@@ -102,11 +102,15 @@ docker-compose up -d --build
 **FastAPI 서버 실행:**
 ```bash
 uv run uvicorn app.main:app --reload
+# or
+docker compose up -d --build app
 ```
 
 **AI Worker 실행:**
 ```bash
 uv run python -m ai_worker.main
+# or
+docker compose up -d --build ai_worker
 ```
 
 ### 2. EC2 배포 환경 (Production)
