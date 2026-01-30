@@ -1,0 +1,77 @@
+name: ci.yml
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'release/*'
+      - 'hotfix/*'
+  pull_request:
+    # feature 브랜치는 보통 develop으로 PR을 생성하기 때문에 develop이 target 브랜치에 포함되어 있다면 별도로 적지 않아도 됩니다.
+    branches:
+      - main
+      - develop
+      - 'release/*'
+      - 'hotfix/*'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Ruff Check (Linting)
+        run: uv run ruff check .
+
+      - name: Run Ruff Format Check
+        run: uv run ruff format . --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Check if tests exist
+        id: check_tests
+        # tests 폴더나 test_*.py 파일이 있는지 확인
+        run: |
+          if [ -d "tests" ] || [ $(find . -name "test_*.py" | wc -l) -gt 0 ]; then
+            echo "has_tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_tests=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Tests with Coverage
+        if: steps.check_tests.outputs.has_tests == 'true'
+        run: |
+          uv run coverage run -m pytest app
+          uv run coverage report --source='./app'
