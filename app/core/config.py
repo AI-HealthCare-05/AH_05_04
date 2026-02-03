@@ -24,7 +24,7 @@ class Config(BaseSettings):
 
     DB_HOST: str = "localhost"
     DB_PORT: int = 3306
-    DB_USER: str = "mysql_user"
+    DB_USER: str = "root"
     DB_PASSWORD: str = "pw1234"
     DB_NAME: str = "ai_health"
     DB_CONNECT_TIMEOUT: int = 5
