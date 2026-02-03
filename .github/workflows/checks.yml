@@ -49,8 +49,6 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: pw1234
           MYSQL_DATABASE: ai_health
-          MYSQL_USER: mysql_user
-          MYSQL_PASSWORD: pw1234
         ports:
           - 3306:3306
     steps:
