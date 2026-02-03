@@ -26,8 +26,9 @@ services:
       MYSQL_DATABASE: ${DB_NAME}
       MYSQL_USER: ${DB_USER}
       MYSQL_PASSWORD: ${DB_PASSWORD}
+      TZ: 'Asia/Seoul'
     ports:
-      - ${DB_EXPOSE_PORT}:3306
+      - ${DB_EXPOSE_PORT}:${DB_PORT}
     networks:
       - ws
     volumes:
@@ -35,6 +36,7 @@ services:
     command: # 한글 저장을 위한 문자셋 설정 (필수!)
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --port=${DB_PORT}
     healthcheck:
       test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
       interval: 10s
@@ -51,8 +53,11 @@ services:
         - linux/amd64
         - linux/arm64
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}  # APP_VERSION은 빌드된 이미지의 버전관리를 위함입니다. v1.0.0 형식으로 사용합니다.
-    env_file: envs/.env
+    env_file: .env
+    command: | 
+      sh -c "uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
+      - ./app:/app/app  # 로컬의 app 디렉토리를 컨테이너의 /app/app에 마운트(수정사항 즉시 반영)
       - static_volume:/app/templates
     restart: always
     ports:
@@ -75,7 +80,7 @@ services:
         - linux/amd64
         - linux/arm64
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}  # AI_WORKER_VERSION은 빌드된 이미지의 버전관리를 위함입니다. V1.0.0 형식으로 사용합니다.
-    env_file: envs/.env
+    env_file: .env
     restart: always
     mem_limit: 4G
     networks:
