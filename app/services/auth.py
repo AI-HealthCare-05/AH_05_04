@@ -7,6 +7,7 @@ from app.dtos.auth import LoginRequest, SignUpRequest
 from app.models.users import User
 from app.repositories.user_repository import UserRepository
 from app.services.jwt import JwtService
+from app.utils.common import normalize_phone_number
 from app.utils.jwt.tokens import AccessToken, RefreshToken
 from app.utils.security import hash_password, verify_password
 
@@ -20,8 +21,11 @@ class AuthService:
         # 이메일 중복 체크
         await self.check_email_exists(data.email)
 
+        # 입력받은 휴대폰 번호를 노말라이즈
+        normalized_phone_number = normalize_phone_number(data.phone_number)
+
         # 휴대폰 번호 중복 체크
-        await self.check_phone_number_exists(data.phone_number)
+        await self.check_phone_number_exists(normalized_phone_number)
 
         # 유저 생성
         async with in_transaction():
@@ -29,7 +33,7 @@ class AuthService:
                 email=data.email,
                 hashed_password=hash_password(data.password),  # 해시화된 비밀번호를 사용
                 name=data.name,
-                phone_number=data.phone_number,
+                phone_number=normalized_phone_number,
                 gender=data.gender,
                 birthday=data.birth_date,
             )
