@@ -9,3 +9,6 @@ wheels/
 .env
 .idea/
 .vscode
+.coverage
+*.coverage
+.coverage.*
