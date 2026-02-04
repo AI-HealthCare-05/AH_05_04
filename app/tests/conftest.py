@@ -1,18 +1,16 @@
 import asyncio
-from collections.abc import AsyncGenerator, Generator
-from typing import Any
-from unittest.mock import Mock, patch
+from typing import Any, Generator
+from unittest.mock import patch, Mock
 
 import pytest
 import pytest_asyncio
 from _pytest.fixtures import FixtureRequest
-from httpx import ASGITransport, AsyncClient
+
 from tortoise import generate_config
-from tortoise.contrib.test import finalizer, initializer
+from tortoise.contrib.test import initializer, finalizer
 
 from app.core import config
 from app.db.databases import TORTOISE_APP_MODELS
-from app.main import app
 
 TEST_BASE_URL = "http://test"
 TEST_DB_LABEL = "models"
@@ -45,9 +43,3 @@ def initialize(request: FixtureRequest) -> Generator[None, None]:
 @pytest_asyncio.fixture(autouse=True, scope="session")
 def event_loop() -> None:
     pass
-
-
-@pytest.fixture(scope="session")
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        yield ac
