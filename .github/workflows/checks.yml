@@ -82,4 +82,4 @@ jobs:
         if: steps.check_tests.outputs.has_tests == 'true'
         run: |
           uv run coverage run -m pytest app
-          uv run coverage report --source='./app'
+          uv run coverage report -m
