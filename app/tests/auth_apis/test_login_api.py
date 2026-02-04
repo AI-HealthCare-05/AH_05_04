@@ -1,4 +1,4 @@
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from starlette import status
 from tortoise.contrib.test import TestCase
 
@@ -27,7 +27,6 @@ class TestLoginAPI(TestCase):
         assert "access_token" in response.json()
         # 쿠키 검증 대신 응답 헤더 확인
         assert any("refresh_token" in header for header in response.headers.get_list("set-cookie"))
-
 
     async def test_login_invalid_credentials(self):
         login_data = {"email": "nonexistent@example.com", "password": "WrongPassword123!"}

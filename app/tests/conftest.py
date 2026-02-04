@@ -1,13 +1,13 @@
 import asyncio
-from typing import Any, Generator
-from unittest.mock import patch, Mock
+from collections.abc import Generator
+from typing import Any
+from unittest.mock import Mock, patch
 
 import pytest
 import pytest_asyncio
 from _pytest.fixtures import FixtureRequest
-
 from tortoise import generate_config
-from tortoise.contrib.test import initializer, finalizer
+from tortoise.contrib.test import finalizer, initializer
 
 from app.core import config
 from app.db.databases import TORTOISE_APP_MODELS
@@ -40,6 +40,6 @@ def initialize(request: FixtureRequest) -> Generator[None, None]:
     loop.close()
 
 
-@pytest_asyncio.fixture(autouse=True, scope="session")
+@pytest_asyncio.fixture(autouse=True, scope="session")  # type: ignore[type-var]
 def event_loop() -> None:
     pass

@@ -1,4 +1,4 @@
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from starlette import status
 from tortoise.contrib.test import TestCase
 
@@ -37,7 +37,6 @@ class TestJWTTokenRefreshAPI(TestCase):
             response = await client.get("/api/v1/auth/token/refresh", cookies={"refresh_token": refresh_token})
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
-
 
     async def test_token_refresh_missing_token(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

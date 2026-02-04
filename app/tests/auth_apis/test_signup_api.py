@@ -1,5 +1,4 @@
-import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from starlette import status
 from tortoise.contrib.test import TestCase
 
@@ -21,7 +20,6 @@ class TestSignupAPI(TestCase):
             response = await client.post("/api/v1/auth/signup", json=signup_data)
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json() == {"detail": "회원가입이 성공적으로 완료되었습니다."}
-
 
     async def test_signup_invalid_email(self):
         signup_data = {

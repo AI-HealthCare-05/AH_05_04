@@ -1,5 +1,4 @@
-import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from starlette import status
 from tortoise.contrib.test import TestCase
 
@@ -31,7 +30,6 @@ class TestUserMeApis(TestCase):
         assert response.json()["email"] == email
         assert response.json()["name"] == "내정보테스터"
 
-
     async def test_update_user_me_success(self):
         # 사용자 등록 및 로그인
         email = "update_me@example.com"
@@ -55,7 +53,6 @@ class TestUserMeApis(TestCase):
             response = await client.patch("/api/v1/users/me", json=update_data, headers=headers)
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["name"] == "수정후"
-
 
     async def test_get_user_me_unauthorized(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
