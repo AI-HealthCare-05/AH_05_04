@@ -34,7 +34,8 @@ class TestJWTTokenRefreshAPI(TestCase):
                     refresh_token = match.group(1)
 
             # 토큰 갱신 시도
-            response = await client.get("/api/v1/auth/token/refresh", cookies={"refresh_token": refresh_token})
+            client.cookies["refresh_token"] = refresh_token
+            response = await client.get("/api/v1/auth/token/refresh")
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
 

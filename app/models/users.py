@@ -9,7 +9,7 @@ class Gender(StrEnum):
 
 
 class User(models.Model):
-    id = fields.BigIntField(pk=True)
+    id = fields.BigIntField(primary_key=True)
     email = fields.CharField(max_length=40)
     hashed_password = fields.CharField(max_length=128)
     name = fields.CharField(max_length=20)
