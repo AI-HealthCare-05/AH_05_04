@@ -5,7 +5,7 @@ COLOR_BLUE=$(tput setaf 4)
 COLOR_RED=$(tput setaf 1)
 COLOR_NC=$(tput sgr0)
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 echo "${COLOR_BLUE}Run Mypy${COLOR_NC}"
 if ! uv run mypy . ; then
