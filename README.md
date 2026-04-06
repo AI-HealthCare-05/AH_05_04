@@ -27,16 +27,17 @@
 │   └── main.py         # 워커 진입점
 ├── app/                # FastAPI 서버 코드
 │   ├── apis/           # API 라우터 (v1 버전 관리)
-│   ├── core/           # 서버 설정 (pydantic-settings)
-│   ├── db/             # 데이터베이스 초기화 및 마이그레이션 (Tortoise ORM)
+│   ├── core/           # 서버 설정 (pydantic-settings), DB 설정, JWT, Validator 등 핵심 기능
 │   ├── dtos/           # 데이터 전송 객체 (Pydantic models)
 │   ├── models/         # DB 테이블 정의
 │   ├── services/       # 비즈니스 로직
 │   └── main.py         # FastAPI 애플리케이션 진입점
 ├── envs/               # 환경 변수 설정 파일 (.env)
-├── nginx/              # Nginx 설정 파일 (리버스 프록시)
+├── infra/              # 인프라 설정 관련 디렉터리
+│   ├── docker/         # Docker Compose 설정 (운영용)
+│   └── nginx/          # Nginx 설정 파일 (리버스 프록시)
 ├── scripts/            # 배포 및 CI용 쉘 스크립트
-├── docker-compose.yml  # 전체 서비스 실행 설정
+├── docker-compose.yml  # 로컬 개발용 서비스 실행 설정
 └── pyproject.toml      # uv 기반 의존성 관리 설정
 ```
 
