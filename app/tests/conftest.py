@@ -10,7 +10,7 @@ from tortoise import generate_config
 from tortoise.contrib.test import finalizer, initializer
 
 from app.core import config
-from app.db.databases import TORTOISE_APP_MODELS
+from app.core.db.databases import TORTOISE_APP_MODELS
 
 TEST_BASE_URL = "http://test"
 TEST_DB_LABEL = "models"

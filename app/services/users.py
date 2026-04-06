@@ -4,7 +4,7 @@ from app.dtos.users import UserUpdateRequest
 from app.models.users import User
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
-from app.utils.common import normalize_phone_number
+from app.core.utils.common import normalize_phone_number
 
 
 class UserManageService:

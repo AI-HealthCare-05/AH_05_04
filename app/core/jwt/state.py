@@ -1,5 +1,5 @@
 from app.core import config
-from app.utils.jwt.backends import TokenBackend
+from app.core.jwt.backends import TokenBackend
 
 token_backend = TokenBackend(
     algorithm=config.JWT_ALGORITHM,

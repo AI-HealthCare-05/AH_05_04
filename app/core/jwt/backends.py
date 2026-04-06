@@ -7,7 +7,7 @@ import jwt
 from jwt import ExpiredSignatureError, InvalidAlgorithmError, PyJWTError, algorithms
 
 from app.core import config
-from app.utils.jwt.exceptions import TokenBackendError, TokenBackendExpiredError
+from app.core.jwt.exceptions import TokenBackendError, TokenBackendExpiredError
 
 ALLOWED_ALGORITHMS = {
     "HS256",

@@ -4,7 +4,7 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, EmailStr, Field
 
 from app.models.users import Gender
-from app.validators.user_validators import validate_birthday, validate_password, validate_phone_number
+from app.core.validators import validate_birthday, validate_password, validate_phone_number
 
 
 class SignUpRequest(BaseModel):

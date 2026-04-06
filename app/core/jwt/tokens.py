@@ -5,11 +5,11 @@ from uuid import uuid4
 
 from app.core import config
 from app.models.users import User
-from app.utils.jwt.exceptions import ExpiredTokenError, TokenBackendError, TokenBackendExpiredError, TokenError
-from app.utils.jwt.state import token_backend
+from app.core.jwt.exceptions import ExpiredTokenError, TokenBackendError, TokenBackendExpiredError, TokenError
+from app.core.jwt.state import token_backend
 
 if TYPE_CHECKING:
-    from app.utils.jwt.backends import TokenBackend
+    from app.core.jwt.backends import TokenBackend
 
 
 class Token:
