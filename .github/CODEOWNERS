@@ -4,15 +4,15 @@
 # Product, architecture and repository operations
 /.github/ @ceohwj @hazelnutflavoured
 /docs/architecture.md @hazelnutflavoured @ceohwj
-/docs/contracts/ @hazelnutflavoured @solia142 @ceohwj
+/docs/contracts/ @hazelnutflavoured @phina-io @ceohwj
 
 # Frontend / UX
-/frontend/ @phina-io
+/frontend/ @solia142
 
 # Backend / DB / API
-/app/ @solia142
-/docs/api.md @solia142 @hazelnutflavoured
-/docs/data-schema.md @solia142 @hazelnutflavoured
+/app/ @phina-io
+/docs/api.md @phina-io @hazelnutflavoured
+/docs/data-schema.md @phina-io @hazelnutflavoured
 
 # OCR and medical information structuring
 /ai_worker/tasks/ocr/ @Jye-rookie
