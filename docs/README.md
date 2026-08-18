@@ -13,7 +13,6 @@
 - `deployment.md`: 개발·운영 환경과 배포 절차
 - `privacy-safety.md`: 개인정보와 의료 안전 기준
 - `testing.md`: 단위·계약·통합·E2E·AI 평가 전략
-- `project-links.md`: Notion, 요구사항, Figma와 저장소 링크
 - `contracts/`: 모듈 간 공통 데이터 계약
 - `adr/`: 주요 아키텍처 결정 기록
 
