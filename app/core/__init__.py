@@ -5,7 +5,8 @@ from app.core.logger import setup_logger
 
 
 def get_config() -> Config:
-    return Config()
+    #  DB 설정은 BaseSettings가 .env에서 읽는다.
+    return Config()  # type: ignore[call-arg]
 
 
 def get_logger() -> logging.Logger:

@@ -22,7 +22,7 @@ ai = [
     "sentence-transformers>=5.2.0"
 ]
 app = [
-    "aerich>=0.9.2",
+    "alembic>=1.16.5",
     "asyncmy>=0.2.11",
     "bcrypt<=4.0.1",
     "fastapi[standard]>=0.128.0",
@@ -30,7 +30,7 @@ app = [
     "orjson>=3.11.5",
     "passlib[bcrypt]>=1.7.4",
     "pyjwt>=2.10.1",
-    "tortoise-orm>=0.25.3",
+    "sqlalchemy[asyncio]>=2.0.43",
     "uvicorn>=0.40.0",
 ]
 dev = [
@@ -52,14 +52,10 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-[tool.aerich]
-tortoise_orm = "app.core.db.databases.TORTOISE_ORM"
-location = "./app/core/db/migrations"
-src_folder = "./."
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 
 [tool.ruff]
 # 기본 라인 길이 설정
