@@ -10,8 +10,46 @@ wheels/
 .coverage
 *.coverage
 .coverage.*
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
 
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
+
+# AI model artifacts
+ai_worker/models/*
+!ai_worker/models/README.md
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Medical / project data
+data/*
+!data/README.md
+!data/sample/
+!data/sample/.gitkeep
+
+# Frontend artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/coverage/
+frontend/.env*
+
+# Runtime / generated artifacts
+artifacts/
+outputs/
+uploads/
+vector_db/
+chroma_db/
+faiss_index/
+evals/results/
+evals/results.*
+knowledge/cache/
+knowledge/documents/
+knowledge/indexes/

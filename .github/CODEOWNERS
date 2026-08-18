@@ -1,0 +1,29 @@
+# Default review owner
+* @ceohwj
+
+# Product, architecture and repository operations
+/.github/ @ceohwj @hazelnutflavoured
+/docs/architecture.md @hazelnutflavoured @ceohwj
+/docs/contracts/ @hazelnutflavoured @solia142 @ceohwj
+
+# Frontend / UX
+/frontend/ @phina-io
+
+# Backend / DB / API
+/app/ @solia142
+/docs/api.md @solia142 @hazelnutflavoured
+/docs/data-schema.md @solia142 @hazelnutflavoured
+
+# OCR and medical information structuring
+/ai_worker/tasks/ocr/ @Jye-rookie
+/ai_worker/tests/ocr/ @Jye-rookie
+
+# RAG, LLM and evaluation
+/ai_worker/tasks/rag/ @ceohwj
+/ai_worker/tasks/llm/ @ceohwj
+/ai_worker/tasks/evaluation/ @ceohwj
+/ai_worker/tests/rag/ @ceohwj
+/ai_worker/tests/llm/ @ceohwj
+/ai_worker/tests/evaluation/ @ceohwj
+/evals/ @ceohwj @Jye-rookie
+/knowledge/ @ceohwj

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -eo pipefail
 
 COLOR_GREEN=$(tput setaf 2)
@@ -26,7 +27,7 @@ if [ "$HAS_TESTS" = true ]; then
 
     docker exec -i ${MYSQL_CONTAINER_NAME} \
     mysql -u root -p${DB_ROOT_PASSWORD}<<EOF
-      GRANT ALL PRIVILEGES ON *.* TO '${DB_USER}'@'%' WITH GRANT OPTION;
+      GRANT ALL PRIVILEGES ON test.* TO '${DB_USER}'@'%';
       FLUSH PRIVILEGES;
 EOF
 
@@ -46,6 +47,7 @@ EOF
     fi
   else
     echo "${COLOR_RED} MySQL Docker Container Not Found. Run docker compose up mysql.${COLOR_NC}"
+    exit 1
   fi
 else
   echo "${COLOR_BLUE}No tests found. Skipping tests.${COLOR_NC}"
