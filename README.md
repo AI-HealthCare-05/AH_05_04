@@ -185,4 +185,3 @@ chmod +x scripts/certbot.sh
 - **AI 로직 추가**: `ai_worker/tasks/`에 새로운 처리 로직을 작성하고 `ai_worker/main.py`에서 호출하도록 구성하세요.
 - **팀 협업**: 브랜치, 커밋, 리뷰와 완료 기준은 [CONTRIBUTING.md](CONTRIBUTING.md)를 따르세요.
 - **보안 제보**: 비밀정보·개인정보·의료 안전 문제는 [SECURITY.md](SECURITY.md)를 따르세요.
-- **프로젝트 자료**: Notion, Figma와 요구사항 원본은 [docs/project-links.md](docs/project-links.md)에서 확인하세요.
