@@ -41,6 +41,9 @@ jobs:
       - name: Run Ruff Format Check
         run: uv run ruff format . --check
 
+      - name: Run Mypy
+        run: uv run mypy app ai_worker
+
   test:
     runs-on: ubuntu-latest
     services:

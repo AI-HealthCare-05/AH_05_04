@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -eo pipefail
 
 COLOR_GREEN=$(tput setaf 2)

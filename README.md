@@ -13,6 +13,7 @@
 - **Tortoise ORM**: 비동기 방식의 데이터베이스 모델링 및 쿼리 관리.
 - **Docker-Compose**: MySQL, Redis, Nginx를 포함한 전체 서비스 스택을 한 번에 실행.
 - **CI/CD Scripts**: 코드 포맷팅(Ruff), 타입 체크(Mypy), 테스트(Pytest)를 위한 자동화 스크립트 제공.
+- **Medical AI Safety Baseline**: OCR 검수, 근거·인용, 개인정보와 AI 평가 기준 문서화.
 
 ---
 
@@ -23,7 +24,8 @@
 ├── ai_worker/          # AI 모델 추론 및 학습 관련 코드 (Worker)
 │   ├── core/           # 워커 설정 및 로거
 │   ├── models/         # AI 모델 파일 보관 (PyTorch 등)
-│   ├── tasks/          # 실제 처리할 작업 정의
+│   ├── tasks/          # OCR, RAG, LLM, Evaluation 작업 정의
+│   ├── tests/          # AI Worker 테스트
 │   └── main.py         # 워커 진입점
 ├── app/                # FastAPI 서버 코드
 │   ├── apis/           # API 라우터 (v1 버전 관리)
@@ -32,6 +34,12 @@
 │   ├── models/         # DB 테이블 정의
 │   ├── services/       # 비즈니스 로직
 │   └── main.py         # FastAPI 애플리케이션 진입점
+├── frontend/           # 사용자 화면 및 UX
+├── data/               # 비식별 합성 샘플 안내 (실제 의료데이터 저장 금지)
+├── docs/               # 아키텍처, API, ERD, AI 파이프라인, 배포 문서
+├── evals/              # OCR·RAG·LLM·Safety·OTC 평가 기준
+├── knowledge/          # 승인 의료 지식의 출처·버전 manifest
+├── tests/              # 계약·통합·E2E 교차 계층 테스트
 ├── envs/               # 환경 변수 설정 파일 (.env)
 ├── infra/              # 인프라 설정 관련 디렉터리
 │   ├── docker/         # Docker Compose 설정 (운영용)
@@ -162,7 +170,7 @@ chmod +x scripts/certbot.sh
 ./scripts/ci/run_test.sh
 
 # 코드 포맷팅 확인 (Ruff)
-./scripts/ci/code_fommatting.sh
+./scripts/ci/code_formatting.sh
 
 # 정적 타입 검사 (Mypy)
 ./scripts/ci/check_mypy.sh
@@ -175,3 +183,6 @@ chmod +x scripts/certbot.sh
 - **API 추가**: `app/apis/v1/` 아래에 새로운 라우터 파일을 생성하고 `app/apis/v1/__init__.py`에 등록하세요.
 - **DB 모델 추가**: `app/models/`에 Tortoise 모델을 정의하고 `app/db/databases.py`의 `MODELS` 리스트에 추가하세요.
 - **AI 로직 추가**: `ai_worker/tasks/`에 새로운 처리 로직을 작성하고 `ai_worker/main.py`에서 호출하도록 구성하세요.
+- **팀 협업**: 브랜치, 커밋, 리뷰와 완료 기준은 [CONTRIBUTING.md](CONTRIBUTING.md)를 따르세요.
+- **보안 제보**: 비밀정보·개인정보·의료 안전 문제는 [SECURITY.md](SECURITY.md)를 따르세요.
+- **프로젝트 자료**: Notion, Figma와 요구사항 원본은 [docs/project-links.md](docs/project-links.md)에서 확인하세요.
