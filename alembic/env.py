@@ -7,10 +7,7 @@ from alembic import context
 from app.core import config as app_config
 from app.core.db.databases import Base
 
-# Base.metadata에 모든 테이블을 등록하기 위한 import
-from app.models.extracted_field import ExtractedField  # noqa: F401
-from app.models.medical_document import MedicalDocument  # noqa: F401
-from app.models.ocr_job import OCRJob  # noqa: F401
+# Base.metadata에 migration 대상 테이블을 등록하기 위한 import
 from app.models.users import User  # noqa: F401
 
 alembic_config = context.config
