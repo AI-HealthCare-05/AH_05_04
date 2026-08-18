@@ -1,45 +1,68 @@
-import asyncio
-from collections.abc import Generator
-from typing import Any
-from unittest.mock import Mock, patch
+from collections.abc import AsyncIterator
+from urllib.parse import quote_plus
 
-import pytest
 import pytest_asyncio
-from _pytest.fixtures import FixtureRequest
-from tortoise import generate_config
-from tortoise.contrib.test import finalizer, initializer
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool
 
 from app.core import config
-from app.core.db.databases import TORTOISE_APP_MODELS
+from app.core.db.databases import Base, get_db_session
+from app.main import app
 
-TEST_BASE_URL = "http://test"
-TEST_DB_LABEL = "models"
-TEST_DB_TZ = "Asia/Seoul"
+# Base.metadata 등록을 위한 모델 import
+from app.models.users import User  # noqa: F401
+
+TEST_DATABASE_URL = (
+    "mysql+asyncmy://"
+    f"{quote_plus(config.DB_USER)}:"
+    f"{quote_plus(config.DB_PASSWORD)}"
+    f"@127.0.0.1:{config.DB_EXPOSE_PORT}/test"
+    "?charset=utf8mb4"
+)
+
+test_engine = create_async_engine(
+    TEST_DATABASE_URL,
+    pool_pre_ping=True,
+    poolclass=NullPool,
+)
+
+TestSessionFactory = async_sessionmaker(
+    bind=test_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
 
 
-def get_test_db_config() -> dict[str, Any]:
-    tortoise_config = generate_config(
-        db_url=f"mysql://{config.DB_USER}:{config.DB_PASSWORD}@{config.DB_HOST}:{config.DB_PORT}/test",
-        app_modules={TEST_DB_LABEL: TORTOISE_APP_MODELS},
-        connection_label=TEST_DB_LABEL,
-        testing=True,
-    )
-    tortoise_config["timezone"] = TEST_DB_TZ
-
-    return tortoise_config
+async def override_get_db_session() -> AsyncIterator[AsyncSession]:
+    async with TestSessionFactory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
-@pytest.fixture(scope="session", autouse=True)
-def initialize(request: FixtureRequest) -> Generator[None]:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    with patch("tortoise.contrib.test.getDBConfig", Mock(return_value=get_test_db_config())):
-        initializer(modules=TORTOISE_APP_MODELS)
+@pytest_asyncio.fixture(
+    scope="session",
+    autouse=True,
+)
+async def initialize_database() -> AsyncIterator[None]:
+    app.dependency_overrides[get_db_session] = override_get_db_session
+
+    async with test_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+        await connection.run_sync(Base.metadata.create_all)
+
     yield
-    finalizer()
-    loop.close()
 
+    async with test_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
 
-@pytest_asyncio.fixture(autouse=True, scope="session")  # type: ignore[type-var]
-def event_loop() -> None:
-    pass
+    app.dependency_overrides.clear()
+    await test_engine.dispose()
