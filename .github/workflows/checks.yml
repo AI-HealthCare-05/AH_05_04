@@ -46,14 +46,28 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_EXPOSE_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: ci_test_password
+      DB_NAME: test
+
     services:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: pw1234
-          MYSQL_DATABASE: ai_health
+          MYSQL_ROOT_PASSWORD: ci_test_password
+          MYSQL_DATABASE: test
         ports:
           - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_test_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
