@@ -7,8 +7,11 @@ wheels/
 .venv
 .*.env
 .env
-.idea/
-.vscode
 .coverage
 *.coverage
 .coverage.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
