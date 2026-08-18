@@ -2,7 +2,7 @@
 name: Bug report
 about: 버그와 예상하지 못한 동작을 제보합니다
 title: "[Bug] "
-labels: "bug"
+labels: "type: bug"
 assignees: ""
 ---
 
