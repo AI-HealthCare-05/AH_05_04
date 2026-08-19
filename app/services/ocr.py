@@ -8,7 +8,14 @@ from app.models.ocr import ExtractedField, OcrJob
 from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
-from app.services.ocr_engine import NotConfiguredOcrEngine, OcrEngine, OcrProcessingError, OcrProviderUnavailableError
+from app.services.ocr_engine import (
+    NotConfiguredOcrEngine,
+    OcrEngine,
+    OcrProcessingError,
+    OcrProviderConnectionError,
+    OcrProviderTimeoutError,
+    OcrProviderUnavailableError,
+)
 
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
@@ -85,10 +92,46 @@ class OcrService:
                 object_key=document.object_key,
                 file_mime_type=document.file_mime_type,
             )
+        except OcrProviderTimeoutError as err:
+            await self._ocr_repo.mark_failed(
+                job,
+                error_code="OCR_PROVIDER_TIMEOUT",
+                error_message="OCR 서비스 응답 시간이 초과되었습니다.",
+                completed_at=datetime.now(UTC),
+            )
+            raise ApiError(
+                status_code=503,
+                code="OCR_PROVIDER_TIMEOUT",
+                message="OCR 서비스 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
+                details=[
+                    ErrorDetail(
+                        field="provider",
+                        reason="PROVIDER_TIMEOUT",
+                    )
+                ],
+            ) from err
+        except OcrProviderConnectionError as err:
+            await self._ocr_repo.mark_failed(
+                job,
+                error_code="OCR_PROVIDER_CALL_FAILED",
+                error_message="OCR 제공자 연결에 실패했습니다.",
+                completed_at=datetime.now(UTC),
+            )
+            raise ApiError(
+                status_code=503,
+                code="OCR_PROVIDER_CALL_FAILED",
+                message="OCR 서비스 연결에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+                details=[
+                    ErrorDetail(
+                        field="provider",
+                        reason="CONNECTION_FAILED",
+                    )
+                ],
+            ) from err
         except OcrProviderUnavailableError as err:
             await self._ocr_repo.mark_failed(
                 job,
-                error_code="PROVIDER_UNAVAILABLE",
+                error_code="OCR_PROVIDER_UNAVAILABLE",
                 error_message=_PROVIDER_UNAVAILABLE_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
@@ -101,7 +144,7 @@ class OcrService:
         except OcrProcessingError as err:
             await self._ocr_repo.mark_failed(
                 job,
-                error_code="OCR_ENGINE_ERROR",
+                error_code="OCR_PROCESSING_FAILED",
                 error_message=_ENGINE_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
@@ -114,7 +157,7 @@ class OcrService:
         except Exception as err:
             await self._ocr_repo.mark_failed(
                 job,
-                error_code="OCR_ENGINE_ERROR",
+                error_code="OCR_PROCESSING_FAILED",
                 error_message=_ENGINE_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )

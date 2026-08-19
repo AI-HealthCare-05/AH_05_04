@@ -29,6 +29,10 @@ class MedicalDocumentRepository:
         )
         self.session.add(document)
         await self.session.flush()
+        await self.session.refresh(
+            document,
+            attribute_names=["uploaded_at"],
+        )
         return document
 
     async def get_owned(
