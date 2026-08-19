@@ -6,7 +6,7 @@
 
 - `main`: 발표·배포 가능한 안정 버전
 - `develop`: 팀 통합 브랜치
-- `feature/<issue>-<name>`: 기능 개발
+- `feat/<issue>-<name>`: 기능 개발
 - `fix/<issue>-<name>`: 버그 수정
 - `docs/<issue>-<name>`: 문서 변경
 - `chore/<issue>-<name>`: 설정과 유지보수
