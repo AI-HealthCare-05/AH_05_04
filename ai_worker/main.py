@@ -1,6 +1,6 @@
-import logging
+from ai_worker.core import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 def main() -> None:
