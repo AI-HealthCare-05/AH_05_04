@@ -236,13 +236,13 @@ response = await client.responses.create(
     model=model,
     instructions=instructions,
     input=[{"role": "user", "content": input_json}],
-    max_output_tokens=800,
+    max_output_tokens=max_output_tokens,
     store=False,
     stream=False,
 )
 ```
 
-- 모델 기본값은 `gpt-4o-mini`다.
+- MVP 호출 모델은 `gpt-4o-mini`이며 호출자가 `ChatGenerator`에 명시적으로 주입한다.
 - 최대 출력은 MVP 고정값 `800` tokens다.
 - OpenAI 측 저장을 요청하지 않도록 `store=False`를 명시한다.
 - SDK 자체 재시도는 Backend 조립 시 `max_retries=0`으로 설정한다. 이번 기능은 자동 재시도하지 않는다.
@@ -252,14 +252,15 @@ response = await client.responses.create(
 
 `OpenAIResponsesClient`는 다음 순서로 provider 응답을 판정한다.
 
-1. 응답 `status`가 `completed`인지 확인한다.
-2. incomplete, refusal 또는 오류 상태면 정상 답변으로 사용하지 않는다.
-3. `response.output_text`가 문자열인지 확인하고 앞뒤 공백을 제거한다.
-4. 내용이 비어 있으면 실패한다.
-5. 응답의 실제 `model`이 문자열인지 확인한다.
-6. 검증을 통과한 `content`와 `model_name`만 `ProviderChatResponse`로 반환한다.
+1. output item에 refusal이 있으면 `ChatGenerationInvalidResponseError`로 처리한다.
+2. 응답 `error.code`가 `server_error` 또는 `rate_limit_exceeded`이면 `ChatGenerationUnavailableError`로 처리한다.
+3. 응답 `status`가 `completed`인지 확인하고, 다른 미완료·실패 상태는 `ChatGenerationInvalidResponseError`로 처리한다.
+4. `response.output_text`가 문자열인지 확인하고 앞뒤 공백을 제거한다.
+5. 내용이 비어 있으면 실패한다.
+6. 응답의 실제 `model`이 문자열인지 확인한다.
+7. 검증을 통과한 `content`와 `model_name`만 `ProviderChatResponse`로 반환한다.
 
-`ChatGenerator`는 전체 wall-clock timeout을 적용하고, Provider 결과의 `content`가 10,000자 이하인지와 `model_name`이 공백이 아닌 100자 이하 문자열인지 확인한다. 검증을 통과하면 `chat-prompt-v1`을 추가해 `ChatGenerationResult`를 반환한다. 한국어 여부와 HTML·JSON·Markdown 포함 여부는 별도 후처리로 판정하지 않고 프롬프트 지시로만 제어한다.
+`ChatGenerator`는 생성 시 공백이 아닌 model과 양의 유한값인 timeout을 요구하며, 잘못된 값은 `ChatGenerationConfigurationError`로 처리한다. 생성 요청에는 MVP 고정값 `max_output_tokens=800`을 Provider에 전달하고 전체 wall-clock timeout을 적용한다. Provider 결과의 `content`가 10,000자 이하인지와 `model_name`이 공백이 아닌 100자 이하 문자열인지 확인한 뒤 `chat-prompt-v1`을 추가해 `ChatGenerationResult`를 반환한다. 한국어 여부와 HTML·JSON·Markdown 포함 여부는 별도 후처리로 판정하지 않고 프롬프트 지시로만 제어한다.
 
 Provider 원문 응답과 SDK 타입은 adapter 밖으로 전달하지 않는다.
 
@@ -356,6 +357,7 @@ Backend Service
 - 불완전한 용량 값·단위 쌍을 모두 provider payload에서 생략
 - `gpt-4o-mini`, instructions, `max_output_tokens=800` 전달
 - Provider 결과에 `chat-prompt-v1` 추가
+- 공백 model과 0 이하·NaN·무한대 timeout을 설정 오류로 거부
 - 10,000자 초과 content와 공백·100자 초과 model ID 거부
 - 전체 wall-clock timeout을 도메인 오류로 변환
 - 실제 OpenAI SDK와 API Key 없이 Mock Provider로 실행
@@ -363,8 +365,10 @@ Backend Service
 ### OpenAI client 테스트
 
 - `responses.create()`에 `store=False`, `stream=False`, 단일 user input 전달
+- 호출자가 전달한 `max_output_tokens`를 SDK 요청에 그대로 전달
 - completed 응답의 `output_text`와 실제 model ID 추출
 - incomplete, refusal, 빈·공백 output과 누락·비문자열 model ID 차단
+- 응답 `error.code`의 `server_error`와 `rate_limit_exceeded`를 일시적 provider 장애로 변환
 - timeout, 연결, rate limit, provider `4xx`·`5xx` 오류 매핑
 - SDK 타입과 예외가 adapter 외부로 노출되지 않음
 
