@@ -13,6 +13,10 @@ from app.services.jwt import JwtService
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def should_use_secure_cookie(env: Env) -> bool:
+    return env == Env.PRODUCTION
+
+
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
 async def signup(
     request: SignUpRequest,
@@ -36,7 +40,7 @@ async def login(
         key="refresh_token",
         value=str(tokens["refresh_token"]),
         httponly=True,
-        secure=config.ENV == Env.PRODUCTION,
+        secure=should_use_secure_cookie(config.ENV),
         domain=config.COOKIE_DOMAIN or None,
         expires=tokens["access_token"].payload["exp"],
     )
