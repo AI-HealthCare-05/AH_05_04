@@ -14,7 +14,7 @@ auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def should_use_secure_cookie(env: Env) -> bool:
-    return env == Env.PRODUCTION
+    return env in {Env.STAGING, Env.PRODUCTION}
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)

@@ -8,7 +8,7 @@ from app.core.config import Env
     ("env", "expected"),
     [
         (Env.LOCAL, False),
-        (Env.STAGING, False),
+        (Env.STAGING, True),
         (Env.PRODUCTION, True),
     ],
 )
