@@ -92,6 +92,8 @@ class TestSignupAPI:
             )
 
         assert response.status_code == status.HTTP_409_CONFLICT
-        assert response.json() == {
-            "detail": expected_detail,
-        }
+        body = response.json()
+        assert body["code"] == "HTTP_ERROR"
+        assert body["message"] == expected_detail
+        assert body["details"] == []
+        assert "trace_id" in body

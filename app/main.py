@@ -1,7 +1,9 @@
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from openai import AsyncOpenAI
 
@@ -30,6 +32,22 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.cors_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def add_trace_id(request: Request, call_next):
+    # 요청별 고유 trace_id를 request.state에 저장해 에러 응답·로그에서 재사용합니다.
+    request.state.trace_id = uuid.uuid4().hex
+    return await call_next(request)
+
 
 register_exception_handlers(app)
 

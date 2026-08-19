@@ -18,7 +18,8 @@ class Env(StrEnum):
 
 
 def get_default_timezone() -> tzinfo:
-    # Windows 테스트 환경에 tzdata가 없어도 Asia/Seoul 기준 시간을 사용할 수 있게 합니다.
+    # 로컬 Windows 개발 환경에 tzdata가 없어도 Asia/Seoul 기준 시간을 쓸 수 있게 하는 fallback입니다
+    # (CI는 ubuntu-latest, macOS 개발 환경은 tzdata가 이미 있어서 영향 없음).
     try:
         return zoneinfo.ZoneInfo("Asia/Seoul")
     except zoneinfo.ZoneInfoNotFoundError:
@@ -77,6 +78,14 @@ class Config(BaseSettings):
     SQLALCHEMY_ECHO: bool = False
 
     COOKIE_DOMAIN: str = "localhost"
+
+    # 임시값입니다. Frontend 개발 서버 주소는 아직 확정 전이라, 팀 회의에서 정해지는 대로
+    # 이 기본값을 실제 주소로 교체합니다(여러 개면 콤마로 구분).
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
