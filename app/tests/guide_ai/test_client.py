@@ -1,0 +1,214 @@
+from types import SimpleNamespace
+from typing import Any
+
+import httpx2
+import pytest
+from openai import APIConnectionError, APIResponseValidationError, APITimeoutError, AuthenticationError, RateLimitError
+
+from app.services.guide_ai.client import OpenAIResponsesClient
+from app.services.guide_ai.exceptions import (
+    GuideGenerationConfigurationError,
+    GuideGenerationInvalidResponseError,
+    GuideGenerationSafetyError,
+    GuideGenerationTimeoutError,
+    GuideGenerationUnavailableError,
+)
+from app.services.guide_ai.schemas import GeneratedGuideDraft, GeneratedMedicationGuidance
+
+
+class FakeResponses:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.kwargs: dict[str, Any] = {}
+
+    async def parse(self, **kwargs: Any) -> object:
+        self.kwargs = kwargs
+        return self.response
+
+
+class FakeAsyncOpenAI:
+    def __init__(self, response: object) -> None:
+        self.responses = FakeResponses(response)
+
+
+class RaisingResponses:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def parse(self, **kwargs: Any) -> object:
+        raise self.error
+
+
+class RaisingAsyncOpenAI:
+    def __init__(self, error: Exception) -> None:
+        self.responses = RaisingResponses(error)
+
+
+def _draft() -> GeneratedGuideDraft:
+    return GeneratedGuideDraft(
+        medications=[GeneratedMedicationGuidance(source_index=0, guidance="처방 지시를 확인해 주세요.")],
+        general_notice="궁금한 점은 의료진에게 확인해 주세요.",
+    )
+
+
+def _response(
+    *, status: str = "completed", content: list[object] | None = None, incomplete_reason: str | None = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        status=status,
+        model="gpt-4o-mini-2024-07-18",
+        incomplete_details=SimpleNamespace(reason=incomplete_reason) if incomplete_reason else None,
+        output=[
+            SimpleNamespace(
+                type="message",
+                status="completed",
+                content=content if content is not None else [SimpleNamespace(type="output_text", parsed=_draft())],
+            )
+        ],
+    )
+
+
+async def test_client_uses_non_streaming_parse_and_returns_single_parsed_draft() -> None:
+    sdk_client = FakeAsyncOpenAI(_response())
+    client = OpenAIResponsesClient(sdk_client)
+
+    result = await client.generate(
+        model="gpt-4o-mini",
+        instructions="system rules",
+        input_json='[{"source_index":0}]',
+        max_output_tokens=560,
+    )
+
+    assert result.draft == _draft()
+    assert result.model_name == "gpt-4o-mini-2024-07-18"
+    assert sdk_client.responses.kwargs == {
+        "model": "gpt-4o-mini",
+        "instructions": "system rules",
+        "input": [{"role": "user", "content": '[{"source_index":0}]'}],
+        "text_format": GeneratedGuideDraft,
+        "max_output_tokens": 560,
+        "store": False,
+    }
+
+
+async def test_client_rejects_refusal() -> None:
+    client = OpenAIResponsesClient(
+        FakeAsyncOpenAI(_response(content=[SimpleNamespace(type="refusal", refusal="refused")]))
+    )
+
+    with pytest.raises(GuideGenerationSafetyError):
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
+
+
+async def test_client_maps_provider_content_filter_to_safety_error() -> None:
+    client = OpenAIResponsesClient(FakeAsyncOpenAI(_response(status="incomplete", incomplete_reason="content_filter")))
+
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
+
+    assert exc_info.value.rule_id == "PROVIDER_SAFETY_FILTER"
+
+
+async def test_client_maps_refusal_before_generic_incomplete_status() -> None:
+    response = _response(
+        status="incomplete",
+        content=[SimpleNamespace(type="refusal", refusal="refused")],
+        incomplete_reason="max_output_tokens",
+    )
+    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
+
+    assert exc_info.value.rule_id == "PROVIDER_REFUSAL"
+
+
+async def test_client_rejects_incomplete_message_inside_completed_response() -> None:
+    response = _response()
+    response.output[0].status = "incomplete"
+    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+
+    with pytest.raises(GuideGenerationInvalidResponseError):
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
+
+
+@pytest.mark.parametrize("error_code", ["server_error", "rate_limit_exceeded"])
+async def test_client_maps_returned_provider_availability_errors(error_code: str) -> None:
+    response = _response(status="failed")
+    response.error = SimpleNamespace(code=error_code, message="must not escape")
+    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+
+    with pytest.raises(GuideGenerationUnavailableError) as exc_info:
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
+
+    assert "must not escape" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _response(status="incomplete", incomplete_reason="max_output_tokens"),
+        _response(content=[]),
+        _response(content=[SimpleNamespace(type="output_text", parsed=None)]),
+        SimpleNamespace(status="completed", model="gpt-4o-mini", incomplete_details=None, output=[]),
+    ],
+)
+async def test_client_rejects_incomplete_or_unparseable_output(response: object) -> None:
+    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+
+    with pytest.raises(GuideGenerationInvalidResponseError):
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
+
+
+async def test_client_maps_missing_actual_model_id_to_invalid_response() -> None:
+    response = _response()
+    response.model = None
+    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+
+    with pytest.raises(GuideGenerationInvalidResponseError):
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "domain_error"),
+    [
+        (
+            APITimeoutError(request=httpx2.Request("POST", "https://api.openai.com/v1/responses")),
+            GuideGenerationTimeoutError,
+        ),
+        (
+            APIConnectionError(request=httpx2.Request("POST", "https://api.openai.com/v1/responses")),
+            GuideGenerationUnavailableError,
+        ),
+        (
+            RateLimitError(
+                "limited",
+                response=httpx2.Response(429, request=httpx2.Request("POST", "https://api.openai.com/v1/responses")),
+                body=None,
+            ),
+            GuideGenerationUnavailableError,
+        ),
+        (
+            AuthenticationError(
+                "unauthorized",
+                response=httpx2.Response(401, request=httpx2.Request("POST", "https://api.openai.com/v1/responses")),
+                body=None,
+            ),
+            GuideGenerationConfigurationError,
+        ),
+        (
+            APIResponseValidationError(
+                response=httpx2.Response(200, request=httpx2.Request("POST", "https://api.openai.com/v1/responses")),
+                body=None,
+            ),
+            GuideGenerationInvalidResponseError,
+        ),
+    ],
+)
+async def test_client_maps_sdk_errors_to_provider_neutral_errors(
+    provider_error: Exception, domain_error: type[Exception]
+) -> None:
+    client = OpenAIResponsesClient(RaisingAsyncOpenAI(provider_error))
+
+    with pytest.raises(domain_error):
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
