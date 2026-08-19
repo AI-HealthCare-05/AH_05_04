@@ -1,11 +1,10 @@
 from httpx import ASGITransport, AsyncClient
 from starlette import status
-from tortoise.contrib.test import TestCase
 
 from app.main import app
 
 
-class TestSignupAPI(TestCase):
+class TestSignupAPI:
     async def test_signup_success(self):
         signup_data = {
             "email": "test@example.com",

@@ -1,11 +1,10 @@
 from httpx import ASGITransport, AsyncClient
 from starlette import status
-from tortoise.contrib.test import TestCase
 
 from app.main import app
 
 
-class TestUserMeApis(TestCase):
+class TestUserMeApis:
     async def test_get_user_me_success(self):
         # 사용자 등록 및 로그인
         email = "me@example.com"

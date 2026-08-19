@@ -1,6 +1,13 @@
+from datetime import date, datetime
 from enum import StrEnum
+from uuid import UUID, uuid4
 
-from tortoise import fields, models
+from sqlalchemy import Boolean, Date, DateTime, Enum, String
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
+
+from app.core.db.databases import Base
+from app.core.db.types import UUIDChar
 
 
 class Gender(StrEnum):
@@ -8,19 +15,67 @@ class Gender(StrEnum):
     FEMALE = "FEMALE"
 
 
-class User(models.Model):
-    id = fields.BigIntField(primary_key=True)
-    email = fields.CharField(max_length=40)
-    hashed_password = fields.CharField(max_length=128)
-    name = fields.CharField(max_length=20)
-    gender = fields.CharEnumField(enum_type=Gender)
-    birthday = fields.DateField()
-    phone_number = fields.CharField(max_length=11)
-    is_active = fields.BooleanField(default=True)
-    is_admin = fields.BooleanField(default=False)
-    last_login = fields.DatetimeField(null=True)
-    created_at = fields.DatetimeField(auto_now_add=True)
-    updated_at = fields.DatetimeField(auto_now=True)
+class User(Base):
+    __tablename__ = "user"
 
-    class Meta:
-        table = "users"
+    id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        primary_key=True,
+        default=uuid4,
+    )
+    email: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    hashed_password: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+    gender: Mapped[Gender] = mapped_column(
+        Enum(
+            Gender,
+            native_enum=False,
+            length=10,
+        ),
+        nullable=False,
+    )
+    birthday: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+    )
+    phone_number: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        unique=True,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    last_login: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
