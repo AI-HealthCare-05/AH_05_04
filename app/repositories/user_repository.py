@@ -1,13 +1,49 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import EmailStr
 from sqlalchemy import exists, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.models.users import Gender, User
+
+DuplicateUserField = Literal["email", "phone_number"]
+
+MYSQL_DUPLICATE_ENTRY_ERROR_CODE = 1062
+EMAIL_UNIQUE_KEY = "ix_user_email"
+PHONE_NUMBER_UNIQUE_KEY = "phone_number"
+
+
+class DuplicateUserFieldError(Exception):
+    def __init__(self, field: DuplicateUserField) -> None:
+        self.field = field
+        super().__init__(f"Duplicate user field: {field}")
+
+
+def get_duplicate_user_field(
+    exc: IntegrityError,
+) -> DuplicateUserField | None:
+    error_args = getattr(exc.orig, "args", ())
+
+    if not error_args:
+        return None
+
+    if error_args[0] != MYSQL_DUPLICATE_ENTRY_ERROR_CODE:
+        return None
+
+    error_message = str(error_args[1]) if len(error_args) > 1 else str(exc.orig)
+
+    if EMAIL_UNIQUE_KEY in error_message:
+        return "email"
+
+    if PHONE_NUMBER_UNIQUE_KEY in error_message:
+        return "phone_number"
+
+    return None
+
 
 ALLOWED_UPDATE_FIELDS = {
     "name",
@@ -56,7 +92,19 @@ class UserRepository:
         )
 
         self.session.add(user)
-        await self.session.flush()
+
+        try:
+            await self.session.flush()
+        except IntegrityError as exc:
+            duplicate_field = get_duplicate_user_field(exc)
+
+            if duplicate_field is None:
+                raise
+
+            raise DuplicateUserFieldError(
+                duplicate_field,
+            ) from exc
+
         return user
 
     async def get_user_by_email(
