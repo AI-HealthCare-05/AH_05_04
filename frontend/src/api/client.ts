@@ -96,14 +96,17 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const { accessToken, headers, ...requestOptions } = options
 
+  const token =
+    accessToken ?? localStorage.getItem('access_token')
+
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...requestOptions,
     headers: {
       Accept: 'application/json',
       ...headers,
-      ...(accessToken
+      ...(token
         ? {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
           }
         : {}),
     },
