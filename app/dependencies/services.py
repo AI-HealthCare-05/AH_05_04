@@ -32,5 +32,12 @@ def get_user_manage_service(
         UserRepository,
         Depends(get_user_repository),
     ],
+    auth_service: Annotated[
+        AuthService,
+        Depends(get_auth_service),
+    ],
 ) -> UserManageService:
-    return UserManageService(repository)
+    return UserManageService(
+        repository=repository,
+        auth_service=auth_service,
+    )

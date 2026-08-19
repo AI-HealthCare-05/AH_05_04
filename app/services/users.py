@@ -9,9 +9,10 @@ class UserManageService:
     def __init__(
         self,
         repository: UserRepository,
+        auth_service: AuthService,
     ) -> None:
         self.repo = repository
-        self.auth_service = AuthService(repository)
+        self.auth_service = auth_service
 
     async def update_user(
         self,
