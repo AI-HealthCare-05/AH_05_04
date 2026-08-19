@@ -201,11 +201,11 @@ result = await chat_generator.generate(chat_input)
 
 `ChatGenerationResult`는 다음 필드를 반환한다.
 
-- `content`: 앞뒤 공백을 제거한 비어 있지 않은 한국어 평문, 최대 10,000자
+- `content`: 한국어 평문으로 생성하도록 프롬프트에서 지시한 응답 텍스트. 코드는 앞뒤 공백 제거, 비어 있지 않음과 최대 10,000자 제약만 검증
 - `model_name`: OpenAI 응답에서 확인한 실제 모델 ID, 최대 100자
 - `prompt_version`: `chat-prompt-v1`
 
-Provider adapter의 내부 반환형 `ProviderChatResponse`는 `content`와 `model_name`만 가진다. `ChatGenerator`가 이를 검증하고 `prompt_version`을 추가한다.
+Provider adapter의 내부 반환형 `ProviderChatResponse`는 `content`와 `model_name`만 가진다. `OpenAIResponsesClient`는 SDK 응답 상태와 출력 구조를 검증하고, `ChatGenerator`는 실제 모델명 길이와 최종 결과 제약을 검증한 뒤 `prompt_version`을 추가한다.
 
 `assistant_message_id`, `session_id`, `generation_status`, `error_code`, `error_message`, `completed_at`과 `created_at`은 Backend 책임이므로 AI 결과에 포함하지 않는다. Backend는 `ChatGenerationResult.content`를 ASSISTANT `CHAT_MESSAGE.content`에 변경 없이 저장한다.
 
@@ -250,14 +250,16 @@ response = await client.responses.create(
 
 ### 응답 판정
 
-다음 순서로 단일 성공 응답을 판정한다.
+`OpenAIResponsesClient`는 다음 순서로 provider 응답을 판정한다.
 
 1. 응답 `status`가 `completed`인지 확인한다.
 2. incomplete, refusal 또는 오류 상태면 정상 답변으로 사용하지 않는다.
 3. `response.output_text`가 문자열인지 확인하고 앞뒤 공백을 제거한다.
-4. 내용이 비었거나 10,000자를 넘으면 실패한다.
-5. 응답의 실제 `model`이 비어 있지 않은 100자 이하 문자열인지 확인한다.
-6. 검증을 통과한 `content`와 `model_name`만 Provider 결과로 반환한다.
+4. 내용이 비어 있으면 실패한다.
+5. 응답의 실제 `model`이 문자열인지 확인한다.
+6. 검증을 통과한 `content`와 `model_name`만 `ProviderChatResponse`로 반환한다.
+
+`ChatGenerator`는 전체 wall-clock timeout을 적용하고, Provider 결과의 `content`가 10,000자 이하인지와 `model_name`이 공백이 아닌 100자 이하 문자열인지 확인한다. 검증을 통과하면 `chat-prompt-v1`을 추가해 `ChatGenerationResult`를 반환한다. 한국어 여부와 HTML·JSON·Markdown 포함 여부는 별도 후처리로 판정하지 않고 프롬프트 지시로만 제어한다.
 
 Provider 원문 응답과 SDK 타입은 adapter 밖으로 전달하지 않는다.
 
@@ -354,6 +356,7 @@ Backend Service
 - 불완전한 용량 값·단위 쌍을 모두 provider payload에서 생략
 - `gpt-4o-mini`, instructions, `max_output_tokens=800` 전달
 - Provider 결과에 `chat-prompt-v1` 추가
+- 10,000자 초과 content와 공백·100자 초과 model ID 거부
 - 전체 wall-clock timeout을 도메인 오류로 변환
 - 실제 OpenAI SDK와 API Key 없이 Mock Provider로 실행
 
@@ -361,13 +364,13 @@ Backend Service
 
 - `responses.create()`에 `store=False`, `stream=False`, 단일 user input 전달
 - completed 응답의 `output_text`와 실제 model ID 추출
-- incomplete, refusal, 빈·공백 output과 잘못된 model ID 차단
+- incomplete, refusal, 빈·공백 output과 누락·비문자열 model ID 차단
 - timeout, 연결, rate limit, provider `4xx`·`5xx` 오류 매핑
 - SDK 타입과 예외가 adapter 외부로 노출되지 않음
 
 ### 테스트 격리
 
-현재 `app/tests/conftest.py`에는 session·function 범위의 autouse MySQL fixture가 있다. `app/tests/chat_ai/conftest.py`에서 같은 fixture 이름을 no-op fixture로 재정의해 순수 Chat AI 단위 테스트가 DB 연결을 요구하지 않게 한다. 전역 Backend fixture와 다른 테스트 디렉터리는 변경하지 않는다.
+현재 `app/tests/conftest.py`에는 session·function 범위의 autouse MySQL fixture인 `initialize_database`와 `isolate_database`가 있다. `app/tests/chat_ai/conftest.py`에서 두 fixture를 같은 이름의 no-op fixture로 재정의해 순수 Chat AI 단위 테스트가 DB 연결을 요구하지 않게 한다. 전역 Backend fixture와 다른 테스트 디렉터리는 변경하지 않는다.
 
 ### 선택적 실제 API 스모크 테스트
 
