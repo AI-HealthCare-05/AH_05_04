@@ -10,6 +10,10 @@ from app.repositories.medical_document_repository import MedicalDocumentReposito
 from app.repositories.ocr_repository import OcrRepository
 from app.services.ocr_engine import NotConfiguredOcrEngine, OcrEngine, OcrProcessingError, OcrProviderUnavailableError
 
+# 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
+_PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
+_ENGINE_ERROR_MESSAGE = "OCR 처리 중 오류가 발생했습니다."
+
 
 def _to_field_data(field: ExtractedField) -> ExtractedFieldData:
     return ExtractedFieldData(
@@ -85,7 +89,7 @@ class OcrService:
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="PROVIDER_UNAVAILABLE",
-                error_message=str(err),
+                error_message=_PROVIDER_UNAVAILABLE_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
             raise ApiError(
@@ -98,7 +102,7 @@ class OcrService:
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_ENGINE_ERROR",
-                error_message=str(err),
+                error_message=_ENGINE_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
             raise ApiError(
@@ -111,7 +115,7 @@ class OcrService:
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_ENGINE_ERROR",
-                error_message=str(err),
+                error_message=_ENGINE_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
             raise ApiError(

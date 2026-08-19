@@ -13,9 +13,12 @@ from app.repositories.prescription_repository import PrescriptionRepository
 
 
 def _field_value(field: ExtractedField | None) -> str | None:
+    # 사용자가 명시적으로 확인(PATCH /extracted-fields)하지 않은 OCR raw_value는 처방 확정에 쓰지 않습니다.
+    # "OCR 결과는 사용자 확인 전까지 미확정 상태"라는 팀 규칙에 따라 raw_value로 대체하지 않고,
+    # 확인되지 않은 필드는 없는 값으로 취급해 확정 대상에서 제외되도록 합니다.
     if field is None:
         return None
-    return field.confirmed_value if field.confirmed_value is not None else field.raw_value
+    return field.confirmed_value
 
 
 def _to_prescription_data(prescription: Prescription, medications: list[Medication]) -> PrescriptionData:

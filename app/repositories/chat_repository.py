@@ -95,7 +95,9 @@ class ChatRepository:
         message.generation_status = ChatGenerationStatus.FAILED
         message.error_code = error_code
         message.completed_at = completed_at
-        await self.session.flush()
+        # 이후 서비스 계층에서 ApiError를 다시 발생시키면 get_db_session의 예외 처리가
+        # 세션 전체를 rollback합니다. flush만으로는 실패 상태가 사라지므로 즉시 commit합니다.
+        await self.session.commit()
         return message
 
     async def update_last_message_at(self, session: ChatSession, *, last_message_at: datetime) -> ChatSession:

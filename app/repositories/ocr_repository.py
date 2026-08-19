@@ -90,7 +90,9 @@ class OcrRepository:
         job.error_code = error_code
         job.error_message = error_message[:500]
         job.completed_at = completed_at
-        await self.session.flush()
+        # 이후 서비스 계층에서 ApiError를 다시 발생시키면 get_db_session의 예외 처리가
+        # 세션 전체를 rollback합니다. flush만으로는 실패 상태가 사라지므로 즉시 commit합니다.
+        await self.session.commit()
         return job
 
     async def confirm_field(
