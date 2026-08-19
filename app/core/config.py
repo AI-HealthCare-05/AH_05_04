@@ -11,8 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Env(StrEnum):
     LOCAL = "local"
-    DEV = "dev"
-    PROD = "prod"
+    STAGING = "staging"
+    PRODUCTION = "production"
 
 
 class Config(BaseSettings):

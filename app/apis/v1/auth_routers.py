@@ -36,7 +36,7 @@ async def login(
         key="refresh_token",
         value=str(tokens["refresh_token"]),
         httponly=True,
-        secure=True if config.ENV == Env.PROD else False,
+        secure=config.ENV == Env.PRODUCTION,
         domain=config.COOKIE_DOMAIN or None,
         expires=tokens["access_token"].payload["exp"],
     )
