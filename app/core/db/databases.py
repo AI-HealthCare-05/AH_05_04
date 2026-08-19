@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core import config
-from app.core.config import Env
 
 
 class Base(DeclarativeBase):
@@ -17,7 +16,7 @@ class Base(DeclarativeBase):
 
 engine = create_async_engine(
     config.database_url,
-    echo=config.ENV == Env.LOCAL,
+    echo=config.SQLALCHEMY_ECHO,
     pool_pre_ping=True,
     pool_recycle=1800,
     pool_size=config.DB_CONNECTION_POOL_MAXSIZE,

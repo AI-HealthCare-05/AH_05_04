@@ -38,6 +38,7 @@ class Config(BaseSettings):
     DB_NAME: str
     DB_CONNECT_TIMEOUT: int = 5
     DB_CONNECTION_POOL_MAXSIZE: int = 10
+    SQLALCHEMY_ECHO: bool = False
 
     COOKIE_DOMAIN: str = "localhost"
 

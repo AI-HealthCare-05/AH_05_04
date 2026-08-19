@@ -105,8 +105,5 @@ class UserRepository:
             if key in ALLOWED_UPDATE_FIELDS and value is not None:
                 setattr(user, key, value)
 
-        user.updated_at = datetime.now(config.TIMEZONE)
-
         await self.session.flush()
-        await self.session.refresh(user)
         return user

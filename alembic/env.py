@@ -3,12 +3,11 @@ from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Base.metadata에 migration 대상 테이블을 등록하기 위한 import
+import app.models  # noqa: F401
 from alembic import context
 from app.core import config as app_config
 from app.core.db.databases import Base
-
-# Base.metadata에 migration 대상 테이블을 등록하기 위한 import
-from app.models.users import User  # noqa: F401
 
 alembic_config = context.config
 
