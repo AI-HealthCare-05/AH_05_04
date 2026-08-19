@@ -1,11 +1,10 @@
 from httpx import ASGITransport, AsyncClient
 from starlette import status
-from tortoise.contrib.test import TestCase
 
 from app.main import app
 
 
-class TestJWTTokenRefreshAPI(TestCase):
+class TestJWTTokenRefreshAPI:
     async def test_token_refresh_success(self):
         # 사용자 등록 및 로그인하여 리프레시 토큰 획득
         signup_data = {

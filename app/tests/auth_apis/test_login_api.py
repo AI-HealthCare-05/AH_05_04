@@ -1,11 +1,10 @@
 from httpx import ASGITransport, AsyncClient
 from starlette import status
-from tortoise.contrib.test import TestCase
 
 from app.main import app
 
 
-class TestLoginAPI(TestCase):
+class TestLoginAPI:
     async def test_login_success(self):
         # 먼저 사용자 등록
         signup_data = {

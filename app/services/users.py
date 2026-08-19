@@ -1,5 +1,3 @@
-from tortoise.transactions import in_transaction
-
 from app.core.utils.common import normalize_phone_number
 from app.dtos.users import UserUpdateRequest
 from app.models.users import User
@@ -8,18 +6,34 @@ from app.services.auth import AuthService
 
 
 class UserManageService:
-    def __init__(self):
-        self.repo = UserRepository()
-        self.auth_service = AuthService()
+    def __init__(
+        self,
+        repository: UserRepository,
+        auth_service: AuthService,
+    ) -> None:
+        self.repo = repository
+        self.auth_service = auth_service
 
-    async def update_user(self, user: User, data: UserUpdateRequest) -> User:
-        if data.email:
+    async def update_user(
+        self,
+        user: User,
+        data: UserUpdateRequest,
+    ) -> User:
+        update_data = data.model_dump(exclude_none=True)
+
+        if data.email and str(data.email) != user.email:
             await self.auth_service.check_email_exists(data.email)
+            update_data["email"] = str(data.email)
+
         if data.phone_number:
             normalized_phone_number = normalize_phone_number(data.phone_number)
-            await self.auth_service.check_phone_number_exists(normalized_phone_number)
-            data.phone_number = normalized_phone_number
-        async with in_transaction():
-            await self.repo.update_instance(user=user, data=data.model_dump(exclude_none=True))
-            await user.refresh_from_db()
-        return user
+
+            if normalized_phone_number != user.phone_number:
+                await self.auth_service.check_phone_number_exists(normalized_phone_number)
+
+            update_data["phone_number"] = normalized_phone_number
+
+        return await self.repo.update_instance(
+            user=user,
+            data=update_data,
+        )
