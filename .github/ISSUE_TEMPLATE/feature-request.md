@@ -2,8 +2,9 @@
 name: Feature
 about: 새로운 기능 구현
 title: "[Feature] "
-labels: "type: feature"
-assignees: ""
+labels: 'type: feature'
+assignees: ''
+
 ---
 
 ## 작업 목적
