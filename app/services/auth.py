@@ -6,7 +6,10 @@ from app.core.utils.common import normalize_phone_number
 from app.core.utils.security import hash_password, verify_password
 from app.dtos.auth import LoginRequest, SignUpRequest
 from app.models.users import User
-from app.repositories.user_repository import UserRepository
+from app.repositories.user_repository import (
+    DuplicateUserFieldError,
+    UserRepository,
+)
 from app.services.jwt import JwtService
 
 
@@ -27,14 +30,25 @@ class AuthService:
         normalized_phone_number = normalize_phone_number(data.phone_number)
         await self.check_phone_number_exists(normalized_phone_number)
 
-        return await self.user_repo.create_user(
-            email=data.email,
-            hashed_password=hash_password(data.password),
-            name=data.name,
-            phone_number=normalized_phone_number,
-            gender=data.gender,
-            birthday=data.birth_date,
-        )
+        try:
+            return await self.user_repo.create_user(
+                email=data.email,
+                hashed_password=hash_password(data.password),
+                name=data.name,
+                phone_number=normalized_phone_number,
+                gender=data.gender,
+                birthday=data.birth_date,
+            )
+        except DuplicateUserFieldError as exc:
+            if exc.field == "email":
+                detail = "이미 사용중인 이메일입니다."
+            else:
+                detail = "이미 사용중인 휴대폰 번호입니다."
+
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=detail,
+            ) from exc
 
     async def authenticate(
         self,
