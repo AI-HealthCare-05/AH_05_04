@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -31,7 +32,7 @@ class UserUpdateRequest(BaseModel):
 
 
 class UserInfoResponse(BaseSerializerModel):
-    id: int
+    id: UUID
     name: str
     email: str
     phone_number: str

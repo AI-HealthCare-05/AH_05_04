@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import ORJSONResponse as Response
 
 from app.dependencies.security import get_request_user
+from app.dependencies.services import (
+    get_user_manage_service,
+)
 from app.dtos.users import UserInfoResponse, UserUpdateRequest
 from app.models.users import User
 from app.services.users import UserManageService
@@ -22,7 +25,7 @@ async def user_me_info(
 async def update_user_me_info(
     update_data: UserUpdateRequest,
     user: Annotated[User, Depends(get_request_user)],
-    user_manage_service: Annotated[UserManageService, Depends(UserManageService)],
+    user_manage_service: Annotated[UserManageService, Depends(get_user_manage_service)],
 ) -> Response:
     updated_user = await user_manage_service.update_user(user=user, data=update_data)
     return Response(UserInfoResponse.model_validate(updated_user).model_dump(), status_code=status.HTTP_200_OK)

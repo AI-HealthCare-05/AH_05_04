@@ -26,9 +26,12 @@ if [ "$HAS_TESTS" = true ]; then
     echo "${COLOR_BLUE}→ MySQL container found. Granting privileges...${COLOR_NC}"
 
     docker exec -i ${MYSQL_CONTAINER_NAME} \
-    mysql -u root -p${DB_ROOT_PASSWORD}<<EOF
-      GRANT ALL PRIVILEGES ON test.* TO '${DB_USER}'@'%';
-      FLUSH PRIVILEGES;
+mysql -u root -p${DB_ROOT_PASSWORD}<<EOF
+  CREATE DATABASE IF NOT EXISTS test
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
+  GRANT ALL PRIVILEGES ON test.* TO '${DB_USER}'@'%';
+  FLUSH PRIVILEGES;
 EOF
 
     echo "${COLOR_BLUE}Run Pytest with Coverage${COLOR_NC}"
