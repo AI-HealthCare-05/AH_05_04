@@ -54,3 +54,6 @@ evals/results.*
 knowledge/cache/
 knowledge/documents/
 knowledge/indexes/
+
+# Frontend environment example
+!frontend/.env.example
