@@ -1,12 +1,29 @@
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
+from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import config
 from app.core.db.databases import get_db_session
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.guide_repository import GuideRepository
+from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.repositories.ocr_repository import OcrRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
+from app.services.chat import ChatService
+from app.services.guide_ai import GuideGenerator, OpenAIResponsesClient
+from app.services.guides import GuideService
+from app.services.medical_documents import MedicalDocumentService
+from app.services.ocr import OcrService
+from app.services.prescriptions import PrescriptionService
 from app.services.users import UserManageService
+
+
+def get_openai_client(request: Request) -> AsyncOpenAI:
+    return request.app.state.openai_client
 
 
 def get_user_repository(
@@ -16,6 +33,129 @@ def get_user_repository(
     ],
 ) -> UserRepository:
     return UserRepository(session)
+
+
+def get_medical_document_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> MedicalDocumentRepository:
+    return MedicalDocumentRepository(session)
+
+
+def get_medical_document_service(
+    repository: Annotated[
+        MedicalDocumentRepository,
+        Depends(get_medical_document_repository),
+    ],
+) -> MedicalDocumentService:
+    return MedicalDocumentService(repository)
+
+
+def get_ocr_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> OcrRepository:
+    return OcrRepository(session)
+
+
+def get_ocr_service(
+    document_repository: Annotated[
+        MedicalDocumentRepository,
+        Depends(get_medical_document_repository),
+    ],
+    ocr_repository: Annotated[
+        OcrRepository,
+        Depends(get_ocr_repository),
+    ],
+) -> OcrService:
+    return OcrService(document_repository, ocr_repository)
+
+
+def get_prescription_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> PrescriptionRepository:
+    return PrescriptionRepository(session)
+
+
+def get_prescription_service(
+    document_repository: Annotated[
+        MedicalDocumentRepository,
+        Depends(get_medical_document_repository),
+    ],
+    ocr_repository: Annotated[
+        OcrRepository,
+        Depends(get_ocr_repository),
+    ],
+    prescription_repository: Annotated[
+        PrescriptionRepository,
+        Depends(get_prescription_repository),
+    ],
+) -> PrescriptionService:
+    return PrescriptionService(document_repository, ocr_repository, prescription_repository)
+
+
+def get_guide_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> GuideRepository:
+    return GuideRepository(session)
+
+
+def get_guide_generator(
+    client: Annotated[
+        AsyncOpenAI,
+        Depends(get_openai_client),
+    ],
+) -> GuideGenerator:
+    return GuideGenerator(
+        provider=OpenAIResponsesClient(client),
+        model=config.OPENAI_MODEL,
+        timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
+    )
+
+
+def get_guide_service(
+    repository: Annotated[
+        GuideRepository,
+        Depends(get_guide_repository),
+    ],
+    generator: Annotated[
+        GuideGenerator,
+        Depends(get_guide_generator),
+    ],
+) -> GuideService:
+    return GuideService(repository, generator)
+
+
+def get_chat_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> ChatRepository:
+    return ChatRepository(session)
+
+
+def get_chat_service(
+    prescription_repository: Annotated[
+        PrescriptionRepository,
+        Depends(get_prescription_repository),
+    ],
+    chat_repository: Annotated[
+        ChatRepository,
+        Depends(get_chat_repository),
+    ],
+) -> ChatService:
+    return ChatService(prescription_repository, chat_repository)
 
 
 def get_auth_service(
