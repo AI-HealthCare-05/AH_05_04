@@ -1,11 +1,12 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
+from app.models.medical_documents import MedicalDocument
 from app.models.prescriptions import Prescription
 
 
@@ -29,6 +30,21 @@ class ChatRepository:
         if chat_session is None or chat_session.prescription.document.user_id != user_id:
             return None
         return chat_session
+
+    async def get_session_owned_for_update(self, *, session_id: UUID, user_id: UUID) -> ChatSession | None:
+        owned_prescription = exists(
+            select(1)
+            .select_from(Prescription)
+            .join(MedicalDocument, MedicalDocument.id == Prescription.document_id)
+            .where(
+                Prescription.id == ChatSession.prescription_id,
+                MedicalDocument.user_id == user_id,
+            )
+        )
+        result = await self.session.execute(
+            select(ChatSession).where(ChatSession.id == session_id, owned_prescription).with_for_update()
+        )
+        return result.scalar_one_or_none()
 
     async def list_messages(self, *, session: ChatSession) -> list[ChatMessage]:
         result = await self.session.execute(
