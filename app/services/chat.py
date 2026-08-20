@@ -3,19 +3,24 @@ from uuid import UUID
 
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.chat import ChatMessageData, ChatRole, ChatSessionData, SendChatMessageData, SendChatMessageRequest
-from app.models.chat import ChatGenerationStatus, ChatMessage, ChatSessionStatus
+from app.models.chat import ChatGenerationStatus, ChatMessage, ChatSession, ChatSessionStatus
 from app.models.chat import ChatRole as ModelChatRole
 from app.models.users import User
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.chat_ai import (
     ChatEngine,
+    ChatGenerationFailedError,
     ChatMedicationInput,
     ChatReplyInput,
+    ChatReplyOutput,
     ChatServiceUnavailableError,
     ChatTimeoutError,
-    NotConfiguredChatEngine,
 )
+
+_TIMEOUT_ERROR_MESSAGE = "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
+_UNAVAILABLE_ERROR_MESSAGE = "OpenAI 서비스 호출에 실패했습니다."
+_GENERATION_FAILED_ERROR_MESSAGE = "챗봇 응답 생성 처리 중 오류가 발생했습니다."
 
 
 def _to_message_data(message: ChatMessage) -> ChatMessageData:
@@ -33,9 +38,9 @@ class ChatService:
         self,
         prescription_repository: PrescriptionRepository,
         chat_repository: ChatRepository,
-        engine: ChatEngine | None = None,
+        engine: ChatEngine,
     ) -> None:
-        self._engine: ChatEngine = engine or NotConfiguredChatEngine()
+        self._engine = engine
         self._prescription_repo = prescription_repository
         self._chat_repo = chat_repository
 
@@ -78,7 +83,7 @@ class ChatService:
         request: SendChatMessageRequest,
     ) -> SendChatMessageData:
         # 실시간 복약 챗봇 응답 Backend 계약: 사용자 질문 저장 → OpenAI 단일 응답 생성 → 저장.
-        chat_session = await self._chat_repo.get_session_owned(session_id=session_id, user_id=user.id)
+        chat_session = await self._chat_repo.get_session_owned_for_update(session_id=session_id, user_id=user.id)
         if chat_session is None:
             raise ApiError(
                 status_code=404,
@@ -131,47 +136,81 @@ class ChatService:
 
         assistant_message = await self._chat_repo.mark_generating(assistant_message)
 
+        failure: tuple[str, str, ApiError] | None = None
         try:
             result = await self._engine.reply(chat_input)
-        except ChatServiceUnavailableError as err:
-            await self._chat_repo.mark_failed(
-                assistant_message,
-                error_code="OPENAI_API_ERROR",
-                completed_at=datetime.now(UTC),
+        except ChatTimeoutError:
+            failure = (
+                "OPENAI_API_TIMEOUT",
+                _TIMEOUT_ERROR_MESSAGE,
+                ApiError(
+                    status_code=504,
+                    code="GATEWAY_TIMEOUT",
+                    message="외부 처리 시간이 초과되었습니다. 다시 시도해 주세요.",
+                    details=[ErrorDetail(field="openai_api", reason="OPENAI_API_TIMEOUT")],
+                ),
             )
-            raise ApiError(
-                status_code=503,
-                code="SERVICE_UNAVAILABLE",
-                message="현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
-                details=[ErrorDetail(field="openai_api", reason="OPENAI_API_ERROR")],
-            ) from err
-        except ChatTimeoutError as err:
-            await self._chat_repo.mark_failed(
-                assistant_message,
-                error_code="OPENAI_API_TIMEOUT",
-                completed_at=datetime.now(UTC),
+        except ChatServiceUnavailableError:
+            failure = (
+                "OPENAI_API_ERROR",
+                _UNAVAILABLE_ERROR_MESSAGE,
+                ApiError(
+                    status_code=503,
+                    code="SERVICE_UNAVAILABLE",
+                    message="현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                    details=[ErrorDetail(field="openai_api", reason="OPENAI_API_ERROR")],
+                ),
             )
-            raise ApiError(
-                status_code=504,
-                code="GATEWAY_TIMEOUT",
-                message="외부 처리 시간이 초과되었습니다. 다시 시도해 주세요.",
-                details=[ErrorDetail(field="openai_api", reason="OPENAI_API_TIMEOUT")],
-            ) from err
-        except Exception as err:
-            await self._chat_repo.mark_failed(
-                assistant_message,
-                error_code="OPENAI_RESPONSE_PROCESSING_FAILED",
-                completed_at=datetime.now(UTC),
+        except ChatGenerationFailedError:
+            failure = (
+                "OPENAI_RESPONSE_PROCESSING_FAILED",
+                _GENERATION_FAILED_ERROR_MESSAGE,
+                ApiError(
+                    status_code=500,
+                    code="AI_RESPONSE_FAILED",
+                    message="AI 답변 생성에 실패했습니다.",
+                    details=[ErrorDetail(field="assistant_message", reason="OPENAI_RESPONSE_PROCESSING_FAILED")],
+                ),
             )
-            raise ApiError(
-                status_code=500,
-                code="AI_RESPONSE_FAILED",
-                message="AI 답변 생성에 실패했습니다.",
-                details=[ErrorDetail(field="assistant_message", reason="OPENAI_RESPONSE_PROCESSING_FAILED")],
-            ) from err
+        except Exception:
+            failure = (
+                "OPENAI_RESPONSE_PROCESSING_FAILED",
+                _GENERATION_FAILED_ERROR_MESSAGE,
+                ApiError(
+                    status_code=500,
+                    code="AI_RESPONSE_FAILED",
+                    message="AI 답변 생성에 실패했습니다.",
+                    details=[ErrorDetail(field="assistant_message", reason="OPENAI_RESPONSE_PROCESSING_FAILED")],
+                ),
+            )
+        else:
+            return await self._complete_message_pair(
+                chat_session=chat_session,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                result=result,
+            )
 
+        assert failure is not None
+        error_code, error_message, api_error = failure
+        await self._chat_repo.mark_failed(
+            assistant_message,
+            error_code=error_code,
+            error_message=error_message,
+            completed_at=datetime.now(UTC),
+        )
+        raise api_error
+
+    async def _complete_message_pair(
+        self,
+        *,
+        chat_session: ChatSession,
+        user_message: ChatMessage,
+        assistant_message: ChatMessage,
+        result: ChatReplyOutput,
+    ) -> SendChatMessageData:
         completed_at = datetime.now(UTC)
-        assistant_message = await self._chat_repo.mark_completed(
+        completed_message = await self._chat_repo.mark_completed(
             assistant_message,
             content=result.content,
             model_name=result.model_name,
@@ -182,12 +221,12 @@ class ChatService:
 
         return SendChatMessageData(
             user_message_id=user_message.id,
-            assistant_message_id=assistant_message.id,
+            assistant_message_id=completed_message.id,
             session_id=chat_session.id,
-            generation_status=str(assistant_message.generation_status),
-            content=assistant_message.content,
-            model_name=assistant_message.model_name,
-            prompt_version=assistant_message.prompt_version,
-            created_at=assistant_message.created_at,
-            completed_at=assistant_message.completed_at,
+            generation_status=str(completed_message.generation_status),
+            content=completed_message.content,
+            model_name=completed_message.model_name,
+            prompt_version=completed_message.prompt_version,
+            created_at=completed_message.created_at,
+            completed_at=completed_message.completed_at,
         )

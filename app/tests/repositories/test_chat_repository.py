@@ -1,14 +1,16 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.chat import ChatSession
+from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
@@ -142,3 +144,80 @@ async def test_get_medications_returns_every_medication_in_display_order(db_sess
     medications = await PrescriptionRepository(db_session).get_medications(prescription_id=prescription.id)
 
     assert [medication.display_order for medication in medications] == [1, 2, 3]
+
+
+async def test_mark_failed_assigns_safe_metadata_and_commits() -> None:
+    session = AsyncMock()
+    repository = ChatRepository(cast(AsyncSession, session))
+    message = SimpleNamespace(
+        generation_status=ChatGenerationStatus.GENERATING,
+        error_code=None,
+        error_message=None,
+        completed_at=None,
+    )
+    completed_at = datetime(2026, 8, 20, 9, 1, tzinfo=UTC)
+
+    result = await repository.mark_failed(
+        cast(ChatMessage, message),
+        error_code="OPENAI_API_TIMEOUT",
+        error_message="OpenAI 호출이 제한 시간 내에 완료되지 않았습니다.",
+        completed_at=completed_at,
+    )
+
+    assert result is message
+    assert message.generation_status == ChatGenerationStatus.FAILED
+    assert message.error_code == "OPENAI_API_TIMEOUT"
+    assert message.error_message == "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
+    assert message.completed_at == completed_at
+    session.commit.assert_awaited_once_with()
+
+
+async def test_mark_failed_persists_safe_metadata_and_user_row_after_subsequent_rollback(
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user(db_session, email="failed-chat-owner@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    repository = ChatRepository(db_session)
+    chat_session = await repository.create_session(prescription=prescription)
+    user_message = await repository.create_message(
+        session=chat_session,
+        message_seq=1,
+        role=ChatRole.USER,
+        content="합성 질문",
+        generation_status=ChatGenerationStatus.NOT_APPLICABLE,
+    )
+    assistant_message = await repository.create_message(
+        session=chat_session,
+        message_seq=2,
+        role=ChatRole.ASSISTANT,
+        content=None,
+        generation_status=ChatGenerationStatus.PENDING,
+    )
+    await repository.mark_generating(assistant_message)
+    chat_session_id = chat_session.id
+    user_message_id = user_message.id
+
+    await repository.mark_failed(
+        assistant_message,
+        error_code="OPENAI_API_TIMEOUT",
+        error_message="OpenAI 호출이 제한 시간 내에 완료되지 않았습니다.",
+        completed_at=datetime(2026, 8, 20, 9, 1, tzinfo=UTC),
+    )
+    await db_session.rollback()
+    db_session.expunge_all()
+
+    result = await db_session.execute(
+        select(ChatMessage).where(ChatMessage.session_id == chat_session_id).order_by(ChatMessage.message_seq)
+    )
+    reloaded_user, reloaded_assistant = result.scalars().all()
+
+    assert reloaded_user.id == user_message_id
+    assert reloaded_user.role == ChatRole.USER
+    assert reloaded_user.content == "합성 질문"
+    assert reloaded_assistant.generation_status == ChatGenerationStatus.FAILED
+    assert reloaded_assistant.error_code == "OPENAI_API_TIMEOUT"
+    assert reloaded_assistant.error_message == "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
+    assert reloaded_assistant.completed_at is not None
+    assert reloaded_assistant.content is None
+    assert reloaded_assistant.model_name is None
+    assert reloaded_assistant.prompt_version is None
