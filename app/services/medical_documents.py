@@ -14,7 +14,7 @@ from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 
 MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+ALLOWED_EXTENSIONS = {".jpg", ".png", ".pdf"}
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 FILE_SIGNATURES = {
     "image/jpeg": (b"\xff\xd8\xff",),
