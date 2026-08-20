@@ -11,7 +11,7 @@ from sqlalchemy.pool import NullPool
 import app.models  # noqa: F401
 from app.core import config
 from app.core.db.databases import Base, get_db_session
-from app.main import app as fastapi_app
+from app.main import fastapi_app
 
 TEST_DATABASE_URL = (
     "mysql+asyncmy://"

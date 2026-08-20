@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await close_database()
 
 
-app = FastAPI(
+fastapi_app = FastAPI(
     default_response_class=ORJSONResponse,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -34,20 +34,19 @@ app = FastAPI(
 )
 
 
-@app.middleware("http")
+@fastapi_app.middleware("http")
 async def add_trace_id(request: Request, call_next):
     # 요청별 고유 trace_id를 request.state에 저장해 에러 응답·로그에서 재사용합니다.
     request.state.trace_id = uuid.uuid4().hex
     return await call_next(request)
 
 
-register_exception_handlers(app)
+register_exception_handlers(fastapi_app)
 
-app.include_router(v1_routers)
+fastapi_app.include_router(v1_routers)
 
 # FastAPI의 바깥쪽 예외 처리 계층에서 반환되는 500 응답에도 CORS 헤더를 붙입니다.
 # 내부 FastAPI 앱을 먼저 구성한 뒤 마지막에 CORS 미들웨어로 감싸야 합니다.
-fastapi_app = app
 app = CORSMiddleware(
     app=fastapi_app,
     allow_origins=config.cors_allowed_origins,
@@ -55,6 +54,3 @@ app = CORSMiddleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 기존 테스트와 의존성 오버라이드가 내부 FastAPI 앱과 같은 딕셔너리를 사용하도록 합니다.
-app.dependency_overrides = fastapi_app.dependency_overrides

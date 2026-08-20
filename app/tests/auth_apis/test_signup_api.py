@@ -5,7 +5,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette import status
 
 from app.dependencies.services import get_user_repository
-from app.main import app
+from app.main import app, fastapi_app
 from app.repositories.user_repository import (
     DuplicateUserField,
     DuplicateUserFieldError,
@@ -65,7 +65,7 @@ class TestSignupAPI:
         def override_get_user_repository():
             return repository
 
-        app.dependency_overrides[get_user_repository] = override_get_user_repository
+        fastapi_app.dependency_overrides[get_user_repository] = override_get_user_repository
 
         signup_data = {
             "email": "race@example.com",
@@ -86,7 +86,7 @@ class TestSignupAPI:
                     json=signup_data,
                 )
         finally:
-            app.dependency_overrides.pop(
+            fastapi_app.dependency_overrides.pop(
                 get_user_repository,
                 None,
             )
