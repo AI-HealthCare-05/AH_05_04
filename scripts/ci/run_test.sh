@@ -36,7 +36,7 @@ EOF
 
     echo "${COLOR_BLUE}Run Pytest with Coverage${COLOR_NC}"
 
-    if ! uv run coverage run -m pytest app tests/contract; then
+    if ! uv run coverage run -m pytest app; then
       echo ""
       echo "${COLOR_RED}✖ Pytest failed.${COLOR_NC}"
       echo "${COLOR_RED}→ Fix the test failures above and re-run.${COLOR_NC}"

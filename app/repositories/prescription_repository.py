@@ -53,7 +53,5 @@ class PrescriptionRepository:
         return prescription
 
     async def get_medications(self, *, prescription_id: UUID) -> list[Medication]:
-        result = await self.session.execute(
-            select(Medication).where(Medication.prescription_id == prescription_id).order_by(Medication.display_order)
-        )
+        result = await self.session.execute(select(Medication).where(Medication.prescription_id == prescription_id))
         return list(result.scalars().all())

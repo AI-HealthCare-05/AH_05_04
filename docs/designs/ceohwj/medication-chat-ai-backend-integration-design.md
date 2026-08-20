@@ -443,18 +443,6 @@ Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경�
 - 새 dependency, 환경변수, migration과 API body 변경이 없다.
 - 실제 환자정보, API Key, Provider·의료 본문 로그가 포함되지 않는다.
 
-## 구현 및 검증 근거
-
-구현은 `ChatGeneratorEngine`의 한 번의 동기 생성 호출로 현재 질문과 표시 순서의 확정 약물만 전달한다. `Decimal` 용량과 `duration_days`를 보존하고, 31개 이상 약물은 부분 처방으로 자르지 않고 Provider 호출 전에 안전한 실패로 처리한다.
-
-`ChatRepository.get_session_owned_for_update()`의 세션 row lock이 같은 세션 전송을 직렬화하며, 두 세션을 사용하는 MySQL 동시성 테스트는 서로 다른 세션이 독립적으로 진행되는지 함께 검증한다. Service는 성공 시 USER·COMPLETED ASSISTANT와 생성 metadata를 저장하고, 실패 시 USER·FAILED ASSISTANT와 고정 안전 metadata를 즉시 commit한 뒤 공통 `500`·`503`·`504` 오류로 변환한다. Adapter와 Service의 안전한 오류는 원본 exception chain을 보존하지 않는다.
-
-`ChatNoStoreMiddleware`는 outer `CORSMiddleware` 안에서 정확한 세 chat endpoint의 Router-generated success/error response에 `Cache-Control: no-store`를 적용한다. CORS preflight는 Router 밖에서 처리되므로 이 정책에서 제외된다. CI와 로컬 스크립트의 계약 범위는 `app tests/contract`이며, 실제 OpenAI smoke test는 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 합성 입력으로 실행하는 선택 검증이다.
-
-문서화 시점에 결정적 단위·API·계약 검증과 정적 검사는 실행 대상으로 유지한다. real MySQL 동시성·rollback runtime 검증은 저장소에 포함되어 있으나, 실행 환경의 MySQL connection/auth가 준비되지 않으면 통과로 기록하지 않고 해당 환경 blocker를 배포 기록과 작업 보고서에 남긴다.
-
-2026-08-20 문서화 검증에서 Backend–AI 계약 테스트는 `5 passed`였고, Ruff·format check·Mypy는 모두 성공했다. focused chat suite는 `83 passed, 1 skipped`까지 실행된 뒤 MySQL 인증 오류로 DB 의존 19개가 setup에서 중단되었다. 선택적 live OpenAI smoke test는 비밀값이 필요한 PR 비필수 항목으로 skip되었으며, real MySQL 동시성·rollback 결과와 중단된 CORS/error integration 결과는 통과로 간주하지 않는다.
-
 ## PR 구성
 
 - Issue: #38

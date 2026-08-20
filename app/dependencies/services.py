@@ -14,12 +14,8 @@ from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.chat import ChatService
-from app.services.chat_ai import ChatEngine
-from app.services.chat_ai import OpenAIResponsesClient as ChatOpenAIResponsesClient
-from app.services.chat_generator_engine import ChatGeneratorEngine
 from app.services.clova_ocr_engine import ClovaOcrEngine
-from app.services.guide_ai import GuideGenerator
-from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
+from app.services.guide_ai import GuideGenerator, OpenAIResponsesClient
 from app.services.guides import GuideService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.ocr import OcrService
@@ -140,7 +136,7 @@ def get_guide_generator(
     ],
 ) -> GuideGenerator:
     return GuideGenerator(
-        provider=GuideOpenAIResponsesClient(client),
+        provider=OpenAIResponsesClient(client),
         model=config.OPENAI_MODEL,
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
     )
@@ -168,19 +164,6 @@ def get_chat_repository(
     return ChatRepository(session)
 
 
-def get_chat_engine(
-    client: Annotated[
-        AsyncOpenAI,
-        Depends(get_openai_client),
-    ],
-) -> ChatEngine:
-    return ChatGeneratorEngine(
-        provider=ChatOpenAIResponsesClient(client),
-        model=config.OPENAI_MODEL,
-        timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
-    )
-
-
 def get_chat_service(
     prescription_repository: Annotated[
         PrescriptionRepository,
@@ -190,12 +173,8 @@ def get_chat_service(
         ChatRepository,
         Depends(get_chat_repository),
     ],
-    engine: Annotated[
-        ChatEngine,
-        Depends(get_chat_engine),
-    ],
 ) -> ChatService:
-    return ChatService(prescription_repository, chat_repository, engine)
+    return ChatService(prescription_repository, chat_repository)
 
 
 def get_auth_service(
