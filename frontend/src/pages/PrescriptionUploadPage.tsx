@@ -20,6 +20,7 @@ function PrescriptionUploadPage() {
     const selectedFile = event.target.files?.[0] ?? null
 
     setFile(selectedFile)
+    setOcrResult(null)
     setMessage('')
   }
 
@@ -64,8 +65,9 @@ function PrescriptionUploadPage() {
 
       <input
         type="file"
-        accept="image/jpeg,image/png"
+        accept="image/jpeg,image/png,application/pdf"
         onChange={handleFileChange}
+        disabled={isLoading}
       />
 
       <button
