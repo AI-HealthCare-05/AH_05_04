@@ -7,6 +7,7 @@
 | 관련 Issue | [#38 복약 챗봇 AI Backend 연동](https://github.com/AI-HealthCare-05/AH_05_04/issues/38) |
 | 선행 PR | [#35 복약 챗봇 AI 응답 생성 로직 구현](https://github.com/AI-HealthCare-05/AH_05_04/pull/35) |
 | 반영된 선행 PR | [#33 CORS·trace ID·공통 오류 처리](https://github.com/AI-HealthCare-05/AH_05_04/pull/33) (`4e7df35`) |
+| 최신 오류 계약 | [#46 Backend 오류 응답 통일](https://github.com/AI-HealthCare-05/AH_05_04/pull/46) (`d6359f6`) |
 | 작업 브랜치 | `feat/38-chat-ai-backend-integration` |
 | 대상 브랜치 | `develop` |
 | 소유권 | `/app/`: `@phina-io`, `/docs/api.md`: `@phina-io`, `@hazelnutflavoured` |
@@ -31,6 +32,7 @@ PR #35에서 구현한 provider-neutral `ChatGenerator`를 기존 Backend의 채
 - AI 오류에서 기존 `500`·`503`·`504` HTTP 계약으로의 변환
 - Adapter, Repository, Service, API 및 Backend–AI 계약 테스트
 - 모든 채팅 API 성공·오류 응답의 `Cache-Control: no-store` 보장
+- SQL 예외·echo 로그의 질문·약물 bind parameter 비노출
 - `tests/contract/`를 실행하는 CI와 로컬 테스트 스크립트 보완
 
 ### 제외
@@ -56,7 +58,7 @@ Backend에는 세션 소유권 확인, USER·ASSISTANT 메시지 생성, 상태 
 1. 기존 `ChatEngine` 경계를 유지하고 얇은 Adapter에서만 Backend DTO와 AI 모델을 연결한다.
 2. AI Core에 사용자·세션·처방·메시지 식별자와 DB 상태를 전달하지 않는다.
 3. 확정 처방에 속한 전체 약물을 전달하며 일부 약물을 임의로 자르지 않는다.
-4. Provider·SDK 오류 본문과 의료 입력을 DB, HTTP 응답과 일반 애플리케이션 로그에 남기지 않는다.
+4. 질문과 약물 정보는 승인된 도메인 저장 계약에만 저장하고 오류 metadata, HTTP 오류 응답, SQL 예외와 일반 애플리케이션 로그에는 남기지 않는다. Provider·SDK 오류 본문도 저장하거나 노출하지 않는다.
 5. 같은 세션에서는 생성 요청을 직렬화하고 다른 세션의 요청은 독립적으로 처리한다.
 6. 정상 결과와 실패 상태 모두 명시적인 테스트로 저장 계약을 검증한다.
 7. 의료 입력을 포함할 수 있는 원본 예외 chain을 Adapter 밖으로 전달하지 않는다.
@@ -112,6 +114,8 @@ class ChatGenerationFailedError(Exception):
 `prescription_id`는 Backend의 조회·추적 계약을 위해 유지하지만 Adapter가 만드는 `ChatGenerationInput`과 Provider payload에는 포함하지 않는다.
 
 `ChatGenerationFailedError`는 `app.services.chat_ai` package root에서 기존 timeout·unavailable 오류와 함께 export한다. `NotConfiguredChatEngine`과 `ChatService(engine=None)` 기본값은 제거한다. Engine 누락이 묵시적인 런타임 fallback으로 숨지 않고 필수 생성자 인자와 dependency 조립 테스트에서 드러나게 하며, 테스트는 Fake Engine을 명시적으로 주입한다.
+
+이 package root는 저장소 내부 Backend–AI 경계이며 별도 배포·버전 관리되는 외부 Python API가 아니다. 따라서 `duration_days` 필수 필드 추가, `dose_value`의 `Decimal` 전환과 fallback 제거는 저장소 내부 source-incompatible 변경으로 허용하되, 모든 호출부와 테스트를 같은 PR에서 갱신한다. 외부 소비자가 발견되면 구현을 중단하고 호환 기본값 또는 별도 versioned contract를 소유자와 합의한다.
 
 ### ChatGeneratorEngine
 
@@ -197,19 +201,21 @@ AI Core의 기존 규칙에 따라 `dose_value`와 `dose_unit` 중 하나만 존
 
 ### 실패
 
-AI 호출 이전까지는 성공 흐름과 같다. 오류가 발생하면 ASSISTANT를 `FAILED`로 변경하고 안전한 `error_code`, `error_message`와 `completed_at`을 저장한다. 이후 `ApiError`를 발생시키면 request-scoped DB dependency가 rollback하므로 `mark_failed()`가 USER·ASSISTANT와 실패 변경을 즉시 commit한다.
+AI 호출 이전까지는 성공 흐름과 같다. 오류가 발생하면 각 `except` 안에서는 원본 예외를 보존하지 않는 안전한 실패 분류와 `ApiError` 객체만 만든다. `except` 블록을 완전히 벗어난 뒤 ASSISTANT를 `FAILED`로 변경하고 안전한 `error_code`, `error_message`와 `completed_at`을 `commit_failed_message_pair()`로 즉시 commit한 다음 `ApiError`를 발생시킨다. request-scoped DB dependency의 후속 rollback에도 USER·ASSISTANT 실패 쌍은 유지된다.
 
 ```text
 세션 잠금
   → USER/ASSISTANT 생성
   → GENERATING
   → AI 오류
-  → FAILED + 안전 오류 metadata
-  → 즉시 commit
-  → ApiError
+  → except 종료
+  → FAILED + 안전 오류 metadata + 즉시 commit
+  → 안전한 ApiError
 ```
 
 실패한 ASSISTANT의 `content`, `model_name`과 `prompt_version`은 `NULL`로 유지한다. USER 메시지는 보존되며 메시지 목록에서 USER와 FAILED ASSISTANT를 함께 조회할 수 있다.
+
+`commit_failed_message_pair()`는 이름과 docstring에 단일 row update가 아니라 현재 `AsyncSession`의 전체 pending transaction을 commit한다는 점을 명시한다. 이 메서드는 `send_message()`가 만든 USER·ASSISTANT 쌍과 해당 실패 상태만 pending인 시점에 호출해야 하며, 호출 전에 다른 도메인의 write를 같은 session에 추가하지 않는다. AI 예외를 처리하는 `except`가 끝난 뒤 호출해 commit 또는 flush 자체가 실패하더라도 그 persistence 예외의 `__context__`에 Provider·AI 예외가 연결되지 않게 한다. 이 제약을 Service 테스트에서 commit 호출 순서와 횟수로 검증하고, 실제 MySQL 테스트에서 이후 request rollback에도 정확히 한 쌍만 남는지 확인한다. 향후 하나의 request transaction에 다른 도메인 write를 함께 조립해야 한다면 commit 책임을 명시적인 Service unit-of-work로 이동한다.
 
 ### 동시 전송
 
@@ -229,15 +235,27 @@ WHERE chat_session.id = :session_id
 FOR UPDATE;
 ```
 
-SQLAlchemy statement를 MySQL dialect로 compile했을 때도 `FOR UPDATE`는 외부 statement 끝에 한 번만 생성되어야 한다. Repository 단위 테스트는 query 실행 결과뿐 아니라 `CHAT_SESSION` 외 row를 잠그지 않는 실제 두-session 동시성 동작으로 이 전제를 검증한다.
+SQLAlchemy statement를 MySQL dialect로 compile했을 때도 `FOR UPDATE`는 외부 statement 끝에 한 번만 생성되어야 한다. Repository 단위 테스트는 SQL shape를 검증하고, 실제 두-session 동시성 동작과 `CHAT_SESSION` 외 row를 잠그지 않는지는 MySQL 통합 테스트로 검증한다.
 
 같은 세션의 두 번째 전송은 첫 번째 전송이 완료 또는 실패해 commit할 때까지 세션 row lock에서 대기한다. 잠금을 얻은 후 최신 마지막 메시지를 조회하므로 USER–ASSISTANT 쌍은 `1·2`, `3·4`처럼 순서대로 저장된다. 다른 세션 row는 잠그지 않으므로 서로 다른 세션의 생성은 병렬로 진행된다.
 
-잠금은 최대 OpenAI 전체 timeout 동안 유지된다. 현재 요청도 외부 호출 동안 DB transaction과 connection을 유지하므로, 이 설계는 동일 세션만 의도적으로 직렬화한다. 성공 전 프로세스 종료나 요청 취소가 발생하면 transaction이 rollback되어 영구적인 `GENERATING` 메시지를 남기지 않는다.
+잠금은 최대 OpenAI 전체 timeout 동안 유지된다. 현재 요청도 외부 호출 동안 DB transaction과 connection을 유지하므로, 이 설계는 동일 세션만 row-lock 수준에서 의도적으로 직렬화한다. 서로 다른 세션은 row lock으로 서로를 막지 않지만 장시간 DB connection을 함께 사용하므로 connection pool 수준에서는 완전히 독립적이지 않다. 동시 생성량이 pool의 수용량을 넘으면 채팅 외 DB 요청도 connection 대기를 겪을 수 있다. 성공 전 프로세스 종료나 요청 취소가 발생하면 transaction이 rollback되어 영구적인 `GENERATING` 메시지를 남기지 않는다.
 
-같은 세션의 두 번째 요청은 첫 요청의 남은 생성 시간에 더해 자기 생성 시간까지 소비할 수 있다. 정상 최악 지연 상한은 `2 × OPENAI_TIMEOUT_SECONDS`에 애플리케이션 처리 여유를 더한 값으로 본다. MVP 기본값 20초에서는 reverse proxy read timeout이 최소 45초 이상이어야 하며, DB lock wait timeout도 OpenAI timeout보다 길어야 한다. 이번 PR은 기존 동기 계약을 유지하므로 `NOWAIT`와 새 409 오류를 추가하지 않는다. 이 대기 정책은 API 문서와 동시성 테스트에 명시한다.
+같은 세션의 두 번째 요청은 첫 요청의 남은 생성 시간에 더해 자기 생성 시간까지 소비할 수 있다. 정확히 두 요청이 동시에 시작한 시나리오의 참고 지연은 `2 × OPENAI_TIMEOUT_SECONDS`에 애플리케이션 처리 여유를 더한 값이다. 이는 전체 시스템의 최대 대기시간 계약이 아니다. 같은 세션에 세 개 이상이 겹치면 뒤 요청은 앞선 요청 수에 비례해 더 오래 대기하며, 요청 수를 제한하지 않는 현재 설계에는 유한한 end-to-end 최대값이 없다.
 
-현재 `infra/nginx/*.conf`와 MySQL 8.0 compose 설정은 두 timeout을 별도로 덮어쓰지 않는다. #38에서 설정값을 임의로 추가하지 않고, 배포 전 실제 [Nginx `proxy_read_timeout`](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout)이 45초 이상인지와 [MySQL `innodb_lock_wait_timeout`](https://dev.mysql.com/doc/refman/8.0/en/innodb-parameters.html#sysvar_innodb_lock_wait_timeout)이 `OPENAI_TIMEOUT_SECONDS`보다 큰지를 확인해 배포 기록에 남긴다. 조건을 만족하지 않는 환경은 #38 배포 전 Infrastructure 설정을 조정해야 하며, 애플리케이션 코드에서 더 짧은 timeout으로 우회하지 않는다.
+이번 PR은 기존 동기 계약을 유지하므로 `NOWAIT`, 새 409 오류와 세션별 분산 queue를 추가하지 않는다. 동일 세션의 세 개 이상 동시 요청은 correctness는 row lock으로 보호하지만 응답시간 SLO를 보장하지 않는 과부하 상황으로 정의한다. DB lock wait timeout은 AI 오류가 아니므로 현재 공통 오류 계약의 `500 INTERNAL_SERVER_ERROR`로 처리되고, 잠금을 얻어 USER·ASSISTANT를 만들기 전 transaction이 rollback되어 새 메시지를 남기지 않는다. reverse proxy가 먼저 연결을 종료할 수도 있다. 별도 오류 계약이나 backend 동시성 제한이 필요해지면 관측 결과를 근거로 후속 Issue에서 다룬다. API 문서에는 두 요청 기준 참고 지연, 세 개 이상에는 최대시간 보장이 없다는 점과 lock wait timeout 시 재조회 결과가 변하지 않는다는 점을 함께 명시한다.
+
+현재 `infra/nginx/*.conf`와 MySQL 8.0 compose 설정은 timeout을 별도로 덮어쓰지 않는다. #38에서 설정값을 임의로 추가하지 않고, 배포 전 설정된 OpenAI timeout을 `T`, 애플리케이션 처리 여유를 `M`으로 두고 실제 [Nginx `proxy_read_timeout`](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout)이 두 요청 참고 시나리오에 대해 `2 × T + M` 이상인지, [MySQL `innodb_lock_wait_timeout`](https://dev.mysql.com/doc/refman/8.0/en/innodb-parameters.html#sysvar_innodb_lock_wait_timeout)이 `T + M`보다 큰지 확인해 배포 기록에 남긴다. `proxy_read_timeout`은 전체 요청 제한이 아니라 두 연속 read 사이의 무응답 제한이지만, non-streaming 응답은 생성 완료 전 body를 보내지 않으므로 이 확인이 필요하다. 기본 `T=20초`, `M=5초`에서는 각각 45초 이상과 25초 초과가 기준이다.
+
+같은 배포 기록에 worker별 예상 동시 AI 생성량, `DB_CONNECTION_POOL_MAXSIZE`, SQLAlchemy engine의 실제 overflow·pool wait 정책과 허용 가능한 connection 대기를 함께 적는다. 외부 호출 동안 connection을 유지하는 MVP tradeoff를 이 수용량 안에서 명시적으로 승인한다. 예상 동시 생성량이 수용량에 근접하거나 채팅 외 요청의 connection 대기가 관측되면 #38의 잠금 범위를 조용히 완화하지 않고, 비동기 worker 또는 별도 동시성 제어로 전환하는 후속 설계를 진행한다.
+
+수용량 계산에는 실제 AI를 호출 중인 요청만이 아니라 `SELECT ... FOR UPDATE`에서 기다리는 동일 세션 요청을 포함한 전체 in-flight chat 요청을 사용한다. worker별 pool·overflow 총 수용량에서 인증·처방 조회 등 비채팅 DB 요청을 위한 예비 connection을 먼저 제외하고, 남은 범위 안에서 허용 가능한 chat 요청 수를 승인한다. 이 기준을 충족하지 못하는 환경은 admission/rate limit 또는 비동기 worker 설계 없이 배포하지 않는다.
+
+## SQL 예외와 로그 개인정보 보호
+
+USER 질문은 `CHAT_MESSAGE.content`에 의도적으로 저장되지만 SQL bind parameter, ORM/DB 예외 문자열과 echo 로그에는 노출하지 않는다. `app/core/db/databases.py`의 `create_async_engine()`에 `hide_parameters=True`를 설정해 `SQLALCHEMY_ECHO` 값과 관계없이 statement parameter가 SQLAlchemy 로그와 `StatementError` 문자열에서 가려지게 한다. 운영 환경의 `SQLALCHEMY_ECHO`는 계속 `False`를 사용하며, 이를 디버깅 목적으로 켜더라도 실제 환자정보를 사용하지 않는다.
+
+이 제어는 Provider 오류 chain 분리와 별개다. 메시지 insert·실패 update의 flush 또는 commit 자체가 실패해 Starlette/Uvicorn이 예상 밖 예외를 기록하더라도 질문·약물 bind 값이 예외 문자열에 포함되지 않아야 한다. 합성 sentinel 질문과 약물명을 bind parameter로 사용해 의도적인 SQL 실패를 발생시키고, 포착한 SQLAlchemy 예외 문자열과 로그에 sentinel이 없으며 parameter 숨김 표시는 존재하는지 검증한다. 실제 환자정보나 Provider 응답은 테스트에 사용하지 않는다.
 
 ## 오류 계약
 
@@ -254,7 +272,9 @@ Adapter는 timeout과 unavailable을 먼저 처리하고, 나머지 `ChatGenerat
 
 Service는 `ChatTimeoutError`, `ChatServiceUnavailableError`, `ChatGenerationFailedError`, 그 밖의 `Exception` 순서로 처리한다. 앞의 세 분기는 표의 HTTP·DB 분류를 사용하고, 마지막 분기는 생성 처리 실패와 같은 안전한 `500`으로 수렴시킨다. `CancelledError` 같은 `BaseException`은 잡지 않아 request transaction rollback과 취소 전파를 유지한다.
 
-Python의 `raise SafeError(...) from None`은 traceback 표시를 억제하지만 원본 오류 객체를 `SafeError.__context__`에 남긴다. 따라서 Adapter와 Service는 각 `except` 안에서 고정 메시지를 가진 안전한 오류 객체를 변수에 할당하고 필요한 실패 저장을 끝낸 뒤, `except` 블록을 벗어난 위치에서 그 객체를 raise한다. 이 deferred raise 방식으로 외부 오류의 `__cause__`와 `__context__`를 모두 `None`으로 만든다. 네 Service 분기와 Adapter 오류 변환 테스트는 두 속성을 모두 검증한다.
+Python의 `raise SafeError(...) from None`은 traceback 표시를 억제하지만 원본 오류 객체를 `SafeError.__context__`에 남긴다. 또한 `except` 안에서 실행한 실패 저장·commit이 새 예외를 발생시키면 그 persistence 예외의 `__context__`에도 처리 중인 원본 오류가 연결된다. 따라서 Adapter와 Service는 각 `except` 안에서 고정 메시지를 가진 안전한 오류 객체와 실패 metadata만 변수에 할당한다. Adapter는 `except`를 벗어난 뒤 안전한 Backend 오류를 raise하고, Service는 `except`를 벗어난 뒤 `commit_failed_message_pair()`를 호출한 다음 안전한 `ApiError`를 raise한다. 원본 예외 객체 자체는 변수, DTO 또는 metadata에 저장하지 않는다.
+
+이 deferred failure 처리로 정상적인 오류 변환에서는 Backend 오류와 외부 `ApiError`의 `__cause__`·`__context__`가 모두 `None`이 된다. 실패 persistence 자체가 예외를 발생시키는 경우에는 공통 `500 INTERNAL_SERVER_ERROR`와 request rollback으로 수렴하며, 그 persistence 예외 chain에도 앞선 Provider·AI 오류가 포함되지 않는다. Adapter 오류 변환, 네 Service 오류 분기와 persistence 실패 테스트가 이 경계를 검증한다.
 
 DB에는 다음 고정 문구만 저장한다.
 
@@ -272,7 +292,7 @@ HTTP 응답은 기존 계약을 유지한다.
 | 504 | `GATEWAY_TIMEOUT` | `openai_api` | `OPENAI_API_TIMEOUT` |
 | 500 | `AI_RESPONSE_FAILED` | `assistant_message` | `OPENAI_RESPONSE_PROCESSING_FAILED` |
 
-OpenAI SDK 예외 메시지, Provider 요청·응답, 질문, 약물 정보와 Pydantic rejected value는 DB 또는 HTTP 응답에 포함하지 않는다. `ValidationError`와 Provider·SDK 오류에는 입력 또는 응답 정보가 남을 수 있으므로 Adapter는 앞서 정의한 deferred raise로 원본 객체를 분리한다. Service도 같은 방식으로 외부 `ApiError`에서 Backend 오류와 예상 밖 내부 오류 객체를 분리한다. 운영 관측에는 trace ID, 안전한 내부 오류 분류, model·prompt version과 소요 시간만 사용하고 질문·약물·예외 본문과 traceback은 기록하지 않는다.
+OpenAI SDK 예외 메시지, Provider 요청·응답, 질문, 약물 정보와 Pydantic rejected value는 오류 metadata 또는 HTTP 오류 응답에 포함하지 않는다. USER 질문의 도메인 저장은 앞서 정의한 `CHAT_MESSAGE.content` 계약만 허용한다. `ValidationError`와 Provider·SDK 오류에는 입력 또는 응답 정보가 남을 수 있으므로 Adapter는 앞서 정의한 deferred raise로 원본 객체를 분리한다. Service도 같은 방식으로 외부 `ApiError`에서 Backend 오류와 예상 밖 내부 오류 객체를 분리한다. 운영 관측에는 trace ID, 안전한 내부 오류 분류, model·prompt version과 소요 시간만 사용하고 질문·약물·예외 본문과 traceback은 기록하지 않는다.
 
 ## HTTP와 캐시 계약
 
@@ -314,16 +334,18 @@ path 판정은 query string을 제외한 ASGI `scope["path"]`를 segment 단위�
 - SQL 소유권 확인과 활성 세션 제한
 - USER·ASSISTANT 연속 번호와 상태 전이
 - 성공 content와 metadata, `last_message_at` 저장
-- 실패 즉시 commit 후 후속 rollback에서도 USER와 FAILED ASSISTANT 유지
+- `commit_failed_message_pair()`의 전체 pending transaction commit 경계와 호출 순서
+- 실패 즉시 commit 후 후속 rollback에서도 USER와 FAILED ASSISTANT 한 쌍만 유지
+- 실패 commit 자체가 예외를 발생시켜도 그 예외 chain에 앞선 Provider·AI 오류가 없고 transaction이 rollback됨
 - 고정 `error_code`, `error_message`, `completed_at` 저장
 - 외부 `ApiError`의 `__cause__`와 `__context__`가 모두 `None`
 - 실패 시 content와 생성 metadata가 `NULL`
 - engine 호출 전 소유권·상태 검사
 - 약물 `display_order` 전달
 
-동시성은 `app/tests/chat_integration/`에서 두 개의 독립 DB session과 제어 가능한 Fake Engine으로 검증한다. 이 디렉터리의 `conftest.py`는 상위 `isolate_database` fixture를 대체하고, 두 connection에서 보이는 committed 합성 fixture를 준비한다. 테스트 종료 시 생성한 row를 명시적으로 정리하며 병렬 테스트 실행 대상에서 제외한다.
+동시성은 `app/tests/chat_integration/`에서 시나리오에 따라 두 개 또는 세 개의 독립 DB session과 제어 가능한 Fake Engine으로 검증한다. 이 디렉터리의 `conftest.py`는 상위 `isolate_database` fixture를 대체하고, 각 connection에서 보이는 committed 합성 fixture를 준비한다. 테스트 종료 시 생성한 row를 명시적으로 정리하며 병렬 테스트 실행 대상에서 제외한다.
 
-첫 요청이 AI 생성 중일 때 두 번째 요청이 Engine에 진입하지 못하고, 첫 요청 완료 후 진행되며 최종 번호가 `1·2·3·4`인지 확인한다. 같은 처방을 참조하는 서로 다른 두 세션은 서로를 막지 않는지도 검증해 locking query가 처방·문서 row까지 잠그지 않음을 확인한다. 두 번째 요청의 전체 소요 시간이 문서화한 동기 대기 상한 안인지도 검증한다.
+첫 요청이 AI 생성 중일 때 두 번째 요청이 Engine에 진입하지 못하고, 첫 요청 완료 후 진행되며 최종 번호가 `1·2·3·4`인지 확인한다. 같은 처방을 참조하는 서로 다른 두 세션은 서로를 막지 않는지도 검증해 locking query가 처방·문서 row까지 잠그지 않음을 확인한다. 두 번째 요청의 전체 소요 시간이 두 요청 기준 참고 지연 안인지 검증하되 이를 전체 최대 대기시간으로 표현하지 않는다. 세 요청을 동시에 보내도 최종 번호가 `1·2·3·4·5·6`으로 저장되는 별도 correctness 테스트를 두고, 세 번째 요청에는 `2 × timeout` 상한을 주장하지 않는다.
 
 ### API 테스트
 
@@ -343,8 +365,21 @@ path 판정은 query string을 제외한 ASGI `scope["path"]`를 segment 단위�
 - 기존 `WWW-Authenticate` 같은 response header를 cache wrapper가 보존함
 - `500`, `503`, `504` code·message·details
 - 실패 후 목록에서 USER와 FAILED ASSISTANT 조회
+- DB lock wait timeout의 공통 `500 INTERNAL_SERVER_ERROR`와 새 메시지 미생성
 - 인증, 소유권과 종료 세션 오류
 - 실제 OpenAI 대신 dependency override Fake Engine 사용
+
+최신 공통 오류·header·CORS 회귀 계약은 기존 `tests/integration/test_cors_and_errors.py`를 수정하지 않고 그대로 실행한다. 이 테스트는 PR #46의 `ApiError.headers`, `WWW-Authenticate`, 공통 오류 body와 최외곽 CORS 동작이 `app/main.py`의 ASGI wrapper 추가 후에도 유지되는지 검증한다.
+
+### SQL 예외·로그 안전 테스트
+
+`app/tests/core/test_database_logging_safety.py`
+
+- Async engine이 `hide_parameters=True`로 생성됨
+- 합성 sentinel 질문·약물 bind parameter를 포함한 의도적 SQL 실패의 예외 문자열에 sentinel이 없음
+- SQLAlchemy echo/logger를 활성화해 포착한 로그에도 sentinel이 없음
+- 예외와 로그에 parameter 숨김 표시가 존재함
+- 실제 환자정보, Provider payload와 API Key를 사용하지 않음
 
 ### Backend–AI 계약 테스트
 
@@ -364,6 +399,7 @@ Adapter, `ChatGenerator`와 Stub Provider를 한 번 통과시켜 다음을 검�
 ```bash
 uv run pytest app/tests/chat_ai app/tests/chat app/tests/chat_apis app/tests/chat_integration app/tests/repositories/test_chat_repository.py -q
 uv run pytest tests/contract/test_chat_ai_backend_contract.py -q
+uv run pytest tests/integration/test_cors_and_errors.py -q
 uv run ruff check .
 uv run ruff format . --check
 uv run mypy app ai_worker
@@ -390,9 +426,10 @@ uv run coverage run -m pytest app tests/contract
 - 채팅 세션 생성과 메시지 조회·전송의 모든 성공·오류 응답 `Cache-Control: no-store`
 - 현재 질문과 확정 약물만 AI에 전달하는 데이터 경계
 - 실패 시 USER와 FAILED ASSISTANT를 보존하는 재조회 동작
-- 동일 세션 동시 요청의 직렬화와 최대 대기시간
+- 동일 세션 동시 요청의 직렬화, 두 요청 기준 참고 지연과 세 개 이상 과부하 시 최대시간 비보장
+- DB lock wait timeout의 공통 `500 INTERNAL_SERVER_ERROR`와 새 메시지 미생성·재조회 불변 동작
 
-`docs/deployment.md`에는 기본 `OPENAI_TIMEOUT_SECONDS=20` 기준 Nginx read timeout 45초 이상, MySQL lock wait timeout 20초 초과라는 배포 확인 항목과 실제 환경값 기록 위치를 추가한다. 기존 Chat AI Core 설계에는 후속 Backend 연동 문서 링크를 추가한다. API body와 DB schema 문서는 변경하지 않는다.
+`docs/deployment.md`에는 배포 OpenAI timeout `T`와 처리 여유 `M`을 기록하고, Nginx read timeout `>= 2 × T + M`, MySQL lock wait timeout `> T + M`인지 확인하는 항목을 추가한다. 기본 `T=20초`, `M=5초`에서는 각각 45초 이상과 25초 초과다. worker별 lock waiter를 포함한 전체 in-flight chat 요청 수, 비채팅 예비 connection, DB pool·overflow·wait 설정과 장시간 connection 점유 tradeoff의 수용 여부도 같은 위치에 기록한다. 기존 Chat AI Core 설계에는 후속 Backend 연동 문서 링크를 추가한다. API body와 DB schema 문서는 변경하지 않는다.
 
 ## 예상 변경 파일
 
@@ -404,8 +441,10 @@ app/repositories/chat_repository.py
 app/repositories/prescription_repository.py
 app/dependencies/services.py
 app/core/chat_cache_control.py
+app/core/db/databases.py
 app/main.py
 
+app/tests/core/test_database_logging_safety.py
 app/tests/test_chat_cache_control.py
 app/tests/chat_ai/test_engine_adapter.py
 app/tests/chat/test_chat_service.py
@@ -431,17 +470,29 @@ Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경�
 - 소유한 활성 세션에서만 AI가 호출된다.
 - 확정 약물의 `Decimal` 용량과 `duration_days`가 손실 없이 전달된다.
 - Provider payload에 사용자·세션·처방·메시지 식별자와 과거 대화가 없다.
-- 동일 세션 동시 전송에서 메시지 번호 충돌이 발생하지 않는다.
+- 동일 세션의 두 개와 세 개 동시 전송에서 메시지 번호 충돌이 발생하지 않는다.
 - 성공 시 ASSISTANT content와 model·prompt metadata가 저장되고 `201` response와 일치한다.
 - 실패 시 USER와 FAILED ASSISTANT, 안전한 오류 code·message와 완료 시각이 저장된다.
 - timeout, unavailable과 생성 처리 실패가 `504`, `503`, `500`으로 구분된다.
 - Adapter의 Backend 오류와 Service의 `ApiError`에 원본 오류 `__cause__`·`__context__`가 남지 않는다.
+- 실패 persistence가 예외를 발생시켜도 그 예외 chain에 앞선 Provider·AI 오류가 남지 않는다.
+- SQLAlchemy 예외 문자열과 echo 로그에 합성 질문·약물 bind parameter가 노출되지 않는다.
 - 채팅 세션 생성과 메시지 조회·전송의 모든 성공·오류 응답에 `Cache-Control: no-store`가 적용된다.
 - 관련 단위, MySQL 통합, API와 계약 테스트가 통과한다.
+- PR #46의 공통 오류·header·CORS 통합 테스트가 통과한다.
 - CI와 로컬 전체 테스트 스크립트가 `tests/contract/`를 실행한다.
-- 배포 대상의 Nginx read timeout과 MySQL lock wait timeout이 문서화한 하한을 만족하는지 확인하고 기록한다.
+- 두 요청 기준 참고 지연과 세 개 이상 동시 요청의 최대시간 비보장을 API 문서와 테스트에 구분해 명시한다.
 - 새 dependency, 환경변수, migration과 API body 변경이 없다.
 - 실제 환자정보, API Key, Provider·의료 본문 로그가 포함되지 않는다.
+
+## 배포 전 운영 Gate
+
+아래 항목은 환경별 실제 값과 운영 승인자가 있어야 판정할 수 있으므로 Issue #38 구현·merge 완료 기준과 분리한 production deployment gate다. 대상 환경이 확정되지 않은 구현 PR에서 값을 추정하거나 승인자를 대신 기록하지 않는다. `docs/deployment.md`의 해당 환경 기록이 비어 있거나 조건을 충족하지 않으면 코드를 production에 배포하지 않는다.
+
+- 배포 대상의 OpenAI timeout, Nginx read timeout과 MySQL lock wait timeout이 설정 상대식 하한을 만족하는지 확인하고 기록한다.
+- lock waiter를 포함한 전체 in-flight chat 요청 수, 비채팅 예비 connection과 DB pool·overflow·wait 설정을 기록한다.
+- 외부 호출 중 DB transaction과 connection을 유지하는 tradeoff를 해당 환경의 책임자가 승인한다.
+- 수용량이 부족하면 row lock을 약화하지 않고 admission/rate limiting 또는 비동기 worker 설계를 별도 계약과 Issue로 도입한다.
 
 ## PR 구성
 
@@ -452,6 +503,6 @@ Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경�
 - 최초 상태: Draft
 - 필수 리뷰: `@phina-io`, `@hazelnutflavoured`
 
-Issue #38의 관련 영역에서 Database와 Infrastructure를 체크하고, 작업 내용에 동일 세션 row lock·MySQL 동시성 검증 및 `tests/contract/` CI 실행을 추가한다. 선행 PR #33은 `4e7df35`로 현재 branch와 `develop`에 반영되어 있으며, 구현은 이 middleware·공통 오류 계약을 기준으로 진행한다. `.github/workflows/checks.yml` 변경은 `.github/` CODEOWNER인 `@ceohwj`, `@hazelnutflavoured`가 함께 검토한다.
+Issue #38의 관련 영역에서 Database와 Infrastructure를 체크하고, 작업 내용에 동일 세션 row lock·MySQL 동시성 검증 및 `tests/contract/` CI 실행을 추가한다. 선행 PR #33의 middleware 계약과 PR #46의 `ApiError.headers`·공통 오류 계약이 현재 `develop`에 반영되어 있으며, 구현은 두 계약을 기준으로 진행한다. `.github/workflows/checks.yml` 변경은 `.github/` CODEOWNER인 `@ceohwj`, `@hazelnutflavoured`가 함께 검토한다.
 
 AI Core 구현은 선행 PR #35의 계약을 소비하며 이 PR에서 프롬프트와 Provider 동작을 다시 변경하지 않는다. 구현, 테스트와 계약 문서를 하나의 #38 PR에 포함해 Backend CODEOWNER가 전체 연결 흐름을 검토할 수 있게 한다.
