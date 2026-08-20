@@ -26,6 +26,10 @@ class OcrRepository:
         job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING)
         self.session.add(job)
         await self.session.flush()
+        await self.session.refresh(
+            job,
+            attribute_names=["created_at"],
+        )
         return job
 
     async def get_job_with_document(self, *, job_id: UUID) -> OcrJob | None:
