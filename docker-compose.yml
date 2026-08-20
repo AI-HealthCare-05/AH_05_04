@@ -99,7 +99,7 @@ services:
       dockerfile: ai_worker/Dockerfile  # Dockerfile 위치 지정
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}  # AI_WORKER_VERSION은 빌드된 이미지의 버전관리를 위함입니다. V1.0.0 형식으로 사용합니다.
     env_file: .env
-    restart: always
+    restart: "no"
     mem_limit: 4G
     networks:
       - ws

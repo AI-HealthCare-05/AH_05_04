@@ -13,8 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Env(StrEnum):
     LOCAL = "local"
-    DEV = "dev"
-    PROD = "prod"
+    STAGING = "staging"
+    PRODUCTION = "production"
 
 
 def get_default_timezone() -> tzinfo:
@@ -98,6 +98,10 @@ class Config(BaseSettings):
     OPENAI_API_KEY: str = "sk-not-configured"
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_TIMEOUT_SECONDS: float = 20.0
+
+    CLOVA_OCR_INVOKE_URL: str = ""
+    CLOVA_OCR_SECRET: str = ""
+    CLOVA_OCR_TIMEOUT_SECONDS: float = 20.0
 
     @property
     def database_url(self) -> str:

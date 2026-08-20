@@ -1,5 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
+
+
+@dataclass(frozen=True)
+class RawRecognizedField:
+    raw_value: str
+    confidence_score: float | None
+    center_x: float
+    center_y: float
 
 
 @dataclass(frozen=True)
@@ -12,7 +20,9 @@ class RecognizedField:
 
 @dataclass(frozen=True)
 class OcrRecognitionResult:
-    fields: list[RecognizedField]
+    raw_text: str = ""
+    raw_fields: list[RawRecognizedField] = field(default_factory=list)
+    fields: list[RecognizedField] = field(default_factory=list)
 
 
 class OcrProviderUnavailableError(Exception):
@@ -25,6 +35,14 @@ class OcrProcessingError(Exception):
 
 class OcrEngine(Protocol):
     async def recognize(self, *, object_key: str, file_mime_type: str) -> OcrRecognitionResult: ...
+
+
+class OcrProviderConnectionError(OcrProviderUnavailableError):
+    """CLOVA OCR 연결에 실패한 경우."""
+
+
+class OcrProviderTimeoutError(OcrProviderUnavailableError):
+    """CLOVA OCR 응답 제한시간을 초과한 경우."""
 
 
 class NotConfiguredOcrEngine:

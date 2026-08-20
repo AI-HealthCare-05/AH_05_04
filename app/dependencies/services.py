@@ -14,10 +14,12 @@ from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.chat import ChatService
+from app.services.clova_ocr_engine import ClovaOcrEngine
 from app.services.guide_ai import GuideGenerator, OpenAIResponsesClient
 from app.services.guides import GuideService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.ocr import OcrService
+from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
 from app.services.users import UserManageService
 
@@ -62,6 +64,15 @@ def get_ocr_repository(
     return OcrRepository(session)
 
 
+def get_ocr_engine() -> OcrEngine:
+    return ClovaOcrEngine(
+        invoke_url=config.CLOVA_OCR_INVOKE_URL,
+        secret_key=config.CLOVA_OCR_SECRET,
+        storage_dir=config.STORAGE_DIR,
+        timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
+    )
+
+
 def get_ocr_service(
     document_repository: Annotated[
         MedicalDocumentRepository,
@@ -71,8 +82,16 @@ def get_ocr_service(
         OcrRepository,
         Depends(get_ocr_repository),
     ],
+    engine: Annotated[
+        OcrEngine,
+        Depends(get_ocr_engine),
+    ],
 ) -> OcrService:
-    return OcrService(document_repository, ocr_repository)
+    return OcrService(
+        document_repository,
+        ocr_repository,
+        engine,
+    )
 
 
 def get_prescription_repository(
