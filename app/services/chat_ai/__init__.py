@@ -2,6 +2,13 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
+from app.services.chat_ai.client import ChatProvider, OpenAIResponsesClient
+from app.services.chat_ai.generator import ChatGenerator
+from app.services.chat_ai.schemas import (
+    ChatGenerationInput,
+    ChatGenerationResult,
+)
+
 
 @dataclass(frozen=True)
 class ChatMedicationInput:
@@ -51,3 +58,19 @@ class NotConfiguredChatEngine:
     async def reply(self, chat_input: ChatReplyInput) -> ChatReplyOutput:
         _ = chat_input
         raise NotImplementedError("ChatEngine 구현이 아직 연결되지 않았습니다.")
+
+
+__all__ = [
+    "ChatEngine",
+    "ChatGenerationInput",
+    "ChatGenerationResult",
+    "ChatGenerator",
+    "ChatMedicationInput",
+    "ChatProvider",
+    "ChatReplyInput",
+    "ChatReplyOutput",
+    "ChatServiceUnavailableError",
+    "ChatTimeoutError",
+    "NotConfiguredChatEngine",
+    "OpenAIResponsesClient",
+]
