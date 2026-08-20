@@ -34,6 +34,11 @@ class Token:
                 raise ExpiredTokenError("Token is expired") from err
             except TokenBackendError as err:
                 raise TokenError("Token is invalid") from err
+
+            # Access Token을 Refresh Token 자리에 쓰거나 그 반대로 쓰는 걸 막기 위해
+            # 서명 검증과 별개로 클레임의 type이 이 토큰 클래스와 일치하는지 확인합니다.
+            if self.payload.get("type") != self.token_type:
+                raise TokenError("Token type does not match")
         else:
             self.payload = {"type": self.token_type}
             self.set_exp(from_time=self.current_time, lifetime=self.lifetime)

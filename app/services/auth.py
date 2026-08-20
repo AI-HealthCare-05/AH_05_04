@@ -63,6 +63,7 @@ class AuthService:
                 status_code=401,
                 code="UNAUTHORIZED",
                 message="이메일 또는 비밀번호가 올바르지 않습니다.",
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         if not verify_password(
@@ -73,6 +74,7 @@ class AuthService:
                 status_code=401,
                 code="UNAUTHORIZED",
                 message="이메일 또는 비밀번호가 올바르지 않습니다.",
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         if not user.is_active:

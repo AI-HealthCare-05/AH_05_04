@@ -46,3 +46,28 @@ class TestJWTTokenRefreshAPI:
         assert body["code"] == "UNAUTHORIZED"
         assert body["message"] == "로그인이 필요합니다."
         assert "trace_id" in body
+
+    async def test_token_refresh_rejects_access_token_used_as_refresh_token(self):
+        signup_data = {
+            "email": "type-confusion@example.com",
+            "password": "Password123!",
+            "name": "타입혼동테스터",
+            "gender": "MALE",
+            "birth_date": "1990-01-01",
+            "phone_number": "01011112222",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/v1/auth/signup", json=signup_data)
+
+            login_response = await client.post(
+                "/api/v1/auth/login",
+                json={"email": "type-confusion@example.com", "password": "Password123!"},
+            )
+            access_token = login_response.json()["access_token"]
+
+            # Access Token을 Refresh Token 자리에 그대로 사용
+            client.cookies["refresh_token"] = access_token
+            response = await client.get("/api/v1/auth/token/refresh")
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["code"] == "INVALID_TOKEN"

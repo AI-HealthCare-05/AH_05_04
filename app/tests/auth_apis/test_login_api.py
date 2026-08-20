@@ -42,6 +42,28 @@ class TestLoginAPI:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "UNAUTHORIZED"
+        assert response.headers["www-authenticate"] == "Bearer"
+
+    async def test_login_rejects_wrong_password_for_existing_user(self):
+        signup_data = {
+            "email": "wrong_password@example.com",
+            "password": "Password123!",
+            "name": "비밀번호테스터",
+            "gender": "MALE",
+            "birth_date": "1993-03-03",
+            "phone_number": "01033334444",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/v1/auth/signup", json=signup_data)
+
+            response = await client.post(
+                "/api/v1/auth/login",
+                json={"email": "wrong_password@example.com", "password": "WrongPassword123!"},
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["code"] == "UNAUTHORIZED"
+        assert response.headers["www-authenticate"] == "Bearer"
 
     async def test_login_rejects_inactive_account(self):
         inactive_user = User(

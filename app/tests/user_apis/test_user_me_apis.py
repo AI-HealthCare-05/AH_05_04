@@ -4,7 +4,7 @@ from uuid import uuid4
 from httpx import ASGITransport, AsyncClient
 from starlette import status
 
-from app.core.jwt.tokens import AccessToken
+from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.main import app
 
 
@@ -90,3 +90,16 @@ class TestUserMeApis:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "EXPIRED_TOKEN"
         assert response.headers["www-authenticate"] == "Bearer"
+
+    async def test_get_user_me_rejects_refresh_token_used_as_access_token(self):
+        refresh_token = RefreshToken()
+        refresh_token["user_id"] = str(uuid4())
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/users/me",
+                headers={"Authorization": f"Bearer {refresh_token}"},
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["code"] == "INVALID_TOKEN"

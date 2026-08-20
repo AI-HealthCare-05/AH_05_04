@@ -84,3 +84,48 @@ def test_validate_file_accepts_pdf(service: MedicalDocumentService) -> None:
     extension = service._validate_file(file=file, content=b"%PDF-1.7 test")
 
     assert extension == ".pdf"
+
+
+def test_validate_file_accepts_jpg(service: MedicalDocumentService) -> None:
+    file = _file(filename="prescription.jpg", content_type="image/jpeg")
+
+    extension = service._validate_file(file=file, content=b"\xff\xd8\xff fake-jpeg")
+
+    assert extension == ".jpg"
+
+
+def test_validate_file_accepts_png(service: MedicalDocumentService) -> None:
+    file = _file(filename="prescription.png", content_type="image/png")
+
+    extension = service._validate_file(file=file, content=b"\x89PNG\r\n\x1a\n fake-png")
+
+    assert extension == ".png"
+
+
+def test_validate_file_accepts_uppercase_extension(service: MedicalDocumentService) -> None:
+    file = _file(filename="PRESCRIPTION.JPG", content_type="image/jpeg")
+
+    extension = service._validate_file(file=file, content=b"\xff\xd8\xff fake-jpeg")
+
+    assert extension == ".jpg"
+
+
+def test_validate_file_accepts_file_at_exact_size_limit(service: MedicalDocumentService) -> None:
+    file = _file(filename="prescription.jpg", content_type="image/jpeg")
+    content = b"\xff\xd8\xff" + b"x" * (MAX_DOCUMENT_SIZE_BYTES - 3)
+
+    extension = service._validate_file(file=file, content=content)
+
+    assert extension == ".jpg"
+    assert len(content) == MAX_DOCUMENT_SIZE_BYTES
+
+
+def test_validate_file_rejects_filename_without_extension(service: MedicalDocumentService) -> None:
+    file = _file(filename="prescription", content_type="image/jpeg")
+
+    with pytest.raises(ApiError) as exc_info:
+        service._validate_file(file=file, content=b"\xff\xd8\xff fake-jpeg")
+
+    error = exc_info.value
+    assert error.code == "UPLOAD_FILE_INVALID_TYPE"
+    assert error.status_code == 400
