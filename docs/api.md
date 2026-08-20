@@ -37,6 +37,20 @@
 
 기능별 API가 확정되면 경로, 메서드, 요청, 응답 및 오류 사례를 추가합니다.
 
+### 복약 챗봇 세션과 메시지
+
+| Method | Path | Success | Cache policy |
+| --- | --- | ---: | --- |
+| POST | `/api/v1/prescriptions/{prescription_id}/chat-sessions` | 201 | Router responses use `no-store` |
+| GET | `/api/v1/chat-sessions/{session_id}/messages` | 200 | Router responses use `no-store` |
+| POST | `/api/v1/chat-sessions/{session_id}/messages` | 201 | Router responses use `no-store` |
+
+메시지 전송은 동기 one-cycle 요청이다. Backend는 현재 질문과 세션에 연결된 확정 약물을 표시 순서대로만 AI에 전달하며, 이전 대화·사용자·세션·처방·메시지 식별자는 전달하지 않는다. 성공하면 저장된 ASSISTANT 메시지의 `content`, 실제 `model_name`, `prompt_version`을 `201 Created` 응답으로 반환한다.
+
+AI 생성에 실패하면 USER 메시지와 안전한 고정 오류 metadata를 가진 `FAILED` ASSISTANT 메시지를 보존한다. 이후 메시지 조회로 두 메시지를 함께 확인할 수 있다. 같은 세션의 전송은 순서와 `message_seq` 보호를 위해 직렬화되며, 서로 다른 세션은 독립적으로 처리된다. 같은 세션에서 정상적인 두 번째 요청의 최악 지연은 `2 × OPENAI_TIMEOUT_SECONDS`에 애플리케이션 처리 여유를 더한 값이다.
+
+생성 timeout·일시적 서비스 불가·그 밖의 안전한 생성 실패는 각각 `504`·`503`·`500`으로 공통 오류 응답 형식을 사용한다. 세 endpoint에서 Router가 생성하는 성공과 오류 응답에는 `Cache-Control: no-store`가 적용된다. 최외곽 CORS middleware가 Router 밖에서 직접 처리하는 preflight 응답은 이 cache 정책의 대상이 아니다.
+
 ## 변경 이력
 
 API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.

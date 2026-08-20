@@ -438,7 +438,7 @@ Backend가 기존 복약 가이드와 같은 설정을 제공한다.
 | --- | --- |
 | `OPENAI_API_KEY` | Backend 실행 환경의 비밀값 |
 | `OPENAI_MODEL` | MVP에서는 `gpt-4o-mini` |
-| `OPENAI_TIMEOUT_SECONDS` | 기본 30초, 양수 유한값 |
+| `OPENAI_TIMEOUT_SECONDS` | 기본 20초, 양수 유한값 |
 | `RUN_OPENAI_CHAT_SMOKE` | `1`일 때만 선택적 실제 API 테스트 실행 |
 
 AI 담당 PR은 설정 모듈과 환경변수 예시 파일을 수정하지 않는다. API Key는 코드, 테스트, 문서와 로그에 기록하지 않는다.
@@ -461,6 +461,8 @@ AI 담당 PR은 설정 모듈과 환경변수 예시 파일을 수정하지 않�
 ## 후속 단계
 
 one-cycle 통합이 완료된 뒤 필요에 따라 이전 메시지 문맥, RAG와 출처, OTC 성분 식별, 의료 주장 검증, 안전 분류, adherence 분석, 정량 평가와 비동기 처리 방식을 각각 별도 요구사항으로 설계한다. 후속 기능이 추가되더라도 `ChatGenerationInput → ChatGenerationResult` 경계를 우선 유지하고, 필요한 새 필드는 Backend와 AI 담당자가 공유 계약 변경으로 함께 검토한다.
+
+현재 동기 Backend 연동, 저장·오류·동시성·cache 계약은 [복약 챗봇 AI Backend 연동 설계](./medication-chat-ai-backend-integration-design.md)에서 관리한다.
 
 ## 참고 자료
 
