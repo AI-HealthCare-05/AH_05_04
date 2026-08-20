@@ -78,6 +78,15 @@ async def cancel_pending_tasks(*tasks: asyncio.Task[None]) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def assert_committed_sessions_visible(*session_ids: UUID) -> None:
+    async with (
+        AsyncSession(bind=test_engine, expire_on_commit=False) as first_visibility_db,
+        AsyncSession(bind=test_engine, expire_on_commit=False) as second_visibility_db,
+    ):
+        assert await first_visibility_db.get(ChatSession, session_ids[0]) is not None
+        assert await second_visibility_db.get(ChatSession, session_ids[-1]) is not None
+
+
 async def test_same_session_requests_serialize_through_commit(
     committed_chat_fixture: CommittedChatFixture,
 ) -> None:
@@ -85,12 +94,14 @@ async def test_same_session_requests_serialize_through_commit(
     chat_session_id = committed_chat_fixture.session_ids[0]
     engine = ControlledEngine()
 
+    await assert_committed_sessions_visible(chat_session_id)
+
     async with (
         AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as first_db,
         AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as second_db,
     ):
-        assert await first_db.get(ChatSession, chat_session_id) is not None
-        assert await second_db.get(ChatSession, chat_session_id) is not None
+        assert not first_db.in_transaction()
+        assert not second_db.in_transaction()
 
         first_task = asyncio.create_task(
             send_and_commit(session=first_db, engine=engine, user=user, session_id=chat_session_id)
@@ -156,12 +167,14 @@ async def test_different_sessions_generate_independently(
     first_chat_session_id, second_chat_session_id = committed_chat_fixture.session_ids
     engine = BarrierEngine()
 
+    await assert_committed_sessions_visible(first_chat_session_id, second_chat_session_id)
+
     async with (
         AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as first_db,
         AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as second_db,
     ):
-        assert await first_db.get(ChatSession, first_chat_session_id) is not None
-        assert await second_db.get(ChatSession, second_chat_session_id) is not None
+        assert not first_db.in_transaction()
+        assert not second_db.in_transaction()
 
         first_task = asyncio.create_task(
             send_and_commit(session=first_db, engine=engine, user=user, session_id=first_chat_session_id)
