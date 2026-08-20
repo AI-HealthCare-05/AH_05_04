@@ -33,7 +33,7 @@ function LoginPage() {
       const response = await login(form)
 
       localStorage.setItem(
-   'access_token',
+        'access_token',
         response.access_token,
       )
 
