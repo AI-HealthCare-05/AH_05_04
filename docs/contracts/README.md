@@ -2,6 +2,10 @@
 
 Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. 실제 구현 스키마의 기준은 FastAPI OpenAPI와 Pydantic DTO이며, 이 디렉터리에는 경계 설명과 예시를 둡니다.
 
+## 계약 문서
+
+- [복약 가이드 Backend–AI 계약](medication-guide-ai-backend.md): 확정 처방 입력, AI 생성 결과, 오류와 조립 책임
+
 ## 우선 확정할 계약
 
 - Patient/Prescription State와 버전

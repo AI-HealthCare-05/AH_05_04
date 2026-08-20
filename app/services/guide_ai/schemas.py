@@ -3,7 +3,7 @@ import unicodedata
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, field_validator
 
 _FORBIDDEN_DISPLAY_CHARACTERS = frozenset(
     {
@@ -74,6 +74,7 @@ class GuideGenerationInput(_StrictModel):
 
 
 JsonDecimal = Annotated[Decimal, PlainSerializer(lambda value: str(value), return_type=str, when_used="json")]
+_GeneratedText = Annotated[str, BeforeValidator(_normalize_generated_text)]
 
 
 class MedicationPromptItem(_StrictModel):
@@ -88,28 +89,12 @@ class MedicationPromptItem(_StrictModel):
 
 class GeneratedMedicationGuidance(_StrictGeneratedModel):
     source_index: int = Field(ge=0)
-    guidance: str = Field(min_length=1, max_length=150)
-
-    @field_validator("guidance", mode="before")
-    @classmethod
-    def strip_guidance(cls, value: object) -> str:
-        stripped = _normalize_generated_text(value)
-        if not stripped:
-            raise ValueError("guidance must not be blank")
-        return stripped
+    guidance: _GeneratedText = Field(min_length=1, max_length=150)
 
 
 class GeneratedGuideDraft(_StrictGeneratedModel):
     medications: list[GeneratedMedicationGuidance]
-    general_notice: str = Field(min_length=1, max_length=300)
-
-    @field_validator("general_notice", mode="before")
-    @classmethod
-    def strip_general_notice(cls, value: object) -> str:
-        stripped = _normalize_generated_text(value)
-        if not stripped:
-            raise ValueError("general_notice must not be blank")
-        return stripped
+    general_notice: _GeneratedText = Field(min_length=1, max_length=300)
 
 
 class ProviderGuideResponse(_StrictModel):

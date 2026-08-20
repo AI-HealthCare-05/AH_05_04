@@ -1,5 +1,8 @@
 from decimal import Decimal
 
+import pytest
+
+from app.services.guide_ai.exceptions import GuideGenerationInvalidResponseError
 from app.services.guide_ai.renderer import render_plaintext_guide
 from app.services.guide_ai.schemas import (
     GeneratedGuideDraft,
@@ -49,3 +52,14 @@ def test_renderer_uses_original_prescription_values_in_input_order() -> None:
 공통 안내: 불명확한 내용은 의료진에게 확인해 주세요.
 안전 안내: 임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요."""
     )
+
+
+def test_renderer_rejects_content_over_maximum_length() -> None:
+    guide_input = GuideGenerationInput(medications=[MedicationInput(medication_name="가" * 10_000)])
+    draft = GeneratedGuideDraft(
+        medications=[GeneratedMedicationGuidance(source_index=0, guidance="처방 지시를 확인해 주세요.")],
+        general_notice="불명확한 내용은 의료진에게 확인해 주세요.",
+    )
+
+    with pytest.raises(GuideGenerationInvalidResponseError):
+        render_plaintext_guide(guide_input, draft)
