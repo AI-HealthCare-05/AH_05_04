@@ -72,7 +72,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             details=[],
             trace_id=_get_trace_id(request),
         )
-        return ORJSONResponse(status_code=exc.status_code, content=body.model_dump(mode="json"))
+        return ORJSONResponse(status_code=exc.status_code, content=body.model_dump(mode="json"), headers=exc.headers)
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> ORJSONResponse:
