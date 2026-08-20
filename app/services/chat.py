@@ -118,10 +118,11 @@ class ChatService:
             medications=[
                 ChatMedicationInput(
                     medication_name=medication.medication_name,
-                    dose_value=float(medication.dose_value) if medication.dose_value is not None else None,
+                    dose_value=medication.dose_value,
                     dose_unit=medication.dose_unit,
                     frequency_per_day=medication.frequency_per_day,
                     timing_text=medication.timing_text,
+                    duration_days=medication.duration_days,
                 )
                 for medication in medications
             ],

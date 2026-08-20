@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
@@ -13,10 +14,11 @@ from app.services.chat_ai.schemas import (
 @dataclass(frozen=True)
 class ChatMedicationInput:
     medication_name: str
-    dose_value: float | None
+    dose_value: Decimal | None
     dose_unit: str | None
     frequency_per_day: int | None
     timing_text: str | None
+    duration_days: int | None
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,10 @@ class ChatTimeoutError(Exception):
     """챗봇 응답 대기 시간이 초과됐을 때 발생합니다. (-> 504 GATEWAY_TIMEOUT)"""
 
 
+class ChatGenerationFailedError(Exception):
+    """Backend-safe chat input/configuration/response processing failure."""
+
+
 class ChatEngine(Protocol):
     async def reply(self, chat_input: ChatReplyInput) -> ChatReplyOutput: ...
 
@@ -62,6 +68,7 @@ class NotConfiguredChatEngine:
 
 __all__ = [
     "ChatEngine",
+    "ChatGenerationFailedError",
     "ChatGenerationInput",
     "ChatGenerationResult",
     "ChatGenerator",
