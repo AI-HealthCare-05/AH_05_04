@@ -32,6 +32,7 @@ function PrescriptionUploadPage() {
     try {
       setIsLoading(true)
       setMessage('')
+      setOcrResult(null)
 
       const uploadResponse =
         await uploadPrescription(file)
