@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -28,11 +29,14 @@ class ApiError(Exception):
         code: str,
         message: str,
         details: list[ErrorDetail] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = details or []
+        # 인증·재시도 관련 응답 헤더가 공통 오류 변환 과정에서 사라지지 않도록 보존합니다.
+        self.headers = dict(headers or {})
         super().__init__(message)
 
 
@@ -52,7 +56,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def handle_api_error(request: Request, exc: ApiError) -> ORJSONResponse:
         body = ErrorResponse(code=exc.code, message=exc.message, details=exc.details, trace_id=_get_trace_id(request))
-        return ORJSONResponse(status_code=exc.status_code, content=body.model_dump(mode="json"))
+        return ORJSONResponse(
+            status_code=exc.status_code,
+            content=body.model_dump(mode="json"),
+            headers=exc.headers,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, exc: RequestValidationError) -> ORJSONResponse:
