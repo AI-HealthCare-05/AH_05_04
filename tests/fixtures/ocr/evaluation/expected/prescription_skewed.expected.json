@@ -1,0 +1,30 @@
+{
+  "image": "prescription_skewed.png",
+  "prescribed_date": "2026-08-20",
+  "medications": [
+    {
+      "medication_name": "로사르탄정 50mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "아침 식후"
+    },
+    {
+      "medication_name": "암로디핀정 5mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "아침 식후"
+    },
+    {
+      "medication_name": "아토르바스타틴정 10mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "저녁 식후"
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "engine": "paddleocr",
+  "image": "prescription_multi_medications.png",
+  "prescribed_date": "2026-08-20",
+  "medications": [
+    {
+      "medication_name": "메트포르민정 500mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 2,
+      "duration_days": null,
+      "timing": "아침·저녁식후"
+    },
+    {
+      "medication_name": "다파글리플로진정10mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": null,
+      "duration_days": 30,
+      "timing": "아침식전"
+    },
+    {
+      "medication_name": "텔미사르탄정40mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": null,
+      "duration_days": 30,
+      "timing": "아침식후"
+    },
+    {
+      "medication_name": "암로디핀정5mg",
+      "dose_value": null,
+      "dose_unit": null,
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "저녁식후"
+    },
+    {
+      "medication_name": "2.",
+      "dose_value": null,
+      "dose_unit": null,
+      "frequency_per_day": null,
+      "duration_days": null,
+      "timing": null
+    },
+    {
+      "medication_name": "OCR테스트용",
+      "dose_value": null,
+      "dose_unit": null,
+      "frequency_per_day": null,
+      "duration_days": null,
+      "timing": null
+    },
+    {
+      "medication_name": "지도사항",
+      "dose_value": null,
+      "dose_unit": null,
+      "frequency_per_day": 3,
+      "duration_days": null,
+      "timing": null
+    }
+  ],
+  "structure_error": null
+}

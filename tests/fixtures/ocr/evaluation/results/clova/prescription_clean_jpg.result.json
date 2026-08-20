@@ -1,0 +1,156 @@
+{
+  "data": {
+    "job_id": "d4f6d662-2551-4e62-8dfe-e5bb068cd8bf",
+    "document_id": "fc5f73ce-ad33-474c-9749-b7a1edd0be7a",
+    "ocr_status": "COMPLETED",
+    "error_code": null,
+    "created_at": "2026-08-20T18:16:13",
+    "completed_at": "2026-08-20T09:16:16",
+    "fields": [
+      {
+        "field_id": "67037891-00cc-46df-ad54-0baa655f0b24",
+        "field_type": "PRESCRIBED_DATE",
+        "medication_index": 0,
+        "raw_value": "2026-08-12",
+        "confirmed_value": null,
+        "confidence_score": 1,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "fd6a12cd-b792-4229-b992-07b4061b3e51",
+        "field_type": "DOSE_UNIT",
+        "medication_index": 1,
+        "raw_value": "정",
+        "confirmed_value": null,
+        "confidence_score": 0.9652,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "83680c23-b0c6-4d54-a491-e4b16b6aa28b",
+        "field_type": "DOSE_VALUE",
+        "medication_index": 1,
+        "raw_value": "1",
+        "confirmed_value": null,
+        "confidence_score": 0.9652,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "ce1cf104-598b-49ac-897e-9db54db9f240",
+        "field_type": "FREQUENCY_PER_DAY",
+        "medication_index": 1,
+        "raw_value": "2",
+        "confirmed_value": null,
+        "confidence_score": 0.9989,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "8a6bdde1-3e16-4010-a575-ac9f155a94fe",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 1,
+        "raw_value": "메트포르민정 500mg",
+        "confirmed_value": null,
+        "confidence_score": 0.9986,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "29ee189f-1c6e-4a99-a3fc-b074f3247030",
+        "field_type": "TIMING",
+        "medication_index": 1,
+        "raw_value": "아침 · 저녁 식후",
+        "confirmed_value": null,
+        "confidence_score": 0.7441,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "c308b616-ca83-45e1-94fe-092bc9b1cb13",
+        "field_type": "DOSE_UNIT",
+        "medication_index": 2,
+        "raw_value": "정",
+        "confirmed_value": null,
+        "confidence_score": 0.9734,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "1b5cf487-4bca-46c9-84d6-88b3c774b02e",
+        "field_type": "DOSE_VALUE",
+        "medication_index": 2,
+        "raw_value": "1",
+        "confirmed_value": null,
+        "confidence_score": 0.9734,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "6bab0a5c-c2f1-436c-a994-5542eacf823d",
+        "field_type": "DURATION_DAYS",
+        "medication_index": 2,
+        "raw_value": "30",
+        "confirmed_value": null,
+        "confidence_score": 0.9989,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "3628b88d-b083-4f42-8a6e-a469bcd5cc9f",
+        "field_type": "FREQUENCY_PER_DAY",
+        "medication_index": 2,
+        "raw_value": "1",
+        "confirmed_value": null,
+        "confidence_score": 0.9955,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "8cf5a5bd-9a37-444e-8f0b-722a32238a58",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 2,
+        "raw_value": "리나글립틴정 5mg",
+        "confirmed_value": null,
+        "confidence_score": 0.9949,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "d47aba75-94c2-4607-9c55-b13e748f4fd6",
+        "field_type": "TIMING",
+        "medication_index": 2,
+        "raw_value": "아침 식후",
+        "confirmed_value": null,
+        "confidence_score": 0.9951,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "78b67799-5d2f-4f3c-baf3-718af70d311d",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 3,
+        "raw_value": "1.",
+        "confirmed_value": null,
+        "confidence_score": 0.9673,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "c7d2350a-3d98-4497-ba24-687001757c30",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 4,
+        "raw_value": "2. 약을",
+        "confirmed_value": null,
+        "confidence_score": 0.9984,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "4495b146-4535-47d1-ada4-818b6a5fd52b",
+        "field_type": "TIMING",
+        "medication_index": 4,
+        "raw_value": "나타나면",
+        "confirmed_value": null,
+        "confidence_score": 0.9993,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "afb0b0b5-f065-4727-9a5a-5d150b6daf3b",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 5,
+        "raw_value": "즉시",
+        "confirmed_value": null,
+        "confidence_score": 0.9963,
+        "confirmation_status": "UNCONFIRMED"
+      }
+    ]
+  }
+}

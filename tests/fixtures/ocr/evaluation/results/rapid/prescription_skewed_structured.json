@@ -1,0 +1,16 @@
+{
+  "engine": "rapidocr",
+  "image": "prescription_skewed.png",
+  "prescribed_date": "2026-08-20",
+  "medications": [
+    {
+      "medication_name": "(논)",
+      "dose_value": null,
+      "dose_unit": null,
+      "frequency_per_day": null,
+      "duration_days": null,
+      "timing": "조제자"
+    }
+  ],
+  "structure_error": null
+}

@@ -1,0 +1,30 @@
+{
+  "image": "prescription_damaged.png",
+  "prescribed_date": "2026-08-20",
+  "medications": [
+    {
+      "medication_name": "메트포르민정 500mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 2,
+      "duration_days": 30,
+      "timing": "아침·저녁 식후"
+    },
+    {
+      "medication_name": "리나글립틴정 5mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "아침 식후"
+    },
+    {
+      "medication_name": "로수바스타틴정 10mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "저녁 식후"
+    }
+  ]
+}

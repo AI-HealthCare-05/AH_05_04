@@ -1,0 +1,120 @@
+{
+  "data": {
+    "job_id": "708c4027-da8d-44be-946a-8a8a39c90d26",
+    "document_id": "8ef0c807-36d5-4a91-a353-b2f3a5673be7",
+    "ocr_status": "COMPLETED",
+    "error_code": null,
+    "created_at": "2026-08-20T15:31:01",
+    "completed_at": "2026-08-20T06:31:07",
+    "fields": [
+      {
+        "field_id": "d5296b66-7955-487b-b123-2aa0f5b13feb",
+        "field_type": "PRESCRIBED_DATE",
+        "medication_index": 0,
+        "raw_value": "2026-08-20",
+        "confirmed_value": null,
+        "confidence_score": 0.9999,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "5ddc1683-ba34-44d2-a269-8c168911d692",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 1,
+        "raw_value": "1. 위",
+        "confirmed_value": null,
+        "confidence_score": 0.9978,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "50f6d49e-3bbd-4dea-ba2f-5e71808bbfef",
+        "field_type": "TIMING",
+        "medication_index": 1,
+        "raw_value": "마십시오.",
+        "confirmed_value": null,
+        "confidence_score": 0.9895,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "80f63d27-79be-44c4-afee-eb0758ef8613",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 2,
+        "raw_value": "2 정해진",
+        "confirmed_value": null,
+        "confidence_score": 0.9568,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "685a7e58-d068-4249-bffa-1055b4c82fcc",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 3,
+        "raw_value": "복약 안내 3 복음",
+        "confirmed_value": null,
+        "confidence_score": 0.4578,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "adb3b937-ff93-42e8-86df-0d06c3340945",
+        "field_type": "TIMING",
+        "medication_index": 3,
+        "raw_value": "또는 약사에게 알리십시오.",
+        "confirmed_value": null,
+        "confidence_score": 0.9917,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "cd65ff33-cd80-4043-aa71-664bc3c4e633",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 4,
+        "raw_value": "OCR 4. 새로운",
+        "confirmed_value": null,
+        "confidence_score": 0.9964,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "b4228206-a31d-41c7-b135-84e16d8fa676",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 5,
+        "raw_value": "5.",
+        "confirmed_value": null,
+        "confidence_score": 0.9976,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "821ad296-1ab2-4f5d-af9b-176daf2da7bb",
+        "field_type": "DOSE_UNIT",
+        "medication_index": 6,
+        "raw_value": "회",
+        "confirmed_value": null,
+        "confidence_score": 0.9977,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "f59a7b86-1049-4e49-a15b-9910b04ed1d9",
+        "field_type": "DOSE_VALUE",
+        "medication_index": 6,
+        "raw_value": "1",
+        "confirmed_value": null,
+        "confidence_score": 0.9977,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "bf0a9c52-f97f-4d19-bdf7-6b76a481034d",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 6,
+        "raw_value": "주사제 처방내역",
+        "confirmed_value": null,
+        "confidence_score": 0.9983,
+        "confirmation_status": "UNCONFIRMED"
+      },
+      {
+        "field_id": "0550e504-a175-4371-aa6b-45edc34973d2",
+        "field_type": "TIMING",
+        "medication_index": 6,
+        "raw_value": "비고",
+        "confirmed_value": null,
+        "confidence_score": 0.9993,
+        "confirmation_status": "UNCONFIRMED"
+      }
+    ]
+  }
+}

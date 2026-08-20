@@ -1,0 +1,40 @@
+{
+  "engine": "rapidocr",
+  "image": "prescription_multi_medications.png",
+  "prescribed_date": "2026-08-20",
+  "medications": [
+    {
+      "medication_name": "메트포르민정500mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 2,
+      "duration_days": null,
+      "timing": "아침·저녁식후"
+    },
+    {
+      "medication_name": null,
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 10,
+      "duration_days": 30,
+      "timing": null
+    },
+    {
+      "medication_name": null,
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": null,
+      "duration_days": 30,
+      "timing": "아침식후"
+    },
+    {
+      "medication_name": "암로디핀정5mg",
+      "dose_value": null,
+      "dose_unit": null,
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "저녁식후"
+    }
+  ],
+  "structure_error": null
+}
