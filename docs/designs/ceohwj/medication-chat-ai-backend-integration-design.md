@@ -7,7 +7,6 @@
 | 관련 Issue | [#38 복약 챗봇 AI Backend 연동](https://github.com/AI-HealthCare-05/AH_05_04/issues/38) |
 | 선행 PR | [#35 복약 챗봇 AI 응답 생성 로직 구현](https://github.com/AI-HealthCare-05/AH_05_04/pull/35) |
 | 반영된 선행 PR | [#33 CORS·trace ID·공통 오류 처리](https://github.com/AI-HealthCare-05/AH_05_04/pull/33) (`4e7df35`) |
-| 구현 계획 | `docs/superpowers/plans/2026-08-20-medication-chat-ai-backend-integration.md` |
 | 작업 브랜치 | `feat/38-chat-ai-backend-integration` |
 | 대상 브랜치 | `develop` |
 | 소유권 | `/app/`: `@phina-io`, `/docs/api.md`: `@phina-io`, `@hazelnutflavoured` |
@@ -422,7 +421,6 @@ docs/api.md
 docs/deployment.md
 docs/designs/ceohwj/medication-chat-ai-generation-design.md
 docs/designs/ceohwj/medication-chat-ai-backend-integration-design.md
-docs/superpowers/plans/2026-08-20-medication-chat-ai-backend-integration.md
 ```
 
 Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경하지 않는다. `app/main.py`는 PR #33의 `fastapi_app`과 최외곽 CORS 구조를 유지하면서 그 사이에 chat cache-control ASGI wrapper를 조립하는 범위로만 수정한다. `app/core/errors.py`의 공통 오류 body 계약과 handler는 변경하지 않는다.
