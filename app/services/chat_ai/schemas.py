@@ -64,11 +64,11 @@ class _StrictGeneratedModel(BaseModel):
 
 
 class ChatMedicationInput(_StrictModel):
-    medication_name: str
+    medication_name: str = Field(max_length=255)
     dose_value: Decimal | None = Field(default=None, gt=0)
-    dose_unit: str | None = None
+    dose_unit: str | None = Field(default=None, max_length=50)
     frequency_per_day: int | None = Field(default=None, gt=0)
-    timing_text: str | None = None
+    timing_text: str | None = Field(default=None, max_length=255)
     duration_days: int | None = Field(default=None, gt=0)
 
     @field_validator("medication_name")
@@ -86,7 +86,7 @@ class ChatMedicationInput(_StrictModel):
 
 class ChatGenerationInput(_StrictModel):
     question: str = Field(max_length=2000)
-    medications: list[ChatMedicationInput] = Field(min_length=1)
+    medications: list[ChatMedicationInput] = Field(min_length=1, max_length=30)
 
     @field_validator("question", mode="before")
     @classmethod

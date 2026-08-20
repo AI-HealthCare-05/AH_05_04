@@ -119,6 +119,39 @@ def test_optional_medication_strings_allow_missing_values() -> None:
     assert medication.timing_text is None
 
 
+@pytest.mark.parametrize(
+    ("field", "max_length"),
+    [
+        ("medication_name", 255),
+        ("dose_unit", 50),
+        ("timing_text", 255),
+    ],
+)
+def test_medication_rejects_strings_longer_than_storage_contract(field: str, max_length: int) -> None:
+    medication: dict[str, object] = {"medication_name": "합성약"}
+    medication[field] = "가" * (max_length + 1)
+
+    with pytest.raises(ValidationError):
+        ChatMedicationInput.model_validate(medication)
+
+
+def test_chat_input_accepts_up_to_thirty_medications() -> None:
+    chat_input = ChatGenerationInput(
+        question="이 약들을 함께 복용해도 되나요?",
+        medications=[ChatMedicationInput(medication_name=f"합성약 {index}") for index in range(30)],
+    )
+
+    assert len(chat_input.medications) == 30
+
+
+def test_chat_input_rejects_more_than_thirty_medications() -> None:
+    with pytest.raises(ValidationError):
+        ChatGenerationInput(
+            question="이 약들을 함께 복용해도 되나요?",
+            medications=[ChatMedicationInput(medication_name=f"합성약 {index}") for index in range(31)],
+        )
+
+
 def test_generation_result_strips_content_and_validates_limits() -> None:
     result = ChatGenerationResult(
         content="  복용 중 졸림이 나타날 수 있습니다.  ",

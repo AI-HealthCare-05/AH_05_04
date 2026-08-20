@@ -147,15 +147,15 @@ ChatGenerationInput(
 `ChatGenerationInput`은 다음 필드를 가진다.
 
 - `question`: 필수, 앞뒤 공백 제거 후 1~2000자
-- `medications`: 한 개 이상의 `ChatMedicationInput`
+- `medications`: 1~30개의 `ChatMedicationInput`. 문자열 필드 제한과 함께 provider payload 크기를 제한한다.
 
 `ChatMedicationInput`은 현재 `guide_ai.MedicationInput`과 같은 약물 필드를 독립 모델로 정의한다.
 
-- `medication_name`: 필수, 공백이 아닌 문자열
+- `medication_name`: 필수, 공백이 아닌 최대 255자 문자열
 - `dose_value`: 선택, 값이 있으면 양수 `Decimal`
-- `dose_unit`: 선택, 값이 있으면 공백이 아닌 문자열
+- `dose_unit`: 선택, 값이 있으면 공백이 아닌 최대 50자 문자열
 - `frequency_per_day`: 선택, 양의 정수
-- `timing_text`: 선택 문자열
+- `timing_text`: 선택, 값이 있으면 최대 255자 문자열
 - `duration_days`: 선택, 양의 정수
 
 `chat_ai`가 `guide_ai`의 내부 스키마를 직접 import하지 않는다. 두 기능은 현재 필드가 같아도 서로 다른 소비자와 변경 이유를 가지므로 독립 계약을 유지한다. Backend는 조회한 ORM 객체를 두 AI 모듈의 입력 모델로 각각 변환한다.
