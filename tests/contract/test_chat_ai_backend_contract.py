@@ -49,15 +49,15 @@ class CapturingProvider:
 def _reply_input(*, medication_count: int = 2) -> ChatReplyInput:
     medications = [
         ChatMedicationInput(
-            medication_name="합성약 A",
+            medication_name="  합성약\tA  ",
             dose_value=Decimal("0.500"),
-            dose_unit="mg",
+            dose_unit="  mg  ",
             frequency_per_day=2,
-            timing_text="아침 식후",
+            timing_text="\t아침\n식후  ",
             duration_days=7,
         ),
         ChatMedicationInput(
-            medication_name="합성약 B",
+            medication_name="  합성약 B  ",
             dose_value=Decimal("1"),
             dose_unit=None,
             frequency_per_day=None,
@@ -80,7 +80,7 @@ def _reply_input(*, medication_count: int = 2) -> ChatReplyInput:
     return ChatReplyInput(
         prescription_id=uuid4(),
         medications=medications,
-        content="합성 질문",
+        content="\t합성 질문\n",
     )
 
 
@@ -145,9 +145,10 @@ async def test_backend_ai_contract_maps_errors_without_provider_details_or_excep
     provider = CapturingProvider(error=provider_error)
     engine = ChatGeneratorEngine(provider=provider, model="synthetic-model", timeout_seconds=1)
 
-    with pytest.raises(backend_error, match=f"^{message}$") as raised:
+    with pytest.raises(backend_error) as raised:
         await engine.reply(_reply_input())
 
+    assert str(raised.value) == message
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     assert str(provider_error) not in str(raised.value)
@@ -157,9 +158,10 @@ async def test_backend_ai_contract_rejects_more_than_thirty_medications_before_p
     provider = CapturingProvider()
     engine = ChatGeneratorEngine(provider=provider, model="synthetic-model", timeout_seconds=1)
 
-    with pytest.raises(ChatGenerationFailedError, match="^챗봇 응답 생성 처리에 실패했습니다\\.$") as raised:
+    with pytest.raises(ChatGenerationFailedError) as raised:
         await engine.reply(_reply_input(medication_count=31))
 
+    assert str(raised.value) == "챗봇 응답 생성 처리에 실패했습니다."
     assert provider.calls == []
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
