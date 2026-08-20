@@ -27,8 +27,11 @@
 
 ## CORS
 
+- Backend API 서버는 로컬 개발 기준 `http://localhost:8000`에서 실행합니다.
+- Frontend 개발 서버 origin은 `http://localhost:5173`으로 사용합니다.
+- Frontend는 `VITE_API_BASE_URL=http://localhost:8000`으로 Backend API를 호출합니다.
+- Backend는 `CORS_ALLOWED_ORIGINS=http://localhost:5173`을 허용 origin으로 사용합니다.
 - `CORSMiddleware`가 `CORS_ALLOWED_ORIGINS` 환경변수(콤마로 구분된 origin 목록)를 기준으로 허용 origin을 관리합니다.
-- 기본값은 임시로 `http://localhost:5173`(Vite 기본 포트)이며, Frontend 개발 서버 주소가 팀 회의에서 확정되면 교체합니다.
 
 ## API 목록
 
