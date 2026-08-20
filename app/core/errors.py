@@ -1,5 +1,4 @@
 from typing import Any
-from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -45,9 +44,8 @@ def _validation_error_detail(error: dict[str, Any]) -> ErrorDetail:
 
 def _get_trace_id(request: Request) -> str:
     # trace_id 미들웨어가 request.state에 저장한 값을 재사용합니다.
-    # 미들웨어를 거치지 않은 예외적인 상황을 대비해 없으면 새로 생성합니다.
-    trace_id = getattr(request.state, "trace_id", None)
-    return trace_id if isinstance(trace_id, str) else uuid4().hex
+    # 모든 요청은 app/main.py의 미들웨어를 거치므로 별도의 trace_id를 생성하지 않습니다.
+    return request.state.trace_id
 
 
 def register_exception_handlers(app: FastAPI) -> None:

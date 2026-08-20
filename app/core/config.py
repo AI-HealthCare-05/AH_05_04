@@ -79,8 +79,8 @@ class Config(BaseSettings):
 
     COOKIE_DOMAIN: str = "localhost"
 
-    # 임시값입니다. Frontend 개발 서버 주소는 아직 확정 전이라, 팀 회의에서 정해지는 대로
-    # 이 기본값을 실제 주소로 교체합니다(여러 개면 콤마로 구분).
+    # 팀 로컬 개발 기준 Frontend origin입니다.
+    # 여러 origin을 허용해야 하면 콤마로 구분합니다.
     CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"
 
     @property
