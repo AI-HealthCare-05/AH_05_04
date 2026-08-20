@@ -57,6 +57,7 @@ function SignupPage() {
           value={form.password}
           onChange={handleChange}
         />
+        <p>8자 이상, 대문자·소문자·숫자·특수문자를 각각 1개 이상 포함해 주세요.</p>
 
         <input
           name="name"
@@ -83,10 +84,12 @@ function SignupPage() {
 
         <input
           name="phone_number"
-          placeholder="전화번호"
+          type="tel"
+          placeholder="010-1234-5678"
           value={form.phone_number}
           onChange={handleChange}
         />
+        <p>010-1234-5678, 01012345678 또는 +821012345678 형식으로 입력해 주세요.</p>
 
         <button type="submit">
           가입하기
