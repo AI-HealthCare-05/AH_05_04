@@ -40,6 +40,7 @@ assignees: ""
 - [ ] Frontend / UX
 - [ ] Backend / API
 - [ ] Database
+- [ ] AI Worker (공통)
 - [ ] OCR
 - [ ] RAG / LLM
 - [ ] Evaluation

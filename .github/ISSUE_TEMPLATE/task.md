@@ -2,7 +2,7 @@
 name: Task
 about: 이미 합의된 일반 작업과 팀 협업 항목을 관리합니다
 title: "[Task] "
-labels: ""
+labels: "type: task"
 assignees: ""
 ---
 
@@ -18,6 +18,7 @@ assignees: ""
 - [ ] Frontend / UX
 - [ ] Backend / API
 - [ ] Database
+- [ ] AI Worker (공통)
 - [ ] OCR
 - [ ] RAG / LLM
 - [ ] Evaluation
