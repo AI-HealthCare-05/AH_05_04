@@ -24,6 +24,7 @@ class ClovaOcrEngine:
     _SUPPORTED_FORMATS = {
         "image/jpeg": "jpg",
         "image/png": "png",
+        "application/pdf": "pdf",
     }
 
     def __init__(
@@ -51,7 +52,7 @@ class ClovaOcrEngine:
     ) -> OcrRecognitionResult:
         image_format = self._SUPPORTED_FORMATS.get(file_mime_type)
         if image_format is None:
-            raise OcrProcessingError("지원하지 않는 OCR 이미지 형식입니다.")
+            raise OcrProcessingError("지원하지 않는 OCR 파일 형식입니다.")
 
         file_path = self._resolve_file_path(object_key)
 

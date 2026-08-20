@@ -16,6 +16,11 @@ from app.repositories.medical_document_repository import MedicalDocumentReposito
 MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".pdf"}
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "application/pdf"}
+CONTENT_TYPE_BY_EXTENSION = {
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".pdf": "application/pdf",
+}
 FILE_SIGNATURES = {
     "image/jpeg": (b"\xff\xd8\xff",),
     "image/png": (b"\x89PNG\r\n\x1a\n",),
@@ -125,7 +130,12 @@ class MedicalDocumentService:
                 details=[ErrorDetail(field="file", reason="TOO_LARGE", rejected_value=str(len(content)))],
             )
 
-        if extension not in ALLOWED_EXTENSIONS or content_type not in ALLOWED_CONTENT_TYPES:
+        expected_content_type = CONTENT_TYPE_BY_EXTENSION.get(extension)
+        if (
+            extension not in ALLOWED_EXTENSIONS
+            or expected_content_type is None
+            or content_type not in ALLOWED_CONTENT_TYPES
+        ):
             raise ApiError(
                 status_code=400,
                 code="UPLOAD_FILE_INVALID_TYPE",
@@ -133,7 +143,21 @@ class MedicalDocumentService:
                 details=[ErrorDetail(field="file", reason="INVALID_TYPE", rejected_value=content_type)],
             )
 
-        signatures = FILE_SIGNATURES.get(content_type, ())
+        if content_type != expected_content_type:
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="UPLOAD_FILE_INVALID_TYPE",
+                message="파일 이름과 파일 형식이 일치하지 않습니다.",
+                details=[
+                    ErrorDetail(
+                        field="file",
+                        reason="EXTENSION_MIME_MISMATCH",
+                        rejected_value=content_type,
+                    )
+                ],
+            )
+
+        signatures = FILE_SIGNATURES[expected_content_type]
         if not any(content.startswith(signature) for signature in signatures):
             raise ApiError(
                 status_code=status.HTTP_400_BAD_REQUEST,

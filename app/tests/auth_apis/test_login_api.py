@@ -1,7 +1,15 @@
+from datetime import date, datetime
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
 from httpx import ASGITransport, AsyncClient
 from starlette import status
 
-from app.main import app
+from app.core.utils.security import hash_password
+from app.dependencies.services import get_auth_service
+from app.main import app, fastapi_app
+from app.models.users import Gender, User
+from app.services.auth import AuthService
 
 
 class TestLoginAPI:
@@ -34,3 +42,32 @@ class TestLoginAPI:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "UNAUTHORIZED"
+
+    async def test_login_rejects_inactive_account(self):
+        inactive_user = User(
+            id=uuid4(),
+            email="inactive@example.com",
+            hashed_password=hash_password("Password123!"),
+            name="비활성테스터",
+            gender=Gender.FEMALE,
+            birthday=date(1990, 1, 1),
+            phone_number="01012349876",
+            is_active=False,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        repository = AsyncMock()
+        repository.get_user_by_email.return_value = inactive_user
+        fastapi_app.dependency_overrides[get_auth_service] = lambda: AuthService(repository)
+
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/api/v1/auth/login",
+                    json={"email": "inactive@example.com", "password": "Password123!"},
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_auth_service, None)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.json()["code"] == "FORBIDDEN"

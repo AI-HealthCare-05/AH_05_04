@@ -31,6 +31,7 @@ async def get_request_user(
             status_code=401,
             code="UNAUTHORIZED",
             message="로그인이 필요합니다.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     token = credential.credentials
@@ -47,6 +48,7 @@ async def get_request_user(
             code="INVALID_TOKEN",
             message="인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.",
             details=[ErrorDetail(field="user_id", reason="INVALID")],
+            headers={"WWW-Authenticate": "Bearer"},
         ) from error
 
     user = await repository.get_user(user_id)
@@ -56,6 +58,7 @@ async def get_request_user(
             status_code=401,
             code="INVALID_TOKEN",
             message="인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     return user

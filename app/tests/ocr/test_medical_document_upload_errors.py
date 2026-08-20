@@ -38,6 +38,18 @@ def service() -> MedicalDocumentService:
             "UPLOAD_FILE_INVALID_TYPE",
             400,
         ),
+        (
+            _file(filename="prescription.jpg", content_type="application/pdf"),
+            b"%PDF-1.7 test",
+            "UPLOAD_FILE_INVALID_TYPE",
+            400,
+        ),
+        (
+            _file(filename="prescription.pdf", content_type="image/jpeg"),
+            b"\xff\xd8\xff fake-jpeg",
+            "UPLOAD_FILE_INVALID_TYPE",
+            400,
+        ),
     ],
 )
 def test_validate_file_returns_common_api_error(

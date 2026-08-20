@@ -58,6 +58,7 @@ async def token_refresh(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="UNAUTHORIZED",
             message="로그인이 필요합니다.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     access_token = jwt_service.refresh_jwt(refresh_token)
     return Response(

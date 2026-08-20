@@ -45,12 +45,14 @@ class JwtService:
                 status_code=401,
                 code="EXPIRED_TOKEN",
                 message="인증 정보가 만료되었습니다. 다시 로그인해 주세요.",
+                headers={"WWW-Authenticate": "Bearer"},
             ) from err
         except TokenError as err:
             raise ApiError(
                 status_code=401,
                 code="INVALID_TOKEN",
                 message="인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.",
+                headers={"WWW-Authenticate": "Bearer"},
             ) from err
 
     def refresh_jwt(self, refresh_token: str) -> AccessToken:

@@ -34,7 +34,7 @@ async def create_prescription_document(
     file: Annotated[UploadFile, File()],
     document_type: Annotated[MedicalDocumentType, Form()] = MedicalDocumentType.PRESCRIPTION,
 ) -> Response:
-    # 의료문서 업로드 Backend 계약: JPG/PNG 처방전 한 장 업로드. OCR 실행은 별도 API에서 처리합니다.
+    # 의료문서 업로드 Backend 계약: JPG/PNG/PDF 처방전 한 장 업로드. OCR 실행은 별도 API에서 처리합니다.
     result = await medical_document_service.create_prescription_document(
         user=user,
         file=file,

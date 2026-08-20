@@ -16,6 +16,10 @@ def _create_test_image(tmp_path: Path) -> None:
     (tmp_path / "sample.png").write_bytes(b"fake-png-content")
 
 
+def _create_test_pdf(tmp_path: Path) -> None:
+    (tmp_path / "sample.pdf").write_bytes(b"%PDF-1.7 test")
+
+
 def _create_engine(
     *,
     tmp_path: Path,
@@ -129,6 +133,47 @@ async def test_recognize_calls_clova_and_parses_v2_response(
     assert prescribed_date.field_type == "PRESCRIBED_DATE"
     assert prescribed_date.raw_value == "2026-08-12"
     assert prescribed_date.confidence_score == 0.97
+
+
+async def test_recognize_sends_pdf_format_to_clova(
+    tmp_path: Path,
+) -> None:
+    _create_test_pdf(tmp_path)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = await request.aread()
+
+        assert b"sample.pdf" in body
+        assert b'"format": "pdf"' in body
+        assert b"application/pdf" in body
+
+        return httpx.Response(
+            200,
+            json={
+                "images": [
+                    {
+                        "inferResult": "SUCCESS",
+                        "fields": [],
+                    }
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        engine = _create_engine(
+            tmp_path=tmp_path,
+            client=client,
+        )
+
+        result = await engine.recognize(
+            object_key="sample.pdf",
+            file_mime_type="application/pdf",
+        )
+
+    assert result.raw_text == ""
+    assert result.raw_fields == []
 
 
 async def test_recognize_converts_timeout_error(
