@@ -33,6 +33,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 @app.middleware("http")
 async def add_trace_id(request: Request, call_next):
     # 요청별 고유 trace_id를 request.state에 저장해 에러 응답·로그에서 재사용합니다.
