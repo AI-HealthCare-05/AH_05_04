@@ -1,10 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, status
 from fastapi.responses import JSONResponse as Response
 
 from app.core import config
 from app.core.config import Env
+from app.core.errors import ApiError
 from app.dependencies.services import get_auth_service
 from app.dtos.auth import LoginRequest, LoginResponse, SignUpRequest, TokenRefreshResponse
 from app.services.auth import AuthService
@@ -53,7 +54,11 @@ async def token_refresh(
     refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> Response:
     if not refresh_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is missing.")
+        raise ApiError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="UNAUTHORIZED",
+            message="로그인이 필요합니다.",
+        )
     access_token = jwt_service.refresh_jwt(refresh_token)
     return Response(
         content=TokenRefreshResponse(access_token=str(access_token)).model_dump(), status_code=status.HTTP_200_OK

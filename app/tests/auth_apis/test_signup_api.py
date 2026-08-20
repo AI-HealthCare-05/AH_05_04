@@ -93,7 +93,13 @@ class TestSignupAPI:
 
         assert response.status_code == status.HTTP_409_CONFLICT
         body = response.json()
-        assert body["code"] == "HTTP_ERROR"
+        assert body["code"] == "CONFLICT"
         assert body["message"] == expected_detail
-        assert body["details"] == []
+        assert body["details"] == [
+            {
+                "field": duplicate_field,
+                "reason": "ALREADY_EXISTS",
+                "rejected_value": None,
+            }
+        ]
         assert "trace_id" in body

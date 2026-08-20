@@ -78,9 +78,9 @@ class PrescriptionService:
         if job is None:
             raise ApiError(
                 status_code=409,
-                code="OCR_NOT_COMPLETED",
+                code="OCR_JOB_NOT_COMPLETED",
                 message="OCR 처리가 완료된 결과가 없어 처방을 확정할 수 없습니다.",
-                details=[ErrorDetail(field="document_id", reason="OCR_NOT_COMPLETED")],
+                details=[ErrorDetail(field="document_id", reason="OCR_JOB_NOT_COMPLETED")],
             )
 
         prescribed_date, medications = self._build_confirmed_data(list(job.extracted_fields))

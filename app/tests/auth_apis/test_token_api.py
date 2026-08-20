@@ -43,6 +43,6 @@ class TestJWTTokenRefreshAPI:
             response = await client.get("/api/v1/auth/token/refresh")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         body = response.json()
-        assert body["code"] == "HTTP_ERROR"
-        assert body["message"] == "Refresh token is missing."
+        assert body["code"] == "UNAUTHORIZED"
+        assert body["message"] == "로그인이 필요합니다."
         assert "trace_id" in body

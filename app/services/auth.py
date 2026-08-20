@@ -1,6 +1,6 @@
-from fastapi import HTTPException, status
 from pydantic import EmailStr
 
+from app.core.errors import ApiError, ErrorDetail
 from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.core.utils.common import normalize_phone_number
 from app.core.utils.security import hash_password, verify_password
@@ -45,9 +45,11 @@ class AuthService:
             else:
                 detail = "이미 사용중인 휴대폰 번호입니다."
 
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=detail,
+            raise ApiError(
+                status_code=409,
+                code="CONFLICT",
+                message=detail,
+                details=[ErrorDetail(field=exc.field, reason="ALREADY_EXISTS")],
             ) from exc
 
     async def authenticate(
@@ -57,24 +59,27 @@ class AuthService:
         user = await self.user_repo.get_user_by_email(str(data.email))
 
         if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=("이메일 또는 비밀번호가 올바르지 않습니다."),
+            raise ApiError(
+                status_code=401,
+                code="UNAUTHORIZED",
+                message="이메일 또는 비밀번호가 올바르지 않습니다.",
             )
 
         if not verify_password(
             data.password,
             user.hashed_password,
         ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=("이메일 또는 비밀번호가 올바르지 않습니다."),
+            raise ApiError(
+                status_code=401,
+                code="UNAUTHORIZED",
+                message="이메일 또는 비밀번호가 올바르지 않습니다.",
             )
 
         if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="비활성화된 계정입니다.",
+            raise ApiError(
+                status_code=403,
+                code="FORBIDDEN",
+                message="비활성화된 계정입니다.",
             )
 
         return user
@@ -91,9 +96,11 @@ class AuthService:
         email: str | EmailStr,
     ) -> None:
         if await self.user_repo.exists_by_email(email):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="이미 사용중인 이메일입니다.",
+            raise ApiError(
+                status_code=409,
+                code="CONFLICT",
+                message="이미 사용중인 이메일입니다.",
+                details=[ErrorDetail(field="email", reason="ALREADY_EXISTS")],
             )
 
     async def check_phone_number_exists(
@@ -101,7 +108,9 @@ class AuthService:
         phone_number: str,
     ) -> None:
         if await self.user_repo.exists_by_phone_number(phone_number):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="이미 사용중인 휴대폰 번호입니다.",
+            raise ApiError(
+                status_code=409,
+                code="CONFLICT",
+                message="이미 사용중인 휴대폰 번호입니다.",
+                details=[ErrorDetail(field="phone_number", reason="ALREADY_EXISTS")],
             )
