@@ -399,7 +399,7 @@ function ScheduleScreen({ onDecision, onNavigate, scenario, data }: { onDecision
           <div style={{ padding: '12px 0', textAlign: 'center' }}>
             <strong>아직 생성된 복약 일정이 없어요</strong>
             <p style={{ color: 'var(--ds-text-muted)', fontSize: 14 }}>처방전을 등록하고 원본과 확인하면 일정이 만들어져요.</p>
-            <Button fullWidth onClick={() => onNavigate('ocr-quality-failure')}>처방전 등록하기</Button>
+            <Button fullWidth onClick={() => onNavigate('upload')}>처방전 등록하기</Button>
           </div>
         </Card> : <Card>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
@@ -488,7 +488,7 @@ function GuideScreen({ onNavigate, scenario, data }: { onNavigate: Navigate; sce
             <div style={{ padding: '14px 0', textAlign: 'center' }}>
               <strong>아직 만들어진 가이드가 없어요</strong>
               <p style={{ color: 'var(--ds-text-muted)', fontSize: 14 }}>처방전을 등록하고 내용을 직접 확인해 주세요.</p>
-              <Button fullWidth onClick={() => onNavigate('ocr-quality-failure')}>처방전 등록하기</Button>
+              <Button fullWidth onClick={() => onNavigate('upload')}>처방전 등록하기</Button>
             </div>
           </Card>
         </div>
