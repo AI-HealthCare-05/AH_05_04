@@ -1,6 +1,10 @@
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
 from httpx import ASGITransport, AsyncClient
 from starlette import status
 
+from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.main import app
 
 
@@ -57,3 +61,45 @@ class TestUserMeApis:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/users/me")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    async def test_get_user_me_rejects_invalid_access_token(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/users/me",
+                headers={"Authorization": "Bearer invalid-access-token"},
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["code"] == "INVALID_TOKEN"
+        assert response.headers["www-authenticate"] == "Bearer"
+
+    async def test_get_user_me_rejects_expired_access_token(self):
+        expired_token = AccessToken()
+        expired_token["user_id"] = str(uuid4())
+        expired_token.set_exp(
+            from_time=datetime.now(UTC) - timedelta(minutes=2),
+            lifetime=timedelta(),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/users/me",
+                headers={"Authorization": f"Bearer {expired_token}"},
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["code"] == "EXPIRED_TOKEN"
+        assert response.headers["www-authenticate"] == "Bearer"
+
+    async def test_get_user_me_rejects_refresh_token_used_as_access_token(self):
+        refresh_token = RefreshToken()
+        refresh_token["user_id"] = str(uuid4())
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/users/me",
+                headers={"Authorization": f"Bearer {refresh_token}"},
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["code"] == "INVALID_TOKEN"
