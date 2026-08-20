@@ -13,8 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Env(StrEnum):
     LOCAL = "local"
-    DEV = "dev"
-    PROD = "prod"
+    STAGING = "staging"
+    PRODUCTION = "production"
 
 
 def get_default_timezone() -> tzinfo:

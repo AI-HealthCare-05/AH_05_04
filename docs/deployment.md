@@ -3,7 +3,7 @@
 ## 환경
 
 - Local
-- Development
+- Staging
 - Production
 
 ## 배포 절차
