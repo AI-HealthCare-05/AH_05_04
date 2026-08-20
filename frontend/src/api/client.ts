@@ -101,6 +101,7 @@ export async function apiRequest<T>(
 
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...requestOptions,
+    credentials: 'include',
     headers: {
       Accept: 'application/json',
       ...headers,
