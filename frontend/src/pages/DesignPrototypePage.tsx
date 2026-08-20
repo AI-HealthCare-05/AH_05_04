@@ -479,6 +479,7 @@ function SupportPlanScreen({ onBack, onDone }: { onBack: () => void; onDone: () 
 
 function GuideScreen({ onNavigate, scenario, data }: { onNavigate: Navigate; scenario: PrototypeScenario; data: PrototypeData }) {
   const hasMedicationData = medicationFieldKeys.every((key) => data.medication[key])
+  const medicationCount = hasMedicationData ? 1 : 0
   if (!scenario.hasGuide || !hasMedicationData) {
     return (
       <MobileShell activeNavigation="가이드" onNavigate={(item) => onNavigate(mainNavigationTarget[item])}>
@@ -502,7 +503,7 @@ function GuideScreen({ onNavigate, scenario, data }: { onNavigate: Navigate; sce
         <h1 className="screen-title">내 복약 가이드</h1>
         <p className="screen-description">{data.personName ? `${data.personName}님이 ` : ''}직접 확인한 처방전 결과를 기준으로 만들었어요.</p>
         <Card className="home-hero">
-          <div style={{ color: 'rgb(255 255 255 / 72%)', fontSize: 13, fontWeight: 800 }}>확인된 처방약 2개</div>
+          <div style={{ color: 'rgb(255 255 255 / 72%)', fontSize: 13, fontWeight: 800 }}>확인된 처방약 {medicationCount}개</div>
           <h2 style={{ margin: '10px 0 8px', fontSize: 22 }}>{data.medication.timing} 복용</h2>
           <p style={{ color: 'rgb(255 255 255 / 75%)', fontSize: 14 }}>{data.medication.name} · {data.medication.dose}</p>
           <Button fullWidth className="hero-button" onClick={() => onNavigate('schedule')}>오늘 일정 확인하기</Button>
@@ -661,8 +662,15 @@ export default function DesignPrototypePage() {
   const [data, setData] = useState<PrototypeData>(emptyPrototypeData)
   const [width, setWidth] = useState<360 | 390 | 412>(390)
   const [keyboardOpen, setKeyboardOpen] = useState(searchParams.get('keyboard') === 'open')
+  const [dataEditorOpen, setDataEditorOpen] = useState(false)
   const screenDefinition = screens.find((item) => item.key === screen) ?? screens[0]
   const scenario = getPrototypeScenario(scenarioId)
+  const hasCompleteMedicationData = medicationFieldKeys.every((key) => data.medication[key].trim())
+  const externalDataRequired = scenario.hasGuide && !hasCompleteMedicationData
+
+  useEffect(() => {
+    if (externalDataRequired) setDataEditorOpen(true)
+  }, [externalDataRequired])
 
   function changeScenario(nextScenario: PrototypeScenario['id']) {
     setScenarioId(nextScenario)
@@ -721,8 +729,9 @@ export default function DesignPrototypePage() {
           </select>
           <span>{scenario.description}</span>
         </label>
-        <details className="journey-inventory data-slot-editor">
-          <summary>외부 데이터 슬롯</summary>
+        <details className={`journey-inventory data-slot-editor ${externalDataRequired ? 'is-required' : ''}`} open={dataEditorOpen} onToggle={(event) => setDataEditorOpen(event.currentTarget.open)}>
+          <summary><span>외부 데이터 슬롯</span>{externalDataRequired && <span className="data-slot-badge">입력 필요</span>}</summary>
+          {externalDataRequired && <p className="data-slot-status" role="status">이 시나리오는 UI 상태만 정의합니다. 약 데이터를 입력하면 가이드와 일정 화면에 동일한 값이 표시됩니다.</p>}
           <label>사용자 이름<input value={data.personName} onChange={(event) => setData((current) => ({ ...current, personName: event.target.value }))} placeholder="API 데이터" /></label>
           {medicationFieldKeys.map((key) => (
             <label key={key}>{medicationFieldLabels[key]}<input value={data.medication[key]} onChange={(event) => setData((current) => ({ ...current, medication: { ...current.medication, [key]: event.target.value } }))} placeholder="API 데이터" /></label>

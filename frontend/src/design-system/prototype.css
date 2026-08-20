@@ -110,6 +110,34 @@
   font-weight: 700;
 }
 
+.data-slot-editor.is-required {
+  border-color: color-mix(in srgb, var(--ds-attention) 55%, white);
+  background: #fffaf5;
+}
+
+.data-slot-editor summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.data-slot-badge {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #fff1e4;
+  color: var(--ds-attention);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.data-slot-status {
+  margin: 10px 0 0;
+  color: var(--ds-attention);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .data-slot-editor input {
   min-height: 38px;
   padding: 0 9px;
