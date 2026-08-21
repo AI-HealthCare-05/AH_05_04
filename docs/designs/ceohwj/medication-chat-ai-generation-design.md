@@ -391,6 +391,7 @@ Backend Service
 ## Backend 연동 계약
 
 Backend는 기존 OpenAI 설정과 process-scoped client를 재사용해 AI 모듈을 조립한다.
+트랜잭션, 동일 세션 직렬화, 저장 상태, HTTP·캐시 오류 계약을 포함한 후속 조립 설계는 [복약 챗봇 AI Backend 연동 설계](./medication-chat-ai-backend-integration-design.md)에서 다룬다. 이 문서의 프롬프트·Provider 정책과 AI 입·출력 경계는 후속 Backend 연동에서도 유지한다.
 
 ```python
 provider = OpenAIResponsesClient(async_openai_client)
@@ -438,7 +439,7 @@ Backend가 기존 복약 가이드와 같은 설정을 제공한다.
 | --- | --- |
 | `OPENAI_API_KEY` | Backend 실행 환경의 비밀값 |
 | `OPENAI_MODEL` | MVP에서는 `gpt-4o-mini` |
-| `OPENAI_TIMEOUT_SECONDS` | 기본 30초, 양수 유한값 |
+| `OPENAI_TIMEOUT_SECONDS` | 기본 20초, 양수 유한값 |
 | `RUN_OPENAI_CHAT_SMOKE` | `1`일 때만 선택적 실제 API 테스트 실행 |
 
 AI 담당 PR은 설정 모듈과 환경변수 예시 파일을 수정하지 않는다. API Key는 코드, 테스트, 문서와 로그에 기록하지 않는다.

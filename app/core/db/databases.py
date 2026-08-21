@@ -17,6 +17,7 @@ class Base(DeclarativeBase):
 engine = create_async_engine(
     config.database_url,
     echo=config.SQLALCHEMY_ECHO,
+    hide_parameters=True,
     pool_pre_ping=True,
     pool_recycle=1800,
     pool_size=config.DB_CONNECTION_POOL_MAXSIZE,

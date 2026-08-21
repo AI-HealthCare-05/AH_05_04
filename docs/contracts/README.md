@@ -12,3 +12,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - 오류: `code`, `message`, `details`, `trace_id`
 
 계약 변경은 관련 요구사항 ID, API 명세, 구현, 테스트와 함께 한 PR에서 갱신합니다. 필드 삭제·이름/타입 변경·필수 필드 추가는 Breaking Change로 취급합니다.
+
+## 계약 문서
+
+- [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md)
