@@ -15,7 +15,7 @@ _FREQUENCY_PATTERN = re.compile(r"(\d+)\s*회")
 _DURATION_PATTERN = re.compile(r"(\d+)\s*일")
 
 _ROW_Y_TOLERANCE = 15.0
-
+_MEDICATION_NAME_CONTINUATION_Y_GAP = 40.0
 _HEADER_VALUES = {
     "명칭",
     "투여량",
@@ -121,14 +121,48 @@ class PrescriptionOcrStructurer:
             else:
                 grouped_rows.append([field])
 
-        return [
-            row
-            for row in grouped_rows
+        maximum_x = max(field.center_x for field in raw_fields)
+
+        medication_row_indexes = {
+            index
+            for index, row in enumerate(grouped_rows)
             if self._is_medication_row(
                 row=row,
-                maximum_x=max(field.center_x for field in raw_fields),
+                maximum_x=maximum_x,
             )
-        ]
+        }
+
+        medication_rows = {index: list(grouped_rows[index]) for index in medication_row_indexes}
+
+        for index, row in enumerate(grouped_rows):
+            if index in medication_row_indexes:
+                continue
+
+            if not self._is_medication_name_continuation(
+                row=row,
+                maximum_x=maximum_x,
+            ):
+                continue
+
+            row_center_y = self._row_center_y(row)
+
+            nearby_medication_indexes = [
+                medication_index
+                for medication_index, medication_row in medication_rows.items()
+                if abs(self._row_center_y(medication_row) - row_center_y) <= _MEDICATION_NAME_CONTINUATION_Y_GAP
+            ]
+
+            if not nearby_medication_indexes:
+                continue
+
+            nearest_medication_index = min(
+                nearby_medication_indexes,
+                key=lambda medication_index: abs(self._row_center_y(medication_rows[medication_index]) - row_center_y),
+            )
+
+            medication_rows[nearest_medication_index].extend(row)
+
+        return [medication_rows[index] for index in sorted(medication_rows)]
 
     def _is_medication_row(
         self,
@@ -141,7 +175,55 @@ class PrescriptionOcrStructurer:
             maximum_x=maximum_x,
         )
 
-        return bool(columns["name"] and columns["dose"] and columns["frequency"])
+        if not columns["name"]:
+            return False
+
+        dose_text = self._join_values(columns["dose"])
+        frequency_text = self._join_values(
+            columns["frequency"],
+        )
+        duration_text = self._join_values(
+            columns["duration"],
+        )
+
+        recognized_detail_count = sum(
+            (
+                DOSE_PATTERN.fullmatch(dose_text) is not None,
+                _FREQUENCY_PATTERN.search(frequency_text) is not None,
+                _DURATION_PATTERN.search(duration_text) is not None,
+            )
+        )
+
+        # 약품명과 함께 투여량·횟수·기간 중 최소 두 항목이
+        # 실제 처방 형식으로 인식된 행만 약품 행으로 처리합니다.
+        return recognized_detail_count >= 2
+
+    def _is_medication_name_continuation(
+        self,
+        *,
+        row: list[RawRecognizedField],
+        maximum_x: float,
+    ) -> bool:
+        columns = self._split_columns(
+            row=row,
+            maximum_x=maximum_x,
+        )
+
+        return bool(columns["name"]) and not any(
+            columns[column_name]
+            for column_name in (
+                "dose",
+                "frequency",
+                "duration",
+                "timing",
+            )
+        )
+
+    def _row_center_y(
+        self,
+        row: list[RawRecognizedField],
+    ) -> float:
+        return sum(field.center_y for field in row) / len(row)
 
     def _structure_medication_row(
         self,
@@ -263,10 +345,49 @@ class PrescriptionOcrStructurer:
             else:
                 columns["timing"].append(field)
 
-        for fields in columns.values():
-            fields.sort(key=lambda field: field.center_x)
+        for column_name, fields in columns.items():
+            columns[column_name] = self._sort_reading_order(fields)
 
         return columns
+
+    def _sort_reading_order(
+        self,
+        fields: list[RawRecognizedField],
+    ) -> list[RawRecognizedField]:
+        fields_by_y = sorted(
+            fields,
+            key=lambda field: (
+                field.center_y,
+                field.center_x,
+            ),
+        )
+
+        lines: list[list[RawRecognizedField]] = []
+
+        for field in fields_by_y:
+            if not lines:
+                lines.append([field])
+                continue
+
+            current_line = lines[-1]
+            current_line_y = self._row_center_y(current_line)
+
+            if abs(field.center_y - current_line_y) <= _ROW_Y_TOLERANCE:
+                current_line.append(field)
+            else:
+                lines.append([field])
+
+        ordered_fields: list[RawRecognizedField] = []
+
+        for line in lines:
+            ordered_fields.extend(
+                sorted(
+                    line,
+                    key=lambda field: field.center_x,
+                )
+            )
+
+        return ordered_fields
 
     def _recognized_field(
         self,
