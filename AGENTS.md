@@ -58,7 +58,10 @@ The repository does not explicitly map these names to GitHub handles. Do not inf
 A shared contract is an externally consumed API, request or response shape, error or status meaning, database or message schema, or other interface shared across Frontend, Backend, OCR, RAG, LLM, or Evaluation. An implementation change stays behind an existing contract and does not alter those observable semantics.
 
 - Do not disguise a contract change as an implementation detail. Removing or renaming fields, changing types or meanings, adding required fields, or changing shared states is a contract change.
+- Before implementation and during pull request review, explicitly determine whether the change affects a shared API, data structure, error meaning, state transition, or cross-domain DTO.
 - Coordinate a proposed contract change with every affected owner before implementation. Update the authoritative contract or schema, affected implementations, documentation, and contract or integration tests together in the same focused pull request.
+- For every shared-contract change, update the relevant Markdown file under `docs/contracts/`. If no relevant contract file exists, create a focused `docs/contracts/<contract-name>.md` and add it to `docs/contracts/README.md`; the absence of an existing file is not a reason to leave the contract undocumented.
+- Pull request reviewers must treat a missing or stale `docs/contracts/` document, missing index entry, or missing contract/integration coverage as a blocking finding when shared behavior changed. Verify that the contract document, authoritative API or schema documentation, implementation, and tests describe the same fields, types, requiredness, error semantics, and states.
 - When implementing an already agreed contract without changing it, stay within the assigned ownership boundary and add or update the relevant local tests.
 
 ## Safety

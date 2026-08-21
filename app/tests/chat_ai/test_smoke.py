@@ -21,7 +21,7 @@ async def test_gpt_4o_mini_synthetic_chat_smoke() -> None:
 
     from openai import AsyncOpenAI
 
-    timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
+    timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "20"))
     sdk_client = AsyncOpenAI(timeout=timeout_seconds, max_retries=0)
     try:
         generator = ChatGenerator(

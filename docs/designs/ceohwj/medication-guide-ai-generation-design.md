@@ -2,11 +2,11 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| GitHub Issue | `#11` — 복약 가이드 AI 생성 로직 구현 |
+| GitHub Issue | `#11` — 복약 가이드 AI 생성 로직 구현, `#48` — 코드 정리 및 문서 정합성 보완 |
 | 작성·AI 담당 | 정현우 (`@ceohwj`) |
 | Backend 협업·리뷰 | 송은영 (`@phina-io`) |
-| 작업 브랜치 | `feat/11-medication-guide-ai` |
-| 문서 상태 | Draft — 역할·코드 위치와 AI 측 `GUIDE.content` 정의 확정, Backend 명세 동기화 필요 |
+| 작업 브랜치 | `chore/48-medication-guide-ai-cleanup` |
+| 문서 상태 | Implemented — PR #19 구현 및 Issue #48 코드·계약 정합성 검토 반영 |
 | 담당 범위 | 프롬프트, OpenAI 생성, 응답 검증, AI 단위 테스트·스모크 검증 |
 
 동기 MVP 구현은 FastAPI 프로세스의 `app/services/guide_ai/`에 위치한다. 정현우는 프롬프트, AI 생성·검증·렌더링 로직과 기본 테스트·스모크 검증을 담당하고, 송은영은 API, 처방 조회, GUIDE 저장, 트랜잭션과 HTTP 오류 처리를 담당한다. 이 역할과 코드 위치는 두 담당자가 합의했다.
@@ -76,14 +76,20 @@ app/services/guide_ai/
 └── exceptions.py       # Provider-neutral 도메인 오류
 
 app/tests/guide_ai/
-├── test_schemas.py
+├── conftest.py
+├── test_client.py
 ├── test_generator.py
+├── test_renderer.py
+├── test_schemas.py
+├── test_smoke.py
 └── test_validators.py
 ```
 
 `app/services/guide_ai`의 AI 로직과 관련 단위 테스트는 정현우가 구현한다. 송은영은 `app/services/guides.py`를 포함한 Router, Service, Repository 연동 코드를 구현한다. 반복 실행과 정량 지표를 포함한 본격적인 `evals/` 평가는 one-cycle 완성 후 별도 작업으로 진행한다.
 
 ## 내부 계약
+
+Backend와 AI 모듈 사이의 현재 공유 경계는 [복약 가이드 Backend–AI 계약](../../contracts/medication-guide-ai-backend.md)에 별도로 정리한다. 이 설계문서는 생성 방식과 구현 근거를 설명하고, 계약 문서는 호출자가 의존하는 입력·출력·오류 의미를 요약한다.
 
 ### 입력
 
@@ -102,9 +108,9 @@ app/tests/guide_ai/
 - `timing_text`: 선택 문자열
 - `duration_days`: 선택, 양의 정수
 
-필드 길이, 약물 개수와 숫자 범위는 AI 모듈이 임의로 추가하지 않고 authoritative MEDICATION 스키마와 동일하게 맞춘다. Backend가 영속 데이터를 `GuideGenerationInput`으로 변환할 수 없으면 `GuideGenerationInputError`로 처리한다. AI 모듈은 기존 GUIDE를 조회하거나 다른 생성 요청의 상태를 변경하지 않는다.
+필드 길이, 약물 개수와 숫자 범위는 AI 모듈이 임의로 추가하지 않고 authoritative MEDICATION 스키마와 동일하게 맞춘다. Backend가 영속 데이터를 `GuideGenerationInput`으로 구성하는 과정에서 Pydantic 검증이 실패하면 provider를 호출하지 않고 일반 생성 실패로 처리한다. AI 모듈은 기존 GUIDE를 조회하거나 다른 생성 요청의 상태를 변경하지 않는다.
 
-최종 평문 렌더링 전 모든 표시 문자열은 의미 보존을 위해 Unicode NFC로 정규화하고 앞뒤 공백 제거와 연속 공백 축약을 적용한다. NUL, bidi override와 zero-width 문자가 있으면 `GuideGenerationInputError`로 거부한다. 이 정규화는 DB 값을 변경하지 않고 가이드 표시값에만 적용한다.
+최종 평문 렌더링 전 모든 표시 문자열은 의미 보존을 위해 Unicode NFC로 정규화하고 앞뒤 공백 제거와 연속 공백 축약을 적용한다. NUL, bidi override와 zero-width 문자가 있으면 Pydantic 입력 검증 단계에서 거부한다. 이 정규화는 DB 값을 변경하지 않고 가이드 표시값에만 적용한다.
 
 `dose_value`와 `dose_unit`은 독립적으로 누락될 수 있다. 둘 중 하나만 있으면 불완전한 용량을 AI 입력과 최종 사실 문장에서 모두 생략하고, 환자에게는 "용량 정보는 처방전 또는 의료진 안내를 확인해 주세요."라는 결정론적 안내를 표시한다. AI가 누락 값을 보완하지 않으며, 이 경우만으로 전체 가이드 생성을 실패시키지 않는다.
 
@@ -143,7 +149,7 @@ OpenAI에는 SDK가 지원하는 strict JSON Schema 구조화 출력을 요청�
 
 `guidance`와 `general_notice`는 각각 앞뒤 공백을 제거한 비어 있지 않은 평문이다. `guidance`는 약물당 최대 150자, `general_notice`는 최대 300자로 제한한다. HTML, Markdown 링크와 제어문자는 허용하지 않는다. `extra="forbid"`로 정의되지 않은 출력 필드를 거부한다.
 
-약명과 처방 수치는 AI 출력에서 신뢰하지 않는다. 최종 본문의 사실 영역은 반드시 원본 `MedicationInput`으로 다시 렌더링하고, AI 출력에서는 `source_index`와 검증을 통과한 설명 문장만 사용한다. 약물 항목 누락·추가·중복, source index 범위 오류와 빈 설명은 `GuideGenerationInvalidResponseError`로 처리한다.
+약명과 처방 수치는 AI 출력에서 신뢰하지 않는다. 최종 본문의 사실 영역은 반드시 원본 `MedicationInput`으로 다시 렌더링하고, AI 출력에서는 `source_index`와 검증을 통과한 설명 문장만 사용한다. 빈 설명과 provider 응답 구조·파싱 오류는 `GuideGenerationInvalidResponseError`, 약물 항목 누락·추가·중복과 source index 범위 오류는 `GuideGenerationSafetyError`의 `PRESCRIPTION_MISMATCH`로 처리한다.
 
 SDK 호출은 비스트리밍 `await client.responses.parse(...)`를 사용하고 `instructions`, 단일 user `input`, `text_format=GeneratedGuideDraft`, `max_output_tokens`, `store=False`를 명시한다. SDK 버전은 Responses API의 `parse`와 Pydantic `text_format`을 지원하는 최소 버전 이상으로 고정하고 lockfile에 기록한다. 응답의 편의 속성인 `output_text`만 신뢰하지 않고 `status`, `incomplete_details`, output item과 content item의 타입, refusal, 각 `output_text.parsed`를 확인한다. message/output_text가 없거나 여러 개여서 단일 draft를 확정할 수 없으면 실패한다.
 
@@ -237,7 +243,7 @@ AI가 생성한 `guidance`와 `general_notice`에는 다음 fail-closed 검증�
 
 AI 모듈은 다음 provider-neutral 오류를 제공한다.
 
-- `GuideGenerationInputError`: Backend 영속 데이터를 AI 입력 계약으로 변환할 수 없음
+- `GuideGenerationInputError`: 향후 Backend 입력 변환 경계를 위해 호환성 예약된 예외이며 현재 발생 경로 없음
 - `GuideGenerationTimeoutError`: OpenAI 호출 시간 초과
 - `GuideGenerationUnavailableError`: 연결, 사용량 제한 또는 OpenAI 서비스 오류
 - `GuideGenerationConfigurationError`: 필수 설정 누락, 잘못된 제한값 또는 Structured Outputs 미지원 모델
@@ -259,9 +265,9 @@ Backend의 HTTP 및 GUIDE 실패 저장 계약은 다음과 같다.
 
 | 도메인 오류 | GUIDE.error_code | HTTP |
 | --- | --- | --- |
-| `GuideGenerationTimeoutError` | `GATEWAY_TIMEOUT` | `504 GATEWAY_TIMEOUT` / `OPENAI_API_TIMEOUT` |
-| `GuideGenerationUnavailableError` | `SERVICE_UNAVAILABLE` | `503 SERVICE_UNAVAILABLE` / `OPENAI_API_ERROR` |
-| 입력·설정·응답·안전 오류 | `GUIDE_GENERATION_FAILED` | `500 GUIDE_GENERATION_FAILED` / `GENERATION_REQUEST_FAILED` |
+| `GuideGenerationTimeoutError` | `OPENAI_API_TIMEOUT` | `504 GATEWAY_TIMEOUT` / `OPENAI_API_TIMEOUT` |
+| `GuideGenerationUnavailableError` | `OPENAI_API_ERROR` | `503 SERVICE_UNAVAILABLE` / `OPENAI_API_ERROR` |
+| 입력·설정·응답·안전 오류 | `GENERATION_REQUEST_FAILED` | `500 GUIDE_GENERATION_FAILED` / `GENERATION_REQUEST_FAILED` |
 
 실패 시 Backend는 `generation_status=FAILED`, `content=null`, `completed_at=현재 UTC 시각`, 위 표의 비어 있지 않은 `error_code`를 저장한다. `error_message`에는 provider 원문이나 처방 데이터를 넣지 않고 HTTP 계약의 고정된 사용자 안전 메시지를 사용하며 GUIDE 컬럼 제한인 500자 이하를 보장한다. `model_name`과 `prompt_version`은 값이 안전하게 확인된 경우에만 저장하고 각각 100자 제한을 만족시킨다.
 
@@ -269,7 +275,7 @@ Backend의 HTTP 및 GUIDE 실패 저장 계약은 다음과 같다.
 
 - `OPENAI_API_KEY`: 배포 시 필수 비밀 환경변수. 저장소와 로그에 포함하지 않는다.
 - `OPENAI_MODEL`: MVP 값은 `gpt-4o-mini`이다. 생성 로직에 하드코딩하지 않고 배포 환경변수로 주입한다.
-- `OPENAI_TIMEOUT_SECONDS`: 양수, 기본값 `30`초. OpenAI 호출의 전체 wall-clock 상한이며 테스트에서는 짧은 값으로 대체할 수 있게 한다.
+- `OPENAI_TIMEOUT_SECONDS`: 양수, 현재 기본값 `20`초. OpenAI 호출의 전체 wall-clock 상한이며 테스트에서는 짧은 값으로 대체할 수 있게 한다.
 - 공식 `openai` Python SDK를 `pyproject.toml`의 `app` 의존성 그룹에 추가하고 `uv.lock`을 갱신한다. FastAPI Docker 이미지는 `app` 그룹만 설치하므로 `ai` 그룹에만 추가해서는 안 된다.
 - OpenAI 요청에는 `store=False`를 지정해 Responses API의 애플리케이션 상태 저장을 비활성화한다. 이 설정만으로 모든 provider 보존이 0이 된다고 간주하지 않는다.
 - SDK가 연결 오류, `408`, `409`, `429`와 `5xx`를 기본 재시도하지 않도록 `AsyncOpenAI(max_retries=0)`을 사용한다. MVP 재시도 정책은 Backend에 추가하지 않는다.
@@ -278,7 +284,7 @@ MVP 개발·테스트와 실제 API 스모크 검증에는 비식별 합성 처�
 
 `GuideGenerator`는 환경변수를 직접 읽지 않는다. `GuideProvider` async Protocol, 모델명과 전체 제한 시간을 생성자에서 주입받아 단위 테스트가 네트워크와 실제 API Key를 요구하지 않도록 한다. 요청별 `max_output_tokens`는 입력 약물 수로 계산한다. `OpenAIResponsesClient`만 `AsyncOpenAI`, SDK 응답 객체와 SDK 예외를 알고 provider-neutral draft와 실제 모델 ID를 반환한다. GUIDE의 `model_name`에는 설정 별칭이 아니라 OpenAI 응답에서 확인한 실제 모델 ID를 저장해 평가 재현성을 확보한다.
 
-`AsyncOpenAI(timeout=...)`만으로 전체 30초 제한을 보장하지 않는다. `GuideGenerator`는 provider 호출 전체를 `asyncio.timeout(OPENAI_TIMEOUT_SECONDS)`으로 감싸고, SDK transport timeout은 이 상한을 넘지 않게 설정한다. Reverse proxy의 read timeout은 전체 상한과 Backend의 완료·실패 저장 여유보다 길어야 한다.
+SDK transport timeout만으로 전체 제한시간을 보장하지 않는다. `GuideGenerator`는 provider 호출 전체를 `asyncio.timeout(OPENAI_TIMEOUT_SECONDS)`으로 감싼다. 현재 production 조립은 `AsyncOpenAI(max_retries=0)`을 사용하며 transport timeout을 별도로 주입하지 않는다. Reverse proxy의 read timeout은 전체 상한과 Backend의 완료·실패 저장 여유보다 길어야 한다.
 
 OpenAI 클라이언트는 요청마다 생성하지 않고 FastAPI lifespan에서 프로세스당 한 번 생성하고 종료 시 닫는다. 기존 전역 `Config()` import와 API Key 없는 테스트가 깨지지 않도록 OpenAI 설정은 전역 import 시 강제 실패시키지 않고 조립 시점 또는 최초 사용 시 검증한다. `envs/example.local.env`와 `envs/example.prod.env`에는 실제 비밀값 없이 필요한 변수명과 설명만 추가한다.
 
@@ -296,7 +302,7 @@ OpenAI 클라이언트는 요청마다 생성하지 않고 FastAPI lifespan에�
 6. 성공 시 Backend가 검증·렌더링된 `content`, `model_name`, `prompt_version`과 완료 시각을 `COMPLETED`로 저장한다.
 7. 실패 시 Backend가 도메인 오류를 HTTP 오류로 변환하고 현재 요청이 만든 GUIDE만 `FAILED`로 저장한다.
 
-OpenAI 호출을 DB 트랜잭션으로 감싸 장시간 DB 잠금을 유지하지 않는다. `GENERATING` 저장과 완료·실패 갱신은 각각 짧은 트랜잭션으로 처리한다.
+현재 Backend는 GUIDE를 `GENERATING`으로 flush한 요청 세션에서 OpenAI 호출을 기다린다. 성공 갱신은 요청 종료 시 commit되고, 실패 갱신은 오류 응답 전에 즉시 commit된다. 따라서 provider 호출과 DB 트랜잭션을 분리해 연결 점유 시간을 줄이는 작업은 후속 Backend 개선 사항이며 이번 AI cleanup 범위에는 포함하지 않는다.
 
 MVP에서는 각 생성 요청이 독립된 GUIDE를 사용하며 `PRESCRIPTION : GUIDE` 관계는 `1:N`으로 둔다. 동일한 처방전의 재생성 요청도 새 GUIDE를 만들고, 기존 `GENERATING` GUIDE를 실패로 변경하거나 새 요청을 차단하지 않는다. 서버 프로세스 종료로 남은 `GENERATING` 행의 정리 정책은 후속 Backend 운영 요구사항으로 관리하며 다른 생성 요청의 상태 전이에 사용하지 않는다.
 
@@ -317,7 +323,7 @@ MVP에서는 각 생성 요청이 독립된 GUIDE를 사용하며 `PRESCRIPTION 
 - 실제 OpenAI 호출 없이 Mock으로 재현
 - `store=False`와 비스트리밍 요청 설정 전달
 - 입력 약물 수에 따른 `max_output_tokens` 계산과 unsupported·incomplete 응답 처리
-- 전체 제한시간, transport timeout과 `max_retries=0` 설정
+- 전체 제한시간과 `max_retries=0` 설정, 실제 API smoke의 transport timeout
 - authoritative MEDICATION 경계값과 표시 문자열 정규화
 - provider 입력이 정의된 복약정보 허용 필드만 포함하고 식별자를 제외함
 - 프롬프트 지시처럼 보이는 약명·복용 시점을 JSON 데이터로 처리
