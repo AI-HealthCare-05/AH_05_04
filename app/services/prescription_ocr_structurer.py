@@ -1,6 +1,9 @@
 import re
 from statistics import median
 
+from app.services.medication_name_normalizer import (
+    MedicationNameNormalizer,
+)
 from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
@@ -26,6 +29,12 @@ _SECTION_END_VALUES = {
 
 
 class PrescriptionOcrStructurer:
+    def __init__(
+        self,
+        normalizer: MedicationNameNormalizer | None = None,
+    ) -> None:
+        self._normalizer = normalizer if normalizer is not None else MedicationNameNormalizer()
+
     def structure(
         self,
         raw_fields: list[RawRecognizedField],
@@ -148,12 +157,19 @@ class PrescriptionOcrStructurer:
         result: list[RecognizedField] = []
 
         name_fields = columns["name"]
+
         if name_fields:
+            raw_name = self._join_values(name_fields)
+            normalized = self._normalizer.normalize(raw_name)
+
             result.append(
-                self._recognized_field(
+                RecognizedField(
                     medication_index=medication_index,
                     field_type="MEDICATION_NAME",
-                    source_fields=name_fields,
+                    raw_value=raw_name,
+                    normalized_value=(normalized.normalized_value),
+                    normalization_version=(normalized.normalization_version),
+                    confidence_score=(self._minimum_confidence(name_fields)),
                 )
             )
 
