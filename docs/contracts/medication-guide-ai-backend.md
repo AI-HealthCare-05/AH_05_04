@@ -17,7 +17,7 @@ Backend는 인증, 처방 소유권과 확정 상태 확인, 영속 약물 조�
 
 ## 입력 계약
 
-Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`에 전달한다. Guide AI는 전달받은 순서대로 0-based `source_index`를 부여하고 최종 평문에서도 그 순서를 유지한다. 다만 현재 Backend 조회에는 `MEDICATION.display_order` 명시 정렬이 없어 DB의 처방 표시 순서 보장은 후속 연결 작업으로 남아 있다.
+Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`에 전달한다. Guide AI는 전달받은 순서대로 0-based `source_index`를 부여하고 최종 평문에서도 그 순서를 유지한다. `Prescription.medications` relationship에 `MEDICATION.display_order` 명시 정렬이 적용되어 있어, Backend 조회 시점부터 처방 표시 순서가 보장된다.
 
 | 필드 | 타입 | 의미 |
 | --- | --- | --- |
