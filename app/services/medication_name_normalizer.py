@@ -5,10 +5,18 @@ from decimal import Decimal, InvalidOperation
 
 _SPACE_PATTERN = re.compile(r"\s+")
 _BRACKET_PATTERN = re.compile(r"[()\[\]{}<>]")
+_SLASH_PATTERN = re.compile(r"\s*/\s*")
 
 _STRENGTH_PATTERN = re.compile(
     r"(?P<value>\d+(?:\.\d+)?)\s*"
-    r"(?P<unit>mg|mcg|μg|ug|g|ml|mL|%)\b",
+    r"(?P<unit>mg|mcg|μg|ug|g|ml|mL|%)"
+    r"(?!\d)",
+    re.IGNORECASE,
+)
+
+_CONCENTRATION_UNIT_PATTERN = re.compile(
+    r"(?<=/)(?P<unit>mg|mcg|μg|ug|g|ml|mL)"
+    r"(?!\d)",
     re.IGNORECASE,
 )
 
@@ -34,33 +42,49 @@ class MedicationNameNormalizer:
         text = _BRACKET_PATTERN.sub(" ", text)
         text = _SPACE_PATTERN.sub(" ", text)
 
-        match = _STRENGTH_PATTERN.search(text)
+        matches = list(_STRENGTH_PATTERN.finditer(text))
 
-        if match is None:
-            return NormalizedMedicationName(
-                raw_value=raw_value,
-                normalized_value=text,
-                product_name=text,
-                strength_value=None,
-                strength_unit=None,
-                comparison_key=self._comparison_key(text),
-            )
+        # 함량을 이동하지 않고 원래 위치에서 표기만 정리합니다.
+        normalized_value = _STRENGTH_PATTERN.sub(
+            self._normalize_strength_match,
+            text,
+        )
 
-        strength_value = self._parse_decimal(match.group("value"))
-        strength_unit = self._normalize_unit(match.group("unit"))
+        # 복합 함량과 농도 표기의 슬래시 주변 공백을 제거합니다.
+        normalized_value = _SLASH_PATTERN.sub(
+            "/",
+            normalized_value,
+        )
 
-        before_strength = text[: match.start()]
-        after_strength = text[match.end() :]
+        # 1mg/ML처럼 슬래시 뒤에 숫자 없이 단위만 오는 경우입니다.
+        normalized_value = _CONCENTRATION_UNIT_PATTERN.sub(
+            self._normalize_concentration_unit,
+            normalized_value,
+        )
 
-        product_name = f"{before_strength} {after_strength}"
-        product_name = _SPACE_PATTERN.sub(
+        normalized_value = _SPACE_PATTERN.sub(
             " ",
-            product_name,
+            normalized_value,
         ).strip()
 
-        strength_text = f"{self._format_decimal(strength_value)}{strength_unit}"
+        product_name = normalized_value
+        strength_value: Decimal | None = None
+        strength_unit: str | None = None
 
-        normalized_value = f"{product_name} {strength_text}".strip()
+        # 문자열 끝에 단일 함량만 있을 때 기존 메타데이터를 유지합니다.
+        # 복합 함량과 농도는 단일 strength_value로 표현하지 않습니다.
+        if len(matches) == 1:
+            match = matches[0]
+            after_strength = text[match.end() :].strip()
+
+            if not after_strength:
+                product_name = text[: match.start()].strip()
+                strength_value = self._parse_decimal(
+                    match.group("value"),
+                )
+                strength_unit = self._normalize_unit(
+                    match.group("unit"),
+                )
 
         return NormalizedMedicationName(
             raw_value=raw_value,
@@ -70,6 +94,21 @@ class MedicationNameNormalizer:
             strength_unit=strength_unit,
             comparison_key=self._comparison_key(normalized_value),
         )
+
+    def _normalize_strength_match(
+        self,
+        match: re.Match[str],
+    ) -> str:
+        value = match.group("value")
+        unit = self._normalize_unit(match.group("unit"))
+
+        return f"{value}{unit}"
+
+    def _normalize_concentration_unit(
+        self,
+        match: re.Match[str],
+    ) -> str:
+        return self._normalize_unit(match.group("unit"))
 
     def _normalize_unit(self, unit: str) -> str:
         normalized = unit.lower()
@@ -89,13 +128,9 @@ class MedicationNameNormalizer:
         try:
             return Decimal(value)
         except InvalidOperation as error:
-            raise ValueError("약품 함량을 숫자로 변환할 수 없습니다.") from error
-
-    def _format_decimal(
-        self,
-        value: Decimal,
-    ) -> str:
-        return format(value.normalize(), "f")
+            raise ValueError(
+                "약품 함량을 숫자로 변환할 수 없습니다.",
+            ) from error
 
     def _comparison_key(
         self,
