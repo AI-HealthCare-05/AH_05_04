@@ -21,9 +21,15 @@ class ExtractedFieldData(BaseModel):
     field_type: str
     medication_index: int
     raw_value: str | None = None
+    normalized_value: str | None = None
     confirmed_value: str | None = None
-    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    confidence_score: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
     confirmation_status: str
+    normalization_version: str | None = None
 
 
 class OcrJobData(BaseModel):
