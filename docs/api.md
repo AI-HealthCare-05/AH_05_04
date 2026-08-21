@@ -99,6 +99,43 @@ AI에는 현재 요청의 질문과 해당 세션에 연결된 확정 처방의 
 
 DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반환합니다. 잠금을 얻어 USER·ASSISTANT를 만들기 전에 transaction이 rollback되므로 새 메시지가 생성되지 않으며, 메시지 목록을 다시 조회해도 이전 결과와 같습니다.
 
+## OCR 결과 조회
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `GET` | `/api/v1/ocr-jobs/{job_id}` | `200 OK` | 저장된 OCR 작업과 추출 필드를 조회합니다. |
+
+### 약품명 필드 응답
+
+`MEDICATION_NAME` 필드는 OCR 원문, 정규화 참고값 및 사용자 확정값을 함께 반환합니다.
+
+```json
+{
+  "field_id": "11111111-1111-4111-8111-111111111111",
+  "field_type": "MEDICATION_NAME",
+  "medication_index": 1,
+  "raw_value": "복합정 500 mg / 5 mg",
+  "normalized_value": "복합정 500mg/5mg",
+  "confirmed_value": null,
+  "confidence_score": 0.99,
+  "confirmation_status": "UNCONFIRMED",
+  "normalization_version": "rule-v1"
+}
+```
+
+- `raw_value`는 OCR이 인식한 원문이다.
+- `normalized_value`는 표기 정리용 참고값이다.
+- `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값이다.
+- `normalized_value`는 자동 처방 확정이나 의약품 동일성 판단에 사용하지 않는다.
+- 최종 처방에는 `confirmed_value`만 사용한다.
+
+
 ## 변경 이력
 
 API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
+
+| 날짜 | 관련 Issue/PR | 변경 내용 |
+| --- | --- | --- |
+| 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |

@@ -133,6 +133,14 @@ class ExtractedField(Base):
     medication_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     field_type: Mapped[FieldType] = mapped_column(Enum(FieldType, native_enum=False, length=30), nullable=False)
     raw_value: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    normalized_value: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+    normalization_version: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+    )
     confirmed_value: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     confirmation_status: Mapped[ConfirmationStatus] = mapped_column(

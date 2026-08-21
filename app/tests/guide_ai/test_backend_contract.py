@@ -41,6 +41,17 @@ def _prescription(*, medication_name: str = "합성약 A") -> Prescription:
     )
 
 
+def _prescription_with_ordered_medications() -> Prescription:
+    return Prescription(
+        id=uuid4(),
+        medications=[
+            Medication(medication_name="첫번째 약", display_order=1),
+            Medication(medication_name="두번째 약", display_order=2),
+            Medication(medication_name="세번째 약", display_order=3),
+        ],
+    )
+
+
 def _guide(prescription_id: UUID, *, completed: bool = False) -> Guide:
     now = datetime.now(UTC)
     return Guide(
@@ -106,6 +117,29 @@ async def test_backend_contract_stores_and_returns_exact_generation_result() -> 
     assert response.prompt_version == result.prompt_version
 
 
+async def test_backend_contract_preserves_medication_order_in_generation_input() -> None:
+    prescription = _prescription_with_ordered_medications()
+    service, repository, generator = _service(prescription)
+    generator.generate.return_value = GuideGenerationResult(
+        content="검증된 최종 평문",
+        model_name="gpt-4o-mini-2024-07-18",
+        prompt_version="guide-prompt-v1",
+    )
+    repository.mark_completed.return_value = _guide(prescription.id, completed=True)
+
+    await service.create_guide(
+        user=User(id=uuid4()),
+        request=CreateGuideRequest(prescription_id=prescription.id),
+    )
+
+    generation_input = generator.generate.await_args.args[0]
+    assert [medication.medication_name for medication in generation_input.medications] == [
+        "첫번째 약",
+        "두번째 약",
+        "세번째 약",
+    ]
+
+
 @pytest.mark.parametrize(
     ("generation_error", "status_code", "api_code", "stored_error_code"),
     [
@@ -150,6 +184,8 @@ async def test_backend_contract_maps_generation_errors_and_marks_failed(
     assert caught.value.status_code == status_code
     assert caught.value.code == api_code
     assert repository.mark_failed.await_args.kwargs["error_code"] == stored_error_code
+    if api_code == "GUIDE_GENERATION_FAILED":
+        assert caught.value.message == "복약 가이드 생성에 실패했습니다. 다시 시도해 주세요."
 
 
 async def test_backend_contract_does_not_call_provider_when_prescription_input_is_invalid() -> None:

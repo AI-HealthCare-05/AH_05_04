@@ -16,6 +16,8 @@ class RecognizedField:
     field_type: str
     raw_value: str | None
     confidence_score: float | None
+    normalized_value: str | None = None
+    normalization_version: str | None = None
 
 
 @dataclass(frozen=True)

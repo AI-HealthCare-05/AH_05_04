@@ -90,6 +90,8 @@ def test_structure_extracts_date_and_two_medication_rows() -> None:
     first_name = fields_by_identity[(1, "MEDICATION_NAME")]
     assert first_name.raw_value == "로수바스타틴정 10mg"
     assert first_name.confidence_score == 0.9955043
+    assert first_name.normalized_value == "로수바스타틴정 10mg"
+    assert first_name.normalization_version == "rule-v1"
 
     assert fields_by_identity[(1, "DOSE_VALUE")].raw_value == "1"
     assert fields_by_identity[(1, "DOSE_UNIT")].raw_value == "정"
@@ -125,3 +127,35 @@ def test_structure_does_not_invent_medication_without_table() -> None:
     assert len(result) == 1
     assert result[0].field_type == "PRESCRIBED_DATE"
     assert result[0].raw_value == "2026-08-12"
+
+
+def test_structure_normalizes_medication_name() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field(
+            "로수바스타틴칼숨정",
+            137,
+            637,
+        ),
+        _raw_field(
+            "10 mg",
+            247,
+            639,
+        ),
+        _raw_field("1정", 394, 639),
+        _raw_field("1회", 547, 638),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁", 893, 641),
+        _raw_field("식후", 942, 641),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_name = next(field for field in result if field.field_type == "MEDICATION_NAME")
+
+    assert medication_name.raw_value == ("로수바스타틴칼숨정 10 mg")
+    assert medication_name.normalized_value == ("로수바스타틴칼숨정 10mg")
+    assert medication_name.normalization_version == ("rule-v1")
