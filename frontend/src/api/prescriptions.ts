@@ -1,4 +1,4 @@
-import { apiRequest } from './client'
+import { apiBlobRequest, apiRequest } from './client'
 
 export type UploadStatus = 'UPLOADED' | 'FAILED'
 
@@ -78,5 +78,66 @@ export async function getOcrJob(
 ): Promise<OcrJobResponse> {
   return apiRequest<OcrJobResponse>(
     `/api/v1/ocr-jobs/${jobId}`,
+  )
+}
+
+export type Medication = {
+  medication_name: string
+  dose_value: number | null
+  dose_unit: string | null
+  frequency_per_day: number | null
+  timing_text: string | null
+  duration_days: number | null
+  display_order: number
+}
+
+export type PrescriptionResponse = {
+  data: {
+    prescription_id: string
+    document_id: string
+    prescribed_date: string
+    confirmed_at: string
+    medications: Medication[]
+  }
+}
+
+export type ExtractedFieldResponse = {
+  data: ExtractedField
+}
+
+export async function updateExtractedField(
+  fieldId: string,
+  confirmedValue: string,
+): Promise<ExtractedFieldResponse> {
+  return apiRequest<ExtractedFieldResponse>(
+    `/api/v1/extracted-fields/${fieldId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        confirmed_value: confirmedValue,
+      }),
+    },
+  )
+}
+
+export async function confirmPrescription(
+  documentId: string,
+): Promise<PrescriptionResponse> {
+  return apiRequest<PrescriptionResponse>(
+    `/api/v1/documents/${documentId}/prescription`,
+    {
+      method: 'POST',
+    },
+  )
+}
+
+export async function getPrescriptionDocumentFile(
+  documentId: string,
+): Promise<Blob> {
+  return apiBlobRequest(
+    `/api/v1/documents/${documentId}/file`,
   )
 }
