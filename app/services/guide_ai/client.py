@@ -73,16 +73,15 @@ class OpenAIResponsesClient:
     @staticmethod
     def _parse_response(response: Any) -> ProviderGuideResponse:
         output = getattr(response, "output", None)
-        OpenAIResponsesClient._validate_response_status(response, output)
-        message = OpenAIResponsesClient._get_completed_message(output)
+        OpenAIResponsesClient._require_completed_response(response, output)
+        message = OpenAIResponsesClient._require_single_completed_message(output)
         content = getattr(message, "content", None)
         if not isinstance(content, list):
             raise GuideGenerationInvalidResponseError("Guide provider returned an unexpected content structure")
-
-        parsed_items = [
-            getattr(item, "parsed", None) for item in content if getattr(item, "type", None) == "output_text"
-        ]
-        if len(content) != 1 or len(parsed_items) != 1 or not isinstance(parsed_items[0], GeneratedGuideDraft):
+        if len(content) != 1 or getattr(content[0], "type", None) != "output_text":
+            raise GuideGenerationInvalidResponseError("Guide provider returned no single parsed draft")
+        draft = getattr(content[0], "parsed", None)
+        if not isinstance(draft, GeneratedGuideDraft):
             raise GuideGenerationInvalidResponseError("Guide provider returned no single parsed draft")
 
         model_name = getattr(response, "model", None)
@@ -90,12 +89,12 @@ class OpenAIResponsesClient:
             raise GuideGenerationInvalidResponseError("Guide provider returned no model identifier")
 
         return ProviderGuideResponse(
-            draft=parsed_items[0],
+            draft=draft,
             model_name=model_name,
         )
 
     @staticmethod
-    def _validate_response_status(response: Any, output: Any) -> None:
+    def _require_completed_response(response: Any, output: Any) -> None:
         if OpenAIResponsesClient._contains_refusal(output):
             raise GuideGenerationSafetyError("PROVIDER_REFUSAL")
         if getattr(response, "status", None) == "completed":
@@ -122,7 +121,7 @@ class OpenAIResponsesClient:
         return False
 
     @staticmethod
-    def _get_completed_message(output: Any) -> Any:
+    def _require_single_completed_message(output: Any) -> Any:
         if not isinstance(output, list) or len(output) != 1 or getattr(output[0], "type", None) != "message":
             raise GuideGenerationInvalidResponseError("Guide provider returned an unexpected output structure")
         if getattr(output[0], "status", None) != "completed":
