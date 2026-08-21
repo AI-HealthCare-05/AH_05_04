@@ -3,7 +3,7 @@ class GuideGenerationError(Exception):
 
 
 class GuideGenerationInputError(GuideGenerationError):
-    """Raised when confirmed prescription data cannot satisfy the AI input contract."""
+    """Reserved for a future Backend input-conversion boundary."""
 
 
 class GuideGenerationTimeoutError(GuideGenerationError):

@@ -102,6 +102,51 @@ async def test_generator_serializes_prompt_like_prescription_text_as_json_data()
     ]
 
 
+async def test_generator_preserves_input_order_and_provider_field_allowlist() -> None:
+    provider = StubProvider(
+        ProviderGuideResponse(
+            draft=GeneratedGuideDraft(
+                medications=[
+                    GeneratedMedicationGuidance(source_index=0, guidance="처방 지시를 확인해 주세요."),
+                    GeneratedMedicationGuidance(source_index=1, guidance="복약 지시를 확인해 주세요."),
+                ],
+                general_notice="불명확한 내용은 의료진에게 확인해 주세요.",
+            ),
+            model_name="gpt-4o-mini-2024-07-18",
+        )
+    )
+    generator = GuideGenerator(provider=provider, model="gpt-4o-mini", timeout_seconds=1)
+    guide_input = GuideGenerationInput(
+        medications=[
+            MedicationInput(
+                medication_name="합성약 A",
+                dose_value=Decimal("1.250"),
+                dose_unit="mg",
+                frequency_per_day=2,
+                timing_text="아침 식후",
+                duration_days=7,
+            ),
+            MedicationInput(medication_name="합성약 B", dose_unit="정"),
+        ]
+    )
+
+    await generator.generate(guide_input)
+
+    payload = json.loads(str(provider.calls[0]["input_json"]))
+    assert payload == [
+        {
+            "source_index": 0,
+            "medication_name": "합성약 A",
+            "dose_value": "1.250",
+            "dose_unit": "mg",
+            "frequency_per_day": 2,
+            "timing_text": "아침 식후",
+            "duration_days": 7,
+        },
+        {"source_index": 1, "medication_name": "합성약 B"},
+    ]
+
+
 async def test_generator_rejects_invalid_configuration() -> None:
     provider = StubProvider(_response())
 
@@ -115,8 +160,9 @@ async def test_generator_rejects_invalid_configuration() -> None:
         GuideGenerator(provider=provider, model="gpt-4o-mini", timeout_seconds=float("inf"))
 
 
-async def test_generator_rejects_invalid_actual_model_name() -> None:
-    provider = StubProvider(ProviderGuideResponse(draft=_response().draft, model_name="x" * 101))
+@pytest.mark.parametrize("model_name", ["", "   ", "x" * 101])
+async def test_generator_rejects_invalid_actual_model_name(model_name: str) -> None:
+    provider = StubProvider(ProviderGuideResponse(draft=_response().draft, model_name=model_name))
 
     with pytest.raises(GuideGenerationInvalidResponseError):
         await GuideGenerator(provider=provider, model="gpt-4o-mini", timeout_seconds=1).generate(_input())
