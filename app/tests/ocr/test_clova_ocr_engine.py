@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import httpx
@@ -297,3 +298,47 @@ async def test_recognize_rejects_missing_file(
                 object_key="missing.png",
                 file_mime_type="image/png",
             )
+
+
+async def test_recognize_structures_three_medications_from_clova_fixture(
+    tmp_path: Path,
+) -> None:
+    _create_test_image(tmp_path)
+
+    fixture_path = (
+        Path(__file__).parents[1] / "fixtures" / "ocr" / "structuring" / "prescription_medication_rows.clova.json"
+    )
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=payload,
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        engine = _create_engine(
+            tmp_path=tmp_path,
+            client=client,
+        )
+
+        result = await engine.recognize(
+            object_key="sample.png",
+            file_mime_type="image/png",
+        )
+
+    medication_names = [field for field in result.fields if field.field_type == "MEDICATION_NAME"]
+
+    assert [field.medication_index for field in medication_names] == [
+        1,
+        2,
+        3,
+    ]
+    assert [field.raw_value for field in medication_names] == [
+        "로수바스타틴칼숨정 10mg",
+        "에제티미브정 10mg",
+        "오메가-3-산에틸에스테르 90연질캡슐 1000mg",
+    ]

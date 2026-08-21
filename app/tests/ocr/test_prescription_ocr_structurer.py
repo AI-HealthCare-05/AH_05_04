@@ -1,5 +1,8 @@
+import pytest
+
 from app.services.ocr_engine import RawRecognizedField
 from app.services.prescription_ocr_structurer import (
+    DOSE_PATTERN,
     PrescriptionOcrStructurer,
 )
 
@@ -248,7 +251,10 @@ def test_structure_excludes_medication_guide_rows() -> None:
         assert fields_by_identity[(medication_index, "TIMING")].raw_value == expected_timings[medication_index]
 
 
-def test_structure_merges_multiline_medication_name() -> None:
+@pytest.mark.parametrize("scale", [0.5, 1.0, 2.0])
+def test_structure_merges_multiline_medication_name(
+    scale: float,
+) -> None:
     raw_fields = [
         # 의약품 표 헤더
         _raw_field("명칭", 237, 581),
@@ -274,8 +280,16 @@ def test_structure_merges_multiline_medication_name() -> None:
         # 다음 섹션
         _raw_field("조제", 132, 900),
     ]
-
-    result = PrescriptionOcrStructurer().structure(raw_fields)
+    scaled_fields = [
+        RawRecognizedField(
+            raw_value=field.raw_value,
+            confidence_score=field.confidence_score,
+            center_x=field.center_x * scale,
+            center_y=field.center_y * scale,
+        )
+        for field in raw_fields
+    ]
+    result = PrescriptionOcrStructurer().structure(scaled_fields)
 
     fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
@@ -285,3 +299,99 @@ def test_structure_merges_multiline_medication_name() -> None:
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "2"
     assert fields_by_type["DURATION_DAYS"].raw_value == "30"
     assert fields_by_type["TIMING"].raw_value == ("아침 · 저녁 식후")
+
+
+def test_dose_pattern_rejects_frequency_and_duration_units() -> None:
+    assert DOSE_PATTERN.search("1회") is None
+    assert DOSE_PATTERN.search("30일") is None
+
+    assert DOSE_PATTERN.search("1정") is not None
+    assert DOSE_PATTERN.search("2캡슐") is not None
+
+
+def test_structure_excludes_numeric_medication_guide_row() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        # 실제 약품 행
+        _raw_field("로수바스타틴정", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        # 숫자가 포함된 복약 안내 문장
+        _raw_field("1. 증상이 계속되면", 137, 701),
+        _raw_field("3회", 394, 701),
+        _raw_field("확인하고", 547, 701),
+        _raw_field("1일", 719, 701),
+        _raw_field("의료진에게 문의하세요.", 911, 701),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["로수바스타틴정"]
+
+
+def test_structure_attaches_continuation_to_preceding_medication_row() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        # 첫 번째 약품
+        _raw_field("오메가-3-산에틸에스테르", 137, 637),
+        _raw_field("2캡슐", 394, 637),
+        _raw_field("2회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("아침 · 저녁 식후", 911, 637),
+        # 첫 번째 약품명의 연속 행
+        # 두 번째 약품에 더 가깝지만 바로 앞 약품에 병합되어야 합니다.
+        _raw_field("90연질캡슐 1000mg", 137, 675),
+        # 두 번째 약품
+        _raw_field("에제티미브정 10mg", 137, 701),
+        _raw_field("1정", 394, 701),
+        _raw_field("1회", 547, 701),
+        _raw_field("30일", 719, 701),
+        _raw_field("저녁 식후", 911, 701),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert [field.medication_index for field in medication_names] == [1, 2]
+    assert [field.raw_value for field in medication_names] == [
+        "오메가-3-산에틸에스테르 90연질캡슐 1000mg",
+        "에제티미브정 10mg",
+    ]
+
+
+def test_structure_accepts_dose_with_trailing_ocr_text() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("분할복용정", 137, 637),
+        _raw_field("1정 분할", 394, 637),
+        _raw_field("1회", 547, 637),
+        # 투여기간은 OCR에서 누락된 상황
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == "분할복용정"
+    assert fields_by_type["DOSE_VALUE"].raw_value == "1"
+    assert fields_by_type["DOSE_UNIT"].raw_value == "정"
+    assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
+    assert "DURATION_DAYS" not in fields_by_type

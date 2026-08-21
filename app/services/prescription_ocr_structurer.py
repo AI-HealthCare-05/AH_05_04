@@ -10,12 +10,25 @@ from app.services.ocr_engine import (
 )
 
 _DATE_PATTERN = re.compile(r"\d{4}[-./]\d{1,2}[-./]\d{1,2}")
-DOSE_PATTERN = re.compile(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>[^\d\s]+)")
+_DOSE_UNITS = (
+    "캡슐",
+    "정",
+    "포",
+    "mL",
+)
+_DOSE_UNIT_PATTERN = "|".join(re.escape(unit) for unit in _DOSE_UNITS)
+
+DOSE_PATTERN = re.compile(
+    rf"(?P<value>\d+(?:\.\d+)?)\s*"
+    rf"(?P<unit>{_DOSE_UNIT_PATTERN})(?![A-Za-z가-힣])",
+    re.IGNORECASE,
+)
 _FREQUENCY_PATTERN = re.compile(r"(\d+)\s*회")
 _DURATION_PATTERN = re.compile(r"(\d+)\s*일")
 
-_ROW_Y_TOLERANCE = 15.0
-_MEDICATION_NAME_CONTINUATION_Y_GAP = 40.0
+_ROW_Y_TOLERANCE_RATIO = 0.02
+_MEDICATION_NAME_CONTINUATION_Y_GAP_RATIO = 0.05
+
 _HEADER_VALUES = {
     "명칭",
     "투여량",
@@ -87,6 +100,10 @@ class PrescriptionOcrStructurer:
 
         header_y = median(field.center_y for field in header_fields)
 
+        maximum_x = max(field.center_x for field in raw_fields)
+        row_y_tolerance = maximum_x * _ROW_Y_TOLERANCE_RATIO
+        continuation_y_gap = maximum_x * _MEDICATION_NAME_CONTINUATION_Y_GAP_RATIO
+
         section_end_candidates = [
             field.center_y
             for field in raw_fields
@@ -97,7 +114,7 @@ class PrescriptionOcrStructurer:
         candidates = [
             field
             for field in raw_fields
-            if (field.center_y > header_y + _ROW_Y_TOLERANCE and field.center_y < section_end_y)
+            if (field.center_y > header_y + row_y_tolerance and field.center_y < section_end_y)
         ]
         candidates.sort(
             key=lambda field: (
@@ -116,12 +133,10 @@ class PrescriptionOcrStructurer:
             current_row = grouped_rows[-1]
             current_y = sum(item.center_y for item in current_row) / len(current_row)
 
-            if abs(field.center_y - current_y) <= _ROW_Y_TOLERANCE:
+            if abs(field.center_y - current_y) <= row_y_tolerance:
                 current_row.append(field)
             else:
                 grouped_rows.append([field])
-
-        maximum_x = max(field.center_x for field in raw_fields)
 
         medication_row_indexes = {
             index
@@ -134,33 +149,32 @@ class PrescriptionOcrStructurer:
 
         medication_rows = {index: list(grouped_rows[index]) for index in medication_row_indexes}
 
+        last_medication_index: int | None = None
+
         for index, row in enumerate(grouped_rows):
             if index in medication_row_indexes:
+                last_medication_index = index
+                continue
+
+            if last_medication_index is None:
                 continue
 
             if not self._is_medication_name_continuation(
                 row=row,
                 maximum_x=maximum_x,
             ):
+                last_medication_index = None
                 continue
 
-            row_center_y = self._row_center_y(row)
+            medication_row = medication_rows[last_medication_index]
 
-            nearby_medication_indexes = [
-                medication_index
-                for medication_index, medication_row in medication_rows.items()
-                if abs(self._row_center_y(medication_row) - row_center_y) <= _MEDICATION_NAME_CONTINUATION_Y_GAP
-            ]
+            vertical_gap = min(field.center_y for field in row) - max(field.center_y for field in medication_row)
 
-            if not nearby_medication_indexes:
+            if not 0 < vertical_gap <= continuation_y_gap:
+                last_medication_index = None
                 continue
 
-            nearest_medication_index = min(
-                nearby_medication_indexes,
-                key=lambda medication_index: abs(self._row_center_y(medication_rows[medication_index]) - row_center_y),
-            )
-
-            medication_rows[nearest_medication_index].extend(row)
+            medication_row.extend(row)
 
         return [medication_rows[index] for index in sorted(medication_rows)]
 
@@ -186,17 +200,13 @@ class PrescriptionOcrStructurer:
             columns["duration"],
         )
 
-        recognized_detail_count = sum(
-            (
-                DOSE_PATTERN.fullmatch(dose_text) is not None,
-                _FREQUENCY_PATTERN.search(frequency_text) is not None,
-                _DURATION_PATTERN.search(duration_text) is not None,
-            )
-        )
+        dose_match = DOSE_PATTERN.search(dose_text)
+        frequency_match = _FREQUENCY_PATTERN.search(frequency_text)
+        duration_match = _DURATION_PATTERN.search(duration_text)
 
-        # 약품명과 함께 투여량·횟수·기간 중 최소 두 항목이
-        # 실제 처방 형식으로 인식된 행만 약품 행으로 처리합니다.
-        return recognized_detail_count >= 2
+        # 지원하는 투여량 형식이 존재하고, 투여횟수 또는 투여기간 중
+        # 하나 이상이 인식된 경우에만 약품 행으로 처리합니다.
+        return dose_match is not None and (frequency_match is not None or duration_match is not None)
 
     def _is_medication_name_continuation(
         self,
@@ -345,14 +355,21 @@ class PrescriptionOcrStructurer:
             else:
                 columns["timing"].append(field)
 
+        row_y_tolerance = maximum_x * _ROW_Y_TOLERANCE_RATIO
+
         for column_name, fields in columns.items():
-            columns[column_name] = self._sort_reading_order(fields)
+            columns[column_name] = self._sort_reading_order(
+                fields,
+                row_y_tolerance=row_y_tolerance,
+            )
 
         return columns
 
     def _sort_reading_order(
         self,
         fields: list[RawRecognizedField],
+        *,
+        row_y_tolerance: float,
     ) -> list[RawRecognizedField]:
         fields_by_y = sorted(
             fields,
@@ -372,7 +389,7 @@ class PrescriptionOcrStructurer:
             current_line = lines[-1]
             current_line_y = self._row_center_y(current_line)
 
-            if abs(field.center_y - current_line_y) <= _ROW_Y_TOLERANCE:
+            if abs(field.center_y - current_line_y) <= row_y_tolerance:
                 current_line.append(field)
             else:
                 lines.append([field])
