@@ -12,12 +12,14 @@ def _raw_field(
     center_x: float,
     center_y: float,
     confidence_score: float = 0.99,
+    height: float = 20.0,
 ) -> RawRecognizedField:
     return RawRecognizedField(
         raw_value=raw_value,
         confidence_score=confidence_score,
         center_x=center_x,
         center_y=center_y,
+        height=height,
     )
 
 
@@ -286,6 +288,7 @@ def test_structure_merges_multiline_medication_name(
             confidence_score=field.confidence_score,
             center_x=field.center_x * scale,
             center_y=field.center_y * scale,
+            height=field.height * scale,
         )
         for field in raw_fields
     ]
@@ -301,12 +304,41 @@ def test_structure_merges_multiline_medication_name(
     assert fields_by_type["TIMING"].raw_value == ("아침 · 저녁 식후")
 
 
-def test_dose_pattern_rejects_frequency_and_duration_units() -> None:
-    assert DOSE_PATTERN.search("1회") is None
-    assert DOSE_PATTERN.search("30일") is None
+# 투여량 표현 테스트 교체
+@pytest.mark.parametrize(
+    ("raw_value", "expected_value", "expected_unit"),
+    [
+        ("5mg", "5", "mg"),
+        ("1병", "1", "병"),
+        ("1정씩", "1", "정"),
+        ("1정 분할", "1", "정"),
+        ("2캡슐", "2", "캡슐"),
+        ("10mL", "10", "mL"),
+    ],
+)
+def test_dose_pattern_accepts_prescription_units(
+    raw_value: str,
+    expected_value: str,
+    expected_unit: str,
+) -> None:
+    match = DOSE_PATTERN.search(raw_value)
 
-    assert DOSE_PATTERN.search("1정") is not None
-    assert DOSE_PATTERN.search("2캡슐") is not None
+    assert match is not None
+    assert match.group("value") == expected_value
+    assert match.group("unit") == expected_unit
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        "1회",
+        "30일",
+    ],
+)
+def test_dose_pattern_rejects_frequency_and_duration_units(
+    raw_value: str,
+) -> None:
+    assert DOSE_PATTERN.search(raw_value) is None
 
 
 def test_structure_excludes_numeric_medication_guide_row() -> None:
@@ -395,3 +427,122 @@ def test_structure_accepts_dose_with_trailing_ocr_text() -> None:
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
     assert "DURATION_DAYS" not in fields_by_type
+
+
+# 약품 행 유지 테스트 추가
+@pytest.mark.parametrize(
+    ("dose_text", "expected_unit"),
+    [
+        ("5mg", "mg"),
+        ("1병", "병"),
+        ("1정씩", "정"),
+    ],
+)
+def test_structure_keeps_medication_with_various_dose_units(
+    dose_text: str,
+    expected_unit: str,
+) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("테스트약정", 137, 637),
+        _raw_field(dose_text, 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("테스트약정")
+    assert fields_by_type["DOSE_UNIT"].raw_value == (expected_unit)
+
+
+# 오른쪽 워터마크 회귀 테스트 추가
+def test_structure_is_not_affected_by_right_side_watermark() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("로수바스타틴정", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        # 처방전 오른쪽의 별도 문장 또는 워터마크
+        _raw_field("테스트용 워터마크", 3000, 640),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["로수바스타틴정"]
+
+
+# 이름만 인식된 두 번째 약품 테스트 추가
+def test_structure_does_not_merge_name_only_second_medication() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        # 첫 번째 약품
+        _raw_field("로수바스타틴정", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        # OCR이 이름만 인식한 별개의 두 번째 약품
+        _raw_field("에제티미브정 10mg", 137, 675),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert [field.medication_index for field in medication_names] == [1, 2]
+
+    assert [field.raw_value for field in medication_names] == [
+        "로수바스타틴정",
+        "에제티미브정 10mg",
+    ]
+
+    second_medication_fields = [field.field_type for field in result if field.medication_index == 2]
+
+    assert second_medication_fields == ["MEDICATION_NAME"]
+
+
+# 1정, 1회가 있는 안내 문장 테스트 추가
+def test_structure_excludes_guide_sentence_with_dose_and_frequency() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("로수바스타틴정", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        # 형식상 약품 행처럼 보이지만 실제로는 안내 문장
+        _raw_field("증상이 있으면", 137, 701),
+        _raw_field("1정", 394, 701),
+        _raw_field("1회", 547, 701),
+        _raw_field("임의로 복용하지 마십시오.", 911, 701),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["로수바스타틴정"]

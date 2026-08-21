@@ -126,6 +126,8 @@ async def test_recognize_calls_clova_and_parses_v2_response(
     assert result.raw_fields[0].confidence_score == 0.99
     assert result.raw_fields[2].raw_value == "2026-08-12"
     assert result.raw_fields[2].confidence_score == 0.97
+    assert result.raw_fields[0].height == 10.0
+    assert result.raw_fields[2].height == 10.0
     assert len(result.fields) == 1
 
     prescribed_date = result.fields[0]

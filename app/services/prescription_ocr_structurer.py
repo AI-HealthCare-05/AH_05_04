@@ -10,24 +10,54 @@ from app.services.ocr_engine import (
 )
 
 _DATE_PATTERN = re.compile(r"\d{4}[-./]\d{1,2}[-./]\d{1,2}")
-_DOSE_UNITS = (
-    "캡슐",
-    "정",
-    "포",
-    "mL",
-)
-_DOSE_UNIT_PATTERN = "|".join(re.escape(unit) for unit in _DOSE_UNITS)
-
 DOSE_PATTERN = re.compile(
-    rf"(?P<value>\d+(?:\.\d+)?)\s*"
-    rf"(?P<unit>{_DOSE_UNIT_PATTERN})(?![A-Za-z가-힣])",
+    r"(?P<value>\d+(?:\.\d+)?)\s*"
+    r"(?P<unit>"
+    r"(?!(?:회|일)(?:씩)?(?=\s|$))"
+    r"[A-Za-zµμ㎍㎎㎖가-힣]+?"
+    r")"
+    r"(?:씩)?"
+    r"(?=\s|$)",
     re.IGNORECASE,
 )
+
 _FREQUENCY_PATTERN = re.compile(r"(\d+)\s*회")
 _DURATION_PATTERN = re.compile(r"(\d+)\s*일")
 
-_ROW_Y_TOLERANCE_RATIO = 0.02
-_MEDICATION_NAME_CONTINUATION_Y_GAP_RATIO = 0.05
+# 글자 높이를 기준으로 같은 행인지 판단합니다.
+_ROW_Y_TOLERANCE_HEIGHT_MULTIPLIER = 0.75
+_MEDICATION_NAME_CONTINUATION_HEIGHT_MULTIPLIER = 2.5
+
+# 현재 열 구분 비율에서 용법 헤더가 위치하는 지점입니다.
+# 전체 이미지에서 가장 오른쪽 글자를 사용하지 않기 위한 기준입니다.
+_RIGHTMOST_HEADER_POSITION_RATIO = 0.90
+
+_GUIDE_TEXT_PATTERN = re.compile(
+    r"(?:"
+    r"하십시오|마십시오|문의하|문의해|문의하세요|"
+    r"알려주십시오|알려주세요|지시\s*없이|임의로"
+    r")"
+)
+
+_PACKAGE_CONTINUATION_PATTERN = re.compile(
+    r"^\d+\s*"
+    r"(?:연질)?"
+    r"(?:캡슐|정|포|병|앰플|바이알)"
+    r"(?![A-Za-z가-힣])"
+    r".*$",
+    re.IGNORECASE,
+)
+
+_STANDALONE_MEDICATION_NAME_PATTERN = re.compile(
+    r"(?:"
+    r"정|캡슐|연질캡슐|시럽|액|산|과립|"
+    r"연고|크림|패치|주사|주사액"
+    r")"
+    r"(?:\s*\d+(?:\.\d+)?\s*"
+    r"(?:mg|g|mcg|µg|μg|mL|%))?"
+    r"$",
+    re.IGNORECASE,
+)
 
 _HEADER_VALUES = {
     "명칭",
@@ -36,6 +66,8 @@ _HEADER_VALUES = {
     "용법",
 }
 _SECTION_END_VALUES = {
+    "복약 안내",
+    "복약안내",
     "지도",
     "조제",
 }
@@ -68,7 +100,7 @@ class PrescriptionOcrStructurer:
                 self._structure_medication_row(
                     medication_index=medication_index,
                     row=row,
-                    maximum_x=max(field.center_x for field in raw_fields),
+                    maximum_x=self._table_right_x(raw_fields),
                 )
             )
 
@@ -100,9 +132,11 @@ class PrescriptionOcrStructurer:
 
         header_y = median(field.center_y for field in header_fields)
 
-        maximum_x = max(field.center_x for field in raw_fields)
-        row_y_tolerance = maximum_x * _ROW_Y_TOLERANCE_RATIO
-        continuation_y_gap = maximum_x * _MEDICATION_NAME_CONTINUATION_Y_GAP_RATIO
+        maximum_x = self._table_right_x(raw_fields)
+        field_height = self._median_field_height(raw_fields)
+
+        row_y_tolerance = field_height * _ROW_Y_TOLERANCE_HEIGHT_MULTIPLIER
+        continuation_y_gap = field_height * _MEDICATION_NAME_CONTINUATION_HEIGHT_MULTIPLIER
 
         section_end_candidates = [
             field.center_y
@@ -111,10 +145,15 @@ class PrescriptionOcrStructurer:
         ]
         section_end_y = min(section_end_candidates) if section_end_candidates else float("inf")
 
+        # 오른쪽 멀리 있는 워터마크가 열 구분 및 행 판정에 사용되지 않습니다.
         candidates = [
             field
             for field in raw_fields
-            if (field.center_y > header_y + row_y_tolerance and field.center_y < section_end_y)
+            if (
+                field.center_y > header_y + row_y_tolerance
+                and field.center_y < section_end_y
+                and field.center_x <= maximum_x * 1.10
+            )
         ]
         candidates.sort(
             key=lambda field: (
@@ -138,12 +177,19 @@ class PrescriptionOcrStructurer:
             else:
                 grouped_rows.append([field])
 
+        # 에제티미브정 10mg처럼 이름만 OCR 된 두 번째 약은 첫 번째 약에 합쳐지지 않고 별도의 미확정 약품으로 남습니다.
         medication_row_indexes = {
             index
             for index, row in enumerate(grouped_rows)
-            if self._is_medication_row(
-                row=row,
-                maximum_x=maximum_x,
+            if (
+                self._is_medication_row(
+                    row=row,
+                    maximum_x=maximum_x,
+                )
+                or self._is_standalone_medication_name_row(
+                    row=row,
+                    maximum_x=maximum_x,
+                )
             )
         }
 
@@ -189,6 +235,16 @@ class PrescriptionOcrStructurer:
             maximum_x=maximum_x,
         )
 
+        row_text = self._join_values(
+            sorted(
+                row,
+                key=lambda field: field.center_x,
+            )
+        )
+
+        if _GUIDE_TEXT_PATTERN.search(row_text):
+            return False
+
         if not columns["name"]:
             return False
 
@@ -204,8 +260,6 @@ class PrescriptionOcrStructurer:
         frequency_match = _FREQUENCY_PATTERN.search(frequency_text)
         duration_match = _DURATION_PATTERN.search(duration_text)
 
-        # 지원하는 투여량 형식이 존재하고, 투여횟수 또는 투여기간 중
-        # 하나 이상이 인식된 경우에만 약품 행으로 처리합니다.
         return dose_match is not None and (frequency_match is not None or duration_match is not None)
 
     def _is_medication_name_continuation(
@@ -219,7 +273,11 @@ class PrescriptionOcrStructurer:
             maximum_x=maximum_x,
         )
 
-        return bool(columns["name"]) and not any(
+        # 모든 이름 전용 행을 자동 병합하지 않습니다.
+        if not columns["name"]:
+            return False
+
+        if any(
             columns[column_name]
             for column_name in (
                 "dose",
@@ -227,7 +285,68 @@ class PrescriptionOcrStructurer:
                 "duration",
                 "timing",
             )
+        ):
+            return False
+
+        name_text = self._join_values(columns["name"])
+
+        return _PACKAGE_CONTINUATION_PATTERN.fullmatch(name_text) is not None
+
+    def _is_standalone_medication_name_row(
+        self,
+        *,
+        row: list[RawRecognizedField],
+        maximum_x: float,
+    ) -> bool:
+        columns = self._split_columns(
+            row=row,
+            maximum_x=maximum_x,
         )
+
+        if not columns["name"]:
+            return False
+
+        if any(
+            columns[column_name]
+            for column_name in (
+                "dose",
+                "frequency",
+                "duration",
+                "timing",
+            )
+        ):
+            return False
+
+        name_text = self._join_values(columns["name"])
+
+        if _PACKAGE_CONTINUATION_PATTERN.fullmatch(name_text):
+            return False
+
+        return _STANDALONE_MEDICATION_NAME_PATTERN.search(name_text) is not None
+
+    def _table_right_x(
+        self,
+        raw_fields: list[RawRecognizedField],
+    ) -> float:
+        header_fields = [field for field in raw_fields if field.raw_value in _HEADER_VALUES]
+
+        if not header_fields:
+            return max(field.center_x for field in raw_fields)
+
+        rightmost_header_x = max(field.center_x for field in header_fields)
+
+        return rightmost_header_x / _RIGHTMOST_HEADER_POSITION_RATIO
+
+    def _median_field_height(
+        self,
+        fields: list[RawRecognizedField],
+    ) -> float:
+        heights = [field.height for field in fields if field.height > 0]
+
+        if not heights:
+            return 20.0
+
+        return median(heights)
 
     def _row_center_y(
         self,
@@ -355,9 +474,9 @@ class PrescriptionOcrStructurer:
             else:
                 columns["timing"].append(field)
 
-        row_y_tolerance = maximum_x * _ROW_Y_TOLERANCE_RATIO
-
         for column_name, fields in columns.items():
+            row_y_tolerance = self._median_field_height(fields) * _ROW_Y_TOLERANCE_HEIGHT_MULTIPLIER
+
             columns[column_name] = self._sort_reading_order(
                 fields,
                 row_y_tolerance=row_y_tolerance,
