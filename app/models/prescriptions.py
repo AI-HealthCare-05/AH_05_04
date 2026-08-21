@@ -66,7 +66,11 @@ class Prescription(Base):
 
     document: Mapped["MedicalDocument"] = relationship(back_populates="prescription")
     source_ocr_job: Mapped["OcrJob"] = relationship(back_populates="prescriptions")
-    medications: Mapped[list["Medication"]] = relationship(back_populates="prescription")
+    # 처방 약물은 OCR·가이드·채팅 등 모든 소비 경로에서 처방전 표시 순서를 유지합니다.
+    medications: Mapped[list["Medication"]] = relationship(
+        back_populates="prescription",
+        order_by=lambda: Medication.display_order,
+    )
     guides: Mapped[list["Guide"]] = relationship(back_populates="prescription")
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="prescription")
 

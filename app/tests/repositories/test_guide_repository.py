@@ -92,6 +92,25 @@ async def test_get_prescription_owned_rejects_other_users_prescription(db_sessio
     assert stolen is None
 
 
+async def test_get_prescription_owned_orders_medications_by_display_order(db_session: AsyncSession) -> None:
+    owner = await _create_user(db_session, email="ordered-medications@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    db_session.add(
+        Medication(
+            prescription_id=prescription.id,
+            medication_name="두번째 약",
+            display_order=2,
+        )
+    )
+    await db_session.flush()
+
+    repo = GuideRepository(db_session)
+    loaded = await repo.get_prescription_owned(prescription_id=prescription.id, user_id=owner.id)
+
+    assert loaded is not None
+    assert [medication.display_order for medication in loaded.medications] == [1, 2]
+
+
 async def test_get_owned_guide_rejects_other_users_guide(db_session: AsyncSession) -> None:
     owner = await _create_user(db_session, email="owner2@example.com")
     intruder = await _create_user(db_session, email="intruder2@example.com")

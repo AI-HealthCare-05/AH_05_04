@@ -117,7 +117,7 @@ class GuideService:
             raise ApiError(
                 status_code=500,
                 code="GUIDE_GENERATION_FAILED",
-                message="복약 가이드 생성 요청을 처리하지 못했습니다.",
+                message="복약 가이드 생성에 실패했습니다. 다시 시도해 주세요.",
                 details=[ErrorDetail(field="guide", reason="GENERATION_REQUEST_FAILED")],
             ) from err
 
