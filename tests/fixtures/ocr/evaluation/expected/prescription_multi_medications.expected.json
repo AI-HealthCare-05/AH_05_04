@@ -1,0 +1,38 @@
+{
+  "image": "prescription_multi_medications.png",
+  "prescribed_date": "2026-08-20",
+  "medications": [
+    {
+      "medication_name": "메트포르민정 500mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 2,
+      "duration_days": 30,
+      "timing": "아침·저녁 식후"
+    },
+    {
+      "medication_name": "다파글리플로진정 10mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "아침 식전"
+    },
+    {
+      "medication_name": "텔미사르탄정 40mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "아침 식후"
+    },
+    {
+      "medication_name": "암로디핀정 5mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "저녁 식후"
+    }
+  ]
+}

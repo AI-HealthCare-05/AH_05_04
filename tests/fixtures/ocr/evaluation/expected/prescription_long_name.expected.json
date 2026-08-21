@@ -1,0 +1,30 @@
+{
+  "image": "prescription_long_name.png",
+  "prescribed_date": "2026-08-20",
+  "medications": [
+    {
+      "medication_name": "로수바스타틴칼숨정 10mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "저녁 식후"
+    },
+    {
+      "medication_name": "에제티미브정 10mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 1,
+      "duration_days": 30,
+      "timing": "저녁 식후"
+    },
+    {
+      "medication_name": "오메가-3-산에틸에스테르90연질캡슐 1000mg",
+      "dose_value": "2",
+      "dose_unit": "캡슐",
+      "frequency_per_day": 2,
+      "duration_days": 30,
+      "timing": "아침·저녁 식후"
+    }
+  ]
+}

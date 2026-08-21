@@ -1,0 +1,7 @@
+{
+  "engine": "rapidocr",
+  "image": "prescription_damaged.png",
+  "prescribed_date": null,
+  "medications": [],
+  "structure_error": "1회 용량 열 제목을 찾지 못했습니다."
+}

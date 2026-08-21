@@ -1,0 +1,379 @@
+{
+  "evaluation_rules": {
+    "normalization": "모든 공백을 제거한 뒤 비교",
+    "mismatch": "정답 기준 불일치 1건과 출력 기준 오탐 1건으로 각각 계산",
+    "baseline_images": [
+      "prescription_clean",
+      "prescription_long_name",
+      "prescription_multi_medications",
+      "prescription_skewed",
+      "prescription_damaged"
+    ],
+    "pdf_included": false
+  },
+  "engines": {
+    "clova": {
+      "images": {
+        "prescription_clean": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 4,
+          "recall_percent": 92.3,
+          "precision_percent": 75.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 5,
+          "structure_error": null
+        },
+        "prescription_long_name": {
+          "expected_fields": 19,
+          "matched_fields": 18,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 6,
+          "recall_percent": 94.7,
+          "precision_percent": 75.0,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 2,
+          "medication_row_exact_rate_percent": 66.7,
+          "actual_medication_rows": 7,
+          "structure_error": null
+        },
+        "prescription_multi_medications": {
+          "expected_fields": 25,
+          "matched_fields": 17,
+          "missing_or_mismatched_fields": 8,
+          "false_positive_fields": 3,
+          "recall_percent": 68.0,
+          "precision_percent": 85.0,
+          "expected_medication_rows": 4,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 25.0,
+          "actual_medication_rows": 5,
+          "structure_error": null
+        },
+        "prescription_skewed": {
+          "expected_fields": 19,
+          "matched_fields": 1,
+          "missing_or_mismatched_fields": 18,
+          "false_positive_fields": 11,
+          "recall_percent": 5.3,
+          "precision_percent": 8.3,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 6,
+          "structure_error": null
+        },
+        "prescription_damaged": {
+          "expected_fields": 19,
+          "matched_fields": 17,
+          "missing_or_mismatched_fields": 2,
+          "false_positive_fields": 4,
+          "recall_percent": 89.5,
+          "precision_percent": 81.0,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 33.3,
+          "actual_medication_rows": 5,
+          "structure_error": null
+        },
+        "prescription_clean_jpg": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 4,
+          "recall_percent": 92.3,
+          "precision_percent": 75.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 5,
+          "structure_error": null
+        }
+      },
+      "baseline_total": {
+        "expected_fields": 95,
+        "matched_fields": 65,
+        "missing_or_mismatched_fields": 30,
+        "false_positive_fields": 28,
+        "recall_percent": 68.4,
+        "precision_percent": 69.9,
+        "expected_medication_rows": 15,
+        "exact_medication_rows": 5,
+        "medication_row_exact_rate_percent": 33.3
+      },
+      "format_comparison": {
+        "prescription_clean": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 4,
+          "recall_percent": 92.3,
+          "precision_percent": 75.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 5,
+          "structure_error": null
+        },
+        "prescription_clean_jpg": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 4,
+          "recall_percent": 92.3,
+          "precision_percent": 75.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 5,
+          "structure_error": null
+        }
+      }
+    },
+    "paddle": {
+      "images": {
+        "prescription_clean": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 0,
+          "recall_percent": 92.3,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        },
+        "prescription_long_name": {
+          "expected_fields": 19,
+          "matched_fields": 15,
+          "missing_or_mismatched_fields": 4,
+          "false_positive_fields": 1,
+          "recall_percent": 78.9,
+          "precision_percent": 93.8,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 33.3,
+          "actual_medication_rows": 3,
+          "structure_error": null
+        },
+        "prescription_multi_medications": {
+          "expected_fields": 25,
+          "matched_fields": 20,
+          "missing_or_mismatched_fields": 5,
+          "false_positive_fields": 4,
+          "recall_percent": 80.0,
+          "precision_percent": 83.3,
+          "expected_medication_rows": 4,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 7,
+          "structure_error": null
+        },
+        "prescription_skewed": {
+          "expected_fields": 19,
+          "matched_fields": 17,
+          "missing_or_mismatched_fields": 2,
+          "false_positive_fields": 2,
+          "recall_percent": 89.5,
+          "precision_percent": 89.5,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 33.3,
+          "actual_medication_rows": 4,
+          "structure_error": null
+        },
+        "prescription_damaged": {
+          "expected_fields": 19,
+          "matched_fields": 17,
+          "missing_or_mismatched_fields": 2,
+          "false_positive_fields": 0,
+          "recall_percent": 89.5,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 33.3,
+          "actual_medication_rows": 3,
+          "structure_error": null
+        },
+        "prescription_clean_jpg": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 0,
+          "recall_percent": 92.3,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        }
+      },
+      "baseline_total": {
+        "expected_fields": 95,
+        "matched_fields": 81,
+        "missing_or_mismatched_fields": 14,
+        "false_positive_fields": 7,
+        "recall_percent": 85.3,
+        "precision_percent": 92.0,
+        "expected_medication_rows": 15,
+        "exact_medication_rows": 4,
+        "medication_row_exact_rate_percent": 26.7
+      },
+      "format_comparison": {
+        "prescription_clean": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 0,
+          "recall_percent": 92.3,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        },
+        "prescription_clean_jpg": {
+          "expected_fields": 13,
+          "matched_fields": 12,
+          "missing_or_mismatched_fields": 1,
+          "false_positive_fields": 0,
+          "recall_percent": 92.3,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 50.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        }
+      }
+    },
+    "rapid": {
+      "images": {
+        "prescription_clean": {
+          "expected_fields": 13,
+          "matched_fields": 10,
+          "missing_or_mismatched_fields": 3,
+          "false_positive_fields": 0,
+          "recall_percent": 76.9,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        },
+        "prescription_long_name": {
+          "expected_fields": 19,
+          "matched_fields": 15,
+          "missing_or_mismatched_fields": 4,
+          "false_positive_fields": 3,
+          "recall_percent": 78.9,
+          "precision_percent": 83.3,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 1,
+          "medication_row_exact_rate_percent": 33.3,
+          "actual_medication_rows": 4,
+          "structure_error": null
+        },
+        "prescription_multi_medications": {
+          "expected_fields": 25,
+          "matched_fields": 17,
+          "missing_or_mismatched_fields": 8,
+          "false_positive_fields": 1,
+          "recall_percent": 68.0,
+          "precision_percent": 94.4,
+          "expected_medication_rows": 4,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 4,
+          "structure_error": null
+        },
+        "prescription_skewed": {
+          "expected_fields": 19,
+          "matched_fields": 1,
+          "missing_or_mismatched_fields": 18,
+          "false_positive_fields": 2,
+          "recall_percent": 5.3,
+          "precision_percent": 33.3,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 1,
+          "structure_error": null
+        },
+        "prescription_damaged": {
+          "expected_fields": 19,
+          "matched_fields": 0,
+          "missing_or_mismatched_fields": 19,
+          "false_positive_fields": 0,
+          "recall_percent": 0.0,
+          "precision_percent": null,
+          "expected_medication_rows": 3,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 0,
+          "structure_error": "1회 용량 열 제목을 찾지 못했습니다."
+        },
+        "prescription_clean_jpg": {
+          "expected_fields": 13,
+          "matched_fields": 8,
+          "missing_or_mismatched_fields": 5,
+          "false_positive_fields": 0,
+          "recall_percent": 61.5,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        }
+      },
+      "baseline_total": {
+        "expected_fields": 95,
+        "matched_fields": 43,
+        "missing_or_mismatched_fields": 52,
+        "false_positive_fields": 6,
+        "recall_percent": 45.3,
+        "precision_percent": 87.8,
+        "expected_medication_rows": 15,
+        "exact_medication_rows": 1,
+        "medication_row_exact_rate_percent": 6.7
+      },
+      "format_comparison": {
+        "prescription_clean": {
+          "expected_fields": 13,
+          "matched_fields": 10,
+          "missing_or_mismatched_fields": 3,
+          "false_positive_fields": 0,
+          "recall_percent": 76.9,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        },
+        "prescription_clean_jpg": {
+          "expected_fields": 13,
+          "matched_fields": 8,
+          "missing_or_mismatched_fields": 5,
+          "false_positive_fields": 0,
+          "recall_percent": 61.5,
+          "precision_percent": 100.0,
+          "expected_medication_rows": 2,
+          "exact_medication_rows": 0,
+          "medication_row_exact_rate_percent": 0.0,
+          "actual_medication_rows": 2,
+          "structure_error": null
+        }
+      }
+    }
+  }
+}
