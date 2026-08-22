@@ -1,5 +1,7 @@
 # 복약 챗봇 AI Backend 연동 설계
 
+> **후속 정정:** 이 문서의 `2 × T + M`·`T + M` 값은 두 요청 참고 시나리오이며 Production 전체 요청의 하한이 아니다. 현재 구현에는 동일 세션 admission cap이 없으므로 최신 배포 판정은 `docs/deployment.md`를 따른다. 코드로 최대 동시 전송 `N`을 강제하기 전에는 Production 배포가 차단된다.
+
 ## 문서 정보
 
 | 항목 | 내용 |
@@ -245,7 +247,7 @@ SQLAlchemy statement를 MySQL dialect로 compile했을 때도 `FOR UPDATE`는 �
 
 이번 PR은 기존 동기 계약을 유지하므로 `NOWAIT`, 새 409 오류와 세션별 분산 queue를 추가하지 않는다. 동일 세션의 세 개 이상 동시 요청은 correctness는 row lock으로 보호하지만 응답시간 SLO를 보장하지 않는 과부하 상황으로 정의한다. DB lock wait timeout은 AI 오류가 아니므로 현재 공통 오류 계약의 `500 INTERNAL_SERVER_ERROR`로 처리되고, 잠금을 얻어 USER·ASSISTANT를 만들기 전 transaction이 rollback되어 새 메시지를 남기지 않는다. reverse proxy가 먼저 연결을 종료할 수도 있다. 별도 오류 계약이나 backend 동시성 제한이 필요해지면 관측 결과를 근거로 후속 Issue에서 다룬다. API 문서에는 두 요청 기준 참고 지연, 세 개 이상에는 최대시간 보장이 없다는 점과 lock wait timeout 시 재조회 결과가 변하지 않는다는 점을 함께 명시한다.
 
-현재 `infra/nginx/*.conf`와 MySQL 8.0 compose 설정은 timeout을 별도로 덮어쓰지 않는다. #38에서 설정값을 임의로 추가하지 않고, 배포 전 설정된 OpenAI timeout을 `T`, 애플리케이션 처리 여유를 `M`으로 두고 실제 [Nginx `proxy_read_timeout`](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout)이 두 요청 참고 시나리오에 대해 `2 × T + M` 이상인지, [MySQL `innodb_lock_wait_timeout`](https://dev.mysql.com/doc/refman/8.0/en/innodb-parameters.html#sysvar_innodb_lock_wait_timeout)이 `T + M`보다 큰지 확인해 배포 기록에 남긴다. `proxy_read_timeout`은 전체 요청 제한이 아니라 두 연속 read 사이의 무응답 제한이지만, non-streaming 응답은 생성 완료 전 body를 보내지 않으므로 이 확인이 필요하다. 기본 `T=20초`, `M=5초`에서는 각각 45초 이상과 25초 초과가 기준이다.
+현재 `infra/nginx/*.conf`와 MySQL 8.0 compose 설정은 timeout을 별도로 덮어쓰지 않는다. 두 요청 참고 시나리오의 `2 × T + M`·`T + M`만으로 전체 배포 하한을 정하지 않는다. Production 전 lock 획득 전에 동일 세션 최대 동시 전송 `N`을 코드로 강제하고, 최신 [배포 가이드](../../deployment.md)에 따라 Nginx `proxy_read_timeout >= N × T + M`, MySQL `innodb_lock_wait_timeout > (N - 1) × T + M`을 확인한다. `N`이 강제되지 않은 현재 상태는 Production 배포 차단이다.
 
 같은 배포 기록에 worker별 예상 동시 AI 생성량, `DB_CONNECTION_POOL_MAXSIZE`, SQLAlchemy engine의 실제 overflow·pool wait 정책과 허용 가능한 connection 대기를 함께 적는다. 외부 호출 동안 connection을 유지하는 MVP tradeoff를 이 수용량 안에서 명시적으로 승인한다. 예상 동시 생성량이 수용량에 근접하거나 채팅 외 요청의 connection 대기가 관측되면 #38의 잠금 범위를 조용히 완화하지 않고, 비동기 worker 또는 별도 동시성 제어로 전환하는 후속 설계를 진행한다.
 
@@ -429,7 +431,7 @@ uv run coverage run -m pytest app tests/contract
 - 동일 세션 동시 요청의 직렬화, 두 요청 기준 참고 지연과 세 개 이상 과부하 시 최대시간 비보장
 - DB lock wait timeout의 공통 `500 INTERNAL_SERVER_ERROR`와 새 메시지 미생성·재조회 불변 동작
 
-`docs/deployment.md`에는 배포 OpenAI timeout `T`와 처리 여유 `M`을 기록하고, Nginx read timeout `>= 2 × T + M`, MySQL lock wait timeout `> T + M`인지 확인하는 항목을 추가한다. 기본 `T=20초`, `M=5초`에서는 각각 45초 이상과 25초 초과다. worker별 lock waiter를 포함한 전체 in-flight chat 요청 수, 비채팅 예비 connection, DB pool·overflow·wait 설정과 장시간 connection 점유 tradeoff의 수용 여부도 같은 위치에 기록한다. 기존 Chat AI Core 설계에는 후속 Backend 연동 문서 링크를 추가한다. API body와 DB schema 문서는 변경하지 않는다.
+`docs/deployment.md`에는 배포 OpenAI timeout `T`, 처리 여유 `M`과 코드로 강제되는 동일 세션 최대 동시 전송 `N`을 기록하고, Nginx read timeout `>= N × T + M`, MySQL lock wait timeout `> (N - 1) × T + M`인지 확인하는 항목을 둔다. `N`이 없으면 배포하지 않는다. 모든 replica·worker의 process별 DB pool과 MySQL 전체 connection 예산, lock waiter를 포함한 in-flight chat, 비채팅 예비 connection과 장시간 점유 tradeoff도 같은 위치에서 확인한다. 기존 Chat AI Core 설계에는 후속 Backend 연동 문서 링크를 추가한다. API body와 application DB schema 문서는 변경하지 않는다.
 
 ## 예상 변경 파일
 

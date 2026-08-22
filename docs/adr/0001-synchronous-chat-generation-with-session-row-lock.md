@@ -75,10 +75,13 @@ DB pool 고갈 가능성을 낮출 수 있다. 실제 환경의 worker 수, pool
 
 이 결정을 구현·merge하는 것과 Production 배포 승인은 분리한다. 실제 배포 환경이 생기기 전에는 timeout, connection 수용량과 승인자를 추정하지 않는다.
 
+초기 `2 × T + M`과 `T + M` 기준은 두 요청 참고 시나리오에만 유효하며, 동일 세션 요청 수를 제한하지 않는 현재 실행 경로의 배포 하한이 아니다. 최신 authoritative gate는 `docs/deployment.md`를 따른다. lock 전 admission으로 최대 동시 전송 `N`을 코드에서 강제하기 전에는 유한한 timeout 하한을 산정할 수 없어 Production 배포가 차단된다.
+
 Production 배포 전 다음 내용을 실제 환경 기준으로 `docs/deployment.md`에 기록하고 승인해야 한다.
 
-- OpenAI 전체 timeout을 `T`, 처리 여유를 `M`으로 두었을 때 Nginx `proxy_read_timeout >= 2 × T + M`
-- MySQL `innodb_lock_wait_timeout > T + M`
+- 코드로 강제되는 동일 세션 최대 동시 전송 `N`
+- OpenAI 전체 timeout을 `T`, 처리 여유를 `M`으로 두었을 때 Nginx `proxy_read_timeout >= N × T + M`
+- MySQL `innodb_lock_wait_timeout > (N - 1) × T + M`
 - AI 호출 중인 요청과 row lock waiter를 포함한 worker별 전체 in-flight chat 수
 - DB pool size, overflow, pool wait 정책과 비채팅 요청용 예비 connection
 - 외부 AI 호출 동안 transaction과 connection을 유지하는 tradeoff의 운영 승인자
