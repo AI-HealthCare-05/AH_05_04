@@ -10,19 +10,74 @@ from app.services.ocr_engine import (
 )
 
 _DATE_PATTERN = re.compile(r"\d{4}[-./]\d{1,2}[-./]\d{1,2}")
+# 숫자 1을 I, l, |로 오인식한 경우에도 원문을 삭제하지 않고
+# 미확인 필드로 남길 수 있도록 허용합니다.
+_OCR_NUMBER = r"(?:\d+(?:\.\d+)?|[Iil|])"
+
+# 임의의 한글 단위를 허용하지 않고 처방전에서 실제 투여량으로
+# 사용할 수 있는 단위만 명시적으로 허용합니다.
 DOSE_PATTERN = re.compile(
-    r"(?P<value>\d+(?:\.\d+)?)\s*"
+    rf"(?P<value>{_OCR_NUMBER})\s*"
     r"(?P<unit>"
-    r"(?!(?:회|일)(?:씩)?(?=\s|$))"
-    r"[A-Za-zµμ㎍㎎㎖가-힣]+?"
+    r"mg|g|mcg|µg|μg|㎍|㎎|"
+    r"mL|ml|㎖|"
+    r"정|캡슐|포|병|앰플|바이알|방울"
     r")"
     r"(?:씩)?"
     r"(?=\s|$)",
     re.IGNORECASE,
 )
 
-_FREQUENCY_PATTERN = re.compile(r"(\d+)\s*회")
-_DURATION_PATTERN = re.compile(r"(\d+)\s*일")
+_DOSE_INSTRUCTION_PATTERN = re.compile(
+    rf"^\s*{_OCR_NUMBER}\s*"
+    r"(?:"
+    r"mg|g|mcg|µg|μg|㎍|㎎|"
+    r"mL|ml|㎖|"
+    r"정|캡슐|포|병|앰플|바이알|방울"
+    r")"
+    r"(?:씩)?\s*"
+    r"(?:복용|투여|드세요|먹으세요)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+_FREQUENCY_PATTERN = re.compile(
+    rf"(?P<value>{_OCR_NUMBER})\s*회(?:씩)?(?=\s|$)",
+    re.IGNORECASE,
+)
+
+_DURATION_PATTERN = re.compile(
+    r"(?P<value>\d+)\s*일(?:간)?(?=\s|$)",
+    re.IGNORECASE,
+)
+
+# 실제 약품명 다음 줄로 볼 수 있는 형태만 허용합니다.
+# "1정 복용", "1정 드세요" 등 안내문은 허용하지 않습니다.
+_PACKAGE_CONTINUATION_PATTERN = re.compile(
+    r"^\d+\s*"
+    r"(?:연질|경질)?"
+    r"(?:캡슐|정|포|병|앰플|바이알)"
+    r"(?:\s+\d+(?:\.\d+)?\s*"
+    r"(?:mg|g|mcg|µg|μg|mL|ml|%))?"
+    r"$",
+    re.IGNORECASE,
+)
+
+# 약품명으로 판단할 수 있는 적극적인 근거입니다.
+_DOSAGE_FORM_PATTERN = re.compile(
+    r"(?:"
+    r"정|캡슐|연질캡슐|경질캡슐|시럽|과립|"
+    r"연고|크림|겔|패치|주사|주사액|점안액|현탁액"
+    r")"
+    r"(?:\s|$|\d)",
+    re.IGNORECASE,
+)
+
+_STRENGTH_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*"
+    r"(?:mg|g|mcg|µg|μg|㎍|㎎|mL|ml|㎖|%)",
+    re.IGNORECASE,
+)
 _TIMING_PATTERN = re.compile(
     r"(?:"
     r"아침|점심|저녁|취침|"
@@ -46,6 +101,14 @@ _HEADER_POSITION_RATIOS = {
     "duration": 0.710,
     "timing": 0.900,
 }
+# 실제 헤더 좌표 기반 열 경계 함수 추가
+_COLUMN_ORDER = (
+    "name",
+    "dose",
+    "frequency",
+    "duration",
+    "timing",
+)
 
 _HEADER_ALIASES = {
     "name": {
@@ -120,15 +183,6 @@ _NON_MEDICATION_NAME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_PACKAGE_CONTINUATION_PATTERN = re.compile(
-    r"^\d+\s*"
-    r"(?:연질|경질)?"
-    r"(?:캡슐|정|포|병|앰플|바이알)"
-    r"(?![A-Za-z가-힣])"
-    r".*$",
-    re.IGNORECASE,
-)
-
 # 이름만 인식된 약품을 미확인 항목으로 남기기 위한 강한 약품명 형태입니다.
 # 단독 확정 기준이 아니라, 약품명 열 내부라는 조건과 함께 사용합니다.
 _STANDALONE_MEDICATION_NAME_PATTERN = re.compile(
@@ -170,10 +224,19 @@ class PrescriptionOcrStructurer:
         structured_fields: list[RecognizedField] = []
 
         prescribed_date = self._extract_prescribed_date(raw_fields)
+
         if prescribed_date is not None:
             structured_fields.append(prescribed_date)
 
-        medication_rows = self._extract_medication_rows(raw_fields)
+        headers = self._find_header_fields(raw_fields)
+
+        if not headers:
+            return structured_fields
+
+        medication_rows = self._extract_medication_rows(
+            raw_fields,
+            headers=headers,
+        )
 
         for medication_index, row in enumerate(
             medication_rows,
@@ -183,7 +246,7 @@ class PrescriptionOcrStructurer:
                 self._structure_medication_row(
                     medication_index=medication_index,
                     row=row,
-                    maximum_x=self._table_right_x(raw_fields),
+                    headers=headers,
                 )
             )
 
@@ -228,58 +291,134 @@ class PrescriptionOcrStructurer:
 
         return normalized in _SECTION_END_VALUES
 
+    def _group_header_lines(
+        self,
+        fields: list[RawRecognizedField],
+        *,
+        tolerance: float,
+    ) -> list[list[RawRecognizedField]]:
+        header_lines: list[list[RawRecognizedField]] = []
+
+        for field in sorted(
+            fields,
+            key=lambda item: (item.center_y, item.center_x),
+        ):
+            matched_line: list[RawRecognizedField] | None = None
+
+            for line in header_lines:
+                line_y = self._row_center_y(line)
+
+                if abs(field.center_y - line_y) <= tolerance:
+                    matched_line = line
+                    break
+
+            if matched_line is None:
+                header_lines.append([field])
+            else:
+                matched_line.append(field)
+
+        return header_lines
+
     def _find_header_fields(
         self,
         raw_fields: list[RawRecognizedField],
     ) -> dict[str, RawRecognizedField]:
         recognized_headers = [field for field in raw_fields if self._header_kind(field.raw_value) is not None]
 
-        if not recognized_headers:
+        if len(recognized_headers) < 2:
             return {}
 
         tolerance = self._median_field_height(recognized_headers) * _ROW_Y_TOLERANCE_HEIGHT_MULTIPLIER
 
-        # 약품명 헤더가 포함된 실제 헤더 행만 후보로 삼습니다.
-        name_headers = [field for field in recognized_headers if self._header_kind(field.raw_value) == "name"]
+        header_lines = self._group_header_lines(
+            recognized_headers,
+            tolerance=tolerance,
+        )
 
         best: dict[str, RawRecognizedField] = {}
 
-        for name_header in name_headers:
-            same_line = [
-                field for field in recognized_headers if abs(field.center_y - name_header.center_y) <= tolerance
-            ]
-
+        for line in header_lines:
             by_kind: dict[str, RawRecognizedField] = {}
-            for field in sorted(
-                same_line,
-                key=lambda item: item.center_x,
-            ):
+
+            for field in sorted(line, key=lambda item: item.center_x):
                 kind = self._header_kind(field.raw_value)
+
                 if kind is not None and kind not in by_kind:
                     by_kind[kind] = field
 
             if len(by_kind) > len(best):
                 best = by_kind
 
-        # 헤더 개수 3개가 아니라 약품명 헤더 + 복약 관련 헤더 1개를 요구합니다.
-        if "name" not in best or len(best) < 2:
+        # 명칭 헤더는 필수가 아닙니다.
+        # 서로 다른 복약 표 헤더가 최소 2개 있으면 표 후보로 처리합니다.
+        if len(best) < 2:
             return {}
 
         return best
 
+    def _group_medication_candidates(
+        self,
+        candidates: list[RawRecognizedField],
+        *,
+        row_y_tolerance: float,
+    ) -> list[list[RawRecognizedField]]:
+        grouped_rows: list[list[RawRecognizedField]] = []
+
+        for field in candidates:
+            if not grouped_rows:
+                grouped_rows.append([field])
+                continue
+
+            current_row = grouped_rows[-1]
+            current_y = self._row_center_y(current_row)
+
+            if abs(field.center_y - current_y) <= row_y_tolerance:
+                current_row.append(field)
+            else:
+                grouped_rows.append([field])
+
+        return grouped_rows
+
+    def _is_primary_medication_row(
+        self,
+        *,
+        row: list[RawRecognizedField],
+        headers: dict[str, RawRecognizedField],
+    ) -> bool:
+        if self._is_medication_name_continuation(
+            row=row,
+            headers=headers,
+        ):
+            return False
+
+        return self._is_medication_row(
+            row=row,
+            headers=headers,
+        ) or self._is_standalone_medication_name_row(
+            row=row,
+            headers=headers,
+        )
+
     def _extract_medication_rows(
         self,
         raw_fields: list[RawRecognizedField],
+        *,
+        headers: dict[str, RawRecognizedField],
     ) -> list[list[RawRecognizedField]]:
-        headers = self._find_header_fields(raw_fields)
-
         if not headers:
             return []
 
         header_fields = list(headers.values())
         header_y = median(field.center_y for field in header_fields)
 
-        maximum_x = self._table_right_x(raw_fields)
+        table_bounds = self._table_bounds(headers)
+
+        if table_bounds is None:
+            return []
+
+        table_left_x, table_right_x = table_bounds
+        table_width = table_right_x - table_left_x
+        horizontal_margin = table_width * 0.05
         field_height = self._median_field_height(raw_fields)
 
         row_y_tolerance = field_height * _ROW_Y_TOLERANCE_HEIGHT_MULTIPLIER
@@ -292,14 +431,13 @@ class PrescriptionOcrStructurer:
         ]
         section_end_y = min(section_end_candidates) if section_end_candidates else float("inf")
 
-        # 오른쪽 멀리 있는 워터마크가 열 구분 및 행 판정에 사용되지 않습니다.
         candidates = [
             field
             for field in raw_fields
             if (
                 field.center_y > header_y + row_y_tolerance
                 and field.center_y < section_end_y
-                and field.center_x <= maximum_x * 1.10
+                and table_left_x - horizontal_margin <= field.center_x <= table_right_x + horizontal_margin
             )
         ]
         candidates.sort(
@@ -309,34 +447,17 @@ class PrescriptionOcrStructurer:
             )
         )
 
-        grouped_rows: list[list[RawRecognizedField]] = []
+        grouped_rows = self._group_medication_candidates(
+            candidates,
+            row_y_tolerance=row_y_tolerance,
+        )
 
-        for field in candidates:
-            if not grouped_rows:
-                grouped_rows.append([field])
-                continue
-
-            current_row = grouped_rows[-1]
-            current_y = sum(item.center_y for item in current_row) / len(current_row)
-
-            if abs(field.center_y - current_y) <= row_y_tolerance:
-                current_row.append(field)
-            else:
-                grouped_rows.append([field])
-
-        # 에제티미브정 10mg처럼 이름만 OCR 된 두 번째 약은 첫 번째 약에 합쳐지지 않고 별도의 미확정 약품으로 남습니다.
         medication_row_indexes = {
             index
             for index, row in enumerate(grouped_rows)
-            if (
-                self._is_medication_row(
-                    row=row,
-                    maximum_x=maximum_x,
-                )
-                or self._is_standalone_medication_name_row(
-                    row=row,
-                    maximum_x=maximum_x,
-                )
+            if self._is_primary_medication_row(
+                row=row,
+                headers=headers,
             )
         }
 
@@ -354,7 +475,7 @@ class PrescriptionOcrStructurer:
 
             if not self._is_medication_name_continuation(
                 row=row,
-                maximum_x=maximum_x,
+                headers=headers,
             ):
                 last_medication_index = None
                 continue
@@ -386,6 +507,9 @@ class PrescriptionOcrStructurer:
         if _NON_MEDICATION_NAME_PATTERN.search(name_text):
             return False
 
+        if _DOSE_INSTRUCTION_PATTERN.fullmatch(name_text):
+            return False
+
         if re.match(r"^\s*\d+\s*[.)]", name_text):
             return False
 
@@ -394,21 +518,33 @@ class PrescriptionOcrStructurer:
 
         return True
 
+    def _has_strong_medication_name_evidence(
+        self,
+        name_text: str,
+    ) -> bool:
+        return any(
+            (
+                _DOSAGE_FORM_PATTERN.search(name_text) is not None,
+                _STRENGTH_PATTERN.search(name_text) is not None,
+            )
+        )
+
     def _is_medication_row(
         self,
         *,
         row: list[RawRecognizedField],
-        maximum_x: float,
+        headers: dict[str, RawRecognizedField],
     ) -> bool:
         columns = self._split_columns(
             row=row,
-            maximum_x=maximum_x,
+            headers=headers,
         )
 
         if not columns["name"]:
             return False
 
         name_text = self._join_values(columns["name"])
+
         if not self._is_plausible_medication_name(name_text):
             return False
 
@@ -419,7 +555,6 @@ class PrescriptionOcrStructurer:
             )
         )
 
-        # 명령문·주의문 형태는 숫자가 있더라도 약품으로 만들지 않습니다.
         if _GUIDE_TEXT_PATTERN.search(row_text):
             return False
 
@@ -433,28 +568,36 @@ class PrescriptionOcrStructurer:
         duration_match = _DURATION_PATTERN.search(duration_text)
         timing_match = _TIMING_PATTERN.search(timing_text)
 
-        # 횟수·기간이 누락돼도 약품명과 용량 또는
-        # 실제 복용 시점이 인식된 행은 보존합니다.
-        has_supporting_medication_value = any(
-            (
-                dose_match is not None,
-                frequency_match is not None,
-                duration_match is not None,
-                timing_match is not None,
+        strong_name_evidence = self._has_strong_medication_name_evidence(name_text)
+
+        parsed_support_count = sum(
+            match is not None
+            for match in (
+                dose_match,
+                frequency_match,
+                duration_match,
+                timing_match,
             )
         )
 
-        return self._is_plausible_medication_name(name_text) and has_supporting_medication_value
+        # 제형이나 함량이 포함된 강한 약품명은 나머지 값이 일부
+        # I정/I회처럼 오인식됐더라도 사용자 확인 대상으로 유지합니다.
+        if strong_name_evidence:
+            return True
+
+        # 약품명 근거가 약한 일반 문구는 복수의 구조적 근거가 있어야
+        # 약품 행으로 인정합니다.
+        return parsed_support_count >= 2
 
     def _is_medication_name_continuation(
         self,
         *,
         row: list[RawRecognizedField],
-        maximum_x: float,
+        headers: dict[str, RawRecognizedField],
     ) -> bool:
         columns = self._split_columns(
             row=row,
-            maximum_x=maximum_x,
+            headers=headers,
         )
 
         # 모든 이름 전용 행을 자동 병합하지 않습니다.
@@ -480,11 +623,11 @@ class PrescriptionOcrStructurer:
         self,
         *,
         row: list[RawRecognizedField],
-        maximum_x: float,
+        headers: dict[str, RawRecognizedField],
     ) -> bool:
         columns = self._split_columns(
             row=row,
-            maximum_x=maximum_x,
+            headers=headers,
         )
 
         if not columns["name"]:
@@ -514,21 +657,89 @@ class PrescriptionOcrStructurer:
 
         return _STANDALONE_MEDICATION_NAME_PATTERN.search(name_text) is not None
 
-    def _table_right_x(
+    def _column_centers(
         self,
-        raw_fields: list[RawRecognizedField],
-    ) -> float:
-        headers = self._find_header_fields(raw_fields)
-
-        if not headers:
-            return max(
-                (field.center_x for field in raw_fields),
-                default=0.0,
+        headers: dict[str, RawRecognizedField],
+    ) -> dict[str, float]:
+        observed = [
+            (
+                _HEADER_POSITION_RATIOS[kind],
+                field.center_x,
             )
+            for kind, field in headers.items()
+        ]
 
-        table_right_candidates = [field.center_x / _HEADER_POSITION_RATIOS[kind] for kind, field in headers.items()]
+        if len(observed) < 2:
+            return {}
 
-        return median(table_right_candidates)
+        expected_mean = sum(item[0] for item in observed) / len(observed)
+        actual_mean = sum(item[1] for item in observed) / len(observed)
+
+        denominator = sum((expected - expected_mean) ** 2 for expected, _ in observed)
+
+        if denominator == 0:
+            return {}
+
+        scale = sum((expected - expected_mean) * (actual - actual_mean) for expected, actual in observed) / denominator
+
+        if scale <= 0:
+            return {}
+
+        offset = actual_mean - scale * expected_mean
+
+        return {kind: offset + scale * _HEADER_POSITION_RATIOS[kind] for kind in _COLUMN_ORDER}
+
+    def _column_boundaries(
+        self,
+        headers: dict[str, RawRecognizedField],
+    ) -> dict[str, tuple[float, float]]:
+        centers = self._column_centers(headers)
+
+        if not centers:
+            return {}
+
+        ordered_centers = [centers[kind] for kind in _COLUMN_ORDER]
+
+        internal_boundaries = [
+            (left + right) / 2
+            for left, right in zip(
+                ordered_centers,
+                ordered_centers[1:],
+                strict=False,
+            )
+        ]
+
+        first_kind = _COLUMN_ORDER[0]
+        last_kind = _COLUMN_ORDER[-1]
+
+        ratio_span = _HEADER_POSITION_RATIOS[last_kind] - _HEADER_POSITION_RATIOS[first_kind]
+        center_span = centers[last_kind] - centers[first_kind]
+        table_scale = center_span / ratio_span
+
+        outer_left = centers[first_kind] - table_scale * _HEADER_POSITION_RATIOS[first_kind]
+        outer_right = centers[last_kind] + table_scale * (1.0 - _HEADER_POSITION_RATIOS[last_kind])
+
+        edges = [
+            outer_left,
+            *internal_boundaries,
+            outer_right,
+        ]
+
+        return {kind: (edges[index], edges[index + 1]) for index, kind in enumerate(_COLUMN_ORDER)}
+
+    def _table_bounds(
+        self,
+        headers: dict[str, RawRecognizedField],
+    ) -> tuple[float, float] | None:
+        boundaries = self._column_boundaries(headers)
+
+        if not boundaries:
+            return None
+
+        return (
+            boundaries["name"][0],
+            boundaries["timing"][1],
+        )
 
     def _median_field_height(
         self,
@@ -552,11 +763,11 @@ class PrescriptionOcrStructurer:
         *,
         medication_index: int,
         row: list[RawRecognizedField],
-        maximum_x: float,
+        headers: dict[str, RawRecognizedField],
     ) -> list[RecognizedField]:
         columns = self._split_columns(
             row=row,
-            maximum_x=maximum_x,
+            headers=headers,
         )
         result: list[RecognizedField] = []
 
@@ -608,7 +819,7 @@ class PrescriptionOcrStructurer:
                 RecognizedField(
                     medication_index=medication_index,
                     field_type="FREQUENCY_PER_DAY",
-                    raw_value=frequency_match.group(1),
+                    raw_value=frequency_match.group("value"),
                     confidence_score=self._minimum_confidence(frequency_fields),
                 )
             )
@@ -622,13 +833,15 @@ class PrescriptionOcrStructurer:
                 RecognizedField(
                     medication_index=medication_index,
                     field_type="DURATION_DAYS",
-                    raw_value=duration_match.group(1),
+                    raw_value=duration_match.group("value"),
                     confidence_score=self._minimum_confidence(duration_fields),
                 )
             )
-
+        # timing 열의 임의 안내 문구를 TIMING 필드로 저장하지 않습니다.
         timing_fields = columns["timing"]
-        if timing_fields:
+        timing_text = self._join_values(timing_fields)
+
+        if timing_fields and _TIMING_PATTERN.search(timing_text) is not None:
             result.append(
                 self._recognized_field(
                     medication_index=medication_index,
@@ -643,29 +856,22 @@ class PrescriptionOcrStructurer:
         self,
         *,
         row: list[RawRecognizedField],
-        maximum_x: float,
+        headers: dict[str, RawRecognizedField],
     ) -> dict[str, list[RawRecognizedField]]:
-        columns: dict[str, list[RawRecognizedField]] = {
-            "name": [],
-            "dose": [],
-            "frequency": [],
-            "duration": [],
-            "timing": [],
-        }
-        # 실제로 찾은 헤더 X좌표는 표 폭 계산에만 사용되고, 열 경계에는 사용되지 않습니다.
-        for field in row:
-            position = field.center_x / maximum_x
+        columns: dict[str, list[RawRecognizedField]] = {kind: [] for kind in _COLUMN_ORDER}
 
-            if position < 0.30:
-                columns["name"].append(field)
-            elif position < 0.48:
-                columns["dose"].append(field)
-            elif position < 0.64:
-                columns["frequency"].append(field)
-            elif position < 0.82:
-                columns["duration"].append(field)
-            else:
-                columns["timing"].append(field)
+        boundaries = self._column_boundaries(headers)
+
+        if not boundaries:
+            return columns
+
+        for field in row:
+            for kind in _COLUMN_ORDER:
+                left, right = boundaries[kind]
+
+                if left <= field.center_x < right:
+                    columns[kind].append(field)
+                    break
 
         for column_name, fields in columns.items():
             row_y_tolerance = self._median_field_height(fields) * _ROW_Y_TOLERANCE_HEIGHT_MULTIPLIER

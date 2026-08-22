@@ -760,3 +760,221 @@ def test_structure_keeps_medication_when_only_name_and_frequency_headers_exist()
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
     assert fields_by_type["DURATION_DAYS"].raw_value == "30"
     assert fields_by_type["TIMING"].raw_value == "아침 식후"
+
+
+def _shift_x(
+    fields: list[RawRecognizedField],
+    offset: float,
+) -> list[RawRecognizedField]:
+    return [
+        RawRecognizedField(
+            raw_value=field.raw_value,
+            confidence_score=field.confidence_score,
+            center_x=field.center_x + offset,
+            center_y=field.center_y,
+            height=field.height,
+        )
+        for field in fields
+    ]
+
+
+def test_structure_keeps_medication_when_name_header_is_missing() -> None:
+    raw_fields = [
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("투여기간", 719, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("암로디핀정 5mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("아침 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("암로디핀정 5mg")
+    assert fields_by_type["DOSE_VALUE"].raw_value == "1"
+    assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
+    assert fields_by_type["DURATION_DAYS"].raw_value == "30"
+
+
+@pytest.mark.parametrize("offset", [-180, -80, 80, 220])
+def test_structure_is_invariant_to_horizontal_translation(
+    offset: float,
+) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("투여기간", 719, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("암로디핀정 5mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("아침 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    baseline = PrescriptionOcrStructurer().structure(raw_fields)
+    shifted = PrescriptionOcrStructurer().structure(_shift_x(raw_fields, offset))
+
+    baseline_values = [
+        (
+            field.medication_index,
+            field.field_type,
+            field.raw_value,
+        )
+        for field in baseline
+    ]
+    shifted_values = [
+        (
+            field.medication_index,
+            field.field_type,
+            field.raw_value,
+        )
+        for field in shifted
+    ]
+
+    assert shifted_values == baseline_values
+
+
+@pytest.mark.parametrize(
+    ("name", "dose", "frequency", "timing"),
+    [
+        ("충분한 물 섭취", "1컵", "", "매일"),
+        ("운전 금지", "1시간", "", "취침 전"),
+    ],
+)
+def test_structure_excludes_guide_rows_without_medication_evidence(
+    name: str,
+    dose: str,
+    frequency: str,
+    timing: str,
+) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("암로디핀정 5mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("아침 식후", 911, 637),
+        _raw_field(name, 137, 701),
+        _raw_field(dose, 394, 701),
+        *([_raw_field(frequency, 547, 701)] if frequency else []),
+        _raw_field(timing, 911, 701),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["암로디핀정 5mg"]
+
+
+def test_structure_does_not_merge_dose_instruction_into_name() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("오메가-3-산에틸에스테르", 137, 637),
+        _raw_field("1캡슐", 394, 637),
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field("1정 복용", 137, 675),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["오메가-3-산에틸에스테르"]
+
+
+def test_structure_merges_package_continuation_with_strength() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field(
+            "오메가-3-산에틸에스테르",
+            137,
+            637,
+        ),
+        _raw_field("1캡슐", 394, 637),
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field(
+            "90연질캡슐 1000mg",
+            137,
+            675,
+        ),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["오메가-3-산에틸에스테르 90연질캡슐 1000mg"]
+
+
+@pytest.mark.parametrize(
+    "invalid_dose",
+    [
+        "3회분",
+        "30일치",
+        "1복용",
+        "1시간",
+        "1컵",
+    ],
+)
+def test_dose_pattern_rejects_non_dose_units(
+    invalid_dose: str,
+) -> None:
+    assert DOSE_PATTERN.fullmatch(invalid_dose) is None
+
+
+@pytest.mark.parametrize(
+    "valid_dose",
+    [
+        "1정",
+        "1병",
+        "5mg",
+        "0.5mL",
+        "I정",
+    ],
+)
+def test_dose_pattern_keeps_valid_or_reviewable_doses(
+    valid_dose: str,
+) -> None:
+    assert DOSE_PATTERN.fullmatch(valid_dose) is not None
+
+
+def test_structure_keeps_row_with_ocr_digit_confusion() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("리나글립틴정 5mg", 137, 637),
+        _raw_field("I정", 394, 637),
+        _raw_field("I회", 547, 637),
+        _raw_field("아침 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("리나글립틴정 5mg")
+    assert fields_by_type["DOSE_VALUE"].raw_value == "I"
+    assert fields_by_type["DOSE_UNIT"].raw_value == "정"
+    assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "I"

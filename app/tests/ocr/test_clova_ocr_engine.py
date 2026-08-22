@@ -344,3 +344,49 @@ async def test_recognize_structures_three_medications_from_clova_fixture(
         "에제티미브정 10mg",
         "오메가-3-산에틸에스테르 90연질캡슐 1000mg",
     ]
+
+    fields_by_identity = {
+        (
+            field.medication_index,
+            field.field_type,
+        ): field
+        for field in result.fields
+    }
+
+    expected_medication_fields = {
+        1: {
+            "DOSE_VALUE": "1",
+            "DOSE_UNIT": "정",
+            "FREQUENCY_PER_DAY": "1",
+            "DURATION_DAYS": "30",
+            "TIMING": "저녁 식후",
+        },
+        2: {
+            "DOSE_VALUE": "1",
+            "DOSE_UNIT": "정",
+            "FREQUENCY_PER_DAY": "1",
+            "DURATION_DAYS": "30",
+            "TIMING": "저녁 식후",
+        },
+        3: {
+            "DOSE_VALUE": "2",
+            "DOSE_UNIT": "캡슐",
+            "FREQUENCY_PER_DAY": "2",
+            "DURATION_DAYS": "30",
+            "TIMING": "아침 · 저녁 식후",
+        },
+    }
+
+    for (
+        medication_index,
+        expected_fields,
+    ) in expected_medication_fields.items():
+        for field_type, expected_value in expected_fields.items():
+            actual_field = fields_by_identity[
+                (
+                    medication_index,
+                    field_type,
+                )
+            ]
+
+            assert actual_field.raw_value == expected_value
