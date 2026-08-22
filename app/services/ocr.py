@@ -22,15 +22,19 @@ _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니�
 _ENGINE_ERROR_MESSAGE = "OCR 처리 중 오류가 발생했습니다."
 
 
-def _to_field_data(field: ExtractedField) -> ExtractedFieldData:
+def _to_field_data(
+    field: ExtractedField,
+) -> ExtractedFieldData:
     return ExtractedFieldData(
         field_id=field.id,
         field_type=str(field.field_type),
         medication_index=field.medication_index,
         raw_value=field.raw_value,
+        normalized_value=field.normalized_value,
         confirmed_value=field.confirmed_value,
-        confidence_score=float(field.confidence_score) if field.confidence_score is not None else None,
+        confidence_score=(float(field.confidence_score) if field.confidence_score is not None else None),
         confirmation_status=str(field.confirmation_status),
+        normalization_version=(field.normalization_version),
     )
 
 
@@ -172,10 +176,12 @@ class OcrService:
             ocr_job=job,
             fields=[
                 {
-                    "medication_index": field.medication_index,
+                    "medication_index": (field.medication_index),
                     "field_type": field.field_type,
                     "raw_value": field.raw_value,
-                    "confidence_score": field.confidence_score,
+                    "normalized_value": (field.normalized_value),
+                    "normalization_version": (field.normalization_version),
+                    "confidence_score": (field.confidence_score),
                 }
                 for field in result.fields
             ],

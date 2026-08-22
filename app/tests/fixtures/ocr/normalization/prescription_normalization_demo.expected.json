@@ -1,0 +1,21 @@
+{
+  "description": "OCR 약품명 정규화 통합 테스트",
+  "normalization_version": "rule-v1",
+  "medications": [
+    {
+      "medication_index": 1,
+      "raw_value": "로수바스타틴칼숨정 10 mg",
+      "normalized_value": "로수바스타틴칼숨정 10mg"
+    },
+    {
+      "medication_index": 2,
+      "raw_value": "에제티미브정 (10mg)",
+      "normalized_value": "에제티미브정 10mg"
+    },
+    {
+      "medication_index": 3,
+      "raw_value": "리나글립틴정 5 MG",
+      "normalized_value": "리나글립틴정 5mg"
+    }
+  ]
+}

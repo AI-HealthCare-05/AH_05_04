@@ -10,12 +10,16 @@ from app.repositories.chat_repository import ChatRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.chat_ai import (
     ChatEngine,
+    ChatGenerationFailedError,
     ChatMedicationInput,
     ChatReplyInput,
     ChatServiceUnavailableError,
     ChatTimeoutError,
-    NotConfiguredChatEngine,
 )
+
+_TIMEOUT_ERROR_MESSAGE = "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
+_UNAVAILABLE_ERROR_MESSAGE = "OpenAI 서비스 호출에 실패했습니다."
+_GENERATION_FAILED_ERROR_MESSAGE = "챗봇 응답 생성 처리 중 오류가 발생했습니다."
 
 
 def _to_message_data(message: ChatMessage) -> ChatMessageData:
@@ -33,9 +37,9 @@ class ChatService:
         self,
         prescription_repository: PrescriptionRepository,
         chat_repository: ChatRepository,
-        engine: ChatEngine | None = None,
+        engine: ChatEngine,
     ) -> None:
-        self._engine: ChatEngine = engine or NotConfiguredChatEngine()
+        self._engine = engine
         self._prescription_repo = prescription_repository
         self._chat_repo = chat_repository
 
@@ -78,7 +82,7 @@ class ChatService:
         request: SendChatMessageRequest,
     ) -> SendChatMessageData:
         # 실시간 복약 챗봇 응답 Backend 계약: 사용자 질문 저장 → OpenAI 단일 응답 생성 → 저장.
-        chat_session = await self._chat_repo.get_session_owned(session_id=session_id, user_id=user.id)
+        chat_session = await self._chat_repo.get_session_owned_for_update(session_id=session_id, user_id=user.id)
         if chat_session is None:
             raise ApiError(
                 status_code=404,
@@ -95,6 +99,7 @@ class ChatService:
                 details=[ErrorDetail(field="session_id", reason="CHAT_SESSION_CLOSED", rejected_value=str(session_id))],
             )
 
+        medications = await self._prescription_repo.get_medications(prescription_id=chat_session.prescription_id)
         next_seq = await self._chat_repo.next_seq(session=chat_session)
         user_message = await self._chat_repo.create_message(
             session=chat_session,
@@ -112,16 +117,16 @@ class ChatService:
             generation_status=ChatGenerationStatus.PENDING,
         )
 
-        medications = await self._prescription_repo.get_medications(prescription_id=chat_session.prescription_id)
         chat_input = ChatReplyInput(
             prescription_id=chat_session.prescription_id,
             medications=[
                 ChatMedicationInput(
                     medication_name=medication.medication_name,
-                    dose_value=float(medication.dose_value) if medication.dose_value is not None else None,
+                    dose_value=medication.dose_value,
                     dose_unit=medication.dose_unit,
                     frequency_per_day=medication.frequency_per_day,
                     timing_text=medication.timing_text,
+                    duration_days=medication.duration_days,
                 )
                 for medication in medications
             ],
@@ -130,45 +135,55 @@ class ChatService:
 
         assistant_message = await self._chat_repo.mark_generating(assistant_message)
 
+        failure_metadata: tuple[str, str] | None = None
+        api_error: ApiError | None = None
+        result = None
         try:
             result = await self._engine.reply(chat_input)
-        except ChatServiceUnavailableError as err:
-            await self._chat_repo.mark_failed(
-                assistant_message,
-                error_code="OPENAI_API_ERROR",
-                completed_at=datetime.now(UTC),
-            )
-            raise ApiError(
-                status_code=503,
-                code="SERVICE_UNAVAILABLE",
-                message="현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
-                details=[ErrorDetail(field="openai_api", reason="OPENAI_API_ERROR")],
-            ) from err
-        except ChatTimeoutError as err:
-            await self._chat_repo.mark_failed(
-                assistant_message,
-                error_code="OPENAI_API_TIMEOUT",
-                completed_at=datetime.now(UTC),
-            )
-            raise ApiError(
+        except ChatTimeoutError:
+            failure_metadata = ("OPENAI_API_TIMEOUT", _TIMEOUT_ERROR_MESSAGE)
+            api_error = ApiError(
                 status_code=504,
                 code="GATEWAY_TIMEOUT",
                 message="외부 처리 시간이 초과되었습니다. 다시 시도해 주세요.",
                 details=[ErrorDetail(field="openai_api", reason="OPENAI_API_TIMEOUT")],
-            ) from err
-        except Exception as err:
-            await self._chat_repo.mark_failed(
-                assistant_message,
-                error_code="OPENAI_RESPONSE_PROCESSING_FAILED",
-                completed_at=datetime.now(UTC),
             )
-            raise ApiError(
+        except ChatServiceUnavailableError:
+            failure_metadata = ("OPENAI_API_ERROR", _UNAVAILABLE_ERROR_MESSAGE)
+            api_error = ApiError(
+                status_code=503,
+                code="SERVICE_UNAVAILABLE",
+                message="현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                details=[ErrorDetail(field="openai_api", reason="OPENAI_API_ERROR")],
+            )
+        except ChatGenerationFailedError:
+            failure_metadata = ("OPENAI_RESPONSE_PROCESSING_FAILED", _GENERATION_FAILED_ERROR_MESSAGE)
+            api_error = ApiError(
                 status_code=500,
                 code="AI_RESPONSE_FAILED",
                 message="AI 답변 생성에 실패했습니다.",
                 details=[ErrorDetail(field="assistant_message", reason="OPENAI_RESPONSE_PROCESSING_FAILED")],
-            ) from err
+            )
+        except Exception:
+            failure_metadata = ("OPENAI_RESPONSE_PROCESSING_FAILED", _GENERATION_FAILED_ERROR_MESSAGE)
+            api_error = ApiError(
+                status_code=500,
+                code="AI_RESPONSE_FAILED",
+                message="AI 답변 생성에 실패했습니다.",
+                details=[ErrorDetail(field="assistant_message", reason="OPENAI_RESPONSE_PROCESSING_FAILED")],
+            )
 
+        if failure_metadata is not None and api_error is not None:
+            error_code, error_message = failure_metadata
+            await self._chat_repo.commit_failed_message_pair(
+                assistant_message,
+                error_code=error_code,
+                error_message=error_message,
+                completed_at=datetime.now(UTC),
+            )
+            raise api_error
+
+        assert result is not None
         completed_at = datetime.now(UTC)
         assistant_message = await self._chat_repo.mark_completed(
             assistant_message,

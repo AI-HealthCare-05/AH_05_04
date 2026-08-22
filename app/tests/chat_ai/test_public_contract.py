@@ -1,8 +1,14 @@
 from decimal import Decimal
 from uuid import uuid4
 
-from app.services.chat_ai import ChatMedicationInput as ChatReplyMedicationInput
-from app.services.chat_ai import ChatReplyInput
+import app.services.chat_ai as chat_ai
+from app.services.chat_ai import (
+    ChatGenerationFailedError,
+    ChatReplyInput,
+)
+from app.services.chat_ai import (
+    ChatMedicationInput as ChatReplyMedicationInput,
+)
 from app.services.chat_ai.schemas import ChatMedicationInput as SchemaChatMedicationInput
 
 
@@ -19,10 +25,11 @@ def test_public_contract_preserves_backend_medication_input_at_package_root() ->
     )
     reply_medication = ChatReplyMedicationInput(
         medication_name="합성약",
-        dose_value=1.5,
+        dose_value=Decimal("1.5000000000000000001"),
         dose_unit="mg",
         frequency_per_day=1,
         timing_text="저녁 식후",
+        duration_days=7,
     )
 
     reply_input = ChatReplyInput(
@@ -33,3 +40,10 @@ def test_public_contract_preserves_backend_medication_input_at_package_root() ->
 
     assert generation_medication.duration_days == 7
     assert reply_input.medications == [reply_medication]
+    assert reply_medication.dose_value == Decimal("1.5000000000000000001")
+    assert reply_medication.duration_days == 7
+
+
+def test_public_contract_exports_generation_failure_without_fallback_engine() -> None:
+    assert issubclass(ChatGenerationFailedError, Exception)
+    assert not hasattr(chat_ai, "NotConfiguredChatEngine")
