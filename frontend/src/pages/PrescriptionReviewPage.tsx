@@ -37,12 +37,30 @@ const fieldOrder: Record<string, number> = {
   TIMING: 6,
 }
 
+const requiredMedicationFieldTypes = [
+  'MEDICATION_NAME',
+  'DOSE_VALUE',
+  'FREQUENCY_PER_DAY',
+  'DURATION_DAYS',
+] as const
+
 function getFieldLabel(fieldType: string) {
   return fieldLabels[fieldType] ?? fieldType
 }
 
 function getSavedDisplayValue(field: ExtractedField) {
   return field.confirmed_value ?? field.raw_value ?? ''
+}
+
+function isFieldConfirmed(
+  field: ExtractedField,
+  draftValues: Record<string, string>,
+) {
+  const draftValue = draftValues[field.field_id]?.trim() ?? ''
+  return (
+    Boolean(field.confirmed_value?.trim()) &&
+    draftValue === field.confirmed_value?.trim()
+  )
 }
 
 function PrescriptionReviewPage() {
@@ -57,6 +75,7 @@ function PrescriptionReviewPage() {
   const [prescription, setPrescription] =
     useState<PrescriptionResponse | null>(null)
   const [message, setMessage] = useState('')
+  const [blockingMessage, setBlockingMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [savingFieldId, setSavingFieldId] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
@@ -97,47 +116,61 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
-  const isFieldConfirmed = (field: ExtractedField) => {
-    const draftValue = draftValues[field.field_id]?.trim() ?? ''
-    return (
-      Boolean(field.confirmed_value?.trim()) &&
-      draftValue === field.confirmed_value?.trim()
-    )
-  }
-
   const confirmedFieldCount = useMemo(
-    () =>
-      fields.filter((field) => {
-        const draftValue = draftValues[field.field_id]?.trim() ?? ''
-        return (
-          Boolean(field.confirmed_value?.trim()) &&
-          draftValue === field.confirmed_value?.trim()
-        )
-      }).length,
+    () => fields.filter((field) => isFieldConfirmed(field, draftValues)).length,
     [draftValues, fields],
   )
 
-  const canConfirmPrescription = useMemo(() => {
-    const prescribedDateConfirmed = fields.some(
-      (field) =>
-        field.medication_index === 0 &&
-        field.field_type === 'PRESCRIBED_DATE' &&
-        Boolean(field.confirmed_value?.trim()),
-    )
-    const medicationNameConfirmed = fields.some(
-      (field) =>
-        field.medication_index > 0 &&
-        field.field_type === 'MEDICATION_NAME' &&
-        Boolean(field.confirmed_value?.trim()),
-    )
+  const hasMissingRequiredMedicationFields = useMemo(
+    () =>
+      medicationGroups.length === 0 ||
+      medicationGroups.some((group) =>
+        requiredMedicationFieldTypes.some(
+          (fieldType) =>
+            !group.fields.some((field) => field.field_type === fieldType),
+        ),
+      ),
+    [medicationGroups],
+  )
 
+  const allRequiredMedicationFieldsConfirmed = useMemo(
+    () =>
+      medicationGroups.length > 0 &&
+      medicationGroups.every((group) =>
+        requiredMedicationFieldTypes.every((fieldType) => {
+          const field = group.fields.find(
+            (candidate) => candidate.field_type === fieldType,
+          )
+          return Boolean(field && isFieldConfirmed(field, draftValues))
+        }),
+      ),
+    [draftValues, medicationGroups],
+  )
+
+  const prescribedDateConfirmed = useMemo(
+    () =>
+      fields.some(
+        (field) =>
+          field.medication_index === 0 &&
+          field.field_type === 'PRESCRIBED_DATE' &&
+          isFieldConfirmed(field, draftValues),
+      ),
+    [draftValues, fields],
+  )
+
+  const reviewReadyForAcknowledgement =
+    prescribedDateConfirmed &&
+    allRequiredMedicationFieldsConfirmed &&
+    !hasMissingRequiredMedicationFields &&
+    !hasUnsavedChanges &&
+    savingFieldId === null
+
+  const canConfirmPrescription = useMemo(() => {
     return (
-      prescribedDateConfirmed &&
-      medicationNameConfirmed &&
-      !hasUnsavedChanges &&
+      reviewReadyForAcknowledgement &&
       userConfirmed
     )
-  }, [fields, hasUnsavedChanges, userConfirmed])
+  }, [reviewReadyForAcknowledgement, userConfirmed])
 
   useEffect(() => {
     if (!documentId || !jobId) {
@@ -152,11 +185,18 @@ function PrescriptionReviewPage() {
       try {
         setIsLoading(true)
         setMessage('')
+        setBlockingMessage('')
 
-        const [ocrResponse, documentBlob] = await Promise.all([
-          getOcrJob(jobId as string),
-          getPrescriptionDocumentFile(documentId as string),
-        ])
+        const ocrResponse = await getOcrJob(jobId as string)
+
+        if (ocrResponse.data.document_id !== documentId) {
+          setBlockingMessage(
+            '검수하려는 처방전과 OCR 결과가 일치하지 않습니다. 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+          )
+          return
+        }
+
+        const documentBlob = await getPrescriptionDocumentFile(documentId)
 
         setFields(ocrResponse.data.fields)
         setDraftValues(
@@ -242,7 +282,7 @@ function PrescriptionReviewPage() {
 
   const renderField = (field: ExtractedField) => {
     const draftValue = draftValues[field.field_id] ?? ''
-    const confirmed = isFieldConfirmed(field)
+    const confirmed = isFieldConfirmed(field, draftValues)
     const isSaving = savingFieldId === field.field_id
     const rawValue = field.raw_value?.trim() ?? ''
 
@@ -302,6 +342,32 @@ function PrescriptionReviewPage() {
     )
   }
 
+  if (blockingMessage) {
+    return (
+      <div className="prescription-review-page">
+        <MobileShell
+          title="다섯알"
+          onBack={() => navigate('/prescriptions/upload')}
+          hideNavigation
+        >
+          <main className="app-scroll prescription-review prescription-review__blocked">
+            <div className="prescription-review__error" role="alert">
+              <strong>검수를 진행할 수 없어요</strong>
+              <span>{blockingMessage}</span>
+            </div>
+            <Button
+              fullWidth
+              variant="secondary"
+              onClick={() => navigate('/prescriptions/upload')}
+            >
+              처방전 다시 업로드하기
+            </Button>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
   return (
     <div className="prescription-review-page">
       <MobileShell
@@ -324,6 +390,22 @@ function PrescriptionReviewPage() {
             아직 확정 전 정보예요. 누락되거나 잘못 읽은 값은 직접
             입력하고 원본과 대조해 주세요.
           </div>
+
+          {hasMissingRequiredMedicationFields && (
+            <div className="prescription-review__error" role="alert">
+              <strong>필수 처방 항목이 누락됐어요</strong>
+              <span>
+                약 이름·1회 복용량·하루 횟수·복용 기간을 모두 검수할 수
+                있도록 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.
+              </span>
+              <Button
+                variant="secondary"
+                onClick={() => navigate('/prescriptions/upload')}
+              >
+                다시 업로드하기
+              </Button>
+            </div>
+          )}
 
           {message && (
             <div className="prescription-review__error" role="alert">
@@ -351,12 +433,16 @@ function PrescriptionReviewPage() {
                 <strong>처방 정보</strong>
                 <StatusBadge
                   tone={
-                    prescriptionFields.every(isFieldConfirmed)
+                    prescriptionFields.every((field) =>
+                      isFieldConfirmed(field, draftValues),
+                    )
                       ? 'neutral'
                       : 'attention'
                   }
                 >
-                  {prescriptionFields.every(isFieldConfirmed)
+                  {prescriptionFields.every((field) =>
+                    isFieldConfirmed(field, draftValues),
+                  )
                     ? '확인 완료'
                     : '확인 필요'}
                 </StatusBadge>
@@ -368,7 +454,14 @@ function PrescriptionReviewPage() {
           )}
 
           {medicationGroups.map((group, groupIndex) => {
-            const allConfirmed = group.fields.every(isFieldConfirmed)
+            const allConfirmed = requiredMedicationFieldTypes.every(
+              (fieldType) => {
+                const field = group.fields.find(
+                  (candidate) => candidate.field_type === fieldType,
+                )
+                return Boolean(field && isFieldConfirmed(field, draftValues))
+              },
+            )
             const medicationName = group.fields.find(
               (field) => field.field_type === 'MEDICATION_NAME',
             )
@@ -411,7 +504,7 @@ function PrescriptionReviewPage() {
                 <input
                   type="checkbox"
                   checked={userConfirmed}
-                  disabled={hasUnsavedChanges}
+                  disabled={!reviewReadyForAcknowledgement}
                   onChange={(event) => setUserConfirmed(event.target.checked)}
                 />
                 <span>원본 처방전과 모든 항목을 직접 확인했습니다.</span>
@@ -426,10 +519,14 @@ function PrescriptionReviewPage() {
               <Button
                 fullWidth
                 className="prescription-review__confirm"
-                disabled={!canConfirmPrescription || isConfirming}
+                disabled={
+                  !canConfirmPrescription ||
+                  isConfirming ||
+                  savingFieldId !== null
+                }
                 onClick={handleConfirmPrescription}
               >
-                {isConfirming ? '확정 중...' : '확정하고 가이드 만들기'}
+                {isConfirming ? '처방 확정 중...' : '처방 확정'}
               </Button>
 
               <p className="prescription-review__progress">

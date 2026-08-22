@@ -91,6 +91,24 @@
   background: #fff7f0;
 }
 
+.prescription-review__error .ds-button {
+  min-height: 44px;
+  margin-top: 8px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.prescription-review__blocked {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding-top: 28px;
+}
+
+.prescription-review__blocked .prescription-review__error {
+  margin-top: 0;
+}
+
 .prescription-review__source {
   margin-top: 12px;
   border: 1px solid #d7e0ea;
