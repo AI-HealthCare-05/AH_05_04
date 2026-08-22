@@ -546,3 +546,217 @@ def test_structure_excludes_guide_sentence_with_dose_and_frequency() -> None:
     medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
 
     assert medication_names == ["로수바스타틴정"]
+
+
+def test_structure_keeps_medication_when_timing_header_is_missing() -> None:
+    raw_fields = [
+        # 용법 헤더만 OCR에서 누락
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        # 실제 약품
+        _raw_field("로수바스타틴정 10mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("로수바스타틴정 10mg")
+    assert fields_by_type["DOSE_VALUE"].raw_value == "1"
+    assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
+    assert fields_by_type["DURATION_DAYS"].raw_value == "30"
+
+
+def test_structure_keeps_partial_medication_for_confirmation() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        # 횟수와 기간은 OCR에서 누락
+        _raw_field("에제티미브정 10mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("에제티미브정 10mg")
+    assert fields_by_type["DOSE_VALUE"].raw_value == "1"
+    assert fields_by_type["DOSE_UNIT"].raw_value == "정"
+    assert fields_by_type["TIMING"].raw_value == "저녁 식후"
+    assert "FREQUENCY_PER_DAY" not in fields_by_type
+    assert "DURATION_DAYS" not in fields_by_type
+
+
+def test_structure_excludes_precaution_row_with_dose_values() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+        # 실제 약품
+        _raw_field("로수바스타틴정", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        # 숫자가 포함됐지만 실제로는 안내문
+        _raw_field("주의 사항", 137, 701),
+        _raw_field("1정", 394, 701),
+        _raw_field("1회", 547, 701),
+        _raw_field("복용 후 관찰", 911, 701),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["로수바스타틴정"]
+
+
+def test_structure_excludes_action_sentence_ending_in_jeong() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        # 마지막 글자가 '정'이지만 약품명이 아님
+        _raw_field("복용량을 조정", 137, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == []
+
+
+def test_structure_keeps_name_only_medication_as_unconfirmed() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        # 나머지 열 인식 실패
+        _raw_field("리나글립틴정 5mg", 137, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_fields = [field for field in result if field.medication_index == 1]
+
+    assert [field.field_type for field in medication_fields] == ["MEDICATION_NAME"]
+
+    assert medication_fields[0].raw_value == ("리나글립틴정 5mg")
+
+
+@pytest.mark.parametrize(
+    "missing_header",
+    [
+        "투여량",
+        "투여횟수",
+        "용법",
+    ],
+)
+def test_structure_does_not_depend_on_three_header_count(
+    missing_header: str,
+) -> None:
+    header_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("용법", 911, 581),
+    ]
+
+    raw_fields = [field for field in header_fields if field.raw_value != missing_header] + [
+        _raw_field("암로디핀정 5mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("아침 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["암로디핀정 5mg"]
+
+
+# 정상 약품이 사라지는 회귀 방지
+def test_structure_does_not_stop_on_section_word_inside_timing() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("로수바스타틴정", 137, 637),
+        _raw_field("1정", 394, 637),
+        # '지도'를 포함하지만 섹션 제목은 아님
+        _raw_field(
+            "의사 지도하에 저녁 식후",
+            911,
+            637,
+        ),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == ["로수바스타틴정"]
+
+
+# 임의의 안내문이 timing 신호가 되지 않는다
+def test_structure_does_not_accept_arbitrary_timing_text() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        # 약품명이 아닌 안내 문구
+        _raw_field("수분 섭취", 137, 637),
+        # 복용 시점 패턴이 아닌 임의 문구
+        _raw_field("충분히 유지", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == []
+
+
+# 회귀 테스트
+def test_structure_keeps_medication_when_only_name_and_frequency_headers_exist() -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("암로디핀정 5mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        _raw_field("30일", 719, 637),
+        _raw_field("아침 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == "암로디핀정 5mg"
+    assert fields_by_type["DOSE_VALUE"].raw_value == "1"
+    assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
+    assert fields_by_type["DURATION_DAYS"].raw_value == "30"
+    assert fields_by_type["TIMING"].raw_value == "아침 식후"
