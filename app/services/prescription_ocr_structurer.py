@@ -51,15 +51,26 @@ _DURATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# 실제 약품명 다음 줄로 볼 수 있는 형태만 허용합니다.
-# "1정 복용", "1정 드세요" 등 안내문은 허용하지 않습니다.
-_PACKAGE_CONTINUATION_PATTERN = re.compile(
-    r"^\d+\s*"
+# 수정: 여러 줄 약품명에서 공통으로 사용할 함량과 포장·제형 패턴입니다.
+_STRENGTH_UNIT_TEXT = r"(?:mg|g|mcg|µg|μg|㎍|㎎|mL|ml|㎖|%)"
+_STRENGTH_TEXT = rf"\d+(?:\.\d+)?\s*{_STRENGTH_UNIT_TEXT}"
+_PACKAGE_FORM_TEXT = (
     r"(?:연질|경질)?"
     r"(?:캡슐|정|포|병|앰플|바이알)"
-    r"(?:\s+\d+(?:\.\d+)?\s*"
-    r"(?:mg|g|mcg|µg|μg|mL|ml|%))?"
-    r"$",
+)
+
+# 수정: 아래 세 형태를 실제 약품명의 연속 행으로 허용합니다.
+# 1. 1000mg
+# 2. 정 500mg
+# 3. 90연질캡슐 1000mg
+# "1정 복용" 같은 안내문은 전체 패턴과 일치하지 않아 제외됩니다.
+_PACKAGE_CONTINUATION_PATTERN = re.compile(
+    rf"^(?:"
+    rf"{_STRENGTH_TEXT}"
+    rf"|{_PACKAGE_FORM_TEXT}\s+{_STRENGTH_TEXT}"
+    rf"|\d+\s*{_PACKAGE_FORM_TEXT}"
+    rf"(?:\s+{_STRENGTH_TEXT})?"
+    rf")$",
     re.IGNORECASE,
 )
 
@@ -73,11 +84,12 @@ _DOSAGE_FORM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# 수정: 약품명 판단과 연속 행 판단에서 동일한 함량 표현을 사용합니다.
 _STRENGTH_PATTERN = re.compile(
-    r"\d+(?:\.\d+)?\s*"
-    r"(?:mg|g|mcg|µg|μg|㎍|㎎|mL|ml|㎖|%)",
+    _STRENGTH_TEXT,
     re.IGNORECASE,
 )
+
 _TIMING_PATTERN = re.compile(
     r"(?:"
     r"아침|점심|저녁|취침|"
@@ -570,24 +582,27 @@ class PrescriptionOcrStructurer:
 
         strong_name_evidence = self._has_strong_medication_name_evidence(name_text)
 
-        parsed_support_count = sum(
+        # 수정: 용법(timing)은 약품 행을 뒷받침하는 보조 정보로만 사용합니다.
+        # 안내문에 아침·저녁 등이 있다는 이유만으로 약품 행이 되면 안 됩니다.
+        medication_support_count = sum(
             match is not None
             for match in (
                 dose_match,
                 frequency_match,
                 duration_match,
-                timing_match,
             )
         )
 
-        # 제형이나 함량이 포함된 강한 약품명은 나머지 값이 일부
-        # I정/I회처럼 오인식됐더라도 사용자 확인 대상으로 유지합니다.
+        parsed_support_count = medication_support_count + (1 if timing_match is not None else 0)
+
+        # 수정: 제형이나 함량이 명확한 약품명은 투여정보가 일부 누락돼도
+        # 사용자 확인 대상으로 보존합니다.
         if strong_name_evidence:
             return True
 
-        # 약품명 근거가 약한 일반 문구는 복수의 구조적 근거가 있어야
-        # 약품 행으로 인정합니다.
-        return parsed_support_count >= 2
+        # 수정: 약품명 근거가 약한 행은 투여량·횟수·기간 중 하나 이상과
+        # 전체적으로 두 개 이상의 구조적 근거가 있어야 합니다.
+        return medication_support_count >= 1 and parsed_support_count >= 2
 
     def _is_medication_name_continuation(
         self,
