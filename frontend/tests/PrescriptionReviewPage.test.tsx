@@ -1,4 +1,12 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
@@ -26,19 +34,35 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => {
   }
 })
 
-const requiredMedicationFields = [
+const displayedMedicationFields = [
   'MEDICATION_NAME',
   'DOSE_VALUE',
+  'DOSE_UNIT',
   'FREQUENCY_PER_DAY',
   'DURATION_DAYS',
+  'TIMING',
 ] as const
+
+function getValidFieldValue(fieldType: string, medicationIndex: number) {
+  const values: Record<string, string> = {
+    PRESCRIBED_DATE: '2026-08-22',
+    MEDICATION_NAME: `처방약 ${medicationIndex}`,
+    DOSE_VALUE: '0.5',
+    DOSE_UNIT: '정',
+    FREQUENCY_PER_DAY: '3',
+    DURATION_DAYS: '7',
+    TIMING: '식후',
+  }
+
+  return values[fieldType] ?? `${fieldType}-${medicationIndex}`
+}
 
 function makeField(
   fieldType: string,
   medicationIndex: number,
   confirmed = true,
 ): ExtractedField {
-  const value = `${fieldType}-${medicationIndex}`
+  const value = getValidFieldValue(fieldType, medicationIndex)
 
   return {
     field_id: `${fieldType}-${medicationIndex}`,
@@ -56,7 +80,7 @@ function makeCompleteFields(medicationCount = 1) {
 
   for (let index = 1; index <= medicationCount; index += 1) {
     fields.push(
-      ...requiredMedicationFields.map((fieldType) =>
+      ...displayedMedicationFields.map((fieldType) =>
         makeField(fieldType, index),
       ),
     )
@@ -99,6 +123,7 @@ async function getConfirmationButton() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
   vi.stubGlobal('URL', {
     ...URL,
     createObjectURL: vi.fn(() => 'blob:prescription'),
@@ -156,16 +181,34 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(await getConfirmationButton()).toHaveProperty('disabled', true)
   })
 
-  it('필드 저장 요청이 진행 중이면 처방 확정을 비활성화한다', async () => {
+  it('화면에 존재하는 선택 필드도 모두 저장되어야 최종 확인할 수 있다', async () => {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'DOSE_UNIT'
+        ? { ...field, confirmed_value: null, confirmation_status: 'PENDING' }
+        : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+
+    renderPage()
+
+    const acknowledgement = await screen.findByRole('checkbox')
+    expect(acknowledgement).toHaveProperty('disabled', true)
+    expect(await getConfirmationButton()).toHaveProperty('disabled', true)
+  })
+
+  it('동시 저장 중 하나가 먼저 완료되어도 남은 요청이 있으면 확정을 비활성화한다', async () => {
     const fields = makeCompleteFields()
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
-    let resolveSave: ((value: { data: ExtractedField }) => void) | undefined
+    const saveResolvers = new Map<
+      string,
+      (value: { data: ExtractedField }) => void
+    >()
     vi.mocked(updateExtractedField).mockImplementation(
       (fieldId) =>
         new Promise((resolve) => {
-          resolveSave = resolve
           const field = fields.find((candidate) => candidate.field_id === fieldId)
           if (!field) throw new Error('field not found')
+          saveResolvers.set(fieldId, resolve)
         }),
     )
 
@@ -185,17 +228,81 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(confirmButton).toHaveProperty('disabled', true)
 
     fireEvent.change(prescribedDateInput, {
-      target: { value: 'PRESCRIBED_DATE-0' },
+      target: { value: '2026-08-22' },
     })
     fireEvent.click(acknowledgement)
     expect(confirmButton).toHaveProperty('disabled', false)
 
-    fireEvent.click(screen.getAllByRole('button', { name: '수정 저장' })[0])
+    const prescribedDateField = prescribedDateInput.closest(
+      '.prescription-review__field',
+    )
+    const medicationNameInput = screen.getByLabelText('약 이름')
+    const medicationNameField = medicationNameInput.closest(
+      '.prescription-review__field',
+    )
+    if (!prescribedDateField || !medicationNameField) {
+      throw new Error('field controls not found')
+    }
+    const dateSaveButton = within(prescribedDateField).getByRole('button')
+    const medicationSaveButton = within(medicationNameField).getByRole('button')
+
+    fireEvent.click(dateSaveButton)
+    await waitFor(() => expect(dateSaveButton).toHaveProperty('disabled', true))
+    fireEvent.click(medicationSaveButton)
 
     await waitFor(() => expect(confirmButton).toHaveProperty('disabled', true))
-    const savedField = fields[0]
-    if (!savedField || !resolveSave) throw new Error('save did not start')
-    resolveSave({ data: savedField })
+    await waitFor(() => expect(saveResolvers.size).toBe(2))
+
+    const dateField = fields.find((field) => field.field_type === 'PRESCRIBED_DATE')
+    const medicationNameFieldData = fields.find(
+      (field) => field.field_type === 'MEDICATION_NAME',
+    )
+    const resolveDate = dateField && saveResolvers.get(dateField.field_id)
+    const resolveMedication =
+      medicationNameFieldData && saveResolvers.get(medicationNameFieldData.field_id)
+    if (!dateField || !medicationNameFieldData || !resolveDate || !resolveMedication) {
+      throw new Error('concurrent saves did not start')
+    }
+
+    await act(async () => resolveDate({ data: dateField }))
+    expect(confirmButton).toHaveProperty('disabled', true)
+    expect(acknowledgement).toHaveProperty('disabled', true)
+
+    await act(async () => resolveMedication({ data: medicationNameFieldData }))
+    await waitFor(() => expect(acknowledgement).toHaveProperty('disabled', false))
+    expect(confirmButton).toHaveProperty('disabled', true)
+  })
+
+  it.each([
+    [
+      '1회 복용량',
+      '1.2.3',
+      '1회 복용량은 숫자 형식으로 입력해 주세요.',
+    ],
+    ['하루 횟수', '2.5', '하루 횟수는 정수 형식으로 입력해 주세요.'],
+    ['복용 기간', '7.5', '복용 기간은 정수 형식으로 입력해 주세요.'],
+  ])('%s의 잘못된 숫자 형식은 PATCH 전에 차단한다', async (
+    fieldLabel,
+    invalidValue,
+    errorMessage,
+  ) => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+
+    renderPage()
+
+    const numericInput = await screen.findByLabelText(fieldLabel)
+    fireEvent.change(numericInput, { target: { value: invalidValue } })
+    const numericField = numericInput.closest('.prescription-review__field')
+    if (!numericField) throw new Error('numeric field not found')
+
+    fireEvent.click(within(numericField).getByRole('button'))
+
+    expect(
+      await within(numericField).findByText(errorMessage),
+    ).toBeTruthy()
+    expect(updateExtractedField).not.toHaveBeenCalled()
   })
 
   it('URL 문서와 OCR 문서가 다르면 검수 화면을 차단한다', async () => {

@@ -295,6 +295,11 @@
   line-height: 1.5;
 }
 
+.prescription-review__field > p.is-error {
+  color: var(--ds-danger);
+  font-weight: 700;
+}
+
 .prescription-review__acknowledgement {
   display: flex;
   align-items: flex-start;

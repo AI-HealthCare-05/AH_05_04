@@ -63,6 +63,31 @@ function isFieldConfirmed(
   )
 }
 
+function getNumericFieldError(fieldType: string, value: string) {
+  if (
+    fieldType === 'DOSE_VALUE' &&
+    !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)
+  ) {
+    return '1회 복용량은 숫자 형식으로 입력해 주세요.'
+  }
+
+  if (
+    fieldType === 'FREQUENCY_PER_DAY' &&
+    !/^[+-]?\d+$/.test(value)
+  ) {
+    return '하루 횟수는 정수 형식으로 입력해 주세요.'
+  }
+
+  if (
+    fieldType === 'DURATION_DAYS' &&
+    !/^[+-]?\d+$/.test(value)
+  ) {
+    return '복용 기간은 정수 형식으로 입력해 주세요.'
+  }
+
+  return null
+}
+
 function PrescriptionReviewPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -75,9 +100,12 @@ function PrescriptionReviewPage() {
   const [prescription, setPrescription] =
     useState<PrescriptionResponse | null>(null)
   const [message, setMessage] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [blockingMessage, setBlockingMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
-  const [savingFieldId, setSavingFieldId] = useState<string | null>(null)
+  const [savingFieldIds, setSavingFieldIds] = useState<Set<string>>(
+    () => new Set(),
+  )
   const [isConfirming, setIsConfirming] = useState(false)
   const [userConfirmed, setUserConfirmed] = useState(false)
 
@@ -121,6 +149,13 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
+  const allDisplayedFieldsConfirmed = useMemo(
+    () =>
+      fields.length > 0 &&
+      fields.every((field) => isFieldConfirmed(field, draftValues)),
+    [draftValues, fields],
+  )
+
   const hasMissingRequiredMedicationFields = useMemo(
     () =>
       medicationGroups.length === 0 ||
@@ -161,9 +196,10 @@ function PrescriptionReviewPage() {
   const reviewReadyForAcknowledgement =
     prescribedDateConfirmed &&
     allRequiredMedicationFieldsConfirmed &&
+    allDisplayedFieldsConfirmed &&
     !hasMissingRequiredMedicationFields &&
     !hasUnsavedChanges &&
-    savingFieldId === null
+    savingFieldIds.size === 0
 
   const canConfirmPrescription = useMemo(() => {
     return (
@@ -232,12 +268,34 @@ function PrescriptionReviewPage() {
     const value = draftValues[field.field_id]?.trim()
 
     if (!value) {
-      setMessage('확인할 값을 입력해 주세요.')
+      setFieldErrors((current) => ({
+        ...current,
+        [field.field_id]: '확인할 값을 입력해 주세요.',
+      }))
+      return
+    }
+
+    const numericFieldError = getNumericFieldError(field.field_type, value)
+
+    if (numericFieldError) {
+      setFieldErrors((current) => ({
+        ...current,
+        [field.field_id]: numericFieldError,
+      }))
       return
     }
 
     try {
-      setSavingFieldId(field.field_id)
+      setSavingFieldIds((current) => {
+        const next = new Set(current)
+        next.add(field.field_id)
+        return next
+      })
+      setFieldErrors((current) => {
+        const next = { ...current }
+        delete next[field.field_id]
+        return next
+      })
       setMessage('')
       const response = await updateExtractedField(field.field_id, value)
 
@@ -258,7 +316,11 @@ function PrescriptionReviewPage() {
           : '필드 저장 중 오류가 발생했습니다.',
       )
     } finally {
-      setSavingFieldId(null)
+      setSavingFieldIds((current) => {
+        const next = new Set(current)
+        next.delete(field.field_id)
+        return next
+      })
     }
   }
 
@@ -283,8 +345,16 @@ function PrescriptionReviewPage() {
   const renderField = (field: ExtractedField) => {
     const draftValue = draftValues[field.field_id] ?? ''
     const confirmed = isFieldConfirmed(field, draftValues)
-    const isSaving = savingFieldId === field.field_id
+    const isSaving = savingFieldIds.has(field.field_id)
     const rawValue = field.raw_value?.trim() ?? ''
+    const fieldError = fieldErrors[field.field_id]
+    const inputMode =
+      field.field_type === 'DOSE_VALUE'
+        ? 'decimal'
+        : field.field_type === 'FREQUENCY_PER_DAY' ||
+            field.field_type === 'DURATION_DAYS'
+          ? 'numeric'
+          : undefined
 
     return (
       <div className="prescription-review__field" key={field.field_id}>
@@ -301,11 +371,18 @@ function PrescriptionReviewPage() {
           <input
             id={`field-${field.field_id}`}
             value={draftValue}
+            inputMode={inputMode}
+            aria-invalid={Boolean(fieldError)}
             onChange={(event) => {
               setDraftValues((current) => ({
                 ...current,
                 [field.field_id]: event.target.value,
               }))
+              setFieldErrors((current) => {
+                const next = { ...current }
+                delete next[field.field_id]
+                return next
+              })
               setUserConfirmed(false)
             }}
             aria-describedby={`field-help-${field.field_id}`}
@@ -319,12 +396,16 @@ function PrescriptionReviewPage() {
           </Button>
         </div>
 
-        <p id={`field-help-${field.field_id}`}>
-          {confirmed
+        <p
+          id={`field-help-${field.field_id}`}
+          className={fieldError ? 'is-error' : ''}
+          role={fieldError ? 'alert' : undefined}
+        >
+          {fieldError ?? (confirmed
             ? '사용자가 확인하고 저장한 값입니다.'
             : rawValue
               ? `OCR 인식값: ${rawValue}`
-              : '인식된 값이 없습니다. 원본을 보고 직접 입력해 주세요.'}
+              : '인식된 값이 없습니다. 원본을 보고 직접 입력해 주세요.')}
         </p>
       </div>
     )
@@ -454,13 +535,8 @@ function PrescriptionReviewPage() {
           )}
 
           {medicationGroups.map((group, groupIndex) => {
-            const allConfirmed = requiredMedicationFieldTypes.every(
-              (fieldType) => {
-                const field = group.fields.find(
-                  (candidate) => candidate.field_type === fieldType,
-                )
-                return Boolean(field && isFieldConfirmed(field, draftValues))
-              },
+            const allConfirmed = group.fields.every((field) =>
+              isFieldConfirmed(field, draftValues),
             )
             const medicationName = group.fields.find(
               (field) => field.field_type === 'MEDICATION_NAME',
@@ -522,7 +598,7 @@ function PrescriptionReviewPage() {
                 disabled={
                   !canConfirmPrescription ||
                   isConfirming ||
-                  savingFieldId !== null
+                  savingFieldIds.size > 0
                 }
                 onClick={handleConfirmPrescription}
               >
