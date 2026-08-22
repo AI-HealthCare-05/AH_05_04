@@ -45,7 +45,7 @@ button {
   min-height: 100vh;
 }
 
-main {
+main:not(.app-scroll) {
   width: 100%;
   max-width: 390px;
   min-height: 100vh;

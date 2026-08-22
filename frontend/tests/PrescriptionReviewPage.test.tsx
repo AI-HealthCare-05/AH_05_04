@@ -9,7 +9,7 @@ import {
 } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import type {
   ExtractedField,
   OcrJobResponse,
@@ -21,6 +21,7 @@ import {
   getPrescriptionDocumentFile,
   updateExtractedField,
 } from '../src/api/prescriptions'
+import { createGuide } from '../src/api/guides'
 
 vi.mock('../src/api/prescriptions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/api/prescriptions')>()
@@ -33,6 +34,10 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => {
     updateExtractedField: vi.fn(),
   }
 })
+
+vi.mock('../src/api/guides', () => ({
+  createGuide: vi.fn(),
+}))
 
 const displayedMedicationFields = [
   'MEDICATION_NAME',
@@ -113,13 +118,19 @@ function renderPage() {
         '/prescriptions/review?document_id=document-1&job_id=job-1',
       ]}
     >
-      <PrescriptionReviewPage />
+      <Routes>
+        <Route
+          path="/prescriptions/review"
+          element={<PrescriptionReviewPage />}
+        />
+        <Route path="/guides/:guideId" element={<div>가이드 화면 도착</div>} />
+      </Routes>
     </MemoryRouter>,
   )
 }
 
 async function getConfirmationButton() {
-  return screen.findByRole('button', { name: '처방 확정' })
+  return screen.findByRole('button', { name: '확정하고 가이드 만들기' })
 }
 
 beforeEach(() => {
@@ -139,6 +150,18 @@ beforeEach(() => {
       prescribed_date: '2026-08-22',
       confirmed_at: '2026-08-22T00:00:02Z',
       medications: [],
+    },
+  })
+  vi.mocked(createGuide).mockResolvedValue({
+    data: {
+      guide_id: 'guide-1',
+      prescription_id: 'prescription-1',
+      generation_status: 'COMPLETED',
+      content: '복약 가이드 내용',
+      model_name: 'guide-model',
+      prompt_version: 'guide-prompt-v1',
+      requested_at: '2026-08-22T00:00:02Z',
+      completed_at: '2026-08-22T00:00:03Z',
     },
   })
 })
@@ -316,11 +339,11 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(screen.getByText(/OCR 결과가 일치하지 않습니다/)).toBeTruthy()
     expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
     expect(
-      screen.queryByRole('button', { name: '처방 확정' }),
+      screen.queryByRole('button', { name: '확정하고 가이드 만들기' }),
     ).toBeNull()
   })
 
-  it('버튼 문구와 실제 처방 확정 동작이 일치한다', async () => {
+  it('처방 확정 후 실제 가이드를 생성하고 guide_id 화면으로 이동한다', async () => {
     vi.mocked(getOcrJob).mockResolvedValue(
       makeOcrResponse(makeCompleteFields()),
     )
@@ -329,12 +352,15 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     fireEvent.click(await screen.findByRole('checkbox'))
     const confirmButton = await getConfirmationButton()
-    expect(screen.queryByText(/가이드 만들기/)).toBeNull()
 
     fireEvent.click(confirmButton)
 
     await waitFor(() =>
       expect(confirmPrescription).toHaveBeenCalledWith('document-1'),
     )
+    await waitFor(() =>
+      expect(createGuide).toHaveBeenCalledWith('prescription-1'),
+    )
+    expect(await screen.findByText('가이드 화면 도착')).toBeTruthy()
   })
 })

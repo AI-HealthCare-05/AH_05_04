@@ -87,16 +87,13 @@ export function MobileShell({
   return (
     <div className="mobile-app">
       <header className="app-topbar">
-        {onBack ? (
+        {onBack && (
           <button className="icon-button" type="button" onClick={onBack} aria-label="이전 화면">
             ‹
           </button>
-        ) : (
-          <span aria-hidden="true" style={{ color: 'var(--ds-action)', fontSize: 24 }}>
-            ◉
-          </span>
         )}
-        <h1>{title ?? '다섯알'}</h1>
+        <span className="brand-mark" aria-hidden="true">◌</span>
+        <h1>{title ?? 'Dosey 도지'}</h1>
       </header>
       {children}
       {!hideNavigation && (

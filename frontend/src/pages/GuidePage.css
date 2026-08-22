@@ -1,0 +1,82 @@
+.guide-page {
+  width: min(100%, 390px);
+  min-height: 100dvh;
+  margin: 0 auto;
+  color: var(--ds-text);
+  font-family: var(--ds-font);
+}
+
+.guide-page .mobile-app {
+  min-height: 100dvh;
+}
+
+.guide-page__content {
+  padding-bottom: calc(96px + var(--ds-safe-bottom));
+}
+
+.guide-page__hero {
+  margin-top: 4px;
+  border: 0;
+  background: var(--ds-tile);
+}
+
+.guide-page__hero .status-badge {
+  background: rgb(255 255 255 / 14%);
+  color: #fff;
+}
+
+.guide-page__hero h2 {
+  margin: 14px 0 8px;
+  font-size: 22px;
+}
+
+.guide-page__hero p {
+  margin: 0;
+  color: rgb(255 255 255 / 78%);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.guide-page__hero small {
+  display: block;
+  margin-top: 14px;
+  color: rgb(255 255 255 / 62%);
+  font-size: 11px;
+}
+
+.guide-page__guide-card h2,
+.guide-page__state h2 {
+  margin: 12px 0 8px;
+  font-size: 20px;
+}
+
+.guide-page__guide-card {
+  border-color: #d6dee8;
+  border-radius: 20px;
+}
+
+.guide-page__guide-text {
+  color: #343b45;
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.guide-page__state {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.guide-page__state p {
+  margin: 8px 0 18px;
+  color: var(--ds-text-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+@media (max-width: 374px) {
+  .guide-page__content {
+    padding-inline: 16px;
+  }
+}

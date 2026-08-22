@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
+import { createGuide } from '../api/guides'
 import {
   confirmPrescription,
   getOcrJob,
@@ -107,6 +108,7 @@ function PrescriptionReviewPage() {
     () => new Set(),
   )
   const [isConfirming, setIsConfirming] = useState(false)
+  const [isCreatingGuide, setIsCreatingGuide] = useState(false)
   const [userConfirmed, setUserConfirmed] = useState(false)
 
   const prescriptionFields = useMemo(
@@ -324,22 +326,52 @@ function PrescriptionReviewPage() {
     }
   }
 
+  const handleCreateGuide = async (prescriptionId: string) => {
+    try {
+      setIsCreatingGuide(true)
+      setMessage('')
+      const response = await createGuide(prescriptionId)
+      navigate(`/guides/${response.data.guide_id}`)
+    } catch (error) {
+      setMessage(
+        error instanceof ApiError
+          ? error.message
+          : '복약 가이드 생성 중 오류가 발생했습니다.',
+      )
+    } finally {
+      setIsCreatingGuide(false)
+    }
+  }
+
   const handleConfirmPrescription = async () => {
-    if (!documentId || !canConfirmPrescription) return
+    if (
+      !documentId ||
+      !canConfirmPrescription ||
+      isConfirming ||
+      isCreatingGuide
+    ) {
+      return
+    }
+
+    let confirmedPrescription: PrescriptionResponse
 
     try {
       setIsConfirming(true)
       setMessage('')
-      setPrescription(await confirmPrescription(documentId))
+      confirmedPrescription = await confirmPrescription(documentId)
+      setPrescription(confirmedPrescription)
     } catch (error) {
       setMessage(
         error instanceof ApiError
           ? error.message
           : '처방 확정 중 오류가 발생했습니다.',
       )
+      return
     } finally {
       setIsConfirming(false)
     }
+
+    await handleCreateGuide(confirmedPrescription.data.prescription_id)
   }
 
   const renderField = (field: ExtractedField) => {
@@ -414,7 +446,7 @@ function PrescriptionReviewPage() {
   if (isLoading) {
     return (
       <div className="prescription-review-page">
-        <MobileShell title="OCR 결과 확인" hideNavigation>
+        <MobileShell title="Dosey 도지" hideNavigation>
           <div className="app-scroll prescription-review__loading" role="status">
             처방전 검수 정보를 불러오고 있어요.
           </div>
@@ -427,7 +459,7 @@ function PrescriptionReviewPage() {
     return (
       <div className="prescription-review-page">
         <MobileShell
-          title="다섯알"
+          title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
           hideNavigation
         >
@@ -452,7 +484,7 @@ function PrescriptionReviewPage() {
   return (
     <div className="prescription-review-page">
       <MobileShell
-        title="다섯알"
+        title="Dosey 도지"
         onBack={() => navigate('/prescriptions/upload')}
         hideNavigation
       >
@@ -598,11 +630,14 @@ function PrescriptionReviewPage() {
                 disabled={
                   !canConfirmPrescription ||
                   isConfirming ||
+                  isCreatingGuide ||
                   savingFieldIds.size > 0
                 }
                 onClick={handleConfirmPrescription}
               >
-                {isConfirming ? '처방 확정 중...' : '처방 확정'}
+                {isConfirming
+                  ? '처방 확정 중...'
+                  : '확정하고 가이드 만들기'}
               </Button>
 
               <p className="prescription-review__progress">
@@ -613,14 +648,33 @@ function PrescriptionReviewPage() {
 
           {prescription && (
             <Card className="prescription-review__complete">
-              <StatusBadge>확정 완료</StatusBadge>
-              <h2>처방정보가 확정되었어요</h2>
+              <StatusBadge>
+                {isCreatingGuide ? '가이드 생성 중' : '확정 완료'}
+              </StatusBadge>
+              <h2>
+                {isCreatingGuide
+                  ? '복약 가이드를 만들고 있어요'
+                  : '처방정보가 확정되었어요'}
+              </h2>
               <p>
-                확인된 처방정보만 이후 복약 가이드와 일정에 사용합니다.
+                {isCreatingGuide
+                  ? '확인된 처방정보를 기준으로 안전한 복약 안내를 준비하고 있어요.'
+                  : '확인된 처방정보만 이후 복약 가이드와 일정에 사용합니다.'}
               </p>
               <strong>
                 등록된 약물 {prescription.data.medications.length}개
               </strong>
+              {!isCreatingGuide && message && (
+                <Button
+                  fullWidth
+                  style={{ marginTop: 14 }}
+                  onClick={() =>
+                    void handleCreateGuide(prescription.data.prescription_id)
+                  }
+                >
+                  가이드 생성 다시 시도
+                </Button>
+              )}
             </Card>
           )}
         </main>
