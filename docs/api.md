@@ -131,6 +131,32 @@ DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반�
 - `normalized_value`는 자동 처방 확정이나 의약품 동일성 판단에 사용하지 않는다.
 - 최종 처방에는 `confirmed_value`만 사용한다.
 
+## 처방 정보 확정
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/documents/{document_id}/prescription` | `201 Created` | 문서의 최신 완료 OCR 결과 중 사용자가 검수한 필드로 처방 정보를 확정합니다. |
+
+### 요청
+
+- MVP에서는 별도 요청 본문 없이 `document_id`를 기준으로 처리합니다.
+- Backend는 문서 소유권과 최신 OCR 작업의 `COMPLETED` 상태를 확인합니다.
+- OCR 필드는 사용자가 확인한 `confirmed_value`만 처방 확정에 사용합니다.
+- `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
+- `DOSE_UNIT`, `TIMING`은 현재 MVP에서 선택값입니다.
+- 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
+
+### 주요 오류
+
+| 상태 | `code` | 설명 |
+| ---: | --- | --- |
+| `404` | `MEDICAL_DOCUMENT_NOT_FOUND` | 사용자가 접근할 수 없는 문서입니다. |
+| `409` | `OCR_JOB_NOT_COMPLETED` | OCR 처리가 완료되지 않았습니다. |
+| `422` | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 처방 확정 필수 항목이 누락되었습니다. |
+| `422` | `VALIDATION_FAILED` | 필드 값의 형식이 올바르지 않습니다. |
+
 
 ## 변경 이력
 
