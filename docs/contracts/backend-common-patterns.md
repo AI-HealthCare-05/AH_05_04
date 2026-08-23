@@ -1,12 +1,14 @@
-# Backend 공통 구현 패턴
+# Backend 공통 구현 규칙
 
 ## 목적
 
-Backend 담당자가 기능을 나누어 구현하더라도 사용자 리소스 접근, 실패 상태 저장, 의존성 주입, Repository 테스트를 같은 기준으로 적용할 수 있도록 공통 구현 규칙을 정리합니다.
+Backend 담당자가 기능을 나누어 구현하더라도 사용자 리소스 소유권 확인과 외부 호출 실패 상태 저장을 같은 기준으로 적용할 수 있도록 공통 구현 규칙을 정리합니다.
 
 공통 오류 응답 형식과 오류 코드는 [`backend-error-response.md`](./backend-error-response.md)를 기준으로 합니다.
 
 이 문서의 패턴은 현재 MVP 구현(동기 요청 처리, 단일 DB 세션) 기준입니다. Post-MVP에서 공통 비동기 Job 기반으로 전환되면 실패 상태 저장·트랜잭션 경계가 바뀌므로, 새 기능에 그대로 적용하기 전에 Post-MVP 계획과 맞는지 먼저 확인합니다.
+
+> **문서 성격**: 소유권 확인과 실패 상태 저장은 사용자 리소스 보호와 외부에서 관찰되는 상태에 영향을 주는 공통 Backend 규칙입니다. DI Provider와 Repository 테스트 패턴은 별도의 [Backend 내부 구현 패턴 문서](./backend-implementation-patterns.md)에서 관리합니다.
 
 ## 1. 사용자 리소스 소유권 확인
 
@@ -148,7 +150,7 @@ if job is None or job.document.user_id != user.id:
 | 채팅 세션 | `ChatRepository.get_session_owned(...)` (조회), `get_session_owned_for_update(...)` (메시지 전송, 행 잠금 포함) |
 | 사용자 정보 | 인증된 `user` 객체 사용 (별도 리소스 ID 조회 없음) |
 
-현재 코드에서 소유권 확인이 완전히 빠진 사용자 리소스 API는 확인되지 않았습니다. 교차 사용자 접근 테스트는 가이드 Repository에 작성되어 있으며, 의료문서·처방전·OCR·채팅 리소스 테스트는 추가 보강 대상입니다.
+현재 코드에서 소유권 확인이 완전히 빠진 사용자 리소스 API는 확인되지 않았습니다. 교차 사용자 접근 테스트는 가이드 Repository(`test_get_prescription_owned_rejects_other_users_prescription`, `test_get_owned_guide_rejects_other_users_guide`)와 채팅 API(`test_foreign_ownership_and_closed_session_are_rejected_before_engine`)에 이미 작성되어 있으며, 의료문서·처방전·OCR 리소스 테스트는 추가 보강 대상입니다.
 
 ## 2. 실패 상태 저장과 commit 규칙
 
@@ -190,6 +192,8 @@ except ExternalTimeoutError as err:
 
 **주의**: 이 `commit()`은 실패 상태 필드만 선택적으로 저장하는 것이 아니라, **같은 DB 세션에 그 시점까지 pending 상태로 남아있던 다른 모든 변경사항까지 함께 커밋**합니다. 실패 처리 직전에 다른 목적의 변경을 미리 `flush()`해 두면, 의도하지 않은 상태로 같이 확정될 수 있으므로 순서에 주의합니다.
 
+**적용 조건**: 이 실패 시점 `commit()`은 해당 요청의 DB 세션에 함께 저장되어도 괜찮은 변경사항만 남아있는 경우에만 사용합니다. 같은 세션 안에 이 실패 기록과 함께 확정되면 안 되는 다른 작업이 있다면, 그 작업은 별도의 트랜잭션(또는 별도 세션)으로 분리해 실패 시점의 `commit()`이 영향을 주지 않도록 합니다.
+
 ### 2.4 저장할 정보와 저장하지 않을 정보
 
 - 저장: 상태값, 내부 분기용 고정 오류 코드, 안전한 요약 메시지, 완료 시각
@@ -209,78 +213,9 @@ except ExternalTimeoutError as err:
 
 챗봇은 사용자 질문과 실패한 답변을 한 쌍으로 남겨야 대화 흐름이 끊기지 않으므로, 단일 레코드만 갱신하는 `mark_failed(...)`가 아니라 메시지 쌍 전체를 커밋하는 별도 메서드를 씁니다. 새 도메인에 실패 상태 저장을 추가할 때는 이름을 `mark_failed`로 맞추기보다, 그 도메인에서 실패 시점에 실제로 무엇을 같이 확정해야 하는지부터 판단합니다.
 
-## 3. DI Provider 패턴
+## 3. OCR·챗봇 실패 상태 유지 QA
 
-### 3.1 기본 구조
-
-라우터는 Service Provider를 받고 Service Provider는 Repository Provider를 통해 필요한 Repository를 구성합니다.
-
-```python
-def get_x_repository(
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> XRepository:
-    return XRepository(session)
-
-
-def get_x_service(
-    repository: Annotated[XRepository, Depends(get_x_repository)],
-) -> XService:
-    return XService(repository=repository)
-```
-
-라우터에서는 Service Provider를 주입합니다.
-
-```python
-async def get_resource(
-    service: Annotated[XService, Depends(get_x_service)],
-) -> Response:
-    result = await service.get_resource()
-    return Response(content=result)
-```
-
-### 3.2 직접 주입을 지양하는 이유
-
-라우터에서 `Depends(SomeService)`를 직접 사용하면 Service의 생성자 의존성이 분산되거나 기본 생성 방식에 의존하게 됩니다. `get_x_repository() -> get_x_service()` 체인을 사용하면 DB Session과 Service 의존성이 한 경로로 관리되고 테스트에서 `dependency_overrides`로 Service·Repository를 교체하기 쉽습니다.
-
-## 4. Repository 테스트 패턴
-
-### 4.1 테스트 격리 원칙
-
-Repository 테스트는 테스트 간 DB 상태가 섞이지 않도록 각 테스트를 독립적으로 실행합니다. 현재 프로젝트는 테스트용 MySQL DB에 스키마를 준비하고 테스트별 트랜잭션과 savepoint를 사용해 종료 시 변경 내용을 rollback합니다.
-
-```python
-async with test_engine.connect() as connection:
-    transaction = await connection.begin()
-    session = AsyncSession(
-        bind=connection,
-        expire_on_commit=False,
-        autoflush=False,
-        join_transaction_mode="create_savepoint",
-    )
-    try:
-        yield session
-    finally:
-        await session.close()
-        if transaction.is_active:
-            await transaction.rollback()
-```
-
-일반 Repository 테스트에서는 공통 `db_session` fixture를 사용하고 테스트 데이터는 fixture 안에서 생성합니다. 테스트 데이터의 이메일·전화번호 등 고유값은 테스트마다 충돌하지 않도록 구분합니다.
-
-### 4.2 기본 테스트 구성
-
-- 생성: 필요한 필드와 기본 상태가 저장되는지 확인
-- 조회: 존재하는 데이터와 없는 데이터를 구분해 확인
-- 소유권: 소유자는 조회되고 다른 사용자는 `None` 또는 도메인 `404`가 되는지 확인
-- 수정: 허용된 필드만 변경되는지 확인
-- 삭제: 소유권 확인 후 삭제되는지 확인 (삭제 API 도입 후 적용)
-- 실패 상태: 실패 처리 이후 rollback이 발생해도 실패 상태가 남는지 확인
-
-테스트는 구현 세부사항보다 Repository가 보장하는 결과를 검증합니다.
-
-## 5. OCR·챗봇 실패 상태 유지 QA
-
-### 5.1 필수 시나리오
+### 3.1 필수 시나리오
 
 - OCR 외부 호출 timeout 시 OCR 작업이 실패 상태로 저장됩니다.
 - OCR 외부 호출 실패 시 내부 오류 코드가 저장되고 민감한 원문이 저장되지 않습니다.

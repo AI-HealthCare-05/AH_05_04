@@ -6,7 +6,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 ## 공통 오류 응답 형식
 
-모든 오류 응답은 다음 형식을 따릅니다.
+등록된 API에서 처리하는 오류 응답은 다음 형식을 따릅니다.
 
 ```json
 {
@@ -26,6 +26,8 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 클라이언트는 `message`가 아니라 `code`를 기준으로 오류를 분기합니다.
 
+등록되지 않은 경로 요청(404)이나 지원하지 않는 HTTP 메서드 요청(405)은 FastAPI/Starlette가 라우팅 단계에서 자체적으로 응답을 만들기 때문에 아직 이 공통 형식을 따르지 않습니다. 현재는 등록되지 않은 경로에 `{"detail": "Not Found"}`, 지원하지 않는 메서드에 `{"detail": "Method Not Allowed"}`가 반환됩니다. 클라이언트는 이 두 경우에 `code` 필드가 없을 수 있다는 점을 감안해야 합니다.
+
 ## HTTP 상태 코드 기준
 
 | 구분 | HTTP 상태 코드 | 이름 | 사용 기준 |
@@ -33,14 +35,14 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 | 성공 | 200 | OK | 조회·수정 요청이 정상 처리되고 응답 본문이 있는 경우 |
 | 성공 | 201 | Created | 새로운 리소스가 생성된 경우 |
 | 성공 | 202 | Accepted | 비동기 작업 요청이 접수된 경우 (Post-MVP 공통 비동기 기반 도입 이후 사용) |
-| 성공 | 204 | No Content | 삭제 또는 처리 완료 후 반환할 본문이 없는 경우 |
-| 클라이언트 오류 | 400 | Bad Request | 요청 형식, JSON 문법, 필수 헤더 등이 잘못된 경우 |
+| 성공 | 204 | No Content | 삭제 또는 처리 완료 후 반환할 본문이 없는 경우 (현재 사용자 리소스 삭제 API가 없어 실제로 사용되는 곳은 아직 없음) |
+| 클라이언트 오류 | 400 | Bad Request | Pydantic 요청 검증 범위 밖에서 Service가 직접 확인하는 요청 오류 (예: 업로드 파일 누락) |
 | 클라이언트 오류 | 401 | Unauthorized | 인증 토큰이 없거나 유효하지 않거나 만료된 경우 |
 | 클라이언트 오류 | 403 | Forbidden | 인증은 되었지만 해당 리소스에 접근 권한이 없는 경우 |
-| 클라이언트 오류 | 404 | Not Found | 요청한 리소스가 존재하지 않는 경우 |
+| 클라이언트 오류 | 404 | Not Found | 요청한 리소스가 존재하지 않거나 다른 사용자 소유인 경우 |
 | 클라이언트 오류 | 409 | Conflict | 현재 리소스 상태와 충돌하여 요청을 처리할 수 없는 경우 |
 | 클라이언트 오류 | 412 | Precondition Failed | `If-Match`, `version`, `ETag` 조건이 맞지 않는 경우 (Post-MVP) |
-| 클라이언트 오류 | 422 | Unprocessable Entity | 요청 형식은 맞지만 필드 값 검증에 실패한 경우 |
+| 클라이언트 오류 | 422 | Unprocessable Entity | 요청 본문 JSON 문법 오류, 필수 필드 누락 등 Pydantic 요청 검증에 실패한 경우. 현재 Backend는 잘못된 JSON과 필수값 누락을 모두 422로 응답함 |
 | 클라이언트 오류 | 429 | Too Many Requests | 호출 횟수 제한을 초과한 경우 (Post-MVP) |
 | 서버 오류 | 500 | Internal Server Error | 서버 내부 오류로 요청 처리에 실패한 경우 |
 | 서버 오류 | 503 | Service Unavailable | AI, OCR 등 외부 서비스를 일시적으로 사용할 수 없는 경우 |
@@ -168,7 +170,7 @@ raise ApiError(
 | 200 | `ANSWERED` | 답변을 정상적으로 생성했습니다. | Track F, RAG 기반 응답 상태 |
 | 200 | `SAFETY_BLOCKED` | 안전상의 이유로 답변을 제공할 수 없습니다. 의료진과 상담해 주세요. | Track F, Safety Router |
 | 200 | `EVIDENCE_UNAVAILABLE` | 신뢰할 수 있는 근거가 부족해 답변을 제한합니다. | Track F, 근거 부족 fallback |
-| 404 | `CITATION_NOT_FOUND` | 답변의 출처 정보를 찾을 수 없습니다. | Track F, 출처 상세 조회 API 도입 후. 답변 생성 중 출처 누락은 `AI_RESPONSE_FAILED`를 사용 |
+| 404 | `CITATION_NOT_FOUND` | 답변의 출처 정보를 찾을 수 없습니다. | Track F, 출처 상세 조회 API 도입 후. 답변 생성 중 출처 누락은 `AI_RESPONSE_FAILED`, 서버 데이터 무결성 문제로 출처 조회 자체가 실패하면 공통 `INTERNAL_SERVER_ERROR`를 사용 |
 
 `ANSWERED`/`SAFETY_BLOCKED`/`EVIDENCE_UNAVAILABLE`은 오류가 아닌 정상 응답(`200`)의 `status` 값으로 설계되어 있습니다. AI가 안전 제한이나 근거 부족으로 답변을 제한한 경우에도 요청 자체는 정상 처리된 것으로 보고, 실제 요청·서버·처리 오류만 `ApiError`의 `code`로 구분할 계획입니다.
 

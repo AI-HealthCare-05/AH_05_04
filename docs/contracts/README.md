@@ -5,10 +5,11 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 ## 계약 문서
 
 - [복약 가이드 Backend–AI 계약](./medication-guide-ai-backend.md): 확정 처방 입력, AI 생성 결과, 오류와 조립 책임
-- [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md)
+- [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md): 확정 처방 약물 입력, Provider payload 제한, 오류 매핑, 동시성·캐시 계약
 - [OCR 약품명 정규화 계약](./ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할과 정규화 규칙
 - [Backend 공통 오류 응답 계약](./backend-error-response.md): `ApiError` 사용법, 공통·도메인 오류 코드
-- [Backend 공통 구현 패턴](./backend-common-patterns.md): 소유권 확인, 실패 상태 저장, DI Provider, Repository 테스트
+- [Backend 공통 구현 규칙](./backend-common-patterns.md): 소유권 확인, 실패 상태 저장
+- [Backend 내부 구현 패턴](./backend-implementation-patterns.md): DI Provider, Repository 테스트
 
 ## 우선 확정할 계약
 
