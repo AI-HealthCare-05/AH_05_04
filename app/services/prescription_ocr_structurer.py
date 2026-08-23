@@ -46,8 +46,10 @@ _FREQUENCY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# 수정: 일, 일간뿐 아니라 처방전에서 사용하는 일분·일치도
+# 동일한 투약기간 값으로 추출합니다.
 _DURATION_PATTERN = re.compile(
-    r"(?P<value>\d+)\s*일(?:간)?(?=\s|$)",
+    r"(?P<value>\d+)\s*일(?:간|분|치)?(?=\s|$)",
     re.IGNORECASE,
 )
 
@@ -59,17 +61,14 @@ _PACKAGE_FORM_TEXT = (
     r"(?:캡슐|정|포|병|앰플|바이알)"
 )
 
-# 수정: 아래 세 형태를 실제 약품명의 연속 행으로 허용합니다.
-# 1. 1000mg
-# 2. 정 500mg
-# 3. 90연질캡슐 1000mg
-# "1정 복용" 같은 안내문은 전체 패턴과 일치하지 않아 제외됩니다.
+# 수정: OCR이 제형·함량 사이의 공백을 누락해도 연속 약품명으로 처리합니다.
+# 정500mg, 90연질캡슐1000mg과 공백이 있는 형태를 모두 허용합니다.
 _PACKAGE_CONTINUATION_PATTERN = re.compile(
     rf"^(?:"
     rf"{_STRENGTH_TEXT}"
-    rf"|{_PACKAGE_FORM_TEXT}\s+{_STRENGTH_TEXT}"
+    rf"|{_PACKAGE_FORM_TEXT}\s*{_STRENGTH_TEXT}"
     rf"|\d+\s*{_PACKAGE_FORM_TEXT}"
-    rf"(?:\s+{_STRENGTH_TEXT})?"
+    rf"(?:\s*{_STRENGTH_TEXT})?"
     rf")$",
     re.IGNORECASE,
 )
@@ -195,15 +194,19 @@ _NON_MEDICATION_NAME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# 이름만 인식된 약품을 미확인 항목으로 남기기 위한 강한 약품명 형태입니다.
-# 단독 확정 기준이 아니라, 약품명 열 내부라는 조건과 함께 사용합니다.
+# 수정: 이름만 인식된 약품은 제품명처럼 이어진 문자열과
+# 명확한 제형으로 구성된 경우에만 미확인 약품으로 보존합니다.
+# "하루 한 정", "건강 관리정" 같은 문장은 공백 구조 때문에 제외됩니다.
+_MEDICATION_NAME_TOKEN = r"[가-힣A-Za-z0-9·ㆍ.+/%()\-]+"
+
 _STANDALONE_MEDICATION_NAME_PATTERN = re.compile(
+    rf"^{_MEDICATION_NAME_TOKEN}\s*"
     r"(?:"
-    r"정|캡슐|연질캡슐|경질캡슐|시럽|액|산|과립|"
-    r"연고|크림|겔|패치|주사|주사액|점안액|현탁액"
+    r"연질캡슐|경질캡슐|캡슐|"
+    r"주사액|점안액|현탁액|"
+    r"정|시럽|액|산|과립|연고|크림|겔|패치|주사"
     r")"
-    r"(?:\s*\d+(?:\.\d+)?\s*"
-    r"(?:mg|g|mcg|µg|μg|mL|%))?"
+    rf"(?:\s*{_STRENGTH_TEXT})?"
     r"$",
     re.IGNORECASE,
 )
@@ -595,10 +598,11 @@ class PrescriptionOcrStructurer:
 
         parsed_support_count = medication_support_count + (1 if timing_match is not None else 0)
 
-        # 수정: 제형이나 함량이 명확한 약품명은 투여정보가 일부 누락돼도
-        # 사용자 확인 대상으로 보존합니다.
+        # 수정: 제형이나 함량이 포함되어 있어도 일반 행으로 인정하려면
+        # 투여량·횟수·기간 중 하나 이상의 처방 구조 근거가 필요합니다.
+        # 이름만 인식된 약품은 아래의 standalone 판정에서 별도로 보존합니다.
         if strong_name_evidence:
-            return True
+            return medication_support_count >= 1
 
         # 수정: 약품명 근거가 약한 행은 투여량·횟수·기간 중 하나 이상과
         # 전체적으로 두 개 이상의 구조적 근거가 있어야 합니다.
@@ -670,7 +674,8 @@ class PrescriptionOcrStructurer:
         if _PACKAGE_CONTINUATION_PATTERN.fullmatch(name_text):
             return False
 
-        return _STANDALONE_MEDICATION_NAME_PATTERN.search(name_text) is not None
+        # 수정: 문장 일부가 아니라 약품명 전체가 제품명 패턴과 일치해야 합니다.
+        return _STANDALONE_MEDICATION_NAME_PATTERN.fullmatch(name_text) is not None
 
     def _column_centers(
         self,

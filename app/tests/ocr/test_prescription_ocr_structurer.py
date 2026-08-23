@@ -909,6 +909,62 @@ def test_structure_excludes_guide_row_with_only_timing(
     assert medication_names == []
 
 
+@pytest.mark.parametrize(
+    ("guide_name", "timing"),
+    [
+        ("비타민 500mg", "매일"),
+        ("건강 관리정", "아침 식후"),
+    ],
+)
+def test_structure_excludes_strong_name_guide_row_without_medication_support(
+    guide_name: str,
+    timing: str,
+) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("투여기간", 719, 581),
+        _raw_field("용법", 911, 581),
+        # 수정: 함량·제형 표현이 있어도 투여 구조가 없는 안내 행입니다.
+        _raw_field(guide_name, 137, 637),
+        _raw_field(timing, 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == []
+
+
+@pytest.mark.parametrize(
+    "guide_name",
+    [
+        "하루 한 정",
+        "건강 관리정",
+    ],
+)
+def test_structure_excludes_sentence_like_standalone_medication_name(
+    guide_name: str,
+) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        # 수정: 문장 끝에 제형처럼 보이는 글자가 있어도 약품으로 만들지 않습니다.
+        _raw_field(guide_name, 137, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+
+    assert medication_names == []
+
+
 def test_structure_does_not_merge_dose_instruction_into_name() -> None:
     raw_fields = [
         _raw_field("명칭", 237, 581),
@@ -965,6 +1021,14 @@ def test_structure_merges_package_continuation_with_strength() -> None:
         (
             "정 500mg",
             "오메가-3-산에틸에스테르 정 500mg",
+        ),
+        (
+            "정500mg",
+            "오메가-3-산에틸에스테르 정500mg",
+        ),
+        (
+            "90연질캡슐1000mg",
+            "오메가-3-산에틸에스테르 90연질캡슐1000mg",
         ),
     ],
 )
@@ -1030,6 +1094,42 @@ def test_dose_pattern_does_not_extract_attached_instruction_as_unit(
 ) -> None:
     # 수정: 실제 구조화 로직이 search()를 사용하므로 부분 매칭도 없어야 합니다.
     assert DOSE_PATTERN.search(invalid_dose) is None
+
+
+@pytest.mark.parametrize(
+    ("duration_text", "expected_days"),
+    [
+        ("30일", "30"),
+        ("30일간", "30"),
+        ("30일분", "30"),
+        ("7일분", "7"),
+        ("30일치", "30"),
+    ],
+)
+def test_structure_extracts_duration_variants(
+    duration_text: str,
+    expected_days: str,
+) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("투여기간", 719, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("에제티미브정 10mg", 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("1회", 547, 637),
+        # 수정: 일·일간·일분·일치 기간 표현을 실제 구조화로 검증합니다.
+        _raw_field(duration_text, 719, 637),
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["DURATION_DAYS"].raw_value == expected_days
 
 
 @pytest.mark.parametrize(
