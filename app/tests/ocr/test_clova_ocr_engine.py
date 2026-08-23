@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import httpx
@@ -125,6 +126,8 @@ async def test_recognize_calls_clova_and_parses_v2_response(
     assert result.raw_fields[0].confidence_score == 0.99
     assert result.raw_fields[2].raw_value == "2026-08-12"
     assert result.raw_fields[2].confidence_score == 0.97
+    assert result.raw_fields[0].height == 10.0
+    assert result.raw_fields[2].height == 10.0
     assert len(result.fields) == 1
 
     prescribed_date = result.fields[0]
@@ -297,3 +300,93 @@ async def test_recognize_rejects_missing_file(
                 object_key="missing.png",
                 file_mime_type="image/png",
             )
+
+
+async def test_recognize_structures_three_medications_from_clova_fixture(
+    tmp_path: Path,
+) -> None:
+    _create_test_image(tmp_path)
+
+    fixture_path = (
+        Path(__file__).parents[1] / "fixtures" / "ocr" / "structuring" / "prescription_medication_rows.clova.json"
+    )
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=payload,
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        engine = _create_engine(
+            tmp_path=tmp_path,
+            client=client,
+        )
+
+        result = await engine.recognize(
+            object_key="sample.png",
+            file_mime_type="image/png",
+        )
+
+    medication_names = [field for field in result.fields if field.field_type == "MEDICATION_NAME"]
+
+    assert [field.medication_index for field in medication_names] == [
+        1,
+        2,
+        3,
+    ]
+    assert [field.raw_value for field in medication_names] == [
+        "로수바스타틴칼숨정 10mg",
+        "에제티미브정 10mg",
+        "오메가-3-산에틸에스테르 90연질캡슐 1000mg",
+    ]
+
+    fields_by_identity = {
+        (
+            field.medication_index,
+            field.field_type,
+        ): field
+        for field in result.fields
+    }
+
+    expected_medication_fields = {
+        1: {
+            "DOSE_VALUE": "1",
+            "DOSE_UNIT": "정",
+            "FREQUENCY_PER_DAY": "1",
+            "DURATION_DAYS": "30",
+            "TIMING": "저녁 식후",
+        },
+        2: {
+            "DOSE_VALUE": "1",
+            "DOSE_UNIT": "정",
+            "FREQUENCY_PER_DAY": "1",
+            "DURATION_DAYS": "30",
+            "TIMING": "저녁 식후",
+        },
+        3: {
+            "DOSE_VALUE": "2",
+            "DOSE_UNIT": "캡슐",
+            "FREQUENCY_PER_DAY": "2",
+            "DURATION_DAYS": "30",
+            "TIMING": "아침 · 저녁 식후",
+        },
+    }
+
+    for (
+        medication_index,
+        expected_fields,
+    ) in expected_medication_fields.items():
+        for field_type, expected_value in expected_fields.items():
+            actual_field = fields_by_identity[
+                (
+                    medication_index,
+                    field_type,
+                )
+            ]
+
+            assert actual_field.raw_value == expected_value
