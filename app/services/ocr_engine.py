@@ -8,6 +8,7 @@ class RawRecognizedField:
     confidence_score: float | None
     center_x: float
     center_y: float
+    height: float = 20.0  # height에 기본값을 둬서 기존 테스트와 다른 코드가 바로 깨지지 않게 합니다.
 
 
 @dataclass(frozen=True)

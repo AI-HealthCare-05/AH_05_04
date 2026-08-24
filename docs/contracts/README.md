@@ -8,6 +8,7 @@ Frontend, Backend, OCR과 LLM이 공유하는 의미와 상태를 관리합니�
 - [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md)
 - [OCR 약품명 정규화 계약](./ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할과 정규화 규칙
 - [Staging Release Validation Ledger 계약](./release-validation-ledger.md): proposed control DB schema, 상태 전이, 권한, crash recovery와 migration 상호 배제
+- [OCR 약품 행 구조화 계약](./ocr-medication-structuring.md)
 
 ## 현재 구현 계약
 

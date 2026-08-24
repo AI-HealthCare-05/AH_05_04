@@ -184,8 +184,12 @@ class ClovaOcrEngine:
                 if not isinstance(vertices, list) or not vertices:
                     raise TypeError
 
-                center_x = sum(float(vertex["x"]) for vertex in vertices) / len(vertices)
-                center_y = sum(float(vertex["y"]) for vertex in vertices) / len(vertices)
+                x_values = [float(vertex["x"]) for vertex in vertices]
+                y_values = [float(vertex["y"]) for vertex in vertices]
+
+                center_x = sum(x_values) / len(x_values)
+                center_y = sum(y_values) / len(y_values)
+                height = max(y_values) - min(y_values)
             except (
                 KeyError,
                 TypeError,
@@ -200,6 +204,7 @@ class ClovaOcrEngine:
                     confidence_score=(float(confidence) if confidence is not None else None),
                     center_x=center_x,
                     center_y=center_y,
+                    height=height,
                 )
             )
 
