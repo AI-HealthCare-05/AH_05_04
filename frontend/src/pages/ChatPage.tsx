@@ -219,7 +219,12 @@ function ChatPage() {
   if (currentRequiresLogin) {
     return (
       <div className="chat-page">
-        <MobileShell title="Dosey 도지" hideNavigation>
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/start')}
+          backPlacement="content"
+          hideNavigation
+        >
           <main className="app-scroll chat-page__gate">
             <Card>
               <StatusBadge tone="attention">로그인 필요</StatusBadge>
@@ -241,21 +246,21 @@ function ChatPage() {
         <MobileShell
           title="Dosey 도지"
           onBack={() => navigate('/')}
+          backPlacement="content"
           hideNavigation
         >
-          <main className="app-scroll chat-page__gate">
-            <Card>
-              <StatusBadge tone="attention">처방 확인 필요</StatusBadge>
-              <h1>연결할 확정 처방이 없어요</h1>
-              <p>복약 가이드에서 확인된 처방을 선택해 다시 들어와 주세요.</p>
-              <Button
-                fullWidth
-                variant="secondary"
-                onClick={() => navigate('/')}
-              >
-                홈으로 돌아가기
-              </Button>
-            </Card>
+          <main className="app-scroll chat-page__gate chat-page__gate--guide-required">
+            <h1>먼저 복약 가이드가 필요해요</h1>
+            <p>
+              챗봇은 확인된 처방과 가이드에 연결된 질문에만 답해요.
+            </p>
+            <div className="notice attention chat-page__gate-notice">
+              현재 확인된 처방이 없어요. 처방전을 등록하고 인식 결과를 직접
+              확인해 주세요.
+            </div>
+            <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
+              처방전 등록하기
+            </Button>
           </main>
         </MobileShell>
       </div>
@@ -265,90 +270,110 @@ function ChatPage() {
   return (
     <div className="chat-page">
       <MobileShell
-        title="복약 챗봇"
+        title="Dosey 도지"
         onBack={() => navigate(-1)}
+        backPlacement="content"
         hideNavigation
       >
         <main className="chat-layout">
-          <div className="chat-page__context">
-            <strong>확정된 처방 기준</strong>
-            <span>AI가 답변을 만드는 동안 잠시 기다려 주세요.</span>
+          <header className="chat-page__intro">
+            <h1>복약 챗봇</h1>
+            <p>현재 확인된 처방과 제공된 근거 범위에서만 답해요.</p>
+          </header>
+
+          <div className="chat-page__suggestions" aria-label="추천 질문">
+            <button type="button">복용 방법 확인</button>
+            <button type="button">복약 일정 안내</button>
+            <button type="button">불편·안전 확인</button>
           </div>
 
-          <div className="chat-messages" aria-live="polite">
-            {currentIsLoading && (
-              <div className="chat-page__state" role="status">
-                대화를 불러오고 있어요.
-              </div>
-            )}
+          <div className="chat-page__conversation">
+            <div className="chat-messages" aria-live="polite">
+              {currentIsLoading && (
+                <div className="chat-page__state" role="status">
+                  대화를 불러오고 있어요.
+                </div>
+              )}
 
-            {!currentIsLoading &&
-              !currentErrorMessage &&
-              currentMessages.length === 0 && (
-              <div className="chat-page__state chat-page__empty">
-                <strong>아직 대화가 없어요</strong>
-                <span>확정된 처방에 대해 궁금한 내용을 입력해 주세요.</span>
-              </div>
-            )}
+              {!currentIsLoading &&
+                !currentErrorMessage &&
+                currentMessages.length === 0 && (
+                <div className="chat-page__state chat-page__empty">
+                  <div className="chat-page__empty-card">
+                    <strong>무엇을 확인하고 싶으신가요?</strong>
+                    <span>
+                      확정된 처방에 대해 궁금한 내용을 입력해 주세요.
+                    </span>
+                  </div>
+                  <div className="chat-page__empty-callout">
+                    복약 질문을 입력해 주세요
+                  </div>
+                </div>
+              )}
 
-            {currentMessages.map((message) => (
-              <div
-                className={`chat-message ${message.role === 'USER' ? 'user' : ''}`}
-                key={message.message_id}
-              >
-                {message.content ?? '답변을 생성하지 못했어요.'}
-              </div>
-            ))}
-
-            {currentIsSending && (
-              <div className="chat-message chat-page__typing" role="status">
-                AI 답변을 만들고 있어요…
-              </div>
-            )}
-
-            {currentErrorMessage && (
-              <Card className="chat-page__error">
-                <StatusBadge tone="attention">오류</StatusBadge>
-                <p role="alert">{currentErrorMessage}</p>
-                <Button
-                  fullWidth
-                  variant="secondary"
-                  onClick={() => void initializeChat()}
-                  disabled={currentIsSending}
+              {currentMessages.map((message) => (
+                <div
+                  className={`chat-message ${message.role === 'USER' ? 'user' : ''}`}
+                  key={message.message_id}
                 >
-                  대화 다시 불러오기
-                </Button>
-              </Card>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
+                  {message.content ?? '답변을 생성하지 못했어요.'}
+                </div>
+              ))}
 
-          <form className="chat-composer" onSubmit={handleSend}>
-            <textarea
-              className="chat-input"
-              value={currentDraft}
-              onChange={(event) => setDraft(event.target.value)}
-              aria-label="복약 질문"
-              placeholder="복약 질문을 입력해 주세요"
-              rows={1}
-              disabled={
-                currentIsLoading || currentIsSending || !currentSessionId
-              }
-            />
-            <button
-              className="chat-send"
-              type="submit"
-              aria-label="질문 전송"
-              disabled={
-                currentIsLoading ||
-                currentIsSending ||
-                !currentSessionId ||
-                !currentDraft.trim()
-              }
-            >
-              ↑
-            </button>
-          </form>
+              {currentIsSending && (
+                <div className="chat-message chat-page__typing" role="status">
+                  AI 답변을 만들고 있어요…
+                </div>
+              )}
+
+              {currentErrorMessage && (
+                <Card className="chat-page__error">
+                  <StatusBadge tone="attention">오류</StatusBadge>
+                  <p role="alert">{currentErrorMessage}</p>
+                  <Button
+                    fullWidth
+                    variant="secondary"
+                    onClick={() => void initializeChat()}
+                    disabled={currentIsSending}
+                  >
+                    대화 다시 불러오기
+                  </Button>
+                </Card>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <form className="chat-composer" onSubmit={handleSend}>
+              <label className="chat-page__composer-label" htmlFor="dosey-chat-input">
+                복약 질문
+              </label>
+              <textarea
+                id="dosey-chat-input"
+                className="chat-input"
+                value={currentDraft}
+                onChange={(event) => setDraft(event.target.value)}
+                aria-label="복약 질문"
+                placeholder="궁금한 내용을 입력하세요"
+                rows={1}
+                disabled={
+                  currentIsLoading || currentIsSending || !currentSessionId
+                }
+              />
+              <button
+                className="chat-send"
+                type="submit"
+                aria-label="질문 전송"
+                disabled={
+                  currentIsLoading ||
+                  currentIsSending ||
+                  !currentSessionId ||
+                  !currentDraft.trim()
+                }
+              >
+                <span className="chat-send__icon" aria-hidden="true" />
+              </button>
+            </form>
+          </div>
         </main>
       </MobileShell>
     </div>

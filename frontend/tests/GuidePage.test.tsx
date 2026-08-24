@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -9,11 +9,13 @@ vi.mock('../src/api/guides', () => ({
   getGuide: vi.fn(),
 }))
 
-function renderPage() {
+function renderPage(entry = '/guides/guide-1') {
   return render(
-    <MemoryRouter initialEntries={['/guides/guide-1']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
+        <Route path="/guides" element={<GuidePage />} />
         <Route path="/guides/:guideId" element={<GuidePage />} />
+        <Route path="/prescriptions/upload" element={<div>처방전 업로드 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -66,8 +68,18 @@ describe('GuidePage', () => {
     renderPage()
 
     expect(
-      await screen.findByText('가이드 내용을 준비하고 있어요'),
+      await screen.findByText('가이드 내용이 아직 없어요'),
     ).toBeTruthy()
     expect(screen.getByRole('button', { name: '다시 불러오기' })).toBeTruthy()
+  })
+
+  it('Guide가 없는 경로에서 GUIDE-01 상태와 업로드 CTA를 표시한다', async () => {
+    renderPage('/guides')
+
+    expect(await screen.findByText('아직 만들어진 가이드가 없어요')).toBeTruthy()
+    expect(getGuide).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
+    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
   })
 })

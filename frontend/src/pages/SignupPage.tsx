@@ -43,15 +43,22 @@ function SignupPage() {
   }
 
   return (
-    <div className="mvp-page">
-      <MobileShell title="Dosey 도지" onBack={() => navigate('/login')} hideNavigation>
-        <main className="app-scroll mvp-page__content mvp-page__content--no-nav">
-          <h1 className="mvp-page__title">Dosey 도지를 시작해 볼까요?</h1>
-          <p className="mvp-page__description">
-            의료정보는 본인 확인과 동의 후 안전하게 관리합니다.
-          </p>
+    <div className="mvp-page mvp-auth-page">
+      <MobileShell
+        title="Dosey 도지"
+        onBack={() => navigate('/start')}
+        backPlacement="content"
+        hideNavigation
+      >
+        <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-auth">
+          <header className="mvp-auth__intro">
+            <h1 className="mvp-page__title">Dosey 도지를 시작해 볼까요?</h1>
+            <p className="mvp-page__description">
+              의료정보는 본인 확인과 동의 후 안전하게 관리합니다.
+            </p>
+          </header>
 
-          <form className="mvp-form" onSubmit={handleSubmit}>
+          <form className="mvp-form mvp-auth__form" onSubmit={handleSubmit}>
             <label className="mvp-form__field">
               이름
               <input name="name" placeholder="홍길동" required value={form.name} onChange={handleChange} />

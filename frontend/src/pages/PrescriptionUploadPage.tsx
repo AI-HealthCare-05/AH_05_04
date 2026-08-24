@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   executeOcr,
@@ -11,6 +11,15 @@ import { Button, Card, MobileShell } from '../design-system/components'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
+const OCR_POLL_INTERVAL_MS = 1000
+const OCR_POLL_MAX_ATTEMPTS = 80
+
+function waitForNextOcrCheck() {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, OCR_POLL_INTERVAL_MS)
+  })
+}
+
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
   const inputId = useId()
@@ -18,6 +27,14 @@ function PrescriptionUploadPage() {
   const [ocrResult, setOcrResult] = useState<OcrJobResponse | null>(null)
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const pollingRequestRef = useRef(0)
+
+  useEffect(
+    () => () => {
+      pollingRequestRef.current += 1
+    },
+    [],
+  )
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] ?? null
@@ -32,28 +49,56 @@ function PrescriptionUploadPage() {
       return
     }
 
+    const requestId = ++pollingRequestRef.current
+    const isCurrentRequest = () => pollingRequestRef.current === requestId
+
     try {
       setIsLoading(true)
       setMessage('')
       setOcrResult(null)
       const uploadResponse = await uploadPrescription(file)
+      if (!isCurrentRequest()) return
       const ocrResponse = await executeOcr(uploadResponse.data.document_id)
-      const latestOcrResult = await getOcrJob(ocrResponse.data.job_id)
-      setOcrResult(latestOcrResult)
+      if (!isCurrentRequest()) return
 
-      if (latestOcrResult.data.ocr_status === 'COMPLETED') {
-        navigate(
-          `/prescriptions/review?document_id=${uploadResponse.data.document_id}&job_id=${ocrResponse.data.job_id}`,
-        )
+      let latestOcrResult = await getOcrJob(ocrResponse.data.job_id)
+      if (!isCurrentRequest()) return
+
+      for (let attempt = 0; attempt < OCR_POLL_MAX_ATTEMPTS; attempt += 1) {
+        setOcrResult(latestOcrResult)
+
+        if (latestOcrResult.data.ocr_status === 'COMPLETED') {
+          navigate(
+            `/prescriptions/review?document_id=${uploadResponse.data.document_id}&job_id=${ocrResponse.data.job_id}`,
+          )
+          return
+        }
+
+        if (latestOcrResult.data.ocr_status === 'FAILED') {
+          setMessage('처방전 인식에 실패했습니다. 파일을 확인한 뒤 다시 시도해 주세요.')
+          return
+        }
+
+        if (attempt === OCR_POLL_MAX_ATTEMPTS - 1) break
+
+        await waitForNextOcrCheck()
+        if (!isCurrentRequest()) return
+        latestOcrResult = await getOcrJob(ocrResponse.data.job_id)
+        if (!isCurrentRequest()) return
       }
+
+      setMessage('처방전 확인 시간이 길어지고 있어요. 잠시 후 다시 시도해 주세요.')
     } catch (error) {
+      if (!isCurrentRequest()) return
       setMessage(
         error instanceof ApiError
           ? error.message
           : '처방전 처리 중 오류가 발생했습니다.',
       )
     } finally {
-      setIsLoading(false)
+      if (isCurrentRequest()) {
+        setIsLoading(false)
+      }
     }
   }
 
@@ -62,15 +107,17 @@ function PrescriptionUploadPage() {
       <div className="mvp-page">
         <MobileShell title="Dosey 도지" hideNavigation>
           <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-processing" role="status">
-            <div className="quality-illustration processing-document" aria-hidden="true" />
+            <div className="mvp-processing__document" aria-hidden="true">
+              <span />
+            </div>
             <h1 className="mvp-page__title">처방전 내용을 확인하고 있어요</h1>
             <p className="mvp-page__description">
               파일 업로드 → 글자 인식 → 복약정보 구조화
             </p>
             <div className="processing-steps">
-              <span>✓ 문서 업로드 확인</span>
-              <span>● 약 이름과 복용법 인식 중</span>
-              <span>○ 구조화 결과 확인</span>
+              <span className="complete">문서 업로드 완료</span>
+              <span className="active">약 이름과 복용법 인식 중</span>
+              <span>구조화 결과 확인</span>
             </div>
           </main>
         </MobileShell>
@@ -80,7 +127,12 @@ function PrescriptionUploadPage() {
 
   return (
     <div className="mvp-page">
-      <MobileShell title="Dosey 도지" onBack={() => navigate('/')} hideNavigation>
+      <MobileShell
+        title="Dosey 도지"
+        onBack={() => navigate('/')}
+        backPlacement="content"
+        hideNavigation
+      >
         <main className="app-scroll mvp-page__content mvp-page__content--no-nav">
           <h1 className="mvp-page__title">처방전을 등록해 주세요</h1>
           <p className="mvp-page__description">
@@ -88,7 +140,6 @@ function PrescriptionUploadPage() {
           </p>
 
           <Card className="mvp-upload__summary">
-            <span className="brand-mark" aria-hidden="true">▧</span>
             <span>
               <strong>처방전</strong>
               <small>OCR 인식 · 복약 가이드 연결</small>
@@ -103,7 +154,9 @@ function PrescriptionUploadPage() {
             onChange={handleFileChange}
           />
           <label className={`upload-zone mvp-upload__zone ${file ? 'selected' : ''}`} htmlFor={inputId}>
-            <span className="mvp-upload__zone-icon" aria-hidden="true">▧</span>
+            <span className="mvp-upload__zone-icon" aria-hidden="true">
+              <span />
+            </span>
             <strong>{file?.name ?? '사진 촬영 또는 파일 선택'}</strong>
             <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 10MB'}</small>
           </label>

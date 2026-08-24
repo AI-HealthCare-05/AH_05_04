@@ -32,7 +32,8 @@ function GuidePage() {
 
   const loadGuide = useCallback(async () => {
     if (!guideId) {
-      setMessage('가이드를 불러오는 데 필요한 정보가 없습니다.')
+      setGuide(null)
+      setMessage('')
       setIsLoading(false)
       return
     }
@@ -72,10 +73,21 @@ function GuidePage() {
         }}
       >
         <main className="app-scroll guide-page__content">
-          <h1 className="screen-title">내 복약 가이드</h1>
+          <h1 className="screen-title">복약 가이드</h1>
           <p className="screen-description">
-            직접 확인하고 확정한 처방전 결과를 기준으로 만들었어요.
+            약마다 언제·어떻게 복용하는지 먼저 보여드려요.
           </p>
+
+          {!isLoading && !guideId && (
+            <Card className="guide-page__empty">
+              <span className="guide-page__spark" aria-hidden="true" />
+              <h2>아직 만들어진 가이드가 없어요</h2>
+              <p>처방전을 등록부터 시작하면 복약 가이드를 확인할 수 있어요.</p>
+              <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
+                처방전 등록하기
+              </Button>
+            </Card>
+          )}
 
           {isLoading && (
             <Card className="guide-page__state">
@@ -99,20 +111,33 @@ function GuidePage() {
 
           {!isLoading && !message && guide && hasCompletedContent && (
             <>
-              <Card className="home-hero guide-page__hero">
-                <StatusBadge>생성 완료</StatusBadge>
+              <Card className="guide-page__hero">
+                <span className="guide-page__hero-label">확정된 처방 기준</span>
                 <h2>복약 가이드가 준비됐어요</h2>
                 <p>
-                  처방전에서 직접 확인한 정보와 안전 안내를 함께 확인해
-                  주세요.
+                  직접 확인한 처방을 기준으로 생성된 안내를 표시해요.
                 </p>
                 {completedAt && <small>{completedAt} 생성</small>}
+                <button className="guide-page__schedule-button" type="button">
+                  복용 일정 확인하기
+                </button>
               </Card>
 
               <Card className="record-card guide-page__guide-card">
-                <h2>복약 안내</h2>
-                <div className="guide-page__guide-text">{guide.content}</div>
+                <span className="guide-page__guide-label">확인된 처방 기준</span>
+                <h2>확인된 복약 안내</h2>
+                <p className="guide-page__guide-intro">
+                  실제 생성된 가이드 원문을 확인해 주세요.
+                </p>
+                <details className="guide-page__disclosure">
+                  <summary>가이드 전체 내용</summary>
+                  <div className="guide-page__guide-text">{guide.content}</div>
+                </details>
               </Card>
+
+              <div className="notice attention guide-page__notice">
+                확인된 처방 정보와 생성된 가이드 원문을 그대로 표시합니다.
+              </div>
 
               <Button
                 fullWidth
@@ -131,17 +156,23 @@ function GuidePage() {
               <StatusBadge tone="attention">
                 {guide.generation_status === 'FAILED'
                   ? '생성 실패'
-                  : '생성 중'}
+                  : guide.generation_status === 'COMPLETED'
+                    ? '내용 없음'
+                    : '생성 중'}
               </StatusBadge>
               <h2>
                 {guide.generation_status === 'FAILED'
                   ? '가이드를 표시할 수 없어요'
-                  : '가이드 내용을 준비하고 있어요'}
+                  : guide.generation_status === 'COMPLETED'
+                    ? '가이드 내용이 아직 없어요'
+                    : '복약 가이드를 만들고 있어요'}
               </h2>
               <p>
                 {guide.generation_status === 'FAILED'
                   ? '처방 검수 화면에서 가이드 생성을 다시 시도해 주세요.'
-                  : '잠시 후 다시 불러와 주세요.'}
+                  : guide.generation_status === 'COMPLETED'
+                    ? '생성된 내용을 확인할 수 없어 다시 불러와야 해요.'
+                    : '잠시 후 다시 불러와 주세요.'}
               </p>
               <Button fullWidth variant="secondary" onClick={() => void loadGuide()}>
                 다시 불러오기

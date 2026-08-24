@@ -109,7 +109,7 @@ describe('ChatPage', () => {
   it('확정된 prescription_id로 Chat session을 생성한다', async () => {
     renderPage()
 
-    expect(await screen.findByText('아직 대화가 없어요')).toBeTruthy()
+    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
     expect(createChatSession).toHaveBeenCalledWith(prescriptionId)
     expect(getChatMessages).toHaveBeenCalledWith(sessionId)
     expect(
@@ -142,7 +142,7 @@ describe('ChatPage', () => {
       }),
     )
 
-    expect(await screen.findByText('아직 대화가 없어요')).toBeTruthy()
+    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
     expect(createChatSession).toHaveBeenCalledTimes(1)
   })
 
@@ -232,7 +232,7 @@ describe('ChatPage', () => {
     mockSessionCreation()
     fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
 
-    expect(await screen.findByText('아직 대화가 없어요')).toBeTruthy()
+    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
     expect(createChatSession).toHaveBeenCalledTimes(2)
   })
 
@@ -352,11 +352,21 @@ describe('ChatPage', () => {
     async (entry) => {
       renderPage(entry)
 
-      expect(await screen.findByText('연결할 확정 처방이 없어요')).toBeTruthy()
+      expect(await screen.findByText('먼저 복약 가이드가 필요해요')).toBeTruthy()
       expect(createChatSession).not.toHaveBeenCalled()
       expect(getChatMessages).not.toHaveBeenCalled()
     },
   )
+
+  it('추천 질문 chip은 표시하지만 합의되지 않은 전송 동작을 실행하지 않는다', async () => {
+    renderPage()
+
+    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '복용 방법 확인' }))
+
+    expect(sendChatMessage).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('복약 질문')).toHaveProperty('value', '')
+  })
 
   it('인증 API가 401을 반환하면 로그인 안내로 전환한다', async () => {
     vi.mocked(createChatSession).mockRejectedValue(
@@ -402,7 +412,7 @@ describe('ChatPage', () => {
 
     renderPage()
 
-    expect(await screen.findByText('아직 대화가 없어요')).toBeTruthy()
+    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
     expect(getChatMessages).toHaveBeenNthCalledWith(1, expiredSessionId)
     expect(createChatSession).toHaveBeenCalledWith(prescriptionId)
     expect(getChatMessages).toHaveBeenNthCalledWith(2, sessionId)
@@ -426,7 +436,7 @@ describe('ChatPage', () => {
     })
     renderPage()
 
-    expect(await screen.findByText('아직 대화가 없어요')).toBeTruthy()
+    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
     fireEvent.click(screen.getByText('두 번째 처방으로 이동'))
 
     await waitFor(() =>
@@ -555,7 +565,7 @@ describe('ChatPage', () => {
         data: { session_id: secondSessionId, messages: [] },
       }),
     )
-    expect(await screen.findByText('아직 대화가 없어요')).toBeTruthy()
+    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
   })
 
   it('처방 A 초기화 오류와 finally가 늦게 와도 처방 B 상태를 변경하지 않는다', async () => {

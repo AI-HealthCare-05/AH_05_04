@@ -36,16 +36,23 @@ function LoginPage() {
   }
 
   return (
-    <div className="mvp-page">
-      <MobileShell title="Dosey 도지" onBack={() => navigate('/')} hideNavigation>
-        <main className="app-scroll mvp-page__content mvp-page__content--no-nav">
-          <p className="mvp-page__eyebrow">다시 만나서 반가워요</p>
-          <h1 className="mvp-page__title">도지에 로그인해 주세요</h1>
-          <p className="mvp-page__description">
-            확인한 처방전과 복약 가이드를 이어서 볼 수 있어요.
-          </p>
+    <div className="mvp-page mvp-auth-page">
+      <MobileShell
+        title="Dosey 도지"
+        onBack={() => navigate('/start')}
+        backPlacement="content"
+        hideNavigation
+      >
+        <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-auth">
+          <header className="mvp-auth__intro">
+            <p className="mvp-page__eyebrow">다시 만나서 반가워요</p>
+            <h1 className="mvp-page__title">도지에 로그인해 주세요</h1>
+            <p className="mvp-page__description">
+              확인한 처방전과 복약 가이드를 이어서 볼 수 있어요.
+            </p>
+          </header>
 
-          <form className="mvp-form" onSubmit={handleSubmit}>
+          <form className="mvp-form mvp-auth__form" onSubmit={handleSubmit}>
             <label className="mvp-form__field">
               이메일
               <input name="email" type="email" placeholder="hello@example.com" autoComplete="email" required value={form.email} onChange={handleChange} />
