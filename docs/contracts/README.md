@@ -11,6 +11,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [OCR 약품명 정규화 계약](./ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
 - [OCR 약품 행 구조화 계약](./ocr-medication-structuring.md): 현재 약품 행 판정·부분 인식·사용자 확인 경계
 - [처방 확정 MVP Backend 계약](./prescription-confirmation-mvp.md): OCR 검수 필드로 처방을 확정할 때의 필수값, DB 경계값, Post-MVP `job_id` 검증 경계
+- [회원가입·사용자 정보 MVP 계약](./user-account-mvp.md): 회원가입 허용 필드, 내 정보 수정 범위와 개인정보 nullable 상태
+- [OCR 작업 상태 조회 MVP 계약](./ocr-job-status-mvp.md): OCR 작업 실패 코드와 `error_message` 노출 기준, 최신 작업 판별 기준
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
 ## Proposed 운영 계약 — 미구현
