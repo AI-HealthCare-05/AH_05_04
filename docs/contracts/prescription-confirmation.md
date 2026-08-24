@@ -1,4 +1,4 @@
-# 처방 확정 MVP Backend 계약
+# 처방 확정 Backend 계약
 
 ## 목적
 

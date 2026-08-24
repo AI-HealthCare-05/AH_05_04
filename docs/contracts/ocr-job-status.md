@@ -1,4 +1,4 @@
-# OCR 작업 상태 조회 MVP Backend 계약
+# OCR 작업 상태 조회 Backend 계약
 
 ## 목적
 
@@ -22,7 +22,7 @@ OCR 작업 실행·조회 API가 성공·실패 상태를 Frontend에 전달할 
 
 ## Post-MVP 이관
 
-- 문서에 연결된 OCR 작업을 `job_id`로 명시적으로 식별해 사용자가 검수한 작업과 확정 대상 작업을 일치시키는 검증은 [처방 확정 MVP Backend 계약](./prescription-confirmation-mvp.md)의 Post-MVP 이관 항목을 따릅니다.
+- 문서에 연결된 OCR 작업을 `job_id`로 명시적으로 식별해 사용자가 검수한 작업과 확정 대상 작업을 일치시키는 검증은 [처방 확정 Backend 계약](./prescription-confirmation.md)의 Post-MVP 이관 항목을 따릅니다.
 
 ## 검증과 변경 규칙
 
