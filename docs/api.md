@@ -252,7 +252,7 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - OCR 필드는 사용자가 확인한 `confirmed_value`만 처방 확정에 사용합니다.
 - `PRESCRIBED_DATE`, `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
 - `DOSE_UNIT`, `TIMING`은 현재 MVP에서 선택값입니다.
-- `PRESCRIBED_DATE`는 `YYYY-MM-DD` 형식, `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
+- `PRESCRIBED_DATE`는 `date.fromisoformat()`이 허용하는 ISO 8601 날짜 형식(예: `YYYY-MM-DD`, 하이픈 없는 `YYYYMMDD`, ISO week-date `YYYY-Www-D`), `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
 - `DOSE_UNIT`은 `VARCHAR(50)`, `TIMING`은 `VARCHAR(255)` 길이를 초과하면 저장 전에 `422 VALIDATION_FAILED`로 거부합니다.
 - 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
 
