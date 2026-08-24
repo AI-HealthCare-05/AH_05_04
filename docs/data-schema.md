@@ -18,11 +18,9 @@
 
 UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이터 및 API 호환성을 위해 `CHAR(36)` 문자열로 저장합니다. Python 코드에서는 공통 `UUIDChar` 타입을 통해 `UUID` 객체와 DB 문자열 사이를 변환합니다. PostgreSQL native `UUID` 전환은 별도 migration 범위입니다.
 
-`DateTime(timezone=True)` 필드는 PostgreSQL에서 시간대가 포함된 timestamp로 관리합니다. 기존 MySQL `DATETIME` 데이터는 컬럼별 UTC 또는 `Asia/Seoul` 정책에 따라 실제 시각을 보존하여 이관합니다.
+`DateTime(timezone=True)` 필드는 PostgreSQL에서 시간대가 포함된 timestamp로 관리합니다. 애플리케이션의 컬럼별 UTC 또는 `Asia/Seoul` 시간대 정책은 기존 API·모델 계약과 동일하게 유지합니다.
 
-기본키, 외래키, Enum, 상태값과 nullable 의미는 MySQL 사용 당시의 논리적 계약을 유지합니다.
-
-MySQL 데이터 백업, PostgreSQL 일괄 이관, 정합성 검증 및 롤백 절차는 [MySQL에서 PostgreSQL로 전환 Runbook](./runbooks/mysql-to-postgresql-migration.md)을 따릅니다.
+물리 DB를 PostgreSQL로 전환하더라도 기본키, 외래키, Enum, 상태값과 nullable 의미 등 외부에서 관찰되는 논리적 계약은 변경하지 않습니다.
 
 ## 현재 구현 테이블
 
@@ -59,8 +57,6 @@ DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함�
 MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 
 이메일은 회원가입, 로그인 및 내 정보 수정 시 Backend에서 소문자로 정규화합니다. DB에는 정규화된 값만 저장하며, 조회 API도 저장된 소문자 값을 반환합니다. 이메일 unique와 중복 판정 역시 정규화된 값을 기준으로 적용하므로 대소문자만 다른 이메일은 동일하게 취급합니다.
-
-기존 MySQL 데이터를 PostgreSQL로 이관할 때도 같은 정규화 규칙을 적용합니다. 정규화 후 동일해지는 이메일이 여러 건이면 데이터 손실이나 임의 병합을 방지하기 위해 이관을 중단합니다.
 
 ## OCR 작업
 

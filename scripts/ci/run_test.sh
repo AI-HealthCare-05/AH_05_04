@@ -43,7 +43,7 @@ fi
 echo "PostgreSQL container found. Preparing test database."
 
 # test DB가 없을 때만 생성합니다.
-# 애플리케이션 DB와 분리된 DB이므로 pytest의 테이블 생성·삭제가 이관 데이터에 영향을 주지 않습니다.
+# 애플리케이션 DB와 분리된 DB이므로 pytest의 테이블 생성·삭제가 개발 데이터를 변경하지 않습니다.
 docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
