@@ -92,7 +92,7 @@ function getIncompleteOcrState(ocrStatus: string): ReviewBlockingState {
 }
 
 function getApiBlockingState(error: ApiError): ReviewBlockingState | null {
-  if (error.code === 'OCR_NOT_COMPLETED') {
+  if (error.code === 'OCR_JOB_NOT_COMPLETED') {
     return {
       title: 'OCR 검수가 아직 준비되지 않았어요',
       message: error.message,
@@ -477,7 +477,9 @@ function PrescriptionReviewPage() {
   }, [applyReviewError, documentId, jobId, reviewRequestKey])
 
   const handleSaveField = async (field: ExtractedField) => {
-    if (isConfirming || prescription) return
+    if (savingFieldIds.has(field.field_id) || isConfirming || prescription) {
+      return
+    }
 
     const saveRequestKey = reviewRequestKey
     const value = draftValues[field.field_id]?.trim()
@@ -598,7 +600,7 @@ function PrescriptionReviewPage() {
             value={draftValue}
             inputMode={inputMode}
             aria-invalid={Boolean(fieldError)}
-            disabled={isConfirming || Boolean(prescription)}
+            disabled={isSaving || isConfirming || Boolean(prescription)}
             onChange={(event) => {
               setDraftValues((current) => ({
                 ...current,

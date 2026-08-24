@@ -222,12 +222,12 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     },
   )
 
-  it('OCR_NOT_COMPLETED 오류는 OCR 완료 대기 상태로 안내한다', async () => {
+  it('OCR_JOB_NOT_COMPLETED 오류는 OCR 완료 대기 상태로 안내한다', async () => {
     vi.mocked(getOcrJob).mockRejectedValue(
       new ApiError(
         409,
         'OCR 처리가 아직 완료되지 않았습니다.',
-        'OCR_NOT_COMPLETED',
+        'OCR_JOB_NOT_COMPLETED',
       ),
     )
 
@@ -486,6 +486,60 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     await act(async () => resolveMedication({ data: medicationNameFieldData }))
     await waitFor(() => expect(acknowledgement).toHaveProperty('disabled', false))
     expect(confirmButton).toHaveProperty('disabled', true)
+  })
+
+  it('필드 저장 중에는 같은 input만 잠그고 다른 필드는 독립적으로 편집한다', async () => {
+    const fields = makeCompleteFields()
+    const saveRequest = createDeferred<{ data: ExtractedField }>()
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+    vi.mocked(updateExtractedField).mockImplementation(
+      () => saveRequest.promise,
+    )
+
+    renderPage()
+
+    const medicationNameInput = await screen.findByLabelText('약 이름')
+    const doseInput = screen.getByLabelText('1회 복용량')
+    const medicationNameField = medicationNameInput.closest(
+      '.prescription-review__field',
+    )
+    if (!medicationNameField) throw new Error('medication field not found')
+
+    fireEvent.change(medicationNameInput, {
+      target: { value: '저장 요청한 약 이름' },
+    })
+    fireEvent.click(within(medicationNameField).getByRole('button'))
+
+    await waitFor(() =>
+      expect(medicationNameInput).toHaveProperty('disabled', true),
+    )
+    expect(doseInput).toHaveProperty('disabled', false)
+
+    fireEvent.change(doseInput, { target: { value: '1.5' } })
+    expect(doseInput).toHaveProperty('value', '1.5')
+
+    const medicationName = fields.find(
+      (field) => field.field_type === 'MEDICATION_NAME',
+    )
+    if (!medicationName) throw new Error('medication name field not found')
+
+    await act(async () =>
+      saveRequest.resolve({
+        data: {
+          ...medicationName,
+          confirmed_value: '저장 요청한 약 이름',
+          confirmation_status: 'CONFIRMED',
+        },
+      }),
+    )
+
+    await waitFor(() =>
+      expect(medicationNameInput).toHaveProperty('disabled', false),
+    )
+    expect(medicationNameInput).toHaveProperty(
+      'value',
+      '저장 요청한 약 이름',
+    )
   })
 
   it.each([
