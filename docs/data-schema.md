@@ -23,6 +23,32 @@
 
 DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함께 갱신합니다.
 
+## 사용자
+
+`user` 테이블은 MVP 인증과 내 정보 조회에 사용합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+|---|---|---:|---|
+| `email` | `VARCHAR(40)` | No | 로그인 이메일. unique |
+| `hashed_password` | `VARCHAR(128)` | No | 해시된 비밀번호 |
+| `name` | `VARCHAR(20)` | No | 사용자 이름 |
+| `gender` | `ENUM('MALE', 'FEMALE')` | Yes | Post-MVP 추가 정보 입력 대상 |
+| `birthday` | `DATE` | Yes | Post-MVP 추가 정보 입력 대상 |
+| `phone_number` | `VARCHAR(20)` | Yes | Post-MVP 추가 정보 입력 대상. unique |
+
+MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
+
+## OCR 작업
+
+`ocr_job` 테이블은 OCR 처리 상태와 오류 정보를 저장합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+|---|---|---:|---|
+| `created_sequence` | `BIGINT UNSIGNED` | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |
+| `error_code` | `VARCHAR(100)` | Yes | 실패 상태의 안전한 오류 코드 |
+| `error_message` | `VARCHAR(500)` | Yes | 실패 상태 조회 응답에 포함할 수 있는 안전한 사용자 안내 문구 |
+
+`idx_ocr_document_created`는 기존 FK 지원 인덱스로 유지하고, 최신 작업 정렬용 `idx_ocr_document_created_seq(document_id, created_at, created_sequence)`를 별도로 사용합니다.
 
 ## OCR 추출 필드
 

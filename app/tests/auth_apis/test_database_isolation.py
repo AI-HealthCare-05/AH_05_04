@@ -7,9 +7,6 @@ SIGNUP_DATA = {
     "email": "isolation@example.com",
     "password": "Password123!",
     "name": "격리테스트",
-    "gender": "MALE",
-    "birth_date": "1990-01-01",
-    "phone_number": "01099998888",
 }
 
 

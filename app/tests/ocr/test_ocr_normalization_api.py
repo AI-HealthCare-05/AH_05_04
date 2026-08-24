@@ -41,9 +41,6 @@ async def _signup_and_login(
         "email": "ocr-normalization-api@example.com",
         "password": "Password123!",
         "name": "OCR정규화테스터",
-        "gender": "FEMALE",
-        "birth_date": "1990-01-01",
-        "phone_number": "01000002222",
     }
 
     await client.post(

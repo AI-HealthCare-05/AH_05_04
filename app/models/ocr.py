@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum,
@@ -14,7 +15,9 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    text,
 )
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -52,6 +55,7 @@ class OcrJob(Base):
     __tablename__ = "ocr_job"
     __table_args__ = (
         Index("idx_ocr_document_created", "document_id", "created_at", "id"),
+        Index("idx_ocr_document_created_seq", "document_id", "created_at", "created_sequence"),
         UniqueConstraint("id", "document_id", name="uq_ocr_job_id_document"),
         CheckConstraint(
             "ocr_status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')",
@@ -70,6 +74,11 @@ class OcrJob(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    created_sequence: Mapped[int] = mapped_column(
+        BigInteger().with_variant(mysql.BIGINT(unsigned=True), "mysql"),
+        nullable=False,
+        server_default=text("(UUID_SHORT())"),
+    )
     document_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("medical_document.id"), nullable=False)
     ocr_status: Mapped[OcrStatus] = mapped_column(
         Enum(OcrStatus, native_enum=False, length=20),

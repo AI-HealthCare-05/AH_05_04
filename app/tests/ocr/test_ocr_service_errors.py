@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
@@ -8,7 +9,7 @@ import pytest
 from app.core.errors import ApiError
 from app.dtos.ocr import ExecuteOcrRequest
 from app.models.medical_documents import MedicalDocument
-from app.models.ocr import OcrJob
+from app.models.ocr import OcrJob, OcrStatus
 from app.models.users import User
 from app.repositories.medical_document_repository import (
     MedicalDocumentRepository,
@@ -145,3 +146,40 @@ async def test_execute_ocr_converts_engine_error_and_marks_job_failed(
     mark_failed_call = ocr_repository_mock.mark_failed.await_args
     assert mark_failed_call.kwargs["error_code"] == expected_code
     assert "민감한" not in mark_failed_call.kwargs["error_message"]
+
+
+async def test_get_ocr_job_result_exposes_safe_error_message() -> None:
+    user_id = uuid4()
+    job_id = uuid4()
+    document_id = uuid4()
+    safe_error_message = "OCR 서비스 응답 시간이 초과되었습니다."
+
+    user = cast(User, SimpleNamespace(id=user_id))
+    job = cast(
+        OcrJob,
+        SimpleNamespace(
+            id=job_id,
+            document_id=document_id,
+            document=SimpleNamespace(user_id=user_id),
+            ocr_status=OcrStatus.FAILED,
+            error_code="OCR_PROVIDER_TIMEOUT",
+            error_message=safe_error_message,
+            created_at=datetime(2026, 8, 24, 10, 0, 0, tzinfo=UTC),
+            completed_at=datetime(2026, 8, 24, 10, 0, 5, tzinfo=UTC),
+            extracted_fields=[],
+        ),
+    )
+
+    document_repository_mock = AsyncMock(spec=MedicalDocumentRepository)
+    ocr_repository_mock = AsyncMock(spec=OcrRepository)
+    ocr_repository_mock.get_job_with_document.return_value = job
+
+    service = OcrService(
+        document_repository=cast(MedicalDocumentRepository, document_repository_mock),
+        ocr_repository=cast(OcrRepository, ocr_repository_mock),
+    )
+
+    result = await service.get_ocr_job_result(user=user, job_id=job_id)
+
+    assert result.error_code == "OCR_PROVIDER_TIMEOUT"
+    assert result.error_message == safe_error_message

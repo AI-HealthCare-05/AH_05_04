@@ -59,6 +59,40 @@
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동기 queue 접수가 아닙니다. 같은 HTTP 요청에서 CLOVA OCR 호출과 결과 저장을 완료합니다.
 
+## 인증과 사용자
+
+### 회원가입
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/auth/signup` | `201 Created` | MVP 계정을 생성합니다. |
+
+요청 body는 MVP 기준으로 아래 세 필드만 허용합니다.
+
+```json
+{
+  "name": "홍길동",
+  "email": "user@example.com",
+  "password": "Password123!"
+}
+```
+
+- `name`, `email`, `password`는 모두 필수입니다.
+- `password`는 8~72자이며 대문자, 소문자, 숫자, 특수문자를 각각 1개 이상 포함해야 합니다.
+- `gender`, `birth_date`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 허용하지 않습니다.
+- MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
+
+### 내 정보 조회·수정
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `GET` | `/api/v1/users/me` | `200 OK` | 로그인 사용자의 정보를 조회합니다. |
+| `PATCH` | `/api/v1/users/me` | `200 OK` | MVP에서 허용된 사용자 정보를 수정합니다. |
+
+- 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
+- MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다.
+- `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+
 ## Post-MVP-1 목표 API — 미구현
 
 아래 내용은 2026-08-24 승인된 목표 계약이며 현재 Router·OpenAPI 동작이 아닙니다. 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
@@ -195,11 +229,41 @@ DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반�
 }
 ```
 
+OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 있도록 `error_code`와 `error_message`를 함께 포함합니다. 외부 OCR 제공자의 원본 오류 메시지나 민감한 내부 예외 메시지는 그대로 노출하지 않고 Backend가 정의한 안전한 문구만 반환합니다.
+
 - `raw_value`는 OCR이 인식한 원문이다.
 - `normalized_value`는 표기 정리용 참고값이다.
 - `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값이다.
 - `normalized_value`는 자동 처방 확정이나 의약품 동일성 판단에 사용하지 않는다.
 - 최종 처방에는 `confirmed_value`만 사용한다.
+
+## 처방 정보 확정
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/documents/{document_id}/prescription` | `201 Created` | 문서의 최신 완료 OCR 결과 중 사용자가 검수한 필드로 처방 정보를 확정합니다. |
+
+### 요청
+
+- MVP에서는 별도 요청 본문 없이 `document_id`를 기준으로 처리합니다.
+- Backend는 문서 소유권과 최신 OCR 작업의 `COMPLETED` 상태를 확인합니다.
+- OCR 필드는 사용자가 확인한 `confirmed_value`만 처방 확정에 사용합니다.
+- `PRESCRIBED_DATE`, `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
+- `DOSE_UNIT`, `TIMING`은 현재 MVP에서 선택값입니다.
+- `PRESCRIBED_DATE`는 `date.fromisoformat()`이 허용하는 ISO 8601 날짜 형식(예: `YYYY-MM-DD`, 하이픈 없는 `YYYYMMDD`, ISO week-date `YYYY-Www-D`), `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
+- `DOSE_UNIT`은 `VARCHAR(50)`, `TIMING`은 `VARCHAR(255)` 길이를 초과하면 저장 전에 `422 VALIDATION_FAILED`로 거부합니다.
+- 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
+
+### 주요 오류
+
+| 상태 | `code` | 설명 |
+| ---: | --- | --- |
+| `404` | `MEDICAL_DOCUMENT_NOT_FOUND` | 사용자가 접근할 수 없는 문서입니다. |
+| `409` | `OCR_JOB_NOT_COMPLETED` | OCR 처리가 완료되지 않았습니다. |
+| `422` | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 처방 확정 필수 항목(`PRESCRIBED_DATE` 포함)이 누락되었습니다. |
+| `422` | `VALIDATION_FAILED` | 필드 값의 형식이 올바르지 않습니다(`PRESCRIBED_DATE` 형식 오류 포함). |
 
 
 ## 변경 이력
@@ -210,3 +274,4 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | --- | --- | --- |
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
+| 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
