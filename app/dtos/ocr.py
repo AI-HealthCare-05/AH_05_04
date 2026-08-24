@@ -37,6 +37,7 @@ class OcrJobData(BaseModel):
     document_id: UUID
     ocr_status: OcrJobStatus
     error_code: str | None = None
+    error_message: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
     fields: list[ExtractedFieldData] = Field(default_factory=list)

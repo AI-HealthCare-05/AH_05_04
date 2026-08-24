@@ -86,7 +86,7 @@ async def confirm_prescription(
     user: Annotated[User, Depends(get_request_user)],
     prescription_service: Annotated[PrescriptionService, Depends(get_prescription_service)],
 ) -> Response:
-    # 처방 최종 확정 Backend 계약(1차 구현 ERD): 문서 아래에 확정 처방 리소스를 생성합니다.
+    # 처방 최종 확정 Backend 계약(MVP): 문서의 최신 완료 OCR 결과를 기준으로 처방을 생성합니다.
     result = await prescription_service.confirm_prescription(user=user, document_id=document_id)
 
     return Response(

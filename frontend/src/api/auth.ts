@@ -4,9 +4,6 @@ export type SignupRequest = {
   email: string
   password: string
   name: string
-  gender: string
-  birth_date: string
-  phone_number: string
 }
 
 export type LoginRequest = {
