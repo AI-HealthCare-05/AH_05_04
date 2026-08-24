@@ -28,6 +28,12 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 등록되지 않은 경로 요청(404)이나 지원하지 않는 HTTP 메서드 요청(405)은 FastAPI/Starlette가 라우팅 단계에서 자체적으로 응답을 만들기 때문에 아직 이 공통 형식을 따르지 않습니다. 현재는 등록되지 않은 경로에 `{"detail": "Not Found"}`, 지원하지 않는 메서드에 `{"detail": "Method Not Allowed"}`가 반환됩니다. 클라이언트는 이 두 경우에 `code` 필드가 없을 수 있다는 점을 감안해야 합니다.
 
+## 민감정보 노출 방지
+
+**목표 계약**: 의료·개인정보 또는 인증정보가 포함될 수 있는 API는 성공 응답뿐 아니라 `4xx`·`5xx` 오류 응답에도 `Cache-Control: no-store`를 적용한다. `details[].rejected_value`에는 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않는다.
+
+**현재 구현 상태**: 부분 적용. 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않는다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 위 목표를 아직 충족하지 못한다. 이 문구는 현재 구현 완료를 의미하지 않으며, 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
+
 ## HTTP 상태 코드 기준
 
 | 구분 | HTTP 상태 코드 | 이름 | 사용 기준 |
@@ -123,11 +129,10 @@ raise ApiError(
 
 | HTTP | code | message | 비고 |
 | --- | --- | --- | --- |
-| 403 | `CONSENT_REQUIRED` | 서비스 이용을 위해 필수 동의가 필요합니다. | 동의 체계 자체가 아직 없음 |
-| 404 | `RESOURCE_NOT_FOUND` | 요청한 정보를 찾을 수 없습니다. | 일반 fallback, 현재는 도메인별 `*_NOT_FOUND`로 대체 |
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` | 이전과 다른 내용의 요청이라 처리할 수 없습니다. 새로 요청해 주세요. | Idempotency-Key 도입 후 사용. 명칭·상태는 [멱등성 계약 v1](./idempotency-v1.md) 확정값 기준 |
 | 409 | `PRESCRIPTION_VERSION_CONFLICT` | 다른 곳에서 먼저 수정된 정보입니다. 새로고침 후 다시 시도해 주세요. | Prescription Version 도입 후 사용. 명칭·상태는 [처방 버전 계약 v1](./prescription-version-v1.md) 확정값 기준 |
-| 429 | `RATE_LIMITED` | 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요. | Rate limit 도입 후 사용 |
+
+`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED`는 뒷받침하는 승인된 Decision이나 목표 계약이 아직 없어 이 표에서 제외했다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../AGENTS.md) 기준).
 
 ## 도메인별 오류 코드
 
@@ -158,15 +163,11 @@ raise ApiError(
 
 ### Post-MVP
 
-| HTTP | code | message | 관련 계획 |
-| --- | --- | --- | --- |
-| 404 | `PROFILE_NOT_FOUND` | 사용자 프로필을 찾을 수 없습니다. | 별도 Profile 모델 도입 후 |
-| 422 | `OCR_LOW_CONFIDENCE` | 일부 항목의 인식 신뢰도가 낮습니다. 내용을 확인해 주세요. | Track E, confidence 정책 고도화 (Post-MVP-2 / 임계값 미확정, `ISS-TBD-001`) |
-| 500 | `UPLOAD_FAILED` | 파일 업로드에 실패했습니다. 다시 시도해 주세요. | 현재는 저장 실패가 별도 코드로 분리되어 있지 않음 |
-| 404 | `MEDICATION_SCHEDULE_NOT_FOUND` | 복약 일정을 찾을 수 없습니다. | Track B |
-| 409 | `MEDICATION_LOG_ALREADY_EXISTS` | 해당 시간의 복약 기록이 이미 저장되었습니다. | Track B |
-| 422 | `MEDICATION_LOG_INVALID_STATUS` | 복약 기록 상태값이 올바르지 않습니다. | Track B |
-| 404 | `CITATION_NOT_FOUND` | 답변의 출처 정보를 찾을 수 없습니다. | Track F, 출처 상세 조회 API 도입 후. 답변 생성 중 출처 누락은 `AI_RESPONSE_FAILED`, 서버 데이터 무결성 문제로 출처 조회 자체가 실패하면 공통 `INTERNAL_SERVER_ERROR`를 사용 |
+도메인별 Post-MVP 오류 코드는 아직 이 저장소에 승인된 Decision이나 목표 계약이 없어 표를 비워둔다. 다음 코드 후보는 뒷받침하는 계약이 확정된 뒤에만 이 표에 추가한다.
+
+- `PROFILE_NOT_FOUND`, `UPLOAD_FAILED`, `MEDICATION_SCHEDULE_NOT_FOUND`, `MEDICATION_LOG_ALREADY_EXISTS`, `MEDICATION_LOG_INVALID_STATUS`, `CITATION_NOT_FOUND`
+- `OCR_LOW_CONFIDENCE`: 저신뢰 OCR 결과를 요청 실패(`422`)로 볼지, OCR 결과 검수 상태(`REVIEW_REQUIRED`, 아직 미구현)로 볼지는 Product·OCR·Frontend·Backend가 함께 결정해야 하는 별도 Decision 사안이다. 이번 PR에서는 HTTP status를 확정하지 않는다.
+- `CITATION_NOT_FOUND`는 아직 승인되지 않은 출처 상세 조회 API를 전제하며, 기존 [Safety Result 계약 v1](./safety-result-v1.md)의 `fallback_code`(`NO_APPROVED_EVIDENCE` 등)와 의미가 겹칠 수 있어 해당 API 승인 시 함께 재검토한다.
 
 가이드 생성 작업이 정상적으로 접수되었다는 뜻의 `202`는 오류가 아니라 성공 응답이므로 이 표에 두지 않습니다. Post-MVP-1에서 공통 비동기 Job 기반이 도입되면 `202 {"data": JobStatusResponse}` 형태로 접수되며, 세부 응답 형태는 [비동기 Job 계약 v1](./async-job-v1.md)을 따릅니다.
 
