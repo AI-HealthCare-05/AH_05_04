@@ -102,6 +102,24 @@ admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초
 - `ai-worker`는 실제 작업 로직이 없는 placeholder입니다. Production Compose의 `restart: always` 상태로 배포하면 재시작 루프가 발생할 수 있으므로 Worker 구현 전에는 배포 대상에서 제외하거나 정책을 명시적으로 변경합니다.
 - Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS와 CORS 실제 값을 함께 확인합니다.
 
+## Post-MVP-1 비동기 전환 게이트 — 미구현
+
+현재 동기 배포 기록은 비동기 전환이 실제로 완료될 때까지 유효합니다. 아래 항목은 승인된 목표이며 현재 배포 경로가 아닙니다.
+
+- OCR·Guide·Chat은 각각 `ASYNC_OCR`, `ASYNC_GUIDE`, `ASYNC_CHAT` feature flag로 전환하고 신규 접수만 선택한 경로로 보냅니다.
+- 기존 비동기 Job은 rollback 시에도 drain하며 실행 중간에 동기 경로로 바꾸지 않습니다.
+- Redis consumer, dispatch, retry·lease·fencing, Outbox publisher와 reconciler를 구현하고 통합 테스트합니다.
+- 초기 내부 SLO는 queue delay p95 5초 이하, terminal 도달 p95 `OCR 60초 / Guide 120초 / Chat 90초`, 15분 이상 non-terminal 0건입니다.
+- retry·reclaim·STALE 비율을 계측하고 DLQ·quarantine 발생, Safety 검증 우회와 STALE 결과 공개는 1건부터 경보합니다. 비율 threshold는 초기 2주 계측 후 재승인합니다.
+- `PUBLIC_TRACK_C`, `PUBLIC_TRACK_D`, `PUBLIC_TRACK_F`는 의료·약학·Privacy·Source 승인과 회귀 증빙 전까지 닫아 둡니다.
+- Worker 구현 전 Production Compose의 placeholder `ai-worker`를 실제 처리 서비스처럼 배포하지 않습니다.
+
+전환 PR은 [비동기 Job](./contracts/async-job-v1.md), [Outbox·Stream](./contracts/outbox-stream-v1.md), [테스트 전략](./testing.md)을 구현·운영 설정과 함께 갱신해야 합니다.
+
+### 공통 Privacy Production gate
+
+`EXT-PRIV-001` 승인 전에는 production 보존 job과 공개를 차단한다. 승인 범위는 terminal Job 90일, publish 완료 Outbox·quarantine·DLQ 30일, Idempotency 7일 기본값, 1MiB 동기 snapshot의 암호화·일반 로그 금지, 미발행 DLQ·연결 quarantine의 TTL 제외, 사용자 삭제·legal hold·키 관리 증빙이다. Track C·D·F flag별 정확한 해제 조건은 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따르며 공통 Privacy gate를 임의의 flag 조건으로 중복 추가하지 않는다.
+
 ## 보안 확인
 
 - 비밀정보는 저장소에 커밋하지 않습니다.
