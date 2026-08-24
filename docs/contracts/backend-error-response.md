@@ -125,8 +125,8 @@ raise ApiError(
 | --- | --- | --- | --- |
 | 403 | `CONSENT_REQUIRED` | 서비스 이용을 위해 필수 동의가 필요합니다. | 동의 체계 자체가 아직 없음 |
 | 404 | `RESOURCE_NOT_FOUND` | 요청한 정보를 찾을 수 없습니다. | 일반 fallback, 현재는 도메인별 `*_NOT_FOUND`로 대체 |
-| 409 | `IDEMPOTENCY_CONFLICT` | 이전과 다른 내용의 요청이라 처리할 수 없습니다. 새로 요청해 주세요. | Idempotency-Key 도입 후 사용 |
-| 412 | `VERSION_CONFLICT` | 다른 곳에서 먼저 수정된 정보입니다. 새로고침 후 다시 시도해 주세요. | Prescription Version 도입 후 사용 |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` | 이전과 다른 내용의 요청이라 처리할 수 없습니다. 새로 요청해 주세요. | Idempotency-Key 도입 후 사용. 명칭·상태는 [멱등성 계약 v1](./idempotency-v1.md) 확정값 기준 |
+| 409 | `PRESCRIPTION_VERSION_CONFLICT` | 다른 곳에서 먼저 수정된 정보입니다. 새로고침 후 다시 시도해 주세요. | Prescription Version 도입 후 사용. 명칭·상태는 [처방 버전 계약 v1](./prescription-version-v1.md) 확정값 기준 |
 | 429 | `RATE_LIMITED` | 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요. | Rate limit 도입 후 사용 |
 
 ## 도메인별 오류 코드
@@ -166,10 +166,11 @@ raise ApiError(
 | 404 | `MEDICATION_SCHEDULE_NOT_FOUND` | 복약 일정을 찾을 수 없습니다. | Track B |
 | 409 | `MEDICATION_LOG_ALREADY_EXISTS` | 해당 시간의 복약 기록이 이미 저장되었습니다. | Track B |
 | 422 | `MEDICATION_LOG_INVALID_STATUS` | 복약 기록 상태값이 올바르지 않습니다. | Track B |
-| 202 | `GUIDE_GENERATION_PENDING` | 복약 가이드 생성이 진행 중입니다. | Track A, 공통 비동기 Job 기반 도입 후. 현재 동기 처리에는 해당하지 않음 |
 | 404 | `CITATION_NOT_FOUND` | 답변의 출처 정보를 찾을 수 없습니다. | Track F, 출처 상세 조회 API 도입 후. 답변 생성 중 출처 누락은 `AI_RESPONSE_FAILED`, 서버 데이터 무결성 문제로 출처 조회 자체가 실패하면 공통 `INTERNAL_SERVER_ERROR`를 사용 |
 
-AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 오류 코드가 아니라 정상 응답의 `status`로 구분합니다. 관련 후보는 [복약 챗봇 Backend-AI Core 계약](./medication-chat-ai-backend.md)의 Post-MVP 정상 응답 status 기준에서 관리합니다.
+가이드 생성 작업이 정상적으로 접수되었다는 뜻의 `202`는 오류가 아니라 성공 응답이므로 이 표에 두지 않습니다. Post-MVP-1에서 공통 비동기 Job 기반이 도입되면 `202 {"data": JobStatusResponse}` 형태로 접수되며, 세부 응답 형태는 [비동기 Job 계약 v1](./async-job-v1.md)을 따릅니다.
+
+AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 오류 코드가 아니라 정상 응답의 상태 축으로 구분합니다. 확정된 상태 축은 [Safety Result 계약 v1](./safety-result-v1.md)을 따르며, 요약은 [복약 챗봇 Backend-AI Core 계약](./medication-chat-ai-backend.md)에 둡니다.
 
 ## 오류 코드 구분 기준
 

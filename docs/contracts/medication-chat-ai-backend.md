@@ -62,17 +62,11 @@ Provider에는 다음 정보만 전달할 수 있다.
 
 현재 MVP Backend는 세 값을 완료된 ASSISTANT 메시지에 저장하고 같은 값을 `201 Created` 응답에 사용한다. Post-MVP-1에서는 Worker가 결과를 저장하고 완료된 Job의 opaque `result_url`이 가리키는 기존 `GET /api/v1/chat-sessions/{session_id}/messages`에서 조회한다.
 
-### Post-MVP 정상 응답 status 후보
+### Post-MVP-1 정상 응답 상태 축 — 승인된 목표
 
-아래 값은 오류 코드가 아니라 정상 응답(`200`)의 `status` 값으로 설계된 후보이다. AI가 안전 제한이나 근거 부족으로 답변을 제한한 경우에도 요청 자체는 정상 처리된 것으로 보고, 실제 요청·서버·처리 오류만 `ApiError`의 `code`로 구분한다.
+AI가 안전 제한이나 근거 부족으로 답변을 제한한 경우에도 요청 자체는 정상 처리된 것으로 보고, 실제 요청·서버·처리 오류만 `ApiError`의 `code`로 구분한다. 단일 `status` enum 대신 `execution_status`·`release_decision`·`safety_disposition` 세 축과 `response_level`로 표현하며, 확정 정의와 조합표는 [Safety Result 계약 v1](./safety-result-v1.md)을 따른다. 이전에 검토됐던 `ANSWERED`/`SAFETY_BLOCKED`/`EVIDENCE_UNAVAILABLE` 단일 status안은 이 세 축 모델로 대체되었다.
 
-현재 MVP 챗봇 응답은 `generation_status`를 사용하며, 아래 status 값은 RAG·Safety Router·출처 검증을 포함하는 Post-MVP 응답 계약이 확정될 때 적용한다.
-
-| status | message | 관련 계획 |
-| --- | --- | --- |
-| `ANSWERED` | 답변을 정상적으로 생성했습니다. | Track F, RAG 기반 응답 상태 |
-| `SAFETY_BLOCKED` | 안전상의 이유로 답변을 제공할 수 없습니다. 의료진과 상담해 주세요. | Track F, Safety Router |
-| `EVIDENCE_UNAVAILABLE` | 신뢰할 수 있는 근거가 부족해 답변을 제한합니다. | Track F, 근거 부족 fallback |
+현재 MVP 챗봇 응답은 `generation_status`(Job 상태와 동일한 6개 값)만 사용하며, 위 상태 축은 RAG·Safety Router·출처 검증을 포함하는 Post-MVP-1 응답 계약 구현 PR이 병합된 뒤에 적용한다.
 
 ## 오류 경계
 
