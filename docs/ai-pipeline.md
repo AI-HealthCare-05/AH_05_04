@@ -5,7 +5,8 @@
 - **MVP 구현**: 현재 Backend 실행 경로에 연결되어 테스트 가능한 기능
 - **골격만 존재**: 디렉터리·진입점만 있고 실제 작업 처리에는 연결되지 않은 영역
 - **Schema-only**: DB 모델과 migration만 존재하고 repository·service·API에는 연결되지 않은 영역
-- **Post-MVP**: 별도 Issue, 계약, 구현과 검증이 필요한 기능
+- **Approved target — Not implemented**: 계약은 승인됐지만 코드·migration·OpenAPI·자동 테스트가 아직 현재 실행 경로를 증명하지 않는 기능
+- **Proposed**: 아직 승인되지 않아 구현 기준으로 사용할 수 없는 제안
 
 ## 현재 MVP 파이프라인
 
@@ -48,19 +49,15 @@
 | Backend 동기 가이드 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 근거·검증 원칙 또는 코드로 강제되는 제한 모드와 재현 가능한 안전 기준 구현 후 전환 |
 | Backend 동기 챗봇 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 질문 admission·동시성·DB 수용량과 근거·검증 안전 조건 구현 후 전환 |
 | AI Worker | 골격만 존재 | 연결되지 않음 | queue 계약, consumer, 재시도·멱등성, health check와 운영 정책 구현 |
-| RAG | Schema-only / Post-MVP | 지식 문서·청크 테이블만 존재, 검색 경로는 연결되지 않음 | 승인 지식 소스·라이선스, 인덱스, 검색 계약과 retrieval 평가 승인 |
-| Citation/NLI | Schema-only / Post-MVP | 가이드·채팅 citation 테이블만 존재, 생성·검증 경로는 연결되지 않음 | 주장–출처 스키마, 검증 정책, 실패·Fallback 계약과 임계값 승인 |
-| AI 응답 평가 | Post-MVP | 자동 배포 게이트 아님. 수동 의료 안전 승인은 별도 필수 | 합성·공개 데이터셋, 지표·임계값, 재현 가능한 실행과 결과 저장 구현 |
-| OTC | Post-MVP | 연결되지 않음 | 성분 식별·중복·상호작용 범위와 의료 안전 검증 승인 |
+| RAG | Schema-only / Approved target — Not implemented | 지식 문서·청크 테이블만 존재, 검색 경로는 연결되지 않음 | 승인 지식 소스·라이선스, 인덱스, 검색 계약과 retrieval 평가 승인 |
+| Citation/NLI | Schema-only / Approved target — Not implemented | 가이드·채팅 citation 테이블만 존재, 생성·검증 경로는 연결되지 않음 | 주장–출처 스키마, 검증 정책, 실패·Fallback 계약과 임계값 승인 |
+| AI 응답 평가 | Approved target — Not implemented | 자동 배포 게이트 아님. 수동 의료 안전 승인은 별도 필수 | 합성·공개 데이터셋, 지표·임계값, 재현 가능한 실행과 결과 저장 구현 |
+| OTC | Approved target — Not implemented | 연결되지 않음 | 성분 식별·중복·상호작용 범위와 의료 안전 검증 승인 |
 
-## Post-MVP 비동기 흐름
+## Post-MVP-1 비동기 흐름 — Approved target / Not implemented
 
-AI Worker 전환은 단순히 `restart` 정책이나 실행 명령만 바꾸는 작업이 아닙니다. 다음 조건을 모두 충족한 뒤 Backend 요청 경로에 연결합니다.
+목표 흐름은 `API → AI_JOB·OUTBOX_EVENT 동일 transaction commit → Outbox publisher → Redis Stream → Worker claim/lease/fencing → Provider·RAG·검증 → 결과 commit → ACK → REST polling`이다. OCR·Guide·Chat은 공통 6개 Job 상태를 쓰고, 처방 version 변경 결과는 `STALE`로 차단한다. Track F는 RAG·Citation·Safety Result를 분리하고 근거 부족·검증 실패를 승인 fallback 또는 공개 차단으로 처리한다.
 
-1. `docs/contracts/`에 작업 입력·출력, 상태, 오류, 재시도와 멱등성 계약을 기록합니다.
-2. Redis consumer와 실제 OCR·RAG·LLM·평가 작업을 구현합니다.
-3. API의 접수·조회 상태와 기존 동기 응답 의미를 합의하고 문서화합니다.
-4. 계약·통합·장애·재시도 테스트와 health check를 추가합니다.
-5. 민감정보 외부 전송·로그·보존 정책과 운영 수용량을 승인합니다.
+연결 전에는 Redis consumer·retry/reclaim, Outbox reconciler, commit-before-ACK, 멱등성·소유권·STALE 계약과 장애 테스트를 구현해야 한다. `ASYNC_OCR → ASYNC_GUIDE → ASYNC_CHAT` 순으로 신규 접수만 canary 전환하며 rollback 뒤에도 기존 Job은 drain한다. 공개 기능은 [외부 승인 게이트](./release-gates/post-mvp-1-external-approvals.md)를 별도로 충족한다.
 
 `SECURITY.md`의 근거·모델·프롬프트·검증 결과 추적은 장기 안전 원칙으로 유지합니다. 현재 MVP가 RAG·Citation/NLI를 구현하지 않았다는 상태 표시는 이 원칙을 폐기하거나 충족한 것으로 간주한다는 의미가 아닙니다.
