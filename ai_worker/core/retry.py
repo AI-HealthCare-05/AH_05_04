@@ -57,13 +57,15 @@ class RetryDecisionReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RetryDecision:
-    """외부 I/O 없이 계산한 재시도 결과입니다."""
+    """외부 I/O 없이 계산한 재시도 결과입니다.
+
+    이 결과는 재시도 흐름만 나타냅니다. Job의 COMPLETED·FAILED 전환이나
+    격리 저장 여부는 오류별 후속 처리 계층에서 결정합니다.
+    """
 
     should_retry: bool
     delay_seconds: float | None
-    final_failure: bool
     reason: RetryDecisionReason
-    terminal_failure_code: FailureCode | None
 
 
 def calculate_retry_decision(
@@ -90,24 +92,22 @@ def calculate_retry_decision(
     if failure_code not in ALL_FAILURE_CODES:
         raise ValueError("승인되지 않은 failure_code입니다.")
 
-    # 입력·schema·Safety 오류와 영구 오류는 횟수가 남아 있어도 종료합니다.
+    # 재시도 대상이 아닌 오류는 실행을 다시 예약하지 않습니다.
+    # 안전 안내문 저장, 최종 실패 또는 격리 여부는 여기서 결정하지 않습니다.
     if failure_code not in RETRYABLE_FAILURE_CODES:
         return RetryDecision(
             should_retry=False,
             delay_seconds=None,
-            final_failure=True,
             reason=RetryDecisionReason.NON_RETRYABLE,
-            terminal_failure_code=failure_code,
         )
 
-    # 최초 실행을 포함한 최대 횟수에 도달하면 재시도를 예약하지 않습니다.
+    # 허용된 실행 횟수를 모두 사용했음을 알릴 뿐,
+    # 실제 Job을 FAILED로 바꾸는 것은 Worker 처리 계층의 책임입니다.
     if attempt_count >= max_attempts:
         return RetryDecision(
             should_retry=False,
             delay_seconds=None,
-            final_failure=True,
             reason=RetryDecisionReason.ATTEMPTS_EXHAUSTED,
-            terminal_failure_code="RETRY_EXHAUSTED",
         )
 
     base_delay = _calculate_base_delay(attempt_count=attempt_count)
@@ -119,9 +119,7 @@ def calculate_retry_decision(
     return RetryDecision(
         should_retry=True,
         delay_seconds=delay_seconds,
-        final_failure=False,
         reason=RetryDecisionReason.RETRY_SCHEDULED,
-        terminal_failure_code=None,
     )
 
 
@@ -144,17 +142,25 @@ def _add_positive_jitter(
     """기본 지연에 0~20% 범위의 양의 jitter를 추가합니다."""
 
     sampled_value = random_value()
+    error_message = "random_value는 0 이상 1 이하의 유한한 숫자를 반환해야 합니다."
 
-    # random.random과 동일하게 0 이상 1 이하의 유한한 값만 허용합니다.
-    if (
-        isinstance(sampled_value, bool)
-        or not isinstance(sampled_value, int | float)
-        or not math.isfinite(sampled_value)
-        or not 0 <= sampled_value <= 1
+    if isinstance(sampled_value, bool) or not isinstance(
+        sampled_value,
+        int | float,
     ):
-        raise ValueError("random_value는 0 이상 1 이하의 유한한 숫자를 반환해야 합니다.")
+        raise ValueError(error_message)
 
-    jitter_ratio = MAX_JITTER_RATIO * float(sampled_value)
+    try:
+        # 매우 큰 정수는 float 변환 과정에서 OverflowError가 발생할 수 있으므로
+        # 외부 입력 검증 계약인 ValueError로 통일합니다.
+        normalized_value = float(sampled_value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(error_message) from exc
+
+    if not math.isfinite(normalized_value) or not 0 <= normalized_value <= 1:
+        raise ValueError(error_message)
+
+    jitter_ratio = MAX_JITTER_RATIO * normalized_value
     return base_delay * (1 + jitter_ratio)
 
 

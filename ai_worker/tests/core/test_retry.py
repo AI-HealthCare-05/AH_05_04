@@ -34,9 +34,7 @@ def test_transient_failure_is_retryable(
     )
 
     assert decision.should_retry is True
-    assert decision.final_failure is False
     assert decision.reason is RetryDecisionReason.RETRY_SCHEDULED
-    assert decision.terminal_failure_code is None
 
 
 def test_first_failure_uses_five_second_backoff() -> None:
@@ -106,7 +104,7 @@ def test_maximum_positive_jitter_adds_twenty_percent() -> None:
         "INTERNAL_ERROR",
     ],
 )
-def test_permanent_failure_is_not_retried(
+def test_non_retryable_failure_is_not_scheduled_again(
     failure_code: FailureCode,
 ) -> None:
     decision = calculate_retry_decision(
@@ -118,12 +116,10 @@ def test_permanent_failure_is_not_retried(
 
     assert decision.should_retry is False
     assert decision.delay_seconds is None
-    assert decision.final_failure is True
     assert decision.reason is RetryDecisionReason.NON_RETRYABLE
-    assert decision.terminal_failure_code == failure_code
 
 
-def test_max_attempts_returns_retry_exhausted() -> None:
+def test_max_attempts_returns_attempts_exhausted() -> None:
     decision = calculate_retry_decision(
         attempt_count=3,
         max_attempts=3,
@@ -133,9 +129,25 @@ def test_max_attempts_returns_retry_exhausted() -> None:
 
     assert decision.should_retry is False
     assert decision.delay_seconds is None
-    assert decision.final_failure is True
     assert decision.reason is RetryDecisionReason.ATTEMPTS_EXHAUSTED
-    assert decision.terminal_failure_code == "RETRY_EXHAUSTED"
+
+
+def test_safety_validation_failure_does_not_decide_job_terminal_state() -> None:
+    """안전성 실패는 재시도만 중단하며 Job 최종 상태를 결정하지 않습니다."""
+    decision = calculate_retry_decision(
+        attempt_count=1,
+        max_attempts=3,
+        failure_code="SAFETY_VALIDATION_FAILED",
+        random_value=fixed_random(0),
+    )
+
+    assert decision.should_retry is False
+    assert decision.reason is RetryDecisionReason.NON_RETRYABLE
+
+    # 안전 안내문 저장 결과에 따라 COMPLETED 또는 FAILED가 결정되므로
+    # 공통 재시도 결과에는 Job 최종 상태 필드를 제공하지 않습니다.
+    assert not hasattr(decision, "final_failure")
+    assert not hasattr(decision, "terminal_failure_code")
 
 
 @pytest.mark.parametrize(
@@ -189,6 +201,9 @@ def test_non_integer_max_attempts_is_rejected(max_attempts: object) -> None:
         -0.1,
         1.1,
         float("inf"),
+        float("nan"),
+        # Pytest가 ID로 표현할 수 있으면서 float 범위는 초과하는 큰 정수입니다.
+        10**400,
     ],
 )
 def test_invalid_jitter_value_is_rejected(sampled_value: float) -> None:
