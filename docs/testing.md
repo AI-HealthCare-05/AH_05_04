@@ -79,3 +79,19 @@ uv run coverage run -m pytest app tests/contract
 - 모델·프롬프트·검색 인덱스 변경에 대한 회귀 평가
 
 위 평가 체계가 Post-MVP라는 분류는 현재 의료 안전 원칙을 유예한다는 뜻이 아닙니다. 구현 전 사용자 검증은 비식별 합성 데이터와 접근 통제를 사용하는 내부 staging 데모로 제한하며 Production 승인으로 간주하지 않습니다.
+
+## Post-MVP-1 목표 계약 테스트 — 미구현
+
+다음 항목은 목표 계약의 완료 조건이며 현재 CI에서 통과한 것으로 간주하지 않습니다. 관련 기능 PR은 구현·OpenAPI·migration과 함께 해당 테스트를 추가하고 실제 실행 결과를 남겨야 합니다.
+
+- 동일 멱등 키·동일 요청은 Job을 하나만 만들고 기존 Job의 최신 `202`를 반환합니다.
+- 동일 멱등 키·다른 요청은 `409 IDEMPOTENCY_KEY_CONFLICT`입니다.
+- 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다.
+- 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
+- 만료된 lease의 Worker가 새 Worker의 결과를 덮어쓰지 못합니다.
+- 처방 active version 변경 시 처리 중 결과는 `STALE`이며 현재 결과로 노출되지 않습니다.
+- 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
+- Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.
+- 다른 사용자의 Job·결과 직접 URL은 `404`이며 Redis·로그·DLQ에는 의료 원문을 저장하지 않습니다.
+- 근거 없음·상충·timeout·검증 실패는 정상 답변이 아니라 승인된 fallback 또는 공개 차단으로 처리합니다.
+- OTC 평가 불완전 `UNKNOWN`과 승인 범위 내 rule 무성립을 구분하며 안전 보장 문구를 노출하지 않습니다.

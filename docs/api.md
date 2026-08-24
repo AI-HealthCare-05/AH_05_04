@@ -59,6 +59,27 @@
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동기 queue 접수가 아닙니다. 같은 HTTP 요청에서 CLOVA OCR 호출과 결과 저장을 완료합니다.
 
+## Post-MVP-1 목표 API — 미구현
+
+아래 내용은 2026-08-24 승인된 목표 계약이며 현재 Router·OpenAPI 동작이 아닙니다. 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
+
+| Method | Path | 목표 성공 상태 | 목표 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202 Accepted` | OCR Job 접수 |
+| `POST` | `/api/v1/guides` | `202 Accepted` | Guide Job 접수 |
+| `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `202 Accepted` | Chat Job 접수 |
+| `GET` | `/api/v1/jobs/{job_id}` | `200 OK` | 공통 Job 상태 조회 |
+
+- 세 접수 POST에는 `Idempotency-Key`가 필요합니다.
+- 목표 Job 상태는 `PENDING`, `PROCESSING`, `RETRY_WAIT`, `COMPLETED`, `FAILED`, `STALE`입니다.
+- 성공은 `{"data": JobStatusResponse}`, 오류는 현재 top-level 공통 오류 형식을 사용합니다.
+- 접수 응답의 `Location`과 `data.status_url`은 같은 Job 조회 URL을 가리킵니다.
+- `RETRY_WAIT`의 HTTP `Retry-After`와 `data.retry_after_seconds`는 같은 값입니다.
+- 같은 Chat session에는 non-terminal Job을 하나만 허용하고 다른 키의 중복 요청은 `409 CHAT_JOB_IN_PROGRESS`로 거부합니다.
+- 결과는 Backend가 제공하는 opaque `result_url`로 조회하며 다른 사용자의 Job·결과는 `404`로 숨깁니다.
+
+세부 목표는 [비동기 Job 계약](./contracts/async-job-v1.md), [멱등성 계약](./contracts/idempotency-v1.md), [Outbox·Stream 계약](./contracts/outbox-stream-v1.md)을 따릅니다. 계약 파일의 존재는 구현 완료를 뜻하지 않습니다.
+
 ## 복약 챗봇
 
 ### Endpoint
@@ -160,4 +181,5 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 
 | 날짜 | 관련 Issue/PR | 변경 내용 |
 | --- | --- | --- |
+| 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |

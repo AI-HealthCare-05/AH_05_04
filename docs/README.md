@@ -13,11 +13,16 @@
 - `deployment.md`: 개발·운영 환경과 배포 절차
 - `privacy-safety.md`: 개인정보와 의료 안전 기준
 - `testing.md`: 현재 자동 검증 범위와 Post-MVP E2E·AI 평가 전략
-- `contracts/`: 모듈 간 공통 데이터 계약
+- `contracts/`: 현재 구현 계약과 승인된 Post-MVP-1 목표 계약. 상태 구분은 [계약 인덱스](./contracts/README.md)를 확인합니다.
 - `adr/`: 주요 아키텍처 결정 기록
 - `designs/`: 기능별 상세 설계와 구현 계획
 
 외부 문서 도구를 사용한다면 문서의 원본 링크와 최종 갱신일을 이 파일에 기록합니다.
+
+## 외부 원본
+
+- [Post-MVP-1 착수 전 게이트](https://app.notion.com/p/3c3233603e2780a7bcc2ff86de5abb74) — 최종 동기화: 2026-08-23
+- [Post-MVP-1 세부 결정사항](https://app.notion.com/p/3d7d841cc6c0444399e6e20037a2fd5d) — 최종 동기화: 2026-08-23
 
 ## 작성 원칙
 

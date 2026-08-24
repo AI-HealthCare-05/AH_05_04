@@ -1,5 +1,7 @@
 # 복약 챗봇 Backend–AI Core 계약
 
+> **적용 구분:** 이 문서는 현재 MVP의 동기 AI Core 호출 경계다. [비동기 Job 계약 v1](./async-job-v1.md)과 [Safety Result 계약 v1](./safety-result-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. 비동기 전환 후에도 Provider에 내부 식별자와 불필요한 의료 데이터를 보내지 않는 경계는 유지한다.
+
 ## 목적과 적용 범위
 
 이 문서는 복약 챗봇 요청이 Backend DTO에서 Provider payload로 변환되고 결과와 오류가 다시 Backend로 전달되는 공유 경계를 정의한다. HTTP API body 계약은 [`docs/api.md`](../api.md), 상세 구현 설계는 [Backend 연동 설계](../designs/ceohwj/medication-chat-ai-backend-integration-design.md)를 따른다.
@@ -58,7 +60,7 @@ Provider에는 다음 정보만 전달할 수 있다.
 | `model_name` | Provider가 반환한 실제 모델 식별자 |
 | `prompt_version` | AI Core가 사용한 프롬프트 버전 |
 
-Backend는 세 값을 완료된 ASSISTANT 메시지에 저장하고 같은 값을 `201 Created` 응답에 사용한다.
+현재 MVP Backend는 세 값을 완료된 ASSISTANT 메시지에 저장하고 같은 값을 `201 Created` 응답에 사용한다. Post-MVP-1에서는 Worker가 결과를 저장하고 완료된 Job의 opaque `result_url`이 가리키는 기존 `GET /api/v1/chat-sessions/{session_id}/messages`에서 조회한다.
 
 ## 오류 경계
 

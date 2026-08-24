@@ -1,9 +1,11 @@
 # ADR 0001: 세션 row lock을 사용하는 동기식 챗봇 생성
 
-- 상태: Accepted
+- 상태: Accepted (현재 동기 MVP)
 - 결정일: 2026-08-21
 - 관련 Issue: #38
 - 관련 PR: 아직 생성하지 않음 (`feat/38-chat-ai-backend-integration`)
+
+> Post-MVP-1 목표는 비동기 Chat Job, session당 non-terminal Job 1개, `Idempotency-Key`, `409 CHAT_JOB_IN_PROGRESS` 계약이다. 해당 route·DTO·migration·Worker·테스트가 병합되기 전까지 이 ADR과 [`../api.md`](../api.md)의 동기 `201` 계약이 현재 구현 기준이다. 전환 완료 PR에서 상태를 `Superseded`로 갱신한다.
 
 ## 배경과 문제
 
