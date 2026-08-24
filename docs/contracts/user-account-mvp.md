@@ -10,7 +10,7 @@
 - 요청 body는 `name`, `email`, `password` 세 필드만 허용합니다(`extra="forbid"`).
 - `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 받지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
-- `email` 중복 시 `409 CONFLICT`을 반환합니다. (`phone_number` 중복 체크 분기도 Repository에 남아있지만, 회원가입 요청이 `phone_number`를 받지 않는 현재 MVP에서는 실행되지 않는 방어 코드입니다.)
+- `email` 중복 시 `409 CONFLICT`을 반환합니다. `phone_number` 중복 체크는 Post-MVP에서 가입 요청에 `phone_number`가 추가될 때 함께 적용됩니다.
 
 | 필드 | 기준 |
 | --- | --- |
