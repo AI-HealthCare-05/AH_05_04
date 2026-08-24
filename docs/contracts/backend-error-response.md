@@ -161,7 +161,7 @@ raise ApiError(
 | HTTP | code | message | 관련 계획 |
 | --- | --- | --- | --- |
 | 404 | `PROFILE_NOT_FOUND` | 사용자 프로필을 찾을 수 없습니다. | 별도 Profile 모델 도입 후 |
-| 422 | `OCR_LOW_CONFIDENCE` | 일부 항목의 인식 신뢰도가 낮습니다. 내용을 확인해 주세요. | Track E, confidence 정책 고도화 |
+| 422 | `OCR_LOW_CONFIDENCE` | 일부 항목의 인식 신뢰도가 낮습니다. 내용을 확인해 주세요. | Track E, confidence 정책 고도화 (Post-MVP-2 / 임계값 미확정, `ISS-TBD-001`) |
 | 500 | `UPLOAD_FAILED` | 파일 업로드에 실패했습니다. 다시 시도해 주세요. | 현재는 저장 실패가 별도 코드로 분리되어 있지 않음 |
 | 404 | `MEDICATION_SCHEDULE_NOT_FOUND` | 복약 일정을 찾을 수 없습니다. | Track B |
 | 409 | `MEDICATION_LOG_ALREADY_EXISTS` | 해당 시간의 복약 기록이 이미 저장되었습니다. | Track B |
