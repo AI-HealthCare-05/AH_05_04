@@ -46,11 +46,9 @@ def downgrade() -> None:
     user_table = table("user", column("gender"), column("birthday"), column("phone_number"))
     connection = op.get_bind()
     null_count = connection.execute(
-        select(func.count()).select_from(user_table).where(
-            user_table.c.gender.is_(None)
-            | user_table.c.birthday.is_(None)
-            | user_table.c.phone_number.is_(None)
-        )
+        select(func.count())
+        .select_from(user_table)
+        .where(user_table.c.gender.is_(None) | user_table.c.birthday.is_(None) | user_table.c.phone_number.is_(None))
     ).scalar_one()
     if null_count:
         raise RuntimeError(
