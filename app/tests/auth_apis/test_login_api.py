@@ -19,9 +19,6 @@ class TestLoginAPI:
             "email": "login_test@example.com",
             "password": "Password123!",
             "name": "로그인테스터",
-            "gender": "FEMALE",
-            "birth_date": "1995-05-05",
-            "phone_number": "01011112222",
         }
         login_data = {"email": "login_test@example.com", "password": "Password123!"}
 
@@ -49,9 +46,6 @@ class TestLoginAPI:
             "email": "wrong_password@example.com",
             "password": "Password123!",
             "name": "비밀번호테스터",
-            "gender": "MALE",
-            "birth_date": "1993-03-03",
-            "phone_number": "01033334444",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/v1/auth/signup", json=signup_data)

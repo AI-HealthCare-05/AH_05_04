@@ -148,11 +148,13 @@ class PrescriptionService:
                 medications.append(medication)
 
         if missing:
+            # 필수값 누락과 형식 오류가 함께 있으면 필수값 누락을 대표 code로 두되,
+            # 사용자가 한 번에 수정할 수 있도록 형식 오류 details도 같은 응답에 포함합니다.
             raise ApiError(
                 status_code=422,
                 code="PRESCRIPTION_REQUIRED_FIELD_MISSING",
                 message="처방 확정에 필요한 항목이 누락되었습니다.",
-                details=missing,
+                details=[*missing, *invalid],
             )
         if invalid:
             raise ApiError(

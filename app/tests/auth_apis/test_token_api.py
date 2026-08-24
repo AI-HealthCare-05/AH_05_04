@@ -11,9 +11,6 @@ class TestJWTTokenRefreshAPI:
             "email": "refresh@example.com",
             "password": "Password123!",
             "name": "리프레시테스터",
-            "gender": "MALE",
-            "birth_date": "1990-01-01",
-            "phone_number": "01099998888",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/v1/auth/signup", json=signup_data)
@@ -52,9 +49,6 @@ class TestJWTTokenRefreshAPI:
             "email": "type-confusion@example.com",
             "password": "Password123!",
             "name": "타입혼동테스터",
-            "gender": "MALE",
-            "birth_date": "1990-01-01",
-            "phone_number": "01011112222",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/v1/auth/signup", json=signup_data)

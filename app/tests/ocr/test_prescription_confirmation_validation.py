@@ -157,6 +157,27 @@ def test_build_confirmed_data_reports_missing_fields_across_multiple_medications
     assert any(detail.field == "medications[2].duration_days" for detail in error.details)
 
 
+def test_build_confirmed_data_includes_invalid_details_when_required_fields_are_missing() -> None:
+    fields = [
+        _valid_prescribed_date(),
+        *_valid_medication_fields(1),
+        *[f for f in _valid_medication_fields(2) if f.field_type != FieldType.DURATION_DAYS],
+    ]
+    for field in fields:
+        if field.medication_index == 1 and field.field_type == FieldType.DOSE_VALUE:
+            field.confirmed_value = "약 반 알"
+
+    with pytest.raises(ApiError) as exc_info:
+        PrescriptionService._build_confirmed_data(fields)
+
+    error = exc_info.value
+    assert error.code == "PRESCRIPTION_REQUIRED_FIELD_MISSING"
+    assert any(detail.field == "medications[2].duration_days" for detail in error.details)
+    assert any(
+        detail.field == "medications[1].dose_value" and detail.reason == "INVALID_FORMAT" for detail in error.details
+    )
+
+
 def test_build_confirmed_data_rejects_missing_medication_index() -> None:
     fields = [_valid_prescribed_date(), *_valid_medication_fields(1), *_valid_medication_fields(3)]
 
