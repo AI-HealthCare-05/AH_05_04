@@ -96,7 +96,7 @@ raise ApiError(
 
 ## 범위 표시 기준
 
-아래 표의 "범위" 열은 코드가 실제로 언제 응답에 나가는지를 나타냅니다. "구현됨/미구현"처럼 시점에 따라 계속 바뀌는 상태 대신, 어느 개발 단계에 속하는 코드인지로 분류해 문서 유지보수 부담을 줄입니다.
+아래 표는 코드가 실제로 언제 응답에 나가는지에 따라 MVP와 Post-MVP로 나누어 관리합니다. "구현됨/미구현"처럼 시점에 따라 계속 바뀌는 상태 대신, 어느 개발 단계에 속하는 코드인지로 분류해 문서 유지보수 부담을 줄입니다.
 
 - **MVP**: 지금 이 저장소의 코드에서 실제로 발생하는 코드입니다. 코드와 메시지는 실제 구현과 항상 일치해야 합니다.
 - **Post-MVP**: 아직 구현되지 않았고, Post-MVP 계획 문서에서 다루는 기능(공통 비동기 Job, 복약 일정·로그, RAG·Citation·Safety 등)이 만들어질 때 사용할 예정인 코드입니다. 지금 이 코드를 실제로 응답에서 받을 일은 없습니다.
@@ -167,12 +167,9 @@ raise ApiError(
 | 409 | `MEDICATION_LOG_ALREADY_EXISTS` | 해당 시간의 복약 기록이 이미 저장되었습니다. | Track B |
 | 422 | `MEDICATION_LOG_INVALID_STATUS` | 복약 기록 상태값이 올바르지 않습니다. | Track B |
 | 202 | `GUIDE_GENERATION_PENDING` | 복약 가이드 생성이 진행 중입니다. | Track A, 공통 비동기 Job 기반 도입 후. 현재 동기 처리에는 해당하지 않음 |
-| 200 | `ANSWERED` | 답변을 정상적으로 생성했습니다. | Track F, RAG 기반 응답 상태 |
-| 200 | `SAFETY_BLOCKED` | 안전상의 이유로 답변을 제공할 수 없습니다. 의료진과 상담해 주세요. | Track F, Safety Router |
-| 200 | `EVIDENCE_UNAVAILABLE` | 신뢰할 수 있는 근거가 부족해 답변을 제한합니다. | Track F, 근거 부족 fallback |
 | 404 | `CITATION_NOT_FOUND` | 답변의 출처 정보를 찾을 수 없습니다. | Track F, 출처 상세 조회 API 도입 후. 답변 생성 중 출처 누락은 `AI_RESPONSE_FAILED`, 서버 데이터 무결성 문제로 출처 조회 자체가 실패하면 공통 `INTERNAL_SERVER_ERROR`를 사용 |
 
-`ANSWERED`/`SAFETY_BLOCKED`/`EVIDENCE_UNAVAILABLE`은 오류가 아닌 정상 응답(`200`)의 `status` 값으로 설계되어 있습니다. AI가 안전 제한이나 근거 부족으로 답변을 제한한 경우에도 요청 자체는 정상 처리된 것으로 보고, 실제 요청·서버·처리 오류만 `ApiError`의 `code`로 구분할 계획입니다.
+AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 오류 코드가 아니라 정상 응답의 `status`로 구분합니다. 관련 후보는 [복약 챗봇 Backend-AI Core 계약](./medication-chat-ai-backend.md)의 Post-MVP 정상 응답 status 기준에서 관리합니다.
 
 ## 오류 코드 구분 기준
 

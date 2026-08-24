@@ -1,6 +1,6 @@
 # 공통 데이터 계약
 
-Frontend, Backend, OCR과 LLM이 공유하는 의미와 상태를 관리합니다. 실제 구현 스키마의 기준은 FastAPI OpenAPI와 Pydantic DTO이며, 이 디렉터리에는 경계 설명과 예시를 둡니다. RAG·비동기 Worker 계약은 Post-MVP 범위입니다.
+Frontend, Backend, OCR과 LLM이 공유하는 의미와 상태를 관리합니다. 요청·성공 응답 DTO는 FastAPI OpenAPI와 Pydantic DTO를 함께 확인하고, 오류 `code`와 HTTP 상태 의미는 Backend 공통 오류 응답 계약을 기준으로 확인합니다. RAG·비동기 Worker 계약은 Post-MVP 범위입니다.
 
 ## 계약 문서
 
@@ -10,7 +10,6 @@ Frontend, Backend, OCR과 LLM이 공유하는 의미와 상태를 관리합니�
 - [OCR 약품 행 구조화 계약](./ocr-medication-structuring.md)
 - [Backend 공통 오류 응답 계약](./backend-error-response.md): `ApiError` 사용법, 공통·도메인 오류 코드
 - [Backend 공통 구현 규칙](./backend-common-patterns.md): 소유권 확인, 실패 상태 저장
-- [Backend 내부 구현 패턴](./backend-implementation-patterns.md): DI Provider, Repository 테스트
 - [Staging Release Validation Ledger 계약](./release-validation-ledger.md): proposed control DB schema, 상태 전이, 권한, crash recovery와 migration 상호 배제
 
 ## 현재 구현 계약
