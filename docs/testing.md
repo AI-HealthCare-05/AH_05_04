@@ -89,13 +89,23 @@ uv run coverage run -m pytest app tests/contract
 - 동일 멱등 키·다른 요청은 `409 IDEMPOTENCY_KEY_CONFLICT`입니다.
 - 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다.
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
+- poison 메시지는 quarantine 기록을 먼저 commit한 뒤 ACK하며, commit 실패 시 ACK하지 않아 다시 회수할 수 있어야 합니다.
 - 만료된 lease의 Worker가 새 Worker의 결과를 덮어쓰지 못합니다.
 - 처방 active version 변경 시 처리 중 결과는 `STALE`이며 현재 결과로 노출되지 않습니다.
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
 - Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.
-- 다른 사용자의 Job·결과 직접 URL은 `404`이며 Redis·로그·DLQ에는 의료 원문을 저장하지 않습니다.
+- 다른 사용자의 Job·결과와 Track B occurrence·Check-in, Track C Safety·Barrier·ActionPlan, Track D OTC evaluation 직접 요청은 `404`이며 Redis·로그·DLQ에는 의료 원문을 저장하지 않습니다.
 - 근거 없음·상충·timeout·검증 실패는 정상 답변이 아니라 승인된 fallback 또는 공개 차단으로 처리합니다.
 - OTC 평가 불완전 `UNKNOWN`과 승인 범위 내 rule 무성립을 구분하며 안전 보장 문구를 노출하지 않습니다.
+
+### Frontend Job 상태와 재접속 복구
+
+- OCR·Guide·Chat의 공통 상태 UI가 `PENDING`, `PROCESSING`, `RETRY_WAIT`, `COMPLETED`, `FAILED`, `STALE`을 서로 다른 상태로 처리합니다.
+- `RETRY_WAIT`에서는 HTTP `Retry-After`와 `retry_after_seconds`가 같은 값인지 확인하고 해당 대기 후 polling을 계속합니다.
+- `COMPLETED`에서만 Backend가 제공한 opaque `result_url`로 결과를 조회하며, `STALE` 결과는 현재 결과로 노출하지 않습니다.
+- OCR의 `REVIEW_REQUIRED`는 Job 상태가 아니라 `COMPLETED` 결과의 별도 사용자 검수 상태로 처리합니다.
+- OCR·Guide·Chat 처리 중 화면 이탈·재접속 후 새 Job을 만들지 않고 기존 `job_id`와 `status_url`로 polling을 복구합니다. Chat에서 Client에 Job 정보가 없으면 ASSISTANT 메시지의 `job_id`로 복구합니다.
+- 정상·중복 요청·재시도·`FAILED`·`STALE`·재접속 시나리오를 Frontend fixture와 계약 또는 통합 테스트로 검증합니다.
 
 ### Track E OCR 회귀 게이트
 
@@ -115,3 +125,5 @@ Worker 이관 전후 OCR 비퇴행은 CI replay와 release smoke를 분리해 �
 - 승인자 역할과 승인 시각
 
 실제 환자정보, 재식별 가능한 처방과 인증정보는 fixture에 포함하지 않습니다. Critical field는 약명, 용량, 단위, 복용 횟수, 복용 시점, 기간이며 CI replay의 critical invariant는 100% 통과해야 합니다. 성공·부분 추출·저신뢰·timeout·Provider 오류, 미확정 값의 downstream 유입 차단, 사용자 수정·확정 값 보존과 fixture manifest 완전성을 최소 검증 범위로 둡니다.
+
+Track별 요구사항·계약·소유자·예정 테스트·승인 증빙은 [Post-MVP-1 계약 추적표](./testing/post-mvp-1-contract-traceability.md)에서 연결합니다.

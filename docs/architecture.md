@@ -41,17 +41,19 @@ Backend는 SQLAlchemy asyncio와 `asyncmy`를 사용합니다. OpenAI 클라이�
 - **Schema-only Post-MVP 골격**: `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation` 모델과 migration은 존재하지만 repository·service·API 실행 경로에는 연결되지 않음
 - **미구현 Post-MVP 실행 영역**: RAG 검색, Citation/NLI 검증, AI 평가, OTC와 비동기 Worker
 
-## Post-MVP 목표 구조
+## Post-MVP-1 목표 구조 — Approved target / Not implemented
 
-다음은 별도 설계·계약·운영 기준이 승인된 뒤 도입합니다.
+아래 구조와 계약은 승인됐지만 현재 실행 경로에는 연결되지 않았다.
 
-- Redis queue와 장기 실행 AI Worker를 통한 비동기 처리
-- 승인 의료 지식 소스의 수집·버전 관리와 RAG 검색
-- 의료 주장별 citation 생성·추적과 Citation/NLI 검증
-- 재현 가능한 데이터셋·지표·임계값 기반 AI 평가 및 배포 게이트
-- OTC 성분 식별과 처방약 중복·상호작용 확인
+- OCR·Guide·Chat을 공통 `AI_JOB`의 `PENDING`, `PROCESSING`, `RETRY_WAIT`, `COMPLETED`, `FAILED`, `STALE` 상태로 처리한다.
+- API는 MySQL transaction에서 Job과 Transactional Outbox를 함께 commit하고, publisher가 Redis Stream에 at-least-once로 전달한다. Worker는 lease·fencing token을 사용하며 결과 DB commit 뒤에만 ACK한다.
+- 결과는 불변 `prescription_version_id`에 귀속하고 active version이 아니면 `STALE`로 공개를 차단한다.
+- Track B는 사용자가 확인한 schedule에서 occurrence를 생성하고 Check-in·감사 이력을 관리한다. Track C는 `NOT_TAKEN` 뒤 Safety assessment → Barrier → Support → ActionPlan 순서를 따른다.
+- Track D는 사용자가 확정한 OTC 제품 또는 성분을 구조화 rule과 승인 source version으로 동기 평가한다.
+- Track F는 승인 Source의 RAG, claim별 Citation, Safety 검증과 `PASS|LIMITED|REJECTED|STALE` 공개 결정을 분리한다.
+- `ASYNC_OCR`, `ASYNC_GUIDE`, `ASYNC_CHAT`으로 신규 접수 경로를 단계 전환한다. `PUBLIC_TRACK_C`, `PUBLIC_TRACK_D`, `PUBLIC_TRACK_F`는 별도 외부 승인 게이트 전까지 닫는다.
 
-비동기 전환 시 HTTP 상태·작업 상태·재시도·멱등성·오류 의미가 달라질 수 있으므로, 관련 `docs/contracts/`, API·스키마 문서와 계약·통합 테스트를 함께 갱신해야 합니다.
+현재 동기 one-cycle은 각 전환 조건이 충족될 때까지 Current다. 목표를 구현하는 PR은 관련 계약, migration, OpenAPI/DTO, 계약·통합 테스트와 운영 증빙을 함께 갱신해야 한다.
 
 ## 주요 결정
 

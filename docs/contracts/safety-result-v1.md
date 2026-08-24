@@ -11,6 +11,8 @@
 
 안전 결과는 모델의 자연어만 저장하지 않는다. 입력 처방 버전, 구조화 상태, 검증 결과, 공개 결정, 근거 인용을 함께 저장한다. 근거가 없거나 검증이 실패하면 정상 답변으로 공개하지 않는 fail-closed 규칙을 적용한다.
 
+Track C·D·F의 직접 조회·쓰기 API는 인증 사용자가 직접 소유한 resource만 허용한다. OTC 평가는 대상 `prescription_version_id`, Safety·Barrier는 Check-in parent chain, Job 기반 Safety Result는 Job과 처방 version을 통해 같은 `user_id`를 확인한다. 존재하지 않거나 소유하지 않은 식별자는 모두 `404`다. 보호자·patient profile·위임 요청과 별도 운영자 열람 역할은 후속 계약이다.
+
 ## Track F 상태 축
 
 | 축 | 값 |

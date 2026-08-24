@@ -107,6 +107,12 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 - 완료된 Chat Job의 `result_url`은 기존 `GET /api/v1/chat-sessions/{session_id}/messages` 조회를 가리킨다. URL은 Backend가 생성하며 Client가 `domain_id`로 조합하지 않는다.
 - Polling 간격은 클라이언트 기본 1초, 지수 backoff, 최대 5초로 하고 SSE는 v1 범위에서 제외한다.
 
+## 공통 화면 재접속 복구
+
+- Client는 OCR·Guide·Chat 접수 응답의 기존 `job_id`와 `status_url`을 해당 작업 화면 상태에 연결해 보존하고, 화면 이탈·재진입 시 새 Job을 접수하지 않고 같은 `status_url`의 polling을 재개한다.
+- 복구 polling도 공통 6개 Job 상태, `Retry-After`, opaque `result_url`, 소유권과 `Cache-Control: no-store` 계약을 그대로 따른다. Client는 `domain_id`로 Job 또는 결과 URL을 직접 조합하지 않는다.
+- Chat에서 Client가 기존 Job 정보를 보유하지 않은 경우에는 메시지 목록의 ASSISTANT `job_id`로 polling을 복구한다. OCR·Guide의 Job 정보 보존·재발견 연결은 구현 PR의 OpenAPI와 Frontend fixture에서 명시하고, 같은 `job_id`로 복구되는지 계약 테스트로 고정한다.
+
 ## 실행 lease와 보존
 
 - Worker lease는 hard timeout보다 15초 길게 설정한다: `OCR 45초`, `GUIDE 75초`, `CHAT 60초`.

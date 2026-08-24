@@ -116,6 +116,10 @@ admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초
 
 전환 PR은 [비동기 Job](./contracts/async-job-v1.md), [Outbox·Stream](./contracts/outbox-stream-v1.md), [테스트 전략](./testing.md)을 구현·운영 설정과 함께 갱신해야 합니다.
 
+### 공통 Privacy Production gate
+
+`EXT-PRIV-001` 승인 전에는 production 보존 job과 공개를 차단한다. 승인 범위는 terminal Job 90일, publish 완료 Outbox·quarantine·DLQ 30일, Idempotency 7일 기본값, 1MiB 동기 snapshot의 암호화·일반 로그 금지, 미발행 DLQ·연결 quarantine의 TTL 제외, 사용자 삭제·legal hold·키 관리 증빙이다. Track C·D·F flag별 정확한 해제 조건은 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따르며 공통 Privacy gate를 임의의 flag 조건으로 중복 추가하지 않는다.
+
 ## 보안 확인
 
 - 비밀정보는 저장소에 커밋하지 않습니다.

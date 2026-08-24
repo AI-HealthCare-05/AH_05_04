@@ -11,6 +11,16 @@ This file gives coding agents the minimum repository-wide collaboration rules. I
 
 If these sources disagree or do not define a boundary clearly, do not invent a rule. Call out the ambiguity and ask the relevant owners before changing the affected area.
 
+### Document Status and Authority
+
+- **Current runtime contract** means behavior supported together by merged code, migrations, the current OpenAPI/Pydantic DTOs, and automated tests.
+- **Approved target / Not implemented** documents are approved implementation targets, not current API, database, or deployment behavior. Document approval alone does not prove implementation, tests, external approval, or public release.
+- Product and planning documents provide intent and context but do not replace runtime contracts.
+- Use `docs/governance/post-mvp-1-document-authority.md` for Post-MVP-1 provenance and status interpretation. If current implementation and a target differ, do not combine or infer values; reconcile the source Decision and repository target with the relevant CODEOWNERS.
+- Changing an enum, API route or DTO, required field, error code, transaction order, or publication condition requires a new Decision or Contract Freeze version and matching contract and test updates.
+- Do not move a target contract into a new folder to promote it. Keep the path stable and update its status only after implementation, migrations, OpenAPI, automated tests, and CODEOWNERS evidence are linked.
+- Keep Track C, D, and F publication and the common Privacy Production gate closed until `docs/release-gates/post-mvp-1-external-approvals.md` is satisfied.
+
 ## Team Roles
 
 The current team roles recorded in Issue #9 are:

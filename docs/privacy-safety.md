@@ -36,7 +36,9 @@
 
 아래 값은 Privacy 승인과 관련 저장·삭제 구현 전까지 Production 기본값으로 적용하지 않습니다. 의료 원문·질문·답변·원문 멱등 키는 목표 구조의 Stream, 일반 로그, quarantine과 DLQ에 저장하지 않습니다. 개인정보·의료 검토나 legal hold가 더 엄격한 조건을 요구하면 그 조건을 우선하고 근거를 Decision에 남깁니다.
 
-Post-MVP-1의 Job과 결과 직접 URL은 동일한 `user_id` 소유권 검사를 사용합니다. 인증 사용자가 직접 소유하지 않은 식별자는 존재 여부를 숨기기 위해 `404`로 응답합니다. 보호자·patient profile·대리 요청은 후속 계약이며, 내부 운영자는 감사되는 별도 support role 없이 의료 결과를 조회할 수 없습니다.
+Post-MVP-1의 Job·결과와 Track B·C·D 직접 API는 parent resource를 따라 동일한 `user_id` 소유권을 검사합니다. 인증 사용자가 직접 소유하지 않은 식별자는 존재 여부를 숨기기 위해 `404`로 응답합니다. 이 규칙은 Approved target이며 현재 endpoint별 구현 여부는 코드·OpenAPI·테스트로 따로 확인해야 합니다. 보호자·patient profile·대리 요청은 후속 계약이며, 내부 운영자는 감사되는 별도 support role 없이 의료 결과를 조회할 수 없습니다.
+
+보존 기본값과 공개 차단의 정확한 승인 범위는 [Post-MVP-1 외부 승인 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따릅니다.
 
 ## Pull Request 확인
 

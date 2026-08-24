@@ -15,6 +15,9 @@
 - `testing.md`: 현재 자동 검증 범위와 Post-MVP E2E·AI 평가 전략
 - `contracts/`: 현재 구현 계약과 승인된 Post-MVP-1 목표 계약. 상태 구분은 [계약 인덱스](./contracts/README.md)를 확인합니다.
 - `adr/`: 주요 아키텍처 결정 기록
+- `governance/`: 문서 권위, 상태와 원본 provenance
+- `release-gates/`: 구현과 분리된 외부 승인·공개 조건
+- `testing/`: 목표 계약 추적표와 구현 증빙 인덱스
 - `designs/`: 기능별 상세 설계와 구현 계획
 
 외부 문서 도구를 사용한다면 문서의 원본 링크와 최종 갱신일을 이 파일에 기록합니다.
@@ -30,3 +33,4 @@
 - API Key, 비밀번호, 토큰 등 인증정보를 포함하지 않습니다.
 - 코드 또는 API가 변경되면 관련 문서도 같은 Pull Request에서 갱신합니다.
 - 현재 구현, schema-only 골격과 Post-MVP 목표를 같은 상태로 표현하지 않습니다.
+- Post-MVP-1 상태 해석과 원본 충돌 처리는 [문서 권위 규칙](./governance/post-mvp-1-document-authority.md)을 따릅니다.

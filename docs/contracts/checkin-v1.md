@@ -7,6 +7,10 @@
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-b-adherence-v1.md`, `track-c-support-v1.md` |
 | Last verified | 2026-08-24 |
 
+## 소유권 경계
+
+모든 Track B·C 직접 조회·쓰기 API는 인증 사용자가 직접 소유한 resource만 허용한다. occurrence → schedule·prescription version, Check-in → occurrence, Safety·Barrier·ActionPlan → Check-in의 parent chain을 따라 같은 `user_id`인지 검증한다. 존재하지 않거나 소유하지 않은 ID는 존재 여부를 숨기기 위해 모두 `404`다. 보호자·patient profile·위임 요청과 별도 역할은 v1 범위 밖이며 이 문서는 새 권한 역할이나 잠금 순서를 추가하지 않는다.
+
 ## 일정 occurrence와 Check-in 분리
 
 복약 일정 occurrence는 응답 전 `PENDING`일 수 있지만, 이는 Check-in 저장 상태가 아니다. 사용자가 제출하거나 응답 기한이 지난 뒤 생성되는 Check-in 결과는 세 가지다.
@@ -68,6 +72,16 @@ Track C의 목표 API는 다음으로 고정한다.
 - `POST /api/v1/support-action-plans`
 - `PATCH /api/v1/support-action-plans/{id}`
 - `POST /api/v1/support-action-plans/{id}/followups`
+
+### 목표 DTO 요약
+
+- 일정 조회 응답은 `schedule_status`, 약별 `schedule_items[]`, 날짜별 `occurrences[]`, 현재 Check-in, `revision`, `corrected`, `prescription_version_id`를 포함한다. 약별 항목은 `schedule_item_status`, `prescription_version_medication_id`, nullable `schedule_id`, nullable `revision`, nullable `setup_reason`을 포함한다. 전체 상태는 활성 처방 없음 → `NO_ACTIVE_PRESCRIPTION`, READY와 SETUP_REQUIRED 혼합 → `PARTIAL`, SETUP_REQUIRED만 존재 → `SETUP_REQUIRED`, setup 대상 없이 READY 존재 → `READY`, 나머지가 모두 INACTIVE이고 pending occurrence 없음 → `INACTIVE` 순으로 판정한다. 원본에서 occurrence 정렬은 별도 고정하지 않았다.
+- 일정 `PUT` body는 `start_local_date`, `end_mode`, nullable `end_local_date`, `local_times[]`, `expected_revision`; 취소 `PATCH` body는 `status=CANCELLED`, `expected_revision`이다.
+- Check-in `PUT` body는 `status=TAKEN|NOT_TAKEN`, nullable `taken_at`, nullable `reason_code`, `expected_revision`이다. `taken_at`은 `TAKEN`에서만 허용한다.
+- Safety assessment 요청은 `medication_checkin_id`, `checkin_revision`, `symptom_codes[]`, `expected_revision`; 응답은 `assessment_id`, `medication_checkin_id`, `checkin_revision`, `response_level`, `safety_disposition`, `message_code`, `copy_version`, `source_version`, `revision`이다.
+- Barrier 요청은 `response_status`, nullable `barrier_code`, `checkin_revision`, `expected_revision`이다. Support 응답은 `support_code`, `copy_version`, `priority`, `rationale_code`, 허용 action config를 포함하고 `priority ASC, support_code ASC`로 최대 2개를 반환한다. ActionPlan은 선택한 rule/copy version을 snapshot한다.
+
+이 요약은 승인 원본의 최소 필드와 순서만 옮긴 것이다. 구현 PR에서 새 필수 필드, enum, 정렬 또는 오류를 추가하려면 계약 version을 갱신해야 한다.
 
 목표 오류 의미는 다음과 같다.
 
