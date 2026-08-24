@@ -460,3 +460,70 @@ def test_verifier_rejects_content_mismatch_without_exposing_values(
     assert "synthetic_record.optional_value: 값 불일치 1건" in output
     assert source_value not in output
     assert target_value not in output
+
+
+def test_migration_normalizes_user_email_to_lowercase() -> None:
+    """기존 MySQL 이메일도 신규 PostgreSQL 저장 규칙과 같아야 합니다."""
+    rows: list[dict[str, Any]] = [
+        {
+            "id": 1,
+            "email": "Synthetic-User@Example.COM",
+        }
+    ]
+
+    migration.normalize_user_email_values("user", rows)
+
+    assert rows[0]["email"] == "synthetic-user@example.com"
+
+
+def test_migration_detects_case_insensitive_email_collision() -> None:
+    """실제 이메일 값 노출 없이 소문자 변환 충돌 그룹을 계산합니다."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata = MetaData()
+    user_table = Table(
+        "user",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("email", String(40), nullable=False),
+    )
+    metadata.create_all(engine)
+
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                user_table.insert(),
+                [
+                    {"id": 1, "email": "Synthetic@Example.COM"},
+                    {"id": 2, "email": "synthetic@example.com"},
+                ],
+            )
+
+            collision_count = migration.count_normalized_email_collisions(
+                connection,
+                user_table,
+            )
+    finally:
+        engine.dispose()
+
+    assert collision_count == 1
+
+
+def test_verifier_normalizes_only_mysql_source_email() -> None:
+    """검증 시 MySQL 이메일만 이관 규칙에 따라 소문자로 비교합니다."""
+    assert (
+        verification.normalize_source_column_value(
+            "user",
+            "email",
+            "Synthetic@Example.COM",
+        )
+        == "synthetic@example.com"
+    )
+
+    assert (
+        verification.normalize_source_column_value(
+            "user",
+            "name",
+            "Synthetic Name",
+        )
+        == "Synthetic Name"
+    )

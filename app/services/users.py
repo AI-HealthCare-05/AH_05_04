@@ -1,3 +1,4 @@
+from app.core.utils.common import normalize_email
 from app.dtos.users import UserUpdateRequest
 from app.models.users import User
 from app.repositories.user_repository import UserRepository
@@ -20,9 +21,12 @@ class UserManageService:
     ) -> User:
         update_data = data.model_dump(exclude_none=True)
 
-        if data.email and str(data.email) != user.email:
-            await self.auth_service.check_email_exists(data.email)
-            update_data["email"] = str(data.email)
+        if data.email:
+            normalized_email = normalize_email(str(data.email))
+
+            if normalized_email != user.email:
+                await self.auth_service.check_email_exists(normalized_email)
+                update_data["email"] = normalized_email
 
         return await self.repo.update_instance(
             user=user,

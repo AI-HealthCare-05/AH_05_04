@@ -391,6 +391,7 @@ python scripts/db/migrate_mysql_to_postgresql.py
 - `사전검증만 완료했습니다`가 출력됩니다.
 - 데이터 복사 완료 메시지는 출력되지 않습니다.
 - 연결 정보와 비밀번호는 출력되지 않습니다.
+- MySQL 이메일을 소문자로 변환했을 때 충돌하는 계정 그룹이 없습니다.
 
 `MIGRATION_DRY_RUN`을 생략해도 안전 기본값 `true`가 적용되어 실제 이관이 수행되지 않습니다.
 
@@ -420,6 +421,7 @@ python scripts/db/migrate_mysql_to_postgresql.py
 
 다음을 확인합니다.
 
+- 기존 `user.email`은 신규 회원가입과 동일한 소문자 저장 규칙으로 이관됩니다.
 - 각 테이블에 `[이관완료]`와 복사 행 수가 출력됩니다.
 - 각 테이블의 복사 행 수가 사전검증의 MySQL 행 수와 같습니다.
 - 마지막에 `MySQL에서 PostgreSQL로 데이터 이관을 완료했습니다.`가 출력됩니다.
@@ -434,7 +436,7 @@ python scripts/db/migrate_mysql_to_postgresql.py
 ### 정합성 검증
 
 이관 직후 MySQL 쓰기를 재개하거나 PostgreSQL로 애플리케이션을 전환하기 전에 검증 스크립트를 실행합니다.
-
+`user.email`은 의도된 변환 컬럼입니다. 검증기는 MySQL 원본 이메일을 소문자로 정규화한 기대값과 PostgreSQL 저장값을 비교합니다. 실제 이메일이나 사용자 식별자는 검증 로그에 출력하지 않습니다.
 ```bash
 uv run --group db-migration \
 python scripts/db/verify_postgresql_migration.py

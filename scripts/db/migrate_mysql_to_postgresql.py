@@ -188,6 +188,25 @@ def table_count(connection: Connection, table: Table) -> int:
     return int(count)
 
 
+def count_normalized_email_collisions(
+    connection: Connection,
+    user_table: Table,
+) -> int:
+    """소문자 변환 후 충돌할 이메일 그룹 수를 값 노출 없이 계산합니다."""
+    normalized_email = func.lower(user_table.columns.email)
+
+    duplicate_groups = (
+        select(normalized_email.label("normalized_email"))
+        .group_by(normalized_email)
+        .having(func.count() > 1)
+        .subquery()
+    )
+
+    count = connection.execute(select(func.count()).select_from(duplicate_groups)).scalar_one()
+
+    return int(count)
+
+
 def validate_columns(
     source_table: Table,
     target_table: Table,
@@ -272,6 +291,26 @@ def normalize_datetime_values(
             row[column_name] = value.replace(tzinfo=original_timezone)
 
 
+def normalize_user_email_values(
+    table_name: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    """기존 MySQL 이메일을 현재 애플리케이션 저장 규칙으로 변환합니다."""
+    if table_name != "user":
+        return
+
+    for row in rows:
+        email = row.get("email")
+
+        if not isinstance(email, str) or not email:
+            # 실제 이메일 값은 예외나 로그에 포함하지 않습니다.
+            raise RuntimeError("user.email을 소문자로 정규화할 수 없습니다.")
+
+        # 파일 경로로 직접 실행되는 운영 스크립트이므로 app 패키지에 의존하지 않습니다.
+        # 애플리케이션의 normalize_email()과 동일하게 str.lower()를 적용합니다.
+        row["email"] = email.lower()
+
+
 def iter_rows(
     connection: Connection,
     table: Table,
@@ -307,6 +346,16 @@ def run_preflight(
 
         # 스키마의 모든 DATETIME 컬럼에 원본 시간대 정책이 있는지 검사합니다.
         validate_datetime_mapping(source_table)
+        if table_name == "user":
+            # 소문자 변환 결과가 충돌하면 일부 계정을 임의로 합치지 않고
+            # 실제 복사를 시작하기 전에 이관을 중단합니다.
+            collision_count = count_normalized_email_collisions(
+                source_connection,
+                source_table,
+            )
+
+            if collision_count:
+                raise RuntimeError(f"MySQL user.email 소문자 정규화 충돌이 {collision_count}개 발견되었습니다.")
 
         source_count = table_count(source_connection, source_table)
         target_count = table_count(target_connection, target_table)
@@ -344,6 +393,11 @@ def copy_table(
     for rows in iter_rows(source_connection, source_table):
         # MySQL DATETIME에 생성 당시의 UTC 또는 KST 시간대를 복원합니다.
         normalize_datetime_values(source_table.name, rows)
+
+        # PostgreSQL의 대소문자 구분 unique 동작에 대비해
+        # 기존 계정 이메일도 신규 저장 규칙과 동일하게 변환합니다.
+        normalize_user_email_values(source_table.name, rows)
+
         target_connection.execute(insert(target_table), rows)
         copied_count += len(rows)
 

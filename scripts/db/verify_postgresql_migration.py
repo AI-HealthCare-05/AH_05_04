@@ -299,6 +299,22 @@ def normalize_target_datetime(
     return value.astimezone(UTC)
 
 
+def normalize_source_column_value(
+    table_name: str,
+    column_name: str,
+    value: Any,
+) -> Any:
+    """의도적으로 변환한 MySQL 원본값을 PostgreSQL 기대값으로 정규화합니다."""
+    if (table_name, column_name) == ("user", "email") and isinstance(
+        value,
+        str,
+    ):
+        # 이관 스크립트와 동일한 소문자 변환 규칙으로 기대값을 계산합니다.
+        return value.lower()
+
+    return value
+
+
 def column_values_by_primary_key(
     connection: Connection,
     table: Table,
@@ -564,7 +580,13 @@ def verify_column_values(
         common_primary_keys = source_values.keys() & target_values.keys()
 
         mismatch_count = sum(
-            source_values[primary_key] != target_values[primary_key] for primary_key in common_primary_keys
+            normalize_source_column_value(
+                table_name,
+                column_name,
+                source_values[primary_key],
+            )
+            != target_values[primary_key]
+            for primary_key in common_primary_keys
         )
 
         if mismatch_count:
