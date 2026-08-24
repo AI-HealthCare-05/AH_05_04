@@ -14,6 +14,7 @@
 - `privacy-safety.md`: 개인정보와 의료 안전 기준
 - `testing.md`: 현재 자동 검증 범위와 Post-MVP E2E·AI 평가 전략
 - `contracts/`: 모듈 간 공통 데이터 계약
+  - `contracts/prescription-confirmation-mvp.md`: MVP 처방 확정 필수값·DB 경계값·Post-MVP `job_id` 검증 경계
 - `adr/`: 주요 아키텍처 결정 기록
 - `designs/`: 기능별 상세 설계와 구현 계획
 

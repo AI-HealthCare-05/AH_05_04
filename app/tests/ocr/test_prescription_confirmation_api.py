@@ -207,6 +207,43 @@ async def test_confirm_prescription_api_rejects_invalid_numeric_value() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("override_key", "override_value", "expected_field"),
+    [
+        ((1, "DOSE_VALUE"), "1e100", "medications[1].dose_value"),
+        ((1, "MEDICATION_NAME"), "가" * 256, "medications[1].medication_name"),
+        ((1, "FREQUENCY_PER_DAY"), "2147483648", "medications[1].frequency_per_day"),
+        ((1, "DURATION_DAYS"), "2147483648", "medications[1].duration_days"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_confirm_prescription_api_rejects_values_outside_db_limits(
+    override_key: tuple[int, str],
+    override_value: str,
+    expected_field: str,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="db-limit")
+        document_id, job_id = await _upload_and_run_ocr(client, access_token=access_token)
+        await _confirm_fields(
+            client,
+            job_id=job_id,
+            access_token=access_token,
+            overrides={override_key: override_value},
+        )
+
+        response = await client.post(
+            f"/api/v1/documents/{document_id}/prescription",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    body = response.json()
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert body["code"] == "VALIDATION_FAILED"
+    assert body["trace_id"]
+    assert any(detail["field"] == expected_field for detail in body["details"])
+
+
 @pytest.mark.asyncio
 async def test_confirm_prescription_api_rejects_another_users_document() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

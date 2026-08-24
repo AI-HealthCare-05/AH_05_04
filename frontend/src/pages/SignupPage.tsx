@@ -6,15 +6,12 @@ function SignupPage() {
     email: '',
     password: '',
     name: '',
-    gender: 'MALE',
-    birth_date: '',
-    phone_number: '',
   })
 
   const [message, setMessage] = useState('')
 
   const handleChange = (
-    event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
+    event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const { name, value } = event.target
 
@@ -65,31 +62,6 @@ function SignupPage() {
           value={form.name}
           onChange={handleChange}
         />
-
-        <select
-          name="gender"
-          value={form.gender}
-          onChange={handleChange}
-        >
-          <option value="MALE">남성</option>
-          <option value="FEMALE">여성</option>
-        </select>
-
-        <input
-          name="birth_date"
-          type="date"
-          value={form.birth_date}
-          onChange={handleChange}
-        />
-
-        <input
-          name="phone_number"
-          type="tel"
-          placeholder="010-1234-5678"
-          value={form.phone_number}
-          onChange={handleChange}
-        />
-        <p>010-1234-5678, 01012345678 또는 +821012345678 형식으로 입력해 주세요.</p>
 
         <button type="submit">
           가입하기

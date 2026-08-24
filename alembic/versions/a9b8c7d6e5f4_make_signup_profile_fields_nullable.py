@@ -9,6 +9,7 @@ Create Date: 2026-08-24 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy import text
 
 from alembic import op
 
@@ -40,17 +41,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("UPDATE `user` SET gender = 'MALE' WHERE gender IS NULL")
-    op.execute("UPDATE `user` SET birthday = '1970-01-01' WHERE birthday IS NULL")
-    op.execute("SET @signup_profile_rownum := 0")
-    op.execute(
-        """
-        UPDATE `user`
-        SET phone_number = CONCAT('010', LPAD((@signup_profile_rownum := @signup_profile_rownum + 1), 8, '0'))
-        WHERE phone_number IS NULL
-        ORDER BY created_at, id
-        """
-    )
+    connection = op.get_bind()
+    null_count = connection.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM `user`
+            WHERE gender IS NULL OR birthday IS NULL OR phone_number IS NULL
+            """
+        )
+    ).scalar_one()
+    if null_count:
+        raise RuntimeError(
+            "Cannot downgrade while signup profile fields contain NULL values. "
+            "Backfill gender, birthday, and phone_number with approved user-provided values first."
+        )
     op.alter_column(
         "user",
         "phone_number",

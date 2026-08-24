@@ -2,7 +2,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from math import isfinite
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from app.core.errors import ApiError, ErrorDetail
@@ -13,6 +13,13 @@ from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+
+_MAX_MEDICATION_NAME_LENGTH = 255
+_MAX_DOSE_VALUE = Decimal("9999999.999")
+_MAX_DOSE_SCALE = 3
+_MAX_INTEGER_VALUE = 2_147_483_647
+_MAX_DOSE_UNIT_LENGTH = 50
+_MAX_TIMING_TEXT_LENGTH = 255
 
 
 def _field_value(field: ExtractedField | None) -> str | None:
@@ -168,14 +175,19 @@ class PrescriptionService:
         return prescribed_date, medications
 
 
-def _to_float(value: str | None) -> float | None:
+def _to_decimal(value: str | None) -> Decimal | None:
     if not value or not value.strip():
         return None
     try:
-        parsed = float(value.strip())
-    except ValueError:
+        parsed = Decimal(value.strip())
+    except InvalidOperation:
         return None
-    return parsed if isfinite(parsed) and parsed > 0 else None
+    if not parsed.is_finite() or parsed <= 0 or parsed > _MAX_DOSE_VALUE:
+        return None
+    exponent = parsed.as_tuple().exponent
+    if not isinstance(exponent, int) or abs(exponent) > _MAX_DOSE_SCALE:
+        return None
+    return parsed
 
 
 def _to_int(value: str | None) -> int | None:
@@ -185,7 +197,7 @@ def _to_int(value: str | None) -> int | None:
         parsed = int(value.strip())
     except ValueError:
         return None
-    return parsed if parsed > 0 else None
+    return parsed if 0 < parsed <= _MAX_INTEGER_VALUE else None
 
 
 def _parse_prescribed_date(
@@ -224,6 +236,27 @@ def _validate_numeric[T](
     return value
 
 
+def _validate_optional_text_length(
+    *,
+    index: int,
+    field_type: FieldType,
+    fields_by_type: dict[FieldType, ExtractedField],
+    max_length: int,
+    invalid: list[ErrorDetail],
+) -> str | None:
+    value = _field_value(fields_by_type.get(field_type))
+    if value is not None and len(value) > max_length:
+        invalid.append(
+            ErrorDetail(
+                field=f"medications[{index}].{field_type.value.lower()}",
+                reason="MAX_LENGTH_EXCEEDED",
+                rejected_value=value,
+            )
+        )
+        return None
+    return value
+
+
 def _build_medication(
     index: int,
     fields_by_type: dict[FieldType, ExtractedField],
@@ -235,12 +268,20 @@ def _build_medication(
     name = _field_value(fields_by_type.get(FieldType.MEDICATION_NAME))
     if not name:
         missing.append(ErrorDetail(field=f"medications[{index}].medication_name", reason="REQUIRED"))
+    elif len(name) > _MAX_MEDICATION_NAME_LENGTH:
+        invalid.append(
+            ErrorDetail(
+                field=f"medications[{index}].medication_name",
+                reason="MAX_LENGTH_EXCEEDED",
+                rejected_value=name,
+            )
+        )
 
     dose_value = _validate_numeric(
         index=index,
         field_type=FieldType.DOSE_VALUE,
         fields_by_type=fields_by_type,
-        parser=_to_float,
+        parser=_to_decimal,
         missing=missing,
         invalid=invalid,
     )
@@ -261,15 +302,36 @@ def _build_medication(
         invalid=invalid,
     )
 
-    if not name or dose_value is None or frequency_per_day is None or duration_days is None:
+    dose_unit = _validate_optional_text_length(
+        index=index,
+        field_type=FieldType.DOSE_UNIT,
+        fields_by_type=fields_by_type,
+        max_length=_MAX_DOSE_UNIT_LENGTH,
+        invalid=invalid,
+    )
+    timing_text = _validate_optional_text_length(
+        index=index,
+        field_type=FieldType.TIMING,
+        fields_by_type=fields_by_type,
+        max_length=_MAX_TIMING_TEXT_LENGTH,
+        invalid=invalid,
+    )
+
+    if (
+        not name
+        or len(name) > _MAX_MEDICATION_NAME_LENGTH
+        or dose_value is None
+        or frequency_per_day is None
+        or duration_days is None
+    ):
         return None
 
     return {
         "medication_name": name,
         "dose_value": dose_value,
-        "dose_unit": _field_value(fields_by_type.get(FieldType.DOSE_UNIT)),
+        "dose_unit": dose_unit,
         "frequency_per_day": frequency_per_day,
-        "timing_text": _field_value(fields_by_type.get(FieldType.TIMING)),
+        "timing_text": timing_text,
         "duration_days": duration_days,
         "display_order": index,
     }

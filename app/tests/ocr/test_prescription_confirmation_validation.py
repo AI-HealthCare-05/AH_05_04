@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -41,7 +42,7 @@ def test_build_confirmed_data_accepts_fully_confirmed_medication() -> None:
     assert medications == [
         {
             "medication_name": "약품1",
-            "dose_value": 1.5,
+            "dose_value": Decimal("1.5"),
             "dose_unit": "정",
             "frequency_per_day": 2,
             "timing_text": "식후",
@@ -200,3 +201,59 @@ def test_build_confirmed_data_rejects_invalid_integer_format(invalid_value: str)
         PrescriptionService._build_confirmed_data(fields)
 
     assert exc_info.value.code == "VALIDATION_FAILED"
+
+
+@pytest.mark.parametrize("invalid_value", ["1e100", "10000000", "1.2345"])
+def test_build_confirmed_data_rejects_dose_value_outside_db_range(invalid_value: str) -> None:
+    fields = [_valid_prescribed_date(), *_valid_medication_fields(1)]
+    for field in fields:
+        if field.field_type == FieldType.DOSE_VALUE:
+            field.confirmed_value = invalid_value
+
+    with pytest.raises(ApiError) as exc_info:
+        PrescriptionService._build_confirmed_data(fields)
+
+    error = exc_info.value
+    assert error.code == "VALIDATION_FAILED"
+    assert any(detail.field == "medications[1].dose_value" for detail in error.details)
+
+
+@pytest.mark.parametrize(
+    ("field_type", "invalid_value", "expected_field"),
+    [
+        (FieldType.MEDICATION_NAME, "가" * 256, "medications[1].medication_name"),
+        (FieldType.DOSE_UNIT, "단위" * 26, "medications[1].dose_unit"),
+        (FieldType.TIMING, "복용시점" * 64, "medications[1].timing"),
+    ],
+)
+def test_build_confirmed_data_rejects_text_values_outside_db_length(
+    field_type: FieldType,
+    invalid_value: str,
+    expected_field: str,
+) -> None:
+    fields = [_valid_prescribed_date(), *_valid_medication_fields(1)]
+    for field in fields:
+        if field.field_type == field_type:
+            field.confirmed_value = invalid_value
+
+    with pytest.raises(ApiError) as exc_info:
+        PrescriptionService._build_confirmed_data(fields)
+
+    error = exc_info.value
+    assert error.code == "VALIDATION_FAILED"
+    assert any(detail.field == expected_field and detail.reason == "MAX_LENGTH_EXCEEDED" for detail in error.details)
+
+
+@pytest.mark.parametrize("field_type", [FieldType.FREQUENCY_PER_DAY, FieldType.DURATION_DAYS])
+def test_build_confirmed_data_rejects_integer_values_outside_db_range(field_type: FieldType) -> None:
+    fields = [_valid_prescribed_date(), *_valid_medication_fields(1)]
+    for field in fields:
+        if field.field_type == field_type:
+            field.confirmed_value = "2147483648"
+
+    with pytest.raises(ApiError) as exc_info:
+        PrescriptionService._build_confirmed_data(fields)
+
+    error = exc_info.value
+    assert error.code == "VALIDATION_FAILED"
+    assert any(detail.field == f"medications[1].{field_type.value.lower()}" for detail in error.details)

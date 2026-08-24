@@ -7,6 +7,7 @@ Frontend, Backend, OCR과 LLM이 공유하는 의미와 상태를 관리합니�
 - [복약 가이드 Backend–AI 계약](./medication-guide-ai-backend.md): 확정 처방 입력, AI 생성 결과, 오류와 조립 책임
 - [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md)
 - [OCR 약품명 정규화 계약](./ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할과 정규화 규칙
+- [처방 확정 MVP Backend 계약](./prescription-confirmation-mvp.md): OCR 검수 필드로 처방을 확정할 때의 필수값, DB 경계값, Post-MVP `job_id` 검증 경계
 - [Staging Release Validation Ledger 계약](./release-validation-ledger.md): proposed control DB schema, 상태 전이, 권한, crash recovery와 migration 상호 배제
 - [OCR 약품 행 구조화 계약](./ocr-medication-structuring.md)
 
