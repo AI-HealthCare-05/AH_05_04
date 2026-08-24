@@ -63,7 +63,7 @@ DB pool 고갈 가능성을 낮출 수 있다. 실제 환경의 worker 수, pool
 - 외부 AI 호출 동안 DB transaction과 connection을 점유한다.
 - 같은 세션의 요청은 앞 요청 수와 AI 생성 시간에 비례해 대기하며, 세 개 이상 동시 요청에는 유한한 end-to-end 최대시간을 보장하지 않는다.
 - row lock waiter도 DB connection을 사용하므로 전체 in-flight chat 요청이 pool 수용량에 가까워지면 비채팅 요청도 connection 대기를 겪을 수 있다.
-- reverse proxy timeout이나 MySQL lock wait timeout이 애플리케이션의 AI timeout보다 짧으면 응답 또는 잠금 획득 전에 요청이 실패할 수 있다.
+- reverse proxy timeout이나 유한하게 설정한 PostgreSQL `lock_timeout`이 애플리케이션의 AI timeout보다 짧으면 응답 또는 잠금 획득 전에 요청이 실패할 수 있다.
 
 ## 보안·개인정보 영향
 
@@ -83,7 +83,7 @@ Production 배포 전 다음 내용을 실제 환경 기준으로 `docs/deployme
 
 - 코드로 강제되는 동일 세션 최대 동시 전송 `N`
 - OpenAI 전체 timeout을 `T`, 처리 여유를 `M`으로 두었을 때 Nginx `proxy_read_timeout >= N × T + M`
-- MySQL `innodb_lock_wait_timeout > (N - 1) × T + M`
+- PostgreSQL `lock_timeout = 0` 또는 유한하게 설정한 경우 `lock_timeout > (N - 1) × T + M`
 - AI 호출 중인 요청과 row lock waiter를 포함한 worker별 전체 in-flight chat 수
 - DB pool size, overflow, pool wait 정책과 비채팅 요청용 예비 connection
 - 외부 AI 호출 동안 transaction과 connection을 유지하는 tradeoff의 운영 승인자
@@ -92,7 +92,7 @@ Production 배포 전 다음 내용을 실제 환경 기준으로 `docs/deployme
 
 ## 테스트 영향
 
-- 실제 MySQL 8에서 동일 세션의 두 개·세 개 동시 요청이 충돌 없이 직렬화되는지 검증한다.
+- 실제 PostgreSQL 17에서 동일 세션의 두 개·세 개 동시 요청이 충돌 없이 직렬화되는지 검증한다.
 - 서로 다른 세션은 row-lock 수준에서 병렬 진입하는지 검증한다.
 - AI 실패 후 USER·FAILED ASSISTANT 쌍이 후속 request rollback에도 보존되는지 검증한다.
 - 잠금 획득 전 lock wait timeout은 새 메시지를 만들지 않고 기존 공통 500 계약을 사용하는지 검증한다.

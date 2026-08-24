@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+
+# 오류, 미정의 변수 및 pipeline 실패가 발생하면 즉시 중단합니다.
 set -euo pipefail
 
 # 저장소 루트에서 명령이 실행되도록 이동합니다.

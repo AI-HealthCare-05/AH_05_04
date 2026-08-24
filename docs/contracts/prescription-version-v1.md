@@ -15,7 +15,7 @@
 - `prescription_version`은 `prescription_id`와 `version_number`로 식별되는 불변 snapshot이다.
 - `prescription_version_medication`은 version에 귀속된 확정 약물 snapshot이다.
 
-`(prescription_id, version_number)`는 unique이고 `prescription.active_version_id`가 유일한 활성 포인터다. version row에 별도 `ACTIVE` 상태를 두지 않으므로 MySQL partial unique 제약 없이도 활성 version은 하나로 표현된다. 활성화된 버전의 임상 입력 필드는 수정하지 않고 새 버전을 만든다.
+`(prescription_id, version_number)`는 unique이고 `prescription.active_version_id`가 유일한 활성 포인터다. version row에 별도 `ACTIVE` 상태를 두지 않으므로 DB 제품별 partial unique 제약에 의존하지 않고도 활성 version을 하나로 표현한다. 활성화된 버전의 임상 입력 필드는 수정하지 않고 새 버전을 만든다.
 
 소유권·출처·감사 시각을 위한 추가 물리 컬럼과 이름은 migration mapping, OpenAPI·DTO 및 관련 계약 테스트를 함께 제출하는 구현 PR에서 확정한다. 기준 문서가 고정하지 않은 컬럼을 이 계약에서 선행 확정하지 않는다.
 

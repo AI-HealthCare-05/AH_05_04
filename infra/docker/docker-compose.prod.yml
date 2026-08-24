@@ -39,7 +39,37 @@ services:
       retries: 10
       start_period: 5s
 
-  # 3. API Server (FastAPI)
+  # 3. Database Migration
+  migrate:
+    container_name: migrate
+
+    # FastAPI와 동일한 immutable application image에서
+    # 현재 코드에 포함된 Alembic revision을 적용합니다.
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+
+    env_file:
+      - ../../envs/.prod.env
+
+    command:
+      - uv
+      - run
+      - --no-sync
+      - alembic
+      - upgrade
+      - head
+
+    networks:
+      - ws
+
+    # PostgreSQL이 실제 연결 가능한 상태가 된 후 migration을 실행합니다.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # migration 완료 후 정상 종료하며 재실행 루프를 만들지 않습니다.
+    restart: "no"
+
+  # 4. API Server (FastAPI)
   fastapi:
     container_name: fastapi
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}  # APP_VERSION은 빌드된 이미지의 버전관리를 위함입니다. v1.0.0 형식으로 사용합니다.
@@ -56,11 +86,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+      # Alembic migration 성공 후에만 API를 시작합니다.
+      migrate:
+        condition: service_completed_successfully
+
       redis:
         condition: service_healthy
 
 
-  # 4. AI Worker (Model 학습 및 추론)
+  # 5. AI Worker (Model 학습 및 추론)
   ai-worker:
     container_name: ai-worker
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}  # AI_WORKER_VERSION은 빌드된 이미지의 버전관리를 위함입니다. V1.0.0 형식으로 사용합니다.
@@ -73,10 +108,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+      # Worker도 최신 PostgreSQL schema가 적용된 후 시작합니다.
+      migrate:
+        condition: service_completed_successfully
+
       redis:
         condition: service_healthy
 
-  # 5. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
+  # 6. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
   nginx:
     container_name: nginx
     image: nginx:latest
@@ -94,7 +134,7 @@ services:
     depends_on:
       - fastapi
 
-  # 6. certbot: SSL 인증서 발급담당
+  # 7. certbot: SSL 인증서 발급담당
   certbot:
     image: certbot/certbot
     container_name: auto-certbot
@@ -106,8 +146,25 @@ services:
       - nginx
 
 volumes:
+  # PostgreSQL 운영 데이터를 컨테이너 재생성 후에도 유지합니다.
   postgres_data:
     name: postgres_data
+
+  # FastAPI와 Nginx가 공유하는 정적 파일을 유지합니다.
+  static_volume:
+    name: static_volume
+
+  # 업로드된 파일과 생성된 미디어 파일을 유지합니다.
+  media_volume:
+    name: media_volume
+
+  # Nginx와 Certbot이 공유하는 TLS 인증서를 유지합니다.
+  certbot-conf:
+    name: certbot-conf
+
+  # Certbot HTTP-01 challenge 파일을 Nginx와 공유합니다.
+  certbot-www:
+    name: certbot-www
 
 networks:
   ws:

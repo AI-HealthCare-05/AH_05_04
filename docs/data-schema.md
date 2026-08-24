@@ -4,6 +4,26 @@
 
 테이블, 관계, 상태값과 주요 데이터 제약조건을 기록합니다.
 
+## 현재 물리 DB 구성
+
+현재 Backend의 물리 DB는 PostgreSQL 17입니다.
+
+- SQLAlchemy 비동기 드라이버: `postgresql+asyncpg`
+- Alembic 스키마 관리 대상: PostgreSQL
+- Docker Compose 서비스명: `postgres`
+- 애플리케이션 컨테이너 내부 포트: `5432`
+- 로컬 공개 포트 기본값: `5432`
+
+이번 전환은 물리 DB 엔진 교체이며 API 계약과 논리적 데이터 모델은 유지합니다.
+
+UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이터 및 API 호환성을 위해 `CHAR(36)` 문자열로 저장합니다. Python 코드에서는 공통 `UUIDChar` 타입을 통해 `UUID` 객체와 DB 문자열 사이를 변환합니다. PostgreSQL native `UUID` 전환은 별도 migration 범위입니다.
+
+`DateTime(timezone=True)` 필드는 PostgreSQL에서 시간대가 포함된 timestamp로 관리합니다. 기존 MySQL `DATETIME` 데이터는 컬럼별 UTC 또는 `Asia/Seoul` 정책에 따라 실제 시각을 보존하여 이관합니다.
+
+기본키, 외래키, Enum, 상태값과 nullable 의미는 MySQL 사용 당시의 논리적 계약을 유지합니다.
+
+MySQL 데이터 백업, PostgreSQL 일괄 이관, 정합성 검증 및 롤백 절차는 [MySQL에서 PostgreSQL로 전환 Runbook](./runbooks/mysql-to-postgresql-migration.md)을 따릅니다.
+
 ## 현재 구현 테이블
 
 | 영역 | 테이블 | 현재 사용 상태 |

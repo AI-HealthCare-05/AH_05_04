@@ -365,7 +365,9 @@ def main() -> None:
                     target_tables,
                 )
 
-                if env_bool("MIGRATION_DRY_RUN"):
+                # 안전을 위해 환경변수를 생략하면 사전검증만 수행합니다.
+                # 실제 복사는 MIGRATION_DRY_RUN=false를 명시한 경우에만 허용합니다.
+                if env_bool("MIGRATION_DRY_RUN", default=True):
                     print("사전검증만 완료했습니다. MIGRATION_DRY_RUN=false로 실제 이관을 실행하세요.")
                     return
 
