@@ -66,7 +66,14 @@ case "$migration_backup_dir" in
     ;;
 esac
 
+# 이후 생성되는 백업과 체크섬 파일은 소유자만 읽고 쓸 수 있게 합니다.
+# 백업 파일을 만든 뒤 chmod하는 방식은 생성 직후 노출 구간이 생길 수 있습니다.
+umask 077
+
 mkdir -p "$migration_backup_dir"
+
+# 기존에 존재하던 디렉터리에도 소유자 전용 권한을 적용합니다.
+chmod 700 "$migration_backup_dir"
 ```
 
 기존 파일을 덮어쓰지 않도록 실행 시각을 파일명에 포함합니다.
@@ -524,6 +531,33 @@ PostgreSQL 서비스가 연결된 CI도 통과해야 합니다. 로컬 검사만
 
 ### 배포 전환
 
+다음 순서를 변경하거나 생략하지 않습니다.
+
+1. 외부 요청을 유지보수 모드 또는 승인된 게이트에서 차단합니다.
+2. FastAPI와 AI Worker의 신규 DB 쓰기를 중지합니다.
+3. 진행 중인 요청이 종료되어 MySQL 쓰기가 더 이상 발생하지 않는지 확인합니다.
+4. 자체 운영 MySQL이라면 `read_only`와 `super_read_only`를 활성화합니다. 관리형 DB라면 제공자의 읽기 전용 전환 기능을 사용합니다.
+5. MySQL 백업과 격리 복원 리허설을 완료합니다.
+6. PostgreSQL에 Alembic schema를 적용합니다.
+7. dry-run 후 실제 데이터 이관을 실행합니다.
+8. PK·FK·전체 컬럼·상태·시간 정합성 검증을 통과시킵니다.
+9. 외부 요청이 차단된 상태에서 FastAPI와 Worker를 PostgreSQL로 실행합니다.
+10. 합성 데이터만 사용해 핵심 API smoke test와 모니터링을 확인합니다.
+11. 전환 승인자가 검증 결과를 확인한 뒤에만 외부 요청을 재개합니다.
+12. 안정화가 확인될 때까지 기존 MySQL과 백업을 삭제하지 않습니다.
+
+자체 운영 MySQL에서는 애플리케이션 쓰기를 중지한 뒤 승인된 운영 담당자가 다음과 같이 읽기 전용 상태로 전환합니다.
+
+```sql
+-- 신규 쓰기를 차단합니다.
+SET GLOBAL read_only = ON;
+SET GLOBAL super_read_only = ON;
+
+-- 두 설정이 모두 활성화됐는지 확인합니다.
+SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only;
+```
+관리형 MySQL에서는 위 SQL을 임의로 실행하지 않고 제공자가 지원하는 읽기 전용 전환 기능과 승인 절차를 사용합니다.
+
 배포환경에서는 다음 항목을 먼저 기록합니다.
 
 - 전환 대상 commit
@@ -651,8 +685,11 @@ PostgreSQL 전환은 최종 목표이지만, 데이터 손상이나 서비스 �
 로컬 백업 파일 권한은 다음과 같이 제한할 수 있습니다.
 
 ```bash
-chmod 600 "$backup_file" "$checksum_file"
+# umask 077이 적용된 상태에서 생성했는지 최종 확인합니다.
+ls -ld "$migration_backup_dir"
+ls -l "$backup_file" "$checksum_file"
 ```
+백업 디렉터리는 소유자만 접근 가능한 `700`, 백업 파일과 체크섬은 소유자만 읽고 쓸 수 있는 `600` 수준이어야 합니다. 실제 백업 내용은 화면에 출력하지 않습니다.
 
 작업이 끝나면 현재 shell에서 이관용 자격증명을 제거합니다.
 

@@ -26,8 +26,8 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
       TZ: Asia/Seoul
       PGTZ: Asia/Seoul
-    ports:
-      - "${DB_EXPOSE_PORT}:5432"
+    # 운영 PostgreSQL은 Compose 내부 ws 네트워크에서만 접근합니다.
+    # 호스트 외부에는 5432 포트를 공개하지 않습니다.
     networks:
       - ws
     volumes:

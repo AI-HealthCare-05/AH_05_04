@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, func, select
 from sqlalchemy.engine import URL, Connection
+from sqlalchemy.exc import IntegrityError
 
 from scripts.db import migrate_mysql_to_postgresql as migration
 from scripts.db import verify_postgresql_migration as verification
@@ -358,3 +359,104 @@ def test_verifier_rejects_pk_null_and_status_mismatch(
     assert "PK 집합 불일치" in output
     assert "NULL 개수 불일치" in output
     assert "상태값 분포가 다릅니다" in output
+
+
+@pytest.mark.parametrize(
+    "script_module",
+    [migration, verification],
+)
+def test_database_engine_hides_bound_parameters(
+    tmp_path: Path,
+    script_module: Any,
+) -> None:
+    """DB 오류가 발생해도 SQL 파라미터의 실제 값은 예외에 노출하지 않습니다."""
+    database_url = _sqlite_url(tmp_path / f"{script_module.__name__.split('.')[-1]}-hidden-parameters.db")
+    synthetic_sensitive_value = "synthetic-sensitive-value"
+
+    engine = script_module.create_database_engine(database_url)
+
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE synthetic_secret (id INTEGER PRIMARY KEY, secret_value TEXT UNIQUE)"
+            )
+            connection.commit()
+
+            connection.exec_driver_sql(
+                "INSERT INTO synthetic_secret (id, secret_value) VALUES (?, ?)",
+                (1, synthetic_sensitive_value),
+            )
+            connection.commit()
+
+            # 동일한 unique 값을 삽입해 실제 SQLAlchemy DB 오류를 발생시킵니다.
+            with pytest.raises(IntegrityError) as exc_info:
+                connection.exec_driver_sql(
+                    "INSERT INTO synthetic_secret (id, secret_value) VALUES (?, ?)",
+                    (2, synthetic_sensitive_value),
+                )
+
+            connection.rollback()
+
+        error_message = str(exc_info.value)
+
+        assert engine.hide_parameters is True
+        assert synthetic_sensitive_value not in error_message
+    finally:
+        engine.dispose()
+
+
+def test_verifier_rejects_content_mismatch_without_exposing_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """행 구조가 같아도 값이 다르면 실패하고 실제 값은 출력하지 않습니다."""
+    source_url = _sqlite_url(tmp_path / "content-source.db")
+    target_url = _sqlite_url(tmp_path / "content-target.db")
+    table_name = "synthetic_record"
+
+    source_value = "synthetic-source-private-value"
+    target_value = "synthetic-target-private-value"
+
+    _create_schema(source_url, (table_name,))
+    _create_schema(target_url, (table_name,))
+
+    # PK·상태·NULL 여부는 같고 일반 컬럼값만 다르게 구성합니다.
+    _insert_rows(
+        source_url,
+        table_name,
+        [
+            {
+                "id": 1,
+                "status": "COMPLETED",
+                "optional_value": source_value,
+            }
+        ],
+    )
+    _insert_rows(
+        target_url,
+        table_name,
+        [
+            {
+                "id": 1,
+                "status": "COMPLETED",
+                "optional_value": target_value,
+            }
+        ],
+    )
+
+    _configure_verification_databases(
+        monkeypatch,
+        source_url,
+        target_url,
+        [table_name],
+    )
+
+    with pytest.raises(RuntimeError, match="PostgreSQL 이관 검증"):
+        verification.main()
+
+    output = capsys.readouterr().out
+
+    assert "synthetic_record.optional_value: 값 불일치 1건" in output
+    assert source_value not in output
+    assert target_value not in output

@@ -3,9 +3,10 @@
 검증 항목:
 - 테이블별 행 수
 - 기본키(PK) 컬럼 및 PK 집합
+- PK 기준 전체 일반 컬럼값
 - 컬럼별 NULL 개수
 - 상태 컬럼의 값 분포
-- 날짜·시간 컬럼의 최솟값과 최댓값
+- 날짜·시간 컬럼의 실제 시각
 - 외래키(FK) 정의 및 PostgreSQL의 고아 레코드
 
 보안:
@@ -136,6 +137,16 @@ def build_postgresql_url() -> URL:
         host=os.getenv("POSTGRES_MIGRATION_HOST", "127.0.0.1"),
         port=env_int("DB_EXPOSE_PORT", 5432),
         database=required_env("DB_NAME"),
+    )
+
+
+def create_database_engine(url: URL) -> Engine:
+    """검증 오류에 실제 DB 값과 연결 파라미터가 노출되지 않는 엔진을 생성합니다."""
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        # 검증 중 발생한 SQLAlchemy 예외에서도 실제 값을 숨깁니다.
+        hide_parameters=True,
     )
 
 
@@ -286,6 +297,25 @@ def normalize_target_datetime(
         raise RuntimeError(f"{table_name}.{column_name}: PostgreSQL 값에 시간대 정보가 없습니다.")
 
     return value.astimezone(UTC)
+
+
+def column_values_by_primary_key(
+    connection: Connection,
+    table: Table,
+    column_name: str,
+) -> dict[tuple[Hashable, ...], Any]:
+    """PK별 컬럼값을 읽되 실제 PK와 값은 출력하지 않습니다."""
+    primary_key_columns = list(table.primary_key.columns)
+
+    if not primary_key_columns:
+        raise RuntimeError(f"{table.name}: 컬럼값 비교에 필요한 PK가 없습니다.")
+
+    value_column = table.columns[column_name]
+    rows = connection.execute(select(*primary_key_columns, value_column)).all()
+
+    primary_key_length = len(primary_key_columns)
+
+    return {tuple(row[:primary_key_length]): row[primary_key_length] for row in rows}
 
 
 def datetime_values_by_primary_key(
@@ -492,6 +522,56 @@ def verify_status_distributions(
             failures.append(f"{table_name}.{column_name}: 상태값 분포가 다릅니다.")
 
 
+def verify_column_values(
+    table_name: str,
+    source_connection: Connection,
+    target_connection: Connection,
+    source_table: Table,
+    target_table: Table,
+    failures: list[str],
+) -> None:
+    """PK가 같은 행의 모든 일반 컬럼값을 비교합니다.
+
+    날짜·시간 컬럼은 시간대 정규화가 필요하므로
+    verify_datetime_values()에서 별도로 비교합니다.
+    실제 PK와 컬럼값은 오류 메시지에 출력하지 않습니다.
+    """
+    source_primary_keys = primary_key_names(source_table)
+    target_primary_keys = primary_key_names(target_table)
+
+    # PK 구성이 다르면 verify_primary_keys()에서 이미 실패로 기록합니다.
+    if not source_primary_keys or source_primary_keys != target_primary_keys:
+        return
+
+    common_columns = set(source_table.columns.keys()) & set(target_table.columns.keys())
+    datetime_columns = set(datetime_column_names(source_table)) | set(datetime_column_names(target_table))
+
+    # PK 자체는 verify_primary_keys()에서, datetime은 전용 함수에서 검증합니다.
+    comparable_columns = sorted(common_columns - set(source_primary_keys) - datetime_columns)
+
+    for column_name in comparable_columns:
+        source_values = column_values_by_primary_key(
+            source_connection,
+            source_table,
+            column_name,
+        )
+        target_values = column_values_by_primary_key(
+            target_connection,
+            target_table,
+            column_name,
+        )
+
+        common_primary_keys = source_values.keys() & target_values.keys()
+
+        mismatch_count = sum(
+            source_values[primary_key] != target_values[primary_key] for primary_key in common_primary_keys
+        )
+
+        if mismatch_count:
+            # 의료정보나 사용자정보 대신 불일치 건수만 기록합니다.
+            failures.append(f"{table_name}.{column_name}: 값 불일치 {mismatch_count}건")
+
+
 def verify_datetime_values(
     table_name: str,
     source_connection: Connection,
@@ -633,6 +713,16 @@ def verify_table(
         target_table,
         failures,
     )
+    # 행 수와 NULL 개수뿐 아니라 PK별 실제 컬럼값도 비교합니다.
+    verify_column_values(
+        table_name,
+        source_connection,
+        target_connection,
+        source_table,
+        target_table,
+        failures,
+    )
+
     verify_status_distributions(
         table_name,
         source_connection,
@@ -665,14 +755,9 @@ def verify_table(
 
 def main() -> None:
     """전체 테이블을 검증하고 하나라도 다르면 실패 처리합니다."""
-    source_engine = create_engine(
-        build_mysql_url(),
-        pool_pre_ping=True,
-    )
-    target_engine = create_engine(
-        build_postgresql_url(),
-        pool_pre_ping=True,
-    )
+    # 원본과 대상 DB에서 발생한 예외에 실제 데이터가 포함되지 않게 합니다.
+    source_engine = create_database_engine(build_mysql_url())
+    target_engine = create_database_engine(build_postgresql_url())
 
     failures: list[str] = []
     total_source_rows = 0

@@ -21,6 +21,7 @@ from sqlalchemy import (
     func,
     insert,
     select,
+    text,
 )
 from sqlalchemy.engine import URL, Connection, Engine
 
@@ -153,6 +154,16 @@ def build_postgresql_url() -> URL:
         host=os.getenv("POSTGRES_MIGRATION_HOST", "127.0.0.1"),
         port=env_int("DB_EXPOSE_PORT", 5432),
         database=required_env("DB_NAME"),
+    )
+
+
+def create_database_engine(url: URL) -> Engine:
+    """DB 오류에 실제 행 데이터와 자격증명이 노출되지 않는 엔진을 생성합니다."""
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        # SQLAlchemy 예외에 INSERT·UPDATE 파라미터가 표시되지 않게 합니다.
+        hide_parameters=True,
     )
 
 
@@ -339,16 +350,43 @@ def copy_table(
     return copied_count
 
 
+def synchronize_ocr_job_identity(
+    target_connection: Connection,
+    target_table: Table,
+) -> None:
+    """명시적으로 이관한 값 다음부터 PostgreSQL identity가 시작되게 합니다."""
+    if target_connection.dialect.name != "postgresql":
+        raise RuntimeError("OCR created_sequence 동기화 대상은 PostgreSQL이어야 합니다.")
+
+    if "created_sequence" not in target_table.columns:
+        raise RuntimeError("PostgreSQL ocr_job.created_sequence 컬럼을 찾을 수 없습니다.")
+
+    # setval(..., false)는 다음 nextval()이 지정된 값을 반환하게 합니다.
+    # 실제 created_sequence 값은 로그에 출력하지 않습니다.
+    target_connection.execute(
+        text(
+            """
+            SELECT setval(
+                pg_get_serial_sequence(
+                    'ocr_job',
+                    'created_sequence'
+                ),
+                (
+                    SELECT COALESCE(MAX(created_sequence), 0) + 1
+                    FROM ocr_job
+                ),
+                false
+            )
+            """
+        )
+    )
+
+
 def main() -> None:
     """사전검증 후 전체 데이터를 하나의 트랜잭션으로 이관합니다."""
-    source_engine = create_engine(
-        build_mysql_url(),
-        pool_pre_ping=True,
-    )
-    target_engine = create_engine(
-        build_postgresql_url(),
-        pool_pre_ping=True,
-    )
+    # 원본과 대상 DB 모두 동일한 민감정보 비노출 정책을 적용합니다.
+    source_engine = create_database_engine(build_mysql_url())
+    target_engine = create_database_engine(build_postgresql_url())
 
     try:
         source_tables = reflect_tables(source_engine)
@@ -385,6 +423,17 @@ def main() -> None:
                         raise RuntimeError(f"{table_name} 복사 건수 불일치: 예상={expected_count}, 실제={copied_count}")
 
                     print(f"[이관완료] {table_name}: {copied_count}건")
+
+                # 실제 전체 이관에는 ocr_job이 항상 포함됩니다.
+                # 최소 합성 테이블만 사용하는 단위 테스트에서는
+                # 존재하지 않는 운영 테이블의 동기화를 시도하지 않습니다.
+                if "ocr_job" in target_tables:
+                    # MySQL 값을 명시적으로 넣은 뒤 PostgreSQL identity를
+                    # 최댓값 다음으로 이동해 신규 OCR 작업의 순서를 보장합니다.
+                    synchronize_ocr_job_identity(
+                        target_connection,
+                        target_tables["ocr_job"],
+                    )
 
         print("MySQL에서 PostgreSQL로 데이터 이관을 완료했습니다.")
 
