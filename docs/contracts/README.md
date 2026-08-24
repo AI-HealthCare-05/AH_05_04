@@ -1,22 +1,39 @@
 # 공통 데이터 계약
 
-Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. 실제 구현 스키마의 기준은 FastAPI OpenAPI와 Pydantic DTO이며, 이 디렉터리에는 경계 설명과 예시를 둡니다.
+Frontend, Backend, OCR과 LLM이 공유하는 의미와 상태를 관리합니다. 실제 구현 스키마의 기준은 FastAPI OpenAPI와 Pydantic DTO이며, 이 디렉터리에는 경계 설명과 예시를 둡니다. RAG·비동기 Worker 계약은 Post-MVP 범위입니다.
 
 ## 계약 문서
 
 - [복약 가이드 Backend–AI 계약](./medication-guide-ai-backend.md): 확정 처방 입력, AI 생성 결과, 오류와 조립 책임
 - [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md): 확정 처방 약물 입력, Provider payload 제한, 오류 매핑, 동시성·캐시 계약
 - [OCR 약품명 정규화 계약](./ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할과 정규화 규칙
+- [OCR 약품 행 구조화 계약](./ocr-medication-structuring.md)
 - [Backend 공통 오류 응답 계약](./backend-error-response.md): `ApiError` 사용법, 공통·도메인 오류 코드
 - [Backend 공통 구현 규칙](./backend-common-patterns.md): 소유권 확인, 실패 상태 저장
 - [Backend 내부 구현 패턴](./backend-implementation-patterns.md): DI Provider, Repository 테스트
+- [Staging Release Validation Ledger 계약](./release-validation-ledger.md): proposed control DB schema, 상태 전이, 권한, crash recovery와 migration 상호 배제
 
-## 우선 확정할 계약
+## 현재 구현 계약
+
+- OCR 원문·정규화 참고값·사용자 확정값의 의미
+- 동기 복약 가이드 Backend–AI 경계와 생성 오류
+- 동기 복약 챗봇 Backend–AI Core 경계, 오류와 세션 동시성
+- 공통 오류: `code`, `message`, `details`, `trace_id`
+
+## Proposed 운영 계약
+
+- Staging release-validation ledger와 validation·cleanup·migration role 경계
+
+Proposed 계약은 구현 완료 상태가 아닙니다. 관련 schema·service·테스트가 같은 PR에서 추가되고 문서 상태가 갱신되기 전에는 실행 가능한 계약으로 간주하지 않습니다.
+
+## Post-MVP 계약 후보
 
 - Patient/Prescription State와 버전
 - OCR 필드, 신뢰도, 오류와 `REVIEW_REQUIRED`
 - 비동기 Job 상태: `PENDING → PROCESSING → COMPLETED | FAILED | REVIEW_REQUIRED`
 - 복약 상태: 예정, 완료, 지연 완료, 미복용, 불확실, 미확인, 계획된 중단
 - AI 결과: 답변, 인용, NLI·안전 검증, 모델·프롬프트 버전
+
+Post-MVP 항목은 구현 계약이 아니며 API·DTO·상태 전이가 합의되기 전까지 현재 소비자가 의존해서는 안 됩니다. DB에 지식·citation 테이블이 존재하더라도 RAG·인용 계약이 확정된 것으로 간주하지 않습니다.
 
 계약 변경은 관련 요구사항 ID, API 명세, 구현, 테스트와 함께 한 PR에서 갱신합니다. 필드 삭제·이름/타입 변경·필수 필드 추가는 Breaking Change로 취급합니다.

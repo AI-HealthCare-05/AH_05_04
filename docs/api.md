@@ -35,7 +35,29 @@
 
 ## API 목록
 
-기능별 API가 확정되면 경로, 메서드, 요청, 응답 및 오류 사례를 추가합니다.
+현재 등록된 Router endpoint의 요약입니다. 상세 요청·응답과 오류 의미는 관련 계약 문서와 FastAPI OpenAPI를 기준으로 합니다.
+
+| 영역 | Method | Path | 성공 상태 |
+| --- | --- | --- | ---: |
+| 인증 | `POST` | `/api/v1/auth/signup` | `201` |
+| 인증 | `POST` | `/api/v1/auth/login` | `200` |
+| 인증 | `GET` | `/api/v1/auth/token/refresh` | `200` |
+| 사용자 | `GET` | `/api/v1/users/me` | `200` |
+| 사용자 | `PATCH` | `/api/v1/users/me` | `200` |
+| 의료문서 | `POST` | `/api/v1/documents` | `201` |
+| OCR 실행 | `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202` |
+| 처방 확정 | `POST` | `/api/v1/documents/{document_id}/prescription` | `201` |
+| 의료문서 | `GET` | `/api/v1/documents/{document_id}/file` | `200` |
+| OCR | `GET` | `/api/v1/ocr-jobs/{job_id}` | `200` |
+| OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
+| 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
+| 채팅 | `POST` | `/api/v1/prescriptions/{prescription_id}/chat-sessions` | `201` |
+| 가이드 | `POST` | `/api/v1/guides` | `201` |
+| 가이드 | `GET` | `/api/v1/guides/{guide_id}` | `200` |
+| 채팅 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200` |
+| 채팅 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201` |
+
+OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동기 queue 접수가 아닙니다. 같은 HTTP 요청에서 CLOVA OCR 호출과 결과 저장을 완료합니다.
 
 ## 복약 챗봇
 

@@ -1,0 +1,635 @@
+{
+  "images": [
+    {
+      "inferResult": "SUCCESS",
+      "message": "SUCCESS",
+      "fields": [
+        {
+          "inferText": "명칭",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 222.0,
+                "y": 571.0
+              },
+              {
+                "x": 252.0,
+                "y": 571.0
+              },
+              {
+                "x": 252.0,
+                "y": 591.0
+              },
+              {
+                "x": 222.0,
+                "y": 591.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "투여량",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 395.0,
+                "y": 571.0
+              },
+              {
+                "x": 431.0,
+                "y": 571.0
+              },
+              {
+                "x": 431.0,
+                "y": 591.0
+              },
+              {
+                "x": 395.0,
+                "y": 591.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "투여횟수",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 546.0,
+                "y": 571.0
+              },
+              {
+                "x": 594.0,
+                "y": 571.0
+              },
+              {
+                "x": 594.0,
+                "y": 591.0
+              },
+              {
+                "x": 546.0,
+                "y": 591.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "용법",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 896.0,
+                "y": 571.0
+              },
+              {
+                "x": 926.0,
+                "y": 571.0
+              },
+              {
+                "x": 926.0,
+                "y": 591.0
+              },
+              {
+                "x": 896.0,
+                "y": 591.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "로수바스타틴칼숨정 10mg",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 53.0,
+                "y": 627.0
+              },
+              {
+                "x": 221.0,
+                "y": 627.0
+              },
+              {
+                "x": 221.0,
+                "y": 647.0
+              },
+              {
+                "x": 53.0,
+                "y": 647.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "1정",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 379.0,
+                "y": 627.0
+              },
+              {
+                "x": 409.0,
+                "y": 627.0
+              },
+              {
+                "x": 409.0,
+                "y": 647.0
+              },
+              {
+                "x": 379.0,
+                "y": 647.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "1회",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 532.0,
+                "y": 627.0
+              },
+              {
+                "x": 562.0,
+                "y": 627.0
+              },
+              {
+                "x": 562.0,
+                "y": 647.0
+              },
+              {
+                "x": 532.0,
+                "y": 647.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "30일",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 701.0,
+                "y": 627.0
+              },
+              {
+                "x": 737.0,
+                "y": 627.0
+              },
+              {
+                "x": 737.0,
+                "y": 647.0
+              },
+              {
+                "x": 701.0,
+                "y": 647.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "저녁 식후",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 881.0,
+                "y": 627.0
+              },
+              {
+                "x": 941.0,
+                "y": 627.0
+              },
+              {
+                "x": 941.0,
+                "y": 647.0
+              },
+              {
+                "x": 881.0,
+                "y": 647.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "에제티미브정 10mg",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 71.0,
+                "y": 691.0
+              },
+              {
+                "x": 203.0,
+                "y": 691.0
+              },
+              {
+                "x": 203.0,
+                "y": 711.0
+              },
+              {
+                "x": 71.0,
+                "y": 711.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "1정",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 379.0,
+                "y": 691.0
+              },
+              {
+                "x": 409.0,
+                "y": 691.0
+              },
+              {
+                "x": 409.0,
+                "y": 711.0
+              },
+              {
+                "x": 379.0,
+                "y": 711.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "1회",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 532.0,
+                "y": 691.0
+              },
+              {
+                "x": 562.0,
+                "y": 691.0
+              },
+              {
+                "x": 562.0,
+                "y": 711.0
+              },
+              {
+                "x": 532.0,
+                "y": 711.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "30일",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 701.0,
+                "y": 691.0
+              },
+              {
+                "x": 737.0,
+                "y": 691.0
+              },
+              {
+                "x": 737.0,
+                "y": 711.0
+              },
+              {
+                "x": 701.0,
+                "y": 711.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "저녁 식후",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 881.0,
+                "y": 691.0
+              },
+              {
+                "x": 941.0,
+                "y": 691.0
+              },
+              {
+                "x": 941.0,
+                "y": 711.0
+              },
+              {
+                "x": 881.0,
+                "y": 711.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "오메가-3-산에틸에스테르",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 59.0,
+                "y": 755.0
+              },
+              {
+                "x": 215.0,
+                "y": 755.0
+              },
+              {
+                "x": 215.0,
+                "y": 775.0
+              },
+              {
+                "x": 59.0,
+                "y": 775.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "2캡슐",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 376.0,
+                "y": 755.0
+              },
+              {
+                "x": 412.0,
+                "y": 755.0
+              },
+              {
+                "x": 412.0,
+                "y": 775.0
+              },
+              {
+                "x": 376.0,
+                "y": 775.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "2회",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 532.0,
+                "y": 755.0
+              },
+              {
+                "x": 562.0,
+                "y": 755.0
+              },
+              {
+                "x": 562.0,
+                "y": 775.0
+              },
+              {
+                "x": 532.0,
+                "y": 775.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "30일",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 701.0,
+                "y": 755.0
+              },
+              {
+                "x": 737.0,
+                "y": 755.0
+              },
+              {
+                "x": 737.0,
+                "y": 775.0
+              },
+              {
+                "x": 701.0,
+                "y": 775.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "아침 · 저녁 식후",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 851.0,
+                "y": 755.0
+              },
+              {
+                "x": 971.0,
+                "y": 755.0
+              },
+              {
+                "x": 971.0,
+                "y": 775.0
+              },
+              {
+                "x": 851.0,
+                "y": 775.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "90연질캡슐 1000mg",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 59.0,
+                "y": 793.0
+              },
+              {
+                "x": 215.0,
+                "y": 793.0
+              },
+              {
+                "x": 215.0,
+                "y": 813.0
+              },
+              {
+                "x": 59.0,
+                "y": 813.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "1. 3회 복용 후",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 77.0,
+                "y": 860.0
+              },
+              {
+                "x": 197.0,
+                "y": 860.0
+              },
+              {
+                "x": 197.0,
+                "y": 880.0
+              },
+              {
+                "x": 77.0,
+                "y": 880.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "3회",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 379.0,
+                "y": 860.0
+              },
+              {
+                "x": 409.0,
+                "y": 860.0
+              },
+              {
+                "x": 409.0,
+                "y": 880.0
+              },
+              {
+                "x": 379.0,
+                "y": 880.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "1일",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 704.0,
+                "y": 860.0
+              },
+              {
+                "x": 734.0,
+                "y": 860.0
+              },
+              {
+                "x": 734.0,
+                "y": 880.0
+              },
+              {
+                "x": 704.0,
+                "y": 880.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "이상이 있으면 문의하세요.",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 827.0,
+                "y": 860.0
+              },
+              {
+                "x": 995.0,
+                "y": 860.0
+              },
+              {
+                "x": 995.0,
+                "y": 880.0
+              },
+              {
+                "x": 827.0,
+                "y": 880.0
+              }
+            ]
+          }
+        },
+        {
+          "inferText": "조제",
+          "inferConfidence": 0.99,
+          "lineBreak": false,
+          "boundingPoly": {
+            "vertices": [
+              {
+                "x": 117.0,
+                "y": 930.0
+              },
+              {
+                "x": 147.0,
+                "y": 930.0
+              },
+              {
+                "x": 147.0,
+                "y": 950.0
+              },
+              {
+                "x": 117.0,
+                "y": 950.0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
