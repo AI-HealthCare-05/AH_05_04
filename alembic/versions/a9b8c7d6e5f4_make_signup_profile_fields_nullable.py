@@ -9,7 +9,7 @@ Create Date: 2026-08-24 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from sqlalchemy import text
+from sqlalchemy import column, func, select, table
 
 from alembic import op
 
@@ -41,14 +41,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # `user`는 예약어라 dialect별 quoting이 다르므로(MySQL 백틱 vs PostgreSQL 더블쿼트),
+    # 원시 SQL 문자열 대신 SQLAlchemy Core 표현식으로 dialect가 quoting을 알아서 처리하게 합니다.
+    user_table = table("user", column("gender"), column("birthday"), column("phone_number"))
     connection = op.get_bind()
     null_count = connection.execute(
-        text(
-            """
-            SELECT COUNT(*)
-            FROM `user`
-            WHERE gender IS NULL OR birthday IS NULL OR phone_number IS NULL
-            """
+        select(func.count()).select_from(user_table).where(
+            user_table.c.gender.is_(None)
+            | user_table.c.birthday.is_(None)
+            | user_table.c.phone_number.is_(None)
         )
     ).scalar_one()
     if null_count:

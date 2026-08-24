@@ -15,18 +15,19 @@
 
 ## 필수 필드
 
-Medication별 MVP 필수 필드는 다음과 같습니다.
+`PRESCRIBED_DATE`는 처방 단위 필수 필드이며, Medication별 MVP 필수 필드는 다음과 같습니다.
 
 | 필드 | 기준 |
 | --- | --- |
+| `PRESCRIBED_DATE` | 필수, ISO 8601 날짜 형식(`YYYY-MM-DD`) |
 | `MEDICATION_NAME` | 필수, 1~255자 |
 | `DOSE_VALUE` | 필수, `NUMERIC(10,3)` 범위의 양수 |
-| `FREQUENCY_PER_DAY` | 필수, MySQL `INTEGER` 범위의 양수 정수 |
-| `DURATION_DAYS` | 필수, MySQL `INTEGER` 범위의 양수 정수 |
+| `FREQUENCY_PER_DAY` | 필수, `INTEGER(32비트)` 범위의 양수 정수 |
+| `DURATION_DAYS` | 필수, `INTEGER(32비트)` 범위의 양수 정수 |
 | `DOSE_UNIT` | 선택, 최대 50자 |
 | `TIMING` | 선택, 최대 255자 |
 
-필수 필드가 누락되면 `422 PRESCRIPTION_REQUIRED_FIELD_MISSING`을 반환합니다. 형식, 범위, 길이가 맞지 않으면 `422 VALIDATION_FAILED`를 반환합니다.
+`PRESCRIBED_DATE`가 없으면 `422 PRESCRIPTION_REQUIRED_FIELD_MISSING`, 값이 있지만 `YYYY-MM-DD` 형식이 아니면 `422 VALIDATION_FAILED`를 반환합니다. 다른 필수 필드가 누락되면 `422 PRESCRIPTION_REQUIRED_FIELD_MISSING`을 반환합니다. 형식, 범위, 길이가 맞지 않으면 `422 VALIDATION_FAILED`를 반환합니다.
 
 ## Post-MVP 이관
 

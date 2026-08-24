@@ -20,16 +20,21 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+_CREATED_SEQUENCE_TYPE = sa.BigInteger().with_variant(mysql.BIGINT(unsigned=True), "mysql")
+
+
 def upgrade() -> None:
     op.add_column(
         "ocr_job",
         sa.Column(
             "created_sequence",
-            mysql.BIGINT(unsigned=True),
+            _CREATED_SEQUENCE_TYPE,
             nullable=True,
         ),
     )
 
+    # MySQL 전용 백필: 세션 변수와 UPDATE...ORDER BY로 기존 행에 순번을 부여합니다.
+    # PostgreSQL 전환 시 이 백필과 아래 UUID_SHORT() 기본값을 함께 다시 설계해야 합니다.
     op.execute("SET @ocr_job_created_sequence := 0")
     op.execute(
         """
@@ -42,7 +47,7 @@ def upgrade() -> None:
     op.alter_column(
         "ocr_job",
         "created_sequence",
-        existing_type=mysql.BIGINT(unsigned=True),
+        existing_type=_CREATED_SEQUENCE_TYPE,
         nullable=False,
         server_default=sa.text("(UUID_SHORT())"),
     )

@@ -185,7 +185,7 @@ def _to_decimal(value: str | None) -> Decimal | None:
     if not parsed.is_finite() or parsed <= 0 or parsed > _MAX_DOSE_VALUE:
         return None
     exponent = parsed.as_tuple().exponent
-    if not isinstance(exponent, int) or abs(exponent) > _MAX_DOSE_SCALE:
+    if not isinstance(exponent, int) or max(-exponent, 0) > _MAX_DOSE_SCALE:
         return None
     return parsed
 

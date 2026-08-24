@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum,
@@ -74,7 +75,7 @@ class OcrJob(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     created_sequence: Mapped[int] = mapped_column(
-        mysql.BIGINT(unsigned=True),
+        BigInteger().with_variant(mysql.BIGINT(unsigned=True), "mysql"),
         nullable=False,
         server_default=text("(UUID_SHORT())"),
     )

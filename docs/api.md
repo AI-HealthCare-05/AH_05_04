@@ -250,9 +250,9 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - MVP에서는 별도 요청 본문 없이 `document_id`를 기준으로 처리합니다.
 - Backend는 문서 소유권과 최신 OCR 작업의 `COMPLETED` 상태를 확인합니다.
 - OCR 필드는 사용자가 확인한 `confirmed_value`만 처방 확정에 사용합니다.
-- `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
+- `PRESCRIBED_DATE`, `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
 - `DOSE_UNIT`, `TIMING`은 현재 MVP에서 선택값입니다.
-- `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 MySQL `INTEGER` 범위에 맞게 Backend에서 사전 검증합니다.
+- `PRESCRIBED_DATE`는 `YYYY-MM-DD` 형식, `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
 - `DOSE_UNIT`은 `VARCHAR(50)`, `TIMING`은 `VARCHAR(255)` 길이를 초과하면 저장 전에 `422 VALIDATION_FAILED`로 거부합니다.
 - 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
 
@@ -262,8 +262,8 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 | ---: | --- | --- |
 | `404` | `MEDICAL_DOCUMENT_NOT_FOUND` | 사용자가 접근할 수 없는 문서입니다. |
 | `409` | `OCR_JOB_NOT_COMPLETED` | OCR 처리가 완료되지 않았습니다. |
-| `422` | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 처방 확정 필수 항목이 누락되었습니다. |
-| `422` | `VALIDATION_FAILED` | 필드 값의 형식이 올바르지 않습니다. |
+| `422` | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 처방 확정 필수 항목(`PRESCRIBED_DATE` 포함)이 누락되었습니다. |
+| `422` | `VALIDATION_FAILED` | 필드 값의 형식이 올바르지 않습니다(`PRESCRIBED_DATE` 형식 오류 포함). |
 
 
 ## 변경 이력
