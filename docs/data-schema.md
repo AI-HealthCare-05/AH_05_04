@@ -76,3 +76,18 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 ## Post-MVP schema-only 테이블
 
 `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation`은 migration과 SQLAlchemy 모델에는 존재하지만 현재 repository, service, API DTO와 응답에는 연결되지 않습니다. 테이블 존재를 RAG, 출처 인용 또는 Citation/NLI 검증 구현 완료로 해석하지 않습니다.
+
+## Post-MVP-1 목표 스키마 — 미구현
+
+Contract Freeze v1은 다음 구조를 목표로 승인했습니다. 아래 테이블과 제약은 현재 migration·모델에 구현된 것으로 간주하지 않으며, 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 별도 migration PR에서 확정합니다.
+
+| 영역 | 목표 테이블 | 목표 제약 |
+| --- | --- | --- |
+| 비동기 실행 | `ai_job`, `outbox_event`, 비동기 `idempotency_record`, 동기 `sync_idempotency_record` | Job 6상태, at-least-once, DB commit 후 ACK, 두 재응답 방식 분리 |
+| 처방 버전 | `prescription_version`, `prescription_version_medication` | 불변 snapshot과 처방별 단일 active version |
+| 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
+| Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |
+| AI 안전 결과 | retrieval·result·citation 계열 | Job·처방 version 귀속, 생성·검증·공개 상태축 분리 |
+| OTC | 제품·성분·rule·평가 계열 | 평가 당시 rule·source version snapshot과 fail-closed 결과 |
+
+상세 목표는 [계약 인덱스](./contracts/README.md)의 v1 문서를 따릅니다. 목표 enum·컬럼을 현재 코드가 이미 사용한다고 설명하지 않습니다.
