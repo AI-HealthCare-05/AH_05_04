@@ -21,9 +21,11 @@ ai = [
     "torchaudio",
     "sentence-transformers>=5.2.0"
 ]
+
 app = [
     "alembic>=1.16.5",
-    "asyncmy>=0.2.11",
+     # PostgreSQL용 비동기 드라이버입니다.
+    "asyncpg>=0.30.0",
     "bcrypt<=4.0.1",
     "fastapi[standard]>=0.128.0",
     "httpx>=0.28.1",
@@ -33,6 +35,12 @@ app = [
     "pyjwt>=2.10.1",
     "sqlalchemy[asyncio]>=2.0.43",
     "uvicorn>=0.40.0",
+]
+# MySQL → PostgreSQL 데이터 이관 전용 의존성입니다.
+# 애플리케이션 런타임 이미지에는 포함하지 않아도 됩니다.
+db-migration = [
+    "pymysql>=1.1.1",
+    "psycopg[binary]>=3.2.0",
 ]
 dev = [
     "coverage>=7.13.2",

@@ -15,39 +15,36 @@ services:
       start_period: 5s
 
   # 2. Database
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
     restart: always
     environment:
-    # ${환경변수명} 문법은 OS 환경변수 혹은 .env에서 해당 환경변수명과 일치하는 항목이 있으면 대입합니다.
-    # 반드시 사전에 .env에 해당 항목이 존재하는지 확인해야 합니다.
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
       TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
     ports:
-      - ${DB_EXPOSE_PORT}:${DB_PORT}
+      - "${DB_EXPOSE_PORT}:5432"
     networks:
       - ws
     volumes:
-      - mysql_data:/var/lib/mysql  # 컨테이너가 삭제돼도 데이터는 호스트 파일시스템에 남음
-    command: # 한글 저장을 위한 문자셋 설정 (필수!)
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --port=${DB_PORT}
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 5s
 
   # 3. API Server (FastAPI)
   fastapi:
     container_name: fastapi
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}  # APP_VERSION은 빌드된 이미지의 버전관리를 위함입니다. v1.0.0 형식으로 사용합니다.
-    env_file: .env
+    env_file:
+      - ../../envs/.prod.env
     volumes:
       - static_volume:/app/templates
       - media_volume:/app/media
@@ -57,22 +54,24 @@ services:
     networks:
       - ws
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+
 
   # 4. AI Worker (Model 학습 및 추론)
   ai-worker:
     container_name: ai-worker
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}  # AI_WORKER_VERSION은 빌드된 이미지의 버전관리를 위함입니다. V1.0.0 형식으로 사용합니다.
-    env_file: .env
+    env_file:
+      - ../../envs/.prod.env
     restart: always
     mem_limit: 4G
     networks:
       - ws
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -107,16 +106,8 @@ services:
       - nginx
 
 volumes:
-  mysql_data:
-    name: mysql_data
-  static_volume:
-    name: static_volume
-  media_volume:
-    name: media_volume
-  certbot-conf:
-    name: certbot-conf
-  certbot-www:
-    name: certbot-www
+  postgres_data:
+    name: postgres_data
 
 networks:
   ws:

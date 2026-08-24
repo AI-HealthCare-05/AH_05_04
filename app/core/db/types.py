@@ -1,8 +1,4 @@
-"""
-DB에는 하이픈이 포함된 36자리 문자열로 저장되고,
-Python에서는 계속 UUID 객체로 사용하기 위해 types.py 생성
-
-"""
+"""UUID를 DB 문자열과 Python UUID 객체 사이에서 변환하는 공통 타입입니다."""
 
 from typing import Any
 from uuid import UUID
@@ -13,7 +9,13 @@ from sqlalchemy.types import TypeDecorator
 
 
 class UUIDChar(TypeDecorator[UUID]):
-    """Python UUID를 MySQL CHAR(36)으로 저장한다."""
+    """Python UUID를 DB의 CHAR(36) 문자열로 저장합니다.
+
+    PostgreSQL 전환 1단계에서는 기존 MySQL 데이터 및 API 호환성을 위해
+    UUID 저장 형식을 CHAR(36)으로 유지합니다.
+
+    PostgreSQL 네이티브 UUID 타입 전환은 별도 migration에서 처리합니다.
+    """
 
     impl = CHAR(36)
     cache_ok = True
@@ -23,6 +25,8 @@ class UUIDChar(TypeDecorator[UUID]):
         value: UUID | str | None,
         dialect: Dialect,
     ) -> str | None:
+        """Python UUID 또는 UUID 문자열을 DB 저장 문자열로 변환합니다."""
+
         if value is None:
             return None
 
@@ -36,6 +40,8 @@ class UUIDChar(TypeDecorator[UUID]):
         value: Any,
         dialect: Dialect,
     ) -> UUID | None:
+        """DB 값을 Python UUID 객체로 변환합니다."""
+
         if value is None:
             return None
 
