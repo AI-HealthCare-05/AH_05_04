@@ -49,6 +49,39 @@ Barrier는 Check-in status와 별도 축이다.
 
 v1 `barrier_code`는 `FORGOT`, `SCHEDULE_OR_TRAVEL`, `INSTRUCTIONS_UNCLEAR`, `NEED_DOUBT`, `MEDICATION_CONCERN`, `ACCESS_OR_COST`로 고정한다. `UNKNOWN`, `USER_DECLINED`, `uncertain`을 건너뛰기 값으로 사용하지 않는다.
 
+## 목표 API와 고정 오류
+
+Track B의 목표 API는 다음으로 고정한다.
+
+- `GET /api/v1/medication-occurrences?date=YYYY-MM-DD`
+- `PUT /api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`
+- `PATCH /api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`
+- `PUT /api/v1/medication-occurrences/{occurrence_id}/check-in`
+- `GET /api/v1/medication-occurrences/{occurrence_id}/check-in-history`
+- `POST /api/v1/medication-occurrences/{occurrence_id}/reminders`
+
+Track C의 목표 API는 다음으로 고정한다.
+
+- `POST /api/v1/safety-assessments`
+- `PUT /api/v1/medication-checkins/{checkin_id}/barrier-response`
+- `GET /api/v1/barrier-responses/{id}/supports`
+- `POST /api/v1/support-action-plans`
+- `PATCH /api/v1/support-action-plans/{id}`
+- `POST /api/v1/support-action-plans/{id}/followups`
+
+목표 오류 의미는 다음과 같다.
+
+- 일정 생성·변경의 `expected_revision` 불일치: `409 SCHEDULE_REVISION_CONFLICT`
+- Check-in에 사용자가 `UNCONFIRMED` 제출: `422 CHECKIN_STATUS_NOT_USER_SETTABLE`
+- 취소된 미래 occurrence에 Check-in 제출: `409 OCCURRENCE_CANCELLED`
+- 구조화 목록이 아닌 자유 텍스트 증상 제출: `422 FREE_TEXT_SYMPTOM_NOT_SUPPORTED`
+- Safety assessment의 오래된 revision: `409 SAFETY_ASSESSMENT_REVISION_CONFLICT`
+- 최신 Safety assessment가 없거나 `ROUTINE`이 아닌 상태에서 Barrier 진행: `409 SAFETY_FLOW_PRECEDES_BARRIER`
+- Check-in이 `NOT_TAKEN`이 아니거나 assessment revision이 현재 Check-in revision과 다름: `409 CHECKIN_FLOW_STALE`
+- 같은 occurrence의 활성 재알림이 이미 존재: `409 REMINDER_ALREADY_SCHEDULED`
+
+모든 쓰기 API는 `Idempotency-Key`와 동기 응답 snapshot 계약을 적용한다. 상세 요청 DTO, revision 처리와 공개 범위는 구현 OpenAPI 및 계약 테스트로 이 목록과 함께 검증한다.
+
 ## Safety assessment lifecycle
 
 - Safety·Barrier·일반 Support는 현재 Check-in이 `NOT_TAKEN`일 때만 허용한다. `UNCONFIRMED`는 사용자가 먼저 `NOT_TAKEN`으로 정정해야 하며 `TAKEN`의 현재 증상 처리는 v1 adherence flow 범위가 아니다.

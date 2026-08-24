@@ -46,6 +46,26 @@ Track F의 `safety_result`는 Chat Job과 처방 version에 1:1로 귀속하며 
 
 `retrieval_run` 하나에는 여러 retrieved chunk와 score·rank를 연결한다. Citation은 result의 개별 claim과 evidence source를 연결하며 `source_type`, `source_id`, `source_version`, `locator`, `claim_key`를 가진다. `(safety_result_id, claim_key, source_type, source_id, source_version, locator)`를 unique로 둔다. 허용 source type은 `PRESCRIPTION`, `KNOWLEDGE_CHUNK`, `SAFETY_POLICY`다. 출처 원문 전체와 검증에서 폐기한 생성 답변은 결과 row나 Redis에 복제하지 않는다.
 
+Citation 공개 DTO는 다음 필드로 제한한다.
+
+- `citation_id`, `claim_key`, `source_type`
+- `title`, nullable `url`
+- `source_version`, `locator`
+- 짧은 표시용 `excerpt`
+
+내부 retrieval score, 검증 세부와 Source 원문 전체는 공개하지 않는다.
+
+RetrievalRun에는 raw 질문을 저장하지 않고 다음 감사 메타데이터만 저장한다.
+
+- versioned query HMAC/digest
+- filter snapshot과 `prescription_version_id`
+- 검색된 chunk ID, rank, score
+- 최종 선택된 chunk ID
+- index/source version
+- status와 실행 시각
+
+의료 질문·답변 원문과 폐기된 생성 답변은 Stream, 일반 로그, quarantine, DLQ에도 저장하지 않는다. patient-visible 최종 결과와 Retrieval 실행 메타데이터의 보존 정책을 분리한다.
+
 ## Source lifecycle
 
 Source는 owner, license, attribution, checksum, 수집일, 승인자, 승인일, 유효일과 `ACTIVE` 또는 `INACTIVE` 상태를 저장한다. 재색인은 새 `source_version`을 만들고 기존 citation을 바꾸지 않는다. `INACTIVE` source는 신규 retrieval에서 제외하지만 과거 결과의 provenance는 보존한다.
@@ -61,7 +81,9 @@ OTC rule은 `rule_id`, `rule_version`, `rule_type`, 좌·우 ingredient code, `s
 
 단일 `public_outcome`은 평가 불완전 시 `UNKNOWN`, 평가가 완전할 때 `BLOCK → PROFESSIONAL_CONFIRMATION_REQUIRED`, `WARN → CAUTION_FOUND`, `DUPLICATE_INGREDIENT → DUPLICATE_INGREDIENT_FOUND`, `CAUTION 또는 INFO → CAUTION_FOUND`, 성립 rule 없음 → `NO_RULE_MATCH_IN_APPROVED_SCOPE` 순으로 집계한다. Rule row에는 `public_outcome`을 중복 저장하지 않고 versioned 집계 정책과 평가 snapshot에만 저장한다. `NO_RULE_MATCH_IN_APPROVED_SCOPE`는 승인된 범위에서 rule을 찾지 못했다는 뜻이며 안전 보장이 아니다.
 
-Track D 목표 API는 구조화 검색 `GET /api/v1/otc-products?query=...`와 동기 평가 `POST /api/v1/otc-evaluations`이다. 평가는 사용자가 확정한 `product_id` 또는 `ingredient_id` 중 정확히 하나와 기대 `prescription_version_id`, `Idempotency-Key`를 요구한다. 둘 다 있거나 둘 다 없으면 `422 OTC_TARGET_EXACTLY_ONE_REQUIRED`, active version이 다르면 `409 PRESCRIPTION_VERSION_CONFLICT`다. 응답은 `identification_status`, `evaluation_status`, `prescription_version_id`, `evaluated_at`, `public_outcome`, `message_code`, 전체 `matched_rules[]`, `sources[]`, `cta`를 포함한다. 현재 증상은 입력받거나 평가하지 않는다.
+Track D 목표 API는 구조화 검색 `GET /api/v1/otc-products?query=...`, 동기 평가 `POST /api/v1/otc-evaluations`, 저장된 결과 조회 `GET /api/v1/otc-evaluations/{id}`다. 결과 조회는 최초 평가의 동일한 snapshot을 재현한다. 평가는 사용자가 확정한 `product_id` 또는 `ingredient_id` 중 정확히 하나와 기대 `prescription_version_id`, `Idempotency-Key`를 요구한다. 둘 다 있거나 둘 다 없으면 `422 OTC_TARGET_EXACTLY_ONE_REQUIRED`, active version이 다르면 `409 PRESCRIPTION_VERSION_CONFLICT`다. 응답은 `identification_status`, `evaluation_status`, `prescription_version_id`, `evaluated_at`, `public_outcome`, `message_code`, 전체 `matched_rules[]`, `sources[]`, `cta`를 포함한다. 현재 증상은 입력받거나 평가하지 않는다.
+
+평가가 불완전한 `UNKNOWN`의 실패 reason code는 `IDENTIFICATION_FAILED`, `SOURCE_NOT_FOUND`, `SOURCE_CONFLICT`, `DEPENDENCY_UNAVAILABLE`로 구분한다. 입력 수정으로 해결할 수 있는 경우에만 제한적으로 재시도를 안내하고, 나머지는 전문가 확인 CTA를 제공한다.
 
 결과에는 평가 당시 rule·source version을 snapshot한다. 성립한 모든 rule을 `BLOCK`, `WARN`, `INFO`, `rule_type`, `rule_id` 순으로 반환한다. 동일 source·rule version의 완전 중복만 제거하며 서로 다른 근거의 성립 rule을 숨기지 않는다.
 

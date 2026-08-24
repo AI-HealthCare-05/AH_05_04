@@ -25,6 +25,17 @@
 
 OCR 검수 완료만으로 자동 활성화하지 않는다. 사용자의 명시적 처방 확정 동작이 필요하다.
 
+활성화 대상 version에는 확정 medication snapshot이 1개 이상 있어야 한다. 없으면 `422 PRESCRIPTION_MEDICATION_REQUIRED`를 반환하고 활성화 transaction 전체를 rollback한다.
+
+새 version 활성화 transaction은 다음 변경을 원자적으로 수행한다.
+
+1. 이전 version의 `PENDING`, `PROCESSING`, `RETRY_WAIT` Job을 모두 `STALE`로 전환한다.
+2. 해당 Job의 미발행·예약 Outbox를 `CANCELLED` 처리한다.
+3. Track B의 동기 port로 effective 시각 이후의 이전 version `PENDING` occurrence와 미전달 알림을 취소한다.
+4. `prescription.active_version_id`를 새 version으로 변경한다.
+
+이미 실행 중인 Provider 호출의 강제 취소에는 의존하지 않는다. Worker가 결과를 commit할 때 active version과 lease를 다시 확인하고, 둘 중 하나라도 유효하지 않으면 현재 결과로 공개하지 않는다. 이전 완료 결과는 삭제하지 않지만 현재 결과, 새 Chat 문맥과 향후 일정에는 사용하지 않으며 직접 URL 조회에서도 active version을 검증한다.
+
 ## 하위 데이터 귀속
 
 다음 데이터는 생성 당시 `prescription_version_id`를 반드시 저장한다.

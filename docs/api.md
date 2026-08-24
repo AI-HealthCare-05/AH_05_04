@@ -69,6 +69,9 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 | `POST` | `/api/v1/guides` | `202 Accepted` | Guide Job 접수 |
 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `202 Accepted` | Chat Job 접수 |
 | `GET` | `/api/v1/jobs/{job_id}` | `200 OK` | 공통 Job 상태 조회 |
+| `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200 OK` | 완료된 OCR 결과 조회 |
+| `GET` | `/api/v1/guides/{domain_id}` | `200 OK` | 완료된 Guide 결과 조회 |
+| `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200 OK` | 완료된 Chat 결과가 포함된 메시지 목록 조회 |
 
 - 세 접수 POST에는 `Idempotency-Key`가 필요합니다.
 - 목표 Job 상태는 `PENDING`, `PROCESSING`, `RETRY_WAIT`, `COMPLETED`, `FAILED`, `STALE`입니다.
@@ -79,6 +82,30 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 - 결과는 Backend가 제공하는 opaque `result_url`로 조회하며 다른 사용자의 Job·결과는 `404`로 숨깁니다.
 
 세부 목표는 [비동기 Job 계약](./contracts/async-job-v1.md), [멱등성 계약](./contracts/idempotency-v1.md), [Outbox·Stream 계약](./contracts/outbox-stream-v1.md)을 따릅니다. 계약 파일의 존재는 구현 완료를 뜻하지 않습니다.
+
+### Track B·C·D 목표 API 표면
+
+아래 경로도 승인된 Post-MVP-1 목표 계약입니다. 승인 원본이 HTTP 성공 코드를 고정하지 않은 쓰기 API의 정확한 성공 코드는 route·DTO·OpenAPI·계약 테스트를 함께 제출하는 구현 PR에서 고정합니다.
+
+| Track | Method | Path | 목표 동작 |
+| --- | --- | --- | --- |
+| B | `GET` | `/api/v1/medication-occurrences?date=YYYY-MM-DD` | KST 날짜별 일정·occurrence·현재 Check-in 조회 |
+| B | `PUT` | `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule` | 일정 생성·변경 |
+| B | `PATCH` | `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule` | 일정 취소 |
+| B | `PUT` | `/api/v1/medication-occurrences/{occurrence_id}/check-in` | Check-in 생성·정정 |
+| B | `GET` | `/api/v1/medication-occurrences/{occurrence_id}/check-in-history` | 범위 승인 시 정정 이력 조회 |
+| B | `POST` | `/api/v1/medication-occurrences/{occurrence_id}/reminders` | 앱 내부 재알림 1회 요청 |
+| C | `POST` | `/api/v1/safety-assessments` | 구조화 증상 Safety assessment 저장 |
+| C | `PUT` | `/api/v1/medication-checkins/{checkin_id}/barrier-response` | Barrier 응답 저장·정정 |
+| C | `GET` | `/api/v1/barrier-responses/{id}/supports` | eligible Support 조회 |
+| C | `POST` | `/api/v1/support-action-plans` | 실행계획 생성 |
+| C | `PATCH` | `/api/v1/support-action-plans/{id}` | 실행계획 변경 |
+| C | `POST` | `/api/v1/support-action-plans/{id}/followups` | follow-up 저장 |
+| D | `GET` | `/api/v1/otc-products?query={structured-query}` | 승인 제품명·성분명 기반 구조화 검색 |
+| D | `POST` | `/api/v1/otc-evaluations` | 확정 OTC 대상 동기 평가 |
+| D | `GET` | `/api/v1/otc-evaluations/{id}` | 저장된 평가 snapshot 조회 |
+
+Track B·C·D 쓰기 API는 [멱등성 계약](./contracts/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/checkin-v1.md)과 [Safety Result 계약](./contracts/safety-result-v1.md)을 기준으로 합니다.
 
 ## 복약 챗봇
 

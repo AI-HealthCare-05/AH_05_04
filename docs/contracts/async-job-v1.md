@@ -66,6 +66,16 @@ Job 테이블이 상태의 기준 원본이다. Redis Stream 메시지만으로 
 
 OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.status_url`을 같은 Job 조회 URL로 제공한다.
 
+`COMPLETED` 뒤 `result_url`이 가리키는 도메인 결과 endpoint는 다음으로 고정한다.
+
+| domain_type | 결과 endpoint | 응답 |
+|---|---|---|
+| `OCR_JOB` | `GET /api/v1/ocr-jobs/{domain_id}` | 기존 OCR 응답 |
+| `GUIDE` | `GET /api/v1/guides/{domain_id}` | 기존 Guide 응답 |
+| `CHAT_MESSAGE` | `GET /api/v1/chat-sessions/{session_id}/messages` | 기존 메시지 목록 응답 |
+
+Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque `result_url`을 그대로 사용한다. 결과 endpoint에도 Job 조회와 같은 소유권 검사, active prescription version 검사와 `Cache-Control: no-store`를 적용한다.
+
 ## Chat 접수 계약
 
 `POST /api/v1/chat-sessions/{session_id}/messages`는 `Idempotency-Key`를 요구하고 `202 Accepted`를 반환한다. 같은 transaction에서 USER 메시지, 비어 있는 ASSISTANT 메시지, Job, Idempotency 레코드, Outbox 이벤트를 생성하고 Job의 `expected_event_id`를 새 Outbox `event_id`로 설정한다.
