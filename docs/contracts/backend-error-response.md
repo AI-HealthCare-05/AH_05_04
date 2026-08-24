@@ -41,7 +41,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 | 클라이언트 오류 | 403 | Forbidden | 인증은 되었지만 해당 리소스에 접근 권한이 없는 경우 |
 | 클라이언트 오류 | 404 | Not Found | 요청한 리소스가 존재하지 않거나 다른 사용자 소유인 경우 |
 | 클라이언트 오류 | 409 | Conflict | 현재 리소스 상태와 충돌하여 요청을 처리할 수 없는 경우 |
-| 클라이언트 오류 | 412 | Precondition Failed | `If-Match`, `version`, `ETag` 조건이 맞지 않는 경우 (Post-MVP) |
+| 클라이언트 오류 | 412 | Precondition Failed | 별도로 승인될 `If-Match`/`ETag` 조건부 요청 실패 (Post-MVP, 아직 확정된 계약 없음). 처방 버전 충돌은 이 행이 아니라 `409 PRESCRIPTION_VERSION_CONFLICT`를 사용한다 |
 | 클라이언트 오류 | 422 | Unprocessable Entity | 요청 본문 JSON 문법 오류, 필수 필드 누락 등 Pydantic 요청 검증에 실패한 경우. 현재 Backend는 잘못된 JSON과 필수값 누락을 모두 422로 응답함 |
 | 클라이언트 오류 | 429 | Too Many Requests | 호출 횟수 제한을 초과한 경우 (Post-MVP) |
 | 서버 오류 | 500 | Internal Server Error | 서버 내부 오류로 요청 처리에 실패한 경우 |
