@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
@@ -64,25 +64,38 @@ function isFieldConfirmed(
 }
 
 function getNumericFieldError(fieldType: string, value: string) {
-  if (
-    fieldType === 'DOSE_VALUE' &&
-    !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)
-  ) {
-    return '1회 복용량은 숫자 형식으로 입력해 주세요.'
+  if (fieldType === 'DOSE_VALUE') {
+    const isDecimalFormat =
+      /^[+-]?(?:(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)$/.test(value)
+    const numericValue = Number(value.replaceAll('_', ''))
+
+    if (!isDecimalFormat || !Number.isFinite(numericValue)) {
+      return '1회 복용량은 숫자 형식으로 입력해 주세요.'
+    }
+
+    if (numericValue <= 0) {
+      return '1회 복용량은 0보다 큰 숫자로 입력해 주세요.'
+    }
   }
 
-  if (
-    fieldType === 'FREQUENCY_PER_DAY' &&
-    !/^[+-]?\d+$/.test(value)
-  ) {
-    return '하루 횟수는 정수 형식으로 입력해 주세요.'
+  if (fieldType === 'FREQUENCY_PER_DAY') {
+    if (!/^[0-9]+$/.test(value)) {
+      return '하루 횟수는 정수 형식으로 입력해 주세요.'
+    }
+
+    if (Number(value) <= 0) {
+      return '하루 횟수는 0보다 큰 정수로 입력해 주세요.'
+    }
   }
 
-  if (
-    fieldType === 'DURATION_DAYS' &&
-    !/^[+-]?\d+$/.test(value)
-  ) {
-    return '복용 기간은 정수 형식으로 입력해 주세요.'
+  if (fieldType === 'DURATION_DAYS') {
+    if (!/^[0-9]+$/.test(value)) {
+      return '복용 기간은 정수 형식으로 입력해 주세요.'
+    }
+
+    if (Number(value) <= 0) {
+      return '복용 기간은 0보다 큰 정수로 입력해 주세요.'
+    }
   }
 
   return null
@@ -93,6 +106,9 @@ function PrescriptionReviewPage() {
   const [searchParams] = useSearchParams()
   const documentId = searchParams.get('document_id')
   const jobId = searchParams.get('job_id')
+  const reviewRequestKey = `${documentId ?? ''}:${jobId ?? ''}`
+  const latestReviewRequestKeyRef = useRef(reviewRequestKey)
+  latestReviewRequestKeyRef.current = reviewRequestKey
 
   const [fields, setFields] = useState<ExtractedField[]>([])
   const [draftValues, setDraftValues] = useState<Record<string, string>>({})
@@ -209,21 +225,36 @@ function PrescriptionReviewPage() {
   }, [reviewReadyForAcknowledgement, userConfirmed])
 
   useEffect(() => {
+    let isDisposed = false
+    let objectUrl: string | null = null
+    const isLatestRequest = () =>
+      !isDisposed &&
+      latestReviewRequestKeyRef.current === reviewRequestKey
+
+    setFields([])
+    setDraftValues({})
+    setDocumentUrl(null)
+    setPrescription(null)
+    setMessage('')
+    setFieldErrors({})
+    setBlockingMessage('')
+    setSavingFieldIds(new Set())
+    setIsConfirming(false)
+    setUserConfirmed(false)
+    setIsLoading(true)
+
     if (!documentId || !jobId) {
       setMessage('처방전 검수에 필요한 정보가 없습니다.')
       setIsLoading(false)
-      return
+      return () => {
+        isDisposed = true
+      }
     }
-
-    let objectUrl: string | null = null
 
     async function loadReviewData() {
       try {
-        setIsLoading(true)
-        setMessage('')
-        setBlockingMessage('')
-
         const ocrResponse = await getOcrJob(jobId as string)
+        if (!isLatestRequest()) return
 
         if (ocrResponse.data.document_id !== documentId) {
           setBlockingMessage(
@@ -233,6 +264,7 @@ function PrescriptionReviewPage() {
         }
 
         const documentBlob = await getPrescriptionDocumentFile(documentId)
+        if (!isLatestRequest()) return
 
         setFields(ocrResponse.data.fields)
         setDraftValues(
@@ -244,27 +276,37 @@ function PrescriptionReviewPage() {
           ),
         )
 
-        objectUrl = URL.createObjectURL(documentBlob)
-        setDocumentUrl(objectUrl)
+        const nextObjectUrl = URL.createObjectURL(documentBlob)
+        if (!isLatestRequest()) {
+          URL.revokeObjectURL(nextObjectUrl)
+          return
+        }
+        objectUrl = nextObjectUrl
+        setDocumentUrl(nextObjectUrl)
       } catch (error) {
+        if (!isLatestRequest()) return
         setMessage(
           error instanceof ApiError
             ? error.message
             : '처방전 검수 정보를 불러오는 중 오류가 발생했습니다.',
         )
       } finally {
-        setIsLoading(false)
+        if (isLatestRequest()) setIsLoading(false)
       }
     }
 
     void loadReviewData()
 
     return () => {
+      isDisposed = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [documentId, jobId])
+  }, [documentId, jobId, reviewRequestKey])
 
   const handleSaveField = async (field: ExtractedField) => {
+    if (isConfirming || prescription) return
+
+    const saveRequestKey = reviewRequestKey
     const value = draftValues[field.field_id]?.trim()
 
     if (!value) {
@@ -298,6 +340,7 @@ function PrescriptionReviewPage() {
       })
       setMessage('')
       const response = await updateExtractedField(field.field_id, value)
+      if (latestReviewRequestKeyRef.current !== saveRequestKey) return
 
       setFields((current) =>
         current.map((item) =>
@@ -310,35 +353,52 @@ function PrescriptionReviewPage() {
       }))
       setUserConfirmed(false)
     } catch (error) {
+      if (latestReviewRequestKeyRef.current !== saveRequestKey) return
       setMessage(
         error instanceof ApiError
           ? error.message
           : '필드 저장 중 오류가 발생했습니다.',
       )
     } finally {
-      setSavingFieldIds((current) => {
-        const next = new Set(current)
-        next.delete(field.field_id)
-        return next
-      })
+      if (latestReviewRequestKeyRef.current === saveRequestKey) {
+        setSavingFieldIds((current) => {
+          const next = new Set(current)
+          next.delete(field.field_id)
+          return next
+        })
+      }
     }
   }
 
   const handleConfirmPrescription = async () => {
-    if (!documentId || !canConfirmPrescription) return
+    if (
+      !documentId ||
+      !canConfirmPrescription ||
+      isConfirming ||
+      prescription
+    ) {
+      return
+    }
+
+    const confirmationRequestKey = reviewRequestKey
 
     try {
       setIsConfirming(true)
       setMessage('')
-      setPrescription(await confirmPrescription(documentId))
+      const response = await confirmPrescription(documentId)
+      if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
+      setPrescription(response)
     } catch (error) {
+      if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       setMessage(
         error instanceof ApiError
           ? error.message
           : '처방 확정 중 오류가 발생했습니다.',
       )
     } finally {
-      setIsConfirming(false)
+      if (latestReviewRequestKeyRef.current === confirmationRequestKey) {
+        setIsConfirming(false)
+      }
     }
   }
 
@@ -373,6 +433,7 @@ function PrescriptionReviewPage() {
             value={draftValue}
             inputMode={inputMode}
             aria-invalid={Boolean(fieldError)}
+            disabled={isConfirming || Boolean(prescription)}
             onChange={(event) => {
               setDraftValues((current) => ({
                 ...current,
@@ -389,7 +450,7 @@ function PrescriptionReviewPage() {
           />
           <Button
             variant={confirmed ? 'secondary' : 'primary'}
-            disabled={isSaving}
+            disabled={isSaving || isConfirming || Boolean(prescription)}
             onClick={() => handleSaveField(field)}
           >
             {isSaving ? '저장 중' : confirmed ? '수정 저장' : '확인'}
@@ -443,6 +504,31 @@ function PrescriptionReviewPage() {
             >
               처방전 다시 업로드하기
             </Button>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
+  if (prescription) {
+    return (
+      <div className="prescription-review-page">
+        <MobileShell
+          title="다섯알"
+          onBack={() => navigate('/prescriptions/upload')}
+          hideNavigation
+        >
+          <main className="app-scroll prescription-review">
+            <Card className="prescription-review__complete">
+              <StatusBadge>확정 완료</StatusBadge>
+              <h2>처방정보가 확정되었어요</h2>
+              <p>
+                확인된 처방정보만 이후 복약 가이드와 일정에 사용합니다.
+              </p>
+              <strong>
+                등록된 약물 {prescription.data.medications.length}개
+              </strong>
+            </Card>
           </main>
         </MobileShell>
       </div>
@@ -580,7 +666,7 @@ function PrescriptionReviewPage() {
                 <input
                   type="checkbox"
                   checked={userConfirmed}
-                  disabled={!reviewReadyForAcknowledgement}
+                  disabled={!reviewReadyForAcknowledgement || isConfirming}
                   onChange={(event) => setUserConfirmed(event.target.checked)}
                 />
                 <span>원본 처방전과 모든 항목을 직접 확인했습니다.</span>
@@ -611,18 +697,6 @@ function PrescriptionReviewPage() {
             </>
           )}
 
-          {prescription && (
-            <Card className="prescription-review__complete">
-              <StatusBadge>확정 완료</StatusBadge>
-              <h2>처방정보가 확정되었어요</h2>
-              <p>
-                확인된 처방정보만 이후 복약 가이드와 일정에 사용합니다.
-              </p>
-              <strong>
-                등록된 약물 {prescription.data.medications.length}개
-              </strong>
-            </Card>
-          )}
         </main>
       </MobileShell>
     </div>
