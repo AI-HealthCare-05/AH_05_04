@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
@@ -43,6 +43,127 @@ const requiredMedicationFieldTypes = [
   'FREQUENCY_PER_DAY',
   'DURATION_DAYS',
 ] as const
+
+type BlockingAction = 'UPLOAD' | 'RETRY_LATER'
+
+type ReviewBlockingState = {
+  title: string
+  message: string
+  nextAction: string
+  action: BlockingAction
+}
+
+type ReviewMessage = {
+  title: string
+  message: string
+  nextAction: string
+}
+
+type ReviewErrorState =
+  | { kind: 'ALREADY_CONFIRMED' }
+  | { kind: 'BLOCKING'; state: ReviewBlockingState }
+  | { kind: 'INLINE'; state: ReviewMessage }
+
+function getIncompleteOcrState(ocrStatus: string): ReviewBlockingState {
+  if (ocrStatus === 'FAILED') {
+    return {
+      title: '처방전 인식에 실패했어요',
+      message: '완료된 OCR 결과가 없어 검수를 시작할 수 없습니다.',
+      nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+      action: 'UPLOAD',
+    }
+  }
+
+  if (ocrStatus === 'PROCESSING') {
+    return {
+      title: '처방전을 인식하고 있어요',
+      message: 'OCR 작업이 완료되기 전에는 검수하거나 확정할 수 없습니다.',
+      nextAction: 'OCR 처리가 완료된 뒤 다시 확인해 주세요.',
+      action: 'RETRY_LATER',
+    }
+  }
+
+  return {
+    title: 'OCR 작업을 기다리고 있어요',
+    message: 'OCR 작업이 완료되기 전에는 검수하거나 확정할 수 없습니다.',
+    nextAction: 'OCR 처리가 완료된 뒤 다시 확인해 주세요.',
+    action: 'RETRY_LATER',
+  }
+}
+
+function getApiBlockingState(error: ApiError): ReviewBlockingState | null {
+  if (error.code === 'OCR_NOT_COMPLETED') {
+    return {
+      title: 'OCR 검수가 아직 준비되지 않았어요',
+      message: error.message,
+      nextAction: 'OCR 처리가 완료된 뒤 다시 확인해 주세요.',
+      action: 'RETRY_LATER',
+    }
+  }
+
+  if (error.code === 'PRESCRIPTION_REQUIRED_FIELD_MISSING') {
+    return {
+      title: '처방 확정에 필요한 항목이 부족해요',
+      message: error.message,
+      nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+      action: 'UPLOAD',
+    }
+  }
+
+  if (error.code === 'EXTRACTED_FIELD_NOT_FOUND') {
+    return {
+      title: '검수하던 항목을 찾을 수 없어요',
+      message: error.message,
+      nextAction: '최신 OCR 결과로 다시 검수해 주세요.',
+      action: 'UPLOAD',
+    }
+  }
+
+  return null
+}
+
+function getReviewErrorState(
+  error: unknown,
+  fallbackMessage: string,
+): ReviewErrorState {
+  if (error instanceof ApiError) {
+    if (error.code === 'PRESCRIPTION_ALREADY_CONFIRMED') {
+      return { kind: 'ALREADY_CONFIRMED' }
+    }
+
+    const blockingState = getApiBlockingState(error)
+    if (blockingState) return { kind: 'BLOCKING', state: blockingState }
+
+    if (error.code === 'VALIDATION_FAILED') {
+      return {
+        kind: 'INLINE',
+        state: {
+          title: '입력값을 확인해 주세요',
+          message: error.message,
+          nextAction: '원본 처방전과 대조한 뒤 표시된 항목을 수정해 주세요.',
+        },
+      }
+    }
+
+    return {
+      kind: 'INLINE',
+      state: {
+        title: '확인이 필요해요',
+        message: error.message,
+        nextAction: '잠시 후 다시 시도해 주세요.',
+      },
+    }
+  }
+
+  return {
+    kind: 'INLINE',
+    state: {
+      title: '확인이 필요해요',
+      message: fallbackMessage,
+      nextAction: '잠시 후 다시 시도해 주세요.',
+    },
+  }
+}
 
 function getFieldLabel(fieldType: string) {
   return fieldLabels[fieldType] ?? fieldType
@@ -115,15 +236,41 @@ function PrescriptionReviewPage() {
   const [documentUrl, setDocumentUrl] = useState<string | null>(null)
   const [prescription, setPrescription] =
     useState<PrescriptionResponse | null>(null)
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState<ReviewMessage | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
-  const [blockingMessage, setBlockingMessage] = useState('')
+  const [blockingState, setBlockingState] =
+    useState<ReviewBlockingState | null>(null)
+  const [isAlreadyConfirmed, setIsAlreadyConfirmed] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [savingFieldIds, setSavingFieldIds] = useState<Set<string>>(
     () => new Set(),
   )
   const [isConfirming, setIsConfirming] = useState(false)
   const [userConfirmed, setUserConfirmed] = useState(false)
+
+  const applyReviewError = useCallback(
+    (error: unknown, fallbackMessage: string) => {
+      const errorState = getReviewErrorState(error, fallbackMessage)
+
+      if (errorState.kind === 'ALREADY_CONFIRMED') {
+        setMessage(null)
+        setBlockingState(null)
+        setIsAlreadyConfirmed(true)
+        setUserConfirmed(false)
+        return
+      }
+
+      if (errorState.kind === 'BLOCKING') {
+        setMessage(null)
+        setBlockingState(errorState.state)
+        setUserConfirmed(false)
+        return
+      }
+
+      setMessage(errorState.state)
+    },
+    [],
+  )
 
   const prescriptionFields = useMemo(
     () => fields.filter((field) => field.medication_index === 0),
@@ -172,6 +319,16 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
+  const hasMissingPrescribedDateField = useMemo(
+    () =>
+      !fields.some(
+        (field) =>
+          field.medication_index === 0 &&
+          field.field_type === 'PRESCRIBED_DATE',
+      ),
+    [fields],
+  )
+
   const hasMissingRequiredMedicationFields = useMemo(
     () =>
       medicationGroups.length === 0 ||
@@ -213,6 +370,7 @@ function PrescriptionReviewPage() {
     prescribedDateConfirmed &&
     allRequiredMedicationFieldsConfirmed &&
     allDisplayedFieldsConfirmed &&
+    !hasMissingPrescribedDateField &&
     !hasMissingRequiredMedicationFields &&
     !hasUnsavedChanges &&
     savingFieldIds.size === 0
@@ -235,16 +393,22 @@ function PrescriptionReviewPage() {
     setDraftValues({})
     setDocumentUrl(null)
     setPrescription(null)
-    setMessage('')
+    setMessage(null)
     setFieldErrors({})
-    setBlockingMessage('')
+    setBlockingState(null)
+    setIsAlreadyConfirmed(false)
     setSavingFieldIds(new Set())
     setIsConfirming(false)
     setUserConfirmed(false)
     setIsLoading(true)
 
     if (!documentId || !jobId) {
-      setMessage('처방전 검수에 필요한 정보가 없습니다.')
+      setBlockingState({
+        title: '검수 정보를 확인할 수 없어요',
+        message: '처방전 검수에 필요한 정보가 없습니다.',
+        nextAction: '처방전을 다시 업로드해 주세요.',
+        action: 'UPLOAD',
+      })
       setIsLoading(false)
       return () => {
         isDisposed = true
@@ -257,8 +421,18 @@ function PrescriptionReviewPage() {
         if (!isLatestRequest()) return
 
         if (ocrResponse.data.document_id !== documentId) {
-          setBlockingMessage(
-            '검수하려는 처방전과 OCR 결과가 일치하지 않습니다. 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+          setBlockingState({
+            title: '검수를 진행할 수 없어요',
+            message: '검수하려는 처방전과 OCR 결과가 일치하지 않습니다.',
+            nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+            action: 'UPLOAD',
+          })
+          return
+        }
+
+        if (ocrResponse.data.ocr_status !== 'COMPLETED') {
+          setBlockingState(
+            getIncompleteOcrState(ocrResponse.data.ocr_status),
           )
           return
         }
@@ -285,10 +459,9 @@ function PrescriptionReviewPage() {
         setDocumentUrl(nextObjectUrl)
       } catch (error) {
         if (!isLatestRequest()) return
-        setMessage(
-          error instanceof ApiError
-            ? error.message
-            : '처방전 검수 정보를 불러오는 중 오류가 발생했습니다.',
+        applyReviewError(
+          error,
+          '처방전 검수 정보를 불러오는 중 오류가 발생했습니다.',
         )
       } finally {
         if (isLatestRequest()) setIsLoading(false)
@@ -301,7 +474,7 @@ function PrescriptionReviewPage() {
       isDisposed = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [documentId, jobId, reviewRequestKey])
+  }, [applyReviewError, documentId, jobId, reviewRequestKey])
 
   const handleSaveField = async (field: ExtractedField) => {
     if (isConfirming || prescription) return
@@ -338,7 +511,7 @@ function PrescriptionReviewPage() {
         delete next[field.field_id]
         return next
       })
-      setMessage('')
+      setMessage(null)
       const response = await updateExtractedField(field.field_id, value)
       if (latestReviewRequestKeyRef.current !== saveRequestKey) return
 
@@ -354,11 +527,7 @@ function PrescriptionReviewPage() {
       setUserConfirmed(false)
     } catch (error) {
       if (latestReviewRequestKeyRef.current !== saveRequestKey) return
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '필드 저장 중 오류가 발생했습니다.',
-      )
+      applyReviewError(error, '필드 저장 중 오류가 발생했습니다.')
     } finally {
       if (latestReviewRequestKeyRef.current === saveRequestKey) {
         setSavingFieldIds((current) => {
@@ -384,17 +553,13 @@ function PrescriptionReviewPage() {
 
     try {
       setIsConfirming(true)
-      setMessage('')
+      setMessage(null)
       const response = await confirmPrescription(documentId)
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       setPrescription(response)
     } catch (error) {
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '처방 확정 중 오류가 발생했습니다.',
-      )
+      applyReviewError(error, '처방 확정 중 오류가 발생했습니다.')
     } finally {
       if (latestReviewRequestKeyRef.current === confirmationRequestKey) {
         setIsConfirming(false)
@@ -484,7 +649,7 @@ function PrescriptionReviewPage() {
     )
   }
 
-  if (blockingMessage) {
+  if (blockingState) {
     return (
       <div className="prescription-review-page">
         <MobileShell
@@ -494,16 +659,43 @@ function PrescriptionReviewPage() {
         >
           <main className="app-scroll prescription-review prescription-review__blocked">
             <div className="prescription-review__error" role="alert">
-              <strong>검수를 진행할 수 없어요</strong>
-              <span>{blockingMessage}</span>
+              <strong>{blockingState.title}</strong>
+              <span>{blockingState.message}</span>
+              <span>{blockingState.nextAction}</span>
             </div>
             <Button
               fullWidth
               variant="secondary"
-              onClick={() => navigate('/prescriptions/upload')}
+              onClick={() =>
+                blockingState.action === 'UPLOAD'
+                  ? navigate('/prescriptions/upload')
+                  : navigate(0)
+              }
             >
-              처방전 다시 업로드하기
+              {blockingState.action === 'UPLOAD'
+                ? '처방전 다시 업로드하기'
+                : '상태 다시 확인하기'}
             </Button>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
+  if (isAlreadyConfirmed) {
+    return (
+      <div className="prescription-review-page">
+        <MobileShell
+          title="다섯알"
+          onBack={() => navigate('/prescriptions/upload')}
+          hideNavigation
+        >
+          <main className="app-scroll prescription-review">
+            <Card className="prescription-review__complete">
+              <StatusBadge>확정 완료</StatusBadge>
+              <h2>이미 확정된 처방이에요</h2>
+              <p>확정된 처방의 OCR 항목은 더 이상 수정할 수 없습니다.</p>
+            </Card>
           </main>
         </MobileShell>
       </div>
@@ -558,12 +750,13 @@ function PrescriptionReviewPage() {
             입력하고 원본과 대조해 주세요.
           </div>
 
-          {hasMissingRequiredMedicationFields && (
+          {(hasMissingPrescribedDateField ||
+            hasMissingRequiredMedicationFields) && (
             <div className="prescription-review__error" role="alert">
               <strong>필수 처방 항목이 누락됐어요</strong>
               <span>
-                약 이름·1회 복용량·하루 횟수·복용 기간을 모두 검수할 수
-                있도록 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.
+                처방일·약 이름·1회 복용량·하루 횟수·복용 기간을 모두 검수할
+                수 있도록 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.
               </span>
               <Button
                 variant="secondary"
@@ -576,8 +769,9 @@ function PrescriptionReviewPage() {
 
           {message && (
             <div className="prescription-review__error" role="alert">
-              <strong>확인이 필요해요</strong>
-              <span>{message}</span>
+              <strong>{message.title}</strong>
+              <span>{message.message}</span>
+              <span>{message.nextAction}</span>
             </div>
           )}
 
