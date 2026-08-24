@@ -6,6 +6,7 @@ import SignupPage from '../pages/SignupPage'
 import PrescriptionUploadPage from '../pages/PrescriptionUploadPage'
 import PrescriptionReviewPage from '../pages/PrescriptionReviewPage'
 import GuidePage from '../pages/GuidePage'
+import ChatPage from '../pages/ChatPage'
 
 function AppRouter() {
   return (
@@ -18,6 +19,7 @@ function AppRouter() {
         <Route path="/design-prototype" element={<DesignPrototypePage />} />
         <Route path="/prescriptions/review" element={<PrescriptionReviewPage />} />
         <Route path="/guides/:guideId" element={<GuidePage />} />
+        <Route path="/chat" element={<ChatPage />} />
       </Routes>
     </BrowserRouter>
   )

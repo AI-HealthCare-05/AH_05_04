@@ -113,6 +113,16 @@ function GuidePage() {
                 <h2>복약 안내</h2>
                 <div className="guide-page__guide-text">{guide.content}</div>
               </Card>
+
+              <Button
+                fullWidth
+                className="guide-page__chat-button"
+                onClick={() =>
+                  navigate(`/chat?prescription_id=${guide.prescription_id}`)
+                }
+              >
+                복약 챗봇에 질문하기
+              </Button>
             </>
           )}
 

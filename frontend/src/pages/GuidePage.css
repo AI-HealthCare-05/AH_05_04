@@ -63,6 +63,10 @@
   overflow-wrap: anywhere;
 }
 
+.guide-page__chat-button {
+  margin-top: 14px;
+}
+
 .guide-page__state {
   margin-top: 12px;
   text-align: center;
