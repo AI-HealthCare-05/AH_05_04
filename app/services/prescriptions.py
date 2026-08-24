@@ -184,7 +184,8 @@ def _to_decimal(value: str | None) -> Decimal | None:
         return None
     if not parsed.is_finite() or parsed <= 0 or parsed > _MAX_DOSE_VALUE:
         return None
-    exponent = parsed.as_tuple().exponent
+    # normalize()로 뒤에 붙은 불필요한 0(예: 0.5000)을 제거한 뒤 실제 소수 자릿수를 계산합니다.
+    exponent = parsed.normalize().as_tuple().exponent
     if not isinstance(exponent, int) or max(-exponent, 0) > _MAX_DOSE_SCALE:
         return None
     return parsed

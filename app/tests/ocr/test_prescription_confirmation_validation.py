@@ -219,6 +219,29 @@ def test_build_confirmed_data_rejects_dose_value_outside_db_range(invalid_value:
 
 
 @pytest.mark.parametrize(
+    ("valid_value", "expected"),
+    [
+        ("0.5000", Decimal("0.5000")),
+        ("1.2300", Decimal("1.2300")),
+        ("1e4", Decimal("1e4")),
+        ("9999999.999", Decimal("9999999.999")),
+    ],
+)
+def test_build_confirmed_data_accepts_dose_value_with_trailing_zeros_or_scientific_notation(
+    valid_value: str, expected: Decimal
+) -> None:
+    # 뒤에 붙은 0(0.5000)이나 지수 표기(1e4)는 실제 소수 자릿수·값 자체는 DB 경계값(NUMERIC(10,3)) 안에 들어갑니다.
+    fields = [_valid_prescribed_date(), *_valid_medication_fields(1)]
+    for field in fields:
+        if field.field_type == FieldType.DOSE_VALUE:
+            field.confirmed_value = valid_value
+
+    _, medications = PrescriptionService._build_confirmed_data(fields)
+
+    assert medications[0]["dose_value"] == expected
+
+
+@pytest.mark.parametrize(
     ("field_type", "invalid_value", "expected_field"),
     [
         (FieldType.MEDICATION_NAME, "가" * 256, "medications[1].medication_name"),
