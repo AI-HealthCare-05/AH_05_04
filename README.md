@@ -1,196 +1,147 @@
-# AI Healthcare Project Template
+# AI Healthcare 복약 가이드·챗봇
 
-이 프로젝트는 AI 모델 추론(Inference) 워커와 FastAPI API 서버를 통합한 서비스 템플릿입니다.
-현대적인 Python 패키지 관리 도구인 `uv`와 컨테이너화 도구인 `Docker`를 활용하여 일관된 개발 및 배포 환경을 제공합니다.
+FastAPI, SQLAlchemy asyncio와 MySQL을 기반으로 처방전 OCR·검수, 복약 가이드와 복약 챗봇을 제공하는 프로젝트입니다. Python 의존성은 `uv`, 로컬 서비스는 Docker Compose로 관리합니다.
 
----
+## 현재 Backend MVP 범위
 
-## 🚀 주요 특징
+- 처방전 업로드와 CLOVA OCR 실행·결과 검수
+- 사용자 확정 처방 생성·조회
+- 확정 처방 기반 복약 가이드 동기 one-cycle 생성
+- 확정 처방 기반 복약 챗봇 동기 one-cycle 응답
+- OpenAI timeout·가용성·응답 처리 실패 매핑과 민감정보 비노출
 
-- **FastAPI Framework**: 고성능 비동기 API 서버 구현.
-- **AI Worker**: 모델 추론 및 학습 작업을 API 서버와 분리하여 처리.
-- **UV Package Manager**: 매우 빠른 의존성 설치 및 가상환경 관리.
-- **Tortoise ORM**: 비동기 방식의 데이터베이스 모델링 및 쿼리 관리.
-- **Docker-Compose**: MySQL, Redis, Nginx를 포함한 전체 서비스 스택을 한 번에 실행.
-- **CI/CD Scripts**: 코드 포맷팅(Ruff), 타입 체크(Mypy), 테스트(Pytest)를 위한 자동화 스크립트 제공.
-- **Medical AI Safety Baseline**: OCR 검수, 근거·인용, 개인정보와 AI 평가 기준 문서화.
+RAG, 출처 인용, Citation/NLI 검증, OTC 성분·상호작용 기능, AI 응답 품질 평가와 비동기 AI Worker는 **Post-MVP** 범위입니다. 자세한 상태는 [시스템 아키텍처](docs/architecture.md), [AI 파이프라인](docs/ai-pipeline.md), [테스트 전략](docs/testing.md)을 참고하세요.
 
----
+Frontend는 현재 회원가입·로그인, 처방전 업로드와 OCR 결과 요약까지 Backend API에 연결되어 있습니다. OCR 필드 검수·처방 확정·가이드·챗봇 화면은 아직 전체 사용자 여정으로 연결되지 않았으므로 Backend 기능 구현과 End-to-End MVP 완료를 구분합니다.
 
-## 📂 프로젝트 구조
+## 기술 구성
+
+- **Backend**: FastAPI, Pydantic, SQLAlchemy asyncio, Alembic
+- **Database**: MySQL 8.0, `asyncmy`
+- **AI Provider**: CLOVA OCR, OpenAI Responses API
+- **Infrastructure**: Docker Compose, Nginx, Redis
+- **Quality**: Ruff, Mypy, Pytest, Oxlint, TypeScript build
+
+Redis와 `ai-worker` 서비스는 Compose에 준비되어 있지만 현재 MVP AI 요청 경로에는 연결되지 않습니다. AI Worker 컨테이너는 placeholder 진입점을 실행한 뒤 정상 종료합니다.
+
+## 프로젝트 구조
 
 ```text
 .
-├── ai_worker/          # AI 모델 추론 및 학습 관련 코드 (Worker)
-│   ├── core/           # 워커 설정 및 로거
-│   ├── models/         # AI 모델 파일 보관 (PyTorch 등)
-│   ├── tasks/          # OCR, RAG, LLM, Evaluation 작업 정의
-│   ├── tests/          # AI Worker 테스트
-│   └── main.py         # 워커 진입점
-├── app/                # FastAPI 서버 코드
-│   ├── apis/           # API 라우터 (v1 버전 관리)
-│   ├── core/           # 서버 설정 (pydantic-settings), DB 설정, JWT, Validator 등 핵심 기능
-│   ├── dtos/           # 데이터 전송 객체 (Pydantic models)
-│   ├── models/         # DB 테이블 정의
-│   ├── services/       # 비즈니스 로직
-│   └── main.py         # FastAPI 애플리케이션 진입점
-├── frontend/           # 사용자 화면 및 UX
-├── data/               # 비식별 합성 샘플 안내 (실제 의료데이터 저장 금지)
-├── docs/               # 아키텍처, API, ERD, AI 파이프라인, 배포 문서
-├── evals/              # OCR·RAG·LLM·Safety·OTC 평가 기준
-├── knowledge/          # 승인 의료 지식의 출처·버전 manifest
-├── tests/              # 계약·통합·E2E 교차 계층 테스트
-├── envs/               # 환경 변수 설정 파일 (.env)
-├── infra/              # 인프라 설정 관련 디렉터리
-│   ├── docker/         # Docker Compose 설정 (운영용)
-│   └── nginx/          # Nginx 설정 파일 (리버스 프록시)
-├── scripts/            # 배포 및 CI용 쉘 스크립트
-├── docker-compose.yml  # 로컬 개발용 서비스 실행 설정
-└── pyproject.toml      # uv 기반 의존성 관리 설정
+├── app/                # FastAPI API, SQLAlchemy 모델·저장소, 동기 OCR·가이드·챗봇
+├── ai_worker/          # Post-MVP 비동기 Worker 골격
+├── frontend/           # 사용자 화면과 UX
+├── docs/               # 아키텍처, API, 계약, AI 파이프라인, 테스트·배포 문서
+├── evals/              # Post-MVP AI 평가 기준 준비 영역
+├── knowledge/          # Post-MVP 승인 의료 지식 소스 준비 영역
+├── tests/              # 계약·통합 테스트와 E2E 준비 영역
+├── envs/               # 로컬·배포 환경변수 예시
+├── infra/              # Docker·Nginx 배포 구성
+├── scripts/            # CI·배포 스크립트
+├── docker-compose.yml  # 로컬 개발 서비스 구성
+└── pyproject.toml      # uv 의존성 및 도구 설정
 ```
 
----
+## 사전 준비
 
-## ⚙️ 사전 준비 사항
+- Python 3.13 이상
+- [uv](https://docs.astral.sh/uv/)
+- Docker와 Docker Compose
 
-- **Python**: 3.13 이상 (로컬 개발 환경용)
-- **UV**: Python 패키지 매니저 ([설치 가이드](https://github.com/astral-sh/uv))
-- **Docker & Docker-Compose**: 전체 서비스 실행용
+## 설치와 환경 설정
 
----
-
-## 🛠️ 설치 및 설정
-
-### 1. 가상환경 구축 및 의존성 설치
-
-`uv`를 사용하여 프로젝트에 필요한 패키지를 설치합니다.
+의존성을 설치합니다.
 
 ```bash
-# 의존성 설치 (가상환경 자동 생성)
-uv sync
-
-# 특정 그룹의 의존성만 설치하려는 경우
-uv sync --group app  # API 서버용
-uv sync --group ai   # AI 워커용
+uv sync --all-groups
 ```
 
-### 2. 환경 변수 설정
-
-`envs/` 디렉토리에 있는 예시 파일을 복사하여 `.env` 파일을 생성합니다.
-- 로컬용
-    ```bash
-    cp envs/example.local.env envs/.local.env
-    ```
-- 배포용
-    ```bash
-    cp envs/example.prod.env envs/.prod.env
-    ```
-
-생성된 `env` 파일 내의 환경변수들은 프로젝트 상황에 맞게 수정하세요.
-
----
-
-## 🏃 실행 방법
-
-### 1. 로컬 및 개발 환경
-
-#### Docker Compose로 전체 스택 실행
-
-모든 서비스(API, Worker, DB, Redis, Nginx)를 한 번에 실행합니다.
+로컬 Docker Compose는 저장소 루트의 `.env`를 읽습니다. 예시를 복사한 뒤 모든 `replace-with-...` 값을 실제 로컬 값으로 교체하고, `.env`는 커밋하지 않습니다. 예시 placeholder를 그대로 둔 상태는 실행·배포 가능한 설정이 아닙니다.
 
 ```bash
-docker-compose up -d --build
+cp envs/example.local.env .env
 ```
 
-실행 후 다음 주소로 접속 가능합니다:
-- **API 서버**: [http://localhost/api/docs](http://localhost/api/docs) (Swagger UI)
-- **Nginx**: 80 포트를 통해 API 서버로 요청을 전달합니다.
+최소한 DB 설정과 사용하는 외부 제공자의 자격증명을 확인합니다. `OPENAI_MODEL`과 `OPENAI_TIMEOUT_SECONDS` 등 운영 기준값은 코드 기본값만으로 승인하지 않고 [배포 가이드](docs/deployment.md)에 실제 값과 확인 결과를 기록합니다.
 
-#### Database migration
+## 실행
 
-Docker Compose 실행 시 `migrate` 서비스가 MySQL healthcheck 완료 후
-다음 명령을 한 번 실행합니다.
+Backend와 지원 인프라를 빌드하고 실행합니다. 이 Compose 파일에는 Frontend 서비스가 포함되지 않습니다.
+
+```bash
+docker compose up -d --build
+```
+
+Frontend는 별도 터미널에서 실행합니다.
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+주요 서비스명은 다음과 같습니다.
+
+| 서비스 | 역할 | 현재 동작 |
+| --- | --- | --- |
+| `fastapi` | API 서버 | `http://localhost:8000/api/docs` |
+| `mysql` | MySQL 8.0 | 영속 데이터 저장 |
+| `migrate` | Alembic migration | 실행 완료 후 정상 종료 |
+| `redis` | Redis | 기동되지만 현재 MVP AI 경로에서는 미사용 |
+| `ai-worker` | Post-MVP Worker 골격 | placeholder 로그 후 정상 종료 |
+| `nginx` | 리버스 프록시 | `http://localhost/api/docs` |
+
+필요한 서비스만 실행할 수도 있습니다.
+
+```bash
+docker compose up -d --build fastapi
+docker compose up -d --build ai-worker
+```
+
+로컬 Python 환경에서 API 서버를 직접 실행하려면 DB와 필요한 외부 설정을 준비한 뒤 다음 명령을 사용합니다.
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+## Database migration
+
+전체 Compose 실행 시 `migrate` 서비스가 MySQL health check 후 다음 명령을 한 번 실행합니다.
 
 ```bash
 uv run --no-sync alembic upgrade head
 ```
 
-#### 로컬에서 개별 실행 (개발용)
-
-**FastAPI 서버 실행:**
-```bash
-uv run uvicorn app.main:app --reload
-# or
-docker compose up -d --build app
-```
-
-**AI Worker 실행:**
-```bash
-uv run python -m ai_worker.main
-# or
-docker compose up -d --build ai_worker
-```
-
-### 2. EC2 배포 환경 (Production)
-
-제공된 쉘 스크립트를 사용하여 AWS EC2 환경에 이미지를 빌드, 푸시 및 배포할 수 있습니다.
-
-#### 사전 준비
-- EC2 인스턴스 (Ubuntu 권장)
-- SSH 키 페어 (`~/.ssh/` 경로에 위치)
-- 도커 허브(Docker Hub) 계정 및 Personal Access Token
-- 배포용 환경 변수 설정 (`envs/.prod.env`)
-- 도메인 구매 (Gabia, GoDaddy, AWS Route53 등)
-
-#### 자동 배포 스크립트 실행
-`scripts/deployment.sh`는 도커 이미지 빌드, 레포지토리 푸시, EC2 접속 및 컨테이너 실행 과정을 자동화합니다.
+로컬 Python 환경에서는 다음 명령을 사용합니다.
 
 ```bash
-chmod +x scripts/deployment.sh
-./scripts/deployment.sh
+uv run alembic upgrade head
 ```
-스크립트 실행 시 다음 정보를 입력해야 합니다:
-1. 도커 허브 계정 정보 (Username, PAT)
-2. 이미지를 업로드할 레포지토리 이름
-3. 배포할 서비스 선택 (FastAPI, AI-Worker) 및 버전(Tag)
-4. SSH 키 파일명 및 EC2 IP 주소
-5. https 사용여부
-   - 5-1. https인 경우 도메인 추가 입력
 
-#### SSL(HTTPS) 설정 (Certbot)
-도메인을 연결하고 HTTPS를 적용하려면 `scripts/certbot.sh`를 사용합니다.
+## 테스트와 품질 검사
+
+저장소 완료 기준은 [CONTRIBUTING.md](CONTRIBUTING.md)와 [테스트 전략](docs/testing.md)을 따릅니다.
 
 ```bash
-chmod +x scripts/certbot.sh
-./scripts/certbot.sh
-```
-1. 도메인 주소 및 이메일 입력
-2. SSH 키 파일명 및 EC2 IP 주소 입력
-3. Let's Encrypt를 통한 인증서 발급 및 Nginx 설정 자동 갱신 적용
+uv run ruff check .
+uv run ruff format . --check
+uv run mypy app ai_worker
+bash scripts/ci/run_test.sh
 
----
-
-## 🧪 테스트 및 품질 관리
-
-제공된 스크립트를 사용하여 코드의 품질을 검증할 수 있습니다.
-
-```bash
-# 테스트 실행
-./scripts/ci/run_test.sh
-
-# 코드 포맷팅 확인 (Ruff)
-./scripts/ci/code_formatting.sh
-
-# 정적 타입 검사 (Mypy)
-./scripts/ci/check_mypy.sh
+cd frontend
+pnpm lint
+pnpm build
 ```
 
----
+Python 기본 테스트 명령은 `app`과 `tests/contract`를 실행합니다. OpenAI 실호출 smoke, `tests/integration`, E2E와 AI 평가가 기본 CI에서 자동 실행되는 것은 아닙니다. 정확한 범위는 [테스트 전략](docs/testing.md)을 확인하세요.
 
-## 📝 개발 가이드
+문서만 변경한 경우에는 렌더링·링크·범위와 전체 diff를 검토하고 `git diff --check`를 실행합니다.
 
-- **API 추가**: `app/apis/v1/` 아래에 새로운 라우터 파일을 생성하고 `app/apis/v1/__init__.py`에 등록하세요.
-- **DB 모델 추가**: `app/models/`에 Tortoise 모델을 정의하고 `app/db/databases.py`의 `MODELS` 리스트에 추가하세요.
-- **AI 로직 추가**: `ai_worker/tasks/`에 새로운 처리 로직을 작성하고 `ai_worker/main.py`에서 호출하도록 구성하세요.
-- **팀 협업**: 브랜치, 커밋, 리뷰와 완료 기준은 [CONTRIBUTING.md](CONTRIBUTING.md)를 따르세요.
-- **보안 제보**: 비밀정보·개인정보·의료 안전 문제는 [SECURITY.md](SECURITY.md)를 따르세요.
+## 개발 가이드
+
+- API 경로와 오류 계약은 [API 명세](docs/api.md)를 따릅니다.
+- 공유 DTO·상태·오류 의미를 변경하면 관련 [계약 문서](docs/contracts/README.md), 구현과 계약·통합 테스트를 함께 갱신합니다.
+- DB 모델은 `app/models/`에 SQLAlchemy 모델로 정의하고 Alembic migration을 추가합니다.
+- 현재 동기 AI 구현은 `app/services/ocr.py`, `app/services/guide_ai/`, `app/services/chat_ai/`에 있습니다.
+- Post-MVP 비동기 작업은 계약과 전환 조건을 승인한 뒤 `ai_worker/tasks/`에 구현합니다.
+- 비밀정보와 실제 환자 정보는 저장소에 포함하지 않습니다. [SECURITY.md](SECURITY.md)와 [개인정보 및 의료 안전](docs/privacy-safety.md)을 따릅니다.
