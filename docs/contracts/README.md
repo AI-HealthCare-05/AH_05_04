@@ -3,6 +3,14 @@
 Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `*-v1.md` 신규 문서는 **승인된 Post-MVP-1 목표 계약**이며 해당 구현 PR이 병합되기 전에는 현재 API·DB 동작으로 간주하지 않습니다.
 
 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../governance/post-mvp-1-document-authority.md)를 따릅니다.
+Frontend, Backend, OCR과 LLM이 공유하는 의미와 상태를 관리합니다. 실제 구현 스키마의 기준은 FastAPI OpenAPI와 Pydantic DTO이며, 이 디렉터리에는 경계 설명과 예시를 둡니다. RAG·비동기 Worker 계약은 Post-MVP 범위입니다.
+
+## 계약 문서
+
+- [복약 가이드 Backend–AI 계약](./medication-guide-ai-backend.md): 확정 처방 입력, AI 생성 결과, 오류와 조립 책임
+- [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md)
+- [OCR 약품명 정규화 계약](./ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할과 정규화 규칙
+- [OCR 약품 행 구조화 계약](./ocr-medication-structuring.md)
 
 ## 현재 구현 계약
 
