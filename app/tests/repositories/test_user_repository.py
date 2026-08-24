@@ -95,6 +95,32 @@ async def test_create_user_converts_postgresql_unique_violation(
     assert exc_info.value.field == expected_field
 
 
+async def test_update_user_converts_postgresql_email_unique_violation() -> None:
+    """이메일 수정 중 발생한 PostgreSQL unique 오류를 공통 중복 오류로 변환합니다."""
+    session = AsyncMock(spec=AsyncSession)
+    session.flush.side_effect = IntegrityError(
+        statement=None,
+        params=None,
+        orig=PostgreSQLUniqueViolationTestError("ix_user_email"),
+    )
+
+    repository = UserRepository(session)
+    user = User(
+        email="before-update@example.com",
+        hashed_password="synthetic-hashed-password",
+        name="수정충돌테스트",
+    )
+
+    with pytest.raises(DuplicateUserFieldError) as exc_info:
+        await repository.update_instance(
+            user=user,
+            data={"email": "shared-target@example.com"},
+        )
+
+    assert exc_info.value.field == "email"
+    assert user.email == "shared-target@example.com"
+
+
 async def test_create_user_reraises_unknown_postgresql_unique_violation() -> None:
     original_error = PostgreSQLUniqueViolationTestError("unrelated_unique_constraint")
 
@@ -202,3 +228,77 @@ async def test_postgresql_rejects_concurrent_case_variant_emails() -> None:
             await cleanup_session.commit()
 
     assert sorted(results) == ["created", "duplicate"]
+
+
+async def test_postgresql_rejects_concurrent_email_updates() -> None:
+    """서로 다른 두 사용자가 같은 이메일로 동시에 수정할 때 한 요청만 성공합니다."""
+    unique_suffix = uuid4().hex[:12]
+    first_email = f"pg-update-a-{unique_suffix}@example.com"
+    second_email = f"pg-update-b-{unique_suffix}@example.com"
+    target_email = f"pg-update-c-{unique_suffix}@example.com"
+
+    session_factory = async_sessionmaker(
+        test_engine,
+        expire_on_commit=False,
+    )
+
+    # 동시 수정 대상이 될 합성 사용자 두 명을 별도 transaction에 저장합니다.
+    async with session_factory() as setup_session:
+        setup_repository = UserRepository(setup_session)
+        first_user = await setup_repository.create_user(
+            email=first_email,
+            hashed_password="synthetic-hashed-password",
+            name="동시수정테스트A",
+        )
+        second_user = await setup_repository.create_user(
+            email=second_email,
+            hashed_password="synthetic-hashed-password",
+            name="동시수정테스트B",
+        )
+        await setup_session.commit()
+
+        first_user_id = first_user.id
+        second_user_id = second_user.id
+
+    async def update_email(user_id) -> str:
+        # 서로 다른 session을 사용해 실제 PostgreSQL transaction 경쟁을 재현합니다.
+        async with session_factory() as session:
+            repository = UserRepository(session)
+            user = await repository.get_user(user_id)
+            assert user is not None
+
+            try:
+                await repository.update_instance(
+                    user=user,
+                    data={"email": target_email},
+                )
+                await session.commit()
+                return "updated"
+            except DuplicateUserFieldError as exc:
+                await session.rollback()
+
+                assert exc.field == "email"
+                return "conflict"
+
+    try:
+        results = await asyncio.gather(
+            update_email(first_user_id),
+            update_email(second_user_id),
+        )
+    finally:
+        # 독립 transaction에서 commit한 합성 사용자만 제거합니다.
+        async with session_factory() as cleanup_session:
+            await cleanup_session.execute(
+                delete(User).where(
+                    User.email.in_(
+                        {
+                            first_email,
+                            second_email,
+                            target_email,
+                        }
+                    )
+                )
+            )
+            await cleanup_session.commit()
+
+    assert sorted(results) == ["conflict", "updated"]

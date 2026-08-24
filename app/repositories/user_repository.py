@@ -211,5 +211,20 @@ class UserRepository:
 
             setattr(user, key, value)
 
-        await self.session.flush()
+        try:
+            # 사전 중복 조회 이후 발생할 수 있는 동시 수정 경쟁도
+            # DB unique 제약을 기준으로 다시 검증합니다.
+            await self.session.flush()
+        except IntegrityError as exc:
+            duplicate_field = get_duplicate_user_field(exc)
+
+            # 이메일·전화번호 이외의 무결성 오류는 원인을 숨기지 않고
+            # 기존 예외 처리 계층으로 전달합니다.
+            if duplicate_field is None:
+                raise
+
+            raise DuplicateUserFieldError(
+                duplicate_field,
+            ) from exc
+
         return user
