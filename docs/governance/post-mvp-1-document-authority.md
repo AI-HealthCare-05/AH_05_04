@@ -15,7 +15,7 @@
 | Proposed | 검토 중인 제안 | 구현 또는 승인 근거로 사용할 수 없음 |
 | Publication gate | 구현과 별개인 외부 승인·공개 조건 | 승인 등록부와 재현 가능한 증빙 |
 
-문서 승인, 구현 완료, 자동 테스트 통과, 외부 승인과 사용자 공개는 서로 다른 상태다. `docs/contracts/*-v1.md` 목표 문서는 관련 CODEOWNERS가 승인한 뒤 구현 시 따라야 할 normative target이지만, 구현 PR이 병합되기 전에는 현재 API·DB 동작이 아니다. 제품·기획 문서는 의도와 우선순위를 설명하며 runtime 계약을 대체하지 않는다.
+문서 승인, 구현 완료, 자동 테스트 통과, 외부 승인과 사용자 공개는 서로 다른 상태다. `docs/contracts/*-v1.md` 목표 문서는 관련 영역의 지정 리뷰어가 승인한 뒤 구현 시 따라야 할 normative target이지만, 구현 PR이 병합되기 전에는 현재 API·DB 동작이 아니다. 제품·기획 문서는 의도와 우선순위를 설명하며 runtime 계약을 대체하지 않는다.
 
 ## 승인 원본과 provenance
 
@@ -39,6 +39,6 @@
 ## 충돌과 승격 규칙
 
 1. 원본과 저장소 목표 계약이 다르면 구현을 중단하고 차이를 기록한다. 값을 추정하거나 두 계약을 혼합하지 않는다.
-2. 계약 변경은 Decision 또는 Contract Freeze version, 관련 요구사항 ID, API·migration·테스트와 함께 CODEOWNERS 검토를 받는다.
+2. 계약 변경은 Decision 또는 Contract Freeze version, 관련 요구사항 ID, API·migration·테스트와 함께 관련 영역의 지정 리뷰어 검토를 받는다.
 3. 목표 계약을 Current로 승격하려면 동일 경로에서 구현 PR, migration, OpenAPI/DTO, 계약·통합 테스트와 실행 증빙을 연결하고 상태를 갱신한다. 폴더 이동으로 상태를 표현하지 않는다.
 4. 외부 승인과 공개 flag는 구현 완료와 별도로 관리한다. 상세 조건은 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 따른다.

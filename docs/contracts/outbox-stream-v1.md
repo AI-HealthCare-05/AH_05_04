@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved target — 2026-08-24 팀 인계 기준 |
-| 구현·리뷰 | Not implemented · 구현 동기화와 관련 CODEOWNERS 리뷰 대기 |
+| 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
 | Last verified | 2026-08-24 |
 

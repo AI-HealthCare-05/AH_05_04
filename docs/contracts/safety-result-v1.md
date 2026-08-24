@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved target — 2026-08-24 팀 인계 기준 |
-| 구현·리뷰 | Not implemented · C·D·F 구현 동기화와 CODEOWNERS·외부 승인 대기 |
+| 구현·리뷰 | Not implemented · C·D·F 구현 동기화와 지정 리뷰어 검토·외부 승인 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-c-support-v1.md`, `track-d-otc-v1.md`, `track-f-rag-citation-safety-v1.md` |
 | Last verified | 2026-08-24 |
 

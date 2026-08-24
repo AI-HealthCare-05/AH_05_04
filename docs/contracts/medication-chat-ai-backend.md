@@ -99,4 +99,4 @@ DB lock wait timeout처럼 세션 row lock을 얻기 전에 발생한 DB 오류�
 - 실패 메시지 persistence 또는 동시성 의미 변경
 - API 응답 body나 cache/header 계약 변경
 
-별도 배포·버전 관리되는 외부 소비자가 생기면 현재 저장소 내부 계약으로 간주하지 말고 versioned contract와 호환 정책을 관련 CODEOWNERS와 먼저 합의한다.
+별도 배포·버전 관리되는 외부 소비자가 생기면 현재 저장소 내부 계약으로 간주하지 말고 versioned contract와 호환 정책을 관련 영역의 지정 리뷰어와 먼저 합의한다.

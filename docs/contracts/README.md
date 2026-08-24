@@ -31,7 +31,7 @@ Proposed 운영 계약은 관련 schema·service·CLI·테스트가 함께 병�
 
 ### Current 승격 조건
 
-목표 계약은 파일을 `current/` 같은 새 폴더로 이동하지 않고 같은 경로에서 상태를 갱신한다. 관련 코드·migration·OpenAPI/DTO, 계약·통합 테스트와 실행 증빙이 같은 구현 PR에 포함되고 관련 CODEOWNERS 승인을 받은 뒤에만 Current로 표시한다. 외부 승인이나 공개 flag가 필요한 기능은 이 승격과 별도로 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 충족해야 한다.
+목표 계약은 파일을 `current/` 같은 새 폴더로 이동하지 않고 같은 경로에서 상태를 갱신한다. 관련 코드·migration·OpenAPI/DTO, 계약·통합 테스트와 실행 증빙이 같은 구현 PR에 포함되고 관련 영역의 지정 리뷰어 승인을 받은 뒤에만 Current로 표시한다. 외부 승인이나 공개 flag가 필요한 기능은 이 승격과 별도로 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 충족해야 한다.
 
 ### Contract Freeze v1에서 확정한 목표
 
