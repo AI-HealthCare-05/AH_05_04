@@ -108,6 +108,33 @@ admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초
 - `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 Production 배포 대상에서 제외합니다.
 - Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS 및 CORS 실제 값을 함께 확인합니다.
 
+### PostgreSQL volume 초기화 전제
+
+현재 운영 전환 범위는 기존 MySQL 데이터 이관이 없는 빈 PostgreSQL 전환입니다.
+
+새로운 `DB_ADMIN_USER`, `DB_MIGRATION_USER`, `DB_APP_USER` 구성은
+Production의 `postgres_data` volume이 아직 초기화되지 않은 fresh volume을
+전제로 합니다.
+
+배포 전에 다음 명령으로 기존 volume 존재 여부를 확인합니다.
+
+```bash
+docker volume inspect postgres_data
+```
+
+- volume이 존재하지 않으면 새로운 Admin·Migration·Runtime 역할로 최초 초기화합니다.
+- volume이 존재하지만 보존할 데이터가 없고 삭제 승인을 받은 경우 fresh volume으로 다시 초기화합니다.
+- volume에 보존할 데이터가 있거나 PR #72 설정으로 이미 초기화됐다면 바로 배포하지 않습니다.
+- 기존 Bootstrap 역할을 사용해 새로운 Admin·Migration 역할을 생성하고 객체 소유권과 권한을 이전하는 일회성 전환 절차를 먼저 수행해야 합니다.
+- 기존 volume을 삭제하거나 역할 권한을 변경하기 전에는 Infrastructure 담당자의 확인을 받습니다.
+
+배포 스크립트는 세 역할 이름이 서로 같은 경우 실행을 중단합니다.
+- `DB_ADMIN_USER`
+- `DB_MIGRATION_USER`
+- `DB_APP_USER`
+
+기존 Runtime 역할에 부여된 sequence `UPDATE` 권한은 역할 설정 SQL에서 명시적으로 `REVOKE`한 뒤 `USAGE`, `SELECT`만 다시 부여합니다.
+
 ## Post-MVP-1 비동기 전환 게이트 — 미구현
 
 현재 동기 배포 기록은 비동기 전환이 실제로 완료될 때까지 유효합니다. 아래 항목은 승인된 목표이며 현재 배포 경로가 아닙니다.
