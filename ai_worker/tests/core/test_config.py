@@ -1,16 +1,22 @@
 import zoneinfo
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from ai_worker.core.config import Config
+
+# ZoneInfo.utcoffset()은 offset 조회 기준 datetime이 필요합니다(None으로는 조회 불가).
+# 참조 시각을 고정하지 않으면 tzdata 유무에 따라 fallback timezone(고정 offset, None 허용)과
+# 실제 ZoneInfo(datetime 필요)가 다르게 동작해 CI(tzdata 있음)와 로컬(Windows, tzdata 없음)의
+# 결과가 갈립니다.
+_REFERENCE_INSTANT = datetime(2026, 1, 1)
 
 
 def test_config_loads_with_default_timezone_fallback() -> None:
     """환경변수 없이도 tzdata 유무와 무관하게 Config가 생성됩니다."""
     config = Config()
 
-    assert config.TIMEZONE.utcoffset(None) == timedelta(hours=9)
+    assert config.TIMEZONE.utcoffset(_REFERENCE_INSTANT) == timedelta(hours=9)
 
 
 def test_config_accepts_timezone_env_var_string(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -19,7 +25,7 @@ def test_config_accepts_timezone_env_var_string(monkeypatch: pytest.MonkeyPatch)
 
     config = Config()
 
-    assert config.TIMEZONE.utcoffset(None) == timedelta(hours=9)
+    assert config.TIMEZONE.utcoffset(_REFERENCE_INSTANT) == timedelta(hours=9)
 
 
 def test_config_accepts_utc_timezone_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
