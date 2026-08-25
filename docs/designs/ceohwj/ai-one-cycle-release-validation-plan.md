@@ -15,7 +15,7 @@
 
 **Design:** `docs/designs/ceohwj/ai-one-cycle-release-validation-design.md`
 
-**Spec:** `docs/deployment.md`, `docs/contracts/medication-guide-ai-backend.md`, `docs/contracts/medication-chat-ai-backend.md`, `docs/contracts/release-validation-ledger.md`, `docs/testing.md`
+**Spec:** `docs/deployment.md`, `docs/contracts/medication/medication-guide-ai-backend.md`, `docs/contracts/medication/medication-chat-ai-backend.md`, `docs/contracts/operations/release-validation-ledger.md`, `docs/testing.md`
 
 ## Global Constraints
 
@@ -38,14 +38,14 @@
 - Create: `infra/docker/release-control.Dockerfile`
 - Create: `scripts/release_validation/run_ai_one_cycle_smoke.sh`
 - Create: `scripts/release_validation/run_staging_migration.sh`
-- Modify: `docs/contracts/release-validation-ledger.md` (Proposed → Implemented 상태와 실제 SQL type·길이 확정)
+- Modify: `docs/contracts/operations/release-validation-ledger.md` (Proposed → Implemented 상태와 실제 SQL type·길이 확정)
 - Modify: `docs/contracts/README.md`
 - Modify: `app/Dockerfile`
 - Review jointly: staging application DB·control DB·secret-store provisioning outside this repository
 
 - [ ] **Step 1: 전용 staging project와 DB를 정의한다**
 
-  local·production Compose를 재명명해 사용하지 않는다. `ah-staging` Compose project, staging 전용 application DB host·database·최소권한 user를 정의하고 Production DB host·이름·credential을 재사용하지 않는다. 애플리케이션 schema 밖의 staging control DB에 authoritative `release_validation_runs` 원장과 append-only event를 둔다. schema version, 상태·전이, crash recovery, 90일 보존과 role별 권한은 `docs/contracts/release-validation-ledger.md`를 기준으로 구현한다. 동일 validation CLI의 normal·cleanup role만 상태를 전이하고 resolver는 provenance read-only, migration은 lock·unresolved 조회, retention role은 만료된 `RESOLVED` record·event 삭제만 수행한다. FastAPI application account와 host wrapper에는 control DB 권한을 주지 않는다.
+  local·production Compose를 재명명해 사용하지 않는다. `ah-staging` Compose project, staging 전용 application DB host·database·최소권한 user를 정의하고 Production DB host·이름·credential을 재사용하지 않는다. 애플리케이션 schema 밖의 staging control DB에 authoritative `release_validation_runs` 원장과 append-only event를 둔다. schema version, 상태·전이, crash recovery, 90일 보존과 role별 권한은 `docs/contracts/operations/release-validation-ledger.md`를 기준으로 구현한다. 동일 validation CLI의 normal·cleanup role만 상태를 전이하고 resolver는 provenance read-only, migration은 lock·unresolved 조회, retention role은 만료된 `RESOLVED` record·event 삭제만 수행한다. FastAPI application account와 host wrapper에는 control DB 권한을 주지 않는다.
 
 - [ ] **Step 2: normal·cleanup guard를 분리한다**
 
@@ -279,6 +279,6 @@
 ## Self-Review Result
 
 - 요구사항 매핑: staging 격리(Task 0), 실제 OpenAI smoke(Task 4), 처방 확정부터 챗봇 전체 흐름(Task 2), 모델·프롬프트 저장(Task 2), 실패 저장(Task 3), Frontend 별도 인계(Task 5), FastAPI 전용 key(Task 0·4).
-- 계약 변경: 기존 사용자 API·application DB 의미는 유지하지만 staging control DB ledger와 validation·cleanup·migration role 사이에 새 proposed 운영 계약을 추가한다. `docs/contracts/release-validation-ledger.md`, index, schema·구현과 contract/fault-injection test를 같은 구현 PR에서 갱신한다.
+- 계약 변경: 기존 사용자 API·application DB 의미는 유지하지만 staging control DB ledger와 validation·cleanup·migration role 사이에 새 proposed 운영 계약을 추가한다. `docs/contracts/operations/release-validation-ledger.md`, index, schema·구현과 contract/fault-injection test를 같은 구현 PR에서 갱신한다.
 - 주요 위험: `app/tests/conftest.py`는 test DB schema를 생성·삭제하므로 기존 `app/tests/**/test_smoke.py`를 배포 컨테이너의 운영 DB 설정으로 직접 실행하지 않는다.
 - 완료 구분: Task 0~4는 Backend 통합 검증 구현, Task 5는 Frontend 별도 인계, Task 6은 저장소 전달을 완료한다. 기능 Issue와 Production 배포 승인은 별도 authoritative gate에서 판정한다.

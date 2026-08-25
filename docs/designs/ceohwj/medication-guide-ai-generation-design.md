@@ -89,7 +89,7 @@ app/tests/guide_ai/
 
 ## 내부 계약
 
-Backend와 AI 모듈 사이의 현재 공유 경계는 [복약 가이드 Backend–AI 계약](../../contracts/medication-guide-ai-backend.md)에 별도로 정리한다. 이 설계문서는 생성 방식과 구현 근거를 설명하고, 계약 문서는 호출자가 의존하는 입력·출력·오류 의미를 요약한다.
+Backend와 AI 모듈 사이의 현재 공유 경계는 [복약 가이드 Backend–AI 계약](../../contracts/medication/medication-guide-ai-backend.md)에 별도로 정리한다. 이 설계문서는 생성 방식과 구현 근거를 설명하고, 계약 문서는 호출자가 의존하는 입력·출력·오류 의미를 요약한다.
 
 ### 입력
 

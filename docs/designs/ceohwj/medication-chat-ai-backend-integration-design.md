@@ -1,6 +1,6 @@
 # 복약 챗봇 AI Backend 연동 설계
 
-> 상태: Implemented (현재 동기 MVP). 아래 동기 one-cycle·session row lock 설계가 현재 구현 기준이다. Post-MVP-1 목표는 [`../../contracts/async-job-v1.md`](../../contracts/async-job-v1.md)와 [`../../contracts/idempotency-v1.md`](../../contracts/idempotency-v1.md)에 정의되어 있으며, 전환 구현이 병합되면 이 문서를 `Superseded`로 갱신한다. 최신 배포 판정은 [`../../deployment.md`](../../deployment.md)를 따른다.
+> 상태: Implemented (현재 동기 MVP). 아래 동기 one-cycle·session row lock 설계가 현재 구현 기준이다. Post-MVP-1 목표는 [`../../contracts/jobs/async-job-v1.md`](../../contracts/jobs/async-job-v1.md)와 [`../../contracts/jobs/idempotency-v1.md`](../../contracts/jobs/idempotency-v1.md)에 정의되어 있으며, 전환 구현이 병합되면 이 문서를 `Superseded`로 갱신한다. 최신 배포 판정은 [`../../deployment.md`](../../deployment.md)를 따른다.
 
 > **후속 정정:** 이 문서의 `2 × T + M`·`T + M` 값은 두 요청 참고 시나리오이며 Production 전체 요청의 하한이 아니다. 현재 구현에는 동일 세션 admission cap이 없으므로 코드로 최대 동시 전송 `N`을 강제하기 전에는 Production 배포가 차단된다.
 

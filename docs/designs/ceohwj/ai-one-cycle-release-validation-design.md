@@ -184,7 +184,7 @@ cleanup-only는 OpenAI Key·model, FastAPI readiness와 normal smoke 허용값�
 
 ### 6.2 Staging Run Ledger와 상호 배제
 
-애플리케이션 DB schema를 변경하지 않고 staging 인프라가 관리하는 별도 control DB에 `release_validation_runs` 원장과 append-only event를 둔다. schema·상태·전이·권한·90일 보존의 authoritative 정의는 [`docs/contracts/release-validation-ledger.md`](../../contracts/release-validation-ledger.md)다. FastAPI application service account와 host wrapper는 원장을 읽거나 변경할 수 없다. `release-validator`와 `release-cleanup`에서 실행되는 동일 validation CLI만 record를 생성·전이한다. Resolver는 provenance read-only, migration process는 advisory lock·unresolved 조회, retention role은 90일이 지난 `RESOLVED` record·event 삭제만 할 수 있다.
+애플리케이션 DB schema를 변경하지 않고 staging 인프라가 관리하는 별도 control DB에 `release_validation_runs` 원장과 append-only event를 둔다. schema·상태·전이·권한·90일 보존의 authoritative 정의는 [`docs/contracts/operations/release-validation-ledger.md`](../../contracts/operations/release-validation-ledger.md)다. FastAPI application service account와 host wrapper는 원장을 읽거나 변경할 수 없다. `release-validator`와 `release-cleanup`에서 실행되는 동일 validation CLI만 record를 생성·전이한다. Resolver는 provenance read-only, migration process는 advisory lock·unresolved 조회, retention role은 90일이 지난 `RESOLVED` record·event 삭제만 할 수 있다.
 
 - `run_id` 기본키
 - 원래 pull 가능한 full RepoDigest, 보조 local image ID와 OCI revision

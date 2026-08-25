@@ -147,7 +147,7 @@ docker volume inspect postgres_data
 - `PUBLIC_TRACK_C`, `PUBLIC_TRACK_D`, `PUBLIC_TRACK_F`는 의료·약학·Privacy·Source 승인과 회귀 증빙 전까지 닫아 둡니다.
 - Worker 구현 전 Production Compose의 placeholder `ai-worker`를 실제 처리 서비스처럼 배포하지 않습니다.
 
-전환 PR은 [비동기 Job](./contracts/async-job-v1.md), [Outbox·Stream](./contracts/outbox-stream-v1.md), [테스트 전략](./testing.md)을 구현·운영 설정과 함께 갱신해야 합니다.
+전환 PR은 [비동기 Job](./contracts/jobs/async-job-v1.md), [Outbox·Stream](./contracts/jobs/outbox-stream-v1.md), [테스트 전략](./testing.md)을 구현·운영 설정과 함께 갱신해야 합니다.
 
 ### 공통 Privacy Production gate
 

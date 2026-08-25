@@ -1,10 +1,10 @@
 # 복약 챗봇 Backend–AI Core 계약
 
-> **적용 구분:** 이 문서는 현재 MVP의 동기 AI Core 호출 경계다. [비동기 Job 계약 v1](./async-job-v1.md)과 [Safety Result 계약 v1](./safety-result-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. 비동기 전환 후에도 Provider에 내부 식별자와 불필요한 의료 데이터를 보내지 않는 경계는 유지한다.
+> **적용 구분:** 이 문서는 현재 MVP의 동기 AI Core 호출 경계다. [비동기 Job 계약 v1](../jobs/async-job-v1.md)과 [Safety Result 계약 v1](../safety/safety-result-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. 비동기 전환 후에도 Provider에 내부 식별자와 불필요한 의료 데이터를 보내지 않는 경계는 유지한다.
 
 ## 목적과 적용 범위
 
-이 문서는 복약 챗봇 요청이 Backend DTO에서 Provider payload로 변환되고 결과와 오류가 다시 Backend로 전달되는 공유 경계를 정의한다. HTTP API body 계약은 [`docs/api.md`](../api.md), 상세 구현 설계는 [Backend 연동 설계](../designs/ceohwj/medication-chat-ai-backend-integration-design.md)를 따른다.
+이 문서는 복약 챗봇 요청이 Backend DTO에서 Provider payload로 변환되고 결과와 오류가 다시 Backend로 전달되는 공유 경계를 정의한다. HTTP API body 계약은 [`docs/api.md`](../../api.md), 상세 구현 설계는 [Backend 연동 설계](../../designs/ceohwj/medication-chat-ai-backend-integration-design.md)를 따른다.
 
 실제 구현 스키마의 기준은 `app.services.chat_ai`의 Backend DTO와 `app.services.chat_ai.schemas`의 AI Core 입력 모델이다. 이 문서는 두 경계 사이에서 보존하거나 제외해야 할 의미를 고정한다.
 
