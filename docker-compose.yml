@@ -14,34 +14,36 @@ services:
       retries: 5
       start_period: 5s
 
-  # 2. Database
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
+  # 2. Database mySQL -> postgreSQL
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
     restart: always
     environment:
-    # ${환경변수명} 문법은 OS 환경변수 혹은 .env에서 해당 환경변수명과 일치하는 항목이 있으면 대입합니다.
-    # 반드시 사전에 .env에 해당 항목이 존재하는지 확인해야 합니다.
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
-      TZ: 'Asia/Seoul'
+      # 개발환경에서는 이 사용자가 DB owner가 됩니다.
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+
+      # 신규 volume 초기화 시 UTF-8을 사용합니다.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
     ports:
-      - ${DB_EXPOSE_PORT}:${DB_PORT}
+      # 컨테이너 내부 포트는 항상 5432입니다.
+      - "${DB_EXPOSE_PORT}:5432"
     networks:
       - ws
     volumes:
-      - mysql_data:/var/lib/mysql  # 컨테이너가 삭제돼도 데이터는 호스트 파일시스템에 남음
-    command: # 한글 저장을 위한 문자셋 설정 (필수!)
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --port=${DB_PORT}
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      # 프로세스뿐 아니라 대상 DB가 실제 연결 가능한지 확인합니다.
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 5s
 
   # 3. Database Migration
   migrate:
@@ -50,7 +52,8 @@ services:
       context: .
       dockerfile: app/Dockerfile
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
-    env_file: .env
+    env_file:
+        - ./envs/.local.env
     command:
       - uv
       - run
@@ -61,7 +64,7 @@ services:
     networks:
       - ws
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     restart: "no"
 
@@ -72,7 +75,8 @@ services:
       context: .  # 프로젝트 루트를 빌드 컨텍스트로 지정
       dockerfile: app/Dockerfile  # Dockerfile 위치 지정
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}  # APP_VERSION은 빌드된 이미지의 버전관리를 위함입니다. v1.0.0 형식으로 사용합니다.
-    env_file: .env
+    env_file:
+        - ./envs/.local.env
     command: |
       sh -c "uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
@@ -84,7 +88,7 @@ services:
     networks:
       - ws
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -98,13 +102,14 @@ services:
       context: .  # 프로젝트 루트를 빌드 컨텍스트로 지정
       dockerfile: ai_worker/Dockerfile  # Dockerfile 위치 지정
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}  # AI_WORKER_VERSION은 빌드된 이미지의 버전관리를 위함입니다. V1.0.0 형식으로 사용합니다.
-    env_file: .env
+    env_file:
+        - ./envs/.local.env
     restart: "no"
     mem_limit: 4G
     networks:
       - ws
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -126,7 +131,7 @@ services:
       - fastapi
 
 volumes:
-  mysql_data:
+  postgres_data:
   static_volume:
 
 networks:

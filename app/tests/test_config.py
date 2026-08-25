@@ -5,11 +5,20 @@ from app.core.config import Config, Env
 
 BASE_CONFIG = {
     "DB_HOST": "localhost",
-    "DB_PORT": 3306,
+    "DB_PORT": 5432,
     "DB_USER": "test_user",
     "DB_PASSWORD": "test_password",
     "DB_NAME": "test_database",
 }
+
+
+def test_config_builds_postgresql_async_url() -> None:
+    config = Config.model_validate(BASE_CONFIG)
+
+    # MySQL 드라이버가 다시 들어오는 회귀를 방지합니다.
+    assert config.database_url.startswith("postgresql+asyncpg://")
+    assert "mysql+asyncmy" not in config.database_url
+    assert "charset=utf8mb4" not in config.database_url
 
 
 @pytest.mark.parametrize(

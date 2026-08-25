@@ -1,58 +1,85 @@
 #!/usr/bin/env bash
-set -eo pipefail
 
-COLOR_GREEN=$(tput setaf 2)
-COLOR_BLUE=$(tput setaf 4)
-COLOR_RED=$(tput setaf 1)
-COLOR_NC=$(tput sgr0)
+# 오류, 미정의 변수 및 pipeline 실패가 발생하면 즉시 중단합니다.
+set -euo pipefail
 
+# 저장소 루트에서 명령이 실행되도록 이동합니다.
 cd "$(dirname "$0")/../.."
 
-source .env
+ENV_FILE="${ENV_FILE:-envs/.local.env}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 
-echo "${COLOR_BLUE}Find Tests${COLOR_NC}"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "환경 파일을 찾을 수 없습니다: $ENV_FILE"
+  exit 1
+fi
+
+echo "Find Tests"
 
 HAS_TESTS=false
-MYSQL_CONTAINER_NAME=mysql
 
-if [ -d "./app/tests" ] && find ./app/tests -name 'test_*.py' -print -quit | read ; then
-  HAS_TESTS=true
-fi
+# 실제 기본 테스트 실행 범위와 동일한 디렉터리를 확인합니다.
+for test_dir in ./app/tests ./tests/contract ./ai_worker/tests/core; do
+  if [ -d "$test_dir" ] &&
+    find "$test_dir" -type f -name 'test_*.py' -print -quit | grep -q .; then
+    HAS_TESTS=true
+    break
+  fi
+done
 
 echo "Has tests: $HAS_TESTS"
 
-if [ "$HAS_TESTS" = true ]; then
-  if docker ps --format '{{.Names}}' | grep -q "^${MYSQL_CONTAINER_NAME}$"; then
-    echo "${COLOR_BLUE}→ MySQL container found. Granting privileges...${COLOR_NC}"
+if [ "$HAS_TESTS" != true ]; then
+  echo "No tests found. Skipping tests."
+  exit 0
+fi
 
-    docker exec -i ${MYSQL_CONTAINER_NAME} \
-mysql -u root -p${DB_ROOT_PASSWORD}<<EOF
-  CREATE DATABASE IF NOT EXISTS test
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-  GRANT ALL PRIVILEGES ON test.* TO '${DB_USER}'@'%';
-  FLUSH PRIVILEGES;
-EOF
+# Compose 프로젝트의 PostgreSQL 서비스가 실제 실행 중인지 확인합니다.
+if ! docker compose \
+  --env-file "$ENV_FILE" \
+  -f "$COMPOSE_FILE" \
+  ps --services --status running |
+  grep -qx postgres; then
+  echo "PostgreSQL container not found."
+  echo "Run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d postgres"
+  exit 1
+fi
 
-    echo "${COLOR_BLUE}Run Pytest with Coverage${COLOR_NC}"
+echo "PostgreSQL container found. Preparing test database."
 
-    # Backend·계약 테스트와 구현된 Worker 공통 단위 테스트를 함께 실행합니다.
-    if ! uv run coverage run -m pytest app tests/contract ai_worker/tests/core; then
-      echo ""
-      echo "${COLOR_RED}✖ Pytest failed.${COLOR_NC}"
-      echo "${COLOR_RED}→ Fix the test failures above and re-run.${COLOR_NC}"
-      exit 1
-    fi
+# test DB가 없을 때만 생성합니다.
+# 애플리케이션 DB와 분리하여 테스트의 테이블 변경이 개발 데이터를 건드리지 않도록 합니다.
+docker compose \
+  --env-file "$ENV_FILE" \
+  -f "$COMPOSE_FILE" \
+  exec -T postgres \
+  sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT format(
+    'CREATE DATABASE %I OWNER %I',
+    'test',
+    current_user
+)
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM pg_database
+    WHERE datname = 'test'
+)
+\gexec
+SQL
 
-    echo "${COLOR_BLUE}Coverage Report${COLOR_NC}"
-    if ! uv run coverage report -m ; then
-      echo "${COLOR_RED}✖ Coverage check failed.${COLOR_NC}"
-      exit 1
-    fi
-  else
-    echo "${COLOR_RED} MySQL Docker Container Not Found. Run docker compose up mysql.${COLOR_NC}"
-    exit 1
-  fi
-else
-  echo "${COLOR_BLUE}No tests found. Skipping tests.${COLOR_NC}"
+echo "Run Pytest with Coverage"
+
+# Backend, 공통 계약, Worker 공통 골격 테스트를 모두 실행합니다.
+if ! uv run coverage run -m pytest app tests/contract ai_worker/tests/core; then
+  echo
+  echo "Pytest failed."
+  echo "Fix the test failures above and re-run."
+  exit 1
+fi
+
+echo "Coverage Report"
+
+if ! uv run coverage report -m; then
+  echo "Coverage check failed."
+  exit 1
 fi

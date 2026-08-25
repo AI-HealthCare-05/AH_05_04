@@ -32,6 +32,35 @@ class TestLoginAPI:
         # 쿠키 검증 대신 응답 헤더 확인
         assert any("refresh_token" in header for header in response.headers.get_list("set-cookie"))
 
+    async def test_login_accepts_case_variant_email(self) -> None:
+        """저장된 이메일과 대소문자가 달라도 같은 계정으로 로그인합니다."""
+        signup_data = {
+            "email": "case-login@example.com",
+            "password": "Password123!",
+            "name": "이메일정규화테스트",
+        }
+        login_data = {
+            "email": "CASE-LOGIN@EXAMPLE.COM",
+            "password": "Password123!",
+        }
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            signup_response = await client.post(
+                "/api/v1/auth/signup",
+                json=signup_data,
+            )
+            response = await client.post(
+                "/api/v1/auth/login",
+                json=login_data,
+            )
+
+        assert signup_response.status_code == status.HTTP_201_CREATED
+        assert response.status_code == status.HTTP_200_OK
+        assert "access_token" in response.json()
+
     async def test_login_invalid_credentials(self):
         login_data = {"email": "nonexistent@example.com", "password": "WrongPassword123!"}
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

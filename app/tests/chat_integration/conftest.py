@@ -22,7 +22,9 @@ def pytest_collection_modifyitems(config: pytest.Config) -> None:
     numprocesses = getattr(config.option, "numprocesses", None)
     if os.environ.get("PYTEST_XDIST_WORKER") or numprocesses not in (None, 0, "0"):
         raise pytest.UsageError(
-            "app/tests/chat_integration commits shared MySQL fixtures and must run in a serial pytest job without xdist"
+            # 이 테스트는 커밋된 PostgreSQL fixture를 공유하므로 병렬 실행하면 안 됩니다.
+            "app/tests/chat_integration commits shared PostgreSQL fixtures "
+            "and must run in a serial pytest job without xdist"
         )
 
 
@@ -49,8 +51,9 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
     fixture: CommittedChatFixture | None = None
     try:
         async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as session:
-            mysql_version = str(await session.scalar(text("SELECT VERSION()")))
-            assert mysql_version.startswith("8.0."), f"MySQL 8.0 required, got {mysql_version}"
+            # 동시성 검증이 PostgreSQL 17 테스트 DB에서 실행되는지 확인합니다.
+            postgresql_version = str(await session.scalar(text("SELECT current_setting('server_version')")))
+            assert postgresql_version.startswith("17."), f"PostgreSQL 17 required, got {postgresql_version}"
             user = User(
                 email=f"cc-{token[:12]}@example.com",
                 hashed_password="synthetic-hash",

@@ -5,10 +5,10 @@ from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
 from enum import StrEnum
 from pathlib import Path
-from urllib.parse import quote_plus
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Env(StrEnum):
@@ -68,8 +68,10 @@ class Config(BaseSettings):
     )
 
     DB_HOST: str
-    DB_PORT: int
-    DB_EXPOSE_PORT: int = 3306
+    # PostgreSQL 컨테이너 내부 기본 포트입니다.
+    DB_PORT: int = 5432
+    # 로컬 PC에서 컨테이너에 접근하는 포트입니다.
+    DB_EXPOSE_PORT: int = 5432
     DB_USER: str
     DB_PASSWORD: str
     DB_NAME: str
@@ -105,7 +107,16 @@ class Config(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        user = quote_plus(self.DB_USER)
-        password = quote_plus(self.DB_PASSWORD)
+        # URL.create()를 사용하면 비밀번호에 @, /, % 같은 문자가 있어도
+        # 연결 문자열이 깨지지 않습니다.
+        url = URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.DB_USER,
+            password=self.DB_PASSWORD,
+            host=self.DB_HOST,
+            port=self.DB_PORT,
+            database=self.DB_NAME,
+        )
 
-        return f"mysql+asyncmy://{user}:{password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
+        # Alembic은 문자열 URL을 사용하므로 실제 연결 문자열로 렌더링합니다.
+        return url.render_as_string(hide_password=False)

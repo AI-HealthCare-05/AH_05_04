@@ -56,7 +56,7 @@ Post-MVP-1 계약 문서는 승인된 **목표 계약**이며 구현 완료 보�
 ## 기술 구성
 
 - **Backend**: FastAPI, Pydantic, SQLAlchemy asyncio, Alembic
-- **Database**: MySQL 8.0, `asyncmy`
+- **Database**: PostgreSQL 17, `asyncpg`
 - **AI Provider**: CLOVA OCR, OpenAI Responses API
 - **Infrastructure**: Docker Compose, Nginx, Redis
 - **Quality**: Ruff, Mypy, Pytest, Oxlint, TypeScript build
@@ -95,10 +95,10 @@ Redis와 `ai-worker` 서비스는 Compose에 준비되어 있지만 현재 MVP A
 uv sync --all-groups
 ```
 
-로컬 Docker Compose는 저장소 루트의 `.env`를 읽습니다. 예시를 복사한 뒤 모든 `replace-with-...` 값을 실제 로컬 값으로 교체하고, `.env`는 커밋하지 않습니다. 예시 placeholder를 그대로 둔 상태는 실행·배포 가능한 설정이 아닙니다.
+로컬 Docker Compose는 `envs/.local.env`를 사용합니다. 로컬 예시를 복사한 뒤 모든 placeholder를 실제 로컬 값으로 교체하고, 실제 환경 파일은 커밋하지 않습니다. 운영 환경은 `envs/example.prod.env`를 참고해 별도의 `envs/.prod.env`를 준비합니다.
 
 ```bash
-cp envs/example.local.env .env
+cp envs/example.local.env envs/.local.env
 ```
 
 최소한 DB 설정과 사용하는 외부 제공자의 자격증명을 확인합니다. `OPENAI_MODEL`과 `OPENAI_TIMEOUT_SECONDS` 등 운영 기준값은 코드 기본값만으로 승인하지 않고 [배포 가이드](docs/deployment.md)에 실제 값과 확인 결과를 기록합니다.
@@ -108,7 +108,10 @@ cp envs/example.local.env .env
 Backend와 지원 인프라를 빌드하고 실행합니다. 이 Compose 파일에는 Frontend 서비스가 포함되지 않습니다.
 
 ```bash
-docker compose up -d --build
+docker compose \
+  --env-file envs/.local.env \
+  -f docker-compose.yml \
+  up -d --build
 ```
 
 Frontend는 별도 터미널에서 실행합니다.
@@ -124,7 +127,7 @@ pnpm dev
 | 서비스 | 역할 | 현재 동작 |
 | --- | --- | --- |
 | `fastapi` | API 서버 | `http://localhost:8000/api/docs` |
-| `mysql` | MySQL 8.0 | 영속 데이터 저장 |
+| `postgres` | PostgreSQL 17 | 영속 데이터 저장 |
 | `migrate` | Alembic migration | 실행 완료 후 정상 종료 |
 | `redis` | Redis | 기동되지만 현재 MVP AI 경로에서는 미사용 |
 | `ai-worker` | Post-MVP Worker 골격 | placeholder 로그 후 정상 종료 |
@@ -133,8 +136,15 @@ pnpm dev
 필요한 서비스만 실행할 수도 있습니다.
 
 ```bash
-docker compose up -d --build fastapi
-docker compose up -d --build ai-worker
+docker compose \
+  --env-file envs/.local.env \
+  -f docker-compose.yml \
+  up -d --build fastapi
+
+docker compose \
+  --env-file envs/.local.env \
+  -f docker-compose.yml \
+  up -d --build ai-worker
 ```
 
 로컬 Python 환경에서 API 서버를 직접 실행하려면 DB와 필요한 외부 설정을 준비한 뒤 다음 명령을 사용합니다.
@@ -145,7 +155,7 @@ uv run uvicorn app.main:app --reload
 
 ## Database migration
 
-전체 Compose 실행 시 `migrate` 서비스가 MySQL health check 후 다음 명령을 한 번 실행합니다.
+전체 Compose 실행 시 `migrate` 서비스가 PostgreSQL health check 후 다음 명령을 한 번 실행합니다.
 
 ```bash
 uv run --no-sync alembic upgrade head
@@ -172,7 +182,7 @@ pnpm lint
 pnpm build
 ```
 
-Python 기본 테스트 명령은 `app`과 `tests/contract`를 실행합니다. OpenAI 실호출 smoke, `tests/integration`, E2E와 AI 평가가 기본 CI에서 자동 실행되는 것은 아닙니다. 정확한 범위는 [테스트 전략](docs/testing.md)을 확인하세요.
+Python 기본 테스트 명령은 `app`, `tests/contract`, `ai_worker/tests/core`를 실행합니다. OpenAI 실호출 smoke, `tests/integration`, E2E와 AI 평가가 기본 CI에서 자동 실행되는 것은 아닙니다. 정확한 범위는 [테스트 전략](docs/testing.md)을 확인하세요.
 
 문서만 변경한 경우에는 렌더링·링크·범위와 전체 diff를 검토하고 `git diff --check`를 실행합니다.
 

@@ -25,7 +25,7 @@ Validation CLI는 동일 코드가 mode별 credential로 실행되는 유일한 
 
 ## Schema v1
 
-`release_validation_runs`는 다음 필드를 가집니다. 실제 SQL type과 길이는 구현 PR에서 MySQL migration과 이 문서를 함께 확정합니다.
+`release_validation_runs`는 다음 필드를 가집니다. 실제 SQL type과 길이는 구현 PR에서 PostgreSQL migration과 이 문서를 함께 확정합니다.
 
 | 필드 | 규칙 |
 | --- | --- |

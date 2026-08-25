@@ -50,7 +50,7 @@ uv run mypy app ai_worker
 bash scripts/ci/run_test.sh
 ```
 
-DB 테스트는 MySQL 컨테이너가 필요합니다. 의료·AI 변경은 관련 `evals/` 회귀 기준도 통과해야 합니다.
+DB 테스트는 PostgreSQL 컨테이너가 필요합니다. 의료·AI 변경은 관련 `evals/` 회귀 기준도 통과해야 합니다.
 
 ## 데이터와 보안
 

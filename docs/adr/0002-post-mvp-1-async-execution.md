@@ -38,7 +38,7 @@ DB commit과 queue publish 사이의 중단으로 유실 또는 orphan 작업이
 
 ### Redis를 상태 source of truth로 사용
 
-영속 도메인 결과, 소유권, 처방 version과 transaction 일관성을 보장하기 어려워 선택하지 않았다. MySQL이 권위 있는 상태를 유지한다.
+영속 도메인 결과, 소유권, 처방 version과 transaction 일관성을 보장하기 어려워 선택하지 않았다. PostgreSQL이 권위 있는 상태를 유지한다.
 
 ## 영향과 검증
 
