@@ -11,9 +11,9 @@
 | Frontend | 회원가입·로그인, 처방전 업로드와 OCR 결과 요약까지 API 연결. 검수·처방 확정·가이드·챗봇은 디자인 프로토타입 또는 미연결 상태 |
 | Nginx | FastAPI 요청을 전달하는 리버스 프록시 |
 | FastAPI Backend | 인증·인가, 파일·처방·대화 상태 관리, 동기 OCR·가이드·챗봇 orchestration |
-| `app/services/ocr.py` | 같은 HTTP 요청 안에서 CLOVA OCR 호출, 결과 정규화·저장, 오류 매핑 |
-| `app/services/guide_ai/` | 확정 처방만 입력받아 OpenAI 복약 가이드 생성 |
-| `app/services/chat_ai/` | 현재 질문과 확정 약물 목록만 입력받아 OpenAI 단일 응답 생성 |
+| `backend/app/services/ocr.py` | 같은 HTTP 요청 안에서 CLOVA OCR 호출, 결과 정규화·저장, 오류 매핑 |
+| `backend/app/services/guide_ai/` | 확정 처방만 입력받아 OpenAI 복약 가이드 생성 |
+| `backend/app/services/chat_ai/` | 현재 질문과 확정 약물 목록만 입력받아 OpenAI 단일 응답 생성 |
 | PostgreSQL | 사용자, 의료문서, OCR 결과, 확정 처방, 가이드, 채팅 상태 저장 |
 | 로컬 파일시스템 | `STORAGE_DIR` 아래 처방전 원본 저장. 현재 Compose의 영속 volume과 기본 경로가 일치하지 않아 배포 전 확인 필요 |
 | Redis | Compose에 준비되어 있으나 현재 MVP AI 처리 경로에서는 사용하지 않음 |

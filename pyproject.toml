@@ -80,6 +80,10 @@ select = [
 ]
 ignore = ["UP046", "E501"]
 
+[tool.ruff.lint.isort]
+# backend/ 폴더 분리 이후에도 `app`을 서드파티가 아닌 프로젝트 코드로 인식하도록 명시합니다.
+known-first-party = ["app", "ai_worker"]
+
 # 특정 파일에서 무시할 규칙들
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]

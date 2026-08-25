@@ -7,7 +7,7 @@
 | 상태 | Implemented |
 | 관련 Issue | #11, #48 |
 | 검토 CODEOWNER | `@hazelnutflavoured`, `@phina-io`, `@ceohwj` |
-| 구현 | `app/services/guide_ai/`, `app/services/guides.py` |
+| 구현 | `backend/app/services/guide_ai/`, `backend/app/services/guides.py` |
 
 이 문서는 동기 One Cycle 복약 가이드 생성에서 Backend와 Guide AI 모듈이 공유하는 Python 경계를 기록한다. HTTP 요청·응답, DB 모델과 GUIDE 상태 전이는 기존 Backend 계약을 따르며 이 문서가 새 필드나 상태를 추가하지 않는다.
 

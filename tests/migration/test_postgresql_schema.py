@@ -48,7 +48,7 @@ async def test_database_is_at_alembic_head(
     migrated_engine: AsyncEngine,
 ) -> None:
     """DB에 적용된 revision이 저장소의 Alembic head와 일치하는지 확인합니다."""
-    alembic_config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    alembic_config = Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
     script_directory = ScriptDirectory.from_config(alembic_config)
     expected_heads = set(script_directory.get_heads())
 

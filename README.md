@@ -67,7 +67,10 @@ Redis와 `ai-worker` 서비스는 Compose에 준비되어 있지만 현재 MVP A
 
 ```text
 .
-├── app/                # FastAPI API, SQLAlchemy 모델·저장소, 동기 OCR·가이드·챗봇
+├── backend/            # FastAPI API, SQLAlchemy 모델·저장소, 동기 OCR·가이드·챗봇, Alembic
+│   ├── app/
+│   ├── alembic/
+│   └── alembic.ini
 ├── ai_worker/          # Post-MVP 비동기 Worker 골격
 ├── frontend/           # 사용자 화면과 UX
 ├── docs/               # 아키텍처, API, 계약, AI 파이프라인, 테스트·배포 문서
@@ -147,9 +150,10 @@ docker compose \
   up -d --build ai-worker
 ```
 
-로컬 Python 환경에서 API 서버를 직접 실행하려면 DB와 필요한 외부 설정을 준비한 뒤 다음 명령을 사용합니다.
+로컬 Python 환경에서 API 서버를 직접 실행하려면 DB와 필요한 외부 설정을 준비한 뒤 `backend/`에서 다음 명령을 사용합니다.
 
 ```bash
+cd backend
 uv run uvicorn app.main:app --reload
 ```
 
@@ -164,7 +168,7 @@ uv run --no-sync alembic upgrade head
 로컬 Python 환경에서는 다음 명령을 사용합니다.
 
 ```bash
-uv run alembic upgrade head
+uv run alembic -c backend/alembic.ini upgrade head
 ```
 
 ## 테스트와 품질 검사
@@ -174,7 +178,7 @@ uv run alembic upgrade head
 ```bash
 uv run ruff check .
 uv run ruff format . --check
-uv run mypy app ai_worker
+uv run mypy backend/app ai_worker
 bash scripts/ci/run_test.sh
 
 cd frontend
@@ -182,7 +186,7 @@ pnpm lint
 pnpm build
 ```
 
-Python 기본 테스트 명령은 `app`, `tests/contract`, `ai_worker/tests/core`를 실행합니다. OpenAI 실호출 smoke, `tests/integration`, E2E와 AI 평가가 기본 CI에서 자동 실행되는 것은 아닙니다. 정확한 범위는 [테스트 전략](docs/testing.md)을 확인하세요.
+Python 기본 테스트 명령은 `backend/app`, `tests/contract`, `ai_worker/tests/core`를 실행합니다. OpenAI 실호출 smoke, `tests/integration`, E2E와 AI 평가가 기본 CI에서 자동 실행되는 것은 아닙니다. 정확한 범위는 [테스트 전략](docs/testing.md)을 확인하세요.
 
 문서만 변경한 경우에는 렌더링·링크·범위와 전체 diff를 검토하고 `git diff --check`를 실행합니다.
 
@@ -190,7 +194,7 @@ Python 기본 테스트 명령은 `app`, `tests/contract`, `ai_worker/tests/core
 
 - API 경로와 오류 계약은 [API 명세](docs/api.md)를 따릅니다.
 - 공유 DTO·상태·오류 의미를 변경하면 관련 [계약 문서](docs/contracts/README.md), 구현과 계약·통합 테스트를 함께 갱신합니다.
-- DB 모델은 `app/models/`에 SQLAlchemy 모델로 정의하고 Alembic migration을 추가합니다.
-- 현재 동기 AI 구현은 `app/services/ocr.py`, `app/services/guide_ai/`, `app/services/chat_ai/`에 있습니다.
+- DB 모델은 `backend/app/models/`에 SQLAlchemy 모델로 정의하고 Alembic migration을 추가합니다.
+- 현재 동기 AI 구현은 `backend/app/services/ocr.py`, `backend/app/services/guide_ai/`, `backend/app/services/chat_ai/`에 있습니다.
 - Post-MVP 비동기 작업은 계약과 전환 조건을 승인한 뒤 `ai_worker/tasks/`에 구현합니다.
 - 비밀정보와 실제 환자 정보는 저장소에 포함하지 않습니다. [SECURITY.md](SECURITY.md)와 [개인정보 및 의료 안전](docs/privacy-safety.md)을 따릅니다.
