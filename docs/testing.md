@@ -42,12 +42,21 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 
 ## 현재 자동 검증 범위
 
-GitHub Actions와 `scripts/ci/run_test.sh`는 기본적으로 다음 명령과 동등한 Python 범위를 검증합니다.
+GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
+
+1. 개발 DB와 분리된 PostgreSQL `test` DB를 새로 생성합니다.
+2. 선택한 환경파일의 DB 계정으로 `alembic upgrade head`를 실행합니다.
+3. `tests/migration/`에서 Alembic이 생성한 실제 PostgreSQL 스키마를 검증합니다.
+4. Backend·공통 계약·Worker 공통 테스트를 실행합니다.
+5. Coverage 결과를 확인합니다.
+
+로컬 기본 실행 명령은 다음과 같습니다.
 
 ```bash
-uv run coverage run -m pytest app tests/contract ai_worker/tests/core
+bash scripts/ci/run_test.sh
 ```
 
+기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
 - `app/tests/chat_integration/`을 포함한 `app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
 - `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
 - `tests/integration/`, `tests/e2e/`, `ai_worker/tests/ocr/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`, `ai_worker/tests/evaluation/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.

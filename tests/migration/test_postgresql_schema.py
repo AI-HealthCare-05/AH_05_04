@@ -89,27 +89,51 @@ async def test_ocr_created_sequence_uses_postgresql_identity(
 
 
 @pytest.mark.asyncio
-async def test_ocr_created_sequence_index_exists(
+async def test_ocr_created_sequence_index_has_expected_order(
     migrated_engine: AsyncEngine,
 ) -> None:
-    """OCR 최신 결과 정렬에 필요한 복합 인덱스가 존재하는지 확인합니다."""
+    """public schema의 OCR 복합 인덱스 컬럼 순서를 검증합니다."""
     async with migrated_engine.connect() as connection:
         result = await connection.execute(
             text(
                 """
-                SELECT indexdef
-                FROM pg_indexes
-                WHERE schemaname = 'public'
-                  AND tablename = 'ocr_job'
-                  AND indexname = 'idx_ocr_document_created_seq'
+                SELECT array_agg(
+                    attribute.attname
+                    ORDER BY indexed_column.ordinality
+                )
+                FROM pg_class AS table_info
+                JOIN pg_index AS index_info
+                  ON index_info.indrelid = table_info.oid
+                JOIN pg_class AS index_class
+                  ON index_class.oid = index_info.indexrelid
+                JOIN pg_namespace AS table_namespace
+                  ON table_namespace.oid = table_info.relnamespace
+                JOIN pg_namespace AS index_namespace
+                  ON index_namespace.oid = index_class.relnamespace
+                CROSS JOIN LATERAL
+                    unnest(index_info.indkey)
+                    WITH ORDINALITY AS indexed_column(
+                        attribute_number,
+                        ordinality
+                    )
+                JOIN pg_attribute AS attribute
+                  ON attribute.attrelid = table_info.oid
+                 AND attribute.attnum = indexed_column.attribute_number
+                WHERE table_namespace.nspname = 'public'
+                  AND index_namespace.nspname = 'public'
+                  AND table_info.relname = 'ocr_job'
+                  AND index_class.relname = 'idx_ocr_document_created_seq'
+                  AND indexed_column.ordinality <= index_info.indnkeyatts
                 """
             )
         )
-        index_definition = result.scalar_one()
+        index_columns = result.scalar_one()
 
-    assert "document_id" in index_definition
-    assert "created_at" in index_definition
-    assert "created_sequence" in index_definition
+    assert index_columns == [
+        "document_id",
+        "created_at",
+        "created_sequence",
+    ]
 
 
 @pytest.mark.asyncio
