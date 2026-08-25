@@ -86,10 +86,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --group app --frozen
 
-      # metadata.create_all() 테스트만으로는 migration 오류를 찾지 못하므로
-      # 실제 Alembic migration을 PostgreSQL에서 실행합니다.
       - name: Run PostgreSQL migrations
         run: uv run alembic upgrade head
+      # app/tests/conftest.py가 스키마를 재생성하기 전에
+      # Alembic이 만든 실제 PostgreSQL 구조를 검증합니다.
+      - name: Validate migrated PostgreSQL schema
+        run: uv run pytest tests/migration -v
 
       - name: Run Tests with Coverage
         run: |
