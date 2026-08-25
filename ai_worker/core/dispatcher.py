@@ -31,6 +31,9 @@ class Dispatcher:
             # 알 수 없는 예외의 원문에는 Provider 응답이나 secret이 포함될 수
             # 있으므로 exception chain을 외부 공통 오류에 연결하지 않습니다.
             raise HandlerExecutionError(message.job_type) from None
+        # Handler가 반환 타입 계약을 위반해도 내부 예외를 노출하지 않습니다.
+        if not isinstance(result, HandlerSuccess):
+            raise HandlerResultMismatchError(message.job_type)
 
         # 다른 Job 또는 event의 결과가 현재 실행에 잘못 연결되는 것을 막습니다.
         if (

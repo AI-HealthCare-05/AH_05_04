@@ -62,11 +62,25 @@ def test_job_type_and_domain_type_mismatch_is_rejected() -> None:
         WorkerMessage.model_validate(payload)
 
 
-def test_message_rejects_medical_content_field() -> None:
+@pytest.mark.parametrize(
+    "forbidden_field",
+    [
+        "prescription_text",
+        "medication_name",
+        "question",
+        "answer",
+        "ocr_text",
+        "user_id",
+    ],
+)
+def test_message_rejects_medical_or_user_content(
+    forbidden_field: str,
+) -> None:
     payload = valid_message_payload()
 
-    # Stream envelope에는 OCR 원문이나 약품명을 포함하지 않습니다.
-    payload["medication_name"] = "SYNTHETIC_MEDICATION"
+    # Stream envelope에는 의료 원문, 사용자 질문·답변 또는
+    # 사용자 식별정보를 직접 포함하지 않습니다.
+    payload[forbidden_field] = "SYNTHETIC_SENSITIVE_VALUE"
 
     with pytest.raises(ValidationError):
         WorkerMessage.model_validate(payload)

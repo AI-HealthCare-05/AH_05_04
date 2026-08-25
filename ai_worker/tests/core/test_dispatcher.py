@@ -100,6 +100,16 @@ class FakeMismatchedResultHandler:
         )
 
 
+class FakeInvalidResultHandler:
+    """공통 성공 결과가 아닌 값을 반환하는 잘못된 Handler입니다."""
+
+    handler_type = JobType.OCR
+
+    async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        # Handler 구현이 반환 타입 계약을 위반한 상황을 의도적으로 재현합니다.
+        return None  # type: ignore[return-value]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "job_type",
@@ -171,6 +181,20 @@ async def test_mismatched_handler_result_is_rejected() -> None:
 
     with pytest.raises(HandlerResultMismatchError):
         await dispatcher.dispatch(build_message())
+
+
+@pytest.mark.asyncio
+async def test_invalid_handler_result_type_is_rejected() -> None:
+    registry = HandlerRegistry()
+    registry.register(FakeInvalidResultHandler())
+
+    dispatcher = Dispatcher(registry)
+
+    with pytest.raises(HandlerResultMismatchError) as exc_info:
+        await dispatcher.dispatch(build_message())
+
+    assert exc_info.value.handler_type is JobType.OCR
+    assert exc_info.value.failure_code == "INTERNAL_ERROR"
 
 
 @pytest.mark.asyncio
