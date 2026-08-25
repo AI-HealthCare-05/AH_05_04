@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   executeOcr,
   getOcrJob,
@@ -8,6 +9,7 @@ import {
 import { ApiError } from '../api/client'
 
 function PrescriptionUploadPage() {
+  const navigate = useNavigate()
   const [file, setFile] = useState<File | null>(null)
   const [ocrResult, setOcrResult] =
     useState<OcrJobResponse | null>(null)
@@ -47,6 +49,12 @@ function PrescriptionUploadPage() {
       )
 
       setOcrResult(latestOcrResult)
+
+      if (latestOcrResult.data.ocr_status === 'COMPLETED') {
+        navigate(
+          `/prescriptions/review?document_id=${uploadResponse.data.document_id}&job_id=${ocrResponse.data.job_id}`,
+        )
+      }
 
     } catch (error) {
       if (error instanceof ApiError) {
