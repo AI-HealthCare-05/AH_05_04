@@ -32,7 +32,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 **이미 정해진 보안 원칙**: [`SECURITY.md`](../../SECURITY.md)는 "의료·개인정보 응답은 기본적으로 `Cache-Control: no-store`를 적용합니다"를 현재 원칙으로 정하고 있다. 이는 Post-MVP 목표가 아니라 지금 지켜야 하는 규칙이다. 같은 원칙에 따라 `details[].rejected_value`에도 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않아야 한다.
 
-**현재 미충족 상태**: 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않아 오류 응답에서 원칙을 충족하지 못한다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 원칙을 충족하지 못한다. 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
+**현재 미충족 상태**: 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않아 오류 응답에서 원칙을 충족하지 못한다. 인증 API(`login`, `token/refresh`)는 access token을 반환하는 성공 응답에도 이 헤더가 없고, `GET`/`PATCH /users/me`도 개인정보를 반환하면서 헤더가 없다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 원칙을 충족하지 못한다. 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
 
 ## HTTP 상태 코드 기준
 
@@ -127,12 +127,7 @@ raise ApiError(
 
 ### Post-MVP
 
-| HTTP | code | message | 비고 |
-| --- | --- | --- | --- |
-| 409 | `IDEMPOTENCY_KEY_CONFLICT` | 이전과 다른 내용의 요청이라 처리할 수 없습니다. 새로 요청해 주세요. | Idempotency-Key 도입 후 사용. 명칭·상태는 [멱등성 계약 v1](./idempotency-v1.md) 확정값 기준 |
-| 409 | `PRESCRIPTION_VERSION_CONFLICT` | 다른 곳에서 먼저 수정된 정보입니다. 새로고침 후 다시 시도해 주세요. | Prescription Version 도입 후 사용. 명칭·상태는 [처방 버전 계약 v1](./prescription-version-v1.md) 확정값 기준 |
-
-`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED`는 뒷받침하는 승인된 Decision이나 목표 계약이 아직 없어 이 표에서 제외했다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../AGENTS.md) 기준).
+Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](./async-job-v1.md), [멱등성 계약 v1](./idempotency-v1.md), [처방 버전 계약 v1](./prescription-version-v1.md)에서 확인한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../AGENTS.md) 기준).
 
 ## 도메인별 오류 코드
 
@@ -163,9 +158,11 @@ raise ApiError(
 
 ### Post-MVP
 
-도메인별 Post-MVP 오류 코드는 아직 이 저장소에 승인된 Decision이나 목표 계약이 없어 표를 비워둔다. 다음 코드 후보는 뒷받침하는 계약이 확정된 뒤에만 이 표에 추가한다.
+Post-MVP 도메인별 오류 코드는 각 승인된 목표 계약에서 확인한다 — 예: `PRESCRIPTION_MEDICATION_REQUIRED`(422)는 [처방 버전 계약 v1](./prescription-version-v1.md).
 
-- `PROFILE_NOT_FOUND`, `UPLOAD_FAILED`, `MEDICATION_SCHEDULE_NOT_FOUND`, `MEDICATION_LOG_ALREADY_EXISTS`, `MEDICATION_LOG_INVALID_STATUS`, `CITATION_NOT_FOUND`
+아직 어떤 목표 계약에도 없어 별도 Decision이 필요한 항목:
+
+- `PROFILE_NOT_FOUND`, `UPLOAD_FAILED`, `MEDICATION_SCHEDULE_NOT_FOUND`, `MEDICATION_LOG_ALREADY_EXISTS`, `MEDICATION_LOG_INVALID_STATUS`: 뒷받침하는 승인된 계약이 없어 어떤 문서에도 등록하지 않는다.
 - `OCR_LOW_CONFIDENCE`: 저신뢰 OCR 결과를 요청 실패(`422`)로 볼지, OCR 결과 검수 상태(`REVIEW_REQUIRED`, 아직 미구현)로 볼지는 Product·OCR·Frontend·Backend가 함께 결정해야 하는 별도 Decision 사안이다. 이번 PR에서는 HTTP status를 확정하지 않는다.
 - `CITATION_NOT_FOUND`는 아직 승인되지 않은 출처 상세 조회 API를 전제하며, 기존 [Safety Result 계약 v1](./safety-result-v1.md)의 `fallback_code`(`NO_APPROVED_EVIDENCE` 등)와 의미가 겹칠 수 있어 해당 API 승인 시 함께 재검토한다.
 
