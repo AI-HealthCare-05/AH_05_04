@@ -45,29 +45,48 @@ if ! docker compose \
   exit 1
 fi
 
-echo "PostgreSQL container found. Preparing test database."
+echo "PostgreSQL container found. Recreating isolated test database."
 
-# test DB가 없을 때만 생성합니다.
-# 애플리케이션 DB와 분리하여 테스트의 테이블 변경이 개발 데이터를 건드리지 않도록 합니다.
+# 이전 일반 테스트가 애플리케이션 테이블만 삭제하고 alembic_version을
+# 남겼을 수 있으므로 test DB를 매 실행마다 새로 생성합니다.
+# 삭제 대상은 개발 DB와 분리된 로컬 test DB로 한정합니다.
 docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
   exec -T postgres \
-  sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+  sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres' <<'SQL'
+DROP DATABASE IF EXISTS test WITH (FORCE);
+
 SELECT format(
     'CREATE DATABASE %I OWNER %I',
     'test',
     current_user
 )
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM pg_database
-    WHERE datname = 'test'
-)
 \gexec
 SQL
 
+echo "Apply Alembic migrations to test database"
+
+DB_HOST=127.0.0.1 \
+DB_PORT="${DB_EXPOSE_PORT:-5432}" \
+DB_EXPOSE_PORT="${DB_EXPOSE_PORT:-5432}" \
+DB_NAME=test \
+uv run alembic upgrade head
+
+echo "Validate migrated PostgreSQL schema"
+
+DB_HOST=127.0.0.1 \
+DB_PORT="${DB_EXPOSE_PORT:-5432}" \
+DB_EXPOSE_PORT="${DB_EXPOSE_PORT:-5432}" \
+DB_NAME=test \
+uv run pytest tests/migration -v
+
 echo "Run Pytest with Coverage"
+
+uv run coverage run -m pytest \
+  app \
+  tests/contract \
+  ai_worker/tests/core
 
 # Backend, 공통 계약, Worker 공통 골격 테스트를 모두 실행합니다.
 if ! uv run coverage run -m pytest app tests/contract ai_worker/tests/core; then
