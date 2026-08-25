@@ -18,6 +18,31 @@ fi
 set -a
 source "$PROD_ENV_FILE"
 set +a
+# ---------- PostgreSQL 역할 설정 검증 ----------
+# 역할 이름이 같으면 Migration 역할의 NOSUPERUSER 설정이
+# Bootstrap/admin 역할에도 적용될 수 있으므로 배포 전에 차단합니다.
+required_db_variables=(
+  DB_ADMIN_USER
+  DB_ADMIN_PASSWORD
+  DB_MIGRATION_USER
+  DB_MIGRATION_PASSWORD
+  DB_APP_USER
+  DB_APP_PASSWORD
+)
+
+for variable_name in "${required_db_variables[@]}"; do
+  if [ -z "${!variable_name:-}" ]; then
+    echo "필수 운영 DB 환경변수가 비어 있습니다: $variable_name"
+    exit 1
+  fi
+done
+
+if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
+  [ "$DB_ADMIN_USER" = "$DB_APP_USER" ] ||
+  [ "$DB_MIGRATION_USER" = "$DB_APP_USER" ]; then
+  echo "DB_ADMIN_USER, DB_MIGRATION_USER, DB_APP_USER는 서로 다른 이름이어야 합니다."
+  exit 1
+fi
 
 # 터미널 색상을 지원하지 않는 환경에서는 빈 문자열을 사용합니다.
 if [ -t 1 ] &&
@@ -257,19 +282,27 @@ esac
 # ---------- EC2 배포 디렉터리 준비 ----------
 echo "${COLOR_BLUE}EC2 배포 디렉터리를 준비합니다.${COLOR_NC}"
 
+# 운영 환경파일이 저장되는 project 디렉터리는 소유자만 접근할 수 있게 합니다.
 ssh \
   -i "$SSH_KEY_PATH" \
   "ubuntu@$ec2_ip" \
-  "mkdir -p ~/project/nginx ~/project/postgres"
+  'install -d -m 700 \
+    "$HOME/project" \
+    "$HOME/project/nginx" \
+    "$HOME/project/postgres"'
 
 # ---------- 운영 파일 복사 ----------
 echo "${COLOR_BLUE}운영 환경파일과 Compose 설정을 복사합니다.${COLOR_NC}"
 
-# 서버에서는 Compose와 같은 ~/project 디렉터리의 .env를 사용합니다.
-scp \
+# 환경파일 내용을 SSH 표준입력으로 전달합니다.
+# 원격 파일은 생성 시점부터 소유자만 읽고 쓸 수 있게 제한합니다.
+ssh \
   -i "$SSH_KEY_PATH" \
-  "$PROD_ENV_FILE" \
-  "ubuntu@$ec2_ip":~/project/.env
+  "ubuntu@$ec2_ip" \
+  'umask 077
+   cat > "$HOME/project/.env"
+   chmod 600 "$HOME/project/.env"' \
+  <"$PROD_ENV_FILE"
 
 scp \
   -i "$SSH_KEY_PATH" \
@@ -290,11 +323,22 @@ scp \
 
 # ---------- 원격 명령에 전달할 값 안전하게 escape ----------
 printf -v remote_docker_username '%q' "$docker_user"
-printf -v remote_docker_pat '%q' "$docker_pw"
 printf -v remote_docker_repository '%q' "$docker_repo"
 printf -v remote_app_version '%q' "$APP_VERSION"
 printf -v remote_ai_worker_version '%q' "$AI_WORKER_VERSION"
 printf -v remote_deploy_services '%q' "${DEPLOY_SERVICES[*]}"
+
+
+# PAT은 SSH 명령 인자나 환경변수에 포함하지 않고 표준입력으로만 전달합니다.
+echo "${COLOR_BLUE}Docker registry에 로그인합니다.${COLOR_NC}"
+
+printf '%s' "$docker_pw" |
+  ssh \
+    -i "$SSH_KEY_PATH" \
+    "ubuntu@$ec2_ip" \
+    "docker login \
+      -u $remote_docker_username \
+      --password-stdin"
 
 # ---------- EC2 배포 자동화 ----------
 echo "${COLOR_BLUE}EC2 배포를 시작합니다.${COLOR_NC}"
@@ -302,9 +346,7 @@ echo "${COLOR_BLUE}EC2 배포를 시작합니다.${COLOR_NC}"
 ssh \
   -i "$SSH_KEY_PATH" \
   "ubuntu@$ec2_ip" \
-  "DOCKER_USERNAME=$remote_docker_username \
-   DOCKER_PAT=$remote_docker_pat \
-   DOCKER_USER=$remote_docker_username \
+  "DOCKER_USER=$remote_docker_username \
    DOCKER_REPOSITORY=$remote_docker_repository \
    APP_VERSION=$remote_app_version \
    AI_WORKER_VERSION=$remote_ai_worker_version \
@@ -313,12 +355,6 @@ ssh \
 set -euo pipefail
 
 cd "$HOME/project"
-
-echo "Docker login"
-
-# PAT을 stdin으로 전달하여 Docker login 명령 인수에 직접 넣지 않습니다.
-printf '%s' "$DOCKER_PAT" |
-  docker login -u "$DOCKER_USERNAME" --password-stdin
 
 if [ -z "${DEPLOY_SERVICES// }" ]; then
   echo "배포 대상 서비스가 없습니다."
@@ -337,14 +373,15 @@ docker compose up \
   postgres \
   redis
 
-echo "Configuring restricted application database role"
+echo "Configuring restricted database roles"
 
-# 신규·기존 DB에서 애플리케이션 제한 계정과 권한을 정렬합니다.
+# 역할 생성과 권한 설정은 Bootstrap/admin 계정으로만 실행합니다.
+# psql 명령의 line continuation 사이에는 주석을 넣지 않습니다.
 docker compose exec -T postgres \
   sh -lc '
     psql \
       -v ON_ERROR_STOP=1 \
-      -U "$DB_MIGRATION_USER" \
+      -U "$POSTGRES_USER" \
       -d "$POSTGRES_DB" \
       -f /docker-entrypoint-initdb.d/configure-app-role.sql
   '
