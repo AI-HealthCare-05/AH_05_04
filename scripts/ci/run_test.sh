@@ -36,7 +36,8 @@ EOF
 
     echo "${COLOR_BLUE}Run Pytest with Coverage${COLOR_NC}"
 
-    if ! uv run coverage run -m pytest app tests/contract; then
+    # Backend·계약 테스트와 구현된 Worker 공통 단위 테스트를 함께 실행합니다.
+    if ! uv run coverage run -m pytest app tests/contract ai_worker/tests/core; then
       echo ""
       echo "${COLOR_RED}✖ Pytest failed.${COLOR_NC}"
       echo "${COLOR_RED}→ Fix the test failures above and re-run.${COLOR_NC}"

@@ -45,11 +45,12 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 GitHub Actions와 `scripts/ci/run_test.sh`는 기본적으로 다음 명령과 동등한 Python 범위를 검증합니다.
 
 ```bash
-uv run coverage run -m pytest app tests/contract
+uv run coverage run -m pytest app tests/contract ai_worker/tests/core
 ```
 
 - `app/tests/chat_integration/`을 포함한 `app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
-- `tests/integration/`, `tests/e2e/`, `ai_worker/tests/`와 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
+- `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
+- `tests/integration/`, `tests/e2e/`, `ai_worker/tests/ocr/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`, `ai_worker/tests/evaluation/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.
