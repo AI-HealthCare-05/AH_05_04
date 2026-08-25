@@ -33,8 +33,7 @@ function StartPage() {
           </div>
 
           <div className="notice attention mvp-start__notice">
-            AI가 처방을 바꾸지 않아요. 확인된 처방과 출처 범위에서만
-            안내합니다.
+            처방전 확인, 복약 가이드와 복약 질문 기능을 제공합니다.
           </div>
 
           <Button fullWidth onClick={() => navigate('/signup')}>

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Card, MobileShell } from '../design-system/components'
 import '../design-system/prototype.css'
@@ -6,6 +6,7 @@ import './MvpPages.css'
 
 function HomePage() {
   const navigate = useNavigate()
+  const [guideMessage, setGuideMessage] = useState('')
   const today = useMemo(
     () =>
       new Intl.DateTimeFormat('ko-KR', {
@@ -22,7 +23,9 @@ function HomePage() {
         title="Dosey 도지"
         activeNavigation="홈"
         onNavigate={(item) => {
-          if (item === '가이드') navigate('/guides')
+          if (item === '가이드') {
+            setGuideMessage('최근 가이드 목록은 준비 중이에요.')
+          }
         }}
       >
         <main className="app-scroll mvp-page__content">
@@ -64,6 +67,12 @@ function HomePage() {
               <strong>일반 의약품</strong>
             </button>
           </div>
+
+          {guideMessage && (
+            <div className="notice mvp-home__navigation-message" role="status">
+              {guideMessage}
+            </div>
+          )}
 
           <Card className="mvp-home__flow-card">
             <h2>이번 주 복약 흐름</h2>

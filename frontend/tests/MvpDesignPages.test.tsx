@@ -38,7 +38,6 @@ describe('Dosey MVP design pages', () => {
             path="/prescriptions/upload"
             element={<div>처방전 업로드 화면</div>}
           />
-          <Route path="/guides" element={<div>복약 가이드 화면</div>} />
         </Routes>
       </MemoryRouter>,
     )
@@ -53,17 +52,17 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
   })
 
-  it('HOME-01 bottom navigation의 구현된 Guide CTA를 실제 route에 연결한다', () => {
+  it('최근 Guide 조회 API가 없어 Home Guide CTA를 준비 중 상태로 유지한다', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route path="/guides" element={<div>복약 가이드 화면</div>} />
         </Routes>
       </MemoryRouter>,
     )
 
     fireEvent.click(screen.getByRole('button', { name: '가이드' }))
-    expect(screen.getByText('복약 가이드 화면')).toBeTruthy()
+    expect(screen.getByText('최근 가이드 목록은 준비 중이에요.')).toBeTruthy()
+    expect(screen.getByText('오늘 약도 챙겨볼까요?')).toBeTruthy()
   })
 })

@@ -352,7 +352,7 @@ describe('ChatPage', () => {
     async (entry) => {
       renderPage(entry)
 
-      expect(await screen.findByText('먼저 복약 가이드가 필요해요')).toBeTruthy()
+      expect(await screen.findByText('먼저 확정된 처방이 필요해요')).toBeTruthy()
       expect(createChatSession).not.toHaveBeenCalled()
       expect(getChatMessages).not.toHaveBeenCalled()
     },

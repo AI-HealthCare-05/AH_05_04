@@ -37,21 +37,21 @@ class User(Base):
         String(20),
         nullable=False,
     )
-    gender: Mapped[Gender] = mapped_column(
+    gender: Mapped[Gender | None] = mapped_column(
         Enum(
             Gender,
             native_enum=False,
             length=10,
         ),
-        nullable=False,
+        nullable=True,
     )
-    birthday: Mapped[date] = mapped_column(
+    birthday: Mapped[date | None] = mapped_column(
         Date,
-        nullable=False,
+        nullable=True,
     )
-    phone_number: Mapped[str] = mapped_column(
+    phone_number: Mapped[str | None] = mapped_column(
         String(20),
-        nullable=False,
+        nullable=True,
         unique=True,
     )
     is_active: Mapped[bool] = mapped_column(

@@ -12,16 +12,11 @@ function SignupPage() {
     email: '',
     password: '',
     name: '',
-    gender: 'MALE',
-    birth_date: '',
-    phone_number: '',
   })
   const [message, setMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleChange = (
-    event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
-  ) => {
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target
     setForm((prev) => ({ ...prev, [name]: value }))
   }
@@ -54,7 +49,7 @@ function SignupPage() {
           <header className="mvp-auth__intro">
             <h1 className="mvp-page__title">Dosey 도지를 시작해 볼까요?</h1>
             <p className="mvp-page__description">
-              의료정보는 본인 확인과 동의 후 안전하게 관리합니다.
+              이름과 이메일로 Dosey 계정을 만들 수 있어요.
             </p>
           </header>
 
@@ -74,24 +69,8 @@ function SignupPage() {
             <p className="mvp-form__help">
               8자 이상, 대문자·소문자·숫자·특수문자를 각각 1개 이상 포함해 주세요.
             </p>
-            <label className="mvp-form__field">
-              성별
-              <select name="gender" value={form.gender} onChange={handleChange}>
-                <option value="MALE">남성</option>
-                <option value="FEMALE">여성</option>
-              </select>
-            </label>
-            <label className="mvp-form__field">
-              생년월일
-              <input name="birth_date" type="date" required value={form.birth_date} onChange={handleChange} />
-            </label>
-            <label className="mvp-form__field">
-              휴대전화
-              <input name="phone_number" type="tel" placeholder="010-1234-5678" required value={form.phone_number} onChange={handleChange} />
-            </label>
-
             <div className="notice">
-              서비스 이용약관, 개인정보 수집·이용, 민감정보 처리에 필수 동의합니다.
+              서비스 이용약관과 개인정보 수집·이용 내용을 확인해 주세요.
             </div>
 
             {message && <p className="mvp-form__message" role="alert">{message}</p>}

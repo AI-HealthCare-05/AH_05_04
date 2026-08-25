@@ -16,9 +16,6 @@ class TestUserMeApis:
             "email": email,
             "password": "Password123!",
             "name": "내정보테스터",
-            "gender": "FEMALE",
-            "birth_date": "1992-02-02",
-            "phone_number": "01055556666",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/v1/auth/signup", json=signup_data)
@@ -32,6 +29,9 @@ class TestUserMeApis:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["email"] == email
         assert response.json()["name"] == "내정보테스터"
+        assert response.json()["gender"] is None
+        assert response.json()["birthday"] is None
+        assert response.json()["phone_number"] is None
 
     async def test_update_user_me_success(self):
         # 사용자 등록 및 로그인
@@ -40,11 +40,10 @@ class TestUserMeApis:
             "email": email,
             "password": "Password123!",
             "name": "수정전",
-            "gender": "MALE",
-            "birth_date": "1990-10-10",
-            "phone_number": "01077778888",
         }
-        update_data = {"name": "수정후"}
+        update_data = {
+            "name": "수정후",
+        }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/v1/auth/signup", json=signup_data)
 
@@ -56,6 +55,32 @@ class TestUserMeApis:
             response = await client.patch("/api/v1/users/me", json=update_data, headers=headers)
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["name"] == "수정후"
+        assert response.json()["gender"] is None
+        assert response.json()["birthday"] is None
+        assert response.json()["phone_number"] is None
+
+    async def test_update_user_me_rejects_post_mvp_profile_fields(self):
+        email = "update_profile_fields@example.com"
+        signup_data = {
+            "email": email,
+            "password": "Password123!",
+            "name": "수정전",
+        }
+        update_data = {
+            "gender": "MALE",
+            "birthday": "1990-10-10",
+            "phone_number": "01077778888",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/v1/auth/signup", json=signup_data)
+
+            login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+            access_token = login_response.json()["access_token"]
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            response = await client.patch("/api/v1/users/me", json=update_data, headers=headers)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     async def test_get_user_me_unauthorized(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

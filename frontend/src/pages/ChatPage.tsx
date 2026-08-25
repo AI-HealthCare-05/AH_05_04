@@ -229,7 +229,7 @@ function ChatPage() {
             <Card>
               <StatusBadge tone="attention">로그인 필요</StatusBadge>
               <h1>로그인 후 복약 챗봇을 이용해 주세요</h1>
-              <p>확정된 처방에 연결된 대화만 안전하게 불러옵니다.</p>
+              <p>로그인 후 처방에 연결된 대화를 불러올 수 있어요.</p>
               <Button fullWidth onClick={() => navigate('/login')}>
                 로그인
               </Button>
@@ -250,9 +250,9 @@ function ChatPage() {
           hideNavigation
         >
           <main className="app-scroll chat-page__gate chat-page__gate--guide-required">
-            <h1>먼저 복약 가이드가 필요해요</h1>
+            <h1>먼저 확정된 처방이 필요해요</h1>
             <p>
-              챗봇은 확인된 처방과 가이드에 연결된 질문에만 답해요.
+              처방전을 등록하고 인식 결과를 확인한 뒤 이용할 수 있어요.
             </p>
             <div className="notice attention chat-page__gate-notice">
               현재 확인된 처방이 없어요. 처방전을 등록하고 인식 결과를 직접
@@ -278,13 +278,13 @@ function ChatPage() {
         <main className="chat-layout">
           <header className="chat-page__intro">
             <h1>복약 챗봇</h1>
-            <p>현재 확인된 처방과 제공된 근거 범위에서만 답해요.</p>
+            <p>확정된 처방 정보와 현재 질문으로 답변을 생성해요.</p>
           </header>
 
           <div className="chat-page__suggestions" aria-label="추천 질문">
             <button type="button">복용 방법 확인</button>
             <button type="button">복약 일정 안내</button>
-            <button type="button">불편·안전 확인</button>
+            <button type="button">복용 중 불편 질문</button>
           </div>
 
           <div className="chat-page__conversation">

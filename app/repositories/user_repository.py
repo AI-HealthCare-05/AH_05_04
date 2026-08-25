@@ -23,6 +23,9 @@ class DuplicateUserFieldError(Exception):
         super().__init__(f"Duplicate user field: {field}")
 
 
+# phone_number는 현재 가입·프로필 수정 어디서도 값을 받지 않아 이 분기가 실행되지 않지만,
+# phone_number 컬럼의 unique 제약 자체는 DB에 남아 있고 create_user()도 phone_number를 계속 받을 수 있어
+# 삭제하지 않고 방어 로직으로 유지합니다. phone 입력이 Post-MVP로 돌아오면 바로 재사용됩니다.
 def get_duplicate_user_field(
     exc: IntegrityError,
 ) -> DuplicateUserField | None:
@@ -68,14 +71,16 @@ class UserRepository:
     ) -> User | None:
         return await self.session.get(User, user_id)
 
+    # phone_number/gender/birthday는 현재 signup 호출부에서 넘기지 않아 항상 None이지만,
+    # 해당 값 입력이 Post-MVP로 돌아왔을 때 이 Repository 메서드까지 다시 만들지 않아도 되도록 남겨둡니다.
     async def create_user(
         self,
         email: str | EmailStr,
         hashed_password: str,
         name: str,
-        phone_number: str,
-        gender: Gender,
-        birthday: date,
+        phone_number: str | None = None,
+        gender: Gender | None = None,
+        birthday: date | None = None,
         *,
         is_active: bool = True,
         is_admin: bool = False,
@@ -119,19 +124,6 @@ class UserRepository:
         email: str | EmailStr,
     ) -> bool:
         result = await self.session.scalar(select(exists().where(User.email == str(email))))
-        return bool(result)
-
-    async def exists_by_phone_number(
-        self,
-        phone_number: str,
-    ) -> bool:
-        result = await self.session.scalar(
-            select(
-                exists().where(
-                    User.phone_number == phone_number,
-                )
-            )
-        )
         return bool(result)
 
     async def update_last_login(

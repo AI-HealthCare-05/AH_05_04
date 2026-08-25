@@ -48,7 +48,7 @@ function LoginPage() {
             <p className="mvp-page__eyebrow">다시 만나서 반가워요</p>
             <h1 className="mvp-page__title">도지에 로그인해 주세요</h1>
             <p className="mvp-page__description">
-              확인한 처방전과 복약 가이드를 이어서 볼 수 있어요.
+              로그인 후 처방전 등록과 복약 기능을 이용할 수 있어요.
             </p>
           </header>
 

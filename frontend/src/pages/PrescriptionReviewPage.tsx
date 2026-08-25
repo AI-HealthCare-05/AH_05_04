@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { createGuide } from '../api/guides'
 import {
   confirmPrescription,
   getOcrJob,
@@ -45,6 +44,127 @@ const requiredMedicationFieldTypes = [
   'DURATION_DAYS',
 ] as const
 
+type BlockingAction = 'UPLOAD' | 'RETRY_LATER'
+
+type ReviewBlockingState = {
+  title: string
+  message: string
+  nextAction: string
+  action: BlockingAction
+}
+
+type ReviewMessage = {
+  title: string
+  message: string
+  nextAction: string
+}
+
+type ReviewErrorState =
+  | { kind: 'ALREADY_CONFIRMED' }
+  | { kind: 'BLOCKING'; state: ReviewBlockingState }
+  | { kind: 'INLINE'; state: ReviewMessage }
+
+function getIncompleteOcrState(ocrStatus: string): ReviewBlockingState {
+  if (ocrStatus === 'FAILED') {
+    return {
+      title: '처방전 인식에 실패했어요',
+      message: '완료된 OCR 결과가 없어 검수를 시작할 수 없습니다.',
+      nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+      action: 'UPLOAD',
+    }
+  }
+
+  if (ocrStatus === 'PROCESSING') {
+    return {
+      title: '처방전을 인식하고 있어요',
+      message: 'OCR 작업이 완료되기 전에는 검수하거나 확정할 수 없습니다.',
+      nextAction: 'OCR 처리가 완료된 뒤 다시 확인해 주세요.',
+      action: 'RETRY_LATER',
+    }
+  }
+
+  return {
+    title: 'OCR 작업을 기다리고 있어요',
+    message: 'OCR 작업이 완료되기 전에는 검수하거나 확정할 수 없습니다.',
+    nextAction: 'OCR 처리가 완료된 뒤 다시 확인해 주세요.',
+    action: 'RETRY_LATER',
+  }
+}
+
+function getApiBlockingState(error: ApiError): ReviewBlockingState | null {
+  if (error.code === 'OCR_JOB_NOT_COMPLETED') {
+    return {
+      title: 'OCR 검수가 아직 준비되지 않았어요',
+      message: error.message,
+      nextAction: 'OCR 처리가 완료된 뒤 다시 확인해 주세요.',
+      action: 'RETRY_LATER',
+    }
+  }
+
+  if (error.code === 'PRESCRIPTION_REQUIRED_FIELD_MISSING') {
+    return {
+      title: '처방 확정에 필요한 항목이 부족해요',
+      message: error.message,
+      nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+      action: 'UPLOAD',
+    }
+  }
+
+  if (error.code === 'EXTRACTED_FIELD_NOT_FOUND') {
+    return {
+      title: '검수하던 항목을 찾을 수 없어요',
+      message: error.message,
+      nextAction: '최신 OCR 결과로 다시 검수해 주세요.',
+      action: 'UPLOAD',
+    }
+  }
+
+  return null
+}
+
+function getReviewErrorState(
+  error: unknown,
+  fallbackMessage: string,
+): ReviewErrorState {
+  if (error instanceof ApiError) {
+    if (error.code === 'PRESCRIPTION_ALREADY_CONFIRMED') {
+      return { kind: 'ALREADY_CONFIRMED' }
+    }
+
+    const blockingState = getApiBlockingState(error)
+    if (blockingState) return { kind: 'BLOCKING', state: blockingState }
+
+    if (error.code === 'VALIDATION_FAILED') {
+      return {
+        kind: 'INLINE',
+        state: {
+          title: '입력값을 확인해 주세요',
+          message: error.message,
+          nextAction: '원본 처방전과 대조한 뒤 표시된 항목을 수정해 주세요.',
+        },
+      }
+    }
+
+    return {
+      kind: 'INLINE',
+      state: {
+        title: '확인이 필요해요',
+        message: error.message,
+        nextAction: '잠시 후 다시 시도해 주세요.',
+      },
+    }
+  }
+
+  return {
+    kind: 'INLINE',
+    state: {
+      title: '확인이 필요해요',
+      message: fallbackMessage,
+      nextAction: '잠시 후 다시 시도해 주세요.',
+    },
+  }
+}
+
 function getFieldLabel(fieldType: string) {
   return fieldLabels[fieldType] ?? fieldType
 }
@@ -65,25 +185,38 @@ function isFieldConfirmed(
 }
 
 function getNumericFieldError(fieldType: string, value: string) {
-  if (
-    fieldType === 'DOSE_VALUE' &&
-    !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)
-  ) {
-    return '1회 복용량은 숫자 형식으로 입력해 주세요.'
+  if (fieldType === 'DOSE_VALUE') {
+    const isDecimalFormat =
+      /^[+-]?(?:(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)$/.test(value)
+    const numericValue = Number(value.replaceAll('_', ''))
+
+    if (!isDecimalFormat || !Number.isFinite(numericValue)) {
+      return '1회 복용량은 숫자 형식으로 입력해 주세요.'
+    }
+
+    if (numericValue <= 0) {
+      return '1회 복용량은 0보다 큰 숫자로 입력해 주세요.'
+    }
   }
 
-  if (
-    fieldType === 'FREQUENCY_PER_DAY' &&
-    !/^[+-]?\d+$/.test(value)
-  ) {
-    return '하루 횟수는 정수 형식으로 입력해 주세요.'
+  if (fieldType === 'FREQUENCY_PER_DAY') {
+    if (!/^[0-9]+$/.test(value)) {
+      return '하루 횟수는 정수 형식으로 입력해 주세요.'
+    }
+
+    if (Number(value) <= 0) {
+      return '하루 횟수는 0보다 큰 정수로 입력해 주세요.'
+    }
   }
 
-  if (
-    fieldType === 'DURATION_DAYS' &&
-    !/^[+-]?\d+$/.test(value)
-  ) {
-    return '복용 기간은 정수 형식으로 입력해 주세요.'
+  if (fieldType === 'DURATION_DAYS') {
+    if (!/^[0-9]+$/.test(value)) {
+      return '복용 기간은 정수 형식으로 입력해 주세요.'
+    }
+
+    if (Number(value) <= 0) {
+      return '복용 기간은 0보다 큰 정수로 입력해 주세요.'
+    }
   }
 
   return null
@@ -94,22 +227,50 @@ function PrescriptionReviewPage() {
   const [searchParams] = useSearchParams()
   const documentId = searchParams.get('document_id')
   const jobId = searchParams.get('job_id')
+  const reviewRequestKey = `${documentId ?? ''}:${jobId ?? ''}`
+  const latestReviewRequestKeyRef = useRef(reviewRequestKey)
+  latestReviewRequestKeyRef.current = reviewRequestKey
 
   const [fields, setFields] = useState<ExtractedField[]>([])
   const [draftValues, setDraftValues] = useState<Record<string, string>>({})
   const [documentUrl, setDocumentUrl] = useState<string | null>(null)
   const [prescription, setPrescription] =
     useState<PrescriptionResponse | null>(null)
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState<ReviewMessage | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
-  const [blockingMessage, setBlockingMessage] = useState('')
+  const [blockingState, setBlockingState] =
+    useState<ReviewBlockingState | null>(null)
+  const [isAlreadyConfirmed, setIsAlreadyConfirmed] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [savingFieldIds, setSavingFieldIds] = useState<Set<string>>(
     () => new Set(),
   )
   const [isConfirming, setIsConfirming] = useState(false)
-  const [isCreatingGuide, setIsCreatingGuide] = useState(false)
   const [userConfirmed, setUserConfirmed] = useState(false)
+
+  const applyReviewError = useCallback(
+    (error: unknown, fallbackMessage: string) => {
+      const errorState = getReviewErrorState(error, fallbackMessage)
+
+      if (errorState.kind === 'ALREADY_CONFIRMED') {
+        setMessage(null)
+        setBlockingState(null)
+        setIsAlreadyConfirmed(true)
+        setUserConfirmed(false)
+        return
+      }
+
+      if (errorState.kind === 'BLOCKING') {
+        setMessage(null)
+        setBlockingState(errorState.state)
+        setUserConfirmed(false)
+        return
+      }
+
+      setMessage(errorState.state)
+    },
+    [],
+  )
 
   const prescriptionFields = useMemo(
     () => fields.filter((field) => field.medication_index === 0),
@@ -158,6 +319,16 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
+  const hasMissingPrescribedDateField = useMemo(
+    () =>
+      !fields.some(
+        (field) =>
+          field.medication_index === 0 &&
+          field.field_type === 'PRESCRIBED_DATE',
+      ),
+    [fields],
+  )
+
   const hasMissingRequiredMedicationFields = useMemo(
     () =>
       medicationGroups.length === 0 ||
@@ -199,6 +370,7 @@ function PrescriptionReviewPage() {
     prescribedDateConfirmed &&
     allRequiredMedicationFieldsConfirmed &&
     allDisplayedFieldsConfirmed &&
+    !hasMissingPrescribedDateField &&
     !hasMissingRequiredMedicationFields &&
     !hasUnsavedChanges &&
     savingFieldIds.size === 0
@@ -211,30 +383,62 @@ function PrescriptionReviewPage() {
   }, [reviewReadyForAcknowledgement, userConfirmed])
 
   useEffect(() => {
-    if (!documentId || !jobId) {
-      setMessage('처방전 검수에 필요한 정보가 없습니다.')
-      setIsLoading(false)
-      return
-    }
-
+    let isDisposed = false
     let objectUrl: string | null = null
+    const isLatestRequest = () =>
+      !isDisposed &&
+      latestReviewRequestKeyRef.current === reviewRequestKey
+
+    setFields([])
+    setDraftValues({})
+    setDocumentUrl(null)
+    setPrescription(null)
+    setMessage(null)
+    setFieldErrors({})
+    setBlockingState(null)
+    setIsAlreadyConfirmed(false)
+    setSavingFieldIds(new Set())
+    setIsConfirming(false)
+    setUserConfirmed(false)
+    setIsLoading(true)
+
+    if (!documentId || !jobId) {
+      setBlockingState({
+        title: '검수 정보를 확인할 수 없어요',
+        message: '처방전 검수에 필요한 정보가 없습니다.',
+        nextAction: '처방전을 다시 업로드해 주세요.',
+        action: 'UPLOAD',
+      })
+      setIsLoading(false)
+      return () => {
+        isDisposed = true
+      }
+    }
 
     async function loadReviewData() {
       try {
-        setIsLoading(true)
-        setMessage('')
-        setBlockingMessage('')
-
         const ocrResponse = await getOcrJob(jobId as string)
+        if (!isLatestRequest()) return
 
         if (ocrResponse.data.document_id !== documentId) {
-          setBlockingMessage(
-            '검수하려는 처방전과 OCR 결과가 일치하지 않습니다. 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+          setBlockingState({
+            title: '검수를 진행할 수 없어요',
+            message: '검수하려는 처방전과 OCR 결과가 일치하지 않습니다.',
+            nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+            action: 'UPLOAD',
+          })
+          return
+        }
+
+        if (ocrResponse.data.ocr_status !== 'COMPLETED') {
+          setBlockingState(
+            getIncompleteOcrState(ocrResponse.data.ocr_status),
           )
           return
         }
 
         const documentBlob = await getPrescriptionDocumentFile(documentId)
+        if (!isLatestRequest()) return
 
         setFields(ocrResponse.data.fields)
         setDraftValues(
@@ -246,27 +450,38 @@ function PrescriptionReviewPage() {
           ),
         )
 
-        objectUrl = URL.createObjectURL(documentBlob)
-        setDocumentUrl(objectUrl)
+        const nextObjectUrl = URL.createObjectURL(documentBlob)
+        if (!isLatestRequest()) {
+          URL.revokeObjectURL(nextObjectUrl)
+          return
+        }
+        objectUrl = nextObjectUrl
+        setDocumentUrl(nextObjectUrl)
       } catch (error) {
-        setMessage(
-          error instanceof ApiError
-            ? error.message
-            : '처방전 검수 정보를 불러오는 중 오류가 발생했습니다.',
+        if (!isLatestRequest()) return
+        applyReviewError(
+          error,
+          '처방전 검수 정보를 불러오는 중 오류가 발생했습니다.',
         )
       } finally {
-        setIsLoading(false)
+        if (isLatestRequest()) setIsLoading(false)
       }
     }
 
     void loadReviewData()
 
     return () => {
+      isDisposed = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [documentId, jobId])
+  }, [applyReviewError, documentId, jobId, reviewRequestKey])
 
   const handleSaveField = async (field: ExtractedField) => {
+    if (savingFieldIds.has(field.field_id) || isConfirming || prescription) {
+      return
+    }
+
+    const saveRequestKey = reviewRequestKey
     const value = draftValues[field.field_id]?.trim()
 
     if (!value) {
@@ -298,8 +513,9 @@ function PrescriptionReviewPage() {
         delete next[field.field_id]
         return next
       })
-      setMessage('')
+      setMessage(null)
       const response = await updateExtractedField(field.field_id, value)
+      if (latestReviewRequestKeyRef.current !== saveRequestKey) return
 
       setFields((current) =>
         current.map((item) =>
@@ -312,34 +528,16 @@ function PrescriptionReviewPage() {
       }))
       setUserConfirmed(false)
     } catch (error) {
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '필드 저장 중 오류가 발생했습니다.',
-      )
+      if (latestReviewRequestKeyRef.current !== saveRequestKey) return
+      applyReviewError(error, '필드 저장 중 오류가 발생했습니다.')
     } finally {
-      setSavingFieldIds((current) => {
-        const next = new Set(current)
-        next.delete(field.field_id)
-        return next
-      })
-    }
-  }
-
-  const handleCreateGuide = async (prescriptionId: string) => {
-    try {
-      setIsCreatingGuide(true)
-      setMessage('')
-      const response = await createGuide(prescriptionId)
-      navigate(`/guides/${response.data.guide_id}`)
-    } catch (error) {
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '복약 가이드 생성 중 오류가 발생했습니다.',
-      )
-    } finally {
-      setIsCreatingGuide(false)
+      if (latestReviewRequestKeyRef.current === saveRequestKey) {
+        setSavingFieldIds((current) => {
+          const next = new Set(current)
+          next.delete(field.field_id)
+          return next
+        })
+      }
     }
   }
 
@@ -348,30 +546,27 @@ function PrescriptionReviewPage() {
       !documentId ||
       !canConfirmPrescription ||
       isConfirming ||
-      isCreatingGuide
+      prescription
     ) {
       return
     }
 
-    let confirmedPrescription: PrescriptionResponse
+    const confirmationRequestKey = reviewRequestKey
 
     try {
       setIsConfirming(true)
-      setMessage('')
-      confirmedPrescription = await confirmPrescription(documentId)
-      setPrescription(confirmedPrescription)
+      setMessage(null)
+      const response = await confirmPrescription(documentId)
+      if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
+      setPrescription(response)
     } catch (error) {
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '처방 확정 중 오류가 발생했습니다.',
-      )
-      return
+      if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
+      applyReviewError(error, '처방 확정 중 오류가 발생했습니다.')
     } finally {
-      setIsConfirming(false)
+      if (latestReviewRequestKeyRef.current === confirmationRequestKey) {
+        setIsConfirming(false)
+      }
     }
-
-    await handleCreateGuide(confirmedPrescription.data.prescription_id)
   }
 
   const renderField = (field: ExtractedField) => {
@@ -405,6 +600,7 @@ function PrescriptionReviewPage() {
             value={draftValue}
             inputMode={inputMode}
             aria-invalid={Boolean(fieldError)}
+            disabled={isSaving || isConfirming || Boolean(prescription)}
             onChange={(event) => {
               setDraftValues((current) => ({
                 ...current,
@@ -421,7 +617,7 @@ function PrescriptionReviewPage() {
           />
           <Button
             variant={confirmed ? 'secondary' : 'primary'}
-            disabled={isSaving}
+            disabled={isSaving || isConfirming || Boolean(prescription)}
             onClick={() => handleSaveField(field)}
           >
             {isSaving ? '저장 중' : confirmed ? '수정 저장' : '확인'}
@@ -446,35 +642,103 @@ function PrescriptionReviewPage() {
   if (isLoading) {
     return (
       <div className="prescription-review-page">
-        <MobileShell title="Dosey 도지" hideNavigation>
-          <div className="app-scroll prescription-review__loading" role="status">
-            처방전 검수 정보를 불러오고 있어요.
-          </div>
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <div role="status">
+              <Card className="prescription-review__state-card">
+                <span className="prescription-review__loading-mark" aria-hidden="true" />
+                <p className="prescription-review__state-eyebrow">OCR 결과 불러오는 중</p>
+                <h1>처방전 검수를 준비하고 있어요</h1>
+                <p>처방전 검수 정보를 불러오고 있어요.</p>
+              </Card>
+            </div>
+          </main>
         </MobileShell>
       </div>
     )
   }
 
-  if (blockingMessage) {
+  if (blockingState) {
     return (
       <div className="prescription-review-page">
         <MobileShell
           title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
           hideNavigation
         >
-          <main className="app-scroll prescription-review prescription-review__blocked">
-            <div className="prescription-review__error" role="alert">
-              <strong>검수를 진행할 수 없어요</strong>
-              <span>{blockingMessage}</span>
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <div className="prescription-review__error prescription-review__error--blocking" role="alert">
+              <span className="prescription-review__warning-mark" aria-hidden="true" />
+              <strong>{blockingState.title}</strong>
+              <span>{blockingState.message}</span>
+              <span>{blockingState.nextAction}</span>
             </div>
             <Button
               fullWidth
               variant="secondary"
-              onClick={() => navigate('/prescriptions/upload')}
+              onClick={() =>
+                blockingState.action === 'UPLOAD'
+                  ? navigate('/prescriptions/upload')
+                  : navigate(0)
+              }
             >
-              처방전 다시 업로드하기
+              {blockingState.action === 'UPLOAD'
+                ? '처방전 다시 업로드하기'
+                : '상태 다시 확인하기'}
             </Button>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
+  if (isAlreadyConfirmed) {
+    return (
+      <div className="prescription-review-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <Card className="prescription-review__complete prescription-review__state-card">
+              <span className="prescription-review__complete-mark" aria-hidden="true" />
+              <StatusBadge>확정 완료</StatusBadge>
+              <h2>이미 확정된 처방이에요</h2>
+              <p>확정된 처방의 OCR 항목은 더 이상 수정할 수 없습니다.</p>
+            </Card>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
+  if (prescription) {
+    return (
+      <div className="prescription-review-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <Card className="prescription-review__complete prescription-review__state-card">
+              <span className="prescription-review__complete-mark" aria-hidden="true" />
+              <StatusBadge>확정 완료</StatusBadge>
+              <h2>처방정보가 확정되었어요</h2>
+              <p>확정된 처방정보는 더 이상 수정할 수 없습니다.</p>
+              <strong>
+                등록된 약물 {prescription.data.medications.length}개
+              </strong>
+            </Card>
           </main>
         </MobileShell>
       </div>
@@ -486,12 +750,13 @@ function PrescriptionReviewPage() {
       <MobileShell
         title="Dosey 도지"
         onBack={() => navigate('/prescriptions/upload')}
+        backPlacement="content"
         hideNavigation
       >
         <main className="app-scroll prescription-review">
           <section className="prescription-review__intro">
             <div className="prescription-review__success-icon" aria-hidden="true">
-              ✓
+              <span />
             </div>
             <div>
               <p>전체 인식 성공</p>
@@ -504,12 +769,13 @@ function PrescriptionReviewPage() {
             입력하고 원본과 대조해 주세요.
           </div>
 
-          {hasMissingRequiredMedicationFields && (
+          {(hasMissingPrescribedDateField ||
+            hasMissingRequiredMedicationFields) && (
             <div className="prescription-review__error" role="alert">
               <strong>필수 처방 항목이 누락됐어요</strong>
               <span>
-                약 이름·1회 복용량·하루 횟수·복용 기간을 모두 검수할 수
-                있도록 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.
+                처방일·약 이름·1회 복용량·하루 횟수·복용 기간을 모두 검수할
+                수 있도록 처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.
               </span>
               <Button
                 variant="secondary"
@@ -522,28 +788,38 @@ function PrescriptionReviewPage() {
 
           {message && (
             <div className="prescription-review__error" role="alert">
-              <strong>확인이 필요해요</strong>
-              <span>{message}</span>
+              <strong>{message.title}</strong>
+              <span>{message.message}</span>
+              <span>{message.nextAction}</span>
             </div>
           )}
 
           {documentUrl && (
             <details className="prescription-review__source">
               <summary>
-                <span>원본 처방전 보기</span>
-                <span>직접 대조하기</span>
+                <span className="prescription-review__source-heading">
+                  <span className="prescription-review__document-mark" aria-hidden="true" />
+                  <span>
+                    <strong>원본 처방전 확인</strong>
+                    <small>인식 결과와 직접 대조해 주세요</small>
+                  </span>
+                </span>
+                <span className="prescription-review__source-action">원본 보기</span>
               </summary>
               <iframe src={documentUrl} title="원본 처방전" />
             </details>
           )}
 
           {prescriptionFields.length > 0 && (
-            <Card className="prescription-review__card">
+            <Card className="prescription-review__card prescription-review__card--prescription">
               <div className="prescription-review__card-title">
                 <div className="prescription-review__med-icon" aria-hidden="true">
-                  ●
+                  <span className="prescription-review__calendar-mark" />
                 </div>
-                <strong>처방 정보</strong>
+                <div className="prescription-review__card-heading">
+                  <span>처방 정보</span>
+                  <strong>처방일</strong>
+                </div>
                 <StatusBadge
                   tone={
                     prescriptionFields.every((field) =>
@@ -560,6 +836,13 @@ function PrescriptionReviewPage() {
                     : '확인 필요'}
                 </StatusBadge>
               </div>
+              <h2>
+                {draftValues[
+                  prescriptionFields.find(
+                    (field) => field.field_type === 'PRESCRIBED_DATE',
+                  )?.field_id ?? ''
+                ] || '처방일 확인 필요'}
+              </h2>
               <div className="prescription-review__fields">
                 {prescriptionFields.map(renderField)}
               </div>
@@ -576,24 +859,49 @@ function PrescriptionReviewPage() {
             const summaryValue = medicationName
               ? draftValues[medicationName.field_id]
               : ''
+            const getMedicationValue = (fieldType: string) => {
+              const field = group.fields.find(
+                (item) => item.field_type === fieldType,
+              )
+              return field ? draftValues[field.field_id]?.trim() ?? '' : ''
+            }
+            const doseValue = getMedicationValue('DOSE_VALUE')
+            const doseUnit = getMedicationValue('DOSE_UNIT')
+            const frequency = getMedicationValue('FREQUENCY_PER_DAY')
+            const duration = getMedicationValue('DURATION_DAYS')
+            const timing = getMedicationValue('TIMING')
+            const medicationSummary = [
+              doseValue ? `1회 ${doseValue}${doseUnit ? ` ${doseUnit}` : ''}` : '',
+              frequency ? `하루 ${frequency}회` : '',
+              duration ? `${duration}일 복용` : '',
+              timing,
+            ].filter(Boolean)
 
             return (
               <Card className="prescription-review__card" key={group.index}>
                 <div className="prescription-review__card-title">
                   <div className="prescription-review__med-icon" aria-hidden="true">
-                    ●
+                    <span className="prescription-review__med-dot" />
                   </div>
-                  <strong>처방약 {groupIndex + 1}</strong>
+                  <div className="prescription-review__card-heading">
+                    <span>처방약 {groupIndex + 1}</span>
+                    <strong>약물 정보</strong>
+                  </div>
                   <StatusBadge tone={allConfirmed ? 'neutral' : 'attention'}>
-                    {allConfirmed ? '인식 완료' : '확인 필요'}
+                    {allConfirmed ? '확인 완료' : '확인 필요'}
                   </StatusBadge>
                 </div>
-                <h2>{summaryValue || '확인된 약 이름'}</h2>
+                <h2>{summaryValue || '약 이름 확인 필요'}</h2>
                 <p className="prescription-review__card-summary">
-                  1회량 · 하루 횟수 · 복용 기간 · 복용 조건
+                  {medicationSummary.length > 0
+                    ? medicationSummary.join(' · ')
+                    : '세부 복용 정보를 확인해 주세요'}
                 </p>
                 <details className="prescription-review__editor">
-                  <summary>세부 항목 확인 및 수정</summary>
+                  <summary>
+                    <span>세부 항목 확인 및 수정</span>
+                    <span className="prescription-review__editor-chevron" aria-hidden="true" />
+                  </summary>
                   <div className="prescription-review__fields">
                     {group.fields.map(renderField)}
                   </div>
@@ -612,7 +920,7 @@ function PrescriptionReviewPage() {
                 <input
                   type="checkbox"
                   checked={userConfirmed}
-                  disabled={!reviewReadyForAcknowledgement}
+                  disabled={!reviewReadyForAcknowledgement || isConfirming}
                   onChange={(event) => setUserConfirmed(event.target.checked)}
                 />
                 <span>원본 처방전과 모든 항목을 직접 확인했습니다.</span>
@@ -630,14 +938,11 @@ function PrescriptionReviewPage() {
                 disabled={
                   !canConfirmPrescription ||
                   isConfirming ||
-                  isCreatingGuide ||
                   savingFieldIds.size > 0
                 }
                 onClick={handleConfirmPrescription}
               >
-                {isConfirming
-                  ? '처방 확정 중...'
-                  : '확정하고 가이드 만들기'}
+                {isConfirming ? '처방 확정 중...' : '처방 확정'}
               </Button>
 
               <p className="prescription-review__progress">
@@ -646,37 +951,6 @@ function PrescriptionReviewPage() {
             </>
           )}
 
-          {prescription && (
-            <Card className="prescription-review__complete">
-              <StatusBadge>
-                {isCreatingGuide ? '가이드 생성 중' : '확정 완료'}
-              </StatusBadge>
-              <h2>
-                {isCreatingGuide
-                  ? '복약 가이드를 만들고 있어요'
-                  : '처방정보가 확정되었어요'}
-              </h2>
-              <p>
-                {isCreatingGuide
-                  ? '확인된 처방정보를 기준으로 안전한 복약 안내를 준비하고 있어요.'
-                  : '확인된 처방정보만 이후 복약 가이드와 일정에 사용합니다.'}
-              </p>
-              <strong>
-                등록된 약물 {prescription.data.medications.length}개
-              </strong>
-              {!isCreatingGuide && message && (
-                <Button
-                  fullWidth
-                  style={{ marginTop: 14 }}
-                  onClick={() =>
-                    void handleCreateGuide(prescription.data.prescription_id)
-                  }
-                >
-                  가이드 생성 다시 시도
-                </Button>
-              )}
-            </Card>
-          )}
         </main>
       </MobileShell>
     </div>

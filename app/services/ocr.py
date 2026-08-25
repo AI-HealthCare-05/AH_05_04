@@ -44,6 +44,7 @@ def _to_job_data(job: OcrJob, fields: list[ExtractedField]) -> OcrJobData:
         document_id=job.document_id,
         ocr_status=OcrJobStatus(job.ocr_status),
         error_code=job.error_code,
+        error_message=job.error_message,
         created_at=job.created_at,
         completed_at=job.completed_at,
         fields=[_to_field_data(field) for field in fields],

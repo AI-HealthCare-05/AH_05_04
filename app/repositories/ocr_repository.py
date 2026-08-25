@@ -62,7 +62,7 @@ class OcrRepository:
             select(OcrJob)
             .options(selectinload(OcrJob.extracted_fields))
             .where(OcrJob.document_id == document.id, OcrJob.ocr_status == OcrStatus.COMPLETED)
-            .order_by(OcrJob.created_at.desc())
+            .order_by(OcrJob.created_at.desc(), OcrJob.created_sequence.desc())
         )
         return result.scalars().first()
 
