@@ -43,6 +43,8 @@ frontend/coverage/
 frontend/.env*
 
 # Runtime / generated artifacts
+.playwright-cli/
+.pnpm-store/
 artifacts/
 outputs/
 uploads/
