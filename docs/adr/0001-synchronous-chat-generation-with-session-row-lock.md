@@ -101,6 +101,6 @@ Production 배포 전 다음 내용을 실제 환경 기준으로 `docs/deployme
 ## 관련 문서
 
 - [복약 챗봇 AI Backend 연동 설계](../designs/ceohwj/medication-chat-ai-backend-integration-design.md)
-- [복약 챗봇 Backend–AI Core 계약](../contracts/medication/medication-chat-ai-backend.md)
+- [복약 챗봇 Backend–AI Core 계약](../contracts/current/medication-chat-ai-backend.md)
 - [API 명세](../api.md)
 - [배포 가이드](../deployment.md)

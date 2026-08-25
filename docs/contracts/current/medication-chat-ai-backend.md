@@ -1,6 +1,6 @@
 # 복약 챗봇 Backend–AI Core 계약
 
-> **적용 구분:** 이 문서는 현재 MVP의 동기 AI Core 호출 경계다. [비동기 Job 계약 v1](../jobs/async-job-v1.md)과 [Safety Result 계약 v1](../safety/safety-result-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. 비동기 전환 후에도 Provider에 내부 식별자와 불필요한 의료 데이터를 보내지 않는 경계는 유지한다.
+> **적용 구분:** 이 문서는 현재 MVP의 동기 AI Core 호출 경계다. [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md)과 [Safety Result 계약 v1](../targets/post-mvp-1/safety-result-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. 비동기 전환 후에도 Provider에 내부 식별자와 불필요한 의료 데이터를 보내지 않는 경계는 유지한다.
 
 ## 목적과 적용 범위
 
