@@ -123,3 +123,32 @@ export async function apiRequest<T>(
 
   return (await response.json()) as T
 }
+
+export async function apiBlobRequest(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<Blob> {
+  const { accessToken, headers, ...requestOptions } = options
+
+  const token =
+    accessToken ?? localStorage.getItem('access_token')
+
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    ...requestOptions,
+    credentials: 'include',
+    headers: {
+      ...headers,
+      ...(token
+        ? {
+            Authorization: `Bearer ${token}`,
+          }
+        : {}),
+    },
+  })
+
+  if (!response.ok) {
+    throw await createApiError(response)
+  }
+
+  return response.blob()
+}
