@@ -92,7 +92,7 @@ CHAT_MESSAGE.session_id
 
 MVP는 요청한 클라이언트가 같은 HTTP 요청에서 완성 답변을 받는 동기 request-response 방식이다. 외부 OpenAI I/O는 FastAPI 이벤트 루프를 막지 않도록 `AsyncOpenAI`와 `await`를 사용한다. 여기서 동기는 blocking 호출을 뜻하지 않고, 별도 Job이나 결과 조회 API를 사용하지 않는다는 뜻이다.
 
-AI 구현 위치는 기존 복약 가이드 모듈의 sibling인 `app/services/chat_ai/`이다. 이 경로는 Backend CODEOWNER 영역이므로 `@phina-io`의 리뷰를 받는다. 역할은 파일 위치가 아니라 인터페이스로 나눈다. AI 모듈은 FastAPI Request·Response, SQLAlchemy 모델, DB Session, HTTP 상태 코드와 메시지 저장 상태를 참조하지 않는다.
+AI 구현 위치는 기존 복약 가이드 모듈의 sibling인 `backend/app/services/chat_ai/`이다. 이 경로는 Backend CODEOWNER 영역이므로 `@phina-io`의 리뷰를 받는다. 역할은 파일 위치가 아니라 인터페이스로 나눈다. AI 모듈은 FastAPI Request·Response, SQLAlchemy 모델, DB Session, HTTP 상태 코드와 메시지 저장 상태를 참조하지 않는다.
 
 ### 생성 방식
 
@@ -103,7 +103,7 @@ AI 구현 위치는 기존 복약 가이드 모듈의 sibling인 `app/services/c
 ## 모듈 구성
 
 ```text
-app/services/chat_ai/
+backend/app/services/chat_ai/
 ├── __init__.py       # Backend가 사용할 공개 타입과 생성기 export
 ├── schemas.py        # AI 내부 입력·출력 모델
 ├── prompt.py         # 시스템 프롬프트와 버전
@@ -111,7 +111,7 @@ app/services/chat_ai/
 ├── generator.py      # 입력 직렬화, 전체 제한시간과 결과 조정
 └── exceptions.py     # Provider-neutral 도메인 오류
 
-app/tests/chat_ai/
+backend/app/tests/chat_ai/
 ├── __init__.py
 ├── conftest.py       # Chat AI 테스트의 애플리케이션 DB fixture 격리
 ├── test_schemas.py
@@ -120,7 +120,7 @@ app/tests/chat_ai/
 └── test_smoke.py
 ```
 
-OpenAI Python SDK는 복약 가이드 작업에서 이미 추가되었으므로 `pyproject.toml`과 `uv.lock`은 변경하지 않는다. 이번 AI 담당 PR은 `app/core/config.py`, `app/dependencies/`, `app/main.py`도 변경하지 않는다.
+OpenAI Python SDK는 복약 가이드 작업에서 이미 추가되었으므로 `pyproject.toml`과 `uv.lock`은 변경하지 않는다. 이번 AI 담당 PR은 `backend/app/core/config.py`, `backend/app/dependencies/`, `backend/app/main.py`도 변경하지 않는다.
 
 ## 내부 계약
 
@@ -374,7 +374,7 @@ Backend Service
 
 ### 테스트 격리
 
-현재 `app/tests/conftest.py`에는 session·function 범위의 autouse PostgreSQL fixture인 `initialize_database`와 `isolate_database`가 있다. `app/tests/chat_ai/conftest.py`에서 두 fixture를 같은 이름의 no-op fixture로 재정의해 순수 Chat AI 단위 테스트가 DB 연결을 요구하지 않게 한다. 전역 Backend fixture와 다른 테스트 디렉터리는 변경하지 않는다.
+현재 `backend/app/tests/conftest.py`에는 session·function 범위의 autouse PostgreSQL fixture인 `initialize_database`와 `isolate_database`가 있다. `backend/app/tests/chat_ai/conftest.py`에서 두 fixture를 같은 이름의 no-op fixture로 재정의해 순수 Chat AI 단위 테스트가 DB 연결을 요구하지 않게 한다. 전역 Backend fixture와 다른 테스트 디렉터리는 변경하지 않는다.
 
 ### 선택적 실제 API 스모크 테스트
 
@@ -446,7 +446,7 @@ AI 담당 PR은 설정 모듈과 환경변수 예시 파일을 수정하지 않�
 
 ## 완료 기준
 
-- `app/services/chat_ai/`가 DB·FastAPI와 독립된 모듈로 설계되어 있다.
+- `backend/app/services/chat_ai/`가 DB·FastAPI와 독립된 모듈로 설계되어 있다.
 - 입력과 출력 계약이 Pydantic 모델로 구현 가능하게 정의되어 있다.
 - 현재 질문과 확정 약물 정보가 최소 JSON payload로 전달된다.
 - `gpt-4o-mini` 비스트리밍 응답에서 평문 content와 실제 model ID를 추출한다.
