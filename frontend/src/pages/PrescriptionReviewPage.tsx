@@ -15,6 +15,7 @@ import {
   MobileShell,
   StatusBadge,
 } from '../design-system/components'
+import { createGuide } from '../api/guides'
 import '../design-system/prototype.css'
 import './PrescriptionReviewPage.css'
 
@@ -229,6 +230,7 @@ function PrescriptionReviewPage() {
   const jobId = searchParams.get('job_id')
   const reviewRequestKey = `${documentId ?? ''}:${jobId ?? ''}`
   const latestReviewRequestKeyRef = useRef(reviewRequestKey)
+  const guideCreationRequestRef = useRef<symbol | null>(null)
   latestReviewRequestKeyRef.current = reviewRequestKey
 
   const [fields, setFields] = useState<ExtractedField[]>([])
@@ -246,6 +248,10 @@ function PrescriptionReviewPage() {
     () => new Set(),
   )
   const [isConfirming, setIsConfirming] = useState(false)
+  const [isCreatingGuide, setIsCreatingGuide] = useState(false)
+  const [guideCreationError, setGuideCreationError] = useState<string | null>(
+    null,
+  )
   const [userConfirmed, setUserConfirmed] = useState(false)
 
   const applyReviewError = useCallback(
@@ -399,6 +405,9 @@ function PrescriptionReviewPage() {
     setIsAlreadyConfirmed(false)
     setSavingFieldIds(new Set())
     setIsConfirming(false)
+    setIsCreatingGuide(false)
+    setGuideCreationError(null)
+    guideCreationRequestRef.current = null
     setUserConfirmed(false)
     setIsLoading(true)
 
@@ -541,6 +550,46 @@ function PrescriptionReviewPage() {
     }
   }
 
+  const handleCreateGuide = async (prescriptionId: string) => {
+    if (guideCreationRequestRef.current) return
+
+    const requestToken = Symbol('guide-creation')
+    const guideRequestKey = reviewRequestKey
+    guideCreationRequestRef.current = requestToken
+
+    try {
+      setIsCreatingGuide(true)
+      setGuideCreationError(null)
+      const response = await createGuide(prescriptionId)
+      if (
+        latestReviewRequestKeyRef.current !== guideRequestKey ||
+        guideCreationRequestRef.current !== requestToken
+      ) {
+        return
+      }
+      navigate(`/guides/${response.data.guide_id}`)
+    } catch (error) {
+      if (
+        latestReviewRequestKeyRef.current !== guideRequestKey ||
+        guideCreationRequestRef.current !== requestToken
+      ) {
+        return
+      }
+      setGuideCreationError(
+        error instanceof ApiError
+          ? error.message
+          : '복약 가이드를 만드는 중 오류가 발생했습니다.',
+      )
+    } finally {
+      if (guideCreationRequestRef.current === requestToken) {
+        guideCreationRequestRef.current = null
+        if (latestReviewRequestKeyRef.current === guideRequestKey) {
+          setIsCreatingGuide(false)
+        }
+      }
+    }
+  }
+
   const handleConfirmPrescription = async () => {
     if (
       !documentId ||
@@ -559,6 +608,7 @@ function PrescriptionReviewPage() {
       const response = await confirmPrescription(documentId)
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       setPrescription(response)
+      void handleCreateGuide(response.data.prescription_id)
     } catch (error) {
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       applyReviewError(error, '처방 확정 중 오류가 발생했습니다.')
@@ -721,6 +771,12 @@ function PrescriptionReviewPage() {
   }
 
   if (prescription) {
+    const guideStatus = isCreatingGuide
+      ? '가이드 생성 중'
+      : guideCreationError
+        ? '가이드 생성 필요'
+        : '확정 완료'
+
     return (
       <div className="prescription-review-page">
         <MobileShell
@@ -732,12 +788,39 @@ function PrescriptionReviewPage() {
           <main className="app-scroll prescription-review prescription-review__state-screen">
             <Card className="prescription-review__complete prescription-review__state-card">
               <span className="prescription-review__complete-mark" aria-hidden="true" />
-              <StatusBadge>확정 완료</StatusBadge>
+              <StatusBadge tone={guideCreationError ? 'attention' : 'neutral'}>
+                {guideStatus}
+              </StatusBadge>
               <h2>처방정보가 확정되었어요</h2>
-              <p>확정된 처방정보는 더 이상 수정할 수 없습니다.</p>
+              <p>
+                {isCreatingGuide
+                  ? '확정된 처방정보로 복약 가이드를 만들고 있어요.'
+                  : guideCreationError
+                    ? '처방은 확정되었지만 복약 가이드를 만들지 못했어요. 가이드 생성만 다시 시도할 수 있습니다.'
+                    : '확정된 처방정보는 더 이상 수정할 수 없습니다.'}
+              </p>
               <strong>
                 등록된 약물 {prescription.data.medications.length}개
               </strong>
+              {guideCreationError && (
+                <p className="prescription-review__guide-error" role="alert">
+                  {guideCreationError}
+                </p>
+              )}
+              {(isCreatingGuide || guideCreationError) && (
+                <Button
+                  fullWidth
+                  className="prescription-review__guide-action"
+                  disabled={isCreatingGuide}
+                  onClick={() =>
+                    handleCreateGuide(prescription.data.prescription_id)
+                  }
+                >
+                  {isCreatingGuide
+                    ? '가이드 생성 중...'
+                    : '가이드 생성 다시 시도'}
+                </Button>
+              )}
             </Card>
           </main>
         </MobileShell>

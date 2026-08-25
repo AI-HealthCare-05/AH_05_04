@@ -599,10 +599,29 @@
   color: var(--ds-action);
 }
 
-.prescription-review__complete > strong:last-child {
+.prescription-review__complete > strong {
   margin-top: 6px;
   color: var(--ds-action);
   font-size: 13px;
+}
+
+.prescription-review__complete .prescription-review__guide-error {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #efc18f;
+  border-radius: 14px;
+  background: #fff8ef;
+  color: #915416;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.prescription-review-page .prescription-review__guide-action {
+  margin-top: 14px;
+  border-radius: 14px;
 }
 
 @media (max-width: 374px) {
