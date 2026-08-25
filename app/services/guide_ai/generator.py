@@ -1,4 +1,5 @@
 import asyncio
+import json
 import math
 
 from app.services.guide_ai.client import GuideProvider
@@ -12,7 +13,6 @@ from app.services.guide_ai.renderer import render_plaintext_guide
 from app.services.guide_ai.schemas import (
     GuideGenerationInput,
     GuideGenerationResult,
-    MedicationPromptItem,
 )
 from app.services.guide_ai.validators import validate_generated_draft
 
@@ -51,17 +51,9 @@ class GuideGenerator:
 
     @staticmethod
     def _build_provider_input(guide_input: GuideGenerationInput) -> str:
-        serialized_items: list[str] = []
-        for source_index, medication in enumerate(guide_input.medications):
-            has_complete_dose = medication.dose_value is not None and medication.dose_unit is not None
-            item = MedicationPromptItem(
-                source_index=source_index,
-                medication_name=medication.medication_name,
-                dose_value=medication.dose_value if has_complete_dose else None,
-                dose_unit=medication.dose_unit if has_complete_dose else None,
-                frequency_per_day=medication.frequency_per_day,
-                timing_text=medication.timing_text,
-                duration_days=medication.duration_days,
-            )
-            serialized_items.append(item.model_dump_json(exclude_none=True))
-        return f"[{','.join(serialized_items)}]"
+        # 확정 처방값은 Backend renderer가 붙이므로 Provider에는 순서 locator만 전달합니다.
+        # 불필요한 처방값 노출과 모델의 숫자·단위 재생성을 함께 차단합니다.
+        return json.dumps(
+            [{"source_index": source_index} for source_index, _ in enumerate(guide_input.medications)],
+            separators=(",", ":"),
+        )
