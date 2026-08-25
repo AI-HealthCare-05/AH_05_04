@@ -16,43 +16,44 @@ OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단
 
 이 기록은 Issue #38 구현·merge 완료와 분리된 production deployment gate입니다. 대상 환경이 정해지기 전에 값을 추정하거나 승인자를 대신 기입하지 않습니다. 아래 표가 비어 있거나 조건을 충족하지 않으면 구현 검증 통과 여부와 관계없이 해당 환경에 배포할 수 없습니다.
 
-| 항목 | 배포 기록 |
-| --- | --- |
-| 환경·배포 식별자 |  |
-| 확인일·확인자 |  |
-| 실제 OpenAI 모델 | 실제 `OPENAI_MODEL`: ____ (코드 기본값: `gpt-4o-mini`) |
-| OpenAI 전체 timeout `T` | 실제 `OPENAI_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초) |
-| CLOVA OCR timeout `C` | 실제 `CLOVA_OCR_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초) |
-| 애플리케이션 처리 여유 `M` | ____초 (기본 참고값: 5초) |
-| 동일 세션 최대 동시 전송 `N` | 코드로 강제되는 admission 한도: ____ / 초과 시 응답: ____ |
-| Nginx read timeout | 실제 `proxy_read_timeout`: ____초 / 필요 하한 `max(C + M, N × T + M)`: ____초 / 충족 여부: ____ |
-| MySQL lock wait timeout | 실제 `innodb_lock_wait_timeout`: ____초 / 필요 하한 `(N - 1) × T + M`: ____초 / 초과 여부: ____ |
-| 애플리케이션 replica 수 `R` |  |
-| replica별 Uvicorn worker 수 `W` |  |
-| worker별 in-flight OCR | CLOVA 호출 중인 요청: ____ |
-| worker별 in-flight 가이드 | OpenAI 호출 중인 요청: ____ |
-| worker별 in-flight chat | OpenAI 호출 중인 요청과 lock waiter를 모두 포함: ____ |
-| worker별 전체 in-flight AI | OCR + 가이드 + chat 합계: ____ |
-| worker별 비AI 예비 connection | 인증·처방 조회 등을 위해 ____개 예약 |
-| process별 DB pool | 실제 pool size: ____ / overflow: ____ / 총 수용량: ____ |
-| MySQL 전체 connection 예산 | 실제 `max_connections`: ____ / 운영 예비: ____ / `R × W × (pool + overflow) + 운영 예비`: ____ / 충족 여부: ____ |
-| DB connection wait 정책 | pool wait timeout·queue 정책: ____ / 허용 가능한 대기: ____ |
-| 외부 생성 중 DB connection 점유 | tradeoff 승인 여부·승인자: ____ |
-| 수용량 판정 | `전체 in-flight AI <= pool + overflow - 비AI 예비 connection`: ____ |
-| 가이드 OpenAI 실호출 | `RUN_OPENAI_SMOKE=1` 실행 환경·일시·결과: ____ |
-| 챗봇 OpenAI 실호출 | `RUN_OPENAI_CHAT_SMOKE=1` 실행 환경·일시·결과: ____ |
+| 항목 | 배포 기록                                                                                                        |
+| --- |------------------------------------------------------------------------------------------------------------------|
+| 환경·배포 식별자 |                                                                                                                  |
+| 확인일·확인자 |                                                                                                                  |
+| 실제 OpenAI 모델 | 실제 `OPENAI_MODEL`: ____ (코드 기본값: `gpt-4o-mini`)                                                           |
+| OpenAI 전체 timeout `T` | 실제 `OPENAI_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초)                                                        |
+| CLOVA OCR timeout `C` | 실제 `CLOVA_OCR_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초)                                                     |
+| 애플리케이션 처리 여유 `M` | ____초 (기본 참고값: 5초)                                                                                        |
+| 동일 세션 최대 동시 전송 `N` | 코드로 강제되는 admission 한도: ____ / 초과 시 응답: ____                                                        |
+| Nginx read timeout | 실제 `proxy_read_timeout`: ____초 / 필요 하한 `max(C + M, N × T + M)`: ____초 / 충족 여부: ____                  |
+| PostgreSQL lock wait timeout | 실제 `lock_timeout`: ____ (`0`은 제한 없음) / 유한 설정 시 필요 하한 `(N - 1) × T + M`: ____초 / 충족 여부: ____|
+| 애플리케이션 replica 수 `R` |                                                                                                                  |
+| replica별 Uvicorn worker 수 `W` |                                                                                                                  |
+| worker별 in-flight OCR | CLOVA 호출 중인 요청: ____                                                                                       |
+| worker별 in-flight 가이드 | OpenAI 호출 중인 요청: ____                                                                                      |
+| worker별 in-flight chat | OpenAI 호출 중인 요청과 lock waiter를 모두 포함: ____                                                            |
+| worker별 전체 in-flight AI | OCR + 가이드 + chat 합계: ____                                                                                   |
+| worker별 비AI 예비 connection | 인증·처방 조회 등을 위해 ____개 예약                                                                             |
+| process별 DB pool | 실제 pool size: ____ / overflow: ____ / 총 수용량: ____                                                          |
+| PostgreSQL 전체 connection 예산 | 실제 `max_connections`: ____ / 운영 예비: ____ / `R × W × (pool + overflow) + 운영 예비`: ____ / 충족 여부: ____ |
+| DB connection wait 정책 | pool wait timeout·queue 정책: ____ / 허용 가능한 대기: ____                                                      |
+| 외부 생성 중 DB connection 점유 | tradeoff 승인 여부·승인자: ____                                                                                  |
+| 수용량 판정 | `전체 in-flight AI <= pool + overflow - 비AI 예비 connection`: ____                                              |
+| 가이드 OpenAI 실호출 | `RUN_OPENAI_SMOKE=1` 실행 환경·일시·결과: ____                                                                   |
+| 챗봇 OpenAI 실호출 | `RUN_OPENAI_CHAT_SMOKE=1` 실행 환경·일시·결과: ____                                                              |
 
-`N`은 문서에 적은 예상값이 아니라 lock 획득 전에 코드가 실제로 강제하는 동일 세션 admission 한도여야 합니다. 현재 구현은 세 개 이상의 요청도 직렬화하며 최대 동시 전송 수를 제한하지 않으므로 유한한 `N`이 없습니다. 따라서 현재 상태에서는 모든 허용 요청을 포괄하는 Nginx·MySQL timeout 하한을 계산할 수 없으며 Production 배포가 차단됩니다.
+`N`은 문서에 적은 예상값이 아니라 lock 획득 전에 코드가 실제로 강제하는 동일 세션 admission 한도여야 합니다. 현재 구현은 세 개 이상의 요청도 직렬화하며 최대 동시 전송 수를 제한하지 않으므로 유한한 `N`이 없습니다. 따라서 현재 상태에서는 모든 허용 요청을 포괄하는 Nginx·PostgreSQL timeout 하한을 계산할 수 없으며 Production 배포가 차단됩니다.
 
-admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초`, `N=2`를 사용하면 Nginx read timeout은 `max(20 + 5, 2 × 20 + 5) = 45초` 이상, MySQL lock wait timeout은 `(2 - 1) × 20 + 5 = 25초`를 초과해야 합니다. `proxy_read_timeout`은 전체 요청 상한이 아니라 두 연속 read 사이의 무응답 상한이지만, 현재 non-streaming 응답은 Provider 호출 완료 전에 body를 보내지 않으므로 이 기준을 확인합니다.
+admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초`, `N=2`를 사용하면 Nginx read timeout은 `max(20 + 5, 2 × 20 + 5) = 45초` 이상, PostgreSQL lock_timeout을 유한하게 설정한다면 `(2 - 1) × 20 + 5 = 25초`를 초과해야 하며, `0`이면 PostgreSQL 자체의 잠금 대기 제한을 적용하지 않습니다. `proxy_read_timeout`은 전체 요청 상한이 아니라 두 연속 read 사이의 무응답 상한이지만, 현재 non-streaming 응답은 Provider 호출 완료 전에 body를 보내지 않으므로 이 기준을 확인합니다.
 
 다음 조건을 모두 충족해야 배포할 수 있습니다.
 
 - 동일 세션 최대 동시 전송 `N`을 lock 획득 전에 강제하고 초과 요청의 `409` 또는 `429` 계약·테스트를 확정합니다.
 - 실제 `proxy_read_timeout >= max(C + M, N × T + M)`을 확인합니다.
-- 실제 `innodb_lock_wait_timeout > (N - 1) × T + M`을 확인합니다.
+- PostgreSQL `lock_timeout`이 `0`이거나, 유한하게 설정한 경우 `(N - 1) × T + M`보다 큰지 확인합니다.
 - worker별 전체 in-flight AI에 OCR·가이드·채팅 외부 호출과 채팅 row lock waiter를 포함하고, pool·overflow 총 수용량에서 비AI 요청용 예비 connection을 먼저 제외해 수용 가능한지 확인합니다.
-- 모든 replica와 Uvicorn worker가 process별 pool을 각각 만든다는 기준으로 `R × W × (pool + overflow) + 운영 예비 <= MySQL max_connections`를 확인합니다.
+- 모든 replica와 Uvicorn worker가 process별 pool을 각각 만든다는 기준으로 `R × W × (pool + overflow) + 운영 예비 <= PostgreSQL max_connections`를 확인합니다.
+- PostgreSQL `lock_timeout`은 `SHOW lock_timeout`으로 실제 값을 확인하고, 밀리초·초 등 반환 단위를 포함해 기록합니다.
 - DB pool size, overflow, pool wait timeout·queue 정책과 허용 가능한 connection 대기시간을 실제 배포 설정으로 기록합니다. 저장소는 `DB_CONNECTION_POOL_MAXSIZE`만 명시적으로 설정하므로 overflow와 wait 정책은 배포 런타임의 실제 값을 확인합니다.
 - AI 외부 호출 동안 DB transaction과 connection을 유지하는 현재 설계를 해당 수용량에서 운영할 것인지 명시적으로 승인합니다.
 - 가이드와 챗봇의 synthetic live smoke를 실제 배포 모델과 timeout으로 실행하고 결과를 기록합니다. 기본 CI에서 skip된 결과를 실호출 성공으로 간주하지 않습니다.
@@ -98,9 +99,14 @@ admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초
 
 ## Production 실행 확인
 
-- Production DB migration 실행 주체·명령·실패 시 rollback 절차를 기록합니다. 현재 Production Compose에는 별도 `migrate` 서비스가 없습니다.
-- `ai-worker`는 실제 작업 로직이 없는 placeholder입니다. Production Compose의 `restart: always` 상태로 배포하면 재시작 루프가 발생할 수 있으므로 Worker 구현 전에는 배포 대상에서 제외하거나 정책을 명시적으로 변경합니다.
-- Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS와 CORS 실제 값을 함께 확인합니다.
+- Production Compose는 `postgres → migrate → fastapi/ai-worker` 의존 순서를 사용합니다.
+- 배포 스크립트는 PostgreSQL과 Redis의 health check 통과를 기다린 뒤 제한된 애플리케이션 DB 계정을 구성합니다.
+- PostgreSQL 초기화·Alembic migration 계정과 FastAPI·AI Worker 실행 계정을 분리합니다. FastAPI와 AI Worker에는 테이블 조회·입력·수정·삭제 및 필요한 sequence 사용 권한만 부여하고 schema 객체 생성 권한은 부여하지 않습니다.
+- Alembic migration이 종료 코드 0으로 완료된 경우에만 선택한 FastAPI 또는 AI Worker 서비스를 시작합니다.
+- Migration이 실패하면 신규 애플리케이션 컨테이너 실행을 중단하고 `migrate` 서비스 로그를 확인합니다.
+- Schema downgrade는 자동으로 실행하지 않습니다. 해당 migration의 rollback 계획과 데이터 보존 여부를 확인한 뒤 별도로 수행합니다.
+- `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 Production 배포 대상에서 제외합니다.
+- Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS 및 CORS 실제 값을 함께 확인합니다.
 
 ## Post-MVP-1 비동기 전환 게이트 — 미구현
 

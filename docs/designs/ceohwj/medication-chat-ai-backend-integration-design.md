@@ -219,11 +219,11 @@ AI 호출 이전까지는 성공 흐름과 같다. 오류가 발생하면 각 `e
 
 실패한 ASSISTANT의 `content`, `model_name`과 `prompt_version`은 `NULL`로 유지한다. USER 메시지는 보존되며 메시지 목록에서 USER와 FAILED ASSISTANT를 함께 조회할 수 있다.
 
-`commit_failed_message_pair()`는 이름과 docstring에 단일 row update가 아니라 현재 `AsyncSession`의 전체 pending transaction을 commit한다는 점을 명시한다. 이 메서드는 `send_message()`가 만든 USER·ASSISTANT 쌍과 해당 실패 상태만 pending인 시점에 호출해야 하며, 호출 전에 다른 도메인의 write를 같은 session에 추가하지 않는다. AI 예외를 처리하는 `except`가 끝난 뒤 호출해 commit 또는 flush 자체가 실패하더라도 그 persistence 예외의 `__context__`에 Provider·AI 예외가 연결되지 않게 한다. 이 제약을 Service 테스트에서 commit 호출 순서와 횟수로 검증하고, 실제 MySQL 테스트에서 이후 request rollback에도 정확히 한 쌍만 남는지 확인한다. 향후 하나의 request transaction에 다른 도메인 write를 함께 조립해야 한다면 commit 책임을 명시적인 Service unit-of-work로 이동한다.
+`commit_failed_message_pair()`는 이름과 docstring에 단일 row update가 아니라 현재 `AsyncSession`의 전체 pending transaction을 commit한다는 점을 명시한다. 이 메서드는 `send_message()`가 만든 USER·ASSISTANT 쌍과 해당 실패 상태만 pending인 시점에 호출해야 하며, 호출 전에 다른 도메인의 write를 같은 session에 추가하지 않는다. AI 예외를 처리하는 `except`가 끝난 뒤 호출해 commit 또는 flush 자체가 실패하더라도 그 persistence 예외의 `__context__`에 Provider·AI 예외가 연결되지 않게 한다. 이 제약을 Service 테스트에서 commit 호출 순서와 횟수로 검증하고, 실제 PostgreSQL 테스트에서 이후 request rollback에도 정확히 한 쌍만 남는지 확인한다. 향후 하나의 request transaction에 다른 도메인 write를 함께 조립해야 한다면 commit 책임을 명시적인 Service unit-of-work로 이동한다.
 
 ### 동시 전송
 
-`get_session_owned_for_update()`는 조회 전용 `get_session_owned()`와 분리해 잠금 의도를 호출부에서 명확히 한다. 잠금 쿼리는 `CHAT_SESSION.id`의 unique index로 대상 세션 한 건만 조회하고, 소유권은 locking clause가 없는 correlated `EXISTS` subquery로 제한한다. locking statement에서 `PRESCRIPTION`과 `MEDICAL_DOCUMENT`를 JOIN하거나 `selectinload`하지 않는다. MySQL에서 외부 쿼리의 `FOR UPDATE`는 별도 locking clause가 없는 nested subquery row를 잠그지 않으므로, 이 형태로 처방·문서 row의 불필요한 잠금을 피한다.
+`get_session_owned_for_update()`는 조회 전용 `get_session_owned()`와 분리해 잠금 의도를 호출부에서 명확히 한다. 잠금 쿼리는 `CHAT_SESSION.id`의 unique index로 대상 세션 한 건만 조회하고, 소유권은 locking clause가 없는 correlated `EXISTS` subquery로 제한한다. locking statement에서 `PRESCRIPTION`과 `MEDICAL_DOCUMENT`를 JOIN하거나 `selectinload`하지 않는다. PostgreSQL에서 최상위 쿼리의 `FOR UPDATE`는 별도 locking clause가 없는 subquery가 읽은 row를 잠그지 않으므로, 이 형태로 처방·문서 row의 불필요한 잠금을 피한다.
 
 ```sql
 SELECT chat_session.*
@@ -239,7 +239,7 @@ WHERE chat_session.id = :session_id
 FOR UPDATE;
 ```
 
-SQLAlchemy statement를 MySQL dialect로 compile했을 때도 `FOR UPDATE`는 외부 statement 끝에 한 번만 생성되어야 한다. Repository 단위 테스트는 SQL shape를 검증하고, 실제 두-session 동시성 동작과 `CHAT_SESSION` 외 row를 잠그지 않는지는 MySQL 통합 테스트로 검증한다.
+SQLAlchemy statement를 PostgreSQL dialect로 compile했을 때도 `FOR UPDATE`는 외부 statement 끝에 한 번만 생성되어야 한다. Repository 단위 테스트는 SQL shape를 검증하고, 실제 두-session 동시성 동작과 `CHAT_SESSION` 외 row를 잠그지 않는지는 PostgreSQL 통합 테스트로 검증한다.
 
 같은 세션의 두 번째 전송은 첫 번째 전송이 완료 또는 실패해 commit할 때까지 세션 row lock에서 대기한다. 잠금을 얻은 후 최신 마지막 메시지를 조회하므로 USER–ASSISTANT 쌍은 `1·2`, `3·4`처럼 순서대로 저장된다. 다른 세션 row는 잠그지 않으므로 서로 다른 세션의 생성은 병렬로 진행된다.
 
@@ -249,7 +249,7 @@ SQLAlchemy statement를 MySQL dialect로 compile했을 때도 `FOR UPDATE`는 �
 
 이번 PR은 기존 동기 계약을 유지하므로 `NOWAIT`, 새 409 오류와 세션별 분산 queue를 추가하지 않는다. 동일 세션의 세 개 이상 동시 요청은 correctness는 row lock으로 보호하지만 응답시간 SLO를 보장하지 않는 과부하 상황으로 정의한다. DB lock wait timeout은 AI 오류가 아니므로 현재 공통 오류 계약의 `500 INTERNAL_SERVER_ERROR`로 처리되고, 잠금을 얻어 USER·ASSISTANT를 만들기 전 transaction이 rollback되어 새 메시지를 남기지 않는다. reverse proxy가 먼저 연결을 종료할 수도 있다. 별도 오류 계약이나 backend 동시성 제한이 필요해지면 관측 결과를 근거로 후속 Issue에서 다룬다. API 문서에는 두 요청 기준 참고 지연, 세 개 이상에는 최대시간 보장이 없다는 점과 lock wait timeout 시 재조회 결과가 변하지 않는다는 점을 함께 명시한다.
 
-현재 `infra/nginx/*.conf`와 MySQL 8.0 compose 설정은 timeout을 별도로 덮어쓰지 않는다. 두 요청 참고 시나리오의 `2 × T + M`·`T + M`만으로 전체 배포 하한을 정하지 않는다. Production 전 lock 획득 전에 동일 세션 최대 동시 전송 `N`을 코드로 강제하고, 최신 [배포 가이드](../../deployment.md)에 따라 Nginx `proxy_read_timeout >= N × T + M`, MySQL `innodb_lock_wait_timeout > (N - 1) × T + M`을 확인한다. `N`이 강제되지 않은 현재 상태는 Production 배포 차단이다.
+현재 `infra/nginx/*.conf`와 PostgreSQL 17 Compose 설정은 timeout을 별도로 덮어쓰지 않는다. 두 요청 참고 시나리오의 `2 × T + M`·`T + M`만으로 전체 배포 하한을 정하지 않는다. Production 전 lock 획득 전에 동일 세션 최대 동시 전송 `N`을 코드로 강제하고, 최신 [배포 가이드](../../deployment.md)에 따라 Nginx `proxy_read_timeout >= N × T + M`을 확인한다. PostgreSQL `lock_timeout`은 `0`이거나, 유한하게 설정한 경우 `(N - 1) × T + M`보다 커야 한다. `N`이 강제되지 않은 현재 상태는 Production 배포 차단이다.
 
 같은 배포 기록에 worker별 예상 동시 AI 생성량, `DB_CONNECTION_POOL_MAXSIZE`, SQLAlchemy engine의 실제 overflow·pool wait 정책과 허용 가능한 connection 대기를 함께 적는다. 외부 호출 동안 connection을 유지하는 MVP tradeoff를 이 수용량 안에서 명시적으로 승인한다. 예상 동시 생성량이 수용량에 근접하거나 채팅 외 요청의 connection 대기가 관측되면 #38의 잠금 범위를 조용히 완화하지 않고, 비동기 worker 또는 별도 동시성 제어로 전환하는 후속 설계를 진행한다.
 
@@ -433,7 +433,7 @@ uv run coverage run -m pytest app tests/contract
 - 동일 세션 동시 요청의 직렬화, 두 요청 기준 참고 지연과 세 개 이상 과부하 시 최대시간 비보장
 - DB lock wait timeout의 공통 `500 INTERNAL_SERVER_ERROR`와 새 메시지 미생성·재조회 불변 동작
 
-`docs/deployment.md`에는 배포 OpenAI timeout `T`, 처리 여유 `M`과 코드로 강제되는 동일 세션 최대 동시 전송 `N`을 기록하고, Nginx read timeout `>= N × T + M`, MySQL lock wait timeout `> (N - 1) × T + M`인지 확인하는 항목을 둔다. `N`이 없으면 배포하지 않는다. 모든 replica·worker의 process별 DB pool과 MySQL 전체 connection 예산, lock waiter를 포함한 in-flight chat, 비채팅 예비 connection과 장시간 점유 tradeoff도 같은 위치에서 확인한다. 기존 Chat AI Core 설계에는 후속 Backend 연동 문서 링크를 추가한다. API body와 application DB schema 문서는 변경하지 않는다.
+`docs/deployment.md`에는 배포 OpenAI timeout `T`, 처리 여유 `M`과 코드로 강제되는 동일 세션 최대 동시 전송 `N`을 기록하고, Nginx read timeout `>= N × T + M`인지 확인하는 항목을 둔다. PostgreSQL `lock_timeout`은 `0`이거나, 유한하게 설정한 경우 `(N - 1) × T + M`보다 커야 한다. `N`이 없으면 배포하지 않는다. 모든 replica·worker의 process별 DB pool과 PostgreSQL 전체 connection 예산, lock waiter를 포함한 in-flight chat, 비채팅 예비 connection과 장시간 점유 tradeoff도 같은 위치에서 확인한다. 기존 Chat AI Core 설계에는 후속 Backend 연동 문서 링크를 추가한다. API body와 application DB schema 문서는 변경하지 않는다.
 
 ## 예상 변경 파일
 
@@ -482,7 +482,7 @@ Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경�
 - 실패 persistence가 예외를 발생시켜도 그 예외 chain에 앞선 Provider·AI 오류가 남지 않는다.
 - SQLAlchemy 예외 문자열과 echo 로그에 합성 질문·약물 bind parameter가 노출되지 않는다.
 - 채팅 세션 생성과 메시지 조회·전송의 모든 성공·오류 응답에 `Cache-Control: no-store`가 적용된다.
-- 관련 단위, MySQL 통합, API와 계약 테스트가 통과한다.
+- 관련 단위, PostgreSQL 통합, API와 계약 테스트가 통과한다.
 - PR #46의 공통 오류·header·CORS 통합 테스트가 통과한다.
 - CI와 로컬 전체 테스트 스크립트가 `tests/contract/`를 실행한다.
 - 두 요청 기준 참고 지연과 세 개 이상 동시 요청의 최대시간 비보장을 API 문서와 테스트에 구분해 명시한다.
@@ -493,7 +493,7 @@ Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경�
 
 아래 항목은 환경별 실제 값과 운영 승인자가 있어야 판정할 수 있으므로 Issue #38 구현·merge 완료 기준과 분리한 production deployment gate다. 대상 환경이 확정되지 않은 구현 PR에서 값을 추정하거나 승인자를 대신 기록하지 않는다. `docs/deployment.md`의 해당 환경 기록이 비어 있거나 조건을 충족하지 않으면 코드를 production에 배포하지 않는다.
 
-- 배포 대상의 OpenAI timeout, Nginx read timeout과 MySQL lock wait timeout이 설정 상대식 하한을 만족하는지 확인하고 기록한다.
+- 배포 대상의 OpenAI timeout과 Nginx read timeout이 설정 상대식 하한을 만족하는지 확인하고, PostgreSQL `lock_timeout`이 `0`이거나 유한 설정 시 잠금 대기 하한보다 큰지 기록한다.
 - lock waiter를 포함한 전체 in-flight chat 요청 수, 비채팅 예비 connection과 DB pool·overflow·wait 설정을 기록한다.
 - 외부 호출 중 DB transaction과 connection을 유지하는 tradeoff를 해당 환경의 책임자가 승인한다.
 - 수용량이 부족하면 row lock을 약화하지 않고 admission/rate limiting 또는 비동기 worker 설계를 별도 계약과 Issue로 도입한다.
@@ -507,6 +507,6 @@ Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경�
 - 최초 상태: Draft
 - 필수 리뷰: `@phina-io`, `@hazelnutflavoured`
 
-Issue #38의 관련 영역에서 Database와 Infrastructure를 체크하고, 작업 내용에 동일 세션 row lock·MySQL 동시성 검증 및 `tests/contract/` CI 실행을 추가한다. 선행 PR #33의 middleware 계약과 PR #46의 `ApiError.headers`·공통 오류 계약이 현재 `develop`에 반영되어 있으며, 구현은 두 계약을 기준으로 진행한다. `.github/workflows/checks.yml` 변경은 `.github/` CODEOWNER인 `@ceohwj`, `@hazelnutflavoured`가 함께 검토한다.
+Issue #38의 관련 영역에서 Database와 Infrastructure를 체크하고, 작업 내용에 동일 세션 row lock·PostgreSQL 동시성 검증 및 `tests/contract/` CI 실행을 추가한다. 선행 PR #33의 middleware 계약과 PR #46의 `ApiError.headers`·공통 오류 계약이 현재 `develop`에 반영되어 있으며, 구현은 두 계약을 기준으로 진행한다. `.github/workflows/checks.yml` 변경은 `.github/` CODEOWNER인 `@ceohwj`, `@hazelnutflavoured`가 함께 검토한다.
 
 AI Core 구현은 선행 PR #35의 계약을 소비하며 이 PR에서 프롬프트와 Provider 동작을 다시 변경하지 않는다. 구현, 테스트와 계약 문서를 하나의 #38 PR에 포함해 Backend CODEOWNER가 전체 연결 흐름을 검토할 수 있게 한다.

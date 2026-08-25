@@ -4,6 +4,24 @@
 
 테이블, 관계, 상태값과 주요 데이터 제약조건을 기록합니다.
 
+## 현재 물리 DB 구성
+
+현재 Backend의 물리 DB는 PostgreSQL 17입니다.
+
+- SQLAlchemy 비동기 드라이버: `postgresql+asyncpg`
+- Alembic 스키마 관리 대상: PostgreSQL
+- Docker Compose 서비스명: `postgres`
+- 애플리케이션 컨테이너 내부 포트: `5432`
+- 로컬 공개 포트 기본값: `5432`
+
+이번 전환은 물리 DB 엔진 교체이며 API 계약과 논리적 데이터 모델은 유지합니다.
+
+UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이터 및 API 호환성을 위해 `CHAR(36)` 문자열로 저장합니다. Python 코드에서는 공통 `UUIDChar` 타입을 통해 `UUID` 객체와 DB 문자열 사이를 변환합니다. PostgreSQL native `UUID` 전환은 별도 migration 범위입니다.
+
+`DateTime(timezone=True)` 필드는 PostgreSQL에서 시간대가 포함된 timestamp로 관리합니다. 애플리케이션의 컬럼별 UTC 또는 `Asia/Seoul` 시간대 정책은 기존 API·모델 계약과 동일하게 유지합니다.
+
+물리 DB를 PostgreSQL로 전환하더라도 기본키, 외래키, Enum, 상태값과 nullable 의미 등 외부에서 관찰되는 논리적 계약은 변경하지 않습니다.
+
 ## 현재 구현 테이블
 
 | 영역 | 테이블 | 현재 사용 상태 |
@@ -27,24 +45,26 @@ DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함�
 
 `user` 테이블은 MVP 인증과 내 정보 조회에 사용합니다.
 
-| 컬럼 | 타입 | Nullable | 설명 |
-|---|---|---:|---|
-| `email` | `VARCHAR(40)` | No | 로그인 이메일. unique |
-| `hashed_password` | `VARCHAR(128)` | No | 해시된 비밀번호 |
-| `name` | `VARCHAR(20)` | No | 사용자 이름 |
-| `gender` | `ENUM('MALE', 'FEMALE')` | Yes | Post-MVP 추가 정보 입력 대상 |
-| `birthday` | `DATE` | Yes | Post-MVP 추가 정보 입력 대상 |
-| `phone_number` | `VARCHAR(20)` | Yes | Post-MVP 추가 정보 입력 대상. unique |
+| 컬럼 | 타입 | Nullable | 설명                                                                         |
+|---|---|---:|------------------------------------------------------------------------------|
+| `email` | `VARCHAR(40)` | No | 소문자로 정규화해 저장하는 로그인 이메일. 저장된 소문자 값을 기준으로 unique |
+| `hashed_password` | `VARCHAR(128)` | No | 해시된 비밀번호                                                              |
+| `name` | `VARCHAR(20)` | No | 사용자 이름                                                                  |
+| `gender` | `ENUM('MALE', 'FEMALE')` | Yes | Post-MVP 추가 정보 입력 대상                                                 |
+| `birthday` | `DATE` | Yes | Post-MVP 추가 정보 입력 대상                                                 |
+| `phone_number` | `VARCHAR(20)` | Yes | Post-MVP 추가 정보 입력 대상. unique                                         |
 
 MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
+
+이메일은 회원가입, 로그인 및 내 정보 수정 시 Backend에서 소문자로 정규화합니다. DB에는 정규화된 값만 저장하며, 조회 API도 저장된 소문자 값을 반환합니다. 이메일 unique와 중복 판정 역시 정규화된 값을 기준으로 적용하므로 대소문자만 다른 이메일은 동일하게 취급합니다.
 
 ## OCR 작업
 
 `ocr_job` 테이블은 OCR 처리 상태와 오류 정보를 저장합니다.
 
-| 컬럼 | 타입 | Nullable | 설명 |
-|---|---|---:|---|
-| `created_sequence` | `BIGINT UNSIGNED` | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |
+| 컬럼 | 타입           | Nullable | 설명 |
+|---|----------------|---:|---|
+| `created_sequence` | `BIGINT`       | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |
 | `error_code` | `VARCHAR(100)` | Yes | 실패 상태의 안전한 오류 코드 |
 | `error_message` | `VARCHAR(500)` | Yes | 실패 상태 조회 응답에 포함할 수 있는 안전한 사용자 안내 문구 |
 

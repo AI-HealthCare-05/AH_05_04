@@ -57,6 +57,39 @@ async def _create_document(session: AsyncSession) -> MedicalDocument:
 
 
 @pytest.mark.asyncio
+async def test_postgresql_generates_increasing_created_sequence(
+    db_session: AsyncSession,
+) -> None:
+    """created_sequence를 생략하면 PostgreSQL이 증가값을 생성합니다."""
+    document = await _create_document(db_session)
+
+    first_job = OcrJob(
+        document_id=document.id,
+        ocr_status=OcrStatus.PENDING,
+    )
+    db_session.add(first_job)
+    await db_session.flush()
+    await db_session.refresh(
+        first_job,
+        attribute_names=["created_sequence"],
+    )
+
+    second_job = OcrJob(
+        document_id=document.id,
+        ocr_status=OcrStatus.PENDING,
+    )
+    db_session.add(second_job)
+    await db_session.flush()
+    await db_session.refresh(
+        second_job,
+        attribute_names=["created_sequence"],
+    )
+
+    assert first_job.created_sequence > 0
+    assert second_job.created_sequence > first_job.created_sequence
+
+
+@pytest.mark.asyncio
 async def test_get_latest_completed_job_uses_created_sequence_when_created_at_is_same(
     db_session: AsyncSession,
 ) -> None:

@@ -5,7 +5,7 @@ from typing import cast
 from uuid import uuid4
 
 import pytest_asyncio
-from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ClauseElement
 
@@ -99,13 +99,22 @@ async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_corr
 
     assert session.statement is not None
     statement = cast(ClauseElement, session.statement)
+    # 실제 운영 DB와 동일한 PostgreSQL dialect로 row-lock SQL을 검증합니다.
     sql = " ".join(
-        str(statement.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True})).split()
+        str(
+            statement.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        ).split()
     ).upper()
     assert sql.count("FOR UPDATE") == 1
     assert sql.endswith("FOR UPDATE")
     assert "FROM CHAT_SESSION" in sql
-    assert "EXISTS (SELECT 1 FROM PRESCRIPTION INNER JOIN MEDICAL_DOCUMENT" in sql
+    # PostgreSQL은 SELECT 1에 ANON_1 alias를 붙일 수 있으므로
+    # EXISTS와 내부 JOIN 구조를 각각 검증합니다.
+    assert "EXISTS (SELECT 1" in sql
+    assert "FROM PRESCRIPTION JOIN MEDICAL_DOCUMENT" in sql
     assert sql.count("CHAT_SESSION.ID =") == 1
     assert f"CHAT_SESSION.ID = '{session_id}'".upper() in sql
     assert "PRESCRIPTION.ID = CHAT_SESSION.PRESCRIPTION_ID" in sql

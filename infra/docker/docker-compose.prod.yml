@@ -15,39 +15,84 @@ services:
       start_period: 5s
 
   # 2. Database
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
     restart: always
     environment:
-    # ${환경변수명} 문법은 OS 환경변수 혹은 .env에서 해당 환경변수명과 일치하는 항목이 있으면 대입합니다.
-    # 반드시 사전에 .env에 해당 항목이 존재하는지 확인해야 합니다.
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      # PostgreSQL 초기화와 migration은 관리 계정으로 수행합니다.
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_MIGRATION_USER}
+      POSTGRES_PASSWORD: ${DB_MIGRATION_PASSWORD}
+
+      # 제한된 애플리케이션 계정 생성 SQL에서 사용합니다.
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER}
+      DB_APP_USER: ${DB_APP_USER}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
       TZ: Asia/Seoul
-    ports:
-      - ${DB_EXPOSE_PORT}:${DB_PORT}
+      PGTZ: Asia/Seoul
     networks:
       - ws
     volumes:
-      - mysql_data:/var/lib/mysql  # 컨테이너가 삭제돼도 데이터는 호스트 파일시스템에 남음
-    command: # 한글 저장을 위한 문자셋 설정 (필수!)
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --port=${DB_PORT}
+      - postgres_data:/var/lib/postgresql/data
+
+      # 신규·기존 DB 모두 같은 권한 설정 SQL을 실행할 수 있도록 mount합니다.
+      - ./postgres/configure-app-role.sql:/docker-entrypoint-initdb.d/configure-app-role.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_MIGRATION_USER} -d ${DB_NAME}"
+        ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 5s
 
-  # 3. API Server (FastAPI)
+  # 3. Database Migration
+  migrate:
+    container_name: migrate
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+
+    # 서버에서 Compose와 같은 ~/project 디렉터리의 .env를 사용합니다.
+    env_file:
+      - ${SERVICE_ENV_FILE:-./.env}
+
+    environment:
+      # Alembic에는 migration 전용 계정을 주입합니다.
+      DB_USER: ${DB_MIGRATION_USER}
+      DB_PASSWORD: ${DB_MIGRATION_PASSWORD}
+
+    command:
+      - uv
+      - run
+      - --no-sync
+      - alembic
+      - upgrade
+      - head
+
+    networks:
+      - ws
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: "no"
+
+  # 4. API Server (FastAPI)
   fastapi:
     container_name: fastapi
-    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}  # APP_VERSION은 빌드된 이미지의 버전관리를 위함입니다. v1.0.0 형식으로 사용합니다.
-    env_file: .env
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    env_file:
+      - ${SERVICE_ENV_FILE:-./.env}
+    environment:
+      # 런타임 애플리케이션에는 DDL 권한이 없는 계정을 주입합니다.
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
+    # 정적 파일과 업로드 파일을 컨테이너 재생성 후에도 유지합니다.
     volumes:
       - static_volume:/app/templates
       - media_volume:/app/media
@@ -57,27 +102,36 @@ services:
     networks:
       - ws
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
-  # 4. AI Worker (Model 학습 및 추론)
+  # 5. AI Worker (Model 학습 및 추론)
   ai-worker:
     container_name: ai-worker
-    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}  # AI_WORKER_VERSION은 빌드된 이미지의 버전관리를 위함입니다. V1.0.0 형식으로 사용합니다.
-    env_file: .env
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
+    env_file:
+      - ${SERVICE_ENV_FILE:-./.env}
+    environment:
+      # Worker도 FastAPI와 동일한 제한 계정을 사용합니다.
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
     restart: always
     mem_limit: 4G
     networks:
       - ws
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
-  # 5. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
+  # 6. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
   nginx:
     container_name: nginx
     image: nginx:latest
@@ -95,7 +149,7 @@ services:
     depends_on:
       - fastapi
 
-  # 6. certbot: SSL 인증서 발급담당
+  # 7. certbot: SSL 인증서 발급담당
   certbot:
     image: certbot/certbot
     container_name: auto-certbot
@@ -107,14 +161,23 @@ services:
       - nginx
 
 volumes:
-  mysql_data:
-    name: mysql_data
+  # PostgreSQL 운영 데이터를 컨테이너 재생성 후에도 유지합니다.
+  postgres_data:
+    name: postgres_data
+
+  # FastAPI와 Nginx가 공유하는 정적 파일을 유지합니다.
   static_volume:
     name: static_volume
+
+  # 업로드된 파일과 생성된 미디어 파일을 유지합니다.
   media_volume:
     name: media_volume
+
+  # Nginx와 Certbot이 공유하는 TLS 인증서를 유지합니다.
   certbot-conf:
     name: certbot-conf
+
+  # Certbot HTTP-01 challenge 파일을 Nginx와 공유합니다.
   certbot-www:
     name: certbot-www
 
