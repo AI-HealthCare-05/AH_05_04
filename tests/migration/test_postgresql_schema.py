@@ -14,7 +14,6 @@ from sqlalchemy.pool import NullPool
 
 from app.core import config
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -54,9 +53,7 @@ async def test_database_is_at_alembic_head(
     expected_heads = set(script_directory.get_heads())
 
     async with migrated_engine.connect() as connection:
-        result = await connection.execute(
-            text("SELECT version_num FROM alembic_version")
-        )
+        result = await connection.execute(text("SELECT version_num FROM alembic_version"))
         applied_revisions = set(result.scalars().all())
 
     assert applied_revisions == expected_heads
