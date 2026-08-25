@@ -17,7 +17,7 @@
 
 .chat-page__intro {
   flex: 0 0 auto;
-  padding: 0 20px 16px;
+  padding: 12px 20px 18px;
 }
 
 .chat-page__intro h1 {
@@ -36,15 +36,15 @@
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-  padding: 0 20px 14px;
+  gap: 8px;
+  padding: 0 20px 16px;
 }
 
 .chat-page__suggestions button {
-  min-height: 38px;
-  padding: 6px;
+  min-height: 42px;
+  padding: 7px 5px;
   border: 1px solid var(--ds-line);
-  border-radius: 12px;
+  border-radius: 13px;
   background: #fff;
   color: #3e5f83;
   font-size: 10px;
@@ -59,11 +59,12 @@
   margin: 0 14px 14px;
   overflow: hidden;
   border-radius: 18px;
-  background: #eef1f5;
+  border: 1px solid #e3eaf3;
+  background: #edf3fb;
 }
 
 .chat-page .chat-messages {
-  padding: 16px;
+  padding: 18px 16px;
 }
 
 .chat-page__state {
@@ -85,7 +86,8 @@
   display: grid;
   gap: 6px;
   justify-self: start;
-  padding: 14px;
+  max-width: 84%;
+  padding: 14px 16px;
   border-radius: 16px 16px 16px 5px;
   background: #fff;
   color: var(--ds-text-muted);
@@ -125,7 +127,7 @@
 .chat-page .chat-composer {
   grid-template-columns: minmax(0, 1fr) 44px;
   margin-bottom: 0;
-  padding: 10px 12px 12px;
+  padding: 11px 12px 12px;
   background: #fff;
 }
 
@@ -191,6 +193,7 @@
 
 .chat-page__gate--guide-required {
   align-content: start;
+  padding-top: 18px;
 }
 
 .chat-page__gate--guide-required h1 {
@@ -199,7 +202,7 @@
 }
 
 .chat-page__gate-notice {
-  margin: 8px 0 12px;
+  margin: 10px 0 14px;
   border-color: #ead9a6;
   background: #fff9e7;
 }

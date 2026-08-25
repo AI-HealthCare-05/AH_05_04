@@ -16,13 +16,15 @@ describe('Dosey MVP design pages', () => {
         <Routes>
           <Route path="/start" element={<StartPage />} />
           <Route path="/signup" element={<div>회원가입 화면</div>} />
+          <Route path="/login" element={<div>로그인 화면</div>} />
         </Routes>
       </MemoryRouter>,
     )
 
     expect(
-      screen.getByRole('heading', { name: /내 약을 알고,.*건강 습관/ }),
+      screen.getByRole('heading', { name: 'AI 복약 파트너' }),
     ).toBeTruthy()
+    expect(screen.getByRole('link', { name: '로그인' }).getAttribute('href')).toBe('/login')
     fireEvent.click(
       screen.getByRole('button', { name: '회원가입하고 시작하기' }),
     )

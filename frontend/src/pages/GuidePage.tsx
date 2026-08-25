@@ -110,8 +110,8 @@ function GuidePage() {
           {!currentIsLoading && !guideId && (
             <Card className="guide-page__empty">
               <span className="guide-page__spark" aria-hidden="true" />
-              <h2>표시할 가이드 정보가 없어요</h2>
-              <p>처방을 확정하고 가이드를 생성하면 해당 화면으로 이동해요.</p>
+              <h2>아직 만들어진 가이드가 없어요</h2>
+              <p>처방전을 등록하고 시작하면 복약 가이드를 확인할 수 있어요.</p>
               <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
                 처방전 등록하기
               </Button>
@@ -144,8 +144,8 @@ function GuidePage() {
             hasCompletedContent && (
             <>
               <Card className="guide-page__hero">
-                <span className="guide-page__hero-label">확정된 처방 기준</span>
-                <h2>복약 가이드가 준비됐어요</h2>
+                <span className="guide-page__hero-label">오늘 확인한 복용</span>
+                <h2>확인된 복용 조건</h2>
                 <p>
                   직접 확인한 처방을 기준으로 생성된 안내를 표시해요.
                 </p>
@@ -182,7 +182,7 @@ function GuidePage() {
                   )
                 }
               >
-                복약 챗봇에 질문하기
+                복약 챗봇 도지와 이야기하기
               </Button>
             </>
           )}

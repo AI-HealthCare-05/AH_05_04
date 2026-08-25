@@ -198,7 +198,7 @@ function renderReroutablePage() {
 }
 
 async function getConfirmationButton() {
-  return screen.findByRole('button', { name: '처방 확정' })
+  return screen.findByRole('button', { name: '확정하고 가이드 만들기' })
 }
 
 function makeGuideResponse(
@@ -288,7 +288,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
       expect(await screen.findByText(expectedTitle)).toBeTruthy()
       expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
       expect(screen.queryByLabelText('약 이름')).toBeNull()
-      expect(screen.queryByRole('button', { name: '처방 확정' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
     },
   )
 
@@ -724,7 +724,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
       await screen.findByText('처방 확정에 필요한 항목이 부족해요'),
     ).toBeTruthy()
     expect(screen.queryByLabelText('약 이름')).toBeNull()
-    expect(screen.queryByRole('button', { name: '처방 확정' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
   })
 
   it('PRESCRIPTION_ALREADY_CONFIRMED 오류 후에는 편집 UI를 제공하지 않는다', async () => {
@@ -747,7 +747,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(await screen.findByText('이미 확정된 처방이에요')).toBeTruthy()
     expect(screen.queryByLabelText('약 이름')).toBeNull()
     expect(screen.queryByText('세부 항목 확인 및 수정')).toBeNull()
-    expect(screen.queryByRole('button', { name: '처방 확정' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
   })
 
   it('EXTRACTED_FIELD_NOT_FOUND 오류는 최신 OCR 재검수 상태로 전환한다', async () => {
@@ -775,7 +775,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
       await screen.findByText('검수하던 항목을 찾을 수 없어요'),
     ).toBeTruthy()
     expect(screen.queryByLabelText('약 이름')).toBeNull()
-    expect(screen.queryByRole('button', { name: '처방 확정' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
   })
 
   it('VALIDATION_FAILED 오류는 입력값 수정 안내를 표시하고 편집을 유지한다', async () => {
@@ -878,7 +878,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(screen.getByText(/OCR 결과가 일치하지 않습니다/)).toBeTruthy()
     expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
     expect(
-      screen.queryByRole('button', { name: '처방 확정' }),
+      screen.queryByRole('button', { name: '확정하고 가이드 만들기' }),
     ).toBeNull()
   })
 
@@ -1002,7 +1002,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     fireEvent.click(await screen.findByRole('checkbox'))
     const confirmButton = await getConfirmationButton()
-    expect(screen.queryByText(/가이드 만들기/)).toBeNull()
+    expect(confirmButton.textContent).toBe('확정하고 가이드 만들기')
 
     fireEvent.click(confirmButton)
 

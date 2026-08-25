@@ -1025,7 +1025,7 @@ function PrescriptionReviewPage() {
                 }
                 onClick={handleConfirmPrescription}
               >
-                {isConfirming ? '처방 확정 중...' : '처방 확정'}
+                {isConfirming ? '처방 확정 중...' : '확정하고 가이드 만들기'}
               </Button>
 
               <p className="prescription-review__progress">

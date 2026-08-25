@@ -74,6 +74,7 @@ export function MobileShell({
   children,
   onBack,
   backPlacement = 'topbar',
+  hideHeader = false,
   hideNavigation = false,
   activeNavigation = '홈',
   onNavigate,
@@ -82,29 +83,27 @@ export function MobileShell({
   children: ReactNode
   onBack?: () => void
   backPlacement?: 'topbar' | 'content'
+  hideHeader?: boolean
   hideNavigation?: boolean
   activeNavigation?: '홈' | '일정' | '가이드' | '메뉴'
   onNavigate?: (item: '홈' | '일정' | '가이드' | '메뉴') => void
 }) {
   return (
     <div className="mobile-app">
-      <header className="app-topbar">
-        {onBack && backPlacement === 'topbar' && (
+      {!hideHeader && (
+        <header
+          className={`app-topbar ${onBack ? 'app-topbar--with-back' : ''} app-topbar--${backPlacement}-back`}
+        >
+          {onBack && (
           <button className="icon-button" type="button" onClick={onBack} aria-label="이전 화면">
             <span className="chevron-icon" aria-hidden="true" />
           </button>
-        )}
-        <span className="brand-mark" aria-hidden="true">
-          <span className="brand-mark__ring" />
-        </span>
-        <h1>{title ?? 'Dosey 도지'}</h1>
-      </header>
-      {onBack && backPlacement === 'content' && (
-        <div className="app-back-row">
-          <button className="icon-button" type="button" onClick={onBack} aria-label="이전 화면">
-            <span className="chevron-icon" aria-hidden="true" />
-          </button>
-        </div>
+          )}
+          <span className="brand-mark" aria-hidden="true">
+            <span className="brand-mark__ring" />
+          </span>
+          <h1>{title ?? 'Dosey 도지'}</h1>
+        </header>
       )}
       {children}
       {!hideNavigation && (

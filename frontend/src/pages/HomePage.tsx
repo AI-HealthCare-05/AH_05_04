@@ -60,10 +60,10 @@ function HomePage() {
             <button className="mvp-home__quick-card" type="button">
               <strong>복약 챗봇</strong>
             </button>
-            <button className="mvp-home__quick-card" type="button">
+            <button className="mvp-home__quick-card" type="button" disabled>
               <strong>복약 일정</strong>
             </button>
-            <button className="mvp-home__quick-card" type="button">
+            <button className="mvp-home__quick-card" type="button" disabled>
               <strong>일반 의약품</strong>
             </button>
           </div>
@@ -77,7 +77,9 @@ function HomePage() {
           <Card className="mvp-home__flow-card">
             <h2>이번 주 복약 흐름</h2>
             <div className="mvp-home__empty">
-              <span className="mvp-home__empty-mark" aria-hidden="true" />
+              <div className="mvp-home__flow-placeholder" aria-hidden="true">
+                <span /><span /><span /><span /><span /><span /><span />
+              </div>
               <strong>표시할 복약 기록이 아직 없어요</strong>
               <p>처방전을 등록하면 확인된 정보가 여기에 표시돼요.</p>
             </div>

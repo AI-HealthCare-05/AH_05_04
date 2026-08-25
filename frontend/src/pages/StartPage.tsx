@@ -1,5 +1,5 @@
-import { useNavigate } from 'react-router-dom'
-import { Button, Card, MobileShell } from '../design-system/components'
+import { Link, useNavigate } from 'react-router-dom'
+import { Button, MobileShell } from '../design-system/components'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
@@ -8,28 +8,28 @@ function StartPage() {
 
   return (
     <div className="mvp-page mvp-start-page">
-      <MobileShell title="Dosey 도지" hideNavigation>
+      <MobileShell hideHeader hideNavigation>
         <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-start">
-          <Card className="mvp-start__compact">
-            <strong>Dosey 도지</strong>
-            <span>내 처방을 이해하고 함께하는 AI 복약 파트너</span>
-          </Card>
+          <header className="mvp-start__brand">
+            <div>
+              <strong>Dosey</strong>
+              <span>도지</span>
+            </div>
+            <span className="brand-mark mvp-start__brand-mark" aria-hidden="true">
+              <span className="brand-mark__ring" />
+            </span>
+          </header>
 
-          <Card className="mvp-start__hero">
-            <span>처방전을 이해하는 가장 쉬운 방법</span>
-            <h1>
-              내 약을 알고,
-              <br />
-              <em>매일 잘 챙기는</em>
-              <br />
-              건강 습관
-            </h1>
-          </Card>
+          <section className="mvp-start__hero">
+            <p>내 처방을 이해하고 함께하는</p>
+            <h1>AI 복약 파트너</h1>
+          </section>
 
           <div className="mvp-start__features" aria-label="Dosey 주요 기능">
-            <Card>처방전 등록</Card>
-            <Card>쉬운 가이드</Card>
-            <Card>복약 질문</Card>
+            <span>처방전 등록</span>
+            <span>쉬운 가이드</span>
+            <span>복약 챗봇 도지</span>
+            <span>복약 지속 도움</span>
           </div>
 
           <div className="notice attention mvp-start__notice">
@@ -39,6 +39,10 @@ function StartPage() {
           <Button fullWidth onClick={() => navigate('/signup')}>
             회원가입하고 시작하기
           </Button>
+
+          <p className="mvp-form__footer mvp-start__login">
+            이미 계정이 있나요? <Link to="/login">로그인</Link>
+          </p>
         </main>
       </MobileShell>
     </div>

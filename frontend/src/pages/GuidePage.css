@@ -7,6 +7,7 @@
 }
 
 .guide-page .mobile-app {
+  height: 100dvh;
   min-height: 100dvh;
 }
 
@@ -15,7 +16,7 @@
 }
 
 .guide-page__empty {
-  min-height: 250px;
+  min-height: 220px;
   display: grid;
   align-content: center;
   justify-items: center;
@@ -58,7 +59,7 @@
 
 .guide-page__hero {
   margin-top: 4px;
-  padding: 20px;
+  padding: 22px 20px;
   border: 0;
   border-radius: 20px;
   background: #3a67c5;
@@ -114,6 +115,7 @@
 }
 
 .guide-page__guide-card {
+  margin-top: 12px;
   border-color: #d6dee8;
   border-radius: 18px;
 }
@@ -184,7 +186,9 @@
 }
 
 .guide-page__chat-button {
+  min-height: 54px;
   margin-top: 14px;
+  border-radius: 15px;
 }
 
 .guide-page__state {

@@ -8,6 +8,7 @@
 }
 
 .prescription-review-page .mobile-app {
+  height: 100dvh;
   min-height: 100dvh;
 }
 
@@ -116,7 +117,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  margin: 4px 0 26px;
+  margin: 4px 0 20px;
 }
 
 .prescription-review__success-icon {
@@ -567,7 +568,7 @@
 }
 
 .prescription-review-page .prescription-review__confirm {
-  min-height: 54px;
+  min-height: 56px;
   margin-top: 12px;
   border-radius: 16px;
   font-size: 14px;

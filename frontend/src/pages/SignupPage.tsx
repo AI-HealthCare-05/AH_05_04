@@ -47,7 +47,9 @@ function SignupPage() {
       >
         <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-auth">
           <header className="mvp-auth__intro">
-            <h1 className="mvp-page__title">Dosey 도지를 시작해 볼까요?</h1>
+            <h1 className="mvp-page__title">
+              Dosey 도지와 복약<br />관리를 시작해 주세요
+            </h1>
             <p className="mvp-page__description">
               이름과 이메일로 Dosey 계정을 만들 수 있어요.
             </p>
@@ -56,11 +58,11 @@ function SignupPage() {
           <form className="mvp-form mvp-auth__form" onSubmit={handleSubmit}>
             <label className="mvp-form__field">
               이름
-              <input name="name" placeholder="홍길동" required value={form.name} onChange={handleChange} />
+              <input name="name" placeholder="이름을 입력해 주세요" required value={form.name} onChange={handleChange} />
             </label>
             <label className="mvp-form__field">
               이메일
-              <input name="email" type="email" placeholder="hello@example.com" autoComplete="email" required value={form.email} onChange={handleChange} />
+              <input name="email" type="email" placeholder="이메일을 입력해 주세요" autoComplete="email" required value={form.email} onChange={handleChange} />
             </label>
             <label className="mvp-form__field">
               비밀번호
@@ -69,7 +71,7 @@ function SignupPage() {
             <p className="mvp-form__help">
               8자 이상, 대문자·소문자·숫자·특수문자를 각각 1개 이상 포함해 주세요.
             </p>
-            <div className="notice">
+            <div className="notice attention mvp-auth__notice">
               서비스 이용약관과 개인정보 수집·이용 내용을 확인해 주세요.
             </div>
 

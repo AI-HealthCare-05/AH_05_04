@@ -45,21 +45,20 @@ function LoginPage() {
       >
         <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-auth">
           <header className="mvp-auth__intro">
-            <p className="mvp-page__eyebrow">다시 만나서 반가워요</p>
-            <h1 className="mvp-page__title">도지에 로그인해 주세요</h1>
+            <h1 className="mvp-page__title">다시 만나서 반가워요</h1>
             <p className="mvp-page__description">
-              로그인 후 처방전 등록과 복약 기능을 이용할 수 있어요.
+              로그인하고 Dosey 도지에서 복약 관리를 이어가세요.
             </p>
           </header>
 
           <form className="mvp-form mvp-auth__form" onSubmit={handleSubmit}>
             <label className="mvp-form__field">
               이메일
-              <input name="email" type="email" placeholder="hello@example.com" autoComplete="email" required value={form.email} onChange={handleChange} />
+              <input name="email" type="email" placeholder="가입한 이메일을 입력해 주세요" autoComplete="email" required value={form.email} onChange={handleChange} />
             </label>
             <label className="mvp-form__field">
               비밀번호
-              <input name="password" type="password" placeholder="비밀번호 입력" autoComplete="current-password" required value={form.password} onChange={handleChange} />
+              <input name="password" type="password" placeholder="비밀번호를 입력해 주세요" autoComplete="current-password" required value={form.password} onChange={handleChange} />
             </label>
 
             {message && <p className="mvp-form__message" role="alert">{message}</p>}
@@ -69,8 +68,12 @@ function LoginPage() {
             </Button>
           </form>
 
+          <div className="notice attention mvp-auth__notice">
+            로그인 후 본인의 처방전과 복약 정보를 확인할 수 있어요.
+          </div>
+
           <p className="mvp-form__footer">
-            처음이신가요? <Link to="/signup">회원가입</Link>
+            계정이 없다면 <Link to="/signup">회원가입</Link>
           </p>
         </main>
       </MobileShell>

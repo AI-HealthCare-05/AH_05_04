@@ -84,7 +84,7 @@ describe('GuidePage', () => {
 
     renderPage()
 
-    expect(await screen.findByText('복약 가이드가 준비됐어요')).toBeTruthy()
+    expect(await screen.findByText('확인된 복용 조건')).toBeTruthy()
     expect(screen.getByText(/하루 3회 복용하세요/)).toBeTruthy()
     await waitFor(() => expect(getGuide).toHaveBeenCalledWith('guide-1'))
   })
@@ -114,7 +114,7 @@ describe('GuidePage', () => {
   it('Guide가 없는 경로에서 GUIDE-01 상태와 업로드 CTA를 표시한다', async () => {
     renderPage('/guides')
 
-    expect(await screen.findByText('표시할 가이드 정보가 없어요')).toBeTruthy()
+    expect(await screen.findByText('아직 만들어진 가이드가 없어요')).toBeTruthy()
     expect(getGuide).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))

@@ -283,8 +283,8 @@ function ChatPage() {
 
           <div className="chat-page__suggestions" aria-label="추천 질문">
             <button type="button">복용 방법 확인</button>
-            <button type="button">복약 일정 안내</button>
-            <button type="button">복용 중 불편 질문</button>
+            <button type="button">놓친 복용 안내</button>
+            <button type="button">불편·안전 확인</button>
           </div>
 
           <div className="chat-page__conversation">
