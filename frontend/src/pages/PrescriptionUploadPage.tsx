@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   executeOcr,
@@ -7,20 +7,37 @@ import {
   type OcrJobResponse,
 } from '../api/prescriptions'
 import { ApiError } from '../api/client'
+import { Button, Card, MobileShell } from '../design-system/components'
+import '../design-system/prototype.css'
+import './MvpPages.css'
+
+const OCR_POLL_INTERVAL_MS = 1000
+const OCR_POLL_MAX_ATTEMPTS = 80
+
+function waitForNextOcrCheck() {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, OCR_POLL_INTERVAL_MS)
+  })
+}
 
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
+  const inputId = useId()
   const [file, setFile] = useState<File | null>(null)
-  const [ocrResult, setOcrResult] =
-    useState<OcrJobResponse | null>(null)
+  const [ocrResult, setOcrResult] = useState<OcrJobResponse | null>(null)
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const pollingRequestRef = useRef(0)
 
-  const handleFileChange = (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
+  useEffect(
+    () => () => {
+      pollingRequestRef.current += 1
+    },
+    [],
+  )
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] ?? null
-
     setFile(selectedFile)
     setOcrResult(null)
     setMessage('')
@@ -32,85 +49,135 @@ function PrescriptionUploadPage() {
       return
     }
 
+    const requestId = ++pollingRequestRef.current
+    const isCurrentRequest = () => pollingRequestRef.current === requestId
+
     try {
       setIsLoading(true)
       setMessage('')
       setOcrResult(null)
+      const uploadResponse = await uploadPrescription(file)
+      if (!isCurrentRequest()) return
+      const ocrResponse = await executeOcr(uploadResponse.data.document_id)
+      if (!isCurrentRequest()) return
 
-      const uploadResponse =
-        await uploadPrescription(file)
+      let latestOcrResult = await getOcrJob(ocrResponse.data.job_id)
+      if (!isCurrentRequest()) return
 
-      const ocrResponse = await executeOcr(
-        uploadResponse.data.document_id,
-      )
+      for (let attempt = 0; attempt < OCR_POLL_MAX_ATTEMPTS; attempt += 1) {
+        setOcrResult(latestOcrResult)
 
-      const latestOcrResult = await getOcrJob(
-        ocrResponse.data.job_id,
-      )
+        if (latestOcrResult.data.ocr_status === 'COMPLETED') {
+          navigate(
+            `/prescriptions/review?document_id=${uploadResponse.data.document_id}&job_id=${ocrResponse.data.job_id}`,
+          )
+          return
+        }
 
-      setOcrResult(latestOcrResult)
+        if (latestOcrResult.data.ocr_status === 'FAILED') {
+          setMessage('처방전 인식에 실패했습니다. 파일을 확인한 뒤 다시 시도해 주세요.')
+          return
+        }
 
-      if (latestOcrResult.data.ocr_status === 'COMPLETED') {
-        navigate(
-          `/prescriptions/review?document_id=${uploadResponse.data.document_id}&job_id=${ocrResponse.data.job_id}`,
-        )
+        if (attempt === OCR_POLL_MAX_ATTEMPTS - 1) break
+
+        await waitForNextOcrCheck()
+        if (!isCurrentRequest()) return
+        latestOcrResult = await getOcrJob(ocrResponse.data.job_id)
+        if (!isCurrentRequest()) return
       }
 
+      setMessage('처방전 확인 시간이 길어지고 있어요. 잠시 후 다시 시도해 주세요.')
     } catch (error) {
-      if (error instanceof ApiError) {
-        setMessage(error.message)
-      } else {
-        setMessage('처방전 처리 중 오류가 발생했습니다.')
-      }
+      if (!isCurrentRequest()) return
+      setMessage(
+        error instanceof ApiError
+          ? error.message
+          : '처방전 처리 중 오류가 발생했습니다.',
+      )
     } finally {
-      setIsLoading(false)
+      if (isCurrentRequest()) {
+        setIsLoading(false)
+      }
     }
   }
 
+  if (isLoading) {
+    return (
+      <div className="mvp-page">
+        <MobileShell title="Dosey 도지" hideNavigation>
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-processing" role="status">
+            <div className="mvp-processing__document" aria-hidden="true">
+              <span />
+            </div>
+            <h1 className="mvp-page__title">처방전 내용을 확인하고 있어요</h1>
+            <p className="mvp-page__description">
+              파일 업로드 → 글자 인식 → 복약정보 구조화
+            </p>
+            <div className="processing-steps">
+              <span className="complete">문서 업로드 완료</span>
+              <span className="active">약 이름과 복용법 인식 중</span>
+              <span>구조화 결과 확인</span>
+            </div>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
   return (
-    <main>
-      <h1>처방전 업로드</h1>
-
-      <input
-        type="file"
-        accept="image/jpeg,image/png,application/pdf"
-        onChange={handleFileChange}
-        disabled={isLoading}
-      />
-
-      <button
-        type="button"
-        onClick={handleUpload}
-        disabled={isLoading}
+    <div className="mvp-page">
+      <MobileShell
+        title="Dosey 도지"
+        onBack={() => navigate('/')}
+        backPlacement="content"
+        hideNavigation
       >
-        {isLoading ? '처리 중...' : '업로드 및 OCR 실행'}
-      </button>
-
-      {message && <p>{message}</p>}
-
-      {ocrResult?.data.ocr_status === 'PENDING' && (
-        <p>OCR 작업을 기다리고 있습니다.</p>
-      )}
-
-      {ocrResult?.data.ocr_status === 'PROCESSING' && (
-        <p>처방전을 인식하고 있습니다.</p>
-      )}
-
-      {ocrResult?.data.ocr_status === 'COMPLETED' && (
-        <section>
-          <h2>OCR 결과</h2>
-          <p>상태: COMPLETED</p>
-          <p>
-            추출 필드 수: {ocrResult.data.fields.length}
+        <main className="app-scroll mvp-page__content mvp-page__content--no-nav">
+          <h1 className="mvp-page__title">처방전을 등록해 주세요</h1>
+          <p className="mvp-page__description">
+            촬영하거나 저장한 처방전을 읽은 뒤 원본과 인식 결과를 직접 비교합니다.
           </p>
-        </section>
-      )}
 
-      {ocrResult?.data.ocr_status === 'FAILED' && (
-        <p>처방전 인식에 실패했습니다.</p>
-      )}
+          <Card className="mvp-upload__summary">
+            <span>
+              <strong>처방전</strong>
+              <small>OCR 인식 · 복약 가이드 연결</small>
+            </span>
+          </Card>
 
-    </main>
+          <input
+            id={inputId}
+            className="mvp-upload__input"
+            type="file"
+            accept="image/jpeg,image/png,application/pdf"
+            onChange={handleFileChange}
+          />
+          <label className={`upload-zone mvp-upload__zone ${file ? 'selected' : ''}`} htmlFor={inputId}>
+            <span className="mvp-upload__zone-icon" aria-hidden="true">
+              <span />
+            </span>
+            <strong>{file?.name ?? '사진 촬영 또는 파일 선택'}</strong>
+            <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 10MB'}</small>
+          </label>
+
+          <div className="notice mvp-upload__notice">
+            <strong>개인정보를 확인해 주세요.</strong><br />
+            주민등록번호는 가리고 문서 전체가 선명하게 보이도록 촬영해 주세요.
+          </div>
+
+          {message && <p className="mvp-form__message" role="alert">{message}</p>}
+
+          {ocrResult?.data.ocr_status === 'PENDING' && <p className="mvp-form__message">OCR 작업을 기다리고 있습니다.</p>}
+          {ocrResult?.data.ocr_status === 'PROCESSING' && <p className="mvp-form__message">처방전을 인식하고 있습니다.</p>}
+          {ocrResult?.data.ocr_status === 'FAILED' && <p className="mvp-form__message">처방전 인식에 실패했습니다.</p>}
+
+          <Button fullWidth disabled={!file} onClick={handleUpload}>
+            처방전 읽기
+          </Button>
+        </main>
+      </MobileShell>
+    </div>
   )
 }
 

@@ -30,11 +30,12 @@
 
 Backend 기능 구현과 End-to-End 제품 MVP 완료를 구분합니다.
 
-| 구분 | 2026-08-24 상태 |
+| 구분 | 2026-08-25 상태 |
 | --- | --- |
 | Backend MVP | 이메일 인증, 처방전 업로드, 같은 요청 안에서 완료되는 CLOVA OCR, 별도 OCR 필드 수정·처방 확정 API, OpenAI Guide·Chat 동기 API 구현 |
-| Frontend 연결 | 회원가입·로그인, 처방전 업로드와 OCR 결과 요약까지 실제 API 연결 |
-| Frontend 미연결 | OCR 필드 검수·처방 확정·Guide·Chat은 디자인 프로토타입 또는 미연결 상태 |
+| Frontend API 연결 | 회원가입·로그인, 처방전 업로드·OCR 조회, OCR 필드 검수·수정, 처방 확정, Guide 생성·조회, Chat 세션·이력·메시지까지 실제 API 연결 |
+| PostgreSQL 실제 E2E | 회원가입 → 로그인 → 업로드 → OCR → 검수·수정 → 처방 확정까지 완료 |
+| 전체 AI E2E 확인 필요 | Guide 생성 → Guide 조회 → Chat 진입과 실제 OpenAI 응답까지의 전체 흐름은 최종 완료로 표시하지 않음 |
 | Schema-only | 지식 문서·청크와 Guide·Chat citation 테이블은 존재하지만 실행 경로에는 미연결 |
 | Post-MVP-1 목표 | 비동기 Job·Outbox·Redis Stream·Worker, 처방 버전, 일정·Check-in, Barrier/Support, OTC, 최소 RAG·Citation·Safety |
 | 공개 상태 | 현재 Guide·Chat Production 공개 차단. Post-MVP-1 Track C·D·F도 별도 의료·약학·Privacy·Source 승인 전 공개 불가 |
