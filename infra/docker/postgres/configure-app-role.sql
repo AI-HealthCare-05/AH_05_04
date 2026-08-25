@@ -5,6 +5,46 @@
 \getenv app_user DB_APP_USER
 \getenv app_password DB_APP_PASSWORD
 \getenv migration_user DB_MIGRATION_USER
+\getenv migration_user DB_MIGRATION_USER
+\getenv migration_password DB_MIGRATION_PASSWORD
+\getenv app_user DB_APP_USER
+\getenv app_password DB_APP_PASSWORD
+
+
+-- Alembic 전용 Migration 역할을 생성합니다.
+SELECT format(
+    'CREATE ROLE %I LOGIN PASSWORD %L',
+    :'migration_user',
+    :'migration_password'
+)
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = :'migration_user'
+)
+\gexec
+
+-- Migration 역할은 schema migration에 필요한 권한만 가집니다.
+SELECT format(
+    'ALTER ROLE %I WITH LOGIN PASSWORD %L
+     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
+    :'migration_user',
+    :'migration_password'
+)
+\gexec
+
+SELECT format(
+    'GRANT CONNECT ON DATABASE %I TO %I',
+    current_database(),
+    :'migration_user'
+)
+\gexec
+
+SELECT format(
+    'GRANT USAGE, CREATE ON SCHEMA public TO %I',
+    :'migration_user'
+)
+\gexec
 
 -- 애플리케이션 계정이 없을 때만 생성합니다.
 SELECT format(
@@ -49,7 +89,8 @@ SELECT format(
 \gexec
 
 SELECT format(
-    'GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %I',
+    -- nextval() 사용에 필요한 권한만 허용하고 setval() 권한은 부여하지 않습니다.
+    'GRANT USAGE, SELECT, ON ALL SEQUENCES IN SCHEMA public TO %I',
     :'app_user'
 )
 \gexec
@@ -65,7 +106,7 @@ SELECT format(
 
 SELECT format(
     'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public
-     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I',
+     GRANT USAGE, SELECT ON SEQUENCES TO %I',
     :'migration_user',
     :'app_user'
 )

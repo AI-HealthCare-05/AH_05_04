@@ -257,19 +257,27 @@ esac
 # ---------- EC2 배포 디렉터리 준비 ----------
 echo "${COLOR_BLUE}EC2 배포 디렉터리를 준비합니다.${COLOR_NC}"
 
+# 운영 환경파일이 저장되는 project 디렉터리는 소유자만 접근할 수 있게 합니다.
 ssh \
   -i "$SSH_KEY_PATH" \
   "ubuntu@$ec2_ip" \
-  "mkdir -p ~/project/nginx ~/project/postgres"
+  'install -d -m 700 \
+    "$HOME/project" \
+    "$HOME/project/nginx" \
+    "$HOME/project/postgres"'
 
 # ---------- 운영 파일 복사 ----------
 echo "${COLOR_BLUE}운영 환경파일과 Compose 설정을 복사합니다.${COLOR_NC}"
 
-# 서버에서는 Compose와 같은 ~/project 디렉터리의 .env를 사용합니다.
-scp \
+# 환경파일 내용을 SSH 표준입력으로 전달합니다.
+# 원격 파일은 생성 시점부터 소유자만 읽고 쓸 수 있게 제한합니다.
+ssh \
   -i "$SSH_KEY_PATH" \
-  "$PROD_ENV_FILE" \
-  "ubuntu@$ec2_ip":~/project/.env
+  "ubuntu@$ec2_ip" \
+  'umask 077
+   cat > "$HOME/project/.env"
+   chmod 600 "$HOME/project/.env"' \
+  <"$PROD_ENV_FILE"
 
 scp \
   -i "$SSH_KEY_PATH" \
@@ -290,11 +298,22 @@ scp \
 
 # ---------- 원격 명령에 전달할 값 안전하게 escape ----------
 printf -v remote_docker_username '%q' "$docker_user"
-printf -v remote_docker_pat '%q' "$docker_pw"
 printf -v remote_docker_repository '%q' "$docker_repo"
 printf -v remote_app_version '%q' "$APP_VERSION"
 printf -v remote_ai_worker_version '%q' "$AI_WORKER_VERSION"
 printf -v remote_deploy_services '%q' "${DEPLOY_SERVICES[*]}"
+
+
+# PAT은 SSH 명령 인자나 환경변수에 포함하지 않고 표준입력으로만 전달합니다.
+echo "${COLOR_BLUE}Docker registry에 로그인합니다.${COLOR_NC}"
+
+printf '%s' "$docker_pw" |
+  ssh \
+    -i "$SSH_KEY_PATH" \
+    "ubuntu@$ec2_ip" \
+    "docker login \
+      -u $remote_docker_username \
+      --password-stdin"
 
 # ---------- EC2 배포 자동화 ----------
 echo "${COLOR_BLUE}EC2 배포를 시작합니다.${COLOR_NC}"
@@ -302,9 +321,7 @@ echo "${COLOR_BLUE}EC2 배포를 시작합니다.${COLOR_NC}"
 ssh \
   -i "$SSH_KEY_PATH" \
   "ubuntu@$ec2_ip" \
-  "DOCKER_USERNAME=$remote_docker_username \
-   DOCKER_PAT=$remote_docker_pat \
-   DOCKER_USER=$remote_docker_username \
+  "DOCKER_USER=$remote_docker_username \
    DOCKER_REPOSITORY=$remote_docker_repository \
    APP_VERSION=$remote_app_version \
    AI_WORKER_VERSION=$remote_ai_worker_version \
@@ -313,12 +330,6 @@ ssh \
 set -euo pipefail
 
 cd "$HOME/project"
-
-echo "Docker login"
-
-# PAT을 stdin으로 전달하여 Docker login 명령 인수에 직접 넣지 않습니다.
-printf '%s' "$DOCKER_PAT" |
-  docker login -u "$DOCKER_USERNAME" --password-stdin
 
 if [ -z "${DEPLOY_SERVICES// }" ]; then
   echo "배포 대상 서비스가 없습니다."
@@ -344,7 +355,8 @@ docker compose exec -T postgres \
   sh -lc '
     psql \
       -v ON_ERROR_STOP=1 \
-      -U "$DB_MIGRATION_USER" \
+      # 역할 생성과 권한 설정은 Bootstrap/admin 계정으로만 실행합니다.
+      -U "$POSTGRES_USER" \
       -d "$POSTGRES_DB" \
       -f /docker-entrypoint-initdb.d/configure-app-role.sql
   '
