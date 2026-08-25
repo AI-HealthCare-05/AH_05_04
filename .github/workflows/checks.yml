@@ -93,5 +93,6 @@ jobs:
 
       - name: Run Tests with Coverage
         run: |
-          uv run coverage run -m pytest app tests/contract
+          # 구현된 Worker 공통 단위 테스트도 PR 필수 검사에 포함합니다.
+          uv run coverage run -m pytest app tests/contract ai_worker/tests/core
           uv run coverage report -m
