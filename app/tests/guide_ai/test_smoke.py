@@ -43,4 +43,4 @@ async def test_gpt_4o_mini_synthetic_smoke() -> None:
     assert "합성의약품 에이" in result.content
     assert "복용 시점: 식후" in result.content
     assert result.model_name.startswith("gpt-4o-mini")
-    assert result.prompt_version == "guide-prompt-v1"
+    assert result.prompt_version == "guide-prompt-v2"

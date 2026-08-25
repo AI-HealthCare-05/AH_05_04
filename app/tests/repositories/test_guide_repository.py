@@ -3,9 +3,10 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.guides import GuideGenerationStatus
+from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
@@ -138,25 +139,49 @@ async def test_get_owned_guide_rejects_other_users_guide(db_session: AsyncSessio
     assert stolen is None
 
 
-async def test_mark_failed_persists_after_subsequent_rollback(db_session: AsyncSession) -> None:
-    user = await _create_user(db_session, email="failure@example.com")
-    prescription = await _create_confirmed_prescription(db_session, user=user)
+async def test_mark_failed_persists_after_writer_session_closes_and_new_session_reloads() -> None:
+    session_factory = async_sessionmaker(test_engine, expire_on_commit=False, autoflush=False)
+    synthetic_suffix = uuid4().hex[:12]
 
-    repo = GuideRepository(db_session)
-    guide = await repo.create(prescription_id=prescription.id)
+    async with session_factory() as writer_session:
+        user = await _create_user(writer_session, email=f"guide-failure-{synthetic_suffix}@example.com")
+        prescription = await _create_confirmed_prescription(writer_session, user=user)
+        guide = await GuideRepository(writer_session).create(prescription_id=prescription.id)
 
-    await repo.mark_failed(
-        guide,
-        error_code="OPENAI_API_ERROR",
-        error_message="고정된 안전 문구",
-        completed_at=datetime.now(UTC),
-    )
+        await GuideRepository(writer_session).mark_failed(
+            guide,
+            error_code="OPENAI_API_ERROR",
+            error_message="고정된 안전 문구",
+            completed_at=datetime.now(UTC),
+        )
 
-    # 실제 요청 흐름에서는 이 시점 이후 서비스가 ApiError를 다시 발생시키고,
-    # get_db_session의 예외 처리가 session.rollback()을 호출합니다. 그 상황을 재현합니다.
-    await db_session.rollback()
+        # 실제 요청 흐름에서는 commit 뒤 ApiError가 전파되어 dependency가 rollback을 호출합니다.
+        # 실패 상태가 commit 경계를 넘었는지 검증하기 위해 writer session은 여기서 완전히 닫습니다.
+        await writer_session.rollback()
+        guide_id = guide.id
+        prescription_id = prescription.id
+        ocr_job_id = prescription.source_ocr_job_id
+        document_id = prescription.document_id
+        user_id = user.id
 
-    reloaded = await repo.get_owned(guide_id=guide.id, user_id=user.id)
-    assert reloaded is not None
-    assert reloaded.generation_status == GuideGenerationStatus.FAILED
-    assert reloaded.error_message == "고정된 안전 문구"
+    try:
+        async with session_factory() as verification_session:
+            reloaded = await GuideRepository(verification_session).get_owned(
+                guide_id=guide_id,
+                user_id=user_id,
+            )
+            assert reloaded is not None
+            assert reloaded.generation_status == GuideGenerationStatus.FAILED
+            assert reloaded.error_code == "OPENAI_API_ERROR"
+            assert reloaded.error_message == "고정된 안전 문구"
+            assert reloaded.completed_at is not None
+            assert (reloaded.content, reloaded.model_name, reloaded.prompt_version) == (None, None, None)
+    finally:
+        async with session_factory() as cleanup_session:
+            await cleanup_session.execute(delete(Guide).where(Guide.id == guide_id))
+            await cleanup_session.execute(delete(Medication).where(Medication.prescription_id == prescription_id))
+            await cleanup_session.execute(delete(Prescription).where(Prescription.id == prescription_id))
+            await cleanup_session.execute(delete(OcrJob).where(OcrJob.id == ocr_job_id))
+            await cleanup_session.execute(delete(MedicalDocument).where(MedicalDocument.id == document_id))
+            await cleanup_session.execute(delete(User).where(User.id == user_id))
+            await cleanup_session.commit()
