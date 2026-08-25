@@ -51,6 +51,19 @@
   font-weight: 800;
 }
 
+.chat-page__suggestions button[disabled] {
+  cursor: default;
+  opacity: .62;
+}
+
+.chat-page__suggestions-notice {
+  flex: 0 0 auto;
+  margin: -8px 20px 12px;
+  color: var(--ds-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
 .chat-page__conversation {
   flex: 1 1 auto;
   min-height: 0;

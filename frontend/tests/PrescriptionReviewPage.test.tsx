@@ -944,6 +944,33 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     ).toBeTruthy()
   })
 
+  it('Guide 생성 중 화면을 나가면 늦은 성공 응답이 Guide 화면으로 이동시키지 않는다', async () => {
+    const guideCreation = createDeferred<GuideResponse>()
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    vi.mocked(createGuide).mockImplementation(() => guideCreation.promise)
+
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('checkbox'))
+    fireEvent.click(await getConfirmationButton())
+
+    await waitFor(() => expect(createGuide).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: '이전 화면' }))
+    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+
+    await act(async () => {
+      guideCreation.resolve(
+        makeGuideResponse('late-guide', 'prescription-1'),
+      )
+      await guideCreation.promise
+    })
+
+    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+    expect(screen.queryByText('Guide route: late-guide')).toBeNull()
+  })
+
   it('Guide 생성 실패 후 확정 처방을 유지하고 같은 prescription_id로 Guide만 재시도한다', async () => {
     const retryCreation = createDeferred<GuideResponse>()
     vi.mocked(getOcrJob).mockResolvedValue(

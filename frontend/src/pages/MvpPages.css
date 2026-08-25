@@ -176,6 +176,16 @@
   font-weight: 800;
 }
 
+.mvp-home__hero-link span {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: .72;
+}
+
+.mvp-home__hero-link[disabled] {
+  cursor: default;
+}
+
 .mvp-page__hero small,
 .mvp-page__hero p {
   color: rgb(255 255 255 / 72%);
@@ -258,6 +268,12 @@
 
 .mvp-home__quick-card strong {
   font-size: 14px;
+}
+
+.mvp-home__quick-card span {
+  color: var(--ds-text-muted);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .mvp-home__quick-card[disabled] {

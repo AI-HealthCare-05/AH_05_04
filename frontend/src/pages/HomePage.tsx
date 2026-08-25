@@ -40,8 +40,14 @@ function HomePage() {
             <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
               처방전 등록하기
             </Button>
-            <button className="mvp-home__hero-link" type="button">
+            <button
+              className="mvp-home__hero-link"
+              type="button"
+              aria-label="건강정보 입력하기"
+              disabled
+            >
               건강정보 입력하기
+              <span>준비 중</span>
             </button>
           </Card>
 
@@ -57,8 +63,14 @@ function HomePage() {
             >
               <strong>문서 등록</strong>
             </button>
-            <button className="mvp-home__quick-card" type="button">
+            <button
+              className="mvp-home__quick-card"
+              type="button"
+              aria-label="복약 챗봇"
+              disabled
+            >
               <strong>복약 챗봇</strong>
+              <span>준비 중</span>
             </button>
             <button className="mvp-home__quick-card" type="button" disabled>
               <strong>복약 일정</strong>

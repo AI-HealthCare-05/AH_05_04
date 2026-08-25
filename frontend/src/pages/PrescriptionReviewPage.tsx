@@ -481,6 +481,7 @@ function PrescriptionReviewPage() {
 
     return () => {
       isDisposed = true
+      guideCreationRequestRef.current = null
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [applyReviewError, documentId, jobId, reviewRequestKey])

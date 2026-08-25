@@ -358,12 +358,20 @@ describe('ChatPage', () => {
     },
   )
 
-  it('추천 질문 chip은 표시하지만 합의되지 않은 전송 동작을 실행하지 않는다', async () => {
+  it('추천 질문 chip을 준비 중인 미구현 기능으로 비활성화한다', async () => {
     renderPage()
 
     expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '복용 방법 확인' }))
+    const suggestionButtons = [
+      screen.getByRole('button', { name: '복용 방법 확인' }),
+      screen.getByRole('button', { name: '놓친 복용 안내' }),
+      screen.getByRole('button', { name: '불편·안전 확인' }),
+    ]
 
+    for (const button of suggestionButtons) {
+      expect(button).toHaveProperty('disabled', true)
+    }
+    expect(screen.getByText('추천 질문 기능은 준비 중이에요.')).toBeTruthy()
     expect(sendChatMessage).not.toHaveBeenCalled()
     expect(screen.getByLabelText('복약 질문')).toHaveProperty('value', '')
   })

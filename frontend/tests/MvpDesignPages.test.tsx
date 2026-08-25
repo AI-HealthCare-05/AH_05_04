@@ -46,9 +46,16 @@ describe('Dosey MVP design pages', () => {
 
     expect(screen.getByText('표시할 복약 기록이 아직 없어요')).toBeTruthy()
     expect(screen.queryByText('홍길동님')).toBeNull()
-    expect(screen.getByRole('button', { name: '복약 챗봇' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '건강정보 입력하기' }),
+    ).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '복약 챗봇' })).toHaveProperty(
+      'disabled',
+      true,
+    )
     expect(screen.getByRole('button', { name: '복약 일정' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '일반 의약품' })).toBeTruthy()
+    expect(screen.getAllByText('준비 중')).toHaveLength(2)
 
     fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()

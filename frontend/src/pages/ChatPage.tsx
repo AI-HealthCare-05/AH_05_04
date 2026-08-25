@@ -282,10 +282,13 @@ function ChatPage() {
           </header>
 
           <div className="chat-page__suggestions" aria-label="추천 질문">
-            <button type="button">복용 방법 확인</button>
-            <button type="button">놓친 복용 안내</button>
-            <button type="button">불편·안전 확인</button>
+            <button type="button" disabled>복용 방법 확인</button>
+            <button type="button" disabled>놓친 복용 안내</button>
+            <button type="button" disabled>불편·안전 확인</button>
           </div>
+          <p className="chat-page__suggestions-notice" role="status">
+            추천 질문 기능은 준비 중이에요.
+          </p>
 
           <div className="chat-page__conversation">
             <div className="chat-messages" aria-live="polite">
