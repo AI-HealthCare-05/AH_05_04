@@ -53,14 +53,17 @@ services:
     container_name: migrate
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
 
-    # 서버에서 Compose와 같은 ~/project 디렉터리의 .env를 사용합니다.
-    env_file:
-      - ${SERVICE_ENV_FILE:-./.env}
-
     environment:
-      # Alembic에는 migration 전용 계정을 주입합니다.
+      # Migration 컨테이너에는 Alembic 실행에 필요한 DB 설정만 주입합니다.
+      # Admin·Runtime 비밀번호와 OpenAI·CLOVA 자격 증명은 전달하지 않습니다.
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
       DB_USER: ${DB_MIGRATION_USER}
       DB_PASSWORD: ${DB_MIGRATION_PASSWORD}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
+      SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
 
     command:
       - uv
@@ -83,16 +86,40 @@ services:
   fastapi:
     container_name: fastapi
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
-    env_file:
-      - ${SERVICE_ENV_FILE:-./.env}
+
     environment:
-      # 런타임 애플리케이션에는 DDL 권한이 없는 계정을 주입합니다.
+      # 애플리케이션 기본 설정
+      ENV: ${ENV}
+      SECRET_KEY: ${SECRET_KEY}
+      TIMEZONE: ${TIMEZONE:-Asia/Seoul}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+
+      # FastAPI에는 Runtime DB 자격 증명만 주입합니다.
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
       DB_USER: ${DB_APP_USER}
       DB_PASSWORD: ${DB_APP_PASSWORD}
-    # 정적 파일과 업로드 파일을 컨테이너 재생성 후에도 유지합니다.
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
+      SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
+
+      # 현재 FastAPI가 직접 사용하는 Provider 설정
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-20}
+      CLOVA_OCR_INVOKE_URL: ${CLOVA_OCR_INVOKE_URL}
+      CLOVA_OCR_SECRET: ${CLOVA_OCR_SECRET}
+      CLOVA_OCR_TIMEOUT_SECONDS: ${CLOVA_OCR_TIMEOUT_SECONDS:-20}
+
+      # 업로드 파일이 영속 volume 아래에 저장되도록 고정합니다.
+      STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}
+
     volumes:
       - static_volume:/app/templates
       - media_volume:/app/media
+
     restart: always
     ports:
       - "8000:8000"
@@ -110,12 +137,21 @@ services:
   ai-worker:
     container_name: ai-worker
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
-    env_file:
-      - ${SERVICE_ENV_FILE:-./.env}
+
     environment:
-      # Worker도 FastAPI와 동일한 제한 계정을 사용합니다.
+      TIMEZONE: ${TIMEZONE:-Asia/Seoul}
+
+      # Worker에는 Runtime DB 자격 증명만 주입합니다.
+      # Admin·Migration 자격 증명과 현재 사용하지 않는 Provider secret은 전달하지 않습니다.
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
       DB_USER: ${DB_APP_USER}
       DB_PASSWORD: ${DB_APP_PASSWORD}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
+      SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
+
     restart: always
     mem_limit: 4G
     networks:

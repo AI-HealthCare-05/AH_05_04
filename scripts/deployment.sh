@@ -18,6 +18,31 @@ fi
 set -a
 source "$PROD_ENV_FILE"
 set +a
+# ---------- PostgreSQL 역할 설정 검증 ----------
+# 역할 이름이 같으면 Migration 역할의 NOSUPERUSER 설정이
+# Bootstrap/admin 역할에도 적용될 수 있으므로 배포 전에 차단합니다.
+required_db_variables=(
+  DB_ADMIN_USER
+  DB_ADMIN_PASSWORD
+  DB_MIGRATION_USER
+  DB_MIGRATION_PASSWORD
+  DB_APP_USER
+  DB_APP_PASSWORD
+)
+
+for variable_name in "${required_db_variables[@]}"; do
+  if [ -z "${!variable_name:-}" ]; then
+    echo "필수 운영 DB 환경변수가 비어 있습니다: $variable_name"
+    exit 1
+  fi
+done
+
+if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
+  [ "$DB_ADMIN_USER" = "$DB_APP_USER" ] ||
+  [ "$DB_MIGRATION_USER" = "$DB_APP_USER" ]; then
+  echo "DB_ADMIN_USER, DB_MIGRATION_USER, DB_APP_USER는 서로 다른 이름이어야 합니다."
+  exit 1
+fi
 
 # 터미널 색상을 지원하지 않는 환경에서는 빈 문자열을 사용합니다.
 if [ -t 1 ] &&
@@ -348,14 +373,14 @@ docker compose up \
   postgres \
   redis
 
-echo "Configuring restricted application database role"
+echo "Configuring restricted database roles"
 
-# 신규·기존 DB에서 애플리케이션 제한 계정과 권한을 정렬합니다.
+# 역할 생성과 권한 설정은 Bootstrap/admin 계정으로만 실행합니다.
+# psql 명령의 line continuation 사이에는 주석을 넣지 않습니다.
 docker compose exec -T postgres \
   sh -lc '
     psql \
       -v ON_ERROR_STOP=1 \
-      # 역할 생성과 권한 설정은 Bootstrap/admin 계정으로만 실행합니다.
       -U "$POSTGRES_USER" \
       -d "$POSTGRES_DB" \
       -f /docker-entrypoint-initdb.d/configure-app-role.sql
