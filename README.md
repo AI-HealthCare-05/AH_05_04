@@ -150,11 +150,11 @@ docker compose \
   up -d --build ai-worker
 ```
 
-로컬 Python 환경에서 API 서버를 직접 실행하려면 DB와 필요한 외부 설정을 준비한 뒤 `backend/`에서 다음 명령을 사용합니다.
+로컬 Python 환경에서 API 서버를 직접 실행하려면 DB와 필요한 외부 설정을 준비한 뒤 다음 명령을 사용합니다. `Config`는 현재 작업 디렉터리 기준으로 `.env`를 찾으므로, 저장소 루트에서 실행 위치만 `--app-dir`로 지정합니다.
 
 ```bash
-cd backend
-uv run uvicorn app.main:app --reload
+uv run --env-file envs/.local.env \
+  uvicorn --app-dir backend app.main:app --reload
 ```
 
 ## Database migration

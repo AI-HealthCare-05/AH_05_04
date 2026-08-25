@@ -29,8 +29,8 @@
 
 현재 실제 OpenAI API를 호출하는 검증은 다음 두 테스트로 분리되어 있다.
 
-- `app/tests/guide_ai/test_smoke.py`
-- `app/tests/chat_ai/test_smoke.py`
+- `backend/app/tests/guide_ai/test_smoke.py`
+- `backend/app/tests/chat_ai/test_smoke.py`
 
 두 테스트는 각각 Guide AI와 Chat AI 생성 모듈을 직접 호출한다. 따라서 다음 항목은 확인하지 않는다.
 
@@ -130,7 +130,7 @@ wrapper는 저장소 절대경로를 계산해 Compose·env 경로와 검증된 
 - 배포된 애플리케이션 image의 검증 코드를 사용하고, 실제 OpenAI 호출은 실행 중 FastAPI가 자신의 설정으로 수행한다.
 - 전용 validation credential로 합성 데이터 준비·DB 재조회·삭제와 control ledger 전이를 수행한다.
 - 외부에 노출되는 테스트 전용 API나 인증 우회 경로가 필요하지 않다.
-- 현재 `app/tests/conftest.py`가 test DB schema를 생성·삭제하므로 배포 환경에서 pytest를 직접 실행하는 위험을 피한다.
+- 현재 `backend/app/tests/conftest.py`가 test DB schema를 생성·삭제하므로 배포 환경에서 pytest를 직접 실행하는 위험을 피한다.
 
 pytest 기반 live integration test는 배포 DB와 test DB 설정이 섞일 위험 때문에 사용하지 않는다. 외부 실행기 또는 staging 전용 검증 API도 MVP 범위에 비해 보안·운영 복잡도가 커서 사용하지 않는다.
 
@@ -141,7 +141,7 @@ pytest 기반 live integration test는 배포 DB와 test DB 설정이 섞일 위
 검증 코드는 다음 경계로 구성한다.
 
 ```text
-app/release_validation/
+backend/app/release_validation/
 ├── __init__.py
 └── ai_one_cycle_smoke.py
 ```
@@ -454,10 +454,10 @@ live one-cycle은 정상 흐름 확인에만 사용한다. 다음 실패는 실�
 
 ```bash
 uv run pytest \
-  app/tests/guide_ai/test_backend_contract.py::test_backend_contract_maps_generation_errors_and_marks_failed \
-  app/tests/repositories/test_guide_repository.py::test_mark_failed_persists_after_subsequent_rollback \
-  app/tests/chat_apis/test_chat_message_api.py::test_failed_send_is_requeried_as_exact_user_and_failed_assistant_pair \
-  app/tests/repositories/test_chat_repository.py::test_commit_failed_message_pair_persists_exactly_one_user_failed_assistant_pair_after_rollback \
+  backend/app/tests/guide_ai/test_backend_contract.py::test_backend_contract_maps_generation_errors_and_marks_failed \
+  backend/app/tests/repositories/test_guide_repository.py::test_mark_failed_persists_after_subsequent_rollback \
+  backend/app/tests/chat_apis/test_chat_message_api.py::test_failed_send_is_requeried_as_exact_user_and_failed_assistant_pair \
+  backend/app/tests/repositories/test_chat_repository.py::test_commit_failed_message_pair_persists_exactly_one_user_failed_assistant_pair_after_rollback \
   -q
 ```
 
@@ -565,7 +565,7 @@ MVP 단계에서는 별도 서버 파일, 장기 보관 또는 대시보드를 �
 ```bash
 uv run ruff check .
 uv run ruff format . --check
-uv run mypy app ai_worker
+uv run mypy backend/app ai_worker
 bash scripts/ci/run_test.sh
 ```
 
@@ -616,7 +616,7 @@ AI 응답 문장 전체가 매번 동일한지는 검사하지 않는다. 다음
 ## 16. 담당과 리뷰 경계
 
 - `@ceohwj`: 합성 시나리오, AI 안전 기준, 실제 OpenAI 검증 실행과 결과 판정
-- `@phina-io`: `app/` 안의 전용 CLI, 합성 DB 데이터 준비·조회·삭제 로직 구현과 리뷰
+- `@phina-io`: `backend/app/` 안의 전용 CLI, 합성 DB 데이터 준비·조회·삭제 로직 구현과 리뷰
 - `@solia142`: 실제 Frontend 가이드·챗봇 화면 구현과 후속 E2E 공동 검증
 
 이 작업은 기존 공유 계약을 변경하지 않는다. 구현 중 API 형식, DB 구조 또는 상태 의미를 변경해야 하는 상황이 발견되면 one-cycle 검증 작업을 중단하고 관련 CODEOWNER와 별도 계약 변경으로 분리한다.

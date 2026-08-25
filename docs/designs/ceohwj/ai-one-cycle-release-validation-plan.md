@@ -23,7 +23,7 @@
 - `OPENAI_API_KEY`는 staging 배포 비밀 저장소에서 FastAPI 컨테이너에만 주입하며 저장소, CLI 인자, 로그, 결과 파일에 기록하지 않는다.
 - live smoke는 전용 staging Compose·DB에서 `ENV=staging`, `RELEASE_VALIDATION_ALLOWED=1`, UUID run ID와 DB identity 검사를 모두 통과해야 한다.
 - 외부 API·DTO·DB schema·상태 의미는 변경하지 않는다. 변경 필요성이 발견되면 구현을 중단하고 관련 CODEOWNER와 별도 계약 변경으로 분리한다.
-- `app/` 구현과 테스트는 `@phina-io`, Frontend 구현과 E2E는 `@solia142`, AI 검증 기준과 합성 시나리오는 `@ceohwj`가 책임지고 공동 리뷰한다.
+- `backend/app/` 구현과 테스트는 `@phina-io`, Frontend 구현과 E2E는 `@solia142`, AI 검증 기준과 합성 시나리오는 `@ceohwj`가 책임지고 공동 리뷰한다.
 - 생성 본문, 질문 전문, access token, refresh token, DB 비밀번호, API key를 smoke 출력에 포함하지 않는다.
 - Backend 검증 완료, 기능 Issue 완료와 Production 배포 승인을 서로 다른 상태로 관리한다.
 
@@ -40,7 +40,7 @@
 - Create: `scripts/release_validation/run_staging_migration.sh`
 - Modify: `docs/contracts/release-validation-ledger.md` (Proposed → Implemented 상태와 실제 SQL type·길이 확정)
 - Modify: `docs/contracts/README.md`
-- Modify: `app/Dockerfile`
+- Modify: `backend/app/Dockerfile`
 - Review jointly: staging application DB·control DB·secret-store provisioning outside this repository
 
 - [ ] **Step 1: 전용 staging project와 DB를 정의한다**
@@ -107,9 +107,9 @@
 ### Task 2: 배포 컨테이너용 one-cycle smoke 명령 구현
 
 **Files:**
-- Create: `app/release_validation/__init__.py`
-- Create: `app/release_validation/ai_one_cycle_smoke.py`
-- Create: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
+- Create: `backend/app/release_validation/__init__.py`
+- Create: `backend/app/release_validation/ai_one_cycle_smoke.py`
+- Create: `backend/app/tests/release_validation/test_ai_one_cycle_smoke.py`
 
 **Interfaces:**
 - Consumes: `config.ENV`, `config.OPENAI_MODEL`, `RELEASE_VALIDATION_ALLOWED`, operator-provided run ID, staging DB identity, authoritative run ledger, baked commit SHA, running full RepoDigest·local image ID, wrapper-inspected OCI revision, `http://127.0.0.1:8000/api/v1`
@@ -121,7 +121,7 @@
 
 - [ ] **Step 2: 환경 가드 테스트가 실패하는지 확인한다**
 
-  Run: `uv run pytest app/tests/release_validation/test_ai_one_cycle_smoke.py -k environment_guard -q`
+  Run: `uv run pytest backend/app/tests/release_validation/test_ai_one_cycle_smoke.py -k environment_guard -q`
 
   Expected: 모듈이 아직 없어 collection 또는 import 실패.
 
@@ -151,23 +151,23 @@
 
 - [ ] **Step 9: 전용 테스트를 통과시킨다**
 
-  Run: `uv run pytest app/tests/release_validation/test_ai_one_cycle_smoke.py -q`
+  Run: `uv run pytest backend/app/tests/release_validation/test_ai_one_cycle_smoke.py -q`
 
   Expected: 실제 OpenAI 호출 없이 모든 테스트 PASS.
 
 - [ ] **Step 10: Backend 회귀 검사를 실행한다**
 
-  Run: `uv run ruff check app/release_validation app/tests/release_validation && uv run mypy app && uv run pytest app/tests/guide_ai app/tests/chat_ai app/tests/chat app/tests/chat_apis app/tests/repositories/test_guide_repository.py app/tests/repositories/test_chat_repository.py -q`
+  Run: `uv run ruff check backend/app/release_validation backend/app/tests/release_validation && uv run mypy backend/app && uv run pytest backend/app/tests/guide_ai backend/app/tests/chat_ai backend/app/tests/chat backend/app/tests/chat_apis backend/app/tests/repositories/test_guide_repository.py backend/app/tests/repositories/test_chat_repository.py -q`
 
   Expected: 모두 PASS; live smoke 두 건은 명시적으로 SKIPPED.
 
 ### Task 3: 실패 상태 저장을 결정적 테스트 증거로 고정
 
 **Files:**
-- Modify only if a gap is found: `app/tests/guide_ai/test_backend_contract.py`
-- Modify only if a gap is found: `app/tests/chat_apis/test_chat_message_api.py`
-- Modify only if a gap is found: `app/tests/repositories/test_guide_repository.py`
-- Modify only if a gap is found: `app/tests/repositories/test_chat_repository.py`
+- Modify only if a gap is found: `backend/app/tests/guide_ai/test_backend_contract.py`
+- Modify only if a gap is found: `backend/app/tests/chat_apis/test_chat_message_api.py`
+- Modify only if a gap is found: `backend/app/tests/repositories/test_guide_repository.py`
+- Modify only if a gap is found: `backend/app/tests/repositories/test_chat_repository.py`
 
 **Interfaces:**
 - Consumes: 기존 오류 매핑과 repository commit 동작
@@ -175,7 +175,7 @@
 
 - [ ] **Step 1: 현재 실패 회귀 테스트를 실행한다**
 
-  Run: `uv run pytest app/tests/guide_ai/test_backend_contract.py::test_backend_contract_maps_generation_errors_and_marks_failed app/tests/repositories/test_guide_repository.py::test_mark_failed_persists_after_subsequent_rollback app/tests/chat_apis/test_chat_message_api.py::test_failed_send_is_requeried_as_exact_user_and_failed_assistant_pair app/tests/repositories/test_chat_repository.py::test_commit_failed_message_pair_persists_exactly_one_user_failed_assistant_pair_after_rollback -q`
+  Run: `uv run pytest backend/app/tests/guide_ai/test_backend_contract.py::test_backend_contract_maps_generation_errors_and_marks_failed backend/app/tests/repositories/test_guide_repository.py::test_mark_failed_persists_after_subsequent_rollback backend/app/tests/chat_apis/test_chat_message_api.py::test_failed_send_is_requeried_as_exact_user_and_failed_assistant_pair backend/app/tests/repositories/test_chat_repository.py::test_commit_failed_message_pair_persists_exactly_one_user_failed_assistant_pair_after_rollback -q`
 
   Expected: 네 테스트 모두 PASS.
 
@@ -194,7 +194,7 @@
 - Modify: `envs/example.prod.env`
 - Create and implement Task 0 staging artifacts
 - Modify: `docs/deployment.md`
-- Modify: `app/Dockerfile`
+- Modify: `backend/app/Dockerfile`
 
 **Interfaces:**
 - Consumes: staging 전용 secret store의 `OPENAI_API_KEY`, baked commit SHA, running full RepoDigest·local image ID·OCI revision, authoritative run ledger
@@ -252,7 +252,7 @@
 
 - [ ] **Step 1: 저장소 필수 검사를 실행한다**
 
-  Run: `uv run ruff check . && uv run ruff format . --check && uv run mypy app ai_worker && bash scripts/ci/run_test.sh`
+  Run: `uv run ruff check . && uv run ruff format . --check && uv run mypy backend/app ai_worker && bash scripts/ci/run_test.sh`
 
   Expected: 모두 PASS. PostgreSQL·Docker 등 선행 조건을 충족하지 못한 검사는 생략하지 않고 blocker로 기록한다.
 
@@ -280,5 +280,5 @@
 
 - 요구사항 매핑: staging 격리(Task 0), 실제 OpenAI smoke(Task 4), 처방 확정부터 챗봇 전체 흐름(Task 2), 모델·프롬프트 저장(Task 2), 실패 저장(Task 3), Frontend 별도 인계(Task 5), FastAPI 전용 key(Task 0·4).
 - 계약 변경: 기존 사용자 API·application DB 의미는 유지하지만 staging control DB ledger와 validation·cleanup·migration role 사이에 새 proposed 운영 계약을 추가한다. `docs/contracts/release-validation-ledger.md`, index, schema·구현과 contract/fault-injection test를 같은 구현 PR에서 갱신한다.
-- 주요 위험: `app/tests/conftest.py`는 test DB schema를 생성·삭제하므로 기존 `app/tests/**/test_smoke.py`를 배포 컨테이너의 운영 DB 설정으로 직접 실행하지 않는다.
+- 주요 위험: `backend/app/tests/conftest.py`는 test DB schema를 생성·삭제하므로 기존 `backend/app/tests/**/test_smoke.py`를 배포 컨테이너의 운영 DB 설정으로 직접 실행하지 않는다.
 - 완료 구분: Task 0~4는 Backend 통합 검증 구현, Task 5는 Frontend 별도 인계, Task 6은 저장소 전달을 완료한다. 기능 Issue와 Production 배포 승인은 별도 authoritative gate에서 판정한다.
