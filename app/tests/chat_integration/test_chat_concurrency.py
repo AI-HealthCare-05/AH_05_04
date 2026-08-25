@@ -131,7 +131,8 @@ async def _cancel_pending(*tasks: asyncio.Task[None]) -> None:
 
 
 async def _connection_ids(*sessions: AsyncSession) -> list[int]:
-    return [int(await session.scalar(text("SELECT CONNECTION_ID()"))) for session in sessions]
+    # PostgreSQL backend PID를 이용해 요청별로 서로 다른 DB 연결인지 확인합니다.
+    return [int(await session.scalar(text("SELECT pg_backend_pid()"))) for session in sessions]
 
 
 async def _messages(chat_session_id: UUID) -> list[ChatMessage]:

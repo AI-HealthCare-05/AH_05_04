@@ -49,22 +49,23 @@ jobs:
 
     env:
       DB_HOST: 127.0.0.1
-      DB_PORT: "3306"
-      DB_EXPOSE_PORT: "3306"
-      DB_USER: root
+      DB_PORT: "5432"
+      DB_EXPOSE_PORT: "5432"
+      DB_USER: postgres
       DB_PASSWORD: ci_test_password
       DB_NAME: test
 
     services:
-      mysql:
-        image: mysql:8.0
+      postgres:
+        image: postgres:17-alpine
         env:
-          MYSQL_ROOT_PASSWORD: ci_test_password
-          MYSQL_DATABASE: test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: test
         ports:
-          - 3306:3306
+          - 5432:5432
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_test_password"
+          --health-cmd="pg_isready -U postgres -d test"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
@@ -85,18 +86,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --group app --frozen
 
-      - name: Check if tests exist
-        id: check_tests
-        # tests 폴더나 test_*.py 파일이 있는지 확인
-        run: |
-          if [ -d "tests" ] || [ $(find . -name "test_*.py" | wc -l) -gt 0 ]; then
-            echo "has_tests=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_tests=false" >> $GITHUB_OUTPUT
-          fi
+      # metadata.create_all() 테스트만으로는 migration 오류를 찾지 못하므로
+      # 실제 Alembic migration을 PostgreSQL에서 실행합니다.
+      - name: Run PostgreSQL migrations
+        run: uv run alembic upgrade head
 
       - name: Run Tests with Coverage
-        if: steps.check_tests.outputs.has_tests == 'true'
         run: |
           # 구현된 Worker 공통 단위 테스트도 PR 필수 검사에 포함합니다.
           uv run coverage run -m pytest app tests/contract ai_worker/tests/core

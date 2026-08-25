@@ -14,18 +14,18 @@
 | `app/services/ocr.py` | 같은 HTTP 요청 안에서 CLOVA OCR 호출, 결과 정규화·저장, 오류 매핑 |
 | `app/services/guide_ai/` | 확정 처방만 입력받아 OpenAI 복약 가이드 생성 |
 | `app/services/chat_ai/` | 현재 질문과 확정 약물 목록만 입력받아 OpenAI 단일 응답 생성 |
-| MySQL | 사용자, 의료문서, OCR 결과, 확정 처방, 가이드, 채팅 상태 저장 |
+| PostgreSQL | 사용자, 의료문서, OCR 결과, 확정 처방, 가이드, 채팅 상태 저장 |
 | 로컬 파일시스템 | `STORAGE_DIR` 아래 처방전 원본 저장. 현재 Compose의 영속 volume과 기본 경로가 일치하지 않아 배포 전 확인 필요 |
 | Redis | Compose에 준비되어 있으나 현재 MVP AI 처리 경로에서는 사용하지 않음 |
 | AI Worker | 실행 진입점만 있는 placeholder이며 현재 MVP 요청을 처리하지 않음 |
 
-Backend는 SQLAlchemy asyncio와 `asyncmy`를 사용합니다. OpenAI 클라이언트는 FastAPI lifespan에서 프로세스 단위로 생성하고 가이드·챗봇이 공유합니다.
+Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이언트는 FastAPI lifespan에서 프로세스 단위로 생성하고 가이드·챗봇이 공유합니다.
 
 ## 현재 동기 데이터 흐름
 
 1. 로컬 Frontend는 기본적으로 `http://localhost:8000`의 FastAPI를 직접 호출합니다. 배포 환경에서는 Nginx의 `/api/` proxy를 통해 FastAPI에 전달합니다.
 2. FastAPI가 사용자 권한을 확인하고 처방전 파일과 메타데이터를 저장합니다.
-3. OCR 실행 API는 CLOVA OCR을 같은 요청 안에서 호출하고 작업 상태와 추출 필드를 MySQL에 저장합니다. 응답 상태가 `202 Accepted`여도 현재 구현은 queue나 Worker에 위임하지 않습니다.
+3. OCR 실행 API는 CLOVA OCR을 같은 요청 안에서 호출하고 작업 상태와 추출 필드를 PostgreSQL에 저장합니다. 응답 상태가 `202 Accepted`여도 현재 구현은 queue나 Worker에 위임하지 않습니다.
 4. 사용자가 OCR 필드를 검수·수정한 뒤 확정 처방을 생성합니다.
 5. 가이드 생성 API는 확정 처방을 읽고 OpenAI를 직접 호출한 뒤 생성 결과를 저장하고 `201 Created`로 응답합니다.
 6. 챗봇 메시지 API는 USER 메시지를 저장하고 OpenAI 단일 응답을 생성한 뒤 ASSISTANT 메시지를 저장하고 `201 Created`로 응답합니다. 같은 세션의 요청은 DB row lock으로 직렬화합니다.
@@ -46,7 +46,7 @@ Backend는 SQLAlchemy asyncio와 `asyncmy`를 사용합니다. OpenAI 클라이�
 아래 구조와 계약은 승인됐지만 현재 실행 경로에는 연결되지 않았다.
 
 - OCR·Guide·Chat을 공통 `AI_JOB`의 `PENDING`, `PROCESSING`, `RETRY_WAIT`, `COMPLETED`, `FAILED`, `STALE` 상태로 처리한다.
-- API는 MySQL transaction에서 Job과 Transactional Outbox를 함께 commit하고, publisher가 Redis Stream에 at-least-once로 전달한다. Worker는 lease·fencing token을 사용하며 결과 DB commit 뒤에만 ACK한다.
+- API는 PostgreSQL transaction에서 Job과 Transactional Outbox를 함께 commit하고, publisher가 Redis Stream에 at-least-once로 전달한다. Worker는 lease·fencing token을 사용하며 결과 DB commit 뒤에만 ACK한다.
 - 결과는 불변 `prescription_version_id`에 귀속하고 active version이 아니면 `STALE`로 공개를 차단한다.
 - Track B는 사용자가 확인한 schedule에서 occurrence를 생성하고 Check-in·감사 이력을 관리한다. Track C는 `NOT_TAKEN` 뒤 Safety assessment → Barrier → Support → ActionPlan 순서를 따른다.
 - Track D는 사용자가 확정한 OTC 제품 또는 성분을 구조화 rule과 승인 source version으로 동기 평가한다.

@@ -1,11 +1,8 @@
 from collections.abc import AsyncIterator
-from urllib.parse import quote_plus
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    create_async_engine,
-)
+from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
@@ -13,12 +10,13 @@ from app.core import config
 from app.core.db.databases import Base, get_db_session
 from app.main import fastapi_app
 
-TEST_DATABASE_URL = (
-    "mysql+asyncmy://"
-    f"{quote_plus(config.DB_USER)}:"
-    f"{quote_plus(config.DB_PASSWORD)}"
-    f"@127.0.0.1:{config.DB_EXPOSE_PORT}/test"
-    "?charset=utf8mb4"
+TEST_DATABASE_URL = URL.create(
+    drivername="postgresql+asyncpg",
+    username=config.DB_USER,
+    password=config.DB_PASSWORD,
+    host="127.0.0.1",
+    port=config.DB_EXPOSE_PORT,
+    database="test",
 )
 
 test_engine = create_async_engine(

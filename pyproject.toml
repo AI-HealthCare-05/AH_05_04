@@ -21,9 +21,11 @@ ai = [
     "torchaudio",
     "sentence-transformers>=5.2.0"
 ]
+
 app = [
     "alembic>=1.16.5",
-    "asyncmy>=0.2.11",
+     # PostgreSQL용 비동기 드라이버입니다.
+    "asyncpg>=0.30.0",
     "bcrypt<=4.0.1",
     "fastapi[standard]>=0.128.0",
     "httpx>=0.28.1",

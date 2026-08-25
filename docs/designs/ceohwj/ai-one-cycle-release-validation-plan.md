@@ -11,7 +11,7 @@
 
 **Architecture:** 실제 OpenAI 호출은 전용 staging FastAPI가 수행한다. 검증 CLI는 같은 immutable app image의 `release-validator` one-off service에서 실행하고 `network_mode: service:fastapi`로 loopback API를 호출하며, application DB validation credential과 별도 control DB credential로 fixture·원장 상태를 관리한다. FastAPI application account와 host wrapper는 control DB에 접근하지 않는다. 응답 유실·프로세스 중단 이후에는 pinned read-only resolver가 run ID로 원래 image provenance를 반환하고, 동일 validation CLI를 그 image의 DB-only `release-cleanup` service에서 실행한다. 실패 저장은 실제 장애를 유도하지 않고 기존 결정적 Backend 테스트로 증명한다.
 
-**Tech Stack:** Python 3.13, FastAPI, SQLAlchemy async, MySQL 8, OpenAI Responses API, httpx, pytest, Docker Compose
+**Tech Stack:** Python 3.13, FastAPI, SQLAlchemy async, PostgreSQL 17, OpenAI Responses API, httpx, pytest, Docker Compose
 
 **Design:** `docs/designs/ceohwj/ai-one-cycle-release-validation-design.md`
 
@@ -254,7 +254,7 @@
 
   Run: `uv run ruff check . && uv run ruff format . --check && uv run mypy app ai_worker && bash scripts/ci/run_test.sh`
 
-  Expected: 모두 PASS. MySQL·Docker 등 선행 조건을 충족하지 못한 검사는 생략하지 않고 blocker로 기록한다.
+  Expected: 모두 PASS. PostgreSQL·Docker 등 선행 조건을 충족하지 못한 검사는 생략하지 않고 blocker로 기록한다.
 
 - [ ] **Step 2: staging 전용 artifact를 검증한다**
 

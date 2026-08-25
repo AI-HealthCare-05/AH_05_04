@@ -374,7 +374,7 @@ Backend Service
 
 ### 테스트 격리
 
-현재 `app/tests/conftest.py`에는 session·function 범위의 autouse MySQL fixture인 `initialize_database`와 `isolate_database`가 있다. `app/tests/chat_ai/conftest.py`에서 두 fixture를 같은 이름의 no-op fixture로 재정의해 순수 Chat AI 단위 테스트가 DB 연결을 요구하지 않게 한다. 전역 Backend fixture와 다른 테스트 디렉터리는 변경하지 않는다.
+현재 `app/tests/conftest.py`에는 session·function 범위의 autouse PostgreSQL fixture인 `initialize_database`와 `isolate_database`가 있다. `app/tests/chat_ai/conftest.py`에서 두 fixture를 같은 이름의 no-op fixture로 재정의해 순수 Chat AI 단위 테스트가 DB 연결을 요구하지 않게 한다. 전역 Backend fixture와 다른 테스트 디렉터리는 변경하지 않는다.
 
 ### 선택적 실제 API 스모크 테스트
 
