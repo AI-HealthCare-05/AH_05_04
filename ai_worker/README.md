@@ -14,7 +14,8 @@
 
 - `main.py`: placeholder 로그를 남기고 종료 코드 `0`으로 종료
 - `tasks/ocr/`, `tasks/rag/`, `tasks/llm/`, `tasks/evaluation/`: package 골격만 존재하며 작업 처리 로직 없음
-- Redis consumer, 작업 dispatch, 재시도, 멱등성, health check: 미구현
+- 공통 재시도 여부·backoff 순수 계산 로직: 구현
+- Redis consumer, 작업 dispatch, 재시도 실행·상태 전이, 멱등성, health check: 미구현
 - Backend API와 AI Worker 사이의 메시지 계약과 연결: 미구현
 
 따라서 Compose의 `ai-worker` 서비스가 존재하거나 컨테이너가 정상 종료해도 비동기 AI 처리가 구현된 것으로 간주하지 않습니다. 로컬 Compose에서는 불필요한 재시작 루프를 막기 위해 다음 정책을 사용합니다.
