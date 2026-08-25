@@ -20,20 +20,32 @@ services:
     container_name: postgres
     restart: always
     environment:
+      # PostgreSQL 초기화와 migration은 관리 계정으로 수행합니다.
       POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_MIGRATION_USER}
+      POSTGRES_PASSWORD: ${DB_MIGRATION_PASSWORD}
+
+      # 제한된 애플리케이션 계정 생성 SQL에서 사용합니다.
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER}
+      DB_APP_USER: ${DB_APP_USER}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
       TZ: Asia/Seoul
       PGTZ: Asia/Seoul
-    # 운영 PostgreSQL은 Compose 내부 ws 네트워크에서만 접근합니다.
-    # 호스트 외부에는 5432 포트를 공개하지 않습니다.
     networks:
       - ws
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+      # 신규·기존 DB 모두 같은 권한 설정 SQL을 실행할 수 있도록 mount합니다.
+      - ./postgres/configure-app-role.sql:/docker-entrypoint-initdb.d/configure-app-role.sql:ro
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_MIGRATION_USER} -d ${DB_NAME}"
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -42,13 +54,16 @@ services:
   # 3. Database Migration
   migrate:
     container_name: migrate
-
-    # FastAPI와 동일한 immutable application image에서
-    # 현재 코드에 포함된 Alembic revision을 적용합니다.
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
 
+    # 서버에서 Compose와 같은 ~/project 디렉터리의 .env를 사용합니다.
     env_file:
-      - ../../envs/.prod.env
+      - ${SERVICE_ENV_FILE:-./.env}
+
+    environment:
+      # Alembic에는 migration 전용 계정을 주입합니다.
+      DB_USER: ${DB_MIGRATION_USER}
+      DB_PASSWORD: ${DB_MIGRATION_PASSWORD}
 
     command:
       - uv
@@ -61,20 +76,23 @@ services:
     networks:
       - ws
 
-    # PostgreSQL이 실제 연결 가능한 상태가 된 후 migration을 실행합니다.
     depends_on:
       postgres:
         condition: service_healthy
 
-    # migration 완료 후 정상 종료하며 재실행 루프를 만들지 않습니다.
     restart: "no"
 
   # 4. API Server (FastAPI)
   fastapi:
     container_name: fastapi
-    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}  # APP_VERSION은 빌드된 이미지의 버전관리를 위함입니다. v1.0.0 형식으로 사용합니다.
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
     env_file:
-      - ../../envs/.prod.env
+      - ${SERVICE_ENV_FILE:-./.env}
+    environment:
+      # 런타임 애플리케이션에는 DDL 권한이 없는 계정을 주입합니다.
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
+    # 정적 파일과 업로드 파일을 컨테이너 재생성 후에도 유지합니다.
     volumes:
       - static_volume:/app/templates
       - media_volume:/app/media
@@ -86,21 +104,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-      # Alembic migration 성공 후에만 API를 시작합니다.
       migrate:
         condition: service_completed_successfully
-
       redis:
         condition: service_healthy
-
 
   # 5. AI Worker (Model 학습 및 추론)
   ai-worker:
     container_name: ai-worker
-    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}  # AI_WORKER_VERSION은 빌드된 이미지의 버전관리를 위함입니다. V1.0.0 형식으로 사용합니다.
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
     env_file:
-      - ../../envs/.prod.env
+      - ${SERVICE_ENV_FILE:-./.env}
+    environment:
+      # Worker도 FastAPI와 동일한 제한 계정을 사용합니다.
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
     restart: always
     mem_limit: 4G
     networks:
@@ -108,11 +126,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-      # Worker도 최신 PostgreSQL schema가 적용된 후 시작합니다.
       migrate:
         condition: service_completed_successfully
-
       redis:
         condition: service_healthy
 

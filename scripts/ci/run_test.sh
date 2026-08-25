@@ -18,9 +18,14 @@ echo "Find Tests"
 
 HAS_TESTS=false
 
-if [ -d "./app/tests" ] && find ./app/tests -name 'test_*.py' -print -quit | grep -q .; then
-  HAS_TESTS=true
-fi
+# 실제 기본 테스트 실행 범위와 동일한 디렉터리를 확인합니다.
+for test_dir in ./app/tests ./tests/contract ./ai_worker/tests/core; do
+  if [ -d "$test_dir" ] &&
+    find "$test_dir" -type f -name 'test_*.py' -print -quit | grep -q .; then
+    HAS_TESTS=true
+    break
+  fi
+done
 
 echo "Has tests: $HAS_TESTS"
 
@@ -43,7 +48,7 @@ fi
 echo "PostgreSQL container found. Preparing test database."
 
 # test DB가 없을 때만 생성합니다.
-# 애플리케이션 DB와 분리된 DB이므로 pytest의 테이블 생성·삭제가 개발 데이터를 변경하지 않습니다.
+# 애플리케이션 DB와 분리하여 테스트의 테이블 변경이 개발 데이터를 건드리지 않도록 합니다.
 docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
@@ -64,7 +69,8 @@ SQL
 
 echo "Run Pytest with Coverage"
 
-if ! uv run coverage run -m pytest app tests/contract; then
+# Backend, 공통 계약, Worker 공통 골격 테스트를 모두 실행합니다.
+if ! uv run coverage run -m pytest app tests/contract ai_worker/tests/core; then
   echo
   echo "Pytest failed."
   echo "Fix the test failures above and re-run."

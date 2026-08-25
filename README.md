@@ -99,7 +99,7 @@ uv sync --all-groups
 
 ```bash
 cp envs/example.local.env envs/.local.env
-````
+```
 
 최소한 DB 설정과 사용하는 외부 제공자의 자격증명을 확인합니다. `OPENAI_MODEL`과 `OPENAI_TIMEOUT_SECONDS` 등 운영 기준값은 코드 기본값만으로 승인하지 않고 [배포 가이드](docs/deployment.md)에 실제 값과 확인 결과를 기록합니다.
 
@@ -182,7 +182,7 @@ pnpm lint
 pnpm build
 ```
 
-Python 기본 테스트 명령은 `app`과 `tests/contract`를 실행합니다. OpenAI 실호출 smoke, `tests/integration`, E2E와 AI 평가가 기본 CI에서 자동 실행되는 것은 아닙니다. 정확한 범위는 [테스트 전략](docs/testing.md)을 확인하세요.
+Python 기본 테스트 명령은 `app`, `tests/contract`, `ai_worker/tests/core`를 실행합니다. OpenAI 실호출 smoke, `tests/integration`, E2E와 AI 평가가 기본 CI에서 자동 실행되는 것은 아닙니다. 정확한 범위는 [테스트 전략](docs/testing.md)을 확인하세요.
 
 문서만 변경한 경우에는 렌더링·링크·범위와 전체 diff를 검토하고 `git diff --check`를 실행합니다.
 

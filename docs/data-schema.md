@@ -62,9 +62,9 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 
 `ocr_job` 테이블은 OCR 처리 상태와 오류 정보를 저장합니다.
 
-| 컬럼 | 타입 | Nullable | 설명 |
-|---|---|---:|---|
-| `created_sequence` | `BIGINT UNSIGNED` | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |
+| 컬럼 | 타입           | Nullable | 설명 |
+|---|----------------|---:|---|
+| `created_sequence` | `BIGINT`       | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |
 | `error_code` | `VARCHAR(100)` | Yes | 실패 상태의 안전한 오류 코드 |
 | `error_message` | `VARCHAR(500)` | Yes | 실패 상태 조회 응답에 포함할 수 있는 안전한 사용자 안내 문구 |
 

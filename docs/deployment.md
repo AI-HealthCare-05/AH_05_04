@@ -99,9 +99,14 @@ admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초
 
 ## Production 실행 확인
 
-- Production DB migration 실행 주체·명령·실패 시 rollback 절차를 기록합니다. 현재 Production Compose에는 별도 `migrate` 서비스가 없습니다.
-- `ai-worker`는 실제 작업 로직이 없는 placeholder입니다. Production Compose의 `restart: always` 상태로 배포하면 재시작 루프가 발생할 수 있으므로 Worker 구현 전에는 배포 대상에서 제외하거나 정책을 명시적으로 변경합니다.
-- Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS와 CORS 실제 값을 함께 확인합니다.
+- Production Compose는 `postgres → migrate → fastapi/ai-worker` 의존 순서를 사용합니다.
+- 배포 스크립트는 PostgreSQL과 Redis의 health check 통과를 기다린 뒤 제한된 애플리케이션 DB 계정을 구성합니다.
+- PostgreSQL 초기화·Alembic migration 계정과 FastAPI·AI Worker 실행 계정을 분리합니다. FastAPI와 AI Worker에는 테이블 조회·입력·수정·삭제 및 필요한 sequence 사용 권한만 부여하고 schema 객체 생성 권한은 부여하지 않습니다.
+- Alembic migration이 종료 코드 0으로 완료된 경우에만 선택한 FastAPI 또는 AI Worker 서비스를 시작합니다.
+- Migration이 실패하면 신규 애플리케이션 컨테이너 실행을 중단하고 `migrate` 서비스 로그를 확인합니다.
+- Schema downgrade는 자동으로 실행하지 않습니다. 해당 migration의 rollback 계획과 데이터 보존 여부를 확인한 뒤 별도로 수행합니다.
+- `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 Production 배포 대상에서 제외합니다.
+- Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS 및 CORS 실제 값을 함께 확인합니다.
 
 ## Post-MVP-1 비동기 전환 게이트 — 미구현
 
