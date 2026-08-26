@@ -155,7 +155,7 @@ def _service_fixture(
         ),
         SimpleNamespace(
             medication_name="두 번째 합성약",
-            strength_text = None,
+            strength_text=None,
             dose_value=None,
             dose_unit=None,
             frequency_per_day=None,

@@ -59,16 +59,8 @@ class ChatGenerator:
                 ChatMedicationPromptItem(
                     medication_name=medication.medication_name,
                     strength_text=medication.strength_text,
-                    dose_value=(
-                        medication.dose_value
-                        if has_complete_dose
-                        else None
-                    ),
-                    dose_unit=(
-                        medication.dose_unit
-                        if has_complete_dose
-                        else None
-                    ),
+                    dose_value=(medication.dose_value if has_complete_dose else None),
+                    dose_unit=(medication.dose_unit if has_complete_dose else None),
                     frequency_per_day=medication.frequency_per_day,
                     timing_text=medication.timing_text,
                     duration_days=medication.duration_days,

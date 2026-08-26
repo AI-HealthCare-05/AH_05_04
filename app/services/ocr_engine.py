@@ -24,12 +24,8 @@ class RecognizedField:
 @dataclass(frozen=True)
 class OcrRecognitionResult:
     raw_text: str = ""
-    raw_fields: list[RawRecognizedField] = field(
-        default_factory=list
-    )
-    fields: list[RecognizedField] = field(
-        default_factory=list
-    )
+    raw_fields: list[RawRecognizedField] = field(default_factory=list)
+    fields: list[RecognizedField] = field(default_factory=list)
 
     # 실제 OCR 및 LLM 구조화 실행 정보를 OcrJob에 저장합니다.
     engine_name: str | None = None

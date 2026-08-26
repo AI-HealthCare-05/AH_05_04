@@ -377,7 +377,11 @@ async def build_synthetic_fixture(
         field_values.extend(
             [
                 (index, FieldType.MEDICATION_NAME, str(medication["medication_name"])),
-                (index, FieldType.MEDICATION_STRENGTH, str(medication["strength_text"]),),
+                (
+                    index,
+                    FieldType.MEDICATION_STRENGTH,
+                    str(medication["strength_text"]),
+                ),
                 (index, FieldType.DOSE_VALUE, str(medication["dose_value"])),
                 (index, FieldType.DOSE_UNIT, str(medication["dose_unit"])),
                 (index, FieldType.FREQUENCY_PER_DAY, str(medication["frequency_per_day"])),

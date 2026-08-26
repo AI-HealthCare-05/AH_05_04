@@ -53,32 +53,20 @@ class LlmPrescriptionStructurer:
         timeout_seconds: float,
         normalizer: MedicationNameNormalizer | None = None,
     ) -> None:
-        if (
-            not model.strip()
-            or not math.isfinite(timeout_seconds)
-            or timeout_seconds <= 0
-        ):
-            raise ValueError(
-                "OCR 구조화 AI 설정이 올바르지 않습니다."
-            )
+        if not model.strip() or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("OCR 구조화 AI 설정이 올바르지 않습니다.")
 
         self._provider = provider
         self._model = model
         self._timeout_seconds = timeout_seconds
-        self._normalizer = (
-            normalizer
-            if normalizer is not None
-            else MedicationNameNormalizer()
-        )
+        self._normalizer = normalizer if normalizer is not None else MedicationNameNormalizer()
 
     async def structure(
         self,
         raw_fields: list[RawRecognizedField],
     ) -> OcrStructureResult:
         if not raw_fields:
-            raise OcrProcessingError(
-                "구조화할 OCR token이 없습니다."
-            )
+            raise OcrProcessingError("구조화할 OCR token이 없습니다.")
 
         structure_input = OcrStructureInput(
             tokens=[
@@ -103,15 +91,12 @@ class LlmPrescriptionStructurer:
                 provider_response = await self._provider.generate(
                     model=self._model,
                     instructions=SYSTEM_INSTRUCTIONS,
-
                     # 특정 실패 항목이 아니라 CLOVA가 인식한 전체 token을 전달합니다.
                     input_json=structure_input.model_dump_json(),
                     max_output_tokens=4000,
                 )
         except TimeoutError as error:
-            raise OcrProviderTimeoutError(
-                "OCR 구조화 AI 응답 제한시간을 초과했습니다."
-            ) from error
+            raise OcrProviderTimeoutError("OCR 구조화 AI 응답 제한시간을 초과했습니다.") from error
 
         fields = validate_and_convert_draft(
             draft=provider_response.draft,

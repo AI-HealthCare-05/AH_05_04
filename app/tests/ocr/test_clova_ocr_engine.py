@@ -50,6 +50,7 @@ class RecordingStructurer:
             prompt_version="ocr-structure-prompt-v2",
         )
 
+
 def _create_test_image(tmp_path: Path) -> None:
     (tmp_path / "sample.png").write_bytes(b"fake-png-content")
 
@@ -70,12 +71,9 @@ def _create_engine(
         storage_dir=str(tmp_path),
         timeout_seconds=20.0,
         client=client,
-        structurer=(
-            structurer
-            if structurer is not None
-            else RecordingStructurer()
-        ),
+        structurer=(structurer if structurer is not None else RecordingStructurer()),
     )
+
 
 async def test_recognize_calls_clova_and_parses_v2_response(
     tmp_path: Path,
@@ -350,15 +348,9 @@ async def test_recognize_passes_all_clova_tokens_to_llm_structurer(
     _create_test_image(tmp_path)
 
     fixture_path = (
-        Path(__file__).parents[1]
-        / "fixtures"
-        / "ocr"
-        / "structuring"
-        / "prescription_medication_rows.clova.json"
+        Path(__file__).parents[1] / "fixtures" / "ocr" / "structuring" / "prescription_medication_rows.clova.json"
     )
-    payload = json.loads(
-        fixture_path.read_text(encoding="utf-8")
-    )
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
 
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -382,9 +374,7 @@ async def test_recognize_passes_all_clova_tokens_to_llm_structurer(
             file_mime_type="image/png",
         )
 
-    expected_token_count = len(
-        payload["images"][0]["fields"]
-    )
+    expected_token_count = len(payload["images"][0]["fields"])
 
     # 기존 정규식 파서가 아니라 CLOVA 전체 token이 전달됐는지 확인합니다.
     assert len(structurer.received_fields) == expected_token_count

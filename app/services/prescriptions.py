@@ -46,11 +46,7 @@ def _to_prescription_data(prescription: Prescription, medications: list[Medicati
             MedicationData(
                 medication_name=medication.medication_name,
                 strength_text=medication.strength_text,
-                dose_value=(
-                    float(medication.dose_value)
-                    if medication.dose_value is not None
-                    else None
-                ),
+                dose_value=(float(medication.dose_value) if medication.dose_value is not None else None),
                 dose_unit=medication.dose_unit,
                 frequency_per_day=medication.frequency_per_day,
                 timing_text=medication.timing_text,
@@ -346,7 +342,6 @@ def _build_medication(
     return {
         # 화면 표시용 이름입니다. 후속 성분명 매핑에서도 덮어쓰지 않습니다.
         "medication_name": name,
-
         # 제품 함량은 1회 복용량과 별도로 저장합니다.
         "strength_text": strength_text,
         "dose_value": dose_value,

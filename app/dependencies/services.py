@@ -72,6 +72,7 @@ def get_ocr_repository(
 ) -> OcrRepository:
     return OcrRepository(session)
 
+
 def get_ocr_structurer(
     client: Annotated[
         AsyncOpenAI,
@@ -97,10 +98,10 @@ def get_ocr_engine(
         secret_key=config.CLOVA_OCR_SECRET,
         storage_dir=config.STORAGE_DIR,
         timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
-
         # 기존 정규식 파서가 아니라 전체 token용 LLM 구조화기를 연결합니다.
         structurer=structurer,
     )
+
 
 def get_ocr_service(
     document_repository: Annotated[
@@ -121,6 +122,7 @@ def get_ocr_service(
         ocr_repository,
         engine,
     )
+
 
 def get_prescription_repository(
     session: Annotated[

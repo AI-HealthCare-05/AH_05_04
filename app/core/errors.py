@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+
 class ErrorDetail(BaseModel):
     field: str
     reason: str

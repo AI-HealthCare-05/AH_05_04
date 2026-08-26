@@ -153,7 +153,11 @@ class OcrService:
                 details=[ErrorDetail(field="provider", reason="PROVIDER_UNAVAILABLE")],
             ) from err
         except OcrProcessingError as err:
-            logger.warning("OCR processing rejected: document_id=%s reason=%s", document_id, str(err),)
+            logger.warning(
+                "OCR processing rejected: document_id=%s reason=%s",
+                document_id,
+                str(err),
+            )
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_PROCESSING_FAILED",

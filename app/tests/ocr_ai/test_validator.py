@@ -46,10 +46,7 @@ def test_validator_separates_medication_name_and_strength() -> None:
         normalizer=MedicationNameNormalizer(),
     )
 
-    values = {
-        field.field_type: field.raw_value
-        for field in result
-    }
+    values = {field.field_type: field.raw_value for field in result}
 
     assert values["MEDICATION_NAME"] == "합성의약품에이정"
     assert values["MEDICATION_STRENGTH"] == "100mg"
@@ -83,10 +80,8 @@ def test_validator_discards_changed_decimal_strength() -> None:
     )
 
     # 근거 없는 함량은 저장하지 않지만 OCR 전체는 실패시키지 않습니다.
-    assert not any(
-        field.field_type == "MEDICATION_STRENGTH"
-        for field in result
-    )
+    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+
 
 def test_validator_discards_changed_compound_strength() -> None:
     raw_fields = [
@@ -116,10 +111,8 @@ def test_validator_discards_changed_compound_strength() -> None:
     )
 
     # 잘못 변경된 함량은 결과에서 제외합니다.
-    assert not any(
-        field.field_type == "MEDICATION_STRENGTH"
-        for field in result
-    )
+    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+
 
 def test_validator_rejects_unknown_source_id() -> None:
     draft = GeneratedPrescriptionDraft(
@@ -139,6 +132,7 @@ def test_validator_rejects_unknown_source_id() -> None:
             raw_fields=[_raw("합성의약품에이정")],
             normalizer=MedicationNameNormalizer(),
         )
+
 
 def test_validator_allows_whitespace_between_split_ocr_tokens() -> None:
     raw_fields = [
@@ -173,13 +167,11 @@ def test_validator_allows_whitespace_between_split_ocr_tokens() -> None:
         normalizer=MedicationNameNormalizer(),
     )
 
-    values = {
-        field.field_type: field.raw_value
-        for field in result
-    }
+    values = {field.field_type: field.raw_value for field in result}
 
     assert values["DOSE_VALUE"] == "1"
     assert values["DOSE_UNIT"] == "정"
+
 
 def test_validator_allows_joined_value_from_split_tokens() -> None:
     raw_fields = [
@@ -208,12 +200,10 @@ def test_validator_allows_joined_value_from_split_tokens() -> None:
         normalizer=MedicationNameNormalizer(),
     )
 
-    values = {
-        field.field_type: field.raw_value
-        for field in result
-    }
+    values = {field.field_type: field.raw_value for field in result}
 
     assert values["MEDICATION_STRENGTH"] == "100mg"
+
 
 def test_validator_allows_timing_list_separator_added_by_llm() -> None:
     raw_fields = [
@@ -244,12 +234,10 @@ def test_validator_allows_timing_list_separator_added_by_llm() -> None:
         normalizer=MedicationNameNormalizer(),
     )
 
-    values = {
-        field.field_type: field.raw_value
-        for field in result
-    }
+    values = {field.field_type: field.raw_value for field in result}
 
     assert values["TIMING"] == "아침·저녁 식후"
+
 
 def test_validator_replaces_changed_timing_with_empty_field() -> None:
     raw_fields = [
@@ -280,16 +268,13 @@ def test_validator_replaces_changed_timing_with_empty_field() -> None:
     )
 
     # 선택 필드인 TIMING은 근거가 없으면 저장하지 않습니다.
-    timing = next(
-        field
-        for field in result
-        if field.field_type == "TIMING"
-    )
+    timing = next(field for field in result if field.field_type == "TIMING")
 
     # 근거 없는 LLM 값은 저장하지 않고
     # 사용자가 직접 입력할 빈 복용 조건 필드를 만듭니다.
     assert timing.raw_value is None
     assert timing.confidence_score is None
+
 
 def test_validator_replaces_ungrounded_frequency_with_empty_field() -> None:
     raw_fields = [
@@ -318,15 +303,12 @@ def test_validator_replaces_ungrounded_frequency_with_empty_field() -> None:
         normalizer=MedicationNameNormalizer(),
     )
 
-    frequency = next(
-        field
-        for field in result
-        if field.field_type == "FREQUENCY_PER_DAY"
-    )
+    frequency = next(field for field in result if field.field_type == "FREQUENCY_PER_DAY")
 
     # 잘못 추출한 2를 저장하지 않고 사용자 입력용 빈 필드로 만듭니다.
     assert frequency.raw_value is None
     assert frequency.confidence_score is None
+
 
 def test_validator_allows_equivalent_date_separators() -> None:
     raw_fields = [
@@ -354,11 +336,7 @@ def test_validator_allows_equivalent_date_separators() -> None:
         normalizer=MedicationNameNormalizer(),
     )
 
-    prescribed_date = next(
-        field
-        for field in result
-        if field.field_type == "PRESCRIBED_DATE"
-    )
+    prescribed_date = next(field for field in result if field.field_type == "PRESCRIBED_DATE")
 
     assert prescribed_date.raw_value == "2026-08-26"
     assert prescribed_date.normalized_value == "2026-08-26"

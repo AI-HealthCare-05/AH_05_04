@@ -96,15 +96,9 @@ async def test_structurer_sends_all_clova_tokens_and_splits_strength() -> None:
     call = provider.calls[0]
     payload = json.loads(str(call["input_json"]))
 
-    assert [token["text"] for token in payload["tokens"]] == [
-        field.raw_value
-        for field in raw_fields
-    ]
+    assert [token["text"] for token in payload["tokens"]] == [field.raw_value for field in raw_fields]
 
-    fields = {
-        field.field_type: field.raw_value
-        for field in result.fields
-    }
+    fields = {field.field_type: field.raw_value for field in result.fields}
 
     assert fields["MEDICATION_NAME"] == "합성의약품에이정"
     assert fields["MEDICATION_STRENGTH"] == "100mg"

@@ -24,7 +24,7 @@ def render_plaintext_guide(guide_input: GuideGenerationInput, draft: GeneratedGu
         # 환자용 가이드에서는 함께 읽을 수 있도록 표시합니다.
         display_name = medication.medication_name
         if medication.strength_text is not None:
-            display_name = (f"{display_name} {medication.strength_text}")
+            display_name = f"{display_name} {medication.strength_text}"
         lines = [f"[{index + 1}] {display_name}"]
         if medication.dose_value is not None and medication.dose_unit is not None:
             lines.append(f"용량: {_format_decimal(medication.dose_value)} {medication.dose_unit}")

@@ -65,7 +65,10 @@ class _StrictGeneratedModel(BaseModel):
 
 class ChatMedicationInput(_StrictModel):
     medication_name: str = Field(max_length=255)
-    strength_text: str | None = Field(default=None, max_length=100,)
+    strength_text: str | None = Field(
+        default=None,
+        max_length=100,
+    )
     dose_value: Decimal | None = Field(default=None, gt=0)
     dose_unit: str | None = Field(default=None, max_length=50)
     frequency_per_day: int | None = Field(default=None, gt=0)

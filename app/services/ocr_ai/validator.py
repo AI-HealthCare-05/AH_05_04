@@ -28,7 +28,6 @@ _REQUIRED_REVIEW_FIELD_TYPES = frozenset(
         "DOSE_VALUE",
         "FREQUENCY_PER_DAY",
         "DURATION_DAYS",
-
         # 복용 조건 인식에 실패해도 필드를 없애지 않고
         # 사용자가 원본을 보고 직접 입력할 빈칸을 제공합니다.
         "TIMING",
@@ -37,9 +36,7 @@ _REQUIRED_REVIEW_FIELD_TYPES = frozenset(
 
 # 복용 시점에서 항목을 나열할 때 사용되는 표기 차이입니다.
 # 예: "아침 저녁", "아침·저녁", "아침, 저녁"
-_TIMING_SEPARATOR_PATTERN = re.compile(
-    r"[\s,·ㆍ/()\[\]]+"
-)
+_TIMING_SEPARATOR_PATTERN = re.compile(r"[\s,·ㆍ/()\[\]]+")
 
 
 def _comparison_keys(value: str) -> tuple[str, str]:
@@ -106,9 +103,7 @@ def _source_fields(
         source = source_map.get(source_id)
 
         if source is None:
-            raise OcrProcessingError(
-                "LLM 구조화 결과가 존재하지 않는 OCR token을 참조했습니다."
-            )
+            raise OcrProcessingError("LLM 구조화 결과가 존재하지 않는 OCR token을 참조했습니다.")
 
         fields.append(source)
 
@@ -127,41 +122,21 @@ def _validate_grounded_value(
     OCR token 경계에서 생긴 공백 차이만 허용하고,
     숫자와 문장부호 변경은 허용하지 않습니다.
     """
-    generated_spaced, generated_compact = _comparison_keys(
-        generated.value
-    )
+    generated_spaced, generated_compact = _comparison_keys(generated.value)
 
-    source_value = " ".join(
-        field.raw_value
-        for field in source_fields
-    )
-    source_spaced, source_compact = _comparison_keys(
-        source_value
-    )
+    source_value = " ".join(field.raw_value for field in source_fields)
+    source_spaced, source_compact = _comparison_keys(source_value)
 
-    is_grounded = (
-        generated_spaced
-        and (
-            generated_spaced in source_spaced
-            or generated_compact in source_compact
-        )
-    )
+    is_grounded = generated_spaced and (generated_spaced in source_spaced or generated_compact in source_compact)
 
     # TIMING은 CLOVA가 "아침", "저녁", "식후"를 각각 반환하고
     # LLM이 "아침·저녁 식후"처럼 구분 기호를 넣어 조합할 수 있습니다.
     # 이 경우에만 나열 구분 기호 차이를 추가로 허용합니다.
     if not is_grounded and field_type == "TIMING":
-        generated_timing_key = _timing_comparison_key(
-            generated.value
-        )
-        source_timing_key = _timing_comparison_key(
-            source_value
-        )
+        generated_timing_key = _timing_comparison_key(generated.value)
+        source_timing_key = _timing_comparison_key(source_value)
 
-        is_grounded = (
-            bool(generated_timing_key)
-            and generated_timing_key in source_timing_key
-        )
+        is_grounded = bool(generated_timing_key) and generated_timing_key in source_timing_key
     # 날짜는 CLOVA와 LLM의 구분 기호가 달라도
     # 실제 연·월·일이 같으면 동일한 OCR 근거로 인정합니다.
     # 예: 2026.08.26, 2026/08/26, 2026-08-26
@@ -169,27 +144,16 @@ def _validate_grounded_value(
         generated_date = _normalize_date(generated.value)
         source_date = _normalize_date(source_value)
 
-        is_grounded = (
-            generated_date is not None
-            and source_date is not None
-            and generated_date == source_date
-        )
+        is_grounded = generated_date is not None and source_date is not None and generated_date == source_date
 
     if not is_grounded:
-        raise OcrProcessingError(
-            f"LLM 구조화 결과의 {field_type} 값에 "
-            "OCR 원문 근거가 없습니다."
-        )
+        raise OcrProcessingError(f"LLM 구조화 결과의 {field_type} 값에 OCR 원문 근거가 없습니다.")
 
 
 def _minimum_confidence(
     fields: list[RawRecognizedField],
 ) -> float | None:
-    values = [
-        field.confidence_score
-        for field in fields
-        if field.confidence_score is not None
-    ]
+    values = [field.confidence_score for field in fields if field.confidence_score is not None]
 
     return min(values) if values else None
 
@@ -202,11 +166,7 @@ def _normalize_date(value: str) -> str | None:
     if match is None:
         return None
 
-    return (
-        f"{int(match.group('year')):04d}-"
-        f"{int(match.group('month')):02d}-"
-        f"{int(match.group('day')):02d}"
-    )
+    return f"{int(match.group('year')):04d}-{int(match.group('month')):02d}-{int(match.group('day')):02d}"
 
 
 def _make_empty_review_field(
@@ -282,9 +242,7 @@ def validate_and_convert_draft(
     """전체 LLM 결과를 검증하고 DB 저장용 RecognizedField로 변환합니다."""
 
     if not draft.medications:
-        raise OcrProcessingError(
-            "OCR 구조화 결과에서 약품을 찾을 수 없습니다."
-        )
+        raise OcrProcessingError("OCR 구조화 결과에서 약품을 찾을 수 없습니다.")
 
     source_map = {
         source_id: raw_field

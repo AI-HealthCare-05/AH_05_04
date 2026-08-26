@@ -85,15 +85,12 @@ class ClovaOcrEngine:
         parsed_result = self._parse_response(response)
 
         # 기존 정규식 파서를 거치지 않고 전체 token을 LLM에 전달합니다.
-        structured_result = await self._structurer.structure(
-            parsed_result.raw_fields
-        )
+        structured_result = await self._structurer.structure(parsed_result.raw_fields)
 
         return OcrRecognitionResult(
             raw_text=parsed_result.raw_text,
             raw_fields=parsed_result.raw_fields,
             fields=structured_result.fields,
-
             # CLOVA와 OpenAI Structured Outputs의 실제 실행 정보를 기록합니다.
             engine_name="CLOVA_OCR",
             model_version=structured_result.model_name,
@@ -239,7 +236,6 @@ class ClovaOcrEngine:
         return OcrRecognitionResult(
             raw_text=raw_text,
             raw_fields=raw_fields,
-
             # 비동기 LLM 구조화는 recognize()에서 수행합니다.
             fields=[],
         )

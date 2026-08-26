@@ -91,11 +91,20 @@ class OcrJob(Base):
         nullable=False,
         default=OcrStatus.PENDING,
     )
-    engine_name: Mapped[str | None] = mapped_column(String(100), nullable=True,)
-    model_version: Mapped[str | None] = mapped_column(String(100), nullable=True,)
+    engine_name: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    model_version: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
 
     # LLM 구조화 결과를 재현할 수 있도록 prompt 버전을 별도로 저장합니다.
-    prompt_version: Mapped[str | None] = mapped_column(String(100), nullable=True,)
+    prompt_version: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
