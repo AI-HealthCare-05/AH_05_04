@@ -124,6 +124,7 @@ def _scenario_payload(*, version: str = "ai-one-cycle-v1") -> dict[str, object]:
             {
                 "display_order": 1,
                 "medication_name": "합성의약품 에이",
+                "strength_text": "100mg",
                 "dose_value": "1",
                 "dose_unit": "정",
                 "frequency_per_day": 2,
@@ -240,7 +241,7 @@ def test_input_fingerprint_uses_canonical_scenario_values() -> None:
     payload = _scenario_payload()
 
     assert compute_input_fingerprint(payload) == (
-        "sha256:ef8a99be35dfffe87b63dd6460656e2d68d8268b665fd1c1c4a99afe9ec26112"
+        "sha256:eaecc304bae14a164c50c3c2723dd3669337a3be7fde29500b7974bcf5d30ec2"
     )
 
 
@@ -354,7 +355,7 @@ async def test_fixture_builder_commits_completed_confirmed_synthetic_fixture() -
         assert user is not None and user.email == fixture.email
         assert document is not None and document.user_id == fixture.user_id
         assert job is not None and job.ocr_status == OcrStatus.COMPLETED
-        assert len(fields) == 7
+        assert len(fields) == 8
         assert {field.confirmation_status for field in fields} == {ConfirmationStatus.CONFIRMED}
 
         await verification_session.execute(
@@ -697,6 +698,7 @@ async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -
             Medication(
                 prescription_id=prescription.id,
                 medication_name="합성의약품 에이",
+                strength_text="100mg",
                 dose_value=Decimal("1"),
                 dose_unit="정",
                 frequency_per_day=2,
