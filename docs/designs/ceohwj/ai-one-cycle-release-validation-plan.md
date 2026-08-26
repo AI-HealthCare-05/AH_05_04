@@ -86,7 +86,7 @@ PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
 - `backend/app/core/config.py`
 - `infra/docker/docker-compose.prod.yml`
 - `infra/docker/postgres/configure-app-role.sql`
-- `alembic/`
+- `backend/alembic/`
 - `docs/deployment.md`
 
 - [ ] **Step 1: DB 전환과 회귀 증거를 확인한다**

@@ -22,6 +22,13 @@ COPY ./backend/app ./app
 COPY ./backend/alembic ./alembic
 COPY ./backend/alembic.ini ./alembic.ini
 
+# STORAGE_DIR 기본값을 이미지 자체에 고정합니다. Config의 Path(__file__) 기반 기본값은
+# 로컬 실행(backend/app/core/config.py 기준 저장소 루트) 기준이라, docker-compose 없이
+# 이 이미지를 단독 실행하면 컨테이너 내부 폴더 깊이가 달라 /uploads/medical_documents로
+# 잘못 계산됩니다. docker-compose.yml의 environment 오버라이드와 무관하게 항상 올바른
+# 기본값을 갖도록 이미지 레벨에서 고정합니다.
+ENV STORAGE_DIR=/app/uploads/medical_documents
+
 # 5. 해당 이미지를 활용하여 도커컨테이너 실행시 실행되는 명령어입니다.
 # FastAPI를 uvicorn을 활용하여 비동기 환경으로 서버를 실행합니다.
 # --no-sync 옵션은 uv run시 uv.lock파일과 환경에 설치된 패키지들을 비교하여 없는 패키지를 설치하기 때문에
