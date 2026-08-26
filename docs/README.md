@@ -18,6 +18,7 @@
 - `adr/`: 주요 아키텍처 결정 기록
 - `governance/`: 문서 권위, 상태와 원본 provenance
 - `release-gates/`: 구현과 분리된 외부 승인·공개 조건
+- `validation/`: 합성 데이터 기반 release validation 실행·정리 절차와 비민감 결과 양식
 - `testing/`: 목표 계약 추적표와 구현 증빙 인덱스
 - `designs/`: 기능별 상세 설계와 구현 계획
 

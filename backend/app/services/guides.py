@@ -2,12 +2,17 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.core.errors import ApiError, ErrorDetail
+from app.core.logger import default_logger
 from app.dtos.guides import CreateGuideRequest, GuideData, GuideStatus
 from app.models.guides import Guide
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
 from app.services.guide_ai import GuideGenerationInput, GuideGenerator, MedicationInput
-from app.services.guide_ai.exceptions import GuideGenerationTimeoutError, GuideGenerationUnavailableError
+from app.services.guide_ai.exceptions import (
+    GuideGenerationSafetyError,
+    GuideGenerationTimeoutError,
+    GuideGenerationUnavailableError,
+)
 
 # OpenAI SDK/도메인 예외 메시지를 그대로 저장하면 요청 payload(약물 정보 등)가 노출될 수 있어
 # 고정된 문구만 DB에 저장합니다.
@@ -108,6 +113,13 @@ class GuideService:
                 details=[ErrorDetail(field="openai_api", reason="OPENAI_API_ERROR")],
             ) from err
         except Exception as err:
+            # Provider payload와 예외 본문은 기록하지 않고 분류명만 남겨 live 진단을 가능하게 합니다.
+            rule_id = err.rule_id if isinstance(err, GuideGenerationSafetyError) else "NOT_APPLICABLE"
+            default_logger.warning(
+                "guide_generation_failed error_type=%s rule_id=%s",
+                type(err).__name__,
+                rule_id,
+            )
             await self._repo.mark_failed(
                 guide,
                 error_code="GENERATION_REQUEST_FAILED",

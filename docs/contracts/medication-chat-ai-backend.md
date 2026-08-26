@@ -62,6 +62,12 @@ Provider에는 다음 정보만 전달할 수 있다.
 
 현재 MVP Backend는 세 값을 완료된 ASSISTANT 메시지에 저장하고 같은 값을 `201 Created` 응답에 사용한다. Post-MVP-1에서는 Worker가 결과를 저장하고 완료된 Job의 opaque `result_url`이 가리키는 기존 `GET /api/v1/chat-sessions/{session_id}/messages`에서 조회한다.
 
+### Post-MVP-1 정상 응답 상태 축 — 승인된 목표
+
+AI가 안전 제한이나 근거 부족으로 답변을 제한한 경우에도 요청 자체는 정상 처리된 것으로 보고, 실제 요청·서버·처리 오류만 `ApiError`의 `code`로 구분한다. 단일 `status` enum 대신 `execution_status`·`release_decision`·`safety_disposition` 세 축과 `response_level`로 표현하며, 확정 정의와 조합표는 [Safety Result 계약 v1](./safety-result-v1.md)을 따른다. 이전에 검토됐던 `ANSWERED`/`SAFETY_BLOCKED`/`EVIDENCE_UNAVAILABLE` 단일 status안은 이 세 축 모델로 대체되었다.
+
+현재 MVP 챗봇 응답은 `generation_status`(`ChatGenerationStatus`: `NOT_APPLICABLE`, `PENDING`, `GENERATING`, `COMPLETED`, `FAILED` 5개 값)만 사용한다. 이는 Post-MVP-1 공통 Job 상태(`PENDING`, `PROCESSING`, `RETRY_WAIT`, `COMPLETED`, `FAILED`, `STALE` 6개 값)와 이름과 개수가 다른 별도 모델이며, 두 모델을 동일시하지 않는다. 위 상태 축은 RAG·Safety Router·출처 검증을 포함하는 Post-MVP-1 응답 계약 구현 PR이 병합된 뒤에 적용한다.
+
 ## 오류 경계
 
 Adapter와 Service의 오류 mapping은 다음 고정 계약을 따른다.
