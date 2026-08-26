@@ -414,7 +414,7 @@ git diff --check
 PR gate와 로컬 전체 테스트 스크립트는 공식 계약 테스트 위치를 실제 실행하도록 다음처럼 맞춘다.
 
 ```bash
-uv run coverage run -m pytest app tests/contract
+uv run coverage run -m pytest backend/app tests/contract
 ```
 
 `.github/workflows/checks.yml`과 `scripts/ci/run_test.sh`를 함께 변경해 CI와 로컬 완료 검증이 같은 범위를 사용하게 한다. `tests/integration/`와 `tests/e2e/` 전체를 새로 gate에 포함하는 변경은 #38 범위 밖이며 별도 테스트 인프라 작업으로 다룬다.
