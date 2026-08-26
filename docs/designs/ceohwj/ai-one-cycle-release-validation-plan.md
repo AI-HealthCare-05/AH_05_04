@@ -188,7 +188,7 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
 - Create: `backend/app/release_validation/ai_one_cycle_smoke.py`
 - Create: `backend/app/release_validation/scenarios/ai-one-cycle-v1.json`
 
-**Ownership:** `app/` 변경이므로 `@phina-io` 구현 또는 리뷰가 필요하다.
+**Ownership:** `backend/app/` 변경이므로 `@phina-io` 구현 또는 리뷰가 필요하다.
 
 - [ ] **Step 1: 환경 guard 테스트를 작성한다**
 
@@ -329,7 +329,7 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
 - Document: `docs/validation/ai-one-cycle-release.md`
 - Reference candidate: `tests/fixtures/ocr/evaluation/images/prescription_clean.png`
 
-**Ownership:** `app/` 변경과 실제 OCR 흐름은 `@phina-io`의 구현 또는 리뷰가 필요하다. Frontend 코드는
+**Ownership:** `backend/app/` 변경과 실제 OCR 흐름은 `@phina-io`의 구현 또는 리뷰가 필요하다. Frontend 코드는
 `@solia142`의 별도 범위다.
 
 - [ ] **Step 1: 실제 CLOVA preflight로 happy-path 합성 이미지를 확정한다**
