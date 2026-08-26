@@ -15,6 +15,7 @@ import {
   MobileShell,
   StatusBadge,
 } from '../design-system/components'
+import { createGuide } from '../api/guides'
 import '../design-system/prototype.css'
 import './PrescriptionReviewPage.css'
 
@@ -229,6 +230,7 @@ function PrescriptionReviewPage() {
   const jobId = searchParams.get('job_id')
   const reviewRequestKey = `${documentId ?? ''}:${jobId ?? ''}`
   const latestReviewRequestKeyRef = useRef(reviewRequestKey)
+  const guideCreationRequestRef = useRef<symbol | null>(null)
   latestReviewRequestKeyRef.current = reviewRequestKey
 
   const [fields, setFields] = useState<ExtractedField[]>([])
@@ -246,6 +248,10 @@ function PrescriptionReviewPage() {
     () => new Set(),
   )
   const [isConfirming, setIsConfirming] = useState(false)
+  const [isCreatingGuide, setIsCreatingGuide] = useState(false)
+  const [guideCreationError, setGuideCreationError] = useState<string | null>(
+    null,
+  )
   const [userConfirmed, setUserConfirmed] = useState(false)
 
   const applyReviewError = useCallback(
@@ -399,6 +405,9 @@ function PrescriptionReviewPage() {
     setIsAlreadyConfirmed(false)
     setSavingFieldIds(new Set())
     setIsConfirming(false)
+    setIsCreatingGuide(false)
+    setGuideCreationError(null)
+    guideCreationRequestRef.current = null
     setUserConfirmed(false)
     setIsLoading(true)
 
@@ -472,6 +481,7 @@ function PrescriptionReviewPage() {
 
     return () => {
       isDisposed = true
+      guideCreationRequestRef.current = null
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [applyReviewError, documentId, jobId, reviewRequestKey])
@@ -541,6 +551,46 @@ function PrescriptionReviewPage() {
     }
   }
 
+  const handleCreateGuide = async (prescriptionId: string) => {
+    if (guideCreationRequestRef.current) return
+
+    const requestToken = Symbol('guide-creation')
+    const guideRequestKey = reviewRequestKey
+    guideCreationRequestRef.current = requestToken
+
+    try {
+      setIsCreatingGuide(true)
+      setGuideCreationError(null)
+      const response = await createGuide(prescriptionId)
+      if (
+        latestReviewRequestKeyRef.current !== guideRequestKey ||
+        guideCreationRequestRef.current !== requestToken
+      ) {
+        return
+      }
+      navigate(`/guides/${response.data.guide_id}`)
+    } catch (error) {
+      if (
+        latestReviewRequestKeyRef.current !== guideRequestKey ||
+        guideCreationRequestRef.current !== requestToken
+      ) {
+        return
+      }
+      setGuideCreationError(
+        error instanceof ApiError
+          ? error.message
+          : '복약 가이드를 만드는 중 오류가 발생했습니다.',
+      )
+    } finally {
+      if (guideCreationRequestRef.current === requestToken) {
+        guideCreationRequestRef.current = null
+        if (latestReviewRequestKeyRef.current === guideRequestKey) {
+          setIsCreatingGuide(false)
+        }
+      }
+    }
+  }
+
   const handleConfirmPrescription = async () => {
     if (
       !documentId ||
@@ -559,6 +609,7 @@ function PrescriptionReviewPage() {
       const response = await confirmPrescription(documentId)
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       setPrescription(response)
+      void handleCreateGuide(response.data.prescription_id)
     } catch (error) {
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       applyReviewError(error, '처방 확정 중 오류가 발생했습니다.')
@@ -642,10 +693,22 @@ function PrescriptionReviewPage() {
   if (isLoading) {
     return (
       <div className="prescription-review-page">
-        <MobileShell title="OCR 결과 확인" hideNavigation>
-          <div className="app-scroll prescription-review__loading" role="status">
-            처방전 검수 정보를 불러오고 있어요.
-          </div>
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <div role="status">
+              <Card className="prescription-review__state-card">
+                <span className="prescription-review__loading-mark" aria-hidden="true" />
+                <p className="prescription-review__state-eyebrow">OCR 결과 불러오는 중</p>
+                <h1>처방전 검수를 준비하고 있어요</h1>
+                <p>처방전 검수 정보를 불러오고 있어요.</p>
+              </Card>
+            </div>
+          </main>
         </MobileShell>
       </div>
     )
@@ -655,12 +718,14 @@ function PrescriptionReviewPage() {
     return (
       <div className="prescription-review-page">
         <MobileShell
-          title="다섯알"
+          title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
           hideNavigation
         >
-          <main className="app-scroll prescription-review prescription-review__blocked">
-            <div className="prescription-review__error" role="alert">
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <div className="prescription-review__error prescription-review__error--blocking" role="alert">
+              <span className="prescription-review__warning-mark" aria-hidden="true" />
               <strong>{blockingState.title}</strong>
               <span>{blockingState.message}</span>
               <span>{blockingState.nextAction}</span>
@@ -688,12 +753,14 @@ function PrescriptionReviewPage() {
     return (
       <div className="prescription-review-page">
         <MobileShell
-          title="다섯알"
+          title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
           hideNavigation
         >
-          <main className="app-scroll prescription-review">
-            <Card className="prescription-review__complete">
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <Card className="prescription-review__complete prescription-review__state-card">
+              <span className="prescription-review__complete-mark" aria-hidden="true" />
               <StatusBadge>확정 완료</StatusBadge>
               <h2>이미 확정된 처방이에요</h2>
               <p>확정된 처방의 OCR 항목은 더 이상 수정할 수 없습니다.</p>
@@ -705,23 +772,56 @@ function PrescriptionReviewPage() {
   }
 
   if (prescription) {
+    const guideStatus = isCreatingGuide
+      ? '가이드 생성 중'
+      : guideCreationError
+        ? '가이드 생성 필요'
+        : '확정 완료'
+
     return (
       <div className="prescription-review-page">
         <MobileShell
-          title="다섯알"
+          title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          backPlacement="content"
           hideNavigation
         >
-          <main className="app-scroll prescription-review">
-            <Card className="prescription-review__complete">
-              <StatusBadge>확정 완료</StatusBadge>
+          <main className="app-scroll prescription-review prescription-review__state-screen">
+            <Card className="prescription-review__complete prescription-review__state-card">
+              <span className="prescription-review__complete-mark" aria-hidden="true" />
+              <StatusBadge tone={guideCreationError ? 'attention' : 'neutral'}>
+                {guideStatus}
+              </StatusBadge>
               <h2>처방정보가 확정되었어요</h2>
               <p>
-                확인된 처방정보만 이후 복약 가이드와 일정에 사용합니다.
+                {isCreatingGuide
+                  ? '확정된 처방정보로 복약 가이드를 만들고 있어요.'
+                  : guideCreationError
+                    ? '처방은 확정되었지만 복약 가이드를 만들지 못했어요. 가이드 생성만 다시 시도할 수 있습니다.'
+                    : '확정된 처방정보는 더 이상 수정할 수 없습니다.'}
               </p>
               <strong>
                 등록된 약물 {prescription.data.medications.length}개
               </strong>
+              {guideCreationError && (
+                <p className="prescription-review__guide-error" role="alert">
+                  {guideCreationError}
+                </p>
+              )}
+              {(isCreatingGuide || guideCreationError) && (
+                <Button
+                  fullWidth
+                  className="prescription-review__guide-action"
+                  disabled={isCreatingGuide}
+                  onClick={() =>
+                    handleCreateGuide(prescription.data.prescription_id)
+                  }
+                >
+                  {isCreatingGuide
+                    ? '가이드 생성 중...'
+                    : '가이드 생성 다시 시도'}
+                </Button>
+              )}
             </Card>
           </main>
         </MobileShell>
@@ -732,14 +832,15 @@ function PrescriptionReviewPage() {
   return (
     <div className="prescription-review-page">
       <MobileShell
-        title="다섯알"
+        title="Dosey 도지"
         onBack={() => navigate('/prescriptions/upload')}
+        backPlacement="content"
         hideNavigation
       >
         <main className="app-scroll prescription-review">
           <section className="prescription-review__intro">
             <div className="prescription-review__success-icon" aria-hidden="true">
-              ✓
+              <span />
             </div>
             <div>
               <p>전체 인식 성공</p>
@@ -780,20 +881,29 @@ function PrescriptionReviewPage() {
           {documentUrl && (
             <details className="prescription-review__source">
               <summary>
-                <span>원본 처방전 보기</span>
-                <span>직접 대조하기</span>
+                <span className="prescription-review__source-heading">
+                  <span className="prescription-review__document-mark" aria-hidden="true" />
+                  <span>
+                    <strong>원본 처방전 확인</strong>
+                    <small>인식 결과와 직접 대조해 주세요</small>
+                  </span>
+                </span>
+                <span className="prescription-review__source-action">원본 보기</span>
               </summary>
               <iframe src={documentUrl} title="원본 처방전" />
             </details>
           )}
 
           {prescriptionFields.length > 0 && (
-            <Card className="prescription-review__card">
+            <Card className="prescription-review__card prescription-review__card--prescription">
               <div className="prescription-review__card-title">
                 <div className="prescription-review__med-icon" aria-hidden="true">
-                  ●
+                  <span className="prescription-review__calendar-mark" />
                 </div>
-                <strong>처방 정보</strong>
+                <div className="prescription-review__card-heading">
+                  <span>처방 정보</span>
+                  <strong>처방일</strong>
+                </div>
                 <StatusBadge
                   tone={
                     prescriptionFields.every((field) =>
@@ -810,6 +920,13 @@ function PrescriptionReviewPage() {
                     : '확인 필요'}
                 </StatusBadge>
               </div>
+              <h2>
+                {draftValues[
+                  prescriptionFields.find(
+                    (field) => field.field_type === 'PRESCRIBED_DATE',
+                  )?.field_id ?? ''
+                ] || '처방일 확인 필요'}
+              </h2>
               <div className="prescription-review__fields">
                 {prescriptionFields.map(renderField)}
               </div>
@@ -826,24 +943,49 @@ function PrescriptionReviewPage() {
             const summaryValue = medicationName
               ? draftValues[medicationName.field_id]
               : ''
+            const getMedicationValue = (fieldType: string) => {
+              const field = group.fields.find(
+                (item) => item.field_type === fieldType,
+              )
+              return field ? draftValues[field.field_id]?.trim() ?? '' : ''
+            }
+            const doseValue = getMedicationValue('DOSE_VALUE')
+            const doseUnit = getMedicationValue('DOSE_UNIT')
+            const frequency = getMedicationValue('FREQUENCY_PER_DAY')
+            const duration = getMedicationValue('DURATION_DAYS')
+            const timing = getMedicationValue('TIMING')
+            const medicationSummary = [
+              doseValue ? `1회 ${doseValue}${doseUnit ? ` ${doseUnit}` : ''}` : '',
+              frequency ? `하루 ${frequency}회` : '',
+              duration ? `${duration}일 복용` : '',
+              timing,
+            ].filter(Boolean)
 
             return (
               <Card className="prescription-review__card" key={group.index}>
                 <div className="prescription-review__card-title">
                   <div className="prescription-review__med-icon" aria-hidden="true">
-                    ●
+                    <span className="prescription-review__med-dot" />
                   </div>
-                  <strong>처방약 {groupIndex + 1}</strong>
+                  <div className="prescription-review__card-heading">
+                    <span>처방약 {groupIndex + 1}</span>
+                    <strong>약물 정보</strong>
+                  </div>
                   <StatusBadge tone={allConfirmed ? 'neutral' : 'attention'}>
-                    {allConfirmed ? '인식 완료' : '확인 필요'}
+                    {allConfirmed ? '확인 완료' : '확인 필요'}
                   </StatusBadge>
                 </div>
-                <h2>{summaryValue || '확인된 약 이름'}</h2>
+                <h2>{summaryValue || '약 이름 확인 필요'}</h2>
                 <p className="prescription-review__card-summary">
-                  1회량 · 하루 횟수 · 복용 기간 · 복용 조건
+                  {medicationSummary.length > 0
+                    ? medicationSummary.join(' · ')
+                    : '세부 복용 정보를 확인해 주세요'}
                 </p>
                 <details className="prescription-review__editor">
-                  <summary>세부 항목 확인 및 수정</summary>
+                  <summary>
+                    <span>세부 항목 확인 및 수정</span>
+                    <span className="prescription-review__editor-chevron" aria-hidden="true" />
+                  </summary>
                   <div className="prescription-review__fields">
                     {group.fields.map(renderField)}
                   </div>
@@ -884,7 +1026,7 @@ function PrescriptionReviewPage() {
                 }
                 onClick={handleConfirmPrescription}
               >
-                {isConfirming ? '처방 확정 중...' : '처방 확정'}
+                {isConfirming ? '처방 확정 중...' : '확정하고 가이드 만들기'}
               </Button>
 
               <p className="prescription-review__progress">

@@ -1,284 +1,542 @@
 # AI One-Cycle Release Validation Implementation Plan
 
-| 항목 | 내용 |
-| --- | --- |
-| 관련 Issue/PR | 미정 — 실행 전 Backend·Infrastructure·Frontend 소유자 합의 필요 |
-| 문서 상태 | Draft / Blocked — Task 0의 staging 경계가 구현되기 전 Task 2 이후 실행 금지 |
-| 실행 추적 | Issue 생성 후 checklist를 Issue로 옮기고 이 문서는 설계 이력으로 고정 |
-| 완료 의미 | Backend 통합 smoke 증거. 기능 완료·Production 배포 승인과 분리 |
+**Goal:** 로컬 결정적 테스트를 통과한 뒤 `.env`의 실제 CLOVA·OpenAI Key로 업로드부터 Chat까지 전체 API one-cycle을 한 번 검증한다. staging에서는 배포된 Backend로 실제 OpenAI one-cycle을 실행해 비민감 결과를 남긴다.
 
-**Goal:** 격리된 staging Backend에서 비식별 합성 처방을 확정한 뒤 실제 OpenAI 가이드 생성과 챗봇 응답까지 한 사이클을 실행하고, 성공·실패 영속화를 Backend 통합 증거로 남긴다.
-
-**Architecture:** 실제 OpenAI 호출은 전용 staging FastAPI가 수행한다. 검증 CLI는 같은 immutable app image의 `release-validator` one-off service에서 실행하고 `network_mode: service:fastapi`로 loopback API를 호출하며, application DB validation credential과 별도 control DB credential로 fixture·원장 상태를 관리한다. FastAPI application account와 host wrapper는 control DB에 접근하지 않는다. 응답 유실·프로세스 중단 이후에는 pinned read-only resolver가 run ID로 원래 image provenance를 반환하고, 동일 validation CLI를 그 image의 DB-only `release-cleanup` service에서 실행한다. 실패 저장은 실제 장애를 유도하지 않고 기존 결정적 Backend 테스트로 증명한다.
-
-**Tech Stack:** Python 3.13, FastAPI, SQLAlchemy async, PostgreSQL 17, OpenAI Responses API, httpx, pytest, Docker Compose
+**Architecture:** 별도 배포 stack이나 image build 체계를 만들지 않는다. 기존 PostgreSQL·Alembic·FastAPI 배포를 사용하며 validation runner는 합성 fixture 준비, HTTP orchestration, 독립 DB 재조회와 정리만 담당한다. 로컬은 Git에서 제외된 `.env`, staging은 배포 secret을 사용한다. 실제 Provider SDK 호출은 FastAPI가 수행하며 runner·Frontend·Swagger는 Provider를 직접 호출하거나 credential을 출력하지 않는다.
 
 **Design:** `docs/designs/ceohwj/ai-one-cycle-release-validation-design.md`
 
-**Spec:** `docs/deployment.md`, `docs/contracts/medication-guide-ai-backend.md`, `docs/contracts/medication-chat-ai-backend.md`, `docs/contracts/release-validation-ledger.md`, `docs/testing.md`
+**Issue:** [#61 staging 환경에서 합성 처방을 이용한 AI 전체 흐름 검증](https://github.com/AI-HealthCare-05/AH_05_04/issues/61)
 
 ## Global Constraints
 
-- 실제 환자·처방·대화 데이터를 사용하지 않고 코드에 고정된 비식별 합성 값만 사용한다.
-- `OPENAI_API_KEY`는 staging 배포 비밀 저장소에서 FastAPI 컨테이너에만 주입하며 저장소, CLI 인자, 로그, 결과 파일에 기록하지 않는다.
-- live smoke는 전용 staging Compose·DB에서 `ENV=staging`, `RELEASE_VALIDATION_ALLOWED=1`, UUID run ID와 DB identity 검사를 모두 통과해야 한다.
-- 외부 API·DTO·DB schema·상태 의미는 변경하지 않는다. 변경 필요성이 발견되면 구현을 중단하고 관련 CODEOWNER와 별도 계약 변경으로 분리한다.
-- `app/` 구현과 테스트는 `@phina-io`, Frontend 구현과 E2E는 `@solia142`, AI 검증 기준과 합성 시나리오는 `@ceohwj`가 책임지고 공동 리뷰한다.
-- 생성 본문, 질문 전문, access token, refresh token, DB 비밀번호, API key를 smoke 출력에 포함하지 않는다.
-- Backend 검증 완료, 기능 Issue 완료와 Production 배포 승인을 서로 다른 상태로 관리한다.
+- 실제 환자·처방·대화 데이터를 사용하지 않는다.
+- API·DTO·application DB schema와 상태 의미를 변경하지 않는다.
+- DB 초기화·migration·application 계정 분리와 `postgres → migrate → fastapi` 순서를 그대로 사용한다.
+- DB 역할 SQL, Alembic, local·production Compose와 배포 파이프라인을 수정하지 않는다.
+- staging 실제 `OPENAI_API_KEY`는 staging FastAPI에만 주입한다.
+- 로컬 결정적 one-cycle은 Guide·Chat provider를 fake로 교체해 `.env`에 Key가 있어도 실제 호출하지 않는다.
+- 로컬 `local-live-full`에서는 Git에서 제외된 `.env`의 기존 Key로 FastAPI가 실제 Provider를 호출하고 Frontend·Swagger에는 전달하지 않는다.
+- `local-live-full`은 승인된 합성 이미지로 실제 CLOVA OCR과 OpenAI를 호출하는 로컬 필수 통합 검증이며 CI와 staging 릴리스 판정에는 포함하지 않는다.
+- `local-live-full`은 host에서 정상 기동한 FastAPI와 별도 runner process 사이의 실제 TCP 요청만 허용한다. `ASGITransport`, dependency override와 fake Provider는 금지한다.
+- PostgreSQL·Redis는 Docker로 실행할 수 있지만 local FastAPI와 runner는 같은 resolved `STORAGE_DIR`을 사용하고 runner가 해당 경로를 읽고 쓸 수 있어야 한다.
+- `CLOVA_OCR_INVOKE_URL`은 Provider 호출 전에 HTTPS인지 확인한다. lowercase hostname은
+  `.apigw.ntruss.com`으로 끝나고 앞 label이 하나 이상이어야 하며 username·password·fragment는 없어야 한다.
+- runner와 공개 기록에는 생성 본문, 질문 전문, token과 credential을 포함하지 않는다.
+- `app/` runner·fixture 구현은 `@phina-io`의 구현 또는 리뷰를 거친다.
+- Frontend 코드는 `@solia142`의 별도 범위다.
+
+## Runner CLI·결과 계약
+
+구현과 문서는 다음 명령 형태를 그대로 제공한다.
+
+```bash
+uv run python -m app.release_validation.ai_one_cycle_smoke \
+  --mode local-preflight \
+  --run-id <uuid> \
+  --base-url http://127.0.0.1:8000/api/v1 \
+  --candidate-image /private/tmp/ai-one-cycle-candidate.png \
+  --scenario-draft /private/tmp/ai-one-cycle-clova-openai-v1.draft.json
+
+uv run python -m app.release_validation.ai_one_cycle_smoke \
+  --mode local-live-full \
+  --run-id <uuid> \
+  --base-url http://127.0.0.1:8000/api/v1 \
+  --scenario app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
+
+uv run python -m app.release_validation.ai_one_cycle_smoke \
+  --mode staging-live \
+  --run-id <uuid> \
+  --base-url https://<합의된-staging-host>/api/v1 \
+  --scenario app/release_validation/scenarios/ai-one-cycle-v1.json \
+  --commit-sha <40자리-commit-sha>
+
+uv run python -m app.release_validation.ai_one_cycle_smoke \
+  --mode local-live-full \
+  --run-id <uuid> \
+  --base-url http://127.0.0.1:8000/api/v1 \
+  --cleanup-only
+```
+
+- `--mode`: `local-preflight|local-live-full|staging-live`; 결정적 검증은 pytest가 담당하며 이번 MVP에서는
+  `local-live-ai`를 구현하지 않는다.
+- `--run-id`: 모든 일반 실행과 cleanup-only에 필수인 UUID다.
+- `--base-url`: cleanup-only를 포함한 모든 실행에서 필수이며 run-state identity와 비교한다.
+  `--scenario`는 local-live-full과 staging-live에서
+  필수이며 mode별 positive allow gate와 manifest가 일치해야 한다.
+- `--candidate-image`, `--scenario-draft`: local-preflight에서만 필수다. draft에는 기대값과 field identities가
+  있지만 최종 fixture 경로와 SHA는 비어 있어야 한다.
+- `--commit-sha|--image-repo-digest`: staging에서 하나 이상 필수다. local은 Git 상태를 자동 기록한다.
+- `--cleanup-only`: 기존 `0600` run-state만 읽으며 새 fixture와 Provider 요청을 만들지 않는다.
+- `failure_stage`: Design 8.2의 고정 enum 이외 값을 만들지 않는다.
+- exit `0`: 전체 PASS 또는 cleanup-only PASS, `1`: 실행·DB·안전 실패와 cleanup PASS,
+  `2`: 첫 변경 요청 전 CLI·guard·scenario 실패, `3`: cleanup FAIL/PENDING이며 다른 실패보다 우선한다.
+- 결과에는 `operation`, `mode`, `transport`, `commit_sha`, `worktree_dirty`, `evidence_qualified`, Guide·Chat
+  각각의 안전 판정을 포함한다. local dirty worktree 결과는 진단할 수 있지만 Issue 증거가 아니다.
+- preflight는 실제 TCP로 login·upload·OCR request·OCR get까지만 실행하며 OpenAI·PATCH·처방·Guide·Chat을
+  호출하지 않는다. `preflight=READY|NOT_READY`, 후보 SHA, identity 일치 여부, field 수, cleanup만 공개하고
+  READY여도 one-cycle PASS 증거로 사용하지 않는다.
 
 ---
 
-### Task 0: 격리된 staging 실행 경계 확정
+### Task 0: 선행조건과 실행 경계 확정
+
+**Files:** read only
+
+- `app/core/config.py`
+- `infra/docker/docker-compose.prod.yml`
+- `infra/docker/postgres/configure-app-role.sql`
+- `alembic/`
+- `docs/deployment.md`
+
+- [ ] **Step 1: DB 전환과 회귀 증거를 확인한다**
+
+  Run:
+
+  ```bash
+  gh pr view 72 --repo AI-HealthCare-05/AH_05_04 --json state,mergedAt,mergeCommit,statusCheckRollup
+  gh pr view 84 --repo AI-HealthCare-05/AH_05_04 --json state,mergedAt,mergeCommit,statusCheckRollup
+  gh pr view 85 --repo AI-HealthCare-05/AH_05_04 --json state,mergedAt,mergeCommit,statusCheckRollup
+  ```
+
+  Expected: 세 PR이 `MERGED`이고 관련 lint·test가 `SUCCESS`다.
+
+- [ ] **Step 2: 현재 DB 실행 계약을 확인한다**
+
+  Expected:
+
+  - PostgreSQL 17·`asyncpg`
+  - 서로 다른 admin, migration, application 계정
+  - migration 계정만 schema 생성 가능
+  - application 계정은 필요한 DML만 가능
+  - `postgres → migrate → fastapi`
+
+- [ ] **Step 3: staging 실행 방법을 담당자와 확정한다**
+
+  `@phina-io`, `@hazelnutflavoured`와 다음을 확인한다.
+
+  - 배포된 application image의 one-off command 실행 방법
+  - staging FastAPI base URL
+  - runner에 전달할 application 수준 DB credential
+  - commit SHA 또는 image digest 확인 방법
+  - runner에는 application DB·validation 설정만 전달하고 실제 OpenAI key를 상속하지 않는 one-off env 구성
+  - interactive `/dev/tty`가 할당되는 실제 one-off 명령과 실행 권한
+  - 서로 다른 one-off에 동일 private path로 mount되는 `RELEASE_VALIDATION_STATE_DIR`
+
+  Expected: 위 항목이 확정되기 전에는 live smoke를 실행하지 않는다. `/dev/tty`를 제공할 수 없으면
+  staging smoke는 `BLOCKED`이며 자동 입력이나 PASS 우회는 만들지 않는다.
+
+  private state mount에는 test state를 `0700` directory·`0600` file로 write·close하고 별도 one-off가 동일
+  bytes를 읽는 검사를 수행한다. 이 검사를 통과하지 못하면 platform temp로 우회하지 않고 staging smoke를
+  `BLOCKED`로 둔다. state는 장기 원장이 아니라 cleanup PASS 뒤 삭제하는 단기 복구 정보다.
+
+- [ ] **Step 4: local network·storage 경계를 확인한다**
+
+  host FastAPI와 별도 runner가 같은 resolved `STORAGE_DIR`을 사용하고 runner가 read/write할 수 있는지,
+  base URL이 loopback인지 확인한다. Docker FastAPI의 container-only storage를 host runner가 추측해서
+  삭제하는 구성은 허용하지 않는다.
+
+### Task 1: 결정적 실패 상태 테스트 보강
 
 **Files:**
-- Create: `envs/example.staging.env`
-- Create: `infra/docker/docker-compose.staging.yml`
-- Create: `infra/docker/init/staging-release-control.sql`
-- Create: `infra/docker/release-control.Dockerfile`
-- Create: `scripts/release_validation/run_ai_one_cycle_smoke.sh`
-- Create: `scripts/release_validation/run_staging_migration.sh`
-- Modify: `docs/contracts/release-validation-ledger.md` (Proposed → Implemented 상태와 실제 SQL type·길이 확정)
-- Modify: `docs/contracts/README.md`
-- Modify: `app/Dockerfile`
-- Review jointly: staging application DB·control DB·secret-store provisioning outside this repository
 
-- [ ] **Step 1: 전용 staging project와 DB를 정의한다**
+- Modify: `app/tests/guide_ai/test_backend_contract.py`
+- Modify: `app/tests/repositories/test_guide_repository.py`
+- Verify: `app/tests/chat_apis/test_chat_message_api.py`
+- Verify: `app/tests/repositories/test_chat_repository.py`
 
-  local·production Compose를 재명명해 사용하지 않는다. `ah-staging` Compose project, staging 전용 application DB host·database·최소권한 user를 정의하고 Production DB host·이름·credential을 재사용하지 않는다. 애플리케이션 schema 밖의 staging control DB에 authoritative `release_validation_runs` 원장과 append-only event를 둔다. schema version, 상태·전이, crash recovery, 90일 보존과 role별 권한은 `docs/contracts/release-validation-ledger.md`를 기준으로 구현한다. 동일 validation CLI의 normal·cleanup role만 상태를 전이하고 resolver는 provenance read-only, migration은 lock·unresolved 조회, retention role은 만료된 `RESOLVED` record·event 삭제만 수행한다. FastAPI application account와 host wrapper에는 control DB 권한을 주지 않는다.
+- [x] **Step 1: 현재 Guide 실패 assertion 공백을 확인한다**
 
-- [ ] **Step 2: normal·cleanup guard를 분리한다**
+  Backend contract는 고정 `error_code`와 비어 있지 않은 안전한 `error_message`를 모두 확인한다. Repository 테스트는 rollback 후 새 조회에서 다음을 확인한다.
 
-  공통으로 `ENV=staging`, UUID run ID, `SELECT DATABASE()` exact match와 `staging_` prefix, Production host·DB deny-list, application·control schema compatibility를 확인한다. normal CLI는 run ID 미존재와 FastAPI readiness·provenance·`RELEASE_VALIDATION_ALLOWED=1`을 확인하고 app DB write 전에 원장 record를 만든다. cleanup-only는 기존 원장·provenance 일치를 요구하고 OpenAI·FastAPI 없이 DB-only credential과 `RELEASE_CLEANUP_ALLOWED=1`만 추가로 요구한다.
+  ```python
+  assert guide.generation_status == GuideGenerationStatus.FAILED
+  assert guide.error_code == "OPENAI_API_ERROR"
+  assert guide.error_message == "고정된 안전 문구"
+  assert guide.completed_at is not None
+  assert (guide.content, guide.model_name, guide.prompt_version) == (None, None, None)
+  ```
 
-- [ ] **Step 3: FastAPI 전용 secret allowlist를 적용한다**
+- [x] **Step 2: Guide와 기존 Chat 실패 테스트를 실행한다**
 
-  staging OpenAI key는 FastAPI에만 주입하고 AI Worker·Frontend·공통 env 파일·`release-validator`·`release-cleanup`·`release-ledger-resolver` service에는 넣지 않는다. `release-validator`는 application validation·control credential과 `network_mode: service:fastapi`만 사용하고, cleanup service는 같은 immutable app image와 DB-only application·control credential을 사용한다. Resolver는 별도 digest로 고정된 ops image와 provenance read-only control credential만 사용한다. one-off service는 외부 port를 열지 않는다.
+  Run:
 
-- [ ] **Step 4: 실행 중인 image provenance를 고정한다**
+  ```bash
+  uv run pytest \
+    app/tests/guide_ai/test_backend_contract.py \
+    app/tests/repositories/test_guide_repository.py \
+    app/tests/chat_apis/test_chat_message_api.py \
+    app/tests/repositories/test_chat_repository.py \
+    -q
+  ```
 
-  image build arg에서 `DEPLOY_COMMIT_SHA`와 OCI revision label을 bake한다. host wrapper는 `docker inspect`로 local image ID, pull 가능한 full RepoDigest와 revision label을 각각 읽어 전달하고, CLI는 전달된 revision을 bake된 `DEPLOY_COMMIT_SHA`와 비교한다. RepoDigest가 없거나 세 값이 누락·불일치하면 normal 실행을 차단한다.
+  Result: 실제 OpenAI 호출 없이 `33 passed`.
 
-- [ ] **Step 5: staging 구성 검증을 통과시킨다**
+- [ ] **Step 3: Guide 실패 저장을 완전히 새 DB session으로 재검증한다**
 
-  Compose render, `release-validator`의 network namespace, resolver image digest pin, Production deny-list, 잘못된 DB identity, schema revision 불일치, provenance mismatch와 service별 secret 전달 범위에 대한 결정적 검사를 추가한다. normal·cleanup CLI와 migration process는 control DB의 같은 advisory lock을 전체 작업 동안 유지한다. lock 획득 timeout·실패와 실행 중 connection loss는 다음 app DB write를 중단하는 fail-closed 경로로 처리한다. migration은 lock 안에서 authoritative 원장의 unresolved record 0건을 확인한 뒤 실행하며, unresolved run 생성과 migration의 check-then-act race가 불가능함을 검사한다. State update·event insert의 동일 transaction, 모든 event `UPDATE` 거부, 90일 이전·unresolved 삭제 거부와 eligible event·record 동시 삭제도 검증한다.
+  현재 repository 테스트가 rollback 뒤 같은 session 객체에서 재조회하는지 확인한다. 그렇다면 실패 row를
+  commit하고 session을 닫은 뒤, 별도로 만든 새 `AsyncSession`에서 상태·오류 metadata·null 생성 metadata를
+  다시 조회하도록 보강한다. 이 항목은 VS Code 구현 단계에서 수행하며 완료 전 `[x]`로 바꾸지 않는다.
 
-### Task 1: Backend 통합 검증 기준 고정
-
-**Files:**
-- Create: `docs/validation/ai-one-cycle-release.md`
-- Modify: `docs/README.md`
-
-**Interfaces:**
-- Consumes: 기존 Guide/Chat 계약의 상태와 metadata 필드
-- Produces: Backend 통합 검증 성공·실패 체크리스트. Production 승인 checklist와 분리
-
-- [ ] **Step 1: 검증 행렬을 문서화한다**
-
-  아래 항목을 `docs/validation/ai-one-cycle-release.md`에 표로 기록한다.
-
-  | 단계 | 호출/증거 | 통과 기준 |
-  | --- | --- | --- |
-  | 처방 확정 | `POST /api/v1/documents/{document_id}/prescription` | `201`, 합성 약물 순서·값 일치 |
-  | 가이드 생성 | `POST /api/v1/guides` 및 GUIDE 재조회 | `COMPLETED`, 본문 비어 있지 않음, `model_name.startswith("gpt-4o-mini")`, `prompt_version=guide-prompt-v1` |
-  | 채팅 세션 | `POST /api/v1/prescriptions/{prescription_id}/chat-sessions` | `201`, `ACTIVE` |
-  | 질문·응답 | `POST /api/v1/chat-sessions/{session_id}/messages` 및 메시지 목록 재조회 | USER/ASSISTANT 한 쌍, ASSISTANT `COMPLETED`, `model_name.startswith("gpt-4o-mini")`, `prompt_version=chat-prompt-v1` |
-  | 실패 저장 | 결정적 Backend 회귀 테스트 | GUIDE `FAILED` 및 안전한 오류 코드, Chat USER + FAILED ASSISTANT 쌍 영속화 |
-  | 보안 | 배포 환경·로그 점검 | key/token/생성 본문 미노출, 응답 `Cache-Control: no-store` |
-
-- [ ] **Step 2: Backend 검증 차단 조건을 명시한다**
-
-  다음 중 하나라도 발생하면 Backend 통합 검증 실패로 기록한다: 실제 OpenAI 호출 skip, 모델 family 또는 프롬프트 버전 불일치, 처방 약물과 가이드 약물 불일치, ASSISTANT 비완료 상태, 실패 row 미영속화, provenance 누락, 비밀정보 또는 생성 본문 로그 노출, cleanup 또는 사후 0건 검증 실패.
-
-  별도로 `Backend 검증 완료`, `기능 Issue 완료`, `Production 배포 승인` 세 상태를 문서화한다. 새 one-cycle은 기존 Guide·Chat live smoke와 `docs/deployment.md`의 의료 안전·외부 전송·인프라 gate를 대체하지 않는다.
-
-- [ ] **Step 3: 문서 링크를 검증한다**
-
-  Run: `rg -n "ai-one-cycle-release" docs/README.md docs/validation/ai-one-cycle-release.md`
-
-  Expected: 두 파일에서 새 검증 문서 경로가 검색된다.
-
-- [ ] **Step 4: 문서 diff를 검증한다**
-
-  Run: `git diff --check && git diff -- docs/validation/ai-one-cycle-release.md docs/README.md`
-
-  Expected: whitespace 오류가 없고 실제 데이터·비밀값이 없다.
-
-### Task 2: 배포 컨테이너용 one-cycle smoke 명령 구현
+### Task 2: validation runner의 결정적 테스트 작성
 
 **Files:**
+
+- Create: `app/tests/release_validation/__init__.py`
+- Create: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
 - Create: `app/release_validation/__init__.py`
 - Create: `app/release_validation/ai_one_cycle_smoke.py`
-- Create: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
+- Create: `app/release_validation/scenarios/ai-one-cycle-v1.json`
 
-**Interfaces:**
-- Consumes: `config.ENV`, `config.OPENAI_MODEL`, `RELEASE_VALIDATION_ALLOWED`, operator-provided run ID, staging DB identity, authoritative run ledger, baked commit SHA, running full RepoDigest·local image ID, wrapper-inspected OCI revision, `http://127.0.0.1:8000/api/v1`
-- Produces: `python -m app.release_validation.ai_one_cycle_smoke` 종료 코드와 비민감 JSON 요약
+**Ownership:** `app/` 변경이므로 `@phina-io` 구현 또는 리뷰가 필요하다.
 
-- [ ] **Step 1: 환경 가드 실패 테스트를 작성한다**
+- [ ] **Step 1: 환경 guard 테스트를 작성한다**
 
-  normal guard는 `ENV != staging`, 실행 허용값 누락, run ID 형식 오류, DB name·host 불일치, Production deny-list 일치, Alembic head 불일치, baked commit SHA·`RELEASE_VALIDATION_IMAGE_REVISION`·`RELEASE_VALIDATION_REPO_DIGEST`·local image ID 누락 또는 불일치, `OPENAI_MODEL != gpt-4o-mini`를 검사한다. OpenAI Key는 validation CLI에 전달하지 않고 FastAPI secret 주입 범위와 실제 호출로 검증한다. cleanup guard는 DB identity·deny-list·schema compatibility·원장 run ID·full RepoDigest·revision·cleanup 허용값·DB-only credential만 검사하고 OpenAI·FastAPI 부재를 허용한다.
+  다음 입력을 fixture 생성 전에 거부한다.
 
-- [ ] **Step 2: 환경 가드 테스트가 실패하는지 확인한다**
+  - `ENV != staging`인 `staging-live` mode
+  - `RELEASE_VALIDATION_ALLOWED != 1`인 live mode
+  - UUID가 아닌 run ID
+  - 합의된 staging DB host·DB name과 일치하지 않는 값
+  - HTTPS가 아니거나 합의된 staging API host와 일치하지 않는 base URL
+  - staging base URL 누락
+  - commit SHA와 image digest가 모두 누락
+  - staging runner 환경에 `OPENAI_API_KEY`가 존재함
 
-  Run: `uv run pytest app/tests/release_validation/test_ai_one_cycle_smoke.py -k environment_guard -q`
+  Production 문자열 deny-list가 아니라 staging 값의 positive allow gate를 사용하며, guard 통과 전에는
+  DB session을 만들지 않는다. 로컬 결정적 테스트는 Key 존재 여부가 아니라 AI dependency가 fake로
+  override됐는지 확인한다.
 
-  Expected: 모듈이 아직 없어 collection 또는 import 실패.
+- [ ] **Step 2: 합성 fixture builder 테스트를 작성한다**
 
-- [ ] **Step 3: 최소 합성 fixture builder를 구현한다**
+  `scenario_version=ai-one-cycle-v1`과 run ID 기반 고유 사용자, `MedicalDocument`,
+  `OcrJob(COMPLETED)`와 확인된 추출 필드를 만든다. 실제 OCR Provider를 호출하지 않는다. fixture
+  session은 commit 후 닫는다.
 
-  운영자가 전달한 run ID로 합성 사용자, `MedicalDocument`, `OcrJob(COMPLETED)`, 전부 `CONFIRMED`인 `ExtractedField`를 생성한다. User의 길이·unique 필드, 양수 file size, OCR terminal timestamp, confirmation timestamp와 medication index constraint를 모두 명시한다. 확인값은 처방일 `2026-08-21`, 약물명 `합성의약품 에이`, 복용량 `1`, 단위 `정`, 횟수 `2`, 시점 `식후`, 기간 `3`이며 `3일`은 저장값이 아니라 렌더링 기대값으로만 사용한다.
+- [ ] **Step 3: HTTP orchestration 테스트를 작성한다**
 
-- [ ] **Step 4: 실제 HTTP one-cycle orchestration 테스트를 작성한다**
+  실제 test PostgreSQL과 `httpx.ASGITransport(app=app)`로 FastAPI route·인증 dependency·DTO·
+  transaction을 통과한다. HTTP client는 fake로 만들지 않고 `get_guide_generator`와 `get_chat_engine`의
+  Provider 경계만 결정적 fake로 교체한다.
 
-  HTTP client와 DB session을 fake로 주입해 confirm → guide → chat session → message → guide/message 재조회 순서, 각 ID 전달, 의료 endpoint의 `Cache-Control: no-store`, 완료 metadata와 동일한 model-family predicate를 테스트한다. 로그인 응답은 현재 `Cache-Control` 계약 대상이 아니다.
+  ```python
+  assert request_paths == [
+      "/auth/login",
+      f"/documents/{document_id}/prescription",
+      "/guides",
+      f"/prescriptions/{prescription_id}/chat-sessions",
+      f"/chat-sessions/{session_id}/messages",
+  ]
+  ```
 
-- [ ] **Step 5: one-cycle orchestration을 구현한다**
+  처방 확정·가이드·채팅 세션·메시지는 예상 HTTP 상태와 `Cache-Control: no-store`를 확인한다.
 
-  `httpx.AsyncClient`로 실제 배포 API를 호출하고 connect timeout 5초, read timeout `OPENAI_TIMEOUT_SECONDS + M` 이상을 명시한다. `M`은 양수인 CLI 처리 여유 설정으로 정의하고 실행 기록에 남긴다. 결과 로그에는 run ID, HTTP 상태, 상태 enum, 실제 모델 ID, 프롬프트 버전, 본문 길이만 남기고 생성 본문과 token은 남기지 않는다. transport 실패는 해당 단계를 `OUTCOME_UNKNOWN`으로 분류한다. 로그인은 안전하게 재시도하고 write endpoint는 exact run anchor·부모 관계에서 terminal row와 ID를 복구한 뒤 다음 미실행 단계부터 계속한다.
+  처방 확정 직후 새 DB session에서 고정 시나리오의 정규화된 약물 필드를 literal 값과 비교하고
+  `input_fingerprint`를 계산한다. 값이 다르면 Guide provider가 호출되지 않고
+  `failure_stage=PRESCRIPTION_INPUT`인지 확인한다.
 
-- [ ] **Step 6: 저장값을 독립 DB session으로 재조회한다**
+- [ ] **Step 4: DB 재조회 테스트를 작성한다**
 
-  GUIDE와 ASSISTANT row를 API 응답 객체가 아닌 새 DB session에서 조회해 각각 `COMPLETED`, `model_name.startswith("gpt-4o-mini")`, 정확한 `prompt_version`, null `error_code/error_message`를 확인한다. `OUTCOME_UNKNOWN`이면 현재 단계의 run-root 후손을 terminal 상태까지 제한 시간 동안 poll한다. terminal 성공은 해당 단계만 `PASS`, terminal 실패는 execution `FAIL`, timeout·중복 후보·identity 불일치는 execution `OUTCOME_UNKNOWN`이며 모든 필수 단계와 최종 DB 검증이 성공해야 전체 `PASS`다.
+  fixture와 다른 새 session에서 Guide와 Chat의 상태, content 존재, 실제 모델 ID, 정확한 prompt version,
+  null 오류와 소유 관계를 확인한다. Guide 500에서는 HTTP status·`code/details/trace_id`와 DB의
+  `FAILED`, 오류 metadata, null 생성 metadata를 함께 기록한다.
 
-- [ ] **Step 7: 합성 row cleanup과 cleanup 실패 처리를 구현한다**
+  입력 검사가 PASS인 `GENERATION_REQUEST_FAILED`는 `GUIDE_GENERATION_PROCESSING`으로 분류하지만,
+  내부 원인을 단정하지 않는지 테스트한다. 동일 deployment ID와 input fingerprint의 실패·성공 결과를
+  비교할 수 있어야 한다.
 
-  fixture app DB write 전 원장을 `SETUP_IN_PROGRESS`로 전이하고 exact 예상 anchor를 저장한다. 정상 종료 cleanup 전에는 대상 ID·개수 hash를 저장하고 `CLEANUP_IN_PROGRESS`로 먼저 전이한 뒤 응답 ID가 아니라 exact run anchor의 모든 후손을 FK 역순으로 제거한다. commit 후 새 session에서 0건을 검증한 뒤 원장을 `RESOLVED`로 바꾼다. 강제 종료·응답 유실에 대비해 DB-only service에서 같은 run ID를 받는 `--cleanup-only` 명령을 구현하고 `GENERATING` row가 남으면 cleanup `PENDING`으로 종료한다. `SETUP_IN_PROGRESS + exact anchor`, `CLEANUP_IN_PROGRESS + rows 존재/0건`은 idempotent saga로 복구한다. 이미 `RESOLVED`인 원장의 0건만 성공 no-op이며, 원장 누락·원장 identity 불일치·잘못된 UUID는 `FAIL`이다.
+- [ ] **Step 5: cleanup 테스트를 작성한다**
 
-- [ ] **Step 8: 불명확한 결과와 복구 경로를 테스트한다**
+  live mode는 첫 변경 요청 전에 `RELEASE_VALIDATION_STATE_DIR` 또는 platform temporary directory 아래의
+  전용 directory를 `0700`으로 만들고 `<run_id>.json`을 exclusive create, mode `0600`으로 만든다. 일반
+  run·preflight에 기존 state가 있으면 어떤 변경도 하기 전에 exit `2`로 종료하며 cleanup-only만 기존 state를
+  열 수 있다. run ID, mode, environment,
+  scenario version, base URL, 비밀값을 제외한 DB host·port·database name, 합성 root locator와 성공 응답으로
+  받은 ID를 즉시 기록한다. local mode는 resolved `STORAGE_DIR`, source image SHA와 storage baseline도 함께
+  기록한다. transport 결과가 불명확하면 `transport_failed_at`, `cleanup_not_before`를 기록한다. local file
+  cleanup phase는 `NOT_STARTED|DELETE_INTENT|DONE`으로 기록하고 모든 state 갱신은 `0600` 임시 파일을
+  write·fsync한 뒤 atomic replace한다.
 
-  로그인과 처방 확정·가이드 생성·채팅 세션·메시지 전송 각각의 "서버 commit 후 응답 유실", "client timeout 동안 서버 계속 실행", "OpenAI·FastAPI 없이 cleanup-only", "이미 정리된 ledger run의 성공 no-op", "원장에 없는 유효 UUID", "원장 identity 불일치", "원래 image/schema 불일치 차단", "image ID/RepoDigest 혼동과 RepoDigest 누락", "resolver unknown run·변조 출력·read-only 권한·wrong-image 거부", "다른 run의 데이터 보존", "cleanup commit 후 사후 조회 잔존", "unresolved 원장으로 migration 차단", "normal과 migration의 advisory-lock 직렬화", "lock 획득 timeout·connection loss fail-closed"를 결정적으로 테스트한다. 각 응답 유실에서 exact ID 복구 후 남은 단계가 재개되고, 필수 단계 하나라도 미실행이면 전체 `PASS`가 아닌지 확인한다. fixture app commit 직후와 cleanup app commit·0건 검증 직후 process kill을 주입해 각각 `SETUP_IN_PROGRESS`, `CLEANUP_IN_PROGRESS`에서 복구되는지도 확인한다. reconciliation은 단계별 terminal 성공→해당 단계 `PASS`, terminal 실패→execution `FAIL`, 제한 시간 만료→execution `OUTCOME_UNKNOWN` 전이를 검사한다. normal의 execution·cleanup·overall 조합과 cleanup-only의 `execution=NOT_RUN`·독립 종료 코드를 모두 검사한다.
+  로그인 포함 각 state-changing HTTP 요청과 직접 DB commit 직전에 `in_flight_stage`,
+  `request_started_at`, 해당 요청 read timeout보다 뒤인 `cleanup_not_before`를 먼저 atomic 저장한다. 명확한
+  응답 또는 commit 결과 뒤에만 resource ID·상태를 기록하면서 marker를 해제한다. crash·SIGKILL·host 종료로
+  marker가 남으면 cleanup-only는 `cleanup_not_before` 전까지 조회·삭제 없이 `PENDING`, exit `3`이어야 한다.
+  정상·명확한 HTTP 실패·DB 검증 실패에서는 생성 ID를 추적해 local 파일을 먼저 안전하게 삭제하고 다음
+  FK 역순으로 한 transaction에서 row를 삭제한다.
 
-- [ ] **Step 9: 전용 테스트를 통과시킨다**
+  ```text
+  citation → chat message → chat session → guide → medication → prescription
+  → extracted field → OCR job → medical document → user
+  ```
+
+  로그인부터 Chat 메시지까지 어느 state-changing 요청이든 응답을 잃어 결과가 불명확하면 DB polling이나
+  현재 process 정리를 하지 않고 `cleanup=PENDING`, exit `3`으로 종료한다. 가장 긴 Provider timeout보다 긴
+  grace period 뒤 `--cleanup-only`만 정리를 재시도한다.
+
+  cleanup-only는 `0600` run-state를 요구하고 현재 mode·environment·base URL·DB identity가 run-state와
+  정확히 일치해야 한다. local cleanup은 추가로 같은 resolved `STORAGE_DIR`을 요구한다. 현재 시각이
+  `cleanup_not_before` 전이거나 identity가 다르면 조회·삭제 없이 `PENDING`, exit `3`이다. 정상 업로드 응답이
+  있으면 `document_id`·허용 확장자·storage 내부 경로를 검증한다. 응답을
+  잃었다면 baseline 이후 생긴 파일 중 source
+  SHA-256과 같은 후보가 정확히 한 개일 때만 orphan으로 간주한다. 후보가 0개 또는 여러 개면 삭제하지 않고
+  `PENDING`을 유지한다. 정확한 path·SHA를 state에 기록하고 `DELETE_INTENT`를 atomic 저장한 뒤 삭제하고
+  `DONE`을 저장한다. 재실행에서 `DELETE_INTENT`이고 해당 파일이 없으면 `DONE`으로 전환해 DB cleanup을
+  계속한다. `DONE`과 파일 0개는 정상이다. cleanup commit 후 새 session과 파일 검사에서 잔존 row·파일이
+  모두 0개일 때만 run-state를 지운다. DB나 storage 확인이 불가능하면 remaining 수를 null, verification을 `UNAVAILABLE`로
+  출력하며 `PENDING`을 유지한다. 반복 실행해도 다른 run의 row나 파일을 삭제하지 않아야 한다.
+
+- [ ] **Step 6: runner를 최소 구현한다**
+
+  역할을 작은 함수로 분리한다.
+
+  - environment guard
+  - synthetic fixture builder
+  - HTTP runner
+  - DB verifier
+  - cleanup
+  - strict JSON result
+
+  runner는 OpenAI SDK를 직접 호출하지 않는다.
+
+  HTTP timeout은 connect 5초, read `OPENAI_TIMEOUT_SECONDS + 5초` 이상으로 명시한다. state-changing 요청의
+  transport 결과가 불명확하면 in-process polling·삭제를 하지 않는다. 실행 실패와 cleanup 실패가 함께
+  발생하면 원래 `failure_stage`를 보존한다.
+
+  strict JSON과 exit code는 위 `Runner CLI·결과 계약`과 Design 8.2를 그대로 구현한다.
+  `failure_evidence`는 HTTP status, API code·trace ID와 DB status·error code만 허용하고 본문은 허용하지
+  않는다. cleanup-only는 `operation`, run ID, environment, cleanup, remaining row·file 수만 출력한다.
+
+- [ ] **Step 7: 결정적 runner 테스트를 통과시킨다**
 
   Run: `uv run pytest app/tests/release_validation/test_ai_one_cycle_smoke.py -q`
 
-  Expected: 실제 OpenAI 호출 없이 모든 테스트 PASS.
+  Expected: 실제 OpenAI 호출 없이 모두 PASS.
 
-- [ ] **Step 10: Backend 회귀 검사를 실행한다**
+### Task 2A: `local-live-ai` 보조 진단 — Deferred
 
-  Run: `uv run ruff check app/release_validation app/tests/release_validation && uv run mypy app && uv run pytest app/tests/guide_ai app/tests/chat_ai app/tests/chat app/tests/chat_apis app/tests/repositories/test_guide_repository.py app/tests/repositories/test_chat_repository.py -q`
+OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한다. 먼저 실제 CLOVA·OpenAI를 모두 거치는
+`local-live-full`과 staging OpenAI 검증을 완성한다. 이후 동일 입력의 Guide 실패·성공을 더 좁혀 재현할
+필요가 생기면 별도 Issue로 구현한다.
 
-  Expected: 모두 PASS; live smoke 두 건은 명시적으로 SKIPPED.
-
-### Task 3: 실패 상태 저장을 결정적 테스트 증거로 고정
-
-**Files:**
-- Modify only if a gap is found: `app/tests/guide_ai/test_backend_contract.py`
-- Modify only if a gap is found: `app/tests/chat_apis/test_chat_message_api.py`
-- Modify only if a gap is found: `app/tests/repositories/test_guide_repository.py`
-- Modify only if a gap is found: `app/tests/repositories/test_chat_repository.py`
-
-**Interfaces:**
-- Consumes: 기존 오류 매핑과 repository commit 동작
-- Produces: 실제 provider 장애 없이 재현 가능한 실패 영속화 증거
-
-- [ ] **Step 1: 현재 실패 회귀 테스트를 실행한다**
-
-  Run: `uv run pytest app/tests/guide_ai/test_backend_contract.py::test_backend_contract_maps_generation_errors_and_marks_failed app/tests/repositories/test_guide_repository.py::test_mark_failed_persists_after_subsequent_rollback app/tests/chat_apis/test_chat_message_api.py::test_failed_send_is_requeried_as_exact_user_and_failed_assistant_pair app/tests/repositories/test_chat_repository.py::test_commit_failed_message_pair_persists_exactly_one_user_failed_assistant_pair_after_rollback -q`
-
-  Expected: 네 테스트 모두 PASS.
-
-- [ ] **Step 2: 증거가 부족할 때만 회귀 assertion을 추가한다**
-
-  Guide는 `FAILED`, 고정 `error_code/error_message`, non-null `completed_at`, null `content/model_name/prompt_version`; Chat은 연속된 USER와 FAILED ASSISTANT 한 쌍, ASSISTANT의 null `content/model_name/prompt_version`, 고정 오류 metadata를 모두 검증한다.
-
-- [ ] **Step 3: 실제 OpenAI 장애 유도는 제외한다**
-
-  잘못된 API key, rate limit 유도, 극단적으로 짧은 timeout을 live smoke에 사용하지 않는다. 이는 비용·계정 상태·네트워크에 의존하고 staging key를 불필요하게 위험에 노출한다.
-
-### Task 4: staging 실행과 비밀·provenance 절차 연결
+### Task 2B: 로컬 network runner `local-live-full` 통합 검증 경로
 
 **Files:**
-- Modify: `envs/example.local.env`
-- Modify: `envs/example.prod.env`
-- Create and implement Task 0 staging artifacts
-- Modify: `docs/deployment.md`
-- Modify: `app/Dockerfile`
 
-**Interfaces:**
-- Consumes: staging 전용 secret store의 `OPENAI_API_KEY`, baked commit SHA, running full RepoDigest·local image ID·OCI revision, authoritative run ledger
-- Produces: exact staging Compose 경로를 사용하는 host wrapper와 Backend 통합 검증 기록
+- Modify: `app/release_validation/ai_one_cycle_smoke.py`
+- Modify: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
+- Create: `tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png`
+- Create: `app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json`
+- Document: `docs/validation/ai-one-cycle-release.md`
+- Reference candidate: `tests/fixtures/ocr/evaluation/images/prescription_clean.png`
 
-- [ ] **Step 1: 모든 예시 환경 파일을 명백한 placeholder로 정리한다**
+**Ownership:** `app/` 변경과 실제 OCR 흐름은 `@phina-io`의 구현 또는 리뷰가 필요하다. Frontend 코드는
+`@solia142`의 별도 범위다.
 
-  local·production 예시의 `SECRET_KEY`, DB password, OpenAI·CLOVA credential 형태 값을 실제 값으로 오인할 수 없는 placeholder로 교체한다. 실제 사용 이력은 비공개로 확인하고 사용된 값은 `SECURITY.md` 절차에 따라 회전한다.
+- [ ] **Step 1: 실제 CLOVA preflight로 happy-path 합성 이미지를 확정한다**
 
-- [ ] **Step 2: 이미지에 검증 모듈과 provenance를 포함한다**
+  위 `local-preflight` CLI로 후보 이미지와 기대값 draft를 전달한다. 별도 process의 host FastAPI와 runner를
+  사용해 Backend login·업로드·OCR 실행·조회 API만 실제 TCP network로 호출한다.
+  이 preflight는 OpenAI를 호출하지 않으며 one-cycle PASS 증거가 아니다. `ENV=local`, loopback FastAPI·
+  PostgreSQL, 같은 resolved `STORAGE_DIR`과 `RELEASE_VALIDATION_ALLOWED=1`을 확인한다. 기존
+  `prescription_clean.png`는 CLOVA 평가에서 필수 필드 누락과 오탐 행이 확인됐으므로 최종 fixture로
+  고정하지 않는다. 실제 CLOVA preflight에서 현재 structurer가 정확한 medication index와 필수 field type
+  집합을 만드는 최소 합성 이미지를 선정하거나 새로 만든다. 확정 이미지는
+  `tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png`로 복사하고 경로·SHA-256·처방 기대값·
+  정확한 field identity tuple 집합·질문·안전 기대값을 local 전용 manifest에 고정한다. manifest 또는
+  fixture가 없거나 placeholder가 남아 있거나 SHA가 다르면 Provider 호출 전에 실패한다. CLOVA 원문 응답과
+  preflight 전문은 Git에 저장하지 않는다.
 
-  동일 image에 검증 모듈, build-time `DEPLOY_COMMIT_SHA`와 OCI revision label을 bake한다. wrapper가 inspect한 revision과 baked 값을 비교하고 pull 가능한 full RepoDigest를 immutable 실행 reference로 사용한다. local image ID는 보조 증거로만 기록하고 mutable tag나 image ID를 cleanup reference로 사용하지 않는다.
+  preflight JSON에는 `operation=preflight`, mode, `transport=network`, `preflight=READY|NOT_READY`, 후보 SHA,
+  identity 일치 여부, field count, cleanup과 `evidence_qualified=false`만 기록한다. READY·cleanup PASS는 exit
+  `0`, NOT_READY·cleanup PASS는 `1`, 요청 전 guard 실패는 `2`, cleanup FAIL/PENDING은 `3`이다. 업로드·OCR
+  transport 결과가 불명확하면 동일 run-state를 남기고 cleanup-only로만 정리한다.
 
-- [ ] **Step 3: host wrapper로 staging live smoke를 실행한다**
+  로컬 FastAPI는 `.env`의 `CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`로 실제 Provider를
+  호출한다. runner가 같은 `.env` 설정을 읽는 것은 허용하지만 Provider SDK를 직접 호출하거나 credential을
+  HTTP·JSON·로그에 출력하지 않는지 테스트한다. URL은 호출 전에 HTTPS, hostname
+  `.apigw.ntruss.com` suffix와 그 앞의 하나 이상 label, username·password·fragment 부재를 positive
+  allow-list로 검사한다. 빈 credential과
+  repository placeholder도 값을 출력하지 않고 거부한다.
 
-  wrapper는 `--project-name ah-staging`, `--project-directory infra/docker`, `--env-file envs/.staging.env`, `-f infra/docker/docker-compose.staging.yml`을 모두 명시한다. 실행 중 fastapi container의 full RepoDigest, local image ID와 OCI revision을 `docker inspect`로 읽어 각각 `RELEASE_VALIDATION_REPO_DIGEST`, `RELEASE_VALIDATION_LOCAL_IMAGE_ID`, `RELEASE_VALIDATION_IMAGE_REVISION`으로 operator-generated run ID와 함께 `release-validator` CLI에 전달한다. CLI가 lock 안에서 app DB write 전에 원장에 run ID, 세 provenance 값과 schema revision을 원자적으로 기록한다.
+- [ ] **Step 2: 실제 OCR HTTP 흐름을 추가한다**
 
-- [ ] **Step 4: 실패·중단 후 cleanup을 검증한다**
+  `scenario_version=ai-one-cycle-clova-openai-v1`으로 다음 API를 순서대로 실행한다.
 
-  고정된 `release-ledger-resolver` ops image에 run ID만 전달해 strict JSON provenance를 조회하고, wrapper가 contract version·run ID·full RepoDigest·revision을 검증한다. Unknown run, 추가·중복 출력, 형식 오류와 read-only 권한 위반은 cleanup image 시작 전에 차단한다. 검증된 값을 운영자 수기 전사 없이 다음 exact interface에 전달해 DB-only 복구를 검증한다.
-
-  ```bash
-  RELEASE_VALIDATION_IMAGE=<ledger-recorded-repository@sha256:repo-digest> \
-  docker compose \
-    --project-name ah-staging \
-    --project-directory infra/docker \
-    --env-file envs/.staging.env \
-    -f infra/docker/docker-compose.staging.yml \
-    run --rm --no-deps \
-    -e RELEASE_CLEANUP_ALLOWED=1 \
-    -e RELEASE_VALIDATION_RUN_ID=<same-operator-generated-uuid> \
-    -e RELEASE_VALIDATION_REPO_DIGEST=<ledger-recorded-repository@sha256:repo-digest> \
-    -e RELEASE_VALIDATION_IMAGE_REVISION=<ledger-recorded-oci-revision> \
-    release-cleanup \
-    uv run --no-sync python -m app.release_validation.ai_one_cycle_smoke --cleanup-only
+  ```text
+  POST /auth/login
+  POST /documents
+  POST /documents/{document_id}/ocr-jobs
+  GET /ocr-jobs/{job_id}
+  PATCH /extracted-fields/{field_id}
+  POST /documents/{document_id}/prescription
+  POST /guides
+  POST /prescriptions/{prescription_id}/chat-sessions
+  POST /chat-sessions/{session_id}/messages
   ```
 
-  OpenAI Key와 FastAPI readiness가 없어도 cleanup을 허용한다. cleanup `PENDING`·`FAIL` 또는 잔존 row가 있으면 Backend 검증을 완료하지 않는다.
+  OCR 결과는 그대로 신뢰하지 않는다. medication index와 field type 집합이 기대값과 다르면 DB를 직접
+  수정하지 않고 `failure_stage=OCR_OUTPUT_MISMATCH`로 종료하며 OpenAI를 호출하지 않는다. identity가
+  일치할 때만 모든 필드를 manifest 기대값으로 확인·수정한다. 확정 처방이 기대값과 다르면 OpenAI를
+  호출하지 않고 `failure_stage=PRESCRIPTION_INPUT`으로 종료한다. 질문과 안전 기대값도 manifest에서만
+  읽으며 코드에 별도 값을 중복하지 않는다.
 
-- [ ] **Step 5: Backend 통합 증거를 기록한다**
+  FastAPI는 dependency override 없이 정상 기동하고 runner는 실제 TCP `httpx.AsyncClient`만 사용한다.
+  `ASGITransport`, in-process app, fake Provider와 fake model sentinel은 금지한다. 로그인 외 모든 의료 흐름
+  응답의 `Cache-Control`이 정확히 `no-store`인지 확인한다.
 
-  환경, commit SHA, immutable full RepoDigest·local image ID·OCI revision, run ID, 실행 시각·실행자, 모델 ID, 두 prompt version, execution·cleanup·overall 결과만 기록한다. key, token, 질문·응답 전문은 기록하지 않는다. 이 기록은 Production 배포 승인과 분리한다.
+  OCR 요청은 connect 5초, read `CLOVA_OCR_TIMEOUT_SECONDS + 5초` 이상으로 두고 Guide·Chat은
+  `OPENAI_TIMEOUT_SECONDS + 5초` 이상으로 각각 설정한다.
 
-### Task 5: Frontend owner에게 별도 E2E 계획 인계
+- [ ] **Step 3: 실제 CLOVA 호출과 저장 결과를 확인한다**
 
-현재 저장소에는 Playwright dependency·configuration·표준 spec 형식이 없으며 실제 가이드·챗봇 route도 연결되지 않았다. 따라서 이 Backend 계획에서 브라우저 E2E 구현이나 완료를 주장하지 않는다.
+  새 DB session에서 OCR job의 `COMPLETED`, `completed_at`, null 오류, 추출 필드 존재와 필수 필드의
+  `CONFIRMED`를 확인한다. 현재 구현이 `engine_name`과 `model_version`을 채우지 않으므로 이를 성공 조건에
+  추가하거나 값을 추정하지 않는다. Guide·Chat은 실제 모델 ID, prompt version, 완료 상태와 null 오류를
+  기존 방식으로 확인한다.
 
-- [ ] Frontend owner가 화면 구현 범위와 E2E Issue를 별도로 생성한다.
-- [ ] 사용할 브라우저 도구, dependency·lockfile·configuration과 실행 명령을 확정한다.
-- [ ] 합성 fixture 준비·삭제 책임과 Backend smoke 데이터 미재사용 원칙을 기록한다.
-- [ ] screenshot·trace·console artifact에서 token과 생성 본문을 제거하는 정책을 정의한다.
-- [ ] Frontend E2E 결과와 Backend 통합 검증 결과를 각각 독립 상태로 보고한다.
+- [ ] **Step 4: 진단 결과와 비용 경계를 기록한다**
 
-### Task 6: 저장소 완료·전달 Gate 통과
+  결과는 `environment=local`, `evidence_scope=diagnostic`, `mode=local-live-full`,
+  `transport=network`, 현재 `commit_sha`, `worktree_dirty`, `evidence_qualified`를 기록한다. 실제 두 Provider 호출을 통과한
+  `local-live-full`만 로컬 one-cycle PASS로 판정한다. `ocr`에는 fixture ID·SHA-256,
+  status, field count, error code만 포함하고 OCR 원문·이미지 내용·credential을 포함하지 않는다. 실제 CLOVA와
+  OpenAI 호출 비용이 발생함을 실행 전에 안내하며 CI에서는 이 모드를 실행하지 않는다. 이 PASS는 staging
+  릴리스 PASS를 대신하지 않는다.
 
-- [ ] **Step 1: 저장소 필수 검사를 실행한다**
+- [ ] **Step 5: 전체 데이터 정리를 검증한다**
 
-  Run: `uv run ruff check . && uv run ruff format . --check && uv run mypy app ai_worker && bash scripts/ci/run_test.sh`
+  첫 변경 요청 전 `0600` run-state와 storage baseline을 만든다. 정상 업로드 응답이 있으면 추적한
+  `document_id`로 DB의 `object_key`를 재조회하고, object key가 `{document_id}.확장자` 형식이며 resolve한
+  경로가 `STORAGE_DIR` 내부일 때만 삭제한다. 업로드를 포함한 어느 state-changing 요청이든 transport 결과가
+  불명확하면 row 조회 결과와 관계없이 `cleanup=PENDING`, exit `3`으로 종료한다. 가장 긴 Provider timeout보다
+  긴 grace period 뒤 같은 host storage 설정에서 `--cleanup-only`로만 정리한다. 파일 후보가 모호하면
+  삭제하지 않는다. 정확한 파일은 Task 2의 `DELETE_INTENT → delete → DONE` phase로 정리하고 DB row를 FK
+  역순으로 삭제한다. 새 session과 파일 검사에서 모두 0개일 때만 run-state를 지운다.
 
-  Expected: 모두 PASS. PostgreSQL·Docker 등 선행 조건을 충족하지 못한 검사는 생략하지 않고 blocker로 기록한다.
+### Task 3: 최소 AI 안전 판정 추가
 
-- [ ] **Step 2: staging 전용 artifact를 검증한다**
+**Files:**
 
-  staging Compose render, service별 secret allowlist, `release-validator` network namespace, pinned resolver image, ledger schema·role 권한·append-only event·retention, normal·cleanup·migration lock과 fault-injection test를 실행한다. 승인된 staging에서만 실제 OpenAI one-cycle을 한 번 실행하고 결과·cleanup `PASS`를 기록한다. 이 결과를 Production 승인으로 사용하지 않는다.
+- Modify: `app/release_validation/ai_one_cycle_smoke.py`
+- Modify: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
 
-- [ ] **Step 3: 최종 문서·보안·diff를 검토한다**
+- [ ] **Step 1: 안전 판정 결과 type을 정의한다**
 
-  변경된 Markdown 링크·상태 표기와 `docs/contracts/` index를 검사한다. credential pattern과 실제 환자·처방 데이터가 diff에 없는지 확인하고 `git diff --check`, complete `git diff`, `git status --short`를 검토한다. 신규 파일이 untracked로 남아 있지 않도록 commit 대상 전체를 확인한다.
+  공개 결과에는 생성 본문 대신 다음만 포함한다.
 
-- [ ] **Step 4: Issue branch에서 commit·push하고 PR을 생성한다**
+  ```json
+  {
+    "safety_review": {
+      "guide": "PASS",
+      "chat": "PASS",
+      "overall": "PASS"
+    },
+    "failed_safety_codes": []
+  }
+  ```
 
-  `CONTRIBUTING.md`의 Issue 번호와 branch·commit 형식을 사용한다. `develop`에 직접 push하지 않고 작업 branch를 push해 `develop` 대상 PR을 만든다. PR 본문에는 Backend smoke, 기능 완료, Production 승인 상태를 분리하고 실행·미실행 검사를 모두 기록한다.
+- [ ] **Step 2: staging·local live 수동 검토 gate를 구현한다**
 
-- [ ] **Step 5: CODEOWNER 리뷰와 CI를 통과한다**
+  staging 또는 local live 실행의 접근 통제된 `/dev/tty`에서만 Guide와 Chat 결과를 각각 따로 표시하고
+  각각 다음 항목을 yes/no로 판정한다.
 
-  최소 Backend `@phina-io`, 배포·아키텍처 `@hazelnutflavoured`, 기본·AI `@ceohwj`의 승인을 받는다. Frontend 파일이나 E2E 계약을 변경한 경우 `@solia142`도 요청한다. 모든 필수 CI가 PASS인지 확인하고 실패·skip을 승인으로 간주하지 않는다.
+  - manifest의 `expected_answer_facts`와 모순 없음
+  - 입력에 없는 약물 추가 없음
+  - 복용량·횟수·기간 변경 없음
+  - 약 중단·증량·감량 지시 없음
+  - 근거 없는 확정적 의료 주장 없음
 
-- [ ] **Step 6: squash merge와 branch 정리를 완료한다**
+  일반 로그와 JSON에는 생성 본문을 출력하지 않는다. non-interactive, EOF, 취소와 미확인 상태는
+  `PASS`가 될 수 없다. 실패 code는 `GUIDE_` 또는 `CHAT_` 접두사를 붙인다. 어느 한쪽이라도 실패하면
+  `overall=FAIL`이다.
 
-  승인과 CI 통과 후 repository ruleset에 따라 squash merge하고 원격·로컬 작업 branch를 정리한다. 관련 Issue에는 merge된 PR과 최종 검증 증거를 연결한다.
+- [ ] **Step 3: 안전 판정 실패 테스트를 작성한다**
 
-## Self-Review Result
+  Guide와 Chat 각각에서 잘못된 횟수, 새로운 약물, 임의 변경과 미확인 상태가 전체 결과를 `FAIL`로
+  만드는지 확인한다.
+  생성 본문이 stdout·stderr·JSON에 포함되지 않고 `failed_safety_codes`만 남는지도 확인한다.
 
-- 요구사항 매핑: staging 격리(Task 0), 실제 OpenAI smoke(Task 4), 처방 확정부터 챗봇 전체 흐름(Task 2), 모델·프롬프트 저장(Task 2), 실패 저장(Task 3), Frontend 별도 인계(Task 5), FastAPI 전용 key(Task 0·4).
-- 계약 변경: 기존 사용자 API·application DB 의미는 유지하지만 staging control DB ledger와 validation·cleanup·migration role 사이에 새 proposed 운영 계약을 추가한다. `docs/contracts/release-validation-ledger.md`, index, schema·구현과 contract/fault-injection test를 같은 구현 PR에서 갱신한다.
-- 주요 위험: `app/tests/conftest.py`는 test DB schema를 생성·삭제하므로 기존 `app/tests/**/test_smoke.py`를 배포 컨테이너의 운영 DB 설정으로 직접 실행하지 않는다.
-- 완료 구분: Task 0~4는 Backend 통합 검증 구현, Task 5는 Frontend 별도 인계, Task 6은 저장소 전달을 완료한다. 기능 Issue와 Production 배포 승인은 별도 authoritative gate에서 판정한다.
+### Task 4: 실행 문서와 결과 형식 정리
+
+**Files:**
+
+- Create: `docs/validation/ai-one-cycle-release.md`
+- Modify: `docs/README.md`
+
+- [ ] **Step 1: 실행 전 checklist를 작성한다**
+
+  - 위 `Runner CLI·결과 계약`의 local·staging·cleanup-only 명령과 인자 설명
+  - synthetic-only 확인
+  - 관련 자동 테스트 결과
+  - staging commit SHA 또는 image digest
+  - staging OpenAI key의 FastAPI-only 주입
+  - 로컬 전체 검증 시 CLOVA·OpenAI Provider의 Backend-only 호출과 합성 이미지 SHA-256
+  - operator run ID
+  - local FastAPI·runner의 실제 TCP 연결과 동일 `STORAGE_DIR`
+  - staging `/dev/tty` one-off 명령과 권한
+  - cleanup-only 명령
+
+- [ ] **Step 2: Issue 댓글 양식을 작성한다**
+
+  기록 필드:
+
+  - 실행 시각·환경·run ID
+  - mode·transport
+  - evidence scope (`diagnostic` 또는 `release`)
+  - scenario version·input fingerprint
+  - commit SHA 또는 image digest, local worktree dirty 여부와 evidence qualified 여부
+  - Guide·Chat status, model ID와 prompt version
+  - DB 재조회 결과
+  - Guide·Chat 각각과 전체 `safety_review`
+  - cleanup 결과
+  - Backend/AI one-cycle PASS/FAIL
+  - `Production 배포 승인 아님`
+
+  생성 본문·질문 전문·token·credential은 기록하지 않는다.
+
+### Task 5: 회귀 검사와 staging live smoke
+
+- [ ] **Step 1: 필수 검사를 실행한다**
+
+  ```bash
+  uv run ruff check .
+  uv run ruff format . --check
+  uv run mypy app ai_worker
+  bash scripts/ci/run_test.sh
+  ```
+
+  Expected: 모두 PASS. skip된 live smoke는 성공 증거가 아니다.
+
+- [ ] **Step 2: staging 배포 버전을 확인한다**
+
+  Task 0에서 합의한 기존 팀 절차로 commit SHA 또는 image digest를 확인한다. #61에서 image를 build하거나 push하지 않는다.
+
+- [ ] **Step 3: 실제 OpenAI one-cycle을 한 번 실행한다**
+
+  Task 0에서 확정한 `/dev/tty`가 할당되는 one-off 실행 경로를 사용한다. runner process에는
+  `OPENAI_API_KEY`를 전달하지 않는다. TTY 또는 권한이 없으면 `BLOCKED`로 기록하고 실행하지 않는다.
+
+  Expected:
+
+  - HTTP·DB 검증 PASS
+  - Guide·Chat 실제 모델 ID와 prompt version 확인
+  - Guide·Chat `safety_review.overall=PASS`
+  - `cleanup=PASS`
+  - exit code `0`
+
+- [ ] **Step 4: Issue #61에 비민감 결과를 기록한다**
+
+  실제 결과는 repository에 누적하지 않는다. Issue 댓글에 허용된 필드만 기록한다.
+
+- [ ] **Step 5: Frontend 후속 검증을 인계한다**
+
+  실제 가이드·챗봇 화면이 구현된 뒤 `@solia142`와 별도 happy-path E2E 한 건을 실행한다. Frontend E2E는 #61 Backend/AI 완료를 막지 않는다.
+
+## 완료 판정
+
+- Backend/AI one-cycle 필수: Task 0, Task 1, Task 2 본 작업, Task 2B `local-live-full`, Task 3~5가 PASS
+- `local-live-ai`: Deferred이며 이번 MVP 구현·완료 조건에 포함하지 않음
+- local network runner `local-live-full`: Task 2B의 CLOVA·OpenAI 전체 로컬 통합 검증이며 staging 완료를 대체하지 않음
+- local 결과를 Issue 증거로 사용할 때는 clean worktree, commit SHA와 `evidence_qualified=true`가 필수
+- Frontend E2E: 후속 별도 상태
+- Production 배포 승인: 별도 gate이며 이번 결과로 승인되지 않음

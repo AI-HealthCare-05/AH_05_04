@@ -15,10 +15,12 @@ _HTML_TAG = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>")
 _MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\([^)]*\)")
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 _PRESCRIPTION_UNIT_PATTERN = r"(?:mcg|μg|㎍|mg|㎎|kg|g|mL|ml|L|정|알|캡슐|포|병|방울|스푼|회|번|일|주|개월)"
+_NATIVE_KOREAN_NUMBER = r"(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)"
+_KOREAN_NUMBER = rf"(?:{_NATIVE_KOREAN_NUMBER}|일|이|삼|사|오|육|칠|팔|구|십)"
 _NUMERIC_UNIT = re.compile(
     rf"(?:\d+(?:[.,]\d+)?\s*{_PRESCRIPTION_UNIT_PATTERN}|"
-    rf"(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|일|이|삼|사|오|육|칠|팔|구|십)"
-    rf"\s+{_PRESCRIPTION_UNIT_PATTERN})",
+    rf"(?<![가-힣]){_NATIVE_KOREAN_NUMBER}\s*{_PRESCRIPTION_UNIT_PATTERN}(?![가-힣])|"
+    rf"(?<![가-힣]){_KOREAN_NUMBER}\s+{_PRESCRIPTION_UNIT_PATTERN}(?![가-힣]))",
     re.IGNORECASE,
 )
 _CHANGE_TERM = re.compile(r"중단|끊(?:기|어|으)|증량|감량|늘리|줄(?:이|여)|횟수\s*변경|용량\s*변경|복용\s*변경")

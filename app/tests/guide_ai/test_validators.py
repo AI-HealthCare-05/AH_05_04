@@ -45,7 +45,15 @@ def test_validator_rejects_duplicate_missing_or_unknown_source_indexes(indexes: 
 
 @pytest.mark.parametrize(
     "text",
-    ["5mg씩 드세요.", "두 정 복용하세요.", "하루 3회 복용하세요.", "7일 복용하세요.", "한 알 더 드세요."],
+    [
+        "5mg씩 드세요.",
+        "두 정 복용하세요.",
+        "두정 복용하세요.",
+        "하루 3회 복용하세요.",
+        "7일 복용하세요.",
+        "한 알 더 드세요.",
+        "한알 더 드세요.",
+    ],
 )
 def test_validator_rejects_new_prescription_numbers(text: str) -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
