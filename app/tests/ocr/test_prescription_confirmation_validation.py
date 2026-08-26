@@ -42,6 +42,7 @@ def test_build_confirmed_data_accepts_fully_confirmed_medication() -> None:
     assert medications == [
         {
             "medication_name": "약품1",
+            "strength_text": None,
             "dose_value": Decimal("1.5"),
             "dose_unit": "정",
             "frequency_per_day": 2,
@@ -51,6 +52,22 @@ def test_build_confirmed_data_accepts_fully_confirmed_medication() -> None:
         }
     ]
 
+def test_build_confirmed_data_saves_confirmed_strength_text() -> None:
+    fields = [
+        _valid_prescribed_date(),
+        *_valid_medication_fields(1),
+        _field(
+            1,
+            FieldType.MEDICATION_STRENGTH,
+            "100mg",
+        ),
+    ]
+
+    _, medications = PrescriptionService._build_confirmed_data(fields)
+
+    assert medications[0]["medication_name"] == "약품1"
+    assert medications[0]["strength_text"] == "100mg"
+    assert medications[0]["dose_value"] == Decimal("1.5")
 
 def test_build_confirmed_data_allows_missing_optional_fields() -> None:
     fields = [

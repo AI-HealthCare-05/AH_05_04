@@ -7,6 +7,7 @@
     {
       "display_order": 1,
       "medication_name": "합성의약품에이정 100mg",
+      "strength_text": "100mg",
       "dose_value": "1",
       "dose_unit": "정",
       "frequency_per_day": 2,
@@ -17,6 +18,7 @@
   "expected_field_identities": [
     [0, "PRESCRIBED_DATE"],
     [1, "MEDICATION_NAME"],
+    [1, "MEDICATION_STRENGTH"],
     [1, "DOSE_VALUE"],
     [1, "DOSE_UNIT"],
     [1, "FREQUENCY_PER_DAY"],

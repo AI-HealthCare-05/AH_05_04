@@ -13,6 +13,10 @@ export type ExtractedField = {
   field_type: string
   medication_index: number
   raw_value: string | null
+
+  normalized_value: string | null
+  normalization_version: string | null
+
   confirmed_value: string | null
   confidence_score: number | null
   confirmation_status: string
@@ -33,6 +37,9 @@ export type OcrJobResponse = {
     document_id: string
     ocr_status: OcrJobStatus
     error_code: string | null
+    engine_name: string | null
+    model_version: string | null
+    prompt_version: string | null
     created_at: string
     completed_at: string | null
     fields: ExtractedField[]
@@ -82,7 +89,12 @@ export async function getOcrJob(
 }
 
 export type Medication = {
+  // 처방전에서 사용자가 확인한 이름입니다.
   medication_name: string
+
+  // 제품 함량이며 1회 복용량과 구분합니다.
+  strength_text: string | null
+
   dose_value: number | null
   dose_unit: string | null
   frequency_per_day: number | null

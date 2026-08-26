@@ -20,7 +20,12 @@ def render_plaintext_guide(guide_input: GuideGenerationInput, draft: GeneratedGu
     sections = ["복약 가이드"]
 
     for index, medication in enumerate(guide_input.medications):
-        lines = [f"[{index + 1}] {medication.medication_name}"]
+        # 제품명과 제품 함량은 저장 단계에서는 분리하지만
+        # 환자용 가이드에서는 함께 읽을 수 있도록 표시합니다.
+        display_name = medication.medication_name
+        if medication.strength_text is not None:
+            display_name = (f"{display_name} {medication.strength_text}")
+        lines = [f"[{index + 1}] {display_name}"]
         if medication.dose_value is not None and medication.dose_unit is not None:
             lines.append(f"용량: {_format_decimal(medication.dose_value)} {medication.dose_unit}")
         elif medication.dose_value is not None or medication.dose_unit is not None:

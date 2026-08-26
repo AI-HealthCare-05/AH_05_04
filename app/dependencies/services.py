@@ -23,6 +23,11 @@ from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesC
 from app.services.guides import GuideService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.ocr import OcrService
+from app.services.ocr_ai import (
+    LlmPrescriptionStructurer,
+    OcrStructurer,
+    OpenAIOcrStructureClient,
+)
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
 from app.services.users import UserManageService
@@ -67,15 +72,35 @@ def get_ocr_repository(
 ) -> OcrRepository:
     return OcrRepository(session)
 
+def get_ocr_structurer(
+    client: Annotated[
+        AsyncOpenAI,
+        Depends(get_openai_client),
+    ],
+) -> OcrStructurer:
+    # CLOVA 전체 token을 OpenAI Structured Outputs로 변환합니다.
+    return LlmPrescriptionStructurer(
+        provider=OpenAIOcrStructureClient(client),
+        model=config.OCR_STRUCTURE_MODEL,
+        timeout_seconds=config.OCR_STRUCTURE_TIMEOUT_SECONDS,
+    )
 
-def get_ocr_engine() -> OcrEngine:
+
+def get_ocr_engine(
+    structurer: Annotated[
+        OcrStructurer,
+        Depends(get_ocr_structurer),
+    ],
+) -> OcrEngine:
     return ClovaOcrEngine(
         invoke_url=config.CLOVA_OCR_INVOKE_URL,
         secret_key=config.CLOVA_OCR_SECRET,
         storage_dir=config.STORAGE_DIR,
         timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
-    )
 
+        # 기존 정규식 파서가 아니라 전체 token용 LLM 구조화기를 연결합니다.
+        structurer=structurer,
+    )
 
 def get_ocr_service(
     document_repository: Annotated[
@@ -96,7 +121,6 @@ def get_ocr_service(
         ocr_repository,
         engine,
     )
-
 
 def get_prescription_repository(
     session: Annotated[

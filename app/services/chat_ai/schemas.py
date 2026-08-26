@@ -65,6 +65,7 @@ class _StrictGeneratedModel(BaseModel):
 
 class ChatMedicationInput(_StrictModel):
     medication_name: str = Field(max_length=255)
+    strength_text: str | None = Field(default=None, max_length=100,)
     dose_value: Decimal | None = Field(default=None, gt=0)
     dose_unit: str | None = Field(default=None, max_length=50)
     frequency_per_day: int | None = Field(default=None, gt=0)
@@ -76,7 +77,7 @@ class ChatMedicationInput(_StrictModel):
     def normalize_medication_name(cls, value: str) -> str:
         return _normalize_display_text(value)
 
-    @field_validator("dose_unit", "timing_text")
+    @field_validator("strength_text", "dose_unit", "timing_text")
     @classmethod
     def normalize_optional_display_text(cls, value: str | None) -> str | None:
         if value is None or not value.strip():
@@ -99,6 +100,7 @@ JsonDecimal = Annotated[Decimal, PlainSerializer(lambda value: str(value), retur
 
 class ChatMedicationPromptItem(_StrictModel):
     medication_name: str
+    strength_text: str | None = None
     dose_value: JsonDecimal | None = None
     dose_unit: str | None = None
     frequency_per_day: int | None = None

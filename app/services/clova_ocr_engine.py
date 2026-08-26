@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import httpx
 
+from app.services.ocr_ai import OcrStructurer
 from app.services.ocr_engine import (
     OcrProcessingError,
     OcrProviderConnectionError,
@@ -14,9 +15,6 @@ from app.services.ocr_engine import (
     OcrProviderUnavailableError,
     OcrRecognitionResult,
     RawRecognizedField,
-)
-from app.services.prescription_ocr_structurer import (
-    PrescriptionOcrStructurer,
 )
 
 
@@ -34,15 +32,17 @@ class ClovaOcrEngine:
         secret_key: str,
         storage_dir: str,
         timeout_seconds: float,
+        structurer: OcrStructurer,
         client: httpx.AsyncClient | None = None,
-        structurer: PrescriptionOcrStructurer | None = None,
     ) -> None:
         self._invoke_url = invoke_url
         self._secret_key = secret_key
         self._storage_dir = Path(storage_dir).resolve()
         self._timeout_seconds = timeout_seconds
         self._client = client
-        self._structurer = structurer if structurer is not None else PrescriptionOcrStructurer()
+
+        # CLOVA 전체 token을 구조화하는 비동기 LLM 구조화기입니다.
+        self._structurer = structurer
 
     async def recognize(
         self,
@@ -80,7 +80,25 @@ class ClovaOcrEngine:
             file_mime_type=file_mime_type,
             message=message,
         )
-        return self._parse_response(response)
+
+        # CLOVA 응답을 전체 raw token으로 변환합니다.
+        parsed_result = self._parse_response(response)
+
+        # 기존 정규식 파서를 거치지 않고 전체 token을 LLM에 전달합니다.
+        structured_result = await self._structurer.structure(
+            parsed_result.raw_fields
+        )
+
+        return OcrRecognitionResult(
+            raw_text=parsed_result.raw_text,
+            raw_fields=parsed_result.raw_fields,
+            fields=structured_result.fields,
+
+            # CLOVA와 OpenAI Structured Outputs의 실제 실행 정보를 기록합니다.
+            engine_name="CLOVA_OCR",
+            model_version=structured_result.model_name,
+            prompt_version=structured_result.prompt_version,
+        )
 
     def _resolve_file_path(self, object_key: str) -> Path:
         file_path = (self._storage_dir / object_key).resolve()
@@ -133,6 +151,7 @@ class ClovaOcrEngine:
                         headers=headers,
                         files=files,
                     )
+
         except httpx.TimeoutException as error:
             raise OcrProviderTimeoutError("CLOVA OCR 응답 제한시간을 초과했습니다.") from error
         except httpx.RequestError as error:
@@ -220,5 +239,7 @@ class ClovaOcrEngine:
         return OcrRecognitionResult(
             raw_text=raw_text,
             raw_fields=raw_fields,
-            fields=self._structurer.structure(raw_fields),
+
+            # 비동기 LLM 구조화는 recognize()에서 수행합니다.
+            fields=[],
         )

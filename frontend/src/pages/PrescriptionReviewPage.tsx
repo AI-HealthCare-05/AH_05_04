@@ -21,7 +21,11 @@ import './PrescriptionReviewPage.css'
 
 const fieldLabels: Record<string, string> = {
   PRESCRIBED_DATE: '처방일',
-  MEDICATION_NAME: '약 이름',
+  MEDICATION_NAME: '처방전 약 이름',
+
+  // 약 이름에 붙은 제품 함량을 별도로 검수합니다.
+  MEDICATION_STRENGTH: '제품 함량',
+
   DOSE_VALUE: '1회 복용량',
   DOSE_UNIT: '복용 단위',
   FREQUENCY_PER_DAY: '하루 횟수',
@@ -31,11 +35,12 @@ const fieldLabels: Record<string, string> = {
 
 const fieldOrder: Record<string, number> = {
   MEDICATION_NAME: 1,
-  DOSE_VALUE: 2,
-  DOSE_UNIT: 3,
-  FREQUENCY_PER_DAY: 4,
-  DURATION_DAYS: 5,
-  TIMING: 6,
+  MEDICATION_STRENGTH: 2,
+  DOSE_VALUE: 3,
+  DOSE_UNIT: 4,
+  FREQUENCY_PER_DAY: 5,
+  DURATION_DAYS: 6,
+  TIMING: 7,
 }
 
 const requiredMedicationFieldTypes = [
@@ -171,7 +176,20 @@ function getFieldLabel(fieldType: string) {
 }
 
 function getSavedDisplayValue(field: ExtractedField) {
-  return field.confirmed_value ?? field.raw_value ?? ''
+  if (field.confirmed_value?.trim()) {
+    return field.confirmed_value
+  }
+
+  // 처방일만 Backend가 만든 YYYY-MM-DD 값을 사용합니다.
+  // 약물명은 처방전 표기를 보존해야 하므로 정규화 값으로 바꾸지 않습니다.
+  if (
+    field.field_type === 'PRESCRIBED_DATE' &&
+    field.normalized_value?.trim()
+  ) {
+    return field.normalized_value
+  }
+
+  return field.raw_value ?? ''
 }
 
 function isFieldConfirmed(
@@ -186,7 +204,25 @@ function isFieldConfirmed(
 }
 
 function getNumericFieldError(fieldType: string, value: string) {
-  if (fieldType === 'DOSE_VALUE') {
+    if (fieldType === 'PRESCRIBED_DATE') {
+      const isIsoDate = /^\d{4}-\d{2}-\d{2}$/.test(value)
+      const parsedDate = new Date(`${value}T00:00:00Z`)
+
+      if (isIsoDate && !Number.isNaN(parsedDate.getTime())) {
+        const [year, month, day] = value.split('-').map(Number)
+
+        if (
+          parsedDate.getUTCFullYear() === year &&
+          parsedDate.getUTCMonth() + 1 === month &&
+          parsedDate.getUTCDate() === day
+        ) {
+          return null
+        }
+      }
+
+      return '처방일은 YYYY-MM-DD 형식으로 입력해 주세요.'
+    }
+    if (fieldType === 'DOSE_VALUE') {
     const isDecimalFormat =
       /^[+-]?(?:(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)$/.test(value)
     const numericValue = Number(value.replaceAll('_', ''))
@@ -940,9 +976,23 @@ function PrescriptionReviewPage() {
             const medicationName = group.fields.find(
               (field) => field.field_type === 'MEDICATION_NAME',
             )
-            const summaryValue = medicationName
-              ? draftValues[medicationName.field_id]
+            const medicationStrength = group.fields.find(
+              (field) => field.field_type === 'MEDICATION_STRENGTH',
+            )
+
+            const nameValue = medicationName
+              ? draftValues[medicationName.field_id]?.trim() ?? ''
               : ''
+
+            const strengthValue = medicationStrength
+              ? draftValues[medicationStrength.field_id]?.trim() ?? ''
+              : ''
+
+            // 편집 필드는 분리하지만 카드 제목에서는 처방전 표기처럼 함께 보여줍니다.
+            const summaryValue = [nameValue, strengthValue]
+              .filter(Boolean)
+              .join(' ')
+
             const getMedicationValue = (fieldType: string) => {
               const field = group.fields.find(
                 (item) => item.field_type === fieldType,

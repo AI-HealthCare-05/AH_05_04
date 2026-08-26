@@ -287,7 +287,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
       expect(await screen.findByText(expectedTitle)).toBeTruthy()
       expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
-      expect(screen.queryByLabelText('약 이름')).toBeNull()
+      expect(screen.queryByLabelText('처방전 약 이름')).toBeNull()
       expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
     },
   )
@@ -521,7 +521,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     const prescribedDateField = prescribedDateInput.closest(
       '.prescription-review__field',
     )
-    const medicationNameInput = screen.getByLabelText('약 이름')
+    const medicationNameInput = screen.getByLabelText('처방전 약 이름')
     const medicationNameField = medicationNameInput.closest(
       '.prescription-review__field',
     )
@@ -568,7 +568,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     renderPage()
 
-    const medicationNameInput = await screen.findByLabelText('약 이름')
+    const medicationNameInput = await screen.findByLabelText('처방전 약 이름')
     const doseInput = screen.getByLabelText('1회 복용량')
     const medicationNameField = medicationNameInput.closest(
       '.prescription-review__field',
@@ -723,7 +723,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(
       await screen.findByText('처방 확정에 필요한 항목이 부족해요'),
     ).toBeTruthy()
-    expect(screen.queryByLabelText('약 이름')).toBeNull()
+    expect(screen.queryByLabelText('처방전 약 이름')).toBeNull()
     expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
   })
 
@@ -745,7 +745,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     fireEvent.click(await getConfirmationButton())
 
     expect(await screen.findByText('이미 확정된 처방이에요')).toBeTruthy()
-    expect(screen.queryByLabelText('약 이름')).toBeNull()
+    expect(screen.queryByLabelText('처방전 약 이름')).toBeNull()
     expect(screen.queryByText('세부 항목 확인 및 수정')).toBeNull()
     expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
   })
@@ -764,7 +764,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     renderPage()
 
-    const medicationNameInput = await screen.findByLabelText('약 이름')
+    const medicationNameInput = await screen.findByLabelText('처방전 약 이름')
     const medicationNameField = medicationNameInput.closest(
       '.prescription-review__field',
     )
@@ -774,7 +774,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(
       await screen.findByText('검수하던 항목을 찾을 수 없어요'),
     ).toBeTruthy()
-    expect(screen.queryByLabelText('약 이름')).toBeNull()
+    expect(screen.queryByLabelText('처방전 약 이름')).toBeNull()
     expect(screen.queryByRole('button', { name: '확정하고 가이드 만들기' })).toBeNull()
   })
 
@@ -792,7 +792,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     renderPage()
 
-    const medicationNameInput = await screen.findByLabelText('약 이름')
+    const medicationNameInput = await screen.findByLabelText('처방전 약 이름')
     const medicationNameField = medicationNameInput.closest(
       '.prescription-review__field',
     )
@@ -801,7 +801,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     expect(await screen.findByText('입력값을 확인해 주세요')).toBeTruthy()
     expect(screen.getByText('입력 형식을 확인해 주세요.')).toBeTruthy()
-    expect(screen.getByLabelText('약 이름')).toBeTruthy()
+    expect(screen.getByLabelText('처방전 약 이름')).toBeTruthy()
     expect(await getConfirmationButton()).toBeTruthy()
   })
 
@@ -861,7 +861,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     fireEvent.click(await getConfirmationButton())
 
     expect(await screen.findByText('처방정보가 확정되었어요')).toBeTruthy()
-    expect(screen.queryByLabelText('약 이름')).toBeNull()
+    expect(screen.queryByLabelText('처방전 약 이름')).toBeNull()
     expect(screen.queryByText('세부 항목 확인 및 수정')).toBeNull()
     expect(screen.queryByRole('button', { name: /수정 저장|확인/ })).toBeNull()
     expect(updateExtractedField).not.toHaveBeenCalled()
@@ -989,7 +989,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(
       await screen.findByText('복약 가이드를 만드는 중 오류가 발생했습니다.'),
     ).toBeTruthy()
-    expect(screen.queryByLabelText('약 이름')).toBeNull()
+    expect(screen.queryByLabelText('처방전 약 이름')).toBeNull()
     expect(confirmPrescription).toHaveBeenCalledTimes(1)
     expect(createGuide).toHaveBeenNthCalledWith(1, 'prescription-1')
 

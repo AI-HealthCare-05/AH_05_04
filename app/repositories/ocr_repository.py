@@ -76,9 +76,23 @@ class OcrRepository:
         await self.session.flush()
         return job
 
-    async def mark_completed(self, job: OcrJob, *, completed_at: datetime) -> OcrJob:
+    async def mark_completed(
+        self,
+        job: OcrJob,
+        *,
+        completed_at: datetime,
+        engine_name: str | None,
+        model_version: str | None,
+        prompt_version: str | None,
+    ) -> OcrJob:
         job.ocr_status = OcrStatus.COMPLETED
         job.completed_at = completed_at
+
+        # 실제 OCR 및 구조화 실행 정보를 성공 작업에 기록합니다.
+        job.engine_name = engine_name
+        job.model_version = model_version
+        job.prompt_version = prompt_version
+
         await self.session.flush()
         return job
 

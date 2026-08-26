@@ -377,6 +377,7 @@ async def build_synthetic_fixture(
         field_values.extend(
             [
                 (index, FieldType.MEDICATION_NAME, str(medication["medication_name"])),
+                (index, FieldType.MEDICATION_STRENGTH, str(medication["strength_text"]),),
                 (index, FieldType.DOSE_VALUE, str(medication["dose_value"])),
                 (index, FieldType.DOSE_UNIT, str(medication["dose_unit"])),
                 (index, FieldType.FREQUENCY_PER_DAY, str(medication["frequency_per_day"])),
@@ -522,6 +523,7 @@ async def verify_one_cycle(
             matches = matches and (
                 actual.display_order == expected["display_order"]
                 and actual.medication_name == expected["medication_name"]
+                and actual.strength_text == expected["strength_text"]
                 and actual.dose_value == Decimal(str(expected["dose_value"]))
                 and actual.dose_unit == expected["dose_unit"]
                 and actual.frequency_per_day == expected["frequency_per_day"]
@@ -592,6 +594,7 @@ async def verify_prescription_input(
         matches = matches and (
             stored.display_order == wanted["display_order"]
             and stored.medication_name == wanted["medication_name"]
+            and stored.strength_text == wanted["strength_text"]
             and stored.dose_value == Decimal(str(wanted["dose_value"]))
             and stored.dose_unit == wanted["dose_unit"]
             and stored.frequency_per_day == wanted["frequency_per_day"]
@@ -1108,6 +1111,7 @@ class NetworkOneCycleRunner:
             expected_values.update(
                 {
                     (index, "MEDICATION_NAME"): str(medication["medication_name"]),
+                    (index, "MEDICATION_STRENGTH"): str(medication["strength_text"]),
                     (index, "DOSE_VALUE"): str(medication["dose_value"]),
                     (index, "DOSE_UNIT"): str(medication["dose_unit"]),
                     (index, "FREQUENCY_PER_DAY"): str(medication["frequency_per_day"]),

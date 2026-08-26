@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -16,6 +17,8 @@ from app.services.ocr_engine import (
     OcrProviderTimeoutError,
     OcrProviderUnavailableError,
 )
+
+logger = logging.getLogger(__name__)
 
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
@@ -45,6 +48,9 @@ def _to_job_data(job: OcrJob, fields: list[ExtractedField]) -> OcrJobData:
         ocr_status=OcrJobStatus(job.ocr_status),
         error_code=job.error_code,
         error_message=job.error_message,
+        engine_name=job.engine_name,
+        model_version=job.model_version,
+        prompt_version=job.prompt_version,
         created_at=job.created_at,
         completed_at=job.completed_at,
         fields=[_to_field_data(field) for field in fields],
@@ -147,6 +153,7 @@ class OcrService:
                 details=[ErrorDetail(field="provider", reason="PROVIDER_UNAVAILABLE")],
             ) from err
         except OcrProcessingError as err:
+            logger.warning("OCR processing rejected: document_id=%s reason=%s", document_id, str(err),)
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_PROCESSING_FAILED",
@@ -188,7 +195,13 @@ class OcrService:
             ],
         )
 
-        job = await self._ocr_repo.mark_completed(job, completed_at=datetime.now(UTC))
+        job = await self._ocr_repo.mark_completed(
+            job,
+            completed_at=datetime.now(UTC),
+            engine_name=result.engine_name,
+            model_version=result.model_version,
+            prompt_version=result.prompt_version,
+        )
 
         saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
         return _to_job_data(job, saved_fields)

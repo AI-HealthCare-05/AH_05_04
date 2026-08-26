@@ -105,6 +105,11 @@ class Config(BaseSettings):
     CLOVA_OCR_SECRET: str = ""
     CLOVA_OCR_TIMEOUT_SECONDS: float = 20.0
 
+    # OCR 결과를 구조화할 OpenAI 모델 설정입니다.
+    # Guide·Chat과 독립적으로 모델을 변경할 수 있게 분리합니다.
+    OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"
+    OCR_STRUCTURE_TIMEOUT_SECONDS: float = 30.0
+
     @property
     def database_url(self) -> str:
         # URL.create()를 사용하면 비밀번호에 @, /, % 같은 문자가 있어도

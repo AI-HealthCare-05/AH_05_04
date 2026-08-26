@@ -37,6 +37,10 @@ class OcrStatus(StrEnum):
 
 class FieldType(StrEnum):
     MEDICATION_NAME = "MEDICATION_NAME"
+    # 제품명 뒤에 적힌 제품 함량입니다.
+    # 1회 복용량(DOSE_VALUE/DOSE_UNIT)과 구분합니다.
+    MEDICATION_STRENGTH = "MEDICATION_STRENGTH"
+
     DOSE_VALUE = "DOSE_VALUE"
     DOSE_UNIT = "DOSE_UNIT"
     FREQUENCY_PER_DAY = "FREQUENCY_PER_DAY"
@@ -87,8 +91,11 @@ class OcrJob(Base):
         nullable=False,
         default=OcrStatus.PENDING,
     )
-    engine_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    engine_name: Mapped[str | None] = mapped_column(String(100), nullable=True,)
+    model_version: Mapped[str | None] = mapped_column(String(100), nullable=True,)
+
+    # LLM 구조화 결과를 재현할 수 있도록 prompt 버전을 별도로 저장합니다.
+    prompt_version: Mapped[str | None] = mapped_column(String(100), nullable=True,)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -115,7 +122,8 @@ class ExtractedField(Base):
         ),
         CheckConstraint(
             "field_type IN ("
-            "'MEDICATION_NAME', 'DOSE_VALUE', 'DOSE_UNIT', 'FREQUENCY_PER_DAY', "
+            "'MEDICATION_NAME', 'MEDICATION_STRENGTH', "
+            "'DOSE_VALUE', 'DOSE_UNIT', 'FREQUENCY_PER_DAY', "
             "'TIMING', 'PRESCRIBED_DATE', 'DURATION_DAYS')",
             name="chk_field_type",
         ),

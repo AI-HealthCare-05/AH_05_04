@@ -5,13 +5,50 @@ import httpx
 import pytest
 
 from app.services.clova_ocr_engine import ClovaOcrEngine
+from app.services.ocr_ai import OcrStructureResult
 from app.services.ocr_engine import (
     OcrProcessingError,
     OcrProviderConnectionError,
     OcrProviderTimeoutError,
     OcrProviderUnavailableError,
+    RawRecognizedField,
+    RecognizedField,
 )
 
+
+class RecordingStructurer:
+    """실제 OpenAI를 호출하지 않고 CLOVA와 LLM 연결만 검증합니다."""
+
+    def __init__(self) -> None:
+        self.received_fields: list[RawRecognizedField] = []
+
+    async def structure(
+        self,
+        raw_fields: list[RawRecognizedField],
+    ) -> OcrStructureResult:
+        self.received_fields = list(raw_fields)
+
+        fields: list[RecognizedField] = []
+
+        # 기존 테스트가 검사하는 처방일 필드만 가짜 결과로 반환합니다.
+        for field in raw_fields:
+            if field.raw_value == "2026-08-12":
+                fields.append(
+                    RecognizedField(
+                        medication_index=0,
+                        field_type="PRESCRIBED_DATE",
+                        raw_value=field.raw_value,
+                        normalized_value=field.raw_value,
+                        normalization_version="date-rule-v1",
+                        confidence_score=field.confidence_score,
+                    )
+                )
+
+        return OcrStructureResult(
+            fields=fields,
+            model_name="ocr-structure-test-model",
+            prompt_version="ocr-structure-prompt-v2",
+        )
 
 def _create_test_image(tmp_path: Path) -> None:
     (tmp_path / "sample.png").write_bytes(b"fake-png-content")
@@ -25,6 +62,7 @@ def _create_engine(
     *,
     tmp_path: Path,
     client: httpx.AsyncClient,
+    structurer: RecordingStructurer | None = None,
 ) -> ClovaOcrEngine:
     return ClovaOcrEngine(
         invoke_url="https://example.com/clova-ocr",
@@ -32,8 +70,12 @@ def _create_engine(
         storage_dir=str(tmp_path),
         timeout_seconds=20.0,
         client=client,
+        structurer=(
+            structurer
+            if structurer is not None
+            else RecordingStructurer()
+        ),
     )
-
 
 async def test_recognize_calls_clova_and_parses_v2_response(
     tmp_path: Path,
@@ -302,15 +344,21 @@ async def test_recognize_rejects_missing_file(
             )
 
 
-async def test_recognize_structures_three_medications_from_clova_fixture(
+async def test_recognize_passes_all_clova_tokens_to_llm_structurer(
     tmp_path: Path,
 ) -> None:
     _create_test_image(tmp_path)
 
     fixture_path = (
-        Path(__file__).parents[1] / "fixtures" / "ocr" / "structuring" / "prescription_medication_rows.clova.json"
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "ocr"
+        / "structuring"
+        / "prescription_medication_rows.clova.json"
     )
-    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    payload = json.loads(
+        fixture_path.read_text(encoding="utf-8")
+    )
 
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -320,11 +368,13 @@ async def test_recognize_structures_three_medications_from_clova_fixture(
         )
 
     transport = httpx.MockTransport(handler)
+    structurer = RecordingStructurer()
 
     async with httpx.AsyncClient(transport=transport) as client:
         engine = _create_engine(
             tmp_path=tmp_path,
             client=client,
+            structurer=structurer,
         )
 
         result = await engine.recognize(
@@ -332,61 +382,13 @@ async def test_recognize_structures_three_medications_from_clova_fixture(
             file_mime_type="image/png",
         )
 
-    medication_names = [field for field in result.fields if field.field_type == "MEDICATION_NAME"]
+    expected_token_count = len(
+        payload["images"][0]["fields"]
+    )
 
-    assert [field.medication_index for field in medication_names] == [
-        1,
-        2,
-        3,
-    ]
-    assert [field.raw_value for field in medication_names] == [
-        "로수바스타틴칼숨정 10mg",
-        "에제티미브정 10mg",
-        "오메가-3-산에틸에스테르 90연질캡슐 1000mg",
-    ]
-
-    fields_by_identity = {
-        (
-            field.medication_index,
-            field.field_type,
-        ): field
-        for field in result.fields
-    }
-
-    expected_medication_fields = {
-        1: {
-            "DOSE_VALUE": "1",
-            "DOSE_UNIT": "정",
-            "FREQUENCY_PER_DAY": "1",
-            "DURATION_DAYS": "30",
-            "TIMING": "저녁 식후",
-        },
-        2: {
-            "DOSE_VALUE": "1",
-            "DOSE_UNIT": "정",
-            "FREQUENCY_PER_DAY": "1",
-            "DURATION_DAYS": "30",
-            "TIMING": "저녁 식후",
-        },
-        3: {
-            "DOSE_VALUE": "2",
-            "DOSE_UNIT": "캡슐",
-            "FREQUENCY_PER_DAY": "2",
-            "DURATION_DAYS": "30",
-            "TIMING": "아침 · 저녁 식후",
-        },
-    }
-
-    for (
-        medication_index,
-        expected_fields,
-    ) in expected_medication_fields.items():
-        for field_type, expected_value in expected_fields.items():
-            actual_field = fields_by_identity[
-                (
-                    medication_index,
-                    field_type,
-                )
-            ]
-
-            assert actual_field.raw_value == expected_value
+    # 기존 정규식 파서가 아니라 CLOVA 전체 token이 전달됐는지 확인합니다.
+    assert len(structurer.received_fields) == expected_token_count
+    assert structurer.received_fields == result.raw_fields
+    assert result.engine_name == "CLOVA_OCR"
+    assert result.model_version == "ocr-structure-test-model"
+    assert result.prompt_version == "ocr-structure-prompt-v2"
