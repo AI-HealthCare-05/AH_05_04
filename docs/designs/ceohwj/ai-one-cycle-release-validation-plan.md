@@ -31,27 +31,27 @@
 구현과 문서는 다음 명령 형태를 그대로 제공한다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
   --candidate-image /private/tmp/ai-one-cycle-candidate.png \
   --scenario-draft /private/tmp/ai-one-cycle-clova-openai-v1.draft.json
 
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
   --scenario backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
 
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id <uuid> \
   --base-url https://<합의된-staging-host>/api/v1 \
   --scenario backend/app/release_validation/scenarios/ai-one-cycle-v1.json \
   --commit-sha <40자리-commit-sha>
 
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \

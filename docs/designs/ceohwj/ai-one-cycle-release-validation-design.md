@@ -394,7 +394,7 @@ local live 실행의 `/dev/tty`에서만 생성 결과를 표시한다. Guide와
 
 ```bash
 # local fixture preflight. OpenAI는 호출하지 않는다.
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -402,14 +402,14 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
   --scenario-draft /private/tmp/ai-one-cycle-clova-openai-v1.draft.json
 
 # 로컬 실제 CLOVA·OpenAI network 검증
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \
   --scenario backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
 
 # staging 실제 OpenAI 검증
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url https://<합의된-staging-host>/api/v1 \
@@ -417,7 +417,7 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
   --commit-sha <40자리-commit-sha>
 
 # 보류된 실행 정리 재시도
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \

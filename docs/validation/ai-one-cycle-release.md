@@ -27,7 +27,7 @@ Preflight는 실제 CLOVA만 호출해 후보 이미지의 field identity를 검
 Chat endpoint는 호출하지 않으며 결과가 `READY`여도 one-cycle PASS 증거가 아닙니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -38,7 +38,7 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
 고정된 합성 이미지로 실제 CLOVA와 OpenAI 전체 local network 흐름을 실행합니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -49,7 +49,7 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
 `--image-repo-digest`를 하나 이상 전달합니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id <uuid> \
   --base-url https://<agreed-staging-host>/api/v1 \
@@ -61,7 +61,7 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
 재시도합니다. cleanup-only는 fixture나 Provider 요청을 만들지 않습니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
