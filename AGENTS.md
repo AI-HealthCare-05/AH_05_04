@@ -18,7 +18,7 @@ If these sources disagree or do not define a boundary clearly, do not invent a r
 - Product and planning documents provide intent and context but do not replace runtime contracts.
 - Use `docs/governance/post-mvp-1-document-authority.md` for Post-MVP-1 provenance and status interpretation. If current implementation and a target differ, do not combine or infer values; reconcile the source Decision and repository target with the relevant domain reviewers.
 - Changing an enum, API route or DTO, required field, error code, transaction order, or publication condition requires a new Decision or Contract Freeze version and matching contract and test updates.
-- Do not move a target contract into a new folder to promote it. Keep the path stable and update its status only after implementation, migrations, OpenAPI, automated tests, and reviewer approval evidence are linked.
+- Use the status directories as the source of truth for contract status. Promote a target or proposed contract into `docs/contracts/current/` only in the implementation PR that includes the required implementation, migrations, OpenAPI/DTO, automated tests, evidence, and designated reviewer approval; update its status and index entry in the same PR, and do not leave a duplicate in the previous status directory.
 - Keep Track C, D, and F publication and the common Privacy Production gate closed until `docs/release-gates/post-mvp-1-external-approvals.md` is satisfied.
 
 ## Team Roles

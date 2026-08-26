@@ -40,5 +40,5 @@
 
 1. 원본과 저장소 목표 계약이 다르면 구현을 중단하고 차이를 기록한다. 값을 추정하거나 두 계약을 혼합하지 않는다.
 2. 계약 변경은 Decision 또는 Contract Freeze version, 관련 요구사항 ID, API·migration·테스트와 함께 관련 영역의 지정 리뷰어 검토를 받는다.
-3. 목표 계약을 Current로 승격하려면 동일 경로에서 구현 PR, migration, OpenAPI/DTO, 계약·통합 테스트와 실행 증빙을 연결하고 상태를 갱신한다. 폴더 이동으로 상태를 표현하지 않는다.
+3. 상태 디렉터리를 계약 상태의 기준으로 사용한다. 목표 또는 Proposed 계약을 Current로 승격하려면 구현 PR에서 관련 구현, migration, OpenAPI/DTO, 계약·통합 테스트와 실행 증빙을 연결하고 지정 리뷰어 승인을 받은 뒤 `docs/contracts/current/`로 이동한다. 같은 PR에서 문서 상태와 인덱스를 갱신하고 이전 상태 디렉터리에 중복 파일을 남기지 않는다.
 4. 외부 승인과 공개 flag는 구현 완료와 별도로 관리한다. 상세 조건은 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 따른다.

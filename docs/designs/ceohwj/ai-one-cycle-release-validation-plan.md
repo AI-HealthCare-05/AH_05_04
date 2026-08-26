@@ -38,7 +38,7 @@
 - Create: `infra/docker/release-control.Dockerfile`
 - Create: `scripts/release_validation/run_ai_one_cycle_smoke.sh`
 - Create: `scripts/release_validation/run_staging_migration.sh`
-- Modify: `docs/contracts/proposed/operations/release-validation-ledger.md` (Proposed → Implemented 상태와 실제 SQL type·길이 확정)
+- Move: `docs/contracts/proposed/operations/release-validation-ledger.md` → `docs/contracts/current/operations/release-validation-ledger.md` (Current 상태와 실제 SQL type·길이 확정)
 - Modify: `docs/contracts/README.md`
 - Modify: `app/Dockerfile`
 - Review jointly: staging application DB·control DB·secret-store provisioning outside this repository
@@ -279,6 +279,6 @@
 ## Self-Review Result
 
 - 요구사항 매핑: staging 격리(Task 0), 실제 OpenAI smoke(Task 4), 처방 확정부터 챗봇 전체 흐름(Task 2), 모델·프롬프트 저장(Task 2), 실패 저장(Task 3), Frontend 별도 인계(Task 5), FastAPI 전용 key(Task 0·4).
-- 계약 변경: 기존 사용자 API·application DB 의미는 유지하지만 staging control DB ledger와 validation·cleanup·migration role 사이에 새 proposed 운영 계약을 추가한다. `docs/contracts/proposed/operations/release-validation-ledger.md`, index, schema·구현과 contract/fault-injection test를 같은 구현 PR에서 갱신한다.
+- 계약 변경: 기존 사용자 API·application DB 의미는 유지하지만 staging control DB ledger와 validation·cleanup·migration role 사이에 새 운영 계약을 구현한다. 같은 구현 PR에서 `docs/contracts/proposed/operations/release-validation-ledger.md`를 `docs/contracts/current/operations/release-validation-ledger.md`로 이동하고 상태와 index를 갱신하며, schema·구현과 contract/fault-injection test를 함께 반영한다.
 - 주요 위험: `app/tests/conftest.py`는 test DB schema를 생성·삭제하므로 기존 `app/tests/**/test_smoke.py`를 배포 컨테이너의 운영 DB 설정으로 직접 실행하지 않는다.
 - 완료 구분: Task 0~4는 Backend 통합 검증 구현, Task 5는 Frontend 별도 인계, Task 6은 저장소 전달을 완료한다. 기능 Issue와 Production 배포 승인은 별도 authoritative gate에서 판정한다.
