@@ -14,7 +14,7 @@
 | 최신 오류 계약 | [#46 Backend 오류 응답 통일](https://github.com/AI-HealthCare-05/AH_05_04/pull/46) (`d6359f6`) |
 | 작업 브랜치 | `feat/38-chat-ai-backend-integration` |
 | 대상 브랜치 | `develop` |
-| 소유권 | `/app/`: `@phina-io`, `/docs/api.md`: `@phina-io`, `@hazelnutflavoured` |
+| 소유권 | `/backend/app/`: `@phina-io`, `/docs/api.md`: `@phina-io`, `@hazelnutflavoured` |
 | 관련 영역 | Backend, Database, Infrastructure, Documentation |
 
 ## 목적
@@ -406,7 +406,7 @@ uv run pytest tests/contract/test_chat_ai_backend_contract.py -q
 uv run pytest tests/integration/test_cors_and_errors.py -q
 uv run ruff check .
 uv run ruff format . --check
-uv run mypy app ai_worker
+uv run mypy backend/app ai_worker
 bash scripts/ci/run_test.sh
 git diff --check
 ```

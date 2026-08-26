@@ -4,7 +4,7 @@
 
 Backend 내부의 의존성 주입과 Repository 테스트 방식을 통일하기 위한 구현 가이드입니다. 이 문서는 Frontend·AI 담당자와 공유하는 API 요청·응답 계약이 아니라 Backend 코드 구조와 테스트 작성 기준을 다룹니다.
 
-공유 오류 응답과 사용자 리소스 소유권·실패 상태 규칙은 `backend-common-patterns.md`와 `backend-error-response.md`(PR #57, 아직 develop 미병합)를 기준으로 합니다. 병합 후 `docs/contracts/`에서 확인하세요.
+공유 오류 응답과 사용자 리소스 소유권·실패 상태 규칙은 [`../contracts/backend-common-patterns.md`](../contracts/backend-common-patterns.md)와 [`../contracts/backend-error-response.md`](../contracts/backend-error-response.md)를 기준으로 합니다.
 
 ## 1. DI Provider 패턴
 
@@ -77,7 +77,7 @@ async with test_engine.connect() as connection:
 
 ## 3. 실패 상태 저장과 DB 세션 분리
 
-공유 규칙은 `backend-common-patterns.md`(PR #57, 아직 develop 미병합) §2.2를 따릅니다. 여기서는 그 규칙의 구체적인 `flush()`/`commit()` 동작 차이와 코드 예시를 다룹니다.
+공유 규칙은 [`../contracts/backend-common-patterns.md`](../contracts/backend-common-patterns.md) §2.2를 따릅니다. 여기서는 그 규칙의 구체적인 `flush()`/`commit()` 동작 차이와 코드 예시를 다룹니다.
 
 ### 3.1 flush()와 commit()의 차이
 
