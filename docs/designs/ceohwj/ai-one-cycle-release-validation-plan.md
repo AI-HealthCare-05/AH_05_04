@@ -23,7 +23,7 @@
 - `CLOVA_OCR_INVOKE_URL`은 Provider 호출 전에 HTTPS인지 확인한다. lowercase hostname은
   `.apigw.ntruss.com`으로 끝나고 앞 label이 하나 이상이어야 하며 username·password·fragment는 없어야 한다.
 - runner와 공개 기록에는 생성 본문, 질문 전문, token과 credential을 포함하지 않는다.
-- `app/` runner·fixture 구현은 `@phina-io`의 구현 또는 리뷰를 거친다.
+- `backend/app/` runner·fixture 구현은 `@phina-io`의 구현 또는 리뷰를 거친다.
 - Frontend 코드는 `@solia142`의 별도 범위다.
 
 ## Runner CLI·결과 계약
