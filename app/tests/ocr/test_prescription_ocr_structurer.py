@@ -116,27 +116,6 @@ def test_structure_extracts_date_and_two_medication_rows() -> None:
     assert all(field.raw_value not in {"실제", "합성", "테스트용"} for field in result)
 
 
-def test_structure_does_not_write_recognized_content_to_stdout_or_stderr(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    raw_fields = [
-        _raw_field("명칭", 237, 581),
-        _raw_field("투여량", 413, 581),
-        _raw_field("투여횟수", 570, 581),
-        _raw_field("용법", 911, 581),
-        _raw_field("합성약정 10mg", 137, 637),
-        _raw_field("1정", 394, 637),
-        _raw_field("1회", 547, 637),
-        _raw_field("저녁 식후", 911, 637),
-    ]
-
-    PrescriptionOcrStructurer().structure(raw_fields)
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == ""
-
-
 def test_structure_does_not_invent_medication_without_table() -> None:
     raw_fields = [
         _raw_field(

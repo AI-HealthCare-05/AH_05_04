@@ -63,6 +63,7 @@ def test_validator_rejects_duplicate_missing_or_unknown_source_indexes(indexes: 
         "반알 복용하세요.",
         "일 정 복용하세요.",
         "한 정 복용하세요.",
+        "한 번 복용하세요.",
         "이 번 복용하세요.",
     ],
 )
@@ -82,6 +83,7 @@ def test_validator_rejects_new_prescription_numbers(text: str) -> None:
         "복용 일정 확인이 필요합니다.",
         "한정 안내를 확인하세요.",
         "이번 안내를 확인하세요.",
+        "한번 확인해보세요.",
         "1회용 포장입니다.",
     ],
 )

@@ -851,6 +851,124 @@ async def test_lost_upload_cleanup_requires_exactly_one_matching_new_file(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_lost_upload_cleanup_does_not_delete_other_user_same_sha_file(tmp_path: Path) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    other_fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    content = b"approved-synthetic-source"
+    content_sha = "sha256:" + hashlib.sha256(content).hexdigest()
+    other_user_file = tmp_path / f"{other_fixture.document_id}.png"
+    other_user_file.write_bytes(content)
+    run_id = str(uuid4())
+    store = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {
+            "run_id": run_id,
+            "ids": {},
+            "storage_baseline": [],
+            "source_image_sha256": content_sha,
+            "transport_failed_at": datetime.now(UTC).isoformat(),
+            "file_cleanup": "NOT_STARTED",
+        },
+    )
+
+    try:
+        with pytest.raises(CleanupPendingError):
+            await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
+
+        assert other_user_file.read_bytes() == content
+        assert store.read()["file_cleanup"] == "NOT_STARTED"
+        async with factory() as verification_session:
+            assert await verification_session.get(User, other_fixture.user_id) is not None
+    finally:
+        other_user_file.unlink(missing_ok=True)
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+        await cleanup_synthetic_fixture(factory, user_id=other_fixture.user_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_intent_cleanup_does_not_follow_symlink_to_other_user_file(tmp_path: Path) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    other_fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    content = b"approved-synthetic-source"
+    content_sha = "sha256:" + hashlib.sha256(content).hexdigest()
+    target = tmp_path / f"{other_fixture.document_id}.png"
+    target.write_bytes(content)
+    tracked = tmp_path / f"{fixture.document_id}.png"
+    tracked.symlink_to(target)
+    run_id = str(uuid4())
+    store = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {
+            "run_id": run_id,
+            "ids": {"document_id": str(fixture.document_id)},
+            "tracked_file_path": str(tracked),
+            "tracked_file_sha256": content_sha,
+            "file_cleanup": "DELETE_INTENT",
+        },
+    )
+
+    try:
+        with pytest.raises(CleanupPendingError):
+            await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
+
+        assert target.read_bytes() == content
+        assert tracked.is_symlink()
+        assert store.read()["file_cleanup"] == "DELETE_INTENT"
+        async with factory() as verification_session:
+            assert await verification_session.get(User, other_fixture.user_id) is not None
+    finally:
+        tracked.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+        await cleanup_synthetic_fixture(factory, user_id=other_fixture.user_id)
+
+
+@pytest.mark.asyncio
+async def test_document_cleanup_does_not_follow_storage_symlink(tmp_path: Path) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    target = nested / f"{fixture.document_id}.png"
+    content = b"approved-synthetic-source"
+    target.write_bytes(content)
+    candidate = tmp_path / f"{fixture.document_id}.png"
+    candidate.symlink_to(target)
+    run_id = str(uuid4())
+    store = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {
+            "run_id": run_id,
+            "ids": {"document_id": str(fixture.document_id)},
+            "file_cleanup": "NOT_STARTED",
+        },
+    )
+
+    try:
+        rows, files = await _cleanup_root(
+            factory,
+            user_id=fixture.user_id,
+            storage_dir=tmp_path,
+            store=store,
+        )
+
+        assert rows == 0
+        assert files > 0
+        assert target.read_bytes() == content
+        assert candidate.is_symlink()
+        assert store.read()["file_cleanup"] == "NOT_STARTED"
+    finally:
+        candidate.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+
+
+@pytest.mark.asyncio
 async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_path: Path) -> None:
     document_id = str(uuid4())
     job_id = str(uuid4())

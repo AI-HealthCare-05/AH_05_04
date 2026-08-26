@@ -1264,19 +1264,29 @@ async def _cleanup_root(  # noqa: C901
 ) -> tuple[int, int]:
     from app.models.medical_documents import MedicalDocument
 
+    storage_root = storage_dir.resolve()
     async with session_factory() as session:
         documents = list(
             (await session.scalars(select(MedicalDocument).where(MedicalDocument.user_id == user_id))).all()
         )
     state = store.read() if store is not None else {}
     if store is not None and state.get("file_cleanup") == "DELETE_INTENT":
-        tracked = Path(str(state.get("tracked_file_path", ""))).resolve()
+        tracked_path = Path(str(state.get("tracked_file_path", "")))
+        if tracked_path.is_symlink():
+            raise CleanupPendingError
+        tracked = tracked_path.parent.resolve() / tracked_path.name
         try:
-            tracked.relative_to(storage_dir)
+            tracked.relative_to(storage_root)
         except ValueError as exc:
             raise CleanupPendingError from exc
         if tracked.exists():
-            if not tracked.is_file() or _sha256_file(tracked) != state.get("tracked_file_sha256"):
+            if (
+                tracked.is_symlink()
+                or not tracked.is_file()
+                or _sha256_file(tracked) != state.get("tracked_file_sha256")
+            ):
+                raise CleanupPendingError
+            if tracked.is_symlink():
                 raise CleanupPendingError
             tracked.unlink()
         store.update(file_cleanup="DONE")
@@ -1292,7 +1302,7 @@ async def _cleanup_root(  # noqa: C901
         source_sha = state.get("source_image_sha256")
         owned_object_keys = {document.object_key for document in documents}
         candidates = [
-            path.resolve()
+            path
             for path in storage_dir.iterdir()
             if path.name not in baseline
             and path.name in owned_object_keys
@@ -1305,7 +1315,7 @@ async def _cleanup_root(  # noqa: C901
             raise CleanupPendingError
         orphan = candidates[0]
         try:
-            orphan.relative_to(storage_dir)
+            orphan.relative_to(storage_root)
         except ValueError as exc:
             raise CleanupPendingError from exc
         store.update(
@@ -1313,13 +1323,19 @@ async def _cleanup_root(  # noqa: C901
             tracked_file_sha256=source_sha,
             file_cleanup="DELETE_INTENT",
         )
+        if orphan.is_symlink():
+            raise CleanupPendingError
         orphan.unlink()
         store.update(file_cleanup="DONE")
     unsafe_or_remaining = 0
     for document in documents:
-        candidate = (storage_dir / document.object_key).resolve()
+        candidate_path = storage_dir / document.object_key
+        if candidate_path.is_symlink():
+            unsafe_or_remaining += 1
+            continue
+        candidate = candidate_path.parent.resolve() / candidate_path.name
         try:
-            candidate.relative_to(storage_dir)
+            candidate.relative_to(storage_root)
         except ValueError:
             unsafe_or_remaining += 1
             continue
@@ -1337,6 +1353,8 @@ async def _cleanup_root(  # noqa: C901
                     tracked_file_sha256=_sha256_file(candidate),
                     file_cleanup="DELETE_INTENT",
                 )
+            if candidate.is_symlink():
+                raise CleanupPendingError
             candidate.unlink()
             if store is not None:
                 store.update(file_cleanup="DONE")

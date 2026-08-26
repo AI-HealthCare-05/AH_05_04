@@ -29,7 +29,7 @@ _ARABIC_NUMERIC_UNIT = re.compile(
     re.IGNORECASE,
 )
 _KOREAN_NUMERIC_UNIT = re.compile(rf"(?<![가-힣]){_KOREAN_QUANTITY}\s*{_PRESCRIPTION_UNIT_PATTERN}(?:씩)?(?![가-힣])")
-_AMBIGUOUS_KOREAN_WORDS = frozenset({"일정", "한정", "이번"})
+_AMBIGUOUS_KOREAN_WORDS = frozenset({"일정", "한정", "이번", "한번"})
 _CHANGE_TERM = re.compile(r"중단|끊(?:기|어|으)|증량|감량|늘리|줄(?:이|여)|횟수\s*변경|용량\s*변경|복용\s*변경")
 _SAFE_NEGATION = re.compile(r"(?:하지\s*마세요|하지\s*말고|해서는\s*안\s*됩니다|하지\s*않(?:습니다|도록))")
 _DIRECTIVE = re.compile(
