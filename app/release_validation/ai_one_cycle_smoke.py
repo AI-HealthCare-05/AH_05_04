@@ -166,7 +166,7 @@ def validate_live_environment(
         _validate_staging_environment(env, commit_sha=commit_sha, image_repo_digest=image_repo_digest)
         storage_dir = None
     elif mode in LOCAL_MODES:
-        storage_dir = _validate_local_environment(mode, env)
+        storage_dir = _validate_local_environment(env)
     else:
         raise GuardError("unsupported validation mode")
     db_port_value = env.get("DB_PORT")
@@ -246,18 +246,24 @@ def _validate_staging_environment(
         raise GuardError("staging requires a commit SHA or image repository digest")
     if commit_sha is not None and (len(commit_sha) != 40 or any(c not in "0123456789abcdef" for c in commit_sha)):
         raise GuardError("commit SHA must be 40 lowercase hexadecimal characters")
+    if image_repo_digest is not None:
+        algorithm, separator, digest = image_repo_digest.partition(":")
+        if (
+            algorithm != "sha256"
+            or separator != ":"
+            or len(digest) != 64
+            or digest == "0" * 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise GuardError("image repository digest must be canonical sha256")
 
 
-def _validate_local_environment(mode: str, env: Mapping[str, str]) -> Path:
+def _validate_local_environment(env: Mapping[str, str]) -> Path:
     if env.get("ENV") != "local":
         raise GuardError("local live validation requires ENV=local")
     if env.get("DB_HOST", "").lower() not in {"127.0.0.1", "localhost", "::1"}:
         raise GuardError("local host runner requires a loopback database host")
     validate_clova_url(env.get("CLOVA_OCR_INVOKE_URL", ""))
-    if not _configured(env.get("CLOVA_OCR_SECRET")):
-        raise GuardError("CLOVA_OCR_SECRET is missing or a placeholder")
-    if mode == "local-live-full" and not _configured(env.get("OPENAI_API_KEY")):
-        raise GuardError("OPENAI_API_KEY is missing or a placeholder")
     storage_value = env.get("STORAGE_DIR")
     if not storage_value:
         raise GuardError("STORAGE_DIR is required for local validation")
@@ -329,6 +335,7 @@ async def build_synthetic_fixture(
     *,
     run_id: UUID,
     scenario: Mapping[str, Any],
+    user_id: UUID | None = None,
 ) -> SyntheticFixture:
     from app.core.utils.security import hash_password
     from app.models.medical_documents import DocumentType, MedicalDocument, UploadStatus
@@ -339,7 +346,7 @@ async def build_synthetic_fixture(
     compact_run_id = run_id.hex
     email = f"rv-{compact_run_id[:18]}@example.com"
     password = f"Rv-{compact_run_id[:16]}!"
-    user_id = uuid4()
+    user_id = user_id or uuid4()
     document_id = uuid4()
     ocr_job_id = uuid4()
     user = User(
@@ -1209,23 +1216,35 @@ def _emit(result: Mapping[str, Any]) -> None:
 
 
 def _runtime_environment(mode: str) -> dict[str, str]:
-    if mode == "staging-live":
-        return dict(os.environ)
-    from app.core import config
+    os.environ["RELEASE_VALIDATION_RUNNER"] = "1"
+    provider_credentials = ("CLOVA_OCR_SECRET", "OPENAI_API_KEY")
+    if any(name in os.environ for name in provider_credentials):
+        raise GuardError("Provider credentials must not exist in the runner environment")
 
-    return {
-        "ENV": str(config.ENV),
+    required_runner_settings = ("DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME")
+    if missing := [name for name in required_runner_settings if not os.environ.get(name)]:
+        raise GuardError(f"runner environment is missing required settings: {', '.join(missing)}")
+
+    default_storage_dir = Path(__file__).resolve().parents[2] / "uploads" / "medical_documents"
+    allowlisted_names = (
+        "RELEASE_VALIDATION_STAGING_API_HOST",
+        "RELEASE_VALIDATION_STAGING_DB_HOST",
+        "RELEASE_VALIDATION_STAGING_DB_NAME",
+    )
+    runtime = {
+        "RELEASE_VALIDATION_RUNNER": "1",
+        "ENV": os.environ.get("ENV", "local"),
         "RELEASE_VALIDATION_ALLOWED": os.environ.get("RELEASE_VALIDATION_ALLOWED", ""),
-        "CLOVA_OCR_INVOKE_URL": config.CLOVA_OCR_INVOKE_URL,
-        "CLOVA_OCR_SECRET": config.CLOVA_OCR_SECRET,
-        "OPENAI_API_KEY": config.OPENAI_API_KEY,
-        "STORAGE_DIR": str(Path(config.STORAGE_DIR).resolve()),
-        "DB_HOST": config.DB_HOST,
-        "DB_PORT": str(config.DB_PORT),
-        "DB_NAME": config.DB_NAME,
-        "CLOVA_OCR_TIMEOUT_SECONDS": str(config.CLOVA_OCR_TIMEOUT_SECONDS),
-        "OPENAI_TIMEOUT_SECONDS": str(config.OPENAI_TIMEOUT_SECONDS),
+        "CLOVA_OCR_INVOKE_URL": os.environ.get("CLOVA_OCR_INVOKE_URL", ""),
+        "STORAGE_DIR": str(Path(os.environ.get("STORAGE_DIR", default_storage_dir)).resolve()),
+        "DB_HOST": os.environ["DB_HOST"],
+        "DB_PORT": os.environ.get("DB_PORT", "5432"),
+        "DB_NAME": os.environ["DB_NAME"],
+        "CLOVA_OCR_TIMEOUT_SECONDS": os.environ.get("CLOVA_OCR_TIMEOUT_SECONDS", "20"),
+        "OPENAI_TIMEOUT_SECONDS": os.environ.get("OPENAI_TIMEOUT_SECONDS", "20"),
     }
+    runtime.update({name: os.environ[name] for name in allowlisted_names if name in os.environ})
+    return runtime
 
 
 def _state_root(mode: str) -> Path:
@@ -1271,10 +1290,16 @@ async def _cleanup_root(  # noqa: C901
     ):
         baseline = set(state.get("storage_baseline") or [])
         source_sha = state.get("source_image_sha256")
+        owned_object_keys = {document.object_key for document in documents}
         candidates = [
             path.resolve()
             for path in storage_dir.iterdir()
-            if path.name not in baseline and path.is_file() and source_sha and _sha256_file(path) == source_sha
+            if path.name not in baseline
+            and path.name in owned_object_keys
+            and path.is_file()
+            and not path.is_symlink()
+            and source_sha
+            and _sha256_file(path) == source_sha
         ]
         if len(candidates) != 1:
             raise CleanupPendingError
@@ -1391,9 +1416,9 @@ async def _cleanup_only(
 
 
 async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, Any], int]:  # noqa: C901
+    runtime_env = _runtime_environment(args.mode)
     from app.core.db.databases import AsyncSessionFactory
 
-    runtime_env = _runtime_environment(args.mode)
     if args.cleanup_only:
         validated = validate_cleanup_environment(mode=args.mode, base_url=args.base_url, env=runtime_env)
     else:
@@ -1436,6 +1461,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         except OSError as exc:
             raise GuardError("interactive safety review requires a TTY") from exc
 
+    fixture_user_id = uuid4()
     state = {
         "run_id": str(run_id),
         "mode": args.mode,
@@ -1446,6 +1472,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         "db_port": validated.db_port,
         "db_name": validated.db_name,
         "storage_dir": str(validated.storage_dir) if validated.storage_dir else None,
+        "user_id": str(fixture_user_id),
         "ids": {},
         "file_cleanup": "NOT_STARTED",
         "storage_baseline": sorted(path.name for path in validated.storage_dir.iterdir())
@@ -1457,9 +1484,13 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         "cleanup_not_before": (datetime.now(UTC) + timedelta(seconds=30)).isoformat(),
     }
     store = RunStateStore.create(root, str(run_id), state)
-    fixture = await build_synthetic_fixture(AsyncSessionFactory, run_id=run_id, scenario=scenario)
+    fixture = await build_synthetic_fixture(
+        AsyncSessionFactory,
+        run_id=run_id,
+        scenario=scenario,
+        user_id=fixture_user_id,
+    )
     store.update(
-        user_id=str(fixture.user_id),
         in_flight_stage=None,
         request_started_at=None,
         cleanup_not_before=None,

@@ -3,7 +3,7 @@ import unicodedata
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 _FORBIDDEN_DISPLAY_CHARACTERS = frozenset(
     {
@@ -73,18 +73,7 @@ class GuideGenerationInput(_StrictModel):
     medications: list[MedicationInput] = Field(min_length=1)
 
 
-JsonDecimal = Annotated[Decimal, PlainSerializer(lambda value: str(value), return_type=str, when_used="json")]
 _GeneratedText = Annotated[str, BeforeValidator(_normalize_generated_text)]
-
-
-class MedicationPromptItem(_StrictModel):
-    source_index: int = Field(ge=0)
-    medication_name: str
-    dose_value: JsonDecimal | None = None
-    dose_unit: str | None = None
-    frequency_per_day: int | None = None
-    timing_text: str | None = None
-    duration_days: int | None = None
 
 
 class GeneratedMedicationGuidance(_StrictGeneratedModel):

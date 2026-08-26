@@ -13,9 +13,12 @@ Frontend E2E 또는 Production 배포 승인이 아닙니다. `local-live-ai`는
 - [ ] local runner는 실제 TCP로 loopback FastAPI만 호출하며 Provider SDK를 직접 호출하지 않습니다.
 - [ ] local FastAPI와 runner의 resolved `STORAGE_DIR`가 같고 runner가 해당 경로를 읽고 쓸 수 있습니다.
 - [ ] `CLOVA_OCR_INVOKE_URL`이 credential·fragment 없는 허용된 HTTPS Naver Cloud API Gateway host입니다.
+- [ ] local runner 환경에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`가 없고 실제 Key는 FastAPI에만 주입됩니다.
+- [ ] runner는 `.env`를 읽지 않으며 `DB_*`, `ENV`, validation 설정과 credential이 없는 CLOVA URL만 별도 주입받습니다.
 - [ ] local fixture SHA-256과 manifest의 SHA-256이 일치하고 placeholder가 없습니다.
 - [ ] staging은 합의된 HTTPS host, DB identity, commit SHA 또는 image digest의 positive allow gate를 통과합니다.
-- [ ] staging runner 환경에는 `OPENAI_API_KEY`가 없고 실제 Key는 FastAPI에만 주입됩니다.
+- [ ] staging image digest는 0이 아닌 lowercase 64자리 hex의 canonical `sha256:<digest>` 형식입니다.
+- [ ] staging runner 환경에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`가 없고 실제 Key는 FastAPI에만 주입됩니다.
 - [ ] staging one-off는 interactive `/dev/tty`와 실행 권한을 제공합니다.
 - [ ] staging의 `RELEASE_VALIDATION_STATE_DIR`가 별도 one-off 사이에 공유되는 private mount이며, `0700`
   directory와 `0600` file의 write-close-read 선행 검사를 통과했습니다.
@@ -27,7 +30,10 @@ Preflight는 실제 CLOVA만 호출해 후보 이미지의 field identity를 검
 Chat endpoint는 호출하지 않으며 결과가 `READY`여도 one-cycle PASS 증거가 아닙니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+# DB_*, ENV, RELEASE_VALIDATION_ALLOWED, CLOVA_OCR_INVOKE_URL, STORAGE_DIR는
+# credential을 출력하지 않는 별도 runner 환경으로 먼저 주입합니다.
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -38,7 +44,8 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
 고정된 합성 이미지로 실제 CLOVA와 OpenAI 전체 local network 흐름을 실행합니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -49,7 +56,8 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
 `--image-repo-digest`를 하나 이상 전달합니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id <uuid> \
   --base-url https://<agreed-staging-host>/api/v1 \
@@ -61,7 +69,8 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
 재시도합니다. cleanup-only는 fixture나 Provider 요청을 만들지 않습니다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -103,4 +112,3 @@ Backend/AI one-cycle: PASS | FAIL | BLOCKED
 ```
 
 생성 본문, 질문 전문, token, credential, DB password, OCR 원문과 preflight 전문은 기록하지 않습니다.
-

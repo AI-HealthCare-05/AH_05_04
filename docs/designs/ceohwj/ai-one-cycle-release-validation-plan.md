@@ -2,7 +2,7 @@
 
 **Goal:** 로컬 결정적 테스트를 통과한 뒤 `.env`의 실제 CLOVA·OpenAI Key로 업로드부터 Chat까지 전체 API one-cycle을 한 번 검증한다. staging에서는 배포된 Backend로 실제 OpenAI one-cycle을 실행해 비민감 결과를 남긴다.
 
-**Architecture:** 별도 배포 stack이나 image build 체계를 만들지 않는다. 기존 PostgreSQL·Alembic·FastAPI 배포를 사용하며 validation runner는 합성 fixture 준비, HTTP orchestration, 독립 DB 재조회와 정리만 담당한다. 로컬은 Git에서 제외된 `.env`, staging은 배포 secret을 사용한다. 실제 Provider SDK 호출은 FastAPI가 수행하며 runner·Frontend·Swagger는 Provider를 직접 호출하거나 credential을 출력하지 않는다.
+**Architecture:** 별도 배포 stack이나 image build 체계를 만들지 않는다. 기존 PostgreSQL·Alembic·FastAPI 배포를 사용하며 validation runner는 합성 fixture 준비, HTTP orchestration, 독립 DB 재조회와 정리만 담당한다. 로컬 FastAPI는 Git에서 제외된 `.env`, staging FastAPI는 배포 secret을 사용하고 runner는 둘 다 읽지 않는다. 실제 Provider SDK 호출은 FastAPI가 수행하며 runner·Frontend·Swagger는 Provider를 직접 호출하거나 credential을 출력하지 않는다.
 
 **Design:** `docs/designs/ceohwj/ai-one-cycle-release-validation-design.md`
 
@@ -23,6 +23,8 @@
 - `CLOVA_OCR_INVOKE_URL`은 Provider 호출 전에 HTTPS인지 확인한다. lowercase hostname은
   `.apigw.ntruss.com`으로 끝나고 앞 label이 하나 이상이어야 하며 username·password·fragment는 없어야 한다.
 - runner와 공개 기록에는 생성 본문, 질문 전문, token과 credential을 포함하지 않는다.
+- runner는 `.env`를 로드하지 않는다. application DB credential과 validation 설정은 별도 환경으로 주입하고,
+  `CLOVA_OCR_SECRET`, `OPENAI_API_KEY` 이름이 runner 환경에 존재하면 값 확인 없이 실행을 거부한다.
 - `app/` runner·fixture 구현은 `@phina-io`의 구현 또는 리뷰를 거친다.
 - Frontend 코드는 `@solia142`의 별도 범위다.
 
@@ -31,27 +33,33 @@
 구현과 문서는 다음 명령 형태를 그대로 제공한다.
 
 ```bash
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+# DB_*, ENV, RELEASE_VALIDATION_ALLOWED, CLOVA_OCR_INVOKE_URL, STORAGE_DIR는
+# credential을 출력하지 않는 별도 runner 환경으로 먼저 주입한다.
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
   --candidate-image /private/tmp/ai-one-cycle-candidate.png \
   --scenario-draft /private/tmp/ai-one-cycle-clova-openai-v1.draft.json
 
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
   --scenario app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
 
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id <uuid> \
   --base-url https://<합의된-staging-host>/api/v1 \
   --scenario app/release_validation/scenarios/ai-one-cycle-v1.json \
   --commit-sha <40자리-commit-sha>
 
-uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -201,7 +209,8 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
   - HTTPS가 아니거나 합의된 staging API host와 일치하지 않는 base URL
   - staging base URL 누락
   - commit SHA와 image digest가 모두 누락
-  - staging runner 환경에 `OPENAI_API_KEY`가 존재함
+  - image digest가 0이 아닌 lowercase 64자리 hex의 canonical `sha256:<digest>` 형식이 아님
+  - staging runner 환경에 `CLOVA_OCR_SECRET` 또는 `OPENAI_API_KEY`가 존재함
 
   Production 문자열 deny-list가 아니라 staging 값의 positive allow gate를 사용하며, guard 통과 전에는
   DB session을 만들지 않는다. 로컬 결정적 테스트는 Key 존재 여부가 아니라 AI dependency가 fake로
@@ -252,8 +261,9 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
   run·preflight에 기존 state가 있으면 어떤 변경도 하기 전에 exit `2`로 종료하며 cleanup-only만 기존 state를
   열 수 있다. run ID, mode, environment,
   scenario version, base URL, 비밀값을 제외한 DB host·port·database name, 합성 root locator와 성공 응답으로
-  받은 ID를 즉시 기록한다. local mode는 resolved `STORAGE_DIR`, source image SHA와 storage baseline도 함께
-  기록한다. transport 결과가 불명확하면 `transport_failed_at`, `cleanup_not_before`를 기록한다. local file
+  받은 ID를 즉시 기록한다. 합성 user ID는 fixture DB commit 전에 생성해 최초 state에 기록한다. local mode는
+  resolved `STORAGE_DIR`, source image SHA와 storage baseline도 함께 기록한다. transport 결과가 불명확하면
+  `transport_failed_at`, `cleanup_not_before`를 기록한다. local file
   cleanup phase는 `NOT_STARTED|DELETE_INTENT|DONE`으로 기록하고 모든 state 갱신은 `0600` 임시 파일을
   write·fsync한 뒤 atomic replace한다.
 
@@ -277,8 +287,9 @@ uv run python -m app.release_validation.ai_one_cycle_smoke \
   정확히 일치해야 한다. local cleanup은 추가로 같은 resolved `STORAGE_DIR`을 요구한다. 현재 시각이
   `cleanup_not_before` 전이거나 identity가 다르면 조회·삭제 없이 `PENDING`, exit `3`이다. 정상 업로드 응답이
   있으면 `document_id`·허용 확장자·storage 내부 경로를 검증한다. 응답을
-  잃었다면 baseline 이후 생긴 파일 중 source
-  SHA-256과 같은 후보가 정확히 한 개일 때만 orphan으로 간주한다. 후보가 0개 또는 여러 개면 삭제하지 않고
+  잃었다면 baseline 이후 생긴 파일 중 source SHA-256이 같고 합성 user 소유
+  `MEDICAL_DOCUMENT.object_key`와 파일명이 일치하는 후보가 정확히 한 개일 때만 orphan으로 간주한다. 후보가
+  0개 또는 여러 개면 삭제하지 않고
   `PENDING`을 유지한다. 정확한 path·SHA를 state에 기록하고 `DELETE_INTENT`를 atomic 저장한 뒤 삭제하고
   `DONE`을 저장한다. 재실행에서 `DELETE_INTENT`이고 해당 파일이 없으면 `DONE`으로 전환해 DB cleanup을
   계속한다. `DONE`과 파일 0개는 정상이다. cleanup commit 후 새 session과 파일 검사에서 잔존 row·파일이
@@ -352,11 +363,12 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
   transport 결과가 불명확하면 동일 run-state를 남기고 cleanup-only로만 정리한다.
 
   로컬 FastAPI는 `.env`의 `CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`로 실제 Provider를
-  호출한다. runner가 같은 `.env` 설정을 읽는 것은 허용하지만 Provider SDK를 직접 호출하거나 credential을
-  HTTP·JSON·로그에 출력하지 않는지 테스트한다. URL은 호출 전에 HTTPS, hostname
+  호출한다. runner는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 전달받거나 runtime environment와 guard에서
+  읽지 않고 Backend API만 실제 TCP로 호출하는지 테스트한다. runner는 `.env` 로딩을 비활성화하고
+  application DB credential과 validation 설정만 별도 환경으로 받는다. URL은 호출 전에 HTTPS, hostname
   `.apigw.ntruss.com` suffix와 그 앞의 하나 이상 label, username·password·fragment 부재를 positive
-  allow-list로 검사한다. 빈 credential과
-  repository placeholder도 값을 출력하지 않고 거부한다.
+  allow-list로 검사한다. Provider credential 설정의 유효성은 이를 보유한 FastAPI의 실제 OCR·Guide·Chat
+  요청 결과로 확인하며, credential을 HTTP·JSON·로그에 출력하지 않는다.
 
 - [ ] **Step 2: 실제 OCR HTTP 흐름을 추가한다**
 

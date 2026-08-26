@@ -1,11 +1,14 @@
 import logging
+import os
 
 from app.core.config import Config
 from app.core.logger import setup_logger
 
 
 def get_config() -> Config:
-    #  DB 설정은 BaseSettings가 .env에서 읽는다.
+    if os.environ.get("RELEASE_VALIDATION_RUNNER") == "1":
+        return Config(_env_file=None)  # type: ignore[call-arg]
+    # DB 설정은 BaseSettings가 .env에서 읽는다.
     return Config()  # type: ignore[call-arg]
 
 
