@@ -12,20 +12,43 @@ from ai_worker.core.config import Config
 _REFERENCE_INSTANT = datetime(2026, 1, 1)
 
 
-def test_config_loads_with_default_timezone_fallback() -> None:
-    """환경변수 없이도 tzdata 유무와 무관하게 Config가 생성됩니다."""
+def _raise_zoneinfo_not_found(key: str) -> zoneinfo.ZoneInfo:
+    raise zoneinfo.ZoneInfoNotFoundError(f"No time zone found with key {key}")
+
+
+def test_config_loads_with_default_timezone() -> None:
+    """환경변수 없이도 tzdata 유무와 무관하게 Config가 생성됩니다(현재 실행 환경의 정상 경로)."""
     config = Config()
 
     assert config.TIMEZONE.utcoffset(_REFERENCE_INSTANT) == timedelta(hours=9)
 
 
 def test_config_accepts_timezone_env_var_string(monkeypatch: pytest.MonkeyPatch) -> None:
-    """TIMEZONE 환경변수 문자열이 tzinfo로 변환되어 검증을 통과합니다."""
+    """TIMEZONE 환경변수 문자열이 tzinfo로 변환되어 검증을 통과합니다(현재 실행 환경의 정상 경로)."""
     monkeypatch.setenv("TIMEZONE", "Asia/Seoul")
 
     config = Config()
 
     assert config.TIMEZONE.utcoffset(_REFERENCE_INSTANT) == timedelta(hours=9)
+
+
+def test_config_default_factory_falls_back_when_zoneinfo_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tzdata가 없어 ZoneInfo가 실패하는 환경(Windows 로컬 등)을 직접 재현해 기본값 fallback을 확인합니다."""
+    monkeypatch.setattr(zoneinfo, "ZoneInfo", _raise_zoneinfo_not_found)
+
+    config = Config(_env_file=None)  # type: ignore[call-arg]
+
+    assert config.TIMEZONE == timezone(timedelta(hours=9), name="Asia/Seoul")
+
+
+def test_config_env_var_falls_back_when_zoneinfo_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TIMEZONE=Asia/Seoul 환경변수 입력도 ZoneInfo 부재 시 같은 고정 UTC+9로 fallback합니다."""
+    monkeypatch.setattr(zoneinfo, "ZoneInfo", _raise_zoneinfo_not_found)
+    monkeypatch.setenv("TIMEZONE", "Asia/Seoul")
+
+    config = Config(_env_file=None)  # type: ignore[call-arg]
+
+    assert config.TIMEZONE == timezone(timedelta(hours=9), name="Asia/Seoul")
 
 
 def test_config_accepts_utc_timezone_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
