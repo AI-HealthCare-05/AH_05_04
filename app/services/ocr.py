@@ -103,7 +103,7 @@ class OcrService:
                 object_key=document.object_key,
                 file_mime_type=document.file_mime_type,
             )
-        except OcrProviderTimeoutError as err:
+        except OcrProviderTimeoutError:
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_PROVIDER_TIMEOUT",
@@ -120,8 +120,8 @@ class OcrService:
                         reason="PROVIDER_TIMEOUT",
                     )
                 ],
-            ) from err
-        except OcrProviderConnectionError as err:
+            ) from None
+        except OcrProviderConnectionError:
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_PROVIDER_CALL_FAILED",
@@ -138,8 +138,8 @@ class OcrService:
                         reason="CONNECTION_FAILED",
                     )
                 ],
-            ) from err
-        except OcrProviderUnavailableError as err:
+            ) from None
+        except OcrProviderUnavailableError:
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_PROVIDER_UNAVAILABLE",
@@ -151,13 +151,39 @@ class OcrService:
                 code="OCR_PROVIDER_UNAVAILABLE",
                 message="OCR 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
                 details=[ErrorDetail(field="provider", reason="PROVIDER_UNAVAILABLE")],
-            ) from err
-        except OcrProcessingError as err:
-            logger.warning(
-                "OCR processing rejected: document_id=%s reason=%s",
-                document_id,
-                str(err),
+            ) from None
+
+
+        except OcrProcessingError:
+
+            # Provider/OCR 예외 원문에는 민감한 OCR 응답이 포함될 수 있으므로
+
+            # API 예외 체인과 로그에 원문을 남기지 않습니다.
+
+            await self._ocr_repo.mark_failed(
+
+                job,
+
+                error_code="OCR_PROCESSING_FAILED",
+
+                error_message=_ENGINE_ERROR_MESSAGE,
+
+                completed_at=datetime.now(UTC),
+
             )
+
+            raise ApiError(
+
+                status_code=500,
+
+                code="OCR_PROCESSING_FAILED",
+
+                message="처방전 인식에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.",
+
+                details=[ErrorDetail(field="ocr", reason="OCR_ENGINE_ERROR")],
+
+            ) from None
+        except Exception:
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_PROCESSING_FAILED",
@@ -169,20 +195,7 @@ class OcrService:
                 code="OCR_PROCESSING_FAILED",
                 message="처방전 인식에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.",
                 details=[ErrorDetail(field="ocr", reason="OCR_ENGINE_ERROR")],
-            ) from err
-        except Exception as err:
-            await self._ocr_repo.mark_failed(
-                job,
-                error_code="OCR_PROCESSING_FAILED",
-                error_message=_ENGINE_ERROR_MESSAGE,
-                completed_at=datetime.now(UTC),
-            )
-            raise ApiError(
-                status_code=500,
-                code="OCR_PROCESSING_FAILED",
-                message="처방전 인식에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.",
-                details=[ErrorDetail(field="ocr", reason="OCR_ENGINE_ERROR")],
-            ) from err
+            ) from None
 
         await self._ocr_repo.replace_fields(
             ocr_job=job,

@@ -116,7 +116,7 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 - 같은 Chat session에는 non-terminal Job을 하나만 허용하고 다른 키의 중복 요청은 `409 CHAT_JOB_IN_PROGRESS`로 거부합니다.
 - 결과는 Backend가 제공하는 opaque `result_url`로 조회하며 다른 사용자의 Job·결과는 `404`로 숨깁니다.
 
-세부 목표는 [비동기 Job 계약](./contracts/async-job-v1.md), [멱등성 계약](./contracts/idempotency-v1.md), [Outbox·Stream 계약](./contracts/outbox-stream-v1.md)을 따릅니다. 계약 파일의 존재는 구현 완료를 뜻하지 않습니다.
+세부 목표는 [비동기 Job 계약](./contracts/targets/post-mvp-1/async-job-v1.md), [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md), [Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)을 따릅니다. 계약 파일의 존재는 구현 완료를 뜻하지 않습니다.
 
 ### Track B·C·D 목표 API 표면
 
@@ -140,7 +140,7 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 | D | `POST` | `/api/v1/otc-evaluations` | 확정 OTC 대상 동기 평가 |
 | D | `GET` | `/api/v1/otc-evaluations/{id}` | 저장된 평가 snapshot 조회 |
 
-Track B·C·D 쓰기 API는 [멱등성 계약](./contracts/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/checkin-v1.md)과 [Safety Result 계약](./contracts/safety-result-v1.md)을 기준으로 합니다.
+Track B·C·D 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/targets/post-mvp-1/checkin-v1.md)과 [Safety Result 계약](./contracts/targets/post-mvp-1/safety-result-v1.md)을 기준으로 합니다.
 
 ## 복약 챗봇
 

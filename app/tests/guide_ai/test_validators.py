@@ -53,6 +53,23 @@ def test_validator_rejects_duplicate_missing_or_unknown_source_indexes(indexes: 
         "7일 복용하세요.",
         "한 알 더 드세요.",
         "한알 더 드세요.",
+        "한알씩 복용하세요.",
+        "두정씩 복용하세요.",
+        "두번씩 복용하세요.",
+        "열두정 복용하세요.",
+        "스무알 복용하세요.",
+        "스물한알 복용하세요.",
+        "백정 복용하세요.",
+        "반알 복용하세요.",
+        "일 정 복용하세요.",
+        "한 정 복용하세요.",
+        "한 번 복용하세요.",
+        "이 번 복용하세요.",
+        "두정씩은 복용하세요.",
+        "한 번만 복용하세요.",
+        "3일간 복용하세요.",
+        "5mg을 복용하세요.",
+        "두 알을 복용하세요.",
     ],
 )
 def test_validator_rejects_new_prescription_numbers(text: str) -> None:
@@ -60,6 +77,23 @@ def test_validator_rejects_new_prescription_numbers(text: str) -> None:
         validate_generated_draft(_draft(guidance=text), medication_count=1)
 
     assert exc_info.value.rule_id == "RX_NUMERIC_IN_AI_TEXT"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "일반적인 복약 안내를 확인하세요.",
+        "약을 한꺼번에 복용하지 마세요.",
+        "반드시 처방 지시를 확인하세요.",
+        "복용 일정 확인이 필요합니다.",
+        "한정 안내를 확인하세요.",
+        "이번 안내를 확인하세요.",
+        "한번 확인해보세요.",
+        "1회용 포장입니다.",
+    ],
+)
+def test_validator_allows_korean_words_that_are_not_prescription_quantities(text: str) -> None:
+    validate_generated_draft(_draft(guidance=text), medication_count=1)
 
 
 @pytest.mark.parametrize(

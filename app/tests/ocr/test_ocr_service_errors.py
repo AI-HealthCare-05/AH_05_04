@@ -1,3 +1,5 @@
+import logging
+import traceback
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
@@ -5,6 +7,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from app.core.errors import ApiError
 from app.dtos.ocr import ExecuteOcrRequest
@@ -37,6 +40,10 @@ class RaisingOcrEngine:
     ) -> OcrRecognitionResult:
         _ = object_key, file_mime_type
         raise self._error
+
+
+class SyntheticOcrValidationPayload(BaseModel):
+    quantity: int
 
 
 @pytest.mark.parametrize(
@@ -146,6 +153,57 @@ async def test_execute_ocr_converts_engine_error_and_marks_job_failed(
     mark_failed_call = ocr_repository_mock.mark_failed.await_args
     assert mark_failed_call.kwargs["error_code"] == expected_code
     assert "민감한" not in mark_failed_call.kwargs["error_message"]
+
+
+async def test_execute_ocr_validation_failure_does_not_expose_recognized_content(
+    capfd: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sentinel = "SENTINEL-OCR-VALIDATION-CONTENT"
+    with pytest.raises(ValidationError) as validation_error:
+        SyntheticOcrValidationPayload.model_validate({"quantity": sentinel})
+
+    document_id = uuid4()
+    user = cast(User, SimpleNamespace(id=uuid4()))
+    document = cast(
+        MedicalDocument,
+        SimpleNamespace(id=document_id, object_key="prescription.png", file_mime_type="image/png"),
+    )
+    job = cast(OcrJob, SimpleNamespace(id=uuid4()))
+    document_repository_mock = AsyncMock(spec=MedicalDocumentRepository)
+    document_repository_mock.get_owned.return_value = document
+    ocr_repository_mock = AsyncMock(spec=OcrRepository)
+    ocr_repository_mock.get_active_job.return_value = None
+    ocr_repository_mock.create_job.return_value = job
+    ocr_repository_mock.mark_processing.return_value = job
+    ocr_repository_mock.mark_failed.return_value = job
+    service = OcrService(
+        document_repository=cast(MedicalDocumentRepository, document_repository_mock),
+        ocr_repository=cast(OcrRepository, ocr_repository_mock),
+        engine=RaisingOcrEngine(validation_error.value),
+    )
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(ApiError) as api_error:
+        await service.execute_ocr(
+            user=user,
+            document_id=document_id,
+            request=ExecuteOcrRequest(force_reprocess=False),
+        )
+
+    captured = capfd.readouterr()
+    mark_failed_call = ocr_repository_mock.mark_failed.await_args
+    exposed_text = "\n".join(
+        (
+            captured.out,
+            captured.err,
+            caplog.text,
+            "".join(traceback.format_exception(api_error.value)),
+            api_error.value.message,
+            str(mark_failed_call.kwargs["error_message"]),
+        )
+    )
+    assert sentinel not in exposed_text
 
 
 async def test_get_ocr_job_result_exposes_safe_error_message() -> None:

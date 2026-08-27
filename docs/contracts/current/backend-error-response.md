@@ -30,7 +30,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 ## 민감정보 노출 방지
 
-**이미 정해진 보안 원칙**: [`SECURITY.md`](../../SECURITY.md)는 "의료·개인정보 응답은 기본적으로 `Cache-Control: no-store`를 적용합니다"를 현재 원칙으로 정하고 있다. 이는 Post-MVP 목표가 아니라 지금 지켜야 하는 규칙이다. 같은 원칙에 따라 `details[].rejected_value`에도 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않아야 한다.
+**이미 정해진 보안 원칙**: [`SECURITY.md`](../../../SECURITY.md)는 "의료·개인정보 응답은 기본적으로 `Cache-Control: no-store`를 적용합니다"를 현재 원칙으로 정하고 있다. 이는 Post-MVP 목표가 아니라 지금 지켜야 하는 규칙이다. 같은 원칙에 따라 `details[].rejected_value`에도 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않아야 한다.
 
 **현재 미충족 상태**: 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않아 오류 응답에서 원칙을 충족하지 못한다. 인증 API(`login`, `token/refresh`)는 access token을 반환하는 성공 응답에도 이 헤더가 없고, `GET`/`PATCH /users/me`도 개인정보를 반환하면서 헤더가 없다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 원칙을 충족하지 못한다. 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
 
@@ -125,7 +125,7 @@ raise ApiError(
 
 ### Post-MVP
 
-Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](./async-job-v1.md), [멱등성 계약 v1](./idempotency-v1.md), [처방 버전 계약 v1](./prescription-version-v1.md)에서 확인한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../AGENTS.md) 기준).
+Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)에서 확인한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
 
 ## 도메인별 오류 코드
 
@@ -156,17 +156,17 @@ Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](./async-job-v1.md), [
 
 ### Post-MVP
 
-Post-MVP 도메인별 오류 코드는 각 승인된 목표 계약에서 확인한다 — 예: `PRESCRIPTION_MEDICATION_REQUIRED`(422)는 [처방 버전 계약 v1](./prescription-version-v1.md).
+Post-MVP 도메인별 오류 코드는 각 승인된 목표 계약에서 확인한다 — 예: `PRESCRIPTION_MEDICATION_REQUIRED`(422)는 [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md).
 
 아직 어떤 목표 계약에도 없어 별도 Decision이 필요한 항목:
 
 - `PROFILE_NOT_FOUND`, `UPLOAD_FAILED`, `MEDICATION_SCHEDULE_NOT_FOUND`, `MEDICATION_LOG_ALREADY_EXISTS`, `MEDICATION_LOG_INVALID_STATUS`: 뒷받침하는 승인된 계약이 없어 어떤 문서에도 등록하지 않는다.
 - `OCR_LOW_CONFIDENCE`: 저신뢰 OCR 결과를 요청 실패(`422`)로 볼지, OCR 결과 검수 상태(`REVIEW_REQUIRED`, 아직 미구현)로 볼지는 Product·OCR·Frontend·Backend가 함께 결정해야 하는 별도 Decision 사안이다. 이번 PR에서는 HTTP status를 확정하지 않는다.
-- `CITATION_NOT_FOUND`는 아직 승인되지 않은 출처 상세 조회 API를 전제하며, 기존 [Safety Result 계약 v1](./safety-result-v1.md)의 `fallback_code`(`NO_APPROVED_EVIDENCE` 등)와 의미가 겹칠 수 있어 해당 API 승인 시 함께 재검토한다.
+- `CITATION_NOT_FOUND`는 아직 승인되지 않은 출처 상세 조회 API를 전제하며, 기존 [Safety Result 계약 v1](../targets/post-mvp-1/safety-result-v1.md)의 `fallback_code`(`NO_APPROVED_EVIDENCE` 등)와 의미가 겹칠 수 있어 해당 API 승인 시 함께 재검토한다.
 
-가이드 생성 작업이 정상적으로 접수되었다는 뜻의 `202`는 오류가 아니라 성공 응답이므로 이 표에 두지 않습니다. Post-MVP-1에서 공통 비동기 Job 기반이 도입되면 `202 {"data": JobStatusResponse}` 형태로 접수되며, 세부 응답 형태는 [비동기 Job 계약 v1](./async-job-v1.md)을 따릅니다.
+가이드 생성 작업이 정상적으로 접수되었다는 뜻의 `202`는 오류가 아니라 성공 응답이므로 이 표에 두지 않습니다. Post-MVP-1에서 공통 비동기 Job 기반이 도입되면 `202 {"data": JobStatusResponse}` 형태로 접수되며, 세부 응답 형태는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md)을 따릅니다.
 
-AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 오류 코드가 아니라 정상 응답의 상태 축으로 구분합니다. 확정된 상태 축은 [Safety Result 계약 v1](./safety-result-v1.md)을 따르며, 요약은 [복약 챗봇 Backend-AI Core 계약](./medication-chat-ai-backend.md)에 둡니다.
+AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 오류 코드가 아니라 정상 응답의 상태 축으로 구분합니다. 확정된 상태 축은 [Safety Result 계약 v1](../targets/post-mvp-1/safety-result-v1.md)을 따르며, 요약은 [복약 챗봇 Backend-AI Core 계약](./medication-chat-ai-backend.md)에 둡니다.
 
 ## 오류 코드 구분 기준
 
@@ -192,6 +192,6 @@ raise ApiError(
 ## 새 오류 코드 추가 기준
 
 - 기존 코드와 의미가 중복되지 않는지 먼저 확인합니다.
-- 새 오류 코드나 기존 코드의 의미 변경은 [AGENTS.md](../../AGENTS.md) 기준에 따라 먼저 팀 Decision 또는 Contract Freeze 승인을 받습니다. 승인 전에는 MVP·Post-MVP 표 어디에도 등록하지 않습니다.
+- 새 오류 코드나 기존 코드의 의미 변경은 [AGENTS.md](../../../AGENTS.md) 기준에 따라 먼저 팀 Decision 또는 Contract Freeze 승인을 받습니다. 승인 전에는 MVP·Post-MVP 표 어디에도 등록하지 않습니다.
 - 승인된 뒤에 HTTP 상태 코드와 사용자 메시지를 함께 정의하고, 실제 사용 상황 예시를 문서에 추가합니다.
 - 이 문서와 Backend 코드, 관련 테스트를 같은 PR에서 함께 갱신합니다. 실제 구현이 아직 없는 경우에만 "Post-MVP" 표에 등록하되, 이 역시 사전 승인이 있어야 합니다.
