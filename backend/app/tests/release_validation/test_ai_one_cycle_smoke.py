@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from io import StringIO
@@ -52,6 +53,20 @@ from app.release_validation.ai_one_cycle_smoke import (
 from app.services.chat_ai import ChatReplyOutput
 from app.services.guide_ai.schemas import GuideGenerationResult
 from app.tests.conftest import test_engine
+
+# backend/app/tests/release_validation/에서 4단계 위가 backend/이며, subprocess로 새로
+# 실행하는 파이썬은 pytest의 rootdir 기반 sys.path 삽입을 물려받지 않아 app 패키지를
+# 직접 찾지 못한다. PYTHONPATH로 backend/를 명시해 `-m app...` import를 가능하게 한다.
+_BACKEND_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
+    process_env = dict(base_env)
+    existing_pythonpath = process_env.get("PYTHONPATH")
+    process_env["PYTHONPATH"] = (
+        f"{_BACKEND_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(_BACKEND_ROOT)
+    )
+    return process_env
 
 
 @pytest.mark.parametrize(
@@ -131,7 +146,7 @@ def test_live_read_timeout_rejects_invalid_timeout(
 def test_cli_rejects_non_uuid_run_id_before_any_state_change(tmp_path: Path) -> None:
     scenario_path = tmp_path / "scenario.json"
     scenario_path.write_text("{}", encoding="utf-8")
-    process_env = os.environ.copy()
+    process_env = _subprocess_env(os.environ)
     process_env.pop("OPENAI_API_KEY", None)
     process_env.pop("CLOVA_OCR_SECRET", None)
 
@@ -184,6 +199,7 @@ def test_cli_argument_errors_emit_exactly_one_json_object() -> None:
         check=False,
         capture_output=True,
         text=True,
+        env=_subprocess_env(os.environ),
     )
 
     assert completed.returncode == 2

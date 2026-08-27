@@ -32,7 +32,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 **이미 정해진 보안 원칙**: [`SECURITY.md`](../../../SECURITY.md)는 "의료·개인정보 응답은 기본적으로 `Cache-Control: no-store`를 적용합니다"를 현재 원칙으로 정하고 있다. 이는 Post-MVP 목표가 아니라 지금 지켜야 하는 규칙이다. 같은 원칙에 따라 `details[].rejected_value`에도 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않아야 한다.
 
-**현재 미충족 상태**: 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않아 오류 응답에서 원칙을 충족하지 못한다. 인증 API(`login`, `token/refresh`)는 access token을 반환하는 성공 응답에도 이 헤더가 없고, `GET`/`PATCH /users/me`도 개인정보를 반환하면서 헤더가 없다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 원칙을 충족하지 못한다. 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
+**현재 미충족 상태**: 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`backend/app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않아 오류 응답에서 원칙을 충족하지 못한다. 인증 API(`login`, `token/refresh`)는 access token을 반환하는 성공 응답에도 이 헤더가 없고, `GET`/`PATCH /users/me`도 개인정보를 반환하면서 헤더가 없다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 원칙을 충족하지 못한다. 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
 
 ## HTTP 상태 코드 기준
 

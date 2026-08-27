@@ -5,7 +5,9 @@ from typing import Any
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MIGRATION_PATH = PROJECT_ROOT / "alembic" / "versions" / "529b2a36b677_add_medication_strength_and_ocr_prompt_.py"
+MIGRATION_PATH = (
+    PROJECT_ROOT / "backend" / "alembic" / "versions" / "529b2a36b677_add_medication_strength_and_ocr_prompt_.py"
+)
 
 
 def _load_migration() -> Any:

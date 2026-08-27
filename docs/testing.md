@@ -13,7 +13,7 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 
 ### 현재 MVP
 
-- `app/tests/`: Backend API·서비스·DB, OCR·가이드·챗봇 AI 어댑터 테스트
+- `backend/app/tests/`: Backend API·서비스·DB, OCR·가이드·챗봇 AI 어댑터 테스트
 - `tests/contract/`: 현재 Backend–AI Core 경계 계약. OpenAPI 회귀 테스트는 아직 없음
 - `tests/integration/`: 공통 CORS·오류 동작 검증. 현재 기본 CI 명령에는 포함되지 않음
 - `tests/e2e/`: 전체 사용자 여정 테스트를 위한 준비 영역이며 현재 자동화된 E2E 테스트는 없음
@@ -57,7 +57,7 @@ bash scripts/ci/run_test.sh
 ```
 
 기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
-- `app/tests/chat_integration/`을 포함한 `app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
+- `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
 - `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
 - `tests/integration/`, `tests/e2e/`, `ai_worker/tests/ocr/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`, `ai_worker/tests/evaluation/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.

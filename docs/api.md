@@ -8,7 +8,7 @@
 
 ## 공통 오류 응답 형식
 
-등록된 Router endpoint 안에서 처리되는 오류 응답은 아래 형식(`app/core/errors.py`)을 따릅니다.
+등록된 Router endpoint 안에서 처리되는 오류 응답은 아래 형식(`backend/app/core/errors.py`)을 따릅니다.
 
 ```json
 {
@@ -21,7 +21,7 @@
 }
 ```
 
-- `trace_id`는 요청별 미들웨어(`app/main.py`)가 생성해 `request.state.trace_id`에 저장하고, 모든 에러 핸들러가 이 값을 재사용합니다(핸들러가 자체적으로 새 값을 만들지 않음). 성공 응답 body에는 아직 포함하지 않으며, 필요 시 로그·감사로그와 연결할 수 있도록 모든 요청에서 `request.state`에 존재합니다.
+- `trace_id`는 요청별 미들웨어(`backend/app/main.py`)가 생성해 `request.state.trace_id`에 저장하고, 모든 에러 핸들러가 이 값을 재사용합니다(핸들러가 자체적으로 새 값을 만들지 않음). 성공 응답 body에는 아직 포함하지 않으며, 필요 시 로그·감사로그와 연결할 수 있도록 모든 요청에서 `request.state`에 존재합니다.
 - 기존 `HTTPException` 기반 코드(`{"detail": "..."}`)도 전역 핸들러가 위 형식으로 자동 변환합니다. 이때 `code`는 `HTTP_ERROR`로 고정되고 `message`에 원래 `detail` 값이 들어갑니다.
 - 예상치 못한 예외는 `code: INTERNAL_SERVER_ERROR`, 500으로 변환되며 내부 오류 내용은 노출하지 않습니다.
 - 등록되지 않은 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405는 FastAPI/Starlette 라우팅 단계에서 `{"detail": ...}` 형식으로 반환될 수 있습니다.

@@ -73,7 +73,7 @@ HAS_TESTS=false
 
 # 실제 기본 테스트 실행 범위와 동일한 디렉터리를 확인합니다.
 for test_dir in \
-  ./app/tests \
+  ./backend/app/tests \
   ./tests/contract \
   ./tests/migration \
   ./ai_worker/tests/core; do
@@ -153,7 +153,7 @@ run_with_test_database() {
 
 echo "Apply Alembic migrations to test database"
 
-run_with_test_database alembic upgrade head
+run_with_test_database alembic -c backend/alembic.ini upgrade head
 
 echo "Validate migrated PostgreSQL schema"
 
@@ -164,7 +164,7 @@ echo "Run Pytest with Coverage"
 # Backend, 공통 계약, Worker 공통 골격 테스트를 한 번만 실행합니다.
 if ! run_with_test_database \
   coverage run -m pytest \
-  app \
+  backend/app \
   tests/contract \
   ai_worker/tests/core; then
   echo
