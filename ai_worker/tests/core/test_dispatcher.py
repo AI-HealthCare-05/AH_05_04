@@ -276,10 +276,7 @@ async def test_invalid_failure_code_is_converted_without_sensitive_value() -> No
 
     assert exc_info.value.failure_code == "INTERNAL_ERROR"
     assert "SYNTHETIC_API_KEY_NOT_ALLOWED" not in str(exc_info.value)
-    assert (
-        "SYNTHETIC_API_KEY_NOT_ALLOWED"
-        not in exc_info.value.safe_message
-    )
+    assert "SYNTHETIC_API_KEY_NOT_ALLOWED" not in exc_info.value.safe_message
 
 
 @pytest.mark.asyncio
