@@ -24,11 +24,15 @@ _SINO_KOREAN_ONES = r"(?:일|이|삼|사|오|육|칠|팔|구)"
 _SINO_KOREAN_TENS = rf"(?:십(?:{_SINO_KOREAN_ONES})?|{_SINO_KOREAN_ONES}십(?:{_SINO_KOREAN_ONES})?)"
 _SINO_KOREAN_NUMBER = rf"(?:{_SINO_KOREAN_ONES}|{_SINO_KOREAN_TENS}|(?:{_SINO_KOREAN_ONES})?백)"
 _KOREAN_QUANTITY = rf"(?:반|{_NATIVE_KOREAN_NUMBER}|{_SINO_KOREAN_NUMBER})"
+_KOREAN_PARTICLE = r"(?:에게|에서|에는|부터|까지|마다|보다|처럼|조차|으로|은|는|이|가|을|를|만|도|에|로|와|과|의)"
+_PRESCRIPTION_POSTFIX = rf"(?:(?:씩|간)(?:{_KOREAN_PARTICLE})?|{_KOREAN_PARTICLE})?"
 _ARABIC_NUMERIC_UNIT = re.compile(
-    rf"\d+(?:[.,]\d+)?\s*{_PRESCRIPTION_UNIT_PATTERN}(?:씩)?(?![가-힣])",
+    rf"\d+(?:[.,]\d+)?\s*{_PRESCRIPTION_UNIT_PATTERN}{_PRESCRIPTION_POSTFIX}(?![가-힣])",
     re.IGNORECASE,
 )
-_KOREAN_NUMERIC_UNIT = re.compile(rf"(?<![가-힣]){_KOREAN_QUANTITY}\s*{_PRESCRIPTION_UNIT_PATTERN}(?:씩)?(?![가-힣])")
+_KOREAN_NUMERIC_UNIT = re.compile(
+    rf"(?<![가-힣]){_KOREAN_QUANTITY}\s*{_PRESCRIPTION_UNIT_PATTERN}{_PRESCRIPTION_POSTFIX}(?![가-힣])"
+)
 _AMBIGUOUS_KOREAN_WORDS = frozenset({"일정", "한정", "이번", "한번"})
 _CHANGE_TERM = re.compile(r"중단|끊(?:기|어|으)|증량|감량|늘리|줄(?:이|여)|횟수\s*변경|용량\s*변경|복용\s*변경")
 _SAFE_NEGATION = re.compile(r"(?:하지\s*마세요|하지\s*말고|해서는\s*안\s*됩니다|하지\s*않(?:습니다|도록))")
