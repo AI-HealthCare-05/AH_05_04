@@ -466,7 +466,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(await getConfirmationButton()).toHaveProperty('disabled', true)
   })
 
-  it('화면에 존재하는 선택 필드도 모두 저장되어야 최종 확인할 수 있다', async () => {
+  it('값이 있는 선택 필드는 저장되어야 최종 확인할 수 있다.', async () => {
     const fields = makeCompleteFields().map((field) =>
       field.field_type === 'DOSE_UNIT'
         ? { ...field, confirmed_value: null, confirmation_status: 'PENDING' }
@@ -479,6 +479,40 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     const acknowledgement = await screen.findByRole('checkbox')
     expect(acknowledgement).toHaveProperty('disabled', true)
     expect(await getConfirmationButton()).toHaveProperty('disabled', true)
+  })
+
+  it('값이 없는 선택 TIMING 필드는 저장하지 않아도 최종 확인할 수 있다', async () => {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'TIMING'
+        ? {
+            ...field,
+            raw_value: null,
+            confirmed_value: null,
+            confirmation_status: 'PENDING',
+          }
+        : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+
+    renderPage()
+
+    const acknowledgement = await screen.findByRole('checkbox')
+    const confirmButton = await getConfirmationButton()
+
+    // 빈 선택 필드는 입력창에 유지하되 저장 대상으로 계산하지 않습니다.
+    expect(screen.getByLabelText('복용 조건')).toHaveProperty('value', '')
+    expect(screen.getByRole('button', {name: '선택 입력'}),).toHaveProperty('disabled', true)
+    expect(screen.getByText('6/6개 항목 저장 완료')).toBeTruthy()
+
+    // 필수 항목과 값이 있는 선택 항목이 모두 저장됐으므로
+    // 사용자 최종 확인 체크박스는 활성화됩니다.
+    expect(acknowledgement).toHaveProperty('disabled', false)
+    expect(confirmButton).toHaveProperty('disabled', true)
+
+    fireEvent.click(acknowledgement)
+
+    expect(confirmButton).toHaveProperty('disabled', false)
+    expect(updateExtractedField).not.toHaveBeenCalled()
   })
 
   it('동시 저장 중 하나가 먼저 완료되어도 남은 요청이 있으면 확정을 비활성화한다', async () => {

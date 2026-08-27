@@ -30,6 +30,8 @@
 
 `PRESCRIBED_DATE`가 없으면 `422 PRESCRIPTION_REQUIRED_FIELD_MISSING`, 값이 있지만 `date.fromisoformat()`이 파싱할 수 없는 형식이면 `422 VALIDATION_FAILED`를 반환합니다. 다른 필수 필드가 누락되면 `422 PRESCRIPTION_REQUIRED_FIELD_MISSING`을 반환합니다. 형식, 범위, 길이가 맞지 않으면 `422 VALIDATION_FAILED`를 반환합니다.
 
+선택 필드는 검수 화면에 빈 입력란으로 표시될 수 있습니다. 값이 없는 선택 필드는 저장하지 않아도 처방 확정을 차단하지 않으며, OCR 값이 있거나 사용자가 직접 입력한 선택 필드는 `confirmed_value`로 저장한 후 확정해야 합니다.
+
 ## 확정 이후 수정 금지
 
 - 처방이 확정된 문서의 extracted-field는 더 이상 수정할 수 없습니다.

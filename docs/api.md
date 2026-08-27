@@ -325,6 +325,8 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - `PRESCRIBED_DATE`는 `date.fromisoformat()`이 허용하는 ISO 8601 날짜 형식(예: `YYYY-MM-DD`, 하이픈 없는 `YYYYMMDD`, ISO week-date `YYYY-Www-D`), `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
 - `DOSE_UNIT`은 `VARCHAR(50)`, `TIMING`은 `VARCHAR(255)` 길이를 초과하면 저장 전에 `422 VALIDATION_FAILED`로 거부합니다.
 - 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
+- 값이 없는 선택 필드는 검수 화면에 빈 입력란으로 표시될 수 있으며, 저장하지 않아도 처방 확정을 차단하지 않습니다.
+- 선택 필드에 OCR 값이 있거나 사용자가 직접 값을 입력한 경우에는 `confirmed_value`로 저장해야 처방을 확정할 수 있습니다.
 
 ### 주요 오류
 
