@@ -1,6 +1,6 @@
 # 복약 가이드 Backend–AI 계약
 
-> **적용 구분:** 이 문서는 현재 구현된 동기 one-cycle의 Python 모듈 경계다. [비동기 Job 계약 v1](./async-job-v1.md)과 [Outbox·Stream 계약 v1](./outbox-stream-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. Worker 전환 시 이 문서의 입력·출력·Provider 오류 변환 경계를 재사용한다.
+> **적용 구분:** 이 문서는 현재 구현된 동기 one-cycle의 Python 모듈 경계다. [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md)과 [Outbox·Stream 계약 v1](../targets/post-mvp-1/outbox-stream-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. Worker 전환 시 이 문서의 입력·출력·Provider 오류 변환 경계를 재사용한다.
 
 | 항목 | 내용 |
 | --- | --- |
