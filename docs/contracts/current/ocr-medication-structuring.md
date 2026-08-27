@@ -35,7 +35,7 @@ CLOVA OCR과 OpenAI 구조화는 순차 실행되므로 OCR 요청의 Provider t
 | 필드 | 의미 | 예시 |
 | --- | --- | --- |
 | `MEDICATION_NAME` | 처방전에 기재된 약물명 또는 성분명 | `복합정` |
-| `MEDICATION_STRENGTH` | 제품 자체의 함량 | `100mg`, `5mg/100mg` |
+| `MEDICATION_STRENGTH` | 제품 자체의 함량 | `100mg`, `5mg/100mg`, `1mg/mL`, `500mg/5mL` |
 | `DOSE_VALUE` | 실제 1회 복용량 값 | `1` |
 | `DOSE_UNIT` | 실제 1회 복용 단위 | `정` |
 
@@ -60,7 +60,14 @@ CLOVA OCR과 OpenAI 구조화는 순차 실행되므로 OCR 요청의 Provider t
   - `MEDICATION_STRENGTH`, `DOSE_UNIT`: 필드 생략
 - 빈 검수 필드의 `raw_value`, `normalized_value`, `normalization_version`, `confidence_score`는 모두 `null`입니다.
 
-현재 validator는 `source_ids`의 존재와 결합 문자열의 포함 여부를 검증합니다. token의 좌표와 약제 행 인접성을 이용한 교차 행 결합 차단은 별도 후속 작업입니다.
+현재 validator는 `source_ids`의 존재 여부와 OCR 원문 근거를 필드별 기준으로 검증합니다.
+
+- `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 더 큰 숫자의 일부가 아닌 완전한 숫자 경계로 검증합니다.
+- `MEDICATION_NAME`은 OCR 약품명 전체와 일치해야 합니다.
+- 하나의 OCR token에 약품명과 제품 함량이 함께 있는 경우에는 약품명 뒤에 유효한 제품 함량만 남는 것을 허용합니다.
+- 공백으로 분리된 OCR token 결합과 필드별로 허용된 표기 차이만 인정합니다.
+
+token의 좌표와 약제 행 인접성을 이용한 교차 행 결합 차단은 별도 후속 작업입니다.
 
 ## medication_index
 

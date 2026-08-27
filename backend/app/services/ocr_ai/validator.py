@@ -39,6 +39,32 @@ _EMPTY_REVIEW_FIELD_TYPES = frozenset(
 # 예: "아침 저녁", "아침·저녁", "아침, 저녁"
 _TIMING_SEPARATOR_PATTERN = re.compile(r"[\s,·ㆍ/()\[\]]+")
 
+# 숫자 필드는 OCR 원문의 완전한 숫자 단위와 일치해야 합니다.
+# 예: OCR "10회"에서 LLM이 반환한 "1"은 근거로 인정하지 않습니다.
+_NUMERIC_GROUNDING_FIELD_TYPES = frozenset(
+    {
+        "DOSE_VALUE",
+        "FREQUENCY_PER_DAY",
+        "DURATION_DAYS",
+    }
+)
+
+# 숫자의 일부를 잘라서 일치시키는 것을 막기 위한 인접 문자입니다.
+# 단위 문자는 포함하지 않아 "1정"에서 DOSE_VALUE "1"은 허용합니다.
+_NUMERIC_NEIGHBOR_CHARACTERS = r"\d.,_eE"
+
+# MEDICATION_NAME은 OCR 원문과 완전히 일치하거나,
+# 뒤에 제품 함량만 남는 경우에만 근거가 있는 것으로 판단합니다.
+# _comparison_keys() 적용 후 비교하므로 소문자·공백 제거 기준입니다.
+_STRENGTH_UNIT_KEY = r"(?:mg|g|mcg|μg|ml|%)"
+_STRENGTH_AMOUNT_KEY = rf"\d+(?:\.\d+)?{_STRENGTH_UNIT_KEY}"
+_MEDICATION_STRENGTH_SUFFIX_PATTERN = re.compile(
+    rf"^\(?"
+    rf"{_STRENGTH_AMOUNT_KEY}"
+    rf"(?:/(?:{_STRENGTH_AMOUNT_KEY}|{_STRENGTH_UNIT_KEY}))*"
+    rf"\)?$"
+)
+
 
 def _comparison_keys(value: str) -> tuple[str, str]:
     """
@@ -70,6 +96,54 @@ def _comparison_keys(value: str) -> tuple[str, str]:
     )
 
     return spaced_key, compact_key
+
+
+def _contains_complete_numeric_value(
+    *,
+    generated_compact: str,
+    source_compact: str,
+) -> bool:
+    """
+    생성된 숫자가 OCR 숫자의 일부가 아닌 완전한 값인지 확인합니다.
+
+    단위 문자는 숫자 경계에 포함하지 않으므로
+    OCR "1정"에서 생성된 "1"은 정상적으로 허용합니다.
+    """
+    if not generated_compact:
+        return False
+
+    pattern = re.compile(
+        rf"(?<![{_NUMERIC_NEIGHBOR_CHARACTERS}])"
+        rf"{re.escape(generated_compact)}"
+        rf"(?![{_NUMERIC_NEIGHBOR_CHARACTERS}])"
+    )
+
+    return pattern.search(source_compact) is not None
+
+
+def _is_complete_medication_name(
+    *,
+    generated_compact: str,
+    source_compact: str,
+) -> bool:
+    """
+    약품명 전체가 OCR 근거와 일치하는지 확인합니다.
+
+    OCR token 하나에 약품명과 제품 함량이 함께 있는 경우에는
+    약품명 뒤에 유효한 제품 함량만 남는 것을 허용합니다.
+    """
+    if not generated_compact:
+        return False
+
+    if generated_compact == source_compact:
+        return True
+
+    if not source_compact.startswith(generated_compact):
+        return False
+
+    remaining_suffix = source_compact[len(generated_compact) :]
+
+    return _MEDICATION_STRENGTH_SUFFIX_PATTERN.fullmatch(remaining_suffix) is not None
 
 
 def _timing_comparison_key(value: str) -> str:
@@ -128,7 +202,25 @@ def _validate_grounded_value(
     source_value = " ".join(field.raw_value for field in source_fields)
     source_spaced, source_compact = _comparison_keys(source_value)
 
-    is_grounded = generated_spaced and (generated_spaced in source_spaced or generated_compact in source_compact)
+    if field_type in _NUMERIC_GROUNDING_FIELD_TYPES:
+        # 숫자는 부분 문자열이 아닌 완전한 숫자 경계로 검증합니다.
+        is_grounded = _contains_complete_numeric_value(
+            generated_compact=generated_compact,
+            source_compact=source_compact,
+        )
+    elif field_type == "MEDICATION_NAME":
+        # 약품명 임의 일부만 반환하는 것을 차단합니다.
+        # 단, 동일 OCR token 뒤에 제품 함량만 붙은 경우는 허용합니다.
+        is_grounded = _is_complete_medication_name(
+            generated_compact=generated_compact,
+            source_compact=source_compact,
+        )
+    else:
+        # 함량·단위·복용 시점 등은 OCR token 결합에 따른
+        # 공백 차이만 허용합니다.
+        is_grounded = bool(generated_spaced) and (
+            generated_spaced in source_spaced or generated_compact in source_compact
+        )
 
     # TIMING은 CLOVA가 "아침", "저녁", "식후"를 각각 반환하고
     # LLM이 "아침·저녁 식후"처럼 구분 기호를 넣어 조합할 수 있습니다.

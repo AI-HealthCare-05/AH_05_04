@@ -340,3 +340,132 @@ def test_validator_allows_equivalent_date_separators() -> None:
 
     assert prescribed_date.raw_value == "2026-08-26"
     assert prescribed_date.normalized_value == "2026-08-26"
+
+
+def test_validator_rejects_numeric_substring_from_larger_ocr_number() -> None:
+    raw_fields = [
+        _raw("합성의약품에이정"),
+        _raw("10회"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[1],
+                ),
+                frequency_per_day=GeneratedSourceValue(
+                    # OCR은 10회인데 LLM이 일부 숫자인 1만 반환한 경우입니다.
+                    value="1",
+                    source_ids=[2],
+                ),
+            )
+        ]
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    frequency = next(field for field in result if field.field_type == "FREQUENCY_PER_DAY")
+
+    # 근거 없는 숫자는 저장하지 않고 검수용 빈 필드로 대체합니다.
+    assert frequency.raw_value is None
+    assert frequency.confidence_score is None
+
+
+def test_validator_rejects_partial_medication_name() -> None:
+    raw_fields = [
+        _raw("합성의약품에이정"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    # OCR 약품명의 임의 일부만 반환한 경우입니다.
+                    value="합성의약품",
+                    source_ids=[1],
+                ),
+            )
+        ]
+    )
+
+    with pytest.raises(
+        OcrProcessingError,
+        match="MEDICATION_NAME",
+    ):
+        validate_and_convert_draft(
+            draft=draft,
+            raw_fields=raw_fields,
+            normalizer=MedicationNameNormalizer(),
+        )
+
+
+def test_validator_allows_dose_value_and_unit_from_same_ocr_token() -> None:
+    raw_fields = [
+        _raw("합성의약품에이정"),
+        _raw("1정"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[1],
+                ),
+                dose_value=GeneratedSourceValue(
+                    value="1",
+                    source_ids=[2],
+                ),
+                dose_unit=GeneratedSourceValue(
+                    value="정",
+                    source_ids=[2],
+                ),
+            )
+        ]
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    values = {field.field_type: field.raw_value for field in result}
+
+    # 정상적인 "1정" 분리는 계속 허용해야 합니다.
+    assert values["DOSE_VALUE"] == "1"
+    assert values["DOSE_UNIT"] == "정"
+
+
+def test_validator_allows_medication_name_and_strength_from_same_ocr_token() -> None:
+    raw_fields = [
+        _raw("합성의약품에이정 100mg"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[1],
+                ),
+                strength_text=GeneratedSourceValue(
+                    value="100mg",
+                    source_ids=[1],
+                ),
+            )
+        ]
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    values = {field.field_type: field.raw_value for field in result}
+
+    assert values["MEDICATION_NAME"] == "합성의약품에이정"
+    assert values["MEDICATION_STRENGTH"] == "100mg"

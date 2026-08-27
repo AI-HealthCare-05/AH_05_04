@@ -53,9 +53,19 @@ _DURATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# 수정: 여러 줄 약품명에서 공통으로 사용할 함량과 포장·제형 패턴입니다.
+# 제품 함량의 기본 단위와 숫자가 포함된 함량 표현입니다.
 _STRENGTH_UNIT_TEXT = r"(?:mg|g|mcg|µg|μg|㎍|㎎|mL|ml|㎖|%)"
-_STRENGTH_TEXT = rf"\d+(?:\.\d+)?\s*{_STRENGTH_UNIT_TEXT}"
+_STRENGTH_AMOUNT_TEXT = rf"\d+(?:\.\d+)?\s*{_STRENGTH_UNIT_TEXT}"
+
+# 일반 함량뿐 아니라 분모 숫자가 생략된 농도 표현도 허용합니다.
+# 예: 10mg, 500mg/5mL, 1mg/mL
+_STRENGTH_TEXT = (
+    rf"(?:"
+    rf"{_STRENGTH_AMOUNT_TEXT}\s*/\s*{_STRENGTH_UNIT_TEXT}"
+    rf"|{_STRENGTH_AMOUNT_TEXT}"
+    rf")"
+)
+# 약품명의 포장 수량과 제형을 판별하기 위한 패턴입니다.
 _PACKAGE_FORM_TEXT = (
     r"(?:연질|경질)?"
     r"(?:캡슐|정|포|병|앰플|바이알)"
@@ -88,10 +98,10 @@ _STRENGTH_PATTERN = re.compile(
     _STRENGTH_TEXT,
     re.IGNORECASE,
 )
-# 단일 함량과 복합 함량을 하나의 제품 함량 문자열로 처리합니다.
+# 단일 함량, 복합 함량, 농도 표현을 하나의 제품 함량으로 처리합니다.
 _STRENGTH_SEQUENCE_TEXT = (
     rf"{_STRENGTH_TEXT}"
-    rf"(?:\s*/\s*{_STRENGTH_TEXT})*"
+    rf"(?:\s*/\s*{_STRENGTH_AMOUNT_TEXT})*"
 )
 
 # 약품명 끝의 일반 함량과 괄호로 둘러싸인 함량을 분리합니다.

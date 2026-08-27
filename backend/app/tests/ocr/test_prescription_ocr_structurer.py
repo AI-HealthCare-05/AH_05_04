@@ -198,6 +198,11 @@ def test_structure_normalizes_medication_name() -> None:
             "암로디핀정",
             "5 mg",
         ),
+        (
+            "주사액 1mg/mL",
+            "주사액",
+            "1mg/mL",
+        ),
     ],
 )
 def test_structure_separates_trailing_medication_strength(
@@ -1121,6 +1126,12 @@ def test_structure_merges_package_continuation_with_strength() -> None:
             "90연질캡슐1000mg",
             "오메가-3-산에틸에스테르 90연질캡슐",
             "1000mg",
+        ),
+        # 별도 OCR 행의 농도 표현도 직전 약품의 제품 함량으로 병합합니다.
+        (
+            "1mg/mL",
+            "오메가-3-산에틸에스테르",
+            "1mg/mL",
         ),
     ],
 )

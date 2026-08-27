@@ -99,7 +99,7 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 - 사용자 확인 전 `confirmation_status`는 `UNCONFIRMED`이다.
 - 최종 처방에는 사용자가 확인한 `confirmed_value`만 사용한다.
 - `MEDICATION_STRENGTH`는 제품 함량을 표현하며 `DOSE_VALUE`·`DOSE_UNIT`과 구분합니다.
-- 제품 함량은 `100mg`, `5mg/100mg`, `500mg/5mL`과 같은 문자열을 보존합니다.
+- 제품 함량은 `100mg`, `5mg/100mg`, `1mg/mL`, `500mg/5mL`과 같은 문자열을 보존합니다.
 - 확인되지 않은 제품 함량은 최종 처방에 저장하지 않습니다.
 
 ## 확정 처방 약물

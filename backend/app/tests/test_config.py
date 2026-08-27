@@ -57,10 +57,11 @@ def test_config_rejects_legacy_environment(
 
 
 def test_ocr_structure_llm_is_disabled_by_default() -> None:
-    config = Config.model_validate(BASE_CONFIG)
+    # 실제 .env나 환경변수의 영향을 받지 않고
+    # Config에 선언된 Production 안전 기본값을 직접 검증합니다.
+    field_info = Config.model_fields["OCR_STRUCTURE_LLM_ENABLED"]
 
-    # 환경변수를 명시하지 않으면 OCR 원문을 외부 LLM에 전달하지 않습니다.
-    assert config.OCR_STRUCTURE_LLM_ENABLED is False
+    assert field_info.default is False
 
 
 @pytest.mark.parametrize(
