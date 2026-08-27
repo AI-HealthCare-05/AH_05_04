@@ -64,6 +64,22 @@ def test_fastapi_service_declares_no_storage_dir_environment_override() -> None:
         )
 
 
+def test_fastapi_service_declares_local_env_file() -> None:
+    """fastapi 서비스가 `envs/.local.env`를 `env_file`로 선언하는지 확인한다.
+
+    `docker run --env-file` 기반 테스트는 매번 직접 만든 env 파일을 사용하므로,
+    `docker-compose.yml`에서 이 `env_file:` 선언 자체가 실수로 삭제돼도 잡지 못한다.
+    이 테스트는 Compose YAML 구조를 직접 확인해 그 회귀를 잡는다(PR #87 리뷰 재지적).
+    """
+    fastapi_service = _load_fastapi_service()
+    env_files = fastapi_service.get("env_file")
+
+    assert env_files is not None, "fastapi 서비스에 env_file 선언이 없습니다."
+    assert "./envs/.local.env" in env_files, (
+        f"fastapi 서비스의 env_file이 envs/.local.env를 가리키지 않습니다: {env_files!r}"
+    )
+
+
 def test_fastapi_dockerfile_copies_from_backend_app() -> None:
     """빌드 컨텍스트가 저장소 루트일 때 Dockerfile 경로가 backend/app을 가리킵니다."""
     fastapi_service = _load_fastapi_service()
