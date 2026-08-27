@@ -2,7 +2,7 @@
 
 ## 목적과 범위
 
-현재 MVP의 실제 실행 구조와 Post-MVP 목표 구조를 구분해 기록합니다. 현재 MVP는 FastAPI Backend가 외부 AI 제공자를 직접 호출하는 동기 one-cycle 구조입니다. Redis 기반 비동기 AI Worker, RAG, 인용·NLI 검증과 AI 평가는 아직 실행 경로에 포함되지 않습니다.
+현재 MVP의 실제 실행 구조와 Approved Contract Freeze v4의 Post-MVP 목표 구조를 구분해 기록합니다. 현재 MVP는 FastAPI Backend가 외부 AI 제공자를 직접 호출하는 동기 one-cycle 구조입니다. Redis 기반 비동기 AI Worker, OCR 비-RAG LLM 구조화, MFDS 공식 Identity·Preflight, Rule-first RAG·Citation·Safety와 AI 평가는 아직 실행 경로에 포함되지 않습니다.
 
 ## 현재 MVP 구성요소
 
@@ -40,9 +40,9 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 - **PostgreSQL 실제 E2E 완료 범위**: 회원가입 → 로그인 → 업로드 → OCR → 검수·수정 → 처방 확정
 - **전체 AI E2E 확인 필요**: Guide 생성 → Guide 조회 → Chat 진입과 실제 OpenAI 응답까지의 전체 흐름은 최종 완료로 표시하지 않음
 - **Schema-only Post-MVP 골격**: `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation` 모델과 migration은 존재하지만 repository·service·API 실행 경로에는 연결되지 않음
-- **미구현 Post-MVP 실행 영역**: RAG 검색, Citation/NLI 검증, AI 평가, OTC와 비동기 Worker
+- **미구현 Post-MVP 실행 영역**: OCR 비-RAG LLM 구조화, MFDS Source/Catalog·Candidate Resolver·Identification·Preflight, Rule-first RAG·Citation·Safety, AI 평가와 비동기 Worker
 
-## Post-MVP-1 목표 구조 — Approved target / Not implemented
+## Post-MVP-1 목표 구조 — Approved v4 target / Not implemented
 
 아래 구조와 계약은 승인됐지만 현재 실행 경로에는 연결되지 않았다.
 
@@ -50,16 +50,19 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 - API는 PostgreSQL transaction에서 Job과 Transactional Outbox를 함께 commit하고, publisher가 Redis Stream에 at-least-once로 전달한다. Worker는 lease·fencing token을 사용하며 결과 DB commit 뒤에만 ACK한다.
 - 결과는 불변 `prescription_version_id`에 귀속하고 active version이 아니면 `STALE`로 공개를 차단한다.
 - Track B는 사용자가 확인한 schedule에서 occurrence를 생성하고 Check-in·감사 이력을 관리한다. Track C는 `NOT_TAKEN` 뒤 Safety assessment → Barrier → Support → ActionPlan 순서를 따른다.
-- Track D는 사용자가 확정한 OTC 제품 또는 성분을 구조화 rule과 승인 source version으로 동기 평가한다.
-- Track F는 승인 Source의 RAG, claim별 Citation, Safety 검증과 `PASS|LIMITED|REJECTED|STALE` 공개 결정을 분리한다.
-- `ASYNC_OCR`, `ASYNC_GUIDE`, `ASYNC_CHAT`으로 신규 접수 경로를 단계 전환한다. `PUBLIC_TRACK_C`, `PUBLIC_TRACK_D`, `PUBLIC_TRACK_F`는 별도 외부 승인 게이트 전까지 닫는다.
+- Track E는 OCR Job 안에서 CLOVA 결과의 승인된 최소 필드만 비-RAG LLM으로 정규화·구조화하고, 사용자 원본 대조·수정·확정 뒤에만 불변 Prescription Version을 만든다.
+- Track F는 사용자 확정 `medication_name + nullable strength_text`를 MFDS Source/Catalog에서 검색하고, Single Candidate Gate를 통과한 최대 1개 후보를 사용자 확인·거절로 연결한다. 확인은 append-only Identification을 만들며 모든 활성 약이 현재 Runtime Release Bundle에서 `MATCHED`일 때만 Guide·Chat Job을 접수한다.
+- Track F 실행 순서는 `Context Load → Scope Classifier → Identification Preflight → Rule Engine → Evidence Retrieval → Rerank → Evidence Gate → Answer Composer → Citation Validator → Safety Gate → Persist Result`로 고정한다. 자유 ReAct와 열린 웹 검색을 사용하지 않는다.
+- OTC는 별도 Track D, 화면 또는 전용 API가 아니다. 기존 Chat의 `OTC_INTERACTION` 질문 유형에서 승인된 처방약–OTC `interaction_rule`과 `rule_evidence`를 먼저 실행하고 Citation·Safety 경로를 공유한다.
+- 의미 기반 NLI와 고급 reranking은 Post-MVP-1 완료·공개 게이트에서 제외한다. Post-MVP-1은 결정적 Citation 완전성과 정책 검증을 적용한다.
+- `ASYNC_OCR`, `ASYNC_GUIDE`, `ASYNC_CHAT`으로 신규 접수 경로를 단계 전환한다. `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`는 별도 외부 승인 게이트 전까지 닫으며 OTC는 F 게이트를 공유한다.
 
 현재 동기 one-cycle은 각 전환 조건이 충족될 때까지 Current다. 목표를 구현하는 PR은 관련 계약, migration, OpenAPI/DTO, 계약·통합 테스트와 운영 증빙을 함께 갱신해야 한다.
 
 ## 주요 결정
 
 - MVP는 가이드와 챗봇의 기존 동기 one-cycle API 계약을 유지합니다.
-- RAG·인용·NLI·AI 평가·OTC를 구현된 기능이나 MVP 배포 게이트로 표시하지 않습니다.
+- Approved v4 목표나 PostgreSQL 전환 완료만으로 OCR LLM·공식 Identity·RAG·Citation·Safety·OTC·AI 평가를 구현된 기능이나 통과한 배포 게이트로 표시하지 않습니다.
 - Redis와 AI Worker의 존재만으로 비동기 처리가 구현됐다고 간주하지 않습니다.
 - RAG·Citation 테이블의 존재만으로 검색·인용 기능이 구현됐다고 간주하지 않습니다.
 - 운영 모델·timeout·동시 생성량·DB pool 수용량·외부 전송 데이터 승인은 `docs/deployment.md`에 실제 배포값으로 기록합니다.

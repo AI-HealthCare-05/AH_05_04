@@ -1,5 +1,7 @@
 # 복약 가이드 AI 생성 설계
 
+> 상태: 현재 동기 MVP 설계다. Approved v4는 공식 Identification Preflight와 승인 근거가 모두 통과한 약물에 한해 제한된 Medication-linked Guideline Card를 폐쇄형 데모 목표에 포함하지만, 광범위한 생활습관 수집·상담·운동 처방은 계속 제외한다.
+
 | 항목 | 내용 |
 | --- | --- |
 | GitHub Issue | `#11` — 복약 가이드 AI 생성 로직 구현, `#48` — 코드 정리 및 문서 정합성 보완 |

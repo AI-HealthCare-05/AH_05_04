@@ -5,7 +5,7 @@
 This file gives coding agents the minimum repository-wide collaboration rules. It does not replace the team's existing documentation.
 
 - Follow `CONTRIBUTING.md` and the GitHub Ruleset for branches, commits, reviews, pull requests, and completion checks.
-- Treat the review routing table in this file as the source of truth for path ownership and manually requested reviewers.
+- CODEOWNERS is not used. Every Issue and Pull Request names the implementation owner and responsible reviewer separately, and merge is allowed only after the responsible reviewer approves.
 - Follow `SECURITY.md` and `docs/privacy-safety.md` for security, patient data, and medical safety requirements.
 - Follow the relevant files under `docs/`, especially `docs/contracts/`, `docs/api.md`, `docs/data-schema.md`, and `docs/testing.md`, for architecture, contracts, schemas, and verification.
 
@@ -14,51 +14,37 @@ If these sources disagree or do not define a boundary clearly, do not invent a r
 ### Document Status and Authority
 
 - **Current runtime contract** means behavior supported together by merged code, migrations, the current OpenAPI/Pydantic DTOs, and automated tests.
-- **Approved target / Not implemented** documents are approved implementation targets, not current API, database, or deployment behavior. Document approval alone does not prove implementation, tests, external approval, or public release.
+- **Approved target / Not implemented** documents are approved implementation targets, not current API, database, or deployment behavior. Approved Contract Freeze v4 is the current normative target baseline, but document approval alone does not prove implementation, tests, external approval, or public release.
 - Product and planning documents provide intent and context but do not replace runtime contracts.
 - Use `docs/governance/post-mvp-1-document-authority.md` for Post-MVP-1 provenance and status interpretation. If current implementation and a target differ, do not combine or infer values; reconcile the source Decision and repository target with the relevant domain reviewers.
 - Changing an enum, API route or DTO, required field, error code, transaction order, or publication condition requires a new Decision or Contract Freeze version and matching contract and test updates.
 - Use the status directories as the source of truth for contract status. Promote a target or proposed contract into `docs/contracts/current/` only in the implementation PR that includes the required implementation, migrations, OpenAPI/DTO, automated tests, evidence, and designated reviewer approval; update its status and index entry in the same PR, and do not leave a duplicate in the previous status directory.
-- Keep Track C, D, and F publication and the common Privacy Production gate closed until `docs/release-gates/post-mvp-1-external-approvals.md` is satisfied.
+- Keep Track C and Track F publication and the common Privacy Production gate closed until `docs/release-gates/post-mvp-1-external-approvals.md` is satisfied. OTC is part of Track F and has no separate Track D publication flag.
 
 ## Team Roles
 
-The current team roles recorded in Issue #9 are:
+The current Post-MVP-1 responsibility baseline is:
 
-- 권가빈 — Product / Architecture / AI Integration / 전체 일정
-- 남한솔 — Frontend / UX
-- 송은영 — Backend / DB / API
-- 김지혜 — OCR / 의료정보 구조화
-- 정현우 — RAG / LLM / Evaluation
+- 권가빈 — PM, product acceptance, Privacy policy and consent scope, external-approval tracking, Track C final responsibility
+- 송은영 — Backend, data and Security technical controls; Track A API·DB·Outbox, Track B Backend, Track F Chat data boundary
+- 김지혜 — Worker and OCR; Track A Consumer·Worker, Track C Backend, Track E delivery
+- 정현우 — AI/RAG implementation owner; Track F Guide·Chat·Citation·Safety·OTC delivery and evidence
+- 남한솔 — Frontend and consent UX; common Job states and Track B·C·E·F integration
 
-The repository does not explicitly map these names to GitHub handles. Do not infer that mapping. Manually request review from the following handles according to the changed paths:
+Former Track D is not a separate execution or ownership unit. Its historical document and requirement IDs remain for traceability, while current OTC scope is owned and accepted under Track F.
 
-- Repository default: `*` — `@ceohwj`
-- Product, architecture, and repository operations:
-  - `/.github/` — `@ceohwj`, `@hazelnutflavoured`
-  - `/docs/architecture.md` — `@hazelnutflavoured`, `@ceohwj`
-  - `/docs/contracts/` — `@hazelnutflavoured`, `@phina-io`, `@ceohwj`
-- Frontend / UX: `/frontend/` — `@solia142`
-- Backend / DB / API:
-  - `/app/` — `@phina-io`
-  - `/docs/api.md` — `@phina-io`, `@hazelnutflavoured`
-  - `/docs/data-schema.md` — `@phina-io`, `@hazelnutflavoured`
-- OCR and medical information structuring:
-  - `/ai_worker/tasks/ocr/` — `@Jye-rookie`
-  - `/ai_worker/tests/ocr/` — `@Jye-rookie`
-- RAG, LLM, and evaluation:
-  - `/ai_worker/tasks/rag/` — `@ceohwj`
-  - `/ai_worker/tasks/llm/` — `@ceohwj`
-  - `/ai_worker/tasks/evaluation/` — `@ceohwj`
-  - `/ai_worker/tests/rag/` — `@ceohwj`
-  - `/ai_worker/tests/llm/` — `@ceohwj`
-  - `/ai_worker/tests/evaluation/` — `@ceohwj`
-  - `/evals/` — `@ceohwj`, `@Jye-rookie`
-  - `/knowledge/` — `@ceohwj`
+## Reviewer Assignment and Merge
+
+- The Issue and Pull Request name the implementation owner and responsible reviewer separately.
+- Select the responsible reviewer for the actual change scope. Do not infer the reviewer from file history, document authorship, a former CODEOWNERS entry, or an unrecorded GitHub handle/name mapping.
+- The PR author cannot count self-approval as the required approval.
+- Merge only after the named responsible reviewer approves and blocking review comments are resolved.
+- Cross-domain changes name reviewers for every affected domain. Security·Privacy, medical safety, Source and AI/RAG changes also attach the required specialist or external approval evidence when applicable.
+- AI/RAG detailed assignments and PR reviewers are recorded in the 2026-08-28 responsibility matrix under 정현우's overall responsibility.
 
 ## Ownership Boundaries
 
-- Identify the affected path and its designated reviewers before editing.
+- Identify the affected domains and name their responsible reviewers before editing shared contracts.
 - Do not modify another owner's implementation merely because it is adjacent or convenient. Cross-owner changes require explicit task scope or prior coordination, and the relevant owners must review them.
 - Keep changes within the issue's stated scope. Do not include unrelated refactors, formatting sweeps, generated files, or dependency changes.
 - Co-owned and cross-cutting areas require coordination with all affected domains; ownership of one implementation area does not grant authority to change a shared interface unilaterally.

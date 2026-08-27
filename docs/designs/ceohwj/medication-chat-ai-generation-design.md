@@ -1,5 +1,7 @@
 # 복약 챗봇 AI 응답 생성 설계
 
+> 상태: 현재 동기 MVP의 one-cycle 설계다. Approved v4 Post-MVP-1 목표는 [MFDS 공식 의약품 식별](../../contracts/targets/post-mvp-1/medication-identification-v1.md), [Safety Result](../../contracts/targets/post-mvp-1/safety-result-v1.md), [Async Job](../../contracts/targets/post-mvp-1/async-job-v1.md)을 따른다. OTC는 모델 자체 지식이나 별도 제품 API가 아니라 기존 Chat의 Rule-first·Evidence·Citation·Safety 경로에서 처리한다.
+
 | 항목 | 내용 |
 | --- | --- |
 | GitHub Issue | `#24` — 복약 챗봇 AI 응답 생성 로직 구현 |

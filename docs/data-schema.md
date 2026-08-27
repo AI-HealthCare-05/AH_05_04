@@ -95,19 +95,28 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 
 ## Post-MVP schema-only 테이블
 
-`knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation`은 migration과 SQLAlchemy 모델에는 존재하지만 현재 repository, service, API DTO와 응답에는 연결되지 않습니다. 테이블 존재를 RAG, 출처 인용 또는 Citation/NLI 검증 구현 완료로 해석하지 않습니다.
+`knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation`은 migration과 SQLAlchemy 모델에는 존재하지만 현재 repository, service, API DTO와 응답에는 연결되지 않습니다. 테이블 존재를 RAG, 출처 인용 또는 Citation·Safety 검증 구현 완료로 해석하지 않습니다.
 
 ## Post-MVP-1 목표 스키마 — 미구현
 
-Contract Freeze v1은 다음 구조를 목표로 승인했습니다. 아래 테이블과 제약은 현재 migration·모델에 구현된 것으로 간주하지 않으며, 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 별도 migration PR에서 확정합니다.
+Approved Contract Freeze v4와 RAG DB schema v1.19는 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐지만 아래 RAG/Eval 테이블과 제약은 현재 migration·모델에 구현된 것으로 간주하지 않습니다. 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK는 호환을 위해 `CHAR(36)`을 유지하고 신규 독립 RAG/Eval ID만 PostgreSQL native `UUID`를 허용합니다.
 
 | 영역 | 목표 테이블 | 목표 제약 |
 | --- | --- | --- |
 | 비동기 실행 | `ai_job`, `outbox_event`, 비동기 `idempotency_record`, 동기 `sync_idempotency_record` | Job 6상태, at-least-once, DB commit 후 ACK, 두 재응답 방식 분리 |
 | 처방 버전 | `prescription_version`, `prescription_version_medication` | 불변 snapshot과 처방별 단일 active version |
+| OCR LLM provenance | OCR 구조화 실행·필드 provenance 계열 | `raw_value`, rule 정규화값, LLM 초안, 사용자 수정값, 확정값과 allowlist·schema·prompt·model·validator version 분리 |
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |
-| AI 안전 결과 | retrieval·result·citation 계열 | Job·처방 version 귀속, 생성·검증·공개 상태축 분리 |
-| OTC | 제품·성분·rule·평가 계열 | 평가 당시 rule·source version snapshot과 fail-closed 결과 |
+| 공식 Source·Catalog | `rag_source`, source approval·ingestion·normalization·snapshot·verification 계열, medication product·ingredient·component·alias | MFDS artifact→불변 정규화→승인 Source Snapshot, stable Identity, checksum·version·유효시각·rollback |
+| Candidate·Identification | candidate index·search·result, append-only medication identification | confirmed `medication_name + nullable strength_text`만 입력, 내부 Top-K와 외부 최대 1개 분리, 사용자 확인·거절·소유권·멱등성·현재성 |
+| Rule·Evidence | `rag_interaction_rule`, `rag_rule_evidence`, rule set 계열 | 처방약–OTC Rule-first, 승인 evidence와 version 연결, rule 없음은 안전 판정이 아님 |
+| RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열 | Job·처방 version·Runtime Bundle 귀속, 생성·검증·공개 상태축과 Citation 완전성 분리 |
+| Runtime 배포 | runtime execution manifest·release bundle·environment 계열 | Source·Index·Rule·Prompt·Model·Validator·Worker artifact version을 환경별 단일 active bundle로 고정 |
+| Evaluation | dataset·case·run·variant·metric·release approval 계열 | HOLDOUT·SAFETY_REGRESSION·END_TO_END_FINAL, 분모·신뢰구간·`NOT_RUN/INCONCLUSIVE`와 재현 version 저장 |
+
+OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계를 가지며, pgvector는 OCR 후보 보조 단계에만 사용합니다. HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상호작용 근거로 사용하지 않습니다.
+
+`OTC_IDENTIFICATION`, `OTC_EVALUATION`, `OTC_RULE_MATCH` 같은 Track D 전용 평가 모델은 목표 schema에서 사용하지 않습니다. OTC는 기존 Chat 결과·Citation을 재사용하지만 `interaction_rule`과 `rule_evidence`는 Track F 내부 결정 규칙과 근거 원장으로 유지합니다.
 
 상세 목표는 [계약 인덱스](./contracts/README.md)의 v1 문서를 따릅니다. 목표 enum·컬럼을 현재 코드가 이미 사용한다고 설명하지 않습니다.

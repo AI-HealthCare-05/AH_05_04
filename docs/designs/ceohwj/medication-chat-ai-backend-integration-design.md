@@ -2,6 +2,8 @@
 
 > 상태: Implemented (현재 동기 MVP). 아래 동기 one-cycle·session row lock 설계가 현재 구현 기준이다. Post-MVP-1 목표는 [`../../contracts/targets/post-mvp-1/async-job-v1.md`](../../contracts/targets/post-mvp-1/async-job-v1.md)와 [`../../contracts/targets/post-mvp-1/idempotency-v1.md`](../../contracts/targets/post-mvp-1/idempotency-v1.md)에 정의되어 있으며, 전환 구현이 병합되면 이 문서를 `Superseded`로 갱신한다. 최신 배포 판정은 [`../../deployment.md`](../../deployment.md)를 따른다.
 
+> 범위 정정: 아래 RAG·Citation·OTC 제외 설명은 현재 동기 MVP에만 해당한다. Approved v4 목표에서 OTC는 별도 API·화면이 아니라 기존 `CHAT` Job의 `OTC_INTERACTION` 유형이며, 공식 Identification Preflight 뒤 처방약–OTC Rule·Evidence를 먼저 실행하고 RAG·Citation·Safety 경로를 공유한다.
+
 > **후속 정정:** 이 문서의 `2 × T + M`·`T + M` 값은 두 요청 참고 시나리오이며 Production 전체 요청의 하한이 아니다. 현재 구현에는 동일 세션 admission cap이 없으므로 코드로 최대 동시 전송 `N`을 강제하기 전에는 Production 배포가 차단된다.
 
 ## 문서 정보

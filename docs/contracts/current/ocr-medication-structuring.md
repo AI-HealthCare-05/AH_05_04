@@ -1,5 +1,7 @@
 # OCR 약품 행 구조화 계약
 
+> 상태: Current runtime. Approved v4의 비-RAG LLM 구조화·최소전송·사용자 확정 목표는 [OCR 비-RAG LLM 구조화 계약](../targets/post-mvp-1/ocr-llm-structuring-v1.md)에 별도로 정의하며 아직 구현되지 않았다.
+
 ## 목적
 
 OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안내문

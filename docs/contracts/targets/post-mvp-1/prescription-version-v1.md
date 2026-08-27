@@ -2,10 +2,10 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved target — 2026-08-24 팀 인계 기준 |
+| 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
-| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-b-adherence-v1.md` |
-| Last verified | 2026-08-24 |
+| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-b-adherence-v1.md`, `track-e-ocr-regression-v1.md`, `track-f-rag-citation-safety-v1.md` |
+| Last verified | 2026-08-27 |
 
 ## 모델
 
@@ -42,8 +42,9 @@ OCR 검수 완료만으로 자동 활성화하지 않는다. 사용자의 명시
 
 - 복약 가이드와 Chat 세션
 - 복약 일정과 occurrence
-- OTC 안전성 판정
+- 공식 Candidate Search·append-only Identification과 Identification Preflight 실행 기록
 - Safety Result와 인용
+- OTC 질문을 포함한 Guide·Chat Rule-first RAG 결과
 - OCR 이후 확정된 처방 입력에서 파생된 Job
 
 처리 중 Job의 version이 더 이상 active가 아니면 결과는 보존하되 Job을 `STALE`로 종결하고 현재 화면에 자동 반영하지 않는다.

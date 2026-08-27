@@ -2,14 +2,14 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved target — 2026-08-24 팀 인계 기준 |
+| 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
-| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
-| Last verified | 2026-08-24 |
+| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-f-rag-citation-safety-v1.md` |
+| Last verified | 2026-08-27 |
 
 ## 적용 요청
 
-비동기 Job을 생성하는 모든 POST 요청과 Post-MVP-1 B·C·D 동기 상태 변경 요청은 `Idempotency-Key` 헤더를 요구한다. 키는 16~255자의 ASCII 영숫자와 `-._:`만 허용하며 로그에는 원문을 남기지 않는다. 누락·빈 값은 `400 IDEMPOTENCY_KEY_REQUIRED`, 형식 오류는 `400 IDEMPOTENCY_KEY_INVALID`다.
+비동기 Job을 생성하는 모든 POST 요청과 Post-MVP-1 B·C 동기 상태 변경, Track F 사용자 Candidate 확인·거절 요청은 `Idempotency-Key` 헤더를 요구한다. 키는 16~255자의 ASCII 영숫자와 `-._:`만 허용하며 로그에는 원문을 남기지 않는다. 누락·빈 값은 `400 IDEMPOTENCY_KEY_REQUIRED`, 형식 오류는 `400 IDEMPOTENCY_KEY_INVALID`다.
 
 ## 식별 범위와 요청 해시
 
@@ -41,12 +41,12 @@
 
 ## 동기 상태 변경 처리 규칙
 
-동기 B·C·D 쓰기의 고유 범위는 `(user_id, OpenAPI operation_id, parent_resource_id, idempotency_key_hmac)`이다. parent resource는 다음과 같다.
+동기 B·C·F 쓰기의 고유 범위는 `(user_id, OpenAPI operation_id, parent_resource_id, idempotency_key_hmac)`이다. parent resource는 다음과 같다.
 
 - B 일정: `prescription_version_medication_id`
 - B Check-in·재알림: `occurrence_id`
 - C Safety: `medication_checkin_id`; Barrier: `checkin_id`; ActionPlan 생성: `barrier_response_id`; ActionPlan 변경·follow-up: `support_action_plan_id`
-- D OTC 평가: `prescription_version_id`이며 request hash에 선택 target 종류와 ID를 포함
+- F Candidate 확인·거절: `prescription_version_medication_id`이며 request hash에 `candidate_search_result_id`, 확인·거절 action과 기대 Runtime Release Bundle을 포함
 
 권한·입력·revision·현재 상태 검사를 통과한 2xx mutation만 최초 성공 HTTP status와 canonical JSON body snapshot을 도메인 변경과 같은 transaction에서 저장한다. 4xx·5xx는 저장하지 않는다. 같은 키·같은 지문은 revision·현재 상태 검사보다 먼저 최초 snapshot을 그대로 재현하고, 같은 키·다른 지문은 `409 IDEMPOTENCY_KEY_CONFLICT`다.
 

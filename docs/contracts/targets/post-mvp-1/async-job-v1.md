@@ -2,14 +2,14 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved target — 2026-08-24 팀 인계 기준 |
+| 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
-| Last verified | 2026-08-24 |
+| Last verified | 2026-08-27 |
 
 ## 적용 범위
 
-Post-MVP-1의 `OCR`, `GUIDE`, `CHAT` 작업에 적용한다. Barrier Check-in은 동기 규칙, OTC 안전성 판정은 확정 성분에 대한 동기 규칙으로 처리하므로 v1 Job 유형에 포함하지 않는다.
+Post-MVP-1의 `OCR`, `GUIDE`, `CHAT` 작업에 적용한다. Barrier·Check-in, Candidate Search·사용자 Identification 확인과 Identification Preflight는 동기 경계이므로 새 Job 유형에 포함하지 않는다. OTC 상호작용 질문은 별도 `OTC_CHECK`가 아니라 기존 `CHAT` Job을 사용한다.
 
 ## 상태와 전이
 
