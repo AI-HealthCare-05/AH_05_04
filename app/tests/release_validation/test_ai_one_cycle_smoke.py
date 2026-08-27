@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import hashlib
 import json
@@ -17,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+import app.release_validation.ai_one_cycle_smoke as smoke_module
 from app.core.db.databases import get_db_session
 from app.dependencies.services import get_chat_engine, get_guide_generator
 from app.main import app, fastapi_app
@@ -35,6 +37,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     ScenarioError,
     SyntheticFixture,
     _cleanup_root,
+    _runtime_environment,
     build_synthetic_fixture,
     cleanup_synthetic_fixture,
     compute_input_fingerprint,
@@ -179,20 +182,66 @@ def test_staging_guard_is_positive_allow_gate_and_rejects_provider_key() -> None
     assert env["OPENAI_API_KEY"] not in str(raised.value)
 
 
-def test_local_live_guard_requires_loopback_real_provider_configuration(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "image_repo_digest",
+    ["placeholder", "sha256:1234", f"sha256:{'A' * 64}", f"sha256:{'0' * 64}", f"sha512:{'a' * 64}"],
+)
+def test_staging_guard_rejects_noncanonical_image_repository_digest(image_repo_digest: str) -> None:
+    env = {
+        "ENV": "staging",
+        "RELEASE_VALIDATION_ALLOWED": "1",
+        "RELEASE_VALIDATION_STAGING_API_HOST": "staging.example.test",
+        "RELEASE_VALIDATION_STAGING_DB_HOST": "staging-db",
+        "RELEASE_VALIDATION_STAGING_DB_NAME": "validation",
+        "DB_HOST": "staging-db",
+        "DB_NAME": "validation",
+    }
+
+    with pytest.raises(GuardError):
+        validate_live_environment(
+            mode="staging-live",
+            base_url="https://staging.example.test/api/v1",
+            env=env,
+            commit_sha=None,
+            image_repo_digest=image_repo_digest,
+        )
+
+
+def test_staging_guard_accepts_canonical_image_repository_digest_without_commit() -> None:
+    env = {
+        "ENV": "staging",
+        "RELEASE_VALIDATION_ALLOWED": "1",
+        "RELEASE_VALIDATION_STAGING_API_HOST": "staging.example.test",
+        "RELEASE_VALIDATION_STAGING_DB_HOST": "staging-db",
+        "RELEASE_VALIDATION_STAGING_DB_NAME": "validation",
+        "DB_HOST": "staging-db",
+        "DB_NAME": "validation",
+    }
+
+    validated = validate_live_environment(
+        mode="staging-live",
+        base_url="https://staging.example.test/api/v1",
+        env=env,
+        commit_sha=None,
+        image_repo_digest=f"sha256:{'a' * 64}",
+    )
+
+    assert validated.environment == "staging"
+
+
+@pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
+def test_local_live_guard_does_not_require_provider_credentials(mode: str, tmp_path: Path) -> None:
     env = {
         "ENV": "local",
         "RELEASE_VALIDATION_ALLOWED": "1",
         "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
-        "CLOVA_OCR_SECRET": "clova-configured",
-        "OPENAI_API_KEY": "sk-configured",
         "STORAGE_DIR": str(tmp_path),
         "DB_HOST": "127.0.0.1",
         "DB_PORT": "5432",
     }
 
     validated = validate_live_environment(
-        mode="local-live-full",
+        mode=mode,
         base_url="http://127.0.0.1:8000/api/v1",
         env=env,
         commit_sha=None,
@@ -203,13 +252,107 @@ def test_local_live_guard_requires_loopback_real_provider_configuration(tmp_path
     assert validated.storage_dir == tmp_path.resolve()
 
 
+@pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
+def test_local_runtime_environment_excludes_provider_credentials(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RELEASE_VALIDATION_RUNNER", raising=False)
+    monkeypatch.delenv("CLOVA_OCR_SECRET", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("DB_HOST", "127.0.0.1")
+    monkeypatch.setenv("DB_USER", "synthetic-runner")
+    monkeypatch.setenv("DB_PASSWORD", uuid4().hex)
+    monkeypatch.setenv("DB_NAME", "synthetic-runner-db")
+    monkeypatch.setenv("CLOVA_OCR_INVOKE_URL", "https://tenant.apigw.ntruss.com/ocr")
+    runtime_environment = _runtime_environment(mode)
+
+    assert runtime_environment["RELEASE_VALIDATION_RUNNER"] == "1"
+    assert "CLOVA_OCR_SECRET" not in runtime_environment
+    assert "OPENAI_API_KEY" not in runtime_environment
+
+
+def test_local_runner_does_not_load_provider_credentials_from_dotenv(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=synthetic-openai-sentinel\nCLOVA_OCR_SECRET=synthetic-clova-sentinel\n",
+        encoding="utf-8",
+    )
+    process_env = os.environ.copy()
+    process_env.pop("OPENAI_API_KEY", None)
+    process_env.pop("CLOVA_OCR_SECRET", None)
+    process_env.update(
+        {
+            "ENV": "local",
+            "RELEASE_VALIDATION_ALLOWED": "1",
+            "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+            "STORAGE_DIR": str(tmp_path),
+            "DB_HOST": "127.0.0.1",
+            "DB_PORT": "5432",
+            "DB_USER": "synthetic-runner",
+            "DB_PASSWORD": uuid4().hex,
+            "DB_NAME": "synthetic-runner-db",
+        }
+    )
+    repository_root = Path(__file__).resolve().parents[3]
+    process_env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(repository_root), process_env.get("PYTHONPATH"))))
+    script = """
+import json
+from app.release_validation.ai_one_cycle_smoke import _runtime_environment
+
+runtime = _runtime_environment("local-live-full")
+from app.core import config
+
+print(json.dumps({
+    "runner_marker": runtime.get("RELEASE_VALIDATION_RUNNER"),
+    "runtime_has_openai": "OPENAI_API_KEY" in runtime,
+    "runtime_has_clova": "CLOVA_OCR_SECRET" in runtime,
+    "config_openai": config.OPENAI_API_KEY,
+    "config_clova": config.CLOVA_OCR_SECRET,
+}))
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=process_env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "runner_marker": "1",
+        "runtime_has_openai": False,
+        "runtime_has_clova": False,
+        "config_openai": "sk-not-configured",
+        "config_clova": "",
+    }
+
+
+@pytest.mark.parametrize("credential_name", ["CLOVA_OCR_SECRET", "OPENAI_API_KEY"])
+def test_local_runner_rejects_inherited_provider_credentials_without_exposing_values(
+    credential_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = "synthetic-provider-credential-must-not-appear"
+    monkeypatch.setenv("DB_HOST", "127.0.0.1")
+    monkeypatch.setenv("DB_USER", "synthetic-runner")
+    monkeypatch.setenv("DB_PASSWORD", uuid4().hex)
+    monkeypatch.setenv("DB_NAME", "synthetic-runner-db")
+    monkeypatch.setenv("CLOVA_OCR_INVOKE_URL", "https://tenant.apigw.ntruss.com/ocr")
+    monkeypatch.delenv("CLOVA_OCR_SECRET", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv(credential_name, sentinel)
+
+    with pytest.raises(GuardError) as exc_info:
+        _runtime_environment("local-live-full")
+
+    assert credential_name not in str(exc_info.value)
+    assert sentinel not in str(exc_info.value)
+
+
 def test_local_live_guard_rejects_container_only_database_identity(tmp_path: Path) -> None:
     env = {
         "ENV": "local",
         "RELEASE_VALIDATION_ALLOWED": "1",
         "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
-        "CLOVA_OCR_SECRET": "clova-configured",
-        "OPENAI_API_KEY": "sk-configured",
         "STORAGE_DIR": str(tmp_path),
         "DB_HOST": "postgres",
         "DB_PORT": "5432",
@@ -367,6 +510,96 @@ async def test_fixture_builder_commits_completed_confirmed_synthetic_fixture() -
 
 
 @pytest.mark.asyncio
+async def test_fixture_builder_uses_preallocated_user_id_for_crash_recovery() -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    user_id = uuid4()
+
+    fixture = await build_synthetic_fixture(
+        factory,
+        run_id=uuid4(),
+        scenario=_scenario_payload(),
+        user_id=user_id,
+    )
+
+    assert fixture.user_id == user_id
+    assert await cleanup_synthetic_fixture(factory, user_id=user_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_only_recovers_fixture_committed_before_state_marker_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    run_id = uuid4()
+    state_parent = tmp_path / "state-parent"
+    storage_dir = tmp_path / "storage"
+    storage_dir.mkdir()
+    candidate = tmp_path / "candidate.png"
+    candidate.write_bytes(b"approved-synthetic-candidate")
+    draft = _scenario_payload(version="ai-one-cycle-clova-openai-v1")
+    draft["expected_field_identities"] = [[0, "PRESCRIBED_DATE"]]
+    draft_path = tmp_path / "draft.json"
+    draft_path.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
+    runtime_env = {
+        "ENV": "local",
+        "RELEASE_VALIDATION_ALLOWED": "1",
+        "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "STORAGE_DIR": str(storage_dir),
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
+        "DB_NAME": "test",
+        "CLOVA_OCR_TIMEOUT_SECONDS": "20",
+        "OPENAI_TIMEOUT_SECONDS": "20",
+    }
+    monkeypatch.setenv("RELEASE_VALIDATION_STATE_DIR", str(state_parent))
+    monkeypatch.setattr(smoke_module, "_runtime_environment", lambda _mode: runtime_env)
+    monkeypatch.setattr("app.core.db.databases.AsyncSessionFactory", factory)
+    original_update = smoke_module.RunStateStore.update
+    crash_enabled = True
+
+    def crash_after_fixture_commit(store: RunStateStore, **values: object) -> None:
+        if crash_enabled and values.get("in_flight_stage") is None:
+            raise RuntimeError("simulated crash after fixture commit")
+        original_update(store, **values)
+
+    monkeypatch.setattr(smoke_module.RunStateStore, "update", crash_after_fixture_commit)
+    args = argparse.Namespace(
+        mode="local-preflight",
+        run_id=str(run_id),
+        base_url="http://127.0.0.1:8000/api/v1",
+        scenario=None,
+        candidate_image=str(candidate),
+        scenario_draft=str(draft_path),
+        commit_sha=None,
+        image_repo_digest=None,
+        cleanup_only=False,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        await smoke_module._execute(args, run_id)
+
+    crash_enabled = False
+    root = smoke_module._state_root("local-preflight")
+    store = RunStateStore.open(root, str(run_id))
+    state = store.read()
+    user_id = state["user_id"]
+    store.update(cleanup_not_before=(datetime.now(UTC) - timedelta(seconds=1)).isoformat())
+    validated = smoke_module.validate_cleanup_environment(
+        mode="local-preflight",
+        base_url=args.base_url,
+        env=runtime_env,
+    )
+
+    result, exit_code = await smoke_module._cleanup_only(args=args, validated=validated, store=store)
+
+    assert exit_code == 0
+    assert result["cleanup"] == "PASS"
+    assert not store.path.exists()
+    async with factory() as verification_session:
+        assert await verification_session.get(User, user_id) is None
+
+
+@pytest.mark.asyncio
 async def test_cleanup_deletes_only_the_exact_synthetic_root() -> None:
     factory = async_sessionmaker(test_engine, expire_on_commit=False)
     target = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
@@ -448,12 +681,26 @@ async def test_network_runner_uses_real_tcp_and_preserves_http_id_order(tmp_path
 
     server = await asyncio.start_server(handle, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
+    validated = validate_live_environment(
+        mode="local-live-full",
+        base_url=f"http://127.0.0.1:{port}/api/v1",
+        env={
+            "ENV": "local",
+            "RELEASE_VALIDATION_ALLOWED": "1",
+            "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+            "STORAGE_DIR": str(tmp_path),
+            "DB_HOST": "127.0.0.1",
+            "DB_PORT": "5432",
+        },
+        commit_sha=None,
+        image_repo_digest=None,
+    )
     run_id = str(uuid4())
     store = RunStateStore.create(tmp_path, run_id, {"run_id": run_id, "ids": {}})
     try:
         async with server:
             async with NetworkOneCycleRunner(
-                base_url=f"http://127.0.0.1:{port}/api/v1",
+                base_url=validated.base_url,
                 state=store,
                 read_timeout_seconds=5,
                 prescription_check=check_prescription,
@@ -591,10 +838,134 @@ async def test_lost_upload_cleanup_requires_exactly_one_matching_new_file(tmp_pa
         await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
 
     second.unlink()
+    with pytest.raises(CleanupPendingError):
+        await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
+
+    first.unlink()
+    owned = tmp_path / f"{fixture.document_id}.png"
+    owned.write_bytes(source)
     rows, files = await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
     assert (rows, files) == (0, 0)
-    assert not first.exists()
+    assert not owned.exists()
     assert store.read()["file_cleanup"] == "DONE"
+
+
+@pytest.mark.asyncio
+async def test_lost_upload_cleanup_does_not_delete_other_user_same_sha_file(tmp_path: Path) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    other_fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    content = b"approved-synthetic-source"
+    content_sha = "sha256:" + hashlib.sha256(content).hexdigest()
+    other_user_file = tmp_path / f"{other_fixture.document_id}.png"
+    other_user_file.write_bytes(content)
+    run_id = str(uuid4())
+    store = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {
+            "run_id": run_id,
+            "ids": {},
+            "storage_baseline": [],
+            "source_image_sha256": content_sha,
+            "transport_failed_at": datetime.now(UTC).isoformat(),
+            "file_cleanup": "NOT_STARTED",
+        },
+    )
+
+    try:
+        with pytest.raises(CleanupPendingError):
+            await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
+
+        assert other_user_file.read_bytes() == content
+        assert store.read()["file_cleanup"] == "NOT_STARTED"
+        async with factory() as verification_session:
+            assert await verification_session.get(User, other_fixture.user_id) is not None
+    finally:
+        other_user_file.unlink(missing_ok=True)
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+        await cleanup_synthetic_fixture(factory, user_id=other_fixture.user_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_intent_cleanup_does_not_follow_symlink_to_other_user_file(tmp_path: Path) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    other_fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    content = b"approved-synthetic-source"
+    content_sha = "sha256:" + hashlib.sha256(content).hexdigest()
+    target = tmp_path / f"{other_fixture.document_id}.png"
+    target.write_bytes(content)
+    tracked = tmp_path / f"{fixture.document_id}.png"
+    tracked.symlink_to(target)
+    run_id = str(uuid4())
+    store = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {
+            "run_id": run_id,
+            "ids": {"document_id": str(fixture.document_id)},
+            "tracked_file_path": str(tracked),
+            "tracked_file_sha256": content_sha,
+            "file_cleanup": "DELETE_INTENT",
+        },
+    )
+
+    try:
+        with pytest.raises(CleanupPendingError):
+            await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
+
+        assert target.read_bytes() == content
+        assert tracked.is_symlink()
+        assert store.read()["file_cleanup"] == "DELETE_INTENT"
+        async with factory() as verification_session:
+            assert await verification_session.get(User, other_fixture.user_id) is not None
+    finally:
+        tracked.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+        await cleanup_synthetic_fixture(factory, user_id=other_fixture.user_id)
+
+
+@pytest.mark.asyncio
+async def test_document_cleanup_does_not_follow_storage_symlink(tmp_path: Path) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    target = nested / f"{fixture.document_id}.png"
+    content = b"approved-synthetic-source"
+    target.write_bytes(content)
+    candidate = tmp_path / f"{fixture.document_id}.png"
+    candidate.symlink_to(target)
+    run_id = str(uuid4())
+    store = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {
+            "run_id": run_id,
+            "ids": {"document_id": str(fixture.document_id)},
+            "file_cleanup": "NOT_STARTED",
+        },
+    )
+
+    try:
+        rows, files = await _cleanup_root(
+            factory,
+            user_id=fixture.user_id,
+            storage_dir=tmp_path,
+            store=store,
+        )
+
+        assert rows == 0
+        assert files > 0
+        assert target.read_bytes() == content
+        assert candidate.is_symlink()
+        assert store.read()["file_cleanup"] == "NOT_STARTED"
+    finally:
+        candidate.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
 
 
 @pytest.mark.asyncio
