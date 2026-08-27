@@ -5,9 +5,12 @@ app/이 backend/app/으로 이동한 뒤 `python -m app.release_validation...`�
 루트에서 그대로 실행하면 `ModuleNotFoundError: No module named 'app'`이 발생한다.
 문서의 고정 명령에는 PYTHONPATH=backend가 포함되어야 하며, 문서 문자열만 확인하는
 대신 실제로 그 명령을 실행해 회귀를 잡는다.
+
+PR #95에서 runner 환경에 Provider credential이 상속되지 않도록
+`env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \\`를 명령 맨 앞에 추가했으므로,
+`PYTHONPATH=backend`는 더 이상 명령의 맨 앞이 아니라 그 `env -u ...` 다음에 온다.
 """
 
-import os
 import re
 import shlex
 import subprocess
@@ -16,7 +19,7 @@ from uuid import uuid4
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DOC_PATH = PROJECT_ROOT / "docs" / "validation" / "ai-one-cycle-release.md"
-_PYTHONPATH_PREFIX = "PYTHONPATH=backend "
+_PYTHONPATH_DECLARATION = "PYTHONPATH=backend "
 
 
 def _release_validation_command_blocks() -> list[str]:
@@ -26,7 +29,8 @@ def _release_validation_command_blocks() -> list[str]:
 
 
 def _joined_command(block: str) -> str:
-    return " ".join(line.rstrip("\\").strip() for line in block.strip().splitlines())
+    executable_lines = (line for line in block.strip().splitlines() if not line.strip().startswith("#"))
+    return " ".join(line.rstrip("\\").strip() for line in executable_lines)
 
 
 def test_all_release_validation_commands_declare_backend_pythonpath() -> None:
@@ -35,7 +39,7 @@ def test_all_release_validation_commands_declare_backend_pythonpath() -> None:
     assert len(blocks) == 4, f"문서의 release_validation 실행 명령 블록 수가 예상과 다릅니다: {len(blocks)}"
     for block in blocks:
         command = _joined_command(block)
-        assert command.startswith(_PYTHONPATH_PREFIX), (
+        assert _PYTHONPATH_DECLARATION in command, (
             "backend/ 이동 이후 저장소 루트에서 `python -m app...`을 실행하려면 "
             f"PYTHONPATH=backend가 필요합니다: {command!r}"
         )
@@ -46,13 +50,12 @@ def test_cleanup_only_command_runs_from_repository_root_without_module_error() -
     blocks = [block for block in _release_validation_command_blocks() if "--cleanup-only" in block]
     command = _joined_command(blocks[0]).replace("<uuid>", str(uuid4()))
 
-    assert command.startswith(_PYTHONPATH_PREFIX)
-    argv = shlex.split(command.removeprefix(_PYTHONPATH_PREFIX))
+    assert _PYTHONPATH_DECLARATION in command
+    argv = shlex.split(command)
 
     completed = subprocess.run(
         argv,
         cwd=PROJECT_ROOT,
-        env={**os.environ, "PYTHONPATH": "backend"},
         check=False,
         capture_output=True,
         text=True,
