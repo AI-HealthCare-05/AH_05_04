@@ -24,8 +24,13 @@ class Dispatcher:
 
         try:
             result = await handler.handle(message)
-        except WorkerError:
-            # Handler가 이미 안전하게 분류한 오류는 그대로 전달합니다.
+        except WorkerError as exc:
+            # Handler 오류도 승인된 코드·고정 메시지 조합일 때만 전달합니다.
+            # 잘못 구성된 오류에 Provider 응답이나 secret이 포함될 수 있으므로
+            # 계약을 위반한 오류는 안전한 공통 오류로 교체합니다.
+            if not exc.has_safe_contract():
+                raise HandlerExecutionError(message.job_type) from None
+
             raise
         except Exception:
             # 알 수 없는 예외의 원문에는 Provider 응답이나 secret이 포함될 수

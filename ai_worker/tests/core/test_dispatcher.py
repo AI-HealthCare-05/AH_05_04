@@ -1,6 +1,7 @@
 """Fake Handler를 이용한 Registry·Dispatcher 단위 테스트입니다."""
 
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -15,7 +16,7 @@ from ai_worker.core.errors import (
 )
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
-from ai_worker.core.retry import calculate_retry_decision
+from ai_worker.core.retry import FailureCode, calculate_retry_decision
 from ai_worker.schemas.messages import JobType, WorkerMessage
 
 
@@ -72,10 +73,24 @@ class FakeTimeoutHandler:
     handler_type = JobType.OCR
 
     async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        # Handler는 오류 코드만 선택하며 메시지는 고정 계약에서 가져옵니다.
         raise WorkerError(
             failure_code="TIMEOUT",
-            safe_message="외부 처리 시간이 초과되었습니다.",
         )
+
+
+class FakeInvalidFailureCodeHandler:
+    """승인되지 않은 오류 코드를 발생시키는 잘못된 Handler입니다."""
+
+    handler_type = JobType.OCR
+
+    async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        # 정적 타입 검사를 우회해 런타임 방어가 동작하는지 확인합니다.
+        invalid_code = cast(
+            FailureCode,
+            "SYNTHETIC_API_KEY_NOT_ALLOWED",
+        )
+        raise WorkerError(failure_code=invalid_code)
 
 
 class FakeUnknownErrorHandler:
@@ -220,6 +235,51 @@ async def test_classified_worker_error_is_preserved() -> None:
 
     assert decision.should_retry is True
     assert decision.delay_seconds == 5.0
+
+
+def test_worker_error_rejects_unapproved_failure_code() -> None:
+    """정적 타입을 우회한 오류 코드도 런타임에서 차단합니다."""
+
+    invalid_code = cast(
+        FailureCode,
+        "SYNTHETIC_API_KEY_NOT_ALLOWED",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="승인되지 않은 failure_code",
+    ):
+        WorkerError(failure_code=invalid_code)
+
+
+def test_worker_error_rejects_freeform_safe_message() -> None:
+    """Handler가 민감정보를 자유 오류 문구로 전달하지 못하게 합니다."""
+
+    with pytest.raises(TypeError):
+        WorkerError(  # type: ignore[call-arg]
+            failure_code="TIMEOUT",
+            safe_message="SYNTHETIC_PROVIDER_SECRET",
+        )
+
+
+@pytest.mark.asyncio
+async def test_invalid_failure_code_is_converted_without_sensitive_value() -> None:
+    """잘못된 오류 코드가 Dispatcher 외부로 전달되지 않게 합니다."""
+
+    registry = HandlerRegistry()
+    registry.register(FakeInvalidFailureCodeHandler())
+
+    dispatcher = Dispatcher(registry)
+
+    with pytest.raises(HandlerExecutionError) as exc_info:
+        await dispatcher.dispatch(build_message())
+
+    assert exc_info.value.failure_code == "INTERNAL_ERROR"
+    assert "SYNTHETIC_API_KEY_NOT_ALLOWED" not in str(exc_info.value)
+    assert (
+        "SYNTHETIC_API_KEY_NOT_ALLOWED"
+        not in exc_info.value.safe_message
+    )
 
 
 @pytest.mark.asyncio
