@@ -119,15 +119,17 @@ transaction을 통과한다. HTTP client는 fake로 바꾸지 않고 Guide·Chat
 
 OCR부터 확인할 때는 Git에서 제외된 로컬 `.env`의 기존 `CLOVA_OCR_INVOKE_URL`,
 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 사용한다. 실제 CLOVA·OpenAI SDK 호출은 FastAPI가 수행하고,
-Frontend와 Swagger는 두 Provider의 Key를 받지 않고 Backend API만 호출한다. runner process가 같은
-저장소의 `.env` 설정을 읽는 것 자체는 로컬 검증 실패로 보지 않되, Provider SDK를 직접 호출하거나 Key를
-HTTP·JSON·로그에 출력해서는 안 된다.
+Frontend, Swagger와 runner는 두 Provider의 Key를 받거나 읽지 않고 Backend API만 호출한다. runner의
+runtime environment 수집과 guard에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 포함하지 않는다.
+runner는 `.env`를 읽지 않으며 실행 환경에 두 credential 이름이 존재하면 값 확인 없이 guard에서 거부한다.
+runner가 직접 사용하는 application DB credential과 validation 설정은 FastAPI의 `.env`와 분리된 실행 환경으로
+주입한다. `RELEASE_VALIDATION_RUNNER=1`에서는 application 설정 객체도 `.env` 로딩을 비활성화한다.
 
 FastAPI를 시작하기 전에 `CLOVA_OCR_INVOKE_URL`은 HTTPS인지 확인한다. lowercase hostname은
 `.apigw.ntruss.com`으로 끝나고 그 앞 label이 하나 이상 있어야 하며, 정확히 `apigw.ntruss.com`인 host는
-거부한다. URL의 username·password·fragment는 허용하지 않는다. OpenAI·CLOVA credential은 빈 값과
-repository placeholder를 거부하되 값 자체는 출력하지 않는다. 이 검사가 끝나기 전에는 FastAPI와 runner
-모두 Provider 요청을 보내지 않는다.
+거부한다. URL의 username·password·fragment는 허용하지 않는다. credential 설정의 유효성은 credential을
+보유한 FastAPI가 수행한 실제 OCR·Guide·Chat 요청 결과로 확인한다. runner는 credential 값이나 유효성을
+읽지 않고 환경변수 이름의 존재 여부만 검사해 존재하면 거부하며, HTTP·JSON·로그에도 출력하지 않는다.
 
 PASS 판정은 Swagger 수동 조작이 아니라 별도 process의 runner가 담당한다. FastAPI는 dependency override
 없이 host에서 정상 기동하고 runner는 실제 TCP `httpx.AsyncClient`로만 loopback FastAPI를 호출한다.
@@ -277,7 +279,8 @@ exclusive create로 mode `0600`으로 만든다. 일반 run과 preflight에서 �
 어떤 DB·HTTP 변경도 하기 전에 exit `2`로 종료하며 덮어쓰지 않는다. 기존 state는 `--cleanup-only`만 열 수
 있다. 이 run-state에는 run ID, mode, environment, scenario version, base URL,
 비밀값을 제외한 DB identity(host, port, database name), 합성 root locator, 성공적으로 받은 resource ID를
-기록한다. local mode는 resolved `STORAGE_DIR`, source image SHA-256과 실행 전 파일명 baseline도 기록한다.
+기록한다. 합성 user ID는 fixture DB commit 전에 생성해 최초 state에 기록한다. local mode는 resolved
+`STORAGE_DIR`, source image SHA-256과 실행 전 파일명 baseline도 기록한다.
 transport 결과가 불명확해지면 `transport_failed_at`과 가장 긴 Provider timeout보다 뒤인
 `cleanup_not_before`를 기록한다. local file cleanup을 위해 `tracked_file_path`, `tracked_file_sha256`과
 `file_cleanup=NOT_STARTED|DELETE_INTENT|DONE` phase도 기록한다. 모든 state 갱신은 같은 directory의 임시
@@ -310,7 +313,8 @@ transport 결과가 불명확하면 DB polling 결과와 관계없이 현재 pro
 - FastAPI와 runner가 같은 resolved `STORAGE_DIR`을 사용하며 runner가 해당 경로를 읽고 쓸 수 있음
 - 정상 업로드 응답을 받았다면 DB의 `object_key`가 추적한 `document_id`와 허용 확장자로 구성되고 resolve한
   경로가 `STORAGE_DIR` 내부임
-- 업로드 응답을 잃었다면 baseline 이후 생긴 파일 중 source fixture SHA-256과 일치하는 후보가 정확히 한 개임
+- 업로드 응답을 잃었다면 baseline 이후 생긴 파일 중 source fixture SHA-256과 일치하고, 합성 user가 소유한
+  `MEDICAL_DOCUMENT.object_key`와 파일명이 같은 후보가 정확히 한 개임
 
 현재 시각이 `cleanup_not_before`보다 이르거나 identity가 다르면 조회·삭제하지 않고 `cleanup=PENDING`, exit
 `3`으로 남긴다. 후보가 0개 또는 여러 개이거나 경로가 모호하면 파일을 삭제하지 않고
@@ -354,7 +358,7 @@ status, 공통 오류 `code/details/trace_id`만 보존하고 token·질문·생
 API 호출에 사용한 session과 다른 새 DB session에서 다음을 확인한다.
 
 - `local-live-full` OCR: `COMPLETED`, `completed_at` 존재, 오류 정보 null, 추출 필드 존재와 모든 필수 필드 `CONFIRMED`
-- Guide: `COMPLETED`, content 존재, 실제 모델 ID, `guide-prompt-v1`, 오류 정보 null
+- Guide: `COMPLETED`, content 존재, 실제 모델 ID, `guide-prompt-v2`, 오류 정보 null
 - Chat Assistant: `COMPLETED`, content 존재, 실제 모델 ID, `chat-prompt-v1`, 오류 정보 null
 - 사용자 질문과 Assistant가 올바른 순서로 같은 session에 연결됨
 - Guide와 Chat이 같은 합성 prescription에 연결됨
@@ -393,8 +397,11 @@ local live 실행의 `/dev/tty`에서만 생성 결과를 표시한다. Guide와
 구현자가 실행 방법을 추측하지 않도록 명령 형태를 다음으로 고정한다.
 
 ```bash
+# 아래 runner process에는 DB_*, ENV, RELEASE_VALIDATION_ALLOWED, CLOVA_OCR_INVOKE_URL,
+# STORAGE_DIR만 별도로 주입하고 Provider credential은 주입하지 않는다.
 # local fixture preflight. OpenAI는 호출하지 않는다.
-PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -402,14 +409,16 @@ PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --scenario-draft /private/tmp/ai-one-cycle-clova-openai-v1.draft.json
 
 # 로컬 실제 CLOVA·OpenAI network 검증
-PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \
   --scenario backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
 
 # staging 실제 OpenAI 검증
-PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url https://<합의된-staging-host>/api/v1 \
@@ -417,7 +426,8 @@ PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --commit-sha <40자리-commit-sha>
 
 # 보류된 실행 정리 재시도
-PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
+env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -491,7 +501,7 @@ runner는 stdout에 JSON 한 건만 출력하고 진단은 민감정보 없이 s
   "guide": {
     "status": "COMPLETED",
     "model_name": "gpt-4o-mini-actual-id",
-    "prompt_version": "guide-prompt-v1",
+    "prompt_version": "guide-prompt-v2",
     "content_length": 120
   },
   "chat": {
@@ -507,6 +517,7 @@ runner는 stdout에 JSON 한 건만 출력하고 진단은 민감정보 없이 s
 OCR 원문, 이미지 내용과 Provider credential은 포함하지 않는다.
 
 `commit_sha` 또는 `image_repo_digest` 중 실제 staging에서 확인 가능한 값을 반드시 하나 이상 기록한다.
+`image_repo_digest`를 사용하면 0이 아닌 lowercase 64자리 hex를 포함한 canonical `sha256:<digest>` 형식만 허용한다.
 staging의 `worktree_dirty`는 null이다. local은 현재 `commit_sha`와 boolean `worktree_dirty`를 기록한다.
 dirty worktree에서도 개인 진단 실행 결과는 낼 수 있지만 `evidence_qualified=false`이며 Issue 완료 증거로
 사용하지 않는다. 질문·가이드·답변 전문, token, API key와 DB password는 포함하지 않는다.

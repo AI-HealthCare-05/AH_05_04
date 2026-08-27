@@ -1,6 +1,6 @@
 # 복약 가이드 Backend–AI 계약
 
-> **적용 구분:** 이 문서는 현재 구현된 동기 one-cycle의 Python 모듈 경계다. [비동기 Job 계약 v1](./async-job-v1.md)과 [Outbox·Stream 계약 v1](./outbox-stream-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. Worker 전환 시 이 문서의 입력·출력·Provider 오류 변환 경계를 재사용한다.
+> **적용 구분:** 이 문서는 현재 구현된 동기 one-cycle의 Python 모듈 경계다. [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md)과 [Outbox·Stream 계약 v1](../targets/post-mvp-1/outbox-stream-v1.md)은 승인된 Post-MVP-1 목표이며 아직 현재 HTTP 동작을 대체하지 않는다. Worker 전환 시 이 문서의 입력·출력·Provider 오류 변환 경계를 재사용한다.
 
 | 항목 | 내용 |
 | --- | --- |
@@ -32,7 +32,7 @@ Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`
 
 환자·사용자·처방 식별자, OCR 원문, 이미지와 미확정 값은 Guide AI 입력에 포함하지 않는다. 입력 문자열은 NFC 정규화, 앞뒤 공백 제거와 연속 공백 축약을 거치며 NUL, bidi override와 zero-width 문자는 거부한다.
 
-용량 값과 단위 중 하나만 존재하면 둘 다 provider payload에서 제외한다. 최종 평문에는 누락 값을 추정하지 않고 고정 확인 안내를 표시한다. 입력 모델 검증이 실패하면 provider를 호출하지 않으며 현재 Backend는 이를 일반 생성 실패 경로로 처리한다.
+용량 값과 단위 중 하나만 존재하면 최종 평문에서 둘 다 생략하고 고정 확인 안내를 표시한다. 확정 처방값은 provider payload에 포함하지 않는다. 입력 모델 검증이 실패하면 provider를 호출하지 않으며 현재 Backend는 이를 일반 생성 실패 경로로 처리한다.
 
 ## Provider 호출 계약
 
@@ -43,15 +43,11 @@ Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`
 - `input_json`
 - `max_output_tokens`
 
-`input_json`은 입력 순서대로 부여한 0-based `source_index`와 다음 허용 필드만 포함한다.
+`input_json`은 입력 순서대로 부여한 0-based locator만 포함한다.
 
 - `source_index`
-- `medication_name`
-- `dose_value`
-- `dose_unit`
-- `frequency_per_day`
-- `timing_text`
-- `duration_days`
+
+약명·용량·횟수·복용 시점·기간을 포함한 확정 처방값은 Backend renderer에만 남기며 provider에 전달하지 않는다.
 
 OpenAI adapter는 비스트리밍 `responses.parse`, `text_format=GeneratedGuideDraft`, `store=False`를 사용한다. `max_output_tokens`는 `400 + (160 × 약물 수)`이며, `GuideGenerator`가 provider 호출 전체를 주입된 timeout으로 제한한다.
 
@@ -63,7 +59,7 @@ OpenAI adapter는 비스트리밍 `responses.parse`, `text_format=GeneratedGuide
 | --- | --- |
 | `content` | 검증된 AI 안내와 원본 처방값을 결합한 10,000자 이하 UTF-8 평문 |
 | `model_name` | provider 응답에서 확인한 비어 있지 않은 실제 모델 ID, 100자 이하 |
-| `prompt_version` | 현재 `guide-prompt-v1` |
+| `prompt_version` | 현재 `guide-prompt-v2` |
 
 `content`는 OpenAI의 원문이나 `response.output_text`가 아니다. 약명·용량·횟수·복용 시점·기간은 원본 `MedicationInput`에서 결정론적으로 렌더링하고, AI 출력에서는 `source_index`, 검증된 `guidance`와 `general_notice`만 사용한다. 입력 약물 순서와 각 `source_index`의 대응을 유지한다.
 
