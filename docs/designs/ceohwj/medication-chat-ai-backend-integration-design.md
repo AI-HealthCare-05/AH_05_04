@@ -16,7 +16,7 @@
 | 최신 오류 계약 | [#46 Backend 오류 응답 통일](https://github.com/AI-HealthCare-05/AH_05_04/pull/46) (`d6359f6`) |
 | 작업 브랜치 | `feat/38-chat-ai-backend-integration` |
 | 대상 브랜치 | `develop` |
-| 소유권 | `/app/`: `@phina-io`, `/docs/api.md`: `@phina-io`, `@hazelnutflavoured` |
+| 소유권 | `/backend/app/`: `@phina-io`, `/docs/api.md`: `@phina-io`, `@hazelnutflavoured` |
 | 관련 영역 | Backend, Database, Infrastructure, Documentation |
 
 ## 목적
@@ -86,7 +86,7 @@ ChatService
 
 ### Backend 공개 계약
 
-`app/services/chat_ai/__init__.py`의 기존 공개 계약은 유지하되 다음을 보완한다.
+`backend/app/services/chat_ai/__init__.py`의 기존 공개 계약은 유지하되 다음을 보완한다.
 
 ```python
 @dataclass(frozen=True)
@@ -125,7 +125,7 @@ class ChatGenerationFailedError(Exception):
 
 ### ChatGeneratorEngine
 
-신규 `app/services/chat_generator_engine.py`는 `ChatEngine`을 구현한다. 이 Adapter는 DB와 FastAPI를 import하지 않으며 다음 책임만 가진다.
+신규 `backend/app/services/chat_generator_engine.py`는 `ChatEngine`을 구현한다. 이 Adapter는 DB와 FastAPI를 import하지 않으며 다음 책임만 가진다.
 
 - `ChatReplyInput.content`를 `ChatGenerationInput.question`으로 변환
 - 각 Backend `ChatMedicationInput`을 AI `schemas.ChatMedicationInput`으로 변환
@@ -145,9 +145,9 @@ class ChatGeneratorEngine:
 
 ## Dependency 조립
 
-`app/main.py`가 lifespan 동안 생성하는 process-scoped `AsyncOpenAI`를 그대로 재사용한다. 설정도 기존 `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_TIMEOUT_SECONDS`를 사용한다.
+`backend/app/main.py`가 lifespan 동안 생성하는 process-scoped `AsyncOpenAI`를 그대로 재사용한다. 설정도 기존 `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_TIMEOUT_SECONDS`를 사용한다.
 
-`app/dependencies/services.py`에는 Chat Engine dependency를 추가한다. Guide와 Chat client class가 모두 `OpenAIResponsesClient`라는 이름을 사용하므로 import alias로 소비자를 분명히 한다.
+`backend/app/dependencies/services.py`에는 Chat Engine dependency를 추가한다. Guide와 Chat client class가 모두 `OpenAIResponsesClient`라는 이름을 사용하므로 import alias로 소비자를 분명히 한다.
 
 ```python
 from app.services.chat_ai import OpenAIResponsesClient as ChatOpenAIResponsesClient
@@ -259,7 +259,7 @@ SQLAlchemy statement를 PostgreSQL dialect로 compile했을 때도 `FOR UPDATE`�
 
 ## SQL 예외와 로그 개인정보 보호
 
-USER 질문은 `CHAT_MESSAGE.content`에 의도적으로 저장되지만 SQL bind parameter, ORM/DB 예외 문자열과 echo 로그에는 노출하지 않는다. `app/core/db/databases.py`의 `create_async_engine()`에 `hide_parameters=True`를 설정해 `SQLALCHEMY_ECHO` 값과 관계없이 statement parameter가 SQLAlchemy 로그와 `StatementError` 문자열에서 가려지게 한다. 운영 환경의 `SQLALCHEMY_ECHO`는 계속 `False`를 사용하며, 이를 디버깅 목적으로 켜더라도 실제 환자정보를 사용하지 않는다.
+USER 질문은 `CHAT_MESSAGE.content`에 의도적으로 저장되지만 SQL bind parameter, ORM/DB 예외 문자열과 echo 로그에는 노출하지 않는다. `backend/app/core/db/databases.py`의 `create_async_engine()`에 `hide_parameters=True`를 설정해 `SQLALCHEMY_ECHO` 값과 관계없이 statement parameter가 SQLAlchemy 로그와 `StatementError` 문자열에서 가려지게 한다. 운영 환경의 `SQLALCHEMY_ECHO`는 계속 `False`를 사용하며, 이를 디버깅 목적으로 켜더라도 실제 환자정보를 사용하지 않는다.
 
 이 제어는 Provider 오류 chain 분리와 별개다. 메시지 insert·실패 update의 flush 또는 commit 자체가 실패해 Starlette/Uvicorn이 예상 밖 예외를 기록하더라도 질문·약물 bind 값이 예외 문자열에 포함되지 않아야 한다. 합성 sentinel 질문과 약물명을 bind parameter로 사용해 의도적인 SQL 실패를 발생시키고, 포착한 SQLAlchemy 예외 문자열과 로그에 sentinel이 없으며 parameter 숨김 표시는 존재하는지 검증한다. 실제 환자정보나 Provider 응답은 테스트에 사용하지 않는다.
 
@@ -314,7 +314,7 @@ OpenAI SDK 예외 메시지, Provider 요청·응답, 질문, 약물 정보와 P
 
 Router에는 성공 응답의 `no-store`가 이미 구현되어 있다. 그러나 전역 exception handler가 만드는 인증·검증·도메인·예상 밖 오류 응답에는 이 header가 유지되지 않는다. 특히 PR #33에서 도입된 Starlette stack은 예상 밖 `Exception`의 `500` response를 사용자 HTTP middleware 바깥의 `ServerErrorMiddleware`에서 생성하므로, `fastapi_app.middleware("http")`를 추가하는 방식으로는 모든 오류 응답을 덮을 수 없다.
 
-`app/core/chat_cache_control.py`에 path 판정 pure helper와 순수 ASGI `ChatNoStoreMiddleware`를 둔다. 최종 stack은 `CORSMiddleware(ChatNoStoreMiddleware(fastapi_app))` 순서로 조립한다. 이 wrapper는 두 chat path에 대한 `http.response.start`만 가로채 기존 header를 보존하면서 `Cache-Control: no-store`를 덮어쓴다. 따라서 Router 성공 response, FastAPI exception handler의 인증·검증·도메인 오류, `ServerErrorMiddleware`의 예상 밖 `500`이 모두 같은 정책을 통과하고 CORS는 계속 최외곽에서 적용된다.
+`backend/app/core/chat_cache_control.py`에 path 판정 pure helper와 순수 ASGI `ChatNoStoreMiddleware`를 둔다. 최종 stack은 `CORSMiddleware(ChatNoStoreMiddleware(fastapi_app))` 순서로 조립한다. 이 wrapper는 두 chat path에 대한 `http.response.start`만 가로채 기존 header를 보존하면서 `Cache-Control: no-store`를 덮어쓴다. 따라서 Router 성공 response, FastAPI exception handler의 인증·검증·도메인 오류, `ServerErrorMiddleware`의 예상 밖 `500`이 모두 같은 정책을 통과하고 CORS는 계속 최외곽에서 적용된다.
 
 path 판정은 query string을 제외한 ASGI `scope["path"]`를 segment 단위로 비교한다. `/api/v1/chat-sessions/{session_id}/messages`와 `/api/v1/prescriptions/{prescription_id}/chat-sessions` 두 형태와 각각의 단일 trailing slash만 허용하고, 식별자의 UUID 유효성은 판정 조건으로 삼지 않아 잘못된 UUID의 `422`에도 정책을 적용한다. 추가 하위 path와 문자열 일부만 일치하는 path는 제외한다. 전체 의료 API의 공통 `no-store` 정책으로 확장하는 변경은 #38 범위를 넘으므로 별도 보안 정책 작업으로 다룬다.
 
@@ -322,7 +322,7 @@ path 판정은 query string을 제외한 ASGI `scope["path"]`를 segment 단위�
 
 ### Adapter 단위 테스트
 
-`app/tests/chat_ai/test_engine_adapter.py`
+`backend/app/tests/chat_ai/test_engine_adapter.py`
 
 - 질문과 모든 약물 필드의 정확한 변환
 - `Decimal` 정밀도와 `duration_days` 보존
@@ -335,7 +335,7 @@ path 판정은 query string을 제외한 ASGI `scope["path"]`를 segment 단위�
 
 ### Repository·Service 통합 테스트
 
-`app/tests/repositories/test_chat_repository.py`와 `app/tests/chat/test_chat_service.py`
+`backend/app/tests/repositories/test_chat_repository.py`와 `backend/app/tests/chat/test_chat_service.py`
 
 - SQL 소유권 확인과 활성 세션 제한
 - USER·ASSISTANT 연속 번호와 상태 전이
@@ -349,20 +349,20 @@ path 판정은 query string을 제외한 ASGI `scope["path"]`를 segment 단위�
 - engine 호출 전 소유권·상태 검사
 - 약물 `display_order` 전달
 
-동시성은 `app/tests/chat_integration/`에서 시나리오에 따라 두 개 또는 세 개의 독립 DB session과 제어 가능한 Fake Engine으로 검증한다. 이 디렉터리의 `conftest.py`는 상위 `isolate_database` fixture를 대체하고, 각 connection에서 보이는 committed 합성 fixture를 준비한다. 테스트 종료 시 생성한 row를 명시적으로 정리하며 병렬 테스트 실행 대상에서 제외한다.
+동시성은 `backend/app/tests/chat_integration/`에서 시나리오에 따라 두 개 또는 세 개의 독립 DB session과 제어 가능한 Fake Engine으로 검증한다. 이 디렉터리의 `conftest.py`는 상위 `isolate_database` fixture를 대체하고, 각 connection에서 보이는 committed 합성 fixture를 준비한다. 테스트 종료 시 생성한 row를 명시적으로 정리하며 병렬 테스트 실행 대상에서 제외한다.
 
 첫 요청이 AI 생성 중일 때 두 번째 요청이 Engine에 진입하지 못하고, 첫 요청 완료 후 진행되며 최종 번호가 `1·2·3·4`인지 확인한다. 같은 처방을 참조하는 서로 다른 두 세션은 서로를 막지 않는지도 검증해 locking query가 처방·문서 row까지 잠그지 않음을 확인한다. 두 번째 요청의 전체 소요 시간이 두 요청 기준 참고 지연 안인지 검증하되 이를 전체 최대 대기시간으로 표현하지 않는다. 세 요청을 동시에 보내도 최종 번호가 `1·2·3·4·5·6`으로 저장되는 별도 correctness 테스트를 두고, 세 번째 요청에는 `2 × timeout` 상한을 주장하지 않는다.
 
 ### API 테스트
 
-`app/tests/test_chat_cache_control.py`
+`backend/app/tests/test_chat_cache_control.py`
 
 - path helper가 메시지 route와 처방 기반 세션 생성 route, 각각의 단일 trailing slash만 선택함
 - 잘못된 UUID 문자열은 선택하고 추가 하위 path·부분 일치·무관한 API는 제외함
 - ASGI wrapper가 대상 response의 기존 header를 보존하면서 `Cache-Control`만 `no-store`로 덮어씀
 - 비대상 path와 HTTP가 아닌 ASGI scope는 그대로 통과시킴
 
-`app/tests/chat_apis/test_chat_message_api.py`
+`backend/app/tests/chat_apis/test_chat_message_api.py`
 
 - 성공 `201` body와 저장된 content 일치
 - 성공, 인증·검증·도메인 오류와 `500`·`503`·`504`의 `Cache-Control: no-store`
@@ -375,11 +375,11 @@ path 판정은 query string을 제외한 ASGI `scope["path"]`를 segment 단위�
 - 인증, 소유권과 종료 세션 오류
 - 실제 OpenAI 대신 dependency override Fake Engine 사용
 
-최신 공통 오류·header·CORS 회귀 계약은 기존 `tests/integration/test_cors_and_errors.py`를 수정하지 않고 그대로 실행한다. 이 테스트는 PR #46의 `ApiError.headers`, `WWW-Authenticate`, 공통 오류 body와 최외곽 CORS 동작이 `app/main.py`의 ASGI wrapper 추가 후에도 유지되는지 검증한다.
+최신 공통 오류·header·CORS 회귀 계약은 기존 `tests/integration/test_cors_and_errors.py`를 수정하지 않고 그대로 실행한다. 이 테스트는 PR #46의 `ApiError.headers`, `WWW-Authenticate`, 공통 오류 body와 최외곽 CORS 동작이 `backend/app/main.py`의 ASGI wrapper 추가 후에도 유지되는지 검증한다.
 
 ### SQL 예외·로그 안전 테스트
 
-`app/tests/core/test_database_logging_safety.py`
+`backend/app/tests/core/test_database_logging_safety.py`
 
 - Async engine이 `hide_parameters=True`로 생성됨
 - 합성 sentinel 질문·약물 bind parameter를 포함한 의도적 SQL 실패의 예외 문자열에 sentinel이 없음
@@ -403,12 +403,12 @@ Adapter, `ChatGenerator`와 Stub Provider를 한 번 통과시켜 다음을 검�
 ### 검증 명령
 
 ```bash
-uv run pytest app/tests/chat_ai app/tests/chat app/tests/chat_apis app/tests/chat_integration app/tests/repositories/test_chat_repository.py -q
+uv run pytest backend/app/tests/chat_ai backend/app/tests/chat backend/app/tests/chat_apis backend/app/tests/chat_integration backend/app/tests/repositories/test_chat_repository.py -q
 uv run pytest tests/contract/test_chat_ai_backend_contract.py -q
 uv run pytest tests/integration/test_cors_and_errors.py -q
 uv run ruff check .
 uv run ruff format . --check
-uv run mypy app ai_worker
+uv run mypy backend/app ai_worker
 bash scripts/ci/run_test.sh
 git diff --check
 ```
@@ -416,12 +416,12 @@ git diff --check
 PR gate와 로컬 전체 테스트 스크립트는 공식 계약 테스트 위치를 실제 실행하도록 다음처럼 맞춘다.
 
 ```bash
-uv run coverage run -m pytest app tests/contract
+uv run coverage run -m pytest backend/app tests/contract
 ```
 
 `.github/workflows/checks.yml`과 `scripts/ci/run_test.sh`를 함께 변경해 CI와 로컬 완료 검증이 같은 범위를 사용하게 한다. `tests/integration/`와 `tests/e2e/` 전체를 새로 gate에 포함하는 변경은 #38 범위 밖이며 별도 테스트 인프라 작업으로 다룬다.
 
-현재 `evals/`에는 Chat AI 동작을 평가하는 실행 가능한 suite가 없고, 이번 PR은 프롬프트·Provider client·생성 정책을 변경하지 않는다. 따라서 #38에서 근거 없는 새 품질 점수나 사례를 만들지 않는다. 대신 기존 `app/tests/chat_ai/` 전체를 회귀 baseline으로 실행하고 Backend–AI 계약 테스트로 동일 AI Core에 전달되는 최소 입력과 출력 metadata를 결정적으로 검증한다. 이 과정에서 기존 AI Core 테스트가 실패하면 프롬프트를 조정해 통과시키지 않고 Backend Adapter를 수정한다. 실제 OpenAI smoke test는 합성 입력만 사용하되 비밀 API Key가 필요한 선택 검증이며 PR 필수 조건으로 두지 않는다. Chat AI 의료 품질 eval suite 구축은 평가 기준과 dataset 합의가 필요한 별도 Issue로 분리한다.
+현재 `evals/`에는 Chat AI 동작을 평가하는 실행 가능한 suite가 없고, 이번 PR은 프롬프트·Provider client·생성 정책을 변경하지 않는다. 따라서 #38에서 근거 없는 새 품질 점수나 사례를 만들지 않는다. 대신 기존 `backend/app/tests/chat_ai/` 전체를 회귀 baseline으로 실행하고 Backend–AI 계약 테스트로 동일 AI Core에 전달되는 최소 입력과 출력 metadata를 결정적으로 검증한다. 이 과정에서 기존 AI Core 테스트가 실패하면 프롬프트를 조정해 통과시키지 않고 Backend Adapter를 수정한다. 실제 OpenAI smoke test는 합성 입력만 사용하되 비밀 API Key가 필요한 선택 검증이며 PR 필수 조건으로 두지 않는다. Chat AI 의료 품질 eval suite 구축은 평가 기준과 dataset 합의가 필요한 별도 Issue로 분리한다.
 
 ## 문서 변경
 
@@ -440,24 +440,24 @@ uv run coverage run -m pytest app tests/contract
 ## 예상 변경 파일
 
 ```text
-app/services/chat_ai/__init__.py
-app/services/chat_generator_engine.py
-app/services/chat.py
-app/repositories/chat_repository.py
-app/repositories/prescription_repository.py
-app/dependencies/services.py
-app/core/chat_cache_control.py
-app/core/db/databases.py
-app/main.py
+backend/app/services/chat_ai/__init__.py
+backend/app/services/chat_generator_engine.py
+backend/app/services/chat.py
+backend/app/repositories/chat_repository.py
+backend/app/repositories/prescription_repository.py
+backend/app/dependencies/services.py
+backend/app/core/chat_cache_control.py
+backend/app/core/db/databases.py
+backend/app/main.py
 
-app/tests/core/test_database_logging_safety.py
-app/tests/test_chat_cache_control.py
-app/tests/chat_ai/test_engine_adapter.py
-app/tests/chat/test_chat_service.py
-app/tests/chat_apis/test_chat_message_api.py
-app/tests/chat_integration/conftest.py
-app/tests/chat_integration/test_chat_concurrency.py
-app/tests/repositories/test_chat_repository.py
+backend/app/tests/core/test_database_logging_safety.py
+backend/app/tests/test_chat_cache_control.py
+backend/app/tests/chat_ai/test_engine_adapter.py
+backend/app/tests/chat/test_chat_service.py
+backend/app/tests/chat_apis/test_chat_message_api.py
+backend/app/tests/chat_integration/conftest.py
+backend/app/tests/chat_integration/test_chat_concurrency.py
+backend/app/tests/repositories/test_chat_repository.py
 tests/contract/test_chat_ai_backend_contract.py
 
 .github/workflows/checks.yml
@@ -468,7 +468,7 @@ docs/designs/ceohwj/medication-chat-ai-generation-design.md
 docs/designs/ceohwj/medication-chat-ai-backend-integration-design.md
 ```
 
-Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경하지 않는다. `app/main.py`는 PR #33의 `fastapi_app`과 최외곽 CORS 구조를 유지하면서 그 사이에 chat cache-control ASGI wrapper를 조립하는 범위로만 수정한다. `app/core/errors.py`의 공통 오류 body 계약과 handler는 변경하지 않는다.
+Router, DTO, DB model, migration, 환경변수와 dependency manifest는 변경하지 않는다. `backend/app/main.py`는 PR #33의 `fastapi_app`과 최외곽 CORS 구조를 유지하면서 그 사이에 chat cache-control ASGI wrapper를 조립하는 범위로만 수정한다. `backend/app/core/errors.py`의 공통 오류 body 계약과 handler는 변경하지 않는다.
 
 ## 완료 기준
 

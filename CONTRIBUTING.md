@@ -55,7 +55,7 @@ git switch -c feature/12-prescription-upload
 ```bash
 uv run ruff check .
 uv run ruff format . --check
-uv run mypy app ai_worker
+uv run mypy backend/app ai_worker
 bash scripts/ci/run_test.sh
 ```
 

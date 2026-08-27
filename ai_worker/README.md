@@ -6,9 +6,9 @@
 
 현재 MVP 실행 경로는 다음 위치에 있습니다.
 
-- OCR: `app/services/ocr.py`, interface·오류 계약 `app/services/ocr_engine.py`, CLOVA adapter `app/services/clova_ocr_engine.py`
-- 복약 가이드: `app/services/guide_ai/`, `app/services/guides.py`
-- 복약 챗봇: `app/services/chat_ai/`, `app/services/chat.py`
+- OCR: `backend/app/services/ocr.py`, interface·오류 계약 `backend/app/services/ocr_engine.py`, CLOVA adapter `backend/app/services/clova_ocr_engine.py`
+- 복약 가이드: `backend/app/services/guide_ai/`, `backend/app/services/guides.py`
+- 복약 챗봇: `backend/app/services/chat_ai/`, `backend/app/services/chat.py`
 
 ## 현재 구현 상태
 

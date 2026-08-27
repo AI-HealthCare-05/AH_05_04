@@ -11,7 +11,7 @@
 | 문서 상태 | Implemented — PR #19 구현 및 Issue #48 코드·계약 정합성 검토 반영 |
 | 담당 범위 | 프롬프트, OpenAI 생성, 응답 검증, AI 단위 테스트·스모크 검증 |
 
-동기 MVP 구현은 FastAPI 프로세스의 `app/services/guide_ai/`에 위치한다. 정현우는 프롬프트, AI 생성·검증·렌더링 로직과 기본 테스트·스모크 검증을 담당하고, 송은영은 API, 처방 조회, GUIDE 저장, 트랜잭션과 HTTP 오류 처리를 담당한다. 이 역할과 코드 위치는 두 담당자가 합의했다.
+동기 MVP 구현은 FastAPI 프로세스의 `backend/app/services/guide_ai/`에 위치한다. 정현우는 프롬프트, AI 생성·검증·렌더링 로직과 기본 테스트·스모크 검증을 담당하고, 송은영은 API, 처방 조회, GUIDE 저장, 트랜잭션과 HTTP 오류 처리를 담당한다. 이 역할과 코드 위치는 두 담당자가 합의했다.
 
 ## 배경
 
@@ -47,7 +47,7 @@ Issue #11은 사용자가 확정한 처방과 소속 약물의 구조화된 정�
 
 ### 실행 위치
 
-MVP는 요청한 클라이언트가 같은 HTTP 요청에서 완성 결과를 받는 동기 request-response 방식이다. AI 생성 코드는 FastAPI 프로세스 안에서 실행하며 구현 위치는 `app/services/guide_ai/`로 한다.
+MVP는 요청한 클라이언트가 같은 HTTP 요청에서 완성 결과를 받는 동기 request-response 방식이다. AI 생성 코드는 FastAPI 프로세스 안에서 실행하며 구현 위치는 `backend/app/services/guide_ai/`로 한다.
 
 외부 OpenAI I/O는 FastAPI 이벤트 루프를 블로킹하지 않도록 `AsyncOpenAI`와 `await`를 사용한다. 여기서 동기는 Python의 blocking 함수를 뜻하지 않으며, 비동기 Job이나 별도 결과 조회 API를 사용하지 않는다는 뜻이다.
 
@@ -67,7 +67,7 @@ AI가 약물별 복약 안내와 전체 공통 안내를 짧은 자유 문장으
 ## 모듈 구성
 
 ```text
-app/services/guide_ai/
+backend/app/services/guide_ai/
 ├── __init__.py
 ├── schemas.py          # AI 내부 입력·출력 모델
 ├── prompt.py           # 시스템 프롬프트와 버전
@@ -77,7 +77,7 @@ app/services/guide_ai/
 ├── validators.py       # 구조·처방 일치·기본 안전 규칙 검증
 └── exceptions.py       # Provider-neutral 도메인 오류
 
-app/tests/guide_ai/
+backend/app/tests/guide_ai/
 ├── conftest.py
 ├── test_client.py
 ├── test_generator.py
@@ -87,7 +87,7 @@ app/tests/guide_ai/
 └── test_validators.py
 ```
 
-`app/services/guide_ai`의 AI 로직과 관련 단위 테스트는 정현우가 구현한다. 송은영은 `app/services/guides.py`를 포함한 Router, Service, Repository 연동 코드를 구현한다. 반복 실행과 정량 지표를 포함한 본격적인 `evals/` 평가는 one-cycle 완성 후 별도 작업으로 진행한다.
+`backend/app/services/guide_ai`의 AI 로직과 관련 단위 테스트는 정현우가 구현한다. 송은영은 `backend/app/services/guides.py`를 포함한 Router, Service, Repository 연동 코드를 구현한다. 반복 실행과 정량 지표를 포함한 본격적인 `evals/` 평가는 one-cycle 완성 후 별도 작업으로 진행한다.
 
 ## 내부 계약
 
@@ -291,8 +291,8 @@ SDK transport timeout만으로 전체 제한시간을 보장하지 않는다. `G
 OpenAI 클라이언트는 요청마다 생성하지 않고 FastAPI lifespan에서 프로세스당 한 번 생성하고 종료 시 닫는다. 기존 전역 `Config()` import와 API Key 없는 테스트가 깨지지 않도록 OpenAI 설정은 전역 import 시 강제 실패시키지 않고 조립 시점 또는 최초 사용 시 검증한다. `envs/example.local.env`와 `envs/example.prod.env`에는 실제 비밀값 없이 필요한 변수명과 설명만 추가한다.
 
 - 정현우는 `openai` 의존성, AI 모듈과 설정을 주입받는 인터페이스를 구현한다.
-- 송은영은 `app/core/config.py`, FastAPI lifespan과 Backend 조립 지점에서 설정과 process-scoped 클라이언트를 `GuideGenerator`에 주입한다.
-- `app/`, `pyproject.toml`과 `uv.lock` 변경은 Backend CODEOWNER 리뷰를 받는다.
+- 송은영은 `backend/app/core/config.py`, FastAPI lifespan과 Backend 조립 지점에서 설정과 process-scoped 클라이언트를 `GuideGenerator`에 주입한다.
+- `backend/app/`, `pyproject.toml`과 `uv.lock` 변경은 Backend CODEOWNER 리뷰를 받는다.
 
 ## Backend 연동 흐름
 

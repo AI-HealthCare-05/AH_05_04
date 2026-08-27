@@ -14,6 +14,7 @@
 - `privacy-safety.md`: 개인정보와 의료 안전 기준
 - `testing.md`: 현재 자동 검증 범위와 Post-MVP E2E·AI 평가 전략
 - `contracts/`: 현재 구현 계약과 승인된 Post-MVP-1 목표 계약. 상태 구분은 [계약 인덱스](./contracts/README.md)를 확인합니다.
+- `backend/`: Backend 내부 구현 가이드(DI Provider·Repository 테스트 패턴 등). 공유 계약이 아니라 구현 방식 참고용입니다.
 - `adr/`: 주요 아키텍처 결정 기록
 - `governance/`: 문서 권위, 상태와 원본 provenance
 - `release-gates/`: 구현과 분리된 외부 승인·공개 조건

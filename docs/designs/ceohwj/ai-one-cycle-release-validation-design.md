@@ -159,7 +159,7 @@ fixture 탐색과 PASS 검증은 분리한다.
    찾는다. 이 실행은 one-cycle PASS가 아니며 OpenAI를 호출하지 않는다.
 2. **Scenario lock:** 성공한 이미지를
    `tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png`로 고정하고
-   `app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json`에 SHA-256, 처방 기대값,
+   `backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json`에 SHA-256, 처방 기대값,
    `(medication_index, field_type)` 집합, 질문과 안전 기대값을 함께 저장한다.
 3. **Live run:** manifest와 이미지 SHA가 정확히 일치할 때만 전체 one-cycle을 시작한다. manifest가 없거나
    placeholder가 남아 있으면 Provider 호출 전에 실패한다.
@@ -401,7 +401,7 @@ local live 실행의 `/dev/tty`에서만 생성 결과를 표시한다. Guide와
 # STORAGE_DIR만 별도로 주입하고 Provider credential은 주입하지 않는다.
 # local fixture preflight. OpenAI는 호출하지 않는다.
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -410,24 +410,24 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 # 로컬 실제 CLOVA·OpenAI network 검증
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \
-  --scenario app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
+  --scenario backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
 
 # staging 실제 OpenAI 검증
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url https://<합의된-staging-host>/api/v1 \
-  --scenario app/release_validation/scenarios/ai-one-cycle-v1.json \
+  --scenario backend/app/release_validation/scenarios/ai-one-cycle-v1.json \
   --commit-sha <40자리-commit-sha>
 
 # 보류된 실행 정리 재시도
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id 00000000-0000-4000-8000-000000000001 \
   --base-url http://127.0.0.1:8000/api/v1 \

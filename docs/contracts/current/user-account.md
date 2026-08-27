@@ -39,7 +39,7 @@
 
 ## 검증과 변경 규칙
 
-구현 계약은 `app/tests/auth_apis`, `app/tests/user_apis`에서 검증합니다.
+구현 계약은 `backend/app/tests/auth_apis`, `backend/app/tests/user_apis`에서 검증합니다.
 
 다음 변경은 이 문서, 구현, API 문서와 관련 테스트를 같은 PR에서 갱신해야 합니다.
 
