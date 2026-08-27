@@ -40,8 +40,7 @@ class ClovaOcrEngine:
         self._storage_dir = Path(storage_dir).resolve()
         self._timeout_seconds = timeout_seconds
         self._client = client
-
-        # CLOVA 전체 token을 구조화하는 비동기 LLM 구조화기입니다.
+        # 설정에 따라 규칙 기반 또는 LLM 구조화기를 주입받습니다.
         self._structurer = structurer
 
     async def recognize(
@@ -84,14 +83,15 @@ class ClovaOcrEngine:
         # CLOVA 응답을 전체 raw token으로 변환합니다.
         parsed_result = self._parse_response(response)
 
-        # 기존 정규식 파서를 거치지 않고 전체 token을 LLM에 전달합니다.
+        # CLOVA 전체 token을 설정에서 선택한 구조화기에 전달합니다.
         structured_result = await self._structurer.structure(parsed_result.raw_fields)
 
         return OcrRecognitionResult(
             raw_text=parsed_result.raw_text,
             raw_fields=parsed_result.raw_fields,
             fields=structured_result.fields,
-            # CLOVA와 OpenAI Structured Outputs의 실제 실행 정보를 기록합니다.
+            # 규칙 기반 경로에서는 model/prompt가 null이고,
+            # LLM이 실제 실행된 경우에만 해당 실행 정보를 기록합니다.
             engine_name="CLOVA_OCR",
             model_version=structured_result.model_name,
             prompt_version=structured_result.prompt_version,

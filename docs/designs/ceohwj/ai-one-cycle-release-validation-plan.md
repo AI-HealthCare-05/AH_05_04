@@ -396,8 +396,8 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
   `ASGITransport`, in-process app, fake Provider와 fake model sentinel은 금지한다. 로그인 외 모든 의료 흐름
   응답의 `Cache-Control`이 정확히 `no-store`인지 확인한다.
 
-  OCR 요청은 connect 5초, read `CLOVA_OCR_TIMEOUT_SECONDS + 5초` 이상으로 두고 Guide·Chat은
-  `OPENAI_TIMEOUT_SECONDS + 5초` 이상으로 각각 설정한다.
+  OCR 요청은 connect 5초, read `CLOVA_OCR_TIMEOUT_SECONDS + E × OCR_STRUCTURE_TIMEOUT_SECONDS + 5초` 이상으로 두고 Guide·Chat은 `OPENAI_TIMEOUT_SECONDS + 5초` 이상으로 둔다.
+  Runner의 공통 read timeout은 `max(C + E × S, T) + 5초`로 계산한다.
 
 - [ ] **Step 3: 실제 CLOVA 호출과 저장 결과를 확인한다**
 

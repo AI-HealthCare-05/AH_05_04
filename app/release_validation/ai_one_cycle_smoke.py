@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import stat
 import subprocess
@@ -71,6 +72,69 @@ SAFETY_CRITERIA = (
 
 class GuardError(ValueError):
     """A pre-mutation environment or CLI guard failed."""
+
+
+_LIVE_READ_TIMEOUT_MARGIN_SECONDS = 5.0
+
+
+def _parse_positive_timeout(
+    environment: Mapping[str, str],
+    name: str,
+    default: str,
+) -> float:
+    raw_value = environment.get(name, default)
+
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise GuardError(f"{name} must be a positive finite number") from error
+
+    if not math.isfinite(value) or value <= 0:
+        raise GuardError(f"{name} must be a positive finite number")
+
+    return value
+
+
+def _calculate_live_read_timeout_seconds(
+    environment: Mapping[str, str],
+) -> float:
+    enabled_value = (
+        environment.get(
+            "OCR_STRUCTURE_LLM_ENABLED",
+            "false",
+        )
+        .strip()
+        .lower()
+    )
+
+    if enabled_value not in {"true", "false"}:
+        raise GuardError("OCR_STRUCTURE_LLM_ENABLED must be true or false")
+
+    clova_timeout = _parse_positive_timeout(
+        environment,
+        "CLOVA_OCR_TIMEOUT_SECONDS",
+        "20",
+    )
+    openai_timeout = _parse_positive_timeout(
+        environment,
+        "OPENAI_TIMEOUT_SECONDS",
+        "20",
+    )
+
+    # CLOVA 다음에 OCR 구조화 OpenAI 호출이 순차 실행되므로,
+    # LLM이 활성화된 경우 두 timeout을 합산합니다.
+    ocr_request_timeout = clova_timeout
+
+    if enabled_value == "true":
+        ocr_request_timeout += _parse_positive_timeout(
+            environment,
+            "OCR_STRUCTURE_TIMEOUT_SECONDS",
+            "30",
+        )
+
+    # One-cycle runner는 OCR, Guide, Chat을 서로 다른 HTTP 요청으로
+    # 실행하므로 가장 긴 요청에 처리 여유 5초를 더합니다.
+    return max(ocr_request_timeout, openai_timeout) + _LIVE_READ_TIMEOUT_MARGIN_SECONDS
 
 
 class ScenarioError(ValueError):
@@ -1249,6 +1313,14 @@ def _runtime_environment(mode: str) -> dict[str, str]:
         "DB_PORT": os.environ.get("DB_PORT", "5432"),
         "DB_NAME": os.environ["DB_NAME"],
         "CLOVA_OCR_TIMEOUT_SECONDS": os.environ.get("CLOVA_OCR_TIMEOUT_SECONDS", "20"),
+        "OCR_STRUCTURE_LLM_ENABLED": os.environ.get(
+            "OCR_STRUCTURE_LLM_ENABLED",
+            "false",
+        ),
+        "OCR_STRUCTURE_TIMEOUT_SECONDS": os.environ.get(
+            "OCR_STRUCTURE_TIMEOUT_SECONDS",
+            "30",
+        ),
         "OPENAI_TIMEOUT_SECONDS": os.environ.get("OPENAI_TIMEOUT_SECONDS", "20"),
     }
     runtime.update({name: os.environ[name] for name in allowlisted_names if name in os.environ})
@@ -1521,12 +1593,8 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         request_started_at=None,
         cleanup_not_before=None,
     )
-    read_timeout = (
-        max(
-            float(runtime_env.get("CLOVA_OCR_TIMEOUT_SECONDS", "20")),
-            float(runtime_env.get("OPENAI_TIMEOUT_SECONDS", "20")),
-        )
-        + 5
+    read_timeout = _calculate_live_read_timeout_seconds(
+        runtime_env,
     )
     try:
 

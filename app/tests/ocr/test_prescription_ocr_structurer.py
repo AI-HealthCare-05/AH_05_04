@@ -86,17 +86,22 @@ def test_structure_extracts_date_and_two_medication_rows() -> None:
 
     fields_by_identity = {(field.medication_index, field.field_type): field for field in result}
 
-    assert len(result) == 13
+    assert len(result) == 15
 
     prescribed_date = fields_by_identity[(0, "PRESCRIBED_DATE")]
     assert prescribed_date.raw_value == "2026-08-12"
     assert prescribed_date.confidence_score == 0.9998913
 
     first_name = fields_by_identity[(1, "MEDICATION_NAME")]
-    assert first_name.raw_value == "로수바스타틴정 10mg"
+    assert first_name.raw_value == "로수바스타틴정"
     assert first_name.confidence_score == 0.9955043
-    assert first_name.normalized_value == "로수바스타틴정 10mg"
+    assert first_name.normalized_value == "로수바스타틴정"
     assert first_name.normalization_version == "rule-v1"
+
+    first_strength = fields_by_identity[(1, "MEDICATION_STRENGTH")]
+    assert first_strength.raw_value == "10mg"
+    assert first_strength.normalized_value is None
+    assert first_strength.normalization_version is None
 
     assert fields_by_identity[(1, "DOSE_VALUE")].raw_value == "1"
     assert fields_by_identity[(1, "DOSE_UNIT")].raw_value == "정"
@@ -105,7 +110,10 @@ def test_structure_extracts_date_and_two_medication_rows() -> None:
     assert fields_by_identity[(1, "TIMING")].raw_value == "저녁 식후"
 
     second_name = fields_by_identity[(2, "MEDICATION_NAME")]
-    assert second_name.raw_value == "에제티미브정 10mg"
+    assert second_name.raw_value == "에제티미브정"
+
+    second_strength = fields_by_identity[(2, "MEDICATION_STRENGTH")]
+    assert second_strength.raw_value == "10mg"
 
     assert fields_by_identity[(2, "DOSE_VALUE")].raw_value == "1"
     assert fields_by_identity[(2, "DOSE_UNIT")].raw_value == "정"
@@ -159,11 +167,60 @@ def test_structure_normalizes_medication_name() -> None:
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    medication_name = next(field for field in result if field.field_type == "MEDICATION_NAME")
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert medication_name.raw_value == ("로수바스타틴칼숨정 10 mg")
-    assert medication_name.normalized_value == ("로수바스타틴칼숨정 10mg")
-    assert medication_name.normalization_version == ("rule-v1")
+    medication_name = fields_by_type["MEDICATION_NAME"]
+    assert medication_name.raw_value == "로수바스타틴칼숨정"
+    assert medication_name.normalized_value == "로수바스타틴칼숨정"
+    assert medication_name.normalization_version == "rule-v1"
+
+    strength = fields_by_type["MEDICATION_STRENGTH"]
+    assert strength.raw_value == "10 mg"
+    assert strength.normalized_value is None
+    assert strength.normalization_version is None
+
+
+@pytest.mark.parametrize(
+    ("source_name", "expected_name", "expected_strength"),
+    [
+        (
+            "복합정 5mg/100mg",
+            "복합정",
+            "5mg/100mg",
+        ),
+        (
+            "시럽 500mg/5mL",
+            "시럽",
+            "500mg/5mL",
+        ),
+        (
+            "암로디핀정 5 mg",
+            "암로디핀정",
+            "5 mg",
+        ),
+    ],
+)
+def test_structure_separates_trailing_medication_strength(
+    source_name: str,
+    expected_name: str,
+    expected_strength: str,
+) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field(source_name, 137, 637),
+        _raw_field("1정", 394, 637),
+        _raw_field("저녁 식후", 911, 637),
+        _raw_field("조제", 132, 800),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
+
+    assert fields_by_type["MEDICATION_NAME"].raw_value == expected_name
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == expected_strength
 
 
 def test_structure_excludes_medication_guide_rows() -> None:
@@ -230,14 +287,23 @@ def test_structure_excludes_medication_guide_rows() -> None:
     assert [field.medication_index for field in medication_names] == [1, 2, 3]
 
     assert [field.raw_value for field in medication_names] == [
-        "로수바스타틴칼숨정 10 mg",
-        "에제티미브정 (10mg)",
-        "리나글립틴정 5 MG",
+        "로수바스타틴칼숨정",
+        "에제티미브정",
+        "리나글립틴정",
     ]
 
     assert all("복약 안내" not in (field.raw_value or "") for field in medication_names)
 
     fields_by_identity = {(field.medication_index, field.field_type): field for field in result}
+
+    expected_strengths = {
+        1: "10 mg",
+        2: "10mg",
+        3: "5 MG",
+    }
+
+    for medication_index, expected_strength in expected_strengths.items():
+        assert fields_by_identity[(medication_index, "MEDICATION_STRENGTH")].raw_value == expected_strength
 
     expected_timings = {
         1: "저녁 식후",
@@ -296,7 +362,8 @@ def test_structure_merges_multiline_medication_name(
 
     fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert fields_by_type["MEDICATION_NAME"].raw_value == ("오메가-3-산에틸에스테르 90연질캡슐 1000mg")
+    assert fields_by_type["MEDICATION_NAME"].raw_value == "오메가-3-산에틸에스테르 90연질캡슐"
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "1000mg"
     assert fields_by_type["DOSE_VALUE"].raw_value == "2"
     assert fields_by_type["DOSE_UNIT"].raw_value == "캡슐"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "2"
@@ -395,13 +462,18 @@ def test_structure_attaches_continuation_to_preceding_medication_row() -> None:
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    medication_names = [field for field in result if field.field_type == "MEDICATION_NAME"]
+    fields_by_identity = {(field.medication_index, field.field_type): field for field in result}
 
-    assert [field.medication_index for field in medication_names] == [1, 2]
-    assert [field.raw_value for field in medication_names] == [
-        "오메가-3-산에틸에스테르 90연질캡슐 1000mg",
-        "에제티미브정 10mg",
+    assert [
+        fields_by_identity[(1, "MEDICATION_NAME")].raw_value,
+        fields_by_identity[(2, "MEDICATION_NAME")].raw_value,
+    ] == [
+        "오메가-3-산에틸에스테르 90연질캡슐",
+        "에제티미브정",
     ]
+
+    assert fields_by_identity[(1, "MEDICATION_STRENGTH")].raw_value == "1000mg"
+    assert fields_by_identity[(2, "MEDICATION_STRENGTH")].raw_value == "10mg"
 
 
 def test_structure_accepts_dose_with_trailing_ocr_text() -> None:
@@ -513,12 +585,16 @@ def test_structure_does_not_merge_name_only_second_medication() -> None:
 
     assert [field.raw_value for field in medication_names] == [
         "로수바스타틴정",
-        "에제티미브정 10mg",
+        "에제티미브정",
     ]
 
-    second_medication_fields = [field.field_type for field in result if field.medication_index == 2]
+    second_medication_fields = {field.field_type: field for field in result if field.medication_index == 2}
 
-    assert second_medication_fields == ["MEDICATION_NAME"]
+    assert set(second_medication_fields) == {
+        "MEDICATION_NAME",
+        "MEDICATION_STRENGTH",
+    }
+    assert second_medication_fields["MEDICATION_STRENGTH"].raw_value == "10mg"
 
 
 # 1정, 1회가 있는 안내 문장 테스트 추가
@@ -567,7 +643,8 @@ def test_structure_keeps_medication_when_timing_header_is_missing() -> None:
 
     fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert fields_by_type["MEDICATION_NAME"].raw_value == ("로수바스타틴정 10mg")
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("로수바스타틴정")
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "10mg"
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
     assert fields_by_type["DURATION_DAYS"].raw_value == "30"
@@ -589,7 +666,8 @@ def test_structure_keeps_partial_medication_for_confirmation() -> None:
 
     fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert fields_by_type["MEDICATION_NAME"].raw_value == ("에제티미브정 10mg")
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("에제티미브정")
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "10mg"
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["TIMING"].raw_value == "저녁 식후"
@@ -653,11 +731,14 @@ def test_structure_keeps_name_only_medication_as_unconfirmed() -> None:
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    medication_fields = [field for field in result if field.medication_index == 1]
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert [field.field_type for field in medication_fields] == ["MEDICATION_NAME"]
-
-    assert medication_fields[0].raw_value == ("리나글립틴정 5mg")
+    assert set(fields_by_type) == {
+        "MEDICATION_NAME",
+        "MEDICATION_STRENGTH",
+    }
+    assert fields_by_type["MEDICATION_NAME"].raw_value == "리나글립틴정"
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "5mg"
 
 
 @pytest.mark.parametrize(
@@ -690,8 +771,10 @@ def test_structure_does_not_depend_on_three_header_count(
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
     medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+    medication_strengths = [field.raw_value for field in result if field.field_type == "MEDICATION_STRENGTH"]
 
-    assert medication_names == ["암로디핀정 5mg"]
+    assert medication_names == ["암로디핀정"]
+    assert medication_strengths == ["5mg"]
 
 
 # 정상 약품이 사라지는 회귀 방지
@@ -755,7 +838,8 @@ def test_structure_keeps_medication_when_only_name_and_frequency_headers_exist()
 
     fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert fields_by_type["MEDICATION_NAME"].raw_value == "암로디핀정 5mg"
+    assert fields_by_type["MEDICATION_NAME"].raw_value == "암로디핀정"
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "5mg"
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
     assert fields_by_type["DURATION_DAYS"].raw_value == "30"
@@ -796,7 +880,8 @@ def test_structure_keeps_medication_when_name_header_is_missing() -> None:
 
     fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert fields_by_type["MEDICATION_NAME"].raw_value == ("암로디핀정 5mg")
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("암로디핀정")
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "5mg"
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
     assert fields_by_type["DURATION_DAYS"].raw_value == "30"
@@ -875,8 +960,10 @@ def test_structure_excludes_guide_rows_without_medication_evidence(
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
     medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+    medication_strengths = [field.raw_value for field in result if field.field_type == "MEDICATION_STRENGTH"]
 
-    assert medication_names == ["암로디핀정 5mg"]
+    assert medication_names == ["암로디핀정"]
+    assert medication_strengths == ["5mg"]
 
 
 @pytest.mark.parametrize(
@@ -1006,35 +1093,41 @@ def test_structure_merges_package_continuation_with_strength() -> None:
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert medication_names == ["오메가-3-산에틸에스테르 90연질캡슐 1000mg"]
+    assert fields_by_type["MEDICATION_NAME"].raw_value == "오메가-3-산에틸에스테르 90연질캡슐"
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "1000mg"
 
 
 @pytest.mark.parametrize(
-    ("continuation", "expected_name"),
+    ("continuation", "expected_name", "expected_strength"),
     [
         (
             "1000mg",
-            "오메가-3-산에틸에스테르 1000mg",
+            "오메가-3-산에틸에스테르",
+            "1000mg",
         ),
         (
             "정 500mg",
-            "오메가-3-산에틸에스테르 정 500mg",
+            "오메가-3-산에틸에스테르 정",
+            "500mg",
         ),
         (
             "정500mg",
-            "오메가-3-산에틸에스테르 정500mg",
+            "오메가-3-산에틸에스테르 정",
+            "500mg",
         ),
         (
             "90연질캡슐1000mg",
-            "오메가-3-산에틸에스테르 90연질캡슐1000mg",
+            "오메가-3-산에틸에스테르 90연질캡슐",
+            "1000mg",
         ),
     ],
 )
 def test_structure_merges_additional_medication_name_continuation(
     continuation: str,
     expected_name: str,
+    expected_strength: str,
 ) -> None:
     raw_fields = [
         _raw_field("명칭", 237, 581),
@@ -1048,7 +1141,7 @@ def test_structure_merges_additional_medication_name_continuation(
         ),
         _raw_field("1캡슐", 394, 637),
         _raw_field("저녁 식후", 911, 637),
-        # 수정: OCR이 별도 줄로 인식한 함량 또는 제형+함량입니다.
+        # OCR이 별도 줄로 인식한 함량 또는 제형+함량입니다.
         _raw_field(
             continuation,
             137,
@@ -1059,10 +1152,11 @@ def test_structure_merges_additional_medication_name_continuation(
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    medication_names = [field.raw_value for field in result if field.field_type == "MEDICATION_NAME"]
+    fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    # 수정: 연속 행이 별도 약품으로 분리되지 않고 직전 약품에 병합됩니다.
-    assert medication_names == [expected_name]
+    # 연속 행은 직전 약품에 병합하되 끝의 제품 함량은 별도로 분리합니다.
+    assert fields_by_type["MEDICATION_NAME"].raw_value == expected_name
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == expected_strength
 
 
 @pytest.mark.parametrize(
@@ -1092,7 +1186,8 @@ def test_dose_pattern_rejects_non_dose_units(
 def test_dose_pattern_does_not_extract_attached_instruction_as_unit(
     invalid_dose: str,
 ) -> None:
-    # 수정: 실제 구조화 로직이 search()를 사용하므로 부분 매칭도 없어야 합니다.
+    # 실제 구조화 로직이 search()를 사용하므로
+    # 문자열 일부에도 잘못 매칭되지 않아야 합니다.
     assert DOSE_PATTERN.search(invalid_dose) is None
 
 
@@ -1119,7 +1214,7 @@ def test_structure_extracts_duration_variants(
         _raw_field("에제티미브정 10mg", 137, 637),
         _raw_field("1정", 394, 637),
         _raw_field("1회", 547, 637),
-        # 수정: 일·일간·일분·일치 기간 표현을 실제 구조화로 검증합니다.
+        # 일·일간·일분·일치 기간 표현을 실제 구조화로 검증합니다.
         _raw_field(duration_text, 719, 637),
         _raw_field("저녁 식후", 911, 637),
         _raw_field("조제", 132, 800),
@@ -1165,7 +1260,8 @@ def test_structure_keeps_row_with_ocr_digit_confusion() -> None:
 
     fields_by_type = {field.field_type: field for field in result if field.medication_index == 1}
 
-    assert fields_by_type["MEDICATION_NAME"].raw_value == ("리나글립틴정 5mg")
+    assert fields_by_type["MEDICATION_NAME"].raw_value == ("리나글립틴정")
+    assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "5mg"
     assert fields_by_type["DOSE_VALUE"].raw_value == "I"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "I"

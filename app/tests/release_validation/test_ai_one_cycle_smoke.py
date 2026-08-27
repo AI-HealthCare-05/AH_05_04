@@ -36,6 +36,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     RunStateStore,
     ScenarioError,
     SyntheticFixture,
+    _calculate_live_read_timeout_seconds,
     _cleanup_root,
     _runtime_environment,
     build_synthetic_fixture,
@@ -51,6 +52,80 @@ from app.release_validation.ai_one_cycle_smoke import (
 from app.services.chat_ai import ChatReplyOutput
 from app.services.guide_ai.schemas import GuideGenerationResult
 from app.tests.conftest import test_engine
+
+
+@pytest.mark.parametrize(
+    (
+        "llm_enabled",
+        "clova_timeout",
+        "structure_timeout",
+        "openai_timeout",
+        "expected",
+    ),
+    [
+        # LLM OFF: max(CLOVA 20초, Guide·Chat 20초) + 여유 5초
+        ("false", "20", "30", "20", 25.0),
+        # LLM ON: max(CLOVA 20초 + OCR OpenAI 30초, Guide·Chat 20초)
+        # + 여유 5초
+        ("true", "20", "30", "20", 55.0),
+        # Guide·Chat timeout이 OCR 합산보다 긴 경우도 검증합니다.
+        ("true", "10", "15", "40", 45.0),
+    ],
+)
+def test_live_read_timeout_combines_sequential_ocr_providers(
+    llm_enabled: str,
+    clova_timeout: str,
+    structure_timeout: str,
+    openai_timeout: str,
+    expected: float,
+) -> None:
+    environment = {
+        "OCR_STRUCTURE_LLM_ENABLED": llm_enabled,
+        "CLOVA_OCR_TIMEOUT_SECONDS": clova_timeout,
+        "OCR_STRUCTURE_TIMEOUT_SECONDS": structure_timeout,
+        "OPENAI_TIMEOUT_SECONDS": openai_timeout,
+    }
+
+    assert _calculate_live_read_timeout_seconds(environment) == expected
+
+
+def test_live_read_timeout_rejects_invalid_llm_flag() -> None:
+    with pytest.raises(
+        GuardError,
+        match="OCR_STRUCTURE_LLM_ENABLED must be true or false",
+    ):
+        _calculate_live_read_timeout_seconds(
+            {
+                "OCR_STRUCTURE_LLM_ENABLED": "enabled",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CLOVA_OCR_TIMEOUT_SECONDS", "0"),
+        ("OCR_STRUCTURE_TIMEOUT_SECONDS", "-1"),
+        ("OPENAI_TIMEOUT_SECONDS", "not-a-number"),
+    ],
+)
+def test_live_read_timeout_rejects_invalid_timeout(
+    name: str,
+    value: str,
+) -> None:
+    environment = {
+        "OCR_STRUCTURE_LLM_ENABLED": "true",
+        "CLOVA_OCR_TIMEOUT_SECONDS": "20",
+        "OCR_STRUCTURE_TIMEOUT_SECONDS": "30",
+        "OPENAI_TIMEOUT_SECONDS": "20",
+        name: value,
+    }
+
+    with pytest.raises(
+        GuardError,
+        match=f"{name} must be a positive finite number",
+    ):
+        _calculate_live_read_timeout_seconds(environment)
 
 
 def test_cli_rejects_non_uuid_run_id_before_any_state_change(tmp_path: Path) -> None:
@@ -263,9 +338,19 @@ def test_local_runtime_environment_excludes_provider_credentials(mode: str, monk
     monkeypatch.setenv("DB_PASSWORD", uuid4().hex)
     monkeypatch.setenv("DB_NAME", "synthetic-runner-db")
     monkeypatch.setenv("CLOVA_OCR_INVOKE_URL", "https://tenant.apigw.ntruss.com/ocr")
+    monkeypatch.setenv(
+        "OCR_STRUCTURE_LLM_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "OCR_STRUCTURE_TIMEOUT_SECONDS",
+        "30",
+    )
     runtime_environment = _runtime_environment(mode)
 
     assert runtime_environment["RELEASE_VALIDATION_RUNNER"] == "1"
+    assert runtime_environment["OCR_STRUCTURE_LLM_ENABLED"] == "true"
+    assert runtime_environment["OCR_STRUCTURE_TIMEOUT_SECONDS"] == "30"
     assert "CLOVA_OCR_SECRET" not in runtime_environment
     assert "OPENAI_API_KEY" not in runtime_environment
 

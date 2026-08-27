@@ -6,7 +6,7 @@ from app.services.ocr_ai.schemas import (
     GeneratedSourceValue,
     ProviderOcrStructureResponse,
 )
-from app.services.ocr_ai.structurer import LlmPrescriptionStructurer
+from app.services.ocr_ai.structurer import LlmPrescriptionStructurer, RuleBasedPrescriptionStructurer
 from app.services.ocr_engine import RawRecognizedField
 
 
@@ -106,3 +106,19 @@ async def test_structurer_sends_all_clova_tokens_and_splits_strength() -> None:
     assert fields["DOSE_UNIT"] == "정"
     assert result.model_name == "actual-test-model-id"
     assert result.prompt_version == "ocr-structure-prompt-v2"
+
+
+async def test_rule_based_structurer_does_not_report_llm_metadata() -> None:
+    structurer = RuleBasedPrescriptionStructurer()
+
+    result = await structurer.structure(
+        [
+            _raw("2026-08-26", x=10, y=10),
+        ]
+    )
+
+    # 규칙 기반 경로에서는 OpenAI 모델과 프롬프트가 실행되지 않습니다.
+    assert result.model_name is None
+    assert result.prompt_version is None
+    assert result.fields[0].field_type == "PRESCRIBED_DATE"
+    assert result.fields[0].raw_value == "2026-08-26"

@@ -48,6 +48,7 @@ vi.mock('../src/api/guides', () => ({
 
 const displayedMedicationFields = [
   'MEDICATION_NAME',
+  'MEDICATION_STRENGTH',
   'DOSE_VALUE',
   'DOSE_UNIT',
   'FREQUENCY_PER_DAY',
@@ -59,6 +60,7 @@ function getValidFieldValue(fieldType: string, medicationIndex: number) {
   const values: Record<string, string> = {
     PRESCRIBED_DATE: '2026-08-22',
     MEDICATION_NAME: `처방약 ${medicationIndex}`,
+    MEDICATION_STRENGTH: '100mg',
     DOSE_VALUE: '0.5',
     DOSE_UNIT: '정',
     FREQUENCY_PER_DAY: '3',
@@ -81,6 +83,8 @@ function makeField(
     field_type: fieldType,
     medication_index: medicationIndex,
     raw_value: value,
+    normalized_value: null,
+    normalization_version: null,
     confirmed_value: confirmed ? value : null,
     confidence_score: 0.99,
     confirmation_status: confirmed ? 'CONFIRMED' : 'PENDING',
@@ -131,6 +135,9 @@ function makeOcrResponse(
       document_id: documentId,
       ocr_status: ocrStatus,
       error_code: null,
+      engine_name: 'CLOVA_OCR',
+      model_version: null,
+      prompt_version: null,
       created_at: '2026-08-22T00:00:00Z',
       completed_at: '2026-08-22T00:00:01Z',
       fields,
@@ -264,12 +271,106 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(
       screen.getByRole('heading', { name: '2026-08-22', level: 2 }),
     ).toBeTruthy()
+    // 약품명과 제품 함량은 별도 검수 필드로 표시합니다.
+    expect(screen.getByLabelText('처방전 약 이름')).toHaveProperty(
+      'value',
+      '처방약 1',
+    )
+    expect(screen.getByLabelText('제품 함량')).toHaveProperty(
+      'value',
+      '100mg',
+    )
+
+    // 카드 제목에서는 처방전 표기와 같이 약품명과 함량을 함께 보여줍니다.
     expect(
-      screen.getByRole('heading', { name: '처방약 1', level: 2 }),
+      screen.getByRole('heading', {
+        name: '처방약 1 100mg',
+        level: 2,
+      }),
     ).toBeTruthy()
     expect(
       screen.getByText('1회 0.5 정 · 하루 3회 · 7일 복용 · 식후'),
     ).toBeTruthy()
+  })
+  it('제품 함량을 약품명과 별도로 표시하고 확인값을 PATCH한다', async () => {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'MEDICATION_STRENGTH'
+        ? {
+            ...field,
+            confirmed_value: null,
+            confirmation_status: 'PENDING',
+          }
+        : field,
+    )
+    const strengthField = fields.find(
+      (field) => field.field_type === 'MEDICATION_STRENGTH',
+    )
+
+    if (!strengthField) {
+      throw new Error('medication strength field not found')
+    }
+
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(fields),
+    )
+    vi.mocked(updateExtractedField).mockResolvedValue({
+      data: {
+        ...strengthField,
+        confirmed_value: '100mg',
+        confirmation_status: 'CONFIRMED',
+      },
+    })
+
+    renderPage()
+
+    const strengthInput = await screen.findByLabelText('제품 함량')
+    const strengthControl = strengthInput.closest(
+      '.prescription-review__field',
+    )
+
+    if (!strengthControl) {
+      throw new Error('medication strength control not found')
+    }
+
+    // OCR에서 분리된 제품 함량을 약품명과 별도 입력으로 표시합니다.
+    expect(strengthInput).toHaveProperty('value', '100mg')
+    expect(
+      screen.getByRole('heading', {
+        name: '처방약 1 100mg',
+        level: 2,
+      }),
+    ).toBeTruthy()
+
+    // 값이 있는 선택 필드는 저장 전까지 최종 확인을 차단합니다.
+    expect(screen.getByRole('checkbox')).toHaveProperty(
+      'disabled',
+      true,
+    )
+
+    fireEvent.click(
+      within(strengthControl).getByRole('button', {
+        name: '확인',
+      }),
+    )
+
+    await waitFor(() =>
+      expect(updateExtractedField).toHaveBeenCalledWith(
+        'MEDICATION_STRENGTH-1',
+        '100mg',
+      ),
+    )
+
+    await waitFor(() =>
+      expect(
+        within(strengthControl).getByText('저장됨'),
+      ).toBeTruthy(),
+    )
+
+    // 제품 함량 저장 후에는 최종 확인 단계로 진행할 수 있습니다.
+    expect(screen.getByRole('checkbox')).toHaveProperty(
+      'disabled',
+      false,
+    )
   })
 
   it.each([
@@ -343,14 +444,14 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '문서 B로 이동' }))
 
-    expect(await screen.findByText('문서 B 처방약')).toBeTruthy()
-    expect(screen.queryByText('문서 A 처방약')).toBeNull()
+    expect(await screen.findByText('문서 B 처방약 100mg')).toBeTruthy()
+    expect(screen.queryByText('문서 A 처방약 100mg')).toBeNull()
 
     await act(async () => documentAFile.resolve(new Blob(['document-a'])))
 
     await waitFor(() => {
-      expect(screen.getByText('문서 B 처방약')).toBeTruthy()
-      expect(screen.queryByText('문서 A 처방약')).toBeNull()
+      expect(screen.getByText('문서 B 처방약 100mg')).toBeTruthy()
+      expect(screen.queryByText('문서 A 처방약 100mg')).toBeNull()
     })
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
     expect(URL.createObjectURL).toHaveBeenCalledWith(documentBBlob)
@@ -386,7 +487,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     renderReroutablePage()
 
-    expect(await screen.findByText('문서 A 처방약')).toBeTruthy()
+    expect(await screen.findByText('문서 A 처방약 100mg')).toBeTruthy()
     const acknowledgement = screen.getByRole('checkbox')
     fireEvent.click(acknowledgement)
     expect(acknowledgement).toHaveProperty('checked', true)
@@ -412,9 +513,9 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     await act(async () => documentBFile.resolve(new Blob(['document-b'])))
 
-    expect(await screen.findByText('문서 B 처방약')).toBeTruthy()
+    expect(await screen.findByText('문서 B 처방약 100mg')).toBeTruthy()
     expect(screen.getByRole('checkbox')).toHaveProperty('checked', false)
-    expect(screen.queryByText('문서 A 처방약')).toBeNull()
+    expect(screen.queryByText('문서 A 처방약 100mg')).toBeNull()
   })
 
   it('일부 약만 확인된 경우 처방을 확정할 수 없다', async () => {
@@ -481,39 +582,61 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(await getConfirmationButton()).toHaveProperty('disabled', true)
   })
 
-  it('값이 없는 선택 TIMING 필드는 저장하지 않아도 최종 확인할 수 있다', async () => {
-    const fields = makeCompleteFields().map((field) =>
-      field.field_type === 'TIMING'
-        ? {
-            ...field,
-            raw_value: null,
-            confirmed_value: null,
-            confirmation_status: 'PENDING',
-          }
-        : field,
-    )
-    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+  it.each([
+    ['TIMING', '복용 조건'],
+    ['MEDICATION_STRENGTH', '제품 함량'],
+  ] as const)(
+    '값이 없는 선택 %s 필드는 저장하지 않아도 최종 확인할 수 있다',
+    async (fieldType, fieldLabel) => {
+      const fields = makeCompleteFields().map((field) =>
+        field.field_type === fieldType
+          ? {
+              ...field,
+              raw_value: null,
+              confirmed_value: null,
+              confirmation_status: 'PENDING',
+            }
+          : field,
+      )
+      vi.mocked(getOcrJob).mockResolvedValue(
+        makeOcrResponse(fields),
+      )
 
-    renderPage()
+      renderPage()
 
-    const acknowledgement = await screen.findByRole('checkbox')
-    const confirmButton = await getConfirmationButton()
+      const acknowledgement = await screen.findByRole('checkbox')
+      const confirmButton = await getConfirmationButton()
+      const optionalInput = screen.getByLabelText(fieldLabel)
+      const optionalField = optionalInput.closest(
+        '.prescription-review__field',
+      )
 
-    // 빈 선택 필드는 입력창에 유지하되 저장 대상으로 계산하지 않습니다.
-    expect(screen.getByLabelText('복용 조건')).toHaveProperty('value', '')
-    expect(screen.getByRole('button', {name: '선택 입력'}),).toHaveProperty('disabled', true)
-    expect(screen.getByText('6/6개 항목 저장 완료')).toBeTruthy()
+      if (!optionalField) {
+        throw new Error('optional field control not found')
+      }
 
-    // 필수 항목과 값이 있는 선택 항목이 모두 저장됐으므로
-    // 사용자 최종 확인 체크박스는 활성화됩니다.
-    expect(acknowledgement).toHaveProperty('disabled', false)
-    expect(confirmButton).toHaveProperty('disabled', true)
+      // 빈 선택 필드는 화면에 유지하되 저장 대상으로 계산하지 않습니다.
+      expect(optionalInput).toHaveProperty('value', '')
+      expect(
+        within(optionalField).getByRole('button', {
+          name: '선택 입력',
+        }),
+      ).toHaveProperty('disabled', true)
 
-    fireEvent.click(acknowledgement)
+      // 총 8개 필드 중 빈 선택 필드 1개를 제외한 7개가 저장 대상입니다.
+      expect(
+        screen.getByText('7/7개 항목 저장 완료'),
+      ).toBeTruthy()
 
-    expect(confirmButton).toHaveProperty('disabled', false)
-    expect(updateExtractedField).not.toHaveBeenCalled()
-  })
+      expect(acknowledgement).toHaveProperty('disabled', false)
+      expect(confirmButton).toHaveProperty('disabled', true)
+
+      fireEvent.click(acknowledgement)
+
+      expect(confirmButton).toHaveProperty('disabled', false)
+      expect(updateExtractedField).not.toHaveBeenCalled()
+    },
+  )
 
   it('동시 저장 중 하나가 먼저 완료되어도 남은 요청이 있으면 확정을 비활성화한다', async () => {
     const fields = makeCompleteFields()

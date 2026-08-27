@@ -239,42 +239,36 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
         "confirmed_value": null,
         "confidence_score": 0.99,
         "confirmation_status": "UNCONFIRMED",
-        "normalization_version": "ocr-structure-prompt-v2"
+        "normalization_version": "rule-v1"
       },
       {
         "field_id": "44444444-4444-4444-8444-444444444444",
         "field_type": "MEDICATION_STRENGTH",
         "medication_index": 1,
         "raw_value": "500mg/5mg",
-        "normalized_value": "500mg/5mg",
+        "normalized_value": null,
         "confirmed_value": null,
         "confidence_score": 0.99,
         "confirmation_status": "UNCONFIRMED",
-        "normalization_version": "ocr-structure-prompt-v2"
+        "normalization_version": null
       }
     ]
   }
 }
 ```
 - `engine_name`은 실제 OCR 엔진 식별자입니다.
-- `model_version`은 OCR 구조화에 사용한 실제 모델 ID입니다.
-- `prompt_version`은 OCR 구조화 프롬프트 버전입니다.
-- 기존 작업 또는 실패한 작업에서는 실행 `metadata`가 `null`일 수 있습니다.
-- `MEDICATION_NAME`은 처방전에 기재된 약물명 또는 성분명입니다.
-- `MEDICATION_STRENGTH`는 `100mg`, `5mg/100mg`과 같은 제품 함량이며 1회 복용량과 구분합니다.
-- `raw_value`는 OCR이 인식한 원문입니다.
-- `normalized_value`는 표기 정리용 참고값입니다.
-- `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값입니다.
-- 최종 처방에는 사용자가 확인한 `confirmed_value`만 사용합니다.
+- `OCR_STRUCTURE_LLM_ENABLED=false`인 규칙 기반 구조화 경로에서는 `model_version`과 `prompt_version`이 `null`입니다.
+- LLM 구조화가 실제 실행된 경우에만 실제 모델 ID와 프롬프트 버전을 기록합니다.
+- `raw_value`는 OCR 원문입니다. 사용자 입력용 빈 검수 필드에서는 `null`일 수 있습니다.
+- `MEDICATION_NAME`의 `normalized_value`는 표기 정리용 참고값이며 `normalization_version`에는 정규화 규칙 버전을 기록합니다.
+- LLM 경로의 `PRESCRIBED_DATE`에는 날짜 정규화 값과 `date-rule-v1`이 기록될 수 있습니다.
+- `MEDICATION_STRENGTH`를 포함한 나머지 필드는 현재 정규화 값을 생성하지 않습니다.
+- OCR 프롬프트 버전은 필드의 `normalization_version`이 아니라 OCR 작업의 `prompt_version`에 기록합니다.
+- `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값이며 최종 처방에는 이 값만 사용합니다.
+- `normalized_value`는 자동 처방 확정이나 의약품 동일성 판단에 사용하지 않습니다.
 
-
-OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 있도록 `error_code`와 `error_message`를 함께 포함합니다. 외부 OCR 제공자의 원본 오류 메시지나 민감한 내부 예외 메시지는 그대로 노출하지 않고 Backend가 정의한 안전한 문구만 반환합니다.
-
-- `raw_value`는 OCR이 인식한 원문이다.
-- `normalized_value`는 표기 정리용 참고값이다.
-- `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값이다.
-- `normalized_value`는 자동 처방 확정이나 의약품 동일성 판단에 사용하지 않는다.
-- 최종 처방에는 `confirmed_value`만 사용한다.
+OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 있도록 `error_code`와 `error_message`를 함께 포함합니다.
+외부 OCR 제공자의 원본 오류 메시지나 민감한 내부 예외 메시지는 그대로 노출하지 않고 Backend가 정의한 안전한 문구만 반환합니다.
 
 ## OCR 추출 필드 검수
 

@@ -105,8 +105,13 @@ class Config(BaseSettings):
     CLOVA_OCR_SECRET: str = ""
     CLOVA_OCR_TIMEOUT_SECONDS: float = 20.0
 
-    # OCR 결과를 구조화할 OpenAI 모델 설정입니다.
-    # Guide·Chat과 독립적으로 모델을 변경할 수 있게 분리합니다.
+    # OCR 결과를 OpenAI Structured Outputs로 구조화할지 결정합니다.
+    # 명시적으로 활성화하지 않은 환경에서는 외부 LLM에 OCR 원문을 전달하지 않고
+    # 기존 규칙 기반 구조화기를 사용합니다.
+    OCR_STRUCTURE_LLM_ENABLED: bool = False
+
+    # Guide·Chat과 독립적으로 OCR 구조화 모델을 변경할 수 있게 분리합니다.
+    # 이 값들은 OCR_STRUCTURE_LLM_ENABLED=true일 때만 사용됩니다.
     OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"
     OCR_STRUCTURE_TIMEOUT_SECONDS: float = 30.0
 

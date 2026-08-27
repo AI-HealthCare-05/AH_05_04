@@ -6,6 +6,7 @@ from app.services.ocr_ai.structurer import (
     LlmPrescriptionStructurer,
     OcrStructurer,
     OcrStructureResult,
+    RuleBasedPrescriptionStructurer,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "OcrStructureProvider",
     "OcrStructureResult",
     "OpenAIOcrStructureClient",
+    "RuleBasedPrescriptionStructurer",
 ]

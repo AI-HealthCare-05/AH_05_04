@@ -1,4 +1,3 @@
-import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -17,8 +16,6 @@ from app.services.ocr_engine import (
     OcrProviderTimeoutError,
     OcrProviderUnavailableError,
 )
-
-logger = logging.getLogger(__name__)
 
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
@@ -153,35 +150,20 @@ class OcrService:
                 details=[ErrorDetail(field="provider", reason="PROVIDER_UNAVAILABLE")],
             ) from None
 
-
         except OcrProcessingError:
-
             # Provider/OCR 예외 원문에는 민감한 OCR 응답이 포함될 수 있으므로
-
             # API 예외 체인과 로그에 원문을 남기지 않습니다.
-
             await self._ocr_repo.mark_failed(
-
                 job,
-
                 error_code="OCR_PROCESSING_FAILED",
-
                 error_message=_ENGINE_ERROR_MESSAGE,
-
                 completed_at=datetime.now(UTC),
-
             )
-
             raise ApiError(
-
                 status_code=500,
-
                 code="OCR_PROCESSING_FAILED",
-
                 message="처방전 인식에 실패했습니다. 다시 시도하거나 직접 입력해 주세요.",
-
                 details=[ErrorDetail(field="ocr", reason="OCR_ENGINE_ERROR")],
-
             ) from None
         except Exception:
             await self._ocr_repo.mark_failed(

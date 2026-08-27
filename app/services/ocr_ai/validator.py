@@ -21,9 +21,10 @@ _DATE_PATTERN = re.compile(
 )
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
-# LLM이 값을 안전하게 추출하지 못해도 검수 화면에서
-# 사용자가 원본을 보며 직접 입력할 수 있어야 하는 필드입니다.
-_REQUIRED_REVIEW_FIELD_TYPES = frozenset(
+# LLM이 값을 찾지 못하거나 grounding 검증에 실패했을 때
+# 검수 화면에 사용자 입력용 빈칸을 제공하는 필드입니다.
+# 처방 확정 필수 여부와는 별개이며 TIMING은 선택값입니다.
+_EMPTY_REVIEW_FIELD_TYPES = frozenset(
     {
         "DOSE_VALUE",
         "FREQUENCY_PER_DAY",
@@ -175,7 +176,7 @@ def _make_empty_review_field(
     field_type: str,
 ) -> RecognizedField:
     """
-    근거 검증에 실패한 필수 필드를 사용자 입력용 빈 필드로 만듭니다.
+    검수용 빈 필드 대상으로 지정한 값을 사용자 입력용 빈 필드로 만듭니다.
     검증에 실패한 LLM 값은 저장하지 않습니다.
     """
     return RecognizedField(
@@ -309,9 +310,9 @@ def validate_and_convert_draft(
 
         for field_type, generated in optional_fields:
             if generated is None:
-                # 필수 필드는 LLM이 찾지 못했더라도 검수 화면에
-                # 빈 입력칸을 만들어 사용자가 직접 입력하도록 합니다.
-                if field_type in _REQUIRED_REVIEW_FIELD_TYPES:
+                # 빈 검수 필드 대상으로 정한 유형은 LLM이 찾지 못해도
+                # 사용자가 원본을 보고 직접 입력할 수 있게 합니다.
+                if field_type in _EMPTY_REVIEW_FIELD_TYPES:
                     result.append(
                         _make_empty_review_field(
                             medication_index=medication_index,
@@ -332,17 +333,14 @@ def validate_and_convert_draft(
                 )
             except OcrProcessingError:
                 # 근거 없는 LLM 값은 절대 저장하지 않습니다.
-                if field_type in _REQUIRED_REVIEW_FIELD_TYPES:
-                    # 필수 필드는 사용자가 직접 입력할 수 있도록 빈 필드로 대체합니다.
+                if field_type in _EMPTY_REVIEW_FIELD_TYPES:
+                    # 검수 대상으로 정한 필드는 사용자 입력용 빈 필드로 대체합니다.
                     result.append(
                         _make_empty_review_field(
                             medication_index=medication_index,
                             field_type=field_type,
                         )
                     )
-
-                # strength, dose_unit, timing 같은 선택 필드는
-                # 근거 검증 실패 시 결과에서 제외합니다.
                 continue
 
     return result

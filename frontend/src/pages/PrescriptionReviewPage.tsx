@@ -226,25 +226,26 @@ function requiresUserConfirmation(
 }
 
 function getNumericFieldError(fieldType: string, value: string) {
-    if (fieldType === 'PRESCRIBED_DATE') {
-      const isIsoDate = /^\d{4}-\d{2}-\d{2}$/.test(value)
-      const parsedDate = new Date(`${value}T00:00:00Z`)
+  if (fieldType === 'PRESCRIBED_DATE') {
+    const isIsoDate = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    const parsedDate = new Date(`${value}T00:00:00Z`)
 
-      if (isIsoDate && !Number.isNaN(parsedDate.getTime())) {
-        const [year, month, day] = value.split('-').map(Number)
+    if (isIsoDate && !Number.isNaN(parsedDate.getTime())) {
+      const [year, month, day] = value.split('-').map(Number)
 
-        if (
-          parsedDate.getUTCFullYear() === year &&
-          parsedDate.getUTCMonth() + 1 === month &&
-          parsedDate.getUTCDate() === day
-        ) {
-          return null
-        }
+      if (
+        parsedDate.getUTCFullYear() === year &&
+        parsedDate.getUTCMonth() + 1 === month &&
+        parsedDate.getUTCDate() === day
+      ) {
+        return null
       }
-
-      return '처방일은 YYYY-MM-DD 형식으로 입력해 주세요.'
     }
-    if (fieldType === 'DOSE_VALUE') {
+
+    return '처방일은 YYYY-MM-DD 형식으로 입력해 주세요.'
+  }
+
+  if (fieldType === 'DOSE_VALUE') {
     const isDecimalFormat =
       /^[+-]?(?:(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)$/.test(value)
     const numericValue = Number(value.replaceAll('_', ''))
@@ -1118,7 +1119,7 @@ function PrescriptionReviewPage() {
                   onChange={(event) => setUserConfirmed(event.target.checked)}
                 />
                 <span>
-                    원본 처방전의 필수 항목과 입력된 항목을 직접 확인했습니다.
+                  원본 처방전의 필수 항목과 입력된 항목을 직접 확인했습니다.
                 </span>
               </label>
 

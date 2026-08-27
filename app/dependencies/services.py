@@ -27,6 +27,7 @@ from app.services.ocr_ai import (
     LlmPrescriptionStructurer,
     OcrStructurer,
     OpenAIOcrStructureClient,
+    RuleBasedPrescriptionStructurer,
 )
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
@@ -79,7 +80,14 @@ def get_ocr_structurer(
         Depends(get_openai_client),
     ],
 ) -> OcrStructurer:
-    # CLOVA 전체 token을 OpenAI Structured Outputs로 변환합니다.
+    if not config.OCR_STRUCTURE_LLM_ENABLED:
+        # 기본값은 OFF입니다.
+        # 명시적으로 활성화하지 않으면 OCR 원문을 OpenAI에 전달하지 않고
+        # 기존 규칙 기반 구조화기를 사용합니다.
+        return RuleBasedPrescriptionStructurer()
+
+    # 활성화된 환경에서만 CLOVA 전체 token을
+    # OpenAI Structured Outputs로 변환합니다.
     return LlmPrescriptionStructurer(
         provider=OpenAIOcrStructureClient(client),
         model=config.OCR_STRUCTURE_MODEL,
@@ -98,7 +106,7 @@ def get_ocr_engine(
         secret_key=config.CLOVA_OCR_SECRET,
         storage_dir=config.STORAGE_DIR,
         timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
-        # 기존 정규식 파서가 아니라 전체 token용 LLM 구조화기를 연결합니다.
+        # Feature flag에 따라 규칙 기반 또는 LLM 구조화기를 연결합니다.
         structurer=structurer,
     )
 

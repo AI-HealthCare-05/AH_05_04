@@ -73,7 +73,9 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 
 `idx_ocr_document_created`는 기존 FK 지원 인덱스로 유지하고, 최신 작업 정렬용 `idx_ocr_document_created_seq(document_id, created_at, created_sequence)`를 별도로 사용합니다.
 
-- 성공한 신규 OCR 작업에는 실제 `engine_name`, `model_version`, `prompt_version`을 기록합니다.
+- 성공한 신규 OCR 작업에는 실제 `engine_name`을 기록합니다.
+- LLM 구조화가 실제 실행된 경우에만 `model_version`과 `prompt_version`을 기록합니다.
+- 규칙 기반 구조화 경로에서는 `model_version`과 `prompt_version`이 `null`입니다.
 - 기존 작업이나 구조화 단계 이전에 실패한 작업에서는 실행 metadata가 `null`일 수 있습니다.
 - Provider 원문 응답, 처방전 원문 또는 API Key는 실행 metadata에 저장하지 않습니다.
 
@@ -89,8 +91,10 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 | `normalization_version` | `VARCHAR(30)` | Yes | 적용한 정규화 규칙 버전 |
 | `field_type` | `VARCHAR(30)` | No | OCR 필드 종류. `MEDICATION_STRENGTH`를 포함 |
 
-- `normalized_value`와 `normalization_version`은 `MEDICATION_NAME` 필드에만 저장한다.
--
+- `MEDICATION_NAME`에는 약품명 표기 정규화를 적용하며 `normalization_version`은 `rule-v1`입니다.
+- LLM 경로의 `PRESCRIBED_DATE`에는 `YYYY-MM-DD` 정규화를 적용하며 `normalization_version`은 `date-rule-v1`입니다.
+- `MEDICATION_STRENGTH`를 포함한 그 밖의 필드는 현재 `normalized_value`와 `normalization_version`을 생성하지 않습니다.
+- OCR 원문이 없는 사용자 입력용 빈 검수 필드는 `raw_value`, `normalized_value`, `normalization_version`이 모두 `null`일 수 있습니다.
 - 사용자 확인 전에는 `confirmed_value`가 `null`이다.
 - 사용자 확인 전 `confirmation_status`는 `UNCONFIRMED`이다.
 - 최종 처방에는 사용자가 확인한 `confirmed_value`만 사용한다.
@@ -116,6 +120,18 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 - `strength_text`는 `dose_value`·`dose_unit`과 의미가 다른 선택값입니다.
 - 확인된 `MEDICATION_STRENGTH`가 있으면 `strength_text`에 저장합니다.
 - 제품 함량이 없는 처방전도 확정할 수 있습니다.
+
+## 제품 함량 Migration rollback 정책
+
+Revision `529b2a36b677`은 다음 schema를 추가합니다.
+
+- `extracted_field.field_type`의 `MEDICATION_STRENGTH`
+- `medication.strength_text`
+- `ocr_job.prompt_version`
+
+Production에서는 해당 revision을 downgrade하지 않고 후속 migration으로 forward-fix합니다.
+
+비운영 환경에서 downgrade하려면 위 필드에 저장된 데이터가 없어야 합니다. 데이터가 하나라도 존재하면 migration은 constraint 또는 컬럼을 변경하기 전에 중단됩니다. 데이터 삭제나 변환이 필요하면 백업·영향 확인 및 승인된 rollback 절차를 먼저 수행해야 합니다.
 
 ## 생성 상태
 
