@@ -26,6 +26,9 @@ function HomePage() {
           if (item === '가이드') {
             setGuideMessage('최근 가이드 목록은 준비 중이에요.')
           }
+          if (item === '메뉴') {
+            navigate('/profile')
+          }
         }}
       >
         <main className="app-scroll mvp-page__content">
