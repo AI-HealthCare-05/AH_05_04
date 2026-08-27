@@ -25,7 +25,7 @@
 - runner와 공개 기록에는 생성 본문, 질문 전문, token과 credential을 포함하지 않는다.
 - runner는 `.env`를 로드하지 않는다. application DB credential과 validation 설정은 별도 환경으로 주입하고,
   `CLOVA_OCR_SECRET`, `OPENAI_API_KEY` 이름이 runner 환경에 존재하면 값 확인 없이 실행을 거부한다.
-- `app/` runner·fixture 구현은 `@phina-io`의 구현 또는 리뷰를 거친다.
+- `backend/app/` runner·fixture 구현은 `@phina-io`의 구현 또는 리뷰를 거친다.
 - Frontend 코드는 `@solia142`의 별도 범위다.
 
 ## Runner CLI·결과 계약
@@ -36,7 +36,7 @@
 # DB_*, ENV, RELEASE_VALIDATION_ALLOWED, CLOVA_OCR_INVOKE_URL, STORAGE_DIR는
 # credential을 출력하지 않는 별도 runner 환경으로 먼저 주입한다.
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -44,22 +44,22 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
   --scenario-draft /private/tmp/ai-one-cycle-clova-openai-v1.draft.json
 
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
-  --scenario app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
+  --scenario backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
 
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id <uuid> \
   --base-url https://<합의된-staging-host>/api/v1 \
-  --scenario app/release_validation/scenarios/ai-one-cycle-v1.json \
+  --scenario backend/app/release_validation/scenarios/ai-one-cycle-v1.json \
   --commit-sha <40자리-commit-sha>
 
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -91,10 +91,10 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 **Files:** read only
 
-- `app/core/config.py`
+- `backend/app/core/config.py`
 - `infra/docker/docker-compose.prod.yml`
 - `infra/docker/postgres/configure-app-role.sql`
-- `alembic/`
+- `backend/alembic/`
 - `docs/deployment.md`
 
 - [ ] **Step 1: DB 전환과 회귀 증거를 확인한다**
@@ -148,10 +148,10 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 **Files:**
 
-- Modify: `app/tests/guide_ai/test_backend_contract.py`
-- Modify: `app/tests/repositories/test_guide_repository.py`
-- Verify: `app/tests/chat_apis/test_chat_message_api.py`
-- Verify: `app/tests/repositories/test_chat_repository.py`
+- Modify: `backend/app/tests/guide_ai/test_backend_contract.py`
+- Modify: `backend/app/tests/repositories/test_guide_repository.py`
+- Verify: `backend/app/tests/chat_apis/test_chat_message_api.py`
+- Verify: `backend/app/tests/repositories/test_chat_repository.py`
 
 - [x] **Step 1: 현재 Guide 실패 assertion 공백을 확인한다**
 
@@ -171,10 +171,10 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
   ```bash
   uv run pytest \
-    app/tests/guide_ai/test_backend_contract.py \
-    app/tests/repositories/test_guide_repository.py \
-    app/tests/chat_apis/test_chat_message_api.py \
-    app/tests/repositories/test_chat_repository.py \
+    backend/app/tests/guide_ai/test_backend_contract.py \
+    backend/app/tests/repositories/test_guide_repository.py \
+    backend/app/tests/chat_apis/test_chat_message_api.py \
+    backend/app/tests/repositories/test_chat_repository.py \
     -q
   ```
 
@@ -190,13 +190,13 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 **Files:**
 
-- Create: `app/tests/release_validation/__init__.py`
-- Create: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
-- Create: `app/release_validation/__init__.py`
-- Create: `app/release_validation/ai_one_cycle_smoke.py`
-- Create: `app/release_validation/scenarios/ai-one-cycle-v1.json`
+- Create: `backend/app/tests/release_validation/__init__.py`
+- Create: `backend/app/tests/release_validation/test_ai_one_cycle_smoke.py`
+- Create: `backend/app/release_validation/__init__.py`
+- Create: `backend/app/release_validation/ai_one_cycle_smoke.py`
+- Create: `backend/app/release_validation/scenarios/ai-one-cycle-v1.json`
 
-**Ownership:** `app/` 변경이므로 `@phina-io` 구현 또는 리뷰가 필요하다.
+**Ownership:** `backend/app/` 변경이므로 `@phina-io` 구현 또는 리뷰가 필요하다.
 
 - [ ] **Step 1: 환경 guard 테스트를 작성한다**
 
@@ -319,7 +319,7 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 - [ ] **Step 7: 결정적 runner 테스트를 통과시킨다**
 
-  Run: `uv run pytest app/tests/release_validation/test_ai_one_cycle_smoke.py -q`
+  Run: `uv run pytest backend/app/tests/release_validation/test_ai_one_cycle_smoke.py -q`
 
   Expected: 실제 OpenAI 호출 없이 모두 PASS.
 
@@ -333,14 +333,14 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
 
 **Files:**
 
-- Modify: `app/release_validation/ai_one_cycle_smoke.py`
-- Modify: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
+- Modify: `backend/app/release_validation/ai_one_cycle_smoke.py`
+- Modify: `backend/app/tests/release_validation/test_ai_one_cycle_smoke.py`
 - Create: `tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png`
-- Create: `app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json`
+- Create: `backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json`
 - Document: `docs/validation/ai-one-cycle-release.md`
 - Reference candidate: `tests/fixtures/ocr/evaluation/images/prescription_clean.png`
 
-**Ownership:** `app/` 변경과 실제 OCR 흐름은 `@phina-io`의 구현 또는 리뷰가 필요하다. Frontend 코드는
+**Ownership:** `backend/app/` 변경과 실제 OCR 흐름은 `@phina-io`의 구현 또는 리뷰가 필요하다. Frontend 코드는
 `@solia142`의 별도 범위다.
 
 - [ ] **Step 1: 실제 CLOVA preflight로 happy-path 합성 이미지를 확정한다**
@@ -429,8 +429,8 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
 
 **Files:**
 
-- Modify: `app/release_validation/ai_one_cycle_smoke.py`
-- Modify: `app/tests/release_validation/test_ai_one_cycle_smoke.py`
+- Modify: `backend/app/release_validation/ai_one_cycle_smoke.py`
+- Modify: `backend/app/tests/release_validation/test_ai_one_cycle_smoke.py`
 
 - [ ] **Step 1: 안전 판정 결과 type을 정의한다**
 
@@ -513,7 +513,7 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
   ```bash
   uv run ruff check .
   uv run ruff format . --check
-  uv run mypy app ai_worker
+  uv run mypy backend/app ai_worker
   bash scripts/ci/run_test.sh
   ```
 

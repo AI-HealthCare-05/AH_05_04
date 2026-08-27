@@ -23,7 +23,7 @@ def pytest_collection_modifyitems(config: pytest.Config) -> None:
     if os.environ.get("PYTEST_XDIST_WORKER") or numprocesses not in (None, 0, "0"):
         raise pytest.UsageError(
             # 이 테스트는 커밋된 PostgreSQL fixture를 공유하므로 병렬 실행하면 안 됩니다.
-            "app/tests/chat_integration commits shared PostgreSQL fixtures "
+            "backend/app/tests/chat_integration commits shared PostgreSQL fixtures "
             "and must run in a serial pytest job without xdist"
         )
 

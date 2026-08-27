@@ -33,7 +33,7 @@ Chat endpoint는 호출하지 않으며 결과가 `READY`여도 one-cycle PASS �
 # DB_*, ENV, RELEASE_VALIDATION_ALLOWED, CLOVA_OCR_INVOKE_URL, STORAGE_DIR는
 # credential을 출력하지 않는 별도 runner 환경으로 먼저 주입합니다.
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
@@ -45,11 +45,11 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 ```bash
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
-  --scenario app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
+  --scenario backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json
 ```
 
 배포된 staging Backend에서 OpenAI one-cycle을 실행합니다. `--commit-sha` 또는
@@ -57,11 +57,11 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 ```bash
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode staging-live \
   --run-id <uuid> \
   --base-url https://<agreed-staging-host>/api/v1 \
-  --scenario app/release_validation/scenarios/ai-one-cycle-v1.json \
+  --scenario backend/app/release_validation/scenarios/ai-one-cycle-v1.json \
   --commit-sha <40-character-commit-sha>
 ```
 
@@ -70,7 +70,7 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 ```bash
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
-  uv run python -m app.release_validation.ai_one_cycle_smoke \
+  PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
   --base-url http://127.0.0.1:8000/api/v1 \
