@@ -26,7 +26,7 @@ from app.main import app, fastapi_app
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
-from app.models.ocr import ConfirmationStatus, ExtractedField, OcrJob, OcrStatus
+from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.prescriptions import Medication, Prescription
 from app.models.users import User
 from app.release_validation.ai_one_cycle_smoke import (
@@ -49,6 +49,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     validate_clova_url,
     validate_live_environment,
     verify_one_cycle,
+    verify_prescription_input,
 )
 from app.services.chat_ai import ChatReplyOutput
 from app.services.guide_ai.schemas import GuideGenerationResult
@@ -58,6 +59,11 @@ from app.tests.conftest import test_engine
 # 실행하는 파이썬은 pytest의 rootdir 기반 sys.path 삽입을 물려받지 않아 app 패키지를
 # 직접 찾지 못한다. PYTHONPATH로 backend/를 명시해 `-m app...` import를 가능하게 한다.
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
+_SCENARIO_ROOT = Path(__file__).resolve().parents[2] / "release_validation" / "scenarios"
+
+
+def _load_real_scenario(filename: str) -> dict[str, Any]:
+    return json.loads((_SCENARIO_ROOT / filename).read_text(encoding="utf-8"))
 
 
 def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
@@ -612,6 +618,93 @@ async def test_fixture_builder_commits_completed_confirmed_synthetic_fixture() -
 
 
 @pytest.mark.asyncio
+async def test_staging_scenario_without_strength_builds_fixture() -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    scenario = _load_real_scenario("ai-one-cycle-v1.json")
+
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=scenario)
+
+    try:
+        async with factory() as verification_session:
+            fields = list(
+                (
+                    await verification_session.scalars(
+                        select(ExtractedField).where(ExtractedField.ocr_job_id == fixture.ocr_job_id)
+                    )
+                ).all()
+            )
+        assert len(fields) == 7
+        assert FieldType.MEDICATION_STRENGTH not in {field.field_type for field in fields}
+    finally:
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+
+
+@pytest.mark.asyncio
+async def test_local_live_scenario_builds_separate_name_and_strength_expectations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _load_real_scenario("ai-one-cycle-clova-openai-v1.json")
+    scenario["resolved_fixture_path"] = scenario["fixture_path"]
+    run_id = str(uuid4())
+    state = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {"run_id": run_id, "ids": {"document_id": str(uuid4())}},
+    )
+    runner = NetworkOneCycleRunner(
+        base_url="http://127.0.0.1:8000/api/v1",
+        state=state,
+        read_timeout_seconds=5,
+    )
+    confirmed_values: dict[str, str] = {}
+
+    async def fake_preflight(**_kwargs: object) -> dict[str, object]:
+        runner._preflight_fields = [
+            {
+                "field_id": "medication-name-field",
+                "medication_index": 1,
+                "field_type": "MEDICATION_NAME",
+            },
+            {
+                "field_id": "medication-strength-field",
+                "medication_index": 1,
+                "field_type": "MEDICATION_STRENGTH",
+            },
+        ]
+        return {"preflight": "READY", "field_count": 2}
+
+    async def fake_request(
+        _stage: str,
+        _method: str,
+        request_path: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        json_body = kwargs["json_body"]
+        assert isinstance(json_body, dict)
+        confirmed_values[request_path] = str(json_body["confirmed_value"])
+        return {}
+
+    async def fake_generation(**_kwargs: object) -> dict[str, object]:
+        return {}
+
+    monkeypatch.setattr(runner, "run_preflight", fake_preflight)
+    monkeypatch.setattr(runner, "_request", fake_request)
+    monkeypatch.setattr(runner, "_run_generation", fake_generation)
+
+    await runner.run_local_full(
+        email="synthetic@example.invalid",
+        password="Password123!",
+        scenario=scenario,
+    )
+
+    assert confirmed_values == {
+        "/extracted-fields/medication-name-field": "합성의약품에이정",
+        "/extracted-fields/medication-strength-field": "100mg",
+    }
+
+
+@pytest.mark.asyncio
 async def test_fixture_builder_uses_preallocated_user_id_for_crash_recovery() -> None:
     factory = async_sessionmaker(test_engine, expire_on_commit=False)
     user_id = uuid4()
@@ -1153,9 +1246,21 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -> None:
+@pytest.mark.parametrize(
+    ("scenario_filename", "expected_strength"),
+    [
+        ("ai-one-cycle-v1.json", None),
+        ("ai-one-cycle-clova-openai-v1.json", "100mg"),
+    ],
+)
+async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
+    scenario_filename: str,
+    expected_strength: str | None,
+) -> None:
     factory = async_sessionmaker(test_engine, expire_on_commit=False)
-    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    scenario = _load_real_scenario(scenario_filename)
+    medication = scenario["medications"][0]
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=scenario)
     now = datetime.now(UTC)
     async with factory() as session:
         prescription = Prescription(
@@ -1169,14 +1274,14 @@ async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -
         session.add(
             Medication(
                 prescription_id=prescription.id,
-                medication_name="합성의약품 에이",
-                strength_text="100mg",
-                dose_value=Decimal("1"),
-                dose_unit="정",
-                frequency_per_day=2,
-                timing_text="식후",
-                duration_days=3,
-                display_order=1,
+                medication_name=medication["medication_name"],
+                strength_text=expected_strength,
+                dose_value=Decimal(str(medication["dose_value"])),
+                dose_unit=medication["dose_unit"],
+                frequency_per_day=medication["frequency_per_day"],
+                timing_text=medication["timing_text"],
+                duration_days=medication["duration_days"],
+                display_order=medication["display_order"],
             )
         )
         guide = Guide(
@@ -1196,7 +1301,7 @@ async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -
                     session_id=chat_session.id,
                     message_seq=1,
                     role=ChatRole.USER,
-                    content=str(_scenario_payload()["question"]),
+                    content=str(scenario["question"]),
                     generation_status=ChatGenerationStatus.COMPLETED,
                 ),
                 ChatMessage(
@@ -1218,7 +1323,13 @@ async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -
             "session_id": str(chat_session.id),
         }
 
-    verified = await verify_one_cycle(factory, fixture=fixture, ids=ids, scenario=_scenario_payload())
+    await verify_prescription_input(
+        factory,
+        prescription_id=str(prescription.id),
+        document_id=str(fixture.document_id),
+        scenario=scenario,
+    )
+    verified = await verify_one_cycle(factory, fixture=fixture, ids=ids, scenario=scenario)
 
     assert verified["input_check"] == "PASS"
     assert verified["guide"]["prompt_version"] == "guide-prompt-v2"

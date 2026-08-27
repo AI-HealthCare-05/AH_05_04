@@ -445,14 +445,10 @@ async def build_synthetic_fixture(
     ]
     for medication in sorted(scenario["medications"], key=lambda item: item["display_order"]):
         index = int(medication["display_order"])
+        strength_text = medication.get("strength_text")
         field_values.extend(
             [
                 (index, FieldType.MEDICATION_NAME, str(medication["medication_name"])),
-                (
-                    index,
-                    FieldType.MEDICATION_STRENGTH,
-                    str(medication["strength_text"]),
-                ),
                 (index, FieldType.DOSE_VALUE, str(medication["dose_value"])),
                 (index, FieldType.DOSE_UNIT, str(medication["dose_unit"])),
                 (index, FieldType.FREQUENCY_PER_DAY, str(medication["frequency_per_day"])),
@@ -460,6 +456,8 @@ async def build_synthetic_fixture(
                 (index, FieldType.DURATION_DAYS, str(medication["duration_days"])),
             ]
         )
+        if strength_text is not None:
+            field_values.append((index, FieldType.MEDICATION_STRENGTH, str(strength_text)))
     fields = [
         ExtractedField(
             ocr_job_id=ocr_job_id,
@@ -598,7 +596,7 @@ async def verify_one_cycle(
             matches = matches and (
                 actual.display_order == expected["display_order"]
                 and actual.medication_name == expected["medication_name"]
-                and actual.strength_text == expected["strength_text"]
+                and actual.strength_text == expected.get("strength_text")
                 and actual.dose_value == Decimal(str(expected["dose_value"]))
                 and actual.dose_unit == expected["dose_unit"]
                 and actual.frequency_per_day == expected["frequency_per_day"]
@@ -669,7 +667,7 @@ async def verify_prescription_input(
         matches = matches and (
             stored.display_order == wanted["display_order"]
             and stored.medication_name == wanted["medication_name"]
-            and stored.strength_text == wanted["strength_text"]
+            and stored.strength_text == wanted.get("strength_text")
             and stored.dose_value == Decimal(str(wanted["dose_value"]))
             and stored.dose_unit == wanted["dose_unit"]
             and stored.frequency_per_day == wanted["frequency_per_day"]
@@ -1183,10 +1181,10 @@ class NetworkOneCycleRunner:
         }
         for medication in scenario["medications"]:
             index = int(medication["display_order"])
+            strength_text = medication.get("strength_text")
             expected_values.update(
                 {
                     (index, "MEDICATION_NAME"): str(medication["medication_name"]),
-                    (index, "MEDICATION_STRENGTH"): str(medication["strength_text"]),
                     (index, "DOSE_VALUE"): str(medication["dose_value"]),
                     (index, "DOSE_UNIT"): str(medication["dose_unit"]),
                     (index, "FREQUENCY_PER_DAY"): str(medication["frequency_per_day"]),
@@ -1194,6 +1192,8 @@ class NetworkOneCycleRunner:
                     (index, "DURATION_DAYS"): str(medication["duration_days"]),
                 }
             )
+            if strength_text is not None:
+                expected_values[(index, "MEDICATION_STRENGTH")] = str(strength_text)
         for field in self._preflight_fields:
             identity = (int(field["medication_index"]), str(field["field_type"]))
             if identity not in expected_values:

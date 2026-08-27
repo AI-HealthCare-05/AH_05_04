@@ -6,7 +6,7 @@
   "medications": [
     {
       "display_order": 1,
-      "medication_name": "합성의약품에이정 100mg",
+      "medication_name": "합성의약품에이정",
       "strength_text": "100mg",
       "dose_value": "1",
       "dose_unit": "정",
