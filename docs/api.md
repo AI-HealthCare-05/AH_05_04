@@ -212,23 +212,61 @@ DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반�
 | --- | --- | ---: | --- |
 | `GET` | `/api/v1/ocr-jobs/{job_id}` | `200 OK` | 저장된 OCR 작업과 추출 필드를 조회합니다. |
 
-### 약품명 필드 응답
+### OCR 작업 및 추출 필드 응답
 
-`MEDICATION_NAME` 필드는 OCR 원문, 정규화 참고값 및 사용자 확정값을 함께 반환합니다.
+OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합니다.
 
 ```json
 {
-  "field_id": "11111111-1111-4111-8111-111111111111",
-  "field_type": "MEDICATION_NAME",
-  "medication_index": 1,
-  "raw_value": "복합정 500 mg / 5 mg",
-  "normalized_value": "복합정 500mg/5mg",
-  "confirmed_value": null,
-  "confidence_score": 0.99,
-  "confirmation_status": "UNCONFIRMED",
-  "normalization_version": "rule-v1"
+  "data": {
+    "job_id": "11111111-1111-4111-8111-111111111111",
+    "document_id": "22222222-2222-4222-8222-222222222222",
+    "ocr_status": "COMPLETED",
+    "error_code": null,
+    "error_message": null,
+    "engine_name": "CLOVA_OCR",
+    "model_version": "gpt-4o-mini",
+    "prompt_version": "ocr-structure-prompt-v2",
+    "created_at": "2026-08-26T09:00:00Z",
+    "completed_at": "2026-08-26T09:00:05Z",
+    "fields": [
+      {
+        "field_id": "33333333-3333-4333-8333-333333333333",
+        "field_type": "MEDICATION_NAME",
+        "medication_index": 1,
+        "raw_value": "복합정",
+        "normalized_value": "복합정",
+        "confirmed_value": null,
+        "confidence_score": 0.99,
+        "confirmation_status": "UNCONFIRMED",
+        "normalization_version": "ocr-structure-prompt-v2"
+      },
+      {
+        "field_id": "44444444-4444-4444-8444-444444444444",
+        "field_type": "MEDICATION_STRENGTH",
+        "medication_index": 1,
+        "raw_value": "500mg/5mg",
+        "normalized_value": "500mg/5mg",
+        "confirmed_value": null,
+        "confidence_score": 0.99,
+        "confirmation_status": "UNCONFIRMED",
+        "normalization_version": "ocr-structure-prompt-v2"
+      }
+    ]
+  }
 }
 ```
+- `engine_name`은 실제 OCR 엔진 식별자입니다.
+- `model_version`은 OCR 구조화에 사용한 실제 모델 ID입니다.
+- `prompt_version`은 OCR 구조화 프롬프트 버전입니다.
+- 기존 작업 또는 실패한 작업에서는 실행 `metadata`가 `null`일 수 있습니다.
+- `MEDICATION_NAME`은 처방전에 기재된 약물명 또는 성분명입니다.
+- `MEDICATION_STRENGTH`는 `100mg`, `5mg/100mg`과 같은 제품 함량이며 1회 복용량과 구분합니다.
+- `raw_value`는 OCR이 인식한 원문입니다.
+- `normalized_value`는 표기 정리용 참고값입니다.
+- `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값입니다.
+- 최종 처방에는 사용자가 확인한 `confirmed_value`만 사용합니다.
+
 
 OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 있도록 `error_code`와 `error_message`를 함께 포함합니다. 외부 OCR 제공자의 원본 오류 메시지나 민감한 내부 예외 메시지는 그대로 노출하지 않고 Backend가 정의한 안전한 문구만 반환합니다.
 
@@ -237,6 +275,36 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값이다.
 - `normalized_value`는 자동 처방 확정이나 의약품 동일성 판단에 사용하지 않는다.
 - 최종 처방에는 `confirmed_value`만 사용한다.
+
+## OCR 추출 필드 검수
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200 OK` | OCR 추출 필드의 사용자 확인값을 저장합니다. |
+
+### 요청
+
+```json
+{
+  "confirmed_value": "복합정"
+}
+```
+- 사용자는 자신이 소유한 의료문서의 추출 필드만 수정할 수 있습니다.
+- 처방이 확정되기 전까지만 `confirmed_value`를 수정할 수 있습니다.
+- 처방 확정 이후에는 확정 처방과 OCR 검수값의 불일치를 방지하기 위해 extracted-field PATCH를 거부합니다.
+- 거부된 PATCH는 기존 `confirmed_value`를 변경하지 않습니다.
+- PATCH와 처방 확정의 동시 요청 직렬화는 Post-MVP 범위입니다.
+
+### 주요 오류
+
+| 상태 | `code` | 설명 |
+| ---: | --- | --- |
+| `404` | `EXTRACTED_FIELD_NOT_FOUND` | 필드가 없거나 사용자가 접근할 수 없습니다. |
+| `409` | `PRESCRIPTION_ALREADY_CONFIRMED` | 해당 문서의 처방이 이미 확정되어 필드를 수정할 수 없습니다. |
+
+현재 MVP의 `409` 검사는 PATCH 처리 시점에 이미 확정된 처방이 존재하는지를 확인합니다. PATCH와 처방 확정이 동시에 실행되는 경우의 row lock 및 직렬화는 Post-MVP 범위입니다.
 
 ## 처방 정보 확정
 
@@ -252,7 +320,8 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - Backend는 문서 소유권과 최신 OCR 작업의 `COMPLETED` 상태를 확인합니다.
 - OCR 필드는 사용자가 확인한 `confirmed_value`만 처방 확정에 사용합니다.
 - `PRESCRIBED_DATE`, `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
-- `DOSE_UNIT`, `TIMING`은 현재 MVP에서 선택값입니다.
+- `MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`은 현재 MVP에서 선택값입니다.
+- `MEDICATION_STRENGTH`는 최대 100자이며 확정 시 `medication.strength_text`로 저장합니다.
 - `PRESCRIBED_DATE`는 `date.fromisoformat()`이 허용하는 ISO 8601 날짜 형식(예: `YYYY-MM-DD`, 하이픈 없는 `YYYYMMDD`, ISO week-date `YYYY-Www-D`), `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
 - `DOSE_UNIT`은 `VARCHAR(50)`, `TIMING`은 `VARCHAR(255)` 길이를 초과하면 저장 전에 `422 VALIDATION_FAILED`로 거부합니다.
 - 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
@@ -266,6 +335,7 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 | `422` | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 처방 확정 필수 항목(`PRESCRIBED_DATE` 포함)이 누락되었습니다. |
 | `422` | `VALIDATION_FAILED` | 필드 값의 형식이 올바르지 않습니다(`PRESCRIBED_DATE` 형식 오류 포함). |
 
+현재 MVP의 `409` 검사는 PATCH 처리 시점에 이미 확정된 처방이 존재하는지를 확인합니다. PATCH와 처방 확정이 동시에 실행되는 경우의 row lock 및 직렬화는 Post-MVP 범위입니다.
 
 ## 변경 이력
 
@@ -273,6 +343,7 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 
 | 날짜 | 관련 Issue/PR | 변경 내용 |
 | --- | --- | --- |
+| 2026-08-27 | Issue #94 / PR #96 | OCR LLM 구조화 metadata, 제품 함량 필드, 확정 후 extracted-field PATCH 409 차단 계약을 반영 |
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
-| 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
+| 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |

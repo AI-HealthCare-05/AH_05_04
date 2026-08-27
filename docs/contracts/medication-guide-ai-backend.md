@@ -29,6 +29,7 @@ Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`
 | `frequency_per_day` | `int \| None` | 선택 양수 일일 횟수 |
 | `timing_text` | `str \| None` | 선택 복용 시점 |
 | `duration_days` | `int \| None` | 선택 양수 기간 |
+| `strength_text` | `str \| None` | 선택 제품 함량, 최대 100자 |
 
 환자·사용자·처방 식별자, OCR 원문, 이미지와 미확정 값은 Guide AI 입력에 포함하지 않는다. 입력 문자열은 NFC 정규화, 앞뒤 공백 제거와 연속 공백 축약을 거치며 NUL, bidi override와 zero-width 문자는 거부한다.
 
@@ -43,15 +44,14 @@ Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`
 - `input_json`
 - `max_output_tokens`
 
-`input_json`은 입력 순서대로 부여한 0-based `source_index`와 다음 허용 필드만 포함한다.
+`input_json`에는 입력 순서를 연결하기 위한 0-based `source_index`만 포함합니다.
 
-- `source_index`
-- `medication_name`
-- `dose_value`
-- `dose_unit`
-- `frequency_per_day`
-- `timing_text`
-- `duration_days`
+```json
+[
+  { "source_index": 0 },
+  { "source_index": 1 }
+]
+```
 
 OpenAI adapter는 비스트리밍 `responses.parse`, `text_format=GeneratedGuideDraft`, `store=False`를 사용한다. `max_output_tokens`는 `400 + (160 × 약물 수)`이며, `GuideGenerator`가 provider 호출 전체를 주입된 timeout으로 제한한다.
 
@@ -59,11 +59,11 @@ OpenAI adapter는 비스트리밍 `responses.parse`, `text_format=GeneratedGuide
 
 성공 시 `GuideGenerator.generate()`는 다음 `GuideGenerationResult`를 반환한다.
 
-| 필드 | 계약 |
-| --- | --- |
-| `content` | 검증된 AI 안내와 원본 처방값을 결합한 10,000자 이하 UTF-8 평문 |
+| 필드 | 계약                                                             |
+| --- |------------------------------------------------------------------|
+| `content` | 검증된 AI 안내와 원본 처방값을 결합한 10,000자 이하 UTF-8 평문   |
 | `model_name` | provider 응답에서 확인한 비어 있지 않은 실제 모델 ID, 100자 이하 |
-| `prompt_version` | 현재 `guide-prompt-v1` |
+| `prompt_version` | 현재 `guide-prompt-v2`                                           |
 
 `content`는 OpenAI의 원문이나 `response.output_text`가 아니다. 약명·용량·횟수·복용 시점·기간은 원본 `MedicationInput`에서 결정론적으로 렌더링하고, AI 출력에서는 `source_index`, 검증된 `guidance`와 `general_notice`만 사용한다. 입력 약물 순서와 각 `source_index`의 대응을 유지한다.
 

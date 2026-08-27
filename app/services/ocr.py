@@ -235,7 +235,31 @@ class OcrService:
                 status_code=404,
                 code="EXTRACTED_FIELD_NOT_FOUND",
                 message="추출 필드를 찾을 수 없습니다.",
-                details=[ErrorDetail(field="field_id", reason="NOT_FOUND", rejected_value=str(field_id))],
+                details=[
+                    ErrorDetail(
+                        field="field_id",
+                        reason="NOT_FOUND",
+                        rejected_value=str(field_id),
+                    )
+                ],
+            )
+
+        document = field.ocr_job.document
+
+        # PRESCRIPTION은 사용자 검수를 마친 최종 확정 데이터입니다.
+        # 처방 확정 이후 OCR 추출값이 변경되면 화면의 검수값과 확정 처방이 달라질 수 있으므로
+        # 추가 PATCH를 거부하고 Frontend가 비편집 확정 화면으로 전환하도록 합니다.
+        if document.prescription is not None:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_ALREADY_CONFIRMED",
+                message="이미 확정된 처방 정보입니다.",
+                details=[
+                    ErrorDetail(
+                        field="document_id",
+                        reason="ALREADY_CONFIRMED",
+                    )
+                ],
             )
 
         field = await self._ocr_repo.confirm_field(

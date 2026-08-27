@@ -258,3 +258,79 @@ async def test_confirm_prescription_api_rejects_another_users_document() -> None
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert response.json()["code"] == "MEDICAL_DOCUMENT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_update_extracted_field_api_rejects_after_prescription_confirmed() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        access_token = await _signup_and_login(
+            client,
+            # SignUpRequest의 이메일 최대 길이 40자를 넘지 않는 짧은 테스트 식별자를 사용합니다.
+            label="patch-lock",
+        )
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        document_id, job_id = await _upload_and_run_ocr(
+            client,
+            access_token=access_token,
+        )
+        await _confirm_all_fields(
+            client,
+            job_id=job_id,
+            access_token=access_token,
+        )
+
+        # 차단 테스트에 사용할 약물명 필드와 기존 확정값을 저장합니다.
+        before_response = await client.get(
+            f"/api/v1/ocr-jobs/{job_id}",
+            headers=headers,
+        )
+        assert before_response.status_code == status.HTTP_200_OK
+
+        target_field = next(
+            field for field in before_response.json()["data"]["fields"] if field["field_type"] == "MEDICATION_NAME"
+        )
+        original_confirmed_value = target_field["confirmed_value"]
+
+        # 처방을 최종 확정해 이후 extracted-field 수정을 금지합니다.
+        confirm_response = await client.post(
+            f"/api/v1/documents/{document_id}/prescription",
+            headers=headers,
+        )
+        assert confirm_response.status_code == status.HTTP_201_CREATED
+
+        patch_response = await client.patch(
+            f"/api/v1/extracted-fields/{target_field['field_id']}",
+            json={
+                "confirmed_value": "확정 후 변경하면 안 되는 약물명",
+            },
+            headers=headers,
+        )
+
+        # 거부된 PATCH가 실제 DB 값을 변경하지 않았는지도 함께 확인합니다.
+        after_response = await client.get(
+            f"/api/v1/ocr-jobs/{job_id}",
+            headers=headers,
+        )
+        assert after_response.status_code == status.HTTP_200_OK
+
+    body = patch_response.json()
+
+    assert patch_response.status_code == status.HTTP_409_CONFLICT
+    assert body["code"] == "PRESCRIPTION_ALREADY_CONFIRMED"
+    assert body["message"] == "이미 확정된 처방 정보입니다."
+    assert body["trace_id"]
+    assert body["details"][0]["field"] == "document_id"
+    assert body["details"][0]["reason"] == "ALREADY_CONFIRMED"
+
+    updated_field = next(
+        field for field in after_response.json()["data"]["fields"] if field["field_id"] == target_field["field_id"]
+    )
+
+    # 409 응답만 반환하고 끝나는 것이 아니라, 기존 확정값이 보존되어야 합니다.
+    assert updated_field["confirmed_value"] == original_confirmed_value

@@ -67,8 +67,15 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 | `created_sequence` | `BIGINT`       | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |
 | `error_code` | `VARCHAR(100)` | Yes | 실패 상태의 안전한 오류 코드 |
 | `error_message` | `VARCHAR(500)` | Yes | 실패 상태 조회 응답에 포함할 수 있는 안전한 사용자 안내 문구 |
+| `engine_name` | `VARCHAR(100)` | Yes | 실제 OCR 실행 엔진 식별자 |
+| `model_version` | `VARCHAR(100)` | Yes | OCR 구조화에 사용한 실제 모델 ID |
+| `prompt_version` | `VARCHAR(100)` | Yes | OCR 구조화 프롬프트 버전 |
 
 `idx_ocr_document_created`는 기존 FK 지원 인덱스로 유지하고, 최신 작업 정렬용 `idx_ocr_document_created_seq(document_id, created_at, created_sequence)`를 별도로 사용합니다.
+
+- 성공한 신규 OCR 작업에는 실제 `engine_name`, `model_version`, `prompt_version`을 기록합니다.
+- 기존 작업이나 구조화 단계 이전에 실패한 작업에서는 실행 metadata가 `null`일 수 있습니다.
+- Provider 원문 응답, 처방전 원문 또는 API Key는 실행 metadata에 저장하지 않습니다.
 
 ## OCR 추출 필드
 
@@ -80,11 +87,35 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 | `normalized_value` | `VARCHAR(1000)` | Yes | 원문의 표기만 정리한 참고값 |
 | `confirmed_value` | `VARCHAR(1000)` | Yes | 사용자가 확인하거나 수정한 최종 기준값 |
 | `normalization_version` | `VARCHAR(30)` | Yes | 적용한 정규화 규칙 버전 |
+| `field_type` | `VARCHAR(30)` | No | OCR 필드 종류. `MEDICATION_STRENGTH`를 포함 |
 
 - `normalized_value`와 `normalization_version`은 `MEDICATION_NAME` 필드에만 저장한다.
+-
 - 사용자 확인 전에는 `confirmed_value`가 `null`이다.
 - 사용자 확인 전 `confirmation_status`는 `UNCONFIRMED`이다.
 - 최종 처방에는 사용자가 확인한 `confirmed_value`만 사용한다.
+- `MEDICATION_STRENGTH`는 제품 함량을 표현하며 `DOSE_VALUE`·`DOSE_UNIT`과 구분합니다.
+- 제품 함량은 `100mg`, `5mg/100mg`, `500mg/5mL`과 같은 문자열을 보존합니다.
+- 확인되지 않은 제품 함량은 최종 처방에 저장하지 않습니다.
+
+## 확정 처방 약물
+
+`medication` 테이블은 사용자가 확인한 약물별 확정값을 저장합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `medication_name` | `VARCHAR(255)` | No | 사용자가 확인한 약물명 또는 성분명 |
+| `strength_text` | `VARCHAR(100)` | Yes | 처방전에 기재된 제품 함량 |
+| `dose_value` | `NUMERIC(10,3)` | Yes | 실제 1회 복용량 |
+| `dose_unit` | `VARCHAR(50)` | Yes | 실제 1회 복용 단위 |
+| `frequency_per_day` | `INTEGER` | Yes | 하루 복용 횟수 |
+| `timing_text` | `VARCHAR(255)` | Yes | 복용 시점 |
+| `duration_days` | `INTEGER` | Yes | 복용 기간 |
+| `display_order` | `INTEGER` | No | 처방전상의 약물 표시 순서 |
+
+- `strength_text`는 `dose_value`·`dose_unit`과 의미가 다른 선택값입니다.
+- 확인된 `MEDICATION_STRENGTH`가 있으면 `strength_text`에 저장합니다.
+- 제품 함량이 없는 처방전도 확정할 수 있습니다.
 
 ## 생성 상태
 

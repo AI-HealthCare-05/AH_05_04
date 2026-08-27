@@ -389,10 +389,11 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
 
 - [ ] **Step 3: 실제 CLOVA 호출과 저장 결과를 확인한다**
 
-  새 DB session에서 OCR job의 `COMPLETED`, `completed_at`, null 오류, 추출 필드 존재와 필수 필드의
-  `CONFIRMED`를 확인한다. 현재 구현이 `engine_name`과 `model_version`을 채우지 않으므로 이를 성공 조건에
-  추가하거나 값을 추정하지 않는다. Guide·Chat은 실제 모델 ID, prompt version, 완료 상태와 null 오류를
-  기존 방식으로 확인한다.
+- 새 DB session에서 OCR job의 `COMPLETED`, `completed_at`, null 오류, 추출 필드 존재와 필수 필드의 `CONFIRMED`를 확인한다.
+- 새 DB session에서 OCR job의 `engine_name`, `model_version`, `prompt_version`이 실제 실행 결과와 일치하는지 확인한다.
+- 값을 고정 모델명으로 추정하지 않고 OCR API 응답과 저장값을 대조한다.
+- 기존 작업 또는 구조화 이전 실패 작업에서는 실행 metadata가 `null`일 수 있다.
+- Guide·Chat은 실제 모델 ID, prompt version, 완료 상태와 null 오류를 기존 방식으로 확인한다.
 
 - [ ] **Step 4: 진단 결과와 비용 경계를 기록한다**
 

@@ -102,6 +102,7 @@ Backend와 AI 모듈 사이의 현재 공유 경계는 [복약 가이드 Backend
 `MedicationInput`은 다음 필드를 가진다.
 
 - `medication_name`: 필수, 공백이 아닌 문자열
+- `strength_text`: 선택 제품 함량, 최대 100자
 - `dose_value`: 선택, 값이 있으면 양수 `Decimal`
 - `dose_unit`: 선택, 값이 있으면 공백이 아닌 문자열
 - `frequency_per_day`: 선택, 양의 정수
@@ -116,9 +117,9 @@ Backend와 AI 모듈 사이의 현재 공유 경계는 [복약 가이드 Backend
 
 AI 모듈에는 환자 ID, 사용자 ID, 처방전 이미지, OCR 원문과 미검토 값을 전달하지 않는다. `prescription_id`는 Backend 저장과 추적에 필요하지만 생성에는 필요하지 않으므로 입력에서 제외한다.
 
-OpenAI에는 복약 가이드 생성에 필요한 `source_index`, 약명, 존재하는 용량·단위·횟수·시점·기간만 전달한다. `MedicationPromptItem`을 `model_dump_json()`으로 직렬화해 단일 user `input` 메시지로 전달하고 시스템 규칙은 `instructions`에만 둔다. `Decimal`은 문자열로 직렬화해 숫자 정밀도를 보존하고 누락 필드는 JSON에서 생략한다.
+OpenAI Provider에는 약물 순서를 연결하기 위한 `source_index`만 전달한다. 확정 약물명, 제품 함량, 복용량, 단위, 횟수, 복용 시점과 기간은 Provider payload에 포함하지 않는다.
 
-Provider 요청 payload의 허용 필드는 `source_index`, `medication_name`, `dose_value`, `dose_unit`, `frequency_per_day`, `timing_text`, `duration_days`이다. 처방 ID와 사용자 식별자는 provider input과 metadata에 넣지 않는다. JSON 직렬화만으로 prompt injection이 방지된다고 가정하지 않으며, 입력 문자열을 지시가 아닌 데이터로 취급하도록 프롬프트에 명시하고 adversarial fixture로 검증한다. 이 전송 범위가 늘어나는 변경은 개인정보·의료 안전 리뷰와 prompt version 갱신이 필요하다.
+Provider 요청 payload의 유일한 허용 필드는 `source_index`이다. 확정 처방값은 원본 `MedicationInput`에서 Backend renderer가 결정론적으로 조립한다. 이를 통해 Provider가 약물명, 제품 함량, 숫자 또는 단위를 재생성하거나 변경하지 못하도록 한다.
 
 ### 출력
 
@@ -132,7 +133,7 @@ result = await guide_generator.generate(guide_input)
 
 - `content`: 검증과 렌더링이 완료된 비어 있지 않은 한국어 본문
 - `model_name`: OpenAI 응답에서 확인한 실제 모델 ID, GUIDE 컬럼 제약인 100자 이하
-- `prompt_version`: `guide-prompt-v1`
+- `prompt_version`: `guide-prompt-v2`
 
 실제 모델 ID가 비어 있거나 100자를 넘으면 자르지 않고 `GuideGenerationInvalidResponseError`로 처리한다. 프롬프트, 출력 스키마, 검증 규칙이나 renderer가 바뀌어 사용자에게 보이는 결과가 달라질 때도 `prompt_version`을 올린다.
 
@@ -165,7 +166,7 @@ Responses API 결과는 다음 순서로 판정한다.
 
 ## 프롬프트 규칙
 
-프롬프트 버전은 `guide-prompt-v1`로 코드에 명시한다.
+프롬프트 버전은 `guide-prompt-v2`로 코드에 명시한다.
 
 - 제공된 처방 데이터만 사실로 사용해 짧은 한국어 복약 안내를 작성한다.
 - 누락된 값을 추측하거나 보완하지 않는다.
