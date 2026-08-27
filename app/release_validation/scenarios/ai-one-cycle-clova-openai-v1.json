@@ -1,0 +1,31 @@
+{
+  "scenario_version": "ai-one-cycle-clova-openai-v1",
+  "fixture_path": "tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png",
+  "fixture_sha256": "sha256:f206134e66d11a56c831ad22c4bf2dd6ca6ee291bdfe0925792893fd349290da",
+  "prescribed_date": "2026-08-21",
+  "medications": [
+    {
+      "display_order": 1,
+      "medication_name": "합성의약품에이정 100mg",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 2,
+      "timing_text": "아침 저녁 식후",
+      "duration_days": 3
+    }
+  ],
+  "expected_field_identities": [
+    [0, "PRESCRIBED_DATE"],
+    [1, "MEDICATION_NAME"],
+    [1, "DOSE_VALUE"],
+    [1, "DOSE_UNIT"],
+    [1, "FREQUENCY_PER_DAY"],
+    [1, "DURATION_DAYS"],
+    [1, "TIMING"]
+  ],
+  "question": "이 합성 처방의 하루 복용 횟수와 복용 시점을 알려주세요.",
+  "expected_answer_facts": [
+    "합성의약품에이정 100mg:1일 2회",
+    "복용 시점:아침 저녁 식후"
+  ]
+}

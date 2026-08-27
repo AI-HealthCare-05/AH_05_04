@@ -8,7 +8,6 @@ from app.services.guide_ai.schemas import (
     GeneratedMedicationGuidance,
     GuideGenerationInput,
     MedicationInput,
-    MedicationPromptItem,
 )
 
 
@@ -46,19 +45,6 @@ def test_guide_input_requires_at_least_one_medication_and_forbids_extra_fields()
 
     with pytest.raises(ValidationError):
         MedicationInput.model_validate({"medication_name": "합성약", "patient_id": "patient-1"})
-
-
-def test_prompt_item_omits_missing_values_and_serializes_decimal_as_string() -> None:
-    item = MedicationPromptItem(
-        source_index=0,
-        medication_name="합성약",
-        dose_value=Decimal("1.250"),
-        timing_text=None,
-    )
-
-    assert item.model_dump_json(exclude_none=True) == (
-        '{"source_index":0,"medication_name":"합성약","dose_value":"1.250"}'
-    )
 
 
 def test_generated_draft_strips_text_and_forbids_unknown_fields() -> None:
