@@ -118,13 +118,18 @@ React Router를 사용합니다.
 
 | 경로 | 상태 |
 | --- | --- |
-| `/` | 기본 Home 화면 |
+| `/` | Dosey Home 화면 |
+| `/start` | 시작 화면, 회원가입·로그인 route 연결 |
 | `/signup` | 회원가입 API 연결 |
 | `/login` | 로그인 API 연결 |
-| `/prescriptions/upload` | 처방전 업로드, 동기 OCR 실행과 결과 요약 연결 |
+| `/prescriptions/upload` | 처방전 업로드, OCR 실행·상태 재조회와 검수 route 연결 |
+| `/prescriptions/review?document_id=...&job_id=...` | OCR 원본·필드 조회, 필드 PATCH, 처방 확정, 확정 성공 후 Guide 생성 API 연결 |
+| `/guides/:guideId` | 실제 Guide 조회 응답 표시, `prescription_id` 기반 Chat 진입 연결 |
+| `/guides` | 조회할 Guide ID가 없는 빈 상태 |
+| `/chat?prescription_id=...` | Chat 세션 생성, 기존 메시지 조회, 사용자 메시지와 동기 AI 응답 표시 |
 | `/design-prototype` | 실제 Backend 상태와 분리된 UX 프로토타입 |
 
-OCR 필드 확인·수정, 처방 확정, 복약 가이드와 챗봇 화면은 아직 실제 API 사용자 여정으로 연결되지 않았습니다. 디자인 프로토타입에 화면이 있더라도 구현 완료로 간주하지 않습니다.
+Frontend API 연결은 회원가입부터 처방 확정, Guide 생성·조회, Chat 세션·이력·메시지까지 구현되어 있습니다. PostgreSQL 환경의 실제 E2E는 회원가입 → 로그인 → 업로드 → OCR → 검수·수정 → 처방 확정까지 완료했으며, Guide 생성부터 실제 OpenAI Chat 응답까지의 전체 E2E는 아직 최종 완료로 표시하지 않습니다. `/design-prototype`은 이 실제 사용자 여정과 분리된 참고 화면입니다.
 
 ## API Client
 

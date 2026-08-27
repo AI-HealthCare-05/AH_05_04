@@ -1,40 +1,53 @@
 # 공통 데이터 계약
 
-Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `*-v1.md` 신규 문서는 **승인된 Post-MVP-1 목표 계약**이며 해당 구현 PR이 병합되기 전에는 현재 API·DB 동작으로 간주하지 않습니다.
+Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `targets/post-mvp-1/` 문서는 **승인된 Post-MVP-1 목표 계약**이며 해당 구현 PR이 병합되기 전에는 현재 API·DB 동작으로 간주하지 않습니다.
 
 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../governance/post-mvp-1-document-authority.md)를 따릅니다.
 
+## 디렉터리 구조와 배치 원칙
+
+계약 문서는 승인·구현 상태에 따라 다음 경로에서 관리합니다.
+
+- `current/`: 현재 코드·OpenAPI·migration·자동 테스트가 함께 뒷받침하는 실행 계약
+- `targets/post-mvp-1/`: 승인됐지만 아직 구현되지 않은 Post-MVP-1 목표 계약
+- `proposed/`: 아직 구현 목표로 확정되지 않은 제안
+
+각 계약은 하나의 정규 경로만 가지며 상태 폴더 사이에 복제하지 않습니다. 목표 계약은 관련 구현과 검증 증빙이 완료된 구현 PR에서 `current/`로 이동하고 상태를 함께 갱신합니다. Proposed 계약은 승인 결정 없이 `targets/` 또는 `current/`로 이동하지 않습니다.
+
 ## 현재 구현 계약
 
-- [복약 가이드 Backend–AI 계약](./medication-guide-ai-backend.md): 현재 동기 one-cycle 입력·출력·오류 경계
-- [복약 챗봇 Backend–AI Core 계약](./medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
-- [OCR 약품명 정규화 계약](./ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
-- [OCR 약품 행 구조화 계약](./ocr-medication-structuring.md): 현재 약품 행 판정·부분 인식·사용자 확인 경계
-- [처방 확정 Backend 계약](./prescription-confirmation.md): OCR 검수 필드로 처방을 확정할 때의 필수값, DB 경계값, Post-MVP `job_id` 검증 경계
-- [회원가입·사용자 정보 계약](./user-account.md): 회원가입 허용 필드, 내 정보 수정 범위와 개인정보 nullable 상태
-- [OCR 작업 상태 조회 계약](./ocr-job-status.md): OCR 작업 실패 코드와 `error_message` 노출 기준, 최신 작업 판별 기준
+- [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): 현재 동기 one-cycle 입력·출력·오류 경계
+- [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
+- [OCR 약품명 정규화 계약](./current/ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
+- [OCR 약품 행 구조화 계약](./current/ocr-medication-structuring.md): 현재 약품 행 판정·부분 인식·사용자 확인 경계
+- [처방 확정 Backend 계약](./current/prescription-confirmation.md): OCR 검수 필드로 처방을 확정할 때의 필수값, DB 경계값, Post-MVP `job_id` 검증 경계
+- [회원가입·사용자 정보 계약](./current/user-account.md): 회원가입 허용 필드, 내 정보 수정 범위와 개인정보 nullable 상태
+- [OCR 작업 상태 조회 계약](./current/ocr-job-status.md): OCR 작업 실패 코드와 `error_message` 노출 기준, 최신 작업 판별 기준
+- [Backend 공통 오류 응답 계약](./current/backend-error-response.md): `ApiError` 사용법, 공통·도메인 오류 코드
+- [Backend 공통 구현 규칙](./current/backend-common-patterns.md): 소유권 확인, 실패 상태 저장
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
 ## Proposed 운영 계약 — 미구현
 
-- [Staging Release Validation Ledger 계약](./release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
+- [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 
 Proposed 운영 계약은 관련 schema·service·CLI·테스트가 함께 병합되고 상태가 갱신되기 전에는 실행 가능한 계약으로 간주하지 않습니다.
 
 ## 승인된 Post-MVP-1 목표 계약 — 미구현
 
-- [비동기 Job 계약 v1](./async-job-v1.md): Job 유형, 6개 상태, Chat 동시성 및 Polling
-- [멱등성 계약 v1](./idempotency-v1.md): 요청 지문, 중복·충돌 처리와 보존 기간
-- [Transactional Outbox와 Redis Stream 계약 v1](./outbox-stream-v1.md): at-least-once 전달, ACK, fencing과 메시지 경계
-- [처방 버전 계약 v1](./prescription-version-v1.md): 불변 snapshot, 활성화, stale 및 기존 데이터 backfill
-- [Check-in과 Barrier 계약 v1](./checkin-v1.md): 3개 Check-in 결과와 Barrier 명시적 거절·미제출 구분
-- [Safety Result 계약 v1](./safety-result-v1.md): 생성·검증·공개 상태 조합과 fail-closed 규칙
+- [Post-MVP-1 목표 계약 인덱스](./targets/post-mvp-1/README.md)
+- [비동기 Job 계약 v1](./targets/post-mvp-1/async-job-v1.md): Job 유형, 6개 상태, Chat 동시성 및 Polling
+- [멱등성 계약 v1](./targets/post-mvp-1/idempotency-v1.md): 요청 지문, 중복·충돌 처리와 보존 기간
+- [Transactional Outbox와 Redis Stream 계약 v1](./targets/post-mvp-1/outbox-stream-v1.md): at-least-once 전달, ACK, fencing과 메시지 경계
+- [처방 버전 계약 v1](./targets/post-mvp-1/prescription-version-v1.md): 불변 snapshot, 활성화, stale 및 기존 데이터 backfill
+- [Check-in과 Barrier 계약 v1](./targets/post-mvp-1/checkin-v1.md): 3개 Check-in 결과와 Barrier 명시적 거절·미제출 구분
+- [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): 생성·검증·공개 상태 조합과 fail-closed 규칙
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 
 ### Current 승격 조건
 
-목표 계약은 파일을 `current/` 같은 새 폴더로 이동하지 않고 같은 경로에서 상태를 갱신한다. 관련 코드·migration·OpenAPI/DTO, 계약·통합 테스트와 실행 증빙이 같은 구현 PR에 포함되고 관련 영역의 지정 리뷰어 승인을 받은 뒤에만 Current로 표시한다. 외부 승인이나 공개 flag가 필요한 기능은 이 승격과 별도로 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 충족해야 한다.
+목표 계약은 관련 코드·migration·OpenAPI/DTO, 계약·통합 테스트와 실행 증빙이 같은 구현 PR에 포함되고 관련 영역의 지정 리뷰어 승인을 받은 뒤에만 `targets/post-mvp-1/`에서 `current/`로 이동하고 Current로 표시한다. 외부 승인이나 공개 flag가 필요한 기능은 이 승격과 별도로 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 충족해야 한다.
 
 ### Contract Freeze v1에서 확정한 목표
 

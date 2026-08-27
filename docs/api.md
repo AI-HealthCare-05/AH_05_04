@@ -8,7 +8,7 @@
 
 ## 공통 오류 응답 형식
 
-모든 API의 오류 응답은 아래 형식(`app/core/errors.py`)을 따릅니다.
+등록된 Router endpoint 안에서 처리되는 오류 응답은 아래 형식(`backend/app/core/errors.py`)을 따릅니다.
 
 ```json
 {
@@ -21,9 +21,10 @@
 }
 ```
 
-- `trace_id`는 요청별 미들웨어(`app/main.py`)가 생성해 `request.state.trace_id`에 저장하고, 모든 에러 핸들러가 이 값을 재사용합니다(핸들러가 자체적으로 새 값을 만들지 않음). 성공 응답 body에는 아직 포함하지 않으며, 필요 시 로그·감사로그와 연결할 수 있도록 모든 요청에서 `request.state`에 존재합니다.
+- `trace_id`는 요청별 미들웨어(`backend/app/main.py`)가 생성해 `request.state.trace_id`에 저장하고, 모든 에러 핸들러가 이 값을 재사용합니다(핸들러가 자체적으로 새 값을 만들지 않음). 성공 응답 body에는 아직 포함하지 않으며, 필요 시 로그·감사로그와 연결할 수 있도록 모든 요청에서 `request.state`에 존재합니다.
 - 기존 `HTTPException` 기반 코드(`{"detail": "..."}`)도 전역 핸들러가 위 형식으로 자동 변환합니다. 이때 `code`는 `HTTP_ERROR`로 고정되고 `message`에 원래 `detail` 값이 들어갑니다.
 - 예상치 못한 예외는 `code: INTERNAL_SERVER_ERROR`, 500으로 변환되며 내부 오류 내용은 노출하지 않습니다.
+- 등록되지 않은 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405는 FastAPI/Starlette 라우팅 단계에서 `{"detail": ...}` 형식으로 반환될 수 있습니다.
 
 ## CORS
 
@@ -35,7 +36,7 @@
 
 ## API 목록
 
-현재 등록된 Router endpoint의 요약입니다. 상세 요청·응답과 오류 의미는 관련 계약 문서와 FastAPI OpenAPI를 기준으로 합니다.
+현재 등록된 Router endpoint의 요약입니다. 상세 요청·성공 응답 DTO는 FastAPI OpenAPI와 Pydantic DTO를 함께 확인하고, 오류 `code`와 HTTP 상태 의미는 관련 계약 문서를 기준으로 합니다.
 
 | 영역 | Method | Path | 성공 상태 |
 | --- | --- | --- | ---: |
@@ -115,7 +116,7 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 - 같은 Chat session에는 non-terminal Job을 하나만 허용하고 다른 키의 중복 요청은 `409 CHAT_JOB_IN_PROGRESS`로 거부합니다.
 - 결과는 Backend가 제공하는 opaque `result_url`로 조회하며 다른 사용자의 Job·결과는 `404`로 숨깁니다.
 
-세부 목표는 [비동기 Job 계약](./contracts/async-job-v1.md), [멱등성 계약](./contracts/idempotency-v1.md), [Outbox·Stream 계약](./contracts/outbox-stream-v1.md)을 따릅니다. 계약 파일의 존재는 구현 완료를 뜻하지 않습니다.
+세부 목표는 [비동기 Job 계약](./contracts/targets/post-mvp-1/async-job-v1.md), [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md), [Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)을 따릅니다. 계약 파일의 존재는 구현 완료를 뜻하지 않습니다.
 
 ### Track B·C·D 목표 API 표면
 
@@ -139,7 +140,7 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 | D | `POST` | `/api/v1/otc-evaluations` | 확정 OTC 대상 동기 평가 |
 | D | `GET` | `/api/v1/otc-evaluations/{id}` | 저장된 평가 snapshot 조회 |
 
-Track B·C·D 쓰기 API는 [멱등성 계약](./contracts/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/checkin-v1.md)과 [Safety Result 계약](./contracts/safety-result-v1.md)을 기준으로 합니다.
+Track B·C·D 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/targets/post-mvp-1/checkin-v1.md)과 [Safety Result 계약](./contracts/targets/post-mvp-1/safety-result-v1.md)을 기준으로 합니다.
 
 ## 복약 챗봇
 

@@ -1,0 +1,22 @@
+{
+  "scenario_version": "ai-one-cycle-v1",
+  "fixture_path": null,
+  "fixture_sha256": null,
+  "prescribed_date": "2026-08-21",
+  "medications": [
+    {
+      "display_order": 1,
+      "medication_name": "합성의약품 에이",
+      "dose_value": "1",
+      "dose_unit": "정",
+      "frequency_per_day": 2,
+      "timing_text": "식후",
+      "duration_days": 3
+    }
+  ],
+  "expected_field_identities": [],
+  "question": "이 합성 처방은 하루에 몇 번 복용하도록 되어 있나요?",
+  "expected_answer_facts": [
+    "합성의약품 에이:1일 2회"
+  ]
+}

@@ -18,7 +18,7 @@ If these sources disagree or do not define a boundary clearly, do not invent a r
 - Product and planning documents provide intent and context but do not replace runtime contracts.
 - Use `docs/governance/post-mvp-1-document-authority.md` for Post-MVP-1 provenance and status interpretation. If current implementation and a target differ, do not combine or infer values; reconcile the source Decision and repository target with the relevant domain reviewers.
 - Changing an enum, API route or DTO, required field, error code, transaction order, or publication condition requires a new Decision or Contract Freeze version and matching contract and test updates.
-- Do not move a target contract into a new folder to promote it. Keep the path stable and update its status only after implementation, migrations, OpenAPI, automated tests, and reviewer approval evidence are linked.
+- Use the status directories as the source of truth for contract status. Promote a target or proposed contract into `docs/contracts/current/` only in the implementation PR that includes the required implementation, migrations, OpenAPI/DTO, automated tests, evidence, and designated reviewer approval; update its status and index entry in the same PR, and do not leave a duplicate in the previous status directory.
 - Keep Track C, D, and F publication and the common Privacy Production gate closed until `docs/release-gates/post-mvp-1-external-approvals.md` is satisfied.
 
 ## Team Roles
@@ -40,7 +40,7 @@ The repository does not explicitly map these names to GitHub handles. Do not inf
   - `/docs/contracts/` — `@hazelnutflavoured`, `@phina-io`, `@ceohwj`
 - Frontend / UX: `/frontend/` — `@solia142`
 - Backend / DB / API:
-  - `/app/` — `@phina-io`
+  - `/backend/app/` — `@phina-io`
   - `/docs/api.md` — `@phina-io`, `@hazelnutflavoured`
   - `/docs/data-schema.md` — `@phina-io`, `@hazelnutflavoured`
 - OCR and medical information structuring:
@@ -70,7 +70,7 @@ A shared contract is an externally consumed API, request or response shape, erro
 - Do not disguise a contract change as an implementation detail. Removing or renaming fields, changing types or meanings, adding required fields, or changing shared states is a contract change.
 - Before implementation and during pull request review, explicitly determine whether the change affects a shared API, data structure, error meaning, state transition, or cross-domain DTO.
 - Coordinate a proposed contract change with every affected owner before implementation. Update the authoritative contract or schema, affected implementations, documentation, and contract or integration tests together in the same focused pull request.
-- For every shared-contract change, update the relevant Markdown file under `docs/contracts/`. If no relevant contract file exists, create a focused `docs/contracts/<contract-name>.md` and add it to `docs/contracts/README.md`; the absence of an existing file is not a reason to leave the contract undocumented.
+- For every shared-contract change, update the relevant Markdown file under `docs/contracts/current/`, `docs/contracts/targets/`, or `docs/contracts/proposed/` according to its status and add it to `docs/contracts/README.md`. Do not duplicate a contract across status folders. Promote a target into `current/` only in the implementation PR that includes the required code, migrations, OpenAPI/DTO, automated tests, evidence, and designated reviewer approval. The absence of an existing file is not a reason to leave the contract undocumented.
 - Pull request reviewers must treat a missing or stale `docs/contracts/` document, missing index entry, or missing contract/integration coverage as a blocking finding when shared behavior changed. Verify that the contract document, authoritative API or schema documentation, implementation, and tests describe the same fields, types, requiredness, error semantics, and states.
 - When implementing an already agreed contract without changing it, stay within the assigned ownership boundary and add or update the relevant local tests.
 

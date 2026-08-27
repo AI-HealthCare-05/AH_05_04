@@ -8,12 +8,12 @@
 
 | 구성요소 | 현재 책임 |
 | --- | --- |
-| Frontend | 회원가입·로그인, 처방전 업로드와 OCR 결과 요약까지 API 연결. 검수·처방 확정·가이드·챗봇은 디자인 프로토타입 또는 미연결 상태 |
+| Frontend | 회원가입·로그인, 처방전 업로드·OCR 조회, OCR 필드 검수·수정, 처방 확정, Guide 생성·조회, Chat 세션·이력·메시지를 실제 API에 연결하고 각 실제 화면에 표시 |
 | Nginx | FastAPI 요청을 전달하는 리버스 프록시 |
 | FastAPI Backend | 인증·인가, 파일·처방·대화 상태 관리, 동기 OCR·가이드·챗봇 orchestration |
-| `app/services/ocr.py` | 같은 HTTP 요청 안에서 CLOVA OCR 호출, 결과 정규화·저장, 오류 매핑 |
-| `app/services/guide_ai/` | 확정 처방만 입력받아 OpenAI 복약 가이드 생성 |
-| `app/services/chat_ai/` | 현재 질문과 확정 약물 목록만 입력받아 OpenAI 단일 응답 생성 |
+| `backend/app/services/ocr.py` | 같은 HTTP 요청 안에서 CLOVA OCR 호출, 결과 정규화·저장, 오류 매핑 |
+| `backend/app/services/guide_ai/` | 확정 처방만 입력받아 OpenAI 복약 가이드 생성 |
+| `backend/app/services/chat_ai/` | 현재 질문과 확정 약물 목록만 입력받아 OpenAI 단일 응답 생성 |
 | PostgreSQL | 사용자, 의료문서, OCR 결과, 확정 처방, 가이드, 채팅 상태 저장 |
 | 로컬 파일시스템 | `STORAGE_DIR` 아래 처방전 원본 저장. 현재 Compose의 영속 volume과 기본 경로가 일치하지 않아 배포 전 확인 필요 |
 | Redis | Compose에 준비되어 있으나 현재 MVP AI 처리 경로에서는 사용하지 않음 |
@@ -27,7 +27,7 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 2. FastAPI가 사용자 권한을 확인하고 처방전 파일과 메타데이터를 저장합니다.
 3. OCR 실행 API는 CLOVA OCR을 같은 요청 안에서 호출하고 작업 상태와 추출 필드를 PostgreSQL에 저장합니다. 응답 상태가 `202 Accepted`여도 현재 구현은 queue나 Worker에 위임하지 않습니다.
 4. 사용자가 OCR 필드를 검수·수정한 뒤 확정 처방을 생성합니다.
-5. 가이드 생성 API는 확정 처방을 읽고 OpenAI를 직접 호출한 뒤 생성 결과를 저장하고 `201 Created`로 응답합니다.
+5. Frontend는 처방 확정 응답의 `prescription_id`로 가이드 생성 API를 호출합니다. Backend는 확정 처방을 읽고 OpenAI를 직접 호출한 뒤 생성 결과를 저장하고 `201 Created`로 응답하며, Frontend는 응답의 `guide_id` 화면으로 이동합니다.
 6. 챗봇 메시지 API는 USER 메시지를 저장하고 OpenAI 단일 응답을 생성한 뒤 ASSISTANT 메시지를 저장하고 `201 Created`로 응답합니다. 같은 세션의 요청은 DB row lock으로 직렬화합니다.
 7. timeout, 제공자 장애 또는 응답 처리 실패는 정해진 API 오류로 변환하고 실패 상태를 저장합니다.
 
@@ -36,8 +36,9 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 ## 구현 수준 구분
 
 - **Backend MVP 구현**: 인증, 업로드, 동기 OCR, OCR 필드 수정, 처방 확정, 가이드와 챗봇 API
-- **Frontend API 연결**: 인증, 처방전 업로드, OCR 실행·결과 요약
-- **Frontend 미연결**: OCR 필드 검수·수정, 처방 확정, 가이드와 챗봇 사용자 여정
+- **Frontend API 연결**: 인증, 처방전 업로드, OCR 실행·조회, OCR 필드 검수·수정, 처방 확정, Guide 생성·조회, Chat 세션·이력·메시지
+- **PostgreSQL 실제 E2E 완료 범위**: 회원가입 → 로그인 → 업로드 → OCR → 검수·수정 → 처방 확정
+- **전체 AI E2E 확인 필요**: Guide 생성 → Guide 조회 → Chat 진입과 실제 OpenAI 응답까지의 전체 흐름은 최종 완료로 표시하지 않음
 - **Schema-only Post-MVP 골격**: `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation` 모델과 migration은 존재하지만 repository·service·API 실행 경로에는 연결되지 않음
 - **미구현 Post-MVP 실행 영역**: RAG 검색, Citation/NLI 검증, AI 평가, OTC와 비동기 Worker
 

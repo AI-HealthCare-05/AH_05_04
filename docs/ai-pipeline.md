@@ -13,7 +13,7 @@
 ### OCR — MVP 구현
 
 - 진입점: `POST /api/v1/documents/{document_id}/ocr-jobs`
-- 구현: `app/services/ocr.py`, interface·오류 계약 `app/services/ocr_engine.py`, CLOVA adapter `app/services/clova_ocr_engine.py`
+- 구현: `backend/app/services/ocr.py`, interface·오류 계약 `backend/app/services/ocr_engine.py`, CLOVA adapter `backend/app/services/clova_ocr_engine.py`
 - 처리: 문서 소유권 확인 → OCR 작업 생성 → 같은 요청에서 CLOVA OCR 호출 → 추출 필드 저장 → 결과 반환
 - 검수: OCR 원문·정규화 참고값과 사용자 확정값을 구분하며 확정 처방에는 사용자 확정값만 사용
 - 실패 처리: 제공자 timeout·장애·처리 실패를 안전한 API 오류로 변환하고 OCR 작업을 `FAILED`로 저장
@@ -25,7 +25,7 @@
 ### 복약 가이드 LLM — MVP 구현
 
 - 진입점: `POST /api/v1/guides`
-- 구현: `app/services/guide_ai/`, `app/services/guides.py`
+- 구현: `backend/app/services/guide_ai/`, `backend/app/services/guides.py`
 - 입력: 사용자에게 속한 확정 처방의 약물 정보
 - 처리: FastAPI가 OpenAI를 직접 호출하고 같은 요청 안에서 GUIDE 상태와 결과를 저장
 - 출력 제한: 약명·용량·횟수·복용 시점·기간은 확정 처방에서 결정론적으로 렌더링하고, AI는 처방 변경이나 새로운 의료 주장을 만들지 않음
@@ -33,7 +33,7 @@
 ### 복약 챗봇 LLM — MVP 구현
 
 - 진입점: `POST /api/v1/chat-sessions/{session_id}/messages`
-- 구현: `app/services/chat_ai/`, `app/services/chat.py`
+- 구현: `backend/app/services/chat_ai/`, `backend/app/services/chat.py`
 - 입력: 현재 사용자 질문과 세션에 연결된 확정 약물 목록
 - 처리: USER 메시지 저장 → OpenAI 단일 응답 생성 → ASSISTANT 메시지 저장을 같은 요청에서 완료
 - 문맥 제한: 이전 대화, 사용자·세션 식별자, 처방전 이미지와 OCR 원문·미검수 값은 AI에 전달하지 않음
