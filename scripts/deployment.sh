@@ -157,7 +157,7 @@ for choice in $selections; do
         "$docker_repo" \
         "FastAPI" \
         "$fastapi_version" \
-        "app/Dockerfile" \
+        "backend/app/Dockerfile" \
         "."
 
       # 입력받은 버전을 원격 Compose image tag에 전달합니다.

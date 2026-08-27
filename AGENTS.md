@@ -40,7 +40,7 @@ The repository does not explicitly map these names to GitHub handles. Do not inf
   - `/docs/contracts/` — `@hazelnutflavoured`, `@phina-io`, `@ceohwj`
 - Frontend / UX: `/frontend/` — `@solia142`
 - Backend / DB / API:
-  - `/app/` — `@phina-io`
+  - `/backend/app/` — `@phina-io`
   - `/docs/api.md` — `@phina-io`, `@hazelnutflavoured`
   - `/docs/data-schema.md` — `@phina-io`, `@hazelnutflavoured`
 - OCR and medical information structuring:

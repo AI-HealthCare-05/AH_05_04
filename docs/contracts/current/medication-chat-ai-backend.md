@@ -95,7 +95,7 @@ DB lock wait timeout처럼 세션 row lock을 얻기 전에 발생한 DB 오류�
 
 ## 검증과 변경 규칙
 
-구현 계약은 `tests/contract/test_chat_ai_backend_contract.py`에서 Provider payload와 결과 metadata를 검증한다. API·DB·동시성 관찰 결과는 `app/tests/chat_apis`, `app/tests/chat_integration`과 repository 테스트에서 검증한다.
+구현 계약은 `tests/contract/test_chat_ai_backend_contract.py`에서 Provider payload와 결과 metadata를 검증한다. API·DB·동시성 관찰 결과는 `backend/app/tests/chat_apis`, `backend/app/tests/chat_integration`과 repository 테스트에서 검증한다.
 
 다음 변경은 이 문서, 구현, API 문서와 관련 계약·통합 테스트를 같은 PR에서 갱신해야 한다.
 

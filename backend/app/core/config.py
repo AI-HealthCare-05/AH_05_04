@@ -61,8 +61,9 @@ class Config(BaseSettings):
         "templates",
     )
     # 실제 의료문서 업로드 파일 저장 경로. data/는 비식별 샘플 전용이라 gitignore된 uploads/를 사용합니다.
+    # backend/ 폴더 분리 이후에도 저장소 루트의 uploads/를 가리키도록 parent를 한 단계 더 올라갑니다.
     STORAGE_DIR: str = os.path.join(
-        Path(__file__).resolve().parent.parent.parent,
+        Path(__file__).resolve().parent.parent.parent.parent,
         "uploads",
         "medical_documents",
     )
