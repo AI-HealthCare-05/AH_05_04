@@ -74,4 +74,18 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('최근 가이드 목록은 준비 중이에요.')).toBeTruthy()
     expect(screen.getByText('오늘 약도 챙겨볼까요?')).toBeTruthy()
   })
+
+  it('HOME-01 메뉴에서 인증 전용 내 정보 route로 진입한다', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/profile" element={<div>내 정보 화면</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '메뉴' }))
+    expect(screen.getByText('내 정보 화면')).toBeTruthy()
+  })
 })
