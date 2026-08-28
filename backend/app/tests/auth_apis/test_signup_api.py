@@ -21,6 +21,7 @@ class TestSignupAPI:
             response = await client.post("/api/v1/auth/signup", json=signup_data)
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json() == {"detail": "회원가입이 성공적으로 완료되었습니다."}
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_signup_invalid_email(self):
         signup_data = {
@@ -31,6 +32,7 @@ class TestSignupAPI:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/v1/auth/signup", json=signup_data)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_signup_returns_conflict_for_concurrent_duplicate_email(
         self,
@@ -77,6 +79,7 @@ class TestSignupAPI:
             }
         ]
         assert "trace_id" in body
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     @pytest.mark.parametrize(
         "signup_data",
@@ -91,6 +94,7 @@ class TestSignupAPI:
             response = await client.post("/api/v1/auth/signup", json=signup_data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_signup_rejects_profile_fields_in_mvp_signup(self):
         signup_data = {
@@ -106,3 +110,4 @@ class TestSignupAPI:
             response = await client.post("/api/v1/auth/signup", json=signup_data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.headers.get_list("cache-control") == ["no-store"]

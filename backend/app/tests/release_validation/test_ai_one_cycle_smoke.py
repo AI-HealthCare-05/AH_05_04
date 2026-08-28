@@ -26,7 +26,7 @@ from app.main import app, fastapi_app
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
-from app.models.ocr import ConfirmationStatus, ExtractedField, OcrJob, OcrStatus
+from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.prescriptions import Medication, Prescription
 from app.models.users import User
 from app.release_validation.ai_one_cycle_smoke import (
@@ -37,6 +37,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     RunStateStore,
     ScenarioError,
     SyntheticFixture,
+    _calculate_live_read_timeout_seconds,
     _cleanup_root,
     _runtime_environment,
     build_synthetic_fixture,
@@ -48,6 +49,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     validate_clova_url,
     validate_live_environment,
     verify_one_cycle,
+    verify_prescription_input,
 )
 from app.services.chat_ai import ChatReplyOutput
 from app.services.guide_ai.schemas import GuideGenerationResult
@@ -57,6 +59,11 @@ from app.tests.conftest import test_engine
 # 실행하는 파이썬은 pytest의 rootdir 기반 sys.path 삽입을 물려받지 않아 app 패키지를
 # 직접 찾지 못한다. PYTHONPATH로 backend/를 명시해 `-m app...` import를 가능하게 한다.
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
+_SCENARIO_ROOT = Path(__file__).resolve().parents[2] / "release_validation" / "scenarios"
+
+
+def _load_real_scenario(filename: str) -> dict[str, Any]:
+    return json.loads((_SCENARIO_ROOT / filename).read_text(encoding="utf-8"))
 
 
 def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
@@ -66,6 +73,93 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
         f"{_BACKEND_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(_BACKEND_ROOT)
     )
     return process_env
+
+
+def _create_symlink_or_skip(
+    link: Path,
+    target: Path,
+) -> None:
+    """Windows에서 symlink 권한이 없을 때만 테스트를 건너뜁니다."""
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable (WinError 1314)")
+        raise
+
+
+@pytest.mark.parametrize(
+    (
+        "llm_enabled",
+        "clova_timeout",
+        "structure_timeout",
+        "openai_timeout",
+        "expected",
+    ),
+    [
+        # LLM OFF: max(CLOVA 20초, Guide·Chat 20초) + 여유 5초
+        ("false", "20", "30", "20", 25.0),
+        # LLM ON: max(CLOVA 20초 + OCR OpenAI 30초, Guide·Chat 20초)
+        # + 여유 5초
+        ("true", "20", "30", "20", 55.0),
+        # Guide·Chat timeout이 OCR 합산보다 긴 경우도 검증합니다.
+        ("true", "10", "15", "40", 45.0),
+    ],
+)
+def test_live_read_timeout_combines_sequential_ocr_providers(
+    llm_enabled: str,
+    clova_timeout: str,
+    structure_timeout: str,
+    openai_timeout: str,
+    expected: float,
+) -> None:
+    environment = {
+        "OCR_STRUCTURE_LLM_ENABLED": llm_enabled,
+        "CLOVA_OCR_TIMEOUT_SECONDS": clova_timeout,
+        "OCR_STRUCTURE_TIMEOUT_SECONDS": structure_timeout,
+        "OPENAI_TIMEOUT_SECONDS": openai_timeout,
+    }
+
+    assert _calculate_live_read_timeout_seconds(environment) == expected
+
+
+def test_live_read_timeout_rejects_invalid_llm_flag() -> None:
+    with pytest.raises(
+        GuardError,
+        match="OCR_STRUCTURE_LLM_ENABLED must be true or false",
+    ):
+        _calculate_live_read_timeout_seconds(
+            {
+                "OCR_STRUCTURE_LLM_ENABLED": "enabled",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CLOVA_OCR_TIMEOUT_SECONDS", "0"),
+        ("OCR_STRUCTURE_TIMEOUT_SECONDS", "-1"),
+        ("OPENAI_TIMEOUT_SECONDS", "not-a-number"),
+    ],
+)
+def test_live_read_timeout_rejects_invalid_timeout(
+    name: str,
+    value: str,
+) -> None:
+    environment = {
+        "OCR_STRUCTURE_LLM_ENABLED": "true",
+        "CLOVA_OCR_TIMEOUT_SECONDS": "20",
+        "OCR_STRUCTURE_TIMEOUT_SECONDS": "30",
+        "OPENAI_TIMEOUT_SECONDS": "20",
+        name: value,
+    }
+
+    with pytest.raises(
+        GuardError,
+        match=f"{name} must be a positive finite number",
+    ):
+        _calculate_live_read_timeout_seconds(environment)
 
 
 def test_cli_rejects_non_uuid_run_id_before_any_state_change(tmp_path: Path) -> None:
@@ -143,6 +237,7 @@ def _scenario_payload(*, version: str = "ai-one-cycle-v1") -> dict[str, object]:
             {
                 "display_order": 1,
                 "medication_name": "합성의약품 에이",
+                "strength_text": "100mg",
                 "dose_value": "1",
                 "dose_unit": "정",
                 "frequency_per_day": 2,
@@ -278,9 +373,19 @@ def test_local_runtime_environment_excludes_provider_credentials(mode: str, monk
     monkeypatch.setenv("DB_PASSWORD", uuid4().hex)
     monkeypatch.setenv("DB_NAME", "synthetic-runner-db")
     monkeypatch.setenv("CLOVA_OCR_INVOKE_URL", "https://tenant.apigw.ntruss.com/ocr")
+    monkeypatch.setenv(
+        "OCR_STRUCTURE_LLM_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "OCR_STRUCTURE_TIMEOUT_SECONDS",
+        "30",
+    )
     runtime_environment = _runtime_environment(mode)
 
     assert runtime_environment["RELEASE_VALIDATION_RUNNER"] == "1"
+    assert runtime_environment["OCR_STRUCTURE_LLM_ENABLED"] == "true"
+    assert runtime_environment["OCR_STRUCTURE_TIMEOUT_SECONDS"] == "30"
     assert "CLOVA_OCR_SECRET" not in runtime_environment
     assert "OPENAI_API_KEY" not in runtime_environment
 
@@ -399,7 +504,7 @@ def test_input_fingerprint_uses_canonical_scenario_values() -> None:
     payload = _scenario_payload()
 
     assert compute_input_fingerprint(payload) == (
-        "sha256:ef8a99be35dfffe87b63dd6460656e2d68d8268b665fd1c1c4a99afe9ec26112"
+        "sha256:eaecc304bae14a164c50c3c2723dd3669337a3be7fde29500b7974bcf5d30ec2"
     )
 
 
@@ -408,15 +513,42 @@ def test_run_state_is_exclusive_atomic_and_private(tmp_path: Path) -> None:
     run_id = str(uuid4())
     store = RunStateStore.create(state_root, run_id, {"run_id": run_id, "ids": {}})
 
-    assert stat.S_IMODE(state_root.stat().st_mode) == 0o700
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    if smoke_module._STRICT_POSIX_FILE_MODES:
+        assert stat.S_IMODE(state_root.stat().st_mode) == 0o700
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
     with pytest.raises(FileExistsError):
         RunStateStore.create(state_root, run_id, {"run_id": run_id})
 
     store.update(in_flight_stage="AUTH", cleanup_not_before="2026-08-25T10:00:00+00:00")
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    if smoke_module._STRICT_POSIX_FILE_MODES:
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
     assert store.read()["in_flight_stage"] == "AUTH"
     assert list(state_root.glob(f".{run_id}.*.tmp")) == []
+
+
+def test_directory_fsync_is_skipped_when_not_supported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        smoke_module,
+        "_DIRECTORY_FSYNC_SUPPORTED",
+        False,
+    )
+
+    def fail_if_opened(
+        *_args: object,
+        **_kwargs: object,
+    ) -> int:
+        raise AssertionError("directory must not be opened for fsync")
+
+    monkeypatch.setattr(
+        smoke_module.os,
+        "open",
+        fail_if_opened,
+    )
+
+    RunStateStore._fsync_directory(tmp_path)
 
 
 def test_cleanup_is_pending_during_in_flight_grace_without_calling_cleanup(tmp_path: Path) -> None:
@@ -513,7 +645,7 @@ async def test_fixture_builder_commits_completed_confirmed_synthetic_fixture() -
         assert user is not None and user.email == fixture.email
         assert document is not None and document.user_id == fixture.user_id
         assert job is not None and job.ocr_status == OcrStatus.COMPLETED
-        assert len(fields) == 7
+        assert len(fields) == 8
         assert {field.confirmation_status for field in fields} == {ConfirmationStatus.CONFIRMED}
 
         await verification_session.execute(
@@ -523,6 +655,93 @@ async def test_fixture_builder_commits_completed_confirmed_synthetic_fixture() -
         await verification_session.execute(delete(MedicalDocument).where(MedicalDocument.id == fixture.document_id))
         await verification_session.execute(delete(User).where(User.id == fixture.user_id))
         await verification_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_staging_scenario_without_strength_builds_fixture() -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    scenario = _load_real_scenario("ai-one-cycle-v1.json")
+
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=scenario)
+
+    try:
+        async with factory() as verification_session:
+            fields = list(
+                (
+                    await verification_session.scalars(
+                        select(ExtractedField).where(ExtractedField.ocr_job_id == fixture.ocr_job_id)
+                    )
+                ).all()
+            )
+        assert len(fields) == 7
+        assert FieldType.MEDICATION_STRENGTH not in {field.field_type for field in fields}
+    finally:
+        await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+
+
+@pytest.mark.asyncio
+async def test_local_live_scenario_builds_separate_name_and_strength_expectations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _load_real_scenario("ai-one-cycle-clova-openai-v1.json")
+    scenario["resolved_fixture_path"] = scenario["fixture_path"]
+    run_id = str(uuid4())
+    state = RunStateStore.create(
+        tmp_path / "state",
+        run_id,
+        {"run_id": run_id, "ids": {"document_id": str(uuid4())}},
+    )
+    runner = NetworkOneCycleRunner(
+        base_url="http://127.0.0.1:8000/api/v1",
+        state=state,
+        read_timeout_seconds=5,
+    )
+    confirmed_values: dict[str, str] = {}
+
+    async def fake_preflight(**_kwargs: object) -> dict[str, object]:
+        runner._preflight_fields = [
+            {
+                "field_id": "medication-name-field",
+                "medication_index": 1,
+                "field_type": "MEDICATION_NAME",
+            },
+            {
+                "field_id": "medication-strength-field",
+                "medication_index": 1,
+                "field_type": "MEDICATION_STRENGTH",
+            },
+        ]
+        return {"preflight": "READY", "field_count": 2}
+
+    async def fake_request(
+        _stage: str,
+        _method: str,
+        request_path: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        json_body = kwargs["json_body"]
+        assert isinstance(json_body, dict)
+        confirmed_values[request_path] = str(json_body["confirmed_value"])
+        return {}
+
+    async def fake_generation(**_kwargs: object) -> dict[str, object]:
+        return {}
+
+    monkeypatch.setattr(runner, "run_preflight", fake_preflight)
+    monkeypatch.setattr(runner, "_request", fake_request)
+    monkeypatch.setattr(runner, "_run_generation", fake_generation)
+
+    await runner.run_local_full(
+        email="synthetic@example.invalid",
+        password="Password123!",
+        scenario=scenario,
+    )
+
+    assert confirmed_values == {
+        "/extracted-fields/medication-name-field": "합성의약품에이정",
+        "/extracted-fields/medication-strength-field": "100mg",
+    }
 
 
 @pytest.mark.asyncio
@@ -682,7 +901,8 @@ async def test_network_runner_uses_real_tcp_and_preserves_http_id_order(tmp_path
             },
         }
         body = json.dumps(payloads[path]).encode()
-        cache = b"" if path.endswith("/auth/login") else b"Cache-Control: no-store\r\n"
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth/login도 포함합니다.
+        cache = b"Cache-Control: no-store\r\n"
         status_line = b"HTTP/1.1 200 OK\r\n" if path.endswith("/auth/login") else b"HTTP/1.1 201 Created\r\n"
         writer.write(
             status_line
@@ -781,7 +1001,8 @@ async def test_prescription_input_mismatch_stops_before_guide_request(tmp_path: 
         )
         body = json.dumps(payload).encode()
         status = b"200 OK" if path.endswith("/auth/login") else b"201 Created"
-        cache = b"" if path.endswith("/auth/login") else b"Cache-Control: no-store\r\n"
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth/login도 포함합니다.
+        cache = b"Cache-Control: no-store\r\n"
         writer.write(
             b"HTTP/1.1 "
             + status
@@ -913,7 +1134,6 @@ async def test_delete_intent_cleanup_does_not_follow_symlink_to_other_user_file(
     target = tmp_path / f"{other_fixture.document_id}.png"
     target.write_bytes(content)
     tracked = tmp_path / f"{fixture.document_id}.png"
-    tracked.symlink_to(target)
     run_id = str(uuid4())
     store = RunStateStore.create(
         tmp_path / "state",
@@ -928,6 +1148,8 @@ async def test_delete_intent_cleanup_does_not_follow_symlink_to_other_user_file(
     )
 
     try:
+        _create_symlink_or_skip(tracked, target)
+
         with pytest.raises(CleanupPendingError):
             await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
 
@@ -953,7 +1175,6 @@ async def test_document_cleanup_does_not_follow_storage_symlink(tmp_path: Path) 
     content = b"approved-synthetic-source"
     target.write_bytes(content)
     candidate = tmp_path / f"{fixture.document_id}.png"
-    candidate.symlink_to(target)
     run_id = str(uuid4())
     store = RunStateStore.create(
         tmp_path / "state",
@@ -966,6 +1187,8 @@ async def test_document_cleanup_does_not_follow_storage_symlink(tmp_path: Path) 
     )
 
     try:
+        _create_symlink_or_skip(candidate, target)
+
         rows, files = await _cleanup_root(
             factory,
             user_id=fixture.user_id,
@@ -1021,7 +1244,8 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
             ),
         }[path]
         body = json.dumps(payload).encode()
-        cache = b"" if path.endswith("/auth/login") else b"Cache-Control: no-store\r\n"
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth/login도 포함합니다.
+        cache = b"Cache-Control: no-store\r\n"
         writer.write(
             f"HTTP/1.1 {status}\r\n".encode()
             + b"Content-Type: application/json\r\n"
@@ -1067,9 +1291,21 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -> None:
+@pytest.mark.parametrize(
+    ("scenario_filename", "expected_strength"),
+    [
+        ("ai-one-cycle-v1.json", None),
+        ("ai-one-cycle-clova-openai-v1.json", "100mg"),
+    ],
+)
+async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
+    scenario_filename: str,
+    expected_strength: str | None,
+) -> None:
     factory = async_sessionmaker(test_engine, expire_on_commit=False)
-    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=_scenario_payload())
+    scenario = _load_real_scenario(scenario_filename)
+    medication = scenario["medications"][0]
+    fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=scenario)
     now = datetime.now(UTC)
     async with factory() as session:
         prescription = Prescription(
@@ -1083,13 +1319,14 @@ async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -
         session.add(
             Medication(
                 prescription_id=prescription.id,
-                medication_name="합성의약품 에이",
-                dose_value=Decimal("1"),
-                dose_unit="정",
-                frequency_per_day=2,
-                timing_text="식후",
-                duration_days=3,
-                display_order=1,
+                medication_name=medication["medication_name"],
+                strength_text=expected_strength,
+                dose_value=Decimal(str(medication["dose_value"])),
+                dose_unit=medication["dose_unit"],
+                frequency_per_day=medication["frequency_per_day"],
+                timing_text=medication["timing_text"],
+                duration_days=medication["duration_days"],
+                display_order=medication["display_order"],
             )
         )
         guide = Guide(
@@ -1109,7 +1346,7 @@ async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -
                     session_id=chat_session.id,
                     message_seq=1,
                     role=ChatRole.USER,
-                    content=str(_scenario_payload()["question"]),
+                    content=str(scenario["question"]),
                     generation_status=ChatGenerationStatus.COMPLETED,
                 ),
                 ChatMessage(
@@ -1131,7 +1368,13 @@ async def test_db_verifier_uses_fresh_session_and_checks_generation_metadata() -
             "session_id": str(chat_session.id),
         }
 
-    verified = await verify_one_cycle(factory, fixture=fixture, ids=ids, scenario=_scenario_payload())
+    await verify_prescription_input(
+        factory,
+        prescription_id=str(prescription.id),
+        document_id=str(fixture.document_id),
+        scenario=scenario,
+    )
+    verified = await verify_one_cycle(factory, fixture=fixture, ids=ids, scenario=scenario)
 
     assert verified["input_check"] == "PASS"
     assert verified["guide"]["prompt_version"] == "guide-prompt-v2"

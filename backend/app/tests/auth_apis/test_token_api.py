@@ -34,6 +34,7 @@ class TestJWTTokenRefreshAPI:
             response = await client.get("/api/v1/auth/token/refresh")
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_token_refresh_missing_token(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -43,6 +44,7 @@ class TestJWTTokenRefreshAPI:
         assert body["code"] == "UNAUTHORIZED"
         assert body["message"] == "로그인이 필요합니다."
         assert "trace_id" in body
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_token_refresh_rejects_access_token_used_as_refresh_token(self):
         signup_data = {
@@ -65,3 +67,4 @@ class TestJWTTokenRefreshAPI:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "INVALID_TOKEN"
+        assert response.headers.get_list("cache-control") == ["no-store"]

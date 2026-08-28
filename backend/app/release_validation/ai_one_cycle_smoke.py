@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import stat
 import subprocess
@@ -71,6 +72,75 @@ SAFETY_CRITERIA = (
 
 class GuardError(ValueError):
     """A pre-mutation environment or CLI guard failed."""
+
+
+_LIVE_READ_TIMEOUT_MARGIN_SECONDS = 5.0
+
+
+# Windows는 POSIX mode bit를 보존하지 않고 디렉터리 descriptor에 대한
+# fsync도 지원하지 않습니다. 파일 fsync와 atomic replace는 계속 수행합니다.
+_STRICT_POSIX_FILE_MODES = os.name != "nt"
+_DIRECTORY_FSYNC_SUPPORTED = os.name != "nt"
+
+
+def _parse_positive_timeout(
+    environment: Mapping[str, str],
+    name: str,
+    default: str,
+) -> float:
+    raw_value = environment.get(name, default)
+
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise GuardError(f"{name} must be a positive finite number") from error
+
+    if not math.isfinite(value) or value <= 0:
+        raise GuardError(f"{name} must be a positive finite number")
+
+    return value
+
+
+def _calculate_live_read_timeout_seconds(
+    environment: Mapping[str, str],
+) -> float:
+    enabled_value = (
+        environment.get(
+            "OCR_STRUCTURE_LLM_ENABLED",
+            "false",
+        )
+        .strip()
+        .lower()
+    )
+
+    if enabled_value not in {"true", "false"}:
+        raise GuardError("OCR_STRUCTURE_LLM_ENABLED must be true or false")
+
+    clova_timeout = _parse_positive_timeout(
+        environment,
+        "CLOVA_OCR_TIMEOUT_SECONDS",
+        "20",
+    )
+    openai_timeout = _parse_positive_timeout(
+        environment,
+        "OPENAI_TIMEOUT_SECONDS",
+        "20",
+    )
+
+    # CLOVA 다음에 OCR 구조화 OpenAI 호출이 순차 실행되므로,
+    # LLM이 활성화된 경우 두 timeout을 합산합니다.
+    ocr_request_timeout = clova_timeout
+
+    if enabled_value == "true":
+        ocr_request_timeout += _parse_positive_timeout(
+            environment,
+            "OCR_STRUCTURE_TIMEOUT_SECONDS",
+            "30",
+        )
+
+    # One-cycle runner는 OCR, Guide, Chat을 서로 다른 HTTP 요청으로
+    # 실행하므로 가장 긴 요청에 처리 여유 5초를 더합니다.
+    return max(ocr_request_timeout, openai_timeout) + _LIVE_READ_TIMEOUT_MARGIN_SECONDS
 
 
 class ScenarioError(ValueError):
@@ -381,6 +451,7 @@ async def build_synthetic_fixture(
     ]
     for medication in sorted(scenario["medications"], key=lambda item: item["display_order"]):
         index = int(medication["display_order"])
+        strength_text = medication.get("strength_text")
         field_values.extend(
             [
                 (index, FieldType.MEDICATION_NAME, str(medication["medication_name"])),
@@ -391,6 +462,8 @@ async def build_synthetic_fixture(
                 (index, FieldType.DURATION_DAYS, str(medication["duration_days"])),
             ]
         )
+        if strength_text is not None:
+            field_values.append((index, FieldType.MEDICATION_STRENGTH, str(strength_text)))
     fields = [
         ExtractedField(
             ocr_job_id=ocr_job_id,
@@ -529,6 +602,7 @@ async def verify_one_cycle(
             matches = matches and (
                 actual.display_order == expected["display_order"]
                 and actual.medication_name == expected["medication_name"]
+                and actual.strength_text == expected.get("strength_text")
                 and actual.dose_value == Decimal(str(expected["dose_value"]))
                 and actual.dose_unit == expected["dose_unit"]
                 and actual.frequency_per_day == expected["frequency_per_day"]
@@ -599,6 +673,7 @@ async def verify_prescription_input(
         matches = matches and (
             stored.display_order == wanted["display_order"]
             and stored.medication_name == wanted["medication_name"]
+            and stored.strength_text == wanted.get("strength_text")
             and stored.dose_value == Decimal(str(wanted["dose_value"]))
             and stored.dose_unit == wanted["dose_unit"]
             and stored.frequency_per_day == wanted["frequency_per_day"]
@@ -669,7 +744,8 @@ async def run_deterministic_one_cycle(
         "POST",
         "/api/v1/auth/login",
         expected_status=200,
-        medical_response=False,
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth도 이제 포함합니다.
+        medical_response=True,
         json_body={"email": fixture.email, "password": fixture.password},
     )
     headers = {"Authorization": f"Bearer {login['access_token']}"}
@@ -743,12 +819,17 @@ class RunStateStore:
     def open(cls, root: Path, run_id: str) -> RunStateStore:
         path = root / f"{run_id}.json"
         metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+        has_invalid_mode = _STRICT_POSIX_FILE_MODES and stat.S_IMODE(metadata.st_mode) != 0o600
+
+        if not stat.S_ISREG(metadata.st_mode) or has_invalid_mode:
             raise GuardError("run-state file must be a regular private file")
         return cls(path)
 
     @staticmethod
     def _fsync_directory(root: Path) -> None:
+        if not _DIRECTORY_FSYNC_SUPPORTED:
+            return
+
         descriptor = os.open(root, os.O_RDONLY)
         try:
             os.fsync(descriptor)
@@ -756,7 +837,7 @@ class RunStateStore:
             os.close(descriptor)
 
     def read(self) -> dict[str, Any]:
-        if stat.S_IMODE(self.path.stat().st_mode) != 0o600:
+        if _STRICT_POSIX_FILE_MODES and stat.S_IMODE(self.path.stat().st_mode) != 0o600:
             raise GuardError("run-state file mode changed")
         value = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
@@ -957,7 +1038,8 @@ class NetworkOneCycleRunner:
             "POST",
             "/auth/login",
             expected_status=200,
-            medical_response=False,
+            # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth도 이제 포함합니다.
+            medical_response=True,
             json_body={"email": email, "password": password},
         )
         token = login.get("access_token")
@@ -1112,6 +1194,7 @@ class NetworkOneCycleRunner:
         }
         for medication in scenario["medications"]:
             index = int(medication["display_order"])
+            strength_text = medication.get("strength_text")
             expected_values.update(
                 {
                     (index, "MEDICATION_NAME"): str(medication["medication_name"]),
@@ -1122,6 +1205,8 @@ class NetworkOneCycleRunner:
                     (index, "DURATION_DAYS"): str(medication["duration_days"]),
                 }
             )
+            if strength_text is not None:
+                expected_values[(index, "MEDICATION_STRENGTH")] = str(strength_text)
         for field in self._preflight_fields:
             identity = (int(field["medication_index"]), str(field["field_type"]))
             if identity not in expected_values:
@@ -1241,6 +1326,14 @@ def _runtime_environment(mode: str) -> dict[str, str]:
         "DB_PORT": os.environ.get("DB_PORT", "5432"),
         "DB_NAME": os.environ["DB_NAME"],
         "CLOVA_OCR_TIMEOUT_SECONDS": os.environ.get("CLOVA_OCR_TIMEOUT_SECONDS", "20"),
+        "OCR_STRUCTURE_LLM_ENABLED": os.environ.get(
+            "OCR_STRUCTURE_LLM_ENABLED",
+            "false",
+        ),
+        "OCR_STRUCTURE_TIMEOUT_SECONDS": os.environ.get(
+            "OCR_STRUCTURE_TIMEOUT_SECONDS",
+            "30",
+        ),
         "OPENAI_TIMEOUT_SECONDS": os.environ.get("OPENAI_TIMEOUT_SECONDS", "20"),
     }
     runtime.update({name: os.environ[name] for name in allowlisted_names if name in os.environ})
@@ -1513,12 +1606,8 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         request_started_at=None,
         cleanup_not_before=None,
     )
-    read_timeout = (
-        max(
-            float(runtime_env.get("CLOVA_OCR_TIMEOUT_SECONDS", "20")),
-            float(runtime_env.get("OPENAI_TIMEOUT_SECONDS", "20")),
-        )
-        + 5
+    read_timeout = _calculate_live_read_timeout_seconds(
+        runtime_env,
     )
     try:
 

@@ -28,6 +28,7 @@
 | `frequency_per_day` | `int \| None` | 값 또는 `None`을 보존한다. |
 | `timing_text` | `str \| None` | 값 또는 `None`을 보존한다. |
 | `duration_days` | `int \| None` | 값 또는 `None`을 보존한다. |
+| `strength_text` | `str \| None` | 선택 제품 함량, 최대 100자. 값 또는 `None`을 보존한다. |
 
 `display_order`는 Provider 필드가 아니라 약물 배열의 순서로 보존한다. 약물이 AI Core의 최대 개수인 30개를 초과하면 일부만 잘라 전달하지 않고 입력 검증 실패로 처리한다.
 
@@ -37,9 +38,10 @@ Provider에는 다음 정보만 전달할 수 있다.
 
 - 현재 질문 `question`
 - 확정 처방의 약물 배열 `medications`
-- 약물별 허용 필드: `medication_name`, `dose_value`, `dose_unit`, `frequency_per_day`, `timing_text`, `duration_days`
+- 약물별 허용 필드: `medication_name`, `strength_text`, `dose_value`, `dose_unit`, `frequency_per_day`, `timing_text`, `duration_days`
 
 `Decimal` 값은 정밀도를 잃지 않는 문자열로 JSON 직렬화한다. AI Core 규칙에 따라 `dose_value`와 `dose_unit` 중 하나만 존재하면 두 필드를 모두 생략한다. 값이 없는 선택 필드는 Provider JSON에서 생략할 수 있다.
+`strength_text`는 제품 자체의 함량이며 실제 1회 복용량인 `dose_value`·`dose_unit`과 구분합니다. 값이 없는 경우 Provider JSON에서 생략할 수 있으며, 존재하지 않는 제품 함량을 추정해 추가하지 않습니다.
 
 다음 정보는 Provider payload에 포함하지 않는다.
 

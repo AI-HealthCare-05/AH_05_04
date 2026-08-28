@@ -15,6 +15,8 @@ from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 
 _MAX_MEDICATION_NAME_LENGTH = 255
+# 복합제 및 농도 문자열을 포함할 수 있는 최대 길이입니다.
+_MAX_STRENGTH_TEXT_LENGTH = 100
 _MAX_DOSE_VALUE = Decimal("9999999.999")
 _MAX_DOSE_SCALE = 3
 _MAX_INTEGER_VALUE = 2_147_483_647
@@ -43,7 +45,8 @@ def _to_prescription_data(prescription: Prescription, medications: list[Medicati
         medications=[
             MedicationData(
                 medication_name=medication.medication_name,
-                dose_value=float(medication.dose_value) if medication.dose_value is not None else None,
+                strength_text=medication.strength_text,
+                dose_value=(float(medication.dose_value) if medication.dose_value is not None else None),
                 dose_unit=medication.dose_unit,
                 frequency_per_day=medication.frequency_per_day,
                 timing_text=medication.timing_text,
@@ -213,7 +216,8 @@ def _parse_prescribed_date(
     try:
         return date.fromisoformat(value)
     except ValueError:
-        invalid.append(ErrorDetail(field="prescribed_date", reason="INVALID_FORMAT", rejected_value=value))
+        # OCR 원문(처방 날짜 텍스트)을 응답에 그대로 노출하지 않습니다.
+        invalid.append(ErrorDetail(field="prescribed_date", reason="INVALID_FORMAT"))
         return None
 
 
@@ -233,7 +237,8 @@ def _validate_numeric[T](
         return None
     value = parser(raw_value)
     if value is None:
-        invalid.append(ErrorDetail(field=field_name, reason="INVALID_FORMAT", rejected_value=raw_value))
+        # OCR 원문(용량·횟수·기간 텍스트)을 응답에 그대로 노출하지 않습니다.
+        invalid.append(ErrorDetail(field=field_name, reason="INVALID_FORMAT"))
     return value
 
 
@@ -247,11 +252,11 @@ def _validate_optional_text_length(
 ) -> str | None:
     value = _field_value(fields_by_type.get(field_type))
     if value is not None and len(value) > max_length:
+        # OCR 원문(복용법 등 텍스트)을 응답에 그대로 노출하지 않습니다.
         invalid.append(
             ErrorDetail(
                 field=f"medications[{index}].{field_type.value.lower()}",
                 reason="MAX_LENGTH_EXCEEDED",
-                rejected_value=value,
             )
         )
         return None
@@ -270,13 +275,22 @@ def _build_medication(
     if not name:
         missing.append(ErrorDetail(field=f"medications[{index}].medication_name", reason="REQUIRED"))
     elif len(name) > _MAX_MEDICATION_NAME_LENGTH:
+        # OCR 원문(약물명)을 응답에 그대로 노출하지 않습니다.
         invalid.append(
             ErrorDetail(
                 field=f"medications[{index}].medication_name",
                 reason="MAX_LENGTH_EXCEEDED",
-                rejected_value=name,
             )
         )
+    # 제품 함량은 없는 처방전도 있으므로 선택 필드입니다.
+    # 다만 존재하면 사용자가 확인한 값만 확정 처방에 사용합니다.
+    strength_text = _validate_optional_text_length(
+        index=index,
+        field_type=FieldType.MEDICATION_STRENGTH,
+        fields_by_type=fields_by_type,
+        max_length=_MAX_STRENGTH_TEXT_LENGTH,
+        invalid=invalid,
+    )
 
     dose_value = _validate_numeric(
         index=index,
@@ -328,7 +342,10 @@ def _build_medication(
         return None
 
     return {
+        # 화면 표시용 이름입니다. 후속 성분명 매핑에서도 덮어쓰지 않습니다.
         "medication_name": name,
+        # 제품 함량은 1회 복용량과 별도로 저장합니다.
+        "strength_text": strength_text,
         "dose_value": dose_value,
         "dose_unit": dose_unit,
         "frequency_per_day": frequency_per_day,

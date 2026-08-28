@@ -26,12 +26,12 @@ async def get_prescription_detail(
     prescription_service: Annotated[PrescriptionService, Depends(get_prescription_service)],
 ) -> Response:
     # 처방 상세 조회 Backend 계약: 확정 처방과 소속 약물 상세 정보를 조회합니다.
+    # Cache-Control: no-store는 NoStoreMiddleware가 /api/v1/* 전체에 일괄 적용합니다.
     result = await prescription_service.get_prescription_detail(user=user, prescription_id=prescription_id)
 
     return Response(
         content=PrescriptionResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -51,5 +51,4 @@ async def create_chat_session(
     return Response(
         content=ChatSessionResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
-        headers={"Cache-Control": "no-store"},
     )

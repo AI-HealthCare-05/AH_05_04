@@ -1,45 +1,108 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { login } from '../api/auth'
 import { ApiError } from '../api/client'
 import { Button, MobileShell } from '../design-system/components'
+import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
+type LoginForm = {
+  email: string
+  password: string
+}
+
+type LoginFieldErrors = Partial<Record<keyof LoginForm, string>>
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const NETWORK_ERROR_MESSAGE = '네트워크 연결을 확인하고 다시 시도해 주세요.'
+
+function validateLogin(form: LoginForm): LoginFieldErrors {
+  const errors: LoginFieldErrors = {}
+  const email = form.email.trim()
+
+  if (!email) {
+    errors.email = '이메일을 입력해 주세요.'
+  } else if (!EMAIL_PATTERN.test(email)) {
+    errors.email = '올바른 이메일 주소를 입력해 주세요.'
+  }
+
+  if (form.password.length < 8) {
+    errors.password = '비밀번호를 8자 이상 입력해 주세요.'
+  }
+
+  return errors
+}
+
 function LoginPage() {
   const navigate = useNavigate()
-  const [form, setForm] = useState({ email: '', password: '' })
+  const [form, setForm] = useState<LoginForm>({ email: '', password: '' })
+  const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({})
+  const [hasCredentialError, setHasCredentialError] = useState(false)
   const [message, setMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const isSubmittingRef = useRef(false)
+  const emailInputRef = useRef<HTMLInputElement>(null)
+  const passwordInputRef = useRef<HTMLInputElement>(null)
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target
     setForm((prev) => ({ ...prev, [name]: value }))
+    setFieldErrors((prev) => ({ ...prev, [name]: undefined }))
+    setHasCredentialError(false)
+    setMessage('')
   }
+
+  useEffect(() => {
+    if (fieldErrors.email || hasCredentialError) {
+      emailInputRef.current?.focus()
+      return
+    }
+
+    if (fieldErrors.password) passwordInputRef.current?.focus()
+  }, [fieldErrors, hasCredentialError])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    try {
-      setIsSubmitting(true)
+
+    if (isSubmittingRef.current) return
+
+    const validationErrors = validateLogin(form)
+    if (Object.keys(validationErrors).length > 0) {
+      setFieldErrors(validationErrors)
+      setHasCredentialError(false)
       setMessage('')
-      const response = await login(form)
+      return
+    }
+
+    try {
+      isSubmittingRef.current = true
+      setIsSubmitting(true)
+      setFieldErrors({})
+      setHasCredentialError(false)
+      setMessage('')
+      const response = await login({
+        email: form.email.trim(),
+        password: form.password,
+      })
       localStorage.setItem('access_token', response.access_token)
       navigate('/')
     } catch (error) {
-      setMessage(
-        error instanceof ApiError ? error.message : '로그인에 실패했습니다.',
-      )
+      setMessage(error instanceof ApiError ? error.message : NETWORK_ERROR_MESSAGE)
+      setHasCredentialError(error instanceof ApiError && error.status === 401)
     } finally {
+      isSubmittingRef.current = false
       setIsSubmitting(false)
     }
   }
 
   return (
-    <div className="mvp-page mvp-auth-page">
+    <div className="mvp-page mvp-auth-page mvp-login-page">
       <MobileShell
         title="Dosey 도지"
         onBack={() => navigate('/start')}
+        brandMark={<DoseyMascot variant="header" />}
         backPlacement="content"
         hideNavigation
       >
@@ -51,15 +114,52 @@ function LoginPage() {
             </p>
           </header>
 
-          <form className="mvp-form mvp-auth__form" onSubmit={handleSubmit}>
-            <label className="mvp-form__field">
-              이메일
-              <input name="email" type="email" placeholder="가입한 이메일을 입력해 주세요" autoComplete="email" required value={form.email} onChange={handleChange} />
-            </label>
-            <label className="mvp-form__field">
-              비밀번호
-              <input name="password" type="password" placeholder="비밀번호를 입력해 주세요" autoComplete="current-password" required value={form.password} onChange={handleChange} />
-            </label>
+          <form className="mvp-form mvp-auth__form" onSubmit={handleSubmit} noValidate>
+            <div className="mvp-auth__fields">
+              <div className="mvp-form__field">
+                <label htmlFor="login-email">이메일</label>
+                <input
+                  ref={emailInputRef}
+                  id="login-email"
+                  name="email"
+                  type="email"
+                  placeholder="가입한 이메일을 입력해 주세요"
+                  autoComplete="email"
+                  required
+                  aria-invalid={Boolean(fieldErrors.email) || hasCredentialError}
+                  aria-describedby={fieldErrors.email ? 'login-email-error' : undefined}
+                  value={form.email}
+                  onChange={handleChange}
+                />
+                {fieldErrors.email && (
+                  <span className="mvp-form__field-error" id="login-email-error" role="alert">
+                    {fieldErrors.email}
+                  </span>
+                )}
+              </div>
+              <div className="mvp-form__field">
+                <label htmlFor="login-password">비밀번호</label>
+                <input
+                  ref={passwordInputRef}
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  placeholder="비밀번호를 입력해 주세요"
+                  autoComplete="current-password"
+                  required
+                  minLength={8}
+                  aria-invalid={Boolean(fieldErrors.password) || hasCredentialError}
+                  aria-describedby={fieldErrors.password ? 'login-password-error' : undefined}
+                  value={form.password}
+                  onChange={handleChange}
+                />
+                {fieldErrors.password && (
+                  <span className="mvp-form__field-error" id="login-password-error" role="alert">
+                    {fieldErrors.password}
+                  </span>
+                )}
+              </div>
+            </div>
 
             {message && <p className="mvp-form__message" role="alert">{message}</p>}
 
@@ -68,13 +168,13 @@ function LoginPage() {
             </Button>
           </form>
 
-          <div className="notice attention mvp-auth__notice">
-            로그인 후 본인의 처방전과 복약 정보를 확인할 수 있어요.
-          </div>
-
-          <p className="mvp-form__footer">
-            계정이 없다면 <Link to="/signup">회원가입</Link>
+          <p className="mvp-form__footer mvp-auth__signup-link">
+            <Link to="/signup">계정이 없다면 회원가입</Link>
           </p>
+
+          <div className="notice attention mvp-auth__notice">
+            의료정보는 로그인한 본인만 볼 수 있어요.
+          </div>
         </main>
       </MobileShell>
     </div>

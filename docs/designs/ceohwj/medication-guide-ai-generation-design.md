@@ -104,6 +104,7 @@ Backend와 AI 모듈 사이의 현재 공유 경계는 [복약 가이드 Backend
 `MedicationInput`은 다음 필드를 가진다.
 
 - `medication_name`: 필수, 공백이 아닌 문자열
+- `strength_text`: 선택 제품 함량, 최대 100자
 - `dose_value`: 선택, 값이 있으면 양수 `Decimal`
 - `dose_unit`: 선택, 값이 있으면 공백이 아닌 문자열
 - `frequency_per_day`: 선택, 양의 정수
@@ -118,9 +119,10 @@ Backend와 AI 모듈 사이의 현재 공유 경계는 [복약 가이드 Backend
 
 AI 모듈에는 환자 ID, 사용자 ID, 처방전 이미지, OCR 원문과 미검토 값을 전달하지 않는다. `prescription_id`는 Backend 저장과 추적에 필요하지만 생성에는 필요하지 않으므로 입력에서 제외한다.
 
-OpenAI에는 입력 약물 순서를 나타내는 0-based `source_index`만 전달한다. 약명과 용량·단위·횟수·시점·기간은 Backend renderer가 원본 확정 처방값으로 조립하며 provider에 전달하지 않는다. `source_index` 목록은 단일 user `input` JSON으로 직렬화하고 시스템 규칙은 `instructions`에만 둔다.
+OpenAI에는 입력 약물 순서를 나타내는 0-based `source_index`만 전달한다. 확정 약물명, 제품 함량, 복용량, 단위, 횟수, 복용 시점과 기간은 Backend renderer가 원본 확정 처방값으로 조립하며 provider에 전달하지 않는다. `source_index` 목록은 단일 user `input` JSON으로 직렬화하고 시스템 규칙은 `instructions`에만 둔다.
 
 Provider 요청 payload의 유일한 허용 필드는 `source_index`이다. 처방 ID, 사용자 식별자와 확정 처방값은 provider input과 metadata에 넣지 않는다. 이 전송 범위가 늘어나는 변경은 개인정보·의료 안전 리뷰와 prompt version 갱신이 필요하다.
+
 
 ### 출력
 
