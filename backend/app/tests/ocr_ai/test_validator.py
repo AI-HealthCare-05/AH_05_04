@@ -83,6 +83,67 @@ def test_validator_discards_changed_decimal_strength() -> None:
     assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
 
 
+def test_validator_discards_strength_suffix_from_larger_ocr_number() -> None:
+    raw_fields = [
+        _raw("합성의약품에이정"),
+        _raw("100mg"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[1],
+                ),
+                strength_text=GeneratedSourceValue(
+                    # OCR 100mg의 일부인 0mg을 LLM이 반환한 경우입니다.
+                    value="0mg",
+                    source_ids=[2],
+                ),
+            )
+        ]
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    # 일부 문자열만 일치하는 잘못된 함량은 저장하지 않습니다.
+    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+
+
+def test_validator_discards_component_of_compound_strength() -> None:
+    raw_fields = [
+        _raw("합성복합정"),
+        _raw("5mg/100mg"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성복합정",
+                    source_ids=[1],
+                ),
+                strength_text=GeneratedSourceValue(
+                    # 복합 함량 전체가 아닌 뒤쪽 성분만 반환했습니다.
+                    value="100mg",
+                    source_ids=[2],
+                ),
+            )
+        ]
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+
+
 def test_validator_discards_changed_compound_strength() -> None:
     raw_fields = [
         _raw("합성복합정"),
@@ -374,6 +435,72 @@ def test_validator_rejects_numeric_substring_from_larger_ocr_number() -> None:
     # 근거 없는 숫자는 저장하지 않고 검수용 빈 필드로 대체합니다.
     assert frequency.raw_value is None
     assert frequency.confidence_score is None
+
+
+def test_validator_rejects_frequency_from_duration_number() -> None:
+    raw_fields = [
+        _raw("합성의약품에이정"),
+        _raw("1일 3회"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[1],
+                ),
+                frequency_per_day=GeneratedSourceValue(
+                    # 숫자 1은 존재하지만 기간 단위인 "일"에 붙어 있습니다.
+                    value="1",
+                    source_ids=[2],
+                ),
+            )
+        ]
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    frequency = next(field for field in result if field.field_type == "FREQUENCY_PER_DAY")
+
+    # 잘못된 1을 저장하지 않고 사용자 검수용 빈 필드로 만듭니다.
+    assert frequency.raw_value is None
+    assert frequency.confidence_score is None
+
+
+def test_validator_accepts_frequency_with_frequency_unit_context() -> None:
+    raw_fields = [
+        _raw("합성의약품에이정"),
+        _raw("1일 3회"),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[1],
+                ),
+                frequency_per_day=GeneratedSourceValue(
+                    value="3",
+                    source_ids=[2],
+                ),
+            )
+        ]
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    frequency = next(field for field in result if field.field_type == "FREQUENCY_PER_DAY")
+
+    assert frequency.raw_value == "3"
+    assert frequency.confidence_score == 0.99
 
 
 def test_validator_rejects_partial_medication_name() -> None:

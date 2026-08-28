@@ -291,12 +291,27 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - 거부된 PATCH는 기존 `confirmed_value`를 변경하지 않습니다.
 - PATCH와 처방 확정의 동시 요청 직렬화는 Post-MVP 범위입니다.
 
+선택 필드의 OCR 값을 사용자가 제거하여 “값 없음”으로 확인할 때는
+`confirmed_value`를 명시적인 `null`로 전송합니다.
+
+```json
+{
+  "confirmed_value": null
+}
+```
+- `null`은 요청 필드 생략이나 미확인 상태가 아닙니다.
+- `MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`에만 `null`을 허용합니다.
+- 이 경우 OCR `raw_value`는 이력으로 유지합니다.
+- 응답은 `confirmed_value=null`, `confirmation_status=CONFIRMED`입니다.
+- 필수 필드에 `null`을 전송하면 `422 VALIDATION_FAILED`를 반환합니다.
+
 ### 주요 오류
 
 | 상태 | `code` | 설명 |
 | ---: | --- | --- |
 | `404` | `EXTRACTED_FIELD_NOT_FOUND` | 필드가 없거나 사용자가 접근할 수 없습니다. |
 | `409` | `PRESCRIPTION_ALREADY_CONFIRMED` | 해당 문서의 처방이 이미 확정되어 필드를 수정할 수 없습니다. |
+| `422` | `VALIDATION_FAILED` | 필수 필드에 `null` 또는 유효하지 않은 값을 전달했습니다. |
 
 현재 MVP의 `409` 검사는 PATCH 처리 시점에 이미 확정된 처방이 존재하는지를 확인합니다. PATCH와 처방 확정이 동시에 실행되는 경우의 row lock 및 직렬화는 Post-MVP 범위입니다.
 

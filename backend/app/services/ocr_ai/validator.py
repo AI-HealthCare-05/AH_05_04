@@ -53,6 +53,23 @@ _NUMERIC_GROUNDING_FIELD_TYPES = frozenset(
 # 단위 문자는 포함하지 않아 "1정"에서 DOSE_VALUE "1"은 허용합니다.
 _NUMERIC_NEIGHBOR_CHARACTERS = r"\d.,_eE"
 
+
+# 횟수와 기간은 같은 source_ids 안의 아무 숫자가 아니라
+# 해당 필드 단위가 바로 뒤에 붙은 숫자만 근거로 인정합니다.
+_NUMERIC_CONTEXT_UNIT_PATTERNS = {
+    "FREQUENCY_PER_DAY": r"(?:회|번)",
+    "DURATION_DAYS": r"(?:일|day(?:s)?)",
+}
+
+# 제품 함량의 일부만 잘라서 일치시키는 것을 막습니다.
+#
+# 예:
+# - OCR 100mg / LLM 0mg: 거부
+# - OCR 5mg/100mg / LLM 100mg: 거부
+# - OCR 약품명100mg / LLM 100mg: 허용
+_STRENGTH_NEIGHBOR_CHARACTERS = r"\d.,_/%"
+
+
 # MEDICATION_NAME은 OCR 원문과 완전히 일치하거나,
 # 뒤에 제품 함량만 남는 경우에만 근거가 있는 것으로 판단합니다.
 # _comparison_keys() 적용 후 비교하므로 소문자·공백 제거 기준입니다.
@@ -64,6 +81,33 @@ _MEDICATION_STRENGTH_SUFFIX_PATTERN = re.compile(
     rf"(?:/(?:{_STRENGTH_AMOUNT_KEY}|{_STRENGTH_UNIT_KEY}))*"
     rf"\)?$"
 )
+
+
+def _contains_complete_medication_strength(
+    *,
+    generated_compact: str,
+    source_compact: str,
+) -> bool:
+    """
+    생성된 제품 함량이 OCR 원문의 완전한 함량 표현인지 확인합니다.
+
+    제품명과 함량이 같은 OCR token에 들어 있는 경우는 허용하지만,
+    더 큰 숫자나 복합 함량의 일부를 잘라낸 값은 허용하지 않습니다.
+    """
+    if not generated_compact:
+        return False
+
+    # LLM 값 자체가 지원하는 함량 형식인지 먼저 검증합니다.
+    if _MEDICATION_STRENGTH_SUFFIX_PATTERN.fullmatch(generated_compact) is None:
+        return False
+
+    pattern = re.compile(
+        rf"(?<![{_STRENGTH_NEIGHBOR_CHARACTERS}])"
+        rf"{re.escape(generated_compact)}"
+        rf"(?![{_STRENGTH_NEIGHBOR_CHARACTERS}])"
+    )
+
+    return pattern.search(source_compact) is not None
 
 
 def _comparison_keys(value: str) -> tuple[str, str]:
@@ -116,6 +160,41 @@ def _contains_complete_numeric_value(
         rf"(?<![{_NUMERIC_NEIGHBOR_CHARACTERS}])"
         rf"{re.escape(generated_compact)}"
         rf"(?![{_NUMERIC_NEIGHBOR_CHARACTERS}])"
+    )
+
+    return pattern.search(source_compact) is not None
+
+
+def _contains_numeric_value_with_field_context(
+    *,
+    field_type: str,
+    generated_compact: str,
+    source_compact: str,
+) -> bool:
+    """
+    횟수·기간 숫자가 해당 필드의 단위 문맥에 있는지 확인합니다.
+
+    source가 숫자 token 하나뿐인 경우에는 완전 일치를 허용합니다.
+    단위가 포함된 source에서는 숫자 바로 뒤에 필드 단위가 있어야 합니다.
+
+    예:
+    - FREQUENCY_PER_DAY=3 / OCR "1일 3회": 허용
+    - FREQUENCY_PER_DAY=1 / OCR "1일 3회": 거부
+    - DURATION_DAYS=1 / OCR "1일 3회": 허용
+    """
+    if not generated_compact:
+        return False
+
+    # CLOVA가 숫자를 단독 token으로 반환하고 LLM도 그 token만
+    # source_id로 참조한 경우에는 정확히 같은 숫자만 허용합니다.
+    if generated_compact == source_compact:
+        return True
+
+    unit_pattern = _NUMERIC_CONTEXT_UNIT_PATTERNS[field_type]
+    pattern = re.compile(
+        rf"(?<![{_NUMERIC_NEIGHBOR_CHARACTERS}])"
+        rf"{re.escape(generated_compact)}"
+        rf"(?={unit_pattern})"
     )
 
     return pattern.search(source_compact) is not None
@@ -202,9 +281,25 @@ def _validate_grounded_value(
     source_value = " ".join(field.raw_value for field in source_fields)
     source_spaced, source_compact = _comparison_keys(source_value)
 
-    if field_type in _NUMERIC_GROUNDING_FIELD_TYPES:
-        # 숫자는 부분 문자열이 아닌 완전한 숫자 경계로 검증합니다.
+    if field_type in _NUMERIC_CONTEXT_UNIT_PATTERNS:
+        # 횟수와 기간은 같은 OCR 근거 안의 아무 숫자가 아니라
+        # 해당 필드 단위가 붙은 숫자만 허용합니다.
+        is_grounded = _contains_numeric_value_with_field_context(
+            field_type=field_type,
+            generated_compact=generated_compact,
+            source_compact=source_compact,
+        )
+    elif field_type in _NUMERIC_GROUNDING_FIELD_TYPES:
+        # DOSE_VALUE 등은 "1정"에서 숫자 1을 분리할 수 있도록
+        # 완전한 숫자 경계만 확인합니다.
         is_grounded = _contains_complete_numeric_value(
+            generated_compact=generated_compact,
+            source_compact=source_compact,
+        )
+    elif field_type == "MEDICATION_STRENGTH":
+        # 제품 함량은 더 큰 숫자나 복합 함량의 일부가 아닌
+        # 전체 함량 표현으로 검증합니다.
+        is_grounded = _contains_complete_medication_strength(
             generated_compact=generated_compact,
             source_compact=source_compact,
         )

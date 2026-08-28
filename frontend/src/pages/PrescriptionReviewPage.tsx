@@ -183,12 +183,13 @@ function getFieldLabel(fieldType: string) {
 }
 
 function getSavedDisplayValue(field: ExtractedField) {
-  if (field.confirmed_value?.trim()) {
-    return field.confirmed_value
+  // CONFIRMED + null은 사용자가 선택 필드를
+  // “값 없음”으로 확인한 상태입니다.
+  if (field.confirmation_status === 'CONFIRMED') {
+    return field.confirmed_value?.trim() ?? ''
   }
 
   // 처방일만 Backend가 만든 YYYY-MM-DD 값을 사용합니다.
-  // 약물명은 처방전 표기를 보존해야 하므로 정규화 값으로 바꾸지 않습니다.
   if (
     field.field_type === 'PRESCRIBED_DATE' &&
     field.normalized_value?.trim()
@@ -204,9 +205,11 @@ function isFieldConfirmed(
   draftValues: Record<string, string>,
 ) {
   const draftValue = draftValues[field.field_id]?.trim() ?? ''
+  const confirmedValue = field.confirmed_value?.trim() ?? ''
+
   return (
-    Boolean(field.confirmed_value?.trim()) &&
-    draftValue === field.confirmed_value?.trim()
+    field.confirmation_status === 'CONFIRMED' &&
+    draftValue === confirmedValue
   )
 }
 
@@ -566,9 +569,11 @@ function PrescriptionReviewPage() {
     }
 
     const saveRequestKey = reviewRequestKey
-    const value = draftValues[field.field_id]?.trim()
+    const value = draftValues[field.field_id]?.trim() ?? ''
+    const isOptionalField =
+      !requiredReviewFieldTypes.has(field.field_type)
 
-    if (!value) {
+    if (!value && !isOptionalField) {
       setFieldErrors((current) => ({
         ...current,
         [field.field_id]: '확인할 값을 입력해 주세요.',
@@ -576,7 +581,10 @@ function PrescriptionReviewPage() {
       return
     }
 
-    const numericFieldError = getNumericFieldError(field.field_type, value)
+    const confirmedValue = value || null
+    const numericFieldError = value
+      ? getNumericFieldError(field.field_type, value)
+      : null
 
     if (numericFieldError) {
       setFieldErrors((current) => ({
@@ -598,7 +606,10 @@ function PrescriptionReviewPage() {
         return next
       })
       setMessage(null)
-      const response = await updateExtractedField(field.field_id, value)
+      const response = await updateExtractedField(
+        field.field_id,
+        confirmedValue,
+      )
       if (latestReviewRequestKeyRef.current !== saveRequestKey) return
 
       setFields((current) =>
@@ -608,7 +619,7 @@ function PrescriptionReviewPage() {
       )
       setDraftValues((current) => ({
         ...current,
-        [field.field_id]: response.data.confirmed_value ?? value,
+        [field.field_id]: getSavedDisplayValue(response.data),
       }))
       setUserConfirmed(false)
     } catch (error) {
@@ -700,8 +711,20 @@ function PrescriptionReviewPage() {
 
     // 값이 없는 선택 필드는 사용자 확인이 필요한 오류 상태가 아니라
     // 입력을 생략할 수 있는 정상 상태입니다.
+    const savedValue = getSavedDisplayValue(field).trim()
+    const hasFieldChanges = draftValue.trim() !== savedValue
+    const isOptionalField =
+      !requiredReviewFieldTypes.has(field.field_type)
+
+    const isOptionalRemoval =
+      isOptionalField &&
+      !draftValue.trim() &&
+      Boolean(savedValue)
+
     const isBlankOptionalField =
-      !requiresUserConfirmation(field, draftValues)
+      isOptionalField &&
+      !draftValue.trim() &&
+      !hasFieldChanges
 
     const isSaving = savingFieldIds.has(field.field_id)
     const rawValue = field.raw_value?.trim() ?? ''
@@ -762,11 +785,13 @@ function PrescriptionReviewPage() {
           >
             {isSaving
               ? '저장 중'
-              : confirmed
-                ? '수정 저장'
-                : isBlankOptionalField
-                  ? '선택 입력'
-                  : '확인'}
+              : isOptionalRemoval
+                ? '값 없음 저장'
+                : confirmed
+                  ? '수정 저장'
+                  : isBlankOptionalField
+                    ? '선택 입력'
+                    : '확인'}
           </Button>
         </div>
 

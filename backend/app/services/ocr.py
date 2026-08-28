@@ -4,7 +4,7 @@ from uuid import UUID
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.ocr import ExecuteOcrRequest, ExtractedFieldData, OcrJobData, OcrJobStatus
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
-from app.models.ocr import ExtractedField, OcrJob
+from app.models.ocr import ExtractedField, FieldType, OcrJob
 from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
@@ -20,6 +20,15 @@ from app.services.ocr_engine import (
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
 _ENGINE_ERROR_MESSAGE = "OCR 처리 중 오류가 발생했습니다."
+
+# 사용자가 OCR 오인식 값을 제거하고 “값 없음”으로 확인할 수 있는 필드입니다.
+_NULLABLE_CONFIRMED_FIELD_TYPES = frozenset(
+    {
+        FieldType.MEDICATION_STRENGTH,
+        FieldType.DOSE_UNIT,
+        FieldType.TIMING,
+    }
+)
 
 
 def _to_field_data(
@@ -253,6 +262,18 @@ class OcrService:
                     ErrorDetail(
                         field="document_id",
                         reason="ALREADY_CONFIRMED",
+                    )
+                ],
+            )
+        if request.confirmed_value is None and field.field_type not in _NULLABLE_CONFIRMED_FIELD_TYPES:
+            raise ApiError(
+                status_code=422,
+                code="VALIDATION_FAILED",
+                message="입력값을 확인해 주세요.",
+                details=[
+                    ErrorDetail(
+                        field="confirmed_value",
+                        reason="REQUIRED",
                     )
                 ],
             )

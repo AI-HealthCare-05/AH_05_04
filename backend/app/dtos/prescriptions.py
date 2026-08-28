@@ -5,7 +5,9 @@ from pydantic import BaseModel, Field
 
 
 class UpdateExtractedFieldRequest(BaseModel):
-    confirmed_value: str = Field(min_length=1)
+    # null은 선택 필드를 사용자가 “값 없음”으로 확인한 경우입니다.
+    # 필수 필드의 null 거부는 필드 유형을 아는 서비스 계층에서 처리합니다.
+    confirmed_value: str | None = Field(min_length=1)
 
 
 class MedicationData(BaseModel):

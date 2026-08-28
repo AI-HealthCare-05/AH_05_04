@@ -75,6 +75,19 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
     return process_env
 
 
+def _create_symlink_or_skip(
+    link: Path,
+    target: Path,
+) -> None:
+    """Windows에서 symlink 권한이 없을 때만 테스트를 건너뜁니다."""
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable (WinError 1314)")
+        raise
+
+
 @pytest.mark.parametrize(
     (
         "llm_enabled",
@@ -500,15 +513,42 @@ def test_run_state_is_exclusive_atomic_and_private(tmp_path: Path) -> None:
     run_id = str(uuid4())
     store = RunStateStore.create(state_root, run_id, {"run_id": run_id, "ids": {}})
 
-    assert stat.S_IMODE(state_root.stat().st_mode) == 0o700
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    if smoke_module._STRICT_POSIX_FILE_MODES:
+        assert stat.S_IMODE(state_root.stat().st_mode) == 0o700
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
     with pytest.raises(FileExistsError):
         RunStateStore.create(state_root, run_id, {"run_id": run_id})
 
     store.update(in_flight_stage="AUTH", cleanup_not_before="2026-08-25T10:00:00+00:00")
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    if smoke_module._STRICT_POSIX_FILE_MODES:
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
     assert store.read()["in_flight_stage"] == "AUTH"
     assert list(state_root.glob(f".{run_id}.*.tmp")) == []
+
+
+def test_directory_fsync_is_skipped_when_not_supported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        smoke_module,
+        "_DIRECTORY_FSYNC_SUPPORTED",
+        False,
+    )
+
+    def fail_if_opened(
+        *_args: object,
+        **_kwargs: object,
+    ) -> int:
+        raise AssertionError("directory must not be opened for fsync")
+
+    monkeypatch.setattr(
+        smoke_module.os,
+        "open",
+        fail_if_opened,
+    )
+
+    RunStateStore._fsync_directory(tmp_path)
 
 
 def test_cleanup_is_pending_during_in_flight_grace_without_calling_cleanup(tmp_path: Path) -> None:
@@ -1092,7 +1132,6 @@ async def test_delete_intent_cleanup_does_not_follow_symlink_to_other_user_file(
     target = tmp_path / f"{other_fixture.document_id}.png"
     target.write_bytes(content)
     tracked = tmp_path / f"{fixture.document_id}.png"
-    tracked.symlink_to(target)
     run_id = str(uuid4())
     store = RunStateStore.create(
         tmp_path / "state",
@@ -1107,6 +1146,8 @@ async def test_delete_intent_cleanup_does_not_follow_symlink_to_other_user_file(
     )
 
     try:
+        _create_symlink_or_skip(tracked, target)
+
         with pytest.raises(CleanupPendingError):
             await _cleanup_root(factory, user_id=fixture.user_id, storage_dir=tmp_path, store=store)
 
@@ -1132,7 +1173,6 @@ async def test_document_cleanup_does_not_follow_storage_symlink(tmp_path: Path) 
     content = b"approved-synthetic-source"
     target.write_bytes(content)
     candidate = tmp_path / f"{fixture.document_id}.png"
-    candidate.symlink_to(target)
     run_id = str(uuid4())
     store = RunStateStore.create(
         tmp_path / "state",
@@ -1145,6 +1185,8 @@ async def test_document_cleanup_does_not_follow_storage_symlink(tmp_path: Path) 
     )
 
     try:
+        _create_symlink_or_skip(candidate, target)
+
         rows, files = await _cleanup_root(
             factory,
             user_id=fixture.user_id,

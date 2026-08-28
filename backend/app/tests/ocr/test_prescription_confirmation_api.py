@@ -135,7 +135,7 @@ async def test_confirm_prescription_api_rejects_unreviewed_fields() -> None:
             headers={"Authorization": f"Bearer {access_token}"},
         )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert response.json()["code"] == "PRESCRIPTION_REQUIRED_FIELD_MISSING"
     assert response.json()["message"] == "처방 확정에 필요한 항목이 누락되었습니다."
     assert response.json()["details"]
@@ -164,7 +164,7 @@ async def test_confirm_prescription_api_rejects_when_only_one_of_two_medications
         )
 
     body = response.json()
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert body["code"] == "PRESCRIPTION_REQUIRED_FIELD_MISSING"
     assert body["message"] == "처방 확정에 필요한 항목이 누락되었습니다."
     assert body["trace_id"]
@@ -194,7 +194,7 @@ async def test_confirm_prescription_api_rejects_invalid_numeric_value() -> None:
         )
 
     body = response.json()
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert body["code"] == "VALIDATION_FAILED"
     assert body["message"] == "입력값을 확인해 주세요."
     assert body["trace_id"]
@@ -238,7 +238,7 @@ async def test_confirm_prescription_api_rejects_values_outside_db_limits(
         )
 
     body = response.json()
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert body["code"] == "VALIDATION_FAILED"
     assert body["trace_id"]
     assert any(detail["field"] == expected_field for detail in body["details"])
@@ -258,6 +258,127 @@ async def test_confirm_prescription_api_rejects_another_users_document() -> None
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert response.json()["code"] == "MEDICAL_DOCUMENT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_optional_extracted_field_accepts_confirmed_null() -> None:
+    ConfirmationTestOcrEngine.fields = [
+        *DEFAULT_RECOGNIZED_FIELDS,
+        RecognizedField(
+            1,
+            "MEDICATION_STRENGTH",
+            "100mg",
+            0.99,
+        ),
+    ]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        access_token = await _signup_and_login(
+            client,
+            label="optional-null",
+        )
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        document_id, job_id = await _upload_and_run_ocr(
+            client,
+            access_token=access_token,
+        )
+
+        job_response = await client.get(
+            f"/api/v1/ocr-jobs/{job_id}",
+            headers=headers,
+        )
+        assert job_response.status_code == status.HTTP_200_OK
+
+        fields = job_response.json()["data"]["fields"]
+
+        for field in fields:
+            confirmed_value = (
+                None
+                if field["field_type"] == "MEDICATION_STRENGTH"
+                else field["normalized_value"] or field["raw_value"]
+            )
+
+            patch_response = await client.patch(
+                f"/api/v1/extracted-fields/{field['field_id']}",
+                json={
+                    "confirmed_value": confirmed_value,
+                },
+                headers=headers,
+            )
+
+            assert patch_response.status_code == status.HTTP_200_OK
+
+            if field["field_type"] == "MEDICATION_STRENGTH":
+                body = patch_response.json()["data"]
+                assert body["raw_value"] == "100mg"
+                assert body["confirmed_value"] is None
+                assert body["confirmation_status"] == "CONFIRMED"
+
+        confirm_response = await client.post(
+            f"/api/v1/documents/{document_id}/prescription",
+            headers=headers,
+        )
+
+    assert confirm_response.status_code == status.HTTP_201_CREATED
+    medication = confirm_response.json()["data"]["medications"][0]
+    assert medication["strength_text"] is None
+
+
+@pytest.mark.asyncio
+async def test_required_extracted_field_rejects_confirmed_null() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        access_token = await _signup_and_login(
+            client,
+            label="required-null",
+        )
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        _, job_id = await _upload_and_run_ocr(
+            client,
+            access_token=access_token,
+        )
+
+        job_response = await client.get(
+            f"/api/v1/ocr-jobs/{job_id}",
+            headers=headers,
+        )
+        assert job_response.status_code == status.HTTP_200_OK
+
+        medication_name = next(
+            field for field in job_response.json()["data"]["fields"] if field["field_type"] == "MEDICATION_NAME"
+        )
+
+        patch_response = await client.patch(
+            f"/api/v1/extracted-fields/{medication_name['field_id']}",
+            json={
+                "confirmed_value": None,
+            },
+            headers=headers,
+        )
+
+    body = patch_response.json()
+
+    assert patch_response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert body["code"] == "VALIDATION_FAILED"
+    assert body["message"] == "입력값을 확인해 주세요."
+    assert body["details"] == [
+        {
+            "field": "confirmed_value",
+            "reason": "REQUIRED",
+            "rejected_value": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio

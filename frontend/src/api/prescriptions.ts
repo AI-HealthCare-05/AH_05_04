@@ -119,7 +119,7 @@ export type ExtractedFieldResponse = {
 
 export async function updateExtractedField(
   fieldId: string,
-  confirmedValue: string,
+  confirmedValue: string | null,
 ): Promise<ExtractedFieldResponse> {
   return apiRequest<ExtractedFieldResponse>(
     `/api/v1/extracted-fields/${fieldId}`,

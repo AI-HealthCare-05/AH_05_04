@@ -146,8 +146,19 @@ class ExtractedField(Base):
             name="chk_field_medication_index",
         ),
         CheckConstraint(
-            "(confirmation_status = 'CONFIRMED' AND confirmed_value IS NOT NULL AND confirmed_at IS NOT NULL) "
-            "OR (confirmation_status = 'UNCONFIRMED' AND confirmed_value IS NULL AND confirmed_at IS NULL)",
+            "("
+            "confirmation_status = 'CONFIRMED' "
+            "AND confirmed_at IS NOT NULL "
+            "AND ("
+            "confirmed_value IS NOT NULL "
+            "OR field_type IN ('MEDICATION_STRENGTH', 'DOSE_UNIT', 'TIMING')"
+            ")"
+            ") "
+            "OR ("
+            "confirmation_status = 'UNCONFIRMED' "
+            "AND confirmed_value IS NULL "
+            "AND confirmed_at IS NULL"
+            ")",
             name="chk_field_confirmation_fields",
         ),
         CheckConstraint(

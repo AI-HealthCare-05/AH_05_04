@@ -77,6 +77,12 @@ class GuardError(ValueError):
 _LIVE_READ_TIMEOUT_MARGIN_SECONDS = 5.0
 
 
+# Windows는 POSIX mode bit를 보존하지 않고 디렉터리 descriptor에 대한
+# fsync도 지원하지 않습니다. 파일 fsync와 atomic replace는 계속 수행합니다.
+_STRICT_POSIX_FILE_MODES = os.name != "nt"
+_DIRECTORY_FSYNC_SUPPORTED = os.name != "nt"
+
+
 def _parse_positive_timeout(
     environment: Mapping[str, str],
     name: str,
@@ -812,12 +818,17 @@ class RunStateStore:
     def open(cls, root: Path, run_id: str) -> RunStateStore:
         path = root / f"{run_id}.json"
         metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+        has_invalid_mode = _STRICT_POSIX_FILE_MODES and stat.S_IMODE(metadata.st_mode) != 0o600
+
+        if not stat.S_ISREG(metadata.st_mode) or has_invalid_mode:
             raise GuardError("run-state file must be a regular private file")
         return cls(path)
 
     @staticmethod
     def _fsync_directory(root: Path) -> None:
+        if not _DIRECTORY_FSYNC_SUPPORTED:
+            return
+
         descriptor = os.open(root, os.O_RDONLY)
         try:
             os.fsync(descriptor)
@@ -825,7 +836,7 @@ class RunStateStore:
             os.close(descriptor)
 
     def read(self) -> dict[str, Any]:
-        if stat.S_IMODE(self.path.stat().st_mode) != 0o600:
+        if _STRICT_POSIX_FILE_MODES and stat.S_IMODE(self.path.stat().st_mode) != 0o600:
             raise GuardError("run-state file mode changed")
         value = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):

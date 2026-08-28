@@ -373,6 +373,111 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     )
   })
 
+  it('OCR 제품 함량을 삭제하고 null로 저장한 뒤 함량 없이 처방을 확정한다', async () => {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'MEDICATION_STRENGTH'
+        ? {
+            ...field,
+            raw_value: '100mg',
+            confirmed_value: null,
+            confirmation_status: 'PENDING',
+          }
+        : field,
+    )
+
+    const strengthField = fields.find(
+      (field) => field.field_type === 'MEDICATION_STRENGTH',
+    )
+
+    if (!strengthField) {
+      throw new Error('medication strength field not found')
+    }
+
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(fields),
+    )
+
+    vi.mocked(updateExtractedField).mockResolvedValue({
+      data: {
+        ...strengthField,
+        confirmed_value: null,
+        confirmation_status: 'CONFIRMED',
+      },
+    })
+
+    renderPage()
+
+    const strengthInput = await screen.findByLabelText('제품 함량')
+
+    // OCR 값이 입력란과 카드 제목에 표시됩니다.
+    expect(strengthInput).toHaveProperty('value', '100mg')
+    expect(
+      screen.getByRole('heading', {
+        name: '처방약 1 100mg',
+        level: 2,
+      }),
+    ).toBeTruthy()
+
+    // 사용자가 OCR 오인식 값을 전부 삭제합니다.
+    fireEvent.change(strengthInput, {
+      target: {
+        value: '',
+      },
+    })
+
+    const removeSaveButton = screen.getByRole('button', {
+      name: '값 없음 저장',
+    })
+
+    expect(removeSaveButton).toHaveProperty('disabled', false)
+    expect(
+      screen.getByText(
+        '저장하지 않은 수정값이 있어요. 모든 수정값을 저장해 주세요.',
+      ),
+    ).toBeTruthy()
+
+    fireEvent.click(removeSaveButton)
+
+    await waitFor(() =>
+      expect(updateExtractedField).toHaveBeenCalledWith(
+        'MEDICATION_STRENGTH-1',
+        null,
+      ),
+    )
+
+    // 저장 후 OCR 함량이 다시 나타나지 않습니다.
+    await waitFor(() =>
+      expect(strengthInput).toHaveProperty('value', ''),
+    )
+
+   expect(
+      screen.getByRole('heading', {
+        name: '처방약 1',
+        level: 2,
+      }),
+    ).toBeTruthy()
+
+    expect(
+      screen.queryByText(
+        '저장하지 않은 수정값이 있어요. 모든 수정값을 저장해 주세요.',
+      ),
+    ).toBeNull()
+
+    // 선택 필드가 없어도 최종 확인이 가능합니다.
+    const acknowledgement = screen.getByRole('checkbox')
+
+    expect(acknowledgement).toHaveProperty('disabled', false)
+
+    fireEvent.click(acknowledgement)
+    fireEvent.click(await getConfirmationButton())
+
+    await waitFor(() =>
+      expect(confirmPrescription).toHaveBeenCalledWith(
+        'document-1',
+      ),
+    )
+  })
+
   it.each([
     ['PENDING', 'OCR 작업을 기다리고 있어요'],
     ['PROCESSING', '처방전을 인식하고 있어요'],

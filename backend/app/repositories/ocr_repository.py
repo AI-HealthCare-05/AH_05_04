@@ -126,7 +126,7 @@ class OcrRepository:
         self,
         field: ExtractedField,
         *,
-        confirmed_value: str,
+        confirmed_value: str | None,
         confirmed_at: datetime,
     ) -> ExtractedField:
         field.confirmed_value = confirmed_value
