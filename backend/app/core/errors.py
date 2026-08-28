@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 class ErrorDetail(BaseModel):
@@ -72,7 +73,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         return ORJSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(request: Request, exc: HTTPException) -> ORJSONResponse:
         body = ErrorResponse(
             code="HTTP_ERROR",

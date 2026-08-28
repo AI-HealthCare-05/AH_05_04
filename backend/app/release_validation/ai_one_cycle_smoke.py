@@ -669,7 +669,8 @@ async def run_deterministic_one_cycle(
         "POST",
         "/api/v1/auth/login",
         expected_status=200,
-        medical_response=False,
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth도 이제 포함합니다.
+        medical_response=True,
         json_body={"email": fixture.email, "password": fixture.password},
     )
     headers = {"Authorization": f"Bearer {login['access_token']}"}
@@ -957,7 +958,8 @@ class NetworkOneCycleRunner:
             "POST",
             "/auth/login",
             expected_status=200,
-            medical_response=False,
+            # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth도 이제 포함합니다.
+            medical_response=True,
             json_body={"email": email, "password": password},
         )
         token = login.get("access_token")

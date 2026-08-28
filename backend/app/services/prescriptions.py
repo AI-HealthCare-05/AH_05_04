@@ -213,7 +213,8 @@ def _parse_prescribed_date(
     try:
         return date.fromisoformat(value)
     except ValueError:
-        invalid.append(ErrorDetail(field="prescribed_date", reason="INVALID_FORMAT", rejected_value=value))
+        # OCR 원문(처방 날짜 텍스트)을 응답에 그대로 노출하지 않습니다.
+        invalid.append(ErrorDetail(field="prescribed_date", reason="INVALID_FORMAT"))
         return None
 
 
@@ -233,7 +234,8 @@ def _validate_numeric[T](
         return None
     value = parser(raw_value)
     if value is None:
-        invalid.append(ErrorDetail(field=field_name, reason="INVALID_FORMAT", rejected_value=raw_value))
+        # OCR 원문(용량·횟수·기간 텍스트)을 응답에 그대로 노출하지 않습니다.
+        invalid.append(ErrorDetail(field=field_name, reason="INVALID_FORMAT"))
     return value
 
 
@@ -247,11 +249,11 @@ def _validate_optional_text_length(
 ) -> str | None:
     value = _field_value(fields_by_type.get(field_type))
     if value is not None and len(value) > max_length:
+        # OCR 원문(복용법 등 텍스트)을 응답에 그대로 노출하지 않습니다.
         invalid.append(
             ErrorDetail(
                 field=f"medications[{index}].{field_type.value.lower()}",
                 reason="MAX_LENGTH_EXCEEDED",
-                rejected_value=value,
             )
         )
         return None
@@ -270,11 +272,11 @@ def _build_medication(
     if not name:
         missing.append(ErrorDetail(field=f"medications[{index}].medication_name", reason="REQUIRED"))
     elif len(name) > _MAX_MEDICATION_NAME_LENGTH:
+        # OCR 원문(약물명)을 응답에 그대로 노출하지 않습니다.
         invalid.append(
             ErrorDetail(
                 field=f"medications[{index}].medication_name",
                 reason="MAX_LENGTH_EXCEEDED",
-                rejected_value=name,
             )
         )
 

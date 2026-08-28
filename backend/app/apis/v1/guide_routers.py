@@ -25,12 +25,12 @@ async def create_guide(
 ) -> Response:
     # 복약 가이드 생성 Backend 계약(one-cycle, 동기):
     # 같은 요청 안에서 OpenAI 가이드 생성과 GUIDE 저장을 완료하고 201로 응답합니다.
+    # Cache-Control: no-store는 NoStoreMiddleware가 /api/v1/* 전체에 일괄 적용합니다.
     result = await guide_service.create_guide(user=user, request=request)
 
     return Response(
         content=GuideResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -50,5 +50,4 @@ async def get_guide_detail(
     return Response(
         content=GuideResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
-        headers={"Cache-Control": "no-store"},
     )

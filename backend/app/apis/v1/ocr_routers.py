@@ -24,10 +24,10 @@ async def get_ocr_job_result(
     ocr_service: Annotated[OcrService, Depends(get_ocr_service)],
 ) -> Response:
     # OCR 결과 확인 Backend 계약(1차 구현 원사이클): 작업 상태와 추출 필드를 함께 반환합니다.
+    # Cache-Control: no-store는 NoStoreMiddleware가 /api/v1/* 전체에 일괄 적용합니다.
     result = await ocr_service.get_ocr_job_result(user=user, job_id=job_id)
 
     return Response(
         content=OcrJobResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
-        headers={"Cache-Control": "no-store"},
     )
