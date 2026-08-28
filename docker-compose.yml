@@ -98,7 +98,29 @@ services:
       redis:
         condition: service_healthy
 
-  # 5. AI Worker (Model 학습 및 추론)
+  # 5. Frontend (Vite local development server)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      # Vite 환경변수는 브라우저에서 사용되므로 Compose 내부 hostname이 아닌
+      # 호스트에 공개된 FastAPI 주소를 사용합니다.
+      VITE_API_BASE_URL: http://localhost:8000
+    command: |
+      sh -c "pnpm install --frozen-lockfile && exec pnpm dev --host 0.0.0.0 --port 5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    networks:
+      - ws
+    depends_on:
+      fastapi:
+        condition: service_started
+
+  # 6. AI Worker (Model 학습 및 추론)
   ai-worker:
     container_name: ai-worker
     build:
@@ -119,7 +141,7 @@ services:
       redis:
         condition: service_healthy
 
-  # 6. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
+  # 7. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
   nginx:
     container_name: nginx
     image: nginx:latest
@@ -136,6 +158,7 @@ services:
 volumes:
   postgres_data:
   static_volume:
+  frontend_node_modules:
 
 networks:
   ws:
