@@ -117,8 +117,10 @@ def test_build_confirmed_data_rejects_invalid_dose_value_format_instead_of_stori
     assert error.status_code == 422
     assert error.code == "VALIDATION_FAILED"
     assert any(
-        detail.field == "medications[1].dose_value" and detail.rejected_value == "약 반 알" for detail in error.details
+        detail.field == "medications[1].dose_value" and detail.reason == "INVALID_FORMAT" for detail in error.details
     )
+    # OCR 원문(용량 텍스트)을 응답에 그대로 노출하지 않습니다.
+    assert all(detail.rejected_value is None for detail in error.details)
 
 
 def test_build_confirmed_data_rejects_missing_prescribed_date() -> None:

@@ -2,7 +2,7 @@ import pytest
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import Message, Receive, Scope, Send
 
-from app.core.chat_cache_control import ChatNoStoreMiddleware, is_chat_api_path
+from app.core.no_store_middleware import NoStoreMiddleware, is_api_v1_path
 from app.main import app as application
 from app.main import fastapi_app
 
@@ -20,37 +20,39 @@ def isolate_database() -> None:
 @pytest.mark.parametrize(
     "path",
     [
+        "/api/v1",
+        "/api/v1/auth/login",
+        "/api/v1/auth/token/refresh",
+        "/api/v1/users/me",
+        "/api/v1/documents",
+        "/api/v1/documents/document-id/ocr-jobs",
+        "/api/v1/ocr-jobs/job-id",
+        "/api/v1/extracted-fields/field-id",
+        "/api/v1/prescriptions/prescription-id",
+        "/api/v1/guides/guide-id",
         "/api/v1/chat-sessions/session-id/messages",
         "/api/v1/chat-sessions/session-id/messages/",
-        "/api/v1/chat-sessions/not-a-uuid/messages",
         "/api/v1/prescriptions/prescription-id/chat-sessions",
-        "/api/v1/prescriptions/prescription-id/chat-sessions/",
-        "/api/v1/prescriptions/not-a-uuid/chat-sessions",
     ],
 )
-def test_is_chat_api_path_accepts_only_supported_route_shapes(path: str) -> None:
-    assert is_chat_api_path(path)
+def test_is_api_v1_path_accepts_every_v1_route(path: str) -> None:
+    assert is_api_v1_path(path)
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v1/chat-sessions//messages",
-        "/api/v1/chat-sessions/session-id/messages//",
-        "/api/v1/chat-sessions/session-id/messages/extra",
-        "/api/v1/chat-sessions-prefix/session-id/messages",
-        "/prefix/api/v1/chat-sessions/session-id/messages",
-        "/api/v1/prescriptions//chat-sessions",
-        "/api/v1/prescriptions/prescription-id/chat-sessions//",
-        "/api/v1/prescriptions/prescription-id/chat-sessions/extra",
-        "/api/v1/prescriptions-prefix/prescription-id/chat-sessions",
-        "/api/v1/prescriptions/prescription-id",
-        "/api/v1/guides/guide-id",
-        "/api/v1/chat-sessions/session-id/messages?limit=20",
+        "/",
+        "/api",
+        "/api/v2/users/me",
+        "/api/docs",
+        "/api/openapi.json",
+        "/prefix/api/v1/users/me",
+        "/api/v1prefix/users/me",
     ],
 )
-def test_is_chat_api_path_rejects_partial_additional_and_unrelated_paths(path: str) -> None:
-    assert not is_chat_api_path(path)
+def test_is_api_v1_path_rejects_non_v1_and_prefix_lookalikes(path: str) -> None:
+    assert not is_api_v1_path(path)
 
 
 def _http_scope(path: str) -> Scope:
@@ -74,11 +76,23 @@ async def _receive_http_request() -> Message:
     return {"type": "http.request", "body": b"", "more_body": False}
 
 
-async def test_middleware_preserves_headers_and_replaces_all_cache_control_values() -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/auth/login",
+        "/api/v1/users/me",
+        "/api/v1/chat-sessions/not-a-uuid/messages",
+    ],
+)
+@pytest.mark.parametrize("status_code", [200, 401, 422, 500])
+async def test_middleware_preserves_headers_and_replaces_all_cache_control_values(
+    path: str,
+    status_code: int,
+) -> None:
     sent: list[Message] = []
     response_start: Message = {
         "type": "http.response.start",
-        "status": 401,
+        "status": status_code,
         "headers": [
             (b"www-authenticate", b"Bearer"),
             (b"access-control-allow-origin", b"https://synthetic.example"),
@@ -98,15 +112,11 @@ async def test_middleware_preserves_headers_and_replaces_all_cache_control_value
     async def capture(message: Message) -> None:
         sent.append(message)
 
-    middleware = ChatNoStoreMiddleware(downstream)
-    await middleware(
-        _http_scope("/api/v1/chat-sessions/not-a-uuid/messages"),
-        _receive_http_request,
-        capture,
-    )
+    middleware = NoStoreMiddleware(downstream)
+    await middleware(_http_scope(path), _receive_http_request, capture)
 
     assert sent[1] is response_body
-    assert sent[0]["status"] == 401
+    assert sent[0]["status"] == status_code
     headers = sent[0]["headers"]
     assert (b"www-authenticate", b"Bearer") in headers
     assert (b"access-control-allow-origin", b"https://synthetic.example") in headers
@@ -120,7 +130,7 @@ async def test_middleware_preserves_headers_and_replaces_all_cache_control_value
     ("scope", "first_message"),
     [
         (
-            _http_scope("/api/v1/guides/guide-id"),
+            _http_scope("/api/docs"),
             {
                 "type": "http.response.start",
                 "status": 200,
@@ -168,7 +178,7 @@ async def test_middleware_passes_non_target_and_non_http_scopes_through_unchange
     async def capture(message: Message) -> None:
         sent.append(message)
 
-    middleware = ChatNoStoreMiddleware(downstream)
+    middleware = NoStoreMiddleware(downstream)
     await middleware(scope, receive, capture)
 
     assert received_scope is scope
@@ -178,7 +188,7 @@ async def test_middleware_passes_non_target_and_non_http_scopes_through_unchange
     assert sent[0] is first_message
 
 
-def test_application_wraps_chat_cache_control_inside_outer_cors() -> None:
+def test_application_wraps_no_store_middleware_inside_outer_cors() -> None:
     assert isinstance(application, CORSMiddleware)
-    assert isinstance(application.app, ChatNoStoreMiddleware)
+    assert isinstance(application.app, NoStoreMiddleware)
     assert application.app._app is fastapi_app

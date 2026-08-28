@@ -29,13 +29,13 @@ async def list_chat_messages(
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> Response:
     # 채팅 메시지 목록 조회 Backend 계약: 세션의 사용자 질문과 AI 응답 이력을 조회합니다.
+    # Cache-Control: no-store는 NoStoreMiddleware가 /api/v1/* 전체에 일괄 적용합니다.
     messages = await chat_service.list_messages(user=user, session_id=session_id)
     return Response(
         content=ChatMessageListResponse(data=ChatMessageListData(session_id=session_id, messages=messages)).model_dump(
             mode="json"
         ),
         status_code=status.HTTP_200_OK,
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -55,5 +55,4 @@ async def send_chat_message(
     return Response(
         content=SendChatMessageResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
-        headers={"Cache-Control": "no-store"},
     )

@@ -682,7 +682,8 @@ async def test_network_runner_uses_real_tcp_and_preserves_http_id_order(tmp_path
             },
         }
         body = json.dumps(payloads[path]).encode()
-        cache = b"" if path.endswith("/auth/login") else b"Cache-Control: no-store\r\n"
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth/login도 포함합니다.
+        cache = b"Cache-Control: no-store\r\n"
         status_line = b"HTTP/1.1 200 OK\r\n" if path.endswith("/auth/login") else b"HTTP/1.1 201 Created\r\n"
         writer.write(
             status_line
@@ -781,7 +782,8 @@ async def test_prescription_input_mismatch_stops_before_guide_request(tmp_path: 
         )
         body = json.dumps(payload).encode()
         status = b"200 OK" if path.endswith("/auth/login") else b"201 Created"
-        cache = b"" if path.endswith("/auth/login") else b"Cache-Control: no-store\r\n"
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth/login도 포함합니다.
+        cache = b"Cache-Control: no-store\r\n"
         writer.write(
             b"HTTP/1.1 "
             + status
@@ -1021,7 +1023,8 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
             ),
         }[path]
         body = json.dumps(payload).encode()
-        cache = b"" if path.endswith("/auth/login") else b"Cache-Control: no-store\r\n"
+        # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth/login도 포함합니다.
+        cache = b"Cache-Control: no-store\r\n"
         writer.write(
             f"HTTP/1.1 {status}\r\n".encode()
             + b"Content-Type: application/json\r\n"
