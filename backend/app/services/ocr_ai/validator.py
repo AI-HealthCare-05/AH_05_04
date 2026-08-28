@@ -54,12 +54,19 @@ _NUMERIC_GROUNDING_FIELD_TYPES = frozenset(
 _NUMERIC_NEIGHBOR_CHARACTERS = r"\d.,_eE"
 
 
-# 횟수와 기간은 같은 source_ids 안의 아무 숫자가 아니라
-# 해당 필드 단위가 바로 뒤에 붙은 숫자만 근거로 인정합니다.
 _NUMERIC_CONTEXT_UNIT_PATTERNS = {
     "FREQUENCY_PER_DAY": r"(?:회|번)",
-    "DURATION_DAYS": r"(?:일|day(?:s)?)",
+    # "1일 3회"의 1일은 횟수 표현의 일부이므로 기간 근거로 인정하지 않습니다.
+    # "7일", "7일분", "7일간"처럼 실제 기간 표현만 허용합니다.
+    "DURATION_DAYS": r"(?:일(?:분|간)?(?!\d+(?:회|번))|day(?:s)?)",
 }
+# OCR token 중심점 차이가 token 높이의 75% 이내인 경우에만
+# 같은 약제 행으로 인정합니다.
+_MAX_MEDICATION_ROW_DISTANCE_RATIO = 0.75
+
+# 약품명은 OCR에서 두 줄로 나뉠 수 있으므로 일반 필드보다 넓은
+# 인접 행 범위를 허용하되, 그보다 먼 행의 token 결합은 거부합니다.
+_MAX_MEDICATION_NAME_LINE_GAP_RATIO = 1.5
 
 # 제품 함량의 일부만 잘라서 일치시키는 것을 막습니다.
 #
@@ -174,21 +181,18 @@ def _contains_numeric_value_with_field_context(
     """
     횟수·기간 숫자가 해당 필드의 단위 문맥에 있는지 확인합니다.
 
-    source가 숫자 token 하나뿐인 경우에는 완전 일치를 허용합니다.
-    단위가 포함된 source에서는 숫자 바로 뒤에 필드 단위가 있어야 합니다.
+    숫자 token이 단독으로 참조된 경우에는 의미 문맥을 확인할 수 없으므로
+    근거로 인정하지 않습니다. CLOVA가 숫자와 단위를 분리한 경우에는
+    LLM이 숫자와 단위 token을 모두 source_ids로 제공해야 합니다.
 
     예:
     - FREQUENCY_PER_DAY=3 / OCR "1일 3회": 허용
     - FREQUENCY_PER_DAY=1 / OCR "1일 3회": 거부
-    - DURATION_DAYS=1 / OCR "1일 3회": 허용
+    - DURATION_DAYS=1 / OCR "1일 3회": 거부
+    - DURATION_DAYS=7 / OCR "7일분": 허용
     """
     if not generated_compact:
         return False
-
-    # CLOVA가 숫자를 단독 token으로 반환하고 LLM도 그 token만
-    # source_id로 참조한 경우에는 정확히 같은 숫자만 허용합니다.
-    if generated_compact == source_compact:
-        return True
 
     unit_pattern = _NUMERIC_CONTEXT_UNIT_PATTERNS[field_type]
     pattern = re.compile(
@@ -262,6 +266,107 @@ def _source_fields(
         fields.append(source)
 
     return fields
+
+
+def _row_distance_ratio(
+    *,
+    source: RawRecognizedField,
+    anchor: RawRecognizedField,
+) -> float:
+    """두 OCR token의 세로 중심점 거리를 token 높이 기준으로 계산합니다."""
+
+    reference_height = max(
+        source.height,
+        anchor.height,
+        1.0,
+    )
+
+    return abs(source.center_y - anchor.center_y) / reference_height
+
+
+def _belongs_to_medication_row(
+    *,
+    medication_index: int,
+    source_fields: list[RawRecognizedField],
+    medication_row_anchors: list[list[RawRecognizedField]],
+) -> bool:
+    """모든 근거 token이 현재 약제 행에 가장 가까운지 확인합니다."""
+
+    current_anchor_index = medication_index - 1
+
+    if not 0 <= current_anchor_index < len(medication_row_anchors):
+        return False
+
+    for source in source_fields:
+        distances = [
+            min(
+                _row_distance_ratio(
+                    source=source,
+                    anchor=anchor,
+                )
+                for anchor in anchors
+            )
+            for anchors in medication_row_anchors
+        ]
+
+        current_distance = distances[current_anchor_index]
+
+        # 현재 약제명 행에서 너무 멀리 떨어진 token은 허용하지 않습니다.
+        if current_distance > _MAX_MEDICATION_ROW_DISTANCE_RATIO:
+            return False
+
+        # 다른 약제 행이 더 가깝거나 같은 거리라면 현재 약제 근거로
+        # 결정할 수 없으므로 보수적으로 거부합니다.
+        if any(
+            distance <= current_distance
+            for anchor_index, distance in enumerate(distances)
+            if anchor_index != current_anchor_index
+        ):
+            return False
+
+    return True
+
+
+def _validate_medication_name_sources(
+    *,
+    draft: GeneratedPrescriptionDraft,
+    medication_row_anchors: list[list[RawRecognizedField]],
+) -> None:
+    """약품명 token 공유와 지나치게 먼 행의 결합을 차단합니다."""
+
+    used_source_ids: set[int] = set()
+
+    for medication, anchors in zip(
+        draft.medications,
+        medication_row_anchors,
+        strict=True,
+    ):
+        source_ids = set(medication.medication_name.source_ids)
+
+        # 하나의 OCR token을 둘 이상의 약품명 근거로 재사용하면
+        # 약제 경계를 결정할 수 없으므로 전체 구조화를 거부합니다.
+        if used_source_ids.intersection(source_ids):
+            raise OcrProcessingError("LLM 구조화 결과의 MEDICATION_NAME 근거가 여러 약제에 중복되었습니다.")
+
+        used_source_ids.update(source_ids)
+
+        ordered_anchors = sorted(
+            anchors,
+            key=lambda field: field.center_y,
+        )
+
+        for previous, current in zip(
+            ordered_anchors,
+            ordered_anchors[1:],
+            strict=False,
+        ):
+            line_gap_ratio = _row_distance_ratio(
+                source=current,
+                anchor=previous,
+            )
+
+            if line_gap_ratio > _MAX_MEDICATION_NAME_LINE_GAP_RATIO:
+                raise OcrProcessingError("LLM 구조화 결과의 MEDICATION_NAME 근거 행이 서로 인접하지 않습니다.")
 
 
 def _validate_grounded_value(
@@ -383,12 +488,23 @@ def _make_field(
     generated: GeneratedSourceValue,
     source_map: dict[int, RawRecognizedField],
     normalizer: MedicationNameNormalizer,
+    medication_row_anchors: list[list[RawRecognizedField]] | None = None,
 ) -> RecognizedField:
     source_fields = _source_fields(
         generated=generated,
         source_map=source_map,
     )
-
+    if (
+        medication_index > 0
+        and field_type != "MEDICATION_NAME"
+        and medication_row_anchors is not None
+        and not _belongs_to_medication_row(
+            medication_index=medication_index,
+            source_fields=source_fields,
+            medication_row_anchors=medication_row_anchors,
+        )
+    ):
+        raise OcrProcessingError(f"LLM 구조화 결과의 {field_type} 값이 해당 약제 행을 참조하지 않습니다.")
     _validate_grounded_value(
         field_type=field_type,
         generated=generated,
@@ -439,6 +555,19 @@ def validate_and_convert_draft(
             start=1,
         )
     }
+
+    medication_row_anchors = [
+        _source_fields(
+            generated=medication.medication_name,
+            source_map=source_map,
+        )
+        for medication in draft.medications
+    ]
+
+    _validate_medication_name_sources(
+        draft=draft,
+        medication_row_anchors=medication_row_anchors,
+    )
 
     result: list[RecognizedField] = []
 
@@ -516,6 +645,7 @@ def validate_and_convert_draft(
                         generated=generated,
                         source_map=source_map,
                         normalizer=normalizer,
+                        medication_row_anchors=medication_row_anchors,
                     )
                 )
             except OcrProcessingError:
