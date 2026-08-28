@@ -101,6 +101,8 @@ bash scripts/ci/run_test.sh
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
 - poison 메시지는 quarantine 기록을 먼저 commit한 뒤 ACK하며, commit 실패 시 ACK하지 않아 다시 회수할 수 있어야 합니다.
 - 만료된 lease의 Worker가 새 Worker의 결과를 덮어쓰지 못합니다.
+- OCR의 CLOVA·구조화 LLM 순차 호출 경계에서 재승인된 end-to-end hard timeout과 lease를 검증합니다. 값이 재승인되기 전에는 이 행을 `NOT_RUN`으로 유지합니다.
+- `RETRY_WAIT` 중 active Runtime Bundle이 변경된 Job과 구·신 Worker가 함께 실행되는 배포를 검증합니다. 기대 전이와 Worker–Bundle 호환성 규칙이 재승인되기 전에는 이 행을 `NOT_RUN`으로 유지합니다.
 - 처방 active version 변경 시 처리 중 결과는 `STALE`이며 현재 결과로 노출되지 않습니다.
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
 - Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.

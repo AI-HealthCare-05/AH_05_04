@@ -115,7 +115,7 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 
 ## 실행 lease와 보존
 
-- Worker lease는 hard timeout보다 15초 길게 설정한다: `OCR 45초`, `GUIDE 75초`, `CHAT 60초`.
+- Approved v4 원본의 실행 상한은 `OCR hard timeout 30초 / lease 45초`, `GUIDE hard timeout 60초 / lease 75초`, `CHAT hard timeout 45초 / lease 60초`다. 다만 OCR은 현재 설정상 CLOVA 최대 20초와 OCR 구조화 LLM 최대 30초를 순차 호출할 수 있어 30초 상한과 충돌한다. OCR hard timeout·lease 값은 [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)에서 함께 재승인할 때까지 provenance로만 보존하며 구현값으로 사용하지 않는다.
 - 처리 중 Worker는 10초마다 heartbeat하고 lease가 만료된 뒤에만 다른 Worker가 reclaim한다.
 - 실행 메타데이터와 Job은 terminal 전환 후 90일 보존한다. 더 엄격한 개인정보·감사 정책이 있으면 그 정책을 적용한다.
 

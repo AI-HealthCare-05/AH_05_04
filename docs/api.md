@@ -146,8 +146,9 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
 - Track F는 Candidate Search, 최대 1개 Candidate Result, 사용자 확인·거절, append-only Identification과 Guide·Chat 전 Identification Preflight operation을 제공해야 한다.
 - Candidate Search와 확인 요청은 `prescription_version_medication_id`에 귀속한다. “맞아요” 요청은 `candidate_search_result_id`와 `Idempotency-Key`를 요구하며, 소유권·active version·후보 현재성·미소비 상태·Runtime Release Bundle 호환성을 잠금 안에서 검증한다.
 - `AMBIGUOUS`, `NO_CANDIDATE`, `INGREDIENT_ONLY`, `INVALID_INPUT`은 내부 Top-K·score를 공개하지 않고 Identification을 만들지 않는다. Preflight 실패는 `job_id` 없는 동기 `REVIEW_REQUIRED`이며 AI Job 안에서 사용자 입력을 기다리지 않는다.
-- Candidate·Identification·Preflight의 route template, 성공 status와 전체 DTO·오류 code는 Approved v4에서 고정하지 않았다. 구현 전 후속 Product Decision으로 확정하고 OpenAPI·계약 테스트와 함께 반영한다.
+- 위 `prescription_version_medication_id`, `candidate_search_result_id`, `Idempotency-Key`와 검증 불변 조건은 Approved v4가 고정한 최소 계약이다. 그 밖의 Candidate·Identification·Preflight route template, 성공 status, 전체 DTO 구성과 오류 code는 고정하지 않았다. 구현 전 후속 Product Decision으로 확정하고 OpenAPI·계약 테스트와 함께 반영한다.
 - `/api/v1/otc-products`, `/api/v1/otc-evaluations`, `/api/v1/otc-evaluations/{id}`는 폐기된 Track D 전용 표면이며 구현하지 않는다. OTC 질문은 기존 Chat 화면·세션·`CHAT` Job·RAG·Citation·Safety API 경로를 사용한다.
+- Chat 자유 입력의 OTC 제품·성분·함량·제형을 안정적인 Rule 입력 Identity로 확정하는 애매함 처리·사용자 확인 전이는 아직 고정하지 않았다. [문서 권위의 구현 전 재결정 항목](./governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)으로 추적하고, 확정 전에는 불충분한 입력으로 Rule 평가를 실행하지 않는다.
 
 ## 복약 챗봇
 

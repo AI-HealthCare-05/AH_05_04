@@ -80,6 +80,7 @@ Source는 owner, license, attribution, checksum, 수집일, 승인자, 승인일
 - `MEDICATION_GENERAL`과 `OTC_INTERACTION`은 같은 Chat 화면·세션·`CHAT` Job·RAG·Citation·Safety 경로를 사용한다.
 - 처방약–OTC 질문은 활성 `interaction_rule`을 결정론적으로 먼저 실행하고 연결된 `rule_evidence`를 Claim Citation으로 반환한다.
 - Rule 없음은 안전함이나 함께 복용 가능함을 뜻하지 않는다. OTC 제품·성분·함량·제형을 충분히 식별하지 못하면 Rule 평가를 하지 않고 추가 정보 요청 또는 승인 fallback으로 끝낸다.
+- 자유 입력에서 추가 정보와 사용자 확인을 거쳐 안정적인 OTC Identity를 확정하는 상세 전이는 아직 미정이다. [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌) 전에는 LLM 추론만으로 OTC Identity를 확정하거나 Rule 평가로 진행하지 않는다.
 - 처방약–처방약 질문에는 Rule 결과를 만들지 않고 범위 제한과 전문가 확인 안내를 반환한다. 음식·음료·보충제 개별 상호작용 판정도 범위 밖이다.
 - 근거 없음·상충·Source 비활성·Citation 불일치·Provider 장애·검증 실패에서는 생성 내용을 폐기하고 승인된 제한 응답만 노출한다.
 

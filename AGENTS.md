@@ -40,7 +40,7 @@ Former Track D is not a separate execution or ownership unit. Its historical doc
 - The PR author cannot count self-approval as the required approval.
 - Merge only after the named responsible reviewer approves and blocking review comments are resolved.
 - Cross-domain changes name reviewers for every affected domain. Security·Privacy, medical safety, Source and AI/RAG changes also attach the required specialist or external approval evidence when applicable.
-- AI/RAG detailed assignments and PR reviewers are recorded in the 2026-08-28 responsibility matrix under 정현우's overall responsibility.
+- AI/RAG detailed assignments and PR reviewers are scheduled to be finalized in the 2026-08-28 responsibility matrix under 정현우's overall responsibility. Until that matrix is published and linked from the repository, every affected Issue and Pull Request must name its implementation owner and responsible reviewers explicitly; do not treat the matrix as an available source.
 
 ## Ownership Boundaries
 

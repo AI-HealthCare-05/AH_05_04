@@ -46,11 +46,11 @@
 - B 일정: `prescription_version_medication_id`
 - B Check-in·재알림: `occurrence_id`
 - C Safety: `medication_checkin_id`; Barrier: `checkin_id`; ActionPlan 생성: `barrier_response_id`; ActionPlan 변경·follow-up: `support_action_plan_id`
-- F Candidate 확인·거절: `prescription_version_medication_id`이며 request hash에 `candidate_search_result_id`, 확인·거절 action과 기대 Runtime Release Bundle을 포함
+- F Candidate 확인·거절: `prescription_version_medication_id`이며 request hash에 `candidate_search_result_id`, 확인·거절 action과 기대 [Runtime Release Bundle](./medication-identification-v1.md#identification-preflight)을 포함
 
 권한·입력·revision·현재 상태 검사를 통과한 2xx mutation만 최초 성공 HTTP status와 canonical JSON body snapshot을 도메인 변경과 같은 transaction에서 저장한다. 4xx·5xx는 저장하지 않는다. 같은 키·같은 지문은 revision·현재 상태 검사보다 먼저 최초 snapshot을 그대로 재현하고, 같은 키·다른 지문은 `409 IDEMPOTENCY_KEY_CONFLICT`다.
 
-snapshot은 암호화된 `MEDIUMBLOB`에 저장하되 application cap은 1MiB다. 의료 자유 텍스트와 Provider 원문은 넣지 않고 일반 로그에도 기록하지 않는다. 직렬화 결과가 cap을 넘으면 snapshot을 자르지 않으며 mutation 전에 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`와 alert로 실패한다.
+snapshot의 논리 계약은 암호화 binary payload이며 application cap은 1MiB다. 승인 원본의 `MEDIUMBLOB`은 PostgreSQL에서 사용할 수 없으므로 물리 타입·암호화 envelope·migration mapping은 [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌) 전까지 미확정으로 두고 구현하지 않는다. 의료 자유 텍스트와 Provider 원문은 넣지 않고 일반 로그에도 기록하지 않는다. 직렬화 결과가 cap을 넘으면 snapshot을 자르지 않으며 mutation 전에 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`와 alert로 실패한다.
 
 ## 보존
 

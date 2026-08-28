@@ -54,10 +54,10 @@ Single Candidate Gate는 다음을 검증한다.
 - Backend는 소유권, active Prescription Version, Candidate 현재성, 미소비 상태와 현재 Runtime Release Bundle 호환성을 잠금 안에서 검증한다.
 - 성공 시 기존 Prescription Version을 수정하지 않고 append-only `USER_SELECTED/MATCHED` Identification과 Candidate Search `CONSUMED`를 같은 transaction에서 저장한다.
 - 동일 키·동일 request hash는 최초 성공 결과를 재현하고 동일 키·상이 hash는 `409 IDEMPOTENCY_KEY_CONFLICT`다. 서로 다른 Candidate의 동시 선택은 하나만 성공한다.
-- “아니에요”는 거절 event와 Search 무효화를 남기고 약명·함량 수정과 재검색으로 연결한다.
+- “아니에요”는 거절 event와 Search 무효화를 남긴다. 약명·함량 수정은 기존 불변 Prescription Version을 직접 변경하지 않고 [새 Prescription Version을 생성·활성화](./prescription-version-v1.md#활성화)한 뒤 새 Version Medication에 귀속된 Candidate 재검색으로 연결한다.
 - 처방 Medication 수정, Source 비활성화 또는 Bundle 변경으로 현재성이 사라져도 과거 Identification을 덮어쓰지 않고 새 상태·event로 추적한다.
 
-Candidate Search·확인·거절의 route template, 성공 status, 전체 DTO와 이 문서에서 고정하지 않은 오류 code는 후속 Product Decision과 구현 OpenAPI·계약 테스트에서 함께 확정한다.
+위 식별자·멱등 키와 확인·거절 transaction 불변 조건은 Approved v4가 고정한 최소 계약이다. 그 밖의 Candidate Search·확인·거절 route template, 성공 status, 전체 DTO 구성과 이 문서에서 고정하지 않은 오류 code는 후속 Product Decision과 구현 OpenAPI·계약 테스트에서 함께 확정한다.
 
 ## Identification Preflight
 
@@ -67,6 +67,8 @@ Candidate Search·확인·거절의 route template, 성공 status, 전체 DTO와
 - 처방·Context·Identification·Bundle·Execution Manifest·환경 revision이 바뀌면 과거 결과는 `STALE`, `is_current=false`이며 현재 답변으로 공개하지 않는다.
 
 Runtime Release Bundle은 Source, Candidate/Knowledge Index, Rule, Guideline, Safety, Resolver, Graph, Prompt, Validator, Model과 Worker artifact version을 묶으며 환경별 Active Bundle은 최대 하나다.
+
+`RETRY_WAIT` 중 active Bundle이 바뀐 Job을 기존 snapshot으로 계속 실행할지 즉시 `STALE`로 종결할지, 그리고 구·신 Worker가 함께 실행되는 배포에서 Worker artifact와 Job Bundle 호환성을 어떻게 검증할지는 Approved v4가 고정하지 않았다. [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)과 Track A 상태 전이·배포·계약 테스트가 함께 확정되기 전에는 어느 한 동작을 추정해 구현하지 않는다.
 
 ## 최소 검증
 
