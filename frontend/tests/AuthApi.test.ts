@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { signup } from '../src/api/auth'
+import { login, signup } from '../src/api/auth'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -39,5 +39,31 @@ describe('signup API', () => {
     expect(requestBody).not.toHaveProperty('gender')
     expect(requestBody).not.toHaveProperty('birth_date')
     expect(requestBody).not.toHaveProperty('phone_number')
+  })
+})
+
+describe('login API', () => {
+  it('email과 password만 기존 로그인 endpoint로 전송한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ access_token: 'synthetic-token' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await login({
+      email: 'dosey@example.com',
+      password: 'Password1!',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://localhost:8000/api/v1/auth/login')
+    expect(options?.method).toBe('POST')
+    expect(JSON.parse(String(options?.body))).toEqual({
+      email: 'dosey@example.com',
+      password: 'Password1!',
+    })
   })
 })
