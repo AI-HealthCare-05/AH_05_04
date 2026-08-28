@@ -146,6 +146,7 @@ def _service_fixture(
     medications = [
         SimpleNamespace(
             medication_name="첫 번째 합성약",
+            strength_text="100mg",
             dose_value=Decimal("0.123"),
             dose_unit="mg",
             frequency_per_day=2,
@@ -154,6 +155,7 @@ def _service_fixture(
         ),
         SimpleNamespace(
             medication_name="두 번째 합성약",
+            strength_text=None,
             dose_value=None,
             dose_unit=None,
             frequency_per_day=None,
@@ -200,21 +202,23 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
     first_medication, second_medication = engine.inputs[0].medications
     assert (
         first_medication.medication_name,
+        first_medication.strength_text,
         first_medication.dose_value,
         first_medication.dose_unit,
         first_medication.frequency_per_day,
         first_medication.timing_text,
         first_medication.duration_days,
-    ) == ("첫 번째 합성약", Decimal("0.123"), "mg", 2, "식후", 9)
+    ) == ("첫 번째 합성약", "100mg", Decimal("0.123"), "mg", 2, "식후", 9)
     assert isinstance(first_medication.dose_value, Decimal)
     assert (
         second_medication.medication_name,
+        second_medication.strength_text,
         second_medication.dose_value,
         second_medication.dose_unit,
         second_medication.frequency_per_day,
         second_medication.timing_text,
         second_medication.duration_days,
-    ) == ("두 번째 합성약", None, None, None, None, None)
+    ) == ("두 번째 합성약", None, None, None, None, None, None)
     assert [item.medication_name for item in engine.inputs[0].medications] == ["첫 번째 합성약", "두 번째 합성약"]
     assert result.content == "안전한 합성 답변"
     assert result.model_name == "model-id"

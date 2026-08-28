@@ -19,6 +19,7 @@ class ChatMedicationInput:
     frequency_per_day: int | None
     timing_text: str | None
     duration_days: int | None
+    strength_text: str | None = None
 
 
 @dataclass(frozen=True)

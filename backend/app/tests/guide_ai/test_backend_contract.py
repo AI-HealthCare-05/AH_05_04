@@ -30,6 +30,7 @@ def _prescription(*, medication_name: str = "합성약 A") -> Prescription:
         medications=[
             Medication(
                 medication_name=medication_name,
+                strength_text="100mg",
                 dose_value=Decimal("1.250"),
                 dose_unit="mg",
                 frequency_per_day=2,
@@ -103,6 +104,7 @@ async def test_backend_contract_stores_and_returns_exact_generation_result() -> 
     generation_input = generator.generate.await_args.args[0]
     assert generation_input.medications[0].model_dump() == {
         "medication_name": "합성약 A",
+        "strength_text": "100mg",
         "dose_value": Decimal("1.250"),
         "dose_unit": "mg",
         "frequency_per_day": 2,

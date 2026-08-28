@@ -488,6 +488,43 @@
   box-shadow: inset 0 0 0 2px rgb(255 255 255 / 14%);
 }
 
+.dosey-mascot {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.dosey-mascot img {
+  max-width: none;
+  position: absolute;
+  display: block;
+}
+
+.dosey-mascot--welcome {
+  width: 112px;
+  height: 143px;
+}
+
+.dosey-mascot--welcome img {
+  width: 518.187px;
+  height: 422.987px;
+  left: -16.053px;
+  top: -15.68px;
+}
+
+.dosey-mascot--header {
+  width: 36px;
+  height: 36px;
+}
+
+.dosey-mascot--header img {
+  width: 262.989px;
+  height: 214.674px;
+  left: -56.842px;
+  top: -162.568px;
+}
+
 .app-back-row {
   min-height: 40px;
   flex: 0 0 40px;

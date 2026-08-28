@@ -49,12 +49,21 @@ class OcrRepository:
     async def get_field_owned(self, *, field_id: UUID, user_id: UUID) -> ExtractedField | None:
         result = await self.session.execute(
             select(ExtractedField)
-            .options(selectinload(ExtractedField.ocr_job).selectinload(OcrJob.document))
+            .options(
+                # PATCH 전에 문서 소유권과 처방 확정 여부를 추가 쿼리 없이 확인할 수 있도록
+                # OCR 작업 → 의료문서 → 확정 처방 관계를 한 번에 eager loading 합니다.
+                selectinload(ExtractedField.ocr_job)
+                .selectinload(OcrJob.document)
+                .selectinload(MedicalDocument.prescription)
+            )
             .where(ExtractedField.id == field_id)
         )
         field = result.scalar_one_or_none()
+
+        # 다른 사용자의 필드 존재 여부가 노출되지 않도록 소유권 불일치도 None으로 처리합니다.
         if field is None or field.ocr_job.document.user_id != user_id:
             return None
+
         return field
 
     async def get_latest_completed_job(self, *, document: MedicalDocument) -> OcrJob | None:
@@ -76,9 +85,23 @@ class OcrRepository:
         await self.session.flush()
         return job
 
-    async def mark_completed(self, job: OcrJob, *, completed_at: datetime) -> OcrJob:
+    async def mark_completed(
+        self,
+        job: OcrJob,
+        *,
+        completed_at: datetime,
+        engine_name: str | None,
+        model_version: str | None,
+        prompt_version: str | None,
+    ) -> OcrJob:
         job.ocr_status = OcrStatus.COMPLETED
         job.completed_at = completed_at
+
+        # 실제 OCR 및 구조화 실행 정보를 성공 작업에 기록합니다.
+        job.engine_name = engine_name
+        job.model_version = model_version
+        job.prompt_version = prompt_version
+
         await self.session.flush()
         return job
 
@@ -103,7 +126,7 @@ class OcrRepository:
         self,
         field: ExtractedField,
         *,
-        confirmed_value: str,
+        confirmed_value: str | None,
         confirmed_at: datetime,
     ) -> ExtractedField:
         field.confirmed_value = confirmed_value

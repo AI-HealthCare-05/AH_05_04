@@ -73,6 +73,7 @@ export function MobileShell({
   title,
   children,
   onBack,
+  brandMark,
   backPlacement = 'topbar',
   hideHeader = false,
   hideNavigation = false,
@@ -82,6 +83,7 @@ export function MobileShell({
   title?: string
   children: ReactNode
   onBack?: () => void
+  brandMark?: ReactNode
   backPlacement?: 'topbar' | 'content'
   hideHeader?: boolean
   hideNavigation?: boolean
@@ -99,9 +101,11 @@ export function MobileShell({
             <span className="chevron-icon" aria-hidden="true" />
           </button>
           )}
-          <span className="brand-mark" aria-hidden="true">
-            <span className="brand-mark__ring" />
-          </span>
+          {brandMark ?? (
+            <span className="brand-mark" aria-hidden="true">
+              <span className="brand-mark__ring" />
+            </span>
+          )}
           <h1>{title ?? 'Dosey 도지'}</h1>
         </header>
       )}

@@ -38,6 +38,12 @@ class OcrJobData(BaseModel):
     ocr_status: OcrJobStatus
     error_code: str | None = None
     error_message: str | None = None
+
+    # 실제 OCR과 구조화에 사용한 실행 정보를 반환합니다.
+    engine_name: str | None = None
+    model_version: str | None = None
+    prompt_version: str | None = None
+
     created_at: datetime
     completed_at: datetime | None = None
     fields: list[ExtractedFieldData] = Field(default_factory=list)

@@ -35,6 +35,7 @@ async def create_prescription_document(
     document_type: Annotated[MedicalDocumentType, Form()] = MedicalDocumentType.PRESCRIPTION,
 ) -> Response:
     # 의료문서 업로드 Backend 계약: JPG/PNG/PDF 처방전 한 장 업로드. OCR 실행은 별도 API에서 처리합니다.
+    # Cache-Control: no-store는 NoStoreMiddleware가 /api/v1/* 전체에 일괄 적용합니다.
     result = await medical_document_service.create_prescription_document(
         user=user,
         file=file,
@@ -51,7 +52,6 @@ async def create_prescription_document(
     return Response(
         content=content,
         status_code=status.HTTP_201_CREATED,
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -72,7 +72,6 @@ async def execute_ocr(
     return Response(
         content=OcrJobResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_202_ACCEPTED,
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -92,7 +91,6 @@ async def confirm_prescription(
     return Response(
         content=PrescriptionResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_201_CREATED,
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -107,6 +105,7 @@ async def get_prescription_document_file(
     medical_document_service: Annotated[MedicalDocumentService, Depends(get_medical_document_service)],
 ) -> FileResponse:
     # 처방전 원본 파일 조회 Backend 계약: 권한 확인 후 원본 파일 스트림을 반환합니다.
+    # Cache-Control: no-store는 NoStoreMiddleware가 /api/v1/* 전체에 일괄 적용합니다.
     result = await medical_document_service.get_prescription_document_file(
         user=user,
         document_id=document_id,
@@ -115,5 +114,4 @@ async def get_prescription_document_file(
         path=result.file_path,
         filename=result.filename,
         media_type=result.media_type,
-        headers={"Cache-Control": "no-store"},
     )

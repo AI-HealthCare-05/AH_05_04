@@ -42,6 +42,7 @@ def test_build_confirmed_data_accepts_fully_confirmed_medication() -> None:
     assert medications == [
         {
             "medication_name": "약품1",
+            "strength_text": None,
             "dose_value": Decimal("1.5"),
             "dose_unit": "정",
             "frequency_per_day": 2,
@@ -50,6 +51,24 @@ def test_build_confirmed_data_accepts_fully_confirmed_medication() -> None:
             "display_order": 1,
         }
     ]
+
+
+def test_build_confirmed_data_saves_confirmed_strength_text() -> None:
+    fields = [
+        _valid_prescribed_date(),
+        *_valid_medication_fields(1),
+        _field(
+            1,
+            FieldType.MEDICATION_STRENGTH,
+            "100mg",
+        ),
+    ]
+
+    _, medications = PrescriptionService._build_confirmed_data(fields)
+
+    assert medications[0]["medication_name"] == "약품1"
+    assert medications[0]["strength_text"] == "100mg"
+    assert medications[0]["dose_value"] == Decimal("1.5")
 
 
 def test_build_confirmed_data_allows_missing_optional_fields() -> None:
@@ -117,8 +136,10 @@ def test_build_confirmed_data_rejects_invalid_dose_value_format_instead_of_stori
     assert error.status_code == 422
     assert error.code == "VALIDATION_FAILED"
     assert any(
-        detail.field == "medications[1].dose_value" and detail.rejected_value == "약 반 알" for detail in error.details
+        detail.field == "medications[1].dose_value" and detail.reason == "INVALID_FORMAT" for detail in error.details
     )
+    # OCR 원문(용량 텍스트)을 응답에 그대로 노출하지 않습니다.
+    assert all(detail.rejected_value is None for detail in error.details)
 
 
 def test_build_confirmed_data_rejects_missing_prescribed_date() -> None:

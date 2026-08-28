@@ -27,6 +27,11 @@ class OcrRecognitionResult:
     raw_fields: list[RawRecognizedField] = field(default_factory=list)
     fields: list[RecognizedField] = field(default_factory=list)
 
+    # 실제 OCR 및 LLM 구조화 실행 정보를 OcrJob에 저장합니다.
+    engine_name: str | None = None
+    model_version: str | None = None
+    prompt_version: str | None = None
+
 
 class OcrProviderUnavailableError(Exception):
     """CLOVA OCR 연결 실패·타임아웃 등 외부 서비스 장애. (-> 503 OCR_PROVIDER_UNAVAILABLE)"""

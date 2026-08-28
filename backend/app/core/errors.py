@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -5,6 +6,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+logger = logging.getLogger(__name__)
 
 
 class ErrorDetail(BaseModel):
@@ -72,7 +76,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         return ORJSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(request: Request, exc: HTTPException) -> ORJSONResponse:
         body = ErrorResponse(
             code="HTTP_ERROR",
@@ -83,11 +87,29 @@ def register_exception_handlers(app: FastAPI) -> None:
         return ORJSONResponse(status_code=exc.status_code, content=body.model_dump(mode="json"), headers=exc.headers)
 
     @app.exception_handler(Exception)
-    async def handle_unexpected_error(request: Request, exc: Exception) -> ORJSONResponse:
+    async def handle_unexpected_error(
+        request: Request,
+        exc: Exception,
+    ) -> ORJSONResponse:
+        trace_id = _get_trace_id(request)
+
+        # 예상하지 못한 서버 오류의 원인을 추적할 수 있도록
+        # trace_id와 요청 경로를 스택 트레이스와 함께 기록합니다.
+        # SQLAlchemy 설정에서 hide_parameters=True이므로 DB 파라미터는 노출되지 않습니다.
+        logger.error(
+            "Unhandled server error: trace_id=%s path=%s",
+            trace_id,
+            request.url.path,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
         body = ErrorResponse(
             code="INTERNAL_SERVER_ERROR",
             message="서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
             details=[],
-            trace_id=_get_trace_id(request),
+            trace_id=trace_id,
         )
-        return ORJSONResponse(status_code=500, content=body.model_dump(mode="json"))
+        return ORJSONResponse(
+            status_code=500,
+            content=body.model_dump(mode="json"),
+        )
