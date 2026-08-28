@@ -9,7 +9,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import URL, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core import config
@@ -27,6 +27,99 @@ def create_test_database_url() -> URL:
         port=config.DB_EXPOSE_PORT,
         database="test",
     )
+
+
+async def insert_ocr_parent_chain(
+    connection: AsyncConnection,
+) -> tuple[str, str, str]:
+    """extracted_field 제약조건 테스트에 필요한 최소 부모 데이터를 생성합니다."""
+    user_id = str(uuid4())
+    document_id = str(uuid4())
+    ocr_job_id = str(uuid4())
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO "user" (
+                id,
+                email,
+                hashed_password,
+                name,
+                is_active,
+                is_admin
+            )
+            VALUES (
+                :id,
+                :email,
+                :hashed_password,
+                :name,
+                true,
+                false
+            )
+            """
+        ),
+        {
+            "id": user_id,
+            "email": f"constraint-{uuid4().hex[:12]}@test.local",
+            "hashed_password": "migration-test-password-hash",
+            "name": "constraint-test",
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO medical_document (
+                id,
+                user_id,
+                document_type,
+                original_file_name,
+                object_key,
+                file_mime_type,
+                file_size_bytes,
+                upload_status
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'PRESCRIPTION',
+                'constraint-test.png',
+                :object_key,
+                'image/png',
+                1,
+                'UPLOADED'
+            )
+            """
+        ),
+        {
+            "id": document_id,
+            "user_id": user_id,
+            "object_key": f"migration-test/{document_id}.png",
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO ocr_job (
+                id,
+                document_id,
+                ocr_status
+            )
+            VALUES (
+                :id,
+                :document_id,
+                'PENDING'
+            )
+            """
+        ),
+        {
+            "id": ocr_job_id,
+            "document_id": document_id,
+        },
+    )
+
+    return user_id, document_id, ocr_job_id
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -220,3 +313,120 @@ async def test_concurrent_user_email_insert_allows_only_one(
                 ),
                 {"email": email},
             )
+
+
+@pytest.mark.asyncio
+async def test_confirmed_optional_ocr_field_allows_null(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """선택 OCR 필드는 CONFIRMED 상태에서 confirmed_value=null을 허용합니다."""
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            _, _, ocr_job_id = await insert_ocr_parent_chain(connection)
+
+            field_id = str(uuid4())
+
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO extracted_field (
+                        id,
+                        ocr_job_id,
+                        medication_index,
+                        field_type,
+                        raw_value,
+                        confirmed_value,
+                        confirmation_status,
+                        confirmed_at
+                    )
+                    VALUES (
+                        :id,
+                        :ocr_job_id,
+                        1,
+                        'MEDICATION_STRENGTH',
+                        '100mg',
+                        NULL,
+                        'CONFIRMED',
+                        now()
+                    )
+                    """
+                ),
+                {
+                    "id": field_id,
+                    "ocr_job_id": ocr_job_id,
+                },
+            )
+
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT
+                        raw_value,
+                        confirmed_value,
+                        confirmation_status,
+                        confirmed_at
+                    FROM extracted_field
+                    WHERE id = :id
+                    """
+                ),
+                {"id": field_id},
+            )
+            stored = result.mappings().one()
+
+            assert stored["raw_value"] == "100mg"
+            assert stored["confirmed_value"] is None
+            assert stored["confirmation_status"] == "CONFIRMED"
+            assert stored["confirmed_at"] is not None
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_required_ocr_field_rejects_null(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """필수 OCR 필드는 CONFIRMED 상태에서 confirmed_value=null을 거부합니다."""
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            _, _, ocr_job_id = await insert_ocr_parent_chain(connection)
+
+            with pytest.raises(
+                IntegrityError,
+                match="chk_field_confirmation_fields",
+            ):
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO extracted_field (
+                            id,
+                            ocr_job_id,
+                            medication_index,
+                            field_type,
+                            raw_value,
+                            confirmed_value,
+                            confirmation_status,
+                            confirmed_at
+                        )
+                        VALUES (
+                            :id,
+                            :ocr_job_id,
+                            1,
+                            'MEDICATION_NAME',
+                            '합성의약품정',
+                            NULL,
+                            'CONFIRMED',
+                            now()
+                        )
+                        """
+                    ),
+                    {
+                        "id": str(uuid4()),
+                        "ocr_job_id": ocr_job_id,
+                    },
+                )
+        finally:
+            await transaction.rollback()

@@ -222,6 +222,10 @@ async def test_get_ocr_job_result_exposes_safe_error_message() -> None:
             ocr_status=OcrStatus.FAILED,
             error_code="OCR_PROVIDER_TIMEOUT",
             error_message=safe_error_message,
+            # 실패한 기존 작업에는 실행 메타데이터가 없을 수 있습니다.
+            engine_name=None,
+            model_version=None,
+            prompt_version=None,
             created_at=datetime(2026, 8, 24, 10, 0, 0, tzinfo=UTC),
             completed_at=datetime(2026, 8, 24, 10, 0, 5, tzinfo=UTC),
             extracted_fields=[],

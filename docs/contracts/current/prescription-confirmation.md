@@ -26,8 +26,34 @@
 | `DURATION_DAYS` | 필수, `INTEGER(32비트)` 범위의 양수 정수 |
 | `DOSE_UNIT` | 선택, 최대 50자 |
 | `TIMING` | 선택, 최대 255자 |
+| `MEDICATION_STRENGTH` | 선택, 최대 100자. 제품 함량이며 `medication.strength_text`로 저장 |
 
 `PRESCRIBED_DATE`가 없으면 `422 PRESCRIPTION_REQUIRED_FIELD_MISSING`, 값이 있지만 `date.fromisoformat()`이 파싱할 수 없는 형식이면 `422 VALIDATION_FAILED`를 반환합니다. 다른 필수 필드가 누락되면 `422 PRESCRIPTION_REQUIRED_FIELD_MISSING`을 반환합니다. 형식, 범위, 길이가 맞지 않으면 `422 VALIDATION_FAILED`를 반환합니다.
+
+선택 필드는 검수 화면에 빈 입력란으로 표시될 수 있습니다.
+값이 없는 선택 필드는 저장하지 않아도 처방 확정을 차단하지 않습니다.
+
+OCR 값이 있는 선택 필드를 사용자가 제거한 경우에는
+`PATCH /api/v1/extracted-fields/{field_id}`에
+`confirmed_value: null`을 명시적으로 전송합니다.
+
+Backend는 이 상태를 다음과 같이 저장합니다.
+
+- `raw_value`: 기존 OCR 인식값 유지
+- `confirmed_value`: `null`
+- `confirmation_status`: `CONFIRMED`
+- `confirmed_at`: 사용자 저장 시각
+
+`MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`에만 이 상태를 허용하며,
+필수 필드의 `confirmed_value: null`은 `422 VALIDATION_FAILED`로 거부합니다.
+
+## 확정 이후 수정 금지
+
+- 처방이 확정된 문서의 extracted-field는 더 이상 수정할 수 없습니다.
+- 확정 이후 `PATCH /api/v1/extracted-fields/{field_id}` 요청은 `409 PRESCRIPTION_ALREADY_CONFIRMED`를 반환합니다.
+- 거부된 PATCH는 기존 `confirmed_value`를 변경하지 않습니다.
+- Frontend는 해당 오류를 받으면 편집을 중단하고 비편집 확정 상태로 전환합니다.
+- PATCH와 처방 확정의 동시 요청을 직렬화하는 row lock 및 PostgreSQL 동시성 보장은 Post-MVP 범위입니다.
 
 ## Post-MVP 이관
 

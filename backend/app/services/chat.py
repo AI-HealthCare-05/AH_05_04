@@ -127,6 +127,7 @@ class ChatService:
                     frequency_per_day=medication.frequency_per_day,
                     timing_text=medication.timing_text,
                     duration_days=medication.duration_days,
+                    strength_text=medication.strength_text,
                 )
                 for medication in medications
             ],

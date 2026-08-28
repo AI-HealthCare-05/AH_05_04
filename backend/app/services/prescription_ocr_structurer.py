@@ -53,9 +53,19 @@ _DURATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# 수정: 여러 줄 약품명에서 공통으로 사용할 함량과 포장·제형 패턴입니다.
+# 제품 함량의 기본 단위와 숫자가 포함된 함량 표현입니다.
 _STRENGTH_UNIT_TEXT = r"(?:mg|g|mcg|µg|μg|㎍|㎎|mL|ml|㎖|%)"
-_STRENGTH_TEXT = rf"\d+(?:\.\d+)?\s*{_STRENGTH_UNIT_TEXT}"
+_STRENGTH_AMOUNT_TEXT = rf"\d+(?:\.\d+)?\s*{_STRENGTH_UNIT_TEXT}"
+
+# 일반 함량뿐 아니라 분모 숫자가 생략된 농도 표현도 허용합니다.
+# 예: 10mg, 500mg/5mL, 1mg/mL
+_STRENGTH_TEXT = (
+    rf"(?:"
+    rf"{_STRENGTH_AMOUNT_TEXT}\s*/\s*{_STRENGTH_UNIT_TEXT}"
+    rf"|{_STRENGTH_AMOUNT_TEXT}"
+    rf")"
+)
+# 약품명의 포장 수량과 제형을 판별하기 위한 패턴입니다.
 _PACKAGE_FORM_TEXT = (
     r"(?:연질|경질)?"
     r"(?:캡슐|정|포|병|앰플|바이알)"
@@ -86,6 +96,22 @@ _DOSAGE_FORM_PATTERN = re.compile(
 # 수정: 약품명 판단과 연속 행 판단에서 동일한 함량 표현을 사용합니다.
 _STRENGTH_PATTERN = re.compile(
     _STRENGTH_TEXT,
+    re.IGNORECASE,
+)
+# 단일 함량, 복합 함량, 농도 표현을 하나의 제품 함량으로 처리합니다.
+_STRENGTH_SEQUENCE_TEXT = (
+    rf"{_STRENGTH_TEXT}"
+    rf"(?:\s*/\s*{_STRENGTH_AMOUNT_TEXT})*"
+)
+
+# 약품명 끝의 일반 함량과 괄호로 둘러싸인 함량을 분리합니다.
+# 예: "로수바스타틴정 10mg", "복합정 5mg/100mg",
+#     "에제티미브정 (10mg)"
+_TRAILING_STRENGTH_PATTERN = re.compile(
+    rf"(?:"
+    rf"\(\s*(?P<parenthesized_strength>{_STRENGTH_SEQUENCE_TEXT})\s*\)"
+    rf"|(?P<plain_strength>{_STRENGTH_SEQUENCE_TEXT})"
+    rf")\s*$",
     re.IGNORECASE,
 )
 
@@ -778,6 +804,32 @@ class PrescriptionOcrStructurer:
     ) -> float:
         return sum(field.center_y for field in row) / len(row)
 
+    def _split_medication_name_and_strength(
+        self,
+        value: str,
+    ) -> tuple[str, str | None]:
+        """
+        약품명 끝의 제품 함량만 MEDICATION_STRENGTH로 분리합니다.
+
+        함량 앞에 실제 약품명이 없는 경우에는 원문 전체를 약품명으로
+        유지하여 숫자·단위만 약품명으로 오인되는 것을 방지합니다.
+        """
+        match = _TRAILING_STRENGTH_PATTERN.search(value)
+
+        if match is None:
+            return value, None
+
+        medication_name = value[: match.start()].strip()
+
+        if not medication_name:
+            return value, None
+
+        # 괄호는 제품 함량 값 자체가 아니므로 제거하고,
+        # 괄호 안의 OCR 함량 표기를 보존합니다.
+        strength_text = (match.group("parenthesized_strength") or match.group("plain_strength")).strip()
+
+        return medication_name, strength_text
+
     def _structure_medication_row(
         self,
         *,
@@ -794,19 +846,38 @@ class PrescriptionOcrStructurer:
         name_fields = columns["name"]
 
         if name_fields:
-            raw_name = self._join_values(name_fields)
+            combined_name = self._join_values(name_fields)
+
+            # 규칙 기반 구조화에서도 LLM 경로와 동일하게
+            # 처방 약품명과 제품 함량을 별도 필드로 저장합니다.
+            raw_name, strength_text = self._split_medication_name_and_strength(
+                combined_name,
+            )
             normalized = self._normalizer.normalize(raw_name)
+            confidence_score = self._minimum_confidence(name_fields)
 
             result.append(
                 RecognizedField(
                     medication_index=medication_index,
                     field_type="MEDICATION_NAME",
                     raw_value=raw_name,
-                    normalized_value=(normalized.normalized_value),
-                    normalization_version=(normalized.normalization_version),
-                    confidence_score=(self._minimum_confidence(name_fields)),
+                    normalized_value=normalized.normalized_value,
+                    normalization_version=normalized.normalization_version,
+                    confidence_score=confidence_score,
                 )
             )
+
+            if strength_text is not None:
+                # 제품 함량은 원문 표기를 보존합니다.
+                # normalized_value와 normalization_version은 생성하지 않습니다.
+                result.append(
+                    RecognizedField(
+                        medication_index=medication_index,
+                        field_type="MEDICATION_STRENGTH",
+                        raw_value=strength_text,
+                        confidence_score=confidence_score,
+                    )
+                )
 
         dose_fields = columns["dose"]
         dose_text = self._join_values(dose_fields)

@@ -4,7 +4,7 @@ from uuid import UUID
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.ocr import ExecuteOcrRequest, ExtractedFieldData, OcrJobData, OcrJobStatus
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
-from app.models.ocr import ExtractedField, OcrJob
+from app.models.ocr import ExtractedField, FieldType, OcrJob
 from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
@@ -20,6 +20,15 @@ from app.services.ocr_engine import (
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
 _ENGINE_ERROR_MESSAGE = "OCR 처리 중 오류가 발생했습니다."
+
+# 사용자가 OCR 오인식 값을 제거하고 “값 없음”으로 확인할 수 있는 필드입니다.
+_NULLABLE_CONFIRMED_FIELD_TYPES = frozenset(
+    {
+        FieldType.MEDICATION_STRENGTH,
+        FieldType.DOSE_UNIT,
+        FieldType.TIMING,
+    }
+)
 
 
 def _to_field_data(
@@ -45,6 +54,9 @@ def _to_job_data(job: OcrJob, fields: list[ExtractedField]) -> OcrJobData:
         ocr_status=OcrJobStatus(job.ocr_status),
         error_code=job.error_code,
         error_message=job.error_message,
+        engine_name=job.engine_name,
+        model_version=job.model_version,
+        prompt_version=job.prompt_version,
         created_at=job.created_at,
         completed_at=job.completed_at,
         fields=[_to_field_data(field) for field in fields],
@@ -146,7 +158,10 @@ class OcrService:
                 message="OCR 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
                 details=[ErrorDetail(field="provider", reason="PROVIDER_UNAVAILABLE")],
             ) from None
+
         except OcrProcessingError:
+            # Provider/OCR 예외 원문에는 민감한 OCR 응답이 포함될 수 있으므로
+            # API 예외 체인과 로그에 원문을 남기지 않습니다.
             await self._ocr_repo.mark_failed(
                 job,
                 error_code="OCR_PROCESSING_FAILED",
@@ -188,7 +203,13 @@ class OcrService:
             ],
         )
 
-        job = await self._ocr_repo.mark_completed(job, completed_at=datetime.now(UTC))
+        job = await self._ocr_repo.mark_completed(
+            job,
+            completed_at=datetime.now(UTC),
+            engine_name=result.engine_name,
+            model_version=result.model_version,
+            prompt_version=result.prompt_version,
+        )
 
         saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
         return _to_job_data(job, saved_fields)
@@ -218,7 +239,43 @@ class OcrService:
                 status_code=404,
                 code="EXTRACTED_FIELD_NOT_FOUND",
                 message="추출 필드를 찾을 수 없습니다.",
-                details=[ErrorDetail(field="field_id", reason="NOT_FOUND", rejected_value=str(field_id))],
+                details=[
+                    ErrorDetail(
+                        field="field_id",
+                        reason="NOT_FOUND",
+                        rejected_value=str(field_id),
+                    )
+                ],
+            )
+
+        document = field.ocr_job.document
+
+        # PRESCRIPTION은 사용자 검수를 마친 최종 확정 데이터입니다.
+        # 처방 확정 이후 OCR 추출값이 변경되면 화면의 검수값과 확정 처방이 달라질 수 있으므로
+        # 추가 PATCH를 거부하고 Frontend가 비편집 확정 화면으로 전환하도록 합니다.
+        if document.prescription is not None:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_ALREADY_CONFIRMED",
+                message="이미 확정된 처방 정보입니다.",
+                details=[
+                    ErrorDetail(
+                        field="document_id",
+                        reason="ALREADY_CONFIRMED",
+                    )
+                ],
+            )
+        if request.confirmed_value is None and field.field_type not in _NULLABLE_CONFIRMED_FIELD_TYPES:
+            raise ApiError(
+                status_code=422,
+                code="VALIDATION_FAILED",
+                message="입력값을 확인해 주세요.",
+                details=[
+                    ErrorDetail(
+                        field="confirmed_value",
+                        reason="REQUIRED",
+                    )
+                ],
             )
 
         field = await self._ocr_repo.confirm_field(

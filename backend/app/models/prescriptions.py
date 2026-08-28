@@ -87,9 +87,28 @@ class Medication(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("prescription.id"), nullable=False)
-    medication_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    dose_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
-    dose_unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    medication_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    # 처방전에 표시된 제품 함량입니다.
+    # 복합제와 농도 표현을 보존하기 위해 Decimal이 아닌 문자열로 저장합니다.
+    # 예: 100mg, 5mg/100mg, 500mg/5mL
+    strength_text: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    # 아래 필드는 제품 함량이 아니라 실제 1회 복용량입니다.
+    dose_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 3),
+        nullable=True,
+    )
+    dose_unit: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
     frequency_per_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     timing_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
     duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
