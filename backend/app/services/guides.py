@@ -76,6 +76,7 @@ class GuideService:
                 medications=[
                     MedicationInput(
                         medication_name=medication.medication_name,
+                        strength_text=medication.strength_text,
                         dose_value=medication.dose_value,
                         dose_unit=medication.dose_unit,
                         frequency_per_day=medication.frequency_per_day,

@@ -6,6 +6,69 @@ OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안
 오탐을 함께 최소화한다. 구조를 확신할 수 없는 값은 자동 확정하지
 않고 사용자 확인 대상으로 유지한다.
 
+
+## 현재 구조화 경로
+
+- `OCR_STRUCTURE_LLM_ENABLED`의 기본값은 `false`입니다.
+- 비활성화 상태에서는 CLOVA OCR token을 기존 규칙 기반 구조화기로 처리하며 OpenAI에 전달하지 않습니다.
+- 활성화 상태에서만 CLOVA OCR 전체 token을 OpenAI Responses API Structured Outputs에 전달합니다.
+- LLM 구조화 결과는 `ocr-structure-prompt-v2` 스키마를 따르며 OpenAI 요청은 `store=False`로 실행합니다.
+- 규칙 기반 경로에서는 OCR 작업의 `model_version`과 `prompt_version`을 `null`로 기록합니다.
+- LLM 경로에서는 실제 모델 ID와 프롬프트 버전을 기록합니다.
+- Production Compose도 해당 설정의 기본값을 `false`로 유지합니다.
+
+## Timeout 계약
+
+다음 기호를 사용합니다.
+
+- `C`: `CLOVA_OCR_TIMEOUT_SECONDS`, 기본 20초
+- `S`: `OCR_STRUCTURE_TIMEOUT_SECONDS`, 기본 30초
+- `E`: `OCR_STRUCTURE_LLM_ENABLED`가 `true`이면 1, 아니면 0
+- `M`: HTTP 요청 종료와 실패 상태 저장을 위한 처리 여유, 기본 참고값 5초
+
+CLOVA OCR과 OpenAI 구조화는 순차 실행되므로 OCR 요청의 Provider timeout 기준은 `C + E × S`입니다. 상위 HTTP client와 reverse proxy의 read timeout은 최소 `C + E × S + M` 이상이어야 합니다.
+
+기본값 기준으로 LLM 구조화가 비활성화되면 25초 이상, 활성화되면 55초 이상이 필요합니다. 개별 timeout 값을 변경하면 합산 기준도 함께 다시 계산해야 합니다.
+
+## 제품 함량과 복용량 구분
+
+| 필드 | 의미 | 예시 |
+| --- | --- | --- |
+| `MEDICATION_NAME` | 처방전에 기재된 약물명 또는 성분명 | `복합정` |
+| `MEDICATION_STRENGTH` | 제품 자체의 함량 | `100mg`, `5mg/100mg`, `1mg/mL`, `500mg/5mL` |
+| `DOSE_VALUE` | 실제 1회 복용량 값 | `1` |
+| `DOSE_UNIT` | 실제 1회 복용 단위 | `정` |
+
+- 제품 함량은 선택값입니다.
+- 소수점과 복합 함량의 `/`는 값의 일부로 보존합니다.
+- 제품 함량이 없거나 grounding에 실패해도 약물 행 전체를 실패시키지 않습니다.
+- 사용자가 확인한 제품 함량만 확정 처방의 `medication.strength_text`로 저장합니다.
+- LLM 경로와 규칙 기반 경로 모두 약품명 끝에서 식별한 제품 함량을 `MEDICATION_STRENGTH`로 분리합니다.
+- `MEDICATION_NAME`에는 분리된 제품 함량을 중복해서 포함하지 않습니다.
+- 제품 함량은 원문을 `raw_value`로 보존하며 현재 `normalized_value`와 `normalization_version`을 생성하지 않습니다.
+
+## Grounding 검증
+
+- LLM이 반환한 값은 함께 반환된 CLOVA `source_ids`를 기준으로 검증합니다.
+- 존재하지 않는 token을 참조한 값은 저장하지 않습니다.
+- OCR 원문에서 근거를 확인할 수 없는 값은 확정값으로 저장하지 않습니다.
+- 공백으로 분리된 token의 결합, 복용 조건의 나열 구분자 차이 및 날짜 구분자 차이는 허용합니다.
+- 약물명 grounding 실패는 약제 행 식별 안전을 위해 OCR 구조화 전체 실패로 처리합니다.
+- grounding 실패는 필드 종류에 따라 다음과 같이 처리합니다.
+  - `PRESCRIBED_DATE`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`: 사용자 입력용 빈 검수 필드
+  - `TIMING`: 선택값이지만 검수 편의를 위한 빈 검수 필드
+  - `MEDICATION_STRENGTH`, `DOSE_UNIT`: 필드 생략
+- 빈 검수 필드의 `raw_value`, `normalized_value`, `normalization_version`, `confidence_score`는 모두 `null`입니다.
+
+현재 validator는 `source_ids`의 존재 여부와 OCR 원문 근거를 필드별 기준으로 검증합니다.
+
+- `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 더 큰 숫자의 일부가 아닌 완전한 숫자 경계로 검증합니다.
+- `MEDICATION_NAME`은 OCR 약품명 전체와 일치해야 합니다.
+- 하나의 OCR token에 약품명과 제품 함량이 함께 있는 경우에는 약품명 뒤에 유효한 제품 함량만 남는 것을 허용합니다.
+- 공백으로 분리된 OCR token 결합과 필드별로 허용된 표기 차이만 인정합니다.
+
+token의 좌표와 약제 행 인접성을 이용한 교차 행 결합 차단은 별도 후속 작업입니다.
+
 ## medication_index
 
 - `0`은 처방일자처럼 특정 약품에 속하지 않는 문서 공통 필드다.
@@ -17,10 +80,11 @@ OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안
 ## 부분 인식
 
 - 약품명과 일부 필드만 인식된 경우에도 약품 행을 삭제하지 않는다.
-- 인식되지 않은 필드는 생성하지 않는다.
-- OCR 원문은 `raw_value`로 보존한다.
-- `I정`, `I회`처럼 숫자 오인식이 의심되더라도 자동으로 `1`로
-  확정하지 않는다.
+- 규칙 기반 경로에서는 인식되지 않은 필드를 생성하지 않습니다.
+- LLM 경로에서는 검수용 빈 필드 대상으로 정한 `PRESCRIBED_DATE`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`, `TIMING`만 빈 필드로 생성할 수 있습니다.
+- 값이 없는 `MEDICATION_STRENGTH`와 `DOSE_UNIT`은 생성하지 않습니다.
+- OCR 원문이 있는 필드는 `raw_value`로 보존합니다.
+- `I정`, `I회`처럼 숫자 오인식이 의심되더라도 자동으로 `1`로 확정하지 않는다.
 - 모든 추출 필드는 기본적으로 `UNCONFIRMED` 상태다.
 - 최종 처방 확정에는 사용자가 확인한 `confirmed_value`만 사용한다.
 

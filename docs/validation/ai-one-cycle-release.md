@@ -23,6 +23,8 @@ Frontend E2E 또는 Production 배포 승인이 아닙니다. `local-live-ai`는
 - [ ] staging의 `RELEASE_VALIDATION_STATE_DIR`가 별도 one-off 사이에 공유되는 private mount이며, `0700`
   directory와 `0600` file의 write-close-read 선행 검사를 통과했습니다.
 - [ ] 실제 Provider 호출 비용이 발생하는 local live 실행임을 operator가 확인했습니다.
+- [ ] runner의 `OCR_STRUCTURE_LLM_ENABLED`, `CLOVA_OCR_TIMEOUT_SECONDS`, `OCR_STRUCTURE_TIMEOUT_SECONDS`, `OPENAI_TIMEOUT_SECONDS`가 검증 대상 Backend 설정과 일치합니다.
+- [ ] one-cycle read timeout은 `max(C + E × S, T) + 5초`로 계산됩니다.
 
 ## 고정 명령
 

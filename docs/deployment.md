@@ -25,7 +25,7 @@ OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단
 | CLOVA OCR timeout `C` | 실제 `CLOVA_OCR_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초)                                                     |
 | 애플리케이션 처리 여유 `M` | ____초 (기본 참고값: 5초)                                                                                        |
 | 동일 세션 최대 동시 전송 `N` | 코드로 강제되는 admission 한도: ____ / 초과 시 응답: ____                                                        |
-| Nginx read timeout | 실제 `proxy_read_timeout`: ____초 / 필요 하한 `max(C + M, N × T + M)`: ____초 / 충족 여부: ____                  |
+| Nginx read timeout | 실제 `proxy_read_timeout`: ____초 / 필요 하한 `max(C + E × S + M, N × T + M)`: ____초 / 충족 여부: ____ |
 | PostgreSQL lock wait timeout | 실제 `lock_timeout`: ____ (`0`은 제한 없음) / 유한 설정 시 필요 하한 `(N - 1) × T + M`: ____초 / 충족 여부: ____|
 | 애플리케이션 replica 수 `R` |                                                                                                                  |
 | replica별 Uvicorn worker 수 `W` |                                                                                                                  |
@@ -41,15 +41,18 @@ OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단
 | 수용량 판정 | `전체 in-flight AI <= pool + overflow - 비AI 예비 connection`: ____                                              |
 | 가이드 OpenAI 실호출 | `RUN_OPENAI_SMOKE=1` 실행 환경·일시·결과: ____                                                                   |
 | 챗봇 OpenAI 실호출 | `RUN_OPENAI_CHAT_SMOKE=1` 실행 환경·일시·결과: ____                                                              |
+| OCR 구조화 LLM 활성화 `E` | 실제 `OCR_STRUCTURE_LLM_ENABLED`: ____ (`false`=0, `true`=1) |
+| OCR 구조화 timeout `S` | 실제 `OCR_STRUCTURE_TIMEOUT_SECONDS`: ____초 (코드 기본값: 30초) |
 
 `N`은 문서에 적은 예상값이 아니라 lock 획득 전에 코드가 실제로 강제하는 동일 세션 admission 한도여야 합니다. 현재 구현은 세 개 이상의 요청도 직렬화하며 최대 동시 전송 수를 제한하지 않으므로 유한한 `N`이 없습니다. 따라서 현재 상태에서는 모든 허용 요청을 포괄하는 Nginx·PostgreSQL timeout 하한을 계산할 수 없으며 Production 배포가 차단됩니다.
 
-admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초`, `N=2`를 사용하면 Nginx read timeout은 `max(20 + 5, 2 × 20 + 5) = 45초` 이상, PostgreSQL lock_timeout을 유한하게 설정한다면 `(2 - 1) × 20 + 5 = 25초`를 초과해야 하며, `0`이면 PostgreSQL 자체의 잠금 대기 제한을 적용하지 않습니다. `proxy_read_timeout`은 전체 요청 상한이 아니라 두 연속 read 사이의 무응답 상한이지만, 현재 non-streaming 응답은 Provider 호출 완료 전에 body를 보내지 않으므로 이 기준을 확인합니다.
+OCR 요청에서는 CLOVA와 OCR 구조화 OpenAI가 순차 실행되므로 두 Provider timeout을 `C + E × S`로 합산합니다. 기본 참고값 `C=20초`, `S=30초`, `T=20초`, `M=5초`를 적용하면 OCR LLM이 비활성화된 경우 OCR read timeout 하한은 25초이고, 활성화된 경우 55초입니다.
+Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N × T + M`을 사용합니다. 따라서 Nginx read timeout의 전체 필요 하한은 `max(C + E × S + M, N × T + M)`입니다. `N`이 강제되지 않은 현재 상태에서는 Production 전체 하한을 확정할 수 없으므로 배포 차단 상태를 유지합니다.
 
 다음 조건을 모두 충족해야 배포할 수 있습니다.
 
 - 동일 세션 최대 동시 전송 `N`을 lock 획득 전에 강제하고 초과 요청의 `409` 또는 `429` 계약·테스트를 확정합니다.
-- 실제 `proxy_read_timeout >= max(C + M, N × T + M)`을 확인합니다.
+- 실제 `proxy_read_timeout >= max(C + E × S + M, N × T + M)`을 확인합니다.
 - PostgreSQL `lock_timeout`이 `0`이거나, 유한하게 설정한 경우 `(N - 1) × T + M`보다 큰지 확인합니다.
 - worker별 전체 in-flight AI에 OCR·가이드·채팅 외부 호출과 채팅 row lock waiter를 포함하고, pool·overflow 총 수용량에서 비AI 요청용 예비 connection을 먼저 제외해 수용 가능한지 확인합니다.
 - 모든 replica와 Uvicorn worker가 process별 pool을 각각 만든다는 기준으로 `R × W × (pool + overflow) + 운영 예비 <= PostgreSQL max_connections`를 확인합니다.
@@ -104,7 +107,10 @@ admission 한도를 구현한 뒤 기본 참고값 `C=20초`, `T=20초`, `M=5초
 - PostgreSQL 초기화·Alembic migration 계정과 FastAPI·AI Worker 실행 계정을 분리합니다. FastAPI와 AI Worker에는 테이블 조회·입력·수정·삭제 및 필요한 sequence 사용 권한만 부여하고 schema 객체 생성 권한은 부여하지 않습니다.
 - Alembic migration이 종료 코드 0으로 완료된 경우에만 선택한 FastAPI 또는 AI Worker 서비스를 시작합니다.
 - Migration이 실패하면 신규 애플리케이션 컨테이너 실행을 중단하고 `migrate` 서비스 로그를 확인합니다.
-- Schema downgrade는 자동으로 실행하지 않습니다. 해당 migration의 rollback 계획과 데이터 보존 여부를 확인한 뒤 별도로 수행합니다.
+- Production schema 변경은 forward-fix를 원칙으로 하며 자동 downgrade를 실행하지 않습니다.
+- Revision `529b2a36b677`은 `MEDICATION_STRENGTH`, `medication.strength_text`, `ocr_job.prompt_version` 데이터가 하나라도 존재하면 DDL 실행 전에 downgrade를 중단합니다.
+- 비운영 환경에서 downgrade가 필요한 경우에만 백업과 영향 확인을 완료하고, 승인된 절차로 신규 필드 데이터를 제거하거나 별도로 보존한 후 실행합니다.
+- Production에서 migration 문제가 발생하면 신규 애플리케이션 배포를 중단하고 기존 호환 버전을 유지한 상태에서 후속 migration으로 forward-fix합니다.
 - `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 Production 배포 대상에서 제외합니다.
 - Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS 및 CORS 실제 값을 함께 확인합니다.
 

@@ -82,7 +82,7 @@ class TestUserMeApis:
             headers = {"Authorization": f"Bearer {access_token}"}
             response = await client.patch("/api/v1/users/me", json=update_data, headers=headers)
 
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_get_user_me_unauthorized(self):

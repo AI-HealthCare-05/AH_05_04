@@ -134,7 +134,7 @@ Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1
 | HTTP | code | message | 사용 상황 |
 | --- | --- | --- | --- |
 | 404 | `PRESCRIPTION_NOT_FOUND` | "처방 정보를 찾을 수 없습니다." | 요청한 처방 ID가 존재하지 않거나 다른 사용자 소유 |
-| 409 | `PRESCRIPTION_ALREADY_CONFIRMED` | "이미 확정된 처방 정보입니다." | 이미 확정된 처방을 다시 확정하려고 함 |
+| 409 | `PRESCRIPTION_ALREADY_CONFIRMED` | "이미 확정된 처방 정보입니다." | 이미 확정된 처방을 다시 확정하거나, 확정된 문서의 extracted-field를 수정하려고 함 |
 | 422 | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | "처방 확정에 필요한 항목이 누락되었습니다." | 처방 확정 요청에 필수 항목이 없음 |
 | 409 | `OCR_JOB_NOT_COMPLETED` | "OCR 처리가 완료된 결과가 없어 처방을 확정할 수 없습니다." | OCR이 완료되기 전에 처방 확정을 요청함 |
 | 400 | `UPLOAD_FILE_TOO_LARGE` | "파일 크기는 10MB 이하만 업로드할 수 있습니다." | 10MB를 초과한 파일을 업로드함 |

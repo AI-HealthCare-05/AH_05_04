@@ -21,7 +21,11 @@ import './PrescriptionReviewPage.css'
 
 const fieldLabels: Record<string, string> = {
   PRESCRIBED_DATE: '처방일',
-  MEDICATION_NAME: '약 이름',
+  MEDICATION_NAME: '처방전 약 이름',
+
+  // 약 이름에 붙은 제품 함량을 별도로 검수합니다.
+  MEDICATION_STRENGTH: '제품 함량',
+
   DOSE_VALUE: '1회 복용량',
   DOSE_UNIT: '복용 단위',
   FREQUENCY_PER_DAY: '하루 횟수',
@@ -31,11 +35,12 @@ const fieldLabels: Record<string, string> = {
 
 const fieldOrder: Record<string, number> = {
   MEDICATION_NAME: 1,
-  DOSE_VALUE: 2,
-  DOSE_UNIT: 3,
-  FREQUENCY_PER_DAY: 4,
-  DURATION_DAYS: 5,
-  TIMING: 6,
+  MEDICATION_STRENGTH: 2,
+  DOSE_VALUE: 3,
+  DOSE_UNIT: 4,
+  FREQUENCY_PER_DAY: 5,
+  DURATION_DAYS: 6,
+  TIMING: 7,
 }
 
 const requiredMedicationFieldTypes = [
@@ -44,6 +49,13 @@ const requiredMedicationFieldTypes = [
   'FREQUENCY_PER_DAY',
   'DURATION_DAYS',
 ] as const
+
+// 처방일과 필수 약품 필드는 값의 유무와 관계없이 반드시 확인해야 합니다.
+// 선택 필드는 값이 입력된 경우에만 최종 확인 대상으로 취급합니다.
+const requiredReviewFieldTypes = new Set<string>([
+  'PRESCRIBED_DATE',
+  ...requiredMedicationFieldTypes,
+])
 
 type BlockingAction = 'UPLOAD' | 'RETRY_LATER'
 
@@ -171,7 +183,21 @@ function getFieldLabel(fieldType: string) {
 }
 
 function getSavedDisplayValue(field: ExtractedField) {
-  return field.confirmed_value ?? field.raw_value ?? ''
+  // CONFIRMED + null은 사용자가 선택 필드를
+  // “값 없음”으로 확인한 상태입니다.
+  if (field.confirmation_status === 'CONFIRMED') {
+    return field.confirmed_value?.trim() ?? ''
+  }
+
+  // 처방일만 Backend가 만든 YYYY-MM-DD 값을 사용합니다.
+  if (
+    field.field_type === 'PRESCRIBED_DATE' &&
+    field.normalized_value?.trim()
+  ) {
+    return field.normalized_value
+  }
+
+  return field.raw_value ?? ''
 }
 
 function isFieldConfirmed(
@@ -179,13 +205,49 @@ function isFieldConfirmed(
   draftValues: Record<string, string>,
 ) {
   const draftValue = draftValues[field.field_id]?.trim() ?? ''
+  const confirmedValue = field.confirmed_value?.trim() ?? ''
+
   return (
-    Boolean(field.confirmed_value?.trim()) &&
-    draftValue === field.confirmed_value?.trim()
+    field.confirmation_status === 'CONFIRMED' &&
+    draftValue === confirmedValue
+  )
+}
+
+// 필수 필드는 항상 확인 대상입니다.
+// 선택 필드는 OCR 값이 있거나 사용자가 직접 값을 입력한 경우에만
+// 저장 및 확인 대상으로 포함합니다.
+function requiresUserConfirmation(
+  field: ExtractedField,
+  draftValues: Record<string, string>,
+) {
+  const draftValue = draftValues[field.field_id]?.trim() ?? ''
+
+  return (
+    requiredReviewFieldTypes.has(field.field_type) ||
+    Boolean(draftValue)
   )
 }
 
 function getNumericFieldError(fieldType: string, value: string) {
+  if (fieldType === 'PRESCRIBED_DATE') {
+    const isIsoDate = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    const parsedDate = new Date(`${value}T00:00:00Z`)
+
+    if (isIsoDate && !Number.isNaN(parsedDate.getTime())) {
+      const [year, month, day] = value.split('-').map(Number)
+
+      if (
+        parsedDate.getUTCFullYear() === year &&
+        parsedDate.getUTCMonth() + 1 === month &&
+        parsedDate.getUTCDate() === day
+      ) {
+        return null
+      }
+    }
+
+    return '처방일은 YYYY-MM-DD 형식으로 입력해 주세요.'
+  }
+
   if (fieldType === 'DOSE_VALUE') {
     const isDecimalFormat =
       /^[+-]?(?:(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)$/.test(value)
@@ -313,18 +375,33 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
-  const confirmedFieldCount = useMemo(
-    () => fields.filter((field) => isFieldConfirmed(field, draftValues)).length,
-    [draftValues, fields],
-  )
-
-  const allDisplayedFieldsConfirmed = useMemo(
+  // 필수 필드와 값이 있는 선택 필드만 최종 확인 대상으로 계산합니다.
+  // 빈 TIMING, DOSE_UNIT, MEDICATION_STRENGTH 등은 화면에는 표시되지만
+  // 처방 확정을 막지 않습니다.
+  const reviewTargetFields = useMemo(
     () =>
-      fields.length > 0 &&
-      fields.every((field) => isFieldConfirmed(field, draftValues)),
+      fields.filter((field) =>
+        requiresUserConfirmation(field, draftValues),
+      ),
     [draftValues, fields],
   )
 
+  const confirmedFieldCount = useMemo(
+    () =>
+      reviewTargetFields.filter((field) =>
+        isFieldConfirmed(field, draftValues),
+      ).length,
+    [draftValues, reviewTargetFields],
+  )
+
+  const allReviewTargetFieldsConfirmed = useMemo(
+    () =>
+      reviewTargetFields.length > 0 &&
+      reviewTargetFields.every((field) =>
+        isFieldConfirmed(field, draftValues),
+      ),
+    [draftValues, reviewTargetFields],
+  )
   const hasMissingPrescribedDateField = useMemo(
     () =>
       !fields.some(
@@ -375,7 +452,7 @@ function PrescriptionReviewPage() {
   const reviewReadyForAcknowledgement =
     prescribedDateConfirmed &&
     allRequiredMedicationFieldsConfirmed &&
-    allDisplayedFieldsConfirmed &&
+    allReviewTargetFieldsConfirmed &&
     !hasMissingPrescribedDateField &&
     !hasMissingRequiredMedicationFields &&
     !hasUnsavedChanges &&
@@ -492,9 +569,11 @@ function PrescriptionReviewPage() {
     }
 
     const saveRequestKey = reviewRequestKey
-    const value = draftValues[field.field_id]?.trim()
+    const value = draftValues[field.field_id]?.trim() ?? ''
+    const isOptionalField =
+      !requiredReviewFieldTypes.has(field.field_type)
 
-    if (!value) {
+    if (!value && !isOptionalField) {
       setFieldErrors((current) => ({
         ...current,
         [field.field_id]: '확인할 값을 입력해 주세요.',
@@ -502,7 +581,10 @@ function PrescriptionReviewPage() {
       return
     }
 
-    const numericFieldError = getNumericFieldError(field.field_type, value)
+    const confirmedValue = value || null
+    const numericFieldError = value
+      ? getNumericFieldError(field.field_type, value)
+      : null
 
     if (numericFieldError) {
       setFieldErrors((current) => ({
@@ -524,7 +606,10 @@ function PrescriptionReviewPage() {
         return next
       })
       setMessage(null)
-      const response = await updateExtractedField(field.field_id, value)
+      const response = await updateExtractedField(
+        field.field_id,
+        confirmedValue,
+      )
       if (latestReviewRequestKeyRef.current !== saveRequestKey) return
 
       setFields((current) =>
@@ -534,7 +619,7 @@ function PrescriptionReviewPage() {
       )
       setDraftValues((current) => ({
         ...current,
-        [field.field_id]: response.data.confirmed_value ?? value,
+        [field.field_id]: getSavedDisplayValue(response.data),
       }))
       setUserConfirmed(false)
     } catch (error) {
@@ -623,6 +708,24 @@ function PrescriptionReviewPage() {
   const renderField = (field: ExtractedField) => {
     const draftValue = draftValues[field.field_id] ?? ''
     const confirmed = isFieldConfirmed(field, draftValues)
+
+    // 값이 없는 선택 필드는 사용자 확인이 필요한 오류 상태가 아니라
+    // 입력을 생략할 수 있는 정상 상태입니다.
+    const savedValue = getSavedDisplayValue(field).trim()
+    const hasFieldChanges = draftValue.trim() !== savedValue
+    const isOptionalField =
+      !requiredReviewFieldTypes.has(field.field_type)
+
+    const isOptionalRemoval =
+      isOptionalField &&
+      !draftValue.trim() &&
+      Boolean(savedValue)
+
+    const isBlankOptionalField =
+      isOptionalField &&
+      !draftValue.trim() &&
+      !hasFieldChanges
+
     const isSaving = savingFieldIds.has(field.field_id)
     const rawValue = field.raw_value?.trim() ?? ''
     const fieldError = fieldErrors[field.field_id]
@@ -641,7 +744,11 @@ function PrescriptionReviewPage() {
             {getFieldLabel(field.field_type)}
           </label>
           <span className={confirmed ? 'is-confirmed' : ''}>
-            {confirmed ? '저장됨' : '확인 필요'}
+            {confirmed
+              ? '저장됨'
+              : isBlankOptionalField
+                ? '선택 입력'
+                : '확인 필요'}
           </span>
         </div>
 
@@ -668,10 +775,23 @@ function PrescriptionReviewPage() {
           />
           <Button
             variant={confirmed ? 'secondary' : 'primary'}
-            disabled={isSaving || isConfirming || Boolean(prescription)}
+            disabled={
+              isSaving ||
+              isConfirming ||
+              Boolean(prescription) ||
+              isBlankOptionalField
+            }
             onClick={() => handleSaveField(field)}
           >
-            {isSaving ? '저장 중' : confirmed ? '수정 저장' : '확인'}
+            {isSaving
+              ? '저장 중'
+              : isOptionalRemoval
+                ? '값 없음 저장'
+                : confirmed
+                  ? '수정 저장'
+                  : isBlankOptionalField
+                    ? '선택 입력'
+                    : '확인'}
           </Button>
         </div>
 
@@ -682,9 +802,11 @@ function PrescriptionReviewPage() {
         >
           {fieldError ?? (confirmed
             ? '사용자가 확인하고 저장한 값입니다.'
-            : rawValue
-              ? `OCR 인식값: ${rawValue}`
-              : '인식된 값이 없습니다. 원본을 보고 직접 입력해 주세요.')}
+            : isBlankOptionalField
+              ? '선택 항목입니다. 처방전에 값이 있을 때만 입력해 주세요.'
+              : rawValue
+                ? `OCR 인식값: ${rawValue}`
+                : '인식된 값이 없습니다. 원본을 보고 직접 입력해 주세요.')}
         </p>
       </div>
     )
@@ -940,9 +1062,23 @@ function PrescriptionReviewPage() {
             const medicationName = group.fields.find(
               (field) => field.field_type === 'MEDICATION_NAME',
             )
-            const summaryValue = medicationName
-              ? draftValues[medicationName.field_id]
+            const medicationStrength = group.fields.find(
+              (field) => field.field_type === 'MEDICATION_STRENGTH',
+            )
+
+            const nameValue = medicationName
+              ? draftValues[medicationName.field_id]?.trim() ?? ''
               : ''
+
+            const strengthValue = medicationStrength
+              ? draftValues[medicationStrength.field_id]?.trim() ?? ''
+              : ''
+
+            // 편집 필드는 분리하지만 카드 제목에서는 처방전 표기처럼 함께 보여줍니다.
+            const summaryValue = [nameValue, strengthValue]
+              .filter(Boolean)
+              .join(' ')
+
             const getMedicationValue = (fieldType: string) => {
               const field = group.fields.find(
                 (item) => item.field_type === fieldType,
@@ -1007,7 +1143,9 @@ function PrescriptionReviewPage() {
                   disabled={!reviewReadyForAcknowledgement || isConfirming}
                   onChange={(event) => setUserConfirmed(event.target.checked)}
                 />
-                <span>원본 처방전과 모든 항목을 직접 확인했습니다.</span>
+                <span>
+                  원본 처방전의 필수 항목과 입력된 항목을 직접 확인했습니다.
+                </span>
               </label>
 
               {hasUnsavedChanges && (
@@ -1030,7 +1168,7 @@ function PrescriptionReviewPage() {
               </Button>
 
               <p className="prescription-review__progress">
-                {confirmedFieldCount}/{fields.length}개 항목 저장 완료
+                {confirmedFieldCount}/{reviewTargetFields.length}개 항목 저장 완료
               </p>
             </>
           )}

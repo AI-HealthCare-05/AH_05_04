@@ -56,7 +56,7 @@ class MedicalDocumentService:
         # 1차 구현 원사이클: JPG/PNG/PDF 처방전 한 장 업로드만 지원합니다. OCR 실행은 별도 API에서 처리합니다.
         if document_type != MedicalDocumentType.PRESCRIPTION:
             raise ApiError(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 code="VALIDATION_FAILED",
                 message="MVP에서는 처방전 문서만 업로드할 수 있습니다.",
                 details=[ErrorDetail(field="document_type", reason="INVALID_VALUE", rejected_value=str(document_type))],

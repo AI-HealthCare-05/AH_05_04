@@ -351,9 +351,9 @@ row·파일이 모두 0개인지 확인한다. 그때만 run-state를 삭제하�
 `ASGITransport`, dependency override 또는 fake model sentinel이 발견되면 실행 전 또는 DB 검증 단계에서
 실패한다.
 
-HTTP timeout은 connect 5초로 두고, OCR read는 `CLOVA_OCR_TIMEOUT_SECONDS + 5초`, Guide·Chat read는
-`OPENAI_TIMEOUT_SECONDS + 5초` 이상으로 각각 둔다. HTTP 실패 응답에서는
-status, 공통 오류 `code/details/trace_id`만 보존하고 token·질문·생성 본문은 보존하지 않는다.
+HTTP timeout은 connect 5초로 두고, OCR read timeout은 `CLOVA_OCR_TIMEOUT_SECONDS + E × OCR_STRUCTURE_TIMEOUT_SECONDS + 5초` 이상으로 둔다.
+`E`는 OCR LLM 구조화가 활성화되면 1, 비활성화되면 0이다. Guide·Chat read timeout은 `OPENAI_TIMEOUT_SECONDS + 5초` 이상으로 둔다.
+Runner가 모든 요청에 하나의 read timeout을 사용하므로 실제 값은 `max(C + E × S, T) + 5초`로 계산한다.
 
 API 호출에 사용한 session과 다른 새 DB session에서 다음을 확인한다.
 
