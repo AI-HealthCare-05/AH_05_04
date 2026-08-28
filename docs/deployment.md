@@ -95,10 +95,12 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N 
 | 대상 | 실제 전송 데이터 | Provider 저장·학습·보존 정책 확인 | 승인자·확인일 |
 | --- | --- | --- | --- |
 | CLOVA OCR | 처방전 파일과 OCR 요청 metadata: ____ | ____ | ____ |
-| OpenAI 가이드 | 확정 처방의 약물 필드: ____ | `store=False` 포함 실제 정책 확인: ____ | ____ |
+| OpenAI 가이드 | 0-based `source_index`와 파생 `guidance_intent`(`FOLLOW_CONFIRMED_TIMING` 또는 `FOLLOW_CONFIRMED_SCHEDULE`)만 전송. 약명·제품 함량·용량·단위·횟수·시점·기간·식별자는 전송 금지 | `store=False` 포함 실제 저장·학습·보존 정책 확인: ____ | ____ |
 | OpenAI 챗봇 | 현재 질문과 확정 약물 필드: ____ | `store=False` 포함 실제 정책 확인: ____ | ____ |
 
-승인 범위를 넘는 식별자, 이전 대화, OCR 원문·미검수 값이나 내부 오류 metadata가 외부 payload에 포함되면 배포하지 않습니다.
+가이드 `guidance_intent`는 확정 처방의 `timing_text` 존재 여부에서 파생된 의료 metadata이므로 단순 locator가 아니라 외부 전송 승인 대상으로 검토합니다. 승인 범위를 넘는 식별자, 원본 처방값, 이전 대화, OCR 원문·미검수 값이나 내부 오류 metadata가 외부 payload에 포함되면 배포하지 않습니다.
+
+`guide-prompt-v3`는 intent별 승인 guidance와 공통 notice만 선택하도록 제한하며 Backend가 index·intent·exact membership을 검증합니다. 이 제한 생성과 Local 합성 평가 통과는 현재 의료 AI Production 차단을 해제하지 않습니다.
 
 ## Production 실행 확인
 

@@ -71,6 +71,7 @@ class GuideService:
 
         guide = await self._repo.create(prescription_id=prescription.id)
 
+        failure_error: ApiError
         try:
             generation_input = GuideGenerationInput(
                 medications=[
@@ -87,32 +88,32 @@ class GuideService:
                 ]
             )
             result = await self._generator.generate(generation_input)
-        except GuideGenerationTimeoutError as err:
+        except GuideGenerationTimeoutError:
             await self._repo.mark_failed(
                 guide,
                 error_code="OPENAI_API_TIMEOUT",
                 error_message=_TIMEOUT_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
-            raise ApiError(
+            failure_error = ApiError(
                 status_code=504,
                 code="GATEWAY_TIMEOUT",
                 message="외부 처리 시간이 초과되었습니다. 다시 시도해 주세요.",
                 details=[ErrorDetail(field="openai_api", reason="OPENAI_API_TIMEOUT")],
-            ) from err
-        except GuideGenerationUnavailableError as err:
+            )
+        except GuideGenerationUnavailableError:
             await self._repo.mark_failed(
                 guide,
                 error_code="OPENAI_API_ERROR",
                 error_message=_UNAVAILABLE_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
-            raise ApiError(
+            failure_error = ApiError(
                 status_code=503,
                 code="SERVICE_UNAVAILABLE",
                 message="현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
                 details=[ErrorDetail(field="openai_api", reason="OPENAI_API_ERROR")],
-            ) from err
+            )
         except Exception as err:
             # Provider payload와 예외 본문은 기록하지 않고 분류명만 남겨 live 진단을 가능하게 합니다.
             rule_id = err.rule_id if isinstance(err, GuideGenerationSafetyError) else "NOT_APPLICABLE"
@@ -127,22 +128,24 @@ class GuideService:
                 error_message=_GENERATION_FAILED_ERROR_MESSAGE,
                 completed_at=datetime.now(UTC),
             )
-            raise ApiError(
+            failure_error = ApiError(
                 status_code=500,
                 code="GUIDE_GENERATION_FAILED",
                 message="복약 가이드 생성에 실패했습니다. 다시 시도해 주세요.",
                 details=[ErrorDetail(field="guide", reason="GENERATION_REQUEST_FAILED")],
-            ) from err
+            )
+        else:
+            guide = await self._repo.mark_completed(
+                guide,
+                content=result.content,
+                model_name=result.model_name,
+                prompt_version=result.prompt_version,
+                completed_at=datetime.now(UTC),
+            )
+            return _to_guide_data(guide)
 
-        guide = await self._repo.mark_completed(
-            guide,
-            content=result.content,
-            model_name=result.model_name,
-            prompt_version=result.prompt_version,
-            completed_at=datetime.now(UTC),
-        )
-
-        return _to_guide_data(guide)
+        # except handler 밖에서 raise해야 비식별 API 오류가 원본 예외를 __context__로 보유하지 않습니다.
+        raise failure_error
 
     async def get_guide_detail(self, *, user: User, guide_id: UUID) -> GuideData:
         # 지원 API: 새로고침·재조회용. one-cycle 최초 생성 흐름에는 필요하지 않습니다.

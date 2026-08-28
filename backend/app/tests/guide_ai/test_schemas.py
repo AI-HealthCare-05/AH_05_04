@@ -7,6 +7,7 @@ from app.services.guide_ai.schemas import (
     GeneratedGuideDraft,
     GeneratedMedicationGuidance,
     GuideGenerationInput,
+    GuideGuidanceIntent,
     MedicationInput,
 )
 
@@ -49,7 +50,13 @@ def test_guide_input_requires_at_least_one_medication_and_forbids_extra_fields()
 
 def test_generated_draft_strips_text_and_forbids_unknown_fields() -> None:
     draft = GeneratedGuideDraft(
-        medications=[GeneratedMedicationGuidance(source_index=0, guidance="  처방 지시를 따라 복용해 주세요.  ")],
+        medications=[
+            GeneratedMedicationGuidance(
+                source_index=0,
+                guidance_intent=GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                guidance="  처방 지시를 따라 복용해 주세요.  ",
+            )
+        ],
         general_notice="  궁금한 점은 의료진에게 확인해 주세요.  ",
     )
 
@@ -59,25 +66,44 @@ def test_generated_draft_strips_text_and_forbids_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         GeneratedGuideDraft.model_validate(
             {
-                "medications": [{"source_index": 0, "guidance": "안내", "medication_name": "조작된 약명"}],
+                "medications": [
+                    {
+                        "source_index": 0,
+                        "guidance_intent": GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                        "guidance": "안내",
+                        "medication_name": "조작된 약명",
+                    }
+                ],
                 "general_notice": "안내",
             }
         )
 
 
-def test_generated_draft_normalizes_unicode_without_hiding_control_characters() -> None:
+def test_generated_draft_normalizes_unicode_and_trim_without_hiding_internal_characters() -> None:
     draft = GeneratedGuideDraft(
-        medications=[GeneratedMedicationGuidance(source_index=0, guidance="  A\u030a약  안내\t문  ")],
+        medications=[
+            GeneratedMedicationGuidance(
+                source_index=0,
+                guidance_intent=GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                guidance="  A\u030a약  안내\t문  ",
+            )
+        ],
         general_notice="  공통   안내  ",
     )
 
-    assert draft.medications[0].guidance == "Å약 안내\t문"
-    assert draft.general_notice == "공통 안내"
+    assert draft.medications[0].guidance == "Å약  안내\t문"
+    assert draft.general_notice == "공통   안내"
 
 
 def test_generated_text_length_limits_apply_after_display_normalization() -> None:
     draft = GeneratedGuideDraft(
-        medications=[GeneratedMedicationGuidance(source_index=0, guidance=f"  {'가' * 150}  ")],
+        medications=[
+            GeneratedMedicationGuidance(
+                source_index=0,
+                guidance_intent=GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                guidance=f"  {'가' * 150}  ",
+            )
+        ],
         general_notice=f"  {'나' * 300}  ",
     )
 
@@ -87,9 +113,45 @@ def test_generated_text_length_limits_apply_after_display_normalization() -> Non
 
 def test_generated_text_rejects_non_string_values_as_validation_errors() -> None:
     with pytest.raises(ValidationError):
-        GeneratedMedicationGuidance.model_validate({"source_index": 0, "guidance": 123})
+        GeneratedMedicationGuidance.model_validate(
+            {
+                "source_index": 0,
+                "guidance_intent": GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                "guidance": 123,
+            }
+        )
 
 
 def test_generated_output_rejects_coerced_source_indexes() -> None:
     with pytest.raises(ValidationError):
-        GeneratedMedicationGuidance.model_validate({"source_index": "0", "guidance": "안내를 확인해 주세요."})
+        GeneratedMedicationGuidance.model_validate(
+            {
+                "source_index": "0",
+                "guidance_intent": GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                "guidance": "안내를 확인해 주세요.",
+            }
+        )
+
+
+def test_guidance_intent_enum_matches_confirmed_prescription_contract() -> None:
+    assert {intent.value for intent in GuideGuidanceIntent} == {
+        "FOLLOW_CONFIRMED_TIMING",
+        "FOLLOW_CONFIRMED_SCHEDULE",
+    }
+
+
+def test_generated_medication_guidance_requires_strict_intent_echo() -> None:
+    guidance = GeneratedMedicationGuidance.model_validate_json(
+        '{"source_index":0,"guidance_intent":"FOLLOW_CONFIRMED_TIMING",'
+        '"guidance":"안내된 복용 시점을 확인해 그대로 따라 주세요."}'
+    )
+
+    assert guidance.guidance_intent.value == "FOLLOW_CONFIRMED_TIMING"
+
+    with pytest.raises(ValidationError):
+        GeneratedMedicationGuidance.model_validate(
+            {
+                "source_index": 0,
+                "guidance": "안내된 복용 시점을 확인해 그대로 따라 주세요.",
+            }
+        )

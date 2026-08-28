@@ -1,14 +1,19 @@
 import re
 import unicodedata
+from collections.abc import Mapping
 
 from app.services.guide_ai.exceptions import GuideGenerationSafetyError
-from app.services.guide_ai.schemas import GeneratedGuideDraft
+from app.services.guide_ai.prompt import APPROVED_GENERAL_NOTICES, APPROVED_GUIDANCE_BY_INTENT
+from app.services.guide_ai.schemas import GeneratedGuideDraft, GuideGuidanceIntent
 
 RULE_PRESCRIPTION_MISMATCH = "PRESCRIPTION_MISMATCH"
 RULE_NUMERIC_IN_AI_TEXT = "RX_NUMERIC_IN_AI_TEXT"
 RULE_CHANGE_DIRECTIVE = "RX_CHANGE_DIRECTIVE"
 RULE_MEDICAL_CLAIM = "RX_MEDICAL_CLAIM"
 RULE_UNSAFE_MARKUP = "UNSAFE_MARKUP"
+RULE_GUIDANCE_INTENT_MISMATCH = "GUIDANCE_INTENT_MISMATCH"
+RULE_UNAPPROVED_GUIDANCE = "UNAPPROVED_GUIDANCE"
+RULE_UNAPPROVED_GENERAL_NOTICE = "UNAPPROVED_GENERAL_NOTICE"
 
 _ZERO_WIDTH_OR_BIDI = re.compile("[\u200b-\u200d\u202a-\u202e\u2066-\u2069\ufeff]")
 _HTML_TAG = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>")
@@ -76,11 +81,26 @@ def _validate_text(text: str) -> None:
             raise GuideGenerationSafetyError(RULE_CHANGE_DIRECTIVE)
 
 
-def validate_generated_draft(draft: GeneratedGuideDraft, *, medication_count: int) -> None:
+def _normalize_for_membership(text: str) -> str:
+    return unicodedata.normalize("NFC", text).strip()
+
+
+def validate_generated_draft(
+    draft: GeneratedGuideDraft,
+    *,
+    expected_intents: Mapping[int, GuideGuidanceIntent],
+) -> None:
     indexes = [item.source_index for item in draft.medications]
-    if len(indexes) != medication_count or sorted(indexes) != list(range(medication_count)):
+    if len(indexes) != len(expected_intents) or set(indexes) != set(expected_intents):
         raise GuideGenerationSafetyError(RULE_PRESCRIPTION_MISMATCH)
 
     for item in draft.medications:
+        expected_intent = expected_intents[item.source_index]
+        if item.guidance_intent is not expected_intent:
+            raise GuideGenerationSafetyError(RULE_GUIDANCE_INTENT_MISMATCH)
         _validate_text(item.guidance)
+        if _normalize_for_membership(item.guidance) not in APPROVED_GUIDANCE_BY_INTENT[expected_intent]:
+            raise GuideGenerationSafetyError(RULE_UNAPPROVED_GUIDANCE)
     _validate_text(draft.general_notice)
+    if _normalize_for_membership(draft.general_notice) not in APPROVED_GENERAL_NOTICES:
+        raise GuideGenerationSafetyError(RULE_UNAPPROVED_GENERAL_NOTICE)

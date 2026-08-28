@@ -9,6 +9,8 @@
 | 문서 상태 | Implemented — PR #19 구현 및 Issue #48 코드·계약 정합성 검토 반영 |
 | 담당 범위 | 프롬프트, OpenAI 생성, 응답 검증, AI 단위 테스트·스모크 검증 |
 
+> **Superseded:** 이 문서는 Issue #11·#48의 `guide-prompt-v2` 구현 기록이다. 현재 Guide AI 런타임과 계약은 Issue #110의 [`medication-guide-ai-v3-design.md`](./medication-guide-ai-v3-design.md) 및 [`medication-guide-ai-backend.md`](../../contracts/current/medication-guide-ai-backend.md)를 따른다. 아래 v2 내용은 변경 이력으로 보존한다.
+
 동기 MVP 구현은 FastAPI 프로세스의 `backend/app/services/guide_ai/`에 위치한다. 정현우는 프롬프트, AI 생성·검증·렌더링 로직과 기본 테스트·스모크 검증을 담당하고, 송은영은 API, 처방 조회, GUIDE 저장, 트랜잭션과 HTTP 오류 처리를 담당한다. 이 역할과 코드 위치는 두 담당자가 합의했다.
 
 ## 배경

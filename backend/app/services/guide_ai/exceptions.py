@@ -3,7 +3,7 @@ class GuideGenerationError(Exception):
 
 
 class GuideGenerationInputError(GuideGenerationError):
-    """Reserved for a future Backend input-conversion boundary."""
+    """Raised when confirmed medication input violates the Guide AI preconditions."""
 
 
 class GuideGenerationTimeoutError(GuideGenerationError):

@@ -21,7 +21,7 @@ from app.services.guide_ai.exceptions import (
     GuideGenerationTimeoutError,
     GuideGenerationUnavailableError,
 )
-from app.services.guide_ai.schemas import GeneratedGuideDraft, GeneratedMedicationGuidance
+from app.services.guide_ai.schemas import GeneratedGuideDraft, GeneratedMedicationGuidance, GuideGuidanceIntent
 
 
 class FakeResponses:
@@ -54,8 +54,14 @@ class RaisingAsyncOpenAI:
 
 def _draft() -> GeneratedGuideDraft:
     return GeneratedGuideDraft(
-        medications=[GeneratedMedicationGuidance(source_index=0, guidance="처방 지시를 확인해 주세요.")],
-        general_notice="궁금한 점은 의료진에게 확인해 주세요.",
+        medications=[
+            GeneratedMedicationGuidance(
+                source_index=0,
+                guidance_intent=GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                guidance="안내된 복용 시점을 확인해 그대로 따라 주세요.",
+            )
+        ],
+        general_notice="불명확한 내용은 의료진 또는 약사에게 확인해 주세요.",
     )
 
 
@@ -83,7 +89,7 @@ async def test_client_uses_non_streaming_parse_and_returns_single_parsed_draft()
     result = await client.generate(
         model="gpt-4o-mini",
         instructions="system rules",
-        input_json='[{"source_index":0}]',
+        input_json='{"medications":[{"source_index":0,"guidance_intent":"FOLLOW_CONFIRMED_TIMING"}]}',
         max_output_tokens=560,
     )
 
@@ -92,7 +98,12 @@ async def test_client_uses_non_streaming_parse_and_returns_single_parsed_draft()
     assert sdk_client.responses.kwargs == {
         "model": "gpt-4o-mini",
         "instructions": "system rules",
-        "input": [{"role": "user", "content": '[{"source_index":0}]'}],
+        "input": [
+            {
+                "role": "user",
+                "content": '{"medications":[{"source_index":0,"guidance_intent":"FOLLOW_CONFIRMED_TIMING"}]}',
+            }
+        ],
         "text_format": GeneratedGuideDraft,
         "max_output_tokens": 560,
         "store": False,

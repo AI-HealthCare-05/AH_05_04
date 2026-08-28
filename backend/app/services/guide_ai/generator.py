@@ -5,6 +5,7 @@ import math
 from app.services.guide_ai.client import GuideProvider
 from app.services.guide_ai.exceptions import (
     GuideGenerationConfigurationError,
+    GuideGenerationInputError,
     GuideGenerationInvalidResponseError,
     GuideGenerationTimeoutError,
 )
@@ -13,6 +14,8 @@ from app.services.guide_ai.renderer import render_plaintext_guide
 from app.services.guide_ai.schemas import (
     GuideGenerationInput,
     GuideGenerationResult,
+    GuideGuidanceIntent,
+    MedicationInput,
 )
 from app.services.guide_ai.validators import validate_generated_draft
 
@@ -26,7 +29,11 @@ class GuideGenerator:
         self._timeout_seconds = timeout_seconds
 
     async def generate(self, guide_input: GuideGenerationInput) -> GuideGenerationResult:
-        input_json = self._build_provider_input(guide_input)
+        expected_intents = {
+            source_index: classify_guidance_intent(medication)
+            for source_index, medication in enumerate(guide_input.medications)
+        }
+        input_json = self._build_provider_input(expected_intents)
         try:
             async with asyncio.timeout(self._timeout_seconds):
                 provider_response = await self._provider.generate(
@@ -41,7 +48,7 @@ class GuideGenerator:
         if not provider_response.model_name.strip() or len(provider_response.model_name) > 100:
             raise GuideGenerationInvalidResponseError("Provider model identifier is invalid")
 
-        validate_generated_draft(provider_response.draft, medication_count=len(guide_input.medications))
+        validate_generated_draft(provider_response.draft, expected_intents=expected_intents)
         content = render_plaintext_guide(guide_input, provider_response.draft)
         return GuideGenerationResult(
             content=content,
@@ -50,10 +57,21 @@ class GuideGenerator:
         )
 
     @staticmethod
-    def _build_provider_input(guide_input: GuideGenerationInput) -> str:
-        # 확정 처방값은 Backend renderer가 붙이므로 Provider에는 순서 locator만 전달합니다.
-        # 불필요한 처방값 노출과 모델의 숫자·단위 재생성을 함께 차단합니다.
+    def _build_provider_input(expected_intents: dict[int, GuideGuidanceIntent]) -> str:
         return json.dumps(
-            [{"source_index": source_index} for source_index, _ in enumerate(guide_input.medications)],
+            {
+                "medications": [
+                    {"source_index": source_index, "guidance_intent": intent.value}
+                    for source_index, intent in expected_intents.items()
+                ]
+            },
             separators=(",", ":"),
         )
+
+
+def classify_guidance_intent(medication: MedicationInput) -> GuideGuidanceIntent:
+    if medication.frequency_per_day is None:
+        raise GuideGenerationInputError("Guide generation input is invalid")
+    if medication.timing_text is not None:
+        return GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING
+    return GuideGuidanceIntent.FOLLOW_CONFIRMED_SCHEDULE
