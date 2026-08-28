@@ -29,6 +29,7 @@ class TestLoginAPI:
             response = await client.post("/api/v1/auth/login", json=login_data)
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
+        assert response.headers.get_list("cache-control") == ["no-store"]
         # 쿠키 검증 대신 응답 헤더 확인
         assert any("refresh_token" in header for header in response.headers.get_list("set-cookie"))
 
@@ -60,6 +61,7 @@ class TestLoginAPI:
         assert signup_response.status_code == status.HTTP_201_CREATED
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_login_invalid_credentials(self):
         login_data = {"email": "nonexistent@example.com", "password": "WrongPassword123!"}
@@ -69,6 +71,7 @@ class TestLoginAPI:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "UNAUTHORIZED"
         assert response.headers["www-authenticate"] == "Bearer"
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_login_rejects_wrong_password_for_existing_user(self):
         signup_data = {
@@ -87,6 +90,7 @@ class TestLoginAPI:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "UNAUTHORIZED"
         assert response.headers["www-authenticate"] == "Bearer"
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_login_rejects_inactive_account(self):
         inactive_user = User(
@@ -116,3 +120,4 @@ class TestLoginAPI:
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert response.json()["code"] == "FORBIDDEN"
+        assert response.headers.get_list("cache-control") == ["no-store"]

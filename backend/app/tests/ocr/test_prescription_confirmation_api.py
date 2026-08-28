@@ -198,11 +198,12 @@ async def test_confirm_prescription_api_rejects_invalid_numeric_value() -> None:
     assert body["code"] == "VALIDATION_FAILED"
     assert body["message"] == "입력값을 확인해 주세요."
     assert body["trace_id"]
+    # OCR 원문(용량 텍스트)을 응답에 그대로 노출하지 않습니다.
     assert body["details"] == [
         {
             "field": "medications[1].dose_value",
             "reason": "INVALID_FORMAT",
-            "rejected_value": "약 반 알",
+            "rejected_value": None,
         }
     ]
 
