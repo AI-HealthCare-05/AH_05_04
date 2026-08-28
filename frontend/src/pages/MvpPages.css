@@ -11,6 +11,12 @@
   min-height: 100dvh;
 }
 
+.mvp-start-page,
+.mvp-auth-page {
+  --ds-action: #0066cc;
+  --ds-action-pressed: #0052a3;
+}
+
 .mvp-page__content {
   padding: 20px 20px calc(96px + var(--ds-safe-bottom));
 }
@@ -34,60 +40,54 @@
 }
 
 .mvp-start {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  padding-top: 42px;
+  display: flex;
+  flex-direction: column;
+  padding-top: 28px;
+  background: #fff;
+}
+
+.mvp-start__welcome {
+  min-height: 193px;
+  position: relative;
 }
 
 .mvp-start__brand {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 112px;
-}
-
-.mvp-start__brand > div {
   display: grid;
-  gap: 2px;
+  gap: 0;
 }
 
 .mvp-start__brand strong {
   color: var(--ds-action);
-  font-size: 36px;
-  line-height: 1;
-  letter-spacing: -.05em;
+  font-size: 48px;
+  line-height: 1.2;
+  letter-spacing: -.04em;
 }
 
-.mvp-start__brand > div > span {
-  font-size: 18px;
+.mvp-start__brand > span {
+  font-size: 27px;
+  line-height: 1.22;
   font-weight: 900;
 }
 
-.mvp-start__brand-mark {
-  width: 72px;
-  height: 72px;
-  flex-basis: 72px;
-  border-radius: 24px;
-}
-
-.mvp-start__brand-mark .brand-mark__ring {
-  width: 22px;
-  height: 22px;
-  border-width: 2px;
+.mvp-start__welcome > .dosey-mascot {
+  position: absolute;
+  top: 0;
+  right: 12px;
 }
 
 .mvp-start__hero {
   display: grid;
-  gap: 2px;
-  padding: 2px 0 4px;
+  gap: 0;
+  margin-top: 27px;
 }
 
 .mvp-start__hero p {
   margin: 0;
   color: var(--ds-text-muted);
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 23px;
+  font-weight: 500;
+  line-height: 1.22;
+  letter-spacing: -.035em;
 }
 
 .mvp-start__hero h1 {
@@ -100,54 +100,142 @@
 .mvp-start__features {
   display: grid;
   gap: 8px;
+  margin-top: 33px;
 }
 
 .mvp-start__features > span {
-  min-height: 46px;
+  min-height: 50px;
   display: flex;
   align-items: center;
-  padding: 0 14px;
-  border-radius: 13px;
+  padding: 0 18px;
+  border-radius: 16px;
   background: #edf1f5;
   color: #252931;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
 }
 
 .mvp-start__notice {
-  margin: 2px 0 0;
-  border-color: #ead9a6;
-  background: #fff9e7;
+  min-height: 86px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  margin: 20px 0 0;
+  padding: 14px 17px;
+  border-color: #efca72;
+  background: #fff9e9;
+  color: var(--ds-text);
+  font-weight: 800;
 }
 
 .mvp-start > .ds-button {
-  margin-top: -1px;
+  margin-top: 12px;
 }
 
 .mvp-start__login {
-  margin-top: 0;
+  align-self: center;
+  margin-top: 23px;
+  color: var(--ds-action);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 17px;
+  text-decoration: none;
 }
 
 .mvp-auth {
-  padding-top: 0;
+  padding-top: 39px;
 }
 
 .mvp-auth__intro {
-  margin-bottom: 24px;
+  min-height: 92px;
+  margin-bottom: 53px;
 }
 
 .mvp-auth__intro .mvp-page__description {
   margin-bottom: 0;
 }
 
-.mvp-auth__form {
-  gap: 16px;
+.mvp-auth .mvp-page__title {
+  font-size: 25px;
+  line-height: 1.25;
+}
+
+.mvp-form.mvp-auth__form {
+  gap: 12px;
+}
+
+.mvp-auth__fields {
+  display: grid;
+  gap: 19px;
+}
+
+.mvp-auth .mvp-form__field {
+  gap: 6px;
+  font-size: 12px;
+}
+
+.mvp-auth .mvp-form__field > label {
+  line-height: 15px;
+}
+
+.mvp-auth .mvp-form__field input {
+  min-height: 48px;
+  padding-inline: 16px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+
+.mvp-auth .mvp-form__field:has(.mvp-form__field-error) {
+  gap: 5px;
 }
 
 .mvp-auth__notice {
-  margin-top: 0;
-  border-color: #ead9a6;
-  background: #fff9e7;
+  min-height: 86px;
+  display: flex;
+  align-items: center;
+  margin-top: 3px;
+  padding: 14px 17px;
+  border-color: #efca72;
+  background: #fff9e9;
+  color: var(--ds-text);
+  font-weight: 800;
+}
+
+.mvp-form__footer.mvp-auth__signup-link {
+  margin-top: 23px;
+  font-size: 14px;
+  line-height: 17px;
+}
+
+.mvp-auth__signup-link + .mvp-auth__notice {
+  margin-top: 22px;
+}
+
+.mvp-login-page .mvp-auth__form > .ds-button {
+  margin-top: 3px;
+}
+
+.mvp-auth-page .app-topbar {
+  min-height: 68px;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 0;
+  background: #fff;
+  backdrop-filter: none;
+}
+
+.mvp-auth-page .app-topbar .icon-button {
+  min-width: 18px;
+  min-height: 36px;
+  margin: 0;
+}
+
+.mvp-auth-page .app-topbar h1 {
+  font-size: 17px;
+}
+
+.mvp-auth-page .mobile-app {
+  background: var(--ds-canvas);
 }
 
 .mvp-page__description {
@@ -155,6 +243,12 @@
   color: var(--ds-text-muted);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.mvp-auth .mvp-page__description {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .mvp-page__hero {
@@ -392,6 +486,13 @@
   line-height: 1.55;
 }
 
+.mvp-form__field-error {
+  color: var(--ds-danger);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .mvp-form__footer {
   margin: 14px 0 0;
   color: var(--ds-text-muted);
@@ -569,19 +670,22 @@
   }
 
   .mvp-start__hero h1 {
-    font-size: 22px;
+    font-size: 23px;
   }
 
   .mvp-start__features {
     gap: 7px;
   }
 
-  .mvp-start__brand strong {
-    font-size: 32px;
+  .mvp-start__welcome > .dosey-mascot {
+    right: 0;
   }
 
-  .mvp-start__brand-mark {
-    width: 64px;
-    height: 64px;
+  .mvp-start__hero p {
+    font-size: 21px;
+  }
+
+  .mvp-auth__intro {
+    margin-bottom: 45px;
   }
 }
