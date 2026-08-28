@@ -41,7 +41,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/')
 
-    expect(await screen.findByRole('heading', { name: '오늘 약도 챙겨볼까요?' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
   })
 
   it('비로그인 사용자가 회원 전용 화면에 직접 접속하면 로그인 화면으로 이동한다', () => {
@@ -63,7 +63,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/login')
 
-    expect(await screen.findByRole('heading', { name: '오늘 약도 챙겨볼까요?' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
   })
 
   it('로그인 사용자가 회원가입 화면에 접속하면 홈 화면으로 이동한다', async () => {
@@ -71,7 +71,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/signup')
 
-    expect(await screen.findByRole('heading', { name: '오늘 약도 챙겨볼까요?' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
   })
 
   it('남아 있는 토큰이 만료된 경우 로그인 화면 진입을 허용한다', async () => {
