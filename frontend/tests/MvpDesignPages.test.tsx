@@ -24,7 +24,16 @@ describe('Dosey MVP design pages', () => {
     expect(
       screen.getByRole('heading', { name: 'AI 복약 파트너' }),
     ).toBeTruthy()
-    expect(screen.getByRole('link', { name: '로그인' }).getAttribute('href')).toBe('/login')
+    expect(screen.getByText('처방전 등록')).toBeTruthy()
+    expect(screen.getByText('쉬운 가이드')).toBeTruthy()
+    expect(screen.getByText('복약 챗봇 도지')).toBeTruthy()
+    expect(screen.getByText('복약 지속 도움')).toBeTruthy()
+    expect(screen.getByText('AI가 처방을 바꾸지 않아요.')).toBeTruthy()
+    expect(
+      screen
+        .getByRole('link', { name: '이미 계정이 있어요 · 로그인' })
+        .getAttribute('href'),
+    ).toBe('/login')
     fireEvent.click(
       screen.getByRole('button', { name: '회원가입하고 시작하기' }),
     )

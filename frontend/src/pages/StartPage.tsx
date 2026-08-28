@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { Button, MobileShell } from '../design-system/components'
+import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
@@ -10,20 +11,17 @@ function StartPage() {
     <div className="mvp-page mvp-start-page">
       <MobileShell hideHeader hideNavigation>
         <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-start">
-          <header className="mvp-start__brand">
-            <div>
+          <header className="mvp-start__welcome">
+            <div className="mvp-start__brand">
               <strong>Dosey</strong>
               <span>도지</span>
             </div>
-            <span className="brand-mark mvp-start__brand-mark" aria-hidden="true">
-              <span className="brand-mark__ring" />
-            </span>
+            <DoseyMascot variant="welcome" />
+            <div className="mvp-start__hero">
+              <p>내 처방을 이해하고 함께하는</p>
+              <h1>AI 복약 파트너</h1>
+            </div>
           </header>
-
-          <section className="mvp-start__hero">
-            <p>내 처방을 이해하고 함께하는</p>
-            <h1>AI 복약 파트너</h1>
-          </section>
 
           <div className="mvp-start__features" aria-label="Dosey 주요 기능">
             <span>처방전 등록</span>
@@ -33,16 +31,17 @@ function StartPage() {
           </div>
 
           <div className="notice attention mvp-start__notice">
-            처방전 확인, 복약 가이드와 복약 질문 기능을 제공합니다.
+            <strong>AI가 처방을 바꾸지 않아요.</strong>
+            <span>확인된 처방과 출처 범위에서만 안내합니다.</span>
           </div>
 
           <Button fullWidth onClick={() => navigate('/signup')}>
             회원가입하고 시작하기
           </Button>
 
-          <p className="mvp-form__footer mvp-start__login">
-            이미 계정이 있나요? <Link to="/login">로그인</Link>
-          </p>
+          <Link className="mvp-start__login" to="/login">
+            이미 계정이 있어요 · 로그인
+          </Link>
         </main>
       </MobileShell>
     </div>
