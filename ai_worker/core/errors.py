@@ -105,3 +105,21 @@ class HandlerExecutionError(WorkerError):
             failure_code="INTERNAL_ERROR",
         )
         self.handler_type = handler_type
+
+
+class ConsumerPersistenceError(WorkerError):
+    """Worker 결과 저장 또는 DB commit 실패를 안전하게 변환합니다."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            failure_code="DEPENDENCY_UNAVAILABLE",
+        )
+
+
+class ConsumerAcknowledgementError(WorkerError):
+    """DB commit 이후 Stream ACK 실패를 안전하게 변환합니다."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            failure_code="DEPENDENCY_UNAVAILABLE",
+        )
