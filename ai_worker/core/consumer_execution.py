@@ -1,5 +1,6 @@
 """Handler 결과 검증 이후 저장·commit·ACK 순서를 조정합니다."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -7,6 +8,7 @@ from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.errors import (
     ConsumerAcknowledgementError,
     ConsumerPersistenceError,
+    WorkerError,
 )
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.schemas.messages import WorkerMessage
@@ -82,7 +84,14 @@ class ConsumerExecution:
     async def execute(self, delivery: WorkerDelivery) -> HandlerSuccess:
         """검증된 결과를 저장·commit한 뒤에만 ACK합니다."""
 
-        result = await self._dispatcher.dispatch(delivery.message)
+        try:
+            result = await self._dispatcher.dispatch(delivery.message)
+        except (WorkerError, asyncio.CancelledError):
+            # Handler가 같은 transaction에 이미 변경을 남겼을 수 있으므로
+            # 결과 검증 실패도 Consumer의 정리 범위에서 rollback합니다.
+            await self._rollback_safely()
+            raise
+
         persistence_error: ConsumerPersistenceError | None = None
 
         try:
@@ -91,6 +100,11 @@ class ConsumerExecution:
                 result=result,
             )
             await self._transaction.commit()
+        except asyncio.CancelledError:
+            # CancelledError는 BaseException이라 아래 except Exception에
+            # 잡히지 않으므로 별도로 정리한 뒤 그대로 전파합니다.
+            await self._rollback_safely()
+            raise
         except Exception:
             await self._rollback_safely()
             persistence_error = ConsumerPersistenceError()
@@ -111,8 +125,6 @@ class ConsumerExecution:
             # commit은 이미 완료됐으므로 rollback하지 않습니다.
             # 활성 예외 구간 밖에서 안전한 오류를 발생시킵니다.
             raise acknowledgement_error
-
-        return result
 
         return result
 

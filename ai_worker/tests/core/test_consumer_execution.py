@@ -1,12 +1,13 @@
 """Consumer의 저장·commit·ACK 실행 순서를 검증합니다."""
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
 from ai_worker.core.consumer_execution import ConsumerExecution, WorkerDelivery
-from ai_worker.core.dispatcher import Dispatcher
+from ai_worker.core.dispatcher import Dispatcher, HandlerExecutionError
 from ai_worker.core.errors import (
     ConsumerAcknowledgementError,
     ConsumerPersistenceError,
@@ -43,10 +44,19 @@ def build_message() -> WorkerMessage:
 class FakeHandler:
     handler_type = JobType.OCR
 
-    def __init__(self, *, mismatched: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        mismatched: bool = False,
+        error: BaseException | None = None,
+    ) -> None:
         self._mismatched = mismatched
+        self._error = error
 
     async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        if self._error is not None:
+            raise self._error
+
         return HandlerSuccess(
             event_id=message.event_id,
             job_id=uuid4() if self._mismatched else message.job_id,
@@ -176,7 +186,7 @@ async def test_consumer_acknowledges_only_after_save_and_commit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumer_does_not_run_side_effects_for_mismatched_result() -> None:
+async def test_consumer_rolls_back_without_side_effects_for_mismatched_result() -> None:
     events: list[str] = []
     execution, acknowledger = build_execution(
         handler=FakeHandler(mismatched=True),
@@ -190,7 +200,8 @@ async def test_consumer_does_not_run_side_effects_for_mismatched_result() -> Non
     with pytest.raises(HandlerResultMismatchError):
         await execution.execute(delivery)
 
-    assert events == []
+    # 저장·commit·ACK는 실행되지 않고 rollback만 수행합니다.
+    assert events == ["rollback"]
     assert acknowledger.acknowledged_ids == []
 
 
@@ -311,3 +322,78 @@ def test_worker_delivery_rejects_blank_stream_message_id(
             stream_message_id=stream_message_id,
             message=build_message(),
         )
+
+
+@pytest.mark.asyncio
+async def test_mismatched_result_keeps_original_error_when_rollback_fails() -> None:
+    """rollback 실패가 원래 검증 오류를 덮어쓰지 않게 합니다."""
+
+    events: list[str] = []
+    execution, acknowledger = build_execution(
+        handler=FakeHandler(mismatched=True),
+        events=events,
+        fail_rollback=True,
+    )
+    delivery = WorkerDelivery(
+        stream_message_id="1005-0",
+        message=build_message(),
+    )
+
+    with pytest.raises(HandlerResultMismatchError) as exc_info:
+        await execution.execute(delivery)
+
+    error = exc_info.value
+
+    assert events == ["rollback"]
+    assert acknowledger.acknowledged_ids == []
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_consumer_rolls_back_and_does_not_ack_when_handler_raises() -> None:
+    """Handler 예외에서도 rollback하고 ACK하지 않습니다."""
+
+    events: list[str] = []
+    execution, acknowledger = build_execution(
+        handler=FakeHandler(
+            error=RuntimeError("synthetic sensitive handler failure"),
+        ),
+        events=events,
+    )
+    delivery = WorkerDelivery(
+        stream_message_id="1006-0",
+        message=build_message(),
+    )
+
+    with pytest.raises(HandlerExecutionError) as exc_info:
+        await execution.execute(delivery)
+
+    error = exc_info.value
+
+    assert events == ["rollback"]
+    assert acknowledger.acknowledged_ids == []
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert "synthetic sensitive handler failure" not in str(error)
+
+
+@pytest.mark.asyncio
+async def test_consumer_rolls_back_and_does_not_ack_when_cancelled() -> None:
+    """실행 취소에서도 rollback하고 ACK하지 않습니다."""
+
+    events: list[str] = []
+    execution, acknowledger = build_execution(
+        handler=FakeHandler(error=asyncio.CancelledError()),
+        events=events,
+    )
+    delivery = WorkerDelivery(
+        stream_message_id="1007-0",
+        message=build_message(),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await execution.execute(delivery)
+
+    assert events == ["rollback"]
+    assert acknowledger.acknowledged_ids == []
