@@ -32,6 +32,7 @@ class TestUserMeApis:
         assert response.json()["gender"] is None
         assert response.json()["birthday"] is None
         assert response.json()["phone_number"] is None
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_update_user_me_success(self):
         # 사용자 등록 및 로그인
@@ -58,6 +59,7 @@ class TestUserMeApis:
         assert response.json()["gender"] is None
         assert response.json()["birthday"] is None
         assert response.json()["phone_number"] is None
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_update_user_me_rejects_post_mvp_profile_fields(self):
         email = "update_profile_fields@example.com"
@@ -81,11 +83,13 @@ class TestUserMeApis:
             response = await client.patch("/api/v1/users/me", json=update_data, headers=headers)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_get_user_me_unauthorized(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/users/me")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_get_user_me_rejects_invalid_access_token(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -97,6 +101,7 @@ class TestUserMeApis:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "INVALID_TOKEN"
         assert response.headers["www-authenticate"] == "Bearer"
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_get_user_me_rejects_expired_access_token(self):
         expired_token = AccessToken()
@@ -115,6 +120,7 @@ class TestUserMeApis:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "EXPIRED_TOKEN"
         assert response.headers["www-authenticate"] == "Bearer"
+        assert response.headers.get_list("cache-control") == ["no-store"]
 
     async def test_get_user_me_rejects_refresh_token_used_as_access_token(self):
         refresh_token = RefreshToken()
@@ -128,3 +134,4 @@ class TestUserMeApis:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["code"] == "INVALID_TOKEN"
+        assert response.headers.get_list("cache-control") == ["no-store"]
