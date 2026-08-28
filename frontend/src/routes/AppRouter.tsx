@@ -8,6 +8,7 @@ import PrescriptionReviewPage from '../pages/PrescriptionReviewPage'
 import GuidePage from '../pages/GuidePage'
 import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
+import ProfilePage from '../pages/ProfilePage'
 
 function AppRouter() {
   return (
@@ -23,6 +24,7 @@ function AppRouter() {
         <Route path="/guides/:guideId" element={<GuidePage />} />
         <Route path="/guides" element={<GuidePage />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
       </Routes>
     </BrowserRouter>
   )
