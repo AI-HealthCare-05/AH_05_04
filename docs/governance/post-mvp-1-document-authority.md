@@ -46,6 +46,10 @@
 3. 상태 디렉터리를 계약 상태의 기준으로 사용한다. 목표 또는 Proposed 계약을 Current로 승격하려면 구현 PR에서 관련 구현, migration, OpenAPI/DTO, 계약·통합 테스트와 실행 증빙을 연결하고 지정 리뷰어 승인을 받은 뒤 `docs/contracts/current/`로 이동한다. 같은 PR에서 문서 상태와 인덱스를 갱신하고 이전 상태 디렉터리에 중복 파일을 남기지 않는다.
 4. 외부 승인과 공개 flag는 구현 완료와 별도로 관리한다. 상세 조건은 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 따른다.
 
+## RAG-00 승인 제안
+
+[Product Decision 초안 `PD-125-20260831`](./decisions/2026-08-31-rag-p0-contract-freeze.md)과 `docs/contracts/proposed/post-mvp-1/`의 다섯 RAG P0 계약은 Issue #125 지정 리뷰어 승인 대기 상태다. 승인 전에는 구현 기준 또는 Approved v4로 사용하지 않는다. 승인 완료 시 같은 PR에서 Proposed 문서를 `targets/post-mvp-1/`로 이동하고 Decision·문서·인덱스·추적표 상태를 함께 `Approved Target · Not implemented`로 변경한다.
+
 `ISS-TBD-035`는 `FinalProject Documents/00_Index.md`의 상류 계획 레지스터 ID이며, 이 구현 저장소에서는 [Issue #91](https://github.com/AI-HealthCare-05/AH_05_04/issues/91)과 연결해 추적한다. 상류 artifact에 공개 가능한 안정 URL이 생기기 전에는 존재하지 않는 저장소 링크를 만들지 않는다. HIRA 식별, Track D 전용 OTC API 또는 의미 기반 NLI를 Approved v4 목표로 복원하지 않는다.
 
 ## 구현 전 재결정이 필요한 충돌
