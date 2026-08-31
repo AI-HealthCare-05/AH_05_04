@@ -49,7 +49,7 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 
 | 선행 조건 | 이유 | 완료 기준 |
 | --- | --- | --- |
-| PROFILE SELF 소유권 전환 기준 승인 | 현재 Current 계약은 `user_id` 기반이고 목표 ERD는 `profile_id` 기반이다. 소유권 기준이 흔들리면 Job·결과·처방 version 권한 검사가 반복 수정된다. | `profile` 테이블, SELF unique, 신규 사용자·신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, 도메인별 `profile_id` 일관성 검증, OCR 소유권 chain 기준 승인 |
+| PROFILE SELF 소유권 전환 기준 승인 | 현재 Current 계약은 `user_id` 기반이고 목표 ERD는 `profile_id` 기반이다. 소유권 기준이 흔들리면 Job·결과·처방 version 권한 검사가 반복 수정된다. | `profile` 테이블, SELF unique, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, 도메인별 `profile_id` composite FK·일관성 검증, OCR 소유권 chain 기준 승인 |
 | `AI_JOB.domain_type/domain_id` 물리 저장 여부 확정 | 목표 계약은 응답 구성값으로 설명하지만 ERD와 구현안이 물리 컬럼으로 해석될 수 있다. | 최종 DDL에서 물리 컬럼으로 둘지, 도메인 row의 `ai_job_id` FK에서 응답을 구성할지 결정 |
 | Idempotency 단일 테이블 구조 정렬 | #99 이후 목표 계약은 단일 `idempotency_record`와 `record_type=ASYNC_JOB|SYNC_MUTATION`을 사용한다. 별도 `sync_idempotency_record`를 만들면 최신 계약과 충돌한다. | ERD·계약·migration 계획에서 단일 테이블, `record_type`, 타입별 CHECK 제약으로 정렬 |
 | `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT` Expand 포함 확정 | poison message를 durable하게 기록한 뒤 ACK하려면 quarantine과 DLQ Outbox가 필요하다. | PR 1 범위와 계약 테스트에 두 테이블 포함 |
@@ -149,7 +149,7 @@ PROFILE 전환 승인 후 멱등성 scope까지 `profile_id`로 바꿀지는 PR 
 
 | 단계 | 내용 | rollback·복구 기준 |
 | --- | --- | --- |
-| 1. PROFILE 선행 | 본인 단일 SELF profile 도입, 신규 사용자·신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, 소유권 조회 전환 | Contract 전에는 기존 read 경로 rollback 가능. Contract 후에는 forward-fix 우선 |
+| 1. PROFILE 선행 | 본인 단일 SELF profile 도입, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, composite FK 기반 소유권 일관성 검증, 소유권 조회 전환 | Contract 전에는 기존 read 경로 rollback 가능. Contract 후에는 forward-fix 우선 |
 | 2. Expand | `ai_job`, `outbox_event`, `message_quarantine`, `dlq_outbox_event`, 단일 `idempotency_record`, `prescription_version`, `prescription_version_medication` 생성. 기존 테이블에 nullable FK 추가 | 신규 경로 미사용 시 nullable 컬럼·신규 테이블 제거 가능 |
 | 3. Dual-write | 신규 처방 write 시 기존 read 호환 필드와 version snapshot을 함께 기록. 신규 비동기 접수는 feature flag가 켜진 경로에서만 생성 | flag off 시 신규 접수는 legacy 경로로 되돌리고, 이미 생성된 Job은 drain |
 | 4. Backfill | 기존 처방마다 version 1 생성, 약물 snapshot 복사, `active_version_id` 채움 | 재실행 가능한 batch는 rollback이 아니라 resume/recovery로 처리 |
@@ -203,7 +203,7 @@ mixed-version 배포 중에는 다음 기준을 따른다.
 - rollback 중에도 새 Job, 새 Outbox, 새 Provider 호출이 중복 생성되면 안 된다.
 - drain 완료 전에는 관련 nullable FK를 제거하거나 `AI_JOB`·Outbox 테이블을 drop하지 않는다.
 
-drain 완료 조건은 다음 중 하나다.
+drain 완료 조건은 아래 항목을 모두 충족해야 한다.
 
 - rollback 대상 window 안의 모든 non-terminal Job이 `COMPLETED`, `FAILED`, `STALE` 중 하나가 된다.
 - `outbox_event`에 발행 대기 또는 처리 중인 이벤트가 남아 있지 않다.
@@ -294,12 +294,12 @@ Track A는 통합 게이트이며 모든 트랙의 개발 착수 게이트가 �
 - PROFILE 선행 전환 문서가 연결되어 있다.
 - Track A PR 1 전에 필요한 blocking 조건이 문서화되어 있다.
 - 대상 테이블과 기존 테이블 변경 범위가 정리되어 있다.
-- PROFILE dual-write와 도메인별 `profile_id` 일관성 검증 기준이 선행 조건으로 연결되어 있다.
+- PROFILE SELF profile 멱등 생성, dual-write, 도메인별 `profile_id` composite FK·일관성 검증 기준이 선행 조건으로 연결되어 있다.
 - Job 조회와 `result_url` 결과 조회가 같은 소유권 기준을 사용하고, 소유권 불일치 시 fail-closed `404`를 반환하도록 명시되어 있다.
 - `domain_type/domain_id` 물리 컬럼 여부가 PR 1 차단 조건으로 명시되어 있다.
 - 단일 `idempotency_record`와 `record_type=ASYNC_JOB|SYNC_MUTATION` 기준이 최신 계약과 일치한다.
 - `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT`가 Expand 범위에 포함되어 있다.
-- async feature flag와 기존 Job drain 기준이 rollback 절차에 포함되어 있다.
+- async feature flag와 기존 Job drain 기준이 rollback 절차에 포함되어 있고, drain 완료 조건은 모두 충족해야 한다고 명시되어 있다.
 - Backfill과 rollback/resume/recovery 의미가 구분되어 있다.
 - OCR·Guide·Chat 기존 행의 synthetic Job 처리 기준이 분리되어 있다.
 - OCR `ai_job_id` mapping이 별도 확정 대상임을 명시한다.

@@ -32,7 +32,7 @@ Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 도입하기 �
 | 문서 | 현재 기준 |
 | --- | --- |
 | `docs/contracts/current/backend-common-patterns.md` | 사용자 리소스는 소유권을 확인하고, 존재하지 않거나 소유하지 않은 리소스는 `404`를 반환한다. |
-| `docs/privacy-safety.md` | Post-MVP-1 Job·결과와 동기 상태 변경 API는 parent resource를 따라 동일한 `user_id` 소유권을 검사한다고 되어 있다. 별도 Track D 표현은 후속 문서 갱신 시 Track B·C·F 범위로 정렬한다. |
+| `docs/privacy-safety.md` | Post-MVP-1 Job·결과와 동기 상태 변경 API는 parent resource를 따라 동일한 `user_id` 소유권을 검사한다고 되어 있다. 최신 목표 계약은 Track B·C와 Track F Candidate·Identification 기준으로 정렬한다. |
 | `docs/data-schema.md` | 멀티 프로필, 환자·보호자 권한은 현재 미구현 후속 범위이며, Post-MVP-1 목표 스키마는 실제 구현으로 간주하지 않는다. |
 | `docs/contracts/targets/post-mvp-1/prescription-version-v1.md` | 소유권·출처·감사 시각을 위한 물리 컬럼과 이름은 구현 PR에서 확정한다고 되어 있다. |
 
@@ -112,9 +112,9 @@ owned_by_self(Resource.profile_id, user_id)
 | --- | --- | --- | --- |
 | `medical_document` | 인증 사용자의 SELF profile | Yes | 업로드 시 SELF profile id를 저장한다. |
 | `ocr_job` | `medical_document.profile_id` | No | `ocr_job.document_id`의 문서 소유권 chain으로 확인한다. |
-| `prescription` | 연결된 `medical_document.profile_id` 또는 인증 사용자의 SELF profile | Yes | 처방 생성 시 문서의 `profile_id`와 처방의 `profile_id`가 일치해야 한다. |
+| `prescription` | `medical_document.profile_id` | Yes | 처방 생성 시 `prescription.medical_document_id`가 가리키는 문서의 `profile_id`와 처방의 `profile_id`가 일치해야 한다. |
 | `guide` | 연결된 `prescription.profile_id` | Yes | 가이드 생성 시 처방의 `profile_id`와 가이드의 `profile_id`가 일치해야 한다. |
-| `chat_session` | 인증 사용자의 SELF profile | Yes | 세션 생성 시 SELF profile id를 저장한다. |
+| `chat_session` | 연결된 `prescription.profile_id` | Yes | 처방 기반 세션 생성 시 처방의 `profile_id`와 세션의 `profile_id`가 일치해야 한다. |
 | `chat_message` | `chat_session.profile_id` | No | 메시지는 세션의 소유권을 따른다. |
 
 기준 원본을 위처럼 두는 이유는 소유권 판단의 출처를 하나로 고정하기 위해서다. OCR은 의료문서에 종속된 작업이므로 `medical_document.profile_id`를 기준으로 삼고, Guide는 처방 결과에 종속되므로 `prescription.profile_id`를 기준으로 삼는다. Chat message는 세션 안의 하위 row이므로 별도 `profile_id`를 반복 저장하지 않는다.
@@ -122,7 +122,8 @@ owned_by_self(Resource.profile_id, user_id)
 구현 PR에서는 다음 검증을 함께 포함한다.
 
 - write 시 부모 row의 `profile_id`와 자식 row에 저장할 `profile_id`가 일치하지 않으면 저장하지 않는다.
-- 가능한 범위에서 FK와 composite index를 추가해 소유권 조회 조건을 고정한다.
+- 부모·자식 소유권 관계는 단순 composite index가 아니라 실제 DB 제약으로 강제한다. 예를 들어 `prescription(medical_document_id, profile_id) → medical_document(id, profile_id)`, `guide(prescription_id, profile_id) → prescription(id, profile_id)`, `chat_session(prescription_id, profile_id) → prescription(id, profile_id)` 형태의 composite FK를 사용한다.
+- composite FK를 걸기 위해 부모 테이블에는 `(id, profile_id)` unique 또는 동등한 참조 가능 제약을 둔다.
 - backfill 후 부모·자식 `profile_id` 불일치 검증 SQL을 실행한다.
 - 정상 사용자 접근, 타 사용자 접근 차단, 부모·자식 소유권 불일치 방어 테스트를 추가한다.
 - 불일치가 발견되면 read cutover와 NOT NULL 전환을 진행하지 않는다.
@@ -134,16 +135,19 @@ PROFILE 전환은 Track A의 `AI_JOB`·Outbox Expand보다 먼저 수행한다.
 | 단계 | 내용 | 검증 |
 | --- | --- | --- |
 | 1. Expand | `profile` 테이블 생성, 기존 리소스 테이블에 nullable `profile_id` FK 추가 | migration 적용 가능 여부 |
-| 2. Dual-write 준비 | 회원가입·사용자 생성 시 SELF profile 자동 생성, 신규 리소스 생성 시 `profile_id` 기록 | 신규 사용자와 신규 리소스가 `profile_id`를 갖는지 확인 |
+| 2. SELF profile write 보장 | 회원가입·사용자 생성 시 SELF profile 자동 생성. 기존 사용자가 신규 리소스를 생성하는 경우에도 리소스 write transaction 안에서 SELF profile을 멱등적으로 조회·생성 | 신규 사용자와 기존 사용자의 신규 write 모두 SELF profile을 갖는지 확인 |
 | 3. SELF profile backfill | 기존 `user`마다 `profile_type='SELF'` profile 1개 생성 | `user` 수와 SELF profile 수 일치 |
-| 4. Resource backfill | 기존 `medical_document`, `prescription`, `guide`, `chat_session`에 `profile_id` 채움 | 대상 테이블별 `profile_id IS NULL` 0건 |
-| 5. Consistency verify | 부모·자식 `profile_id` 불일치, orphan, 중복 SELF profile 확인 | 불일치 0건 |
-| 6. Read cutover | repository 소유권 조회를 `profile_id` 기준으로 전환 | 정상 조회와 타 사용자 접근 차단 테스트 |
-| 7. Contract | 검증 후 `profile_id NOT NULL`, FK·index·unique 최종화 | NOT NULL 적용 전 null 잔존 재검증 |
+| 4. Resource dual-write 활성화 | 신규 `medical_document`, `prescription`, `guide`, `chat_session` 생성 시 `profile_id` 기록. 부모가 있는 리소스는 부모의 `profile_id`와 같은 값만 저장 | 신규 리소스의 `profile_id IS NULL` 0건, 부모·자식 불일치 0건 |
+| 5. Resource backfill | 기존 `medical_document`, `prescription`, `guide`, `chat_session`에 `profile_id` 채움 | 대상 테이블별 `profile_id IS NULL` 0건 |
+| 6. Consistency verify | 부모·자식 `profile_id` 불일치, orphan, 중복 SELF profile 확인 | 불일치 0건 |
+| 7. Read cutover | repository 소유권 조회를 `profile_id` 기준으로 전환 | 정상 조회와 타 사용자 접근 차단 테스트 |
+| 8. Contract | 검증 후 `profile_id NOT NULL`, FK·composite FK·index·unique 최종화 | NOT NULL 적용 전 null 잔존 재검증 |
 
 데이터 규모가 작은 MVP 상태에서는 backfill을 별도 장기 batch로 나누지 않고 migration 안에서 수행할 수 있다. 다만 운영 데이터가 증가했거나 검증 시간이 길어질 경우에는 재실행 가능한 batch와 cutover PR을 분리한다.
 
-Dual-write 단계를 backfill보다 먼저 두는 이유는 backfill 이후 read cutover 전까지 새로 생성되는 사용자와 리소스를 보호하기 위해서다. SELF profile 자동 생성과 신규 리소스 `profile_id` 기록이 먼저 배포되지 않으면, backfill이 끝난 뒤 생성된 데이터가 다시 `profile_id = NULL`로 남을 수 있다.
+SELF profile write 보장과 Resource dual-write를 backfill보다 먼저 두는 이유는 backfill 이후 read cutover 전까지 새로 생성되는 사용자와 리소스를 보호하기 위해서다. 기존 사용자에게 아직 SELF profile backfill이 완료되지 않았더라도, 신규 리소스 write transaction 안에서 SELF profile을 멱등적으로 생성하면 `profile_id = NULL` 리소스가 새로 생기지 않는다.
+
+SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 멱등적으로 처리한다. 동시에 같은 사용자의 SELF profile 생성이 발생해도 하나만 성공해야 하며, 중복 충돌이 발생하면 기존 SELF profile을 다시 조회해 같은 transaction에서 리소스의 `profile_id`로 사용한다.
 
 이 순서를 쓰는 이유는 기존 데이터가 있는 상태에서 바로 `profile_id NOT NULL`을 적용하면 migration이 실패하거나 서비스 rollback이 어려워지기 때문이다. 먼저 nullable 컬럼을 열고, 신규 write가 새 기준을 함께 기록하게 만든 뒤, 기존 값을 채우고, 조회 기준을 바꾸고, 마지막에 NOT NULL을 적용해야 중간 실패 시 복구할 수 있다.
 
@@ -195,9 +199,9 @@ PROFILE 전환이 승인·병합되면 #75의 Track A migration은 다음 기준
 
 - PROFILE 선행 전환이 #75의 Track A PR 1보다 먼저 필요하다는 점이 승인된다.
 - `profile` 테이블과 `(user_id, profile_type='SELF')` unique 기준이 승인된다.
-- 신규 사용자·신규 리소스가 backfill 이후 `profile_id = NULL`로 남지 않도록 dual-write 순서가 승인된다.
+- 기존 사용자와 신규 사용자 모두 backfill 전후 신규 리소스 생성 시 `profile_id = NULL`로 남지 않도록 SELF profile 멱등 생성과 dual-write 순서가 승인된다.
 - 기존 리소스의 `profile_id` backfill 대상과 순서가 승인된다.
-- 도메인별 `profile_id` 기준 원본과 부모·자식 일관성 검증 기준이 승인된다.
+- 도메인별 `profile_id` 기준 원본과 부모·자식 composite FK·일관성 검증 기준이 승인된다.
 - 리소스 소유권 조회를 SELF `profile_id` 기준으로 전환하는 방향이 승인된다.
 - 보호자·멀티 프로필·위임 권한은 후속 범위로 유지한다.
 - 구현 PR에서 migration, 모델, repository, API/ownership 테스트, 문서 갱신을 함께 제출한다.
