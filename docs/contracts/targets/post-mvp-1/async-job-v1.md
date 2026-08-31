@@ -4,7 +4,7 @@
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
-| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
+| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-08-31 |
 
 ## 적용 범위
@@ -117,7 +117,7 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 
 ## 실행 lease와 보존
 
-- 2026-08-31 담당자 협의에 따라 실행 상한은 `OCR hard timeout 60초 / lease 75초`, `GUIDE hard timeout 60초 / lease 75초`, `CHAT hard timeout 45초 / lease 60초`로 고정한다. OCR 60초는 현재 Provider 상한 CLOVA 20초 + 구조화 LLM 30초의 순차 실행과 종료 처리 여유를 포함하고 lease는 hard timeout보다 15초 길다.
+- 2026-08-31 [Product Decision `PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md)에 따라 실행 상한은 `OCR hard timeout 60초 / lease 75초`, `GUIDE hard timeout 60초 / lease 75초`, `CHAT hard timeout 45초 / lease 60초`로 고정한다. OCR 60초는 현재 Provider 상한 CLOVA 20초 + 구조화 LLM 30초의 순차 실행과 종료 처리 여유를 포함하고 lease는 hard timeout보다 15초 길다.
 - 처리 중 Worker는 10초마다 heartbeat하고 lease가 만료된 뒤에만 다른 Worker가 reclaim한다.
 - 실행 메타데이터와 Job은 terminal 전환 후 90일 보존한다. 더 엄격한 개인정보·감사 정책이 있으면 그 정책을 적용한다.
 

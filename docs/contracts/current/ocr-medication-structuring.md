@@ -11,7 +11,7 @@ OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안
 
 ## 현재 구조화 경로
 
-- feature flag 기반 LLM 경로와 규칙 기반 fallback은 현재 Backend 실행 경로에 구현되어 있습니다.
+- feature flag 기반 LLM 경로와 규칙 기반 구조화 경로 선택은 현재 Backend 실행 경로에 구현되어 있습니다. LLM 실패 시 규칙 기반 경로로 자동 전환하지 않습니다.
 - `OCR_STRUCTURE_LLM_ENABLED`의 기본값은 `false`입니다.
 - 비활성화 상태에서는 CLOVA OCR token을 기존 규칙 기반 구조화기로 처리하며 OpenAI에 전달하지 않습니다.
 - 활성화 상태에서만 CLOVA OCR 전체 token을 OpenAI Responses API Structured Outputs에 전달합니다.

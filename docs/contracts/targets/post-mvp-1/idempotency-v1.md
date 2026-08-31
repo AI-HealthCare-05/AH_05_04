@@ -4,7 +4,7 @@
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
-| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-f-rag-citation-safety-v1.md` |
+| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-f-rag-citation-safety-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-08-31 |
 
 ## 적용 요청
@@ -60,6 +60,6 @@ snapshot은 암호화한 PostgreSQL `BYTEA`로 저장하고 application cap은 1
 
 ## 단일 테이블과 저장 필드
 
-비동기와 동기 멱등 레코드는 PostgreSQL 단일 `idempotency_record` 테이블에 저장하고 `record_type=ASYNC_JOB|SYNC_MUTATION`으로 구분한다. 별도 `sync_idempotency_record` 테이블은 만들지 않는다.
+2026-08-31 [Product Decision `PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md)에 따라 비동기와 동기 멱등 레코드는 PostgreSQL 단일 `idempotency_record` 테이블에 저장하고 `record_type=ASYNC_JOB|SYNC_MUTATION`으로 구분한다. 별도 `sync_idempotency_record` 테이블은 만들지 않는다.
 
 공통 필드는 `record_type`, `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `created_at`, `expires_at`이다. `ASYNC_JOB`은 non-null `job_id`를 저장하고 `parent_resource_id`, `response_status`, `response_body_snapshot`은 null이다. `SYNC_MUTATION`은 non-null `parent_resource_id`, `response_status`, 암호화된 `response_body_snapshot`(암호화 후 `BYTEA`)을 저장하고 `job_id`는 null이다. DB CHECK 제약으로 이 타입별 nullability를 강제한다. HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다.

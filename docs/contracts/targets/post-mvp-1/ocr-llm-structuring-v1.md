@@ -11,7 +11,7 @@
 
 Track E는 처방전 OCR부터 비-RAG LLM 구조화 초안, 사용자 원본 대조·수정과 처방 확정까지 소유한다. 공식 의약품 후보 검색·Identity와 Guide·Chat Preflight는 처방 확정 뒤 Track F가 수행한다.
 
-현재 Backend에는 `OCR_STRUCTURE_LLM_ENABLED` feature flag, OpenAI Structured Outputs, `source_ids` grounding, rule fallback, model·prompt version 기록이 이미 구현되어 있다. 이 문서의 미구현 범위는 그 경로를 없는 것으로 취급하지 않고, 아래 최소전송·provenance·Worker·실패 복구 요구사항과의 gap으로 한정한다.
+현재 Backend에는 `OCR_STRUCTURE_LLM_ENABLED` feature flag, OpenAI Structured Outputs, `source_ids` grounding, flag 비활성화 시 사용하는 규칙 기반 구조화 경로, model·prompt version 기록이 이미 구현되어 있다. LLM 실패 시 규칙 기반 경로로 자동 전환하는 fallback은 구현되어 있지 않다. 이 문서의 미구현 범위는 그 경로를 없는 것으로 취급하지 않고, 아래 최소전송·provenance·Worker·실패 복구 요구사항과의 gap으로 한정한다.
 
 - HIRA 적용약가 데이터나 HIRA API를 품목 식별 입력·정답 원장으로 사용하지 않는다.
 - 비-RAG LLM은 Retrieval, RAG, vector search 또는 외부 의료 Source 검색을 호출하지 않는다.

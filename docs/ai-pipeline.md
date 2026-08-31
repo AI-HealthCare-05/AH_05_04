@@ -49,7 +49,7 @@
 | Backend 동기 가이드 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 근거·검증 원칙 또는 코드로 강제되는 제한 모드와 재현 가능한 안전 기준 구현 후 전환 |
 | Backend 동기 챗봇 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 질문 admission·동시성·DB 수용량과 근거·검증 안전 조건 구현 후 전환 |
 | AI Worker | 골격만 존재 | 연결되지 않음 | queue 계약, consumer, 재시도·멱등성, health check와 운영 정책 구현 |
-| Track E 비-RAG LLM 확장 | Approved v4 target — Partially implemented | feature flag 기반 LLM 구조화·grounding·rule fallback은 Current; Worker 이관과 v4 provenance는 미연결 | 최소 allowlist, versioned schema·prompt·validator, raw/rule/draft/corrected/confirmed provenance와 실패 복구 구현 |
+| Track E 비-RAG LLM 확장 | Approved v4 target — Partially implemented | feature flag 기반 LLM 구조화·grounding과 flag 비활성화 시 규칙 기반 경로 사용은 Current; LLM 실패 시 규칙 기반 자동 fallback은 없고 Worker 이관과 v4 provenance는 미연결 | 최소 allowlist, versioned schema·prompt·validator, raw/rule/draft/corrected/confirmed provenance와 실패 복구 구현 |
 | MFDS 공식 Identity | Approved v4 target — Not implemented | 연결되지 않음 | Source Snapshot·Catalog, Candidate Resolver, Single Candidate Gate, 사용자 확인·거절, append-only Identification과 Preflight 구현 |
 | Rule-first RAG·Citation | Schema-only / Approved v4 target — Not implemented | 지식 문서·청크·citation 테이블만 존재하고 실행 경로는 미연결 | 고정 LangGraph, 승인 Rule/Evidence, 결정적 Citation 완전성 검증과 fail-closed fallback 구현 |
 | AI 응답 평가 | Approved v4 target — Not implemented | 자동 배포 게이트가 아니며 Evaluation Results는 `NOT_RUN` | HOLDOUT·SAFETY_REGRESSION·END_TO_END_FINAL 실행, versioned 지표·분모·신뢰구간과 승인 증빙 구현 |
