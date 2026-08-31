@@ -35,7 +35,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 의료 지식 | `knowledge_document`, `knowledge_chunk` | Schema-only Post-MVP 골격, 현재 검색 경로에서 미사용 |
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 
-멀티 프로필, 환자·보호자 권한, 복약 일정·기록과 감사 로그는 현재 DB 모델·migration에 구현되어 있지 않은 후속 범위입니다.
+본인 단일 `SELF` profile과 도메인 리소스의 `user_id → profile_id` 소유권 전환은 Post-MVP-1 Approved target의 현재 범위지만, 아직 현재 DB 모델·migration에는 구현되어 있지 않습니다. 복약 일정·기록과 감사 로그도 동일하게 목표 계약과 현재 구현을 구분합니다.
 
 ## 변경 원칙
 

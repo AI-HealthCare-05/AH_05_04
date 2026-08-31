@@ -66,7 +66,7 @@ Proposed 운영 계약은 관련 schema·service·CLI·테스트가 함께 병�
 - 비동기 성공 응답은 `{"data": JobStatusResponse}`, 오류는 top-level 공통 오류 envelope를 사용한다.
 - 같은 Chat session에는 non-terminal Job을 하나만 허용하고 다른 키의 두 번째 요청은 `409 CHAT_JOB_IN_PROGRESS`다.
 - timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 schedule에서만 만든다. 처방에 정확한 시각이 있어도 사용자 확인 없이 자동 생성하지 않으며, Check-in deadline은 `max(Asia/Seoul 기준 예정일 다음 날 00:00, scheduled_at + 4시간)`을 UTC instant로 snapshot한다.
-- 비동기 접수의 멱등성 scope는 `(user_id, OpenAPI operation_id, key_digest)`이고, 동기 상태 변경은 별도 `(user_id, OpenAPI operation_id, parent_resource_id, key_hmac)` scope를 사용한다. 둘 다 최소 24시간, 운영 기본값 7일 보존하며 비동기 동일 요청은 기존 Job의 최신 상태를 반환한다.
+- 비동기 접수의 멱등성 scope는 `(user_id, OpenAPI operation_id, key_hmac)`이고, 동기 상태 변경은 `(user_id, OpenAPI operation_id, parent_resource_id, key_hmac)` scope를 사용한다. 두 레코드 모두 원문 키의 versioned HMAC-SHA-256 결과를 `key_hmac` 컬럼에 저장한다. 둘 다 최소 24시간, 운영 기본값 7일 보존하며 비동기 동일 요청은 기존 Job의 최신 상태를 반환한다.
 - 오류: `code`, `message`, `details`, `trace_id`
 
 계약 변경은 관련 요구사항 ID, API 명세, 구현, 테스트와 함께 한 PR에서 갱신합니다. 필드 삭제·이름/타입 변경·필수 필드 추가는 Breaking Change로 취급합니다.

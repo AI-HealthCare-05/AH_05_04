@@ -13,7 +13,7 @@
 
 ## 식별 범위와 요청 해시
 
-비동기 접수의 고유 범위는 `(user_id, OpenAPI operation_id, key_digest)`이다. `key_digest`는 원문 키를 서버 비밀키로 versioned HMAC-SHA-256 처리한 값이며 원문은 저장하지 않는다. 동기 상태 변경은 아래와 같이 `parent_resource_id`를 포함한 별도 `key_hmac` scope를 사용한다. Post-MVP-1은 인증 사용자가 직접 소유한 리소스에 수행하는 요청만 지원한다.
+비동기 접수의 고유 범위는 `(user_id, OpenAPI operation_id, key_hmac)`이다. `key_hmac`은 원문 키를 서버 비밀키로 versioned HMAC-SHA-256 처리한 값이며 원문은 저장하지 않는다. 동기 상태 변경도 같은 `key_hmac` 컬럼명을 사용하되 아래와 같이 `parent_resource_id`를 scope에 추가한다. Post-MVP-1은 인증 사용자가 직접 소유한 리소스에 수행하는 요청만 지원한다.
 
 요청 지문은 다음 값을 canonical JSON으로 직렬화한 SHA-256이다.
 
@@ -41,7 +41,7 @@
 
 ## 동기 상태 변경 처리 규칙
 
-동기 B·C·F 쓰기의 고유 범위는 `(user_id, OpenAPI operation_id, parent_resource_id, idempotency_key_hmac)`이다. parent resource는 다음과 같다.
+동기 B·C·F 쓰기의 고유 범위는 `(user_id, OpenAPI operation_id, parent_resource_id, key_hmac)`이다. parent resource는 다음과 같다.
 
 - B 일정: `prescription_version_medication_id`
 - B Check-in·재알림: `occurrence_id`
@@ -60,6 +60,6 @@ snapshot의 논리 계약은 암호화 binary payload이며 application cap은 1
 
 ## 저장 필드
 
-비동기 레코드는 `user_id`, `operation_id`, versioned `key_digest`, `request_hash`, `job_id`, `created_at`, `expires_at`을 저장하고 응답 snapshot은 저장하지 않는다.
+비동기 레코드는 `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `job_id`, `created_at`, `expires_at`을 저장하고 응답 snapshot은 저장하지 않는다.
 
 동기 레코드는 `user_id`, `operation_id`, `parent_resource_id`, versioned `key_hmac`, `request_hash`, `response_status`, 암호화된 `response_body_snapshot`, `created_at`, `expires_at`을 저장한다. HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정하며 이 계약에서 별도 저장 방식을 추정하지 않는다.

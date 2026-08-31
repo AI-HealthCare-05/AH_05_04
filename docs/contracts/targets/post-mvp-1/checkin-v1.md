@@ -9,7 +9,7 @@
 
 ## 소유권 경계
 
-모든 Track B·C 직접 조회·쓰기 API는 인증 사용자가 직접 소유한 resource만 허용한다. occurrence → schedule·prescription version, Check-in → occurrence, Safety·Barrier·ActionPlan → Check-in의 parent chain을 따라 같은 `user_id`인지 검증한다. 존재하지 않거나 소유하지 않은 ID는 존재 여부를 숨기기 위해 모두 `404`다. 보호자·patient profile·위임 요청과 별도 역할은 v1 범위 밖이며 이 문서는 새 권한 역할이나 잠금 순서를 추가하지 않는다.
+모든 Track B·C 직접 조회·쓰기 API는 인증 사용자가 직접 소유한 resource만 허용한다. 본인 단일 `SELF` profile과 도메인 리소스의 `user_id → profile_id` 소유권 전환은 Post-MVP-1 현재 범위다. occurrence → schedule·prescription version → prescription → profile, Check-in → occurrence, Safety·Barrier·ActionPlan → Check-in의 parent chain을 따라 `PROFILE.user_id`가 인증 사용자와 같은지 검증한다. 존재하지 않거나 소유하지 않은 ID는 존재 여부를 숨기기 위해 모두 `404`다. 이 문서는 새 권한 역할이나 잠금 순서를 추가하지 않는다.
 
 ## 일정 occurrence와 Check-in 분리
 

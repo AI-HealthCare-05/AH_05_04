@@ -62,9 +62,11 @@ Job 테이블이 상태의 기준 원본이다. Redis Stream 메시지만으로 
 }
 ```
 
-성공 응답은 `{"data": JobStatusResponse}`로 감싸고 오류는 공통 top-level 오류 envelope를 사용한다. Job과 `result_url`은 동일한 `user_id` 소유권 함수를 적용하며 존재하지만 소유하지 않은 ID도 `404`로 응답한다. 보호자·patient profile 권한은 v1 범위가 아니다. 모든 응답에 `Cache-Control: no-store`를 포함한다. `result_url`은 안전한 도메인 결과가 저장된 `COMPLETED`에서만 제공하고 그 전에는 `null`이다. Track F의 `REJECTED` fallback도 `COMPLETED + result_url`로 조회한다. `RETRY_WAIT`에서는 `Retry-After` 헤더와 같은 값의 `retry_after_seconds`를 제공한다. `error`는 도메인 결과를 저장하지 못한 terminal `FAILED`에서만 안전한 `{code, message}`를 반환하며 `attempt_count`, progress, `failure_detail`과 Provider 원문 오류는 외부 응답에 포함하지 않는다.
+성공 응답은 `{"data": JobStatusResponse}`로 감싸고 오류는 공통 top-level 오류 envelope를 사용한다. 본인 단일 `SELF` profile과 도메인 리소스의 `user_id → profile_id` 소유권 전환은 Post-MVP-1 현재 범위다. Job의 요청 사용자와 `result_url`이 가리키는 결과 리소스의 `profile_id → PROFILE.user_id` parent chain이 같은 사용자를 가리켜야 하며, 존재하지만 소유하지 않은 ID도 `404`로 응답한다. 모든 응답에 `Cache-Control: no-store`를 포함한다. `result_url`은 안전한 도메인 결과가 저장된 `COMPLETED`에서만 제공하고 그 전에는 `null`이다. Track F의 `REJECTED` fallback도 `COMPLETED + result_url`로 조회한다. `RETRY_WAIT`에서는 `Retry-After` 헤더와 같은 값의 `retry_after_seconds`를 제공한다. `error`는 도메인 결과를 저장하지 못한 terminal `FAILED`에서만 안전한 `{code, message}`를 반환하며 `attempt_count`, progress, `failure_detail`과 Provider 원문 오류는 외부 응답에 포함하지 않는다.
 
 OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.status_url`을 같은 Job 조회 URL로 제공한다.
+
+Proposed ERD의 `AI_JOB_ATTEMPT.attempt_status=BLOCKED`는 현재 승인된 Worker 상태 의미나 적용 Track이 없다. 이를 Track F의 `safety_disposition=BLOCKED_ACTION`과 연동된 값으로 해석하지 않으며, 별도 Decision으로 기록 조건과 OCR·Guide·Chat 적용 범위를 확정하기 전에는 Worker가 `BLOCKED`를 저장하지 않는다.
 
 `COMPLETED` 뒤 `result_url`이 가리키는 도메인 결과 endpoint는 다음으로 고정한다.
 

@@ -11,7 +11,7 @@
 
 안전 결과는 모델의 자연어만 저장하지 않는다. 입력 처방 버전, 구조화 상태, 검증 결과, 공개 결정, 근거 인용을 함께 저장한다. 근거가 없거나 검증이 실패하면 정상 답변으로 공개하지 않는 fail-closed 규칙을 적용한다.
 
-Track C 직접 API와 Track F Job·결과·Candidate·Identification은 인증 사용자가 직접 소유한 resource만 허용한다. Safety·Barrier는 Check-in parent chain, Track F는 Job·Prescription Version·Prescription Medication parent chain을 통해 같은 `user_id`를 확인한다. 존재하지 않거나 소유하지 않은 식별자는 모두 `404`다. 보호자·patient profile·위임 요청과 별도 운영자 열람 역할은 후속 계약이다.
+Track C 직접 API와 Track F Job·결과·Candidate·Identification은 인증 사용자가 직접 소유한 resource만 허용한다. 본인 단일 `SELF` profile과 도메인 리소스의 `user_id → profile_id` 소유권 전환은 Post-MVP-1 현재 범위다. Safety·Barrier는 Check-in에서 처방의 `profile_id`까지 이어지는 parent chain, Track F는 Job·Prescription Version·Prescription Medication에서 `PROFILE.user_id`까지 이어지는 parent chain을 통해 같은 소유자인지 확인한다. 존재하지 않거나 소유하지 않은 식별자는 모두 `404`다.
 
 ## Track F 상태 축
 
@@ -23,6 +23,8 @@ Track C 직접 API와 Track F Job·결과·Candidate·Identification은 인증 �
 | `safety_disposition` | `NORMAL`, `URGENT_ROUTED`, `EMERGENCY_ROUTED`, `BLOCKED_ACTION`, `UNKNOWN_RISK` |
 
 Router와 저장 결과를 혼용하지 않는다. `ROUTINE → NORMAL`, `URGENT → URGENT_ROUTED`, `EMERGENCY → EMERGENCY_ROUTED`, `UNKNOWN → UNKNOWN_RISK`로 매핑하고, 정책 검증이 특정 행동을 차단한 경우에만 `BLOCKED_ACTION`을 저장한다.
+
+`BLOCKED_ACTION`은 Safety Result의 `safety_disposition` 값이며 Proposed ERD의 `AI_JOB_ATTEMPT.attempt_status=BLOCKED`와 연동된 상태가 아니다. 후자의 의미와 적용 Track은 별도 Decision 전까지 미확정이므로 Safety 처리 결과만으로 Worker가 attempt를 `BLOCKED`로 기록하지 않는다.
 
 정확한 조합은 다음으로 고정한다.
 
