@@ -229,7 +229,12 @@ def get_chat_service(
         Depends(get_chat_engine),
     ],
 ) -> ChatService:
-    return ChatService(prescription_repository, chat_repository, engine)
+    return ChatService(
+        prescription_repository,
+        chat_repository,
+        engine,
+        history_context_enabled=config.CHAT_HISTORY_CONTEXT_ENABLED,
+    )
 
 
 def get_auth_service(

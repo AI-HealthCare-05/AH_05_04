@@ -183,7 +183,7 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
     "generation_status": "COMPLETED",
     "content": "합성 답변",
     "model_name": "synthetic-model",
-    "prompt_version": "chat-prompt-v1",
+    "prompt_version": "chat-prompt-v2",
     "created_at": "2026-08-21T10:00:00Z",
     "completed_at": "2026-08-21T10:00:01Z"
   }

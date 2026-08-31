@@ -9,6 +9,7 @@ BASE_CONFIG = {
     "DB_USER": "test_user",
     "DB_PASSWORD": "test_password",
     "DB_NAME": "test_database",
+    "CHAT_HISTORY_CONTEXT_ENABLED": False,
 }
 
 
@@ -83,3 +84,31 @@ def test_config_parses_ocr_structure_llm_enabled(
     )
 
     assert config.OCR_STRUCTURE_LLM_ENABLED is expected
+
+
+def test_chat_history_context_is_disabled_by_default() -> None:
+    assert Config.model_fields["CHAT_HISTORY_CONTEXT_ENABLED"].default is False
+
+
+def test_chat_history_context_can_be_enabled_in_local_environment() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": "local",
+            "CHAT_HISTORY_CONTEXT_ENABLED": True,
+        }
+    )
+
+    assert config.CHAT_HISTORY_CONTEXT_ENABLED is True
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_chat_history_context_cannot_be_enabled_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "CHAT_HISTORY_CONTEXT_ENABLED": True,
+            }
+        )
