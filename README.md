@@ -37,7 +37,7 @@ Backend 기능 구현과 End-to-End 제품 MVP 완료를 구분합니다.
 | PostgreSQL 실제 E2E | 회원가입 → 로그인 → 업로드 → OCR → 검수·수정 → 처방 확정까지 완료 |
 | 전체 AI E2E 확인 필요 | Guide 생성 → Guide 조회 → Chat 진입과 실제 OpenAI 응답까지의 전체 흐름은 최종 완료로 표시하지 않음 |
 | Schema-only | 지식 문서·청크와 Guide·Chat citation 테이블은 존재하지만 실행 경로에는 미연결 |
-| Post-MVP-1 Approved v4 목표 | 비동기 Job·Outbox·Redis Stream·Worker, 처방 버전, 일정·Check-in, Barrier/Support, OCR 비-RAG LLM 구조화, MFDS 공식 Identity·Preflight, Guide·Chat Rule-first RAG·Citation·Safety·OTC |
+| Post-MVP-1 Approved v4 목표 | 비동기 Job·Outbox·Redis Stream·Worker, 처방 버전, 일정·Check-in, Barrier/Support, 현재 OCR LLM 경로의 최소전송·provenance·Worker 확장, MFDS 공식 Identity·Preflight, Guide·Chat Rule-first RAG·Citation·Safety·OTC |
 | 구현 상태 | PostgreSQL 전환은 완료됐지만 Post-MVP-1 OpenAPI, RAG/Eval schema, 기능·계약 테스트와 Evaluation Run은 아직 별도 구현·검증 필요 |
 | 공개 상태 | 현재 Guide·Chat Production 공개 차단. `PUBLIC_TRACK_C=false`, `PUBLIC_TRACK_F=false`이며 OTC는 F 게이트를 공유 |
 

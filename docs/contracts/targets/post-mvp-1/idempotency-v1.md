@@ -5,7 +5,7 @@
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-f-rag-citation-safety-v1.md` |
-| Last verified | 2026-08-27 |
+| Last verified | 2026-08-31 |
 
 ## 적용 요청
 
@@ -50,7 +50,7 @@
 
 권한·입력·revision·현재 상태 검사를 통과한 2xx mutation만 최초 성공 HTTP status와 canonical JSON body snapshot을 도메인 변경과 같은 transaction에서 저장한다. 4xx·5xx는 저장하지 않는다. 같은 키·같은 지문은 revision·현재 상태 검사보다 먼저 최초 snapshot을 그대로 재현하고, 같은 키·다른 지문은 `409 IDEMPOTENCY_KEY_CONFLICT`다.
 
-snapshot의 논리 계약은 암호화 binary payload이며 application cap은 1MiB다. 승인 원본의 `MEDIUMBLOB`은 PostgreSQL에서 사용할 수 없으므로 물리 타입·암호화 envelope·migration mapping은 [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌) 전까지 미확정으로 두고 구현하지 않는다. 의료 자유 텍스트와 Provider 원문은 넣지 않고 일반 로그에도 기록하지 않는다. 직렬화 결과가 cap을 넘으면 snapshot을 자르지 않으며 mutation 전에 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`와 alert로 실패한다.
+snapshot은 암호화한 PostgreSQL `BYTEA`로 저장하고 application cap은 1MiB다. 암호화 envelope·key version·rotation과 migration의 정확한 구현은 Privacy·Security 리뷰를 받되 물리 타입을 다른 DB 전용 타입으로 대체하지 않는다. 의료 자유 텍스트와 Provider 원문은 넣지 않고 일반 로그에도 기록하지 않는다. 직렬화 결과가 cap을 넘으면 snapshot을 자르지 않으며 mutation 전에 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`와 alert로 실패한다.
 
 ## 보존
 
@@ -58,8 +58,8 @@ snapshot의 논리 계약은 암호화 binary payload이며 application cap은 1
 - 만료 이후 같은 키는 새 요청으로 처리될 수 있으므로 사용자의 새 실행에는 항상 새 키를 발급한다.
 - 감사·보안 정책이 더 긴 보존을 요구하면 더 긴 기간을 적용할 수 있다.
 
-## 저장 필드
+## 단일 테이블과 저장 필드
 
-비동기 레코드는 `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `job_id`, `created_at`, `expires_at`을 저장하고 응답 snapshot은 저장하지 않는다.
+비동기와 동기 멱등 레코드는 PostgreSQL 단일 `idempotency_record` 테이블에 저장하고 `record_type=ASYNC_JOB|SYNC_MUTATION`으로 구분한다. 별도 `sync_idempotency_record` 테이블은 만들지 않는다.
 
-동기 레코드는 `user_id`, `operation_id`, `parent_resource_id`, versioned `key_hmac`, `request_hash`, `response_status`, 암호화된 `response_body_snapshot`, `created_at`, `expires_at`을 저장한다. HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정하며 이 계약에서 별도 저장 방식을 추정하지 않는다.
+공통 필드는 `record_type`, `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `created_at`, `expires_at`이다. `ASYNC_JOB`은 non-null `job_id`를 저장하고 `parent_resource_id`, `response_status`, `response_body_snapshot`은 null이다. `SYNC_MUTATION`은 non-null `parent_resource_id`, `response_status`, 암호화된 `response_body_snapshot`(암호화 후 `BYTEA`)을 저장하고 `job_id`는 null이다. DB CHECK 제약으로 이 타입별 nullability를 강제한다. HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다.

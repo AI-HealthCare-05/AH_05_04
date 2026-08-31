@@ -14,7 +14,7 @@
 
 - 진입점: `POST /api/v1/documents/{document_id}/ocr-jobs`
 - 구현: `backend/app/services/ocr.py`, interface·오류 계약 `backend/app/services/ocr_engine.py`, CLOVA adapter `backend/app/services/clova_ocr_engine.py`
-- 처리: 문서 소유권 확인 → OCR 작업 생성 → 같은 요청에서 CLOVA OCR 호출 → 추출 필드 저장 → 결과 반환
+- 처리: 문서 소유권 확인 → OCR 작업 생성 → 같은 요청에서 CLOVA OCR 호출 → `OCR_STRUCTURE_LLM_ENABLED=true`이면 구현된 OpenAI Structured Outputs 구조화, 아니면 규칙 기반 구조화 → 추출 필드 저장 → 결과 반환
 - 검수: OCR 원문·정규화 참고값과 사용자 확정값을 구분하며 확정 처방에는 사용자 확정값만 사용
 - 실패 처리: 제공자 timeout·장애·처리 실패를 안전한 API 오류로 변환하고 OCR 작업을 `FAILED`로 저장
 
@@ -45,11 +45,11 @@
 
 | 영역 | 상태 | 현재 연결 여부 | 전환 조건 |
 | --- | --- | --- | --- |
-| Backend 동기 OCR | MVP 구현 | FastAPI → CLOVA OCR | 현재 계약·오류 처리·검수 흐름 유지 |
+| Backend 동기 OCR | MVP 구현 | FastAPI → CLOVA OCR → feature flag 기반 LLM 또는 규칙 구조화 | 현재 계약·grounding·오류 처리·검수 흐름 유지 |
 | Backend 동기 가이드 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 근거·검증 원칙 또는 코드로 강제되는 제한 모드와 재현 가능한 안전 기준 구현 후 전환 |
 | Backend 동기 챗봇 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 질문 admission·동시성·DB 수용량과 근거·검증 안전 조건 구현 후 전환 |
 | AI Worker | 골격만 존재 | 연결되지 않음 | queue 계약, consumer, 재시도·멱등성, health check와 운영 정책 구현 |
-| Track E 비-RAG LLM 구조화 | Approved v4 target — Not implemented | 현재 rule 정규화만 연결됨 | 최소 allowlist, versioned schema·prompt·validator, raw/rule/draft/corrected/confirmed provenance와 실패 복구 구현 |
+| Track E 비-RAG LLM 확장 | Approved v4 target — Partially implemented | feature flag 기반 LLM 구조화·grounding·rule fallback은 Current; Worker 이관과 v4 provenance는 미연결 | 최소 allowlist, versioned schema·prompt·validator, raw/rule/draft/corrected/confirmed provenance와 실패 복구 구현 |
 | MFDS 공식 Identity | Approved v4 target — Not implemented | 연결되지 않음 | Source Snapshot·Catalog, Candidate Resolver, Single Candidate Gate, 사용자 확인·거절, append-only Identification과 Preflight 구현 |
 | Rule-first RAG·Citation | Schema-only / Approved v4 target — Not implemented | 지식 문서·청크·citation 테이블만 존재하고 실행 경로는 미연결 | 고정 LangGraph, 승인 Rule/Evidence, 결정적 Citation 완전성 검증과 fail-closed fallback 구현 |
 | AI 응답 평가 | Approved v4 target — Not implemented | 자동 배포 게이트가 아니며 Evaluation Results는 `NOT_RUN` | HOLDOUT·SAFETY_REGRESSION·END_TO_END_FINAL 실행, versioned 지표·분모·신뢰구간과 승인 증빙 구현 |

@@ -4,8 +4,8 @@
 
 테스트와 배포 기준은 현재 MVP와 Post-MVP를 구분합니다.
 
-- **현재 MVP**: FastAPI 요청 안에서 OCR, 복약 가이드 생성, 복약 챗봇 응답을 완료하는 동기 one-cycle 흐름
-- **Post-MVP**: 비동기 AI Worker, OCR 비-RAG LLM 구조화, MFDS 공식 Identity·Preflight, Rule-first RAG·Citation·Safety, OTC Chat 상호작용과 AI 응답 품질 평가
+- **현재 MVP**: FastAPI 요청 안에서 OCR(feature flag 기반 LLM 또는 규칙 구조화), 복약 가이드 생성, 복약 챗봇 응답을 완료하는 동기 one-cycle 흐름
+- **Post-MVP**: 비동기 AI Worker, OCR LLM의 최소전송·provenance·Worker 확장, MFDS 공식 Identity·Preflight, Rule-first RAG·Citation·Safety, OTC Chat 상호작용과 AI 응답 품질 평가
 
 Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 구현 완료 또는 배포 조건으로 간주하지 않습니다.
 
@@ -101,12 +101,15 @@ bash scripts/ci/run_test.sh
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
 - poison 메시지는 quarantine 기록을 먼저 commit한 뒤 ACK하며, commit 실패 시 ACK하지 않아 다시 회수할 수 있어야 합니다.
 - 만료된 lease의 Worker가 새 Worker의 결과를 덮어쓰지 못합니다.
-- OCR의 CLOVA·구조화 LLM 순차 호출 경계에서 재승인된 end-to-end hard timeout과 lease를 검증합니다. 값이 재승인되기 전에는 이 행을 `NOT_RUN`으로 유지합니다.
+- OCR의 CLOVA 20초·구조화 LLM 30초 순차 호출 경계에서 `hard timeout 60초 / lease 75초`를 검증하고, timeout 직전 정상 결과가 재시도 소진으로 오분류되지 않는지 확인합니다.
+- 단일 `idempotency_record`의 `record_type=ASYNC_JOB|SYNC_MUTATION`, 타입별 nullability CHECK, 동기 snapshot `BYTEA` 암호화와 비동기 snapshot 미저장을 계약·migration 테스트로 검증합니다.
 - `RETRY_WAIT` 중 active Runtime Bundle이 변경된 Job과 구·신 Worker가 함께 실행되는 배포를 검증합니다. 기대 전이와 Worker–Bundle 호환성 규칙이 재승인되기 전에는 이 행을 `NOT_RUN`으로 유지합니다.
 - 처방 active version 변경 시 처리 중 결과는 `STALE`이며 현재 결과로 노출되지 않습니다.
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
 - Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.
 - 다른 사용자의 Job·결과와 Track B occurrence·Check-in, Track C Safety·Barrier·ActionPlan, Candidate·Identification·Chat session 직접 요청은 `404`이며 Redis·일반 로그·quarantine·DLQ에는 의료 원문을 저장하지 않습니다.
+- `SELF profile` 이관 Decision 전에는 기존 `user_id` 소유권 회귀 테스트를 유지하고, 미확정 `profile_id` read/write cutover를 허용하지 않습니다.
+- `AI_JOB_ATTEMPT.BLOCKED` enum은 승인 schema에 남기되 의미·기록 조건·전이 Decision 전에 Worker가 해당 값을 생성하지 않고 `BLOCKED_ACTION`과 연결하지 않는지 검증합니다.
 - 근거 없음·상충·timeout·검증 실패는 정상 답변이 아니라 승인된 fallback 또는 공개 차단으로 처리합니다.
 - OTC Chat은 미식별·Rule 없음·근거 없음·상충·비활성 Source·Citation 실패에서 안전 보장 문구를 만들지 않고 생성 답변을 폐기한 뒤 승인 fallback으로 종료합니다.
 

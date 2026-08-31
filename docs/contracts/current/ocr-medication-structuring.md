@@ -1,6 +1,6 @@
 # OCR 약품 행 구조화 계약
 
-> 상태: Current runtime. Approved v4의 비-RAG LLM 구조화·최소전송·사용자 확정 목표는 [OCR 비-RAG LLM 구조화 계약](../targets/post-mvp-1/ocr-llm-structuring-v1.md)에 별도로 정의하며 아직 구현되지 않았다.
+> 상태: Current runtime. PR #96에서 feature flag 기반 비-RAG LLM 구조화 경로가 구현됐고 기본값 `false`는 미구현이 아니라 기본 비활성화를 뜻한다. Approved v4에서 추가한 최소 전송 allowlist, raw/rule/draft/corrected/confirmed provenance, Worker 이관과 실패 복구는 [OCR 비-RAG LLM 구조화 목표 계약](../targets/post-mvp-1/ocr-llm-structuring-v1.md)의 미구현 범위다.
 
 ## 목적
 
@@ -11,6 +11,7 @@ OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안
 
 ## 현재 구조화 경로
 
+- feature flag 기반 LLM 경로와 규칙 기반 fallback은 현재 Backend 실행 경로에 구현되어 있습니다.
 - `OCR_STRUCTURE_LLM_ENABLED`의 기본값은 `false`입니다.
 - 비활성화 상태에서는 CLOVA OCR token을 기존 규칙 기반 구조화기로 처리하며 OpenAI에 전달하지 않습니다.
 - 활성화 상태에서만 CLOVA OCR 전체 token을 OpenAI Responses API Structured Outputs에 전달합니다.

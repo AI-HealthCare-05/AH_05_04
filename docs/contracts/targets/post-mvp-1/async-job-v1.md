@@ -5,7 +5,7 @@
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
-| Last verified | 2026-08-27 |
+| Last verified | 2026-08-31 |
 
 ## 적용 범위
 
@@ -62,11 +62,11 @@ Job 테이블이 상태의 기준 원본이다. Redis Stream 메시지만으로 
 }
 ```
 
-성공 응답은 `{"data": JobStatusResponse}`로 감싸고 오류는 공통 top-level 오류 envelope를 사용한다. 본인 단일 `SELF` profile과 도메인 리소스의 `user_id → profile_id` 소유권 전환은 Post-MVP-1 현재 범위다. Job의 요청 사용자와 `result_url`이 가리키는 결과 리소스의 `profile_id → PROFILE.user_id` parent chain이 같은 사용자를 가리켜야 하며, 존재하지만 소유하지 않은 ID도 `404`로 응답한다. 모든 응답에 `Cache-Control: no-store`를 포함한다. `result_url`은 안전한 도메인 결과가 저장된 `COMPLETED`에서만 제공하고 그 전에는 `null`이다. Track F의 `REJECTED` fallback도 `COMPLETED + result_url`로 조회한다. `RETRY_WAIT`에서는 `Retry-After` 헤더와 같은 값의 `retry_after_seconds`를 제공한다. `error`는 도메인 결과를 저장하지 못한 terminal `FAILED`에서만 안전한 `{code, message}`를 반환하며 `attempt_count`, progress, `failure_detail`과 Provider 원문 오류는 외부 응답에 포함하지 않는다.
+성공 응답은 `{"data": JobStatusResponse}`로 감싸고 오류는 공통 top-level 오류 envelope를 사용한다. `SELF` profile 제약·backfill·FK·cutover·rollback·권한 테스트 Decision이 승인될 때까지 Job과 `result_url`이 가리키는 도메인 결과는 기존 `user_id` 소유권 기준을 유지하며 `profile_id`로 읽기·쓰기를 전환하지 않는다. Job 요청 사용자와 결과 리소스의 `user_id`가 같아야 하고, 존재하지만 소유하지 않은 ID도 `404`로 응답한다. 모든 응답에 `Cache-Control: no-store`를 포함한다. `result_url`은 안전한 도메인 결과가 저장된 `COMPLETED`에서만 제공하고 그 전에는 `null`이다. Track F의 `REJECTED` fallback도 `COMPLETED + result_url`로 조회한다. `RETRY_WAIT`에서는 `Retry-After` 헤더와 같은 값의 `retry_after_seconds`를 제공한다. `error`는 도메인 결과를 저장하지 못한 terminal `FAILED`에서만 안전한 `{code, message}`를 반환하며 `attempt_count`, progress, `failure_detail`과 Provider 원문 오류는 외부 응답에 포함하지 않는다.
 
 OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.status_url`을 같은 Job 조회 URL로 제공한다.
 
-Proposed ERD의 `AI_JOB_ATTEMPT.attempt_status=BLOCKED`는 현재 승인된 Worker 상태 의미나 적용 Track이 없다. 이를 Track F의 `safety_disposition=BLOCKED_ACTION`과 연동된 값으로 해석하지 않으며, 별도 Decision으로 기록 조건과 OCR·Guide·Chat 적용 범위를 확정하기 전에는 Worker가 `BLOCKED`를 저장하지 않는다.
+승인된 ERD에는 `AI_JOB_ATTEMPT.attempt_status=BLOCKED` enum 값이 포함된다. 다만 이 값의 의미, 기록 조건, 상태 전이와 OCR·Guide·Chat 적용 범위는 후속 Decision 대상이다. ERD나 enum을 Proposed로 낮추지 않되, 전이 계약이 승인될 때까지 Worker 구현에서 `BLOCKED`를 생성·전이·저장하지 않는다. Track F의 `safety_disposition=BLOCKED_ACTION`과는 연동하지 않는다.
 
 `COMPLETED` 뒤 `result_url`이 가리키는 도메인 결과 endpoint는 다음으로 고정한다.
 
@@ -117,7 +117,7 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 
 ## 실행 lease와 보존
 
-- Approved v4 원본의 실행 상한은 `OCR hard timeout 30초 / lease 45초`, `GUIDE hard timeout 60초 / lease 75초`, `CHAT hard timeout 45초 / lease 60초`다. 다만 OCR은 현재 설정상 CLOVA 최대 20초와 OCR 구조화 LLM 최대 30초를 순차 호출할 수 있어 30초 상한과 충돌한다. OCR hard timeout·lease 값은 [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)에서 함께 재승인할 때까지 provenance로만 보존하며 구현값으로 사용하지 않는다.
+- 2026-08-31 담당자 협의에 따라 실행 상한은 `OCR hard timeout 60초 / lease 75초`, `GUIDE hard timeout 60초 / lease 75초`, `CHAT hard timeout 45초 / lease 60초`로 고정한다. OCR 60초는 현재 Provider 상한 CLOVA 20초 + 구조화 LLM 30초의 순차 실행과 종료 처리 여유를 포함하고 lease는 hard timeout보다 15초 길다.
 - 처리 중 Worker는 10초마다 heartbeat하고 lease가 만료된 뒤에만 다른 Worker가 reclaim한다.
 - 실행 메타데이터와 Job은 terminal 전환 후 90일 보존한다. 더 엄격한 개인정보·감사 정책이 있으면 그 정책을 적용한다.
 

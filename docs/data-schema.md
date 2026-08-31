@@ -35,7 +35,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 의료 지식 | `knowledge_document`, `knowledge_chunk` | Schema-only Post-MVP 골격, 현재 검색 경로에서 미사용 |
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 
-본인 단일 `SELF` profile과 도메인 리소스의 `user_id → profile_id` 소유권 전환은 Post-MVP-1 Approved target의 현재 범위지만, 아직 현재 DB 모델·migration에는 구현되어 있지 않습니다. 복약 일정·기록과 감사 로그도 동일하게 목표 계약과 현재 구현을 구분합니다.
+본인 단일 `SELF` profile 도입은 Post-MVP-1의 방향이지만 도메인 리소스의 `user_id → profile_id` 소유권 전환은 제약·backfill·FK·cutover·rollback·권한 테스트 Decision 전까지 구현하지 않습니다. 그 Decision이 승인될 때까지 현재 `user_id` 소유권을 기준으로 유지합니다. 복약 일정·기록과 감사 로그도 동일하게 목표 계약과 현재 구현을 구분합니다.
 
 ## 변경 원칙
 
@@ -150,7 +150,7 @@ Approved Contract Freeze v4와 RAG DB schema v1.19는 다음 구조를 목표로
 
 | 영역 | 목표 테이블 | 목표 제약 |
 | --- | --- | --- |
-| 비동기 실행 | `ai_job`, `outbox_event`, 비동기 `idempotency_record`, 동기 `sync_idempotency_record` | Job 6상태, at-least-once, DB commit 후 ACK, 두 재응답 방식 분리 |
+| 비동기 실행 | `ai_job`, `outbox_event`, 단일 `idempotency_record` | Job 6상태, at-least-once, DB commit 후 ACK, `record_type=ASYNC_JOB|SYNC_MUTATION`과 타입별 CHECK 제약, 동기 snapshot은 암호화 PostgreSQL `BYTEA` |
 | 처방 버전 | `prescription_version`, `prescription_version_medication` | 불변 snapshot과 처방별 단일 active version |
 | OCR LLM provenance | OCR 구조화 실행·필드 provenance 계열 | `raw_value`, rule 정규화값, LLM 초안, 사용자 수정값, 확정값과 allowlist·schema·prompt·model·validator version 분리 |
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |

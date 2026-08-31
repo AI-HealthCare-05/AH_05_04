@@ -3,13 +3,15 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Not implemented · Track E 구현 동기화와 지정 리뷰어·Privacy 검토 대기 |
+| 구현·리뷰 | Partially implemented · PR #96 feature flag 경로는 Current, v4 확장은 구현 동기화와 지정 리뷰어·Privacy 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-e-ocr-regression-v1.md` |
-| Last verified | 2026-08-27 |
+| Last verified | 2026-08-31 |
 
 ## 목적과 소유 경계
 
 Track E는 처방전 OCR부터 비-RAG LLM 구조화 초안, 사용자 원본 대조·수정과 처방 확정까지 소유한다. 공식 의약품 후보 검색·Identity와 Guide·Chat Preflight는 처방 확정 뒤 Track F가 수행한다.
+
+현재 Backend에는 `OCR_STRUCTURE_LLM_ENABLED` feature flag, OpenAI Structured Outputs, `source_ids` grounding, rule fallback, model·prompt version 기록이 이미 구현되어 있다. 이 문서의 미구현 범위는 그 경로를 없는 것으로 취급하지 않고, 아래 최소전송·provenance·Worker·실패 복구 요구사항과의 gap으로 한정한다.
 
 - HIRA 적용약가 데이터나 HIRA API를 품목 식별 입력·정답 원장으로 사용하지 않는다.
 - 비-RAG LLM은 Retrieval, RAG, vector search 또는 외부 의료 Source 검색을 호출하지 않는다.
@@ -75,4 +77,4 @@ Track E는 처방전 OCR부터 비-RAG LLM 구조화 초안, 사용자 원본 �
 
 ## Current와의 관계
 
-현재 runtime의 rule 정규화와 약품 행 구조화 계약은 [`../../current/ocr-medication-normalization.md`](../../current/ocr-medication-normalization.md)와 [`../../current/ocr-medication-structuring.md`](../../current/ocr-medication-structuring.md)다. 이 목표 계약은 구현·migration·OpenAPI/DTO·자동 테스트와 지정 리뷰어 승인이 함께 병합되기 전에는 Current로 승격하지 않는다.
+현재 runtime의 rule 정규화와 feature flag 기반 LLM 약품 행 구조화 계약은 [`../../current/ocr-medication-normalization.md`](../../current/ocr-medication-normalization.md)와 [`../../current/ocr-medication-structuring.md`](../../current/ocr-medication-structuring.md)다. 이 목표의 최소전송·provenance·Worker·실패 복구 gap은 구현·migration·OpenAPI/DTO·자동 테스트와 지정 리뷰어 승인이 함께 병합되기 전에 Current로 승격하지 않는다.
