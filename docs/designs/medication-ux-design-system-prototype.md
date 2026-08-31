@@ -186,8 +186,8 @@ http://localhost:5173/design-prototype
 | `?screen=signed-out` | 로그아웃 완료 |
 | `?screen=records` | 처방·문서 기록 |
 | `?screen=insights` | 주간 복약 리포트 |
-| `?screen=lifestyle` | 생활관리 가이드 |
-| `?screen=otc` | 일반 의약품 확인 |
+| `?screen=lifestyle` | 역사적 프로토타입. Approved v4의 독립 생활습관 화면 범위에는 포함하지 않음 |
+| `?screen=otc` | 역사적 프로토타입. Approved v4에서는 별도 OTC 화면 없이 기존 Chat 질문 유형으로 통합 |
 | `?screen=profile` | 내 정보·동의 관리 |
 | `?screen=notifications` | 복약 알림·잠금 화면 설정 |
 | `?screen=support-hub` | 적용 중인 복약 도움 |

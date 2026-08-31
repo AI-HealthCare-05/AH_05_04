@@ -78,6 +78,7 @@ export function MobileShell({
   hideHeader = false,
   hideNavigation = false,
   activeNavigation = '홈',
+  disabledNavigation = [],
   onNavigate,
 }: {
   title?: string
@@ -88,6 +89,7 @@ export function MobileShell({
   hideHeader?: boolean
   hideNavigation?: boolean
   activeNavigation?: '홈' | '일정' | '가이드' | '메뉴'
+  disabledNavigation?: readonly ('홈' | '일정' | '가이드' | '메뉴')[]
   onNavigate?: (item: '홈' | '일정' | '가이드' | '메뉴') => void
 }) {
   return (
@@ -113,7 +115,14 @@ export function MobileShell({
       {!hideNavigation && (
         <nav className="bottom-nav" aria-label="주요 메뉴">
           {(['홈', '일정', '가이드', '메뉴'] as const).map((item) => (
-            <button key={item} type="button" aria-current={item === activeNavigation ? 'page' : undefined} onClick={() => onNavigate?.(item)}>
+            <button
+              key={item}
+              type="button"
+              aria-current={item === activeNavigation ? 'page' : undefined}
+              aria-label={disabledNavigation.includes(item) ? `${item} (준비 중)` : item}
+              disabled={disabledNavigation.includes(item)}
+              onClick={() => onNavigate?.(item)}
+            >
               {item}
             </button>
           ))}

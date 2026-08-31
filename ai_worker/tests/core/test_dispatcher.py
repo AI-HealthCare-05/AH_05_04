@@ -79,6 +79,19 @@ class FakeTimeoutHandler:
         )
 
 
+class FakeContextLeakingTimeoutHandler:
+    """활성 예외 구간에서 분류 오류를 만드는 Fake입니다."""
+
+    handler_type = JobType.OCR
+
+    async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        try:
+            raise RuntimeError("SYNTHETIC_PROVIDER_TIMEOUT_BODY")
+        except RuntimeError:
+            # from None을 써도 __context__에는 원본이 남습니다.
+            raise WorkerError(failure_code="TIMEOUT") from None
+
+
 class FakeInvalidFailureCodeHandler:
     """승인되지 않은 오류 코드를 발생시키는 잘못된 Handler입니다."""
 
@@ -292,3 +305,42 @@ async def test_unknown_exception_is_converted_without_raw_message() -> None:
     assert exc_info.value.failure_code == "INTERNAL_ERROR"
     assert "sensitive provider response" not in exc_info.value.safe_message
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_classified_worker_error_does_not_carry_original_context() -> None:
+    """분류된 오류에도 Provider 원문이 예외 chain으로 남지 않게 합니다."""
+
+    registry = HandlerRegistry()
+    registry.register(FakeContextLeakingTimeoutHandler())
+
+    dispatcher = Dispatcher(registry)
+
+    with pytest.raises(WorkerError) as exc_info:
+        await dispatcher.dispatch(build_message())
+
+    error = exc_info.value
+
+    assert error.failure_code == "TIMEOUT"
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert "SYNTHETIC_PROVIDER_TIMEOUT_BODY" not in str(error)
+
+
+@pytest.mark.asyncio
+async def test_unclassified_error_does_not_carry_original_context() -> None:
+    """미분류 예외의 원문이 예외 chain으로 남지 않게 합니다."""
+
+    registry = HandlerRegistry()
+    registry.register(FakeUnknownErrorHandler())
+
+    dispatcher = Dispatcher(registry)
+
+    with pytest.raises(HandlerExecutionError) as exc_info:
+        await dispatcher.dispatch(build_message())
+
+    error = exc_info.value
+
+    assert error.__cause__ is None
+    assert error.__context__ is None

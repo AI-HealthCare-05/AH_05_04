@@ -358,7 +358,7 @@ Runner가 모든 요청에 하나의 read timeout을 사용하므로 실제 값�
 API 호출에 사용한 session과 다른 새 DB session에서 다음을 확인한다.
 
 - `local-live-full` OCR: `COMPLETED`, `completed_at` 존재, 오류 정보 null, 추출 필드 존재와 모든 필수 필드 `CONFIRMED`
-- Guide: `COMPLETED`, content 존재, 실제 모델 ID, `guide-prompt-v2`, 오류 정보 null
+- Guide: `COMPLETED`, content 존재, 실제 모델 ID, `guide-prompt-v3`, 오류 정보 null
 - Chat Assistant: `COMPLETED`, content 존재, 실제 모델 ID, `chat-prompt-v1`, 오류 정보 null
 - 사용자 질문과 Assistant가 올바른 순서로 같은 session에 연결됨
 - Guide와 Chat이 같은 합성 prescription에 연결됨
@@ -501,7 +501,7 @@ runner는 stdout에 JSON 한 건만 출력하고 진단은 민감정보 없이 s
   "guide": {
     "status": "COMPLETED",
     "model_name": "gpt-4o-mini-actual-id",
-    "prompt_version": "guide-prompt-v2",
+    "prompt_version": "guide-prompt-v3",
     "content_length": 120
   },
   "chat": {

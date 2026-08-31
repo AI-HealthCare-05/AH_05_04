@@ -27,10 +27,12 @@ class HandlerRegistry:
     def get(self, handler_type: JobType) -> Handler:
         """등록된 Handler를 반환합니다."""
 
-        try:
-            return self._handlers[handler_type]
-        except KeyError:
-            raise HandlerNotRegisteredError(handler_type) from None
+        handler = self._handlers.get(handler_type)
+
+        if handler is None:
+            raise HandlerNotRegisteredError(handler_type)
+
+        return handler
 
     @property
     def registered_types(self) -> frozenset[JobType]:

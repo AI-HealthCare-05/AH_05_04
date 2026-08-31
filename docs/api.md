@@ -96,7 +96,7 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 
 ## Post-MVP-1 목표 API — 미구현
 
-아래 내용은 2026-08-24 승인된 목표 계약이며 현재 Router·OpenAPI 동작이 아닙니다. 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
+아래 내용은 2026-08-27 Approved Contract Freeze v4의 목표 계약이며 현재 Router·OpenAPI 동작이 아닙니다. 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
 
 | Method | Path | 목표 성공 상태 | 목표 동작 |
 | --- | --- | ---: | --- |
@@ -118,9 +118,9 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 
 세부 목표는 [비동기 Job 계약](./contracts/targets/post-mvp-1/async-job-v1.md), [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md), [Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)을 따릅니다. 계약 파일의 존재는 구현 완료를 뜻하지 않습니다.
 
-### Track B·C·D 목표 API 표면
+### Track B·C 목표 API 표면
 
-아래 경로도 승인된 Post-MVP-1 목표 계약입니다. 승인 원본이 HTTP 성공 코드를 고정하지 않은 쓰기 API의 정확한 성공 코드는 route·DTO·OpenAPI·계약 테스트를 함께 제출하는 구현 PR에서 고정합니다.
+아래 경로도 승인된 Post-MVP-1 목표 계약입니다. 승인 원본이 HTTP 성공 코드나 route·DTO를 고정하지 않은 쓰기 API는 구현자가 임의로 정하지 않습니다. 별도 Product Decision으로 경계를 확정한 뒤 route·DTO·OpenAPI·계약 테스트를 함께 제출합니다.
 
 | Track | Method | Path | 목표 동작 |
 | --- | --- | --- | --- |
@@ -136,11 +136,19 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 | C | `POST` | `/api/v1/support-action-plans` | 실행계획 생성 |
 | C | `PATCH` | `/api/v1/support-action-plans/{id}` | 실행계획 변경 |
 | C | `POST` | `/api/v1/support-action-plans/{id}/followups` | follow-up 저장 |
-| D | `GET` | `/api/v1/otc-products?query={structured-query}` | 승인 제품명·성분명 기반 구조화 검색 |
-| D | `POST` | `/api/v1/otc-evaluations` | 확정 OTC 대상 동기 평가 |
-| D | `GET` | `/api/v1/otc-evaluations/{id}` | 저장된 평가 snapshot 조회 |
 
-Track B·C·D 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/targets/post-mvp-1/checkin-v1.md)과 [Safety Result 계약](./contracts/targets/post-mvp-1/safety-result-v1.md)을 기준으로 합니다.
+Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/targets/post-mvp-1/checkin-v1.md)과 [Safety Result 계약](./contracts/targets/post-mvp-1/safety-result-v1.md)을 기준으로 합니다.
+
+### Track E·F 목표 API 경계
+
+- OCR 접수·조회 route는 공통 `OCR` Job 계약을 유지한다. OCR 결과 DTO에는 rule 정규화값, 비-RAG LLM 초안, 사용자 수정값과 확정값의 provenance와 version을 서로 덮어쓰지 않고 표현해야 한다.
+- 처방 확정은 사용자 검수 revision·소유권을 확인하고 Prescription, 불변 Prescription Version과 Medication snapshot을 한 transaction에서 만든다. LLM 초안이나 미확정 OCR 값은 저장 입력으로 사용할 수 없다.
+- Track F는 Candidate Search, 최대 1개 Candidate Result, 사용자 확인·거절, append-only Identification과 Guide·Chat 전 Identification Preflight operation을 제공해야 한다.
+- Candidate Search와 확인 요청은 `prescription_version_medication_id`에 귀속한다. “맞아요” 요청은 `candidate_search_result_id`와 `Idempotency-Key`를 요구하며, 소유권·active version·후보 현재성·미소비 상태·Runtime Release Bundle 호환성을 잠금 안에서 검증한다.
+- `AMBIGUOUS`, `NO_CANDIDATE`, `INGREDIENT_ONLY`, `INVALID_INPUT`은 내부 Top-K·score를 공개하지 않고 Identification을 만들지 않는다. Preflight 실패는 `job_id` 없는 동기 `REVIEW_REQUIRED`이며 AI Job 안에서 사용자 입력을 기다리지 않는다.
+- 위 `prescription_version_medication_id`, `candidate_search_result_id`, `Idempotency-Key`와 검증 불변 조건은 Approved v4가 고정한 최소 계약이다. 그 밖의 Candidate·Identification·Preflight route template, 성공 status, 전체 DTO 구성과 오류 code는 고정하지 않았다. 구현 전 후속 Product Decision으로 확정하고 OpenAPI·계약 테스트와 함께 반영한다.
+- `/api/v1/otc-products`, `/api/v1/otc-evaluations`, `/api/v1/otc-evaluations/{id}`는 폐기된 Track D 전용 표면이며 구현하지 않는다. OTC 질문은 기존 Chat 화면·세션·`CHAT` Job·RAG·Citation·Safety API 경로를 사용한다.
+- Chat 자유 입력의 OTC 제품·성분·함량·제형을 안정적인 Rule 입력 Identity로 확정하는 애매함 처리·사용자 확인 전이는 아직 고정하지 않았다. [문서 권위의 구현 전 재결정 항목](./governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)으로 추적하고, 확정 전에는 불충분한 입력으로 Rule 평가를 실행하지 않는다.
 
 ## 복약 챗봇
 
@@ -357,4 +365,5 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-27 | Issue #94 / PR #96 | OCR LLM 구조화 metadata, 제품 함량 필드, 확정 후 extracted-field PATCH 409 차단 계약을 반영 |
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
+| 2026-08-27 | Issue #91 | Approved v4의 OCR 비-RAG LLM→사용자 처방 확정→MFDS Candidate·Identification·Preflight와 Track F OTC Chat 경계를 목표 API에 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |

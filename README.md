@@ -20,29 +20,30 @@
 제품이 완성하려는 핵심 여정은 다음과 같습니다.
 
 1. 처방전 업로드
-2. OCR 결과 확인·수정과 처방 확정
+2. OCR·비-RAG LLM 구조화 초안 확인·수정과 처방 확정
 3. 확정 처방 기반 복약 가이드와 챗봇
 4. 사용자가 확인한 일정과 Check-in
 5. 미복용 사유에 따른 Barrier/Support
-6. OTC 성분 식별과 처방약 병용 확인
+6. 기존 챗봇에서 처방약–OTC Rule과 승인 근거를 이용한 병용 질문
 
 ## 현재 구현과 목표 범위
 
 Backend 기능 구현과 End-to-End 제품 MVP 완료를 구분합니다.
 
-| 구분 | 2026-08-25 상태 |
+| 구분 | 2026-08-27 상태 |
 | --- | --- |
 | Backend MVP | 이메일 인증, 처방전 업로드, 같은 요청 안에서 완료되는 CLOVA OCR, 별도 OCR 필드 수정·처방 확정 API, OpenAI Guide·Chat 동기 API 구현 |
 | Frontend API 연결 | 회원가입·로그인, 처방전 업로드·OCR 조회, OCR 필드 검수·수정, 처방 확정, Guide 생성·조회, Chat 세션·이력·메시지까지 실제 API 연결 |
 | PostgreSQL 실제 E2E | 회원가입 → 로그인 → 업로드 → OCR → 검수·수정 → 처방 확정까지 완료 |
 | 전체 AI E2E 확인 필요 | Guide 생성 → Guide 조회 → Chat 진입과 실제 OpenAI 응답까지의 전체 흐름은 최종 완료로 표시하지 않음 |
 | Schema-only | 지식 문서·청크와 Guide·Chat citation 테이블은 존재하지만 실행 경로에는 미연결 |
-| Post-MVP-1 목표 | 비동기 Job·Outbox·Redis Stream·Worker, 처방 버전, 일정·Check-in, Barrier/Support, OTC, 최소 RAG·Citation·Safety |
-| 공개 상태 | 현재 Guide·Chat Production 공개 차단. Post-MVP-1 Track C·D·F도 별도 의료·약학·Privacy·Source 승인 전 공개 불가 |
+| Post-MVP-1 Approved v4 목표 | 비동기 Job·Outbox·Redis Stream·Worker, 처방 버전, 일정·Check-in, Barrier/Support, 현재 OCR LLM 경로의 최소전송·provenance·Worker 확장, MFDS 공식 Identity·Preflight, Guide·Chat Rule-first RAG·Citation·Safety·OTC |
+| 구현 상태 | PostgreSQL 전환은 완료됐지만 Post-MVP-1 OpenAPI, RAG/Eval schema, 기능·계약 테스트와 Evaluation Run은 아직 별도 구현·검증 필요 |
+| 공개 상태 | 현재 Guide·Chat Production 공개 차단. `PUBLIC_TRACK_C=false`, `PUBLIC_TRACK_F=false`이며 OTC는 F 게이트를 공유 |
 
 현재 OCR endpoint의 `202 Accepted`는 queue 접수를 뜻하지 않습니다. FastAPI 요청 안에서 CLOVA 호출과 저장을 완료합니다. Guide와 Chat도 각각 동기 one-cycle `201 Created` 계약을 사용합니다. Redis와 `ai-worker` 서비스는 준비되어 있지만 현재 AI 요청 경로에는 연결되지 않았고 Worker는 placeholder로 종료합니다.
 
-Post-MVP-1 계약 문서는 승인된 **목표 계약**이며 구현 완료 보고서가 아닙니다. 현재 상태의 상세 근거는 [시스템 아키텍처](docs/architecture.md), [AI 파이프라인](docs/ai-pipeline.md), [API 명세](docs/api.md), [데이터 구조](docs/data-schema.md), [테스트 전략](docs/testing.md)을 확인하세요.
+Approved Contract Freeze v4와 Post-MVP-1 계약 문서는 현재 **규범 목표 계약**이며 구현 완료 보고서가 아닙니다. 현재 runtime과 목표의 차이는 [시스템 아키텍처](docs/architecture.md), [AI 파이프라인](docs/ai-pipeline.md), [API 명세](docs/api.md), [데이터 구조](docs/data-schema.md), [테스트 전략](docs/testing.md)을 확인하세요.
 
 ## 의료 안전 원칙
 

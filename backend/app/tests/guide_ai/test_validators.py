@@ -1,28 +1,42 @@
+import unicodedata
+
 import pytest
 
 from app.services.guide_ai.exceptions import GuideGenerationSafetyError
-from app.services.guide_ai.schemas import GeneratedGuideDraft, GeneratedMedicationGuidance
-from app.services.guide_ai.validators import validate_generated_draft
+from app.services.guide_ai.prompt import APPROVED_GENERAL_NOTICES, APPROVED_GUIDANCE_BY_INTENT
+from app.services.guide_ai.schemas import (
+    GeneratedGuideDraft,
+    GeneratedMedicationGuidance,
+    GuideGuidanceIntent,
+)
+from app.services.guide_ai.validators import _validate_text, validate_generated_draft
 
 
 def _draft(
-    guidance: str = "처방 지시를 따라 복용해 주세요.", notice: str = "궁금한 점은 약사에게 확인해 주세요."
+    guidance: str = "안내된 복용 시점을 확인해 그대로 따라 주세요.",
+    notice: str = "불명확한 내용은 의료진 또는 약사에게 확인해 주세요.",
+    intent: GuideGuidanceIntent = GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
 ) -> GeneratedGuideDraft:
     return GeneratedGuideDraft(
-        medications=[GeneratedMedicationGuidance(source_index=0, guidance=guidance)],
+        medications=[GeneratedMedicationGuidance(source_index=0, guidance_intent=intent, guidance=guidance)],
         general_notice=notice,
     )
 
 
+def _validate_draft(
+    draft: GeneratedGuideDraft,
+    *,
+    expected_intent: GuideGuidanceIntent = GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+) -> None:
+    validate_generated_draft(draft, expected_intents={0: expected_intent})
+
+
 def test_validator_accepts_exactly_one_guidance_per_source_index() -> None:
-    validate_generated_draft(_draft(), medication_count=1)
+    _validate_draft(_draft())
 
 
 def test_validator_does_not_extract_dose_across_korean_word_boundaries() -> None:
-    validate_generated_draft(
-        _draft(notice="복약에 대한 불명확한 정보는 의료진이나 약사에게 확인하시기 바랍니다."),
-        medication_count=1,
-    )
+    _validate_text("복약에 대한 불명확한 정보는 의료진이나 약사에게 확인하시기 바랍니다.")
 
 
 @pytest.mark.parametrize(
@@ -32,13 +46,24 @@ def test_validator_does_not_extract_dose_across_korean_word_boundaries() -> None
 def test_validator_rejects_duplicate_missing_or_unknown_source_indexes(indexes: list[int]) -> None:
     draft = GeneratedGuideDraft(
         medications=[
-            GeneratedMedicationGuidance(source_index=index, guidance="지시를 확인해 주세요.") for index in indexes
+            GeneratedMedicationGuidance(
+                source_index=index,
+                guidance_intent=GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                guidance="안내된 복용 시점을 확인해 그대로 따라 주세요.",
+            )
+            for index in indexes
         ],
-        general_notice="궁금한 점은 약사에게 확인해 주세요.",
+        general_notice="불명확한 내용은 의료진 또는 약사에게 확인해 주세요.",
     )
 
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
-        validate_generated_draft(draft, medication_count=2)
+        validate_generated_draft(
+            draft,
+            expected_intents={
+                0: GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+                1: GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+            },
+        )
 
     assert exc_info.value.rule_id == "PRESCRIPTION_MISMATCH"
 
@@ -74,7 +99,7 @@ def test_validator_rejects_duplicate_missing_or_unknown_source_indexes(indexes: 
 )
 def test_validator_rejects_new_prescription_numbers(text: str) -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
-        validate_generated_draft(_draft(guidance=text), medication_count=1)
+        _validate_draft(_draft(guidance=text))
 
     assert exc_info.value.rule_id == "RX_NUMERIC_IN_AI_TEXT"
 
@@ -93,7 +118,7 @@ def test_validator_rejects_new_prescription_numbers(text: str) -> None:
     ],
 )
 def test_validator_allows_korean_words_that_are_not_prescription_quantities(text: str) -> None:
-    validate_generated_draft(_draft(guidance=text), medication_count=1)
+    _validate_text(text)
 
 
 @pytest.mark.parametrize(
@@ -101,25 +126,25 @@ def test_validator_allows_korean_words_that_are_not_prescription_quantities(text
 )
 def test_validator_rejects_prescription_change_directives(text: str) -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
-        validate_generated_draft(_draft(guidance=text), medication_count=1)
+        _validate_draft(_draft(guidance=text))
 
     assert exc_info.value.rule_id == "RX_CHANGE_DIRECTIVE"
 
 
 def test_validator_allows_explicit_negative_change_guidance() -> None:
-    validate_generated_draft(_draft(guidance="복용을 임의로 중단하지 마세요."), medication_count=1)
+    _validate_text("복용을 임의로 중단하지 마세요.")
 
 
 def test_validator_rejects_positive_directive_mixed_with_safe_negation() -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
-        validate_generated_draft(_draft(guidance="복용을 중단하지 말고 용량을 줄여 드세요."), medication_count=1)
+        _validate_draft(_draft(guidance="복용을 중단하지 말고 용량을 줄여 드세요."))
 
     assert exc_info.value.rule_id == "RX_CHANGE_DIRECTIVE"
 
 
 def test_validator_rejects_unrecognized_directive_mixed_with_safe_negation() -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
-        validate_generated_draft(_draft(guidance="복용을 중단하지 말고 용량을 줄이십시오."), medication_count=1)
+        _validate_draft(_draft(guidance="복용을 중단하지 말고 용량을 줄이십시오."))
 
     assert exc_info.value.rule_id == "RX_CHANGE_DIRECTIVE"
 
@@ -135,7 +160,7 @@ def test_validator_rejects_unrecognized_directive_mixed_with_safe_negation() -> 
 )
 def test_validator_rejects_unsupported_medical_claims(text: str) -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
-        validate_generated_draft(_draft(guidance=text), medication_count=1)
+        _validate_draft(_draft(guidance=text))
 
     assert exc_info.value.rule_id == "RX_MEDICAL_CLAIM"
 
@@ -145,6 +170,102 @@ def test_validator_rejects_unsupported_medical_claims(text: str) -> None:
 )
 def test_validator_rejects_markup_urls_and_unsafe_unicode(text: str) -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
-        validate_generated_draft(_draft(guidance=text), medication_count=1)
+        _validate_draft(_draft(guidance=text))
 
     assert exc_info.value.rule_id == "UNSAFE_MARKUP"
+
+
+@pytest.mark.parametrize(
+    ("expected_intent", "output_intent", "guidance"),
+    [
+        (
+            GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+            GuideGuidanceIntent.FOLLOW_CONFIRMED_SCHEDULE,
+            "안내된 복용 계획을 확인해 그대로 따라 주세요.",
+        ),
+        (
+            GuideGuidanceIntent.FOLLOW_CONFIRMED_SCHEDULE,
+            GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING,
+            "안내된 복용 시점을 확인해 그대로 따라 주세요.",
+        ),
+    ],
+)
+def test_validator_rejects_intent_change_for_existing_index(
+    expected_intent: GuideGuidanceIntent,
+    output_intent: GuideGuidanceIntent,
+    guidance: str,
+) -> None:
+    draft = _draft(guidance=guidance, intent=output_intent)
+
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        validate_generated_draft(
+            draft,
+            expected_intents={0: expected_intent},
+        )
+
+    assert exc_info.value.rule_id == "GUIDANCE_INTENT_MISMATCH"
+
+
+def test_validator_accepts_every_approved_guidance_and_general_notice() -> None:
+    for intent, guidance_set in APPROVED_GUIDANCE_BY_INTENT.items():
+        for guidance in guidance_set:
+            for notice in APPROVED_GENERAL_NOTICES:
+                validate_generated_draft(
+                    _draft(guidance=guidance, notice=notice, intent=intent),
+                    expected_intents={0: intent},
+                )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "합성약을 복용해 주세요.",
+        "공복에 드세요.",
+        "식전에 복용해 주세요.",
+        "식후에 복용해 주세요.",
+        "취침 전에 복용해 주세요.",
+        "물과 함께 복용하세요.",
+        "안내된 복용 시점을 확인해 따라 주세요.",
+    ],
+)
+@pytest.mark.parametrize("intent", list(GuideGuidanceIntent))
+def test_validator_rejects_unapproved_guidance(text: str, intent: GuideGuidanceIntent) -> None:
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        validate_generated_draft(
+            _draft(guidance=text, intent=intent),
+            expected_intents={0: intent},
+        )
+
+    assert exc_info.value.rule_id == "UNAPPROVED_GUIDANCE"
+
+
+@pytest.mark.parametrize(
+    "notice",
+    [
+        "궁금한 점은 가까운 곳에 문의해 주세요.",
+        "자세한 내용은 검색해 보세요.",
+        "문제가 없으면 그대로 진행하세요.",
+    ],
+)
+def test_validator_rejects_unapproved_general_notice(notice: str) -> None:
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        validate_generated_draft(
+            _draft(notice=notice),
+            expected_intents={0: GuideGuidanceIntent.FOLLOW_CONFIRMED_TIMING},
+        )
+
+    assert exc_info.value.rule_id == "UNAPPROVED_GENERAL_NOTICE"
+
+
+def test_validator_allows_nfc_equivalent_guidance_after_trim() -> None:
+    guidance = unicodedata.normalize("NFD", "안내된 복용 시점을 확인해 그대로 따라 주세요.")
+    notice = unicodedata.normalize("NFD", "불명확한 내용은 의료진 또는 약사에게 확인해 주세요.")
+
+    _validate_draft(_draft(guidance=f"  {guidance}  ", notice=f"  {notice}  "))
+
+
+def test_validator_does_not_collapse_internal_spaces_before_exact_membership() -> None:
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        _validate_draft(_draft(guidance="안내된  복용 시점을 확인해 그대로 따라 주세요."))
+
+    assert exc_info.value.rule_id == "UNAPPROVED_GUIDANCE"

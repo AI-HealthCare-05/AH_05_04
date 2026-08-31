@@ -885,7 +885,7 @@ async def test_network_runner_uses_real_tcp_and_preserves_http_id_order(tmp_path
                     "generation_status": "COMPLETED",
                     "content": "private guide",
                     "model_name": "real-model-id",
-                    "prompt_version": "guide-prompt-v2",
+                    "prompt_version": "guide-prompt-v3",
                 }
             },
             f"/api/v1/prescriptions/{prescription_id}/chat-sessions": {"data": {"session_id": session_id}},
@@ -1334,7 +1334,7 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
             generation_status=GuideGenerationStatus.COMPLETED,
             content="private guide",
             model_name="gpt-4o-mini-actual",
-            prompt_version="guide-prompt-v2",
+            prompt_version="guide-prompt-v3",
             completed_at=now,
         )
         chat_session = ChatSession(prescription_id=prescription.id)
@@ -1377,7 +1377,7 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
     verified = await verify_one_cycle(factory, fixture=fixture, ids=ids, scenario=scenario)
 
     assert verified["input_check"] == "PASS"
-    assert verified["guide"]["prompt_version"] == "guide-prompt-v2"
+    assert verified["guide"]["prompt_version"] == "guide-prompt-v3"
     assert verified["chat"]["prompt_version"] == "chat-prompt-v1"
     assert verified["guide_content"] == "private guide"
     assert verified["chat_content"] == "private chat"
@@ -1391,7 +1391,7 @@ async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_bound
             return GuideGenerationResult(
                 content="private deterministic guide",
                 model_name="gpt-4o-mini-deterministic",
-                prompt_version="guide-prompt-v2",
+                prompt_version="guide-prompt-v3",
             )
 
     class FakeChatEngine:
