@@ -1,0 +1,120 @@
+.ai-job-state {
+  width: 100%;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  padding: 42px 0 28px;
+  text-align: center;
+}
+
+.ai-job-state__document {
+  width: 98px;
+  height: 124px;
+  position: relative;
+  margin-bottom: 24px;
+  border: 1px solid #d6dde6;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgb(31 56 86 / 6%);
+}
+
+.ai-job-state__document::before {
+  content: '';
+  position: absolute;
+  inset: 30px 18px auto;
+  height: 5px;
+  border-radius: 4px;
+  background: #edf1f5;
+  box-shadow: 0 18px #edf1f5, 0 36px #edf1f5;
+}
+
+.ai-job-state__document > span {
+  width: 28px;
+  height: 10px;
+  position: absolute;
+  left: 35px;
+  bottom: 24px;
+  border: 1px solid var(--ds-action);
+  transform: skew(-8deg);
+}
+
+.ai-job-state--error .ai-job-state__document > span {
+  border-color: var(--ds-danger);
+}
+
+.ai-job-state--attention .ai-job-state__document > span {
+  border-color: #b47600;
+}
+
+.ai-job-state__title {
+  margin: 0;
+  font-size: 27px;
+  line-height: 1.28;
+  letter-spacing: -.045em;
+}
+
+.ai-job-state__description {
+  max-width: 310px;
+  margin: 10px 0 0;
+  color: var(--ds-text-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.ai-job-state__progress {
+  display: flex;
+  gap: 8px;
+  margin-top: 42px;
+}
+
+.ai-job-state__progress span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ds-action);
+  animation: ai-job-progress 1.2s ease-in-out infinite;
+}
+
+.ai-job-state__progress span:nth-child(2) {
+  animation-delay: .15s;
+}
+
+.ai-job-state__progress span:nth-child(3) {
+  animation-delay: .3s;
+}
+
+.ai-job-state__action {
+  margin-top: 42px;
+}
+
+.ai-job-state__unavailable {
+  margin: 10px 0 0;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
+@keyframes ai-job-progress {
+  0%,
+  60%,
+  100% {
+    opacity: .35;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-job-state__progress span {
+    animation: none;
+  }
+}
+
+@media (max-width: 374px) {
+  .ai-job-state__title {
+    font-size: 25px;
+  }
+}

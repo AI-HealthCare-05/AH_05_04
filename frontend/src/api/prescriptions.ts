@@ -82,9 +82,11 @@ export async function executeOcr(
 
 export async function getOcrJob(
   jobId: string,
+  signal?: AbortSignal,
 ): Promise<OcrJobResponse> {
   return apiRequest<OcrJobResponse>(
     `/api/v1/ocr-jobs/${jobId}`,
+    { signal },
   )
 }
 

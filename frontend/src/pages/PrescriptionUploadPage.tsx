@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   executeOcr,
@@ -7,39 +7,77 @@ import {
   type OcrJobResponse,
 } from '../api/prescriptions'
 import { ApiError } from '../api/client'
+import AiJobStatusState from '../components/AiJobStatusState'
 import { Button, Card, MobileShell } from '../design-system/components'
+import { adaptOcrJobStatus } from '../features/ai-jobs/ocrJobAdapter'
+import {
+  getJobFailurePresentation,
+  getJobRequestErrorPresentation,
+  getJobStatusPresentation,
+  getPollingTimeoutPresentation,
+  type AiJobPresentation,
+  type AiJobViewStatus,
+} from '../features/ai-jobs/jobState'
+import { useJobPolling } from '../features/ai-jobs/useJobPolling'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
 const OCR_POLL_INTERVAL_MS = 1000
 const OCR_POLL_MAX_ATTEMPTS = 80
 
-function waitForNextOcrCheck() {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, OCR_POLL_INTERVAL_MS)
-  })
+type OcrPollingTarget = {
+  documentId: string
+  jobId: string
+}
+
+function getOcrResponseStatus(response: OcrJobResponse): AiJobViewStatus {
+  return adaptOcrJobStatus(response.data.ocr_status)
 }
 
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
   const inputId = useId()
   const [file, setFile] = useState<File | null>(null)
-  const [ocrResult, setOcrResult] = useState<OcrJobResponse | null>(null)
+  const [pollingTarget, setPollingTarget] = useState<OcrPollingTarget | null>(null)
   const [message, setMessage] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const pollingRequestRef = useRef(0)
+  const [isPreparing, setIsPreparing] = useState(false)
+  const preparationRequestRef = useRef(0)
+
+  const fetchOcrJob = useCallback(
+    (jobId: string, signal: AbortSignal) => getOcrJob(jobId, signal),
+    [],
+  )
+  const pollingState = useJobPolling<OcrJobResponse>({
+    jobKey: pollingTarget?.jobId ?? null,
+    fetcher: fetchOcrJob,
+    getStatus: getOcrResponseStatus,
+    intervalMs: OCR_POLL_INTERVAL_MS,
+    maxAttempts: OCR_POLL_MAX_ATTEMPTS,
+  })
 
   useEffect(
     () => () => {
-      pollingRequestRef.current += 1
+      preparationRequestRef.current += 1
     },
     [],
   )
 
+  useEffect(() => {
+    if (
+      pollingState.status !== 'COMPLETED' ||
+      !pollingTarget ||
+      pollingState.jobKey !== pollingTarget.jobId
+    ) return
+
+    navigate(
+      `/prescriptions/review?document_id=${pollingTarget.documentId}&job_id=${pollingTarget.jobId}`,
+    )
+  }, [navigate, pollingState.jobKey, pollingState.status, pollingTarget])
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] ?? null
     setFile(selectedFile)
-    setOcrResult(null)
+    setPollingTarget(null)
     setMessage('')
   }
 
@@ -49,45 +87,22 @@ function PrescriptionUploadPage() {
       return
     }
 
-    const requestId = ++pollingRequestRef.current
-    const isCurrentRequest = () => pollingRequestRef.current === requestId
+    const requestId = ++preparationRequestRef.current
+    const isCurrentRequest = () => preparationRequestRef.current === requestId
 
     try {
-      setIsLoading(true)
+      setIsPreparing(true)
       setMessage('')
-      setOcrResult(null)
+      setPollingTarget(null)
       const uploadResponse = await uploadPrescription(file)
       if (!isCurrentRequest()) return
       const ocrResponse = await executeOcr(uploadResponse.data.document_id)
       if (!isCurrentRequest()) return
 
-      let latestOcrResult = await getOcrJob(ocrResponse.data.job_id)
-      if (!isCurrentRequest()) return
-
-      for (let attempt = 0; attempt < OCR_POLL_MAX_ATTEMPTS; attempt += 1) {
-        setOcrResult(latestOcrResult)
-
-        if (latestOcrResult.data.ocr_status === 'COMPLETED') {
-          navigate(
-            `/prescriptions/review?document_id=${uploadResponse.data.document_id}&job_id=${ocrResponse.data.job_id}`,
-          )
-          return
-        }
-
-        if (latestOcrResult.data.ocr_status === 'FAILED') {
-          setMessage('처방전 인식에 실패했습니다. 파일을 확인한 뒤 다시 시도해 주세요.')
-          return
-        }
-
-        if (attempt === OCR_POLL_MAX_ATTEMPTS - 1) break
-
-        await waitForNextOcrCheck()
-        if (!isCurrentRequest()) return
-        latestOcrResult = await getOcrJob(ocrResponse.data.job_id)
-        if (!isCurrentRequest()) return
-      }
-
-      setMessage('처방전 확인 시간이 길어지고 있어요. 잠시 후 다시 시도해 주세요.')
+      setPollingTarget({
+        documentId: uploadResponse.data.document_id,
+        jobId: ocrResponse.data.job_id,
+      })
     } catch (error) {
       if (!isCurrentRequest()) return
       setMessage(
@@ -97,28 +112,57 @@ function PrescriptionUploadPage() {
       )
     } finally {
       if (isCurrentRequest()) {
-        setIsLoading(false)
+        setIsPreparing(false)
       }
     }
   }
 
-  if (isLoading) {
+  const resetToUpload = () => {
+    setPollingTarget(null)
+    setFile(null)
+    setMessage('')
+  }
+
+  if (isPreparing || pollingTarget) {
+    const isCurrentPollingTarget = pollingState.jobKey === pollingTarget?.jobId
+    let status: Exclude<AiJobViewStatus, 'COMPLETED'> | 'REQUEST_ERROR' | 'POLL_TIMEOUT' = 'PENDING'
+    let presentation: AiJobPresentation = getJobStatusPresentation('PENDING')
+    let onAction: (() => void) | undefined
+
+    if (isCurrentPollingTarget && pollingState.phase === 'ERROR') {
+      status = 'REQUEST_ERROR'
+      presentation = getJobRequestErrorPresentation(pollingState.error)
+      onAction =
+        pollingState.error instanceof ApiError && pollingState.error.status === 401
+          ? () => navigate('/login')
+          : resetToUpload
+    } else if (isCurrentPollingTarget && pollingState.phase === 'TIMED_OUT') {
+      status = 'POLL_TIMEOUT'
+      presentation = getPollingTimeoutPresentation()
+      onAction = resetToUpload
+    } else if (isCurrentPollingTarget && pollingState.status === 'FAILED') {
+      status = 'FAILED'
+      presentation = getJobFailurePresentation(pollingState.data?.data.error_code)
+      onAction = resetToUpload
+    } else if (
+      isCurrentPollingTarget &&
+      pollingState.status &&
+      pollingState.status !== 'FAILED' &&
+      pollingState.status !== 'COMPLETED'
+    ) {
+      status = pollingState.status
+      presentation = getJobStatusPresentation(pollingState.status)
+    }
+
     return (
       <div className="mvp-page">
         <MobileShell title="Dosey 도지" hideNavigation>
-          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-processing" role="status">
-            <div className="mvp-processing__document" aria-hidden="true">
-              <span />
-            </div>
-            <h1 className="mvp-page__title">처방전 내용을 확인하고 있어요</h1>
-            <p className="mvp-page__description">
-              파일 업로드 → 글자 인식 → 복약정보 구조화
-            </p>
-            <div className="processing-steps">
-              <span className="complete">문서 업로드 완료</span>
-              <span className="active">약 이름과 복용법 인식 중</span>
-              <span>구조화 결과 확인</span>
-            </div>
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav">
+            <AiJobStatusState
+              status={status}
+              presentation={presentation}
+              onAction={onAction}
+            />
           </main>
         </MobileShell>
       </div>
@@ -167,10 +211,6 @@ function PrescriptionUploadPage() {
           </div>
 
           {message && <p className="mvp-form__message" role="alert">{message}</p>}
-
-          {ocrResult?.data.ocr_status === 'PENDING' && <p className="mvp-form__message">OCR 작업을 기다리고 있습니다.</p>}
-          {ocrResult?.data.ocr_status === 'PROCESSING' && <p className="mvp-form__message">처방전을 인식하고 있습니다.</p>}
-          {ocrResult?.data.ocr_status === 'FAILED' && <p className="mvp-form__message">처방전 인식에 실패했습니다.</p>}
 
           <Button fullWidth disabled={!file} onClick={handleUpload}>
             처방전 읽기
