@@ -1,7 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom'
 import { getGuide, type GuideResponse } from '../src/api/guides'
 import GuidePage from '../src/pages/GuidePage'
 
@@ -18,10 +24,16 @@ function GuideRouteControls() {
   )
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.pathname}</output>
+}
+
 function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       {withRouteControls && <GuideRouteControls />}
+      <LocationProbe />
       <Routes>
         <Route path="/guides" element={<GuidePage />} />
         <Route path="/guides/:guideId" element={<GuidePage />} />
@@ -142,6 +154,23 @@ describe('GuidePage', () => {
     await screen.findByText('아직 만들어진 가이드가 없어요')
     fireEvent.click(screen.getByRole('button', { name: '홈' }))
     expect(screen.getByText('홈 화면')).toBeTruthy()
+  })
+
+  it('상세 Guide에서 active 가이드 탭을 재클릭해도 현재 상세 route와 내용을 유지한다', async () => {
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', '현재 Guide 내용'),
+    )
+
+    renderPage('/guides/guide-1')
+
+    expect(await screen.findByText('현재 Guide 내용')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+
+    fireEvent.click(screen.getByRole('button', { name: '가이드' }))
+
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+    expect(screen.getByText('현재 Guide 내용')).toBeTruthy()
+    expect(getGuide).toHaveBeenCalledTimes(1)
   })
 
   it('Guide A의 느린 응답이 route 전환 후 Guide B를 덮어쓰지 않는다', async () => {
