@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { ApiError } from '../api/client'
-import { getCurrentUser } from '../api/users'
+import { getCurrentUser, type CurrentUser } from '../api/users'
 import DesignPrototypePage from '../pages/DesignPrototypePage'
 import HomePage from '../pages/HomePage'
 import LoginPage from '../pages/LoginPage'
@@ -14,7 +14,10 @@ import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
 import ProfilePage from '../pages/ProfilePage'
 
-type AuthStatus = 'checking' | 'guest' | 'authenticated'
+type AuthState =
+  | { status: 'checking'; user: null }
+  | { status: 'guest'; user: null }
+  | { status: 'authenticated'; user: CurrentUser }
 
 function hasAccessToken() {
   return Boolean(localStorage.getItem('access_token'))
@@ -30,28 +33,33 @@ function isStaleTokenError(error: unknown) {
   )
 }
 
-function useAuthStatus(): AuthStatus {
-  const [authStatus, setAuthStatus] = useState<AuthStatus>(() =>
-    hasAccessToken() ? 'checking' : 'guest',
+function useAuthStatus(): AuthState {
+  const [authState, setAuthState] = useState<AuthState>(() =>
+    hasAccessToken()
+      ? { status: 'checking', user: null }
+      : { status: 'guest', user: null },
   )
+  const currentUserRequest = useRef<Promise<CurrentUser> | null>(null)
 
   useEffect(() => {
     let isMounted = true
 
     if (!hasAccessToken()) {
-      setAuthStatus('guest')
+      setAuthState({ status: 'guest', user: null })
       return undefined
     }
 
     async function verifyAccessToken() {
       try {
-        await getCurrentUser()
-        if (isMounted) setAuthStatus('authenticated')
+        const request = currentUserRequest.current ?? getCurrentUser()
+        currentUserRequest.current = request
+        const user = await request
+        if (isMounted) setAuthState({ status: 'authenticated', user })
       } catch (error) {
         if (isStaleTokenError(error)) {
           localStorage.removeItem('access_token')
         }
-        if (isMounted) setAuthStatus('guest')
+        if (isMounted) setAuthState({ status: 'guest', user: null })
       }
     }
 
@@ -62,7 +70,7 @@ function useAuthStatus(): AuthStatus {
     }
   }, [])
 
-  return authStatus
+  return authState
 }
 
 function AuthCheckingFallback() {
@@ -70,26 +78,30 @@ function AuthCheckingFallback() {
 }
 
 function RootRoute() {
-  const authStatus = useAuthStatus()
+  const authState = useAuthStatus()
 
-  if (authStatus === 'checking') return <AuthCheckingFallback />
-  return authStatus === 'authenticated' ? <HomePage /> : <StartPage />
+  if (authState.status === 'checking') return <AuthCheckingFallback />
+  return authState.status === 'authenticated' ? (
+    <HomePage currentUser={authState.user} />
+  ) : (
+    <StartPage />
+  )
 }
 
 function PublicOnlyRoute({ children }: { children: ReactNode }) {
-  const authStatus = useAuthStatus()
+  const authState = useAuthStatus()
 
-  if (authStatus === 'checking') return <AuthCheckingFallback />
+  if (authState.status === 'checking') return <AuthCheckingFallback />
   // 로그인된 사용자는 회원가입/로그인 화면으로 되돌아가지 않고 홈 화면을 봅니다.
-  return authStatus === 'authenticated' ? <Navigate to="/" replace /> : children
+  return authState.status === 'authenticated' ? <Navigate to="/" replace /> : children
 }
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const authStatus = useAuthStatus()
+  const authState = useAuthStatus()
 
-  if (authStatus === 'checking') return <AuthCheckingFallback />
+  if (authState.status === 'checking') return <AuthCheckingFallback />
   // 회원 전용 화면은 화면 렌더링 전에 토큰 존재 여부를 먼저 확인합니다.
-  return authStatus === 'authenticated' ? children : <Navigate to="/login" replace />
+  return authState.status === 'authenticated' ? children : <Navigate to="/login" replace />
 }
 
 function AppRouter() {

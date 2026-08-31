@@ -45,7 +45,7 @@ DB commit과 queue publish 사이의 중단으로 유실 또는 orphan 작업이
 - API는 `202` 접수·상태 조회, 멱등 충돌, Chat session당 non-terminal Job 1개와 재접속 복구 계약을 구현해야 한다.
 - migration, OpenAPI/DTO, Backend·Worker·Frontend 계약 및 통합 테스트를 함께 병합한다.
 - 중복 publish/delivery, Worker 종료·lease reclaim, fencing 경쟁, poison quarantine, Redis 장애, STALE과 민감정보 비노출을 검증한다.
-- 보존과 C·D·F 공개는 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 별도로 충족한다.
+- 보존과 C·F(OTC 포함) 공개는 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 별도로 충족한다.
 
 ## ADR 0001 전환 조건
 

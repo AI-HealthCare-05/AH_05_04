@@ -2,10 +2,10 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved target — 2026-08-24 팀 인계 기준 |
+| 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
-| Last verified | 2026-08-24 |
+| Last verified | 2026-08-27 |
 
 ## 생산 흐름
 
@@ -64,6 +64,8 @@ Worker는 메시지 수신 후 DB Job을 다시 읽고 다음을 검증한다.
 - `available_at` 도달
 - 활성 처방 버전 일치
 - 유효한 lease 획득
+
+현재 목록만으로는 Worker artifact version과 Job의 Runtime Release Bundle 호환성을 보장하지 못한다. `RETRY_WAIT` 중 Bundle 변경과 구·신 Worker 동시 배포의 처리 방식은 [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)에서 상태 전이·drain 방식·계약 테스트와 함께 확정하며, 그 전에는 이 목록을 Bundle 검증이 완료된 구현 계약으로 해석하지 않는다.
 
 상태 변경과 결과 저장은 `job_id + lease_token + expected_status` 조건부 갱신으로 fencing한다. 오래된 Worker는 새 lease 소유자의 결과를 덮어쓸 수 없다.
 

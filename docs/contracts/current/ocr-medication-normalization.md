@@ -3,7 +3,8 @@
 ## 관련 요구사항
 
 - REQ-CLN-009: 원문값과 정규화값 분리
-- REQ-CLN-014: OCR 약품명 표기 정규화
+
+Approved v4의 `REQ-CLN-014`는 사용자 확정 처방에 적용하는 Track F Resolver Query Normalizer 목표로 개정됐다. 현재 rule 기반 `normalized_value` 구현이 해당 목표를 충족한다는 뜻이 아니며, 목표 경계는 [OCR 비-RAG LLM 구조화 계약](../targets/post-mvp-1/ocr-llm-structuring-v1.md)과 [MFDS 공식 의약품 식별 계약](../targets/post-mvp-1/medication-identification-v1.md)을 따른다.
 
 ## 목적
 
@@ -43,7 +44,7 @@ OCR로 추출한 약품명의 원문을 보존하면서 공백, 괄호 및 단�
 - 약품명, 성분명 및 함량의 위치나 순서를 변경하지 않는다.
 - 정규화를 반복해도 결과가 변경되지 않아야 한다.
 - OCR 오타로 추정되는 글자는 임의로 교정하지 않는다.
-- 공식 제품명 매칭은 별도 후속 기능으로 처리한다.
+- 공식 제품명 매칭은 사용자 확정 뒤 Track F에서 처리한다. 현재 `normalized_value`는 MFDS Resolver 입력이나 공식 Identity 정답으로 사용하지 않는다.
 
 ## 예시
 

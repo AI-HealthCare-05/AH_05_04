@@ -2,16 +2,16 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved target — 2026-08-24 팀 인계 기준 |
-| 구현·리뷰 | Not implemented · C·D·F 구현 동기화와 지정 리뷰어 검토·외부 승인 대기 |
-| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-c-support-v1.md`, `track-d-otc-v1.md`, `track-f-rag-citation-safety-v1.md` |
-| Last verified | 2026-08-24 |
+| 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
+| 구현·리뷰 | Not implemented · C·F 구현 동기화와 지정 리뷰어 검토·외부 승인 대기 |
+| Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-c-support-v1.md`, `track-f-rag-citation-safety-v1.md` |
+| Last verified | 2026-08-27 |
 
 ## 공통 원칙
 
 안전 결과는 모델의 자연어만 저장하지 않는다. 입력 처방 버전, 구조화 상태, 검증 결과, 공개 결정, 근거 인용을 함께 저장한다. 근거가 없거나 검증이 실패하면 정상 답변으로 공개하지 않는 fail-closed 규칙을 적용한다.
 
-Track C·D·F의 직접 조회·쓰기 API는 인증 사용자가 직접 소유한 resource만 허용한다. OTC 평가는 대상 `prescription_version_id`, Safety·Barrier는 Check-in parent chain, Job 기반 Safety Result는 Job과 처방 version을 통해 같은 `user_id`를 확인한다. 존재하지 않거나 소유하지 않은 식별자는 모두 `404`다. 보호자·patient profile·위임 요청과 별도 운영자 열람 역할은 후속 계약이다.
+Track C 직접 API와 Track F Job·결과·Candidate·Identification은 인증 사용자가 직접 소유한 resource만 허용한다. `SELF` profile 소유권 이관 Decision이 승인될 때까지 Safety·Barrier는 Check-in에서 처방, Track F는 Job·Prescription Version·Prescription Medication으로 이어지는 parent chain의 기존 `user_id`로 같은 소유자인지 확인한다. Decision 전에 `profile_id`로 읽기·쓰기를 전환하지 않는다. 존재하지 않거나 소유하지 않은 식별자는 모두 `404`다.
 
 ## Track F 상태 축
 
@@ -23,6 +23,8 @@ Track C·D·F의 직접 조회·쓰기 API는 인증 사용자가 직접 소유�
 | `safety_disposition` | `NORMAL`, `URGENT_ROUTED`, `EMERGENCY_ROUTED`, `BLOCKED_ACTION`, `UNKNOWN_RISK` |
 
 Router와 저장 결과를 혼용하지 않는다. `ROUTINE → NORMAL`, `URGENT → URGENT_ROUTED`, `EMERGENCY → EMERGENCY_ROUTED`, `UNKNOWN → UNKNOWN_RISK`로 매핑하고, 정책 검증이 특정 행동을 차단한 경우에만 `BLOCKED_ACTION`을 저장한다.
+
+`BLOCKED_ACTION`은 Safety Result의 `safety_disposition` 값이며 승인된 ERD의 `AI_JOB_ATTEMPT.attempt_status=BLOCKED`와 연동된 상태가 아니다. `BLOCKED` enum 값 자체는 승인 범위로 유지하되 의미·기록 조건·전이·적용 Track은 별도 Decision 전까지 미확정이므로 Safety 처리 결과만으로 Worker가 attempt를 `BLOCKED`로 기록하지 않는다.
 
 정확한 조합은 다음으로 고정한다.
 
@@ -42,7 +44,7 @@ Router와 저장 결과를 혼용하지 않는다. `ROUTINE → NORMAL`, `URGENT
 
 ## 저장 모델과 근거
 
-Track F의 `safety_result`는 Chat Job과 처방 version에 1:1로 귀속하며 `response_level`, `execution_status`, `release_decision`, `safety_disposition`, `is_current`, 승인 content 또는 fallback을 저장한다. 모델·prompt·validator·source version과 Citation을 함께 기록하고 상태축의 허용 조합은 DB 제약 또는 서비스 검증으로 강제한다. 정확한 물리 컬럼명은 migration·DTO·계약 테스트를 포함한 구현 PR에서 확정한다. 동기 처리인 Track C·D의 도메인 결과를 `AI_JOB`에 귀속하지 않는다.
+Track F의 `safety_result`는 Guide 또는 Chat Job과 처방 version에 귀속하며 `response_level`, `execution_status`, `release_decision`, `safety_disposition`, `is_current`, 승인 content 또는 fallback을 저장한다. 모델·prompt·validator·Source·Rule·Runtime Bundle version과 Citation을 함께 기록하고 상태축의 허용 조합은 DB 제약 또는 서비스 검증으로 강제한다. 정확한 물리 컬럼명은 migration·DTO·계약 테스트를 포함한 구현 PR에서 확정한다. 동기 처리인 Track C의 도메인 결과를 `AI_JOB`에 귀속하지 않는다.
 
 `fallback_code`는 `NO_APPROVED_EVIDENCE`, `CONFLICTING_EVIDENCE`, `SAFETY_ROUTED`, `PROVIDER_TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `VALIDATION_FAILED`, `PRESCRIPTION_STALE`, `UNSUPPORTED_REQUEST`로 제한한다. Job 기반 ASSISTANT 응답은 `job_id`, Job 상태와 동일한 `generation_status`, nullable `content`, `prescription_version_id`, `is_current`, 세 결과 상태축, `response_level`, nullable `fallback_code`, `citations[]`를 제공한다. non-terminal·`FAILED`·`STALE`에서는 `content=null`이며 `COMPLETED`에서만 승인 답변 또는 fallback을 노출한다.
 
@@ -72,22 +74,23 @@ RetrievalRun에는 raw 질문을 저장하지 않고 다음 감사 메타데이�
 
 Source는 owner, license, attribution, checksum, 수집일, 승인자, 승인일, 유효일과 `ACTIVE` 또는 `INACTIVE` 상태를 저장한다. 재색인은 새 `source_version`을 만들고 기존 citation을 바꾸지 않는다. `INACTIVE` source는 신규 retrieval에서 제외하지만 과거 결과의 provenance는 보존한다.
 
-## Track C와 D 매핑
+## Track C와 Track F Rule-first 매핑
 
 - Track C Support는 승인된 고정 규칙과 문구만 사용한다. 위기·응급 신호는 안내 문구를 임의 생성하지 않고 승인 경로로 보낸다.
-- Track D는 제품/성분 식별과 안전성 판정을 분리한다. 사용자가 확정한 제품·성분에 대해 구조화 규칙 엔진을 동기로 실행한다.
-- 성분 미확정, 미수록, 근거 충돌과 의존성 실패는 `UNKNOWN`이다. 승인된 범위의 전체 평가가 끝났지만 성립 rule이 없으면 `NO_RULE_MATCH_IN_APPROVED_SCOPE`이며 두 결과 모두 `SAFE`로 간주하지 않는다.
-- v1 후보 검색은 허가된 제품명·성분명 기반 구조화 검색만 지원한다. 이미지 OCR, 바코드와 자연어 복수 제품 비교는 제외하며 `OTC_CHECK` Job 유형을 추가하지 않는다.
+- Track F는 `Context Load → Scope Classifier → Identification Preflight → Rule Engine → Evidence Retrieval → Rerank → Evidence Gate → Answer Composer → Citation Validator → Safety Gate → Persist Result` 순서를 고정한다.
+- 자유 ReAct 도구 호출과 열린 웹 검색을 사용하지 않는다. 의미 기반 NLI와 고급 reranking은 Post-MVP-1 완료 게이트에서 제외한다.
+- `MEDICATION_GENERAL`과 `OTC_INTERACTION`은 같은 Chat 화면·세션·`CHAT` Job·RAG·Citation·Safety 경로를 사용한다.
+- 처방약–OTC 질문은 활성 `interaction_rule`을 결정론적으로 먼저 실행하고 연결된 `rule_evidence`를 Claim Citation으로 반환한다.
+- Rule 없음은 안전함이나 함께 복용 가능함을 뜻하지 않는다. OTC 제품·성분·함량·제형을 충분히 식별하지 못하면 Rule 평가를 하지 않고 추가 정보 요청 또는 승인 fallback으로 끝낸다.
+- 자유 입력에서 추가 정보와 사용자 확인을 거쳐 안정적인 OTC Identity를 확정하는 상세 전이는 아직 미정이다. [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌) 전에는 LLM 추론만으로 OTC Identity를 확정하거나 Rule 평가로 진행하지 않는다.
+- 처방약–처방약 질문에는 Rule 결과를 만들지 않고 범위 제한과 전문가 확인 안내를 반환한다. 음식·음료·보충제 개별 상호작용 판정도 범위 밖이다.
+- 근거 없음·상충·Source 비활성·Citation 불일치·Provider 장애·검증 실패에서는 생성 내용을 폐기하고 승인된 제한 응답만 노출한다.
 
-OTC rule은 `rule_id`, `rule_version`, `rule_type`, 좌·우 ingredient code, `severity`, `source_id`, `source_version`, `effective_at`을 저장한다. `rule_type`은 `CONTRAINDICATION`, `DUPLICATE_INGREDIENT`, `CAUTION`, `severity`는 `BLOCK`, `WARN`, `INFO`로 고정한다. 사용자 공개 `public_outcome`은 `PROFESSIONAL_CONFIRMATION_REQUIRED`, `DUPLICATE_INGREDIENT_FOUND`, `CAUTION_FOUND`, `NO_RULE_MATCH_IN_APPROVED_SCOPE`, `UNKNOWN`만 허용하며 `SAFE`, `DO_NOT_USE`, 복용 중단·용량 변경 지시를 금지한다.
+`interaction_rule`은 안정적인 처방약·OTC Identity, rule type·severity, rule/source version, effective 시각과 연결된 `rule_evidence`를 저장한다. 동일 Source 행의 완전 중복만 제거하고 과거 실행은 당시 Rule Set과 Runtime Release Bundle로 재현한다. HIRA 적용약가 데이터는 제품 Identity 또는 상호작용 근거로 사용하지 않는다.
 
-단일 `public_outcome`은 평가 불완전 시 `UNKNOWN`, 평가가 완전할 때 `BLOCK → PROFESSIONAL_CONFIRMATION_REQUIRED`, `WARN → CAUTION_FOUND`, `DUPLICATE_INGREDIENT → DUPLICATE_INGREDIENT_FOUND`, `CAUTION 또는 INFO → CAUTION_FOUND`, 성립 rule 없음 → `NO_RULE_MATCH_IN_APPROVED_SCOPE` 순으로 집계한다. Rule row에는 `public_outcome`을 중복 저장하지 않고 versioned 집계 정책과 평가 snapshot에만 저장한다. `NO_RULE_MATCH_IN_APPROVED_SCOPE`는 승인된 범위에서 rule을 찾지 못했다는 뜻이며 안전 보장이 아니다.
+별도 `/api/v1/otc-products`, `/api/v1/otc-evaluations`, `/api/v1/otc-evaluations/{id}`와 `OTC_CHECK` Job, Track D 공개 flag는 두지 않는다. OTC 결과는 기존 Chat 응답의 `release_decision`, `fallback_code`, `citations[]`와 Safety 상태축으로 표현한다.
 
-Track D 목표 API는 구조화 검색 `GET /api/v1/otc-products?query=...`, 동기 평가 `POST /api/v1/otc-evaluations`, 저장된 결과 조회 `GET /api/v1/otc-evaluations/{id}`다. 결과 조회는 최초 평가의 동일한 snapshot을 재현한다. 평가는 사용자가 확정한 `product_id` 또는 `ingredient_id` 중 정확히 하나와 기대 `prescription_version_id`, `Idempotency-Key`를 요구한다. 둘 다 있거나 둘 다 없으면 `422 OTC_TARGET_EXACTLY_ONE_REQUIRED`, active version이 다르면 `409 PRESCRIPTION_VERSION_CONFLICT`다. 응답은 `identification_status`, `evaluation_status`, `prescription_version_id`, `evaluated_at`, `public_outcome`, `message_code`, 전체 `matched_rules[]`, `sources[]`, `cta`를 포함한다. 현재 증상은 입력받거나 평가하지 않는다.
-
-평가가 불완전한 `UNKNOWN`의 실패 reason code는 `IDENTIFICATION_FAILED`, `SOURCE_NOT_FOUND`, `SOURCE_CONFLICT`, `DEPENDENCY_UNAVAILABLE`로 구분한다. 입력 수정으로 해결할 수 있는 경우에만 제한적으로 재시도를 안내하고, 나머지는 전문가 확인 CTA를 제공한다.
-
-결과에는 평가 당시 rule·source version을 snapshot한다. 성립한 모든 rule을 `BLOCK`, `WARN`, `INFO`, `rule_type`, `rule_id` 순으로 반환한다. 동일 source·rule version의 완전 중복만 제거하며 서로 다른 근거의 성립 rule을 숨기지 않는다.
+Runtime Release Bundle은 Source, Candidate/Knowledge Index, Rule, Guideline, Safety, Resolver, Graph, Prompt, Validator, Model과 Worker artifact version을 묶는다. 환경별 Active Bundle은 최대 하나이며 처방·Identification·Bundle·Execution Manifest가 바뀐 과거 결과는 `STALE`이다.
 
 ## 보존
 
@@ -95,4 +98,4 @@ Track D 목표 API는 구조화 검색 `GET /api/v1/otc-products?query=...`, 동
 
 ## 공개 게이트
 
-Track C·D·F는 synthetic fixture로 기술 통합을 검증할 수 있다. 실제 사용자 공개는 승인된 실제형 fixture, 의료·약학 검토, 개인정보 검토, 위험 사례 회귀 테스트가 모두 통과할 때까지 각각 `PUBLIC_TRACK_C=false`, `PUBLIC_TRACK_D=false`, `PUBLIC_TRACK_F=false`로 차단한다. 승인 artifact에는 fixture ID, rule/source version, 기대 결과, 검토 범위, 검토자 역할과 승인 시각을 남긴다.
+Track C·F는 synthetic fixture로 기술 통합을 검증할 수 있다. 실제 사용자 공개는 승인된 실제형 fixture, 의료·약학·Source·Privacy 검토, HOLDOUT·SAFETY_REGRESSION과 위험 사례 회귀가 모두 통과할 때까지 `PUBLIC_TRACK_C=false`, `PUBLIC_TRACK_F=false`로 차단한다. OTC는 F 게이트를 공유한다. 필수 평가가 `NOT_RUN`이거나 분모가 0이면 `INCONCLUSIVE`로 차단하며 승인 artifact에는 fixture ID, Dataset·Rule·Source·Runtime Bundle version, 분자·분모·95% 신뢰구간, 기대 결과, 검토 범위, 검토자 역할과 승인 시각을 남긴다.

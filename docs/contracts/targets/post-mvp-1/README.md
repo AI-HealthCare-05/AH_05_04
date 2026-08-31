@@ -1,6 +1,6 @@
 # Post-MVP-1 목표 계약
 
-> 상태: Approved target / Not implemented
+> 상태: Approved Contract Freeze v4 target / Not implemented
 
 이 디렉터리의 계약은 승인된 Post-MVP-1 구현 목표이며 현재 API, DB, Worker 또는 공개 기능으로 해석하지 않습니다. 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../../../governance/post-mvp-1-document-authority.md)를 따릅니다.
 
@@ -9,6 +9,8 @@
 - [Transactional Outbox와 Redis Stream 계약 v1](./outbox-stream-v1.md)
 - [처방 버전 계약 v1](./prescription-version-v1.md)
 - [Check-in과 Barrier 계약 v1](./checkin-v1.md)
+- [OCR 비-RAG LLM 구조화 계약 v1](./ocr-llm-structuring-v1.md)
+- [MFDS 공식 의약품 식별 계약 v1](./medication-identification-v1.md)
 - [Safety Result 계약 v1](./safety-result-v1.md)
 
 ## Current 승격 조건

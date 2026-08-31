@@ -58,7 +58,7 @@ Provider에는 다음 정보만 전달할 수 있다.
 
 | 필드 | 의미 |
 | --- | --- |
-| `content` | Provider 응답의 구조·빈값 처리를 통과한 답변 본문. 의료 근거, Citation/NLI 또는 AI 품질 평가 통과를 의미하지 않는다. |
+| `content` | Provider 응답의 구조·빈값 처리를 통과한 답변 본문. 의료 근거, Citation·Safety 또는 AI 품질 평가 통과를 의미하지 않는다. |
 | `model_name` | Provider가 반환한 실제 모델 식별자 |
 | `prompt_version` | AI Core가 사용한 프롬프트 버전 |
 

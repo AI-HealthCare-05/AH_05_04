@@ -1,5 +1,15 @@
 # 개인정보 및 의료 안전
 
+## 책임과 승인
+
+- 권가빈: 개인정보·민감정보 수집·이용, 외부 Provider 처리 고지, 보존·삭제 정책과 Privacy 공개 승인 인수
+- 송은영: 인증·소유권·암호화·키 관리·로그 마스킹·TTL·사용자 삭제·legal hold·감사 통제 구현과 증빙
+- 남한솔: 회원가입·처방 업로드·Guide·Chat의 동의·철회·삭제 요청 UX와 접근성
+- 김지혜: OCR·Worker 경계의 최소 필드 전송, 민감정보 비로그와 합성 fixture 증빙
+- 정현우: AI·RAG·Provider·평가 경계의 최소 필드 전송, 민감정보 비로그와 합성 fixture 증빙 및 세부 배정 팀원 결과 취합
+
+Security·Privacy는 별도 기능 Track이 아니라 모든 PR의 공통 완료 조건입니다. PR에는 구현 담당자와 담당 리뷰어를 별도로 지정하며, 코드 리뷰는 외부 Privacy·의료·약학·Source 공개 승인을 대신하지 않습니다.
+
 ## 데이터 분류
 
 | 구분 | 저장소 포함 | 원칙 |
@@ -9,7 +19,7 @@
 | OCR 원문·미검토 값 | 운영 데이터 | 사용자 승인 전 확정 입력 금지 |
 | 확정 처방 상태 | 운영 데이터 | 버전과 승인 주체·시각 추적 |
 | AI 모델·프롬프트 정보 | 운영 데이터 | 현재 MVP 생성 결과와 함께 버전 추적 |
-| AI 근거·검증 결과 | Post-MVP 운영 데이터 | RAG·Citation/NLI 구현 후 출처·검증 버전 추적 |
+| AI 근거·검증 결과 | Post-MVP 운영 데이터 | RAG·Citation·Safety 구현 후 Source·Rule·검증·Runtime Bundle version 추적 |
 
 ## 필수 안전 규칙
 
@@ -48,7 +58,7 @@
 
 아래 값은 Privacy 승인과 관련 저장·삭제 구현 전까지 Production 기본값으로 적용하지 않습니다. 의료 원문·질문·답변·원문 멱등 키는 목표 구조의 Stream, 일반 로그, quarantine과 DLQ에 저장하지 않습니다. 개인정보·의료 검토나 legal hold가 더 엄격한 조건을 요구하면 그 조건을 우선하고 근거를 Decision에 남깁니다.
 
-Post-MVP-1의 Job·결과와 Track B·C·D 직접 API는 parent resource를 따라 동일한 `user_id` 소유권을 검사합니다. 인증 사용자가 직접 소유하지 않은 식별자는 존재 여부를 숨기기 위해 `404`로 응답합니다. 이 규칙은 Approved target이며 현재 endpoint별 구현 여부는 코드·OpenAPI·테스트로 따로 확인해야 합니다. 보호자·patient profile·대리 요청은 후속 계약이며, 내부 운영자는 감사되는 별도 support role 없이 의료 결과를 조회할 수 없습니다.
+Post-MVP-1의 본인 단일 `SELF` profile은 승인된 방향이지만, 사용자당 단일성 제약, 기존 의료 데이터 backfill, FK·migration·cutover·rollback과 endpoint별 권한 테스트가 확정되지 않았습니다. 별도 Decision이 승인될 때까지 Job·결과와 Track B·C, Candidate·Identification 직접 API는 기존 `user_id` 소유권 기준을 유지하고 `profile_id`로 읽기·쓰기를 전환하지 않습니다. 인증 사용자가 직접 소유하지 않은 식별자는 존재 여부를 숨기기 위해 `404`로 응답합니다. 내부 운영자는 감사되는 별도 support role 없이 의료 결과를 조회할 수 없습니다.
 
 보존 기본값과 공개 차단의 정확한 승인 범위는 [Post-MVP-1 외부 승인 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따릅니다.
 
@@ -58,4 +68,4 @@ Post-MVP-1의 Job·결과와 Track B·C·D 직접 API는 parent resource를 따�
 - 로그 또는 오류 응답에 민감정보가 남는가
 - 새로운 외부 데이터 출처와 라이선스가 기록됐는가
 - 현재 변경 범위에 해당하는 OCR·LLM 회귀 테스트 또는 수동 검증 근거가 추가됐는가
-- RAG·Citation/NLI·OTC 또는 AI 평가 변경이라면 Post-MVP 계약·데이터셋·임계값과 실행 결과가 함께 갱신됐는가
+- RAG·Citation·Safety·OTC 또는 공식 Identity 변경이라면 승인 Source·Dataset·Rule·Runtime Bundle manifest, 검증 정책과 실행 결과가 함께 갱신됐는가

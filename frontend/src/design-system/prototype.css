@@ -454,7 +454,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 8px max(18px, env(safe-area-inset-left));
+  padding: 8px max(18px, env(safe-area-inset-right)) 8px max(18px, env(safe-area-inset-left));
   border-bottom: 1px solid #edf0f4;
   background: rgb(255 255 255 / 96%);
   backdrop-filter: blur(12px);
@@ -662,6 +662,13 @@
 
 .ds-button:active {
   background: var(--ds-action-pressed);
+}
+
+.ds-button:focus-visible,
+.icon-button:focus-visible,
+.bottom-nav button:focus-visible {
+  outline: 3px solid var(--ds-focus);
+  outline-offset: -3px;
 }
 
 .ds-button.secondary {
@@ -952,6 +959,11 @@
   border-radius: 999px;
   background: var(--ds-action);
   transform: translateX(-50%);
+}
+
+.bottom-nav button:disabled {
+  cursor: default;
+  color: #9aa3ad;
 }
 
 .compact-two-column {
