@@ -257,6 +257,25 @@ def test_validator_rejects_unapproved_general_notice(notice: str) -> None:
     assert exc_info.value.rule_id == "UNAPPROVED_GENERAL_NOTICE"
 
 
+@pytest.mark.parametrize(
+    ("notice", "expected_rule_id"),
+    [
+        ("하루 3회 복용하세요.", "RX_NUMERIC_IN_AI_TEXT"),
+        ("복용을 중단하세요.", "RX_CHANGE_DIRECTIVE"),
+        ("이 약은 통증을 치료합니다.", "RX_MEDICAL_CLAIM"),
+        ("<b>안내</b>", "UNSAFE_MARKUP"),
+    ],
+)
+def test_validator_rejects_unsafe_general_notice_before_membership(
+    notice: str,
+    expected_rule_id: str,
+) -> None:
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        _validate_draft(_draft(notice=notice))
+
+    assert exc_info.value.rule_id == expected_rule_id
+
+
 def test_validator_allows_nfc_equivalent_guidance_after_trim() -> None:
     guidance = unicodedata.normalize("NFD", "안내된 복용 시점을 확인해 그대로 따라 주세요.")
     notice = unicodedata.normalize("NFD", "불명확한 내용은 의료진 또는 약사에게 확인해 주세요.")
