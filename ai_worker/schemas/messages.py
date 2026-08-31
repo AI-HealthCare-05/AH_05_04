@@ -1,6 +1,6 @@
 """Redis 연결과 독립적인 Worker Stream 메시지 schema입니다.
 
-승인된 `docs/contracts/outbox-stream-v1.md`의 v1 envelope만 표현합니다.
+승인된 `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md`의 v1 envelope만 표현합니다.
 처방 내용, 약품명, 질문, OCR 원문과 사용자 식별정보는 허용하지 않습니다.
 """
 
