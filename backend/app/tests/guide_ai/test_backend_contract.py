@@ -15,6 +15,7 @@ from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
 from app.services.guide_ai.exceptions import (
     GuideGenerationConfigurationError,
+    GuideGenerationInputError,
     GuideGenerationInvalidResponseError,
     GuideGenerationSafetyError,
     GuideGenerationTimeoutError,
@@ -162,6 +163,13 @@ async def test_backend_contract_preserves_medication_order_in_generation_input()
         ),
         (
             GuideGenerationConfigurationError("configuration"),
+            500,
+            "GUIDE_GENERATION_FAILED",
+            "GENERATION_REQUEST_FAILED",
+            "가이드 생성 처리 중 오류가 발생했습니다.",
+        ),
+        (
+            GuideGenerationInputError("input"),
             500,
             "GUIDE_GENERATION_FAILED",
             "GENERATION_REQUEST_FAILED",
