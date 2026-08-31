@@ -5,7 +5,7 @@
 | 항목 | 내용 |
 | --- | --- |
 | 상태 | Implemented |
-| 관련 Issue | #11, #48 |
+| 관련 Issue | #11, #48, #110 |
 | 검토 CODEOWNER | `@hazelnutflavoured`, `@phina-io`, `@ceohwj` |
 | 구현 | `backend/app/services/guide_ai/`, `backend/app/services/guides.py` |
 
@@ -13,7 +13,7 @@
 
 ## 책임 경계
 
-Backend는 인증, 처방 소유권과 확정 상태 확인, 영속 약물 조회, GUIDE 생성·완료·실패 저장, HTTP 오류 변환을 담당한다. Guide AI 모듈은 전달받은 확정 약물 정보로 provider를 호출하고, 구조화 출력을 검증한 뒤 원본 처방값과 결합한 `GuideGenerationResult`를 반환한다.
+Backend는 인증, 처방 소유권과 확정 상태 확인, 영속 약물 조회, GUIDE 생성·완료·실패 저장, HTTP 오류 변환을 담당한다. Guide AI 모듈은 확정 약물 정보에서 안내 intent를 결정하고 `source_index`와 intent만 provider에 전달한다. 구조화 출력을 검증한 뒤 원본 처방값과 결합한 `GuideGenerationResult`를 반환한다.
 
 `GuideGenerator`는 DB, FastAPI 객체와 GUIDE 상태를 참조하지 않는다. `OpenAIResponsesClient`만 OpenAI SDK 타입과 예외를 알고, `GuideGenerator`에는 `GuideProvider`, 모델명과 전체 제한시간을 주입한다. Guide AI와 Chat AI는 서로의 스키마·provider 계약을 공유하지 않는다.
 
@@ -26,14 +26,19 @@ Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`
 | `medication_name` | `str` | 필수 약명 |
 | `dose_value` | `Decimal \| None` | 선택 양수 용량 값 |
 | `dose_unit` | `str \| None` | 선택 용량 단위 |
-| `frequency_per_day` | `int \| None` | 선택 양수 일일 횟수 |
+| `frequency_per_day` | `int \| None` | 확정 처방에서는 필수인 양수 일일 횟수. 비정상 `None`은 provider 호출 전 거부 |
 | `timing_text` | `str \| None` | 선택 복용 시점 |
 | `duration_days` | `int \| None` | 선택 양수 기간 |
 | `strength_text` | `str \| None` | 선택 제품 함량, 최대 100자 |
 
 환자·사용자·처방 식별자, OCR 원문, 이미지와 미확정 값은 Guide AI 입력에 포함하지 않는다. 입력 문자열은 NFC 정규화, 앞뒤 공백 제거와 연속 공백 축약을 거치며 NUL, bidi override와 zero-width 문자는 거부한다.
 
-용량 값과 단위 중 하나만 존재하면 최종 평문에서 둘 다 생략하고 고정 확인 안내를 표시한다. 확정 처방값은 provider payload에 포함하지 않는다. 입력 모델 검증이 실패하면 provider를 호출하지 않으며 현재 Backend는 이를 일반 생성 실패 경로로 처리한다.
+용량 값과 단위 중 하나만 존재하면 최종 평문에서 둘 다 생략하고 고정 확인 안내를 표시한다. 이 상태를 별도 LLM intent로 만들지 않는다. 확정 처방값은 provider payload에 포함하지 않는다. `frequency_per_day` 누락을 포함한 입력 검증 실패는 provider 호출 전에 발생하며 현재 Backend는 이를 일반 생성 실패 경로로 처리한다. 오류 메시지에는 실패한 처방값을 포함하지 않는다.
+
+Guide AI는 다음 두 intent만 사용한다.
+
+- `FOLLOW_CONFIRMED_TIMING`: `timing_text`가 존재하는 확정 약물
+- `FOLLOW_CONFIRMED_SCHEDULE`: `timing_text`가 없고 필수 `frequency_per_day`가 존재하는 확정 약물
 
 ## Provider 호출 계약
 
@@ -44,29 +49,33 @@ Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`
 - `input_json`
 - `max_output_tokens`
 
-`input_json`에는 입력 순서를 연결하기 위한 0-based `source_index`만 포함합니다.
+`input_json`에는 입력 순서를 연결하는 0-based `source_index`와 Backend가 결정한 `guidance_intent`만 포함한다.
 
 ```json
-[
-  { "source_index": 0 },
-  { "source_index": 1 }
-]
+{
+  "medications": [
+    { "source_index": 0, "guidance_intent": "FOLLOW_CONFIRMED_TIMING" },
+    { "source_index": 1, "guidance_intent": "FOLLOW_CONFIRMED_SCHEDULE" }
+  ]
+}
 ```
-약명·제품 함량·복용량·단위·횟수·복용 시점·기간을 포함한 확정 처방값은 `Backend renderer`에만 남기며 `provider`에 전달하지 않는다.
+
+약명·제품 함량·복용량·단위·횟수·복용 시점·기간과 사용자·문서·처방·약물 식별자는 `Backend renderer`와 내부 저장 경계에만 남기며 provider에 전달하지 않는다. `guidance_intent`는 `timing_text` 존재 여부에서 파생된 의료 metadata이므로 외부 전송 승인 대상이다.
 OpenAI adapter는 비스트리밍 `responses.parse`, `text_format=GeneratedGuideDraft`, `store=False`를 사용한다. `max_output_tokens`는 `400 + (160 × 약물 수)`이며, `GuideGenerator`가 provider 호출 전체를 주입된 timeout으로 제한한다.
 
 ## 출력 계약
 
 성공 시 `GuideGenerator.generate()`는 다음 `GuideGenerationResult`를 반환한다.
 
-| 필드 | 계약                                                             |
-| --- |------------------------------------------------------------------|
-| `content` | 검증된 AI 안내와 원본 처방값을 결합한 10,000자 이하 UTF-8 평문   |
+| 필드 | 계약 |
+| --- | --- |
+| `content` | 검증된 AI 안내와 원본 처방값을 결합한 10,000자 이하 UTF-8 평문 |
 | `model_name` | provider 응답에서 확인한 비어 있지 않은 실제 모델 ID, 100자 이하 |
+| `prompt_version` | 현재 `guide-prompt-v3` |
 
-| `prompt_version` | 현재 `guide-prompt-v2`                                           |
+`content`는 OpenAI의 원문이나 `response.output_text`가 아니다. 구조화 출력의 약물 항목은 `source_index`, 입력과 동일한 `guidance_intent`, 승인된 `guidance`를 포함한다. 약명·용량·횟수·복용 시점·기간은 원본 `MedicationInput`에서 결정론적으로 렌더링하고, AI 출력의 사실값은 사용하지 않는다. Provider 배열 순서와 무관하게 입력 약물 순서와 각 `source_index`의 대응을 유지한다.
 
-`content`는 OpenAI의 원문이나 `response.output_text`가 아니다. 약명·용량·횟수·복용 시점·기간은 원본 `MedicationInput`에서 결정론적으로 렌더링하고, AI 출력에서는 `source_index`, 검증된 `guidance`와 `general_notice`만 사용한다. 입력 약물 순서와 각 `source_index`의 대응을 유지한다.
+`guidance`는 intent별 `APPROVED_GUIDANCE_BY_INTENT`, `general_notice`는 `APPROVED_GENERAL_NOTICES`에 NFC 정규화와 앞뒤 공백 제거 후 정확히 포함되어야 한다. index 중복·누락·범위 밖 값, intent 변경·불일치, 승인 집합 밖 문장과 기존 숫자·의료 주장·처방 변경·마크업 위반은 전체 결과를 차단한다.
 
 Backend는 성공 결과의 세 필드를 GUIDE 완료 저장에 사용하며, 저장한 `content`와 성공 API 응답의 `content`를 동일하게 유지한다.
 
@@ -76,14 +85,14 @@ OpenAI SDK 예외는 `OpenAIResponsesClient` 밖으로 노출하지 않는다.
 
 | AI 오류 | 의미 | 현재 Backend 처리 |
 | --- | --- | --- |
-| `GuideGenerationInputError` | 향후 Backend 입력 변환 경계를 위한 호환성 예약 예외이며 현재 발생 경로 없음 | 해당 없음 |
+| `GuideGenerationInputError` | 확정 처방 계약상 필수인 `frequency_per_day` 누락 등 provider 호출 전 입력 불일치 | 일반 생성 실패 |
 | `GuideGenerationTimeoutError` | 전체 provider 호출 또는 SDK timeout | GUIDE 실패, `504 GATEWAY_TIMEOUT` |
 | `GuideGenerationUnavailableError` | 연결·rate limit·408·409·5xx | GUIDE 실패, `503 SERVICE_UNAVAILABLE` |
 | `GuideGenerationConfigurationError` | OpenAI SDK가 HTTP `4xx`로 반환한 인증·권한·모델 또는 설정 오류 | 일반 생성 실패 |
 | `GuideGenerationInvalidResponseError` | 불완전·빈·다중·파싱 불가 응답 또는 잘못된 실제 모델 ID | 일반 생성 실패 |
-| `GuideGenerationSafetyError` | refusal, content filter, 처방 항목 불일치 또는 기본 안전 규칙 위반 | 일반 생성 실패 |
+| `GuideGenerationSafetyError` | refusal, content filter, index·intent 불일치, 승인 집합 밖 문장 또는 기본 안전 규칙 위반 | 일반 생성 실패 |
 
-예상하지 않은 프로그래밍 오류와 cancellation은 provider 장애로 숨기지 않는다. Backend가 저장하는 오류 메시지는 provider 응답이나 처방 데이터를 포함하지 않는 고정 문구를 사용한다.
+예상하지 않은 프로그래밍 오류와 cancellation은 provider 장애로 숨기지 않는다. Backend가 저장하는 오류 메시지와 API 오류는 provider 응답이나 처방 데이터를 포함하지 않는 고정 문구를 사용한다. 일반 생성 실패의 예외 chain도 API 오류에 연결하지 않으며 로그에는 오류 분류명과 안전한 rule ID만 기록한다.
 
 ## 조립 계약
 

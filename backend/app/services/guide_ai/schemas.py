@@ -1,6 +1,7 @@
 import re
 import unicodedata
 from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
@@ -36,8 +37,7 @@ def _normalize_display_text(value: str) -> str:
 def _normalize_generated_text(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError("generated text must be a string")
-    normalized = unicodedata.normalize("NFC", value.strip())
-    return re.sub(r" {2,}", " ", normalized)
+    return unicodedata.normalize("NFC", value.strip())
 
 
 class _StrictModel(BaseModel):
@@ -88,8 +88,14 @@ class GuideGenerationInput(_StrictModel):
 _GeneratedText = Annotated[str, BeforeValidator(_normalize_generated_text)]
 
 
+class GuideGuidanceIntent(StrEnum):
+    FOLLOW_CONFIRMED_TIMING = "FOLLOW_CONFIRMED_TIMING"
+    FOLLOW_CONFIRMED_SCHEDULE = "FOLLOW_CONFIRMED_SCHEDULE"
+
+
 class GeneratedMedicationGuidance(_StrictGeneratedModel):
     source_index: int = Field(ge=0)
+    guidance_intent: GuideGuidanceIntent
     guidance: _GeneratedText = Field(min_length=1, max_length=150)
 
 

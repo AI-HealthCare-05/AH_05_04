@@ -16,7 +16,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 현재 구현 계약
 
-- [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): 현재 동기 one-cycle 입력·출력·오류 경계
+- [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): `guide-prompt-v3` intent·승인 문구 선택형 동기 one-cycle 입력·출력·오류 경계
 - [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
 - [OCR 약품명 정규화 계약](./current/ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
 - [OCR 약품 행 구조화 계약](./current/ocr-medication-structuring.md): 현재 약품 행 판정·부분 인식·사용자 확인 경계

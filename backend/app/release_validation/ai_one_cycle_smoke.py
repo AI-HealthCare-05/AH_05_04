@@ -615,7 +615,7 @@ async def verify_one_cycle(
         guide.generation_status != GuideGenerationStatus.COMPLETED
         or not guide.content
         or not guide.model_name
-        or guide.prompt_version != "guide-prompt-v2"
+        or guide.prompt_version != "guide-prompt-v3"
         or guide.error_code is not None
         or guide.error_message is not None
         or assistant.generation_status != ChatGenerationStatus.COMPLETED

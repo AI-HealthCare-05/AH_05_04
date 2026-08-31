@@ -64,6 +64,26 @@ bash scripts/ci/run_test.sh
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.
 
+### Guide AI v3 Local 검증
+
+`guide-prompt-v3`는 실제 Provider 호출 없이 다음 결정론적 검증을 수행합니다.
+
+```bash
+uv run pytest backend/app/tests/guide_ai -q
+uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
+```
+
+- intent 분류: `timing_text`가 있으면 `FOLLOW_CONFIRMED_TIMING`, 없으면 필수 frequency 기반 `FOLLOW_CONFIRMED_SCHEDULE`
+- 비정상 frequency 누락의 Provider 호출 전 실패
+- Provider payload의 `source_index + guidance_intent` 필드 allowlist와 원본 처방값·식별자 비포함
+- 구조화 출력의 index 중복·누락·범위 밖 값 및 intent 누락·변경·불일치 차단
+- intent별 전체 승인 guidance와 전체 공통 notice 허용, NFC+trim 이후 exact membership 밖 문장 차단
+- 숫자·의료 주장·처방 변경·마크업 validator 회귀
+- renderer의 원본 처방값·불완전 용량 안내와 검증된 AI guidance 입력 순서 결합
+- `prompt_version == guide-prompt-v3`와 로그·오류의 처방값 비노출
+
+버전된 비식별 합성 평가셋은 `evals/generation/guide-v3-eval-v1.json`이며 `data_classification=SYNTHETIC`으로 고정합니다. 이 평가는 자유 생성 품질이나 실제 Provider 응답을 측정하지 않고 승인 문구 선택·안전 차단 계약을 재현합니다. 별도 승인 없이 `RUN_OPENAI_SMOKE=1`을 설정하지 않으며, skip된 실호출 테스트를 성공으로 해석하지 않습니다.
+
 ## MVP 배포 차단 기준
 
 - Ruff·Mypy·현재 범위의 자동 테스트 실패

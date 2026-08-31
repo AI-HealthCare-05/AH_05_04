@@ -31,7 +31,19 @@ Security·Privacy는 별도 기능 Track이 아니라 모든 PR의 공통 완료
 6. 응급·고위험 신호는 상담 또는 응급 도움 안내를 우선합니다.
 7. 의료문서·대화·AI 로그의 보존·삭제 기준을 데이터 종류별로 기록합니다.
 
-근거·검증 추적은 장기 안전 원칙입니다. 현재 MVP에서 RAG·Citation·Safety가 미구현이라는 사실은 이 원칙을 폐기하거나 이미 충족했다는 의미가 아닙니다. 현재 챗봇은 질문 범위를 코드로 제한하지 않으므로 복약 가이드·챗봇의 Production 배포는 차단된 상태입니다. 의미 기반 NLI는 Approved v4의 Post-MVP-1 완료 게이트가 아니며, 결정적 Citation 완전성·Source 유효성·Safety 정책 검증을 먼저 구현합니다.
+## Guide AI v3 외부 전송과 공개 경계
+
+- Guide Provider payload는 0-based `source_index`와 `guidance_intent`만 포함합니다.
+- `guidance_intent`는 `timing_text` 존재 여부에서 파생된 의료 metadata이며 외부 전송 승인 범위에 포함합니다.
+- 약명·제품 함량·용량·단위·횟수·복용 시점·기간, 사용자·문서·처방·약물 식별자, OCR 원문과 내부 오류 metadata는 Guide Provider에 전달하지 않습니다.
+- LLM 출력은 입력과 같은 index·intent 및 코드에 고정된 intent별 guidance·공통 notice 집합에 NFC 정규화와 trim 후 정확히 일치해야 합니다.
+- 승인 집합 밖 문장, 새 처방 사실·복용법, 숫자·의료 주장·처방 변경·마크업 위반은 `GuideGenerationSafetyError`로 전체 공개를 차단합니다.
+- 오류 저장·API 응답에는 고정 문구만 사용하고, 일반 생성 실패 로그에는 오류 분류명과 안전한 rule ID만 기록합니다. 처방값이나 생성 본문을 예외 chain에 남기지 않습니다.
+- 최종 가이드의 약명·용량·횟수·시점·기간과 불완전 용량 확인은 기존 Backend renderer만 원본 확정 입력에서 표시합니다.
+
+`guide-prompt-v3`의 제한 생성과 `guide-v3-eval-v1` Local 합성 검증은 외부 Provider 정책 승인이나 Production 공개 승인을 대체하지 않습니다.
+
+근거·검증 추적은 장기 안전 원칙입니다. 현재 MVP에서 RAG·Citation/NLI가 미구현이라는 사실은 이 원칙을 폐기하거나 이미 충족했다는 의미가 아닙니다. 현재 챗봇은 질문 범위를 코드로 제한하지 않으므로 복약 가이드·챗봇의 Production 배포는 차단된 상태입니다.
 
 승인표나 수동 검토만으로 이 차단을 예외 처리하지 않습니다. 조기 검증은 비식별 합성 데이터만 사용하는 접근 통제된 내부 staging 데모로 제한합니다. Production 전환에는 근거·검증 원칙을 구현하거나, 허용 사용자·질문·데이터 범위와 만료를 코드로 강제하는 제한 모드 및 재현 가능한 안전 기준을 별도 보안 ADR·계약·테스트로 승인해야 합니다.
 

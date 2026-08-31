@@ -1,3 +1,4 @@
+import traceback
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
@@ -14,6 +15,7 @@ from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
 from app.services.guide_ai.exceptions import (
     GuideGenerationConfigurationError,
+    GuideGenerationInputError,
     GuideGenerationInvalidResponseError,
     GuideGenerationSafetyError,
     GuideGenerationTimeoutError,
@@ -61,7 +63,7 @@ def _guide(prescription_id: UUID, *, completed: bool = False) -> Guide:
         generation_status=GuideGenerationStatus.COMPLETED if completed else GuideGenerationStatus.GENERATING,
         content="검증된 최종 평문" if completed else None,
         model_name="gpt-4o-mini-2024-07-18" if completed else None,
-        prompt_version="guide-prompt-v2" if completed else None,
+        prompt_version="guide-prompt-v3" if completed else None,
         requested_at=now,
         completed_at=now if completed else None,
     )
@@ -91,7 +93,7 @@ async def test_backend_contract_stores_and_returns_exact_generation_result() -> 
     result = GuideGenerationResult(
         content="검증된 최종 평문",
         model_name="gpt-4o-mini-2024-07-18",
-        prompt_version="guide-prompt-v2",
+        prompt_version="guide-prompt-v3",
     )
     generator.generate.return_value = result
     repository.mark_completed.return_value = _guide(prescription.id, completed=True)
@@ -125,7 +127,7 @@ async def test_backend_contract_preserves_medication_order_in_generation_input()
     generator.generate.return_value = GuideGenerationResult(
         content="검증된 최종 평문",
         model_name="gpt-4o-mini-2024-07-18",
-        prompt_version="guide-prompt-v2",
+        prompt_version="guide-prompt-v3",
     )
     repository.mark_completed.return_value = _guide(prescription.id, completed=True)
 
@@ -167,6 +169,13 @@ async def test_backend_contract_preserves_medication_order_in_generation_input()
             "가이드 생성 처리 중 오류가 발생했습니다.",
         ),
         (
+            GuideGenerationInputError("input"),
+            500,
+            "GUIDE_GENERATION_FAILED",
+            "GENERATION_REQUEST_FAILED",
+            "가이드 생성 처리 중 오류가 발생했습니다.",
+        ),
+        (
             GuideGenerationInvalidResponseError("response"),
             500,
             "GUIDE_GENERATION_FAILED",
@@ -201,6 +210,8 @@ async def test_backend_contract_maps_generation_errors_and_marks_failed(
 
     assert caught.value.status_code == status_code
     assert caught.value.code == api_code
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
     assert repository.mark_failed.await_args.kwargs["error_code"] == stored_error_code
     assert repository.mark_failed.await_args.kwargs["error_message"] == stored_error_message
     if api_code == "GUIDE_GENERATION_FAILED":
@@ -221,3 +232,32 @@ async def test_backend_contract_does_not_call_provider_when_prescription_input_i
     assert caught.value.code == "GUIDE_GENERATION_FAILED"
     generator.generate.assert_not_awaited()
     assert repository.mark_failed.await_args.kwargs["error_code"] == "GENERATION_REQUEST_FAILED"
+
+
+async def test_backend_contract_does_not_expose_prescription_values_in_logs_or_error_chain(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    sentinel = "SENTINEL-RX-NAME-5MG-AFTER-MEAL-RX-ID"
+    prescription = _prescription(medication_name=sentinel)
+    service, repository, generator = _service(prescription)
+    generator.generate.side_effect = GuideGenerationInvalidResponseError(sentinel)
+
+    with pytest.raises(ApiError) as caught:
+        await service.create_guide(
+            user=User(id=uuid4()),
+            request=CreateGuideRequest(prescription_id=prescription.id),
+        )
+
+    captured = capfd.readouterr()
+    exposed_text = "\n".join(
+        (
+            captured.out,
+            captured.err,
+            "".join(traceback.format_exception(caught.value)),
+            caught.value.message,
+            str(repository.mark_failed.await_args.kwargs["error_message"]),
+        )
+    )
+    assert sentinel not in exposed_text
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
