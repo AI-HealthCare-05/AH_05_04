@@ -23,7 +23,18 @@
 
 Chat은 단일 `JOB_EXECUTE` 안에서 Safety Intake를 먼저 실행한다. `URGENT`, `EMERGENCY`, `UNKNOWN`은 일반 RAG를 호출하지 않고 승인 Safety Flow로 끝낸다. `ROUTINE`만 Identification Preflight 후 Rule·Retrieval·Composer로 진행하며 단계별 두 번째 Outbox를 만들지 않는다.
 
+Chat Job은 접수 Transaction에서 최소 Intake Context만 고정한다. `ROUTINE` 판정 뒤 현재 처방·Identification·Bundle을 잠금 재검증하여 Full Execution Context를 원자적으로 확장하고, 불일치하면 일반 RAG 없이 `STALE`로 종료한다. Guide는 Identification Preflight 통과 후 Job·Full Context·Identification member·Outbox를 하나의 Transaction으로 생성한다.
+
 Citation 목표 유형은 `PRESCRIPTION`, `KNOWLEDGE_CHUNK`, `INTERACTION_RULE`, `LIFESTYLE_GUIDELINE`, `SAFETY_POLICY`의 다섯 가지다. 실행 Context가 최신이 아니면 공개 오류 `EXECUTION_CONTEXT_STALE`과 `release_decision=STALE`로 fail-closed 처리한다.
+
+## 기존 계약과의 대체·유지 관계
+
+- 이 Decision과 Runtime v1이 승인되면 기존 [MFDS 공식 의약품 식별 계약 v1](../../contracts/targets/post-mvp-1/medication-identification-v1.md)의 Job 생성 조건은 Chat에 한해 위 2단계 Intake·Preflight 계약으로 대체된다. 자동 Guide의 “모든 활성 약제 `MATCHED` 후 Job 생성” 조건은 유지한다.
+- Candidate Search 생성은 `Idempotency-Key` 적용 대상이 아니다. 사용자 후보 확인·거절만 기존 [멱등성 계약 v1](../../contracts/targets/post-mvp-1/idempotency-v1.md)의 Track F 규칙을 따른다.
+- PR #96의 활성 Prescription Version Medication에 없는 보험코드는 RAG P0 입력·검색 신호가 아니다. 별도 OCR·Prescription 공유 계약, Migration, 승인 MFDS Identifier Source와 Contract Test가 승인되기 전까지 보험코드 Feature는 비활성이다. HIRA 데이터는 사용하지 않는다.
+- 검수 전 OCR·LLM 값은 Candidate 입력이 아니다. 사용자가 명시적으로 확정하여 활성 불변 Prescription Version Medication에 저장된 `medication_name`과 nullable `strength_text`만 사용한다.
+
+승인 전에는 Proposed Runtime과 기존 Approved Target을 조합해 현재 동작으로 주장하지 않는다. 승인·승격 시 계약 인덱스와 기존 의약품 식별 Target에 위 대체 관계를 함께 반영해 상충하는 두 Target이 남지 않도록 한다.
 
 ## 승인·승격 조건
 

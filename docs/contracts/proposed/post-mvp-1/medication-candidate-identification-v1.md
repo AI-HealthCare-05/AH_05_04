@@ -11,7 +11,7 @@
 
 ## 목적과 변경 분류
 
-사용자가 검수·확정한 Prescription Medication을 공식 MFDS 제품 Identity 후보에 연결하고, 단일 후보 확인 결과를 append-only Identification으로 저장한다. 이 문서는 기존 의약품 식별 목표를 대체하지 않고 RAG-00에서 필요한 공유 API·DTO·상태·오류 경계를 추가한다.
+사용자가 검수·확정한 Prescription Medication을 공식 MFDS 제품 Identity 후보에 연결하고, 단일 후보 확인 결과를 append-only Identification으로 저장한다. 이 문서는 기존 의약품 식별 목표를 대체하지 않고 RAG-00에서 필요한 공유 API·DTO·상태·오류 경계를 추가한다. 다만 Chat Job 생성 시점은 [RAG Runtime v1](./rag-runtime-v1.md)의 2단계 Context 계약을 따른다. 이 Proposed Target이 승인될 때 기존 의약품 식별 계약의 “모든 활성 약제가 `MATCHED`일 때만 Chat Job 생성” 조건은 Chat에 한해 대체되고, 자동 Guide 조건은 그대로 유지된다.
 
 다음은 Backend·Frontend·OCR·RAG가 함께 사용하는 공유 계약 변경이다.
 
@@ -24,18 +24,30 @@ Route Template과 물리 컬럼은 구현 PR에서 OpenAPI·Migration·Contract 
 
 ## 입력 정본
 
-- 사용자 검수 완료 값을 이관한 활성 `prescription_version_medication.medication_name`
+- 사용자가 명시적으로 확정하고 활성 불변 Prescription Version Medication에 원자적으로 이관된 `prescription_version_medication.medication_name`
 - nullable `strength_text`
-- 공유 계약과 Source Snapshot이 활성화된 경우에만 내부 nullable `insurance_code_text`
 - Candidate Index·Resolver Policy·Runtime Release Bundle version
 
-OCR `raw_value`, `normalized_value`, 검수 전 Structured Output와 `source_ids`는 직접 입력하지 않는다. 보험코드는 Grounding·서버 형식 검증과 승인 식약처 Identifier Snapshot이 모두 준비된 경우에만 내부 Exact 신호로 사용하고 제품명 Embedding·Trigram 문자열에 합치지 않는다. 사용자 화면과 공개 DTO에는 보험코드를 표시하지 않는다.
+OCR `raw_value`, `normalized_value`, 검수 전 Structured Output, `source_ids`, 사용자가 수정만 하고 확정하지 않은 값은 직접 입력하지 않는다. `strength_text=null`인 사용자 확정 Snapshot은 정상 입력이며 제품명 경로로 검색한다.
+
+### 조건부 보험코드 확장 — P0 비활성
+
+PR #96과 현재 OCR·Prescription 계약에는 보험코드를 추출·Grounding·사용자 확정하여 Prescription Version Medication에 이관하는 경계가 없다. 따라서 RAG P0 기본 Bundle에서는 `insurance_code_text`를 입력 DTO·Exact 검색·공개 UI·Contract Test의 활성 신호로 사용하지 않는다. 필드가 없거나 null이어도 제품명 경로를 계속한다.
+
+보험코드 검색은 다음 항목을 포함한 별도 공유 계약·Migration·승인 식약처 Identifier Snapshot이 함께 승인된 이후에만 Bundle Feature Flag로 활성화할 수 있다.
+
+- 보험코드의 공식 Source와 Identifier 의미
+- OCR 추출·Grounding·사용자 명시 확인 기준
+- 확정값의 Prescription Version Medication Snapshot 이관
+- 승인 MFDS Identifier와 제품 속성 충돌 처리
+- 미확정 OCR 값과 HIRA 데이터 유입 차단 Contract Test
+
+HIRA 데이터는 현재 Source와 Resolver 입력으로 사용하지 않는다. 조건부 확장이 활성화되더라도 보험코드는 제품명 Embedding·Trigram 문자열에 합치지 않고 내부 Exact 보조 신호로만 사용하며 공개 DTO와 사용자 화면에는 표시하지 않는다.
 
 ## 검색과 Single Candidate Gate
 
 ```text
-선택적 보험코드 Exact
-→ 제품명 Exact
+제품명 Exact
 → 승인 제품 Alias Exact
 → 공식 성분명·Alias Exact 진단
 → pg_trgm·편집거리
@@ -56,6 +68,20 @@ Candidate Search 상태는 `RUNNING | READY | AMBIGUOUS | NO_CANDIDATE | INGREDI
 | `INGREDIENT_ONLY` | 제품으로 승격하지 않고 제품명 확인 안내 |
 | `INVALID_INPUT` | 검색하지 않고 입력 수정 안내 |
 
+### 상태별 공개 DTO 불변식
+
+모든 응답 필드는 키 자체는 필수이며 아래 표의 nullable 규칙을 따른다. 내부 Candidate·Result 이력은 append-only로 보존하되 재사용할 수 없는 상태에서는 공개 후보를 반환하지 않는다.
+
+| 상태 | `candidate_count` | `displayed_candidate_count` | Result ID·`candidate` | `status_reason` |
+| --- | ---: | ---: | --- | --- |
+| `RUNNING` | 0 이상 | 0 | null | null |
+| `READY` | 1 이상 | 1 | 모두 non-null | null |
+| `AMBIGUOUS` | 2 이상 | 0 | 모두 null | null 또는 충돌 관련 고정 code |
+| `NO_CANDIDATE` | 0 | 0 | 모두 null | null |
+| `INGREDIENT_ONLY` | 0 | 0 | 모두 null | `PRODUCT_NAME_REQUIRED` |
+| `INVALID_INPUT` | 0 | 0 | 모두 null | `INVALID_INPUT` |
+| `INVALIDATED_INPUT_CHANGED`, `INVALIDATED_USER_REJECTED`, `EXPIRED`, `FAILED`, `CONSUMED` | 내부 이력값 유지 | 0 | 모두 null | null |
+
 ## 사용자 확인과 Identification
 
 - 사용자가 화면의 단일 후보에 `맞아요`를 명시 선택해야 `USER_SELECTED/MATCHED` Identification을 저장한다.
@@ -75,7 +101,7 @@ Candidate Search 상태는 `RUNNING | READY | AMBIGUOUS | NO_CANDIDATE | INGREDI
 | --- | --- | --- | --- |
 | `prescription_version_medication_id` | string(UUID) | 필수 | 현재 활성 Prescription Version의 약제 |
 
-요청 헤더 `Idempotency-Key`는 필수다. Backend는 약제의 확정 `medication_name`, nullable `strength_text`와 내부 보험코드 신호를 서버에서 읽으며 클라이언트가 약품명·함량·보험코드를 덮어쓰게 하지 않는다.
+Candidate Search 생성에는 `Idempotency-Key`를 요구하지 않는다. 기존 [멱등성 계약 v1](../../targets/post-mvp-1/idempotency-v1.md)의 Track F 범위는 사용자 확인·거절에만 적용한다. Backend는 약제의 확정 `medication_name`과 nullable `strength_text`를 서버에서 읽으며 클라이언트가 약품명·함량을 덮어쓰게 하지 않는다.
 
 ### Candidate Search 응답
 
@@ -106,6 +132,25 @@ Candidate Search 상태는 `RUNNING | READY | AMBIGUOUS | NO_CANDIDATE | INGREDI
 
 두 요청 모두 `Idempotency-Key` 헤더가 필수다. `search_id`는 `candidate_search_result_id`의 FK에서 서버가 도출하며 클라이언트가 중복 제출하지 않는다. 확인 응답의 `product_id`는 공식 제품 Identity이며 성분 배열이나 내부 Source Record 전체를 반환하지 않는다. 동일 키·동일 요청은 최초 성공 응답을 재현하고 동일 키·상이 요청은 오류로 끝낸다.
 
+## 소유권·Transaction·현재성
+
+### 소유권
+
+- Candidate Search·Result·Identification은 `prescription_version_medication → prescription_version → prescription → user_id` 경로로 요청 사용자 소유권을 검증한다.
+- Guide·Chat·Job·Result·Citation은 해당 Job의 고정 `prescription_version_id → prescription → user_id` 경로로 같은 소유권을 검증한다.
+- SELF Profile 도입 Decision이 승인되기 전에는 임의로 `profile_id` 소유권으로 전환하지 않는다.
+- 리소스가 없거나 다른 사용자 소유이면 동일하게 `404`로 끝내고 상태 변경·이력 추가·Provider 호출을 수행하지 않는다.
+
+### 확인·거절 Transaction
+
+- 확인은 Candidate Identification Service가 약제·Search·Result·활성 Prescription Version을 잠그고, Context 현재성을 재검증한 뒤 append-only `MATCHED/USER_SELECTED` Identification과 Search `CONSUMED`를 하나의 Transaction으로 저장한다. 하나라도 불일치하면 전체를 rollback하고 `409`로 끝낸다.
+- 거절은 Search·Result를 잠그고 거절 Event, append-only `UNRESOLVED` Identification과 Search `INVALIDATED_USER_REJECTED`를 하나의 Transaction으로 저장한다.
+- 확인·거절로 현재 Identification 결정이 바뀌면 같은 Transaction의 동기 무효화 경계에서 아직 완료되지 않은 해당 Context의 Guide·Chat Job을 `STALE`로 만들고, 완료 결과는 `is_current=false`로 전환한다. 과거 Result·Citation·Identification provenance는 삭제하거나 덮어쓰지 않는다.
+
+### Prescription Version 변경
+
+새 Prescription Version 활성화 Transaction은 이전 Version의 미종료 Candidate Search를 `INVALIDATED_INPUT_CHANGED`로 전환하고, 이전 Version에 고정된 미종료 Guide·Chat Job을 `STALE`, 완료 결과를 `is_current=false`로 만든다. 이미 `CONSUMED`·거절·만료된 Search와 과거 Identification 이력은 변경하지 않고 현재성만 상실한다. 새 Version은 기존 Search·Identification을 재사용하지 않고 다시 검색·확정해야 한다.
+
 ## Guide·Chat Preflight 경계
 
 - 자동 Guide는 모든 활성 약제의 현재 `MATCHED` Identification이 있어야 Job을 생성한다.
@@ -133,10 +178,13 @@ Candidate Search·확인·거절·Identification 조회와 모든 오류 응답�
 
 - 검수 전 OCR·LLM 값과 HIRA 입력 차단
 - Exact·Alias·Trigram·OCR pgvector 후보 중복 제거
-- 보험코드 미인식은 이름 경로 계속, 코드·제품 속성 충돌은 `AMBIGUOUS`
+- P0 Bundle에서 보험코드 Feature 비활성, 보험코드 필드 조회·Exact 검색·공개 노출 0건과 제품명 경로 정상 진행
 - 함량 누락·복수 Variant·명시 함량 충돌 시 임의 후보 표시 금지
+- 상태별 필수 필드·nullable·후보 수 불변식
 - 공개 후보 최대 1개, `AMBIGUOUS` 내부 Top-K·score 노출 0건
 - 사용자 확인 전 `MATCHED` 저장 0건
 - 확인·거절 멱등성, 동시 선택 단일 성공과 append-only 이력
+- Candidate·Identification·Guide·Chat·Citation의 동일 `user_id` 소유권과 타 사용자 `404`·부작용 0건
+- 확인·거절 Transaction rollback과 Identification 변경 시 Job·Result 현재성 전파
 - 새 Prescription Version 생성 시 이전 Search·Identification 현재성 상실
 - Candidate·Identification 성공·오류 응답의 `Cache-Control: no-store`

@@ -64,6 +64,8 @@ OCR `raw_value`, 정규화 참고값, 검수 전 LLM 초안과 HIRA 데이터는
 
 Chat은 약품 식별이 불완전해도 질문과 최소 Chat Job을 먼저 저장하고 Safety Intake·Triage를 실행할 수 있다. `URGENT`, `EMERGENCY`, `UNKNOWN`은 승인 Safety Flow로 즉시 분기하며 일반 Retrieval·Composer·Provider를 호출하지 않는다. `ROUTINE`만 Identification Preflight를 통과한 뒤 일반 Rule·RAG로 진행한다. Preflight 실패는 같은 Job에 승인된 제한 응답을 저장하며 AI Job 안에서 사용자 입력을 기다리지 않는다.
 
+이 Proposed Target이 승인되면 [MFDS 공식 의약품 식별 계약 v1](../../targets/post-mvp-1/medication-identification-v1.md)의 “모든 활성 약제 `MATCHED` 후 Chat Job 생성” 조건은 Chat에 한해 이 2단계 접수 계약으로 대체된다. 자동 Guide의 선행 Identification 조건은 대체하지 않는다. 승인 전에는 두 문서를 임의로 결합하여 현재 Runtime으로 해석하지 않는다.
+
 Job·Outbox·Redis Stream·Worker 상태와 재시도는 [비동기 Job 계약](../../targets/post-mvp-1/async-job-v1.md)과 [Outbox·Stream 계약](../../targets/post-mvp-1/outbox-stream-v1.md)을 따른다. `JOB_EXECUTE` 하나를 소비한 Worker가 아래 Graph를 같은 Job 실행 안에서 처리하며 단계별 두 번째 Outbox를 만들지 않는다.
 
 ## 고정 실행 Graph
@@ -75,7 +77,7 @@ load_chat_intake_context
 → safety_triage
 → scope
 → ROUTINE이면 identification_preflight
-→ pin_full_execution_context
+→ expand_full_execution_context
 → rule
 → retrieval
 → rerank
@@ -90,7 +92,7 @@ load_chat_intake_context
 
 ```text
 identification_preflight
-→ pin_full_execution_context
+→ create_full_execution_context
 → rule
 → retrieval
 → rerank
@@ -101,7 +103,7 @@ identification_preflight
 → persist
 ```
 
-구현은 LangGraph의 명시적 Node와 조건부 Edge를 사용한다. Chat과 Guide의 접수 경계는 다르지만 `pin_full_execution_context` 이후의 fail-closed Rule·Evidence·Citation·Release 경계는 공유한다. `release_gate`는 최종 환자 공개 판정이며 Safety Triage와 같은 단계가 아니다.
+구현은 LangGraph의 명시적 Node와 조건부 Edge를 사용한다. Chat과 Guide의 접수 경계는 다르지만 Full Execution Context가 생성된 이후의 fail-closed Rule·Evidence·Citation·Release 경계는 공유한다. `release_gate`는 최종 환자 공개 판정이며 Safety Triage와 같은 단계가 아니다.
 
 ### Rule-first
 
@@ -121,6 +123,22 @@ identification_preflight
 
 고급 의미 기반 NLI와 고급 reranking은 Post-MVP-1 완료 Gate 범위 밖이다. 구현 PR은 도입하지 않은 기능을 평가 완료로 표시하지 않는다.
 
+## Intake Context와 Full Execution Context
+
+Chat은 접수 시점과 일반 RAG 실행 시점의 Snapshot을 분리한다.
+
+| 구분 | 생성 Transaction | 고정 범위 | 사용 분기 |
+| --- | --- | --- | --- |
+| Chat Intake Context | Chat Message·최소 AI Job·`ai_job_intake_context`·단일 `JOB_EXECUTE` Outbox를 함께 저장 | 요청 사용자·현재 Prescription Version 참조, 최소 Safety Patient Context, 질문 digest·scope, Safety Policy·Runtime Bundle/환경 참조 | 모든 Chat Safety Triage |
+| Full Execution Context | `ROUTINE` Safety 판정 후 Identification Preflight가 현재 처방·Identification·Bundle을 잠금 재검증하고 `ai_job_execution_context`와 Identification member를 원자적으로 확장 | Prescription Version 전체, 최소 Patient Context Snapshot, 현재 `MATCHED` Identification 목록, Source·Index·Rule·Prompt·Validator·Model·Execution Manifest version | 일반 Rule·Retrieval·Composer |
+| Guide Full Context | Job 생성 전 Identification Preflight 후 Guide Job·Full Context·Identification member·단일 Outbox를 함께 저장 | 위 Full Execution Context와 동일 | 자동 Guide 전체 경로 |
+
+- Chat 접수 Transaction에서는 Full Execution Context를 미리 만들지 않는다. `URGENT`, `EMERGENCY`, `UNKNOWN`은 Full Context 없이 승인 Safety 결과로 종료할 수 있다.
+- Chat `ROUTINE` 확장 시 Intake의 Prescription Version·환경·Bundle 참조와 잠금 재검증한 현재값이 다르면 Full Context를 만들지 않고 `AI_JOB=STALE`, `release_decision=STALE`로 종료하며 일반 RAG를 실행하지 않는다.
+- Full Context 생성과 Identification member 저장은 하나의 Transaction이다. 부분 Snapshot은 허용하지 않는다.
+- Worker 재시도는 이미 고정된 Intake/Full Context만 읽고 현재 상태를 다시 선택하지 않는다. Full Context가 없는 `ROUTINE` 재시도는 같은 원자적 확장 절차를 다시 수행한다.
+- 결과 commit 직전에도 고정 Context와 현재 Prescription·Patient Context·Identification·Bundle·Execution Manifest·runtime revision을 재검증한다. 불일치 시 생성 결과를 공개하지 않고 `STALE`, `is_current=false`로 저장한다.
+
 ## Runtime Release Bundle과 실행 Snapshot
 
 Runtime Release Bundle은 다음 version을 함께 고정한다.
@@ -130,7 +148,7 @@ Runtime Release Bundle은 다음 version을 함께 고정한다.
 - Resolver·Graph·Prompt·Validator·Model
 - Execution Manifest와 Worker artifact
 
-Job 접수 transaction은 Prescription Version, 최소 Patient Context, Identification 목록, Local Runtime Release Bundle, Execution Manifest와 runtime revision을 고정하며 Worker 재시도도 같은 Snapshot만 읽는다.
+Guide Job 접수 Transaction은 Full Execution Context 전체를 고정한다. Chat Job 접수 Transaction은 Intake Context만 고정하고, `ROUTINE` 분기에서 Identification Preflight 후 Full Execution Context를 원자적으로 확장한다. Worker 재시도는 각 단계에서 이미 고정된 Snapshot만 읽는다.
 
 처방·Patient Context·Identification·Bundle·Execution Manifest·runtime revision이 달라지면 이전 결과는 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`이며 현재 답변으로 공개하지 않는다.
 
@@ -144,7 +162,7 @@ Citation 목표 유형은 `PRESCRIPTION`, `KNOWLEDGE_CHUNK`, `INTERACTION_RULE`,
 
 Retrieval Run에는 raw 질문을 저장하지 않고 versioned query HMAC/digest, filter Snapshot, `prescription_version_id`, 질문 유형, 검색 Chunk ID·rank·score, 최종 선택 Chunk, Index·Source version, 상태와 실행 시각만 저장한다.
 
-Candidate Search·Identification·OTC 질문·Chat/Guide 접수·Job 상태·결과·Citation과 그 오류 응답은 소유권을 검증하고 `Cache-Control: no-store`를 포함한다. 존재하지 않거나 타 사용자 리소스는 `404`로 통일한다. 이 헤더는 OpenAPI 설명과 Contract Test에서 고정한다.
+Candidate Search·Identification·OTC 질문·Chat/Guide 접수·Job 상태·결과·Citation과 그 오류 응답은 [Candidate·Identification 계약의 소유권 경로](./medication-candidate-identification-v1.md#소유권transaction현재성)에 따라 동일한 `user_id` 소유권을 검증하고 `Cache-Control: no-store`를 포함한다. 존재하지 않거나 타 사용자 리소스는 부작용 없이 `404`로 통일한다. 이 헤더는 OpenAPI 설명과 Contract Test에서 고정한다.
 
 ## 평가 후보 Guard Operation
 
@@ -157,6 +175,8 @@ Candidate Search·Identification·OTC 질문·Chat/Guide 접수·Job 상태·결
 - 미확정 OCR/LLM 값과 HIRA 입력 차단
 - 자동 Guide의 모든 활성 약 `MATCHED` 전 Job 미생성과 동기 `REVIEW_REQUIRED`
 - Chat 최소 Job·Safety Triage 선행, `ROUTINE`만 Identification Preflight 이후 일반 RAG 실행
+- Chat Intake Context와 Full Execution Context 분리, `ROUTINE` 원자적 확장 실패의 `STALE`와 부분 Snapshot 0건
+- Guide Preflight 후 Job·Full Context·Identification member·Outbox 원자적 생성
 - 단일 `JOB_EXECUTE`에서 고정 Graph 실행과 두 번째 단계 Outbox 미생성
 - Rule 양성·Rule 없음·OTC Identity 불충분의 fail-closed 분기
 - 승인 Source만 Retrieval하고 비활성·만료·상충 Source 차단
