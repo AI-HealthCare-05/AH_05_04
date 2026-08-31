@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { ApiError } from '../src/api/client'
 import {
   executeOcr,
   getOcrJob,
@@ -25,6 +26,10 @@ function ocrResponse(status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED') 
       document_id: documentId,
       ocr_status: status,
       error_code: status === 'FAILED' ? 'OCR_FAILED' : null,
+      error_message:
+        status === 'FAILED'
+          ? '민감한 OCR 원문과 내부 오류 상세를 포함한 Backend 메시지'
+          : null,
       created_at: '2026-08-24T00:00:00Z',
       completed_at:
         status === 'COMPLETED' || status === 'FAILED'
@@ -36,11 +41,18 @@ function ocrResponse(status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED') 
 }
 
 function renderPage() {
+  function ReviewRoute() {
+    const location = useLocation()
+
+    return <div>OCR 검수 화면 {location.search}</div>
+  }
+
   return render(
     <MemoryRouter initialEntries={['/prescriptions/upload']}>
       <Routes>
         <Route path="/prescriptions/upload" element={<PrescriptionUploadPage />} />
-        <Route path="/prescriptions/review" element={<div>OCR 검수 화면</div>} />
+        <Route path="/prescriptions/review" element={<ReviewRoute />} />
+        <Route path="/login" element={<div>로그인 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -73,8 +85,9 @@ afterEach(() => {
 })
 
 describe('PrescriptionUploadPage OCR polling', () => {
-  it('PROCESSING 상태를 재조회하고 COMPLETED에서 기존 review route로 이동한다', async () => {
+  it('PENDING → PROCESSING → COMPLETED 후 document_id와 job_id를 유지해 review route로 이동한다', async () => {
     vi.mocked(getOcrJob)
+      .mockResolvedValueOnce(ocrResponse('PENDING'))
       .mockResolvedValueOnce(ocrResponse('PROCESSING'))
       .mockResolvedValueOnce(ocrResponse('COMPLETED'))
     const { container } = renderPage()
@@ -83,25 +96,62 @@ describe('PrescriptionUploadPage OCR polling', () => {
     fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
 
     expect(
-      await screen.findByText('OCR 검수 화면', {}, { timeout: 2500 }),
+      await screen.findByText(/OCR 검수 화면/, {}, { timeout: 3500 }),
     ).toBeTruthy()
     expect(uploadPrescription).toHaveBeenCalledTimes(1)
     expect(executeOcr).toHaveBeenCalledWith(documentId)
-    expect(getOcrJob).toHaveBeenCalledTimes(2)
-    expect(getOcrJob).toHaveBeenCalledWith(jobId)
+    expect(getOcrJob).toHaveBeenCalledTimes(3)
+    expect(getOcrJob).toHaveBeenCalledWith(jobId, expect.any(AbortSignal))
+    expect(screen.getByText(new RegExp(`document_id=${documentId}`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`job_id=${jobId}`))).toBeTruthy()
   })
 
-  it('FAILED 상태에서는 polling을 중단하고 재업로드 안내를 표시한다', async () => {
-    vi.mocked(getOcrJob).mockResolvedValue(ocrResponse('FAILED'))
+  it('PROCESSING → FAILED unknown code에서는 polling을 중단하고 안전한 fallback UI를 표시한다', async () => {
+    vi.mocked(getOcrJob)
+      .mockResolvedValueOnce(ocrResponse('PROCESSING'))
+      .mockResolvedValueOnce(ocrResponse('FAILED'))
     const { container } = renderPage()
 
     selectPrescriptionFile(container)
     fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
 
     expect(
-      await screen.findByText(/파일을 확인한 뒤 다시 시도해 주세요/),
+      await screen.findByText('작업을 완료하지 못했어요', {}, { timeout: 2500 }),
     ).toBeTruthy()
-    await waitFor(() => expect(getOcrJob).toHaveBeenCalledTimes(1))
-    expect(screen.queryByText('OCR 검수 화면')).toBeNull()
+    await waitFor(() => expect(getOcrJob).toHaveBeenCalledTimes(2))
+    expect(
+      screen.getByText(
+        '현재 작업을 완료하지 못했어요. 이전 화면에서 다시 확인해 주세요.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText('OCR_FAILED')).toBeNull()
+    expect(
+      screen.queryByText(/민감한 OCR 원문|내부 오류 상세/),
+    ).toBeNull()
+    expect(screen.queryByText(/OCR 검수 화면/)).toBeNull()
+  })
+
+  it('polling network failure를 안전한 연결 오류 UI로 표시한다', async () => {
+    vi.mocked(getOcrJob).mockRejectedValue(new TypeError('Failed to fetch'))
+    const { container } = renderPage()
+
+    selectPrescriptionFile(container)
+    fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
+
+    expect(await screen.findByText('네트워크 연결을 확인해 주세요')).toBeTruthy()
+    expect(getOcrJob).toHaveBeenCalledTimes(1)
+  })
+
+  it('polling 5xx를 Backend FAILED와 구분한 서버 오류 UI로 표시한다', async () => {
+    vi.mocked(getOcrJob).mockRejectedValue(
+      new ApiError(503, 'provider detail', 'DEPENDENCY_DOWN'),
+    )
+    const { container } = renderPage()
+
+    selectPrescriptionFile(container)
+    fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
+
+    expect(await screen.findByText('서버 응답이 원활하지 않아요')).toBeTruthy()
+    expect(screen.queryByText('provider detail')).toBeNull()
   })
 })
