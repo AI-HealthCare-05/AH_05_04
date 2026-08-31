@@ -27,11 +27,13 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Backend 공통 구현 규칙](./current/backend-common-patterns.md): 소유권 확인, 실패 상태 저장
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
-## Proposed 운영 계약 — 미구현
+## Proposed 계약 — 미구현
 
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
+- [PROFILE SELF 소유권 전환 제안 v1](./proposed/profile-self-ownership-v1.md): Track A migration 전 본인 단일 SELF profile과 `profile_id` 기반 소유권 전환 기준
+- [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): `AI_JOB`, Outbox, Idempotency, Prescription Version 도입 순서와 rollback 경계
 
-Proposed 운영 계약은 관련 schema·service·CLI·테스트가 함께 병합되고 상태가 갱신되기 전에는 실행 가능한 계약으로 간주하지 않습니다.
+Proposed 계약은 관련 schema·service·CLI·테스트가 함께 병합되고 상태가 갱신되기 전에는 실행 가능한 계약으로 간주하지 않습니다.
 
 ## 승인된 Post-MVP-1 목표 계약 — 미구현
 
