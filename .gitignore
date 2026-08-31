@@ -28,6 +28,7 @@ ai_worker/models/*
 *.pth
 *.ckpt
 *.onnx
+.codex-tmp/
 
 # Medical / project data
 data/*
