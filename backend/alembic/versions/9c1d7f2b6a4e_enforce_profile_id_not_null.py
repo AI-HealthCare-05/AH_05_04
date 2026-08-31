@@ -27,9 +27,7 @@ def _ensure_no_missing_profiles(connection: sa.Connection) -> None:
             sa.select(sa.func.count()).select_from(resource_table).where(resource_table.c.profile_id.is_(None))
         ).scalar_one()
         if missing_count:
-            raise RuntimeError(
-                f"Cannot enforce NOT NULL: {table_name}.profile_id has {missing_count} missing values."
-            )
+            raise RuntimeError(f"Cannot enforce NOT NULL: {table_name}.profile_id has {missing_count} missing values.")
 
 
 def upgrade() -> None:
