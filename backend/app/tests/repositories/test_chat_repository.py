@@ -9,7 +9,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ClauseElement
 
-from app.models.chat import ChatGenerationStatus, ChatRole, ChatSession
+from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
@@ -214,3 +214,74 @@ async def test_commit_failed_message_pair_persists_exactly_one_user_failed_assis
     assert messages[1].error_message == "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
     assert messages[1].completed_at is not None
     assert (messages[1].content, messages[1].model_name, messages[1].prompt_version) == (None, None, None)
+
+
+def _message(
+    session_id: object,
+    sequence: int,
+    role: ChatRole,
+    status: ChatGenerationStatus,
+    content: str | None,
+) -> ChatMessage:
+    return ChatMessage(
+        session_id=session_id,
+        message_seq=sequence,
+        role=role,
+        generation_status=status,
+        content=content,
+    )
+
+
+async def test_list_recent_completed_pairs_returns_only_latest_complete_consecutive_pairs_from_same_session(
+    db_session: AsyncSession,
+) -> None:
+    _, _, target_session = await _create_session(db_session)
+    _, _, other_session = await _create_session(db_session)
+    complete_messages: list[ChatMessage] = []
+    for pair_index in range(4):
+        user_sequence = pair_index * 2 + 1
+        complete_messages.extend(
+            [
+                _message(
+                    target_session.id,
+                    user_sequence,
+                    ChatRole.USER,
+                    ChatGenerationStatus.NOT_APPLICABLE,
+                    f"완료 질문 {pair_index}",
+                ),
+                _message(
+                    target_session.id,
+                    user_sequence + 1,
+                    ChatRole.ASSISTANT,
+                    ChatGenerationStatus.COMPLETED,
+                    f"완료 답변 {pair_index}",
+                ),
+            ]
+        )
+    db_session.add_all(
+        [
+            *complete_messages,
+            _message(target_session.id, 9, ChatRole.USER, ChatGenerationStatus.NOT_APPLICABLE, "실패 질문"),
+            _message(target_session.id, 10, ChatRole.ASSISTANT, ChatGenerationStatus.FAILED, None),
+            _message(target_session.id, 11, ChatRole.USER, ChatGenerationStatus.NOT_APPLICABLE, "진행 질문"),
+            _message(target_session.id, 12, ChatRole.ASSISTANT, ChatGenerationStatus.GENERATING, None),
+            _message(target_session.id, 13, ChatRole.USER, ChatGenerationStatus.NOT_APPLICABLE, "현재 질문"),
+            _message(other_session.id, 1, ChatRole.USER, ChatGenerationStatus.NOT_APPLICABLE, "다른 사용자 질문"),
+            _message(other_session.id, 2, ChatRole.ASSISTANT, ChatGenerationStatus.COMPLETED, "다른 사용자 답변"),
+        ]
+    )
+    await db_session.flush()
+
+    pairs = await ChatRepository(db_session).list_recent_completed_pairs(
+        session=target_session,
+        before_message_seq=13,
+        candidate_limit=3,
+    )
+
+    assert [
+        (user.message_seq, user.content, assistant.message_seq, assistant.content) for user, assistant in pairs
+    ] == [
+        (7, "완료 질문 3", 8, "완료 답변 3"),
+        (5, "완료 질문 2", 6, "완료 답변 2"),
+        (3, "완료 질문 1", 4, "완료 답변 1"),
+    ]

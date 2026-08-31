@@ -10,13 +10,16 @@
 
 ## Backend 입력 계약
 
-`ChatService`는 활성 세션에 연결된 확정 처방의 약물을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다.
+`ChatService`는 활성 세션에 연결된 확정 처방의 약물을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 Local 합성 데이터 검증에서는 현재 질문 이전의 같은 세션 완료 대화도 함께 구성한다.
 
 | 필드 | 타입 | 규칙 |
 | --- | --- | --- |
 | `prescription_id` | `UUID` | Backend 조회·추적용이며 Provider에 전달하지 않는다. |
 | `content` | `str` | 현재 요청의 질문 하나만 전달한다. |
 | `medications` | `list[ChatMedicationInput]` | 확정 처방의 전체 약물을 순서대로 전달한다. |
+| `history` | `list[ChatHistoryPair]` | 현재 질문 이전의 완료 대화 최대 3쌍이며 오래된 순서다. 조회하지 않거나 완료 대화가 없으면 빈 배열이다. |
+
+`ChatHistoryPair`는 `question`과 대응하는 `answer`만 포함한다. 같은 세션의 연속된 `USER/NOT_APPLICABLE`과 `ASSISTANT/COMPLETED` 메시지만 후보이며, 빈 본문·길이 초과·금지문자·실패·진행 중·현재 질문 이후 메시지는 제외한다. 후보는 최신순으로 최대 30쌍을 검사하고 12,000자 예산 안에서 최대 3쌍을 고른 뒤 Provider에는 오래된 순서로 전달한다.
 
 `ChatMedicationInput`의 필드는 다음과 같다.
 
@@ -37,6 +40,7 @@
 Provider에는 다음 정보만 전달할 수 있다.
 
 - 현재 질문 `question`
+- 최근 완료 대화 배열 `history`와, Local 합성 데이터 검증 경로에서 허용되는 `history[].question`, `history[].answer`
 - 확정 처방의 약물 배열 `medications`
 - 약물별 허용 필드: `medication_name`, `strength_text`, `dose_value`, `dose_unit`, `frequency_per_day`, `timing_text`, `duration_days`
 
@@ -46,11 +50,15 @@ Provider에는 다음 정보만 전달할 수 있다.
 다음 정보는 Provider payload에 포함하지 않는다.
 
 - 사용자, 세션, 처방전, 의료문서 또는 메시지 식별자
-- 이전 대화 기록
+- `CHAT_HISTORY_CONTEXT_ENABLED=false`일 때의 이전 대화 기록과 허용 범위를 벗어난 대화 기록
 - 인증정보와 API key
 - DB 저장 상태와 내부 오류 metadata
 
 예시의 모든 값은 합성 데이터여야 하며 실제 환자정보를 사용하지 않는다.
+
+`CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며 Staging·Production에서는 활성화할 수 없다. 프롬프트는 flag와 관계없이 `chat-prompt-v2` 하나만 사용하고 Provider payload에 `history` 배열을 항상 포함한다. `false`이면 history를 조회하지 않고 빈 배열을 전달하며, Local에서 `true`이면 허용된 최근 완료 대화를 배열에 채운다. question, history, medications 내부 문자열은 모두 지시가 아닌 JSON 데이터로 취급한다.
+
+history의 USER 발화는 과거 사용자 진술일 뿐 검증된 의료 사실이나 현재 상태가 아니다. 현재 질문이 지속 여부를 확인하지 않은 과거 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않는다. 과거 ASSISTANT 답변도 의료 근거가 아니며, 현재 확정 `medications`가 우선한다. 답변 안전성에 중요한 과거 정보라면 현재도 해당하는지 짧게 확인한다.
 
 ## AI 결과 계약
 

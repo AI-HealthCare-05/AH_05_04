@@ -3,11 +3,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.services.chat_ai.schemas import (
-    ChatGenerationInput,
-    ChatGenerationResult,
-    ChatMedicationInput,
-)
+from app.services.chat_ai.schemas import ChatGenerationInput, ChatGenerationResult, ChatHistoryItem, ChatMedicationInput
 
 
 def test_chat_input_normalizes_question_and_medication_fields() -> None:
@@ -152,11 +148,60 @@ def test_chat_input_rejects_more_than_thirty_medications() -> None:
         )
 
 
+def test_chat_input_accepts_empty_or_three_history_pairs_and_normalizes_text() -> None:
+    empty = ChatGenerationInput(
+        question="질문",
+        history=[],
+        medications=[ChatMedicationInput(medication_name="합성약")],
+    )
+    full = ChatGenerationInput(
+        question="질문",
+        history=[ChatHistoryItem(question=f"  질문 {index}  ", answer=f"  답변 {index}  ") for index in range(3)],
+        medications=[ChatMedicationInput(medication_name="합성약")],
+    )
+
+    assert empty.history == []
+    assert [(item.question, item.answer) for item in full.history] == [
+        (f"질문 {index}", f"답변 {index}") for index in range(3)
+    ]
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        [{"question": f"질문 {index}", "answer": "답변"} for index in range(4)],
+        [
+            {"question": "가" * 2000, "answer": "나" * 10_000},
+            {"question": "추가", "answer": "답변"},
+        ],
+    ],
+)
+def test_chat_input_rejects_history_over_pair_or_total_character_limit(history: list[object]) -> None:
+    with pytest.raises(ValidationError):
+        ChatGenerationInput.model_validate(
+            {
+                "question": "질문",
+                "history": history,
+                "medications": [{"medication_name": "합성약"}],
+            }
+        )
+
+
+@pytest.mark.parametrize("field", ["question", "answer"])
+def test_history_rejects_blank_oversized_or_forbidden_text(field: str) -> None:
+    valid = {"question": "과거 질문", "answer": "과거 답변"}
+    invalid_values = [" ", "가" * (2001 if field == "question" else 10_001), "숨김\u202e문자"]
+
+    for value in invalid_values:
+        with pytest.raises(ValidationError):
+            ChatHistoryItem.model_validate({**valid, field: value})
+
+
 def test_generation_result_strips_content_and_validates_limits() -> None:
     result = ChatGenerationResult(
         content="  복용 중 졸림이 나타날 수 있습니다.  ",
         model_name="gpt-4o-mini-2024-07-18",
-        prompt_version="chat-prompt-v1",
+        prompt_version="chat-prompt-v2",
     )
 
     assert result.content == "복용 중 졸림이 나타날 수 있습니다."
@@ -166,14 +211,14 @@ def test_generation_result_strips_content_and_validates_limits() -> None:
             ChatGenerationResult(
                 content=invalid,
                 model_name="gpt-4o-mini",
-                prompt_version="chat-prompt-v1",
+                prompt_version="chat-prompt-v2",
             )
 
     with pytest.raises(ValidationError):
         ChatGenerationResult(
             content="답변",
             model_name="m" * 101,
-            prompt_version="chat-prompt-v1",
+            prompt_version="chat-prompt-v2",
         )
 
 
@@ -183,7 +228,7 @@ def test_generation_result_forbids_unknown_fields() -> None:
             {
                 "content": "답변",
                 "model_name": "gpt-4o-mini",
-                "prompt_version": "chat-prompt-v1",
+                "prompt_version": "chat-prompt-v2",
                 "citations": [],
             }
         )

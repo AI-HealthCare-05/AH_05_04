@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
@@ -8,6 +8,7 @@ from app.services.chat_ai.generator import ChatGenerator
 from app.services.chat_ai.schemas import (
     ChatGenerationInput,
     ChatGenerationResult,
+    ChatHistoryItem,
 )
 
 
@@ -23,10 +24,17 @@ class ChatMedicationInput:
 
 
 @dataclass(frozen=True)
+class ChatHistoryPair:
+    question: str
+    answer: str
+
+
+@dataclass(frozen=True)
 class ChatReplyInput:
     prescription_id: UUID
     medications: list[ChatMedicationInput]
     content: str
+    history: list[ChatHistoryPair] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,8 @@ __all__ = [
     "ChatGenerationInput",
     "ChatGenerationResult",
     "ChatGenerator",
+    "ChatHistoryItem",
+    "ChatHistoryPair",
     "ChatMedicationInput",
     "ChatProvider",
     "ChatReplyInput",

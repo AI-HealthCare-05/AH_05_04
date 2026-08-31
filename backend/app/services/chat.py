@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.chat import ChatMessageData, ChatRole, ChatSessionData, SendChatMessageData, SendChatMessageRequest
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatSessionStatus
@@ -11,15 +13,20 @@ from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.chat_ai import (
     ChatEngine,
     ChatGenerationFailedError,
+    ChatHistoryPair,
     ChatMedicationInput,
     ChatReplyInput,
     ChatServiceUnavailableError,
     ChatTimeoutError,
 )
+from app.services.chat_ai.schemas import ChatHistoryItem
 
 _TIMEOUT_ERROR_MESSAGE = "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
 _UNAVAILABLE_ERROR_MESSAGE = "OpenAI 서비스 호출에 실패했습니다."
 _GENERATION_FAILED_ERROR_MESSAGE = "챗봇 응답 생성 처리 중 오류가 발생했습니다."
+HISTORY_PAIR_LIMIT = 3
+HISTORY_CANDIDATE_SCAN_LIMIT = 30
+HISTORY_TOTAL_CHARACTER_LIMIT = 12_000
 
 
 def _to_message_data(message: ChatMessage) -> ChatMessageData:
@@ -38,10 +45,36 @@ class ChatService:
         prescription_repository: PrescriptionRepository,
         chat_repository: ChatRepository,
         engine: ChatEngine,
+        *,
+        history_context_enabled: bool = False,
     ) -> None:
         self._engine = engine
         self._prescription_repo = prescription_repository
         self._chat_repo = chat_repository
+        self._history_context_enabled = history_context_enabled
+
+    @staticmethod
+    def _select_history(
+        pairs: list[tuple[ChatMessage, ChatMessage]],
+    ) -> list[ChatHistoryPair]:
+        selected: list[ChatHistoryPair] = []
+        total_characters = 0
+        for user_message, assistant_message in pairs:
+            try:
+                item = ChatHistoryItem.model_validate(
+                    {"question": user_message.content, "answer": assistant_message.content}
+                )
+            except ValidationError:
+                continue
+            pair_characters = len(item.question) + len(item.answer)
+            if total_characters + pair_characters > HISTORY_TOTAL_CHARACTER_LIMIT:
+                break
+            selected.append(ChatHistoryPair(question=item.question, answer=item.answer))
+            total_characters += pair_characters
+            if len(selected) == HISTORY_PAIR_LIMIT:
+                break
+        selected.reverse()
+        return selected
 
     async def create_session(self, *, user: User, prescription_id: UUID) -> ChatSessionData:
         # 채팅 세션 생성 Backend 계약: 확정 처방을 기준으로 챗봇 세션을 만듭니다.
@@ -101,6 +134,14 @@ class ChatService:
 
         medications = await self._prescription_repo.get_medications(prescription_id=chat_session.prescription_id)
         next_seq = await self._chat_repo.next_seq(session=chat_session)
+        history: list[ChatHistoryPair] = []
+        if self._history_context_enabled:
+            history_candidates = await self._chat_repo.list_recent_completed_pairs(
+                session=chat_session,
+                before_message_seq=next_seq,
+                candidate_limit=HISTORY_CANDIDATE_SCAN_LIMIT,
+            )
+            history = self._select_history(history_candidates)
         user_message = await self._chat_repo.create_message(
             session=chat_session,
             message_seq=next_seq,
@@ -132,6 +173,7 @@ class ChatService:
                 for medication in medications
             ],
             content=request.content,
+            history=history,
         )
 
         assistant_message = await self._chat_repo.mark_generating(assistant_message)

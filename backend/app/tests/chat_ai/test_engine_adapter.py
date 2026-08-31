@@ -6,6 +6,7 @@ import pytest
 
 from app.services.chat_ai import (
     ChatGenerationFailedError,
+    ChatHistoryPair,
     ChatMedicationInput,
     ChatReplyInput,
     ChatServiceUnavailableError,
@@ -70,10 +71,11 @@ async def test_reply_maps_all_medication_fields_and_result_metadata() -> None:
 
     assert result.content == "안전한 합성 답변"
     assert result.model_name == "model-actual"
-    assert result.prompt_version == "chat-prompt-v1"
+    assert result.prompt_version == "chat-prompt-v2"
     payload = json.loads(str(provider.calls[0]["input_json"]))
     assert payload == {
         "question": "이 약을 먹으면 졸릴 수 있나요?",
+        "history": [],
         "medications": [
             {
                 "medication_name": "합성의약품 에이",
@@ -86,6 +88,25 @@ async def test_reply_maps_all_medication_fields_and_result_metadata() -> None:
         ],
     }
     assert "prescription_id" not in payload
+
+
+async def test_reply_maps_history_without_backend_identifiers() -> None:
+    provider = StubProvider()
+    engine = ChatGeneratorEngine(provider=provider, model="model-requested", timeout_seconds=1)
+    chat_input = _reply_input()
+    chat_input = ChatReplyInput(
+        prescription_id=chat_input.prescription_id,
+        medications=chat_input.medications,
+        content="현재 질문",
+        history=[ChatHistoryPair(question="과거 질문", answer="과거 답변")],
+    )
+
+    result = await engine.reply(chat_input)
+
+    payload = json.loads(str(provider.calls[0]["input_json"]))
+    assert payload["history"] == [{"question": "과거 질문", "answer": "과거 답변"}]
+    assert "prescription_id" not in payload
+    assert result.prompt_version == "chat-prompt-v2"
 
 
 @pytest.mark.parametrize(

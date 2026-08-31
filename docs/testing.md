@@ -84,6 +84,25 @@ uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
 
 버전된 비식별 합성 평가셋은 `evals/generation/guide-v3-eval-v1.json`이며 `data_classification=SYNTHETIC`으로 고정합니다. 이 평가는 자유 생성 품질이나 실제 Provider 응답을 측정하지 않고 승인 문구 선택·안전 차단 계약을 재현합니다. 별도 승인 없이 `RUN_OPENAI_SMOKE=1`을 설정하지 않으며, skip된 실호출 테스트를 성공으로 해석하지 않습니다.
 
+### Chat AI v2 최근 대화 Local 검증
+
+실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v2` 계약을 검증합니다.
+
+```bash
+uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_repository.py backend/app/tests/chat_ai backend/app/tests/chat_integration tests/contract/test_chat_ai_backend_contract.py -q
+```
+
+- 완료 대화 0·1·3·4쌍, 최신 3쌍 선택과 오래된 순서 전달
+- 답변 없음·FAILED·PENDING·GENERATING·비연속 pair 제외와 최대 30개 후보·12,000자 예산
+- 현재 질문 중복 제외와 다른 사용자·세션·처방 소유권 경계
+- flag OFF의 조회 생략·`history: []`와 flag ON Local 합성 history 전달
+- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v2`
+- JSON 문자열을 지시가 아닌 데이터로 취급하는 프롬프트 인젝션 방어
+- 과거 USER의 부정확하거나 오래된 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않고, 안전상 중요하면 현재도 해당하는지 확인하는 프롬프트 규칙
+- 과거 ASSISTANT 비신뢰, 현재 확정 medications 우선과 기존 응답·오류 회귀
+
+`chat-v2-history-eval-v1` 합성 품질 평가, 최대 입력 latency와 PII sentinel의 payload·로그·trace·오류 비복제 증빙은 현재 `NOT_RUN`이며 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 추적합니다. 실행 전에는 통과로 표시하거나 PR #128 및 Production 공개의 완료 근거로 사용하지 않습니다. 실제 OpenAI smoke는 필수 Local 검증에서 제외하며 별도 명시적 opt-in 없이는 실행하지 않습니다.
+
 ## MVP 배포 차단 기준
 
 - Ruff·Mypy·현재 범위의 자동 테스트 실패

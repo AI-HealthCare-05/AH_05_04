@@ -26,7 +26,7 @@
 5. AI 생성이 실패하면 원본 오류의 `except` 범위를 벗어난 뒤 안전한 고정 metadata로 ASSISTANT를 FAILED로 변경하고 USER·ASSISTANT 쌍을 명시적으로 commit한다.
 6. 같은 세션의 후속 요청은 앞 요청이 commit 또는 rollback할 때까지 기다린다. 서로 다른 세션은 서로 다른 session row를 잠그므로 row-lock 수준에서는 독립적으로 처리한다.
 
-Provider-neutral Adapter 경계는 유지한다. Backend는 현재 질문과 확정 처방의 약물만 Adapter에 전달하고 사용자·세션·처방·메시지 식별자와 과거 대화는 Provider payload에서 제외한다.
+Provider-neutral Adapter 경계는 유지한다. Backend는 사용자·세션·처방·메시지 식별자를 Provider payload에서 제외한다. 현재 질문과 확정 처방 약물만 전달한다는 기존 제한은 [ADR 0003](./0003-chat-recent-context-single-v2.md)이 대체하며, 승인된 Local 합성 검증에서만 같은 세션의 최근 완료 대화 최대 3쌍을 추가한다.
 
 이번 결정에서는 세션별 queue, 비동기 worker, `NOWAIT`, 새로운 409 응답, admission control과 rate limiting을 도입하지 않는다.
 
@@ -68,7 +68,7 @@ DB pool 고갈 가능성을 낮출 수 있다. 실제 환경의 worker 수, pool
 ## 보안·개인정보 영향
 
 - 질문과 약물은 승인된 메시지·처방 저장 계약과 Provider 입력에만 사용한다.
-- Provider payload에는 현재 질문과 허용된 약물 필드만 포함한다.
+- Provider payload에는 현재 질문, 허용된 약물 필드와 ADR 0003이 허용한 Local 합성 history만 포함한다.
 - Provider 본문과 원본 예외 chain은 DB metadata, HTTP 오류와 일반 로그에 저장하거나 노출하지 않는다.
 - SQLAlchemy bind parameter는 `hide_parameters=True`로 예외와 echo 로그에서 숨긴다.
 - 테스트와 문서 예시는 비식별 합성 데이터만 사용한다.

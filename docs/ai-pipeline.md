@@ -34,12 +34,12 @@
 
 - 진입점: `POST /api/v1/chat-sessions/{session_id}/messages`
 - 구현: `backend/app/services/chat_ai/`, `backend/app/services/chat.py`
-- 입력: 현재 사용자 질문과 세션에 연결된 확정 약물 목록
+- 입력: 현재 사용자 질문, 세션에 연결된 확정 약물 목록과 `history` 배열
 - 처리: USER 메시지 저장 → OpenAI 단일 응답 생성 → ASSISTANT 메시지 저장을 같은 요청에서 완료
-- 문맥 제한: 이전 대화, 사용자·세션 식별자, 처방전 이미지와 OCR 원문·미검수 값은 AI에 전달하지 않음
-- 안전 제한: 추측·임의 복용 변경·확인하지 않은 인용 생성을 금지하고, 정보 부족 시 확인을 요청하며 명시된 응급·고위험 상황에서는 도움 안내를 우선
+- 문맥 제한: `CHAT_HISTORY_CONTEXT_ENABLED=false`이면 history를 조회하지 않고 빈 배열을 전달한다. 비식별 합성 Local에서만 flag를 켜 같은 세션의 현재 질문 이전 완료 대화를 최대 3쌍 전달하며, 사용자·세션 식별자, 처방전 이미지와 OCR 원문·미검수 값은 전달하지 않는다.
+- 안전 제한: 단일 `chat-prompt-v2`는 과거 USER 진술과 ASSISTANT 답변을 검증된 현재 사실로 취급하지 않고 현재 확정 medications를 우선한다. 추측·임의 복용 변경·확인하지 않은 인용 생성을 금지하고, 안전상 중요한 과거 정보는 현재도 해당하는지 확인하며 명시된 현재 응급·고위험 상황에서는 도움 안내를 우선한다.
 
-이 안전 제한은 현재 프롬프트와 단위·계약 테스트의 범위입니다. 별도 데이터셋과 임계값으로 응답 품질을 판정하는 평가는 Post-MVP입니다.
+이 안전 제한은 현재 프롬프트와 단위·계약 테스트의 범위입니다. `chat-v2-history-eval-v1`, 최대 입력 latency와 PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 `NOT_RUN` 후속 검증이며, 별도 데이터셋과 임계값으로 응답 품질을 판정하는 평가는 현재 Production 승인 근거가 아닙니다.
 
 ## 구현 상태 표
 
@@ -47,7 +47,7 @@
 | --- | --- | --- | --- |
 | Backend 동기 OCR | MVP 구현 | FastAPI → CLOVA OCR → feature flag 기반 LLM 또는 규칙 구조화 | 현재 계약·grounding·오류 처리·검수 흐름 유지 |
 | Backend 동기 가이드 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 근거·검증 원칙 또는 코드로 강제되는 제한 모드와 재현 가능한 안전 기준 구현 후 전환 |
-| Backend 동기 챗봇 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 질문 admission·동시성·DB 수용량과 근거·검증 안전 조건 구현 후 전환 |
+| Backend 동기 챗봇 | MVP 구현 | FastAPI → OpenAI. history는 기본 빈 배열이며 Local 합성 검증에서만 최대 3쌍 | 실제 대화 history 전송 승인, 질문 admission·동시성·DB 수용량과 근거·검증 안전 조건 구현 후 전환 |
 | AI Worker | 골격만 존재 | 연결되지 않음 | queue 계약, consumer, 재시도·멱등성, health check와 운영 정책 구현 |
 | Track E 비-RAG LLM 확장 | Approved v4 target — Partially implemented | feature flag 기반 LLM 구조화·grounding과 flag 비활성화 시 규칙 기반 경로 사용은 Current; LLM 실패 시 규칙 기반 자동 fallback은 없고 Worker 이관과 v4 provenance는 미연결 | 최소 allowlist, versioned schema·prompt·validator, raw/rule/draft/corrected/confirmed provenance와 실패 복구 구현 |
 | MFDS 공식 Identity | Approved v4 target — Not implemented | 연결되지 않음 | Source Snapshot·Catalog, Candidate Resolver, Single Candidate Gate, 사용자 확인·거절, append-only Identification과 Preflight 구현 |
