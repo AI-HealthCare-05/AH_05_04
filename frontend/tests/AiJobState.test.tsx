@@ -115,6 +115,24 @@ describe('AI Job 공통 상태 UI', () => {
     expect(status.getAttribute('data-job-status')).toBe('RETRY_WAIT')
     expect(status.getAttribute('aria-busy')).toBe('true')
     expect(screen.getByText('잠시 후 자동으로 다시 시도할게요')).toBeTruthy()
+    expect(screen.getByText('자동 재시도 준비 중')).toBeTruthy()
+  })
+
+  it('재접속 복구 UI는 기존 작업을 이어가는 상태 카드로 표시한다', () => {
+    render(
+      <AiJobStatusState
+        status="RECONNECT_RECOVERY"
+        presentation={{
+          title: '진행 상태를 확인 중이에요',
+          description: '이전에 진행하던 작업의 현재 상태를 불러오고 있어요.',
+          tone: 'progress',
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('status').getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByText('현재 진행 상태 확인 중')).toBeTruthy()
+    expect(screen.getByText('새 작업을 시작하지 않고 이전 진행 상태를 이어가요.')).toBeTruthy()
   })
 
   it('STALE fixture는 미확정 재생성 action을 disabled로 표시한다', () => {
@@ -143,6 +161,7 @@ describe('AI Job 공통 상태 UI', () => {
     )
 
     expect(screen.getByRole('alert').getAttribute('aria-live')).toBe('assertive')
+    expect(screen.getByText('문제가 계속되면 잠시 후 다시 확인해 주세요.')).toBeTruthy()
   })
 
   it('409 attention presentation도 request 오류이면 alert로 알린다', () => {

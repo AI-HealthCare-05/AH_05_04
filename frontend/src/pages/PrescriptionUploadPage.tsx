@@ -9,6 +9,7 @@ import {
 import { ApiError } from '../api/client'
 import AiJobStatusState from '../components/AiJobStatusState'
 import { Button, Card, MobileShell } from '../design-system/components'
+import { DoseyMascot } from '../design-system/DoseyMascot'
 import { adaptOcrJobStatus } from '../features/ai-jobs/ocrJobAdapter'
 import {
   getJobFailurePresentation,
@@ -155,9 +156,15 @@ function PrescriptionUploadPage() {
     }
 
     return (
-      <div className="mvp-page">
-        <MobileShell title="Dosey 도지" hideNavigation>
-          <main className="app-scroll mvp-page__content mvp-page__content--no-nav">
+      <div className="mvp-page mvp-ai-job-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={resetToUpload}
+          brandMark={<DoseyMascot variant="header" />}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav ai-job-page__content">
             <AiJobStatusState
               status={status}
               presentation={presentation}

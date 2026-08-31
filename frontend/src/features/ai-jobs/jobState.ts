@@ -69,7 +69,7 @@ const failurePresentations: Record<AiJobFailureCode, AiJobPresentation> = {
   },
   INTERNAL_ERROR: {
     title: '작업을 완료하지 못했어요',
-    description: '일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+    description: '현재 작업을 완료하지 못했어요. 이전 화면에서 다시 확인해 주세요.',
     actionLabel: '이전 화면으로 돌아가기',
     tone: 'error',
   },
@@ -77,7 +77,7 @@ const failurePresentations: Record<AiJobFailureCode, AiJobPresentation> = {
 
 const unknownFailurePresentation: AiJobPresentation = {
   title: '작업을 완료하지 못했어요',
-  description: '문제가 계속되면 잠시 후 다시 시도해 주세요.',
+  description: '현재 작업을 완료하지 못했어요. 이전 화면에서 다시 확인해 주세요.',
   actionLabel: '이전 화면으로 돌아가기',
   tone: 'error',
 }
@@ -99,25 +99,25 @@ export function getJobStatusPresentation(
     case 'PENDING':
       return {
         title: '처리를 준비하고 있어요',
-        description: '작업을 시작할 때까지 잠시만 기다려 주세요.',
+        description: '잠시만 기다려 주세요. 준비가 끝나면 자동으로 처리를 시작해요.',
         tone: 'progress',
       }
     case 'PROCESSING':
       return {
         title: '처방정보를 확인하고 있어요',
-        description: '파일 업로드 → 글자 인식 → 복약정보 구조화',
+        description: '처방전 업로드 → 내용 읽기 → 처방정보 정리',
         tone: 'progress',
       }
     case 'RETRY_WAIT':
       return {
         title: '잠시 후 자동으로 다시 시도할게요',
-        description: '현재 작업은 안전하게 대기 중입니다.',
+        description: '일시적인 문제로 처리가 지연되고 있어요. 잠시 기다려 주세요.',
         tone: 'attention',
       }
     case 'STALE':
       return {
         title: '최신 정보 확인이 필요해요',
-        description: '새로운 기준으로 다시 확인하는 기능을 준비하고 있습니다.',
+        description: '이 결과는 이전 정보를 기준으로 만들어져 현재 결과로 사용할 수 없어요.',
         actionLabel: '최신 정보 확인하기',
         tone: 'attention',
       }

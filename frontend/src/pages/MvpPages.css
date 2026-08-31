@@ -25,6 +25,23 @@
   padding-bottom: calc(28px + var(--ds-safe-bottom));
 }
 
+.ai-job-page__content {
+  padding-top: 0;
+}
+
+.mvp-ai-job-page .app-topbar {
+  min-height: 68px;
+  gap: 10px;
+  padding-block: 8px;
+  border-bottom: 0;
+  background: #fff;
+  backdrop-filter: none;
+}
+
+.mvp-ai-job-page .app-topbar h1 {
+  font-size: 17px;
+}
+
 .mvp-page__eyebrow {
   margin: 0 0 7px;
   color: var(--ds-action);
