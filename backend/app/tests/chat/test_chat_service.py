@@ -295,10 +295,10 @@ async def test_history_context_selects_up_to_three_latest_pairs_and_orders_them_
     )
 
     expected_indexes = list(range(max(0, pair_count - 3), pair_count))
-    assert [(item.question, item.answer) for item in engine.inputs[0].history or []] == [
+    assert [(item.question, item.answer) for item in engine.inputs[0].history] == [
         (f"과거 질문 {index}", f"과거 답변 {index}") for index in expected_indexes
     ]
-    assert all(item.question != "현재 질문" for item in engine.inputs[0].history or [])
+    assert all(item.question != "현재 질문" for item in engine.inputs[0].history)
     assert events.index("chat.list_recent_completed_pairs") < events.index(f"chat.create.{ChatRole.USER}")
 
 
@@ -324,7 +324,7 @@ async def test_history_context_skips_invalid_pair_and_backfills_with_older_valid
         request=SendChatMessageRequest(content="현재 질문"),
     )
 
-    assert [(item.question, item.answer) for item in engine.inputs[0].history or []] == [
+    assert [(item.question, item.answer) for item in engine.inputs[0].history] == [
         ("오래된 질문", "오래된 답변"),
         ("중간 질문", "중간 답변"),
         ("최신 질문", "최신 답변"),
@@ -352,7 +352,7 @@ async def test_history_context_stops_when_next_valid_pair_exceeds_total_characte
         request=SendChatMessageRequest(content="현재 질문"),
     )
 
-    assert [(item.question, item.answer) for item in engine.inputs[0].history or []] == [("가" * 2000, "나" * 9000)]
+    assert [(item.question, item.answer) for item in engine.inputs[0].history] == [("가" * 2000, "나" * 9000)]
 
 
 @pytest.mark.parametrize(

@@ -13,7 +13,7 @@ from app.services.chat_ai.schemas import (
     ChatGenerationResult,
     ChatMedicationPromptItem,
     ChatPromptPayload,
-    normalize_history_answer,
+    normalize_chat_answer,
 )
 
 MAX_OUTPUT_TOKENS = 800
@@ -45,7 +45,7 @@ class ChatGenerator:
         if not content or len(content) > 10_000 or not model_name.strip() or len(model_name) > 100:
             raise ChatGenerationInvalidResponseError("Chat provider result is invalid")
         try:
-            content = normalize_history_answer(content)
+            content = normalize_chat_answer(content)
         except ValueError as error:
             raise ChatGenerationInvalidResponseError("Chat provider result is invalid") from error
 

@@ -9,6 +9,7 @@ BASE_CONFIG = {
     "DB_USER": "test_user",
     "DB_PASSWORD": "test_password",
     "DB_NAME": "test_database",
+    "CHAT_HISTORY_CONTEXT_ENABLED": False,
 }
 
 

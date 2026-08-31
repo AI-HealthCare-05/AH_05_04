@@ -3,8 +3,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.services.chat_ai import schemas
-from app.services.chat_ai.schemas import ChatGenerationInput, ChatGenerationResult, ChatMedicationInput
+from app.services.chat_ai.schemas import ChatGenerationInput, ChatGenerationResult, ChatHistoryItem, ChatMedicationInput
 
 
 def test_chat_input_normalizes_question_and_medication_fields() -> None:
@@ -157,14 +156,12 @@ def test_chat_input_accepts_empty_or_three_history_pairs_and_normalizes_text() -
     )
     full = ChatGenerationInput(
         question="질문",
-        history=[
-            schemas.ChatHistoryItem(question=f"  질문 {index}  ", answer=f"  답변 {index}  ") for index in range(3)
-        ],
+        history=[ChatHistoryItem(question=f"  질문 {index}  ", answer=f"  답변 {index}  ") for index in range(3)],
         medications=[ChatMedicationInput(medication_name="합성약")],
     )
 
     assert empty.history == []
-    assert [(item.question, item.answer) for item in full.history or []] == [
+    assert [(item.question, item.answer) for item in full.history] == [
         (f"질문 {index}", f"답변 {index}") for index in range(3)
     ]
 
@@ -197,7 +194,7 @@ def test_history_rejects_blank_oversized_or_forbidden_text(field: str) -> None:
 
     for value in invalid_values:
         with pytest.raises(ValidationError):
-            schemas.ChatHistoryItem.model_validate({**valid, field: value})
+            ChatHistoryItem.model_validate({**valid, field: value})
 
 
 def test_generation_result_strips_content_and_validates_limits() -> None:

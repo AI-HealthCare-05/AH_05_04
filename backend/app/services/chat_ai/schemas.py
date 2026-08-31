@@ -55,11 +55,11 @@ def _normalize_generated_content(value: object) -> str:
     return unicodedata.normalize("NFC", value.strip())
 
 
-def normalize_history_answer(value: object) -> str:
+def normalize_chat_answer(value: object) -> str:
     normalized = _normalize_generated_content(value)
     _reject_forbidden_input_characters(normalized)
     if not normalized:
-        raise ValueError("history answer must not be blank")
+        raise ValueError("chat answer must not be blank")
     return normalized
 
 
@@ -108,7 +108,7 @@ class ChatHistoryItem(_StrictModel):
     @field_validator("answer", mode="before")
     @classmethod
     def normalize_answer(cls, value: object) -> str:
-        return normalize_history_answer(value)
+        return normalize_chat_answer(value)
 
 
 class ChatGenerationInput(_StrictModel):
