@@ -84,12 +84,15 @@ CLOVA OCR과 OpenAI 구조화는 순차 실행되므로 OCR 요청의 Provider t
 
 ### 적용 경로
 
-이 grounding 검증은 CLOVA General OCR token을 규칙 기반 또는 LLM으로
-구조화하는 경로에 적용합니다.
+이 grounding 검증은 현재 CLOVA General OCR token을 OpenAI Structured Outputs로
+변환한 LLM 구조화 결과에만 적용합니다.
 
-CLOVA Template OCR 결과는 Template 필드 이름과 약품 행 매핑을 사용하는
-별도 변환기를 통해 기존 RecognizedField 계약으로 변환합니다.
-Template OCR 결과에 LLM source_ids grounding 규칙을 적용하지 않습니다.
+규칙 기반 경로는 별도의 `PrescriptionOcrStructurer`를 사용하며
+`validate_and_convert_draft()`를 호출하지 않습니다.
+
+CLOVA Template OCR 전용 변환기는 아직 구현되지 않았습니다.
+Template OCR 적용과 기존 `RecognizedField` 계약으로의 변환은
+후속 구현 Issue 및 PR에서 처리합니다.
 
 ## medication_index
 
