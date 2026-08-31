@@ -97,8 +97,11 @@ function GuidePage() {
       <MobileShell
         title="Dosey 도지"
         activeNavigation="가이드"
+        disabledNavigation={['일정']}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '가이드' && !guideId) navigate('/guides')
+          if (item === '메뉴') navigate('/profile')
         }}
       >
         <main className="app-scroll guide-page__content">

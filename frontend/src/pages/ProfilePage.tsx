@@ -220,9 +220,12 @@ function ProfilePage() {
       <MobileShell
         title="내 정보"
         activeNavigation="메뉴"
+        disabledNavigation={['일정']}
         onBack={() => navigate('/')}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '가이드') navigate('/guides')
+          if (item === '메뉴') navigate('/profile')
         }}
       >
         <main className="app-scroll mvp-page__content mvp-profile">
