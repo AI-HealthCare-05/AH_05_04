@@ -67,11 +67,11 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N 
 
 ## 의료 AI 안전 승인
 
-`SECURITY.md`는 답변의 처방 버전, 근거, 모델·프롬프트 버전과 검증 결과 추적을 요구합니다. 현재 MVP에는 RAG·Citation/NLI, 코드로 강제되는 허용 질문 범위와 AI 응답 품질 평가가 구현되어 있지 않으므로 복약 가이드·챗봇의 Production 배포는 차단됩니다. 승인자와 수동 검토 결과를 Markdown 표에 기록하는 것만으로 이 차단을 해제할 수 없습니다.
+`SECURITY.md`는 답변의 처방 버전, 근거, 모델·프롬프트 버전과 검증 결과 추적을 요구합니다. 현재 MVP에는 공식 Identity·Preflight, Rule-first RAG·Citation·Safety, 코드로 강제되는 허용 질문 범위와 AI 응답 품질 평가가 구현되어 있지 않으므로 복약 가이드·챗봇의 Production 배포는 차단됩니다. 승인자와 수동 검토 결과를 Markdown 표에 기록하는 것만으로 이 차단을 해제할 수 없습니다.
 
 조기 사용자 검증이 필요하면 실제 환자·처방 데이터를 사용하지 않는 접근 통제된 내부 staging 데모로 제한합니다. Production을 허용하려면 다음 중 하나를 별도 보안 설계·계약·구현·검증으로 완료해야 합니다.
 
-- `SECURITY.md`의 근거·검증 추적 원칙을 충족하는 RAG·Citation/NLI와 재현 가능한 안전 평가를 구현합니다.
+- `SECURITY.md`의 근거·검증 추적 원칙을 충족하는 공식 Identity·Preflight, Rule-first RAG·Citation·Safety와 재현 가능한 안전 평가를 구현합니다.
 - 또는 허용 질문·사용자·데이터 범위, 만료 시각과 금지 답변을 코드로 강제하는 제한 모드를 구현하고, 합의된 데이터셋·지표·임계값, 책임자 승인과 중단 조건을 보안 ADR·계약에 기록합니다.
 
 ## OCR·의료문서 배포 기록
@@ -150,14 +150,14 @@ docker volume inspect postgres_data
 - Redis consumer, dispatch, retry·lease·fencing, Outbox publisher와 reconciler를 구현하고 통합 테스트합니다.
 - 초기 내부 SLO는 queue delay p95 5초 이하, terminal 도달 p95 `OCR 60초 / Guide 120초 / Chat 90초`, 15분 이상 non-terminal 0건입니다.
 - retry·reclaim·STALE 비율을 계측하고 DLQ·quarantine 발생, Safety 검증 우회와 STALE 결과 공개는 1건부터 경보합니다. 비율 threshold는 초기 2주 계측 후 재승인합니다.
-- `PUBLIC_TRACK_C`, `PUBLIC_TRACK_D`, `PUBLIC_TRACK_F`는 의료·약학·Privacy·Source 승인과 회귀 증빙 전까지 닫아 둡니다.
+- `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`는 의료·약학·Privacy·Source 승인과 회귀 증빙 전까지 닫아 둡니다. OTC는 F 게이트를 공유하며 별도 `PUBLIC_TRACK_D`를 만들지 않습니다. MFDS 공식 Identity 활성화도 승인·검증된 Source Snapshot, Single Candidate Gate 회귀와 rollback 훈련 전까지 차단합니다.
 - Worker 구현 전 Production Compose의 placeholder `ai-worker`를 실제 처리 서비스처럼 배포하지 않습니다.
 
 전환 PR은 [비동기 Job](./contracts/targets/post-mvp-1/async-job-v1.md), [Outbox·Stream](./contracts/targets/post-mvp-1/outbox-stream-v1.md), [테스트 전략](./testing.md)을 구현·운영 설정과 함께 갱신해야 합니다.
 
 ### 공통 Privacy Production gate
 
-`EXT-PRIV-001` 승인 전에는 production 보존 job과 공개를 차단한다. 승인 범위는 terminal Job 90일, publish 완료 Outbox·quarantine·DLQ 30일, Idempotency 7일 기본값, 1MiB 동기 snapshot의 암호화·일반 로그 금지, 미발행 DLQ·연결 quarantine의 TTL 제외, 사용자 삭제·legal hold·키 관리 증빙이다. Track C·D·F flag별 정확한 해제 조건은 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따르며 공통 Privacy gate를 임의의 flag 조건으로 중복 추가하지 않는다.
+정책·승인 인수는 권가빈, 보존·삭제·암호화·로그 통제의 기술 증빙은 송은영, 동의·철회·삭제 UX 증빙은 남한솔이 담당합니다. `EXT-PRIV-001` 승인 전에는 production 보존 job, 미승인 외부 Provider 전송과 공개를 차단합니다. 승인 범위는 terminal Job 90일, publish 완료 Outbox·quarantine·DLQ 30일, Idempotency 7일 기본값, 1MiB 동기 snapshot의 암호화·일반 로그 금지, 미발행 DLQ·연결 quarantine의 TTL 제외, 사용자 삭제·legal hold·키 관리, 목적별 최소 Provider allowlist와 동의·철회 차단 증빙입니다. Track C와 F(OTC 포함)의 정확한 해제 조건은 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따릅니다.
 
 ## 보안 확인
 
