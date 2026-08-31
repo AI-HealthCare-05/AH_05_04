@@ -80,7 +80,7 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | `guide` | 신규 비동기 생성부터 nullable `ai_job_id` 연결 | 기존 Guide에는 synthetic Job 생성 금지 |
 | `chat_message` | 신규 ASSISTANT 비동기 메시지부터 nullable `ai_job_id` 연결 | 기존 메시지에는 synthetic Job 생성 금지 |
 
-PROFILE 전환이 승인되면 기존 리소스 소유권은 `profile_id` 기준으로 정렬한다. OCR은 `ocr_job.profile_id`를 직접 만들지 않고 `ocr_job → medical_document → profile_id` chain으로 확인한다.
+PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 기존 리소스 소유권은 `profile_id` 기준으로 정렬한다. OCR은 `ocr_job.profile_id`를 직접 만들지 않고 `ocr_job → medical_document → profile_id` chain으로 확인한다.
 
 대상 테이블을 이 범위로 나누는 이유는 실제 상태의 기준 원본을 분리하기 위해서다. `ai_job`은 실행 상태만, 도메인 row는 결과와 placeholder만, Outbox는 실행 요청 전달만 담당해야 재시도·중복 전달·rollback 상황에서 어느 row를 기준으로 판단할지 명확해진다.
 
@@ -114,7 +114,7 @@ PROFILE 전환이 승인되면 기존 리소스 소유권은 `profile_id` 기준
 | 단계 | Job 조회 기준 | 결과 조회 기준 |
 | --- | --- | --- |
 | PROFILE 전환 승인 전 | 기존 target 계약의 `user_id` 기준을 유지한다. | 결과 도메인 row도 기존 `user_id` 또는 parent chain 기준을 유지한다. |
-| PROFILE 전환 승인 후 | `ai_job.profile_id` 직접 저장 여부를 PR 1 전에 확정한다. 직접 저장하지 않으면 도메인 row의 `ai_job_id`를 역조회해 SELF `profile_id`를 확인한다. | OCR은 `ocr_job → medical_document → profile_id`, Guide는 `guide.profile_id`, Chat은 `chat_message → chat_session.profile_id` 기준으로 확인한다. |
+| PR 0 backfill·검증·read cutover 배포 완료 후 | `ai_job.profile_id` 직접 저장 여부를 PR 1 전에 확정한다. 직접 저장하지 않으면 도메인 row의 `ai_job_id`를 역조회해 SELF `profile_id`를 확인한다. | OCR은 `ocr_job → medical_document → profile_id`, Guide는 `guide.profile_id`, Chat은 `chat_message → chat_session.profile_id` 기준으로 확인한다. |
 
 `ai_job.profile_id`를 직접 저장할지 여부는 `AI_JOB.domain_type/domain_id` 물리 저장 여부와 함께 PR 1의 blocking 결정으로 둔다. 직접 저장하면 Job 단독 조회가 단순하지만 도메인 row와 `profile_id` 불일치를 막아야 한다. 직접 저장하지 않으면 중복 저장은 줄지만 Job 조회 시 도메인별 역조회가 필요하다.
 
@@ -143,7 +143,7 @@ Track A는 비동기 Job 접수와 동기 상태 변경을 단일 `idempotency_r
 
 단일 테이블을 쓰는 이유는 #99 이후 최신 목표 계약이 `idempotency_record` 하나를 정본으로 삼기 때문이다. `ASYNC_JOB`은 `job_id`가 non-null이고 snapshot 관련 필드는 null이어야 하며, `SYNC_MUTATION`은 `parent_resource_id`, `response_status`, `response_body_snapshot`이 non-null이고 `job_id`는 null이어야 한다. 이 타입별 nullability는 DB CHECK 제약으로 강제한다.
 
-PROFILE 전환 승인 후 멱등성 scope까지 `profile_id`로 바꿀지는 PR 1 전에 별도 확정한다. 승인 전에는 target 계약의 `user_id` scope를 임의로 바꾸지 않는다.
+PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포 완료 후 멱등성 scope까지 `profile_id`로 바꿀지는 PR 1 전에 별도 확정한다. PR 0 완료 전에는 target 계약의 `user_id` scope를 임의로 바꾸지 않는다.
 
 ## 8. Migration 단계
 

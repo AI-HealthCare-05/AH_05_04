@@ -16,7 +16,7 @@
 
 ## 1. 목적
 
-Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 도입하기 전에 사용자 리소스의 소유권 기준을 `user_id` 직접 비교에서 본인 단일 `PROFILE(profile_type='SELF')`의 `profile_id` 기준으로 전환한다.
+Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 도입하기 전에 사용자 리소스의 소유권 기준을 `user_id` 직접 비교에서 본인 단일 `PROFILE(profile_type='SELF')`의 `profile_id` 기준으로 전환하기 위한 순서와 검증 기준을 확정한다. 실제 `profile_id` 소유권 조회는 PR 0의 backfill, 일관성 검증, read cutover 배포가 완료된 뒤에만 사용한다.
 
 이 전환을 먼저 고정해야 하는 이유는 다음과 같다.
 
@@ -51,11 +51,11 @@ Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 도입하기 �
 | 컬럼 추가 | `guide.profile_id` | 가이드 소유 profile |
 | 컬럼 추가 | `chat_session.profile_id` | 채팅 세션 소유 profile |
 
-`prescription`, `guide`, `chat_session`은 현재 직접 소유권 컬럼이 없고 부모 chain을 따라 사용자를 확인한다. 전환 후에는 각 도메인 row에 `profile_id`를 직접 저장해 소유권 확인 기준을 단순화한다.
+`prescription`, `guide`, `chat_session`은 현재 직접 소유권 컬럼이 없고 부모 chain을 따라 사용자를 확인한다. PR 0의 backfill, 일관성 검증, read cutover 배포가 완료된 뒤에는 각 도메인 row에 저장된 `profile_id`를 소유권 확인 기준으로 사용한다.
 
-이렇게 바꾸면 각 API가 매번 여러 부모 테이블을 따라가며 `user_id`를 확인하지 않아도 된다. 특히 Job 상태 조회, Guide 조회, Chat 조회처럼 서로 다른 도메인 결과가 공통 Job과 연결될 때 같은 `profile_id` 기준을 재사용할 수 있다.
+이렇게 바꾸면 cutover 이후 각 API가 매번 여러 부모 테이블을 따라가며 `user_id`를 확인하지 않아도 된다. 특히 Job 상태 조회, Guide 조회, Chat 조회처럼 서로 다른 도메인 결과가 공통 Job과 연결될 때 같은 `profile_id` 기준을 재사용할 수 있다.
 
-OCR 작업 자체는 이번 전환의 소유권 확인 범위에 포함한다. 다만 `ocr_job.profile_id` 직접 컬럼은 추가하지 않는다. 현재 OCR 작업은 `ocr_job.document_id`로 `medical_document`에 연결되어 있고, 전환 후에는 `medical_document.profile_id`를 통해 다음 chain으로 소유권을 확인할 수 있기 때문이다.
+OCR 작업 자체는 이번 전환의 소유권 확인 범위에 포함한다. 다만 `ocr_job.profile_id` 직접 컬럼은 추가하지 않는다. 현재 OCR 작업은 `ocr_job.document_id`로 `medical_document`에 연결되어 있고, PR 0의 read cutover 이후에는 `medical_document.profile_id`를 통해 다음 chain으로 소유권을 확인할 수 있기 때문이다.
 
 ```text
 ocr_job → medical_document → profile_id
@@ -137,7 +137,7 @@ PROFILE 전환은 Track A의 `AI_JOB`·Outbox Expand보다 먼저 수행한다.
 | 1. Expand | `profile` 테이블 생성, 기존 리소스 테이블에 nullable `profile_id` FK 추가 | migration 적용 가능 여부 |
 | 2. SELF profile write 보장 | 회원가입·사용자 생성 시 SELF profile 자동 생성. 기존 사용자가 신규 리소스를 생성하는 경우에도 리소스 write transaction 안에서 SELF profile을 멱등적으로 조회·생성 | 신규 사용자와 기존 사용자의 신규 write 모두 SELF profile을 갖는지 확인 |
 | 3. SELF profile backfill | 기존 `user`마다 `profile_type='SELF'` profile 1개 생성 | `user` 수와 SELF profile 수 일치 |
-| 4. Resource dual-write 활성화 | 신규 `medical_document`, `prescription`, `guide`, `chat_session` 생성 시 `profile_id` 기록. 부모가 있는 리소스는 부모의 `profile_id`와 같은 값만 저장 | 신규 리소스의 `profile_id IS NULL` 0건, 부모·자식 불일치 0건 |
+| 4. Resource dual-write 활성화 | 신규 `medical_document`, `prescription`, `guide`, `chat_session` 생성 시 `profile_id` 기록. 부모가 있는 리소스는 부모의 `profile_id`와 같은 값만 저장하며, 부모의 `profile_id`가 NULL이면 자식 생성 전에 부모 chain을 먼저 보정한다. | 신규 리소스의 `profile_id IS NULL` 0건, 부모·자식 불일치 0건 |
 | 5. Resource backfill | 기존 `medical_document`, `prescription`, `guide`, `chat_session`에 `profile_id` 채움 | 대상 테이블별 `profile_id IS NULL` 0건 |
 | 6. Consistency verify | 부모·자식 `profile_id` 불일치, orphan, 중복 SELF profile 확인 | 불일치 0건 |
 | 7. Read cutover | repository 소유권 조회를 `profile_id` 기준으로 전환 | 정상 조회와 타 사용자 접근 차단 테스트 |
@@ -147,7 +147,9 @@ PROFILE 전환은 Track A의 `AI_JOB`·Outbox Expand보다 먼저 수행한다.
 
 SELF profile write 보장과 Resource dual-write를 backfill보다 먼저 두는 이유는 backfill 이후 read cutover 전까지 새로 생성되는 사용자와 리소스를 보호하기 위해서다. 기존 사용자에게 아직 SELF profile backfill이 완료되지 않았더라도, 신규 리소스 write transaction 안에서 SELF profile을 멱등적으로 생성하면 `profile_id = NULL` 리소스가 새로 생기지 않는다.
 
-SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 멱등적으로 처리한다. 동시에 같은 사용자의 SELF profile 생성이 발생해도 하나만 성공해야 하며, 중복 충돌이 발생하면 기존 SELF profile을 다시 조회해 같은 transaction에서 리소스의 `profile_id`로 사용한다.
+Resource dual-write 시 부모 row의 `profile_id`가 아직 NULL이면 그 NULL을 자식 row에 복사하지 않는다. 예를 들어 기존 Prescription에서 Guide 또는 Chat session을 생성할 때 `prescription.profile_id`가 NULL이면, 같은 write transaction 안에서 `prescription.document_id → medical_document.profile_id → SELF profile` 순서로 부모 chain을 먼저 보정한 뒤 자식의 `profile_id`를 저장한다. 부모 chain을 보정할 수 없거나 부모·자식 `profile_id`가 일치하지 않으면 자식 리소스를 생성하지 않는다.
+
+SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 멱등적으로 처리한다. PostgreSQL에서는 일반 `INSERT`의 unique violation 이후 같은 transaction에서 바로 재조회할 수 없으므로, 구현 PR에서는 `INSERT ... ON CONFLICT DO NOTHING RETURNING` 후 반환 row가 없으면 기존 SELF profile을 조회하는 방식 또는 savepoint로 충돌을 격리하는 방식 중 하나를 사용한다. 동시에 같은 사용자의 SELF profile 생성이 발생해도 하나만 성공해야 하며, 리소스 write transaction은 최종적으로 조회된 같은 SELF profile id를 `profile_id`로 사용한다.
 
 이 순서를 쓰는 이유는 기존 데이터가 있는 상태에서 바로 `profile_id NOT NULL`을 적용하면 migration이 실패하거나 서비스 rollback이 어려워지기 때문이다. 먼저 nullable 컬럼을 열고, 신규 write가 새 기준을 함께 기록하게 만든 뒤, 기존 값을 채우고, 조회 기준을 바꾸고, 마지막에 NOT NULL을 적용해야 중간 실패 시 복구할 수 있다.
 
@@ -163,7 +165,7 @@ rollback 기준을 미리 정하는 이유는 소유권 migration이 실패했�
 
 ## 9. 후속 Track A와의 연결
 
-PROFILE 전환이 승인·병합되면 #75의 Track A migration은 다음 기준을 사용한다.
+PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 #75의 Track A migration은 다음 기준을 사용한다.
 
 - `AI_JOB`, Outbox, Idempotency, Prescription Version은 `profile_id` 기준 소유권과 충돌하지 않게 설계한다.
 - Job 상태 조회와 결과 조회는 해당 Job 또는 도메인 결과가 인증 사용자의 SELF profile에 속하는지 확인한다.
@@ -202,7 +204,7 @@ PROFILE 전환이 승인·병합되면 #75의 Track A migration은 다음 기준
 - 기존 사용자와 신규 사용자 모두 backfill 전후 신규 리소스 생성 시 `profile_id = NULL`로 남지 않도록 SELF profile 멱등 생성과 dual-write 순서가 승인된다.
 - 기존 리소스의 `profile_id` backfill 대상과 순서가 승인된다.
 - 도메인별 `profile_id` 기준 원본과 부모·자식 composite FK·일관성 검증 기준이 승인된다.
-- 리소스 소유권 조회를 SELF `profile_id` 기준으로 전환하는 방향이 승인된다.
+- PR 0의 backfill, 일관성 검증, read cutover 배포 완료 후 리소스 소유권 조회를 SELF `profile_id` 기준으로 전환하는 방향이 승인된다.
 - 보호자·멀티 프로필·위임 권한은 후속 범위로 유지한다.
 - 구현 PR에서 migration, 모델, repository, API/ownership 테스트, 문서 갱신을 함께 제출한다.
 
