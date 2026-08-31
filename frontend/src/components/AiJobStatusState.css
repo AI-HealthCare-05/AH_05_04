@@ -1,0 +1,182 @@
+.ai-job-state {
+  width: 100%;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  padding: 56px 0 28px;
+  text-align: center;
+}
+
+.ai-job-state__document {
+  width: 140px;
+  height: 178px;
+  position: relative;
+  margin-bottom: 26px;
+  border: 1px solid #d8dee8;
+  border-radius: 28px;
+  background: #fff;
+}
+
+.ai-job-state__document::before {
+  content: '';
+  position: absolute;
+  inset: 33px 20px auto;
+  height: 5px;
+  border-radius: 4px;
+  background: #edf1f5;
+  box-shadow: 0 18px #edf1f5, 0 36px #e5effc;
+}
+
+.ai-job-state__indicator {
+  position: absolute;
+  right: 0;
+  bottom: 32px;
+  left: 0;
+  color: #0066cc;
+  font-family: Inter, var(--ds-font);
+  font-size: 38px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 2px;
+  text-align: center;
+}
+
+.ai-job-state__title {
+  max-width: 350px;
+  margin: 0;
+  color: #171a21;
+  font-size: 25px;
+  line-height: 1.28;
+  letter-spacing: -.04em;
+}
+
+.ai-job-state[data-job-status='RETRY_WAIT'] .ai-job-state__title {
+  max-width: 280px;
+}
+
+.ai-job-state__description {
+  max-width: 350px;
+  min-height: 40px;
+  margin: 16px 0 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ai-job-state__steps {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  margin: 54px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-job-state__steps li,
+.ai-job-state__action--inline {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  border: 1px solid #d8dee8;
+  border-radius: 14px;
+  background: #fff;
+  color: #171a21;
+  text-align: left;
+}
+
+.ai-job-state__steps li > span,
+.ai-job-state__step-marker {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 7px;
+  background: #e6f1ff;
+}
+
+.ai-job-state__steps strong,
+.ai-job-state__action--inline span:last-child {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ai-job-state__action {
+  margin-top: 54px;
+}
+
+.ai-job-state__action--inline {
+  justify-content: flex-start;
+  color: #171a21;
+}
+
+.ds-button.ai-job-state__action--inline {
+  color: #171a21;
+}
+
+.ai-job-state__action--primary {
+  min-height: 52px;
+  border-radius: 14px;
+  background: #0066cc;
+}
+
+.ai-job-state__footer {
+  width: 100%;
+  margin: 28px 0 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.ai-job-state--error .ai-job-state__footer,
+.ai-job-state--attention .ai-job-state__footer {
+  text-align: center;
+}
+
+.ai-job-state__unavailable {
+  margin: 10px 0 0;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
+@keyframes ai-job-indicator-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ai-job-state__indicator--retry_wait,
+.ai-job-state__indicator--reconnect_recovery {
+  width: 38px;
+  right: calc(50% - 19px);
+  left: auto;
+  animation: ai-job-indicator-spin 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-job-state__indicator--retry_wait,
+  .ai-job-state__indicator--reconnect_recovery {
+    animation: none;
+  }
+}
+
+@media (max-width: 374px) {
+  .ai-job-state {
+    padding-top: 44px;
+  }
+
+  .ai-job-state__document {
+    width: 128px;
+    height: 162px;
+  }
+
+  .ai-job-state__title {
+    font-size: 23px;
+  }
+
+  .ai-job-state__steps,
+  .ai-job-state__action {
+    margin-top: 42px;
+  }
+}

@@ -37,6 +37,7 @@ export type OcrJobResponse = {
     document_id: string
     ocr_status: OcrJobStatus
     error_code: string | null
+    error_message?: string | null
     engine_name: string | null
     model_version: string | null
     prompt_version: string | null
@@ -82,9 +83,11 @@ export async function executeOcr(
 
 export async function getOcrJob(
   jobId: string,
+  signal?: AbortSignal,
 ): Promise<OcrJobResponse> {
   return apiRequest<OcrJobResponse>(
     `/api/v1/ocr-jobs/${jobId}`,
+    { signal },
   )
 }
 
