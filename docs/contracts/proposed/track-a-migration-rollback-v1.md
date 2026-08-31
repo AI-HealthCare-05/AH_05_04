@@ -267,7 +267,7 @@ quarantine과 DLQ를 Expand에 포함하는 이유는 Worker가 처리할 수 �
 | PR | 범위 | 선행 조건 | 확인 필요 |
 | --- | --- | --- | --- |
 | PR 0 | PROFILE SELF 소유권 전환 | `profile-self-ownership-v1.md` 승인 | ERD·계약·Backend 소유권 |
-| PR 1 | Expand: Track A 신규 테이블과 nullable FK 추가 | PR 0 병합, blocking 선행 조건 해소 | DB, Worker, 계약 |
+| PR 1 | Expand: Track A 신규 테이블과 nullable FK 추가 | PR 0 backfill·검증·read cutover 배포 완료, blocking 선행 조건 해소 | DB, Worker, 계약 |
 | PR 2 | 신규 write dual-write와 async feature flag 기본값 적용 | PR 1 | Backend/API, rollback 경계 |
 | PR 3 | Prescription Version backfill·검증 SQL·테스트 | PR 2 | DB, 계약 |
 | PR 4 | 공통 Job 접수·상태 조회 API와 Outbox 연결 | PR 1, PR 2 | Backend/API, Frontend polling, Worker |
