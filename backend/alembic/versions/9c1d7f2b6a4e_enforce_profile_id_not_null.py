@@ -53,17 +53,17 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("idx_document_uploader_uploaded", table_name="medical_document")
+    op.execute(
+        "ALTER TABLE medical_document RENAME CONSTRAINT medical_document_uploaded_by_fkey "
+        "TO medical_document_user_id_fkey"
+    )
+    op.alter_column("medical_document", "uploaded_by", new_column_name="user_id", existing_type=sa.CHAR(length=36))
     op.create_index(
         "idx_document_user_uploaded",
         "medical_document",
         ["user_id", "uploaded_at", "id"],
         unique=False,
     )
-    op.execute(
-        "ALTER TABLE medical_document RENAME CONSTRAINT medical_document_uploaded_by_fkey "
-        "TO medical_document_user_id_fkey"
-    )
-    op.alter_column("medical_document", "uploaded_by", new_column_name="user_id", existing_type=sa.CHAR(length=36))
 
     for table_name in _RESOURCE_TABLES:
         op.alter_column(table_name, "profile_id", existing_type=sa.CHAR(length=36), nullable=True)

@@ -42,7 +42,7 @@ Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 도입하기 �
 | --- | --- | --- |
 | 신규 테이블 | `profile` | 본인 단일 SELF profile 저장 |
 | 컬럼 추가 | `medical_document.profile_id` | 의료문서 소유 profile |
-| 컬럼 의미 변경 | `medical_document.user_id` | 소유권 기준이 아니라 업로드 행위자 의미로 격하. 구현 시 `uploaded_by` rename 검토 |
+| 컬럼 의미 변경 | `medical_document.user_id` → `medical_document.uploaded_by` | 소유권 기준이 아니라 업로드 행위자 의미로 격하 |
 | 컬럼 추가 | `prescription.profile_id` | 확정 처방 소유 profile |
 | 컬럼 추가 | `guide.profile_id` | 가이드 소유 profile |
 | 컬럼 추가 | `chat_session.profile_id` | 채팅 세션 소유 profile |
@@ -168,6 +168,8 @@ SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 �
 - 검증 실패 시 read cutover와 NOT NULL 전환을 진행하지 않고 backup, row count, 실패 SQL 결과를 기준으로 원인을 확인한다.
 
 ## 8. Rollback 기준
+
+#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
 
 - `profile_id`가 nullable인 Expand 단계에서는 코드 rollback이 가능해야 한다.
 - Contract 단계 전에는 기존 `user_id` 또는 부모 chain 기반 read 경로로 되돌릴 수 있어야 한다.

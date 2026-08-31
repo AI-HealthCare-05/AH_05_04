@@ -44,7 +44,7 @@ Backend 담당자가 기능을 나누어 구현하더라도 사용자 리소스 
 }
 ```
 
-현재 코드에서 소유권 확인이 완전히 빠진 사용자 리소스 API는 확인되지 않았습니다. PROFILE 전환 구현 PR은 `owned_by_self(...)` helper, 기존 사용자 SELF profile 멱등 생성, 의료문서→처방→가이드→채팅 세션 `profile_id` 전파, 부모·자식 `profile_id` 불일치 차단 테스트를 포함합니다. 교차 사용자 접근 테스트는 가이드 Repository(`test_get_prescription_owned_rejects_other_users_prescription`, `test_get_owned_guide_rejects_other_users_guide`)와 채팅 API(`test_foreign_ownership_and_closed_session_are_rejected_before_engine`)에 이미 작성되어 있습니다.
+현재 코드에서 소유권 확인이 완전히 빠진 사용자 리소스 API는 확인되지 않았습니다. PROFILE 전환 구현 PR은 `owned_by_self(...)` helper, 기존 사용자 SELF profile 멱등 생성, 의료문서→처방→가이드→채팅 세션 `profile_id` 전파, 부모·자식 `profile_id` 불일치 차단 테스트를 포함합니다. 교차 사용자 접근 테스트는 OCR API(`test_ocr_job_result_returns_404_for_another_user`), 가이드 Repository(`test_get_prescription_owned_rejects_other_users_prescription`, `test_get_owned_guide_rejects_other_users_guide`)와 채팅 API(`test_foreign_ownership_and_closed_session_are_rejected_before_engine`)에 작성되어 있습니다.
 
 구체적인 Repository 조회 패턴(`get_owned(...)` 표준 구현, 지양하는 방식, 리소스별 현재 적용 현황)은 Backend 내부 구현 가이드로 옮깁니다.
 
