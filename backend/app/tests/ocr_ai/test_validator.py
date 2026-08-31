@@ -443,10 +443,11 @@ def test_validator_rejects_numeric_substring_from_larger_ocr_number() -> None:
     assert frequency.confidence_score is None
 
 
-def test_validator_rejects_frequency_from_duration_number() -> None:
+def test_validator_rejects_frequency_from_distant_numeric_and_unit_tokens() -> None:
     raw_fields = [
-        _raw("합성의약품에이정"),
-        _raw("1일 3회"),
+        _raw("합성의약품에이정", center_x=10, center_y=10),
+        _raw("1", center_x=40, center_y=10),
+        _raw("회", center_x=100, center_y=10),
     ]
     draft = GeneratedPrescriptionDraft(
         medications=[
@@ -456,9 +457,8 @@ def test_validator_rejects_frequency_from_duration_number() -> None:
                     source_ids=[1],
                 ),
                 frequency_per_day=GeneratedSourceValue(
-                    # 숫자 1은 존재하지만 기간 단위인 "일"에 붙어 있습니다.
                     value="1",
-                    source_ids=[2],
+                    source_ids=[2, 3],
                 ),
             )
         ]
@@ -472,7 +472,6 @@ def test_validator_rejects_frequency_from_duration_number() -> None:
 
     frequency = next(field for field in result if field.field_type == "FREQUENCY_PER_DAY")
 
-    # 잘못된 1을 저장하지 않고 사용자 검수용 빈 필드로 만듭니다.
     assert frequency.raw_value is None
     assert frequency.confidence_score is None
 
@@ -509,11 +508,11 @@ def test_validator_accepts_frequency_with_frequency_unit_context() -> None:
     assert frequency.confidence_score == 0.99
 
 
-def test_validator_rejects_duration_from_frequency_context() -> None:
+def test_validator_rejects_duration_from_split_frequency_context() -> None:
     raw_fields = [
-        _raw("합성의약품에이정"),
-        _raw("1일 3회"),
-        _raw("7일분"),
+        _raw("합성의약품에이정", center_x=10, center_y=10),
+        _raw("1일", center_x=50, center_y=10),
+        _raw("3회", center_x=65, center_y=10),
     ]
     draft = GeneratedPrescriptionDraft(
         medications=[
@@ -523,7 +522,6 @@ def test_validator_rejects_duration_from_frequency_context() -> None:
                     source_ids=[1],
                 ),
                 duration_days=GeneratedSourceValue(
-                    # "1일 3회"의 1일은 기간이 아니라 횟수 문맥입니다.
                     value="1",
                     source_ids=[2],
                 ),
@@ -539,7 +537,6 @@ def test_validator_rejects_duration_from_frequency_context() -> None:
 
     duration = next(field for field in result if field.field_type == "DURATION_DAYS")
 
-    # 잘못된 기간 근거는 저장하지 않고 사용자 검수용 빈 필드로 만듭니다.
     assert duration.raw_value is None
     assert duration.confidence_score is None
 
@@ -585,8 +582,8 @@ def test_validator_rejects_duration_from_standalone_numeric_token() -> None:
 def test_validator_accepts_split_numeric_and_duration_unit_tokens() -> None:
     raw_fields = [
         _raw("합성의약품에이정"),
-        _raw("7"),
-        _raw("일분"),
+        _raw("7", center_x=40, center_y=10),
+        _raw("일분", center_x=52, center_y=10),
     ]
     draft = GeneratedPrescriptionDraft(
         medications=[
@@ -619,8 +616,8 @@ def test_validator_accepts_split_numeric_and_duration_unit_tokens() -> None:
 def test_validator_accepts_split_numeric_and_frequency_unit_tokens() -> None:
     raw_fields = [
         _raw("합성의약품에이정"),
-        _raw("3"),
-        _raw("회"),
+        _raw("3", center_x=40, center_y=10),
+        _raw("회", center_x=50, center_y=10),
     ]
     draft = GeneratedPrescriptionDraft(
         medications=[
@@ -1146,18 +1143,16 @@ def test_validator_applies_medication_row_distance_boundary(
     assert frequency.raw_value == expected_value
 
 
-def test_validator_rejects_medication_name_from_distant_lines() -> None:
+def test_validator_rejects_medication_name_token_closer_to_next_medication() -> None:
     raw_fields = [
-        _raw(
-            "오메가-3-산",
-            center_y=10,
-            height=10,
-        ),
+        _raw("오메가-3-산", center_x=10, center_y=10, height=10),
         _raw(
             "에틸에스테르90연질캡슐",
-            center_y=40,
+            center_x=10,
+            center_y=24,
             height=10,
         ),
+        _raw("합성의약품비정", center_x=10, center_y=30, height=10),
     ]
     draft = GeneratedPrescriptionDraft(
         medications=[
@@ -1166,7 +1161,13 @@ def test_validator_rejects_medication_name_from_distant_lines() -> None:
                     value="오메가-3-산 에틸에스테르90연질캡슐",
                     source_ids=[1, 2],
                 ),
-            )
+            ),
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품비정",
+                    source_ids=[3],
+                ),
+            ),
         ]
     )
 

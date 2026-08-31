@@ -82,6 +82,15 @@ CLOVA OCR과 OpenAI 구조화는 순차 실행되므로 OCR 요청의 Provider t
 - 일반 약제 필드는 token 높이 대비 세로 중심점 거리 `0.75` 이하를 같은 행으로 인정합니다.
 - 연속 약품명 행은 token 높이 대비 세로 중심점 간격 `1.5` 이하를 허용합니다.
 
+### 적용 경로
+
+이 grounding 검증은 CLOVA General OCR token을 규칙 기반 또는 LLM으로
+구조화하는 경로에 적용합니다.
+
+CLOVA Template OCR 결과는 Template 필드 이름과 약품 행 매핑을 사용하는
+별도 변환기를 통해 기존 RecognizedField 계약으로 변환합니다.
+Template OCR 결과에 LLM source_ids grounding 규칙을 적용하지 않습니다.
+
 ## medication_index
 
 - `0`은 처방일자처럼 특정 약품에 속하지 않는 문서 공통 필드다.

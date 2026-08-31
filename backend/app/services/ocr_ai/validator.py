@@ -68,6 +68,10 @@ _MAX_MEDICATION_ROW_DISTANCE_RATIO = 0.75
 # 인접 행 범위를 허용하되, 그보다 먼 행의 token 결합은 거부합니다.
 _MAX_MEDICATION_NAME_LINE_GAP_RATIO = 1.5
 
+# 숫자와 의미 단위가 별도 OCR token인 경우, 원본 OCR 순서에서
+# 연속하고 같은 행에 있으며 가로 중심점 거리도 충분히 가까워야 합니다.
+_MAX_NUMERIC_CONTEXT_CENTER_DISTANCE_RATIO = 2.0
+
 # 제품 함량의 일부만 잘라서 일치시키는 것을 막습니다.
 #
 # 예:
@@ -175,33 +179,88 @@ def _contains_complete_numeric_value(
 def _contains_numeric_value_with_field_context(
     *,
     field_type: str,
-    generated_compact: str,
-    source_compact: str,
+    generated: GeneratedSourceValue,
+    source_fields: list[RawRecognizedField],
+    source_map: dict[int, RawRecognizedField],
 ) -> bool:
     """
-    횟수·기간 숫자가 해당 필드의 단위 문맥에 있는지 확인합니다.
+    횟수·기간 값이 실제로 인접한 숫자와 의미 단위를 참조하는지 확인합니다.
 
-    숫자 token이 단독으로 참조된 경우에는 의미 문맥을 확인할 수 없으므로
-    근거로 인정하지 않습니다. CLOVA가 숫자와 단위를 분리한 경우에는
-    LLM이 숫자와 단위 token을 모두 source_ids로 제공해야 합니다.
-
-    예:
-    - FREQUENCY_PER_DAY=3 / OCR "1일 3회": 허용
-    - FREQUENCY_PER_DAY=1 / OCR "1일 3회": 거부
-    - DURATION_DAYS=1 / OCR "1일 3회": 거부
-    - DURATION_DAYS=7 / OCR "7일분": 허용
+    임의의 source_ids 문자열을 합쳐 문맥을 만들지 않습니다.
+    같은 token에 숫자와 단위가 있거나, 원본 OCR 순서와 좌표에서
+    실제로 인접한 숫자·단위 token인 경우만 허용합니다.
     """
+
+    _, generated_compact = _comparison_keys(generated.value)
+
     if not generated_compact:
         return False
 
     unit_pattern = _NUMERIC_CONTEXT_UNIT_PATTERNS[field_type]
-    pattern = re.compile(
+    combined_pattern = re.compile(
         rf"(?<![{_NUMERIC_NEIGHBOR_CHARACTERS}])"
         rf"{re.escape(generated_compact)}"
         rf"(?={unit_pattern})"
     )
 
-    return pattern.search(source_compact) is not None
+    ordered_sources = sorted(
+        zip(
+            generated.source_ids,
+            source_fields,
+            strict=True,
+        ),
+        key=lambda item: item[0],
+    )
+
+    # 숫자와 단위가 같은 OCR token에 포함된 경우입니다.
+    for source_id, source in ordered_sources:
+        _, source_compact = _comparison_keys(source.raw_value)
+
+        if combined_pattern.search(source_compact) is None:
+            continue
+
+        if field_type == "DURATION_DAYS" and _is_duration_frequency_prefix(
+            duration_end_source_id=source_id,
+            source_map=source_map,
+        ):
+            continue
+
+        return True
+
+    # CLOVA가 숫자와 단위를 별도 token으로 반환한 경우입니다.
+    for (number_source_id, number_source), (
+        unit_source_id,
+        unit_source,
+    ) in zip(
+        ordered_sources,
+        ordered_sources[1:],
+        strict=False,
+    ):
+        _, number_compact = _comparison_keys(number_source.raw_value)
+        _, unit_compact = _comparison_keys(unit_source.raw_value)
+
+        if number_compact != generated_compact:
+            continue
+
+        if re.fullmatch(unit_pattern, unit_compact) is None:
+            continue
+
+        if not _are_adjacent_ocr_tokens(
+            left_source_id=number_source_id,
+            right_source_id=unit_source_id,
+            source_map=source_map,
+        ):
+            continue
+
+        if field_type == "DURATION_DAYS" and _is_duration_frequency_prefix(
+            duration_end_source_id=unit_source_id,
+            source_map=source_map,
+        ):
+            continue
+
+        return True
+
+    return False
 
 
 def _is_complete_medication_name(
@@ -284,6 +343,104 @@ def _row_distance_ratio(
     return abs(source.center_y - anchor.center_y) / reference_height
 
 
+def _are_adjacent_ocr_tokens(
+    *,
+    left_source_id: int,
+    right_source_id: int,
+    source_map: dict[int, RawRecognizedField],
+) -> bool:
+    """두 token이 원본 OCR 순서와 좌표에서 실제로 인접하는지 확인합니다."""
+
+    if right_source_id != left_source_id + 1:
+        return False
+
+    left = source_map.get(left_source_id)
+    right = source_map.get(right_source_id)
+
+    if left is None or right is None:
+        return False
+
+    if (
+        _row_distance_ratio(
+            source=right,
+            anchor=left,
+        )
+        > _MAX_MEDICATION_ROW_DISTANCE_RATIO
+    ):
+        return False
+
+    # 같은 행에서는 CLOVA 정렬 결과상 왼쪽 token이 먼저 와야 합니다.
+    center_x_distance = right.center_x - left.center_x
+
+    if center_x_distance < 0:
+        return False
+
+    maximum_center_x_distance = (
+        max(
+            left.height,
+            right.height,
+            1.0,
+        )
+        * _MAX_NUMERIC_CONTEXT_CENTER_DISTANCE_RATIO
+    )
+
+    return center_x_distance <= maximum_center_x_distance
+
+
+def _starts_frequency_expression(
+    *,
+    source_id: int,
+    source_map: dict[int, RawRecognizedField],
+) -> bool:
+    """해당 위치에서 N회 또는 N + 회 표현이 시작되는지 확인합니다."""
+
+    source = source_map.get(source_id)
+
+    if source is None:
+        return False
+
+    _, source_compact = _comparison_keys(source.raw_value)
+
+    if re.fullmatch(r"\d+(?:회|번)", source_compact) is not None:
+        return True
+
+    if re.fullmatch(r"\d+", source_compact) is None:
+        return False
+
+    unit_source_id = source_id + 1
+    unit_source = source_map.get(unit_source_id)
+
+    if unit_source is None:
+        return False
+
+    _, unit_compact = _comparison_keys(unit_source.raw_value)
+
+    return re.fullmatch(r"(?:회|번)", unit_compact) is not None and _are_adjacent_ocr_tokens(
+        left_source_id=source_id,
+        right_source_id=unit_source_id,
+        source_map=source_map,
+    )
+
+
+def _is_duration_frequency_prefix(
+    *,
+    duration_end_source_id: int,
+    source_map: dict[int, RawRecognizedField],
+) -> bool:
+    """N일 바로 뒤에 횟수 표현이 있으면 기간 근거로 인정하지 않습니다."""
+
+    frequency_source_id = duration_end_source_id + 1
+
+    return _are_adjacent_ocr_tokens(
+        left_source_id=duration_end_source_id,
+        right_source_id=frequency_source_id,
+        source_map=source_map,
+    ) and _starts_frequency_expression(
+        source_id=frequency_source_id,
+        source_map=source_map,
+    )
+
+
 def _belongs_to_medication_row(
     *,
     medication_index: int,
@@ -332,19 +489,30 @@ def _validate_medication_name_sources(
     draft: GeneratedPrescriptionDraft,
     medication_row_anchors: list[list[RawRecognizedField]],
 ) -> None:
-    """약품명 token 공유와 지나치게 먼 행의 결합을 차단합니다."""
+    """약품명 token 공유, 행 간격 및 다른 약제 anchor 침범을 차단합니다."""
+
+    if any(not anchors for anchors in medication_row_anchors):
+        raise OcrProcessingError("LLM 구조화 결과의 MEDICATION_NAME 근거가 비어 있습니다.")
+
+    representative_anchors = [
+        min(
+            anchors,
+            key=lambda field: field.center_y,
+        )
+        for anchors in medication_row_anchors
+    ]
 
     used_source_ids: set[int] = set()
 
-    for medication, anchors in zip(
-        draft.medications,
-        medication_row_anchors,
-        strict=True,
+    for medication_index, (medication, anchors) in enumerate(
+        zip(
+            draft.medications,
+            medication_row_anchors,
+            strict=True,
+        )
     ):
         source_ids = set(medication.medication_name.source_ids)
 
-        # 하나의 OCR token을 둘 이상의 약품명 근거로 재사용하면
-        # 약제 경계를 결정할 수 없으므로 전체 구조화를 거부합니다.
         if used_source_ids.intersection(source_ids):
             raise OcrProcessingError("LLM 구조화 결과의 MEDICATION_NAME 근거가 여러 약제에 중복되었습니다.")
 
@@ -368,12 +536,35 @@ def _validate_medication_name_sources(
             if line_gap_ratio > _MAX_MEDICATION_NAME_LINE_GAP_RATIO:
                 raise OcrProcessingError("LLM 구조화 결과의 MEDICATION_NAME 근거 행이 서로 인접하지 않습니다.")
 
+        current_representative = representative_anchors[medication_index]
+
+        for source in anchors:
+            if source is current_representative:
+                continue
+
+            current_distance = _row_distance_ratio(
+                source=source,
+                anchor=current_representative,
+            )
+
+            if any(
+                _row_distance_ratio(
+                    source=source,
+                    anchor=other_representative,
+                )
+                <= current_distance
+                for other_index, other_representative in enumerate(representative_anchors)
+                if other_index != medication_index
+            ):
+                raise OcrProcessingError("LLM 구조화 결과의 MEDICATION_NAME 근거가 다른 약제 행에 더 가깝습니다.")
+
 
 def _validate_grounded_value(
     *,
     field_type: str,
     generated: GeneratedSourceValue,
     source_fields: list[RawRecognizedField],
+    source_map: dict[int, RawRecognizedField],
 ) -> None:
     """
     LLM이 반환한 값이 참조한 CLOVA token 안에 실제로 존재하는지 검증합니다.
@@ -391,8 +582,9 @@ def _validate_grounded_value(
         # 해당 필드 단위가 붙은 숫자만 허용합니다.
         is_grounded = _contains_numeric_value_with_field_context(
             field_type=field_type,
-            generated_compact=generated_compact,
-            source_compact=source_compact,
+            generated=generated,
+            source_fields=source_fields,
+            source_map=source_map,
         )
     elif field_type in _NUMERIC_GROUNDING_FIELD_TYPES:
         # DOSE_VALUE 등은 "1정"에서 숫자 1을 분리할 수 있도록
@@ -509,6 +701,7 @@ def _make_field(
         field_type=field_type,
         generated=generated,
         source_fields=source_fields,
+        source_map=source_map,
     )
 
     raw_value = generated.value.strip()
