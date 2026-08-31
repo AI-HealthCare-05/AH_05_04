@@ -1,9 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import and_, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
 from app.models.medical_documents import MedicalDocument
@@ -64,6 +64,43 @@ class ChatRepository:
         )
         last = result.scalars().first()
         return (last.message_seq + 1) if last else 1
+
+    async def list_recent_completed_pairs(
+        self,
+        *,
+        session: ChatSession,
+        before_message_seq: int,
+        candidate_limit: int,
+    ) -> list[tuple[ChatMessage, ChatMessage]]:
+        user_message = aliased(ChatMessage)
+        assistant_message = aliased(ChatMessage)
+        result = await self.session.execute(
+            select(user_message, assistant_message)
+            .join(
+                assistant_message,
+                and_(
+                    assistant_message.session_id == user_message.session_id,
+                    assistant_message.message_seq == user_message.message_seq + 1,
+                ),
+            )
+            .where(
+                user_message.session_id == session.id,
+                user_message.role == ChatRole.USER,
+                user_message.generation_status == ChatGenerationStatus.NOT_APPLICABLE,
+                user_message.content.is_not(None),
+                func.length(user_message.content) > 0,
+                func.length(user_message.content) <= 2000,
+                assistant_message.role == ChatRole.ASSISTANT,
+                assistant_message.generation_status == ChatGenerationStatus.COMPLETED,
+                assistant_message.content.is_not(None),
+                func.length(assistant_message.content) > 0,
+                func.length(assistant_message.content) <= 10_000,
+                assistant_message.message_seq < before_message_seq,
+            )
+            .order_by(user_message.message_seq.desc())
+            .limit(candidate_limit)
+        )
+        return [(row[0], row[1]) for row in result.all()]
 
     async def create_message(
         self,

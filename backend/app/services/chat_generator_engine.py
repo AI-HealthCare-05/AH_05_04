@@ -3,6 +3,7 @@ from pydantic import ValidationError
 from app.services.chat_ai import (
     ChatEngine,
     ChatGenerationFailedError,
+    ChatHistoryPair,
     ChatMedicationInput,
     ChatReplyInput,
     ChatReplyOutput,
@@ -17,6 +18,7 @@ from app.services.chat_ai.exceptions import (
 )
 from app.services.chat_ai.generator import ChatGenerator
 from app.services.chat_ai.schemas import ChatGenerationInput
+from app.services.chat_ai.schemas import ChatHistoryItem as GenerationHistoryItem
 from app.services.chat_ai.schemas import ChatMedicationInput as GenerationMedicationInput
 
 
@@ -36,6 +38,11 @@ class ChatGeneratorEngine(ChatEngine):
             )
             generation_input = ChatGenerationInput(
                 question=chat_input.content,
+                history=(
+                    None
+                    if chat_input.history is None
+                    else [self._to_generation_history(pair) for pair in chat_input.history]
+                ),
                 medications=[self._to_generation_medication(medication) for medication in chat_input.medications],
             )
             result = await generator.generate(generation_input)
@@ -66,3 +73,7 @@ class ChatGeneratorEngine(ChatEngine):
             timing_text=medication.timing_text,
             duration_days=medication.duration_days,
         )
+
+    @staticmethod
+    def _to_generation_history(pair: ChatHistoryPair) -> GenerationHistoryItem:
+        return GenerationHistoryItem(question=pair.question, answer=pair.answer)

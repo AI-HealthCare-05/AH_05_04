@@ -3,7 +3,7 @@ import unicodedata
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
 
 _FORBIDDEN_INPUT_CHARACTERS = frozenset(
     {
@@ -55,6 +55,14 @@ def _normalize_generated_content(value: object) -> str:
     return unicodedata.normalize("NFC", value.strip())
 
 
+def normalize_history_answer(value: object) -> str:
+    normalized = _normalize_generated_content(value)
+    _reject_forbidden_input_characters(normalized)
+    if not normalized:
+        raise ValueError("history answer must not be blank")
+    return normalized
+
+
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -88,14 +96,36 @@ class ChatMedicationInput(_StrictModel):
         return _normalize_display_text(value)
 
 
+class ChatHistoryItem(_StrictModel):
+    question: str = Field(min_length=1, max_length=2000)
+    answer: str = Field(min_length=1, max_length=10_000)
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def normalize_question(cls, value: object) -> str:
+        return _normalize_question(value)
+
+    @field_validator("answer", mode="before")
+    @classmethod
+    def normalize_answer(cls, value: object) -> str:
+        return normalize_history_answer(value)
+
+
 class ChatGenerationInput(_StrictModel):
     question: str = Field(max_length=2000)
+    history: list[ChatHistoryItem] | None = Field(default=None, max_length=3)
     medications: list[ChatMedicationInput] = Field(min_length=1, max_length=30)
 
     @field_validator("question", mode="before")
     @classmethod
     def normalize_question(cls, value: object) -> str:
         return _normalize_question(value)
+
+    @model_validator(mode="after")
+    def validate_history_total_length(self) -> "ChatGenerationInput":
+        if self.history is not None and sum(len(item.question) + len(item.answer) for item in self.history) > 12_000:
+            raise ValueError("history exceeds total character limit")
+        return self
 
 
 JsonDecimal = Annotated[Decimal, PlainSerializer(lambda value: str(value), return_type=str, when_used="json")]
@@ -113,6 +143,7 @@ class ChatMedicationPromptItem(_StrictModel):
 
 class ChatPromptPayload(_StrictModel):
     question: str
+    history: list[ChatHistoryItem] | None = None
     medications: list[ChatMedicationPromptItem]
 
 

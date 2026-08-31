@@ -6,7 +6,7 @@ from datetime import UTC, timedelta, timezone, tzinfo
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -101,6 +101,7 @@ class Config(BaseSettings):
     OPENAI_API_KEY: str = "sk-not-configured"
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_TIMEOUT_SECONDS: float = 20.0
+    CHAT_HISTORY_CONTEXT_ENABLED: bool = False
 
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: str = ""
@@ -115,6 +116,12 @@ class Config(BaseSettings):
     # 이 값들은 OCR_STRUCTURE_LLM_ENABLED=true일 때만 사용됩니다.
     OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"
     OCR_STRUCTURE_TIMEOUT_SECONDS: float = 30.0
+
+    @model_validator(mode="after")
+    def validate_chat_history_environment(self) -> "Config":
+        if self.CHAT_HISTORY_CONTEXT_ENABLED and self.ENV is not Env.LOCAL:
+            raise ValueError("CHAT_HISTORY_CONTEXT_ENABLED is allowed only in local environment")
+        return self
 
     @property
     def database_url(self) -> str:

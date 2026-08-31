@@ -58,10 +58,18 @@ class RecordingPrescriptionRepository:
 
 
 class RecordingChatRepository:
-    def __init__(self, session: object | None, events: list[str], *, commit_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        session: object | None,
+        events: list[str],
+        *,
+        recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
+        commit_error: Exception | None = None,
+    ) -> None:
         self.owned_session = session
         self.events = events
         self.commit_error = commit_error
+        self.recent_pairs = recent_pairs or []
         self.messages: list[SimpleNamespace] = []
         self.created_snapshots: list[tuple[int, object, object, object]] = []
         self.state_transitions: list[tuple[int, ChatGenerationStatus]] = []
@@ -74,6 +82,18 @@ class RecordingChatRepository:
     async def next_seq(self, *, session: object) -> int:
         self.events.append("chat.next_seq")
         return 7
+
+    async def list_recent_completed_pairs(
+        self,
+        *,
+        session: object,
+        before_message_seq: int,
+        candidate_limit: int,
+    ) -> list[tuple[SimpleNamespace, SimpleNamespace]]:
+        self.events.append("chat.list_recent_completed_pairs")
+        assert before_message_seq == 7
+        assert candidate_limit == 30
+        return self.recent_pairs[:candidate_limit]
 
     async def create_message(self, **kwargs: object) -> SimpleNamespace:
         role = kwargs["role"]
@@ -135,6 +155,8 @@ def _service_fixture(
     status: ChatSessionStatus = ChatSessionStatus.ACTIVE,
     owned: bool = True,
     commit_error: Exception | None = None,
+    history_context_enabled: bool = False,
+    recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
 ) -> tuple[ChatService, RecordingChatRepository, list[str], SimpleNamespace]:
     events: list[str] = []
     chat_session = SimpleNamespace(
@@ -163,10 +185,32 @@ def _service_fixture(
             duration_days=None,
         ),
     ]
-    chat_repo = RecordingChatRepository(chat_session if owned else None, events, commit_error=commit_error)
+    chat_repo = RecordingChatRepository(
+        chat_session if owned else None,
+        events,
+        recent_pairs=recent_pairs,
+        commit_error=commit_error,
+    )
     prescription_repo = RecordingPrescriptionRepository(medications, events)
     engine.events = events
-    return ChatService(prescription_repo, chat_repo, engine), chat_repo, events, chat_session  # type: ignore[arg-type]
+    return (
+        ChatService(
+            prescription_repo,  # type: ignore[arg-type]
+            chat_repo,  # type: ignore[arg-type]
+            engine,
+            history_context_enabled=history_context_enabled,
+        ),
+        chat_repo,
+        events,
+        chat_session,
+    )  # type: ignore[arg-type]
+
+
+def _history_pair(sequence: int, question: str, answer: str) -> tuple[SimpleNamespace, SimpleNamespace]:
+    return (
+        SimpleNamespace(message_seq=sequence, content=question),
+        SimpleNamespace(message_seq=sequence + 1, content=answer),
+    )
 
 
 async def test_send_message_locks_then_preserves_ordered_medication_fields_and_completes_pair() -> None:
@@ -224,6 +268,91 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
     assert result.model_name == "model-id"
     assert result.prompt_version == "prompt-v1"
     assert result.completed_at == chat_session.last_message_at
+    assert engine.inputs[0].history is None
+
+
+@pytest.mark.parametrize("pair_count", [0, 1, 3, 4])
+async def test_history_context_selects_up_to_three_latest_pairs_and_orders_them_chronologically(
+    pair_count: int,
+) -> None:
+    pairs = [
+        _history_pair(index * 2 + 1, f"과거 질문 {index}", f"과거 답변 {index}")
+        for index in reversed(range(pair_count))
+    ]
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    service, _, events, chat_session = _service_fixture(
+        engine=engine,
+        history_context_enabled=True,
+        recent_pairs=pairs,
+    )
+
+    await service.send_message(
+        user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+        session_id=chat_session.id,
+        request=SendChatMessageRequest(content="현재 질문"),
+    )
+
+    expected_indexes = list(range(max(0, pair_count - 3), pair_count))
+    assert [(item.question, item.answer) for item in engine.inputs[0].history or []] == [
+        (f"과거 질문 {index}", f"과거 답변 {index}") for index in expected_indexes
+    ]
+    assert all(item.question != "현재 질문" for item in engine.inputs[0].history or [])
+    assert events.index("chat.list_recent_completed_pairs") < events.index(f"chat.create.{ChatRole.USER}")
+
+
+async def test_history_context_skips_invalid_pair_and_backfills_with_older_valid_pair() -> None:
+    pairs = [
+        _history_pair(9, "최신 질문", "최신 답변"),
+        _history_pair(7, "숨김\u200b질문", "제외할 답변"),
+        _history_pair(5, "중간 질문", "중간 답변"),
+        _history_pair(3, "오래된 질문", "오래된 답변"),
+    ]
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    service, _, _, chat_session = _service_fixture(
+        engine=engine,
+        history_context_enabled=True,
+        recent_pairs=pairs,
+    )
+
+    await service.send_message(
+        user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+        session_id=chat_session.id,
+        request=SendChatMessageRequest(content="현재 질문"),
+    )
+
+    assert [(item.question, item.answer) for item in engine.inputs[0].history or []] == [
+        ("오래된 질문", "오래된 답변"),
+        ("중간 질문", "중간 답변"),
+        ("최신 질문", "최신 답변"),
+    ]
+
+
+async def test_history_context_stops_when_next_valid_pair_exceeds_total_character_budget() -> None:
+    pairs = [
+        _history_pair(5, "가" * 2000, "나" * 9000),
+        _history_pair(3, "다" * 1000, "라" * 1000),
+        _history_pair(1, "더 오래된 질문", "더 오래된 답변"),
+    ]
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    service, _, _, chat_session = _service_fixture(
+        engine=engine,
+        history_context_enabled=True,
+        recent_pairs=pairs,
+    )
+
+    await service.send_message(
+        user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+        session_id=chat_session.id,
+        request=SendChatMessageRequest(content="현재 질문"),
+    )
+
+    assert [(item.question, item.answer) for item in engine.inputs[0].history or []] == [("가" * 2000, "나" * 9000)]
 
 
 @pytest.mark.parametrize(

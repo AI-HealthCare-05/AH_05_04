@@ -57,11 +57,15 @@ def test_get_chat_engine_wires_process_client_and_existing_configuration(monkeyp
     }
 
 
-def test_get_chat_service_requires_and_injects_chat_engine() -> None:
+def test_get_chat_service_requires_and_injects_chat_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.dependencies import services
+
     prescription_repository = object()
     chat_repository = object()
     engine: ChatEngine = StubEngine()
+    monkeypatch.setattr(services.config, "CHAT_HISTORY_CONTEXT_ENABLED", True)
 
     service = get_chat_service(prescription_repository, chat_repository, engine)  # type: ignore[arg-type]
 
     assert service._engine is engine
+    assert service._history_context_enabled is True
