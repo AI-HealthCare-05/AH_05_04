@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getOcrJob } from '../src/api/prescriptions'
+import { getOcrJob, type OcrJobResponse } from '../src/api/prescriptions'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -7,12 +7,13 @@ afterEach(() => {
 
 describe('OCR Job API', () => {
   it('polling AbortSignal을 기존 OCR 조회 endpoint까지 전달한다', async () => {
-    const responseBody = {
+    const responseBody: OcrJobResponse = {
       data: {
         job_id: '22222222-2222-4222-8222-222222222222',
         document_id: '11111111-1111-4111-8111-111111111111',
         ocr_status: 'PROCESSING',
         error_code: null,
+        error_message: null,
         engine_name: null,
         model_version: null,
         prompt_version: null,

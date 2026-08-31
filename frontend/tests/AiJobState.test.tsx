@@ -17,6 +17,13 @@ import {
 
 afterEach(cleanup)
 
+const productionOcrFailureCodes = [
+  'OCR_PROVIDER_TIMEOUT',
+  'OCR_PROVIDER_CALL_FAILED',
+  'OCR_PROVIDER_UNAVAILABLE',
+  'OCR_PROCESSING_FAILED',
+] as const
+
 describe('AI Job 상태 view-model', () => {
   it.each([
     'PENDING',
@@ -52,6 +59,19 @@ describe('AI Job 상태 view-model', () => {
     expect(presentation.title).toBe('작업을 완료하지 못했어요')
     expect(presentation.description).not.toContain('PROVIDER_SECRET_DETAIL')
   })
+
+  it.each(productionOcrFailureCodes)(
+    '현재 OCR 전용 %s code는 공통 code로 변환하지 않고 안전한 fallback을 사용한다',
+    (code) => {
+      const presentation = getJobFailurePresentation(code)
+      const visibleCopy = `${presentation.title} ${presentation.description}`
+
+      expect(visibleCopy).toBe(
+        '작업을 완료하지 못했어요 현재 작업을 완료하지 못했어요. 이전 화면에서 다시 확인해 주세요.',
+      )
+      expect(visibleCopy).not.toContain(code)
+    },
+  )
 
   it.each([
     [401, '로그인이 필요해요'],

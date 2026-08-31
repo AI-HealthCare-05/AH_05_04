@@ -26,6 +26,10 @@ function ocrResponse(status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED') 
       document_id: documentId,
       ocr_status: status,
       error_code: status === 'FAILED' ? 'OCR_FAILED' : null,
+      error_message:
+        status === 'FAILED'
+          ? '민감한 OCR 원문과 내부 오류 상세를 포함한 Backend 메시지'
+          : null,
       created_at: '2026-08-24T00:00:00Z',
       completed_at:
         status === 'COMPLETED' || status === 'FAILED'
@@ -102,7 +106,7 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(screen.getByText(new RegExp(`job_id=${jobId}`))).toBeTruthy()
   })
 
-  it('PROCESSING → FAILED 상태에서는 polling을 중단하고 공통 실패 UI를 표시한다', async () => {
+  it('PROCESSING → FAILED unknown code에서는 polling을 중단하고 안전한 fallback UI를 표시한다', async () => {
     vi.mocked(getOcrJob)
       .mockResolvedValueOnce(ocrResponse('PROCESSING'))
       .mockResolvedValueOnce(ocrResponse('FAILED'))
@@ -115,6 +119,15 @@ describe('PrescriptionUploadPage OCR polling', () => {
       await screen.findByText('작업을 완료하지 못했어요', {}, { timeout: 2500 }),
     ).toBeTruthy()
     await waitFor(() => expect(getOcrJob).toHaveBeenCalledTimes(2))
+    expect(
+      screen.getByText(
+        '현재 작업을 완료하지 못했어요. 이전 화면에서 다시 확인해 주세요.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText('OCR_FAILED')).toBeNull()
+    expect(
+      screen.queryByText(/민감한 OCR 원문|내부 오류 상세/),
+    ).toBeNull()
     expect(screen.queryByText(/OCR 검수 화면/)).toBeNull()
   })
 
