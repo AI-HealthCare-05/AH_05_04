@@ -1,14 +1,9 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { getCurrentUser } from '../src/api/users'
 import HomePage from '../src/pages/HomePage'
 import StartPage from '../src/pages/StartPage'
-
-vi.mock('../src/api/users', () => ({
-  getCurrentUser: vi.fn(),
-}))
 
 const CURRENT_USER = {
   id: '00000000-0000-4000-8000-000000000113',
@@ -20,11 +15,11 @@ const CURRENT_USER = {
   created_at: '2026-08-28T00:00:00Z',
 }
 
-function renderHome() {
+function renderHome(currentUser = CURRENT_USER) {
   return render(
     <MemoryRouter initialEntries={['/']}>
       <Routes>
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<HomePage currentUser={currentUser} />} />
         <Route
           path="/prescriptions/upload"
           element={<div>처방전 업로드 화면</div>}
@@ -37,13 +32,8 @@ function renderHome() {
   )
 }
 
-beforeEach(() => {
-  vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
-})
-
 afterEach(() => {
   cleanup()
-  vi.clearAllMocks()
 })
 
 describe('Dosey MVP design pages', () => {
@@ -86,15 +76,13 @@ describe('Dosey MVP design pages', () => {
       }),
     ).toBeTruthy()
     expect(screen.getByText(/^기기 기준 /)).toBeTruthy()
-    expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
-  it('HOME-01은 사용자 이름 조회 실패를 개인화된 성공처럼 숨기지 않는다', async () => {
-    vi.mocked(getCurrentUser).mockRejectedValue(new Error('network unavailable'))
-    renderHome()
+  it('HOME-01은 조회된 사용자의 이름이 비어 있을 때 개인화된 성공처럼 숨기지 않는다', () => {
+    renderHome({ ...CURRENT_USER, name: '   ' })
 
     expect(
-      await screen.findByText(
+      screen.getByText(
         '사용자 이름을 불러오지 못했어요. 홈 기능은 계속 사용할 수 있어요.',
       ),
     ).toBeTruthy()
@@ -103,18 +91,6 @@ describe('Dosey MVP design pages', () => {
     ).toBeTruthy()
     expect(screen.queryByText('사용자님, 오늘 복용할 약을 확인해 주세요')).toBeNull()
     expect(screen.getByRole('button', { name: '처방전 등록하기' })).toBeTruthy()
-  })
-
-  it('HOME-01은 사용자 이름 조회 중 비개인화 loading 상태를 표시한다', () => {
-    vi.mocked(getCurrentUser).mockReturnValue(new Promise(() => undefined))
-    renderHome()
-
-    expect(screen.getByRole('status').textContent).toBe(
-      '사용자 이름을 불러오는 중이에요.',
-    )
-    expect(
-      screen.getByRole('heading', { name: '오늘 복용할 약을 확인해 주세요' }),
-    ).toBeTruthy()
   })
 
   it('HOME-01은 실제 데이터가 없을 때 가짜 주간 그래프를 표시하지 않는다', async () => {
@@ -157,7 +133,6 @@ describe('Dosey MVP design pages', () => {
       'disabled',
       true,
     )
-    expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
   it('복약 챗봇은 ID를 추측하지 않고 기존 /chat route로만 이동한다', async () => {
@@ -166,7 +141,6 @@ describe('Dosey MVP design pages', () => {
     await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
     fireEvent.click(screen.getByRole('button', { name: '복약 챗봇 도지' }))
     expect(screen.getByText('처방전 ID 없는 챗봇 진입 화면')).toBeTruthy()
-    expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
   it('가이드 Bottom Navigation은 API 호출 없이 기존 /guides empty route로 이동한다', async () => {
@@ -175,7 +149,6 @@ describe('Dosey MVP design pages', () => {
     await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
     fireEvent.click(screen.getByRole('button', { name: '가이드' }))
     expect(screen.getByText('가이드 empty 화면')).toBeTruthy()
-    expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
   it('HOME-01 Bottom Navigation은 홈 active 상태와 Profile 회귀를 유지한다', async () => {

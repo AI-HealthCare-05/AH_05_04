@@ -1,15 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCurrentUser } from '../api/users'
+import type { CurrentUser } from '../api/users'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
-function HomePage() {
+function HomePage({ currentUser }: { currentUser: CurrentUser }) {
   const navigate = useNavigate()
-  const [userName, setUserName] = useState<string | null>(null)
-  const [userNameLoadFailed, setUserNameLoadFailed] = useState(false)
+  const userName = currentUser.name.trim()
   const today = useMemo(
     () =>
       new Intl.DateTimeFormat('ko-KR', {
@@ -19,31 +18,6 @@ function HomePage() {
       }).format(new Date()),
     [],
   )
-
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadUserName() {
-      try {
-        const user = await getCurrentUser()
-        const nextName = user.name.trim()
-        if (!isMounted) return
-        if (nextName) {
-          setUserName(nextName)
-        } else {
-          setUserNameLoadFailed(true)
-        }
-      } catch {
-        if (isMounted) setUserNameLoadFailed(true)
-      }
-    }
-
-    void loadUserName()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
 
   return (
     <div className="mvp-page mvp-home-page">
@@ -73,9 +47,7 @@ function HomePage() {
           </h1>
           {!userName && (
             <p className="mvp-home__greeting-status" role="status">
-              {userNameLoadFailed
-                ? '사용자 이름을 불러오지 못했어요. 홈 기능은 계속 사용할 수 있어요.'
-                : '사용자 이름을 불러오는 중이에요.'}
+              사용자 이름을 불러오지 못했어요. 홈 기능은 계속 사용할 수 있어요.
             </p>
           )}
 
