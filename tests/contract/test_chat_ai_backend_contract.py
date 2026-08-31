@@ -23,7 +23,7 @@ class RecordingProvider:
         return ProviderChatResponse(content="합성 계약 답변", model_name="provider-model-2026-08")
 
 
-async def test_backend_dto_crosses_adapter_and_real_generator_without_identifiers_or_history() -> None:
+async def test_backend_dto_crosses_adapter_with_empty_history_and_without_identifiers() -> None:
     prescription_id = uuid4()
     provider = RecordingProvider()
     engine = ChatGeneratorEngine(provider=provider, model="configured-model", timeout_seconds=1)
@@ -55,6 +55,7 @@ async def test_backend_dto_crosses_adapter_and_real_generator_without_identifier
     assert provider.input_json is not None
     assert json.loads(provider.input_json) == {
         "question": "현재 질문만 전달해 주세요.",
+        "history": [],
         "medications": [
             {
                 "medication_name": "합성약 정밀",
@@ -68,10 +69,10 @@ async def test_backend_dto_crosses_adapter_and_real_generator_without_identifier
         ],
     }
     assert str(prescription_id) not in provider.input_json
-    assert "history" not in provider.input_json
+    assert json.loads(provider.input_json)["history"] == []
     assert result.content == "합성 계약 답변"
     assert result.model_name == "provider-model-2026-08"
-    assert result.prompt_version == "chat-prompt-v1"
+    assert result.prompt_version == "chat-prompt-v2"
 
 
 async def test_backend_history_crosses_adapter_as_ordered_data_without_structured_metadata() -> None:

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
@@ -34,7 +34,7 @@ class ChatReplyInput:
     prescription_id: UUID
     medications: list[ChatMedicationInput]
     content: str
-    history: list[ChatHistoryPair] | None = None
+    history: list[ChatHistoryPair] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

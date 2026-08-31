@@ -113,7 +113,7 @@ class ChatHistoryItem(_StrictModel):
 
 class ChatGenerationInput(_StrictModel):
     question: str = Field(max_length=2000)
-    history: list[ChatHistoryItem] | None = Field(default=None, max_length=3)
+    history: list[ChatHistoryItem] = Field(default_factory=list, max_length=3)
     medications: list[ChatMedicationInput] = Field(min_length=1, max_length=30)
 
     @field_validator("question", mode="before")
@@ -123,7 +123,7 @@ class ChatGenerationInput(_StrictModel):
 
     @model_validator(mode="after")
     def validate_history_total_length(self) -> "ChatGenerationInput":
-        if self.history is not None and sum(len(item.question) + len(item.answer) for item in self.history) > 12_000:
+        if sum(len(item.question) + len(item.answer) for item in self.history) > 12_000:
             raise ValueError("history exceeds total character limit")
         return self
 
@@ -143,7 +143,7 @@ class ChatMedicationPromptItem(_StrictModel):
 
 class ChatPromptPayload(_StrictModel):
     question: str
-    history: list[ChatHistoryItem] | None = None
+    history: list[ChatHistoryItem]
     medications: list[ChatMedicationPromptItem]
 
 

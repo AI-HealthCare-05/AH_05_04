@@ -71,10 +71,11 @@ async def test_reply_maps_all_medication_fields_and_result_metadata() -> None:
 
     assert result.content == "안전한 합성 답변"
     assert result.model_name == "model-actual"
-    assert result.prompt_version == "chat-prompt-v1"
+    assert result.prompt_version == "chat-prompt-v2"
     payload = json.loads(str(provider.calls[0]["input_json"]))
     assert payload == {
         "question": "이 약을 먹으면 졸릴 수 있나요?",
+        "history": [],
         "medications": [
             {
                 "medication_name": "합성의약품 에이",

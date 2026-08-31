@@ -134,7 +134,7 @@ class ChatService:
 
         medications = await self._prescription_repo.get_medications(prescription_id=chat_session.prescription_id)
         next_seq = await self._chat_repo.next_seq(session=chat_session)
-        history: list[ChatHistoryPair] | None = None
+        history: list[ChatHistoryPair] = []
         if self._history_context_enabled:
             history_candidates = await self._chat_repo.list_recent_completed_pairs(
                 session=chat_session,

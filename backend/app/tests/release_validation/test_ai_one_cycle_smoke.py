@@ -896,7 +896,7 @@ async def test_network_runner_uses_real_tcp_and_preserves_http_id_order(tmp_path
                     "generation_status": "COMPLETED",
                     "content": "private chat",
                     "model_name": "real-model-id",
-                    "prompt_version": "chat-prompt-v1",
+                    "prompt_version": "chat-prompt-v2",
                 }
             },
         }
@@ -1356,7 +1356,7 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
                     content="private chat",
                     generation_status=ChatGenerationStatus.COMPLETED,
                     model_name="gpt-4o-mini-actual",
-                    prompt_version="chat-prompt-v1",
+                    prompt_version="chat-prompt-v2",
                     completed_at=now,
                 ),
             ]
@@ -1378,7 +1378,7 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
 
     assert verified["input_check"] == "PASS"
     assert verified["guide"]["prompt_version"] == "guide-prompt-v3"
-    assert verified["chat"]["prompt_version"] == "chat-prompt-v1"
+    assert verified["chat"]["prompt_version"] == "chat-prompt-v2"
     assert verified["guide_content"] == "private guide"
     assert verified["chat_content"] == "private chat"
     await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
@@ -1399,7 +1399,7 @@ async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_bound
             return ChatReplyOutput(
                 content="private deterministic chat",
                 model_name="gpt-4o-mini-deterministic",
-                prompt_version="chat-prompt-v1",
+                prompt_version="chat-prompt-v2",
             )
 
     factory = async_sessionmaker(test_engine, expire_on_commit=False)

@@ -204,7 +204,7 @@ def test_generation_result_strips_content_and_validates_limits() -> None:
     result = ChatGenerationResult(
         content="  복용 중 졸림이 나타날 수 있습니다.  ",
         model_name="gpt-4o-mini-2024-07-18",
-        prompt_version="chat-prompt-v1",
+        prompt_version="chat-prompt-v2",
     )
 
     assert result.content == "복용 중 졸림이 나타날 수 있습니다."
@@ -214,14 +214,14 @@ def test_generation_result_strips_content_and_validates_limits() -> None:
             ChatGenerationResult(
                 content=invalid,
                 model_name="gpt-4o-mini",
-                prompt_version="chat-prompt-v1",
+                prompt_version="chat-prompt-v2",
             )
 
     with pytest.raises(ValidationError):
         ChatGenerationResult(
             content="답변",
             model_name="m" * 101,
-            prompt_version="chat-prompt-v1",
+            prompt_version="chat-prompt-v2",
         )
 
 
@@ -231,7 +231,7 @@ def test_generation_result_forbids_unknown_fields() -> None:
             {
                 "content": "답변",
                 "model_name": "gpt-4o-mini",
-                "prompt_version": "chat-prompt-v1",
+                "prompt_version": "chat-prompt-v2",
                 "citations": [],
             }
         )

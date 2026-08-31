@@ -7,12 +7,7 @@ from app.services.chat_ai.exceptions import (
     ChatGenerationInvalidResponseError,
     ChatGenerationTimeoutError,
 )
-from app.services.chat_ai.prompt import (
-    CHAT_HISTORY_SYSTEM_INSTRUCTIONS,
-    CHAT_SYSTEM_INSTRUCTIONS,
-    PROMPT_VERSION,
-    PROMPT_VERSION_WITH_HISTORY,
-)
+from app.services.chat_ai.prompt import CHAT_SYSTEM_INSTRUCTIONS, PROMPT_VERSION
 from app.services.chat_ai.schemas import (
     ChatGenerationInput,
     ChatGenerationResult,
@@ -34,12 +29,11 @@ class ChatGenerator:
 
     async def generate(self, chat_input: ChatGenerationInput) -> ChatGenerationResult:
         input_json = self._build_provider_input(chat_input)
-        history_enabled = chat_input.history is not None
         try:
             async with asyncio.timeout(self._timeout_seconds):
                 provider_response = await self._provider.generate(
                     model=self._model,
-                    instructions=(CHAT_HISTORY_SYSTEM_INSTRUCTIONS if history_enabled else CHAT_SYSTEM_INSTRUCTIONS),
+                    instructions=CHAT_SYSTEM_INSTRUCTIONS,
                     input_json=input_json,
                     max_output_tokens=MAX_OUTPUT_TOKENS,
                 )
@@ -50,16 +44,15 @@ class ChatGenerator:
         model_name = provider_response.model_name
         if not content or len(content) > 10_000 or not model_name.strip() or len(model_name) > 100:
             raise ChatGenerationInvalidResponseError("Chat provider result is invalid")
-        if history_enabled:
-            try:
-                content = normalize_history_answer(content)
-            except ValueError as error:
-                raise ChatGenerationInvalidResponseError("Chat provider result is invalid") from error
+        try:
+            content = normalize_history_answer(content)
+        except ValueError as error:
+            raise ChatGenerationInvalidResponseError("Chat provider result is invalid") from error
 
         return ChatGenerationResult(
             content=content,
             model_name=model_name,
-            prompt_version=(PROMPT_VERSION_WITH_HISTORY if history_enabled else PROMPT_VERSION),
+            prompt_version=PROMPT_VERSION,
         )
 
     @staticmethod

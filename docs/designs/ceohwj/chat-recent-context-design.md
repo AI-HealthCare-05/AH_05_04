@@ -1,12 +1,12 @@
 # 복약 챗봇 최근 대화 3쌍 문맥 설계
 
-> **상태: Draft — 구현 전 검토 필요.** 이 문서는 목표 설계이며 현재 Provider payload, 프롬프트 또는 배포 동작을 설명하지 않는다. 구현 PR이 병합되기 전까지 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
+> **상태: 구현 완료 — 리뷰·병합 전.** 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
 
 | 항목 | 내용 |
 | --- | --- |
 | 관련 Issue | [#112](https://github.com/AI-HealthCare-05/AH_05_04/issues/112) |
 | 멘토링 요구 | 현재 질문 이전의 최근 질문·답변 최대 3쌍을 LLM 문맥으로 제공 |
-| 현재 기준 | `chat-prompt-v1`, 현재 질문과 확정 약물만 Provider에 전달 |
+| 변경 전 기준 | `chat-prompt-v1`, 현재 질문과 확정 약물만 Provider에 전달 |
 | 목표 버전 | `chat-prompt-v2` |
 | 작성·AI 검토 | `@ceohwj` |
 | Backend 협업·리뷰 | `@phina-io` |
@@ -94,7 +94,7 @@ POST /chat-sessions/{session_id}/messages
   → medications 조회
   → next_seq 계산
   → CHAT_HISTORY_CONTEXT_ENABLED 분기
-      false: v1 현재 질문·medications 경로
+      false: history를 조회하지 않고 빈 배열 사용
       true: next_seq 이전 최근 완료 후보 최대 30개 조회
             → 유효성·12,000자 예산 적용 후 최대 3개 선택
   → 현재 USER + PENDING ASSISTANT 생성
@@ -170,7 +170,7 @@ class ChatGenerationInput(_StrictModel):
 
 history 질문은 현재 질문과 같은 Unicode 정규화·금지문자 정책을 적용한다. 과거 ASSISTANT 답변도 NFC와 앞뒤 공백 정리를 적용하고, NUL·bidi override·zero-width 문자를 거부한다.
 
-현재 구현의 완료 답변은 길이·빈값·NFC·앞뒤 공백만 검증하므로 기존 `COMPLETED` row가 새 history 검증을 통과한다고 가정하지 않는다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 v2 경로에서 생성된 새 ASSISTANT 답변은 history와 동일한 금지문자 검증을 통과한 경우에만 `COMPLETED`로 저장한다. flag가 꺼진 v1 경로의 기존 출력 검증은 변경하지 않는다. 기존·수동 변경 row가 v2 history 검증에 실패하면 현재 요청을 실패시키지 않고 해당 pair를 제외한 뒤 이전 유효 후보로 backfill한다. 제외 사실은 본문·message ID·session ID 없이 `INVALID_HISTORY_PAIR` rule ID와 요청 단위 제외 개수만 승인된 metric에 기록한다. DB 내용을 자동 수정·삭제하거나 정상 완료 상태를 조용히 다른 상태로 변경하지 않는다.
+기존 `COMPLETED` row가 새 history 검증을 통과한다고 가정하지 않는다. flag와 관계없이 단일 v2 출력 검증을 적용하므로 새 ASSISTANT 답변은 history와 동일한 금지문자 검증을 통과한 경우에만 `COMPLETED`로 저장한다. 기존·수동 변경 row가 v2 history 검증에 실패하면 현재 요청을 실패시키지 않고 해당 pair를 제외한 뒤 이전 유효 후보로 backfill한다. 제외 사실은 본문·message ID·session ID 없이 `INVALID_HISTORY_PAIR` rule ID와 요청 단위 제외 개수만 승인된 metric에 기록한다. DB 내용을 자동 수정·삭제하거나 정상 완료 상태를 조용히 다른 상태로 변경하지 않는다.
 
 ## Provider payload 계약
 
@@ -260,16 +260,16 @@ history는 사용자 질문과 과거 AI 답변이라는 추가 의료·대화 �
 
 이번 설계는 자유 텍스트 PII 탐지·마스킹을 안전하게 완성할 수 있다고 가정하지 않는다. 초기 구현과 평가는 비식별 합성 대화만 사용하는 Local 환경으로 제한한다. Development·Staging 서버는 비용 정책상 구성하거나 검증하지 않는다. 실제 사용자 대화를 전송하려면 원문 대화 전송을 명시한 이용자 고지·동의 또는 적용 가능한 법적 근거, 목적 제한, Provider 보존·학습 정책, 보존·삭제와 철회 처리, 사고 대응 범위를 Privacy·Security 책임자가 승인해야 하지만, 해당 승인과 서버 공개는 이번 구현 범위에서 제외한다.
 
-`CHAT_HISTORY_CONTEXT_ENABLED` feature flag의 기본값은 `false`다. `false`이면 history를 조회·전송하지 않고 현재 v1과 같은 현재 질문·medications payload를 사용한다. 이번 범위에서 `true`는 비식별 합성 데이터만 사용하는 Local 환경에서만 허용한다. Development·Staging·Production을 포함한 서버 환경에서는 `false`를 유지하며, flag는 기존 의료 AI Production gate를 우회할 수 없다.
+`CHAT_HISTORY_CONTEXT_ENABLED` feature flag의 기본값은 `false`다. 이 flag는 프롬프트 버전이 아니라 과거 대화의 조회·외부 전송 여부만 제어한다. `false`이면 history를 조회하지 않고 Provider에는 빈 배열을 전달한다. 이번 범위에서 `true`는 비식별 합성 데이터만 사용하는 Local 환경에서만 허용한다. Development·Staging·Production을 포함한 서버 환경에서는 `false`를 유지하며, flag는 기존 의료 AI Production gate를 우회할 수 없다.
 
 ### Rollout 계약
 
 | Flag | 허용 환경 | 조회·Provider payload | Provider 출력 검증 | 프롬프트·결과 버전 |
 | --- | --- | --- | --- | --- |
-| `false` | 모든 환경의 기본값 | history를 조회하지 않고 현재 질문·medications만 전달 | 현재 trim·NFC·빈값·10,000자 제한 유지 | `chat-prompt-v1` |
-| `true` | 비식별 합성 Local 검증만 | 이 설계에 따라 history 최대 3쌍을 추가 전달 | v1 검증과 NUL·bidi·zero-width 거부 | `chat-prompt-v2` |
+| `false` | 모든 환경의 기본값 | history를 조회하지 않고 빈 배열 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v2` |
+| `true` | 비식별 합성 Local 검증만 | 이 설계에 따라 history 최대 3쌍 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v2` |
 
-flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 한 요청 안에서 v1·v2 payload나 prompt version을 혼합하지 않는다. 설정 변경은 새 process 시작 후 적용하고, Local 검증 기록에 flag 값·합성 fixture·실행 결과를 남긴다.
+flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 설정 변경은 새 process 시작 후 적용하고, Local 검증 기록에 flag 값·합성 fixture·실행 결과를 남긴다.
 
 다음 항목은 향후 실제 사용자 데이터가 있는 서버 환경으로 전환할 때 필요한 선행조건이며 이번 Issue의 완료 조건이 아니다.
 
@@ -309,11 +309,10 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - Provider JSON의 시간순 history와 현재 medications 보존
 - 식별자·상태·시각·오류 metadata 비포함
 - `Decimal` 직렬화와 불완전 dose pair 생략 회귀
-- flag가 켜진 경로의 `prompt_version == "chat-prompt-v2"`, 꺼진 경로의 `chat-prompt-v1` 유지
+- flag 상태와 history 유무에 관계없이 `prompt_version == "chat-prompt-v2"`
 - 기존 timeout·가용성·응답 처리 오류 mapping 회귀
-- flag가 켜진 신규 ASSISTANT 답변을 동일한 금지문자 검증 후에만 `COMPLETED`로 저장
-- flag가 꺼진 경로의 v1 출력 검증과 `prompt_version`이 바뀌지 않는지
-- feature flag가 꺼져 있으면 history 조회·전송이 발생하지 않는지
+- 신규 ASSISTANT 답변을 동일한 금지문자 검증 후에만 `COMPLETED`로 저장
+- feature flag가 꺼져 있으면 history 조회가 발생하지 않고 빈 배열이 전송되는지
 - feature flag가 켜진 합성 테스트에서 PII sentinel이 의도한 `history[].question`·`answer`에만 존재하고 로그·trace·오류·구조화 metadata에는 복제되지 않는지
 
 ### 합성 LLM 평가

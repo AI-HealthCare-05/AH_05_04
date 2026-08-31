@@ -215,7 +215,7 @@ def _history_pair(sequence: int, question: str, answer: str) -> tuple[SimpleName
 
 async def test_send_message_locks_then_preserves_ordered_medication_fields_and_completes_pair() -> None:
     engine = RecordingEngine(
-        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="prompt-v1")
+        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
     )
     service, chat_repo, events, chat_session = _service_fixture(engine=engine)
     user = SimpleNamespace(id=uuid4())
@@ -266,9 +266,9 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
     assert [item.medication_name for item in engine.inputs[0].medications] == ["첫 번째 합성약", "두 번째 합성약"]
     assert result.content == "안전한 합성 답변"
     assert result.model_name == "model-id"
-    assert result.prompt_version == "prompt-v1"
+    assert result.prompt_version == "chat-prompt-v2"
     assert result.completed_at == chat_session.last_message_at
-    assert engine.inputs[0].history is None
+    assert engine.inputs[0].history == []
 
 
 @pytest.mark.parametrize("pair_count", [0, 1, 3, 4])

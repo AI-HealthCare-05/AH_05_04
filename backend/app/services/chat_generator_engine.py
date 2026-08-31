@@ -38,11 +38,7 @@ class ChatGeneratorEngine(ChatEngine):
             )
             generation_input = ChatGenerationInput(
                 question=chat_input.content,
-                history=(
-                    None
-                    if chat_input.history is None
-                    else [self._to_generation_history(pair) for pair in chat_input.history]
-                ),
+                history=[self._to_generation_history(pair) for pair in chat_input.history],
                 medications=[self._to_generation_medication(medication) for medication in chat_input.medications],
             )
             result = await generator.generate(generation_input)
