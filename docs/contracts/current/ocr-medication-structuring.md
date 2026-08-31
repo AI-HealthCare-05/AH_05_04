@@ -63,11 +63,36 @@ CLOVA OCR과 OpenAI 구조화는 순차 실행되므로 OCR 요청의 Provider t
 현재 validator는 `source_ids`의 존재 여부와 OCR 원문 근거를 필드별 기준으로 검증합니다.
 
 - `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 더 큰 숫자의 일부가 아닌 완전한 숫자 경계로 검증합니다.
+- `FREQUENCY_PER_DAY`는 `회`, `번` 문맥의 숫자만 근거로 인정합니다.
+- CLOVA가 숫자와 단위를 별도 token으로 반환한 경우, 횟수·기간 필드는 숫자와 의미 단위 token을 모두 `source_ids`로 참조해야 합니다.
+- 단독 숫자 token만으로는 횟수와 기간 문맥을 구분할 수 없으므로 `FREQUENCY_PER_DAY`, `DURATION_DAYS`의 근거로 인정하지 않습니다.
+- `DURATION_DAYS`는 `N일`, `N일분`, `N일간`, `N days`처럼 실제 기간 문맥의 숫자만 인정하며, `1일 N회`의 `1일`은 기간 근거로 인정하지 않습니다.
 - `MEDICATION_NAME`은 OCR 약품명 전체와 일치해야 합니다.
 - 하나의 OCR token에 약품명과 제품 함량이 함께 있는 경우에는 약품명 뒤에 유효한 제품 함량만 남는 것을 허용합니다.
 - 공백으로 분리된 OCR token 결합과 필드별로 허용된 표기 차이만 인정합니다.
 
-token의 좌표와 약제 행 인접성을 이용한 교차 행 결합 차단은 별도 후속 작업입니다.
+### 약제 행 인접성 검증
+
+- 각 약품명의 `source_ids`가 참조하는 OCR token 좌표를 해당 약제 행의 anchor로 사용합니다.
+- 약제별 선택 필드는 현재 약제 anchor에 가장 가깝고, token 높이 기준 허용 거리 안에 있는 경우에만 저장합니다.
+- 다른 약제 행이 더 가깝거나 같은 거리인 token은 현재 약제의 근거로 인정하지 않습니다.
+- 하나의 필드가 여러 약제 행의 token을 함께 참조하면 grounding 실패로 처리합니다.
+- 동일한 약품명 OCR token을 둘 이상의 약제에서 공유할 수 없습니다.
+- 약품명은 OCR 줄바꿈을 고려하여 허용된 인접 행 결합을 지원하지만, 허용 거리를 넘는 행의 token 결합은 거부합니다.
+- 일반 약제 필드는 token 높이 대비 세로 중심점 거리 `0.75` 이하를 같은 행으로 인정합니다.
+- 연속 약품명 행은 token 높이 대비 세로 중심점 간격 `1.5` 이하를 허용합니다.
+
+### 적용 경로
+
+이 grounding 검증은 현재 CLOVA General OCR token을 OpenAI Structured Outputs로
+변환한 LLM 구조화 결과에만 적용합니다.
+
+규칙 기반 경로는 별도의 `PrescriptionOcrStructurer`를 사용하며
+`validate_and_convert_draft()`를 호출하지 않습니다.
+
+CLOVA Template OCR 전용 변환기는 아직 구현되지 않았습니다.
+Template OCR 적용과 기존 `RecognizedField` 계약으로의 변환은
+후속 구현 Issue 및 PR에서 처리합니다.
 
 ## medication_index
 
