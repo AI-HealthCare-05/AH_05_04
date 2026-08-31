@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, ForeignKey, Index, String
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -29,6 +29,7 @@ class UploadStatus(StrEnum):
 class MedicalDocument(Base):
     __tablename__ = "medical_document"
     __table_args__ = (
+        UniqueConstraint("id", "profile_id", name="uq_medical_document_id_profile"),
         Index("idx_document_uploader_uploaded", "uploaded_by", "uploaded_at", "id"),
         Index("idx_document_profile_uploaded", "profile_id", "uploaded_at", "id"),
         CheckConstraint("document_type = 'PRESCRIPTION'", name="chk_document_type_prescription"),

@@ -3,7 +3,18 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -26,6 +37,11 @@ class GuideGenerationStatus(StrEnum):
 class Guide(Base):
     __tablename__ = "guide"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["prescription_id", "profile_id"],
+            ["prescription.id", "prescription.profile_id"],
+            name="fk_guide_prescription_profile",
+        ),
         Index("idx_guide_prescription_requested", "prescription_id", "requested_at", "id"),
         Index("idx_guide_profile_requested", "profile_id", "requested_at", "id"),
         CheckConstraint(
@@ -35,7 +51,7 @@ class Guide(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("prescription.id"), nullable=False)
+    prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     generation_status: Mapped[GuideGenerationStatus] = mapped_column(
         Enum(GuideGenerationStatus, native_enum=False, length=20),
@@ -55,7 +71,7 @@ class Guide(Base):
     error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     prescription: Mapped["Prescription"] = relationship(back_populates="guides")
-    profile: Mapped["Profile"] = relationship()
+    profile: Mapped["Profile"] = relationship(overlaps="prescription")
     citations: Mapped[list["GuideCitation"]] = relationship(back_populates="guide")
 
 

@@ -5,7 +5,7 @@
 | 문서 상태 | Proposed — 승인 전 제안 |
 | 구현 상태 | Not implemented in `develop` |
 | 관련 Issue | #75 |
-| 선행 제안 | `profile-self-ownership-v1.md` |
+| 선행 계약 | `docs/contracts/current/profile-self-ownership-v1.md` |
 | 적용 범위 | Post-MVP-1 Track A, Backend/API, Database, AI Worker 공통, OCR·Guide·Chat 연결 경계 |
 | 작성일 | 2026-08-31 |
 
@@ -36,7 +36,7 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md` | Outbox, Redis Stream envelope, ACK, quarantine, DLQ |
 | `docs/contracts/targets/post-mvp-1/idempotency-v1.md` | 비동기·동기 멱등성 scope, request hash, 저장 필드 |
 | `docs/contracts/targets/post-mvp-1/prescription-version-v1.md` | Prescription Version 불변 snapshot, 활성화, backfill, rollback |
-| `docs/contracts/proposed/profile-self-ownership-v1.md` | PROFILE SELF와 `profile_id` 소유권 선행 전환 제안 |
+| `docs/contracts/current/profile-self-ownership-v1.md` | PROFILE SELF와 `profile_id` 소유권 선행 전환 계약 |
 | `docs/governance/post-mvp-1-document-authority.md` | 계약 상태와 승인 원본 우선순위 |
 
 위 문서와 이 제안이 다르면 구현 착수 전에 차이를 먼저 정리한다. 값을 추정하거나 서로 다른 문서의 기준을 섞어 구현하지 않는다.
@@ -49,7 +49,7 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 
 | 선행 조건 | 이유 | 완료 기준 |
 | --- | --- | --- |
-| PROFILE SELF 소유권 전환 기준 승인 | 현재 Current 계약은 `user_id` 기반이고 목표 ERD는 `profile_id` 기반이다. 소유권 기준이 흔들리면 Job·결과·처방 version 권한 검사가 반복 수정된다. | `profile` 테이블, SELF unique, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, 도메인별 `profile_id` composite FK·일관성 검증, OCR 소유권 chain 기준 승인 |
+| PROFILE SELF 소유권 전환 기준 적용 | #117 이후 Current 계약은 SELF `profile_id` 기반이다. 소유권 기준이 흔들리면 Job·결과·처방 version 권한 검사가 반복 수정된다. | `profile` 테이블, SELF unique, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, 도메인별 `profile_id` composite FK·일관성 검증, OCR 소유권 chain 기준 적용 |
 | `AI_JOB.domain_type/domain_id` 물리 저장 여부 확정 | 목표 계약은 응답 구성값으로 설명하지만 ERD와 구현안이 물리 컬럼으로 해석될 수 있다. | 최종 DDL에서 물리 컬럼으로 둘지, 도메인 row의 `ai_job_id` FK에서 응답을 구성할지 결정 |
 | Idempotency 단일 테이블 구조 정렬 | #99 이후 목표 계약은 단일 `idempotency_record`와 `record_type=ASYNC_JOB|SYNC_MUTATION`을 사용한다. 별도 `sync_idempotency_record`를 만들면 최신 계약과 충돌한다. | ERD·계약·migration 계획에서 단일 테이블, `record_type`, 타입별 CHECK 제약으로 정렬 |
 | `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT` Expand 포함 확정 | poison message를 durable하게 기록한 뒤 ACK하려면 quarantine과 DLQ Outbox가 필요하다. | PR 1 범위와 계약 테스트에 두 테이블 포함 |
@@ -147,6 +147,8 @@ PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포 완료 후 멱�
 
 ## 8. Migration 단계
 
+운영 DB에 migration을 적용하기 전에는 backup과 적용 전 row count snapshot을 남긴다. 이는 단순 복원 목적뿐 아니라 migration 실패 시 코드 문제, 기존 데이터 불일치, backfill 누락을 구분하기 위한 기준이다.
+
 | 단계 | 내용 | rollback·복구 기준 |
 | --- | --- | --- |
 | 1. PROFILE 선행 | 본인 단일 SELF profile 도입, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, composite FK 기반 소유권 일관성 검증, 소유권 조회 전환 | Contract 전에는 기존 read 경로 rollback 가능. Contract 후에는 forward-fix 우선 |
@@ -180,6 +182,15 @@ Backfill batch는 같은 입력에 대해 여러 번 실행되어도 중복 row�
 - `(prescription_id, version_number)` 중복 0건
 - version medication snapshot 수와 기존 `medication` 수 대조
 - 하위 결과의 `prescription_version_id` 누락 여부 확인
+
+운영 적용 전후 기록은 각 migration PR의 완료 조건에 포함한다.
+
+| 시점 | 기록 |
+| --- | --- |
+| 적용 전 | DB backup 생성 여부, 대상 테이블 row count, 현재 Alembic revision |
+| 적용 후 | 적용된 Alembic revision, 대상 테이블 row count, backfill 결과, orphan·null·불일치 검증 SQL 결과 |
+
+검증 실패 시 cutover나 Contract 단계로 진행하지 않고, backup과 적용 전후 row count를 기준으로 원인을 확인한 뒤 재실행 가능한 backfill 또는 forward-fix로 복구한다.
 
 ## 10. Feature flag와 기존 Job drain
 
@@ -266,7 +277,7 @@ quarantine과 DLQ를 Expand에 포함하는 이유는 Worker가 처리할 수 �
 
 | PR | 범위 | 선행 조건 | 확인 필요 |
 | --- | --- | --- | --- |
-| PR 0 | PROFILE SELF 소유권 전환 | `profile-self-ownership-v1.md` 승인 | ERD·계약·Backend 소유권 |
+| PR 0 | PROFILE SELF 소유권 전환 | `docs/contracts/current/profile-self-ownership-v1.md` 기준 구현 | ERD·계약·Backend 소유권 |
 | PR 1 | Expand: Track A 신규 테이블과 nullable FK 추가 | PR 0 backfill·검증·read cutover 배포 완료, blocking 선행 조건 해소 | DB, Worker, 계약 |
 | PR 2 | 신규 write dual-write와 async feature flag 기본값 적용 | PR 1 | Backend/API, rollback 경계 |
 | PR 3 | Prescription Version backfill·검증 SQL·테스트 | PR 2 | DB, 계약 |
@@ -301,13 +312,14 @@ Track A는 통합 게이트이며 모든 트랙의 개발 착수 게이트가 �
 - `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT`가 Expand 범위에 포함되어 있다.
 - async feature flag와 기존 Job drain 기준이 rollback 절차에 포함되어 있고, drain 완료 조건은 모두 충족해야 한다고 명시되어 있다.
 - Backfill과 rollback/resume/recovery 의미가 구분되어 있다.
+- 운영 적용 전 DB backup과 적용 전후 row count·검증 SQL 기록이 완료 조건에 포함되어 있다.
 - OCR·Guide·Chat 기존 행의 synthetic Job 처리 기준이 분리되어 있다.
 - OCR `ai_job_id` mapping이 별도 확정 대상임을 명시한다.
 - 후속 PR 순서와 리뷰 경계가 정리되어 있다.
 
 ## 16. 참고 자료
 
-- `docs/contracts/proposed/profile-self-ownership-v1.md`
+- `docs/contracts/current/profile-self-ownership-v1.md`
 - `docs/contracts/targets/post-mvp-1/async-job-v1.md`
 - `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md`
 - `docs/contracts/targets/post-mvp-1/idempotency-v1.md`

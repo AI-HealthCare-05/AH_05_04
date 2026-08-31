@@ -101,6 +101,11 @@ def upgrade() -> None:
         ["profile_id"],
         ["id"],
     )
+    op.create_unique_constraint(
+        "uq_medical_document_id_profile",
+        "medical_document",
+        ["id", "profile_id"],
+    )
     op.create_index(
         "idx_document_profile_uploaded",
         "medical_document",
@@ -115,6 +120,18 @@ def upgrade() -> None:
         "profile",
         ["profile_id"],
         ["id"],
+    )
+    op.create_unique_constraint(
+        "uq_prescription_id_profile",
+        "prescription",
+        ["id", "profile_id"],
+    )
+    op.create_foreign_key(
+        "fk_prescription_document_profile",
+        "prescription",
+        "medical_document",
+        ["document_id", "profile_id"],
+        ["id", "profile_id"],
     )
     op.create_index(
         "idx_prescription_profile_created",
@@ -131,6 +148,13 @@ def upgrade() -> None:
         ["profile_id"],
         ["id"],
     )
+    op.create_foreign_key(
+        "fk_guide_prescription_profile",
+        "guide",
+        "prescription",
+        ["prescription_id", "profile_id"],
+        ["id", "profile_id"],
+    )
     op.create_index(
         "idx_guide_profile_requested",
         "guide",
@@ -145,6 +169,13 @@ def upgrade() -> None:
         "profile",
         ["profile_id"],
         ["id"],
+    )
+    op.create_foreign_key(
+        "fk_chat_session_prescription_profile",
+        "chat_session",
+        "prescription",
+        ["prescription_id", "profile_id"],
+        ["id", "profile_id"],
     )
     op.create_index(
         "idx_chat_session_profile_activity",
@@ -192,18 +223,23 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("idx_chat_session_profile_activity", table_name="chat_session")
+    op.drop_constraint("fk_chat_session_prescription_profile", "chat_session", type_="foreignkey")
     op.drop_constraint("fk_chat_session_profile_id_profile", "chat_session", type_="foreignkey")
     op.drop_column("chat_session", "profile_id")
 
     op.drop_index("idx_guide_profile_requested", table_name="guide")
+    op.drop_constraint("fk_guide_prescription_profile", "guide", type_="foreignkey")
     op.drop_constraint("fk_guide_profile_id_profile", "guide", type_="foreignkey")
     op.drop_column("guide", "profile_id")
 
     op.drop_index("idx_prescription_profile_created", table_name="prescription")
+    op.drop_constraint("fk_prescription_document_profile", "prescription", type_="foreignkey")
+    op.drop_constraint("uq_prescription_id_profile", "prescription", type_="unique")
     op.drop_constraint("fk_prescription_profile_id_profile", "prescription", type_="foreignkey")
     op.drop_column("prescription", "profile_id")
 
     op.drop_index("idx_document_profile_uploaded", table_name="medical_document")
+    op.drop_constraint("uq_medical_document_id_profile", "medical_document", type_="unique")
     op.drop_constraint("fk_medical_document_profile_id_profile", "medical_document", type_="foreignkey")
     op.drop_column("medical_document", "profile_id")
 

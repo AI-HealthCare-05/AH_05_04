@@ -1,18 +1,16 @@
-# PROFILE SELF 소유권 전환 제안 v1
+# PROFILE SELF 소유권 전환 계약 v1
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Proposed — 승인 전 제안 |
-| 구현 상태 | Not implemented in `develop` |
+| 문서 상태 | Current — #117 구현 PR 기준 |
+| 구현 상태 | #117 병합 시 `develop` 실행 계약 |
 | 관련 Issue | #75, #117 |
 | 적용 범위 | Backend/API, Database, 소유권 확인, Post-MVP-1 Track A 선행 조건 |
 | 작성일 | 2026-08-31 |
 
-이 문서는 Post-MVP-1 Track A migration을 시작하기 전에 본인 단일 `PROFILE`과 `profile_id` 기반 소유권 기준을 먼저 확정하기 위한 제안이다.
+이 문서는 Post-MVP-1 Track A migration을 시작하기 전에 본인 단일 `PROFILE`과 `profile_id` 기반 소유권 기준을 현재 Backend 실행 계약으로 고정한다.
 
-현재 `develop`의 실행 계약은 아직 `user_id` 기반 소유권을 사용한다. 이 문서는 승인 전까지 `current` 또는 `targets/post-mvp-1` 계약으로 해석하지 않으며, 실제 API·DB 동작으로 간주하지 않는다.
-
-문서 상태는 `docs/contracts/README.md`와 `docs/governance/post-mvp-1-document-authority.md`의 분류 기준에 따라 `Proposed — 승인 전 제안`으로 둔다. 승인 후 Post-MVP-1 목표 계약으로 확정되면 별도 PR에서 `targets/post-mvp-1/`로 이동하고, 실제 migration·service·test가 병합된 뒤에만 `current/`로 승격한다.
+#117 구현 PR은 `profile` 테이블, 기존 사용자 SELF profile backfill, 리소스 `profile_id` backfill, read cutover, 부모·자식 composite FK와 교차 사용자 테스트를 함께 포함한다. 따라서 이 문서는 #117 병합 시 `docs/contracts/current/`의 실행 계약으로 해석한다.
 
 ## 1. 목적
 
@@ -32,17 +30,15 @@ Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 도입하기 �
 | 문서 | 현재 기준 |
 | --- | --- |
 | `docs/contracts/current/backend-common-patterns.md` | 사용자 리소스는 소유권을 확인하고, 존재하지 않거나 소유하지 않은 리소스는 `404`를 반환한다. |
-| `docs/privacy-safety.md` | Post-MVP-1 Job·결과와 동기 상태 변경 API는 parent resource를 따라 동일한 `user_id` 소유권을 검사한다고 되어 있다. 최신 목표 계약은 Track B·C와 Track F Candidate·Identification 기준으로 정렬한다. |
-| `docs/data-schema.md` | 멀티 프로필, 환자·보호자 권한은 현재 미구현 후속 범위이며, Post-MVP-1 목표 스키마는 실제 구현으로 간주하지 않는다. |
+| `docs/privacy-safety.md` | #117 이후 새 Backend 리소스는 SELF `profile_id` 또는 부모 chain의 `profile_id`를 기준으로 소유권을 확인한다. |
+| `docs/data-schema.md` | 본인 단일 SELF profile은 현재 구현 테이블이며, 보호자·멀티 프로필·위임 권한은 후속 범위로 둔다. |
 | `docs/contracts/targets/post-mvp-1/prescription-version-v1.md` | 소유권·출처·감사 시각을 위한 물리 컬럼과 이름은 구현 PR에서 확정한다고 되어 있다. |
 
-따라서 이 문서는 기존 Current 계약을 즉시 변경하지 않는다. 승인 후 구현 PR에서 migration, 모델, repository, API 테스트가 함께 제출되면 해당 기준을 Current 문서와 데이터 구조 문서에 반영한다.
-
-이 단계를 분리하는 이유는 문서 승인과 코드 병합 상태를 섞지 않기 위해서다. `proposed` 문서에서 방향을 먼저 합의하고, 구현 PR에서 실제 migration·테스트가 통과한 뒤에만 Current 계약을 갱신한다.
+따라서 #117 이후 현재 Backend의 사용자 의료 리소스 소유권 기준은 `user_id` 직접 비교가 아니라 SELF `profile_id` 또는 부모 chain의 `profile_id` 확인이다. Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version은 이 기준 위에서 설계한다.
 
 ## 3. 전환 대상
 
-| 종류 | 대상 | 제안 변경 |
+| 종류 | 대상 | 변경 |
 | --- | --- | --- |
 | 신규 테이블 | `profile` | 본인 단일 SELF profile 저장 |
 | 컬럼 추가 | `medical_document.profile_id` | 의료문서 소유 profile |
@@ -65,7 +61,7 @@ ocr_job → medical_document → profile_id
 
 `ocr_job.profile_id`를 만들지 않는 이유는 같은 소유권 값이 `medical_document.profile_id`와 `ocr_job.profile_id` 두 곳에 중복 저장되면 두 값이 어긋나는 상태를 막기 위한 추가 제약과 backfill 검증이 필요해지기 때문이다. OCR은 문서에 종속된 작업이므로 문서의 profile 소유권을 따라가는 쪽이 더 단순하다.
 
-## 4. `profile` 테이블 제안
+## 4. `profile` 테이블
 
 | 컬럼 | 타입 | Nullable | 설명 |
 | --- | --- | ---: | --- |
@@ -132,6 +128,8 @@ owned_by_self(Resource.profile_id, user_id)
 
 PROFILE 전환은 Track A의 `AI_JOB`·Outbox Expand보다 먼저 수행한다.
 
+운영 DB에 적용하기 전에는 복구와 원인 추적을 위해 migration 전 backup과 적용 전 row count snapshot을 남긴다. 최소 기록 대상은 `user`, `profile`, `medical_document`, `prescription`, `guide`, `chat_session`이다.
+
 | 단계 | 내용 | 검증 |
 | --- | --- | --- |
 | 1. Expand | `profile` 테이블 생성, 기존 리소스 테이블에 nullable `profile_id` FK 추가 | migration 적용 가능 여부 |
@@ -152,6 +150,22 @@ Resource dual-write 시 부모 row의 `profile_id`가 아직 NULL이면 그 NULL
 SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 멱등적으로 처리한다. PostgreSQL에서는 일반 `INSERT`의 unique violation 이후 같은 transaction에서 바로 재조회할 수 없으므로, 구현 PR에서는 `INSERT ... ON CONFLICT DO NOTHING RETURNING` 후 반환 row가 없으면 기존 SELF profile을 조회하는 방식 또는 savepoint로 충돌을 격리하는 방식 중 하나를 사용한다. 동시에 같은 사용자의 SELF profile 생성이 발생해도 하나만 성공해야 하며, 리소스 write transaction은 최종적으로 조회된 같은 SELF profile id를 `profile_id`로 사용한다.
 
 이 순서를 쓰는 이유는 기존 데이터가 있는 상태에서 바로 `profile_id NOT NULL`을 적용하면 migration이 실패하거나 서비스 rollback이 어려워지기 때문이다. 먼저 nullable 컬럼을 열고, 신규 write가 새 기준을 함께 기록하게 만든 뒤, 기존 값을 채우고, 조회 기준을 바꾸고, 마지막에 NOT NULL을 적용해야 중간 실패 시 복구할 수 있다.
+
+### 7.1 적용 전후 검증 기록
+
+운영 적용 전후에는 아래 값을 기록한다.
+
+| 시점 | 기록 |
+| --- | --- |
+| 적용 전 | DB backup 생성 여부, 대상 테이블 row count, 현재 Alembic revision |
+| 적용 후 | 적용된 Alembic revision, 대상 테이블 row count, SELF profile 수, `profile_id IS NULL` 잔존 수, 부모·자식 `profile_id` 불일치 수 |
+
+검증 기준은 다음과 같다.
+
+- 기존 `user` 수와 `SELF` profile 수가 일치한다.
+- `medical_document`, `prescription`, `guide`, `chat_session`의 `profile_id IS NULL`이 0건이다.
+- `prescription.document_id → medical_document.profile_id`, `guide.prescription_id → prescription.profile_id`, `chat_session.prescription_id → prescription.profile_id` 불일치가 0건이다.
+- 검증 실패 시 read cutover와 NOT NULL 전환을 진행하지 않고 backup, row count, 실패 SQL 결과를 기준으로 원인을 확인한다.
 
 ## 8. Rollback 기준
 
@@ -175,7 +189,7 @@ PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 
 
 ## 10. 제외 범위
 
-이번 제안은 다음을 포함하지 않는다.
+이번 계약은 다음을 포함하지 않는다.
 
 - 보호자·멀티 프로필·위임 권한
 - 운영자 support role
@@ -185,9 +199,9 @@ PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 
 - `AI_JOB`, Outbox, Idempotency, Prescription Version 실제 migration
 - RAG·Citation·Safety·OTC 세부 구현
 
-## 11. 승인 후 필요한 문서 갱신
+## 11. 함께 갱신한 문서
 
-이 제안이 승인되면 구현 PR에서 다음 문서를 함께 갱신한다.
+#117 구현 PR에서는 이 계약과 함께 다음 문서를 갱신한다.
 
 - `docs/contracts/current/backend-common-patterns.md`
 - `docs/privacy-safety.md`
@@ -195,18 +209,17 @@ PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 
 - 필요한 경우 `docs/contracts/targets/post-mvp-1/async-job-v1.md`
 - 필요한 경우 `docs/contracts/targets/post-mvp-1/prescription-version-v1.md`
 
-승인 전에는 위 문서의 Current/Approved target 내용을 이 제안 기준으로 임의 변경하지 않는다.
-
 ## 12. 완료 조건
 
-- PROFILE 선행 전환이 #75의 Track A PR 1보다 먼저 필요하다는 점이 승인된다.
-- `profile` 테이블과 `(user_id, profile_type='SELF')` unique 기준이 승인된다.
-- 기존 사용자와 신규 사용자 모두 backfill 전후 신규 리소스 생성 시 `profile_id = NULL`로 남지 않도록 SELF profile 멱등 생성과 dual-write 순서가 승인된다.
-- 기존 리소스의 `profile_id` backfill 대상과 순서가 승인된다.
-- 도메인별 `profile_id` 기준 원본과 부모·자식 composite FK·일관성 검증 기준이 승인된다.
-- PR 0의 backfill, 일관성 검증, read cutover 배포 완료 후 리소스 소유권 조회를 SELF `profile_id` 기준으로 전환하는 방향이 승인된다.
+- PROFILE 선행 전환이 #75의 Track A PR 1보다 먼저 적용된다.
+- `profile` 테이블과 `(user_id, profile_type='SELF')` unique 기준이 구현된다.
+- 기존 사용자와 신규 사용자 모두 backfill 전후 신규 리소스 생성 시 `profile_id = NULL`로 남지 않도록 SELF profile 멱등 생성과 dual-write 순서가 구현된다.
+- 기존 리소스의 `profile_id` backfill 대상과 순서가 구현된다.
+- 도메인별 `profile_id` 기준 원본과 부모·자식 composite FK·일관성 검증 기준이 구현된다.
+- PR 0의 backfill, 일관성 검증, read cutover 배포 완료 후 리소스 소유권 조회를 SELF `profile_id` 기준으로 전환한다.
+- 운영 적용 전 DB backup, 적용 전후 row count, `profile_id` null·불일치 검증 결과를 기록한다.
 - 보호자·멀티 프로필·위임 권한은 후속 범위로 유지한다.
-- 구현 PR에서 migration, 모델, repository, API/ownership 테스트, 문서 갱신을 함께 제출한다.
+- migration, 모델, repository, API/ownership 테스트, 문서 갱신을 같은 PR에 포함한다.
 
 ## 13. 참고 자료
 

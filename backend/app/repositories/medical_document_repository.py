@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medical_documents import MedicalDocument
 from app.models.users import User
-from app.repositories.profile_ownership import get_self_profile_id, owned_by_self
+from app.repositories.profile_ownership import get_or_create_self_profile_id, owned_by_self
 
 
 class MedicalDocumentRepository:
@@ -21,9 +21,11 @@ class MedicalDocumentRepository:
         file_mime_type: str,
         file_size_bytes: int,
     ) -> MedicalDocument:
-        profile_id = await get_self_profile_id(self.session, user_id=user.id)
-        if profile_id is None:
-            raise RuntimeError(f"User {user.id} has no SELF profile; cannot create medical_document.")
+        profile_id = await get_or_create_self_profile_id(
+            self.session,
+            user_id=user.id,
+            display_name=user.name,
+        )
         document = MedicalDocument(
             uploaded_by=user.id,
             profile_id=profile_id,
