@@ -112,7 +112,7 @@ owned_by_self(Resource.profile_id, user_id)
 | --- | --- | --- | --- |
 | `medical_document` | 인증 사용자의 SELF profile | Yes | 업로드 시 SELF profile id를 저장한다. |
 | `ocr_job` | `medical_document.profile_id` | No | `ocr_job.document_id`의 문서 소유권 chain으로 확인한다. |
-| `prescription` | `medical_document.profile_id` | Yes | 처방 생성 시 `prescription.medical_document_id`가 가리키는 문서의 `profile_id`와 처방의 `profile_id`가 일치해야 한다. |
+| `prescription` | `medical_document.profile_id` | Yes | 처방 생성 시 `prescription.document_id`가 가리키는 문서의 `profile_id`와 처방의 `profile_id`가 일치해야 한다. |
 | `guide` | 연결된 `prescription.profile_id` | Yes | 가이드 생성 시 처방의 `profile_id`와 가이드의 `profile_id`가 일치해야 한다. |
 | `chat_session` | 연결된 `prescription.profile_id` | Yes | 처방 기반 세션 생성 시 처방의 `profile_id`와 세션의 `profile_id`가 일치해야 한다. |
 | `chat_message` | `chat_session.profile_id` | No | 메시지는 세션의 소유권을 따른다. |
@@ -122,7 +122,7 @@ owned_by_self(Resource.profile_id, user_id)
 구현 PR에서는 다음 검증을 함께 포함한다.
 
 - write 시 부모 row의 `profile_id`와 자식 row에 저장할 `profile_id`가 일치하지 않으면 저장하지 않는다.
-- 부모·자식 소유권 관계는 단순 composite index가 아니라 실제 DB 제약으로 강제한다. 예를 들어 `prescription(medical_document_id, profile_id) → medical_document(id, profile_id)`, `guide(prescription_id, profile_id) → prescription(id, profile_id)`, `chat_session(prescription_id, profile_id) → prescription(id, profile_id)` 형태의 composite FK를 사용한다.
+- 부모·자식 소유권 관계는 단순 composite index가 아니라 실제 DB 제약으로 강제한다. 예를 들어 `prescription(document_id, profile_id) → medical_document(id, profile_id)`, `guide(prescription_id, profile_id) → prescription(id, profile_id)`, `chat_session(prescription_id, profile_id) → prescription(id, profile_id)` 형태의 composite FK를 사용한다.
 - composite FK를 걸기 위해 부모 테이블에는 `(id, profile_id)` unique 또는 동등한 참조 가능 제약을 둔다.
 - backfill 후 부모·자식 `profile_id` 불일치 검증 SQL을 실행한다.
 - 정상 사용자 접근, 타 사용자 접근 차단, 부모·자식 소유권 불일치 방어 테스트를 추가한다.
