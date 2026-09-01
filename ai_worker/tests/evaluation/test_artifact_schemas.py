@@ -159,6 +159,9 @@ def _retrieval_case_result() -> dict[str, Any]:
         "actual_provider_invocation": None,
         "actual_retrieval_invocation": True,
         "actual_publication_allowed": None,
+        "actual_sections": None,
+        "omitted_sections": None,
+        "risk_level": None,
         "answer_sha256": None,
         "latency_ms": 12,
         "input_token_count": None,
@@ -180,6 +183,97 @@ def test_case_result_task_union_requires_explicit_retrieval_nullability() -> Non
 def test_case_result_rejects_passed_boolean() -> None:
     payload = _retrieval_case_result()
     payload["passed"] = True
+
+    with pytest.raises(ValidationError):
+        CASE_RESULT_ADAPTER.validate_python(payload)
+
+
+def _case_result_for_task(task_type: str) -> dict[str, Any]:
+    payload = _retrieval_case_result()
+    payload["task_type"] = task_type
+    if task_type in {"ANSWER_QUALITY", "ANSWER_GROUNDING"}:
+        payload.update(
+            retrieved_evidence_ids=None,
+            selected_evidence_ids=None,
+            actual_claim_ids=["claim-001"],
+            actual_citation_evidence_ids=["evidence-001"],
+            actual_rule_ids=None,
+            actual_scope_codes=None,
+            actual_retrieval_invocation=None,
+            answer_sha256="b" * 64,
+            actual_sections=["SYNTHETIC_SECTION"],
+            omitted_sections=[],
+        )
+    elif task_type in {"SAFETY", "END_TO_END_RAG"}:
+        payload.update(
+            retrieved_evidence_ids=["evidence-001"],
+            selected_evidence_ids=["evidence-001"],
+            actual_claim_ids=["claim-001"],
+            actual_citation_evidence_ids=["evidence-001"],
+            actual_rule_ids=["rule-001"],
+            actual_scope_codes=["scope-001"],
+            actual_response_level="URGENT",
+            actual_safety_disposition="URGENT_ROUTED",
+            actual_execution_status="SUCCEEDED",
+            actual_release_decision="LIMITED",
+            actual_fallback_code="SAFETY_ROUTED",
+            actual_provider_invocation=False,
+            actual_retrieval_invocation=True,
+            actual_publication_allowed=True,
+            answer_sha256="b" * 64,
+            actual_sections=["SYNTHETIC_SAFETY_SECTION"],
+            omitted_sections=[],
+            risk_level="URGENT",
+        )
+    return payload
+
+
+@pytest.mark.parametrize(
+    "task_type",
+    ["RETRIEVAL", "ANSWER_QUALITY", "ANSWER_GROUNDING", "SAFETY", "END_TO_END_RAG"],
+)
+def test_case_result_five_task_actual_section_and_risk_matrix_accepts_valid_payload(task_type: str) -> None:
+    result = CASE_RESULT_ADAPTER.validate_python(_case_result_for_task(task_type))
+    assert result.task_type.value == task_type
+
+
+@pytest.mark.parametrize(
+    ("task_type", "field", "invalid_value"),
+    [
+        ("RETRIEVAL", "actual_sections", []),
+        ("ANSWER_QUALITY", "risk_level", "GENERAL"),
+        ("ANSWER_GROUNDING", "omitted_sections", None),
+        ("SAFETY", "actual_sections", None),
+        ("END_TO_END_RAG", "risk_level", None),
+    ],
+)
+def test_case_result_five_task_actual_section_and_risk_matrix_rejects_invalid_nullability(
+    task_type: str,
+    field: str,
+    invalid_value: object,
+) -> None:
+    payload = _case_result_for_task(task_type)
+    payload[field] = invalid_value
+
+    with pytest.raises(ValidationError):
+        CASE_RESULT_ADAPTER.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("actual_response_level", "LOW"),
+        ("actual_safety_disposition", "SAFE"),
+        ("actual_fallback_code", "UNAPPROVED_FALLBACK"),
+        ("risk_level", "LOW"),
+    ],
+)
+def test_case_result_rejects_values_outside_authoritative_track_f_enums(
+    field: str,
+    invalid_value: str,
+) -> None:
+    payload = _case_result_for_task("SAFETY")
+    payload[field] = invalid_value
 
     with pytest.raises(ValidationError):
         CASE_RESULT_ADAPTER.validate_python(payload)

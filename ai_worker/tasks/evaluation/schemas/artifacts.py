@@ -7,7 +7,13 @@ from pydantic import AfterValidator, BeforeValidator, Field, StrictBool, TypeAda
 
 from ai_worker.tasks.evaluation.canonical import canonical_sha256
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
-from ai_worker.tasks.evaluation.schemas.authoring import GitCommitSha
+from ai_worker.tasks.evaluation.schemas.authoring import (
+    FallbackCodeValue,
+    GitCommitSha,
+    ResponseLevelValue,
+    RiskLevelValue,
+    SafetyDispositionValue,
+)
 from ai_worker.tasks.evaluation.schemas.common import (
     ActorRef,
     CanonicalDecimal,
@@ -269,14 +275,17 @@ class _CaseResultBase(ResultEnvelope):
     actual_citation_evidence_ids: OptionalEvidenceIds
     actual_rule_ids: OptionalEvidenceIds
     actual_scope_codes: OptionalEvidenceIds
-    actual_response_level: StableId | None
-    actual_safety_disposition: StableId | None
+    actual_response_level: ResponseLevelValue | None
+    actual_safety_disposition: SafetyDispositionValue | None
     actual_execution_status: RuntimeExecutionStatusValue | None
     actual_release_decision: RuntimeReleaseDecisionValue | None
-    actual_fallback_code: StableId | None
+    actual_fallback_code: FallbackCodeValue | None
     actual_provider_invocation: StrictBool | None
     actual_retrieval_invocation: StrictBool | None
     actual_publication_allowed: StrictBool | None
+    actual_sections: SortedStrings | None
+    omitted_sections: SortedStrings | None
+    risk_level: RiskLevelValue | None
     answer_sha256: Sha256Hex | None
     latency_ms: NonNegativeSafeInteger | None
     input_token_count: NonNegativeSafeInteger | None
@@ -309,6 +318,9 @@ class RetrievalCaseResult(_CaseResultBase):
     actual_provider_invocation: None
     actual_retrieval_invocation: StrictBool
     actual_publication_allowed: None
+    actual_sections: None
+    omitted_sections: None
+    risk_level: None
     answer_sha256: None
     input_token_count: None
     output_token_count: None
@@ -330,6 +342,9 @@ class _AnswerCaseResultBase(_CaseResultBase):
     actual_provider_invocation: None
     actual_retrieval_invocation: StrictBool | None
     actual_publication_allowed: None
+    actual_sections: SortedStrings
+    omitted_sections: SortedStrings
+    risk_level: None
     answer_sha256: Sha256Hex
 
 
@@ -348,14 +363,17 @@ class _SafetyCaseResultBase(_CaseResultBase):
     actual_citation_evidence_ids: EvidenceIds
     actual_rule_ids: EvidenceIds
     actual_scope_codes: EvidenceIds
-    actual_response_level: StableId
-    actual_safety_disposition: StableId
+    actual_response_level: ResponseLevelValue
+    actual_safety_disposition: SafetyDispositionValue
     actual_execution_status: RuntimeExecutionStatusValue
     actual_release_decision: RuntimeReleaseDecisionValue
-    actual_fallback_code: StableId | None
+    actual_fallback_code: FallbackCodeValue | None
     actual_provider_invocation: StrictBool
     actual_retrieval_invocation: StrictBool
     actual_publication_allowed: StrictBool
+    actual_sections: SortedStrings
+    omitted_sections: SortedStrings
+    risk_level: RiskLevelValue
     answer_sha256: Sha256Hex | None
 
 

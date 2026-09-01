@@ -83,7 +83,7 @@ QueryText = Annotated[
 ]
 SyntheticToken = Annotated[
     str,
-    StringConstraints(strict=True, min_length=11),
+    StringConstraints(strict=True, min_length=11, pattern=r"^SYNTHETIC_"),
     AfterValidator(_validate_synthetic_token),
 ]
 PartitionValue = Annotated[Partition, BeforeValidator(lambda value: _enum_from_wire(Partition, value))]
@@ -136,6 +136,49 @@ class RuntimeReleaseDecision(StrEnum):
     STALE = "STALE"
 
 
+class Criticality(StrEnum):
+    CRITICAL = "CRITICAL"
+    NON_CRITICAL = "NON_CRITICAL"
+
+
+class ResponseLevel(StrEnum):
+    ROUTINE = "ROUTINE"
+    URGENT = "URGENT"
+    EMERGENCY = "EMERGENCY"
+    UNKNOWN = "UNKNOWN"
+
+
+class SafetyDisposition(StrEnum):
+    NORMAL = "NORMAL"
+    URGENT_ROUTED = "URGENT_ROUTED"
+    EMERGENCY_ROUTED = "EMERGENCY_ROUTED"
+    UNKNOWN_RISK = "UNKNOWN_RISK"
+    BLOCKED_ACTION = "BLOCKED_ACTION"
+
+
+class FallbackCode(StrEnum):
+    NO_APPROVED_EVIDENCE = "NO_APPROVED_EVIDENCE"
+    CONFLICTING_EVIDENCE = "CONFLICTING_EVIDENCE"
+    SAFETY_ROUTED = "SAFETY_ROUTED"
+    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+    DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    PRESCRIPTION_STALE = "PRESCRIPTION_STALE"
+    UNSUPPORTED_REQUEST = "UNSUPPORTED_REQUEST"
+
+
+class RiskLevel(StrEnum):
+    GENERAL = "GENERAL"
+    PROFESSIONAL_CHECK = "PROFESSIONAL_CHECK"
+    URGENT = "URGENT"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class EvidenceTargetKind(StrEnum):
+    RUNTIME_TYPED_REF = "RUNTIME_TYPED_REF"
+    FIXTURE_RECORD = "FIXTURE_RECORD"
+
+
 EvidenceTypeValue = Annotated[EvidenceType, BeforeValidator(lambda value: _enum_from_wire(EvidenceType, value))]
 DatasetStatusValue = Annotated[
     DatasetStatus,
@@ -152,6 +195,18 @@ RuntimeExecutionStatusValue = Annotated[
 RuntimeReleaseDecisionValue = Annotated[
     RuntimeReleaseDecision,
     BeforeValidator(lambda value: _enum_from_wire(RuntimeReleaseDecision, value)),
+]
+CriticalityValue = Annotated[Criticality, BeforeValidator(lambda value: _enum_from_wire(Criticality, value))]
+ResponseLevelValue = Annotated[ResponseLevel, BeforeValidator(lambda value: _enum_from_wire(ResponseLevel, value))]
+SafetyDispositionValue = Annotated[
+    SafetyDisposition,
+    BeforeValidator(lambda value: _enum_from_wire(SafetyDisposition, value)),
+]
+FallbackCodeValue = Annotated[FallbackCode, BeforeValidator(lambda value: _enum_from_wire(FallbackCode, value))]
+RiskLevelValue = Annotated[RiskLevel, BeforeValidator(lambda value: _enum_from_wire(RiskLevel, value))]
+EvidenceTargetKindValue = Annotated[
+    EvidenceTargetKind,
+    BeforeValidator(lambda value: _enum_from_wire(EvidenceTargetKind, value)),
 ]
 
 
@@ -235,7 +290,7 @@ class GoldClaim(StrictContractModel):
     claim_id: StableId
     claim_text: Annotated[NonEmptyText, Field(max_length=2000)]
     required: StrictBool
-    criticality: StableId
+    criticality: CriticalityValue
     supporting_evidence_ref_ids: StableIds
 
     @model_validator(mode="after")
@@ -247,7 +302,7 @@ class GoldClaim(StrictContractModel):
 class ForbiddenClaim(StrictContractModel):
     claim_id: StableId
     semantic_rule: Annotated[NonEmptyText, Field(max_length=1000)]
-    criticality: StableId
+    criticality: CriticalityValue
     reason_code: StableId
 
 
@@ -343,17 +398,17 @@ class SafetyExpected(_ExpectedContract):
     expected_citations: ExpectedCitations
     expected_rule_ids: NonEmptyStableIds
     expected_scope_codes: NonEmptyStableIds
-    expected_response_level: StableId
-    expected_safety_disposition: StableId
+    expected_response_level: ResponseLevelValue
+    expected_safety_disposition: SafetyDispositionValue
     expected_execution_status: RuntimeExecutionStatusValue
     expected_release_decision: RuntimeReleaseDecisionValue
-    expected_fallback_code: StableId | None
+    expected_fallback_code: FallbackCodeValue | None
     expected_provider_invocation: StrictBool
     expected_retrieval_invocation: StrictBool
     expected_publication_allowed: StrictBool
     expected_sections: StableIds
     omitted_sections: StableIds
-    risk_level: StableId
+    risk_level: RiskLevelValue
 
 
 class EndToEndRagExpected(SafetyExpected):
@@ -504,7 +559,7 @@ class DatasetManifest(StrictContractModel):
 
 
 class EvidenceMappingEntry(EvidenceReference):
-    target_kind: StableId
+    target_kind: EvidenceTargetKindValue
     runtime_typed_ref: ImmutableReference | None
     fixture_record_ref: ResourceReference | None
 
@@ -512,6 +567,10 @@ class EvidenceMappingEntry(EvidenceReference):
     def validate_target(self) -> EvidenceMappingEntry:
         if (self.runtime_typed_ref is None) == (self.fixture_record_ref is None):
             raise ValueError("exactly one Evidence target reference is required")
+        if self.target_kind is EvidenceTargetKind.RUNTIME_TYPED_REF and self.runtime_typed_ref is None:
+            raise ValueError("runtime target kind requires runtime typed reference")
+        if self.target_kind is EvidenceTargetKind.FIXTURE_RECORD and self.fixture_record_ref is None:
+            raise ValueError("fixture target kind requires fixture record reference")
         return self
 
 
@@ -526,18 +585,24 @@ class EvidenceMappingManifest(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_entries(self) -> EvidenceMappingManifest:
-        keys = [
-            (item.evidence_type.value, item.stable_key, item.source_version, item.locator, item.evidence_ref_id)
-            for item in self.entries
+        evidence_ids = [item.evidence_ref_id for item in self.entries]
+        stable_tuples = [
+            (item.evidence_type.value, item.stable_key, item.source_version, item.locator) for item in self.entries
         ]
-        if len(keys) != len(set(keys)) or keys != sorted(keys):
+        keys = [
+            (*stable_tuple, item.evidence_ref_id)
+            for stable_tuple, item in zip(stable_tuples, self.entries, strict=True)
+        ]
+        if len(evidence_ids) != len(set(evidence_ids)) or len(stable_tuples) != len(set(stable_tuples)):
+            raise ValueError("Evidence Mapping IDs and stable tuples must be unique")
+        if keys != sorted(keys):
             raise ValueError("Evidence Mapping entries must be unique and sorted")
         return self
 
 
 class CriticalClaimRule(StrictContractModel):
     rule_id: StableId
-    criticality: StableId
+    criticality: CriticalityValue
     condition_code: StableId
     description: Annotated[NonEmptyText, Field(max_length=1000)]
     member_order: Annotated[SafeInteger, Field(ge=1)]

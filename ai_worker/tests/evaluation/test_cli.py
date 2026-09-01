@@ -44,6 +44,32 @@ def test_cli_validates_fixture_without_creating_release_artifacts(tmp_path: Path
     )
 
 
+def test_cli_maps_unexpected_loader_eio_to_safe_internal_error_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = tmp_path / "receipt.json"
+
+    def fail_loader(*_args: object, **_kwargs: object) -> object:
+        raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
+
+    monkeypatch.setattr(cli_module, "load_dataset", fail_loader)
+
+    exit_code = main(
+        ["validate", "--manifest", str(FOUNDATION_MANIFEST), "--result", str(result)],
+        allowed_result_root=tmp_path,
+    )
+
+    assert exit_code == 1
+    receipt = json.loads(result.read_text(encoding="utf-8"))
+    assert receipt["execution_status"] == "ERROR"
+    assert receipt["decision_status"] is None
+    assert receipt["error_codes"] == [EvaluationErrorCode.INTERNAL_ERROR.value]
+    assert "SENSITIVE_SENTINEL" not in result.read_text(encoding="utf-8")
+    assert capsys.readouterr().err == f"{EvaluationErrorCode.INTERNAL_ERROR.value}\n"
+
+
 def test_cli_does_not_overwrite_existing_result(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     result = tmp_path / "receipt.json"
     result.write_bytes(b"existing")

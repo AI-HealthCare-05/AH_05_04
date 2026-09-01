@@ -4,12 +4,15 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
 from ai_worker.tasks.evaluation.schema_exports import (
     normalize_schema_document,
     schema_documents,
     write_schema_documents,
 )
+from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRY
 from ai_worker.tasks.evaluation.schemas.artifacts import RESULT_ARTIFACT_MODELS
 
 
@@ -89,12 +92,59 @@ def test_schema_documents_are_complete_strict_draft_2020_12_contracts() -> None:
     for relative_path, document in documents.items():
         assert relative_path.endswith(".schema.json")
         assert document["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert str(document["$id"]).startswith("urn:rag-eval:schema:")
+        logical_name = relative_path.rsplit("/", 1)[1].removesuffix(".schema.json").removeprefix("rag-eval.")
+        assert document["$id"] == f"urn:ah05:rag-eval:schema:{logical_name}:1.0.0"
         if "oneOf" in document and "properties" not in document:
             assert document["unevaluatedProperties"] is False
         else:
             assert document["additionalProperties"] is False
         _assert_no_schema_metadata(document)
+
+
+def test_schema_registry_is_the_exact_unique_eighteen_file_contract() -> None:
+    paths = [entry.relative_path for entry in SCHEMA_REGISTRY]
+    schema_ids = [entry.schema_id for entry in SCHEMA_REGISTRY]
+
+    assert len(paths) == len(set(paths)) == 18
+    assert len(schema_ids) == len(set(schema_ids)) == 18
+    assert set(paths) == set(schema_documents())
+
+
+def test_array_minimums_and_synthetic_tokens_use_draft_2020_keywords() -> None:
+    documents = schema_documents()
+    saw_minimum_array = False
+    saw_synthetic_pattern = False
+
+    def visit(value: object) -> None:
+        nonlocal saw_minimum_array, saw_synthetic_pattern
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        if value.get("type") == "array" and "minItems" in value:
+            saw_minimum_array = True
+        if value.get("type") == "array":
+            assert "minLength" not in value
+        if value.get("pattern") == "^SYNTHETIC_":
+            saw_synthetic_pattern = True
+        for item in value.values():
+            visit(item)
+
+    for document in documents.values():
+        visit(document)
+    assert saw_synthetic_pattern
+    assert saw_minimum_array
+
+
+def test_schema_export_fails_closed_when_output_contains_stale_json(tmp_path: Path) -> None:
+    write_schema_documents(tmp_path)
+    stale = tmp_path / "stale.schema.json"
+    stale.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="stale schema"):
+        write_schema_documents(tmp_path)
 
 
 def test_union_schema_roots_do_not_forbid_all_branch_properties() -> None:

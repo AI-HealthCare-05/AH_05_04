@@ -96,6 +96,7 @@ def test_foundation_load_is_hash_deterministic() -> None:
 
 def test_foundation_fixture_is_privacy_clean_and_uses_only_known_github_actors() -> None:
     loaded = load_dataset(FOUNDATION_MANIFEST, evals_root=EVALS_ROOT)
+    assert loaded.protected_artifact_receipt is not None
     models = (
         loaded.manifest,
         *loaded.cases,

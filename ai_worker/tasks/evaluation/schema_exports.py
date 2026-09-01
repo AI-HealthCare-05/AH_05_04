@@ -2,43 +2,14 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
-from ai_worker.tasks.evaluation.schemas.artifacts import RESULT_ARTIFACT_MODELS, ValidationReceipt
-from ai_worker.tasks.evaluation.schemas.authoring import (
-    EVALUATION_CASE_ADAPTER,
-    CriticalClaimRubric,
-    DatasetManifest,
-    EvidenceMappingManifest,
-    ProtectedArtifactReceipt,
-)
-from ai_worker.tasks.evaluation.schemas.policy import (
-    ComparisonPolicy,
-    EvaluationPolicy,
-    EvaluationProfile,
-    SuiteDefinition,
-)
+from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRY, SchemaRegistryEntry, SchemaSource
 
 _DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
-_SCHEMA_VERSION = "1.0.0"
-
-type SchemaSource = type[BaseModel] | TypeAdapter[Any]
-
-_AUTHORING_MODELS: dict[str, SchemaSource] = {
-    "rag-eval.case": EVALUATION_CASE_ADAPTER,
-    "rag-eval.dataset-manifest": DatasetManifest,
-    "rag-eval.evidence-mapping-manifest": EvidenceMappingManifest,
-    "rag-eval.critical-claim-rubric": CriticalClaimRubric,
-}
-_POLICY_MODELS: dict[str, SchemaSource] = {
-    "rag-eval.evaluation-profile": EvaluationProfile,
-    "rag-eval.suite-definition": SuiteDefinition,
-    "rag-eval.comparison-policy": ComparisonPolicy,
-    "rag-eval.evaluation-policy": EvaluationPolicy,
-}
 
 
 def normalize_schema_document(document: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -48,11 +19,14 @@ def normalize_schema_document(document: dict[str, JsonValue]) -> dict[str, JsonV
         if isinstance(value, list):
             return [normalize(item) for item in value]
         if isinstance(value, dict):
-            return {
+            normalized = {
                 key: normalize(item, parent_key=key)
                 for key, item in value.items()
                 if parent_key in map_key_namespaces or key not in {"title", "description"}
             }
+            if normalized.get("type") == "array" and "minLength" in normalized:
+                normalized["minItems"] = normalized.pop("minLength")
+            return normalized
         return value
 
     return cast(dict[str, JsonValue], normalize(document))
@@ -336,10 +310,11 @@ def _add_authoring_role_conditions(schema_id: str, document: dict[str, JsonValue
         _append_containing_approval_roles(definition, roles)
 
 
-def _schema_document(schema_id: str, model: SchemaSource) -> dict[str, JsonValue]:
-    document = _model_schema(model)
+def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
+    schema_id = entry.schema_id
+    document = _model_schema(entry.source)
     document["$schema"] = _DRAFT_2020_12
-    document["$id"] = f"urn:rag-eval:schema:{schema_id}:{_SCHEMA_VERSION}"
+    document["$id"] = entry.urn
     if "oneOf" in document and "properties" not in document:
         document.pop("additionalProperties", None)
         document["unevaluatedProperties"] = False
@@ -358,24 +333,16 @@ def _schema_document(schema_id: str, model: SchemaSource) -> dict[str, JsonValue
 
 
 def schema_documents() -> dict[str, dict[str, JsonValue]]:
-    documents: dict[str, dict[str, JsonValue]] = {}
-    for schema_id, model in _AUTHORING_MODELS.items():
-        documents[f"authoring/{schema_id}.schema.json"] = _schema_document(schema_id, model)
-    for schema_id, model in _POLICY_MODELS.items():
-        documents[f"policy/{schema_id}.schema.json"] = _schema_document(schema_id, model)
-    for schema_id, model in RESULT_ARTIFACT_MODELS.items():
-        documents[f"artifacts/{schema_id}.schema.json"] = _schema_document(schema_id, model)
-    documents["operational/rag-eval.validation-receipt.schema.json"] = _schema_document(
-        "rag-eval.validation-receipt", ValidationReceipt
-    )
-    documents["operational/rag-eval.protected-artifact-receipt.schema.json"] = _schema_document(
-        "rag-eval.protected-artifact-receipt", ProtectedArtifactReceipt
-    )
-    return dict(sorted(documents.items()))
+    return dict(sorted((entry.relative_path, _schema_document(entry)) for entry in SCHEMA_REGISTRY))
 
 
 def write_schema_documents(root: Path) -> None:
-    for relative_path, document in schema_documents().items():
+    documents = schema_documents()
+    existing = {path.relative_to(root).as_posix() for path in root.rglob("*.json")} if root.exists() else set()
+    stale = existing - set(documents)
+    if stale:
+        raise ValueError("stale schema files present")
+    for relative_path, document in documents.items():
         destination = root / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(canonical_json_bytes(document))

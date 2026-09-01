@@ -222,6 +222,7 @@ def test_foundation_has_concrete_receipt_and_nonapproved_dataset_provenance() ->
     assert loaded.manifest.review_provenance.team_gold_status.value == "REVIEWED"
     assert loaded.manifest.review_provenance.approved_by is None
     assert loaded.manifest.protected_artifact_receipt_ref is not None
+    assert loaded.protected_artifact_receipt is not None
     assert loaded.protected_artifact_receipt.resource_set_hash == loaded.manifest.resource_set_hash
 
 

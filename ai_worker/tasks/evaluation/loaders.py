@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -17,12 +18,14 @@ from ai_worker.tasks.evaluation.canonical import (
 )
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
+from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRY
 from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
     CriticalClaimRubric,
     DatasetManifest,
     EvaluationCase,
     EvidenceMappingManifest,
+    EvidenceTargetKind,
     EvidenceType,
     ProtectedArtifactReceipt,
 )
@@ -62,7 +65,7 @@ class ValidatedDataset:
     comparison_policy: ComparisonPolicy
     evaluation_policy: EvaluationPolicy
     suite: SuiteDefinition
-    protected_artifact_receipt: ProtectedArtifactReceipt
+    protected_artifact_receipt: ProtectedArtifactReceipt | None
     reference_graph: tuple[ResolvedReference, ...]
     resource_hashes: tuple[tuple[str, str], ...]
 
@@ -95,8 +98,12 @@ class _SnapshotReader:
             return cached
         try:
             raw_bytes = safe_path.read_bytes()
-        except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as error:
-            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING) from error
+        except OSError as error:
+            if error.errno == errno.ENOENT:
+                raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING) from error
+            if error.errno in {errno.ENOTDIR, errno.EISDIR, errno.EACCES, errno.EPERM, errno.ELOOP}:
+                raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
+            raise
         value = _parse_json_object(raw_bytes)
         relative = safe_path.relative_to(self.root).as_posix()
         snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, value)
@@ -382,12 +389,15 @@ def _load_evidence(
     }
     for entry in evidence.entries:
         registry[(entry.stable_key, entry.source_version, entry.content_sha256)] = evidence_kinds[entry.evidence_type]
-        if entry.fixture_record_ref is not None:
-            resource = reader.read(entry.fixture_record_ref.path)
-            _verify_file_hash(resource, entry.fixture_record_ref.sha256)
-            if resource.file_sha256 != entry.content_sha256:
-                raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
-            _validate_privacy(resource.value)
+        if entry.target_kind is EvidenceTargetKind.RUNTIME_TYPED_REF:
+            raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+        if entry.fixture_record_ref is None:
+            raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+        resource = reader.read(entry.fixture_record_ref.path)
+        _verify_file_hash(resource, entry.fixture_record_ref.sha256)
+        if resource.file_sha256 != entry.content_sha256:
+            raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+        _validate_privacy(resource.value)
     corpus_ref = ImmutableReference(
         id=evidence.mapping_id,
         version=evidence.mapping_version,
@@ -442,20 +452,23 @@ def _load_receipt(
 def _schema_set_hash(reader: _SnapshotReader) -> str:
     entries: list[dict[str, str]] = []
     schema_root = reader.root / "schemas/1.0.0"
-    for path in sorted(schema_root.rglob("*.json")):
-        snapshot = reader.read_path(path)
+    actual_paths = (
+        {path.relative_to(schema_root).as_posix() for path in schema_root.rglob("*.json")}
+        if schema_root.exists()
+        else set()
+    )
+    expected_paths = {entry.relative_path for entry in SCHEMA_REGISTRY}
+    if actual_paths != expected_paths:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    for registry_entry in SCHEMA_REGISTRY:
+        snapshot = reader.read(f"schemas/1.0.0/{registry_entry.relative_path}")
         schema_urn = snapshot.value.get("$id")
-        if not isinstance(schema_urn, str) or not schema_urn.startswith("urn:rag-eval:schema:"):
+        if schema_urn != registry_entry.urn:
             raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
-        logical_id_and_version = schema_urn.removeprefix("urn:rag-eval:schema:")
-        try:
-            schema_id, schema_version = logical_id_and_version.rsplit(":", 1)
-        except ValueError as error:
-            raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from error
         entries.append(
             {
-                "schema_id": schema_id,
-                "schema_version": schema_version,
+                "schema_id": registry_entry.schema_id,
+                "schema_version": "1.0.0",
                 "schema_sha256": snapshot.file_sha256,
             }
         )
@@ -560,6 +573,57 @@ def _validate_reference_graph(
     return tuple(graph)
 
 
+def _validate_configuration_graph(
+    manifest: DatasetManifest,
+    cases: tuple[EvaluationCase, ...],
+    profile: EvaluationProfile,
+    comparison: ComparisonPolicy,
+    policy: EvaluationPolicy,
+    suite: SuiteDefinition,
+) -> None:
+    dataset_partitions = {
+        partition for partition in Partition if getattr(manifest.partition_counts, partition.value) > 0
+    }
+    profile_partitions = set(profile.required_partitions)
+    suite_partitions = set(suite.input_selector.partitions)
+    policy_partitions: set[Partition] = set()
+    prefix = f"{manifest.dataset_code}:"
+    for member in policy.required_partition_refs:
+        if not member.reference.id.startswith(prefix):
+            raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+        try:
+            policy_partitions.add(Partition(member.reference.id.removeprefix(prefix)))
+        except ValueError:
+            raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID) from None
+    if not (dataset_partitions == profile_partitions == suite_partitions == policy_partitions):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+
+    suite_ref = (suite.suite_id, suite.suite_version, suite.suite_hash)
+    profile_suites = {(item.id, item.version, item.hash) for item in profile.required_suite_refs}
+    policy_suites = {
+        (item.reference.id, item.reference.version, item.reference.hash) for item in policy.required_suite_refs
+    }
+    if profile_suites != policy_suites or profile_suites != {suite_ref}:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+
+    profile_gates = {(item.id, item.version, item.hash) for item in profile.required_gate_refs}
+    policy_gates = {
+        (item.reference.id, item.reference.version, item.reference.hash) for item in policy.required_gate_refs
+    }
+    if profile_gates != policy_gates:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+
+    selected_partitions = {case.partition for case in cases}
+    if any(
+        scope.partition not in profile_partitions
+        or scope.partition not in suite_partitions
+        or scope.partition not in policy_partitions
+        or scope.partition not in selected_partitions
+        for scope in comparison.scopes
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+
+
 def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
     reader = _SnapshotReader(evals_root)
     manifest_snapshot = reader.read_path(manifest_path)
@@ -572,8 +636,9 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
     _validate_leakage(cases)
     evidence, evidence_registry = _load_evidence(reader, prefix, manifest, cases)
     rubric = _load_rubric(reader, prefix, manifest, cases)
-    receipt = _load_receipt(reader, prefix, manifest)
+    receipt = _load_receipt(reader, prefix, manifest) if manifest.protected_artifact_receipt_ref is not None else None
     profile, comparison, policy, suite = _load_configuration(reader, prefix)
+    _validate_configuration_graph(manifest, cases, profile, comparison, policy, suite)
     if (
         suite.input_selector.dataset_code != manifest.dataset_code
         or suite.input_selector.dataset_version != manifest.dataset_version

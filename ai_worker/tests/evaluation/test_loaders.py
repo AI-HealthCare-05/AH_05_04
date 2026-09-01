@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import shutil
 from pathlib import Path
@@ -814,7 +815,7 @@ def test_loader_rejects_runtime_reference_with_valid_tuple_of_wrong_kind(
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
 
 
-def test_schema_set_hash_is_independent_of_schema_file_path_order(
+def test_loader_rejects_schema_ids_swapped_between_registered_paths(
     tmp_dataset: MutableDatasetFixture,
 ) -> None:
     first = tmp_dataset.root / "schemas/1.0.0/authoring/rag-eval.case.schema.json"
@@ -824,4 +825,113 @@ def test_schema_set_hash_is_independent_of_schema_file_path_order(
     second.rename(first)
     temporary.rename(second)
 
-    load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+def test_loader_rejects_schema_set_with_unexpected_file(tmp_dataset: MutableDatasetFixture) -> None:
+    stale = tmp_dataset.root / "schemas/1.0.0/stale.schema.json"
+    stale.write_bytes(canonical_json_bytes({"$id": "urn:ah05:rag-eval:schema:stale:1.0.0"}))
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+def test_loader_rejects_schema_set_with_missing_file(tmp_dataset: MutableDatasetFixture) -> None:
+    (tmp_dataset.root / "schemas/1.0.0/artifacts/rag-eval.run.schema.json").unlink()
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+def test_loader_rejects_duplicate_schema_identity_at_registered_path(tmp_dataset: MutableDatasetFixture) -> None:
+    run_path = tmp_dataset.root / "schemas/1.0.0/artifacts/rag-eval.run.schema.json"
+    gate_path = tmp_dataset.root / "schemas/1.0.0/artifacts/rag-eval.gate.schema.json"
+    run_schema = tmp_dataset.read(run_path)
+    gate_schema = tmp_dataset.read(gate_path)
+    gate_schema["$id"] = run_schema["$id"]
+    tmp_dataset.write(gate_path, gate_schema)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+def test_loader_rejects_profile_partition_set_that_disagrees_with_suite_and_policy(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    tmp_dataset.mutate_config(
+        "profiles/dev-foundation-v1.profile.json",
+        lambda value: value.update(required_partitions=["HOLDOUT"]),
+    )
+    tmp_dataset.rebind_configuration_refs()
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_rejects_comparison_scope_outside_bound_profile_and_suite(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    comparison_path = tmp_dataset.root / "policies/dev-foundation-v1.comparison-policy.json"
+    comparison = tmp_dataset.read(comparison_path)
+    comparison["scopes"][0]["partition"] = "HOLDOUT"
+    tmp_dataset.refresh_self_hash(comparison)
+    tmp_dataset.write(comparison_path, comparison)
+    policy_path = tmp_dataset.root / "policies/dev-foundation-v1.evaluation-policy.json"
+    policy = tmp_dataset.read(policy_path)
+    policy["comparison_policy_ref"]["reference"]["hash"] = comparison["comparison_policy_hash"]
+    members = [
+        policy["evaluation_profile_ref"],
+        policy["comparison_policy_ref"],
+        *policy["required_partition_refs"],
+        *policy["required_gate_refs"],
+        *policy["required_suite_refs"],
+        policy["artifact_schema_set_ref"],
+    ]
+    policy["member_manifest_hash"] = canonical_sha256({"members": members})
+    tmp_dataset.refresh_self_hash(policy)
+    tmp_dataset.write(policy_path, policy)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_accepts_git_provenance_without_loading_protected_receipt(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    manifest = tmp_dataset.manifest_value()
+    manifest["fixture_git_commit_sha"] = "a" * 40
+    manifest["protected_artifact_receipt_ref"] = None
+    tmp_dataset.write_manifest(manifest)
+
+    loaded = load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+
+    assert loaded.manifest.fixture_git_commit_sha == "a" * 40
+    assert loaded.protected_artifact_receipt is None
+
+
+def test_loader_explicitly_rejects_unsupported_runtime_evidence_reference(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    def use_runtime_reference(value: dict[str, Any]) -> None:
+        entry = value["entries"][0]
+        entry["target_kind"] = "RUNTIME_TYPED_REF"
+        entry["runtime_typed_ref"] = {
+            "id": entry["stable_key"],
+            "version": entry["source_version"],
+            "hash": entry["content_sha256"],
+        }
+        entry["fixture_record_ref"] = None
+
+    tmp_dataset.mutate_resource("evidence_mapping", use_runtime_reference)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+
+
+def test_loader_does_not_misclassify_unexpected_eio_as_missing(
+    tmp_dataset: MutableDatasetFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_read(_path: Path) -> bytes:
+        raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+
+    with pytest.raises(OSError) as caught:
+        load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+
+    assert caught.value.errno == errno.EIO

@@ -219,6 +219,65 @@ def test_evidence_mapping_rejects_unknown_evidence_type() -> None:
         EvidenceMappingManifest.model_validate(deepcopy(payload))
 
 
+@pytest.mark.parametrize("target_kind", ["RUNTIME_REFERENCE", "FIXTURE", "UNKNOWN"])
+def test_evidence_mapping_rejects_unapproved_target_kind(target_kind: str) -> None:
+    payload = _fixture_json("retrieval/evidence/dev-foundation-v1.evidence-mapping.json")
+    payload["entries"][0]["target_kind"] = target_kind
+
+    with pytest.raises(ValidationError):
+        EvidenceMappingManifest.model_validate(payload)
+
+
+def test_evidence_mapping_binds_target_kind_to_exactly_one_matching_branch() -> None:
+    payload = _fixture_json("retrieval/evidence/dev-foundation-v1.evidence-mapping.json")
+    payload["entries"][0]["target_kind"] = "RUNTIME_TYPED_REF"
+
+    with pytest.raises(ValidationError):
+        EvidenceMappingManifest.model_validate(payload)
+
+
+def test_evidence_mapping_rejects_duplicate_ids_and_stable_tuples_independently() -> None:
+    payload = _fixture_json("retrieval/evidence/dev-foundation-v1.evidence-mapping.json")
+    duplicate_id = deepcopy(payload)
+    duplicate_id["entries"][1]["evidence_ref_id"] = duplicate_id["entries"][0]["evidence_ref_id"]
+    with pytest.raises(ValidationError):
+        EvidenceMappingManifest.model_validate(duplicate_id)
+
+    duplicate_tuple = deepcopy(payload)
+    for field in ("evidence_type", "stable_key", "source_version", "locator"):
+        duplicate_tuple["entries"][1][field] = duplicate_tuple["entries"][0][field]
+    with pytest.raises(ValidationError):
+        EvidenceMappingManifest.model_validate(duplicate_tuple)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("expected_response_level", "LOW"),
+        ("expected_safety_disposition", "SAFE"),
+        ("expected_fallback_code", "UNAPPROVED_FALLBACK"),
+        ("risk_level", "LOW"),
+    ],
+)
+def test_safety_expected_rejects_values_outside_authoritative_track_f_enums(
+    field: str,
+    invalid_value: str,
+) -> None:
+    payload = _fixture_json("retrieval/cases/dev-foundation-v1/rag-dev-safety-001.json")
+    payload["expected"][field] = invalid_value
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER.validate_python(payload)
+
+
+def test_claim_criticality_is_exactly_critical_or_non_critical() -> None:
+    payload = _fixture_json("retrieval/cases/dev-foundation-v1/rag-dev-answer-quality-001.json")
+    payload["expected"]["gold_claims"][0]["criticality"] = "IMPORTANT"
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER.validate_python(payload)
+
+
 def test_git_commit_schema_rejects_non_lowercase_or_non_hex_40_character_values() -> None:
     schema = DatasetManifest.model_json_schema()
     pattern = schema["properties"]["fixture_git_commit_sha"]["anyOf"][0]["pattern"]
