@@ -333,3 +333,61 @@ async def test_lock_scope_is_per_document(
     # 잠금 대기가 발생하지 않았음을 보는 것이므로 lock_timeout보다 짧으면 충분합니다.
     # CI 러너 지연을 고려해 여유를 둡니다.
     assert elapsed < LOCK_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_patch_times_out_and_preserves_value_when_document_row_is_locked(
+    real_connection_app: None,
+    lock_holder: AsyncSession,
+) -> None:
+    """PATCH의 공개 lock timeout 계약입니다.
+
+    잠금이 유지된 상태에서 409 CONCURRENT_UPDATE_IN_PROGRESS와 공통 error envelope를
+    반환하고 기존 confirmed_value를 변경하지 않아야 합니다.
+    """
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, document_id, job_id, fields = await _prepare_reviewed_document(client, label="patch-timeout")
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        target = next(field for field in fields if field["field_type"] == "MEDICATION_NAME")
+        # _confirm_all_fields가 저장한 값과 같은 기준으로 원래 값을 계산합니다.
+        expected_value = target["normalized_value"] or target["raw_value"]
+
+        # 확정 transaction이 잠금을 계속 보유한 상태를 재현합니다.
+        await _lock_document(lock_holder, document_id)
+
+        started = monotonic()
+        response = await client.patch(
+            f"/api/v1/extracted-fields/{target['field_id']}",
+            json={"confirmed_value": "잠금중수정시도"},
+            headers=headers,
+        )
+        elapsed = monotonic() - started
+
+        assert response.status_code == status.HTTP_409_CONFLICT, response.text
+
+        body = response.json()
+        assert body["code"] == "CONCURRENT_UPDATE_IN_PROGRESS"
+        assert body["message"] == "같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요."
+        assert body["details"] == [
+            {
+                "field": "field_id",
+                "reason": "CONCURRENT_UPDATE_IN_PROGRESS",
+                "rejected_value": None,
+            }
+        ]
+        assert body["trace_id"]
+
+        # 즉시 실패하면 잠금을 기다리지 않았다는 뜻입니다.
+        assert elapsed >= LOCK_TIMEOUT_SECONDS * 0.8
+
+        # 잠금을 해제한 뒤 기존 값이 그대로인지 확인합니다.
+        await lock_holder.rollback()
+
+        after = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert after.status_code == status.HTTP_200_OK, after.text
+
+        current = next(field for field in after.json()["data"]["fields"] if field["field_id"] == target["field_id"])
+
+    assert current["confirmed_value"] == expected_value
+    assert current["confirmation_status"] == "CONFIRMED"
