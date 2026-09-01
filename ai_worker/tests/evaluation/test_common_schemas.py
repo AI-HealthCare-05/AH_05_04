@@ -90,6 +90,9 @@ def test_safe_integer_rejects_boolean_and_out_of_range_values(count: object) -> 
         ("ratio", "01.25"),
         ("ratio", "1.250"),
         ("ratio", "-0"),
+        ("ratio", "-00.5"),
+        ("ratio", "-01.5"),
+        ("resource_path", "C:/absolute.json"),
         ("recorded_at", "2026-09-01 03:04:05+00:00"),
         ("recorded_at", "2026-09-01T03:04:05+00:00"),
         ("recorded_at", "2026-02-30T03:04:05.000000Z"),
@@ -247,8 +250,11 @@ def test_scalar_schema_patterns_accept_and_reject_the_same_concrete_values_as_ru
     assert re.fullmatch(decimal_pattern, "-0.5")
     assert re.fullmatch(decimal_pattern, "-12")
     assert re.fullmatch(decimal_pattern, "-0") is None
+    assert re.fullmatch(decimal_pattern, "-00.5") is None
+    assert re.fullmatch(decimal_pattern, "-01.5") is None
     for invalid_path in (
         "/absolute.json",
+        "C:/absolute.json",
         "cases//item.json",
         "cases/./item.json",
         "cases/../item.json",

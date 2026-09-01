@@ -225,6 +225,50 @@ def test_exported_review_provenance_schema_encodes_team_and_external_approval_co
     )
 
 
+def _containing_approval_role_condition(roles: list[str]) -> dict[str, Any]:
+    return {
+        "if": {
+            "properties": {
+                "review_provenance": {
+                    "properties": {"team_gold_status": {"const": "APPROVED"}},
+                    "required": ["team_gold_status"],
+                }
+            },
+            "required": ["review_provenance"],
+        },
+        "then": {
+            "properties": {
+                "review_provenance": {
+                    "properties": {
+                        "approved_by": {
+                            "type": "object",
+                            "properties": {"role": {"enum": roles}},
+                            "required": ["role"],
+                        }
+                    },
+                    "required": ["approved_by"],
+                }
+            }
+        },
+    }
+
+
+def test_exported_authoring_schemas_encode_containing_approval_role_allowlists() -> None:
+    documents = schema_documents()
+    dataset_schema = cast(
+        dict[str, Any],
+        documents["authoring/rag-eval.dataset-manifest.schema.json"],
+    )
+    case_schema = cast(dict[str, Any], documents["authoring/rag-eval.case.schema.json"])
+    case_definitions = cast(dict[str, Any], case_schema["$defs"])
+
+    assert _containing_approval_role_condition(["DATASET_CUSTODIAN"]) in dataset_schema["allOf"]
+    safety_roles = ["PRODUCT_SAFETY_REVIEWER", "MEDICAL_REVIEWER"]
+    for definition_name in ("SafetyCase", "EndToEndRagCase"):
+        definition = cast(dict[str, Any], case_definitions[definition_name])
+        assert _containing_approval_role_condition(safety_roles) in definition["allOf"]
+
+
 def test_schema_normalization_removes_metadata_only_from_schema_locations() -> None:
     source: dict[str, Any] = {
         "title": "root metadata",

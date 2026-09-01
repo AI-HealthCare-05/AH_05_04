@@ -191,6 +191,74 @@ def test_review_provenance_uses_namespace_and_actor_id_identity() -> None:
         DatasetManifest.model_validate(payload)
 
 
+def test_dataset_manifest_team_approval_requires_dataset_custodian() -> None:
+    payload = _valid_dataset_manifest()
+    payload["review_provenance"]["approved_by"] = _actor(
+        "approver-1",
+        "Approver",
+        "PRODUCT_SAFETY_REVIEWER",
+    )
+
+    with pytest.raises(ValidationError):
+        DatasetManifest.model_validate(payload)
+
+    payload["review_provenance"]["approved_by"] = _actor(
+        "approver-1",
+        "Approver",
+        "DATASET_CUSTODIAN",
+    )
+    DatasetManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("task_type", "allowed_role"),
+    [
+        ("SAFETY", "PRODUCT_SAFETY_REVIEWER"),
+        ("END_TO_END_RAG", "MEDICAL_REVIEWER"),
+    ],
+)
+def test_safety_gold_team_approval_requires_safety_or_medical_reviewer(
+    valid_retrieval_case: dict[str, Any],
+    task_type: str,
+    allowed_role: str,
+) -> None:
+    payload = deepcopy(valid_retrieval_case)
+    payload["task_type"] = task_type
+    payload["review_provenance"]["approved_by"] = _actor(
+        "approver-1",
+        "Approver",
+        "DATASET_CUSTODIAN",
+    )
+    if task_type == "SAFETY":
+        payload["expected"] = {
+            "gold_evidence_ids": None,
+            "gold_claims": None,
+            "gold_citation_evidence_ids": None,
+            "gold_rule_ids": ["rule-001"],
+            "expected_scope": "scope-001",
+            "expected_safety_disposition": "REJECT",
+        }
+    else:
+        payload["expected"] = {
+            "gold_evidence_ids": ["ev-001"],
+            "gold_claims": ["claim-001"],
+            "gold_citation_evidence_ids": ["ev-001"],
+            "gold_rule_ids": ["rule-001"],
+            "expected_scope": "scope-001",
+            "expected_safety_disposition": "REJECT",
+        }
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER.validate_python(payload)
+
+    payload["review_provenance"]["approved_by"] = _actor(
+        "approver-1",
+        "Approver",
+        allowed_role,
+    )
+    EVALUATION_CASE_ADAPTER.validate_python(payload)
+
+
 def test_evidence_mapping_rejects_unknown_evidence_type() -> None:
     payload: dict[str, Any] = {
         "schema_version": "1.0.0",

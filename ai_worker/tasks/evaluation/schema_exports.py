@@ -282,6 +282,59 @@ def _add_review_provenance_conditions(value: JsonValue) -> None:
         _add_review_provenance_conditions(item)
 
 
+def _containing_approval_role_condition(roles: list[str]) -> dict[str, JsonValue]:
+    role_values: list[JsonValue] = [role for role in roles]
+    return {
+        "if": {
+            "properties": {
+                "review_provenance": {
+                    "properties": {"team_gold_status": {"const": "APPROVED"}},
+                    "required": ["team_gold_status"],
+                }
+            },
+            "required": ["review_provenance"],
+        },
+        "then": {
+            "properties": {
+                "review_provenance": {
+                    "properties": {
+                        "approved_by": {
+                            "type": "object",
+                            "properties": {"role": {"enum": role_values}},
+                            "required": ["role"],
+                        }
+                    },
+                    "required": ["approved_by"],
+                }
+            }
+        },
+    }
+
+
+def _append_containing_approval_roles(schema: dict[str, JsonValue], roles: list[str]) -> None:
+    all_of = schema.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("containing authoring schema allOf must be an array")
+    all_of.append(_containing_approval_role_condition(roles))
+
+
+def _add_authoring_role_conditions(schema_id: str, document: dict[str, JsonValue]) -> None:
+    if schema_id == "rag-eval.dataset-manifest":
+        _append_containing_approval_roles(document, ["DATASET_CUSTODIAN"])
+        return
+    if schema_id != "rag-eval.case":
+        return
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        raise TypeError("case schema definitions must be an object")
+    roles = ["PRODUCT_SAFETY_REVIEWER", "MEDICAL_REVIEWER"]
+    for definition_name in ("SafetyCase", "EndToEndRagCase"):
+        definition = definitions.get(definition_name)
+        if not isinstance(definition, dict):
+            raise TypeError(f"{definition_name} schema must be an object")
+        _append_containing_approval_roles(definition, roles)
+
+
 def _schema_document(schema_id: str, model: SchemaSource) -> dict[str, JsonValue]:
     document = _model_schema(model)
     document["$schema"] = _DRAFT_2020_12
@@ -293,6 +346,7 @@ def _schema_document(schema_id: str, model: SchemaSource) -> dict[str, JsonValue
         document["additionalProperties"] = False
     _add_execution_decision_conditions(document)
     _add_review_provenance_conditions(document)
+    _add_authoring_role_conditions(schema_id, document)
     if schema_id == "rag-eval.run":
         _add_run_conditions(document)
     if schema_id == "rag-eval.validation-receipt":

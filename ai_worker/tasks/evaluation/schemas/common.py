@@ -31,12 +31,16 @@ MAX_SAFE_INTEGER = (2**53) - 1
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_DECIMAL_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*|-[1-9][0-9]*|(?:0|[1-9][0-9]*|-[0-9]+)\.[0-9]*[1-9])$")
+_DECIMAL_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*|-[1-9][0-9]*|(?:0|[1-9][0-9]*|-(?:0|[1-9][0-9]*))\.[0-9]*[1-9])$")
 _TIMESTAMP_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$")
 _SEMANTIC_VERSION_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
 _STABLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _RESOURCE_SEGMENT_SCHEMA_PATTERN = r"(?:[^./\\\x00][^/\\\x00]*|\.[^./\\\x00][^/\\\x00]*|\.\.[^/\\\x00]+)"
-_RESOURCE_PATH_SCHEMA_PATTERN = rf"^{_RESOURCE_SEGMENT_SCHEMA_PATTERN}(?:/{_RESOURCE_SEGMENT_SCHEMA_PATTERN})*$"
+_RESOURCE_FIRST_SEGMENT_SCHEMA_PATTERN = (
+    r"(?:[A-Za-z](?:[^:/\\\x00][^/\\\x00]*)?|[^A-Za-z./\\\x00][^/\\\x00]*|"
+    r"\.[^./\\\x00][^/\\\x00]*|\.\.[^/\\\x00]+)"
+)
+_RESOURCE_PATH_SCHEMA_PATTERN = rf"^{_RESOURCE_FIRST_SEGMENT_SCHEMA_PATTERN}(?:/{_RESOURCE_SEGMENT_SCHEMA_PATTERN})*$"
 _SAFE_LOCATION_SEGMENT = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 
 

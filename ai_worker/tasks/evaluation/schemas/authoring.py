@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints, TypeAdapter, model_validator
 
 from ai_worker.tasks.evaluation.schemas.common import (
+    ActorRole,
     ContentClassification,
     NonEmptyString,
     Partition,
@@ -17,6 +18,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     StableId,
     StrictContractModel,
     TaskType,
+    TeamGoldStatus,
     validate_schema_value,
 )
 
@@ -33,6 +35,16 @@ def _validate_git_sha(value: str) -> str:
     if _GIT_SHA_PATTERN.fullmatch(value) is None:
         raise ValueError("must be a lowercase Git commit SHA")
     return value
+
+
+def _require_team_approval_role(
+    provenance: ReviewProvenance,
+    allowed_roles: frozenset[ActorRole],
+) -> None:
+    if provenance.team_gold_status is not TeamGoldStatus.APPROVED:
+        return
+    if provenance.approved_by is None or provenance.approved_by.role not in allowed_roles:
+        raise ValueError("team gold approval actor role is not permitted for this schema")
 
 
 GitCommitSha = Annotated[
@@ -162,10 +174,26 @@ class SafetyCase(_CaseBase):
     task_type: Literal[TaskType.SAFETY]
     expected: SafetyExpected
 
+    @model_validator(mode="after")
+    def require_safety_approval_role(self) -> SafetyCase:
+        _require_team_approval_role(
+            self.review_provenance,
+            frozenset({ActorRole.PRODUCT_SAFETY_REVIEWER, ActorRole.MEDICAL_REVIEWER}),
+        )
+        return self
+
 
 class EndToEndRagCase(_CaseBase):
     task_type: Literal[TaskType.END_TO_END_RAG]
     expected: EndToEndRagExpected
+
+    @model_validator(mode="after")
+    def require_safety_approval_role(self) -> EndToEndRagCase:
+        _require_team_approval_role(
+            self.review_provenance,
+            frozenset({ActorRole.PRODUCT_SAFETY_REVIEWER, ActorRole.MEDICAL_REVIEWER}),
+        )
+        return self
 
 
 EvaluationCase = Annotated[
@@ -206,6 +234,10 @@ class DatasetManifest(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_source_and_privacy_provenance(self) -> DatasetManifest:
+        _require_team_approval_role(
+            self.review_provenance,
+            frozenset({ActorRole.DATASET_CUSTODIAN}),
+        )
         if (self.fixture_git_commit_sha is None) == (self.protected_artifact_receipt_ref is None):
             raise ValueError("exactly one dataset source provenance is required")
         if (
