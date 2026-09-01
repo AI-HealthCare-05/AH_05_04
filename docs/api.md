@@ -322,6 +322,7 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 | `422` | `VALIDATION_FAILED` | 필수 필드에 `null` 또는 유효하지 않은 값을 전달했습니다. |
 
 PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `409`는 의미가 다르므로 클라이언트는 `code`로 분기합니다.
+전체 공개 오류 코드의 재시도 가능 여부는 [공통 오류 응답 계약](./contracts/current/backend-error-response.md)의 「재시도 가능 여부」 절을 따릅니다.
 
 - `PRESCRIPTION_ALREADY_CONFIRMED`: 이미 확정된 terminal 상태입니다. 편집을 종료하고 비편집 확정 화면으로 전환합니다.
 - `CONCURRENT_UPDATE_IN_PROGRESS`: 잠금 경합에 의한 일시적 충돌입니다. 재시도하면 성공할 수 있으므로 편집 상태를 유지하고 확정 화면으로 전환하지 않습니다.
