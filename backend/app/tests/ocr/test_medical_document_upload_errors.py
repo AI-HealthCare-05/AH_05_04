@@ -1,11 +1,13 @@
 from io import BytesIO
 from types import SimpleNamespace
 from typing import cast
+from uuid import uuid4
 
 import pytest
 from fastapi import UploadFile
 
 from app.core.errors import ApiError
+from app.models.medical_documents import MedicalDocument
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.services.medical_documents import MAX_DOCUMENT_SIZE_BYTES, MedicalDocumentService
 
@@ -94,6 +96,14 @@ def test_validate_file_accepts_jpg(service: MedicalDocumentService) -> None:
     assert extension == ".jpg"
 
 
+def test_validate_file_accepts_jpeg(service: MedicalDocumentService) -> None:
+    file = _file(filename="prescription.jpeg", content_type="image/jpeg")
+
+    extension = service._validate_file(file=file, content=b"\xff\xd8\xff fake-jpeg")
+
+    assert extension == ".jpeg"
+
+
 def test_validate_file_accepts_png(service: MedicalDocumentService) -> None:
     file = _file(filename="prescription.png", content_type="image/png")
 
@@ -103,11 +113,11 @@ def test_validate_file_accepts_png(service: MedicalDocumentService) -> None:
 
 
 def test_validate_file_accepts_uppercase_extension(service: MedicalDocumentService) -> None:
-    file = _file(filename="PRESCRIPTION.JPG", content_type="image/jpeg")
+    file = _file(filename="PRESCRIPTION.JPEG", content_type="image/jpeg")
 
     extension = service._validate_file(file=file, content=b"\xff\xd8\xff fake-jpeg")
 
-    assert extension == ".jpg"
+    assert extension == ".jpeg"
 
 
 def test_validate_file_accepts_file_at_exact_size_limit(service: MedicalDocumentService) -> None:
@@ -129,3 +139,23 @@ def test_validate_file_rejects_filename_without_extension(service: MedicalDocume
     error = exc_info.value
     assert error.code == "UPLOAD_FILE_INVALID_TYPE"
     assert error.status_code == 400
+
+
+def test_safe_download_filename_does_not_reuse_original_filename(service: MedicalDocumentService) -> None:
+    document_id = uuid4()
+    document = MedicalDocument(
+        id=document_id,
+        uploaded_by=uuid4(),
+        profile_id=uuid4(),
+        original_file_name="patient-hypertension-medication.pdf",
+        object_key=f"{document_id}.pdf",
+        file_mime_type="application/pdf",
+        file_size_bytes=100,
+    )
+
+    filename = service._safe_download_filename(document=document)
+
+    assert filename == f"medical-document-{document_id}.pdf"
+    assert "patient" not in filename
+    assert "hypertension" not in filename
+    assert "medication" not in filename

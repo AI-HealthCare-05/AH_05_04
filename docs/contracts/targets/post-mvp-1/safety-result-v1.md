@@ -11,7 +11,7 @@
 
 안전 결과는 모델의 자연어만 저장하지 않는다. 입력 처방 버전, 구조화 상태, 검증 결과, 공개 결정, 근거 인용을 함께 저장한다. 근거가 없거나 검증이 실패하면 정상 답변으로 공개하지 않는 fail-closed 규칙을 적용한다.
 
-Track C 직접 API와 Track F Job·결과·Candidate·Identification은 인증 사용자가 직접 소유한 resource만 허용한다. `SELF` profile 소유권 이관 Decision이 승인될 때까지 Safety·Barrier는 Check-in에서 처방, Track F는 Job·Prescription Version·Prescription Medication으로 이어지는 parent chain의 기존 `user_id`로 같은 소유자인지 확인한다. Decision 전에 `profile_id`로 읽기·쓰기를 전환하지 않는다. 존재하지 않거나 소유하지 않은 식별자는 모두 `404`다.
+Track C 직접 API와 Track F Job·결과·Candidate·Identification은 인증 사용자가 직접 소유한 resource만 허용한다. #117 병합 이후 Safety·Barrier는 Check-in에서 처방, Track F는 Job·Prescription Version·Prescription Medication으로 이어지는 parent chain의 SELF `profile_id` 또는 부모 chain의 `profile_id`로 같은 소유자인지 확인한다. 존재하지 않거나 소유하지 않은 식별자는 모두 `404`다.
 
 ## Track F 상태 축
 

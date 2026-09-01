@@ -14,6 +14,7 @@ from app.models.chat import ChatMessage, ChatSession
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
+from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.tests.conftest import test_engine
 
@@ -64,8 +65,12 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             )
             session.add(user)
             await session.flush()
+            profile = Profile(user_id=user.id, profile_type=ProfileType.SELF, display_name=user.name)
+            session.add(profile)
+            await session.flush()
             document = MedicalDocument(
-                user_id=user.id,
+                uploaded_by=user.id,
+                profile_id=profile.id,
                 original_file_name=f"synthetic-{token}.jpg",
                 object_key=f"synthetic/chat-concurrency/{token}.jpg",
                 file_mime_type="image/jpeg",
@@ -79,6 +84,7 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             prescription = Prescription(
                 document_id=document.id,
                 source_ocr_job_id=ocr_job.id,
+                profile_id=profile.id,
                 prescribed_date=date(2026, 8, 21),
                 confirmed_at=datetime.now(UTC),
             )
@@ -94,8 +100,8 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
                 duration_days=7,
                 display_order=1,
             )
-            first_session = ChatSession(prescription_id=prescription.id)
-            second_session = ChatSession(prescription_id=prescription.id)
+            first_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
+            second_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
             session.add_all([medication, first_session, second_session])
             await session.flush()
             fixture = CommittedChatFixture(
@@ -118,6 +124,7 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
                 await cleanup.execute(delete(Prescription).where(Prescription.id == fixture.prescription_id))
                 await cleanup.execute(delete(OcrJob).where(OcrJob.id == fixture.ocr_job_id))
                 await cleanup.execute(delete(MedicalDocument).where(MedicalDocument.id == fixture.document_id))
+                await cleanup.execute(delete(Profile).where(Profile.user_id == fixture.user.id))
                 await cleanup.execute(delete(User).where(User.id == fixture.user.id))
                 await cleanup.commit()
 
@@ -132,4 +139,5 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
                 assert await cleanup.get(Prescription, fixture.prescription_id) is None
                 assert await cleanup.get(OcrJob, fixture.ocr_job_id) is None
                 assert await cleanup.get(MedicalDocument, fixture.document_id) is None
+                assert await cleanup.scalar(select(Profile.id).where(Profile.user_id == fixture.user.id)) is None
                 assert await cleanup.get(User, fixture.user.id) is None

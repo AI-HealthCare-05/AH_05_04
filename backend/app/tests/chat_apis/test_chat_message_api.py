@@ -22,6 +22,7 @@ from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSes
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
+from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.chat_repository import ChatRepository
 from app.services.chat_ai import (
@@ -107,8 +108,13 @@ async def api_db_session() -> AsyncIterator[AsyncSession]:
 
 
 async def _add_prescription_graph(session: AsyncSession, *, user: User, token: str) -> Prescription:
+    profile = await session.scalar(
+        select(Profile).where(Profile.user_id == user.id, Profile.profile_type == ProfileType.SELF)
+    )
+    assert profile is not None
     document = MedicalDocument(
-        user_id=user.id,
+        uploaded_by=user.id,
+        profile_id=profile.id,
         original_file_name=f"synthetic-{token}.jpg",
         object_key=f"synthetic/chat-api/{token}.jpg",
         file_mime_type="image/jpeg",
@@ -122,6 +128,7 @@ async def _add_prescription_graph(session: AsyncSession, *, user: User, token: s
     prescription = Prescription(
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
+        profile_id=profile.id,
         prescribed_date=date(2026, 8, 21),
         confirmed_at=datetime.now(UTC),
     )
@@ -163,14 +170,22 @@ async def api_chat_fixture(api_db_session: AsyncSession) -> ApiChatFixture:
     )
     api_db_session.add_all([owner, outsider])
     await api_db_session.flush()
+    api_db_session.add_all(
+        [
+            Profile(user_id=owner.id, profile_type=ProfileType.SELF, display_name=owner.name),
+            Profile(user_id=outsider.id, profile_type=ProfileType.SELF, display_name=outsider.name),
+        ]
+    )
+    await api_db_session.flush()
     owner_prescription = await _add_prescription_graph(api_db_session, user=owner, token=uuid4().hex)
     foreign_prescription = await _add_prescription_graph(api_db_session, user=outsider, token=uuid4().hex)
-    active = ChatSession(prescription_id=owner_prescription.id)
+    active = ChatSession(prescription_id=owner_prescription.id, profile_id=owner_prescription.profile_id)
     closed = ChatSession(
         prescription_id=owner_prescription.id,
+        profile_id=owner_prescription.profile_id,
         session_status=ChatSessionStatus.CLOSED,
     )
-    foreign = ChatSession(prescription_id=foreign_prescription.id)
+    foreign = ChatSession(prescription_id=foreign_prescription.id, profile_id=foreign_prescription.profile_id)
     api_db_session.add_all([active, closed, foreign])
     await api_db_session.flush()
     await api_db_session.commit()

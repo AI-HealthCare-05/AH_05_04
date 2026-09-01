@@ -14,13 +14,15 @@ from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 
 MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
-ALLOWED_EXTENSIONS = {".jpg", ".png", ".pdf"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 CONTENT_TYPE_BY_EXTENSION = {
     ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".pdf": "application/pdf",
 }
+EXTENSION_BY_CONTENT_TYPE = {content_type: extension for extension, content_type in CONTENT_TYPE_BY_EXTENSION.items()}
 FILE_SIGNATURES = {
     "image/jpeg": (b"\xff\xd8\xff",),
     "image/png": (b"\x89PNG\r\n\x1a\n",),
@@ -53,7 +55,7 @@ class MedicalDocumentService:
         file: UploadFile,
         document_type: MedicalDocumentType,
     ) -> PrescriptionDocumentUploadResult:
-        # 1차 구현 원사이클: JPG/PNG/PDF 처방전 한 장 업로드만 지원합니다. OCR 실행은 별도 API에서 처리합니다.
+        # 1차 구현 원사이클: JPG/JPEG/PNG/PDF 처방전 한 장 업로드만 지원합니다. OCR 실행은 별도 API에서 처리합니다.
         if document_type != MedicalDocumentType.PRESCRIPTION:
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -98,7 +100,7 @@ class MedicalDocumentService:
             )
         return MedicalDocumentFileResult(
             file_path=os.path.join(config.STORAGE_DIR, document.object_key),
-            filename=document.original_file_name,
+            filename=self._safe_download_filename(document=document),
             media_type=document.file_mime_type,
         )
 
@@ -108,6 +110,13 @@ class MedicalDocumentService:
         with open(os.path.join(config.STORAGE_DIR, object_key), "wb") as f:
             f.write(content)
         return object_key
+
+    def _safe_download_filename(self, *, document: MedicalDocument) -> str:
+        extension = PurePath(document.object_key).suffix.lower()
+        if extension not in ALLOWED_EXTENSIONS:
+            extension = EXTENSION_BY_CONTENT_TYPE.get(document.file_mime_type, "")
+
+        return f"medical-document-{document.id}{extension}"
 
     def _validate_file(self, *, file: UploadFile, content: bytes) -> str:
         filename = file.filename or ""
@@ -139,7 +148,7 @@ class MedicalDocumentService:
             raise ApiError(
                 status_code=400,
                 code="UPLOAD_FILE_INVALID_TYPE",
-                message="지원하지 않는 파일 형식입니다. JPG, PNG, PDF 파일만 업로드할 수 있습니다.",
+                message="지원하지 않는 파일 형식입니다. JPG, JPEG, PNG, PDF 파일만 업로드할 수 있습니다.",
                 details=[ErrorDetail(field="file", reason="INVALID_TYPE", rejected_value=content_type)],
             )
 

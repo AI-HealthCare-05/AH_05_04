@@ -130,6 +130,7 @@ fi
 echo "${COLOR_BLUE}빌드하고 배포할 이미지를 선택하세요.${COLOR_NC}"
 echo "1) fastapi"
 echo "2) ai_worker"
+echo "schema migration을 실행하는 배포에서는 fastapi와 ai_worker를 모두 선택해야 합니다."
 read -r -p "선택 (복수 선택 가능, 예: 1 2): " selections
 echo ""
 
@@ -191,6 +192,11 @@ for choice in $selections; do
       ;;
   esac
 done
+
+if [[ ! " ${DEPLOY_SERVICES[*]} " =~ " fastapi " ]]; then
+  echo "${COLOR_RED}schema migration 배포는 fastapi 새 이미지를 포함해야 합니다.${COLOR_NC}"
+  exit 1
+fi
 
 echo "${COLOR_GREEN}선택한 이미지의 build와 push가 완료되었습니다.${COLOR_NC}"
 echo "${COLOR_BLUE}배포 대상 서비스: ${DEPLOY_SERVICES[*]}${COLOR_NC}"
@@ -362,6 +368,50 @@ if [ -z "${DEPLOY_SERVICES// }" ]; then
 fi
 
 read -r -a deploy_services <<<"$DEPLOY_SERVICES"
+deployment_id="$(date -u +%Y%m%dT%H%M%SZ)"
+evidence_dir="deployment-evidence/$deployment_id"
+umask 077
+mkdir -p "$evidence_dir"
+
+write_deployment_db_snapshot() {
+  local output_path="$1"
+
+  docker compose exec -T postgres \
+    sh -lc '
+      psql \
+        -v ON_ERROR_STOP=1 \
+        -q \
+        -At \
+        -F $'"'"'\t'"'"' \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
+CREATE TEMP TABLE deployment_snapshot(name text, value text);
+DO $$
+BEGIN
+  IF to_regclass('"'"'public.alembic_version'"'"') IS NULL THEN
+    INSERT INTO deployment_snapshot VALUES ('"'"'alembic_revision'"'"', NULL);
+  ELSE
+    EXECUTE '"'"'INSERT INTO deployment_snapshot SELECT '"'"''"'"'alembic_revision'"'"''"'"', version_num FROM alembic_version ORDER BY version_num LIMIT 1';
+  END IF;
+END $$;
+INSERT INTO deployment_snapshot SELECT '"'"'user'"'"', count(*)::text FROM "user";
+DO $$
+BEGIN
+  IF to_regclass('"'"'public.profile'"'"') IS NULL THEN
+    INSERT INTO deployment_snapshot VALUES ('"'"'profile'"'"', NULL);
+  ELSE
+    EXECUTE '"'"'INSERT INTO deployment_snapshot SELECT '"'"''"'"'profile'"'"''"'"', count(*)::text FROM profile';
+  END IF;
+END $$;
+INSERT INTO deployment_snapshot SELECT '"'"'medical_document'"'"', count(*)::text FROM medical_document;
+INSERT INTO deployment_snapshot SELECT '"'"'prescription'"'"', count(*)::text FROM prescription;
+INSERT INTO deployment_snapshot SELECT '"'"'guide'"'"', count(*)::text FROM guide;
+INSERT INTO deployment_snapshot SELECT '"'"'chat_session'"'"', count(*)::text FROM chat_session;
+SELECT name, value FROM deployment_snapshot ORDER BY name;
+DROP TABLE deployment_snapshot;
+SQL
+    ' >"$output_path"
+}
 
 echo "Starting PostgreSQL and Redis"
 
@@ -372,6 +422,27 @@ docker compose up \
   --wait \
   postgres \
   redis
+
+echo "Stopping application services before schema migration"
+
+# Schema migration 전에 기존 애플리케이션을 먼저 멈춰 구버전 코드가 변경 중인
+# DB schema를 읽거나 쓰는 상황을 방지합니다.
+docker compose stop \
+  -t 60 \
+  fastapi \
+  ai-worker
+
+if ! running_application_services="$(docker compose ps --services --status running)"; then
+  echo "Could not confirm application service stop state."
+  docker compose ps fastapi ai-worker || true
+  exit 1
+fi
+
+if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker)$'; then
+  echo "Application services are still running after stop request."
+  docker compose ps fastapi ai-worker
+  exit 1
+fi
 
 echo "Configuring restricted database roles"
 
@@ -385,6 +456,14 @@ docker compose exec -T postgres \
       -d "$POSTGRES_DB" \
       -f /docker-entrypoint-initdb.d/configure-app-role.sql
   '
+
+echo "Creating pre-migration backup and schema snapshot"
+
+docker compose exec -T postgres \
+  sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  >"$evidence_dir/pre-migration.dump"
+
+write_deployment_db_snapshot "$evidence_dir/pre-migration-snapshot.tsv"
 
 echo "Running Alembic migration"
 
@@ -404,6 +483,61 @@ if [ "$migration_exit_code" -ne 0 ]; then
 fi
 
 echo "Alembic migration completed successfully."
+write_deployment_db_snapshot "$evidence_dir/post-migration-snapshot.tsv"
+echo "Validating profile migration integrity"
+
+profile_validation_output="$(
+  docker compose exec -T postgres \
+    sh -lc '
+      psql \
+        -v ON_ERROR_STOP=1 \
+        -At \
+        -F $'"'"'\t'"'"' \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
+SELECT '"'"'user'"'"', count(*) FROM "user";
+SELECT '"'"'self_profile'"'"', count(*) FROM profile WHERE profile_type = '"'"'SELF'"'"';
+SELECT '"'"'medical_document_profile_null'"'"', count(*) FROM medical_document WHERE profile_id IS NULL;
+SELECT '"'"'prescription_profile_null'"'"', count(*) FROM prescription WHERE profile_id IS NULL;
+SELECT '"'"'guide_profile_null'"'"', count(*) FROM guide WHERE profile_id IS NULL;
+SELECT '"'"'chat_session_profile_null'"'"', count(*) FROM chat_session WHERE profile_id IS NULL;
+SELECT '"'"'prescription_profile_mismatch'"'"', count(*)
+FROM prescription
+JOIN medical_document ON medical_document.id = prescription.document_id
+WHERE prescription.profile_id <> medical_document.profile_id;
+SELECT '"'"'guide_profile_mismatch'"'"', count(*)
+FROM guide
+JOIN prescription ON prescription.id = guide.prescription_id
+WHERE guide.profile_id <> prescription.profile_id;
+SELECT '"'"'chat_session_profile_mismatch'"'"', count(*)
+FROM chat_session
+JOIN prescription ON prescription.id = chat_session.prescription_id
+WHERE chat_session.profile_id <> prescription.profile_id;
+SQL
+    '
+)"
+
+printf '%s\n' "$profile_validation_output" >"$evidence_dir/post-migration-profile-validation.tsv"
+
+user_count="$(printf '%s\n' "$profile_validation_output" | awk -F '\t' '$1 == "user" {print $2}')"
+self_profile_count="$(printf '%s\n' "$profile_validation_output" | awk -F '\t' '$1 == "self_profile" {print $2}')"
+
+if [ "$user_count" != "$self_profile_count" ]; then
+  echo "Profile migration validation failed: user count and SELF profile count differ."
+  cat "$evidence_dir/post-migration-profile-validation.tsv"
+  exit 1
+fi
+
+if ! printf '%s\n' "$profile_validation_output" |
+  awk -F '\t' '
+    $1 != "user" && $1 != "self_profile" && $2 != 0 { failed = 1 }
+    END { exit failed }
+  '; then
+  echo "Profile migration validation failed: null or mismatch rows remain."
+  cat "$evidence_dir/post-migration-profile-validation.tsv"
+  exit 1
+fi
+
 echo "Deploying services: ${deploy_services[*]}"
 
 # --no-deps를 사용하지 않습니다.

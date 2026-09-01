@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import URL, text
@@ -15,18 +16,28 @@ from sqlalchemy.pool import NullPool
 from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PRE_PROFILE_REVISION = "77585c0c9792"
+PROFILE_EXPAND_REVISION = "117a8c9d4e21"
 
 
 def create_test_database_url() -> URL:
-    """CI 또는 로컬 PostgreSQL test DB의 접속 주소를 생성합니다."""
+    """Alembic이 migration을 적용한 PostgreSQL test DB의 접속 주소를 생성합니다."""
     return URL.create(
         drivername="postgresql+asyncpg",
         username=config.DB_USER,
         password=config.DB_PASSWORD,
         host="127.0.0.1",
-        port=config.DB_EXPOSE_PORT,
-        database="test",
+        port=config.DB_PORT,
+        database=config.DB_NAME,
     )
+
+
+def create_alembic_config() -> Config:
+    return Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
+
+
+def create_alembic_database_url() -> str:
+    return config.database_url
 
 
 async def insert_ocr_parent_chain(
@@ -34,6 +45,7 @@ async def insert_ocr_parent_chain(
 ) -> tuple[str, str, str]:
     """extracted_field 제약조건 테스트에 필요한 최소 부모 데이터를 생성합니다."""
     user_id = str(uuid4())
+    profile_id = str(uuid4())
     document_id = str(uuid4())
     ocr_job_id = str(uuid4())
 
@@ -69,9 +81,33 @@ async def insert_ocr_parent_chain(
     await connection.execute(
         text(
             """
-            INSERT INTO medical_document (
+            INSERT INTO profile (
                 id,
                 user_id,
+                profile_type,
+                display_name
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'SELF',
+                'constraint-test'
+            )
+            """
+        ),
+        {
+            "id": profile_id,
+            "user_id": user_id,
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO medical_document (
+                id,
+                uploaded_by,
+                profile_id,
                 document_type,
                 original_file_name,
                 object_key,
@@ -81,7 +117,8 @@ async def insert_ocr_parent_chain(
             )
             VALUES (
                 :id,
-                :user_id,
+                :uploaded_by,
+                :profile_id,
                 'PRESCRIPTION',
                 'constraint-test.png',
                 :object_key,
@@ -93,7 +130,8 @@ async def insert_ocr_parent_chain(
         ),
         {
             "id": document_id,
-            "user_id": user_id,
+            "uploaded_by": user_id,
+            "profile_id": profile_id,
             "object_key": f"migration-test/{document_id}.png",
         },
     )
@@ -120,6 +158,475 @@ async def insert_ocr_parent_chain(
     )
 
     return user_id, document_id, ocr_job_id
+
+
+async def _insert_legacy_profile_graph_data() -> tuple[str, str, str, str, str, str]:
+    user_id = str(uuid4())
+    document_id = str(uuid4())
+    ocr_job_id = str(uuid4())
+    prescription_id = str(uuid4())
+    guide_id = str(uuid4())
+    chat_session_id = str(uuid4())
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO "user" (
+                        id,
+                        email,
+                        hashed_password,
+                        name,
+                        is_active,
+                        is_admin
+                    )
+                    VALUES (
+                        :id,
+                        :email,
+                        :hashed_password,
+                        :name,
+                        true,
+                        false
+                    )
+                    """
+                ),
+                {
+                    "id": user_id,
+                    "email": f"p{uuid4().hex[:12]}@t.local",
+                    "hashed_password": "migration-test-password-hash",
+                    "name": "profile-roundtrip",
+                },
+            )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO medical_document (
+                        id,
+                        user_id,
+                        document_type,
+                        original_file_name,
+                        object_key,
+                        file_mime_type,
+                        file_size_bytes,
+                        upload_status
+                    )
+                    VALUES (
+                        :id,
+                        :user_id,
+                        'PRESCRIPTION',
+                        'profile-roundtrip.png',
+                        :object_key,
+                        'image/png',
+                        1,
+                        'UPLOADED'
+                    )
+                    """
+                ),
+                {
+                    "id": document_id,
+                    "user_id": user_id,
+                    "object_key": f"profile-roundtrip/{document_id}.png",
+                },
+            )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO ocr_job (
+                        id,
+                        document_id,
+                        ocr_status
+                    )
+                    VALUES (
+                        :id,
+                        :document_id,
+                        'PENDING'
+                    )
+                    """
+                ),
+                {
+                    "id": ocr_job_id,
+                    "document_id": document_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO prescription (
+                        id,
+                        document_id,
+                        source_ocr_job_id,
+                        prescribed_date,
+                        prescription_status,
+                        confirmed_at
+                    )
+                    VALUES (
+                        :id,
+                        :document_id,
+                        :source_ocr_job_id,
+                        DATE '2026-08-31',
+                        'CONFIRMED',
+                        now()
+                    )
+                    """
+                ),
+                {
+                    "id": prescription_id,
+                    "document_id": document_id,
+                    "source_ocr_job_id": ocr_job_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO guide (
+                        id,
+                        prescription_id,
+                        generation_status
+                    )
+                    VALUES (
+                        :id,
+                        :prescription_id,
+                        'PENDING'
+                    )
+                    """
+                ),
+                {
+                    "id": guide_id,
+                    "prescription_id": prescription_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO chat_session (
+                        id,
+                        prescription_id,
+                        session_status
+                    )
+                    VALUES (
+                        :id,
+                        :prescription_id,
+                        'ACTIVE'
+                    )
+                    """
+                ),
+                {
+                    "id": chat_session_id,
+                    "prescription_id": prescription_id,
+                },
+            )
+    finally:
+        await engine.dispose()
+
+    return user_id, document_id, ocr_job_id, prescription_id, guide_id, chat_session_id
+
+
+async def _fetch_head_ocr_owner_chain(ocr_job_id: str) -> dict[str, object]:
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT
+                        ocr_job.id AS ocr_job_id,
+                        medical_document.id AS document_id,
+                        medical_document.uploaded_by,
+                        medical_document.profile_id,
+                        profile.user_id AS profile_user_id
+                    FROM ocr_job
+                    JOIN medical_document
+                      ON medical_document.id = ocr_job.document_id
+                    JOIN profile
+                      ON profile.id = medical_document.profile_id
+                    WHERE ocr_job.id = :ocr_job_id
+                    """
+                ),
+                {"ocr_job_id": ocr_job_id},
+            )
+            return dict(result.mappings().one())
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_head_profile_graph(
+    *,
+    ocr_job_id: str,
+    prescription_id: str,
+    guide_id: str,
+    chat_session_id: str,
+) -> dict[str, object]:
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT
+                        ocr_job.id AS ocr_job_id,
+                        medical_document.id AS document_id,
+                        medical_document.uploaded_by,
+                        medical_document.profile_id AS document_profile_id,
+                        prescription.id AS prescription_id,
+                        prescription.profile_id AS prescription_profile_id,
+                        guide.id AS guide_id,
+                        guide.profile_id AS guide_profile_id,
+                        chat_session.id AS chat_session_id,
+                        chat_session.profile_id AS chat_session_profile_id,
+                        profile.user_id AS profile_user_id
+                    FROM ocr_job
+                    JOIN medical_document
+                      ON medical_document.id = ocr_job.document_id
+                    JOIN profile
+                      ON profile.id = medical_document.profile_id
+                    JOIN prescription
+                      ON prescription.document_id = medical_document.id
+                    JOIN guide
+                      ON guide.prescription_id = prescription.id
+                    JOIN chat_session
+                      ON chat_session.prescription_id = prescription.id
+                    WHERE ocr_job.id = :ocr_job_id
+                      AND prescription.id = :prescription_id
+                      AND guide.id = :guide_id
+                      AND chat_session.id = :chat_session_id
+                    """
+                ),
+                {
+                    "ocr_job_id": ocr_job_id,
+                    "prescription_id": prescription_id,
+                    "guide_id": guide_id,
+                    "chat_session_id": chat_session_id,
+                },
+            )
+            return dict(result.mappings().one())
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_expand_revision_ocr_owner_chain(ocr_job_id: str) -> dict[str, object]:
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT
+                        ocr_job.id AS ocr_job_id,
+                        medical_document.id AS document_id,
+                        medical_document.user_id,
+                        medical_document.profile_id,
+                        profile.user_id AS profile_user_id
+                    FROM ocr_job
+                    JOIN medical_document
+                      ON medical_document.id = ocr_job.document_id
+                    JOIN profile
+                      ON profile.id = medical_document.profile_id
+                    WHERE ocr_job.id = :ocr_job_id
+                    """
+                ),
+                {"ocr_job_id": ocr_job_id},
+            )
+            return dict(result.mappings().one())
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_medical_document_columns_and_index() -> tuple[set[str], bool]:
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            columns_result = await connection.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'medical_document'
+                      AND column_name IN ('user_id', 'uploaded_by')
+                    """
+                )
+            )
+            index_result = await connection.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'medical_document'
+                          AND indexname = 'idx_document_user_uploaded'
+                    )
+                    """
+                )
+            )
+            return set(columns_result.scalars().all()), bool(index_result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_profile_integrity_gap_counts() -> dict[str, int]:
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT 'medical_document_missing' AS name, count(*) AS count
+                    FROM medical_document
+                    WHERE profile_id IS NULL
+                    UNION ALL
+                    SELECT 'medical_document_orphan' AS name, count(*) AS count
+                    FROM medical_document
+                    LEFT JOIN profile ON profile.id = medical_document.profile_id
+                    WHERE profile.id IS NULL
+                    UNION ALL
+                    SELECT 'prescription_missing' AS name, count(*) AS count
+                    FROM prescription
+                    WHERE profile_id IS NULL
+                    UNION ALL
+                    SELECT 'prescription_orphan' AS name, count(*) AS count
+                    FROM prescription
+                    LEFT JOIN profile ON profile.id = prescription.profile_id
+                    WHERE profile.id IS NULL
+                    UNION ALL
+                    SELECT 'guide_missing' AS name, count(*) AS count
+                    FROM guide
+                    WHERE profile_id IS NULL
+                    UNION ALL
+                    SELECT 'guide_orphan' AS name, count(*) AS count
+                    FROM guide
+                    LEFT JOIN profile ON profile.id = guide.profile_id
+                    WHERE profile.id IS NULL
+                    UNION ALL
+                    SELECT 'chat_session_missing' AS name, count(*) AS count
+                    FROM chat_session
+                    WHERE profile_id IS NULL
+                    UNION ALL
+                    SELECT 'chat_session_orphan' AS name, count(*) AS count
+                    FROM chat_session
+                    LEFT JOIN profile ON profile.id = chat_session.profile_id
+                    WHERE profile.id IS NULL
+                    """
+                )
+            )
+            return {str(row._mapping["name"]): int(row._mapping["count"]) for row in result}
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup_profile_roundtrip_data(
+    *,
+    user_id: str,
+    document_id: str,
+    ocr_job_id: str,
+    prescription_id: str,
+    guide_id: str,
+    chat_session_id: str,
+) -> None:
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("DELETE FROM chat_session WHERE id = :id"), {"id": chat_session_id})
+            await connection.execute(text("DELETE FROM guide WHERE id = :id"), {"id": guide_id})
+            await connection.execute(text("DELETE FROM prescription WHERE id = :id"), {"id": prescription_id})
+            await connection.execute(text("DELETE FROM ocr_job WHERE id = :id"), {"id": ocr_job_id})
+            await connection.execute(text("DELETE FROM medical_document WHERE id = :id"), {"id": document_id})
+            await connection.execute(text("DELETE FROM profile WHERE user_id = :user_id"), {"user_id": user_id})
+            await connection.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": user_id})
+    finally:
+        await engine.dispose()
+
+
+def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() -> None:
+    """기존 의료문서->OCR->처방->가이드/채팅 데이터가 PROFILE 전환 후 원 소유자에 연결되는지 검증합니다."""
+    alembic_config = create_alembic_config()
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+    prescription_id = ""
+    guide_id = ""
+    chat_session_id = ""
+
+    try:
+        command.downgrade(alembic_config, PRE_PROFILE_REVISION)
+        user_id, document_id, ocr_job_id, prescription_id, guide_id, chat_session_id = asyncio.run(
+            _insert_legacy_profile_graph_data()
+        )
+
+        command.upgrade(alembic_config, "head")
+        head_chain = asyncio.run(
+            _fetch_head_profile_graph(
+                ocr_job_id=ocr_job_id,
+                prescription_id=prescription_id,
+                guide_id=guide_id,
+                chat_session_id=chat_session_id,
+            )
+        )
+        gap_counts = asyncio.run(_fetch_profile_integrity_gap_counts())
+
+        assert head_chain["ocr_job_id"] == ocr_job_id
+        assert head_chain["document_id"] == document_id
+        assert head_chain["uploaded_by"] == user_id
+        assert head_chain["prescription_id"] == prescription_id
+        assert head_chain["guide_id"] == guide_id
+        assert head_chain["chat_session_id"] == chat_session_id
+        assert head_chain["document_profile_id"] is not None
+        assert head_chain["prescription_profile_id"] == head_chain["document_profile_id"]
+        assert head_chain["guide_profile_id"] == head_chain["document_profile_id"]
+        assert head_chain["chat_session_profile_id"] == head_chain["document_profile_id"]
+        assert head_chain["profile_user_id"] == user_id
+        assert set(gap_counts.values()) == {0}
+
+        command.downgrade(alembic_config, PROFILE_EXPAND_REVISION)
+        columns, has_user_index = asyncio.run(_fetch_medical_document_columns_and_index())
+        assert columns == {"user_id"}
+        assert has_user_index is True
+
+        expand_chain = asyncio.run(_fetch_expand_revision_ocr_owner_chain(ocr_job_id))
+        assert expand_chain["ocr_job_id"] == ocr_job_id
+        assert expand_chain["document_id"] == document_id
+        assert expand_chain["user_id"] == user_id
+        assert expand_chain["profile_id"] is not None
+        assert expand_chain["profile_user_id"] == user_id
+
+        command.upgrade(alembic_config, "head")
+        final_chain = asyncio.run(
+            _fetch_head_profile_graph(
+                ocr_job_id=ocr_job_id,
+                prescription_id=prescription_id,
+                guide_id=guide_id,
+                chat_session_id=chat_session_id,
+            )
+        )
+        final_gap_counts = asyncio.run(_fetch_profile_integrity_gap_counts())
+
+        assert final_chain["ocr_job_id"] == ocr_job_id
+        assert final_chain["document_id"] == document_id
+        assert final_chain["uploaded_by"] == user_id
+        assert final_chain["prescription_id"] == prescription_id
+        assert final_chain["guide_id"] == guide_id
+        assert final_chain["chat_session_id"] == chat_session_id
+        assert final_chain["document_profile_id"] == head_chain["document_profile_id"]
+        assert final_chain["prescription_profile_id"] == head_chain["document_profile_id"]
+        assert final_chain["guide_profile_id"] == head_chain["document_profile_id"]
+        assert final_chain["chat_session_profile_id"] == head_chain["document_profile_id"]
+        assert final_chain["profile_user_id"] == user_id
+        assert set(final_gap_counts.values()) == {0}
+    finally:
+        command.upgrade(alembic_config, "head")
+        if user_id and document_id and ocr_job_id and prescription_id and guide_id and chat_session_id:
+            asyncio.run(
+                _cleanup_profile_roundtrip_data(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                    prescription_id=prescription_id,
+                    guide_id=guide_id,
+                    chat_session_id=chat_session_id,
+                )
+            )
 
 
 @pytest_asyncio.fixture(scope="session")

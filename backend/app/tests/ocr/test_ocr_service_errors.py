@@ -234,7 +234,7 @@ async def test_get_ocr_job_result_exposes_safe_error_message() -> None:
 
     document_repository_mock = AsyncMock(spec=MedicalDocumentRepository)
     ocr_repository_mock = AsyncMock(spec=OcrRepository)
-    ocr_repository_mock.get_job_with_document.return_value = job
+    ocr_repository_mock.get_job_owned.return_value = job
 
     service = OcrService(
         document_repository=cast(MedicalDocumentRepository, document_repository_mock),
