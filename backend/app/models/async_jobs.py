@@ -1,0 +1,433 @@
+from datetime import datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
+
+from app.core.db.databases import Base
+from app.core.db.types import UUIDChar
+
+if TYPE_CHECKING:
+    from app.models.users import User
+
+_FAILURE_CODE_VALUES = (
+    "TIMEOUT",
+    "DEPENDENCY_UNAVAILABLE",
+    "INVALID_INPUT",
+    "UNSUPPORTED_SCHEMA",
+    "SAFETY_VALIDATION_FAILED",
+    "RETRY_EXHAUSTED",
+    "INTERNAL_ERROR",
+)
+_FAILURE_CODE_LIST_SQL = ", ".join(f"'{code}'" for code in _FAILURE_CODE_VALUES)
+
+
+class AiJobType(StrEnum):
+    OCR = "OCR"
+    GUIDE = "GUIDE"
+    CHAT = "CHAT"
+
+
+class AiJobStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    RETRY_WAIT = "RETRY_WAIT"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    STALE = "STALE"
+
+
+class AiJobAttemptStatus(StrEnum):
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    BLOCKED = "BLOCKED"
+    FAILED = "FAILED"
+
+
+class OutboxEventKind(StrEnum):
+    JOB_EXECUTE = "JOB_EXECUTE"
+
+
+class OutboxEventStatus(StrEnum):
+    PENDING = "PENDING"
+    CLAIMED = "CLAIMED"
+    PUBLISHED = "PUBLISHED"
+    CANCELLED = "CANCELLED"
+
+
+class IdempotencyRecordType(StrEnum):
+    ASYNC_JOB = "ASYNC_JOB"
+    SYNC_MUTATION = "SYNC_MUTATION"
+
+
+class DlqOutboxEventKind(StrEnum):
+    QUARANTINE_RECORDED = "QUARANTINE_RECORDED"
+
+
+class DlqOutboxEventStatus(StrEnum):
+    PENDING = "PENDING"
+    CLAIMED = "CLAIMED"
+    PUBLISHED = "PUBLISHED"
+
+
+class AiJob(Base):
+    __tablename__ = "ai_job"
+    __table_args__ = (
+        Index("idx_ai_job_user_status_updated", "user_id", "status", "updated_at", "id"),
+        Index("idx_ai_job_status_available", "status", "available_at", "id"),
+        Index("idx_ai_job_expected_event", "expected_event_id"),
+        CheckConstraint("job_type IN ('OCR', 'GUIDE', 'CHAT')", name="chk_ai_job_type"),
+        CheckConstraint(
+            "status IN ('PENDING', 'PROCESSING', 'RETRY_WAIT', 'COMPLETED', 'FAILED', 'STALE')",
+            name="chk_ai_job_status",
+        ),
+        CheckConstraint("attempt_count >= 0", name="chk_ai_job_attempt_count"),
+        CheckConstraint("max_attempts > 0", name="chk_ai_job_max_attempts"),
+        CheckConstraint("attempt_count <= max_attempts", name="chk_ai_job_attempt_limit"),
+        CheckConstraint("status <> 'FAILED' OR failure_code IS NOT NULL", name="chk_ai_job_failed_code"),
+        CheckConstraint(
+            f"failure_code IS NULL OR failure_code IN ({_FAILURE_CODE_LIST_SQL})",
+            name="chk_ai_job_failure_code_values",
+        ),
+        CheckConstraint(
+            "status NOT IN ('COMPLETED', 'FAILED', 'STALE') OR completed_at IS NOT NULL",
+            name="chk_ai_job_terminal_completed_at",
+        ),
+        CheckConstraint(
+            "status <> 'PROCESSING' OR (lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)",
+            name="chk_ai_job_processing_lease",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("user.id"), nullable=False)
+    job_type: Mapped[AiJobType] = mapped_column(Enum(AiJobType, native_enum=False, length=20), nullable=False)
+    status: Mapped[AiJobStatus] = mapped_column(
+        Enum(AiJobStatus, native_enum=False, length=20),
+        nullable=False,
+        default=AiJobStatus.PENDING,
+    )
+    prescription_version_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    # ai_job -> outbox_event -> ai_job은 순환 참조라 use_alter로 걸어야
+    # Base.metadata.create_all()/drop_all()이 두 테이블 순서를 정할 수 있습니다.
+    # Outbox는 30일, Job은 90일 보존이라 Outbox가 먼저 삭제될 수 있으므로 ON DELETE SET NULL로
+    # 둡니다 — 기본값(NO ACTION)이면 Outbox 정리 배치가 FK 위반으로 실패합니다.
+    expected_event_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(),
+        ForeignKey("outbox_event.event_id", use_alter=True, name="fk_ai_job_expected_event", ondelete="SET NULL"),
+        nullable=True,
+    )
+    last_consumed_event_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(),
+        ForeignKey("outbox_event.event_id", use_alter=True, name="fk_ai_job_last_consumed_event", ondelete="SET NULL"),
+        nullable=True,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    lease_token: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped["User"] = relationship()
+    outbox_events: Mapped[list["OutboxEvent"]] = relationship(
+        back_populates="job",
+        foreign_keys="OutboxEvent.job_id",
+    )
+    idempotency_records: Mapped[list["IdempotencyRecord"]] = relationship(back_populates="job")
+    attempts: Mapped[list["AiJobAttempt"]] = relationship(back_populates="job")
+
+
+class AiJobAttempt(Base):
+    __tablename__ = "ai_job_attempt"
+    __table_args__ = (
+        UniqueConstraint("ai_job_id", "attempt_no", name="uq_ai_job_attempt_no"),
+        Index("idx_ai_job_attempt_status_started", "attempt_status", "started_at"),
+        CheckConstraint("attempt_no >= 1", name="chk_ai_job_attempt_attempt_no"),
+        CheckConstraint(
+            "attempt_status IN ('PROCESSING', 'COMPLETED', 'BLOCKED', 'FAILED')",
+            name="chk_ai_job_attempt_status",
+        ),
+        CheckConstraint(
+            "attempt_status NOT IN ('COMPLETED', 'BLOCKED', 'FAILED') OR completed_at IS NOT NULL",
+            name="chk_ai_job_attempt_terminal_completed_at",
+        ),
+        CheckConstraint("attempt_status <> 'FAILED' OR error_code IS NOT NULL", name="chk_ai_job_attempt_failed_code"),
+        CheckConstraint(
+            f"error_code IS NULL OR error_code IN ({_FAILURE_CODE_LIST_SQL})",
+            name="chk_ai_job_attempt_error_code_values",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    ai_job_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("ai_job.id"), nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_status: Mapped[AiJobAttemptStatus] = mapped_column(
+        Enum(AiJobAttemptStatus, native_enum=False, length=30),
+        nullable=False,
+        default=AiJobAttemptStatus.PROCESSING,
+    )
+    runtime_metadata: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    timed_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    job: Mapped["AiJob"] = relationship(back_populates="attempts")
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_event"
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt", "event_kind", name="uq_outbox_event_job_attempt_kind"),
+        Index("idx_outbox_status_available", "status", "available_at", "event_id"),
+        Index("idx_outbox_claim_expires", "claim_expires_at", "event_id"),
+        CheckConstraint("event_kind IN ('JOB_EXECUTE')", name="chk_outbox_event_kind"),
+        CheckConstraint("status IN ('PENDING', 'CLAIMED', 'PUBLISHED', 'CANCELLED')", name="chk_outbox_status"),
+        CheckConstraint("attempt > 0", name="chk_outbox_attempt"),
+    )
+
+    event_id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    job_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("ai_job.id"), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_kind: Mapped[OutboxEventKind] = mapped_column(
+        Enum(OutboxEventKind, native_enum=False, length=30),
+        nullable=False,
+        default=OutboxEventKind.JOB_EXECUTE,
+    )
+    schema_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0")
+    status: Mapped[OutboxEventStatus] = mapped_column(
+        Enum(OutboxEventStatus, native_enum=False, length=20),
+        nullable=False,
+        default=OutboxEventStatus.PENDING,
+    )
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    claim_token: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    job: Mapped["AiJob"] = relationship(back_populates="outbox_events", foreign_keys=[job_id])
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_record"
+    __table_args__ = (
+        UniqueConstraint("job_id", name="uq_idempotency_job"),
+        # 비동기 접수(ASYNC_JOB)는 parent_resource_id가 항상 NULL이라, 일반 UNIQUE 제약에 포함하면
+        # PostgreSQL이 NULL끼리는 다르다고 취급해 중복 접수를 막지 못합니다. record_type별로
+        # scope가 다른 두 partial unique index로 나눠서 걸어야 합니다.
+        Index(
+            "uq_idempotency_async_scope",
+            "record_type",
+            "user_id",
+            "operation_id",
+            "key_hmac",
+            unique=True,
+            postgresql_where=text("record_type = 'ASYNC_JOB'"),
+        ),
+        Index(
+            "uq_idempotency_sync_scope",
+            "record_type",
+            "user_id",
+            "operation_id",
+            "parent_resource_id",
+            "key_hmac",
+            unique=True,
+            postgresql_where=text("record_type = 'SYNC_MUTATION'"),
+        ),
+        Index("idx_idempotency_user_operation", "user_id", "operation_id", "created_at"),
+        Index("idx_idempotency_expires", "expires_at", "id"),
+        CheckConstraint("record_type IN ('ASYNC_JOB', 'SYNC_MUTATION')", name="chk_idempotency_record_type"),
+        CheckConstraint(
+            "("
+            "record_type = 'ASYNC_JOB' "
+            "AND job_id IS NOT NULL "
+            "AND parent_resource_id IS NULL "
+            "AND response_status IS NULL "
+            "AND response_body_snapshot IS NULL "
+            "AND encryption_key_version IS NULL"
+            ") OR ("
+            "record_type = 'SYNC_MUTATION' "
+            "AND job_id IS NULL "
+            "AND parent_resource_id IS NOT NULL "
+            "AND response_status IS NOT NULL "
+            "AND response_body_snapshot IS NOT NULL "
+            "AND encryption_key_version IS NOT NULL"
+            ")",
+            name="chk_idempotency_record_payload",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("user.id"), nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    key_hmac_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    key_hmac: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    record_type: Mapped[IdempotencyRecordType] = mapped_column(
+        Enum(IdempotencyRecordType, native_enum=False, length=30),
+        nullable=False,
+    )
+    job_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("ai_job.id"), nullable=True)
+    parent_resource_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # idempotency-v1.md: SYNC_MUTATION snapshot은 암호화 후 PostgreSQL BYTEA로 저장합니다.
+    response_body_snapshot: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    encryption_key_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped["User"] = relationship()
+    job: Mapped["AiJob | None"] = relationship(back_populates="idempotency_records")
+
+
+class MessageQuarantine(Base):
+    __tablename__ = "message_quarantine"
+    __table_args__ = (
+        UniqueConstraint("stream_name", "stream_entry_id", name="uq_message_quarantine_stream_entry"),
+        Index("idx_message_quarantine_received", "received_at", "id"),
+        Index("idx_message_quarantine_failure", "failure_code", "received_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    stream_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    stream_entry_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    message_digest: Mapped[str] = mapped_column(String(128), nullable=False)
+    # job_id를 메시지에서 파싱할 수 있었을 때만 채워집니다. quarantine 진입 시점에는 원본
+    # outbox_event가 이미 삭제됐을 수 있어 FK는 걸지 않습니다.
+    job_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("ai_job.id"), nullable=True)
+    original_event_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    failure_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_schema_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    dlq_outbox_event: Mapped["DlqOutboxEvent | None"] = relationship(back_populates="quarantine")
+
+
+class DlqOutboxEvent(Base):
+    __tablename__ = "dlq_outbox_event"
+    __table_args__ = (
+        UniqueConstraint("quarantine_id", name="uq_dlq_outbox_quarantine"),
+        Index("idx_dlq_outbox_status_available", "status", "available_at", "event_id"),
+        Index("idx_dlq_outbox_claim_expires", "claim_expires_at", "event_id"),
+        CheckConstraint("event_kind IN ('QUARANTINE_RECORDED')", name="chk_dlq_outbox_event_kind"),
+        CheckConstraint("status IN ('PENDING', 'CLAIMED', 'PUBLISHED')", name="chk_dlq_outbox_status"),
+        CheckConstraint("attempt_count >= 0", name="chk_dlq_outbox_attempt_count"),
+    )
+
+    event_id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    quarantine_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("message_quarantine.id"), nullable=False)
+    event_kind: Mapped[DlqOutboxEventKind] = mapped_column(
+        Enum(DlqOutboxEventKind, native_enum=False, length=30),
+        nullable=False,
+        default=DlqOutboxEventKind.QUARANTINE_RECORDED,
+    )
+    schema_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0")
+    original_schema_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[DlqOutboxEventStatus] = mapped_column(
+        Enum(DlqOutboxEventStatus, native_enum=False, length=20),
+        nullable=False,
+        default=DlqOutboxEventStatus.PENDING,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    claim_token: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    quarantine: Mapped["MessageQuarantine"] = relationship(back_populates="dlq_outbox_event")
