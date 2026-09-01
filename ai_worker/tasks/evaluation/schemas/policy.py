@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -30,6 +31,12 @@ def _enum_from_wire(enum_type: type[StrEnum], value: object) -> object:
     return value
 
 
+def _tuple_from_wire(value: object) -> object:
+    if isinstance(value, list):
+        return tuple(value)
+    return value
+
+
 ExperimentTypeValue = Annotated[
     ExperimentType,
     BeforeValidator(lambda value: _enum_from_wire(ExperimentType, value)),
@@ -41,6 +48,26 @@ LeakageAxisValue = Annotated[
     BeforeValidator(lambda value: _enum_from_wire(LeakageAxis, value)),
 ]
 PositiveSafeInteger = Annotated[SafeInteger, Field(ge=1)]
+ExperimentTypes = Annotated[
+    tuple[ExperimentTypeValue, ...],
+    BeforeValidator(_tuple_from_wire),
+    Field(min_length=1),
+]
+Partitions = Annotated[
+    tuple[PartitionValue, ...],
+    BeforeValidator(_tuple_from_wire),
+    Field(min_length=1),
+]
+TaskTypes = Annotated[
+    tuple[TaskTypeValue, ...],
+    BeforeValidator(_tuple_from_wire),
+    Field(min_length=1),
+]
+SuiteReferences = Annotated[
+    tuple[ImmutableReference, ...],
+    BeforeValidator(_tuple_from_wire),
+    Field(min_length=1),
+]
 
 
 class EvaluationProfile(StrictContractModel):
@@ -48,9 +75,9 @@ class EvaluationProfile(StrictContractModel):
     profile_code: NonEmptyString
     profile_version: SemanticVersion
     runtime_eligible: StrictBool
-    required_experiment_types: Annotated[list[ExperimentTypeValue], Field(min_length=1)]
-    required_partitions: Annotated[list[PartitionValue], Field(min_length=1)]
-    suite_references: Annotated[list[ImmutableReference], Field(min_length=1)]
+    required_experiment_types: ExperimentTypes
+    required_partitions: Partitions
+    suite_references: SuiteReferences
     review_provenance: ReviewProvenance
     content_hash: Sha256Hex
 
@@ -70,14 +97,16 @@ class SuiteDefinition(StrictContractModel):
     suite_code: NonEmptyString
     suite_version: SemanticVersion
     experiment_type: ExperimentTypeValue
-    partitions: Annotated[list[PartitionValue], Field(min_length=1)]
-    task_types: Annotated[list[TaskTypeValue], Field(min_length=1)]
+    partitions: Partitions
+    task_types: TaskTypes
     required: StrictBool
     review_provenance: ReviewProvenance
     content_hash: Sha256Hex
 
 
-CiParameterValue = CanonicalDecimal | SafeInteger | NonEmptyString | StrictBool | None
+class ConfidenceIntervalParameters(StrictContractModel):
+    confidence_level: CanonicalDecimal
+    resamples: PositiveSafeInteger
 
 
 class ComparisonScope(StrictContractModel):
@@ -95,7 +124,7 @@ class ComparisonScope(StrictContractModel):
     decision_basis: NonEmptyString
     ci_method: NonEmptyString
     ci_method_version: SemanticVersion
-    ci_parameters: dict[NonEmptyString, CiParameterValue]
+    ci_parameters: ConfidenceIntervalParameters
     seed: SafeInteger | None
 
 
@@ -103,7 +132,11 @@ class ComparisonPolicy(StrictContractModel):
     schema_version: Literal["1.0.0"]
     policy_code: NonEmptyString
     policy_version: SemanticVersion
-    scopes: Annotated[list[ComparisonScope], Field(min_length=1)]
+    scopes: Annotated[
+        tuple[ComparisonScope, ...],
+        BeforeValidator(_tuple_from_wire),
+        Field(min_length=1),
+    ]
     proposed_by: ActorRef
     approved_by: ActorRef
     reviewed_at: UtcTimestamp
@@ -138,7 +171,7 @@ class EvaluationPolicyMember(StrictContractModel):
         return (self.member_type, self.reference.resource_id, self.reference.resource_version)
 
 
-def evaluation_policy_member_manifest_hash(members: list[EvaluationPolicyMember]) -> str:
+def evaluation_policy_member_manifest_hash(members: Sequence[EvaluationPolicyMember]) -> str:
     ordered_members = sorted(members, key=lambda member: member.member_order)
     member_values: list[JsonValue] = [
         {
@@ -160,7 +193,11 @@ class EvaluationPolicy(StrictContractModel):
     schema_version: Literal["1.0.0"]
     policy_code: NonEmptyString
     policy_version: SemanticVersion
-    members: Annotated[list[EvaluationPolicyMember], Field(min_length=1)]
+    members: Annotated[
+        tuple[EvaluationPolicyMember, ...],
+        BeforeValidator(_tuple_from_wire),
+        Field(min_length=1),
+    ]
     member_manifest_hash: Sha256Hex
     review_provenance: ReviewProvenance
     content_hash: Sha256Hex

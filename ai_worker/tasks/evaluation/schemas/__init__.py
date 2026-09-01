@@ -47,6 +47,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     ComparisonScope,
+    ConfidenceIntervalParameters,
     EvaluationPolicy,
     EvaluationPolicyMember,
     EvaluationProfile,
@@ -80,6 +81,7 @@ __all__ = [
     "ensure_unique_resource_paths",
     "ComparisonPolicy",
     "ComparisonScope",
+    "ConfidenceIntervalParameters",
     "EvaluationPolicy",
     "EvaluationPolicyMember",
     "EvaluationProfile",

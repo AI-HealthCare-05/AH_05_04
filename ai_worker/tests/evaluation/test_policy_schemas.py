@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -173,6 +173,20 @@ def test_suite_definition_accepts_complete_wire_payload(suite_payload: dict[str,
     assert [partition.value for partition in suite.partitions] == ["HOLDOUT", "SAFETY_REGRESSION"]
 
 
+def test_profile_repeated_fields_are_deeply_immutable(profile_payload: dict[str, Any]) -> None:
+    profile = EvaluationProfile.model_validate(profile_payload)
+
+    with pytest.raises(AttributeError):
+        cast(Any, profile.required_partitions).append(profile.required_partitions[0])
+
+
+def test_suite_repeated_fields_are_deeply_immutable(suite_payload: dict[str, Any]) -> None:
+    suite = SuiteDefinition.model_validate(suite_payload)
+
+    with pytest.raises(AttributeError):
+        cast(Any, suite.task_types).pop()
+
+
 def test_comparison_policy_rejects_self_approval(policy_payload: dict[str, Any]) -> None:
     ComparisonPolicy.model_validate(policy_payload)
     policy_payload["approved_by"] = policy_payload["proposed_by"]
@@ -211,6 +225,20 @@ def test_comparison_scope_accepts_nullable_safe_integer_seed(policy_payload: dic
     assert with_seed.scopes[0].seed == 1729
 
 
+def test_comparison_policy_scopes_are_deeply_immutable(policy_payload: dict[str, Any]) -> None:
+    policy = ComparisonPolicy.model_validate(policy_payload)
+
+    with pytest.raises(AttributeError):
+        cast(Any, policy.scopes).pop()
+
+
+def test_comparison_scope_ci_parameters_are_deeply_immutable(policy_payload: dict[str, Any]) -> None:
+    policy = ComparisonPolicy.model_validate(policy_payload)
+
+    with pytest.raises((TypeError, ValidationError)):
+        cast(Any, policy.scopes[0].ci_parameters)["confidence_level"] = "0.9"
+
+
 def test_evaluation_policy_validates_hand_checked_member_manifest_hash() -> None:
     policy = EvaluationPolicy.model_validate(_evaluation_policy_payload())
 
@@ -240,3 +268,38 @@ def test_evaluation_policy_rejects_mismatched_member_manifest_hash() -> None:
 
     with pytest.raises(ValidationError):
         EvaluationPolicy.model_validate(payload)
+
+
+def test_evaluation_policy_members_remain_unchanged_after_mutation_attempt() -> None:
+    policy = EvaluationPolicy.model_validate(_evaluation_policy_payload())
+    original_members = tuple(policy.members)
+
+    with pytest.raises(AttributeError):
+        cast(Any, policy.members).pop()
+
+    assert tuple(policy.members) == original_members
+    assert policy.member_manifest_hash == "9823dffe940e9b29971afe6407b892838858c64788df5a8494ee0ba2f7898621"
+
+
+def test_immutable_collections_preserve_json_array_and_object_wire_shapes(
+    profile_payload: dict[str, Any],
+    suite_payload: dict[str, Any],
+    policy_payload: dict[str, Any],
+) -> None:
+    profile_json = EvaluationProfile.model_validate(profile_payload).model_dump(mode="json")
+    suite_json = SuiteDefinition.model_validate(suite_payload).model_dump(mode="json")
+    comparison_json = ComparisonPolicy.model_validate(policy_payload).model_dump(mode="json")
+    evaluation_json = EvaluationPolicy.model_validate(_evaluation_policy_payload()).model_dump(mode="json")
+
+    assert profile_json["required_partitions"] == ["HOLDOUT", "SAFETY_REGRESSION"]
+    assert suite_json["task_types"] == ["END_TO_END_RAG", "SAFETY"]
+    assert comparison_json["scopes"][0]["ci_parameters"] == {
+        "confidence_level": "0.95",
+        "resamples": 10000,
+    }
+    assert [member["member_order"] for member in evaluation_json["members"]] == [1, 2, 3]
+
+    assert EvaluationProfile.model_json_schema()["properties"]["required_partitions"]["type"] == "array"
+    assert SuiteDefinition.model_json_schema()["properties"]["task_types"]["type"] == "array"
+    assert ComparisonPolicy.model_json_schema()["properties"]["scopes"]["type"] == "array"
+    assert EvaluationPolicy.model_json_schema()["properties"]["members"]["type"] == "array"
