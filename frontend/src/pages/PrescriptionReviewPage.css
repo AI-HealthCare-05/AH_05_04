@@ -656,3 +656,535 @@
     max-width: 170px;
   }
 }
+
+/* DOC-03 Final · 705:48 / 상태 기준 634:6-9 */
+.prescription-review-page {
+  --ds-action: #0066cc;
+  --ds-action-pressed: #0052a3;
+  --ds-canvas: #f6f8fb;
+  background: var(--ds-canvas);
+}
+
+.prescription-review-page .app-topbar {
+  min-height: 68px;
+  gap: 10px;
+  padding-right: max(20px, env(safe-area-inset-right));
+  background: #fff;
+  backdrop-filter: none;
+}
+
+.prescription-review-page .app-topbar h1 {
+  font-size: 17px;
+}
+
+.prescription-review-page .icon-button {
+  min-width: 18px;
+  width: 18px;
+  margin-right: 0;
+}
+
+.prescription-review__content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 20px calc(34px + var(--ds-safe-bottom));
+}
+
+.prescription-review__content .prescription-review__intro {
+  min-height: 58px;
+  gap: 12px;
+  margin: 0;
+}
+
+.prescription-review__content .prescription-review__success-icon {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+  border-radius: 24px;
+  background: #eaf3ff;
+  color: var(--ds-action);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.prescription-review__content .prescription-review__intro p {
+  margin-bottom: 3px;
+  font-size: 11px;
+}
+
+.prescription-review__content .prescription-review__intro h1 {
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+}
+
+.prescription-review__content .prescription-review__notice {
+  min-height: 72px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-color: #f0d77a;
+  background: #fff9e8;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.prescription-review__content .prescription-review__notice strong {
+  color: #171a21;
+  font-size: 12px;
+}
+
+.prescription-review__content .prescription-review__notice span {
+  color: #475167;
+  font-weight: 500;
+}
+
+.prescription-review__prescription-card,
+.prescription-review__medication-card {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d8dee8;
+  background: #fff;
+}
+
+.prescription-review__prescription-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 16px;
+}
+
+.prescription-review__prescription-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 176px;
+  align-items: center;
+  gap: 8px;
+}
+
+.prescription-review__prescription-heading h2 {
+  margin: 0;
+  color: #1a212e;
+  font-size: 14px;
+}
+
+.prescription-review__prescription-heading > button,
+.prescription-review__source summary {
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid var(--ds-action);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ds-action);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.prescription-review__prescription-heading > button:disabled {
+  border-color: #c7cdd6;
+  color: #8f99ab;
+}
+
+.prescription-review__content .prescription-review__source {
+  width: 176px;
+  margin: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.prescription-review__content .prescription-review__source summary {
+  justify-content: center;
+  padding: 0 8px;
+}
+
+.prescription-review__content .prescription-review__source iframe {
+  width: 322px;
+  height: 420px;
+  margin: 8px 0 0 -146px;
+  border: 1px solid #d8dee8;
+  border-radius: 12px;
+}
+
+.prescription-review__section-status,
+.prescription-review__medication-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prescription-review__section-status > strong {
+  color: #293345;
+  font-size: 13px;
+}
+
+.prescription-review__badge {
+  min-width: 92px;
+  min-height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: 14px;
+  box-sizing: border-box;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.prescription-review__badge.is-unreviewed {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.prescription-review__badge.is-reviewed {
+  background: #ecfbf2;
+  color: #148040;
+}
+
+.prescription-review__badge.is-editing {
+  background: #fff9e8;
+  color: #b54e0c;
+}
+
+.prescription-review__badge.is-required {
+  background: #fff0f0;
+  color: #b51712;
+}
+
+.prescription-review__date-value {
+  min-height: 54px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  box-sizing: border-box;
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: #293345;
+  font-size: 13px;
+}
+
+.prescription-review__date-value.is-error {
+  border-color: #eb2e33;
+}
+
+.prescription-review__date-value small,
+.prescription-review__medication-values small {
+  color: #b51712;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.prescription-review__section-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.prescription-review__section-actions:has(> :only-child) {
+  grid-template-columns: 1fr;
+}
+
+.prescription-review__section-actions .ds-button {
+  min-height: 48px;
+  padding-inline: 10px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.prescription-review__medication-progress {
+  display: grid;
+  gap: 7px;
+  min-height: 48px;
+  align-content: start;
+}
+
+.prescription-review__medication-progress > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.prescription-review__medication-progress strong {
+  color: #171a21;
+  font-size: 12px;
+}
+
+.prescription-review__medication-progress > div span {
+  color: var(--ds-action);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.prescription-review__progress-track {
+  width: 100%;
+  height: 6px;
+  display: block;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #d8dee8;
+}
+
+.prescription-review__progress-track > span {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: var(--ds-action);
+  transition: width 160ms ease;
+}
+
+.prescription-review__medication-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 20px;
+}
+
+.prescription-review__medication-card.is-editing {
+  border-color: #f0a43c;
+  background: #fffdfa;
+}
+
+.prescription-review__medication-card.has-error:not(.is-editing) {
+  border-color: #eb6868;
+}
+
+.prescription-review__medication-heading {
+  min-height: 36px;
+}
+
+.prescription-review__medication-index {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #eaf3ff;
+  color: var(--ds-action);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.prescription-review__medication-heading h2 {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  overflow: hidden;
+  color: #171a21;
+  font-size: 14px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prescription-review__card-error,
+.prescription-review__editing-notice {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.prescription-review__card-error {
+  color: #b51712;
+}
+
+.prescription-review__editing-notice {
+  color: #c45a0a;
+}
+
+.prescription-review__medication-values {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.prescription-review__medication-values > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(0, 2fr);
+  align-items: center;
+  min-height: 16px;
+}
+
+.prescription-review__medication-values dt,
+.prescription-review__medication-values dd {
+  margin: 0;
+}
+
+.prescription-review__medication-values dt {
+  color: #475167;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.prescription-review__medication-values dd {
+  overflow-wrap: anywhere;
+  color: #171a21;
+  font-size: 13px;
+  text-align: right;
+}
+
+.prescription-review__medication-values > div.is-error {
+  grid-template-rows: auto auto;
+}
+
+.prescription-review__medication-values > div.is-error small {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+}
+
+.prescription-review__edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.prescription-review__edit-grid--date {
+  grid-template-columns: 1fr;
+}
+
+.prescription-review__edit-field {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: #59667d;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.prescription-review__edit-field--wide {
+  grid-column: 1 / -1;
+}
+
+.prescription-review__edit-control {
+  min-width: 0;
+}
+
+.prescription-review__edit-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--ds-action);
+  border-radius: 8px;
+  background: #fff;
+  color: #1a212e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.prescription-review__edit-field input[aria-invalid='true'] {
+  border-color: #eb2e33;
+}
+
+.prescription-review__edit-field input:focus-visible,
+.prescription-review__source summary:focus-visible,
+.prescription-review__acknowledgement:has(input:focus-visible) {
+  outline: 3px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
+.prescription-review__edit-field small {
+  min-height: 0;
+  color: #b51712;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.prescription-review__content .prescription-review__acknowledgement {
+  min-height: 72px;
+  align-items: center;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 14px;
+  border-radius: 16px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.prescription-review__content .prescription-review__acknowledgement:has(input:disabled) {
+  opacity: 0.62;
+}
+
+.prescription-review__condition-summary {
+  min-height: 36px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.prescription-review__condition-summary.is-complete {
+  background: #ecfbf2;
+  color: #148040;
+}
+
+.prescription-review-page .prescription-review__confirm {
+  min-height: 52px;
+  margin: 0;
+  border-radius: 14px;
+}
+
+.prescription-review-page .prescription-review__confirm:disabled {
+  border-color: #c7cdd6;
+  background: #fff;
+  color: #9aa2ae;
+}
+
+@media (max-width: 374px) {
+  .prescription-review__content {
+    padding-inline: 16px;
+  }
+
+  .prescription-review__content .prescription-review__intro h1 {
+    font-size: 18px;
+  }
+
+  .prescription-review__badge {
+    min-width: 82px;
+    padding-inline: 7px;
+    font-size: 10px;
+  }
+
+  .prescription-review__prescription-heading {
+    grid-template-columns: minmax(0, 1fr) 156px;
+  }
+
+  .prescription-review__content .prescription-review__source,
+  .prescription-review__content .prescription-review__source iframe {
+    width: 100%;
+  }
+
+  .prescription-review__content .prescription-review__source iframe {
+    margin-left: calc(-100vw + 188px);
+  }
+
+  .prescription-review__medication-heading h2 {
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prescription-review__progress-track > span {
+    transition: none;
+  }
+}
