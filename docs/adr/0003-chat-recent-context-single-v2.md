@@ -45,7 +45,7 @@ flag를 즉시 끌 때 기존 prompt version까지 되돌릴 수 있지만, 동�
 - flag OFF Provider payload에는 `history: []`가 추가되지만 기존 Backend Chat API DTO와 오류 의미는 변하지 않는다.
 - 단일 프롬프트와 출력 검증 경로로 Local 및 운영 설정 간 안전 규칙이 일치한다.
 - 실제 사용자 history 전송은 아직 승인되지 않았다. Staging·Production에서는 flag를 `false`로 유지한다.
-- 버전된 합성 평가, 최대 입력 latency와 PII sentinel 검증은 후속 Issue #129에서 수행한다. 해당 결과가 없으므로 이 ADR과 PR #128은 Production 공개 근거가 아니다.
+- 후속 Issue #129에서 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증을 수행했다. 실제 Provider 검증은 `NOT_RUN`이고 결과는 Production 공개 근거가 아니다.
 
 ## 보안·개인정보 영향
 
@@ -56,7 +56,7 @@ history 자유 텍스트에는 사용자가 입력한 개인·의료정보가 �
 - flag OFF의 조회 생략, `history: []`, `chat-prompt-v2`를 검증한다.
 - flag ON의 최대 3쌍, 최신 선택·시간순 전달, 완료 상태·소유권 경계와 현재 질문 제외를 검증한다.
 - 과거 USER 진술과 ASSISTANT 답변의 비신뢰성, 현재 medications 우선, JSON 데이터의 프롬프트 인젝션 방어를 검증한다.
-- 버전된 합성 품질 평가, latency와 PII sentinel 증빙은 Issue #129에서 별도로 기록한다.
+- 버전된 합성 replay, 결정론적 Local application-path latency와 PII sentinel 증빙은 Issue #129에 기록한다. 실제 Provider 품질·latency·token 결과는 실행 전까지 `NOT_RUN`으로 유지한다.
 
 ## 관련 문서
 

@@ -15,10 +15,11 @@
 
 비동기 접수의 고유 범위는 `(user_id, OpenAPI operation_id, key_hmac)`이다. `key_hmac`은 원문 키를 서버 비밀키로 versioned HMAC-SHA-256 처리한 값이며 원문은 저장하지 않는다. 동기 상태 변경도 같은 `key_hmac` 컬럼명을 사용하되 아래와 같이 `parent_resource_id`를 scope에 추가한다. Post-MVP-1은 인증 사용자가 직접 소유한 리소스에 수행하는 요청만 지원한다.
 
-HMAC key rotation 중에는 구 writer와 신 writer가 동시에 최초 요청을 쓰지 못하게 한다. reader는 현재 key version과 직전 key version을 함께 조회할 수 있지만, writer가 서로 다른 active key version으로 같은 원문 key를 동시에 insert하면 서로 다른 `key_hmac`이 만들어져 DB unique constraint가 중복 Job을 막지 못한다. 따라서 key rotation 배포는 다음 중 하나를 만족해야 한다.
+HMAC key rotation 중에는 구 writer와 신 writer가 동시에 최초 요청을 쓰지 못하게 한다. reader는 미만료 멱등 레코드가 존재할 수 있는 모든 retained key version을 조회해야 한다. 현재 key version과 직전 key version만 조회하는 방식은 rotation 주기가 최대 멱등 레코드 보존기간보다 길어 N-2 이하 미만료 레코드가 존재할 수 없을 때만 허용한다. writer가 서로 다른 active key version으로 같은 원문 key를 동시에 insert하면 서로 다른 `key_hmac`이 만들어져 DB unique constraint가 중복 Job을 막지 못한다. 따라서 key rotation 배포는 다음 중 하나를 만족해야 한다.
 
 - rolling 배포 중 active write key version을 바꾸지 않고, 모든 writer가 같은 active version을 사용한 뒤에만 새 version write를 시작한다.
 - active write key version 전환 전 기존 writer와 PENDING/non-terminal Job drain이 완료됐음을 확인한다.
+- rotation 주기를 최대 멱등 레코드 보존기간보다 길게 제한하고, 보존기간 안에 둘 이상의 이전 key version으로 생성된 미만료 레코드가 없음을 운영 기준으로 보장한다.
 - 혼합 writer를 허용해야 한다면 원문 key를 저장하지 않는 별도 rotation-invariant 원자 잠금 또는 unique digest를 먼저 승인·구현한다.
 
 위 조건이 충족되지 않으면 HMAC key rotation 중 신규 멱등성 write를 배포하지 않는다.
@@ -80,4 +81,4 @@ snapshot은 암호화한 PostgreSQL `BYTEA`로 저장하고 application cap은 1
 
 공통 필드는 `record_type`, `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `created_at`, `expires_at`이다. `ASYNC_JOB`은 non-null `job_id`를 저장하고 `parent_resource_id`, `response_status`, `response_body_snapshot`은 null이다. `SYNC_MUTATION`은 non-null `parent_resource_id`, `response_status`, 암호화된 `response_body_snapshot`(암호화 후 `BYTEA`)을 저장하고 `job_id`는 null이다. DB CHECK 제약으로 이 타입별 nullability를 강제한다.
 
-HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다. HMAC key rotation 기간에는 현재 key version과 직전 key version으로 계산한 `key_hmac`을 같은 scope에서 함께 조회해 기존 record를 찾는다. 같은 원문 key가 이전 key version으로 저장되어 있는데 현재 key version만 조회해 새 Job이나 mutation을 만들면 안 된다. rotation 중에도 원문 `Idempotency-Key`는 저장하지 않는다. 또한 혼합 writer가 서로 다른 active key version으로 같은 원문 key의 최초 write를 동시에 수행할 수 있는 배포는 금지한다.
+HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다. HMAC key rotation 기간에는 미만료 record가 존재할 수 있는 모든 retained key version으로 계산한 `key_hmac`을 같은 scope에서 함께 조회해 기존 record를 찾는다. 현재·직전 key version만 조회하는 구현은 rotation 주기가 최대 멱등 레코드 보존기간보다 길어 N-2 이하 미만료 record가 존재할 수 없을 때만 허용한다. 같은 원문 key가 retained key version으로 저장되어 있는데 현재 key version만 조회해 새 Job이나 mutation을 만들면 안 된다. rotation 중에도 원문 `Idempotency-Key`는 저장하지 않는다. 또한 혼합 writer가 서로 다른 active key version으로 같은 원문 key의 최초 write를 동시에 수행할 수 있는 배포는 금지한다.

@@ -79,7 +79,7 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | 테이블 | 변경 | 기준 |
 | --- | --- | --- |
 | `prescription` | `active_version_id` nullable FK 추가 후 backfill·검증 뒤 NOT NULL | 활성 version pointer |
-| `ocr_job` | `ai_job_id` 적용 방식 별도 확정 | 목표 ERD상 NOT NULL이면 기존 OCR 행 mapping·검증 기준 필요 |
+| `ocr_job` | nullable `ai_job_id` FK 추가, 신규 비동기 OCR Job부터 연결 | 기존 OCR 행은 synthetic Job을 만들지 않고 `NULL` 허용. OCR도 다른 도메인 결과와 동일하게 Job 삭제 시 `ON DELETE SET NULL` 또는 삭제 전 참조 해제 |
 | `guide` | 신규 비동기 생성부터 nullable `ai_job_id` 연결 | 기존 Guide에는 synthetic Job 생성 금지 |
 | `chat_message` | 신규 ASSISTANT 비동기 메시지부터 nullable `ai_job_id` 연결 | 기존 메시지에는 synthetic Job 생성 금지 |
 
@@ -102,7 +102,7 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 
 `ai_job.expected_event_id`/`last_consumed_event_id → outbox_event.event_id`와 `outbox_event.job_id → ai_job.id`는 순환 참조다. migration은 `ai_job` 테이블을 먼저 만들되 `expected_event_id`/`last_consumed_event_id` FK는 나중에 걸고, `outbox_event` 생성 후 `ALTER TABLE`로 두 FK를 추가한다. 접수 transaction 안에서는 `ai_job` INSERT 뒤 `outbox_event` INSERT, 같은 transaction의 `ai_job.expected_event_id` UPDATE 순서가 되며, 이 NULL 구간은 commit 전 외부에서 관측되지 않는다.
 
-Outbox는 publish 후 30일, Job 실행 메타데이터는 terminal 전환 후 90일 보존을 기본으로 하므로 보존기간 차이가 FK 삭제를 막으면 안 된다. `ai_job.expected_event_id`와 `last_consumed_event_id`는 nullable FK로 두고 Outbox 삭제 시 `ON DELETE SET NULL` 또는 삭제 전 참조 해제를 적용한다. 도메인 결과의 `ai_job_id`도 결과 보존을 우선해 nullable FK와 `ON DELETE SET NULL`을 기본으로 하며, Job 삭제 때문에 OCR·Guide·Chat 결과 row를 삭제하지 않는다.
+Outbox는 publish 후 30일, Job 실행 메타데이터는 terminal 전환 후 90일 보존을 기본으로 하므로 보존기간 차이가 FK 삭제를 막으면 안 된다. 다만 Outbox는 단순히 30일이 지났다는 이유만으로 삭제하지 않고, 연결된 Job이 terminal 상태이며 관련 Stream entry, PEL, 예약 retry와 재발행 대상이 모두 정리된 경우에만 삭제할 수 있다. `ai_job.expected_event_id`와 `last_consumed_event_id`는 nullable FK로 두고 Outbox 삭제 시 `ON DELETE SET NULL` 또는 삭제 전 참조 해제를 적용한다. 도메인 결과의 `ai_job_id`도 결과 보존을 우선해 nullable FK와 `ON DELETE SET NULL`을 기본으로 하며, Job 삭제 때문에 OCR·Guide·Chat 결과 row를 삭제하지 않는다.
 
 ## 5. `AI_JOB`과 도메인 row 관계
 
@@ -249,11 +249,12 @@ PR 단계에서는 feature flag 기본값, flag off 시 접수 경로, drain 검
 - OCR은 Track A 적용 대상이다.
 - OCR 소유권은 PROFILE 전환 후 `ocr_job → medical_document → profile_id` chain으로 확인한다.
 - `ocr_job.profile_id` 직접 컬럼은 만들지 않는다.
-- 목표 ERD에서 `ocr_job.ai_job_id NOT NULL`을 유지하려면 기존 OCR 행을 어떤 Job으로 mapping할지 별도 기준이 필요하다.
-- 기존 OCR 실행 사실을 검증 없이 일괄 synthetic `AI_JOB(COMPLETED)`로 만들지 않는다.
-- OCR `ai_job_id` mapping은 OCR 담당자와 별도 이슈·PR에서 확정한다.
+- `ocr_job.ai_job_id`는 다른 도메인 결과 row와 동일하게 nullable FK로 둔다.
+- 기존 OCR 행의 `ai_job_id`는 `NULL`을 허용하고, 기존 OCR 실행 사실을 검증 없이 일괄 synthetic `AI_JOB(COMPLETED)`로 만들지 않는다.
+- 신규 비동기 OCR Job부터 `ocr_job.ai_job_id`를 연결한다.
+- Job 삭제 또는 보존기간 만료 처리 시 `ocr_job.ai_job_id`는 `ON DELETE SET NULL` 또는 삭제 전 참조 해제로 정리한다.
 
-OCR을 별도 mapping으로 분리하는 이유는 기존 OCR 행의 실행 사실과 결과 상태를 공통 `AI_JOB`으로 되살리는 기준이 필요하기 때문이다. 근거 없이 기존 행마다 synthetic completed Job을 만들면 실제 실행 시각, attempt, provider 실패 여부가 왜곡될 수 있다.
+기존 OCR 행을 nullable로 두는 이유는 기존 OCR 행의 실행 사실과 결과 상태를 공통 `AI_JOB`으로 되살리는 기준이 없기 때문이다. 근거 없이 기존 행마다 synthetic completed Job을 만들면 실제 실행 시각, attempt, provider 실패 여부가 왜곡될 수 있다.
 
 ### 11.2 Guide
 

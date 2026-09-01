@@ -105,6 +105,6 @@ lease 만료로 회수된 Job도 현재 attempt를 사용한 실패로 계산한
 
 Safety validation 실패는 재시도하지 않지만 항상 Job `FAILED`를 뜻하지 않는다. Track F에서 생성 답변을 폐기하고 승인 fallback 저장에 성공하면 도메인 결과는 `REJECTED`, Job은 `COMPLETED`로 끝난다. fallback 저장까지 실패한 경우에만 Job을 `FAILED`로 전환한다.
 
-publish가 완료된 Outbox·quarantine·DLQ 메타데이터의 30일 보존은 Privacy 승인 대상 기본안이다. 미발행 `PENDING|CLAIMED` DLQ Outbox와 연결된 `MESSAGE_QUARANTINE`은 TTL로 삭제하지 않는다. legal hold 또는 더 엄격한 감사 정책이 있으면 해당 정책을 적용한다.
+publish가 완료된 Outbox·quarantine·DLQ 메타데이터의 30일 보존은 Privacy 승인 대상 기본안이다. 단순히 30일이 지났다는 이유만으로 정상 실행 Outbox를 삭제하지 않는다. 연결된 Job이 terminal 상태이고, 관련 Stream entry, PEL, 예약 retry와 재발행 대상이 모두 정리된 경우에만 삭제할 수 있다. 미발행 `PENDING|CLAIMED` DLQ Outbox와 연결된 `MESSAGE_QUARANTINE`은 TTL로 삭제하지 않는다. legal hold 또는 더 엄격한 감사 정책이 있으면 해당 정책을 적용한다.
 
 Job 실행 메타데이터는 terminal 전환 후 90일 보존하므로, `AI_JOB.expected_event_id`와 `last_consumed_event_id`가 Outbox 삭제를 막으면 안 된다. 두 FK는 nullable이며 Outbox 삭제 시 `ON DELETE SET NULL` 또는 삭제 전 참조 해제로 처리한다. 도메인 결과 row의 `ai_job_id`도 결과 보존을 우선해 nullable FK와 `ON DELETE SET NULL`을 기본으로 하며, Job 삭제 때문에 사용자에게 보존해야 할 OCR·Guide·Chat 결과를 삭제하지 않는다.

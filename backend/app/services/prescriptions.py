@@ -10,7 +10,7 @@ from app.dtos.prescriptions import MedicationData, PrescriptionData
 from app.models.ocr import ExtractedField, FieldType
 from app.models.prescriptions import Medication, Prescription
 from app.models.users import User
-from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.repositories.medical_document_repository import DocumentLockTimeoutError, MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 
@@ -70,9 +70,19 @@ class PrescriptionService:
         self._prescription_repo = prescription_repository
 
     async def confirm_prescription(self, *, user: User, document_id: UUID) -> PrescriptionData:
-        # 처방 최종 확정 Backend 계약(1차 구현 ERD): 확정 시점에 PRESCRIPTION·MEDICATION을 생성합니다.
-        # "사용자 확인 전 정보를 확정 정보로 쓰지 않는다"는 의료 안전 원칙에 따라 단순화 대상에서 제외합니다.
-        document = await self._document_repo.get_owned(document_id=document_id, user=user)
+        # 처방 확정과 extracted-field PATCH의 동시 요청을 직렬화합니다.
+        # 문서 row를 먼저 잠근 뒤에 확정 여부와 검수값을 읽어야
+        # "확정에 반영되지 않은 PATCH"와 "확정 이후 필드 변경"을 함께 차단할 수 있습니다.
+        try:
+            document = await self._document_repo.get_owned_for_update(document_id=document_id, user=user)
+        except DocumentLockTimeoutError:
+            raise ApiError(
+                status_code=409,
+                code="CONCURRENT_UPDATE_IN_PROGRESS",
+                message="같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.",
+                details=[ErrorDetail(field="document_id", reason="CONCURRENT_UPDATE_IN_PROGRESS")],
+            ) from None
+
         if document is None:
             raise ApiError(
                 status_code=404,
