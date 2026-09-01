@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401, F811, E402
-# mypy: disable-error-code="assignment"
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -29,23 +27,16 @@ from ai_worker.tasks.evaluation.schemas.common import (
 
 
 def _enum_from_wire(enum_type: type[StrEnum], value: object) -> object:
-    if isinstance(value, str):
-        return enum_type(value)
-    return value
+    return enum_type(value) if isinstance(value, str) else value
 
 
 def _tuple_from_wire(value: object) -> object:
-    if isinstance(value, list):
-        return tuple(value)
-    return value
+    return tuple(value) if isinstance(value, list) else value
 
 
-def _ci_parameters_from_wire(value: object) -> object:
-    if type(value) is not dict:
-        raise ValueError("CI parameters must be a JSON object")
-    if any(type(key) is not str or not key for key in value):
-        raise ValueError("CI parameter keys must be non-empty strict strings")
-    return tuple(sorted(value.items()))
+def _require_sorted_unique(values: tuple[object, ...], message: str) -> None:
+    if len(values) != len(set(values)) or list(values) != sorted(values, key=repr):
+        raise ValueError(message)
 
 
 ExperimentTypeValue = Annotated[
@@ -74,49 +65,94 @@ TaskTypes = Annotated[
     BeforeValidator(_tuple_from_wire),
     Field(min_length=1),
 ]
-SuiteReferences = Annotated[
-    tuple[ImmutableReference, ...],
-    BeforeValidator(_tuple_from_wire),
-    Field(min_length=1),
-]
+References = Annotated[tuple[ImmutableReference, ...], BeforeValidator(_tuple_from_wire)]
+StableIds = Annotated[tuple[StableId, ...], BeforeValidator(_tuple_from_wire)]
+
+
+class TriggerCatalogEntry(StrictContractModel):
+    trigger_id: StableId
+    member_order: PositiveSafeInteger
 
 
 class EvaluationProfile(StrictContractModel):
+    schema_id: Literal["rag-eval.evaluation-profile"]
     schema_version: Literal["1.0.0"]
-    profile_code: StableId
-    profile_version: SemanticVersion
-    runtime_eligible: StrictBool
+    evaluation_profile_id: StableId
+    evaluation_profile_version: SemanticVersion
+    evaluation_profile_hash: Sha256Hex
     required_experiment_types: ExperimentTypes
     required_partitions: Partitions
-    suite_references: SuiteReferences
+    required_gate_refs: References
+    required_suite_refs: References
+    trigger_catalog: Annotated[tuple[TriggerCatalogEntry, ...], BeforeValidator(_tuple_from_wire)]
+    runtime_eligible: StrictBool
     review_provenance: ReviewProvenance
-    content_hash: Sha256Hex
 
     @model_validator(mode="after")
-    def validate_release_scope(self) -> EvaluationProfile:
+    def validate_profile(self) -> EvaluationProfile:
+        for values, message in (
+            (self.required_experiment_types, "experiment types must be unique and sorted"),
+            (self.required_partitions, "partitions must be unique and sorted"),
+            (self.required_gate_refs, "gate references must be unique and sorted"),
+            (self.required_suite_refs, "suite references must be unique and sorted"),
+        ):
+            keys = tuple(
+                (item.id, item.version, item.hash) if isinstance(item, ImmutableReference) else item for item in values
+            )
+            _require_sorted_unique(keys, message)
+        trigger_orders = [item.member_order for item in self.trigger_catalog]
+        trigger_ids = [item.trigger_id for item in self.trigger_catalog]
+        if trigger_orders != list(range(1, len(trigger_orders) + 1)) or len(trigger_ids) != len(set(trigger_ids)):
+            raise ValueError("trigger catalog must have unique IDs and contiguous order")
         if self.runtime_eligible:
             if ExperimentType.END_TO_END_RAG not in self.required_experiment_types:
                 raise ValueError("runtime-eligible profiles require END_TO_END_RAG")
-            required_partitions = {Partition.HOLDOUT, Partition.SAFETY_REGRESSION}
-            if not required_partitions.issubset(self.required_partitions):
+            if not {Partition.HOLDOUT, Partition.SAFETY_REGRESSION}.issubset(self.required_partitions):
                 raise ValueError("runtime-eligible profiles require HOLDOUT and SAFETY_REGRESSION")
         return self
 
 
-class SuiteDefinition(StrictContractModel):
-    schema_version: Literal["1.0.0"]
-    suite_code: StableId
-    suite_version: SemanticVersion
-    experiment_type: ExperimentTypeValue
+class SuiteInputSelector(StrictContractModel):
+    dataset_code: StableId
+    dataset_version: SemanticVersion
     partitions: Partitions
     task_types: TaskTypes
+
+
+class SuiteDefinition(StrictContractModel):
+    schema_id: Literal["rag-eval.suite-definition"]
+    schema_version: Literal["1.0.0"]
+    suite_id: StableId
+    suite_version: SemanticVersion
+    suite_hash: Sha256Hex
+    adapter_id: StableId
+    command: Annotated[tuple[NonEmptyString, ...], BeforeValidator(_tuple_from_wire), Field(min_length=1)]
+    input_selector: SuiteInputSelector
+    expected_case_set_hash: Sha256Hex
+    critical_invariant_ids: StableIds
+    pass_rule: StableId
+    artifact_contract_version: SemanticVersion
     required: StrictBool
     review_provenance: ReviewProvenance
-    content_hash: Sha256Hex
+
+    @model_validator(mode="after")
+    def validate_sets(self) -> SuiteDefinition:
+        _require_sorted_unique(self.critical_invariant_ids, "critical invariant IDs must be unique and sorted")
+        _require_sorted_unique(self.input_selector.partitions, "Suite partitions must be unique and sorted")
+        _require_sorted_unique(self.input_selector.task_types, "Suite task types must be unique and sorted")
+        return self
 
 
 CiParameterScalar = CanonicalDecimal | SafeInteger | NonEmptyString | StrictBool | None
 CiParameterEntries = tuple[tuple[NonEmptyString, CiParameterScalar], ...]
+
+
+def _ci_parameters_from_wire(value: object) -> object:
+    if type(value) is not dict:
+        raise ValueError("CI parameters must be a JSON object")
+    if any(type(key) is not str or not key for key in value):
+        raise ValueError("CI parameter keys must be non-empty strict strings")
+    return tuple(sorted(value.items()))
 
 
 def _serialize_ci_parameters(parameters: CiParameterEntries) -> dict[str, CiParameterScalar]:
@@ -135,7 +171,6 @@ _CI_PARAMETERS_JSON_SCHEMA = {
         ]
     },
 }
-
 ConfidenceIntervalParameters = Annotated[
     CiParameterEntries,
     BeforeValidator(_ci_parameters_from_wire),
@@ -146,49 +181,67 @@ ConfidenceIntervalParameters = Annotated[
 
 
 class ComparisonScope(StrictContractModel):
-    metric_code: StableId
+    metric_id: StableId
     metric_version: SemanticVersion
     partition: PartitionValue
-    slice_key: StableId
+    slice_id: StableId
     required: StrictBool
-    analysis_unit: StableId
-    estimator: StableId
+    unit_of_analysis: StableId
+    estimator_id: StableId
+    estimator_version: SemanticVersion
     minimum_case_count: PositiveSafeInteger
-    minimum_independent_group_count: PositiveSafeInteger
-    cluster_dimension: LeakageAxisValue
+    independence_unit: StableId | None
+    cluster_dimension: LeakageAxisValue | None
+    minimum_independent_group_count: PositiveSafeInteger | None
     threshold: CanonicalDecimal
     decision_basis: StableId
-    ci_method: StableId
+    ci_method_id: StableId
     ci_method_version: SemanticVersion
     ci_parameters: ConfidenceIntervalParameters
     seed: SafeInteger | None
 
+    @model_validator(mode="after")
+    def validate_independence(self) -> ComparisonScope:
+        clustered = self.cluster_dimension is not None
+        if clustered != (self.minimum_independent_group_count is not None):
+            raise ValueError("cluster dimension and minimum independent group count must be paired")
+        return self
+
 
 class ComparisonPolicy(StrictContractModel):
+    schema_id: Literal["rag-eval.comparison-policy"]
     schema_version: Literal["1.0.0"]
-    policy_code: StableId
-    policy_version: SemanticVersion
-    scopes: Annotated[
-        tuple[ComparisonScope, ...],
+    comparison_policy_id: StableId
+    comparison_policy_version: SemanticVersion
+    comparison_policy_hash: Sha256Hex
+    scopes: Annotated[tuple[ComparisonScope, ...], BeforeValidator(_tuple_from_wire), Field(min_length=1)]
+    controlled_variable_keys: Annotated[
+        tuple[StableId, ...],
         BeforeValidator(_tuple_from_wire),
         Field(min_length=1),
     ]
     proposed_by: ActorRef
     approved_by: ActorRef
-    reviewed_at: UtcTimestamp
-    content_hash: Sha256Hex
+    approved_at: UtcTimestamp
 
     @model_validator(mode="after")
-    def reject_self_approval(self) -> ComparisonPolicy:
+    def validate_policy(self) -> ComparisonPolicy:
         if self.proposed_by.identity == self.approved_by.identity:
             raise ValueError("proposer and approver must be different actors")
+        _require_sorted_unique(self.controlled_variable_keys, "controlled variable keys must be unique and sorted")
+        scope_keys = [(item.metric_id, item.metric_version, item.partition, item.slice_id) for item in self.scopes]
+        if len(scope_keys) != len(set(scope_keys)):
+            raise ValueError("Comparison Scope natural keys must be unique")
         return self
 
 
 class PolicyMemberType(StrEnum):
     PROFILE = "PROFILE"
-    SUITE = "SUITE"
     COMPARISON_POLICY = "COMPARISON_POLICY"
+    PARTITION = "PARTITION"
+    GATE = "GATE"
+    SUITE = "SUITE"
+    ARTIFACT_SCHEMA_SET = "ARTIFACT_SCHEMA_SET"
 
 
 PolicyMemberTypeValue = Annotated[
@@ -208,63 +261,58 @@ class EvaluationPolicyMember(StrictContractModel):
 
 
 def evaluation_policy_member_manifest_hash(members: Sequence[EvaluationPolicyMember]) -> str:
-    ordered_members = sorted(members, key=lambda member: member.member_order)
-    member_values: list[JsonValue] = [
-        {
-            "member_order": member.member_order,
-            "member_type": member.member_type.value,
-            "reference": {
-                "id": member.reference.id,
-                "version": member.reference.version,
-                "hash": member.reference.hash,
-            },
-        }
-        for member in ordered_members
+    values: list[JsonValue] = [
+        member.model_dump(mode="json") for member in sorted(members, key=lambda item: item.member_order)
     ]
-    envelope: JsonValue = {"members": member_values}
-    return canonical_sha256(envelope)
+    return canonical_sha256({"members": values})
 
 
 class EvaluationPolicy(StrictContractModel):
+    schema_id: Literal["rag-eval.evaluation-policy"]
     schema_version: Literal["1.0.0"]
-    policy_code: StableId
-    policy_version: SemanticVersion
-    members: Annotated[
-        tuple[EvaluationPolicyMember, ...],
-        BeforeValidator(_tuple_from_wire),
-        Field(min_length=1),
-    ]
+    evaluation_policy_id: StableId
+    evaluation_policy_version: SemanticVersion
+    evaluation_policy_hash: Sha256Hex
+    evaluation_profile_ref: EvaluationPolicyMember
+    comparison_policy_ref: EvaluationPolicyMember
+    required_partition_refs: Annotated[tuple[EvaluationPolicyMember, ...], BeforeValidator(_tuple_from_wire)]
+    required_gate_refs: Annotated[tuple[EvaluationPolicyMember, ...], BeforeValidator(_tuple_from_wire)]
+    required_suite_refs: Annotated[tuple[EvaluationPolicyMember, ...], BeforeValidator(_tuple_from_wire)]
+    artifact_schema_set_ref: EvaluationPolicyMember
     member_manifest_hash: Sha256Hex
     review_provenance: ReviewProvenance
-    content_hash: Sha256Hex
+
+    @property
+    def members(self) -> tuple[EvaluationPolicyMember, ...]:
+        return (
+            self.evaluation_profile_ref,
+            self.comparison_policy_ref,
+            *self.required_partition_refs,
+            *self.required_gate_refs,
+            *self.required_suite_refs,
+            self.artifact_schema_set_ref,
+        )
 
     @model_validator(mode="after")
     def validate_members(self) -> EvaluationPolicy:
-        natural_keys = [member.natural_key for member in self.members]
-        if len(natural_keys) != len(set(natural_keys)):
-            raise ValueError("evaluation policy member natural keys must be unique")
-
-        member_orders = [member.member_order for member in self.members]
-        if len(member_orders) != len(set(member_orders)):
-            raise ValueError("evaluation policy member orders must be unique")
-
-        expected_hash = evaluation_policy_member_manifest_hash(self.members)
-        if self.member_manifest_hash != expected_hash:
-            raise ValueError("evaluation policy member manifest hash does not match")
+        explicit_types = (
+            (self.evaluation_profile_ref.member_type, PolicyMemberType.PROFILE),
+            (self.comparison_policy_ref.member_type, PolicyMemberType.COMPARISON_POLICY),
+            (self.artifact_schema_set_ref.member_type, PolicyMemberType.ARTIFACT_SCHEMA_SET),
+        )
+        if any(actual is not expected for actual, expected in explicit_types):
+            raise ValueError("explicit Evaluation Policy reference has wrong member type")
+        if any(item.member_type is not PolicyMemberType.PARTITION for item in self.required_partition_refs):
+            raise ValueError("required partition refs must be PARTITION members")
+        if any(item.member_type is not PolicyMemberType.GATE for item in self.required_gate_refs):
+            raise ValueError("required gate refs must be GATE members")
+        if any(item.member_type is not PolicyMemberType.SUITE for item in self.required_suite_refs):
+            raise ValueError("required Suite refs must be SUITE members")
+        members = self.members
+        keys = [member.natural_key for member in members]
+        orders = [member.member_order for member in members]
+        if len(keys) != len(set(keys)) or orders != list(range(1, len(members) + 1)):
+            raise ValueError("Evaluation Policy members require unique keys and contiguous order")
+        if self.member_manifest_hash != evaluation_policy_member_manifest_hash(members):
+            raise ValueError("Evaluation Policy member manifest hash does not match")
         return self
-
-
-# Section 17 physical contract supersedes the earlier reduced in-module draft.
-from ai_worker.tasks.evaluation.schemas.policy_contract import (  # noqa: E402
-    ComparisonPolicy,
-    ComparisonScope,
-    ConfidenceIntervalParameters,
-    EvaluationPolicy,
-    EvaluationPolicyMember,
-    EvaluationProfile,
-    PolicyMemberType,
-    SuiteDefinition,
-    SuiteInputSelector,
-    TriggerCatalogEntry,
-    evaluation_policy_member_manifest_hash,
-)

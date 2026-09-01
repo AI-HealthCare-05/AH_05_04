@@ -17,7 +17,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     ValidationReceipt,
     validate_validation_receipt,
 )
-from ai_worker.tasks.evaluation.schemas.authoring_contract import (
+from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
     AnswerGroundingCase,
     AnswerGroundingExpected,
@@ -81,7 +81,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ensure_unique_resource_paths,
     validate_schema_value,
 )
-from ai_worker.tasks.evaluation.schemas.policy_contract import (
+from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     ComparisonScope,
     ConfidenceIntervalParameters,

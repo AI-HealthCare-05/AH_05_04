@@ -66,6 +66,18 @@ _VALUE_PATTERNS = (
     ),
 )
 _SAFE_POINTER_SEGMENT = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+_KNOWN_POINTER_SEGMENTS = frozenset(
+    {
+        "ci_parameters",
+        "context",
+        "input_selector",
+        "medication_fixtures",
+        "patient_context_fixture",
+        "prescription_fixture",
+        "runtime_fixture",
+        "scopes",
+    }
+)
 
 
 def _normalize_key(key: str) -> str:
@@ -73,7 +85,9 @@ def _normalize_key(key: str) -> str:
 
 
 def _pointer_segment(value: str) -> str:
-    if _SAFE_POINTER_SEGMENT.fullmatch(value) is None:
+    if value.isdecimal():
+        return value
+    if value not in _KNOWN_POINTER_SEGMENTS or _SAFE_POINTER_SEGMENT.fullmatch(value) is None:
         return "*"
     return value.replace("~", "~0").replace("/", "~1")
 

@@ -103,6 +103,14 @@ def test_privacy_boundary_redacts_unsafe_pointer_segment() -> None:
     assert "unsafe segment!" not in str(caught.value)
 
 
+def test_privacy_boundary_redacts_arbitrary_flexible_map_key_from_pointer() -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_privacy_boundary({"ci_parameters": {"custom_parameter_name": "patient@example.com"}})
+
+    assert caught.value.safe_path == "/ci_parameters/*"
+    assert "custom_parameter_name" not in str(caught.value)
+
+
 @pytest.mark.parametrize("phone", ["010.1234.5678", "(010) 1234-5678", "+82 10 1234 5678"])
 def test_privacy_boundary_rejects_common_korean_phone_formats(phone: str) -> None:
     with pytest.raises(EvaluationValidationError) as caught:

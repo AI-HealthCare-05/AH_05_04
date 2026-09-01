@@ -6,15 +6,15 @@ from typing import Any, cast
 
 import pytest
 
-from ai_worker.tasks.evaluation.loaders_contract import load_dataset
+from ai_worker.tasks.evaluation.loaders import load_dataset
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
-from ai_worker.tasks.evaluation.schemas.authoring_contract import (
+from ai_worker.tasks.evaluation.schemas.authoring import (
     DatasetManifest,
     EvaluationContext,
     EvidenceMappingManifest,
     RetrievalExpected,
 )
-from ai_worker.tasks.evaluation.schemas.policy_contract import (
+from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     EvaluationPolicy,
     EvaluationProfile,
@@ -25,6 +25,13 @@ REPOSITORY_ROOT = Path(__file__).parents[3]
 EVALS_ROOT = REPOSITORY_ROOT / "evals"
 FOUNDATION_MANIFEST = EVALS_ROOT / "retrieval/manifests/dev-foundation-v1.dataset.json"
 PROTECTED_RECEIPT = EVALS_ROOT / "provenance/dev-foundation-v1.protected-artifact-receipt.json"
+HIDDEN_CORPUS_SNAPSHOT = EVALS_ROOT / "retrieval/snapshots/dev-foundation-v1.corpus-snapshot.json"
+
+
+def test_public_modules_are_the_canonical_single_implementation_surfaces() -> None:
+    assert load_dataset.__module__ == "ai_worker.tasks.evaluation.loaders"
+    assert DatasetManifest.__module__ == "ai_worker.tasks.evaluation.schemas.authoring"
+    assert EvaluationPolicy.__module__ == "ai_worker.tasks.evaluation.schemas.policy"
 
 
 def test_authoring_schema_uses_exact_section_17_fields() -> None:
@@ -234,3 +241,13 @@ def test_foundation_complete_reference_graph_is_bound() -> None:
     assert loaded.suite.adapter_id == "validation-only.v1"
     assert len(loaded.reference_graph) >= 8
     assert all(reference.resolved for reference in loaded.reference_graph)
+
+
+def test_foundation_corpus_uses_approved_evidence_mapping_contract() -> None:
+    loaded = load_dataset(FOUNDATION_MANIFEST, evals_root=EVALS_ROOT)
+
+    assert not HIDDEN_CORPUS_SNAPSHOT.exists()
+    assert not hasattr(loaded, "corpus_snapshot")
+    assert loaded.manifest.evaluation_corpus_snapshot_ref.id == loaded.evidence_mapping.mapping_id
+    assert loaded.manifest.evaluation_corpus_snapshot_ref.version == loaded.evidence_mapping.mapping_version
+    assert loaded.manifest.evaluation_corpus_snapshot_ref.hash == loaded.evidence_mapping.manifest_sha256

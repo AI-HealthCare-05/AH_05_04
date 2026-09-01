@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai_worker.tasks.evaluation.canonical import canonical_sha256
-from ai_worker.tasks.evaluation.schemas.policy_contract import (
+from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     EvaluationPolicy,
     EvaluationProfile,

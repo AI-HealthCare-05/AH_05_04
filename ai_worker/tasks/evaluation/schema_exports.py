@@ -8,14 +8,14 @@ from pydantic import BaseModel, TypeAdapter
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.schemas.artifacts import RESULT_ARTIFACT_MODELS, ValidationReceipt
-from ai_worker.tasks.evaluation.schemas.authoring_contract import (
+from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
     CriticalClaimRubric,
     DatasetManifest,
     EvidenceMappingManifest,
     ProtectedArtifactReceipt,
 )
-from ai_worker.tasks.evaluation.schemas.policy_contract import (
+from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     EvaluationPolicy,
     EvaluationProfile,

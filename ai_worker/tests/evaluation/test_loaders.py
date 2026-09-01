@@ -3,15 +3,15 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders_contract import load_dataset, load_json_object
+from ai_worker.tasks.evaluation.loaders import load_dataset, load_json_object
 from ai_worker.tasks.evaluation.schemas.artifacts import ValidationReceipt
-from ai_worker.tasks.evaluation.schemas.authoring_contract import DatasetManifest
+from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
 SOURCE_EVALS = REPOSITORY_ROOT / "evals"
@@ -71,6 +71,38 @@ class MutableDatasetFixture:
             }
         )
 
+    def rebind_case_derived_claims(self, manifest: dict[str, Any]) -> None:
+        self.refresh_resource_set_hash(manifest)
+        receipt_path = self.root / "provenance/dev-foundation-v1.protected-artifact-receipt.json"
+        receipt = self.read(receipt_path)
+        receipt["resource_set_hash"] = manifest["resource_set_hash"]
+        receipt["artifact_paths"] = [item["path"] for item in manifest["case_resources"]]
+        self.refresh_self_hash(receipt)
+        self.write(receipt_path, receipt)
+        manifest["protected_artifact_receipt_ref"]["hash"] = sha256_hex(receipt_path.read_bytes())
+
+        policy_path = self.root / "policies/dev-foundation-v1.evaluation-policy.json"
+        policy = self.read(policy_path)
+        for member in policy["required_partition_refs"]:
+            partition = member["reference"]["id"].rsplit(":", 1)[1]
+            resources = [
+                {"case_id": item["case_id"], "path": item["path"], "sha256": item["sha256"]}
+                for item in manifest["case_resources"]
+                if item["partition"] == partition
+            ]
+            member["reference"]["hash"] = canonical_sha256(cast(Any, {"partition": partition, "resources": resources}))
+        members = [
+            policy["evaluation_profile_ref"],
+            policy["comparison_policy_ref"],
+            *policy["required_partition_refs"],
+            *policy["required_gate_refs"],
+            *policy["required_suite_refs"],
+            policy["artifact_schema_set_ref"],
+        ]
+        policy["member_manifest_hash"] = canonical_sha256({"members": members})
+        self.refresh_self_hash(policy)
+        self.write(policy_path, policy)
+
     def case_path(self, case_id: str) -> Path:
         manifest = self.manifest_value()
         resource = next(item for item in manifest["case_resources"] if item["case_id"] == case_id)
@@ -86,7 +118,7 @@ class MutableDatasetFixture:
             value["input_sha256"] = canonical_sha256({"query": value["query"], "context": value["context"]})
         self.write(path, value)
         resource["sha256"] = sha256_hex(path.read_bytes())
-        self.refresh_resource_set_hash(manifest)
+        self.rebind_case_derived_claims(manifest)
         self.write_manifest(manifest)
 
     def mutate_resource(self, key: str, mutation: Any) -> None:
@@ -131,6 +163,35 @@ class MutableDatasetFixture:
         mutation(value)
         self.refresh_self_hash(value)
         self.write(path, value)
+
+    def rebind_configuration_refs(self) -> None:
+        suite_path = self.root / "suites/dev-foundation-v1.suite.json"
+        suite = self.read(suite_path)
+        profile_path = self.root / "profiles/dev-foundation-v1.profile.json"
+        profile = self.read(profile_path)
+        for reference in profile["required_suite_refs"]:
+            if reference["id"] == suite["suite_id"]:
+                reference["hash"] = suite["suite_hash"]
+        self.refresh_self_hash(profile)
+        self.write(profile_path, profile)
+
+        policy_path = self.root / "policies/dev-foundation-v1.evaluation-policy.json"
+        policy = self.read(policy_path)
+        policy["evaluation_profile_ref"]["reference"]["hash"] = profile["evaluation_profile_hash"]
+        for member in policy["required_suite_refs"]:
+            if member["reference"]["id"] == suite["suite_id"]:
+                member["reference"]["hash"] = suite["suite_hash"]
+        members = [
+            policy["evaluation_profile_ref"],
+            policy["comparison_policy_ref"],
+            *policy["required_partition_refs"],
+            *policy["required_gate_refs"],
+            *policy["required_suite_refs"],
+            policy["artifact_schema_set_ref"],
+        ]
+        policy["member_manifest_hash"] = canonical_sha256({"members": members})
+        self.refresh_self_hash(policy)
+        self.write(policy_path, policy)
 
 
 @pytest.fixture
@@ -595,3 +656,151 @@ def test_loader_rejects_duplicate_configuration_natural_keys(
 ) -> None:
     tmp_dataset.mutate_config(relative_path, mutation)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+@pytest.mark.parametrize(
+    ("selector_field", "selector_value"),
+    [
+        ("partitions", ["HOLDOUT"]),
+        ("task_types", ["RETRIEVAL"]),
+    ],
+)
+def test_loader_binds_every_suite_selector_field_to_selected_cases(
+    tmp_dataset: MutableDatasetFixture,
+    selector_field: str,
+    selector_value: list[str],
+) -> None:
+    tmp_dataset.mutate_config(
+        "suites/dev-foundation-v1.suite.json",
+        lambda value: value["input_selector"].__setitem__(selector_field, selector_value),
+    )
+    tmp_dataset.rebind_configuration_refs()
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_prioritizes_case_structure_over_stale_exact_byte_hash(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    case_path = tmp_dataset.case_path("rag-dev-retrieval-001")
+    case = tmp_dataset.read(case_path)
+    del case["query"]
+    tmp_dataset.write(case_path, case)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+@pytest.mark.parametrize(
+    ("target_field", "source_field"),
+    [
+        ("evaluation_profile_ref", "comparison_policy_ref"),
+        ("comparison_policy_ref", "evaluation_profile_ref"),
+        ("required_partition_refs", "required_suite_refs"),
+        ("required_suite_refs", "required_partition_refs"),
+        ("artifact_schema_set_ref", "required_suite_refs"),
+    ],
+)
+def test_loader_rejects_policy_reference_with_valid_tuple_of_wrong_kind(
+    tmp_dataset: MutableDatasetFixture,
+    target_field: str,
+    source_field: str,
+) -> None:
+    path = tmp_dataset.root / "policies/dev-foundation-v1.evaluation-policy.json"
+    value = tmp_dataset.read(path)
+    target = value[target_field]
+    source = value[source_field]
+    target_member = target[0] if isinstance(target, list) else target
+    source_member = source[0] if isinstance(source, list) else source
+    target_member["reference"] = source_member["reference"]
+    members = [
+        value["evaluation_profile_ref"],
+        value["comparison_policy_ref"],
+        *value["required_partition_refs"],
+        *value["required_gate_refs"],
+        *value["required_suite_refs"],
+        value["artifact_schema_set_ref"],
+    ]
+    value["member_manifest_hash"] = canonical_sha256({"members": members})
+    tmp_dataset.refresh_self_hash(value)
+    tmp_dataset.write(path, value)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_rejects_gate_reference_with_valid_suite_tuple(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    path = tmp_dataset.root / "policies/dev-foundation-v1.evaluation-policy.json"
+    value = tmp_dataset.read(path)
+    suite_member = value["required_suite_refs"][0]
+    value["required_gate_refs"] = [{"member_order": 4, "member_type": "GATE", "reference": suite_member["reference"]}]
+    suite_member["member_order"] = 5
+    value["artifact_schema_set_ref"]["member_order"] = 6
+    members = [
+        value["evaluation_profile_ref"],
+        value["comparison_policy_ref"],
+        *value["required_partition_refs"],
+        *value["required_gate_refs"],
+        *value["required_suite_refs"],
+        value["artifact_schema_set_ref"],
+    ]
+    value["member_manifest_hash"] = canonical_sha256({"members": members})
+    tmp_dataset.refresh_self_hash(value)
+    tmp_dataset.write(path, value)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_rejects_profile_suite_reference_with_valid_comparison_tuple(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    comparison = tmp_dataset.read(tmp_dataset.root / "policies/dev-foundation-v1.comparison-policy.json")
+    profile_path = tmp_dataset.root / "profiles/dev-foundation-v1.profile.json"
+    profile = tmp_dataset.read(profile_path)
+    profile["required_suite_refs"][0] = {
+        "id": comparison["comparison_policy_id"],
+        "version": comparison["comparison_policy_version"],
+        "hash": comparison["comparison_policy_hash"],
+    }
+    tmp_dataset.refresh_self_hash(profile)
+    tmp_dataset.write(profile_path, profile)
+    tmp_dataset.rebind_configuration_refs()
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+@pytest.mark.parametrize(
+    ("target_field", "source_field"),
+    [
+        ("source_snapshot_ref", "knowledge_index_ref"),
+        ("knowledge_index_ref", "rule_set_ref"),
+        ("rule_set_ref", "guideline_set_ref"),
+        ("guideline_set_ref", "safety_policy_set_ref"),
+        ("safety_policy_set_ref", "knowledge_index_ref"),
+    ],
+)
+def test_loader_rejects_runtime_reference_with_valid_tuple_of_wrong_kind(
+    tmp_dataset: MutableDatasetFixture,
+    target_field: str,
+    source_field: str,
+) -> None:
+    tmp_dataset.mutate_case(
+        "rag-dev-retrieval-001",
+        lambda case: case["context"]["runtime_fixture"].__setitem__(
+            target_field,
+            case["context"]["runtime_fixture"][source_field],
+        ),
+    )
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_schema_set_hash_is_independent_of_schema_file_path_order(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    first = tmp_dataset.root / "schemas/1.0.0/authoring/rag-eval.case.schema.json"
+    second = tmp_dataset.root / "schemas/1.0.0/authoring/rag-eval.dataset-manifest.schema.json"
+    temporary = tmp_dataset.root / "schemas/1.0.0/authoring/SYNTHETIC_SWAP.schema.json"
+    first.rename(temporary)
+    second.rename(first)
+    temporary.rename(second)
+
+    load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)

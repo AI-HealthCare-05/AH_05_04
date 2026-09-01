@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai_worker.tasks.evaluation.schemas import authoring as authoring_schemas
-from ai_worker.tasks.evaluation.schemas.authoring_contract import (
+from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
     DatasetManifest,
     EvidenceMappingManifest,

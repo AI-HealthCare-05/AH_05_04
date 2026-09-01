@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-# ruff: noqa: F401, F811, E402
-# mypy: disable-error-code="arg-type, assignment, attr-defined, union-attr"
 import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -25,13 +23,13 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
     DatasetManifest,
     EvaluationCase,
     EvidenceMappingManifest,
+    EvidenceType,
+    ProtectedArtifactReceipt,
 )
 from ai_worker.tasks.evaluation.schemas.common import (
-    ActorRole,
     ContentClassification,
+    ImmutableReference,
     Partition,
-    ReviewProvenance,
-    TeamGoldStatus,
 )
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
@@ -46,7 +44,16 @@ class _DuplicateKeyError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class _LegacyValidatedDataset:
+class ResolvedReference:
+    kind: str
+    id: str
+    version: str
+    hash: str
+    resolved: Literal[True] = True
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedDataset:
     manifest: DatasetManifest
     cases: tuple[EvaluationCase, ...]
     evidence_mapping: EvidenceMappingManifest
@@ -55,7 +62,53 @@ class _LegacyValidatedDataset:
     comparison_policy: ComparisonPolicy
     evaluation_policy: EvaluationPolicy
     suite: SuiteDefinition
+    protected_artifact_receipt: ProtectedArtifactReceipt
+    reference_graph: tuple[ResolvedReference, ...]
     resource_hashes: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _JsonSnapshot:
+    path: Path
+    relative_path: str
+    raw_bytes: bytes
+    value: dict[str, JsonValue]
+
+    @property
+    def file_sha256(self) -> str:
+        return sha256_hex(self.raw_bytes)
+
+
+class _SnapshotReader:
+    def __init__(self, root: Path) -> None:
+        self.root = root.absolute()
+        self._cache: dict[Path, _JsonSnapshot] = {}
+
+    def path(self, relative_path: str) -> Path:
+        normalized = normalize_resource_path(relative_path)
+        return _safe_path(self.root, self.root / normalized)
+
+    def read_path(self, path: Path) -> _JsonSnapshot:
+        safe_path = _safe_path(self.root, path)
+        cached = self._cache.get(safe_path)
+        if cached is not None:
+            return cached
+        try:
+            raw_bytes = safe_path.read_bytes()
+        except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as error:
+            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING) from error
+        value = _parse_json_object(raw_bytes)
+        relative = safe_path.relative_to(self.root).as_posix()
+        snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, value)
+        self._cache[safe_path] = snapshot
+        return snapshot
+
+    def read(self, relative_path: str) -> _JsonSnapshot:
+        return self.read_path(self.path(relative_path))
+
+    @property
+    def resource_hashes(self) -> tuple[tuple[str, str], ...]:
+        return tuple(sorted((item.relative_path, item.file_sha256) for item in self._cache.values()))
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
@@ -67,11 +120,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, JsonValue]]) -> dict[str, Json
     return result
 
 
-def _read_json_object(path: Path) -> dict[str, JsonValue]:
-    try:
-        raw_bytes = path.read_bytes()
-    except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as error:
-        raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING) from error
+def _parse_json_object(raw_bytes: bytes) -> dict[str, JsonValue]:
     try:
         decoded = raw_bytes.decode("utf-8", errors="strict")
         value = json.loads(decoded, object_pairs_hook=_reject_duplicate_keys)
@@ -94,113 +143,13 @@ def _read_json_object(path: Path) -> dict[str, JsonValue]:
     return cast(dict[str, JsonValue], value)
 
 
-def _schema_error_code(
-    error: ValidationError,
-    model: type[BaseModel] | None = None,
-    value: dict[str, JsonValue] | None = None,
-) -> EvaluationErrorCode:
-    details = error.errors(include_input=False)
-    invalid_locations = {str(item["loc"][-1]) for item in details if item["loc"] and item["type"] != "missing"}
-    if invalid_locations & {"sha256", "content_hash", "resource_hash", "hash", "input_hash"}:
-        return EvaluationErrorCode.HASH_INVALID
-    if "path" in invalid_locations or "resource_path" in invalid_locations:
-        return EvaluationErrorCode.RESOURCE_PATH_INVALID
-    if "partition" in invalid_locations:
-        return EvaluationErrorCode.PARTITION_INVALID
-    if invalid_locations & {
-        "review_provenance",
-        "authored_by",
-        "reviewed_by",
-        "approved_by",
-        "proposed_by",
-        "team_gold_status",
-    }:
-        return EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
-    if invalid_locations & {"deidentification_approval_receipt_ref", "content_classification"}:
-        return EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED
-    if invalid_locations & {"execution_status", "decision_status"}:
-        return EvaluationErrorCode.STATE_COMBINATION_INVALID
-    contextual_code = _contextual_schema_error_code(model, value)
-    return contextual_code or EvaluationErrorCode.SCHEMA_INVALID
-
-
-def _contextual_schema_error_code(
-    model: type[BaseModel] | None,
-    value: dict[str, JsonValue] | None,
-) -> EvaluationErrorCode | None:
-    if model is DatasetManifest and value is not None:
-        if (
-            value.get("content_classification") == "APPROVED_DEIDENTIFIED"
-            and value.get("deidentification_approval_receipt_ref") is None
-        ):
-            return EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED
-        if _review_provenance_invalid(
-            value,
-            allowed_approval_roles=frozenset({ActorRole.DATASET_CUSTODIAN}),
-        ):
-            return EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
-    if model is not None and model.__name__ == "ValidationReceipt" and value is not None:
-        if "execution_status" in value and "decision_status" in value:
-            return EvaluationErrorCode.STATE_COMBINATION_INVALID
-    return None
-
-
-def _review_provenance_invalid(
-    value: dict[str, JsonValue],
-    *,
-    allowed_approval_roles: frozenset[ActorRole] | None = None,
-) -> bool:
-    raw_provenance = value.get("review_provenance")
-    if not isinstance(raw_provenance, dict):
-        return False
-    try:
-        provenance = ReviewProvenance.model_validate(raw_provenance)
-    except ValidationError:
-        return True
-    return bool(
-        allowed_approval_roles is not None
-        and provenance.team_gold_status is TeamGoldStatus.APPROVED
-        and (provenance.approved_by is None or provenance.approved_by.role not in allowed_approval_roles)
-    )
-
-
-_DIGEST_FIELDS = frozenset({"sha256", "content_hash", "resource_hash", "input_hash", "hash", "member_manifest_hash"})
-
-
-def _privacy_view(value: JsonValue, key: str | None = None) -> JsonValue:
-    if key in _DIGEST_FIELDS and isinstance(value, str):
-        return "SYNTHETIC_DIGEST"
-    if isinstance(value, dict):
-        return {item_key: _privacy_view(item, item_key) for item_key, item in value.items()}
-    if isinstance(value, list):
-        return [_privacy_view(item) for item in value]
-    return value
-
-
-def _legacy_load_json_object[T: BaseModel](path: Path, model: type[T]) -> T:
-    value = _read_json_object(path)
-    try:
-        validate_privacy_boundary(_privacy_view(value))
-        return model.model_validate(value)
-    except EvaluationValidationError as error:
-        if error.code is EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN:
-            raise EvaluationValidationError(
-                EvaluationErrorCode.PRIVACY_VALUE_DETECTED,
-                error.safe_path,
-            ) from error
-        raise
-    except ValidationError as error:
-        raise EvaluationValidationError(_schema_error_code(error, model, value)) from None
-
-
 def _safe_path(root: Path, path: Path) -> Path:
     root_absolute = root.absolute()
     path_absolute = path.absolute()
     try:
-        path_absolute.relative_to(root_absolute)
+        relative = path_absolute.relative_to(root_absolute)
     except ValueError as error:
         raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
-    relative = path_absolute.relative_to(root_absolute)
     current = root_absolute
     for part in relative.parts:
         current /= part
@@ -209,330 +158,462 @@ def _safe_path(root: Path, path: Path) -> Path:
     return path_absolute
 
 
-def _resource_path(root: Path, relative_path: str) -> Path:
-    normalized = normalize_resource_path(relative_path)
-    return _safe_path(root, root / normalized)
+def _model_error_code(
+    model_name: str,
+    details: list[dict[str, object]],
+) -> EvaluationErrorCode | None:
+    messages = tuple(str(cast(dict[str, object], item.get("ctx", {})).get("error", "")) for item in details)
+    if model_name == "ValidationReceipt":
+        return EvaluationErrorCode.STATE_COMBINATION_INVALID
+    if model_name == "EvidenceMappingManifest" and any(item["loc"] == () for item in details):
+        return EvaluationErrorCode.EVIDENCE_MAPPING_INVALID
+    if model_name in {"EvaluationProfile", "ComparisonPolicy", "EvaluationPolicy", "SuiteDefinition"}:
+        return EvaluationErrorCode.MANIFEST_INVALID
+    if model_name == "DatasetManifest":
+        if any("Case resources must be unique" in message for message in messages):
+            return EvaluationErrorCode.CASE_DUPLICATE
+        if any("approved deidentified data requires" in message for message in messages):
+            return EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED
+        if any(
+            "author, reviewer, and approver" in message or "approval" in message or "provenance" in message
+            for message in messages
+        ):
+            return EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
+    return None
 
 
-def _verify_file_hash(path: Path, expected: str) -> str:
+def _schema_error_code(error: ValidationError, model: type[BaseModel] | None = None) -> EvaluationErrorCode:
+    details = cast(list[dict[str, object]], error.errors(include_input=False))
+    model_code = _model_error_code("" if model is None else model.__name__, details)
+    if model_code is not None:
+        return model_code
+    invalid_locations = {
+        str(cast(tuple[object, ...], item["loc"])[-1]) for item in details if item["loc"] and item["type"] != "missing"
+    }
+    if invalid_locations & {
+        "sha256",
+        "manifest_sha256",
+        "rubric_hash",
+        "snapshot_hash",
+        "receipt_hash",
+        "resource_set_hash",
+        "input_sha256",
+        "hash",
+        "evaluation_profile_hash",
+        "comparison_policy_hash",
+        "evaluation_policy_hash",
+        "suite_hash",
+    }:
+        return EvaluationErrorCode.HASH_INVALID
+    if invalid_locations & {"path", "resource_path"}:
+        return EvaluationErrorCode.RESOURCE_PATH_INVALID
+    if "partition" in invalid_locations:
+        return EvaluationErrorCode.PARTITION_INVALID
+    if invalid_locations & {"execution_status", "decision_status"}:
+        return EvaluationErrorCode.STATE_COMBINATION_INVALID
+    return EvaluationErrorCode.SCHEMA_INVALID
+
+
+def _validate_model[T: BaseModel](snapshot: _JsonSnapshot, model: type[T]) -> T:
     try:
-        actual = sha256_hex(path.read_bytes())
-    except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as error:
-        raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING) from error
-    if actual != expected:
-        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
-    return actual
+        validated = model.model_validate(snapshot.value)
+    except ValidationError as error:
+        raise EvaluationValidationError(_schema_error_code(error, model)) from None
+    _validate_privacy(validated.model_dump(mode="json"))
+    return validated
 
 
-def _verify_context_resources(root: Path, case: EvaluationCase) -> None:
-    paths = [
-        case.context.prescription_fixture,
-        *case.context.medication_fixtures,
-        case.context.patient_context_fixture,
-        case.context.runtime_fixture,
-    ]
-    for relative_path in paths:
-        if relative_path is None:
-            continue
-        path = _resource_path(root, relative_path)
-        if not path.is_file():
-            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING)
-
-
-def _verify_content_hash(value: BaseModel) -> None:
-    payload = cast(dict[str, JsonValue], value.model_dump(mode="json"))
-    expected = cast(str, payload["content_hash"])
-    if canonical_sha256(payload, excluded_top_level_keys=frozenset({"content_hash"})) != expected:
-        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
-
-
-def _load_case(path: Path) -> tuple[EvaluationCase, dict[str, JsonValue]]:
-    value = _read_json_object(path)
+def _validate_case(snapshot: _JsonSnapshot) -> EvaluationCase:
     try:
-        validate_privacy_boundary(_privacy_view(value))
-        case = EVALUATION_CASE_ADAPTER.validate_python(value)
+        validated = EVALUATION_CASE_ADAPTER.validate_python(snapshot.value)
+    except ValidationError as error:
+        raise EvaluationValidationError(_schema_error_code(error)) from None
+    _validate_privacy(validated.model_dump(mode="json"))
+    return validated
+
+
+def _validate_privacy(value: JsonValue) -> None:
+    try:
+        validate_privacy_boundary(value)
     except EvaluationValidationError as error:
         if error.code is EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN:
-            raise EvaluationValidationError(
-                EvaluationErrorCode.PRIVACY_VALUE_DETECTED,
-                error.safe_path,
-            ) from error
+            raise EvaluationValidationError(EvaluationErrorCode.PRIVACY_VALUE_DETECTED, error.safe_path) from None
         raise
-    except ValidationError as error:
-        code = _schema_error_code(error)
-        allowed_roles = None
-        if value.get("task_type") in {"SAFETY", "END_TO_END_RAG"}:
-            allowed_roles = frozenset({ActorRole.PRODUCT_SAFETY_REVIEWER, ActorRole.MEDICAL_REVIEWER})
-        if code is EvaluationErrorCode.SCHEMA_INVALID and _review_provenance_invalid(
-            value,
-            allowed_approval_roles=allowed_roles,
-        ):
-            code = EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
-        raise EvaluationValidationError(code) from None
-    return case, value
 
 
-def _config_path(root: Path, manifest_path: Path, directory: str, suffix: str) -> Path:
-    name = manifest_path.name.removesuffix(".dataset.json") + suffix
-    return _safe_path(root, root / directory / name)
+def load_json_object[T: BaseModel](path: Path, model: type[T]) -> T:
+    root = path.absolute().parent
+    snapshot = _SnapshotReader(root).read_path(path)
+    return _validate_model(snapshot, model)
 
 
-def _validate_unique_configuration(
-    profile: EvaluationProfile,
-    suite: SuiteDefinition,
-    comparison_policy: ComparisonPolicy,
-) -> None:
-    profile_refs = [(ref.id, ref.version, ref.hash) for ref in profile.suite_references]
-    if len(profile_refs) != len(set(profile_refs)):
-        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
-    if len(suite.partitions) != len(set(suite.partitions)) or len(suite.task_types) != len(set(suite.task_types)):
-        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
-    scope_keys = [
-        (scope.metric_code, scope.metric_version, scope.partition, scope.slice_key)
-        for scope in comparison_policy.scopes
+def _verify_self_hash(model: BaseModel, field: str) -> None:
+    payload = cast(dict[str, JsonValue], model.model_dump(mode="json"))
+    expected = cast(str, payload[field])
+    if canonical_sha256(payload, excluded_top_level_keys=frozenset({field})) != expected:
+        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+
+
+def _verify_file_hash(snapshot: _JsonSnapshot, expected: str) -> None:
+    if snapshot.file_sha256 != expected:
+        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+
+
+def _prefix(manifest_path: Path) -> str:
+    return manifest_path.name.removesuffix(".dataset.json")
+
+
+def _resource_set_hash(manifest: DatasetManifest) -> str:
+    resources: list[JsonValue] = [
+        {"partition": item.partition.value, "path": item.path, "sha256": item.sha256}
+        for item in manifest.case_resources
     ]
-    if len(scope_keys) != len(set(scope_keys)):
-        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    return canonical_sha256({"resources": resources})
 
 
-def _case_evidence_ids(case: EvaluationCase) -> set[str]:
+def _partition_reference_hash(manifest: DatasetManifest, partition: Partition) -> str:
+    resources: list[JsonValue] = [
+        {"case_id": item.case_id, "path": item.path, "sha256": item.sha256}
+        for item in manifest.case_resources
+        if item.partition is partition
+    ]
+    return canonical_sha256({"partition": partition.value, "resources": resources})
+
+
+def _case_set_hash(cases: tuple[EvaluationCase, ...]) -> str:
+    return canonical_sha256({"case_ids": [case.case_id for case in cases]})
+
+
+def _expected_evidence_refs(case: EvaluationCase) -> tuple[str, ...]:
     expected = case.expected
-    ids: set[str] = set()
-    for field in ("gold_evidence_ids", "gold_citation_evidence_ids", "gold_rule_ids"):
-        values = getattr(expected, field)
-        if values is not None:
-            ids.update(values)
-    return ids
+    values: list[str] = []
+    for field in (
+        "relevant_evidence_refs",
+        "required_evidence_refs",
+        "expected_rule_ids",
+    ):
+        items = getattr(expected, field)
+        if items is not None:
+            values.extend(items)
+    citations = expected.expected_citations
+    if citations is not None:
+        values.extend(item.evidence_ref_id for item in citations)
+    claims = expected.gold_claims
+    if claims is not None:
+        for claim in claims:
+            values.extend(claim.supporting_evidence_ref_ids)
+    return tuple(values)
 
 
-def _has_duplicate_case_evidence_ids(case: EvaluationCase) -> bool:
-    expected = case.expected
-    for field in ("gold_evidence_ids", "gold_citation_evidence_ids", "gold_rule_ids"):
-        values = getattr(expected, field)
-        if values is not None and len(values) != len(set(values)):
-            return True
-    return False
-
-
-def _case_claim_ids(case: EvaluationCase) -> set[str]:
-    claims = case.expected.gold_claims
-    return set() if claims is None else set(claims)
-
-
-def _load_cases(
-    root: Path,
+def _validate_cases(
+    reader: _SnapshotReader,
     manifest: DatasetManifest,
-) -> tuple[list[EvaluationCase], list[tuple[str, str]]]:
-    case_ids: set[str] = set()
-    case_paths: set[str] = set()
+) -> tuple[EvaluationCase, ...]:
     cases: list[EvaluationCase] = []
-    resource_hashes: list[tuple[str, str]] = []
-    declared_counts = Counter(resource.partition for resource in manifest.case_resources)
+    ids: set[str] = set()
+    paths: set[str] = set()
     for resource in manifest.case_resources:
-        if resource.case_id in case_ids or resource.path in case_paths:
+        if resource.case_id in ids or resource.path in paths:
             raise EvaluationValidationError(EvaluationErrorCode.CASE_DUPLICATE)
-        case_ids.add(resource.case_id)
-        case_paths.add(resource.path)
-        case_path = _resource_path(root, resource.path)
-        resource_hashes.append((resource.path, _verify_file_hash(case_path, resource.sha256)))
-        case, raw_case = _load_case(case_path)
-        if case.partition != resource.partition:
+        ids.add(resource.case_id)
+        paths.add(resource.path)
+        snapshot = reader.read(resource.path)
+        case = _validate_case(snapshot)
+        _verify_file_hash(snapshot, resource.sha256)
+        if case.partition is not resource.partition:
             raise EvaluationValidationError(EvaluationErrorCode.PARTITION_COUNT_MISMATCH)
         if (
             case.case_id != resource.case_id
-            or case.task_type != resource.task_type
             or case.dataset_code != manifest.dataset_code
             or case.dataset_version != manifest.dataset_version
-            or case.content_classification != manifest.content_classification
+            or case.data_classification is not manifest.data_classification
+            or case.critical_claim_rubric_ref != manifest.critical_claim_rubric_ref
         ):
             raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
-        if _has_duplicate_case_evidence_ids(case):
-            raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
-        _verify_context_resources(root, case)
-        expected_input_hash = canonical_sha256({"question": raw_case["question"], "context": raw_case["context"]})
-        if case.input_hash != expected_input_hash:
+        input_value: JsonValue = {
+            "query": case.query,
+            "context": cast(JsonValue, case.context.model_dump(mode="json")),
+        }
+        if case.input_sha256 != canonical_sha256(input_value):
             raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
         cases.append(case)
-    if Counter(case.partition for case in cases) != declared_counts:
+    actual_counts = Counter(case.partition.value for case in cases)
+    stored_counts = manifest.partition_counts.model_dump(mode="json")
+    if any(actual_counts[partition.value] != stored_counts[partition.value] for partition in Partition):
         raise EvaluationValidationError(EvaluationErrorCode.PARTITION_COUNT_MISMATCH)
-    return cases, resource_hashes
+    return tuple(cases)
 
 
-def _validate_leakage(cases: list[EvaluationCase]) -> None:
+def _validate_leakage(cases: tuple[EvaluationCase, ...]) -> None:
     for axis in ("question_template", "source_segment", "medication_family", "transform_origin"):
         partitions_by_value: defaultdict[str, set[Partition]] = defaultdict(set)
         for case in cases:
-            partitions_by_value[case.leakage_groups[axis]].add(case.partition)
+            partitions_by_value[getattr(case.leakage_group_ids, axis)].add(case.partition)
         if any(len(partitions) > 1 for partitions in partitions_by_value.values()):
             raise EvaluationValidationError(EvaluationErrorCode.LEAKAGE_CROSS_PARTITION)
 
 
-def _load_evidence_mapping(
-    root: Path,
+def _load_evidence(
+    reader: _SnapshotReader,
+    prefix: str,
     manifest: DatasetManifest,
-    cases: list[EvaluationCase],
-) -> tuple[EvidenceMappingManifest, list[tuple[str, str]]]:
-    evidence_path = _resource_path(root, manifest.evidence_mapping.path)
-    resource_hashes = [
-        (
-            manifest.evidence_mapping.path,
-            _verify_file_hash(evidence_path, manifest.evidence_mapping.sha256),
-        )
-    ]
-    try:
-        evidence_mapping = _legacy_load_json_object(evidence_path, EvidenceMappingManifest)
-    except EvaluationValidationError as error:
-        if error.code is EvaluationErrorCode.SCHEMA_INVALID:
-            raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID) from None
-        raise
-    _verify_content_hash(evidence_mapping)
-    if (
-        evidence_mapping.dataset_code != manifest.dataset_code
-        or evidence_mapping.dataset_version != manifest.dataset_version
-    ):
+    cases: tuple[EvaluationCase, ...],
+) -> tuple[EvidenceMappingManifest, dict[tuple[str, str, str], str]]:
+    snapshot = reader.read(f"retrieval/evidence/{prefix}.evidence-mapping.json")
+    evidence = _validate_model(snapshot, EvidenceMappingManifest)
+    _verify_self_hash(evidence, "manifest_sha256")
+    if evidence.manifest_sha256 != manifest.evidence_mapping_manifest_sha256:
         raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
-    mapped_ids = {entry.evidence_id for entry in evidence_mapping.evidence}
-    mapped_paths = [entry.resource_path for entry in evidence_mapping.evidence]
-    if len(mapped_paths) != len(set(mapped_paths)):
+    by_id = {item.evidence_ref_id: item for item in evidence.entries}
+    if len(by_id) != len(evidence.entries):
         raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
-    if not set().union(*(_case_evidence_ids(case) for case in cases)).issubset(mapped_ids):
-        raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
-    for entry in evidence_mapping.evidence:
-        evidence_resource = _resource_path(root, entry.resource_path)
-        resource_hashes.append((entry.resource_path, _verify_file_hash(evidence_resource, entry.resource_hash)))
-    return evidence_mapping, resource_hashes
+    for case in cases:
+        if not set(_expected_evidence_refs(case)).issubset(by_id):
+            raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+    registry: dict[tuple[str, str, str], str] = {
+        (evidence.mapping_id, evidence.mapping_version, evidence.manifest_sha256): "CORPUS_SNAPSHOT"
+    }
+    evidence_kinds = {
+        EvidenceType.PRESCRIPTION: "PRESCRIPTION",
+        EvidenceType.KNOWLEDGE_CHUNK: "KNOWLEDGE_INDEX",
+        EvidenceType.INTERACTION_RULE: "RULE_SET",
+        EvidenceType.LIFESTYLE_GUIDELINE: "GUIDELINE_SET",
+        EvidenceType.SAFETY_POLICY: "SAFETY_POLICY_SET",
+    }
+    for entry in evidence.entries:
+        registry[(entry.stable_key, entry.source_version, entry.content_sha256)] = evidence_kinds[entry.evidence_type]
+        if entry.fixture_record_ref is not None:
+            resource = reader.read(entry.fixture_record_ref.path)
+            _verify_file_hash(resource, entry.fixture_record_ref.sha256)
+            if resource.file_sha256 != entry.content_sha256:
+                raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+            _validate_privacy(resource.value)
+    corpus_ref = ImmutableReference(
+        id=evidence.mapping_id,
+        version=evidence.mapping_version,
+        hash=evidence.manifest_sha256,
+    )
+    if manifest.evaluation_corpus_snapshot_ref != corpus_ref:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    return evidence, registry
 
 
 def _load_rubric(
-    root: Path,
+    reader: _SnapshotReader,
+    prefix: str,
     manifest: DatasetManifest,
-    cases: list[EvaluationCase],
-) -> tuple[CriticalClaimRubric, tuple[str, str]]:
-    rubric_path = _resource_path(root, manifest.critical_claim_rubric.path)
-    resource_hash = (
-        manifest.critical_claim_rubric.path,
-        _verify_file_hash(rubric_path, manifest.critical_claim_rubric.sha256),
-    )
-    rubric = _legacy_load_json_object(rubric_path, CriticalClaimRubric)
-    _verify_content_hash(rubric)
-    claim_ids = set().union(*(_case_claim_ids(case) for case in cases))
-    if (
-        rubric.dataset_code != manifest.dataset_code
-        or rubric.dataset_version != manifest.dataset_version
-        or set(rubric.critical_claim_keys) != claim_ids
-    ):
+    cases: tuple[EvaluationCase, ...],
+) -> CriticalClaimRubric:
+    snapshot = reader.read(f"retrieval/manifests/{prefix}.critical-claim-rubric.json")
+    rubric = _validate_model(snapshot, CriticalClaimRubric)
+    _verify_self_hash(rubric, "rubric_hash")
+    expected_ref = ImmutableReference(id=rubric.rubric_id, version=rubric.rubric_version, hash=rubric.rubric_hash)
+    if manifest.critical_claim_rubric_ref != expected_ref:
         raise EvaluationValidationError(EvaluationErrorCode.RUBRIC_MISMATCH)
-    return rubric, resource_hash
+    if any(case.critical_claim_rubric_ref != expected_ref for case in cases):
+        raise EvaluationValidationError(EvaluationErrorCode.RUBRIC_MISMATCH)
+    if {case.task_type for case in cases} != set(rubric.applicable_task_types):
+        raise EvaluationValidationError(EvaluationErrorCode.RUBRIC_MISMATCH)
+    return rubric
 
 
-@dataclass(frozen=True, slots=True)
-class _ValidatedConfiguration:
-    profile: EvaluationProfile
-    comparison_policy: ComparisonPolicy
-    evaluation_policy: EvaluationPolicy
-    suite: SuiteDefinition
-    resource_hashes: tuple[tuple[str, str], ...]
-
-
-def _load_configuration(root: Path, manifest_path: Path) -> _ValidatedConfiguration:
-    profile_path = _config_path(root, manifest_path, "profiles", ".profile.json")
-    comparison_path = _config_path(root, manifest_path, "policies", ".comparison-policy.json")
-    policy_path = _config_path(root, manifest_path, "policies", ".evaluation-policy.json")
-    suite_path = _config_path(root, manifest_path, "suites", ".suite.json")
-    profile = _legacy_load_json_object(profile_path, EvaluationProfile)
-    comparison_policy = _legacy_load_json_object(comparison_path, ComparisonPolicy)
-    evaluation_policy = _legacy_load_json_object(policy_path, EvaluationPolicy)
-    suite = _legacy_load_json_object(suite_path, SuiteDefinition)
-    paths_and_models = (
-        (profile_path, profile),
-        (comparison_path, comparison_policy),
-        (policy_path, evaluation_policy),
-        (suite_path, suite),
-    )
-    for _, config in paths_and_models:
-        _verify_content_hash(config)
-    _validate_unique_configuration(profile, suite, comparison_policy)
-    _validate_configuration_references(profile, suite, comparison_policy, evaluation_policy)
-    return _ValidatedConfiguration(
-        profile=profile,
-        comparison_policy=comparison_policy,
-        evaluation_policy=evaluation_policy,
-        suite=suite,
-        resource_hashes=tuple(
-            (str(path.relative_to(root)), sha256_hex(path.read_bytes())) for path, _ in paths_and_models
-        ),
-    )
-
-
-def _validate_configuration_references(
-    profile: EvaluationProfile,
-    suite: SuiteDefinition,
-    comparison_policy: ComparisonPolicy,
-    evaluation_policy: EvaluationPolicy,
-) -> None:
-    suite_reference = (suite.suite_code, suite.suite_version, suite.content_hash)
-    if [(ref.id, ref.version, ref.hash) for ref in profile.suite_references] != [suite_reference]:
+def _load_receipt(
+    reader: _SnapshotReader,
+    prefix: str,
+    manifest: DatasetManifest,
+) -> ProtectedArtifactReceipt:
+    snapshot = reader.read(f"provenance/{prefix}.protected-artifact-receipt.json")
+    receipt = _validate_model(snapshot, ProtectedArtifactReceipt)
+    _verify_self_hash(receipt, "receipt_hash")
+    expected = ImmutableReference(id=receipt.receipt_id, version=receipt.receipt_version, hash=snapshot.file_sha256)
+    if manifest.protected_artifact_receipt_ref != expected:
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
-    expected_policy_members = {
-        ("PROFILE", profile.profile_code, profile.profile_version, profile.content_hash),
-        ("SUITE", suite.suite_code, suite.suite_version, suite.content_hash),
-        (
-            "COMPARISON_POLICY",
-            comparison_policy.policy_code,
-            comparison_policy.policy_version,
-            comparison_policy.content_hash,
-        ),
-    }
-    actual_policy_members = {
-        (
-            member.member_type.value,
-            member.reference.id,
-            member.reference.version,
-            member.reference.hash,
+    if (
+        receipt.dataset_code != manifest.dataset_code
+        or receipt.dataset_version != manifest.dataset_version
+        or receipt.data_classification is not manifest.data_classification
+        or receipt.resource_set_hash != manifest.resource_set_hash
+        or receipt.artifact_paths != tuple(item.path for item in manifest.case_resources)
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    return receipt
+
+
+def _schema_set_hash(reader: _SnapshotReader) -> str:
+    entries: list[dict[str, str]] = []
+    schema_root = reader.root / "schemas/1.0.0"
+    for path in sorted(schema_root.rglob("*.json")):
+        snapshot = reader.read_path(path)
+        schema_urn = snapshot.value.get("$id")
+        if not isinstance(schema_urn, str) or not schema_urn.startswith("urn:rag-eval:schema:"):
+            raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+        logical_id_and_version = schema_urn.removeprefix("urn:rag-eval:schema:")
+        try:
+            schema_id, schema_version = logical_id_and_version.rsplit(":", 1)
+        except ValueError as error:
+            raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from error
+        entries.append(
+            {
+                "schema_id": schema_id,
+                "schema_version": schema_version,
+                "schema_sha256": snapshot.file_sha256,
+            }
         )
-        for member in evaluation_policy.members
-    }
-    if actual_policy_members != expected_policy_members:
+    entries.sort(key=lambda item: (item["schema_id"], item["schema_version"], item["schema_sha256"]))
+    return canonical_sha256(cast(JsonValue, {"schemas": entries}))
+
+
+def _load_configuration(
+    reader: _SnapshotReader,
+    prefix: str,
+) -> tuple[EvaluationProfile, ComparisonPolicy, EvaluationPolicy, SuiteDefinition]:
+    profile = _validate_model(reader.read(f"profiles/{prefix}.profile.json"), EvaluationProfile)
+    comparison = _validate_model(
+        reader.read(f"policies/{prefix}.comparison-policy.json"),
+        ComparisonPolicy,
+    )
+    policy = _validate_model(reader.read(f"policies/{prefix}.evaluation-policy.json"), EvaluationPolicy)
+    suite = _validate_model(reader.read(f"suites/{prefix}.suite.json"), SuiteDefinition)
+    for model, field in (
+        (profile, "evaluation_profile_hash"),
+        (comparison, "comparison_policy_hash"),
+        (policy, "evaluation_policy_hash"),
+        (suite, "suite_hash"),
+    ):
+        _verify_self_hash(model, field)
+    return profile, comparison, policy, suite
+
+
+def _resolve_reference(
+    reference: ImmutableReference,
+    expected_kind: str,
+    registry: dict[tuple[str, str, str], str],
+    graph: list[ResolvedReference],
+    graph_kind: str | None = None,
+) -> None:
+    actual_kind = registry.get((reference.id, reference.version, reference.hash))
+    if actual_kind != expected_kind:
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    graph.append(ResolvedReference(graph_kind or expected_kind, reference.id, reference.version, reference.hash))
 
 
-def _legacy_load_dataset(manifest_path: Path, *, evals_root: Path) -> _LegacyValidatedDataset:
-    root = evals_root.absolute()
-    safe_manifest_path = _safe_path(root, manifest_path)
-    manifest = _legacy_load_json_object(safe_manifest_path, DatasetManifest)
-    _verify_content_hash(manifest)
+def _validate_reference_graph(
+    manifest: DatasetManifest,
+    cases: tuple[EvaluationCase, ...],
+    evidence_registry: dict[tuple[str, str, str], str],
+    profile: EvaluationProfile,
+    comparison: ComparisonPolicy,
+    policy: EvaluationPolicy,
+    suite: SuiteDefinition,
+    schema_set_hash: str,
+) -> tuple[ResolvedReference, ...]:
+    registry = dict(evidence_registry)
+    registry[(profile.evaluation_profile_id, profile.evaluation_profile_version, profile.evaluation_profile_hash)] = (
+        "PROFILE"
+    )
+    registry[
+        (comparison.comparison_policy_id, comparison.comparison_policy_version, comparison.comparison_policy_hash)
+    ] = "COMPARISON_POLICY"
+    registry[(suite.suite_id, suite.suite_version, suite.suite_hash)] = "SUITE"
+    registry[("rag-eval.schema-set", "1.0.0", schema_set_hash)] = "ARTIFACT_SCHEMA_SET"
+    for partition in Partition:
+        registry[
+            (
+                f"{manifest.dataset_code}:{partition.value}",
+                manifest.dataset_version,
+                _partition_reference_hash(manifest, partition),
+            )
+        ] = "PARTITION"
+    graph: list[ResolvedReference] = []
+    _resolve_reference(
+        manifest.evaluation_corpus_snapshot_ref,
+        "CORPUS_SNAPSHOT",
+        registry,
+        graph,
+    )
+    runtime_kinds = {
+        "source_snapshot_ref": "CORPUS_SNAPSHOT",
+        "knowledge_index_ref": "KNOWLEDGE_INDEX",
+        "rule_set_ref": "RULE_SET",
+        "guideline_set_ref": "GUIDELINE_SET",
+        "safety_policy_set_ref": "SAFETY_POLICY_SET",
+    }
+    for case in cases:
+        runtime = case.context.runtime_fixture
+        if runtime is not None:
+            for field, expected_kind in runtime_kinds.items():
+                reference = getattr(runtime, field)
+                if reference is not None:
+                    _resolve_reference(
+                        reference,
+                        expected_kind,
+                        registry,
+                        graph,
+                        f"CASE_{field.upper()}",
+                    )
+    for reference in profile.required_gate_refs:
+        _resolve_reference(reference, "GATE", registry, graph, "PROFILE_GATE")
+    for reference in profile.required_suite_refs:
+        _resolve_reference(reference, "SUITE", registry, graph, "PROFILE_SUITE")
+    for member in policy.members:
+        _resolve_reference(member.reference, member.member_type.value, registry, graph)
+    return tuple(graph)
 
-    cases, resource_hashes = _load_cases(root, manifest)
+
+def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
+    reader = _SnapshotReader(evals_root)
+    manifest_snapshot = reader.read_path(manifest_path)
+    manifest = _validate_model(manifest_snapshot, DatasetManifest)
+    _verify_self_hash(manifest, "manifest_sha256")
+    if manifest.resource_set_hash != _resource_set_hash(manifest):
+        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+    prefix = _prefix(manifest_path)
+    cases = _validate_cases(reader, manifest)
     _validate_leakage(cases)
-    evidence_mapping, evidence_hashes = _load_evidence_mapping(root, manifest, cases)
-    resource_hashes.extend(evidence_hashes)
-    rubric, rubric_hash = _load_rubric(root, manifest, cases)
-    resource_hashes.append(rubric_hash)
-    configuration = _load_configuration(root, safe_manifest_path)
-    resource_hashes.extend(configuration.resource_hashes)
-
-    if manifest.content_classification is ContentClassification.APPROVED_DEIDENTIFIED:
+    evidence, evidence_registry = _load_evidence(reader, prefix, manifest, cases)
+    rubric = _load_rubric(reader, prefix, manifest, cases)
+    receipt = _load_receipt(reader, prefix, manifest)
+    profile, comparison, policy, suite = _load_configuration(reader, prefix)
+    if (
+        suite.input_selector.dataset_code != manifest.dataset_code
+        or suite.input_selector.dataset_version != manifest.dataset_version
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    selected_cases = tuple(
+        case
+        for case in cases
+        if case.partition in suite.input_selector.partitions and case.task_type in suite.input_selector.task_types
+    )
+    if (
+        {case.partition for case in selected_cases} != set(suite.input_selector.partitions)
+        or {case.task_type for case in selected_cases} != set(suite.input_selector.task_types)
+        or suite.expected_case_set_hash != _case_set_hash(selected_cases)
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    schema_set_hash = _schema_set_hash(reader)
+    graph = _validate_reference_graph(
+        manifest,
+        cases,
+        evidence_registry,
+        profile,
+        comparison,
+        policy,
+        suite,
+        schema_set_hash,
+    )
+    if manifest.data_classification is ContentClassification.APPROVED_DEIDENTIFIED:
         if manifest.deidentification_approval_receipt_ref is None:
             raise EvaluationValidationError(EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED)
-
-    return _LegacyValidatedDataset(
+    return ValidatedDataset(
         manifest=manifest,
-        cases=tuple(cases),
-        evidence_mapping=evidence_mapping,
+        cases=cases,
+        evidence_mapping=evidence,
         rubric=rubric,
-        profile=configuration.profile,
-        comparison_policy=configuration.comparison_policy,
-        evaluation_policy=configuration.evaluation_policy,
-        suite=configuration.suite,
-        resource_hashes=tuple(sorted(resource_hashes)),
+        profile=profile,
+        comparison_policy=comparison,
+        evaluation_policy=policy,
+        suite=suite,
+        protected_artifact_receipt=receipt,
+        reference_graph=graph,
+        resource_hashes=reader.resource_hashes,
     )
-
-
-# The Section 17/20 one-read loader supersedes the reduced first-pass loader above.
-from ai_worker.tasks.evaluation.loaders_contract import (  # noqa: E402
-    ResolvedReference,
-    SyntheticCorpusSnapshot,
-    ValidatedDataset,
-    load_dataset,
-    load_json_object,
-)

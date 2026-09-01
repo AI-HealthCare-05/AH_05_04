@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_worker.tasks.evaluation.loaders_contract import load_dataset
+from ai_worker.tasks.evaluation.loaders import load_dataset
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.schemas import ContentClassification, Partition, TaskType
 
@@ -106,7 +106,6 @@ def test_foundation_fixture_is_privacy_clean_and_uses_only_known_github_actors()
         loaded.evaluation_policy,
         loaded.suite,
         loaded.protected_artifact_receipt,
-        loaded.corpus_snapshot,
     )
     for model in models:
         validate_privacy_boundary(model.model_dump(mode="json"))
