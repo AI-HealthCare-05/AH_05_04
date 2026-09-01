@@ -113,11 +113,30 @@ def test_privacy_boundary_rejects_common_korean_phone_formats(phone: str) -> Non
 
 
 @pytest.mark.parametrize(
+    "phone_text",
+    [
+        "문의는 01012345678 번호로 주세요",
+        "+821012345678",
+        "문의는 +821012345678 번호로 주세요",
+    ],
+)
+def test_privacy_boundary_rejects_compact_korean_phone_inside_text(phone_text: str) -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_privacy_boundary({"contact": phone_text})
+
+    assert caught.value.code is EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN
+    assert phone_text not in str(caught.value)
+
+
+@pytest.mark.parametrize(
     "identifier",
     [
         "abc01012345678def",
         "ba7816bf8f01012345678ff61f20015ad",
         "id-01012345678-suffix",
+        "id_01012345678_suffix",
+        "id-+821012345678-suffix",
+        "id_+821012345678_suffix",
     ],
 )
 def test_privacy_boundary_does_not_treat_embedded_hash_or_id_digits_as_phone(identifier: str) -> None:
