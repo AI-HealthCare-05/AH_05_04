@@ -105,6 +105,79 @@ raise ApiError(
 - **MVP**: 지금 이 저장소의 코드에서 실제로 발생하는 코드입니다. 코드와 메시지는 실제 구현과 항상 일치해야 합니다.
 - **Post-MVP**: 아직 구현되지 않았고, Post-MVP 계획 문서에서 다루는 기능(공통 비동기 Job, 복약 일정·로그, RAG·Citation·Safety 등)이 만들어질 때 사용할 예정인 코드입니다. 지금 이 코드를 실제로 응답에서 받을 일은 없습니다.
 
+## 재시도 가능 여부
+
+`retryable`은 **클라이언트가 동일 요청을 그대로 재전송해 성공할 수 있는지**를 뜻합니다.
+사용자 입력 수정, 재인증, 다른 리소스 상태가 필요한 경우는 `retryable=false`입니다.
+아래 표가 판정의 정본이며 다른 절의 표는 이 기준을 따릅니다.
+
+`retryable`은 아직 응답 body에 포함하지 않습니다. 클라이언트는 `code`로 판정합니다.
+응답 필드나 `Retry-After` header 추가는 별도 Decision이 필요합니다.
+
+### 공개 오류 코드
+
+| code | HTTP | `retryable` | 판정 근거 |
+| --- | ---: | :---: | --- |
+| `OCR_PROVIDER_TIMEOUT` | 503 | true | OCR 제공자 일시 지연 |
+| `OCR_PROVIDER_CALL_FAILED` | 503 | true | OCR 제공자 연결 일시 실패 |
+| `OCR_PROVIDER_UNAVAILABLE` | 503 | true | OCR 제공자 일시 사용 불가 |
+| `SERVICE_UNAVAILABLE` | 503 | true | 서비스 일시 사용 불가 |
+| `GATEWAY_TIMEOUT` | 504 | true | 외부 처리 시간 초과 |
+| `CONCURRENT_UPDATE_IN_PROGRESS` | 409 | true | 문서 잠금 경합이며 잠금 해제 후 성공 가능 |
+| `OCR_JOB_ALREADY_PROCESSING` | 409 | true | 진행 중 작업이 끝나면 성공 가능 |
+| `OCR_JOB_NOT_COMPLETED` | 409 | true | OCR이 완료되면 성공 가능 |
+| `PRESCRIPTION_ALREADY_CONFIRMED` | 409 | false | 이미 확정된 terminal 상태 |
+| `CONFLICT` | 409 | false | 중복 리소스 등 요청 내용을 바꿔야 하는 충돌 |
+| `VALIDATION_FAILED` | 422 | false | 요청 값 수정 필요 |
+| `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 422 | false | 누락 항목 입력 필요 |
+| `BAD_REQUEST` | 400 | false | 요청 내용 수정 필요 |
+| `UPLOAD_FILE_TOO_LARGE` | 400 | false | 다른 파일 필요 |
+| `UPLOAD_FILE_INVALID_TYPE` | 400 | false | 다른 파일 필요 |
+| `UNAUTHORIZED` | 401 | false | 재인증 필요이며 동일 요청 재전송 대상이 아님 |
+| `INVALID_TOKEN` | 401 | false | 재인증 필요 |
+| `EXPIRED_TOKEN` | 401 | false | 토큰 갱신 필요 |
+| `FORBIDDEN` | 403 | false | 권한 상태 변경 필요 |
+| `MEDICAL_DOCUMENT_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `OCR_JOB_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `EXTRACTED_FIELD_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `PRESCRIPTION_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `GUIDE_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `CHAT_SESSION_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `OCR_PROCESSING_FAILED` | 500 | false | 원인 확인 없이 재전송하면 같은 실패가 반복됨 |
+| `GUIDE_GENERATION_FAILED` | 500 | false | 동일 |
+| `AI_RESPONSE_FAILED` | 500 | false | 동일 |
+| `INTERNAL_SERVER_ERROR` | 500 | false | 동일 |
+| `HTTP_ERROR` | (원본) | false | 자동 변환 결과이므로 판정하지 않음 |
+
+`503`·`504`는 모두 `retryable=true`이고, `401`은 재인증이 필요하므로 `false`입니다.
+같은 `409`라도 잠금·진행 중처럼 시간이 지나면 해소되는 충돌만 `true`입니다.
+
+### Worker `FailureCode` 매핑
+
+Worker는 `ai_worker/core/retry.py`의 `RETRYABLE_FAILURE_CODES`로 재시도를 판정합니다.
+공개 오류 코드와의 대응은 다음과 같습니다.
+
+| `FailureCode` | `retryable` | 대응 공개 오류 코드 |
+| --- | :---: | --- |
+| `TIMEOUT` | true | `OCR_PROVIDER_TIMEOUT` |
+| `DEPENDENCY_UNAVAILABLE` | true | `OCR_PROVIDER_CALL_FAILED`, `OCR_PROVIDER_UNAVAILABLE` |
+| `INVALID_INPUT` | false | `VALIDATION_FAILED` |
+| `UNSUPPORTED_SCHEMA` | false | `OCR_PROCESSING_FAILED` |
+| `SAFETY_VALIDATION_FAILED` | false | 공개 오류가 아니라 Safety 상태 축 |
+| `RETRY_EXHAUSTED` | false | `OCR_PROCESSING_FAILED` |
+| `INTERNAL_ERROR` | false | `INTERNAL_SERVER_ERROR` |
+
+`SAFETY_VALIDATION_FAILED`는 오류 응답이 아니라 정상 응답의 상태 축으로 표현합니다.
+확정 정의는 [Safety Result 계약 v1](../targets/post-mvp-1/safety-result-v1.md)을 따릅니다.
+
+Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% 양의 jitter를 더합니다.
+`retryable=false`인 오류는 지연을 계산하지 않고 즉시 후속 처리로 넘깁니다.
+
+### 변경 규칙
+
+`RETRYABLE_FAILURE_CODES`와 이 절의 표는 계약 테스트로 고정합니다.
+한쪽만 바꾸면 `tests/contract/test_retryable_error_classification.py`가 실패합니다.
+
 ## 공통 오류 코드
 
 ### MVP
@@ -122,6 +195,8 @@ raise ApiError(
 | 503 | `SERVICE_UNAVAILABLE` | "현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요." | |
 | 504 | `GATEWAY_TIMEOUT` | "외부 처리 시간이 초과되었습니다. 다시 시도해 주세요." | |
 | (원본 상태 코드) | `HTTP_ERROR` | `HTTPException.detail`을 문자열로 변환한 값 (`str(detail)`) | 아직 `ApiError`로 전환되지 않은 코드의 자동 변환 결과. `detail`이 문자열이 아니면 그 값의 문자열 표현이 됨 |
+
+각 코드의 재시도 가능 여부는 「재시도 가능 여부」 절의 표를 따릅니다.
 
 ### Post-MVP
 
@@ -174,6 +249,7 @@ AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 �
 - OCR 작업은 완료됐지만 특정 결과 항목이 없으면 `EXTRACTED_FIELD_NOT_FOUND`를 사용합니다.
 - OCR 제공 서비스 호출이 시간 초과되면 `OCR_PROVIDER_TIMEOUT`, 연결 자체가 실패하면 `OCR_PROVIDER_CALL_FAILED`, 그 외 일시적으로 사용할 수 없으면 `OCR_PROVIDER_UNAVAILABLE`을 사용합니다.
 - 일반적인 리소스 상태 충돌은 `CONFLICT`를 사용하고, 동일 OCR 작업 중복처럼 의미가 명확한 경우에는 `OCR_JOB_ALREADY_PROCESSING`을 사용합니다.
+- 재시도 가능 여부는 HTTP status가 아니라 `code`로 판정합니다. 판정표는 「재시도 가능 여부」 절에 있습니다.
 
 ## HTTPException과의 구분
 
