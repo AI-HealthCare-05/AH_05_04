@@ -112,7 +112,7 @@ uv run python -m app.evaluation.chat_history_runner \
   --output ../evals/results/chat-v2-history-eval-v1-local-deterministic.json
 ```
 
-실제 OpenAI 평가는 명시적 Local opt-in을 요청하지 않아 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v2-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. 결정론적 결과는 PR #128 또는 Production 공개·Privacy 승인 근거가 아닙니다.
+실제 OpenAI 평가는 명시적 Local opt-in을 요청하지 않아 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v2-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결정론적 결과는 PR #128 또는 Production 공개·Privacy 승인 근거가 아닙니다.
 
 ## MVP 배포 차단 기준
 

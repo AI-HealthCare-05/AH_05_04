@@ -33,12 +33,13 @@ class RunnerArguments:
 
 
 def _validate_live_dataset(dataset_path: Path, raw_dataset: bytes, dataset: object) -> None:
+    normalized_dataset = raw_dataset.replace(b"\r\n", b"\n")
     if (
         dataset_path.resolve() != _DEFAULT_DATASET_PATH.resolve()
         or not isinstance(dataset, dict)
         or dataset.get("dataset_id") != _LIVE_DATASET_ID
         or dataset.get("data_classification") != _LIVE_DATA_CLASSIFICATION
-        or hashlib.sha256(raw_dataset).hexdigest() != _LIVE_DATASET_SHA256
+        or hashlib.sha256(normalized_dataset).hexdigest() != _LIVE_DATASET_SHA256
     ):
         raise LiveEvaluationConfigurationError("Live Chat history dataset is not allowed")
 
