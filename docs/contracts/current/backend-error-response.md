@@ -210,6 +210,7 @@ Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1
 | --- | --- | --- | --- |
 | 404 | `PRESCRIPTION_NOT_FOUND` | "처방 정보를 찾을 수 없습니다." | 요청한 처방 ID가 존재하지 않거나 다른 사용자 소유 |
 | 409 | `PRESCRIPTION_ALREADY_CONFIRMED` | "이미 확정된 처방 정보입니다." | 이미 확정된 처방을 다시 확정하거나, 확정된 문서의 extracted-field를 수정하려고 함 |
+| 409 | `CONCURRENT_UPDATE_IN_PROGRESS` | "같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요." | 같은 문서의 처방 확정과 extracted-field PATCH가 동시에 요청되어 문서 row 잠금을 3초 안에 획득하지 못함 |
 | 422 | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | "처방 확정에 필요한 항목이 누락되었습니다." | 처방 확정 요청에 필수 항목이 없음 |
 | 409 | `OCR_JOB_NOT_COMPLETED` | "OCR 처리가 완료된 결과가 없어 처방을 확정할 수 없습니다." | OCR이 완료되기 전에 처방 확정을 요청함 |
 | 400 | `UPLOAD_FILE_TOO_LARGE` | "파일 크기는 10MB 이하만 업로드할 수 있습니다." | 10MB를 초과한 파일을 업로드함 |
@@ -249,7 +250,6 @@ AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 �
 - OCR 작업은 완료됐지만 특정 결과 항목이 없으면 `EXTRACTED_FIELD_NOT_FOUND`를 사용합니다.
 - OCR 제공 서비스 호출이 시간 초과되면 `OCR_PROVIDER_TIMEOUT`, 연결 자체가 실패하면 `OCR_PROVIDER_CALL_FAILED`, 그 외 일시적으로 사용할 수 없으면 `OCR_PROVIDER_UNAVAILABLE`을 사용합니다.
 - 일반적인 리소스 상태 충돌은 `CONFLICT`를 사용하고, 동일 OCR 작업 중복처럼 의미가 명확한 경우에는 `OCR_JOB_ALREADY_PROCESSING`을 사용합니다.
-- 재시도 가능 여부는 HTTP status가 아니라 `code`로 판정합니다. 판정표는 「재시도 가능 여부」 절에 있습니다.
 
 ## HTTPException과의 구분
 
