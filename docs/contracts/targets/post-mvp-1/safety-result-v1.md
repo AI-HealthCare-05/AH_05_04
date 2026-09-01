@@ -7,6 +7,8 @@
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-c-support-v1.md`, `track-f-rag-citation-safety-v1.md` |
 | Last verified | 2026-08-27 |
 
+> RAG-00 승인 이후 이 문서는 Approved v4 이력과 Track C 공통 Safety 기준으로 유지한다. Track F의 Safety Result·Citation·실행 Context STALE·Release Gate 목표는 [Safety Result·Citation 계약 v2](./safety-result-v2.md)가 대체한다. v1 또는 v2 문서의 존재만으로 Current Runtime을 의미하지 않는다.
+
 ## 공통 원칙
 
 안전 결과는 모델의 자연어만 저장하지 않는다. 입력 처방 버전, 구조화 상태, 검증 결과, 공개 결정, 근거 인용을 함께 저장한다. 근거가 없거나 검증이 실패하면 정상 답변으로 공개하지 않는 fail-closed 규칙을 적용한다.
@@ -98,4 +100,6 @@ Runtime Release Bundle은 Source, Candidate/Knowledge Index, Rule, Guideline, Sa
 
 ## 공개 게이트
 
-Track C·F는 synthetic fixture로 기술 통합을 검증할 수 있다. 실제 사용자 공개는 승인된 실제형 fixture, 의료·약학·Source·Privacy 검토, HOLDOUT·SAFETY_REGRESSION과 위험 사례 회귀가 모두 통과할 때까지 `PUBLIC_TRACK_C=false`, `PUBLIC_TRACK_F=false`로 차단한다. OTC는 F 게이트를 공유한다. 필수 평가가 `NOT_RUN`이거나 분모가 0이면 `INCONCLUSIVE`로 차단하며 승인 artifact에는 fixture ID, Dataset·Rule·Source·Runtime Bundle version, 분자·분모·95% 신뢰구간, 기대 결과, 검토 범위, 검토자 역할과 승인 시각을 남긴다.
+Track C는 synthetic fixture로 기술 통합을 검증할 수 있다. 실제 사용자 공개는 승인된 실제형 fixture, 의료·Privacy·Safety 검토와 위험 사례 회귀가 모두 통과할 때까지 `PUBLIC_TRACK_C=false`로 차단한다. Track C의 v1 필수 검증이 `NOT_RUN`이거나 분모가 0이면 공개를 차단하고 승인 artifact에 fixture ID, Rule·Safety version, 분자·분모·95% 신뢰구간, 기대 결과, 검토 범위, 검토자 역할과 승인 시각을 남긴다.
+
+Track F와 OTC의 평가·공개 게이트는 [Safety Result·Citation v2](./safety-result-v2.md)와 [RAG Evaluation 계약 v1](./rag-evaluation-v1.md)을 따른다. Track F 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`이며 실행 완료 후 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`다. v1의 `NOT_RUN`을 Track F RAG Evaluation 상태로 저장하지 않는다.
