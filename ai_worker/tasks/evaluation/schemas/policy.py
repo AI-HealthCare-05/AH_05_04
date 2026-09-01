@@ -122,6 +122,7 @@ def _serialize_ci_parameters(parameters: CiParameterEntries) -> dict[str, CiPara
 
 _CI_PARAMETERS_JSON_SCHEMA = {
     "type": "object",
+    "propertyNames": {"type": "string", "minLength": 1},
     "additionalProperties": {
         "anyOf": [
             {"type": "string", "minLength": 1},

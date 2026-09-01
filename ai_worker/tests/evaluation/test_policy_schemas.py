@@ -319,7 +319,6 @@ def test_ci_parameters_reject_non_dict_and_duplicate_pair_bypasses(
 @pytest.mark.parametrize(
     "invalid_parameters",
     [
-        {"": "empty-key"},
         {1: "integer-key"},
         {"valid": "value", 1: "mixed-key"},
     ],
@@ -332,6 +331,20 @@ def test_ci_parameter_invalid_keys_raise_validation_error_not_raw_type_error(
 
     with pytest.raises(ValidationError):
         ComparisonPolicy.model_validate(policy_payload)
+
+
+def test_ci_parameters_reject_empty_keys_at_runtime(policy_payload: dict[str, Any]) -> None:
+    policy_payload["scopes"][0]["ci_parameters"] = {"": "empty-key"}
+
+    with pytest.raises(ValidationError):
+        ComparisonPolicy.model_validate(policy_payload)
+
+
+def test_ci_parameters_json_schema_rejects_empty_property_names() -> None:
+    comparison_schema = ComparisonPolicy.model_json_schema()
+    ci_parameters_schema = comparison_schema["$defs"]["ComparisonScope"]["properties"]["ci_parameters"]
+
+    assert ci_parameters_schema["propertyNames"] == {"type": "string", "minLength": 1}
 
 
 def test_comparison_policy_scopes_are_deeply_immutable(policy_payload: dict[str, Any]) -> None:
