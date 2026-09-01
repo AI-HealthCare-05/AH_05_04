@@ -158,10 +158,12 @@ uv run python -m app.evaluation.chat_history_runner \
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
 - Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.
 - Track B 일정 생성·변경에서 `frequency_per_day`가 존재하면 `local_times.length`와 반드시 일치해야 하며, 불일치 시 422로 실패하고 schedule row와 schedule time row를 저장하지 않습니다.
-- Track B 일정 조회의 `setup_reason`은 단일 값이며, 여러 사유가 있으면 정본 문서의 우선순위에 따라 하나만 반환합니다.
+- Track B 일정 조회의 `setup_reason`은 `SETUP_REQUIRED` 약품별 단일 값이며, `UNSUPPORTED_SCHEDULE_PATTERN → MISSING_START_DATE → MISSING_EXACT_TIME → MISSING_DURATION_DECISION → USER_CONFIRMATION_REQUIRED` 우선순위를 Frontend와 Backend에서 같게 검증합니다. `NO_ACTIVE_PRESCRIPTION`은 전체 `schedule_status`로만 반환하고 `NEW_PRESCRIPTION_VERSION|NEW_MEDICATION`은 v1 `setup_reason`으로 사용하지 않습니다.
 - `reason_code`는 enum 확정 전까지 Check-in 생성·정정 요청, OpenAPI request schema와 DB enum에 포함하지 않습니다. 테스트 fixture의 예시값도 확정 enum처럼 사용하지 않습니다.
-- 처방 version 변경 시 새 version 일정은 자동 복사·자동 생성하지 않고 새 처방 약품을 `SETUP_REQUIRED`로 반환하며, 기존 occurrence와 Check-in 기록은 기존 version에 보존합니다.
-- `UNCONFIRMED` backlog 조회 API와 사용자 알림 ON/OFF 정책은 후속 Issue로 분리하고 Track B 핵심 일정·Check-in 테스트의 완료 조건으로 간주하지 않습니다.
+- 처방 version 변경 시 새 version 일정을 자동 복사·자동 생성하거나 이전 일정을 참고 후보로 제공하지 않습니다. 이전 version과 값이 같아도 새 version의 모든 medication을 재확인 전 `SETUP_REQUIRED`로 반환합니다.
+- version `effective_at` 이후의 이전 version `PENDING` occurrence와 미전달 알림만 취소합니다. 이전 schedule·time revision, `effective_at` 이전 occurrence, Check-in·audit은 원래 version에 보존하고, deadline이 지난 과거 `PENDING` occurrence는 취소가 아닌 `UNCONFIRMED` 생성 대상으로 검증합니다.
+- `UNCONFIRMED` backlog 조회·다음 로그인 보완 Flow는 Track B 완료 조건으로 검증합니다. 전용 API의 URL·pagination 계약은 후속 Issue에서 고정할 수 있지만 이 기능 자체를 완료 범위에서 제외하지 않습니다.
+- 사용자 알림 ON/OFF preference와 외부 Push·SMS 채널 정책은 후속 Issue로 분리할 수 있습니다. 앱 내부 알림의 생성·중복 방지·version 변경 시 취소와 알림 상태로 복용 결과를 추정하지 않는 기준은 Track B 완료 조건으로 검증합니다.
 - 다른 사용자의 Job·결과와 Track B occurrence·Check-in, Track C Safety·Barrier·ActionPlan, Candidate·Identification·Chat session 직접 요청은 `404`이며 Redis·일반 로그·quarantine·DLQ에는 의료 원문을 저장하지 않습니다.
 - #117 병합 이후 `SELF profile` 이관은 current 계약 기준으로 검증합니다. 의료문서·처방·가이드·채팅 세션은 `profile_id` 또는 부모 chain의 `profile_id`로 소유권을 확인하고, 다른 사용자의 리소스 접근은 `404`로 숨깁니다.
 - `AI_JOB_ATTEMPT.BLOCKED` enum은 승인 schema에 남기되 의미·기록 조건·전이 Decision 전에 Worker가 해당 값을 생성하지 않고 `BLOCKED_ACTION`과 연결하지 않는지 검증합니다.

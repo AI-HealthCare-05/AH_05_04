@@ -25,7 +25,7 @@
 - `NOT_TAKEN`과 무응답 `UNCONFIRMED`를 합치지 않는다.
 - 늦은 복용은 `TAKEN`과 실제 `taken_at`으로 표현하고 별도 상태를 추가하지 않는다.
 
-Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 여러 사유가 동시에 있으면 아래 `setup_reason` 우선순위에 따라 단일 값만 반환한다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
+Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `UNSUPPORTED_SCHEDULE_PATTERN|MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|USER_CONFIRMATION_REQUIRED` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 여러 사유가 동시에 있으면 아래 `setup_reason` 우선순위에 따라 단일 값만 반환한다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
 
 `medication_schedule`은 `prescription_version_medication_id`를 unique로 참조하고 `end_mode=DATE|OPEN_ENDED`, `source=PRESCRIPTION_EXACT|USER_CONFIRMED`, `status=ACTIVE|CANCELLED|ENDED`, revision을 가진다. 시각은 별도 `medication_schedule_time` row에 revision별로 보존하고 `(medication_schedule_id, schedule_revision, local_time)`을 unique로 둔다. occurrence 상태는 `PENDING|CANCELLED|CLOSED`이며 Check-in 생성 시 `CLOSED`가 된다. 일정 `PUT`은 최초 생성·변경과 `CANCELLED|ENDED`의 명시적 재활성화를 담당하고, `PATCH`는 사용자 `CANCELLED`만 허용하며 `ENDED`는 Scheduler만 설정한다.
 
@@ -41,7 +41,11 @@ Post-MVP-1에서는 사용자가 과거 결과를 횟수 제한 없이 수정할
 
 Check-in `PUT` 요청은 `Idempotency-Key` 헤더와 `expected_revision`을 요구한다. 동기 멱등 레코드의 unique scope는 `(user_id, API operation, occurrence_id, key_hmac)`이며 원문 키를 저장하지 않는다. 같은 키·같은 request hash는 revision 검사보다 먼저 같은 transaction에서 저장한 최초 성공 HTTP status와 canonical body snapshot을 재현하고, 같은 키·다른 hash는 `409 IDEMPOTENCY_KEY_CONFLICT`다. 신규 키에서 현재 revision과 다른 `expected_revision`은 payload가 현재 값과 같아도 `409 CHECKIN_REVISION_CONFLICT`다. snapshot은 최대 1MiB이며 암호화 저장·일반 로그 금지이고, 초과 시 mutation 전 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`로 실패한다.
 
-처방 버전이 바뀌면 effective 시각 이후 이전 버전의 `PENDING` occurrence와 미전달 알림만 취소한다. 이전 일정·시각을 새 버전에 복사·재귀속하거나 새 occurrence를 자동 생성하지 않는다. 새 버전의 모든 대상 약은 사용자가 일정 설정 API로 다시 확인하기 전 `SETUP_REQUIRED`다. 이미 마감되었거나 사용자가 응답한 Check-in과 감사 이력은 당시 `prescription_version_id`에 남긴다.
+처방 version이 바뀌면 `effective_at` 이후에 예정된 이전 version의 `PENDING` occurrence와 미전달 알림만 취소한다. 이전 일정·시각을 새 version에 복사·재귀속하거나 참고 후보로 자동 제공하지 않고, 새 occurrence도 자동 생성하지 않는다. 새 version의 모든 `prescription_version_medication`은 이전 version과 약명·용량·횟수가 같더라도 사용자가 해당 version의 일정을 다시 확인하기 전까지 `SETUP_REQUIRED`다.
+
+이전 version의 schedule·time revision, `effective_at` 이전 occurrence, 이미 생성된 Check-in과 Check-in audit은 생성 당시 `prescription_version_id`에 그대로 보존하고 새 version으로 재귀속하지 않는다. `effective_at` 이전에 예정되었지만 아직 결과가 없는 occurrence도 취소하지 않으며, deadline이 지났다면 Scheduler가 기존 기준에 따라 `UNCONFIRMED`를 생성한다.
+
+`UNCONFIRMED` backlog를 조회하고 다음 로그인에서 보완하는 기능은 Track B 완료 범위에 유지한다. 전용 API의 URL·pagination 등 상세 계약은 별도 Issue에서 고정할 수 있지만, 이 기능을 구현·검증하기 전에 Track B를 완료로 판정하지 않는다. 사용자 알림 ON/OFF preference와 외부 Push·SMS 등 전달 채널 정책은 후속 Issue로 분리할 수 있다. 단, 앱 내부 알림의 생성·중복 방지·version 변경 시 취소와 알림 상태로 복용 결과를 추정하지 않는 기준은 Track B 범위에 유지한다.
 
 자정 경계, UTC 변환, Scheduler 중복 실행과 처방 변경을 계약 fixture로 고정한다. 사용자별 time zone과 DST fixture는 해당 기능을 도입하는 후속 version에서 추가한다.
 
@@ -87,17 +91,17 @@ Track C의 목표 API는 다음으로 고정한다.
 
 ### `setup_reason` 우선순위
 
-`setup_reason`은 v1에서 단일 값으로 반환한다. 여러 사유가 동시에 있으면 다음 고정 우선순위에 따라 하나만 반환하고, Frontend와 Backend는 같은 우선순위를 사용한다.
+`setup_reason`은 `schedule_item_status=SETUP_REQUIRED`인 약품별 항목에서만 v1 단일 값으로 반환한다. 여러 사유가 동시에 있으면 다음 고정 우선순위에 따라 하나만 반환하고, Frontend와 Backend는 같은 우선순위를 사용한다. `NO_ACTIVE_PRESCRIPTION`은 약품별 `setup_reason`이 아니라 전체 `schedule_status`로만 반환한다. `NEW_PRESCRIPTION_VERSION`과 `NEW_MEDICATION`은 중복·경계가 불명확하므로 v1 `setup_reason`으로 사용하지 않는다.
 
 | 우선순위 | `setup_reason` | 의미 |
 | ---: | --- | --- |
-| 1 | `NO_ACTIVE_PRESCRIPTION` | 활성 처방 version이 없음 |
-| 2 | `NEW_PRESCRIPTION_VERSION` | 새 처방 version이 활성화되어 사용자의 일정 확인이 필요함 |
-| 3 | `NEW_MEDICATION` | 새 처방 약품에 대한 일정이 아직 없음 |
-| 4 | `MISSING_START_DATE` | 시작일 확인이 필요함 |
-| 5 | `MISSING_EXACT_TIME` | 정확한 복용 시각 확인이 필요함 |
-| 6 | `MISSING_DURATION_DECISION` | 종료일 또는 계속 복용 여부 확인이 필요함 |
-| 7 | `UNSUPPORTED_SCHEDULE_PATTERN` | v1의 매일 동일 시각 반복으로 표현할 수 없음 |
+| 1 | `UNSUPPORTED_SCHEDULE_PATTERN` | v1의 매일 동일 시각 반복으로 표현할 수 없음 |
+| 2 | `MISSING_START_DATE` | 시작일 확인이 필요함 |
+| 3 | `MISSING_EXACT_TIME` | 정확한 복용 시각 확인이 필요함 |
+| 4 | `MISSING_DURATION_DECISION` | 종료일 또는 계속 복용 여부 확인이 필요함 |
+| 5 | `USER_CONFIRMATION_REQUIRED` | 필요한 값은 모두 있지만 사용자가 해당 version의 일정을 아직 확인하지 않음 |
+
+`USER_CONFIRMATION_REQUIRED`는 위의 1~4 사유가 없고 active schedule도 없을 때만 사용한다. 이 enum 추가는 공유 계약 변경이므로 구현 전 Decision 또는 Contract Freeze version에 반영하고 OpenAPI·DTO·Frontend fixture·계약 테스트를 같이 동기화한다.
 
 목표 오류 의미는 다음과 같다.
 
