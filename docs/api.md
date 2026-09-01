@@ -143,10 +143,10 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
 
 - OCR 접수·조회 route는 공통 `OCR` Job 계약을 유지한다. OCR 결과 DTO에는 rule 정규화값, 비-RAG LLM 초안, 사용자 수정값과 확정값의 provenance와 version을 서로 덮어쓰지 않고 표현해야 한다.
 - 처방 확정은 사용자 검수 revision·소유권을 확인하고 Prescription, 불변 Prescription Version과 Medication snapshot을 한 transaction에서 만든다. LLM 초안이나 미확정 OCR 값은 저장 입력으로 사용할 수 없다.
-- Track F는 Candidate Search, 최대 1개 Candidate Result, 사용자 확인·거절, append-only Identification과 Guide·Chat 전 Identification Preflight operation을 제공해야 한다.
-- Candidate Search와 확인 요청은 `prescription_version_medication_id`에 귀속한다. “맞아요” 요청은 `candidate_search_result_id`와 `Idempotency-Key`를 요구하며, 소유권·active version·후보 현재성·미소비 상태·Runtime Release Bundle 호환성을 잠금 안에서 검증한다.
-- `AMBIGUOUS`, `NO_CANDIDATE`, `INGREDIENT_ONLY`, `INVALID_INPUT`은 내부 Top-K·score를 공개하지 않고 Identification을 만들지 않는다. Preflight 실패는 `job_id` 없는 동기 `REVIEW_REQUIRED`이며 AI Job 안에서 사용자 입력을 기다리지 않는다.
-- 위 `prescription_version_medication_id`, `candidate_search_result_id`, `Idempotency-Key`와 검증 불변 조건은 Approved v4가 고정한 최소 계약이다. 그 밖의 Candidate·Identification·Preflight route template, 성공 status, 전체 DTO 구성과 오류 code는 고정하지 않았다. 구현 전 후속 Product Decision으로 확정하고 OpenAPI·계약 테스트와 함께 반영한다.
+- Track F는 Candidate Search, 최대 1개 Candidate Result, 사용자 확인·거절과 append-only Identification을 제공한다. 자동 Guide는 Job 접수 전에 모든 활성 약제의 Identification Preflight를 통과해야 한다. Chat은 Identification 완료 전 최소 Safety Intake Job을 접수할 수 있고 `ROUTINE` 분기만 Identification Preflight 후 일반 RAG를 실행한다.
+- Candidate Search는 `prescription_version_medication_id`에 귀속하고 `Idempotency-Key`를 요구하지 않는다. “맞아요” 요청은 `prescription_version_medication_id`·`candidate_search_result_id`와 `Idempotency-Key`, 거절 요청은 현재 `search_id`·`candidate_search_result_id`와 `Idempotency-Key`를 요구한다. Backend는 SELF `profile_id` 소유권·active version·후보 현재성·미소비 상태·Runtime Release Bundle 호환성을 전역 잠금 순서 안에서 검증한다.
+- `AMBIGUOUS`, `NO_CANDIDATE`, `INGREDIENT_ONLY`, `INVALID_INPUT`은 내부 Top-K·score를 공개하지 않고 Identification을 만들지 않는다. Guide Preflight 실패는 `job_id` 없는 동기 `REVIEW_REQUIRED`다. Chat `ROUTINE` Preflight 실패는 이미 생성된 최소 Job에 승인된 제한 응답을 저장하며 AI Job 안에서 사용자 입력을 기다리지 않는다.
+- Candidate Search·확인·거절의 요청·응답 DTO, 상태별 nullable, 공개 오류 의미와 복구 행동은 [MFDS 공식 의약품 식별·Candidate Target](./contracts/targets/post-mvp-1/medication-identification-v1.md)이 고정한다. 정확한 Route Template과 성공 HTTP status는 구현 OpenAPI에서 확정하되 Target의 필드·상태·오류 의미를 변경하지 않는다.
 - `/api/v1/otc-products`, `/api/v1/otc-evaluations`, `/api/v1/otc-evaluations/{id}`는 폐기된 Track D 전용 표면이며 구현하지 않는다. OTC 질문은 기존 Chat 화면·세션·`CHAT` Job·RAG·Citation·Safety API 경로를 사용한다.
 - Chat 자유 입력의 OTC 제품·성분·함량·제형을 안정적인 Rule 입력 Identity로 확정하는 애매함 처리·사용자 확인 전이는 아직 고정하지 않았다. [문서 권위의 구현 전 재결정 항목](./governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)으로 추적하고, 확정 전에는 불충분한 입력으로 Rule 평가를 실행하지 않는다.
 
