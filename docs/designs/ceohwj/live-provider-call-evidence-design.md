@@ -15,7 +15,7 @@
 
 현재 저장소에는 다음 기반이 이미 있습니다.
 
-- `local-live-full`과 `staging-live` one-cycle 검증 모드
+- `local-live-full` one-cycle 검증 모드
 - 검증 실행별 UUID `run_id`
 - 별도 TCP 연결을 강제하는 `NetworkOneCycleRunner`
 - OCR·Guide·Chat 결과의 DB 검증
@@ -110,7 +110,7 @@ Provider 계층에 FastAPI `Request`를 직접 전달하지 않습니다. 요청
 | --- | --- | --- |
 | `trace_id` | 32자리 서버 생성 hexadecimal | 단일 HTTP 요청 식별자 |
 | `validation_run_id` | UUID 또는 `null` | 승인된 one-cycle 검증 실행 식별자 |
-| `environment` | `local`, `staging` 등 승인 enum | 서버가 확인한 실행 환경 |
+| `environment` | 서버 환경 enum | 서버가 확인한 실행 환경, 이번 Live 검증은 `local`만 허용 |
 | `validation_enabled` | boolean | Backend 검증 허용 설정 |
 
 클라이언트가 주장한 실행 mode를 컨텍스트에 그대로 저장하지 않습니다. 환경과 검증 허용 여부는 Backend 설정에서 결정합니다.
@@ -194,11 +194,11 @@ X-Validation-Run-Id: 61a10000-0000-4000-8000-000000000003
 현재 runner guard에서 사용하는 `RELEASE_VALIDATION_ALLOWED`를 Backend `Config`에도 명시적인 boolean 필드로 추가합니다.
 
 - 기본값은 `false`입니다.
-- `local`과 `staging`에서만 `true`를 허용합니다.
-- `production`에서 `true`이면 애플리케이션 기동을 거부합니다.
+- `local`에서만 `true`를 허용합니다.
+- `staging`과 `production` 등 local 이외 환경에서 `true`이면 애플리케이션 기동을 거부합니다.
 - runner와 Backend는 서로 다른 process이므로 각각의 환경에 명시적으로 주입합니다.
 - runner의 값은 Backend 설정을 증명하지 않고, Backend의 값도 runner guard를 대체하지 않습니다.
-- local·staging Compose와 검증 실행 문서에 어느 process에 값이 주입되는지 구분해 기록합니다.
+- local Compose와 검증 실행 문서에 어느 process에 값이 주입되는지 구분해 기록합니다.
 
 이 설정이 없거나 `false`이면 일반 요청은 그대로 처리하지만 `X-Validation-Run-Id`가 있는 요청은 `403 HTTP_ERROR`로 거부합니다. 이번 범위에서 신규 공개 오류 code를 만들지 않습니다. Header별 고정된 안전 메시지와 HTTP status는 Current 계약에 기록하고 runner는 status·trace 일치를 검증합니다.
 
@@ -260,7 +260,7 @@ Provider terminal은 외부 호출 경계만 나타냅니다. Generator·Structu
   "schema_version": "provider-call-log-v1",
   "event": "provider.call.succeeded",
   "occurred_at": "2026-09-01T12:00:00.123Z",
-  "environment": "staging",
+  "environment": "local",
   "validation_run_id": "61a10000-0000-4000-8000-000000000003",
   "trace_id": "server-generated-trace-id",
   "provider_call_id": "server-generated-call-id",
@@ -475,7 +475,7 @@ Issue·멘토링 증빙의 전체 성공은 `one-cycle execution=PASS`, `databas
 
 최종 결과의 `execution_mode=LIVE`는 클라이언트 Header 하나로 결정하지 않습니다. 다음 기존 guard와 검증을 모두 만족해야 합니다.
 
-- runner mode가 `local-live-full` 또는 `staging-live`
+- runner mode가 `local-live-full`
 - runner와 FastAPI 사이 실제 TCP transport
 - runner process에 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY` 부재
 - Backend process에 승인된 Provider Secret 주입
@@ -517,14 +517,6 @@ docker compose logs --no-color --no-log-prefix --since 10m fastapi \
 
 ```bash
 docker compose logs --no-color --no-log-prefix -f fastapi \
-  | rg '"validation_run_id":"61a10000-0000-4000-8000-000000000003"'
-```
-
-Staging Compose 조회:
-
-```bash
-docker compose -f infra/docker/docker-compose.prod.yml logs \
-  --no-color --no-log-prefix --since 10m fastapi \
   | rg '"validation_run_id":"61a10000-0000-4000-8000-000000000003"'
 ```
 
@@ -640,8 +632,8 @@ provider-log-review-<run_id>.json
 - `backend/app/services/guide_ai/client.py`
 - `backend/app/services/chat_ai/client.py`
 - `backend/app/release_validation/ai_one_cycle_smoke.py`
-- `docker-compose.yml`과 `infra/docker/docker-compose.prod.yml`
-  - 허용 환경의 Backend 설정 전달과 Production 기본 비활성
+- `docker-compose.yml`
+  - local Backend 검증 설정 전달
 - 관련 `backend/app/tests/`
 - `docs/api.md`
 - `docs/validation/ai-one-cycle-release.md`
@@ -753,7 +745,7 @@ OCR 구조화, Guide, Chat 각각 다음을 검증합니다.
 - 로그 발췌 sentinel 검사
 - prefix 없는 JSONL 전체 줄 파싱과 Schema 검증
 - 수동 검토 기록 Schema와 필수 operation 판정
-- clean worktree와 commit SHA 또는 staging image digest 기록
+- clean worktree와 commit SHA 기록
 
 ## Rollout
 
@@ -763,13 +755,12 @@ OCR 구조화, Guide, Chat 각각 다음을 검증합니다.
 4. Mock 통합 테스트에서 Schema·금지 필드를 검증합니다.
 5. 로컬 Docker에서 비식별 Live one-cycle을 실행합니다.
 6. Docker Desktop과 CLI에서 동일 `run_id` 결과를 확인합니다.
-7. Staging 승인 환경에서 release 범위 증빙을 생성합니다.
 
 기존 사용자 요청은 validation Header가 없으므로 기존 동작을 유지합니다. Header·logger 문제가 의료 결과나 Provider retry 동작을 변경하지 않아야 합니다.
 
 ## 완료 조건
 
-- [ ] 승인된 `local-live-full` 또는 `staging-live` 실행이 실제 TCP 경로로 성공합니다.
+- [ ] 승인된 `local-live-full` 실행이 실제 TCP 경로로 성공합니다.
 - [ ] CLOVA `PRESCRIPTION_RECOGNITION` terminal 로그가 조회됩니다.
 - [ ] 활성화된 경우 OpenAI `OCR_STRUCTURING` terminal 로그가 조회됩니다.
 - [ ] OpenAI `GUIDE_GENERATION` terminal 로그가 조회됩니다.
@@ -800,5 +791,5 @@ OCR 구조화, Guide, Chat 각각 다음을 검증합니다.
 - Security 기술 검토자와 Privacy 정책·증빙 보존 승인자를 별도로 명시
 - `X-Validation-Run-Id`, `X-Trace-Id` 공유 Header 계약 승인
 - Security·Privacy 로그 허용 필드와 증빙 보존 경계 승인
-- 실제 Provider 호출이 허용된 검증 환경 확인
+- 실제 Provider 호출이 허용된 local 검증 환경 확인
 - 설계 문서 사용자 검토 완료
