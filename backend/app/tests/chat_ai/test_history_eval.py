@@ -223,8 +223,7 @@ def test_live_dataset_validation_accepts_canonical_immutable_synthetic_fixture()
 def test_live_dataset_validation_accepts_canonical_fixture_with_crlf_checkout() -> None:
     from app.evaluation.chat_history_runner import _validate_live_dataset
 
-    windows_checkout = _DATASET_PATH.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
-    raw_dataset = windows_checkout.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    raw_dataset = _DATASET_PATH.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
 
     _validate_live_dataset(_DATASET_PATH, raw_dataset, json.loads(raw_dataset))
 
