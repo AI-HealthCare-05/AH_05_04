@@ -109,23 +109,25 @@ def test_resource_paths_are_normalized_and_duplicate_normalized_paths_are_reject
 
 def test_execution_decision_rejects_pass_before_completion() -> None:
     with pytest.raises(ValidationError):
-        ExecutionDecision(execution_status="NOT_EVALUATED", decision_status="PASS")
+        ExecutionDecision.model_validate({"execution_status": "NOT_EVALUATED", "decision_status": "PASS"})
 
 
 def test_execution_decision_requires_a_decision_only_after_completion() -> None:
-    pending = ExecutionDecision(execution_status="NOT_EVALUATED", decision_status=None)
-    completed = ExecutionDecision(execution_status="COMPLETED", decision_status="PASS")
+    pending = ExecutionDecision.model_validate({"execution_status": "NOT_EVALUATED", "decision_status": None})
+    completed = ExecutionDecision.model_validate({"execution_status": "COMPLETED", "decision_status": "PASS"})
 
     assert pending.execution_status is ExecutionStatus.NOT_EVALUATED
     assert completed.decision_status is DecisionStatus.PASS
 
     with pytest.raises(ValidationError):
-        ExecutionDecision(execution_status="COMPLETED", decision_status=None)
+        ExecutionDecision.model_validate({"execution_status": "COMPLETED", "decision_status": None})
 
 
 def test_required_execution_decision_rejects_na() -> None:
     with pytest.raises(ValidationError):
-        RequiredExecutionDecision(execution_status="COMPLETED", decision_status="N/A", required=True)
+        RequiredExecutionDecision.model_validate(
+            {"execution_status": "COMPLETED", "decision_status": "N/A", "required": True}
+        )
 
 
 def test_review_provenance_rejects_self_approval_by_actor_identity() -> None:

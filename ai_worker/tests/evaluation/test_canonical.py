@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import (
+    JsonValue,
     canonical_json_bytes,
     canonical_sha256,
     normalize_resource_path,
@@ -14,8 +17,9 @@ from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationVal
 def test_canonical_json_uses_utf16_key_order_and_rejects_float() -> None:
     assert canonical_json_bytes({"\ue000": 1, "\U00010000": 2}) == '{"𐀀":2,"":1}'.encode()
 
+    invalid_number: Any = 0.5
     with pytest.raises(EvaluationValidationError, match="EVAL_JSON_NUMBER_INVALID"):
-        canonical_json_bytes({"ratio": 0.5})
+        canonical_json_bytes({"ratio": invalid_number})
 
 
 @pytest.mark.parametrize("value", [-(2**53), 2**53])
@@ -35,11 +39,12 @@ def test_canonical_json_rejects_lone_surrogates_without_echoing_them() -> None:
 
 
 def test_canonical_sha256_excludes_only_requested_top_level_keys() -> None:
-    value = {"content": {"signature": "kept"}, "signature": "excluded"}
+    value: JsonValue = {"content": {"signature": "kept"}, "signature": "excluded"}
 
     assert canonical_sha256(value, excluded_top_level_keys=frozenset({"signature"})) == sha256_hex(
         b'{"content":{"signature":"kept"}}'
     )
+    assert isinstance(value, dict)
     assert value["signature"] == "excluded"
 
 
