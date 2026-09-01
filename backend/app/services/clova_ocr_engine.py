@@ -52,7 +52,6 @@ class ClovaOcrEngine:
         file_mime_type: str,
         deadline: OcrDeadline,
     ) -> OcrRecognitionResult:
-        ...
         # CLOVA 호출 직전 남은 예산을 다시 계산합니다.
         clova_timeout = deadline.timeout_for(self._timeout_seconds)
         if clova_timeout <= 0:
