@@ -115,6 +115,18 @@ Provider 계층에 FastAPI `Request`를 직접 전달하지 않습니다. 요청
 
 클라이언트가 주장한 실행 mode를 컨텍스트에 그대로 저장하지 않습니다. 환경과 검증 허용 여부는 Backend 설정에서 결정합니다.
 
+### `ProviderCallDescriptor`
+
+요청별 상관관계와 Provider 호출의 정적 의미를 분리합니다. 각 Provider 어댑터에는 다음 불변 descriptor를 생성 시점에 주입합니다.
+
+| 필드 | 형식 | 의미 |
+| --- | --- | --- |
+| `provider` | `CLOVA_OCR` 또는 `OPENAI` | 실제 외부 Provider |
+| `operation` | 승인된 operation enum | 호출 목적 |
+| `prompt_version` | 문자열 또는 `null` | 해당 OpenAI Prompt Version, CLOVA는 `null` |
+
+`requested_model`은 호출마다 `generate()`가 받는 동적 값이므로 descriptor에 중복 저장하지 않습니다. Guide·Chat·OCR 구조화 client가 자신이 어느 operation인지 추정하거나 Prompt 모듈을 역참조하지 않도록 dependency 조립 경계에서 명시합니다.
+
 ### `ProviderCallLogger`
 
 Provider 이벤트 Schema의 유일한 직렬화 경계입니다.
@@ -138,7 +150,9 @@ Provider 네트워크 경계를 실제로 아는 어댑터가 이벤트를 기�
 
 Service나 Repository는 실제 외부 호출 여부를 추정해 Provider 성공 로그를 만들지 않습니다.
 
-Provider 어댑터는 일반 요청과 검증 요청 모두에 같은 안전한 이벤트 Schema를 사용합니다. 일반 요청은 `validation_run_id=null`이며, one-cycle 실제 호출 증빙은 승인된 `validation_run_id`가 있는 이벤트만 사용합니다. 운영 전체 호출 로그를 남기는 경계는 Security·Privacy 로그 허용 필드 승인 대상입니다.
+Provider 어댑터는 일반 요청과 검증 요청 모두에 같은 안전한 이벤트 Schema를 사용합니다. 일반 요청은 `validation_run_id=null`이며, one-cycle 실제 호출 증빙은 승인된 `validation_run_id`가 있는 이벤트만 사용합니다.
+
+최소 수집 원칙을 적용해 일반 요청에서는 `provider_request_id`와 `provider_response_id`를 항상 `null`로 둡니다. 이 두 외부 식별자는 승인된 Live 검증 요청에서만 기록합니다. Provider·operation·outcome·안전 오류 code·latency·요청 모델·실제 모델은 일반 운영 관측에도 필요한 허용 필드로 유지하되, 전체 호출 로그 범위는 Security·Privacy 승인 대상입니다.
 
 ### `NetworkOneCycleRunner`
 
@@ -165,10 +179,15 @@ X-Validation-Run-Id: 61a10000-0000-4000-8000-000000000003
 | --- | --- |
 | Header 없음 | 일반 요청으로 정상 처리 |
 | 승인 환경이며 유효한 UUID | `validation_run_id`로 사용 |
-| 승인 환경이며 형식 오류 | `400 VALIDATION_RUN_ID_INVALID` |
-| 미승인 환경이며 Header 존재 | `403 VALIDATION_RUN_NOT_ALLOWED` |
+| 승인 환경이며 형식 오류 | `400`과 기존 공통 code `HTTP_ERROR` |
+| 미승인 환경이며 Header 존재 | `403`과 기존 공통 code `HTTP_ERROR` |
 
 잘못된 validation header를 조용히 무시하지 않습니다. Live 실행이 성공한 것처럼 보이지만 상관관계가 사라지는 false positive를 막기 위해 fail-fast합니다.
+
+공개 메시지는 입력값이나 환경 상세를 포함하지 않는 고정 문자열로 제한합니다.
+
+- `400`: `Invalid validation run ID.`
+- `403`: `Validation run is not allowed.`
 
 ### Backend 설정
 
@@ -181,7 +200,7 @@ X-Validation-Run-Id: 61a10000-0000-4000-8000-000000000003
 - runner의 값은 Backend 설정을 증명하지 않고, Backend의 값도 runner guard를 대체하지 않습니다.
 - local·staging Compose와 검증 실행 문서에 어느 process에 값이 주입되는지 구분해 기록합니다.
 
-이 설정이 없거나 `false`이면 일반 요청은 그대로 처리하지만 `X-Validation-Run-Id`가 있는 요청은 `403 VALIDATION_RUN_NOT_ALLOWED`로 거부합니다.
+이 설정이 없거나 `false`이면 일반 요청은 그대로 처리하지만 `X-Validation-Run-Id`가 있는 요청은 `403 HTTP_ERROR`로 거부합니다. 이번 범위에서 신규 공개 오류 code를 만들지 않습니다. Header별 고정된 안전 메시지와 HTTP status는 Current 계약에 기록하고 runner는 status·trace 일치를 검증합니다.
 
 ### 보안 경계
 
@@ -226,11 +245,13 @@ provider.call.started
 ```
 
 - 실제 네트워크 호출 직전에 `started`를 기록합니다.
-- HTTP 응답 수신과 Provider 응답 검증을 모두 통과한 뒤 `succeeded`를 기록합니다.
+- HTTP 응답 수신과 Provider client 내부의 Provider Schema 파싱을 모두 통과한 뒤 `succeeded`를 기록합니다.
 - 호출 또는 응답 검증 실패 시 `failed`를 기록합니다.
 - Provider 호출 전 입력 검증에서 실패하면 Provider 이벤트를 만들지 않습니다.
 - 동일 `provider_call_id`에 terminal 이벤트는 최대 1건입니다.
 - 시작 이벤트만 존재하면 `INCOMPLETE`입니다.
+
+Provider terminal은 외부 호출 경계만 나타냅니다. Generator·Structurer가 client 반환 이후 수행하는 Grounding, 의료 안전, 정규화, renderer 검증은 Provider terminal을 변경하지 않습니다. Provider가 유효한 응답을 반환했지만 후속 애플리케이션 검증이 실패하면 Provider event는 `succeeded`, DB·one-cycle 결과는 `FAILED`가 될 수 있으며 최종 증빙은 DB 검증 실패로 거부합니다.
 
 ### 공통 Schema
 
@@ -275,8 +296,8 @@ provider.call.started
 | `requested_model` | OpenAI 설정 모델, CLOVA는 `null` |
 | `model_name` | 성공 응답에서 확인한 실제 OpenAI 모델, 그 외 `null` |
 | `prompt_version` | OpenAI operation의 애플리케이션 Prompt Version |
-| `provider_request_id` | Provider가 안전하게 제공한 경우만 기록 |
-| `provider_response_id` | OpenAI Response `id` 등 안전하게 확인된 값 |
+| `provider_request_id` | 승인된 Live validation에서 Provider가 안전하게 제공한 경우만 기록, 일반 요청은 `null` |
+| `provider_response_id` | 승인된 Live validation에서 OpenAI Response `id` 등 안전하게 확인된 값, 일반 요청은 `null` |
 | `provider_response_received` | Provider 응답 수신 여부 |
 | `http_status` | 실제 객체에서 확인한 경우만 기록 |
 | `latency_ms` | monotonic clock 기준, terminal에서만 정수 |
@@ -301,7 +322,7 @@ provider.call.started
 - `TRANSPORT_CONNECTION`
 - `HTTP_STATUS`
 - `RESPONSE_VALIDATION`
-- `SAFETY_VALIDATION`
+- `PROVIDER_POLICY`
 - `APPLICATION_DEADLINE`
 - `UNKNOWN_INTERNAL`
 
@@ -326,6 +347,9 @@ provider.call.started
 
 ### CLOVA OCR
 
+- `PRESCRIPTION_RECOGNITION` span은 실제 `_request()` 직전 시작하고 `_parse_response()`가 성공한 직후 종료합니다.
+- 이후 규칙 기반 구조화 또는 `LlmPrescriptionStructurer.structure()`는 CLOVA span에 포함하지 않습니다.
+- OCR 구조화 OpenAI가 활성화되면 같은 HTTP `trace_id` 아래 별도 `OCR_STRUCTURING` span을 만듭니다.
 - 애플리케이션이 생성한 CLOVA V2 `requestId`를 `provider_request_id`로 기록할 수 있습니다.
 - 실제 `httpx.Response.status_code`만 `http_status`에 기록합니다.
 - timeout·connection failure에서는 `http_status=null`입니다.
@@ -334,6 +358,9 @@ provider.call.started
 
 ### OpenAI OCR 구조화·Guide·Chat
 
+- span은 OpenAI SDK 호출 직전 시작하고 client 내부의 완료 상태·refusal·Provider 응답 Schema 파싱이 끝난 시점에 terminal 처리합니다.
+- Generator·Structurer의 후속 Grounding·도메인 안전 검증은 OpenAI Provider span 밖입니다.
+- Provider refusal과 content filter는 `failure_phase=PROVIDER_POLICY`로 기록합니다.
 - 요청 시 설정 모델을 `requested_model`에 기록합니다.
 - 성공 시 Response 객체의 `id`와 `model`을 기록합니다.
 - `APIStatusError`에서 안전하게 확인한 `request_id`와 `status_code`만 기록합니다.
@@ -415,12 +442,34 @@ OCR 구조화 OpenAI가 비활성화된 경우 다음처럼 표현합니다.
   "provider_traces": {},
   "database_verification": "PASS",
   "cleanup": "PASS",
-  "provider_log_verification": "REQUIRED",
+  "provider_log_verification": "MANUAL_REQUIRED",
   "execution": "PASS"
 }
 ```
 
 `execution=PASS`는 API·DB·cleanup 검증 성공을 의미합니다. Backend 로그를 사람이 확인했다는 의미가 아닙니다. 애플리케이션이 조회하지 않은 로그 상태를 자동으로 `PASS`라고 출력하지 않습니다.
+
+최종 증빙 완료 판정은 별도 수동 검토 record에서 수행합니다.
+
+```json
+{
+  "schema_version": "provider-log-review-v1",
+  "run_id": "61a10000-0000-4000-8000-000000000003",
+  "reviewed_at": "2026-09-01T12:10:00Z",
+  "reviewer": "designated-reviewer",
+  "required_operations": {
+    "PRESCRIPTION_RECOGNITION": "PASS",
+    "OCR_STRUCTURING": "PASS",
+    "GUIDE_GENERATION": "PASS",
+    "CHAT_GENERATION": "PASS"
+  },
+  "trace_match": "PASS",
+  "sensitive_data_check": "PASS",
+  "result": "PASS"
+}
+```
+
+Issue·멘토링 증빙의 전체 성공은 `one-cycle execution=PASS`, `database_verification=PASS`, `cleanup=PASS`, `provider-log-review result=PASS`를 모두 만족해야 합니다. 수동 검토자가 기록되지 않으면 증빙은 미완료입니다.
 
 ## 실제 Live 실행 판정
 
@@ -434,6 +483,13 @@ OCR 구조화 OpenAI가 비활성화된 경우 다음처럼 표현합니다.
 - DB 모델명에 `fake`, `sentinel`, `test-model` 부재
 - 현재 commit SHA 또는 image repository digest 기록
 - 합성 Fixture identity와 DB identity 일치
+
+OCR 구조화 기대값은 runner 환경변수 하나만으로 결정하지 않습니다.
+
+- runner가 검증한 `OCR_STRUCTURE_LLM_ENABLED`와 Backend 배포 설정이 일치해야 합니다.
+- 활성 경로는 OCR DB의 `model_version`·`prompt_version`이 non-null이고 `OCR_STRUCTURING` 로그가 존재해야 합니다.
+- 비활성 경로는 두 DB 필드가 `null`이고 `OCR_STRUCTURING` 로그가 없어야 합니다.
+- 설정·DB·Provider 로그 중 하나라도 다르면 DB 검증 또는 수동 Provider 로그 검토를 실패 처리합니다.
 
 Provider 구조화 로그는 위 guard 결과와 함께 실제 호출 증빙을 구성합니다. 로그만으로 감사급 또는 암호학적 호출 증명을 제공한다고 주장하지 않습니다.
 
@@ -453,25 +509,35 @@ Docker Desktop의 통합 Logs 화면을 사용할 수 있는 버전에서는 `fa
 ### Docker CLI 대체 경로
 
 ```bash
-docker compose logs --since 10m fastapi \
+docker compose logs --no-color --no-log-prefix --since 10m fastapi \
   | rg '"validation_run_id":"61a10000-0000-4000-8000-000000000003"'
 ```
 
 실시간 조회:
 
 ```bash
-docker compose logs -f fastapi \
+docker compose logs --no-color --no-log-prefix -f fastapi \
   | rg '"validation_run_id":"61a10000-0000-4000-8000-000000000003"'
 ```
 
 Staging Compose 조회:
 
 ```bash
-docker compose -f infra/docker/docker-compose.prod.yml logs --since 10m fastapi \
+docker compose -f infra/docker/docker-compose.prod.yml logs \
+  --no-color --no-log-prefix --since 10m fastapi \
   | rg '"validation_run_id":"61a10000-0000-4000-8000-000000000003"'
 ```
 
-Docker Desktop의 검색·Export 기능을 사용할 수 없거나 버전이 다를 때 CLI 경로를 정본 대체 절차로 사용합니다.
+Docker Desktop 검색은 빠른 육안 확인용입니다. Desktop Export는 service prefix나 UI 변환이 포함될 수 있으므로 정본 JSONL Artifact로 사용하지 않습니다. 정본 발췌는 컨테이너 stdout 원문에서 생성합니다.
+
+```bash
+docker logs --since 10m fastapi 2>&1 \
+  | rg '"validation_run_id":"61a10000-0000-4000-8000-000000000003"' \
+  > /private/tmp/provider-call-log-61a10000-0000-4000-8000-000000000003.jsonl
+chmod 600 /private/tmp/provider-call-log-61a10000-0000-4000-8000-000000000003.jsonl
+```
+
+발췌 후 각 줄이 독립 JSON 객체인지 파싱하고, `schema_version=provider-call-log-v1`과 금지 필드 부재를 검사합니다. Compose service name이 다른 환경에서는 먼저 실제 Backend 컨테이너 이름을 확인한 뒤 명시적으로 치환합니다.
 
 ## 수동 Provider 로그 판정
 
@@ -496,15 +562,18 @@ Docker Desktop의 검색·Export 기능을 사용할 수 없거나 버전이 다
 
 ## 증빙 Artifact
 
-멘토링 또는 릴리스 검토용 증빙은 다음 두 부분으로 구성합니다.
+멘토링 또는 릴리스 검토용 증빙은 다음 세 부분으로 구성합니다.
 
 ```text
 one-cycle-result.json
 provider-call-log-<run_id>.jsonl
+provider-log-review-<run_id>.json
 ```
 
 - `one-cycle-result.json`은 runner의 민감정보 없는 최종 결과입니다.
-- `provider-call-log-<run_id>.jsonl`은 Docker stdout에서 해당 `run_id`만 필터링한 발췌입니다.
+- `provider-call-log-<run_id>.jsonl`은 `docker logs`의 prefix 없는 stdout 원문에서 해당 `run_id`만 필터링한 발췌입니다.
+- `provider-log-review-<run_id>.json`은 지정 검토자가 operation·trace·민감정보를 판정한 수동 검토 기록입니다.
+- 전체 증빙 성공은 runner 결과·DB 검증·cleanup과 수동 Provider 로그 검토가 모두 `PASS`일 때만 성립합니다.
 - 애플리케이션이 별도 로그 파일을 자동 생성하지 않습니다.
 - 전체 컨테이너 로그를 첨부하지 않습니다.
 - 증빙 발췌에 금지 필드가 없는지 sentinel 검사 후 사용합니다.
@@ -576,7 +645,12 @@ provider-call-log-<run_id>.jsonl
 - 관련 `backend/app/tests/`
 - `docs/api.md`
 - `docs/validation/ai-one-cycle-release.md`
-- 필요 시 현재 Backend 오류·trace 계약 문서
+- `docs/contracts/current/live-provider-call-evidence.md`
+  - `X-Validation-Run-Id`, `X-Trace-Id`, Provider 증빙 Schema와 수동 판정 계약 신설
+- `docs/contracts/current/backend-error-response.md`
+  - 기존 `HTTP_ERROR`를 사용하는 validation Header 400·403과 Header/body trace 일치 반영
+- `docs/contracts/README.md`
+  - 새 current 계약 색인 추가
 
 공유 Header 계약 변경이므로 Backend/API, OCR, AI/RAG, Evaluation 담당 리뷰를 지정합니다. Security·Privacy 담당자는 금지 필드, 로그 접근과 증빙 보존 경계를 검토합니다.
 
@@ -591,6 +665,10 @@ provider-call-log-<run_id>.jsonl
 - `run_id`가 인증·소유권에 영향을 주지 않음
 - 성공 응답 `X-Trace-Id`
 - 기존 오류 body trace와 Header 일치
+- 미등록 경로 404의 `X-Trace-Id`
+- 허용되지 않은 method 405의 `X-Trace-Id`
+- 처리되지 않은 예외 500의 `X-Trace-Id`
+- 가장 바깥 ASGI 경계에서 성공·기본 오류·예외 응답에 Header가 일관되게 추가됨
 - Nginx Header pass-through
 - CORS exposed header
 
@@ -604,6 +682,9 @@ provider-call-log-<run_id>.jsonl
 - UTC timestamp
 - monotonic latency
 - `null`과 조건부 필드 규칙
+- `ProviderCallDescriptor`의 provider·operation·prompt_version 정적 매핑
+- 실제 호출 인자의 requested_model과 응답 model_name 동적 기록
+- 일반 요청에서는 Provider request·response ID가 `null`이고 승인된 Live validation에서만 기록됨
 - 직렬화 실패가 Provider 결과를 변경하지 않음
 - logger 중복 handler·propagation으로 중복 출력되지 않음
 
@@ -670,6 +751,8 @@ OCR 구조화, Guide, Chat 각각 다음을 검증합니다.
 - OCR·Guide·Chat DB 상태 확인
 - cleanup `PASS`
 - 로그 발췌 sentinel 검사
+- prefix 없는 JSONL 전체 줄 파싱과 Schema 검증
+- 수동 검토 기록 Schema와 필수 operation 판정
 - clean worktree와 commit SHA 또는 staging image digest 기록
 
 ## Rollout
@@ -695,12 +778,15 @@ OCR 구조화, Guide, Chat 각각 다음을 검증합니다.
 - [ ] runner trace와 Provider 로그 trace가 일치합니다.
 - [ ] started와 terminal이 `provider_call_id`로 연결됩니다.
 - [ ] Docker Desktop과 CLI에서 동일 로그를 확인할 수 있습니다.
+- [ ] 정본 JSONL은 `docker logs` 원문에서 추출되고 모든 줄이 독립 JSON으로 파싱됩니다.
 - [ ] OCR·Guide·Chat DB 검증이 통과합니다.
 - [ ] cleanup이 `PASS`입니다.
+- [ ] `one-cycle-result.json`, Provider JSONL, 수동 검토 기록이 같은 `run_id`로 연결됩니다.
+- [ ] runner·DB·cleanup·수동 Provider 검토가 모두 `PASS`인 경우에만 전체 증빙을 성공으로 판정합니다.
 - [ ] Mock 실행은 Live 증빙으로 인정되지 않습니다.
 - [ ] API Key·의료정보·Provider payload 비노출 테스트가 통과합니다.
 - [ ] 신규 DB Schema와 외부 로그 플랫폼이 추가되지 않습니다.
-- [ ] API·release validation 문서가 갱신됩니다.
+- [ ] current 공유 계약, 계약 색인, Backend 오류 계약, API·release validation 문서가 함께 갱신됩니다.
 - [ ] 관련 단위·통합·회귀 테스트가 통과합니다.
 - [ ] Ruff와 mypy가 통과합니다.
 - [ ] Backend/API, OCR, AI/RAG, Evaluation 지정 리뷰가 완료됩니다.
@@ -711,6 +797,7 @@ OCR 구조화, Guide, Chat 각각 다음을 검증합니다.
 이 문서는 구현 전 설계만 확정합니다. 구현은 다음 조건 이후 별도 계획에 따라 착수합니다.
 
 - Issue #152에 구현 담당자와 영역별 담당 리뷰어 명시
+- Security 기술 검토자와 Privacy 정책·증빙 보존 승인자를 별도로 명시
 - `X-Validation-Run-Id`, `X-Trace-Id` 공유 Header 계약 승인
 - Security·Privacy 로그 허용 필드와 증빙 보존 경계 승인
 - 실제 Provider 호출이 허용된 검증 환경 확인
