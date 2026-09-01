@@ -2,9 +2,9 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
+| 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
 | 구현·리뷰 | Not implemented · Track F Backend·Worker·RAG·Frontend 구현과 지정 리뷰어 검토 대기 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
 | Last verified | 2026-09-01 |
@@ -13,7 +13,7 @@
 
 사용자가 확정한 현재 처방과 공식 의약품 Identification을 기반으로 Guide·Chat·처방약–OTC 질문을 동일한 Rule-first RAG·Citation·Safety 경로에서 처리한다.
 
-이 문서는 외부 RAG 정본의 Local P0 Runtime 투영본이다. RAG-00 승인, 공유 DTO·DB 계약과 구현·테스트가 완료되기 전에는 현재 Runtime 계약이 아니며 기존 Approved Contract Freeze v4를 자동으로 대체하지 않는다.
+이 문서는 외부 RAG 정본의 Local P0 Runtime 투영본이다. RAG-00은 Approved Target이지만 공유 DTO·DB 계약의 구현·테스트가 완료되기 전에는 현재 Runtime 계약이 아니며 기존 Current 동작을 자동으로 대체하지 않는다.
 
 - 자유 ReAct Agent, 열린 웹 검색, Graph DB와 승인되지 않은 Source 자동 편입은 사용하지 않는다.
 - 고위험·응급·금지 행동 분기는 일반 Retrieval보다 먼저 수행한다.
@@ -34,10 +34,10 @@
 
 | 경계 | 분류 | RAG-00 처리 |
 | --- | --- | --- |
-| Candidate Search·Identification 요청/결과/오류 DTO | 공유 계약 변경 | [Candidate·Identification Target](./medication-candidate-identification-v1.md)과 OpenAPI·Contract Test로 고정 |
+| Candidate Search·Identification 요청/결과/오류 DTO | 공유 계약 변경 | [공식 의약품 식별·Candidate Target](./medication-identification-v1.md)과 OpenAPI·Contract Test로 고정 |
 | Chat/Guide 접수·상태·결과·오류 DTO | 공유 계약 변경 | Safety 상태축·Citation v2·`no-store`를 함께 고정 |
 | OTC | 기존 `CHAT` 질문 유형의 공유 DTO 변경 | 별도 API·Job·Track을 만들지 않음 |
-| Citation·Safety 공개 DTO | 공유 계약 변경 | [Safety·Citation v2](./safety-citation-v2.md)로 고정 |
+| Citation·Safety 공개 DTO | 공유 계약 변경 | [Safety Result·Citation v2](./safety-result-v2.md)로 고정 |
 | LangGraph 내부 Node state, Retrieval score·Top-K | 구현 세부 | 공개 DTO에 노출하지 않음 |
 
 ## 구현·실행 환경
@@ -79,9 +79,9 @@ OCR `raw_value`, 정규화 참고값, 검수 전 LLM 초안과 HIRA 데이터는
 
 Chat은 약품 식별이 불완전해도 질문과 최소 Chat Job을 먼저 저장하고 Safety Intake·Triage를 실행할 수 있다. `URGENT`, `EMERGENCY`, `UNKNOWN`은 승인 Safety Flow로 즉시 분기하며 일반 Retrieval·Composer·Provider를 호출하지 않는다. `ROUTINE`만 Identification Preflight를 통과한 뒤 일반 Rule·RAG로 진행한다. Preflight 실패는 같은 Job에 승인된 제한 응답을 저장하며 AI Job 안에서 사용자 입력을 기다리지 않는다.
 
-이 Proposed Target이 승인되면 [MFDS 공식 의약품 식별 계약 v1](../../targets/post-mvp-1/medication-identification-v1.md)의 “모든 활성 약제 `MATCHED` 후 Chat Job 생성” 조건은 Chat에 한해 이 2단계 접수 계약으로 대체된다. 자동 Guide의 선행 Identification 조건은 대체하지 않는다. 승인 전에는 두 문서를 임의로 결합하여 현재 Runtime으로 해석하지 않는다.
+이 Approved Target은 [MFDS 공식 의약품 식별·Candidate 계약 v1](./medication-identification-v1.md)의 “모든 활성 약제 `MATCHED` 후 Chat Job 생성” 조건을 Chat에 한해 이 2단계 접수 계약으로 대체한다. 자동 Guide의 선행 Identification 조건은 대체하지 않는다. 구현·OpenAPI·테스트가 함께 승격되기 전에는 두 문서를 현재 Runtime으로 해석하지 않는다.
 
-Job·Outbox·Redis Stream·Worker 상태와 재시도는 [비동기 Job 계약](../../targets/post-mvp-1/async-job-v1.md)과 [Outbox·Stream 계약](../../targets/post-mvp-1/outbox-stream-v1.md)을 따른다. `JOB_EXECUTE` 하나를 소비한 Worker가 아래 Graph를 같은 Job 실행 안에서 처리하며 단계별 두 번째 Outbox를 만들지 않는다.
+Job·Outbox·Redis Stream·Worker 상태와 재시도는 [비동기 Job 계약](./async-job-v1.md)과 [Outbox·Stream 계약](./outbox-stream-v1.md)을 따른다. `JOB_EXECUTE` 하나를 소비한 Worker가 아래 Graph를 같은 Job 실행 안에서 처리하며 단계별 두 번째 Outbox를 만들지 않는다.
 
 ## 고정 실행 Graph
 
@@ -202,7 +202,7 @@ Chat은 접수 시점과 일반 RAG 실행 시점의 Snapshot을 분리한다.
 - Chat `ROUTINE` 확장 시 Intake의 Prescription Version·환경·Bundle 참조와 잠금 재검증한 현재값이 다르면 Full Context를 만들지 않고 `AI_JOB=STALE`, `release_decision=STALE`로 종료하며 일반 RAG를 실행하지 않는다.
 - 각 Intake·Full Context는 해당 단계의 `runtime_guard_decision_id`를 필수로 저장한다. Full Guard, Full Context 생성과 Identification member 저장은 하나의 Transaction이며 부분 Snapshot은 허용하지 않는다.
 - Worker 재시도는 이미 고정된 Intake/Full Context만 읽고 현재 상태를 다시 선택하지 않는다. Full Context가 없는 `ROUTINE` 재시도는 같은 원자적 확장 절차를 다시 수행한다.
-- Worker의 Preflight·결과 commit Transaction은 [처방 버전 계약의 전역 잠금 순서](../../targets/post-mvp-1/prescription-version-v1.md#동시-수정)인 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX(해당 시)`를 따른다.
+- Worker의 Preflight·결과 commit Transaction은 [처방 버전 계약의 전역 잠금 순서](./prescription-version-v1.md#동시-수정)인 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX(해당 시)`를 따른다.
 - 결과 commit 직전에도 위 순서로 고정 Context와 현재 Prescription·Patient Context·Identification·Bundle·Execution Manifest·runtime revision을 재검증한다. 불일치 시 생성 결과를 공개하지 않고 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`로 저장한다.
 
 ## Runtime Release Bundle과 실행 Snapshot
@@ -232,13 +232,13 @@ Local Runtime 포인터 변경도 보호된 Guard Operation을 사용한다.
 
 ## 결과·Citation·상태
 
-상태축, 허용 조합, fallback과 공개 DTO의 RAG 목표는 [Safety·Citation v2 Proposed Target](./safety-citation-v2.md)을 따른다. 기존 [Safety Result v1](../../targets/post-mvp-1/safety-result-v1.md)은 선행 Approved v4 Target이며 v2 구현 PR이 DTO·OpenAPI·Migration·Contract Test와 함께 승인되기 전까지 현재 Runtime을 변경하지 않는다.
+상태축, 허용 조합, fallback과 공개 DTO의 RAG 목표는 [Safety Result·Citation v2 Target](./safety-result-v2.md)을 따른다. 기존 [Safety Result v1](./safety-result-v1.md)은 선행 Approved v4 Target 이력이며 v2 구현 PR이 DTO·OpenAPI·Migration·Contract Test와 함께 승인되기 전까지 현재 Runtime을 변경하지 않는다.
 
 Citation 목표 유형은 `PRESCRIPTION`, `KNOWLEDGE_CHUNK`, `INTERACTION_RULE`, `LIFESTYLE_GUIDELINE`, `SAFETY_POLICY`다. 각 의료 Claim은 유형별 Evidence FK 하나와 승인된 Source version·locator를 가져야 한다. 공개 Citation은 `citation_id`, `claim_key`, `source_type`, `title`, nullable `url`, `source_version`, `locator`, 짧은 `excerpt`만 포함한다.
 
 Retrieval Run에는 raw 질문을 저장하지 않고 versioned query HMAC/digest, filter Snapshot, `prescription_version_id`, 질문 유형, 검색 Chunk ID·rank·score, 최종 선택 Chunk, Index·Source version, 상태와 실행 시각만 저장한다.
 
-Candidate Search·Identification·OTC 질문·Chat/Guide 접수·Job 상태·결과·Citation과 그 오류 응답은 [Candidate·Identification 계약의 소유권 경로](./medication-candidate-identification-v1.md#소유권transaction현재성)에 따라 동일한 `user_id` 소유권을 검증하고 `Cache-Control: no-store`를 포함한다. 존재하지 않거나 타 사용자 리소스는 부작용 없이 `404`로 통일한다. 이 헤더는 OpenAPI 설명과 Contract Test에서 고정한다.
+Candidate Search·Identification·OTC 질문·Chat/Guide 접수·Job 상태·결과·Citation과 그 오류 응답은 [공식 의약품 식별·Candidate 계약의 소유권 경로](./medication-identification-v1.md#소유권transaction현재성)에 따라 동일한 `user_id` 소유권을 검증하고 `Cache-Control: no-store`를 포함한다. 존재하지 않거나 타 사용자 리소스는 부작용 없이 `404`로 통일한다. 이 헤더는 OpenAPI 설명과 Contract Test에서 고정한다.
 
 ## 평가 후보 Guard Operation
 

@@ -1,23 +1,36 @@
-# Product Decision 초안: RAG P0 공유 계약 Freeze
+# Product Decision: RAG P0 공유 계약 Freeze
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-125-20260831` |
-| 상태 | Proposed — Issue #125·지정 리뷰어 승인 대기 |
+| 상태 | Approved Target · Not implemented — 2026-09-01 |
 | 제안일 | 2026-08-31 |
 | 제안자 | 정현우 — AI/RAG 구현 담당 |
 | 추적 Issue | [#125](https://github.com/AI-HealthCare-05/AH_05_04/issues/125) |
-| 적용 범위 | Post-MVP-1 Track F RAG P0 Proposed Target |
+| 적용 범위 | Post-MVP-1 Track F RAG P0 Approved Target |
 
-## 결정 제안
+## 결정
 
-외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 RAG P0 공유 계약의 검토 정본으로 채택한다. 아래 다섯 문서를 하나의 변경 세트로 검토한다.
+외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 RAG P0 공유 계약의 정본으로 채택한다. 아래 다섯 논리 계약을 하나의 변경 세트로 관리한다.
 
-- Medication Candidate Search·Identification v1
+- Medication Candidate Search·Identification v1 — 저장소에서는 기존 `medication-identification-v1.md`에 통합
 - RAG Source 수집·정규화 v1
 - Rule-first Curated Evidence RAG Runtime v1
 - RAG Evaluation·Release Gate v1
 - Safety Result·Citation v2
+
+### Authority Receipt
+
+| Artifact | Version·Role | SHA-256 |
+| --- | --- | --- |
+| Authority Manifest | `2026-08-29.11` | `f2c98884c841d3fccdbec552f14aad1fd471730eae6d80c472c1b332ed95a570` |
+| `rag-design` | `1.50 · NORMATIVE_ARCHITECTURE` | `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
+| `rag-db-schema` | `1.47 · NORMATIVE_PHYSICAL_TARGET` | `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
+| `rag-source-policy` | `1.18 · NORMATIVE_SOURCE_GOVERNANCE` | `35842d2cbe54201ff9fb5580616055eda613fe4c16ac6d60daa7f8859d2f28e3` |
+| `rag-evaluation-plan` | `1.35 · NORMATIVE_EVALUATION` | `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
+| `rag-implementation-order` | `1.16 · NON_NORMATIVE_EXECUTION_ORDER` | `15b6296e7c28e1603cc55ebcee357048f9061ebd522ffc5e8e1dcf3c17f9732e` |
+
+`rag-implementation-order`는 Issue 분할·진행 순서에만 사용하며 enum·DTO·DB·평가 의미를 덮어쓰지 않는다. Manifest 파일의 SHA-256과 각 문서 항목은 2026-09-01 로컬 Authority Bundle에서 재검증했다.
 
 평가 Experiment Type은 `END_TO_END_RAG`를 사용하며 `END_TO_END_FINAL`은 사용하지 않는다. Local 평가 후보 Bundle에는 Run 단위 `EVALUATION_CANDIDATE`, Required Case 단위 `EVALUATION_REQUEST` Guard를 적용한다. 두 Guard는 환자용 API나 Application 결과를 생성하지 않으며 합성·승인 비식별 Dataset과 승인 Runner로 제한한다.
 
@@ -45,18 +58,24 @@ Source Runtime 적격성은 Source lifecycle 하나로 판단하지 않는다. S
 - PR #96의 활성 Prescription Version Medication에 없는 보험코드는 RAG P0 입력·검색 신호가 아니다. 별도 OCR·Prescription 공유 계약, Migration, 승인 MFDS Identifier Source와 Contract Test가 승인되기 전까지 보험코드 Feature는 비활성이다. HIRA 데이터는 사용하지 않는다.
 - 검수 전 OCR·LLM 값은 Candidate 입력이 아니다. 사용자가 명시적으로 확정하여 활성 불변 Prescription Version Medication에 저장된 `medication_name`과 nullable `strength_text`만 사용한다.
 
-승인 전에는 Proposed Runtime과 기존 Approved Target을 조합해 현재 동작으로 주장하지 않는다. 승인·승격 시 계약 인덱스와 기존 의약품 식별 Target에 위 대체 관계를 함께 반영해 상충하는 두 Target이 남지 않도록 한다.
+이 Decision과 Target 문서를 현재 Runtime으로 주장하지 않는다. 외부 논리 계약 `medication-candidate-identification-v1`은 기존 의약품 식별 Target에 통합하며 상충하는 별도 Target을 만들지 않는다. Safety v1은 Approved v4 이력으로 보존하고 v2를 후속 Target으로 추가한다.
 
-## 승인·승격 조건
+## 승인·승격 기록과 입력 Receipt
 
-이 초안과 Proposed Target 문서는 다음 담당 리뷰가 모두 기록되기 전에는 Approved Target이 아니다.
+이 Decision과 Target 문서는 다음 담당 리뷰 영역을 모두 포함한다.
 
 - 권가빈 (`@hazelnutflavoured`): Product·Safety·Evaluation 범위
 - 송은영 (`@phina-io`): Backend·DB·소유권·Transaction
 - 김지혜 (`@Jye-rookie`): OCR 확정 입력 경계와 PR #96 재사용
 - 남한솔 (`@solia142`): Candidate 확인 UI·공개 DTO·`no-store`
 
-Issue와 PR에는 각 담당자의 실제 GitHub 계정을 지정한다. 계정 매핑을 추정하지 않는다. 승인 완료 시 같은 PR에서 다섯 문서를 `docs/contracts/targets/post-mvp-1/`로 이동하고 문서 상태, 두 계약 인덱스와 추적표를 `Approved Target · Not implemented`로 갱신한다.
+Issue와 PR에는 각 담당자의 실제 GitHub 계정을 지정한다. 계정 매핑을 추정하지 않는다. RAG-00 변경 매핑이 승인 검토 후 달라졌으므로 승격 커밋에 대해 지정 리뷰어 재검토를 요청한다.
+
+| 입력 Receipt | 현재 상태 | 적용 규칙 |
+| --- | --- | --- |
+| [Issue #136 Guide·Chat 책임 경계·상태 표시 기준](https://github.com/AI-HealthCare-05/AH_05_04/issues/136) | `OPEN` · 2026-09-01 기준 산출물·연결 PR 미확정 | RAG-00에서 같은 Session·Message·상태 UI 문서를 중복 작성하지 않는다. 확정 Contract·Receipt가 생긴 범위만 후속 구현에 사용하며, #125 통합 완료·Close는 Receipt 연결 전까지 차단한다. |
+
+`#136 OPEN`은 RAG-00 Target 문서의 상태를 Current로 낮추거나 미승인 정책을 추정해 채울 근거가 아니다. 후속 Guide·Chat 구현은 #136에서 확정된 책임·표시 계약과 이 Decision의 RAG Runtime 경계를 함께 검증한다.
 
 ## 구현·공개 경계
 

@@ -46,9 +46,11 @@
 3. 상태 디렉터리를 계약 상태의 기준으로 사용한다. 목표 또는 Proposed 계약을 Current로 승격하려면 구현 PR에서 관련 구현, migration, OpenAPI/DTO, 계약·통합 테스트와 실행 증빙을 연결하고 지정 리뷰어 승인을 받은 뒤 `docs/contracts/current/`로 이동한다. 같은 PR에서 문서 상태와 인덱스를 갱신하고 이전 상태 디렉터리에 중복 파일을 남기지 않는다.
 4. 외부 승인과 공개 flag는 구현 완료와 별도로 관리한다. 상세 조건은 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 따른다.
 
-## RAG-00 승인 제안
+## RAG-00 Approved Target
 
-[Product Decision 초안 `PD-125-20260831`](./decisions/2026-08-31-rag-p0-contract-freeze.md)과 `docs/contracts/proposed/post-mvp-1/`의 다섯 RAG P0 계약은 Issue #125 지정 리뷰어 승인 대기 상태다. 승인 전에는 구현 기준 또는 Approved v4로 사용하지 않는다. 승인 완료 시 같은 PR에서 Proposed 문서를 `targets/post-mvp-1/`로 이동하고 Decision·문서·인덱스·추적표 상태를 함께 `Approved Target · Not implemented`로 변경한다.
+[Product Decision `PD-125-20260831`](./decisions/2026-08-31-rag-p0-contract-freeze.md)과 `docs/contracts/targets/post-mvp-1/`의 RAG P0 계약은 외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 저장소 공유 경계로 투영한 `Approved Target · Not implemented`다. 외부 논리 계약 `medication-candidate-identification-v1`은 기존 `medication-identification-v1.md`에 통합하며 같은 상태 폴더에 중복 파일을 두지 않는다. Safety Result v1은 Approved v4 이력으로 유지하고 Safety Result·Citation v2는 후속 Target으로 별도 관리한다.
+
+[Issue #136](https://github.com/AI-HealthCare-05/AH_05_04/issues/136)의 Guide·Chat 책임 경계·상태 표시 산출물은 RAG-00의 입력 Receipt다. 2026-09-01 현재 Issue가 Open이고 산출물·연결 PR이 확정되지 않았으므로 같은 문서를 RAG-00에서 중복 작성하거나 미확정 상태 UI 계약을 추정하지 않는다. 확정 Receipt 연결 전까지 Issue #125의 통합 완료·Close는 차단하지만, 이미 확정된 RAG Target 범위의 로컬 구현 준비를 막는 의미로 확대하지 않는다.
 
 `ISS-TBD-035`는 `FinalProject Documents/00_Index.md`의 상류 계획 레지스터 ID이며, 이 구현 저장소에서는 [Issue #91](https://github.com/AI-HealthCare-05/AH_05_04/issues/91)과 연결해 추적한다. 상류 artifact에 공개 가능한 안정 URL이 생기기 전에는 존재하지 않는 저장소 링크를 만들지 않는다. HIRA 식별, Track D 전용 OTC API 또는 의미 기반 NLI를 Approved v4 목표로 복원하지 않는다.
 

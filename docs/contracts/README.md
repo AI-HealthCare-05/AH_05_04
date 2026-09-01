@@ -1,6 +1,6 @@
 # 공통 데이터 계약
 
-Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `targets/post-mvp-1/`의 문서는 **Approved Contract Freeze v4의 Post-MVP-1 목표 계약**이며, RAG-00 제안은 팀 승인 전까지 `proposed/post-mvp-1/`에서 관리합니다.
+Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `targets/post-mvp-1/`의 문서는 승인됐지만 아직 구현되지 않은 Post-MVP-1 목표 계약이며 Approved Contract Freeze v4와 RAG-00 Approved Target을 함께 관리합니다.
 
 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../governance/post-mvp-1-document-authority.md)를 따릅니다.
 
@@ -35,16 +35,6 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 Proposed 계약은 관련 schema·service·CLI·테스트가 함께 병합되고 상태가 갱신되기 전에는 실행 가능한 계약으로 간주하지 않습니다.
 
-## RAG-00 Proposed Target — 미승인·미구현
-
-- [Medication Candidate Search·Identification 계약 v1](./proposed/post-mvp-1/medication-candidate-identification-v1.md): 공유 DTO·후보 검색·사용자 확인·Preflight 경계
-- [RAG Source 수집·정규화 계약 v1](./proposed/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속
-- [RAG Runtime 계약 v1](./proposed/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름
-- [RAG Evaluation·Release Gate 계약 v1](./proposed/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric과 Release 차단 기준
-- [Safety Result·Citation 계약 v2](./proposed/post-mvp-1/safety-citation-v2.md): Context STALE·다형 Citation·Release Gate
-
-이 제안은 [RAG P0 Contract Freeze Decision 초안](../governance/decisions/2026-08-31-rag-p0-contract-freeze.md)과 함께 Issue #125 및 PR의 지정 리뷰어가 승인해야 한다. 승인 전에는 구현 기준이나 Approved v4로 사용할 수 없다. 승인 시 같은 PR에서 문서를 `targets/post-mvp-1/`로 이동하고 상태·인덱스·추적표를 `Approved Target`으로 함께 갱신한다.
-
 ## 승인된 Post-MVP-1 목표 계약 — 미구현
 
 - [Post-MVP-1 목표 계약 인덱스](./targets/post-mvp-1/README.md)
@@ -54,14 +44,18 @@ Proposed 계약은 관련 schema·service·CLI·테스트가 함께 병합되고
 - [처방 버전 계약 v1](./targets/post-mvp-1/prescription-version-v1.md): 불변 snapshot, 활성화, stale 및 기존 데이터 backfill
 - [Check-in과 Barrier 계약 v1](./targets/post-mvp-1/checkin-v1.md): 3개 Check-in 결과와 Barrier 명시적 거절·미제출 구분
 - [OCR 비-RAG LLM 구조화 계약 v1](./targets/post-mvp-1/ocr-llm-structuring-v1.md): 최소전송, 구조화 초안 provenance, 사용자 확정과 실패 복구
-- [MFDS 공식 의약품 식별 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): Approved v4 선행 Target의 Source/Catalog·식별 원칙
+- [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계
 - [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): 생성·검증·공개 상태 조합과 fail-closed 규칙
+- [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속
+- [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름
+- [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric과 Release 차단 기준
+- [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): v1 후속 Target의 Context STALE·다형 Citation·Release Gate
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 
-### RAG-00 Proposed Target 권위와 책임
+### RAG-00 Approved Target 권위와 책임
 
-RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외부 Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 Local P0 투영본이며 상태는 `PROPOSED_TARGET_NOT_IMPLEMENTED`다. 팀 승인 전에는 Approved Contract Freeze v4 또는 Current Runtime으로 해석하지 않는다.
+RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외부 Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 Local P0 투영본이며 저장소 상태는 `Approved Target · Not implemented`다. 문서 승인만으로 Current Runtime 또는 사용자 공개 완료로 해석하지 않는다. 외부 논리 계약 `medication-candidate-identification-v1`은 별도 파일을 만들지 않고 기존 `medication-identification-v1.md`에 통합했다.
 
 | RAG-00 문서 영역 | 작성·변경 담당 | 책임 리뷰 |
 | --- | --- | --- |

@@ -2,9 +2,9 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
+| 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
 | 구현·리뷰 | Not implemented · Track F Source·RAG 구현과 지정 리뷰어·Privacy·외부 Source 승인 대기 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `rag-source-management-policy-v1.0.md@1.18` · SHA-256 `35842d2cbe54201ff9fb5580616055eda613fe4c16ac6d60daa7f8859d2f28e3` |
 | Last verified | 2026-09-01 |
 
@@ -12,7 +12,7 @@
 
 Track F가 사용하는 공식 의약품·의료정보를 재현 가능한 불변 Source Snapshot으로 수집하고, 승인·검증된 Snapshot만 Candidate Resolver, Rule과 Evidence Retrieval에 사용한다.
 
-이 문서는 외부 RAG 문서 세트의 Source Governance를 저장소의 Local P0 Target으로 투영한다. 외부 문서와 이 문서가 충돌하면 RAG-00 승인 전에는 구현하지 않고 Manifest에 고정된 정본과 저장소 공유 계약을 함께 재검토한다. 문서 존재만으로 기존 Approved Contract Freeze v4를 변경하거나 현재 Runtime을 증명하지 않는다.
+이 문서는 외부 RAG 문서 세트의 Source Governance를 저장소의 Local P0 Target으로 투영한다. 외부 문서와 이 문서가 충돌하면 구현을 중단하고 Manifest에 고정된 정본과 저장소 공유 계약을 함께 재검토한다. 문서 존재만으로 기존 Current Runtime의 변경이나 Source 활성화를 증명하지 않는다.
 
 - P0 Source는 MFDS 공식 제품·성분·복합제 Component·승인 Alias, DUR 상호작용 근거와 환자용 승인 의료정보다.
 - 실제 API Service ID, Operation·Path, 필수 파라미터, 응답 Content-Type, 성공 본문 code, pagination과 안정 Primary Key는 실응답 검증으로 확정한다. 문서나 구현에서 추정값을 만들지 않는다.

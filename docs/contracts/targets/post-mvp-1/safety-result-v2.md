@@ -2,11 +2,11 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
+| 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
 | 구현 담당 | 정현우 — Citation·Validator·Release Gate |
 | 책임 리뷰 | 권가빈 — Safety·제품 수용, 송은영 — Backend·DB·공개 DTO, 남한솔 — 환자 표시·오류 UX |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; Design `1.50` SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a`; DB `1.47` SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| 기존 선행 계약 | [Safety Result 계약 v1](../../targets/post-mvp-1/safety-result-v1.md) |
+| 기존 선행 계약 | [Safety Result 계약 v1](./safety-result-v1.md) — v2 승인 이력을 위해 v1 파일을 유지하며 Current Runtime으로 간주하지 않음 |
 | Last verified | 2026-09-01 |
 
 ## 목적과 승격 경계
