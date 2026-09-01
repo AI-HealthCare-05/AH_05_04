@@ -50,11 +50,10 @@ class OcrRepository:
         result = await self.session.execute(
             select(ExtractedField)
             .options(
-                # PATCH 전에 문서 소유권과 처방 확정 여부를 추가 쿼리 없이 확인할 수 있도록
-                # OCR 작업 → 의료문서 → 확정 처방 관계를 한 번에 eager loading 합니다.
-                selectinload(ExtractedField.ocr_job)
-                .selectinload(OcrJob.document)
-                .selectinload(MedicalDocument.prescription)
+                # PATCH 전에 문서 소유권을 확인하고 lock 대상 document_id를 얻기 위해
+                # OCR 작업 관계만 eager loading 합니다.
+                # 확정 처방 여부는 문서 row를 잠근 뒤 별도로 조회하므로 여기서 미리 읽지 않습니다.
+                selectinload(ExtractedField.ocr_job).selectinload(OcrJob.document)
             )
             .where(ExtractedField.id == field_id)
         )

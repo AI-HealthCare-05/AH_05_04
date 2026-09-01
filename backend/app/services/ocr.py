@@ -6,8 +6,12 @@ from app.dtos.ocr import ExecuteOcrRequest, ExtractedFieldData, OcrJobData, OcrJ
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
 from app.models.ocr import ExtractedField, FieldType, OcrJob
 from app.models.users import User
-from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.repositories.medical_document_repository import (
+    DocumentLockTimeoutError,
+    MedicalDocumentRepository,
+)
 from app.repositories.ocr_repository import OcrRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.ocr_engine import (
     NotConfiguredOcrEngine,
     OcrEngine,
@@ -69,10 +73,13 @@ class OcrService:
         document_repository: MedicalDocumentRepository,
         ocr_repository: OcrRepository,
         engine: OcrEngine | None = None,
+        # 처방 확정 여부를 lock 획득 이후에 다시 확인하기 위해 주입합니다.
+        prescription_repository: PrescriptionRepository | None = None,
     ) -> None:
         self._engine: OcrEngine = engine or NotConfiguredOcrEngine()
         self._document_repo = document_repository
         self._ocr_repo = ocr_repository
+        self._prescription_repo = prescription_repository
 
     async def execute_ocr(
         self,
@@ -248,12 +255,47 @@ class OcrService:
                 ],
             )
 
-        document = field.ocr_job.document
+        # 소유권 확인까지는 lock 없이 읽습니다.
+        # 잠금 없는 SELECT는 lock을 획득하지 않으므로 전역 lock 순서에 영향을 주지 않습니다.
+        # 확보한 document_id로 확정 경로와 같은 MEDICAL_DOCUMENT row를 잠가 두 요청을 직렬화합니다.
+        try:
+            document = await self._document_repo.get_owned_for_update(
+                document_id=field.ocr_job.document_id,
+                user=user,
+            )
+        except DocumentLockTimeoutError:
+            raise ApiError(
+                status_code=409,
+                code="CONCURRENT_UPDATE_IN_PROGRESS",
+                message="같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.",
+                details=[ErrorDetail(field="field_id", reason="CONCURRENT_UPDATE_IN_PROGRESS")],
+            ) from None
+
+        if document is None:
+            # 위에서 소유권을 확인했으므로 여기 도달하면 문서가 동시에 삭제된 경우입니다.
+            raise ApiError(
+                status_code=404,
+                code="MEDICAL_DOCUMENT_NOT_FOUND",
+                message="의료문서를 찾을 수 없습니다.",
+                details=[
+                    ErrorDetail(
+                        field="field_id",
+                        reason="NOT_FOUND",
+                        rejected_value=str(field_id),
+                    )
+                ],
+            )
 
         # PRESCRIPTION은 사용자 검수를 마친 최종 확정 데이터입니다.
         # 처방 확정 이후 OCR 추출값이 변경되면 화면의 검수값과 확정 처방이 달라질 수 있으므로
         # 추가 PATCH를 거부하고 Frontend가 비편집 확정 화면으로 전환하도록 합니다.
-        if document.prescription is not None:
+        #
+        # field.ocr_job.document.prescription은 lock 획득 전에 eager loading 된 값이라
+        # 그 사이에 확정된 처방을 놓칠 수 있습니다. lock 이후 새로 조회해야 정확합니다.
+        if self._prescription_repo is None:
+            raise RuntimeError("prescription_repository가 주입되지 않았습니다.")
+
+        if await self._prescription_repo.get_by_document(document=document) is not None:
             raise ApiError(
                 status_code=409,
                 code="PRESCRIPTION_ALREADY_CONFIRMED",
