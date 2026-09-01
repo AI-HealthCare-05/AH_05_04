@@ -297,7 +297,6 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - 처방이 확정되기 전까지만 `confirmed_value`를 수정할 수 있습니다.
 - 처방 확정 이후에는 확정 처방과 OCR 검수값의 불일치를 방지하기 위해 extracted-field PATCH를 거부합니다.
 - 거부된 PATCH는 기존 `confirmed_value`를 변경하지 않습니다.
-- PATCH와 처방 확정의 동시 요청 직렬화는 Post-MVP 범위입니다.
 
 선택 필드의 OCR 값을 사용자가 제거하여 “값 없음”으로 확인할 때는
 `confirmed_value`를 명시적인 `null`로 전송합니다.
