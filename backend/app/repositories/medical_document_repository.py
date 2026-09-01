@@ -90,7 +90,7 @@ class MedicalDocumentRepository:
                 select(MedicalDocument)
                 .where(
                     MedicalDocument.id == document_id,
-                    MedicalDocument.user_id == user.id,
+                    owned_by_self(MedicalDocument.profile_id, user.id),
                 )
                 .with_for_update()
             )

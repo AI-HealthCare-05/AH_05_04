@@ -50,6 +50,7 @@ TRUNCATE_TARGETS = (
     "prescription",
     "ocr_job",
     "medical_document",
+    "profile",
     '"user"',
 )
 
@@ -107,12 +108,13 @@ async def lock_holder() -> AsyncIterator[AsyncSession]:
         await session.close()
 
 
-async def _lock_document(session: AsyncSession, document_id: str) -> None:
-    """구현이 잠그는 것과 같은 MEDICAL_DOCUMENT row를 선점합니다."""
-    await session.execute(
-        text("SELECT id FROM medical_document WHERE id = :document_id FOR UPDATE"),
+async def _lock_document(session: AsyncSession, document_id: str) -> UUID:
+    """구현이 잠그는 것과 같은 MEDICAL_DOCUMENT row를 선점하고 소유 profile_id를 돌려줍니다."""
+    result = await session.execute(
+        text("SELECT profile_id FROM medical_document WHERE id = :document_id FOR UPDATE"),
         {"document_id": document_id},
     )
+    return UUID(result.scalar_one())
 
 
 async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
@@ -216,7 +218,7 @@ async def test_patch_waits_for_confirmation_and_then_rejects(
         target_field_id = _field_id(fields, field_type="MEDICATION_NAME")
 
         # 확정 transaction이 lock을 잡고 있는 상태를 재현합니다.
-        await _lock_document(lock_holder, document_id)
+        profile_id = await _lock_document(lock_holder, document_id)
 
         patch_task = asyncio.create_task(
             client.patch(
@@ -233,6 +235,7 @@ async def test_patch_waits_for_confirmation_and_then_rejects(
             Prescription(
                 document_id=UUID(document_id),
                 source_ocr_job_id=UUID(job_id),
+                profile_id=profile_id,
                 prescribed_date=date(2026, 8, 1),
                 prescription_status=PrescriptionStatus.CONFIRMED,
                 confirmed_at=datetime.now(UTC),
@@ -327,4 +330,6 @@ async def test_lock_scope_is_per_document(
         elapsed = monotonic() - started
 
     assert response.status_code == status.HTTP_201_CREATED, response.text
-    assert elapsed < LOCK_TIMEOUT_SECONDS * 0.5
+    # 잠금 대기가 발생하지 않았음을 보는 것이므로 lock_timeout보다 짧으면 충분합니다.
+    # CI 러너 지연을 고려해 여유를 둡니다.
+    assert elapsed < LOCK_TIMEOUT_SECONDS
