@@ -100,7 +100,7 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N 
 | OpenAI 가이드 | 0-based `source_index`와 파생 `guidance_intent`(`FOLLOW_CONFIRMED_TIMING` 또는 `FOLLOW_CONFIRMED_SCHEDULE`)만 전송. 약명·제품 함량·용량·단위·횟수·시점·기간·식별자는 전송 금지 | `store=False` 포함 실제 저장·학습·보존 정책 확인: ____ | ____ |
 | OpenAI 챗봇 | 현재 질문과 확정 약물 필드. 최근 완료 대화 최대 3쌍은 별도 승인 후에만 허용하며 현재 Staging·Production에서는 `history: []`: ____ | `store=False` 포함 실제 정책 확인: ____ | ____ |
 
-가이드 `guidance_intent`는 확정 처방의 `timing_text` 존재 여부에서 파생된 의료 metadata이므로 단순 locator가 아니라 외부 전송 승인 대상으로 검토합니다. 승인 범위를 넘는 식별자, 원본 처방값, 최근 대화, OCR 원문·미검수 값이나 내부 오류 metadata가 외부 payload에 포함되면 배포하지 않습니다. Chat history의 버전된 합성 평가, latency와 PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 추적하며, 완료되더라도 별도 외부 전송·Production 승인을 자동으로 해제하지 않습니다.
+가이드 `guidance_intent`는 확정 처방의 `timing_text` 존재 여부에서 파생된 의료 metadata이므로 단순 locator가 아니라 외부 전송 승인 대상으로 검토합니다. 승인 범위를 넘는 식별자, 원본 처방값, 최근 대화, OCR 원문·미검수 값이나 내부 오류 metadata가 외부 payload에 포함되면 배포하지 않습니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 실제 Provider 검증이나 외부 전송 승인이 아니며, 별도 외부 전송·Production 승인을 자동으로 해제하지 않습니다.
 
 `guide-prompt-v3`는 intent별 승인 guidance와 공통 notice만 선택하도록 제한하며 Backend가 index·intent·exact membership을 검증합니다. 이 제한 생성과 Local 합성 평가 통과는 현재 의료 AI Production 차단을 해제하지 않습니다.
 
