@@ -4,8 +4,8 @@
 | --- | --- |
 | 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
 | 구현·리뷰 | Not implemented · Track F Source·RAG 구현과 지정 리뷰어·Privacy·외부 Source 승인 대기 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.9` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
-| Normative Source | `rag-source-management-policy-v1.0.md@1.17` · SHA-256 `9e4932d4382c34f7434c3c4f1f4ebda7e75910386e9db9cb6cd62d5b80991e4e` |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
+| Normative Source | `rag-source-management-policy-v1.0.md@1.18` · SHA-256 `35842d2cbe54201ff9fb5580616055eda613fe4c16ac6d60daa7f8859d2f28e3` |
 | Last verified | 2026-09-01 |
 
 ## 목적과 범위

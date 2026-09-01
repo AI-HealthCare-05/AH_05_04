@@ -5,9 +5,9 @@
 | 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
 | 구현·리뷰 | Not implemented · Track F RAG/Evaluation 구현과 지정 리뷰어·의료·약학·Privacy 승인 대기 |
 | 실행 환경 | 실제 RAG 평가는 Local Runner에서만 수행 · Development/Staging 서버 미사용 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.9` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
-| Normative Source | `evaluation-plan.md@1.33` · SHA-256 `bf57f0eba05fb74796579a08f5feb73f408ec68d16bc84668a70073a474adef3` |
-| Physical Target | `rag-detailed-db-schema-v1.md@1.45` · SHA-256 `b3b15c9d21767f660da4c60466c0ca6b16fa7fc605abd4a0fff5af9978ad988e` |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
+| Normative Source | `evaluation-plan.md@1.35` · SHA-256 `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
+| Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
 | Last verified | 2026-09-01 |
 
 ## 목적과 평가 경계
@@ -87,6 +87,7 @@ OCR·Resolver 품질 비교와 Candidate 검색 알고리즘별 성능은 RAG �
 - 보험코드 원문·Digest·내부 매칭 상태는 RAG Prompt·답변·Citation·공개 UI에 전달하지 않는다.
 - OCR `raw_value`, `normalized_value`, 검수 전 Structured Output은 Candidate·Rule·RAG 의료 근거로 사용하지 않는다.
 - Candidate Finalizer·단일 후보·함량 충돌·사용자 확인·append-only Identification 불변식은 Candidate/OCR Contract Suite가 소유한다.
+- 약제별 활성 `RUNNING | READY` Candidate Search 최대 1개, 동일 Context Search 재사용, 상이 Context Search 무효화와 서로 다른 Search ID 동시 확인 단일 성공은 Candidate Contract Suite가 소유한다. 이 결과는 RAG 품질 Metric에 합산하지 않는다.
 
 상류 Contract Receipt가 `COMPLETED/PASS`가 아니면 RAG 품질 결과가 PASS여도 Release를 차단한다. 미구현·미실행·오류 Receipt는 품질 `FAIL`로 위장하지 않고 각 `execution_status`와 `decision_status=null`을 유지한다. OCR Field·Candidate Rank·Resolver 내부 결과와 상류 품질 Metric은 RAG Dataset·Case Result·Metric 테이블에 복제하지 않는다.
 

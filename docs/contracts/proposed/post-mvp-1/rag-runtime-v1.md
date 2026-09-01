@@ -4,9 +4,9 @@
 | --- | --- |
 | 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
 | 구현·리뷰 | Not implemented · Track F Backend·Worker·RAG·Frontend 구현과 지정 리뷰어 검토 대기 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.9` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
-| Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.48` · SHA-256 `0276ddac4dd62f4ed166edd098fb4e629bb3da4ecd79d8c079ef363e080b5dc8` |
-| Physical Target | `rag-detailed-db-schema-v1.md@1.45` · SHA-256 `b3b15c9d21767f660da4c60466c0ca6b16fa7fc605abd4a0fff5af9978ad988e` |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11` (`PROPOSED_TARGET_NOT_IMPLEMENTED`) |
+| Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
+| Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
 | Last verified | 2026-09-01 |
 
 ## 목적과 적용 범위

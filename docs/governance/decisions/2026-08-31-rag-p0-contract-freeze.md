@@ -11,7 +11,7 @@
 
 ## 결정 제안
 
-외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.9`을 RAG P0 공유 계약의 검토 정본으로 채택한다. 아래 다섯 문서를 하나의 변경 세트로 검토한다.
+외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 RAG P0 공유 계약의 검토 정본으로 채택한다. 아래 다섯 문서를 하나의 변경 세트로 검토한다.
 
 - Medication Candidate Search·Identification v1
 - RAG Source 수집·정규화 v1
@@ -39,7 +39,9 @@ Source Runtime 적격성은 Source lifecycle 하나로 판단하지 않는다. S
 
 - 이 Decision과 Runtime v1이 승인되면 기존 [MFDS 공식 의약품 식별 계약 v1](../../contracts/targets/post-mvp-1/medication-identification-v1.md)의 Job 생성 조건은 Chat에 한해 위 2단계 Intake·Preflight 계약으로 대체된다. 자동 Guide의 “모든 활성 약제 `MATCHED` 후 Job 생성” 조건은 유지한다.
 - Candidate Search 생성은 `Idempotency-Key` 적용 대상이 아니다. 사용자 후보 확인·거절만 기존 [멱등성 계약 v1](../../contracts/targets/post-mvp-1/idempotency-v1.md)의 Track F 규칙을 따른다.
+- Candidate Search 생성은 상위 Prescription과 대상 Prescription Version Medication을 잠그고, 약제별 활성 `RUNNING | READY` Search를 Partial Unique로 최대 하나만 허용한다. 같은 Query Digest·Runtime Release Bundle·Candidate Index의 Search는 기존 행을 재사용하고, Context가 다르면 기존 활성 Search를 `INVALIDATED_INPUT_CHANGED`로 전환한 뒤 새 Search를 같은 Transaction에서 만든다. 최신 `MATCHED`가 있으면 승인된 재식별 경로 밖의 새 Search를 만들지 않는다.
 - 후보 확인 요청은 `prescription_version_medication_id + candidate_search_result_id`, 거절 요청은 `search_id + candidate_search_result_id`를 사용하며 두 요청 모두 `Idempotency-Key`가 필수다. Candidate Search Finalizer는 Result 전체, Gate·표시 Flag·최종 상태를 하나의 Transaction에서 확정한다. 거절 후 새로 확정한 Prescription Version Medication에는 별도 후속 Search를 만들고 과거 Result를 재선택하지 않는다. P0에는 Prescription Version 간 안정적 Medication 계보 Key가 없으므로 `supersedes_search_id`는 `null`로 유지하며 추정 연결하지 않는다. 향후 계보 Key·Migration·무결성 규칙·Contract Test가 승인된 뒤에만 이 예약 필드를 활성화한다.
+- 후보 확인 Transaction은 약제·Search·Result를 잠근 뒤 해당 Search가 유일한 활성 `READY`이고 최신 Identification에 새 `MATCHED`가 없는지 재검사한다. 먼저 성공한 Transaction만 Identification과 Search `CONSUMED`를 원자 저장한다. 같은 Search의 동일 멱등 재시도만 최초 결과를 재현하며, 다른 Search ID의 경쟁 확인은 `409 CANDIDATE_SEARCH_STALE` 또는 최신 Identification 변경 시 `409 IDENTIFICATION_CONTEXT_STALE`로 끝나고 신규 Identification을 만들지 않는다.
 - PR #96의 활성 Prescription Version Medication에 없는 보험코드는 RAG P0 입력·검색 신호가 아니다. 별도 OCR·Prescription 공유 계약, Migration, 승인 MFDS Identifier Source와 Contract Test가 승인되기 전까지 보험코드 Feature는 비활성이다. HIRA 데이터는 사용하지 않는다.
 - 검수 전 OCR·LLM 값은 Candidate 입력이 아니다. 사용자가 명시적으로 확정하여 활성 불변 Prescription Version Medication에 저장된 `medication_name`과 nullable `strength_text`만 사용한다.
 
