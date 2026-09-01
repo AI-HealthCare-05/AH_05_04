@@ -95,7 +95,7 @@ class CapturingSession:
         return CapturingResult()
 
 
-async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_correlated_ownership_exists() -> None:
+async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_self_profile_subquery() -> None:
     session = CapturingSession()
     repository = ChatRepository(session)  # type: ignore[arg-type]
     session_id = uuid4()
