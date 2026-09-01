@@ -25,9 +25,11 @@
 - `NOT_TAKEN`과 무응답 `UNCONFIRMED`를 합치지 않는다.
 - 늦은 복용은 `TAKEN`과 실제 `taken_at`으로 표현하고 별도 상태를 추가하지 않는다.
 
-Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
+Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 여러 사유가 동시에 있으면 아래 `setup_reason` 우선순위에 따라 단일 값만 반환한다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
 
 `medication_schedule`은 `prescription_version_medication_id`를 unique로 참조하고 `end_mode=DATE|OPEN_ENDED`, `source=PRESCRIPTION_EXACT|USER_CONFIRMED`, `status=ACTIVE|CANCELLED|ENDED`, revision을 가진다. 시각은 별도 `medication_schedule_time` row에 revision별로 보존하고 `(medication_schedule_id, schedule_revision, local_time)`을 unique로 둔다. occurrence 상태는 `PENDING|CANCELLED|CLOSED`이며 Check-in 생성 시 `CLOSED`가 된다. 일정 `PUT`은 최초 생성·변경과 `CANCELLED|ENDED`의 명시적 재활성화를 담당하고, `PATCH`는 사용자 `CANCELLED`만 허용하며 `ENDED`는 Scheduler만 설정한다.
+
+처방에 `frequency_per_day`가 존재하면 일정 생성·변경 요청의 `local_times.length`와 반드시 일치해야 한다. Frontend는 저장 전 같은 기준으로 사전 검증하고, Backend는 동일 기준으로 다시 검증한다. 불일치하면 `422 VALIDATION_FAILED` 또는 Track B에서 정의한 검증 오류를 반환하며 `medication_schedule`과 `medication_schedule_time` row를 저장하지 않는다. 처방의 `frequency_per_day`가 없으면 사용자가 입력한 `local_times.length`를 일정 생성 기준으로 사용한다.
 
 Post-MVP-1은 매일 동일한 시각 반복만 지원하고 Scheduler는 앞으로 14일 rolling horizon만 생성한다. `confirmation_deadline_at`은 `max(Asia/Seoul 기준 예정일 다음 날 00:00, scheduled_at + 4시간)`을 UTC instant로 계산해 snapshot한다. 모든 DB timestamp는 UTC로 저장한다. 배포 설정의 서비스 시간대가 누락되거나 `Asia/Seoul`이 아니면 Scheduler 시작을 거부한다. 사용자별 IANA time zone은 후속 계약이다.
 
@@ -35,7 +37,7 @@ Scheduler는 `confirmation_deadline_at <= now`이고 결과가 없는 occurrence
 
 ## 수정과 감사
 
-Post-MVP-1에서는 사용자가 과거 결과를 횟수 제한 없이 수정할 수 있다. 현재값과 별도로 `checkin_audit`에 `checkin_id`, `from_status`, `to_status`, `from_revision`, `to_revision`, `changed_by`, nullable `reason_code`, `changed_at`을 append-only로 저장한다.
+Post-MVP-1에서는 사용자가 과거 결과를 횟수 제한 없이 수정할 수 있다. 현재값과 별도로 `checkin_audit`에 `checkin_id`, `from_status`, `to_status`, `from_revision`, `to_revision`, `changed_by`, `changed_at`을 append-only로 저장한다. `reason_code`는 enum이 확정되기 전까지 Check-in 생성·정정 요청, OpenAPI request schema와 DB enum에서 제외한다. 이력 응답 예시에서 필요하면 확정되지 않은 값을 쓰지 않고 `reason_code=null` 또는 필드 생략으로 표시한다.
 
 Check-in `PUT` 요청은 `Idempotency-Key` 헤더와 `expected_revision`을 요구한다. 동기 멱등 레코드의 unique scope는 `(user_id, API operation, occurrence_id, key_hmac)`이며 원문 키를 저장하지 않는다. 같은 키·같은 request hash는 revision 검사보다 먼저 같은 transaction에서 저장한 최초 성공 HTTP status와 canonical body snapshot을 재현하고, 같은 키·다른 hash는 `409 IDEMPOTENCY_KEY_CONFLICT`다. 신규 키에서 현재 revision과 다른 `expected_revision`은 payload가 현재 값과 같아도 `409 CHECKIN_REVISION_CONFLICT`다. snapshot은 최대 1MiB이며 암호화 저장·일반 로그 금지이고, 초과 시 mutation 전 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`로 실패한다.
 
@@ -77,11 +79,25 @@ Track C의 목표 API는 다음으로 고정한다.
 
 - 일정 조회 응답은 `schedule_status`, 약별 `schedule_items[]`, 날짜별 `occurrences[]`, 현재 Check-in, `revision`, `corrected`, `prescription_version_id`를 포함한다. 약별 항목은 `schedule_item_status`, `prescription_version_medication_id`, nullable `schedule_id`, nullable `revision`, nullable `setup_reason`을 포함한다. 전체 상태는 활성 처방 없음 → `NO_ACTIVE_PRESCRIPTION`, READY와 SETUP_REQUIRED 혼합 → `PARTIAL`, SETUP_REQUIRED만 존재 → `SETUP_REQUIRED`, setup 대상 없이 READY 존재 → `READY`, 나머지가 모두 INACTIVE이고 pending occurrence 없음 → `INACTIVE` 순으로 판정한다. 원본에서 occurrence 정렬은 별도 고정하지 않았다.
 - 일정 `PUT` body는 `start_local_date`, `end_mode`, nullable `end_local_date`, `local_times[]`, `expected_revision`; 취소 `PATCH` body는 `status=CANCELLED`, `expected_revision`이다.
-- Check-in `PUT` body는 `status=TAKEN|NOT_TAKEN`, nullable `taken_at`, nullable `reason_code`, `expected_revision`이다. `taken_at`은 `TAKEN`에서만 허용한다.
+- Check-in `PUT` body는 `status=TAKEN|NOT_TAKEN`, nullable `taken_at`, `expected_revision`이다. `taken_at`은 `TAKEN`에서만 허용한다. `reason_code`는 enum 확정 전까지 요청 body에 포함하지 않는다.
 - Safety assessment 요청은 `medication_checkin_id`, `checkin_revision`, `symptom_codes[]`, `expected_revision`; 응답은 `assessment_id`, `medication_checkin_id`, `checkin_revision`, `response_level`, `safety_disposition`, `message_code`, `copy_version`, `source_version`, `revision`이다.
 - Barrier 요청은 `response_status`, nullable `barrier_code`, `checkin_revision`, `expected_revision`이다. Support 응답은 `support_code`, `copy_version`, `priority`, `rationale_code`, 허용 action config를 포함하고 `priority ASC, support_code ASC`로 최대 2개를 반환한다. ActionPlan은 선택한 rule/copy version을 snapshot한다.
 
 이 요약은 승인 원본의 최소 필드와 순서만 옮긴 것이다. 구현 PR에서 새 필수 필드, enum, 정렬 또는 오류를 추가하려면 계약 version을 갱신해야 한다.
+
+### `setup_reason` 우선순위
+
+`setup_reason`은 v1에서 단일 값으로 반환한다. 여러 사유가 동시에 있으면 다음 고정 우선순위에 따라 하나만 반환하고, Frontend와 Backend는 같은 우선순위를 사용한다.
+
+| 우선순위 | `setup_reason` | 의미 |
+| ---: | --- | --- |
+| 1 | `NO_ACTIVE_PRESCRIPTION` | 활성 처방 version이 없음 |
+| 2 | `NEW_PRESCRIPTION_VERSION` | 새 처방 version이 활성화되어 사용자의 일정 확인이 필요함 |
+| 3 | `NEW_MEDICATION` | 새 처방 약품에 대한 일정이 아직 없음 |
+| 4 | `MISSING_START_DATE` | 시작일 확인이 필요함 |
+| 5 | `MISSING_EXACT_TIME` | 정확한 복용 시각 확인이 필요함 |
+| 6 | `MISSING_DURATION_DECISION` | 종료일 또는 계속 복용 여부 확인이 필요함 |
+| 7 | `UNSUPPORTED_SCHEDULE_PATTERN` | v1의 매일 동일 시각 반복으로 표현할 수 없음 |
 
 목표 오류 의미는 다음과 같다.
 
