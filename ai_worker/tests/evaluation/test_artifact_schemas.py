@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from ai_worker.tasks.evaluation.schemas import artifacts as artifact_schemas
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
     RESULT_ARTIFACT_MODELS,
@@ -16,6 +17,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     RagEvaluationRun,
     ValidationReceipt,
 )
+from ai_worker.tasks.evaluation.schemas.common import SchemaValidationError
 
 EXPECTED_ARTIFACT_IDS = {
     "rag-eval.run",
@@ -118,6 +120,13 @@ def test_runtime_eligible_run_requires_local_guard_bindings(valid_run: dict[str,
             RagEvaluationRun.model_validate(invalid)
 
     valid_run["environment"] = "CI"
+    with pytest.raises(ValidationError):
+        RagEvaluationRun.model_validate(valid_run)
+
+
+def test_artifact_identifiers_reject_non_stable_ids(valid_run: dict[str, Any]) -> None:
+    valid_run["experiment_id"] = "not a stable id"
+
     with pytest.raises(ValidationError):
         RagEvaluationRun.model_validate(valid_run)
 
@@ -477,3 +486,42 @@ def test_validation_receipt_rejects_sensitive_paths_without_echoing_values(sensi
         ValidationReceipt.model_validate(payload)
 
     assert sensitive_path not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "sensitive_path",
+    [
+        "invalid/patient@example.com",
+        "invalid/010-1234-5678",
+        "invalid/sk-proj-abcdefghijklmnop",
+    ],
+)
+def test_public_validation_receipt_error_serialization_never_contains_sensitive_input(
+    sensitive_path: str,
+) -> None:
+    validate_validation_receipt = getattr(artifact_schemas, "validate_validation_receipt", None)
+    assert callable(validate_validation_receipt)
+    payload: dict[str, Any] = {
+        "schema_id": "rag-eval.validation-receipt",
+        "schema_version": "1.0.0",
+        "validation_id": RUN_ID,
+        "validated_at": "2026-09-01T00:01:00.000000Z",
+        "validator_version": "1.0.0",
+        "manifest_path": "datasets/manifest.json",
+        "dataset_code": "rag-foundation",
+        "dataset_version": "1.0.0",
+        "dataset_manifest_sha256": None,
+        "evaluation_profile_ref": None,
+        "comparison_policy_ref": None,
+        "execution_status": "INVALID",
+        "decision_status": None,
+        "release_eligible": False,
+        "error_codes": ["EVAL_SCHEMA_INVALID"],
+        "invalid_resource_paths": [sensitive_path],
+    }
+
+    with pytest.raises(SchemaValidationError) as caught:
+        validate_validation_receipt(payload)
+
+    assert sensitive_path not in repr(caught.value.errors())
+    assert sensitive_path not in caught.value.json()

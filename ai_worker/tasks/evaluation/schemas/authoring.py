@@ -4,7 +4,7 @@ import re
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BeforeValidator, Field, TypeAdapter, model_validator
+from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints, TypeAdapter, model_validator
 
 from ai_worker.tasks.evaluation.schemas.common import (
     ContentClassification,
@@ -14,8 +14,10 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ReviewProvenance,
     SemanticVersion,
     Sha256Hex,
+    StableId,
     StrictContractModel,
     TaskType,
+    validate_schema_value,
 )
 
 _GIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -33,14 +35,18 @@ def _validate_git_sha(value: str) -> str:
     return value
 
 
-GitCommitSha = Annotated[NonEmptyString, AfterValidator(_validate_git_sha)]
+GitCommitSha = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_GIT_SHA_PATTERN.pattern),
+    AfterValidator(_validate_git_sha),
+]
 PartitionValue = Annotated[Partition, BeforeValidator(lambda value: _enum_from_wire(Partition, value))]
 ContentClassificationValue = Annotated[
     ContentClassification,
     BeforeValidator(lambda value: _enum_from_wire(ContentClassification, value)),
 ]
 TaskTypeValue = Annotated[TaskType, BeforeValidator(lambda value: _enum_from_wire(TaskType, value))]
-EvidenceIdList = Annotated[list[NonEmptyString], Field(min_length=1)]
+EvidenceIdList = Annotated[list[StableId], Field(min_length=1)]
 
 
 class EvidenceType(StrEnum):
@@ -78,7 +84,7 @@ class AnswerQualityExpected(StrictContractModel):
     gold_claims: EvidenceIdList
     gold_citation_evidence_ids: None
     gold_rule_ids: None
-    expected_scope: NonEmptyString | None
+    expected_scope: StableId | None
     expected_safety_disposition: None
 
 
@@ -87,7 +93,7 @@ class AnswerGroundingExpected(StrictContractModel):
     gold_claims: EvidenceIdList
     gold_citation_evidence_ids: EvidenceIdList
     gold_rule_ids: None
-    expected_scope: NonEmptyString | None
+    expected_scope: StableId | None
     expected_safety_disposition: None
 
 
@@ -96,23 +102,23 @@ class SafetyExpected(StrictContractModel):
     gold_claims: None
     gold_citation_evidence_ids: None
     gold_rule_ids: EvidenceIdList
-    expected_scope: NonEmptyString
-    expected_safety_disposition: NonEmptyString
+    expected_scope: StableId
+    expected_safety_disposition: StableId
 
 
 class EndToEndRagExpected(StrictContractModel):
     gold_evidence_ids: EvidenceIdList
     gold_claims: EvidenceIdList
     gold_citation_evidence_ids: EvidenceIdList
-    gold_rule_ids: list[NonEmptyString]
-    expected_scope: NonEmptyString
-    expected_safety_disposition: NonEmptyString
+    gold_rule_ids: list[StableId]
+    expected_scope: StableId
+    expected_safety_disposition: StableId
 
 
 class _CaseBase(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    case_id: NonEmptyString
-    dataset_code: NonEmptyString
+    case_id: StableId
+    dataset_code: StableId
     dataset_version: SemanticVersion
     partition: PartitionValue
     content_classification: ContentClassificationValue
@@ -121,7 +127,7 @@ class _CaseBase(StrictContractModel):
     context: EvaluationContext
     leakage_groups: dict[
         Literal["question_template", "source_segment", "medication_family", "transform_origin"],
-        NonEmptyString,
+        StableId,
     ]
     review_provenance: ReviewProvenance
 
@@ -169,25 +175,29 @@ EvaluationCase = Annotated[
 EVALUATION_CASE_ADAPTER: TypeAdapter[EvaluationCase] = TypeAdapter(EvaluationCase)
 
 
+def validate_evaluation_case(value: object) -> EvaluationCase:
+    return validate_schema_value(EVALUATION_CASE_ADAPTER, value)
+
+
 class ResourceReference(StrictContractModel):
     path: ResourcePath
     sha256: Sha256Hex
 
 
 class CaseResource(ResourceReference):
-    case_id: NonEmptyString
+    case_id: StableId
     partition: PartitionValue
     task_type: TaskTypeValue
 
 
 class DatasetManifest(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    dataset_code: NonEmptyString
+    dataset_code: StableId
     dataset_version: SemanticVersion
     content_classification: ContentClassificationValue
     fixture_git_commit_sha: GitCommitSha | None
-    protected_artifact_receipt_ref: NonEmptyString | None
-    deidentification_approval_receipt_ref: NonEmptyString | None
+    protected_artifact_receipt_ref: StableId | None
+    deidentification_approval_receipt_ref: StableId | None
     case_resources: Annotated[list[CaseResource], Field(min_length=1)]
     evidence_mapping: ResourceReference
     critical_claim_rubric: ResourceReference
@@ -212,7 +222,7 @@ class DatasetManifest(StrictContractModel):
 
 
 class EvidenceReference(StrictContractModel):
-    evidence_id: NonEmptyString
+    evidence_id: StableId
     evidence_type: EvidenceTypeValue
     resource_path: ResourcePath
     resource_hash: Sha256Hex
@@ -221,7 +231,7 @@ class EvidenceReference(StrictContractModel):
 
 class EvidenceMappingManifest(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    dataset_code: NonEmptyString
+    dataset_code: StableId
     dataset_version: SemanticVersion
     evidence: Annotated[list[EvidenceReference], Field(min_length=1)]
     review_provenance: ReviewProvenance
@@ -237,9 +247,9 @@ class EvidenceMappingManifest(StrictContractModel):
 
 class CriticalClaimRubric(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    dataset_code: NonEmptyString
+    dataset_code: StableId
     dataset_version: SemanticVersion
-    critical_claim_keys: Annotated[list[NonEmptyString], Field(min_length=1)]
+    critical_claim_keys: Annotated[list[StableId], Field(min_length=1)]
     review_provenance: ReviewProvenance
     content_hash: Sha256Hex
 

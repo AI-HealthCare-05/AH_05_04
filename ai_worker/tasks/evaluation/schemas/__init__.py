@@ -15,6 +15,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     SafetyCaseResult,
     SuiteResults,
     ValidationReceipt,
+    validate_validation_receipt,
 )
 from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
@@ -37,6 +38,7 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
     RetrievalExpected,
     SafetyCase,
     SafetyExpected,
+    validate_evaluation_case,
 )
 from ai_worker.tasks.evaluation.schemas.common import (
     SCHEMA_VERSION,
@@ -50,6 +52,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ExecutionDecisionMixin,
     ExecutionStatus,
     ExperimentType,
+    ExternalMedicalReviewStatus,
     ImmutableReference,
     LeakageAxis,
     NonEmptyString,
@@ -57,13 +60,16 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ResourcePath,
     ReviewProvenance,
     SafeInteger,
+    SchemaValidationError,
     SemanticVersion,
     Sha256Hex,
     StableId,
     StrictContractModel,
     TaskType,
+    TeamGoldStatus,
     UtcTimestamp,
     ensure_unique_resource_paths,
+    validate_schema_value,
 )
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
@@ -88,6 +94,7 @@ __all__ = [
     "DecisionStatus",
     "ExecutionDecisionMixin",
     "ExecutionStatus",
+    "ExternalMedicalReviewStatus",
     "ExperimentType",
     "ImmutableReference",
     "LeakageAxis",
@@ -100,9 +107,12 @@ __all__ = [
     "Sha256Hex",
     "StableId",
     "StrictContractModel",
+    "SchemaValidationError",
     "TaskType",
+    "TeamGoldStatus",
     "UtcTimestamp",
     "ensure_unique_resource_paths",
+    "validate_schema_value",
     "ComparisonPolicy",
     "ComparisonScope",
     "ConfidenceIntervalParameters",
@@ -132,6 +142,7 @@ __all__ = [
     "RetrievalExpected",
     "SafetyCase",
     "SafetyExpected",
+    "validate_evaluation_case",
     "CASE_RESULT_ADAPTER",
     "RESULT_ARTIFACT_MODELS",
     "AnswerGroundingCaseResult",
@@ -148,4 +159,5 @@ __all__ = [
     "SafetyCaseResult",
     "SuiteResults",
     "ValidationReceipt",
+    "validate_validation_receipt",
 ]

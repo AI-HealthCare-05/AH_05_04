@@ -16,19 +16,30 @@ from ai_worker.tasks.evaluation.schemas.policy import (
 )
 
 
-def _actor(actor_id: str, _display_name: str) -> dict[str, object]:
+def _actor(
+    actor_id: str,
+    _display_name: str,
+    role: str = "EVALUATION_IMPLEMENTER",
+) -> dict[str, object]:
     return {
         "namespace": "GITHUB_LOGIN",
         "actor_id": actor_id,
-        "role": "EVALUATION_IMPLEMENTER",
+        "role": role,
     }
 
 
 def _review_provenance() -> dict[str, object]:
     return {
-        "proposed_by": _actor("rag-owner", "RAG owner"),
-        "approved_by": _actor("product-approver", "Product approver"),
+        "authored_by": _actor("rag-owner", "RAG owner"),
+        "reviewed_by": _actor("policy-reviewer", "Policy reviewer", "MEDICAL_REVIEWER"),
+        "approved_by": _actor("product-approver", "Product approver", "PRODUCT_SAFETY_REVIEWER"),
+        "authored_at": "2026-09-01T00:00:00.000000Z",
         "reviewed_at": "2026-09-01T00:00:00.000000Z",
+        "approved_at": "2026-09-01T00:00:00.000000Z",
+        "team_gold_status": "APPROVED",
+        "external_medical_review_status": "NOT_REQUESTED",
+        "external_medical_approval_receipt_ref": None,
+        "evidence_review_refs": [],
     }
 
 

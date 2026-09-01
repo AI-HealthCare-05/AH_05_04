@@ -164,6 +164,124 @@ def _add_receipt_outcomes(document: dict[str, JsonValue]) -> None:
     ]
 
 
+def _add_metric_conditions(document: dict[str, JsonValue]) -> None:
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        raise TypeError("metrics schema definitions must be an object")
+    metric = definitions.get("MetricResult")
+    if not isinstance(metric, dict):
+        raise TypeError("MetricResult schema must be an object")
+    all_of = metric.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("MetricResult allOf must be an array")
+
+    calculated_fields = (
+        "sample_case_count",
+        "sample_independent_group_count",
+        "numerator",
+        "denominator",
+        "metric_value",
+        "ci_lower",
+        "ci_upper",
+        "reason_code",
+    )
+    completed_count_fields = (
+        "sample_case_count",
+        "sample_independent_group_count",
+        "numerator",
+        "denominator",
+    )
+    inconclusive_fields = (
+        "sample_case_count",
+        "sample_independent_group_count",
+        "denominator",
+        "reason_code",
+    )
+    all_of.extend(
+        [
+            {
+                "if": {
+                    "properties": {
+                        "execution_status": {"enum": ["NOT_IMPLEMENTED", "NOT_EVALUATED", "INVALID", "ERROR"]}
+                    },
+                    "required": ["execution_status"],
+                },
+                "then": {"properties": {field: {"type": "null"} for field in calculated_fields}},
+            },
+            {
+                "if": {"properties": {"required": {"const": True}}, "required": ["required"]},
+                "then": {"properties": {"decision_status": {"not": {"const": "N/A"}}}},
+            },
+            {
+                "if": {
+                    "properties": {"execution_status": {"const": "COMPLETED"}},
+                    "required": ["execution_status"],
+                },
+                "then": {"properties": {field: {"not": {"type": "null"}} for field in completed_count_fields}},
+            },
+            {
+                "if": {
+                    "properties": {"decision_status": {"const": "INCONCLUSIVE"}},
+                    "required": ["decision_status"],
+                },
+                "then": {"properties": {field: {"not": {"type": "null"}} for field in inconclusive_fields}},
+            },
+        ]
+    )
+
+
+def _add_review_provenance_conditions(value: JsonValue) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _add_review_provenance_conditions(item)
+        return
+    if not isinstance(value, dict):
+        return
+    properties = value.get("properties")
+    if isinstance(properties, dict) and {
+        "team_gold_status",
+        "approved_by",
+        "approved_at",
+        "external_medical_review_status",
+        "external_medical_approval_receipt_ref",
+    }.issubset(properties):
+        all_of = value.setdefault("allOf", [])
+        if not isinstance(all_of, list):
+            raise TypeError("ReviewProvenance allOf must be an array")
+        all_of.extend(
+            [
+                {
+                    "if": {
+                        "properties": {"team_gold_status": {"const": "APPROVED"}},
+                        "required": ["team_gold_status"],
+                    },
+                    "then": {
+                        "properties": {
+                            "approved_by": {"not": {"type": "null"}},
+                            "approved_at": {"not": {"type": "null"}},
+                        }
+                    },
+                    "else": {
+                        "properties": {
+                            "approved_by": {"type": "null"},
+                            "approved_at": {"type": "null"},
+                        }
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"external_medical_review_status": {"const": "APPROVED"}},
+                        "required": ["external_medical_review_status"],
+                    },
+                    "then": {"properties": {"external_medical_approval_receipt_ref": {"not": {"type": "null"}}}},
+                    "else": {"properties": {"external_medical_approval_receipt_ref": {"type": "null"}}},
+                },
+            ]
+        )
+    for item in value.values():
+        _add_review_provenance_conditions(item)
+
+
 def _schema_document(schema_id: str, model: SchemaSource) -> dict[str, JsonValue]:
     document = _model_schema(model)
     document["$schema"] = _DRAFT_2020_12
@@ -174,10 +292,13 @@ def _schema_document(schema_id: str, model: SchemaSource) -> dict[str, JsonValue
     else:
         document["additionalProperties"] = False
     _add_execution_decision_conditions(document)
+    _add_review_provenance_conditions(document)
     if schema_id == "rag-eval.run":
         _add_run_conditions(document)
     if schema_id == "rag-eval.validation-receipt":
         _add_receipt_outcomes(document)
+    if schema_id == "rag-eval.metrics":
+        _add_metric_conditions(document)
     return normalize_schema_document(document)
 
 

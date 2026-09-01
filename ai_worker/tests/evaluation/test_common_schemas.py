@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Annotated
+import re
+from typing import Annotated, Any
 
 import pytest
 from pydantic import AfterValidator, ValidationError
@@ -16,6 +17,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ExecutionStatus,
     ImmutableReference,
     ResourcePath,
+    ReviewProvenance,
     SafeInteger,
     Sha256Hex,
     StrictContractModel,
@@ -147,10 +149,19 @@ def test_review_provenance_rejects_self_approval_by_actor_identity() -> None:
     from ai_worker.tasks.evaluation.schemas.common import ReviewProvenance
 
     with pytest.raises(ValidationError):
-        ReviewProvenance(
-            proposed_by=proposer,
-            approved_by=same_identity,
-            reviewed_at="2026-09-01T03:04:05.000000Z",
+        ReviewProvenance.model_validate(
+            {
+                "authored_by": proposer.model_dump(mode="json"),
+                "reviewed_by": same_identity.model_dump(mode="json"),
+                "approved_by": None,
+                "authored_at": "2026-09-01T03:04:05.000000Z",
+                "reviewed_at": "2026-09-01T03:04:05.000000Z",
+                "approved_at": None,
+                "team_gold_status": "REVIEWED",
+                "external_medical_review_status": "NOT_REQUESTED",
+                "external_medical_approval_receipt_ref": None,
+                "evidence_review_refs": [],
+            }
         )
 
 
@@ -222,7 +233,87 @@ def test_scalar_json_schema_preserves_runtime_patterns_and_formats() -> None:
     assert properties["digest"]["pattern"] == "^[0-9a-f]{64}$"
     assert properties["identifier"]["pattern"].startswith("^[0-9a-f]{8}")
     assert properties["identifier"]["format"] == "uuid"
-    assert properties["ratio"]["pattern"].startswith("^-?")
+    assert properties["ratio"]["pattern"].startswith("^(?:0|")
     assert properties["recorded_at"]["pattern"].endswith("Z$")
     assert properties["recorded_at"]["format"] == "date-time"
     assert "pattern" in properties["resource_path"]
+
+
+def test_scalar_schema_patterns_accept_and_reject_the_same_concrete_values_as_runtime() -> None:
+    properties = ScalarContract.model_json_schema()["properties"]
+    decimal_pattern = properties["ratio"]["pattern"]
+    path_pattern = properties["resource_path"]["pattern"]
+
+    assert re.fullmatch(decimal_pattern, "-0.5")
+    assert re.fullmatch(decimal_pattern, "-12")
+    assert re.fullmatch(decimal_pattern, "-0") is None
+    for invalid_path in (
+        "/absolute.json",
+        "cases//item.json",
+        "cases/./item.json",
+        "cases/../item.json",
+        "a\\b",
+        "cases/\x00item.json",
+    ):
+        assert re.fullmatch(path_pattern, invalid_path) is None
+
+
+def _review_actor(actor_id: str, role: str) -> dict[str, str]:
+    return {"namespace": "GITHUB_LOGIN", "actor_id": actor_id, "role": role}
+
+
+def test_review_provenance_uses_exact_section_16_3_approved_shape_and_sorted_evidence_refs() -> None:
+    payload: dict[str, Any] = {
+        "authored_by": _review_actor("author-1", "EVALUATION_IMPLEMENTER"),
+        "reviewed_by": _review_actor("reviewer-1", "DATASET_CUSTODIAN"),
+        "approved_by": _review_actor("approver-1", "PRODUCT_SAFETY_REVIEWER"),
+        "authored_at": "2026-09-01T00:00:00.000000Z",
+        "reviewed_at": "2026-09-01T00:01:00.000000Z",
+        "approved_at": "2026-09-01T00:02:00.000000Z",
+        "team_gold_status": "APPROVED",
+        "external_medical_review_status": "NOT_REQUESTED",
+        "external_medical_approval_receipt_ref": None,
+        "evidence_review_refs": [
+            {"id": "evidence-review-1", "version": "1.0.0", "hash": "a" * 64},
+            {"id": "evidence-review-2", "version": "1.0.0", "hash": "b" * 64},
+        ],
+    }
+
+    provenance = ReviewProvenance.model_validate(payload)
+    assert provenance.team_gold_status.value == "APPROVED"
+
+    evidence_review_refs = payload["evidence_review_refs"]
+    assert isinstance(evidence_review_refs, list)
+    payload["evidence_review_refs"] = list(reversed(evidence_review_refs))
+    with pytest.raises(ValidationError):
+        ReviewProvenance.model_validate(payload)
+
+
+def test_review_provenance_rejects_legacy_shape_and_invalid_status_role_combinations() -> None:
+    with pytest.raises(ValidationError):
+        ReviewProvenance.model_validate(
+            {
+                "proposed_by": _review_actor("author-1", "EVALUATION_IMPLEMENTER"),
+                "approved_by": _review_actor("approver-1", "PRODUCT_SAFETY_REVIEWER"),
+                "reviewed_at": "2026-09-01T00:01:00.000000Z",
+            }
+        )
+
+    payload: dict[str, Any] = {
+        "authored_by": _review_actor("same-actor", "EVALUATION_IMPLEMENTER"),
+        "reviewed_by": _review_actor("same-actor", "DATASET_CUSTODIAN"),
+        "approved_by": None,
+        "authored_at": "2026-09-01T00:00:00.000000Z",
+        "reviewed_at": "2026-09-01T00:01:00.000000Z",
+        "approved_at": None,
+        "team_gold_status": "REVIEWED",
+        "external_medical_review_status": "NOT_REQUESTED",
+        "external_medical_approval_receipt_ref": None,
+        "evidence_review_refs": [],
+    }
+    with pytest.raises(ValidationError):
+        ReviewProvenance.model_validate(payload)
+
+    payload["reviewed_by"] = _review_actor("reviewer-1", "SYSTEM_VALIDATOR")
+    with pytest.raises(ValidationError):
+        ReviewProvenance.model_validate(payload)

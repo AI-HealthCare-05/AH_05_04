@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from json import dumps
+from typing import Annotated, Any, overload
 from uuid import UUID
 
 from pydantic import (
@@ -14,11 +16,14 @@ from pydantic import (
     Field,
     StrictInt,
     StringConstraints,
+    TypeAdapter,
+    ValidationError,
     model_validator,
 )
 
-from ai_worker.tasks.evaluation.canonical import normalize_resource_path
+from ai_worker.tasks.evaluation.canonical import JsonValue, normalize_resource_path
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
+from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 
 SCHEMA_VERSION = "1.0.0"
 MIN_SAFE_INTEGER = -(2**53) + 1
@@ -26,11 +31,13 @@ MAX_SAFE_INTEGER = (2**53) - 1
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_DECIMAL_PATTERN = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$")
+_DECIMAL_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*|-[1-9][0-9]*|(?:0|[1-9][0-9]*|-[0-9]+)\.[0-9]*[1-9])$")
 _TIMESTAMP_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$")
 _SEMANTIC_VERSION_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
 _STABLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
-_RESOURCE_PATH_SCHEMA_PATTERN = r"^[^/\\\x00]+(?:/[^/\\\x00]+)*$"
+_RESOURCE_SEGMENT_SCHEMA_PATTERN = r"(?:[^./\\\x00][^/\\\x00]*|\.[^./\\\x00][^/\\\x00]*|\.\.[^/\\\x00]+)"
+_RESOURCE_PATH_SCHEMA_PATTERN = rf"^{_RESOURCE_SEGMENT_SCHEMA_PATTERN}(?:/{_RESOURCE_SEGMENT_SCHEMA_PATTERN})*$"
+_SAFE_LOCATION_SEGMENT = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 
 
 class Partition(StrEnum):
@@ -94,6 +101,19 @@ class ActorRole(StrEnum):
     MEDICAL_REVIEWER = "MEDICAL_REVIEWER"
     PRIVACY_REVIEWER = "PRIVACY_REVIEWER"
     SYSTEM_VALIDATOR = "SYSTEM_VALIDATOR"
+
+
+class TeamGoldStatus(StrEnum):
+    DRAFT = "DRAFT"
+    REVIEWED = "REVIEWED"
+    APPROVED = "APPROVED"
+
+
+class ExternalMedicalReviewStatus(StrEnum):
+    NOT_REQUESTED = "NOT_REQUESTED"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 def _validate_sha256(value: str) -> str:
@@ -232,16 +252,157 @@ class ImmutableReference(StrictContractModel):
     hash: Sha256Hex
 
 
+def _immutable_reference_sort_key(reference: ImmutableReference) -> tuple[str, str, str]:
+    return (reference.id, reference.version, reference.hash)
+
+
 class ReviewProvenance(StrictContractModel):
-    proposed_by: ActorRef
-    approved_by: ActorRef
+    authored_by: ActorRef
+    reviewed_by: ActorRef
+    approved_by: ActorRef | None
+    authored_at: UtcTimestamp
     reviewed_at: UtcTimestamp
+    approved_at: UtcTimestamp | None
+    team_gold_status: Annotated[
+        TeamGoldStatus,
+        BeforeValidator(lambda value: _enum_from_wire(TeamGoldStatus, value)),
+    ]
+    external_medical_review_status: Annotated[
+        ExternalMedicalReviewStatus,
+        BeforeValidator(lambda value: _enum_from_wire(ExternalMedicalReviewStatus, value)),
+    ]
+    external_medical_approval_receipt_ref: ImmutableReference | None
+    evidence_review_refs: Annotated[
+        tuple[ImmutableReference, ...],
+        BeforeValidator(lambda value: tuple(value) if isinstance(value, list) else value),
+    ]
 
     @model_validator(mode="after")
-    def reject_self_approval(self) -> ReviewProvenance:
-        if self.proposed_by.identity == self.approved_by.identity:
-            raise ValueError("proposer and approver must be different actors")
+    def validate_provenance(self) -> ReviewProvenance:
+        self._validate_actor_rules()
+        self._validate_team_gold_rules()
+        self._validate_external_review_rules()
+        self._validate_evidence_refs()
         return self
+
+    def _validate_actor_rules(self) -> None:
+        actors = [self.authored_by, self.reviewed_by]
+        if self.approved_by is not None:
+            actors.append(self.approved_by)
+        identities = [actor.identity for actor in actors]
+        if len(identities) != len(set(identities)):
+            raise ValueError("author, reviewer, and approver must be different actors")
+        if any(
+            actor.namespace is ActorNamespace.SYSTEM or actor.role is ActorRole.SYSTEM_VALIDATOR for actor in actors
+        ):
+            raise ValueError("human review provenance cannot use system actors")
+        if self.approved_by is not None and self.approved_by.role is ActorRole.EVALUATION_IMPLEMENTER:
+            raise ValueError("an evaluation implementer cannot approve review provenance")
+
+    def _validate_team_gold_rules(self) -> None:
+        if self.authored_at > self.reviewed_at:
+            raise ValueError("authored_at must not be after reviewed_at")
+        if self.team_gold_status is TeamGoldStatus.APPROVED:
+            if self.approved_by is None or self.approved_at is None:
+                raise ValueError("approved provenance requires an approver and approval time")
+            if self.reviewed_at > self.approved_at:
+                raise ValueError("reviewed_at must not be after approved_at")
+        elif self.approved_by is not None or self.approved_at is not None:
+            raise ValueError("non-approved provenance must not carry approval fields")
+
+    def _validate_external_review_rules(self) -> None:
+        if self.external_medical_review_status is ExternalMedicalReviewStatus.APPROVED:
+            if self.external_medical_approval_receipt_ref is None:
+                raise ValueError("external medical approval requires an immutable receipt")
+        elif self.external_medical_approval_receipt_ref is not None:
+            raise ValueError("non-approved external review must not carry an approval receipt")
+
+    def _validate_evidence_refs(self) -> None:
+        keys = [_immutable_reference_sort_key(reference) for reference in self.evidence_review_refs]
+        if len(keys) != len(set(keys)) or keys != sorted(keys):
+            raise ValueError("evidence review references must be unique and sorted")
+
+
+def _safe_text(value: str) -> str:
+    try:
+        validate_privacy_boundary({"detail": value})
+    except EvaluationValidationError:
+        return "REDACTED"
+    if len(value) > 500 or any(ord(character) < 0x20 for character in value):
+        return "REDACTED"
+    return value
+
+
+def _safe_location_segment(value: object) -> str | int:
+    if isinstance(value, int):
+        return value
+    text = str(value)
+    if _SAFE_LOCATION_SEGMENT.fullmatch(text) is None:
+        return "*"
+    return _safe_text(text)
+
+
+def _safe_context_value(value: object) -> JsonValue:
+    if value is None or isinstance(value, bool | int):
+        return value
+    if isinstance(value, str):
+        return _safe_text(value)
+    if isinstance(value, list | tuple):
+        return [_safe_context_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _safe_text(str(key)): _safe_context_value(item)
+            for key, item in value.items()
+            if _safe_text(str(key)) != "REDACTED"
+        }
+    return _safe_text(str(value))
+
+
+class SchemaValidationError(ValueError):
+    """Public validation error containing only sanitized, JSON-safe details."""
+
+    def __init__(self, error: ValidationError) -> None:
+        details: list[dict[str, JsonValue]] = []
+        for item in error.errors(include_input=False):
+            detail: dict[str, JsonValue] = {
+                "type": _safe_text(str(item.get("type", "value_error"))),
+                "loc": [_safe_location_segment(segment) for segment in item.get("loc", ())],
+                "msg": _safe_text(str(item.get("msg", "Value is invalid"))),
+            }
+            context = item.get("ctx")
+            if isinstance(context, dict):
+                safe_context = _safe_context_value(context)
+                if isinstance(safe_context, dict) and safe_context:
+                    detail["ctx"] = safe_context
+            details.append(detail)
+        self._details = details
+        super().__init__(EvaluationErrorCode.SCHEMA_INVALID.value)
+
+    def errors(self) -> list[dict[str, JsonValue]]:
+        return deepcopy(self._details)
+
+    def json(self) -> str:
+        return dumps(self._details, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+@overload
+def validate_schema_value[ModelValue: BaseModel](validator: type[ModelValue], value: object) -> ModelValue: ...
+
+
+@overload
+def validate_schema_value[AdapterValue](validator: TypeAdapter[AdapterValue], value: object) -> AdapterValue: ...
+
+
+def validate_schema_value(
+    validator: type[BaseModel] | TypeAdapter[Any],
+    value: object,
+) -> BaseModel | Any:
+    try:
+        if isinstance(validator, TypeAdapter):
+            return validator.validate_python(value)
+        return validator.model_validate(value)
+    except ValidationError as error:
+        raise SchemaValidationError(error) from None
 
 
 class ExecutionDecisionMixin(StrictContractModel):

@@ -19,6 +19,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     SafeInteger,
     SemanticVersion,
     Sha256Hex,
+    StableId,
     StrictContractModel,
     TaskType,
     UtcTimestamp,
@@ -80,7 +81,7 @@ SuiteReferences = Annotated[
 
 class EvaluationProfile(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    profile_code: NonEmptyString
+    profile_code: StableId
     profile_version: SemanticVersion
     runtime_eligible: StrictBool
     required_experiment_types: ExperimentTypes
@@ -102,7 +103,7 @@ class EvaluationProfile(StrictContractModel):
 
 class SuiteDefinition(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    suite_code: NonEmptyString
+    suite_code: StableId
     suite_version: SemanticVersion
     experiment_type: ExperimentTypeValue
     partitions: Partitions
@@ -143,19 +144,19 @@ ConfidenceIntervalParameters = Annotated[
 
 
 class ComparisonScope(StrictContractModel):
-    metric_code: NonEmptyString
+    metric_code: StableId
     metric_version: SemanticVersion
     partition: PartitionValue
-    slice_key: NonEmptyString
+    slice_key: StableId
     required: StrictBool
-    analysis_unit: NonEmptyString
-    estimator: NonEmptyString
+    analysis_unit: StableId
+    estimator: StableId
     minimum_case_count: PositiveSafeInteger
     minimum_independent_group_count: PositiveSafeInteger
     cluster_dimension: LeakageAxisValue
     threshold: CanonicalDecimal
-    decision_basis: NonEmptyString
-    ci_method: NonEmptyString
+    decision_basis: StableId
+    ci_method: StableId
     ci_method_version: SemanticVersion
     ci_parameters: ConfidenceIntervalParameters
     seed: SafeInteger | None
@@ -163,7 +164,7 @@ class ComparisonScope(StrictContractModel):
 
 class ComparisonPolicy(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    policy_code: NonEmptyString
+    policy_code: StableId
     policy_version: SemanticVersion
     scopes: Annotated[
         tuple[ComparisonScope, ...],
@@ -224,7 +225,7 @@ def evaluation_policy_member_manifest_hash(members: Sequence[EvaluationPolicyMem
 
 class EvaluationPolicy(StrictContractModel):
     schema_version: Literal["1.0.0"]
-    policy_code: NonEmptyString
+    policy_code: StableId
     policy_version: SemanticVersion
     members: Annotated[
         tuple[EvaluationPolicyMember, ...],

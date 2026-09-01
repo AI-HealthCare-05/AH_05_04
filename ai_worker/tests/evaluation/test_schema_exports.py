@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
 from ai_worker.tasks.evaluation.schema_exports import (
@@ -134,6 +134,95 @@ def test_exported_schema_encodes_execution_decision_and_receipt_feasibility() ->
             "required": ["execution_status", "decision_status"],
         },
     ]
+
+
+def test_exported_metric_schema_encodes_concrete_state_dependent_nullability() -> None:
+    document = cast(dict[str, Any], schema_documents()["artifacts/rag-eval.metrics.schema.json"])
+    metric_schema = cast(dict[str, Any], document["$defs"]["MetricResult"])
+    conditions = cast(list[dict[str, Any]], metric_schema["allOf"])
+
+    assert {
+        "if": {
+            "properties": {"execution_status": {"enum": ["NOT_IMPLEMENTED", "NOT_EVALUATED", "INVALID", "ERROR"]}},
+            "required": ["execution_status"],
+        },
+        "then": {
+            "properties": {
+                field: {"type": "null"}
+                for field in (
+                    "sample_case_count",
+                    "sample_independent_group_count",
+                    "numerator",
+                    "denominator",
+                    "metric_value",
+                    "ci_lower",
+                    "ci_upper",
+                    "reason_code",
+                )
+            }
+        },
+    } in conditions
+    assert any(
+        condition.get("if", {}).get("properties", {}).get("required") == {"const": True}
+        and condition.get("then", {}).get("properties", {}).get("decision_status") == {"not": {"const": "N/A"}}
+        for condition in conditions
+    )
+    assert any(
+        condition.get("if", {}).get("properties", {}).get("decision_status") == {"const": "INCONCLUSIVE"}
+        and condition["then"]["properties"]["reason_code"] == {"not": {"type": "null"}}
+        for condition in conditions
+    )
+
+
+def test_exported_content_manifest_schema_contains_exact_filename_allowlist() -> None:
+    content_schema = cast(
+        dict[str, Any],
+        schema_documents()["artifacts/rag-eval.content-manifest.schema.json"],
+    )
+    path_schema = cast(
+        dict[str, Any],
+        content_schema["$defs"]["ContentArtifact"]["properties"]["relative_path"],
+    )
+
+    assert set(path_schema["enum"]) == {
+        "cases.jsonl",
+        "metrics.json",
+        "suite-results.json",
+        "comparison.json",
+        "gate.json",
+        "failures.jsonl",
+        "report.md",
+    }
+    assert "run.json" not in path_schema["enum"]
+    assert "result-content-manifest.json" not in path_schema["enum"]
+
+
+def test_exported_review_provenance_schema_encodes_team_and_external_approval_conditions() -> None:
+    authoring_schema = cast(
+        dict[str, Any],
+        schema_documents()["authoring/rag-eval.dataset-manifest.schema.json"],
+    )
+    provenance_schema = cast(dict[str, Any], authoring_schema["$defs"]["ReviewProvenance"])
+    conditions = cast(list[dict[str, Any]], provenance_schema["allOf"])
+
+    assert {
+        "if": {
+            "properties": {"team_gold_status": {"const": "APPROVED"}},
+            "required": ["team_gold_status"],
+        },
+        "then": {
+            "properties": {
+                "approved_by": {"not": {"type": "null"}},
+                "approved_at": {"not": {"type": "null"}},
+            }
+        },
+        "else": {"properties": {"approved_by": {"type": "null"}, "approved_at": {"type": "null"}}},
+    } in conditions
+    assert any(
+        condition.get("if", {}).get("properties", {}).get("external_medical_review_status") == {"const": "APPROVED"}
+        and condition["then"]["properties"]["external_medical_approval_receipt_ref"] == {"not": {"type": "null"}}
+        for condition in conditions
+    )
 
 
 def test_schema_normalization_removes_metadata_only_from_schema_locations() -> None:

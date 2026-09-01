@@ -18,15 +18,16 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ExecutionStatusValue,
     ExperimentType,
     ImmutableReference,
-    NonEmptyString,
     Partition,
     ResourcePath,
     SafeInteger,
     SemanticVersion,
     Sha256Hex,
+    StableId,
     StrictContractModel,
     TaskType,
     UtcTimestamp,
+    validate_schema_value,
 )
 
 
@@ -65,11 +66,11 @@ ExperimentTypeValue = Annotated[
 ]
 NonNegativeSafeInteger = Annotated[SafeInteger, Field(ge=0)]
 SortedStrings = Annotated[
-    tuple[NonEmptyString, ...],
+    tuple[StableId, ...],
     BeforeValidator(_tuple_from_wire),
     AfterValidator(_require_sorted_unique_strings),
 ]
-EvidenceIds = Annotated[tuple[NonEmptyString, ...], BeforeValidator(_tuple_from_wire)]
+EvidenceIds = Annotated[tuple[StableId, ...], BeforeValidator(_tuple_from_wire)]
 OptionalEvidenceIds = EvidenceIds | None
 ReceiptResourcePath = Annotated[ResourcePath, AfterValidator(_validate_receipt_resource_path)]
 
@@ -164,22 +165,22 @@ BlockingStatuses = Annotated[
 
 
 class ResultEnvelope(StrictContractModel):
-    schema_id: NonEmptyString
+    schema_id: StableId
     schema_version: Literal["1.0.0"]
     run_id: CanonicalUuid
 
 
 class RagEvaluationRun(ResultEnvelope):
     schema_id: Literal["rag-eval.run"]
-    experiment_id: NonEmptyString
-    variant_id: NonEmptyString
+    experiment_id: StableId
+    variant_id: StableId
     experiment_type: ExperimentTypeValue
     task_types: Annotated[tuple[TaskTypeValue, ...], BeforeValidator(_tuple_from_wire), Field(min_length=1)]
     evaluation_profile_ref: ImmutableReference
     comparison_policy_ref: ImmutableReference
     evaluation_policy_ref: ImmutableReference
     artifact_schema_set_ref: ImmutableReference
-    dataset_code: NonEmptyString
+    dataset_code: StableId
     dataset_version: SemanticVersion
     dataset_manifest_sha256: Sha256Hex
     resource_set_hash: Sha256Hex
@@ -192,7 +193,7 @@ class RagEvaluationRun(ResultEnvelope):
     retrieval_variant_manifest_hash: Sha256Hex | None
     answer_variant_manifest_hash: Sha256Hex | None
     model_config_hash: Sha256Hex
-    prompt_version: NonEmptyString
+    prompt_version: StableId
     evaluated_partitions: Annotated[
         tuple[PartitionValue, ...],
         BeforeValidator(_tuple_from_wire),
@@ -201,9 +202,9 @@ class RagEvaluationRun(ResultEnvelope):
     partition_manifest_hash: Sha256Hex
     environment: RuntimeEnvironmentValue
     runtime_eligible: StrictBool
-    candidate_bundle_id: NonEmptyString | None
+    candidate_bundle_id: StableId | None
     candidate_bundle_manifest_hash: Sha256Hex | None
-    candidate_guard_decision_id: NonEmptyString | None
+    candidate_guard_decision_id: StableId | None
     candidate_guard_decision: CandidateGuardDecisionValue | None
     required_case_guard_coverage_manifest_hash: Sha256Hex | None
     executed_by: ActorRef
@@ -254,8 +255,8 @@ class RagEvaluationRun(ResultEnvelope):
 
 class _CaseResultBase(ResultEnvelope):
     schema_id: Literal["rag-eval.case-result"]
-    case_id: NonEmptyString
-    dataset_code: NonEmptyString
+    case_id: StableId
+    dataset_code: StableId
     dataset_version: SemanticVersion
     partition: PartitionValue
     input_sha256: Sha256Hex
@@ -268,11 +269,11 @@ class _CaseResultBase(ResultEnvelope):
     actual_citation_evidence_ids: OptionalEvidenceIds
     actual_rule_ids: OptionalEvidenceIds
     actual_scope_codes: OptionalEvidenceIds
-    actual_response_level: NonEmptyString | None
-    actual_safety_disposition: NonEmptyString | None
+    actual_response_level: StableId | None
+    actual_safety_disposition: StableId | None
     actual_execution_status: RuntimeExecutionStatusValue | None
     actual_release_decision: RuntimeReleaseDecisionValue | None
-    actual_fallback_code: NonEmptyString | None
+    actual_fallback_code: StableId | None
     actual_provider_invocation: StrictBool | None
     actual_retrieval_invocation: StrictBool | None
     actual_publication_allowed: StrictBool | None
@@ -347,11 +348,11 @@ class _SafetyCaseResultBase(_CaseResultBase):
     actual_citation_evidence_ids: EvidenceIds
     actual_rule_ids: EvidenceIds
     actual_scope_codes: EvidenceIds
-    actual_response_level: NonEmptyString
-    actual_safety_disposition: NonEmptyString
+    actual_response_level: StableId
+    actual_safety_disposition: StableId
     actual_execution_status: RuntimeExecutionStatusValue
     actual_release_decision: RuntimeReleaseDecisionValue
-    actual_fallback_code: NonEmptyString | None
+    actual_fallback_code: StableId | None
     actual_provider_invocation: StrictBool
     actual_retrieval_invocation: StrictBool
     actual_publication_allowed: StrictBool
@@ -378,10 +379,10 @@ CASE_RESULT_ADAPTER: TypeAdapter[CaseResult] = TypeAdapter(CaseResult)
 
 
 class MetricResult(StrictContractModel):
-    metric_id: NonEmptyString
+    metric_id: StableId
     metric_version: SemanticVersion
     partition: PartitionValue
-    slice_id: NonEmptyString
+    slice_id: StableId
     required: StrictBool
     execution_status: ExecutionStatusValue
     decision_status: DecisionStatusValue | None
@@ -390,19 +391,19 @@ class MetricResult(StrictContractModel):
     numerator: NonNegativeSafeInteger | None
     denominator: NonNegativeSafeInteger | None
     metric_value: CanonicalDecimal | None
-    unit_of_analysis: NonEmptyString
-    estimator_id: NonEmptyString
+    unit_of_analysis: StableId
+    estimator_id: StableId
     estimator_version: SemanticVersion
-    independence_unit: NonEmptyString | None
-    cluster_dimension: NonEmptyString | None
+    independence_unit: StableId | None
+    cluster_dimension: StableId | None
     ci_lower: CanonicalDecimal | None
     ci_upper: CanonicalDecimal | None
-    ci_method_id: NonEmptyString | None
+    ci_method_id: StableId | None
     ci_method_version: SemanticVersion | None
     ci_level: CanonicalDecimal | None
-    ci_sidedness: NonEmptyString | None
+    ci_sidedness: StableId | None
     threshold: CanonicalDecimal | None
-    reason_code: NonEmptyString | None
+    reason_code: StableId | None
 
     @property
     def sort_key(self) -> tuple[str, str, str]:
@@ -456,12 +457,12 @@ class MetricResults(ResultEnvelope):
 
 
 class SuiteCaseResult(StrictContractModel):
-    case_code: NonEmptyString
+    case_code: StableId
     case_input_hash: Sha256Hex
     execution_status: ExecutionStatusValue
     decision_status: DecisionStatusValue | None
     artifact_ref: ImmutableReference | None
-    failure_code: NonEmptyString | None
+    failure_code: StableId | None
 
     @model_validator(mode="after")
     def validate_state(self) -> SuiteCaseResult:
@@ -475,7 +476,7 @@ class SuiteCaseResult(StrictContractModel):
 
 class SuiteResults(ResultEnvelope):
     schema_id: Literal["rag-eval.suite-results"]
-    suite_id: NonEmptyString
+    suite_id: StableId
     suite_version: SemanticVersion
     suite_definition_hash: Sha256Hex
     required: StrictBool
@@ -506,7 +507,7 @@ class SuiteResults(ResultEnvelope):
 
 
 class ControlledVariableCheck(StrictContractModel):
-    variable_key: NonEmptyString
+    variable_key: StableId
     baseline_value_hash: Sha256Hex
     candidate_value_hash: Sha256Hex
     matched: StrictBool
@@ -526,21 +527,21 @@ ComparisonDecisionValue = Annotated[
 
 
 class ScopeComparison(StrictContractModel):
-    metric_id: NonEmptyString
+    metric_id: StableId
     partition: PartitionValue
-    slice_id: NonEmptyString
+    slice_id: StableId
     baseline_value: CanonicalDecimal | None
     candidate_value: CanonicalDecimal | None
     absolute_delta: CanonicalDecimal | None
     relative_delta: CanonicalDecimal | None
-    paired_test_method: NonEmptyString | None
+    paired_test_method: StableId | None
     p_value: CanonicalDecimal | None
     comparison_decision: ComparisonDecisionValue
 
 
 class ComparisonResult(ResultEnvelope):
     schema_id: Literal["rag-eval.comparison"]
-    experiment_id: NonEmptyString
+    experiment_id: StableId
     baseline_run_id: CanonicalUuid
     baseline_run_hash: Sha256Hex
     candidate_run_id: CanonicalUuid
@@ -574,7 +575,7 @@ GateMemberTypeValue = Annotated[
 
 class RequiredGateMember(StrictContractModel):
     member_type: GateMemberTypeValue
-    member_id: NonEmptyString
+    member_id: StableId
     member_version: SemanticVersion
     member_hash: Sha256Hex
     execution_status: ExecutionStatusValue
@@ -679,13 +680,13 @@ def _validate_blocking_aggregation(
 
 class FailureRecord(ResultEnvelope):
     schema_id: Literal["rag-eval.failure"]
-    case_id: NonEmptyString
-    failure_code: NonEmptyString
-    failure_stage: NonEmptyString
+    case_id: StableId
+    failure_code: StableId
+    failure_stage: StableId
     expected_summary: FailureSummaryValue
     actual_summary: FailureSummaryValue
-    root_cause_code: NonEmptyString | None
-    followup_issue_ref: NonEmptyString | None
+    root_cause_code: StableId | None
+    followup_issue_ref: StableId | None
     created_at: UtcTimestamp
 
 
@@ -700,10 +701,19 @@ _CONTENT_FILENAMES = frozenset(
         "report.md",
     }
 )
+ContentArtifactPath = Literal[
+    "cases.jsonl",
+    "metrics.json",
+    "suite-results.json",
+    "comparison.json",
+    "gate.json",
+    "failures.jsonl",
+    "report.md",
+]
 
 
 class ContentArtifact(StrictContractModel):
-    relative_path: ResourcePath
+    relative_path: ContentArtifactPath
     sha256: Sha256Hex
     size_bytes: NonNegativeSafeInteger
 
@@ -741,7 +751,7 @@ class ValidationReceipt(StrictContractModel):
     validated_at: UtcTimestamp
     validator_version: SemanticVersion
     manifest_path: ResourcePath
-    dataset_code: NonEmptyString
+    dataset_code: StableId
     dataset_version: SemanticVersion
     dataset_manifest_sha256: Sha256Hex | None
     evaluation_profile_ref: ImmutableReference | None
@@ -766,6 +776,10 @@ class ValidationReceipt(StrictContractModel):
         if (self.execution_status, self.decision_status) not in allowed:
             raise ValueError("validation receipt outcome is not permitted")
         return self
+
+
+def validate_validation_receipt(value: object) -> ValidationReceipt:
+    return validate_schema_value(ValidationReceipt, value)
 
 
 RESULT_ARTIFACT_MODELS: dict[str, type[StrictContractModel] | TypeAdapter[CaseResult]] = {

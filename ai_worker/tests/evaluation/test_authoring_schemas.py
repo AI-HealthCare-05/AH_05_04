@@ -1,31 +1,45 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from ai_worker.tasks.evaluation.schemas import authoring as authoring_schemas
 from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
     DatasetManifest,
     EvidenceMappingManifest,
 )
+from ai_worker.tasks.evaluation.schemas.common import SchemaValidationError
 
 
-def _actor(actor_id: str, _display_name: str) -> dict[str, object]:
+def _actor(
+    actor_id: str,
+    _display_name: str,
+    role: str = "EVALUATION_IMPLEMENTER",
+) -> dict[str, object]:
     return {
         "namespace": "GITHUB_LOGIN",
         "actor_id": actor_id,
-        "role": "EVALUATION_IMPLEMENTER",
+        "role": role,
     }
 
 
 def _provenance() -> dict[str, object]:
     return {
-        "proposed_by": _actor("author-1", "Author"),
-        "approved_by": _actor("reviewer-1", "Reviewer"),
+        "authored_by": _actor("author-1", "Author"),
+        "reviewed_by": _actor("reviewer-1", "Reviewer", "PRIVACY_REVIEWER"),
+        "approved_by": _actor("approver-1", "Approver", "DATASET_CUSTODIAN"),
+        "authored_at": "2026-09-01T00:00:00.000000Z",
         "reviewed_at": "2026-09-01T00:00:00.000000Z",
+        "approved_at": "2026-09-01T00:00:00.000000Z",
+        "team_gold_status": "APPROVED",
+        "external_medical_review_status": "NOT_REQUESTED",
+        "external_medical_approval_receipt_ref": None,
+        "evidence_review_refs": [],
     }
 
 
@@ -171,7 +185,7 @@ def test_approved_deidentified_dataset_requires_approval_receipt() -> None:
 
 def test_review_provenance_uses_namespace_and_actor_id_identity() -> None:
     payload = _valid_dataset_manifest()
-    payload["review_provenance"]["approved_by"] = _actor("author-1", "Different label")
+    payload["review_provenance"]["approved_by"] = _actor("author-1", "Different label", "DATASET_CUSTODIAN")
 
     with pytest.raises(ValidationError):
         DatasetManifest.model_validate(payload)
@@ -197,3 +211,35 @@ def test_evidence_mapping_rejects_unknown_evidence_type() -> None:
 
     with pytest.raises(ValidationError):
         EvidenceMappingManifest.model_validate(deepcopy(payload))
+
+
+def test_git_commit_schema_rejects_non_lowercase_or_non_hex_40_character_values() -> None:
+    schema = DatasetManifest.model_json_schema()
+    pattern = schema["properties"]["fixture_git_commit_sha"]["anyOf"][0]["pattern"]
+
+    assert re.fullmatch(pattern, "a" * 40)
+    assert re.fullmatch(pattern, "A" * 40) is None
+    assert re.fullmatch(pattern, "g" * 40) is None
+    assert re.fullmatch(pattern, "a" * 39) is None
+
+
+@pytest.mark.parametrize(
+    "sensitive_value",
+    ["patient@example.com", "010-1234-5678", "sk-proj-abcdefghijklmnop"],
+)
+def test_public_evaluation_case_validation_error_serialization_never_contains_sensitive_input(
+    valid_retrieval_case: dict[str, Any],
+    sensitive_value: str,
+) -> None:
+    validate_evaluation_case = getattr(authoring_schemas, "validate_evaluation_case", None)
+    assert callable(validate_evaluation_case)
+    valid_retrieval_case["task_type"] = sensitive_value
+
+    with pytest.raises(SchemaValidationError) as caught:
+        validate_evaluation_case(valid_retrieval_case)
+
+    details = caught.value.errors()
+    serialized = caught.value.json()
+    assert details
+    assert sensitive_value not in repr(details)
+    assert sensitive_value not in serialized
