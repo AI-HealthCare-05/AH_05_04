@@ -192,16 +192,16 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - Single Candidate Gate에서 함량 누락·복수 variant·명시 함량·제형 충돌을 차단하고 외부 후보를 최대 1개로 제한합니다.
 - `AMBIGUOUS`에서 내부 1위·Top-K·score를 노출하지 않고 잘못된 자동 `MATCHED`를 0건으로 유지합니다.
 - 사용자 확인·거절의 멱등 transaction, 동시 선택 단일 성공, append-only Identification과 소유권을 검증합니다.
-- 모든 활성 약의 현재 Identification 전에는 Guide·Chat Job을 만들지 않고 동기 `REVIEW_REQUIRED`를 반환합니다.
+- 자동 Guide는 모든 활성 약의 현재 Identification 전에는 Job을 만들지 않고 동기 `REVIEW_REQUIRED`를 반환합니다. Chat은 Identification 전에도 최소 Safety Intake Job을 만들 수 있지만, `ROUTINE`만 Identification Preflight 후 일반 Rule·RAG로 진행합니다. `URGENT | EMERGENCY | UNKNOWN`은 일반 Retrieval·Composer·Provider 호출 0건을 검증합니다.
 - 처방·Identification·Source·Runtime Bundle 변경 뒤 과거 결과가 `STALE`인지 검증합니다.
 
 ### Track F Evaluation Release Gate
 
-- Release 판정은 `END_TO_END_FINAL`에서 `HOLDOUT`과 `SAFETY_REGRESSION`을 모두 요구합니다.
-- Critical Safety Failure, Critical Unsupported Claim, Citation 없는 의료 Claim, 미승인·만료 Source, 잘못된 자동 `MATCHED`, 잘못 표시된 단일 후보와 `AMBIGUOUS` 내부 후보 노출은 각각 0건이어야 합니다.
-- 제품·성분 식별 Precision은 99% 이상, OCR 오타 Candidate Recall@5는 95% 이상, Retrieval Recall@5는 90% 이상, Citation Precision·Coverage는 각각 95% 이상입니다.
-- 처방약–OTC DUR 양성 Runtime Recall과 승인 DUR Source 행→Rule 변환 Coverage는 각각 100%입니다.
-- 모든 비율은 분자·분모와 95% 신뢰구간을 기록합니다. 필수 partition의 분모가 0이거나 실행 결과가 `NOT_RUN`이면 `INCONCLUSIVE`로 공개를 차단합니다.
+- Release 통합 Experiment Type은 `END_TO_END_RAG`이며 `HOLDOUT`과 `SAFETY_REGRESSION`을 모두 요구합니다. `END_TO_END_FINAL`은 저장하거나 혼용하지 않습니다.
+- Critical Safety Failure, Critical Unsupported Claim, Citation 없는 의료 Claim, 미승인·만료 Source, 부적격 Bundle 부분 실행, 처방약–처방약 안전 단정, 음식·음료·보충제 개별 상호작용 판정과 승인 근거 없는 생활습관 행동 제안은 각각 0건이어야 합니다.
+- Retrieval Recall@5 90% 이상, Citation Precision·Coverage 각각 95% 이상, 처방약–OTC DUR 양성 Runtime Recall 100%는 초기 목표 예시입니다. RAG-03에서 Baseline·표본·독립 Group·95% 신뢰구간과 versioned Policy를 승인한 뒤에만 Release Threshold로 활성화합니다.
+- OCR·Resolver·Candidate 품질과 승인 DUR Source 행→Rule 변환 Coverage는 RAG Metric에 합산하지 않고 별도 Contract Suite의 불변 `COMPLETED/PASS` Receipt로 연결합니다. Receipt가 미구현·미실행·오류이면 RAG 점수와 무관하게 Release를 차단합니다.
+- 모든 비율은 분자·분모와 95% 신뢰구간을 기록합니다. 필수 Partition 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`입니다. 실행을 완료했지만 분모 0·최소 Case·독립 Group이 부족할 때만 `COMPLETED/INCONCLUSIVE`로 공개를 차단합니다.
 
 ### Frontend Job 상태와 재접속 복구
 
