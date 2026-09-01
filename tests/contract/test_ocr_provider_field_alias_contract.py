@@ -48,7 +48,7 @@ def test_backend_and_ocr_use_canonical_medication_name() -> None:
 
 
 @pytest.mark.parametrize("alias", sorted(UNREGISTERED_ALIASES))
-def test_unregistered_alias_cannot_replace_backend_canonical_field(
+def test_alias_only_payload_does_not_satisfy_required_response_field(
     alias: str,
 ) -> None:
     with pytest.raises(ValidationError):
@@ -58,6 +58,24 @@ def test_unregistered_alias_cannot_replace_backend_canonical_field(
                 "display_order": 1,
             }
         )
+
+
+@pytest.mark.parametrize("alias", sorted(UNREGISTERED_ALIASES))
+def test_medication_response_does_not_expose_unregistered_alias(
+    alias: str,
+) -> None:
+    medication = MedicationData.model_validate(
+        {
+            "medication_name": "정본합성약정",
+            alias: "외부별칭합성약정",
+            "display_order": 1,
+        }
+    )
+
+    payload = medication.model_dump()
+
+    assert payload[CANONICAL_BACKEND_FIELD] == "정본합성약정"
+    assert alias not in payload
 
 
 def test_backend_response_contains_only_canonical_medication_name() -> None:

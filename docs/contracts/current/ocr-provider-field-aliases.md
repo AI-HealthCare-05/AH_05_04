@@ -106,17 +106,39 @@ Source가 확인되지 않은 일반적인 이름을 추측하여 이 표에 추
 
 예를 들어 `drug`, `drug_name`, `drugName`, `medicine`, `medicine_name`, `product_name` 등의 이름을 문자열 유사성만으로 `medication_name`에 매핑해서는 안 됩니다.
 
+현재 Backend `MedicationData`는 Pydantic의 기본 extra 처리인 `ignore`를 사용하므로,
+정본 `medication_name`과 미등록 alias가 동시에 입력되면 미등록 alias는 출력 DTO에서
+제거되고 정본 값만 유지됩니다.
+
+이는 해당 alias를 허용하거나 호환 입력으로 지원한다는 의미가 아닙니다.
+현재 계약의 불변 조건은 미등록 alias가 정본을 대체하거나 덮어쓰지 않고,
+직렬화 결과와 이후 내부 계층으로 전파되지 않는 것입니다.
+
+미등록 필드 자체를 validation error로 거부하는 strict DTO 변경은 공개 API 동작에
+영향을 줄 수 있으므로 별도 계약 변경과 회귀 테스트 없이 이 문서에서 요구하지 않습니다.
+
 ### 7.2 정본과 Alias 동시 입력
 
-정본과 alias가 동시에 전달되는 입력 형식은 Source별 계약에서 명시적으로 정의하지 않는 한 허용하지 않습니다.
+현재 Backend `MedicationData`를 구성할 때 정본 `medication_name`과 미등록 alias가
+동시에 전달되면 Pydantic의 기본 `extra="ignore"` 동작에 따라 정본 값은 유지되고
+미등록 alias는 직렬화 결과에서 제거됩니다.
 
-두 값 중 하나를 임의로 우선하거나 조용히 덮어써서는 안 됩니다.
+이는 미등록 alias를 호환 입력으로 승인하거나 해당 값을 `medication_name`으로
+변환한다는 의미가 아닙니다.
+
+향후 Source 전용 Provider Adapter가 실제 alias 변환을 지원하는 경우에는 정본과
+등록 alias가 동시에 전달될 때의 처리 규칙을 Source 계약에 명시해야 합니다.
+두 값이 다를 경우 임의로 하나를 선택하거나 조용히 덮어써서는 안 되며,
+승인된 Source 계약에 따라 오류 또는 검수 필요 상태로 처리해야 합니다.
 
 ### 7.3 복수 Alias 입력
 
-서로 다른 alias가 동시에 전달되면 임의로 하나를 선택하지 않습니다.
+현재 Backend `MedicationData`에 복수의 미등록 alias가 전달되더라도 해당 필드는
+Pydantic의 기본 `extra="ignore"` 동작에 따라 직렬화 결과에서 제거됩니다.
 
-Source 계약에 정의된 오류 또는 검수 필요 상태로 처리해야 합니다.
+향후 Provider Adapter가 둘 이상의 등록 alias를 지원하는 경우에는 임의로 하나를
+선택해서는 안 됩니다. Source 계약에 우선순위 또는 동일성 검증 규칙이 없는 경우
+오류 또는 검수 필요 상태로 처리해야 합니다.
 
 ### 7.4 빈 값
 
