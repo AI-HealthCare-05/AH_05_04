@@ -1,13 +1,13 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
-from app.models.medical_documents import MedicalDocument
 from app.models.prescriptions import Prescription
+from app.repositories.profile_ownership import owned_by_self
 
 
 class ChatRepository:
@@ -15,7 +15,7 @@ class ChatRepository:
         self.session = session
 
     async def create_session(self, *, prescription: Prescription) -> ChatSession:
-        chat_session = ChatSession(prescription_id=prescription.id)
+        chat_session = ChatSession(prescription_id=prescription.id, profile_id=prescription.profile_id)
         self.session.add(chat_session)
         await self.session.flush()
         await self.session.refresh(chat_session, attribute_names=["created_at", "last_message_at"])
@@ -25,28 +25,19 @@ class ChatRepository:
         result = await self.session.execute(
             select(ChatSession)
             .options(selectinload(ChatSession.prescription).selectinload(Prescription.document))
-            .where(ChatSession.id == session_id)
-        )
-        chat_session = result.scalar_one_or_none()
-        if chat_session is None or chat_session.prescription.document.user_id != user_id:
-            return None
-        return chat_session
-
-    async def get_session_owned_for_update(self, *, session_id: UUID, user_id: UUID) -> ChatSession | None:
-        ownership_exists = exists(
-            select(1)
-            .select_from(Prescription)
-            .join(MedicalDocument, MedicalDocument.id == Prescription.document_id)
             .where(
-                Prescription.id == ChatSession.prescription_id,
-                MedicalDocument.user_id == user_id,
+                ChatSession.id == session_id,
+                owned_by_self(ChatSession.profile_id, user_id),
             )
         )
+        return result.scalar_one_or_none()
+
+    async def get_session_owned_for_update(self, *, session_id: UUID, user_id: UUID) -> ChatSession | None:
         result = await self.session.execute(
             select(ChatSession)
             .where(
                 ChatSession.id == session_id,
-                ownership_exists,
+                owned_by_self(ChatSession.profile_id, user_id),
             )
             .with_for_update()
         )

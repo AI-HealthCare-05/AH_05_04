@@ -28,6 +28,7 @@ from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.prescriptions import Medication, Prescription
+from app.models.profiles import Profile
 from app.models.users import User
 from app.release_validation.ai_one_cycle_smoke import (
     CleanupPendingError,
@@ -643,7 +644,7 @@ async def test_fixture_builder_commits_completed_confirmed_synthetic_fixture() -
             ).all()
         )
         assert user is not None and user.email == fixture.email
-        assert document is not None and document.user_id == fixture.user_id
+        assert document is not None and document.uploaded_by == fixture.user_id
         assert job is not None and job.ocr_status == OcrStatus.COMPLETED
         assert len(fields) == 8
         assert {field.confirmation_status for field in fields} == {ConfirmationStatus.CONFIRMED}
@@ -653,6 +654,7 @@ async def test_fixture_builder_commits_completed_confirmed_synthetic_fixture() -
         )
         await verification_session.execute(delete(OcrJob).where(OcrJob.id == fixture.ocr_job_id))
         await verification_session.execute(delete(MedicalDocument).where(MedicalDocument.id == fixture.document_id))
+        await verification_session.execute(delete(Profile).where(Profile.user_id == fixture.user_id))
         await verification_session.execute(delete(User).where(User.id == fixture.user_id))
         await verification_session.commit()
 
@@ -1308,9 +1310,13 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
     fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=scenario)
     now = datetime.now(UTC)
     async with factory() as session:
+        document = await session.get(MedicalDocument, fixture.document_id)
+        assert document is not None
+        assert document.profile_id is not None
         prescription = Prescription(
             document_id=fixture.document_id,
             source_ocr_job_id=fixture.ocr_job_id,
+            profile_id=document.profile_id,
             prescribed_date=datetime(2026, 8, 21, tzinfo=UTC).date(),
             confirmed_at=now,
         )
@@ -1331,13 +1337,14 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
         )
         guide = Guide(
             prescription_id=prescription.id,
+            profile_id=prescription.profile_id,
             generation_status=GuideGenerationStatus.COMPLETED,
             content="private guide",
             model_name="gpt-4o-mini-actual",
             prompt_version="guide-prompt-v3",
             completed_at=now,
         )
-        chat_session = ChatSession(prescription_id=prescription.id)
+        chat_session = ChatSession(prescription_id=prescription.id, profile_id=prescription.profile_id)
         session.add_all([guide, chat_session])
         await session.flush()
         session.add_all(

@@ -13,6 +13,7 @@ from app.core.db.types import UUIDChar
 if TYPE_CHECKING:
     from app.models.knowledge import KnowledgeChunk
     from app.models.prescriptions import Prescription
+    from app.models.profiles import Profile
 
 
 class ChatSessionStatus(StrEnum):
@@ -43,11 +44,13 @@ class ChatSession(Base):
             "last_message_at",
             "id",
         ),
+        Index("idx_chat_session_profile_activity", "profile_id", "last_message_at", "id"),
         CheckConstraint("session_status IN ('ACTIVE', 'CLOSED')", name="chk_chat_session_status"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("prescription.id"), nullable=False)
+    profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     session_status: Mapped[ChatSessionStatus] = mapped_column(
         Enum(ChatSessionStatus, native_enum=False, length=20),
@@ -72,6 +75,7 @@ class ChatSession(Base):
     )
 
     prescription: Mapped["Prescription"] = relationship(back_populates="chat_sessions")
+    profile: Mapped["Profile"] = relationship()
     messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session")
 
 

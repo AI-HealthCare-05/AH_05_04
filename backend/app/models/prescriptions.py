@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.models.guides import Guide
     from app.models.medical_documents import MedicalDocument
     from app.models.ocr import OcrJob
+    from app.models.profiles import Profile
 
 
 class PrescriptionStatus(StrEnum):
@@ -38,6 +39,7 @@ class Prescription(Base):
     __tablename__ = "prescription"
     __table_args__ = (
         Index("idx_prescription_source_ocr", "source_ocr_job_id"),
+        Index("idx_prescription_profile_created", "profile_id", "created_at", "id"),
         CheckConstraint("prescription_status = 'CONFIRMED'", name="chk_prescription_status"),
     )
 
@@ -51,6 +53,7 @@ class Prescription(Base):
     )
     # 처방 생성에 사용한 COMPLETED OCR 작업입니다.
     source_ocr_job_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("ocr_job.id"), nullable=False)
+    profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     prescribed_date: Mapped[date] = mapped_column(Date, nullable=False)
     prescription_status: Mapped[PrescriptionStatus] = mapped_column(
         Enum(PrescriptionStatus, native_enum=False, length=20),
@@ -65,6 +68,7 @@ class Prescription(Base):
     )
 
     document: Mapped["MedicalDocument"] = relationship(back_populates="prescription")
+    profile: Mapped["Profile"] = relationship()
     source_ocr_job: Mapped["OcrJob"] = relationship(back_populates="prescriptions")
     # 처방 약물은 OCR·가이드·채팅 등 모든 소비 경로에서 처방전 표시 순서를 유지합니다.
     medications: Mapped[list["Medication"]] = relationship(

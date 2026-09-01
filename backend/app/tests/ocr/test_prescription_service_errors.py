@@ -23,7 +23,7 @@ async def test_confirm_prescription_rejects_when_ocr_is_not_completed() -> None:
     )
     document = MedicalDocument(
         id=uuid4(),
-        user_id=user.id,
+        uploaded_by=user.id,
         original_file_name="prescription.jpg",
         object_key="prescription.jpg",
         file_mime_type="image/jpeg",

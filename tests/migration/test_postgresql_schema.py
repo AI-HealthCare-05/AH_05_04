@@ -34,6 +34,7 @@ async def insert_ocr_parent_chain(
 ) -> tuple[str, str, str]:
     """extracted_field 제약조건 테스트에 필요한 최소 부모 데이터를 생성합니다."""
     user_id = str(uuid4())
+    profile_id = str(uuid4())
     document_id = str(uuid4())
     ocr_job_id = str(uuid4())
 
@@ -69,9 +70,33 @@ async def insert_ocr_parent_chain(
     await connection.execute(
         text(
             """
-            INSERT INTO medical_document (
+            INSERT INTO profile (
                 id,
                 user_id,
+                profile_type,
+                display_name
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'SELF',
+                'constraint-test'
+            )
+            """
+        ),
+        {
+            "id": profile_id,
+            "user_id": user_id,
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO medical_document (
+                id,
+                uploaded_by,
+                profile_id,
                 document_type,
                 original_file_name,
                 object_key,
@@ -81,7 +106,8 @@ async def insert_ocr_parent_chain(
             )
             VALUES (
                 :id,
-                :user_id,
+                :uploaded_by,
+                :profile_id,
                 'PRESCRIPTION',
                 'constraint-test.png',
                 :object_key,
@@ -93,7 +119,8 @@ async def insert_ocr_parent_chain(
         ),
         {
             "id": document_id,
-            "user_id": user_id,
+            "uploaded_by": user_id,
+            "profile_id": profile_id,
             "object_key": f"migration-test/{document_id}.png",
         },
     )
