@@ -5,9 +5,9 @@
 | 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
 | 구현 담당 | 정현우 — Citation·Validator·Release Gate |
 | 책임 리뷰 | 권가빈 — Safety·제품 수용, 송은영 — Backend·DB·공개 DTO, 남한솔 — 환자 표시·오류 UX |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.8`; Design `1.47` SHA-256 `798dfad94477100d8de242846a3885e6dadf83cc3024b34bcba207d1fdaae932`; DB `1.44` SHA-256 `79d1c6587fab2df1864b9a68d7d5bd23206dd3afded1ad67939cfa31905f3634` |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.9`; Design `1.48` SHA-256 `0276ddac4dd62f4ed166edd098fb4e629bb3da4ecd79d8c079ef363e080b5dc8`; DB `1.45` SHA-256 `b3b15c9d21767f660da4c60466c0ca6b16fa7fc605abd4a0fff5af9978ad988e` |
 | 기존 선행 계약 | [Safety Result 계약 v1](../../targets/post-mvp-1/safety-result-v1.md) |
-| Last verified | 2026-08-31 |
+| Last verified | 2026-09-01 |
 
 ## 목적과 승격 경계
 
@@ -32,7 +32,9 @@
 | 승인 정상 답변 | `SUCCEEDED` | `PASS` | `NORMAL` | 가능 |
 | 승인 긴급 안내 | `SUCCEEDED` | `PASS` | `URGENT_ROUTED` | 가능 |
 | 승인 응급 안내 | `SUCCEEDED` | `PASS` | `EMERGENCY_ROUTED` | 가능 |
-| 승인된 범위 제한 안내 | `SUCCEEDED` | `LIMITED` | Router 결과 | 제한 응답만 가능 |
+| 진단·처방 변경·용량 조절·복용 중단 등 금지 행동 요청 | `SUCCEEDED` | `LIMITED` | `BLOCKED_ACTION` | 금지 행동을 수행하지 않는 승인 안내만 가능 |
+| 위험 수준 판단 불가 | `NO_RESULT` | `REJECTED` | `UNKNOWN_RISK` | 승인 fallback만 가능, 일반 Retrieval·Provider 금지 |
+| 그 밖의 승인된 범위 제한 안내 | `SUCCEEDED` | `LIMITED` | Router 결과 | 제한 응답만 가능 |
 | 근거 없음·충돌 | `NO_RESULT` | `REJECTED` | Router 결과 | 승인 fallback만 가능 |
 | Provider·검증 실패 | 해당 실패 상태 | `REJECTED` | Router 결과 | 승인 fallback만 가능 |
 | 실행 Context 불일치 | 원래 값 보존 | `STALE` | 원래 값 보존 | 금지, `is_current=false` |
@@ -59,6 +61,8 @@
 
 각 Citation은 하나의 Claim과 연결되고 `source_type`에 맞는 유형별 Evidence FK를 정확히 하나 가진다. 범용 문자열 `source_id` 하나로 여러 Evidence 대상을 참조하지 않는다. Source 기반 Citation은 실행에서 실제 사용한 Source Snapshot·Endpoint/Operation 또는 Artifact Member, Bundle 승인 Version, Runtime Guard Decision과 locator까지 재현할 수 있어야 한다. `PRESCRIPTION`만 Source 실행 Provenance FK가 nullable일 수 있다.
 
+Source 기반 Citation은 원 환자 요청의 `REQUEST/PASS`만으로 공개할 수 없다. Citation Finalizer는 별도 `CITATION_AUTHORIZATION/PASS` Guard를 요구하고, 이 Guard가 원 REQUEST의 Bundle·환경·Manifest Hash·정렬 요청 Scope를 exact-match하며 실제 Citation Source·Member의 `PATIENT_CITATION` 목적 승인을 다시 확인해야 한다. Citation은 해당 Guard에서 `selected_for_operation=true`이고 Source·Member Decision이 모두 `PASS`인 실행 Usage만 참조한다.
+
 의료 Claim은 `SUPPORTED`일 때만 공개한다. `PARTIALLY_SUPPORTED`는 비의료 보조 Claim에만 제한적으로 허용하고 `CONTRADICTED`, `NOT_SUPPORTED`는 공개하지 않는다.
 
 공개 Citation DTO는 다음으로 제한한다.
@@ -73,11 +77,13 @@
 ## 최소 Contract Test
 
 - 상태축 허용 조합과 `is_current=false` 공개 차단
-- Chat `response_level`별 Provider·Retrieval 호출 여부와 공개 결과
+- Chat `response_level`별 Provider·Retrieval 호출 여부와 공개 결과, `UNKNOWN/UNKNOWN_RISK` 일반 실행 0건
+- 금지 행동 요청의 `SUCCEEDED/LIMITED/BLOCKED_ACTION`과 처방 변경·중단 지시 생성 0건
 - Source 만료와 실행 Context STALE 의미 분리
 - 공개 `EXECUTION_CONTEXT_STALE`과 내부 `stale_reason` 분리
 - Claim별 유형 FK 정확히 하나, 잘못된 유형·FK 조합 차단
 - 다섯 Citation 유형의 Source Snapshot·locator·실행 Usage 재현
+- Citation별 별도 `CITATION_AUTHORIZATION/PASS`, 원 REQUEST·Scope exact-match와 `PATIENT_CITATION` 승인
 - 의료 Claim의 Citation 누락·변조·근거 불일치 공개 0건
 - Candidate·Identification·OTC·Chat/Guide 접수·상태·결과·오류 응답 `Cache-Control: no-store`
 

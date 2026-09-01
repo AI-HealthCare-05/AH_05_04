@@ -5,9 +5,9 @@
 | 문서 상태 | Proposed Target · Not implemented — `proposed/`에서 RAG-00 팀 승인 대기 |
 | 구현 담당 | 정현우 — Candidate Resolver·Identification 연계 |
 | 책임 리뷰 | 송은영 — Backend·DB·소유권·Transaction, 김지혜 — OCR 확정 입력 경계, 남한솔 — 확인 UI·공개 DTO, 권가빈 — 제품 범위·안전 문구 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.8`; Design `1.47` SHA-256 `798dfad94477100d8de242846a3885e6dadf83cc3024b34bcba207d1fdaae932`; DB `1.44` SHA-256 `79d1c6587fab2df1864b9a68d7d5bd23206dd3afded1ad67939cfa31905f3634` |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.9`; Design `1.48` SHA-256 `0276ddac4dd62f4ed166edd098fb4e629bb3da4ecd79d8c079ef363e080b5dc8`; DB `1.45` SHA-256 `b3b15c9d21767f660da4c60466c0ca6b16fa7fc605abd4a0fff5af9978ad988e` |
 | 기존 선행 계약 | [MFDS 공식 의약품 식별 계약 v1](../../targets/post-mvp-1/medication-identification-v1.md), [처방 버전 계약 v1](../../targets/post-mvp-1/prescription-version-v1.md) |
-| Last verified | 2026-08-31 |
+| Last verified | 2026-09-01 |
 
 ## 목적과 변경 분류
 
@@ -80,7 +80,17 @@ Candidate Search 상태는 `RUNNING | READY | AMBIGUOUS | NO_CANDIDATE | INGREDI
 | `NO_CANDIDATE` | 0 | 0 | 모두 null | null |
 | `INGREDIENT_ONLY` | 0 | 0 | 모두 null | `PRODUCT_NAME_REQUIRED` |
 | `INVALID_INPUT` | 0 | 0 | 모두 null | `INVALID_INPUT` |
-| `INVALIDATED_INPUT_CHANGED`, `INVALIDATED_USER_REJECTED`, `EXPIRED`, `FAILED`, `CONSUMED` | 내부 이력값 유지 | 0 | 모두 null | null |
+| `INVALIDATED_INPUT_CHANGED`, `EXPIRED` | 내부 이력값 유지 | 무효화 전 값 0 또는 1 | 모두 null | null |
+| `INVALIDATED_USER_REJECTED`, `CONSUMED` | 내부 이력값 유지 | 1 | 모두 null | null |
+| `FAILED` | 내부 이력값 유지 | 0 | 모두 null | null |
+
+`displayed_candidate_count`는 현재 화면에 노출 중인 카드 수가 아니라 Finalizer가 당시 표시 대상으로 지정한 감사 수다. 따라서 `INVALIDATED_USER_REJECTED`와 `CONSUMED`에서도 값 1과 과거 Result의 `is_displayed=true`, `selection_eligible=true`를 불변 보존하되, Search 상태가 `READY`가 아니므로 공개 Candidate Snapshot과 Result ID를 반환하거나 다시 선택할 수 없다. `INVALIDATED_INPUT_CHANGED`와 `EXPIRED`는 무효화 전 상태에 따라 감사 수가 0 또는 1일 수 있다.
+
+### Candidate Search Finalizer
+
+Candidate Search 최종화의 Transaction Owner는 Candidate Search Finalizer다. Finalizer는 내부 Result 전체 삽입, Single Candidate Gate 판정, `is_displayed`·`selection_eligible` 지정, `displayed_candidate_count` 계산과 Search의 최종 상태 전환을 하나의 Transaction에서 수행한다. Result를 저장하기 전 별도 Transaction에서 Search를 `READY`로 만들 수 없다.
+
+Commit 시 Deferred Constraint는 실제 표시 Result 수, `displayed_candidate_count`, 상태별 허용 Result 수와 `selection_eligible => is_displayed`를 검증한다. 불일치하면 전체를 rollback한다. `RUNNING`을 장기 작업 상태로 commit할 수는 있지만 모든 Result의 표시·선택 Flag는 `false`여야 한다.
 
 ## 사용자 확인과 Identification
 
@@ -88,6 +98,8 @@ Candidate Search 상태는 `RUNNING | READY | AMBIGUOUS | NO_CANDIDATE | INGREDI
 - Backend는 소유권, 활성 Prescription Version, Search 만료·Query Digest·Bundle·Candidate Index·제품 활성 상태와 미소비 여부를 잠금 검증한다.
 - `prescription_version_medication_id + candidate_search_result_id + Idempotency-Key`를 사용하며 Identification과 Search `CONSUMED`를 하나의 Transaction으로 저장한다.
 - `아니에요`는 거절 Event와 Search 무효화를 남기고 약제를 `UNRESOLVED`로 유지한다.
+- 거절된 Search·Result는 불변 감사 이력으로 보존하고 다시 선택하지 않는다. 사용자가 약품명·함량을 정정해 새 Prescription Version Medication Snapshot을 확정한 경우에만 별도의 후속 Search를 만든다.
+- P0에는 Prescription Version을 가로지르는 안정적인 Medication 계보 Key가 승인되어 있지 않다. 따라서 후속 Search의 `supersedes_search_id`는 `null`로 저장하며, 새 약제 Snapshot과 과거 Search를 이름·함량·배열 순서 등으로 추정 연결하지 않는다. 이 nullable 컬럼은 향후 안정적 계보 Key, Migration, 무결성 규칙과 Contract Test가 승인될 때까지 예약 필드다.
 - 확정 후 약품명·함량 수정은 OCR 필드를 되돌려 쓰지 않고 새 Prescription Version 생성·활성화 후 재검색한다.
 - Candidate·Search·Identification 이력은 덮어쓰지 않는다.
 
@@ -113,13 +125,13 @@ Candidate Search 생성에는 `Idempotency-Key`를 요구하지 않는다. 기�
 | `status` | enum | 필수 | 이 계약의 Candidate Search 상태 |
 | `status_reason` | enum \| null | 필수 | 고정 Reason code 또는 `null` |
 | `candidate_count` | integer | 필수 | 내부 중복 제거 후 후보 수. 0 이상 |
-| `displayed_candidate_count` | integer | 필수 | 공개 후보 수. 0 또는 1 |
+| `displayed_candidate_count` | integer | 필수 | Finalizer가 표시 대상으로 지정한 감사 수. 0 또는 1 |
 | `display_limit` | integer | 필수 | P0에서는 항상 1 |
 | `candidate_search_result_id` | string(UUID) \| null | 필수 | `READY`일 때만 non-null |
 | `candidate` | object \| null | 필수 | 아래 표시 Snapshot. `READY`일 때만 non-null |
 | `expires_at` | string(date-time) \| null | 필수 | 확인 가능 만료 시각. 아직 계산되지 않은 `RUNNING`은 null 가능 |
 
-표시 Snapshot `candidate`는 `product_name`, nullable `strength_text`, nullable `dosage_form`, nullable `manufacturer_name`, `product_status`만 포함한다. `READY`이면 `candidate_count>=1`, `displayed_candidate_count=1`, `candidate_search_result_id`와 `candidate`가 모두 non-null이어야 한다. 그 밖의 상태에서는 `displayed_candidate_count=0`이고 두 필드는 모두 null이다.
+표시 Snapshot `candidate`는 `product_name`, nullable `strength_text`, nullable `dosage_form`, nullable `manufacturer_name`, `product_status`만 포함한다. `READY`이면 `candidate_count>=1`, `displayed_candidate_count=1`, `candidate_search_result_id`와 `candidate`가 모두 non-null이어야 한다. `READY`가 아닌 상태에서는 두 공개 후보 필드는 모두 null이며, `displayed_candidate_count`는 위 상태별 감사 불변식을 따른다.
 
 `status_reason`의 P0 허용값은 `INVALID_INPUT | MISSING_STRENGTH_MULTIPLE_VARIANTS | ATTRIBUTE_CONFLICT | IDENTIFIER_ATTRIBUTE_CONFLICT | PRODUCT_NAME_REQUIRED`다. 상태만으로 의미가 충분하면 null을 사용하며 구현자가 자유문장이나 새로운 Reason code를 추가하지 않는다. 새 code는 공유 계약 변경으로 처리한다.
 
@@ -128,9 +140,9 @@ Candidate Search 생성에는 `Idempotency-Key`를 요구하지 않는다. 기�
 | 동작 | 요청 필드 | 성공 응답 필드 |
 | --- | --- | --- |
 | 확인 | `prescription_version_medication_id`, `candidate_search_result_id` | `identification_id`, `prescription_version_medication_id`, `status=MATCHED`, `source=USER_SELECTED`, `product_id`, `confirmed_at` |
-| 거절 | `prescription_version_medication_id`, `candidate_search_result_id` | `identification_event_id`, `prescription_version_medication_id`, `status=UNRESOLVED`, `search_status=INVALIDATED_USER_REJECTED`, `rejected_at` |
+| 거절 | `search_id`, `candidate_search_result_id` | `identification_event_id`, `prescription_version_medication_id`, `status=UNRESOLVED`, `search_status=INVALIDATED_USER_REJECTED`, `rejected_at` |
 
-두 요청 모두 `Idempotency-Key` 헤더가 필수다. `search_id`는 `candidate_search_result_id`의 FK에서 서버가 도출하며 클라이언트가 중복 제출하지 않는다. 확인 응답의 `product_id`는 공식 제품 Identity이며 성분 배열이나 내부 Source Record 전체를 반환하지 않는다. 동일 키·동일 요청은 최초 성공 응답을 재현하고 동일 키·상이 요청은 오류로 끝낸다.
+두 요청 모두 `Idempotency-Key` 헤더가 필수다. 확인 요청의 `search_id`는 `candidate_search_result_id`의 FK에서 서버가 도출하며 클라이언트가 중복 제출하지 않는다. 거절 요청은 화면에 표시된 현재 `search_id`와 `candidate_search_result_id`를 함께 제출하고 Backend가 동일 Search 소속, `READY`, `is_displayed=true`, `selection_eligible=true`를 검증한다. 거절 사유는 서버 고정 `USER_REJECTED_DISPLAYED_CANDIDATE`이며 자유문장을 받지 않는다. 확인 응답의 `product_id`는 공식 제품 Identity이며 성분 배열이나 내부 Source Record 전체를 반환하지 않는다. 동일 키·동일 요청은 최초 성공 응답을 재현하고 동일 키·상이 요청은 오류로 끝낸다.
 
 ## 소유권·Transaction·현재성
 
@@ -147,7 +159,7 @@ Candidate Search 생성에는 `Idempotency-Key`를 요구하지 않는다. 기�
 - 모든 잠금은 [처방 버전 계약의 전역 순서](../../targets/post-mvp-1/prescription-version-v1.md#동시-수정)인 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB(해당 시) → 도메인 row → OUTBOX(해당 시)`를 따른다. 각 Transaction은 실제로 변경하는 row만 잠그며 역순 잠금을 금지한다.
 - 확인·거절은 Chat Session·AI Job·Outbox를 직접 변경하지 않는다. 두 요청의 잠금 획득 순서는 `PRESCRIPTION → prescription_version_medication → candidate_search → candidate_search_result → medication_identification`으로 고정한다. 동기 멱등 레코드와 응답 Snapshot은 이 도메인 변경과 같은 Transaction에 저장한다.
 - 확인은 위 순서로 소유권·활성 Prescription Version·Search·Result·Context 현재성을 재검증한 뒤 append-only `MATCHED/USER_SELECTED` Identification과 Search `CONSUMED`를 원자 저장한다. 하나라도 불일치하면 전체를 rollback하고 `409`로 끝낸다.
-- 거절은 같은 순서로 검증한 뒤 거절 Event, append-only `UNRESOLVED` Identification과 Search `INVALIDATED_USER_REJECTED`를 원자 저장한다.
+- 거절은 같은 순서로 요청 `search_id`와 Result의 Search FK 일치까지 검증한 뒤 `USER_REJECTED_DISPLAYED_CANDIDATE` Event, append-only `UNRESOLVED` Identification과 Search `INVALIDATED_USER_REJECTED`를 원자 저장한다.
 - 확인·거절 Transaction은 기존 Guide·Chat `AI_JOB`이나 완료 결과를 일괄 갱신하지 않는다. 실행 중 Worker가 결과를 commit할 때 고정 Identification과 최신 Identification을 다시 비교하고, 불일치하면 Worker Transaction에서 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`로 종결한다. 완료된 과거 결과 조회도 같은 현재성 검증을 통과하지 못하면 현재 결과로 공개하지 않는다.
 - 과거 Result·Citation·Identification provenance는 삭제하거나 덮어쓰지 않는다.
 
@@ -185,9 +197,12 @@ Candidate Search·확인·거절·Identification 조회와 모든 오류 응답�
 - P0 Bundle에서 보험코드 Feature 비활성, 보험코드 필드 조회·Exact 검색·공개 노출 0건과 제품명 경로 정상 진행
 - 함량 누락·복수 Variant·명시 함량 충돌 시 임의 후보 표시 금지
 - 상태별 필수 필드·nullable·후보 수 불변식
+- 거절·소비·입력 변경·만료 후 과거 표시 Result와 감사 `displayed_candidate_count` 보존, 공개 후보·재선택 차단
+- Candidate Search Finalizer의 Result 전체 삽입·Gate·표시 Flag·상태 전환 원자성과 Deferred Constraint rollback
 - 공개 후보 최대 1개, `AMBIGUOUS` 내부 Top-K·score 노출 0건
 - 사용자 확인 전 `MATCHED` 저장 0건
-- 확인·거절 멱등성, 동시 선택 단일 성공과 append-only 이력
+- 확인·거절 멱등성, 거절 `search_id`·Result 소속 불일치 차단, 동시 선택 단일 성공과 append-only 이력
+- 거절 후 새 Prescription Version Medication의 후속 Search는 새 이력으로 생성되고 `supersedes_search_id=null`, 추정 계보 연결과 과거 Result 재선택 0건
 - Candidate·Identification·Guide·Chat·Citation의 동일 `user_id` 소유권과 타 사용자 `404`·부작용 0건
 - 확인·거절의 전역 잠금 순서 준수, 역순 잠금 0건과 Transaction rollback
 - 확인·거절과 Worker 결과 commit 동시 실행의 교착 0건, 최신 Identification 불일치 Job의 `STALE`·결과 비공개

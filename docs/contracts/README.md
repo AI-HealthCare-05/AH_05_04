@@ -61,7 +61,7 @@ Proposed 계약은 관련 schema·service·CLI·테스트가 함께 병합되고
 
 ### RAG-00 Proposed Target 권위와 책임
 
-RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외부 Manifest `post-mvp-rag-evaluation-contract@2026-08-29.8`의 Local P0 투영본이며 상태는 `PROPOSED_TARGET_NOT_IMPLEMENTED`다. 팀 승인 전에는 Approved Contract Freeze v4 또는 Current Runtime으로 해석하지 않는다.
+RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외부 Manifest `post-mvp-rag-evaluation-contract@2026-08-29.9`의 Local P0 투영본이며 상태는 `PROPOSED_TARGET_NOT_IMPLEMENTED`다. 팀 승인 전에는 Approved Contract Freeze v4 또는 Current Runtime으로 해석하지 않는다.
 
 | RAG-00 문서 영역 | 작성·변경 담당 | 책임 리뷰 |
 | --- | --- | --- |
