@@ -147,7 +147,7 @@ PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포 완료 후 멱�
 
 ## 8. Migration 단계
 
-운영 DB에 migration을 적용하기 전에는 backup과 적용 전 row count snapshot을 남긴다. 이는 단순 복원 목적뿐 아니라 migration 실패 시 코드 문제, 기존 데이터 불일치, backfill 누락을 구분하기 위한 기준이다.
+운영 DB에 migration을 적용하기 전에는 backup을 남기고, 적용 전후 Alembic revision과 row count snapshot을 같은 형식으로 기록한다. 이는 단순 복원 목적뿐 아니라 migration 실패 시 코드 문제, 기존 데이터 불일치, backfill 누락을 구분하기 위한 기준이다.
 
 | 단계 | 내용 | rollback·복구 기준 |
 | --- | --- | --- |

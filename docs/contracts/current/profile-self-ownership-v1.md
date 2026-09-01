@@ -129,9 +129,9 @@ owned_by_self(Resource.profile_id, user_id)
 
 PROFILE 전환은 Track A의 `AI_JOB`·Outbox Expand보다 먼저 수행한다.
 
-운영 DB에 적용하기 전에는 복구와 원인 추적을 위해 migration 전 backup과 적용 전 row count snapshot을 남긴다. 최소 기록 대상은 `user`, `profile`, `medical_document`, `prescription`, `guide`, `chat_session`이다.
+운영 DB에 적용하기 전에는 복구와 원인 추적을 위해 migration 전 backup과 적용 전후 Alembic revision·row count snapshot을 남긴다. 최소 기록 대상은 `user`, `profile`, `medical_document`, `prescription`, `guide`, `chat_session`이다. DB dump와 검증 증빙은 의료·개인정보 포함 가능성을 고려해 소유자만 접근할 수 있는 권한으로 생성한다.
 
-아래 표는 rolling deploy나 장기 migration으로 분리할 때의 논리적 전환 순서다. #117 구현 PR의 실제 운영 적용은 이 단계를 하나의 중단 배포 안에서 수행하며, 절차는 `서비스 중단 → backup·row count snapshot → migration·backfill·검증 → 호환 코드 재시작` 순서로 고정한다.
+아래 표는 rolling deploy나 장기 migration으로 분리할 때의 논리적 전환 순서다. #117 구현 PR의 실제 운영 적용은 이 단계를 하나의 중단 배포 안에서 수행하며, 절차는 `서비스 중단 → backup·적용 전 snapshot → migration·backfill·적용 후 snapshot·검증 → 호환 코드 재시작` 순서로 고정한다.
 
 | 단계 | 내용 | 검증 |
 | --- | --- | --- |
@@ -172,7 +172,7 @@ SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 �
 
 ## 8. Rollback 기준
 
-#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. DB schema 변경 전에 기존 `fastapi`와 `ai-worker`를 멈추고, 처리 중인 요청이 종료된 뒤 migration을 실행한다. 서비스 중단에 실패하거나 중단 상태를 확인하지 못하면 migration을 실행하지 않는다. 영향받는 애플리케이션 이미지는 migration 후 새 코드로 함께 재시작하며, 구버전 이미지를 다시 띄우지 않는다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
+#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. DB schema 변경 전에 기존 `fastapi`와 `ai-worker`를 멈추고, 처리 중인 요청이 종료된 뒤 migration을 실행한다. 서비스 중단에 실패하거나 중단 상태를 확인하지 못하면 migration을 실행하지 않는다. migration 후에는 `fastapi` 새 이미지를 필수로 재시작하고, `ai-worker`는 실제 Redis Consumer 실행 경로가 연결된 뒤 같은 배포 단위에 포함한다. placeholder `ai-worker`를 강제 재시작해 재시작 루프를 만들지 않으며, 구버전 이미지를 다시 띄우지 않는다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
 
 - `profile_id`가 nullable인 Expand 단계에서는 코드 rollback이 가능해야 한다.
 - Contract 단계 전에는 기존 `user_id` 또는 부모 chain 기반 read 경로로 되돌릴 수 있어야 한다.
@@ -222,7 +222,7 @@ PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 
 - 기존 리소스의 `profile_id` backfill 대상과 순서가 구현된다.
 - 도메인별 `profile_id` 기준 원본과 부모·자식 composite FK·일관성 검증 기준이 구현된다.
 - PR 0의 backfill, 일관성 검증, read cutover 배포 완료 후 리소스 소유권 조회를 SELF `profile_id` 기준으로 전환한다.
-- 운영 적용 전 DB backup, 적용 전후 row count, `profile_id` null·불일치 검증 결과를 기록한다.
+- 운영 적용 전 DB backup, 적용 전후 Alembic revision·row count, `profile_id` null·불일치 검증 결과를 기록한다.
 - 보호자·멀티 프로필·위임 권한은 후속 범위로 유지한다.
 - migration, 모델, repository, API/ownership 테스트, 문서 갱신을 같은 PR에 포함한다.
 

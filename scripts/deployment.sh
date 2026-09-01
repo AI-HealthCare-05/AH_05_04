@@ -193,9 +193,8 @@ for choice in $selections; do
   esac
 done
 
-if [[ ! " ${DEPLOY_SERVICES[*]} " =~ " fastapi " ]] ||
-  [[ ! " ${DEPLOY_SERVICES[*]} " =~ " ai-worker " ]]; then
-  echo "${COLOR_RED}schema migration 배포는 fastapi와 ai_worker를 같은 배포 단위로 포함해야 합니다.${COLOR_NC}"
+if [[ ! " ${DEPLOY_SERVICES[*]} " =~ " fastapi " ]]; then
+  echo "${COLOR_RED}schema migration 배포는 fastapi 새 이미지를 포함해야 합니다.${COLOR_NC}"
   exit 1
 fi
 
@@ -371,7 +370,48 @@ fi
 read -r -a deploy_services <<<"$DEPLOY_SERVICES"
 deployment_id="$(date -u +%Y%m%dT%H%M%SZ)"
 evidence_dir="deployment-evidence/$deployment_id"
+umask 077
 mkdir -p "$evidence_dir"
+
+write_deployment_db_snapshot() {
+  local output_path="$1"
+
+  docker compose exec -T postgres \
+    sh -lc '
+      psql \
+        -v ON_ERROR_STOP=1 \
+        -q \
+        -At \
+        -F $'"'"'\t'"'"' \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
+CREATE TEMP TABLE deployment_snapshot(name text, value text);
+DO $$
+BEGIN
+  IF to_regclass('"'"'public.alembic_version'"'"') IS NULL THEN
+    INSERT INTO deployment_snapshot VALUES ('"'"'alembic_revision'"'"', NULL);
+  ELSE
+    EXECUTE '"'"'INSERT INTO deployment_snapshot SELECT '"'"''"'"'alembic_revision'"'"''"'"', version_num FROM alembic_version ORDER BY version_num LIMIT 1';
+  END IF;
+END $$;
+INSERT INTO deployment_snapshot SELECT '"'"'user'"'"', count(*)::text FROM "user";
+DO $$
+BEGIN
+  IF to_regclass('"'"'public.profile'"'"') IS NULL THEN
+    INSERT INTO deployment_snapshot VALUES ('"'"'profile'"'"', NULL);
+  ELSE
+    EXECUTE '"'"'INSERT INTO deployment_snapshot SELECT '"'"''"'"'profile'"'"''"'"', count(*)::text FROM profile';
+  END IF;
+END $$;
+INSERT INTO deployment_snapshot SELECT '"'"'medical_document'"'"', count(*)::text FROM medical_document;
+INSERT INTO deployment_snapshot SELECT '"'"'prescription'"'"', count(*)::text FROM prescription;
+INSERT INTO deployment_snapshot SELECT '"'"'guide'"'"', count(*)::text FROM guide;
+INSERT INTO deployment_snapshot SELECT '"'"'chat_session'"'"', count(*)::text FROM chat_session;
+SELECT name, value FROM deployment_snapshot ORDER BY name;
+DROP TABLE deployment_snapshot;
+SQL
+    ' >"$output_path"
+}
 
 echo "Starting PostgreSQL and Redis"
 
@@ -392,7 +432,13 @@ docker compose stop \
   fastapi \
   ai-worker
 
-if docker compose ps --services --status running | grep -Eq '^(fastapi|ai-worker)$'; then
+if ! running_application_services="$(docker compose ps --services --status running)"; then
+  echo "Could not confirm application service stop state."
+  docker compose ps fastapi ai-worker || true
+  exit 1
+fi
+
+if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker)$'; then
   echo "Application services are still running after stop request."
   docker compose ps fastapi ai-worker
   exit 1
@@ -411,39 +457,13 @@ docker compose exec -T postgres \
       -f /docker-entrypoint-initdb.d/configure-app-role.sql
   '
 
-echo "Creating pre-migration backup and row count snapshot"
+echo "Creating pre-migration backup and schema snapshot"
 
 docker compose exec -T postgres \
   sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
   >"$evidence_dir/pre-migration.dump"
 
-docker compose exec -T postgres \
-  sh -lc '
-    psql \
-      -v ON_ERROR_STOP=1 \
-      -q \
-      -At \
-      -F $'"'"'\t'"'"' \
-      -U "$POSTGRES_USER" \
-      -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
-CREATE TEMP TABLE deployment_row_counts(name text, row_count bigint);
-INSERT INTO deployment_row_counts SELECT '"'"'user'"'"', count(*) FROM "user";
-DO $$
-BEGIN
-  IF to_regclass('"'"'public.profile'"'"') IS NULL THEN
-    INSERT INTO deployment_row_counts VALUES ('"'"'profile'"'"', NULL);
-  ELSE
-    EXECUTE '"'"'INSERT INTO deployment_row_counts SELECT '"'"''"'"'profile'"'"''"'"', count(*) FROM profile';
-  END IF;
-END $$;
-INSERT INTO deployment_row_counts SELECT '"'"'medical_document'"'"', count(*) FROM medical_document;
-INSERT INTO deployment_row_counts SELECT '"'"'prescription'"'"', count(*) FROM prescription;
-INSERT INTO deployment_row_counts SELECT '"'"'guide'"'"', count(*) FROM guide;
-INSERT INTO deployment_row_counts SELECT '"'"'chat_session'"'"', count(*) FROM chat_session;
-SELECT name, row_count FROM deployment_row_counts ORDER BY name;
-DROP TABLE deployment_row_counts;
-SQL
-  ' >"$evidence_dir/pre-migration-row-count.tsv"
+write_deployment_db_snapshot "$evidence_dir/pre-migration-snapshot.tsv"
 
 echo "Running Alembic migration"
 
@@ -463,6 +483,7 @@ if [ "$migration_exit_code" -ne 0 ]; then
 fi
 
 echo "Alembic migration completed successfully."
+write_deployment_db_snapshot "$evidence_dir/post-migration-snapshot.tsv"
 echo "Validating profile migration integrity"
 
 profile_validation_output="$(
