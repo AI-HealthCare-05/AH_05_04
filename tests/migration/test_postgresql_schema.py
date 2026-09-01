@@ -160,10 +160,13 @@ async def insert_ocr_parent_chain(
     return user_id, document_id, ocr_job_id
 
 
-async def _insert_legacy_ocr_data() -> tuple[str, str, str]:
+async def _insert_legacy_profile_graph_data() -> tuple[str, str, str, str, str, str]:
     user_id = str(uuid4())
     document_id = str(uuid4())
     ocr_job_id = str(uuid4())
+    prescription_id = str(uuid4())
+    guide_id = str(uuid4())
+    chat_session_id = str(uuid4())
     engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
 
     try:
@@ -247,10 +250,77 @@ async def _insert_legacy_ocr_data() -> tuple[str, str, str]:
                     "document_id": document_id,
                 },
             )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO prescription (
+                        id,
+                        document_id,
+                        source_ocr_job_id,
+                        prescribed_date,
+                        prescription_status,
+                        confirmed_at
+                    )
+                    VALUES (
+                        :id,
+                        :document_id,
+                        :source_ocr_job_id,
+                        DATE '2026-08-31',
+                        'CONFIRMED',
+                        now()
+                    )
+                    """
+                ),
+                {
+                    "id": prescription_id,
+                    "document_id": document_id,
+                    "source_ocr_job_id": ocr_job_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO guide (
+                        id,
+                        prescription_id,
+                        generation_status
+                    )
+                    VALUES (
+                        :id,
+                        :prescription_id,
+                        'PENDING'
+                    )
+                    """
+                ),
+                {
+                    "id": guide_id,
+                    "prescription_id": prescription_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO chat_session (
+                        id,
+                        prescription_id,
+                        session_status
+                    )
+                    VALUES (
+                        :id,
+                        :prescription_id,
+                        'ACTIVE'
+                    )
+                    """
+                ),
+                {
+                    "id": chat_session_id,
+                    "prescription_id": prescription_id,
+                },
+            )
     finally:
         await engine.dispose()
 
-    return user_id, document_id, ocr_job_id
+    return user_id, document_id, ocr_job_id, prescription_id, guide_id, chat_session_id
 
 
 async def _fetch_head_ocr_owner_chain(ocr_job_id: str) -> dict[str, object]:
@@ -275,6 +345,60 @@ async def _fetch_head_ocr_owner_chain(ocr_job_id: str) -> dict[str, object]:
                     """
                 ),
                 {"ocr_job_id": ocr_job_id},
+            )
+            return dict(result.mappings().one())
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_head_profile_graph(
+    *,
+    ocr_job_id: str,
+    prescription_id: str,
+    guide_id: str,
+    chat_session_id: str,
+) -> dict[str, object]:
+    engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT
+                        ocr_job.id AS ocr_job_id,
+                        medical_document.id AS document_id,
+                        medical_document.uploaded_by,
+                        medical_document.profile_id AS document_profile_id,
+                        prescription.id AS prescription_id,
+                        prescription.profile_id AS prescription_profile_id,
+                        guide.id AS guide_id,
+                        guide.profile_id AS guide_profile_id,
+                        chat_session.id AS chat_session_id,
+                        chat_session.profile_id AS chat_session_profile_id,
+                        profile.user_id AS profile_user_id
+                    FROM ocr_job
+                    JOIN medical_document
+                      ON medical_document.id = ocr_job.document_id
+                    JOIN profile
+                      ON profile.id = medical_document.profile_id
+                    JOIN prescription
+                      ON prescription.document_id = medical_document.id
+                    JOIN guide
+                      ON guide.prescription_id = prescription.id
+                    JOIN chat_session
+                      ON chat_session.prescription_id = prescription.id
+                    WHERE ocr_job.id = :ocr_job_id
+                      AND prescription.id = :prescription_id
+                      AND guide.id = :guide_id
+                      AND chat_session.id = :chat_session_id
+                    """
+                ),
+                {
+                    "ocr_job_id": ocr_job_id,
+                    "prescription_id": prescription_id,
+                    "guide_id": guide_id,
+                    "chat_session_id": chat_session_id,
+                },
             )
             return dict(result.mappings().one())
     finally:
@@ -387,7 +511,7 @@ async def _fetch_profile_integrity_gap_counts() -> dict[str, int]:
                     """
                 )
             )
-            return {str(row.name): int(row.count) for row in result}
+            return {str(row._mapping["name"]): int(row._mapping["count"]) for row in result}
     finally:
         await engine.dispose()
 
@@ -397,10 +521,16 @@ async def _cleanup_profile_roundtrip_data(
     user_id: str,
     document_id: str,
     ocr_job_id: str,
+    prescription_id: str,
+    guide_id: str,
+    chat_session_id: str,
 ) -> None:
     engine = create_async_engine(create_alembic_database_url(), poolclass=NullPool)
     try:
         async with engine.begin() as connection:
+            await connection.execute(text("DELETE FROM chat_session WHERE id = :id"), {"id": chat_session_id})
+            await connection.execute(text("DELETE FROM guide WHERE id = :id"), {"id": guide_id})
+            await connection.execute(text("DELETE FROM prescription WHERE id = :id"), {"id": prescription_id})
             await connection.execute(text("DELETE FROM ocr_job WHERE id = :id"), {"id": ocr_job_id})
             await connection.execute(text("DELETE FROM medical_document WHERE id = :id"), {"id": document_id})
             await connection.execute(text("DELETE FROM profile WHERE user_id = :user_id"), {"user_id": user_id})
@@ -409,25 +539,43 @@ async def _cleanup_profile_roundtrip_data(
         await engine.dispose()
 
 
-def test_profile_migration_preserves_existing_ocr_data_and_roundtrips() -> None:
-    """기존 OCR 데이터가 PROFILE 전환과 downgrade/upgrade 왕복 후에도 원 소유자에 연결되는지 검증합니다."""
+def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() -> None:
+    """기존 의료문서->OCR->처방->가이드/채팅 데이터가 PROFILE 전환 후 원 소유자에 연결되는지 검증합니다."""
     alembic_config = create_alembic_config()
     user_id = ""
     document_id = ""
     ocr_job_id = ""
+    prescription_id = ""
+    guide_id = ""
+    chat_session_id = ""
 
     try:
         command.downgrade(alembic_config, PRE_PROFILE_REVISION)
-        user_id, document_id, ocr_job_id = asyncio.run(_insert_legacy_ocr_data())
+        user_id, document_id, ocr_job_id, prescription_id, guide_id, chat_session_id = asyncio.run(
+            _insert_legacy_profile_graph_data()
+        )
 
         command.upgrade(alembic_config, "head")
-        head_chain = asyncio.run(_fetch_head_ocr_owner_chain(ocr_job_id))
+        head_chain = asyncio.run(
+            _fetch_head_profile_graph(
+                ocr_job_id=ocr_job_id,
+                prescription_id=prescription_id,
+                guide_id=guide_id,
+                chat_session_id=chat_session_id,
+            )
+        )
         gap_counts = asyncio.run(_fetch_profile_integrity_gap_counts())
 
         assert head_chain["ocr_job_id"] == ocr_job_id
         assert head_chain["document_id"] == document_id
         assert head_chain["uploaded_by"] == user_id
-        assert head_chain["profile_id"] is not None
+        assert head_chain["prescription_id"] == prescription_id
+        assert head_chain["guide_id"] == guide_id
+        assert head_chain["chat_session_id"] == chat_session_id
+        assert head_chain["document_profile_id"] is not None
+        assert head_chain["prescription_profile_id"] == head_chain["document_profile_id"]
+        assert head_chain["guide_profile_id"] == head_chain["document_profile_id"]
+        assert head_chain["chat_session_profile_id"] == head_chain["document_profile_id"]
         assert head_chain["profile_user_id"] == user_id
         assert set(gap_counts.values()) == {0}
 
@@ -444,23 +592,39 @@ def test_profile_migration_preserves_existing_ocr_data_and_roundtrips() -> None:
         assert expand_chain["profile_user_id"] == user_id
 
         command.upgrade(alembic_config, "head")
-        final_chain = asyncio.run(_fetch_head_ocr_owner_chain(ocr_job_id))
+        final_chain = asyncio.run(
+            _fetch_head_profile_graph(
+                ocr_job_id=ocr_job_id,
+                prescription_id=prescription_id,
+                guide_id=guide_id,
+                chat_session_id=chat_session_id,
+            )
+        )
         final_gap_counts = asyncio.run(_fetch_profile_integrity_gap_counts())
 
         assert final_chain["ocr_job_id"] == ocr_job_id
         assert final_chain["document_id"] == document_id
         assert final_chain["uploaded_by"] == user_id
-        assert final_chain["profile_id"] == head_chain["profile_id"]
+        assert final_chain["prescription_id"] == prescription_id
+        assert final_chain["guide_id"] == guide_id
+        assert final_chain["chat_session_id"] == chat_session_id
+        assert final_chain["document_profile_id"] == head_chain["document_profile_id"]
+        assert final_chain["prescription_profile_id"] == head_chain["document_profile_id"]
+        assert final_chain["guide_profile_id"] == head_chain["document_profile_id"]
+        assert final_chain["chat_session_profile_id"] == head_chain["document_profile_id"]
         assert final_chain["profile_user_id"] == user_id
         assert set(final_gap_counts.values()) == {0}
     finally:
         command.upgrade(alembic_config, "head")
-        if user_id and document_id and ocr_job_id:
+        if user_id and document_id and ocr_job_id and prescription_id and guide_id and chat_session_id:
             asyncio.run(
                 _cleanup_profile_roundtrip_data(
                     user_id=user_id,
                     document_id=document_id,
                     ocr_job_id=ocr_job_id,
+                    prescription_id=prescription_id,
+                    guide_id=guide_id,
+                    chat_session_id=chat_session_id,
                 )
             )
 

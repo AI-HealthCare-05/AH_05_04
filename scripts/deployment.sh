@@ -373,6 +373,15 @@ docker compose up \
   postgres \
   redis
 
+echo "Stopping application services before schema migration"
+
+# Schema migration 전에 기존 애플리케이션을 먼저 멈춰 구버전 코드가 변경 중인
+# DB schema를 읽거나 쓰는 상황을 방지합니다.
+docker compose stop \
+  -t 60 \
+  fastapi \
+  ai-worker || true
+
 echo "Configuring restricted database roles"
 
 # 역할 생성과 권한 설정은 Bootstrap/admin 계정으로만 실행합니다.

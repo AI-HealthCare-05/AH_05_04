@@ -108,6 +108,7 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N 
 
 - Production Compose는 `postgres → migrate → fastapi/ai-worker` 의존 순서를 사용합니다.
 - 배포 스크립트는 PostgreSQL과 Redis의 health check 통과를 기다린 뒤 제한된 애플리케이션 DB 계정을 구성합니다.
+- 기존 컬럼 rename, `NOT NULL`, FK 추가처럼 구버전 애플리케이션과 호환되지 않는 schema migration은 기존 `fastapi`와 `ai-worker`를 먼저 멈추고 처리 중인 요청이 종료된 뒤 실행합니다. 이때 영향받는 애플리케이션 이미지는 같은 배포 단위에 포함해 migration 후 새 코드로 재시작하며, 구버전 이미지를 다시 띄우는 배포는 허용하지 않습니다.
 - PostgreSQL 초기화·Alembic migration 계정과 FastAPI·AI Worker 실행 계정을 분리합니다. FastAPI와 AI Worker에는 테이블 조회·입력·수정·삭제 및 필요한 sequence 사용 권한만 부여하고 schema 객체 생성 권한은 부여하지 않습니다.
 - Alembic migration이 종료 코드 0으로 완료된 경우에만 선택한 FastAPI 또는 AI Worker 서비스를 시작합니다.
 - Migration이 실패하면 신규 애플리케이션 컨테이너 실행을 중단하고 `migrate` 서비스 로그를 확인합니다.

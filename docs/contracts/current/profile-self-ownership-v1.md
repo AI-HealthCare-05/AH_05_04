@@ -5,12 +5,13 @@
 | 문서 상태 | Current — #117 구현 PR 기준 |
 | 구현 상태 | #117 병합 시 `develop` 실행 계약 |
 | 관련 Issue | #75, #117 |
+| 승인 기록 | [`PD-117`](../../governance/decisions/2026-09-01-profile-self-ownership-current.md) |
 | 적용 범위 | Backend/API, Database, 소유권 확인, Post-MVP-1 Track A 선행 조건 |
 | 작성일 | 2026-08-31 |
 
 이 문서는 Post-MVP-1 Track A migration을 시작하기 전에 본인 단일 `PROFILE`과 `profile_id` 기반 소유권 기준을 현재 Backend 실행 계약으로 고정한다.
 
-#117 구현 PR은 `profile` 테이블, 기존 사용자 SELF profile backfill, 리소스 `profile_id` backfill, read cutover, 부모·자식 composite FK와 교차 사용자 테스트를 함께 포함한다. 따라서 이 문서는 #117 병합 시 `docs/contracts/current/`의 실행 계약으로 해석한다.
+#117 구현 PR은 `profile` 테이블, 기존 사용자 SELF profile backfill, 리소스 `profile_id` backfill, read cutover, 부모·자식 composite FK와 교차 사용자 테스트를 함께 포함한다. [`PD-117`](../../governance/decisions/2026-09-01-profile-self-ownership-current.md)에 따라 이 문서는 #117 병합 시 `docs/contracts/current/`의 실행 계약으로 해석한다.
 
 ## 1. 목적
 
@@ -169,7 +170,7 @@ SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 �
 
 ## 8. Rollback 기준
 
-#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
+#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. DB schema 변경 전에 기존 `fastapi`와 `ai-worker`를 멈추고, 처리 중인 요청이 종료된 뒤 migration을 실행한다. 영향받는 애플리케이션 이미지는 migration 후 새 코드로 재시작하며, 구버전 이미지를 다시 띄우지 않는다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
 
 - `profile_id`가 nullable인 Expand 단계에서는 코드 rollback이 가능해야 한다.
 - Contract 단계 전에는 기존 `user_id` 또는 부모 chain 기반 read 경로로 되돌릴 수 있어야 한다.
