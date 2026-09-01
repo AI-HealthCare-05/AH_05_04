@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from app.core import config
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.ocr import ExecuteOcrRequest, ExtractedFieldData, OcrJobData, OcrJobStatus
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
@@ -14,6 +15,8 @@ from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.ocr_engine import (
     NotConfiguredOcrEngine,
+    OcrDeadline,
+    OcrDeadlineExceededError,
     OcrEngine,
     OcrProcessingError,
     OcrProviderConnectionError,
@@ -111,11 +114,34 @@ class OcrService:
         job = await self._ocr_repo.create_job(document=document)
         job = await self._ocr_repo.mark_processing(job, started_at=datetime.now(UTC))
 
+        # 요청 전체 예산은 wall clock 변경에 영향받지 않도록 monotonic으로 계산합니다.
+        # 응답 생성과 실패 상태 저장 여유를 제외한 시점이 Provider 경로의 hard stop입니다.
+        deadline = OcrDeadline.start(
+            total_seconds=config.OCR_REQUEST_DEADLINE_SECONDS,
+            response_margin_seconds=config.OCR_RESPONSE_MARGIN_SECONDS,
+        )
+
         try:
             result = await self._engine.recognize(
                 object_key=document.object_key,
                 file_mime_type=document.file_mime_type,
+                deadline=deadline,
             )
+        except OcrDeadlineExceededError:
+            # 남은 예산이 없어 Provider를 호출하지 않은 경우입니다.
+            # OcrProcessingError의 하위 클래스이므로 반드시 그보다 앞에서 잡습니다.
+            await self._ocr_repo.mark_failed(
+                job,
+                error_code="OCR_PROVIDER_TIMEOUT",
+                error_message="OCR 처리 시간이 초과되었습니다.",
+                completed_at=datetime.now(UTC),
+            )
+            raise ApiError(
+                status_code=503,
+                code="OCR_PROVIDER_TIMEOUT",
+                message="OCR 서비스 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
+                details=[ErrorDetail(field="ocr", reason="DEADLINE_EXCEEDED")],
+            ) from None
         except OcrProviderTimeoutError:
             await self._ocr_repo.mark_failed(
                 job,
@@ -165,7 +191,6 @@ class OcrService:
                 message="OCR 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
                 details=[ErrorDetail(field="provider", reason="PROVIDER_UNAVAILABLE")],
             ) from None
-
         except OcrProcessingError:
             # Provider/OCR 예외 원문에는 민감한 OCR 응답이 포함될 수 있으므로
             # API 예외 체인과 로그에 원문을 남기지 않습니다.

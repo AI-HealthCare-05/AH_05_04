@@ -1,3 +1,4 @@
+import math
 import os
 import uuid
 import zoneinfo
@@ -116,6 +117,16 @@ class Config(BaseSettings):
     # 이 값들은 OCR_STRUCTURE_LLM_ENABLED=true일 때만 사용됩니다.
     OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"
     OCR_STRUCTURE_TIMEOUT_SECONDS: float = 30.0
+    # OCR 동기 요청 전체 deadline입니다. 개별 Provider timeout의 상한이 아니라
+    # 요청 시작부터 응답 생성까지의 monotonic 예산입니다.
+    OCR_REQUEST_DEADLINE_SECONDS: float = 60.0
+
+    # 파일 읽기·구조화·필드 저장 등 Provider 호출 밖 로컬 처리 예약입니다.
+    # 기동 검증에만 사용하고 런타임 timeout으로는 쓰지 않습니다.
+    OCR_LOCAL_PROCESSING_RESERVE_SECONDS: float = 3.0
+
+    # 실패 상태 저장과 응답 생성에 남겨두는 여유입니다.
+    OCR_RESPONSE_MARGIN_SECONDS: float = 5.0
 
     @model_validator(mode="after")
     def validate_chat_history_environment(self) -> "Config":
@@ -138,3 +149,33 @@ class Config(BaseSettings):
 
         # Alembic은 문자열 URL을 사용하므로 실제 연결 문자열로 렌더링합니다.
         return url.render_as_string(hide_password=False)
+
+    @model_validator(mode="after")
+    def validate_ocr_timeout_budget(self) -> "Config":
+        for name, value in (
+            ("OCR_REQUEST_DEADLINE_SECONDS", self.OCR_REQUEST_DEADLINE_SECONDS),
+            ("OCR_LOCAL_PROCESSING_RESERVE_SECONDS", self.OCR_LOCAL_PROCESSING_RESERVE_SECONDS),
+            ("OCR_RESPONSE_MARGIN_SECONDS", self.OCR_RESPONSE_MARGIN_SECONDS),
+            ("CLOVA_OCR_TIMEOUT_SECONDS", self.CLOVA_OCR_TIMEOUT_SECONDS),
+            ("OCR_STRUCTURE_TIMEOUT_SECONDS", self.OCR_STRUCTURE_TIMEOUT_SECONDS),
+        ):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be a positive finite number")
+
+        # Provider 개별 상한의 합이 전체 deadline을 채우면 로컬 처리 예산이 0이 되므로,
+        # 로컬 예약과 응답 여유를 포함해 비교합니다.
+        structure_timeout = self.OCR_STRUCTURE_TIMEOUT_SECONDS if self.OCR_STRUCTURE_LLM_ENABLED else 0.0
+        required = (
+            self.CLOVA_OCR_TIMEOUT_SECONDS
+            + structure_timeout
+            + self.OCR_RESPONSE_MARGIN_SECONDS
+            + self.OCR_LOCAL_PROCESSING_RESERVE_SECONDS
+        )
+
+        if required > self.OCR_REQUEST_DEADLINE_SECONDS:
+            raise ValueError(
+                "OCR timeout budget exceeds OCR_REQUEST_DEADLINE_SECONDS: "
+                f"required={required}, deadline={self.OCR_REQUEST_DEADLINE_SECONDS}"
+            )
+
+        return self
