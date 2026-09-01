@@ -310,6 +310,66 @@ def _add_authoring_role_conditions(schema_id: str, document: dict[str, JsonValue
         _append_containing_approval_roles(definition, roles)
 
 
+def _add_dataset_source_provenance_condition(document: dict[str, JsonValue]) -> None:
+    all_of = document.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("dataset manifest schema allOf must be an array")
+    all_of.append(
+        {
+            "oneOf": [
+                {
+                    "properties": {
+                        "fixture_git_commit_sha": {"not": {"type": "null"}},
+                        "protected_artifact_receipt_ref": {"type": "null"},
+                    },
+                    "required": ["fixture_git_commit_sha", "protected_artifact_receipt_ref"],
+                },
+                {
+                    "properties": {
+                        "fixture_git_commit_sha": {"type": "null"},
+                        "protected_artifact_receipt_ref": {"not": {"type": "null"}},
+                    },
+                    "required": ["fixture_git_commit_sha", "protected_artifact_receipt_ref"],
+                },
+            ]
+        }
+    )
+
+
+def _add_evidence_target_condition(document: dict[str, JsonValue]) -> None:
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        raise TypeError("evidence mapping schema definitions must be an object")
+    entry = definitions.get("EvidenceMappingEntry")
+    if not isinstance(entry, dict):
+        raise TypeError("EvidenceMappingEntry schema must be an object")
+    all_of = entry.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("EvidenceMappingEntry allOf must be an array")
+    all_of.append(
+        {
+            "oneOf": [
+                {
+                    "properties": {
+                        "target_kind": {"const": "RUNTIME_TYPED_REF"},
+                        "runtime_typed_ref": {"not": {"type": "null"}},
+                        "fixture_record_ref": {"type": "null"},
+                    },
+                    "required": ["target_kind", "runtime_typed_ref", "fixture_record_ref"],
+                },
+                {
+                    "properties": {
+                        "target_kind": {"const": "FIXTURE_RECORD"},
+                        "runtime_typed_ref": {"type": "null"},
+                        "fixture_record_ref": {"not": {"type": "null"}},
+                    },
+                    "required": ["target_kind", "runtime_typed_ref", "fixture_record_ref"],
+                },
+            ]
+        }
+    )
+
+
 def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     schema_id = entry.schema_id
     document = _model_schema(entry.source)
@@ -323,6 +383,10 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     _add_execution_decision_conditions(document)
     _add_review_provenance_conditions(document)
     _add_authoring_role_conditions(schema_id, document)
+    if schema_id == "rag-eval.dataset-manifest":
+        _add_dataset_source_provenance_condition(document)
+    if schema_id == "rag-eval.evidence-mapping-manifest":
+        _add_evidence_target_condition(document)
     if schema_id == "rag-eval.run":
         _add_run_conditions(document)
     if schema_id == "rag-eval.validation-receipt":
