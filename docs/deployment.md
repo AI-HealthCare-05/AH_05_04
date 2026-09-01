@@ -108,15 +108,17 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N 
 
 - Production Compose는 `postgres → migrate → fastapi/ai-worker` 의존 순서를 사용합니다.
 - 배포 스크립트는 PostgreSQL과 Redis의 health check 통과를 기다린 뒤 제한된 애플리케이션 DB 계정을 구성합니다.
-- 기존 컬럼 rename, `NOT NULL`, FK 추가처럼 구버전 애플리케이션과 호환되지 않는 schema migration은 기존 `fastapi`와 `ai-worker`를 먼저 멈추고 처리 중인 요청이 종료된 뒤 실행합니다. 이때 영향받는 애플리케이션 이미지는 같은 배포 단위에 포함해 migration 후 새 코드로 재시작하며, 구버전 이미지를 다시 띄우는 배포는 허용하지 않습니다.
+- 기존 컬럼 rename, `NOT NULL`, FK 추가처럼 구버전 애플리케이션과 호환되지 않는 schema migration은 기존 `fastapi`와 `ai-worker`를 먼저 멈추고 처리 중인 요청이 종료된 뒤 실행합니다. 서비스 중단에 실패하거나 중단 상태를 확인하지 못하면 migration을 실행하지 않습니다.
+- schema migration을 실행하는 배포에서는 `fastapi`와 `ai-worker` 이미지를 같은 배포 단위에 포함해 migration 후 새 코드로 재시작합니다. 둘 중 하나만 선택한 부분 배포와 구버전 이미지를 다시 띄우는 배포는 허용하지 않습니다.
+- 배포 스크립트는 migration 전 DB backup과 대상 테이블 row count snapshot을 `deployment-evidence/<timestamp>/`에 저장하고, migration 후 SELF profile 수, `profile_id IS NULL`, 부모·자식 `profile_id` 불일치 검증이 통과한 경우에만 애플리케이션 서비스를 재시작합니다.
 - PostgreSQL 초기화·Alembic migration 계정과 FastAPI·AI Worker 실행 계정을 분리합니다. FastAPI와 AI Worker에는 테이블 조회·입력·수정·삭제 및 필요한 sequence 사용 권한만 부여하고 schema 객체 생성 권한은 부여하지 않습니다.
-- Alembic migration이 종료 코드 0으로 완료된 경우에만 선택한 FastAPI 또는 AI Worker 서비스를 시작합니다.
+- Alembic migration과 migration 후 profile 무결성 검증이 모두 완료된 경우에만 FastAPI와 AI Worker 서비스를 시작합니다.
 - Migration이 실패하면 신규 애플리케이션 컨테이너 실행을 중단하고 `migrate` 서비스 로그를 확인합니다.
 - Production schema 변경은 forward-fix를 원칙으로 하며 자동 downgrade를 실행하지 않습니다.
 - Revision `529b2a36b677`은 `MEDICATION_STRENGTH`, `medication.strength_text`, `ocr_job.prompt_version` 데이터가 하나라도 존재하면 DDL 실행 전에 downgrade를 중단합니다.
 - 비운영 환경에서 downgrade가 필요한 경우에만 백업과 영향 확인을 완료하고, 승인된 절차로 신규 필드 데이터를 제거하거나 별도로 보존한 후 실행합니다.
 - Production에서 migration 문제가 발생하면 신규 애플리케이션 배포를 중단하고 기존 호환 버전을 유지한 상태에서 후속 migration으로 forward-fix합니다.
-- `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 Production 배포 대상에서 제외합니다.
+- `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 비동기 작업 처리 서비스로 운영하지 않지만, schema migration 배포에서는 DB schema 호환성을 위해 FastAPI와 같은 배포 단위에서 새 이미지로 재시작합니다.
 - Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS 및 CORS 실제 값을 함께 확인합니다.
 
 ### PostgreSQL volume 초기화 전제

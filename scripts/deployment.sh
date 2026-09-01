@@ -130,6 +130,7 @@ fi
 echo "${COLOR_BLUE}빌드하고 배포할 이미지를 선택하세요.${COLOR_NC}"
 echo "1) fastapi"
 echo "2) ai_worker"
+echo "schema migration을 실행하는 배포에서는 fastapi와 ai_worker를 모두 선택해야 합니다."
 read -r -p "선택 (복수 선택 가능, 예: 1 2): " selections
 echo ""
 
@@ -191,6 +192,12 @@ for choice in $selections; do
       ;;
   esac
 done
+
+if [[ ! " ${DEPLOY_SERVICES[*]} " =~ " fastapi " ]] ||
+  [[ ! " ${DEPLOY_SERVICES[*]} " =~ " ai-worker " ]]; then
+  echo "${COLOR_RED}schema migration 배포는 fastapi와 ai_worker를 같은 배포 단위로 포함해야 합니다.${COLOR_NC}"
+  exit 1
+fi
 
 echo "${COLOR_GREEN}선택한 이미지의 build와 push가 완료되었습니다.${COLOR_NC}"
 echo "${COLOR_BLUE}배포 대상 서비스: ${DEPLOY_SERVICES[*]}${COLOR_NC}"
@@ -362,6 +369,9 @@ if [ -z "${DEPLOY_SERVICES// }" ]; then
 fi
 
 read -r -a deploy_services <<<"$DEPLOY_SERVICES"
+deployment_id="$(date -u +%Y%m%dT%H%M%SZ)"
+evidence_dir="deployment-evidence/$deployment_id"
+mkdir -p "$evidence_dir"
 
 echo "Starting PostgreSQL and Redis"
 
@@ -380,7 +390,13 @@ echo "Stopping application services before schema migration"
 docker compose stop \
   -t 60 \
   fastapi \
-  ai-worker || true
+  ai-worker
+
+if docker compose ps --services --status running | grep -Eq '^(fastapi|ai-worker)$'; then
+  echo "Application services are still running after stop request."
+  docker compose ps fastapi ai-worker
+  exit 1
+fi
 
 echo "Configuring restricted database roles"
 
@@ -394,6 +410,39 @@ docker compose exec -T postgres \
       -d "$POSTGRES_DB" \
       -f /docker-entrypoint-initdb.d/configure-app-role.sql
   '
+
+echo "Creating pre-migration backup and row count snapshot"
+
+docker compose exec -T postgres \
+  sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  >"$evidence_dir/pre-migration.dump"
+
+docker compose exec -T postgres \
+  sh -lc '
+    psql \
+      -v ON_ERROR_STOP=1 \
+      -At \
+      -F $'"'"'\t'"'"' \
+      -U "$POSTGRES_USER" \
+      -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
+CREATE TEMP TABLE deployment_row_counts(name text, row_count bigint);
+INSERT INTO deployment_row_counts SELECT '"'"'user'"'"', count(*) FROM "user";
+DO $$
+BEGIN
+  IF to_regclass('"'"'public.profile'"'"') IS NULL THEN
+    INSERT INTO deployment_row_counts VALUES ('"'"'profile'"'"', NULL);
+  ELSE
+    EXECUTE '"'"'INSERT INTO deployment_row_counts SELECT '"'"''"'"'profile'"'"''"'"', count(*) FROM profile';
+  END IF;
+END $$;
+INSERT INTO deployment_row_counts SELECT '"'"'medical_document'"'"', count(*) FROM medical_document;
+INSERT INTO deployment_row_counts SELECT '"'"'prescription'"'"', count(*) FROM prescription;
+INSERT INTO deployment_row_counts SELECT '"'"'guide'"'"', count(*) FROM guide;
+INSERT INTO deployment_row_counts SELECT '"'"'chat_session'"'"', count(*) FROM chat_session;
+SELECT name, row_count FROM deployment_row_counts ORDER BY name;
+DROP TABLE deployment_row_counts;
+SQL
+  ' >"$evidence_dir/pre-migration-row-count.tsv"
 
 echo "Running Alembic migration"
 
@@ -413,6 +462,60 @@ if [ "$migration_exit_code" -ne 0 ]; then
 fi
 
 echo "Alembic migration completed successfully."
+echo "Validating profile migration integrity"
+
+profile_validation_output="$(
+  docker compose exec -T postgres \
+    sh -lc '
+      psql \
+        -v ON_ERROR_STOP=1 \
+        -At \
+        -F $'"'"'\t'"'"' \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
+SELECT '"'"'user'"'"', count(*) FROM "user";
+SELECT '"'"'self_profile'"'"', count(*) FROM profile WHERE profile_type = '"'"'SELF'"'"';
+SELECT '"'"'medical_document_profile_null'"'"', count(*) FROM medical_document WHERE profile_id IS NULL;
+SELECT '"'"'prescription_profile_null'"'"', count(*) FROM prescription WHERE profile_id IS NULL;
+SELECT '"'"'guide_profile_null'"'"', count(*) FROM guide WHERE profile_id IS NULL;
+SELECT '"'"'chat_session_profile_null'"'"', count(*) FROM chat_session WHERE profile_id IS NULL;
+SELECT '"'"'prescription_profile_mismatch'"'"', count(*)
+FROM prescription
+JOIN medical_document ON medical_document.id = prescription.document_id
+WHERE prescription.profile_id <> medical_document.profile_id;
+SELECT '"'"'guide_profile_mismatch'"'"', count(*)
+FROM guide
+JOIN prescription ON prescription.id = guide.prescription_id
+WHERE guide.profile_id <> prescription.profile_id;
+SELECT '"'"'chat_session_profile_mismatch'"'"', count(*)
+FROM chat_session
+JOIN prescription ON prescription.id = chat_session.prescription_id
+WHERE chat_session.profile_id <> prescription.profile_id;
+SQL
+    '
+)"
+
+printf '%s\n' "$profile_validation_output" >"$evidence_dir/post-migration-profile-validation.tsv"
+
+user_count="$(printf '%s\n' "$profile_validation_output" | awk -F '\t' '$1 == "user" {print $2}')"
+self_profile_count="$(printf '%s\n' "$profile_validation_output" | awk -F '\t' '$1 == "self_profile" {print $2}')"
+
+if [ "$user_count" != "$self_profile_count" ]; then
+  echo "Profile migration validation failed: user count and SELF profile count differ."
+  cat "$evidence_dir/post-migration-profile-validation.tsv"
+  exit 1
+fi
+
+if ! printf '%s\n' "$profile_validation_output" |
+  awk -F '\t' '
+    $1 != "user" && $1 != "self_profile" && $2 != 0 { failed = 1 }
+    END { exit failed }
+  '; then
+  echo "Profile migration validation failed: null or mismatch rows remain."
+  cat "$evidence_dir/post-migration-profile-validation.tsv"
+  exit 1
+fi
+
 echo "Deploying services: ${deploy_services[*]}"
 
 # --no-deps를 사용하지 않습니다.

@@ -131,6 +131,8 @@ PROFILE 전환은 Track A의 `AI_JOB`·Outbox Expand보다 먼저 수행한다.
 
 운영 DB에 적용하기 전에는 복구와 원인 추적을 위해 migration 전 backup과 적용 전 row count snapshot을 남긴다. 최소 기록 대상은 `user`, `profile`, `medical_document`, `prescription`, `guide`, `chat_session`이다.
 
+아래 표는 rolling deploy나 장기 migration으로 분리할 때의 논리적 전환 순서다. #117 구현 PR의 실제 운영 적용은 이 단계를 하나의 중단 배포 안에서 수행하며, 절차는 `서비스 중단 → backup·row count snapshot → migration·backfill·검증 → 호환 코드 재시작` 순서로 고정한다.
+
 | 단계 | 내용 | 검증 |
 | --- | --- | --- |
 | 1. Expand | `profile` 테이블 생성, 기존 리소스 테이블에 nullable `profile_id` FK 추가 | migration 적용 가능 여부 |
@@ -170,7 +172,7 @@ SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 �
 
 ## 8. Rollback 기준
 
-#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. DB schema 변경 전에 기존 `fastapi`와 `ai-worker`를 멈추고, 처리 중인 요청이 종료된 뒤 migration을 실행한다. 영향받는 애플리케이션 이미지는 migration 후 새 코드로 재시작하며, 구버전 이미지를 다시 띄우지 않는다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
+#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. DB schema 변경 전에 기존 `fastapi`와 `ai-worker`를 멈추고, 처리 중인 요청이 종료된 뒤 migration을 실행한다. 서비스 중단에 실패하거나 중단 상태를 확인하지 못하면 migration을 실행하지 않는다. 영향받는 애플리케이션 이미지는 migration 후 새 코드로 함께 재시작하며, 구버전 이미지를 다시 띄우지 않는다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
 
 - `profile_id`가 nullable인 Expand 단계에서는 코드 rollback이 가능해야 한다.
 - Contract 단계 전에는 기존 `user_id` 또는 부모 chain 기반 read 경로로 되돌릴 수 있어야 한다.
