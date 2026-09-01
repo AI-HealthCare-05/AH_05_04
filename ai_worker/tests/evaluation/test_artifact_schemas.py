@@ -1,0 +1,414 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from ai_worker.tasks.evaluation.schemas.artifacts import (
+    CASE_RESULT_ADAPTER,
+    RESULT_ARTIFACT_MODELS,
+    ContentManifest,
+    FailureRecord,
+    GateResult,
+    MetricResults,
+    RagEvaluationRun,
+    ValidationReceipt,
+)
+
+EXPECTED_ARTIFACT_IDS = {
+    "rag-eval.run",
+    "rag-eval.case-result",
+    "rag-eval.metrics",
+    "rag-eval.suite-results",
+    "rag-eval.comparison",
+    "rag-eval.gate",
+    "rag-eval.failure",
+    "rag-eval.content-manifest",
+}
+RUN_ID = "123e4567-e89b-42d3-a456-426614174000"
+
+
+def _ref(resource_id: str) -> dict[str, object]:
+    return {
+        "resource_id": resource_id,
+        "resource_version": "1.0.0",
+        "resource_hash": "a" * 64,
+    }
+
+
+@pytest.fixture
+def valid_run() -> dict[str, Any]:
+    return {
+        "schema_id": "rag-eval.run",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "experiment_id": "experiment-001",
+        "variant_id": "candidate-001",
+        "experiment_type": "END_TO_END_RAG",
+        "task_types": ["END_TO_END_RAG", "SAFETY"],
+        "evaluation_profile_ref": _ref("profile.release"),
+        "comparison_policy_ref": _ref("comparison.release"),
+        "evaluation_policy_ref": _ref("policy.release"),
+        "artifact_schema_set_ref": _ref("schema-set.release"),
+        "dataset_code": "rag-foundation",
+        "dataset_version": "1.0.0",
+        "dataset_manifest_sha256": "b" * 64,
+        "resource_set_hash": "c" * 64,
+        "evidence_mapping_manifest_sha256": "d" * 64,
+        "critical_claim_rubric_ref": _ref("rubric.release"),
+        "fixture_git_commit_sha": "e" * 40,
+        "protected_artifact_receipt_ref": None,
+        "resolved_evaluation_config_hash": "f" * 64,
+        "upstream_contract_manifest_hash": "1" * 64,
+        "retrieval_variant_manifest_hash": "2" * 64,
+        "answer_variant_manifest_hash": "3" * 64,
+        "model_config_hash": "4" * 64,
+        "prompt_version": "prompt-v1",
+        "evaluated_partitions": ["HOLDOUT", "SAFETY_REGRESSION"],
+        "partition_manifest_hash": "5" * 64,
+        "environment": "LOCAL",
+        "runtime_eligible": True,
+        "candidate_bundle_id": "bundle-001",
+        "candidate_bundle_manifest_hash": "6" * 64,
+        "candidate_guard_decision_id": "guard-001",
+        "candidate_guard_decision": "PASS",
+        "required_case_guard_coverage_manifest_hash": "7" * 64,
+        "executed_by": {
+            "namespace": "github",
+            "actor_id": "rag-owner",
+            "display_name": "RAG owner",
+        },
+        "started_at": "2026-09-01T00:00:00Z",
+        "completed_at": "2026-09-01T00:01:00Z",
+        "execution_status": "COMPLETED",
+        "decision_status": "PASS",
+        "blocking_execution_statuses": [],
+        "result_content_manifest_hash": "8" * 64,
+    }
+
+
+def test_artifact_registry_contains_exactly_eight_ids() -> None:
+    assert set(RESULT_ARTIFACT_MODELS) == EXPECTED_ARTIFACT_IDS
+
+
+def test_incomplete_run_rejects_completion_fields(valid_run: dict[str, Any]) -> None:
+    valid_run.update(
+        execution_status="ERROR",
+        decision_status="FAIL",
+        result_content_manifest_hash="a" * 64,
+    )
+
+    with pytest.raises(ValidationError):
+        RagEvaluationRun.model_validate(valid_run)
+
+
+def test_runtime_eligible_run_requires_local_guard_bindings(valid_run: dict[str, Any]) -> None:
+    RagEvaluationRun.model_validate(valid_run)
+    for field in (
+        "candidate_bundle_id",
+        "candidate_bundle_manifest_hash",
+        "candidate_guard_decision_id",
+        "required_case_guard_coverage_manifest_hash",
+    ):
+        invalid = deepcopy(valid_run)
+        invalid[field] = None
+        with pytest.raises(ValidationError):
+            RagEvaluationRun.model_validate(invalid)
+
+    valid_run["environment"] = "CI"
+    with pytest.raises(ValidationError):
+        RagEvaluationRun.model_validate(valid_run)
+
+
+def _retrieval_case_result() -> dict[str, Any]:
+    return {
+        "schema_id": "rag-eval.case-result",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "case_id": "retrieval-001",
+        "dataset_code": "rag-foundation",
+        "dataset_version": "1.0.0",
+        "task_type": "RETRIEVAL",
+        "partition": "DEV",
+        "input_sha256": "a" * 64,
+        "execution_status": "COMPLETED",
+        "decision_status": "PASS",
+        "failure_codes": [],
+        "retrieved_evidence_ids": ["evidence-001"],
+        "selected_evidence_ids": ["evidence-001"],
+        "actual_claim_ids": None,
+        "actual_citation_evidence_ids": None,
+        "actual_rule_ids": None,
+        "actual_scope_codes": None,
+        "actual_response_level": None,
+        "actual_safety_disposition": None,
+        "actual_execution_status": None,
+        "actual_release_decision": None,
+        "actual_fallback_code": None,
+        "actual_provider_invocation": None,
+        "actual_retrieval_invocation": True,
+        "actual_publication_allowed": None,
+        "answer_sha256": None,
+        "latency_ms": 12,
+        "input_token_count": None,
+        "output_token_count": None,
+        "estimated_cost": None,
+    }
+
+
+def test_case_result_task_union_requires_explicit_retrieval_nullability() -> None:
+    payload = _retrieval_case_result()
+    result = CASE_RESULT_ADAPTER.validate_python(payload)
+    assert result.task_type.value == "RETRIEVAL"
+
+    payload["actual_claim_ids"] = []
+    with pytest.raises(ValidationError):
+        CASE_RESULT_ADAPTER.validate_python(payload)
+
+
+def test_case_result_rejects_passed_boolean() -> None:
+    payload = _retrieval_case_result()
+    payload["passed"] = True
+
+    with pytest.raises(ValidationError):
+        CASE_RESULT_ADAPTER.validate_python(payload)
+
+
+def _metric_payload() -> dict[str, Any]:
+    return {
+        "schema_id": "rag-eval.metrics",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "metrics": [
+            {
+                "metric_id": "citation-precision",
+                "metric_version": "1.0.0",
+                "partition": "HOLDOUT",
+                "slice_id": "ALL",
+                "required": True,
+                "execution_status": "COMPLETED",
+                "decision_status": "INCONCLUSIVE",
+                "sample_case_count": 3,
+                "sample_independent_group_count": 2,
+                "numerator": 0,
+                "denominator": 0,
+                "metric_value": None,
+                "unit_of_analysis": "CASE",
+                "estimator_id": "proportion",
+                "estimator_version": "1.0.0",
+                "independence_unit": "CASE",
+                "cluster_dimension": "question_template",
+                "ci_lower": None,
+                "ci_upper": None,
+                "ci_method_id": "wilson",
+                "ci_method_version": "1.0.0",
+                "ci_level": "0.95",
+                "ci_sidedness": "TWO_SIDED",
+                "threshold": "0.95",
+                "reason_code": "ZERO_DENOMINATOR",
+            }
+        ],
+    }
+
+
+def test_inconclusive_metric_requires_counts_denominator_and_reason() -> None:
+    MetricResults.model_validate(_metric_payload())
+    for field in ("sample_case_count", "sample_independent_group_count", "denominator", "reason_code"):
+        payload = _metric_payload()
+        payload["metrics"][0][field] = None
+        with pytest.raises(ValidationError):
+            MetricResults.model_validate(payload)
+
+
+def test_incomplete_metric_rejects_calculated_values() -> None:
+    payload = _metric_payload()
+    metric = payload["metrics"][0]
+    metric.update(execution_status="NOT_EVALUATED", decision_status=None)
+
+    with pytest.raises(ValidationError):
+        MetricResults.model_validate(payload)
+
+
+def _gate_payload() -> dict[str, Any]:
+    member = {
+        "member_type": "METRIC",
+        "member_id": "citation-precision",
+        "member_version": "1.0.0",
+        "member_hash": "b" * 64,
+        "execution_status": "COMPLETED",
+        "decision_status": "PASS",
+        "receipt_or_artifact_ref": _ref("metric-artifact"),
+    }
+    return {
+        "schema_id": "rag-eval.gate",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "evaluation_policy_ref": _ref("policy.release"),
+        "evaluation_profile_ref": _ref("profile.release"),
+        "comparison_policy_ref": _ref("comparison.release"),
+        "required_scope_manifest_hash": "a" * 64,
+        "required_metrics": [member],
+        "required_suites": [],
+        "required_contract_receipts": [],
+        "aggregate_execution_status": "COMPLETED",
+        "aggregate_decision_status": "PASS",
+        "blocking_execution_statuses": [],
+        "blocking_reason_codes": [],
+    }
+
+
+def test_gate_rejects_aggregate_decision_when_required_member_is_incomplete() -> None:
+    payload = _gate_payload()
+    payload["required_metrics"][0].update(execution_status="ERROR", decision_status=None)
+
+    with pytest.raises(ValidationError):
+        GateResult.model_validate(payload)
+
+
+def test_gate_blocking_statuses_are_derived_from_all_required_members() -> None:
+    payload = _gate_payload()
+    payload["required_metrics"][0].update(execution_status="ERROR", decision_status=None)
+    payload.update(
+        aggregate_execution_status="ERROR",
+        aggregate_decision_status=None,
+        blocking_execution_statuses=["ERROR"],
+    )
+    GateResult.model_validate(payload)
+
+    payload["blocking_execution_statuses"] = []
+    with pytest.raises(ValidationError):
+        GateResult.model_validate(payload)
+
+
+def test_gate_completed_decision_uses_fail_then_inconclusive_then_pass_precedence() -> None:
+    payload = _gate_payload()
+    failing_member = deepcopy(payload["required_metrics"][0])
+    failing_member.update(member_id="critical-failure-count", decision_status="FAIL")
+    payload["required_metrics"].append(failing_member)
+
+    with pytest.raises(ValidationError):
+        GateResult.model_validate(payload)
+
+    payload["aggregate_decision_status"] = "FAIL"
+    GateResult.model_validate(payload)
+
+
+def test_failure_summary_is_short_and_non_sensitive() -> None:
+    payload = {
+        "schema_id": "rag-eval.failure",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "case_id": "safety-001",
+        "failure_code": "SAFETY_SCOPE_MISMATCH",
+        "failure_stage": "ASSERTION",
+        "expected_summary": "Expected approved synthetic safety route",
+        "actual_summary": "Observed a different non-sensitive route code",
+        "root_cause_code": None,
+        "followup_issue_ref": None,
+        "created_at": "2026-09-01T00:01:00Z",
+    }
+    FailureRecord.model_validate(payload)
+
+    payload["actual_summary"] = "patient@example.com"
+    with pytest.raises((ValidationError, ValueError)):
+        FailureRecord.model_validate(payload)
+
+    payload["actual_summary"] = "x" * 501
+    with pytest.raises(ValidationError):
+        FailureRecord.model_validate(payload)
+
+
+def test_content_manifest_requires_sorted_allowed_non_self_entries_and_count() -> None:
+    payload = {
+        "schema_id": "rag-eval.content-manifest",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "hash_algorithm": "SHA-256",
+        "artifacts": [
+            {"relative_path": "cases.jsonl", "sha256": "a" * 64, "size_bytes": 1},
+            {"relative_path": "metrics.json", "sha256": "b" * 64, "size_bytes": 2},
+        ],
+        "artifact_count": 2,
+        "manifest_sha256": "2a147f775f9328bfa99844e82887bfca6b58e3a813f1ee4c091f3977ec1b3dbf",
+    }
+    ContentManifest.model_validate(payload)
+
+    for artifacts in (
+        list(reversed(payload["artifacts"])),
+        [{"relative_path": "run.json", "sha256": "a" * 64, "size_bytes": 1}],
+        [
+            {
+                "relative_path": "result-content-manifest.json",
+                "sha256": "a" * 64,
+                "size_bytes": 1,
+            }
+        ],
+    ):
+        invalid = deepcopy(payload)
+        invalid["artifacts"] = artifacts
+        invalid["artifact_count"] = len(artifacts)
+        with pytest.raises(ValidationError):
+            ContentManifest.model_validate(invalid)
+
+    payload["artifact_count"] = 1
+    with pytest.raises(ValidationError):
+        ContentManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("execution_status", "decision_status"),
+    [("COMPLETED", "N/A"), ("INVALID", None), ("ERROR", None)],
+)
+def test_validation_receipt_accepts_only_validation_outcomes(
+    execution_status: str,
+    decision_status: str | None,
+) -> None:
+    payload = {
+        "schema_id": "rag-eval.validation-receipt",
+        "schema_version": "1.0.0",
+        "validation_id": RUN_ID,
+        "validated_at": "2026-09-01T00:01:00Z",
+        "validator_version": "1.0.0",
+        "manifest_path": "datasets/manifest.json",
+        "dataset_code": "rag-foundation",
+        "dataset_version": "1.0.0",
+        "dataset_manifest_sha256": "a" * 64,
+        "evaluation_profile_ref": _ref("profile.release"),
+        "comparison_policy_ref": _ref("comparison.release"),
+        "execution_status": execution_status,
+        "decision_status": decision_status,
+        "release_eligible": False,
+        "error_codes": [],
+        "invalid_resource_paths": [],
+    }
+    receipt = ValidationReceipt.model_validate(payload)
+    assert "run_id" not in receipt.model_dump()
+
+    payload["release_eligible"] = True
+    with pytest.raises(ValidationError):
+        ValidationReceipt.model_validate(payload)
+
+
+def test_validation_receipt_rejects_evaluation_run_outcomes() -> None:
+    payload = {
+        "schema_id": "rag-eval.validation-receipt",
+        "schema_version": "1.0.0",
+        "validation_id": RUN_ID,
+        "validated_at": "2026-09-01T00:01:00Z",
+        "validator_version": "1.0.0",
+        "manifest_path": "datasets/manifest.json",
+        "dataset_code": "rag-foundation",
+        "dataset_version": "1.0.0",
+        "dataset_manifest_sha256": None,
+        "evaluation_profile_ref": None,
+        "comparison_policy_ref": None,
+        "execution_status": "COMPLETED",
+        "decision_status": "PASS",
+        "release_eligible": False,
+        "error_codes": [],
+        "invalid_resource_paths": [],
+    }
+    with pytest.raises(ValidationError):
+        ValidationReceipt.model_validate(payload)
