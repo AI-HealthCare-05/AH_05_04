@@ -50,7 +50,7 @@
 
 [Product Decision `PD-125-20260831`](./decisions/2026-08-31-rag-p0-contract-freeze.md)과 `docs/contracts/targets/post-mvp-1/`의 RAG P0 계약은 외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 저장소 공유 경계로 투영한 `Approved Target · Not implemented`다. 외부 논리 계약 `medication-candidate-identification-v1`은 기존 `medication-identification-v1.md`에 통합하며 같은 상태 폴더에 중복 파일을 두지 않는다. Safety Result v1은 Approved v4 이력으로 유지하고 Safety Result·Citation v2는 후속 Target으로 별도 관리한다.
 
-[Issue #136](https://github.com/AI-HealthCare-05/AH_05_04/issues/136)의 Guide·Chat 책임 경계·상태 표시 산출물은 RAG-00의 입력 Receipt다. 2026-09-01 현재 Issue가 Open이고 산출물·연결 PR이 확정되지 않았으므로 같은 문서를 RAG-00에서 중복 작성하거나 미확정 상태 UI 계약을 추정하지 않는다. 확정 Receipt 연결 전까지 Issue #125의 통합 완료·Close는 차단하지만, 이미 확정된 RAG Target 범위의 로컬 구현 준비를 막는 의미로 확대하지 않는다.
+[Issue #136](https://github.com/AI-HealthCare-05/AH_05_04/issues/136)의 Guide·Chat 책임 경계·상태 표시 산출물은 RAG-00의 입력 Receipt다. 해당 산출물은 [PR #191](https://github.com/AI-HealthCare-05/AH_05_04/pull/191)의 `docs/contracts/proposed/guide-chat-session-message-status-ui-v1.md`로 연결됐다(리뷰 반영 중). 이 PR이 병합되어 Issue #136이 Close되기 전까지는 같은 문서를 RAG-00에서 중복 작성하거나 미확정 상태 UI 계약을 추정하지 않는다. Issue #125는 이 Receipt 확정 전인 2026-09-01에 이미 수동으로 Close됐다 — 아래 서술은 애초에 지켜지지 않았으므로 향후에는 Receipt 확정 여부와 무관하게 개별 이슈 Close 판단을 각 담당자에게 맡기고, 이 문서는 계약 상태 자체의 정합성만 기록한다.
 
 `ISS-TBD-035`는 `FinalProject Documents/00_Index.md`의 상류 계획 레지스터 ID이며, 이 구현 저장소에서는 [Issue #91](https://github.com/AI-HealthCare-05/AH_05_04/issues/91)과 연결해 추적한다. 상류 artifact에 공개 가능한 안정 URL이 생기기 전에는 존재하지 않는 저장소 링크를 만들지 않는다. HIRA 식별, Track D 전용 OTC API 또는 의미 기반 NLI를 Approved v4 목표로 복원하지 않는다.
 

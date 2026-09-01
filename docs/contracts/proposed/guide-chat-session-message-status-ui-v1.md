@@ -33,13 +33,18 @@
 - 세션 메시지 요청과 Guide 요청은 `Idempotency-Key`를 필수로 받는다.
 - 접수 transaction에는 `IDEMPOTENCY_RECORD`를 반드시 함께 생성한다.
 - `POST /api/v1/guides`, `POST /api/v1/chat-sessions/{session_id}/messages`는 상태 조회를 위한 `status_url`을 반환한다.
-- `REVIEW_REQUIRED`는 Job 상태가 아니며, Job을 만들지 않는 동기 fallback 종료로 정의한다.
+- `REVIEW_REQUIRED`는 Job 상태가 아니다. 다만 Job 유무는 기능별로 다르다: 자동 Guide는 Identification 실패 시 Job을 만들지 않는 동기 fallback으로 종료하지만, Chat은 Identification 이전에 이미 최소 Job(Safety Intake)과 Safety Triage를 수행하며, ROUTINE Preflight 실패는 새 fallback을 만들지 않고 **이미 생성된 Job**에 승인된 제한 응답을 저장한다(`rag-runtime-v1.md` "입력과 접수 Preflight" 섹션, "고정 실행 Graph"의 `medication_identification_preflight` 실패 분기). 이 저장에 쓰이는 정확한 `execution_status`/`release_decision` 조합은 `safety-result-v2.md`에서 확정한다. 이 구분을 지키지 않으면 Chat이 Safety Triage(긴급·응급 라우팅 포함)를 건너뛸 수 있다.
 
 ### 2.2 버전 경계
 
-- Chat Session은 생성 시 `prescription_version_id`를 기준 버전으로 귀속한다.
+- Chat Session은 생성 시 `prescription_version_id`를 기준 버전으로 귀속한다(`prescription-version-v1.md` "하위 데이터 귀속").
 - `AI_JOB`, `CHAT_MESSAGE`, `GUIDE`에는 처리 시점 버전 정합성이 반영되어야 하며, 처방 버전 변경 시 이전 non-terminal Job은 `STALE` 처리되어 현재 사용자 화면에 노출되지 않는다.
 - `STALE`은 사용자 화면 비노출(`content = null`, `is_current = false`)을 의미하지만, Job/Safety 메타데이터는 보존한다.
+- **Session의 Version 소비 불변식(Frontend 임의 추론 금지)**:
+  - 사용자가 재접속해도 Session은 생성 시 귀속된 `prescription_version_id`를 계속 사용한다 — 재접속을 최신 Version 재조회 시점으로 취급하지 않는다.
+  - Frontend는 최신 활성 Prescription Version을 자동으로 선택·추론해 Session에 대입하지 않는다. Version 귀속은 항상 Backend가 Session 생성 시점에 결정한 값을 따른다.
+  - 같은 Session에 속한 Message·Job은 그 Session의 귀속 Version과 정합성을 유지해야 하며, Message/Job마다 다른 Version을 임의로 참조하지 않는다.
+  - 처방 Version이 변경돼도 기존 Session을 새 Version으로 자동 재귀속하지 않는다 — 새 Version에서 이어가려면 새 Session이 필요하다(정확한 FK·저장 방식은 구현 PR에서 확정).
 
 ## 3) Frontend 결과 상태축(필수 분리)
 
@@ -55,7 +60,7 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 
 최소 금지 조합
 
-- `generation_status`가 `PENDING` / `PROCESSING` / `RETRY_WAIT` / `FAILED` / `STALE`이면 현재 결과 콘텐츠를 화면에 보여주지 않는다.
+- `generation_status`는 리소스별로 별개 enum이다: `guide.generation_status`(`GuideGenerationStatus`)는 `PENDING`/`GENERATING`/`COMPLETED`/`FAILED` 4개뿐이고, `chat_message.generation_status`(`ChatGenerationStatus`)는 USER Message에서 항상 `NOT_APPLICABLE`, ASSISTANT Message에서 `PENDING`/`GENERATING`/`COMPLETED`/`FAILED`다(`backend/app/models/guides.py`, `chat.py` 참고). 두 enum 모두 `PENDING`/`GENERATING`/`FAILED`면 현재 결과 콘텐츠를 화면에 보여주지 않는다. `PROCESSING`/`RETRY_WAIT`/`STALE`은 이 `generation_status`들의 값이 아니라 별도 축인 `ai_job.status` 값이며, 이 값들일 때도 마찬가지로 현재 결과를 보여주지 않는다.
 - `is_current = false`이면 최신 화면 결과로 노출하지 않는다.
 - `STALE`은 실패/에러가 아니라 과거 결과 비공개 상태이며 `content = null` 로 유지한다.
 - `safety_disposition`의 `URGENT_ROUTED` / `EMERGENCY_ROUTED`는 실패 UI로 오해하지 않고 안전 안내 UI로 분기한다.
@@ -66,9 +71,24 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 
 - `release_decision` 값: `PASS`, `LIMITED`, `REJECTED`, `STALE`
 - `execution_status` 값: 실행 성공/실패 계열
-- `fallback_code` 값: `NO_APPROVED_EVIDENCE`, `CONFLICTING_EVIDENCE`, `SAFETY_ROUTED`, `PROVIDER_TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `VALIDATION_FAILED`, `PRESCRIPTION_STALE`, `UNSUPPORTED_REQUEST`
+- `fallback_code` 값: `NO_APPROVED_EVIDENCE`, `CONFLICTING_EVIDENCE`, `SAFETY_ROUTED`, `PROVIDER_TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `VALIDATION_FAILED`, `PRESCRIPTION_STALE`, `EXECUTION_CONTEXT_STALE`, `UNSUPPORTED_REQUEST`(`safety-result-v2.md` 정본 목록과 일치)
 - `REJECTED`는 실패로 끝내지 않고 승인된 fallback 응답 또는 안전안내를 제공한다.
 - `release_decision=PASS`는 RAG 결과 공개 판단이며 Evaluation의 `PASS`/`FAIL` 판정과 다른 축이다.
+
+### 4.1 Frontend 최소 허용 조합(구현자가 추론하지 않도록 명시)
+
+`ai_job.status`와 `generation_status`는 서로 다른 축이며(위 "3) Frontend 결과 상태축" 참고), 아래는 `ai_job.status` × `release_decision` 조합 중 Frontend가 반드시 구분해야 하는 최소 관계다. 정확한 값은 `safety-result-v2.md` "상태 축과 공개 판정"이 정본이다.
+
+| `ai_job.status` | `release_decision` | 의미 | 화면 처리 |
+| --- | --- | --- | --- |
+| `COMPLETED` | `PASS` | 정상 답변 또는 승인된 긴급·응급 안내 공개 가능 | 정상 콘텐츠 표시 |
+| `COMPLETED` | `LIMITED` | 금지 행동 요청 등, 승인된 범위 제한 안내만 공개 가능 | 제한 안내 UI로 표시 (실패 아님) |
+| `COMPLETED` | `REJECTED` | 생성 답변은 폐기하고 승인된 고정 fallback만 공개 | `fallback_code` 기반 안내 표시. **`ai_job.status=FAILED`가 아니다** — Job 자체는 정상 종결이다 |
+| `FAILED` | 해당 없음(값 없음) | fallback조차 안전하게 commit하지 못한 실행 실패 | 계약된 안전한 오류 응답만 표시(원문·상세 사유 노출 금지) |
+| `STALE` | `STALE` | 처리 중 active 처방 Version 변경으로 결과 반영 불가 | `content = null`, `is_current = false`로 비노출 |
+
+- `AI_JOB=COMPLETED` 또는 `execution_status=SUCCEEDED` 값만으로는 공개 가능 여부를 판단하지 않는다. 최종 공개는 `release_decision`·`is_current`·Citation 검증·Safety 결과를 함께 확인하는 `release_gate` 판정을 따른다.
+- `citations[]`는 `release_decision=PASS`이고 해당 Citation이 `CITATION_AUTHORIZATION/PASS` Guard를 통과했을 때만 공개한다. `REJECTED`·`LIMITED`·`STALE` 응답에는 `citations[]`를 공개하지 않는다(`safety-result-v2.md` "Claim-Citation 계약").
 
 ## 5) OTC는 기존 Chat transport 사용
 
@@ -110,7 +130,7 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 | --- | --- | --- |
 | Guide·Chat 접수 `202 Accepted + JobStatusResponse`, `status_url` polling | `docs/contracts/targets/post-mvp-1/async-job-v1.md`와 대조 | 기존 비동기 Job 계약과 충돌하지 않는지 확인하고, 변경이 필요하면 해당 계약도 함께 수정 |
 | `Idempotency-Key`, `IDEMPOTENCY_RECORD` 동반 transaction 접수 | `docs/contracts/targets/post-mvp-1/idempotency-v1.md`와 대조 | 접수 transaction, 중복 요청, 충돌 응답이 기존 멱등성 계약과 일치하는지 확인 |
-| `REVIEW_REQUIRED` 동기 종료(비-Job 경로) | `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 및 `rag-runtime-v1.md`와 대조 | Job 상태로 오해되지 않도록 Preflight 실패 처리와 RAG 차단 조건을 명확히 함 |
+| `REVIEW_REQUIRED`: 자동 Guide는 비-Job 동기 종료, Chat은 기존 Job에 제한 응답 저장 | `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 및 `rag-runtime-v1.md`와 대조 | 자동 Guide와 Chat의 Job 유무 차이가 유지되는지, Chat이 Safety Triage를 건너뛰지 않는지 확인 |
 | Session/Message/Job 결과 상태축 분리 | 필요 시 신규 `targets/post-mvp-1/guide-chat-session-message-status-ui-v1.md`로 승격 | Frontend/Backend/RAG가 공유해야 하는 상태축이면 별도 목표 계약으로 분리 |
 | STALE(`content=null`, `is_current=false`) 비노출 및 메타데이터 보존 | `prescription-version-v1.md`, `safety-result-v2.md`와 대조 | 버전 변경과 공개 결정 규칙이 기존 STALE 계약과 충돌하지 않는지 확인 |
 | OTC 기존 Chat transport 사용 및 Rule-first 선행 게이트 | `rag-runtime-v1.md`, `medication-identification-v1.md`와 대조 | 별도 OTC API/Job을 만들지 않는 방향과 Identification 선행 조건을 확인 |
@@ -125,7 +145,7 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 
 - Profile 소유권 기준이 Current(`profile_id`/부모 chain)으로 고정되어 있고, 위반 접근은 `404`로 반환한다.
 - `POST /api/v1/guides`, `POST /api/v1/chat-sessions/{session_id}/messages`에서 Idempotency/202/Job 상태 조회 계약이 일관된다.
-- `REVIEW_REQUIRED`는 Job 없이 동기 fallback으로 종료되고, RAG/Composer 호출이 선행되지 않는다.
+- `REVIEW_REQUIRED`는 자동 Guide에서만 Job 없이 동기 fallback으로 종료된다. Chat은 Identification 이전에 이미 생성된 Job·Safety Triage를 유지하며, ROUTINE Preflight 실패도 그 Job에 제한 응답을 저장한다 — 두 경우 모두 RAG/Composer 호출은 선행되지 않는다.
 - `STALE`은 `content = null`, `is_current = false`로 현재 화면 비노출이며 Job/Safety 메타데이터는 보존한다.
 - OTC는 기존 Chat transport를 사용하고, Identification/Preflight 미완료 시 Rule-first 평가를 강제 차단한다.
 - Frontend 상태축은 `generation_status`, `execution_status`, `response_level`, `release_decision`, `safety_disposition`, `fallback_code`, `is_current`가 분리되어 해석된다.
