@@ -32,9 +32,9 @@ RUN_ID = "123e4567-e89b-42d3-a456-426614174000"
 
 def _ref(resource_id: str) -> dict[str, object]:
     return {
-        "resource_id": resource_id,
-        "resource_version": "1.0.0",
-        "resource_hash": "a" * 64,
+        "id": resource_id,
+        "version": "1.0.0",
+        "hash": "a" * 64,
     }
 
 
@@ -76,12 +76,12 @@ def valid_run() -> dict[str, Any]:
         "candidate_guard_decision": "PASS",
         "required_case_guard_coverage_manifest_hash": "7" * 64,
         "executed_by": {
-            "namespace": "github",
+            "namespace": "GITHUB_LOGIN",
             "actor_id": "rag-owner",
-            "display_name": "RAG owner",
+            "role": "EVALUATION_IMPLEMENTER",
         },
-        "started_at": "2026-09-01T00:00:00Z",
-        "completed_at": "2026-09-01T00:01:00Z",
+        "started_at": "2026-09-01T00:00:00.000000Z",
+        "completed_at": "2026-09-01T00:01:00.000000Z",
         "execution_status": "COMPLETED",
         "decision_status": "PASS",
         "blocking_execution_statuses": [],
@@ -295,6 +295,25 @@ def test_gate_completed_decision_uses_fail_then_inconclusive_then_pass_precedenc
     GateResult.model_validate(payload)
 
 
+def test_gate_aggregate_execution_uses_exact_highest_blocker_priority() -> None:
+    payload = _gate_payload()
+    invalid_member = payload["required_metrics"][0]
+    invalid_member.update(execution_status="INVALID", decision_status=None)
+    error_member = deepcopy(invalid_member)
+    error_member.update(member_type="CONTRACT_RECEIPT", member_id="runtime-contract", execution_status="ERROR")
+    payload["required_contract_receipts"] = [error_member]
+    payload.update(
+        aggregate_execution_status="INVALID",
+        aggregate_decision_status=None,
+        blocking_execution_statuses=["INVALID", "ERROR"],
+    )
+    GateResult.model_validate(payload)
+
+    payload["aggregate_execution_status"] = "ERROR"
+    with pytest.raises(ValidationError):
+        GateResult.model_validate(payload)
+
+
 def test_failure_summary_is_short_and_non_sensitive() -> None:
     payload = {
         "schema_id": "rag-eval.failure",
@@ -303,11 +322,11 @@ def test_failure_summary_is_short_and_non_sensitive() -> None:
         "case_id": "safety-001",
         "failure_code": "SAFETY_SCOPE_MISMATCH",
         "failure_stage": "ASSERTION",
-        "expected_summary": "Expected approved synthetic safety route",
-        "actual_summary": "Observed a different non-sensitive route code",
+        "expected_summary": "EXPECTED_APPROVED_SYNTHETIC_SAFETY_ROUTE",
+        "actual_summary": "ACTUAL_NON_SENSITIVE_ROUTE_MISMATCH",
         "root_cause_code": None,
         "followup_issue_ref": None,
-        "created_at": "2026-09-01T00:01:00Z",
+        "created_at": "2026-09-01T00:01:00.000000Z",
     }
     FailureRecord.model_validate(payload)
 
@@ -320,8 +339,27 @@ def test_failure_summary_is_short_and_non_sensitive() -> None:
         FailureRecord.model_validate(payload)
 
 
-def test_content_manifest_requires_sorted_allowed_non_self_entries_and_count() -> None:
+def test_failure_summary_rejects_uncatalogued_caller_free_text() -> None:
     payload = {
+        "schema_id": "rag-eval.failure",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "case_id": "safety-001",
+        "failure_code": "SAFETY_SCOPE_MISMATCH",
+        "failure_stage": "ASSERTION",
+        "expected_summary": "This harmless-looking text may still contain a caller query",
+        "actual_summary": "This harmless-looking text may still contain a provider body",
+        "root_cause_code": None,
+        "followup_issue_ref": None,
+        "created_at": "2026-09-01T00:01:00.000000Z",
+    }
+
+    with pytest.raises(ValidationError):
+        FailureRecord.model_validate(payload)
+
+
+def test_content_manifest_requires_sorted_allowed_non_self_entries_and_count() -> None:
+    payload: dict[str, Any] = {
         "schema_id": "rag-eval.content-manifest",
         "schema_version": "1.0.0",
         "run_id": RUN_ID,
@@ -365,11 +403,11 @@ def test_validation_receipt_accepts_only_validation_outcomes(
     execution_status: str,
     decision_status: str | None,
 ) -> None:
-    payload = {
+    payload: dict[str, Any] = {
         "schema_id": "rag-eval.validation-receipt",
         "schema_version": "1.0.0",
         "validation_id": RUN_ID,
-        "validated_at": "2026-09-01T00:01:00Z",
+        "validated_at": "2026-09-01T00:01:00.000000Z",
         "validator_version": "1.0.0",
         "manifest_path": "datasets/manifest.json",
         "dataset_code": "rag-foundation",
@@ -392,11 +430,11 @@ def test_validation_receipt_accepts_only_validation_outcomes(
 
 
 def test_validation_receipt_rejects_evaluation_run_outcomes() -> None:
-    payload = {
+    payload: dict[str, Any] = {
         "schema_id": "rag-eval.validation-receipt",
         "schema_version": "1.0.0",
         "validation_id": RUN_ID,
-        "validated_at": "2026-09-01T00:01:00Z",
+        "validated_at": "2026-09-01T00:01:00.000000Z",
         "validator_version": "1.0.0",
         "manifest_path": "datasets/manifest.json",
         "dataset_code": "rag-foundation",
@@ -412,3 +450,30 @@ def test_validation_receipt_rejects_evaluation_run_outcomes() -> None:
     }
     with pytest.raises(ValidationError):
         ValidationReceipt.model_validate(payload)
+
+
+@pytest.mark.parametrize("sensitive_path", ["invalid/patient@example.com", "invalid/010-1234-5678.json"])
+def test_validation_receipt_rejects_sensitive_paths_without_echoing_values(sensitive_path: str) -> None:
+    payload = {
+        "schema_id": "rag-eval.validation-receipt",
+        "schema_version": "1.0.0",
+        "validation_id": RUN_ID,
+        "validated_at": "2026-09-01T00:01:00.000000Z",
+        "validator_version": "1.0.0",
+        "manifest_path": "datasets/manifest.json",
+        "dataset_code": "rag-foundation",
+        "dataset_version": "1.0.0",
+        "dataset_manifest_sha256": None,
+        "evaluation_profile_ref": None,
+        "comparison_policy_ref": None,
+        "execution_status": "INVALID",
+        "decision_status": None,
+        "release_eligible": False,
+        "error_codes": ["EVAL_SCHEMA_INVALID"],
+        "invalid_resource_paths": [sensitive_path],
+    }
+
+    with pytest.raises(ValidationError) as caught:
+        ValidationReceipt.model_validate(payload)
+
+    assert sensitive_path not in str(caught.value)

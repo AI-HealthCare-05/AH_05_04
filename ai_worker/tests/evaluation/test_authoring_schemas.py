@@ -13,15 +13,19 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
 )
 
 
-def _actor(actor_id: str, display_name: str) -> dict[str, object]:
-    return {"namespace": "github", "actor_id": actor_id, "display_name": display_name}
+def _actor(actor_id: str, _display_name: str) -> dict[str, object]:
+    return {
+        "namespace": "GITHUB_LOGIN",
+        "actor_id": actor_id,
+        "role": "EVALUATION_IMPLEMENTER",
+    }
 
 
 def _provenance() -> dict[str, object]:
     return {
         "proposed_by": _actor("author-1", "Author"),
         "approved_by": _actor("reviewer-1", "Reviewer"),
-        "reviewed_at": "2026-09-01T00:00:00Z",
+        "reviewed_at": "2026-09-01T00:00:00.000000Z",
     }
 
 
@@ -165,7 +169,7 @@ def test_approved_deidentified_dataset_requires_approval_receipt() -> None:
     assert manifest.deidentification_approval_receipt_ref == "receipt:privacy:001"
 
 
-def test_review_provenance_uses_actor_identity_not_display_name() -> None:
+def test_review_provenance_uses_namespace_and_actor_id_identity() -> None:
     payload = _valid_dataset_manifest()
     payload["review_provenance"]["approved_by"] = _actor("author-1", "Different label")
 

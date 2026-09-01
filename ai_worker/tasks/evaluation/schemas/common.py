@@ -29,6 +29,8 @@ _UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 _DECIMAL_PATTERN = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$")
 _TIMESTAMP_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$")
 _SEMANTIC_VERSION_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
+_STABLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+_RESOURCE_PATH_SCHEMA_PATTERN = r"^[^/\\\x00]+(?:/[^/\\\x00]+)*$"
 
 
 class Partition(StrEnum):
@@ -79,6 +81,21 @@ class LeakageAxis(StrEnum):
     TRANSFORM_ORIGIN = "transform_origin"
 
 
+class ActorNamespace(StrEnum):
+    GITHUB_LOGIN = "GITHUB_LOGIN"
+    EXTERNAL_APPROVAL_REGISTRY = "EXTERNAL_APPROVAL_REGISTRY"
+    SYSTEM = "SYSTEM"
+
+
+class ActorRole(StrEnum):
+    EVALUATION_IMPLEMENTER = "EVALUATION_IMPLEMENTER"
+    DATASET_CUSTODIAN = "DATASET_CUSTODIAN"
+    PRODUCT_SAFETY_REVIEWER = "PRODUCT_SAFETY_REVIEWER"
+    MEDICAL_REVIEWER = "MEDICAL_REVIEWER"
+    PRIVACY_REVIEWER = "PRIVACY_REVIEWER"
+    SYSTEM_VALIDATOR = "SYSTEM_VALIDATOR"
+
+
 def _validate_sha256(value: str) -> str:
     if _SHA256_PATTERN.fullmatch(value) is None:
         raise ValueError("must be a lowercase SHA-256 hex value")
@@ -113,6 +130,12 @@ def _validate_timestamp(value: str) -> str:
     return value
 
 
+def _validate_stable_id(value: str) -> str:
+    if _STABLE_ID_PATTERN.fullmatch(value) is None:
+        raise ValueError("must be a stable identifier")
+    return value
+
+
 def _validate_semantic_version(value: str) -> str:
     if _SEMANTIC_VERSION_PATTERN.fullmatch(value) is None:
         raise ValueError("must be a canonical semantic version")
@@ -126,12 +149,46 @@ def _enum_from_wire(enum_type: type[StrEnum], value: Any) -> Any:
 
 
 SafeInteger = Annotated[StrictInt, Field(ge=MIN_SAFE_INTEGER, le=MAX_SAFE_INTEGER)]
-Sha256Hex = Annotated[str, StringConstraints(strict=True), AfterValidator(_validate_sha256)]
-CanonicalUuid = Annotated[str, StringConstraints(strict=True), AfterValidator(_validate_uuid)]
-CanonicalDecimal = Annotated[str, StringConstraints(strict=True), AfterValidator(_validate_decimal)]
-UtcTimestamp = Annotated[str, StringConstraints(strict=True), AfterValidator(_validate_timestamp)]
-ResourcePath = Annotated[str, StringConstraints(strict=True), AfterValidator(normalize_resource_path)]
-SemanticVersion = Annotated[str, StringConstraints(strict=True), AfterValidator(_validate_semantic_version)]
+Sha256Hex = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_SHA256_PATTERN.pattern),
+    AfterValidator(_validate_sha256),
+]
+CanonicalUuid = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_UUID_PATTERN.pattern),
+    Field(json_schema_extra={"format": "uuid"}),
+    AfterValidator(_validate_uuid),
+]
+CanonicalDecimal = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_DECIMAL_PATTERN.pattern),
+    AfterValidator(_validate_decimal),
+]
+UtcTimestamp = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$",
+    ),
+    Field(json_schema_extra={"format": "date-time"}),
+    AfterValidator(_validate_timestamp),
+]
+ResourcePath = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_RESOURCE_PATH_SCHEMA_PATTERN),
+    AfterValidator(normalize_resource_path),
+]
+SemanticVersion = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_SEMANTIC_VERSION_PATTERN.pattern),
+    AfterValidator(_validate_semantic_version),
+]
+StableId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_STABLE_ID_PATTERN.pattern),
+    AfterValidator(_validate_stable_id),
+]
 NonEmptyString = Annotated[str, StringConstraints(strict=True, min_length=1)]
 ExecutionStatusValue = Annotated[
     ExecutionStatus,
@@ -150,13 +207,19 @@ def ensure_unique_resource_paths(paths: list[str]) -> list[str]:
 
 
 class StrictContractModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, hide_input_in_errors=True)
 
 
 class ActorRef(StrictContractModel):
-    namespace: NonEmptyString
-    actor_id: NonEmptyString
-    display_name: NonEmptyString | None = None
+    namespace: Annotated[
+        ActorNamespace,
+        BeforeValidator(lambda value: _enum_from_wire(ActorNamespace, value)),
+    ]
+    actor_id: StableId
+    role: Annotated[
+        ActorRole,
+        BeforeValidator(lambda value: _enum_from_wire(ActorRole, value)),
+    ]
 
     @property
     def identity(self) -> tuple[str, str]:
@@ -164,9 +227,9 @@ class ActorRef(StrictContractModel):
 
 
 class ImmutableReference(StrictContractModel):
-    resource_id: NonEmptyString
-    resource_version: SemanticVersion
-    resource_hash: Sha256Hex
+    id: StableId
+    version: SemanticVersion
+    hash: Sha256Hex
 
 
 class ReviewProvenance(StrictContractModel):

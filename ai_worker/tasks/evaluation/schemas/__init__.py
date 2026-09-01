@@ -40,7 +40,9 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
 )
 from ai_worker.tasks.evaluation.schemas.common import (
     SCHEMA_VERSION,
+    ActorNamespace,
     ActorRef,
+    ActorRole,
     CanonicalDecimal,
     CanonicalUuid,
     ContentClassification,
@@ -57,6 +59,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     SafeInteger,
     SemanticVersion,
     Sha256Hex,
+    StableId,
     StrictContractModel,
     TaskType,
     UtcTimestamp,
@@ -77,6 +80,8 @@ from ai_worker.tasks.evaluation.schemas.policy import (
 __all__ = [
     "SCHEMA_VERSION",
     "ActorRef",
+    "ActorNamespace",
+    "ActorRole",
     "CanonicalDecimal",
     "CanonicalUuid",
     "ContentClassification",
@@ -93,6 +98,7 @@ __all__ = [
     "SafeInteger",
     "SemanticVersion",
     "Sha256Hex",
+    "StableId",
     "StrictContractModel",
     "TaskType",
     "UtcTimestamp",

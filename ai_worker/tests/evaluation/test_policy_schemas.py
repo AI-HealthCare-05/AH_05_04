@@ -16,15 +16,19 @@ from ai_worker.tasks.evaluation.schemas.policy import (
 )
 
 
-def _actor(actor_id: str, display_name: str) -> dict[str, object]:
-    return {"namespace": "github", "actor_id": actor_id, "display_name": display_name}
+def _actor(actor_id: str, _display_name: str) -> dict[str, object]:
+    return {
+        "namespace": "GITHUB_LOGIN",
+        "actor_id": actor_id,
+        "role": "EVALUATION_IMPLEMENTER",
+    }
 
 
 def _review_provenance() -> dict[str, object]:
     return {
         "proposed_by": _actor("rag-owner", "RAG owner"),
         "approved_by": _actor("product-approver", "Product approver"),
-        "reviewed_at": "2026-09-01T00:00:00Z",
+        "reviewed_at": "2026-09-01T00:00:00.000000Z",
     }
 
 
@@ -39,9 +43,9 @@ def profile_payload() -> dict[str, Any]:
         "required_partitions": ["HOLDOUT", "SAFETY_REGRESSION"],
         "suite_references": [
             {
-                "resource_id": "rag-eval.suite.release",
-                "resource_version": "1.0.0",
-                "resource_hash": "a" * 64,
+                "id": "rag-eval.suite.release",
+                "version": "1.0.0",
+                "hash": "a" * 64,
             }
         ],
         "review_provenance": _review_provenance(),
@@ -92,7 +96,7 @@ def policy_payload() -> dict[str, Any]:
         ],
         "proposed_by": _actor("rag-owner", "RAG owner"),
         "approved_by": _actor("product-approver", "Product approver"),
-        "reviewed_at": "2026-09-01T00:00:00Z",
+        "reviewed_at": "2026-09-01T00:00:00.000000Z",
         "content_hash": "d" * 64,
     }
 
@@ -103,27 +107,27 @@ def _policy_members() -> list[dict[str, Any]]:
             "member_order": 1,
             "member_type": "PROFILE",
             "reference": {
-                "resource_id": "rag-eval.profile.release",
-                "resource_version": "1.0.0",
-                "resource_hash": "a" * 64,
+                "id": "rag-eval.profile.release",
+                "version": "1.0.0",
+                "hash": "a" * 64,
             },
         },
         {
             "member_order": 2,
             "member_type": "SUITE",
             "reference": {
-                "resource_id": "rag-eval.suite.release",
-                "resource_version": "1.0.0",
-                "resource_hash": "b" * 64,
+                "id": "rag-eval.suite.release",
+                "version": "1.0.0",
+                "hash": "b" * 64,
             },
         },
         {
             "member_order": 3,
             "member_type": "COMPARISON_POLICY",
             "reference": {
-                "resource_id": "rag-eval.comparison.release",
-                "resource_version": "1.0.0",
-                "resource_hash": "c" * 64,
+                "id": "rag-eval.comparison.release",
+                "version": "1.0.0",
+                "hash": "c" * 64,
             },
         },
     ]
@@ -135,7 +139,7 @@ def _evaluation_policy_payload() -> dict[str, Any]:
         "policy_code": "rag-release",
         "policy_version": "1.0.0",
         "members": _policy_members(),
-        "member_manifest_hash": "9823dffe940e9b29971afe6407b892838858c64788df5a8494ee0ba2f7898621",
+        "member_manifest_hash": "a29886523c5236bf176060cb32c8ab2ac44934f554ba7a3fe9852a71f0f46a5f",
         "review_provenance": _review_provenance(),
         "content_hash": "e" * 64,
     }
@@ -364,7 +368,7 @@ def test_comparison_scope_ci_parameters_are_deeply_immutable(policy_payload: dic
 def test_evaluation_policy_validates_hand_checked_member_manifest_hash() -> None:
     policy = EvaluationPolicy.model_validate(_evaluation_policy_payload())
 
-    assert policy.member_manifest_hash == "9823dffe940e9b29971afe6407b892838858c64788df5a8494ee0ba2f7898621"
+    assert policy.member_manifest_hash == "a29886523c5236bf176060cb32c8ab2ac44934f554ba7a3fe9852a71f0f46a5f"
 
 
 def test_evaluation_policy_rejects_duplicate_member_natural_key() -> None:
@@ -400,7 +404,7 @@ def test_evaluation_policy_members_remain_unchanged_after_mutation_attempt() -> 
         cast(Any, policy.members).pop()
 
     assert tuple(policy.members) == original_members
-    assert policy.member_manifest_hash == "9823dffe940e9b29971afe6407b892838858c64788df5a8494ee0ba2f7898621"
+    assert policy.member_manifest_hash == "a29886523c5236bf176060cb32c8ab2ac44934f554ba7a3fe9852a71f0f46a5f"
 
 
 def test_immutable_collections_preserve_json_array_and_object_wire_shapes(

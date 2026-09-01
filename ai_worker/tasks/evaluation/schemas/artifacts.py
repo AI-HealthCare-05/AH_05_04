@@ -52,8 +52,8 @@ def _require_sorted_unique_strings(values: tuple[str, ...]) -> tuple[str, ...]:
     return values
 
 
-def _validate_safe_summary(value: str) -> str:
-    validate_privacy_boundary({"summary": value})
+def _validate_receipt_resource_path(value: str) -> str:
+    validate_privacy_boundary({"invalid_resource_path": value})
     return value
 
 
@@ -71,10 +71,22 @@ SortedStrings = Annotated[
 ]
 EvidenceIds = Annotated[tuple[NonEmptyString, ...], BeforeValidator(_tuple_from_wire)]
 OptionalEvidenceIds = EvidenceIds | None
-SafeSummary = Annotated[
-    str,
-    Field(strict=True, min_length=1, max_length=500),
-    AfterValidator(_validate_safe_summary),
+ReceiptResourcePath = Annotated[ResourcePath, AfterValidator(_validate_receipt_resource_path)]
+
+
+class FailureSummary(StrEnum):
+    EXPECTED_APPROVED_SYNTHETIC_SAFETY_ROUTE = "EXPECTED_APPROVED_SYNTHETIC_SAFETY_ROUTE"
+    ACTUAL_NON_SENSITIVE_ROUTE_MISMATCH = "ACTUAL_NON_SENSITIVE_ROUTE_MISMATCH"
+    EXPECTED_REQUIRED_EVIDENCE = "EXPECTED_REQUIRED_EVIDENCE"
+    ACTUAL_REQUIRED_EVIDENCE_MISSING = "ACTUAL_REQUIRED_EVIDENCE_MISSING"
+    EXPECTED_POLICY_THRESHOLD = "EXPECTED_POLICY_THRESHOLD"
+    ACTUAL_POLICY_THRESHOLD_MISSED = "ACTUAL_POLICY_THRESHOLD_MISSED"
+
+
+FailureSummaryValue = Annotated[
+    FailureSummary,
+    BeforeValidator(lambda value: _enum_from_wire(FailureSummary, value)),
+    Field(max_length=500),
 ]
 
 
@@ -125,10 +137,10 @@ RuntimeReleaseDecisionValue = Annotated[
 
 
 _BLOCKING_STATUS_ORDER = {
-    ExecutionStatus.NOT_IMPLEMENTED: 0,
-    ExecutionStatus.NOT_EVALUATED: 1,
-    ExecutionStatus.INVALID: 2,
-    ExecutionStatus.ERROR: 3,
+    ExecutionStatus.INVALID: 0,
+    ExecutionStatus.ERROR: 1,
+    ExecutionStatus.NOT_IMPLEMENTED: 2,
+    ExecutionStatus.NOT_EVALUATED: 3,
 }
 
 
@@ -661,6 +673,8 @@ def _validate_blocking_aggregation(
         raise ValueError("blocking statuses must contain every incomplete member state")
     if expected and aggregate_execution_status not in expected:
         raise ValueError("aggregate execution status must identify a blocking member state")
+    if expected and aggregate_execution_status is not expected[0]:
+        raise ValueError("aggregate execution status must use the highest-priority blocker")
 
 
 class FailureRecord(ResultEnvelope):
@@ -668,8 +682,8 @@ class FailureRecord(ResultEnvelope):
     case_id: NonEmptyString
     failure_code: NonEmptyString
     failure_stage: NonEmptyString
-    expected_summary: SafeSummary
-    actual_summary: SafeSummary
+    expected_summary: FailureSummaryValue
+    actual_summary: FailureSummaryValue
     root_cause_code: NonEmptyString | None
     followup_issue_ref: NonEmptyString | None
     created_at: UtcTimestamp
@@ -737,7 +751,7 @@ class ValidationReceipt(StrictContractModel):
     release_eligible: Literal[False]
     error_codes: SortedStrings
     invalid_resource_paths: Annotated[
-        tuple[ResourcePath, ...],
+        tuple[ReceiptResourcePath, ...],
         BeforeValidator(_tuple_from_wire),
         AfterValidator(_require_sorted_unique_strings),
     ]

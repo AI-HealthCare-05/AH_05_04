@@ -201,7 +201,7 @@ class EvaluationPolicyMember(StrictContractModel):
 
     @property
     def natural_key(self) -> tuple[PolicyMemberType, str, str]:
-        return (self.member_type, self.reference.resource_id, self.reference.resource_version)
+        return (self.member_type, self.reference.id, self.reference.version)
 
 
 def evaluation_policy_member_manifest_hash(members: Sequence[EvaluationPolicyMember]) -> str:
@@ -211,9 +211,9 @@ def evaluation_policy_member_manifest_hash(members: Sequence[EvaluationPolicyMem
             "member_order": member.member_order,
             "member_type": member.member_type.value,
             "reference": {
-                "resource_id": member.reference.resource_id,
-                "resource_version": member.reference.resource_version,
-                "resource_hash": member.reference.resource_hash,
+                "id": member.reference.id,
+                "version": member.reference.version,
+                "hash": member.reference.hash,
             },
         }
         for member in ordered_members
