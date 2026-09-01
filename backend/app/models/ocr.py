@@ -59,6 +59,7 @@ class OcrJob(Base):
     __table_args__ = (
         Index("idx_ocr_document_created", "document_id", "created_at", "id"),
         Index("idx_ocr_document_created_seq", "document_id", "created_at", "created_sequence"),
+        Index("idx_ocr_job_ai_job", "ai_job_id"),
         UniqueConstraint("id", "document_id", name="uq_ocr_job_id_document"),
         CheckConstraint(
             "ocr_status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')",
@@ -86,6 +87,9 @@ class OcrJob(Base):
         nullable=False,
     )
     document_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("medical_document.id"), nullable=False)
+    # Track A 공통 Job 접수(#147/#148)가 연결되기 전까지는 항상 NULL입니다.
+    # ON DELETE 정책은 #147에서 Worker/Reconciler 삭제 배치 순서가 정해지면 재확인합니다.
+    ai_job_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("ai_job.id"), nullable=True)
     ocr_status: Mapped[OcrStatus] = mapped_column(
         Enum(OcrStatus, native_enum=False, length=20),
         nullable=False,
