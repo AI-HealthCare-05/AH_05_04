@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
+from ai_worker.tasks.evaluation.canonical import canonical_sha256
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     EvaluationPolicy,
@@ -225,6 +226,77 @@ def test_comparison_scope_accepts_nullable_safe_integer_seed(policy_payload: dic
     assert with_seed.scopes[0].seed == 1729
 
 
+def test_wilson_score_ci_accepts_generic_parameters_without_resamples(
+    policy_payload: dict[str, Any],
+) -> None:
+    scope = policy_payload["scopes"][0]
+    scope["ci_method"] = "WILSON_SCORE"
+    scope["ci_parameters"] = {
+        "confidence_level": "0.95",
+        "continuity_correction": True,
+    }
+
+    policy = ComparisonPolicy.model_validate(policy_payload)
+
+    assert policy.model_dump(mode="json")["scopes"][0]["ci_parameters"] == {
+        "confidence_level": "0.95",
+        "continuity_correction": True,
+    }
+
+
+def test_bootstrap_ci_accepts_extra_method_specific_scalar_parameters(
+    policy_payload: dict[str, Any],
+) -> None:
+    policy_payload["scopes"][0]["ci_parameters"] = {
+        "confidence_level": "0.95",
+        "resamples": 10000,
+        "stratification": "cluster",
+        "studentized": False,
+        "optional_tuning": None,
+    }
+
+    policy = ComparisonPolicy.model_validate(policy_payload)
+
+    assert policy.model_dump(mode="json")["scopes"][0]["ci_parameters"]["stratification"] == "cluster"
+
+
+@pytest.mark.parametrize("nested_value", [["cluster"], {"mode": "cluster"}])
+def test_ci_parameters_reject_nested_collections(
+    policy_payload: dict[str, Any],
+    nested_value: object,
+) -> None:
+    policy_payload["scopes"][0]["ci_parameters"]["nested"] = nested_value
+
+    with pytest.raises(ValidationError):
+        ComparisonPolicy.model_validate(policy_payload)
+
+
+def test_ci_parameter_storage_and_hash_are_independent_of_wire_key_order(
+    policy_payload: dict[str, Any],
+) -> None:
+    first_payload = deepcopy(policy_payload)
+    first_payload["scopes"][0]["ci_parameters"] = {
+        "confidence_level": "0.95",
+        "resamples": 10000,
+        "studentized": False,
+    }
+    reversed_payload = deepcopy(policy_payload)
+    reversed_payload["scopes"][0]["ci_parameters"] = {
+        "studentized": False,
+        "resamples": 10000,
+        "confidence_level": "0.95",
+    }
+
+    first = ComparisonPolicy.model_validate(first_payload)
+    reversed_order = ComparisonPolicy.model_validate(reversed_payload)
+    first_json = first.model_dump(mode="json")
+    reversed_json = reversed_order.model_dump(mode="json")
+
+    assert first.scopes[0].ci_parameters == reversed_order.scopes[0].ci_parameters
+    assert first_json == reversed_json
+    assert canonical_sha256(first_json) == canonical_sha256(reversed_json)
+
+
 def test_comparison_policy_scopes_are_deeply_immutable(policy_payload: dict[str, Any]) -> None:
     policy = ComparisonPolicy.model_validate(policy_payload)
 
@@ -301,5 +373,7 @@ def test_immutable_collections_preserve_json_array_and_object_wire_shapes(
 
     assert EvaluationProfile.model_json_schema()["properties"]["required_partitions"]["type"] == "array"
     assert SuiteDefinition.model_json_schema()["properties"]["task_types"]["type"] == "array"
-    assert ComparisonPolicy.model_json_schema()["properties"]["scopes"]["type"] == "array"
+    comparison_schema = ComparisonPolicy.model_json_schema()
+    assert comparison_schema["properties"]["scopes"]["type"] == "array"
+    assert comparison_schema["$defs"]["ComparisonScope"]["properties"]["ci_parameters"]["type"] == "object"
     assert EvaluationPolicy.model_json_schema()["properties"]["members"]["type"] == "array"

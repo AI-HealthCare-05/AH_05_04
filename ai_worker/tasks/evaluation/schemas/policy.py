@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, Field, StrictBool, model_validator
+from pydantic import BeforeValidator, Field, PlainSerializer, StrictBool, WithJsonSchema, model_validator
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.schemas.common import (
@@ -34,6 +34,12 @@ def _enum_from_wire(enum_type: type[StrEnum], value: object) -> object:
 def _tuple_from_wire(value: object) -> object:
     if isinstance(value, list):
         return tuple(value)
+    return value
+
+
+def _ci_parameters_from_wire(value: object) -> object:
+    if isinstance(value, dict):
+        return tuple(sorted(value.items()))
     return value
 
 
@@ -104,9 +110,33 @@ class SuiteDefinition(StrictContractModel):
     content_hash: Sha256Hex
 
 
-class ConfidenceIntervalParameters(StrictContractModel):
-    confidence_level: CanonicalDecimal
-    resamples: PositiveSafeInteger
+CiParameterScalar = CanonicalDecimal | SafeInteger | NonEmptyString | StrictBool | None
+CiParameterEntries = tuple[tuple[NonEmptyString, CiParameterScalar], ...]
+
+
+def _serialize_ci_parameters(parameters: CiParameterEntries) -> dict[str, CiParameterScalar]:
+    return dict(parameters)
+
+
+_CI_PARAMETERS_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": {
+        "anyOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "integer", "minimum": -(2**53) + 1, "maximum": (2**53) - 1},
+            {"type": "boolean"},
+            {"type": "null"},
+        ]
+    },
+}
+
+ConfidenceIntervalParameters = Annotated[
+    CiParameterEntries,
+    BeforeValidator(_ci_parameters_from_wire),
+    PlainSerializer(_serialize_ci_parameters, return_type=dict[str, CiParameterScalar]),
+    WithJsonSchema(_CI_PARAMETERS_JSON_SCHEMA, mode="validation"),
+    WithJsonSchema(_CI_PARAMETERS_JSON_SCHEMA, mode="serialization"),
+]
 
 
 class ComparisonScope(StrictContractModel):
