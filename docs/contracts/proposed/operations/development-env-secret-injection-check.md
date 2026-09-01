@@ -223,7 +223,7 @@ Stream envelope 테스트는 Redis/Outbox 발행 골격이 구현된 뒤 추가�
 
 | 항목 | 현재 판정 | PR 반영 조건 |
 | --- | --- | --- |
-| 운영 Redis 외부 노출 제거 또는 인증 설정 | BLOCKED | 운영 compose port 공개 제거 또는 Redis 인증 설정 Issue/PR |
+| 운영 Redis 외부 노출 제거 또는 인증 설정 | BLOCKED | #150에서 운영 compose port 공개 제거 또는 Redis 인증 설정 기준 추적 |
 | Redis Consumer Group 최소 구현 | TODO | Stream/Consumer Group client 구현 Issue/PR |
 | CLOVA OCR Worker 이관 | TODO | OCR 비동기 전환 Track의 별도 구현 Issue/PR |
 | CLOVA 설정 누락 시작 검증 | TODO | `CLOVA_OCR_INVOKE_URL`/`CLOVA_OCR_SECRET` 검증 Issue/PR |
