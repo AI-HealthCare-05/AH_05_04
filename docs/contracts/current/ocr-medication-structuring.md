@@ -24,14 +24,46 @@ OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안
 
 다음 기호를 사용합니다.
 
-- `C`: `CLOVA_OCR_TIMEOUT_SECONDS`, 기본 20초
-- `S`: `OCR_STRUCTURE_TIMEOUT_SECONDS`, 기본 30초
+- `C`: `CLOVA_OCR_TIMEOUT_SECONDS`, 기본 20초 — CLOVA OCR 개별 상한
+- `S`: `OCR_STRUCTURE_TIMEOUT_SECONDS`, 기본 30초 — LLM 구조화 개별 상한
 - `E`: `OCR_STRUCTURE_LLM_ENABLED`가 `true`이면 1, 아니면 0
-- `M`: HTTP 요청 종료와 실패 상태 저장을 위한 처리 여유, 기본 참고값 5초
+- `M`: `OCR_RESPONSE_MARGIN_SECONDS`, 기본 5초 — 실패 상태 저장과 응답 생성 여유
+- `L`: `OCR_LOCAL_PROCESSING_RESERVE_SECONDS`, 기본 3초 — 파일 읽기·응답 파싱·구조화 결과 변환·필드 저장 예약
+- `D`: `OCR_REQUEST_DEADLINE_SECONDS`, 기본 60초 — OCR 요청 전체 deadline
 
-CLOVA OCR과 OpenAI 구조화는 순차 실행되므로 OCR 요청의 Provider timeout 기준은 `C + E × S`입니다. 상위 HTTP client와 reverse proxy의 read timeout은 최소 `C + E × S + M` 이상이어야 합니다.
+`D`는 요청 시작부터 응답 생성까지의 예산이며 **monotonic clock으로 강제**합니다.
+wall clock 변경의 영향을 받는 `datetime.now()`로 계산하지 않습니다.
 
-기본값 기준으로 LLM 구조화가 비활성화되면 25초 이상, 활성화되면 55초 이상이 필요합니다. 개별 timeout 값을 변경하면 합산 기준도 함께 다시 계산해야 합니다.
+Provider 경로의 hard stop은 `D - M`입니다. CLOVA 호출 직전에 남은 예산을 다시 계산해
+`min(C, 남은 예산)`을 개별 timeout으로 적용하고, 남은 예산이 0 이하이면 Provider를
+호출하지 않고 종료합니다.
+
+구조화기 호출 직전에도 남은 예산을 확인해 0 이하이면 호출하지 않습니다.
+현재 구조화기의 개별 timeout은 단축하지 않고 `S`를 그대로 사용합니다.
+아래 기동 검증이 개별 상한의 합을 `D` 안으로 보장하기 때문입니다.
+
+### 기동 검증
+
+다음을 만족하지 않으면 애플리케이션이 기동하지 않습니다.
+
+`C + E×S + M + L <= D`
+
+기본값 기준입니다.
+
+| 조합 | 필요 예산 | `D=60` |
+| --- | --- | --- |
+| LLM 비활성 | `20 + 0 + 5 + 3 = 28` | 허용 |
+| LLM 활성 | `20 + 30 + 5 + 3 = 58` | 허용 |
+
+개별 timeout을 변경하면 이 식을 다시 계산해야 하며, `D`를 바꿀 때는 reverse proxy의
+upstream read timeout도 같은 배포 변경으로 갱신합니다.
+
+### Reverse proxy
+
+Backend가 비스트리밍 응답을 사용하는 동안 reverse proxy의 upstream read timeout은
+`D`보다 커야 합니다. `infra/nginx`의 `default.conf`·`prod_http.conf`·`prod_https.conf`에는
+현재 `proxy_read_timeout`이 설정되어 있지 않아 NGINX 기본값 60초가 적용됩니다.
+`D=60`이면 여유가 없으므로 세 파일 모두에 명시적으로 설정하는 것이 배포 선행 조건입니다.
 
 ## 제품 함량과 복용량 구분
 
