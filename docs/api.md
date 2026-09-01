@@ -8,7 +8,7 @@
 
 ## 공통 오류 응답 형식
 
-`/api/v1/*` API 오류 응답은 아래 형식(`backend/app/core/errors.py`)을 따릅니다.
+FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은 아래 형식(`backend/app/core/errors.py`)을 따릅니다.
 
 ```json
 {
@@ -25,12 +25,13 @@
 - 기존 `HTTPException` 기반 코드(`{"detail": "..."}`)도 전역 핸들러가 위 형식으로 자동 변환합니다. 이때 `code`는 `HTTP_ERROR`로 고정되고 `message`에 원래 `detail` 값이 들어갑니다.
 - 예상치 못한 예외는 `code: INTERNAL_SERVER_ERROR`, 500으로 변환되며 내부 오류 내용은 노출하지 않습니다.
 - 등록되지 않은 `/api/v1/*` 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405도 전역 핸들러가 공통 오류 형식으로 변환합니다. 이때 `code`는 `HTTP_ERROR`, `details`는 빈 배열입니다.
+- Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 공통 오류 envelope 적용 대상이 아닙니다.
 
 ## Cache-Control
 
 - `NoStoreMiddleware`가 `/api/v1/*` 전체 응답에 `Cache-Control: no-store`를 일괄 적용합니다.
 - 적용 대상은 인증·사용자·처방·의료문서·OCR·가이드·채팅 API의 성공 응답과 오류 응답입니다.
-- Router endpoint를 실행하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 이 정책의 대상이 아닙니다.
+- Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 이 정책의 대상이 아닙니다.
 
 ## CORS
 
@@ -39,7 +40,7 @@
 - Frontend는 `VITE_API_BASE_URL=http://localhost:8000`으로 Backend API를 호출합니다.
 - Backend는 `CORS_ALLOWED_ORIGINS=http://localhost:5173`을 허용 origin으로 사용합니다.
 - `CORSMiddleware`가 `CORS_ALLOWED_ORIGINS` 환경변수(콤마로 구분된 origin 목록)를 기준으로 허용 origin을 관리합니다.
-- CORS preflight는 실제 API 처리 이전에 응답될 수 있으므로 `/api/v1/*` `no-store` 검증 범위에서 제외합니다.
+- CORS preflight는 실제 API 처리 이전에 응답될 수 있으므로 `/api/v1/*` 공통 오류 envelope와 `no-store` 검증 범위에서 제외합니다.
 
 ## API 목록
 
@@ -167,7 +168,7 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200 OK` | 세션의 USER·ASSISTANT 메시지를 순서대로 조회합니다. |
 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201 Created` | USER 메시지 저장, AI 응답 생성, ASSISTANT 메시지 저장을 한 요청에서 완료합니다. |
 
-위 세 endpoint도 공통 `/api/v1/*` `Cache-Control: no-store` 정책 대상입니다. Router endpoint를 실행하지 않고 최외곽 CORS middleware가 직접 처리하는 preflight 응답은 이 정책의 대상이 아닙니다.
+위 세 endpoint도 공통 `/api/v1/*` `Cache-Control: no-store` 정책 대상입니다. Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 CORS middleware가 직접 처리하는 preflight 응답은 공통 오류 envelope와 `no-store` 정책의 대상이 아닙니다.
 
 ### 메시지 전송
 

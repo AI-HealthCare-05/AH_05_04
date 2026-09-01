@@ -110,7 +110,7 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 등록되지 않은 `/api/v1/*` 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405는 `{"code","message","details","trace_id"}` 오류 envelope를 반환합니다.
 - Pydantic 요청 검증 실패는 `422 VALIDATION_FAILED`이며 `details`는 객체가 아니라 배열입니다.
 - 인증·사용자·처방·의료문서·OCR·가이드·채팅 API의 성공 응답과 4xx/5xx 오류 응답은 모두 `Cache-Control: no-store`를 포함합니다.
-- Router endpoint를 실행하지 않고 최외곽 CORS middleware가 직접 처리하는 preflight 응답은 `/api/v1/*` `no-store` 검증 범위에서 제외합니다.
+- Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 CORS middleware가 직접 처리하는 preflight 응답은 `/api/v1/*` 공통 오류 envelope와 `no-store` 검증 범위에서 제외합니다.
 - 처방 확정과 OCR 검수 오류 응답의 `message`와 `details[].rejected_value`에는 OCR `raw_value`, 처방 원문, Provider 원문 오류, 챗봇 질문·답변, 비밀번호·토큰을 넣지 않습니다.
 
 ## MVP 배포 차단 기준

@@ -6,7 +6,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 ## 공통 오류 응답 형식
 
-`/api/v1/*` API에서 처리하는 오류 응답은 다음 형식을 따릅니다.
+FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은 다음 형식을 따릅니다.
 
 ```json
 {
@@ -28,11 +28,13 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 등록되지 않은 `/api/v1/*` 경로 요청(404)과 지원하지 않는 HTTP 메서드 요청(405)도 전역 `StarletteHTTPException` 핸들러가 공통 형식으로 변환합니다. 이 경우 `code`는 `HTTP_ERROR`, `details`는 빈 배열이며, `message`에는 FastAPI/Starlette의 기본 `detail` 문자열이 들어갑니다.
 
+단, Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 공통 오류 envelope 적용 대상이 아닙니다.
+
 ## 민감정보 노출 방지
 
 **이미 정해진 보안 원칙**: [`SECURITY.md`](../../../SECURITY.md)는 "의료·개인정보 응답은 기본적으로 `Cache-Control: no-store`를 적용합니다"를 현재 원칙으로 정하고 있다. 이는 Post-MVP 목표가 아니라 지금 지켜야 하는 규칙이다. 같은 원칙에 따라 `details[].rejected_value`에도 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않아야 한다.
 
-**현재 적용 상태**: `backend/app/core/no_store_middleware.py`의 `NoStoreMiddleware`가 `/api/v1/*` 전체 응답에 `Cache-Control: no-store`를 일괄 적용한다. 인증·사용자·처방·의료문서·OCR·가이드·채팅 API의 성공 응답과 오류 응답이 모두 대상이다. 단, Router endpoint를 실행하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 이 정책의 대상이 아니다.
+**현재 적용 상태**: `backend/app/core/no_store_middleware.py`의 `NoStoreMiddleware`가 `/api/v1/*` 전체 응답에 `Cache-Control: no-store`를 일괄 적용한다. 인증·사용자·처방·의료문서·OCR·가이드·채팅 API의 성공 응답과 오류 응답이 모두 대상이다. 단, Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 공통 오류 envelope와 `no-store` 정책의 대상이 아니다.
 
 **처방 OCR 원문 비노출 원칙**: 처방 확정과 OCR 검수 오류 응답은 OCR `raw_value`, 처방 원문, Provider 원문 오류, 챗봇 질문·답변, 비밀번호·토큰을 `message`나 `details[].rejected_value`에 넣지 않는다. 사용자가 확인한 `confirmed_value`만 처방 확정 입력으로 사용하며, 형식 오류는 `field`와 `reason` 중심으로 반환한다.
 

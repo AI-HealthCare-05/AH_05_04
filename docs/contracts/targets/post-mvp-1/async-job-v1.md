@@ -98,7 +98,7 @@ OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.sta
 | `GUIDE` | `GET /api/v1/guides/{domain_id}` | 기존 Guide 응답 |
 | `CHAT_MESSAGE` | `GET /api/v1/chat-sessions/{session_id}/messages` | 기존 메시지 목록 응답 |
 
-Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque `result_url`을 그대로 사용한다. `CHAT_MESSAGE`의 `domain_id`는 ASSISTANT message id이므로 Backend는 `chat_message` row의 `session_id`로 메시지 목록 URL을 구성한다. 결과 endpoint에도 Job 조회와 같은 소유권 검사, active prescription version 검사와 `Cache-Control: no-store`를 적용한다.
+Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque `result_url`을 그대로 사용한다. `CHAT_MESSAGE`의 `domain_id`는 ASSISTANT message id이므로 Backend는 `chat_message` row의 `session_id`로 메시지 목록 URL을 구성한다. Chat의 `result_url`은 단일 메시지 조회가 아니라 메시지 목록 조회이므로, Client는 목록 응답에서 `id == domain_id`인 ASSISTANT 메시지를 해당 Job의 결과로 선택한다. Backend는 `COMPLETED` Job의 `result_url`이 가리키는 메시지 목록 응답에 `domain_id` 메시지가 포함되도록 보장한다. 페이지네이션이 도입되면 이 보장을 유지하는 query parameter를 `result_url`에 포함하거나 단건 메시지 조회 endpoint를 별도 계약으로 추가한다. 결과 endpoint에도 Job 조회와 같은 소유권 검사, active prescription version 검사와 `Cache-Control: no-store`를 적용한다.
 
 ## Chat 접수 계약
 
@@ -128,7 +128,7 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 - 다른 키의 두 번째 요청은 공통 오류 envelope의 `409 CHAT_JOB_IN_PROGRESS`를 반환하며 별도 `status_url` 필드를 추가하지 않는다.
 - 동일 키 재전송은 [멱등성 계약](./idempotency-v1.md)에 따라 기존 `202` 응답을 재현한다.
 - ASSISTANT 메시지 응답은 nullable `job_id`와 `generation_status`를 포함한다. Client는 자신이 저장한 기존 Job을 계속 polling하고, 재접속으로 Job 정보가 없으면 메시지 목록의 `job_id`로 polling을 복구한다.
-- 완료된 Chat Job의 `result_url`은 기존 `GET /api/v1/chat-sessions/{session_id}/messages` 조회를 가리킨다. URL은 Backend가 생성하며 Client가 `domain_id`로 조합하지 않는다.
+- 완료된 Chat Job의 `result_url`은 기존 `GET /api/v1/chat-sessions/{session_id}/messages` 조회를 가리킨다. URL은 Backend가 생성하며 Client가 `domain_id`로 조합하지 않는다. Client는 목록에서 `id == domain_id`인 ASSISTANT 메시지를 해당 Job 결과로 선택하며, Backend는 해당 메시지가 목록 응답에 포함되도록 보장한다.
 - Polling 간격은 클라이언트 기본 1초, 지수 backoff, 최대 5초로 하고 SSE는 v1 범위에서 제외한다.
 
 ## 공통 화면 재접속 복구
