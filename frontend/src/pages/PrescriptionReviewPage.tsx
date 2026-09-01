@@ -15,22 +15,23 @@ import {
   MobileShell,
   StatusBadge,
 } from '../design-system/components'
+import { DoseyMascot } from '../design-system/DoseyMascot'
 import { createGuide } from '../api/guides'
 import '../design-system/prototype.css'
 import './PrescriptionReviewPage.css'
 
 const fieldLabels: Record<string, string> = {
   PRESCRIBED_DATE: '처방일',
-  MEDICATION_NAME: '처방전 약 이름',
+  MEDICATION_NAME: '약물이름',
 
   // 약 이름에 붙은 제품 함량을 별도로 검수합니다.
-  MEDICATION_STRENGTH: '제품 함량',
+  MEDICATION_STRENGTH: '제품함량',
 
   DOSE_VALUE: '1회 복용량',
-  DOSE_UNIT: '복용 단위',
-  FREQUENCY_PER_DAY: '하루 횟수',
-  TIMING: '복용 조건',
-  DURATION_DAYS: '복용 기간',
+  DOSE_UNIT: '복용단위',
+  FREQUENCY_PER_DAY: '하루횟수',
+  TIMING: '복용조건',
+  DURATION_DAYS: '투약일수',
 }
 
 const fieldOrder: Record<string, number> = {
@@ -56,6 +57,8 @@ const requiredReviewFieldTypes = new Set<string>([
   'PRESCRIBED_DATE',
   ...requiredMedicationFieldTypes,
 ])
+
+type ReviewSectionKey = 'prescription-date' | `medication-${number}`
 
 type BlockingAction = 'UPLOAD' | 'RETRY_LATER'
 
@@ -285,6 +288,34 @@ function getNumericFieldError(fieldType: string, value: string) {
   return null
 }
 
+function getFieldValidationError(field: ExtractedField, value: string) {
+  if (requiredReviewFieldTypes.has(field.field_type) && !value.trim()) {
+    return `${getFieldLabel(field.field_type)}을(를) 입력해 주세요.`
+  }
+
+  return value.trim()
+    ? getNumericFieldError(field.field_type, value.trim())
+    : null
+}
+
+function formatDateForDisplay(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value.replaceAll('-', '.')
+    : value
+}
+
+function formatFieldValue(fieldType: string, value: string) {
+  if (!value.trim()) return '—'
+  if (fieldType === 'PRESCRIBED_DATE') return formatDateForDisplay(value)
+  if (fieldType === 'FREQUENCY_PER_DAY' && !value.endsWith('회')) {
+    return `${value}회`
+  }
+  if (fieldType === 'DURATION_DAYS' && !value.endsWith('일')) {
+    return `${value}일`
+  }
+  return value
+}
+
 function PrescriptionReviewPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -307,6 +338,15 @@ function PrescriptionReviewPage() {
   const [isAlreadyConfirmed, setIsAlreadyConfirmed] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [savingFieldIds, setSavingFieldIds] = useState<Set<string>>(
+    () => new Set(),
+  )
+  const [editingSections, setEditingSections] = useState<Set<ReviewSectionKey>>(
+    () => new Set(),
+  )
+  const [revokedReviewSections, setRevokedReviewSections] = useState<
+    Set<ReviewSectionKey>
+  >(() => new Set())
+  const [savingSections, setSavingSections] = useState<Set<ReviewSectionKey>>(
     () => new Set(),
   )
   const [isConfirming, setIsConfirming] = useState(false)
@@ -386,14 +426,6 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
-  const confirmedFieldCount = useMemo(
-    () =>
-      reviewTargetFields.filter((field) =>
-        isFieldConfirmed(field, draftValues),
-      ).length,
-    [draftValues, reviewTargetFields],
-  )
-
   const allReviewTargetFieldsConfirmed = useMemo(
     () =>
       reviewTargetFields.length > 0 &&
@@ -456,7 +488,9 @@ function PrescriptionReviewPage() {
     !hasMissingPrescribedDateField &&
     !hasMissingRequiredMedicationFields &&
     !hasUnsavedChanges &&
-    savingFieldIds.size === 0
+    savingFieldIds.size === 0 &&
+    editingSections.size === 0 &&
+    revokedReviewSections.size === 0
 
   const canConfirmPrescription = useMemo(() => {
     return (
@@ -481,6 +515,9 @@ function PrescriptionReviewPage() {
     setBlockingState(null)
     setIsAlreadyConfirmed(false)
     setSavingFieldIds(new Set())
+    setEditingSections(new Set())
+    setRevokedReviewSections(new Set())
+    setSavingSections(new Set())
     setIsConfirming(false)
     setIsCreatingGuide(false)
     setGuideCreationError(null)
@@ -563,73 +600,183 @@ function PrescriptionReviewPage() {
     }
   }, [applyReviewError, documentId, jobId, reviewRequestKey])
 
-  const handleSaveField = async (field: ExtractedField) => {
-    if (savingFieldIds.has(field.field_id) || isConfirming || prescription) {
+  const startEditing = (sectionKey: ReviewSectionKey) => {
+    setEditingSections((current) => new Set(current).add(sectionKey))
+    setRevokedReviewSections((current) => new Set(current).add(sectionKey))
+    setUserConfirmed(false)
+  }
+
+  const cancelEditing = (
+    sectionKey: ReviewSectionKey,
+    sectionFields: ExtractedField[],
+  ) => {
+    setDraftValues((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        sectionFields.map((field) => [
+          field.field_id,
+          getSavedDisplayValue(field),
+        ]),
+      ),
+    }))
+    setFieldErrors((current) => {
+      const next = { ...current }
+      for (const field of sectionFields) delete next[field.field_id]
+      return next
+    })
+    setEditingSections((current) => {
+      const next = new Set(current)
+      next.delete(sectionKey)
+      return next
+    })
+    setUserConfirmed(false)
+  }
+
+  const isSectionReviewed = (
+    sectionKey: ReviewSectionKey,
+    sectionFields: ExtractedField[],
+  ) => {
+    if (
+      editingSections.has(sectionKey) ||
+      revokedReviewSections.has(sectionKey)
+    ) {
+      return false
+    }
+
+    const targetFields = sectionFields.filter((field) =>
+      requiresUserConfirmation(field, draftValues),
+    )
+
+    return (
+      targetFields.length > 0 &&
+      targetFields.every((field) => isFieldConfirmed(field, draftValues))
+    )
+  }
+
+  const sectionHasValidationError = (sectionFields: ExtractedField[]) =>
+    sectionFields.some((field) =>
+      Boolean(
+        getFieldValidationError(
+          field,
+          draftValues[field.field_id] ?? '',
+        ),
+      ),
+    )
+
+  const handleReviewSection = async (
+    sectionKey: ReviewSectionKey,
+    sectionFields: ExtractedField[],
+  ) => {
+    if (
+      savingSections.has(sectionKey) ||
+      isConfirming ||
+      prescription
+    ) {
+      return
+    }
+
+    const validationErrors = Object.fromEntries(
+      sectionFields.flatMap((field) => {
+        const error = getFieldValidationError(
+          field,
+          draftValues[field.field_id] ?? '',
+        )
+        return error ? [[field.field_id, error]] : []
+      }),
+    )
+
+    setFieldErrors((current) => {
+      const next = { ...current }
+      for (const field of sectionFields) delete next[field.field_id]
+      return { ...next, ...validationErrors }
+    })
+
+    if (Object.keys(validationErrors).length > 0) {
+      setUserConfirmed(false)
+      return
+    }
+
+    const fieldsToSave = sectionFields.filter((field) => {
+      const draftValue = draftValues[field.field_id]?.trim() ?? ''
+      const savedValue = getSavedDisplayValue(field).trim()
+      const changed = draftValue !== savedValue
+
+      return (
+        changed ||
+        (requiresUserConfirmation(field, draftValues) &&
+          !isFieldConfirmed(field, draftValues))
+      )
+    })
+
+    if (fieldsToSave.length === 0) {
+      setEditingSections((current) => {
+        const next = new Set(current)
+        next.delete(sectionKey)
+        return next
+      })
+      setRevokedReviewSections((current) => {
+        const next = new Set(current)
+        next.delete(sectionKey)
+        return next
+      })
+      setUserConfirmed(false)
       return
     }
 
     const saveRequestKey = reviewRequestKey
-    const value = draftValues[field.field_id]?.trim() ?? ''
-    const isOptionalField =
-      !requiredReviewFieldTypes.has(field.field_type)
-
-    if (!value && !isOptionalField) {
-      setFieldErrors((current) => ({
-        ...current,
-        [field.field_id]: '확인할 값을 입력해 주세요.',
-      }))
-      return
-    }
-
-    const confirmedValue = value || null
-    const numericFieldError = value
-      ? getNumericFieldError(field.field_type, value)
-      : null
-
-    if (numericFieldError) {
-      setFieldErrors((current) => ({
-        ...current,
-        [field.field_id]: numericFieldError,
-      }))
-      return
-    }
+    setSavingSections((current) => new Set(current).add(sectionKey))
+    setSavingFieldIds((current) => {
+      const next = new Set(current)
+      for (const field of fieldsToSave) next.add(field.field_id)
+      return next
+    })
+    setMessage(null)
 
     try {
-      setSavingFieldIds((current) => {
-        const next = new Set(current)
-        next.add(field.field_id)
-        return next
-      })
-      setFieldErrors((current) => {
-        const next = { ...current }
-        delete next[field.field_id]
-        return next
-      })
-      setMessage(null)
-      const response = await updateExtractedField(
-        field.field_id,
-        confirmedValue,
-      )
-      if (latestReviewRequestKeyRef.current !== saveRequestKey) return
+      for (const field of fieldsToSave) {
+        const confirmedValue =
+          draftValues[field.field_id]?.trim() || null
+        const response = await updateExtractedField(
+          field.field_id,
+          confirmedValue,
+        )
+        if (latestReviewRequestKeyRef.current !== saveRequestKey) return
 
-      setFields((current) =>
-        current.map((item) =>
-          item.field_id === field.field_id ? response.data : item,
-        ),
-      )
-      setDraftValues((current) => ({
-        ...current,
-        [field.field_id]: getSavedDisplayValue(response.data),
-      }))
+        setFields((current) =>
+          current.map((item) =>
+            item.field_id === field.field_id ? response.data : item,
+          ),
+        )
+        setDraftValues((current) => ({
+          ...current,
+          [field.field_id]: getSavedDisplayValue(response.data),
+        }))
+      }
+
+      setEditingSections((current) => {
+        const next = new Set(current)
+        next.delete(sectionKey)
+        return next
+      })
+      setRevokedReviewSections((current) => {
+        const next = new Set(current)
+        next.delete(sectionKey)
+        return next
+      })
       setUserConfirmed(false)
     } catch (error) {
       if (latestReviewRequestKeyRef.current !== saveRequestKey) return
-      applyReviewError(error, '필드 저장 중 오류가 발생했습니다.')
+      applyReviewError(error, '검토 정보를 저장하는 중 오류가 발생했습니다.')
     } finally {
       if (latestReviewRequestKeyRef.current === saveRequestKey) {
+        setSavingSections((current) => {
+          const next = new Set(current)
+          next.delete(sectionKey)
+          return next
+        })
         setSavingFieldIds((current) => {
           const next = new Set(current)
-          next.delete(field.field_id)
+          for (const field of fieldsToSave) next.delete(field.field_id)
           return next
         })
       }
@@ -705,30 +852,11 @@ function PrescriptionReviewPage() {
     }
   }
 
-  const renderField = (field: ExtractedField) => {
+  const renderEditField = (field: ExtractedField) => {
     const draftValue = draftValues[field.field_id] ?? ''
-    const confirmed = isFieldConfirmed(field, draftValues)
-
-    // 값이 없는 선택 필드는 사용자 확인이 필요한 오류 상태가 아니라
-    // 입력을 생략할 수 있는 정상 상태입니다.
-    const savedValue = getSavedDisplayValue(field).trim()
-    const hasFieldChanges = draftValue.trim() !== savedValue
-    const isOptionalField =
-      !requiredReviewFieldTypes.has(field.field_type)
-
-    const isOptionalRemoval =
-      isOptionalField &&
-      !draftValue.trim() &&
-      Boolean(savedValue)
-
-    const isBlankOptionalField =
-      isOptionalField &&
-      !draftValue.trim() &&
-      !hasFieldChanges
-
     const isSaving = savingFieldIds.has(field.field_id)
-    const rawValue = field.raw_value?.trim() ?? ''
-    const fieldError = fieldErrors[field.field_id]
+    const fieldError = fieldErrors[field.field_id] ??
+      getFieldValidationError(field, draftValue)
     const inputMode =
       field.field_type === 'DOSE_VALUE'
         ? 'decimal'
@@ -737,26 +865,30 @@ function PrescriptionReviewPage() {
           ? 'numeric'
           : undefined
 
-    return (
-      <div className="prescription-review__field" key={field.field_id}>
-        <div className="prescription-review__field-heading">
-          <label htmlFor={`field-${field.field_id}`}>
-            {getFieldLabel(field.field_type)}
-          </label>
-          <span className={confirmed ? 'is-confirmed' : ''}>
-            {confirmed
-              ? '저장됨'
-              : isBlankOptionalField
-                ? '선택 입력'
-                : '확인 필요'}
-          </span>
-        </div>
+    const isWide =
+      field.field_type === 'PRESCRIBED_DATE' ||
+      field.field_type === 'MEDICATION_NAME' ||
+      field.field_type === 'DURATION_DAYS'
 
-        <div className="prescription-review__field-control">
+    return (
+      <label
+        className={`prescription-review__edit-field ${
+          isWide ? 'prescription-review__edit-field--wide' : ''
+        }`}
+        htmlFor={`field-${field.field_id}`}
+        key={field.field_id}
+      >
+        <span>{getFieldLabel(field.field_type)}</span>
+        <span className="prescription-review__edit-control">
           <input
             id={`field-${field.field_id}`}
             value={draftValue}
             inputMode={inputMode}
+            placeholder={
+              requiredReviewFieldTypes.has(field.field_type)
+                ? '필수 입력'
+                : '선택 입력'
+            }
             aria-invalid={Boolean(fieldError)}
             disabled={isSaving || isConfirming || Boolean(prescription)}
             onChange={(event) => {
@@ -773,42 +905,296 @@ function PrescriptionReviewPage() {
             }}
             aria-describedby={`field-help-${field.field_id}`}
           />
-          <Button
-            variant={confirmed ? 'secondary' : 'primary'}
-            disabled={
-              isSaving ||
-              isConfirming ||
-              Boolean(prescription) ||
-              isBlankOptionalField
-            }
-            onClick={() => handleSaveField(field)}
-          >
-            {isSaving
-              ? '저장 중'
-              : isOptionalRemoval
-                ? '값 없음 저장'
-                : confirmed
-                  ? '수정 저장'
-                  : isBlankOptionalField
-                    ? '선택 입력'
-                    : '확인'}
-          </Button>
-        </div>
-
-        <p
+        </span>
+        <small
           id={`field-help-${field.field_id}`}
           className={fieldError ? 'is-error' : ''}
           role={fieldError ? 'alert' : undefined}
         >
-          {fieldError ?? (confirmed
-            ? '사용자가 확인하고 저장한 값입니다.'
-            : isBlankOptionalField
-              ? '선택 항목입니다. 처방전에 값이 있을 때만 입력해 주세요.'
-              : rawValue
-                ? `OCR 인식값: ${rawValue}`
-                : '인식된 값이 없습니다. 원본을 보고 직접 입력해 주세요.')}
-        </p>
-      </div>
+          {fieldError ?? ''}
+        </small>
+      </label>
+    )
+  }
+
+  const prescribedDateField = prescriptionFields.find(
+    (field) => field.field_type === 'PRESCRIBED_DATE',
+  )
+  const prescriptionSectionKey: ReviewSectionKey = 'prescription-date'
+  const prescriptionDateReviewed =
+    prescribedDateField &&
+    isSectionReviewed(prescriptionSectionKey, [prescribedDateField])
+
+  const reviewedMedicationCount = medicationGroups.filter((group) =>
+    isSectionReviewed(`medication-${group.index}`, group.fields),
+  ).length
+  const medicationProgress = medicationGroups.length > 0
+    ? Math.round((reviewedMedicationCount / medicationGroups.length) * 100)
+    : 0
+  const allMedicationGroupsReviewed =
+    medicationGroups.length > 0 &&
+    reviewedMedicationCount === medicationGroups.length
+
+  const renderBadge = (
+    state: 'reviewed' | 'editing' | 'required' | 'unreviewed',
+  ) => {
+    const label = state === 'reviewed'
+      ? '✓ 검토 완료'
+      : state === 'editing'
+        ? '수정 중'
+        : state === 'required'
+          ? '확인 필요'
+          : '검토 전'
+
+    return (
+      <span className={`prescription-review__badge is-${state}`}>
+        {label}
+      </span>
+    )
+  }
+
+  const renderPrescriptionCard = () => {
+    const isEditing = editingSections.has(prescriptionSectionKey)
+    const isSaving = savingSections.has(prescriptionSectionKey)
+    const dateValue = prescribedDateField
+      ? draftValues[prescribedDateField.field_id] ?? ''
+      : ''
+    const dateError = prescribedDateField
+      ? fieldErrors[prescribedDateField.field_id] ??
+        getFieldValidationError(prescribedDateField, dateValue)
+      : '처방일을 확인할 수 없습니다.'
+    const reviewed = Boolean(prescriptionDateReviewed)
+
+    return (
+      <section className="prescription-review__prescription-card">
+        <div className="prescription-review__prescription-heading">
+          <h2>처방 정보</h2>
+          {documentUrl ? (
+            <details className="prescription-review__source">
+              <summary>원본 처방전 보기</summary>
+              <iframe src={documentUrl} title="원본 처방전" />
+            </details>
+          ) : (
+            <button type="button" disabled>원본 처방전 보기</button>
+          )}
+        </div>
+
+        <div className="prescription-review__section-status">
+          <strong>처방일</strong>
+          {renderBadge(
+            isEditing
+              ? 'editing'
+              : dateError
+                ? 'required'
+                : reviewed
+                  ? 'reviewed'
+                  : 'unreviewed',
+          )}
+        </div>
+
+        {isEditing && prescribedDateField ? (
+          <>
+            <div className="prescription-review__edit-grid prescription-review__edit-grid--date">
+              {renderEditField(prescribedDateField)}
+            </div>
+            <div className="prescription-review__section-actions">
+              <Button
+                variant="secondary"
+                disabled={isSaving}
+                onClick={() =>
+                  cancelEditing(prescriptionSectionKey, [prescribedDateField])
+                }
+              >
+                취소
+              </Button>
+              <Button
+                disabled={isSaving || Boolean(dateError)}
+                onClick={() =>
+                  handleReviewSection(
+                    prescriptionSectionKey,
+                    [prescribedDateField],
+                  )
+                }
+              >
+                {isSaving ? '저장 중...' : '수정완료'}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div
+              className={`prescription-review__date-value ${
+                dateError ? 'is-error' : ''
+              }`}
+            >
+              <strong>{formatDateForDisplay(dateValue) || '—'}</strong>
+              {dateError && <small role="alert">{dateError}</small>}
+            </div>
+            <div className="prescription-review__section-actions">
+              <Button
+                variant="secondary"
+                disabled={!prescribedDateField}
+                onClick={() => startEditing(prescriptionSectionKey)}
+              >
+                수정
+              </Button>
+              {!reviewed && (
+                <Button
+                  disabled={
+                    !prescribedDateField ||
+                    Boolean(dateError) ||
+                    isSaving
+                  }
+                  onClick={() =>
+                    prescribedDateField &&
+                    handleReviewSection(
+                      prescriptionSectionKey,
+                      [prescribedDateField],
+                    )
+                  }
+                >
+                  {isSaving ? '저장 중...' : '검토 완료'}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+    )
+  }
+
+  const renderMedicationCard = (
+    group: { index: number; fields: ExtractedField[] },
+    groupIndex: number,
+  ) => {
+    const sectionKey: ReviewSectionKey = `medication-${group.index}`
+    const isEditing = editingSections.has(sectionKey)
+    const isSaving = savingSections.has(sectionKey)
+    const reviewed = isSectionReviewed(sectionKey, group.fields)
+    const missingRequiredLabels = requiredMedicationFieldTypes.flatMap(
+      (fieldType) => {
+        const field = group.fields.find(
+          (candidate) => candidate.field_type === fieldType,
+        )
+        const invalid = !field || Boolean(
+          getFieldValidationError(
+            field,
+            draftValues[field.field_id] ?? '',
+          ),
+        )
+        return invalid ? [getFieldLabel(fieldType)] : []
+      },
+    )
+    const validationErrorCount = missingRequiredLabels.length
+    const hasValidationError =
+      validationErrorCount > 0 || sectionHasValidationError(group.fields)
+    const getValue = (fieldType: string) => {
+      const field = group.fields.find(
+        (candidate) => candidate.field_type === fieldType,
+      )
+      return field ? draftValues[field.field_id]?.trim() ?? '' : ''
+    }
+    const medicationName = getValue('MEDICATION_NAME')
+    const strength = getValue('MEDICATION_STRENGTH')
+    const title = [medicationName, strength].filter(Boolean).join(' ')
+    const rows = [
+      'MEDICATION_STRENGTH',
+      'DOSE_VALUE',
+      'DOSE_UNIT',
+      'FREQUENCY_PER_DAY',
+      'TIMING',
+      'DURATION_DAYS',
+    ]
+
+    return (
+      <section
+        className={`prescription-review__medication-card ${
+          isEditing ? 'is-editing' : ''
+        } ${hasValidationError ? 'has-error' : ''}`}
+        key={group.index}
+      >
+        <div className="prescription-review__medication-heading">
+          <span className="prescription-review__medication-index" aria-hidden="true">
+            {reviewed ? '✓' : groupIndex + 1}
+          </span>
+          <h2>{title || '약 이름 확인 필요'}</h2>
+          {renderBadge(
+            isEditing
+              ? 'editing'
+              : hasValidationError
+                ? 'required'
+                : reviewed
+                  ? 'reviewed'
+                  : 'unreviewed',
+          )}
+        </div>
+
+        {isEditing ? (
+          <>
+            <p className="prescription-review__editing-notice" role="status">
+              수정 시작과 동시에 이 약의 검토 완료가 해제됐습니다.
+            </p>
+            <div className="prescription-review__edit-grid">
+              {group.fields.map(renderEditField)}
+            </div>
+            <div className="prescription-review__section-actions">
+              <Button
+                variant="secondary"
+                disabled={isSaving}
+                onClick={() => cancelEditing(sectionKey, group.fields)}
+              >
+                취소
+              </Button>
+              <Button
+                disabled={isSaving || hasValidationError}
+                onClick={() => handleReviewSection(sectionKey, group.fields)}
+              >
+                {isSaving ? '저장 중...' : '수정완료'}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            {validationErrorCount > 0 && (
+              <p className="prescription-review__card-error" role="alert">
+                필수값 {validationErrorCount}개 누락 · {missingRequiredLabels.join(', ')} 확인이 필요해요.
+              </p>
+            )}
+            <dl className="prescription-review__medication-values">
+              {rows.map((fieldType) => {
+                const value = getValue(fieldType)
+                const isRequiredMissing =
+                  requiredReviewFieldTypes.has(fieldType) && !value
+                return (
+                  <div className={isRequiredMissing ? 'is-error' : ''} key={fieldType}>
+                    <dt>{getFieldLabel(fieldType)}</dt>
+                    <dd>{formatFieldValue(fieldType, value)}</dd>
+                    {isRequiredMissing && (
+                      <small>{getFieldLabel(fieldType)}을(를) 입력해 주세요.</small>
+                    )}
+                  </div>
+                )
+              })}
+            </dl>
+            <div className="prescription-review__section-actions">
+              <Button
+                variant="secondary"
+                onClick={() => startEditing(sectionKey)}
+              >
+                수정하기
+              </Button>
+              {!reviewed && (
+                <Button
+                  disabled={hasValidationError || isSaving}
+                  onClick={() => handleReviewSection(sectionKey, group.fields)}
+                >
+                  {isSaving ? '저장 중...' : '검토 완료'}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </section>
     )
   }
 
@@ -818,6 +1204,7 @@ function PrescriptionReviewPage() {
         <MobileShell
           title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          brandMark={<DoseyMascot variant="header" />}
           backPlacement="content"
           hideNavigation
         >
@@ -842,6 +1229,7 @@ function PrescriptionReviewPage() {
         <MobileShell
           title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          brandMark={<DoseyMascot variant="header" />}
           backPlacement="content"
           hideNavigation
         >
@@ -877,6 +1265,7 @@ function PrescriptionReviewPage() {
         <MobileShell
           title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          brandMark={<DoseyMascot variant="header" />}
           backPlacement="content"
           hideNavigation
         >
@@ -905,6 +1294,7 @@ function PrescriptionReviewPage() {
         <MobileShell
           title="Dosey 도지"
           onBack={() => navigate('/prescriptions/upload')}
+          brandMark={<DoseyMascot variant="header" />}
           backPlacement="content"
           hideNavigation
         >
@@ -956,13 +1346,14 @@ function PrescriptionReviewPage() {
       <MobileShell
         title="Dosey 도지"
         onBack={() => navigate('/prescriptions/upload')}
+        brandMark={<DoseyMascot variant="header" />}
         backPlacement="content"
         hideNavigation
       >
-        <main className="app-scroll prescription-review">
+        <main className="app-scroll prescription-review prescription-review__content">
           <section className="prescription-review__intro">
             <div className="prescription-review__success-icon" aria-hidden="true">
-              <span />
+              ✓
             </div>
             <div>
               <p>전체 인식 성공</p>
@@ -971,8 +1362,20 @@ function PrescriptionReviewPage() {
           </section>
 
           <div className="prescription-review__notice">
-            아직 확정 전 정보예요. 누락되거나 잘못 읽은 값은 직접
-            입력하고 원본과 대조해 주세요.
+            <strong>
+              {editingSections.size > 0
+                ? '수정 중인 정보는 검토 완료가 해제돼요.'
+                : prescriptionDateReviewed && allMedicationGroupsReviewed
+                  ? '처방일과 모든 약의 검토를 완료했어요.'
+                  : '처방일과 약별 정보를 확인해 주세요.'}
+            </strong>
+            <span>
+              {editingSections.size > 0
+                ? '입력값 저장 후 조회 상태에서 다시 검토 완료해 주세요.'
+                : prescriptionDateReviewed && allMedicationGroupsReviewed
+                  ? '원본 처방전과 직접 대조한 뒤 아래 항목을 체크해 주세요.'
+                  : '값을 확인하거나 수정한 뒤, 처방일과 각 약의 검토 완료를 눌러 주세요.'}
+            </span>
           </div>
 
           {(hasMissingPrescribedDateField ||
@@ -1000,142 +1403,35 @@ function PrescriptionReviewPage() {
             </div>
           )}
 
-          {documentUrl && (
-            <details className="prescription-review__source">
-              <summary>
-                <span className="prescription-review__source-heading">
-                  <span className="prescription-review__document-mark" aria-hidden="true" />
-                  <span>
-                    <strong>원본 처방전 확인</strong>
-                    <small>인식 결과와 직접 대조해 주세요</small>
-                  </span>
-                </span>
-                <span className="prescription-review__source-action">원본 보기</span>
-              </summary>
-              <iframe src={documentUrl} title="원본 처방전" />
-            </details>
-          )}
+          {renderPrescriptionCard()}
 
-          {prescriptionFields.length > 0 && (
-            <Card className="prescription-review__card prescription-review__card--prescription">
-              <div className="prescription-review__card-title">
-                <div className="prescription-review__med-icon" aria-hidden="true">
-                  <span className="prescription-review__calendar-mark" />
-                </div>
-                <div className="prescription-review__card-heading">
-                  <span>처방 정보</span>
-                  <strong>처방일</strong>
-                </div>
-                <StatusBadge
-                  tone={
-                    prescriptionFields.every((field) =>
-                      isFieldConfirmed(field, draftValues),
-                    )
-                      ? 'neutral'
-                      : 'attention'
-                  }
-                >
-                  {prescriptionFields.every((field) =>
-                    isFieldConfirmed(field, draftValues),
-                  )
-                    ? '확인 완료'
-                    : '확인 필요'}
-                </StatusBadge>
-              </div>
-              <h2>
-                {draftValues[
-                  prescriptionFields.find(
-                    (field) => field.field_type === 'PRESCRIBED_DATE',
-                  )?.field_id ?? ''
-                ] || '처방일 확인 필요'}
-              </h2>
-              <div className="prescription-review__fields">
-                {prescriptionFields.map(renderField)}
-              </div>
-            </Card>
-          )}
+          <section
+            className="prescription-review__medication-progress"
+            aria-label="약 검토 진행률"
+          >
+            <div>
+              <strong>
+                약 {reviewedMedicationCount}/{medicationGroups.length}개 검토 완료
+              </strong>
+              <span>{medicationProgress}%</span>
+            </div>
+            <span
+              className="prescription-review__progress-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={medicationProgress}
+            >
+              <span style={{ width: `${medicationProgress}%` }} />
+            </span>
+          </section>
 
-          {medicationGroups.map((group, groupIndex) => {
-            const allConfirmed = group.fields.every((field) =>
-              isFieldConfirmed(field, draftValues),
-            )
-            const medicationName = group.fields.find(
-              (field) => field.field_type === 'MEDICATION_NAME',
-            )
-            const medicationStrength = group.fields.find(
-              (field) => field.field_type === 'MEDICATION_STRENGTH',
-            )
-
-            const nameValue = medicationName
-              ? draftValues[medicationName.field_id]?.trim() ?? ''
-              : ''
-
-            const strengthValue = medicationStrength
-              ? draftValues[medicationStrength.field_id]?.trim() ?? ''
-              : ''
-
-            // 편집 필드는 분리하지만 카드 제목에서는 처방전 표기처럼 함께 보여줍니다.
-            const summaryValue = [nameValue, strengthValue]
-              .filter(Boolean)
-              .join(' ')
-
-            const getMedicationValue = (fieldType: string) => {
-              const field = group.fields.find(
-                (item) => item.field_type === fieldType,
-              )
-              return field ? draftValues[field.field_id]?.trim() ?? '' : ''
-            }
-            const doseValue = getMedicationValue('DOSE_VALUE')
-            const doseUnit = getMedicationValue('DOSE_UNIT')
-            const frequency = getMedicationValue('FREQUENCY_PER_DAY')
-            const duration = getMedicationValue('DURATION_DAYS')
-            const timing = getMedicationValue('TIMING')
-            const medicationSummary = [
-              doseValue ? `1회 ${doseValue}${doseUnit ? ` ${doseUnit}` : ''}` : '',
-              frequency ? `하루 ${frequency}회` : '',
-              duration ? `${duration}일 복용` : '',
-              timing,
-            ].filter(Boolean)
-
-            return (
-              <Card className="prescription-review__card" key={group.index}>
-                <div className="prescription-review__card-title">
-                  <div className="prescription-review__med-icon" aria-hidden="true">
-                    <span className="prescription-review__med-dot" />
-                  </div>
-                  <div className="prescription-review__card-heading">
-                    <span>처방약 {groupIndex + 1}</span>
-                    <strong>약물 정보</strong>
-                  </div>
-                  <StatusBadge tone={allConfirmed ? 'neutral' : 'attention'}>
-                    {allConfirmed ? '확인 완료' : '확인 필요'}
-                  </StatusBadge>
-                </div>
-                <h2>{summaryValue || '약 이름 확인 필요'}</h2>
-                <p className="prescription-review__card-summary">
-                  {medicationSummary.length > 0
-                    ? medicationSummary.join(' · ')
-                    : '세부 복용 정보를 확인해 주세요'}
-                </p>
-                <details className="prescription-review__editor">
-                  <summary>
-                    <span>세부 항목 확인 및 수정</span>
-                    <span className="prescription-review__editor-chevron" aria-hidden="true" />
-                  </summary>
-                  <div className="prescription-review__fields">
-                    {group.fields.map(renderField)}
-                  </div>
-                </details>
-              </Card>
-            )
-          })}
+          {medicationGroups.map(renderMedicationCard)}
 
           {!prescription && (
             <>
               <label
-                className={`prescription-review__acknowledgement ${
-                  hasUnsavedChanges ? 'has-unsaved' : ''
-                }`}
+                className="prescription-review__acknowledgement"
               >
                 <input
                   type="checkbox"
@@ -1144,15 +1440,24 @@ function PrescriptionReviewPage() {
                   onChange={(event) => setUserConfirmed(event.target.checked)}
                 />
                 <span>
-                  원본 처방전의 필수 항목과 입력된 항목을 직접 확인했습니다.
+                  {reviewReadyForAcknowledgement
+                    ? '원본 처방전의 모든 항목을 직접 확인했습니다.'
+                    : '처방일과 모든 약 검토 완료 후 원본 대조가 활성화됩니다.'}
                 </span>
               </label>
 
-              {hasUnsavedChanges && (
-                <p className="prescription-review__unsaved" role="status">
-                  저장하지 않은 수정값이 있어요. 모든 수정값을 저장해 주세요.
-                </p>
-              )}
+              <p
+                className={`prescription-review__condition-summary ${
+                  userConfirmed ? 'is-complete' : ''
+                }`}
+                role="status"
+              >
+                {userConfirmed
+                  ? `✓ 약 ${reviewedMedicationCount}/${medicationGroups.length}개 검토 완료 · 원본 대조 완료`
+                  : reviewReadyForAcknowledgement
+                    ? `약 ${reviewedMedicationCount}/${medicationGroups.length}개 검토 완료 · 원본 대조 필요`
+                    : `처방일 ${prescriptionDateReviewed ? '검토 완료' : '검토 전'} · 약 ${reviewedMedicationCount}/${medicationGroups.length}개 검토 완료`}
+              </p>
 
               <Button
                 fullWidth
@@ -1164,12 +1469,10 @@ function PrescriptionReviewPage() {
                 }
                 onClick={handleConfirmPrescription}
               >
-                {isConfirming ? '처방 확정 중...' : '확정하고 가이드 만들기'}
+                {isConfirming
+                  ? '처방 확정 중...'
+                  : '처방전 확정 및 가이드 만들기'}
               </Button>
-
-              <p className="prescription-review__progress">
-                {confirmedFieldCount}/{reviewTargetFields.length}개 항목 저장 완료
-              </p>
             </>
           )}
 
