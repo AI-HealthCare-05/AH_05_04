@@ -8,7 +8,7 @@
 
 ## 공통 오류 응답 형식
 
-등록된 Router endpoint 안에서 처리되는 오류 응답은 아래 형식(`backend/app/core/errors.py`)을 따릅니다.
+FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은 아래 형식(`backend/app/core/errors.py`)을 따릅니다.
 
 ```json
 {
@@ -24,7 +24,14 @@
 - `trace_id`는 요청별 미들웨어(`backend/app/main.py`)가 생성해 `request.state.trace_id`에 저장하고, 모든 에러 핸들러가 이 값을 재사용합니다(핸들러가 자체적으로 새 값을 만들지 않음). 성공 응답 body에는 아직 포함하지 않으며, 필요 시 로그·감사로그와 연결할 수 있도록 모든 요청에서 `request.state`에 존재합니다.
 - 기존 `HTTPException` 기반 코드(`{"detail": "..."}`)도 전역 핸들러가 위 형식으로 자동 변환합니다. 이때 `code`는 `HTTP_ERROR`로 고정되고 `message`에 원래 `detail` 값이 들어갑니다.
 - 예상치 못한 예외는 `code: INTERNAL_SERVER_ERROR`, 500으로 변환되며 내부 오류 내용은 노출하지 않습니다.
-- 등록되지 않은 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405는 FastAPI/Starlette 라우팅 단계에서 `{"detail": ...}` 형식으로 반환될 수 있습니다.
+- 등록되지 않은 `/api/v1/*` 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405도 전역 핸들러가 공통 오류 형식으로 변환합니다. 이때 `code`는 `HTTP_ERROR`, `details`는 빈 배열입니다.
+- Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 공통 오류 envelope 적용 대상이 아닙니다.
+
+## Cache-Control
+
+- `NoStoreMiddleware`가 `/api/v1/*` 전체 응답에 `Cache-Control: no-store`를 일괄 적용합니다.
+- 적용 대상은 인증·사용자·처방·의료문서·OCR·가이드·채팅 API의 성공 응답과 오류 응답입니다.
+- Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 이 정책의 대상이 아닙니다.
 
 ## CORS
 
@@ -33,6 +40,7 @@
 - Frontend는 `VITE_API_BASE_URL=http://localhost:8000`으로 Backend API를 호출합니다.
 - Backend는 `CORS_ALLOWED_ORIGINS=http://localhost:5173`을 허용 origin으로 사용합니다.
 - `CORSMiddleware`가 `CORS_ALLOWED_ORIGINS` 환경변수(콤마로 구분된 origin 목록)를 기준으로 허용 origin을 관리합니다.
+- CORS preflight는 실제 API 처리 이전에 응답될 수 있으므로 `/api/v1/*` 공통 오류 envelope와 `no-store` 검증 범위에서 제외합니다.
 
 ## API 목록
 
@@ -160,7 +168,7 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200 OK` | 세션의 USER·ASSISTANT 메시지를 순서대로 조회합니다. |
 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201 Created` | USER 메시지 저장, AI 응답 생성, ASSISTANT 메시지 저장을 한 요청에서 완료합니다. |
 
-위 세 endpoint의 모든 성공·오류 응답은 `Cache-Control: no-store`를 포함합니다. Router endpoint를 실행하지 않고 최외곽 CORS middleware가 직접 처리하는 preflight 응답은 이 정책의 대상이 아닙니다.
+위 세 endpoint도 공통 `/api/v1/*` `Cache-Control: no-store` 정책 대상입니다. Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 CORS middleware가 직접 처리하는 preflight 응답은 공통 오류 envelope와 `no-store` 정책의 대상이 아닙니다.
 
 ### 메시지 전송
 
@@ -322,6 +330,7 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 | `422` | `VALIDATION_FAILED` | 필수 필드에 `null` 또는 유효하지 않은 값을 전달했습니다. |
 
 PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `409`는 의미가 다르므로 클라이언트는 `code`로 분기합니다.
+전체 공개 오류 코드의 재시도 가능 여부는 [공통 오류 응답 계약](./contracts/current/backend-error-response.md)의 「재시도 가능 여부」 절을 따릅니다.
 
 - `PRESCRIPTION_ALREADY_CONFIRMED`: 이미 확정된 terminal 상태입니다. 편집을 종료하고 비편집 확정 화면으로 전환합니다.
 - `CONCURRENT_UPDATE_IN_PROGRESS`: 잠금 경합에 의한 일시적 충돌입니다. 재시도하면 성공할 수 있으므로 편집 상태를 유지하고 확정 화면으로 전환하지 않습니다.
@@ -341,6 +350,7 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 - MVP에서는 별도 요청 본문 없이 `document_id`를 기준으로 처리합니다.
 - Backend는 문서 소유권과 최신 OCR 작업의 `COMPLETED` 상태를 확인합니다.
 - OCR 필드는 사용자가 확인한 `confirmed_value`만 처방 확정에 사용합니다.
+- OCR `raw_value`, 처방 원문, Provider 원문 오류는 처방 확정 오류 응답의 `message`나 `details[].rejected_value`에 넣지 않습니다.
 - `PRESCRIBED_DATE`, `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
 - `MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`은 현재 MVP에서 선택값입니다.
 - `MEDICATION_STRENGTH`는 최대 100자이며 확정 시 `medication.strength_text`로 저장합니다.
@@ -369,6 +379,7 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 
 | 날짜 | 관련 Issue/PR | 변경 내용 |
 | --- | --- | --- |
+| 2026-09-01 | PR #107 후속 | 기본 404/405 공통 오류 형식, `/api/v1/*` 성공·오류 응답 `Cache-Control: no-store`, CORS preflight 제외 범위와 처방 OCR 원문 비노출 정책을 반영 |
 | 2026-09-01 | Issue #101 | 처방 확정·extracted-field PATCH 직렬화와 신규 `409 CONCURRENT_UPDATE_IN_PROGRESS` 공개 오류 코드를 반영 |
 | 2026-08-27 | Issue #94 / PR #96 | OCR LLM 구조화 metadata, 제품 함량 필드, 확정 후 extracted-field PATCH 409 차단 계약을 반영 |
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |

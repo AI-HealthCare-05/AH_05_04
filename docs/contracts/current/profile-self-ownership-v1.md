@@ -184,7 +184,7 @@ rollback 기준을 미리 정하는 이유는 소유권 migration이 실패했�
 
 ## 9. 후속 Track A와의 연결
 
-PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 #75의 Track A migration은 다음 기준을 사용한다.
+#117 이후 #75의 Track A migration은 다음 기준을 사용한다.
 
 - `AI_JOB`, Outbox, Idempotency, Prescription Version은 `profile_id` 기준 소유권과 충돌하지 않게 설계한다.
 - Job 상태 조회와 결과 조회는 해당 Job 또는 도메인 결과가 인증 사용자의 SELF profile에 속하는지 확인한다.
