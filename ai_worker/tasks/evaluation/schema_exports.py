@@ -8,13 +8,14 @@ from pydantic import BaseModel, TypeAdapter
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.schemas.artifacts import RESULT_ARTIFACT_MODELS, ValidationReceipt
-from ai_worker.tasks.evaluation.schemas.authoring import (
+from ai_worker.tasks.evaluation.schemas.authoring_contract import (
     EVALUATION_CASE_ADAPTER,
     CriticalClaimRubric,
     DatasetManifest,
     EvidenceMappingManifest,
+    ProtectedArtifactReceipt,
 )
-from ai_worker.tasks.evaluation.schemas.policy import (
+from ai_worker.tasks.evaluation.schemas.policy_contract import (
     ComparisonPolicy,
     EvaluationPolicy,
     EvaluationProfile,
@@ -366,6 +367,9 @@ def schema_documents() -> dict[str, dict[str, JsonValue]]:
         documents[f"artifacts/{schema_id}.schema.json"] = _schema_document(schema_id, model)
     documents["operational/rag-eval.validation-receipt.schema.json"] = _schema_document(
         "rag-eval.validation-receipt", ValidationReceipt
+    )
+    documents["operational/rag-eval.protected-artifact-receipt.schema.json"] = _schema_document(
+        "rag-eval.protected-artifact-receipt", ProtectedArtifactReceipt
     )
     return dict(sorted(documents.items()))
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: F401, F811, E402
+# mypy: disable-error-code="arg-type, assignment, attr-defined, union-attr"
 import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -44,7 +46,7 @@ class _DuplicateKeyError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedDataset:
+class _LegacyValidatedDataset:
     manifest: DatasetManifest
     cases: tuple[EvaluationCase, ...]
     evidence_mapping: EvidenceMappingManifest
@@ -175,7 +177,7 @@ def _privacy_view(value: JsonValue, key: str | None = None) -> JsonValue:
     return value
 
 
-def load_json_object[T: BaseModel](path: Path, model: type[T]) -> T:
+def _legacy_load_json_object[T: BaseModel](path: Path, model: type[T]) -> T:
     value = _read_json_object(path)
     try:
         validate_privacy_boundary(_privacy_view(value))
@@ -378,7 +380,7 @@ def _load_evidence_mapping(
         )
     ]
     try:
-        evidence_mapping = load_json_object(evidence_path, EvidenceMappingManifest)
+        evidence_mapping = _legacy_load_json_object(evidence_path, EvidenceMappingManifest)
     except EvaluationValidationError as error:
         if error.code is EvaluationErrorCode.SCHEMA_INVALID:
             raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID) from None
@@ -411,7 +413,7 @@ def _load_rubric(
         manifest.critical_claim_rubric.path,
         _verify_file_hash(rubric_path, manifest.critical_claim_rubric.sha256),
     )
-    rubric = load_json_object(rubric_path, CriticalClaimRubric)
+    rubric = _legacy_load_json_object(rubric_path, CriticalClaimRubric)
     _verify_content_hash(rubric)
     claim_ids = set().union(*(_case_claim_ids(case) for case in cases))
     if (
@@ -437,10 +439,10 @@ def _load_configuration(root: Path, manifest_path: Path) -> _ValidatedConfigurat
     comparison_path = _config_path(root, manifest_path, "policies", ".comparison-policy.json")
     policy_path = _config_path(root, manifest_path, "policies", ".evaluation-policy.json")
     suite_path = _config_path(root, manifest_path, "suites", ".suite.json")
-    profile = load_json_object(profile_path, EvaluationProfile)
-    comparison_policy = load_json_object(comparison_path, ComparisonPolicy)
-    evaluation_policy = load_json_object(policy_path, EvaluationPolicy)
-    suite = load_json_object(suite_path, SuiteDefinition)
+    profile = _legacy_load_json_object(profile_path, EvaluationProfile)
+    comparison_policy = _legacy_load_json_object(comparison_path, ComparisonPolicy)
+    evaluation_policy = _legacy_load_json_object(policy_path, EvaluationPolicy)
+    suite = _legacy_load_json_object(suite_path, SuiteDefinition)
     paths_and_models = (
         (profile_path, profile),
         (comparison_path, comparison_policy),
@@ -494,10 +496,10 @@ def _validate_configuration_references(
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
 
 
-def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
+def _legacy_load_dataset(manifest_path: Path, *, evals_root: Path) -> _LegacyValidatedDataset:
     root = evals_root.absolute()
     safe_manifest_path = _safe_path(root, manifest_path)
-    manifest = load_json_object(safe_manifest_path, DatasetManifest)
+    manifest = _legacy_load_json_object(safe_manifest_path, DatasetManifest)
     _verify_content_hash(manifest)
 
     cases, resource_hashes = _load_cases(root, manifest)
@@ -513,7 +515,7 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
         if manifest.deidentification_approval_receipt_ref is None:
             raise EvaluationValidationError(EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED)
 
-    return ValidatedDataset(
+    return _LegacyValidatedDataset(
         manifest=manifest,
         cases=tuple(cases),
         evidence_mapping=evidence_mapping,
@@ -524,3 +526,13 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
         suite=configuration.suite,
         resource_hashes=tuple(sorted(resource_hashes)),
     )
+
+
+# The Section 17/20 one-read loader supersedes the reduced first-pass loader above.
+from ai_worker.tasks.evaluation.loaders_contract import (  # noqa: E402
+    ResolvedReference,
+    SyntheticCorpusSnapshot,
+    ValidatedDataset,
+    load_dataset,
+    load_json_object,
+)

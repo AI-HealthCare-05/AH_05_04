@@ -403,10 +403,14 @@ def validate_schema_value(
 ) -> BaseModel | Any:
     try:
         if isinstance(validator, TypeAdapter):
-            return validator.validate_python(value)
-        return validator.model_validate(value)
+            validated = validator.validate_python(value)
+        else:
+            validated = validator.model_validate(value)
     except ValidationError as error:
         raise SchemaValidationError(error) from None
+    if isinstance(validated, BaseModel):
+        validate_privacy_boundary(validated.model_dump(mode="json"))
+    return validated
 
 
 class ExecutionDecisionMixin(StrictContractModel):

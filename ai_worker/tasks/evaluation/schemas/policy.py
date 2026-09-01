@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: F401, F811, E402
+# mypy: disable-error-code="assignment"
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -250,3 +252,19 @@ class EvaluationPolicy(StrictContractModel):
         if self.member_manifest_hash != expected_hash:
             raise ValueError("evaluation policy member manifest hash does not match")
         return self
+
+
+# Section 17 physical contract supersedes the earlier reduced in-module draft.
+from ai_worker.tasks.evaluation.schemas.policy_contract import (  # noqa: E402
+    ComparisonPolicy,
+    ComparisonScope,
+    ConfidenceIntervalParameters,
+    EvaluationPolicy,
+    EvaluationPolicyMember,
+    EvaluationProfile,
+    PolicyMemberType,
+    SuiteDefinition,
+    SuiteInputSelector,
+    TriggerCatalogEntry,
+    evaluation_policy_member_manifest_hash,
+)

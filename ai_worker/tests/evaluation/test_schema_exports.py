@@ -82,9 +82,10 @@ def test_schema_normalization_preserves_contract_fields_named_title_or_descripti
 def test_schema_documents_are_complete_strict_draft_2020_12_contracts() -> None:
     documents = schema_documents()
 
-    assert len(documents) == 17
+    assert len(documents) == 18
     assert len(RESULT_ARTIFACT_MODELS) == 8
     assert "operational/rag-eval.validation-receipt.schema.json" in documents
+    assert "operational/rag-eval.protected-artifact-receipt.schema.json" in documents
     for relative_path, document in documents.items():
         assert relative_path.endswith(".schema.json")
         assert document["$schema"] == "https://json-schema.org/draft/2020-12/schema"

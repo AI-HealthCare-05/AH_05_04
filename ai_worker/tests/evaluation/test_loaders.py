@@ -9,9 +9,9 @@ import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import load_dataset, load_json_object
+from ai_worker.tasks.evaluation.loaders_contract import load_dataset, load_json_object
 from ai_worker.tasks.evaluation.schemas.artifacts import ValidationReceipt
-from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest
+from ai_worker.tasks.evaluation.schemas.authoring_contract import DatasetManifest
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
 SOURCE_EVALS = REPOSITORY_ROOT / "evals"
@@ -32,10 +32,24 @@ class MutableDatasetFixture:
         path.write_bytes(canonical_json_bytes(value) + b"\n")
 
     @staticmethod
-    def refresh_content_hash(value: dict[str, Any]) -> None:
-        value["content_hash"] = canonical_sha256(
+    def refresh_self_hash(value: dict[str, Any]) -> None:
+        field = next(
+            name
+            for name in (
+                "manifest_sha256",
+                "rubric_hash",
+                "snapshot_hash",
+                "receipt_hash",
+                "evaluation_profile_hash",
+                "comparison_policy_hash",
+                "evaluation_policy_hash",
+                "suite_hash",
+            )
+            if name in value
+        )
+        value[field] = canonical_sha256(
             value,
-            excluded_top_level_keys=frozenset({"content_hash"}),
+            excluded_top_level_keys=frozenset({field}),
         )
 
     def manifest_value(self) -> dict[str, Any]:
@@ -43,8 +57,19 @@ class MutableDatasetFixture:
 
     def write_manifest(self, value: dict[str, Any], *, refresh: bool = True) -> None:
         if refresh:
-            self.refresh_content_hash(value)
+            self.refresh_self_hash(value)
         self.write(self.manifest, value)
+
+    @staticmethod
+    def refresh_resource_set_hash(value: dict[str, Any]) -> None:
+        value["resource_set_hash"] = canonical_sha256(
+            {
+                "resources": [
+                    {"partition": item["partition"], "path": item["path"], "sha256": item["sha256"]}
+                    for item in value["case_resources"]
+                ]
+            }
+        )
 
     def case_path(self, case_id: str) -> Path:
         manifest = self.manifest_value()
@@ -57,28 +82,54 @@ class MutableDatasetFixture:
         path = self.root / resource["path"]
         value = self.read(path)
         mutation(value)
-        if "question" in value and "context" in value:
-            value["input_hash"] = canonical_sha256({"question": value["question"], "context": value["context"]})
+        if "query" in value and "context" in value:
+            value["input_sha256"] = canonical_sha256({"query": value["query"], "context": value["context"]})
         self.write(path, value)
         resource["sha256"] = sha256_hex(path.read_bytes())
+        self.refresh_resource_set_hash(manifest)
         self.write_manifest(manifest)
 
     def mutate_resource(self, key: str, mutation: Any) -> None:
         manifest = self.manifest_value()
-        reference = manifest[key]
-        path = self.root / reference["path"]
+        paths = {
+            "evidence_mapping": "retrieval/evidence/dev-foundation-v1.evidence-mapping.json",
+            "critical_claim_rubric": "retrieval/manifests/dev-foundation-v1.critical-claim-rubric.json",
+        }
+        path = self.root / paths[key]
         value = self.read(path)
         mutation(value)
-        self.refresh_content_hash(value)
+        self.refresh_self_hash(value)
         self.write(path, value)
-        reference["sha256"] = sha256_hex(path.read_bytes())
+        if key == "evidence_mapping":
+            manifest["evidence_mapping_manifest_sha256"] = value["manifest_sha256"]
+        else:
+            rubric_ref = {
+                "id": value["rubric_id"],
+                "version": value["rubric_version"],
+                "hash": value["rubric_hash"],
+            }
+            manifest["critical_claim_rubric_ref"] = rubric_ref
+            for resource in manifest["case_resources"]:
+                case_path = self.root / resource["path"]
+                case = self.read(case_path)
+                case["critical_claim_rubric_ref"] = rubric_ref
+                self.write(case_path, case)
+                resource["sha256"] = sha256_hex(case_path.read_bytes())
+            manifest["resource_set_hash"] = canonical_sha256(
+                {
+                    "resources": [
+                        {"partition": item["partition"], "path": item["path"], "sha256": item["sha256"]}
+                        for item in manifest["case_resources"]
+                    ]
+                }
+            )
         self.write_manifest(manifest)
 
     def mutate_config(self, relative_path: str, mutation: Any) -> None:
         path = self.root / relative_path
         value = self.read(path)
         mutation(value)
-        self.refresh_content_hash(value)
+        self.refresh_self_hash(value)
         self.write(path, value)
 
 
@@ -156,7 +207,7 @@ def assert_dataset_error(
 
 def test_loader_rejects_manifest_digest_format(tmp_dataset: MutableDatasetFixture) -> None:
     manifest = tmp_dataset.manifest_value()
-    manifest["content_hash"] = "SECRET_SENTINEL"
+    manifest["manifest_sha256"] = "SECRET_SENTINEL"
     tmp_dataset.write_manifest(manifest, refresh=False)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.HASH_INVALID)
 
@@ -171,6 +222,7 @@ def test_loader_rejects_manifest_self_hash_mismatch(tmp_dataset: MutableDatasetF
 def test_loader_rejects_missing_resource(tmp_dataset: MutableDatasetFixture) -> None:
     manifest = tmp_dataset.manifest_value()
     manifest["case_resources"][0]["path"] = "retrieval/cases/dev-foundation-v1/missing.json"
+    tmp_dataset.refresh_resource_set_hash(manifest)
     tmp_dataset.write_manifest(manifest)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.RESOURCE_MISSING)
 
@@ -188,15 +240,12 @@ def test_loader_rejects_resource_hash_mismatch(tmp_dataset: MutableDatasetFixtur
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.HASH_MISMATCH)
 
 
-def test_loader_rejects_missing_context_resource(tmp_dataset: MutableDatasetFixture) -> None:
+def test_loader_rejects_unresolved_context_reference(tmp_dataset: MutableDatasetFixture) -> None:
     tmp_dataset.mutate_case(
         "rag-dev-retrieval-001",
-        lambda case: case["context"].__setitem__(
-            "prescription_fixture",
-            "retrieval/evidence/resources/dev-foundation-v1/SECRET_SENTINEL.json",
-        ),
+        lambda case: case["context"]["runtime_fixture"]["source_snapshot_ref"].__setitem__("id", "SECRET_SENTINEL"),
     )
-    assert_dataset_error(tmp_dataset, EvaluationErrorCode.RESOURCE_MISSING)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
 
 
 def test_loader_rejects_manifest_outside_evals_root(tmp_dataset: MutableDatasetFixture) -> None:
@@ -219,6 +268,7 @@ def test_loader_rejects_duplicate_case_identity_or_path(
 ) -> None:
     manifest = tmp_dataset.manifest_value()
     manifest["case_resources"][1][duplicate_field] = manifest["case_resources"][0][duplicate_field]
+    tmp_dataset.refresh_resource_set_hash(manifest)
     tmp_dataset.write_manifest(manifest)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.CASE_DUPLICATE)
 
@@ -232,9 +282,19 @@ def test_loader_rejects_invalid_partition(tmp_dataset: MutableDatasetFixture) ->
 
 def test_loader_rejects_partition_count_mismatch(tmp_dataset: MutableDatasetFixture) -> None:
     manifest = tmp_dataset.manifest_value()
-    manifest["case_resources"][0]["partition"] = "HOLDOUT"
+    manifest["case_resources"][-1]["partition"] = "HOLDOUT"
+    tmp_dataset.refresh_resource_set_hash(manifest)
     tmp_dataset.write_manifest(manifest)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.PARTITION_COUNT_MISMATCH)
+
+
+def test_loader_rejects_independent_resource_set_hash_claim(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    manifest = tmp_dataset.manifest_value()
+    manifest["resource_set_hash"] = "a" * 64
+    tmp_dataset.write_manifest(manifest)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.HASH_MISMATCH)
 
 
 @pytest.mark.parametrize(
@@ -246,14 +306,26 @@ def test_loader_rejects_each_cross_partition_leakage_axis(
     axis: str,
 ) -> None:
     first = tmp_dataset.read(tmp_dataset.case_path("rag-dev-retrieval-001"))
-    shared = first["leakage_groups"][axis]
+    shared = first["leakage_group_ids"][axis]
     tmp_dataset.mutate_case(
         "rag-dev-safety-001",
-        lambda case: (case.__setitem__("partition", "HOLDOUT"), case["leakage_groups"].__setitem__(axis, shared)),
+        lambda case: (
+            case.__setitem__("partition", "HOLDOUT"),
+            case["leakage_group_ids"].__setitem__(axis, shared),
+        ),
     )
     manifest = tmp_dataset.manifest_value()
     resource = next(item for item in manifest["case_resources"] if item["case_id"] == "rag-dev-safety-001")
     resource["partition"] = "HOLDOUT"
+    manifest["partition_counts"] = {"AUTHORING": 0, "DEV": 4, "HOLDOUT": 1, "SAFETY_REGRESSION": 0}
+    manifest["resource_set_hash"] = canonical_sha256(
+        {
+            "resources": [
+                {"partition": item["partition"], "path": item["path"], "sha256": item["sha256"]}
+                for item in manifest["case_resources"]
+            ]
+        }
+    )
     tmp_dataset.write_manifest(manifest)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.LEAKAGE_CROSS_PARTITION)
 
@@ -261,7 +333,7 @@ def test_loader_rejects_each_cross_partition_leakage_axis(
 def test_loader_rejects_rubric_claim_mismatch(tmp_dataset: MutableDatasetFixture) -> None:
     tmp_dataset.mutate_resource(
         "critical_claim_rubric",
-        lambda rubric: rubric["critical_claim_keys"].append("synthetic-unbound-claim"),
+        lambda rubric: rubric["applicable_task_types"].remove("RETRIEVAL"),
     )
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.RUBRIC_MISMATCH)
 
@@ -269,7 +341,7 @@ def test_loader_rejects_rubric_claim_mismatch(tmp_dataset: MutableDatasetFixture
 def test_loader_rejects_unmapped_evidence_reference(tmp_dataset: MutableDatasetFixture) -> None:
     tmp_dataset.mutate_case(
         "rag-dev-retrieval-001",
-        lambda case: case["expected"]["gold_evidence_ids"].append("ev-synthetic-unmapped-001"),
+        lambda case: case["expected"]["relevant_evidence_refs"].append("ev-synthetic-unmapped-001"),
     )
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
 
@@ -277,7 +349,7 @@ def test_loader_rejects_unmapped_evidence_reference(tmp_dataset: MutableDatasetF
 def test_loader_rejects_duplicate_evidence_mapping_id(tmp_dataset: MutableDatasetFixture) -> None:
     tmp_dataset.mutate_resource(
         "evidence_mapping",
-        lambda mapping: mapping["evidence"].append(mapping["evidence"][0]),
+        lambda mapping: mapping["entries"].append(mapping["entries"][0]),
     )
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
 
@@ -290,23 +362,24 @@ def test_loader_rejects_resource_self_hash_mismatch(
     tmp_dataset: MutableDatasetFixture,
     resource_key: str,
 ) -> None:
-    manifest = tmp_dataset.manifest_value()
-    reference = manifest[resource_key]
-    path = tmp_dataset.root / reference["path"]
+    paths = {
+        "evidence_mapping": "retrieval/evidence/dev-foundation-v1.evidence-mapping.json",
+        "critical_claim_rubric": "retrieval/manifests/dev-foundation-v1.critical-claim-rubric.json",
+    }
+    path = tmp_dataset.root / paths[resource_key]
     value = tmp_dataset.read(path)
-    value["content_hash"] = "a" * 64
+    hash_field = "manifest_sha256" if resource_key == "evidence_mapping" else "rubric_hash"
+    value[hash_field] = "a" * 64
     tmp_dataset.write(path, value)
-    reference["sha256"] = sha256_hex(path.read_bytes())
-    tmp_dataset.write_manifest(manifest)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.HASH_MISMATCH)
 
 
 def test_loader_rejects_duplicate_evidence_reference_in_case(tmp_dataset: MutableDatasetFixture) -> None:
     tmp_dataset.mutate_case(
         "rag-dev-retrieval-001",
-        lambda case: case["expected"]["gold_evidence_ids"].append("ev-synthetic-chunk-001"),
+        lambda case: case["expected"]["relevant_evidence_refs"].append("ev-synthetic-chunk-001"),
     )
-    assert_dataset_error(tmp_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
 
 
 def test_loader_rejects_forbidden_privacy_key(tmp_dataset: MutableDatasetFixture) -> None:
@@ -314,20 +387,43 @@ def test_loader_rejects_forbidden_privacy_key(tmp_dataset: MutableDatasetFixture
         "rag-dev-retrieval-001",
         lambda case: case.__setitem__("ocr_raw", "SECRET_SENTINEL"),
     )
-    assert_dataset_error(tmp_dataset, EvaluationErrorCode.PRIVACY_FIELD_FORBIDDEN)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
 
 
 def test_loader_rejects_privacy_value(tmp_dataset: MutableDatasetFixture) -> None:
     tmp_dataset.mutate_case(
         "rag-dev-retrieval-001",
-        lambda case: case.__setitem__("question", "patient@example.com SECRET_SENTINEL"),
+        lambda case: case.__setitem__("query", "patient@example.com SECRET_SENTINEL"),
     )
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.PRIVACY_VALUE_DETECTED)
 
 
+@pytest.mark.parametrize(
+    ("parameter", "expected_code"),
+    [
+        ({"patient_id": "SYNTHETIC_SENTINEL"}, EvaluationErrorCode.PRIVACY_FIELD_FORBIDDEN),
+        ({"safe_parameter": "patient@example.com"}, EvaluationErrorCode.PRIVACY_VALUE_DETECTED),
+        (
+            {"patient_id": ["SYNTHETIC_SENTINEL"]},
+            EvaluationErrorCode.MANIFEST_INVALID,
+        ),
+    ],
+)
+def test_loader_validates_flexible_policy_parameters_structurally_then_for_privacy(
+    tmp_dataset: MutableDatasetFixture,
+    parameter: dict[str, object],
+    expected_code: EvaluationErrorCode,
+) -> None:
+    tmp_dataset.mutate_config(
+        "policies/dev-foundation-v1.comparison-policy.json",
+        lambda value: value["scopes"][0].__setitem__("ci_parameters", parameter),
+    )
+    assert_dataset_error(tmp_dataset, expected_code)
+
+
 def test_loader_requires_deidentification_approval(tmp_dataset: MutableDatasetFixture) -> None:
     manifest = tmp_dataset.manifest_value()
-    manifest["content_classification"] = "APPROVED_DEIDENTIFIED"
+    manifest["data_classification"] = "APPROVED_DEIDENTIFIED"
     tmp_dataset.write_manifest(manifest)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED)
 
@@ -371,7 +467,7 @@ def test_load_json_object_rejects_invalid_state_combination(tmp_path: Path) -> N
 def test_loader_rejects_profile_suite_hash_mismatch(tmp_dataset: MutableDatasetFixture) -> None:
     tmp_dataset.mutate_config(
         "profiles/dev-foundation-v1.profile.json",
-        lambda value: value["suite_references"][0].__setitem__("hash", "a" * 64),
+        lambda value: value["required_suite_refs"][0].__setitem__("hash", "a" * 64),
     )
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
 
@@ -381,12 +477,97 @@ def test_loader_rejects_evaluation_policy_member_hash_mismatch(
 ) -> None:
     tmp_dataset.mutate_config(
         "policies/dev-foundation-v1.evaluation-policy.json",
-        lambda value: value["members"][0]["reference"].__setitem__("hash", "a" * 64),
+        lambda value: value["evaluation_profile_ref"]["reference"].__setitem__("hash", "a" * 64),
     )
     value = tmp_dataset.read(tmp_dataset.root / "policies/dev-foundation-v1.evaluation-policy.json")
-    value["member_manifest_hash"] = canonical_sha256({"members": value["members"]})
-    tmp_dataset.refresh_content_hash(value)
+    members = [
+        value["evaluation_profile_ref"],
+        value["comparison_policy_ref"],
+        *value["required_partition_refs"],
+        *value["required_gate_refs"],
+        *value["required_suite_refs"],
+        value["artifact_schema_set_ref"],
+    ]
+    value["member_manifest_hash"] = canonical_sha256({"members": members})
+    tmp_dataset.refresh_self_hash(value)
     tmp_dataset.write(tmp_dataset.root / "policies/dev-foundation-v1.evaluation-policy.json", value)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+@pytest.mark.parametrize(
+    "reference_field",
+    [
+        "source_snapshot_ref",
+        "knowledge_index_ref",
+        "rule_set_ref",
+        "guideline_set_ref",
+        "safety_policy_set_ref",
+    ],
+)
+def test_loader_resolves_every_runtime_context_reference(
+    tmp_dataset: MutableDatasetFixture,
+    reference_field: str,
+) -> None:
+    tmp_dataset.mutate_case(
+        "rag-dev-retrieval-001",
+        lambda case: case["context"]["runtime_fixture"][reference_field].__setitem__("hash", "a" * 64),
+    )
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+@pytest.mark.parametrize(
+    "member_field",
+    [
+        "evaluation_profile_ref",
+        "comparison_policy_ref",
+        "required_partition_refs",
+        "required_suite_refs",
+        "artifact_schema_set_ref",
+    ],
+)
+def test_loader_resolves_every_evaluation_policy_reference(
+    tmp_dataset: MutableDatasetFixture,
+    member_field: str,
+) -> None:
+    path = tmp_dataset.root / "policies/dev-foundation-v1.evaluation-policy.json"
+    value = tmp_dataset.read(path)
+    target = value[member_field]
+    member = target[0] if isinstance(target, list) else target
+    member["reference"]["hash"] = "a" * 64
+    members = [
+        value["evaluation_profile_ref"],
+        value["comparison_policy_ref"],
+        *value["required_partition_refs"],
+        *value["required_gate_refs"],
+        *value["required_suite_refs"],
+        value["artifact_schema_set_ref"],
+    ]
+    value["member_manifest_hash"] = canonical_sha256({"members": members})
+    tmp_dataset.refresh_self_hash(value)
+    tmp_dataset.write(path, value)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_binds_protected_receipt_to_exact_resource_set(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    receipt_path = tmp_dataset.root / "provenance/dev-foundation-v1.protected-artifact-receipt.json"
+    receipt = tmp_dataset.read(receipt_path)
+    receipt["resource_set_hash"] = "a" * 64
+    tmp_dataset.refresh_self_hash(receipt)
+    tmp_dataset.write(receipt_path, receipt)
+    manifest = tmp_dataset.manifest_value()
+    manifest["protected_artifact_receipt_ref"]["hash"] = sha256_hex(receipt_path.read_bytes())
+    tmp_dataset.write_manifest(manifest)
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_binds_protected_receipt_reference_to_exact_file_bytes(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    manifest = tmp_dataset.manifest_value()
+    manifest["protected_artifact_receipt_ref"]["hash"] = "a" * 64
+    tmp_dataset.write_manifest(manifest)
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.MANIFEST_INVALID)
 
 
@@ -395,11 +576,11 @@ def test_loader_rejects_evaluation_policy_member_hash_mismatch(
     [
         (
             "profiles/dev-foundation-v1.profile.json",
-            lambda value: value["suite_references"].append(value["suite_references"][0]),
+            lambda value: value["required_suite_refs"].append(value["required_suite_refs"][0]),
         ),
         (
             "suites/dev-foundation-v1.suite.json",
-            lambda value: value["task_types"].append(value["task_types"][0]),
+            lambda value: value["input_selector"]["task_types"].append(value["input_selector"]["task_types"][0]),
         ),
         (
             "policies/dev-foundation-v1.comparison-policy.json",

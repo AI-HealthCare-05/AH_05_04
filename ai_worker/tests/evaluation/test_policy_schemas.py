@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -8,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai_worker.tasks.evaluation.canonical import canonical_sha256
-from ai_worker.tasks.evaluation.schemas.policy import (
+from ai_worker.tasks.evaluation.schemas.policy_contract import (
     ComparisonPolicy,
     EvaluationPolicy,
     EvaluationProfile,
@@ -30,13 +32,13 @@ def _actor(
 
 def _review_provenance() -> dict[str, object]:
     return {
-        "authored_by": _actor("rag-owner", "RAG owner"),
-        "reviewed_by": _actor("policy-reviewer", "Policy reviewer", "MEDICAL_REVIEWER"),
-        "approved_by": _actor("product-approver", "Product approver", "PRODUCT_SAFETY_REVIEWER"),
+        "authored_by": _actor("ceohwj", "RAG owner"),
+        "reviewed_by": _actor("hazelnutflavoured", "Policy reviewer", "MEDICAL_REVIEWER"),
+        "approved_by": None,
         "authored_at": "2026-09-01T00:00:00.000000Z",
         "reviewed_at": "2026-09-01T00:00:00.000000Z",
-        "approved_at": "2026-09-01T00:00:00.000000Z",
-        "team_gold_status": "APPROVED",
+        "approved_at": None,
+        "team_gold_status": "REVIEWED",
         "external_medical_review_status": "NOT_REQUESTED",
         "external_medical_approval_receipt_ref": None,
         "evidence_review_refs": [],
@@ -45,120 +47,48 @@ def _review_provenance() -> dict[str, object]:
 
 @pytest.fixture
 def profile_payload() -> dict[str, Any]:
-    return {
-        "schema_version": "1.0.0",
-        "profile_code": "rag-release",
-        "profile_version": "1.0.0",
-        "runtime_eligible": True,
-        "required_experiment_types": ["END_TO_END_RAG"],
-        "required_partitions": ["HOLDOUT", "SAFETY_REGRESSION"],
-        "suite_references": [
-            {
-                "id": "rag-eval.suite.release",
-                "version": "1.0.0",
-                "hash": "a" * 64,
-            }
-        ],
-        "review_provenance": _review_provenance(),
-        "content_hash": "b" * 64,
-    }
+    return _fixture_json("profiles/dev-foundation-v1.profile.json")
 
 
 @pytest.fixture
 def suite_payload() -> dict[str, Any]:
-    return {
-        "schema_version": "1.0.0",
-        "suite_code": "rag-release",
-        "suite_version": "1.0.0",
-        "experiment_type": "END_TO_END_RAG",
-        "partitions": ["HOLDOUT", "SAFETY_REGRESSION"],
-        "task_types": ["END_TO_END_RAG", "SAFETY"],
-        "required": True,
-        "review_provenance": _review_provenance(),
-        "content_hash": "c" * 64,
-    }
+    return _fixture_json("suites/dev-foundation-v1.suite.json")
 
 
 @pytest.fixture
 def policy_payload() -> dict[str, Any]:
-    return {
-        "schema_version": "1.0.0",
-        "policy_code": "rag-release-comparison",
-        "policy_version": "1.0.0",
-        "scopes": [
-            {
-                "metric_code": "citation-precision",
-                "metric_version": "1.0.0",
-                "partition": "HOLDOUT",
-                "slice_key": "ALL",
-                "required": True,
-                "analysis_unit": "CASE",
-                "estimator": "PROPORTION",
-                "minimum_case_count": 30,
-                "minimum_independent_group_count": 20,
-                "cluster_dimension": "question_template",
-                "threshold": "0.95",
-                "decision_basis": "CANDIDATE_THRESHOLD",
-                "ci_method": "CLUSTER_BOOTSTRAP",
-                "ci_method_version": "1.0.0",
-                "ci_parameters": {"confidence_level": "0.95", "resamples": 10000},
-                "seed": None,
-            }
-        ],
-        "proposed_by": _actor("rag-owner", "RAG owner"),
-        "approved_by": _actor("product-approver", "Product approver"),
-        "reviewed_at": "2026-09-01T00:00:00.000000Z",
-        "content_hash": "d" * 64,
-    }
+    return _fixture_json("policies/dev-foundation-v1.comparison-policy.json")
+
+
+EVALS_ROOT = Path(__file__).parents[3] / "evals"
+
+
+def _fixture_json(relative_path: str) -> dict[str, Any]:
+    return json.loads((EVALS_ROOT / relative_path).read_text(encoding="utf-8"))
 
 
 def _policy_members() -> list[dict[str, Any]]:
+    policy = _fixture_json("policies/dev-foundation-v1.evaluation-policy.json")
     return [
-        {
-            "member_order": 1,
-            "member_type": "PROFILE",
-            "reference": {
-                "id": "rag-eval.profile.release",
-                "version": "1.0.0",
-                "hash": "a" * 64,
-            },
-        },
-        {
-            "member_order": 2,
-            "member_type": "SUITE",
-            "reference": {
-                "id": "rag-eval.suite.release",
-                "version": "1.0.0",
-                "hash": "b" * 64,
-            },
-        },
-        {
-            "member_order": 3,
-            "member_type": "COMPARISON_POLICY",
-            "reference": {
-                "id": "rag-eval.comparison.release",
-                "version": "1.0.0",
-                "hash": "c" * 64,
-            },
-        },
+        policy["evaluation_profile_ref"],
+        policy["comparison_policy_ref"],
+        *policy["required_partition_refs"],
+        *policy["required_gate_refs"],
+        *policy["required_suite_refs"],
+        policy["artifact_schema_set_ref"],
     ]
 
 
 def _evaluation_policy_payload() -> dict[str, Any]:
-    return {
-        "schema_version": "1.0.0",
-        "policy_code": "rag-release",
-        "policy_version": "1.0.0",
-        "members": _policy_members(),
-        "member_manifest_hash": "a29886523c5236bf176060cb32c8ab2ac44934f554ba7a3fe9852a71f0f46a5f",
-        "review_provenance": _review_provenance(),
-        "content_hash": "e" * 64,
-    }
+    return _fixture_json("policies/dev-foundation-v1.evaluation-policy.json")
 
 
 def test_release_profile_requires_end_to_end_holdout_and_safety(
     profile_payload: dict[str, Any],
 ) -> None:
+    profile_payload["runtime_eligible"] = True
+    profile_payload["required_experiment_types"] = ["END_TO_END_RAG"]
+    profile_payload["required_partitions"] = ["HOLDOUT", "SAFETY_REGRESSION"]
     EvaluationProfile.model_validate(profile_payload)
 
     missing_experiment = deepcopy(profile_payload)
@@ -186,8 +116,8 @@ def test_non_runtime_profile_may_define_diagnostic_scope(profile_payload: dict[s
 def test_suite_definition_accepts_complete_wire_payload(suite_payload: dict[str, Any]) -> None:
     suite = SuiteDefinition.model_validate(suite_payload)
 
-    assert suite.experiment_type.value == "END_TO_END_RAG"
-    assert [partition.value for partition in suite.partitions] == ["HOLDOUT", "SAFETY_REGRESSION"]
+    assert suite.adapter_id == "validation-only.v1"
+    assert [partition.value for partition in suite.input_selector.partitions] == ["DEV"]
 
 
 def test_profile_repeated_fields_are_deeply_immutable(profile_payload: dict[str, Any]) -> None:
@@ -201,7 +131,7 @@ def test_suite_repeated_fields_are_deeply_immutable(suite_payload: dict[str, Any
     suite = SuiteDefinition.model_validate(suite_payload)
 
     with pytest.raises(AttributeError):
-        cast(Any, suite.task_types).pop()
+        cast(Any, suite.input_selector.task_types).pop()
 
 
 def test_comparison_policy_rejects_self_approval(policy_payload: dict[str, Any]) -> None:
@@ -246,7 +176,7 @@ def test_wilson_score_ci_accepts_generic_parameters_without_resamples(
     policy_payload: dict[str, Any],
 ) -> None:
     scope = policy_payload["scopes"][0]
-    scope["ci_method"] = "WILSON_SCORE"
+    scope["ci_method_id"] = "WILSON_SCORE"
     scope["ci_parameters"] = {
         "confidence_level": "0.95",
         "continuity_correction": True,
@@ -377,15 +307,16 @@ def test_comparison_scope_ci_parameters_are_deeply_immutable(policy_payload: dic
 
 
 def test_evaluation_policy_validates_hand_checked_member_manifest_hash() -> None:
-    policy = EvaluationPolicy.model_validate(_evaluation_policy_payload())
+    payload = _evaluation_policy_payload()
+    policy = EvaluationPolicy.model_validate(payload)
 
-    assert policy.member_manifest_hash == "a29886523c5236bf176060cb32c8ab2ac44934f554ba7a3fe9852a71f0f46a5f"
+    assert policy.member_manifest_hash == payload["member_manifest_hash"]
 
 
 def test_evaluation_policy_rejects_duplicate_member_natural_key() -> None:
     payload = _evaluation_policy_payload()
-    payload["members"][1]["reference"] = deepcopy(payload["members"][0]["reference"])
-    payload["members"][1]["member_type"] = payload["members"][0]["member_type"]
+    payload["required_suite_refs"][0]["reference"] = deepcopy(payload["evaluation_profile_ref"]["reference"])
+    payload["required_suite_refs"][0]["member_type"] = "PROFILE"
 
     with pytest.raises(ValidationError):
         EvaluationPolicy.model_validate(payload)
@@ -393,7 +324,7 @@ def test_evaluation_policy_rejects_duplicate_member_natural_key() -> None:
 
 def test_evaluation_policy_rejects_duplicate_member_order() -> None:
     payload = _evaluation_policy_payload()
-    payload["members"][1]["member_order"] = 1
+    payload["comparison_policy_ref"]["member_order"] = 1
 
     with pytest.raises(ValidationError):
         EvaluationPolicy.model_validate(payload)
@@ -408,14 +339,15 @@ def test_evaluation_policy_rejects_mismatched_member_manifest_hash() -> None:
 
 
 def test_evaluation_policy_members_remain_unchanged_after_mutation_attempt() -> None:
-    policy = EvaluationPolicy.model_validate(_evaluation_policy_payload())
+    payload = _evaluation_policy_payload()
+    policy = EvaluationPolicy.model_validate(payload)
     original_members = tuple(policy.members)
 
     with pytest.raises(AttributeError):
         cast(Any, policy.members).pop()
 
     assert tuple(policy.members) == original_members
-    assert policy.member_manifest_hash == "a29886523c5236bf176060cb32c8ab2ac44934f554ba7a3fe9852a71f0f46a5f"
+    assert policy.member_manifest_hash == payload["member_manifest_hash"]
 
 
 def test_immutable_collections_preserve_json_array_and_object_wire_shapes(
@@ -428,17 +360,24 @@ def test_immutable_collections_preserve_json_array_and_object_wire_shapes(
     comparison_json = ComparisonPolicy.model_validate(policy_payload).model_dump(mode="json")
     evaluation_json = EvaluationPolicy.model_validate(_evaluation_policy_payload()).model_dump(mode="json")
 
-    assert profile_json["required_partitions"] == ["HOLDOUT", "SAFETY_REGRESSION"]
-    assert suite_json["task_types"] == ["END_TO_END_RAG", "SAFETY"]
+    assert profile_json["required_partitions"] == ["DEV"]
+    assert suite_json["input_selector"]["task_types"] == [
+        "ANSWER_GROUNDING",
+        "ANSWER_QUALITY",
+        "END_TO_END_RAG",
+        "RETRIEVAL",
+        "SAFETY",
+    ]
     assert comparison_json["scopes"][0]["ci_parameters"] == {
-        "confidence_level": "0.95",
-        "resamples": 10000,
+        "validation_only": True,
     }
-    assert [member["member_order"] for member in evaluation_json["members"]] == [1, 2, 3]
+    assert evaluation_json["evaluation_profile_ref"]["member_order"] == 1
+    assert evaluation_json["artifact_schema_set_ref"]["member_order"] == 5
 
     assert EvaluationProfile.model_json_schema()["properties"]["required_partitions"]["type"] == "array"
-    assert SuiteDefinition.model_json_schema()["properties"]["task_types"]["type"] == "array"
+    suite_schema = SuiteDefinition.model_json_schema()
+    assert suite_schema["$defs"]["SuiteInputSelector"]["properties"]["task_types"]["type"] == "array"
     comparison_schema = ComparisonPolicy.model_json_schema()
     assert comparison_schema["properties"]["scopes"]["type"] == "array"
     assert comparison_schema["$defs"]["ComparisonScope"]["properties"]["ci_parameters"]["type"] == "object"
-    assert EvaluationPolicy.model_json_schema()["properties"]["members"]["type"] == "array"
+    assert EvaluationPolicy.model_json_schema()["properties"]["required_suite_refs"]["type"] == "array"
