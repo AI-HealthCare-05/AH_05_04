@@ -215,8 +215,8 @@ class OcrService:
         return _to_job_data(job, saved_fields)
 
     async def get_ocr_job_result(self, *, user: User, job_id: UUID) -> OcrJobData:
-        job = await self._ocr_repo.get_job_with_document(job_id=job_id)
-        if job is None or job.document.user_id != user.id:
+        job = await self._ocr_repo.get_job_owned(job_id=job_id, user_id=user.id)
+        if job is None:
             raise ApiError(
                 status_code=404,
                 code="OCR_JOB_NOT_FOUND",

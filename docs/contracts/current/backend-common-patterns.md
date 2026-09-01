@@ -23,6 +23,7 @@ Backend 담당자가 기능을 나누어 구현하더라도 사용자 리소스 
 ### 1.2 사용자에게 보이는 규칙
 
 - 사용자 리소스의 조회·수정·삭제·생성 API는 요청·경로에 포함된 리소스(생성 시에는 상위 리소스)의 소유권을 확인합니다.
+- #117 이후 현재 Backend 리소스의 소유권 기준은 인증 사용자의 본인 단일 `SELF` profile입니다. 리소스가 직접 `profile_id`를 저장하는 경우 해당 값이 사용자의 SELF profile id와 같아야 하며, OCR 작업과 Chat message처럼 직접 저장하지 않는 하위 row는 부모 리소스 chain의 `profile_id`를 따릅니다.
 - 소유권이 없거나 리소스가 존재하지 않으면 **동일하게 `404`**를 반환합니다. 다른 사용자의 리소스에 `403`을 반환하면 해당 ID가 실제로 존재한다는 정보가 노출될 수 있으므로, 존재 여부를 숨기기 위해 `404`로 통일합니다.
 - 소유권 확인에 실패한 리소스는 반환하거나 수정·삭제하지 않습니다.
 - 오류 응답과 로그에 다른 사용자의 의료정보나 소유권 판단의 상세 사유를 남기지 않습니다.
@@ -43,7 +44,7 @@ Backend 담당자가 기능을 나누어 구현하더라도 사용자 리소스 
 }
 ```
 
-현재 코드에서 소유권 확인이 완전히 빠진 사용자 리소스 API는 확인되지 않았습니다. 교차 사용자 접근 테스트는 가이드 Repository(`test_get_prescription_owned_rejects_other_users_prescription`, `test_get_owned_guide_rejects_other_users_guide`)와 채팅 API(`test_foreign_ownership_and_closed_session_are_rejected_before_engine`)에 이미 작성되어 있으며, 의료문서·처방전·OCR 리소스 테스트는 추가 보강 대상입니다.
+현재 코드에서 소유권 확인이 완전히 빠진 사용자 리소스 API는 확인되지 않았습니다. PROFILE 전환 구현 PR은 `owned_by_self(...)` helper, 기존 사용자 SELF profile 멱등 생성, 의료문서→처방→가이드→채팅 세션 `profile_id` 전파, 부모·자식 `profile_id` 불일치 차단 테스트를 포함합니다. 교차 사용자 접근 테스트는 OCR API(`test_ocr_job_result_returns_404_for_another_user`), 가이드 Repository(`test_get_prescription_owned_rejects_other_users_prescription`, `test_get_owned_guide_rejects_other_users_guide`)와 채팅 API(`test_foreign_ownership_and_closed_session_are_rejected_before_engine`)에 작성되어 있습니다.
 
 구체적인 Repository 조회 패턴(`get_owned(...)` 표준 구현, 지양하는 방식, 리소스별 현재 적용 현황)은 Backend 내부 구현 가이드로 옮깁니다.
 

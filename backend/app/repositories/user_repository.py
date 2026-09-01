@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.core.utils.common import normalize_email
+from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 
 DuplicateUserField = Literal["email", "phone_number"]
@@ -167,6 +168,14 @@ class UserRepository:
             raise DuplicateUserFieldError(
                 duplicate_field,
             ) from exc
+
+        profile = Profile(
+            user_id=user.id,
+            profile_type=ProfileType.SELF,
+            display_name=user.name,
+        )
+        self.session.add(profile)
+        await self.session.flush()
 
         return user
 
