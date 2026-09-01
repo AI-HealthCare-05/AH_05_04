@@ -27,6 +27,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
+| 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
 | OCR | `ocr_job`, `extracted_field` | 동기 OCR 상태, 원문·정규화·사용자 확정값 저장 |
 | 처방 | `prescription`, `medication` | 사용자 확정 처방과 약물 저장 |
@@ -35,7 +36,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 의료 지식 | `knowledge_document`, `knowledge_chunk` | Schema-only Post-MVP 골격, 현재 검색 경로에서 미사용 |
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 
-본인 단일 `SELF` profile 도입은 Post-MVP-1의 방향이지만 도메인 리소스의 `user_id → profile_id` 소유권 전환은 제약·backfill·FK·cutover·rollback·권한 테스트 Decision 전까지 구현하지 않습니다. 그 Decision이 승인될 때까지 현재 `user_id` 소유권을 기준으로 유지합니다. 복약 일정·기록과 감사 로그도 동일하게 목표 계약과 현재 구현을 구분합니다.
+본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입합니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·기록과 감사 로그는 아직 목표 계약과 현재 구현을 구분합니다.
 
 ## 변경 원칙
 
@@ -57,6 +58,50 @@ DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함�
 MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 
 이메일은 회원가입, 로그인 및 내 정보 수정 시 Backend에서 소문자로 정규화합니다. DB에는 정규화된 값만 저장하며, 조회 API도 저장된 소문자 값을 반환합니다. 이메일 unique와 중복 판정 역시 정규화된 값을 기준으로 적용하므로 대소문자만 다른 이메일은 동일하게 취급합니다.
+
+## PROFILE SELF 소유권
+
+`profile` 테이블은 본인 단일 `SELF` profile을 저장합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Profile PK |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `profile_type` | `VARCHAR(30)` | No | 현재는 `SELF`만 허용 |
+| `display_name` | `VARCHAR(100)` | No | 기본 표시명 |
+| `created_at` | timezone datetime | No | 생성 시각 |
+| `updated_at` | timezone datetime | No | 수정 시각 |
+
+DB 제약:
+
+- `(user_id, profile_type)` unique
+- `profile_type = 'SELF'` CHECK
+
+회원가입 경로는 사용자 생성과 함께 SELF profile을 생성합니다. 기존 사용자처럼 SELF profile이 없을 수 있는 row가 신규 의료문서를 생성할 때는 `INSERT ... ON CONFLICT DO NOTHING RETURNING` 기준으로 SELF profile을 멱등 생성한 뒤 같은 transaction에서 리소스 `profile_id`로 사용합니다.
+
+## 사용자 리소스 소유권 관계
+
+사용자 의료 리소스는 `profile_id`를 기준으로 소유권을 확인합니다. 소유권이 없거나 리소스가 존재하지 않으면 존재 여부를 숨기기 위해 동일하게 `404`를 반환합니다.
+
+| 테이블 | 소유권 기준 |
+| --- | --- |
+| `medical_document` | `medical_document.profile_id` |
+| `ocr_job` | `ocr_job → medical_document → profile_id` |
+| `prescription` | `prescription.profile_id` |
+| `guide` | `guide.profile_id` |
+| `chat_session` | `chat_session.profile_id` |
+| `chat_message` | `chat_message → chat_session → profile_id` |
+
+부모·자식 리소스의 `profile_id`가 달라지는 상태는 DB 제약으로 차단합니다.
+
+| 관계 | 제약 |
+| --- | --- |
+| `medical_document` | `(id, profile_id)` unique |
+| `prescription` | `(id, profile_id)` unique, `(document_id, profile_id) → medical_document(id, profile_id)` composite FK |
+| `guide` | `(prescription_id, profile_id) → prescription(id, profile_id)` composite FK |
+| `chat_session` | `(prescription_id, profile_id) → prescription(id, profile_id)` composite FK |
+
+`ocr_job.profile_id`와 `chat_message.profile_id`는 직접 저장하지 않습니다. OCR 작업은 의료문서에 종속되고, Chat message는 세션에 종속되므로 부모 chain의 `profile_id`를 기준으로 확인합니다.
 
 ## OCR 작업
 
@@ -146,7 +191,7 @@ Production에서는 해당 revision을 downgrade하지 않고 후속 migration�
 
 ## Post-MVP-1 목표 스키마 — 미구현
 
-Approved Contract Freeze v4와 RAG DB schema v1.19는 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐지만 아래 RAG/Eval 테이블과 제약은 현재 migration·모델에 구현된 것으로 간주하지 않습니다. 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK는 호환을 위해 `CHAR(36)`을 유지하고 신규 독립 RAG/Eval ID만 PostgreSQL native `UUID`를 허용합니다.
+Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐지만 아래 RAG/Eval 테이블과 제약은 현재 migration·모델에 구현된 것으로 간주하지 않습니다. 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK는 호환을 위해 `CHAR(36)`을 유지하고 신규 독립 RAG/Eval ID만 PostgreSQL native `UUID`를 허용합니다.
 
 | 영역 | 목표 테이블 | 목표 제약 |
 | --- | --- | --- |
@@ -160,7 +205,7 @@ Approved Contract Freeze v4와 RAG DB schema v1.19는 다음 구조를 목표로
 | Rule·Evidence | `rag_interaction_rule`, `rag_rule_evidence`, rule set 계열 | 처방약–OTC Rule-first, 승인 evidence와 version 연결, rule 없음은 안전 판정이 아님 |
 | RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열 | Job·처방 version·Runtime Bundle 귀속, 생성·검증·공개 상태축과 Citation 완전성 분리 |
 | Runtime 배포 | runtime execution manifest·release bundle·environment 계열 | Source·Index·Rule·Prompt·Model·Validator·Worker artifact version을 환경별 단일 active bundle로 고정 |
-| Evaluation | dataset·case·run·variant·metric·release approval 계열 | HOLDOUT·SAFETY_REGRESSION·END_TO_END_FINAL, 분모·신뢰구간·`NOT_RUN/INCONCLUSIVE`와 재현 version 저장 |
+| Evaluation | dataset·case·run·variant·metric·release approval 계열 | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료 후 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE` |
 
 OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계를 가지며, pgvector는 OCR 후보 보조 단계에만 사용합니다. HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상호작용 근거로 사용하지 않습니다.
 

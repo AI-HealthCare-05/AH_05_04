@@ -46,12 +46,21 @@
 3. 상태 디렉터리를 계약 상태의 기준으로 사용한다. 목표 또는 Proposed 계약을 Current로 승격하려면 구현 PR에서 관련 구현, migration, OpenAPI/DTO, 계약·통합 테스트와 실행 증빙을 연결하고 지정 리뷰어 승인을 받은 뒤 `docs/contracts/current/`로 이동한다. 같은 PR에서 문서 상태와 인덱스를 갱신하고 이전 상태 디렉터리에 중복 파일을 남기지 않는다.
 4. 외부 승인과 공개 flag는 구현 완료와 별도로 관리한다. 상세 조건은 [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)를 따른다.
 
+## RAG-00 Approved Target
+
+[Product Decision `PD-125-20260831`](./decisions/2026-08-31-rag-p0-contract-freeze.md)과 `docs/contracts/targets/post-mvp-1/`의 RAG P0 계약은 외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 저장소 공유 경계로 투영한 `Approved Target · Not implemented`다. 외부 논리 계약 `medication-candidate-identification-v1`은 기존 `medication-identification-v1.md`에 통합하며 같은 상태 폴더에 중복 파일을 두지 않는다. Safety Result v1은 Approved v4 이력으로 유지하고 Safety Result·Citation v2는 후속 Target으로 별도 관리한다.
+
+[Issue #136](https://github.com/AI-HealthCare-05/AH_05_04/issues/136)의 Guide·Chat 책임 경계·상태 표시 산출물은 RAG-00의 입력 Receipt다. 2026-09-01 현재 Issue가 Open이고 산출물·연결 PR이 확정되지 않았으므로 같은 문서를 RAG-00에서 중복 작성하거나 미확정 상태 UI 계약을 추정하지 않는다. 확정 Receipt 연결 전까지 Issue #125의 통합 완료·Close는 차단하지만, 이미 확정된 RAG Target 범위의 로컬 구현 준비를 막는 의미로 확대하지 않는다.
+
 `ISS-TBD-035`는 `FinalProject Documents/00_Index.md`의 상류 계획 레지스터 ID이며, 이 구현 저장소에서는 [Issue #91](https://github.com/AI-HealthCare-05/AH_05_04/issues/91)과 연결해 추적한다. 상류 artifact에 공개 가능한 안정 URL이 생기기 전에는 존재하지 않는 저장소 링크를 만들지 않는다. HIRA 식별, Track D 전용 OTC API 또는 의미 기반 NLI를 Approved v4 목표로 복원하지 않는다.
+
+## 확정된 Current 소유권 경계
+
+2026-09-01 [`PD-117`](./decisions/2026-09-01-profile-self-ownership-current.md)과 #117/#133 병합으로 사용자당 단일 `SELF` Profile, 기존 의료 리소스 `profile_id` backfill, 부모·자식 composite FK와 read/write cutover가 Current 계약이 됐다. 새 Backend·RAG 리소스의 소유권은 SELF `profile_id` 또는 부모 chain의 `profile_id`를 따르며 `user_id` 직접 비교로 되돌리지 않는다. 보호자·멀티 프로필·위임 권한은 후속 Decision 전까지 범위 밖이다.
 
 ## 구현 전 재결정이 필요한 충돌
 
 다음 항목은 Approved v4 문구와 현재 실행·배포 경계 사이의 남은 충돌이다. 이 PR은 값을 추정해 해소하지 않으며, [Issue #91](https://github.com/AI-HealthCare-05/AH_05_04/issues/91)에 연결된 후속 Product Decision 또는 새 Contract Freeze version이 승인될 때까지 관련 구현과 `current/` 승격을 차단한다. 2026-08-31 [Product Decision `PD-91-20260831`](./decisions/2026-08-31-ocr-timeout-idempotency.md)로 OCR `hard timeout 60초 / lease 75초`, PostgreSQL `BYTEA`, 단일 `idempotency_record + record_type`을 목표 계약에 확정했으며 더 이상 미정 충돌로 취급하지 않는다.
 
-- **SELF profile 소유권 이관:** 사용자당 `SELF` profile 1개를 보장하는 제약, 기존 의료 데이터의 `profile_id` backfill, FK·index 생성과 read/write cutover 순서, rollback, endpoint별 권한 테스트가 미정이다. 별도 Decision과 migration 계획이 승인될 때까지 기존 `user_id` 소유권 기준을 유지하고 `profile_id`로 읽기·쓰기를 전환하지 않는다.
 - **Runtime Bundle과 Worker 배포:** Worker artifact version을 Bundle에 포함하면서 재시도 snapshot 고정, active Bundle 변경 시 `STALE`, 구·신 Worker 동시 배포를 함께 만족시키는 전이가 미정이다. `RETRY_WAIT` 처리, Worker–Bundle 호환성 검사와 drain/rolling deployment 방식을 함께 확정한다.
 - **OTC 질문의 안정 Identity:** Chat 자유 입력에서 OTC 제품·성분·함량·제형을 식별하고 애매함·사용자 확인을 거쳐 Rule 입력 Identity로 고정하는 전이가 미정이다. 이 전이가 확정되기 전에는 불충분한 입력으로 Rule 평가를 실행하지 않는다.

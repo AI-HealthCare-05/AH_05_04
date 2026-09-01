@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob, OcrStatus
+from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.ocr_repository import OcrRepository
 from app.tests.conftest import test_engine
@@ -43,9 +44,13 @@ async def _create_document(session: AsyncSession) -> MedicalDocument:
     )
     session.add(user)
     await session.flush()
+    profile = Profile(user_id=user.id, profile_type=ProfileType.SELF, display_name=user.name)
+    session.add(profile)
+    await session.flush()
 
     document = MedicalDocument(
-        user_id=user.id,
+        uploaded_by=user.id,
+        profile_id=profile.id,
         original_file_name="prescription.jpg",
         object_key=f"test/{uuid4()}.jpg",
         file_mime_type="image/jpeg",

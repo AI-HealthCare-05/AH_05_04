@@ -13,6 +13,7 @@ from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSes
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
+from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.prescription_repository import PrescriptionRepository
@@ -49,8 +50,12 @@ async def _create_session(session: AsyncSession) -> tuple[User, Prescription, Ch
     )
     session.add(user)
     await session.flush()
+    profile = Profile(user_id=user.id, profile_type=ProfileType.SELF, display_name=user.name)
+    session.add(profile)
+    await session.flush()
     document = MedicalDocument(
-        user_id=user.id,
+        uploaded_by=user.id,
+        profile_id=profile.id,
         original_file_name="synthetic.jpg",
         object_key=f"synthetic/{token}.jpg",
         file_mime_type="image/jpeg",
@@ -64,12 +69,13 @@ async def _create_session(session: AsyncSession) -> tuple[User, Prescription, Ch
     prescription = Prescription(
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
+        profile_id=profile.id,
         prescribed_date=date(2026, 8, 20),
         confirmed_at=datetime.now(UTC),
     )
     session.add(prescription)
     await session.flush()
-    chat_session = ChatSession(prescription_id=prescription.id)
+    chat_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
     session.add(chat_session)
     await session.flush()
     return user, prescription, chat_session
@@ -89,7 +95,7 @@ class CapturingSession:
         return CapturingResult()
 
 
-async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_correlated_ownership_exists() -> None:
+async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_self_profile_subquery() -> None:
     session = CapturingSession()
     repository = ChatRepository(session)  # type: ignore[arg-type]
     session_id = uuid4()
@@ -111,14 +117,12 @@ async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_corr
     assert sql.count("FOR UPDATE") == 1
     assert sql.endswith("FOR UPDATE")
     assert "FROM CHAT_SESSION" in sql
-    # PostgreSQL은 SELECT 1에 ANON_1 alias를 붙일 수 있으므로
-    # EXISTS와 내부 JOIN 구조를 각각 검증합니다.
-    assert "EXISTS (SELECT 1" in sql
-    assert "FROM PRESCRIPTION JOIN MEDICAL_DOCUMENT" in sql
+    # 소유권은 user_id 직접 비교가 아니라 사용자의 SELF profile_id로 검증합니다.
+    assert "CHAT_SESSION.PROFILE_ID = (SELECT PROFILE.ID" in sql
     assert sql.count("CHAT_SESSION.ID =") == 1
     assert f"CHAT_SESSION.ID = '{session_id}'".upper() in sql
-    assert "PRESCRIPTION.ID = CHAT_SESSION.PRESCRIPTION_ID" in sql
-    assert f"MEDICAL_DOCUMENT.USER_ID = '{user_id}'".upper() in sql
+    assert f"PROFILE.USER_ID = '{user_id}'".upper() in sql
+    assert "PROFILE.PROFILE_TYPE = 'SELF'" in sql
     assert "CHAT_SESSION JOIN" not in sql
 
 

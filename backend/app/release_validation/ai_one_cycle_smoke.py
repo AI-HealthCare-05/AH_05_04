@@ -410,6 +410,7 @@ async def build_synthetic_fixture(
     from app.core.utils.security import hash_password
     from app.models.medical_documents import DocumentType, MedicalDocument, UploadStatus
     from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
+    from app.models.profiles import Profile, ProfileType
     from app.models.users import User
 
     now = datetime.now(UTC)
@@ -419,6 +420,7 @@ async def build_synthetic_fixture(
     user_id = user_id or uuid4()
     document_id = uuid4()
     ocr_job_id = uuid4()
+    profile_id = uuid4()
     user = User(
         id=user_id,
         email=email,
@@ -427,9 +429,16 @@ async def build_synthetic_fixture(
         is_active=True,
         is_admin=False,
     )
+    profile = Profile(
+        id=profile_id,
+        user_id=user_id,
+        profile_type=ProfileType.SELF,
+        display_name=user.name,
+    )
     document = MedicalDocument(
         id=document_id,
-        user_id=user_id,
+        uploaded_by=user_id,
+        profile_id=profile_id,
         document_type=DocumentType.PRESCRIPTION,
         original_file_name=f"synthetic-{compact_run_id}.png",
         object_key=f"{document_id}.png",
@@ -479,7 +488,7 @@ async def build_synthetic_fixture(
         for index, field_type, value in field_values
     ]
     async with session_factory() as session:
-        session.add_all([user, document, job, *fields])
+        session.add_all([user, profile, document, job, *fields])
         await session.commit()
     return SyntheticFixture(
         user_id=user_id,
@@ -500,9 +509,10 @@ async def cleanup_synthetic_fixture(
     from app.models.medical_documents import MedicalDocument
     from app.models.ocr import ExtractedField, OcrJob
     from app.models.prescriptions import Medication, Prescription
+    from app.models.profiles import Profile
     from app.models.users import User
 
-    document_ids = select(MedicalDocument.id).where(MedicalDocument.user_id == user_id)
+    document_ids = select(MedicalDocument.id).where(MedicalDocument.uploaded_by == user_id)
     ocr_job_ids = select(OcrJob.id).where(OcrJob.document_id.in_(document_ids))
     prescription_ids = select(Prescription.id).where(Prescription.document_id.in_(document_ids))
     guide_ids = select(Guide.id).where(Guide.prescription_id.in_(prescription_ids))
@@ -518,7 +528,8 @@ async def cleanup_synthetic_fixture(
         await session.execute(delete(Prescription).where(Prescription.document_id.in_(document_ids)))
         await session.execute(delete(ExtractedField).where(ExtractedField.ocr_job_id.in_(ocr_job_ids)))
         await session.execute(delete(OcrJob).where(OcrJob.document_id.in_(document_ids)))
-        await session.execute(delete(MedicalDocument).where(MedicalDocument.user_id == user_id))
+        await session.execute(delete(MedicalDocument).where(MedicalDocument.uploaded_by == user_id))
+        await session.execute(delete(Profile).where(Profile.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
     async with session_factory() as verification_session:
@@ -586,7 +597,7 @@ async def verify_one_cycle(
         or [message.role for message in messages] != [ChatRole.USER, ChatRole.ASSISTANT]
         or messages[0].message_seq >= messages[1].message_seq
         or messages[0].content != scenario["question"]
-        or document.user_id != fixture.user_id
+        or document.uploaded_by != fixture.user_id
         or prescription.document_id != expected_document_id
         or guide.prescription_id != prescription.id
         or chat_session.prescription_id != prescription.id
@@ -1360,7 +1371,7 @@ async def _cleanup_root(  # noqa: C901
     storage_root = storage_dir.resolve()
     async with session_factory() as session:
         documents = list(
-            (await session.scalars(select(MedicalDocument).where(MedicalDocument.user_id == user_id))).all()
+            (await session.scalars(select(MedicalDocument).where(MedicalDocument.uploaded_by == user_id))).all()
         )
     state = store.read() if store is not None else {}
     if store is not None and state.get("file_cleanup") == "DELETE_INTENT":

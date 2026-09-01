@@ -69,7 +69,7 @@ class GuideService:
                 ],
             )
 
-        guide = await self._repo.create(prescription_id=prescription.id)
+        guide = await self._repo.create(prescription=prescription)
 
         failure_error: ApiError
         try:

@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, ForeignKey, Index, String
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -13,6 +13,7 @@ from app.core.db.types import UUIDChar
 if TYPE_CHECKING:
     from app.models.ocr import OcrJob
     from app.models.prescriptions import Prescription
+    from app.models.profiles import Profile
     from app.models.users import User
 
 
@@ -28,7 +29,9 @@ class UploadStatus(StrEnum):
 class MedicalDocument(Base):
     __tablename__ = "medical_document"
     __table_args__ = (
-        Index("idx_document_user_uploaded", "user_id", "uploaded_at", "id"),
+        UniqueConstraint("id", "profile_id", name="uq_medical_document_id_profile"),
+        Index("idx_document_uploader_uploaded", "uploaded_by", "uploaded_at", "id"),
+        Index("idx_document_profile_uploaded", "profile_id", "uploaded_at", "id"),
         CheckConstraint("document_type = 'PRESCRIPTION'", name="chk_document_type_prescription"),
         CheckConstraint("upload_status IN ('UPLOADED', 'FAILED')", name="chk_document_upload_status"),
         CheckConstraint(
@@ -39,7 +42,8 @@ class MedicalDocument(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("user.id"), nullable=False)
+    uploaded_by: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("user.id"), nullable=False)
+    profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     document_type: Mapped[DocumentType] = mapped_column(
         Enum(DocumentType, native_enum=False, length=30),
         nullable=False,
@@ -61,6 +65,7 @@ class MedicalDocument(Base):
         server_default=func.now(),
     )
 
-    user: Mapped["User"] = relationship()
+    uploader: Mapped["User"] = relationship()
+    profile: Mapped["Profile"] = relationship()
     ocr_jobs: Mapped[list["OcrJob"]] = relationship(back_populates="document")
     prescription: Mapped["Prescription | None"] = relationship(back_populates="document")

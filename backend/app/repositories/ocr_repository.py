@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ConfirmationStatus, ExtractedField, OcrJob, OcrStatus
+from app.repositories.profile_ownership import owned_by_self
 
 
 class OcrRepository:
@@ -40,6 +41,18 @@ class OcrRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_job_owned(self, *, job_id: UUID, user_id: UUID) -> OcrJob | None:
+        result = await self.session.execute(
+            select(OcrJob)
+            .join(MedicalDocument, MedicalDocument.id == OcrJob.document_id)
+            .options(selectinload(OcrJob.document), selectinload(OcrJob.extracted_fields))
+            .where(
+                OcrJob.id == job_id,
+                owned_by_self(MedicalDocument.profile_id, user_id),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def replace_fields(self, *, ocr_job: OcrJob, fields: list[dict]) -> None:
         await self.session.execute(delete(ExtractedField).where(ExtractedField.ocr_job_id == ocr_job.id))
         for field in fields:
@@ -49,22 +62,21 @@ class OcrRepository:
     async def get_field_owned(self, *, field_id: UUID, user_id: UUID) -> ExtractedField | None:
         result = await self.session.execute(
             select(ExtractedField)
+            .join(OcrJob, OcrJob.id == ExtractedField.ocr_job_id)
+            .join(MedicalDocument, MedicalDocument.id == OcrJob.document_id)
             .options(
-                # PATCH 전에 문서 소유권과 처방 확정 여부를 추가 쿼리 없이 확인할 수 있도록
-                # OCR 작업 → 의료문서 → 확정 처방 관계를 한 번에 eager loading 합니다.
-                selectinload(ExtractedField.ocr_job)
-                .selectinload(OcrJob.document)
-                .selectinload(MedicalDocument.prescription)
+                # PATCH 전에 문서 소유권을 확인하고 lock 대상 document_id를 얻기 위해
+                # OCR 작업 관계만 eager loading 합니다.
+                # 확정 처방 여부는 문서 row를 잠근 뒤 별도로 조회하므로 여기서 미리 읽지 않습니다.
+                selectinload(ExtractedField.ocr_job).selectinload(OcrJob.document)
             )
-            .where(ExtractedField.id == field_id)
+            .where(
+                ExtractedField.id == field_id,
+                # 다른 사용자의 필드는 존재 여부가 노출되지 않도록 조회 자체에서 걸러집니다.
+                owned_by_self(MedicalDocument.profile_id, user_id),
+            )
         )
-        field = result.scalar_one_or_none()
-
-        # 다른 사용자의 필드 존재 여부가 노출되지 않도록 소유권 불일치도 None으로 처리합니다.
-        if field is None or field.ocr_job.document.user_id != user_id:
-            return None
-
-        return field
+        return result.scalar_one_or_none()
 
     async def get_latest_completed_job(self, *, document: MedicalDocument) -> OcrJob | None:
         result = await self.session.execute(

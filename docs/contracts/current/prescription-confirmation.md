@@ -53,8 +53,9 @@ Backend는 이 상태를 다음과 같이 저장합니다.
 - 확정 이후 `PATCH /api/v1/extracted-fields/{field_id}` 요청은 `409 PRESCRIPTION_ALREADY_CONFIRMED`를 반환합니다.
 - 거부된 PATCH는 기존 `confirmed_value`를 변경하지 않습니다.
 - Frontend는 해당 오류를 받으면 편집을 중단하고 비편집 확정 상태로 전환합니다.
-- PATCH와 처방 확정의 동시 요청을 직렬화하는 row lock 및 PostgreSQL 동시성 보장은 Post-MVP 범위입니다.
-
+- PATCH와 처방 확정은 대상 `medical_document` row를 `SELECT ... FOR UPDATE`로 먼저 잠가 직렬화합니다.
+- 잠금 대기가 3초를 초과하면 `409 CONCURRENT_UPDATE_IN_PROGRESS`를 반환하고 어떤 값도 변경하지 않습니다.
+- 확정은 잠금 획득 이후에 읽은 검수값만 사용하므로, 확정 직전 commit된 PATCH는 반드시 확정 결과에 반영됩니다.
 ## Post-MVP 이관
 
 사용자가 검수한 OCR 작업과 확정 대상 OCR 작업을 `job_id`로 직접 일치 검증하는 기능은 Post-MVP 범위입니다.

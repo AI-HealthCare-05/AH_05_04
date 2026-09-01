@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.prescriptions import Prescription
+from app.repositories.profile_ownership import owned_by_self
 
 
 class GuideRepository:
@@ -17,15 +18,19 @@ class GuideRepository:
         result = await self.session.execute(
             select(Prescription)
             .options(selectinload(Prescription.medications), selectinload(Prescription.document))
-            .where(Prescription.id == prescription_id)
+            .where(
+                Prescription.id == prescription_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
         )
-        prescription = result.scalar_one_or_none()
-        if prescription is None or prescription.document.user_id != user_id:
-            return None
-        return prescription
+        return result.scalar_one_or_none()
 
-    async def create(self, *, prescription_id: UUID) -> Guide:
-        guide = Guide(prescription_id=prescription_id, generation_status=GuideGenerationStatus.GENERATING)
+    async def create(self, *, prescription: Prescription) -> Guide:
+        guide = Guide(
+            prescription_id=prescription.id,
+            profile_id=prescription.profile_id,
+            generation_status=GuideGenerationStatus.GENERATING,
+        )
         self.session.add(guide)
         await self.session.flush()
         return guide
@@ -34,12 +39,12 @@ class GuideRepository:
         result = await self.session.execute(
             select(Guide)
             .options(selectinload(Guide.prescription).selectinload(Prescription.document))
-            .where(Guide.id == guide_id)
+            .where(
+                Guide.id == guide_id,
+                owned_by_self(Guide.profile_id, user_id),
+            )
         )
-        guide = result.scalar_one_or_none()
-        if guide is None or guide.prescription.document.user_id != user_id:
-            return None
-        return guide
+        return result.scalar_one_or_none()
 
     async def mark_completed(
         self,
