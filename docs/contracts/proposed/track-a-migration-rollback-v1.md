@@ -50,12 +50,12 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | 선행 조건 | 이유 | 완료 기준 |
 | --- | --- | --- |
 | PROFILE SELF 소유권 전환 기준 적용 | #117 이후 Current 계약은 SELF `profile_id` 기반이다. 소유권 기준이 흔들리면 Job·결과·처방 version 권한 검사가 반복 수정된다. | `profile` 테이블, SELF unique, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, 도메인별 `profile_id` composite FK·일관성 검증, OCR 소유권 chain 기준 적용 |
-| `AI_JOB.domain_type/domain_id` 물리 저장 여부 확정 | 목표 계약은 응답 구성값으로 설명하지만 ERD와 구현안이 물리 컬럼으로 해석될 수 있다. | 최종 DDL에서 물리 컬럼으로 둘지, 도메인 row의 `ai_job_id` FK에서 응답을 구성할지 결정 |
+| `AI_JOB.domain_type/domain_id` 물리 저장 제외 반영 | 목표 계약은 `domain_type/domain_id`를 응답 구성값으로 둔다. 이를 물리 컬럼으로 중복 저장하면 도메인 row와 불일치가 생길 수 있다. | 최종 DDL에서 `AI_JOB.domain_type/domain_id` 컬럼을 만들지 않고, 도메인 row의 unique `ai_job_id` FK에서 응답값을 구성한다. |
 | Idempotency 단일 테이블 구조 정렬 | #99 이후 목표 계약은 단일 `idempotency_record`와 `record_type=ASYNC_JOB|SYNC_MUTATION`을 사용한다. 별도 `sync_idempotency_record`를 만들면 최신 계약과 충돌한다. | ERD·계약·migration 계획에서 단일 테이블, `record_type`, 타입별 CHECK 제약으로 정렬 |
 | `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT` Expand 포함 확정 | poison message를 durable하게 기록한 뒤 ACK하려면 quarantine과 DLQ Outbox가 필요하다. | PR 1 범위와 계약 테스트에 두 테이블 포함 |
 | Backfill과 rollback 용어 분리 | 재실행 가능한 batch는 rollback이 아니라 resume/recovery다. | 코드 rollback, forward-fix, batch 재개 기준을 문서에 구분 |
 
-위 항목을 blocking으로 둔 이유는 PR 1의 DDL이 한번 병합되면 이후 PR들이 그 구조를 전제로 개발되기 때문이다. `profile_id`, `domain_type/domain_id`, 멱등성 저장 구조, quarantine/DLQ 범위가 나중에 바뀌면 migration뿐 아니라 API 응답, Worker 메시지, 테스트 fixture까지 다시 바뀐다.
+위 항목을 blocking으로 둔 이유는 PR 1의 DDL이 한번 병합되면 이후 PR들이 그 구조를 전제로 개발되기 때문이다. `profile_id`, 도메인 row 연결 방식, 멱등성 저장 구조, quarantine/DLQ 범위가 나중에 바뀌면 migration뿐 아니라 API 응답, Worker 메시지, 테스트 fixture까지 다시 바뀐다.
 
 ## 4. 대상 테이블
 
@@ -80,9 +80,24 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | `guide` | 신규 비동기 생성부터 nullable `ai_job_id` 연결 | 기존 Guide에는 synthetic Job 생성 금지 |
 | `chat_message` | 신규 ASSISTANT 비동기 메시지부터 nullable `ai_job_id` 연결 | 기존 메시지에는 synthetic Job 생성 금지 |
 
-PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 기존 리소스 소유권은 `profile_id` 기준으로 정렬한다. OCR은 `ocr_job.profile_id`를 직접 만들지 않고 `ocr_job → medical_document → profile_id` chain으로 확인한다.
+#117 병합 이후 기존 리소스 소유권은 `profile_id` 기준으로 정렬되어 있다. OCR은 `ocr_job.profile_id`를 직접 만들지 않고 `ocr_job → medical_document → profile_id` chain으로 확인한다.
 
 대상 테이블을 이 범위로 나누는 이유는 실제 상태의 기준 원본을 분리하기 위해서다. `ai_job`은 실행 상태만, 도메인 row는 결과와 placeholder만, Outbox는 실행 요청 전달만 담당해야 재시도·중복 전달·rollback 상황에서 어느 row를 기준으로 판단할지 명확해진다.
+
+### 4.3 Track A 실행 기반 물리 DDL 최소 기준
+
+이 절은 `AI_JOB migration` 구현 PR에서 Alembic migration과 SQLAlchemy 모델로 옮길 최소 물리 기준이다. 여기서 말하는 `uuid` 표기는 PostgreSQL 네이티브 `uuid` 타입이 아니라 저장소 기존 컨벤션인 `CHAR(36)`/`UUIDChar`를 뜻한다. 기존 `user.id`가 `CHAR(36)`이므로 FK를 걸려면 신규 FK 컬럼도 같은 타입을 사용한다. 네이티브 `uuid` 전환은 별도 migration 범위다.
+
+| 테이블 | 필수 컬럼·제약 요약 |
+| --- | --- |
+| `ai_job` | `id`, `user_id`, `job_type`, nullable `prescription_version_id`, `status`, nullable `expected_event_id`, nullable `last_consumed_event_id`, `attempt_count default 0`, `max_attempts`, `available_at`, lease token·만료·heartbeat, 실패 code·detail·dead-lettered 시각, `started_at`, `completed_at`, `created_at`, `updated_at`. `job_type`, 6개 `status`, 7개 `failure_code`, terminal `completed_at`, failed `failure_code`, `attempt_count >= 0`, `max_attempts >= 1`은 CHECK로 강제한다. |
+| `ai_job_attempt` | `id`, `ai_job_id`, `attempt_no`, `attempt_status`, nullable runtime metadata, nullable error code/message, `retryable`, `timed_out`, `started_at`, `completed_at`. `(ai_job_id, attempt_no)` unique와 7개 error code CHECK를 둔다. ERD 호환을 위해 `BLOCKED` enum 값은 허용할 수 있지만 Worker는 별도 Decision 전까지 생성·전이·저장하지 않는다. |
+| `idempotency_record` | `id`, `user_id`, `operation_id`, `record_type`, nullable `parent_resource_id`, `key_hmac_version`, `key_hmac`, `request_hash`, nullable unique `job_id`, nullable `response_status`, nullable encrypted `response_body_snapshot`, nullable `encryption_key_version`, `created_at`, `expires_at`. `record_type=ASYNC_JOB|SYNC_MUTATION`별 nullability는 CHECK로 강제한다. |
+| `outbox_event` | `event_id`, `job_id`, `attempt`, `event_kind='JOB_EXECUTE'`, `schema_version='1.0'`, `status=PENDING|CLAIMED|PUBLISHED|CANCELLED`, `available_at`, nullable `claim_token`, nullable `claim_expires_at`, nullable `published_at`, `created_at`. `(job_id, attempt, event_kind)` unique와 `(status, available_at, event_id)` index를 둔다. |
+| `message_quarantine` | `id`, unique `stream_entry_id`, `message_digest`, nullable `job_id`, nullable `original_event_id`, nullable `original_schema_version`, nullable `trace_id`, `failure_code`, `received_at`. `job_id`는 메시지에서 파싱 가능하고 DB의 `ai_job`에 실제로 존재할 때만 저장한다. |
+| `dlq_outbox_event` | `event_id`, unique `quarantine_id`, `event_kind='QUARANTINE_RECORDED'`, `schema_version='1.0'`, nullable `original_schema_version`, `status=PENDING|CLAIMED|PUBLISHED`, `attempt_count default 0`, `available_at`, nullable claim token·만료, nullable `last_error_code`, nullable `published_at`, `created_at`, `updated_at`. |
+
+`ai_job.expected_event_id`/`last_consumed_event_id → outbox_event.event_id`와 `outbox_event.job_id → ai_job.id`는 순환 참조다. migration은 `ai_job` 테이블을 먼저 만들되 `expected_event_id`/`last_consumed_event_id` FK는 나중에 걸고, `outbox_event` 생성 후 `ALTER TABLE`로 두 FK를 추가한다. 접수 transaction 안에서는 `ai_job` INSERT 뒤 `outbox_event` INSERT, 같은 transaction의 `ai_job.expected_event_id` UPDATE 순서가 되며, 이 NULL 구간은 commit 전 외부에서 관측되지 않는다.
 
 ## 5. `AI_JOB`과 도메인 row 관계
 
@@ -103,20 +118,19 @@ PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포가 완료되면 
 }
 ```
 
-최종 DDL에서 `AI_JOB.domain_type/domain_id`를 물리 컬럼으로 둘지 여부는 PR 1 전에 확정한다. 이 결정이 끝나기 전에는 `ai_job` DDL을 병합하지 않는다.
+최종 DDL에서는 `AI_JOB.domain_type/domain_id`를 물리 컬럼으로 만들지 않는다. 응답에 필요한 값은 도메인 row의 unique `ai_job_id` FK를 역조회해 구성한다. 이 기준은 `async-job-v1.md`의 "응답 구성값이며 `AI_JOB` 물리 컬럼으로 고정하지 않는다"는 계약과 일치한다.
 
-이 결정을 미루지 않는 이유는 두 방식의 제약과 조회 방식이 다르기 때문이다. 물리 컬럼으로 저장하면 Job row만으로 응답을 만들 수 있지만 도메인 row와 값 불일치를 막아야 한다. 도메인 row의 `ai_job_id` FK에서 구성하면 중복 저장은 줄지만 조회 시 도메인별 join 또는 lookup이 필요하다.
+물리 컬럼을 제외하는 이유는 Job row와 도메인 row에 같은 연결 정보를 중복 저장하지 않기 위해서다. 중복 저장하면 `ai_job.domain_id`와 실제 `guide.id`·`chat_message.id`가 어긋나는 상태를 별도 제약으로 막아야 한다. 도메인 row의 `ai_job_id`를 기준으로 구성하면 조회 시 도메인별 lookup은 필요하지만, 상태의 기준 원본과 결과의 기준 원본을 분리할 수 있다.
 
 ## 6. Job 조회와 결과 조회 소유권 기준
 
 `GET /api/v1/jobs/{job_id}`와 `result_url`이 가리키는 도메인 결과 조회는 같은 소유권 기준을 사용한다. Job은 존재하지만 인증 사용자의 리소스가 아니거나, Job과 도메인 결과의 소유권이 서로 맞지 않으면 fail-closed로 `404`를 반환한다.
 
-| 단계 | Job 조회 기준 | 결과 조회 기준 |
+| 기준 | Job 조회 기준 | 결과 조회 기준 |
 | --- | --- | --- |
-| PROFILE 전환 승인 전 | 기존 target 계약의 `user_id` 기준을 유지한다. | 결과 도메인 row도 기존 `user_id` 또는 parent chain 기준을 유지한다. |
-| PR 0 backfill·검증·read cutover 배포 완료 후 | `ai_job.profile_id` 직접 저장 여부를 PR 1 전에 확정한다. 직접 저장하지 않으면 도메인 row의 `ai_job_id`를 역조회해 SELF `profile_id`를 확인한다. | OCR은 `ocr_job → medical_document → profile_id`, Guide는 `guide.profile_id`, Chat은 `chat_message → chat_session.profile_id` 기준으로 확인한다. |
+| #117 이후 Current | `ai_job.user_id`는 생성 사용자 추적과 멱등 scope에 사용하고, 실제 결과 소유권은 도메인 row의 `ai_job_id` 역조회와 SELF `profile_id` chain으로 확인한다. | OCR은 `ocr_job → medical_document → profile_id`, Guide는 `guide.profile_id`, Chat은 `chat_message → chat_session.profile_id` 기준으로 확인한다. |
 
-`ai_job.profile_id`를 직접 저장할지 여부는 `AI_JOB.domain_type/domain_id` 물리 저장 여부와 함께 PR 1의 blocking 결정으로 둔다. 직접 저장하면 Job 단독 조회가 단순하지만 도메인 row와 `profile_id` 불일치를 막아야 한다. 직접 저장하지 않으면 중복 저장은 줄지만 Job 조회 시 도메인별 역조회가 필요하다.
+최종 DDL에서는 `ai_job.profile_id`도 직접 저장하지 않는다. Job 단독 조회는 `ai_job.user_id`로 1차 범위를 좁히고, 응답 구성과 결과 공개 전에는 도메인 row의 `ai_job_id`를 통해 SELF `profile_id` chain을 다시 확인한다. 이중 확인이 필요한 이유는 Job은 실행 상태의 기준 원본이고, 의료 결과의 실제 소유권은 도메인 row와 부모 resource chain에 있기 때문이다.
 
 구현 PR에서는 다음 테스트를 포함한다.
 
@@ -143,7 +157,7 @@ Track A는 비동기 Job 접수와 동기 상태 변경을 단일 `idempotency_r
 
 단일 테이블을 쓰는 이유는 #99 이후 최신 목표 계약이 `idempotency_record` 하나를 정본으로 삼기 때문이다. `ASYNC_JOB`은 `job_id`가 non-null이고 snapshot 관련 필드는 null이어야 하며, `SYNC_MUTATION`은 `parent_resource_id`, `response_status`, `response_body_snapshot`이 non-null이고 `job_id`는 null이어야 한다. 이 타입별 nullability는 DB CHECK 제약으로 강제한다.
 
-PR 0의 PROFILE backfill, 일관성 검증, read cutover 배포 완료 후 멱등성 scope까지 `profile_id`로 바꿀지는 PR 1 전에 별도 확정한다. PR 0 완료 전에는 target 계약의 `user_id` scope를 임의로 바꾸지 않는다.
+#117 이후 리소스 소유권은 SELF `profile_id` 기준으로 확인하지만, 멱등성 scope는 최신 목표 계약의 `user_id`를 유지한다. 멱등성 scope까지 `profile_id`로 바꾸려면 PR 1 전에 별도 Decision으로 확정한다.
 
 ## 8. Migration 단계
 
@@ -267,6 +281,8 @@ PR 1 Expand에는 정상 실행 Outbox뿐 아니라 poison message 격리용 테
 
 Worker는 Provider 호출 전에 message schema, `event_id`, `job_id`, attempt, `expected_event_id`, lease를 검증한다. poison message는 Provider를 호출하지 않고 `MESSAGE_QUARANTINE`과 `DLQ_OUTBOX_EVENT`를 같은 DB transaction에서 commit한 뒤 ACK한다.
 
+`message_quarantine.job_id`는 메시지에서 `job_id`를 파싱할 수 있고 해당 Job이 DB에 실제로 존재할 때만 저장한다. 파싱된 `job_id`가 존재하지 않으면 FK 위반으로 quarantine insert가 실패할 수 있으므로 NULL로 둔다. 특정 Job을 `FAILED + UNSUPPORTED_SCHEMA`로 바꾸려면 파싱한 `job_id` 존재만으로는 부족하며, 실제 `outbox_event`, `ai_job.expected_event_id`, Job-event 연결과 message attempt 검증이 모두 성공해야 한다. 검증할 수 없으면 정상 Job 상태는 변경하지 않고 quarantine과 DLQ만 기록한다.
+
 Stream envelope, DLQ envelope, ACK 순서는 `outbox-stream-v1.md`를 따른다. 의료 원문, 질문, 답변, Provider 원문 오류, 원문 Idempotency Key는 Outbox·Stream·quarantine·DLQ에 저장하지 않는다.
 
 quarantine과 DLQ를 Expand에 포함하는 이유는 Worker가 처리할 수 없는 메시지를 만났을 때도 ACK 전에 장애 사실을 DB에 남겨야 하기 때문이다. 이 테이블이 없으면 poison message를 계속 재전달받거나, 반대로 원인 기록 없이 ACK해서 장애 추적이 어려워진다.
@@ -277,8 +293,8 @@ quarantine과 DLQ를 Expand에 포함하는 이유는 Worker가 처리할 수 �
 
 | PR | 범위 | 선행 조건 | 확인 필요 |
 | --- | --- | --- | --- |
-| PR 0 | PROFILE SELF 소유권 전환 | `docs/contracts/current/profile-self-ownership-v1.md` 기준 구현 | ERD·계약·Backend 소유권 |
-| PR 1 | Expand: Track A 신규 테이블과 nullable FK 추가 | PR 0 backfill·검증·read cutover 배포 완료, blocking 선행 조건 해소 | DB, Worker, 계약 |
+| PR 0 | PROFILE SELF 소유권 전환 | #117 병합으로 완료된 Current 계약 | ERD·계약·Backend 소유권 |
+| PR 1 | Expand: Track A 신규 테이블과 nullable FK 추가 | #117 Current 계약 기준 확인, blocking 선행 조건 해소 | DB, Worker, 계약 |
 | PR 2 | 신규 write dual-write와 async feature flag 기본값 적용 | PR 1 | Backend/API, rollback 경계 |
 | PR 3 | Prescription Version backfill·검증 SQL·테스트 | PR 2 | DB, 계약 |
 | PR 4 | 공통 Job 접수·상태 조회 API와 Outbox 연결 | PR 1, PR 2 | Backend/API, Frontend polling, Worker |
@@ -307,7 +323,7 @@ Track A는 통합 게이트이며 모든 트랙의 개발 착수 게이트가 �
 - 대상 테이블과 기존 테이블 변경 범위가 정리되어 있다.
 - PROFILE SELF profile 멱등 생성, dual-write, 도메인별 `profile_id` composite FK·일관성 검증 기준이 선행 조건으로 연결되어 있다.
 - Job 조회와 `result_url` 결과 조회가 같은 소유권 기준을 사용하고, 소유권 불일치 시 fail-closed `404`를 반환하도록 명시되어 있다.
-- `domain_type/domain_id` 물리 컬럼 여부가 PR 1 차단 조건으로 명시되어 있다.
+- `AI_JOB.domain_type/domain_id`와 `ai_job.profile_id`는 물리 컬럼으로 만들지 않고, 도메인 row의 `ai_job_id`와 SELF `profile_id` chain으로 응답과 소유권을 구성한다고 명시되어 있다.
 - 단일 `idempotency_record`와 `record_type=ASYNC_JOB|SYNC_MUTATION` 기준이 최신 계약과 일치한다.
 - `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT`가 Expand 범위에 포함되어 있다.
 - async feature flag와 기존 Job drain 기준이 rollback 절차에 포함되어 있고, drain 완료 조건은 모두 충족해야 한다고 명시되어 있다.

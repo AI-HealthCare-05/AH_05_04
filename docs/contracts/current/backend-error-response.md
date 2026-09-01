@@ -6,7 +6,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 ## 공통 오류 응답 형식
 
-등록된 API에서 처리하는 오류 응답은 다음 형식을 따릅니다.
+`/api/v1/*` API에서 처리하는 오류 응답은 다음 형식을 따릅니다.
 
 ```json
 {
@@ -26,13 +26,15 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 클라이언트는 `message`가 아니라 `code`를 기준으로 오류를 분기합니다.
 
-등록되지 않은 경로 요청(404)이나 지원하지 않는 HTTP 메서드 요청(405)은 FastAPI/Starlette가 라우팅 단계에서 자체적으로 응답을 만들기 때문에 아직 이 공통 형식을 따르지 않습니다. 현재는 등록되지 않은 경로에 `{"detail": "Not Found"}`, 지원하지 않는 메서드에 `{"detail": "Method Not Allowed"}`가 반환됩니다. 클라이언트는 이 두 경우에 `code` 필드가 없을 수 있다는 점을 감안해야 합니다.
+등록되지 않은 `/api/v1/*` 경로 요청(404)과 지원하지 않는 HTTP 메서드 요청(405)도 전역 `StarletteHTTPException` 핸들러가 공통 형식으로 변환합니다. 이 경우 `code`는 `HTTP_ERROR`, `details`는 빈 배열이며, `message`에는 FastAPI/Starlette의 기본 `detail` 문자열이 들어갑니다.
 
 ## 민감정보 노출 방지
 
 **이미 정해진 보안 원칙**: [`SECURITY.md`](../../../SECURITY.md)는 "의료·개인정보 응답은 기본적으로 `Cache-Control: no-store`를 적용합니다"를 현재 원칙으로 정하고 있다. 이는 Post-MVP 목표가 아니라 지금 지켜야 하는 규칙이다. 같은 원칙에 따라 `details[].rejected_value`에도 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않아야 한다.
 
-**현재 미충족 상태**: 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`backend/app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않아 오류 응답에서 원칙을 충족하지 못한다. 인증 API(`login`, `token/refresh`)는 access token을 반환하는 성공 응답에도 이 헤더가 없고, `GET`/`PATCH /users/me`도 개인정보를 반환하면서 헤더가 없다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 원칙을 충족하지 못한다. 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
+**현재 적용 상태**: `backend/app/core/no_store_middleware.py`의 `NoStoreMiddleware`가 `/api/v1/*` 전체 응답에 `Cache-Control: no-store`를 일괄 적용한다. 인증·사용자·처방·의료문서·OCR·가이드·채팅 API의 성공 응답과 오류 응답이 모두 대상이다. 단, Router endpoint를 실행하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 이 정책의 대상이 아니다.
+
+**처방 OCR 원문 비노출 원칙**: 처방 확정과 OCR 검수 오류 응답은 OCR `raw_value`, 처방 원문, Provider 원문 오류, 챗봇 질문·답변, 비밀번호·토큰을 `message`나 `details[].rejected_value`에 넣지 않는다. 사용자가 확인한 `confirmed_value`만 처방 확정 입력으로 사용하며, 형식 오류는 `field`와 `reason` 중심으로 반환한다.
 
 ## HTTP 상태 코드 기준
 
@@ -121,11 +123,11 @@ raise ApiError(
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
 | 503 | `SERVICE_UNAVAILABLE` | "현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요." | |
 | 504 | `GATEWAY_TIMEOUT` | "외부 처리 시간이 초과되었습니다. 다시 시도해 주세요." | |
-| (원본 상태 코드) | `HTTP_ERROR` | `HTTPException.detail`을 문자열로 변환한 값 (`str(detail)`) | 아직 `ApiError`로 전환되지 않은 코드의 자동 변환 결과. `detail`이 문자열이 아니면 그 값의 문자열 표현이 됨 |
+| (원본 상태 코드) | `HTTP_ERROR` | `HTTPException.detail`을 문자열로 변환한 값 (`str(detail)`) | 아직 `ApiError`로 전환되지 않은 코드의 자동 변환 결과. 기본 라우팅 404/405도 이 형식으로 변환됨 |
 
 ### Post-MVP
 
-Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)에서 확인한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
+이 문서는 현재 Backend 오류 응답 envelope와 MVP에서 실제 응답으로 나가는 오류 코드의 기준 문서다. Post-MVP target 전용 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)처럼 승인된 목표 계약에서 먼저 정의하고, 실제 구현 PR에서 이 문서와 코드·테스트를 함께 갱신한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
 
 ## 도메인별 오류 코드
 
@@ -156,7 +158,7 @@ Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1
 
 ### Post-MVP
 
-Post-MVP 도메인별 오류 코드는 각 승인된 목표 계약에서 확인한다 — 예: `PRESCRIPTION_MEDICATION_REQUIRED`(422)는 [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md).
+Post-MVP 도메인별 오류 코드는 각 승인된 목표 계약에서 먼저 정의한다 — 예: `PRESCRIPTION_MEDICATION_REQUIRED`(422)는 [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md). 실제 구현 PR에서는 이 문서의 MVP 표 또는 후속 Post-MVP 구현 표에 반영해 코드와 문서가 같은 기준을 보도록 한다.
 
 아직 어떤 목표 계약에도 없어 별도 Decision이 필요한 항목:
 

@@ -55,11 +55,14 @@ snapshot은 암호화한 PostgreSQL `BYTEA`로 저장하고 application cap은 1
 ## 보존
 
 - 최초 접수 transaction이 성공한 시점부터 최소 24시간 유지하며 운영 설정 기본값은 7일이다.
-- 만료 이후 같은 키는 새 요청으로 처리될 수 있으므로 사용자의 새 실행에는 항상 새 키를 발급한다.
+- 만료 이후 같은 키는 새 요청으로 처리될 수 있으므로 사용자의 새 실행에는 항상 새 키를 발급한다. 다만 `expires_at`은 unique index를 자동 해제하지 않으므로, 만료 row를 새 요청처럼 처리하려면 만료 row를 원자적으로 reclaim하거나 삭제 job으로 제거된 뒤 새 row를 생성해야 한다.
+- 만료 row 정리와 새 Job·mutation 생성은 같은 transaction 또는 DB unique 제약으로 보호한다. 정리 경쟁 중 같은 key가 새 Job, 새 Outbox, 새 Provider 호출을 중복 생성하면 안 된다.
 - 감사·보안 정책이 더 긴 보존을 요구하면 더 긴 기간을 적용할 수 있다.
 
 ## 단일 테이블과 저장 필드
 
 2026-08-31 [Product Decision `PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md)에 따라 비동기와 동기 멱등 레코드는 PostgreSQL 단일 `idempotency_record` 테이블에 저장하고 `record_type=ASYNC_JOB|SYNC_MUTATION`으로 구분한다. 별도 `sync_idempotency_record` 테이블은 만들지 않는다.
 
-공통 필드는 `record_type`, `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `created_at`, `expires_at`이다. `ASYNC_JOB`은 non-null `job_id`를 저장하고 `parent_resource_id`, `response_status`, `response_body_snapshot`은 null이다. `SYNC_MUTATION`은 non-null `parent_resource_id`, `response_status`, 암호화된 `response_body_snapshot`(암호화 후 `BYTEA`)을 저장하고 `job_id`는 null이다. DB CHECK 제약으로 이 타입별 nullability를 강제한다. HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다.
+공통 필드는 `record_type`, `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `created_at`, `expires_at`이다. `ASYNC_JOB`은 non-null `job_id`를 저장하고 `parent_resource_id`, `response_status`, `response_body_snapshot`은 null이다. `SYNC_MUTATION`은 non-null `parent_resource_id`, `response_status`, 암호화된 `response_body_snapshot`(암호화 후 `BYTEA`)을 저장하고 `job_id`는 null이다. DB CHECK 제약으로 이 타입별 nullability를 강제한다.
+
+HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다. HMAC key rotation 기간에는 현재 key version과 직전 key version으로 계산한 `key_hmac`을 같은 scope에서 함께 조회해 기존 record를 찾는다. 같은 원문 key가 이전 key version으로 저장되어 있는데 현재 key version만 조회해 새 Job이나 mutation을 만들면 안 된다. rotation 중에도 원문 `Idempotency-Key`는 저장하지 않는다.
