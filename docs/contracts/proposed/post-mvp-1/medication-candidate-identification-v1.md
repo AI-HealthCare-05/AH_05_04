@@ -143,13 +143,17 @@ Candidate Search 생성에는 `Idempotency-Key`를 요구하지 않는다. 기�
 
 ### 확인·거절 Transaction
 
-- 확인은 Candidate Identification Service가 약제·Search·Result·활성 Prescription Version을 잠그고, Context 현재성을 재검증한 뒤 append-only `MATCHED/USER_SELECTED` Identification과 Search `CONSUMED`를 하나의 Transaction으로 저장한다. 하나라도 불일치하면 전체를 rollback하고 `409`로 끝낸다.
-- 거절은 Search·Result를 잠그고 거절 Event, append-only `UNRESOLVED` Identification과 Search `INVALIDATED_USER_REJECTED`를 하나의 Transaction으로 저장한다.
-- 확인·거절로 현재 Identification 결정이 바뀌면 같은 Transaction의 동기 무효화 경계에서 아직 완료되지 않은 해당 Context의 Guide·Chat Job을 `STALE`로 만들고, 완료 결과는 `is_current=false`로 전환한다. 과거 Result·Citation·Identification provenance는 삭제하거나 덮어쓰지 않는다.
+- 확인·거절 Transaction Owner는 Candidate Identification Write Service다.
+- 모든 잠금은 [처방 버전 계약의 전역 순서](../../targets/post-mvp-1/prescription-version-v1.md#동시-수정)인 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB(해당 시) → 도메인 row → OUTBOX(해당 시)`를 따른다. 각 Transaction은 실제로 변경하는 row만 잠그며 역순 잠금을 금지한다.
+- 확인·거절은 Chat Session·AI Job·Outbox를 직접 변경하지 않는다. 두 요청의 잠금 획득 순서는 `PRESCRIPTION → prescription_version_medication → candidate_search → candidate_search_result → medication_identification`으로 고정한다. 동기 멱등 레코드와 응답 Snapshot은 이 도메인 변경과 같은 Transaction에 저장한다.
+- 확인은 위 순서로 소유권·활성 Prescription Version·Search·Result·Context 현재성을 재검증한 뒤 append-only `MATCHED/USER_SELECTED` Identification과 Search `CONSUMED`를 원자 저장한다. 하나라도 불일치하면 전체를 rollback하고 `409`로 끝낸다.
+- 거절은 같은 순서로 검증한 뒤 거절 Event, append-only `UNRESOLVED` Identification과 Search `INVALIDATED_USER_REJECTED`를 원자 저장한다.
+- 확인·거절 Transaction은 기존 Guide·Chat `AI_JOB`이나 완료 결과를 일괄 갱신하지 않는다. 실행 중 Worker가 결과를 commit할 때 고정 Identification과 최신 Identification을 다시 비교하고, 불일치하면 Worker Transaction에서 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`로 종결한다. 완료된 과거 결과 조회도 같은 현재성 검증을 통과하지 못하면 현재 결과로 공개하지 않는다.
+- 과거 Result·Citation·Identification provenance는 삭제하거나 덮어쓰지 않는다.
 
 ### Prescription Version 변경
 
-새 Prescription Version 활성화 Transaction은 이전 Version의 미종료 Candidate Search를 `INVALIDATED_INPUT_CHANGED`로 전환하고, 이전 Version에 고정된 미종료 Guide·Chat Job을 `STALE`, 완료 결과를 `is_current=false`로 만든다. 이미 `CONSUMED`·거절·만료된 Search와 과거 Identification 이력은 변경하지 않고 현재성만 상실한다. 새 Version은 기존 Search·Identification을 재사용하지 않고 다시 검색·확정해야 한다.
+Prescription Version Write Service가 활성화 Transaction Owner다. 이 Transaction은 전역 잠금 순서 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX`에 따라 이전 Version의 미종료 Guide·Chat Job을 `STALE`로 전환하고, 미종료 Candidate Search를 도메인 row 단계에서 `INVALIDATED_INPUT_CHANGED`로 전환한다. 완료 결과는 현재 결과로 공개하지 않는다. 이미 `CONSUMED`·거절·만료된 Search와 과거 Identification 이력은 변경하지 않고 현재성만 상실한다. 새 Version은 기존 Search·Identification을 재사용하지 않고 다시 검색·확정해야 한다.
 
 ## Guide·Chat Preflight 경계
 
@@ -185,6 +189,7 @@ Candidate Search·확인·거절·Identification 조회와 모든 오류 응답�
 - 사용자 확인 전 `MATCHED` 저장 0건
 - 확인·거절 멱등성, 동시 선택 단일 성공과 append-only 이력
 - Candidate·Identification·Guide·Chat·Citation의 동일 `user_id` 소유권과 타 사용자 `404`·부작용 0건
-- 확인·거절 Transaction rollback과 Identification 변경 시 Job·Result 현재성 전파
+- 확인·거절의 전역 잠금 순서 준수, 역순 잠금 0건과 Transaction rollback
+- 확인·거절과 Worker 결과 commit 동시 실행의 교착 0건, 최신 Identification 불일치 Job의 `STALE`·결과 비공개
 - 새 Prescription Version 생성 시 이전 Search·Identification 현재성 상실
 - Candidate·Identification 성공·오류 응답의 `Cache-Control: no-store`

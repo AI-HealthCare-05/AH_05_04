@@ -137,7 +137,8 @@ Chat은 접수 시점과 일반 RAG 실행 시점의 Snapshot을 분리한다.
 - Chat `ROUTINE` 확장 시 Intake의 Prescription Version·환경·Bundle 참조와 잠금 재검증한 현재값이 다르면 Full Context를 만들지 않고 `AI_JOB=STALE`, `release_decision=STALE`로 종료하며 일반 RAG를 실행하지 않는다.
 - Full Context 생성과 Identification member 저장은 하나의 Transaction이다. 부분 Snapshot은 허용하지 않는다.
 - Worker 재시도는 이미 고정된 Intake/Full Context만 읽고 현재 상태를 다시 선택하지 않는다. Full Context가 없는 `ROUTINE` 재시도는 같은 원자적 확장 절차를 다시 수행한다.
-- 결과 commit 직전에도 고정 Context와 현재 Prescription·Patient Context·Identification·Bundle·Execution Manifest·runtime revision을 재검증한다. 불일치 시 생성 결과를 공개하지 않고 `STALE`, `is_current=false`로 저장한다.
+- Worker의 Preflight·결과 commit Transaction은 [처방 버전 계약의 전역 잠금 순서](../../targets/post-mvp-1/prescription-version-v1.md#동시-수정)인 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX(해당 시)`를 따른다.
+- 결과 commit 직전에도 위 순서로 고정 Context와 현재 Prescription·Patient Context·Identification·Bundle·Execution Manifest·runtime revision을 재검증한다. 불일치 시 생성 결과를 공개하지 않고 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`로 저장한다.
 
 ## Runtime Release Bundle과 실행 Snapshot
 
