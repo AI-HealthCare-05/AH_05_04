@@ -5,6 +5,7 @@
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
 | 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-b-adherence-v1.md`, `track-c-support-v1.md` |
+| Proposed delta | 아래 `setup_reason` 신규 값·우선순위는 Decision/Contract Freeze 승인 전 TBD이며 Approved v4에 포함되지 않음 |
 | Last verified | 2026-08-27 |
 
 ## 소유권 경계
@@ -25,7 +26,7 @@
 - `NOT_TAKEN`과 무응답 `UNCONFIRMED`를 합치지 않는다.
 - 늦은 복용은 `TAKEN`과 실제 `taken_at`으로 표현하고 별도 상태를 추가하지 않는다.
 
-Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `UNSUPPORTED_SCHEDULE_PATTERN|MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|USER_CONFIRMATION_REQUIRED` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 여러 사유가 동시에 있으면 아래 `setup_reason` 우선순위에 따라 단일 값만 반환한다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
+Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. Approved v4에서 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 여러 사유가 동시에 있을 때의 단일 값 선택 우선순위와 `USER_CONFIRMATION_REQUIRED` 추가는 Approved v4에 포함되지 않은 Proposed/TBD delta이며 아래 별도 절에 격리한다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
 
 `medication_schedule`은 `prescription_version_medication_id`를 unique로 참조하고 `end_mode=DATE|OPEN_ENDED`, `source=PRESCRIPTION_EXACT|USER_CONFIRMED`, `status=ACTIVE|CANCELLED|ENDED`, revision을 가진다. 시각은 별도 `medication_schedule_time` row에 revision별로 보존하고 `(medication_schedule_id, schedule_revision, local_time)`을 unique로 둔다. occurrence 상태는 `PENDING|CANCELLED|CLOSED`이며 Check-in 생성 시 `CLOSED`가 된다. 일정 `PUT`은 최초 생성·변경과 `CANCELLED|ENDED`의 명시적 재활성화를 담당하고, `PATCH`는 사용자 `CANCELLED`만 허용하며 `ENDED`는 Scheduler만 설정한다.
 
@@ -89,9 +90,9 @@ Track C의 목표 API는 다음으로 고정한다.
 
 이 요약은 승인 원본의 최소 필드와 순서만 옮긴 것이다. 구현 PR에서 새 필수 필드, enum, 정렬 또는 오류를 추가하려면 계약 version을 갱신해야 한다.
 
-### `setup_reason` 우선순위
+### Proposed/TBD — `setup_reason` 신규 값·우선순위
 
-`setup_reason`은 `schedule_item_status=SETUP_REQUIRED`인 약품별 항목에서만 v1 단일 값으로 반환한다. 여러 사유가 동시에 있으면 다음 고정 우선순위에 따라 하나만 반환하고, Frontend와 Backend는 같은 우선순위를 사용한다. `NO_ACTIVE_PRESCRIPTION`은 약품별 `setup_reason`이 아니라 전체 `schedule_status`로만 반환한다. `NEW_PRESCRIPTION_VERSION`과 `NEW_MEDICATION`은 중복·경계가 불명확하므로 v1 `setup_reason`으로 사용하지 않는다.
+이 절은 Approved Contract Freeze v4의 일부가 아니며 구현 근거로 사용할 수 없다. 다음 신규 값·우선순위는 별도 Decision 또는 Contract Freeze version에서 승인될 때까지 Proposed/TBD다. 승인 시 Backend가 고정 우선순위를 계산해 `schedule_item_status=SETUP_REQUIRED`인 약품별 항목에 nullable 단일 `setup_reason`을 반환한다. Frontend는 반환값을 표시·분기에만 사용하고 동일 우선순위를 재계산하지 않는다. `NO_ACTIVE_PRESCRIPTION`은 약품별 `setup_reason`이 아니라 전체 `schedule_status`로만 반환한다. `NEW_PRESCRIPTION_VERSION`과 `NEW_MEDICATION`은 중복·경계가 불명확하므로 제안 enum에 포함하지 않는다.
 
 | 우선순위 | `setup_reason` | 의미 |
 | ---: | --- | --- |
@@ -101,7 +102,7 @@ Track C의 목표 API는 다음으로 고정한다.
 | 4 | `MISSING_DURATION_DECISION` | 종료일 또는 계속 복용 여부 확인이 필요함 |
 | 5 | `USER_CONFIRMATION_REQUIRED` | 필요한 값은 모두 있지만 사용자가 해당 version의 일정을 아직 확인하지 않음 |
 
-`USER_CONFIRMATION_REQUIRED`는 위의 1~4 사유가 없고 active schedule도 없을 때만 사용한다. 이 enum 추가는 공유 계약 변경이므로 구현 전 Decision 또는 Contract Freeze version에 반영하고 OpenAPI·DTO·Frontend fixture·계약 테스트를 같이 동기화한다.
+제안안에서 `USER_CONFIRMATION_REQUIRED`는 위의 1~4 사유가 없고 active schedule도 없을 때만 사용한다. 이 enum 추가와 우선순위 고정은 공유 계약 변경이므로 구현 전 Decision 또는 Contract Freeze version에 반영하고 OpenAPI·DTO·Frontend fixture·계약 테스트를 같이 동기화한다. 승인 전에는 이 표를 확정 enum 또는 테스트 기대값으로 사용하지 않는다.
 
 목표 오류 의미는 다음과 같다.
 

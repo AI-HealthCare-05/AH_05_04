@@ -158,7 +158,7 @@ uv run python -m app.evaluation.chat_history_runner \
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
 - Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.
 - Track B 일정 생성·변경에서 `frequency_per_day`가 존재하면 `local_times.length`와 반드시 일치해야 하며, 불일치 시 422로 실패하고 schedule row와 schedule time row를 저장하지 않습니다.
-- Track B 일정 조회의 `setup_reason`은 `SETUP_REQUIRED` 약품별 단일 값이며, `UNSUPPORTED_SCHEDULE_PATTERN → MISSING_START_DATE → MISSING_EXACT_TIME → MISSING_DURATION_DECISION → USER_CONFIRMATION_REQUIRED` 우선순위를 Frontend와 Backend에서 같게 검증합니다. `NO_ACTIVE_PRESCRIPTION`은 전체 `schedule_status`로만 반환하고 `NEW_PRESCRIPTION_VERSION|NEW_MEDICATION`은 v1 `setup_reason`으로 사용하지 않습니다.
+- Track B `setup_reason` 신규 값·우선순위는 Proposed/TBD이며 별도 Decision 또는 Contract Freeze version 승인 전에는 완료 조건이나 확정 테스트 기대값으로 사용하지 않습니다. 승인 후에는 Backend 계약 테스트에서 고정 우선순위 계산과 nullable 단일 `setup_reason` 반환을 검증하고, Frontend 테스트에서는 반환값의 표시·분기만 검증하며 우선순위를 재계산하지 않습니다. `NO_ACTIVE_PRESCRIPTION`은 전체 `schedule_status`로만 반환합니다.
 - `reason_code`는 enum 확정 전까지 Check-in 생성·정정 요청, OpenAPI request schema와 DB enum에 포함하지 않습니다. 테스트 fixture의 예시값도 확정 enum처럼 사용하지 않습니다.
 - 처방 version 변경 시 새 version 일정을 자동 복사·자동 생성하거나 이전 일정을 참고 후보로 제공하지 않습니다. 이전 version과 값이 같아도 새 version의 모든 medication을 재확인 전 `SETUP_REQUIRED`로 반환합니다.
 - version `effective_at` 이후의 이전 version `PENDING` occurrence와 미전달 알림만 취소합니다. 이전 schedule·time revision, `effective_at` 이전 occurrence, Check-in·audit은 원래 version에 보존하고, deadline이 지난 과거 `PENDING` occurrence는 취소가 아닌 `UNCONFIRMED` 생성 대상으로 검증합니다.
