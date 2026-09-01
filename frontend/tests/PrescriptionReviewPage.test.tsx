@@ -311,6 +311,46 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100')
   })
 
+  it('조회 상태에서 긴 약물이름 전체를 줄임표 없이 표시한다', async () => {
+    const longMedicationName =
+      '아주긴합성약물이름으로모바일화면에서도전체확인이가능해야하는정'
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(
+        withMedicationName(makeCompleteFields(), longMedicationName),
+      ),
+    )
+
+    renderPage()
+
+    const heading = await screen.findByRole('heading', {
+      name: `${longMedicationName} 100mg`,
+      level: 2,
+    })
+
+    expect(heading.textContent).toBe(`${longMedicationName} 100mg`)
+    expect(heading.getAttribute('title')).toBeNull()
+  })
+
+  it('원본 처방전 details를 열고 닫아도 iframe 조회를 유지한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+
+    renderPage()
+
+    const summary = await screen.findByText('원본 처방전 보기')
+    const details = summary.closest('details')
+    const iframe = screen.getByTitle('원본 처방전')
+
+    expect(details?.open).toBe(false)
+    fireEvent.click(summary)
+    expect(details?.open).toBe(true)
+    expect(iframe.getAttribute('src')).toBe('blob:prescription')
+
+    fireEvent.click(summary)
+    expect(details?.open).toBe(false)
+  })
+
   it('STATE-01에서 처방일과 약별 검토 완료 전 원본 대조를 잠근다', async () => {
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(makePendingFields()))
 
