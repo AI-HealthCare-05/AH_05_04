@@ -177,14 +177,15 @@ function PrescriptionUploadPage() {
   }
 
   return (
-    <div className="mvp-page">
+    <div className="mvp-page mvp-upload-page">
       <MobileShell
         title="Dosey 도지"
         onBack={() => navigate('/')}
+        brandMark={<DoseyMascot variant="header" />}
         backPlacement="content"
         hideNavigation
       >
-        <main className="app-scroll mvp-page__content mvp-page__content--no-nav">
+        <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-upload__content">
           <h1 className="mvp-page__title">처방전을 등록해 주세요</h1>
           <p className="mvp-page__description">
             촬영하거나 저장한 처방전을 읽은 뒤 원본과 인식 결과를 직접 비교합니다.
