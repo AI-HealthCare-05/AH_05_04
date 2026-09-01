@@ -140,6 +140,7 @@ docker volume inspect postgres_data
 - volume에 보존할 데이터가 있거나 PR #72 설정으로 이미 초기화됐다면 바로 배포하지 않습니다.
 - 기존 Bootstrap 역할을 사용해 새로운 Admin·Migration 역할을 생성하고 객체 소유권과 권한을 이전하는 일회성 전환 절차를 먼저 수행해야 합니다.
 - 기존 volume을 삭제하거나 역할 권한을 변경하기 전에는 Infrastructure 담당자의 확인을 받습니다.
+- 실제 운영 `envs/.prod.env`는 `envs/example.prod.env`의 Admin·Migration·Runtime DB 역할 변수명으로 갱신되어 있어야 합니다. 기존 `DB_USER`/`DB_PASSWORD`만 있는 환경파일로는 배포 스크립트가 실행을 중단합니다.
 
 배포 스크립트는 세 역할 이름이 서로 같은 경우 실행을 중단합니다.
 - `DB_ADMIN_USER`
@@ -158,7 +159,7 @@ docker volume inspect postgres_data
 - 초기 내부 SLO는 queue delay p95 5초 이하, terminal 도달 p95 `OCR 60초 / Guide 120초 / Chat 90초`, 15분 이상 non-terminal 0건입니다.
 - retry·reclaim·STALE 비율을 계측하고 DLQ·quarantine 발생, Safety 검증 우회와 STALE 결과 공개는 1건부터 경보합니다. 비율 threshold는 초기 2주 계측 후 재승인합니다.
 - `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`는 의료·약학·Privacy·Source 승인과 회귀 증빙 전까지 닫아 둡니다. OTC는 F 게이트를 공유하며 별도 `PUBLIC_TRACK_D`를 만들지 않습니다. MFDS 공식 Identity 활성화도 승인·검증된 Source Snapshot, Single Candidate Gate 회귀와 rollback 훈련 전까지 차단합니다.
-- Worker 구현 전 Production Compose의 placeholder `ai-worker`를 실제 처리 서비스처럼 배포하지 않습니다.
+- Worker 구현 전 Production Compose의 placeholder `ai-worker`는 실제 비동기 작업 처리 서비스로 운영하지 않습니다. 다만 schema migration 배포에서는 DB schema 호환성을 위해 FastAPI와 같은 배포 단위에서 중단·재시작 대상에 포함합니다.
 
 전환 PR은 [비동기 Job](./contracts/targets/post-mvp-1/async-job-v1.md), [Outbox·Stream](./contracts/targets/post-mvp-1/outbox-stream-v1.md), [테스트 전략](./testing.md)을 구현·운영 설정과 함께 갱신해야 합니다.
 

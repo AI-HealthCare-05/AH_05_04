@@ -421,6 +421,7 @@ docker compose exec -T postgres \
   sh -lc '
     psql \
       -v ON_ERROR_STOP=1 \
+      -q \
       -At \
       -F $'"'"'\t'"'"' \
       -U "$POSTGRES_USER" \
