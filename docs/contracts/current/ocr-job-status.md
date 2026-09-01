@@ -20,6 +20,27 @@ OCR 작업 실행·조회 API가 성공·실패 상태를 Frontend에 전달할 
 | `OCR_PROVIDER_UNAVAILABLE` | OCR 제공자 일시적 사용 불가 | `503` |
 | `OCR_PROCESSING_FAILED` | 그 외 OCR 처리 중 오류 | `500` |
 
+
+## 상태 전이
+
+| 전이 | 조건 | 저장 값 |
+| --- | --- | --- |
+| (생성) → `PENDING` | OCR 작업 생성 | `completed_at=null` |
+| `PENDING` → `PROCESSING` | Provider 호출 시작 전 | `started_at` 기록, `completed_at=null` |
+| `PROCESSING` → `COMPLETED` | 인식·구조화·필드 저장 성공 | `completed_at`, `engine_name` 기록. `error_code`·`error_message`는 `null` |
+| `PROCESSING` → `FAILED` | Provider 실패, 예산 소진, 처리 실패 | `completed_at`, `error_code` 기록 |
+
+DB CHECK 제약으로 강제되는 불변식입니다.
+
+- `PENDING`·`PROCESSING`은 `completed_at IS NULL`
+- `COMPLETED`·`FAILED`는 `completed_at IS NOT NULL`
+- `FAILED`는 `error_code IS NOT NULL`
+- `COMPLETED`는 `error_code`·`error_message`가 모두 `NULL`
+
+전체 deadline이 소진되어 Provider를 호출하지 않은 경우에도 Job을 `PROCESSING`으로 남기지
+않고 `FAILED`로 전이합니다. `error_code`는 `OCR_PROVIDER_TIMEOUT`이며 내부 사유는
+응답 `details[].reason=DEADLINE_EXCEEDED`로 구분합니다.
+
 ## Post-MVP 이관
 
 - 문서에 연결된 OCR 작업을 `job_id`로 명시적으로 식별해 사용자가 검수한 작업과 확정 대상 작업을 일치시키는 검증은 [처방 확정 Backend 계약](./prescription-confirmation.md)의 Post-MVP 이관 항목을 따릅니다.
