@@ -1,3 +1,4 @@
+import hashlib
 import json
 import traceback
 from pathlib import Path
@@ -161,6 +162,17 @@ async def test_deterministic_runner_uses_chat_generator_and_reports_payload_late
         {},
         {"RUN_OPENAI_CHAT_HISTORY_EVAL": "1", "ENV": "staging", "OPENAI_API_KEY": "sk-synthetic"},
         {"RUN_OPENAI_CHAT_HISTORY_EVAL": "1", "ENV": "local", "OPENAI_API_KEY": "sk-not-configured"},
+        {"RUN_OPENAI_CHAT_HISTORY_EVAL": "1", "ENV": "local", "OPENAI_API_KEY": "   "},
+        {
+            "RUN_OPENAI_CHAT_HISTORY_EVAL": "1",
+            "ENV": "local",
+            "OPENAI_API_KEY": "replace-with-openai-api-key",
+        },
+        {
+            "RUN_OPENAI_CHAT_HISTORY_EVAL": "1",
+            "ENV": "local",
+            "OPENAI_API_KEY": "replace-with-production-openai-api-key",
+        },
     ],
 )
 def test_live_evaluation_rejects_missing_local_explicit_opt_in(environment: dict[str, str]) -> None:
@@ -168,6 +180,102 @@ def test_live_evaluation_rejects_missing_local_explicit_opt_in(environment: dict
 
     with pytest.raises(LiveEvaluationConfigurationError, match="Live Chat history evaluation is not enabled"):
         validate_live_environment(environment)
+
+
+async def test_live_cli_rejects_custom_dataset_before_openai_client_creation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import openai
+
+    from app.evaluation.chat_history import LiveEvaluationConfigurationError
+    from app.evaluation.chat_history_runner import RunnerArguments, execute
+
+    custom_dataset = tmp_path / "custom.json"
+    custom_dataset.write_bytes(_DATASET_PATH.read_bytes())
+
+    class UnexpectedClient:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+            raise AssertionError("OpenAI client must not be created for a custom live dataset")
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", UnexpectedClient)
+
+    with pytest.raises(LiveEvaluationConfigurationError, match="Live Chat history dataset is not allowed"):
+        await execute(
+            RunnerArguments(mode="live", dataset_path=custom_dataset, output_path=tmp_path / "result.json"),
+            environment={
+                "RUN_OPENAI_CHAT_HISTORY_EVAL": "1",
+                "ENV": "local",
+                "OPENAI_API_KEY": "sk-synthetic",
+            },
+        )
+
+
+def test_live_dataset_validation_accepts_canonical_immutable_synthetic_fixture() -> None:
+    from app.evaluation.chat_history_runner import _validate_live_dataset
+
+    raw_dataset = _DATASET_PATH.read_bytes()
+
+    _validate_live_dataset(_DATASET_PATH, raw_dataset, json.loads(raw_dataset))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"dataset_id": "unversioned-chat-history-eval"},
+        {"data_classification": "PRIVATE"},
+        {"cases.0.question": "실제 사용자 질문으로 바뀌었다고 가정한 값"},
+    ],
+)
+async def test_live_cli_rejects_tampered_canonical_dataset_before_openai_client_creation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: dict[str, str],
+) -> None:
+    import openai
+
+    from app.evaluation import chat_history_runner
+    from app.evaluation.chat_history import LiveEvaluationConfigurationError
+
+    dataset = json.loads(_DATASET_PATH.read_text(encoding="utf-8"))
+    if "dataset_id" in mutation:
+        dataset["dataset_id"] = mutation["dataset_id"]
+    elif "data_classification" in mutation:
+        dataset["data_classification"] = mutation["data_classification"]
+    else:
+        dataset["cases"][0]["question"] = mutation["cases.0.question"]
+
+    canonical_path = tmp_path / "chat-v2-history-eval-v1.json"
+    canonical_path.write_text(json.dumps(dataset, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(chat_history_runner, "_DEFAULT_DATASET_PATH", canonical_path)
+    if "dataset_id" in mutation or "data_classification" in mutation:
+        monkeypatch.setattr(
+            chat_history_runner,
+            "_LIVE_DATASET_SHA256",
+            hashlib.sha256(canonical_path.read_bytes()).hexdigest(),
+        )
+
+    class UnexpectedClient:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+            raise AssertionError("OpenAI client must not be created for a tampered live dataset")
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", UnexpectedClient)
+
+    with pytest.raises(LiveEvaluationConfigurationError, match="Live Chat history dataset is not allowed"):
+        await chat_history_runner.execute(
+            chat_history_runner.RunnerArguments(
+                mode="live",
+                dataset_path=canonical_path,
+                output_path=tmp_path / "result.json",
+            ),
+            environment={
+                "RUN_OPENAI_CHAT_HISTORY_EVAL": "1",
+                "ENV": "local",
+                "OPENAI_API_KEY": "sk-synthetic",
+            },
+        )
 
 
 async def test_live_evaluation_uses_injected_provider_without_persisting_raw_outputs_or_sentinels() -> None:

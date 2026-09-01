@@ -144,13 +144,28 @@ class EvaluationExecutionError(RuntimeError):
     pass
 
 
+_OPENAI_API_KEY_PLACEHOLDERS = frozenset(
+    {
+        "",
+        "placeholder",
+        "change-me",
+        "changeme",
+        "not-configured",
+        "sk-not-configured",
+        "your-api-key",
+        "your-secret-key",
+        "replace-with-openai-api-key",
+        "replace-with-production-openai-api-key",
+    }
+)
+
+
 def validate_live_environment(environment: Mapping[str, str]) -> None:
-    api_key = environment.get("OPENAI_API_KEY", "")
+    api_key = environment.get("OPENAI_API_KEY", "").strip()
     if (
         environment.get("RUN_OPENAI_CHAT_HISTORY_EVAL") != "1"
         or environment.get("ENV") != "local"
-        or not api_key
-        or api_key == "sk-not-configured"
+        or api_key.casefold() in _OPENAI_API_KEY_PLACEHOLDERS
     ):
         raise LiveEvaluationConfigurationError("Live Chat history evaluation is not enabled")
 
