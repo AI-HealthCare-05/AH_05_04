@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
+from app.repositories.profile_ownership import owned_by_self
 
 
 class PrescriptionRepository:
@@ -22,12 +23,12 @@ class PrescriptionRepository:
         result = await self.session.execute(
             select(Prescription)
             .options(selectinload(Prescription.document), selectinload(Prescription.medications))
-            .where(Prescription.id == prescription_id)
+            .where(
+                Prescription.id == prescription_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
         )
-        prescription = result.scalar_one_or_none()
-        if prescription is None or prescription.document.user_id != user_id:
-            return None
-        return prescription
+        return result.scalar_one_or_none()
 
     async def create_with_medications(
         self,
@@ -41,6 +42,7 @@ class PrescriptionRepository:
         prescription = Prescription(
             document_id=document.id,
             source_ocr_job_id=source_ocr_job.id,
+            profile_id=document.profile_id,
             prescribed_date=prescribed_date,
             confirmed_at=confirmed_at,
         )

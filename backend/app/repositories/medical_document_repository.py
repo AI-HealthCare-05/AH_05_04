@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medical_documents import MedicalDocument
 from app.models.users import User
+from app.repositories.profile_ownership import get_or_create_self_profile_id, owned_by_self
 
 
 class MedicalDocumentRepository:
@@ -20,8 +21,14 @@ class MedicalDocumentRepository:
         file_mime_type: str,
         file_size_bytes: int,
     ) -> MedicalDocument:
-        document = MedicalDocument(
+        profile_id = await get_or_create_self_profile_id(
+            self.session,
             user_id=user.id,
+            display_name=user.name,
+        )
+        document = MedicalDocument(
+            uploaded_by=user.id,
+            profile_id=profile_id,
             original_file_name=original_file_name,
             object_key=object_key,
             file_mime_type=file_mime_type,
@@ -44,7 +51,7 @@ class MedicalDocumentRepository:
         result = await self.session.execute(
             select(MedicalDocument).where(
                 MedicalDocument.id == document_id,
-                MedicalDocument.user_id == user.id,
+                owned_by_self(MedicalDocument.profile_id, user.id),
             )
         )
         return result.scalar_one_or_none()

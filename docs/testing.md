@@ -158,7 +158,7 @@ uv run python -m app.evaluation.chat_history_runner \
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
 - Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.
 - 다른 사용자의 Job·결과와 Track B occurrence·Check-in, Track C Safety·Barrier·ActionPlan, Candidate·Identification·Chat session 직접 요청은 `404`이며 Redis·일반 로그·quarantine·DLQ에는 의료 원문을 저장하지 않습니다.
-- `SELF profile` 이관 Decision 전에는 기존 `user_id` 소유권 회귀 테스트를 유지하고, 미확정 `profile_id` read/write cutover를 허용하지 않습니다.
+- #117 병합 이후 `SELF profile` 이관은 current 계약 기준으로 검증합니다. 의료문서·처방·가이드·채팅 세션은 `profile_id` 또는 부모 chain의 `profile_id`로 소유권을 확인하고, 다른 사용자의 리소스 접근은 `404`로 숨깁니다.
 - `AI_JOB_ATTEMPT.BLOCKED` enum은 승인 schema에 남기되 의미·기록 조건·전이 Decision 전에 Worker가 해당 값을 생성하지 않고 `BLOCKED_ACTION`과 연결하지 않는지 검증합니다.
 - 근거 없음·상충·timeout·검증 실패는 정상 답변이 아니라 승인된 fallback 또는 공개 차단으로 처리합니다.
 - OTC Chat은 미식별·Rule 없음·근거 없음·상충·비활성 Source·Citation 실패에서 안전 보장 문구를 만들지 않고 생성 답변을 폐기한 뒤 승인 fallback으로 종료합니다.

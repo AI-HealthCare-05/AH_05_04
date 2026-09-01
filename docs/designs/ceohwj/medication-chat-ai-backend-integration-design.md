@@ -225,18 +225,17 @@ AI 호출 이전까지는 성공 흐름과 같다. 오류가 발생하면 각 `e
 
 ### 동시 전송
 
-`get_session_owned_for_update()`는 조회 전용 `get_session_owned()`와 분리해 잠금 의도를 호출부에서 명확히 한다. 잠금 쿼리는 `CHAT_SESSION.id`의 unique index로 대상 세션 한 건만 조회하고, 소유권은 locking clause가 없는 correlated `EXISTS` subquery로 제한한다. locking statement에서 `PRESCRIPTION`과 `MEDICAL_DOCUMENT`를 JOIN하거나 `selectinload`하지 않는다. PostgreSQL에서 최상위 쿼리의 `FOR UPDATE`는 별도 locking clause가 없는 subquery가 읽은 row를 잠그지 않으므로, 이 형태로 처방·문서 row의 불필요한 잠금을 피한다.
+`get_session_owned_for_update()`는 조회 전용 `get_session_owned()`와 분리해 잠금 의도를 호출부에서 명확히 한다. 잠금 쿼리는 `CHAT_SESSION.id`의 unique index로 대상 세션 한 건만 조회하고, 소유권은 `chat_session.profile_id`가 요청 사용자의 `SELF` Profile id와 일치하는지 확인한다. locking statement에서 `PRESCRIPTION`과 `MEDICAL_DOCUMENT`를 JOIN하거나 `selectinload`하지 않는다. PostgreSQL에서 최상위 쿼리의 `FOR UPDATE`는 외부 statement가 조회한 `chat_session` row만 잠그므로, 이 형태로 처방·문서 row의 불필요한 잠금을 피한다.
 
 ```sql
 SELECT chat_session.*
 FROM chat_session
 WHERE chat_session.id = :session_id
-  AND EXISTS (
-    SELECT 1
-    FROM prescription
-    JOIN medical_document ON medical_document.id = prescription.document_id
-    WHERE prescription.id = chat_session.prescription_id
-      AND medical_document.user_id = :user_id
+  AND chat_session.profile_id = (
+    SELECT profile.id
+    FROM profile
+    WHERE profile.user_id = :user_id
+      AND profile.profile_type = 'SELF'
   )
 FOR UPDATE;
 ```

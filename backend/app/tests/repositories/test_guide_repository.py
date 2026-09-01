@@ -3,13 +3,14 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
+from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.guide_repository import GuideRepository
 from app.tests.conftest import test_engine
@@ -46,12 +47,20 @@ async def _create_user(session: AsyncSession, *, email: str) -> User:
     )
     session.add(user)
     await session.flush()
+    profile = Profile(user_id=user.id, profile_type=ProfileType.SELF, display_name=user.name)
+    session.add(profile)
+    await session.flush()
     return user
 
 
 async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -> Prescription:
+    profile = await session.scalar(
+        select(Profile).where(Profile.user_id == user.id, Profile.profile_type == ProfileType.SELF)
+    )
+    assert profile is not None
     document = MedicalDocument(
-        user_id=user.id,
+        uploaded_by=user.id,
+        profile_id=profile.id,
         original_file_name="prescription.jpg",
         object_key="prescription.jpg",
         file_mime_type="image/jpeg",
@@ -67,6 +76,7 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     prescription = Prescription(
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
+        profile_id=profile.id,
         prescribed_date=date.today(),
         confirmed_at=datetime.now(UTC),
     )
@@ -130,7 +140,7 @@ async def test_get_owned_guide_rejects_other_users_guide(db_session: AsyncSessio
     prescription = await _create_confirmed_prescription(db_session, user=owner)
 
     repo = GuideRepository(db_session)
-    guide = await repo.create(prescription_id=prescription.id)
+    guide = await repo.create(prescription=prescription)
 
     owned = await repo.get_owned(guide_id=guide.id, user_id=owner.id)
     assert owned is not None
@@ -146,7 +156,7 @@ async def test_mark_failed_persists_after_writer_session_closes_and_new_session_
     async with session_factory() as writer_session:
         user = await _create_user(writer_session, email=f"guide-failure-{synthetic_suffix}@example.com")
         prescription = await _create_confirmed_prescription(writer_session, user=user)
-        guide = await GuideRepository(writer_session).create(prescription_id=prescription.id)
+        guide = await GuideRepository(writer_session).create(prescription=prescription)
 
         await GuideRepository(writer_session).mark_failed(
             guide,
@@ -183,5 +193,6 @@ async def test_mark_failed_persists_after_writer_session_closes_and_new_session_
             await cleanup_session.execute(delete(Prescription).where(Prescription.id == prescription_id))
             await cleanup_session.execute(delete(OcrJob).where(OcrJob.id == ocr_job_id))
             await cleanup_session.execute(delete(MedicalDocument).where(MedicalDocument.id == document_id))
+            await cleanup_session.execute(delete(Profile).where(Profile.user_id == user_id))
             await cleanup_session.execute(delete(User).where(User.id == user_id))
             await cleanup_session.commit()

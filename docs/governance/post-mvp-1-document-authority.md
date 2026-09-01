@@ -52,6 +52,6 @@
 
 다음 항목은 Approved v4 문구와 현재 실행·배포 경계 사이의 남은 충돌이다. 이 PR은 값을 추정해 해소하지 않으며, [Issue #91](https://github.com/AI-HealthCare-05/AH_05_04/issues/91)에 연결된 후속 Product Decision 또는 새 Contract Freeze version이 승인될 때까지 관련 구현과 `current/` 승격을 차단한다. 2026-08-31 [Product Decision `PD-91-20260831`](./decisions/2026-08-31-ocr-timeout-idempotency.md)로 OCR `hard timeout 60초 / lease 75초`, PostgreSQL `BYTEA`, 단일 `idempotency_record + record_type`을 목표 계약에 확정했으며 더 이상 미정 충돌로 취급하지 않는다.
 
-- **SELF profile 소유권 이관:** 사용자당 `SELF` profile 1개를 보장하는 제약, 기존 의료 데이터의 `profile_id` backfill, FK·index 생성과 read/write cutover 순서, rollback, endpoint별 권한 테스트가 미정이다. 별도 Decision과 migration 계획이 승인될 때까지 기존 `user_id` 소유권 기준을 유지하고 `profile_id`로 읽기·쓰기를 전환하지 않는다.
+- **SELF profile 소유권 이관:** 2026-09-01 [`PD-117`](./decisions/2026-09-01-profile-self-ownership-current.md)에 따라 #117 구현 PR에서 사용자당 `SELF` profile 1개를 보장하는 제약, 기존 의료 데이터의 `profile_id` backfill, FK·index 생성과 read/write cutover 순서, rollback, endpoint별 권한 테스트를 함께 반영한다. #117 병합 이후 새 Backend 리소스의 소유권 기준은 SELF `profile_id` 또는 부모 chain의 `profile_id`를 따른다. 보호자·멀티 프로필·위임 권한은 후속 Decision이 승인될 때까지 구현하지 않는다.
 - **Runtime Bundle과 Worker 배포:** Worker artifact version을 Bundle에 포함하면서 재시도 snapshot 고정, active Bundle 변경 시 `STALE`, 구·신 Worker 동시 배포를 함께 만족시키는 전이가 미정이다. `RETRY_WAIT` 처리, Worker–Bundle 호환성 검사와 drain/rolling deployment 방식을 함께 확정한다.
 - **OTC 질문의 안정 Identity:** Chat 자유 입력에서 OTC 제품·성분·함량·제형을 식별하고 애매함·사용자 확인을 거쳐 Rule 입력 Identity로 고정하는 전이가 미정이다. 이 전이가 확정되기 전에는 불충분한 입력으로 Rule 평가를 실행하지 않는다.

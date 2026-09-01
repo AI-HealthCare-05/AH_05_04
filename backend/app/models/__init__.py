@@ -4,6 +4,7 @@ from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ExtractedField, OcrJob
 from app.models.prescriptions import Medication, Prescription
+from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 
 __all__ = [
@@ -20,5 +21,7 @@ __all__ = [
     "MedicalDocument",
     "OcrJob",
     "Prescription",
+    "Profile",
+    "ProfileType",
     "User",
 ]
