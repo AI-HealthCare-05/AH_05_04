@@ -4,13 +4,14 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
 )
 
+from app.models.profiles import Profile
 from app.models.users import Gender, User
 from app.repositories.user_repository import (
     DuplicateUserFieldError,
@@ -182,7 +183,45 @@ async def test_create_user_normalizes_email_to_lowercase() -> None:
     )
 
     assert user.email == "case-sensitive@example.com"
-    session.flush.assert_awaited_once()
+    assert session.flush.await_count == 2
+
+
+async def test_create_user_creates_self_profile() -> None:
+    email = f"profile-create-{uuid4().hex[:12]}@example.com"
+    session_factory = async_sessionmaker(
+        test_engine,
+        expire_on_commit=False,
+    )
+
+    async with session_factory() as session:
+        repository = UserRepository(session)
+        user = await repository.create_user(
+            email=email,
+            hashed_password="synthetic-hashed-password",
+            name="SELF프로필생성",
+        )
+        await session.commit()
+        user_id = user.id
+
+    try:
+        async with session_factory() as verification_session:
+            profiles = list(
+                (
+                    await verification_session.scalars(
+                        select(Profile).where(
+                            Profile.user_id == user_id,
+                            Profile.profile_type == "SELF",
+                        )
+                    )
+                ).all()
+            )
+            assert len(profiles) == 1
+            assert profiles[0].display_name == "SELF프로필생성"
+    finally:
+        async with session_factory() as cleanup_session:
+            await cleanup_session.execute(delete(Profile).where(Profile.user_id == user_id))
+            await cleanup_session.execute(delete(User).where(User.id == user_id))
+            await cleanup_session.commit()
 
 
 async def test_postgresql_rejects_concurrent_case_variant_emails() -> None:
@@ -224,6 +263,9 @@ async def test_postgresql_rejects_concurrent_case_variant_emails() -> None:
     finally:
         # 이 테스트는 독립 session에서 실제 commit하므로 합성 테스트 행을 직접 정리합니다.
         async with session_factory() as cleanup_session:
+            created_user = await cleanup_session.scalar(select(User).where(User.email == normalized_email))
+            if created_user is not None:
+                await cleanup_session.execute(delete(Profile).where(Profile.user_id == created_user.id))
             await cleanup_session.execute(delete(User).where(User.email == normalized_email))
             await cleanup_session.commit()
 
@@ -288,6 +330,22 @@ async def test_postgresql_rejects_concurrent_email_updates() -> None:
     finally:
         # 독립 transaction에서 commit한 합성 사용자만 제거합니다.
         async with session_factory() as cleanup_session:
+            users = (
+                await cleanup_session.execute(
+                    select(User.id).where(
+                        User.email.in_(
+                            {
+                                first_email,
+                                second_email,
+                                target_email,
+                            }
+                        )
+                    )
+                )
+            ).scalars()
+            user_ids = list(users)
+            if user_ids:
+                await cleanup_session.execute(delete(Profile).where(Profile.user_id.in_(user_ids)))
             await cleanup_session.execute(
                 delete(User).where(
                     User.email.in_(

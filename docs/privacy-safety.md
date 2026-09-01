@@ -70,7 +70,9 @@ Security·Privacy는 별도 기능 Track이 아니라 모든 PR의 공통 완료
 
 아래 값은 Privacy 승인과 관련 저장·삭제 구현 전까지 Production 기본값으로 적용하지 않습니다. 의료 원문·질문·답변·원문 멱등 키는 목표 구조의 Stream, 일반 로그, quarantine과 DLQ에 저장하지 않습니다. 개인정보·의료 검토나 legal hold가 더 엄격한 조건을 요구하면 그 조건을 우선하고 근거를 Decision에 남깁니다.
 
-Post-MVP-1의 본인 단일 `SELF` profile은 승인된 방향이지만, 사용자당 단일성 제약, 기존 의료 데이터 backfill, FK·migration·cutover·rollback과 endpoint별 권한 테스트가 확정되지 않았습니다. 별도 Decision이 승인될 때까지 Job·결과와 Track B·C, Candidate·Identification 직접 API는 기존 `user_id` 소유권 기준을 유지하고 `profile_id`로 읽기·쓰기를 전환하지 않습니다. 인증 사용자가 직접 소유하지 않은 식별자는 존재 여부를 숨기기 위해 `404`로 응답합니다. 내부 운영자는 감사되는 별도 support role 없이 의료 결과를 조회할 수 없습니다.
+Post-MVP-1의 본인 단일 `SELF` profile 전환은 #117 구현 PR에서 `profile` 테이블, `(user_id, profile_type='SELF')` unique, 기존 의료 데이터 backfill, `profile_id` read cutover, 부모·자식 composite FK와 교차 사용자 테스트로 고정합니다. 인증 사용자가 직접 소유하지 않은 식별자는 존재 여부를 숨기기 위해 `404`로 응답합니다. 내부 운영자는 감사되는 별도 support role 없이 의료 결과를 조회할 수 없습니다.
+
+Job·결과와 Track B·C, Candidate·Identification 직접 API가 `profile_id`를 어떻게 저장하거나 역조회할지는 각 후속 구현 PR의 계약을 따릅니다. 단, #117 이후 새 Backend 리소스는 기존 `user_id` 직접 비교가 아니라 SELF `profile_id` 또는 부모 chain의 `profile_id`를 기준으로 소유권을 확인해야 합니다.
 
 보존 기본값과 공개 차단의 정확한 승인 범위는 [Post-MVP-1 외부 승인 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따릅니다.
 

@@ -156,7 +156,7 @@ services:
       DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
       SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
 
-    restart: always
+    restart: "no"
     mem_limit: 4G
     networks:
       - ws
