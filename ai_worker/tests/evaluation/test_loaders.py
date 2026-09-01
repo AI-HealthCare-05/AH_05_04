@@ -482,6 +482,27 @@ def test_loader_validates_flexible_policy_parameters_structurally_then_for_priva
     assert_dataset_error(tmp_dataset, expected_code)
 
 
+@pytest.mark.parametrize("collision_key", ["context", "scopes", "runtime_fixture"])
+def test_loader_redacts_every_flexible_ci_parameter_key_even_when_it_matches_schema_field(
+    tmp_dataset: MutableDatasetFixture,
+    collision_key: str,
+) -> None:
+    injected_value = "collision-value@example.com"
+    tmp_dataset.mutate_config(
+        "policies/dev-foundation-v1.comparison-policy.json",
+        lambda value: value["scopes"][0].__setitem__("ci_parameters", {collision_key: injected_value}),
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+
+    assert caught.value.code is EvaluationErrorCode.PRIVACY_VALUE_DETECTED
+    assert caught.value.safe_path == "/scopes/0/ci_parameters/*"
+    message = str(caught.value)
+    assert collision_key not in message.rpartition("/ci_parameters/")[2]
+    assert injected_value not in message
+
+
 def test_loader_requires_deidentification_approval(tmp_dataset: MutableDatasetFixture) -> None:
     manifest = tmp_dataset.manifest_value()
     manifest["data_classification"] = "APPROVED_DEIDENTIFIED"

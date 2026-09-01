@@ -84,7 +84,9 @@ def _normalize_key(key: str) -> str:
     return key.casefold().replace("-", "").replace("_", "")
 
 
-def _pointer_segment(value: str) -> str:
+def _pointer_segment(value: str, *, redact: bool = False) -> str:
+    if redact:
+        return "*"
     if value.isdecimal():
         return value
     if value not in _KNOWN_POINTER_SEGMENTS or _SAFE_POINTER_SEGMENT.fullmatch(value) is None:
@@ -92,23 +94,23 @@ def _pointer_segment(value: str) -> str:
     return value.replace("~", "~0").replace("/", "~1")
 
 
-def _child_path(path: str, segment: str) -> str:
-    return f"{path}/{_pointer_segment(segment)}"
+def _child_path(path: str, segment: str, *, redact: bool = False) -> str:
+    return f"{path}/{_pointer_segment(segment, redact=redact)}"
 
 
 def _contains_forbidden_value(value: str) -> bool:
     return any(pattern.search(value) for pattern in _VALUE_PATTERNS)
 
 
-def _validate(value: JsonValue, path: str) -> None:
+def _validate(value: JsonValue, path: str, *, redact_child_keys: bool = False) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if _normalize_key(key) in _FORBIDDEN_KEYS:
                 raise EvaluationValidationError(EvaluationErrorCode.PRIVACY_FIELD_FORBIDDEN, path or "/")
             if _contains_forbidden_value(key):
                 raise EvaluationValidationError(EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN, path or "/")
-            item_path = _child_path(path, key)
-            _validate(item, item_path)
+            item_path = _child_path(path, key, redact=redact_child_keys)
+            _validate(item, item_path, redact_child_keys=key == "ci_parameters")
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
