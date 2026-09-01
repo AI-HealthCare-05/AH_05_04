@@ -111,6 +111,15 @@ def get_ocr_engine(
     )
 
 
+def get_prescription_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> PrescriptionRepository:
+    return PrescriptionRepository(session)
+
+
 def get_ocr_service(
     document_repository: Annotated[
         MedicalDocumentRepository,
@@ -124,21 +133,18 @@ def get_ocr_service(
         OcrEngine,
         Depends(get_ocr_engine),
     ],
+    # PATCH가 lock 획득 이후 확정 여부를 다시 확인할 때 사용합니다.
+    prescription_repository: Annotated[
+        PrescriptionRepository,
+        Depends(get_prescription_repository),
+    ],
 ) -> OcrService:
     return OcrService(
         document_repository,
         ocr_repository,
         engine,
+        prescription_repository,
     )
-
-
-def get_prescription_repository(
-    session: Annotated[
-        AsyncSession,
-        Depends(get_db_session),
-    ],
-) -> PrescriptionRepository:
-    return PrescriptionRepository(session)
 
 
 def get_prescription_service(

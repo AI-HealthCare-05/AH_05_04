@@ -297,7 +297,6 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 - 처방이 확정되기 전까지만 `confirmed_value`를 수정할 수 있습니다.
 - 처방 확정 이후에는 확정 처방과 OCR 검수값의 불일치를 방지하기 위해 extracted-field PATCH를 거부합니다.
 - 거부된 PATCH는 기존 `confirmed_value`를 변경하지 않습니다.
-- PATCH와 처방 확정의 동시 요청 직렬화는 Post-MVP 범위입니다.
 
 선택 필드의 OCR 값을 사용자가 제거하여 “값 없음”으로 확인할 때는
 `confirmed_value`를 명시적인 `null`로 전송합니다.
@@ -319,9 +318,15 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 | ---: | --- | --- |
 | `404` | `EXTRACTED_FIELD_NOT_FOUND` | 필드가 없거나 사용자가 접근할 수 없습니다. |
 | `409` | `PRESCRIPTION_ALREADY_CONFIRMED` | 해당 문서의 처방이 이미 확정되어 필드를 수정할 수 없습니다. |
+| `409` | `CONCURRENT_UPDATE_IN_PROGRESS` | 같은 문서의 처방 확정 또는 다른 수정이 처리 중입니다. 재시도할 수 있습니다. |
 | `422` | `VALIDATION_FAILED` | 필수 필드에 `null` 또는 유효하지 않은 값을 전달했습니다. |
 
-현재 MVP의 `409` 검사는 PATCH 처리 시점에 이미 확정된 처방이 존재하는지를 확인합니다. PATCH와 처방 확정이 동시에 실행되는 경우의 row lock 및 직렬화는 Post-MVP 범위입니다.
+PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `409`는 의미가 다르므로 클라이언트는 `code`로 분기합니다.
+
+- `PRESCRIPTION_ALREADY_CONFIRMED`: 이미 확정된 terminal 상태입니다. 편집을 종료하고 비편집 확정 화면으로 전환합니다.
+- `CONCURRENT_UPDATE_IN_PROGRESS`: 잠금 경합에 의한 일시적 충돌입니다. 재시도하면 성공할 수 있으므로 편집 상태를 유지하고 확정 화면으로 전환하지 않습니다.
+
+잠금 대기 상한은 3초이므로 이 응답은 요청 후 약 3초 뒤에 반환될 수 있습니다. 거부된 요청은 기존 `confirmed_value`를 변경하지 않습니다.
 
 ## 처방 정보 확정
 
@@ -351,10 +356,12 @@ OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 �
 | ---: | --- | --- |
 | `404` | `MEDICAL_DOCUMENT_NOT_FOUND` | 사용자가 접근할 수 없는 문서입니다. |
 | `409` | `OCR_JOB_NOT_COMPLETED` | OCR 처리가 완료되지 않았습니다. |
+| `409` | `CONCURRENT_UPDATE_IN_PROGRESS` | 같은 문서의 extracted-field 수정 또는 다른 확정 요청이 처리 중입니다. 재시도할 수 있습니다. |
 | `422` | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 처방 확정 필수 항목(`PRESCRIBED_DATE` 포함)이 누락되었습니다. |
 | `422` | `VALIDATION_FAILED` | 필드 값의 형식이 올바르지 않습니다(`PRESCRIBED_DATE` 형식 오류 포함). |
 
-현재 MVP의 `409` 검사는 PATCH 처리 시점에 이미 확정된 처방이 존재하는지를 확인합니다. PATCH와 처방 확정이 동시에 실행되는 경우의 row lock 및 직렬화는 Post-MVP 범위입니다.
+
+처방 확정과 extracted-field PATCH는 대상 문서 row를 잠가 직렬화합니다. 잠금 획득 이후에 읽은 검수값만 확정에 사용하므로 확정 직전 commit된 PATCH가 확정 결과에 누락되지 않습니다. 잠금 대기가 3초를 초과하면 `409 CONCURRENT_UPDATE_IN_PROGRESS`를 반환하고 어떤 값도 변경하지 않습니다.
 
 ## 변경 이력
 
@@ -362,6 +369,7 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 
 | 날짜 | 관련 Issue/PR | 변경 내용 |
 | --- | --- | --- |
+| 2026-09-01 | Issue #101 | 처방 확정·extracted-field PATCH 직렬화와 신규 `409 CONCURRENT_UPDATE_IN_PROGRESS` 공개 오류 코드를 반영 |
 | 2026-08-27 | Issue #94 / PR #96 | OCR LLM 구조화 metadata, 제품 함량 필드, 확정 후 extracted-field PATCH 409 차단 계약을 반영 |
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
