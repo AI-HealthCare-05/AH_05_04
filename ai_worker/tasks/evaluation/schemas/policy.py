@@ -38,9 +38,11 @@ def _tuple_from_wire(value: object) -> object:
 
 
 def _ci_parameters_from_wire(value: object) -> object:
-    if isinstance(value, dict):
-        return tuple(sorted(value.items()))
-    return value
+    if type(value) is not dict:
+        raise ValueError("CI parameters must be a JSON object")
+    if any(type(key) is not str or not key for key in value):
+        raise ValueError("CI parameter keys must be non-empty strict strings")
+    return tuple(sorted(value.items()))
 
 
 ExperimentTypeValue = Annotated[

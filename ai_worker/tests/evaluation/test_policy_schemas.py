@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
@@ -295,6 +296,42 @@ def test_ci_parameter_storage_and_hash_are_independent_of_wire_key_order(
     assert first.scopes[0].ci_parameters == reversed_order.scopes[0].ci_parameters
     assert first_json == reversed_json
     assert canonical_sha256(first_json) == canonical_sha256(reversed_json)
+
+
+@pytest.mark.parametrize(
+    "non_object",
+    [
+        (("confidence_level", "0.95"), ("confidence_level", "0.9")),
+        [["confidence_level", "0.95"]],
+        MappingProxyType({"confidence_level": "0.95"}),
+    ],
+)
+def test_ci_parameters_reject_non_dict_and_duplicate_pair_bypasses(
+    policy_payload: dict[str, Any],
+    non_object: object,
+) -> None:
+    policy_payload["scopes"][0]["ci_parameters"] = non_object
+
+    with pytest.raises(ValidationError):
+        ComparisonPolicy.model_validate(policy_payload)
+
+
+@pytest.mark.parametrize(
+    "invalid_parameters",
+    [
+        {"": "empty-key"},
+        {1: "integer-key"},
+        {"valid": "value", 1: "mixed-key"},
+    ],
+)
+def test_ci_parameter_invalid_keys_raise_validation_error_not_raw_type_error(
+    policy_payload: dict[str, Any],
+    invalid_parameters: dict[object, object],
+) -> None:
+    policy_payload["scopes"][0]["ci_parameters"] = invalid_parameters
+
+    with pytest.raises(ValidationError):
+        ComparisonPolicy.model_validate(policy_payload)
 
 
 def test_comparison_policy_scopes_are_deeply_immutable(policy_payload: dict[str, Any]) -> None:
