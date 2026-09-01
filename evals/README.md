@@ -15,3 +15,16 @@
 Post-MVP 평가 기능을 배포 게이트로 전환할 때는 결과에 데이터셋, 모델, 프롬프트, 검색 인덱스와 임계값 버전을 함께 기록합니다. 합의된 임계값, 재현 가능한 실행 명령과 CI 연결이 완료된 항목만 자동 배포 차단 기준으로 사용합니다.
 
 자동 평가 체계가 아직 없다는 이유로 의료 안전 검증을 통과한 것으로 간주하지 않습니다. 현재 운영 가능 여부는 `SECURITY.md`, `docs/privacy-safety.md`와 `docs/deployment.md`의 수동 승인·차단 기준을 따릅니다.
+
+## Chat history 평가
+
+`generation/chat-v2-history-eval-v1.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 기준선과 처리 경로 모두 `chat-prompt-v2`를 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
+
+```bash
+cd backend
+uv run python -m app.evaluation.chat_history_runner \
+  --mode deterministic \
+  --output ../evals/results/chat-v2-history-eval-v1-local-deterministic.json
+```
+
+결과에는 rule ID와 집계값만 기록하고 원시 질문·history·응답과 PII sentinel은 기록하지 않습니다. 실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 유효한 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.

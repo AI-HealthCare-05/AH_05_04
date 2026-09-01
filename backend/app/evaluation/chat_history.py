@@ -316,26 +316,30 @@ async def _run_evaluation(
         )
         for _ in range(int(fixture["pair_count"]))
     ]
-    boundary_provider = provider_factory(("최대 history 합성 검증 답변입니다.",))
+    max_history_sample_count = int(fixture["sample_count"])
+    boundary_provider = provider_factory(
+        tuple("최대 history 합성 검증 답변입니다." for _ in range(max_history_sample_count))
+    )
     boundary_generator = ChatGenerator(
         provider=boundary_provider,
         model=str(model_settings["model"]),
         timeout_seconds=float(model_settings["timeout_seconds"]),
     )
-    _, boundary_duration = await _timed_generate(
-        boundary_generator,
-        ChatGenerationInput(
-            question="최대 history 경계를 검증해 주세요.",
-            history=max_history,
-            medications=[ChatMedicationInput(medication_name="합성의약품 에이")],
-        ),
-        clock=clock,
+    boundary_input = ChatGenerationInput(
+        question="최대 history 경계를 검증해 주세요.",
+        history=max_history,
+        medications=[ChatMedicationInput(medication_name="합성의약품 에이")],
     )
+    boundary_durations = []
+    for _ in range(max_history_sample_count):
+        _, duration = await _timed_generate(boundary_generator, boundary_input, clock=clock)
+        boundary_durations.append(duration)
 
     observations: dict[str, object] = {
         "baseline_p95_ms": _p95_milliseconds(baseline_durations),
         "history_p95_ms": _p95_milliseconds(history_durations),
-        "max_history_p95_ms": boundary_duration * 1000,
+        "max_history_p95_ms": _p95_milliseconds(boundary_durations),
+        "max_history_sample_count": max_history_sample_count,
         "max_history_characters": sum(len(item.question) + len(item.answer) for item in max_history),
         "max_payload_bytes": len(boundary_provider.calls[0].input_json.encode("utf-8")),
         "token_count": {"status": "NOT_RUN", "reason": "No approved provider tokenizer is configured."},
@@ -379,7 +383,7 @@ async def run_live_evaluation(
     provider: ChatProvider,
     clock: Callable[[], float],
 ) -> ExecutionReport:
-    response_count = len(dataset["cases"]) * 2 + 1
+    response_count = len(dataset["cases"]) * 2 + int(dataset["max_history_fixture"]["sample_count"])
     try:
         return await _run_evaluation(
             dataset,

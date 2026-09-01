@@ -29,6 +29,7 @@ def test_chat_v2_history_eval_v1_declares_synthetic_v2_comparison_and_required_s
         "question_length": 2000,
         "answer_length": 2000,
         "total_characters": 12000,
+        "sample_count": 30,
     }
     assert {case["scenario_type"] for case in dataset["cases"]} == {
         "single_turn",
@@ -107,7 +108,9 @@ def test_replay_evaluation_reports_comparison_metrics_without_raw_text_or_sentin
         "safety_violation_count": 0,
         "threshold_status": "NOT_APPLICABLE_SAMPLE_LT_30",
     }
-    assert len(report["cases"]) == 10
+    cases = report["cases"]
+    assert isinstance(cases, list)
+    assert len(cases) == 10
     serialized_report = json.dumps(report, ensure_ascii=False)
     assert "replay_outputs" not in serialized_report
     assert "SYNTHETIC_NAME_SENTINEL_129" not in serialized_report
@@ -125,15 +128,20 @@ async def test_deterministic_runner_uses_chat_generator_and_reports_payload_late
 
     assert payload["prompt_version"] == "chat-prompt-v2"
     assert payload["model_settings"] == dataset["model_settings"]
-    assert payload["observations"] == {
+    observations = payload["observations"]
+    assert isinstance(observations, dict)
+    assert observations == {
         "baseline_p95_ms": pytest.approx(1.0),
         "history_p95_ms": pytest.approx(1.0),
         "max_history_p95_ms": pytest.approx(1.0),
+        "max_history_sample_count": 30,
         "max_history_characters": 12000,
-        "max_payload_bytes": payload["observations"]["max_payload_bytes"],
+        "max_payload_bytes": observations["max_payload_bytes"],
         "token_count": {"status": "NOT_RUN", "reason": "No approved provider tokenizer is configured."},
     }
-    assert payload["observations"]["max_payload_bytes"] > 12000
+    max_payload_bytes = observations["max_payload_bytes"]
+    assert isinstance(max_payload_bytes, int)
+    assert max_payload_bytes > 12000
     assert payload["pii_sentinel_audit"] == {
         "case_count": 1,
         "allowed_history_occurrence_count": 2,
@@ -167,7 +175,7 @@ async def test_live_evaluation_uses_injected_provider_without_persisting_raw_out
 
     dataset = json.loads(_DATASET_PATH.read_text(encoding="utf-8"))
     outputs = [case["replay_outputs"][variant] for case in dataset["cases"] for variant in ("baseline", "history")]
-    outputs.append("최대 history 합성 검증 답변입니다.")
+    outputs.extend("최대 history 합성 검증 답변입니다." for _ in range(30))
 
     class ScriptedProvider:
         def __init__(self) -> None:
@@ -182,8 +190,10 @@ async def test_live_evaluation_uses_injected_provider_without_persisting_raw_out
     payload = report.to_dict()
 
     assert payload["run_mode"] == "LIVE_PROVIDER"
-    assert payload["provider_evaluation"] == {"status": "RUN", "response_count": 21}
-    assert payload["metrics"]["history_pass_count"] == 10
+    assert payload["provider_evaluation"] == {"status": "RUN", "response_count": 50}
+    metrics = payload["metrics"]
+    assert isinstance(metrics, dict)
+    assert metrics["history_pass_count"] == 10
     serialized = json.dumps(payload, ensure_ascii=False)
     assert "replay_outputs" not in serialized
     assert "SYNTHETIC_NAME_SENTINEL_129" not in serialized

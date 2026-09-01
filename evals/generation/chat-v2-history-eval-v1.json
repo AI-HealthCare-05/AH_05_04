@@ -16,7 +16,8 @@
     "pair_count": 3,
     "question_length": 2000,
     "answer_length": 2000,
-    "total_characters": 12000
+    "total_characters": 12000,
+    "sample_count": 30
   },
   "cases": [
     {
