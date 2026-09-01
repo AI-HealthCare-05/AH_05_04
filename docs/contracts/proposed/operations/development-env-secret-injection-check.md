@@ -3,7 +3,7 @@
 ## 상태와 범위
 
 - 상태: **Proposed / 실구현 전 진행 기준**
-- 연결 Issue: `#77`
+- 연결 Issue: `Related #77`
 - 적용 범위: Post-MVP-1 Sprint 1 착수 전 개발환경, Redis, PostgreSQL, CLOVA OCR, Provider secret, 로그·Stream·오류 응답 비밀정보 비노출 점검
 
 이 문서는 구현 완료 보고서가 아니라, Post-MVP-1 Sprint 1 착수 전에 개발환경과 비밀정보 주입 경로의 차단 요소를 확인하고 실구현 PR에서 따라야 할 조건을 정리한 Proposed 운영 계약이다.
@@ -31,7 +31,7 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 | Redis 연결 설정 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` 사용 여부와 기본값을 Backend/Worker 기준으로 통일한다. |
 | Worker 실행 | 공통 Handler·Dispatcher·commit-before-ACK 경계는 재사용하고, 실제 Redis Consumer Group·ACK adapter·결과 저장 adapter는 별도 구현한다. |
 | Provider secret | 실제 Provider 호출이 켜진 환경에서는 CLOVA/OpenAI 설정 누락을 startup 또는 client 생성 시점에 차단한다. |
-| Runner secret 경계 | release validation runner에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않고, 실제 Provider 호출은 FastAPI 실행 환경에서만 수행한다. |
+| Runner secret 경계 | release validation runner에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다. 현재 동기 경로에서는 FastAPI에 Provider secret을 주입하고, Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 주입한다. |
 | Provider endpoint | CLOVA endpoint는 허용된 HTTPS Provider endpoint인지 검증하고, full endpoint query를 로그·오류 응답에 남기지 않는다. |
 | 오류 응답 | secret, token, cookie, DB password, Provider 원문 응답, OCR 원문, 의료 원문을 응답 body에 포함하지 않는다. |
 | 로그·Stream·DLQ | 일반 로그, Stream, quarantine, DLQ, 평가 artifact에 의료 원문과 인증정보를 남기지 않는다. |
@@ -85,13 +85,13 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 
 | 항목 | 현재 상태 | 근거 |
 | --- | --- | --- |
-| CLOVA endpoint | `CLOVA_OCR_INVOKE_URL` | `backend/app/core/config.py:105` |
-| CLOVA secret | `CLOVA_OCR_SECRET`, 기본값은 빈 문자열 | `backend/app/core/config.py:106` |
-| CLOVA timeout | `CLOVA_OCR_TIMEOUT_SECONDS`, 기본값 20초 | `backend/app/core/config.py:107` |
+| CLOVA endpoint | `CLOVA_OCR_INVOKE_URL` | `backend/app/core/config.py:106` |
+| CLOVA secret | `CLOVA_OCR_SECRET`, 기본값은 빈 문자열 | `backend/app/core/config.py:107` |
+| CLOVA timeout | `CLOVA_OCR_TIMEOUT_SECONDS`, 기본값 20초 | `backend/app/core/config.py:108` |
 | secret 주입 | engine 생성 시 `secret_key=config.CLOVA_OCR_SECRET` 전달 | `backend/app/dependencies/services.py:106` |
 | 요청 헤더 | `X-OCR-SECRET: self._secret_key` | `backend/app/services/clova_ocr_engine.py:119-121` |
 
-현재 CLOVA endpoint·secret·timeout은 FastAPI 동기 OCR 경로에서 소비한다. AI Worker에는 CLOVA 자격 증명을 주입하지 않으며, Worker 이관은 OCR 비동기 전환 Track의 별도 구현 Issue에서 다룬다. 최신 develop 기준으로도 현재 MVP의 OCR, Guide, Chat은 AI Worker를 거치지 않고 FastAPI 요청 안에서 외부 Provider를 호출한다.
+현재 CLOVA endpoint·secret·timeout은 FastAPI 동기 OCR 경로에서 소비한다. Worker 이관 전까지는 FastAPI가 실제 Provider 호출을 담당한다. Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 Provider secret을 주입하며, release validation runner에는 주입하지 않는다. 최신 develop 기준으로도 현재 MVP의 OCR, Guide, Chat은 AI Worker를 거치지 않고 FastAPI 요청 안에서 외부 Provider를 호출한다.
 
 `OPENAI_API_KEY`는 `sk-not-configured` placeholder를 기본값으로 사용하지만, `CLOVA_OCR_SECRET`은 빈 문자열을 기본값으로 사용한다. 이 상태에서 CLOVA OCR이 실행되면 빈 `X-OCR-SECRET` 헤더로 실제 요청을 보낼 수 있고, 설정 누락은 시작 시점이 아니라 Provider 인증 실패로 드러난다.
 
@@ -106,7 +106,8 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 최신 develop의 release validation runner는 Provider credential이 runner 환경에 존재하지 않아야 한다는 guard를 둔다. 이 기준은 유지한다.
 
 - runner 환경에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다.
-- 실제 CLOVA·OpenAI 호출은 FastAPI 실행 환경에서만 수행한다.
+- 현재 동기 경로의 실제 CLOVA·OpenAI 호출은 FastAPI 실행 환경에서 수행한다.
+- Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 secret을 주입한다.
 - runner는 secret 값을 읽거나 출력하지 않는다.
 - runner가 수집하는 runtime environment에는 Provider credential 값을 포함하지 않는다.
 - local live 검증에서 CLOVA endpoint는 허용된 HTTPS Provider endpoint인지 확인한다.
@@ -435,11 +436,13 @@ Production Redis는 기본적으로 host port에 공개하지 않는다. Redis�
 ```text
 Production Provider secret은 저장소에 커밋하지 않고 승인된 secret 저장소에서 주입한다.
 
-FastAPI 실행 환경에는 실제 Provider 호출에 필요한 `CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입한다.
+현재 동기 경로에서는 FastAPI 실행 환경에 실제 Provider 호출에 필요한 `CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입한다.
+
+Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 필요한 Provider secret을 최소 권한으로 주입한다.
 
 release validation runner에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다. runner는 Provider credential 이름이 환경에 존재하면 실행을 거부한다.
 
-실제 Provider 호출은 FastAPI 실행 환경에서만 수행하고, runner는 secret 값을 읽거나 출력하지 않는다.
+runner는 secret 값을 읽거나 출력하지 않는다. Provider 호출 실행 위치는 현재 동기 경로에서는 FastAPI이고, Worker 이관 후에는 승인된 실행 서비스다.
 ```
 
 반영 후보:
@@ -689,7 +692,7 @@ Outbox 발행 직전 payload와 Redis Stream entry는 허용 필드 목록만 �
 - `REDIS_PORT`의 로컬/운영 사용 방식 차이가 기록됨
 - `CLOVA_OCR_SECRET` 빈 문자열 기본값과 startup 검증 gap이 기록됨
 - 오류 응답·로그·Stream 비밀정보 비노출 테스트의 후속 항목이 분리됨
-- 후속 구현 항목이 Issue 또는 Draft PR로 연결됨
+- 후속 구현 항목이 실구현 PR 필수 조건 표로 분리·식별됨
 - 실구현 PR에서 반드시 확인할 조건과 문서 분리·승격 기준이 기록됨
 
 다음 조건을 만족하기 전에는 이 문서를 current 계약으로 승격하지 않는다.
