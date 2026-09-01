@@ -15,6 +15,14 @@
 
 비동기 접수의 고유 범위는 `(user_id, OpenAPI operation_id, key_hmac)`이다. `key_hmac`은 원문 키를 서버 비밀키로 versioned HMAC-SHA-256 처리한 값이며 원문은 저장하지 않는다. 동기 상태 변경도 같은 `key_hmac` 컬럼명을 사용하되 아래와 같이 `parent_resource_id`를 scope에 추가한다. Post-MVP-1은 인증 사용자가 직접 소유한 리소스에 수행하는 요청만 지원한다.
 
+HMAC key rotation 중에는 구 writer와 신 writer가 동시에 최초 요청을 쓰지 못하게 한다. reader는 현재 key version과 직전 key version을 함께 조회할 수 있지만, writer가 서로 다른 active key version으로 같은 원문 key를 동시에 insert하면 서로 다른 `key_hmac`이 만들어져 DB unique constraint가 중복 Job을 막지 못한다. 따라서 key rotation 배포는 다음 중 하나를 만족해야 한다.
+
+- rolling 배포 중 active write key version을 바꾸지 않고, 모든 writer가 같은 active version을 사용한 뒤에만 새 version write를 시작한다.
+- active write key version 전환 전 기존 writer와 PENDING/non-terminal Job drain이 완료됐음을 확인한다.
+- 혼합 writer를 허용해야 한다면 원문 key를 저장하지 않는 별도 rotation-invariant 원자 잠금 또는 unique digest를 먼저 승인·구현한다.
+
+위 조건이 충족되지 않으면 HMAC key rotation 중 신규 멱등성 write를 배포하지 않는다.
+
 요청 지문은 다음 값을 canonical JSON으로 직렬화한 SHA-256이다.
 
 - 비동기 요청의 `job_type`
@@ -36,6 +44,13 @@
 | 최초 transaction rollback | 키도 저장하지 않아 안전하게 재시도 가능 |
 
 동시 최초 요청은 DB unique constraint로 하나만 승리시킨 뒤, 패자는 저장된 요청 지문을 비교해 위 규칙을 적용한다.
+
+DB unique 제약은 최소 다음 범위를 보장한다. `expires_at`은 unique key에 포함하지 않는다. 만료 row를 새 요청처럼 처리하려면 위 보존 규칙처럼 기존 row를 먼저 원자적으로 reclaim하거나 삭제한 뒤 새 row를 생성한다.
+
+| 구분 | unique 기준 |
+| --- | --- |
+| 비동기 요청 | `record_type`, `user_id`, `operation_id`, `key_hmac` |
+| 동기 요청 | `record_type`, `user_id`, `operation_id`, `parent_resource_id`, `key_hmac` |
 
 비동기 Job 멱등 레코드는 응답 body snapshot을 저장하지 않는다. 동일 요청은 저장된 `job_id`로 현재 Job을 조회해 최신 `202`를 반환한다.
 
@@ -65,4 +80,4 @@ snapshot은 암호화한 PostgreSQL `BYTEA`로 저장하고 application cap은 1
 
 공통 필드는 `record_type`, `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `created_at`, `expires_at`이다. `ASYNC_JOB`은 non-null `job_id`를 저장하고 `parent_resource_id`, `response_status`, `response_body_snapshot`은 null이다. `SYNC_MUTATION`은 non-null `parent_resource_id`, `response_status`, 암호화된 `response_body_snapshot`(암호화 후 `BYTEA`)을 저장하고 `job_id`는 null이다. DB CHECK 제약으로 이 타입별 nullability를 강제한다.
 
-HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다. HMAC key rotation 기간에는 현재 key version과 직전 key version으로 계산한 `key_hmac`을 같은 scope에서 함께 조회해 기존 record를 찾는다. 같은 원문 key가 이전 key version으로 저장되어 있는데 현재 key version만 조회해 새 Job이나 mutation을 만들면 안 된다. rotation 중에도 원문 `Idempotency-Key`는 저장하지 않는다.
+HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다. HMAC key rotation 기간에는 현재 key version과 직전 key version으로 계산한 `key_hmac`을 같은 scope에서 함께 조회해 기존 record를 찾는다. 같은 원문 key가 이전 key version으로 저장되어 있는데 현재 key version만 조회해 새 Job이나 mutation을 만들면 안 된다. rotation 중에도 원문 `Idempotency-Key`는 저장하지 않는다. 또한 혼합 writer가 서로 다른 active key version으로 같은 원문 key의 최초 write를 동시에 수행할 수 있는 배포는 금지한다.

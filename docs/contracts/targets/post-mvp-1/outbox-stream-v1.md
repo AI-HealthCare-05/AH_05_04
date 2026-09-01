@@ -21,7 +21,8 @@ Outbox publisher는 미발행 row를 짧은 lease로 선점하고 Redis Stream�
 - Publisher lease는 30초이며 lease token으로 fencing한다.
 - Publisher는 `status=PENDING AND available_at <= now()` row뿐 아니라 `status=CLAIMED AND claim_expires_at <= now()` row도 재선점할 수 있다. `CLAIMED` row를 재선점하지 않으면 Publisher가 row 선점 뒤 종료했을 때 event가 영구 정체된다.
 - 발행 완료 갱신은 `event_id`, 현재 `claim_token`, `status=CLAIMED` 조건으로만 수행한다. 오래된 Publisher가 뒤늦게 돌아와 새 claim 소유자의 row를 `PUBLISHED`로 덮어쓰면 안 된다.
-- Reconciler는 DB row claim으로 due Job을 선점해 여러 instance가 동시에 실행되어도 같은 retry Outbox를 하나만 만든다.
+- Reconciler는 `RETRY_WAIT` due Job과 lease가 만료된 `PROCESSING` Job을 복구 대상으로 확인한다. 증가한 attempt의 후속 Outbox 생성은 `RETRY_WAIT` due Job에서만 수행하며, 미발행 `PENDING` Job의 기존 Outbox 재발행은 Publisher 책임이다. Reconciler는 미발행 `PENDING` Job에 대해 다음 attempt를 만들지 않는다.
+- `PENDING` Job의 `expected_event_id`가 가리키는 Outbox가 없거나 Job·Outbox 연결이 깨진 경우는 데이터 무결성 오류로 기록하고 alert한다. 이 경우 Reconciler가 추정으로 새 Outbox를 만들지 않는다.
 
 `OUTBOX_EVENT`는 최소 `event_id`, `job_id`, `attempt`, `event_kind`, `schema_version`, `status`, `available_at`, nullable claim token·만료, nullable `published_at`, `created_at`을 저장한다. 상태는 `PENDING`, `CLAIMED`, `PUBLISHED`, `CANCELLED`이며 `(job_id, attempt, event_kind)`는 unique다. 최초 접수와 Reconciler 모두 Job의 `expected_event_id`와 Outbox `event_id`를 같은 transaction에서 설정한다.
 
@@ -90,11 +91,11 @@ DB commit 전에 ACK하지 않는다. process crash로 재전달되면 Job 상�
 
 Publisher의 `XADD` 성공 뒤 `published_at` 기록이 실패할 수 있으므로 같은 `event_id`의 Stream entry가 둘 이상 존재할 수 있다. Worker는 Job row를 잠그고 `last_consumed_event_id`를 확인해 이미 commit된 event를 Provider 호출 없이 ACK한다. expected event 불일치가 소비 이력으로 설명되지 않으면 quarantine commit 후 ACK한다.
 
-`RETRY_WAIT` commit 후 Reconciler가 due Job을 선점해 새로운 event ID와 증가한 attempt의 후속 Outbox를 만든다. Worker가 retry 메시지를 Redis에 직접 추가하지 않는다.
-
 Reconciler는 후속 `OUTBOX_EVENT`를 생성하는 같은 transaction에서 Job의 `expected_event_id`를 새 Outbox `event_id`로 갱신한다. Reconciler는 Job을 `PROCESSING`으로 직접 전환하지 않으며, `PROCESSING` 전환은 후속 event를 수신한 Worker가 lease를 획득하는 시점에 수행한다.
 
-`available_at`이 지난 `RETRY_WAIT` Job이나 Redis 장애 등으로 발행되지 못한 `PENDING` Job이 오래 남으면 Reconciler의 회수 대상이다. 정확한 실행 주기, batch size와 정체 판단 시간은 Worker 구현 PR에서 확정하되, DB row claim과 unique 제약으로 같은 retry Outbox가 중복 생성되지 않아야 한다.
+Worker가 `PROCESSING`으로 전환한 뒤 종료해 lease가 만료된 Job은 Reconciler가 복구 대상으로 확인한다. Reconciler는 만료된 lease, 현재 `attempt_count`, `expected_event_id`, `max_attempts`, `last_consumed_event_id`를 검증한 뒤 해당 attempt를 실패로 기록하고, 재시도 가능하면 Job을 `RETRY_WAIT`로 전환한다. 재시도 횟수를 소진했으면 최종 `FAILED`로 종결한다. 새 Provider 호출은 `RETRY_WAIT`의 `available_at` 도달 후 Reconciler가 증가한 attempt의 새 Outbox를 만들고, Worker가 그 event의 lease를 획득한 뒤에만 가능하다.
+
+`available_at`이 지난 `RETRY_WAIT` Job은 Reconciler의 회수 대상이다. Redis 장애나 Publisher 종료로 발행되지 못한 `PENDING` Job은 Reconciler가 새 attempt를 만들지 않고 Publisher가 기존 Outbox row를 재선점해 발행한다. 정확한 실행 주기, batch size와 정체 판단 시간은 Worker 구현 PR에서 확정하되, DB row claim과 unique 제약으로 같은 retry Outbox가 중복 생성되지 않아야 한다.
 
 ## 재시도와 격리
 
@@ -105,3 +106,5 @@ lease 만료로 회수된 Job도 현재 attempt를 사용한 실패로 계산한
 Safety validation 실패는 재시도하지 않지만 항상 Job `FAILED`를 뜻하지 않는다. Track F에서 생성 답변을 폐기하고 승인 fallback 저장에 성공하면 도메인 결과는 `REJECTED`, Job은 `COMPLETED`로 끝난다. fallback 저장까지 실패한 경우에만 Job을 `FAILED`로 전환한다.
 
 publish가 완료된 Outbox·quarantine·DLQ 메타데이터의 30일 보존은 Privacy 승인 대상 기본안이다. 미발행 `PENDING|CLAIMED` DLQ Outbox와 연결된 `MESSAGE_QUARANTINE`은 TTL로 삭제하지 않는다. legal hold 또는 더 엄격한 감사 정책이 있으면 해당 정책을 적용한다.
+
+Job 실행 메타데이터는 terminal 전환 후 90일 보존하므로, `AI_JOB.expected_event_id`와 `last_consumed_event_id`가 Outbox 삭제를 막으면 안 된다. 두 FK는 nullable이며 Outbox 삭제 시 `ON DELETE SET NULL` 또는 삭제 전 참조 해제로 처리한다. 도메인 결과 row의 `ai_job_id`도 결과 보존을 우선해 nullable FK와 `ON DELETE SET NULL`을 기본으로 하며, Job 삭제 때문에 사용자에게 보존해야 할 OCR·Guide·Chat 결과를 삭제하지 않는다.

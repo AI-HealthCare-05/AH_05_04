@@ -150,11 +150,14 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - `GET /api/v1/jobs/{job_id}`는 `{"data": JobStatusResponse}` envelope를 반환하고, `RETRY_WAIT`에서는 `Retry-After`와 `retry_after_seconds`가 같은 값입니다.
 - Job 접수·상태 조회·결과 조회의 성공 응답과 `400`, `401`, `404`, `409`, `500`, `503` 오류 응답은 모두 `Cache-Control: no-store`를 포함합니다.
 - Job 접수·상태 조회 오류 응답은 공통 오류 envelope를 사용하고 `details`를 객체가 아니라 배열로 반환합니다.
+- HMAC key rotation 중 현재·직전 key version 조회와 혼합 writer 차단 또는 rotation-invariant 원자 잠금으로 같은 원문 key의 중복 실행을 방지합니다.
 - 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다.
 - 같은 멱등 키 동시 접수는 DB unique constraint로 하나만 Job을 생성하고 나머지는 기존 Job의 최신 `202`를 반환합니다.
+- 비동기 요청은 `record_type + user_id + operation_id + key_hmac`, 동기 요청은 `record_type + user_id + operation_id + parent_resource_id + key_hmac` unique 기준으로 동시 중복 생성을 차단합니다.
 - 만료된 멱등 row 정리와 새 Job 생성은 중복 Job·Outbox·Provider 호출을 만들지 않습니다.
-- HMAC key rotation 중 현재·직전 key version 조회로 같은 원문 key의 중복 실행을 방지합니다.
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
+- Publisher가 `CLAIMED` Outbox row 선점 뒤 종료하면 claim 만료 후 같은 Outbox row를 재선점하며, Reconciler가 미발행 `PENDING` Job에 대해 새 attempt Outbox를 만들지 않는지 검증합니다.
+- Worker 종료 후 lease가 만료된 `PROCESSING` Job은 Reconciler가 회수해 재시도 가능하면 `RETRY_WAIT`, 재시도 소진이면 `FAILED`로 전환하며, 새 Provider 호출은 증가한 attempt의 새 Outbox 이후에만 발생합니다.
 - poison 메시지는 quarantine 기록을 먼저 commit한 뒤 ACK하며, commit 실패 시 ACK하지 않아 다시 회수할 수 있어야 합니다.
 - poison 메시지에서 파싱한 `job_id`만으로 정상 Job을 `FAILED` 처리하지 않습니다. 실제 Outbox event, `expected_event_id`, Job-event 연결과 attempt 검증이 모두 성공한 경우에만 Job 상태를 변경합니다.
 - 만료된 lease의 Worker가 새 Worker의 결과를 덮어쓰지 못합니다.
@@ -163,6 +166,7 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - Publisher가 `CLAIMED` Outbox row 선점 뒤 종료해도 만료된 claim을 재선점할 수 있으며, 발행 완료 갱신은 `claim_token` fencing으로 보호됩니다.
 - OCR의 CLOVA 20초·구조화 LLM 30초 순차 호출 경계에서 `hard timeout 60초 / lease 75초`를 검증하고, timeout 직전 정상 결과가 재시도 소진으로 오분류되지 않는지 확인합니다.
 - 단일 `idempotency_record`의 `record_type=ASYNC_JOB|SYNC_MUTATION`, 타입별 nullability CHECK, 동기 snapshot `BYTEA` 암호화와 비동기 snapshot 미저장을 계약·migration 테스트로 검증합니다.
+- Outbox 30일 보존과 Job 90일 보존이 충돌하지 않도록 nullable FK, `ON DELETE SET NULL` 또는 삭제 전 참조 해제 기준을 migration 테스트로 검증합니다.
 - `RETRY_WAIT` 중 active Runtime Bundle이 변경된 Job과 구·신 Worker가 함께 실행되는 배포를 검증합니다. 기대 전이와 Worker–Bundle 호환성 규칙이 재승인되기 전에는 이 행을 `NOT_RUN`으로 유지합니다.
 - 처방 active version 변경 시 처리 중 결과는 `STALE`이며 현재 결과로 노출되지 않습니다.
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.

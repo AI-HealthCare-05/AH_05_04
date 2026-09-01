@@ -143,6 +143,7 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 - 처리 중 Worker는 10초마다 heartbeat하고 lease가 만료된 뒤에만 다른 Worker가 reclaim한다. heartbeat는 Provider 호출과 독립적으로 갱신한다.
 - lease가 만료된 Job은 즉시 `FAILED`로 바꾸지 않는다. 다른 Worker 또는 Reconciler가 DB의 Job 상태, `attempt_count`, `expected_event_id`, `available_at`을 확인한 뒤 재획득·재시도·실패 처리를 판단한다.
 - 실행 메타데이터와 Job은 terminal 전환 후 90일 보존한다. 더 엄격한 개인정보·감사 정책이 있으면 그 정책을 적용한다.
+- 도메인 결과 row는 Job보다 오래 보존될 수 있으므로 `OCR_JOB`, `GUIDE`, ASSISTANT `CHAT_MESSAGE`의 `ai_job_id` FK는 nullable로 두고 Job 삭제 시 `ON DELETE SET NULL` 또는 삭제 전 참조 해제를 적용한다. Job 삭제 때문에 사용자에게 보존해야 할 OCR·Guide·Chat 결과를 삭제하지 않는다.
 
 ## 시도와 재시도
 
@@ -153,6 +154,8 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 - timeout, rate limit, 일시적 Provider·의존성 장애만 재시도하고 영구 입력·schema·Safety 검증 오류는 즉시 종료한다. 외부 rate limit과 일시적 Provider 오류를 어떤 공통 `failure_code`로 정규화할지는 구현 PR의 오류 매핑 테스트로 고정하되, 아래 허용 목록 밖의 새 공개 code를 만들지 않는다.
 - `failure_code`는 `TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `INVALID_INPUT`, `UNSUPPORTED_SCHEMA`, `SAFETY_VALIDATION_FAILED`, `RETRY_EXHAUSTED`, `INTERNAL_ERROR` 중 하나다.
 - lease 만료로 회수된 Job도 현재 attempt를 사용한 실패로 계산한다. 같은 Stream 메시지를 다시 받은 Worker는 해당 attempt가 이미 `RETRY_WAIT`, `FAILED`, `COMPLETED`, `STALE` 중 하나로 반영되어 있으면 Provider를 재호출하지 않고 ACK한다. 다음 Provider 호출은 Reconciler가 증가한 attempt와 새 Outbox event를 만든 뒤에만 수행한다.
+
+`attempt_count=0`에서 시작해 Worker lease 획득 시 수신 attempt로 갱신하는 전이는 기존 Contract Freeze v4의 원문보다 구체화된 구현 기준이다. 구현 PR 착수 전 [문서 권위](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)의 후속 Decision에서 승인 근거를 남긴다.
 
 ## 오류 응답 적용 기준
 

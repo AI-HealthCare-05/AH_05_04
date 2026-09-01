@@ -52,6 +52,8 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | PROFILE SELF 소유권 전환 기준 적용 | #117 이후 Current 계약은 SELF `profile_id` 기반이다. 소유권 기준이 흔들리면 Job·결과·처방 version 권한 검사가 반복 수정된다. | `profile` 테이블, SELF unique, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, 도메인별 `profile_id` composite FK·일관성 검증, OCR 소유권 chain 기준 적용 |
 | `AI_JOB.domain_type/domain_id` 물리 저장 제외 반영 | 목표 계약은 `domain_type/domain_id`를 응답 구성값으로 둔다. 이를 물리 컬럼으로 중복 저장하면 도메인 row와 불일치가 생길 수 있다. | 최종 DDL에서 `AI_JOB.domain_type/domain_id` 컬럼을 만들지 않고, 도메인 row의 unique `ai_job_id` FK에서 응답값을 구성한다. |
 | Idempotency 단일 테이블 구조 정렬 | #99 이후 목표 계약은 단일 `idempotency_record`와 `record_type=ASYNC_JOB|SYNC_MUTATION`을 사용한다. 별도 `sync_idempotency_record`를 만들면 최신 계약과 충돌한다. | ERD·계약·migration 계획에서 단일 테이블, `record_type`, 타입별 CHECK 제약으로 정렬 |
+| HMAC key rotation 중 혼합 writer 차단 | 구 writer와 신 writer가 서로 다른 active key version으로 같은 원문 key를 최초 write하면 서로 다른 `key_hmac`이 저장되어 중복 Job이 생길 수 있다. | rotation 중 writer active key version 단일화 또는 별도 rotation-invariant 원자 잠금 승인 |
+| Worker attempt 전이 방식 승인 | 접수 직후 `attempt_count=0`, 최초 메시지 `attempt=1`, lease 획득 시 DB `attempt_count` 갱신 방식은 Worker 복구·재시도 전이에 직접 영향을 준다. | Product Decision 또는 governance decision에 attempt 전이와 lease 만료 복구 근거 기록 |
 | `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT` Expand 포함 확정 | poison message를 durable하게 기록한 뒤 ACK하려면 quarantine과 DLQ Outbox가 필요하다. | PR 1 범위와 계약 테스트에 두 테이블 포함 |
 | Backfill과 rollback 용어 분리 | 재실행 가능한 batch는 rollback이 아니라 resume/recovery다. | 코드 rollback, forward-fix, batch 재개 기준을 문서에 구분 |
 
@@ -64,6 +66,7 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | 영역 | 테이블 | 목적 |
 | --- | --- | --- |
 | 공통 Job | `ai_job` | OCR·Guide·Chat 실행 상태와 lease·retry·failure metadata 저장 |
+| Job 시도 이력 | `ai_job_attempt` | Worker 실행 attempt, lease, handler 결과, 실패 code와 처리 이력 저장 |
 | Outbox | `outbox_event` | DB commit 이후 Worker 실행 이벤트 발행 |
 | Quarantine | `message_quarantine` | 필수 필드 오류, 미지원 schema, event mismatch 등 poison message 격리 기록 |
 | DLQ Outbox | `dlq_outbox_event` | quarantine 기록을 dead-letter Stream으로 발행하기 위한 별도 Outbox |
@@ -92,12 +95,14 @@ Track A는 OCR·Guide·Chat이 같은 비동기 작업 기준을 사용하도록
 | --- | --- |
 | `ai_job` | `id`, `user_id`, `job_type`, nullable `prescription_version_id`, `status`, nullable `expected_event_id`, nullable `last_consumed_event_id`, `attempt_count default 0`, `max_attempts`, `available_at`, lease token·만료·heartbeat, 실패 code·detail·dead-lettered 시각, `started_at`, `completed_at`, `created_at`, `updated_at`. `job_type`, 6개 `status`, 7개 `failure_code`, terminal `completed_at`, failed `failure_code`, `attempt_count >= 0`, `max_attempts >= 1`은 CHECK로 강제한다. |
 | `ai_job_attempt` | `id`, `ai_job_id`, `attempt_no`, `attempt_status`, nullable runtime metadata, nullable error code/message, `retryable`, `timed_out`, `started_at`, `completed_at`. `(ai_job_id, attempt_no)` unique와 7개 error code CHECK를 둔다. ERD 호환을 위해 `BLOCKED` enum 값은 허용할 수 있지만 Worker는 별도 Decision 전까지 생성·전이·저장하지 않는다. |
-| `idempotency_record` | `id`, `user_id`, `operation_id`, `record_type`, nullable `parent_resource_id`, `key_hmac_version`, `key_hmac`, `request_hash`, nullable unique `job_id`, nullable `response_status`, nullable encrypted `response_body_snapshot`, nullable `encryption_key_version`, `created_at`, `expires_at`. `record_type=ASYNC_JOB|SYNC_MUTATION`별 nullability는 CHECK로 강제한다. |
+| `idempotency_record` | `id`, `user_id`, `operation_id`, `record_type`, nullable `parent_resource_id`, `key_hmac_version`, `key_hmac`, `request_hash`, nullable unique `job_id`, nullable `response_status`, nullable encrypted `response_body_snapshot`, nullable `encryption_key_version`, `created_at`, `expires_at`. `record_type=ASYNC_JOB|SYNC_MUTATION`별 nullability는 CHECK로 강제한다. 비동기 요청은 `(record_type, user_id, operation_id, key_hmac)`, 동기 요청은 `(record_type, user_id, operation_id, parent_resource_id, key_hmac)` unique 기준으로 중복 생성을 막는다. |
 | `outbox_event` | `event_id`, `job_id`, `attempt`, `event_kind='JOB_EXECUTE'`, `schema_version='1.0'`, `status=PENDING|CLAIMED|PUBLISHED|CANCELLED`, `available_at`, nullable `claim_token`, nullable `claim_expires_at`, nullable `published_at`, `created_at`. `(job_id, attempt, event_kind)` unique와 `(status, available_at, event_id)` index를 둔다. |
 | `message_quarantine` | `id`, unique `stream_entry_id`, `message_digest`, nullable `job_id`, nullable `original_event_id`, nullable `original_schema_version`, nullable `trace_id`, `failure_code`, `received_at`. `job_id`는 메시지에서 파싱 가능하고 DB의 `ai_job`에 실제로 존재할 때만 저장한다. |
 | `dlq_outbox_event` | `event_id`, unique `quarantine_id`, `event_kind='QUARANTINE_RECORDED'`, `schema_version='1.0'`, nullable `original_schema_version`, `status=PENDING|CLAIMED|PUBLISHED`, `attempt_count default 0`, `available_at`, nullable claim token·만료, nullable `last_error_code`, nullable `published_at`, `created_at`, `updated_at`. |
 
 `ai_job.expected_event_id`/`last_consumed_event_id → outbox_event.event_id`와 `outbox_event.job_id → ai_job.id`는 순환 참조다. migration은 `ai_job` 테이블을 먼저 만들되 `expected_event_id`/`last_consumed_event_id` FK는 나중에 걸고, `outbox_event` 생성 후 `ALTER TABLE`로 두 FK를 추가한다. 접수 transaction 안에서는 `ai_job` INSERT 뒤 `outbox_event` INSERT, 같은 transaction의 `ai_job.expected_event_id` UPDATE 순서가 되며, 이 NULL 구간은 commit 전 외부에서 관측되지 않는다.
+
+Outbox는 publish 후 30일, Job 실행 메타데이터는 terminal 전환 후 90일 보존을 기본으로 하므로 보존기간 차이가 FK 삭제를 막으면 안 된다. `ai_job.expected_event_id`와 `last_consumed_event_id`는 nullable FK로 두고 Outbox 삭제 시 `ON DELETE SET NULL` 또는 삭제 전 참조 해제를 적용한다. 도메인 결과의 `ai_job_id`도 결과 보존을 우선해 nullable FK와 `ON DELETE SET NULL`을 기본으로 하며, Job 삭제 때문에 OCR·Guide·Chat 결과 row를 삭제하지 않는다.
 
 ## 5. `AI_JOB`과 도메인 row 관계
 
@@ -166,7 +171,7 @@ Track A는 비동기 Job 접수와 동기 상태 변경을 단일 `idempotency_r
 | 단계 | 내용 | rollback·복구 기준 |
 | --- | --- | --- |
 | 1. PROFILE 선행 | 본인 단일 SELF profile 도입, 기존 사용자 신규 write 시 SELF profile 멱등 생성, 신규 리소스 dual-write, 기존 리소스 `profile_id` backfill, composite FK 기반 소유권 일관성 검증, 소유권 조회 전환 | Contract 전에는 기존 read 경로 rollback 가능. Contract 후에는 forward-fix 우선 |
-| 2. Expand | `ai_job`, `outbox_event`, `message_quarantine`, `dlq_outbox_event`, 단일 `idempotency_record`, `prescription_version`, `prescription_version_medication` 생성. 기존 테이블에 nullable FK 추가 | 신규 경로 미사용 시 nullable 컬럼·신규 테이블 제거 가능 |
+| 2. Expand | `ai_job`, `ai_job_attempt`, `outbox_event`, `message_quarantine`, `dlq_outbox_event`, 단일 `idempotency_record`, `prescription_version`, `prescription_version_medication` 생성. 기존 테이블에 nullable FK 추가 | 신규 경로 미사용 시 nullable 컬럼·신규 테이블 제거 가능 |
 | 3. Dual-write | 신규 처방 write 시 기존 read 호환 필드와 version snapshot을 함께 기록. 신규 비동기 접수는 feature flag가 켜진 경로에서만 생성 | flag off 시 신규 접수는 legacy 경로로 되돌리고, 이미 생성된 Job은 drain |
 | 4. Backfill | 기존 처방마다 version 1 생성, 약물 snapshot 복사, `active_version_id` 채움 | 재실행 가능한 batch는 rollback이 아니라 resume/recovery로 처리 |
 | 5. Dual compatibility | version FK가 있으면 신경로, 없으면 기존 경로 fallback. 신규 write는 version snapshot과 기존 read 호환 필드 유지 | 애플리케이션 코드 rollback 가능 |
@@ -325,6 +330,10 @@ Track A는 통합 게이트이며 모든 트랙의 개발 착수 게이트가 �
 - Job 조회와 `result_url` 결과 조회가 같은 소유권 기준을 사용하고, 소유권 불일치 시 fail-closed `404`를 반환하도록 명시되어 있다.
 - `AI_JOB.domain_type/domain_id`와 `ai_job.profile_id`는 물리 컬럼으로 만들지 않고, 도메인 row의 `ai_job_id`와 SELF `profile_id` chain으로 응답과 소유권을 구성한다고 명시되어 있다.
 - 단일 `idempotency_record`와 `record_type=ASYNC_JOB|SYNC_MUTATION` 기준이 최신 계약과 일치한다.
+- 비동기·동기 멱등 요청의 DB unique 기준이 구분되어 있고, 애플리케이션 사전 조회만으로 동시 요청을 막는 구조가 아니다.
+- Worker lease 만료 후 `PROCESSING` Job 복구, `RETRY_WAIT` 전환, 새 attempt Outbox 생성 주체가 문서화되어 있다.
+- Outbox 30일과 Job 90일 보존기간 차이를 처리하는 nullable FK, `ON DELETE SET NULL` 또는 삭제 전 참조 해제 기준이 명시되어 있다.
+- `ai_job_attempt`가 신규 테이블 목록과 Expand 범위에 포함되어 있다.
 - `MESSAGE_QUARANTINE`, `DLQ_OUTBOX_EVENT`가 Expand 범위에 포함되어 있다.
 - async feature flag와 기존 Job drain 기준이 rollback 절차에 포함되어 있고, drain 완료 조건은 모두 충족해야 한다고 명시되어 있다.
 - Backfill과 rollback/resume/recovery 의미가 구분되어 있다.
