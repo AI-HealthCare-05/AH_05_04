@@ -11,11 +11,11 @@
 - [Check-in과 Barrier 계약 v1](./checkin-v1.md)
 - [OCR 비-RAG LLM 구조화 계약 v1](./ocr-llm-structuring-v1.md)
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./medication-identification-v1.md)
-- [Safety Result 계약 v1](./safety-result-v1.md)
+- [Safety Result 계약 v1](./safety-result-v1.md) — Approved v4 이력과 Track C 공통 Safety 기준
 - [RAG Source 수집·활성화 계약 v1](./rag-source-ingestion-v1.md)
 - [RAG Runtime 계약 v1](./rag-runtime-v1.md)
 - [RAG Evaluation·Release Gate 계약 v1](./rag-evaluation-v1.md)
-- [Safety Result·Citation 계약 v2](./safety-result-v2.md)
+- [Safety Result·Citation 계약 v2](./safety-result-v2.md) — Track F에서 v1의 Safety·Citation·STALE·Release Gate 목표를 대체
 
 RAG-00 Target은 외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 저장소 경계에 투영한다. 외부 논리 계약 `medication-candidate-identification-v1`은 기존 공식 의약품 식별 Target에 통합하며 중복 Target 파일을 두지 않는다. Safety v1은 Approved v4 이력으로 유지하고 v2는 후속 Target으로 관리한다. 어느 문서도 구현·Current Runtime·공개 완료를 의미하지 않는다.
 

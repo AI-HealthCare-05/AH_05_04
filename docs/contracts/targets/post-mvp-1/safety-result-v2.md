@@ -13,6 +13,17 @@
 
 이 문서는 RAG-00에서 필요한 Safety Result v2 상태·오류·다형 Citation 목표를 고정한다. 기존 v1은 Approved Contract Freeze v4의 선행 Target으로 유지한다. v2는 DTO·OpenAPI·Migration·Contract Test와 지정 리뷰어 승인이 같은 구현 PR에 포함되기 전에는 Current Runtime이 아니다.
 
+### v1과 v2의 적용 관계
+
+| 범위 | 적용 Target |
+| --- | --- |
+| Track C 동기 Safety·Barrier의 공통 Safety 기준 | v1 유지. v2가 Track C API·상태를 변경하지 않음 |
+| Track F Guide·Chat·OTC의 Safety Result·Citation·실행 Context STALE·Release Gate | v2가 v1의 Track F 목표를 대체 |
+| 과거 Approved v4 provenance | v1을 불변 이력으로 보존 |
+| 현재 실행 동작 | 관련 구현·Migration·OpenAPI·Contract/Integration Test가 함께 Current로 승격되기 전에는 v1·v2 어느 쪽도 현재 RAG Runtime 구현 완료 근거가 아님 |
+
+Track F 구현은 v1과 v2의 Citation 유형이나 fallback enum을 합집합으로 추정하지 않고 v2만 따른다. Track C 변경이 필요하면 별도 Decision과 계약 version을 추가한다.
+
 ## 상태 축과 공개 판정
 
 | 상태 그룹 | 값 |

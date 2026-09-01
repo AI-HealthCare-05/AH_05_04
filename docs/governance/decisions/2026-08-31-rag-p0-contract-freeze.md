@@ -77,6 +77,8 @@ Issue와 PR에는 각 담당자의 실제 GitHub 계정을 지정한다. 계정 
 
 `#136 OPEN`은 RAG-00 Target 문서의 상태를 Current로 낮추거나 미승인 정책을 추정해 채울 근거가 아니다. 후속 Guide·Chat 구현은 #136에서 확정된 책임·표시 계약과 이 Decision의 RAG Runtime 경계를 함께 검증한다.
 
+권위 경계는 단방향으로 고정한다. RAG-00은 RAG/LLM 실행 분기, Evidence·Citation·Safety Result·Release enum과 fail-closed 의미를 소유한다. #136은 Session·Message 저장과 그 확정 결과의 Frontend 표시 투영을 소유한다. #136 산출물은 RAG-00 enum·오류·공개 판정을 재정의하지 않으며 변경이 필요하면 새 Decision 또는 계약 version과 영향 영역 리뷰를 거친다.
+
 ## 구현·공개 경계
 
 - 이 Decision 승인은 RAG·LangGraph·Parser·DB migration·OpenAPI·Frontend 또는 Evaluation Run 구현 완료를 뜻하지 않는다.

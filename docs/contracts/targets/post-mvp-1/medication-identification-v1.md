@@ -156,10 +156,10 @@ Search 생성 Transaction은 전역 순서에 따라 상위 `prescription`과 �
 
 ### 소유권
 
-- Candidate Search·Result·Identification은 `prescription_version_medication → prescription_version → prescription → user_id` 경로로 요청 사용자 소유권을 검증한다.
-- Guide·Chat·Job·Result·Citation은 해당 Job의 고정 `prescription_version_id → prescription → user_id` 경로로 같은 소유권을 검증한다.
-- SELF Profile 도입 Decision이 승인되기 전에는 임의로 `profile_id` 소유권으로 전환하지 않는다.
-- 리소스가 없거나 다른 사용자 소유이면 동일하게 `404`로 끝내고 상태 변경·이력 추가·Provider 호출을 수행하지 않는다.
+- Candidate Search·Result·Identification은 `prescription_version_medication → prescription_version → prescription → profile_id` 경로로 소유권을 검증하고, 대상 `profile_id`가 인증 사용자의 단일 SELF Profile과 일치해야 한다.
+- Guide·Chat·Job·Result·Citation은 해당 Job에 고정된 `prescription_version_id → prescription → profile_id` 또는 같은 부모 chain의 `profile_id`를 기준으로 소유권을 검증한다.
+- 소유권 의미와 조회 방식은 [PROFILE SELF 소유권 전환 Current 계약](../../current/profile-self-ownership-v1.md)을 따른다. 인증은 `user_id`로 시작할 수 있지만 의료 리소스 소유권을 `user_id` 직접 비교로 판정하지 않는다.
+- 부모·자식 리소스의 `profile_id`가 다르거나 인증 사용자의 SELF Profile과 일치하지 않으면 존재하지 않는 리소스와 동일하게 `404`로 끝내고 상태 변경·이력 추가·Provider 호출을 수행하지 않는다.
 
 ### 확인·거절 Transaction
 
@@ -225,7 +225,7 @@ Candidate Search·확인·거절·Identification 조회와 모든 오류 응답�
 - 사용자 확인 전 `MATCHED` 저장 0건
 - 확인·거절 멱등성, 거절 `search_id`·Result 소속 불일치 차단, 같은 약제의 서로 다른 `search_id` 동시 확인 시 `MATCHED` 성공 1건·나머지 `409`와 append-only 이력
 - 거절 후 새 Prescription Version Medication의 후속 Search는 새 이력으로 생성되고 `supersedes_search_id=null`, 추정 계보 연결과 과거 Result 재선택 0건
-- Candidate·Identification·Guide·Chat·Citation의 동일 `user_id` 소유권과 타 사용자 `404`·부작용 0건
+- Candidate·Identification·Guide·Chat·Citation의 동일 SELF `profile_id`·부모 chain 일관성, 교차 Profile·부모 자식 불일치 `404`와 부작용 0건
 - 확인·거절의 전역 잠금 순서 준수, 역순 잠금 0건과 Transaction rollback
 - 확인·거절과 Worker 결과 commit 동시 실행의 교착 0건, 최신 Identification 불일치 Job의 `STALE`·결과 비공개
 - 새 Prescription Version 생성 시 이전 Search·Identification 현재성 상실

@@ -46,11 +46,11 @@ Proposed 계약은 관련 schema·service·CLI·테스트가 함께 병합되고
 - [Check-in과 Barrier 계약 v1](./targets/post-mvp-1/checkin-v1.md): 3개 Check-in 결과와 Barrier 명시적 거절·미제출 구분
 - [OCR 비-RAG LLM 구조화 계약 v1](./targets/post-mvp-1/ocr-llm-structuring-v1.md): 최소전송, 구조화 초안 provenance, 사용자 확정과 실패 복구
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계
-- [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): 생성·검증·공개 상태 조합과 fail-closed 규칙
+- [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): Approved v4 이력과 Track C 공통 Safety 기준; Track F 후속 의미는 v2가 대체
 - [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속
 - [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric과 Release 차단 기준
-- [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): v1 후속 Target의 Context STALE·다형 Citation·Release Gate
+- [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 
@@ -81,7 +81,7 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - AI 결과는 생성·검증·공개 결정을 분리하고 근거 부족과 검증 실패를 fail-closed 처리한다.
 - OCR Job은 비-RAG LLM 구조화 초안을 만들 수 있지만 사용자 확인 전 자동 확정하지 않으며 Retrieval·외부 의료 Source 검색을 호출하지 않는다.
 - 공식 제품 Resolver는 사용자 확정 `medication_name + nullable strength_text`와 활성 MFDS Catalog만 사용한다. 내부 Top-K 중 Single Candidate Gate를 통과한 최대 1개만 표시하고 사용자 확인 전 `MATCHED`로 저장하지 않는다.
-- 모든 활성 처방약의 현재 Identification이 Runtime Release Bundle과 호환될 때만 Guide·Chat Job을 접수한다.
+- 자동 Guide는 모든 활성 처방약의 현재 Identification이 Runtime Release Bundle과 호환될 때만 Job을 접수한다. Chat은 Identification 완료 전 최소 Safety Intake Job을 접수할 수 있고, `ROUTINE` 분기만 Identification Preflight 후 일반 RAG를 실행한다.
 - OTC는 기존 Chat의 질문 유형이며 처방약–OTC Rule·Evidence를 먼저 실행한다. 별도 Track D API·화면·공개 flag는 두지 않는다.
 - 비동기 성공 응답은 `{"data": JobStatusResponse}`, 오류는 top-level 공통 오류 envelope를 사용한다.
 - 같은 Chat session에는 non-terminal Job을 하나만 허용하고 다른 키의 두 번째 요청은 `409 CHAT_JOB_IN_PROGRESS`다.

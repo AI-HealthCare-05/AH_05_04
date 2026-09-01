@@ -238,7 +238,7 @@ Citation 목표 유형은 `PRESCRIPTION`, `KNOWLEDGE_CHUNK`, `INTERACTION_RULE`,
 
 Retrieval Run에는 raw 질문을 저장하지 않고 versioned query HMAC/digest, filter Snapshot, `prescription_version_id`, 질문 유형, 검색 Chunk ID·rank·score, 최종 선택 Chunk, Index·Source version, 상태와 실행 시각만 저장한다.
 
-Candidate Search·Identification·OTC 질문·Chat/Guide 접수·Job 상태·결과·Citation과 그 오류 응답은 [공식 의약품 식별·Candidate 계약의 소유권 경로](./medication-identification-v1.md#소유권transaction현재성)에 따라 동일한 `user_id` 소유권을 검증하고 `Cache-Control: no-store`를 포함한다. 존재하지 않거나 타 사용자 리소스는 부작용 없이 `404`로 통일한다. 이 헤더는 OpenAPI 설명과 Contract Test에서 고정한다.
+Candidate Search·Identification·OTC 질문·Chat/Guide 접수·Job 상태·결과·Citation과 그 오류 응답은 [공식 의약품 식별·Candidate 계약의 소유권 경로](./medication-identification-v1.md#소유권transaction현재성)와 [PROFILE SELF Current 계약](../../current/profile-self-ownership-v1.md)에 따라 동일한 SELF `profile_id` 또는 부모 chain의 `profile_id`를 검증하고 `Cache-Control: no-store`를 포함한다. 교차 Profile, 부모·자식 `profile_id` 불일치, 존재하지 않는 리소스는 부작용 없이 `404`로 통일한다. 이 헤더와 권한 실패 부작용 0건은 OpenAPI 설명과 Contract Test에서 고정한다.
 
 ## 평가 후보 Guard Operation
 
