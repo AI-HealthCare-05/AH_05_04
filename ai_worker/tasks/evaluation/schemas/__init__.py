@@ -44,6 +44,16 @@ from ai_worker.tasks.evaluation.schemas.common import (
     UtcTimestamp,
     ensure_unique_resource_paths,
 )
+from ai_worker.tasks.evaluation.schemas.policy import (
+    ComparisonPolicy,
+    ComparisonScope,
+    EvaluationPolicy,
+    EvaluationPolicyMember,
+    EvaluationProfile,
+    PolicyMemberType,
+    SuiteDefinition,
+    evaluation_policy_member_manifest_hash,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -68,6 +78,14 @@ __all__ = [
     "TaskType",
     "UtcTimestamp",
     "ensure_unique_resource_paths",
+    "ComparisonPolicy",
+    "ComparisonScope",
+    "EvaluationPolicy",
+    "EvaluationPolicyMember",
+    "EvaluationProfile",
+    "PolicyMemberType",
+    "SuiteDefinition",
+    "evaluation_policy_member_manifest_hash",
     "EVALUATION_CASE_ADAPTER",
     "AnswerGroundingCase",
     "AnswerGroundingExpected",
