@@ -11,6 +11,7 @@ import pytest
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import load_dataset, load_json_object
+from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRIES
 from ai_worker.tasks.evaluation.schemas.artifacts import ValidationReceipt
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest
 
@@ -194,12 +195,205 @@ class MutableDatasetFixture:
         self.refresh_self_hash(policy)
         self.write(policy_path, policy)
 
+    @staticmethod
+    def _set_team_gold(provenance: dict[str, Any], *, approved: bool, role: str) -> None:
+        provenance["team_gold_status"] = "APPROVED" if approved else "REVIEWED"
+        provenance["approved_by"] = (
+            {
+                "namespace": "EXTERNAL_APPROVAL_REGISTRY",
+                "actor_id": f"synthetic-{role.lower().replace('_', '-')}",
+                "role": role,
+            }
+            if approved
+            else None
+        )
+        provenance["approved_at"] = "2026-09-02T00:02:00.000000Z" if approved else None
+
+    def _schema_set_hash(self, version: str) -> str:
+        entries = [
+            {
+                "schema_id": entry.schema_id,
+                "schema_version": entry.member_version,
+                "schema_sha256": sha256_hex((self.root / "schemas" / version / entry.relative_path).read_bytes()),
+            }
+            for entry in SCHEMA_REGISTRIES[version]
+        ]
+        entries.sort(key=lambda item: (item["schema_id"], item["schema_version"], item["schema_sha256"]))
+        return canonical_sha256(cast(Any, {"schemas": entries}))
+
+    def upgrade_to_v1_1(self, *, frozen: bool = False, reviewed_child: str | None = None) -> None:
+        manifest = self.manifest_value()
+        evidence_path = self.root / "retrieval/evidence/dev-foundation-v1.evidence-mapping.json"
+        evidence = self.read(evidence_path)
+        self._set_team_gold(
+            evidence["review_provenance"],
+            approved=not frozen or reviewed_child != "evidence_mapping",
+            role="DATASET_CUSTODIAN",
+        )
+        self.refresh_self_hash(evidence)
+        self.write(evidence_path, evidence)
+
+        rubric_path = self.root / "retrieval/manifests/dev-foundation-v1.critical-claim-rubric.json"
+        rubric = self.read(rubric_path)
+        self._set_team_gold(
+            rubric["review_provenance"],
+            approved=not frozen or reviewed_child != "critical_claim_rubric",
+            role="PRODUCT_SAFETY_REVIEWER",
+        )
+        self.refresh_self_hash(rubric)
+        self.write(rubric_path, rubric)
+
+        rubric_ref = {
+            "id": rubric["rubric_id"],
+            "version": rubric["rubric_version"],
+            "hash": rubric["rubric_hash"],
+        }
+        for resource in manifest["case_resources"]:
+            case_path = self.root / resource["path"]
+            case = self.read(case_path)
+            case["schema_version"] = "1.1.0"
+            case["critical_claim_rubric_ref"] = rubric_ref
+            runtime = case["context"]["runtime_fixture"]
+            runtime.update(
+                source_eligibility_status="ELIGIBLE",
+                bundle_eligibility_status="ELIGIBLE",
+                dependency_fault="NONE",
+            )
+            runtime["source_snapshot_ref"]["hash"] = evidence["manifest_sha256"]
+            if case["task_type"] in {"SAFETY", "END_TO_END_RAG"}:
+                case["expected"].update(
+                    expected_rule_outcome="MATCHED_RULES",
+                    expected_rule_not_invoked_reason=None,
+                )
+            else:
+                case["expected"].update(
+                    expected_rule_outcome=None,
+                    expected_rule_not_invoked_reason=None,
+                )
+            self._set_team_gold(
+                case["review_provenance"],
+                approved=not frozen or reviewed_child != "case" or case["case_id"] != "rag-dev-safety-001",
+                role="PRODUCT_SAFETY_REVIEWER",
+            )
+            case["input_sha256"] = canonical_sha256({"query": case["query"], "context": case["context"]})
+            self.write(case_path, case)
+            resource["sha256"] = sha256_hex(case_path.read_bytes())
+
+        manifest.update(
+            schema_version="1.1.0",
+            evidence_mapping_manifest_sha256=evidence["manifest_sha256"],
+            critical_claim_rubric_ref=rubric_ref,
+            evaluation_corpus_snapshot_ref={
+                "id": evidence["mapping_id"],
+                "version": evidence["mapping_version"],
+                "hash": evidence["manifest_sha256"],
+            },
+        )
+        if frozen:
+            manifest.update(status="FROZEN", frozen_at="2026-09-02T00:03:00.000000Z")
+            self._set_team_gold(manifest["review_provenance"], approved=True, role="DATASET_CUSTODIAN")
+        self.rebind_case_derived_claims(manifest)
+
+        policy_path = self.root / "policies/dev-foundation-v1.evaluation-policy.json"
+        policy = self.read(policy_path)
+        policy["artifact_schema_set_ref"]["reference"].update(
+            version="1.1.0",
+            hash=self._schema_set_hash("1.1.0"),
+        )
+        members = [
+            policy["evaluation_profile_ref"],
+            policy["comparison_policy_ref"],
+            *policy["required_partition_refs"],
+            *policy["required_gate_refs"],
+            *policy["required_suite_refs"],
+            policy["artifact_schema_set_ref"],
+        ]
+        policy["member_manifest_hash"] = canonical_sha256({"members": members})
+        self.refresh_self_hash(policy)
+        self.write(policy_path, policy)
+        self.write_manifest(manifest)
+
 
 @pytest.fixture
 def tmp_dataset(tmp_path: Path) -> MutableDatasetFixture:
     root = tmp_path / "evals"
     shutil.copytree(SOURCE_EVALS, root)
     return MutableDatasetFixture(root)
+
+
+def test_loader_dispatches_schema_set_1_1_without_breaking_v1_fixture(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    original = load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+    tmp_dataset.upgrade_to_v1_1()
+
+    upgraded = load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+
+    assert original.manifest.schema_version == "1.0.0"
+    assert upgraded.manifest.schema_version == "1.1.0"
+    assert upgraded.cases[0].schema_version == "1.1.0"
+    assert any(
+        reference.kind == "ARTIFACT_SCHEMA_SET" and reference.version == "1.1.0"
+        for reference in upgraded.reference_graph
+    )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reason", "runtime_updates"),
+    [
+        ("NO_MATCH", None, {}),
+        ("NOT_INVOKED", "BUNDLE_INELIGIBLE", {"bundle_eligibility_status": "SCOPE_INELIGIBLE"}),
+    ],
+)
+def test_loader_accepts_v1_1_rule_outcomes_without_fake_rule_ids(
+    tmp_dataset: MutableDatasetFixture,
+    outcome: str,
+    reason: str | None,
+    runtime_updates: dict[str, str],
+) -> None:
+    tmp_dataset.upgrade_to_v1_1()
+
+    def set_rule_outcome(case: dict[str, Any]) -> None:
+        case["expected"].update(
+            expected_rule_outcome=outcome,
+            expected_rule_ids=[],
+            expected_rule_not_invoked_reason=reason,
+        )
+        case["context"]["runtime_fixture"].update(runtime_updates)
+
+    tmp_dataset.mutate_case("rag-dev-safety-001", set_rule_outcome)
+
+    loaded = load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+    safety = next(case for case in loaded.cases if case.case_id == "rag-dev-safety-001")
+    assert safety.expected.expected_rule_ids == ()
+
+
+def test_loader_rejects_unknown_authoring_schema_version(tmp_dataset: MutableDatasetFixture) -> None:
+    manifest = tmp_dataset.manifest_value()
+    manifest["schema_version"] = "2.0.0"
+    tmp_dataset.write_manifest(manifest)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+@pytest.mark.parametrize("reviewed_child", ["case", "evidence_mapping", "critical_claim_rubric"])
+def test_frozen_v1_1_dataset_requires_every_gold_dependency_to_be_team_approved(
+    tmp_dataset: MutableDatasetFixture,
+    reviewed_child: str,
+) -> None:
+    tmp_dataset.upgrade_to_v1_1(frozen=True, reviewed_child=reviewed_child)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+
+def test_frozen_v1_1_dataset_accepts_complete_team_approval_closure(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    tmp_dataset.upgrade_to_v1_1(frozen=True)
+
+    loaded = load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+
+    assert loaded.manifest.status.value == "FROZEN"
 
 
 def test_load_json_object_rejects_invalid_json_without_echoing_input(tmp_path: Path) -> None:

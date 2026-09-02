@@ -5,9 +5,9 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from ai_worker.tasks.evaluation.canonical import (
     JsonValue,
@@ -18,7 +18,7 @@ from ai_worker.tasks.evaluation.canonical import (
 )
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
-from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRY
+from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRIES
 from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
     CriticalClaimRubric,
@@ -30,10 +30,16 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
     EvidenceType,
     ProtectedArtifactReceipt,
 )
+from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
+    EVALUATION_CASE_ADAPTER_V1_1,
+    DatasetManifestV11,
+    EvaluationCaseV11,
+)
 from ai_worker.tasks.evaluation.schemas.common import (
     ContentClassification,
     ImmutableReference,
     Partition,
+    TeamGoldStatus,
 )
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
@@ -41,6 +47,9 @@ from ai_worker.tasks.evaluation.schemas.policy import (
     EvaluationProfile,
     SuiteDefinition,
 )
+
+type DatasetManifestContract = DatasetManifest | DatasetManifestV11
+type EvaluationCaseContract = EvaluationCase | EvaluationCaseV11
 
 
 class _DuplicateKeyError(ValueError):
@@ -58,8 +67,8 @@ class ResolvedReference:
 
 @dataclass(frozen=True, slots=True)
 class ValidatedDataset:
-    manifest: DatasetManifest
-    cases: tuple[EvaluationCase, ...]
+    manifest: DatasetManifestContract
+    cases: tuple[EvaluationCaseContract, ...]
     evidence_mapping: EvidenceMappingManifest
     rubric: CriticalClaimRubric
     profile: EvaluationProfile
@@ -81,6 +90,18 @@ class _JsonSnapshot:
     @property
     def file_sha256(self) -> str:
         return sha256_hex(self.raw_bytes)
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthoringContract:
+    manifest_model: type[BaseModel]
+    case_adapter: TypeAdapter[Any]
+
+
+_AUTHORING_CONTRACTS = {
+    "1.0.0": _AuthoringContract(DatasetManifest, EVALUATION_CASE_ADAPTER),
+    "1.1.0": _AuthoringContract(DatasetManifestV11, EVALUATION_CASE_ADAPTER_V1_1),
+}
 
 
 class _SnapshotReader:
@@ -187,7 +208,7 @@ def _model_error_code(
         return EvaluationErrorCode.EVIDENCE_MAPPING_INVALID
     if model_name in {"EvaluationProfile", "ComparisonPolicy", "EvaluationPolicy", "SuiteDefinition"}:
         return EvaluationErrorCode.MANIFEST_INVALID
-    if model_name == "DatasetManifest":
+    if model_name in {"DatasetManifest", "DatasetManifestV11"}:
         if any("Case resources must be unique" in message for message in messages):
             return EvaluationErrorCode.CASE_DUPLICATE
         if any("approved deidentified data requires" in message for message in messages):
@@ -241,13 +262,25 @@ def _validate_model[T: BaseModel](snapshot: _JsonSnapshot, model: type[T]) -> T:
     return validated
 
 
-def _validate_case(snapshot: _JsonSnapshot) -> EvaluationCase:
+def _authoring_contract(snapshot: _JsonSnapshot) -> _AuthoringContract:
+    if snapshot.value.get("schema_id") != "rag-eval.dataset-manifest":
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    schema_version = snapshot.value.get("schema_version")
+    if not isinstance(schema_version, str):
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    contract = _AUTHORING_CONTRACTS.get(schema_version)
+    if contract is None:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    return contract
+
+
+def _validate_case(snapshot: _JsonSnapshot, adapter: TypeAdapter[Any]) -> EvaluationCaseContract:
     try:
-        validated = EVALUATION_CASE_ADAPTER.validate_python(snapshot.value)
+        validated = adapter.validate_python(snapshot.value)
     except ValidationError as error:
         raise EvaluationValidationError(_schema_error_code(error)) from None
     _validate_privacy(validated.model_dump(mode="json"))
-    return validated
+    return cast(EvaluationCaseContract, validated)
 
 
 def _validate_privacy(value: JsonValue) -> None:
@@ -281,7 +314,7 @@ def _prefix(manifest_path: Path) -> str:
     return manifest_path.name.removesuffix(".dataset.json")
 
 
-def _resource_set_hash(manifest: DatasetManifest) -> str:
+def _resource_set_hash(manifest: DatasetManifestContract) -> str:
     resources: list[JsonValue] = [
         {"partition": item.partition.value, "path": item.path, "sha256": item.sha256}
         for item in manifest.case_resources
@@ -289,7 +322,7 @@ def _resource_set_hash(manifest: DatasetManifest) -> str:
     return canonical_sha256({"resources": resources})
 
 
-def _partition_reference_hash(manifest: DatasetManifest, partition: Partition) -> str:
+def _partition_reference_hash(manifest: DatasetManifestContract, partition: Partition) -> str:
     resources: list[JsonValue] = [
         {"case_id": item.case_id, "path": item.path, "sha256": item.sha256}
         for item in manifest.case_resources
@@ -298,11 +331,11 @@ def _partition_reference_hash(manifest: DatasetManifest, partition: Partition) -
     return canonical_sha256({"partition": partition.value, "resources": resources})
 
 
-def _case_set_hash(cases: tuple[EvaluationCase, ...]) -> str:
+def _case_set_hash(cases: tuple[EvaluationCaseContract, ...]) -> str:
     return canonical_sha256({"case_ids": [case.case_id for case in cases]})
 
 
-def _expected_evidence_refs(case: EvaluationCase) -> tuple[str, ...]:
+def _expected_evidence_refs(case: EvaluationCaseContract) -> tuple[str, ...]:
     expected = case.expected
     values: list[str] = []
     for field in (
@@ -324,7 +357,7 @@ def _expected_evidence_refs(case: EvaluationCase) -> tuple[str, ...]:
 
 
 def _validate_case_evidence_references(
-    case: EvaluationCase,
+    case: EvaluationCaseContract,
     by_id: dict[str, EvidenceMappingEntry],
 ) -> None:
     if not set(_expected_evidence_refs(case)).issubset(by_id):
@@ -341,9 +374,10 @@ def _validate_case_evidence_references(
 
 def _validate_cases(
     reader: _SnapshotReader,
-    manifest: DatasetManifest,
-) -> tuple[EvaluationCase, ...]:
-    cases: list[EvaluationCase] = []
+    manifest: DatasetManifestContract,
+    case_adapter: TypeAdapter[Any],
+) -> tuple[EvaluationCaseContract, ...]:
+    cases: list[EvaluationCaseContract] = []
     ids: set[str] = set()
     paths: set[str] = set()
     for resource in manifest.case_resources:
@@ -352,7 +386,7 @@ def _validate_cases(
         ids.add(resource.case_id)
         paths.add(resource.path)
         snapshot = reader.read(resource.path)
-        case = _validate_case(snapshot)
+        case = _validate_case(snapshot, case_adapter)
         _verify_file_hash(snapshot, resource.sha256)
         if case.partition is not resource.partition:
             raise EvaluationValidationError(EvaluationErrorCode.PARTITION_COUNT_MISMATCH)
@@ -378,7 +412,7 @@ def _validate_cases(
     return tuple(cases)
 
 
-def _validate_leakage(cases: tuple[EvaluationCase, ...]) -> None:
+def _validate_leakage(cases: tuple[EvaluationCaseContract, ...]) -> None:
     for axis in ("question_template", "source_segment", "medication_family", "transform_origin"):
         partitions_by_value: defaultdict[str, set[Partition]] = defaultdict(set)
         for case in cases:
@@ -390,8 +424,8 @@ def _validate_leakage(cases: tuple[EvaluationCase, ...]) -> None:
 def _load_evidence(
     reader: _SnapshotReader,
     prefix: str,
-    manifest: DatasetManifest,
-    cases: tuple[EvaluationCase, ...],
+    manifest: DatasetManifestContract,
+    cases: tuple[EvaluationCaseContract, ...],
 ) -> tuple[EvidenceMappingManifest, dict[tuple[str, str, str], str]]:
     snapshot = reader.read(f"retrieval/evidence/{prefix}.evidence-mapping.json")
     evidence = _validate_model(snapshot, EvidenceMappingManifest)
@@ -437,8 +471,8 @@ def _load_evidence(
 def _load_rubric(
     reader: _SnapshotReader,
     prefix: str,
-    manifest: DatasetManifest,
-    cases: tuple[EvaluationCase, ...],
+    manifest: DatasetManifestContract,
+    cases: tuple[EvaluationCaseContract, ...],
 ) -> CriticalClaimRubric:
     snapshot = reader.read(f"retrieval/manifests/{prefix}.critical-claim-rubric.json")
     rubric = _validate_model(snapshot, CriticalClaimRubric)
@@ -465,7 +499,7 @@ def _load_rubric(
 def _load_receipt(
     reader: _SnapshotReader,
     prefix: str,
-    manifest: DatasetManifest,
+    manifest: DatasetManifestContract,
 ) -> ProtectedArtifactReceipt:
     snapshot = reader.read(f"provenance/{prefix}.protected-artifact-receipt.json")
     receipt = _validate_model(snapshot, ProtectedArtifactReceipt)
@@ -484,26 +518,29 @@ def _load_receipt(
     return receipt
 
 
-def _schema_set_hash(reader: _SnapshotReader) -> str:
+def _schema_set_hash(reader: _SnapshotReader, schema_set_version: str) -> str:
     entries: list[dict[str, str]] = []
-    schema_root = reader.root / "schemas/1.0.0"
+    registry = SCHEMA_REGISTRIES.get(schema_set_version)
+    if registry is None:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    schema_root = reader.root / "schemas" / schema_set_version
     actual_paths = (
         {path.relative_to(schema_root).as_posix() for path in schema_root.rglob("*.json")}
         if schema_root.exists()
         else set()
     )
-    expected_paths = {entry.relative_path for entry in SCHEMA_REGISTRY}
+    expected_paths = {entry.relative_path for entry in registry}
     if actual_paths != expected_paths:
         raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
-    for registry_entry in SCHEMA_REGISTRY:
-        snapshot = reader.read(f"schemas/1.0.0/{registry_entry.relative_path}")
+    for registry_entry in registry:
+        snapshot = reader.read(f"schemas/{schema_set_version}/{registry_entry.relative_path}")
         schema_urn = snapshot.value.get("$id")
         if schema_urn != registry_entry.urn:
             raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
         entries.append(
             {
                 "schema_id": registry_entry.schema_id,
-                "schema_version": "1.0.0",
+                "schema_version": registry_entry.member_version,
                 "schema_sha256": snapshot.file_sha256,
             }
         )
@@ -546,14 +583,15 @@ def _resolve_reference(
 
 
 def _validate_reference_graph(
-    manifest: DatasetManifest,
-    cases: tuple[EvaluationCase, ...],
+    manifest: DatasetManifestContract,
+    cases: tuple[EvaluationCaseContract, ...],
     evidence_registry: dict[tuple[str, str, str], str],
     profile: EvaluationProfile,
     comparison: ComparisonPolicy,
     policy: EvaluationPolicy,
     suite: SuiteDefinition,
     schema_set_hash: str,
+    schema_set_version: str,
 ) -> tuple[ResolvedReference, ...]:
     registry = dict(evidence_registry)
     registry[(profile.evaluation_profile_id, profile.evaluation_profile_version, profile.evaluation_profile_hash)] = (
@@ -563,7 +601,7 @@ def _validate_reference_graph(
         (comparison.comparison_policy_id, comparison.comparison_policy_version, comparison.comparison_policy_hash)
     ] = "COMPARISON_POLICY"
     registry[(suite.suite_id, suite.suite_version, suite.suite_hash)] = "SUITE"
-    registry[("rag-eval.schema-set", "1.0.0", schema_set_hash)] = "ARTIFACT_SCHEMA_SET"
+    registry[("rag-eval.schema-set", schema_set_version, schema_set_hash)] = "ARTIFACT_SCHEMA_SET"
     for partition in Partition:
         registry[
             (
@@ -609,8 +647,8 @@ def _validate_reference_graph(
 
 
 def _validate_configuration_graph(
-    manifest: DatasetManifest,
-    cases: tuple[EvaluationCase, ...],
+    manifest: DatasetManifestContract,
+    cases: tuple[EvaluationCaseContract, ...],
     profile: EvaluationProfile,
     comparison: ComparisonPolicy,
     policy: EvaluationPolicy,
@@ -659,18 +697,40 @@ def _validate_configuration_graph(
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
 
 
+def _validate_frozen_gold_closure(
+    manifest: DatasetManifestContract,
+    cases: tuple[EvaluationCaseContract, ...],
+    evidence: EvidenceMappingManifest,
+    rubric: CriticalClaimRubric,
+) -> None:
+    if not isinstance(manifest, DatasetManifestV11) or manifest.status.value != "FROZEN":
+        return
+    provenance = (
+        *(case.review_provenance for case in cases),
+        evidence.review_provenance,
+        rubric.review_provenance,
+    )
+    if any(item.team_gold_status is not TeamGoldStatus.APPROVED for item in provenance):
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+
 def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
     reader = _SnapshotReader(evals_root)
     manifest_snapshot = reader.read_path(manifest_path)
-    manifest = _validate_model(manifest_snapshot, DatasetManifest)
+    authoring = _authoring_contract(manifest_snapshot)
+    manifest = cast(
+        DatasetManifestContract,
+        _validate_model(manifest_snapshot, authoring.manifest_model),
+    )
     _verify_self_hash(manifest, "manifest_sha256")
     if manifest.resource_set_hash != _resource_set_hash(manifest):
         raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
     prefix = _prefix(manifest_path)
-    cases = _validate_cases(reader, manifest)
+    cases = _validate_cases(reader, manifest, authoring.case_adapter)
     _validate_leakage(cases)
     evidence, evidence_registry = _load_evidence(reader, prefix, manifest, cases)
     rubric = _load_rubric(reader, prefix, manifest, cases)
+    _validate_frozen_gold_closure(manifest, cases, evidence, rubric)
     receipt = _load_receipt(reader, prefix, manifest) if manifest.protected_artifact_receipt_ref is not None else None
     profile, comparison, policy, suite = _load_configuration(reader, prefix)
     _validate_configuration_graph(manifest, cases, profile, comparison, policy, suite)
@@ -690,7 +750,10 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
         or suite.expected_case_set_hash != _case_set_hash(selected_cases)
     ):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
-    schema_set_hash = _schema_set_hash(reader)
+    schema_set_version = policy.artifact_schema_set_ref.reference.version
+    if schema_set_version != manifest.schema_version:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    schema_set_hash = _schema_set_hash(reader, schema_set_version)
     graph = _validate_reference_graph(
         manifest,
         cases,
@@ -700,6 +763,7 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
         policy,
         suite,
         schema_set_hash,
+        schema_set_version,
     )
     if manifest.data_classification is ContentClassification.APPROVED_DEIDENTIFIED:
         if manifest.deidentification_approval_receipt_ref is None:
