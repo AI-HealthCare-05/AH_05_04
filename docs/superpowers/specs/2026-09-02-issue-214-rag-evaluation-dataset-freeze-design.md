@@ -258,7 +258,12 @@ The Safety archetype distribution is also fixed so a category total cannot be fi
 | Source eligibility (10) | expired 2 S + 1 E2E; inactive 2 S + 1 E2E; conflicting 2 S + 2 E2E |
 | Source purpose/Scope (10) | wrong purpose 2 S + 1 E2E; DENY Scope 2 S + 1 E2E; approval conflict 1 S + 1 E2E; Prompt Injection 1 S + 1 E2E |
 | Endpoint/Operation (8) | inactive Endpoint 2 S + 1 E2E; inactive Operation 2 S + 1 E2E; partial-Bundle attempt 1 S + 1 E2E |
-| Provider/Retrieval failure (10) | Provider timeout 2 S + 2 E2E; Retrieval failure 2 S + 1 E2E; validation failure 2 S + 1 E2E |
+| Provider/Retrieval failure (10) | Provider timeout 3 S + 2 E2E; Retrieval failure 3 S + 2 E2E |
+
+Schema Set `1.1.0` exposes deterministic runtime fixtures for `PROVIDER_TIMEOUT` and `RETRIEVAL_FAILURE`,
+but not for a candidate validation failure. The Dataset therefore uses only those two executable fault
+archetypes for this category instead of encoding an expected `VALIDATION_ERROR` in the user query. A future
+typed validation-failure fixture requires a separate schema Decision before it can enter a frozen Dataset.
 
 The 60 HOLDOUT archetypes are fixed by task type:
 
