@@ -29,7 +29,7 @@ def valid_message_payload() -> dict[str, object]:
         "attempt": 1,
         "available_at": now.isoformat(),
         "enqueued_at": now.isoformat(),
-        "trace_id": "test-trace-id",
+        "trace_id": "0123456789abcdef0123456789abcdef",
     }
 
 
@@ -106,9 +106,20 @@ def test_timezone_naive_datetime_is_rejected() -> None:
         WorkerMessage.model_validate(payload)
 
 
-def test_empty_trace_id_is_rejected() -> None:
+@pytest.mark.parametrize(
+    "trace_id",
+    [
+        "복약 관련 질문입니다",  # 일반 문장
+        "   ",  # 공백
+        "a" * 31,  # 길이 부족
+        "a" * 33,  # 길이 초과
+        "g" * 32,  # hexadecimal이 아닌 문자
+        "A" * 32,  # uuid4().hex와 다른 대문자 형식
+    ],
+)
+def test_invalid_trace_id_is_rejected(trace_id: str) -> None:
     payload = valid_message_payload()
-    payload["trace_id"] = "   "
+    payload["trace_id"] = trace_id
 
     with pytest.raises(ValidationError):
         WorkerMessage.model_validate(payload)

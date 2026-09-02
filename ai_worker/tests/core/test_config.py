@@ -2,6 +2,7 @@ import zoneinfo
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from ai_worker.core.config import Config
 
@@ -74,3 +75,65 @@ def test_config_rejects_unknown_timezone_name(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(zoneinfo.ZoneInfoNotFoundError):
         Config()
+
+
+def test_config_has_approved_redis_defaults() -> None:
+    config = Config(_env_file=None)  # type: ignore[call-arg]
+
+    assert config.REDIS_HOST == "redis"
+    assert config.REDIS_PORT == 6379
+    assert config.REDIS_STREAM_NAME == "oryak:jobs"
+    assert config.REDIS_CONSUMER_GROUP == "ai-workers"
+    assert config.REDIS_CONSUMER_NAME == "ai-worker-local"
+    assert config.REDIS_BLOCK_MS == 5000
+    assert config.REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS == 5.0
+    assert config.REDIS_SOCKET_TIMEOUT_SECONDS == 10.0
+
+
+def test_config_accepts_redis_environment_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDIS_HOST", "localhost")
+    monkeypatch.setenv("REDIS_PORT", "6380")
+    monkeypatch.setenv("REDIS_CONSUMER_NAME", "worker-test-1")
+
+    config = Config(_env_file=None)  # type: ignore[call-arg]
+
+    assert config.REDIS_HOST == "localhost"
+    assert config.REDIS_PORT == 6380
+    assert config.REDIS_CONSUMER_NAME == "worker-test-1"
+
+
+def test_config_rejects_blank_redis_group() -> None:
+    with pytest.raises(ValidationError):
+        Config(  # type: ignore[call-arg]
+            _env_file=None,
+            REDIS_CONSUMER_GROUP="   ",
+        )
+
+
+@pytest.mark.parametrize("port", [0, 65536])
+def test_config_rejects_invalid_redis_port(port: int) -> None:
+    with pytest.raises(ValidationError):
+        Config(  # type: ignore[call-arg]
+            _env_file=None,
+            REDIS_PORT=port,
+        )
+
+
+@pytest.mark.parametrize(
+    "socket_timeout_seconds",
+    [5.0, 4.9],
+)
+def test_config_rejects_socket_timeout_not_longer_than_blocking_read(
+    socket_timeout_seconds: float,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match="REDIS_SOCKET_TIMEOUT_SECONDS",
+    ):
+        Config(  # type: ignore[call-arg]
+            _env_file=None,
+            REDIS_BLOCK_MS=5000,
+            REDIS_SOCKET_TIMEOUT_SECONDS=socket_timeout_seconds,
+        )
