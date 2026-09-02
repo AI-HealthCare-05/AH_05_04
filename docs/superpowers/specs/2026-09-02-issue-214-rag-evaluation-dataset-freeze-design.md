@@ -278,9 +278,12 @@ rag-hs-v1-{h|s}-{category_code}-{task_code}-{archetype_code}-{ordinal_3_digits}
 ```
 
 `category_code` is one of `med-info`, `rx-otc`, `adverse`, `lifestyle`, `no-evidence`, `rx-rx-scope`,
-`food-scope`, `high-risk`, `source-state`, `source-scope`, `member-state`, or `dependency-failure`.
+`food-scope`, `high-acuity`, `source-state`, `source-scope`, `member-state`, or `dependency-failure`.
 `task_code` is one of `ret`, `ansq`, `grnd`, `safe`, or `e2e`. `archetype_code` is the kebab-case archetype
-label shown in the two tables. The ordinal starts at `001` and resets for each
+label shown in the two tables, except that `risk Citation chain` uses `citation-chain-risk`. These two
+identifier spellings deliberately avoid an embedded `sk-...` sequence that the shared privacy boundary must
+treat as a possible API credential; the human category and archetype meanings are unchanged. The ordinal
+starts at `001` and resets for each
 `(partition, category_code, task_code, archetype_code)` tuple.
 
 There is no second allocation source of truth. A #214 Dataset-specific catalog conformance test derives a
