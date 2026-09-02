@@ -5,7 +5,7 @@
 - Issue: [#214](https://github.com/AI-HealthCare-05/AH_05_04/issues/214)
 - Upstream foundation: #122 / PR #210
 - Downstream runner: #157
-- Design status: approved direction, implementation pending
+- Design status: revised proposal, Dataset Custodian review pending
 - Execution boundary: approved schema-compatible local files and deterministic validation only
 
 This change creates a new, versioned, synthetic evaluation Dataset that contains both `HOLDOUT` and
@@ -33,8 +33,9 @@ The `FinalProject Documents/` folder is not an authority for Dataset size or par
 design. The normative RAG evaluation plan supplies 12 per-category initial minimums whose arithmetic sum is
 153. It describes those values as workload estimates; it does not prescribe an exact total or the 60/93
 partition split. Exact v1 size 153 and allocation 60/93 are Issue #214 project decisions that remain proposed
-until the named Dataset Custodian approves the completed Case allocation artifact. The repository target and
-#122 schemas remain authoritative for machine-readable fields, enum values, validation, and status semantics.
+until the named Dataset Custodian approves the completed Case set and its derived allocation projection. The
+repository target and #122 schemas remain authoritative for machine-readable fields, enum values, validation,
+and status semantics.
 
 Older local planning documents use `END_TO_END_FINAL`, `NOT_RUN`, and sometimes map an unexecuted required
 cell to `INCONCLUSIVE`. Those values conflict with the newer approved repository target and are not copied
@@ -58,7 +59,7 @@ Grounding, Citation, Rule-first, Scope, Safety, and end-to-end RAG expectations 
 - Preserve a machine-verifiable approval transition from authoring to Dataset Custodian freeze.
 - Ensure validation never creates a Release `PASS` or implies Production eligibility.
 
-### Blocking schema-compatibility prerequisite
+### Blocking schema-compatibility prerequisite: #216
 
 The current #122 schema cannot honestly encode every required Safety branch. `MedicationFixture` accepts only
 `MATCHED`, while every `SAFETY` and `END_TO_END_RAG` expected value requires at least one Interaction Rule ID.
@@ -66,7 +67,8 @@ That combination cannot represent OTC `AMBIGUOUS | UNMATCHED`, a valid no-rule o
 that was intentionally suppressed. `RuntimeFixture` also lacks a typed fault input for Source eligibility and
 Provider/Retrieval failure scenarios.
 
-Before Dataset Case authoring begins, a separately approved RAG-EVAL-001 Contract correction must:
+Before Dataset Case authoring begins, [#216](https://github.com/AI-HealthCare-05/AH_05_04/issues/216) must
+publish approved Evaluation Schema Set `1.1.0` with an immutable ID/version/hash reference and must:
 
 - distinguish `MATCHED_RULES`, `NO_MATCH`, and `NOT_INVOKED` without fabricating a Rule ID
 - represent the approved OTC preflight result needed by Safety evaluation, or explicitly route that branch to
@@ -75,7 +77,7 @@ Before Dataset Case authoring begins, a separately approved RAG-EVAL-001 Contrac
 - add schema, exported-schema parity, loader, privacy, and negative contract tests
 - update the authoritative repository target and Decision/Contract Freeze version in the same focused PR
 
-Issue #214 Dataset authoring is `BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` until that correction is approved
+Issue #214 Dataset authoring is `BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` until #216 is approved
 and merged. This design does not choose placeholder Rule IDs, encode faults in free-form tags, or weaken the
 required Safety coverage to fit schema version `1.0.0`.
 
@@ -125,7 +127,7 @@ evals/
     └── rag-holdout-safety-v1.suite.json
 ```
 
-The Dataset PR consumes the approved schema set produced by the compatibility prerequisite. It adds schema
+The Dataset PR consumes approved Schema Set `1.1.0` produced by #216. It adds schema
 instances only and does not mix another contract change into the Dataset Freeze diff.
 
 ## 5. Provenance and freeze model
@@ -146,17 +148,16 @@ GitHub login for each role before the authoring stage; a display name or inferre
 
 | Artifact | Author | Reviewer | Team approver | External status at initial freeze |
 | --- | --- | --- | --- | --- |
-| Retrieval/Answer/Grounding Case Gold | `EVALUATION_IMPLEMENTER` | assigned Gold reviewer | `DATASET_CUSTODIAN` | `PENDING` when the Case contains a medical claim; otherwise the approved schema's applicable state |
-| Safety/End-to-End Case Gold | `EVALUATION_IMPLEMENTER` | assigned Safety/Gold reviewer | `PRODUCT_SAFETY_REVIEWER` or `MEDICAL_REVIEWER` | `PENDING` until an immutable external approval receipt exists |
-| Evidence Mapping and Critical Claim Rubric | `EVALUATION_IMPLEMENTER` | assigned Evidence/Gold reviewer | role permitted by the approved schema | `PENDING` when medical judgment is present |
-| Dataset Manifest | `EVALUATION_IMPLEMENTER` | assigned Dataset integrity reviewer | `DATASET_CUSTODIAN` | derived only as an approval summary, never as external clinical approval |
+| Retrieval/Answer/Grounding Case Gold | `@ceohwj` / `EVALUATION_IMPLEMENTER` | `@Jye-rookie` / assigned Gold reviewer | `@hazelnutflavoured` / `DATASET_CUSTODIAN` | `PENDING` when the Case contains a medical claim; otherwise the approved schema's applicable state |
+| Safety/End-to-End Case Gold | `@ceohwj` / `EVALUATION_IMPLEMENTER` | `@Jye-rookie` / assigned Safety/Gold reviewer | `@hazelnutflavoured` / `PRODUCT_SAFETY_REVIEWER` | `PENDING` until an immutable external approval receipt exists |
+| Evidence Mapping and Critical Claim Rubric | `@ceohwj` / `EVALUATION_IMPLEMENTER` | `@Jye-rookie` / Evidence/Gold reviewer | `@hazelnutflavoured` / schema-permitted approval role | `PENDING` when medical judgment is present |
+| Dataset Manifest | `@ceohwj` / `EVALUATION_IMPLEMENTER` | `@Jye-rookie` / Dataset integrity reviewer | `@hazelnutflavoured` / `DATASET_CUSTODIAN` | derived only as an approval summary, never as external clinical approval |
 | Profile, Evaluation Policy, and Suite | proposer/author defined by their contract | distinct assigned reviewer | distinct contract-permitted approver | independent of Dataset content freeze |
 | Protected Artifact Receipt | recorder defined by its contract | distinct reviewer | no Team `APPROVED` state permitted | does not convey medical approval |
 
-The current Issue names `@ceohwj` as implementer and `@hazelnutflavoured` as responsible reviewer but does not
-name the third independent Gold reviewer required by the schema. Until that actor and actual GitHub login are
-recorded in the Issue, freeze is `BLOCKED_BY_REVIEW_PROVENANCE_ASSIGNMENT`; the implementation must not invent
-an identity or reuse one person in two provenance positions.
+The third Gold reviewer is `@Jye-rookie`, matching the normative RAG assignment for synthetic Source Fixture
+and Gold-evidence review. Issue #214 records all three actual GitHub identities. External clinical review is
+still separate and remains `PENDING` where required.
 
 The Dataset freeze transition occurs inside the PR in two reviewable stages:
 
@@ -187,10 +188,10 @@ tuning.
 
 Version `1.0.0` proposes exactly 153 synthetic cases: 60 `HOLDOUT` and 93 `SAFETY_REGRESSION`. The 153 is the
 sum of the normative evaluation plan's 12 per-category initial minimums; exact size and partition allocation
-are the locally approved #214 Freeze decision. They are not a permanent maximum and do not prove statistical
-sufficiency. Metric-specific minimum Case counts, independent-group counts, estimators, confidence intervals,
-and thresholds remain owned by later approved Comparison Policy versions in #158–#163. An executed scope
-below those approved minimums becomes `COMPLETED/INCONCLUSIVE`, never `PASS`.
+are the proposed #214 Freeze decision pending Dataset Custodian approval. They are not a permanent maximum and
+do not prove statistical sufficiency. Metric-specific minimum Case counts, independent-group counts,
+estimators, confidence intervals, and thresholds remain owned by later approved Comparison Policy versions in
+#158–#163. An executed scope below those approved minimums becomes `COMPLETED/INCONCLUSIVE`, never `PASS`.
 
 | Evaluation-plan category | Total | HOLDOUT | SAFETY_REGRESSION |
 | --- | ---: | ---: | ---: |
@@ -228,48 +229,67 @@ and `E2E` mean `RETRIEVAL`, `ANSWER_QUALITY`, `ANSWER_GROUNDING`, `SAFETY`, and 
 | Category | H-R | H-AQ | H-AG | H-S | H-E2E | S-R | S-AQ | S-AG | S-S | S-E2E |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Medication information/directions | 5 | 5 | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| Prescription–OTC | 1 | 1 | 2 | 0 | 4 | 0 | 0 | 2 | 5 | 5 |
-| Adverse effects/precautions | 2 | 3 | 3 | 0 | 2 | 0 | 1 | 1 | 2 | 1 |
-| Food/activity guidance | 3 | 3 | 3 | 0 | 3 | 0 | 1 | 0 | 1 | 1 |
-| Insufficient Evidence | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 1 | 4 | 2 |
+| Prescription–OTC | 1 | 1 | 2 | 0 | 4 | 0 | 0 | 0 | 6 | 6 |
+| Adverse effects/precautions | 2 | 3 | 3 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
+| Food/activity guidance | 3 | 3 | 3 | 0 | 3 | 0 | 0 | 0 | 2 | 1 |
+| Insufficient Evidence | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 4 |
 | Prescription–prescription out of scope | 0 | 2 | 1 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
 | Food/beverage/supplement out of scope | 0 | 1 | 1 | 0 | 3 | 0 | 0 | 0 | 3 | 2 |
 | High-risk/change request | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 5 |
-| Source expired/inactive/conflicting | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 3 | 2 |
-| Source purpose/Scope violation | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 4 | 2 |
-| Endpoint/Operation inactive | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 2 | 2 |
-| Provider/Retrieval failure | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 3 | 1 |
-| **Task totals** | **11** | **15** | **15** | **0** | **19** | **15** | **3** | **10** | **40** | **25** |
+| Source expired/inactive/conflicting | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 4 |
+| Source purpose/Scope violation | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 4 |
+| Endpoint/Operation inactive | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 3 |
+| Provider/Retrieval failure | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 4 |
+| **Task totals** | **11** | **15** | **15** | **0** | **19** | **0** | **0** | **0** | **56** | **37** |
 
 The Safety archetype distribution is also fixed so a category total cannot be filled with repetitive variants:
 
 | Safety category | Required archetypes and counts |
 | --- | --- |
-| Prescription–OTC (12) | positive Rule 4; no match 2; identity insufficient 2; duplicate ingredient 2; Rule reversal 2 |
-| Adverse effects (5) | critical omission 2; unsupported safety claim 2; missing Citation 1 |
-| Food/activity (3) | unsupported action 2; contraindicated activity 1 |
-| Insufficient Evidence (10) | no Evidence 4; conflicting Evidence 3; invalid Evidence reference 3 |
-| Prescription–prescription scope (5) | forbidden safe/no-interaction statement 2; medication-change advice 2; RAG bypass 1 |
-| Food/beverage/supplement scope (5) | unsupported interaction judgment 3; medication-change advice 2 |
-| High-risk/change request (15) | urgent 6; emergency 5; medication-change request 4 |
-| Source eligibility (10) | expired 3; inactive 3; conflicting 4 |
-| Source purpose/Scope (10) | wrong purpose 3; DENY Scope 3; approval conflict 2; Prompt Injection 2 |
-| Endpoint/Operation (8) | inactive Endpoint 3; inactive Operation 3; partial-Bundle attempt 2 |
-| Provider/Retrieval failure (10) | Provider timeout 4; Retrieval failure 3; validation failure 3 |
+| Prescription–OTC (12) | positive Rule 4 E2E; no match 2 S; identity insufficient 2 S; duplicate ingredient 2 E2E; Rule reversal 2 S |
+| Adverse effects (5) | critical omission 2 S; unsupported safety claim 2 E2E; missing Citation 1 S |
+| Food/activity (3) | unsupported action 2 S; contraindicated activity 1 E2E |
+| Insufficient Evidence (10) | no Evidence 4 S; conflicting Evidence 3 E2E; invalid Candidate Evidence reference 2 S + 1 E2E |
+| Prescription–prescription scope (5) | forbidden safe/no-interaction statement 2 S; medication-change advice 2 E2E; RAG bypass 1 S |
+| Food/beverage/supplement scope (5) | unsupported interaction judgment 3 S; medication-change advice 2 E2E |
+| High-risk/change request (15) | urgent 4 S + 2 E2E; emergency 3 S + 2 E2E; medication-change request 3 S + 1 E2E |
+| Source eligibility (10) | expired 2 S + 1 E2E; inactive 2 S + 1 E2E; conflicting 2 S + 2 E2E |
+| Source purpose/Scope (10) | wrong purpose 2 S + 1 E2E; DENY Scope 2 S + 1 E2E; approval conflict 1 S + 1 E2E; Prompt Injection 1 S + 1 E2E |
+| Endpoint/Operation (8) | inactive Endpoint 2 S + 1 E2E; inactive Operation 2 S + 1 E2E; partial-Bundle attempt 1 S + 1 E2E |
+| Provider/Retrieval failure (10) | Provider timeout 2 S + 2 E2E; Retrieval failure 2 S + 1 E2E; validation failure 2 S + 1 E2E |
+
+The 60 HOLDOUT archetypes are fixed by task type:
+
+| HOLDOUT category | Required archetypes and counts |
+| --- | --- |
+| Medication information/directions (20) | approved retrieval hit 5 R; required-claim answer 5 AQ; exact Citation chain 5 AG; routine full flow 5 E2E |
+| Prescription–OTC (8) | positive-Rule Evidence retrieval 1 R; safe response wording 1 AQ; Rule Citation chain 2 AG; routine Rule-first full flow 4 E2E |
+| Adverse effects/precautions (10) | precaution Evidence retrieval 2 R; required risk claims 3 AQ; risk Citation chain 3 AG; routine full flow 2 E2E |
+| Food/activity guidance (12) | approved guidance retrieval 3 R; bounded guidance claims 3 AQ; guidance Citation chain 3 AG; routine full flow 3 E2E |
+| Prescription–prescription scope (5) | bounded unsupported-scope response 2 AQ; scope Citation/grounding 1 AG; full scope-routing flow 2 E2E |
+| Food/beverage/supplement scope (5) | bounded unsupported-scope response 1 AQ; scope Citation/grounding 1 AG; full scope-routing flow 3 E2E |
 
 Stable Case IDs are derived without free-form author choice:
 
 ```text
-rag-hs-v1-{h|s}-{category_code}-{task_code}-{ordinal_3_digits}
+rag-hs-v1-{h|s}-{category_code}-{task_code}-{archetype_code}-{ordinal_3_digits}
 ```
 
-The committed allocation artifact lists all 153 IDs with category, partition, task type, archetype, risk
-branch, four Leakage axes, Rule-coverage applicability, and Gold-field applicability. Generation fails unless
-that artifact exactly matches both tables and every ID is unique and deterministically ordered.
+`category_code` is one of `med-info`, `rx-otc`, `adverse`, `lifestyle`, `no-evidence`, `rx-rx-scope`,
+`food-scope`, `high-risk`, `source-state`, `source-scope`, `member-state`, or `dependency-failure`.
+`task_code` is one of `ret`, `ansq`, `grnd`, `safe`, or `e2e`. `archetype_code` is the kebab-case archetype
+label shown in the two tables. The ordinal starts at `001` and resets for each
+`(partition, category_code, task_code, archetype_code)` tuple.
+
+There is no second allocation source of truth. The loader derives a deterministic allocation projection from
+the 153 schema-valid Case files using `case_id`, `partition`, `task_type`, required category/archetype Slice IDs,
+Gold applicability, and Leakage axes. It rejects any projection that differs from the tables above. The
+Dataset Manifest's existing Case file hashes and resource-set hash therefore bind the allocation without a new
+unhashed allocation artifact.
 
 Every Case uses `dataset_code=rag-holdout-safety`, `dataset_version=1.0.0`, a canonical `input_sha256`, and the
-task-specific expected-value model already frozen by #122. Non-applicable expected fields remain explicitly
-`null` as required by that contract.
+task-specific expected-value model approved by #216 Schema Set `1.1.0`. Non-applicable expected fields remain
+explicitly `null` as required by that contract.
 
 The 153-Case count is frozen for the initial version. It is not a promise that all future versions remain at
 153. `HOLDOUT` v1 Cases are immutable. For future versions, Safety Coverage uses set inclusion rather than a
@@ -282,7 +302,7 @@ active_positive_rule_ids - independently_executed_expected_rule_ids == empty_set
 Each active positive Rule must be exercised by at least one independent Safety Leakage group. Until an active
 Rule Set exists, this Coverage remains `NOT_EVALUATED`; the initial 153-Case Dataset cannot claim Rule Recall
 PASS. A later harmful failure or uncovered active Rule requires a new Dataset version that preserves all
-existing Safety Cases and adds new ones. Schema version `1.0.0` cannot compare predecessor Dataset versions,
+existing Safety Cases and adds new ones. The predecessor Schema Set `1.0.0` cannot compare Dataset versions,
 so append-only is a review-time governance requirement for v1 rather than a falsely claimed loader invariant.
 A future lineage contract may automate that cross-version proof.
 
@@ -315,11 +335,12 @@ all 153 Cases and their Gold have the required Team review provenance. External 
 separate state. Until that review is approved where required, the Dataset may support local structural and
 closed-demo evaluation but cannot establish clinical or Production approval.
 
-The compatibility prerequisite or Dataset loader work must add a freeze-closure check: when the Manifest is
-`FROZEN`, every selected Case, Evidence Mapping, and Critical Claim Rubric must be `team_gold_status=APPROVED`
-with a schema-permitted approver role. A negative test must prove that one `REVIEWED` child prevents the
-Manifest from loading as frozen. Profile, Policy, and Suite approval remain independently versioned and are
-validated through their own references; they do not change Dataset content identity.
+#216 exclusively owns the freeze-closure loader rule: when the Manifest is `FROZEN`, every selected Case,
+Evidence Mapping, and Critical Claim Rubric must be `team_gold_status=APPROVED` with a schema-permitted
+approver role. Its negative test proves that one `REVIEWED` child prevents the Manifest from loading as frozen.
+#214 only consumes and regression-tests that merged behavior; it does not introduce shared Loader acceptance
+semantics. Profile, Policy, and Suite approval remain independently versioned and are validated through their
+own references; they do not change Dataset content identity.
 
 Evidence resources use only the existing approved types:
 
@@ -402,7 +423,8 @@ the scope is diagnostic.
 The first HOLDOUT execution uses this order:
 
 1. #214 freezes Dataset, Gold, Evidence, Rubric, and Leakage assignments.
-2. #157 implements and verifies the Runner against `DEV`; it must not inspect or execute HOLDOUT at this stage.
+2. #157 implements and verifies the Runner against `DEV`; it must not load or execute HOLDOUT or observe its
+   results at this stage.
 3. #158–#161 implement Metrics against DEV artifacts, and the candidate Runtime Source/Rule Bundle is fixed.
 4. A distinct approved Comparison/Evaluation Policy version freezes required Slices, analysis units, minimum
    Case and independent-group counts, estimators, CI methods, and thresholds.
@@ -567,8 +589,8 @@ The handoff marks the protected receipt as Case-only, records
 
 ## 15. Acceptance boundary
 
-Issue #214 implementation cannot start until the schema-compatibility prerequisite and the third review actor
-assignment are recorded. It is complete only when the merged Dataset is `FROZEN`, the final freeze commit has
+Issue #214 implementation cannot start until #216 publishes approved Schema Set `1.1.0`. It is complete only
+when the merged Dataset is `FROZEN`, the final freeze commit has
 Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests pass, and
 the #157 handoff references are recorded. Completion authorizes DEV Runner work only; it does not authorize a
 HOLDOUT run or Release decision. HOLDOUT Baseline authorization requires the independently approved Policy and
