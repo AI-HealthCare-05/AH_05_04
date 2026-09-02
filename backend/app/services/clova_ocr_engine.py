@@ -9,6 +9,8 @@ import httpx
 
 from app.services.ocr_ai import OcrStructurer
 from app.services.ocr_engine import (
+    OcrDeadline,
+    OcrDeadlineExceededError,
     OcrProcessingError,
     OcrProviderConnectionError,
     OcrProviderTimeoutError,
@@ -48,7 +50,13 @@ class ClovaOcrEngine:
         *,
         object_key: str,
         file_mime_type: str,
+        deadline: OcrDeadline,
     ) -> OcrRecognitionResult:
+        # CLOVA 호출 직전 남은 예산을 다시 계산합니다.
+        clova_timeout = deadline.timeout_for(self._timeout_seconds)
+        if clova_timeout <= 0:
+            raise OcrDeadlineExceededError("OCR 요청 예산이 남아 있지 않습니다.")
+
         image_format = self._SUPPORTED_FORMATS.get(file_mime_type)
         if image_format is None:
             raise OcrProcessingError("지원하지 않는 OCR 파일 형식입니다.")
@@ -78,12 +86,16 @@ class ClovaOcrEngine:
             file_content=file_content,
             file_mime_type=file_mime_type,
             message=message,
+            clova_timeout=clova_timeout,
         )
 
         # CLOVA 응답을 전체 raw token으로 변환합니다.
         parsed_result = self._parse_response(response)
 
-        # CLOVA 전체 token을 설정에서 선택한 구조화기에 전달합니다.
+        # 구조화기 호출 직전 남은 예산을 다시 확인합니다.
+        # 예산이 없으면 Provider를 호출하지 않고 종료합니다.
+        if deadline.remaining() <= 0:
+            raise OcrDeadlineExceededError("OCR 요청 예산이 남아 있지 않습니다.")
         structured_result = await self._structurer.structure(parsed_result.raw_fields)
 
         return OcrRecognitionResult(
@@ -115,6 +127,7 @@ class ClovaOcrEngine:
         file_content: bytes,
         file_mime_type: str,
         message: dict[str, Any],
+        clova_timeout: float,
     ) -> httpx.Response:
         headers = {
             "X-OCR-SECRET": self._secret_key,
@@ -137,11 +150,11 @@ class ClovaOcrEngine:
                     self._invoke_url,
                     headers=headers,
                     files=files,
-                    timeout=self._timeout_seconds,
+                    timeout=clova_timeout,
                 )
             else:
                 async with httpx.AsyncClient(
-                    timeout=self._timeout_seconds,
+                    timeout=clova_timeout,
                 ) as client:
                     response = await client.post(
                         self._invoke_url,

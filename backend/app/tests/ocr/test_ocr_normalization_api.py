@@ -3,10 +3,7 @@ from starlette import status
 
 from app.dependencies.services import get_ocr_engine
 from app.main import app, fastapi_app
-from app.services.ocr_engine import (
-    OcrRecognitionResult,
-    RecognizedField,
-)
+from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -17,8 +14,9 @@ class NormalizationTestOcrEngine:
         *,
         object_key: str,
         file_mime_type: str,
+        deadline: OcrDeadline,
     ) -> OcrRecognitionResult:
-        _ = object_key, file_mime_type
+        _ = object_key, file_mime_type, deadline
 
         return OcrRecognitionResult(
             fields=[
