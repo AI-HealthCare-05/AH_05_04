@@ -105,7 +105,7 @@ Use one or more synthetic records per approved evidence type. Each file is canon
 
 - [ ] **Step 2: Create the Evidence Mapping candidate**
 
-Use `schema_version=1.0.0`, `mapping_id=rag-holdout-safety-evidence`, `mapping_version=1.0.0`, sorted unique entries, `target_kind=FIXTURE_RECORD`, and exact file hashes. Set `team_gold_status=REVIEWED`, `approved_by=null`, and the named distinct GitHub actors; do not claim external approval.
+Use `schema_version=1.0.0`, `mapping_id=rag-holdout-safety-evidence`, `mapping_version=1.0.0`, sorted unique entries, `target_kind=FIXTURE_RECORD`, and exact file hashes. Keep `team_gold_status=DRAFT` and `approved_by=null` until the named human review occurs. Because Schema Set `1.1.0` requires reviewer fields even for `DRAFT`, record `@Jye-rookie` only as the assigned reviewer and use the authoring handoff timestamp; do not represent that assignment as a completed review or external approval.
 
 - [ ] **Step 3: Create the Rubric candidate**
 
@@ -190,7 +190,7 @@ The Suite selects all 153 Case IDs, both partitions, and all five task types, us
 
 - [ ] **Step 2: Create the diagnostic Comparison Policy**
 
-Create only `required=false` scopes with canonical threshold `0`; no scope may authorize Release or HOLDOUT execution. Use distinct proposer and approver identities required by the policy schema.
+Create only `required=false` scopes with canonical threshold `0`; no scope may authorize Release or HOLDOUT execution. The schema-required approver is the `SYSTEM/rag-eval-draft-validator` validation actor, not a human policy approval. A later approved comparison policy is a separate #157 execution prerequisite.
 
 - [ ] **Step 3: Create the Evaluation Policy**
 
@@ -198,7 +198,7 @@ Bind Profile, Comparison Policy, both partition references, Suite, and `rag-eval
 
 - [ ] **Step 4: Create the Case-only protected receipt**
 
-Bind the sorted Case paths and Dataset resource-set hash. Keep receipt provenance `REVIEWED`; the receipt must never claim Team approval.
+Bind the sorted Case paths and Dataset resource-set hash. Keep receipt provenance `DRAFT` before human review; the receipt must never claim Team approval.
 
 - [ ] **Step 5: Create the DRAFT Dataset Manifest**
 
