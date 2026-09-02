@@ -279,23 +279,23 @@ The current post-final-review-remediation DRAFT graph handed to the named review
 
 | Item | Immutable ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `46542e06a1cb8627798bb67eff9639bb9478c936e17f9149b0516a166e988772` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `9db8ccf11613bdbf397fe978765d9517eba8bf095e33bed7189212d74837eae1` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `76f494ea30f15adeb18566d09b79d25e60b1412d3555b1d5d89e05178a4ca931` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `299ce6ad9d8c0299f4498d20c03195c4189d56bfd844b8daed1f4e0b2baa3ed9` |
-| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `0817571851481cbf0bdbb864e57d327cc179319c8c3074e7702912d8537e5ba1` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `53dbbd4d84b24a8f908e9bd44431d8528a18a3231e77b8ebdc7d8b0f2aa40492` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `c07dcb6460bc0e92243538d8ef89c4107daaf7628aec02b710937fb5f486d05b` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `ea501750d229ec7992536d5770200c9e40f3550c7ef50d80bea109a484666012` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `04faaa229640a7935c0cbe896e3c9c633a288d4d7870392b31587513c1cbf678` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `ac1d16148fb0ac364a71e3faa2af0bb3a61dcbfd20a30c1eb7d1483bf5607042` |
 | Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `421639924196622ab173469d450f6c6fe89ccbb6d417004614fc849b81e772b6` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `8830a693ec354e23752c3974dc9aa5a1ac4ea545ac996e54fd8ae0ddc7c24704` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `86c05d7dcba26563a6938809b4467174d7b5bc0fe52f486185ad573671b60109` |
-| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `2dc3bc6feab26d981a8c92ad395b65192369b0ec554a98cb17a8b2c311899167` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `05102b8216e1ea985db4122460d2340997aac78e7b3219bd91f9a5285dc005d2` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `80e45075338cfbc4a76353fd2ba61cb57657237261168f57f406adc7d8a6d963` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `4d5ab58c65fb7ca6f3f2198d34c9d9552c8d218b93e96129dbe34652b7911f93` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `e938441ac0f931676d6765e4016d333b7fff037a4cba9281ea98fa53737da443` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `83847daf9f871b9a81a8440000b4fadec3772d33984974bb382af755d02545c0` |
 | Artifact Schema Set | `rag-eval.schema-set@1.1.0` | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
 
 The receipt reference uses its canonical file hash; its internal `receipt_hash` is
-`aa3f52397fd6b7b16c901cc92f9ee8f8c6c8e0a3d65494ab4551f4a5312c8727`.
+`d5d2b800fa99751bcd9c0357b140a7a3d03a9f31cd5263662d83757a23f30fbd`.
 
 These values remain DRAFT review inputs. They do not record completed human review, Dataset approval, freeze,
 HOLDOUT execution, or Release authorization. Task 7 remains gated on the actual named review events.
