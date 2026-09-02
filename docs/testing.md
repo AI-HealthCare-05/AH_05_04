@@ -162,8 +162,8 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - Job 접수·상태 조회·결과 조회의 성공 응답과 `400`, `401`, `404`, `409`, `500`, `503` 오류 응답은 모두 `Cache-Control: no-store`를 포함합니다.
 - Job 접수·상태 조회 오류 응답은 공통 오류 envelope를 사용하고 `details`를 객체가 아니라 배열로 반환합니다.
 - HMAC key rotation 중 미만료 record가 존재할 수 있는 모든 retained key version 조회와 혼합 writer 차단 또는 rotation-invariant 원자 잠금으로 같은 원문 key의 중복 실행을 방지합니다. 현재·직전 key version만 조회하는 구현은 rotation 주기가 최대 멱등 레코드 보존기간보다 길 때만 허용합니다.
-- 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다.
-- 같은 멱등 키 동시 접수는 DB unique constraint로 하나만 Job을 생성하고 나머지는 기존 Job의 최신 `202`를 반환합니다.
+- 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다. Service·Repository 계층은 `#147`의 `test_job_intake.py`(`test_accept_job_rejects_domain_placeholder_for_document_not_owned_by_user` 등)로 real Postgres 기준 검증됐습니다. API 라우트가 없어 실제 `202`/오류 응답 형태 확인은 `#148`에서 이어집니다.
+- 같은 멱등 키 동시 접수는 DB unique constraint로 하나만 Job을 생성하고 나머지는 기존 Job의 최신 `202`를 반환합니다. DB unique constraint 기반 동시성 처리는 `#147`의 `test_accept_job_concurrent_same_key_creates_only_one_job`으로 검증됐고, 실제 `202` 응답은 `#148`에서 확인합니다.
 - 비동기 요청은 `record_type + user_id + operation_id + key_hmac`, 동기 요청은 `record_type + user_id + operation_id + parent_resource_id + key_hmac` unique 기준으로 동시 중복 생성을 차단합니다.
 - 만료된 멱등 row 정리와 새 Job 생성은 중복 Job·Outbox·Provider 호출을 만들지 않습니다.
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
@@ -182,6 +182,16 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 처방 active version 변경 시 처리 중 결과는 `STALE`이며 현재 결과로 노출되지 않습니다.
 - 같은 Chat session의 다른 키 요청은 `409 CHAT_JOB_IN_PROGRESS`이고 동일 키 재전송은 기존 Job을 반환합니다.
 - Check-in의 `TAKEN`, `NOT_TAKEN`, `UNCONFIRMED`와 Barrier 거절·미제출을 구분합니다.
+- Track B 일정 생성·변경에서 `frequency_per_day`가 존재하면 `local_times.length`와 반드시 일치해야 하며, 불일치 시 422로 실패하고 schedule row와 schedule time row를 저장하지 않습니다.
+- Track B `setup_reason` 신규 값·우선순위는 Proposed/TBD이며 별도 Decision 또는 Contract Freeze version 승인 전에는 완료 조건이나 확정 테스트 기대값으로 사용하지 않습니다. 승인 후에는 Backend 계약 테스트에서 고정 우선순위 계산과 nullable 단일 `setup_reason` 반환을 검증하고, Frontend 테스트에서는 반환값의 표시·분기만 검증하며 우선순위를 재계산하지 않습니다. `NO_ACTIVE_PRESCRIPTION`은 전체 `schedule_status`로만 반환합니다.
+- Scheduler deadline 처리와 사용자 `PUT` 최초 생성이 경쟁해도 `medication_checkin.occurrence_id` unique 제약, 조건부 insert와 insert 충돌 처리로 현재 Check-in row가 하나만 생성되는지 검증합니다. 사용자 최초 생성의 `expected_revision`은 `0`입니다.
+- `reason_code`는 enum 확정 전까지 Check-in 생성·정정 요청, OpenAPI request schema, DB enum과 `checkin_audit` 컬럼에 포함하지 않습니다. 테스트 fixture의 예시값도 확정 enum처럼 사용하지 않습니다.
+- 처방 version 변경 시 새 version 일정을 자동 복사·자동 생성하거나 이전 일정을 참고 후보로 제공하지 않습니다. 이전 version과 값이 같아도 새 version의 모든 medication을 재확인 전 `SETUP_REQUIRED`로 반환합니다.
+- version `effective_at` 이후의 이전 version `PENDING` occurrence와 미전달 알림만 취소합니다. 이전 schedule·time revision, `effective_at` 이전 occurrence, Check-in·audit은 원래 version에 보존하고, deadline이 지난 과거 `PENDING` occurrence는 취소가 아닌 `UNCONFIRMED` 생성 대상으로 검증합니다.
+- 처방 version 확정과 이전 occurrence·미전달 알림 취소의 transaction·Outbox 결합 방식은 Track A 비동기 인프라와 후속 Decision 전까지 `NOT_RUN`으로 유지합니다.
+- `UNCONFIRMED` backlog 조회·다음 로그인 보완 Flow는 Track B 완료 조건으로 검증합니다. 전용 API의 URL·pagination 계약은 후속 Issue에서 고정할 수 있지만 이 기능 자체를 완료 범위에서 제외하지 않습니다.
+- 사용자 알림 ON/OFF preference와 외부 Push·SMS 채널 정책은 후속 Issue로 분리할 수 있습니다. 앱 내부 알림의 생성·중복 방지·version 변경 시 취소와 알림 상태로 복용 결과를 추정하지 않는 기준은 Track B 완료 조건으로 검증합니다.
+- Track B의 Check-in write가 Track C의 `invalidate_for_checkin_revision`을 별도 queue·Outbox 없이 같은 transaction의 in-process 동기 함수로 호출하고, 정의된 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE → SUPPORT_ACTION_PLAN` 잠금 순서와 rollback 경계를 지키는지 검증합니다.
 - 다른 사용자의 Job·결과와 Track B occurrence·Check-in, Track C Safety·Barrier·ActionPlan, Candidate·Identification·Chat session 직접 요청은 `404`이며 Redis·일반 로그·quarantine·DLQ에는 의료 원문을 저장하지 않습니다.
 - #117 병합 이후 `SELF profile` 이관은 current 계약 기준으로 검증합니다. 의료문서·처방·가이드·채팅 세션은 `profile_id` 또는 부모 chain의 `profile_id`로 소유권을 확인하고, 다른 사용자의 리소스 접근은 `404`로 숨깁니다.
 - `AI_JOB_ATTEMPT.BLOCKED` enum은 승인 schema에 남기되 의미·기록 조건·전이 Decision 전에 Worker가 해당 값을 생성하지 않고 `BLOCKED_ACTION`과 연결하지 않는지 검증합니다.

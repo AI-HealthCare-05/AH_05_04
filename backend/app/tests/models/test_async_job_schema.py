@@ -6,10 +6,26 @@ import pytest_asyncio
 from sqlalchemy import CheckConstraint, UniqueConstraint, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.core.retry import ALL_FAILURE_CODES
 from app.core.db.databases import Base
-from app.models.async_jobs import AiJob, AiJobStatus, AiJobType, OutboxEvent, OutboxEventKind, OutboxEventStatus
+from app.models.async_jobs import (
+    _FAILURE_CODE_VALUES,
+    AiJob,
+    AiJobStatus,
+    AiJobType,
+    MessageQuarantine,
+    OutboxEvent,
+    OutboxEventKind,
+    OutboxEventStatus,
+)
 from app.models.users import Gender, User
 from app.tests.conftest import test_engine
+
+
+def test_failure_code_allowlist_matches_worker_retry_contract() -> None:
+    """ai_worker/core/retry.py의 ALL_FAILURE_CODES와 DB CHECK 제약의 allowlist가 어긋나면
+    Worker가 기록한 failure_code를 DB가 거부할 수 있으므로 두 목록을 동기화된 상태로 고정합니다."""
+    assert set(_FAILURE_CODE_VALUES) == set(ALL_FAILURE_CODES)
 
 
 def test_track_a_async_tables_are_registered() -> None:
@@ -156,7 +172,7 @@ def test_quarantine_and_dlq_tables_keep_poison_message_metadata_only() -> None:
     message_quarantine = Base.metadata.tables["message_quarantine"]
     dlq_outbox_event = Base.metadata.tables["dlq_outbox_event"]
 
-    assert {
+    assert set(message_quarantine.c.keys()) == {
         "id",
         "stream_name",
         "stream_entry_id",
@@ -169,8 +185,8 @@ def test_quarantine_and_dlq_tables_keep_poison_message_metadata_only() -> None:
         "trace_id",
         "received_at",
         "created_at",
-    }.issubset(set(message_quarantine.c.keys()))
-    assert {
+    }
+    assert set(dlq_outbox_event.c.keys()) == {
         "event_id",
         "quarantine_id",
         "event_kind",
@@ -185,7 +201,8 @@ def test_quarantine_and_dlq_tables_keep_poison_message_metadata_only() -> None:
         "published_at",
         "created_at",
         "updated_at",
-    }.issubset(set(dlq_outbox_event.c.keys()))
+    }
+    assert not message_quarantine.c.job_id.foreign_keys
 
 
 @pytest_asyncio.fixture
@@ -264,3 +281,30 @@ async def test_deleting_outbox_event_nulls_out_ai_job_pointer_instead_of_failing
     assert refreshed is not None
     assert refreshed.expected_event_id is None
     assert refreshed.last_consumed_event_id is None
+
+
+async def test_message_quarantine_job_id_accepts_reference_to_missing_ai_job(
+    db_session: AsyncSession,
+) -> None:
+    """outbox-stream-v1.md "재시도와 격리": job_id가 파싱되지만 DB에 그 Job이 없는 메시지도
+    quarantine에 반드시 commit되어야 poison message가 무한 재전달되지 않습니다. `job_id`에 FK가
+    걸리면 이 INSERT 자체가 FK 위반으로 실패하므로, 존재하지 않는 `ai_job.id`를 참조해도 실제로
+    commit되는지 real Postgres에서 확인합니다.
+    """
+    quarantine = MessageQuarantine(
+        stream_name="guide-jobs",
+        stream_entry_id=f"{uuid4().hex}-0",
+        message_digest=uuid4().hex,
+        job_id=uuid4(),
+        failure_code="UNSUPPORTED_SCHEMA",
+    )
+    db_session.add(quarantine)
+    await db_session.flush()
+
+    quarantine_id = quarantine.id
+    expected_job_id = quarantine.job_id
+
+    db_session.expire(quarantine)
+    persisted = await db_session.scalar(select(MessageQuarantine).where(MessageQuarantine.id == quarantine_id))
+    assert persisted is not None
+    assert persisted.job_id == expected_job_id
