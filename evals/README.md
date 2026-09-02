@@ -16,6 +16,18 @@ Post-MVP 평가 기능을 배포 게이트로 전환할 때는 결과에 데이�
 
 자동 평가 체계가 아직 없다는 이유로 의료 안전 검증을 통과한 것으로 간주하지 않습니다. 현재 운영 가능 여부는 `SECURITY.md`, `docs/privacy-safety.md`와 `docs/deployment.md`의 수동 승인·차단 기준을 따릅니다.
 
+## RAG foundation 계약 검증
+
+다음 명령은 Issue #122의 합성 DEV dataset과 연결된 schema, hash, provenance, privacy 경계를 검증하고 별도의 validation receipt만 기록합니다.
+
+```bash
+uv run python -m ai_worker.tasks.evaluation validate \
+  --manifest evals/retrieval/manifests/dev-foundation-v1.dataset.json \
+  --result evals/validation-results/dev-foundation-v1.validation.json
+```
+
+이 명령은 validation 전용입니다. Evaluation Run, Metric, Gate, PASS/FAIL, Markdown report를 생성하지 않고 Provider를 호출하지 않으며 `PUBLIC_TRACK_F`를 변경할 수 없습니다. 기존 result나 lock은 덮어쓰거나 자동 삭제하지 않습니다. 생성되는 `evals/validation-results/` 파일은 로컬 검증 산출물이며 Git 추적 대상이 아닙니다.
+
 ## Chat history 평가
 
 `generation/chat-v2-history-eval-v1.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 기준선과 처리 경로 모두 `chat-prompt-v2`를 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
