@@ -60,6 +60,8 @@ v1 메시지에는 다음 필드만 둔다.
 
 ## 소비와 fencing
 
+2026-09-02 [Product Decision `PD-141-20260902`](../../../governance/decisions/2026-09-02-worker-attempt-lease-fencing.md)에 따라 아래 attempt·lease·fencing·commit-before-ACK 기준을 승인했다.
+
 Worker는 메시지 수신 후 DB Job을 다시 읽고 다음을 검증한다.
 
 - Job 존재와 유형 일치
@@ -75,7 +77,9 @@ Worker는 메시지 수신 후 DB Job을 다시 읽고 다음을 검증한다.
 
 현재 목록만으로는 Worker artifact version과 Job의 Runtime Release Bundle 호환성을 보장하지 못한다. `RETRY_WAIT` 중 Bundle 변경과 구·신 Worker 동시 배포의 처리 방식은 [후속 Product Decision](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)에서 상태 전이·drain 방식·계약 테스트와 함께 확정하며, 그 전에는 이 목록을 Bundle 검증이 완료된 구현 계약으로 해석하지 않는다.
 
-상태 변경과 결과 저장은 `job_id + lease_token + expected_status` 조건부 갱신으로 fencing한다. 오래된 Worker는 새 lease 소유자의 결과를 덮어쓸 수 없다.
+신규 lease 획득 전에 `last_consumed_event_id`를 확인한다. 수신 event가 이미 소비됐고 실제 Job·Outbox 연결도 일치하면 신규 lease, Provider 호출과 결과 저장을 생략하고 ACK한다.
+
+heartbeat와 상태 변경·결과 저장은 `job_id + attempt_count + lease_token + status=PROCESSING + 만료되지 않은 lease` 조건부 갱신으로 fencing한다. 영향 행이 0건이면 실행 권한을 잃은 것으로 처리하고 해당 결과와 상태 변경을 commit하지 않는다. 오래된 Worker는 새 lease 소유자의 결과를 덮어쓸 수 없다.
 
 ## ACK 불변식
 

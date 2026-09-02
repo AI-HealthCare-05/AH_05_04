@@ -2,9 +2,10 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Draft — Product Decision 승인 대기 |
+| 상태 | Approved design — `PD-141-20260902`, 구현·검증 대기 |
 | 구현 이슈 | [#141](https://github.com/AI-HealthCare-05/AH_05_04/issues/141) |
 | 기준 계약 | `async-job-v1.md`, `outbox-stream-v1.md` |
+| 승인 Decision | [`PD-141-20260902`](../governance/decisions/2026-09-02-worker-attempt-lease-fencing.md) |
 | 대상 | Worker lease·heartbeat·fencing·결과 commit Repository |
 | 제외 | #142 reclaim·retry·quarantine·DLQ, #147 Outbox Publisher |
 
@@ -30,17 +31,21 @@ Worker Repository가 유효한 실행 소유자의 DB 변경만 허용하고,
 - commit 이후 ACK 실패가 발생해도 이미 commit된 DB 결과는
   rollback하지 않는다.
 
-## Product Decision 승인 대기 항목
+## 승인된 Repository 조건
 
-다음 항목은 승인 전 테스트 기대값이나 구현으로 확정하지 않는다.
-
-- `attempt_count`를 수신 attempt로 갱신하는 정확한 시점
-- lease 획득을 허용할 Job 상태
-- 숫자형 attempt와 opaque `lease_token`의 fencing 역할 분담
-- heartbeat 조건부 갱신 조건
-- lease 만료 Worker의 결과 저장 거부 조건
-- 동일 event 재전달 시 Repository 반환 결과
-- lease 만료 후 reclaim·retry 전환 책임
+- `attempt_count`는 lease 획득 transaction에서 수신 attempt로 갱신한다.
+- 신규 lease 전에 동일 event의 처리 완료 여부를 확인한다.
+- 중복 event 생략은 `last_consumed_event_id`와 실제 Job·Outbox 연결이 모두 일치하는 경우에만 허용한다.
+- 실행 세대는 `attempt_count`, 동일 세대의 소유자는 opaque `lease_token`으로 검증한다.
+- heartbeat와 결과 저장은 `job_id + attempt_count + lease_token + PROCESSING + 만료되지 않은 lease` 조건부 갱신을 사용한다.
+- 조건부 갱신 결과가 0건이면 실행 권한 상실로 처리한다.
+- 결과·terminal 상태·`last_consumed_event_id`는 같은 transaction에서 저장하고 commit 이후에만 ACK한다.
+- ACK 실패는 완료된 commit을 되돌리지 않는다.
+- reclaim·retry Outbox·quarantine·DLQ는 #142 범위다.
+- lease 획득은 진입 조건 전체를 `WHERE`에 포함한 하나의 조건부 `UPDATE`로 수행한다.
+- lease 획득 UPDATE의 영향 행이 `1`일 때만 성공이며, `0`이면 실행 권한을 얻지 못한 것으로 처리한다.
+- 동시성 제어는 `SELECT FOR UPDATE`가 아닌 optimistic conditional UPDATE를 사용한다.
+- #141은 `expected_event_id`를 읽고 검증하지만 갱신하지 않는다. 최초 값은 #147, retry용 새 값은 #142가 Outbox와 같은 transaction에서 갱신한다.
 
 ## 테스트 계층
 
@@ -81,10 +86,7 @@ Worker Repository가 유효한 실행 소유자의 DB 변경만 허용하고,
 `WJR-009`의 실제 PostgreSQL 중복 INSERT 테스트는 아직 추가되지 않았다.
 
 
-## Product Decision 승인 대기 Repository 입출력 초안
-
-> 이 절은 구현 기준이 아닌 검토용 초안이다. Product Decision 승인 후
-> 메서드명·반환 상태·조건부 갱신 조건을 확정하고 테스트 코드로 전환한다.
+## 승인된 Repository 입출력
 
 | 작업 | 입력 | 출력 | DB 변경 |
 | --- | --- | --- | --- |
@@ -98,7 +100,7 @@ Worker Repository가 유효한 실행 소유자의 DB 변경만 허용하고,
 도메인 ResultStore와 Job Repository 변경은 Consumer가 소유한 하나의
 transaction에서 함께 commit한다.
 
-## Product Decision 승인 후 활성화할 테스트
+## Repository 구현 테스트 Matrix
 
 | ID | 입력·사전 상태 | 결정안 기준 기대 결과 |
 | --- | --- | --- |
@@ -108,7 +110,7 @@ transaction에서 함께 commit한다.
 | `WJR-104` | 수신 attempt가 허용된 다음 attempt와 불일치 | lease 미획득, DB 변경 없음 |
 | `WJR-105` | `available_at`이 미래 | lease 미획득, DB 변경 없음 |
 | `WJR-106` | 허용되지 않은 Job 상태 | lease 미획득, DB 변경 없음 |
-| `WJR-107` | 두 Worker가 같은 Job lease 동시 획득 | 한 Worker만 성공 |
+| `WJR-107` | 두 Worker가 같은 Job·event·attempt로 동시에 조건부 UPDATE 실행 | 정확히 한 Worker만 영향 행 `1`로 lease를 획득하고, 다른 Worker는 영향 행 `0`으로 실패 |
 | `WJR-108` | 현재 attempt·token으로 heartbeat | heartbeat와 만료 시각 갱신 |
 | `WJR-109` | 이전 attempt 또는 token으로 heartbeat | 영향 행 0건, 실행 권한 상실 |
 | `WJR-110` | 만료된 lease로 heartbeat | 영향 행 0건, 실행 권한 상실 |
@@ -117,5 +119,32 @@ transaction에서 함께 commit한다.
 | `WJR-113` | 결과 commit 후 동일 event 재전달 | Handler·Provider 재호출 없이 ACK 가능 상태 반환 |
 | `WJR-114` | 결과 commit 이후 ACK 실패 후 재전달 | 결과와 Attempt 이력이 각각 1건 유지 |
 | `WJR-115` | heartbeat 조건부 갱신 실패 후 Handler 완료 | 늦은 결과 폐기, ACK 미호출 |
+| `WJR-116` | Handler 또는 하위 Repository가 Worker transaction 전에 별도 commit 시도 | 별도 commit을 허용하지 않고 Worker 소유 transaction만 사용 |
+| `WJR-117` | Handler 완료 후 결과 저장 직전에 fencing 조건이 무효화됨 | 조건부 갱신 0건, 도메인 결과와 Job 상태 모두 rollback |
+| `WJR-118` | timeout·rate limit·일시적 의존성 장애이며 terminal 결과 없음 | 정규화된 재시도 가능 실패로 반환하고 terminal 결과를 저장하지 않음 |
+| `WJR-119` | 승인된 고정 fallback 저장 성공 | 도메인 `REJECTED`와 Job `COMPLETED`를 원자적으로 저장하고 재시도하지 않음 |
+| `WJR-120` | Safety 검증 실패 후 승인 fallback 저장 성공 | Job `COMPLETED`, 동일 Provider 호출 재시도 없음 |
+| `WJR-121` | Safety fallback 저장까지 실패 | Job `FAILED`, 안전한 failure code만 저장 |
+| `WJR-122` | schema·영구 입력 오류 | 재시도하지 않고 승인된 terminal 경로로 처리 |
+| `WJR-123` | 동일 event 결과가 이미 commit됨 | 신규 lease·Handler·Provider·결과 저장 없이 ACK만 호출 |
 
-위 기대 결과는 Product Decision 승인 답변과 일치하는지 대조한 뒤 확정한다.
+
+### `WJR-107` PostgreSQL 동시성 검증 방법
+
+- 서로 다른 `AsyncSession` 두 개를 사용한다.
+- 두 Worker가 동일한 Job·event·attempt를 입력으로 사용한다.
+- 두 작업을 barrier에서 동시에 시작한다.
+- lease 획득 로직은 사전 `SELECT FOR UPDATE` 없이 단일 조건부 UPDATE를 실행한다.
+- 반환 결과는 성공 1건, 실패 1건이어야 한다.
+- DB `attempt_count`는 한 번만 증가한다.
+- `ai_job_attempt` 실행 이력은 1건만 존재해야 한다.
+- 실패한 Worker의 token으로 heartbeat·결과 저장을 시도하면 영향 행이 0이어야 한다.
+
+### Handler transaction 검증 원칙
+
+- Handler와 하위 Repository는 `commit()`을 호출하지 않는다.
+- Handler는 결과 또는 정규화된 실패 분류만 반환한다.
+- 결과의 `job_id`·`event_id` 검증 후 Worker transaction에 저장한다.
+- 저장 직전 fencing 조건이 무효하면 모든 미완료 결과를 rollback한다.
+- 기존 동기 Guide·Chat 서비스의 내부 commit 경로는 Worker Handler에서
+  직접 재사용하지 않는다.
