@@ -278,7 +278,10 @@ class OutboxEvent(_CreatedUpdatedColumns, Base):
     # outbox-stream-v1.md Stream envelope의 required trace_id입니다. 접수 시점의 request.state.trace_id를
     # 저장해두지 않으면, 나중에 실제 발행(XADD) 시점에는 원래 HTTP 요청이 이미 끝나 그 값을 잃어버려
     # live-provider-call-evidence.md가 세우는 runner→Backend 로그→provider 로그 상관관계가 접수 경로에서
-    # 끊깁니다. 접수 시 값이 없을 수 있는 호출(테스트 등)을 위해 nullable로 둡니다.
+    # 끊깁니다. WorkerMessage.trace_id가 32자리 hex required라 NULL이면 #219가 발행 시 예외 분기를
+    # 둬야 하므로, JobIntakeService.accept_job()/AsyncJobRepository.create_outbox_event()는 이 값을
+    # 필수 인자로 받습니다. 컬럼 자체는 과거 row나 이 서비스 밖의 다른 경로를 위해 nullable로 둡니다
+    # (값 형식 검증은 컬럼 레벨에 없고 #219에서 확인).
     trace_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Stream envelope의 required domain_type/domain_id입니다. ai_job은 domain_type/domain_id 물리
     # 컬럼을 두지 않기로 확정했고(PR #184) 도메인 테이블에도 ai_job으로부터의 역참조 컬럼이 아직
