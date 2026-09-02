@@ -207,11 +207,71 @@ def _catalog_projection(
     return category_tasks, archetypes
 
 
+def _assert_rule_gold(expected: SafetyExpectedV11) -> None:
+    if expected.expected_rule_outcome.value == "MATCHED_RULES":
+        assert expected.expected_rule_ids
+        assert expected.expected_rule_not_invoked_reason is None
+    elif expected.expected_rule_outcome.value == "NO_MATCH":
+        assert expected.expected_rule_ids == ()
+        assert expected.expected_rule_not_invoked_reason is None
+    else:
+        assert expected.expected_rule_outcome.value == "NOT_INVOKED"
+        assert expected.expected_rule_ids == ()
+        assert expected.expected_rule_not_invoked_reason is not None
+
+
+def _assert_not_invoked_failure(expected: SafetyExpectedV11, *, reason: str, fallback: str) -> None:
+    assert expected.expected_fallback_code is not None
+    assert expected.expected_fallback_code.value == fallback
+    assert expected.expected_rule_outcome.value == "NOT_INVOKED"
+    assert expected.expected_rule_not_invoked_reason is not None
+    assert expected.expected_rule_not_invoked_reason.value == reason
+    assert expected.expected_provider_invocation is False
+    assert expected.expected_retrieval_invocation is False
+    assert expected.expected_publication_allowed is False
+
+
+def _assert_safety_archetype_gold(expected: SafetyExpectedV11, *, category: str, archetype: str) -> None:
+    if category == "no-evidence":
+        assert expected.expected_fallback_code is not None
+        assert expected.expected_fallback_code.value == (
+            "CONFLICTING_EVIDENCE" if archetype == "conflicting-evidence" else "NO_APPROVED_EVIDENCE"
+        )
+        assert expected.expected_publication_allowed is False
+    elif category in {"rx-rx-scope", "food-scope", "source-scope", "member-state"}:
+        _assert_not_invoked_failure(expected, reason="BUNDLE_INELIGIBLE", fallback="UNSUPPORTED_REQUEST")
+    elif category == "high-risk":
+        _assert_not_invoked_failure(expected, reason="SAFETY_ROUTED", fallback="SAFETY_ROUTED")
+    elif category == "source-state":
+        fallback = "CONFLICTING_EVIDENCE" if archetype == "conflicting" else "NO_APPROVED_EVIDENCE"
+        _assert_not_invoked_failure(expected, reason="SOURCE_INELIGIBLE", fallback=fallback)
+    elif archetype == "provider-timeout":
+        assert expected.expected_fallback_code is not None
+        assert expected.expected_fallback_code.value == "PROVIDER_TIMEOUT"
+        assert expected.expected_execution_status.value == "TIMED_OUT"
+        assert expected.expected_provider_invocation is True
+        assert expected.expected_publication_allowed is False
+    elif archetype == "retrieval-failure":
+        assert expected.expected_fallback_code is not None
+        assert expected.expected_fallback_code.value == "DEPENDENCY_UNAVAILABLE"
+        assert expected.expected_execution_status.value == "DEPENDENCY_ERROR"
+        assert expected.expected_retrieval_invocation is True
+        assert expected.expected_publication_allowed is False
+    elif archetype == "validation-failure":
+        assert expected.expected_fallback_code is not None
+        assert expected.expected_fallback_code.value == "VALIDATION_FAILED"
+        assert expected.expected_execution_status.value == "VALIDATION_ERROR"
+        assert expected.expected_publication_allowed is False
+    else:
+        assert expected.expected_fallback_code is None
+
+
 def test_holdout_safety_dataset_loads_with_exact_identity_and_counts() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
 
     assert dataset.manifest.dataset_code == "rag-holdout-safety"
     assert dataset.manifest.dataset_version == "1.0.0"
+    assert dataset.manifest.scope == "SYNTHETIC_RAG_HOLDOUT_SAFETY"
     assert dataset.manifest.partition_counts.HOLDOUT == 60
     assert dataset.manifest.partition_counts.SAFETY_REGRESSION == 93
     assert len(dataset.cases) == 153
@@ -249,27 +309,33 @@ def test_holdout_safety_dataset_has_exact_archetype_projection_and_case_ids() ->
         ]
 
 
-def test_holdout_safety_dataset_has_complete_gold_and_candidate_skip_contract() -> None:
+def test_holdout_safety_dataset_has_complete_task_and_archetype_gold() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
-    candidate_skip_expectations: list[SafetyExpectedV11] = []
 
     for case in dataset.cases:
         expected = case.expected
+        category = _slice_value(case.slice_ids, "category:")
+        archetype = _slice_value(case.slice_ids, "archetype:")
         assert case.dataset_code == "rag-holdout-safety"
         assert case.dataset_version == "1.0.0"
         if case.task_type.value == "RETRIEVAL":
             assert expected.relevant_evidence_refs
             assert expected.required_evidence_refs
+            assert expected.gold_claims is None
+            assert expected.forbidden_claims is None
+            assert expected.expected_citations is None
+            assert expected.expected_rule_ids is None
+            assert expected.expected_scope_codes is None
             assert expected.expected_retrieval_invocation is not None
         else:
-            assert expected.gold_claims is not None
-            assert expected.forbidden_claims is not None
-            assert expected.expected_citations is not None
+            assert expected.gold_claims
+            assert expected.forbidden_claims
+            assert expected.expected_citations
+            assert expected.expected_scope_codes
             assert expected.expected_sections is not None
             assert expected.omitted_sections is not None
         if case.task_type.value in {"SAFETY", "END_TO_END_RAG"}:
             assert isinstance(expected, SafetyExpectedV11)
-            assert expected.expected_rule_outcome is not None
             assert expected.expected_response_level is not None
             assert expected.expected_safety_disposition is not None
             assert expected.expected_execution_status is not None
@@ -278,16 +344,44 @@ def test_holdout_safety_dataset_has_complete_gold_and_candidate_skip_contract() 
             assert expected.expected_retrieval_invocation is not None
             assert expected.expected_publication_allowed is not None
             assert expected.risk_level is not None
-        if "archetype:candidate-skips-required-rule-invocation-after-valid-matched-input" in case.slice_ids:
-            assert case.partition.value == "SAFETY_REGRESSION"
-            assert case.task_type.value == "SAFETY"
-            assert isinstance(expected, SafetyExpectedV11)
-            candidate_skip_expectations.append(expected)
+            _assert_rule_gold(expected)
+            _assert_safety_archetype_gold(expected, category=category, archetype=archetype)
 
-    assert len(candidate_skip_expectations) == 2
-    for expected in candidate_skip_expectations:
+
+def test_candidate_skip_cases_require_matched_rules() -> None:
+    dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+    candidate_skip_cases = [
+        case
+        for case in dataset.cases
+        if "archetype:candidate-skips-required-rule-invocation-after-valid-matched-input" in case.slice_ids
+    ]
+
+    assert len(candidate_skip_cases) == 2
+    for case in candidate_skip_cases:
+        assert case.partition.value == "SAFETY_REGRESSION"
+        assert case.task_type.value == "SAFETY"
+        expected = case.expected
+        assert isinstance(expected, SafetyExpectedV11)
         assert expected.expected_rule_outcome.value == "MATCHED_RULES"
         assert expected.expected_rule_ids
+
+
+def test_non_supporting_evidence_is_excluded_from_claims_and_citations() -> None:
+    dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+    cases = [
+        case for case in dataset.cases if "archetype:evidence-does-not-support-the-requested-claim" in case.slice_ids
+    ]
+
+    assert len(cases) == 3
+    for case in cases:
+        expected = case.expected
+        assert expected.relevant_evidence_refs
+        supporting_evidence = {
+            evidence_ref for claim in expected.gold_claims or () for evidence_ref in claim.supporting_evidence_ref_ids
+        }
+        cited_evidence = {citation.evidence_ref_id for citation in expected.expected_citations or ()}
+        assert set(expected.relevant_evidence_refs).isdisjoint(supporting_evidence)
+        assert set(expected.relevant_evidence_refs).isdisjoint(cited_evidence)
 
 
 def test_holdout_safety_dataset_separates_every_leakage_axis_across_partitions() -> None:
@@ -303,19 +397,24 @@ def test_holdout_safety_dataset_separates_every_leakage_axis_across_partitions()
         assert groups_by_partition["HOLDOUT"].isdisjoint(groups_by_partition["SAFETY_REGRESSION"])
 
 
-def test_holdout_safety_dataset_is_frozen_but_configuration_remains_non_release() -> None:
+def test_holdout_safety_dataset_is_loadable_draft_with_non_release_configuration() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
 
     assert dataset.manifest.schema_version == "1.1.0"
     assert dataset.manifest.data_classification.value == "SYNTHETIC"
-    assert dataset.manifest.status.value == "FROZEN"
-    assert dataset.manifest.frozen_at is not None
-    assert dataset.manifest.review_provenance.team_gold_status.value == "APPROVED"
+    assert dataset.manifest.status.value == "DRAFT"
+    assert dataset.manifest.frozen_at is None
+    assert dataset.manifest.review_provenance.team_gold_status.value == "REVIEWED"
     assert dataset.manifest.fixture_git_commit_sha is None
     assert dataset.manifest.protected_artifact_receipt_ref is not None
-    assert all(case.review_provenance.team_gold_status.value == "APPROVED" for case in dataset.cases)
-    assert dataset.evidence_mapping.review_provenance.team_gold_status.value == "APPROVED"
-    assert dataset.rubric.review_provenance.team_gold_status.value == "APPROVED"
+    assert all(case.review_provenance.team_gold_status.value == "REVIEWED" for case in dataset.cases)
+    assert dataset.evidence_mapping.review_provenance.team_gold_status.value == "REVIEWED"
+    assert dataset.rubric.review_provenance.team_gold_status.value == "REVIEWED"
+    assert dataset.profile.review_provenance.team_gold_status.value == "REVIEWED"
+    assert dataset.evaluation_policy.review_provenance.team_gold_status.value == "REVIEWED"
+    assert dataset.suite.review_provenance.team_gold_status.value == "REVIEWED"
+    assert dataset.protected_artifact_receipt is not None
+    assert dataset.protected_artifact_receipt.recorded_by.team_gold_status.value == "REVIEWED"
 
     assert tuple(value.value for value in dataset.profile.required_experiment_types) == (
         "ANSWER_GROUNDING_SAFETY",
@@ -353,3 +452,7 @@ def test_holdout_safety_dataset_is_frozen_but_configuration_remains_non_release(
     assert dataset.evaluation_policy.required_gate_refs == ()
     assert len(dataset.evaluation_policy.required_partition_refs) == 2
     assert len(dataset.evaluation_policy.required_suite_refs) == 1
+    schema_set_ref = dataset.evaluation_policy.artifact_schema_set_ref.reference
+    assert schema_set_ref.id == "rag-eval.schema-set"
+    assert schema_set_ref.version == "1.1.0"
+    assert schema_set_ref.hash == "5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0"
