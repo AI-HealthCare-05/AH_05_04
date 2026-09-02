@@ -34,15 +34,17 @@ Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결�
 
 Post-MVP-1은 매일 동일한 시각 반복만 지원하고 Scheduler는 앞으로 14일 rolling horizon만 생성한다. `confirmation_deadline_at`은 `max(Asia/Seoul 기준 예정일 다음 날 00:00, scheduled_at + 4시간)`을 UTC instant로 계산해 snapshot한다. 모든 DB timestamp는 UTC로 저장한다. 배포 설정의 서비스 시간대가 누락되거나 `Asia/Seoul`이 아니면 Scheduler 시작을 거부한다. 사용자별 IANA time zone은 후속 계약이다.
 
-Scheduler는 `confirmation_deadline_at <= now`이고 결과가 없는 occurrence만 처리한다. `medication_checkin.occurrence_id` unique 제약과 조건부 insert로 중복 실행에도 `UNCONFIRMED`를 하나만 만든다. deadline 뒤 사용자가 복용 또는 미복용을 명시하면 현재 결과를 `TAKEN` 또는 `NOT_TAKEN`으로 정정하고 이전 `UNCONFIRMED`는 감사 이력에 남긴다.
+Scheduler는 `confirmation_deadline_at <= now`이고 결과가 없는 occurrence만 처리한다. Scheduler의 deadline 처리와 사용자 `PUT`의 최초 Check-in 생성은 모두 `medication_checkin.occurrence_id` unique 제약을 직렬화 기준으로 삼고 조건부 insert와 insert 충돌 처리를 사용한다. 따라서 deadline 부근에 두 경로가 경쟁해도 occurrence마다 현재 Check-in row는 하나만 생성하며, 충돌 뒤 처리는 아래 `expected_revision`과 정정 계약을 따른다. deadline 뒤 사용자가 복용 또는 미복용을 명시하면 현재 결과를 `TAKEN` 또는 `NOT_TAKEN`으로 정정하고 이전 `UNCONFIRMED`는 감사 이력에 남긴다.
 
 ## 수정과 감사
 
-Post-MVP-1에서는 사용자가 과거 결과를 횟수 제한 없이 수정할 수 있다. 현재값과 별도로 `checkin_audit`에 `checkin_id`, `from_status`, `to_status`, `from_revision`, `to_revision`, `changed_by`, `changed_at`을 append-only로 저장한다. `reason_code`는 enum이 확정되기 전까지 Check-in 생성·정정 요청, OpenAPI request schema와 DB enum에서 제외한다. 이력 응답 예시에서 필요하면 확정되지 않은 값을 쓰지 않고 `reason_code=null` 또는 필드 생략으로 표시한다.
+Post-MVP-1에서는 사용자가 과거 결과를 횟수 제한 없이 수정할 수 있다. 현재값과 별도로 `checkin_audit`에 `checkin_id`, `from_status`, `to_status`, `from_revision`, `to_revision`, `changed_by`, `changed_at`을 append-only로 저장한다. `reason_code`는 enum이 확정되기 전까지 Check-in 생성·정정 요청, OpenAPI request schema와 DB enum에서 제외하며 `checkin_audit`에도 해당 컬럼을 만들지 않는다. 이력 응답 예시에서 필요하면 확정되지 않은 값을 쓰지 않고 `reason_code=null` 또는 필드 생략으로 표시한다.
 
-Check-in `PUT` 요청은 `Idempotency-Key` 헤더와 `expected_revision`을 요구한다. 동기 멱등 레코드의 unique scope는 `(user_id, API operation, occurrence_id, key_hmac)`이며 원문 키를 저장하지 않는다. 같은 키·같은 request hash는 revision 검사보다 먼저 같은 transaction에서 저장한 최초 성공 HTTP status와 canonical body snapshot을 재현하고, 같은 키·다른 hash는 `409 IDEMPOTENCY_KEY_CONFLICT`다. 신규 키에서 현재 revision과 다른 `expected_revision`은 payload가 현재 값과 같아도 `409 CHECKIN_REVISION_CONFLICT`다. snapshot은 최대 1MiB이며 암호화 저장·일반 로그 금지이고, 초과 시 mutation 전 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`로 실패한다.
+Check-in `PUT` 요청은 `Idempotency-Key` 헤더와 `expected_revision`을 요구하며 최초 생성은 `expected_revision=0`이다. 동기 멱등 레코드의 unique scope는 `(user_id, API operation, occurrence_id, key_hmac)`이며 원문 키를 저장하지 않는다. 같은 키·같은 request hash는 revision 검사보다 먼저 같은 transaction에서 저장한 최초 성공 HTTP status와 canonical body snapshot을 재현하고, 같은 키·다른 hash는 `409 IDEMPOTENCY_KEY_CONFLICT`다. 신규 키에서 현재 revision과 다른 `expected_revision`은 payload가 현재 값과 같아도 `409 CHECKIN_REVISION_CONFLICT`다. snapshot은 최대 1MiB이며 암호화 저장·일반 로그 금지이고, 초과 시 mutation 전 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`로 실패한다.
 
 처방 version이 바뀌면 `effective_at` 이후에 예정된 이전 version의 `PENDING` occurrence와 미전달 알림만 취소한다. 이전 일정·시각을 새 version에 복사·재귀속하거나 참고 후보로 자동 제공하지 않고, 새 occurrence도 자동 생성하지 않는다. 새 version의 모든 `prescription_version_medication`은 이전 version과 약명·용량·횟수가 같더라도 사용자가 해당 version의 일정을 다시 확인하기 전까지 `SETUP_REQUIRED`다.
+
+처방 version 확정과 이전 version의 `PENDING` occurrence·미전달 알림 취소를 하나의 DB transaction, Outbox 또는 다른 비동기 경계 중 어떤 방식으로 결합할지는 이 문서에서 고정하지 않는다. Track A 비동기 인프라가 확정된 뒤 후속 Issue와 별도 Decision에서 transaction 경계, 실패 복구와 재처리 방식을 정한다.
 
 이전 version의 schedule·time revision, `effective_at` 이전 occurrence, 이미 생성된 Check-in과 Check-in audit은 생성 당시 `prescription_version_id`에 그대로 보존하고 새 version으로 재귀속하지 않는다. `effective_at` 이전에 예정되었지만 아직 결과가 없는 occurrence도 취소하지 않으며, deadline이 지났다면 Scheduler가 기존 기준에 따라 `UNCONFIRMED`를 생성한다.
 
@@ -84,7 +86,7 @@ Track C의 목표 API는 다음으로 고정한다.
 
 - 일정 조회 응답은 `schedule_status`, 약별 `schedule_items[]`, 날짜별 `occurrences[]`, 현재 Check-in, `revision`, `corrected`, `prescription_version_id`를 포함한다. 약별 항목은 `schedule_item_status`, `prescription_version_medication_id`, nullable `schedule_id`, nullable `revision`, nullable `setup_reason`을 포함한다. 전체 상태는 활성 처방 없음 → `NO_ACTIVE_PRESCRIPTION`, READY와 SETUP_REQUIRED 혼합 → `PARTIAL`, SETUP_REQUIRED만 존재 → `SETUP_REQUIRED`, setup 대상 없이 READY 존재 → `READY`, 나머지가 모두 INACTIVE이고 pending occurrence 없음 → `INACTIVE` 순으로 판정한다. 원본에서 occurrence 정렬은 별도 고정하지 않았다.
 - 일정 `PUT` body는 `start_local_date`, `end_mode`, nullable `end_local_date`, `local_times[]`, `expected_revision`; 취소 `PATCH` body는 `status=CANCELLED`, `expected_revision`이다.
-- Check-in `PUT` body는 `status=TAKEN|NOT_TAKEN`, nullable `taken_at`, `expected_revision`이다. `taken_at`은 `TAKEN`에서만 허용한다. `reason_code`는 enum 확정 전까지 요청 body에 포함하지 않는다.
+- Check-in `PUT` body는 `status=TAKEN|NOT_TAKEN`, nullable `taken_at`, `expected_revision`이다. 최초 생성의 `expected_revision`은 `0`이며 `taken_at`은 `TAKEN`에서만 허용한다. `reason_code`는 enum 확정 전까지 요청 body에 포함하지 않는다.
 - Safety assessment 요청은 `medication_checkin_id`, `checkin_revision`, `symptom_codes[]`, `expected_revision`; 응답은 `assessment_id`, `medication_checkin_id`, `checkin_revision`, `response_level`, `safety_disposition`, `message_code`, `copy_version`, `source_version`, `revision`이다.
 - Barrier 요청은 `response_status`, nullable `barrier_code`, `checkin_revision`, `expected_revision`이다. Support 응답은 `support_code`, `copy_version`, `priority`, `rationale_code`, 허용 action config를 포함하고 `priority ASC, support_code ASC`로 최대 2개를 반환한다. ActionPlan은 선택한 rule/copy version을 snapshot한다.
 
@@ -127,7 +129,7 @@ Track C의 목표 API는 다음으로 고정한다.
 - 최신 결과가 `URGENT`, `EMERGENCY`, `UNKNOWN`이면 Barrier·일반 Support를 생성하지 않는다.
 - 기존 Barrier 뒤 non-`ROUTINE` 정정이 생기면 이력은 보존하고 활성 ActionPlan을 같은 transaction에서 `CANCELLED` 처리한다.
 - 잠금 순서는 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE → SUPPORT_ACTION_PLAN`이다.
-- Check-in write transaction의 owner는 Track B다. 현재 `NOT_TAKEN` revision이 `TAKEN` 또는 새 `NOT_TAKEN` revision으로 바뀌면 B가 Track C의 동기 `invalidate_for_checkin_revision` port를 같은 transaction에서 호출해 이전 revision의 Safety·Barrier 이력을 보존하고 활성 ActionPlan을 취소한다. 새 상태가 `NOT_TAKEN`이면 Safety부터 다시 시작하며 과거 revision 결과를 현재 흐름에 사용하지 않는다.
+- Check-in write transaction의 owner는 Track B다. 현재 `NOT_TAKEN` revision이 `TAKEN` 또는 새 `NOT_TAKEN` revision으로 바뀌면 B가 Track C의 `invalidate_for_checkin_revision` port를 별도 queue·Outbox를 거치지 않는 in-process 동기 함수로 같은 transaction에서 호출한다. 이 호출도 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE → SUPPORT_ACTION_PLAN` 잠금 순서를 그대로 따르며, 이전 revision의 Safety·Barrier 이력을 보존하고 활성 ActionPlan을 취소한다. 새 상태가 `NOT_TAKEN`이면 Safety부터 다시 시작하며 과거 revision 결과를 현재 흐름에 사용하지 않는다.
 
 ## Support와 실행계획
 
