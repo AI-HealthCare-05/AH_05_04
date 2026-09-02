@@ -73,6 +73,17 @@ def test_no_match_requires_empty_rule_ids_and_healthy_rule_inputs() -> None:
         EVALUATION_CASE_ADAPTER_V1_1.validate_python(ineligible)
 
 
+def test_matched_rules_rejects_ineligible_rule_inputs() -> None:
+    payload = _safety_case()
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="EXPIRED",
+        bundle_eligibility_status="SOURCE_INELIGIBLE",
+    )
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
 @pytest.mark.parametrize(
     ("reason", "runtime_updates"),
     [
@@ -94,12 +105,16 @@ def test_not_invoked_requires_empty_ids_and_matching_typed_reason(
             "expected_rule_outcome": "NOT_INVOKED",
             "expected_rule_ids": [],
             "expected_rule_not_invoked_reason": reason,
+            "expected_provider_invocation": False,
+            "expected_retrieval_invocation": False,
         }
     )
 
     EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 
-    payload["expected"]["expected_rule_not_invoked_reason"] = "SAFETY_ROUTED"
+    payload["expected"]["expected_rule_not_invoked_reason"] = (
+        "BUNDLE_INELIGIBLE" if reason == "SOURCE_INELIGIBLE" else "SOURCE_INELIGIBLE"
+    )
     with pytest.raises(ValidationError):
         EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 
@@ -157,6 +172,98 @@ def test_dependency_failure_is_not_a_rule_not_invoked_reason() -> None:
         expected_provider_invocation=True,
     )
 
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+def test_not_invoked_rejects_dependency_fault_after_rule_first() -> None:
+    payload = _safety_case()
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="EXPIRED",
+        bundle_eligibility_status="SOURCE_INELIGIBLE",
+        dependency_fault="PROVIDER_TIMEOUT",
+    )
+    payload["expected"].update(
+        expected_rule_outcome="NOT_INVOKED",
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="SOURCE_INELIGIBLE",
+        expected_execution_status="TIMED_OUT",
+        expected_provider_invocation=True,
+    )
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize("invocation_field", ["expected_provider_invocation", "expected_retrieval_invocation"])
+def test_not_invoked_rejects_general_pipeline_invocation(invocation_field: str) -> None:
+    payload = _safety_case()
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="EXPIRED",
+        bundle_eligibility_status="SOURCE_INELIGIBLE",
+    )
+    payload["expected"].update(
+        expected_rule_outcome="NOT_INVOKED",
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="SOURCE_INELIGIBLE",
+        expected_provider_invocation=False,
+        expected_retrieval_invocation=False,
+    )
+    payload["expected"][invocation_field] = True
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize("outcome", ["NO_MATCH", "NOT_INVOKED"])
+def test_rule_outcomes_keep_nonempty_request_scope(outcome: str) -> None:
+    payload = _safety_case()
+    payload["expected"].update(
+        expected_rule_outcome=outcome,
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="SAFETY_ROUTED" if outcome == "NOT_INVOKED" else None,
+    )
+    if outcome == "NOT_INVOKED":
+        payload["expected"].update(
+            expected_provider_invocation=False,
+            expected_retrieval_invocation=False,
+        )
+
+    EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+    payload["expected"]["expected_scope_codes"] = []
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    ("fixture", "task_type"),
+    [
+        ("rag-dev-answer-quality-001.json", "ANSWER_QUALITY"),
+        ("rag-dev-answer-grounding-001.json", "ANSWER_GROUNDING"),
+    ],
+)
+def test_answer_only_cases_reject_rule_ids_without_rule_outcome(fixture: str, task_type: str) -> None:
+    path = EVALS_ROOT / "retrieval/cases/dev-foundation-v1" / fixture
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = "1.1.0"
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="ELIGIBLE",
+        bundle_eligibility_status="ELIGIBLE",
+        dependency_fault="NONE",
+    )
+    payload["expected"].update(
+        expected_rule_outcome=None,
+        expected_rule_not_invoked_reason=None,
+    )
+
+    EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+    payload["expected"].update(
+        expected_rule_ids=["ev-synthetic-rule-001"],
+    )
+
+    assert payload["task_type"] == task_type
     with pytest.raises(ValidationError):
         EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 

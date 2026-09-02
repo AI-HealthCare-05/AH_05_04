@@ -784,19 +784,23 @@ def _add_v1_1_case_context_conditions(definitions: dict[str, JsonValue]) -> None
     ]
     conditions = [
         _nested_case_condition(
-            expected_if={"expected_rule_outcome": {"const": "NO_MATCH"}},
+            expected_if={"expected_rule_outcome": {"enum": ["MATCHED_RULES", "NO_MATCH"]}},
             runtime_then={
                 "source_eligibility_status": {"const": "ELIGIBLE"},
                 "bundle_eligibility_status": {"const": "ELIGIBLE"},
             },
         ),
         _nested_case_condition(
-            expected_if={"expected_rule_not_invoked_reason": {"const": "SAFETY_ROUTED"}},
+            expected_if={"expected_rule_outcome": {"const": "NOT_INVOKED"}},
             expected_then={
-                "expected_safety_disposition": {"not": {"const": "NORMAL"}},
                 "expected_provider_invocation": {"const": False},
                 "expected_retrieval_invocation": {"const": False},
             },
+            runtime_then={"dependency_fault": {"const": "NONE"}},
+        ),
+        _nested_case_condition(
+            expected_if={"expected_rule_not_invoked_reason": {"const": "SAFETY_ROUTED"}},
+            expected_then={"expected_safety_disposition": {"not": {"const": "NORMAL"}}},
         ),
         _nested_case_condition(
             expected_if={"expected_rule_not_invoked_reason": {"const": "SOURCE_INELIGIBLE"}},

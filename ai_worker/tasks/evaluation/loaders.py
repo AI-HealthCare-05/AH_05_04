@@ -751,7 +751,13 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
     ):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     schema_set_version = policy.artifact_schema_set_ref.reference.version
-    if schema_set_version != manifest.schema_version:
+    registry = SCHEMA_REGISTRIES.get(schema_set_version)
+    if registry is None:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    member_versions = {entry.schema_id: entry.member_version for entry in registry}
+    if member_versions.get("rag-eval.dataset-manifest") != manifest.schema_version or any(
+        member_versions.get("rag-eval.case") != case.schema_version for case in cases
+    ):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     schema_set_hash = _schema_set_hash(reader, schema_set_version)
     graph = _validate_reference_graph(

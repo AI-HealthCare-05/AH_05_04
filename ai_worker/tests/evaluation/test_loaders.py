@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from ai_worker.tasks.evaluation import loaders as evaluation_loaders
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import load_dataset, load_json_object
@@ -338,6 +339,42 @@ def test_loader_dispatches_schema_set_1_1_without_breaking_v1_fixture(
     )
 
 
+def test_loader_compares_payload_versions_with_authoring_members_not_set_version(
+    tmp_dataset: MutableDatasetFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_dataset.upgrade_to_v1_1()
+    shutil.copytree(tmp_dataset.root / "schemas/1.1.0", tmp_dataset.root / "schemas/1.2.0")
+    registries = dict(SCHEMA_REGISTRIES)
+    registries["1.2.0"] = SCHEMA_REGISTRIES["1.1.0"]
+    monkeypatch.setattr(evaluation_loaders, "SCHEMA_REGISTRIES", registries)
+
+    policy_path = tmp_dataset.root / "policies/dev-foundation-v1.evaluation-policy.json"
+    policy = tmp_dataset.read(policy_path)
+    policy["artifact_schema_set_ref"]["reference"].update(
+        version="1.2.0",
+        hash=tmp_dataset._schema_set_hash("1.1.0"),
+    )
+    members = [
+        policy["evaluation_profile_ref"],
+        policy["comparison_policy_ref"],
+        *policy["required_partition_refs"],
+        *policy["required_gate_refs"],
+        *policy["required_suite_refs"],
+        policy["artifact_schema_set_ref"],
+    ]
+    policy["member_manifest_hash"] = canonical_sha256({"members": members})
+    tmp_dataset.refresh_self_hash(policy)
+    tmp_dataset.write(policy_path, policy)
+
+    loaded = load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+
+    assert loaded.manifest.schema_version == "1.1.0"
+    assert any(
+        reference.kind == "ARTIFACT_SCHEMA_SET" and reference.version == "1.2.0" for reference in loaded.reference_graph
+    )
+
+
 @pytest.mark.parametrize(
     ("outcome", "reason", "runtime_updates"),
     [
@@ -359,6 +396,11 @@ def test_loader_accepts_v1_1_rule_outcomes_without_fake_rule_ids(
             expected_rule_ids=[],
             expected_rule_not_invoked_reason=reason,
         )
+        if outcome == "NOT_INVOKED":
+            case["expected"].update(
+                expected_provider_invocation=False,
+                expected_retrieval_invocation=False,
+            )
         case["context"]["runtime_fixture"].update(runtime_updates)
 
     tmp_dataset.mutate_case("rag-dev-safety-001", set_rule_outcome)

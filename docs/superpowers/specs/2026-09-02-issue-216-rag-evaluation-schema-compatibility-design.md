@@ -37,6 +37,8 @@ OTC `AMBIGUOUS | UNMATCHED` medication identification is not an Evaluation Case 
 
 The directory `evals/schemas/1.1.0/` contains the complete set so exact-path validation and hashing stay closed-world. Reused documents retain their `:1.0.0` `$id`; they are copied byte-for-byte from Schema Set `1.0.0`. The Schema Set hash is computed from sorted `{schema_id, schema_version, schema_sha256}` members, so the set version never impersonates a member version.
 
+The Loader compares Case and Dataset Manifest payload versions with the selected registry members, not with the Schema Set version. This permits a future additive Set to reuse unchanged authoring members without weakening exact member-version validation.
+
 The public Python APIs remain backward compatible:
 
 - `SCHEMA_REGISTRY` and `schema_documents()` continue to mean `1.0.0`.
@@ -66,18 +68,20 @@ Safety and End-to-End Gold add:
 | `expected_rule_outcome` | `MATCHED_RULES`, `NO_MATCH`, `NOT_INVOKED` |
 | `expected_rule_not_invoked_reason` | `null`, `SAFETY_ROUTED`, `SOURCE_INELIGIBLE`, `BUNDLE_INELIGIBLE` |
 
-Other task types require both fields as explicit `null`, preserving the existing explicit-applicability shape.
+Other task types require both fields as explicit `null`, preserving the existing explicit-applicability shape. Answer Quality and Answer Grounding also require `expected_rule_ids=null`; Rule IDs are not meaningful without a Rule outcome.
 
 Cardinality and consistency rules:
 
-- `MATCHED_RULES`: `expected_rule_ids` is non-empty and reason is `null`.
+- `MATCHED_RULES`: `expected_rule_ids` is non-empty, reason is `null`, and Source and Bundle are eligible.
 - `NO_MATCH`: `expected_rule_ids=[]`, reason is `null`, and Source and Bundle are eligible.
-- `NOT_INVOKED`: `expected_rule_ids=[]` and a non-null typed reason is required.
+- `NOT_INVOKED`: `expected_rule_ids=[]`, a non-null typed reason, `dependency_fault=NONE`, and no provider/retrieval invocation are required.
 - `SAFETY_ROUTED` requires a non-`NORMAL` Safety disposition and no provider/retrieval invocation.
 - `SOURCE_INELIGIBLE` requires a non-eligible Source fixture.
 - `BUNDLE_INELIGIBLE` requires `SCOPE_INELIGIBLE | MEMBER_INELIGIBLE`; Source failures use `SOURCE_INELIGIBLE` and cannot be relabeled.
 
-Provider and Retrieval faults occur after the Rule-first step and therefore never mean `NOT_INVOKED`. `PROVIDER_TIMEOUT` requires `TIMED_OUT` after provider invocation; `RETRIEVAL_FAILURE` requires `DEPENDENCY_ERROR` after retrieval invocation. Either fault can coexist with the Rule result that was already produced.
+Provider and Retrieval faults occur after the Rule-first step and therefore cannot coexist with `NOT_INVOKED`. `PROVIDER_TIMEOUT` requires `TIMED_OUT` after provider invocation; `RETRIEVAL_FAILURE` requires `DEPENDENCY_ERROR` after retrieval invocation. Either fault can coexist with a `MATCHED_RULES | NO_MATCH` result that was already produced.
+
+`expected_scope_codes` is the non-empty expected request Scope submitted by the Evaluation Request Guard, not a list derived from matched Rule IDs. It remains required for all Safety and End-to-End Rule outcomes, including `NO_MATCH` and `NOT_INVOKED`, so the Guard can exact-match the Case Scope and reject an empty request Scope.
 
 These cross-field rules are enforced by the Case model, not only by Python call sites, and exported JSON Schema contains equivalent conditional constraints.
 

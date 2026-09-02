@@ -106,7 +106,7 @@ SCHEMA_REGISTRY_V1_1: tuple[SchemaRegistryEntry, ...] = (
         DatasetManifestV11,
         "1.1.0",
     ),
-    *SCHEMA_REGISTRY[2:],
+    *(entry for entry in SCHEMA_REGISTRY if entry.schema_id not in {"rag-eval.case", "rag-eval.dataset-manifest"}),
 )
 
 SCHEMA_REGISTRIES = MappingProxyType(

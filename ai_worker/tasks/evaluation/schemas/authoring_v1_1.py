@@ -112,7 +112,9 @@ class RuntimeFixtureV11(RuntimeFixture):
         source_eligible = self.source_eligibility_status is SourceEligibilityStatus.ELIGIBLE
         bundle_reports_source = self.bundle_eligibility_status is BundleEligibilityStatus.SOURCE_INELIGIBLE
         if source_eligible == bundle_reports_source:
-            raise ValueError("Source and Bundle eligibility axes are contradictory")
+            raise ValueError(
+                "Source eligibility and Bundle SOURCE_INELIGIBLE must identify the same canonical root cause"
+            )
         return self
 
 
@@ -140,11 +142,13 @@ class RetrievalExpectedV11(RetrievalExpected):
 
 
 class AnswerQualityExpectedV11(AnswerQualityExpected):
+    expected_rule_ids: None
     expected_rule_outcome: None
     expected_rule_not_invoked_reason: None
 
 
 class AnswerGroundingExpectedV11(AnswerGroundingExpected):
+    expected_rule_ids: None
     expected_rule_outcome: None
     expected_rule_not_invoked_reason: None
 
@@ -163,8 +167,11 @@ class SafetyExpectedV11(SafetyExpected):
         elif self.expected_rule_outcome is RuleExpectedOutcome.NO_MATCH:
             if has_rules or self.expected_rule_not_invoked_reason is not None:
                 raise ValueError("NO_MATCH requires empty Rule IDs and no not-invoked reason")
-        elif has_rules or self.expected_rule_not_invoked_reason is None:
-            raise ValueError("NOT_INVOKED requires empty Rule IDs and a typed reason")
+        elif self.expected_rule_outcome is RuleExpectedOutcome.NOT_INVOKED:
+            if has_rules or self.expected_rule_not_invoked_reason is None:
+                raise ValueError("NOT_INVOKED requires empty Rule IDs and a typed reason")
+        else:
+            raise ValueError(f"unsupported Rule outcome: {self.expected_rule_outcome}")
         return self
 
 
@@ -172,23 +179,23 @@ class EndToEndRagExpectedV11(SafetyExpectedV11):
     pass
 
 
-def _validate_no_match(runtime: RuntimeFixtureV11) -> None:
+def _validate_rule_inputs(runtime: RuntimeFixtureV11) -> None:
     if (
         runtime.source_eligibility_status is not SourceEligibilityStatus.ELIGIBLE
         or runtime.bundle_eligibility_status is not BundleEligibilityStatus.ELIGIBLE
     ):
-        raise ValueError("NO_MATCH requires eligible Rule inputs")
+        raise ValueError("Rule execution requires eligible Source and Bundle inputs")
 
 
 def _validate_not_invoked(expected: SafetyExpectedV11, runtime: RuntimeFixtureV11) -> None:
+    if runtime.dependency_fault is not DependencyFault.NONE:
+        raise ValueError("NOT_INVOKED requires dependency_fault=NONE")
+    if expected.expected_provider_invocation or expected.expected_retrieval_invocation:
+        raise ValueError("NOT_INVOKED requires no general pipeline invocation")
     reason = expected.expected_rule_not_invoked_reason
     if reason is RuleNotInvokedReason.SAFETY_ROUTED:
-        if (
-            expected.expected_safety_disposition is SafetyDisposition.NORMAL
-            or expected.expected_provider_invocation
-            or expected.expected_retrieval_invocation
-        ):
-            raise ValueError("SAFETY_ROUTED requires a routed disposition and no general pipeline invocation")
+        if expected.expected_safety_disposition is SafetyDisposition.NORMAL:
+            raise ValueError("SAFETY_ROUTED requires a routed disposition")
     elif (
         reason is RuleNotInvokedReason.SOURCE_INELIGIBLE
         and runtime.source_eligibility_status is SourceEligibilityStatus.ELIGIBLE
@@ -265,10 +272,10 @@ class _RuleOutcomeCaseV11(_CaseBaseV11):
         runtime = self.context.runtime_fixture
         if runtime is None:
             raise ValueError("Safety Rule outcome requires a runtime fixture")
-        if expected.expected_rule_outcome is RuleExpectedOutcome.NO_MATCH:
-            _validate_no_match(runtime)
-        elif expected.expected_rule_outcome is RuleExpectedOutcome.NOT_INVOKED:
+        if expected.expected_rule_outcome is RuleExpectedOutcome.NOT_INVOKED:
             _validate_not_invoked(expected, runtime)
+        else:
+            _validate_rule_inputs(runtime)
         _validate_dependency_fault(expected, runtime)
         return self
 

@@ -45,9 +45,13 @@ Dataset Manifest는 Case ID, partition, task type, 합성·비식별 분류, 입
 
 ### Evaluation Schema Set 1.1
 
-`#214` Dataset Freeze 입력 후보는 `rag-eval.schema-set@1.1.0`, SHA-256 `5b8524708198a3c6781503cc166b14e0a2349173a0abd5907cdb0ce38ff24327`이다. 18개 전체 member 중 `rag-eval.case`와 `rag-eval.dataset-manifest`만 `1.1.0`이며 나머지 16개 member는 기존 `1.0.0` canonical 계약을 byte-for-byte 재사용한다. 지정 책임 리뷰 승인 전에는 이 후보를 승인 완료된 Freeze 입력으로 해석하지 않는다.
+`#214` Dataset Freeze 입력 후보는 `rag-eval.schema-set@1.1.0`, SHA-256 `ee60c207cd461d1a415d75d4b77e9976cb5055d4462893b51e1180a7ab2bb108`이다. 18개 전체 member 중 `rag-eval.case`와 `rag-eval.dataset-manifest`만 `1.1.0`이며 나머지 16개 member는 기존 `1.0.0` canonical 계약을 byte-for-byte 재사용한다. 지정 책임 리뷰 승인 전에는 이 후보를 승인 완료된 Freeze 입력으로 해석하지 않는다.
 
-Safety·End-to-End Gold는 Rule 결과를 `MATCHED_RULES | NO_MATCH | NOT_INVOKED`로 구분한다. `MATCHED_RULES`만 비어 있지 않은 `expected_rule_ids`를 가지며, `NO_MATCH`와 `NOT_INVOKED`는 빈 배열을 사용한다. `NOT_INVOKED`는 `SAFETY_ROUTED | SOURCE_INELIGIBLE | BUNDLE_INELIGIBLE` 중 하나의 typed reason을 추가로 요구한다. Source eligibility, Bundle eligibility와 Provider/Retrieval dependency fault도 typed fixture로 기록하고 free-form tag나 가짜 Rule ID를 사용하지 않는다. Provider·Retrieval fault는 Rule-first 이후의 실패이므로 Rule 미실행 사유로 사용하지 않고 이미 확정된 Rule 결과와 독립적으로 기록한다.
+Safety·End-to-End Gold는 Rule 결과를 `MATCHED_RULES | NO_MATCH | NOT_INVOKED`로 구분한다. `MATCHED_RULES`만 비어 있지 않은 `expected_rule_ids`를 가지며, `NO_MATCH`와 `NOT_INVOKED`는 빈 배열을 사용한다. `MATCHED_RULES | NO_MATCH`는 Source·Bundle이 모두 적격이어야 한다. `NOT_INVOKED`는 `SAFETY_ROUTED | SOURCE_INELIGIBLE | BUNDLE_INELIGIBLE` 중 하나의 typed reason, `dependency_fault=NONE`, Provider·Retrieval 미호출을 요구한다. Provider·Retrieval fault는 Rule-first 이후의 실패이므로 이미 확정된 `MATCHED_RULES | NO_MATCH` 결과와만 결속한다. Answer-only Case는 Rule outcome을 소유하지 않으므로 Rule ID도 `null`이다.
+
+`expected_scope_codes`는 매칭된 Rule의 부속값이 아니라 해당 Evaluation Request가 Guard에 제출하는 기대 요청 Scope다. 따라서 Rule 결과와 독립적으로 Safety·End-to-End Case에서 비어 있지 않아야 하며, Case 기대 Scope와 EVALUATION_REQUEST의 정렬 Scope·Scope Manifest Hash를 exact-match한다. Source eligibility, Bundle eligibility와 Provider/Retrieval dependency fault도 typed fixture로 기록하고 free-form tag나 가짜 Rule ID를 사용하지 않는다.
+
+Loader는 Case·Dataset Manifest의 payload version을 Schema Set version 자체가 아니라 선택된 registry의 해당 member version과 비교한다. 따라서 후속 Schema Set이 바뀌지 않은 authoring member를 재사용해도 Set version을 member version으로 오인하지 않는다.
 
 Schema `1.1.0`의 `FROZEN` Dataset은 모든 Case Gold, Evidence Mapping과 Critical Claim Rubric의 Team `APPROVED` closure가 완전해야 Loader를 통과한다. 하나라도 `DRAFT | REVIEWED`이면 `EVAL_REVIEW_PROVENANCE_INVALID`로 실패한다. 상세 결정은 [RAG Evaluation Schema Set 1.1 Freeze](../../../governance/decisions/2026-09-02-rag-evaluation-schema-set-1-1-freeze.md)를 따른다.
 
