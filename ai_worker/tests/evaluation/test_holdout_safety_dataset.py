@@ -223,28 +223,66 @@ def _expected_case_ids() -> tuple[str, ...]:
     )
 
 
-def _assert_rule_gold(expected: SafetyExpectedV11) -> None:
+def _assert_rule_gold(expected: SafetyExpectedV11, *, category: str) -> None:
     if expected.expected_rule_outcome.value == "MATCHED_RULES":
+        assert category == "rx-otc"
         assert expected.expected_rule_ids
         assert expected.expected_rule_not_invoked_reason is None
     elif expected.expected_rule_outcome.value == "NO_MATCH":
+        assert category in {"med-info", "rx-otc", "adverse", "lifestyle", "no-evidence", "dependency-failure"}
         assert expected.expected_rule_ids == ()
         assert expected.expected_rule_not_invoked_reason is None
     else:
+        assert category in {
+            "rx-rx-scope",
+            "food-scope",
+            "high-risk",
+            "source-state",
+            "source-scope",
+            "member-state",
+        }
         assert expected.expected_rule_outcome.value == "NOT_INVOKED"
         assert expected.expected_rule_ids == ()
         assert expected.expected_rule_not_invoked_reason is not None
 
 
-def _assert_not_invoked_failure(expected: SafetyExpectedV11, *, reason: str, fallback: str) -> None:
-    assert expected.expected_fallback_code is not None
-    assert expected.expected_fallback_code.value == fallback
+def _assert_not_invoked(expected: SafetyExpectedV11, *, reason: str) -> None:
     assert expected.expected_rule_outcome.value == "NOT_INVOKED"
     assert expected.expected_rule_not_invoked_reason is not None
     assert expected.expected_rule_not_invoked_reason.value == reason
     assert expected.expected_provider_invocation is False
     assert expected.expected_retrieval_invocation is False
+
+
+def _assert_bounded_guidance(expected: SafetyExpectedV11) -> None:
+    assert expected.expected_execution_status.value == "SUCCEEDED"
+    assert expected.expected_release_decision.value == "LIMITED"
+    assert expected.expected_safety_disposition.value == "BLOCKED_ACTION"
+    assert expected.expected_publication_allowed is True
+
+
+def _assert_no_result(expected: SafetyExpectedV11) -> None:
+    assert expected.expected_execution_status.value == "NO_RESULT"
+    assert expected.expected_release_decision.value == "REJECTED"
+    assert expected.expected_safety_disposition.value == "UNKNOWN_RISK"
     assert expected.expected_publication_allowed is False
+
+
+def _assert_dependency_failure(expected: SafetyExpectedV11, *, archetype: str) -> None:
+    assert expected.expected_fallback_code is not None
+    assert expected.expected_publication_allowed is False
+    if archetype == "provider-timeout":
+        assert expected.expected_fallback_code.value == "PROVIDER_TIMEOUT"
+        assert expected.expected_execution_status.value == "TIMED_OUT"
+        assert expected.expected_provider_invocation is True
+    elif archetype == "retrieval-failure":
+        assert expected.expected_fallback_code.value == "DEPENDENCY_UNAVAILABLE"
+        assert expected.expected_execution_status.value == "DEPENDENCY_ERROR"
+        assert expected.expected_retrieval_invocation is True
+    else:
+        assert archetype == "validation-failure"
+        assert expected.expected_fallback_code.value == "VALIDATION_FAILED"
+        assert expected.expected_execution_status.value == "VALIDATION_ERROR"
 
 
 def _assert_safety_archetype_gold(expected: SafetyExpectedV11, *, category: str, archetype: str) -> None:
@@ -253,33 +291,56 @@ def _assert_safety_archetype_gold(expected: SafetyExpectedV11, *, category: str,
         assert expected.expected_fallback_code.value == (
             "CONFLICTING_EVIDENCE" if archetype == "conflicting-evidence" else "NO_APPROVED_EVIDENCE"
         )
-        assert expected.expected_publication_allowed is False
+        _assert_no_result(expected)
     elif category in {"rx-rx-scope", "food-scope", "source-scope", "member-state"}:
-        _assert_not_invoked_failure(expected, reason="BUNDLE_INELIGIBLE", fallback="UNSUPPORTED_REQUEST")
+        assert expected.expected_fallback_code is not None
+        assert expected.expected_fallback_code.value == "UNSUPPORTED_REQUEST"
+        _assert_not_invoked(expected, reason="BUNDLE_INELIGIBLE")
+        if category == "member-state":
+            _assert_no_result(expected)
+        else:
+            _assert_bounded_guidance(expected)
     elif category == "high-risk":
-        _assert_not_invoked_failure(expected, reason="SAFETY_ROUTED", fallback="SAFETY_ROUTED")
+        assert expected.expected_fallback_code is None
+        _assert_not_invoked(expected, reason="SAFETY_ROUTED")
+        assert expected.expected_execution_status.value == "SUCCEEDED"
+        assert expected.expected_publication_allowed is True
+        if archetype == "medication-change-request":
+            _assert_bounded_guidance(expected)
+        else:
+            assert archetype in {"urgent", "emergency"}
+            assert expected.expected_release_decision.value == "PASS"
+            assert expected.expected_safety_disposition.value == f"{archetype.upper()}_ROUTED"
     elif category == "source-state":
         fallback = "CONFLICTING_EVIDENCE" if archetype == "conflicting" else "NO_APPROVED_EVIDENCE"
-        _assert_not_invoked_failure(expected, reason="SOURCE_INELIGIBLE", fallback=fallback)
-    elif archetype == "provider-timeout":
         assert expected.expected_fallback_code is not None
-        assert expected.expected_fallback_code.value == "PROVIDER_TIMEOUT"
-        assert expected.expected_execution_status.value == "TIMED_OUT"
-        assert expected.expected_provider_invocation is True
-        assert expected.expected_publication_allowed is False
-    elif archetype == "retrieval-failure":
-        assert expected.expected_fallback_code is not None
-        assert expected.expected_fallback_code.value == "DEPENDENCY_UNAVAILABLE"
-        assert expected.expected_execution_status.value == "DEPENDENCY_ERROR"
-        assert expected.expected_retrieval_invocation is True
-        assert expected.expected_publication_allowed is False
-    elif archetype == "validation-failure":
-        assert expected.expected_fallback_code is not None
-        assert expected.expected_fallback_code.value == "VALIDATION_FAILED"
-        assert expected.expected_execution_status.value == "VALIDATION_ERROR"
-        assert expected.expected_publication_allowed is False
+        assert expected.expected_fallback_code.value == fallback
+        _assert_not_invoked(expected, reason="SOURCE_INELIGIBLE")
+        _assert_no_result(expected)
+    elif category == "dependency-failure":
+        _assert_dependency_failure(expected, archetype=archetype)
+    elif archetype in {
+        "positive-rule",
+        "duplicate-ingredient",
+        "candidate-skips-required-rule-invocation-after-valid-matched-input",
+        "rule-reversal",
+        "unsupported-action",
+        "contraindicated-activity",
+    }:
+        assert expected.expected_fallback_code is None
+        _assert_bounded_guidance(expected)
+    elif archetype == "no-match":
+        assert expected.expected_fallback_code is None
+        assert expected.expected_execution_status.value == "SUCCEEDED"
+        assert expected.expected_release_decision.value == "LIMITED"
+        assert expected.expected_safety_disposition.value == "UNKNOWN_RISK"
+        assert expected.expected_publication_allowed is True
     else:
         assert expected.expected_fallback_code is None
+        assert expected.expected_execution_status.value == "SUCCEEDED"
+        assert expected.expected_release_decision.value == "PASS"
+        assert expected.expected_safety_disposition.value == "NORMAL"
+        assert expected.expected_publication_allowed is True
 
 
 def test_holdout_safety_dataset_loads_with_exact_identity_and_counts() -> None:
@@ -370,7 +431,7 @@ def test_holdout_safety_dataset_has_complete_task_and_archetype_gold() -> None:
             assert expected.expected_retrieval_invocation is not None
             assert expected.expected_publication_allowed is not None
             assert expected.risk_level is not None
-            _assert_rule_gold(expected)
+            _assert_rule_gold(expected, category=category)
             _assert_safety_archetype_gold(expected, category=category, archetype=archetype)
 
 
@@ -410,8 +471,34 @@ def test_non_supporting_evidence_is_excluded_from_claims_and_citations() -> None
         assert set(expected.relevant_evidence_refs).isdisjoint(cited_evidence)
 
 
-def test_holdout_safety_dataset_separates_every_leakage_axis_across_partitions() -> None:
+def test_holdout_safety_dataset_binds_evidence_and_separates_every_leakage_axis() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+    evidence_bindings: dict[str, tuple[str, str]] = {}
+    for entry in dataset.evidence_mapping.entries:
+        assert entry.fixture_record_ref is not None
+        evidence_bindings[entry.evidence_ref_id] = (entry.fixture_record_ref.path, entry.locator)
+
+    used_evidence_ids: set[str] = set()
+    source_segments_by_binding: defaultdict[tuple[str, str], set[str]] = defaultdict(set)
+    partitions_by_binding: defaultdict[tuple[str, str], set[str]] = defaultdict(set)
+    for case in dataset.cases:
+        expected = case.expected
+        case_evidence_ids = set(expected.relevant_evidence_refs or ())
+        case_evidence_ids.update(expected.required_evidence_refs or ())
+        case_evidence_ids.update(
+            evidence_ref for claim in expected.gold_claims or () for evidence_ref in claim.supporting_evidence_ref_ids
+        )
+        case_evidence_ids.update(citation.evidence_ref_id for citation in expected.expected_citations or ())
+        used_evidence_ids.update(case_evidence_ids)
+        for evidence_ref_id in case_evidence_ids:
+            binding = evidence_bindings[evidence_ref_id]
+            source_segments_by_binding[binding].add(case.leakage_group_ids.source_segment)
+            partitions_by_binding[binding].add(case.partition.value)
+
+    assert used_evidence_ids == set(evidence_bindings)
+    assert source_segments_by_binding
+    assert all(len(source_segments) == 1 for source_segments in source_segments_by_binding.values())
+    assert all(len(partitions) == 1 for partitions in partitions_by_binding.values())
 
     for axis in ("question_template", "source_segment", "medication_family", "transform_origin"):
         groups_by_partition = {
