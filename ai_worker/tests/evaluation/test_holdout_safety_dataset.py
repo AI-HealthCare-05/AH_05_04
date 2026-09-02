@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
-from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import SafetyExpectedV11
+from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
+    EVALUATION_CASE_ADAPTER_V1_1,
+    EvaluationCaseV11,
+    SafetyExpectedV11,
+)
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-holdout-safety-v1.dataset.json"
+CASE_ROOT = EVALS_ROOT / "retrieval/cases/rag-holdout-safety-v1"
 
 CASE_ID_PATTERN = re.compile(r"^rag-hs-v1-(?:h|s)-[a-z0-9-]+-(?:ret|ansq|grnd|safe|e2e)-[a-z0-9-]+-[0-9]{3}$")
 
@@ -163,12 +168,79 @@ EXPECTED_ARCHETYPES: Mapping[tuple[str, str, str, str], int] = MappingProxyType(
         ("SAFETY_REGRESSION", "member-state", "END_TO_END_RAG", "inactive-operation"): 1,
         ("SAFETY_REGRESSION", "member-state", "SAFETY", "partial-bundle-attempt"): 1,
         ("SAFETY_REGRESSION", "member-state", "END_TO_END_RAG", "partial-bundle-attempt"): 1,
-        ("SAFETY_REGRESSION", "dependency-failure", "SAFETY", "provider-timeout"): 2,
+        ("SAFETY_REGRESSION", "dependency-failure", "SAFETY", "provider-timeout"): 3,
         ("SAFETY_REGRESSION", "dependency-failure", "END_TO_END_RAG", "provider-timeout"): 2,
-        ("SAFETY_REGRESSION", "dependency-failure", "SAFETY", "retrieval-failure"): 2,
-        ("SAFETY_REGRESSION", "dependency-failure", "END_TO_END_RAG", "retrieval-failure"): 1,
-        ("SAFETY_REGRESSION", "dependency-failure", "SAFETY", "validation-failure"): 2,
-        ("SAFETY_REGRESSION", "dependency-failure", "END_TO_END_RAG", "validation-failure"): 1,
+        ("SAFETY_REGRESSION", "dependency-failure", "SAFETY", "retrieval-failure"): 3,
+        ("SAFETY_REGRESSION", "dependency-failure", "END_TO_END_RAG", "retrieval-failure"): 2,
+    }
+)
+
+EXPECTED_LEAKAGE_GROUP_COUNTS: Mapping[str, Mapping[tuple[str, str], int]] = MappingProxyType(
+    {
+        "question_template": MappingProxyType(
+            {
+                ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_FIND_REVIEWED_RECORD"): 11,
+                ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_SHORT_EXPLANATION"): 15,
+                ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_SUPPORTING_RECORD"): 15,
+                ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_COMPLETE_RESPONSE"): 19,
+                ("SAFETY_REGRESSION", "SYNTHETIC_QUESTION_TEMPLATE_USER_REPORT_REPLY"): 56,
+                ("SAFETY_REGRESSION", "SYNTHETIC_QUESTION_TEMPLATE_FINAL_MESSAGE"): 37,
+            }
+        ),
+        "source_segment": MappingProxyType(
+            {
+                ("HOLDOUT", "SYNTHETIC_SOURCE_SEGMENT_H_ADVERSE"): 10,
+                ("HOLDOUT", "SYNTHETIC_SOURCE_SEGMENT_H_LIFESTYLE"): 12,
+                ("HOLDOUT", "SYNTHETIC_SOURCE_SEGMENT_H_MED_INFO"): 20,
+                ("HOLDOUT", "SYNTHETIC_SOURCE_SEGMENT_H_RX_OTC"): 8,
+                ("HOLDOUT", "SYNTHETIC_SOURCE_SEGMENT_H_SCOPE_POLICY"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_SOURCE_SEGMENT_S_ADVERSE"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_SOURCE_SEGMENT_S_EMERGENCY_POLICY"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_SOURCE_SEGMENT_S_FAIL_CLOSED_POLICY"): 58,
+                ("SAFETY_REGRESSION", "SYNTHETIC_SOURCE_SEGMENT_S_LIFESTYLE"): 3,
+                ("SAFETY_REGRESSION", "SYNTHETIC_SOURCE_SEGMENT_S_RX_OTC"): 12,
+                ("SAFETY_REGRESSION", "SYNTHETIC_SOURCE_SEGMENT_S_URGENT_POLICY"): 10,
+            }
+        ),
+        "medication_family": MappingProxyType(
+            {
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_H_CINDER"): 15,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_H_GROVE"): 17,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_H_HARBOR"): 28,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_AURORA"): 15,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_CEDAR"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_COMET"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_EMBER"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_LANTERN"): 8,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_NEBULA"): 12,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_ONYX"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_QUARTZ"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_SAFFRON"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_STORM"): 3,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_TIDAL"): 10,
+            }
+        ),
+        "transform_origin": MappingProxyType(
+            {
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_ADVERSE"): 10,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_FOOD_SCOPE"): 5,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_LIFESTYLE"): 12,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_MED_INFO"): 20,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_RX_OTC"): 8,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_RX_RX_SCOPE"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_ADVERSE"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_DEPENDENCY_FAILURE"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_FOOD_SCOPE"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_HIGH_RISK"): 15,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_LIFESTYLE"): 3,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_MEMBER_STATE"): 8,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_NO_EVIDENCE"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_RX_OTC"): 12,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_RX_RX_SCOPE"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_SOURCE_SCOPE"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_SOURCE_STATE"): 10,
+            }
+        ),
     }
 )
 
@@ -185,11 +257,49 @@ TASK_CODES: Mapping[str, str] = MappingProxyType(
 ID_CATEGORY_CODE_ALIASES: Mapping[str, str] = MappingProxyType({"high-risk": "high-acuity"})
 ID_ARCHETYPE_CODE_ALIASES: Mapping[str, str] = MappingProxyType({"risk-citation-chain": "citation-chain-risk"})
 
+FICTIONAL_TOKEN_PATTERN = re.compile(r"\b(?:FICTIONAL|SYNTHETIC)_[A-Z0-9_]+\b")
+ORDINAL_SCENARIO_VALUES = (
+    "during a new fictional intake",
+    "after a fictional user adds one more detail",
+    "during a check of a fictional draft response",
+    "before starting a fictional morning routine",
+    "while preparing a short fictional handoff",
+)
+EVALUATOR_ARTIFACT_PATTERN = re.compile(
+    r"\b(?:draft|candidate(?: response| output)?|output|composed fictional response)\b",
+    re.IGNORECASE,
+)
+LABELED_FAILURE_PATTERN = re.compile(
+    r"\b(?:omit(?:s|ted|ting)?|revers(?:e|es|ed|ing)|bypass(?:es|ed|ing)?)\b"
+    r".{0,80}\b(?:rules?|citations?|claims?)\b"
+    r"|\b(?:rules?|citations?|claims?)\b"
+    r".{0,80}\b(?:omit(?:s|ted|ting)?|revers(?:e|es|ed|ing)|bypass(?:es|ed|ing)?)\b",
+    re.IGNORECASE,
+)
+
 
 def _slice_value(slice_ids: tuple[str, ...], prefix: str) -> str:
     values = [value.removeprefix(prefix) for value in slice_ids if value.startswith(prefix)]
     assert len(values) == 1
     return values[0]
+
+
+def _case_projection(
+    cases: Iterable[EvaluationCaseV11],
+) -> tuple[
+    Counter[tuple[str, str, str]],
+    Counter[tuple[str, str, str, str]],
+]:
+    category_tasks: Counter[tuple[str, str, str]] = Counter()
+    archetypes: Counter[tuple[str, str, str, str]] = Counter()
+    for case in cases:
+        partition = case.partition.value
+        task = case.task_type.value
+        category = _slice_value(case.slice_ids, "category:")
+        archetype = _slice_value(case.slice_ids, "archetype:")
+        category_tasks[(partition, category, task)] += 1
+        archetypes[(partition, category, task, archetype)] += 1
+    return category_tasks, archetypes
 
 
 def _catalog_projection(
@@ -208,6 +318,20 @@ def _catalog_projection(
         category_tasks[(partition, category, task)] += 1
         archetypes[(partition, category, task, archetype)] += 1
     return category_tasks, archetypes
+
+
+def _load_committed_cases() -> tuple[EvaluationCaseV11, ...]:
+    return tuple(
+        EVALUATION_CASE_ADAPTER_V1_1.validate_json(case_path.read_bytes())
+        for case_path in sorted(CASE_ROOT.glob("*.json"))
+    )
+
+
+def _normalize_query_scaffold(query: str) -> str:
+    normalized = FICTIONAL_TOKEN_PATTERN.sub("<FICTIONAL_TOKEN>", query)
+    for scenario_value in ORDINAL_SCENARIO_VALUES:
+        normalized = normalized.replace(scenario_value, "<ORDINAL_SCENARIO>")
+    return normalized
 
 
 def _expected_case_ids() -> tuple[str, ...]:
@@ -280,9 +404,7 @@ def _assert_dependency_failure(expected: SafetyExpectedV11, *, archetype: str) -
         assert expected.expected_execution_status.value == "DEPENDENCY_ERROR"
         assert expected.expected_retrieval_invocation is True
     else:
-        assert archetype == "validation-failure"
-        assert expected.expected_fallback_code.value == "VALIDATION_FAILED"
-        assert expected.expected_execution_status.value == "VALIDATION_ERROR"
+        raise AssertionError(f"unsupported dependency-failure archetype: {archetype}")
 
 
 def _assert_safety_archetype_gold(expected: SafetyExpectedV11, *, category: str, archetype: str) -> None:
@@ -360,6 +482,63 @@ def test_expected_case_ids_do_not_collide_with_secret_key_sentinel_pattern() -> 
     assert len(expected_ids) == 153
     for case_id in expected_ids:
         validate_privacy_boundary({"case_id": case_id})
+
+
+def test_committed_cases_have_exact_catalog_and_leakage_group_maps() -> None:
+    cases = _load_committed_cases()
+    category_tasks, archetypes = _case_projection(cases)
+
+    assert len(cases) == 153
+    assert Counter(case.partition.value for case in cases) == EXPECTED_PARTITIONS
+    assert Counter((case.partition.value, case.task_type.value) for case in cases) == EXPECTED_TASKS
+    assert category_tasks == EXPECTED_CATEGORY_TASKS
+    for axis, expected_counts in EXPECTED_LEAKAGE_GROUP_COUNTS.items():
+        assert (
+            Counter((case.partition.value, getattr(case.leakage_group_ids, axis)) for case in cases) == expected_counts
+        )
+    assert archetypes == EXPECTED_ARCHETYPES
+
+
+def test_query_scaffolds_do_not_cross_question_templates_or_partitions() -> None:
+    cases = _load_committed_cases()
+    labels_by_scaffold: defaultdict[str, set[tuple[str, str]]] = defaultdict(set)
+
+    for case in cases:
+        scaffold = _normalize_query_scaffold(case.query)
+        labels_by_scaffold[scaffold].add((case.leakage_group_ids.question_template, case.partition.value))
+
+    assert len(labels_by_scaffold) < len(cases)
+    assert all(len(labels) == 1 for labels in labels_by_scaffold.values())
+
+
+def test_queries_do_not_leak_candidate_or_evaluator_failure_labels() -> None:
+    cases = _load_committed_cases()
+    candidate_skip_cases = [
+        case
+        for case in cases
+        if "archetype:candidate-skips-required-rule-invocation-after-valid-matched-input" in case.slice_ids
+    ]
+
+    for case in cases:
+        assert EVALUATOR_ARTIFACT_PATTERN.search(case.query) is None, case.case_id
+        assert LABELED_FAILURE_PATTERN.search(case.query) is None, case.case_id
+
+    assert len(candidate_skip_cases) == 2
+    for case in candidate_skip_cases:
+        assert "category:rx-otc" in case.slice_ids
+        assert "FICTIONAL_RX_" in case.query
+        assert "FICTIONAL_OTC_" in case.query
+        runtime_fixture = case.context.runtime_fixture
+        assert runtime_fixture is not None
+        assert runtime_fixture.bundle_eligibility_status.value == "ELIGIBLE"
+        assert runtime_fixture.source_eligibility_status.value == "ELIGIBLE"
+        assert runtime_fixture.dependency_fault.value == "NONE"
+        assert not re.search(
+            r"\b(?:processing step|rules?|citations?|claims?|invocation|"
+            r"omit(?:s|ted|ting)?|revers(?:e|es|ed|ing)|bypass(?:es|ed|ing)?)\b",
+            case.query,
+            re.IGNORECASE,
+        ), case.case_id
 
 
 def test_holdout_safety_dataset_has_exact_partition_task_and_category_projection() -> None:
