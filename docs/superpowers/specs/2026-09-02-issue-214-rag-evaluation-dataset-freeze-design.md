@@ -46,8 +46,9 @@ into the Dataset. The exact values used here are:
 - Insufficient sample after completed execution: `COMPLETED/INCONCLUSIVE`
 
 Resolver quality cases identified as R0–R3 in older planning are not duplicated in this Dataset. Candidate
-Resolver and OCR quality remain upstream Contract Receipt concerns. This Dataset owns Retrieval, Answer,
-Grounding, Citation, Rule-first, Scope, Safety, and end-to-end RAG expectations only.
+Resolver, OTC identity-insufficient preflight, and OCR quality remain upstream Contract Receipt concerns. This
+Dataset owns Retrieval, Answer, Grounding, Citation, Rule-first, Scope, Safety, and end-to-end RAG expectations
+only.
 
 ## 3. Goals and non-goals
 
@@ -71,8 +72,8 @@ Before Dataset Case authoring begins, [#216](https://github.com/AI-HealthCare-05
 publish approved Evaluation Schema Set `1.1.0` with an immutable ID/version/hash reference and must:
 
 - distinguish `MATCHED_RULES`, `NO_MATCH`, and `NOT_INVOKED` without fabricating a Rule ID
-- represent the approved OTC preflight result needed by Safety evaluation, or explicitly route that branch to
-  an upstream Contract Receipt instead of an `eval.evaluation_case`
+- keep OTC identity-insufficient preflight under the upstream Contract Receipt boundary, outside
+  `eval.evaluation_case`, and define the immutable Receipt reference consumed by later end-to-end evaluation
 - represent deterministic Source/Bundle eligibility and dependency-fault inputs consumed by the future Runner
 - add schema, exported-schema parity, loader, privacy, and negative contract tests
 - update the authoritative repository target and Decision/Contract Freeze version in the same focused PR
@@ -215,7 +216,8 @@ Allocation is risk-based within a category rather than a mechanical category spl
   stable Scope behavior under valid inputs and approved Sources.
 - `SAFETY_REGRESSION` contains cases whose incorrect handling can create harm or bypass a fail-closed boundary,
   including critical or forbidden claims, high-risk routing, unsupported or out-of-scope requests, Rule-first
-  reversal, insufficient identity, Source or Scope ineligibility, Prompt Injection, and dependency failures.
+  reversal or non-invocation after valid matched input, Source or Scope ineligibility, Prompt Injection, and
+  dependency failures.
 - The schema `task_type` records the primary evaluator (`RETRIEVAL`, `ANSWER_QUALITY`, `ANSWER_GROUNDING`,
   `SAFETY`, or `END_TO_END_RAG`); the evaluation-plan category is retained as a stable Slice/tag. A category
   does not create a new task-type enum.
@@ -246,7 +248,7 @@ The Safety archetype distribution is also fixed so a category total cannot be fi
 
 | Safety category | Required archetypes and counts |
 | --- | --- |
-| Prescription–OTC (12) | positive Rule 4 E2E; no match 2 S; identity insufficient 2 S; duplicate ingredient 2 E2E; Rule reversal 2 S |
+| Prescription–OTC (12) | positive Rule 4 E2E; no match 2 S; Rule not invoked after valid matched input 2 S; duplicate ingredient 2 E2E; Rule reversal 2 S |
 | Adverse effects (5) | critical omission 2 S; unsupported safety claim 2 E2E; missing Citation 1 S |
 | Food/activity (3) | unsupported action 2 S; contraindicated activity 1 E2E |
 | Insufficient Evidence (10) | no Evidence 4 S; conflicting Evidence 3 E2E; invalid Candidate Evidence reference 2 S + 1 E2E |
@@ -281,11 +283,13 @@ rag-hs-v1-{h|s}-{category_code}-{task_code}-{archetype_code}-{ordinal_3_digits}
 label shown in the two tables. The ordinal starts at `001` and resets for each
 `(partition, category_code, task_code, archetype_code)` tuple.
 
-There is no second allocation source of truth. The loader derives a deterministic allocation projection from
-the 153 schema-valid Case files using `case_id`, `partition`, `task_type`, required category/archetype Slice IDs,
-Gold applicability, and Leakage axes. It rejects any projection that differs from the tables above. The
-Dataset Manifest's existing Case file hashes and resource-set hash therefore bind the allocation without a new
-unhashed allocation artifact.
+There is no second allocation source of truth. A #214 Dataset-specific catalog conformance test derives a
+deterministic allocation projection from the 153 schema-valid Case files using `case_id`, `partition`,
+`task_type`, required category/archetype Slice IDs, Gold applicability, and Leakage axes. It rejects any
+projection that differs from the tables above. The generic loader continues to enforce schema, graph, hash,
+approval, privacy, and Leakage invariants without hard-coding this Dataset's counts or archetypes. The Dataset
+Manifest's existing Case file hashes and resource-set hash bind the allocation without a new unhashed
+allocation artifact.
 
 Every Case uses `dataset_code=rag-holdout-safety`, `dataset_version=1.0.0`, a canonical `input_sha256`, and the
 task-specific expected-value model approved by #216 Schema Set `1.1.0`. Non-applicable expected fields remain
@@ -493,8 +497,9 @@ Implementation follows test-first changes around the existing #122 loader and sc
 ### Dataset acceptance
 
 - Exact Dataset identity, version, status, classification, and partition counts.
-- Exact 153-Case catalog, the 12-category 60/93 allocation matrix, and expected partition/task matrix.
-- Exact Safety archetype counts and deterministic Case-ID derivation.
+- Dataset-specific conformance of the exact 153-Case catalog, 12-category 60/93 allocation matrix, and
+  partition/task matrix without adding those values to the generic loader contract.
+- Dataset-specific conformance of exact Safety archetype counts and deterministic Case-ID derivation.
 - Complete structured Gold for every Case, including task-applicable Evidence, Claims, Citations, Rule, Scope,
   Safety, fallback, invocation, and publication expectations.
 - Complete Evidence, Rubric, Profile, Policy, Suite, and protected receipt graph.
@@ -566,9 +571,9 @@ The #157 handoff contains the exact immutable references and hashes for:
 - artifact schema set
 - protected artifact receipt
 
-The handoff marks the protected receipt as Case-only, records
-`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` until the prerequisite merges, and records
-`WAITING_FOR_APPROVED_COMPARISON_POLICY` until the first HOLDOUT Baseline is authorized.
+The handoff marks the protected receipt as Case-only, records #216 as a resolved prerequisite with the exact
+Schema Set immutable reference, and records `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the only active
+HOLDOUT blocker until the first Baseline is authorized.
 
 ## 14. Risks and mitigations
 
@@ -579,7 +584,7 @@ The handoff marks the protected receipt as Case-only, records
 | Squash merge invalidates a recorded fixture commit. | Use content hashes and protected artifact receipt; #157 records Runner/Baseline commits later. |
 | The initial 153-Case workload is mistaken for a permanent maximum or Release-quality statistical sample. | `runtime_eligible=false`, diagnostic Policy scopes, no Gate refs, explicit future `INCONCLUSIVE` behavior, and append-only Safety versioning. |
 | A later active OTC Rule Set contains Rule IDs absent from independently executed Safety groups. | Evaluate set inclusion, keep HOLDOUT v1 immutable, and publish a new Dataset version that appends Safety Cases until every active positive Rule member is executed. |
-| A Safety branch is forced into schema `1.0.0` using a dummy Rule or free-form tag. | Block Case authoring until the separately approved compatibility contract represents no-match, not-invoked, preflight, and fault inputs explicitly. |
+| A Safety branch is forced into schema `1.0.0` using a dummy Rule or free-form tag. | Block Case authoring until the separately approved compatibility contract represents no-match, not-invoked, and fault inputs explicitly and binds OTC identity-insufficient preflight to its upstream Receipt. |
 | A prose reference answer is mistaken for the Gold oracle. | Make structured Claims, forbidden Claims, Evidence, Citation, routing, fallback, invocation, and publication expectations normative; reference prose is reviewer guidance only. |
 | HOLDOUT is inspected before its required Policy is frozen. | Verify Runner/Metrics on DEV, freeze the independent Comparison/Evaluation Policy, then authorize the first HOLDOUT Baseline. |
 | Dataset content version is coupled to Policy or Suite changes. | Version Dataset/Gold/Evidence/Rubric separately from Profile/Policy/Suite and bind each run through explicit immutable refs and a resolved configuration hash. |
