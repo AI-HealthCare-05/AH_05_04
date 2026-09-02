@@ -90,6 +90,23 @@ class AsyncJobRepository:
         result = await self.session.execute(select(AiJob).where(AiJob.id == job_id))
         return result.scalars().first()
 
+    async def get_interim_domain_reference(self, *, job: AiJob) -> tuple[DomainType, UUID] | None:
+        """임시 구현 — `GET /jobs/{job_id}`의 `domain_type`/`domain_id`/`result_url` 구성과
+        소유권 이중 확인(track-a-migration-rollback-v1.md §6)에 필요한 값이지만,
+        `ocr_job`/`guide`/`chat_message`의 `ai_job_id` 역참조가 아직 없습니다(OCR은 #212,
+        Guide·Chat은 이슈 미생성). 정식 값의 원본은 도메인 row의 `ai_job_id`여야 하지만,
+        그 컬럼이 생기기 전까지는 접수 시점에 채운 `outbox_event.domain_type`/`domain_id`를
+        `job.expected_event_id`로 따라가 대신 씁니다. Outbox는 30일 보존이라 그 이후
+        삭제되면(`ON DELETE SET NULL`) 이 경로로는 값을 찾을 수 없습니다 — 도메인 row에
+        `ai_job_id`가 추가되면 이 메서드를 역조회로 교체해야 합니다.
+        """
+        if job.expected_event_id is None:
+            return None
+        event = await self.session.get(OutboxEvent, job.expected_event_id)
+        if event is None or event.domain_type is None or event.domain_id is None:
+            return None
+        return (event.domain_type, event.domain_id)
+
     async def create_job(
         self,
         *,
