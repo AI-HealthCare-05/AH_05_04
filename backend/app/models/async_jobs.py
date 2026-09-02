@@ -118,6 +118,9 @@ class AiJob(_CreatedUpdatedColumns, Base):
         Index("idx_ai_job_user_status_updated", "user_id", "status", "updated_at", "id"),
         Index("idx_ai_job_status_available", "status", "available_at", "id"),
         Index("idx_ai_job_expected_event", "expected_event_id"),
+        # outbox_event/dlq_outbox_event의 claim_expires_at처럼 만료 lease reclaim 조회용입니다.
+        # 90일 보존으로 셋 중 가장 크게 자라는 테이블이라 인덱스 없이는 이 조회가 full scan이 됩니다.
+        Index("idx_ai_job_lease_expires", "status", "lease_expires_at", "id"),
         CheckConstraint(f"job_type IN ({_sql_in_list(AiJobType)})", name="chk_ai_job_type"),
         CheckConstraint(
             f"status IN ({_sql_in_list(AiJobStatus)})",
@@ -164,6 +167,9 @@ class AiJob(_CreatedUpdatedColumns, Base):
         ForeignKey("outbox_event.event_id", use_alter=True, name="fk_ai_job_last_consumed_event", ondelete="SET NULL"),
         nullable=True,
     )
+    # async-job-v1.md "시도와 재시도": 접수 직후 attempt_count=0이 정본입니다(최초 outbox_event.attempt=1과는
+    # 다른 축). Worker가 lease를 획득하는 transaction에서 attempt_count를 수신 attempt 값으로 갱신하며,
+    # 그 전까지 Provider 호출·ACK 검증에서 attempt_count를 수신 attempt와 동일하다고 가정하지 않습니다.
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     available_at: Mapped[datetime] = _now_timestamp_column()
@@ -335,16 +341,21 @@ class MessageQuarantine(Base):
         UniqueConstraint("stream_name", "stream_entry_id", name="uq_message_quarantine_stream_entry"),
         Index("idx_message_quarantine_received", "received_at", "id"),
         Index("idx_message_quarantine_failure", "failure_code", "received_at"),
+        Index("idx_message_quarantine_job", "job_id"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     stream_name: Mapped[str] = mapped_column(String(100), nullable=False)
     stream_entry_id: Mapped[str] = mapped_column(String(100), nullable=False)
     message_digest: Mapped[str] = mapped_column(String(128), nullable=False)
-    # job_id를 메시지에서 파싱할 수 있었을 때만 채워집니다. quarantine 진입 시점에는 원본
-    # outbox_event가 이미 삭제됐을 수 있어 FK는 걸지 않습니다.
-    job_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("ai_job.id"), nullable=True)
+    # job_id를 메시지에서 파싱할 수 있었을 때만 채워집니다. quarantine이 필요한 대표 케이스가
+    # "job_id는 파싱되는데 DB에 그 Job이 없는 메시지"(90일 보존 만료, 손상 메시지, dead-letter 재생 등)라
+    # FK를 걸면 그 격리 자체가 INSERT 실패로 막힙니다. 그래서 FK 없는 nullable UUID + 인덱스로 둡니다.
+    job_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
     original_event_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    # ai_job.failure_code/ai_job_attempt.error_code와 의도적으로 다른 도메인입니다 — 이건 Job 실행 실패가
+    # 아니라 메시지 자체(파싱 불가, Stream 손상 등)의 실패라 _FAILURE_CODE_VALUES allowlist로 제한하지
+    # 않습니다. 원문 예외 문구를 그대로 넣지 않는 책임은 여전히 이 컬럼을 채우는 코드에 있습니다.
     failure_code: Mapped[str] = mapped_column(String(100), nullable=False)
     failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_schema_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -384,6 +395,8 @@ class DlqOutboxEvent(_CreatedUpdatedColumns, Base):
     available_at: Mapped[datetime] = _now_timestamp_column()
     claim_token: Mapped[str | None] = mapped_column(String(100), nullable=True)
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # message_quarantine.failure_code와 같은 이유로 _FAILURE_CODE_VALUES allowlist를 적용하지 않습니다 —
+    # DLQ 발행 실패는 Job 실행 실패와 다른 도메인(발행·claim 자체의 실패)입니다.
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

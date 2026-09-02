@@ -11,6 +11,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import Connection
 
 # revision identifiers, used by Alembic.
 revision: str = "146a1b2c3d4e"
@@ -22,6 +23,30 @@ _FAILURE_CODES_SQL = (
     "'TIMEOUT', 'DEPENDENCY_UNAVAILABLE', 'INVALID_INPUT', 'UNSUPPORTED_SCHEMA', "
     "'SAFETY_VALIDATION_FAILED', 'RETRY_EXHAUSTED', 'INTERNAL_ERROR'"
 )
+
+
+def _ensure_downgrade_is_data_safe(connection: Connection) -> None:
+    """outbox-stream-v1.md: 미발행 DLQ Outbox와 연결된 quarantine은 TTL로도 삭제하지 않습니다.
+
+    격리된 poison message는 원본을 저장하지 않아 지워지면 재현할 수 없으므로, 아직 발행되지
+    않은 DLQ row가 있으면 downgrade의 DDL 실행 전에 중단합니다.
+    """
+
+    dlq_outbox_event = sa.table("dlq_outbox_event", sa.column("status"))
+
+    unpublished_dlq_count = connection.execute(
+        sa.select(sa.func.count())
+        .select_from(dlq_outbox_event)
+        .where(dlq_outbox_event.c.status.in_(["PENDING", "CLAIMED"]))
+    ).scalar_one()
+
+    if unpublished_dlq_count:
+        raise RuntimeError(
+            "Cannot downgrade revision 146a1b2c3d4e while unpublished (PENDING|CLAIMED) "
+            "dlq_outbox_event rows exist. Production must use a forward-fix. In a "
+            "non-production environment, back up and remove or migrate the affected data "
+            "through an approved rollback procedure first."
+        )
 
 
 def upgrade() -> None:
@@ -90,6 +115,7 @@ def upgrade() -> None:
     op.create_index("idx_ai_job_expected_event", "ai_job", ["expected_event_id"], unique=False)
     op.create_index("idx_ai_job_user_status_updated", "ai_job", ["user_id", "status", "updated_at", "id"], unique=False)
     op.create_index("idx_ai_job_status_available", "ai_job", ["status", "available_at", "id"], unique=False)
+    op.create_index("idx_ai_job_lease_expires", "ai_job", ["status", "lease_expires_at", "id"], unique=False)
 
     op.create_table(
         "ai_job_attempt",
@@ -268,7 +294,6 @@ def upgrade() -> None:
         sa.Column("trace_id", sa.String(length=100), nullable=True),
         sa.Column("received_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["job_id"], ["ai_job.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("stream_name", "stream_entry_id", name="uq_message_quarantine_stream_entry"),
     )
@@ -276,6 +301,7 @@ def upgrade() -> None:
         "idx_message_quarantine_failure", "message_quarantine", ["failure_code", "received_at"], unique=False
     )
     op.create_index("idx_message_quarantine_received", "message_quarantine", ["received_at", "id"], unique=False)
+    op.create_index("idx_message_quarantine_job", "message_quarantine", ["job_id"], unique=False)
 
     op.create_table(
         "dlq_outbox_event",
@@ -315,10 +341,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    _ensure_downgrade_is_data_safe(connection)
+
     op.drop_index("idx_dlq_outbox_status_available", table_name="dlq_outbox_event")
     op.drop_index("idx_dlq_outbox_claim_expires", table_name="dlq_outbox_event")
     op.drop_table("dlq_outbox_event")
 
+    op.drop_index("idx_message_quarantine_job", table_name="message_quarantine")
     op.drop_index("idx_message_quarantine_received", table_name="message_quarantine")
     op.drop_index("idx_message_quarantine_failure", table_name="message_quarantine")
     op.drop_table("message_quarantine")
@@ -339,6 +369,7 @@ def downgrade() -> None:
     op.drop_index("idx_ai_job_attempt_status_started", table_name="ai_job_attempt")
     op.drop_table("ai_job_attempt")
 
+    op.drop_index("idx_ai_job_lease_expires", table_name="ai_job")
     op.drop_index("idx_ai_job_status_available", table_name="ai_job")
     op.drop_index("idx_ai_job_user_status_updated", table_name="ai_job")
     op.drop_index("idx_ai_job_expected_event", table_name="ai_job")

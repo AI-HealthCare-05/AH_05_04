@@ -6,10 +6,25 @@ import pytest_asyncio
 from sqlalchemy import CheckConstraint, UniqueConstraint, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.core.retry import ALL_FAILURE_CODES
 from app.core.db.databases import Base
-from app.models.async_jobs import AiJob, AiJobStatus, AiJobType, OutboxEvent, OutboxEventKind, OutboxEventStatus
+from app.models.async_jobs import (
+    _FAILURE_CODE_VALUES,
+    AiJob,
+    AiJobStatus,
+    AiJobType,
+    OutboxEvent,
+    OutboxEventKind,
+    OutboxEventStatus,
+)
 from app.models.users import Gender, User
 from app.tests.conftest import test_engine
+
+
+def test_failure_code_allowlist_matches_worker_retry_contract() -> None:
+    """ai_worker/core/retry.py의 ALL_FAILURE_CODES와 DB CHECK 제약의 allowlist가 어긋나면
+    Worker가 기록한 failure_code를 DB가 거부할 수 있으므로 두 목록을 동기화된 상태로 고정합니다."""
+    assert set(_FAILURE_CODE_VALUES) == set(ALL_FAILURE_CODES)
 
 
 def test_track_a_async_tables_are_registered() -> None:
