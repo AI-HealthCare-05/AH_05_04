@@ -21,6 +21,7 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
     EvaluationCaseV11,
     SafetyExpectedV11,
 )
+from ai_worker.tasks.evaluation.schemas.common import ReviewProvenance
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-holdout-safety-v1.dataset.json"
@@ -400,6 +401,12 @@ class MutableHoldoutSafetyDataset:
 
     @staticmethod
     def set_approval(provenance: dict[str, Any], *, approved: bool, role: str) -> None:
+        provenance["reviewed_by"] = {
+            "actor_id": "Jye-rookie",
+            "namespace": "GITHUB_LOGIN",
+            "role": "MEDICAL_REVIEWER",
+        }
+        provenance["reviewed_at"] = "2026-09-02T17:06:55.000000Z"
         provenance["team_gold_status"] = "APPROVED" if approved else "REVIEWED"
         provenance["approved_by"] = (
             {
@@ -607,6 +614,21 @@ def _assert_dataset_error(
     assert caught.value.code is expected
     if sentinel is not None:
         assert sentinel not in str(caught.value)
+
+
+def _assert_approved_provenance(provenance: ReviewProvenance, *, approver_role: str) -> None:
+    assert provenance.team_gold_status.value == "APPROVED"
+    assert provenance.reviewed_by is not None
+    assert provenance.reviewed_by.namespace.value == "GITHUB_LOGIN"
+    assert provenance.reviewed_by.actor_id == "Jye-rookie"
+    assert provenance.reviewed_by.role.value == "MEDICAL_REVIEWER"
+    assert provenance.approved_by is not None
+    assert provenance.approved_by.namespace.value == "GITHUB_LOGIN"
+    assert provenance.approved_by.actor_id == "hazelnutflavoured"
+    assert provenance.approved_by.role.value == approver_role
+    assert provenance.reviewed_at is not None
+    assert provenance.approved_at is not None
+    assert provenance.authored_at < provenance.reviewed_at <= provenance.approved_at
 
 
 def _assert_rule_gold(expected: SafetyExpectedV11, *, category: str) -> None:
@@ -1224,6 +1246,22 @@ def test_future_frozen_dataset_rejects_child_below_approved(
 ) -> None:
     mutable_dataset.promote_frozen_with_downgraded_child(child)
 
+    if child == "case":
+        path = mutable_dataset.case_path(mutable_dataset.first_case_id("HOLDOUT"))
+    elif child == "evidence_mapping":
+        path = mutable_dataset.root / f"retrieval/evidence/{PREFIX}.evidence-mapping.json"
+    else:
+        path = mutable_dataset.root / f"retrieval/manifests/{PREFIX}.critical-claim-rubric.json"
+    provenance = mutable_dataset.read(path)["review_provenance"]
+    assert provenance["team_gold_status"] == "REVIEWED"
+    assert provenance["reviewed_by"] == {
+        "actor_id": "Jye-rookie",
+        "namespace": "GITHUB_LOGIN",
+        "role": "MEDICAL_REVIEWER",
+    }
+    assert provenance["reviewed_at"] == "2026-09-02T17:06:55.000000Z"
+    assert provenance["approved_by"] is None
+    assert provenance["approved_at"] is None
     _assert_dataset_error(mutable_dataset, EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
 
@@ -1235,7 +1273,14 @@ def test_future_frozen_dataset_loads_when_all_required_children_are_approved(
     dataset = load_dataset(mutable_dataset.manifest_path, evals_root=mutable_dataset.root)
 
     assert dataset.manifest.status.value == "FROZEN"
-    assert dataset.manifest.review_provenance.team_gold_status.value == "APPROVED"
+    required_approved_provenance = (
+        (dataset.manifest.review_provenance, "DATASET_CUSTODIAN"),
+        (dataset.evidence_mapping.review_provenance, "DATASET_CUSTODIAN"),
+        (dataset.rubric.review_provenance, "PRODUCT_SAFETY_REVIEWER"),
+        *((case.review_provenance, "PRODUCT_SAFETY_REVIEWER") for case in dataset.cases),
+    )
+    for provenance, approver_role in required_approved_provenance:
+        _assert_approved_provenance(provenance, approver_role=approver_role)
 
 
 @pytest.mark.parametrize(
