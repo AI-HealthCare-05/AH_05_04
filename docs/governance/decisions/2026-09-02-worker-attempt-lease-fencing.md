@@ -71,10 +71,21 @@ conditional UPDATE를 사용한다. Handler·Provider 실행 동안 DB row lock�
 유지하지 않고, PostgreSQL의 원자적 UPDATE와 영향 행 수로 실행 소유자를
 결정하기 위해 이 방식을 선택한다.
 
+lease 획득과 attempt 생성 transaction은 Handler·Provider 호출 전에
+commit한다. Handler·Provider 실행 중 heartbeat는 실행 transaction과 다른
+`AsyncSession`의 짧은 transaction에서 갱신하고 즉시 commit한다. Handler가
+반환한 뒤에는 도메인 결과 저장과 조건부 완료 갱신을 별도 transaction에서
+함께 commit한다. 따라서 실행 경계는 `lease 획득 commit → Handler·Provider와
+별도 heartbeat transaction → 결과·완료 commit → ACK` 순서다.
+
 heartbeat와 결과 저장도 동일하게 조건부 UPDATE의 영향 행이 `1`인
 경우만 성공으로 처리한다. 영향 행이 `0`이면 stale attempt, 이전 token,
 만료 lease 또는 상태 변경 여부를 추정해 덮어쓰지 않고 실행 권한 상실로
 처리한다.
+
+Worker는 heartbeat의 조건부 갱신이 `0`건인 것을 감지하면 진행 중인
+Handler·Provider task를 취소한다. 취소된 실행의 결과는 저장하지 않고 Job
+상태도 변경하지 않으며 ACK하지 않는다.
 
 ## 결정 4: 결과 commit과 ACK
 

@@ -106,9 +106,15 @@ Worker Repository가 유효한 실행 소유자의 DB 변경만 허용하고,
 | 결과 commit 준비 | `job_id`, `event_id`, `attempt`, `lease_token`, 완료 상태·시각 | 조건부 갱신 성공 여부 | Job terminal 상태·소비 event·Attempt 이력 |
 | 중복 전달 확인 | `job_id`, `event_id`, `attempt` | 이미 commit됨·처리 필요·격리 필요 | 없음 |
 
-모든 작업은 호출자가 주입한 동일 `AsyncSession`을 사용하고 직접 commit하지 않는다.
-도메인 ResultStore와 Job Repository 변경은 Consumer가 소유한 하나의
-transaction에서 함께 commit한다.
+lease 획득·attempt 생성과 최종 결과 저장·완료 갱신은 Consumer가 소유한
+`AsyncSession`에서 서로 분리된 순차 transaction으로 실행한다. lease
+transaction은 Handler·Provider 호출 전에 commit한다. 도메인 ResultStore와
+Job Repository의 최종 변경은 하나의 결과 transaction에서 함께 commit한다.
+
+실행 중 heartbeat는 Consumer 실행 Session을 공유하지 않고 별도
+`AsyncSession`의 짧은 transaction에서 조건부 갱신 후 즉시 commit한다.
+heartbeat 또는 최종 완료 갱신의 영향 행이 0건이면 생성 결과를 폐기하고
+ACK하지 않는다.
 
 ## Repository 구현 테스트 Matrix
 

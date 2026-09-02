@@ -81,6 +81,10 @@ Worker는 메시지 수신 후 DB Job을 다시 읽고 다음을 검증한다.
 
 heartbeat와 상태 변경·결과 저장은 `job_id + attempt_count + lease_token + status=PROCESSING + 만료되지 않은 lease` 조건부 갱신으로 fencing한다. 영향 행이 0건이면 실행 권한을 잃은 것으로 처리하고 해당 결과와 상태 변경을 commit하지 않는다. 오래된 Worker는 새 lease 소유자의 결과를 덮어쓸 수 없다.
 
+lease 획득과 attempt 생성은 짧은 transaction에서 먼저 commit하며, Handler·Provider 실행 중에는 Job row lock을 유지하지 않는다. 실행 중 heartbeat는 별도 `AsyncSession`의 transaction에서 조건부 갱신하고 즉시 commit한다. Handler 완료 후 도메인 결과와 Job terminal 상태·`last_consumed_event_id`는 다시 하나의 결과 transaction에서 원자적으로 commit한 뒤 ACK한다.
+
+heartbeat 조건부 갱신이 `0`건이면 Worker는 진행 중인 Handler·Provider task를 취소하고 결과 저장과 ACK를 수행하지 않는다. 따라서 lease를 잃은 Worker가 새 lease 소유자와 Provider 호출을 계속 중복하지 않는다.
+
 ## ACK 불변식
 
 다음 중 하나가 DB에 commit된 뒤에만 ACK한다.

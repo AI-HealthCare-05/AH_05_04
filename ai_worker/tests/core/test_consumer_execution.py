@@ -57,13 +57,18 @@ class FakeHandler:
     def __init__(
         self,
         *,
+        events: list[str] | None = None,
         mismatched: bool = False,
         error: BaseException | None = None,
     ) -> None:
+        self._events = events
         self._mismatched = mismatched
         self._error = error
 
     async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        if self._events is not None:
+            self._events.append("handle")
+
         if self._error is not None:
             raise self._error
 
@@ -188,6 +193,155 @@ class FakeJobExecutionRepository:
     ) -> bool:
         self._events.append("complete")
         return self._complete_successfully
+
+
+class FakeLeaseHeartbeatHandle:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        ownership_retained: bool,
+        fail_stop: bool = False,
+    ) -> None:
+        self._events = events
+        self._ownership_retained = ownership_retained
+        self._fail_stop = fail_stop
+        self._finished = asyncio.Event()
+
+    async def wait(self) -> bool:
+        await self._finished.wait()
+        return self._ownership_retained
+
+    async def stop(self) -> bool:
+        self._events.append("heartbeat_stop")
+        self._finished.set()
+
+        if self._fail_stop:
+            raise RuntimeError("synthetic heartbeat stop failure")
+
+        return self._ownership_retained
+
+
+class BackgroundLeaseHeartbeatHandle:
+    """실제 background task 종료 여부를 검증하는 테스트 handle입니다."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self._stop_event = asyncio.Event()
+        self.task = asyncio.create_task(self._maintain())
+
+    async def _maintain(self) -> bool:
+        await self._stop_event.wait()
+        return True
+
+    async def wait(self) -> bool:
+        return await asyncio.shield(self.task)
+
+    async def stop(self) -> bool:
+        self._events.append("heartbeat_stop")
+        self._stop_event.set()
+        return await self.task
+
+
+class LosingLeaseHeartbeatHandle:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self._ownership_lost = asyncio.Event()
+
+    def lose_ownership(self) -> None:
+        self._ownership_lost.set()
+
+    async def wait(self) -> bool:
+        await self._ownership_lost.wait()
+        return False
+
+    async def stop(self) -> bool:
+        self._events.append("heartbeat_stop")
+        return not self._ownership_lost.is_set()
+
+
+class LosingLeaseHeartbeat:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.handle = LosingLeaseHeartbeatHandle(events)
+
+    async def start(
+        self,
+        lease: ExecutionLease,
+    ) -> LosingLeaseHeartbeatHandle:
+        self._events.append("heartbeat_start")
+        return self.handle
+
+
+class BackgroundLeaseHeartbeat:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.handle: BackgroundLeaseHeartbeatHandle | None = None
+
+    async def start(
+        self,
+        lease: ExecutionLease,
+    ) -> BackgroundLeaseHeartbeatHandle:
+        self._events.append("heartbeat_start")
+        self.handle = BackgroundLeaseHeartbeatHandle(self._events)
+        return self.handle
+
+
+class FakeLeaseHeartbeat:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        ownership_retained: bool = True,
+        fail_stop: bool = False,
+    ) -> None:
+        self._events = events
+        self._ownership_retained = ownership_retained
+        self._fail_stop = fail_stop
+
+    async def start(
+        self,
+        lease: ExecutionLease,
+    ) -> FakeLeaseHeartbeatHandle:
+        self._events.append("heartbeat_start")
+        return FakeLeaseHeartbeatHandle(
+            self._events,
+            ownership_retained=self._ownership_retained,
+            fail_stop=self._fail_stop,
+        )
+
+
+class DirectFailureDispatcher(Dispatcher):
+    """Dispatcher 경계 밖의 예외가 발생하는 교체 구현입니다."""
+
+    def __init__(self) -> None:
+        super().__init__(HandlerRegistry())
+
+    async def dispatch(self, message: WorkerMessage) -> HandlerSuccess:
+        raise RuntimeError("synthetic unwrapped dispatcher failure")
+
+
+class CancellableHandler:
+    handler_type = JobType.OCR
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self._release = asyncio.Event()
+
+    async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        self._events.append("handle")
+        self.started.set()
+
+        try:
+            await self._release.wait()
+        except asyncio.CancelledError:
+            self._events.append("handler_cancelled")
+            self.cancelled.set()
+            raise
+
+        raise AssertionError("테스트 Handler가 예기치 않게 해제됐습니다.")
 
 
 def build_execution(
@@ -475,6 +629,7 @@ async def test_lost_fencing_rolls_back_result_and_does_not_ack() -> None:
             events,
             complete_successfully=False,
         ),
+        heartbeat=FakeLeaseHeartbeat(events),
         lease_duration=timedelta(seconds=30),
         clock=lambda: now,
     )
@@ -489,6 +644,9 @@ async def test_lost_fencing_rolls_back_result_and_does_not_ack() -> None:
     assert isinstance(result, LeaseNotAcquired)
     assert events == [
         "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
         "save",
         "complete",
         "rollback",
@@ -501,7 +659,7 @@ async def test_leased_consumer_commits_before_acknowledgement() -> None:
     events: list[str] = []
     now = datetime.now(UTC)
     registry = HandlerRegistry()
-    registry.register(FakeHandler())
+    registry.register(FakeHandler(events=events))
     acknowledger = FakeAcknowledger(events)
 
     execution = LeaseAwareConsumerExecution(
@@ -513,6 +671,7 @@ async def test_leased_consumer_commits_before_acknowledgement() -> None:
             events,
             complete_successfully=True,
         ),
+        heartbeat=FakeLeaseHeartbeat(events),
         lease_duration=timedelta(seconds=30),
         clock=lambda: now,
     )
@@ -529,12 +688,236 @@ async def test_leased_consumer_commits_before_acknowledgement() -> None:
     assert result.job_id == message.job_id
     assert events == [
         "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "heartbeat_stop",
         "save",
         "complete",
         "commit",
         "ack",
     ]
     assert acknowledger.acknowledged_ids == ["2001-0"]
+
+
+@pytest.mark.asyncio
+async def test_lost_heartbeat_discards_handler_result_and_does_not_ack() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(
+            events,
+            ownership_retained=False,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2001-2",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "heartbeat_stop",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_lost_heartbeat_cancels_running_handler() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    handler = CancellableHandler(events)
+    heartbeat = LosingLeaseHeartbeat(events)
+    registry = HandlerRegistry()
+    registry.register(handler)
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=heartbeat,
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    execution_task = asyncio.create_task(
+        execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-5",
+                message=build_message(),
+            )
+        )
+    )
+
+    await asyncio.wait_for(handler.started.wait(), timeout=1)
+    heartbeat.handle.lose_ownership()
+
+    result = await asyncio.wait_for(execution_task, timeout=1)
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert handler.cancelled.is_set()
+    assert "handler_cancelled" in events
+    assert "heartbeat_stop" in events
+    assert "save" not in events
+    assert "complete" not in events
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_stops_heartbeat_when_dispatcher_raises() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    acknowledger = FakeAcknowledger(events)
+    heartbeat = BackgroundLeaseHeartbeat(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=DirectFailureDispatcher(),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=heartbeat,
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="synthetic unwrapped dispatcher failure",
+    ):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-3",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+    assert heartbeat.handle is not None
+    assert heartbeat.handle.task.done()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_stop_failure_does_not_hide_dispatcher_error() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=DirectFailureDispatcher(),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(
+            events,
+            fail_stop=True,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="synthetic unwrapped dispatcher failure",
+    ):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-4",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_does_not_run_handler_when_lease_commit_fails() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(
+            events,
+            fail_commit=True,
+        ),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(ConsumerPersistenceError):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-1",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "commit",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
 
 
 @pytest.mark.asyncio
@@ -562,6 +945,7 @@ async def test_committed_redelivery_skips_handler_and_only_acknowledges() -> Non
             complete_successfully=True,
             acquisition_result=committed,
         ),
+        heartbeat=FakeLeaseHeartbeat(events),
         lease_duration=timedelta(seconds=30),
         clock=lambda: now,
     )
@@ -600,6 +984,7 @@ async def test_unacquired_lease_skips_handler_and_does_not_ack() -> None:
             complete_successfully=False,
             acquisition_result=LeaseNotAcquired(),
         ),
+        heartbeat=FakeLeaseHeartbeat(events),
         lease_duration=timedelta(seconds=30),
         clock=lambda: now,
     )
@@ -638,6 +1023,7 @@ async def test_leased_consumer_does_not_rollback_after_ack_failure() -> None:
             events,
             complete_successfully=True,
         ),
+        heartbeat=FakeLeaseHeartbeat(events),
         lease_duration=timedelta(seconds=30),
         clock=lambda: now,
     )
@@ -652,6 +1038,9 @@ async def test_leased_consumer_does_not_rollback_after_ack_failure() -> None:
 
     assert events == [
         "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
         "save",
         "complete",
         "commit",

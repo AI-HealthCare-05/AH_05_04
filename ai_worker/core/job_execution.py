@@ -36,6 +36,29 @@ class LeaseNotAcquired:
 type LeaseAcquisitionResult = ExecutionLease | CommittedDelivery | LeaseNotAcquired
 
 
+class LeaseHeartbeatHandle(Protocol):
+    """하나의 실행 lease에 대해 동작 중인 heartbeat입니다."""
+
+    async def wait(self) -> bool:
+        """heartbeat 종료를 기다리고 소유권 유지 여부를 반환합니다."""
+        ...
+
+    async def stop(self) -> bool:
+        """heartbeat를 종료하고 마지막까지 소유권을 유지했는지 반환합니다."""
+        ...
+
+
+class LeaseHeartbeat(Protocol):
+    """Handler 실행 중 별도 transaction으로 lease를 갱신합니다."""
+
+    async def start(
+        self,
+        lease: ExecutionLease,
+    ) -> LeaseHeartbeatHandle:
+        """heartbeat를 시작하고 실행별 종료 handle을 반환합니다."""
+        ...
+
+
 class JobExecutionRepository(Protocol):
     """Job 실행 소유권과 terminal 상태를 관리하는 저장소 계약입니다.
 
