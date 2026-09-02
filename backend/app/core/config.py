@@ -70,9 +70,9 @@ class Config(BaseSettings):
     )
 
     DB_HOST: str
-    # PostgreSQL 컨테이너 내부 기본 포트입니다.
+    # 평소엔 둘 다 5432로 같습니다. 호스트에 5432를 쓰는 다른 프로세스가 있어 충돌할 때만
+    # DB_EXPOSE_PORT(호스트 매핑 포트)를 바꾸면 되고, DB_PORT(컨테이너 내부 포트)는 그대로 둡니다.
     DB_PORT: int = 5432
-    # 로컬 PC에서 컨테이너에 접근하는 포트입니다.
     DB_EXPOSE_PORT: int = 5432
     DB_USER: str
     DB_PASSWORD: str
@@ -96,7 +96,14 @@ class Config(BaseSettings):
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
     JWT_LEEWAY: int = 5
 
-    # 정현우님(app/services/guide_ai) 및 chat_ai 연동용 OpenAI 설정.
+    # idempotency-v1.md: 원문 Idempotency-Key는 저장하지 않고 versioned HMAC만 저장합니다.
+    # 실제 key rotation 절차·물리 secret 관리는 Privacy·보안 승인 후 별도로 확정합니다(문서 "단일 테이블과
+    # 저장 필드" 참고) — 지금은 단일 active version만 지원합니다.
+    IDEMPOTENCY_HMAC_KEY: str = f"default-idempotency-hmac-key{uuid.uuid4().hex}"
+    IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
+    IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
+
+    # app/services/guide_ai 및 chat_ai 연동용 OpenAI 설정.
     # CI의 test 잡 env에는 OPENAI_API_KEY가 없어서 필수값(DB_*처럼)으로 두면 전체 테스트가 깨집니다.
     # 실제 키가 없으면 OpenAI 호출 시점에만 401 -> 500으로 실패하도록 placeholder 기본값을 둡니다.
     OPENAI_API_KEY: str = "sk-not-configured"

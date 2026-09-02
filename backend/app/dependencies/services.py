@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.core.db.databases import get_db_session
+from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
@@ -21,6 +22,7 @@ from app.services.clova_ocr_engine import ClovaOcrEngine
 from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
 from app.services.guides import GuideService
+from app.services.job_intake import JobIntakeService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.ocr import OcrService
 from app.services.ocr_ai import (
@@ -266,3 +268,21 @@ def get_user_manage_service(
         repository=repository,
         auth_service=auth_service,
     )
+
+
+def get_async_job_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> AsyncJobRepository:
+    return AsyncJobRepository(session)
+
+
+def get_job_intake_service(
+    repository: Annotated[
+        AsyncJobRepository,
+        Depends(get_async_job_repository),
+    ],
+) -> JobIntakeService:
+    return JobIntakeService(repository)
