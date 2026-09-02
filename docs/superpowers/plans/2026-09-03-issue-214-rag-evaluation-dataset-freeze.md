@@ -304,11 +304,11 @@ Request `@Jye-rookie` for Gold/Evidence and `@hazelnutflavoured` for Dataset/Saf
 
 - [ ] **Step 1: Verify reviewer identities and approvals**
 
-Do not continue unless GitHub shows the assigned reviewers approved the exact candidate commit and their roles match the artifact schemas.
+Do not continue unless GitHub shows `@Jye-rookie` completed the assigned review of the exact candidate and the designated approvers approved it with roles matching the artifact schemas. Record the real review event timestamp and transition every required provenance record from `DRAFT` to `REVIEWED` before applying approval.
 
 - [ ] **Step 2: Promote provenance without altering Gold content**
 
-Set each approved child to `team_gold_status=APPROVED` with its actual approver actor and approval timestamp. Set Dataset `status=FROZEN`, `frozen_at` to the freeze event, and Dataset approval to `DATASET_CUSTODIAN`. Recompute every affected canonical hash and downstream reference; do not change questions, Gold, allocation, or Leakage axes in this step.
+For every required child, replace the DRAFT handoff timestamp with the actual `@Jye-rookie` review timestamp, verify `authored_at < reviewed_at`, and record the `REVIEWED` transition. Then set each approved child to `team_gold_status=APPROVED` with its actual approver actor and approval timestamp, requiring `reviewed_at <= approved_at`. Set Dataset `status=FROZEN`, `frozen_at` to the freeze event, and Dataset approval to `DATASET_CUSTODIAN`. Recompute every affected canonical hash and downstream reference; do not change questions, Gold, allocation, or Leakage axes in this step.
 
 - [ ] **Step 3: Prove freeze closure and determinism**
 
