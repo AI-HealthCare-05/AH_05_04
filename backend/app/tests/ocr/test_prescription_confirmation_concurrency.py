@@ -23,7 +23,7 @@ from app.core.db.databases import get_db_session
 from app.dependencies.services import get_ocr_engine
 from app.main import app, fastapi_app
 from app.models.prescriptions import Prescription, PrescriptionStatus
-from app.services.ocr_engine import OcrRecognitionResult, RecognizedField
+from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 from app.tests.conftest import test_engine
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
@@ -56,8 +56,14 @@ TRUNCATE_TARGETS = (
 
 
 class ConcurrencyTestOcrEngine:
-    async def recognize(self, *, object_key: str, file_mime_type: str) -> OcrRecognitionResult:
-        _ = object_key, file_mime_type
+    async def recognize(
+        self,
+        *,
+        object_key: str,
+        file_mime_type: str,
+        deadline: OcrDeadline,
+    ) -> OcrRecognitionResult:
+        _ = object_key, file_mime_type, deadline
         return OcrRecognitionResult(fields=list(DEFAULT_RECOGNIZED_FIELDS))
 
 

@@ -1,6 +1,6 @@
 # 복약 챗봇 최근 대화 3쌍 문맥 설계
 
-> **상태: 기능 구현 완료 — 리뷰·병합 전.** 버전된 합성 품질 평가, latency와 PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 `NOT_RUN` 후속 작업이다. 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
+> **상태: 기능 구현 완료.** 버전된 합성 평가와 결정론적 Local application-path latency·PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 수행했다. 실제 Provider 평가는 `NOT_RUN`이며 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
 
 | 항목 | 내용 |
 | --- | --- |
@@ -332,19 +332,19 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - history가 없거나 1쌍뿐인 경우
 - 현재 질문만으로 즉각적인 응급 안내가 필요한 경우
 
-평가셋은 `chat-v2-history-eval-v1`처럼 불변 버전을 부여하고 합성 대화, 기대 대상, 허용 답변 범위, 금지 rule을 함께 기록한다. 동일한 모델·temperature·max token·timeout 설정과 동일 합성 대화 세트로 v1 single-turn과 v2 history 결과를 비교한다.
+평가셋은 `chat-v2-history-eval-v1` 불변 버전과 `SYNTHETIC` 분류로 합성 대화, 기대 대상, 허용 답변 범위와 금지 rule을 기록한다. 기준선과 처리 경로는 동일한 모델·temperature·max token·timeout 및 `chat-prompt-v2`를 사용하고, 각각 빈 history와 합성 history만 다르게 비교한다.
 
-다음 품질·운영 기준은 PR #128의 기능 구현 완료 조건에서 분리해 Issue #129에서 검증한다. 현재 결과는 `NOT_RUN`이며, 실행 근거 없이 충족한 것으로 간주하지 않는다.
+다음 품질·운영 기준은 PR #128의 기능 구현 완료 조건에서 분리했다. Issue #129의 결정론적 replay는 계약 scorer 기준선·history 각각 10/10과 안전 rule 위반 0건을 기록했지만, 평가 축별 표본이 30건 미만이고 실제 Provider를 실행하지 않았으므로 아래 품질 비율은 충족한 것으로 간주하지 않는다.
 
-- 정상 후속 대상 식별 정확도 90% 이상이면서 동일 평가셋의 v1 baseline보다 20%p 이상 개선
-- history가 필요하지 않은 단일 질문 정답률은 v1 대비 5%p를 초과해 하락하지 않음
+- 정상 후속 대상 식별 정확도 90% 이상이면서 동일 `chat-prompt-v2 + history=[]` baseline보다 20%p 이상 개선
+- history가 필요하지 않은 단일 질문 정답률은 동일 `chat-prompt-v2 + history=[]` baseline 대비 5%p를 초과해 하락하지 않음
 - 처방 변경, 새 약명·용량·시점 환각, 응급 안내 누락, 과거 오류 강화 허용 0건
 - 다른 세션 데이터, 구조화 식별자와 오류 metadata의 payload·로그·trace 노출 0건
 - 합성 PII sentinel은 승인된 history 본문 위치 외의 payload 필드·로그·trace·오류에 복제 0건
 - invalid history로 인한 현재 정상 요청 실패 0건
-- 최대 12,000자 history의 Local p95 end-to-end 시간이 `OPENAI_TIMEOUT_SECONDS + 5초` 이하이고 v1 p95 대비 20%를 초과해 증가하지 않음
+- 최대 12,000자 history의 Local p95 end-to-end 시간이 `OPENAI_TIMEOUT_SECONDS + 5초` 이하이고 동일 `chat-prompt-v2 + history=[]` baseline p95 대비 20%를 초과해 증가하지 않음
 
-평가 표본 수, 실제 모델·환경, v1·v2 원시 결과와 p95 산출 근거를 Issue #129에 기록한다. 표본 수가 각 평가 축 30건 미만이면 위 비율을 검증 완료 근거로 사용하지 않는다. 이 평가는 기존 의료 AI Production gate를 대체하지 않는다.
+Issue #129의 2026-09-01 결정론적 Local 실행은 최대 3쌍·12,000자 입력을 30회 측정해 payload 36,217 bytes와 application-path p95 0.059 ms를 기록했다. 합성 PII sentinel의 허용 history 위치 밖 복제는 0건이고 trace pipeline은 없어 trace 검증은 `NOT_APPLICABLE_NO_TRACE_PIPELINE`이다. Provider token·네트워크 latency와 실제 모델 품질은 `NOT_RUN`이며, 표본 수가 각 평가 축 30건 미만이면 위 비율의 검증 완료 근거로 사용하지 않는다. 이 평가는 기존 의료 AI Production gate를 대체하지 않는다.
 
 ## 문서와 변경 대상
 
@@ -390,4 +390,4 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - Provider payload와 로그에 구조화 식별자·오류 metadata·미확정 의료 데이터가 포함되지 않는다.
 - 자유 텍스트의 내용 기반 식별정보 위험과 실제 대화 외부 전송 승인이 향후 서버 공개 선행조건으로 문서화된다.
 - 관련 ADR·계약·Local 결정론적 테스트·외부 전송 위험 검토와 지정 Privacy·Security·Backend·AI 리뷰가 함께 제공된다.
-- 버전된 합성 품질 평가, latency와 PII sentinel 검증은 Issue #129에서 `NOT_RUN` 후속 작업으로 추적하며, 완료 전에는 Production 공개 근거로 사용하지 않는다.
+- 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 Issue #129에서 수행했다. 실제 Provider 품질·latency·token 검증은 `NOT_RUN`이며, 어느 결과도 Production 공개 근거로 사용하지 않는다.

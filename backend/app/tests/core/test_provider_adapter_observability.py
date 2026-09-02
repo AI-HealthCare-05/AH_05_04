@@ -33,7 +33,7 @@ from app.services.guide_ai.schemas import GeneratedGuideDraft, GeneratedMedicati
 from app.services.ocr_ai import OcrStructureResult
 from app.services.ocr_ai.client import OpenAIOcrStructureClient
 from app.services.ocr_ai.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
-from app.services.ocr_engine import OcrProcessingError
+from app.services.ocr_engine import OcrDeadline, OcrProcessingError
 
 
 class FakeResponses:
@@ -311,7 +311,11 @@ async def test_clova_client_logs_response_validation_failure_without_body(tmp_pa
             call_logger=logger,
         )
         with pytest.raises(OcrProcessingError):
-            await engine.recognize(object_key=image.name, file_mime_type="image/png")
+            await engine.recognize(
+                object_key=image.name,
+                file_mime_type="image/png",
+                deadline=OcrDeadline.start(total_seconds=60, response_margin_seconds=0),
+            )
 
     events = _events(stream)
     assert [event["event"] for event in events] == ["provider.call.started", "provider.call.failed"]
