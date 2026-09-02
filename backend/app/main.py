@@ -11,7 +11,7 @@ from app.core import config
 from app.core.db.databases import close_database
 from app.core.errors import register_exception_handlers
 from app.core.no_store_middleware import NoStoreMiddleware
-from app.core.validation_trace_middleware import ValidationTraceMiddleware
+from app.core.validation_trace_middleware import RequestTraceMiddleware, ValidationTraceMiddleware
 
 
 @asynccontextmanager
@@ -39,18 +39,22 @@ register_exception_handlers(fastapi_app)
 
 fastapi_app.include_router(v1_routers)
 
+# validation 거부 응답도 CORS와 no-store 경계를 통과하도록 FastAPI 바로 바깥에 둡니다.
+validated_app = ValidationTraceMiddleware(
+    fastapi_app,
+    environment=config.ENV,
+    validation_enabled=config.RELEASE_VALIDATION_ALLOWED,
+)
+
 # FastAPI의 바깥쪽 예외 처리 계층에서 반환되는 500 응답에도 CORS 헤더를 붙입니다.
-# trace 경계는 CORS preflight를 포함한 모든 HTTP 응답을 감싸도록 가장 바깥에 둡니다.
 cors_app = CORSMiddleware(
-    app=NoStoreMiddleware(fastapi_app),
+    app=NoStoreMiddleware(validated_app),
     allow_origins=config.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Trace-Id"],
 )
-app = ValidationTraceMiddleware(
-    cors_app,
-    environment=config.ENV,
-    validation_enabled=config.RELEASE_VALIDATION_ALLOWED,
-)
+
+# trace 경계는 CORS preflight를 포함한 모든 HTTP 응답을 감싸도록 가장 바깥에 둡니다.
+app = RequestTraceMiddleware(cors_app)

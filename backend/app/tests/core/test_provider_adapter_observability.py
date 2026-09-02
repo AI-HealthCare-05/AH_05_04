@@ -33,7 +33,13 @@ from app.services.guide_ai.schemas import GeneratedGuideDraft, GeneratedMedicati
 from app.services.ocr_ai import OcrStructureResult
 from app.services.ocr_ai.client import OpenAIOcrStructureClient
 from app.services.ocr_ai.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
-from app.services.ocr_engine import OcrDeadline, OcrProcessingError
+from app.services.ocr_engine import (
+    OcrDeadline,
+    OcrProcessingError,
+    OcrProviderConnectionError,
+    OcrProviderTimeoutError,
+    OcrProviderUnavailableError,
+)
 
 
 class FakeResponses:
@@ -60,6 +66,15 @@ class FakeAsyncOpenAI:
 class FakeStructurer:
     async def structure(self, _raw_fields: list[object]) -> OcrStructureResult:
         return OcrStructureResult(fields=[], model_name=None, prompt_version=None)
+
+
+class ExplodingParseResponse:
+    id = "resp_synthetic"
+    model = "gpt-4o-mini-2024-07-18"
+
+    @property
+    def output(self) -> object:
+        raise RuntimeError("SENSITIVE_PARSE_ERROR")
 
 
 def _observer(operation: ProviderOperation, prompt_version: str | None) -> tuple[ProviderCallLogger, io.StringIO]:
@@ -91,6 +106,29 @@ def _descriptor(operation: ProviderOperation, prompt_version: str | None) -> Pro
 
 def _events(stream: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in stream.getvalue().splitlines()]
+
+
+def _clova_engine(tmp_path: Path, client: httpx.AsyncClient, logger: ProviderCallLogger) -> ClovaOcrEngine:
+    (tmp_path / "synthetic.png").write_bytes(b"synthetic-image")
+    return ClovaOcrEngine(
+        invoke_url="https://synthetic.example/ocr",
+        secret_key="SENSITIVE_CLOVA_SECRET",
+        storage_dir=str(tmp_path),
+        timeout_seconds=5,
+        structurer=FakeStructurer(),  # type: ignore[arg-type]
+        client=client,
+        context=_context(),
+        descriptor=_descriptor(ProviderOperation.PRESCRIPTION_RECOGNITION, None),
+        call_logger=logger,
+    )
+
+
+async def _recognize_clova(engine: ClovaOcrEngine) -> None:
+    await engine.recognize(
+        object_key="synthetic.png",
+        file_mime_type="image/png",
+        deadline=OcrDeadline.start(total_seconds=60, response_margin_seconds=0),
+    )
 
 
 def _guide_response(*, refusal: bool = False) -> SimpleNamespace:
@@ -290,32 +328,79 @@ async def test_ocr_and_chat_openai_clients_log_their_distinct_operations() -> No
     assert _events(chat_stream)[1]["provider_response_id"] == "resp_chat_synthetic"
 
 
+@pytest.mark.parametrize(
+    ("client_type", "operation", "prompt_version"),
+    [
+        (ChatOpenAIResponsesClient, ProviderOperation.CHAT_GENERATION, "chat-prompt-v2"),
+        (GuideOpenAIResponsesClient, ProviderOperation.GUIDE_GENERATION, "guide-prompt-v3"),
+        (OpenAIOcrStructureClient, ProviderOperation.OCR_STRUCTURING, "ocr-structure-prompt-v2"),
+    ],
+)
+async def test_openai_clients_log_unexpected_parse_failure_once(
+    client_type: type[object],
+    operation: ProviderOperation,
+    prompt_version: str,
+) -> None:
+    logger, stream = _observer(operation, prompt_version)
+    client = client_type(  # type: ignore[call-arg]
+        FakeAsyncOpenAI(ExplodingParseResponse()),
+        context=_context(),
+        descriptor=_descriptor(operation, prompt_version),
+        call_logger=logger,
+    )
+
+    with pytest.raises(RuntimeError, match="SENSITIVE_PARSE_ERROR"):
+        await client.generate(  # type: ignore[attr-defined]
+            model="gpt-4o-mini",
+            instructions="rules",
+            input_json="{}",
+            max_output_tokens=800,
+        )
+
+    events = _events(stream)
+    assert [event["event"] for event in events] == ["provider.call.started", "provider.call.failed"]
+    assert events[1]["failure_phase"] == "UNKNOWN_INTERNAL"
+    assert events[1]["error_code"] == "PROVIDER_INTERNAL_FAILURE"
+    assert events[1]["provider_response_received"] is True
+    assert "SENSITIVE_PARSE_ERROR" not in stream.getvalue()
+
+
+async def test_ocr_client_classifies_content_filter_as_provider_policy() -> None:
+    logger, stream = _observer(ProviderOperation.OCR_STRUCTURING, "ocr-structure-prompt-v2")
+    response = SimpleNamespace(
+        id="resp_ocr_filtered",
+        status="incomplete",
+        model="gpt-4o-mini-2024-07-18",
+        incomplete_details=SimpleNamespace(reason="content_filter"),
+        output=[],
+        output_parsed=None,
+    )
+    client = OpenAIOcrStructureClient(
+        FakeAsyncOpenAI(response),
+        context=_context(),
+        descriptor=_descriptor(ProviderOperation.OCR_STRUCTURING, "ocr-structure-prompt-v2"),
+        call_logger=logger,
+    )
+
+    with pytest.raises(OcrProcessingError):
+        await client.generate(model="gpt-4o-mini", instructions="rules", input_json="{}", max_output_tokens=1200)
+
+    events = _events(stream)
+    assert [event["event"] for event in events] == ["provider.call.started", "provider.call.failed"]
+    assert events[1]["failure_phase"] == "PROVIDER_POLICY"
+    assert events[1]["error_code"] == "PROVIDER_SAFETY_FILTERED"
+
+
 async def test_clova_client_logs_response_validation_failure_without_body(tmp_path: Path) -> None:
-    image = tmp_path / "synthetic.png"
-    image.write_bytes(b"synthetic-image")
     logger, stream = _observer(ProviderOperation.PRESCRIPTION_RECOGNITION, None)
 
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"SENSITIVE_OCR_BODY": "must-not-be-logged"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        engine = ClovaOcrEngine(
-            invoke_url="https://synthetic.example/ocr",
-            secret_key="SENSITIVE_CLOVA_SECRET",
-            storage_dir=str(tmp_path),
-            timeout_seconds=5,
-            structurer=FakeStructurer(),  # type: ignore[arg-type]
-            client=http_client,
-            context=_context(),
-            descriptor=_descriptor(ProviderOperation.PRESCRIPTION_RECOGNITION, None),
-            call_logger=logger,
-        )
+        engine = _clova_engine(tmp_path, http_client, logger)
         with pytest.raises(OcrProcessingError):
-            await engine.recognize(
-                object_key=image.name,
-                file_mime_type="image/png",
-                deadline=OcrDeadline.start(total_seconds=60, response_margin_seconds=0),
-            )
+            await _recognize_clova(engine)
 
     events = _events(stream)
     assert [event["event"] for event in events] == ["provider.call.started", "provider.call.failed"]
@@ -324,3 +409,93 @@ async def test_clova_client_logs_response_validation_failure_without_body(tmp_pa
     assert events[1]["http_status"] == 200
     assert "SENSITIVE_CLOVA_SECRET" not in stream.getvalue()
     assert "SENSITIVE_OCR_BODY" not in stream.getvalue()
+
+
+async def test_clova_client_logs_success_with_actual_http_status(tmp_path: Path) -> None:
+    logger, stream = _observer(ProviderOperation.PRESCRIPTION_RECOGNITION, None)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"images": [{"inferResult": "SUCCESS", "fields": []}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await _recognize_clova(_clova_engine(tmp_path, http_client, logger))
+
+    events = _events(stream)
+    assert [event["event"] for event in events] == ["provider.call.started", "provider.call.succeeded"]
+    assert events[1]["http_status"] == 200
+
+
+@pytest.mark.parametrize(
+    ("status_code", "domain_error", "error_code"),
+    [
+        (400, OcrProcessingError, "PROVIDER_REQUEST_REJECTED"),
+        (429, OcrProviderUnavailableError, "PROVIDER_RATE_LIMITED"),
+        (503, OcrProviderUnavailableError, "PROVIDER_UNAVAILABLE"),
+    ],
+)
+async def test_clova_client_logs_http_status_failure_once(
+    tmp_path: Path,
+    status_code: int,
+    domain_error: type[Exception],
+    error_code: str,
+) -> None:
+    logger, stream = _observer(ProviderOperation.PRESCRIPTION_RECOGNITION, None)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, json={"SENSITIVE_OCR_BODY": "must-not-be-logged"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        engine = _clova_engine(tmp_path, http_client, logger)
+        with pytest.raises(domain_error):
+            await _recognize_clova(engine)
+
+    events = _events(stream)
+    assert [event["event"] for event in events] == ["provider.call.started", "provider.call.failed"]
+    assert events[1]["failure_phase"] == "HTTP_STATUS"
+    assert events[1]["error_code"] == error_code
+    assert events[1]["http_status"] == status_code
+    assert "SENSITIVE_CLOVA_SECRET" not in stream.getvalue()
+    assert "SENSITIVE_OCR_BODY" not in stream.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("transport_error", "domain_error", "failure_phase", "error_code"),
+    [
+        (
+            httpx.ReadTimeout("SENSITIVE_TIMEOUT"),
+            OcrProviderTimeoutError,
+            "TRANSPORT_TIMEOUT",
+            "PROVIDER_TIMEOUT",
+        ),
+        (
+            httpx.ConnectError("SENSITIVE_CONNECTION"),
+            OcrProviderConnectionError,
+            "TRANSPORT_CONNECTION",
+            "PROVIDER_CONNECTION_FAILED",
+        ),
+    ],
+)
+async def test_clova_client_logs_transport_failure_once(
+    tmp_path: Path,
+    transport_error: httpx.RequestError,
+    domain_error: type[Exception],
+    failure_phase: str,
+    error_code: str,
+) -> None:
+    logger, stream = _observer(ProviderOperation.PRESCRIPTION_RECOGNITION, None)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        transport_error.request = request
+        raise transport_error
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        engine = _clova_engine(tmp_path, http_client, logger)
+        with pytest.raises(domain_error):
+            await _recognize_clova(engine)
+
+    events = _events(stream)
+    assert [event["event"] for event in events] == ["provider.call.started", "provider.call.failed"]
+    assert events[1]["failure_phase"] == failure_phase
+    assert events[1]["error_code"] == error_code
+    assert events[1]["provider_response_received"] is False
+    assert str(transport_error) not in stream.getvalue()

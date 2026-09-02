@@ -108,6 +108,15 @@ class OpenAIResponsesClient:
                 provider_response_received=True,
             )
             raise
+        except Exception:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.UNKNOWN_INTERNAL,
+                ProviderErrorCode.PROVIDER_INTERNAL_FAILURE,
+                response=response,
+                provider_response_received=True,
+            )
+            raise
         self._observer.succeeded(span, response=response, model_name=result.model_name)
         return result
 

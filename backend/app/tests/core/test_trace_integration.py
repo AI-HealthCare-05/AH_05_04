@@ -35,12 +35,29 @@ async def test_not_found_and_method_not_allowed_share_body_and_header_trace() ->
 async def test_unapproved_validation_header_is_rejected_with_trace() -> None:
     response = await _request(
         "GET",
-        "/api/openapi.json",
+        "/api/v1/health",
         headers={"X-Validation-Run-Id": "61a10000-0000-4000-8000-000000000003"},
     )
 
     assert response.status_code == 403
     assert response.json()["message"] == "Validation run is not allowed."
+    assert response.json()["trace_id"] == response.headers["X-Trace-Id"]
+
+
+async def test_validation_rejection_passes_through_cors_and_no_store_boundaries() -> None:
+    response = await _request(
+        "GET",
+        "/api/v1/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "X-Validation-Run-Id": "61a10000-0000-4000-8000-000000000003",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+    assert "x-trace-id" in response.headers["Access-Control-Expose-Headers"].lower()
+    assert response.headers["Cache-Control"] == "no-store"
     assert response.json()["trace_id"] == response.headers["X-Trace-Id"]
 
 

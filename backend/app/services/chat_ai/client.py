@@ -14,6 +14,7 @@ from app.core.provider_observability import (
     ProviderCallDescriptor,
     ProviderCallLogger,
     ProviderCallObserver,
+    ProviderCallSpan,
     ProviderErrorCode,
     ProviderFailurePhase,
     provider_call_logger,
@@ -110,8 +111,17 @@ class OpenAIResponsesClient:
             )
             raise
 
+        result = self._parse_observed_response(span, response)
+        self._observer.succeeded(span, response=response, model_name=result.model_name)
+        return result
+
+    def _parse_observed_response(
+        self,
+        span: ProviderCallSpan | None,
+        response: Any,
+    ) -> ProviderChatResponse:
         try:
-            result = self._parse_response(response)
+            return self._parse_response(response)
         except ChatGenerationUnavailableError:
             self._observer.failed(
                 span,
@@ -143,8 +153,15 @@ class OpenAIResponsesClient:
                 provider_response_received=True,
             )
             raise
-        self._observer.succeeded(span, response=response, model_name=result.model_name)
-        return result
+        except Exception:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.UNKNOWN_INTERNAL,
+                ProviderErrorCode.PROVIDER_INTERNAL_FAILURE,
+                response=response,
+                provider_response_received=True,
+            )
+            raise
 
     @staticmethod
     def _raise_for_status_error(error: APIStatusError) -> None:

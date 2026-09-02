@@ -679,6 +679,8 @@ def _ocr_database_evidence(ocr_job: Any, *, ocr_structuring_expected: bool) -> d
             {
                 "api_code": "OCR_STRUCTURE_EVIDENCE_MISMATCH",
                 "ocr_structuring_expected": ocr_structuring_expected,
+                "model_version_present": bool(model_version),
+                "prompt_version_present": bool(prompt_version),
             },
         )
     return {
@@ -1403,10 +1405,16 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _failure(*, run_id: str, mode: str, stage: str) -> dict[str, Any]:
+def _failure(
+    *,
+    run_id: str,
+    mode: str,
+    stage: str,
+    provider_traces: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     if stage not in ALLOWED_FAILURE_STAGES:
         raise ValueError("invalid failure stage")
-    return {
+    result: dict[str, Any] = {
         "operation": "run",
         "run_id": run_id,
         "mode": mode,
@@ -1416,6 +1424,9 @@ def _failure(*, run_id: str, mode: str, stage: str) -> dict[str, Any]:
         "cleanup": "PASS",
         "evidence_qualified": False,
     }
+    if provider_traces is not None:
+        result["provider_traces"] = {name: dict(trace) for name, trace in provider_traces.items()}
+    return result
 
 
 def _apply_local_live_evidence_contract(result: dict[str, Any], *, mode: str) -> dict[str, Any]:
@@ -1741,6 +1752,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
     read_timeout = _calculate_live_read_timeout_seconds(
         runtime_env,
     )
+    runner: NetworkOneCycleRunner | None = None
     try:
 
         async def prescription_check(prescription_id: str, document_id: str) -> None:
@@ -1775,7 +1787,12 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
                     question=str(scenario["question"]),
                 )
     except HttpFlowError as exc:
-        result = _failure(run_id=str(run_id), mode=args.mode, stage=exc.stage)
+        result = _failure(
+            run_id=str(run_id),
+            mode=args.mode,
+            stage=exc.stage,
+            provider_traces=(runner.provider_traces if args.mode == "local-live-full" and runner is not None else None),
+        )
         evidence = dict(exc.evidence)
         state_ids = store.read().get("ids", {})
         if exc.stage == "GUIDE_GENERATION_PROCESSING" and state_ids.get("prescription_id"):
@@ -1808,7 +1825,13 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
             if any(marker in model.lower() for model in model_names for marker in ("fake", "sentinel", "test-model")):
                 raise HttpFlowError("DB_VERIFICATION")
         except HttpFlowError as exc:
-            result = _failure(run_id=str(run_id), mode=args.mode, stage=exc.stage)
+            existing_traces = result.get("provider_traces")
+            result = _failure(
+                run_id=str(run_id),
+                mode=args.mode,
+                stage=exc.stage,
+                provider_traces=(existing_traces if isinstance(existing_traces, Mapping) else None),
+            )
             result["failure_evidence"] = exc.evidence or None
         else:
             try:

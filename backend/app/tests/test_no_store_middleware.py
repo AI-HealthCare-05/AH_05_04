@@ -3,7 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.types import Message, Receive, Scope, Send
 
 from app.core.no_store_middleware import NoStoreMiddleware, is_api_v1_path
-from app.core.validation_trace_middleware import ValidationTraceMiddleware
+from app.core.validation_trace_middleware import RequestTraceMiddleware, ValidationTraceMiddleware
 from app.main import app as application
 from app.main import cors_app, fastapi_app
 
@@ -190,8 +190,9 @@ async def test_middleware_passes_non_target_and_non_http_scopes_through_unchange
 
 
 def test_application_wraps_cors_and_no_store_inside_outer_trace_boundary() -> None:
-    assert isinstance(application, ValidationTraceMiddleware)
+    assert isinstance(application, RequestTraceMiddleware)
     assert application._app is cors_app
     assert isinstance(cors_app, CORSMiddleware)
     assert isinstance(cors_app.app, NoStoreMiddleware)
-    assert cors_app.app._app is fastapi_app
+    assert isinstance(cors_app.app._app, ValidationTraceMiddleware)
+    assert cors_app.app._app._app is fastapi_app

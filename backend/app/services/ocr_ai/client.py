@@ -15,6 +15,7 @@ from app.core.provider_observability import (
     ProviderCallDescriptor,
     ProviderCallLogger,
     ProviderCallObserver,
+    ProviderCallSpan,
     ProviderErrorCode,
     ProviderFailurePhase,
     provider_call_logger,
@@ -131,20 +132,48 @@ class OpenAIOcrStructureClient:
             )
             raise
 
+        result = self._parse_observed_response(span, response)
+        self._observer.succeeded(span, response=response, model_name=result.model_name)
+        return result
+
+    def _parse_observed_response(
+        self,
+        span: ProviderCallSpan | None,
+        response: Any,
+    ) -> ProviderOcrStructureResponse:
         try:
-            result = self._parse_response(response)
+            return self._parse_response(response)
         except OcrProcessingError:
             refusal = self._contains_refusal(getattr(response, "output", None))
+            incomplete = getattr(response, "incomplete_details", None)
+            filtered = getattr(incomplete, "reason", None) == "content_filter"
             self._observer.failed(
                 span,
-                ProviderFailurePhase.PROVIDER_POLICY if refusal else ProviderFailurePhase.RESPONSE_VALIDATION,
-                ProviderErrorCode.PROVIDER_REFUSAL if refusal else ProviderErrorCode.PROVIDER_RESPONSE_INVALID,
+                ProviderFailurePhase.PROVIDER_POLICY
+                if refusal or filtered
+                else ProviderFailurePhase.RESPONSE_VALIDATION,
+                (
+                    ProviderErrorCode.PROVIDER_REFUSAL
+                    if refusal
+                    else (
+                        ProviderErrorCode.PROVIDER_SAFETY_FILTERED
+                        if filtered
+                        else ProviderErrorCode.PROVIDER_RESPONSE_INVALID
+                    )
+                ),
                 response=response,
                 provider_response_received=True,
             )
             raise
-        self._observer.succeeded(span, response=response, model_name=result.model_name)
-        return result
+        except Exception:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.UNKNOWN_INTERNAL,
+                ProviderErrorCode.PROVIDER_INTERNAL_FAILURE,
+                response=response,
+                provider_response_received=True,
+            )
+            raise
 
     @staticmethod
     def _raise_for_status_error(error: APIStatusError) -> None:

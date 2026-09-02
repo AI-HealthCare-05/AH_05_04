@@ -11,6 +11,28 @@ from app.core.provider_observability import ProviderCallContext
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
+class RequestTraceMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        trace_id = uuid.uuid4().hex
+        state = scope.setdefault("state", {})
+        state["trace_id"] = trace_id
+
+        async def add_trace_header(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Trace-Id"] = trace_id
+            await send(message)
+
+        await self._app(scope, receive, add_trace_header)
+
+
 class ValidationTraceMiddleware:
     def __init__(self, app: ASGIApp, *, environment: Env, validation_enabled: bool) -> None:
         self._app = app
@@ -22,8 +44,10 @@ class ValidationTraceMiddleware:
             await self._app(scope, receive, send)
             return
 
-        trace_id = uuid.uuid4().hex
         state = scope.setdefault("state", {})
+        trace_id = state.get("trace_id")
+        if not isinstance(trace_id, str):
+            trace_id = uuid.uuid4().hex
         state["trace_id"] = trace_id
         accepted, validation_run_id = await self._validation_run_id(scope, trace_id, receive, send)
         if not accepted:

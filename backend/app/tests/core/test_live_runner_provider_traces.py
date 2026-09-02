@@ -10,6 +10,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     NetworkOneCycleRunner,
     RunStateStore,
     _apply_local_live_evidence_contract,
+    _failure,
     _ocr_database_evidence,
 )
 
@@ -150,6 +151,19 @@ def test_local_live_result_requires_manual_provider_log_review_without_claiming_
     assert staging_result == {"execution": "PASS"}
 
 
+def test_local_live_failure_preserves_provider_trace_references() -> None:
+    traces = {"prescription_recognition": {"status": "EXPECTED", "trace_id": "2" * 32}}
+
+    result = _failure(
+        run_id="61a10000-0000-4000-8000-000000000003",
+        mode="local-live-full",
+        stage="OCR_REQUEST",
+        provider_traces=traces,
+    )
+
+    assert result["provider_traces"] == traces
+
+
 @pytest.mark.parametrize(
     ("enabled", "model_version", "prompt_version"),
     [
@@ -187,8 +201,15 @@ def test_ocr_database_evidence_rejects_config_and_database_mismatch(
     model_version: str | None,
     prompt_version: str | None,
 ) -> None:
-    with pytest.raises(HttpFlowError, match="DB_VERIFICATION"):
+    with pytest.raises(HttpFlowError, match="DB_VERIFICATION") as exc_info:
         _ocr_database_evidence(
             SimpleNamespace(model_version=model_version, prompt_version=prompt_version),
             ocr_structuring_expected=enabled,
         )
+
+    assert exc_info.value.evidence == {
+        "api_code": "OCR_STRUCTURE_EVIDENCE_MISMATCH",
+        "ocr_structuring_expected": enabled,
+        "model_version_present": bool(model_version),
+        "prompt_version_present": bool(prompt_version),
+    }
