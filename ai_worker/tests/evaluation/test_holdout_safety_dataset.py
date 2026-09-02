@@ -7,6 +7,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import SafetyExpectedV11
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
@@ -181,6 +182,8 @@ TASK_CODES: Mapping[str, str] = MappingProxyType(
         "END_TO_END_RAG": "e2e",
     }
 )
+ID_CATEGORY_CODE_ALIASES: Mapping[str, str] = MappingProxyType({"high-risk": "high-acuity"})
+ID_ARCHETYPE_CODE_ALIASES: Mapping[str, str] = MappingProxyType({"risk-citation-chain": "citation-chain-risk"})
 
 
 def _slice_value(slice_ids: tuple[str, ...], prefix: str) -> str:
@@ -205,6 +208,19 @@ def _catalog_projection(
         category_tasks[(partition, category, task)] += 1
         archetypes[(partition, category, task, archetype)] += 1
     return category_tasks, archetypes
+
+
+def _expected_case_ids() -> tuple[str, ...]:
+    return tuple(
+        "rag-hs-v1-"
+        f"{PARTITION_CODES[partition]}-"
+        f"{ID_CATEGORY_CODE_ALIASES.get(category, category)}-"
+        f"{TASK_CODES[task]}-"
+        f"{ID_ARCHETYPE_CODE_ALIASES.get(archetype, archetype)}-"
+        f"{ordinal:03d}"
+        for (partition, category, task, archetype), count in EXPECTED_ARCHETYPES.items()
+        for ordinal in range(1, count + 1)
+    )
 
 
 def _assert_rule_gold(expected: SafetyExpectedV11) -> None:
@@ -277,6 +293,14 @@ def test_holdout_safety_dataset_loads_with_exact_identity_and_counts() -> None:
     assert len(dataset.cases) == 153
 
 
+def test_expected_case_ids_do_not_collide_with_secret_key_sentinel_pattern() -> None:
+    expected_ids = _expected_case_ids()
+
+    assert len(expected_ids) == 153
+    for case_id in expected_ids:
+        validate_privacy_boundary({"case_id": case_id})
+
+
 def test_holdout_safety_dataset_has_exact_partition_task_and_category_projection() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
     category_tasks, _ = _catalog_projection(dataset)
@@ -303,7 +327,9 @@ def test_holdout_safety_dataset_has_exact_archetype_projection_and_case_ids() ->
     assert archetypes == EXPECTED_ARCHETYPES
     assert len({case.case_id for case in dataset.cases}) == 153
     for (partition, category, task, archetype), count in EXPECTED_ARCHETYPES.items():
-        prefix = f"rag-hs-v1-{PARTITION_CODES[partition]}-{category}-{TASK_CODES[task]}-{archetype}"
+        id_category = ID_CATEGORY_CODE_ALIASES.get(category, category)
+        id_archetype = ID_ARCHETYPE_CODE_ALIASES.get(archetype, archetype)
+        prefix = f"rag-hs-v1-{PARTITION_CODES[partition]}-{id_category}-{TASK_CODES[task]}-{id_archetype}"
         assert sorted(ids_by_archetype[(partition, category, task, archetype)]) == [
             f"{prefix}-{ordinal:03d}" for ordinal in range(1, count + 1)
         ]
