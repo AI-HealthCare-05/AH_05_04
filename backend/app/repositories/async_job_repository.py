@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.models.async_jobs import (
     AiJob,
     AiJobStatus,
     AiJobType,
+    DomainType,
     IdempotencyRecord,
     IdempotencyRecordType,
     OutboxEvent,
@@ -71,6 +72,20 @@ class AsyncJobRepository:
         )
         return result.scalars().first()
 
+    async def delete_expired_idempotency_record(self, *, record_id: UUID) -> None:
+        """idempotency-v1.md "만료 이후 같은 키는 새 요청으로 처리될 수 있다": `expires_at`은 unique
+        index를 자동 해제하지 않으므로, 만료 row를 먼저 원자적으로 제거해야 같은 key로 새 Job을 만들
+        수 있습니다. `expires_at`을 다시 확인해, 그 사이 다른 요청이 이미 지웠거나 레코드가 더는
+        만료 상태가 아니면(이론상 불가능하지만) 조건 불일치로 아무것도 지우지 않습니다."""
+        now = datetime.now(config.TIMEZONE)
+        await self.session.execute(
+            delete(IdempotencyRecord).where(
+                IdempotencyRecord.id == record_id,
+                IdempotencyRecord.expires_at <= now,
+            )
+        )
+        await self.session.flush()
+
     async def get_job(self, *, job_id: UUID) -> AiJob | None:
         result = await self.session.execute(select(AiJob).where(AiJob.id == job_id))
         return result.scalars().first()
@@ -94,12 +109,22 @@ class AsyncJobRepository:
         await self.session.flush()
         return job
 
-    async def create_outbox_event(self, *, job: AiJob) -> OutboxEvent:
+    async def create_outbox_event(
+        self,
+        *,
+        job: AiJob,
+        trace_id: str | None = None,
+        domain_type: DomainType | None = None,
+        domain_id: UUID | None = None,
+    ) -> OutboxEvent:
         event = OutboxEvent(
             job_id=job.id,
             attempt=1,
             event_kind=OutboxEventKind.JOB_EXECUTE,
             status=OutboxEventStatus.PENDING,
+            trace_id=trace_id,
+            domain_type=domain_type,
+            domain_id=domain_id,
         )
         self.session.add(event)
         await self.session.flush()

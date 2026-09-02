@@ -7,12 +7,14 @@ from sqlalchemy import CheckConstraint, UniqueConstraint, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.core.retry import ALL_FAILURE_CODES
+from ai_worker.schemas.messages import DomainType as WorkerDomainType
 from app.core.db.databases import Base
 from app.models.async_jobs import (
     _FAILURE_CODE_VALUES,
     AiJob,
     AiJobStatus,
     AiJobType,
+    DomainType,
     MessageQuarantine,
     OutboxEvent,
     OutboxEventKind,
@@ -26,6 +28,13 @@ def test_failure_code_allowlist_matches_worker_retry_contract() -> None:
     """ai_worker/core/retry.py의 ALL_FAILURE_CODES와 DB CHECK 제약의 allowlist가 어긋나면
     Worker가 기록한 failure_code를 DB가 거부할 수 있으므로 두 목록을 동기화된 상태로 고정합니다."""
     assert set(_FAILURE_CODE_VALUES) == set(ALL_FAILURE_CODES)
+
+
+def test_domain_type_matches_worker_message_schema() -> None:
+    """`ai_worker/schemas/messages.py`의 `DomainType`과 이 값이 어긋나면, Backend가 접수 시점에
+    저장한 `outbox_event.domain_type`을 Publisher가 `WorkerMessage`로 조립할 때 검증에서
+    거부될 수 있으므로 두 enum을 동기화된 상태로 고정합니다."""
+    assert {member.value for member in DomainType} == {member.value for member in WorkerDomainType}
 
 
 def test_track_a_async_tables_are_registered() -> None:
@@ -121,6 +130,9 @@ def test_outbox_event_contains_publish_and_claim_columns() -> None:
         "claim_token",
         "claim_expires_at",
         "published_at",
+        "trace_id",
+        "domain_type",
+        "domain_id",
         "created_at",
         "updated_at",
     }

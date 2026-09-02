@@ -70,6 +70,19 @@ class AiJobType(StrEnum):
     CHAT = "CHAT"
 
 
+class DomainType(StrEnum):
+    OCR_JOB = "OCR_JOB"
+    GUIDE = "GUIDE"
+    CHAT_MESSAGE = "CHAT_MESSAGE"
+
+
+DOMAIN_TYPE_BY_JOB_TYPE: dict[AiJobType, DomainType] = {
+    AiJobType.OCR: DomainType.OCR_JOB,
+    AiJobType.GUIDE: DomainType.GUIDE,
+    AiJobType.CHAT: DomainType.CHAT_MESSAGE,
+}
+
+
 class AiJobStatus(StrEnum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
@@ -239,6 +252,9 @@ class OutboxEvent(_CreatedUpdatedColumns, Base):
         CheckConstraint(f"event_kind IN ({_sql_in_list(OutboxEventKind)})", name="chk_outbox_event_kind"),
         CheckConstraint(f"status IN ({_sql_in_list(OutboxEventStatus)})", name="chk_outbox_status"),
         CheckConstraint("attempt > 0", name="chk_outbox_attempt"),
+        CheckConstraint(
+            f"domain_type IS NULL OR domain_type IN ({_sql_in_list(DomainType)})", name="chk_outbox_domain_type"
+        ),
     )
 
     event_id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -259,6 +275,22 @@ class OutboxEvent(_CreatedUpdatedColumns, Base):
     claim_token: Mapped[str | None] = mapped_column(String(100), nullable=True)
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # outbox-stream-v1.md Stream envelope의 required trace_id입니다. 접수 시점의 request.state.trace_id를
+    # 저장해두지 않으면, 나중에 실제 발행(XADD) 시점에는 원래 HTTP 요청이 이미 끝나 그 값을 잃어버려
+    # live-provider-call-evidence.md가 세우는 runner→Backend 로그→provider 로그 상관관계가 접수 경로에서
+    # 끊깁니다. 접수 시 값이 없을 수 있는 호출(테스트 등)을 위해 nullable로 둡니다.
+    trace_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Stream envelope의 required domain_type/domain_id입니다. ai_job은 domain_type/domain_id 물리
+    # 컬럼을 두지 않기로 확정했고(PR #184) 도메인 테이블에도 ai_job으로부터의 역참조 컬럼이 아직
+    # 없어서, 나중에 역조회할 방법이 없습니다. 대신 create_domain_placeholder가 도메인 row를 막 만든
+    # 접수 시점에 이미 알고 있는 값을 여기 그대로 저장해 역조회 자체를 필요 없게 만듭니다.
+    # #142(Pending Reclaim·재시도)가 새 attempt의 retry Outbox event를 만들 때는, 같은 Job의 직전
+    # Outbox event에서 이 domain_type/domain_id를 그대로 복사해야 합니다 — 재시도는 같은 도메인
+    # 결과를 다시 만드는 게 아니라 같은 결과를 향한 재시도이므로 참조가 바뀌면 안 됩니다.
+    domain_type: Mapped[DomainType | None] = mapped_column(
+        Enum(DomainType, native_enum=False, length=20), nullable=True
+    )
+    domain_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
 
     job: Mapped["AiJob"] = relationship(back_populates="outbox_events", foreign_keys=[job_id])
 

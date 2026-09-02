@@ -99,7 +99,11 @@ class Config(BaseSettings):
     # idempotency-v1.md: 원문 Idempotency-Key는 저장하지 않고 versioned HMAC만 저장합니다.
     # 실제 key rotation 절차·물리 secret 관리는 Privacy·보안 승인 후 별도로 확정합니다(문서 "단일 테이블과
     # 저장 필드" 참고) — 지금은 단일 active version만 지원합니다.
-    IDEMPOTENCY_HMAC_KEY: str = f"default-idempotency-hmac-key{uuid.uuid4().hex}"
+    # 기본값은 프로세스마다 값이 달라지면 안 됩니다 — 서버 재시작이나 여러 Backend 인스턴스가 같은
+    # Idempotency-Key를 서로 다른 HMAC으로 계산하면 기존 레코드를 찾지 못해 중복 Job·Outbox가 생깁니다.
+    # 그래서 uuid4() 같은 프로세스별 난수 대신 안정적인 placeholder 문자열을 쓰고, production 기동은
+    # 아래 validator가 이 placeholder·빈 값으로 시작하지 못하게 막습니다.
+    IDEMPOTENCY_HMAC_KEY: str = "not-configured-idempotency-hmac-key"
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
 
@@ -139,6 +143,15 @@ class Config(BaseSettings):
     def validate_chat_history_environment(self) -> "Config":
         if self.CHAT_HISTORY_CONTEXT_ENABLED and self.ENV is not Env.LOCAL:
             raise ValueError("CHAT_HISTORY_CONTEXT_ENABLED is allowed only in local environment")
+        return self
+
+    @model_validator(mode="after")
+    def validate_idempotency_hmac_key_configured(self) -> "Config":
+        if self.ENV is Env.PRODUCTION:
+            if not self.IDEMPOTENCY_HMAC_KEY.strip():
+                raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty in production")
+            if self.IDEMPOTENCY_HMAC_KEY == "not-configured-idempotency-hmac-key":
+                raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret in production")
         return self
 
     @property

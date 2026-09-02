@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from typing import NoReturn
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
 from app.core.utils.idempotency import IdempotencyKeyFormatError
-from app.models.async_jobs import AiJob, AiJobType, IdempotencyRecord, OutboxEvent, OutboxEventKind
+from app.models.async_jobs import AiJob, AiJobType, DomainType, IdempotencyRecord, OutboxEvent, OutboxEventKind
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob, OcrStatus
 from app.models.profiles import Profile, ProfileType
@@ -19,6 +20,7 @@ from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.services.job_intake import (
     CreateDomainPlaceholder,
+    DomainReference,
     IdempotencyKeyConflictError,
     JobIntakeResult,
     JobIntakeService,
@@ -99,7 +101,7 @@ def _ocr_placeholder_factory(
     received_job_ids: list[UUID] = []
     document_repo = MedicalDocumentRepository(session)
 
-    async def create_domain_placeholder(job_id: UUID) -> None:
+    async def create_domain_placeholder(job_id: UUID) -> DomainReference:
         document = await document_repo.get_owned(document_id=document_id, user=user)
         if document is None:
             raise ApiError(
@@ -112,6 +114,7 @@ def _ocr_placeholder_factory(
         await session.flush()
         created.append(ocr_job)
         received_job_ids.append(job_id)
+        return DomainReference(domain_type=DomainType.OCR_JOB, domain_id=ocr_job.id)
 
     return created, received_job_ids, create_domain_placeholder
 
@@ -134,6 +137,7 @@ async def test_accept_job_creates_placeholder_job_outbox_and_idempotency_record(
         idempotency_key="test-idempotency-key-0001",
         fingerprint={"job_type": "OCR", "document_id": str(document.id)},
         create_domain_placeholder=create_placeholder,
+        trace_id="a" * 32,
     )
 
     assert result.is_duplicate is False
@@ -148,6 +152,13 @@ async def test_accept_job_creates_placeholder_job_outbox_and_idempotency_record(
     assert outbox_event is not None
     assert outbox_event.event_kind == OutboxEventKind.JOB_EXECUTE
     assert outbox_event.attempt == 1
+    # outbox-stream-v1.md envelope의 required trace_id — 접수 시점의 request.state.trace_id를
+    # 저장해두지 않으면 실제 발행 시점엔 원래 HTTP 요청이 끝나 있어 값을 잃어버립니다.
+    assert outbox_event.trace_id == "a" * 32
+    # envelope의 required domain_type/domain_id — ai_job_id 역참조가 없어도 접수 시점에 콜백이
+    # 돌려준 DomainReference를 그대로 저장해서 나중에 역조회할 필요가 없습니다.
+    assert outbox_event.domain_type == DomainType.OCR_JOB
+    assert outbox_event.domain_id == created_ocr_jobs[0].id
 
     await db_session.refresh(result.job)
     assert result.job.expected_event_id == outbox_event.event_id
@@ -177,7 +188,7 @@ async def test_accept_job_same_key_same_fingerprint_returns_existing_job(
         create_domain_placeholder=create_placeholder,
     )
 
-    async def unexpected_placeholder(_job_id: UUID) -> None:
+    async def unexpected_placeholder(_job_id: UUID) -> NoReturn:
         raise AssertionError("중복 요청에서는 새 도메인 placeholder를 만들면 안 됩니다.")
 
     second = await service.accept_job(
@@ -195,6 +206,58 @@ async def test_accept_job_same_key_same_fingerprint_returns_existing_job(
 
     job_count = await db_session.scalar(select(AiJob).where(AiJob.user_id == user.id))
     assert job_count is not None  # 정상적으로 하나만 존재
+
+
+@pytest.mark.asyncio
+async def test_accept_job_expired_record_is_reclaimed_and_creates_new_job(
+    db_session: AsyncSession,
+) -> None:
+    """idempotency-v1.md "만료 이후 같은 키는 새 요청으로 처리될 수 있다": expires_at을 확인하지
+    않으면 만료 후에도 같은 key가 계속 기존 Job을 반환하게 됩니다. 또한 만료 row가 지워지지 않고
+    남아있으면 새 레코드 INSERT가 unique 제약 위반으로 실패합니다.
+    """
+    user = await _create_user(db_session, email=f"intake-{uuid4().hex[:12]}@test.local")
+    document = await _create_document(db_session, user=user)
+    service = JobIntakeService(AsyncJobRepository(db_session))
+    idempotency_key = "test-idempotency-key-0005"
+    fingerprint = {"job_type": "OCR", "document_id": str(document.id)}
+
+    _, _, create_placeholder = _ocr_placeholder_factory(db_session, document_id=document.id, user=user)
+    first = await service.accept_job(
+        user_id=user.id,
+        job_type=AiJobType.OCR,
+        operation_id="ocr.create_job",
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        create_domain_placeholder=create_placeholder,
+    )
+
+    record = await db_session.scalar(select(IdempotencyRecord).where(IdempotencyRecord.job_id == first.job.id))
+    assert record is not None
+    record.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.flush()
+
+    second_ocr_jobs, _, second_create_placeholder = _ocr_placeholder_factory(
+        db_session, document_id=document.id, user=user
+    )
+    second = await service.accept_job(
+        user_id=user.id,
+        job_type=AiJobType.OCR,
+        operation_id="ocr.create_job",
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        create_domain_placeholder=second_create_placeholder,
+    )
+
+    assert second.is_duplicate is False
+    assert second.job.id != first.job.id
+    assert len(second_ocr_jobs) == 1
+
+    remaining_records = (
+        await db_session.scalars(select(IdempotencyRecord).where(IdempotencyRecord.user_id == user.id))
+    ).all()
+    assert len(remaining_records) == 1
+    assert remaining_records[0].job_id == second.job.id
 
 
 @pytest.mark.asyncio
@@ -216,7 +279,7 @@ async def test_accept_job_same_key_different_fingerprint_raises_conflict(
         create_domain_placeholder=create_placeholder,
     )
 
-    async def unexpected_placeholder(_job_id: UUID) -> None:
+    async def unexpected_placeholder(_job_id: UUID) -> NoReturn:
         raise AssertionError("충돌 요청에서는 새 도메인 placeholder를 만들면 안 됩니다.")
 
     with pytest.raises(IdempotencyKeyConflictError):
@@ -238,7 +301,7 @@ async def test_accept_job_rejects_invalid_idempotency_key_format(
     document = await _create_document(db_session, user=user)
     service = JobIntakeService(AsyncJobRepository(db_session))
 
-    async def unexpected_placeholder(_job_id: UUID) -> None:
+    async def unexpected_placeholder(_job_id: UUID) -> NoReturn:
         raise AssertionError("형식이 잘못된 key는 placeholder를 만들기 전에 거부돼야 합니다.")
 
     with pytest.raises(IdempotencyKeyFormatError):
@@ -309,9 +372,11 @@ async def test_accept_job_concurrent_same_key_creates_only_one_job() -> None:
         try:
             service = JobIntakeService(AsyncJobRepository(session))
 
-            async def create_placeholder(_job_id: UUID) -> None:
-                session.add(OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING))
+            async def create_placeholder(_job_id: UUID) -> DomainReference:
+                ocr_job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING)
+                session.add(ocr_job)
                 await session.flush()
+                return DomainReference(domain_type=DomainType.OCR_JOB, domain_id=ocr_job.id)
 
             result = await service.accept_job(
                 user_id=user.id,

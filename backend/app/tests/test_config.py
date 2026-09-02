@@ -38,6 +38,9 @@ def test_config_parses_environment(
         {
             **BASE_CONFIG,
             "ENV": env_value,
+            # production은 IDEMPOTENCY_HMAC_KEY placeholder 기동을 거부하므로, 이 테스트가 검증하는
+            # ENV 파싱과 무관한 실패를 피하려면 실제 값을 넣어야 합니다.
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret",
         }
     )
 
@@ -153,3 +156,49 @@ def test_config_rejects_non_positive_ocr_deadline() -> None:
                 "OCR_REQUEST_DEADLINE_SECONDS": 0.0,
             }
         )
+
+
+def test_idempotency_hmac_key_default_is_a_fixed_placeholder() -> None:
+    """서버 재시작·여러 인스턴스에서 기본값이 매번 달라지면 같은 Idempotency-Key가 서로 다른
+    key_hmac으로 계산되어 기존 레코드를 찾지 못하고 중복 Job·Outbox가 생깁니다. `uuid.uuid4()`
+    같은 프로세스별 난수 기본값은 같은 프로세스 안에서 두 인스턴스를 비교해서는 잡히지 않으므로
+    (클래스 정의 시점에 한 번만 평가되어 프로세스 내에서는 항상 동일), 필드 기본값 자체가 고정
+    literal인지 `model_fields`로 직접 확인합니다(실제 환경변수 값에 영향받지 않는 유일한 방법)."""
+    assert Config.model_fields["IDEMPOTENCY_HMAC_KEY"].default == "not-configured-idempotency-hmac-key"
+
+
+def test_idempotency_hmac_key_rejects_placeholder_in_production() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": "production",
+                # 실행 환경의 실제 IDEMPOTENCY_HMAC_KEY 환경변수가 이 값을 덮어쓰지 않도록 명시적으로
+                # placeholder를 지정합니다 — pydantic-settings는 dict에 없는 키만 env var로 채우므로,
+                # 키를 생략하면 로컬 .env에 실제 값이 설정된 환경에서 이 테스트가 거짓으로 통과합니다.
+                "IDEMPOTENCY_HMAC_KEY": "not-configured-idempotency-hmac-key",
+            }
+        )
+
+
+def test_idempotency_hmac_key_rejects_blank_in_production() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": "production",
+                "IDEMPOTENCY_HMAC_KEY": "   ",
+            }
+        )
+
+
+def test_idempotency_hmac_key_accepts_configured_value_in_production() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": "production",
+            "IDEMPOTENCY_HMAC_KEY": "a-real-production-idempotency-hmac-secret",
+        }
+    )
+
+    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-production-idempotency-hmac-secret"
