@@ -29,7 +29,7 @@ def build_message() -> WorkerMessage:
             "attempt": 1,
             "available_at": now.isoformat(),
             "enqueued_at": now.isoformat(),
-            "trace_id": "fake-consumer-one-cycle",
+            "trace_id": uuid4().hex,
         }
     )
 

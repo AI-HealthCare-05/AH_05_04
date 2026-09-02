@@ -36,7 +36,7 @@ def build_message() -> WorkerMessage:
             "attempt": 1,
             "available_at": now.isoformat(),
             "enqueued_at": now.isoformat(),
-            "trace_id": "fake-stream-test",
+            "trace_id": uuid4().hex,
         }
     )
 

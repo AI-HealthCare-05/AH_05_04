@@ -1,6 +1,7 @@
 """Redis Stream 메시지 Codec 테스트입니다."""
 
 from datetime import UTC, datetime
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -16,10 +17,7 @@ from ai_worker.adapters.redis_message_codec import (
 from ai_worker.schemas.messages import WorkerMessage
 
 
-def build_message(
-    *,
-    trace_id: str = "redis-codec-test",
-) -> WorkerMessage:
+def build_message() -> WorkerMessage:
     now = datetime.now(UTC)
 
     return WorkerMessage.model_validate(
@@ -34,7 +32,7 @@ def build_message(
             "attempt": 1,
             "available_at": now.isoformat(),
             "enqueued_at": now.isoformat(),
-            "trace_id": trace_id,
+            "trace_id": uuid4().hex,
         }
     )
 
@@ -68,7 +66,14 @@ def test_unknown_field_is_rejected_without_exposure() -> None:
 
 
 def test_message_larger_than_8kib_is_rejected() -> None:
-    message = build_message(trace_id="x" * 9000)
+    message = build_message()
 
-    with pytest.raises(StreamMessageEncodingError):
-        encode_stream_message(message)
+    # 향후 envelope 필드가 추가되더라도 직렬화 결과의
+    # 8KiB 상한이 유지되는지 검증합니다.
+    with patch.object(
+        WorkerMessage,
+        "model_dump",
+        return_value={"synthetic_field": "x" * 9000},
+    ):
+        with pytest.raises(StreamMessageEncodingError):
+            encode_stream_message(message)

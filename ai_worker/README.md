@@ -62,10 +62,14 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 | `REDIS_CONSUMER_GROUP` | `ai-workers` | Consumer Group |
 | `REDIS_CONSUMER_NAME` | `ai-worker-local` | Consumer 식별자 |
 | `REDIS_BLOCK_MS` | `5000` | blocking read 시간 |
+| `REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS` | `5.0` | Redis 연결 수립 timeout(초) |
+| `REDIS_SOCKET_TIMEOUT_SECONDS` | `10.0` | Redis 명령 socket timeout(초) |
 
 실제 비밀번호를 저장소·로그·이슈·문서에 기록하지 않습니다.
 운영 Redis 외부 노출과 인증 설정은 별도 Infrastructure 작업의
 Production 차단 조건입니다.
+`REDIS_SOCKET_TIMEOUT_SECONDS`는 `REDIS_BLOCK_MS / 1000`보다 길어야 합니다.
+이를 통해 정상적인 `XREADGROUP` blocking read가 socket timeout으로 먼저 중단되지 않도록 합니다.
 
 ### 생성 예시
 

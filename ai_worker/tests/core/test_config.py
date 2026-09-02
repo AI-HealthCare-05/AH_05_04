@@ -86,6 +86,8 @@ def test_config_has_approved_redis_defaults() -> None:
     assert config.REDIS_CONSUMER_GROUP == "ai-workers"
     assert config.REDIS_CONSUMER_NAME == "ai-worker-local"
     assert config.REDIS_BLOCK_MS == 5000
+    assert config.REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS == 5.0
+    assert config.REDIS_SOCKET_TIMEOUT_SECONDS == 10.0
 
 
 def test_config_accepts_redis_environment_values(
@@ -116,4 +118,22 @@ def test_config_rejects_invalid_redis_port(port: int) -> None:
         Config(  # type: ignore[call-arg]
             _env_file=None,
             REDIS_PORT=port,
+        )
+
+
+@pytest.mark.parametrize(
+    "socket_timeout_seconds",
+    [5.0, 4.9],
+)
+def test_config_rejects_socket_timeout_not_longer_than_blocking_read(
+    socket_timeout_seconds: float,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match="REDIS_SOCKET_TIMEOUT_SECONDS",
+    ):
+        Config(  # type: ignore[call-arg]
+            _env_file=None,
+            REDIS_BLOCK_MS=5000,
+            REDIS_SOCKET_TIMEOUT_SECONDS=socket_timeout_seconds,
         )

@@ -14,6 +14,8 @@ def create_redis_client(config: Config) -> Redis:
         port=config.REDIS_PORT,
         password=config.REDIS_PASSWORD,
         decode_responses=False,
+        socket_connect_timeout=config.REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=config.REDIS_SOCKET_TIMEOUT_SECONDS,
     )
 
 

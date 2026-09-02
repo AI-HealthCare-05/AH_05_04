@@ -20,6 +20,8 @@ def test_create_redis_client_uses_worker_config() -> None:
         REDIS_HOST="redis-test",
         REDIS_PORT=6380,
         REDIS_PASSWORD="synthetic-password",
+        REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS=2.5,
+        REDIS_SOCKET_TIMEOUT_SECONDS=8.0,
     )
 
     with patch(
@@ -36,6 +38,8 @@ def test_create_redis_client_uses_worker_config() -> None:
         port=6380,
         password="synthetic-password",
         decode_responses=False,
+        socket_connect_timeout=2.5,
+        socket_timeout=8.0,
     )
 
 

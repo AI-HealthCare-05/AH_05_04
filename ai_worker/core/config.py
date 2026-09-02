@@ -1,8 +1,9 @@
 import zoneinfo
 from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
+from typing import Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +40,8 @@ class Config(BaseSettings):
     REDIS_CONSUMER_GROUP: str = "ai-workers"
     REDIS_CONSUMER_NAME: str = "ai-worker-local"
     REDIS_BLOCK_MS: int = Field(default=5000, ge=0)
+    REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
+    REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
 
     @field_validator("TIMEZONE", mode="before")
     @classmethod
@@ -72,3 +75,14 @@ class Config(BaseSettings):
             return None
 
         return value
+
+    @model_validator(mode="after")
+    def _validate_redis_timeout_relationship(self) -> Self:
+        """Blocking read보다 socket timeout을 길게 유지합니다."""
+
+        block_seconds = self.REDIS_BLOCK_MS / 1000
+
+        if self.REDIS_SOCKET_TIMEOUT_SECONDS <= block_seconds:
+            raise ValueError("REDIS_SOCKET_TIMEOUT_SECONDS는 REDIS_BLOCK_MS보다 길어야 합니다.")
+
+        return self
