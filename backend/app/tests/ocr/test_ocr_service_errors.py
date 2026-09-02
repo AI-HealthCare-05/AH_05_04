@@ -20,6 +20,8 @@ from app.repositories.medical_document_repository import (
 from app.repositories.ocr_repository import OcrRepository
 from app.services.ocr import OcrService
 from app.services.ocr_engine import (
+    OcrDeadline,
+    OcrDeadlineExceededError,
     OcrProcessingError,
     OcrProviderConnectionError,
     OcrProviderTimeoutError,
@@ -37,8 +39,9 @@ class RaisingOcrEngine:
         *,
         object_key: str,
         file_mime_type: str,
+        deadline: OcrDeadline,
     ) -> OcrRecognitionResult:
-        _ = object_key, file_mime_type
+        _ = object_key, file_mime_type, deadline
         raise self._error
 
 
@@ -71,6 +74,12 @@ class SyntheticOcrValidationPayload(BaseModel):
             503,
             "OCR_PROVIDER_UNAVAILABLE",
             "PROVIDER_UNAVAILABLE",
+        ),
+        (
+            OcrDeadlineExceededError("OCR 요청 예산이 남아 있지 않습니다."),
+            503,
+            "OCR_PROVIDER_TIMEOUT",
+            "DEADLINE_EXCEEDED",
         ),
         (
             OcrProcessingError("민감한 OCR 응답"),

@@ -6,7 +6,7 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 ## 공통 오류 응답 형식
 
-등록된 API에서 처리하는 오류 응답은 다음 형식을 따릅니다.
+FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은 다음 형식을 따릅니다.
 
 ```json
 {
@@ -26,13 +26,17 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 클라이언트는 `message`가 아니라 `code`를 기준으로 오류를 분기합니다.
 
-등록되지 않은 경로 요청(404)이나 지원하지 않는 HTTP 메서드 요청(405)은 FastAPI/Starlette가 라우팅 단계에서 자체적으로 응답을 만들기 때문에 아직 이 공통 형식을 따르지 않습니다. 현재는 등록되지 않은 경로에 `{"detail": "Not Found"}`, 지원하지 않는 메서드에 `{"detail": "Method Not Allowed"}`가 반환됩니다. 클라이언트는 이 두 경우에 `code` 필드가 없을 수 있다는 점을 감안해야 합니다.
+등록되지 않은 `/api/v1/*` 경로 요청(404)과 지원하지 않는 HTTP 메서드 요청(405)도 전역 `StarletteHTTPException` 핸들러가 공통 형식으로 변환합니다. 이 경우 `code`는 `HTTP_ERROR`, `details`는 빈 배열이며, `message`에는 FastAPI/Starlette의 기본 `detail` 문자열이 들어갑니다.
+
+단, Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 공통 오류 envelope 적용 대상이 아닙니다.
 
 ## 민감정보 노출 방지
 
 **이미 정해진 보안 원칙**: [`SECURITY.md`](../../../SECURITY.md)는 "의료·개인정보 응답은 기본적으로 `Cache-Control: no-store`를 적용합니다"를 현재 원칙으로 정하고 있다. 이는 Post-MVP 목표가 아니라 지금 지켜야 하는 규칙이다. 같은 원칙에 따라 `details[].rejected_value`에도 비밀번호·토큰, OCR·처방 원문, 챗봇 질문·답변, Provider payload, 예외 원문을 넣지 않아야 한다.
 
-**현재 미충족 상태**: 처방·의료문서·OCR·가이드 API는 각 라우터의 성공 응답에만 개별적으로 `Cache-Control: no-store`를 붙이며, 공통 오류 핸들러(`backend/app/core/errors.py`)는 기본으로 이 헤더를 붙이지 않아 오류 응답에서 원칙을 충족하지 못한다. 인증 API(`login`, `token/refresh`)는 access token을 반환하는 성공 응답에도 이 헤더가 없고, `GET`/`PATCH /users/me`도 개인정보를 반환하면서 헤더가 없다. Chat API만 `ChatNoStoreMiddleware`로 성공·오류 응답 모두를 보호한다. `details[].rejected_value`도 일부 검증 코드(예: 처방 확정의 `dose_value` 형식 오류)에서 원본 입력값을 그대로 담고 있어 원칙을 충족하지 못한다. 실제 적용 범위 확장과 회귀 테스트는 별도 후속 Issue에서 진행한다.
+**현재 적용 상태**: `backend/app/core/no_store_middleware.py`의 `NoStoreMiddleware`가 `/api/v1/*` 전체 응답에 `Cache-Control: no-store`를 일괄 적용한다. 인증·사용자·처방·의료문서·OCR·가이드·채팅 API의 성공 응답과 오류 응답이 모두 대상이다. 단, Router endpoint와 FastAPI/Starlette 예외 처리 계층까지 도달하지 않고 최외곽 `CORSMiddleware`가 직접 처리하는 CORS preflight 응답은 공통 오류 envelope와 `no-store` 정책의 대상이 아니다.
+
+**처방 OCR 원문 비노출 원칙**: 처방 확정과 OCR 검수 오류 응답은 OCR `raw_value`, 처방 원문, Provider 원문 오류, 챗봇 질문·답변, 비밀번호·토큰을 `message`나 `details[].rejected_value`에 넣지 않는다. 사용자가 확인한 `confirmed_value`만 처방 확정 입력으로 사용하며, 형식 오류는 `field`와 `reason` 중심으로 반환한다.
 
 ## HTTP 상태 코드 기준
 
@@ -105,6 +109,80 @@ raise ApiError(
 - **MVP**: 지금 이 저장소의 코드에서 실제로 발생하는 코드입니다. 코드와 메시지는 실제 구현과 항상 일치해야 합니다.
 - **Post-MVP**: 아직 구현되지 않았고, Post-MVP 계획 문서에서 다루는 기능(공통 비동기 Job, 복약 일정·로그, RAG·Citation·Safety 등)이 만들어질 때 사용할 예정인 코드입니다. 지금 이 코드를 실제로 응답에서 받을 일은 없습니다.
 
+## 재시도 가능 여부
+
+`retryable=true`는 일시적인 시간·상태 조건이 해소된 뒤 동일한 payload의 요청이 성공할 수 있음을 뜻합니다.
+즉시 또는 자동 재시도를 허용한다는 의미는 아닙니다.
+자동·수동 재시도, 지연과 backoff, 최대 횟수, 상태 재조회, 재업로드 및 사용자 안내 방식은 endpoint·domain별 계약에서 결정합니다.
+`retryable=false`는 현재 상태에서 동일 요청을 그대로 재전송하는 대상이 아니라는 뜻이며, 재인증·입력 수정·사용자 행동 이후의 새로운 시도까지 금지하지 않습니다.
+아래 표가 판정의 정본이며 다른 절의 표는 이 기준을 따릅니다.
+`retryable`은 아직 응답 body에 포함하지 않고 클라이언트는 `code`로 판정합니다.
+응답 필드나 `Retry-After` header 추가는 별도 Decision이 필요합니다.
+
+### 공개 오류 코드
+
+| code | HTTP | `retryable` | 판정 근거 |
+| --- | ---: | :---: | --- |
+| `OCR_PROVIDER_TIMEOUT` | 503 | true | OCR 제공자 일시 지연 |
+| `OCR_PROVIDER_CALL_FAILED` | 503 | true | OCR 제공자 연결 일시 실패 |
+| `OCR_PROVIDER_UNAVAILABLE` | 503 | true | OCR 제공자 일시 사용 불가 |
+| `SERVICE_UNAVAILABLE` | 503 | true | 서비스 일시 사용 불가 |
+| `GATEWAY_TIMEOUT` | 504 | true | 외부 처리 시간 초과 |
+| `CONCURRENT_UPDATE_IN_PROGRESS` | 409 | true | 문서 잠금 경합이며 잠금 해제 후 성공 가능 |
+| `OCR_JOB_ALREADY_PROCESSING` | 409 | true | 진행 중 작업이 끝나면 성공 가능 |
+| `OCR_JOB_NOT_COMPLETED` | 409 | true | OCR이 완료되면 성공 가능 |
+| `PRESCRIPTION_ALREADY_CONFIRMED` | 409 | false | 이미 확정된 terminal 상태 |
+| `CONFLICT` | 409 | false | 중복 리소스 등 요청 내용을 바꿔야 하는 충돌 |
+| `VALIDATION_FAILED` | 422 | false | 요청 값 수정 필요 |
+| `PRESCRIPTION_REQUIRED_FIELD_MISSING` | 422 | false | 누락 항목 입력 필요 |
+| `BAD_REQUEST` | 400 | false | 요청 내용 수정 필요 |
+| `UPLOAD_FILE_TOO_LARGE` | 400 | false | 다른 파일 필요 |
+| `UPLOAD_FILE_INVALID_TYPE` | 400 | false | 다른 파일 필요 |
+| `UNAUTHORIZED` | 401 | false | 재인증 필요이며 동일 요청 재전송 대상이 아님 |
+| `INVALID_TOKEN` | 401 | false | 재인증 필요 |
+| `EXPIRED_TOKEN` | 401 | false | 토큰 갱신 필요 |
+| `FORBIDDEN` | 403 | false | 권한 상태 변경 필요 |
+| `MEDICAL_DOCUMENT_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `OCR_JOB_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `EXTRACTED_FIELD_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `PRESCRIPTION_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `GUIDE_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `CHAT_SESSION_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `OCR_PROCESSING_FAILED` | 500 | false | 원인 확인 없이 재전송하면 같은 실패가 반복됨 |
+| `GUIDE_GENERATION_FAILED` | 500 | false | 동일 |
+| `AI_RESPONSE_FAILED` | 500 | false | 동일 |
+| `INTERNAL_SERVER_ERROR` | 500 | false | 동일 |
+| `HTTP_ERROR` | (원본) | false | 자동 변환 결과이므로 판정하지 않음 |
+
+`503`·`504`는 모두 `retryable=true`이고, `401`은 재인증이 필요하므로 `false`입니다.
+같은 `409`라도 잠금·진행 중처럼 시간이 지나면 해소되는 충돌만 `true`입니다.
+
+### Worker `FailureCode` 매핑
+
+Worker는 `ai_worker/core/retry.py`의 `RETRYABLE_FAILURE_CODES`로 재시도를 판정합니다.
+공개 오류 코드와의 대응은 다음과 같습니다.
+
+| `FailureCode` | `retryable` | 대응 공개 오류 코드 |
+| --- | :---: | --- |
+| `TIMEOUT` | true | `OCR_PROVIDER_TIMEOUT` |
+| `DEPENDENCY_UNAVAILABLE` | true | `OCR_PROVIDER_CALL_FAILED`, `OCR_PROVIDER_UNAVAILABLE` |
+| `INVALID_INPUT` | false | `VALIDATION_FAILED` |
+| `UNSUPPORTED_SCHEMA` | false | `OCR_PROCESSING_FAILED` |
+| `SAFETY_VALIDATION_FAILED` | false | 공개 오류가 아니라 Safety 상태 축 |
+| `RETRY_EXHAUSTED` | false | `OCR_PROCESSING_FAILED` |
+| `INTERNAL_ERROR` | false | `INTERNAL_SERVER_ERROR` |
+
+`SAFETY_VALIDATION_FAILED`는 오류 응답이 아니라 정상 응답의 상태 축으로 표현합니다.
+확정 정의는 [Safety Result 계약 v1](../targets/post-mvp-1/safety-result-v1.md)을 따릅니다.
+
+Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% 양의 jitter를 더합니다.
+`retryable=false`인 오류는 지연을 계산하지 않고 즉시 후속 처리로 넘깁니다.
+
+### 변경 규칙
+
+`RETRYABLE_FAILURE_CODES`와 이 절의 표는 계약 테스트로 고정합니다.
+한쪽만 바꾸면 `tests/contract/test_retryable_error_classification.py`가 실패합니다.
+
 ## 공통 오류 코드
 
 ### MVP
@@ -121,11 +199,13 @@ raise ApiError(
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
 | 503 | `SERVICE_UNAVAILABLE` | "현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요." | |
 | 504 | `GATEWAY_TIMEOUT` | "외부 처리 시간이 초과되었습니다. 다시 시도해 주세요." | |
-| (원본 상태 코드) | `HTTP_ERROR` | `HTTPException.detail`을 문자열로 변환한 값 (`str(detail)`) | 아직 `ApiError`로 전환되지 않은 코드의 자동 변환 결과. `detail`이 문자열이 아니면 그 값의 문자열 표현이 됨 |
+| (원본 상태 코드) | `HTTP_ERROR` | `HTTPException.detail`을 문자열로 변환한 값 (`str(detail)`) | 아직 `ApiError`로 전환되지 않은 코드의 자동 변환 결과. 기본 라우팅 404/405도 이 형식으로 변환됨 |
+
+각 코드의 재시도 가능 여부는 「재시도 가능 여부」 절의 표를 따릅니다.
 
 ### Post-MVP
 
-Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)에서 확인한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
+이 문서는 현재 Backend 오류 응답 envelope와 MVP에서 실제 응답으로 나가는 오류 코드의 기준 문서다. Post-MVP target 전용 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)처럼 승인된 목표 계약에서 먼저 정의하고, 실제 구현 PR에서 이 문서와 코드·테스트를 함께 갱신한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
 
 ## 도메인별 오류 코드
 
@@ -157,7 +237,7 @@ Post-MVP 공통 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1
 
 ### Post-MVP
 
-Post-MVP 도메인별 오류 코드는 각 승인된 목표 계약에서 확인한다 — 예: `PRESCRIPTION_MEDICATION_REQUIRED`(422)는 [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md).
+Post-MVP 도메인별 오류 코드는 각 승인된 목표 계약에서 먼저 정의한다 — 예: `PRESCRIPTION_MEDICATION_REQUIRED`(422)는 [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md). 실제 구현 PR에서는 이 문서의 MVP 표 또는 후속 Post-MVP 구현 표에 반영해 코드와 문서가 같은 기준을 보도록 한다.
 
 아직 어떤 목표 계약에도 없어 별도 Decision이 필요한 항목:
 
@@ -175,8 +255,6 @@ AI가 안전 제한이나 근거 부족으로 답변을 제한하는 경우는 �
 - OCR 작업은 완료됐지만 특정 결과 항목이 없으면 `EXTRACTED_FIELD_NOT_FOUND`를 사용합니다.
 - OCR 제공 서비스 호출이 시간 초과되면 `OCR_PROVIDER_TIMEOUT`, 연결 자체가 실패하면 `OCR_PROVIDER_CALL_FAILED`, 그 외 일시적으로 사용할 수 없으면 `OCR_PROVIDER_UNAVAILABLE`을 사용합니다.
 - 일반적인 리소스 상태 충돌은 `CONFLICT`를 사용하고, 동일 OCR 작업 중복처럼 의미가 명확한 경우에는 `OCR_JOB_ALREADY_PROCESSING`을 사용합니다.
-- 같은 `409`라도 `PRESCRIPTION_ALREADY_CONFIRMED`는 이미 확정된 terminal 상태이고, `CONCURRENT_UPDATE_IN_PROGRESS`는 잠금 경합에 의한 일시적 충돌로 재시도하면 성공할 수 있습니다.
-- 클라이언트는 전자에서 편집을 종료하고 확정 화면으로 전환하며, 후자에서는 편집 상태를 유지한 채 재시도합니다.
 
 ## HTTPException과의 구분
 

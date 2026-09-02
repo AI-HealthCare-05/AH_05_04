@@ -7,6 +7,8 @@ import pytest
 from app.services.clova_ocr_engine import ClovaOcrEngine
 from app.services.ocr_ai import OcrStructureResult
 from app.services.ocr_engine import (
+    OcrDeadline,
+    OcrDeadlineExceededError,
     OcrProcessingError,
     OcrProviderConnectionError,
     OcrProviderTimeoutError,
@@ -14,6 +16,11 @@ from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
 )
+
+
+def _test_deadline(total_seconds: float = 60.0) -> OcrDeadline:
+    """테스트에서 예산이 충분한 deadline을 만듭니다."""
+    return OcrDeadline.start(total_seconds=total_seconds, response_margin_seconds=0.0)
 
 
 class RecordingStructurer:
@@ -154,6 +161,7 @@ async def test_recognize_calls_clova_and_parses_v2_response(
         result = await engine.recognize(
             object_key="sample.png",
             file_mime_type="image/png",
+            deadline=_test_deadline(),
         )
 
     assert result.raw_text == "처방전 발행일자 2026-08-12"
@@ -213,6 +221,7 @@ async def test_recognize_sends_pdf_format_to_clova(
         result = await engine.recognize(
             object_key="sample.pdf",
             file_mime_type="application/pdf",
+            deadline=_test_deadline(),
         )
 
     assert result.raw_text == ""
@@ -242,6 +251,7 @@ async def test_recognize_converts_timeout_error(
             await engine.recognize(
                 object_key="sample.png",
                 file_mime_type="image/png",
+                deadline=_test_deadline(),
             )
 
 
@@ -268,6 +278,7 @@ async def test_recognize_converts_connection_error(
             await engine.recognize(
                 object_key="sample.png",
                 file_mime_type="image/png",
+                deadline=_test_deadline(),
             )
 
 
@@ -296,6 +307,7 @@ async def test_recognize_converts_provider_unavailable_response(
             await engine.recognize(
                 object_key="sample.png",
                 file_mime_type="image/png",
+                deadline=_test_deadline(),
             )
 
 
@@ -323,6 +335,7 @@ async def test_recognize_rejects_invalid_clova_response(
             await engine.recognize(
                 object_key="sample.png",
                 file_mime_type="image/png",
+                deadline=_test_deadline(),
             )
 
 
@@ -339,6 +352,7 @@ async def test_recognize_rejects_missing_file(
             await engine.recognize(
                 object_key="missing.png",
                 file_mime_type="image/png",
+                deadline=_test_deadline(),
             )
 
 
@@ -372,6 +386,7 @@ async def test_recognize_passes_all_clova_tokens_to_llm_structurer(
         result = await engine.recognize(
             object_key="sample.png",
             file_mime_type="image/png",
+            deadline=_test_deadline(),
         )
 
     expected_token_count = len(payload["images"][0]["fields"])
@@ -382,3 +397,40 @@ async def test_recognize_passes_all_clova_tokens_to_llm_structurer(
     assert result.engine_name == "CLOVA_OCR"
     assert result.model_version == "ocr-structure-test-model"
     assert result.prompt_version == "ocr-structure-prompt-v2"
+
+
+async def test_recognize_does_not_call_provider_when_deadline_is_exhausted(
+    tmp_path: Path,
+) -> None:
+    """예산이 소진되면 HTTP 호출 없이 OcrDeadlineExceededError를 던집니다.
+
+    파일은 정상이지만 남은 예산이 없으므로 Provider를 호출하지 않아야 합니다.
+    """
+    _create_test_image(tmp_path)
+
+    called = False
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={}, request=request)
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        engine = _create_engine(
+            tmp_path=tmp_path,
+            client=client,
+        )
+
+        # 응답 여유가 전체 예산과 같으면 Provider 경로 예산이 0입니다.
+        exhausted = OcrDeadline.start(total_seconds=5.0, response_margin_seconds=5.0)
+
+        with pytest.raises(OcrDeadlineExceededError):
+            await engine.recognize(
+                object_key="sample.png",
+                file_mime_type="image/png",
+                deadline=exhausted,
+            )
+
+    assert called is False, "예산이 없는데 Provider를 호출했습니다."
