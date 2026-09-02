@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Protocol
 
 from openai import (
@@ -9,6 +10,15 @@ from openai import (
 )
 from pydantic import ValidationError
 
+from app.core.provider_observability import (
+    ProviderCallContext,
+    ProviderCallDescriptor,
+    ProviderCallLogger,
+    ProviderCallObserver,
+    ProviderErrorCode,
+    ProviderFailurePhase,
+    provider_call_logger,
+)
 from app.services.ocr_ai.schemas import (
     GeneratedPrescriptionDraft,
     ProviderOcrStructureResponse,
@@ -36,8 +46,20 @@ class OcrStructureProvider(Protocol):
 class OpenAIOcrStructureClient:
     """OpenAI Responses API Structured Outputs 호출만 담당합니다."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        context: ProviderCallContext | None = None,
+        descriptor: ProviderCallDescriptor | None = None,
+        call_logger: ProviderCallLogger = provider_call_logger,
+    ) -> None:
         self._client = client
+        self._observer = ProviderCallObserver(
+            context=context,
+            descriptor=descriptor,
+            call_logger=call_logger,
+        )
 
     async def generate(
         self,
@@ -47,6 +69,7 @@ class OpenAIOcrStructureClient:
         input_json: str,
         max_output_tokens: int,
     ) -> ProviderOcrStructureResponse:
+        span = self._observer.start(requested_model=model)
         try:
             response = await self._client.responses.parse(
                 model=model,
@@ -62,16 +85,66 @@ class OpenAIOcrStructureClient:
                 # 의료문서 OCR 결과를 OpenAI 응답 저장소에 저장하지 않습니다.
                 store=False,
             )
+        except asyncio.CancelledError:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.APPLICATION_DEADLINE,
+                ProviderErrorCode.PROVIDER_CALL_ABORTED,
+            )
+            raise
         except APITimeoutError as error:
+            self._observer.failed(span, ProviderFailurePhase.TRANSPORT_TIMEOUT, ProviderErrorCode.PROVIDER_TIMEOUT)
             raise OcrProviderTimeoutError("OCR 구조화 AI 응답 제한시간을 초과했습니다.") from error
-        except (APIConnectionError, RateLimitError) as error:
+        except APIConnectionError as error:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.TRANSPORT_CONNECTION,
+                ProviderErrorCode.PROVIDER_CONNECTION_FAILED,
+            )
             raise OcrProviderUnavailableError("OCR 구조화 AI 서비스를 사용할 수 없습니다.") from error
-        except (APIResponseValidationError, ValidationError) as error:
+        except RateLimitError as error:
+            self._observer.failed_http_status(span, error, ProviderErrorCode.PROVIDER_RATE_LIMITED)
+            raise OcrProviderUnavailableError("OCR 구조화 AI 서비스를 사용할 수 없습니다.") from error
+        except APIResponseValidationError as error:
+            self._observer.failed_response_validation(span, error)
+            raise OcrProcessingError("OCR 구조화 AI 응답 형식이 올바르지 않습니다.") from error
+        except ValidationError as error:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.RESPONSE_VALIDATION,
+                ProviderErrorCode.PROVIDER_RESPONSE_INVALID,
+                provider_response_received=True,
+            )
             raise OcrProcessingError("OCR 구조화 AI 응답 형식이 올바르지 않습니다.") from error
         except APIStatusError as error:
+            self._observer.failed_http_status(
+                span,
+                error,
+                self._observer.error_code_for_http_status(error.status_code),
+            )
             self._raise_for_status_error(error)
+        except Exception:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.UNKNOWN_INTERNAL,
+                ProviderErrorCode.PROVIDER_INTERNAL_FAILURE,
+            )
+            raise
 
-        return self._parse_response(response)
+        try:
+            result = self._parse_response(response)
+        except OcrProcessingError:
+            refusal = self._contains_refusal(getattr(response, "output", None))
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.PROVIDER_POLICY if refusal else ProviderFailurePhase.RESPONSE_VALIDATION,
+                ProviderErrorCode.PROVIDER_REFUSAL if refusal else ProviderErrorCode.PROVIDER_RESPONSE_INVALID,
+                response=response,
+                provider_response_received=True,
+            )
+            raise
+        self._observer.succeeded(span, response=response, model_name=result.model_name)
+        return result
 
     @staticmethod
     def _raise_for_status_error(error: APIStatusError) -> None:

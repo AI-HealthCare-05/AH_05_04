@@ -26,7 +26,18 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 클라이언트는 `message`가 아니라 `code`를 기준으로 오류를 분기합니다.
 
-등록되지 않은 경로 요청(404)이나 지원하지 않는 HTTP 메서드 요청(405)은 FastAPI/Starlette가 라우팅 단계에서 자체적으로 응답을 만들기 때문에 아직 이 공통 형식을 따르지 않습니다. 현재는 등록되지 않은 경로에 `{"detail": "Not Found"}`, 지원하지 않는 메서드에 `{"detail": "Method Not Allowed"}`가 반환됩니다. 클라이언트는 이 두 경우에 `code` 필드가 없을 수 있다는 점을 감안해야 합니다.
+등록되지 않은 경로 요청(404), 지원하지 않는 HTTP 메서드 요청(405), 처리되지 않은 예외(500)도 전역 오류 처리 경계를 거쳐 공통 형식을 따릅니다. 성공과 실패를 포함한 모든 Backend HTTP 응답에는 body의 `trace_id`와 같은 서버 생성 `X-Trace-Id` 응답 Header가 포함됩니다. 성공 응답 body에는 `trace_id`를 추가하지 않습니다.
+
+### Local Live validation Header 오류
+
+`X-Validation-Run-Id`는 `local-live-full` 상관관계용이며 인증·인가 수단이 아닙니다. Backend의 `ENV=local`이고 `RELEASE_VALIDATION_ALLOWED=true`인 경우에만 UUID를 수용합니다.
+
+| 조건 | HTTP | code | message |
+| --- | ---: | --- | --- |
+| 허용된 local 환경에서 UUID 형식 오류 | 400 | `HTTP_ERROR` | `Invalid validation run ID.` |
+| Backend 검증 비활성 또는 local 이외 환경에서 Header 존재 | 403 | `HTTP_ERROR` | `Validation run is not allowed.` |
+
+입력 Header 값이나 환경 상세는 오류 message와 details에 포함하지 않습니다.
 
 ## 민감정보 노출 방지
 

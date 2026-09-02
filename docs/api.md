@@ -21,10 +21,12 @@
 }
 ```
 
-- `trace_id`는 요청별 미들웨어(`backend/app/main.py`)가 생성해 `request.state.trace_id`에 저장하고, 모든 에러 핸들러가 이 값을 재사용합니다(핸들러가 자체적으로 새 값을 만들지 않음). 성공 응답 body에는 아직 포함하지 않으며, 필요 시 로그·감사로그와 연결할 수 있도록 모든 요청에서 `request.state`에 존재합니다.
+- `trace_id`는 가장 바깥 요청 경계가 128-bit 무작위 hexadecimal로 생성해 `request.state.trace_id`에 저장하고, 모든 에러 핸들러가 이 값을 재사용합니다. 성공 응답 body에는 포함하지 않습니다.
+- 성공·실패·기본 404·405·처리되지 않은 500을 포함한 모든 Backend HTTP 응답은 `X-Trace-Id` Header를 반환합니다. 오류 body의 `trace_id`와 Header는 항상 같습니다.
+- `X-Validation-Run-Id: <uuid>`는 `ENV=local`, `RELEASE_VALIDATION_ALLOWED=true`인 `local-live-full`에서만 수용합니다. 형식 오류는 `400 HTTP_ERROR`, 미승인 환경은 `403 HTTP_ERROR`이며 인증·소유권 판단에는 사용하지 않습니다.
 - 기존 `HTTPException` 기반 코드(`{"detail": "..."}`)도 전역 핸들러가 위 형식으로 자동 변환합니다. 이때 `code`는 `HTTP_ERROR`로 고정되고 `message`에 원래 `detail` 값이 들어갑니다.
 - 예상치 못한 예외는 `code: INTERNAL_SERVER_ERROR`, 500으로 변환되며 내부 오류 내용은 노출하지 않습니다.
-- 등록되지 않은 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405는 FastAPI/Starlette 라우팅 단계에서 `{"detail": ...}` 형식으로 반환될 수 있습니다.
+- 등록되지 않은 경로의 기본 404와 지원하지 않는 HTTP 메서드의 기본 405도 공통 오류 형식으로 변환됩니다.
 
 ## CORS
 
@@ -33,6 +35,7 @@
 - Frontend는 `VITE_API_BASE_URL=http://localhost:8000`으로 Backend API를 호출합니다.
 - Backend는 `CORS_ALLOWED_ORIGINS=http://localhost:5173`을 허용 origin으로 사용합니다.
 - `CORSMiddleware`가 `CORS_ALLOWED_ORIGINS` 환경변수(콤마로 구분된 origin 목록)를 기준으로 허용 origin을 관리합니다.
+- 브라우저가 상관관계 값을 읽을 수 있도록 `X-Trace-Id`를 CORS exposed header로 제공합니다.
 
 ## API 목록
 

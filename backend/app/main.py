@@ -1,8 +1,7 @@
-import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from openai import AsyncOpenAI
@@ -12,6 +11,7 @@ from app.core import config
 from app.core.db.databases import close_database
 from app.core.errors import register_exception_handlers
 from app.core.no_store_middleware import NoStoreMiddleware
+from app.core.validation_trace_middleware import ValidationTraceMiddleware
 
 
 @asynccontextmanager
@@ -35,23 +35,22 @@ fastapi_app = FastAPI(
 )
 
 
-@fastapi_app.middleware("http")
-async def add_trace_id(request: Request, call_next):
-    # 요청별 고유 trace_id를 request.state에 저장해 에러 응답·로그에서 재사용합니다.
-    request.state.trace_id = uuid.uuid4().hex
-    return await call_next(request)
-
-
 register_exception_handlers(fastapi_app)
 
 fastapi_app.include_router(v1_routers)
 
 # FastAPI의 바깥쪽 예외 처리 계층에서 반환되는 500 응답에도 CORS 헤더를 붙입니다.
-# 내부 FastAPI 앱을 먼저 구성한 뒤 마지막에 CORS 미들웨어로 감싸야 합니다.
-app = CORSMiddleware(
+# trace 경계는 CORS preflight를 포함한 모든 HTTP 응답을 감싸도록 가장 바깥에 둡니다.
+cors_app = CORSMiddleware(
     app=NoStoreMiddleware(fastapi_app),
     allow_origins=config.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Trace-Id"],
+)
+app = ValidationTraceMiddleware(
+    cors_app,
+    environment=config.ENV,
+    validation_enabled=config.RELEASE_VALIDATION_ALLOWED,
 )

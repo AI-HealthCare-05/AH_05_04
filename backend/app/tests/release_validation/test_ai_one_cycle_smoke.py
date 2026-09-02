@@ -427,6 +427,7 @@ print(json.dumps({
     "runtime_has_clova": "CLOVA_OCR_SECRET" in runtime,
     "config_openai": config.OPENAI_API_KEY,
     "config_clova": config.CLOVA_OCR_SECRET,
+    "config_validation_allowed": config.RELEASE_VALIDATION_ALLOWED,
 }))
 """
 
@@ -446,6 +447,7 @@ print(json.dumps({
         "runtime_has_clova": False,
         "config_openai": "sk-not-configured",
         "config_clova": "",
+        "config_validation_allowed": False,
     }
 
 

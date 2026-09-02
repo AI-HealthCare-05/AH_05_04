@@ -7,6 +7,16 @@ from uuid import uuid4
 
 import httpx
 
+from app.core.provider_observability import (
+    ProviderCallContext,
+    ProviderCallDescriptor,
+    ProviderCallLogger,
+    ProviderCallObserver,
+    ProviderCallSpan,
+    ProviderErrorCode,
+    ProviderFailurePhase,
+    provider_call_logger,
+)
 from app.services.ocr_ai import OcrStructurer
 from app.services.ocr_engine import (
     OcrProcessingError,
@@ -34,12 +44,20 @@ class ClovaOcrEngine:
         timeout_seconds: float,
         structurer: OcrStructurer,
         client: httpx.AsyncClient | None = None,
+        context: ProviderCallContext | None = None,
+        descriptor: ProviderCallDescriptor | None = None,
+        call_logger: ProviderCallLogger = provider_call_logger,
     ) -> None:
         self._invoke_url = invoke_url
         self._secret_key = secret_key
         self._storage_dir = Path(storage_dir).resolve()
         self._timeout_seconds = timeout_seconds
         self._client = client
+        self._observer = ProviderCallObserver(
+            context=context,
+            descriptor=descriptor,
+            call_logger=call_logger,
+        )
         # 설정에 따라 규칙 기반 또는 LLM 구조화기를 주입받습니다.
         self._structurer = structurer
 
@@ -72,16 +90,16 @@ class ClovaOcrEngine:
                 }
             ],
         }
-
-        response = await self._request(
+        request_id = str(message["requestId"])
+        span = self._observer.start(requested_model=None, provider_request_id=request_id)
+        parsed_result = await self._recognize_provider(
+            span=span,
+            request_id=request_id,
             file_name=file_path.name,
             file_content=file_content,
             file_mime_type=file_mime_type,
             message=message,
         )
-
-        # CLOVA 응답을 전체 raw token으로 변환합니다.
-        parsed_result = self._parse_response(response)
 
         # CLOVA 전체 token을 설정에서 선택한 구조화기에 전달합니다.
         structured_result = await self._structurer.structure(parsed_result.raw_fields)
@@ -96,6 +114,111 @@ class ClovaOcrEngine:
             model_version=structured_result.model_name,
             prompt_version=structured_result.prompt_version,
         )
+
+    async def _recognize_provider(
+        self,
+        *,
+        span: ProviderCallSpan | None,
+        request_id: str,
+        file_name: str,
+        file_content: bytes,
+        file_mime_type: str,
+        message: dict[str, Any],
+    ) -> OcrRecognitionResult:
+        response: httpx.Response | None = None
+        try:
+            response = await self._request(
+                file_name=file_name,
+                file_content=file_content,
+                file_mime_type=file_mime_type,
+                message=message,
+            )
+            if response.status_code == 429:
+                self._observer.failed(
+                    span,
+                    ProviderFailurePhase.HTTP_STATUS,
+                    ProviderErrorCode.PROVIDER_RATE_LIMITED,
+                    provider_request_id=request_id,
+                    provider_response_received=True,
+                    http_status=response.status_code,
+                )
+                raise OcrProviderUnavailableError("CLOVA OCR 서비스를 사용할 수 없습니다.")
+            if response.status_code >= 500:
+                self._observer.failed(
+                    span,
+                    ProviderFailurePhase.HTTP_STATUS,
+                    ProviderErrorCode.PROVIDER_UNAVAILABLE,
+                    provider_request_id=request_id,
+                    provider_response_received=True,
+                    http_status=response.status_code,
+                )
+                raise OcrProviderUnavailableError("CLOVA OCR 서비스를 사용할 수 없습니다.")
+            if response.status_code >= 400:
+                self._observer.failed(
+                    span,
+                    ProviderFailurePhase.HTTP_STATUS,
+                    ProviderErrorCode.PROVIDER_REQUEST_REJECTED,
+                    provider_request_id=request_id,
+                    provider_response_received=True,
+                    http_status=response.status_code,
+                )
+                raise OcrProcessingError("CLOVA OCR 요청이 거부되었습니다.")
+
+            # CLOVA 응답을 전체 raw token으로 변환합니다.
+            parsed_result = self._parse_response(response)
+        except asyncio.CancelledError:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.APPLICATION_DEADLINE,
+                ProviderErrorCode.PROVIDER_CALL_ABORTED,
+                provider_request_id=request_id,
+            )
+            raise
+        except OcrProviderTimeoutError:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.TRANSPORT_TIMEOUT,
+                ProviderErrorCode.PROVIDER_TIMEOUT,
+                provider_request_id=request_id,
+            )
+            raise
+        except OcrProviderConnectionError:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.TRANSPORT_CONNECTION,
+                ProviderErrorCode.PROVIDER_CONNECTION_FAILED,
+                provider_request_id=request_id,
+            )
+            raise
+        except (OcrProviderUnavailableError, OcrProcessingError):
+            if span is not None and not span.terminal_emitted:
+                self._observer.failed(
+                    span,
+                    ProviderFailurePhase.RESPONSE_VALIDATION,
+                    ProviderErrorCode.PROVIDER_RESPONSE_INVALID,
+                    provider_request_id=request_id,
+                    provider_response_received=response is not None,
+                    http_status=response.status_code if response is not None else None,
+                )
+            raise
+        except Exception:
+            self._observer.failed(
+                span,
+                ProviderFailurePhase.UNKNOWN_INTERNAL,
+                ProviderErrorCode.PROVIDER_INTERNAL_FAILURE,
+                provider_request_id=request_id,
+                provider_response_received=response is not None,
+                http_status=response.status_code if response is not None else None,
+            )
+            raise
+        self._observer.succeeded(
+            span,
+            model_name=None,
+            provider_request_id=request_id,
+            provider_response_received=True,
+            http_status=response.status_code,
+        )
+        return parsed_result
 
     def _resolve_file_path(self, object_key: str) -> Path:
         file_path = (self._storage_dir / object_key).resolve()
@@ -153,12 +276,6 @@ class ClovaOcrEngine:
             raise OcrProviderTimeoutError("CLOVA OCR 응답 제한시간을 초과했습니다.") from error
         except httpx.RequestError as error:
             raise OcrProviderConnectionError("CLOVA OCR 연결에 실패했습니다.") from error
-
-        if response.status_code == 429 or response.status_code >= 500:
-            raise OcrProviderUnavailableError("CLOVA OCR 서비스를 사용할 수 없습니다.")
-
-        if response.status_code >= 400:
-            raise OcrProcessingError("CLOVA OCR 요청이 거부되었습니다.")
 
         return response
 
