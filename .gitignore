@@ -54,6 +54,7 @@ chroma_db/
 faiss_index/
 evals/results/
 evals/results.*
+evals/validation-results/
 knowledge/cache/
 knowledge/documents/
 knowledge/indexes/
