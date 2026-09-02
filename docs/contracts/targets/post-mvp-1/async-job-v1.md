@@ -153,9 +153,9 @@ Client는 `domain_id`로 URL을 조합하지 않고 Backend가 제공한 opaque 
 - 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% 양의 jitter를 더한다.
 - timeout, rate limit, 일시적 Provider·의존성 장애만 재시도하고 영구 입력·schema·Safety 검증 오류는 즉시 종료한다. 외부 rate limit과 일시적 Provider 오류를 어떤 공통 `failure_code`로 정규화할지는 구현 PR의 오류 매핑 테스트로 고정하되, 아래 허용 목록 밖의 새 공개 code를 만들지 않는다.
 - `failure_code`는 `TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `INVALID_INPUT`, `UNSUPPORTED_SCHEMA`, `SAFETY_VALIDATION_FAILED`, `RETRY_EXHAUSTED`, `INTERNAL_ERROR` 중 하나다.
-- lease 만료로 회수된 Job도 현재 attempt를 사용한 실패로 계산한다. 같은 Stream 메시지를 다시 받은 Worker는 해당 attempt가 이미 `RETRY_WAIT`, `FAILED`, `COMPLETED`, `STALE` 중 하나로 반영되어 있으면 Provider를 재호출하지 않고 ACK한다. 다음 Provider 호출은 Reconciler가 증가한 attempt와 새 Outbox event를 만든 뒤에만 수행한다.
+- lease 만료로 회수된 Job도 현재 attempt를 사용한 실패로 계산한다. #141의 현재 구현 범위에서는 동일 event의 Job·Outbox 연결과 `last_consumed_event_id`가 일치하고 Job 상태가 `COMPLETED` 또는 `FAILED`인 경우에만 Provider를 재호출하지 않고 ACK한다. `RETRY_WAIT`·`STALE` 전이와 해당 상태의 재전달 멱등 처리, 다음 attempt와 새 Outbox event 생성은 #142에서 구현·검증 범위를 확장한다.
 
-`attempt_count=0`에서 시작해 Worker lease 획득 시 수신 attempt로 갱신하는 전이는 기존 Contract Freeze v4의 원문보다 구체화된 구현 기준이다. 구현 PR 착수 전 [문서 권위](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)의 후속 Decision에서 승인 근거를 남긴다.
+2026-09-02 [Product Decision `PD-141-20260902`](../../../governance/decisions/2026-09-02-worker-attempt-lease-fencing.md)에 따라 `attempt_count=0`에서 시작하고, Worker가 lease를 획득하는 transaction에서 수신 attempt로 갱신하는 기준을 승인했다. 실행 소유권은 `attempt_count + lease_token`으로 검증하며, heartbeat·결과 저장의 조건부 갱신이 0건이면 실행 권한 상실로 처리한다.
 
 ## 오류 응답 적용 기준
 

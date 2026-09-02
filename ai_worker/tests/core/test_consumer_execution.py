@@ -1,12 +1,16 @@
 """Consumer의 저장·commit·ACK 실행 순서를 검증합니다."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
-from ai_worker.core.consumer_execution import ConsumerExecution, WorkerDelivery
+from ai_worker.core.consumer_execution import (
+    ConsumerExecution,
+    LeaseAwareConsumerExecution,
+    WorkerDelivery,
+)
 from ai_worker.core.dispatcher import Dispatcher, HandlerExecutionError
 from ai_worker.core.errors import (
     ConsumerAcknowledgementError,
@@ -14,6 +18,12 @@ from ai_worker.core.errors import (
     HandlerResultMismatchError,
 )
 from ai_worker.core.handler import Handler
+from ai_worker.core.job_execution import (
+    CommittedDelivery,
+    ExecutionLease,
+    LeaseAcquisitionResult,
+    LeaseNotAcquired,
+)
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.schemas.messages import JobType, WorkerMessage
@@ -47,13 +57,18 @@ class FakeHandler:
     def __init__(
         self,
         *,
+        events: list[str] | None = None,
         mismatched: bool = False,
         error: BaseException | None = None,
     ) -> None:
+        self._events = events
         self._mismatched = mismatched
         self._error = error
 
     async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        if self._events is not None:
+            self._events.append("handle")
+
         if self._error is not None:
             raise self._error
 
@@ -129,6 +144,204 @@ class FakeAcknowledger:
             raise RuntimeError("synthetic sensitive ack failure")
 
         self.acknowledged_ids.append(stream_message_id)
+
+
+class FakeJobExecutionRepository:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        complete_successfully: bool,
+        acquisition_result: LeaseAcquisitionResult | None = None,
+    ) -> None:
+        self._events = events
+        self._complete_successfully = complete_successfully
+        self._acquisition_result = acquisition_result
+
+    async def acquire_lease(
+        self,
+        message: WorkerMessage,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> LeaseAcquisitionResult:
+        self._events.append("acquire")
+        if self._acquisition_result is not None:
+            return self._acquisition_result
+        return ExecutionLease(
+            job_id=message.job_id,
+            event_id=message.event_id,
+            attempt=message.attempt,
+            lease_token=uuid4().hex,
+            lease_expires_at=now + lease_duration,
+        )
+
+    async def refresh_heartbeat(
+        self,
+        lease: ExecutionLease,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionLease | None:
+        return lease
+
+    async def complete_execution(
+        self,
+        lease: ExecutionLease,
+        *,
+        completed_at: datetime,
+    ) -> bool:
+        self._events.append("complete")
+        return self._complete_successfully
+
+
+class FakeLeaseHeartbeatHandle:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        ownership_retained: bool,
+        fail_stop: bool = False,
+    ) -> None:
+        self._events = events
+        self._ownership_retained = ownership_retained
+        self._fail_stop = fail_stop
+        self._finished = asyncio.Event()
+
+    async def wait(self) -> bool:
+        await self._finished.wait()
+        return self._ownership_retained
+
+    async def stop(self) -> bool:
+        self._events.append("heartbeat_stop")
+        self._finished.set()
+
+        if self._fail_stop:
+            raise RuntimeError("synthetic heartbeat stop failure")
+
+        return self._ownership_retained
+
+
+class BackgroundLeaseHeartbeatHandle:
+    """실제 background task 종료 여부를 검증하는 테스트 handle입니다."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self._stop_event = asyncio.Event()
+        self.task = asyncio.create_task(self._maintain())
+
+    async def _maintain(self) -> bool:
+        await self._stop_event.wait()
+        return True
+
+    async def wait(self) -> bool:
+        return await asyncio.shield(self.task)
+
+    async def stop(self) -> bool:
+        self._events.append("heartbeat_stop")
+        self._stop_event.set()
+        return await self.task
+
+
+class LosingLeaseHeartbeatHandle:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self._ownership_lost = asyncio.Event()
+
+    def lose_ownership(self) -> None:
+        self._ownership_lost.set()
+
+    async def wait(self) -> bool:
+        await self._ownership_lost.wait()
+        return False
+
+    async def stop(self) -> bool:
+        self._events.append("heartbeat_stop")
+        return not self._ownership_lost.is_set()
+
+
+class LosingLeaseHeartbeat:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.handle = LosingLeaseHeartbeatHandle(events)
+
+    async def start(
+        self,
+        lease: ExecutionLease,
+    ) -> LosingLeaseHeartbeatHandle:
+        self._events.append("heartbeat_start")
+        return self.handle
+
+
+class BackgroundLeaseHeartbeat:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.handle: BackgroundLeaseHeartbeatHandle | None = None
+
+    async def start(
+        self,
+        lease: ExecutionLease,
+    ) -> BackgroundLeaseHeartbeatHandle:
+        self._events.append("heartbeat_start")
+        self.handle = BackgroundLeaseHeartbeatHandle(self._events)
+        return self.handle
+
+
+class FakeLeaseHeartbeat:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        ownership_retained: bool = True,
+        fail_stop: bool = False,
+    ) -> None:
+        self._events = events
+        self._ownership_retained = ownership_retained
+        self._fail_stop = fail_stop
+
+    async def start(
+        self,
+        lease: ExecutionLease,
+    ) -> FakeLeaseHeartbeatHandle:
+        self._events.append("heartbeat_start")
+        return FakeLeaseHeartbeatHandle(
+            self._events,
+            ownership_retained=self._ownership_retained,
+            fail_stop=self._fail_stop,
+        )
+
+
+class DirectFailureDispatcher(Dispatcher):
+    """Dispatcher 경계 밖의 예외가 발생하는 교체 구현입니다."""
+
+    def __init__(self) -> None:
+        super().__init__(HandlerRegistry())
+
+    async def dispatch(self, message: WorkerMessage) -> HandlerSuccess:
+        raise RuntimeError("synthetic unwrapped dispatcher failure")
+
+
+class CancellableHandler:
+    handler_type = JobType.OCR
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self._release = asyncio.Event()
+
+    async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+        self._events.append("handle")
+        self.started.set()
+
+        try:
+            await self._release.wait()
+        except asyncio.CancelledError:
+            self._events.append("handler_cancelled")
+            self.cancelled.set()
+            raise
+
+        raise AssertionError("테스트 Handler가 예기치 않게 해제됐습니다.")
 
 
 def build_execution(
@@ -397,3 +610,440 @@ async def test_consumer_rolls_back_and_does_not_ack_when_cancelled() -> None:
 
     assert events == ["rollback"]
     assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_lost_fencing_rolls_back_result_and_does_not_ack() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=False,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    delivery = WorkerDelivery(
+        stream_message_id="2000-0",
+        message=build_message(),
+    )
+
+    result = await execution.execute(delivery)
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
+        "save",
+        "complete",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_commits_before_acknowledgement() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    message = build_message()
+    delivery = WorkerDelivery(
+        stream_message_id="2001-0",
+        message=message,
+    )
+
+    result = await execution.execute(delivery)
+
+    assert isinstance(result, HandlerSuccess)
+    assert result.job_id == message.job_id
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "heartbeat_stop",
+        "save",
+        "complete",
+        "commit",
+        "ack",
+    ]
+    assert acknowledger.acknowledged_ids == ["2001-0"]
+
+
+@pytest.mark.asyncio
+async def test_lost_heartbeat_discards_handler_result_and_does_not_ack() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(
+            events,
+            ownership_retained=False,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2001-2",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "heartbeat_stop",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_lost_heartbeat_cancels_running_handler() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    handler = CancellableHandler(events)
+    heartbeat = LosingLeaseHeartbeat(events)
+    registry = HandlerRegistry()
+    registry.register(handler)
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=heartbeat,
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    execution_task = asyncio.create_task(
+        execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-5",
+                message=build_message(),
+            )
+        )
+    )
+
+    await asyncio.wait_for(handler.started.wait(), timeout=1)
+    heartbeat.handle.lose_ownership()
+
+    result = await asyncio.wait_for(execution_task, timeout=1)
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert handler.cancelled.is_set()
+    assert "handler_cancelled" in events
+    assert "heartbeat_stop" in events
+    assert "save" not in events
+    assert "complete" not in events
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_stops_heartbeat_when_dispatcher_raises() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    acknowledger = FakeAcknowledger(events)
+    heartbeat = BackgroundLeaseHeartbeat(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=DirectFailureDispatcher(),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=heartbeat,
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="synthetic unwrapped dispatcher failure",
+    ):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-3",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+    assert heartbeat.handle is not None
+    assert heartbeat.handle.task.done()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_stop_failure_does_not_hide_dispatcher_error() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=DirectFailureDispatcher(),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(
+            events,
+            fail_stop=True,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="synthetic unwrapped dispatcher failure",
+    ):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-4",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_does_not_run_handler_when_lease_commit_fails() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(
+            events,
+            fail_commit=True,
+        ),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(ConsumerPersistenceError):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2001-1",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "commit",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_committed_redelivery_skips_handler_and_only_acknowledges() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    message = build_message()
+    committed = CommittedDelivery(
+        job_id=message.job_id,
+        event_id=message.event_id,
+        attempt=message.attempt,
+    )
+
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+            acquisition_result=committed,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2002-0",
+            message=message,
+        )
+    )
+
+    assert result == committed
+    assert events == [
+        "acquire",
+        "commit",
+        "ack",
+    ]
+    assert acknowledger.acknowledged_ids == ["2002-0"]
+
+
+@pytest.mark.asyncio
+async def test_unacquired_lease_skips_handler_and_does_not_ack() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=False,
+            acquisition_result=LeaseNotAcquired(),
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2003-0",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_does_not_rollback_after_ack_failure() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=FakeAcknowledger(
+            events,
+            fail_acknowledge=True,
+        ),
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(ConsumerAcknowledgementError):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2004-0",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "heartbeat_stop",
+        "save",
+        "complete",
+        "commit",
+        "ack",
+    ]
+    assert "rollback" not in events
