@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 from uuid import uuid4
 
 import httpx
@@ -30,7 +30,22 @@ from app.services.ocr_engine import (
 )
 
 
+class _ClovaImageMessage(TypedDict):
+    format: str
+    name: str
+
+
+class _ClovaRequestMessage(TypedDict):
+    version: str
+    requestId: str
+    timestamp: int
+    lang: str
+    images: list[_ClovaImageMessage]
+
+
 class ClovaOcrEngine:
+    _PROVIDER_DOCUMENT_NAME = "document"
+
     _SUPPORTED_FORMATS = {
         "image/jpeg": "jpg",
         "image/png": "png",
@@ -79,6 +94,7 @@ class ClovaOcrEngine:
         if image_format is None:
             raise OcrProcessingError("지원하지 않는 OCR 파일 형식입니다.")
 
+        provider_file_name = f"{self._PROVIDER_DOCUMENT_NAME}.{image_format}"
         file_path = self._resolve_file_path(object_key)
 
         try:
@@ -86,7 +102,7 @@ class ClovaOcrEngine:
         except OSError as error:
             raise OcrProcessingError("OCR 대상 파일을 읽을 수 없습니다.") from error
 
-        message = {
+        message: _ClovaRequestMessage = {
             "version": "V2",
             "requestId": str(uuid4()),
             "timestamp": int(time.time() * 1000),
@@ -94,16 +110,16 @@ class ClovaOcrEngine:
             "images": [
                 {
                     "format": image_format,
-                    "name": file_path.stem,
+                    "name": self._PROVIDER_DOCUMENT_NAME,
                 }
             ],
         }
-        request_id = str(message["requestId"])
+        request_id = message["requestId"]
         span = self._observer.start(requested_model=None, provider_request_id=request_id)
         parsed_result = await self._recognize_provider(
             span=span,
             request_id=request_id,
-            file_name=file_path.name,
+            file_name=provider_file_name,
             file_content=file_content,
             file_mime_type=file_mime_type,
             message=message,
@@ -137,7 +153,7 @@ class ClovaOcrEngine:
         file_name: str,
         file_content: bytes,
         file_mime_type: str,
-        message: dict[str, Any],
+        message: _ClovaRequestMessage,
         clova_timeout: float,
     ) -> OcrRecognitionResult:
         response: httpx.Response | None = None
@@ -253,7 +269,7 @@ class ClovaOcrEngine:
         file_name: str,
         file_content: bytes,
         file_mime_type: str,
-        message: dict[str, Any],
+        message: _ClovaRequestMessage,
         clova_timeout: float,
     ) -> httpx.Response:
         headers = {

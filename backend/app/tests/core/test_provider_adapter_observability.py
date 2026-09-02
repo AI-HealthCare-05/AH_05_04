@@ -407,8 +407,12 @@ async def test_clova_client_logs_response_validation_failure_without_body(tmp_pa
     assert events[1]["failure_phase"] == "RESPONSE_VALIDATION"
     assert events[1]["error_code"] == "PROVIDER_RESPONSE_INVALID"
     assert events[1]["http_status"] == 200
-    assert "SENSITIVE_CLOVA_SECRET" not in stream.getvalue()
-    assert "SENSITIVE_OCR_BODY" not in stream.getvalue()
+    logged_output = stream.getvalue()
+
+    assert "SENSITIVE_CLOVA_SECRET" not in logged_output
+    assert "SENSITIVE_OCR_BODY" not in logged_output
+    assert "synthetic.png" not in logged_output
+    assert "synthetic-image" not in logged_output
 
 
 async def test_clova_client_logs_success_with_actual_http_status(tmp_path: Path) -> None:
