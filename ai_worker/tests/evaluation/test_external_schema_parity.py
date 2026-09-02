@@ -194,6 +194,176 @@ def test_external_suite_schema_rejects_completed_pass_for_empty_cases() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("member_decision", "aggregate_decision"),
+    [("FAIL", "FAIL"), ("INCONCLUSIVE", "INCONCLUSIVE")],
+)
+def test_external_gate_schema_enforces_completed_decision_precedence(
+    member_decision: str,
+    aggregate_decision: str,
+) -> None:
+    payload = _gate_payload()
+    payload["required_metrics"][0]["decision_status"] = member_decision
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=payload,
+        runtime_model=GateResult,
+        expected_valid=False,
+    )
+
+    payload["aggregate_decision_status"] = aggregate_decision
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=payload,
+        runtime_model=GateResult,
+        expected_valid=True,
+    )
+
+
+def test_external_gate_schema_enforces_blocker_priority_and_exact_statuses() -> None:
+    payload = _gate_payload()
+    invalid_member = payload["required_metrics"][0]
+    invalid_member.update(execution_status="INVALID", decision_status=None)
+    error_member = deepcopy(invalid_member)
+    error_member.update(member_type="CONTRACT_RECEIPT", member_id="runtime-contract", execution_status="ERROR")
+    payload["required_contract_receipts"] = [error_member]
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=payload,
+        runtime_model=GateResult,
+        expected_valid=False,
+    )
+
+    payload.update(
+        aggregate_execution_status="INVALID",
+        aggregate_decision_status=None,
+        blocking_execution_statuses=["INVALID", "ERROR"],
+    )
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=payload,
+        runtime_model=GateResult,
+        expected_valid=True,
+    )
+
+    payload["blocking_execution_statuses"] = ["INVALID"]
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=payload,
+        runtime_model=GateResult,
+        expected_valid=False,
+    )
+
+
+def test_external_gate_schema_rejects_not_applicable_and_wrong_collection_type() -> None:
+    not_applicable = _gate_payload()
+    not_applicable["required_metrics"][0]["decision_status"] = "N/A"
+    not_applicable["aggregate_decision_status"] = "N/A"
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=not_applicable,
+        runtime_model=GateResult,
+        expected_valid=False,
+    )
+
+    wrong_collection = _gate_payload()
+    wrong_collection["required_metrics"][0]["member_type"] = "SUITE"
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=wrong_collection,
+        runtime_model=GateResult,
+        expected_valid=False,
+    )
+
+
+def _suite_case(decision_status: str) -> dict[str, Any]:
+    return {
+        "case_code": "case-001",
+        "case_input_hash": "d" * 64,
+        "execution_status": "COMPLETED",
+        "decision_status": decision_status,
+        "artifact_ref": {"id": "case-result", "version": "1.0.0", "hash": "e" * 64},
+        "failure_code": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("case_decision", "required", "aggregate_decision"),
+    [("FAIL", True, "FAIL"), ("INCONCLUSIVE", True, "INCONCLUSIVE"), ("N/A", False, "N/A")],
+)
+def test_external_suite_schema_enforces_completed_decision_precedence(
+    case_decision: str,
+    required: bool,
+    aggregate_decision: str,
+) -> None:
+    payload = _suite_payload()
+    payload.update(required=required, case_results=[_suite_case(case_decision)])
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=False,
+    )
+
+    payload["aggregate_decision_status"] = aggregate_decision
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=True,
+    )
+
+
+def test_external_suite_schema_enforces_blocker_priority_and_exact_statuses() -> None:
+    payload = _suite_payload()
+    invalid_case = _suite_case("PASS")
+    invalid_case.update(execution_status="INVALID", decision_status=None)
+    error_case = deepcopy(invalid_case)
+    error_case.update(case_code="case-002", execution_status="ERROR")
+    payload["case_results"] = [invalid_case, error_case]
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=False,
+    )
+
+    payload.update(
+        aggregate_execution_status="INVALID",
+        aggregate_decision_status=None,
+        blocking_execution_statuses=["INVALID", "ERROR"],
+    )
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=True,
+    )
+
+    payload["aggregate_execution_status"] = "ERROR"
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=False,
+    )
+
+
+def test_external_required_suite_schema_rejects_not_applicable_aggregate() -> None:
+    payload = _suite_payload()
+    payload.update(case_results=[_suite_case("N/A")], aggregate_decision_status="N/A")
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=False,
+    )
+
+
 def test_external_comparison_schema_rejects_pass_for_mismatch_or_regression() -> None:
     mismatch = _comparison_payload()
     mismatch["controlled_variable_checks"][0]["matched"] = False

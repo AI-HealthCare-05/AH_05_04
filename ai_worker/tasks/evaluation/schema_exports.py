@@ -254,40 +254,50 @@ def _add_empty_aggregate_conditions(schema_id: str, document: dict[str, JsonValu
                 "properties": {
                     "aggregate_execution_status": {"not": {"const": "COMPLETED"}},
                     "aggregate_decision_status": {"type": "null"},
+                    "blocking_execution_statuses": {"const": []},
                 }
             },
         }
     )
 
 
-def _array_contains(field: str, nested_field: str, value: JsonValue) -> dict[str, JsonValue]:
+def _array_contains_schema(field: str, item_schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return {
         "properties": {
             field: {
-                "contains": {
-                    "properties": {nested_field: {"const": value}},
-                    "required": [nested_field],
-                }
+                "contains": item_schema,
             }
         },
         "required": [field],
     }
 
 
-def _array_does_not_contain(field: str, nested_field: str, value: JsonValue) -> dict[str, JsonValue]:
+def _array_does_not_contain_schema(field: str, item_schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return {
         "properties": {
             field: {
                 "not": {
-                    "contains": {
-                        "properties": {nested_field: {"const": value}},
-                        "required": [nested_field],
-                    }
+                    "contains": item_schema,
                 }
             }
         },
         "required": [field],
     }
+
+
+def _nested_value_schema(nested_field: str, value: JsonValue) -> dict[str, JsonValue]:
+    return {
+        "properties": {nested_field: {"const": value}},
+        "required": [nested_field],
+    }
+
+
+def _array_contains(field: str, nested_field: str, value: JsonValue) -> dict[str, JsonValue]:
+    return _array_contains_schema(field, _nested_value_schema(nested_field, value))
+
+
+def _array_does_not_contain(field: str, nested_field: str, value: JsonValue) -> dict[str, JsonValue]:
+    return _array_does_not_contain_schema(field, _nested_value_schema(nested_field, value))
 
 
 def _array_is_empty(field: str) -> dict[str, JsonValue]:
@@ -295,6 +305,171 @@ def _array_is_empty(field: str) -> dict[str, JsonValue]:
         "properties": {field: {"maxItems": 0}},
         "required": [field],
     }
+
+
+def _aggregate_sources_contain(
+    fields: tuple[str, ...],
+    nested_field: str,
+    value: JsonValue,
+) -> dict[str, JsonValue]:
+    return {"anyOf": [_array_contains(field, nested_field, value) for field in fields]}
+
+
+def _aggregate_sources_do_not_contain(
+    fields: tuple[str, ...],
+    nested_field: str,
+    value: JsonValue,
+) -> dict[str, JsonValue]:
+    return {"allOf": [_array_does_not_contain(field, nested_field, value) for field in fields]}
+
+
+def _aggregate_sources_nonempty(fields: tuple[str, ...]) -> dict[str, JsonValue]:
+    return {
+        "anyOf": [
+            {
+                "properties": {field: {"minItems": 1}},
+                "required": [field],
+            }
+            for field in fields
+        ]
+    }
+
+
+_BLOCKING_EXECUTION_PRECEDENCE = ("INVALID", "ERROR", "NOT_IMPLEMENTED", "NOT_EVALUATED")
+
+
+def _aggregate_blocker_condition(
+    fields: tuple[str, ...],
+    blocking_statuses: tuple[str, ...],
+) -> dict[str, JsonValue]:
+    conditions: list[JsonValue] = [_aggregate_sources_nonempty(fields)]
+    for status in _BLOCKING_EXECUTION_PRECEDENCE:
+        condition = (
+            _aggregate_sources_contain(fields, "execution_status", status)
+            if status in blocking_statuses
+            else _aggregate_sources_do_not_contain(fields, "execution_status", status)
+        )
+        conditions.append(condition)
+    return {"allOf": conditions}
+
+
+def _add_aggregate_outcome_conditions(schema_id: str, document: dict[str, JsonValue]) -> None:
+    fields: tuple[str, ...]
+    if schema_id == "rag-eval.suite-results":
+        fields = ("case_results",)
+    elif schema_id == "rag-eval.gate":
+        fields = ("required_metrics", "required_suites", "required_contract_receipts")
+    else:
+        return
+
+    all_of = document.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("aggregate schema allOf must be an array")
+
+    for mask in range(1 << len(_BLOCKING_EXECUTION_PRECEDENCE)):
+        blocking_statuses = tuple(
+            status for index, status in enumerate(_BLOCKING_EXECUTION_PRECEDENCE) if mask & (1 << index)
+        )
+        aggregate_properties: dict[str, JsonValue] = {
+            "blocking_execution_statuses": {"const": list(blocking_statuses)},
+        }
+        if blocking_statuses:
+            aggregate_properties.update(
+                aggregate_execution_status={"const": blocking_statuses[0]},
+                aggregate_decision_status={"type": "null"},
+            )
+        else:
+            aggregate_properties["aggregate_execution_status"] = {"const": "COMPLETED"}
+        all_of.append(
+            {
+                "if": _aggregate_blocker_condition(fields, blocking_statuses),
+                "then": {"properties": aggregate_properties},
+            }
+        )
+
+    all_completed = _aggregate_blocker_condition(fields, ())
+    no_fail = _aggregate_sources_do_not_contain(fields, "decision_status", "FAIL")
+    no_inconclusive = _aggregate_sources_do_not_contain(fields, "decision_status", "INCONCLUSIVE")
+    no_pass = _aggregate_sources_do_not_contain(fields, "decision_status", "PASS")
+    all_of.extend(
+        [
+            {
+                "if": {"allOf": [all_completed, _aggregate_sources_contain(fields, "decision_status", "FAIL")]},
+                "then": {"properties": {"aggregate_decision_status": {"const": "FAIL"}}},
+            },
+            {
+                "if": {
+                    "allOf": [
+                        all_completed,
+                        no_fail,
+                        _aggregate_sources_contain(fields, "decision_status", "INCONCLUSIVE"),
+                    ]
+                },
+                "then": {"properties": {"aggregate_decision_status": {"const": "INCONCLUSIVE"}}},
+            },
+            {
+                "if": {
+                    "allOf": [
+                        all_completed,
+                        no_fail,
+                        no_inconclusive,
+                        _aggregate_sources_contain(fields, "decision_status", "PASS"),
+                    ]
+                },
+                "then": {"properties": {"aggregate_decision_status": {"const": "PASS"}}},
+            },
+            {
+                "if": {"allOf": [all_completed, no_fail, no_inconclusive, no_pass]},
+                "then": {"properties": {"aggregate_decision_status": {"const": "N/A"}}},
+            },
+        ]
+    )
+
+    if schema_id == "rag-eval.suite-results":
+        all_of.append(
+            {
+                "if": {"properties": {"required": {"const": True}}, "required": ["required"]},
+                "then": {"properties": {"aggregate_decision_status": {"not": {"const": "N/A"}}}},
+            }
+        )
+
+
+def _add_gate_member_conditions(document: dict[str, JsonValue]) -> None:
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        raise TypeError("gate schema definitions must be an object")
+    member = definitions.get("RequiredGateMember")
+    if not isinstance(member, dict):
+        raise TypeError("RequiredGateMember schema must be an object")
+    all_of = member.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("RequiredGateMember allOf must be an array")
+    all_of.append({"properties": {"decision_status": {"not": {"const": "N/A"}}}})
+
+    properties = document.get("properties")
+    if not isinstance(properties, dict):
+        raise TypeError("gate schema properties must be an object")
+    member_types = {
+        "required_metrics": "METRIC",
+        "required_suites": "SUITE",
+        "required_contract_receipts": "CONTRACT_RECEIPT",
+    }
+    for field, member_type in member_types.items():
+        collection = properties.get(field)
+        if not isinstance(collection, dict):
+            raise TypeError("gate member collection schema must be an object")
+        item_schema = collection.get("items")
+        if not isinstance(item_schema, dict):
+            raise TypeError("gate member item schema must be an object")
+        collection["items"] = {
+            "allOf": [
+                item_schema,
+                {
+                    "properties": {"member_type": {"const": member_type}},
+                    "required": ["member_type"],
+                },
+            ]
+        }
 
 
 def _add_comparison_outcome_conditions(document: dict[str, JsonValue]) -> None:
@@ -535,6 +710,9 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     if schema_id == "rag-eval.metrics":
         _add_metric_conditions(document)
     _add_empty_aggregate_conditions(schema_id, document)
+    _add_aggregate_outcome_conditions(schema_id, document)
+    if schema_id == "rag-eval.gate":
+        _add_gate_member_conditions(document)
     if schema_id == "rag-eval.comparison":
         _add_comparison_outcome_conditions(document)
     return normalize_schema_document(document)
