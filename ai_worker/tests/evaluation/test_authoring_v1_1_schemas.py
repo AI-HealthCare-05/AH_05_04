@@ -8,7 +8,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import EVALUATION_CASE_ADAPTER_V1_1
+from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
+    EVALUATION_CASE_ADAPTER_V1_1,
+    RuleExpectedOutcome,
+)
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
 
@@ -38,7 +41,7 @@ def test_matched_rules_requires_one_or_more_rule_ids() -> None:
 
     case = EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 
-    assert case.expected.expected_rule_outcome.value == "MATCHED_RULES"
+    assert case.expected.expected_rule_outcome is RuleExpectedOutcome.MATCHED_RULES
     assert case.expected.expected_rule_ids == ("ev-synthetic-rule-001",)
 
     payload["expected"]["expected_rule_ids"] = []
