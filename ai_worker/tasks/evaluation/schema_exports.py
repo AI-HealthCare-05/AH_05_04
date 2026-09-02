@@ -201,6 +201,133 @@ def _add_metric_conditions(document: dict[str, JsonValue]) -> None:
                 },
                 "then": {"properties": {field: {"not": {"type": "null"}} for field in inconclusive_fields}},
             },
+            {
+                "if": {
+                    "allOf": [
+                        {
+                            "properties": {"required": {"const": True}},
+                            "required": ["required"],
+                        },
+                        {
+                            "anyOf": [
+                                {
+                                    "properties": {field: {"const": 0}},
+                                    "required": [field],
+                                }
+                                for field in (
+                                    "sample_case_count",
+                                    "sample_independent_group_count",
+                                    "denominator",
+                                )
+                            ]
+                        },
+                    ]
+                },
+                "then": {"properties": {"decision_status": {"const": "INCONCLUSIVE"}}},
+            },
+        ]
+    )
+
+
+def _add_empty_aggregate_conditions(schema_id: str, document: dict[str, JsonValue]) -> None:
+    if schema_id == "rag-eval.suite-results":
+        empty_condition: dict[str, JsonValue] = {
+            "properties": {"case_results": {"maxItems": 0}},
+            "required": ["case_results"],
+        }
+    elif schema_id == "rag-eval.gate":
+        required_groups = ("required_metrics", "required_suites", "required_contract_receipts")
+        empty_condition = {
+            "properties": {field: {"maxItems": 0} for field in required_groups},
+            "required": list(required_groups),
+        }
+    else:
+        return
+
+    all_of = document.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("aggregate schema allOf must be an array")
+    all_of.append(
+        {
+            "if": empty_condition,
+            "then": {
+                "properties": {
+                    "aggregate_execution_status": {"not": {"const": "COMPLETED"}},
+                    "aggregate_decision_status": {"type": "null"},
+                }
+            },
+        }
+    )
+
+
+def _array_contains(field: str, nested_field: str, value: JsonValue) -> dict[str, JsonValue]:
+    return {
+        "properties": {
+            field: {
+                "contains": {
+                    "properties": {nested_field: {"const": value}},
+                    "required": [nested_field],
+                }
+            }
+        },
+        "required": [field],
+    }
+
+
+def _array_does_not_contain(field: str, nested_field: str, value: JsonValue) -> dict[str, JsonValue]:
+    return {
+        "properties": {
+            field: {
+                "not": {
+                    "contains": {
+                        "properties": {nested_field: {"const": value}},
+                        "required": [nested_field],
+                    }
+                }
+            }
+        },
+        "required": [field],
+    }
+
+
+def _add_comparison_outcome_conditions(document: dict[str, JsonValue]) -> None:
+    mismatch = _array_contains("controlled_variable_checks", "matched", False)
+    no_mismatch = _array_does_not_contain("controlled_variable_checks", "matched", False)
+    regressed = _array_contains("scope_comparisons", "comparison_decision", "REGRESSED")
+    no_regression = _array_does_not_contain("scope_comparisons", "comparison_decision", "REGRESSED")
+    inconclusive = _array_contains("scope_comparisons", "comparison_decision", "INCONCLUSIVE")
+    no_inconclusive = _array_does_not_contain("scope_comparisons", "comparison_decision", "INCONCLUSIVE")
+    completed: dict[str, JsonValue] = {
+        "properties": {"execution_status": {"const": "COMPLETED"}},
+        "required": ["execution_status"],
+    }
+
+    all_of = document.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("comparison schema allOf must be an array")
+    all_of.extend(
+        [
+            {
+                "if": mismatch,
+                "then": {
+                    "properties": {
+                        "execution_status": {"const": "INVALID"},
+                        "decision_status": {"type": "null"},
+                    }
+                },
+            },
+            {
+                "if": {"allOf": [no_mismatch, completed, regressed]},
+                "then": {"properties": {"decision_status": {"const": "FAIL"}}},
+            },
+            {
+                "if": {"allOf": [no_mismatch, completed, no_regression, inconclusive]},
+                "then": {"properties": {"decision_status": {"const": "INCONCLUSIVE"}}},
+            },
+            {
+                "if": {"allOf": [no_mismatch, completed, no_regression, no_inconclusive]},
+                "then": {"properties": {"decision_status": {"const": "PASS"}}},
+            },
         ]
     )
 
@@ -393,6 +520,9 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
         _add_receipt_outcomes(document)
     if schema_id == "rag-eval.metrics":
         _add_metric_conditions(document)
+    _add_empty_aggregate_conditions(schema_id, document)
+    if schema_id == "rag-eval.comparison":
+        _add_comparison_outcome_conditions(document)
     return normalize_schema_document(document)
 
 

@@ -8,7 +8,14 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, GateResult, MetricResults, SuiteResults
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest, EvidenceMappingManifest
+from ai_worker.tests.evaluation.test_artifact_schemas import (
+    _comparison_payload,
+    _gate_payload,
+    _metric_payload,
+    _suite_payload,
+)
 
 jsonschema: Any = pytest.importorskip(
     "jsonschema",
@@ -115,4 +122,107 @@ def test_external_evidence_schema_matches_runtime_target_branch_selection(
         payload=payload,
         runtime_model=EvidenceMappingManifest,
         expected_valid=expected_valid,
+    )
+
+
+def test_external_metric_schema_rejects_zero_denominator_pass() -> None:
+    payload = _metric_payload()
+    metric = payload["metrics"][0]
+    metric.update(decision_status="PASS", metric_value=None, reason_code=None)
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.metrics.schema.json",
+        payload=payload,
+        runtime_model=MetricResults,
+        expected_valid=False,
+    )
+
+    metric.update(decision_status="INCONCLUSIVE", reason_code="ZERO_DENOMINATOR")
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.metrics.schema.json",
+        payload=payload,
+        runtime_model=MetricResults,
+        expected_valid=True,
+    )
+
+
+def test_external_gate_schema_rejects_completed_pass_for_empty_required_set() -> None:
+    payload = _gate_payload()
+    payload["required_metrics"] = []
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=payload,
+        runtime_model=GateResult,
+        expected_valid=False,
+    )
+
+    payload = _gate_payload()
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.gate.schema.json",
+        payload=payload,
+        runtime_model=GateResult,
+        expected_valid=True,
+    )
+
+
+def test_external_suite_schema_rejects_completed_pass_for_empty_cases() -> None:
+    payload = _suite_payload()
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=False,
+    )
+
+    payload["case_results"] = [
+        {
+            "case_code": "case-001",
+            "case_input_hash": "d" * 64,
+            "execution_status": "COMPLETED",
+            "decision_status": "PASS",
+            "artifact_ref": {"id": "case-result", "version": "1.0.0", "hash": "e" * 64},
+            "failure_code": None,
+        }
+    ]
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.suite-results.schema.json",
+        payload=payload,
+        runtime_model=SuiteResults,
+        expected_valid=True,
+    )
+
+
+def test_external_comparison_schema_rejects_pass_for_mismatch_or_regression() -> None:
+    mismatch = _comparison_payload()
+    mismatch["controlled_variable_checks"][0]["matched"] = False
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.comparison.schema.json",
+        payload=mismatch,
+        runtime_model=ComparisonResult,
+        expected_valid=False,
+    )
+    mismatch.update(execution_status="INVALID", decision_status=None)
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.comparison.schema.json",
+        payload=mismatch,
+        runtime_model=ComparisonResult,
+        expected_valid=True,
+    )
+
+    regressed = _comparison_payload()
+    regressed["scope_comparisons"][0]["comparison_decision"] = "REGRESSED"
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.comparison.schema.json",
+        payload=regressed,
+        runtime_model=ComparisonResult,
+        expected_valid=False,
+    )
+    regressed["decision_status"] = "FAIL"
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.comparison.schema.json",
+        payload=regressed,
+        runtime_model=ComparisonResult,
+        expected_valid=True,
     )

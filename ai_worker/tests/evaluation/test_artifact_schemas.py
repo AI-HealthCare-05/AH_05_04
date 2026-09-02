@@ -10,11 +10,13 @@ from ai_worker.tasks.evaluation.schemas import artifacts as artifact_schemas
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
     RESULT_ARTIFACT_MODELS,
+    ComparisonResult,
     ContentManifest,
     FailureRecord,
     GateResult,
     MetricResults,
     RagEvaluationRun,
+    SuiteResults,
     ValidationReceipt,
 )
 from ai_worker.tasks.evaluation.schemas.common import SchemaValidationError
@@ -334,6 +336,27 @@ def test_incomplete_metric_rejects_calculated_values() -> None:
         MetricResults.model_validate(payload)
 
 
+@pytest.mark.parametrize("zero_field", ["denominator", "sample_case_count", "sample_independent_group_count"])
+def test_required_metric_rejects_pass_for_zero_denominator_or_empty_sample(zero_field: str) -> None:
+    payload = _metric_payload()
+    metric = payload["metrics"][0]
+    metric.update(
+        decision_status="PASS",
+        sample_case_count=3,
+        sample_independent_group_count=2,
+        numerator=1,
+        denominator=1,
+        metric_value="1",
+        reason_code=None,
+    )
+    metric[zero_field] = 0
+    if zero_field == "denominator":
+        metric["metric_value"] = None
+
+    with pytest.raises(ValidationError):
+        MetricResults.model_validate(payload)
+
+
 def _gate_payload() -> dict[str, Any]:
     member = {
         "member_type": "METRIC",
@@ -398,6 +421,14 @@ def test_gate_completed_decision_uses_fail_then_inconclusive_then_pass_precedenc
     GateResult.model_validate(payload)
 
 
+def test_gate_rejects_completed_pass_when_required_member_set_is_empty() -> None:
+    payload = _gate_payload()
+    payload["required_metrics"] = []
+
+    with pytest.raises(ValidationError):
+        GateResult.model_validate(payload)
+
+
 def test_gate_aggregate_execution_uses_exact_highest_blocker_priority() -> None:
     payload = _gate_payload()
     invalid_member = payload["required_metrics"][0]
@@ -415,6 +446,89 @@ def test_gate_aggregate_execution_uses_exact_highest_blocker_priority() -> None:
     payload["aggregate_execution_status"] = "ERROR"
     with pytest.raises(ValidationError):
         GateResult.model_validate(payload)
+
+
+def _suite_payload() -> dict[str, Any]:
+    return {
+        "schema_id": "rag-eval.suite-results",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "suite_id": "required-suite",
+        "suite_version": "1.0.0",
+        "suite_definition_hash": "a" * 64,
+        "required": True,
+        "expected_case_set_hash": "b" * 64,
+        "executed_case_set_hash": "b" * 64,
+        "case_results": [],
+        "aggregate_execution_status": "COMPLETED",
+        "aggregate_decision_status": "PASS",
+        "blocking_execution_statuses": [],
+        "artifact_hash": "c" * 64,
+    }
+
+
+def test_required_suite_rejects_completed_pass_when_case_results_are_empty() -> None:
+    with pytest.raises(ValidationError):
+        SuiteResults.model_validate(_suite_payload())
+
+
+def _comparison_payload() -> dict[str, Any]:
+    return {
+        "schema_id": "rag-eval.comparison",
+        "schema_version": "1.0.0",
+        "run_id": RUN_ID,
+        "experiment_id": "experiment-001",
+        "baseline_run_id": "223e4567-e89b-42d3-a456-426614174000",
+        "baseline_run_hash": "a" * 64,
+        "candidate_run_id": "323e4567-e89b-42d3-a456-426614174000",
+        "candidate_run_hash": "b" * 64,
+        "controlled_variable_checks": [
+            {
+                "variable_key": "dataset",
+                "baseline_value_hash": "c" * 64,
+                "candidate_value_hash": "c" * 64,
+                "matched": True,
+            }
+        ],
+        "scope_comparisons": [
+            {
+                "metric_id": "citation-precision",
+                "partition": "HOLDOUT",
+                "slice_id": "ALL",
+                "baseline_value": "0.9",
+                "candidate_value": "0.9",
+                "absolute_delta": "0",
+                "relative_delta": "0",
+                "paired_test_method": "bootstrap",
+                "p_value": "0.5",
+                "comparison_decision": "NON_INFERIOR",
+            }
+        ],
+        "execution_status": "COMPLETED",
+        "decision_status": "PASS",
+    }
+
+
+def test_comparison_controlled_variable_mismatch_requires_invalid_null_decision() -> None:
+    payload = _comparison_payload()
+    payload["controlled_variable_checks"][0]["matched"] = False
+
+    with pytest.raises(ValidationError):
+        ComparisonResult.model_validate(payload)
+
+    payload.update(execution_status="INVALID", decision_status=None)
+    ComparisonResult.model_validate(payload)
+
+
+def test_comparison_regression_requires_completed_fail_decision() -> None:
+    payload = _comparison_payload()
+    payload["scope_comparisons"][0]["comparison_decision"] = "REGRESSED"
+
+    with pytest.raises(ValidationError):
+        ComparisonResult.model_validate(payload)
+
+    payload["decision_status"] = "FAIL"
+    ComparisonResult.model_validate(payload)
 
 
 def test_failure_summary_is_short_and_non_sensitive() -> None:

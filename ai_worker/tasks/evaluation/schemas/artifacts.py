@@ -457,6 +457,11 @@ class MetricResult(StrictContractModel):
             )
         ):
             raise ValueError("completed metrics require sample and ratio counts")
+        if self.required and (
+            self.sample_case_count == 0 or self.sample_independent_group_count == 0 or self.denominator == 0
+        ):
+            if self.decision_status is not DecisionStatus.INCONCLUSIVE:
+                raise ValueError("required metrics with zero denominator or empty samples must be inconclusive")
         if self.decision_status is DecisionStatus.INCONCLUSIVE and self.reason_code is None:
             raise ValueError("inconclusive metrics require a reason code")
         return self
@@ -571,9 +576,20 @@ class ComparisonResult(ResultEnvelope):
 
     @model_validator(mode="after")
     def validate_state(self) -> ComparisonResult:
+        controlled_variable_mismatch = any(not check.matched for check in self.controlled_variable_checks)
+        if controlled_variable_mismatch:
+            if self.execution_status is not ExecutionStatus.INVALID or self.decision_status is not None:
+                raise ValueError("controlled variable mismatches require INVALID with a null decision")
+            return self
         if self.execution_status is ExecutionStatus.COMPLETED:
-            if self.decision_status is None:
-                raise ValueError("completed comparisons require an evaluation decision")
+            scope_decisions = [scope.comparison_decision for scope in self.scope_comparisons]
+            expected = DecisionStatus.PASS
+            if ComparisonDecision.REGRESSED in scope_decisions:
+                expected = DecisionStatus.FAIL
+            elif ComparisonDecision.INCONCLUSIVE in scope_decisions:
+                expected = DecisionStatus.INCONCLUSIVE
+            if self.decision_status is not expected:
+                raise ValueError("comparison decision does not match controlled variables and scope precedence")
         elif self.decision_status is not None:
             raise ValueError("incomplete comparisons must not carry a decision")
         return self
@@ -659,22 +675,32 @@ def _validate_aggregate_state(
     aggregate_decision_status: DecisionStatus | None,
     required: bool,
 ) -> None:
+    if not execution_statuses:
+        if aggregate_execution_status is ExecutionStatus.COMPLETED or aggregate_decision_status is not None:
+            raise ValueError("empty member sets cannot produce a completed aggregate decision")
+        return
     if all(status is ExecutionStatus.COMPLETED for status in execution_statuses):
         if aggregate_execution_status is not ExecutionStatus.COMPLETED or aggregate_decision_status is None:
             raise ValueError("fully completed members require a completed aggregate decision")
         if required and aggregate_decision_status is DecisionStatus.NOT_APPLICABLE:
             raise ValueError("required aggregate cannot be not applicable")
-        expected = DecisionStatus.PASS
-        if DecisionStatus.FAIL in decision_statuses:
-            expected = DecisionStatus.FAIL
-        elif DecisionStatus.INCONCLUSIVE in decision_statuses:
-            expected = DecisionStatus.INCONCLUSIVE
-        elif decision_statuses and all(status is DecisionStatus.NOT_APPLICABLE for status in decision_statuses):
-            expected = DecisionStatus.NOT_APPLICABLE
+        expected = _expected_aggregate_decision(decision_statuses)
         if aggregate_decision_status is not expected:
             raise ValueError("aggregate decision does not match member precedence")
     elif aggregate_execution_status is ExecutionStatus.COMPLETED or aggregate_decision_status is not None:
         raise ValueError("incomplete members require a blocking aggregate with null decision")
+
+
+def _expected_aggregate_decision(
+    decision_statuses: list[DecisionStatus | None],
+) -> DecisionStatus:
+    if DecisionStatus.FAIL in decision_statuses:
+        return DecisionStatus.FAIL
+    if DecisionStatus.INCONCLUSIVE in decision_statuses:
+        return DecisionStatus.INCONCLUSIVE
+    if all(status is DecisionStatus.NOT_APPLICABLE for status in decision_statuses):
+        return DecisionStatus.NOT_APPLICABLE
+    return DecisionStatus.PASS
 
 
 def _validate_blocking_aggregation(
