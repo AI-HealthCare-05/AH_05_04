@@ -3,8 +3,8 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 from importlib import import_module
+from uuid import uuid4
 
 import pytest_asyncio
 from sqlalchemy import text
@@ -25,7 +25,8 @@ from ai_worker.core.job_execution import (
 )
 from ai_worker.schemas.messages import WorkerMessage
 
-config = import_module("app.core.config")
+app_core = import_module("app.core")
+config = app_core.config
 
 TEST_SCHEMA = "worker_job_repository_test"
 

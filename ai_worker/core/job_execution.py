@@ -33,11 +33,7 @@ class LeaseNotAcquired:
     """조건 불일치 또는 동시 경합으로 lease를 얻지 못했습니다."""
 
 
-type LeaseAcquisitionResult = (
-    ExecutionLease
-    | CommittedDelivery
-    | LeaseNotAcquired
-)
+type LeaseAcquisitionResult = ExecutionLease | CommittedDelivery | LeaseNotAcquired
 
 
 class JobExecutionRepository(Protocol):

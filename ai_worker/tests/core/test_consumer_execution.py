@@ -1,12 +1,16 @@
 """Consumer의 저장·commit·ACK 실행 순서를 검증합니다."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
-from ai_worker.core.consumer_execution import ConsumerExecution, WorkerDelivery
+from ai_worker.core.consumer_execution import (
+    ConsumerExecution,
+    LeaseAwareConsumerExecution,
+    WorkerDelivery,
+)
 from ai_worker.core.dispatcher import Dispatcher, HandlerExecutionError
 from ai_worker.core.errors import (
     ConsumerAcknowledgementError,
@@ -14,6 +18,12 @@ from ai_worker.core.errors import (
     HandlerResultMismatchError,
 )
 from ai_worker.core.handler import Handler
+from ai_worker.core.job_execution import (
+    CommittedDelivery,
+    ExecutionLease,
+    LeaseAcquisitionResult,
+    LeaseNotAcquired,
+)
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.schemas.messages import JobType, WorkerMessage
@@ -129,6 +139,55 @@ class FakeAcknowledger:
             raise RuntimeError("synthetic sensitive ack failure")
 
         self.acknowledged_ids.append(stream_message_id)
+
+
+class FakeJobExecutionRepository:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        complete_successfully: bool,
+        acquisition_result: LeaseAcquisitionResult | None = None,
+    ) -> None:
+        self._events = events
+        self._complete_successfully = complete_successfully
+        self._acquisition_result = acquisition_result
+
+    async def acquire_lease(
+        self,
+        message: WorkerMessage,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> LeaseAcquisitionResult:
+        self._events.append("acquire")
+        if self._acquisition_result is not None:
+            return self._acquisition_result
+        return ExecutionLease(
+            job_id=message.job_id,
+            event_id=message.event_id,
+            attempt=message.attempt,
+            lease_token=uuid4().hex,
+            lease_expires_at=now + lease_duration,
+        )
+
+    async def refresh_heartbeat(
+        self,
+        lease: ExecutionLease,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionLease | None:
+        return lease
+
+    async def complete_execution(
+        self,
+        lease: ExecutionLease,
+        *,
+        completed_at: datetime,
+    ) -> bool:
+        self._events.append("complete")
+        return self._complete_successfully
 
 
 def build_execution(
@@ -397,3 +456,205 @@ async def test_consumer_rolls_back_and_does_not_ack_when_cancelled() -> None:
 
     assert events == ["rollback"]
     assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_lost_fencing_rolls_back_result_and_does_not_ack() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=False,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    delivery = WorkerDelivery(
+        stream_message_id="2000-0",
+        message=build_message(),
+    )
+
+    result = await execution.execute(delivery)
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "save",
+        "complete",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_commits_before_acknowledgement() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    message = build_message()
+    delivery = WorkerDelivery(
+        stream_message_id="2001-0",
+        message=message,
+    )
+
+    result = await execution.execute(delivery)
+
+    assert isinstance(result, HandlerSuccess)
+    assert result.job_id == message.job_id
+    assert events == [
+        "acquire",
+        "save",
+        "complete",
+        "commit",
+        "ack",
+    ]
+    assert acknowledger.acknowledged_ids == ["2001-0"]
+
+
+@pytest.mark.asyncio
+async def test_committed_redelivery_skips_handler_and_only_acknowledges() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    message = build_message()
+    committed = CommittedDelivery(
+        job_id=message.job_id,
+        event_id=message.event_id,
+        attempt=message.attempt,
+    )
+
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+            acquisition_result=committed,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2002-0",
+            message=message,
+        )
+    )
+
+    assert result == committed
+    assert events == [
+        "acquire",
+        "commit",
+        "ack",
+    ]
+    assert acknowledger.acknowledged_ids == ["2002-0"]
+
+
+@pytest.mark.asyncio
+async def test_unacquired_lease_skips_handler_and_does_not_ack() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=False,
+            acquisition_result=LeaseNotAcquired(),
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2003-0",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_does_not_rollback_after_ack_failure() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler())
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=FakeAcknowledger(
+            events,
+            fail_acknowledge=True,
+        ),
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(ConsumerAcknowledgementError):
+        await execution.execute(
+            WorkerDelivery(
+                stream_message_id="2004-0",
+                message=build_message(),
+            )
+        )
+
+    assert events == [
+        "acquire",
+        "save",
+        "complete",
+        "commit",
+        "ack",
+    ]
+    assert "rollback" not in events

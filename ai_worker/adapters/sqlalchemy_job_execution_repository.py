@@ -192,6 +192,7 @@ class SqlAlchemyJobExecutionRepository:
             lease_token=lease_token,
             lease_expires_at=lease_expires_at,
         )
+
     async def refresh_heartbeat(
         self,
         lease: ExecutionLease,
