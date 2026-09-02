@@ -82,22 +82,23 @@ Runner 작업도 #214가 완료된 뒤 시작하며, 그 뒤에도 HOLDOUT을 lo
 
 | 항목 | 불변 ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `2d8cff7826c32a6bc9fd2cb035e88085aaad762574be17391d2266a4f0fc512b` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `4f72234b2ae2178eb70a3ad6e46e27340122eb84732651f4ab051b5aa5cd2d73` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `c39dc2e65bce8c78bebfe53bca31d4cdf40bd029b07d7ccf75934288cf747f2e` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `5118f57745d75829160dbce7fa57f9fec5a637971d721b28b7c655334024f00e` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `46542e06a1cb8627798bb67eff9639bb9478c936e17f9149b0516a166e988772` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `9db8ccf11613bdbf397fe978765d9517eba8bf095e33bed7189212d74837eae1` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `76f494ea30f15adeb18566d09b79d25e60b1412d3555b1d5d89e05178a4ca931` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `299ce6ad9d8c0299f4498d20c03195c4189d56bfd844b8daed1f4e0b2baa3ed9` |
 | Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `0817571851481cbf0bdbb864e57d327cc179319c8c3074e7702912d8537e5ba1` |
 | Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `421639924196622ab173469d450f6c6fe89ccbb6d417004614fc849b81e772b6` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `8830a693ec354e23752c3974dc9aa5a1ac4ea545ac996e54fd8ae0ddc7c24704` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `50f492919df57a576d1f9c6b7875564f36af9488a80c6c5d26775af45f4b4cf6` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `86c05d7dcba26563a6938809b4467174d7b5bc0fe52f486185ad573671b60109` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `2dc3bc6feab26d981a8c92ad395b65192369b0ec554a98cb17a8b2c311899167` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `4d5ab58c65fb7ca6f3f2198d34c9d9552c8d218b93e96129dbe34652b7911f93` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `908c45570d1781f61699753ae2d8bd8d9b2098b4229366ca16d2c7eb93f94c60` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `e938441ac0f931676d6765e4016d333b7fff037a4cba9281ea98fa53737da443` |
 | Artifact Schema Set | `rag-eval.schema-set@1.1.0` | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
 
 Receipt 표의 SHA-256은 Dataset Manifest가 참조하는 canonical file hash다. Receipt 내부 self-hash는
-`b5ab22b595d8334825621d622dc2187585cf38402308692b421891e8acbfe094`이며, 이 receipt는 153개 Case
+`aa3f52397fd6b7b16c901cc92f9ee8f8c6c8e0a3d65494ab4551f4a5312c8727`이며, 이 receipt는 153개 Case
 resource만 보호하고 Evidence·Rubric·Profile·Policy·Suite 승인을 증명하지 않는다.
 
 Dataset가 실제 검토 뒤 `FROZEN`되면 `rag-holdout-safety@1.0.0`의 Case, Gold, Evidence Mapping,
