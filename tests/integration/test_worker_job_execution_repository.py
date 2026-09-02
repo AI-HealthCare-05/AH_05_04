@@ -19,6 +19,7 @@ from ai_worker.adapters.sqlalchemy_job_execution_repository import (
     SqlAlchemyJobExecutionRepository,
 )
 from ai_worker.core.job_execution import (
+    CommittedDelivery,
     ExecutionLease,
     LeaseAcquisitionResult,
     LeaseNotAcquired,
@@ -255,4 +256,119 @@ async def test_only_one_worker_acquires_same_job_lease() -> None:
 
     assert status == "PROCESSING"
     assert attempt_count == 1
+    assert attempt_result.scalar_one() == 1
+
+
+async def test_committed_event_redelivery_keeps_single_attempt() -> None:
+    message = build_message()
+    now = datetime.now(UTC)
+
+    async with test_engine.begin() as connection:
+        await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
+        await connection.execute(
+            text(
+                """
+                INSERT INTO ai_job (
+                    id,
+                    job_type,
+                    status,
+                    expected_event_id,
+                    attempt_count,
+                    max_attempts,
+                    available_at
+                )
+                VALUES (
+                    :job_id,
+                    'OCR',
+                    'PENDING',
+                    :event_id,
+                    0,
+                    3,
+                    :available_at
+                )
+                """
+            ),
+            {
+                "job_id": str(message.job_id),
+                "event_id": str(message.event_id),
+                "available_at": now,
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO outbox_event (
+                    event_id,
+                    job_id,
+                    attempt,
+                    event_kind
+                )
+                VALUES (
+                    :event_id,
+                    :job_id,
+                    :attempt,
+                    'JOB_EXECUTE'
+                )
+                """
+            ),
+            {
+                "event_id": str(message.event_id),
+                "job_id": str(message.job_id),
+                "attempt": message.attempt,
+            },
+        )
+
+    async with AsyncSession(
+        bind=test_engine,
+        expire_on_commit=False,
+    ) as session:
+        await use_test_schema(session)
+        repository = SqlAlchemyJobExecutionRepository(session)
+
+        acquired = await repository.acquire_lease(
+            message,
+            now=now,
+            lease_duration=timedelta(seconds=30),
+        )
+        assert isinstance(acquired, ExecutionLease)
+
+        completed = await repository.complete_execution(
+            acquired,
+            completed_at=now + timedelta(seconds=1),
+        )
+        assert completed is True
+        await session.commit()
+
+    async with AsyncSession(
+        bind=test_engine,
+        expire_on_commit=False,
+    ) as session:
+        await use_test_schema(session)
+        repository = SqlAlchemyJobExecutionRepository(session)
+
+        redelivery = await repository.acquire_lease(
+            message,
+            now=now + timedelta(seconds=2),
+            lease_duration=timedelta(seconds=30),
+        )
+        await session.commit()
+
+    assert isinstance(redelivery, CommittedDelivery)
+
+    async with AsyncSession(
+        bind=test_engine,
+        expire_on_commit=False,
+    ) as session:
+        await use_test_schema(session)
+        attempt_result = await session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM ai_job_attempt
+                WHERE ai_job_id = :job_id
+                """
+            ),
+            {"job_id": str(message.job_id)},
+        )
+
     assert attempt_result.scalar_one() == 1

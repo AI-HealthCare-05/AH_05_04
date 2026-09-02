@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Approved design — `PD-141-20260902`, 구현·검증 대기 |
+| 상태 | Core implementation verified — `PD-141-20260902` |
 | 구현 이슈 | [#141](https://github.com/AI-HealthCare-05/AH_05_04/issues/141) |
 | 기준 계약 | `async-job-v1.md`, `outbox-stream-v1.md` |
 | 승인 Decision | [`PD-141-20260902`](../governance/decisions/2026-09-02-worker-attempt-lease-fencing.md) |
@@ -82,8 +82,18 @@ Worker Repository가 유효한 실행 소유자의 DB 변경만 허용하고,
 | `WJR-001`, `WJR-002`, `WJR-003`, `WJR-004`, `WJR-005`, `WJR-006`, `WJR-007`, `WJR-008`, `WJR-010` | `tests/integration/test_worker_consumer_session_sharing.py` |
 | SQLAlchemy commit·rollback 위임 | `ai_worker/tests/core/test_sqlalchemy_transaction.py` |
 | `WJR-009` 스키마 제약 존재 | `backend/app/tests/models/test_async_job_schema.py` |
+| Core lease·fencing 타입 계약 | `ai_worker/tests/core/test_job_execution.py` |
+| `WJR-101`~`WJR-106`, `WJR-108`~`WJR-112` | `ai_worker/tests/core/test_sqlalchemy_job_execution_repository.py` |
+| `WJR-107`, `WJR-113`, `WJR-114` | `tests/integration/test_worker_job_execution_repository.py` |
+| `WJR-113`, `WJR-115`, `WJR-117`, `WJR-123` | `ai_worker/tests/core/test_consumer_execution.py` |
+| `WJR-118`, `WJR-122` 재시도 분류 계약 | `ai_worker/tests/core/test_retry.py` |
+| `WJR-119`~`WJR-121` 공통 저장·rollback 경계 | `ai_worker/tests/core/test_consumer_execution.py` |
+
 
 `WJR-009`의 실제 PostgreSQL 중복 INSERT 테스트는 아직 추가되지 않았다.
+`WJR-119`~`WJR-121`의 Guide·Chat별 fallback payload와 도메인 상태 검증은
+각 Handler·ResultStore 구현에서 추가하며, #141은 Worker가 소유하는
+조건부 완료·commit·rollback 경계를 고정한다.
 
 
 ## 승인된 Repository 입출력
