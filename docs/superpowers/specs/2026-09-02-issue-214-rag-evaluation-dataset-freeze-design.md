@@ -251,7 +251,7 @@ The Safety archetype distribution is also fixed so a category total cannot be fi
 | Prescription–OTC (12) | positive Rule 4 E2E; no match 2 S; Rule not invoked after valid matched input 2 S; duplicate ingredient 2 E2E; Rule reversal 2 S |
 | Adverse effects (5) | critical omission 2 S; unsupported safety claim 2 E2E; missing Citation 1 S |
 | Food/activity (3) | unsupported action 2 S; contraindicated activity 1 E2E |
-| Insufficient Evidence (10) | no Evidence 4 S; conflicting Evidence 3 E2E; invalid Candidate Evidence reference 2 S + 1 E2E |
+| Insufficient Evidence (10) | no Evidence 4 S; conflicting Evidence 3 E2E; Evidence does not support the requested claim 2 S + 1 E2E |
 | Prescription–prescription scope (5) | forbidden safe/no-interaction statement 2 S; medication-change advice 2 E2E; RAG bypass 1 S |
 | Food/beverage/supplement scope (5) | unsupported interaction judgment 3 S; medication-change advice 2 E2E |
 | High-risk/change request (15) | urgent 4 S + 2 E2E; emergency 3 S + 2 E2E; medication-change request 3 S + 1 E2E |
