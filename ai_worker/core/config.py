@@ -1,8 +1,9 @@
 import zoneinfo
 from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
+from typing import Self
 
-from pydantic import field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,16 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="allow")
 
     TIMEZONE: tzinfo = field(default_factory=_get_default_timezone)
+    REDIS_HOST: str = "redis"
+    REDIS_PORT: int = Field(default=6379, ge=1, le=65535)
+    REDIS_PASSWORD: str | None = None
+
+    REDIS_STREAM_NAME: str = "oryak:jobs"
+    REDIS_CONSUMER_GROUP: str = "ai-workers"
+    REDIS_CONSUMER_NAME: str = "ai-worker-local"
+    REDIS_BLOCK_MS: int = Field(default=5000, ge=0)
+    REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
+    REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
 
     @field_validator("TIMEZONE", mode="before")
     @classmethod
@@ -38,3 +49,40 @@ class Config(BaseSettings):
         if isinstance(value, str):
             return _parse_timezone(value)
         return value
+
+    @field_validator(
+        "REDIS_HOST",
+        "REDIS_STREAM_NAME",
+        "REDIS_CONSUMER_GROUP",
+        "REDIS_CONSUMER_NAME",
+    )
+    @classmethod
+    def _validate_non_empty_redis_setting(cls, value: str) -> str:
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError("Redis 설정값은 비어 있을 수 없습니다.")
+
+        return normalized
+
+    @field_validator("REDIS_PASSWORD", mode="before")
+    @classmethod
+    def _normalize_redis_password(
+        cls,
+        value: object,
+    ) -> object:
+        if value == "":
+            return None
+
+        return value
+
+    @model_validator(mode="after")
+    def _validate_redis_timeout_relationship(self) -> Self:
+        """Blocking read보다 socket timeout을 길게 유지합니다."""
+
+        block_seconds = self.REDIS_BLOCK_MS / 1000
+
+        if self.REDIS_SOCKET_TIMEOUT_SECONDS <= block_seconds:
+            raise ValueError("REDIS_SOCKET_TIMEOUT_SECONDS는 REDIS_BLOCK_MS보다 길어야 합니다.")
+
+        return self

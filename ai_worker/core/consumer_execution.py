@@ -1,7 +1,6 @@
 """Handler 결과 검증 이후 저장·commit·ACK 순서를 조정합니다."""
 
 import asyncio
-from dataclasses import dataclass
 from typing import Protocol
 
 from ai_worker.core.dispatcher import Dispatcher
@@ -11,25 +10,8 @@ from ai_worker.core.errors import (
     WorkerError,
 )
 from ai_worker.core.results import HandlerSuccess
+from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
 from ai_worker.schemas.messages import WorkerMessage
-
-
-@dataclass(frozen=True, slots=True)
-class WorkerDelivery:
-    """Redis Stream 전달 식별자와 검증된 Worker 메시지를 묶습니다.
-
-    stream_message_id는 Redis ACK에 사용하고,
-    WorkerMessage.event_id는 비즈니스 이벤트 식별자로 사용합니다.
-    """
-
-    stream_message_id: str
-    message: WorkerMessage
-
-    def __post_init__(self) -> None:
-        """빈 Stream 메시지 ID를 실행 경계에서 거부합니다."""
-
-        if not self.stream_message_id.strip():
-            raise ValueError("stream_message_id는 비어 있을 수 없습니다.")
 
 
 class ResultStore(Protocol):
@@ -54,14 +36,6 @@ class Transaction(Protocol):
 
     async def rollback(self) -> None:
         """현재 transaction을 rollback합니다."""
-        ...
-
-
-class StreamAcknowledger(Protocol):
-    """DB commit 이후 Stream 메시지를 ACK하는 인터페이스입니다."""
-
-    async def acknowledge(self, stream_message_id: str) -> None:
-        """Redis Stream 메시지를 ACK합니다."""
         ...
 
 
