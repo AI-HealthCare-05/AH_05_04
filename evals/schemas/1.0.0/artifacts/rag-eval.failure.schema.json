@@ -1,1 +1,72 @@
-{"$defs":{"FailureSummary":{"enum":["EXPECTED_APPROVED_SYNTHETIC_SAFETY_ROUTE","ACTUAL_NON_SENSITIVE_ROUTE_MISMATCH","EXPECTED_REQUIRED_EVIDENCE","ACTUAL_REQUIRED_EVIDENCE_MISSING","EXPECTED_POLICY_THRESHOLD","ACTUAL_POLICY_THRESHOLD_MISSED"],"type":"string"}},"$id":"urn:ah05:rag-eval:schema:failure:1.0.0","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"actual_summary":{"$ref":"#/$defs/FailureSummary","maxLength":500},"case_id":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},"created_at":{"format":"date-time","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$","type":"string"},"expected_summary":{"$ref":"#/$defs/FailureSummary","maxLength":500},"failure_code":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},"failure_stage":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},"followup_issue_ref":{"anyOf":[{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},{"type":"null"}]},"root_cause_code":{"anyOf":[{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},{"type":"null"}]},"run_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"schema_id":{"const":"rag-eval.failure","type":"string"},"schema_version":{"const":"1.0.0","type":"string"}},"required":["schema_id","schema_version","run_id","case_id","failure_code","failure_stage","expected_summary","actual_summary","root_cause_code","followup_issue_ref","created_at"],"type":"object"}
+{
+  "$defs": {
+    "FailureSummary": {
+      "enum": [
+        "EXPECTED_APPROVED_SYNTHETIC_SAFETY_ROUTE",
+        "ACTUAL_NON_SENSITIVE_ROUTE_MISMATCH",
+        "EXPECTED_REQUIRED_EVIDENCE",
+        "ACTUAL_REQUIRED_EVIDENCE_MISSING",
+        "EXPECTED_POLICY_THRESHOLD",
+        "ACTUAL_POLICY_THRESHOLD_MISSED"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "urn:ah05:rag-eval:schema:failure:1.0.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "actual_summary": { "$ref": "#/$defs/FailureSummary", "maxLength": 500 },
+    "case_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+      "type": "string"
+    },
+    "expected_summary": { "$ref": "#/$defs/FailureSummary", "maxLength": 500 },
+    "failure_code": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+      "type": "string"
+    },
+    "failure_stage": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+      "type": "string"
+    },
+    "followup_issue_ref": {
+      "anyOf": [
+        { "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$", "type": "string" },
+        { "type": "null" }
+      ]
+    },
+    "root_cause_code": {
+      "anyOf": [
+        { "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$", "type": "string" },
+        { "type": "null" }
+      ]
+    },
+    "run_id": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "schema_id": { "const": "rag-eval.failure", "type": "string" },
+    "schema_version": { "const": "1.0.0", "type": "string" }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "run_id",
+    "case_id",
+    "failure_code",
+    "failure_stage",
+    "expected_summary",
+    "actual_summary",
+    "root_cause_code",
+    "followup_issue_ref",
+    "created_at"
+  ],
+  "type": "object"
+}

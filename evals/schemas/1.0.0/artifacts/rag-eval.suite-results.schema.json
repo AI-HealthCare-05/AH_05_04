@@ -1,1 +1,2241 @@
-{"$defs":{"DecisionStatus":{"enum":["PASS","FAIL","INCONCLUSIVE","N/A"],"type":"string"},"ExecutionStatus":{"enum":["NOT_IMPLEMENTED","NOT_EVALUATED","INVALID","ERROR","COMPLETED"],"type":"string"},"ImmutableReference":{"additionalProperties":false,"properties":{"hash":{"pattern":"^[0-9a-f]{64}$","type":"string"},"id":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},"version":{"pattern":"^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$","type":"string"}},"required":["id","version","hash"],"type":"object"},"SuiteCaseResult":{"additionalProperties":false,"allOf":[{"else":{"properties":{"decision_status":{"type":"null"}}},"if":{"properties":{"execution_status":{"const":"COMPLETED"}},"required":["execution_status"]},"then":{"properties":{"decision_status":{"not":{"type":"null"}}}}}],"properties":{"artifact_ref":{"anyOf":[{"$ref":"#/$defs/ImmutableReference"},{"type":"null"}]},"case_code":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},"case_input_hash":{"pattern":"^[0-9a-f]{64}$","type":"string"},"decision_status":{"anyOf":[{"$ref":"#/$defs/DecisionStatus"},{"type":"null"}]},"execution_status":{"$ref":"#/$defs/ExecutionStatus"},"failure_code":{"anyOf":[{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},{"type":"null"}]}},"required":["case_code","case_input_hash","execution_status","decision_status","artifact_ref","failure_code"],"type":"object"}},"$id":"urn:ah05:rag-eval:schema:suite-results:1.0.0","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"allOf":[{"else":{"properties":{"aggregate_decision_status":{"type":"null"}}},"if":{"properties":{"aggregate_execution_status":{"const":"COMPLETED"}},"required":["aggregate_execution_status"]},"then":{"properties":{"aggregate_decision_status":{"not":{"type":"null"}}}}},{"if":{"properties":{"case_results":{"maxItems":0}},"required":["case_results"]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"not":{"const":"COMPLETED"}},"blocking_execution_statuses":{"const":[]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_execution_status":{"const":"COMPLETED"},"blocking_execution_statuses":{"const":[]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"ERROR"},"blocking_execution_statuses":{"const":["ERROR"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID","ERROR"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"NOT_IMPLEMENTED"},"blocking_execution_statuses":{"const":["NOT_IMPLEMENTED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID","NOT_IMPLEMENTED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"ERROR"},"blocking_execution_statuses":{"const":["ERROR","NOT_IMPLEMENTED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID","ERROR","NOT_IMPLEMENTED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"NOT_EVALUATED"},"blocking_execution_statuses":{"const":["NOT_EVALUATED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID","NOT_EVALUATED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"ERROR"},"blocking_execution_statuses":{"const":["ERROR","NOT_EVALUATED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID","ERROR","NOT_EVALUATED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"NOT_IMPLEMENTED"},"blocking_execution_statuses":{"const":["NOT_IMPLEMENTED","NOT_EVALUATED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID","NOT_IMPLEMENTED","NOT_EVALUATED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"ERROR"},"blocking_execution_statuses":{"const":["ERROR","NOT_IMPLEMENTED","NOT_EVALUATED"]}}}},{"if":{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"type":"null"},"aggregate_execution_status":{"const":"INVALID"},"blocking_execution_statuses":{"const":["INVALID","ERROR","NOT_IMPLEMENTED","NOT_EVALUATED"]}}}},{"if":{"allOf":[{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"decision_status":{"const":"FAIL"}},"required":["decision_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"const":"FAIL"}}}},{"if":{"allOf":[{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"decision_status":{"const":"FAIL"}},"required":["decision_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"decision_status":{"const":"INCONCLUSIVE"}},"required":["decision_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"const":"INCONCLUSIVE"}}}},{"if":{"allOf":[{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"decision_status":{"const":"FAIL"}},"required":["decision_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"decision_status":{"const":"INCONCLUSIVE"}},"required":["decision_status"]}}}},"required":["case_results"]}]},{"anyOf":[{"properties":{"case_results":{"contains":{"properties":{"decision_status":{"const":"PASS"}},"required":["decision_status"]}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"const":"PASS"}}}},{"if":{"allOf":[{"allOf":[{"anyOf":[{"properties":{"case_results":{"minItems":1}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"INVALID"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"ERROR"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_IMPLEMENTED"}},"required":["execution_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"execution_status":{"const":"NOT_EVALUATED"}},"required":["execution_status"]}}}},"required":["case_results"]}]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"decision_status":{"const":"FAIL"}},"required":["decision_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"decision_status":{"const":"INCONCLUSIVE"}},"required":["decision_status"]}}}},"required":["case_results"]}]},{"allOf":[{"properties":{"case_results":{"not":{"contains":{"properties":{"decision_status":{"const":"PASS"}},"required":["decision_status"]}}}},"required":["case_results"]}]}]},"then":{"properties":{"aggregate_decision_status":{"const":"N/A"}}}},{"if":{"properties":{"required":{"const":true}},"required":["required"]},"then":{"properties":{"aggregate_decision_status":{"not":{"const":"N/A"}}}}}],"properties":{"aggregate_decision_status":{"anyOf":[{"$ref":"#/$defs/DecisionStatus"},{"type":"null"}]},"aggregate_execution_status":{"$ref":"#/$defs/ExecutionStatus"},"artifact_hash":{"anyOf":[{"pattern":"^[0-9a-f]{64}$","type":"string"},{"type":"null"}]},"blocking_execution_statuses":{"items":{"$ref":"#/$defs/ExecutionStatus"},"type":"array"},"case_results":{"items":{"$ref":"#/$defs/SuiteCaseResult"},"type":"array"},"executed_case_set_hash":{"pattern":"^[0-9a-f]{64}$","type":"string"},"expected_case_set_hash":{"pattern":"^[0-9a-f]{64}$","type":"string"},"required":{"type":"boolean"},"run_id":{"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"},"schema_id":{"const":"rag-eval.suite-results","type":"string"},"schema_version":{"const":"1.0.0","type":"string"},"suite_definition_hash":{"pattern":"^[0-9a-f]{64}$","type":"string"},"suite_id":{"pattern":"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$","type":"string"},"suite_version":{"pattern":"^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$","type":"string"}},"required":["schema_id","schema_version","run_id","suite_id","suite_version","suite_definition_hash","required","expected_case_set_hash","executed_case_set_hash","case_results","aggregate_execution_status","aggregate_decision_status","blocking_execution_statuses","artifact_hash"],"type":"object"}
+{
+  "$defs": {
+    "DecisionStatus": {
+      "enum": ["PASS", "FAIL", "INCONCLUSIVE", "N/A"],
+      "type": "string"
+    },
+    "ExecutionStatus": {
+      "enum": [
+        "NOT_IMPLEMENTED",
+        "NOT_EVALUATED",
+        "INVALID",
+        "ERROR",
+        "COMPLETED"
+      ],
+      "type": "string"
+    },
+    "ImmutableReference": {
+      "additionalProperties": false,
+      "properties": {
+        "hash": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$",
+          "type": "string"
+        }
+      },
+      "required": ["id", "version", "hash"],
+      "type": "object"
+    },
+    "SuiteCaseResult": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": { "properties": { "decision_status": { "type": "null" } } },
+          "if": {
+            "properties": { "execution_status": { "const": "COMPLETED" } },
+            "required": ["execution_status"]
+          },
+          "then": {
+            "properties": { "decision_status": { "not": { "type": "null" } } }
+          }
+        }
+      ],
+      "properties": {
+        "artifact_ref": {
+          "anyOf": [
+            { "$ref": "#/$defs/ImmutableReference" },
+            { "type": "null" }
+          ]
+        },
+        "case_code": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+          "type": "string"
+        },
+        "case_input_hash": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+        "decision_status": {
+          "anyOf": [{ "$ref": "#/$defs/DecisionStatus" }, { "type": "null" }]
+        },
+        "execution_status": { "$ref": "#/$defs/ExecutionStatus" },
+        "failure_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+              "type": "string"
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": [
+        "case_code",
+        "case_input_hash",
+        "execution_status",
+        "decision_status",
+        "artifact_ref",
+        "failure_code"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:ah05:rag-eval:schema:suite-results:1.0.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "properties": { "aggregate_decision_status": { "type": "null" } }
+      },
+      "if": {
+        "properties": {
+          "aggregate_execution_status": { "const": "COMPLETED" }
+        },
+        "required": ["aggregate_execution_status"]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "not": { "type": "null" } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "case_results": { "maxItems": 0 } },
+        "required": ["case_results"]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "not": { "const": "COMPLETED" } },
+          "blocking_execution_statuses": { "const": [] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_execution_status": { "const": "COMPLETED" },
+          "blocking_execution_statuses": { "const": [] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": { "const": ["INVALID"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "ERROR" },
+          "blocking_execution_statuses": { "const": ["ERROR"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": { "const": ["INVALID", "ERROR"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "NOT_IMPLEMENTED" },
+          "blocking_execution_statuses": { "const": ["NOT_IMPLEMENTED"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": {
+            "const": ["INVALID", "NOT_IMPLEMENTED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "ERROR" },
+          "blocking_execution_statuses": {
+            "const": ["ERROR", "NOT_IMPLEMENTED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_EVALUATED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": {
+            "const": ["INVALID", "ERROR", "NOT_IMPLEMENTED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "NOT_EVALUATED" },
+          "blocking_execution_statuses": { "const": ["NOT_EVALUATED"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": {
+            "const": ["INVALID", "NOT_EVALUATED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "ERROR" },
+          "blocking_execution_statuses": { "const": ["ERROR", "NOT_EVALUATED"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "NOT_IMPLEMENTED" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": {
+            "const": ["INVALID", "ERROR", "NOT_EVALUATED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "NOT_IMPLEMENTED" },
+          "blocking_execution_statuses": {
+            "const": ["NOT_IMPLEMENTED", "NOT_EVALUATED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "ERROR" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": {
+            "const": ["INVALID", "NOT_IMPLEMENTED", "NOT_EVALUATED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "execution_status": { "const": "INVALID" }
+                        },
+                        "required": ["execution_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "ERROR" },
+          "blocking_execution_statuses": {
+            "const": ["ERROR", "NOT_IMPLEMENTED", "NOT_EVALUATED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": { "case_results": { "minItems": 1 } },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "INVALID" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "ERROR" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_IMPLEMENTED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "execution_status": { "const": "NOT_EVALUATED" }
+                      },
+                      "required": ["execution_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "type": "null" },
+          "aggregate_execution_status": { "const": "INVALID" },
+          "blocking_execution_statuses": {
+            "const": ["INVALID", "ERROR", "NOT_IMPLEMENTED", "NOT_EVALUATED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "properties": { "case_results": { "minItems": 1 } },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "INVALID" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "ERROR" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_IMPLEMENTED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_EVALUATED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": { "decision_status": { "const": "FAIL" } },
+                      "required": ["decision_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": { "aggregate_decision_status": { "const": "FAIL" } }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "properties": { "case_results": { "minItems": 1 } },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "INVALID" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "ERROR" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_IMPLEMENTED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_EVALUATED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "decision_status": { "const": "FAIL" }
+                        },
+                        "required": ["decision_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": {
+                        "decision_status": { "const": "INCONCLUSIVE" }
+                      },
+                      "required": ["decision_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "const": "INCONCLUSIVE" }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "properties": { "case_results": { "minItems": 1 } },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "INVALID" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "ERROR" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_IMPLEMENTED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_EVALUATED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "decision_status": { "const": "FAIL" }
+                        },
+                        "required": ["decision_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "decision_status": { "const": "INCONCLUSIVE" }
+                        },
+                        "required": ["decision_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "contains": {
+                      "properties": { "decision_status": { "const": "PASS" } },
+                      "required": ["decision_status"]
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": { "aggregate_decision_status": { "const": "PASS" } }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "properties": { "case_results": { "minItems": 1 } },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "INVALID" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "ERROR" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_IMPLEMENTED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "properties": {
+                      "case_results": {
+                        "not": {
+                          "contains": {
+                            "properties": {
+                              "execution_status": { "const": "NOT_EVALUATED" }
+                            },
+                            "required": ["execution_status"]
+                          }
+                        }
+                      }
+                    },
+                    "required": ["case_results"]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "decision_status": { "const": "FAIL" }
+                        },
+                        "required": ["decision_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "decision_status": { "const": "INCONCLUSIVE" }
+                        },
+                        "required": ["decision_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "properties": {
+                  "case_results": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "decision_status": { "const": "PASS" }
+                        },
+                        "required": ["decision_status"]
+                      }
+                    }
+                  }
+                },
+                "required": ["case_results"]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": { "aggregate_decision_status": { "const": "N/A" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "required": { "const": true } },
+        "required": ["required"]
+      },
+      "then": {
+        "properties": {
+          "aggregate_decision_status": { "not": { "const": "N/A" } }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "aggregate_decision_status": {
+      "anyOf": [{ "$ref": "#/$defs/DecisionStatus" }, { "type": "null" }]
+    },
+    "aggregate_execution_status": { "$ref": "#/$defs/ExecutionStatus" },
+    "artifact_hash": {
+      "anyOf": [
+        { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+        { "type": "null" }
+      ]
+    },
+    "blocking_execution_statuses": {
+      "items": { "$ref": "#/$defs/ExecutionStatus" },
+      "type": "array"
+    },
+    "case_results": {
+      "items": { "$ref": "#/$defs/SuiteCaseResult" },
+      "type": "array"
+    },
+    "executed_case_set_hash": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+    "expected_case_set_hash": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+    "required": { "type": "boolean" },
+    "run_id": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "schema_id": { "const": "rag-eval.suite-results", "type": "string" },
+    "schema_version": { "const": "1.0.0", "type": "string" },
+    "suite_definition_hash": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+    "suite_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$",
+      "type": "string"
+    },
+    "suite_version": {
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_version",
+    "run_id",
+    "suite_id",
+    "suite_version",
+    "suite_definition_hash",
+    "required",
+    "expected_case_set_hash",
+    "executed_case_set_hash",
+    "case_results",
+    "aggregate_execution_status",
+    "aggregate_decision_status",
+    "blocking_execution_statuses",
+    "artifact_hash"
+  ],
+  "type": "object"
+}

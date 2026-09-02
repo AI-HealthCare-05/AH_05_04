@@ -544,6 +544,7 @@ async def verify_one_cycle(
     fixture: SyntheticFixture,
     ids: Mapping[str, str],
     scenario: Mapping[str, Any],
+    ocr_structuring_expected: bool = False,
 ) -> dict[str, Any]:
     from decimal import Decimal
 
@@ -622,6 +623,10 @@ async def verify_one_cycle(
             )
     if not matches:
         raise HttpFlowError("PRESCRIPTION_INPUT")
+    ocr_database = _ocr_database_evidence(
+        ocr_job,
+        ocr_structuring_expected=ocr_structuring_expected,
+    )
     if (
         guide.generation_status != GuideGenerationStatus.COMPLETED
         or not guide.content
@@ -640,6 +645,7 @@ async def verify_one_cycle(
     return {
         "input_check": "PASS",
         "input_fingerprint": compute_input_fingerprint(scenario),
+        "ocr_database": ocr_database,
         "guide": {
             "status": str(guide.generation_status),
             "model_name": guide.model_name,
@@ -654,6 +660,33 @@ async def verify_one_cycle(
         },
         "guide_content": guide.content,
         "chat_content": assistant.content,
+    }
+
+
+def _ocr_database_evidence(ocr_job: Any, *, ocr_structuring_expected: bool) -> dict[str, Any]:
+    model_version = getattr(ocr_job, "model_version", None)
+    prompt_version = getattr(ocr_job, "prompt_version", None)
+    has_both = (
+        isinstance(model_version, str)
+        and bool(model_version)
+        and isinstance(prompt_version, str)
+        and bool(prompt_version)
+    )
+    has_neither = model_version is None and prompt_version is None
+    if (ocr_structuring_expected and not has_both) or (not ocr_structuring_expected and not has_neither):
+        raise HttpFlowError(
+            "DB_VERIFICATION",
+            {
+                "api_code": "OCR_STRUCTURE_EVIDENCE_MISMATCH",
+                "ocr_structuring_expected": ocr_structuring_expected,
+                "model_version_present": bool(model_version),
+                "prompt_version_present": bool(prompt_version),
+            },
+        )
+    return {
+        "status": "PASS",
+        "model_version": model_version,
+        "prompt_version": prompt_version,
     }
 
 
@@ -926,14 +959,39 @@ class NetworkOneCycleRunner:
         state: RunStateStore,
         read_timeout_seconds: float,
         prescription_check: Callable[[str, str], Awaitable[None]] | None = None,
+        ocr_structuring_expected: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._state = state
         self._read_timeout_seconds = read_timeout_seconds
         self._client: httpx.AsyncClient | None = None
-        self._headers: dict[str, str] = {}
+        state_values = self._state.read()
+        self._local_live_full = state_values.get("mode") == "local-live-full"
+        self._headers: dict[str, str] = (
+            {"X-Validation-Run-Id": str(state_values["run_id"])} if self._local_live_full else {}
+        )
         self._preflight_fields: list[dict[str, Any]] = []
         self._prescription_check = prescription_check
+        self._provider_traces: dict[str, dict[str, Any]] = {}
+        if self._local_live_full:
+            self._provider_traces = {
+                "prescription_recognition": {"status": "EXPECTED", "trace_id": None},
+                "ocr_structuring": (
+                    {"status": "EXPECTED", "trace_id": None}
+                    if ocr_structuring_expected
+                    else {
+                        "status": "SKIPPED",
+                        "reason": "OCR_STRUCTURE_LLM_DISABLED",
+                        "trace_id": None,
+                    }
+                ),
+                "guide_generation": {"status": "EXPECTED", "trace_id": None},
+                "chat_generation": {"status": "EXPECTED", "trace_id": None},
+            }
+
+    @property
+    def provider_traces(self) -> dict[str, dict[str, Any]]:
+        return {name: dict(value) for name, value in self._provider_traces.items()}
 
     async def __aenter__(self) -> NetworkOneCycleRunner:
         timeout = httpx.Timeout(connect=5.0, read=self._read_timeout_seconds, write=5.0, pool=5.0)
@@ -980,6 +1038,8 @@ class NetworkOneCycleRunner:
         except httpx.TransportError:
             self._state.update(transport_failed_at=datetime.now(UTC).isoformat())
             raise HttpFlowError(stage) from None
+        trace_id = self._response_trace_id(stage, response)
+        self._record_provider_trace(stage, method, trace_id)
         if medical_response and response.headers.get("cache-control") != "no-store":
             if mutating:
                 self._complete_request()
@@ -989,6 +1049,18 @@ class NetworkOneCycleRunner:
                 body = response.json()
             except ValueError:
                 body = {}
+            body_trace_id = body.get("trace_id")
+            if self._local_live_full and body_trace_id is not None and body_trace_id != trace_id:
+                if mutating:
+                    self._complete_request()
+                raise HttpFlowError(
+                    stage,
+                    {
+                        "http_status": response.status_code,
+                        "api_code": "TRACE_ID_MISMATCH",
+                        "trace_id": trace_id,
+                    },
+                )
             if mutating:
                 self._complete_request()
             raise HttpFlowError(
@@ -996,7 +1068,7 @@ class NetworkOneCycleRunner:
                 {
                     "http_status": response.status_code,
                     "api_code": body.get("code"),
-                    "trace_id": body.get("trace_id"),
+                    "trace_id": trace_id or body.get("trace_id"),
                 },
             )
         try:
@@ -1010,6 +1082,46 @@ class NetworkOneCycleRunner:
                 self._complete_request()
             raise HttpFlowError(stage, {"http_status": response.status_code, "api_code": "INVALID_JSON_SHAPE"})
         return body
+
+    def _response_trace_id(self, stage: str, response: httpx.Response) -> str | None:
+        if not self._local_live_full:
+            return None
+        trace_id = response.headers.get("X-Trace-Id")
+        if trace_id is None:
+            self._complete_request()
+            raise HttpFlowError(
+                stage,
+                {"http_status": response.status_code, "api_code": "TRACE_ID_MISSING"},
+            )
+        if len(trace_id) != 32:
+            self._complete_request()
+            raise HttpFlowError(
+                stage,
+                {"http_status": response.status_code, "api_code": "TRACE_ID_INVALID"},
+            )
+        try:
+            int(trace_id, 16)
+        except ValueError:
+            self._complete_request()
+            raise HttpFlowError(
+                stage,
+                {"http_status": response.status_code, "api_code": "TRACE_ID_INVALID"},
+            ) from None
+        return trace_id
+
+    def _record_provider_trace(self, stage: str, method: str, trace_id: str | None) -> None:
+        if not self._local_live_full or trace_id is None:
+            return
+        trace_names: tuple[str, ...] = ()
+        if stage == "OCR_REQUEST" and method.upper() == "POST":
+            trace_names = ("prescription_recognition", "ocr_structuring")
+        elif stage == "GUIDE_GENERATION_PROCESSING":
+            trace_names = ("guide_generation",)
+        elif stage == "CHAT_GENERATION_PROCESSING":
+            trace_names = ("chat_generation",)
+        for trace_name in trace_names:
+            if self._provider_traces[trace_name]["status"] == "EXPECTED":
+                self._provider_traces[trace_name]["trace_id"] = trace_id
 
     def _record_id(self, name: str, value: str) -> None:
         state = self._state.read()
@@ -1057,7 +1169,7 @@ class NetworkOneCycleRunner:
         if not isinstance(token, str) or not token:
             self._complete_request()
             raise HttpFlowError("AUTH", {"http_status": 200, "api_code": "TOKEN_MISSING"})
-        self._headers = {"Authorization": f"Bearer {token}"}
+        self._headers["Authorization"] = f"Bearer {token}"
         self._complete_request()
 
     async def _run_generation(self, *, document_id: str, question: str) -> dict[str, Any]:
@@ -1239,6 +1351,7 @@ class NetworkOneCycleRunner:
             "field_count": preflight["field_count"],
             "error_code": None,
         }
+        generated["provider_traces"] = self.provider_traces
         return generated
 
 
@@ -1292,10 +1405,16 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _failure(*, run_id: str, mode: str, stage: str) -> dict[str, Any]:
+def _failure(
+    *,
+    run_id: str,
+    mode: str,
+    stage: str,
+    provider_traces: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     if stage not in ALLOWED_FAILURE_STAGES:
         raise ValueError("invalid failure stage")
-    return {
+    result: dict[str, Any] = {
         "operation": "run",
         "run_id": run_id,
         "mode": mode,
@@ -1305,6 +1424,19 @@ def _failure(*, run_id: str, mode: str, stage: str) -> dict[str, Any]:
         "cleanup": "PASS",
         "evidence_qualified": False,
     }
+    if provider_traces is not None:
+        result["provider_traces"] = {name: dict(trace) for name, trace in provider_traces.items()}
+    return result
+
+
+def _apply_local_live_evidence_contract(result: dict[str, Any], *, mode: str) -> dict[str, Any]:
+    if mode == "local-live-full":
+        result.update(
+            execution_mode="LIVE",
+            database_verification="PASS",
+            provider_log_verification="MANUAL_REQUIRED",
+        )
+    return result
 
 
 def _emit(result: Mapping[str, Any]) -> None:
@@ -1620,6 +1752,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
     read_timeout = _calculate_live_read_timeout_seconds(
         runtime_env,
     )
+    runner: NetworkOneCycleRunner | None = None
     try:
 
         async def prescription_check(prescription_id: str, document_id: str) -> None:
@@ -1635,6 +1768,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
             state=store,
             read_timeout_seconds=read_timeout,
             prescription_check=prescription_check,
+            ocr_structuring_expected=(runtime_env.get("OCR_STRUCTURE_LLM_ENABLED", "false").strip().lower() == "true"),
         ) as runner:
             if args.mode == "local-preflight":
                 result = await runner.run_preflight(
@@ -1653,7 +1787,12 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
                     question=str(scenario["question"]),
                 )
     except HttpFlowError as exc:
-        result = _failure(run_id=str(run_id), mode=args.mode, stage=exc.stage)
+        result = _failure(
+            run_id=str(run_id),
+            mode=args.mode,
+            stage=exc.stage,
+            provider_traces=(runner.provider_traces if args.mode == "local-live-full" and runner is not None else None),
+        )
         evidence = dict(exc.evidence)
         state_ids = store.read().get("ids", {})
         if exc.stage == "GUIDE_GENERATION_PROCESSING" and state_ids.get("prescription_id"):
@@ -1677,12 +1816,22 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
                 fixture=fixture,
                 ids=result["ids"],
                 scenario=scenario,
+                ocr_structuring_expected=(
+                    args.mode == "local-live-full"
+                    and runtime_env.get("OCR_STRUCTURE_LLM_ENABLED", "false").strip().lower() == "true"
+                ),
             )
             model_names = (verified["guide"]["model_name"], verified["chat"]["model_name"])
             if any(marker in model.lower() for model in model_names for marker in ("fake", "sentinel", "test-model")):
                 raise HttpFlowError("DB_VERIFICATION")
         except HttpFlowError as exc:
-            result = _failure(run_id=str(run_id), mode=args.mode, stage=exc.stage)
+            existing_traces = result.get("provider_traces")
+            result = _failure(
+                run_id=str(run_id),
+                mode=args.mode,
+                stage=exc.stage,
+                provider_traces=(existing_traces if isinstance(existing_traces, Mapping) else None),
+            )
             result["failure_evidence"] = exc.evidence or None
         else:
             try:
@@ -1721,7 +1870,9 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
                 "worktree_dirty": None,
                 "evidence_qualified": args.mode == "staging-live",
                 "ocr": result.get("ocr"),
+                **({"provider_traces": result.get("provider_traces")} if args.mode == "local-live-full" else {}),
             }
+            result = _apply_local_live_evidence_contract(result, mode=args.mode)
             if args.mode == "local-live-full":
                 commit = subprocess.run(
                     ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True

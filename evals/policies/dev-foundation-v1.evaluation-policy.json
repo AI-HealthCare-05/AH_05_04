@@ -1,1 +1,78 @@
-{"artifact_schema_set_ref":{"member_order":5,"member_type":"ARTIFACT_SCHEMA_SET","reference":{"hash":"e0b9e83460927fc5e01ca5f7ee5033c0e3f75035c4af14dafcebef8f3f04e6d1","id":"rag-eval.schema-set","version":"1.0.0"}},"comparison_policy_ref":{"member_order":2,"member_type":"COMPARISON_POLICY","reference":{"hash":"1b807d7806a1678398e36e10cbee84031b1d47ff67ee9684e9a30613a736a76a","id":"rag-dev-foundation-comparison","version":"1.0.0"}},"evaluation_policy_hash":"07cd8b2e4dcacdff14eead2fa73c78219923a010bebd97552ca9f25fc6772b81","evaluation_policy_id":"rag-dev-foundation-policy","evaluation_policy_version":"1.0.0","evaluation_profile_ref":{"member_order":1,"member_type":"PROFILE","reference":{"hash":"73ff095737fcd434c1afd26afd4abc2eb402e16f5f701a9768b6e6ac6b4a598b","id":"rag-dev-foundation-profile","version":"1.0.0"}},"member_manifest_hash":"ed75b3e5fc665198a838ca37c04ec64f893bd09c8ccd5e66fe921a679f81a668","required_gate_refs":[],"required_partition_refs":[{"member_order":3,"member_type":"PARTITION","reference":{"hash":"29ccbde7635f29abed66c2f25b7010a454b988ab6714ec7730667e1313796fc9","id":"rag-dev-foundation:DEV","version":"1.0.0"}}],"required_suite_refs":[{"member_order":4,"member_type":"SUITE","reference":{"hash":"6226e77d2862b713d9ed4d7d523c07e1ac3c6f6c8c52e25be2a36ae970dda55a","id":"rag-dev-foundation-validation-suite","version":"1.0.0"}}],"review_provenance":{"approved_at":null,"approved_by":null,"authored_at":"2026-09-01T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":"2026-09-01T00:01:00.000000Z","reviewed_by":{"actor_id":"hazelnutflavoured","namespace":"GITHUB_LOGIN","role":"DATASET_CUSTODIAN"},"team_gold_status":"REVIEWED"},"schema_id":"rag-eval.evaluation-policy","schema_version":"1.0.0"}
+{
+  "artifact_schema_set_ref": {
+    "member_order": 5,
+    "member_type": "ARTIFACT_SCHEMA_SET",
+    "reference": {
+      "hash": "e0b9e83460927fc5e01ca5f7ee5033c0e3f75035c4af14dafcebef8f3f04e6d1",
+      "id": "rag-eval.schema-set",
+      "version": "1.0.0"
+    }
+  },
+  "comparison_policy_ref": {
+    "member_order": 2,
+    "member_type": "COMPARISON_POLICY",
+    "reference": {
+      "hash": "1b807d7806a1678398e36e10cbee84031b1d47ff67ee9684e9a30613a736a76a",
+      "id": "rag-dev-foundation-comparison",
+      "version": "1.0.0"
+    }
+  },
+  "evaluation_policy_hash": "07cd8b2e4dcacdff14eead2fa73c78219923a010bebd97552ca9f25fc6772b81",
+  "evaluation_policy_id": "rag-dev-foundation-policy",
+  "evaluation_policy_version": "1.0.0",
+  "evaluation_profile_ref": {
+    "member_order": 1,
+    "member_type": "PROFILE",
+    "reference": {
+      "hash": "73ff095737fcd434c1afd26afd4abc2eb402e16f5f701a9768b6e6ac6b4a598b",
+      "id": "rag-dev-foundation-profile",
+      "version": "1.0.0"
+    }
+  },
+  "member_manifest_hash": "ed75b3e5fc665198a838ca37c04ec64f893bd09c8ccd5e66fe921a679f81a668",
+  "required_gate_refs": [],
+  "required_partition_refs": [
+    {
+      "member_order": 3,
+      "member_type": "PARTITION",
+      "reference": {
+        "hash": "29ccbde7635f29abed66c2f25b7010a454b988ab6714ec7730667e1313796fc9",
+        "id": "rag-dev-foundation:DEV",
+        "version": "1.0.0"
+      }
+    }
+  ],
+  "required_suite_refs": [
+    {
+      "member_order": 4,
+      "member_type": "SUITE",
+      "reference": {
+        "hash": "6226e77d2862b713d9ed4d7d523c07e1ac3c6f6c8c52e25be2a36ae970dda55a",
+        "id": "rag-dev-foundation-validation-suite",
+        "version": "1.0.0"
+      }
+    }
+  ],
+  "review_provenance": {
+    "approved_at": null,
+    "approved_by": null,
+    "authored_at": "2026-09-01T00:00:00.000000Z",
+    "authored_by": {
+      "actor_id": "ceohwj",
+      "namespace": "GITHUB_LOGIN",
+      "role": "EVALUATION_IMPLEMENTER"
+    },
+    "evidence_review_refs": [],
+    "external_medical_approval_receipt_ref": null,
+    "external_medical_review_status": "NOT_REQUESTED",
+    "reviewed_at": "2026-09-01T00:01:00.000000Z",
+    "reviewed_by": {
+      "actor_id": "hazelnutflavoured",
+      "namespace": "GITHUB_LOGIN",
+      "role": "DATASET_CUSTODIAN"
+    },
+    "team_gold_status": "REVIEWED"
+  },
+  "schema_id": "rag-eval.evaluation-policy",
+  "schema_version": "1.0.0"
+}
