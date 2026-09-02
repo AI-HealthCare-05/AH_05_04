@@ -16,7 +16,8 @@ from ai_worker.core.job_execution import (
 def set_attempt(value: object) -> None:
     """frozen dataclass의 런타임 변경 거부를 검증하기 위한 helper입니다."""
 
-    setattr(value, "attempt", 2)
+    attribute_name = "attempt"
+    setattr(value, attribute_name, 2)
 
 
 def test_execution_lease_is_immutable() -> None:
