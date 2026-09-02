@@ -38,6 +38,13 @@
 
 REQ-USR-010("서버가 화면 표시 여부와 별개로 모든 접근 권한을 재검증한다")과 REQ-USR-020 AC-03("이미 종료된 session으로 API를 호출하면 계약된 401/재인증 응답이 반환된다")이 이 동작을 요구한다.
 
+**`GET /auth/token/refresh`도 같은 재검증을 거쳐야 한다.** 현재 `token_refresh`는 `jwt_service.refresh_jwt()`만 호출하는데, 이 메서드는 refresh token의 서명·만료만 검증하고 DB를 전혀 조회하지 않는다 — `get_request_user()`의 재검증 로직을 거치지 않는다. 이 상태로는 로그아웃 이후에도 이미 발급된 refresh token으로 새 access token을 계속 발급받아 `tokens_valid_after` 무효화를 완전히 우회할 수 있다. 구현 PR에서 `token_refresh`도 다음을 확인해야 한다.
+- `account_status == ACTIVE`
+- **refresh token 자체의 `iat`** `>=` `user.tokens_valid_after` — 새로 발급하는 access token의 `iat`가 아니라, 지금 제시된 refresh token이 원래 발급된 시각을 기준으로 판단한다. access token의 `iat`로 대신 검사하면 refresh할 때마다 시각이 갱신되어 무효화가 무력화된다.
+- 두 조건 중 하나라도 실패하면 `get_request_user()`와 동일한 401을 반환하고 새 access token을 발급하지 않는다.
+
+**`iat` 비교의 정밀도와 경계.** JWT `iat`는 초 단위 정수(Unix epoch, UTC 기준)이고 `tokens_valid_after`는 마이크로초까지 저장될 수 있는 DB timestamp다. 비교 전 `tokens_valid_after`를 초 단위로 내림(truncate)한 값과 정수 `iat`를 비교하며, 두 값이 같은 초이면 유효한 토큰으로 간주한다(`iat >= floor_to_second(tokens_valid_after)`). 이 방식은 무효화 시각과 같은 초 안에서 실제로는 무효화 이전에 발급된 토큰을 최대 1초 미만의 오차로 유효하다고 오판할 수 있다는 한계가 있다 — `iat`가 초 단위인 한 이 한 초 미만의 순서는 근본적으로 구분할 수 없으므로, 이 한계는 허용 오차로 받아들이고 구현 PR의 계약 테스트에 명시적으로 기록한다. 반대로 무효화 시각을 올림(ceil)하면 무효화 시각과 같은 초에 발급된 정상 신규 토큰을 오탐 거부할 수 있으므로 채택하지 않는다.
+
 ## 결정 2: 로그아웃 — `tokens_valid_after` 갱신 + refresh 쿠키 종료
 
 `apis/v1/auth_routers.py`의 `login`이 이미 refresh token을 **httponly 쿠키**(`refresh_token`)로 내려주고 있음을 확인했다 — 로그아웃은 이 쿠키의 존재를 전제로 설계한다.
@@ -57,12 +64,13 @@ REQ-USR-009 설계메모는 "본인 확인 방식과 기존 세션 무효화 범
 - 재설정 성공 시 해당 사용자의 `tokens_valid_after`를 `now()`로 갱신해 기존 세션을 전부 무효화한다(결정 1 재사용) — 이것이 REQ-USR-009가 말하는 "기존 세션 무효화 범위"의 확정이다: 재설정 시점 이전에 발급된 모든 access/refresh token을 무효화하며, 재설정을 요청한 기기만 예외로 두지 않는다.
 - rate limit 기준(횟수/기간)은 이 Decision 범위에서 확정하지 않고 구현 PR에서 Backend/Security 리뷰로 정한다.
 - **재설정 성공 자체(토큰 검증 후 새 비밀번호 저장)에는 anti-enumeration 고려가 필요 없다** — 이 시점의 인증 요소는 계정 존재 여부가 아니라 `password_reset_token`이므로, 유효하지 않은/만료된/사용된 토큰은 그냥 실패 응답으로 처리한다.
+- **토큰 소비는 원자적 일회성 소비로 구현한다.** 토큰 소비(`used_at` 조건부 갱신), 비밀번호 변경, `tokens_valid_after` 갱신을 단일 transaction에서 처리하며, 토큰 소비는 결정 4의 조건부 UPDATE와 같은 패턴(`UPDATE password_reset_token SET used_at = now() WHERE id = ? AND used_at IS NULL AND expires_at > now()`)으로 구현한다. 영향받은 row가 0건이면 이미 사용됐거나 만료된 토큰으로 간주해 실패 응답을 반환하고 비밀번호를 변경하지 않는다 — read-then-write로 구현하면 같은 토큰의 동시 요청이 둘 다 성공해 비밀번호가 두 번 바뀌거나 경쟁 상태로 이어질 수 있다.
 
 ## 결정 4: 회원탈퇴 — Transaction 경계
 
 0. **대상과 재인증의 정의.** 탈퇴 대상 계정은 요청 URL/body의 별도 파라미터가 아니라 **인증된 요청의 `get_request_user()` 결과(`user_id`)로만** 결정한다 — 다른 사용자의 계정 ID를 지정해 탈퇴시킬 수 있는 경로를 두지 않는다. "재인증"은 세션이 살아있다는 사실만으로 충족되지 않고, `services/auth.py`의 `authenticate()`와 동일한 경로로 **비밀번호 재입력을 검증**하는 것을 의미한다. 이 재인증 엔드포인트는 로그인(`/auth/login`)과 별개의 "비밀번호 맞춰보기" 경로가 되므로, 동일한 수준의 rate limit/lockout을 적용한다(정확한 수치는 결정 3과 같이 구현 PR에서 확정).
 1. 재인증 성공 → 최종확인 → **단일 transaction**으로 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at=now()` 커밋. 이 시점부터 즉시 재로그인 차단. 이 UPDATE는 `WHERE account_status = 'ACTIVE'` 조건부 원자적 전이로 구현하고, 영향받은 row가 0이면 이미 처리된 것으로 간주한다 — read-then-write로 구현하면 동시 중복 요청이 둘 다 커밋될 수 있다([#101](https://github.com/AI-HealthCare-05/AH_05_04/issues/101)과 동일한 클래스의 동시성 결함).
-2. 같은 요청은 멱등 처리한다 — 이미 `WITHDRAWAL_REQUESTED`/`WITHDRAWN`인 계정에 중복 탈퇴 요청이 오면(위 조건부 UPDATE의 영향 row 0건으로 식별) 새 transaction 없이 현재 상태를 반환한다.
+2. 같은 요청은 멱등 처리한다 — 이미 `WITHDRAWAL_REQUESTED`/`WITHDRAWN`인 계정에 중복 탈퇴 요청이 오면(위 조건부 UPDATE의 영향 row 0건으로 식별) 새 transaction 없이 현재 상태를 반환한다. **이 멱등 처리는 재인증에 성공한 여러 요청이 거의 동시에 도착하는 좁은 경쟁 구간에만 적용된다.** 1번에서 `tokens_valid_after`가 갱신되고 나면 그 시점 이전에 발급된 access token은 결정 1의 재검증 로직에 의해 즉시 무효화되므로, 탈퇴가 실제로 반영된 뒤 도착하는 재요청은 이 멱등 로직에 도달하기 전에 `get_request_user()` 단계에서 표준 401로 차단된다. 즉 탈퇴 완료 후 상태를 조회하기 위한 별도 idempotency key나 인증 없는 상태 조회 경로는 두지 않는다 — 탈퇴 확정 API의 마지막 성공 응답을 화면에 보존해 안내하는 것으로 충분하며, 그 UX 처리는 #206 Frontend 리뷰 범위에서 다룬다.
 3. 실제 건강정보 삭제·보존 처리는 **비동기**로 진행하고, 완료 시 `account_status=WITHDRAWN`, `withdrawn_at=now()`로 전환한다. 부분 실패는 상태로 식별 가능해야 하며 재시도 가능해야 한다(구체 메커니즘은 Track A `AI_JOB` 패턴 재사용 여부를 구현 PR에서 확정).
 4. 실제 데이터 물리 삭제 실행은 `EXT-PRIV-001` 외부 Privacy 승인 전까지 수행하지 않는다 — 이 Decision은 상태 추적까지만 다루고 물리 삭제는 별도 승인 후 별도 PR로 분리한다.
 5. 탈퇴 확정(1번) 시점에 결정 1을 재사용해 해당 사용자의 `tokens_valid_after`를 `now()`로 갱신하고 `refresh_token` 쿠키를 종료한다 — REQ-USR-008의 "즉시 로그인 차단"은 `is_active=false`뿐 아니라 이미 발급된 access token의 즉시 무효화(결정 1의 재검증 로직)까지 포함한다.
