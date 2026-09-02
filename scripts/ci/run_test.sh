@@ -138,6 +138,18 @@ SELECT format(
 \gexec
 SQL
 
+# ENV_FILE은 컨테이너용 설정이라 host 테스트에 그대로 쓸 수 없습니다.
+# uv는 shell 환경변수를 --env-file보다 우선 적용하므로, host에서 달라야 하는 값을
+# env로 덮어써서 ENV_FILE의 현재 값과 무관하게 같은 결과가 나오도록 고정합니다.
+#
+# STORAGE_DIR: ENV_FILE 값은 컨테이너 절대경로(/app/...)라 host에 없거나 쓸 수 없습니다.
+# RELEASE_VALIDATION_ALLOWED, OCR_STRUCTURE_LLM_ENABLED: local live 검증 절차
+# (docs/validation/ai-one-cycle-release.md)가 켜두도록 안내하는 gate입니다. 켜진 채로
+# 남아 있으면 테스트가 검증 경로 분기를 타므로 test 기준값으로 되돌립니다. 이 값이
+# 필요한 테스트는 각자 monkeypatch로 설정합니다.
+TEST_STORAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "$TEST_STORAGE_DIR"' EXIT
+
 # 기존 shell의 DB 계정은 제거하고, 선택한 ENV_FILE에서 DB_USER와
 # DB_PASSWORD를 로딩합니다. 호스트·포트·DB 이름만 test DB 기준으로 덮어씁니다.
 run_with_test_database() {
@@ -148,6 +160,9 @@ run_with_test_database() {
     DB_PORT="$HOST_DB_PORT" \
     DB_EXPOSE_PORT="$HOST_DB_PORT" \
     DB_NAME=test \
+    STORAGE_DIR="$TEST_STORAGE_DIR" \
+    RELEASE_VALIDATION_ALLOWED=false \
+    OCR_STRUCTURE_LLM_ENABLED=false \
     uv run --env-file "$ENV_FILE" "$@"
 }
 

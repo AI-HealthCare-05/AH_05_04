@@ -20,6 +20,41 @@ OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안
 - LLM 경로에서는 실제 모델 ID와 프롬프트 버전을 기록합니다.
 - Production Compose도 해당 설정의 기본값을 `false`로 유지합니다.
 
+## CLOVA General OCR 최소전송 계약
+
+현재 OCR 인식 Provider는 CLOVA General OCR API V2입니다. 처방전 파일 자체는
+문자 인식을 위해 전송해야 하지만, Backend 저장소의 파일 식별자와 도메인
+metadata는 Provider 요청에 포함하지 않습니다.
+
+multipart 요청은 다음 두 part만 사용합니다.
+
+- `file`
+  - 처방전 파일 byte
+  - 검증된 MIME type
+  - 원본 파일명이나 `object_key` 대신 형식별 고정 파일명
+    `document.jpg`, `document.png`, `document.pdf`
+- `message`
+  - `version`: `V2`
+  - `requestId`: 호출마다 Backend가 생성한 UUID
+  - `timestamp`: 호출 시각의 Unix epoch milliseconds
+  - `lang`: `ko`
+  - `images`: `format`과 고정값 `name=document`만 포함하는 단일 항목
+
+다음 정보는 CLOVA 요청 payload에 포함하지 않습니다.
+
+- Backend 저장 경로, `object_key`와 원본 파일명
+- 사용자·Profile·Job·문서·처방 식별자
+- 내부 상태, 오류와 추적 metadata
+- 다른 Provider의 Prompt, 모델 또는 구조화 설정
+
+`X-OCR-SECRET`은 인증 Header로만 전달하며 payload에 복제하지 않습니다.
+요청·응답 body, 이미지 byte, 파일명·경로·`object_key`, Secret과 OCR 원문은
+일반 로그와 Provider 호출 증빙에 기록하지 않습니다. 로그 경계는
+[Local Live Provider 호출 증적 계약](./live-provider-call-evidence.md)을 따릅니다.
+
+이 계약은 현재 General OCR 경로에만 적용합니다. Template OCR 도입과
+전용 payload는 별도 승인·구현 범위입니다.
+
 ## Timeout 계약
 
 다음 기호를 사용합니다.
