@@ -1,1 +1,1 @@
-{"records":{"confirmed_prescription":{"record_id":"SYNTHETIC_PRESCRIPTION_CONFIRMED","statement":"SYNTHETIC_CONFIRMED_PRESCRIPTION_CONTEXT"}}}
+{"records":{"confirmed_prescription":{"product_token":"FICTIONAL_RX_ANCHOR","record_id":"SYNTHETIC_PRESCRIPTION_CONFIRMED","statement":"The synthetic reviewed prescription context confirms FICTIONAL_RX_ANCHOR at SYNTHETIC_STRENGTH_ONE for SYNTHETIC_SCHEDULE_ONE."}}}
