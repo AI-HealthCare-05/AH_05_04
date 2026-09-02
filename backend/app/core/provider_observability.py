@@ -295,6 +295,8 @@ class ProviderCallObserver:
     ) -> ProviderCallSpan | None:
         if self._observability_disabled:
             return None
+        # __init__이 active 상태의 두 값을 보장합니다. 향후 alternate construction이나
+        # 내부 상태 변경이 이 불변식을 우회해도 무기록 Provider 호출로 진행하지 않습니다.
         if self._context is None or self._descriptor is None:
             raise RuntimeError("active Provider observability is not configured")
         return self._call_logger.start(

@@ -18,7 +18,9 @@
 
 `ProviderCallContext`는 서버 생성 `trace_id`, nullable UUID `validation_run_id`, Backend `environment`, `validation_enabled`만 가집니다. `ProviderCallDescriptor`는 `provider`, 승인된 `operation`, nullable `prompt_version`만 가집니다. FastAPI `Request`, payload, 예외 객체는 Provider logger 직렬화 경계로 전달하지 않습니다.
 
-Provider observability는 기본적으로 활성입니다. 활성 상태에서는 context와 descriptor를 모두 전달해야 하며 누락을 로그 0건으로 조용히 처리하지 않습니다. HTTP·Worker 증적 계약 밖의 명시된 독립 evaluation·smoke 또는 Provider를 호출하지 않는 결정적 경로만 `observability_disabled=true`로 opt-out할 수 있고, 이 상태에는 context나 descriptor를 함께 전달하지 않습니다. HTTP dependency wiring은 opt-out하지 않습니다. 향후 Worker Provider 경로도 검증된 message trace와 operation descriptor를 조립해야 합니다.
+Provider observability는 기본적으로 활성입니다. 활성 상태에서는 context와 descriptor를 모두 전달해야 하며 누락을 로그 0건으로 조용히 처리하지 않습니다. 테스트를 제외한 runtime `observability_disabled=true` allowlist는 local release evidence 범위 밖의 독립 평가 진입점 `backend.app.evaluation.chat_history_runner.execute` 하나뿐이며, 이 상태에는 context나 descriptor를 함께 전달하지 않습니다. 새 runtime opt-out은 이 current contract와 관련 회귀 테스트를 함께 갱신하고 Backend/API·Security 및 영향 도메인 리뷰를 받아야 합니다. HTTP dependency wiring은 opt-out하지 않습니다.
+
+현재 Worker에는 Provider adapter 조립 경로가 없고 #141도 OCR·Guide·Chat Handler 비즈니스 로직을 제외합니다. Worker Provider 경로를 추가하려면 먼저 [Issue #231](https://github.com/AI-HealthCare-05/AH_05_04/issues/231)에서 Backend 설정을 import하지 않는 공용 context·descriptor·enum 경계와 Worker `environment` 출처를 구현해야 합니다. #231 병합 전에는 Worker에 Backend DB credential을 주입하거나 Provider observability 타입을 중복 정의하거나 Provider adapter를 opt-out 상태로 조립하지 않습니다. #231 이후 Worker는 검증된 message trace와 operation descriptor를 사용하고, 현재 비동기 계약에서는 `validation_run_id=null`, `validation_enabled=false`로 context를 만듭니다.
 
 Provider는 `CLOVA_OCR`, `OPENAI`만 허용합니다. operation은 다음 네 값만 허용합니다.
 

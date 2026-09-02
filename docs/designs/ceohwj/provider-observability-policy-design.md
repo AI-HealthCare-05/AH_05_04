@@ -26,7 +26,9 @@ context와 descriptor가 하나라도 없거나 disabled 상태에 둘 중 하�
 
 HTTP Provider 어댑터는 항상 active입니다. FastAPI DI는 요청 middleware가 만든 `ProviderCallContext`와 operation별 고정 `ProviderCallDescriptor`를 반드시 전달하며 context 없음 fallback을 제공하지 않습니다.
 
-현재 Worker에는 Provider 어댑터 조립 경로가 없습니다. 향후 비동기 Worker가 Provider를 호출할 때는 검증된 메시지의 `trace_id`, Worker 설정의 environment, `validation_run_id=null`, `validation_enabled=false`로 context를 만들고 operation별 descriptor를 함께 전달해야 합니다. HTTP·Worker 증적 계약 밖의 독립 평가·smoke와 Provider를 호출하지 않는 결정적 경로만 explicit disabled를 사용할 수 있습니다.
+현재 Worker에는 Provider 어댑터 조립 경로가 없고 #141도 OCR·Guide·Chat Handler 비즈니스 로직을 제외합니다. `ProviderCallContext`·`ProviderCallDescriptor`를 현재 위치에서 import하면 `app.core.__init__`의 import-time `get_config()`가 실행되어 Worker에 Backend DB 설정을 요구하므로 그대로 재사용하지 않습니다. [Issue #231](https://github.com/AI-HealthCare-05/AH_05_04/issues/231)에서 Backend 설정과 독립된 공용 타입 경계와 Worker environment 출처를 구현하기 전에는 Worker Provider adapter를 조립하지 않습니다. #231 이후 비동기 Worker는 검증된 메시지의 `trace_id`, Worker 설정의 environment, `validation_run_id=null`, `validation_enabled=false`로 context를 만들고 operation별 descriptor를 함께 전달합니다.
+
+테스트를 제외한 runtime explicit disabled allowlist는 local release evidence 범위 밖의 `backend.app.evaluation.chat_history_runner.execute` 하나입니다. 새 runtime opt-out은 current contract와 관련 회귀 테스트를 함께 갱신하고 Backend/API·Security 및 영향 도메인 리뷰를 받아야 합니다. HTTP dependency wiring과 향후 Worker Provider wiring은 opt-out할 수 없습니다.
 
 ## 3. runner API 실패 discriminator
 
