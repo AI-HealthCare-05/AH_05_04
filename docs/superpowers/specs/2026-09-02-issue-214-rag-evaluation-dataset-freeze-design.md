@@ -9,7 +9,7 @@
 - Execution boundary: merged Schema Set-compatible local files and deterministic validation only
 
 This change creates a new, versioned, synthetic evaluation Dataset that contains both `HOLDOUT` and
-`SAFETY_REGRESSION` cases. The current candidate is `DRAFT` with child Gold provenance at Team `REVIEWED`;
+`SAFETY_REGRESSION` cases. The current candidate and all child Gold provenance are Team `DRAFT`;
 it prepares the Dataset input contract needed by #157 without claiming the later `FROZEN` transition or
 implementing a Runner, Metric calculator, Provider adapter, database persistence, or Release Gate.
 
@@ -77,11 +77,12 @@ The merged compatibility contract:
 - add schema, exported-schema parity, loader, privacy, and negative contract tests
 - update the authoritative repository target and Decision/Contract Freeze version in the same focused PR
 
-`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` is resolved. The remaining execution checkpoint is
-`WAITING_FOR_APPROVED_COMPARISON_POLICY`: the committed Comparison Policy is a validation-only envelope and
-does not authorize #157 to load, execute, or inspect HOLDOUT results. This design does not choose placeholder
-Rule IDs, encode faults in free-form tags, or weaken the required Safety coverage to fit schema version
-`1.0.0`.
+`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` is resolved. The current blockers are the named human reviews for
+#214 and its `FROZEN/APPROVED` completion. Only after #214 completes does
+`WAITING_FOR_APPROVED_COMPARISON_POLICY` remain as the later blocker for the first HOLDOUT execution. The
+committed Comparison Policy is a diagnostic validation-only envelope and does not authorize #157 to load,
+execute, or inspect HOLDOUT results. This design does not choose placeholder Rule IDs, encode faults in
+free-form tags, or weaken the required Safety coverage to fit schema version `1.0.0`.
 
 ### Non-goals
 
@@ -143,8 +144,9 @@ merge, and a file cannot reliably contain the SHA of the commit that contains it
 resource hashes plus a protected artifact receipt therefore provide the stable Dataset input provenance.
 The Runner and Baseline implementation commit are recorded later by #157 in the Baseline Freeze Receipt.
 
-The protected artifact receipt proves integrity, not approval. Its `recorded_by.team_gold_status` remains
-`REVIEWED` and never becomes `APPROVED`, as required by the #122 schema.
+The protected artifact receipt proves integrity, not approval. Its current
+`recorded_by.team_gold_status=DRAFT`; an actual receipt review may move it to `REVIEWED`, but it never becomes
+`APPROVED`, as required by the #122 schema.
 
 Every approved `ReviewProvenance` requires three distinct human identities. The PR must record the actual
 GitHub login for each role before the authoring stage; a display name or inferred ownership is insufficient.
@@ -162,15 +164,31 @@ The third Gold reviewer is `@Jye-rookie`, matching the normative RAG assignment 
 and Gold-evidence review. Issue #214 records all three actual GitHub identities. External clinical review is
 still separate and remains `PENDING` where required.
 
-The Dataset freeze transition occurs inside the PR in two reviewable stages:
+Every current `ReviewProvenance` object, including all 153 Cases, is Team `DRAFT`. The schema requires
+`reviewed_by` and `reviewed_at` even at DRAFT, so `reviewed_by=@Jye-rookie` and
+`reviewed_at=authored_at` are assigned-review handoff initialization fields, not a claim that review occurred.
+The actual `@Jye-rookie` review changes the status to `REVIEWED` and records the real review event timestamp.
+
+The Comparison Policy contract separately requires `approved_by` and `approved_at`. In the DRAFT graph those
+fields use SYSTEM actor `rag-eval-draft-validator` / `SYSTEM_VALIDATOR` only to identify a diagnostic
+validation envelope. This is not human approval, and the Policy explicitly carries
+`holdout_execution_authorized=false`.
+
+The Dataset freeze transition occurs inside the PR in three reviewable stages:
 
 1. Authoring stage
    - Dataset `status=DRAFT`
-   - Dataset and child artifact provenance begins at `team_gold_status=REVIEWED`.
+   - Dataset, child artifact, and receipt provenance begins at `team_gold_status=DRAFT`.
+   - Schema-required `reviewed_by` identifies the assigned reviewer and `reviewed_at=authored_at` is an
+     initialization value; neither asserts a completed review.
    - `approved_by=null`, `approved_at=null`, `frozen_at=null`
    - All canonical hashes and the protected artifact receipt are present.
-2. Freeze stage
-   - The assigned approvers approve every Case Gold, Evidence Mapping, and Critical Claim Rubric using the
+2. Review stage
+   - `@Jye-rookie` reviews every Case Gold, Evidence Mapping, and Critical Claim Rubric and records the actual
+     review event timestamp while transitioning their provenance to `REVIEWED`.
+   - `@phina-io` performs the Schema/Loader cross-review.
+3. Freeze stage
+   - The assigned approver approves every Case Gold, Evidence Mapping, and Critical Claim Rubric using the
      artifact-specific actor rules above.
    - The Dataset integrity reviewer verifies the complete Case, Gold, Evidence, Rubric, and Leakage graph.
    - After those approvals are recorded, a follow-up commit changes the Dataset to `status=FROZEN`.
@@ -436,13 +454,14 @@ pass_rule: ALL_SELECTED_CASES_RECORDED_NO_RELEASE_DECISION
 The prefix-coupled Comparison Policy required by the current foundation loader is a validation-envelope Policy
 only. Each scope is `required=false`, uses a non-release decision basis, and does not authorize a HOLDOUT run.
 The threshold field required by schema is serialized as canonical `0` and is explicitly non-normative because
-the scope is diagnostic.
+the scope is diagnostic. Its schema-mandatory approval actor is SYSTEM `rag-eval-draft-validator`, not a human
+Policy approval, and each scope records `holdout_execution_authorized=false`.
 
 The first HOLDOUT execution uses this order:
 
-1. #214 freezes Dataset, Gold, Evidence, Rubric, and Leakage assignments.
-2. #157 implements and verifies the Runner against `DEV`; it must not load or execute HOLDOUT or observe its
-   results at this stage.
+1. #214 completes the named human reviews and freezes Dataset, Gold, Evidence, Rubric, and Leakage assignments.
+2. Only after #214 completes, #157 implements and verifies the Runner against `DEV`; it must not load or
+   execute HOLDOUT or observe its results at this stage.
 3. #158–#161 implement Metrics against DEV artifacts, and the candidate Runtime Source/Rule Bundle is fixed.
 4. A distinct approved Comparison/Evaluation Policy version freezes required Slices, analysis units, minimum
    Case and independent-group counts, estimators, CI methods, and thresholds.
@@ -587,43 +606,46 @@ The #157 handoff contains the exact immutable references and hashes for:
 - artifact schema set
 - protected artifact receipt
 
-The handoff marks the protected receipt as Case-only, records #216 as a resolved prerequisite with the exact
-Schema Set immutable reference, and records `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the only active
+The handoff marks the protected receipt as Case-only and records #216 as a resolved prerequisite with the exact
+Schema Set immutable reference. The current blockers are the named #214 human reviews and the
+`FROZEN/APPROVED` transition. After #214 completes, `WAITING_FOR_APPROVED_COMPARISON_POLICY` becomes the later
 HOLDOUT blocker until the first Baseline is authorized.
 
 The current DRAFT handoff values are:
 
 | Item | Immutable ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `f6fe245934f84171ee6033e7a94d6607ac7872d727a91fedf33fc8f44fc91369` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `70f905c686335e8056686d9876573e5cfe70e334fdbab6fadcefa0f3fe8d95f1` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `39601af571b4b19001bbc0fc8c8a0c467c94d7abb22ac96031f40269d9a87609` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `3292411ecccd67eda7563bafd40ecfc8cca8a68eb0992b81a452f4bc0284cf32` |
-| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6e1d8c82701ba64dbea692123f1a27d0fff597f0bac8d5669b250e04afcf833f` |
-| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `227bb7663b2d77e7d4ca91cecf25914ca463e2686f87353a69b3fa9f74038b5a` |
-| Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `ced2f1dc957cb1719b7429a27d921bfdb0649eb4579776fef07110e487514e9a` |
-| Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `8240b1e208d317b9f7379be3fc06ea884d5908644e44e2928b4629999cb00665` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `17c052db13492e74be3a8ab46de7794bf619650a866bf2503998c5e597d72fae` |
-| Suite | `rag-holdout-safety-validation-suite@1.0.0` | `a537b0465e2644a0936a924f3631f474f1d836421020a191f5b98adf254a42cd` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `2d8cff7826c32a6bc9fd2cb035e88085aaad762574be17391d2266a4f0fc512b` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `4f72234b2ae2178eb70a3ad6e46e27340122eb84732651f4ab051b5aa5cd2d73` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `c39dc2e65bce8c78bebfe53bca31d4cdf40bd029b07d7ccf75934288cf747f2e` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `5118f57745d75829160dbce7fa57f9fec5a637971d721b28b7c655334024f00e` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `0817571851481cbf0bdbb864e57d327cc179319c8c3074e7702912d8537e5ba1` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `421639924196622ab173469d450f6c6fe89ccbb6d417004614fc849b81e772b6` |
+| Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `8830a693ec354e23752c3974dc9aa5a1ac4ea545ac996e54fd8ae0ddc7c24704` |
+| Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `50f492919df57a576d1f9c6b7875564f36af9488a80c6c5d26775af45f4b4cf6` |
+| Suite | `rag-holdout-safety-validation-suite@1.0.0` | `4d5ab58c65fb7ca6f3f2198d34c9d9552c8d218b93e96129dbe34652b7911f93` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `b5a1d198cb9f2039fe756dd2a0a5f3bf100b813b0ee5b7196403d09eaf25baad` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `908c45570d1781f61699753ae2d8bd8d9b2098b4229366ca16d2c7eb93f94c60` |
 | Artifact Schema Set | `rag-eval.schema-set@1.1.0` | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
 
 The receipt SHA-256 in the table is its canonical file hash referenced by the Dataset Manifest. Its internal
-`receipt_hash` is `1b9a6e260343cbacaabfa9469a9b65939e2aa8d4093c2628ae84b845671f6896`; the receipt covers only the
+`receipt_hash` is `b5ab22b595d8334825621d622dc2187585cf38402308692b421891e8acbfe094`; the receipt covers only the
 153 Case resources and does not independently protect or approve Evidence, Rubric, Profile, Policy, or Suite.
 
-These values describe the complete DRAFT graph and are not a freeze receipt. Actual review by
+These values describe the complete DRAFT graph and are not a freeze receipt. Every current
+`ReviewProvenance` and the receipt `recorded_by` remain Team `DRAFT`. Actual review by
 `@Jye-rookie` for Gold/Evidence, approval by `@hazelnutflavoured` for Dataset/Safety, and Schema/Loader
-cross-review by `@phina-io` are still required. Only after those reviews may a follow-up commit populate real
-approval provenance and transition the Dataset from `DRAFT/REVIEWED` to `FROZEN/APPROVED`.
+cross-review by `@phina-io` are still required. Only after the real review event moves required provenance to
+`REVIEWED` may a follow-up approval commit populate approval provenance and transition the Dataset to
+`FROZEN/APPROVED`.
 
 ## 14. Risks and mitigations
 
 | Risk | Mitigation |
 | --- | --- |
 | Frozen data is tuned against after becoming visible. | Immutable versioning, no in-place edits, and derived tuning cases go to DEV. |
-| Team approval is fabricated before review. | Two-stage PR transition and final review on the exact freeze commit. |
+| Team approval is fabricated before review. | Three-stage authoring, review, and freeze transition with final review on the exact freeze commit. |
 | Squash merge invalidates a recorded fixture commit. | Use content hashes and protected artifact receipt; #157 records Runner/Baseline commits later. |
 | The initial 153-Case workload is mistaken for a permanent maximum or Release-quality statistical sample. | `runtime_eligible=false`, diagnostic Policy scopes, no Gate refs, explicit future `INCONCLUSIVE` behavior, and append-only Safety versioning. |
 | A later active OTC Rule Set contains Rule IDs absent from independently executed Safety groups. | Evaluate set inclusion, keep HOLDOUT v1 immutable, and publish a new Dataset version that appends Safety Cases until every active positive Rule member is executed. |
@@ -637,9 +659,11 @@ approval provenance and transition the Dataset from `DRAFT/REVIEWED` to `FROZEN/
 
 ## 15. Acceptance boundary
 
-Issue #214's #216 prerequisite is resolved by merged `rag-eval.schema-set@1.1.0`. The current candidate remains
-`DRAFT/REVIEWED`; Issue #214 is complete only when the merged Dataset is `FROZEN`, the final freeze commit has
-Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests pass, and
-the #157 handoff references are recorded. Completion authorizes DEV Runner work only; it does not authorize a
-HOLDOUT run or Release decision. HOLDOUT Baseline authorization requires the independently approved Policy and
-resolved configuration described in section 9.
+Issue #214's #216 prerequisite is resolved by merged `rag-eval.schema-set@1.1.0`. The current candidate and
+all ReviewProvenance remain `DRAFT`; the immediate blockers are the named human reviews and the final
+`FROZEN/APPROVED` transition. Issue #214 is complete only when the merged Dataset is `FROZEN`, the final freeze
+commit has Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests
+pass, and the #157 handoff references are recorded. Only then may #157 begin DEV Runner work, without loading
+or inspecting HOLDOUT. Completion does not authorize a HOLDOUT run or Release decision. The later first
+HOLDOUT Baseline remains `WAITING_FOR_APPROVED_COMPARISON_POLICY` until the independently approved Policy and
+resolved configuration described in section 9 exist.

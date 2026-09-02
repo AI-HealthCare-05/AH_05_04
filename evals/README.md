@@ -51,10 +51,13 @@ uv run python -m ai_worker.tasks.evaluation.schema_exports \
 따른다.
 
 현재 커밋의 `rag-holdout-safety@1.0.0`은 `status=DRAFT`이고 Gold·Evidence·Rubric을 포함한 자식
-provenance도 Team `REVIEWED` 단계다. 아직 `FROZEN` 또는 Team `APPROVED`가 아니며, 실제
-`@Jye-rookie` Gold·Evidence 검토, `@hazelnutflavoured` Dataset·Safety 승인, `@phina-io`
-Schema·Loader 교차 검토가 남아 있다. 파일에 기록된 후보 provenance는 그 실제 PR 승인을 대신하지
-않는다.
+`ReviewProvenance`와 receipt의 `recorded_by`도 모두 Team `DRAFT`다. DRAFT에서도 schema가
+`reviewed_by`와 `reviewed_at`을 요구하므로 `reviewed_by=@Jye-rookie`,
+`reviewed_at=authored_at`은 지정 검토자 인계용 초기값으로만 기록했다. 완료된 검토를 주장하지
+않는다. 실제 `@Jye-rookie` Gold·Evidence 검토가 끝나면 그 실제 event timestamp와 함께
+`REVIEWED`로 전환하고, 이후 `@hazelnutflavoured` Dataset·Safety 승인을 받아야 Dataset과 필수
+Gold closure를 `APPROVED/FROZEN`으로 전환할 수 있다. `@phina-io` Schema·Loader 교차 검토도
+별도로 남아 있다.
 
 전체 DRAFT 그래프는 다음 validation-only 명령으로 검증한다.
 
@@ -66,30 +69,35 @@ uv run python -m ai_worker.tasks.evaluation validate \
 
 검증 성공은 Dataset 구조·hash·privacy·leakage 계약이 일치한다는 뜻일 뿐, HOLDOUT 실행이나 Release
 `PASS`, 임상·의료·약학·Privacy·Source·Production 승인을 뜻하지 않는다. 이 후보에 연결된
-Comparison Policy도 validation-only envelope라서 최초 HOLDOUT 실행 권한을 부여하지 않는다. #157은
-DEV에서 Runner를 구현·검증할 수 있지만 독립된 실행용 Comparison/Evaluation Policy가 승인될 때까지
-`WAITING_FOR_APPROVED_COMPARISON_POLICY`를 유지해야 한다.
+Comparison Policy의 필수 `approved_by`에는 SYSTEM actor `rag-eval-draft-validator`가 들어 있지만,
+이는 DRAFT 그래프를 load하기 위한 진단용 validation envelope 표시일 뿐 사람의 Dataset/Policy
+승인이 아니다. Policy 자체도 `holdout_execution_authorized=false`다.
+
+현재 차단 조건은 #214의 지정 사람 검토와 `FROZEN/APPROVED` 완료다. Issue 순서상 #157의 DEV
+Runner 작업도 #214가 완료된 뒤 시작하며, 그 뒤에도 HOLDOUT을 load·execute하거나 결과를 관찰해서는
+안 된다. #214 완료 후 최초 HOLDOUT 실행 시점에는 독립된 실행용 Comparison/Evaluation Policy가
+승인될 때까지 `WAITING_FOR_APPROVED_COMPARISON_POLICY`가 후속 차단 조건으로 남는다.
 
 ### #157 DRAFT 인계 참조
 
 | 항목 | 불변 ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `f6fe245934f84171ee6033e7a94d6607ac7872d727a91fedf33fc8f44fc91369` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `70f905c686335e8056686d9876573e5cfe70e334fdbab6fadcefa0f3fe8d95f1` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `39601af571b4b19001bbc0fc8c8a0c467c94d7abb22ac96031f40269d9a87609` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `3292411ecccd67eda7563bafd40ecfc8cca8a68eb0992b81a452f4bc0284cf32` |
-| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6e1d8c82701ba64dbea692123f1a27d0fff597f0bac8d5669b250e04afcf833f` |
-| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `227bb7663b2d77e7d4ca91cecf25914ca463e2686f87353a69b3fa9f74038b5a` |
-| Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `ced2f1dc957cb1719b7429a27d921bfdb0649eb4579776fef07110e487514e9a` |
-| Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `8240b1e208d317b9f7379be3fc06ea884d5908644e44e2928b4629999cb00665` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `17c052db13492e74be3a8ab46de7794bf619650a866bf2503998c5e597d72fae` |
-| Suite | `rag-holdout-safety-validation-suite@1.0.0` | `a537b0465e2644a0936a924f3631f474f1d836421020a191f5b98adf254a42cd` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `2d8cff7826c32a6bc9fd2cb035e88085aaad762574be17391d2266a4f0fc512b` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `4f72234b2ae2178eb70a3ad6e46e27340122eb84732651f4ab051b5aa5cd2d73` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `c39dc2e65bce8c78bebfe53bca31d4cdf40bd029b07d7ccf75934288cf747f2e` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `5118f57745d75829160dbce7fa57f9fec5a637971d721b28b7c655334024f00e` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `0817571851481cbf0bdbb864e57d327cc179319c8c3074e7702912d8537e5ba1` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `421639924196622ab173469d450f6c6fe89ccbb6d417004614fc849b81e772b6` |
+| Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `8830a693ec354e23752c3974dc9aa5a1ac4ea545ac996e54fd8ae0ddc7c24704` |
+| Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `50f492919df57a576d1f9c6b7875564f36af9488a80c6c5d26775af45f4b4cf6` |
+| Suite | `rag-holdout-safety-validation-suite@1.0.0` | `4d5ab58c65fb7ca6f3f2198d34c9d9552c8d218b93e96129dbe34652b7911f93` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `b5a1d198cb9f2039fe756dd2a0a5f3bf100b813b0ee5b7196403d09eaf25baad` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `908c45570d1781f61699753ae2d8bd8d9b2098b4229366ca16d2c7eb93f94c60` |
 | Artifact Schema Set | `rag-eval.schema-set@1.1.0` | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
 
 Receipt 표의 SHA-256은 Dataset Manifest가 참조하는 canonical file hash다. Receipt 내부 self-hash는
-`1b9a6e260343cbacaabfa9469a9b65939e2aa8d4093c2628ae84b845671f6896`이며, 이 receipt는 153개 Case
+`b5ab22b595d8334825621d622dc2187585cf38402308692b421891e8acbfe094`이며, 이 receipt는 153개 Case
 resource만 보호하고 Evidence·Rubric·Profile·Policy·Suite 승인을 증명하지 않는다.
 
 Dataset가 실제 검토 뒤 `FROZEN`되면 `rag-holdout-safety@1.0.0`의 Case, Gold, Evidence Mapping,
