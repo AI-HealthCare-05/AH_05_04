@@ -1,35 +1,16 @@
 import asyncio
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from alembic import command
-from alembic.config import Config
-from sqlalchemy import URL, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
+from test_postgresql_schema import create_alembic_config, create_test_database_url
 
-from app.core import config
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 AI_JOB_MIGRATION_REVISION = "146a1b2c3d4e"
 OCR_AI_JOB_ID_REVISION = "158e9f2a4b7c"
-
-
-def create_alembic_config() -> Config:
-    return Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
-
-
-def create_test_database_url() -> URL:
-    return URL.create(
-        drivername="postgresql+asyncpg",
-        username=config.DB_USER,
-        password=config.DB_PASSWORD,
-        host="127.0.0.1",
-        port=config.DB_PORT,
-        database=config.DB_NAME,
-    )
 
 
 async def _fetch_alembic_state() -> tuple[list[str], str]:
