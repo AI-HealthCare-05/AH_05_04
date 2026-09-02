@@ -75,9 +75,9 @@ class JobIntakeService:
         idempotency_key: str,
         fingerprint: dict[str, Any],
         create_domain_placeholder: CreateDomainPlaceholder,
+        trace_id: str,
         prescription_version_id: UUID | None = None,
         max_attempts: int | None = None,
-        trace_id: str | None = None,
     ) -> JobIntakeResult:
         validate_idempotency_key_format(idempotency_key)
 
