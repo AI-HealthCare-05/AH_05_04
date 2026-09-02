@@ -5,12 +5,13 @@
 - Issue: [#214](https://github.com/AI-HealthCare-05/AH_05_04/issues/214)
 - Upstream foundation: #122 / PR #210
 - Downstream runner: #157
-- Design status: revised proposal, Dataset Custodian review pending
-- Execution boundary: approved schema-compatible local files and deterministic validation only
+- Design status: DRAFT Dataset candidate complete, named human reviews pending
+- Execution boundary: merged Schema Set-compatible local files and deterministic validation only
 
 This change creates a new, versioned, synthetic evaluation Dataset that contains both `HOLDOUT` and
-`SAFETY_REGRESSION` cases. It freezes the Dataset input contract needed by #157 without implementing a
-Runner, Metric calculator, Provider adapter, database persistence, or Release Gate.
+`SAFETY_REGRESSION` cases. The current candidate is `DRAFT` with child Gold provenance at Team `REVIEWED`;
+it prepares the Dataset input contract needed by #157 without claiming the later `FROZEN` transition or
+implementing a Runner, Metric calculator, Provider adapter, database persistence, or Release Gate.
 
 The existing `dev-foundation-v1` Dataset remains unchanged and continues to represent a non-runtime,
 diagnostic `DEV` fixture. The new Dataset is a separate immutable version; it does not rename, promote, or
@@ -60,16 +61,14 @@ only.
 - Preserve a machine-verifiable approval transition from authoring to Dataset Custodian freeze.
 - Ensure validation never creates a Release `PASS` or implies Production eligibility.
 
-### Blocking schema-compatibility prerequisite: #216
+### Resolved schema-compatibility prerequisite: #216
 
-The current #122 schema cannot honestly encode every required Safety branch. `MedicationFixture` accepts only
-`MATCHED`, while every `SAFETY` and `END_TO_END_RAG` expected value requires at least one Interaction Rule ID.
-That combination cannot represent OTC `AMBIGUOUS | UNMATCHED`, a valid no-rule outcome, or a Rule execution
-that was intentionally suppressed. `RuntimeFixture` also lacks a typed fault input for Source eligibility and
-Provider/Retrieval failure scenarios.
+[#216](https://github.com/AI-HealthCare-05/AH_05_04/issues/216) was approved and merged by PR #222. It
+published `rag-eval.schema-set@1.1.0` with SHA-256
+`5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`. The Dataset candidate consumes that
+exact immutable Schema Set reference.
 
-Before Dataset Case authoring begins, [#216](https://github.com/AI-HealthCare-05/AH_05_04/issues/216) must
-publish approved Evaluation Schema Set `1.1.0` with an immutable ID/version/hash reference and must:
+The merged compatibility contract:
 
 - distinguish `MATCHED_RULES`, `NO_MATCH`, and `NOT_INVOKED` without fabricating a Rule ID
 - keep OTC identity-insufficient preflight under the upstream Contract Receipt boundary, outside
@@ -78,9 +77,11 @@ publish approved Evaluation Schema Set `1.1.0` with an immutable ID/version/hash
 - add schema, exported-schema parity, loader, privacy, and negative contract tests
 - update the authoritative repository target and Decision/Contract Freeze version in the same focused PR
 
-Issue #214 Dataset authoring is `BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` until #216 is approved
-and merged. This design does not choose placeholder Rule IDs, encode faults in free-form tags, or weaken the
-required Safety coverage to fit schema version `1.0.0`.
+`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` is resolved. The remaining execution checkpoint is
+`WAITING_FOR_APPROVED_COMPARISON_POLICY`: the committed Comparison Policy is a validation-only envelope and
+does not authorize #157 to load, execute, or inspect HOLDOUT results. This design does not choose placeholder
+Rule IDs, encode faults in free-form tags, or weaken the required Safety coverage to fit schema version
+`1.0.0`.
 
 ### Non-goals
 
@@ -103,7 +104,8 @@ The Dataset uses these stable identities:
 | File prefix | `rag-holdout-safety-v1` |
 | Scope | `SYNTHETIC_RAG_HOLDOUT_SAFETY` |
 | Classification | `SYNTHETIC` |
-| Final Dataset status | `FROZEN` |
+| Current Dataset status | `DRAFT` |
+| Target Dataset status after actual review | `FROZEN` |
 | Runtime eligible | `false` |
 
 Files are added under the existing #122 layout:
@@ -589,6 +591,33 @@ The handoff marks the protected receipt as Case-only, records #216 as a resolved
 Schema Set immutable reference, and records `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the only active
 HOLDOUT blocker until the first Baseline is authorized.
 
+The current DRAFT handoff values are:
+
+| Item | Immutable ID@version | SHA-256 |
+| --- | --- | --- |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `f6fe245934f84171ee6033e7a94d6607ac7872d727a91fedf33fc8f44fc91369` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `70f905c686335e8056686d9876573e5cfe70e334fdbab6fadcefa0f3fe8d95f1` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `39601af571b4b19001bbc0fc8c8a0c467c94d7abb22ac96031f40269d9a87609` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `3292411ecccd67eda7563bafd40ecfc8cca8a68eb0992b81a452f4bc0284cf32` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6e1d8c82701ba64dbea692123f1a27d0fff597f0bac8d5669b250e04afcf833f` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `227bb7663b2d77e7d4ca91cecf25914ca463e2686f87353a69b3fa9f74038b5a` |
+| Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `ced2f1dc957cb1719b7429a27d921bfdb0649eb4579776fef07110e487514e9a` |
+| Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `8240b1e208d317b9f7379be3fc06ea884d5908644e44e2928b4629999cb00665` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `17c052db13492e74be3a8ab46de7794bf619650a866bf2503998c5e597d72fae` |
+| Suite | `rag-holdout-safety-validation-suite@1.0.0` | `a537b0465e2644a0936a924f3631f474f1d836421020a191f5b98adf254a42cd` |
+| Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `b5a1d198cb9f2039fe756dd2a0a5f3bf100b813b0ee5b7196403d09eaf25baad` |
+| Artifact Schema Set | `rag-eval.schema-set@1.1.0` | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
+
+The receipt SHA-256 in the table is its canonical file hash referenced by the Dataset Manifest. Its internal
+`receipt_hash` is `1b9a6e260343cbacaabfa9469a9b65939e2aa8d4093c2628ae84b845671f6896`; the receipt covers only the
+153 Case resources and does not independently protect or approve Evidence, Rubric, Profile, Policy, or Suite.
+
+These values describe the complete DRAFT graph and are not a freeze receipt. Actual review by
+`@Jye-rookie` for Gold/Evidence, approval by `@hazelnutflavoured` for Dataset/Safety, and Schema/Loader
+cross-review by `@phina-io` are still required. Only after those reviews may a follow-up commit populate real
+approval provenance and transition the Dataset from `DRAFT/REVIEWED` to `FROZEN/APPROVED`.
+
 ## 14. Risks and mitigations
 
 | Risk | Mitigation |
@@ -598,7 +627,7 @@ HOLDOUT blocker until the first Baseline is authorized.
 | Squash merge invalidates a recorded fixture commit. | Use content hashes and protected artifact receipt; #157 records Runner/Baseline commits later. |
 | The initial 153-Case workload is mistaken for a permanent maximum or Release-quality statistical sample. | `runtime_eligible=false`, diagnostic Policy scopes, no Gate refs, explicit future `INCONCLUSIVE` behavior, and append-only Safety versioning. |
 | A later active OTC Rule Set contains Rule IDs absent from independently executed Safety groups. | Evaluate set inclusion, keep HOLDOUT v1 immutable, and publish a new Dataset version that appends Safety Cases until every active positive Rule member is executed. |
-| A Safety branch is forced into schema `1.0.0` using a dummy Rule or free-form tag. | Block Case authoring until the separately approved compatibility contract represents no-match, not-invoked, and fault inputs explicitly and binds OTC identity-insufficient preflight to its upstream Receipt. |
+| A Safety branch is forced into schema `1.0.0` using a dummy Rule or free-form tag. | Consume the merged `rag-eval.schema-set@1.1.0` compatibility contract, which represents no-match, not-invoked, and fault inputs explicitly and binds OTC identity-insufficient preflight to its upstream Receipt. |
 | A prose reference answer is mistaken for the Gold oracle. | Make structured Claims, forbidden Claims, Evidence, Citation, routing, fallback, invocation, and publication expectations normative; reference prose is reviewer guidance only. |
 | HOLDOUT is inspected before its required Policy is frozen. | Verify Runner/Metrics on DEV, freeze the independent Comparison/Evaluation Policy, then authorize the first HOLDOUT Baseline. |
 | Dataset content version is coupled to Policy or Suite changes. | Version Dataset/Gold/Evidence/Rubric separately from Profile/Policy/Suite and bind each run through explicit immutable refs and a resolved configuration hash. |
@@ -608,8 +637,8 @@ HOLDOUT blocker until the first Baseline is authorized.
 
 ## 15. Acceptance boundary
 
-Issue #214 implementation cannot start until #216 publishes approved Schema Set `1.1.0`. It is complete only
-when the merged Dataset is `FROZEN`, the final freeze commit has
+Issue #214's #216 prerequisite is resolved by merged `rag-eval.schema-set@1.1.0`. The current candidate remains
+`DRAFT/REVIEWED`; Issue #214 is complete only when the merged Dataset is `FROZEN`, the final freeze commit has
 Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests pass, and
 the #157 handoff references are recorded. Completion authorizes DEV Runner work only; it does not authorize a
 HOLDOUT run or Release decision. HOLDOUT Baseline authorization requires the independently approved Policy and

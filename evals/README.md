@@ -31,9 +31,9 @@ uv run python -m ai_worker.tasks.evaluation validate \
 ### Evaluation Schema Sets
 
 - `evals/schemas/1.0.0/`: Issue #122의 기존 DEV foundation 계약. canonical bytes와 loader 동작을 유지한다.
-- `evals/schemas/1.1.0/`: Issue #216의 18-member implemented candidate. Case·Dataset Manifest는 member `1.1.0`, 나머지 16개 member는 `1.0.0`을 byte-for-byte 재사용한다.
+- `evals/schemas/1.1.0/`: Issue #216/PR #222에서 병합된 18-member 계약. Case·Dataset Manifest는 member `1.1.0`, 나머지 16개 member는 `1.0.0`을 byte-for-byte 재사용한다.
 
-Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. 지정 책임 리뷰 승인 전에는 #214 Dataset Freeze의 승인 입력으로 사용하지 않는다.
+Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. #216/PR #222에서 승인·병합되었으며 #214 Dataset 후보가 이 참조를 사용한다.
 
 두 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 
@@ -42,6 +42,60 @@ uv run python -m ai_worker.tasks.evaluation.schema_exports \
   --output /tmp/rag-eval-schemas-1.1.0 \
   --schema-set-version 1.1.0
 ```
+
+## RAG HOLDOUT·SAFETY_REGRESSION Dataset 후보
+
+`dev-foundation-v1`은 구현 중 반복 검증과 튜닝에 사용하는 합성 `DEV` fixture다. 별도 Dataset
+`rag-holdout-safety@1.0.0`은 60개 `HOLDOUT`과 93개 `SAFETY_REGRESSION` Case를 고정하기 위한 합성
+후보다. 향후 승인된 임상 데이터가 필요해도 이 합성 Dataset에 섞지 않고 별도 보호·승인 경계를
+따른다.
+
+현재 커밋의 `rag-holdout-safety@1.0.0`은 `status=DRAFT`이고 Gold·Evidence·Rubric을 포함한 자식
+provenance도 Team `REVIEWED` 단계다. 아직 `FROZEN` 또는 Team `APPROVED`가 아니며, 실제
+`@Jye-rookie` Gold·Evidence 검토, `@hazelnutflavoured` Dataset·Safety 승인, `@phina-io`
+Schema·Loader 교차 검토가 남아 있다. 파일에 기록된 후보 provenance는 그 실제 PR 승인을 대신하지
+않는다.
+
+전체 DRAFT 그래프는 다음 validation-only 명령으로 검증한다.
+
+```bash
+uv run python -m ai_worker.tasks.evaluation validate \
+  --manifest evals/retrieval/manifests/rag-holdout-safety-v1.dataset.json \
+  --result evals/validation-results/rag-holdout-safety-v1.validation.json
+```
+
+검증 성공은 Dataset 구조·hash·privacy·leakage 계약이 일치한다는 뜻일 뿐, HOLDOUT 실행이나 Release
+`PASS`, 임상·의료·약학·Privacy·Source·Production 승인을 뜻하지 않는다. 이 후보에 연결된
+Comparison Policy도 validation-only envelope라서 최초 HOLDOUT 실행 권한을 부여하지 않는다. #157은
+DEV에서 Runner를 구현·검증할 수 있지만 독립된 실행용 Comparison/Evaluation Policy가 승인될 때까지
+`WAITING_FOR_APPROVED_COMPARISON_POLICY`를 유지해야 한다.
+
+### #157 DRAFT 인계 참조
+
+| 항목 | 불변 ID@version | SHA-256 |
+| --- | --- | --- |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `f6fe245934f84171ee6033e7a94d6607ac7872d727a91fedf33fc8f44fc91369` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `70f905c686335e8056686d9876573e5cfe70e334fdbab6fadcefa0f3fe8d95f1` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `39601af571b4b19001bbc0fc8c8a0c467c94d7abb22ac96031f40269d9a87609` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `3292411ecccd67eda7563bafd40ecfc8cca8a68eb0992b81a452f4bc0284cf32` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6e1d8c82701ba64dbea692123f1a27d0fff597f0bac8d5669b250e04afcf833f` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `227bb7663b2d77e7d4ca91cecf25914ca463e2686f87353a69b3fa9f74038b5a` |
+| Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `ced2f1dc957cb1719b7429a27d921bfdb0649eb4579776fef07110e487514e9a` |
+| Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `8240b1e208d317b9f7379be3fc06ea884d5908644e44e2928b4629999cb00665` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `17c052db13492e74be3a8ab46de7794bf619650a866bf2503998c5e597d72fae` |
+| Suite | `rag-holdout-safety-validation-suite@1.0.0` | `a537b0465e2644a0936a924f3631f474f1d836421020a191f5b98adf254a42cd` |
+| Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `b5a1d198cb9f2039fe756dd2a0a5f3bf100b813b0ee5b7196403d09eaf25baad` |
+| Artifact Schema Set | `rag-eval.schema-set@1.1.0` | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
+
+Receipt 표의 SHA-256은 Dataset Manifest가 참조하는 canonical file hash다. Receipt 내부 self-hash는
+`1b9a6e260343cbacaabfa9469a9b65939e2aa8d4093c2628ae84b845671f6896`이며, 이 receipt는 153개 Case
+resource만 보호하고 Evidence·Rubric·Profile·Policy·Suite 승인을 증명하지 않는다.
+
+Dataset가 실제 검토 뒤 `FROZEN`되면 `rag-holdout-safety@1.0.0`의 Case, Gold, Evidence Mapping,
+Critical Claim Rubric, Leakage 배치를 제자리에서 수정하지 않는다. 변경이 필요하면 새 Dataset version을
+만들고, 튜닝용 파생 Case는 `DEV`에 둔다. Profile·Policy·Suite는 독립 version을 사용하므로 각각의
+변경도 새 불변 참조로 연결한다.
 
 ## Chat history 평가
 
