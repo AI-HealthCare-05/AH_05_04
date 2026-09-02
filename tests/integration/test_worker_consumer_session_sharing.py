@@ -38,7 +38,6 @@ from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
 from app.core import config
 
-
 PROBE_TABLE = "worker_consumer_session_probe"
 
 TEST_DATABASE_URL = URL.create(
@@ -316,6 +315,43 @@ async def test_execution_order_is_save_commit_then_acknowledge(
     await execution.execute(delivery)
 
     assert events == ["save", "commit", "ack"]
+
+
+async def test_commit_failure_rolls_back_and_does_not_ack(
+    session: AsyncSession,
+) -> None:
+    """DB commit 실패 시 모든 변경을 rollback하고 ACK하지 않습니다."""
+
+    message = build_message()
+    delivery = WorkerDelivery(
+        stream_message_id="3-0",
+        message=message,
+    )
+
+    class FailingCommitTransaction(RecordingSqlAlchemyTransaction):
+        async def commit(self) -> None:
+            self.commit_count += 1
+            raise RuntimeError("synthetic commit failure")
+
+    transaction = FailingCommitTransaction(session)
+    acknowledger = RecordingAcknowledger()
+
+    execution = build_execution(
+        handler=SessionWritingHandler(session),
+        result_store=SqlAlchemyResultStore(session),
+        transaction=transaction,
+        acknowledger=acknowledger,
+    )
+
+    with pytest.raises(ConsumerPersistenceError) as exc_info:
+        await execution.execute(delivery)
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert transaction.commit_count == 1
+    assert transaction.rollback_count == 1
+    assert acknowledger.acknowledged == []
+    assert await committed_writers(message.trace_id) == []
 
 
 @pytest.mark.parametrize(
