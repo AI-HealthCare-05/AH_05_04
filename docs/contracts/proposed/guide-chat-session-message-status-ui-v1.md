@@ -52,6 +52,7 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 
 - `generation_status`
 - `execution_status`
+- `evidence_status`
 - `response_level`
 - `release_decision`
 - `safety_disposition`
@@ -71,6 +72,7 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 
 - `release_decision` 값: `PASS`, `LIMITED`, `REJECTED`, `STALE`
 - `execution_status` 값: 실행 성공/실패 계열
+- `evidence_status` 값: `SUFFICIENT`, `INSUFFICIENT`, `CONFLICTED`, `STALE`(`safety-result-v2.md` 정본 목록과 일치)
 - `fallback_code` 값: `NO_APPROVED_EVIDENCE`, `CONFLICTING_EVIDENCE`, `SAFETY_ROUTED`, `PROVIDER_TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `VALIDATION_FAILED`, `PRESCRIPTION_STALE`, `EXECUTION_CONTEXT_STALE`, `UNSUPPORTED_REQUEST`(`safety-result-v2.md` 정본 목록과 일치)
 - `REJECTED`는 실패로 끝내지 않고 승인된 fallback 응답 또는 안전안내를 제공한다.
 - `release_decision=PASS`는 RAG 결과 공개 판단이며 Evaluation의 `PASS`/`FAIL` 판정과 다른 축이다.
@@ -88,7 +90,7 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 | `STALE` | `STALE` | 처리 중 active 처방 Version 변경으로 결과 반영 불가 | `content = null`, `is_current = false`로 비노출 |
 
 - `AI_JOB=COMPLETED` 또는 `execution_status=SUCCEEDED` 값만으로는 공개 가능 여부를 판단하지 않는다. 최종 공개는 `release_decision`·`is_current`·Citation 검증·Safety 결과를 함께 확인하는 `release_gate` 판정을 따른다.
-- `citations[]`는 `release_decision=PASS`이고 해당 Citation이 `CITATION_AUTHORIZATION/PASS` Guard를 통과했을 때만 공개한다. `REJECTED`·`LIMITED`·`STALE` 응답에는 `citations[]`를 공개하지 않는다(`safety-result-v2.md` "Claim-Citation 계약").
+- `citations[]` 공개 여부는 `release_decision` 값 자체가 결정하지 않는다. 개별 Citation이 별도 `CITATION_AUTHORIZATION/PASS` Guard를 통과하고 최종 `release_gate` 검증까지 통과했을 때만 그 Citation을 공개한다(`safety-result-v2.md` "Claim-Citation 계약"). `PASS`뿐 아니라 `LIMITED`의 제한 응답이나 `REJECTED`의 승인된 fallback에도, 정본이 허용하고 개별 `CITATION_AUTHORIZATION/PASS`를 통과한 Citation은 포함될 수 있다. `STALE`은 `is_current=false`로 전체 비공개이므로 `citations[]`도 공개하지 않는다. Frontend는 `response_level` 또는 `release_decision` 값만 보고 `citations[]`를 임의로 숨기거나 노출하지 않는다. 정확한 Citation DTO/fixture 구현은 [#180](https://github.com/AI-HealthCare-05/AH_05_04/issues/180)/[#186](https://github.com/AI-HealthCare-05/AH_05_04/issues/186) 후속 계약 범위로 둔다.
 
 ## 5) OTC는 기존 Chat transport 사용
 
@@ -148,5 +150,6 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 - `REVIEW_REQUIRED`는 자동 Guide에서만 Job 없이 동기 fallback으로 종료된다. Chat은 Identification 이전에 이미 생성된 Job·Safety Triage를 유지하며, ROUTINE Preflight 실패도 그 Job에 제한 응답을 저장한다 — 두 경우 모두 RAG/Composer 호출은 선행되지 않는다.
 - `STALE`은 `content = null`, `is_current = false`로 현재 화면 비노출이며 Job/Safety 메타데이터는 보존한다.
 - OTC는 기존 Chat transport를 사용하고, Identification/Preflight 미완료 시 Rule-first 평가를 강제 차단한다.
-- Frontend 상태축은 `generation_status`, `execution_status`, `response_level`, `release_decision`, `safety_disposition`, `fallback_code`, `is_current`가 분리되어 해석된다.
+- Frontend 상태축은 `generation_status`, `execution_status`, `evidence_status`, `response_level`, `release_decision`, `safety_disposition`, `fallback_code`, `is_current`가 분리되어 해석된다.
+- `citations[]` 공개는 `release_decision` 값 자체가 아니라 개별 `CITATION_AUTHORIZATION/PASS`와 최종 `release_gate` 판정을 따르며, `LIMITED`·승인된 `REJECTED` fallback에도 통과한 Citation이 포함될 수 있다. Frontend가 `response_level`/`release_decision`만으로 `citations[]`를 임의 숨김·노출하지 않는다.
 - `ai_job_id` 소유권/연결 규칙이 구현 PR의 DB 제약과 정합된다.
