@@ -531,6 +531,18 @@ def test_comparison_regression_requires_completed_fail_decision() -> None:
     ComparisonResult.model_validate(payload)
 
 
+@pytest.mark.parametrize("empty_field", ["controlled_variable_checks", "scope_comparisons"])
+def test_comparison_empty_required_inputs_require_invalid_null_decision(empty_field: str) -> None:
+    payload = _comparison_payload()
+    payload[empty_field] = []
+
+    with pytest.raises(ValidationError):
+        ComparisonResult.model_validate(payload)
+
+    payload.update(execution_status="INVALID", decision_status=None)
+    ComparisonResult.model_validate(payload)
+
+
 def test_failure_summary_is_short_and_non_sensitive() -> None:
     payload = {
         "schema_id": "rag-eval.failure",

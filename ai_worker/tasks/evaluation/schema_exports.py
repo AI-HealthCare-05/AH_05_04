@@ -290,8 +290,22 @@ def _array_does_not_contain(field: str, nested_field: str, value: JsonValue) -> 
     }
 
 
+def _array_is_empty(field: str) -> dict[str, JsonValue]:
+    return {
+        "properties": {field: {"maxItems": 0}},
+        "required": [field],
+    }
+
+
 def _add_comparison_outcome_conditions(document: dict[str, JsonValue]) -> None:
     mismatch = _array_contains("controlled_variable_checks", "matched", False)
+    invalid_inputs: dict[str, JsonValue] = {
+        "anyOf": [
+            mismatch,
+            _array_is_empty("controlled_variable_checks"),
+            _array_is_empty("scope_comparisons"),
+        ]
+    }
     no_mismatch = _array_does_not_contain("controlled_variable_checks", "matched", False)
     regressed = _array_contains("scope_comparisons", "comparison_decision", "REGRESSED")
     no_regression = _array_does_not_contain("scope_comparisons", "comparison_decision", "REGRESSED")
@@ -308,7 +322,7 @@ def _add_comparison_outcome_conditions(document: dict[str, JsonValue]) -> None:
     all_of.extend(
         [
             {
-                "if": mismatch,
+                "if": invalid_inputs,
                 "then": {
                     "properties": {
                         "execution_status": {"const": "INVALID"},

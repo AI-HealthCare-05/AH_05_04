@@ -576,10 +576,14 @@ class ComparisonResult(ResultEnvelope):
 
     @model_validator(mode="after")
     def validate_state(self) -> ComparisonResult:
-        controlled_variable_mismatch = any(not check.matched for check in self.controlled_variable_checks)
-        if controlled_variable_mismatch:
+        invalid_comparison_inputs = (
+            not self.controlled_variable_checks
+            or not self.scope_comparisons
+            or any(not check.matched for check in self.controlled_variable_checks)
+        )
+        if invalid_comparison_inputs:
             if self.execution_status is not ExecutionStatus.INVALID or self.decision_status is not None:
-                raise ValueError("controlled variable mismatches require INVALID with a null decision")
+                raise ValueError("empty or mismatched comparison inputs require INVALID with a null decision")
             return self
         if self.execution_status is ExecutionStatus.COMPLETED:
             scope_decisions = [scope.comparison_decision for scope in self.scope_comparisons]

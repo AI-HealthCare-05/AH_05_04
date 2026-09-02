@@ -226,3 +226,26 @@ def test_external_comparison_schema_rejects_pass_for_mismatch_or_regression() ->
         runtime_model=ComparisonResult,
         expected_valid=True,
     )
+
+
+@pytest.mark.parametrize("empty_field", ["controlled_variable_checks", "scope_comparisons"])
+def test_external_comparison_schema_rejects_completed_pass_for_empty_required_inputs(
+    empty_field: str,
+) -> None:
+    payload = _comparison_payload()
+    payload[empty_field] = []
+
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.comparison.schema.json",
+        payload=payload,
+        runtime_model=ComparisonResult,
+        expected_valid=False,
+    )
+
+    payload.update(execution_status="INVALID", decision_status=None)
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.0.0/artifacts/rag-eval.comparison.schema.json",
+        payload=payload,
+        runtime_model=ComparisonResult,
+        expected_valid=True,
+    )
