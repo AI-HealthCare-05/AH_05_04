@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, TypedDict
 
 from fastapi import Depends, Request
 from openai import AsyncOpenAI
@@ -6,6 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.core.db.databases import get_db_session
+from app.core.provider_observability import (
+    Provider,
+    ProviderCallContext,
+    ProviderCallDescriptor,
+    ProviderOperation,
+)
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.guide_repository import GuideRepository
@@ -17,10 +23,12 @@ from app.services.auth import AuthService
 from app.services.chat import ChatService
 from app.services.chat_ai import ChatEngine
 from app.services.chat_ai import OpenAIResponsesClient as ChatOpenAIResponsesClient
+from app.services.chat_ai.prompt import PROMPT_VERSION as CHAT_PROMPT_VERSION
 from app.services.chat_generator_engine import ChatGeneratorEngine
 from app.services.clova_ocr_engine import ClovaOcrEngine
 from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
+from app.services.guide_ai.prompt import PROMPT_VERSION as GUIDE_PROMPT_VERSION
 from app.services.guides import GuideService
 from app.services.job_intake import JobIntakeService
 from app.services.medical_documents import MedicalDocumentService
@@ -31,6 +39,7 @@ from app.services.ocr_ai import (
     OpenAIOcrStructureClient,
     RuleBasedPrescriptionStructurer,
 )
+from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VERSION
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
 from app.services.users import UserManageService
@@ -38,6 +47,35 @@ from app.services.users import UserManageService
 
 def get_openai_client(request: Request) -> AsyncOpenAI:
     return request.app.state.openai_client
+
+
+def get_provider_call_context(request: Request) -> ProviderCallContext:
+    return request.state.provider_call_context
+
+
+class _ProviderObservabilityKwargs(TypedDict, total=False):
+    context: ProviderCallContext
+    descriptor: ProviderCallDescriptor
+
+
+def _provider_observability_kwargs(
+    context: ProviderCallContext | None,
+    *,
+    provider: Provider,
+    operation: ProviderOperation,
+    prompt_version: str | None,
+) -> _ProviderObservabilityKwargs:
+    # Direct factory tests may omit request context; request-time dependency wiring never does.
+    if context is None:
+        return {}
+    return {
+        "context": context,
+        "descriptor": ProviderCallDescriptor(
+            provider=provider,
+            operation=operation,
+            prompt_version=prompt_version,
+        ),
+    }
 
 
 def get_user_repository(
@@ -81,6 +119,10 @@ def get_ocr_structurer(
         AsyncOpenAI,
         Depends(get_openai_client),
     ],
+    context: Annotated[
+        ProviderCallContext | None,
+        Depends(get_provider_call_context),
+    ] = None,
 ) -> OcrStructurer:
     if not config.OCR_STRUCTURE_LLM_ENABLED:
         # 기본값은 OFF입니다.
@@ -91,7 +133,15 @@ def get_ocr_structurer(
     # 활성화된 환경에서만 CLOVA 전체 token을
     # OpenAI Structured Outputs로 변환합니다.
     return LlmPrescriptionStructurer(
-        provider=OpenAIOcrStructureClient(client),
+        provider=OpenAIOcrStructureClient(
+            client,
+            **_provider_observability_kwargs(
+                context,
+                provider=Provider.OPENAI,
+                operation=ProviderOperation.OCR_STRUCTURING,
+                prompt_version=OCR_STRUCTURE_PROMPT_VERSION,
+            ),
+        ),
         model=config.OCR_STRUCTURE_MODEL,
         timeout_seconds=config.OCR_STRUCTURE_TIMEOUT_SECONDS,
     )
@@ -102,14 +152,23 @@ def get_ocr_engine(
         OcrStructurer,
         Depends(get_ocr_structurer),
     ],
+    context: Annotated[
+        ProviderCallContext | None,
+        Depends(get_provider_call_context),
+    ] = None,
 ) -> OcrEngine:
     return ClovaOcrEngine(
         invoke_url=config.CLOVA_OCR_INVOKE_URL,
         secret_key=config.CLOVA_OCR_SECRET,
         storage_dir=config.STORAGE_DIR,
         timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
-        # Feature flag에 따라 규칙 기반 또는 LLM 구조화기를 연결합니다.
         structurer=structurer,
+        **_provider_observability_kwargs(
+            context,
+            provider=Provider.CLOVA_OCR,
+            operation=ProviderOperation.PRESCRIPTION_RECOGNITION,
+            prompt_version=None,
+        ),
     )
 
 
@@ -180,9 +239,21 @@ def get_guide_generator(
         AsyncOpenAI,
         Depends(get_openai_client),
     ],
+    context: Annotated[
+        ProviderCallContext | None,
+        Depends(get_provider_call_context),
+    ] = None,
 ) -> GuideGenerator:
     return GuideGenerator(
-        provider=GuideOpenAIResponsesClient(client),
+        provider=GuideOpenAIResponsesClient(
+            client,
+            **_provider_observability_kwargs(
+                context,
+                provider=Provider.OPENAI,
+                operation=ProviderOperation.GUIDE_GENERATION,
+                prompt_version=GUIDE_PROMPT_VERSION,
+            ),
+        ),
         model=config.OPENAI_MODEL,
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
     )
@@ -215,9 +286,21 @@ def get_chat_engine(
         AsyncOpenAI,
         Depends(get_openai_client),
     ],
+    context: Annotated[
+        ProviderCallContext | None,
+        Depends(get_provider_call_context),
+    ] = None,
 ) -> ChatEngine:
     return ChatGeneratorEngine(
-        provider=ChatOpenAIResponsesClient(client),
+        provider=ChatOpenAIResponsesClient(
+            client,
+            **_provider_observability_kwargs(
+                context,
+                provider=Provider.OPENAI,
+                operation=ProviderOperation.CHAT_GENERATION,
+                prompt_version=CHAT_PROMPT_VERSION,
+            ),
+        ),
         model=config.OPENAI_MODEL,
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
     )

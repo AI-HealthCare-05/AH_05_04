@@ -77,6 +77,8 @@ services:
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}  # APP_VERSION은 빌드된 이미지의 버전관리를 위함입니다. v1.0.0 형식으로 사용합니다.
     env_file:
         - ./envs/.local.env
+    # local-live-full 때만 env_file의 RELEASE_VALIDATION_ALLOWED=true를 Backend에 주입합니다.
+    # runner는 이 container 환경을 상속하지 않고 credential 없는 별도 환경을 사용합니다.
     # STORAGE_DIR 기본값은 backend/app/Dockerfile의 ENV로 이미지에 고정되어 있습니다.
     # 여기서 environment로 다시 선언하면 .local.env(env_file)의 값을 항상 덮어써서
     # 사용자가 .local.env에만 STORAGE_DIR을 지정한 경우가 무시됩니다.

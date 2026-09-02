@@ -117,6 +117,34 @@ def test_chat_history_context_cannot_be_enabled_outside_local(environment: str) 
         )
 
 
+def test_release_validation_is_disabled_by_default() -> None:
+    assert Config.model_fields["RELEASE_VALIDATION_ALLOWED"].default is False
+
+
+def test_release_validation_can_be_enabled_in_local_environment() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": "local",
+            "RELEASE_VALIDATION_ALLOWED": True,
+        }
+    )
+
+    assert config.RELEASE_VALIDATION_ALLOWED is True
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_release_validation_cannot_be_enabled_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "RELEASE_VALIDATION_ALLOWED": True,
+            }
+        )
+
+
 def test_config_rejects_ocr_timeout_budget_exceeding_deadline() -> None:
     """개별 Provider 상한과 로컬 예약의 합이 전체 deadline을 넘으면 기동을 거부합니다."""
     with pytest.raises(ValidationError) as error:
