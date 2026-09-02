@@ -13,12 +13,35 @@ OCR 작업 실행·조회 API가 성공·실패 상태를 Frontend에 전달할 
 
 ## 실패 코드
 
-| `error_code` | 상황 | HTTP status |
-| --- | --- | ---: |
-| `OCR_PROVIDER_TIMEOUT` | OCR 제공자 응답 시간 초과 | `503` |
-| `OCR_PROVIDER_CALL_FAILED` | OCR 제공자 연결 실패 | `503` |
-| `OCR_PROVIDER_UNAVAILABLE` | OCR 제공자 일시적 사용 불가 | `503` |
-| `OCR_PROCESSING_FAILED` | 그 외 OCR 처리 중 오류 | `500` |
+| `error_code` | 상황 | HTTP status | `retryable` |
+| --- | --- | ---: | :---: |
+| `OCR_PROVIDER_TIMEOUT` | OCR 제공자 응답 시간 초과 | `503` | true |
+| `OCR_PROVIDER_CALL_FAILED` | OCR 제공자 연결 실패 | `503` | true |
+| `OCR_PROVIDER_UNAVAILABLE` | OCR 제공자 일시적 사용 불가 | `503` | true |
+| `OCR_PROCESSING_FAILED` | 그 외 OCR 처리 중 오류 | `500` | false |
+
+`retryable` 판정의 정본은 [공통 오류 응답 계약](./backend-error-response.md)의 「재시도 가능 여부」 절입니다.
+
+
+## 상태 전이
+
+| 전이 | 조건 | 저장 값 |
+| --- | --- | --- |
+| (생성) → `PENDING` | OCR 작업 생성 | `completed_at=null` |
+| `PENDING` → `PROCESSING` | Provider 호출 시작 전 | `started_at` 기록, `completed_at=null` |
+| `PROCESSING` → `COMPLETED` | 인식·구조화·필드 저장 성공 | `completed_at`, `engine_name` 기록. `error_code`·`error_message`는 `null` |
+| `PROCESSING` → `FAILED` | Provider 실패, 예산 소진, 처리 실패 | `completed_at`, `error_code` 기록 |
+
+DB CHECK 제약으로 강제되는 불변식입니다.
+
+- `PENDING`·`PROCESSING`은 `completed_at IS NULL`
+- `COMPLETED`·`FAILED`는 `completed_at IS NOT NULL`
+- `FAILED`는 `error_code IS NOT NULL`
+- `COMPLETED`는 `error_code`·`error_message`가 모두 `NULL`
+
+전체 deadline이 소진되어 Provider를 호출하지 않은 경우에도 Job을 `PROCESSING`으로 남기지
+않고 `FAILED`로 전이합니다. `error_code`는 `OCR_PROVIDER_TIMEOUT`이며 내부 사유는
+응답 `details[].reason=DEADLINE_EXCEEDED`로 구분합니다.
 
 ## Post-MVP 이관
 
@@ -30,5 +53,6 @@ OCR 작업 실행·조회 API가 성공·실패 상태를 Frontend에 전달할 
 
 다음 변경은 이 문서, 구현, API 문서와 관련 테스트를 같은 PR에서 갱신해야 합니다.
 
+- 실패 코드의 `retryable` 판정 변경
 - `error_code`·`error_message` 필드 추가·삭제·의미 변경
 - 최신 OCR 작업 판별 기준 변경

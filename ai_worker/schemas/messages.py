@@ -20,11 +20,16 @@ from pydantic import (
 type SchemaVersion = Literal["1.0"]
 type EventKind = Literal["JOB_EXECUTE"]
 
-# Redis에서 받은 trace_id의 앞뒤 공백은 제거하되,
-# 빈 값은 관측성 연결 키로 사용할 수 없으므로 거부합니다.
+# Backend의 uuid.uuid4().hex 형식과 동일한
+# 32자리 소문자 hexadecimal 추적 ID만 허용합니다.
 type TraceId = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1),
+    StringConstraints(
+        strict=True,
+        min_length=32,
+        max_length=32,
+        pattern=r"^[0-9a-f]{32}$",
+    ),
 ]
 
 # bool은 Python에서 int의 하위 타입이므로 strict=True로 차단합니다.

@@ -54,10 +54,14 @@ OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단
 | 확인일·확인자 |                                                                                                                  |
 | 실제 OpenAI 모델 | 실제 `OPENAI_MODEL`: ____ (코드 기본값: `gpt-4o-mini`)                                                           |
 | OpenAI 전체 timeout `T` | 실제 `OPENAI_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초)                                                        |
-| CLOVA OCR timeout `C` | 실제 `CLOVA_OCR_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초)                                                     |
+| CLOVA OCR 개별 timeout `C` | 실제 `CLOVA_OCR_TIMEOUT_SECONDS`: ____초 (코드 기본값: 20초) |
+| OCR 요청 전체 deadline `D` | 실제 `OCR_REQUEST_DEADLINE_SECONDS`: ____초 (코드 기본값: 60초) |
+| OCR 응답 여유 `M_ocr` | 실제 `OCR_RESPONSE_MARGIN_SECONDS`: ____초 (코드 기본값: 5초) |
+| OCR 로컬 처리 예약 `L` | 실제 `OCR_LOCAL_PROCESSING_RESERVE_SECONDS`: ____초 (코드 기본값: 3초) |
+| Chat 애플리케이션 처리 여유 `M_chat` | ____초 (기본 참고값: 5초) |
 | 애플리케이션 처리 여유 `M` | ____초 (기본 참고값: 5초)                                                                                        |
 | 동일 세션 최대 동시 전송 `N` | 코드로 강제되는 admission 한도: ____ / 초과 시 응답: ____                                                        |
-| Nginx read timeout | 실제 `proxy_read_timeout`: ____초 / 필요 하한 `max(C + E × S + M, N × T + M)`: ____초 / 충족 여부: ____ |
+| Nginx read timeout | 실제 `proxy_read_timeout`: ____초 / OCR 조건 `proxy_read_timeout > D`: ____ / 전체 조건 `proxy_read_timeout > max(D, N × T + M_chat)`: ____ / 충족 여부: ____ |
 | PostgreSQL lock wait timeout | 실제 `lock_timeout`: ____ (`0`은 제한 없음) / 유한 설정 시 필요 하한 `(N - 1) × T + M`: ____초 / 충족 여부: ____|
 | 애플리케이션 replica 수 `R` |                                                                                                                  |
 | replica별 Uvicorn worker 수 `W` |                                                                                                                  |
@@ -79,13 +83,41 @@ OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단
 
 `N`은 문서에 적은 예상값이 아니라 lock 획득 전에 코드가 실제로 강제하는 동일 세션 admission 한도여야 합니다. 현재 구현은 세 개 이상의 요청도 직렬화하며 최대 동시 전송 수를 제한하지 않으므로 유한한 `N`이 없습니다. 따라서 현재 상태에서는 모든 허용 요청을 포괄하는 Nginx·PostgreSQL timeout 하한을 계산할 수 없으며 Production 배포가 차단됩니다.
 
-OCR 요청에서는 CLOVA와 OCR 구조화 OpenAI가 순차 실행되므로 두 Provider timeout을 `C + E × S`로 합산합니다. 기본 참고값 `C=20초`, `S=30초`, `T=20초`, `M=5초`를 적용하면 OCR LLM이 비활성화된 경우 OCR read timeout 하한은 25초이고, 활성화된 경우 55초입니다.
-Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N × T + M`을 사용합니다. 따라서 Nginx read timeout의 전체 필요 하한은 `max(C + E × S + M, N × T + M)`입니다. `N`이 강제되지 않은 현재 상태에서는 Production 전체 하한을 확정할 수 없으므로 배포 차단 상태를 유지합니다.
+OCR 요청의 reverse proxy timeout은 더 이상 개별 Provider timeout의 합인
+`C + E × S + M`으로 계산하지 않습니다. 애플리케이션은 요청 시작부터 응답 생성까지의
+전체 deadline `D`를 monotonic clock 기준으로 관리합니다.
+
+기동 시 다음 timeout 예산식을 검증하며, 이를 만족하지 않으면 애플리케이션이
+기동하지 않습니다.
+
+`C + E × S + M_ocr + L <= D`
+
+기본값에서 LLM 구조화가 활성화된 경우 필요한 예산은
+`20 + 30 + 5 + 3 = 58초`이고, 기본 전체 deadline은 `D=60초`입니다.
+
+`C + E × S + M_ocr + L`은 애플리케이션 기동 가능 여부를 검증하는 식이며,
+reverse proxy timeout을 결정하는 식이 아닙니다. OCR reverse proxy의
+upstream read timeout은 전체 deadline `D`보다 커야 합니다.
+
+NGINX 기본 `proxy_read_timeout`은 60초이므로 `D=60초`와 동일하게 설정하면
+응답 전달 여유가 없습니다. `infra/nginx/default.conf`,
+`infra/nginx/prod_http.conf`, `infra/nginx/prod_https.conf`에
+`proxy_read_timeout > D`를 만족하는 값을 명시하기 전에는 OCR 동기 경로를
+Production에 배포하지 않습니다.
+
+Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
+`N × T + M_chat`을 사용합니다. 따라서 Nginx read timeout의 전체 조건은
+`proxy_read_timeout > max(D, N × T + M_chat)`입니다.
+
+`N`이 강제되지 않은 현재 상태에서는 Production 전체 하한을 확정할 수 없으므로
+기존 배포 차단 상태를 유지합니다.
 
 다음 조건을 모두 충족해야 배포할 수 있습니다.
 
 - 동일 세션 최대 동시 전송 `N`을 lock 획득 전에 강제하고 초과 요청의 `409` 또는 `429` 계약·테스트를 확정합니다.
-- 실제 `proxy_read_timeout >= max(C + E × S + M, N × T + M)`을 확인합니다.
+- OCR 기동 예산 `C + E × S + M_ocr + L <= D`를 확인합니다.
+- 실제 `proxy_read_timeout > D`를 확인하고, NGINX 기본값 60초에 의존하지 않습니다.
+- Chat 동시 전송 한도 `N`이 확정된 후 `proxy_read_timeout > max(D, N × T + M_chat)`을 확인합니다.
 - PostgreSQL `lock_timeout`이 `0`이거나, 유한하게 설정한 경우 `(N - 1) × T + M`보다 큰지 확인합니다.
 - worker별 전체 in-flight AI에 OCR·가이드·채팅 외부 호출과 채팅 row lock waiter를 포함하고, pool·overflow 총 수용량에서 비AI 요청용 예비 connection을 먼저 제외해 수용 가능한지 확인합니다.
 - 모든 replica와 Uvicorn worker가 process별 pool을 각각 만든다는 기준으로 `R × W × (pool + overflow) + 운영 예비 <= PostgreSQL max_connections`를 확인합니다.
@@ -113,7 +145,14 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N 
 | 항목 | 배포 기록 |
 | --- | --- |
 | 실제 CLOVA endpoint | 비밀값을 제외한 환경·endpoint 식별자: ____ |
-| CLOVA timeout | 실제 `CLOVA_OCR_TIMEOUT_SECONDS`: ____초 |
+| CLOVA timeout `C` | 실제 `CLOVA_OCR_TIMEOUT_SECONDS`: ____초 |
+| OCR 요청 전체 deadline `D` | 실제 `OCR_REQUEST_DEADLINE_SECONDS`: ____초 |
+| OCR 응답 여유 `M_ocr` | 실제 `OCR_RESPONSE_MARGIN_SECONDS`: ____초 |
+| OCR 로컬 처리 예약 `L` | 실제 `OCR_LOCAL_PROCESSING_RESERVE_SECONDS`: ____초 |
+| OCR 구조화 LLM 활성화 `E` | 실제 `OCR_STRUCTURE_LLM_ENABLED`: ____ |
+| OCR 구조화 timeout `S` | 실제 `OCR_STRUCTURE_TIMEOUT_SECONDS`: ____초 |
+| OCR 기동 예산 검증 | `C + E × S + M_ocr + L <= D`: ____ / 충족 여부: ____ |
+| Nginx OCR read timeout | 실제 `proxy_read_timeout`: ____초 / `proxy_read_timeout > D`: ____ |
 | CLOVA synthetic 실호출 | 실행 일시·합성 fixture·결과: ____ |
 | 실제 `STORAGE_DIR` | ____ |
 | 영속 volume·object storage | mount 또는 저장소: ____ / `STORAGE_DIR`와 일치 여부: ____ |
@@ -132,7 +171,7 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후 `N 
 | OpenAI 가이드 | 0-based `source_index`와 파생 `guidance_intent`(`FOLLOW_CONFIRMED_TIMING` 또는 `FOLLOW_CONFIRMED_SCHEDULE`)만 전송. 약명·제품 함량·용량·단위·횟수·시점·기간·식별자는 전송 금지 | `store=False` 포함 실제 저장·학습·보존 정책 확인: ____ | ____ |
 | OpenAI 챗봇 | 현재 질문과 확정 약물 필드. 최근 완료 대화 최대 3쌍은 별도 승인 후에만 허용하며 현재 Staging·Production에서는 `history: []`: ____ | `store=False` 포함 실제 정책 확인: ____ | ____ |
 
-가이드 `guidance_intent`는 확정 처방의 `timing_text` 존재 여부에서 파생된 의료 metadata이므로 단순 locator가 아니라 외부 전송 승인 대상으로 검토합니다. 승인 범위를 넘는 식별자, 원본 처방값, 최근 대화, OCR 원문·미검수 값이나 내부 오류 metadata가 외부 payload에 포함되면 배포하지 않습니다. Chat history의 버전된 합성 평가, latency와 PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 추적하며, 완료되더라도 별도 외부 전송·Production 승인을 자동으로 해제하지 않습니다.
+가이드 `guidance_intent`는 확정 처방의 `timing_text` 존재 여부에서 파생된 의료 metadata이므로 단순 locator가 아니라 외부 전송 승인 대상으로 검토합니다. 승인 범위를 넘는 식별자, 원본 처방값, 최근 대화, OCR 원문·미검수 값이나 내부 오류 metadata가 외부 payload에 포함되면 배포하지 않습니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 실제 Provider 검증이나 외부 전송 승인이 아니며, 별도 외부 전송·Production 승인을 자동으로 해제하지 않습니다.
 
 `guide-prompt-v3`는 intent별 승인 guidance와 공통 notice만 선택하도록 제한하며 Backend가 index·intent·exact membership을 검증합니다. 이 제한 생성과 Local 합성 평가 통과는 현재 의료 AI Production 차단을 해제하지 않습니다.
 

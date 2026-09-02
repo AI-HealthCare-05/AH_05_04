@@ -39,7 +39,7 @@
 - 문맥 제한: `CHAT_HISTORY_CONTEXT_ENABLED=false`이면 history를 조회하지 않고 빈 배열을 전달한다. 비식별 합성 Local에서만 flag를 켜 같은 세션의 현재 질문 이전 완료 대화를 최대 3쌍 전달하며, 사용자·세션 식별자, 처방전 이미지와 OCR 원문·미검수 값은 전달하지 않는다.
 - 안전 제한: 단일 `chat-prompt-v2`는 과거 USER 진술과 ASSISTANT 답변을 검증된 현재 사실로 취급하지 않고 현재 확정 medications를 우선한다. 추측·임의 복용 변경·확인하지 않은 인용 생성을 금지하고, 안전상 중요한 과거 정보는 현재도 해당하는지 확인하며 명시된 현재 응급·고위험 상황에서는 도움 안내를 우선한다.
 
-이 안전 제한은 현재 프롬프트와 단위·계약 테스트의 범위입니다. `chat-v2-history-eval-v1`, 최대 입력 latency와 PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 `NOT_RUN` 후속 검증이며, 별도 데이터셋과 임계값으로 응답 품질을 판정하는 평가는 현재 Production 승인 근거가 아닙니다.
+이 안전 제한은 현재 프롬프트와 단위·계약 테스트의 범위입니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)은 `chat-v2-history-eval-v1` 결정론적 replay, 최대 입력의 Local application-path latency와 PII sentinel 비복제를 검증했습니다. 실제 Provider 품질·네트워크 latency·token 측정은 `NOT_RUN`이며, 합성 replay와 별도 데이터셋 결과는 Production 승인 근거가 아닙니다.
 
 ## 구현 상태 표
 
@@ -52,12 +52,12 @@
 | Track E 비-RAG LLM 확장 | Approved v4 target — Partially implemented | feature flag 기반 LLM 구조화·grounding과 flag 비활성화 시 규칙 기반 경로 사용은 Current; LLM 실패 시 규칙 기반 자동 fallback은 없고 Worker 이관과 v4 provenance는 미연결 | 최소 allowlist, versioned schema·prompt·validator, raw/rule/draft/corrected/confirmed provenance와 실패 복구 구현 |
 | MFDS 공식 Identity | Approved v4 target — Not implemented | 연결되지 않음 | Source Snapshot·Catalog, Candidate Resolver, Single Candidate Gate, 사용자 확인·거절, append-only Identification과 Preflight 구현 |
 | Rule-first RAG·Citation | Schema-only / Approved v4 target — Not implemented | 지식 문서·청크·citation 테이블만 존재하고 실행 경로는 미연결 | 고정 LangGraph, 승인 Rule/Evidence, 결정적 Citation 완전성 검증과 fail-closed fallback 구현 |
-| AI 응답 평가 | Approved v4 target — Not implemented | 자동 배포 게이트가 아니며 Evaluation Results는 `NOT_RUN` | HOLDOUT·SAFETY_REGRESSION·END_TO_END_FINAL 실행, versioned 지표·분모·신뢰구간과 승인 증빙 구현 |
+| AI 응답 평가 | RAG-00 Approved Target — Not implemented | 자동 배포 게이트가 아니며 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null` | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG` 실행, versioned 지표·분모·신뢰구간과 승인 증빙 구현. 실행 완료 후 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE` |
 | OTC 상호작용 | Track F Approved v4 target — Not implemented | 연결되지 않음 | 기존 Chat의 `OTC_INTERACTION` 유형에서 처방약–OTC Rule을 먼저 실행하고 Evidence·Citation·Safety fallback 적용 |
 
 ## Post-MVP-1 비동기 흐름 — Approved target / Not implemented
 
-목표 흐름은 `API → AI_JOB·OUTBOX_EVENT 동일 transaction commit → Outbox publisher → Redis Stream → Worker claim/lease/fencing → Provider·RAG·검증 → 결과 commit → ACK → REST polling`이다. OCR·Guide·Chat은 공통 6개 Job 상태를 쓰고, 처방 version 변경 결과는 `STALE`로 차단한다. OCR Job 안의 비-RAG LLM 구조화는 Retrieval이나 외부 의료 Source를 호출하지 않는다. 사용자 처방 확정 뒤 Track F의 동기 Candidate·Identification·Preflight를 통과한 경우에만 Guide·Chat Job을 만들며, 근거 부족·검증 실패는 생성 답변을 폐기하고 승인 fallback 또는 공개 차단으로 처리한다.
+목표 흐름은 `API → AI_JOB·OUTBOX_EVENT 동일 transaction commit → Outbox publisher → Redis Stream → Worker claim/lease/fencing → Provider·RAG·검증 → 결과 commit → ACK → REST polling`이다. OCR·Guide·Chat은 공통 6개 Job 상태를 쓰고, 처방 version 변경 결과는 `STALE`로 차단한다. OCR Job 안의 비-RAG LLM 구조화는 Retrieval이나 외부 의료 Source를 호출하지 않는다. 자동 Guide는 모든 활성 처방약의 현재 Identification이 Runtime Bundle과 호환될 때만 Job을 접수한다. Chat은 Identification 완료 전에도 최소 Safety Intake Job을 접수할 수 있지만 `ROUTINE` 분기만 Identification Preflight 통과 후 일반 Rule·Retrieval·Composer를 실행한다. 근거 부족·검증 실패는 생성 답변을 폐기하고 승인 fallback 또는 공개 차단으로 처리한다.
 
 연결 전에는 Redis consumer·retry/reclaim, Outbox reconciler, commit-before-ACK, 멱등성·소유권·STALE 계약과 장애 테스트를 구현해야 한다. `ASYNC_OCR → ASYNC_GUIDE → ASYNC_CHAT` 순으로 신규 접수만 canary 전환하며 rollback 뒤에도 기존 Job은 drain한다. 공개 기능은 [외부 승인 게이트](./release-gates/post-mvp-1-external-approvals.md)를 별도로 충족한다.
 

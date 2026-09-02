@@ -24,6 +24,8 @@ Frontend E2E 또는 Production 배포 승인이 아닙니다. `local-live-ai`는
   directory와 `0600` file의 write-close-read 선행 검사를 통과했습니다.
 - [ ] 실제 Provider 호출 비용이 발생하는 local live 실행임을 operator가 확인했습니다.
 - [ ] runner의 `OCR_STRUCTURE_LLM_ENABLED`, `CLOVA_OCR_TIMEOUT_SECONDS`, `OCR_STRUCTURE_TIMEOUT_SECONDS`, `OPENAI_TIMEOUT_SECONDS`가 검증 대상 Backend 설정과 일치합니다.
+- [ ] `local-live-full` 실행 전 Backend process에도 별도로 `ENV=local`, `RELEASE_VALIDATION_ALLOWED=true`를 주입했습니다. runner의 같은 이름 설정은 Backend 설정을 대신하거나 증명하지 않습니다.
+- [ ] Backend stdout Provider log의 접근·발췌·보존 범위와 지정 수동 검토자를 Security·Privacy 책임자가 승인했습니다.
 - [ ] one-cycle read timeout은 `max(C + E × S, T) + 5초`로 계산됩니다.
 
 ## 고정 명령
@@ -88,6 +90,34 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 stdout에는 JSON 한 건만 허용합니다. `cleanup=PENDING`이나 live test skip은 PASS 증거가 아닙니다. local의
 dirty worktree 결과는 진단에는 사용할 수 있지만 `evidence_qualified=false`이며 Issue 완료 증거가 아닙니다.
+
+`local-live-full` 결과의 `execution=PASS`, `database_verification=PASS`, `cleanup=PASS`는 API·DB·정리 검증 성공만 뜻합니다. `provider_log_verification=MANUAL_REQUIRED`인 동안 실제 Provider 호출 증빙은 완료되지 않았으며 자동으로 `PASS`로 바꾸지 않습니다.
+
+## Issue #152 Local Provider 로그 증빙
+
+이 절차는 `local-live-full`에만 적용합니다. staging·production Live 검증이나 배포 설정을 변경하지 않습니다. runner는 모든 Backend 요청에 동일 `X-Validation-Run-Id`를 보내고 응답별 `X-Trace-Id`를 수집합니다. 로그인 후 Authorization을 추가해도 validation Header를 유지합니다.
+
+Backend process는 Provider Secret을 승인된 방식으로 주입받지만 runner process에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`가 없어야 합니다. `RELEASE_VALIDATION_ALLOWED`도 두 process에 각각 주입합니다. local Compose의 `fastapi`는 `envs/.local.env`를 읽으므로 Backend 쪽 값은 그 파일 또는 동등한 Backend 전용 실행 환경에 설정하고, runner는 credential 없는 별도 환경을 사용합니다.
+
+실행 직후 결과의 `run_id`로 Docker Desktop의 `fastapi` Logs를 검색합니다. 빠른 조회는 다음 명령을 사용할 수 있습니다.
+
+```bash
+docker compose logs --no-color --no-log-prefix --since 10m fastapi \
+  | rg '"validation_run_id":"<run-id>"'
+```
+
+정본 JSONL은 Compose prefix나 Desktop 변환이 없는 컨테이너 stdout 원문에서 접근 제한 위치로 발췌합니다.
+
+```bash
+docker logs --since 10m fastapi 2>&1 \
+  | rg '"validation_run_id":"<run-id>"' \
+  > /private/tmp/provider-call-log-<run-id>.jsonl
+chmod 600 /private/tmp/provider-call-log-<run-id>.jsonl
+```
+
+각 줄을 독립 JSON으로 파싱해 `provider-call-log-v1`, 필수 operation, 동일 trace, started 1건·terminal 최대 1건, 금지정보 부재를 확인합니다. OCR 구조화가 꺼져 있으면 `OCR_STRUCTURING` 로그와 DB model/prompt가 모두 없어야 합니다. 켜져 있으면 로그와 두 DB 필드가 모두 있어야 합니다.
+
+증빙 Artifact는 `one-cycle-result.json`, `provider-call-log-<run-id>.jsonl`, `provider-log-review-<run-id>.json` 세 개이며 모두 같은 `run_id`를 사용합니다. 저장소에 commit하지 않고 승인된 접근 제한 위치에서 팀 보존 정책에 따라 삭제합니다. runner·DB·cleanup·지정 검토자의 수동 Provider 로그 판정이 모두 `PASS`일 때만 전체 증빙을 완료합니다.
 
 ## Issue #61 비민감 결과 양식
 

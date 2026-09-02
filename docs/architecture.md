@@ -42,7 +42,7 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 - **Schema-only Post-MVP 골격**: `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation` 모델과 migration은 존재하지만 repository·service·API 실행 경로에는 연결되지 않음
 - **미구현 Post-MVP 실행 영역**: OCR LLM의 최소전송·provenance·Worker 확장, MFDS Source/Catalog·Candidate Resolver·Identification·Preflight, Rule-first RAG·Citation·Safety, AI 평가와 비동기 Worker
 
-## Post-MVP-1 목표 구조 — Approved v4 target / Not implemented
+## Post-MVP-1 목표 구조 — Approved v4·RAG-00 target / Not implemented
 
 아래 구조와 계약은 승인됐지만 현재 실행 경로에는 연결되지 않았다.
 
@@ -51,8 +51,9 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 - 결과는 불변 `prescription_version_id`에 귀속하고 active version이 아니면 `STALE`로 공개를 차단한다.
 - Track B는 사용자가 확인한 schedule에서 occurrence를 생성하고 Check-in·감사 이력을 관리한다. Track C는 `NOT_TAKEN` 뒤 Safety assessment → Barrier → Support → ActionPlan 순서를 따른다.
 - Track E는 Current의 feature flag 기반 LLM 구조화를 OCR Job으로 이관하고, CLOVA 결과의 승인된 최소 필드만 전송하며 raw/rule/draft/corrected/confirmed provenance를 분리한다. 사용자 원본 대조·수정·확정 뒤에만 불변 Prescription Version을 만든다.
-- Track F는 사용자 확정 `medication_name + nullable strength_text`를 MFDS Source/Catalog에서 검색하고, Single Candidate Gate를 통과한 최대 1개 후보를 사용자 확인·거절로 연결한다. 확인은 append-only Identification을 만들며 모든 활성 약이 현재 Runtime Release Bundle에서 `MATCHED`일 때만 Guide·Chat Job을 접수한다.
-- Track F 실행 순서는 `Context Load → Scope Classifier → Identification Preflight → Rule Engine → Evidence Retrieval → Rerank → Evidence Gate → Answer Composer → Citation Validator → Safety Gate → Persist Result`로 고정한다. 자유 ReAct와 열린 웹 검색을 사용하지 않는다.
+- Track F는 사용자 확정 `medication_name + nullable strength_text`를 MFDS Source/Catalog에서 검색하고, Single Candidate Gate를 통과한 최대 1개 후보를 사용자 확인·거절로 연결한다. 확인은 append-only Identification을 만든다. 자동 Guide는 모든 활성 약이 현재 Runtime Release Bundle에서 `MATCHED`일 때만 Job을 접수한다.
+- Chat은 Identification 완료 전에도 최소 Safety Intake Job을 접수할 수 있다. `URGENT | EMERGENCY | UNKNOWN`은 승인 Safety Flow로 종료하고 일반 Retrieval·Composer·Provider를 호출하지 않는다. `ROUTINE`만 Identification Preflight를 통과한 뒤 Full Execution Context를 원자적으로 확장하고 일반 Rule·RAG를 실행한다.
+- Track F는 [RAG Runtime Target](./contracts/targets/post-mvp-1/rag-runtime-v1.md)의 고정 LangGraph Node·조건부 Edge와 Application Service Guard 경계를 따른다. 자유 ReAct, 열린 웹 검색과 설명용 단축어를 별도 Node ID로 구현하지 않는다.
 - OTC는 별도 Track D, 화면 또는 전용 API가 아니다. 기존 Chat의 `OTC_INTERACTION` 질문 유형에서 승인된 처방약–OTC `interaction_rule`과 `rule_evidence`를 먼저 실행하고 Citation·Safety 경로를 공유한다.
 - 의미 기반 NLI와 고급 reranking은 Post-MVP-1 완료·공개 게이트에서 제외한다. Post-MVP-1은 결정적 Citation 완전성과 정책 검증을 적용한다.
 - `ASYNC_OCR`, `ASYNC_GUIDE`, `ASYNC_CHAT`으로 신규 접수 경로를 단계 전환한다. `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`는 별도 외부 승인 게이트 전까지 닫으며 OTC는 F 게이트를 공유한다.
