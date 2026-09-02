@@ -801,6 +801,10 @@ def _add_v1_1_case_context_conditions(definitions: dict[str, JsonValue]) -> None
         _nested_case_condition(
             expected_if={"expected_rule_not_invoked_reason": {"const": "SAFETY_ROUTED"}},
             expected_then={"expected_safety_disposition": {"not": {"const": "NORMAL"}}},
+            runtime_then={
+                "source_eligibility_status": {"const": "ELIGIBLE"},
+                "bundle_eligibility_status": {"const": "ELIGIBLE"},
+            },
         ),
         _nested_case_condition(
             expected_if={"expected_rule_not_invoked_reason": {"const": "SOURCE_INELIGIBLE"}},

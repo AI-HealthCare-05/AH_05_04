@@ -194,6 +194,11 @@ def _validate_not_invoked(expected: SafetyExpectedV11, runtime: RuntimeFixtureV1
         raise ValueError("NOT_INVOKED requires no general pipeline invocation")
     reason = expected.expected_rule_not_invoked_reason
     if reason is RuleNotInvokedReason.SAFETY_ROUTED:
+        if (
+            runtime.source_eligibility_status is not SourceEligibilityStatus.ELIGIBLE
+            or runtime.bundle_eligibility_status is not BundleEligibilityStatus.ELIGIBLE
+        ):
+            raise ValueError("SAFETY_ROUTED cannot mask Source or Bundle ineligibility")
         if expected.expected_safety_disposition is SafetyDisposition.NORMAL:
             raise ValueError("SAFETY_ROUTED requires a routed disposition")
     elif (

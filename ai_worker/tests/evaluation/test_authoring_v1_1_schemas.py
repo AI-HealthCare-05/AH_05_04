@@ -139,6 +139,35 @@ def test_safety_routed_not_invoked_requires_non_normal_safety_and_no_general_pip
 
 
 @pytest.mark.parametrize(
+    ("source_status", "bundle_status"),
+    [
+        ("EXPIRED", "SOURCE_INELIGIBLE"),
+        ("ELIGIBLE", "SCOPE_INELIGIBLE"),
+        ("ELIGIBLE", "MEMBER_INELIGIBLE"),
+    ],
+)
+def test_safety_routed_not_invoked_cannot_mask_ineligible_rule_inputs(
+    source_status: str,
+    bundle_status: str,
+) -> None:
+    payload = _safety_case()
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status=source_status,
+        bundle_eligibility_status=bundle_status,
+    )
+    payload["expected"].update(
+        expected_rule_outcome="NOT_INVOKED",
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="SAFETY_ROUTED",
+        expected_provider_invocation=False,
+        expected_retrieval_invocation=False,
+    )
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize(
     ("fault", "execution_status", "invocation_field"),
     [
         ("PROVIDER_TIMEOUT", "TIMED_OUT", "expected_provider_invocation"),

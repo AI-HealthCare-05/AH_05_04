@@ -146,6 +146,37 @@ def test_external_v1_1_case_schema_matches_runtime_rule_and_fixture_invariants(m
 
 
 @pytest.mark.parametrize(
+    ("source_status", "bundle_status"),
+    [
+        ("EXPIRED", "SOURCE_INELIGIBLE"),
+        ("ELIGIBLE", "SCOPE_INELIGIBLE"),
+        ("ELIGIBLE", "MEMBER_INELIGIBLE"),
+    ],
+)
+def test_external_v1_1_case_schema_rejects_safety_routed_masking_ineligible_inputs(
+    source_status: str,
+    bundle_status: str,
+) -> None:
+    payload = _v1_1_safety_case()
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status=source_status,
+        bundle_eligibility_status=bundle_status,
+    )
+    payload["expected"].update(
+        expected_rule_outcome="NOT_INVOKED",
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="SAFETY_ROUTED",
+        expected_provider_invocation=False,
+        expected_retrieval_invocation=False,
+    )
+
+    schema = _json("schemas/1.1.0/authoring/rag-eval.case.schema.json")
+    assert list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize(
     "fixture",
     ["rag-dev-answer-quality-001.json", "rag-dev-answer-grounding-001.json"],
 )

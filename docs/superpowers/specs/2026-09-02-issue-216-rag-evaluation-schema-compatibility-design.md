@@ -75,7 +75,7 @@ Cardinality and consistency rules:
 - `MATCHED_RULES`: `expected_rule_ids` is non-empty, reason is `null`, and Source and Bundle are eligible.
 - `NO_MATCH`: `expected_rule_ids=[]`, reason is `null`, and Source and Bundle are eligible.
 - `NOT_INVOKED`: `expected_rule_ids=[]`, a non-null typed reason, `dependency_fault=NONE`, and no provider/retrieval invocation are required.
-- `SAFETY_ROUTED` requires a non-`NORMAL` Safety disposition and no provider/retrieval invocation.
+- `SAFETY_ROUTED` requires `ELIGIBLE` Source and Bundle inputs, a non-`NORMAL` Safety disposition, and no provider/retrieval invocation; it cannot mask an eligibility root cause.
 - `SOURCE_INELIGIBLE` requires a non-eligible Source fixture.
 - `BUNDLE_INELIGIBLE` requires `SCOPE_INELIGIBLE | MEMBER_INELIGIBLE`; Source failures use `SOURCE_INELIGIBLE` and cannot be relabeled.
 

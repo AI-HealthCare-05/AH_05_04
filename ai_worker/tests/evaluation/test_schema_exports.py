@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
@@ -7,6 +8,7 @@ from typing import Any, cast
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
+from ai_worker.tasks.evaluation.loaders import _schema_set_hash, _SnapshotReader
 from ai_worker.tasks.evaluation.schema_exports import (
     normalize_schema_document,
     schema_documents,
@@ -14,6 +16,9 @@ from ai_worker.tasks.evaluation.schema_exports import (
 )
 from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRIES, SCHEMA_REGISTRY
 from ai_worker.tasks.evaluation.schemas.artifacts import RESULT_ARTIFACT_MODELS
+
+REPOSITORY_ROOT = Path(__file__).parents[3]
+EVALS_ROOT = REPOSITORY_ROOT / "evals"
 
 
 def _files(root: Path) -> dict[str, bytes]:
@@ -132,6 +137,33 @@ def test_schema_set_1_1_reuses_unchanged_members_byte_for_byte() -> None:
 
     for path in set(version_1) - changed:
         assert canonical_json_bytes(version_1_1[path]) == canonical_json_bytes(version_1[path])
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern"),
+    [
+        (
+            "docs/contracts/targets/post-mvp-1/rag-evaluation-v1.md",
+            r"rag-eval\.schema-set@1\.1\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "docs/governance/decisions/2026-09-02-rag-evaluation-schema-set-1-1-freeze.md",
+            r"Schema Set SHA-256 \| `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "evals/README.md",
+            r"rag-eval\.schema-set@1\.1\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+    ],
+)
+def test_documented_schema_set_1_1_hash_matches_committed_schema_set(
+    relative_path: str,
+    pattern: str,
+) -> None:
+    documented = re.search(pattern, (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8"))
+
+    assert documented is not None
+    assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.1.0")
 
 
 def test_schema_set_1_1_exports_rule_cardinality_and_fixture_consistency_conditions() -> None:

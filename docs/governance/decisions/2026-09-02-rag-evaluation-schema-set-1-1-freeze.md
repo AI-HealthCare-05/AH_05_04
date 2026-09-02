@@ -21,7 +21,7 @@ Schema Set은 18개 전체 member를 가진다. 변경된 `rag-eval.case`와 `ra
 | --- | --- |
 | Schema Set ID | `rag-eval.schema-set` |
 | Schema Set version | `1.1.0` |
-| Schema Set SHA-256 | `ee60c207cd461d1a415d75d4b77e9976cb5055d4462893b51e1180a7ab2bb108` |
+| Schema Set SHA-256 | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
 | Canonical member root | `evals/schemas/1.1.0/` |
 | Member count | `18` |
 
@@ -45,7 +45,7 @@ Schema Set hash는 member별 `{schema_id, schema_version, schema_sha256}`를 정
 - Bundle eligibility: `ELIGIBLE | SOURCE_INELIGIBLE | SCOPE_INELIGIBLE | MEMBER_INELIGIBLE`
 - Dependency fault: `NONE | PROVIDER_TIMEOUT | RETRIEVAL_FAILURE`
 
-Source가 비적격이면 Bundle은 `SOURCE_INELIGIBLE`이어야 하고, Bundle이 `SOURCE_INELIGIBLE`이면 Source도 비적격이어야 한다. 이 경우 not-invoked reason은 `SOURCE_INELIGIBLE`이며 `BUNDLE_INELIGIBLE`로 바꾸지 않는다. `BUNDLE_INELIGIBLE` reason은 `SCOPE_INELIGIBLE | MEMBER_INELIGIBLE`에만 사용한다. Rule이 실행된 `MATCHED_RULES | NO_MATCH`는 Source·Bundle이 모두 적격일 때만 허용한다.
+Source가 비적격이면 Bundle은 `SOURCE_INELIGIBLE`이어야 하고, Bundle이 `SOURCE_INELIGIBLE`이면 Source도 비적격이어야 한다. 이 경우 not-invoked reason은 `SOURCE_INELIGIBLE`이며 `BUNDLE_INELIGIBLE` 또는 `SAFETY_ROUTED`로 바꾸지 않는다. `BUNDLE_INELIGIBLE` reason은 `SCOPE_INELIGIBLE | MEMBER_INELIGIBLE`에만 사용하고 `SAFETY_ROUTED`는 Source·Bundle이 모두 `ELIGIBLE`일 때만 사용한다. Rule이 실행된 `MATCHED_RULES | NO_MATCH`도 Source·Bundle이 모두 적격일 때만 허용한다.
 
 Provider·Retrieval fault는 Rule-first 단계 이후의 실행 실패이므로 `NOT_INVOKED`와 공존할 수 없다. `NOT_INVOKED`는 `dependency_fault=NONE`, `expected_provider_invocation=false`, `expected_retrieval_invocation=false`를 요구해 선행 차단 뒤 부분 실행을 금지한다. `PROVIDER_TIMEOUT`은 provider 호출이 시작된 `TIMED_OUT`, `RETRIEVAL_FAILURE`는 retrieval 호출이 시작된 `DEPENDENCY_ERROR`와 결속하며, 이미 확정된 `MATCHED_RULES | NO_MATCH` 결과와 독립적으로 기록한다.
 
