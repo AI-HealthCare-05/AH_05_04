@@ -195,12 +195,13 @@ def test_idempotency_hmac_key_default_is_a_fixed_placeholder() -> None:
     assert Config.model_fields["IDEMPOTENCY_HMAC_KEY"].default == "not-configured-idempotency-hmac-key"
 
 
-def test_idempotency_hmac_key_rejects_placeholder_in_production() -> None:
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_placeholder_outside_local(environment: str) -> None:
     with pytest.raises(ValidationError):
         Config.model_validate(
             {
                 **BASE_CONFIG,
-                "ENV": "production",
+                "ENV": environment,
                 # 실행 환경의 실제 IDEMPOTENCY_HMAC_KEY 환경변수가 이 값을 덮어쓰지 않도록 명시적으로
                 # placeholder를 지정합니다 — pydantic-settings는 dict에 없는 키만 env var로 채우므로,
                 # 키를 생략하면 로컬 .env에 실제 값이 설정된 환경에서 이 테스트가 거짓으로 통과합니다.
@@ -209,24 +210,26 @@ def test_idempotency_hmac_key_rejects_placeholder_in_production() -> None:
         )
 
 
-def test_idempotency_hmac_key_rejects_blank_in_production() -> None:
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_blank_outside_local(environment: str) -> None:
     with pytest.raises(ValidationError):
         Config.model_validate(
             {
                 **BASE_CONFIG,
-                "ENV": "production",
+                "ENV": environment,
                 "IDEMPOTENCY_HMAC_KEY": "   ",
             }
         )
 
 
-def test_idempotency_hmac_key_accepts_configured_value_in_production() -> None:
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_accepts_configured_value_outside_local(environment: str) -> None:
     config = Config.model_validate(
         {
             **BASE_CONFIG,
-            "ENV": "production",
-            "IDEMPOTENCY_HMAC_KEY": "a-real-production-idempotency-hmac-secret",
+            "ENV": environment,
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret",
         }
     )
 
-    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-production-idempotency-hmac-secret"
+    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret"

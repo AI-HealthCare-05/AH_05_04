@@ -150,11 +150,11 @@ class Config(BaseSettings):
 
     @model_validator(mode="after")
     def validate_idempotency_hmac_key_configured(self) -> "Config":
-        if self.ENV is Env.PRODUCTION:
+        if self.ENV is not Env.LOCAL:
             if not self.IDEMPOTENCY_HMAC_KEY.strip():
-                raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty in production")
+                raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty outside local environment")
             if self.IDEMPOTENCY_HMAC_KEY == "not-configured-idempotency-hmac-key":
-                raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret in production")
+                raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret outside local environment")
         return self
 
     @property
