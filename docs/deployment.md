@@ -33,16 +33,16 @@
 - 담당자 부재 시 대체 담당자가 같은 증빙과 승인 조건을 확인한다. 대체 담당자도 없으면 배포를 중단하고 제품·Release Gate 확인 담당자와 해당 단계의 기술 승인 또는 판단 담당자에게 에스컬레이션한다.
 - 제품·Release Gate 확인자와 기술 배포 승인·실행자는 서로의 책임을 대신하지 않는다. 외부 승인 누락은 수동 승인이나 담당자 합의만으로 예외 처리하지 않는다.
 
-미정 역할의 확정 정본은 [Issue #230](https://github.com/AI-HealthCare-05/AH_05_04/issues/230)이다. 모든 결정 기한은 **최초 Production 배포 PR 생성 전**이며, 아래 항목과 각 대체 담당자가 확정되기 전까지 `미정/배포 차단` 상태를 유지한다.
+미정 역할의 결정과 확정 결과는 [PR #183](https://github.com/AI-HealthCare-05/AH_05_04/pull/183)의 본문과 리뷰에서 추적한다. 모든 결정 기한은 **PR #183 병합 전**이며, 아래 항목과 각 대체 담당자가 확정되기 전까지 PR을 병합하지 않고 `미정/배포 차단` 상태를 유지한다.
 
 | 미정 역할 | 결정 주체 | 선행조건 | 추적 위치 |
 | --- | --- | --- | --- |
-| 기술 배포 승인 | 권가빈과 Backend·DB·Security 담당 공동 합의 | Production 환경과 migration·secret·수용량 검토 권한 확인 | Issue #230 |
-| 배포 실행 | 권가빈과 Infrastructure·Backend 담당 공동 합의 | 실행 계정, 배포 Runbook과 migration 수행 역량 확인 | Issue #230 |
-| 배포 후 관제 총괄 | 권가빈과 각 도메인 담당 공동 합의 | 관제 도구·알림 채널 접근과 결과 취합 절차 확인 | Issue #230 |
-| 기술 Rollback 판단 | 권가빈과 Backend·DB·Security 담당 공동 합의 | 중단 임계값, DB forward-fix 기준과 연락 경로 확인 | Issue #230 |
-| Rollback 실행 | 권가빈과 Infrastructure·Backend 담당 공동 합의 | 실행 권한, backup·복구 검증, Worker drain 포함 Runbook 확인 | Issue #230 |
-| 각 역할의 대체 담당 | 해당 역할의 결정 주체 | 주 담당과 같은 권한·증빙·Runbook 수행 가능성 확인 | Issue #230 |
+| 기술 배포 승인 | 권가빈과 Backend·DB·Security 담당 공동 합의 | Production 환경과 migration·secret·수용량 검토 권한 확인 | PR #183 |
+| 배포 실행 | 권가빈과 Infrastructure·Backend 담당 공동 합의 | 실행 계정, 배포 Runbook과 migration 수행 역량 확인 | PR #183 |
+| 배포 후 관제 총괄 | 권가빈과 각 도메인 담당 공동 합의 | 관제 도구·알림 채널 접근과 결과 취합 절차 확인 | PR #183 |
+| 기술 Rollback 판단 | 권가빈과 Backend·DB·Security 담당 공동 합의 | 중단 임계값, DB forward-fix 기준과 연락 경로 확인 | PR #183 |
+| Rollback 실행 | 권가빈과 Infrastructure·Backend 담당 공동 합의 | 실행 권한, backup·복구 검증, Worker drain 포함 Runbook 확인 | PR #183 |
+| 각 역할의 대체 담당 | 해당 역할의 결정 주체 | 주 담당과 같은 권한·증빙·Runbook 수행 가능성 확인 | PR #183 |
 
 `미정/배포 차단`은 이 문서가 정의하는 governance 상태이며 저장소에 `production_enabled`라는 runtime flag가 구현되어 있다는 뜻이 아니다. 실제 공개 차단 설정인 `PUBLIC_TRACK_C=false`, `PUBLIC_TRACK_F=false`와 해제 조건은 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)를 따른다. 문서상의 상태를 runtime 차단 증빙으로 대신 사용하지 않는다.
 
