@@ -273,12 +273,19 @@ class ProviderCallObserver:
         context: ProviderCallContext | None,
         descriptor: ProviderCallDescriptor | None,
         call_logger: ProviderCallLogger,
+        observability_disabled: bool = False,
     ) -> None:
-        if (context is None) is not (descriptor is None):
+        if observability_disabled:
+            if context is not None or descriptor is not None:
+                raise ValueError("disabled observability must not include context or descriptor")
+        elif context is None and descriptor is None:
+            raise ValueError("active observability requires context and descriptor")
+        elif (context is None) is not (descriptor is None):
             raise ValueError("context and descriptor must be provided together")
         self._context = context
         self._descriptor = descriptor
         self._call_logger = call_logger
+        self._observability_disabled = observability_disabled
 
     def start(
         self,
@@ -286,8 +293,10 @@ class ProviderCallObserver:
         requested_model: str | None,
         provider_request_id: str | None = None,
     ) -> ProviderCallSpan | None:
-        if self._context is None or self._descriptor is None:
+        if self._observability_disabled:
             return None
+        if self._context is None or self._descriptor is None:
+            raise RuntimeError("active Provider observability is not configured")
         return self._call_logger.start(
             context=self._context,
             descriptor=self._descriptor,

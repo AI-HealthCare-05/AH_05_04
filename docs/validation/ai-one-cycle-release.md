@@ -93,6 +93,10 @@ dirty worktree 결과는 진단에는 사용할 수 있지만 `evidence_qualifie
 
 `local-live-full` 결과의 `execution=PASS`, `database_verification=PASS`, `cleanup=PASS`는 API·DB·정리 검증 성공만 뜻합니다. `provider_log_verification=MANUAL_REQUIRED`인 동안 실제 Provider 호출 증빙은 완료되지 않았으며 자동으로 `PASS`로 바꾸지 않습니다.
 
+실패 결과도 Live 실행 경계에 진입했다면 `execution_mode=LIVE`를 유지합니다. `database_verification`은 DB 검증 전 실패면 `NOT_RUN`, 검증 실패면 `FAIL`, 검증을 통과한 뒤 safety·cleanup에서 실패하면 `PASS`입니다. `provider_log_verification`은 수동 검토 가능한 trace가 있으면 `MANUAL_REQUIRED`, 없으면 `UNVERIFIED`이며 어느 경우에도 runner가 `PASS`를 기록하지 않습니다.
+
+`failure_evidence.api_reason`은 `DEADLINE_EXCEEDED` 또는 `PROVIDER_TIMEOUT`일 때만 존재합니다. 전자는 애플리케이션 전체 예산 소진, 후자는 Provider transport timeout을 뜻합니다. 임의의 API `details` 값은 증빙에 복사하지 않습니다.
+
 ## Issue #152 Local Provider 로그 증빙
 
 이 절차는 `local-live-full`에만 적용합니다. staging·production Live 검증이나 배포 설정을 변경하지 않습니다. runner는 모든 Backend 요청에 동일 `X-Validation-Run-Id`를 보내고 응답별 `X-Trace-Id`를 수집합니다. 로그인 후 Authorization을 추가해도 validation Header를 유지합니다.
@@ -118,6 +122,8 @@ chmod 600 /private/tmp/provider-call-log-<run-id>.jsonl
 각 줄을 독립 JSON으로 파싱해 `provider-call-log-v1`, 필수 operation, 동일 trace, started 1건·terminal 최대 1건, 금지정보 부재를 확인합니다. OCR 구조화가 꺼져 있으면 `OCR_STRUCTURING` 로그와 DB model/prompt가 모두 없어야 합니다. 켜져 있으면 로그와 두 DB 필드가 모두 있어야 합니다.
 
 증빙 Artifact는 `one-cycle-result.json`, `provider-call-log-<run-id>.jsonl`, `provider-log-review-<run-id>.json` 세 개이며 모두 같은 `run_id`를 사용합니다. 저장소에 commit하지 않고 승인된 접근 제한 위치에서 팀 보존 정책에 따라 삭제합니다. runner·DB·cleanup·지정 검토자의 수동 Provider 로그 판정이 모두 `PASS`일 때만 전체 증빙을 완료합니다.
+
+Issue #211에서 재사용하는 run `2d8d3356-d019-430f-a31b-34d5c2afaf71`은 추가 Live 호출 없이 처리합니다. `/private/tmp` Artifact는 승인된 접근 제한 위치가 정해진 뒤 이동하고 기존 SHA-256과 대조합니다. 지정된 사람 검토자만 `provider-log-review-v1` 판정 Artifact를 작성할 수 있으며, 승인 위치와 검토자가 없으면 이 단계는 미완료로 남깁니다.
 
 ## Issue #61 비민감 결과 양식
 

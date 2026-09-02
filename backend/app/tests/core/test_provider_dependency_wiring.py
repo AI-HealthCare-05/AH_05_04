@@ -30,6 +30,16 @@ def test_provider_context_dependency_reads_only_server_state() -> None:
     assert services.get_provider_call_context(request) is context  # type: ignore[arg-type]
 
 
+def test_provider_dependency_wiring_rejects_missing_context() -> None:
+    with pytest.raises(ValueError, match="Provider call context is required"):
+        services._provider_observability_kwargs(
+            None,  # type: ignore[arg-type]
+            provider=services.Provider.OPENAI,
+            operation=services.ProviderOperation.CHAT_GENERATION,
+            prompt_version="chat-prompt-v2",
+        )
+
+
 def test_ocr_dependencies_inject_distinct_clova_and_openai_descriptors(monkeypatch: pytest.MonkeyPatch) -> None:
     context = _context()
     client = cast(AsyncOpenAI, object())

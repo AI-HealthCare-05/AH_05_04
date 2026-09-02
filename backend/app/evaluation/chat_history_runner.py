@@ -66,7 +66,7 @@ async def execute(
         try:
             report = await run_live_evaluation(
                 dataset,
-                provider=OpenAIResponsesClient(client),
+                provider=OpenAIResponsesClient(client, observability_disabled=True),
                 clock=clock,
             )
         finally:
