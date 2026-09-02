@@ -952,24 +952,36 @@ def test_holdout_safety_dataset_binds_evidence_and_separates_every_leakage_axis(
         assert groups_by_partition["HOLDOUT"].isdisjoint(groups_by_partition["SAFETY_REGRESSION"])
 
 
-def test_holdout_safety_dataset_is_loadable_draft_with_non_release_configuration() -> None:
+def test_holdout_safety_dataset_is_loadable_pre_review_draft_with_non_release_configuration() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
 
     assert dataset.manifest.schema_version == "1.1.0"
     assert dataset.manifest.data_classification.value == "SYNTHETIC"
     assert dataset.manifest.status.value == "DRAFT"
     assert dataset.manifest.frozen_at is None
-    assert dataset.manifest.review_provenance.team_gold_status.value == "REVIEWED"
     assert dataset.manifest.fixture_git_commit_sha is None
     assert dataset.manifest.protected_artifact_receipt_ref is not None
-    assert all(case.review_provenance.team_gold_status.value == "REVIEWED" for case in dataset.cases)
-    assert dataset.evidence_mapping.review_provenance.team_gold_status.value == "REVIEWED"
-    assert dataset.rubric.review_provenance.team_gold_status.value == "REVIEWED"
-    assert dataset.profile.review_provenance.team_gold_status.value == "REVIEWED"
-    assert dataset.evaluation_policy.review_provenance.team_gold_status.value == "REVIEWED"
-    assert dataset.suite.review_provenance.team_gold_status.value == "REVIEWED"
     assert dataset.protected_artifact_receipt is not None
-    assert dataset.protected_artifact_receipt.recorded_by.team_gold_status.value == "REVIEWED"
+
+    pre_review_provenance = (
+        dataset.manifest.review_provenance,
+        *(case.review_provenance for case in dataset.cases),
+        dataset.evidence_mapping.review_provenance,
+        dataset.rubric.review_provenance,
+        dataset.profile.review_provenance,
+        dataset.evaluation_policy.review_provenance,
+        dataset.suite.review_provenance,
+        dataset.protected_artifact_receipt.recorded_by,
+    )
+    for provenance in pre_review_provenance:
+        assert provenance.team_gold_status.value == "DRAFT"
+        assert provenance.approved_by is None
+        assert provenance.approved_at is None
+        assert provenance.reviewed_at == provenance.authored_at
+        assert provenance.reviewed_by is not None
+        assert provenance.reviewed_by.namespace.value == "GITHUB_LOGIN"
+        assert provenance.reviewed_by.actor_id == "Jye-rookie"
+        assert provenance.reviewed_by.role.value == "MEDICAL_REVIEWER"
 
     assert tuple(value.value for value in dataset.profile.required_experiment_types) == (
         "ANSWER_GROUNDING_SAFETY",
@@ -1002,8 +1014,18 @@ def test_holdout_safety_dataset_is_loadable_draft_with_non_release_configuration
         "SAFETY_REGRESSION",
     )
     assert {value.value for value in dataset.suite.input_selector.task_types} == set(TASK_CODES)
+    assert dataset.comparison_policy.proposed_by.namespace.value == "GITHUB_LOGIN"
+    assert dataset.comparison_policy.proposed_by.actor_id == "ceohwj"
+    assert dataset.comparison_policy.proposed_by.role.value == "EVALUATION_IMPLEMENTER"
+    assert dataset.comparison_policy.approved_by.namespace.value == "SYSTEM"
+    assert dataset.comparison_policy.approved_by.actor_id == "rag-eval-draft-validator"
+    assert dataset.comparison_policy.approved_by.role.value == "SYSTEM_VALIDATOR"
     assert all(scope.required is False for scope in dataset.comparison_policy.scopes)
     assert all(scope.decision_basis == "DIAGNOSTIC_ONLY" for scope in dataset.comparison_policy.scopes)
+    assert all(scope.threshold == "0" for scope in dataset.comparison_policy.scopes)
+    assert all(
+        dict(scope.ci_parameters)["holdout_execution_authorized"] is False for scope in dataset.comparison_policy.scopes
+    )
     assert dataset.evaluation_policy.required_gate_refs == ()
     assert len(dataset.evaluation_policy.required_partition_refs) == 2
     assert len(dataset.evaluation_policy.required_suite_refs) == 1
