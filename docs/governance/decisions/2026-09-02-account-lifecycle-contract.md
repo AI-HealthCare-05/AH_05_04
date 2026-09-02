@@ -30,20 +30,22 @@
 
 `tokens_valid_after`는 이 두 문제를 모두 없앤다 — 갱신 시점 이전에 발급된 토큰인지 여부만 비교하면 되므로 access/refresh 구분이나 개별 jti 추적이 필요 없다.
 
-이 방식을 쓰려면 토큰 payload에 발급 시각(`iat`)이 있어야 하는데, 현재 `Token.__init__`은 `exp`/`jti`만 설정하고 `iat`를 넣지 않는다(`core/jwt/backends.py`의 `encode()`도 자동으로 추가해주지 않음) — 구현 PR에서 `set_exp`와 함께 `iat`를 payload에 명시적으로 추가해야 한다.
+이 방식을 쓰려면 토큰 payload에 발급 시각이 있어야 하는데, 현재 `Token.__init__`은 `exp`/`jti`만 설정하고 발급 시각을 넣지 않는다(`core/jwt/backends.py`의 `encode()`도 자동으로 추가해주지 않음) — 구현 PR에서 `set_exp`와 함께 표준 `iat`(초 단위, JWT 스펙 호환·로깅용)와 아래에서 정의하는 `iat_ms`(밀리초 단위, 무효화 판정 전용)를 payload에 명시적으로 추가해야 한다.
 
 **모든 인증된 요청의 재검증(REQ-USR-010, REQ-USR-020 AC-03 대응).** 현재 `dependencies/security.py`의 `get_request_user()`는 요청마다 `repository.get_user(user_id)`로 DB를 조회하지만 `is_active`/`account_status`/토큰 발급 시각을 확인하지 않는다 — 로그인 시점에만 `services/auth.py`의 `authenticate()`가 `is_active`를 검사하므로, 로그인 이후 로그아웃·탈퇴된 계정의 기존 access token은 만료 전까지 계속 통과한다. `get_request_user()`에 다음 두 체크를 추가하고, 실패 시 계약된 401을 반환하도록 구현 PR에서 반영한다.
 - `account_status == ACTIVE`(또는 동등하게 `is_active`) — 계정 자체가 살아있는지.
-- 토큰의 `iat` `>=` `user.tokens_valid_after` — 이 토큰이 마지막 전체 세션 무효화 이후에 발급됐는지.
+- 토큰의 `iat_ms` `>=` `user.tokens_valid_after`(밀리초 단위로 비교) — 이 토큰이 마지막 전체 세션 무효화 이후에 발급됐는지. 표준 `iat`가 아니라 `iat_ms`로 비교하는 이유는 아래 "`iat` 비교의 정밀도와 경계" 참고.
 
 REQ-USR-010("서버가 화면 표시 여부와 별개로 모든 접근 권한을 재검증한다")과 REQ-USR-020 AC-03("이미 종료된 session으로 API를 호출하면 계약된 401/재인증 응답이 반환된다")이 이 동작을 요구한다.
 
 **`GET /auth/token/refresh`도 같은 재검증을 거쳐야 한다.** 현재 `token_refresh`는 `jwt_service.refresh_jwt()`만 호출하는데, 이 메서드는 refresh token의 서명·만료만 검증하고 DB를 전혀 조회하지 않는다 — `get_request_user()`의 재검증 로직을 거치지 않는다. 이 상태로는 로그아웃 이후에도 이미 발급된 refresh token으로 새 access token을 계속 발급받아 `tokens_valid_after` 무효화를 완전히 우회할 수 있다. 구현 PR에서 `token_refresh`도 다음을 확인해야 한다.
 - `account_status == ACTIVE`
-- **refresh token 자체의 `iat`** `>=` `user.tokens_valid_after` — 새로 발급하는 access token의 `iat`가 아니라, 지금 제시된 refresh token이 원래 발급된 시각을 기준으로 판단한다. access token의 `iat`로 대신 검사하면 refresh할 때마다 시각이 갱신되어 무효화가 무력화된다.
+- **refresh token 자체의 `iat_ms`** `>=` `user.tokens_valid_after`(밀리초 단위로 비교) — 새로 발급하는 access token의 `iat_ms`가 아니라, 지금 제시된 refresh token이 원래 발급된 시각을 기준으로 판단한다. access token의 값으로 대신 검사하면 refresh할 때마다 시각이 갱신되어 무효화가 무력화된다.
 - 두 조건 중 하나라도 실패하면 `get_request_user()`와 동일한 401을 반환하고 새 access token을 발급하지 않는다.
 
-**`iat` 비교의 정밀도와 경계.** JWT `iat`는 초 단위 정수(Unix epoch, UTC 기준)이고 `tokens_valid_after`는 마이크로초까지 저장될 수 있는 DB timestamp다. 비교 전 `tokens_valid_after`를 초 단위로 내림(truncate)한 값과 정수 `iat`를 비교하며, 두 값이 같은 초이면 유효한 토큰으로 간주한다(`iat >= floor_to_second(tokens_valid_after)`). 이 방식은 무효화 시각과 같은 초 안에서 실제로는 무효화 이전에 발급된 토큰을 최대 1초 미만의 오차로 유효하다고 오판할 수 있다는 한계가 있다 — `iat`가 초 단위인 한 이 한 초 미만의 순서는 근본적으로 구분할 수 없으므로, 이 한계는 허용 오차로 받아들이고 구현 PR의 계약 테스트에 명시적으로 기록한다. 반대로 무효화 시각을 올림(ceil)하면 무효화 시각과 같은 초에 발급된 정상 신규 토큰을 오탐 거부할 수 있으므로 채택하지 않는다.
+**`iat` 비교의 정밀도와 경계 (Frontend/UX 리뷰 반영으로 개정, 2026-09-02).** 초안은 JWT 표준 `iat`(초 단위 정수, Unix epoch)만으로 비교했는데, `tokens_valid_after`는 마이크로초까지 저장되는 DB timestamp라 `iat`를 초 단위로 내림(truncate)해 비교하면 무효화 시각과 같은 초에 발급된 토큰의 실제 선후관계를 구분할 수 없었다. 초안은 이 한 초 미만의 오차를 "근본적으로 구분 불가능한 허용 오차"로 받아들였으나, Frontend/UX 리뷰에서 로그아웃·비밀번호 재설정·탈퇴 직후에는 같은 초 경계까지 포함해 확실히 차단돼야 한다는 지적을 받아 아래로 대체한다.
+
+토큰 payload에 표준 `iat`(초 단위)와 별도로 **`iat_ms`(Unix epoch milliseconds, UTC, 정수) 커스텀 클레임을 추가**하고, 무효화 판정은 표준 `iat`가 아니라 이 `iat_ms`로 수행한다: `iat_ms >= to_epoch_ms(tokens_valid_after)`(`tokens_valid_after`도 밀리초 단위로 내림해 비교). 발급 시각(`iat_ms` 생성)과 무효화 기준시각(`tokens_valid_after` 갱신)이 모두 같은 Backend 서버 시계에서 나오므로 서버 간 clock skew가 새로 생기지 않으며, 밀리초 정밀도면 실질적으로 동일 시각 발급이 발생하지 않아 같은 초 경계 문제가 해소된다. 표준 `iat`는 JWT 스펙 호환과 로깅 용도로 계속 유지하되 무효화 판정에는 사용하지 않는다.
 
 ## 결정 2: 로그아웃 — `tokens_valid_after` 갱신 + refresh 쿠키 종료
 
@@ -62,6 +64,7 @@ REQ-USR-009 설계메모는 "본인 확인 방식과 기존 세션 무효화 범
 - `id`, `user_id`, `token_hash`(원문 미저장 — 재설정 링크의 원본 토큰 값은 DB에 저장하지 않고 해시만 저장해, DB 유출 시에도 토큰이 재사용되지 않도록 한다), `created_at`, `expires_at`, `used_at`(nullable)
 - 존재하지 않는 계정 요청도 존재하는 계정과 동일한 응답 형태·유사 처리시간을 반환한다(계정 존재 여부 비노출).
 - 재설정 성공 시 해당 사용자의 `tokens_valid_after`를 `now()`로 갱신해 기존 세션을 전부 무효화한다(결정 1 재사용) — 이것이 REQ-USR-009가 말하는 "기존 세션 무효화 범위"의 확정이다: 재설정 시점 이전에 발급된 모든 access/refresh token을 무효화하며, 재설정을 요청한 기기만 예외로 두지 않는다.
+- **재설정 성공 후 인증 상태(Frontend/UX 리뷰 반영, 2026-09-02): 재로그인을 요구한다.** 재설정 성공 응답은 새 access/refresh token을 발급하지 않고 성공 안내만 반환하며, Frontend는 로그인 화면으로 이동시킨다. 의료정보를 다루는 서비스 특성상 재설정 직후 자동 세션 발급으로 매끄러운 진입을 주는 것보다, 사용자가 새 비밀번호로 다시 로그인해 본인이 그 비밀번호를 정확히 인지하고 있는지 즉시 재확인하게 하는 쪽을 우선한다. 재설정 성공 응답 body에는 토큰 등 세션 관련 정보를 포함하지 않는다.
 - rate limit 기준(횟수/기간)은 이 Decision 범위에서 확정하지 않고 구현 PR에서 Backend/Security 리뷰로 정한다.
 - **재설정 성공 자체(토큰 검증 후 새 비밀번호 저장)에는 anti-enumeration 고려가 필요 없다** — 이 시점의 인증 요소는 계정 존재 여부가 아니라 `password_reset_token`이므로, 유효하지 않은/만료된/사용된 토큰은 그냥 실패 응답으로 처리한다.
 - **토큰 소비는 원자적 일회성 소비로 구현한다.** 토큰 소비(`used_at` 조건부 갱신), 비밀번호 변경, `tokens_valid_after` 갱신을 단일 transaction에서 처리하며, 토큰 소비는 결정 4의 조건부 UPDATE와 같은 패턴(`UPDATE password_reset_token SET used_at = now() WHERE id = ? AND used_at IS NULL AND expires_at > now()`)으로 구현한다. 영향받은 row가 0건이면 이미 사용됐거나 만료된 토큰으로 간주해 실패 응답을 반환하고 비밀번호를 변경하지 않는다 — read-then-write로 구현하면 같은 토큰의 동시 요청이 둘 다 성공해 비밀번호가 두 번 바뀌거나 경쟁 상태로 이어질 수 있다.
