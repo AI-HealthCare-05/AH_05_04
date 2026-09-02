@@ -107,6 +107,20 @@ class AsyncJobRepository:
             return None
         return (event.domain_type, event.domain_id)
 
+    async def get_latest_job_id_for_domain(self, *, domain_type: DomainType, domain_id: UUID) -> UUID | None:
+        """`get_interim_domain_reference()`의 역방향입니다. rediscovery(#148)는 도메인 row(예:
+        `ocr_job.id`)로부터 `job_id`를 찾아야 하는데, 그 도메인 row에는 아직 `ai_job_id`가 없어서
+        (위 메서드와 같은 이유) 접수 시점에 채운 `outbox_event.domain_type`/`domain_id`로 대신
+        역조회합니다. 같은 한계(Outbox 30일 보존 이후에는 조회 불가)가 적용됩니다.
+        """
+        result = await self.session.execute(
+            select(OutboxEvent.job_id)
+            .where(OutboxEvent.domain_type == domain_type, OutboxEvent.domain_id == domain_id)
+            .order_by(OutboxEvent.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def create_job(
         self,
         *,

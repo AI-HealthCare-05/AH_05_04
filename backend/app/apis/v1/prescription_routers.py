@@ -5,11 +5,13 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse as Response
 
 from app.dependencies.security import get_request_user
-from app.dependencies.services import get_chat_service, get_prescription_service
+from app.dependencies.services import get_chat_service, get_job_status_service, get_prescription_service
 from app.dtos.chat import ChatSessionResponse
+from app.dtos.jobs import JobStatusResponse
 from app.dtos.prescriptions import PrescriptionResponse
 from app.models.users import User
 from app.services.chat import ChatService
+from app.services.job_status import JobStatusService
 from app.services.prescriptions import PrescriptionService
 
 prescription_router = APIRouter(prefix="/prescriptions", tags=["prescriptions"])
@@ -32,6 +34,28 @@ async def get_prescription_detail(
     return Response(
         content=PrescriptionResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
+    )
+
+
+@prescription_router.get(
+    "/{prescription_id}/guides",
+    response_model=JobStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def rediscover_guide_job(
+    prescription_id: UUID,
+    user: Annotated[User, Depends(get_request_user)],
+    job_status_service: Annotated[JobStatusService, Depends(get_job_status_service)],
+) -> Response:
+    # async-job-v1.md "공통 화면 재접속 복구": 화면 재진입 시 이 처방의 가장 최근 Guide Job으로
+    # polling을 재개합니다. Cache-Control: no-store는 NoStoreMiddleware가 일괄 적용합니다.
+    result = await job_status_service.rediscover_guide_job(user=user, prescription_id=prescription_id)
+
+    headers = {"Retry-After": str(result.retry_after_seconds)} if result.retry_after_seconds is not None else None
+    return Response(
+        content=JobStatusResponse(data=result.data).model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+        headers=headers,
     )
 
 

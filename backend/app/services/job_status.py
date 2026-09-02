@@ -101,6 +101,40 @@ class JobStatusService:
         )
         return JobStatusResult(data=data, retry_after_seconds=retry_after_seconds)
 
+    async def rediscover_ocr_job(self, *, user: User, document_id: UUID) -> JobStatusResult:
+        """async-job-v1.md "공통 화면 재접속 복구": 화면을 재진입해도 새 Job을 접수하지 않고
+        가장 최근 Job의 polling을 재개할 수 있도록, 문서의 가장 최근 OCR Job을 찾아 그 Job의
+        상태를 그대로 돌려줍니다(`get_job_status`와 동일한 응답)."""
+        ocr_job = await self.ocr_repository.get_latest_job_for_document_owned(document_id=document_id, user_id=user.id)
+        if ocr_job is None:
+            raise _job_not_found_error()
+        job_id = await self.job_repository.get_latest_job_id_for_domain(
+            domain_type=DomainType.OCR_JOB, domain_id=ocr_job.id
+        )
+        if job_id is None:
+            raise _job_not_found_error()
+        return await self.get_job_status(user=user, job_id=job_id)
+
+    async def rediscover_guide_job(self, *, user: User, prescription_id: UUID) -> JobStatusResult:
+        """`rediscover_ocr_job`과 같은 목적으로, 처방의 가장 최근 Guide Job을 찾아 돌려줍니다.
+
+        prescription_id당 non-terminal Guide Job 1개 제약(`409 GUIDE_JOB_IN_PROGRESS`)은
+        Guide 접수(`POST /guides`)가 `accept_job()`에 실제로 연결될 때 함께 구현합니다 — 팀
+        결정으로 그 연결 자체가 Publisher·Worker·Handler 준비 전까지 보류돼 있어(#148), 이
+        rediscovery만 먼저 준비해둡니다.
+        """
+        guide = await self.guide_repository.get_latest_for_prescription_owned(
+            prescription_id=prescription_id, user_id=user.id
+        )
+        if guide is None:
+            raise _job_not_found_error()
+        job_id = await self.job_repository.get_latest_job_id_for_domain(
+            domain_type=DomainType.GUIDE, domain_id=guide.id
+        )
+        if job_id is None:
+            raise _job_not_found_error()
+        return await self.get_job_status(user=user, job_id=job_id)
+
     async def _resolve_owned_result_url(
         self,
         *,

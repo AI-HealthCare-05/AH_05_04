@@ -78,6 +78,24 @@ class OcrRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_latest_job_for_document_owned(self, *, document_id: UUID, user_id: UUID) -> OcrJob | None:
+        """async-job-v1.md "공통 화면 재접속 복구": 화면 재진입 시 새 Job을 만들지 않고 기존 Job의
+        polling을 재개하기 위해, 이 문서의 가장 최근 OCR Job 하나만 돌려줍니다. `id`는 무작위 UUID라
+        같은 transaction 안에서 `created_at`이 동일할 때(Postgres `now()`는 transaction 시작
+        시각) 정렬 기준이 될 수 없으므로, `get_latest_completed_job`과 같이 `created_sequence`
+        (`idx_ocr_document_created_seq`)로 타이브레이크합니다."""
+        result = await self.session.execute(
+            select(OcrJob)
+            .join(MedicalDocument, MedicalDocument.id == OcrJob.document_id)
+            .where(
+                OcrJob.document_id == document_id,
+                owned_by_self(MedicalDocument.profile_id, user_id),
+            )
+            .order_by(OcrJob.created_at.desc(), OcrJob.created_sequence.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_latest_completed_job(self, *, document: MedicalDocument) -> OcrJob | None:
         result = await self.session.execute(
             select(OcrJob)

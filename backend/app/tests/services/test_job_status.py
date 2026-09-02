@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
 from app.models.async_jobs import _FAILURE_CODE_VALUES, AiJobStatus, AiJobType, DomainType
+from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob, OcrStatus
+from app.models.prescriptions import Prescription
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.async_job_repository import AsyncJobRepository
@@ -107,8 +109,48 @@ async def _accept_ocr_job(session: AsyncSession, *, user: User, document: Medica
         idempotency_key=f"test-job-status-{uuid4().hex[:20]}",
         fingerprint={"job_type": "OCR", "document_id": str(document.id)},
         create_domain_placeholder=create_domain_placeholder,
+        trace_id="a" * 32,
     )
     return result.job.id
+
+
+async def _create_confirmed_prescription(
+    session: AsyncSession, *, user: User, document: MedicalDocument
+) -> Prescription:
+    profile = await session.scalar(
+        select(Profile).where(Profile.user_id == user.id, Profile.profile_type == ProfileType.SELF)
+    )
+    assert profile is not None
+    ocr_job = OcrJob(document_id=document.id, ocr_status=OcrStatus.COMPLETED, completed_at=datetime.now(UTC))
+    session.add(ocr_job)
+    await session.flush()
+    prescription = Prescription(
+        document_id=document.id,
+        source_ocr_job_id=ocr_job.id,
+        profile_id=profile.id,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+    )
+    session.add(prescription)
+    await session.flush()
+    return prescription
+
+
+async def _accept_guide_job(session: AsyncSession, *, user: User, prescription: Prescription) -> tuple[UUID, UUID]:
+    """Guide 접수는 아직 `accept_job()`에 연결되지 않아(팀 결정, #148) repository를 직접 조합합니다.
+    반환값은 (job_id, guide_id)."""
+    guide = Guide(
+        prescription_id=prescription.id,
+        profile_id=prescription.profile_id,
+        generation_status=GuideGenerationStatus.GENERATING,
+    )
+    session.add(guide)
+    await session.flush()
+
+    repo = AsyncJobRepository(session)
+    job = await repo.create_job(user_id=user.id, job_type=AiJobType.GUIDE, prescription_version_id=None)
+    await repo.create_outbox_event(job=job, trace_id="a" * 32, domain_type=DomainType.GUIDE, domain_id=guide.id)
+    return job.id, guide.id
 
 
 async def test_get_job_status_returns_data_for_owner_pending_job(db_session: AsyncSession) -> None:
@@ -153,7 +195,7 @@ async def test_get_job_status_rejects_when_domain_result_profile_mismatch(db_ses
 
     repo = AsyncJobRepository(db_session)
     job = await repo.create_job(user_id=job_owner.id, job_type=AiJobType.OCR, prescription_version_id=None)
-    await repo.create_outbox_event(job=job, domain_type=DomainType.OCR_JOB, domain_id=ocr_job.id)
+    await repo.create_outbox_event(job=job, trace_id="a" * 32, domain_type=DomainType.OCR_JOB, domain_id=ocr_job.id)
 
     with pytest.raises(ApiError) as exc_info:
         await _service(db_session).get_job_status(user=job_owner, job_id=job.id)
@@ -217,3 +259,67 @@ async def test_get_job_status_returns_safe_error_for_failed_job(db_session: Asyn
     assert result.data.error is not None
     assert result.data.error.code == "TIMEOUT"
     assert "내부 원문 오류" not in result.data.error.message
+
+
+async def test_rediscover_ocr_job_returns_latest_job_status(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session, email=f"js-redi-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    job_id = await _accept_ocr_job(db_session, user=user, document=document)
+
+    result = await _service(db_session).rediscover_ocr_job(user=user, document_id=document.id)
+
+    assert result.data.job_id == job_id
+    assert result.data.domain_type == DomainType.OCR_JOB
+
+
+async def test_rediscover_ocr_job_returns_most_recent_when_multiple(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session, email=f"js-redi2-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    await _accept_ocr_job(db_session, user=user, document=document)
+    latest_job_id = await _accept_ocr_job(db_session, user=user, document=document)
+
+    result = await _service(db_session).rediscover_ocr_job(user=user, document_id=document.id)
+
+    assert result.data.job_id == latest_job_id
+
+
+async def test_rediscover_ocr_job_raises_404_when_no_job_exists(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session, email=f"js-redi3-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+
+    with pytest.raises(ApiError) as exc_info:
+        await _service(db_session).rediscover_ocr_job(user=user, document_id=document.id)
+    assert exc_info.value.status_code == 404
+
+
+async def test_rediscover_ocr_job_rejects_other_users_document(db_session: AsyncSession) -> None:
+    owner = await _create_user(db_session, email=f"js-redi4-{uuid4().hex[:10]}@test.local")
+    other = await _create_user(db_session, email=f"js-redi5-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=owner)
+    await _accept_ocr_job(db_session, user=owner, document=document)
+
+    with pytest.raises(ApiError) as exc_info:
+        await _service(db_session).rediscover_ocr_job(user=other, document_id=document.id)
+    assert exc_info.value.status_code == 404
+
+
+async def test_rediscover_guide_job_returns_latest_job_status(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session, email=f"js-redig-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    prescription = await _create_confirmed_prescription(db_session, user=user, document=document)
+    job_id, _ = await _accept_guide_job(db_session, user=user, prescription=prescription)
+
+    result = await _service(db_session).rediscover_guide_job(user=user, prescription_id=prescription.id)
+
+    assert result.data.job_id == job_id
+    assert result.data.domain_type == DomainType.GUIDE
+
+
+async def test_rediscover_guide_job_raises_404_when_no_guide_exists(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session, email=f"js-redig2-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    prescription = await _create_confirmed_prescription(db_session, user=user, document=document)
+
+    with pytest.raises(ApiError) as exc_info:
+        await _service(db_session).rediscover_guide_job(user=user, prescription_id=prescription.id)
+    assert exc_info.value.status_code == 404
