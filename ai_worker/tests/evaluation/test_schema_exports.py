@@ -12,7 +12,7 @@ from ai_worker.tasks.evaluation.schema_exports import (
     schema_documents,
     write_schema_documents,
 )
-from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRY
+from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRIES, SCHEMA_REGISTRY
 from ai_worker.tasks.evaluation.schemas.artifacts import RESULT_ARTIFACT_MODELS
 
 
@@ -108,6 +108,54 @@ def test_schema_registry_is_the_exact_unique_eighteen_file_contract() -> None:
     assert len(paths) == len(set(paths)) == 18
     assert len(schema_ids) == len(set(schema_ids)) == 18
     assert set(paths) == set(schema_documents())
+
+
+def test_schema_set_1_1_is_complete_and_preserves_member_versions() -> None:
+    registry = SCHEMA_REGISTRIES["1.1.0"]
+    documents = schema_documents("1.1.0")
+
+    assert len(registry) == len({entry.relative_path for entry in registry}) == 18
+    assert set(documents) == {entry.relative_path for entry in registry}
+    versions = {entry.schema_id: entry.member_version for entry in registry}
+    assert versions["rag-eval.case"] == "1.1.0"
+    assert versions["rag-eval.dataset-manifest"] == "1.1.0"
+    assert set(versions.values()) == {"1.0.0", "1.1.0"}
+
+
+def test_schema_set_1_1_reuses_unchanged_members_byte_for_byte() -> None:
+    version_1 = schema_documents()
+    version_1_1 = schema_documents("1.1.0")
+    changed = {
+        "authoring/rag-eval.case.schema.json",
+        "authoring/rag-eval.dataset-manifest.schema.json",
+    }
+
+    for path in set(version_1) - changed:
+        assert canonical_json_bytes(version_1_1[path]) == canonical_json_bytes(version_1[path])
+
+
+def test_schema_set_1_1_exports_rule_cardinality_and_fixture_consistency_conditions() -> None:
+    case_schema = cast(
+        dict[str, Any],
+        schema_documents("1.1.0")["authoring/rag-eval.case.schema.json"],
+    )
+    definitions = cast(dict[str, Any], case_schema["$defs"])
+
+    expected = cast(dict[str, Any], definitions["SafetyExpectedV11"])
+    assert len(expected["oneOf"]) == 3
+    assert {
+        branch["properties"]["expected_rule_outcome"]["const"]: branch["properties"]["expected_rule_ids"]
+        for branch in expected["oneOf"]
+    } == {
+        "MATCHED_RULES": {"minItems": 1},
+        "NO_MATCH": {"maxItems": 0},
+        "NOT_INVOKED": {"maxItems": 0},
+    }
+
+    runtime = cast(dict[str, Any], definitions["RuntimeFixtureV11"])
+    assert len(runtime["oneOf"]) == 2
+    safety_case = cast(dict[str, Any], definitions["SafetyCaseV11"])
+    assert len(safety_case["allOf"]) >= 6
 
 
 def test_array_minimums_and_synthetic_tokens_use_draft_2020_keywords() -> None:
@@ -347,3 +395,10 @@ def test_committed_schema_files_match_fresh_canonical_export_byte_for_byte(tmp_p
     committed_root = Path("evals/schemas/1.0.0")
     assert _files(tmp_path) == _files(committed_root)
     assert all(content == canonical_json_bytes(schema_documents()[path]) for path, content in _files(tmp_path).items())
+
+
+def test_committed_schema_set_1_1_matches_fresh_canonical_export_byte_for_byte(tmp_path: Path) -> None:
+    write_schema_documents(tmp_path, "1.1.0")
+
+    committed_root = Path("evals/schemas/1.1.0")
+    assert _files(tmp_path) == _files(committed_root)

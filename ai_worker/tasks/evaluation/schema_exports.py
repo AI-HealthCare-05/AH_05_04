@@ -7,7 +7,12 @@ from typing import cast
 from pydantic import TypeAdapter
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
-from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRY, SchemaRegistryEntry, SchemaSource
+from ai_worker.tasks.evaluation.schema_registry import (
+    SCHEMA_REGISTRIES,
+    SCHEMA_VERSION,
+    SchemaRegistryEntry,
+    SchemaSource,
+)
 
 _DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 
@@ -619,7 +624,12 @@ def _add_authoring_role_conditions(schema_id: str, document: dict[str, JsonValue
     if not isinstance(definitions, dict):
         raise TypeError("case schema definitions must be an object")
     roles = ["PRODUCT_SAFETY_REVIEWER", "MEDICAL_REVIEWER"]
-    for definition_name in ("SafetyCase", "EndToEndRagCase"):
+    definition_names = [
+        name for name in definitions if name in {"SafetyCase", "EndToEndRagCase", "SafetyCaseV11", "EndToEndRagCaseV11"}
+    ]
+    if len(definition_names) != 2:
+        raise TypeError("case schema must contain Safety and End-to-End definitions")
+    for definition_name in definition_names:
         definition = definitions.get(definition_name)
         if not isinstance(definition, dict):
             raise TypeError(f"{definition_name} schema must be an object")
@@ -686,6 +696,133 @@ def _add_evidence_target_condition(document: dict[str, JsonValue]) -> None:
     )
 
 
+def _add_v1_1_rule_cardinality(definitions: dict[str, JsonValue]) -> None:
+    branches: list[JsonValue] = [
+        {
+            "properties": {
+                "expected_rule_outcome": {"const": "MATCHED_RULES"},
+                "expected_rule_ids": {"minItems": 1},
+                "expected_rule_not_invoked_reason": {"type": "null"},
+            },
+            "required": ["expected_rule_outcome", "expected_rule_ids", "expected_rule_not_invoked_reason"],
+        },
+        {
+            "properties": {
+                "expected_rule_outcome": {"const": "NO_MATCH"},
+                "expected_rule_ids": {"maxItems": 0},
+                "expected_rule_not_invoked_reason": {"type": "null"},
+            },
+            "required": ["expected_rule_outcome", "expected_rule_ids", "expected_rule_not_invoked_reason"],
+        },
+        {
+            "properties": {
+                "expected_rule_outcome": {"const": "NOT_INVOKED"},
+                "expected_rule_ids": {"maxItems": 0},
+                "expected_rule_not_invoked_reason": {"not": {"type": "null"}},
+            },
+            "required": ["expected_rule_outcome", "expected_rule_ids", "expected_rule_not_invoked_reason"],
+        },
+    ]
+    for definition_name in ("SafetyExpectedV11", "EndToEndRagExpectedV11"):
+        expected = definitions.get(definition_name)
+        if not isinstance(expected, dict):
+            raise TypeError(f"{definition_name} schema must be an object")
+        expected["oneOf"] = branches
+
+
+def _nested_case_condition(
+    *,
+    expected_if: dict[str, JsonValue],
+    expected_then: dict[str, JsonValue] | None = None,
+    runtime_then: dict[str, JsonValue] | None = None,
+) -> dict[str, JsonValue]:
+    then_properties: dict[str, JsonValue] = {}
+    if expected_then is not None:
+        then_properties["expected"] = {"properties": expected_then}
+    if runtime_then is not None:
+        then_properties["context"] = {
+            "properties": {"runtime_fixture": {"properties": runtime_then}},
+            "required": ["runtime_fixture"],
+        }
+    return {
+        "if": {
+            "properties": {"expected": {"properties": expected_if, "required": list(expected_if)}},
+            "required": ["expected"],
+        },
+        "then": {"properties": then_properties},
+    }
+
+
+def _add_v1_1_case_context_conditions(definitions: dict[str, JsonValue]) -> None:
+    runtime = definitions.get("RuntimeFixtureV11")
+    if not isinstance(runtime, dict):
+        raise TypeError("RuntimeFixtureV11 schema must be an object")
+    runtime["oneOf"] = [
+        {
+            "properties": {
+                "source_eligibility_status": {"const": "ELIGIBLE"},
+                "bundle_eligibility_status": {"not": {"const": "SOURCE_INELIGIBLE"}},
+            },
+            "required": ["source_eligibility_status", "bundle_eligibility_status"],
+        },
+        {
+            "properties": {
+                "source_eligibility_status": {"not": {"const": "ELIGIBLE"}},
+                "bundle_eligibility_status": {"const": "SOURCE_INELIGIBLE"},
+            },
+            "required": ["source_eligibility_status", "bundle_eligibility_status"],
+        },
+    ]
+    conditions = [
+        _nested_case_condition(
+            expected_if={"expected_rule_outcome": {"const": "NO_MATCH"}},
+            runtime_then={
+                "source_eligibility_status": {"const": "ELIGIBLE"},
+                "bundle_eligibility_status": {"const": "ELIGIBLE"},
+                "dependency_fault": {"const": "NONE"},
+            },
+        ),
+        _nested_case_condition(
+            expected_if={"expected_rule_not_invoked_reason": {"const": "SAFETY_ROUTED"}},
+            expected_then={
+                "expected_safety_disposition": {"not": {"const": "NORMAL"}},
+                "expected_provider_invocation": {"const": False},
+                "expected_retrieval_invocation": {"const": False},
+            },
+        ),
+        _nested_case_condition(
+            expected_if={"expected_rule_not_invoked_reason": {"const": "SOURCE_INELIGIBLE"}},
+            runtime_then={"source_eligibility_status": {"not": {"const": "ELIGIBLE"}}},
+        ),
+        _nested_case_condition(
+            expected_if={"expected_rule_not_invoked_reason": {"const": "BUNDLE_INELIGIBLE"}},
+            runtime_then={"bundle_eligibility_status": {"not": {"const": "ELIGIBLE"}}},
+        ),
+        _nested_case_condition(
+            expected_if={"expected_rule_not_invoked_reason": {"const": "DEPENDENCY_FAILURE"}},
+            runtime_then={"dependency_fault": {"not": {"const": "NONE"}}},
+        ),
+    ]
+    for definition_name in ("SafetyCaseV11", "EndToEndRagCaseV11"):
+        case = definitions.get(definition_name)
+        if not isinstance(case, dict):
+            raise TypeError(f"{definition_name} schema must be an object")
+        all_of = case.setdefault("allOf", [])
+        if not isinstance(all_of, list):
+            raise TypeError(f"{definition_name} allOf must be an array")
+        all_of.extend(conditions)
+
+
+def _add_v1_1_authoring_conditions(entry: SchemaRegistryEntry, document: dict[str, JsonValue]) -> None:
+    if entry.schema_id != "rag-eval.case" or entry.member_version != "1.1.0":
+        return
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        raise TypeError("case schema definitions must be an object")
+    _add_v1_1_rule_cardinality(definitions)
+    _add_v1_1_case_context_conditions(definitions)
+
+
 def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     schema_id = entry.schema_id
     document = _model_schema(entry.source)
@@ -699,6 +836,7 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     _add_execution_decision_conditions(document)
     _add_review_provenance_conditions(document)
     _add_authoring_role_conditions(schema_id, document)
+    _add_v1_1_authoring_conditions(entry, document)
     if schema_id == "rag-eval.dataset-manifest":
         _add_dataset_source_provenance_condition(document)
     if schema_id == "rag-eval.evidence-mapping-manifest":
@@ -718,12 +856,13 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     return normalize_schema_document(document)
 
 
-def schema_documents() -> dict[str, dict[str, JsonValue]]:
-    return dict(sorted((entry.relative_path, _schema_document(entry)) for entry in SCHEMA_REGISTRY))
+def schema_documents(schema_set_version: str = SCHEMA_VERSION) -> dict[str, dict[str, JsonValue]]:
+    registry = SCHEMA_REGISTRIES[schema_set_version]
+    return dict(sorted((entry.relative_path, _schema_document(entry)) for entry in registry))
 
 
-def write_schema_documents(root: Path) -> None:
-    documents = schema_documents()
+def write_schema_documents(root: Path, schema_set_version: str = SCHEMA_VERSION) -> None:
+    documents = schema_documents(schema_set_version)
     existing = {path.relative_to(root).as_posix() for path in root.rglob("*.json")} if root.exists() else set()
     stale = existing - set(documents)
     if stale:
@@ -737,12 +876,13 @@ def write_schema_documents(root: Path) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export deterministic RAG evaluation JSON Schemas")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--schema-set-version", choices=tuple(SCHEMA_REGISTRIES), default=SCHEMA_VERSION)
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
-    write_schema_documents(args.output)
+    write_schema_documents(args.output, args.schema_set_version)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, GateResult, MetricResults, SuiteResults
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest, EvidenceMappingManifest
+from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import EVALUATION_CASE_ADAPTER_V1_1
 from ai_worker.tests.evaluation.test_artifact_schemas import (
     _comparison_payload,
     _gate_payload,
@@ -46,6 +47,54 @@ def _assert_external_runtime_parity(
     assert external_errors
     with pytest.raises(ValidationError):
         runtime_model.model_validate(payload)
+
+
+def _v1_1_safety_case() -> dict[str, Any]:
+    payload = _json("retrieval/cases/dev-foundation-v1/rag-dev-safety-001.json")
+    payload["schema_version"] = "1.1.0"
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="ELIGIBLE",
+        bundle_eligibility_status="ELIGIBLE",
+        dependency_fault="NONE",
+    )
+    payload["expected"].update(
+        expected_rule_outcome="MATCHED_RULES",
+        expected_rule_not_invoked_reason=None,
+    )
+    return payload
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "matched-without-rules",
+        "no-match-with-rules",
+        "not-invoked-without-reason",
+        "source-axis-contradiction",
+        "reason-context-mismatch",
+    ],
+)
+def test_external_v1_1_case_schema_matches_runtime_rule_and_fixture_invariants(mutation: str) -> None:
+    payload = _v1_1_safety_case()
+    if mutation == "matched-without-rules":
+        payload["expected"]["expected_rule_ids"] = []
+    elif mutation == "no-match-with-rules":
+        payload["expected"]["expected_rule_outcome"] = "NO_MATCH"
+    elif mutation == "not-invoked-without-reason":
+        payload["expected"].update(expected_rule_outcome="NOT_INVOKED", expected_rule_ids=[])
+    elif mutation == "source-axis-contradiction":
+        payload["context"]["runtime_fixture"]["source_eligibility_status"] = "EXPIRED"
+    else:
+        payload["expected"].update(
+            expected_rule_outcome="NOT_INVOKED",
+            expected_rule_ids=[],
+            expected_rule_not_invoked_reason="DEPENDENCY_FAILURE",
+        )
+
+    schema = _json("schemas/1.1.0/authoring/rag-eval.case.schema.json")
+    assert list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 
 
 @pytest.mark.parametrize(

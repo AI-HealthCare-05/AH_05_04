@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel, TypeAdapter
@@ -12,6 +13,10 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
     DatasetManifest,
     EvidenceMappingManifest,
     ProtectedArtifactReceipt,
+)
+from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
+    EVALUATION_CASE_ADAPTER_V1_1,
+    DatasetManifestV11,
 )
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
@@ -29,6 +34,7 @@ class SchemaRegistryEntry:
     relative_path: str
     schema_id: str
     source: SchemaSource
+    member_version: str = SCHEMA_VERSION
 
     @property
     def logical_name(self) -> str:
@@ -36,7 +42,7 @@ class SchemaRegistryEntry:
 
     @property
     def urn(self) -> str:
-        return f"urn:ah05:rag-eval:schema:{self.logical_name}:{SCHEMA_VERSION}"
+        return f"urn:ah05:rag-eval:schema:{self.logical_name}:{self.member_version}"
 
 
 SCHEMA_REGISTRY: tuple[SchemaRegistryEntry, ...] = (
@@ -85,3 +91,31 @@ if (
     or len({entry.schema_id for entry in SCHEMA_REGISTRY}) != 18
 ):
     raise RuntimeError("RAG evaluation schema registry must contain exactly 18 unique entries")
+
+
+SCHEMA_REGISTRY_V1_1: tuple[SchemaRegistryEntry, ...] = (
+    SchemaRegistryEntry(
+        "authoring/rag-eval.case.schema.json",
+        "rag-eval.case",
+        EVALUATION_CASE_ADAPTER_V1_1,
+        "1.1.0",
+    ),
+    SchemaRegistryEntry(
+        "authoring/rag-eval.dataset-manifest.schema.json",
+        "rag-eval.dataset-manifest",
+        DatasetManifestV11,
+        "1.1.0",
+    ),
+    *SCHEMA_REGISTRY[2:],
+)
+
+SCHEMA_REGISTRIES = MappingProxyType(
+    {
+        "1.0.0": SCHEMA_REGISTRY,
+        "1.1.0": SCHEMA_REGISTRY_V1_1,
+    }
+)
+
+for schema_set_version, registry in SCHEMA_REGISTRIES.items():
+    if len({entry.relative_path for entry in registry}) != 18 or len({entry.schema_id for entry in registry}) != 18:
+        raise RuntimeError(f"RAG evaluation schema registry {schema_set_version} must contain 18 unique entries")
