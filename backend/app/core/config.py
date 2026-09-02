@@ -18,6 +18,16 @@ class Env(StrEnum):
     PRODUCTION = "production"
 
 
+# IDEMPOTENCY_HMAC_KEY 필드 기본값과 envs/example.prod.env에 공개된 예시 값입니다. 둘 다 저장소에
+# 노출돼 있어 실제 비밀값이 아니므로, non-local 환경 기동 시 그대로 쓰이면 거부해야 합니다.
+_IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS = frozenset(
+    {
+        "not-configured-idempotency-hmac-key",
+        "replace-with-random-production-idempotency-hmac-key-at-least-32-characters",
+    }
+)
+
+
 def get_default_timezone() -> tzinfo:
     # 로컬 Windows 개발 환경에 tzdata가 없어도 Asia/Seoul 기준 시간을 쓸 수 있게 하는 fallback입니다
     # (CI는 ubuntu-latest, macOS 개발 환경은 tzdata가 이미 있어서 영향 없음).
@@ -103,6 +113,11 @@ class Config(BaseSettings):
     # Idempotency-Key를 서로 다른 HMAC으로 계산하면 기존 레코드를 찾지 못해 중복 Job·Outbox가 생깁니다.
     # 그래서 uuid4() 같은 프로세스별 난수 대신 안정적인 placeholder 문자열을 쓰고, production 기동은
     # 아래 validator가 이 placeholder·빈 값으로 시작하지 못하게 막습니다.
+    #
+    # 운영 주의: 이 키를 교체하면 같은 원문 Idempotency-Key라도 새 digest가 계산되어, 교체 이전
+    # 레코드에 대한 재시도가 중복으로 인식되지 못하고 새 Job·Outbox가 생길 수 있습니다(현재는
+    # active key 하나로만 조회하며 key_hmac_version별 조회는 지원하지 않음). 그래서 IDEMPOTENCY_RECORD_TTL_DAYS
+    # (아래, 기본 7일)이 완전히 지난 뒤에만 이 키를 교체해야 합니다. multi-version 조회 지원은 #235에서 다룹니다.
     IDEMPOTENCY_HMAC_KEY: str = "not-configured-idempotency-hmac-key"
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
@@ -151,9 +166,10 @@ class Config(BaseSettings):
     @model_validator(mode="after")
     def validate_idempotency_hmac_key_configured(self) -> "Config":
         if self.ENV is not Env.LOCAL:
-            if not self.IDEMPOTENCY_HMAC_KEY.strip():
+            key = self.IDEMPOTENCY_HMAC_KEY.strip()
+            if not key:
                 raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty outside local environment")
-            if self.IDEMPOTENCY_HMAC_KEY == "not-configured-idempotency-hmac-key":
+            if key in _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS:
                 raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret outside local environment")
         return self
 

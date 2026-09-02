@@ -223,6 +223,32 @@ def test_idempotency_hmac_key_rejects_blank_outside_local(environment: str) -> N
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_whitespace_padded_placeholder_outside_local(environment: str) -> None:
+    """앞뒤 공백으로 감싼 placeholder가 문자열 완전 일치 검사를 우회하지 못하는지 확인합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "  not-configured-idempotency-hmac-key  ",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_example_prod_env_placeholder_outside_local(environment: str) -> None:
+    """envs/example.prod.env에 저장소 공개로 노출된 예시 값도 실제 비밀값이 아니므로 거부합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "replace-with-random-production-idempotency-hmac-key-at-least-32-characters",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
 def test_idempotency_hmac_key_accepts_configured_value_outside_local(environment: str) -> None:
     config = Config.model_validate(
         {
