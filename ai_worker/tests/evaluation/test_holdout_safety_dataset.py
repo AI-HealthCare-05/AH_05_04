@@ -257,13 +257,27 @@ TASK_CODES: Mapping[str, str] = MappingProxyType(
 ID_CATEGORY_CODE_ALIASES: Mapping[str, str] = MappingProxyType({"high-risk": "high-acuity"})
 ID_ARCHETYPE_CODE_ALIASES: Mapping[str, str] = MappingProxyType({"risk-citation-chain": "citation-chain-risk"})
 
-FICTIONAL_TOKEN_PATTERN = re.compile(r"\b(?:FICTIONAL|SYNTHETIC)_[A-Z0-9_]+\b")
-ORDINAL_SCENARIO_VALUES = (
-    "during a new fictional intake",
-    "after a fictional user adds one more detail",
-    "during a check of a fictional draft response",
-    "before starting a fictional morning routine",
-    "while preparing a short fictional handoff",
+QUERY_SCAFFOLD_PATTERNS: Mapping[tuple[str, str], re.Pattern[str]] = MappingProxyType(
+    {
+        ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_FIND_REVIEWED_RECORD"): re.compile(
+            r"I am checking .+ Which reviewed fictional record should I look at\?"
+        ),
+        ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_SHORT_EXPLANATION"): re.compile(
+            r"I have a question about .+ How would you explain the answer briefly\?"
+        ),
+        ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_SUPPORTING_RECORD"): re.compile(
+            r"For .+ Which reviewed fictional record supports the answer\?"
+        ),
+        ("HOLDOUT", "SYNTHETIC_QUESTION_TEMPLATE_COMPLETE_RESPONSE"): re.compile(
+            r"I need help with .+ What complete response should be given\?"
+        ),
+        ("SAFETY_REGRESSION", "SYNTHETIC_QUESTION_TEMPLATE_USER_REPORT_REPLY"): re.compile(
+            r"A fictional user reports .+ What response should they receive\?"
+        ),
+        ("SAFETY_REGRESSION", "SYNTHETIC_QUESTION_TEMPLATE_FINAL_MESSAGE"): re.compile(
+            r"A fictional request involves .+ What final message should the user receive\?"
+        ),
+    }
 )
 EVALUATOR_ARTIFACT_PATTERN = re.compile(
     r"\b(?:draft|candidate(?: response| output)?|output|composed fictional response)\b",
@@ -325,13 +339,6 @@ def _load_committed_cases() -> tuple[EvaluationCaseV11, ...]:
         EVALUATION_CASE_ADAPTER_V1_1.validate_json(case_path.read_bytes())
         for case_path in sorted(CASE_ROOT.glob("*.json"))
     )
-
-
-def _normalize_query_scaffold(query: str) -> str:
-    normalized = FICTIONAL_TOKEN_PATTERN.sub("<FICTIONAL_TOKEN>", query)
-    for scenario_value in ORDINAL_SCENARIO_VALUES:
-        normalized = normalized.replace(scenario_value, "<ORDINAL_SCENARIO>")
-    return normalized
 
 
 def _expected_case_ids() -> tuple[str, ...]:
@@ -499,16 +506,17 @@ def test_committed_cases_have_exact_catalog_and_leakage_group_maps() -> None:
     assert archetypes == EXPECTED_ARCHETYPES
 
 
-def test_query_scaffolds_do_not_cross_question_templates_or_partitions() -> None:
+def test_every_query_exclusively_matches_its_partition_and_question_template_scaffold() -> None:
     cases = _load_committed_cases()
-    labels_by_scaffold: defaultdict[str, set[tuple[str, str]]] = defaultdict(set)
+    exercised_labels: set[tuple[str, str]] = set()
 
     for case in cases:
-        scaffold = _normalize_query_scaffold(case.query)
-        labels_by_scaffold[scaffold].add((case.leakage_group_ids.question_template, case.partition.value))
+        expected_label = (case.partition.value, case.leakage_group_ids.question_template)
+        matching_labels = {label for label, pattern in QUERY_SCAFFOLD_PATTERNS.items() if pattern.fullmatch(case.query)}
+        assert matching_labels == {expected_label}, case.case_id
+        exercised_labels.add(expected_label)
 
-    assert len(labels_by_scaffold) < len(cases)
-    assert all(len(labels) == 1 for labels in labels_by_scaffold.values())
+    assert exercised_labels == set(QUERY_SCAFFOLD_PATTERNS)
 
 
 def test_queries_do_not_leak_candidate_or_evaluator_failure_labels() -> None:
