@@ -1,5 +1,8 @@
 import json
+from email.parser import BytesParser
+from email.policy import default
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -16,6 +19,35 @@ from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
 )
+
+
+def _multipart_json_part(
+    request: httpx.Request,
+    body: bytes,
+    *,
+    field_name: str,
+) -> dict[str, object]:
+    content_type = request.headers["Content-Type"]
+    mime_message = BytesParser(policy=default).parsebytes(
+        (f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n").encode() + body
+    )
+
+    for part in mime_message.iter_parts():
+        name = part.get_param(
+            "name",
+            header="content-disposition",
+        )
+        if name != field_name:
+            continue
+
+        encoded_payload = part.get_payload(decode=True)
+        assert isinstance(encoded_payload, bytes)
+
+        payload = json.loads(encoded_payload)
+        assert isinstance(payload, dict)
+        return cast(dict[str, object], payload)
+
+    raise AssertionError(f"multipart field not found: {field_name}")
 
 
 def _test_deadline(total_seconds: float = 60.0) -> OcrDeadline:
@@ -90,12 +122,39 @@ async def test_recognize_calls_clova_and_parses_v2_response(
     async def handler(request: httpx.Request) -> httpx.Response:
         body = await request.aread()
 
+        message = _multipart_json_part(
+            request,
+            body,
+            field_name="message",
+        )
+
+        assert set(message) == {
+            "version",
+            "requestId",
+            "timestamp",
+            "lang",
+            "images",
+        }
+        assert message["version"] == "V2"
+        assert isinstance(message["requestId"], str)
+        assert isinstance(message["timestamp"], int)
+        assert message["lang"] == "ko"
+
+        images = message["images"]
+        assert isinstance(images, list)
+        assert images == [
+            {
+                "format": "png",
+                "name": "document",
+            }
+        ]
+
         assert request.method == "POST"
         assert request.headers["X-OCR-SECRET"] == "test-secret"
         assert "multipart/form-data" in request.headers["Content-Type"]
-        assert b"sample.png" in body
-        assert b'"version": "V2"' in body
-        assert b'"lang": "ko"' in body
+        assert b"sample.png" not in body
+        assert b'filename="document.png"' in body
+        assert b'"name": "document"' in body
 
         return httpx.Response(
             200,
@@ -186,6 +245,49 @@ async def test_recognize_calls_clova_and_parses_v2_response(
     assert prescribed_date.confidence_score == 0.97
 
 
+async def test_recognize_does_not_send_storage_object_key_to_clova(
+    tmp_path: Path,
+) -> None:
+    private_object_key = "private-job-12345.png"
+    (tmp_path / private_object_key).write_bytes(b"fake-png-content")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = await request.aread()
+
+        assert private_object_key.encode() not in body
+        assert b'filename="document.png"' in body
+        assert b'"name": "document"' in body
+
+        return httpx.Response(
+            200,
+            json={
+                "images": [
+                    {
+                        "inferResult": "SUCCESS",
+                        "fields": [],
+                    }
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        engine = _create_engine(
+            tmp_path=tmp_path,
+            client=client,
+        )
+
+        result = await engine.recognize(
+            object_key=private_object_key,
+            file_mime_type="image/png",
+            deadline=_test_deadline(),
+        )
+
+    assert result.raw_text == ""
+    assert result.raw_fields == []
+
+
 async def test_recognize_sends_pdf_format_to_clova(
     tmp_path: Path,
 ) -> None:
@@ -194,7 +296,9 @@ async def test_recognize_sends_pdf_format_to_clova(
     async def handler(request: httpx.Request) -> httpx.Response:
         body = await request.aread()
 
-        assert b"sample.pdf" in body
+        assert b"sample.pdf" not in body
+        assert b'filename="document.pdf"' in body
+        assert b'"name": "document"' in body
         assert b'"format": "pdf"' in body
         assert b"application/pdf" in body
 
