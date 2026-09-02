@@ -24,6 +24,7 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
     CriticalClaimRubric,
     DatasetManifest,
     EvaluationCase,
+    EvidenceMappingEntry,
     EvidenceMappingManifest,
     EvidenceTargetKind,
     EvidenceType,
@@ -84,7 +85,9 @@ class _JsonSnapshot:
 
 class _SnapshotReader:
     def __init__(self, root: Path) -> None:
-        self.root = root.absolute()
+        root_absolute = root.absolute()
+        _reject_symlink_components(root_absolute)
+        self.root = root_absolute
         self._cache: dict[Path, _JsonSnapshot] = {}
 
     def path(self, relative_path: str) -> Path:
@@ -163,6 +166,14 @@ def _safe_path(root: Path, path: Path) -> Path:
         if current.is_symlink():
             raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID)
     return path_absolute
+
+
+def _reject_symlink_components(path: Path) -> None:
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID)
 
 
 def _model_error_code(
@@ -312,6 +323,22 @@ def _expected_evidence_refs(case: EvaluationCase) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _validate_case_evidence_references(
+    case: EvaluationCase,
+    by_id: dict[str, EvidenceMappingEntry],
+) -> None:
+    if not set(_expected_evidence_refs(case)).issubset(by_id):
+        raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+    citations = case.expected.expected_citations
+    if citations is not None and any(by_id[item.evidence_ref_id].locator != item.locator for item in citations):
+        raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+    rule_ids = case.expected.expected_rule_ids
+    if rule_ids is not None and any(
+        by_id[item].evidence_type is not EvidenceType.INTERACTION_RULE for item in rule_ids
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+
+
 def _validate_cases(
     reader: _SnapshotReader,
     manifest: DatasetManifest,
@@ -375,8 +402,7 @@ def _load_evidence(
     if len(by_id) != len(evidence.entries):
         raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
     for case in cases:
-        if not set(_expected_evidence_refs(case)).issubset(by_id):
-            raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+        _validate_case_evidence_references(case, by_id)
     registry: dict[tuple[str, str, str], str] = {
         (evidence.mapping_id, evidence.mapping_version, evidence.manifest_sha256): "CORPUS_SNAPSHOT"
     }
@@ -424,6 +450,15 @@ def _load_rubric(
         raise EvaluationValidationError(EvaluationErrorCode.RUBRIC_MISMATCH)
     if {case.task_type for case in cases} != set(rubric.applicable_task_types):
         raise EvaluationValidationError(EvaluationErrorCode.RUBRIC_MISMATCH)
+    reason_codes = {item.reason_code for item in rubric.reason_code_catalog}
+    scope_codes = set(rubric.applicable_scope_codes)
+    for case in cases:
+        forbidden_claims = case.expected.forbidden_claims
+        if forbidden_claims is not None and any(item.reason_code not in reason_codes for item in forbidden_claims):
+            raise EvaluationValidationError(EvaluationErrorCode.RUBRIC_MISMATCH)
+        expected_scope_codes = case.expected.expected_scope_codes
+        if expected_scope_codes is not None and not set(expected_scope_codes).issubset(scope_codes):
+            raise EvaluationValidationError(EvaluationErrorCode.RUBRIC_MISMATCH)
     return rubric
 
 

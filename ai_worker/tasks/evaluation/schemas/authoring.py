@@ -320,7 +320,7 @@ ExpectedCitations = Annotated[tuple[ExpectedCitation, ...], BeforeValidator(_tup
 
 class _ExpectedContract(StrictContractModel):
     @model_validator(mode="after")
-    def validate_member_uniqueness(self) -> _ExpectedContract:
+    def validate_expected_members(self) -> _ExpectedContract:
         for field in (
             "relevant_evidence_refs",
             "required_evidence_refs",
@@ -341,6 +341,16 @@ class _ExpectedContract(StrictContractModel):
             if values is not None:
                 keys = tuple(key(item) for item in values)
                 _require_sorted_unique(keys, f"{field} must be unique and sorted")
+        claims = getattr(self, "gold_claims", None)
+        citations = getattr(self, "expected_citations", None)
+        if claims is not None and citations is not None:
+            claims_by_id = {claim.claim_id: claim for claim in claims}
+            if any(
+                (claim := claims_by_id.get(citation.claim_id)) is None
+                or citation.evidence_ref_id not in claim.supporting_evidence_ref_ids
+                for citation in citations
+            ):
+                raise ValueError("Citation must reference supporting Evidence of an existing Gold Claim")
         return self
 
 
@@ -640,10 +650,16 @@ class CriticalClaimRubric(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_members(self) -> CriticalClaimRubric:
-        for values in (self.classification_rules, self.reason_code_catalog):
+        for values, id_field in (
+            (self.classification_rules, "rule_id"),
+            (self.reason_code_catalog, "reason_code"),
+        ):
             orders = [item.member_order for item in values]
             if orders != list(range(1, len(values) + 1)):
                 raise ValueError("Rubric member order must be contiguous")
+            logical_ids = [getattr(item, id_field) for item in values]
+            if len(logical_ids) != len(set(logical_ids)):
+                raise ValueError("Rubric logical IDs must be unique")
         _require_sorted_unique(self.applicable_task_types, "applicable task types must be unique and sorted")
         _require_sorted_unique(self.applicable_scope_codes, "applicable scope codes must be unique and sorted")
         return self

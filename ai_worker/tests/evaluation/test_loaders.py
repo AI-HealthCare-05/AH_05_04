@@ -316,6 +316,29 @@ def test_loader_rejects_manifest_outside_evals_root(tmp_dataset: MutableDatasetF
     assert caught.value.code is EvaluationErrorCode.RESOURCE_PATH_INVALID
 
 
+def test_loader_rejects_symlink_evals_root(tmp_path: Path) -> None:
+    evals_root = tmp_path / "evals"
+    evals_root.symlink_to(SOURCE_EVALS, target_is_directory=True)
+    manifest = evals_root / SOURCE_MANIFEST.relative_to(SOURCE_EVALS)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        load_dataset(manifest, evals_root=evals_root)
+
+    assert caught.value.code is EvaluationErrorCode.RESOURCE_PATH_INVALID
+
+
+def test_loader_rejects_evals_root_below_symlink_ancestor(tmp_path: Path) -> None:
+    linked_parent = tmp_path / "linked-repository"
+    linked_parent.symlink_to(SOURCE_EVALS.parent, target_is_directory=True)
+    evals_root = linked_parent / "evals"
+    manifest = evals_root / SOURCE_MANIFEST.relative_to(SOURCE_EVALS)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        load_dataset(manifest, evals_root=evals_root)
+
+    assert caught.value.code is EvaluationErrorCode.RESOURCE_PATH_INVALID
+
+
 def test_loader_rejects_symlink_resource(tmp_dataset: MutableDatasetFixture) -> None:
     path = tmp_dataset.case_path("rag-dev-retrieval-001")
     path.unlink()
@@ -397,6 +420,99 @@ def test_loader_rejects_rubric_claim_mismatch(tmp_dataset: MutableDatasetFixture
         "critical_claim_rubric",
         lambda rubric: rubric["applicable_task_types"].remove("RETRIEVAL"),
     )
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.RUBRIC_MISMATCH)
+
+
+@pytest.mark.parametrize("collection", ["classification_rules", "reason_code_catalog"])
+def test_loader_rejects_duplicate_rubric_logical_ids_after_hash_rebinding(
+    tmp_dataset: MutableDatasetFixture,
+    collection: str,
+) -> None:
+    def duplicate_logical_id(rubric: dict[str, Any]) -> None:
+        duplicate = dict(rubric[collection][0])
+        duplicate["member_order"] = 2
+        rubric[collection].append(duplicate)
+
+    tmp_dataset.mutate_resource("critical_claim_rubric", duplicate_logical_id)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+@pytest.mark.parametrize(
+    ("claim_id", "evidence_ref_id"),
+    [
+        ("SYNTHETIC_CLAIM_MISSING", "ev-synthetic-chunk-001"),
+        ("SYNTHETIC_CLAIM_ANSWER_GROUNDING", "ev-synthetic-guideline-001"),
+    ],
+)
+def test_loader_rejects_citation_outside_claim_support_after_hash_rebinding(
+    tmp_dataset: MutableDatasetFixture,
+    claim_id: str,
+    evidence_ref_id: str,
+) -> None:
+    def mutate(case: dict[str, Any]) -> None:
+        citation = case["expected"]["expected_citations"][0]
+        citation["claim_id"] = claim_id
+        citation["evidence_ref_id"] = evidence_ref_id
+
+    tmp_dataset.mutate_case("rag-dev-answer-grounding-001", mutate)
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+def test_loader_rejects_citation_locator_outside_mapped_evidence(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    tmp_dataset.mutate_case(
+        "rag-dev-answer-grounding-001",
+        lambda case: case["expected"]["expected_citations"][0].__setitem__(
+            "locator",
+            "$.SYNTHETIC_MISSING",
+        ),
+    )
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+
+
+def test_loader_rejects_expected_rule_with_non_rule_evidence_type(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    tmp_dataset.mutate_case(
+        "rag-dev-end-to-end-001",
+        lambda case: case["expected"].__setitem__(
+            "expected_rule_ids",
+            ["ev-synthetic-guideline-001"],
+        ),
+    )
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+
+
+def test_loader_rejects_forbidden_claim_reason_outside_rubric_catalog(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    tmp_dataset.mutate_case(
+        "rag-dev-end-to-end-001",
+        lambda case: case["expected"]["forbidden_claims"][0].__setitem__(
+            "reason_code",
+            "SYNTHETIC_REASON_MISSING",
+        ),
+    )
+
+    assert_dataset_error(tmp_dataset, EvaluationErrorCode.RUBRIC_MISMATCH)
+
+
+def test_loader_rejects_expected_scope_outside_rubric_scope(
+    tmp_dataset: MutableDatasetFixture,
+) -> None:
+    tmp_dataset.mutate_case(
+        "rag-dev-answer-grounding-001",
+        lambda case: case["expected"].__setitem__(
+            "expected_scope_codes",
+            ["SYNTHETIC_SCOPE_MISSING"],
+        ),
+    )
+
     assert_dataset_error(tmp_dataset, EvaluationErrorCode.RUBRIC_MISMATCH)
 
 

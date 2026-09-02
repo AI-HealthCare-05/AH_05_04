@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from ai_worker.tasks.evaluation.schemas import authoring as authoring_schemas
 from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
+    CriticalClaimRubric,
     DatasetManifest,
     EvidenceMappingManifest,
 )
@@ -71,6 +72,26 @@ def test_retrieval_case_rejects_answer_gold_fields(valid_retrieval_case: dict[st
 
     with pytest.raises(ValidationError):
         EVALUATION_CASE_ADAPTER.validate_python(valid_retrieval_case)
+
+
+@pytest.mark.parametrize(
+    ("claim_id", "evidence_ref_id"),
+    [
+        ("SYNTHETIC_CLAIM_MISSING", "ev-synthetic-chunk-001"),
+        ("SYNTHETIC_CLAIM_ANSWER_GROUNDING", "ev-synthetic-guideline-001"),
+    ],
+)
+def test_answer_gold_rejects_citation_outside_claim_support(
+    claim_id: str,
+    evidence_ref_id: str,
+) -> None:
+    payload = _fixture_json("retrieval/cases/dev-foundation-v1/rag-dev-answer-grounding-001.json")
+    citation = payload["expected"]["expected_citations"][0]
+    citation["claim_id"] = claim_id
+    citation["evidence_ref_id"] = evidence_ref_id
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER.validate_python(payload)
 
 
 def test_retrieval_case_requires_non_applicable_fields_as_explicit_null(
@@ -217,6 +238,19 @@ def test_evidence_mapping_rejects_unknown_evidence_type() -> None:
 
     with pytest.raises(ValidationError):
         EvidenceMappingManifest.model_validate(deepcopy(payload))
+
+
+@pytest.mark.parametrize("collection", ["classification_rules", "reason_code_catalog"])
+def test_critical_claim_rubric_rejects_duplicate_logical_ids(
+    collection: str,
+) -> None:
+    payload = _fixture_json("retrieval/manifests/dev-foundation-v1.critical-claim-rubric.json")
+    duplicate = deepcopy(payload[collection][0])
+    duplicate["member_order"] = 2
+    payload[collection].append(duplicate)
+
+    with pytest.raises(ValidationError):
+        CriticalClaimRubric.model_validate(payload)
 
 
 @pytest.mark.parametrize("target_kind", ["RUNTIME_REFERENCE", "FIXTURE", "UNKNOWN"])
