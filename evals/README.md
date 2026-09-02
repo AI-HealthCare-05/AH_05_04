@@ -28,6 +28,21 @@ uv run python -m ai_worker.tasks.evaluation validate \
 
 이 명령은 validation 전용입니다. Evaluation Run, Metric, Gate, PASS/FAIL, Markdown report를 생성하지 않고 Provider를 호출하지 않으며 `PUBLIC_TRACK_F`를 변경할 수 없습니다. 기존 result나 lock은 덮어쓰거나 자동 삭제하지 않습니다. 생성되는 `evals/validation-results/` 파일은 로컬 검증 산출물이며 Git 추적 대상이 아닙니다.
 
+### Evaluation Schema Sets
+
+- `evals/schemas/1.0.0/`: Issue #122의 기존 DEV foundation 계약. canonical bytes와 loader 동작을 유지한다.
+- `evals/schemas/1.1.0/`: Issue #216의 18-member implemented candidate. Case·Dataset Manifest는 member `1.1.0`, 나머지 16개 member는 `1.0.0`을 byte-for-byte 재사용한다.
+
+Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `770064cf4b89e63ddcef7cd4e951d028b56f3a60828b6dd1b04bd855a0beb6b3`이다. 지정 책임 리뷰 승인 전에는 #214 Dataset Freeze의 승인 입력으로 사용하지 않는다.
+
+두 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
+
+```bash
+uv run python -m ai_worker.tasks.evaluation.schema_exports \
+  --output /tmp/rag-eval-schemas-1.1.0 \
+  --schema-set-version 1.1.0
+```
+
 ## Chat history 평가
 
 `generation/chat-v2-history-eval-v1.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 기준선과 처리 경로 모두 `chat-prompt-v2`를 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.

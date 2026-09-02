@@ -3,12 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Not implemented · Track F RAG/Evaluation 구현과 지정 리뷰어·의료·약학·Privacy 승인 대기 |
+| 구현·리뷰 | Evaluation Schema Set 1.1 implemented candidate · 지정 책임 리뷰와 나머지 Track F 구현·외부 승인 대기 |
 | 실행 환경 | 실제 RAG 평가는 Local Runner에서만 수행 · Development/Staging 서버 미사용 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `evaluation-plan.md@1.35` · SHA-256 `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-01 |
+| Last verified | 2026-09-02 |
 
 ## 목적과 평가 경계
 
@@ -42,6 +42,14 @@ Dataset Manifest는 Case ID, partition, task type, 합성·비식별 분류, 입
 `question_template`, `source_segment`, `medication_family`, `transform_origin`을 최소 Leakage Group 축으로 저장한다. 같은 Group 축을 공유하는 원본과 파생 Case를 서로 다른 Partition에 배치하거나 독립 표본 여러 건으로 계산하지 않는다. HOLDOUT 실행 전 Comparison Policy에 Metric별 분석 단위, `cluster_dimension`, 최소 Case 수, 최소 독립 Group 수와 95% 신뢰구간 계산 방식을 고정한다.
 
 필수 Partition을 실행하지 않았으면 `execution_status=NOT_EVALUATED`, `decision_status=null`로 Release를 차단한다. 실행을 완료했지만 분모가 0이거나 최소 Case·독립 Group 수가 부족할 때만 `COMPLETED/INCONCLUSIVE`로 기록한다. 미실행 결과를 0점, `FAIL`, `INCONCLUSIVE` 또는 성공으로 위장하지 않는다.
+
+### Evaluation Schema Set 1.1
+
+`#214` Dataset Freeze 입력 후보는 `rag-eval.schema-set@1.1.0`, SHA-256 `770064cf4b89e63ddcef7cd4e951d028b56f3a60828b6dd1b04bd855a0beb6b3`이다. 18개 전체 member 중 `rag-eval.case`와 `rag-eval.dataset-manifest`만 `1.1.0`이며 나머지 16개 member는 기존 `1.0.0` canonical 계약을 byte-for-byte 재사용한다. 지정 책임 리뷰 승인 전에는 이 후보를 승인 완료된 Freeze 입력으로 해석하지 않는다.
+
+Safety·End-to-End Gold는 Rule 결과를 `MATCHED_RULES | NO_MATCH | NOT_INVOKED`로 구분한다. `MATCHED_RULES`만 비어 있지 않은 `expected_rule_ids`를 가지며, `NO_MATCH`와 `NOT_INVOKED`는 빈 배열을 사용한다. `NOT_INVOKED`는 `SAFETY_ROUTED | SOURCE_INELIGIBLE | BUNDLE_INELIGIBLE | DEPENDENCY_FAILURE` 중 하나의 typed reason을 추가로 요구한다. Source eligibility, Bundle eligibility와 Provider/Retrieval dependency fault도 typed fixture로 기록하고 free-form tag나 가짜 Rule ID를 사용하지 않는다.
+
+Schema `1.1.0`의 `FROZEN` Dataset은 모든 Case Gold, Evidence Mapping과 Critical Claim Rubric의 Team `APPROVED` closure가 완전해야 Loader를 통과한다. 하나라도 `DRAFT | REVIEWED`이면 `EVAL_REVIEW_PROVENANCE_INVALID`로 실패한다. 상세 결정은 [RAG Evaluation Schema Set 1.1 Freeze](../../../governance/decisions/2026-09-02-rag-evaluation-schema-set-1-1-freeze.md)를 따른다.
 
 ## 비교 원칙
 
@@ -141,7 +149,8 @@ OCR·Resolver 품질 비교와 Candidate 검색 알고리즘별 성능은 RAG �
 - Retrieval과 Answer·Citation·Safety Metric 분리
 - HOLDOUT·SAFETY_REGRESSION 필수 실행, 미실행 `NOT_EVALUATED/null`과 실행 완료 분모 0 `COMPLETED/INCONCLUSIVE` 구분
 - Critical 0건 Gate의 평균 점수 우회 금지
-- Rule 양성, Rule 없음, OTC Identity 불충분과 근거 부족·상충 Case
+- Rule 양성·Rule 없음·승인된 선행 차단에 따른 Rule 미실행과 근거 부족·상충 Case
+- OTC Identity 불충분은 Evaluation Case에 복제하지 않고 상류 Candidate/Resolver Contract Receipt로 차단
 - Prompt Injection, Citation 변조, 검색 근거 밖 Claim
 - 비활성·만료·미승인 Source 사용 차단
 - 처방·Identification·Bundle 변경의 `STALE`
