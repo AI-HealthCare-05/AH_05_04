@@ -22,6 +22,7 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
     PrescriptionFixture,
     QueryText,
     RetrievalExpected,
+    RuntimeExecutionStatus,
     RuntimeFixture,
     SafetyDisposition,
     SafetyExpected,
@@ -77,7 +78,6 @@ class RuleNotInvokedReason(StrEnum):
     SAFETY_ROUTED = "SAFETY_ROUTED"
     SOURCE_INELIGIBLE = "SOURCE_INELIGIBLE"
     BUNDLE_INELIGIBLE = "BUNDLE_INELIGIBLE"
-    DEPENDENCY_FAILURE = "DEPENDENCY_FAILURE"
 
 
 SourceEligibilityStatusValue = Annotated[
@@ -176,9 +176,8 @@ def _validate_no_match(runtime: RuntimeFixtureV11) -> None:
     if (
         runtime.source_eligibility_status is not SourceEligibilityStatus.ELIGIBLE
         or runtime.bundle_eligibility_status is not BundleEligibilityStatus.ELIGIBLE
-        or runtime.dependency_fault is not DependencyFault.NONE
     ):
-        raise ValueError("NO_MATCH requires eligible Rule inputs without dependency fault")
+        raise ValueError("NO_MATCH requires eligible Rule inputs")
 
 
 def _validate_not_invoked(expected: SafetyExpectedV11, runtime: RuntimeFixtureV11) -> None:
@@ -195,13 +194,25 @@ def _validate_not_invoked(expected: SafetyExpectedV11, runtime: RuntimeFixtureV1
         and runtime.source_eligibility_status is SourceEligibilityStatus.ELIGIBLE
     ):
         raise ValueError("SOURCE_INELIGIBLE requires a non-eligible Source")
-    elif (
-        reason is RuleNotInvokedReason.BUNDLE_INELIGIBLE
-        and runtime.bundle_eligibility_status is BundleEligibilityStatus.ELIGIBLE
+    elif reason is RuleNotInvokedReason.BUNDLE_INELIGIBLE and runtime.bundle_eligibility_status not in {
+        BundleEligibilityStatus.SCOPE_INELIGIBLE,
+        BundleEligibilityStatus.MEMBER_INELIGIBLE,
+    }:
+        raise ValueError("BUNDLE_INELIGIBLE requires a Scope or Member failure")
+
+
+def _validate_dependency_fault(expected: SafetyExpectedV11, runtime: RuntimeFixtureV11) -> None:
+    if runtime.dependency_fault is DependencyFault.PROVIDER_TIMEOUT:
+        if (
+            expected.expected_execution_status is not RuntimeExecutionStatus.TIMED_OUT
+            or not expected.expected_provider_invocation
+        ):
+            raise ValueError("PROVIDER_TIMEOUT requires TIMED_OUT after provider invocation")
+    elif runtime.dependency_fault is DependencyFault.RETRIEVAL_FAILURE and (
+        expected.expected_execution_status is not RuntimeExecutionStatus.DEPENDENCY_ERROR
+        or not expected.expected_retrieval_invocation
     ):
-        raise ValueError("BUNDLE_INELIGIBLE requires a non-eligible Bundle")
-    elif reason is RuleNotInvokedReason.DEPENDENCY_FAILURE and runtime.dependency_fault is DependencyFault.NONE:
-        raise ValueError("DEPENDENCY_FAILURE requires a typed dependency fault")
+        raise ValueError("RETRIEVAL_FAILURE requires DEPENDENCY_ERROR after retrieval invocation")
 
 
 class _CaseBaseV11(StrictContractModel):
@@ -258,6 +269,7 @@ class _RuleOutcomeCaseV11(_CaseBaseV11):
             _validate_no_match(runtime)
         elif expected.expected_rule_outcome is RuleExpectedOutcome.NOT_INVOKED:
             _validate_not_invoked(expected, runtime)
+        _validate_dependency_fault(expected, runtime)
         return self
 
 

@@ -733,9 +733,18 @@ def _add_v1_1_rule_cardinality(definitions: dict[str, JsonValue]) -> None:
 def _nested_case_condition(
     *,
     expected_if: dict[str, JsonValue],
+    runtime_if: dict[str, JsonValue] | None = None,
     expected_then: dict[str, JsonValue] | None = None,
     runtime_then: dict[str, JsonValue] | None = None,
 ) -> dict[str, JsonValue]:
+    if_properties: dict[str, JsonValue] = {}
+    if expected_if:
+        if_properties["expected"] = {"properties": expected_if, "required": list(expected_if)}
+    if runtime_if is not None:
+        if_properties["context"] = {
+            "properties": {"runtime_fixture": {"properties": runtime_if, "required": list(runtime_if)}},
+            "required": ["runtime_fixture"],
+        }
     then_properties: dict[str, JsonValue] = {}
     if expected_then is not None:
         then_properties["expected"] = {"properties": expected_then}
@@ -746,8 +755,8 @@ def _nested_case_condition(
         }
     return {
         "if": {
-            "properties": {"expected": {"properties": expected_if, "required": list(expected_if)}},
-            "required": ["expected"],
+            "properties": if_properties,
+            "required": list(if_properties),
         },
         "then": {"properties": then_properties},
     }
@@ -779,7 +788,6 @@ def _add_v1_1_case_context_conditions(definitions: dict[str, JsonValue]) -> None
             runtime_then={
                 "source_eligibility_status": {"const": "ELIGIBLE"},
                 "bundle_eligibility_status": {"const": "ELIGIBLE"},
-                "dependency_fault": {"const": "NONE"},
             },
         ),
         _nested_case_condition(
@@ -796,11 +804,23 @@ def _add_v1_1_case_context_conditions(definitions: dict[str, JsonValue]) -> None
         ),
         _nested_case_condition(
             expected_if={"expected_rule_not_invoked_reason": {"const": "BUNDLE_INELIGIBLE"}},
-            runtime_then={"bundle_eligibility_status": {"not": {"const": "ELIGIBLE"}}},
+            runtime_then={"bundle_eligibility_status": {"enum": ["SCOPE_INELIGIBLE", "MEMBER_INELIGIBLE"]}},
         ),
         _nested_case_condition(
-            expected_if={"expected_rule_not_invoked_reason": {"const": "DEPENDENCY_FAILURE"}},
-            runtime_then={"dependency_fault": {"not": {"const": "NONE"}}},
+            expected_if={},
+            expected_then={
+                "expected_execution_status": {"const": "TIMED_OUT"},
+                "expected_provider_invocation": {"const": True},
+            },
+            runtime_if={"dependency_fault": {"const": "PROVIDER_TIMEOUT"}},
+        ),
+        _nested_case_condition(
+            expected_if={},
+            expected_then={
+                "expected_execution_status": {"const": "DEPENDENCY_ERROR"},
+                "expected_retrieval_invocation": {"const": True},
+            },
+            runtime_if={"dependency_fault": {"const": "RETRIEVAL_FAILURE"}},
         ),
     ]
     for definition_name in ("SafetyCaseV11", "EndToEndRagCaseV11"):

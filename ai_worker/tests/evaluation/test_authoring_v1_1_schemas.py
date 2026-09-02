@@ -78,7 +78,6 @@ def test_no_match_requires_empty_rule_ids_and_healthy_rule_inputs() -> None:
             {"source_eligibility_status": "EXPIRED", "bundle_eligibility_status": "SOURCE_INELIGIBLE"},
         ),
         ("BUNDLE_INELIGIBLE", {"bundle_eligibility_status": "SCOPE_INELIGIBLE"}),
-        ("DEPENDENCY_FAILURE", {"dependency_fault": "PROVIDER_TIMEOUT"}),
     ],
 )
 def test_not_invoked_requires_empty_ids_and_matching_typed_reason(
@@ -117,6 +116,60 @@ def test_safety_routed_not_invoked_requires_non_normal_safety_and_no_general_pip
     EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 
     payload["expected"]["expected_safety_disposition"] = "NORMAL"
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    ("fault", "execution_status", "invocation_field"),
+    [
+        ("PROVIDER_TIMEOUT", "TIMED_OUT", "expected_provider_invocation"),
+        ("RETRIEVAL_FAILURE", "DEPENDENCY_ERROR", "expected_retrieval_invocation"),
+    ],
+)
+def test_dependency_fault_requires_matching_execution_status_and_invocation(
+    fault: str,
+    execution_status: str,
+    invocation_field: str,
+) -> None:
+    payload = _safety_case()
+    payload["context"]["runtime_fixture"]["dependency_fault"] = fault
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+    payload["expected"]["expected_execution_status"] = execution_status
+    payload["expected"][invocation_field] = True
+    EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+def test_dependency_failure_is_not_a_rule_not_invoked_reason() -> None:
+    payload = _safety_case()
+    payload["context"]["runtime_fixture"]["dependency_fault"] = "PROVIDER_TIMEOUT"
+    payload["expected"].update(
+        expected_rule_outcome="NOT_INVOKED",
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="DEPENDENCY_FAILURE",
+        expected_execution_status="TIMED_OUT",
+        expected_provider_invocation=True,
+    )
+
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+def test_bundle_not_invoked_reason_does_not_mask_a_source_failure() -> None:
+    payload = _safety_case()
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="EXPIRED",
+        bundle_eligibility_status="SOURCE_INELIGIBLE",
+    )
+    payload["expected"].update(
+        expected_rule_outcome="NOT_INVOKED",
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="BUNDLE_INELIGIBLE",
+    )
+
     with pytest.raises(ValidationError):
         EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 

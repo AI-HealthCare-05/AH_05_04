@@ -33,7 +33,7 @@ uv run python -m ai_worker.tasks.evaluation validate \
 - `evals/schemas/1.0.0/`: Issue #122의 기존 DEV foundation 계약. canonical bytes와 loader 동작을 유지한다.
 - `evals/schemas/1.1.0/`: Issue #216의 18-member implemented candidate. Case·Dataset Manifest는 member `1.1.0`, 나머지 16개 member는 `1.0.0`을 byte-for-byte 재사용한다.
 
-Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `770064cf4b89e63ddcef7cd4e951d028b56f3a60828b6dd1b04bd855a0beb6b3`이다. 지정 책임 리뷰 승인 전에는 #214 Dataset Freeze의 승인 입력으로 사용하지 않는다.
+Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `5b8524708198a3c6781503cc166b14e0a2349173a0abd5907cdb0ce38ff24327`이다. 지정 책임 리뷰 승인 전에는 #214 Dataset Freeze의 승인 입력으로 사용하지 않는다.
 
 두 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 

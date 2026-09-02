@@ -64,19 +64,20 @@ Safety and End-to-End Gold add:
 | Field | Values |
 | --- | --- |
 | `expected_rule_outcome` | `MATCHED_RULES`, `NO_MATCH`, `NOT_INVOKED` |
-| `expected_rule_not_invoked_reason` | `null`, `SAFETY_ROUTED`, `SOURCE_INELIGIBLE`, `BUNDLE_INELIGIBLE`, `DEPENDENCY_FAILURE` |
+| `expected_rule_not_invoked_reason` | `null`, `SAFETY_ROUTED`, `SOURCE_INELIGIBLE`, `BUNDLE_INELIGIBLE` |
 
 Other task types require both fields as explicit `null`, preserving the existing explicit-applicability shape.
 
 Cardinality and consistency rules:
 
 - `MATCHED_RULES`: `expected_rule_ids` is non-empty and reason is `null`.
-- `NO_MATCH`: `expected_rule_ids=[]`, reason is `null`, Source and Bundle are eligible, and dependency fault is `NONE`.
+- `NO_MATCH`: `expected_rule_ids=[]`, reason is `null`, and Source and Bundle are eligible.
 - `NOT_INVOKED`: `expected_rule_ids=[]` and a non-null typed reason is required.
 - `SAFETY_ROUTED` requires a non-`NORMAL` Safety disposition and no provider/retrieval invocation.
 - `SOURCE_INELIGIBLE` requires a non-eligible Source fixture.
-- `BUNDLE_INELIGIBLE` requires a non-eligible Bundle fixture.
-- `DEPENDENCY_FAILURE` requires a non-`NONE` dependency fault.
+- `BUNDLE_INELIGIBLE` requires `SCOPE_INELIGIBLE | MEMBER_INELIGIBLE`; Source failures use `SOURCE_INELIGIBLE` and cannot be relabeled.
+
+Provider and Retrieval faults occur after the Rule-first step and therefore never mean `NOT_INVOKED`. `PROVIDER_TIMEOUT` requires `TIMED_OUT` after provider invocation; `RETRIEVAL_FAILURE` requires `DEPENDENCY_ERROR` after retrieval invocation. Either fault can coexist with the Rule result that was already produced.
 
 These cross-field rules are enforced by the Case model, not only by Python call sites, and exported JSON Schema contains equivalent conditional constraints.
 
@@ -114,4 +115,3 @@ Failure maps to `REVIEW_PROVENANCE_INVALID`. This is a cross-resource loader inv
 - Runner, reports, baseline, metrics, CI, or Release Gate implementation (`#157` onward)
 - Runtime Source/Rule/Bundle implementation
 - Candidate/Resolver evaluation or copying upstream identity details into Evaluation Cases
-

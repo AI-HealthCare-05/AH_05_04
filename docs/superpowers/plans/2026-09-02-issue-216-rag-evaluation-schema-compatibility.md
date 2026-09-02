@@ -103,4 +103,3 @@
 5. Run a fresh export comparison for both Schema Sets and verify no 1.0 byte changed.
 6. Run `git diff --check`, inspect the complete diff, and scan for secrets, patient data, placeholders, and scope drift.
 7. Commit any verification-only corrections, push `feat/216-rag-eval-schema-compat`, and report the immutable Schema Set reference and exact checks.
-
