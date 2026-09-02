@@ -168,8 +168,8 @@ class AiJob(_CreatedUpdatedColumns, Base):
         nullable=True,
     )
     # async-job-v1.md "시도와 재시도": 접수 직후 attempt_count=0이 정본입니다(최초 outbox_event.attempt=1과는
-    # 다른 축). Worker가 lease를 획득하는 transaction에서 attempt_count를 수신 attempt 값으로 갱신하며,
-    # 그 전까지 Provider 호출·ACK 검증에서 attempt_count를 수신 attempt와 동일하다고 가정하지 않습니다.
+    # 다른 축). attempt_count 증가 시점과 Worker fencing 검증 방식은 outbox-stream-v1.md "소비와 fencing"
+    # 기준으로 #141에서 계약과 함께 확정합니다.
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     available_at: Mapped[datetime] = _now_timestamp_column()
