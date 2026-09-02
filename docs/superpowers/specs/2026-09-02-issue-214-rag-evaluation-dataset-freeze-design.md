@@ -6,7 +6,7 @@
 - Upstream foundation: #122 / PR #210
 - Downstream runner: #157
 - Design status: approved direction, implementation pending
-- Execution boundary: local files and deterministic validation only
+- Execution boundary: approved schema-compatible local files and deterministic validation only
 
 This change creates a new, versioned, synthetic evaluation Dataset that contains both `HOLDOUT` and
 `SAFETY_REGRESSION` cases. It freezes the Dataset input contract needed by #157 without implementing a
@@ -27,13 +27,14 @@ The implementation follows these sources in order:
 5. The separately maintained RAG document set identified by
    `rag-document-set-authority-manifest.json` version `2026-08-29.11`, whose normative evaluation source is
    `evaluation-plan.md` version `1.35` with SHA-256
-   `526f83e796e7c3c262dfb84e1ef42a838a51b844123663f38384a14c565e542f`
+   `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f`
 
 The `FinalProject Documents/` folder is not an authority for Dataset size or partition allocation in this
-design. The normative RAG evaluation plan supplies the 12-category, 153-Case initial workload. The repository
-target and #122 schemas remain authoritative for machine-readable fields, enum values, validation, and status
-semantics. If a RAG planning statement cannot be represented by the current approved schema, this issue does
-not silently invent a field; it records the gap for a separately approved contract change.
+design. The normative RAG evaluation plan supplies 12 per-category initial minimums whose arithmetic sum is
+153. It describes those values as workload estimates; it does not prescribe an exact total or the 60/93
+partition split. Exact v1 size 153 and allocation 60/93 are Issue #214 project decisions that remain proposed
+until the named Dataset Custodian approves the completed Case allocation artifact. The repository target and
+#122 schemas remain authoritative for machine-readable fields, enum values, validation, and status semantics.
 
 Older local planning documents use `END_TO_END_FINAL`, `NOT_RUN`, and sometimes map an unexecuted required
 cell to `INCONCLUSIVE`. Those values conflict with the newer approved repository target and are not copied
@@ -57,11 +58,34 @@ Grounding, Citation, Rule-first, Scope, Safety, and end-to-end RAG expectations 
 - Preserve a machine-verifiable approval transition from authoring to Dataset Custodian freeze.
 - Ensure validation never creates a Release `PASS` or implies Production eligibility.
 
+### Blocking schema-compatibility prerequisite
+
+The current #122 schema cannot honestly encode every required Safety branch. `MedicationFixture` accepts only
+`MATCHED`, while every `SAFETY` and `END_TO_END_RAG` expected value requires at least one Interaction Rule ID.
+That combination cannot represent OTC `AMBIGUOUS | UNMATCHED`, a valid no-rule outcome, or a Rule execution
+that was intentionally suppressed. `RuntimeFixture` also lacks a typed fault input for Source eligibility and
+Provider/Retrieval failure scenarios.
+
+Before Dataset Case authoring begins, a separately approved RAG-EVAL-001 Contract correction must:
+
+- distinguish `MATCHED_RULES`, `NO_MATCH`, and `NOT_INVOKED` without fabricating a Rule ID
+- represent the approved OTC preflight result needed by Safety evaluation, or explicitly route that branch to
+  an upstream Contract Receipt instead of an `eval.evaluation_case`
+- represent deterministic Source/Bundle eligibility and dependency-fault inputs consumed by the future Runner
+- add schema, exported-schema parity, loader, privacy, and negative contract tests
+- update the authoritative repository target and Decision/Contract Freeze version in the same focused PR
+
+Issue #214 Dataset authoring is `BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` until that correction is approved
+and merged. This design does not choose placeholder Rule IDs, encode faults in free-form tags, or weaken the
+required Safety coverage to fit schema version `1.0.0`.
+
 ### Non-goals
 
 - Metric computation, confidence intervals, threshold activation, or Baseline/Candidate comparison.
 - Provider, RAG runtime, database, API, or Frontend execution.
 - Patient data, OCR source values, internal identifiers, credentials, or Provider payloads.
+- The schema-compatibility contract correction described above; it is a prerequisite PR rather than hidden
+  Dataset-instance work.
 - Medical, pharmacy, Privacy, Source, or Production approval.
 - Public activation or a change to `PUBLIC_TRACK_F`.
 
@@ -101,8 +125,8 @@ evals/
     └── rag-holdout-safety-v1.suite.json
 ```
 
-The committed schema set remains `1.0.0`. This work adds schema instances, not new schema fields, enums, or
-result artifact types.
+The Dataset PR consumes the approved schema set produced by the compatibility prerequisite. It adds schema
+instances only and does not mix another contract change into the Dataset Freeze diff.
 
 ## 5. Provenance and freeze model
 
@@ -117,16 +141,35 @@ The Runner and Baseline implementation commit are recorded later by #157 in the 
 The protected artifact receipt proves integrity, not approval. Its `recorded_by.team_gold_status` remains
 `REVIEWED` and never becomes `APPROVED`, as required by the #122 schema.
 
+Every approved `ReviewProvenance` requires three distinct human identities. The PR must record the actual
+GitHub login for each role before the authoring stage; a display name or inferred ownership is insufficient.
+
+| Artifact | Author | Reviewer | Team approver | External status at initial freeze |
+| --- | --- | --- | --- | --- |
+| Retrieval/Answer/Grounding Case Gold | `EVALUATION_IMPLEMENTER` | assigned Gold reviewer | `DATASET_CUSTODIAN` | `PENDING` when the Case contains a medical claim; otherwise the approved schema's applicable state |
+| Safety/End-to-End Case Gold | `EVALUATION_IMPLEMENTER` | assigned Safety/Gold reviewer | `PRODUCT_SAFETY_REVIEWER` or `MEDICAL_REVIEWER` | `PENDING` until an immutable external approval receipt exists |
+| Evidence Mapping and Critical Claim Rubric | `EVALUATION_IMPLEMENTER` | assigned Evidence/Gold reviewer | role permitted by the approved schema | `PENDING` when medical judgment is present |
+| Dataset Manifest | `EVALUATION_IMPLEMENTER` | assigned Dataset integrity reviewer | `DATASET_CUSTODIAN` | derived only as an approval summary, never as external clinical approval |
+| Profile, Evaluation Policy, and Suite | proposer/author defined by their contract | distinct assigned reviewer | distinct contract-permitted approver | independent of Dataset content freeze |
+| Protected Artifact Receipt | recorder defined by its contract | distinct reviewer | no Team `APPROVED` state permitted | does not convey medical approval |
+
+The current Issue names `@ceohwj` as implementer and `@hazelnutflavoured` as responsible reviewer but does not
+name the third independent Gold reviewer required by the schema. Until that actor and actual GitHub login are
+recorded in the Issue, freeze is `BLOCKED_BY_REVIEW_PROVENANCE_ASSIGNMENT`; the implementation must not invent
+an identity or reuse one person in two provenance positions.
+
 The Dataset freeze transition occurs inside the PR in two reviewable stages:
 
 1. Authoring stage
    - Dataset `status=DRAFT`
-   - Dataset and Case provenance `team_gold_status=REVIEWED`
+   - Dataset and child artifact provenance begins at `team_gold_status=REVIEWED`.
    - `approved_by=null`, `approved_at=null`, `frozen_at=null`
    - All canonical hashes and the protected artifact receipt are present.
 2. Freeze stage
-   - The Dataset Custodian reviews the complete Case, Gold, Evidence, Rubric, and Leakage graph.
-   - After a recorded approving review, a follow-up commit changes the Dataset to `status=FROZEN`.
+   - The assigned approvers approve every Case Gold, Evidence Mapping, and Critical Claim Rubric using the
+     artifact-specific actor rules above.
+   - The Dataset integrity reviewer verifies the complete Case, Gold, Evidence, Rubric, and Leakage graph.
+   - After those approvals are recorded, a follow-up commit changes the Dataset to `status=FROZEN`.
    - Dataset provenance becomes `team_gold_status=APPROVED` with the real Dataset Custodian actor and review
      timestamp; `frozen_at` records the same freeze event.
    - The Dataset Custodian performs a final review on the exact freeze commit.
@@ -134,13 +177,17 @@ The Dataset freeze transition occurs inside the PR in two reviewable stages:
 The implementer must not pre-populate or fabricate approval. Self-approval is rejected by the schema and is
 not treated as a recoverable validation error.
 
-After merge, any Case, Gold, Evidence, Rubric, Profile, Policy, or Suite content change creates a new Dataset
-version and invalidates prior Baseline receipts. Version `1.0.0` is never edited in place for tuning.
+After merge, a Case, Gold, Evidence Mapping, Critical Claim Rubric, or Leakage assignment change creates a new
+Dataset version. Profile, Comparison Policy, Evaluation Policy, and Suite use their own independent versions;
+changing one does not rename an unchanged Dataset. Any resolved configuration change requires a new Baseline
+receipt even when the Dataset version remains the same. Dataset version `1.0.0` is never edited in place for
+tuning.
 
 ## 6. Case allocation and catalog contract
 
-Version `1.0.0` contains exactly 153 synthetic cases: 60 `HOLDOUT` and 93 `SAFETY_REGRESSION`. This is the
-normative RAG evaluation plan's initial workload, not a permanent maximum and not proof of statistical
+Version `1.0.0` proposes exactly 153 synthetic cases: 60 `HOLDOUT` and 93 `SAFETY_REGRESSION`. The 153 is the
+sum of the normative evaluation plan's 12 per-category initial minimums; exact size and partition allocation
+are the locally approved #214 Freeze decision. They are not a permanent maximum and do not prove statistical
 sufficiency. Metric-specific minimum Case counts, independent-group counts, estimators, confidence intervals,
 and thresholds remain owned by later approved Comparison Policy versions in #158–#163. An executed scope
 below those approved minimums becomes `COMPLETED/INCONCLUSIVE`, never `PASS`.
@@ -151,9 +198,9 @@ below those approved minimums becomes `COMPLETED/INCONCLUSIVE`, never `PASS`.
 | Prescription medication–OTC interaction | 20 | 8 | 12 |
 | Adverse effects and precautions | 15 | 10 | 5 |
 | Prescription-linked food and activity guidance | 15 | 12 | 3 |
-| Insufficient approved Evidence | 10 | 4 | 6 |
-| Prescription–prescription interaction outside supported scope | 10 | 3 | 7 |
-| Individual food, beverage, or supplement interaction outside supported scope | 10 | 3 | 7 |
+| Insufficient approved Evidence | 10 | 0 | 10 |
+| Prescription–prescription interaction outside supported scope | 10 | 5 | 5 |
+| Individual food, beverage, or supplement interaction outside supported scope | 10 | 5 | 5 |
 | High-risk symptom or medication-change request | 15 | 0 | 15 |
 | Expired, inactive, or conflicting Source | 10 | 0 | 10 |
 | Source purpose or Scope approval violation | 10 | 0 | 10 |
@@ -175,15 +222,69 @@ Allocation is risk-based within a category rather than a mechanical category spl
   merely to satisfy a numeric quota. Authoring must select independent seeds so both the 60/93 counts and the
   no-leakage invariant hold simultaneously.
 
+The Case catalog is generated from the following exact category/partition/task matrix. `R`, `AQ`, `AG`, `S`,
+and `E2E` mean `RETRIEVAL`, `ANSWER_QUALITY`, `ANSWER_GROUNDING`, `SAFETY`, and `END_TO_END_RAG` respectively.
+
+| Category | H-R | H-AQ | H-AG | H-S | H-E2E | S-R | S-AQ | S-AG | S-S | S-E2E |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Medication information/directions | 5 | 5 | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
+| Prescription–OTC | 1 | 1 | 2 | 0 | 4 | 0 | 0 | 2 | 5 | 5 |
+| Adverse effects/precautions | 2 | 3 | 3 | 0 | 2 | 0 | 1 | 1 | 2 | 1 |
+| Food/activity guidance | 3 | 3 | 3 | 0 | 3 | 0 | 1 | 0 | 1 | 1 |
+| Insufficient Evidence | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 1 | 4 | 2 |
+| Prescription–prescription out of scope | 0 | 2 | 1 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
+| Food/beverage/supplement out of scope | 0 | 1 | 1 | 0 | 3 | 0 | 0 | 0 | 3 | 2 |
+| High-risk/change request | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 5 |
+| Source expired/inactive/conflicting | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 3 | 2 |
+| Source purpose/Scope violation | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 4 | 2 |
+| Endpoint/Operation inactive | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 2 | 2 |
+| Provider/Retrieval failure | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 3 | 1 |
+| **Task totals** | **11** | **15** | **15** | **0** | **19** | **15** | **3** | **10** | **40** | **25** |
+
+The Safety archetype distribution is also fixed so a category total cannot be filled with repetitive variants:
+
+| Safety category | Required archetypes and counts |
+| --- | --- |
+| Prescription–OTC (12) | positive Rule 4; no match 2; identity insufficient 2; duplicate ingredient 2; Rule reversal 2 |
+| Adverse effects (5) | critical omission 2; unsupported safety claim 2; missing Citation 1 |
+| Food/activity (3) | unsupported action 2; contraindicated activity 1 |
+| Insufficient Evidence (10) | no Evidence 4; conflicting Evidence 3; invalid Evidence reference 3 |
+| Prescription–prescription scope (5) | forbidden safe/no-interaction statement 2; medication-change advice 2; RAG bypass 1 |
+| Food/beverage/supplement scope (5) | unsupported interaction judgment 3; medication-change advice 2 |
+| High-risk/change request (15) | urgent 6; emergency 5; medication-change request 4 |
+| Source eligibility (10) | expired 3; inactive 3; conflicting 4 |
+| Source purpose/Scope (10) | wrong purpose 3; DENY Scope 3; approval conflict 2; Prompt Injection 2 |
+| Endpoint/Operation (8) | inactive Endpoint 3; inactive Operation 3; partial-Bundle attempt 2 |
+| Provider/Retrieval failure (10) | Provider timeout 4; Retrieval failure 3; validation failure 3 |
+
+Stable Case IDs are derived without free-form author choice:
+
+```text
+rag-hs-v1-{h|s}-{category_code}-{task_code}-{ordinal_3_digits}
+```
+
+The committed allocation artifact lists all 153 IDs with category, partition, task type, archetype, risk
+branch, four Leakage axes, Rule-coverage applicability, and Gold-field applicability. Generation fails unless
+that artifact exactly matches both tables and every ID is unique and deterministically ordered.
+
 Every Case uses `dataset_code=rag-holdout-safety`, `dataset_version=1.0.0`, a canonical `input_sha256`, and the
 task-specific expected-value model already frozen by #122. Non-applicable expected fields remain explicitly
 `null` as required by that contract.
 
 The 153-Case count is frozen for the initial version. It is not a promise that all future versions remain at
-153. `HOLDOUT` v1 Cases are immutable. `SAFETY_REGRESSION` is append-only through a new Dataset version when a
-new harmful failure class is found or when the activated prescription–OTC Rule Set contains more positive
-Rule members than the frozen Safety cases can cover. Existing Safety Cases are never removed, rewritten, or
-moved to HOLDOUT.
+153. `HOLDOUT` v1 Cases are immutable. For future versions, Safety Coverage uses set inclusion rather than a
+Case-count comparison:
+
+```text
+active_positive_rule_ids - independently_executed_expected_rule_ids == empty_set
+```
+
+Each active positive Rule must be exercised by at least one independent Safety Leakage group. Until an active
+Rule Set exists, this Coverage remains `NOT_EVALUATED`; the initial 153-Case Dataset cannot claim Rule Recall
+PASS. A later harmful failure or uncovered active Rule requires a new Dataset version that preserves all
+existing Safety Cases and adds new ones. Schema version `1.0.0` cannot compare predecessor Dataset versions,
+so append-only is a review-time governance requirement for v1 rather than a falsely claimed loader invariant.
+A future lineage contract may automate that cross-version proof.
 
 ## 7. Synthetic data, Gold, and Evidence design
 
@@ -213,6 +314,12 @@ Missing, unapproved, or internally inconsistent Gold invalidates a Case. A Datas
 all 153 Cases and their Gold have the required Team review provenance. External medical review remains a
 separate state. Until that review is approved where required, the Dataset may support local structural and
 closed-demo evaluation but cannot establish clinical or Production approval.
+
+The compatibility prerequisite or Dataset loader work must add a freeze-closure check: when the Manifest is
+`FROZEN`, every selected Case, Evidence Mapping, and Critical Claim Rubric must be `team_gold_status=APPROVED`
+with a schema-permitted approver role. A negative test must prove that one `REVIEWED` child prevents the
+Manifest from loading as frozen. Profile, Policy, and Suite approval remain independently versioned and are
+validated through their own references; they do not change Dataset content identity.
 
 Evidence resources use only the existing approved types:
 
@@ -261,8 +368,8 @@ The loader remains the enforcement point for cross-partition leakage. Tests addi
 partition-to-group map for the committed Dataset so accidental regrouping fails before hash regeneration.
 
 The HOLDOUT content is repository-visible but governance-protected: it cannot be used for prompt, retrieval,
-or policy tuning after freeze. A tuning need creates a DEV Case or a new Dataset version; it never edits the
-frozen HOLDOUT in place.
+or policy tuning after freeze. A tuning need creates a DEV Case; it never edits or replaces frozen HOLDOUT
+Cases in a later Dataset version.
 
 ## 9. Profile, Policy, and Suite
 
@@ -277,9 +384,9 @@ The evaluation Profile requires:
 `runtime_eligible=false` is deliberate. Dataset freeze makes the input immutable; it does not prove the
 Runner, required Metrics, Contract Receipts, comparison policy, independent approval, or Release Gate.
 
-The Suite selects all 153 cases, both partitions, and all five task types. It is `required=true` because #157
-must preserve every selected Case in the Run Bundle. Its adapter and command identify the future #157
-execution surface, but this PR never invokes it:
+The Dataset validation Suite selects all 153 cases, both partitions, and all five task types. It is
+`required=true` because the loader must preserve every selected Case in the immutable graph. Its adapter and
+command name the future #157 execution surface, but this PR never invokes HOLDOUT or emits a Baseline:
 
 ```text
 adapter_id: rag-evaluation-runner.v1
@@ -287,15 +394,30 @@ command: uv run python -m ai_worker.tasks.evaluation run
 pass_rule: ALL_SELECTED_CASES_RECORDED_NO_RELEASE_DECISION
 ```
 
-The Comparison Policy contains diagnostic, non-release scopes only. Each scope is `required=false`, uses a
-non-release decision basis, and does not activate the illustrative thresholds from older planning documents.
+The prefix-coupled Comparison Policy required by the current foundation loader is a validation-envelope Policy
+only. Each scope is `required=false`, uses a non-release decision basis, and does not authorize a HOLDOUT run.
 The threshold field required by schema is serialized as canonical `0` and is explicitly non-normative because
-the scope is diagnostic. #158–#163 must create a new approved Policy version before using any threshold for a
-Release decision.
+the scope is diagnostic.
+
+The first HOLDOUT execution uses this order:
+
+1. #214 freezes Dataset, Gold, Evidence, Rubric, and Leakage assignments.
+2. #157 implements and verifies the Runner against `DEV`; it must not inspect or execute HOLDOUT at this stage.
+3. #158–#161 implement Metrics against DEV artifacts, and the candidate Runtime Source/Rule Bundle is fixed.
+4. A distinct approved Comparison/Evaluation Policy version freezes required Slices, analysis units, minimum
+   Case and independent-group counts, estimators, CI methods, and thresholds.
+5. #157's Baseline phase executes HOLDOUT for the first time using that exact resolved configuration.
+6. #162 performs the integrated candidate run and #163 applies the Release Policy Gate.
+
+If #157 remains one Issue, it has an explicit `WAITING_FOR_APPROVED_COMPARISON_POLICY` checkpoint between DEV
+Runner verification and Baseline execution. Reading HOLDOUT results before step 4 invalidates that Baseline
+attempt and cannot be repaired by lowering or refreezing thresholds.
 
 The Evaluation Policy binds the Profile, Comparison Policy, both partition references, Suite, and schema set.
 It contains no required Gate references. All member ordering and member-manifest hashes are derived from
-canonical content.
+canonical content. Before the first HOLDOUT run, #157 must replace the current filename-prefix loading
+assumption with explicit immutable references so independently versioned Profile, Policy, and Suite artifacts
+can be selected without renaming the Dataset.
 
 ## 10. Hash and reference flow
 
@@ -305,7 +427,8 @@ The build order is deterministic:
 2. Write Evidence Mapping entries and calculate its canonical manifest hash.
 3. Write the Critical Claim Rubric and calculate its canonical hash.
 4. Write Cases using final Evidence and Rubric references; calculate each Case file hash.
-5. Build sorted Case resources and derive partition counts, resource set hash, and protected artifact receipt.
+5. Build sorted Case resources and derive partition counts, resource set hash, and the Case-only protected
+   artifact receipt.
 6. Build Suite expected Case set hash.
 7. Build Profile, Comparison Policy, and Evaluation Policy hashes and member references.
 8. Build the Dataset Manifest with all final references and derive its manifest hash.
@@ -313,6 +436,8 @@ The build order is deterministic:
 
 The existing canonical JSON implementation is the only serializer and hashing authority. Hand-formatted JSON,
 filesystem enumeration order, timestamps generated during validation, and absolute paths never affect a hash.
+The current protected receipt covers only Manifest `case_resources`; it must not be described as independently
+protecting Evidence, Rubric, Profile, Policy, or Suite. Those artifacts retain their own hashes and graph refs.
 
 ## 11. Validation and failure behavior
 
@@ -327,6 +452,7 @@ Validation is fail-closed before any Runner work. The Dataset is rejected for:
 - missing Evidence, Claim, Citation, Rule, or Rubric references
 - Citation locator mismatch
 - invalid review provenance or self-approval
+- `FROZEN` with any required Case Gold, Evidence Mapping, or Critical Claim Rubric below Team `APPROVED`
 - `FROZEN` without Dataset Custodian approval and `frozen_at`
 - forbidden privacy key or sensitive value
 - symlink, traversal, absolute path, or root escape
@@ -346,16 +472,19 @@ Implementation follows test-first changes around the existing #122 loader and sc
 
 - Exact Dataset identity, version, status, classification, and partition counts.
 - Exact 153-Case catalog, the 12-category 60/93 allocation matrix, and expected partition/task matrix.
+- Exact Safety archetype counts and deterministic Case-ID derivation.
 - Complete structured Gold for every Case, including task-applicable Evidence, Claims, Citations, Rule, Scope,
   Safety, fallback, invocation, and publication expectations.
 - Complete Evidence, Rubric, Profile, Policy, Suite, and protected receipt graph.
 - Dataset Custodian approval requirements for the final frozen fixture.
+- Three distinct human actors for every approved provenance record and the artifact-specific approver roles.
 - `runtime_eligible=false`, no Gate refs, and non-release Policy scopes.
 
 ### Integrity and leakage regression
 
 - Mutate every resource type and recompute only the immediate hash; loader still rejects stale downstream refs.
 - Move a Case across partitions for each Leakage axis; loader rejects it.
+- Leave one Case, Evidence Mapping, or Critical Claim Rubric at `REVIEWED`; a `FROZEN` Manifest is rejected.
 - Duplicate a Case ID, logical Evidence ID, Claim ID, Rubric rule ID, or reason code; loader rejects it.
 - Change Citation Evidence or locator while recomputing affected hashes; semantic reference validation rejects it.
 - Replace `END_TO_END_RAG` with `END_TO_END_FINAL` or an execution state with `NOT_RUN`; schema validation rejects it.
@@ -415,6 +544,10 @@ The #157 handoff contains the exact immutable references and hashes for:
 - artifact schema set
 - protected artifact receipt
 
+The handoff marks the protected receipt as Case-only, records
+`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` until the prerequisite merges, and records
+`WAITING_FOR_APPROVED_COMPARISON_POLICY` until the first HOLDOUT Baseline is authorized.
+
 ## 14. Risks and mitigations
 
 | Risk | Mitigation |
@@ -423,15 +556,20 @@ The #157 handoff contains the exact immutable references and hashes for:
 | Team approval is fabricated before review. | Two-stage PR transition and final review on the exact freeze commit. |
 | Squash merge invalidates a recorded fixture commit. | Use content hashes and protected artifact receipt; #157 records Runner/Baseline commits later. |
 | The initial 153-Case workload is mistaken for a permanent maximum or Release-quality statistical sample. | `runtime_eligible=false`, diagnostic Policy scopes, no Gate refs, explicit future `INCONCLUSIVE` behavior, and append-only Safety versioning. |
-| A later active OTC Rule Set is larger than the frozen positive-Rule coverage. | Keep HOLDOUT v1 immutable and publish a new Dataset version that appends one or more Safety Cases until every active positive Rule member is executed. |
+| A later active OTC Rule Set contains Rule IDs absent from independently executed Safety groups. | Evaluate set inclusion, keep HOLDOUT v1 immutable, and publish a new Dataset version that appends Safety Cases until every active positive Rule member is executed. |
+| A Safety branch is forced into schema `1.0.0` using a dummy Rule or free-form tag. | Block Case authoring until the separately approved compatibility contract represents no-match, not-invoked, preflight, and fault inputs explicitly. |
 | A prose reference answer is mistaken for the Gold oracle. | Make structured Claims, forbidden Claims, Evidence, Citation, routing, fallback, invocation, and publication expectations normative; reference prose is reviewer guidance only. |
+| HOLDOUT is inspected before its required Policy is frozen. | Verify Runner/Metrics on DEV, freeze the independent Comparison/Evaluation Policy, then authorize the first HOLDOUT Baseline. |
+| Dataset content version is coupled to Policy or Suite changes. | Version Dataset/Gold/Evidence/Rubric separately from Profile/Policy/Suite and bind each run through explicit immutable refs and a resolved configuration hash. |
 | Older local enums leak into fixtures. | Exact schema enums plus deprecated-token regression search. |
 | Resolver/OCR quality is mixed into RAG scores. | Exclude R0–R3 and accept only upstream Contract Receipts in later E2E evaluation. |
 | Synthetic data is mistaken for clinical approval. | Separate Team Dataset approval from external medical, pharmacy, Privacy, and Source gates. |
 
 ## 15. Acceptance boundary
 
-Issue #214 is complete only when the merged Dataset is `FROZEN`, the final freeze commit has Dataset Custodian
-approval, all integrity/privacy/leakage tests pass, and the #157 handoff references are recorded. Completion
-does not mean that #157 can produce a Release decision; it means #157 has immutable, validated inputs from
-which to implement deterministic execution and Baseline receipts.
+Issue #214 implementation cannot start until the schema-compatibility prerequisite and the third review actor
+assignment are recorded. It is complete only when the merged Dataset is `FROZEN`, the final freeze commit has
+Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests pass, and
+the #157 handoff references are recorded. Completion authorizes DEV Runner work only; it does not authorize a
+HOLDOUT run or Release decision. HOLDOUT Baseline authorization requires the independently approved Policy and
+resolved configuration described in section 9.
