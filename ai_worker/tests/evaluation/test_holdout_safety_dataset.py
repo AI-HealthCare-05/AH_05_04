@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import json
 import re
+import shutil
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any, cast
 
+import pytest
+
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
+from ai_worker.tasks.evaluation.cli import main as evaluation_cli_main
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
@@ -17,6 +25,7 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-holdout-safety-v1.dataset.json"
 CASE_ROOT = EVALS_ROOT / "retrieval/cases/rag-holdout-safety-v1"
+PREFIX = "rag-holdout-safety-v1"
 
 CASE_ID_PATTERN = re.compile(r"^rag-hs-v1-(?:h|s)-[a-z0-9-]+-(?:ret|ansq|grnd|safe|e2e)-[a-z0-9-]+-[0-9]{3}$")
 
@@ -352,6 +361,252 @@ def _expected_case_ids() -> tuple[str, ...]:
         for (partition, category, task, archetype), count in EXPECTED_ARCHETYPES.items()
         for ordinal in range(1, count + 1)
     )
+
+
+class MutableHoldoutSafetyDataset:
+    """Dataset-specific mutation fixture that preserves public graph contracts."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.manifest_path = root / f"retrieval/manifests/{PREFIX}.dataset.json"
+
+    @staticmethod
+    def read(path: Path) -> dict[str, Any]:
+        return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+
+    @staticmethod
+    def write(path: Path, value: dict[str, Any]) -> None:
+        path.write_bytes(canonical_json_bytes(cast(JsonValue, value)) + b"\n")
+
+    @staticmethod
+    def refresh_self_hash(value: dict[str, Any]) -> None:
+        field = next(
+            name
+            for name in (
+                "manifest_sha256",
+                "rubric_hash",
+                "receipt_hash",
+                "evaluation_profile_hash",
+                "comparison_policy_hash",
+                "evaluation_policy_hash",
+                "suite_hash",
+            )
+            if name in value
+        )
+        value[field] = canonical_sha256(
+            cast(JsonValue, value),
+            excluded_top_level_keys=frozenset({field}),
+        )
+
+    @staticmethod
+    def set_approval(provenance: dict[str, Any], *, approved: bool, role: str) -> None:
+        provenance["team_gold_status"] = "APPROVED" if approved else "REVIEWED"
+        provenance["approved_by"] = (
+            {
+                "actor_id": "hazelnutflavoured",
+                "namespace": "GITHUB_LOGIN",
+                "role": role,
+            }
+            if approved
+            else None
+        )
+        provenance["approved_at"] = "2026-09-02T17:07:55.000000Z" if approved else None
+
+    def manifest(self) -> dict[str, Any]:
+        return self.read(self.manifest_path)
+
+    def case_path(self, case_id: str) -> Path:
+        resource = next(item for item in self.manifest()["case_resources"] if item["case_id"] == case_id)
+        return self.root / resource["path"]
+
+    def first_case_id(self, partition: str) -> str:
+        return next(item["case_id"] for item in self.manifest()["case_resources"] if item["partition"] == partition)
+
+    @staticmethod
+    def refresh_resource_set_hash(manifest: dict[str, Any]) -> None:
+        manifest["resource_set_hash"] = canonical_sha256(
+            cast(
+                JsonValue,
+                {
+                    "resources": [
+                        {
+                            "partition": item["partition"],
+                            "path": item["path"],
+                            "sha256": item["sha256"],
+                        }
+                        for item in manifest["case_resources"]
+                    ]
+                },
+            )
+        )
+
+    @staticmethod
+    def partition_hash(manifest: dict[str, Any], partition: str) -> str:
+        return canonical_sha256(
+            cast(
+                JsonValue,
+                {
+                    "partition": partition,
+                    "resources": [
+                        {
+                            "case_id": item["case_id"],
+                            "path": item["path"],
+                            "sha256": item["sha256"],
+                        }
+                        for item in manifest["case_resources"]
+                        if item["partition"] == partition
+                    ],
+                },
+            )
+        )
+
+    @staticmethod
+    def refresh_policy_member_hash(policy: dict[str, Any]) -> None:
+        policy["member_manifest_hash"] = canonical_sha256(
+            cast(
+                JsonValue,
+                {
+                    "members": [
+                        policy["evaluation_profile_ref"],
+                        policy["comparison_policy_ref"],
+                        *policy["required_partition_refs"],
+                        *policy["required_gate_refs"],
+                        *policy["required_suite_refs"],
+                        policy["artifact_schema_set_ref"],
+                    ]
+                },
+            )
+        )
+
+    def rebind_case_graph(self, manifest: dict[str, Any]) -> None:
+        self.refresh_resource_set_hash(manifest)
+
+        receipt_path = self.root / f"provenance/{PREFIX}.protected-artifact-receipt.json"
+        receipt = self.read(receipt_path)
+        receipt["resource_set_hash"] = manifest["resource_set_hash"]
+        receipt["artifact_paths"] = [item["path"] for item in manifest["case_resources"]]
+        self.refresh_self_hash(receipt)
+        self.write(receipt_path, receipt)
+        manifest["protected_artifact_receipt_ref"]["hash"] = sha256_hex(receipt_path.read_bytes())
+
+        policy_path = self.root / f"policies/{PREFIX}.evaluation-policy.json"
+        policy = self.read(policy_path)
+        for member in policy["required_partition_refs"]:
+            partition = member["reference"]["id"].rsplit(":", 1)[1]
+            member["reference"]["hash"] = self.partition_hash(manifest, partition)
+        self.refresh_policy_member_hash(policy)
+        self.refresh_self_hash(policy)
+        self.write(policy_path, policy)
+
+    def write_manifest(self, manifest: dict[str, Any]) -> None:
+        self.refresh_self_hash(manifest)
+        self.write(self.manifest_path, manifest)
+
+    def mutate_case(self, case_id: str, mutation: Callable[[dict[str, Any]], None]) -> None:
+        manifest = self.manifest()
+        resource = next(item for item in manifest["case_resources"] if item["case_id"] == case_id)
+        path = self.root / resource["path"]
+        case = self.read(path)
+        mutation(case)
+        case["input_sha256"] = canonical_sha256(cast(JsonValue, {"query": case["query"], "context": case["context"]}))
+        self.write(path, case)
+        resource["sha256"] = sha256_hex(path.read_bytes())
+        self.rebind_case_graph(manifest)
+        self.write_manifest(manifest)
+
+    def rebind_evidence_mapping(self, evidence: dict[str, Any]) -> None:
+        evidence_path = self.root / f"retrieval/evidence/{PREFIX}.evidence-mapping.json"
+        self.refresh_self_hash(evidence)
+        self.write(evidence_path, evidence)
+        manifest = self.manifest()
+        manifest["evidence_mapping_manifest_sha256"] = evidence["manifest_sha256"]
+        manifest["evaluation_corpus_snapshot_ref"]["hash"] = evidence["manifest_sha256"]
+        for resource in manifest["case_resources"]:
+            case_path = self.root / resource["path"]
+            case = self.read(case_path)
+            runtime = case["context"].get("runtime_fixture")
+            if runtime is not None:
+                runtime["source_snapshot_ref"]["hash"] = evidence["manifest_sha256"]
+            case["input_sha256"] = canonical_sha256(
+                cast(JsonValue, {"query": case["query"], "context": case["context"]})
+            )
+            self.write(case_path, case)
+            resource["sha256"] = sha256_hex(case_path.read_bytes())
+        self.rebind_case_graph(manifest)
+        self.write_manifest(manifest)
+
+    def promote_frozen_with_downgraded_child(self, child: str | None) -> None:
+        manifest = self.manifest()
+        evidence_path = self.root / f"retrieval/evidence/{PREFIX}.evidence-mapping.json"
+        evidence = self.read(evidence_path)
+        self.set_approval(
+            evidence["review_provenance"],
+            approved=child != "evidence_mapping",
+            role="DATASET_CUSTODIAN",
+        )
+        self.refresh_self_hash(evidence)
+        self.write(evidence_path, evidence)
+        manifest["evidence_mapping_manifest_sha256"] = evidence["manifest_sha256"]
+        manifest["evaluation_corpus_snapshot_ref"]["hash"] = evidence["manifest_sha256"]
+
+        rubric_path = self.root / f"retrieval/manifests/{PREFIX}.critical-claim-rubric.json"
+        rubric = self.read(rubric_path)
+        self.set_approval(
+            rubric["review_provenance"],
+            approved=child != "critical_claim_rubric",
+            role="PRODUCT_SAFETY_REVIEWER",
+        )
+        self.refresh_self_hash(rubric)
+        self.write(rubric_path, rubric)
+        rubric_ref = {
+            "id": rubric["rubric_id"],
+            "version": rubric["rubric_version"],
+            "hash": rubric["rubric_hash"],
+        }
+        manifest["critical_claim_rubric_ref"] = rubric_ref
+
+        downgraded_case_id = self.first_case_id("HOLDOUT")
+        for resource in manifest["case_resources"]:
+            case_path = self.root / resource["path"]
+            case = self.read(case_path)
+            approved = child != "case" or case["case_id"] != downgraded_case_id
+            self.set_approval(case["review_provenance"], approved=approved, role="PRODUCT_SAFETY_REVIEWER")
+            case["critical_claim_rubric_ref"] = rubric_ref
+            runtime = case["context"].get("runtime_fixture")
+            if runtime is not None:
+                runtime["source_snapshot_ref"]["hash"] = evidence["manifest_sha256"]
+            case["input_sha256"] = canonical_sha256(
+                cast(JsonValue, {"query": case["query"], "context": case["context"]})
+            )
+            self.write(case_path, case)
+            resource["sha256"] = sha256_hex(case_path.read_bytes())
+
+        manifest["status"] = "FROZEN"
+        manifest["frozen_at"] = "2026-09-02T17:07:55.000000Z"
+        self.set_approval(manifest["review_provenance"], approved=True, role="DATASET_CUSTODIAN")
+        self.rebind_case_graph(manifest)
+        self.write_manifest(manifest)
+
+
+@pytest.fixture
+def mutable_dataset(tmp_path: Path) -> MutableHoldoutSafetyDataset:
+    root = tmp_path / "evals"
+    shutil.copytree(EVALS_ROOT, root)
+    return MutableHoldoutSafetyDataset(root)
+
+
+def _assert_dataset_error(
+    dataset: MutableHoldoutSafetyDataset,
+    expected: EvaluationErrorCode,
+    *,
+    sentinel: str | None = None,
+) -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        load_dataset(dataset.manifest_path, evals_root=dataset.root)
+
+    assert caught.value.code is expected
+    if sentinel is not None:
+        assert sentinel not in str(caught.value)
 
 
 def _assert_rule_gold(expected: SafetyExpectedV11, *, category: str) -> None:
@@ -756,3 +1011,403 @@ def test_holdout_safety_dataset_is_loadable_draft_with_non_release_configuration
     assert schema_set_ref.id == "rag-eval.schema-set"
     assert schema_set_ref.version == "1.1.0"
     assert schema_set_ref.hash == "5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0"
+
+
+@pytest.mark.parametrize(
+    ("artifact", "expected_code"),
+    [
+        ("case", EvaluationErrorCode.HASH_MISMATCH),
+        ("evidence_resource", EvaluationErrorCode.HASH_MISMATCH),
+        ("evidence_mapping", EvaluationErrorCode.EVIDENCE_MAPPING_INVALID),
+        ("rubric", EvaluationErrorCode.RUBRIC_MISMATCH),
+        ("profile", EvaluationErrorCode.MANIFEST_INVALID),
+        ("comparison_policy", EvaluationErrorCode.MANIFEST_INVALID),
+        ("evaluation_policy", EvaluationErrorCode.MANIFEST_INVALID),
+        ("suite", EvaluationErrorCode.MANIFEST_INVALID),
+        ("receipt", EvaluationErrorCode.MANIFEST_INVALID),
+    ],
+)
+def test_loader_rejects_immediately_rehashed_artifact_with_stale_downstream_reference(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+    artifact: str,
+    expected_code: EvaluationErrorCode,
+) -> None:
+    if artifact == "case":
+        path = mutable_dataset.case_path(mutable_dataset.first_case_id("HOLDOUT"))
+        value = mutable_dataset.read(path)
+        value["gold_version"] = "1.0.1"
+    elif artifact == "evidence_resource":
+        mapping = mutable_dataset.read(mutable_dataset.root / f"retrieval/evidence/{PREFIX}.evidence-mapping.json")
+        path = mutable_dataset.root / mapping["entries"][0]["fixture_record_ref"]["path"]
+        value = mutable_dataset.read(path)
+        value["synthetic_revision"] = "SYNTHETIC_STALE_DOWNSTREAM"
+    else:
+        paths = {
+            "evidence_mapping": f"retrieval/evidence/{PREFIX}.evidence-mapping.json",
+            "rubric": f"retrieval/manifests/{PREFIX}.critical-claim-rubric.json",
+            "profile": f"profiles/{PREFIX}.profile.json",
+            "comparison_policy": f"policies/{PREFIX}.comparison-policy.json",
+            "evaluation_policy": f"policies/{PREFIX}.evaluation-policy.json",
+            "suite": f"suites/{PREFIX}.suite.json",
+            "receipt": f"provenance/{PREFIX}.protected-artifact-receipt.json",
+        }
+        path = mutable_dataset.root / paths[artifact]
+        value = mutable_dataset.read(path)
+        version_fields = {
+            "evidence_mapping": "mapping_version",
+            "rubric": "rubric_version",
+            "profile": "evaluation_profile_version",
+            "comparison_policy": "comparison_policy_version",
+            "suite": "suite_version",
+            "receipt": "receipt_version",
+        }
+        if artifact == "evaluation_policy":
+            value["evaluation_profile_ref"]["reference"]["hash"] = "a" * 64
+            mutable_dataset.refresh_policy_member_hash(value)
+        else:
+            value[version_fields[artifact]] = "1.0.1"
+        mutable_dataset.refresh_self_hash(value)
+
+    mutable_dataset.write(path, value)
+    _assert_dataset_error(mutable_dataset, expected_code)
+
+
+def test_loader_rejects_duplicate_case_id_after_downstream_hash_rebinding(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+) -> None:
+    manifest = mutable_dataset.manifest()
+    manifest["case_resources"][1]["case_id"] = manifest["case_resources"][0]["case_id"]
+    mutable_dataset.rebind_case_graph(manifest)
+    mutable_dataset.write_manifest(manifest)
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.CASE_DUPLICATE)
+
+
+def test_loader_rejects_duplicate_evidence_id_after_manifest_hash_rebinding(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+) -> None:
+    path = mutable_dataset.root / f"retrieval/evidence/{PREFIX}.evidence-mapping.json"
+    evidence = mutable_dataset.read(path)
+    evidence["entries"][1]["evidence_ref_id"] = evidence["entries"][0]["evidence_ref_id"]
+    mutable_dataset.refresh_self_hash(evidence)
+    mutable_dataset.write(path, evidence)
+    manifest = mutable_dataset.manifest()
+    manifest["evidence_mapping_manifest_sha256"] = evidence["manifest_sha256"]
+    manifest["evaluation_corpus_snapshot_ref"]["hash"] = evidence["manifest_sha256"]
+    mutable_dataset.write_manifest(manifest)
+
+    _assert_dataset_error(
+        mutable_dataset,
+        EvaluationErrorCode.EVIDENCE_MAPPING_INVALID,
+    )
+
+
+def test_loader_rejects_duplicate_gold_claim_id_after_case_hash_rebinding(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+) -> None:
+    case_id = mutable_dataset.first_case_id("HOLDOUT")
+
+    def duplicate_claim(case: dict[str, Any]) -> None:
+        case["expected"]["gold_claims"].append(dict(case["expected"]["gold_claims"][0]))
+
+    mutable_dataset.mutate_case(case_id, duplicate_claim)
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+@pytest.mark.parametrize("collection", ["classification_rules", "reason_code_catalog"])
+def test_loader_rejects_duplicate_rubric_logical_id_after_hash_rebinding(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+    collection: str,
+) -> None:
+    path = mutable_dataset.root / f"retrieval/manifests/{PREFIX}.critical-claim-rubric.json"
+    rubric = mutable_dataset.read(path)
+    duplicate = dict(rubric[collection][0])
+    duplicate["member_order"] = len(rubric[collection]) + 1
+    rubric[collection].append(duplicate)
+    mutable_dataset.refresh_self_hash(rubric)
+    mutable_dataset.write(path, rubric)
+    manifest = mutable_dataset.manifest()
+    rubric_ref = manifest["critical_claim_rubric_ref"]
+    rubric_ref["hash"] = rubric["rubric_hash"]
+    for resource in manifest["case_resources"]:
+        case_path = mutable_dataset.root / resource["path"]
+        case = mutable_dataset.read(case_path)
+        case["critical_claim_rubric_ref"] = rubric_ref
+        mutable_dataset.write(case_path, case)
+        resource["sha256"] = sha256_hex(case_path.read_bytes())
+    mutable_dataset.rebind_case_graph(manifest)
+    mutable_dataset.write_manifest(manifest)
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+def test_loader_rejects_citation_locator_mismatch_after_case_hash_rebinding(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+) -> None:
+    case_id = mutable_dataset.first_case_id("HOLDOUT")
+    mutable_dataset.mutate_case(
+        case_id,
+        lambda case: case["expected"]["expected_citations"][0].__setitem__("locator", "$.records.SYNTHETIC_MISSING"),
+    )
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+
+
+def test_loader_rejects_unmapped_evidence_attached_to_gold_after_case_hash_rebinding(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+) -> None:
+    case_id = mutable_dataset.first_case_id("HOLDOUT")
+
+    def attach_unmapped_evidence(case: dict[str, Any]) -> None:
+        claim = case["expected"]["gold_claims"][0]
+        claim["supporting_evidence_ref_ids"] = ["ev-rag-hs-unmapped-001"]
+        citation = case["expected"]["expected_citations"][0]
+        citation["evidence_ref_id"] = "ev-rag-hs-unmapped-001"
+
+    mutable_dataset.mutate_case(case_id, attach_unmapped_evidence)
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
+
+
+@pytest.mark.parametrize(
+    ("field", "deprecated_value"),
+    [
+        ("task_type", "END_TO_END_FINAL"),
+        ("expected_execution_status", "NOT_RUN"),
+    ],
+)
+def test_loader_rejects_deprecated_task_and_execution_values(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+    field: str,
+    deprecated_value: str,
+) -> None:
+    case_id = mutable_dataset.first_case_id("SAFETY_REGRESSION")
+
+    def mutate(case: dict[str, Any]) -> None:
+        if field == "task_type":
+            case[field] = deprecated_value
+        else:
+            case["expected"][field] = deprecated_value
+
+    mutable_dataset.mutate_case(case_id, mutate)
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.SCHEMA_INVALID)
+
+
+@pytest.mark.parametrize("child", ["case", "evidence_mapping", "critical_claim_rubric"])
+def test_future_frozen_dataset_rejects_child_below_approved(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+    child: str,
+) -> None:
+    mutable_dataset.promote_frozen_with_downgraded_child(child)
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+
+def test_future_frozen_dataset_loads_when_all_required_children_are_approved(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+) -> None:
+    mutable_dataset.promote_frozen_with_downgraded_child(None)
+
+    dataset = load_dataset(mutable_dataset.manifest_path, evals_root=mutable_dataset.root)
+
+    assert dataset.manifest.status.value == "FROZEN"
+    assert dataset.manifest.review_provenance.team_gold_status.value == "APPROVED"
+
+
+@pytest.mark.parametrize(
+    "axis",
+    ["question_template", "source_segment", "medication_family", "transform_origin"],
+)
+def test_loader_rejects_each_leakage_axis_crossing_partitions_after_full_hash_rebinding(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+    axis: str,
+) -> None:
+    holdout = mutable_dataset.read(mutable_dataset.case_path(mutable_dataset.first_case_id("HOLDOUT")))
+    safety_case_id = mutable_dataset.first_case_id("SAFETY_REGRESSION")
+    shared_group = holdout["leakage_group_ids"][axis]
+    mutable_dataset.mutate_case(
+        safety_case_id,
+        lambda case: case["leakage_group_ids"].__setitem__(axis, shared_group),
+    )
+
+    _assert_dataset_error(mutable_dataset, EvaluationErrorCode.LEAKAGE_CROSS_PARTITION)
+
+
+def _inject_case_privacy_value(
+    dataset: MutableHoldoutSafetyDataset,
+    target: str,
+    forbidden_key: str | None,
+    forbidden_value: str,
+) -> None:
+    case_id = dataset.first_case_id("HOLDOUT")
+
+    def mutate_case(case: dict[str, Any]) -> None:
+        if target == "case_context":
+            case["context"][cast(str, forbidden_key)] = forbidden_value
+        elif target == "case_expected":
+            case["expected"][cast(str, forbidden_key)] = forbidden_value
+        else:
+            case["query"] = f"{case['query']} {forbidden_value}"
+
+    dataset.mutate_case(case_id, mutate_case)
+
+
+def _inject_evidence_privacy_value(
+    dataset: MutableHoldoutSafetyDataset,
+    target: str,
+    forbidden_key: str | None,
+    forbidden_value: str,
+) -> None:
+    mapping_path = dataset.root / f"retrieval/evidence/{PREFIX}.evidence-mapping.json"
+    evidence = dataset.read(mapping_path)
+    resource_relative = evidence["entries"][0]["fixture_record_ref"]["path"]
+    resource_path = dataset.root / resource_relative
+    resource = dataset.read(resource_path)
+    if target == "evidence_key":
+        resource[cast(str, forbidden_key)] = forbidden_value
+    else:
+        resource["synthetic_note"] = forbidden_value
+    dataset.write(resource_path, resource)
+    resource_sha = sha256_hex(resource_path.read_bytes())
+    for entry in evidence["entries"]:
+        fixture_ref = entry.get("fixture_record_ref")
+        if fixture_ref is not None and fixture_ref["path"] == resource_relative:
+            fixture_ref["sha256"] = resource_sha
+            entry["content_sha256"] = resource_sha
+    dataset.rebind_evidence_mapping(evidence)
+
+
+def _inject_receipt_privacy_value(
+    dataset: MutableHoldoutSafetyDataset,
+    target: str,
+    forbidden_key: str | None,
+    forbidden_value: str,
+) -> None:
+    receipt_path = dataset.root / f"provenance/{PREFIX}.protected-artifact-receipt.json"
+    receipt = dataset.read(receipt_path)
+    if target == "receipt_key":
+        receipt[cast(str, forbidden_key)] = forbidden_value
+    else:
+        receipt["artifact_paths"][0] = f"{receipt['artifact_paths'][0]}/{forbidden_value}"
+    dataset.refresh_self_hash(receipt)
+    dataset.write(receipt_path, receipt)
+    manifest = dataset.manifest()
+    manifest["protected_artifact_receipt_ref"]["hash"] = sha256_hex(receipt_path.read_bytes())
+    dataset.write_manifest(manifest)
+
+
+def _inject_policy_privacy_value(
+    dataset: MutableHoldoutSafetyDataset,
+    target: str,
+    forbidden_key: str | None,
+    forbidden_value: str,
+) -> None:
+    policy_path = dataset.root / f"policies/{PREFIX}.comparison-policy.json"
+    policy = dataset.read(policy_path)
+    ci_parameters = policy["scopes"][0]["ci_parameters"]
+    if target == "policy_key":
+        ci_parameters[cast(str, forbidden_key)] = forbidden_value
+    else:
+        ci_parameters["synthetic_label"] = forbidden_value
+    dataset.refresh_self_hash(policy)
+    dataset.write(policy_path, policy)
+
+
+@pytest.mark.parametrize(
+    ("target", "forbidden_key", "forbidden_value", "expected_code"),
+    [
+        ("case_context", "patient_id", "SENSITIVE_SENTINEL", EvaluationErrorCode.SCHEMA_INVALID),
+        ("case_expected", "ocr_raw", "SENSITIVE_SENTINEL", EvaluationErrorCode.SCHEMA_INVALID),
+        ("case_value", None, "synthetic.user@example.com", EvaluationErrorCode.PRIVACY_VALUE_DETECTED),
+        ("evidence_key", "insurance_code", "SENSITIVE_SENTINEL", EvaluationErrorCode.PRIVACY_FIELD_FORBIDDEN),
+        ("evidence_value", None, "Bearer SYNTHETIC_PRIVATE_TOKEN", EvaluationErrorCode.PRIVACY_VALUE_DETECTED),
+        ("receipt_key", "credential", "SENSITIVE_SENTINEL", EvaluationErrorCode.SCHEMA_INVALID),
+        ("receipt_value", None, "synthetic.user@example.com", EvaluationErrorCode.PRIVACY_VALUE_DETECTED),
+        ("policy_key", "provider_payload", "SENSITIVE_SENTINEL", EvaluationErrorCode.PRIVACY_FIELD_FORBIDDEN),
+        ("policy_value", None, "ghp_ABCDEFGHIJKLMNOPQRST", EvaluationErrorCode.PRIVACY_VALUE_DETECTED),
+    ],
+)
+def test_dataset_artifacts_reject_privacy_keys_and_values_without_echoing_input(
+    mutable_dataset: MutableHoldoutSafetyDataset,
+    target: str,
+    forbidden_key: str | None,
+    forbidden_value: str,
+    expected_code: EvaluationErrorCode,
+) -> None:
+    if target.startswith("case_"):
+        _inject_case_privacy_value(mutable_dataset, target, forbidden_key, forbidden_value)
+    elif target.startswith("evidence_"):
+        _inject_evidence_privacy_value(mutable_dataset, target, forbidden_key, forbidden_value)
+    elif target.startswith("receipt_"):
+        _inject_receipt_privacy_value(mutable_dataset, target, forbidden_key, forbidden_value)
+    else:
+        _inject_policy_privacy_value(mutable_dataset, target, forbidden_key, forbidden_value)
+
+    _assert_dataset_error(
+        mutable_dataset,
+        expected_code,
+        sentinel=forbidden_value,
+    )
+
+
+def test_two_independent_fresh_loads_have_identical_dataset_graph_hashes() -> None:
+    first = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+    second = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+
+    def graph_hashes(dataset: ValidatedDataset) -> tuple[object, ...]:
+        schema_set = dataset.evaluation_policy.artifact_schema_set_ref.reference
+        return (
+            dataset.manifest.manifest_sha256,
+            dataset.manifest.resource_set_hash,
+            dataset.evidence_mapping.manifest_sha256,
+            dataset.rubric.rubric_hash,
+            dataset.profile.evaluation_profile_hash,
+            dataset.comparison_policy.comparison_policy_hash,
+            dataset.evaluation_policy.evaluation_policy_hash,
+            dataset.suite.suite_hash,
+            schema_set,
+            dataset.suite.expected_case_set_hash,
+            dataset.resource_hashes,
+        )
+
+    assert first == second
+    assert graph_hashes(first) == graph_hashes(second)
+    assert not hasattr(first, "execute")
+
+
+def test_validation_only_cli_is_semantically_deterministic_and_emits_no_run_artifacts(tmp_path: Path) -> None:
+    first_result = tmp_path / "first-validation-receipt.json"
+    second_result = tmp_path / "second-validation-receipt.json"
+
+    assert (
+        evaluation_cli_main(
+            ["validate", "--manifest", str(MANIFEST), "--result", str(first_result)],
+            allowed_result_root=tmp_path,
+        )
+        == 0
+    )
+    assert (
+        evaluation_cli_main(
+            ["validate", "--manifest", str(MANIFEST), "--result", str(second_result)],
+            allowed_result_root=tmp_path,
+        )
+        == 0
+    )
+
+    first = json.loads(first_result.read_text(encoding="utf-8"))
+    second = json.loads(second_result.read_text(encoding="utf-8"))
+    for value in (first, second):
+        value.pop("validation_id")
+        value.pop("validated_at")
+        assert value["release_eligible"] is False
+        assert value["execution_status"] == "COMPLETED"
+        assert value["decision_status"] == "N/A"
+        assert not {"run_id", "metrics", "comparison", "gate", "release_decision"} & value.keys()
+
+    assert first == second
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "first-validation-receipt.json",
+        "second-validation-receipt.json",
+    ]
