@@ -45,7 +45,7 @@ def build_message(
             "attempt": 1,
             "available_at": now.isoformat(),
             "enqueued_at": now.isoformat(),
-            "trace_id": "dispatcher-test-trace",
+            "trace_id": uuid4().hex,
         }
     )
 
