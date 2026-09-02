@@ -214,41 +214,46 @@ EXPECTED_LEAKAGE_GROUP_COUNTS: Mapping[str, Mapping[tuple[str, str], int]] = Map
         ),
         "medication_family": MappingProxyType(
             {
-                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_H_CINDER"): 15,
-                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_H_GROVE"): 17,
-                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_H_HARBOR"): 28,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_AURORA"): 15,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_CEDAR"): 10,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_COMET"): 10,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_EMBER"): 5,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_LANTERN"): 8,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_NEBULA"): 12,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_ONYX"): 5,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_QUARTZ"): 10,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_SAFFRON"): 5,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_STORM"): 3,
-                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_S_TIDAL"): 10,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_OTC_ORBIT_RX_HARBOR"): 8,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_RX_CINDER"): 10,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_RX_GROVE"): 12,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_RX_HARBOR"): 20,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_RX_IVORY_RX_ONYX"): 5,
+                ("HOLDOUT", "SYNTHETIC_MEDICATION_FAMILY_RX_SAFFRON_SUPPLEMENT_MOSS"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_OTC_FLARE_RX_NEBULA"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_OTC_MIST_RX_NEBULA"): 2,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_AURORA"): 15,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_CEDAR"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_COMET"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_EMBER"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_LANTERN"): 8,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_OBSIDIAN_RX_PEARL"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_QUARTZ"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_STORM"): 3,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_TERRA_SUPPLEMENT_FERN"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_MEDICATION_FAMILY_RX_TIDAL"): 10,
             }
         ),
         "transform_origin": MappingProxyType(
             {
-                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_ADVERSE"): 10,
-                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_FOOD_SCOPE"): 5,
-                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_LIFESTYLE"): 12,
-                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_MED_INFO"): 20,
-                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_RX_OTC"): 8,
-                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_H_RX_RX_SCOPE"): 5,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_ADVERSE"): 5,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_DEPENDENCY_FAILURE"): 10,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_FOOD_SCOPE"): 5,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_HIGH_RISK"): 15,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_LIFESTYLE"): 3,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_MEMBER_STATE"): 8,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_NO_EVIDENCE"): 10,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_RX_OTC"): 12,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_RX_RX_SCOPE"): 5,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_SOURCE_SCOPE"): 10,
-                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_S_SOURCE_STATE"): 10,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_ADVERSE_RX_CINDER"): 10,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_FOOD_SCOPE_RX_SAFFRON_SUPPLEMENT_MOSS"): 5,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_LIFESTYLE_RX_GROVE"): 12,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_MED_INFO_RX_HARBOR"): 20,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_RX_OTC_OTC_ORBIT_RX_HARBOR"): 8,
+                ("HOLDOUT", "SYNTHETIC_TRANSFORM_ORIGIN_RX_RX_SCOPE_RX_IVORY_RX_ONYX"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_ADVERSE_RX_EMBER"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_DEPENDENCY_FAILURE_RX_COMET"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_FOOD_SCOPE_RX_TERRA_SUPPLEMENT_FERN"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_HIGH_RISK_RX_AURORA"): 15,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_LIFESTYLE_RX_STORM"): 3,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_MEMBER_STATE_RX_LANTERN"): 8,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_NO_EVIDENCE_RX_QUARTZ"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_RX_OTC_OTC_FLARE_RX_NEBULA"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_RX_OTC_OTC_MIST_RX_NEBULA"): 2,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_RX_RX_SCOPE_RX_OBSIDIAN_RX_PEARL"): 5,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_SOURCE_SCOPE_RX_CEDAR"): 10,
+                ("SAFETY_REGRESSION", "SYNTHETIC_TRANSFORM_ORIGIN_SOURCE_STATE_RX_TIDAL"): 10,
             }
         ),
     }
@@ -300,6 +305,26 @@ LABELED_FAILURE_PATTERN = re.compile(
     r".{0,80}\b(?:omit(?:s|ted|ting)?|revers(?:e|es|ed|ing)|bypass(?:es|ed|ing)?)\b",
     re.IGNORECASE,
 )
+ENTITY_TOKEN_PATTERN = re.compile(r"\bFICTIONAL_(?:RX|OTC|SUPPLEMENT|CONDITION|SYMPTOM|SIGNAL)_[A-Z0-9_]+\b")
+NEUTRAL_RUNTIME_QUERY_PATTERNS: Mapping[str, re.Pattern[str]] = MappingProxyType(
+    {
+        "dependency-failure": re.compile(
+            r"\b(?:provider|retrieval|dependency|timeout|timed out|unavailable|error|failed?)\b",
+            re.IGNORECASE,
+        ),
+        "source-state": re.compile(
+            r"\b(?:source state|expired|inactive|conflicting|ineligible)\b",
+            re.IGNORECASE,
+        ),
+        "member-state": re.compile(
+            r"\b(?:endpoint|operation|bundle|disabled|inactive|partial|unavailable)\b",
+            re.IGNORECASE,
+        ),
+    }
+)
+INTENTIONAL_DUPLICATE_QUERY_CATEGORIES = frozenset(
+    {"dependency-failure", "member-state", "no-evidence", "source-scope", "source-state"}
+)
 
 
 def _slice_value(slice_ids: tuple[str, ...], prefix: str) -> str:
@@ -349,6 +374,90 @@ def _load_committed_cases() -> tuple[EvaluationCaseV11, ...]:
         EVALUATION_CASE_ADAPTER_V1_1.validate_json(case_path.read_bytes())
         for case_path in sorted(CASE_ROOT.glob("*.json"))
     )
+
+
+def _case_evidence_refs(case: EvaluationCaseV11) -> set[str]:
+    expected = case.expected
+    evidence_refs = set(expected.relevant_evidence_refs or ())
+    evidence_refs.update(expected.required_evidence_refs or ())
+    evidence_refs.update(
+        evidence_ref for claim in expected.gold_claims or () for evidence_ref in claim.supporting_evidence_ref_ids
+    )
+    evidence_refs.update(citation.evidence_ref_id for citation in expected.expected_citations or ())
+    return evidence_refs
+
+
+def _extract_entity_tokens(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return set(ENTITY_TOKEN_PATTERN.findall(value.replace("_PLUS_", " ")))
+    if isinstance(value, dict):
+        return set().union(*(_extract_entity_tokens(item) for item in value.values()), set())
+    if isinstance(value, (list, tuple)):
+        return set().union(*(_extract_entity_tokens(item) for item in value), set())
+    return set()
+
+
+def _load_evidence_entity_tokens() -> Mapping[str, set[str]]:
+    mapping_path = EVALS_ROOT / f"retrieval/evidence/{PREFIX}.evidence-mapping.json"
+    mapping = cast(dict[str, Any], json.loads(mapping_path.read_text(encoding="utf-8")))
+    tokens_by_ref: dict[str, set[str]] = {}
+    for entry in mapping["entries"]:
+        fixture_ref = entry["fixture_record_ref"]
+        value: Any = json.loads((EVALS_ROOT / fixture_ref["path"]).read_text(encoding="utf-8"))
+        for component in entry["locator"].removeprefix("$.").split("."):
+            value = value[component]
+        tokens_by_ref[entry["evidence_ref_id"]] = _extract_entity_tokens(value)
+    return MappingProxyType(tokens_by_ref)
+
+
+def _assert_case_entities_resolve(
+    case: EvaluationCaseV11,
+    evidence_tokens_by_ref: Mapping[str, set[str]],
+) -> None:
+    context_entities: list[str] = []
+    for medication in case.context.medication_fixtures:
+        assert medication.display_name_token.startswith("SYNTHETIC_")
+        entity = medication.display_name_token.removeprefix("SYNTHETIC_")
+        assert ENTITY_TOKEN_PATTERN.fullmatch(entity)
+        assert medication.medication_fixture_id == f"SYNTHETIC_MEDICATION_FIXTURE_{entity}"
+        assert medication.medication_product_fixture_id == f"SYNTHETIC_PRODUCT_FIXTURE_{entity}"
+        assert medication.ingredient_tokens == (f"SYNTHETIC_INGREDIENT_FIXTURE_{entity}",)
+        assert medication.strength_text_token == f"SYNTHETIC_STRENGTH_FIXTURE_{entity}"
+        context_entities.append(entity)
+
+    patient_context = case.context.patient_context_fixture
+    if patient_context is not None:
+        for synthetic_token in patient_context.condition_tokens:
+            assert synthetic_token.startswith("SYNTHETIC_")
+            entity = synthetic_token.removeprefix("SYNTHETIC_")
+            assert ENTITY_TOKEN_PATTERN.fullmatch(entity)
+            context_entities.append(entity)
+
+    entity_counts = Counter(context_entities)
+    referenced_entities = _extract_entity_tokens(case.query)
+    for evidence_ref in _case_evidence_refs(case):
+        referenced_entities.update(evidence_tokens_by_ref[evidence_ref])
+    assert all(entity_counts[entity] == 1 for entity in referenced_entities), case.case_id
+
+
+def _canonical_medication_seed(case: EvaluationCaseV11) -> str:
+    entities = sorted(
+        token.removeprefix("FICTIONAL_")
+        for token in _extract_entity_tokens(case.query)
+        if token.startswith(("FICTIONAL_RX_", "FICTIONAL_OTC_", "FICTIONAL_SUPPLEMENT_"))
+    )
+    assert entities
+    return "_".join(entities)
+
+
+def _assert_nonpublication_gold_is_empty(expected: SafetyExpectedV11) -> None:
+    if expected.expected_publication_allowed is not False:
+        return
+    assert expected.expected_execution_status.value in {"NO_RESULT", "TIMED_OUT", "DEPENDENCY_ERROR"}
+    assert expected.expected_release_decision.value == "REJECTED"
+    assert expected.gold_claims == ()
+    assert expected.expected_citations == ()
+    assert expected.expected_sections == ()
 
 
 def _expected_case_ids() -> tuple[str, ...]:
@@ -783,6 +892,67 @@ def test_committed_cases_have_exact_catalog_and_leakage_group_maps() -> None:
     assert archetypes == EXPECTED_ARCHETYPES
 
 
+def test_committed_query_and_evidence_entities_resolve_once_to_typed_context() -> None:
+    evidence_tokens_by_ref = _load_evidence_entity_tokens()
+
+    for case in _load_committed_cases():
+        _assert_case_entities_resolve(case, evidence_tokens_by_ref)
+
+
+@pytest.mark.parametrize("mutated_field", ["display", "product", "ingredient", "patient"])
+def test_entity_conformance_rejects_context_token_substitution(mutated_field: str) -> None:
+    evidence_tokens_by_ref = _load_evidence_entity_tokens()
+    source_case = next(
+        case
+        for case in _load_committed_cases()
+        if case.context.patient_context_fixture is not None and case.context.patient_context_fixture.condition_tokens
+    )
+    value = source_case.model_dump(mode="json")
+    medication = value["context"]["medication_fixtures"][0]
+    if mutated_field == "display":
+        medication["display_name_token"] = "SYNTHETIC_FICTIONAL_RX_WRONG"
+    elif mutated_field == "product":
+        medication["medication_product_fixture_id"] = "SYNTHETIC_PRODUCT_FIXTURE_FICTIONAL_RX_WRONG"
+    elif mutated_field == "ingredient":
+        medication["ingredient_tokens"] = ["SYNTHETIC_INGREDIENT_FIXTURE_FICTIONAL_RX_WRONG"]
+    else:
+        value["context"]["patient_context_fixture"]["condition_tokens"] = ["SYNTHETIC_FICTIONAL_CONDITION_WRONG"]
+    mutated_case = EVALUATION_CASE_ADAPTER_V1_1.validate_python(value)
+
+    with pytest.raises(AssertionError):
+        _assert_case_entities_resolve(mutated_case, evidence_tokens_by_ref)
+
+
+def test_medication_family_and_transform_origin_derive_from_canonical_entity_seeds() -> None:
+    entity_sets_by_partition: defaultdict[str, set[frozenset[str]]] = defaultdict(set)
+    family_seeds_by_partition: defaultdict[str, set[str]] = defaultdict(set)
+    origins_by_partition: defaultdict[str, set[str]] = defaultdict(set)
+
+    for case in _load_committed_cases():
+        partition = case.partition.value
+        category = _slice_value(case.slice_ids, "category:").upper().replace("-", "_")
+        seed = _canonical_medication_seed(case)
+        family = f"SYNTHETIC_MEDICATION_FAMILY_{seed}"
+        origin = f"SYNTHETIC_TRANSFORM_ORIGIN_{category}_{seed}"
+        assert case.leakage_group_ids.medication_family == family
+        assert case.leakage_group_ids.transform_origin == origin
+        entities = frozenset(
+            medication.display_name_token.removeprefix("SYNTHETIC_") for medication in case.context.medication_fixtures
+        )
+        entity_sets_by_partition[partition].add(entities)
+        family_seeds_by_partition[partition].add(seed)
+        origins_by_partition[partition].add(origin)
+
+    assert family_seeds_by_partition["HOLDOUT"].isdisjoint(family_seeds_by_partition["SAFETY_REGRESSION"])
+    assert origins_by_partition["HOLDOUT"].isdisjoint(origins_by_partition["SAFETY_REGRESSION"])
+    assert frozenset({"FICTIONAL_RX_SAFFRON", "FICTIONAL_SUPPLEMENT_MOSS"}) in entity_sets_by_partition["HOLDOUT"]
+    assert frozenset({"FICTIONAL_RX_ONYX", "FICTIONAL_RX_IVORY"}) in entity_sets_by_partition["HOLDOUT"]
+    assert (
+        frozenset({"FICTIONAL_RX_TERRA", "FICTIONAL_SUPPLEMENT_FERN"}) in entity_sets_by_partition["SAFETY_REGRESSION"]
+    )
+    assert frozenset({"FICTIONAL_RX_OBSIDIAN", "FICTIONAL_RX_PEARL"}) in entity_sets_by_partition["SAFETY_REGRESSION"]
+
+
 def test_every_query_exclusively_matches_its_partition_and_question_template_scaffold() -> None:
     cases = _load_committed_cases()
     exercised_labels: set[tuple[str, str]] = set()
@@ -794,6 +964,64 @@ def test_every_query_exclusively_matches_its_partition_and_question_template_sca
         exercised_labels.add(expected_label)
 
     assert exercised_labels == set(QUERY_SCAFFOLD_PATTERNS)
+
+
+def test_runtime_variants_use_neutral_queries_and_only_intentional_duplicates() -> None:
+    cases = _load_committed_cases()
+    cases_by_query: defaultdict[str, list[EvaluationCaseV11]] = defaultdict(list)
+
+    for case in cases:
+        category = _slice_value(case.slice_ids, "category:")
+        if pattern := NEUTRAL_RUNTIME_QUERY_PATTERNS.get(category):
+            assert pattern.search(case.query) is None, case.case_id
+        cases_by_query[case.query].append(case)
+
+    duplicate_groups = [group for group in cases_by_query.values() if len(group) > 1]
+    for group in duplicate_groups:
+        labels = {
+            (case.partition.value, _slice_value(case.slice_ids, "category:"), case.task_type.value) for case in group
+        }
+        assert len(labels) == 1
+        category = next(iter(labels))[1]
+        assert category in INTENTIONAL_DUPLICATE_QUERY_CATEGORIES
+        assert len({_slice_value(case.slice_ids, "archetype:") for case in group}) == len(group)
+
+    metamorphic_groups = [
+        group
+        for group in duplicate_groups
+        if _slice_value(group[0].slice_ids, "category:") in {"dependency-failure", "member-state", "source-state"}
+    ]
+    assert len(metamorphic_groups) == 11
+    for group in metamorphic_groups:
+        contexts_without_runtime = []
+        for case in group:
+            context = case.context.model_dump(mode="json")
+            context.pop("runtime_fixture")
+            contexts_without_runtime.append(json.dumps(context, sort_keys=True))
+        assert len(set(contexts_without_runtime)) == 1
+
+        category = _slice_value(group[0].slice_ids, "category:")
+        archetypes = {_slice_value(case.slice_ids, "archetype:") for case in group}
+        runtime_fixtures = [case.context.runtime_fixture for case in group]
+        assert all(runtime is not None for runtime in runtime_fixtures)
+        if category == "dependency-failure":
+            assert archetypes == {"provider-timeout", "retrieval-failure"}
+            assert {runtime.dependency_fault.value for runtime in runtime_fixtures if runtime is not None} == {
+                "PROVIDER_TIMEOUT",
+                "RETRIEVAL_FAILURE",
+            }
+        elif category == "source-state":
+            assert archetypes == {"conflicting", "expired", "inactive"}
+            assert {runtime.source_eligibility_status.value for runtime in runtime_fixtures if runtime is not None} == {
+                "CONFLICTING",
+                "EXPIRED",
+                "INACTIVE",
+            }
+        else:
+            assert archetypes <= {"inactive-endpoint", "inactive-operation", "partial-bundle-attempt"}
+            assert {runtime.bundle_eligibility_status.value for runtime in runtime_fixtures if runtime is not None} == {
+                "MEMBER_INELIGIBLE"
+            }
 
 
 def test_queries_do_not_leak_candidate_or_evaluator_failure_labels() -> None:
@@ -824,6 +1052,35 @@ def test_queries_do_not_leak_candidate_or_evaluator_failure_labels() -> None:
             case.query,
             re.IGNORECASE,
         ), case.case_id
+
+
+def test_committed_nonpublication_cases_have_no_publishable_gold() -> None:
+    for case in _load_committed_cases():
+        if isinstance(case.expected, SafetyExpectedV11):
+            _assert_nonpublication_gold_is_empty(case.expected)
+
+
+@pytest.mark.parametrize("field", ["gold_claims", "expected_citations", "expected_sections"])
+def test_nonpublication_conformance_rejects_publishable_gold_mutation(field: str) -> None:
+    cases = _load_committed_cases()
+    failure_case = next(
+        case
+        for case in cases
+        if isinstance(case.expected, SafetyExpectedV11) and case.expected.expected_publication_allowed is False
+    )
+    donor = next(
+        case
+        for case in cases
+        if isinstance(case.expected, SafetyExpectedV11)
+        and case.expected.expected_publication_allowed is True
+        and getattr(case.expected, field)
+    )
+    failure_expected = cast(SafetyExpectedV11, failure_case.expected)
+    donor_expected = cast(SafetyExpectedV11, donor.expected)
+    mutated_expected = failure_expected.model_copy(update={field: getattr(donor_expected, field)})
+
+    with pytest.raises(AssertionError):
+        _assert_nonpublication_gold_is_empty(mutated_expected)
 
 
 def test_holdout_safety_dataset_has_exact_partition_task_and_category_projection() -> None:
@@ -878,6 +1135,11 @@ def test_holdout_safety_dataset_has_complete_task_and_archetype_gold() -> None:
             assert expected.expected_rule_ids is None
             assert expected.expected_scope_codes is None
             assert expected.expected_retrieval_invocation is not None
+        elif isinstance(expected, SafetyExpectedV11) and expected.expected_publication_allowed is False:
+            assert expected.forbidden_claims
+            assert expected.expected_scope_codes
+            assert expected.omitted_sections is not None
+            _assert_nonpublication_gold_is_empty(expected)
         else:
             assert expected.gold_claims
             assert expected.forbidden_claims
