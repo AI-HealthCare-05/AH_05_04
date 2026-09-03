@@ -535,6 +535,8 @@ dirty worktree에서도 개인 진단 실행 결과는 낼 수 있지만 `eviden
 }
 ```
 
+`api_reason`은 공개 오류 body의 `details.reason`이 `DEADLINE_EXCEEDED|PROVIDER_TIMEOUT`인 경우에만 해당 고정값으로 존재하고, 그 외에는 필드를 생략한다. `details`의 다른 값은 복사하지 않는다. `local-live-full` 실행 경계에 진입한 결과는 성공·실패 모두 `execution_mode=LIVE`를 기록한다. `database_verification`은 `NOT_RUN|FAIL|PASS`, `provider_log_verification`은 수동 검토 가능한 trace 유무에 따라 `MANUAL_REQUIRED|UNVERIFIED`이며 자동 `PASS`는 금지한다.
+
 `failure_stage`는 다음 값 또는 null만 허용한다.
 
 ```text
