@@ -1,0 +1,559 @@
+{
+  "receipt_version": "1.1.0",
+  "verification_status": "BLOCKED",
+  "execution_status": "NOT_IMPLEMENTED",
+  "decision_status": null,
+  "generated_at": "2026-09-03T00:00:00+09:00",
+  "contract_authority": {
+    "authority_manifest": {
+      "document_set_id": "post-mvp-rag-evaluation-contract",
+      "version": "2026-08-29.11",
+      "sha256": "f2c98884c841d3fccdbec552f14aad1fd471730eae6d80c472c1b332ed95a570"
+    },
+    "source_policy": {
+      "artifact_name": "rag-source-management-policy-v1.0.md",
+      "version": "1.18",
+      "sha256": "35842d2cbe54201ff9fb5580616055eda613fe4c16ac6d60daa7f8859d2f28e3"
+    },
+    "database_target": {
+      "artifact_name": "rag-detailed-db-schema-v1.md",
+      "version": "1.47",
+      "sha256": "f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea"
+    },
+    "local_target": {
+      "repository_path": "docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md",
+      "version": "1",
+      "sha256": "4342d0f772b6f63efe07d6323e95e62865a058caa8f8ae31bb844ad6cfba55b9"
+    },
+    "decision": {
+      "repository_path": "docs/governance/decisions/2026-08-31-rag-p0-contract-freeze.md",
+      "decision_id": "PD-125-20260831",
+      "sha256": "f7e04cad41e3bc4c078e088906a9e7d50826f973fb8825fc45b23198a119ab85"
+    }
+  },
+  "synthetic_contract_execution": {
+    "status": "COMPLETED",
+    "decision": "PASS",
+    "suite": "tests/contract/test_rag_source_governance_receipt.py",
+    "suite_version": "1.1.0",
+    "suite_artifacts": [
+      {
+        "path": "ai_worker/tasks/rag/source_governance.py",
+        "sha256": "08ce57c2d53ede0ac4a9e369012d4872662a0f6b4484d3c97852ccef0123d871"
+      },
+      {
+        "path": "tests/contract/test_rag_source_governance_receipt.py",
+        "sha256": "f145a68a7752ff87c92c30857874fa2c2ac21611e3286f723e8bbb65a6ecd348"
+      },
+      {
+        "path": "ai_worker/tests/rag/test_source_governance.py",
+        "sha256": "f8fb676dadf8ff93d0c4ec734355a8383acd50481e9754692af3e58c0806b8b2"
+      }
+    ],
+    "verified_repository_base_commit": "57e21fca5e9299bad4e30da7c05cb0ee457bfb18",
+    "change_commit": null,
+    "input_manifest": {
+      "guard_target_manifest_spec_version": "guard-target-manifest-v1",
+      "target_bundle_manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "target_release_source_manifest_hash": "6086d157e3ab4d5f8af7f4e44b3833d3612e247b851bbf07e1f6a6f4cfe6365c",
+      "target_snapshot_member_manifest_hash": "8414c65163e4bee9109bf22ab64ddf66f3f774e426092c2acd361477a9f1962c",
+      "selection_release_source_manifest_hash": "5f1a1135a90a811359b5a1e0532cd4e1cc73950b5e2db1bc37bf33d0e14b905c",
+      "selection_snapshot_member_manifest_hash": "8f8443ea5486eb7fac54f38421a61ac1c673e1dd381b7994a7c8e3998a6dfccd",
+      "request_scope_manifest_hash": "e5020ba42eded49c764da50b9215bb57b23f5e2e3755d34889d4b0831afa27dd"
+    },
+    "input_manifest_hash": "aaa14e0f52568db2640867a2a29dea76fe7b187415a69910398d87ed1135e9ec"
+  },
+  "source_readiness": {
+    "status": "BLOCKED",
+    "reason": "BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT",
+    "actual_source_connected": false,
+    "runtime_activation_allowed": false
+  },
+  "synthetic_eligibility_cases": [
+    {
+      "case_id": "approved-current-member",
+      "expected_guard_decision": "PASS",
+      "expected_observation_codes": [],
+      "fact_overrides": {},
+      "runtime_bundle_publication_allowed": false
+    },
+    {
+      "case_id": "approval-unapproved",
+      "expected_guard_decision": "FAIL",
+      "expected_observation_codes": [
+        "approval_not_effective"
+      ],
+      "fact_overrides": {
+        "approval_effective": false
+      },
+      "runtime_bundle_publication_allowed": false
+    },
+    {
+      "case_id": "approval-expired",
+      "expected_guard_decision": "FAIL",
+      "expected_observation_codes": [
+        "approval_expired"
+      ],
+      "fact_overrides": {
+        "approval_expired": true
+      },
+      "runtime_bundle_publication_allowed": false
+    },
+    {
+      "case_id": "snapshot-freshness-stale",
+      "expected_guard_decision": "FAIL",
+      "expected_observation_codes": [
+        "snapshot_freshness_stale"
+      ],
+      "fact_overrides": {
+        "snapshot_freshness_current": false
+      },
+      "runtime_bundle_publication_allowed": false
+    },
+    {
+      "case_id": "revocation-unresolved",
+      "expected_guard_decision": "FAIL",
+      "expected_observation_codes": [
+        "revocation_unresolved"
+      ],
+      "fact_overrides": {
+        "revocation_unresolved": true
+      },
+      "runtime_bundle_publication_allowed": false
+    },
+    {
+      "case_id": "snapshot-incomplete",
+      "expected_guard_decision": "FAIL",
+      "expected_observation_codes": [
+        "snapshot_incomplete"
+      ],
+      "fact_overrides": {
+        "snapshot_complete": false
+      },
+      "runtime_bundle_publication_allowed": false
+    },
+    {
+      "case_id": "schema-drift",
+      "expected_guard_decision": "FAIL",
+      "expected_observation_codes": [
+        "schema_drift"
+      ],
+      "fact_overrides": {
+        "schema_matches": false
+      },
+      "runtime_bundle_publication_allowed": false
+    },
+    {
+      "case_id": "bundle-member-mismatch",
+      "expected_guard_decision": "FAIL",
+      "expected_observation_codes": [
+        "bundle_member_mismatch"
+      ],
+      "fact_overrides": {
+        "bundle_member_matches": false
+      },
+      "runtime_bundle_publication_allowed": false
+    }
+  ],
+  "synthetic_fact_template": {
+    "source_active": true,
+    "endpoint_verified": true,
+    "endpoint_runtime_enabled": true,
+    "endpoint_acquisition_approved": true,
+    "operation_runtime_enabled": true,
+    "operation_acquisition_approved": true,
+    "approval_effective": true,
+    "approval_expired": false,
+    "license_approved": true,
+    "clinical_scope_allowed": true,
+    "snapshot_freshness_current": true,
+    "revocation_unresolved": false,
+    "snapshot_complete": true,
+    "schema_matches": true,
+    "bundle_member_matches": true,
+    "operation": "REQUEST",
+    "expected_purpose": "RETRIEVAL",
+    "observed_purpose": "RETRIEVAL",
+    "expected_environment": "LOCAL",
+    "observed_environment": "LOCAL",
+    "expected_immutable_references": [
+      {
+        "reference_code": "synthetic-source-policy",
+        "version": "1.18",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "reference_code": "synthetic-bundle-manifest",
+        "version": "v1",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "observed_immutable_references": [
+      {
+        "reference_code": "synthetic-source-policy",
+        "version": "1.18",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "reference_code": "synthetic-bundle-manifest",
+        "version": "v1",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "guard_target_manifest_spec_version": "guard-target-manifest-v1",
+    "target_manifest_entries": [
+      {
+        "member_kind": "SOURCE",
+        "source_code": "SYNTHETIC_SOURCE",
+        "endpoint_code": null,
+        "operation_code": null,
+        "artifact_code": null,
+        "artifact_version": null,
+        "content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "source_manifest_member_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+        "source_version": "v1",
+        "canonicalization_spec_version": "v1",
+        "canonical_checksum": "2222222222222222222222222222222222222222222222222222222222222222",
+        "purpose_code": "RETRIEVAL",
+        "approval_version": "approval-v1",
+        "scope_policy_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "freshness_policy_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+        "bundle_build_source_verification_stable_key": "verification-1"
+      },
+      {
+        "member_kind": "SNAPSHOT_MEMBER",
+        "source_code": "SYNTHETIC_SOURCE",
+        "endpoint_code": "SYNTHETIC_ENDPOINT",
+        "operation_code": "SYNTHETIC_OPERATION",
+        "artifact_code": null,
+        "artifact_version": null,
+        "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "source_manifest_member_hash": null,
+        "source_version": "v1",
+        "canonicalization_spec_version": "v1",
+        "canonical_checksum": "6666666666666666666666666666666666666666666666666666666666666666",
+        "purpose_code": "RETRIEVAL",
+        "approval_version": "approval-v1",
+        "scope_policy_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "freshness_policy_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+        "bundle_build_source_verification_stable_key": "verification-1"
+      }
+    ],
+    "selection_manifest_entries": [
+      {
+        "member_kind": "SOURCE",
+        "source_code": "SYNTHETIC_SOURCE",
+        "endpoint_code": null,
+        "operation_code": null,
+        "artifact_code": null,
+        "artifact_version": null,
+        "content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "source_manifest_member_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+        "source_version": "v1",
+        "canonicalization_spec_version": "v1",
+        "canonical_checksum": "2222222222222222222222222222222222222222222222222222222222222222",
+        "purpose_code": "RETRIEVAL",
+        "approval_version": "approval-v1",
+        "scope_policy_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "freshness_policy_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+        "bundle_build_source_verification_stable_key": "verification-1"
+      },
+      {
+        "member_kind": "SNAPSHOT_MEMBER",
+        "source_code": "SYNTHETIC_SOURCE",
+        "endpoint_code": "SYNTHETIC_ENDPOINT",
+        "operation_code": "SYNTHETIC_OPERATION",
+        "artifact_code": null,
+        "artifact_version": null,
+        "content_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "source_manifest_member_hash": null,
+        "source_version": "v1",
+        "canonicalization_spec_version": "v1",
+        "canonical_checksum": "6666666666666666666666666666666666666666666666666666666666666666",
+        "purpose_code": "RETRIEVAL",
+        "approval_version": "approval-v1",
+        "scope_policy_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "freshness_policy_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+        "bundle_build_source_verification_stable_key": "verification-1"
+      }
+    ],
+    "expected_target_release_source_count": 1,
+    "expected_target_release_source_manifest_hash": "6086d157e3ab4d5f8af7f4e44b3833d3612e247b851bbf07e1f6a6f4cfe6365c",
+    "expected_target_snapshot_member_count": 1,
+    "expected_target_snapshot_member_manifest_hash": "8414c65163e4bee9109bf22ab64ddf66f3f774e426092c2acd361477a9f1962c",
+    "expected_selection_release_source_count": 1,
+    "expected_selection_release_source_manifest_hash": "5f1a1135a90a811359b5a1e0532cd4e1cc73950b5e2db1bc37bf33d0e14b905c",
+    "expected_selection_snapshot_member_count": 1,
+    "expected_selection_snapshot_member_manifest_hash": "8f8443ea5486eb7fac54f38421a61ac1c673e1dd381b7994a7c8e3998a6dfccd",
+    "expected_governance_revision": 1,
+    "observed_governance_revision": 1,
+    "expected_safety_epoch": 1,
+    "observed_safety_epoch": 1,
+    "runtime_environment_active": true,
+    "target_bundle_id": "synthetic-bundle-v1",
+    "target_bundle_manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "requested_bundle_id": "synthetic-bundle-v1",
+    "requested_bundle_manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "active_bundle_id": "synthetic-bundle-v1",
+    "active_bundle_manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "request_scope_codes": [
+      "MEDICATION_GUIDANCE"
+    ],
+    "request_scope_manifest_hash": "e5020ba42eded49c764da50b9215bb57b23f5e2e3755d34889d4b0831afa27dd",
+    "origin_request_guard": null
+  },
+  "eligibility_common_conditions": [
+    "source_lifecycle_active",
+    "endpoint_verified_runtime_enabled_acquisition_approved",
+    "operation_runtime_enabled_acquisition_approved",
+    "purpose_environment_approval_effective_and_not_expired",
+    "license_and_reuse_terms_approved",
+    "attribution_present",
+    "clinical_scope_allowed",
+    "snapshot_verification_published_and_freshness_current",
+    "no_unresolved_revocation_intent",
+    "bundle_source_and_snapshot_member_exact_match"
+  ],
+  "source_purpose_eligibility_matrix": [
+    {
+      "purpose": "PRODUCT_IDENTIFICATION",
+      "eligible_source_classes": ["MFDS_PRODUCT_APPROVAL", "TEAM_APPROVED_MEDICATION_ALIAS"],
+      "separate_approval_required": true,
+      "retrieval_approval_is_sufficient": false
+    },
+    {
+      "purpose": "SAFETY_ROUTING",
+      "eligible_source_classes": ["MFDS_DUR"],
+      "separate_approval_required": true,
+      "retrieval_approval_is_sufficient": false
+    },
+    {
+      "purpose": "RULE_DERIVATION",
+      "eligible_source_classes": ["MFDS_DUR"],
+      "separate_approval_required": true,
+      "retrieval_approval_is_sufficient": false
+    },
+    {
+      "purpose": "RETRIEVAL",
+      "eligible_source_classes": ["MFDS_PATIENT_MEDICATION_GUIDE", "INTERNAL_REVIEWED_GUIDELINE"],
+      "separate_approval_required": true,
+      "retrieval_approval_is_sufficient": true
+    },
+    {
+      "purpose": "PATIENT_CITATION",
+      "eligible_source_classes": ["MFDS_PATIENT_MEDICATION_GUIDE", "INTERNAL_REVIEWED_GUIDELINE"],
+      "separate_approval_required": true,
+      "retrieval_approval_is_sufficient": false
+    }
+  ],
+  "resolver_input_boundary": {
+    "allowed": [
+      "prescription_version_medication.medication_name",
+      "prescription_version_medication.strength_text:null-or-string",
+      "approved_mfds_catalog_provenance_after_connected_receipt"
+    ],
+    "forbidden": [
+      "ocr.raw_value",
+      "ocr.normalized_value",
+      "unreviewed_llm_structured_output",
+      "client_supplied_medication_name_or_strength_text",
+      "hira_reimbursement_data",
+      "unapproved_source",
+      "evidence_index_as_candidate_identity_ledger"
+    ]
+  },
+  "index_boundary": {
+    "candidate_index": "OCR_CANDIDATE_ONLY",
+    "evidence_index": "MEDICAL_EVIDENCE_ONLY",
+    "version_and_physical_boundary_required": true,
+    "candidate_result_may_be_cited_as_medical_evidence": false
+  },
+  "eligibility_guard_boundary": {
+    "required_checks": [
+      "source_lifecycle_active",
+      "endpoint_verified_enabled_and_approved",
+      "operation_enabled_and_approved",
+      "purpose_and_environment_approval_effective",
+      "license_approved",
+      "clinical_scope_approved_or_limited_within_allowed_scope",
+      "snapshot_freshness_current",
+      "bundle_member_exact_match",
+      "no_unresolved_revocation_intent",
+      "request_and_citation_require_active_environment",
+      "request_and_citation_require_request_active_target_bundle_id_and_manifest_exact_match",
+      "citation_requires_patient_citation_purpose",
+      "citation_requires_origin_request_pass_and_bundle_environment_manifest_scope_exact_match"
+    ],
+    "target_count_and_hash_exact_match_required": true,
+    "selection_must_be_subset_of_passing_target": true,
+    "selection_rules": {
+      "modeled_required_for": [
+        "REQUEST",
+        "CITATION_AUTHORIZATION"
+      ],
+      "documented_not_executed": [
+        "EVALUATION_CANDIDATE",
+        "EVALUATION_REQUEST",
+        "PLANNED_ACTIVATION",
+        "EMERGENCY_ROLLBACK",
+        "RESUME"
+      ]
+    },
+    "retrieval_approval_authorizes_patient_citation": false,
+    "citation_origin_request_binding": {
+      "origin_decision": "PASS",
+      "operation": "REQUEST",
+      "exact_match": [
+        "bundle_id",
+        "environment",
+        "bundle_manifest_hash",
+        "request_scope_codes",
+        "scope_manifest_hash"
+      ],
+      "scope_codes_canonicalization": "nonempty-unique-NFC-UTF8-byte-sorted-compact-JSON-array-sha256"
+    },
+    "target_and_selection_manifest_validation": {
+      "spec_version": "guard-target-manifest-v1",
+      "canonicalization": "RFC-8785-JCS-UTF-8-NFC",
+      "envelope_keys": [
+        "guard_target_manifest_spec_version",
+        "target_bundle_manifest_hash",
+        "set_role",
+        "entry_kind",
+        "entries"
+      ],
+      "set_roles": [
+        "ELIGIBILITY_TARGET",
+        "OPERATION_SELECTION"
+      ],
+      "entry_kinds": [
+        "RELEASE_SOURCE",
+        "SNAPSHOT_MEMBER"
+      ],
+      "minimum_count_per_required_entry_kind": 1,
+      "separate_count_and_hash_per_entry_kind": true,
+      "duplicate_entries_rejected": true,
+      "member_null_rules": {
+        "RELEASE_SOURCE": "endpoint_code, operation_code, artifact_code, artifact_version are null",
+        "SNAPSHOT_MEMBER": "exactly one of endpoint_code+operation_code or artifact_code+artifact_version is present"
+      },
+      "release_source_entry_fields": [
+        "source_code",
+        "source_version",
+        "purpose_code",
+        "approval_version",
+        "scope_policy_hash",
+        "freshness_policy_hash",
+        "bundle_build_source_verification_stable_key",
+        "source_manifest_member_hash"
+      ],
+      "source_manifest_union_key_fields": [
+        "member_kind",
+        "source_code",
+        "endpoint_code",
+        "operation_code",
+        "artifact_code",
+        "artifact_version",
+        "content_sha256",
+        "source_version",
+        "canonicalization_spec_version",
+        "canonical_checksum",
+        "purpose_code",
+        "approval_version",
+        "scope_policy_hash",
+        "freshness_policy_hash",
+        "bundle_build_source_verification_stable_key"
+      ],
+      "count_hash_and_subset_recomputed_from_entries": true,
+      "caller_asserted_subset_is_sufficient": false
+    },
+    "governance_revision_fan_out_must_cover_all_affected_environments": true,
+    "rollback_without_eligible_candidate_results_in": "SUSPENDED"
+  },
+  "source_snapshot_approval_binding": {
+    "status": "NOT_CONNECTED",
+    "source_code": null,
+    "endpoint_code": null,
+    "operation_code": null,
+    "source_version": null,
+    "source_content_sha256": null,
+    "source_lifecycle_status": null,
+    "endpoint_lifecycle_status": null,
+    "endpoint_runtime_status": null,
+    "endpoint_acquisition_status": null,
+    "operation_runtime_status": null,
+    "operation_acquisition_status": null,
+    "snapshot_version": null,
+    "snapshot_canonical_checksum": null,
+    "snapshot_schema_version": null,
+    "snapshot_parser_version": null,
+    "snapshot_normalization_version": null,
+    "snapshot_verification_status": null,
+    "snapshot_verification_version": null,
+    "snapshot_verification_hash": null,
+    "license_status": null,
+    "reuse_terms": null,
+    "attribution_text": null,
+    "clinical_status": null,
+    "allowed_environments": null,
+    "allowed_scope": null,
+    "approval_status": null,
+    "approval_purpose": null,
+    "approval_version": null,
+    "approval_hash": null,
+    "approval_effective_at": null,
+    "approval_valid_until": null,
+    "freshness_policy_version": null,
+    "freshness_policy_hash": null,
+    "freshness_verified_at": null,
+    "required_before_completion": [
+      "#155 endpoint receipt",
+      "#165 snapshot receipt",
+      "#166 catalog receipt"
+    ]
+  },
+  "revocation_contract": {
+    "new_use_allowed": false,
+    "historical_provenance_preserved": true,
+    "reusable_as_current": false
+  },
+  "predecessor_receipt_gate": {
+    "status": "BLOCKED",
+    "blocking_code": "BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT",
+    "issues": [
+      155,
+      165,
+      166
+    ]
+  },
+  "named_contract_mismatch": {
+    "external_source_policy_field": "request.runtime_release_bundle_id",
+    "repository_target_field": "request.bundle_id",
+    "resolution_status": "BLOCKED_PENDING_APPROVED_SHARED_CONTRACT_RECEIPT",
+    "live_endpoint_or_dto_values_invented": false
+  },
+  "downstream_prerequisites": {
+    "167": "BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT",
+    "168": "BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT",
+    "170": "BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT",
+    "175": "BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT"
+  },
+  "runtime_activation": {
+    "public_track_f": false,
+    "actual_source_activation_allowed": false,
+    "required_track_f_gates": [
+      "EXT-MED-002",
+      "EXT-PHARM-001",
+      "EXT-SOURCE-001",
+      "EXT-SOURCE-002",
+      "EXT-PRIV-001",
+      "EXT-PRIV-002",
+      "EXT-SAFETY-001"
+    ]
+  },
+  "receipt_hash": {
+    "algorithm": "sha256",
+    "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
+    "value": "5a1a706ce9d8be94c9745c02893c90531d49946d816d8988e13b9ace1850045c"
+  }
+}
