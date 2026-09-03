@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Evaluation Schema Set 1.1 implemented candidate · 지정 책임 리뷰와 나머지 Track F 구현·외부 승인 대기 |
+| 구현·리뷰 | Evaluation Schema Set 1.2 implemented candidate · 지정 책임 리뷰와 나머지 Track F 구현·외부 승인 대기 |
 | 실행 환경 | 실제 RAG 평가는 Local Runner에서만 수행 · Development/Staging 서버 미사용 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `evaluation-plan.md@1.35` · SHA-256 `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
@@ -54,6 +54,18 @@ Safety·End-to-End Gold는 Rule 결과를 `MATCHED_RULES | NO_MATCH | NOT_INVOKE
 Loader는 Case·Dataset Manifest의 payload version을 Schema Set version 자체가 아니라 선택된 registry의 해당 member version과 비교한다. 따라서 후속 Schema Set이 바뀌지 않은 authoring member를 재사용해도 Set version을 member version으로 오인하지 않는다.
 
 Schema `1.1.0`의 `FROZEN` Dataset은 모든 Case Gold, Evidence Mapping과 Critical Claim Rubric의 Team `APPROVED` closure가 완전해야 Loader를 통과한다. 하나라도 `DRAFT | REVIEWED`이면 `EVAL_REVIEW_PROVENANCE_INVALID`로 실패한다. 상세 결정은 [RAG Evaluation Schema Set 1.1 Freeze](../../../governance/decisions/2026-09-02-rag-evaluation-schema-set-1-1-freeze.md)를 따른다.
+
+### Evaluation Schema Set 1.2
+
+`#214` Dataset 후보의 실제 검토 provenance는 `rag-eval.schema-set@1.2.0`, SHA-256 `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06`을 사용한다. 18개 member 중 Case, Dataset Manifest, Evidence Mapping, Critical Claim Rubric, Evaluation Profile, Suite Definition, Evaluation Policy, Protected Artifact Receipt 8개만 member `1.2.0`이며 나머지 10개 member는 기존 canonical bytes와 member version을 재사용한다.
+
+`ReviewProvenance@1.2`는 상태와 event를 양방향으로 맞춘다. `DRAFT`는 `reviewed_by=null`, `reviewed_at=null`, 승인 필드 `null`, `evidence_review_refs=[]`만 허용한다. `REVIEWED`는 reviewer·review timestamp와 immutable review evidence를 하나 이상 요구하고 승인 필드는 `null`이다. `APPROVED`는 이 review event에 더해 approver·approval timestamp를 요구한다. reviewer와 approver의 한쪽 필드만 기록하는 payload는 허용하지 않는다.
+
+`REVIEWED`·`APPROVED` 상태의 `reviewed_by.role`은 `EVALUATION_REVIEWER`만 허용한다. 이 역할은 Case Gold·Fixture·Evidence 등 팀 내부 Evaluation 검토를 뜻하며, `MEDICAL_REVIEWER` 또는 외부 의료·약학 approval을 뜻하지 않는다. `external_medical_review_status`와 immutable external receipt 규칙을 대체하지 않는다. Safety Case와 Dataset Manifest의 Team approval 역할 제한은 기존대로 각각 `PRODUCT_SAFETY_REVIEWER | MEDICAL_REVIEWER`, `DATASET_CUSTODIAN`을 유지한다.
+
+Exported Draft 2020-12 JSON Schema는 field type·requiredness·enum·state conditional 등 구조 제약의 portable preflight다. 작성자·검토자·승인자의 cross-field identity 중복, system actor, actor role 조합과 event timestamp 순서는 표준 JSON Schema만으로 portable하게 비교할 수 없으므로 Loader가 Pydantic `ReviewProvenanceV12` 검증으로 fail-closed한다. JSON Schema 단독 통과는 Dataset 수용이나 Freeze 자격을 뜻하지 않으며, Dataset graph는 반드시 Loader로 검증한다.
+
+Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping, Rubric, Profile, Evaluation Policy, Suite, Protected Artifact Receipt까지 검증하고, graph의 모든 schema payload version을 registry member version과 exact-match한다. 기존 1.0/1.1의 validation·canonical bytes는 불변이다. 상세 결정은 [RAG Evaluation Schema Set 1.2 Freeze](../../../governance/decisions/2026-09-03-rag-evaluation-schema-set-1-2-freeze.md)를 따른다.
 
 ## 비교 원칙
 

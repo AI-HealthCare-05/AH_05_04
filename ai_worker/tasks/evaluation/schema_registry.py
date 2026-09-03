@@ -18,11 +18,23 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
     EVALUATION_CASE_ADAPTER_V1_1,
     DatasetManifestV11,
 )
+from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import (
+    EVALUATION_CASE_ADAPTER_V1_2,
+    CriticalClaimRubricV12,
+    DatasetManifestV12,
+    EvidenceMappingManifestV12,
+    ProtectedArtifactReceiptV12,
+)
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     EvaluationPolicy,
     EvaluationProfile,
     SuiteDefinition,
+)
+from ai_worker.tasks.evaluation.schemas.policy_v1_2 import (
+    EvaluationPolicyV12,
+    EvaluationProfileV12,
+    SuiteDefinitionV12,
 )
 
 SCHEMA_VERSION = "1.0.0"
@@ -109,10 +121,76 @@ SCHEMA_REGISTRY_V1_1: tuple[SchemaRegistryEntry, ...] = (
     *(entry for entry in SCHEMA_REGISTRY if entry.schema_id not in {"rag-eval.case", "rag-eval.dataset-manifest"}),
 )
 
+_PROVENANCE_MEMBER_IDS_V1_2 = frozenset(
+    {
+        "rag-eval.case",
+        "rag-eval.dataset-manifest",
+        "rag-eval.evidence-mapping-manifest",
+        "rag-eval.critical-claim-rubric",
+        "rag-eval.evaluation-profile",
+        "rag-eval.suite-definition",
+        "rag-eval.evaluation-policy",
+        "rag-eval.protected-artifact-receipt",
+    }
+)
+
+SCHEMA_REGISTRY_V1_2: tuple[SchemaRegistryEntry, ...] = (
+    SchemaRegistryEntry(
+        "authoring/rag-eval.case.schema.json",
+        "rag-eval.case",
+        EVALUATION_CASE_ADAPTER_V1_2,
+        "1.2.0",
+    ),
+    SchemaRegistryEntry(
+        "authoring/rag-eval.dataset-manifest.schema.json",
+        "rag-eval.dataset-manifest",
+        DatasetManifestV12,
+        "1.2.0",
+    ),
+    SchemaRegistryEntry(
+        "authoring/rag-eval.evidence-mapping-manifest.schema.json",
+        "rag-eval.evidence-mapping-manifest",
+        EvidenceMappingManifestV12,
+        "1.2.0",
+    ),
+    SchemaRegistryEntry(
+        "authoring/rag-eval.critical-claim-rubric.schema.json",
+        "rag-eval.critical-claim-rubric",
+        CriticalClaimRubricV12,
+        "1.2.0",
+    ),
+    SchemaRegistryEntry(
+        "policy/rag-eval.evaluation-profile.schema.json",
+        "rag-eval.evaluation-profile",
+        EvaluationProfileV12,
+        "1.2.0",
+    ),
+    SchemaRegistryEntry(
+        "policy/rag-eval.suite-definition.schema.json",
+        "rag-eval.suite-definition",
+        SuiteDefinitionV12,
+        "1.2.0",
+    ),
+    SchemaRegistryEntry(
+        "policy/rag-eval.evaluation-policy.schema.json",
+        "rag-eval.evaluation-policy",
+        EvaluationPolicyV12,
+        "1.2.0",
+    ),
+    SchemaRegistryEntry(
+        "operational/rag-eval.protected-artifact-receipt.schema.json",
+        "rag-eval.protected-artifact-receipt",
+        ProtectedArtifactReceiptV12,
+        "1.2.0",
+    ),
+    *(entry for entry in SCHEMA_REGISTRY if entry.schema_id not in _PROVENANCE_MEMBER_IDS_V1_2),
+)
+
 SCHEMA_REGISTRIES = MappingProxyType(
     {
         "1.0.0": SCHEMA_REGISTRY,
         "1.1.0": SCHEMA_REGISTRY_V1_1,
+        "1.2.0": SCHEMA_REGISTRY_V1_2,
     }
 )
 
