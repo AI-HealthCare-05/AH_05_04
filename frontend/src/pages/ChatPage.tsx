@@ -13,6 +13,7 @@ import './ChatPage.css'
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const optimisticUserMessageIdPrefix = 'optimistic-user-'
 
 const sessionCreationRequests = new Map<
   string,
@@ -163,6 +164,16 @@ function ChatPage() {
     const requestedPrescriptionId = prescriptionId
     const requestedSessionId = currentSessionId
     const requestId = ++sendRequestRef.current
+    const knownMessageIds = new Set(
+      currentMessages.map((message) => message.message_id),
+    )
+    const optimisticUserMessage: ChatMessageData = {
+      message_id: `${optimisticUserMessageIdPrefix}${requestId}`,
+      role: 'USER',
+      content,
+      generation_status: 'NOT_APPLICABLE',
+      created_at: new Date().toISOString(),
+    }
     const isCurrentRequest = () =>
       sendRequestRef.current === requestId &&
       activePrescriptionRef.current === requestedPrescriptionId
@@ -170,28 +181,35 @@ function ChatPage() {
     try {
       setIsSending(true)
       setErrorMessage('')
+      setDraft('')
+      setMessages((current) => [...current, optimisticUserMessage])
       const response = await sendChatMessage(requestedSessionId, content)
       if (!isCurrentRequest()) return
       const completedAt = response.data.completed_at ?? response.data.created_at
+      const canonicalUserMessage: ChatMessageData = {
+        ...optimisticUserMessage,
+        message_id: response.data.user_message_id,
+        created_at: response.data.created_at,
+      }
 
-      setMessages((current) => [
-        ...current,
-        {
-          message_id: response.data.user_message_id,
-          role: 'USER',
-          content,
-          generation_status: 'NOT_APPLICABLE',
-          created_at: response.data.created_at,
-        },
-        {
-          message_id: response.data.assistant_message_id,
-          role: 'ASSISTANT',
-          content: response.data.content,
-          generation_status: response.data.generation_status,
-          created_at: completedAt,
-        },
-      ])
-      setDraft('')
+      setMessages((current) => {
+        const reconciledMessages = current.map((message) =>
+          message.message_id === optimisticUserMessage.message_id
+            ? canonicalUserMessage
+            : message,
+        )
+
+        return [
+          ...reconciledMessages,
+          {
+            message_id: response.data.assistant_message_id,
+            role: 'ASSISTANT',
+            content: response.data.content,
+            generation_status: response.data.generation_status,
+            created_at: completedAt,
+          },
+        ]
+      })
     } catch (error) {
       if (!isCurrentRequest()) return
       if (error instanceof ApiError && error.status === 401) {
@@ -200,12 +218,36 @@ function ChatPage() {
         try {
           const historyResponse = await getChatMessages(requestedSessionId)
           if (!isCurrentRequest()) return
-          setMessages(historyResponse.data.messages)
+          const historyMessages = historyResponse.data.messages
+          const canonicalUserMessages = historyMessages.filter(
+            (message) =>
+              message.role === 'USER' &&
+              !knownMessageIds.has(message.message_id),
+          )
+          setMessages((current) => {
+            const unmatchedCanonicalUsers = [...canonicalUserMessages]
+            const unmatchedOptimisticUsers = current.filter((message) => {
+              if (
+                !message.message_id.startsWith(optimisticUserMessageIdPrefix)
+              ) {
+                return false
+              }
+
+              const canonicalIndex = unmatchedCanonicalUsers.findIndex(
+                (canonical) => canonical.content === message.content,
+              )
+              if (canonicalIndex === -1) return true
+
+              unmatchedCanonicalUsers.splice(canonicalIndex, 1)
+              return false
+            })
+
+            return [...historyMessages, ...unmatchedOptimisticUsers]
+          })
         } catch {
           if (!isCurrentRequest()) return
         }
       }
-      setDraft('')
       setErrorMessage(
         getErrorMessage(error, 'AI 답변을 받는 중 오류가 발생했습니다.'),
       )

@@ -27,6 +27,16 @@ const sessionId = '22222222-2222-4222-8222-222222222222'
 const secondPrescriptionId = '33333333-3333-4333-8333-333333333333'
 const secondSessionId = '44444444-4444-4444-8444-444444444444'
 
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined
+  let reject: (reason: unknown) => void = () => undefined
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, reject, resolve }
+}
+
 function NavigationHarness() {
   const navigate = useNavigate()
 
@@ -180,16 +190,9 @@ describe('ChatPage', () => {
     ).toHaveLength(1)
   })
 
-  it('메시지 전송 중 입력과 버튼을 막아 중복 제출하지 않는다', async () => {
-    let resolveMessage: (
-      value: Awaited<ReturnType<typeof sendChatMessage>>,
-    ) => void = () => undefined
-    vi.mocked(sendChatMessage).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveMessage = resolve
-        }),
-    )
+  it('사용자 질문을 즉시 표시하고 응답 완료 후 canonical 메시지로 reconcile한다', async () => {
+    const messageRequest = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
+    vi.mocked(sendChatMessage).mockReturnValue(messageRequest.promise)
     renderPage()
 
     const input = await screen.findByLabelText('복약 질문')
@@ -198,13 +201,17 @@ describe('ChatPage', () => {
     fireEvent.click(sendButton)
 
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
+    expect(screen.getAllByText('중복 전송 확인')).toHaveLength(1)
+    expect(screen.getByText('AI 답변을 만들고 있어요…')).toBeTruthy()
+    expect(screen.queryByText('중복 없이 생성된 답변')).toBeNull()
+    expect(input).toHaveProperty('value', '')
     expect(input).toHaveProperty('disabled', true)
     expect(sendButton).toHaveProperty('disabled', true)
     fireEvent.click(sendButton)
     expect(sendChatMessage).toHaveBeenCalledTimes(1)
 
     await act(async () =>
-      resolveMessage({
+      messageRequest.resolve({
         data: {
           user_message_id: 'user-message-2',
           assistant_message_id: 'assistant-message-2',
@@ -218,6 +225,12 @@ describe('ChatPage', () => {
         },
       }),
     )
+
+    expect(await screen.findByText('중복 없이 생성된 답변')).toBeTruthy()
+    expect(screen.getAllByText('중복 전송 확인')).toHaveLength(1)
+    expect(screen.queryByText('AI 답변을 만들고 있어요…')).toBeNull()
+    expect(input).toHaveProperty('value', '')
+    expect(input).toHaveProperty('disabled', false)
   })
 
   it('API 오류를 안내하고 대화를 다시 불러올 수 있다', async () => {
@@ -287,9 +300,8 @@ describe('ChatPage', () => {
   })
 
   it('메시지 실패 후 history 재조회도 실패하면 안전한 오류 상태를 유지한다', async () => {
-    vi.mocked(sendChatMessage).mockRejectedValue(
-      new ApiError(503, 'AI 서비스에 잠시 연결할 수 없습니다.'),
-    )
+    const messageRequest = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
+    vi.mocked(sendChatMessage).mockReturnValue(messageRequest.promise)
     vi.mocked(getChatMessages)
       .mockResolvedValueOnce({
         data: { session_id: sessionId, messages: [] },
@@ -303,9 +315,21 @@ describe('ChatPage', () => {
     fireEvent.change(input, { target: { value: '실패 이력 확인 질문' } })
     fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
 
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
+    expect(screen.getAllByText('실패 이력 확인 질문')).toHaveLength(1)
+    expect(screen.getByText('AI 답변을 만들고 있어요…')).toBeTruthy()
+
+    await act(async () =>
+      messageRequest.reject(
+        new ApiError(503, 'AI 서비스에 잠시 연결할 수 없습니다.'),
+      ),
+    )
+
     expect(
       await screen.findByText('AI 서비스에 잠시 연결할 수 없습니다.'),
     ).toBeTruthy()
+    expect(screen.getAllByText('실패 이력 확인 질문')).toHaveLength(1)
+    expect(screen.queryByText('AI 답변을 만들고 있어요…')).toBeNull()
     expect(input).toHaveProperty('value', '')
     expect(input).toHaveProperty('disabled', false)
     expect(sendChatMessage).toHaveBeenCalledTimes(1)
@@ -313,6 +337,40 @@ describe('ChatPage', () => {
     expect(
       screen.getByRole('button', { name: '대화 다시 불러오기' }),
     ).toBeTruthy()
+  })
+
+  it('연속 실패 복구에서도 이전 optimistic 사용자 질문을 유실하지 않는다', async () => {
+    vi.mocked(sendChatMessage).mockRejectedValue(
+      new ApiError(503, 'AI 서비스에 잠시 연결할 수 없습니다.'),
+    )
+    vi.mocked(getChatMessages)
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: [] },
+      })
+      .mockRejectedValueOnce(
+        new ApiError(503, '첫 번째 대화 이력을 다시 불러올 수 없습니다.'),
+      )
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: [] },
+      })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    const sendButton = screen.getByRole('button', { name: '질문 전송' })
+    fireEvent.change(input, { target: { value: '보존할 첫 번째 질문' } })
+    fireEvent.click(sendButton)
+
+    await waitFor(() => expect(getChatMessages).toHaveBeenCalledTimes(2))
+    expect(screen.getAllByText('보존할 첫 번째 질문')).toHaveLength(1)
+
+    fireEvent.change(input, { target: { value: '보존할 두 번째 질문' } })
+    fireEvent.click(sendButton)
+
+    await waitFor(() => expect(getChatMessages).toHaveBeenCalledTimes(3))
+    expect(screen.getAllByText('보존할 첫 번째 질문')).toHaveLength(1)
+    expect(screen.getAllByText('보존할 두 번째 질문')).toHaveLength(1)
+    expect(input).toHaveProperty('disabled', false)
+    expect(sendChatMessage).toHaveBeenCalledTimes(2)
   })
 
   it('저장된 session_id의 기존 대화 이력을 표시한다', async () => {
