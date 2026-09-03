@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse as Response
 
+from app.apis.v1.job_routers import build_job_status_response
 from app.dependencies.security import get_request_user
 from app.dependencies.services import (
     get_job_status_service,
@@ -95,13 +96,7 @@ async def rediscover_ocr_job(
     # async-job-v1.md "공통 화면 재접속 복구": 화면 재진입 시 이 문서의 가장 최근 OCR Job으로
     # polling을 재개합니다. Cache-Control: no-store는 NoStoreMiddleware가 일괄 적용합니다.
     result = await job_status_service.rediscover_ocr_job(user=user, document_id=document_id)
-
-    headers = {"Retry-After": str(result.retry_after_seconds)} if result.retry_after_seconds is not None else None
-    return Response(
-        content=JobStatusResponse(data=result.data).model_dump(mode="json"),
-        status_code=status.HTTP_200_OK,
-        headers=headers,
-    )
+    return build_job_status_response(result)
 
 
 @medical_document_router.post(

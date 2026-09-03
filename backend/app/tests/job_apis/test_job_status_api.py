@@ -238,7 +238,7 @@ class TestJobStatusApi:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["code"] == "AI_JOB_NOT_FOUND"
 
-    async def test_get_job_status_returns_404_for_missing_job(self, db_session: AsyncSession) -> None:
+    async def test_get_job_status_returns_404_for_missing_job(self) -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             _email, access_token = await _signup_and_login(client, label="lonely")
 
@@ -250,7 +250,7 @@ class TestJobStatusApi:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["code"] == "AI_JOB_NOT_FOUND"
 
-    async def test_get_job_status_requires_authentication(self, db_session: AsyncSession) -> None:
+    async def test_get_job_status_requires_authentication(self) -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(f"/api/v1/jobs/{uuid4()}")
 
