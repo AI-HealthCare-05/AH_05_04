@@ -17,7 +17,7 @@ from ai_worker.core.errors import (
     ConsumerPersistenceError,
     HandlerResultMismatchError,
 )
-from ai_worker.core.handler import Handler
+from ai_worker.core.handler import Handler, HandlerExecutionContext
 from ai_worker.core.job_execution import (
     CommittedDelivery,
     ExecutionLease,
@@ -317,7 +317,13 @@ class DirectFailureDispatcher(Dispatcher):
     def __init__(self) -> None:
         super().__init__(HandlerRegistry())
 
-    async def dispatch(self, message: WorkerMessage) -> HandlerSuccess:
+    async def dispatch(
+        self,
+        message: WorkerMessage,
+        *,
+        context: HandlerExecutionContext | None = None,
+    ) -> HandlerSuccess:
+        _ = message, context
         raise RuntimeError("synthetic unwrapped dispatcher failure")
 
 
