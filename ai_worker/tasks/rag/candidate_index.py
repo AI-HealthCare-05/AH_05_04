@@ -254,6 +254,79 @@ class CandidateIndexBuildSuccess:
     members: tuple[CandidateIndexMember, ...]
 
 
+class CandidateSearchStage(StrEnum):
+    PRODUCT_NAME_EXACT = "PRODUCT_NAME_EXACT"
+    APPROVED_ALIAS_EXACT = "APPROVED_ALIAS_EXACT"
+    TRIGRAM_EDIT_DISTANCE = "TRIGRAM_EDIT_DISTANCE"
+    DENSE_VECTOR = "DENSE_VECTOR"
+
+
+class CandidateIndexSearchFailureReason(StrEnum):
+    QUERY_INVALID = "QUERY_INVALID"
+    INDEX_VERSION_MISMATCH = "INDEX_VERSION_MISMATCH"
+    PORT_FAILURE = "PORT_FAILURE"
+    HIT_PROVENANCE_MISMATCH = "HIT_PROVENANCE_MISMATCH"
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateSearchQuery:
+    index_version: str
+    normalized_query: str
+    retrieval_limit: int
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateRawHit:
+    identity: ProductIdentity
+    member_key: str
+    stage: CandidateSearchStage
+    rank: int
+    stage_score: float
+    index_version: str
+    catalog_version: str
+    source_snapshot_id: str
+    normalization_version: str
+    embedding_model_version: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateIndexSearchSuccess:
+    raw_hits: tuple[CandidateRawHit, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateIndexSearchFailure:
+    reason: CandidateIndexSearchFailureReason
+    details: tuple[str, ...]
+    raw_hits: tuple[CandidateRawHit, ...] = ()
+
+
+class CandidateIndexSearchPort(Protocol):
+    def search_product_name_exact(
+        self,
+        query: CandidateSearchQuery,
+        manifest: CandidateIndexManifest,
+    ) -> tuple[CandidateRawHit, ...]: ...
+
+    def search_approved_alias_exact(
+        self,
+        query: CandidateSearchQuery,
+        manifest: CandidateIndexManifest,
+    ) -> tuple[CandidateRawHit, ...]: ...
+
+    def search_trigram_edit_distance(
+        self,
+        query: CandidateSearchQuery,
+        manifest: CandidateIndexManifest,
+    ) -> tuple[CandidateRawHit, ...]: ...
+
+    def search_dense_vector(
+        self,
+        query: CandidateSearchQuery,
+        manifest: CandidateIndexManifest,
+    ) -> tuple[CandidateRawHit, ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateEmbeddingRequest:
     member_key: str
@@ -822,3 +895,107 @@ def build_candidate_index(
         manifest=_build_manifest(catalog, config, members),
         members=members,
     )
+
+
+def _search_query_failure(
+    query: CandidateSearchQuery,
+    manifest: CandidateIndexManifest,
+) -> CandidateIndexSearchFailure | None:
+    normalized_query = unicodedata.normalize("NFC", query.normalized_query)
+    if (
+        not query.index_version
+        or not query.normalized_query
+        or query.normalized_query != query.normalized_query.strip()
+        or query.normalized_query != normalized_query
+        or query.retrieval_limit < 1
+        or query.retrieval_limit > manifest.candidate_limit
+    ):
+        return CandidateIndexSearchFailure(
+            CandidateIndexSearchFailureReason.QUERY_INVALID,
+            ("query",),
+        )
+    if query.index_version != manifest.index_version:
+        return CandidateIndexSearchFailure(
+            CandidateIndexSearchFailureReason.INDEX_VERSION_MISMATCH,
+            ("index_version",),
+        )
+    return None
+
+
+def _hit_failure_detail(
+    hits: tuple[CandidateRawHit, ...],
+    expected_stage: CandidateSearchStage,
+    query: CandidateSearchQuery,
+    manifest: CandidateIndexManifest,
+) -> str | None:
+    if len(hits) > query.retrieval_limit:
+        return "retrieval_limit"
+    for expected_rank, hit in enumerate(hits, start=1):
+        checks = (
+            (hit.stage is expected_stage, "stage"),
+            (hit.index_version == manifest.index_version, "index_version"),
+            (hit.catalog_version == manifest.catalog_version, "catalog_version"),
+            (hit.source_snapshot_id in manifest.source_snapshot_ids, "source_snapshot_id"),
+            (hit.normalization_version == manifest.normalization_version, "normalization_version"),
+            (hit.identity.entity_type is CandidateEntityType.PRODUCT, "identity"),
+            (_is_sha256(hit.member_key), "member_key"),
+            (hit.rank == expected_rank, "rank"),
+            (
+                isinstance(hit.stage_score, (int, float))
+                and not isinstance(hit.stage_score, bool)
+                and math.isfinite(hit.stage_score),
+                "stage_score",
+            ),
+        )
+        for valid, detail in checks:
+            if not valid:
+                return detail
+        expected_embedding_version = (
+            manifest.embedding_model_version if expected_stage is CandidateSearchStage.DENSE_VECTOR else None
+        )
+        if hit.embedding_model_version != expected_embedding_version:
+            return "embedding_model_version"
+    return None
+
+
+def _search_stages(
+    manifest: CandidateIndexManifest,
+    port: CandidateIndexSearchPort,
+):
+    stages = [
+        (CandidateSearchStage.PRODUCT_NAME_EXACT, port.search_product_name_exact),
+        (CandidateSearchStage.APPROVED_ALIAS_EXACT, port.search_approved_alias_exact),
+        (CandidateSearchStage.TRIGRAM_EDIT_DISTANCE, port.search_trigram_edit_distance),
+    ]
+    if manifest.build_mode is CandidateIndexBuildMode.HYBRID:
+        stages.append((CandidateSearchStage.DENSE_VECTOR, port.search_dense_vector))
+    return tuple(stages)
+
+
+def search_candidate_index(
+    query: CandidateSearchQuery,
+    manifest: CandidateIndexManifest,
+    port: CandidateIndexSearchPort,
+) -> CandidateIndexSearchSuccess | CandidateIndexSearchFailure:
+    """Run Candidate retrieval stages while preserving internal stage-level evidence."""
+
+    query_failure = _search_query_failure(query, manifest)
+    if query_failure is not None:
+        return query_failure
+    collected: list[CandidateRawHit] = []
+    for stage, search in _search_stages(manifest, port):
+        try:
+            hits = search(query, manifest)
+        except Exception:
+            return CandidateIndexSearchFailure(
+                CandidateIndexSearchFailureReason.PORT_FAILURE,
+                (stage.value,),
+            )
+        failure_detail = _hit_failure_detail(hits, stage, query, manifest)
+        if failure_detail is not None:
+            return CandidateIndexSearchFailure(
+                CandidateIndexSearchFailureReason.HIT_PROVENANCE_MISMATCH,
+                (failure_detail,),
+            )
+        collected.extend(hits)
+    return CandidateIndexSearchSuccess(raw_hits=tuple(collected))

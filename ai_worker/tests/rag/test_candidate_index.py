@@ -1,4 +1,7 @@
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -17,7 +20,13 @@ from ai_worker.tasks.rag.candidate_index import (
     CandidateIndexBuildMode,
     CandidateIndexBuildSuccess,
     CandidateIndexKind,
+    CandidateIndexSearchFailure,
+    CandidateIndexSearchFailureReason,
+    CandidateIndexSearchSuccess,
+    CandidateRawHit,
     CandidateRecordStatus,
+    CandidateSearchQuery,
+    CandidateSearchStage,
     CatalogAlias,
     CatalogComponent,
     CatalogFreshnessStatus,
@@ -27,6 +36,7 @@ from ai_worker.tasks.rag.candidate_index import (
     CatalogVerificationStatus,
     ProductIdentity,
     build_candidate_index,
+    search_candidate_index,
 )
 
 
@@ -533,3 +543,249 @@ def test_embedding_provider_error_is_replaced_with_safe_failure() -> None:
         reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
         details=("embedding_port",),
     )
+
+
+def lexical_manifest():
+    result = build_candidate_index(valid_catalog(), lexical_config())
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    return result.manifest
+
+
+def hybrid_manifest():
+    result = build_candidate_index(valid_catalog(), hybrid_config(), FixedEmbeddingPort())
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    return result.manifest
+
+
+def valid_query(limit: int = 5) -> CandidateSearchQuery:
+    return CandidateSearchQuery(
+        index_version="candidate-index-v1",
+        normalized_query="가나다정",
+        retrieval_limit=limit,
+    )
+
+
+class RecordingSearchPort:
+    def __init__(self) -> None:
+        self.calls: list[CandidateSearchStage] = []
+
+    def _hit(self, stage: CandidateSearchStage, manifest) -> tuple[CandidateRawHit, ...]:
+        self.calls.append(stage)
+        return (
+            CandidateRawHit(
+                identity=product_identity(),
+                member_key="b" * 64,
+                stage=stage,
+                rank=1,
+                stage_score=1.0,
+                index_version=manifest.index_version,
+                catalog_version=manifest.catalog_version,
+                source_snapshot_id="snapshot-1",
+                normalization_version=manifest.normalization_version,
+                embedding_model_version=(
+                    manifest.embedding_model_version if stage is CandidateSearchStage.DENSE_VECTOR else None
+                ),
+            ),
+        )
+
+    def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        assert query.retrieval_limit == 5
+        return self._hit(CandidateSearchStage.PRODUCT_NAME_EXACT, manifest)
+
+    def search_approved_alias_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        assert query.retrieval_limit == 5
+        return self._hit(CandidateSearchStage.APPROVED_ALIAS_EXACT, manifest)
+
+    def search_trigram_edit_distance(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        assert query.retrieval_limit == 5
+        return self._hit(CandidateSearchStage.TRIGRAM_EDIT_DISTANCE, manifest)
+
+    def search_dense_vector(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        assert query.retrieval_limit == 5
+        return self._hit(CandidateSearchStage.DENSE_VECTOR, manifest)
+
+
+def test_lexical_search_calls_stages_in_order_and_preserves_repeated_identity_hits() -> None:
+    port = RecordingSearchPort()
+
+    result = search_candidate_index(valid_query(), lexical_manifest(), port)
+
+    assert isinstance(result, CandidateIndexSearchSuccess)
+    assert port.calls == [
+        CandidateSearchStage.PRODUCT_NAME_EXACT,
+        CandidateSearchStage.APPROVED_ALIAS_EXACT,
+        CandidateSearchStage.TRIGRAM_EDIT_DISTANCE,
+    ]
+    assert tuple(hit.stage for hit in result.raw_hits) == tuple(port.calls)
+    assert [hit.identity.canonical_code for hit in result.raw_hits] == ["P-001"] * 3
+
+
+def test_hybrid_search_calls_dense_only_as_final_auxiliary_stage() -> None:
+    port = RecordingSearchPort()
+
+    result = search_candidate_index(valid_query(), hybrid_manifest(), port)
+
+    assert isinstance(result, CandidateIndexSearchSuccess)
+    assert port.calls == [
+        CandidateSearchStage.PRODUCT_NAME_EXACT,
+        CandidateSearchStage.APPROVED_ALIAS_EXACT,
+        CandidateSearchStage.TRIGRAM_EDIT_DISTANCE,
+        CandidateSearchStage.DENSE_VECTOR,
+    ]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        CandidateSearchQuery("candidate-index-v1", "", 5),
+        CandidateSearchQuery("candidate-index-v1", "   ", 5),
+        CandidateSearchQuery("candidate-index-v1", "가나다정", 0),
+        CandidateSearchQuery("candidate-index-v1", "가나다정", 21),
+    ],
+)
+def test_invalid_search_query_fails_before_port_call(query: CandidateSearchQuery) -> None:
+    port = RecordingSearchPort()
+
+    result = search_candidate_index(query, lexical_manifest(), port)
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.QUERY_INVALID,
+        details=("query",),
+        raw_hits=(),
+    )
+    assert port.calls == []
+
+
+class MismatchedHitPort(RecordingSearchPort):
+    def __init__(self, field: str) -> None:
+        super().__init__()
+        self.field = field
+
+    def _hit(self, stage: CandidateSearchStage, manifest) -> tuple[CandidateRawHit, ...]:
+        hit = super()._hit(stage, manifest)[0]
+        return (replace(hit, **{self.field: "mismatch"}),)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["index_version", "catalog_version", "source_snapshot_id", "normalization_version"],
+)
+def test_hit_provenance_mismatch_fails_closed(field: str) -> None:
+    result = search_candidate_index(valid_query(), lexical_manifest(), MismatchedHitPort(field))
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.HIT_PROVENANCE_MISMATCH,
+        details=(field,),
+        raw_hits=(),
+    )
+
+
+class WrongStagePort(RecordingSearchPort):
+    def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        return self._hit(CandidateSearchStage.APPROVED_ALIAS_EXACT, manifest)
+
+
+def test_stage_mismatch_fails_without_returning_partial_hits() -> None:
+    result = search_candidate_index(valid_query(), lexical_manifest(), WrongStagePort())
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.HIT_PROVENANCE_MISMATCH,
+        details=("stage",),
+        raw_hits=(),
+    )
+
+
+class MalformedFirstHitPort(RecordingSearchPort):
+    def __init__(self, changes: dict[str, object]) -> None:
+        super().__init__()
+        self.changes = changes
+
+    def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        hit = self._hit(CandidateSearchStage.PRODUCT_NAME_EXACT, manifest)[0]
+        return (replace(hit, **self.changes),)
+
+
+@pytest.mark.parametrize(
+    ("changes", "detail"),
+    [
+        ({"rank": 2}, "rank"),
+        ({"stage_score": float("nan")}, "stage_score"),
+        ({"member_key": "not-sha256"}, "member_key"),
+        ({"embedding_model_version": "unexpected-model"}, "embedding_model_version"),
+    ],
+)
+def test_malformed_hit_fails_without_returning_partial_hits(changes: dict[str, object], detail: str) -> None:
+    result = search_candidate_index(valid_query(), lexical_manifest(), MalformedFirstHitPort(changes))
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.HIT_PROVENANCE_MISMATCH,
+        details=(detail,),
+        raw_hits=(),
+    )
+
+
+class TooManyHitsPort(RecordingSearchPort):
+    def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        hit = self._hit(CandidateSearchStage.PRODUCT_NAME_EXACT, manifest)[0]
+        return tuple(replace(hit, rank=rank) for rank in range(1, query.retrieval_limit + 2))
+
+
+def test_stage_result_over_retrieval_limit_fails_closed() -> None:
+    result = search_candidate_index(valid_query(), lexical_manifest(), TooManyHitsPort())
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.HIT_PROVENANCE_MISMATCH,
+        details=("retrieval_limit",),
+        raw_hits=(),
+    )
+
+
+class FailingSearchPort(RecordingSearchPort):
+    def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        del query, manifest
+        raise RuntimeError("database raw error must not escape")
+
+
+def test_search_port_error_is_replaced_with_safe_failure() -> None:
+    result = search_candidate_index(valid_query(), lexical_manifest(), FailingSearchPort())
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.PORT_FAILURE,
+        details=(CandidateSearchStage.PRODUCT_NAME_EXACT.value,),
+        raw_hits=(),
+    )
+
+
+def test_query_index_version_must_match_manifest() -> None:
+    result = search_candidate_index(
+        replace(valid_query(), index_version="candidate-index-v2"),
+        lexical_manifest(),
+        RecordingSearchPort(),
+    )
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.INDEX_VERSION_MISMATCH,
+        details=("index_version",),
+        raw_hits=(),
+    )
+
+
+def test_candidate_index_import_does_not_load_backend_or_database_modules() -> None:
+    project_root = Path(__file__).parents[3]
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import ai_worker.tasks.rag.candidate_index; "
+                "assert 'sqlalchemy' not in sys.modules; "
+                "assert not any(name.startswith('backend.app') for name in sys.modules)"
+            ),
+        ],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr

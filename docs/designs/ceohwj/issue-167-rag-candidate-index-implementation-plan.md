@@ -374,7 +374,7 @@ git commit -m "✨ feat: Candidate Index 임베딩 무결성 검증"
 - 출력: `CandidateIndexSearchSuccess` 또는 `CandidateIndexSearchFailure`
 - 함수: `search_candidate_index(query, manifest, port)`
 
-- [ ] **Step 1: lexical 단계 호출 순서와 raw hit 보존 테스트 작성**
+- [x] **Step 1: lexical 단계 호출 순서와 raw hit 보존 테스트 작성**
 
 ```python
 def test_lexical_search_calls_stages_in_order_and_preserves_repeated_identity_hits() -> None:
@@ -391,13 +391,13 @@ def test_lexical_search_calls_stages_in_order_and_preserves_repeated_identity_hi
     assert [hit.product_identity.canonical_code for hit in result.raw_hits] == ["P-001"] * 3
 ```
 
-- [ ] **Step 2: 검색 타입과 함수 부재로 실패하는지 확인**
+- [x] **Step 2: 검색 타입과 함수 부재로 실패하는지 확인**
 
 ```bash
 uv run pytest ai_worker/tests/rag/test_candidate_index.py::test_lexical_search_calls_stages_in_order_and_preserves_repeated_identity_hits -q
 ```
 
-- [ ] **Step 3: 검색 enum·타입·port와 orchestration 최소 구현**
+- [x] **Step 3: 검색 enum·타입·port와 orchestration 최소 구현**
 
 ```python
 class CandidateSearchStage(StrEnum):
@@ -429,7 +429,7 @@ class CandidateIndexSearchPort(Protocol):
 고정 순서로 호출한다. `HYBRID`일 때만 `DENSE_VECTOR`를 마지막에 호출한다. stage별 raw hit를 합치되
 Product Identity 기준으로 dedupe하지 않는다.
 
-- [ ] **Step 4: HYBRID dense-last와 provenance failure matrix 추가**
+- [x] **Step 4: HYBRID dense-last와 provenance failure matrix 추가**
 
 ```python
 def test_hybrid_search_calls_dense_only_as_final_auxiliary_stage() -> None:
@@ -451,7 +451,7 @@ rank는 단계별 1부터 연속이어야 하고 score는 finite number여야 �
 manifest.candidate_limit`이어야 하며 모든 단계에 동일하게 전달한다. lexical manifest에서 port가 vector
 hit를 반환하거나 HYBRID vector hit에 embedding version이 없으면 fail-closed한다.
 
-- [ ] **Step 5: 독립 Python process에서 DB 의존성 없는 import 검증 추가**
+- [x] **Step 5: 독립 Python process에서 DB 의존성 없는 import 검증 추가**
 
 ```python
 def test_candidate_index_import_does_not_load_backend_or_database_modules() -> None:
@@ -477,7 +477,7 @@ def test_candidate_index_import_does_not_load_backend_or_database_modules() -> N
 이 테스트는 소스 문자열을 검사하지 않고 실제 import 부작용을 확인해 RAG-07A의 독립 실행 경계를
 고정한다.
 
-- [ ] **Step 6: Task 4 전체 검증 및 커밋**
+- [x] **Step 6: Task 4 전체 검증 및 커밋**
 
 ```bash
 uv run pytest ai_worker/tests/rag/test_candidate_index.py -q
