@@ -90,9 +90,12 @@ async def test_ocr_result_is_staged_without_commit() -> None:
     assert update_sql.startswith("UPDATE ocr_job SET")
     assert "ocr_job.id" in update_where_sql
     assert "ocr_job.ai_job_id" in update_where_sql
-    assert "ocr_job.ocr_status" in update_where_sql
+    assert "ocr_job.ocr_status =" in update_where_sql
+    assert "ocr_job.ocr_status IN" not in update_where_sql
+
     assert delete_sql.startswith("DELETE FROM extracted_field")
     assert "extracted_field.ocr_job_id" in delete_sql
+
     assert insert_sql.startswith("INSERT INTO extracted_field")
     assert "ocr_job_id" in insert_sql
     assert "field_type" in insert_sql

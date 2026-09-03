@@ -39,6 +39,7 @@ class FakeOcrInputRepository:
     def __init__(self, domain_input: OcrDomainInput | None) -> None:
         self._domain_input = domain_input
         self.received_lookups: list[tuple[UUID, UUID]] = []
+        self.received_processing_starts: list[tuple[UUID, UUID]] = []
 
     async def get_input(
         self,
@@ -48,6 +49,20 @@ class FakeOcrInputRepository:
     ) -> OcrDomainInput | None:
         self.received_lookups.append((domain_id, job_id))
         return self._domain_input
+
+    async def mark_processing(
+        self,
+        *,
+        domain_id: UUID,
+        job_id: UUID,
+    ) -> bool:
+        self.received_processing_starts.append(
+            (
+                domain_id,
+                job_id,
+            )
+        )
+        return True
 
 
 class FakeOcrProvider:
@@ -154,6 +169,9 @@ async def test_ocr_handler_loads_input_and_returns_normalized_result() -> None:
     assert repository.received_lookups == [
         (domain_id, message.job_id),
     ]
+    assert repository.received_processing_starts == [
+        (domain_id, message.job_id),
+    ]
     assert provider.calls == [
         ProviderCall(
             object_key="synthetic/input.png",
@@ -205,6 +223,7 @@ async def test_ocr_handler_rejects_missing_domain_input() -> None:
     assert repository.received_lookups == [
         (domain_id, message.job_id),
     ]
+    assert repository.received_processing_starts == []
     assert provider.calls == []
 
 

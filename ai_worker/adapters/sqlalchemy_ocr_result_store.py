@@ -99,7 +99,7 @@ class SqlAlchemyOcrResultStore:
             .where(
                 _OCR_JOB.c.id == str(message.domain_id),
                 _OCR_JOB.c.ai_job_id == str(message.job_id),
-                _OCR_JOB.c.ocr_status.in_(("PENDING", "PROCESSING")),
+                _OCR_JOB.c.ocr_status == "PROCESSING",
             )
             .values(
                 ocr_status="COMPLETED",

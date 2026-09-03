@@ -92,6 +92,7 @@ async def repository_schema() -> AsyncIterator[None]:
                     document_id VARCHAR(36) NOT NULL,
                     ai_job_id VARCHAR(36),
                     ocr_status VARCHAR(20) NOT NULL,
+                    started_at TIMESTAMPTZ,
                     engine_name VARCHAR(100),
                     model_version VARCHAR(100),
                     prompt_version VARCHAR(100),
@@ -157,12 +158,12 @@ def build_message(
 async def read_persisted_result(
     *,
     domain_id: UUID,
-) -> tuple[str, int]:
+) -> tuple[str, datetime | None, int]:
     async with session_factory() as observer:
-        status_result = await observer.execute(
+        state_result = await observer.execute(
             text(
                 """
-                SELECT ocr_status
+                SELECT ocr_status, started_at
                 FROM ocr_job
                 WHERE id = :domain_id
                 """
@@ -180,8 +181,11 @@ async def read_persisted_result(
             {"domain_id": str(domain_id)},
         )
 
+        status, started_at = state_result.one()
+
         return (
-            status_result.scalar_one(),
+            status,
+            started_at,
             field_result.scalar_one(),
         )
 
@@ -242,8 +246,12 @@ async def test_ocr_input_and_result_share_one_external_transaction() -> None:
             },
         )
 
+    started_at = datetime(2026, 9, 3, 8, 0, tzinfo=UTC)
     async with session_factory() as session:
-        input_repository = SqlAlchemyOcrInputRepository(session)
+        input_repository = SqlAlchemyOcrInputRepository(
+            session,
+            clock=lambda: started_at,
+        )
         result_store = SqlAlchemyOcrResultStore(
             session,
             clock=lambda: datetime.now(UTC),
@@ -258,6 +266,34 @@ async def test_ocr_input_and_result_share_one_external_transaction() -> None:
             object_key="synthetic/input.png",
             file_mime_type="image/png",
         )
+
+        processing_started = await input_repository.mark_processing(
+            domain_id=domain_id,
+            job_id=job_id,
+        )
+
+        assert processing_started is True
+
+        processing_state_result = await session.execute(
+            text(
+                """
+                SELECT ocr_status, started_at
+                FROM ocr_job
+                WHERE id = :domain_id
+                """
+            ),
+            {"domain_id": str(domain_id)},
+        )
+        processing_status, recorded_started_at = processing_state_result.one()
+
+        assert processing_status == "PROCESSING"
+        assert recorded_started_at == started_at
+
+        # 아직 외부 transaction commit 전이므로 다른 session에서는
+        # PENDING 상태만 보여야 합니다.
+        assert await read_persisted_result(
+            domain_id=domain_id,
+        ) == ("PENDING", None, 0)
 
         await result_store.save(
             message=message,
@@ -284,8 +320,12 @@ async def test_ocr_input_and_result_share_one_external_transaction() -> None:
 
         # ResultStore가 직접 commit하지 않았으므로 외부 session에는
         # 아직 변경 결과가 보여서는 안 됩니다.
-        assert await read_persisted_result(domain_id=domain_id) == ("PENDING", 0)
+        assert await read_persisted_result(
+            domain_id=domain_id,
+        ) == ("PENDING", None, 0)
 
         await session.commit()
 
-    assert await read_persisted_result(domain_id=domain_id) == ("COMPLETED", 1)
+    assert await read_persisted_result(
+        domain_id=domain_id,
+    ) == ("COMPLETED", started_at, 1)
