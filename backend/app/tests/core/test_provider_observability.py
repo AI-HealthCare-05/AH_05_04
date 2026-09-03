@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+import provider_contracts.observability as shared_observability
 from app.core.config import Env
 from app.core.provider_observability import (
     Provider,
@@ -25,6 +26,15 @@ def _logger(stream: io.StringIO) -> ProviderCallLogger:
     logger.addHandler(handler)
     logger.propagate = False
     return ProviderCallLogger(logger)
+
+
+def test_backend_reexports_shared_provider_contract_types() -> None:
+    assert Provider is shared_observability.Provider
+    assert ProviderCallContext is shared_observability.ProviderCallContext
+    assert ProviderCallDescriptor is shared_observability.ProviderCallDescriptor
+    assert ProviderErrorCode is shared_observability.ProviderErrorCode
+    assert ProviderFailurePhase is shared_observability.ProviderFailurePhase
+    assert ProviderOperation is shared_observability.ProviderOperation
 
 
 def _context(*, validation: bool = True) -> ProviderCallContext:

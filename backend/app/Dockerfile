@@ -19,6 +19,7 @@ RUN uv sync --group app --no-dev --frozen
 
 # 4. 로컬 소스 코드를 컨테이너 내부로 복사합니다.
 COPY ./backend/app ./app
+COPY ./provider_contracts ./provider_contracts
 COPY ./backend/alembic ./alembic
 COPY ./backend/alembic.ini ./alembic.ini
 
