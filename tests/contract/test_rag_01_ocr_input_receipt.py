@@ -44,6 +44,7 @@ def test_required_source_locations_are_machine_readable() -> None:
         "backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py",
         "backend/app/tests/ocr/test_prescription_confirmation_api.py",
         "backend/app/tests/ocr/test_prescription_confirmation_concurrency.py",
+        "backend/app/tests/ocr/test_prescription_confirmation_validation.py",
     }
 
     assert required_paths <= locations_by_path.keys()

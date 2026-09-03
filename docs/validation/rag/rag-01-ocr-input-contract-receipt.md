@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | Receipt version | `1.0` |
-| Canonical Receipt hash | `sha256:a613cbddcba21d180e0441f034a4b6d84370190b1c61dcfeff4a9926aa6d62c4` |
+| Canonical Receipt hash | `sha256:e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe` |
 | 검증 상태 | `COMPLETED_WITH_GAPS` |
 | 검증일 | 2026-09-03 |
 | 검증 기준 Commit | `723758ec361a29e97a256ac45ae7a17d8b0dae50` |
@@ -20,7 +20,7 @@
 이 Receipt의 기계 판독 정본 hash는 다음과 같다.
 
 ```text
-sha256:a613cbddcba21d180e0441f034a4b6d84370190b1c61dcfeff4a9926aa6d62c4
+sha256:e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe
 ```
 Canonicalization 규칙:
 1. 최상위 generated_at과 receipt_hash 필드를 제외한다.
@@ -76,7 +76,7 @@ uv run pytest \
 
 실행 결과 :
 
-`300 passed`
+`306 passed`
 
 ## 2. 기준 계약
 

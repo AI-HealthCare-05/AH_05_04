@@ -113,6 +113,13 @@
         "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
         "evidence_type": "REGRESSION_TEST",
         "meaning": "PATCH와 처방 확정의 row lock 직렬화 및 동시 확정의 단일 성공 경계를 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_validation.py",
+        "lines": "56-89",
+        "commit_sha": "2c1a9b1859e09a89398162858bfad6ce43985e82",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "복합 함량 문자열 5mg/100mg을 그대로 보존하고, confirmed_value가 NULL인 미확정 OCR 값은 raw_value 또는 normalized_value로 대체하지 않는 입력 경계를 검증한다."
       }
     ]
   },
@@ -207,7 +214,7 @@
   "regression_evidence": {
     "executed_on": "2026-09-03",
     "command": "uv run pytest backend/app/tests/ocr backend/app/tests/ocr_ai backend/app/tests/repositories tests/contract -q",
-    "result": "300 passed",
+    "result": "306 passed",
     "scope": [
       "backend/app/tests/ocr",
       "backend/app/tests/ocr_ai",
@@ -237,6 +244,6 @@
   "receipt_hash": {
     "algorithm": "sha256",
     "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
-    "value": "a613cbddcba21d180e0441f034a4b6d84370190b1c61dcfeff4a9926aa6d62c4"
+    "value": "e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe"
   }
 }
