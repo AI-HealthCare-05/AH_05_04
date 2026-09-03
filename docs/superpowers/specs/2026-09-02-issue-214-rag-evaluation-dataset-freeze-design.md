@@ -5,12 +5,12 @@
 - Issue: [#214](https://github.com/AI-HealthCare-05/AH_05_04/issues/214)
 - Upstream foundation: #122 / PR #210
 - Downstream runner: #157
-- Design status: DRAFT Dataset candidate complete, named human reviews pending
+- Design status: Dataset `1.0.0` frozen from recorded Evaluation and Custodian approval events; final freeze-commit review pending
 - Execution boundary: merged Schema Set-compatible local files and deterministic validation only
 
 This change creates a new, versioned, synthetic evaluation Dataset that contains both `HOLDOUT` and
-`SAFETY_REGRESSION` cases. The current candidate and all child Gold provenance are Team `DRAFT`;
-it prepares the Dataset input contract needed by #157 without claiming the later `FROZEN` transition or
+`SAFETY_REGRESSION` cases. The current Dataset and required child Gold provenance are Team `APPROVED` and the
+Dataset is `FROZEN`; it prepares the Dataset input contract needed by #157 without authorizing Release execution or
 implementing a Runner, Metric calculator, Provider adapter, database persistence, or Release Gate.
 
 The existing `dev-foundation-v1` Dataset remains unchanged and continues to represent a non-runtime,
@@ -33,8 +33,8 @@ The implementation follows these sources in order:
 The `FinalProject Documents/` folder is not an authority for Dataset size or partition allocation in this
 design. The normative RAG evaluation plan supplies 12 per-category initial minimums whose arithmetic sum is
 153. It describes those values as workload estimates; it does not prescribe an exact total or the 60/93
-partition split. Exact v1 size 153 and allocation 60/93 are Issue #214 project decisions that remain proposed
-until the named Dataset Custodian approves the completed Case set and its derived allocation projection. The
+partition split. Exact v1 size 153 and allocation 60/93 are Issue #214 project decisions recorded by the
+completed Dataset Freeze and are immutable for this version. The
 repository target and #122 schemas remain authoritative for machine-readable fields, enum values, validation,
 and status semantics.
 
@@ -76,8 +76,9 @@ The merged compatibility contract:
 - add schema, exported-schema parity, loader, privacy, and negative contract tests
 - update the authoritative repository target and Decision/Contract Freeze version in the same focused PR
 
-`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` is resolved. The current blockers are the named human reviews for
-#214 and its `FROZEN/APPROVED` completion. Only after #214 completes does
+`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` is resolved. The Dataset's `FROZEN/APPROVED` transition is complete;
+the only current PR merge blocker is an official review of the Freeze-state-containing latest PR HEAD. Only after
+#214 completes does
 `WAITING_FOR_APPROVED_COMPARISON_POLICY` remain as the later blocker for the first HOLDOUT execution. The
 committed Comparison Policy is a diagnostic validation-only envelope and does not authorize #157 to load,
 execute, or inspect HOLDOUT results. This design does not choose placeholder Rule IDs, encode faults in
@@ -115,8 +116,8 @@ The Dataset uses these stable identities:
 | File prefix | `rag-holdout-safety-v1` |
 | Scope | `SYNTHETIC_RAG_HOLDOUT_SAFETY` |
 | Classification | `SYNTHETIC` |
-| Current Dataset status | `DRAFT` |
-| Target Dataset status after actual review | `FROZEN` |
+| Current Dataset status | `FROZEN` (`APPROVED` provenance) |
+| Dataset status before recorded approvals | `DRAFT` (`REVIEWED` provenance) |
 | Runtime eligible | `false` |
 
 Files are added under the existing #122 layout:
@@ -174,10 +175,11 @@ The third Gold reviewer is `@Jye-rookie`, matching the normative RAG assignment 
 and Gold-evidence review. Issue #214 records all three actual GitHub identities. External clinical review is
 still separate and remains `PENDING` where required.
 
-Every current `ReviewProvenance` object, including all 153 Cases, is Team `DRAFT`. Schema Set 1.2 requires
-`reviewed_by=null`, `reviewed_at=null`, no approval fields, and an empty `evidence_review_refs` array in this
-state. The actual `@Jye-rookie` review changes the status to `REVIEWED` and records an
-`EVALUATION_REVIEWER` with the real review event timestamp and immutable evidence.
+Dataset Manifest, all 153 Cases, Evidence Mapping, and Critical Claim Rubric now record the completed
+`@Jye-rookie` PR #256 review `5102210603` as Team `APPROVED`, with an `EVALUATION_REVIEWER`, the real UTC
+review timestamp, immutable captured review evidence, and the later `@hazelnutflavoured` approval event
+`5102473823`. Review of the Freeze-state-containing latest PR HEAD remains a separate PR merge gate and is not embedded back into
+the artifact hash graph.
 
 The Comparison Policy contract separately requires `approved_by` and `approved_at`. In the DRAFT graph those
 fields use SYSTEM actor `rag-eval-draft-validator` / `SYSTEM_VALIDATOR` only to identify a diagnostic
@@ -204,7 +206,7 @@ The Dataset freeze transition occurs inside the PR in three reviewable stages:
    - After those approvals are recorded, a follow-up commit changes the Dataset to `status=FROZEN`.
    - Dataset provenance becomes `team_gold_status=APPROVED` with the real Dataset Custodian actor and review
      timestamp; `frozen_at` records the same freeze event.
-   - The Dataset Custodian performs a final review on the exact freeze commit.
+   - The Dataset Custodian performs a final review on the Freeze-state-containing latest PR HEAD.
 
 The implementer must not pre-populate or fabricate approval. Self-approval is rejected by the schema and is
 not treated as a recoverable validation error.
@@ -217,9 +219,9 @@ tuning.
 
 ## 6. Case allocation and catalog contract
 
-Version `1.0.0` proposes exactly 153 synthetic cases: 60 `HOLDOUT` and 93 `SAFETY_REGRESSION`. The 153 is the
+Version `1.0.0` freezes exactly 153 synthetic cases: 60 `HOLDOUT` and 93 `SAFETY_REGRESSION`. The 153 is the
 sum of the normative evaluation plan's 12 per-category initial minimums; exact size and partition allocation
-are the proposed #214 Freeze decision pending Dataset Custodian approval. They are not a permanent maximum and
+are the recorded #214 Dataset Freeze decision. They are not a permanent maximum and
 do not prove statistical sufficiency. Metric-specific minimum Case counts, independent-group counts,
 estimators, confidence intervals, and thresholds remain owned by later approved Comparison Policy versions in
 #158–#163. An executed scope below those approved minimums becomes `COMPLETED/INCONCLUSIVE`, never `PASS`.
@@ -332,6 +334,11 @@ allocation artifact.
 Every Case uses `dataset_code=rag-holdout-safety`, `dataset_version=1.0.0`, a canonical `input_sha256`, and the
 task-specific expected-value model consumed through Schema Set `1.2.0`. Non-applicable expected fields remain
 explicitly `null` as required by that contract.
+
+`input_sha256` is the canonical hash of each Case's `query` and `context`, not just the user-visible query text.
+`context.runtime_fixture.source_snapshot_ref.hash` is intentionally part of that context; consequently, rebinding
+the Evidence Mapping provenance changes every affected Case input hash and requires the complete downstream graph
+to be recomputed. This is an integrity boundary, not a change to the Case's user-facing question or Gold value.
 
 The OTC Candidate-skips archetype uses valid `MATCHED_RULES` input, non-empty expected Rule IDs, and a Gold
 requirement that the Rule be invoked before RAG. Candidate non-invocation is the failure detected by the
@@ -617,51 +624,50 @@ The #157 handoff contains the exact immutable references and hashes for:
 - protected artifact receipt
 
 The handoff marks the protected receipt as Case-only, records #216 as the resolved historical compatibility
-prerequisite, and binds #241's current Schema Set 1.2 immutable reference. The current blockers are the named #214 human reviews and the
-`FROZEN/APPROVED` transition. After #214 completes, `WAITING_FOR_APPROVED_COMPARISON_POLICY` becomes the later
+prerequisite, and binds #241's current Schema Set 1.2 immutable reference. The Dataset is already
+`FROZEN/APPROVED`; the remaining PR merge blocker is the official review of the Freeze-state-containing latest PR HEAD. After #214 completes,
+`WAITING_FOR_APPROVED_COMPARISON_POLICY` becomes the later
 HOLDOUT blocker until the first Baseline is authorized.
 
 The scored natural-language surface is Korean (`ko-KR`): queries, Gold claims, forbidden semantic rules,
 Evidence statements, and Rubric descriptions. Immutable identifiers, enums, reason codes, locators, and
 `FICTIONAL_*` / `SYNTHETIC_*` contract tokens retain their stable spelling.
 
-The current DRAFT handoff values are:
+The current review-recorded handoff values are:
 
 | Item | Immutable ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `1feaca37deca87466acf6b28a429c9484f9718c014ff687618a2540e8ef63717` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `e0f997f1085f4cce397bc473af80442a02535ecdcae38a1ba29c3a8ceecf3eb2` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `e376dc8b347babf097fca9f507bed55696d43d684f119f8b455da89ea6e23d9b` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `4678cc81a98703b3154b08f8297c2dca32399e926065341a5a617959b95d0131` |
-| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6f623450952b55e321009970381b65c6b266f56a37e1f750f59ca232c5a4c437` |
-| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `afa570eec5bf30a7c4ce518e9483be8a5c24ab99230f946ffdcfe0a46c997cd2` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `2c42b2969387d7efaf4f3806e33ee502032b6fb7243bc6a1198434239395f09d` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `094d89292e52971fe5e9148336c533b43936caa70e0c9ea44a5572354cc9b6df` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `0f8dab92ee78a995904ce336d8dbf6739773e86556db479c8efe6775c2e0692b` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `381e808cea848ed6a94335ce262cd7df2594279ababc62cc9fbcc141643bcbe3` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `86f70e09de3dfff719572be40a61540452fc7ebacdaedd5050b9fecb936f2d2a` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `d47433965c83dce1f70d393242b9ed3e37072946853053e76e2a829bb58e1525` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `812ff6bb8cce18cd0e0c80f22ac468005a128e4ed2b30f21ad0381d7b91a0ed1` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `d4f254adfe28a2cc789c02ce7de18d26e79ff1ead21e2bbebdf3df0eda551f8e` |
-| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `034b0c58816774512e6b90ba9c96265f2b01eda2d001438e15b56ec12c2e48bb` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `6173a883d31421c1b9b197d68c4403bba3b24599c1dfd152eeb617279bac50ee` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `02dd78aff64b457fa898e798310e45bcdeef4c31aa264bd470be160a80de94a3` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `f04011915018dd178841171da2bcc652178c9724be9f1905248e03786147c1ca` |
-| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `9bce4d35aa3af797ebbfd77fe73a6f6c3b69580080ff63a085e957e9732e973e` |
+| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `1b88575a5454131d315d71774dceeb6e979fd440959ed3ce3f2635b02c0a7fa7` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 The receipt SHA-256 in the table is its canonical file hash referenced by the Dataset Manifest. Its internal
-`receipt_hash` is `188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24`; the receipt covers only the
+`receipt_hash` is `1b88575a5454131d315d71774dceeb6e979fd440959ed3ce3f2635b02c0a7fa7`; the receipt covers only the
 153 Case resources and does not independently protect or approve Evidence, Rubric, Profile, Policy, or Suite.
 
-These values describe the complete DRAFT graph and are not a freeze receipt. Every current
-`ReviewProvenance` and the receipt `recorded_by` remain Team `DRAFT`. Actual review by
-`@Jye-rookie` for Gold/Evidence, approval by `@hazelnutflavoured` for Dataset/Safety, and Schema/Loader
-cross-review by `@phina-io` are still required. Only after the real review event moves required provenance to
-`REVIEWED` may a follow-up approval commit populate approval provenance and transition the Dataset to
-`FROZEN/APPROVED`.
+These values describe the frozen Dataset graph and are not a Release receipt. Dataset, Case,
+Evidence Mapping, and Critical Claim Rubric provenance is `APPROVED`; the integrity receipt remains `DRAFT` by
+contract because it must not represent a Team approval. This Dataset does not authorize HOLDOUT execution or a
+Release decision.
 
 ## 14. Risks and mitigations
 
 | Risk | Mitigation |
 | --- | --- |
 | Frozen data is tuned against after becoming visible. | Immutable versioning, no in-place edits, and derived tuning cases go to DEV. |
-| Team approval is fabricated before review. | Three-stage authoring, review, and freeze transition with final review on the exact freeze commit. |
+| Team approval is fabricated before review. | Three-stage authoring, review, and freeze transition with final review on the Freeze-state-containing latest PR HEAD. |
 | Squash merge invalidates a recorded fixture commit. | Use content hashes and protected artifact receipt; #157 records Runner/Baseline commits later. |
 | The initial 153-Case workload is mistaken for a permanent maximum or Release-quality statistical sample. | `runtime_eligible=false`, diagnostic Policy scopes, no Gate refs, explicit future `INCONCLUSIVE` behavior, and append-only Safety versioning. |
 | A later active OTC Rule Set contains Rule IDs absent from independently executed Safety groups. | Evaluate set inclusion, keep HOLDOUT v1 immutable, and publish a new Dataset version that appends Safety Cases until every active positive Rule member is executed. |
@@ -675,10 +681,11 @@ cross-review by `@phina-io` are still required. Only after the real review event
 
 ## 15. Acceptance boundary
 
-Issue #214's #216 prerequisite remains resolved by historical `rag-eval.schema-set@1.1.0`; the current candidate
-consumes `rag-eval.schema-set@1.2.0`. All ReviewProvenance remain `DRAFT`; the immediate blockers are the named human reviews and the final
-`FROZEN/APPROVED` transition. Issue #214 is complete only when the merged Dataset is `FROZEN`, the final freeze
-commit has Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests
+Issue #214's #216 prerequisite remains resolved by historical `rag-eval.schema-set@1.1.0`; the current Dataset
+consumes `rag-eval.schema-set@1.2.0`. Required Dataset provenance is `APPROVED` and the Dataset is `FROZEN`;
+the immediate remaining PR step is review of the Freeze-state-containing latest PR HEAD. After Freeze, the
+distinct approved Comparison Policy remains required before #157 may execute HOLDOUT. Issue #214 is complete only when the merged Dataset is `FROZEN`, the final freeze
+PR HEAD has Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests
 pass, and the #157 handoff references are recorded. Only then may #157 begin DEV Runner work, without loading
 or inspecting HOLDOUT. Completion does not authorize a HOLDOUT run or Release decision. The later first
 HOLDOUT Baseline remains `WAITING_FOR_APPROVED_COMPARISON_POLICY` until the independently approved Policy and
