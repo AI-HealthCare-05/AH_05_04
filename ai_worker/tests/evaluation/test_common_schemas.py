@@ -393,3 +393,16 @@ def test_review_provenance_v12_accepts_internal_evaluation_reviewer_after_actual
 
     assert provenance.reviewed_by is not None
     assert provenance.reviewed_by.role.value == "EVALUATION_REVIEWER"
+
+
+@pytest.mark.parametrize("role", ["MEDICAL_REVIEWER", "PRIVACY_REVIEWER"])
+def test_review_provenance_v12_rejects_non_evaluation_reviewer_roles(role: str) -> None:
+    payload = _v12_review_payload("REVIEWED")
+    payload.update(
+        reviewed_by=_review_actor("gold-fixture-reviewer", role),
+        reviewed_at="2026-09-03T00:01:00.000000Z",
+        evidence_review_refs=[_v12_review_ref()],
+    )
+
+    with pytest.raises(ValidationError, match="team review provenance requires an evaluation reviewer"):
+        ReviewProvenanceV12.model_validate(payload)

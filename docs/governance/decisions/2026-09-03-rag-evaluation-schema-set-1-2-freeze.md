@@ -19,7 +19,7 @@
 | --- | --- |
 | Schema Set ID | `rag-eval.schema-set` |
 | Schema Set version | `1.2.0` |
-| Schema Set SHA-256 | `0b0561f23e067fec7c9b702943988fc8d641b6902597472020cdfc0b326e8d6f` |
+| Schema Set SHA-256 | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 | Canonical member root | `evals/schemas/1.2.0/` |
 | Member count | `18` |
 
@@ -50,7 +50,7 @@ Schema Set hash는 member별 `{schema_id, schema_version, schema_sha256}`를 정
 
 reviewer·review timestamp 또는 approver·approval timestamp의 한쪽만 기록한 payload는 거부한다. 작성자, reviewer, approver는 서로 다른 identity여야 하고 system actor를 사용할 수 없다. 실제 review event가 없을 때 지정 reviewer 이름이나 authoring 시각을 review provenance에 기록하지 않는다.
 
-`EVALUATION_REVIEWER`는 팀 내부 Gold·Fixture·Evidence·Evaluation artifact의 검토 역할이다. 이 역할은 `MEDICAL_REVIEWER`, 외부 의료 검토, 의료·약학 승인 또는 Production 공개 승인을 뜻하지 않는다. `external_medical_review_status`와 external approval receipt의 기존 규칙은 유지한다.
+`REVIEWED`·`APPROVED` 상태의 `reviewed_by.role`은 `EVALUATION_REVIEWER`만 허용한다. 이 역할은 팀 내부 Gold·Fixture·Evidence·Evaluation artifact의 검토 역할이며, `MEDICAL_REVIEWER`, 외부 의료 검토, 의료·약학 승인 또는 Production 공개 승인을 뜻하지 않는다. `external_medical_review_status`와 external approval receipt의 기존 규칙은 유지한다.
 
 Safety Case와 End-to-End Case의 Team approval은 계속 `PRODUCT_SAFETY_REVIEWER | MEDICAL_REVIEWER`만 허용하고 Dataset Manifest Team approval은 `DATASET_CUSTODIAN`만 허용한다. `EVALUATION_REVIEWER`는 approval-role allowlist를 넓히지 않는다.
 

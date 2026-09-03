@@ -598,6 +598,16 @@ def _add_v1_2_review_provenance_conditions(value: JsonValue) -> None:
         all_of = value.setdefault("allOf", [])
         if not isinstance(all_of, list):
             raise TypeError("ReviewProvenanceV12 allOf must be an array")
+        evaluation_reviewer: dict[str, JsonValue] = {
+            "allOf": [
+                {"not": {"type": "null"}},
+                {
+                    "type": "object",
+                    "properties": {"role": {"const": "EVALUATION_REVIEWER"}},
+                    "required": ["role"],
+                },
+            ]
+        }
         all_of.extend(
             [
                 {
@@ -622,7 +632,7 @@ def _add_v1_2_review_provenance_conditions(value: JsonValue) -> None:
                     },
                     "then": {
                         "properties": {
-                            "reviewed_by": {"not": {"type": "null"}},
+                            "reviewed_by": evaluation_reviewer,
                             "reviewed_at": {"not": {"type": "null"}},
                             "approved_by": {"type": "null"},
                             "approved_at": {"type": "null"},
@@ -637,7 +647,7 @@ def _add_v1_2_review_provenance_conditions(value: JsonValue) -> None:
                     },
                     "then": {
                         "properties": {
-                            "reviewed_by": {"not": {"type": "null"}},
+                            "reviewed_by": evaluation_reviewer,
                             "reviewed_at": {"not": {"type": "null"}},
                             "approved_by": {"not": {"type": "null"}},
                             "approved_at": {"not": {"type": "null"}},

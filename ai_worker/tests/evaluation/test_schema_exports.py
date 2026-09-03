@@ -400,7 +400,17 @@ def test_exported_review_provenance_v12_schema_encodes_draft_and_reviewed_state_
     } in conditions
     assert any(
         condition.get("if", {}).get("properties", {}).get("team_gold_status") == {"const": "REVIEWED"}
-        and condition["then"]["properties"]["reviewed_by"] == {"not": {"type": "null"}}
+        and condition["then"]["properties"]["reviewed_by"]
+        == {
+            "allOf": [
+                {"not": {"type": "null"}},
+                {
+                    "type": "object",
+                    "properties": {"role": {"const": "EVALUATION_REVIEWER"}},
+                    "required": ["role"],
+                },
+            ]
+        }
         and condition["then"]["properties"]["evidence_review_refs"] == {"minItems": 1}
         for condition in conditions
     )

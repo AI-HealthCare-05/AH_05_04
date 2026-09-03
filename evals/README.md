@@ -36,7 +36,7 @@ uv run python -m ai_worker.tasks.evaluation validate \
 
 Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. 지정 책임 리뷰 승인 전에는 #214 Dataset Freeze의 승인 입력으로 사용하지 않는다.
 
-Schema Set `1.2.0`의 불변 참조는 `rag-eval.schema-set@1.2.0`, SHA-256 `0b0561f23e067fec7c9b702943988fc8d641b6902597472020cdfc0b326e8d6f`이다. DRAFT artifact는 reviewer identity·timestamp·review evidence를 기록하지 않으며, 실제 팀 검토부터 `EVALUATION_REVIEWER`와 immutable review evidence를 기록한다. 이 내부 역할은 외부 의료 검토가 아니며 #214 Dataset Freeze 승인 입력은 지정 책임 리뷰 승인 전까지 계속 후보 상태다.
+Schema Set `1.2.0`의 불변 참조는 `rag-eval.schema-set@1.2.0`, SHA-256 `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06`이다. DRAFT artifact는 reviewer identity·timestamp·review evidence를 기록하지 않으며, 실제 팀 검토부터 `reviewed_by.role=EVALUATION_REVIEWER`와 immutable review evidence를 기록한다. 이 내부 역할은 외부 의료 검토가 아니며 #214 Dataset Freeze 승인 입력은 지정 책임 리뷰 승인 전까지 계속 후보 상태다.
 
 세 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 

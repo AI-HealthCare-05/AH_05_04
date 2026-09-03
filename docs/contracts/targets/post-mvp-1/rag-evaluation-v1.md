@@ -57,11 +57,11 @@ Schema `1.1.0`의 `FROZEN` Dataset은 모든 Case Gold, Evidence Mapping과 Crit
 
 ### Evaluation Schema Set 1.2
 
-`#214` Dataset 후보의 실제 검토 provenance는 `rag-eval.schema-set@1.2.0`, SHA-256 `0b0561f23e067fec7c9b702943988fc8d641b6902597472020cdfc0b326e8d6f`을 사용한다. 18개 member 중 Case, Dataset Manifest, Evidence Mapping, Critical Claim Rubric, Evaluation Profile, Suite Definition, Evaluation Policy, Protected Artifact Receipt 8개만 member `1.2.0`이며 나머지 10개 member는 기존 canonical bytes와 member version을 재사용한다.
+`#214` Dataset 후보의 실제 검토 provenance는 `rag-eval.schema-set@1.2.0`, SHA-256 `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06`을 사용한다. 18개 member 중 Case, Dataset Manifest, Evidence Mapping, Critical Claim Rubric, Evaluation Profile, Suite Definition, Evaluation Policy, Protected Artifact Receipt 8개만 member `1.2.0`이며 나머지 10개 member는 기존 canonical bytes와 member version을 재사용한다.
 
 `ReviewProvenance@1.2`는 상태와 event를 양방향으로 맞춘다. `DRAFT`는 `reviewed_by=null`, `reviewed_at=null`, 승인 필드 `null`, `evidence_review_refs=[]`만 허용한다. `REVIEWED`는 reviewer·review timestamp와 immutable review evidence를 하나 이상 요구하고 승인 필드는 `null`이다. `APPROVED`는 이 review event에 더해 approver·approval timestamp를 요구한다. reviewer와 approver의 한쪽 필드만 기록하는 payload는 허용하지 않는다.
 
-`EVALUATION_REVIEWER`는 Case Gold·Fixture·Evidence 등 팀 내부 Evaluation 검토 역할이다. 이는 `MEDICAL_REVIEWER` 또는 외부 의료·약학 approval을 뜻하지 않으며, `external_medical_review_status`와 immutable external receipt 규칙을 대체하지 않는다. Safety Case와 Dataset Manifest의 Team approval 역할 제한은 기존대로 각각 `PRODUCT_SAFETY_REVIEWER | MEDICAL_REVIEWER`, `DATASET_CUSTODIAN`을 유지한다.
+`REVIEWED`·`APPROVED` 상태의 `reviewed_by.role`은 `EVALUATION_REVIEWER`만 허용한다. 이 역할은 Case Gold·Fixture·Evidence 등 팀 내부 Evaluation 검토를 뜻하며, `MEDICAL_REVIEWER` 또는 외부 의료·약학 approval을 뜻하지 않는다. `external_medical_review_status`와 immutable external receipt 규칙을 대체하지 않는다. Safety Case와 Dataset Manifest의 Team approval 역할 제한은 기존대로 각각 `PRODUCT_SAFETY_REVIEWER | MEDICAL_REVIEWER`, `DATASET_CUSTODIAN`을 유지한다.
 
 Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping, Rubric, Profile, Evaluation Policy, Suite, Protected Artifact Receipt까지 검증하고, graph의 모든 schema payload version을 registry member version과 exact-match한다. 기존 1.0/1.1의 validation·canonical bytes는 불변이다. 상세 결정은 [RAG Evaluation Schema Set 1.2 Freeze](../../../governance/decisions/2026-09-03-rag-evaluation-schema-set-1-2-freeze.md)를 따른다.
 

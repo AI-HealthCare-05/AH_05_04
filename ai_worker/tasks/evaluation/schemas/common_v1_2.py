@@ -113,6 +113,8 @@ class ReviewProvenanceV12(StrictContractModel):
     def _validate_completed_review(self) -> None:
         if self.reviewed_by is None or self.reviewed_at is None:
             raise ValueError("reviewed provenance requires a reviewer and review time")
+        if self.reviewed_by.role is not ActorRoleV12.EVALUATION_REVIEWER:
+            raise ValueError("team review provenance requires an evaluation reviewer")
         if self.authored_at > self.reviewed_at:
             raise ValueError("authored_at must not be after reviewed_at")
         if not self.evidence_review_refs:
