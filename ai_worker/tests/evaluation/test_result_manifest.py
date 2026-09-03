@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import load_dataset
 from ai_worker.tasks.evaluation.manifest import (
     ArtifactDraft,
@@ -17,6 +20,7 @@ from ai_worker.tasks.evaluation.manifest import (
     finalize_artifacts,
     semantic_content_hash,
     serialize_jsonl,
+    validate_published_artifact_contracts,
 )
 from ai_worker.tasks.evaluation.runner import execute_dev_cases
 from ai_worker.tasks.evaluation.schemas.artifacts import (
@@ -119,6 +123,12 @@ def test_jsonl_is_canonical_and_lf_terminated() -> None:
 def test_machine_artifacts_validate_against_models_and_exported_schemas() -> None:
     artifacts = finalize_artifacts(_draft(), b"safe report\n", completed_at=TIME_B)
 
+    validate_published_artifact_contracts(
+        artifacts.files,
+        schema_root=REPOSITORY_ROOT / "evals/schemas/1.0.0",
+        schema_set_version="1.0.0",
+    )
+
     run = RagEvaluationRun.model_validate_json(artifacts.files["run.json"])
     metrics = MetricResults.model_validate_json(artifacts.files["metrics.json"])
     suite = SuiteResults.model_validate_json(artifacts.files["suite-results.json"])
@@ -127,6 +137,50 @@ def test_machine_artifacts_validate_against_models_and_exported_schemas() -> Non
     assert run.schema_id == "rag-eval.run"
     assert metrics.schema_id == "rag-eval.metrics"
     assert suite.schema_id == "rag-eval.suite-results"
+
+
+def test_artifact_contract_validation_rejects_checked_in_schema_drift(tmp_path: Path) -> None:
+    artifacts = finalize_artifacts(_draft(), b"safe report\n", completed_at=TIME_B)
+    source_root = REPOSITORY_ROOT / "evals/schemas/1.0.0"
+    schema_root = tmp_path / "schemas"
+    for relative_path in (
+        "artifacts/rag-eval.run.schema.json",
+        "artifacts/rag-eval.case-result.schema.json",
+        "artifacts/rag-eval.metrics.schema.json",
+        "artifacts/rag-eval.suite-results.schema.json",
+        "artifacts/rag-eval.failure.schema.json",
+        "artifacts/rag-eval.content-manifest.schema.json",
+    ):
+        destination = schema_root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((source_root / relative_path).read_bytes())
+    (schema_root / "artifacts/rag-eval.run.schema.json").write_bytes(b"{}")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_published_artifact_contracts(
+            artifacts.files,
+            schema_root=schema_root,
+            schema_set_version="1.0.0",
+        )
+
+    assert caught.value.code is EvaluationErrorCode.HASH_MISMATCH
+
+
+def test_artifact_contract_validation_rejects_finalized_payload_drift() -> None:
+    artifacts = finalize_artifacts(_draft(), b"safe report\n", completed_at=TIME_B)
+    files = dict(artifacts.files)
+    run_payload = json.loads(files["run.json"])
+    run_payload["unexpected"] = True
+    files["run.json"] = canonical_json_bytes(run_payload)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_published_artifact_contracts(
+            files,
+            schema_root=REPOSITORY_ROOT / "evals/schemas/1.0.0",
+            schema_set_version="1.0.0",
+        )
+
+    assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
 
 
 def test_content_manifest_excludes_run_and_self_but_includes_report() -> None:

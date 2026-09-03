@@ -163,6 +163,21 @@ def _cleanup_staging(
     os.rmdir(staging_name, dir_fd=root_fd)
 
 
+def _cleanup_published(
+    root_fd: int,
+    published_fd: int,
+    run_id: str,
+    published_identity: FileIdentity | None,
+    created_files: Mapping[str, FileIdentity],
+) -> None:
+    if published_identity is None or _identity(root_fd, run_id) != published_identity:
+        raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+    for name, identity in created_files.items():
+        _remove_file_if_owned(published_fd, name, identity)
+    os.close(published_fd)
+    os.rmdir(run_id, dir_fd=root_fd)
+
+
 @dataclass(slots=True)
 class _RunPublication:
     root_fd: int
@@ -173,7 +188,8 @@ class _RunPublication:
     staging_identity: FileIdentity | None = None
     staging_fd: int | None = None
     created_files: dict[str, FileIdentity] = field(default_factory=dict)
-    published: bool = False
+    renamed: bool = False
+    committed: bool = False
 
     def __post_init__(self) -> None:
         self.lock_name = f"{self.run_id}.lock"
@@ -195,10 +211,11 @@ class _RunPublication:
             self.created_files[name] = _create_file(self.staging_fd, name, files[name])
         os.fsync(self.staging_fd)
         exclusive_rename(self.root_fd, self.staging_name, self.run_id)
-        self.published = True
+        self.renamed = True
         os.fsync(self.root_fd)
         self.remove_lock()
         os.fsync(self.root_fd)
+        self.committed = True
 
     def remove_lock(self) -> None:
         if self.lock_identity is not None:
@@ -207,8 +224,16 @@ class _RunPublication:
 
     def cleanup(self) -> BaseException | None:
         try:
-            if self.staging_fd is not None and self.published:
+            if self.staging_fd is not None and self.committed:
                 os.close(self.staging_fd)
+            elif self.staging_fd is not None and self.renamed:
+                _cleanup_published(
+                    self.root_fd,
+                    self.staging_fd,
+                    self.run_id,
+                    self.staging_identity,
+                    self.created_files,
+                )
             elif self.staging_fd is not None:
                 _cleanup_staging(
                     self.root_fd,

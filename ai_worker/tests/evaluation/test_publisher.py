@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,83 @@ def test_publish_cleans_staging_and_lock_after_fsync_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(publisher_module.os, "fsync", lambda _descriptor: (_ for _ in ()).throw(OSError(errno.EIO)))
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert not (tmp_path / RUN_ID).exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_publish_cleans_staging_and_lock_after_staging_fsync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_fsync = os.fsync
+    root_identity = (tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+
+    def fail_staging_fsync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if stat.S_ISDIR(metadata.st_mode) and identity != root_identity:
+            raise OSError(errno.EIO, "staging fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publisher_module.os, "fsync", fail_staging_fsync)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert not (tmp_path / RUN_ID).exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("root_fsync_number", [1, 2])
+def test_publish_rolls_back_final_directory_after_parent_fsync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root_fsync_number: int,
+) -> None:
+    real_fsync = os.fsync
+    root_identity = (tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+    root_fsync_calls = 0
+
+    def fail_selected_root_fsync(descriptor: int) -> None:
+        nonlocal root_fsync_calls
+        metadata = os.fstat(descriptor)
+        if (metadata.st_dev, metadata.st_ino) == root_identity:
+            root_fsync_calls += 1
+            if root_fsync_calls == root_fsync_number:
+                raise OSError(errno.EIO, "parent fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publisher_module.os, "fsync", fail_selected_root_fsync)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert not (tmp_path / RUN_ID).exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_publish_rolls_back_final_directory_after_lock_removal_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_remove = publisher_module._remove_file_if_owned
+    failed_once = False
+
+    def fail_first_lock_removal(directory_fd: int, name: str, identity: tuple[int, int]) -> None:
+        nonlocal failed_once
+        if name.endswith(".lock") and not failed_once:
+            failed_once = True
+            raise OSError(errno.EIO, "lock removal failed")
+        real_remove(directory_fd, name, identity)
+
+    monkeypatch.setattr(publisher_module, "_remove_file_if_owned", fail_first_lock_removal)
 
     with pytest.raises(EvaluationValidationError) as caught:
         publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())

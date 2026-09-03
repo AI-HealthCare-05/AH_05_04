@@ -193,6 +193,13 @@ class _SnapshotReader:
         self._cache[safe_path] = snapshot
         return snapshot
 
+    def seed_path(self, path: Path, raw_bytes: bytes) -> _JsonSnapshot:
+        safe_path = safe_path_under_root(self.root, path)
+        relative = safe_path.relative_to(self.root).as_posix()
+        snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, parse_json_object_bytes(raw_bytes))
+        self._cache[safe_path] = snapshot
+        return snapshot
+
     def read(self, relative_path: str) -> _JsonSnapshot:
         return self.read_path(self.path(relative_path))
 
@@ -796,9 +803,16 @@ def _validate_frozen_gold_closure(
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
 
-def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
+def load_dataset(
+    manifest_path: Path,
+    *,
+    evals_root: Path,
+    manifest_bytes: bytes | None = None,
+) -> ValidatedDataset:
     reader = _SnapshotReader(evals_root)
-    manifest_snapshot = reader.read_path(manifest_path)
+    manifest_snapshot = (
+        reader.read_path(manifest_path) if manifest_bytes is None else reader.seed_path(manifest_path, manifest_bytes)
+    )
     authoring = _authoring_contract(manifest_snapshot)
     manifest = cast(
         DatasetManifestContract,

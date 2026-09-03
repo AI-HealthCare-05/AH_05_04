@@ -1311,7 +1311,7 @@ graph 검증이 끝나기 전에는 lock/staging/final directory를 만들지 �
 순서는 고정한다.
 
 ```text
-config load → manifest-only preflight → load_dataset → loaded binding validation
+config load + manifest bytes snapshot → manifest-only preflight → 같은 snapshot으로 load_dataset → loaded binding validation
 → execute_dev_cases → machine models → machine entry hashes → report.md
 → content manifest → finalized run.json → all models/privacy revalidation
 → publish_run_directory

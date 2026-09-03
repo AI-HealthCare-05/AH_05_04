@@ -31,6 +31,7 @@ from ai_worker.tasks.evaluation.manifest import (
     content_artifact_entries,
     finalize_artifacts,
     machine_artifact_files,
+    validate_published_artifact_contracts,
 )
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.publisher import publish_run_directory
@@ -662,7 +663,11 @@ def _run_dev(
             repository_state_provider=repository_state_provider,
         )
         preflight_dev_manifest(resolved)
-        dataset = load_dataset(resolved.dataset_manifest_path, evals_root=_REPOSITORY_ROOT / "evals")
+        dataset = load_dataset(
+            resolved.dataset_manifest_path,
+            evals_root=_REPOSITORY_ROOT / "evals",
+            manifest_bytes=resolved.dataset_manifest_bytes,
+        )
         validate_loaded_bindings(resolved, dataset)
         started_at = clock()
         outcome = execute_dev_cases(
@@ -690,6 +695,12 @@ def _run_dev(
         )
         artifacts = finalize_artifacts(draft, report, completed_at=clock())
         files = dict(artifacts.files)
+        schema_set_version = dataset.evaluation_policy.artifact_schema_set_ref.reference.version
+        validate_published_artifact_contracts(
+            files,
+            schema_root=_REPOSITORY_ROOT / "evals/schemas" / schema_set_version,
+            schema_set_version=schema_set_version,
+        )
         _validate_bundle_privacy(files)
         publish_run_directory(
             allowed_root=_PRODUCTION_RUN_ROOT if allowed_result_root is None else allowed_result_root,

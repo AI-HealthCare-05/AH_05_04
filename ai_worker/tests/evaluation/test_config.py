@@ -13,6 +13,7 @@ from ai_worker.tasks.evaluation.config import (
 )
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import (
+    _SnapshotReader,
     load_dataset,
     parse_json_object_bytes,
     safe_path_under_root,
@@ -327,6 +328,48 @@ def test_preflight_is_not_bound_to_foundation_id_status_or_case_count(tmp_path: 
     resolved = _resolved_for_manifest(tmp_path, _manifest_payload())
 
     preflight_dev_manifest(resolved)
+
+
+def test_preflight_uses_manifest_snapshot_bound_during_config_resolution(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "evals/retrieval/manifests/dev.dataset.json"
+    resolved = _resolved_for_manifest(tmp_path, _manifest_payload())
+    manifest_path.write_bytes(
+        canonical_json_bytes(
+            _manifest_payload(
+                partition_counts={"AUTHORING": 0, "DEV": 0, "HOLDOUT": 1, "SAFETY_REGRESSION": 0},
+                case_resources=[
+                    {
+                        "case_id": "holdout-001",
+                        "partition": "HOLDOUT",
+                        "path": "retrieval/cases/not-created.json",
+                        "sha256": "1" * 64,
+                    }
+                ],
+            )
+        )
+    )
+
+    preflight_dev_manifest(resolved)
+
+    assert parse_json_object_bytes(resolved.dataset_manifest_bytes)["partition_counts"] == {
+        "AUTHORING": 0,
+        "DEV": 1,
+        "HOLDOUT": 0,
+        "SAFETY_REGRESSION": 0,
+    }
+
+
+def test_snapshot_reader_does_not_reopen_seeded_manifest(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    dev_bytes = canonical_json_bytes(_manifest_payload())
+    manifest_path.write_bytes(canonical_json_bytes({"partition_counts": {"HOLDOUT": 1}}))
+    reader = _SnapshotReader(tmp_path)
+
+    seeded = reader.seed_path(manifest_path, dev_bytes)
+    reread = reader.read_path(manifest_path)
+
+    assert reread is seeded
+    assert reread.raw_bytes == dev_bytes
 
 
 @pytest.mark.parametrize(

@@ -13,7 +13,7 @@ import pytest
 
 from ai_worker.tasks.evaluation import cli as cli_module
 from ai_worker.tasks.evaluation.cli import main, publish_receipt_no_clobber
-from ai_worker.tasks.evaluation.config import RepositoryState
+from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.manifest import semantic_content_hash
 from ai_worker.tasks.evaluation.schemas.artifacts import ContentManifest, MetricResults, RagEvaluationRun, SuiteResults
@@ -610,6 +610,44 @@ def test_run_dev_rejects_holdout_before_load_dataset(
     assert called is False
     assert not (tmp_path / "results" / run_id).exists()
     assert capsys.readouterr().err == f"{EvaluationErrorCode.PARTITION_INVALID.value}\n"
+
+
+def test_run_dev_passes_preflighted_manifest_snapshot_to_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    real_loader = cli_module.load_dataset
+    observed_manifest_bytes: bytes | None = None
+
+    def snapshot_loader(*args: Any, manifest_bytes: bytes | None = None, **kwargs: Any) -> Any:
+        nonlocal observed_manifest_bytes
+        observed_manifest_bytes = manifest_bytes
+        return real_loader(*args, manifest_bytes=manifest_bytes, **kwargs)
+
+    monkeypatch.setattr(cli_module, "load_dataset", snapshot_loader)
+    run_id = str(uuid4())
+
+    exit_code = main(
+        [
+            "run-dev",
+            "--config",
+            "evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json",
+            "--run-id",
+            run_id,
+            "--executed-by",
+            "ceohwj",
+        ],
+        allowed_result_root=tmp_path,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    assert exit_code == 0
+    assert observed_manifest_bytes == resolved.dataset_manifest_bytes
 
 
 def test_run_dev_rejects_dirty_repository_without_artifacts(

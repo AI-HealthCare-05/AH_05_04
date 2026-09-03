@@ -4,14 +4,18 @@ import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset
+from ai_worker.tasks.evaluation.schema_exports import schema_documents
 from ai_worker.tasks.evaluation.schemas.artifacts import (
+    CASE_RESULT_ADAPTER,
     CaseResult,
     ContentArtifact,
     ContentArtifactPath,
@@ -370,6 +374,52 @@ def finalize_artifacts(
     files["run.json"] = canonical_json_bytes(cast(JsonValue, run.model_dump(mode="json")))
     files["result-content-manifest.json"] = content_bytes
     return PublishedArtifacts(run=run, content_manifest=content_manifest, files=files)
+
+
+_PUBLISHED_SCHEMA_PATHS = {
+    "run.json": "artifacts/rag-eval.run.schema.json",
+    "cases.jsonl": "artifacts/rag-eval.case-result.schema.json",
+    "metrics.json": "artifacts/rag-eval.metrics.schema.json",
+    "suite-results.json": "artifacts/rag-eval.suite-results.schema.json",
+    "failures.jsonl": "artifacts/rag-eval.failure.schema.json",
+    "result-content-manifest.json": "artifacts/rag-eval.content-manifest.schema.json",
+}
+
+
+def validate_published_artifact_contracts(
+    files: Mapping[str, bytes],
+    *,
+    schema_root: Path,
+    schema_set_version: str,
+) -> None:
+    """Bind finalized bytes to the checked-in schemas and their exact runtime models."""
+
+    if not set(_PUBLISHED_SCHEMA_PATHS).issubset(files):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    try:
+        generated = schema_documents(schema_set_version)
+    except KeyError:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
+    for schema_path in _PUBLISHED_SCHEMA_PATHS.values():
+        try:
+            committed_bytes = (schema_root / schema_path).read_bytes()
+        except FileNotFoundError:
+            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING) from None
+        expected_bytes = canonical_json_bytes(generated[schema_path])
+        if committed_bytes != expected_bytes:
+            raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+
+    try:
+        RagEvaluationRun.model_validate_json(files["run.json"])
+        MetricResults.model_validate_json(files["metrics.json"])
+        SuiteResults.model_validate_json(files["suite-results.json"])
+        ContentManifest.model_validate_json(files["result-content-manifest.json"])
+        for line in files["cases.jsonl"].splitlines():
+            CASE_RESULT_ADAPTER.validate_json(line)
+        for line in files["failures.jsonl"].splitlines():
+            FailureRecord.model_validate_json(line)
+    except (ValidationError, ValueError):
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
 
 
 _SEMANTIC_FILENAMES = (

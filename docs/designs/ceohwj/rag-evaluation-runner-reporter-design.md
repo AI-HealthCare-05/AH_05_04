@@ -152,7 +152,8 @@ version 논의로 분리한다.
 
 ### 5.2 Manifest preflight
 
-preflight는 Dataset Manifest 한 파일만 안전하게 읽어 다음 조건을 확인한다.
+execution config 해석 시 Dataset Manifest bytes를 한 번 읽어 resolved input에 결속한다. preflight와
+`load_dataset()`은 이 동일한 immutable snapshot을 소비하며 다음 조건을 확인한다.
 
 - execution request가 요구하는 partition이 정확히 `DEV`
 - Manifest가 선언한 DEV Case 수가 1개 이상
@@ -160,6 +161,7 @@ preflight는 Dataset Manifest 한 파일만 안전하게 읽어 다음 조건을
 - Manifest의 모든 `case_resources[].partition`이 정확히 `DEV`
 - `data_classification=SYNTHETIC`
 
+따라서 preflight와 Loader 사이에 Manifest 파일이 교체되어도 새 내용을 열어 child resource를 관찰하지 않는다.
 공식 HOLDOUT Manifest처럼 DEV 외 partition을 선언한 입력은 `load_dataset()` 호출 전에 거부한다. preflight는
 전체 Dataset 수용 경계가 아니며, 통과 뒤 기존 Loader가 child resource와 hash graph 전체를 다시 검증한다.
 Manifest가 partition count를 거짓으로 표시한 비정상 입력은 Loader의 Case·Manifest 정합성 검사에서
@@ -349,11 +351,12 @@ preflight와 전체 입력 graph 검증을 통과한 결과만 허용 root 내�
 7. 최종 run.json을 Pydantic model, exported JSON Schema와 privacy boundary로 검증한다.
 8. staging directory를 fsync한다.
 9. 최종 `evals/results/<run_id>/`로 원자 rename한다.
-10. parent directory를 fsync하고 lock을 정리한다.
+10. parent directory를 fsync하고 lock을 정리한 뒤 다시 fsync한다.
 
 기존 최종 디렉터리나 lock이 있으면 덮어쓰거나 삭제하지 않고 `EVAL_RESULT_PATH_CONFLICT`로 실패한다.
 symlink component, root 이탈, Unicode 비정규화, `.`·`..`, cross-filesystem rename은 거부한다. 실패 시 새로 만든
-staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 삭제하지 않는다.
+staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 삭제하지 않는다. rename 뒤 parent fsync 또는 lock
+제거가 실패하면 final directory의 inode ownership을 확인하고 자신이 발행한 Bundle만 rollback한다.
 
 ## 10. 결정성
 

@@ -85,6 +85,7 @@ type RepositoryStateProvider = Callable[[Path], RepositoryState]
 class ResolvedDevExecution:
     request: DevExecutionRequest
     dataset_manifest_path: Path
+    dataset_manifest_bytes: bytes
     referenced_file_hashes: Sequence[tuple[str, str]]
     resolved_evaluation_config_hash: str
     retrieval_variant_manifest_hash: str | None
@@ -188,10 +189,15 @@ def load_dev_execution_request(
         raise EvaluationValidationError(EvaluationErrorCode.REPOSITORY_STATE_INVALID)
 
     referenced_file_hashes: list[tuple[str, str]] = []
+    dataset_manifest_bytes: bytes | None = None
     for field in _REFERENCE_FIELDS:
         relative_path = cast(str, getattr(request, field))
         raw_bytes = _read_file_under_root(root, root / relative_path)
         referenced_file_hashes.append((relative_path, sha256_hex(raw_bytes)))
+        if field == "dataset_manifest_path":
+            dataset_manifest_bytes = raw_bytes
+    if dataset_manifest_bytes is None:
+        raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
 
     retrieval_hash = (
         canonical_sha256(cast(JsonValue, request.retrieval_variant.model_dump(mode="json", by_alias=True)))
@@ -216,6 +222,7 @@ def load_dev_execution_request(
     return ResolvedDevExecution(
         request=request,
         dataset_manifest_path=safe_path_under_root(root, root / request.dataset_manifest_path),
+        dataset_manifest_bytes=dataset_manifest_bytes,
         referenced_file_hashes=tuple(referenced_file_hashes),
         resolved_evaluation_config_hash=canonical_sha256(resolved_preimage),
         retrieval_variant_manifest_hash=retrieval_hash,
@@ -227,10 +234,7 @@ def load_dev_execution_request(
 
 
 def preflight_dev_manifest(resolved: ResolvedDevExecution) -> None:
-    repository_root = resolved.dataset_manifest_path
-    for _part in Path(resolved.request.dataset_manifest_path).parts:
-        repository_root = repository_root.parent
-    payload = parse_json_object_bytes(_read_file_under_root(repository_root, resolved.dataset_manifest_path))
+    payload = parse_json_object_bytes(resolved.dataset_manifest_bytes)
     counts = payload.get("partition_counts")
     resources = payload.get("case_resources")
     if type(counts) is not dict or type(resources) is not list:
