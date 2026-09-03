@@ -86,7 +86,7 @@ ignore = ["UP046", "E501"]
 
 [tool.ruff.lint.isort]
 # backend/ 폴더 분리 이후에도 `app`을 서드파티가 아닌 프로젝트 코드로 인식하도록 명시합니다.
-known-first-party = ["app", "ai_worker"]
+known-first-party = ["app", "ai_worker", "provider_contracts"]
 # 로컬 migration 디렉터리와 이름이 겹치는 외부 Alembic 패키지를
 # 실행 환경과 무관하게 서드파티로 분류합니다.
 known-third-party = ["alembic"]

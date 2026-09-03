@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, GateResult, MetricResults, SuiteResults
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest, EvidenceMappingManifest
 from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import EVALUATION_CASE_ADAPTER_V1_1
+from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import DatasetManifestV12
 from ai_worker.tests.evaluation.test_artifact_schemas import (
     _comparison_payload,
     _gate_payload,
@@ -60,6 +61,20 @@ def _v1_1_safety_case() -> dict[str, Any]:
     payload["expected"].update(
         expected_rule_outcome="MATCHED_RULES",
         expected_rule_not_invoked_reason=None,
+    )
+    return payload
+
+
+def _v1_2_reviewed_manifest() -> dict[str, Any]:
+    payload = _json("retrieval/manifests/dev-foundation-v1.dataset.json")
+    payload["schema_version"] = "1.2.0"
+    payload["review_provenance"].update(
+        reviewed_by={
+            "actor_id": "evaluation-reviewer",
+            "namespace": "GITHUB_LOGIN",
+            "role": "EVALUATION_REVIEWER",
+        },
+        evidence_review_refs=[{"id": "review-evidence-1", "version": "1.0.0", "hash": "a" * 64}],
     )
     return payload
 
@@ -221,12 +236,30 @@ def test_external_dataset_schema_matches_runtime_provenance_exactly_one(
     payload["protected_artifact_receipt_ref"] = (
         existing_receipt if protected_artifact_receipt_ref == "fixture" else None
     )
-
     _assert_external_runtime_parity(
         schema_path="schemas/1.0.0/authoring/rag-eval.dataset-manifest.schema.json",
         payload=payload,
         runtime_model=DatasetManifest,
         expected_valid=expected_valid,
+    )
+
+
+@pytest.mark.parametrize("role", ["MEDICAL_REVIEWER", "PRIVACY_REVIEWER"])
+def test_external_v12_schema_rejects_non_evaluation_reviewer_roles(role: str) -> None:
+    payload = _v1_2_reviewed_manifest()
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.2.0/authoring/rag-eval.dataset-manifest.schema.json",
+        payload=payload,
+        runtime_model=DatasetManifestV12,
+        expected_valid=True,
+    )
+
+    payload["review_provenance"]["reviewed_by"]["role"] = role
+    _assert_external_runtime_parity(
+        schema_path="schemas/1.2.0/authoring/rag-eval.dataset-manifest.schema.json",
+        payload=payload,
+        runtime_model=DatasetManifestV12,
+        expected_valid=False,
     )
 
 

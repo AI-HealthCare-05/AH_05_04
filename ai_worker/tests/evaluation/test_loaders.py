@@ -12,6 +12,7 @@ from ai_worker.tasks.evaluation import loaders as evaluation_loaders
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import load_dataset, load_json_object
+from ai_worker.tasks.evaluation.schema_exports import write_schema_documents
 from ai_worker.tasks.evaluation.schema_registry import SCHEMA_REGISTRIES
 from ai_worker.tasks.evaluation.schemas.artifacts import ValidationReceipt
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest
@@ -314,6 +315,100 @@ class MutableDatasetFixture:
         self.write(policy_path, policy)
         self.write_manifest(manifest)
 
+    @staticmethod
+    def _set_v1_2_draft(provenance: dict[str, Any]) -> None:
+        provenance.update(
+            reviewed_by=None,
+            approved_by=None,
+            reviewed_at=None,
+            approved_at=None,
+            team_gold_status="DRAFT",
+            evidence_review_refs=[],
+        )
+
+    def upgrade_to_v1_2(self) -> None:
+        self.upgrade_to_v1_1()
+        write_schema_documents(self.root / "schemas/1.2.0", "1.2.0")
+
+        manifest = self.manifest_value()
+        evidence_path = self.root / "retrieval/evidence/dev-foundation-v1.evidence-mapping.json"
+        evidence = self.read(evidence_path)
+        evidence.update(schema_version="1.2.0")
+        self._set_v1_2_draft(evidence["review_provenance"])
+        self.refresh_self_hash(evidence)
+        self.write(evidence_path, evidence)
+
+        rubric_path = self.root / "retrieval/manifests/dev-foundation-v1.critical-claim-rubric.json"
+        rubric = self.read(rubric_path)
+        rubric.update(schema_version="1.2.0")
+        self._set_v1_2_draft(rubric["review_provenance"])
+        self.refresh_self_hash(rubric)
+        self.write(rubric_path, rubric)
+
+        rubric_ref = {"id": rubric["rubric_id"], "version": rubric["rubric_version"], "hash": rubric["rubric_hash"]}
+        for resource in manifest["case_resources"]:
+            case_path = self.root / resource["path"]
+            case = self.read(case_path)
+            case.update(schema_version="1.2.0", critical_claim_rubric_ref=rubric_ref)
+            case["context"]["runtime_fixture"]["source_snapshot_ref"]["hash"] = evidence["manifest_sha256"]
+            self._set_v1_2_draft(case["review_provenance"])
+            case["input_sha256"] = canonical_sha256({"query": case["query"], "context": case["context"]})
+            self.write(case_path, case)
+            resource["sha256"] = sha256_hex(case_path.read_bytes())
+
+        manifest.update(
+            schema_version="1.2.0",
+            evidence_mapping_manifest_sha256=evidence["manifest_sha256"],
+            critical_claim_rubric_ref=rubric_ref,
+            evaluation_corpus_snapshot_ref={
+                "id": evidence["mapping_id"],
+                "version": evidence["mapping_version"],
+                "hash": evidence["manifest_sha256"],
+            },
+        )
+        self._set_v1_2_draft(manifest["review_provenance"])
+        self.rebind_case_derived_claims(manifest)
+        receipt_path = self.root / "provenance/dev-foundation-v1.protected-artifact-receipt.json"
+        receipt = self.read(receipt_path)
+        receipt["schema_version"] = "1.2.0"
+        self._set_v1_2_draft(receipt["recorded_by"])
+        self.refresh_self_hash(receipt)
+        self.write(receipt_path, receipt)
+        manifest["protected_artifact_receipt_ref"]["hash"] = sha256_hex(receipt_path.read_bytes())
+
+        for relative_path in (
+            "profiles/dev-foundation-v1.profile.json",
+            "suites/dev-foundation-v1.suite.json",
+            "policies/dev-foundation-v1.evaluation-policy.json",
+        ):
+            self.mutate_config(
+                relative_path,
+                lambda value: (
+                    value.update(schema_version="1.2.0"),
+                    self._set_v1_2_draft(value["review_provenance"]),
+                ),
+            )
+        self.rebind_configuration_refs()
+
+        policy_path = self.root / "policies/dev-foundation-v1.evaluation-policy.json"
+        policy = self.read(policy_path)
+        policy["artifact_schema_set_ref"]["reference"].update(
+            version="1.2.0",
+            hash=self._schema_set_hash("1.2.0"),
+        )
+        members = [
+            policy["evaluation_profile_ref"],
+            policy["comparison_policy_ref"],
+            *policy["required_partition_refs"],
+            *policy["required_gate_refs"],
+            *policy["required_suite_refs"],
+            policy["artifact_schema_set_ref"],
+        ]
+        policy["member_manifest_hash"] = canonical_sha256({"members": members})
+        self.refresh_self_hash(policy)
+        self.write(policy_path, policy)
+        self.write_manifest(manifest)
+
 
 @pytest.fixture
 def tmp_dataset(tmp_path: Path) -> MutableDatasetFixture:
@@ -339,12 +434,28 @@ def test_loader_dispatches_schema_set_1_1_without_breaking_v1_fixture(
     )
 
 
+def test_loader_dispatches_complete_schema_set_1_2_graph(tmp_dataset: MutableDatasetFixture) -> None:
+    tmp_dataset.upgrade_to_v1_2()
+
+    loaded = load_dataset(tmp_dataset.manifest, evals_root=tmp_dataset.root)
+
+    assert loaded.manifest.schema_version == "1.2.0"
+    assert {case.schema_version for case in loaded.cases} == {"1.2.0"}
+    assert loaded.evidence_mapping.schema_version == "1.2.0"
+    assert loaded.rubric.schema_version == "1.2.0"
+    assert loaded.profile.schema_version == "1.2.0"
+    assert loaded.evaluation_policy.schema_version == "1.2.0"
+    assert loaded.suite.schema_version == "1.2.0"
+    assert loaded.protected_artifact_receipt is not None
+    assert loaded.protected_artifact_receipt.schema_version == "1.2.0"
+
+
 def test_loader_compares_payload_versions_with_authoring_members_not_set_version(
     tmp_dataset: MutableDatasetFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tmp_dataset.upgrade_to_v1_1()
-    shutil.copytree(tmp_dataset.root / "schemas/1.1.0", tmp_dataset.root / "schemas/1.2.0")
+    shutil.copytree(tmp_dataset.root / "schemas/1.1.0", tmp_dataset.root / "schemas/1.2.0", dirs_exist_ok=True)
     registries = dict(SCHEMA_REGISTRIES)
     registries["1.2.0"] = SCHEMA_REGISTRIES["1.1.0"]
     monkeypatch.setattr(evaluation_loaders, "SCHEMA_REGISTRIES", registries)

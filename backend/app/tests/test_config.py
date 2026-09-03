@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Config, Env
+from provider_contracts.observability import DeploymentEnvironment
 
 BASE_CONFIG = {
     "DB_HOST": "localhost",
@@ -11,6 +12,10 @@ BASE_CONFIG = {
     "DB_NAME": "test_database",
     "CHAT_HISTORY_CONTEXT_ENABLED": False,
 }
+
+
+def test_backend_env_is_shared_deployment_environment() -> None:
+    assert Env is DeploymentEnvironment
 
 
 def test_config_builds_postgresql_async_url() -> None:

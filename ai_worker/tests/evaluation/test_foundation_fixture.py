@@ -125,7 +125,7 @@ def test_foundation_fixture_is_privacy_clean_and_uses_only_known_github_actors()
         actor.actor_id
         for provenance in provenance_values
         for actor in (provenance.authored_by, provenance.reviewed_by)
-        if actor.namespace.value == "GITHUB_LOGIN"
+        if actor is not None and actor.namespace.value == "GITHUB_LOGIN"
     }
     github_actor_ids.update(
         {
