@@ -53,13 +53,14 @@ uv run python -m ai_worker.tasks.evaluation.schema_exports \
 후보다. 향후 승인된 임상 데이터가 필요해도 이 합성 Dataset에 섞지 않고 별도 보호·승인 경계를
 따른다.
 
-현재 커밋의 `rag-holdout-safety@1.0.0`은 `status=FROZEN`이고 Schema Set `1.2.0`을 사용한다.
-Dataset Manifest와 153개 Case, Evidence Mapping, Critical Claim Rubric은 `APPROVED` provenance로
-freeze되었다. `@Jye-rookie`는 `EVALUATION_REVIEWER`, `@hazelnutflavoured`는 Dataset Custodian 또는
-Safety approver로 기록되며 review evidence는 PR #236 승인 event에 결속된다. Profile, Evaluation
-Policy, Suite 및 integrity receipt는 별도의 non-release 계약 상태를 유지한다.
+현재 커밋의 `rag-holdout-safety@1.0.0`은 `status=DRAFT`이고 Schema Set `1.2.0`을 사용한다.
+Dataset Manifest와 153개 Case, Evidence Mapping, Critical Claim Rubric은 `@Jye-rookie`의 실제 PR #256
+검토 이벤트를 `REVIEWED` provenance로 기록했다. `@hazelnutflavoured`의 Dataset Custodian·Safety
+최종 승인과 그 뒤 exact freeze commit 검토가 끝나기 전에는 `APPROVED/FROZEN`으로 전환하지 않는다.
+외부 의료 검토는 `PENDING`이며 Profile, Evaluation Policy, Suite 및 integrity receipt는 별도의
+non-release 계약 상태를 유지한다.
 
-전체 frozen Dataset graph는 다음 validation-only 명령으로 검증한다.
+현재 review-recorded Dataset graph는 다음 validation-only 명령으로 검증한다.
 
 ```bash
 uv run python -m ai_worker.tasks.evaluation validate \
@@ -73,10 +74,10 @@ Comparison Policy의 필수 `approved_by`에는 SYSTEM actor `rag-eval-draft-val
 이는 non-release graph를 load하기 위한 진단용 validation envelope 표시일 뿐 사람의 Dataset/Policy
 승인이 아니다. Policy 자체도 `holdout_execution_authorized=false`다.
 
-현재 차단 조건은 HOLDOUT 실행용 Comparison/Evaluation Policy 승인이다. Issue 순서상 #157의 DEV
-Runner 작업은 Dataset Freeze 이후 시작하며, 그 뒤에도 HOLDOUT을 load·execute하거나 결과를 관찰해서는
-안 된다. #214 완료 후 최초 HOLDOUT 실행 시점에는 독립된 실행용 Comparison/Evaluation Policy가
-승인될 때까지 `WAITING_FOR_APPROVED_COMPARISON_POLICY`가 후속 차단 조건으로 남는다.
+현재 차단 조건은 `@hazelnutflavoured`의 팀 최종 승인과 exact freeze commit 검토다. Dataset Freeze 뒤에도
+HOLDOUT 실행용 Comparison/Evaluation Policy 승인이 별도로 필요하다. #157의 DEV Runner 작업은 이
+Freeze 이후 시작하며, 최초 HOLDOUT 실행은 독립 실행 Policy가 승인될 때까지
+`WAITING_FOR_APPROVED_COMPARISON_POLICY` 상태를 유지한다.
 
 이 Dataset의 채점 대상 자연어 표면(query, Gold claim, 금지 semantic rule, Evidence statement,
 Rubric description)은 한국어(`ko-KR`)다. 불변 식별자·enum·reason code·locator와 `FICTIONAL_*`,
@@ -86,24 +87,24 @@ Rubric description)은 한국어(`ko-KR`)다. 불변 식별자·enum·reason cod
 
 | 항목 | 불변 ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `3b14ec72149dd6d50e3c88eaeb683482012890858019d96dd7e4bc7b55f8e793` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `72f1a83868db6d8179d106a9ba7f3e7cef7c1befe620423c5f24b461d48e7a70` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `bb2117879318fef8f6c017b5a164a3e924b2b1e521c8838a211dd251445e2f0b` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `0cd9ffabd6b619ff2eeb474e7435b9ebd24e0f5c2cc664046ba90cd80c02493e` |
-| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `ccb46bcfb3b131fe7f4f318d36e1e345c8a711e14b782df0bfa22c884bed800b` |
-| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `f902e8f42114fbafbda761480ab611f7fa1fa25047c3b04925802c4b8c714d01` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `79ced4920bfa0e6e9eb0a050d1cb734fbd790dad60028d130fd5f44a678ebd13` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `97541aa57c1f467e5353e360ae087587a7992687f08214f2150579697bbcaf0b` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `268c4dc47ce14282d78ca7be36a3568bfe72617f95cfa20941fcd40013d92cad` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `d27e1436b10aba8e08f4b2fba41ec85540ddce858195732a21e158f38c7581a1` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `144a04a1ae64fab588b55ae5926c1d9caa8aabbea0bd137a9fa22bc0f5334663` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `fbc5d839d09b3473e9fead301505094def895ca2221ed8f4f5de26b4e4e5f020` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `812ff6bb8cce18cd0e0c80f22ac468005a128e4ed2b30f21ad0381d7b91a0ed1` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `b892c5099cb7ab2a098f02fb210a7f0e062c56329c8779fa86ff2c5002e7d106` |
-| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `9c30fb50f4dd93e3e176b8c55bf2fc7b39ff7ab45d5cfc9ba7352e3fc5cea8e6` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `f3ee31452f6eed0c828b78c64bbfc9a0f2f71a63a9691c8ff97f817fe3d5aff3` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `24f2cc0ed57f6bdb938b3a2a232005943edd100e42ff4b5249a1048fea019dd4` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `4434847bf7d3f74bfb35cbe376fbccdc1da14104527d6a9f8079f30bf0246976` |
-| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `5f1eec191d90de461553b65392dc9c065ccc5639019b03e2f7e759a8f3b26ae9` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `7b94af7947e4d3a94453bf34322383074112fa21aee83fe4419a54620db08f86` |
+| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `bc7025acc4402c8405052fabde4ce5006dc18a179b876e59e9830cc629359715` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 Receipt 표의 SHA-256은 Dataset Manifest가 참조하는 canonical file hash다. Receipt 내부 self-hash는
-`5f1eec191d90de461553b65392dc9c065ccc5639019b03e2f7e759a8f3b26ae9`이며, 이 receipt는 153개 Case
+`bc7025acc4402c8405052fabde4ce5006dc18a179b876e59e9830cc629359715`이며, 이 receipt는 153개 Case
 resource만 보호하고 Evidence·Rubric·Profile·Policy·Suite 승인을 증명하지 않는다.
 
 Dataset가 실제 검토 뒤 `FROZEN`되면 `rag-holdout-safety@1.0.0`의 Case, Gold, Evidence Mapping,

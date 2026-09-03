@@ -30,6 +30,7 @@ REPOSITORY_ROOT = EVALS_ROOT.parent
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-holdout-safety-v1.dataset.json"
 CASE_ROOT = EVALS_ROOT / "retrieval/cases/rag-holdout-safety-v1"
 PREFIX = "rag-holdout-safety-v1"
+REVIEW_EVIDENCE = EVALS_ROOT / "provenance/rag-holdout-safety-v1.review-evidence.json"
 
 
 def _contains_expected_authoring_field(value: object) -> bool:
@@ -1738,25 +1739,52 @@ def test_holdout_safety_dataset_binds_evidence_and_separates_every_leakage_axis(
         assert groups_by_partition["HOLDOUT"].isdisjoint(groups_by_partition["SAFETY_REGRESSION"])
 
 
-def test_holdout_safety_dataset_is_loadable_frozen_with_non_release_configuration() -> None:
+def test_holdout_safety_dataset_records_the_completed_gold_review_without_freezing() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+    review_evidence = json.loads(REVIEW_EVIDENCE.read_text(encoding="utf-8"))
 
     assert dataset.manifest.schema_version == "1.2.0"
     assert dataset.manifest.data_classification.value == "SYNTHETIC"
-    assert dataset.manifest.status.value == "FROZEN"
-    assert dataset.manifest.frozen_at is not None
+    assert dataset.manifest.status.value == "DRAFT"
+    assert dataset.manifest.frozen_at is None
     assert dataset.manifest.fixture_git_commit_sha is None
     assert dataset.manifest.protected_artifact_receipt_ref is not None
     assert dataset.protected_artifact_receipt is not None
 
-    required_approved_provenance = (
-        (dataset.manifest.review_provenance, "DATASET_CUSTODIAN"),
-        *((case.review_provenance, "PRODUCT_SAFETY_REVIEWER") for case in dataset.cases),
-        (dataset.evidence_mapping.review_provenance, "DATASET_CUSTODIAN"),
-        (dataset.rubric.review_provenance, "PRODUCT_SAFETY_REVIEWER"),
+    assert review_evidence == {
+        "commit_sha": "7324a0eede3e701be83d981760615f92ae64ab46",
+        "evidence_id": "github-pr-256-review-5101202878",
+        "evidence_version": "1.0.0",
+        "pull_number": 256,
+        "repository": "AI-HealthCare-05/AH_05_04",
+        "review_id": 5101202878,
+        "review_state": "APPROVED",
+        "review_submitted_at": "2026-09-03T11:18:03.000000Z",
+        "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/256#pullrequestreview-5101202878",
+        "reviewer": "Jye-rookie",
+    }
+
+    reviewed_artifacts = (
+        dataset.manifest.review_provenance,
+        *(case.review_provenance for case in dataset.cases),
+        dataset.evidence_mapping.review_provenance,
+        dataset.rubric.review_provenance,
     )
-    for provenance, approver_role in required_approved_provenance:
-        _assert_approved_provenance(provenance, approver_role=approver_role)
+    for provenance in reviewed_artifacts:
+        assert provenance.team_gold_status.value == "REVIEWED"
+        assert provenance.reviewed_by is not None
+        assert provenance.reviewed_by.actor_id == "Jye-rookie"
+        assert provenance.reviewed_by.role.value == "EVALUATION_REVIEWER"
+        assert provenance.reviewed_at is not None
+        assert provenance.reviewed_at == "2026-09-03T11:18:03.000000Z"
+        assert len(provenance.evidence_review_refs) == 1
+        evidence_ref = provenance.evidence_review_refs[0]
+        assert evidence_ref.id == review_evidence["evidence_id"]
+        assert evidence_ref.version == review_evidence["evidence_version"]
+        assert evidence_ref.hash == canonical_sha256(cast(JsonValue, review_evidence))
+        assert provenance.approved_by is None
+        assert provenance.approved_at is None
+        assert provenance.external_medical_review_status.value == "PENDING"
 
     assert tuple(value.value for value in dataset.profile.required_experiment_types) == (
         "ANSWER_GROUNDING_SAFETY",
