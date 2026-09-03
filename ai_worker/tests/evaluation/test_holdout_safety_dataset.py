@@ -30,6 +30,8 @@ REPOSITORY_ROOT = EVALS_ROOT.parent
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-holdout-safety-v1.dataset.json"
 CASE_ROOT = EVALS_ROOT / "retrieval/cases/rag-holdout-safety-v1"
 PREFIX = "rag-holdout-safety-v1"
+REVIEW_EVIDENCE = EVALS_ROOT / "provenance/rag-holdout-safety-v1.review-evidence.json"
+APPROVAL_EVIDENCE = EVALS_ROOT / "provenance/rag-holdout-safety-v1.approval-evidence.json"
 
 
 def _contains_expected_authoring_field(value: object) -> bool:
@@ -1738,34 +1740,81 @@ def test_holdout_safety_dataset_binds_evidence_and_separates_every_leakage_axis(
         assert groups_by_partition["HOLDOUT"].isdisjoint(groups_by_partition["SAFETY_REGRESSION"])
 
 
-def test_holdout_safety_dataset_is_loadable_pre_review_draft_with_non_release_configuration() -> None:
+def test_holdout_safety_dataset_freezes_only_with_current_review_and_custodian_approval_events() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+    review_evidence = json.loads(REVIEW_EVIDENCE.read_text(encoding="utf-8"))
+    approval_evidence = json.loads(APPROVAL_EVIDENCE.read_text(encoding="utf-8"))
 
     assert dataset.manifest.schema_version == "1.2.0"
     assert dataset.manifest.data_classification.value == "SYNTHETIC"
-    assert dataset.manifest.status.value == "DRAFT"
-    assert dataset.manifest.frozen_at is None
+    assert dataset.manifest.status.value == "FROZEN"
+    assert dataset.manifest.frozen_at == "2026-09-03T13:25:03.000000Z"
     assert dataset.manifest.fixture_git_commit_sha is None
     assert dataset.manifest.protected_artifact_receipt_ref is not None
     assert dataset.protected_artifact_receipt is not None
 
-    pre_review_provenance = (
-        dataset.manifest.review_provenance,
-        *(case.review_provenance for case in dataset.cases),
-        dataset.evidence_mapping.review_provenance,
-        dataset.rubric.review_provenance,
-        dataset.profile.review_provenance,
-        dataset.evaluation_policy.review_provenance,
-        dataset.suite.review_provenance,
-        dataset.protected_artifact_receipt.recorded_by,
+    assert review_evidence == {
+        "commit_sha": "f6381ba017ae48062398fab8d5832be31c2cbdaf",
+        "evidence_id": "github-pr-256-review-5102210603",
+        "evidence_version": "1.0.0",
+        "pull_number": 256,
+        "repository": "AI-HealthCare-05/AH_05_04",
+        "review_id": 5102210603,
+        "review_state": "APPROVED",
+        "review_submitted_at": "2026-09-03T13:00:53.000000Z",
+        "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/256#pullrequestreview-5102210603",
+        "reviewer": "Jye-rookie",
+    }
+    assert approval_evidence == {
+        "commit_sha": "f6381ba017ae48062398fab8d5832be31c2cbdaf",
+        "evidence_id": "github-pr-256-review-5102473823",
+        "evidence_version": "1.0.0",
+        "pull_number": 256,
+        "repository": "AI-HealthCare-05/AH_05_04",
+        "review_id": 5102473823,
+        "review_state": "APPROVED",
+        "review_submitted_at": "2026-09-03T13:25:03.000000Z",
+        "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/256#pullrequestreview-5102473823",
+        "reviewer": "hazelnutflavoured",
+    }
+
+    expected_review_refs = (
+        (review_evidence["evidence_id"], canonical_sha256(cast(JsonValue, review_evidence))),
+        (approval_evidence["evidence_id"], canonical_sha256(cast(JsonValue, approval_evidence))),
     )
-    for provenance in pre_review_provenance:
-        assert provenance.team_gold_status.value == "DRAFT"
-        assert provenance.reviewed_by is None
-        assert provenance.reviewed_at is None
-        assert provenance.evidence_review_refs == ()
-        assert provenance.approved_by is None
-        assert provenance.approved_at is None
+
+    approved_artifacts = (
+        (dataset.manifest.review_provenance, "DATASET_CUSTODIAN"),
+        (dataset.evidence_mapping.review_provenance, "DATASET_CUSTODIAN"),
+        (dataset.rubric.review_provenance, "PRODUCT_SAFETY_REVIEWER"),
+        *(
+            (
+                case.review_provenance,
+                "DATASET_CUSTODIAN"
+                if case.task_type.value in {"RETRIEVAL", "ANSWER_QUALITY", "ANSWER_GROUNDING"}
+                else "PRODUCT_SAFETY_REVIEWER",
+            )
+            for case in dataset.cases
+        ),
+    )
+    role_counts = Counter(role for _, role in approved_artifacts)
+    assert role_counts == {"DATASET_CUSTODIAN": 43, "PRODUCT_SAFETY_REVIEWER": 113}
+
+    for provenance, approver_role in approved_artifacts:
+        assert provenance.team_gold_status.value == "APPROVED"
+        assert provenance.reviewed_by is not None
+        assert provenance.reviewed_by.actor_id == "Jye-rookie"
+        assert provenance.reviewed_by.role.value == "EVALUATION_REVIEWER"
+        assert provenance.reviewed_at == review_evidence["review_submitted_at"]
+        assert (
+            tuple((reference.id, reference.hash) for reference in provenance.evidence_review_refs)
+            == expected_review_refs
+        )
+        assert provenance.approved_by is not None
+        assert provenance.approved_by.actor_id == "hazelnutflavoured"
+        assert provenance.approved_by.role.value == approver_role
+        assert provenance.approved_at == approval_evidence["review_submitted_at"]
+        assert provenance.external_medical_review_status.value == "PENDING"
 
     assert tuple(value.value for value in dataset.profile.required_experiment_types) == (
         "ANSWER_GROUNDING_SAFETY",

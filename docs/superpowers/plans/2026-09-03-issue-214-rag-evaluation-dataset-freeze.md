@@ -12,6 +12,8 @@
 
 > **2026-09-03 amendment:** #245 merged Schema Set `1.2.0`. This candidate must use its DRAFT provenance rules: reviewer and review timestamp are `null`, and review evidence is empty until a real `EVALUATION_REVIEWER` review occurs. Retrieval resource records exclude authoring-only `expected_*` fields so a future #157 runner cannot retrieve Gold outcome metadata.
 
+> **Freeze completion:** `@Jye-rookie` PR #256 review `5102210603` (`2026-09-03T13:00:53Z`)와 `@hazelnutflavoured` review `5102473823` (`2026-09-03T13:25:03Z`)를 Dataset, Case, Evidence Mapping, Critical Claim Rubric에 결속해 `APPROVED/FROZEN`으로 전환했다. Freeze 상태를 포함한 최신 PR HEAD 검토는 별도 PR review 단계다.
+
 ## Global Constraints
 
 - Consume `rag-eval.schema-set@1.2.0` SHA-256 `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06`; do not change shared schemas or Loader acceptance semantics.
@@ -275,9 +277,9 @@ Explain DEV versus frozen synthetic HOLDOUT/SAFETY_REGRESSION, prohibit in-place
 
 - [ ] **Step 2: Record the resolved #216 prerequisite**
 
-Record #216's merged Schema Set `1.1.0` reference as a resolved historical prerequisite, and hand off the current candidate's Schema Set `1.2.0` immutable reference. Retain `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the later HOLDOUT execution blocker.
+Record #216's merged Schema Set `1.1.0` reference as a resolved historical prerequisite, and hand off the frozen Dataset's Schema Set `1.2.0` immutable reference. Retain `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the later HOLDOUT execution blocker.
 
-The current post-final-review-remediation DRAFT graph handed to the named reviewers is:
+The current frozen Dataset has recorded Dataset Custodian approval; only the official review of the Freeze-state-containing latest PR HEAD remains before merge:
 
 The scored natural-language surface is Korean (`ko-KR`) for queries, Gold claims, forbidden semantic rules,
 Evidence statements, and Rubric descriptions. Stable IDs, enums, reason codes, locators, and synthetic contract
@@ -285,27 +287,27 @@ tokens retain their canonical spelling.
 
 | Item | Immutable ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `1feaca37deca87466acf6b28a429c9484f9718c014ff687618a2540e8ef63717` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `e0f997f1085f4cce397bc473af80442a02535ecdcae38a1ba29c3a8ceecf3eb2` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `e376dc8b347babf097fca9f507bed55696d43d684f119f8b455da89ea6e23d9b` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `4678cc81a98703b3154b08f8297c2dca32399e926065341a5a617959b95d0131` |
-| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6f623450952b55e321009970381b65c6b266f56a37e1f750f59ca232c5a4c437` |
-| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `afa570eec5bf30a7c4ce518e9483be8a5c24ab99230f946ffdcfe0a46c997cd2` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `2c42b2969387d7efaf4f3806e33ee502032b6fb7243bc6a1198434239395f09d` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `094d89292e52971fe5e9148336c533b43936caa70e0c9ea44a5572354cc9b6df` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `0f8dab92ee78a995904ce336d8dbf6739773e86556db479c8efe6775c2e0692b` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `381e808cea848ed6a94335ce262cd7df2594279ababc62cc9fbcc141643bcbe3` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `86f70e09de3dfff719572be40a61540452fc7ebacdaedd5050b9fecb936f2d2a` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `d47433965c83dce1f70d393242b9ed3e37072946853053e76e2a829bb58e1525` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `812ff6bb8cce18cd0e0c80f22ac468005a128e4ed2b30f21ad0381d7b91a0ed1` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `d4f254adfe28a2cc789c02ce7de18d26e79ff1ead21e2bbebdf3df0eda551f8e` |
-| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `034b0c58816774512e6b90ba9c96265f2b01eda2d001438e15b56ec12c2e48bb` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `6173a883d31421c1b9b197d68c4403bba3b24599c1dfd152eeb617279bac50ee` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `02dd78aff64b457fa898e798310e45bcdeef4c31aa264bd470be160a80de94a3` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `f04011915018dd178841171da2bcc652178c9724be9f1905248e03786147c1ca` |
-| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `9bce4d35aa3af797ebbfd77fe73a6f6c3b69580080ff63a085e957e9732e973e` |
+| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `1b88575a5454131d315d71774dceeb6e979fd440959ed3ce3f2635b02c0a7fa7` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 The receipt reference uses its canonical file hash; its internal `receipt_hash` is
-`188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24`.
+`1b88575a5454131d315d71774dceeb6e979fd440959ed3ce3f2635b02c0a7fa7`.
 
-These values remain DRAFT review inputs. They do not record completed human review, Dataset approval, freeze,
-HOLDOUT execution, or Release authorization. Task 7 remains gated on the actual named review events.
+These values describe the frozen Dataset graph. They do not authorize HOLDOUT execution or a Release decision;
+the separate Comparison Policy approval remains required.
 
 - [ ] **Step 3: Run DRAFT verification**
 
@@ -346,9 +348,9 @@ For every required child, add the actual `@Jye-rookie` review timestamp and `EVA
 
 Run the complete Evaluation suite, validate the Dataset twice, compare all semantic hashes, and run the negative test that downgrades one child to `REVIEWED`.
 
-- [ ] **Step 4: Request final Dataset Custodian review on the freeze commit**
+- [ ] **Step 4: Request final Dataset Custodian review on the Freeze-state-containing latest PR HEAD**
 
-The exact freeze commit must be approved before merge. If review requests content changes, return to `DRAFT`, publish a new reviewed candidate, and repeat this task.
+The Freeze-state-containing latest PR HEAD must be approved before merge. If review requests content changes, return to `DRAFT`, publish a new reviewed candidate, and repeat this task.
 
 - [ ] **Step 5: Record the #157 immutable handoff**
 
