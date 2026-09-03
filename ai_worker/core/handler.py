@@ -1,9 +1,46 @@
 """OCR·Guide·Chat Handler가 구현할 공통 인터페이스입니다."""
 
+import math
+from dataclasses import dataclass
 from typing import Protocol
 
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.schemas.messages import JobType, WorkerMessage
+
+
+@dataclass(frozen=True, slots=True)
+class HandlerExecutionContext:
+    """외부 Stream에 노출하지 않는 Worker 내부 실행 경계입니다."""
+
+    worker_deadline: float
+
+    def __post_init__(self) -> None:
+        if isinstance(self.worker_deadline, bool) or not isinstance(
+            self.worker_deadline,
+            int | float,
+        ):
+            raise TypeError("worker_deadline은 monotonic clock 숫자여야 합니다.")
+
+        if not math.isfinite(self.worker_deadline):
+            raise ValueError("worker_deadline은 유한한 값이어야 합니다.")
+
+        if self.worker_deadline <= 0:
+            raise ValueError("worker_deadline은 0보다 커야 합니다.")
+
+
+class ContextAwareHandler(Protocol):
+    """Worker 내부 실행 context를 명시적으로 받는 Handler 계약입니다."""
+
+    handler_type: JobType
+
+    async def handle(
+        self,
+        message: WorkerMessage,
+        *,
+        context: HandlerExecutionContext,
+    ) -> HandlerSuccess:
+        """Worker deadline이 포함된 내부 context로 실행합니다."""
+        ...
 
 
 class Handler(Protocol):

@@ -45,6 +45,18 @@ class Config(BaseSettings):
     REDIS_BLOCK_MS: int = Field(default=5000, ge=0)
     REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
     REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
+    OCR_REQUEST_DEADLINE_SECONDS: float = Field(
+        default=60.0,
+        gt=0,
+    )
+    OCR_PROVIDER_BUDGET_SECONDS: float = Field(
+        default=55.0,
+        gt=0,
+    )
+    OCR_RESPONSE_MARGIN_SECONDS: float = Field(
+        default=5.0,
+        ge=0,
+    )
 
     @field_validator("TIMEZONE", mode="before")
     @classmethod
@@ -87,5 +99,16 @@ class Config(BaseSettings):
 
         if self.REDIS_SOCKET_TIMEOUT_SECONDS <= block_seconds:
             raise ValueError("REDIS_SOCKET_TIMEOUT_SECONDS는 REDIS_BLOCK_MS보다 길어야 합니다.")
+
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ocr_budget_relationship(self) -> Self:
+        """Provider 실행과 완료 여유가 OCR 전체 deadline을 넘지 않게 합니다."""
+
+        required_seconds = self.OCR_PROVIDER_BUDGET_SECONDS + self.OCR_RESPONSE_MARGIN_SECONDS
+
+        if required_seconds > self.OCR_REQUEST_DEADLINE_SECONDS:
+            raise ValueError("OCR Provider 예산과 완료 여유의 합은 OCR_REQUEST_DEADLINE_SECONDS를 초과할 수 없습니다.")
 
         return self

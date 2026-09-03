@@ -14,6 +14,7 @@ from ai_worker.core.errors import (
     HandlerResultMismatchError,
     WorkerError,
 )
+from ai_worker.core.handler import HandlerExecutionContext
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.retry import FailureCode, calculate_retry_decision
@@ -59,6 +60,29 @@ class FakeHandler:
 
     async def handle(self, message: WorkerMessage) -> HandlerSuccess:
         self.received_messages.append(message)
+
+        return HandlerSuccess(
+            event_id=message.event_id,
+            job_id=message.job_id,
+            handler_type=self.handler_type,
+        )
+
+
+class DeadlineAwareFakeHandler:
+    """Worker의 monotonic absolute deadline을 전달받는 Fake입니다."""
+
+    handler_type = JobType.OCR
+
+    def __init__(self) -> None:
+        self.received_context: HandlerExecutionContext | None = None
+
+    async def handle(
+        self,
+        message: WorkerMessage,
+        *,
+        context: HandlerExecutionContext | None = None,
+    ) -> HandlerSuccess:
+        self.received_context = context
 
         return HandlerSuccess(
             event_id=message.event_id,
@@ -165,6 +189,31 @@ async def test_dispatcher_routes_message_to_registered_handler(
         handler_type=job_type,
     )
     assert handler.received_messages == [message]
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_passes_execution_context_to_handler() -> None:
+    registry = HandlerRegistry()
+    handler = DeadlineAwareFakeHandler()
+    registry.register(handler)
+
+    dispatcher = Dispatcher(registry)
+    message = build_message()
+    context = HandlerExecutionContext(
+        worker_deadline=1234.5,
+    )
+
+    result = await dispatcher.dispatch(
+        message,
+        context=context,
+    )
+
+    assert result == HandlerSuccess(
+        event_id=message.event_id,
+        job_id=message.job_id,
+        handler_type=JobType.OCR,
+    )
+    assert handler.received_context is context
 
 
 @pytest.mark.asyncio
