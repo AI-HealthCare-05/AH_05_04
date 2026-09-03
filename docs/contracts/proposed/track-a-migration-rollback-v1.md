@@ -2,8 +2,8 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Proposed — 승인 전 제안 |
-| 구현 상태 | Not implemented in `develop` |
+| 문서 상태 | Proposed — 전체 Track A 계획은 승인 전 제안 |
+| 구현 상태 | Partially implemented — 공통 Job 기반은 `develop` 반영, OCR–AI Job mapping은 본 PR 구현 |
 | 관련 Issue | #75 |
 | 선행 계약 | `docs/contracts/current/profile-self-ownership-v1.md` |
 | 적용 범위 | Post-MVP-1 Track A, Backend/API, Database, AI Worker 공통, OCR·Guide·Chat 연결 경계 |
@@ -11,7 +11,9 @@
 
 이 문서는 Post-MVP-1 Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 실제 migration PR로 나누기 전에 대상 테이블, 적용 순서, rollback 경계, PR 분리 기준을 정리하는 제안이다.
 
-현재 `develop`에는 이 문서의 신규 테이블과 전환 로직이 구현되어 있지 않다. 승인 전까지 이 문서는 Current 계약 또는 구현 완료로 해석하지 않는다.
+현재 `develop`에는 공통 `ai_job`·attempt·Outbox·idempotency 기반과 공통 Job 접수 service가 구현되어 있다. 이 문서가 포함된 revision에는 `ocr_job.ai_job_id` nullable mapping도 구현되어 있다.
+
+아직 구현되지 않은 범위는 Guide·Chat 결과 row의 `ai_job_id` 연결, 신규 OCR 접수 시 실제 mapping 저장, Prescription Version, 전체 비동기 API·Worker 전환, 기존 데이터 backfill, read cutover와 Contract 단계다. 따라서 이 문서는 전체 Track A 계획 관점에서 Proposed이며, 부분 구현 상태를 Track A 완료나 Current 계약 승격으로 해석하지 않는다.
 
 ## 1. 목적
 
@@ -262,7 +264,7 @@ PR 단계에서는 feature flag 기본값, flag off 시 접수 경로, drain 검
 - `ai_job.id` 참조 및 `ON DELETE SET NULL` 적용
 - `uq_ocr_job_ai_job` unique 제약 적용
 - 기존 OCR 행 `NULL` 유지 및 synthetic Job·backfill 미생성
-- non-null 연결이 존재하면 downgrade를 차단하는 데이터 안전 가드 적용
+- downgrade 검사 전 `ocr_job`에 `ACCESS EXCLUSIVE` lock을 획득하고, non-null 연결이 존재하면 downgrade를 차단하는 동시성 안전 가드 적용
 - 실제 신규 OCR 접수 연결과 `job_type='OCR'`·전체 도메인 단일 결과 연결 검증은 #148 범위
 
 ### 11.2 Guide

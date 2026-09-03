@@ -1,6 +1,8 @@
 import asyncio
 from collections.abc import AsyncIterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 import pytest
@@ -1382,6 +1384,182 @@ async def _cleanup_linked_ocr_ai_job(
         await engine.dispose()
 
 
+async def _write_ocr_ai_job_link_and_wait(
+    *,
+    writer_ready: Event,
+    release_writer: Event,
+) -> tuple[str, str, str, str]:
+    """OCR mapping을 기록한 transaction을 commit 직전까지 유지합니다."""
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+
+            try:
+                user_id, document_id, ocr_job_id = await insert_ocr_parent_chain(connection)
+                ai_job_id = await _insert_ai_job_for_ocr_mapping(
+                    connection,
+                    user_id=user_id,
+                )
+
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE ocr_job
+                        SET ai_job_id = :ai_job_id
+                        WHERE id = :ocr_job_id
+                        """
+                    ),
+                    {
+                        "ai_job_id": ai_job_id,
+                        "ocr_job_id": ocr_job_id,
+                    },
+                )
+
+                writer_ready.set()
+
+                released = await asyncio.to_thread(
+                    release_writer.wait,
+                    10,
+                )
+                if not released:
+                    raise TimeoutError("Timed out waiting to release the concurrent OCR writer.")
+
+                await transaction.commit()
+
+                return user_id, document_id, ocr_job_id, ai_job_id
+            except BaseException:
+                if transaction.is_active:
+                    await transaction.rollback()
+                raise
+    finally:
+        await engine.dispose()
+
+
+async def _wait_for_ocr_downgrade_lock() -> None:
+    """downgrade가 ocr_job ACCESS EXCLUSIVE lock을 기다리는지 확인합니다."""
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        for _ in range(100):
+            async with engine.connect() as connection:
+                result = await connection.execute(
+                    text(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM pg_locks AS lock_info
+                            JOIN pg_class AS table_info
+                              ON table_info.oid = lock_info.relation
+                            JOIN pg_namespace AS namespace_info
+                              ON namespace_info.oid = table_info.relnamespace
+                            WHERE namespace_info.nspname = 'public'
+                              AND table_info.relname = 'ocr_job'
+                              AND lock_info.mode = 'AccessExclusiveLock'
+                              AND lock_info.granted = false
+                        )
+                        """
+                    )
+                )
+
+                if result.scalar_one():
+                    return
+
+            await asyncio.sleep(0.05)
+
+        raise AssertionError("Downgrade did not wait for the ocr_job ACCESS EXCLUSIVE lock.")
+    finally:
+        await engine.dispose()
+
+
+def test_ocr_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
+    alembic_config = create_alembic_config()
+    writer_ready = Event()
+    release_writer = Event()
+
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+    ai_job_id = ""
+
+    writer_future: Future[tuple[str, str, str, str]] | None = None
+    downgrade_future: Future[None] | None = None
+
+    try:
+        command.upgrade(alembic_config, "head")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            writer_future = executor.submit(
+                asyncio.run,
+                _write_ocr_ai_job_link_and_wait(
+                    writer_ready=writer_ready,
+                    release_writer=release_writer,
+                ),
+            )
+
+            if not writer_ready.wait(timeout=10):
+                if writer_future.done():
+                    writer_future.result()
+
+                raise AssertionError("Concurrent OCR writer did not reach the uncommitted state.")
+
+            downgrade_future = executor.submit(
+                command.downgrade,
+                alembic_config,
+                OCR_AI_JOB_BASE_REVISION,
+            )
+
+            asyncio.run(_wait_for_ocr_downgrade_lock())
+
+            # writer가 commit하기 전에는 downgrade가 완료되면 안 됩니다.
+            assert downgrade_future.done() is False
+
+            release_writer.set()
+
+            user_id, document_id, ocr_job_id, ai_job_id = writer_future.result(timeout=10)
+
+            # lock 획득 후 다시 검사하므로 방금 commit된 연결을 확인하고
+            # 컬럼 삭제를 거부해야 합니다.
+            with pytest.raises(
+                RuntimeError,
+                match=r"Cannot downgrade while ocr_job\.ai_job_id contains linked AI Jobs",
+            ):
+                downgrade_future.result(timeout=10)
+
+        assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) == ai_job_id
+    finally:
+        release_writer.set()
+
+        if writer_future is not None and not writer_future.done():
+            writer_future.result(timeout=10)
+
+        if downgrade_future is not None and not downgrade_future.done():
+            try:
+                downgrade_future.result(timeout=10)
+            except RuntimeError:
+                pass
+
+        command.upgrade(alembic_config, "head")
+
+        if user_id and document_id and ocr_job_id and ai_job_id:
+            asyncio.run(
+                _cleanup_linked_ocr_ai_job(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                    ai_job_id=ai_job_id,
+                )
+            )
+
+
 def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
     alembic_config = create_alembic_config()
     user_id = ""
@@ -1396,7 +1574,7 @@ def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
 
         with pytest.raises(
             RuntimeError,
-            match="Cannot downgrade revision c3f8a12d9e47",
+            match=r"Cannot downgrade while ocr_job\.ai_job_id contains linked AI Jobs",
         ):
             command.downgrade(
                 alembic_config,

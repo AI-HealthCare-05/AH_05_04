@@ -20,7 +20,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _ensure_downgrade_is_data_safe(connection: Connection) -> None:
-    """AI Job 연결 정보가 존재하는 경우 데이터 손실 downgrade를 차단합니다."""
+    """OCR Job 쓰기를 차단한 뒤 연결 정보가 존재하는 downgrade를 거부합니다."""
+
+    connection.execute(sa.text("LOCK TABLE ocr_job IN ACCESS EXCLUSIVE MODE"))
 
     ocr_job = sa.table(
         "ocr_job",
@@ -31,13 +33,10 @@ def _ensure_downgrade_is_data_safe(connection: Connection) -> None:
         sa.select(sa.func.count()).select_from(ocr_job).where(ocr_job.c.ai_job_id.is_not(None))
     ).scalar_one()
 
-    if linked_ocr_job_count:
+    if linked_ocr_job_count > 0:
         raise RuntimeError(
-            "Cannot downgrade revision c3f8a12d9e47 while "
-            "ocr_job.ai_job_id links exist. Production must use a "
-            "forward-fix. In a non-production environment, back up "
-            "and remove or migrate the affected links through an "
-            "approved rollback procedure first."
+            "Cannot downgrade while ocr_job.ai_job_id contains linked AI Jobs. "
+            "Remove the links explicitly before retrying the downgrade."
         )
 
 
