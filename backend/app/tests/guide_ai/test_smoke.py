@@ -24,7 +24,7 @@ async def test_gpt_4o_mini_synthetic_smoke() -> None:
     sdk_client = AsyncOpenAI(timeout=timeout_seconds, max_retries=0)
     try:
         generator = GuideGenerator(
-            provider=OpenAIResponsesClient(sdk_client),
+            provider=OpenAIResponsesClient(sdk_client, observability_disabled=True),
             model=model,
             timeout_seconds=timeout_seconds,
         )

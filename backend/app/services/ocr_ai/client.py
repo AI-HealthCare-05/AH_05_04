@@ -54,12 +54,14 @@ class OpenAIOcrStructureClient:
         context: ProviderCallContext | None = None,
         descriptor: ProviderCallDescriptor | None = None,
         call_logger: ProviderCallLogger = provider_call_logger,
+        observability_disabled: bool = False,
     ) -> None:
         self._client = client
         self._observer = ProviderCallObserver(
             context=context,
             descriptor=descriptor,
             call_logger=call_logger,
+            observability_disabled=observability_disabled,
         )
 
     async def generate(

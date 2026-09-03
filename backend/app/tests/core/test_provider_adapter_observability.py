@@ -108,6 +108,33 @@ def _events(stream: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in stream.getvalue().splitlines()]
 
 
+def _unobserved_adapter_factories(tmp_path: Path) -> list[Any]:
+    return [
+        lambda **kwargs: ChatOpenAIResponsesClient(FakeAsyncOpenAI(), **kwargs),
+        lambda **kwargs: GuideOpenAIResponsesClient(FakeAsyncOpenAI(), **kwargs),
+        lambda **kwargs: OpenAIOcrStructureClient(FakeAsyncOpenAI(), **kwargs),
+        lambda **kwargs: ClovaOcrEngine(
+            invoke_url="https://synthetic.example/ocr",
+            secret_key="SENSITIVE_CLOVA_SECRET",
+            storage_dir=str(tmp_path),
+            timeout_seconds=5,
+            structurer=FakeStructurer(),  # type: ignore[arg-type]
+            **kwargs,
+        ),
+    ]
+
+
+def test_provider_adapters_reject_implicit_observability_omission(tmp_path: Path) -> None:
+    for construct in _unobserved_adapter_factories(tmp_path):
+        with pytest.raises(ValueError, match="requires context and descriptor"):
+            construct()
+
+
+def test_provider_adapters_allow_explicit_observability_opt_out(tmp_path: Path) -> None:
+    for construct in _unobserved_adapter_factories(tmp_path):
+        construct(observability_disabled=True)
+
+
 def _clova_engine(tmp_path: Path, client: httpx.AsyncClient, logger: ProviderCallLogger) -> ClovaOcrEngine:
     (tmp_path / "synthetic.png").write_bytes(b"synthetic-image")
     return ClovaOcrEngine(
