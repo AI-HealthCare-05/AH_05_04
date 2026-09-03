@@ -7,6 +7,8 @@ from ai_worker.tasks.rag.candidate_index import (
     CandidateCatalogCounts,
     CandidateCatalogExport,
     CandidateDistanceMetric,
+    CandidateEmbeddingRequest,
+    CandidateEmbeddingVector,
     CandidateEntityType,
     CandidateEntryType,
     CandidateIndexBuildConfig,
@@ -158,6 +160,19 @@ def lexical_config() -> CandidateIndexBuildConfig:
         embedding_dimension=None,
         distance_metric=None,
         ann_config=None,
+    )
+
+
+def hybrid_config(dimension: int = 2) -> CandidateIndexBuildConfig:
+    return replace(
+        lexical_config(),
+        build_mode=CandidateIndexBuildMode.HYBRID,
+        embedding_provider="synthetic-provider",
+        embedding_model="synthetic-model",
+        embedding_model_version="synthetic-model-v1",
+        embedding_dimension=dimension,
+        distance_metric=CandidateDistanceMetric.COSINE,
+        ann_config=(("hnsw_m", "16"),),
     )
 
 
@@ -422,3 +437,99 @@ def test_manifest_records_lexical_provenance_and_reproducible_hashes() -> None:
     assert isinstance(changed, CandidateIndexBuildSuccess)
     assert repeated.manifest.content_hash == result.manifest.content_hash
     assert changed.manifest.content_hash != result.manifest.content_hash
+
+
+class FixedEmbeddingPort:
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        assert config.embedding_model_version == "synthetic-model-v1"
+        assert tuple(request.normalized_text for request in requests) == ("가나다정별칭", "가나다정")
+        return tuple(
+            CandidateEmbeddingVector(member_key=request.member_key, values=vector)
+            for request, vector in zip(requests, ((1.0, 0.0), (0.0, 1.0)), strict=True)
+        )
+
+
+def test_hybrid_build_binds_vectors_to_sorted_members() -> None:
+    result = build_candidate_index(valid_catalog(), hybrid_config(), FixedEmbeddingPort())
+
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    assert tuple(member.embedding for member in result.members) == ((1.0, 0.0), (0.0, 1.0))
+    assert result.manifest.vector_count == 2
+    assert result.manifest.embedding_provider == "synthetic-provider"
+    assert result.manifest.embedding_model == "synthetic-model"
+    assert result.manifest.embedding_model_version == "synthetic-model-v1"
+    assert result.manifest.embedding_dimension == 2
+    assert result.manifest.distance_metric is CandidateDistanceMetric.COSINE
+
+
+class StaticEmbeddingPort:
+    def __init__(self, vectors: tuple[tuple[float, ...], ...], *, reverse_keys: bool = False) -> None:
+        self.vectors = vectors
+        self.reverse_keys = reverse_keys
+
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        del config
+        keys = tuple(request.member_key for request in requests)
+        if self.reverse_keys:
+            keys = tuple(reversed(keys))
+        return tuple(
+            CandidateEmbeddingVector(member_key=member_key, values=vector)
+            for member_key, vector in zip(keys, self.vectors, strict=False)
+        )
+
+
+@pytest.mark.parametrize(
+    "port",
+    [
+        StaticEmbeddingPort(((1.0, 0.0),)),
+        StaticEmbeddingPort(((1.0,), (0.0, 1.0))),
+        StaticEmbeddingPort(((float("nan"), 0.0), (0.0, 1.0))),
+        StaticEmbeddingPort(((float("inf"), 0.0), (0.0, 1.0))),
+        StaticEmbeddingPort(((1.0, 0.0), (0.0, 1.0)), reverse_keys=True),
+    ],
+)
+def test_invalid_embedding_output_fails_without_partial_output(port: StaticEmbeddingPort) -> None:
+    result = build_candidate_index(valid_catalog(), hybrid_config(), port)
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+        details=("embedding_output",),
+    )
+    assert not hasattr(result, "members")
+    assert not hasattr(result, "manifest")
+
+
+def test_missing_embedding_port_fails_without_partial_output() -> None:
+    result = build_candidate_index(valid_catalog(), hybrid_config())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+        details=("embedding_port",),
+    )
+
+
+class FailingEmbeddingPort:
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        del requests, config
+        raise RuntimeError("provider raw payload must not escape")
+
+
+def test_embedding_provider_error_is_replaced_with_safe_failure() -> None:
+    result = build_candidate_index(valid_catalog(), hybrid_config(), FailingEmbeddingPort())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+        details=("embedding_port",),
+    )

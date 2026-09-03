@@ -3,9 +3,11 @@
 import dataclasses
 import hashlib
 import json
+import math
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
 
 class CandidateEntityType(StrEnum):
@@ -250,6 +252,26 @@ class CandidateIndexManifest:
 class CandidateIndexBuildSuccess:
     manifest: CandidateIndexManifest
     members: tuple[CandidateIndexMember, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateEmbeddingRequest:
+    member_key: str
+    normalized_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateEmbeddingVector:
+    member_key: str
+    values: tuple[float, ...]
+
+
+class CandidateEmbeddingPort(Protocol):
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]: ...
 
 
 def _is_sha256(value: str) -> bool:
@@ -580,6 +602,62 @@ def _build_lexical_members(
     return tuple(sorted(members_by_key.values(), key=_member_sort_key))
 
 
+def _embedding_values_are_valid(values: tuple[float, ...], dimension: int) -> bool:
+    return len(values) == dimension and all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in values
+    )
+
+
+def _attach_embeddings(
+    members: tuple[CandidateIndexMember, ...],
+    config: CandidateIndexBuildConfig,
+    embedding_port: CandidateEmbeddingPort | None,
+) -> CandidateIndexBuildFailure | tuple[CandidateIndexMember, ...]:
+    if embedding_port is None:
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+            ("embedding_port",),
+        )
+    requests = tuple(
+        CandidateEmbeddingRequest(member_key=member.member_key, normalized_text=member.normalized_text)
+        for member in members
+    )
+    try:
+        vectors = embedding_port.embed(requests, config)
+    except Exception:
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+            ("embedding_port",),
+        )
+    expected_keys = tuple(request.member_key for request in requests)
+    observed_keys = tuple(vector.member_key for vector in vectors)
+    dimension = config.embedding_dimension
+    if (
+        dimension is None
+        or len(vectors) != len(members)
+        or observed_keys != expected_keys
+        or any(not _embedding_values_are_valid(vector.values, dimension) for vector in vectors)
+    ):
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+            ("embedding_output",),
+        )
+    return tuple(
+        dataclasses.replace(
+            member,
+            embedding=vector.values,
+            member_content_hash=_sha256(
+                {
+                    "lexical_member_content_hash": member.member_content_hash,
+                    "embedding_model_version": config.embedding_model_version,
+                    "embedding": vector.values,
+                }
+            ),
+        )
+        for member, vector in zip(members, vectors, strict=True)
+    )
+
+
 def _configuration_payload(config: CandidateIndexBuildConfig) -> dict[str, object]:
     return {
         "index_code": config.index_code,
@@ -717,7 +795,7 @@ def _catalog_envelope_failure(catalog: CandidateCatalogExport) -> CandidateIndex
 def build_candidate_index(
     catalog: CandidateCatalogExport,
     config: CandidateIndexBuildConfig,
-    embedding_port: object | None = None,
+    embedding_port: CandidateEmbeddingPort | None = None,
 ) -> CandidateIndexBuildSuccess | CandidateIndexBuildFailure:
     """Validate the RAG-06 handoff before any Candidate members are constructed."""
 
@@ -736,11 +814,10 @@ def build_candidate_index(
     if isinstance(members, CandidateIndexBuildFailure):
         return members
     if config.build_mode is CandidateIndexBuildMode.HYBRID:
-        del embedding_port
-        return CandidateIndexBuildFailure(
-            CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
-            ("embedding_port",),
-        )
+        embedded_members = _attach_embeddings(members, config, embedding_port)
+        if isinstance(embedded_members, CandidateIndexBuildFailure):
+            return embedded_members
+        members = embedded_members
     return CandidateIndexBuildSuccess(
         manifest=_build_manifest(catalog, config, members),
         members=members,

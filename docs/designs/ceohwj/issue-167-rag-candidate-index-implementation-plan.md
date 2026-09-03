@@ -290,13 +290,20 @@ git commit -m "✨ feat: 결정적 Candidate Index manifest 생성"
 - 소비: 정렬된 lexical 구성원과 `CandidateIndexBuildConfig`
 - 생성: `CandidateEmbeddingPort.embed(entries, config)`와 vector가 결속된 build success
 
-- [ ] **Step 1: 정상 HYBRID embedding 테스트 작성**
+- [x] **Step 1: 정상 HYBRID embedding 테스트 작성**
 
 ```python
 class FixedEmbeddingPort:
-    def embed(self, texts: tuple[str, ...], config: CandidateIndexBuildConfig) -> tuple[tuple[float, ...], ...]:
-        assert texts == ("가나다정", "가나다정별칭")
-        return ((1.0, 0.0), (0.0, 1.0))
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        assert tuple(request.normalized_text for request in requests) == ("가나다정별칭", "가나다정")
+        return tuple(
+            CandidateEmbeddingVector(member_key=request.member_key, values=vector)
+            for request, vector in zip(requests, ((1.0, 0.0), (0.0, 1.0)), strict=True)
+        )
 
 
 def test_hybrid_build_binds_vectors_to_sorted_members() -> None:
@@ -307,7 +314,7 @@ def test_hybrid_build_binds_vectors_to_sorted_members() -> None:
     assert result.manifest.embedding_model_version == "synthetic-model-v1"
 ```
 
-- [ ] **Step 2: embedding port 부재로 실패하는지 확인**
+- [x] **Step 2: embedding port 부재로 실패하는지 확인**
 
 ```bash
 uv run pytest ai_worker/tests/rag/test_candidate_index.py::test_hybrid_build_binds_vectors_to_sorted_members -q
@@ -315,21 +322,21 @@ uv run pytest ai_worker/tests/rag/test_candidate_index.py::test_hybrid_build_bin
 
 기대 결과: embedding protocol 또는 HYBRID 경로가 구현되지 않아 실패한다.
 
-- [ ] **Step 3: embedding protocol과 최소 HYBRID 경로 구현**
+- [x] **Step 3: embedding protocol과 최소 HYBRID 경로 구현**
 
 ```python
 class CandidateEmbeddingPort(Protocol):
     def embed(
         self,
-        texts: tuple[str, ...],
+        requests: tuple[CandidateEmbeddingRequest, ...],
         config: CandidateIndexBuildConfig,
-    ) -> tuple[tuple[float, ...], ...]: ...
+    ) -> tuple[CandidateEmbeddingVector, ...]: ...
 ```
 
-구성원을 먼저 결정적으로 정렬한 뒤 `normalized_text` tuple을 한 번 전달한다. 반환 vector를 같은 순서로
-결속하고 manifest hash를 다시 계산한다.
+구성원을 먼저 결정적으로 정렬한 뒤 `member_key + normalized_text` 요청 tuple을 한 번 전달한다. 응답의
+`member_key` 순서가 요청과 exact-match하는지 확인한 뒤 vector를 결속하고 manifest hash를 다시 계산한다.
 
-- [ ] **Step 4: embedding failure matrix 작성**
+- [x] **Step 4: embedding failure matrix 작성**
 
 count 부족·초과, dimension 불일치, `NaN`, `Infinity`, 잘못된 tuple 순서 witness와 port 미제공을
 각각 `EMBEDDING_OUTPUT_INVALID`로 검증한다. failure의 `details`에는 field name만 있고 vector나 provider
@@ -344,7 +351,7 @@ def test_invalid_embedding_fails_without_partial_output(vector: tuple[float, ...
     assert not hasattr(result, "members")
 ```
 
-- [ ] **Step 5: Task 3 전체 검증 및 커밋**
+- [x] **Step 5: Task 3 전체 검증 및 커밋**
 
 ```bash
 uv run pytest ai_worker/tests/rag/test_candidate_index.py -q
