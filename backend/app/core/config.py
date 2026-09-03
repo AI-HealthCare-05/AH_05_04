@@ -121,8 +121,11 @@ class Config(BaseSettings):
     #
     # 운영 주의: 이 키를 교체하면 같은 원문 Idempotency-Key라도 새 digest가 계산되어, 교체 이전
     # 레코드에 대한 재시도가 중복으로 인식되지 못하고 새 Job·Outbox가 생길 수 있습니다(현재는
-    # active key 하나로만 조회하며 key_hmac_version별 조회는 지원하지 않음). 그래서 IDEMPOTENCY_RECORD_TTL_DAYS
-    # (아래, 기본 7일)이 완전히 지난 뒤에만 이 키를 교체해야 합니다. multi-version 조회 지원은 #235에서 다룹니다.
+    # active key 하나로만 조회하며 key_hmac_version별 조회는 지원하지 않음). "rotation 주기를
+    # 보존기간보다 길게 제한"하는 것만으로는 안전하지 않습니다 — 교체 직전에 생성된 레코드는
+    # 교체 이후에도 최대 IDEMPOTENCY_RECORD_TTL_DAYS만큼 남아 있어, 그 기간 안에 같은 요청이
+    # 새 키로 재시도되면 기존 레코드를 찾지 못합니다. 그래서 #235(retained key 전체 조회 구현)
+    # 전까지는 이 키를 절대 교체하지 않습니다.
     IDEMPOTENCY_HMAC_KEY: str = "not-configured-idempotency-hmac-key"
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
@@ -190,6 +193,14 @@ class Config(BaseSettings):
                     f"IDEMPOTENCY_HMAC_KEY must be at least {_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH} "
                     "characters outside local environment"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_idempotency_record_ttl_days(self) -> "Config":
+        # 0 이하 값이 들어오면 레코드가 저장 즉시(또는 그 전에) 만료돼 재조회에서 항상 걸러지므로,
+        # 멱등성 자체가 조용히 무력화됩니다. 환경 구분 없이 항상 막습니다.
+        if self.IDEMPOTENCY_RECORD_TTL_DAYS <= 0:
+            raise ValueError("IDEMPOTENCY_RECORD_TTL_DAYS must be a positive number of days")
         return self
 
     @property

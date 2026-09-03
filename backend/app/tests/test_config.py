@@ -273,6 +273,19 @@ def test_idempotency_hmac_key_rejects_too_short_value_outside_local(environment:
         )
 
 
+@pytest.mark.parametrize("ttl_days", [0, -1])
+def test_idempotency_record_ttl_days_rejects_non_positive_value(ttl_days: int) -> None:
+    """0 이하 값은 레코드를 저장 즉시(또는 그 전에) 만료시켜 멱등성을 조용히 무력화하므로,
+    환경 구분 없이 항상 거부합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "IDEMPOTENCY_RECORD_TTL_DAYS": ttl_days,
+            }
+        )
+
+
 @pytest.mark.parametrize("environment", ["staging", "production"])
 def test_idempotency_hmac_key_field_is_normalized_to_stripped_value(environment: str) -> None:
     """검증(validator)과 실제 HMAC 계산이 항상 같은 값을 보도록, 필드 자체가 앞뒤 공백을
