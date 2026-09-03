@@ -89,15 +89,6 @@ class OcrInputRepository(Protocol):
         """현재 AI Job에 연결된 OCR Job의 최소 실행 입력을 반환합니다."""
         ...
 
-    async def mark_processing(
-        self,
-        *,
-        domain_id: UUID,
-        job_id: UUID,
-    ) -> bool:
-        """연결된 PENDING OCR Job을 PROCESSING으로 전환합니다."""
-        ...
-
 
 class OcrProvider(Protocol):
     """Worker가 사용하는 OCR Provider Adapter 계약입니다."""
@@ -178,14 +169,6 @@ class OcrHandler:
         )
 
         if domain_input is None:
-            raise WorkerError(failure_code="INVALID_INPUT")
-
-        processing_started = await self._input_repository.mark_processing(
-            domain_id=message.domain_id,
-            job_id=message.job_id,
-        )
-
-        if not processing_started:
             raise WorkerError(failure_code="INVALID_INPUT")
 
         now = self._clock()
