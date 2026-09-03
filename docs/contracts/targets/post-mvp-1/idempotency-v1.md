@@ -24,6 +24,8 @@ HMAC key rotation 중에는 구 writer와 신 writer가 동시에 최초 요청�
 
 위 조건이 충족되지 않으면 HMAC key rotation 중 신규 멱등성 write를 배포하지 않는다.
 
+현재 Backend 구현(#147/#215)은 `IDEMPOTENCY_HMAC_KEY`를 단일 active version만 조회한다. "rotation 주기를 보존기간보다 길게 제한"하는 세 번째 조건은 reader가 current+직전(N-1) key version을 함께 조회할 때만 성립하는데, 지금 구현은 current만 조회하므로 이 조건을 실제로 만족하지 못한다 — 교체 직전 생성된 레코드가 교체 이후에도 최대 `IDEMPOTENCY_RECORD_TTL_DAYS`만큼 남아 있어, 그 기간 안에 같은 요청이 새 키로 재시도되면 기존 레코드를 찾지 못한다. 따라서 현재는 네 조건 중 어느 것도 충족하지 못하는 상태이며, reader가 retained key version 전체를 조회하도록 구현하는 #235가 병합되기 전까지는 `IDEMPOTENCY_HMAC_KEY`를 교체하지 않는다.
+
 요청 지문은 다음 값을 canonical JSON으로 직렬화한 SHA-256이다.
 
 - 비동기 요청의 `job_type`
