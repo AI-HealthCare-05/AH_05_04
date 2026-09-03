@@ -23,6 +23,140 @@ function formatCompletedAt(value: string | null) {
   }).format(date)
 }
 
+type GuideDetail = {
+  label: string
+  value: string
+}
+
+type StructuredMedication = {
+  name: string
+  details: GuideDetail[]
+  guidance: string
+  notices: string[]
+}
+
+type StructuredGuide = {
+  medications: StructuredMedication[]
+  generalNotice: string
+  safetyNotice: string
+}
+
+const GUIDE_DETAIL_LABELS: Record<string, string> = {
+  '용량': '1회량',
+  '복용 횟수': '하루 횟수',
+  '복용 시점': '복용 시점',
+  '복용 기간': '복용 기간',
+}
+
+const INCOMPLETE_DOSE_NOTICE =
+  '용량 정보는 처방전 또는 의료진 안내를 확인해 주세요.'
+
+function parseGuideContent(content: string): StructuredGuide | null {
+  const blocks = content.replace(/\r\n?/g, '\n').trim().split(/\n{2}/)
+  if (blocks.length < 3 || blocks[0].trim() !== '복약 가이드') return null
+
+  const noticeLines = blocks.at(-1)?.split('\n') ?? []
+  if (noticeLines.length !== 2) return null
+
+  const generalNotice = noticeLines[0].match(/^공통 안내:\s*(.+)$/)?.[1]
+  const safetyNotice = noticeLines[1].match(/^안전 안내:\s*(.+)$/)?.[1]
+  if (!generalNotice || !safetyNotice) return null
+
+  const medications: StructuredMedication[] = []
+
+  for (const [medicationIndex, block] of blocks.slice(1, -1).entries()) {
+    const lines = block.split('\n')
+    const heading = lines.shift()?.match(/^\[(\d+)]\s+(.+)$/)
+    if (!heading || Number(heading[1]) !== medicationIndex + 1) return null
+
+    const details: GuideDetail[] = []
+    const notices: string[] = []
+    let guidance: string | null = null
+    const seenLabels = new Set<string>()
+
+    for (const line of lines) {
+      if (line === INCOMPLETE_DOSE_NOTICE) {
+        notices.push(line)
+        continue
+      }
+
+      const field = line.match(/^([^:]+):\s*(.+)$/)
+      if (!field) return null
+
+      const [, sourceLabel, value] = field
+      if (sourceLabel === '복약 안내') {
+        if (guidance !== null) return null
+        guidance = value
+        continue
+      }
+
+      const displayLabel = GUIDE_DETAIL_LABELS[sourceLabel]
+      if (!displayLabel || seenLabels.has(sourceLabel)) return null
+      seenLabels.add(sourceLabel)
+      details.push({ label: displayLabel, value })
+    }
+
+    if (!heading[2].trim() || !guidance) return null
+    medications.push({
+      name: heading[2],
+      details,
+      guidance,
+      notices,
+    })
+  }
+
+  if (medications.length === 0) return null
+  return { medications, generalNotice, safetyNotice }
+}
+
+function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
+  return (
+    <section
+      className="guide-page__structured-guide"
+      aria-labelledby="guide-medications-heading"
+    >
+      <h2 id="guide-medications-heading">
+        확인된 약 목록 · {guide.medications.length}개
+      </h2>
+      <div className="guide-page__medication-list">
+        {guide.medications.map((medication, index) => (
+          <article className="guide-page__medication-card" key={`${index}-${medication.name}`}>
+            <h3>{medication.name}</h3>
+            {medication.details.length > 0 && (
+              <dl className="guide-page__medication-details">
+                {medication.details.map((detail) => (
+                  <div key={detail.label}>
+                    <dt>{detail.label}</dt>
+                    <dd>{detail.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            {medication.notices.map((notice) => (
+              <p className="guide-page__medication-notice" key={notice}>
+                {notice}
+              </p>
+            ))}
+            <section className="guide-page__guidance" aria-labelledby={`guide-guidance-${index}`}>
+              <h4 id={`guide-guidance-${index}`}>복약 안내</h4>
+              <p>{medication.guidance}</p>
+            </section>
+          </article>
+        ))}
+      </div>
+
+      <aside className="guide-page__common-notice" aria-labelledby="guide-common-heading">
+        <h3 id="guide-common-heading">공통 안내</h3>
+        <p>{guide.generalNotice}</p>
+      </aside>
+      <aside className="guide-page__safety-notice" aria-labelledby="guide-safety-heading">
+        <h3 id="guide-safety-heading">안전 안내</h3>
+        <p>{guide.safetyNotice}</p>
+      </aside>
+    </section>
+  )
+}
+
 function GuidePage() {
   const navigate = useNavigate()
   const { guideId } = useParams<{ guideId: string }>()
@@ -91,6 +225,16 @@ function GuidePage() {
   const hasCompletedContent =
     currentGuide?.generation_status === 'COMPLETED' &&
     Boolean(currentGuide.content?.trim())
+  const structuredGuide = currentGuide?.content
+    ? parseGuideContent(currentGuide.content)
+    : null
+  const confirmedTimings =
+    structuredGuide?.medications.flatMap((medication) => {
+      const timing = medication.details.find(
+        (detail) => detail.label === '복용 시점',
+      )
+      return timing ? [{ name: medication.name, timing: timing.value }] : []
+    }) ?? []
 
   return (
     <div className="guide-page">
@@ -149,28 +293,41 @@ function GuidePage() {
               <Card className="guide-page__hero">
                 <span className="guide-page__hero-label">오늘 확인한 복용</span>
                 <h2>확인된 복용 조건</h2>
-                <p>
-                  직접 확인한 처방을 기준으로 생성된 안내를 표시해요.
-                </p>
+                {confirmedTimings.length > 0 ? (
+                  <ul className="guide-page__timing-list" aria-label="확인된 복용 시점">
+                    {confirmedTimings.map((item, index) => (
+                      <li key={`${index}-${item.name}`}>
+                        <span>{item.timing}</span>
+                        <strong>{item.name}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>직접 확인한 처방을 기준으로 생성된 안내를 표시해요.</p>
+                )}
                 {completedAt && <small>{completedAt} 생성</small>}
                 <button className="guide-page__schedule-button" type="button" disabled>
                   복용 일정 준비 중
                 </button>
               </Card>
 
-              <Card className="record-card guide-page__guide-card">
-                <span className="guide-page__guide-label">확인된 처방 기준</span>
-                <h2>확인된 복약 안내</h2>
-                <p className="guide-page__guide-intro">
-                  실제 생성된 가이드 원문을 확인해 주세요.
-                </p>
-                <details className="guide-page__disclosure">
-                  <summary>가이드 전체 내용</summary>
-                  <div className="guide-page__guide-text">
-                    {currentGuide.content}
-                  </div>
-                </details>
-              </Card>
+              {structuredGuide ? (
+                <StructuredGuideContent guide={structuredGuide} />
+              ) : (
+                <Card className="record-card guide-page__guide-card">
+                  <span className="guide-page__guide-label">확인된 처방 기준</span>
+                  <h2>확인된 복약 안내</h2>
+                  <p className="guide-page__guide-intro">
+                    원문 형식을 유지해 안전하게 표시해요.
+                  </p>
+                  <details className="guide-page__disclosure">
+                    <summary>가이드 전체 내용</summary>
+                    <div className="guide-page__guide-text">
+                      {currentGuide.content}
+                    </div>
+                  </details>
+                </Card>
+              )}
 
               <div className="notice attention guide-page__notice">
                 이 화면은 생성된 복약 가이드 내용을 표시해요.
