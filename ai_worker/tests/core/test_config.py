@@ -83,11 +83,20 @@ def test_config_has_approved_redis_defaults() -> None:
     assert config.REDIS_HOST == "redis"
     assert config.REDIS_PORT == 6379
     assert config.REDIS_STREAM_NAME == "oryak:jobs"
+    assert config.REDIS_DLQ_STREAM_NAME == "oryak:jobs:dead-letter"
     assert config.REDIS_CONSUMER_GROUP == "ai-workers"
     assert config.REDIS_CONSUMER_NAME == "ai-worker-local"
+    assert config.RECONCILER_CONSUMER_NAME == "ai-worker-reconciler"
     assert config.REDIS_BLOCK_MS == 5000
     assert config.REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS == 5.0
     assert config.REDIS_SOCKET_TIMEOUT_SECONDS == 10.0
+
+    assert config.RECONCILER_MIN_IDLE_MS == 30_000
+    assert config.RECONCILER_BATCH_SIZE == 100
+    assert config.RECONCILER_INTERVAL_SECONDS == 5.0
+
+    assert config.DLQ_OUTBOX_CLAIM_TTL_SECONDS == 30.0
+    assert config.DLQ_PUBLISHER_INTERVAL_SECONDS == 1.0
 
 
 def test_config_accepts_redis_environment_values(
@@ -136,4 +145,41 @@ def test_config_rejects_socket_timeout_not_longer_than_blocking_read(
             _env_file=None,
             REDIS_BLOCK_MS=5000,
             REDIS_SOCKET_TIMEOUT_SECONDS=socket_timeout_seconds,
+        )
+
+
+def test_config_rejects_blank_dlq_stream_name() -> None:
+    with pytest.raises(ValidationError):
+        Config(  # type: ignore[call-arg]
+            _env_file=None,
+            REDIS_DLQ_STREAM_NAME="   ",
+        )
+
+
+def test_config_rejects_blank_reconciler_consumer_name() -> None:
+    with pytest.raises(ValidationError):
+        Config(  # type: ignore[call-arg]
+            _env_file=None,
+            RECONCILER_CONSUMER_NAME="   ",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("RECONCILER_MIN_IDLE_MS", -1),
+        ("RECONCILER_BATCH_SIZE", 0),
+        ("RECONCILER_INTERVAL_SECONDS", 0),
+        ("DLQ_OUTBOX_CLAIM_TTL_SECONDS", 0),
+        ("DLQ_PUBLISHER_INTERVAL_SECONDS", 0),
+    ],
+)
+def test_config_rejects_invalid_recovery_setting(
+    field_name: str,
+    invalid_value: int,
+) -> None:
+    with pytest.raises(ValidationError):
+        Config(  # type: ignore[call-arg]
+            _env_file=None,
+            **{field_name: invalid_value},
         )

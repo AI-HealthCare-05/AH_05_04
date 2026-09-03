@@ -37,9 +37,33 @@ class Config(BaseSettings):
     REDIS_PASSWORD: str | None = None
 
     REDIS_STREAM_NAME: str = "oryak:jobs"
+    REDIS_DLQ_STREAM_NAME: str = "oryak:jobs:dead-letter"
     REDIS_CONSUMER_GROUP: str = "ai-workers"
     REDIS_CONSUMER_NAME: str = "ai-worker-local"
+    RECONCILER_CONSUMER_NAME: str = "ai-worker-reconciler"
     REDIS_BLOCK_MS: int = Field(default=5000, ge=0)
+
+    RECONCILER_MIN_IDLE_MS: int = Field(
+        default=30_000,
+        ge=0,
+    )
+    RECONCILER_BATCH_SIZE: int = Field(
+        default=100,
+        ge=1,
+    )
+    RECONCILER_INTERVAL_SECONDS: float = Field(
+        default=5.0,
+        gt=0,
+    )
+
+    DLQ_OUTBOX_CLAIM_TTL_SECONDS: float = Field(
+        default=30.0,
+        gt=0,
+    )
+    DLQ_PUBLISHER_INTERVAL_SECONDS: float = Field(
+        default=1.0,
+        gt=0,
+    )
     REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
     REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
 
@@ -53,8 +77,10 @@ class Config(BaseSettings):
     @field_validator(
         "REDIS_HOST",
         "REDIS_STREAM_NAME",
+        "REDIS_DLQ_STREAM_NAME",
         "REDIS_CONSUMER_GROUP",
         "REDIS_CONSUMER_NAME",
+        "RECONCILER_CONSUMER_NAME",
     )
     @classmethod
     def _validate_non_empty_redis_setting(cls, value: str) -> str:
