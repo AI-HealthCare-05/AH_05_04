@@ -124,6 +124,45 @@ async def test_local_live_runner_rejects_missing_invalid_or_mismatched_trace(
     assert exc_info.value.evidence["api_code"] == expected_code
 
 
+@pytest.mark.parametrize(
+    ("reason", "expected_reason"),
+    [
+        ("DEADLINE_EXCEEDED", "DEADLINE_EXCEEDED"),
+        ("PROVIDER_TIMEOUT", "PROVIDER_TIMEOUT"),
+        ("SENSITIVE_PROVIDER_DETAIL", None),
+        (123, None),
+    ],
+)
+async def test_local_live_runner_copies_only_allowlisted_api_failure_reason(
+    tmp_path: Path,
+    reason: object,
+    expected_reason: str | None,
+) -> None:
+    runner = _runner(tmp_path)
+    runner._client = FakeClient(  # type: ignore[assignment]
+        [
+            _response(
+                503,
+                {
+                    "code": "OCR_PROVIDER_TIMEOUT",
+                    "trace_id": "7" * 32,
+                    "details": {"reason": reason, "secret": "MUST_NOT_ESCAPE"},
+                },
+                "7" * 32,
+            )
+        ]
+    )
+
+    with pytest.raises(HttpFlowError) as exc_info:
+        await runner._request("OCR_REQUEST", "POST", "/ocr", expected_status=202)
+
+    if expected_reason is None:
+        assert "api_reason" not in exc_info.value.evidence
+    else:
+        assert exc_info.value.evidence["api_reason"] == expected_reason
+    assert "MUST_NOT_ESCAPE" not in str(exc_info.value.evidence)
+
+
 async def test_staging_runner_does_not_send_local_validation_header_or_require_trace(tmp_path: Path) -> None:
     runner = _runner(tmp_path, mode="staging-live")
     client = FakeClient([_response(200, {"data": {}}, None)])
@@ -136,19 +175,56 @@ async def test_staging_runner_does_not_send_local_validation_header_or_require_t
 
 
 def test_local_live_result_requires_manual_provider_log_review_without_claiming_full_evidence() -> None:
-    result = {"execution": "PASS", "provider_traces": {"guide_generation": {"status": "EXPECTED"}}}
+    result = {
+        "execution": "PASS",
+        "provider_traces": {"guide_generation": {"status": "EXPECTED", "trace_id": "3" * 32}},
+    }
 
-    local_result = _apply_local_live_evidence_contract(result, mode="local-live-full")
-    staging_result = _apply_local_live_evidence_contract({"execution": "PASS"}, mode="staging-live")
+    local_result = _apply_local_live_evidence_contract(
+        result,
+        mode="local-live-full",
+        database_verification="PASS",
+    )
+    staging_result = _apply_local_live_evidence_contract(
+        {"execution": "PASS"},
+        mode="staging-live",
+        database_verification="PASS",
+    )
 
     assert local_result == {
         "execution": "PASS",
         "execution_mode": "LIVE",
-        "provider_traces": {"guide_generation": {"status": "EXPECTED"}},
+        "provider_traces": {"guide_generation": {"status": "EXPECTED", "trace_id": "3" * 32}},
         "database_verification": "PASS",
         "provider_log_verification": "MANUAL_REQUIRED",
     }
     assert staging_result == {"execution": "PASS"}
+
+
+@pytest.mark.parametrize(
+    ("database_verification", "provider_traces", "expected_provider_verification"),
+    [
+        ("NOT_RUN", {}, "UNVERIFIED"),
+        ("NOT_RUN", {"prescription_recognition": {"status": "EXPECTED", "trace_id": "2" * 32}}, "MANUAL_REQUIRED"),
+        ("FAIL", {"guide_generation": {"status": "EXPECTED", "trace_id": None}}, "UNVERIFIED"),
+        ("PASS", {"chat_generation": {"status": "EXPECTED", "trace_id": "4" * 32}}, "MANUAL_REQUIRED"),
+    ],
+)
+def test_local_live_failure_reports_only_completed_verification_steps(
+    database_verification: str,
+    provider_traces: dict[str, dict[str, object]],
+    expected_provider_verification: str,
+) -> None:
+    result = _apply_local_live_evidence_contract(
+        {"execution": "FAIL", "provider_traces": provider_traces, "cleanup": "PENDING"},
+        mode="local-live-full",
+        database_verification=database_verification,
+    )
+
+    assert result["execution_mode"] == "LIVE"
+    assert result["database_verification"] == database_verification
+    assert result["provider_log_verification"] == expected_provider_verification
+    assert result["cleanup"] == "PENDING"
 
 
 def test_local_live_failure_preserves_provider_trace_references() -> None:
