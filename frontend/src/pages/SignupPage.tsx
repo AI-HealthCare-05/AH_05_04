@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { signup } from '../api/auth'
@@ -62,17 +62,23 @@ function SignupPage() {
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target
+    const fieldName = name as keyof SignupForm
     setForm((prev) => ({ ...prev, [name]: value }))
-    setFieldErrors((prev) => ({ ...prev, [name]: undefined }))
+    setFieldErrors((prev) => {
+      if (!(fieldName in prev)) return prev
+
+      const next = { ...prev }
+      delete next[fieldName]
+      return next
+    })
     setMessage('')
   }
 
-  useEffect(() => {
-    const firstError = Object.keys(fieldErrors)[0] as keyof SignupForm | undefined
-    if (firstError === 'name') nameInputRef.current?.focus()
-    if (firstError === 'email') emailInputRef.current?.focus()
-    if (firstError === 'password') passwordInputRef.current?.focus()
-  }, [fieldErrors])
+  const focusField = (field: keyof SignupForm | undefined) => {
+    if (field === 'name') nameInputRef.current?.focus()
+    if (field === 'email') emailInputRef.current?.focus()
+    if (field === 'password') passwordInputRef.current?.focus()
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -83,6 +89,7 @@ function SignupPage() {
     if (Object.keys(validationErrors).length > 0) {
       setFieldErrors(validationErrors)
       setMessage('')
+      focusField(Object.keys(validationErrors)[0] as keyof SignupForm | undefined)
       return
     }
 
@@ -106,6 +113,7 @@ function SignupPage() {
         if (emailConflict) {
           setFieldErrors({ email: error.message })
           setMessage('')
+          focusField('email')
         } else {
           setMessage(error.message)
         }
