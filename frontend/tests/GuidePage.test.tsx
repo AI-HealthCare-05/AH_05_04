@@ -128,9 +128,34 @@ describe('GuidePage', () => {
     expect(within(medicationCard!).getByText('1 정').tagName).toBe('DD')
     expect(within(medicationCard!).getByText('하루 횟수').tagName).toBe('DT')
     expect(within(medicationCard!).getByText('하루 1회').tagName).toBe('DD')
+    expect(within(medicationCard!).getByText('복용 시점').tagName).toBe('DT')
+    expect(within(medicationCard!).getByText('아침 저녁 식후').tagName).toBe('DD')
+    expect(within(medicationCard!).getByText('복용 기간').tagName).toBe('DT')
+    expect(within(medicationCard!).getByText('5일').tagName).toBe('DD')
     expect(within(medicationCard!).getByRole('heading', { name: '복약 안내' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '공통 안내' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '안전 안내' })).toBeTruthy()
+    expect(
+      within(medicationCard!).getByText(
+        '처방에 안내된 복용 계획을 확인하고 지켜 주세요.',
+      ),
+    ).toBeTruthy()
+    const commonNotice = screen
+      .getByRole('heading', { name: '공통 안내' })
+      .closest('aside')
+    expect(commonNotice).not.toBeNull()
+    expect(
+      within(commonNotice!).getByText(
+        '불명확한 내용은 의료진 또는 약사에게 확인해 주세요.',
+      ),
+    ).toBeTruthy()
+    const safetyNotice = screen
+      .getByRole('heading', { name: '안전 안내' })
+      .closest('aside')
+    expect(safetyNotice).not.toBeNull()
+    expect(
+      within(safetyNotice!).getByText(
+        '임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요.',
+      ),
+    ).toBeTruthy()
     expect(screen.getByRole('list', { name: '확인된 복용 시점' })).toBeTruthy()
     expect(screen.queryByText('가이드 전체 내용')).toBeNull()
   })
@@ -164,8 +189,43 @@ describe('GuidePage', () => {
     renderPage()
 
     expect(await screen.findByText('가이드 전체 내용')).toBeTruthy()
+    expect(document.querySelector('.guide-page__guide-text')?.textContent).toBe(
+      content,
+    )
+    expect(screen.queryByText(/확인된 약 목록/)).toBeNull()
+  })
+
+  it('뒤쪽 약이 malformed이면 앞쪽 약만 카드로 표시하지 않고 원문 전체로 fallback한다', async () => {
+    const content = [
+      '복약 가이드',
+      [
+        '[1] 합성 처방약 1',
+        '용량: 1 정',
+        '복용 횟수: 하루 1회',
+        '복용 시점: 아침 식후',
+        '복용 기간: 5일',
+        '복약 안내: 처방에 안내된 복용 계획을 지켜 주세요.',
+      ].join('\n'),
+      [
+        '[2] 합성 처방약 2',
+        '용량: 1 정',
+        '복용 횟수: 하루 2회',
+        '복용 시점 저녁 식후',
+        '복용 기간: 7일',
+        '복약 안내: 처방에 안내된 복용 계획을 지켜 주세요.',
+      ].join('\n'),
+      '공통 안내: 불명확한 내용은 의료진에게 확인해 주세요.\n안전 안내: 임의로 복용을 변경하지 마세요.',
+    ].join('\n\n')
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', content),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('가이드 전체 내용')).toBeTruthy()
     expect(document.querySelector('.guide-page__guide-text')?.textContent).toBe(content)
     expect(screen.queryByText(/확인된 약 목록/)).toBeNull()
+    expect(document.querySelectorAll('.guide-page__medication-card')).toHaveLength(0)
   })
 
   it('실제 Guide 조회 응답의 평문 content를 표시한다', async () => {
