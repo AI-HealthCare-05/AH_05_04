@@ -332,6 +332,11 @@ Every Case uses `dataset_code=rag-holdout-safety`, `dataset_version=1.0.0`, a ca
 task-specific expected-value model consumed through Schema Set `1.2.0`. Non-applicable expected fields remain
 explicitly `null` as required by that contract.
 
+`input_sha256` is the canonical hash of each Case's `query` and `context`, not just the user-visible query text.
+`context.runtime_fixture.source_snapshot_ref.hash` is intentionally part of that context; consequently, rebinding
+the Evidence Mapping provenance changes every affected Case input hash and requires the complete downstream graph
+to be recomputed. This is an integrity boundary, not a change to the Case's user-facing question or Gold value.
+
 The OTC Candidate-skips archetype uses valid `MATCHED_RULES` input, non-empty expected Rule IDs, and a Gold
 requirement that the Rule be invoked before RAG. Candidate non-invocation is the failure detected by the
 evaluator; `NOT_INVOKED` is not the expected Gold outcome for those two Cases.
