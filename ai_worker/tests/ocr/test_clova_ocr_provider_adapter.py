@@ -1,5 +1,7 @@
 """기존 CLOVA OCR Engine과 Worker Handler 사이의 Adapter 테스트입니다."""
 
+import asyncio
+import time
 from dataclasses import dataclass
 
 import pytest
@@ -77,6 +79,30 @@ class FailingOcrEngine:
         raise self._error
 
 
+class HangingOcrEngine:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def recognize(
+        self,
+        *,
+        object_key: str,
+        file_mime_type: str,
+        deadline: OcrDeadline,
+    ) -> OcrRecognitionResult:
+        _ = object_key, file_mime_type, deadline
+        self.started.set()
+
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+        raise AssertionError("Engine 실행이 취소되지 않았습니다.")
+
+
 @pytest.mark.asyncio
 async def test_clova_adapter_forwards_only_minimum_provider_input() -> None:
     engine = FakeOcrEngine(
@@ -96,7 +122,10 @@ async def test_clova_adapter_forwards_only_minimum_provider_input() -> None:
             prompt_version=None,
         )
     )
-    adapter = ClovaOcrProviderAdapter(engine)
+    adapter = ClovaOcrProviderAdapter(
+        engine,
+        clock=lambda: 1000.0,
+    )
 
     result = await adapter.recognize(
         object_key="synthetic/input.png",
@@ -160,7 +189,10 @@ async def test_clova_adapter_normalizes_existing_engine_errors(
     engine_error: Exception,
     expected_error_type: type[Exception],
 ) -> None:
-    adapter = ClovaOcrProviderAdapter(FailingOcrEngine(engine_error))
+    adapter = ClovaOcrProviderAdapter(
+        FailingOcrEngine(engine_error),
+        clock=lambda: 1000.0,
+    )
 
     with pytest.raises(expected_error_type) as exc_info:
         await adapter.recognize(
@@ -187,7 +219,10 @@ async def test_clova_adapter_rejects_invalid_input_before_engine_call(
     file_mime_type: str,
 ) -> None:
     engine = FakeOcrEngine(OcrRecognitionResult())
-    adapter = ClovaOcrProviderAdapter(engine)
+    adapter = ClovaOcrProviderAdapter(
+        engine,
+        clock=lambda: 1000.0,
+    )
 
     with pytest.raises(WorkerOcrProviderInputError):
         await adapter.recognize(
@@ -265,7 +300,10 @@ async def test_clova_adapter_rejects_invalid_normalized_result(
             engine_name="CLOVA_OCR",
         )
     )
-    adapter = ClovaOcrProviderAdapter(engine)
+    adapter = ClovaOcrProviderAdapter(
+        engine,
+        clock=lambda: 1000.0,
+    )
 
     with pytest.raises(expected_error_type):
         await adapter.recognize(
@@ -275,3 +313,43 @@ async def test_clova_adapter_rejects_invalid_normalized_result(
         )
 
     assert len(engine.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_clova_adapter_enforces_absolute_deadline() -> None:
+    engine = HangingOcrEngine()
+    adapter = ClovaOcrProviderAdapter(
+        engine,
+        clock=time.monotonic,
+    )
+
+    with pytest.raises(WorkerOcrProviderTimeoutError):
+        await asyncio.wait_for(
+            adapter.recognize(
+                object_key="synthetic/input.png",
+                file_mime_type="image/png",
+                deadline=time.monotonic() + 0.01,
+            ),
+            timeout=1,
+        )
+
+    assert engine.started.is_set()
+    assert engine.cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_clova_adapter_rejects_expired_deadline_before_engine_call() -> None:
+    engine = FakeOcrEngine(OcrRecognitionResult())
+    adapter = ClovaOcrProviderAdapter(
+        engine,
+        clock=lambda: 1000.0,
+    )
+
+    with pytest.raises(WorkerOcrProviderTimeoutError):
+        await adapter.recognize(
+            object_key="synthetic/input.png",
+            file_mime_type="image/png",
+            deadline=1000.0,
+        )
+
+    assert engine.calls == []

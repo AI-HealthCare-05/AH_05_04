@@ -1,6 +1,9 @@
 """기존 CLOVA OCR Engine을 Worker Provider 계약에 연결합니다."""
 
+import asyncio
 import math
+import time
+from collections.abc import Callable
 
 from ai_worker.tasks.ocr.handler import (
     OcrProviderInputError,
@@ -50,8 +53,14 @@ class ClovaOcrProviderAdapter:
         }
     )
 
-    def __init__(self, engine: OcrEngine) -> None:
+    def __init__(
+        self,
+        engine: OcrEngine,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._engine = engine
+        self._clock = clock
 
     async def recognize(
         self,
@@ -69,14 +78,13 @@ class ClovaOcrProviderAdapter:
         normalized_error: Exception | None = None
 
         try:
-            engine_result = await self._engine.recognize(
+            engine_result = await self._recognize_before_deadline(
                 object_key=object_key,
                 file_mime_type=file_mime_type,
-                deadline=OcrDeadline(
-                    provider_path_deadline=deadline,
-                ),
+                deadline=deadline,
             )
         except (
+            TimeoutError,
             OcrDeadlineExceededError,
             OcrProviderTimeoutError,
         ):
@@ -98,6 +106,29 @@ class ClovaOcrProviderAdapter:
             raise OcrProviderSchemaError()
 
         return self._normalize_result(engine_result)
+
+    async def _recognize_before_deadline(
+        self,
+        *,
+        object_key: str,
+        file_mime_type: str,
+        deadline: float,
+    ) -> OcrRecognitionResult:
+        """Engine 전체 실행을 absolute deadline 안으로 제한합니다."""
+
+        remaining_seconds = deadline - self._clock()
+
+        if remaining_seconds <= 0:
+            raise TimeoutError
+
+        async with asyncio.timeout(remaining_seconds):
+            return await self._engine.recognize(
+                object_key=object_key,
+                file_mime_type=file_mime_type,
+                deadline=OcrDeadline(
+                    provider_path_deadline=deadline,
+                ),
+            )
 
     @classmethod
     def _normalize_result(
