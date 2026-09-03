@@ -144,6 +144,7 @@ services:
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
 
     environment:
+      ENV: ${ENV}
       TIMEZONE: ${TIMEZONE:-Asia/Seoul}
 
       # Worker에는 Runtime DB 자격 증명만 주입합니다.

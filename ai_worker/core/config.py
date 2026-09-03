@@ -6,6 +6,8 @@ from typing import Self
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from provider_contracts.observability import DeploymentEnvironment
+
 
 def _get_default_timezone() -> tzinfo:
     # 로컬 Windows 개발 환경에 tzdata가 없어도 Asia/Seoul 기준 시간을 쓸 수 있게 하는 fallback입니다
@@ -31,6 +33,7 @@ def _parse_timezone(value: str) -> tzinfo:
 class Config(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="allow")
 
+    ENV: DeploymentEnvironment
     TIMEZONE: tzinfo = field(default_factory=_get_default_timezone)
     REDIS_HOST: str = "redis"
     REDIS_PORT: int = Field(default=6379, ge=1, le=65535)
