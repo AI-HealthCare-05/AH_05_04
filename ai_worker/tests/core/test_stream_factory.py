@@ -12,11 +12,13 @@ from ai_worker.adapters.factory import (
 )
 from ai_worker.adapters.redis_stream import RedisStreamAdapter
 from ai_worker.core.config import Config
+from provider_contracts.observability import DeploymentEnvironment
 
 
 def test_create_redis_client_uses_worker_config() -> None:
     config = Config(  # type: ignore[call-arg]
         _env_file=None,
+        ENV=DeploymentEnvironment.LOCAL,
         REDIS_HOST="redis-test",
         REDIS_PORT=6380,
         REDIS_PASSWORD="synthetic-password",
@@ -47,6 +49,7 @@ def test_create_redis_client_uses_worker_config() -> None:
 async def test_create_stream_adapter_uses_stream_config() -> None:
     config = Config(  # type: ignore[call-arg]
         _env_file=None,
+        ENV=DeploymentEnvironment.LOCAL,
         REDIS_STREAM_NAME="test:jobs",
         REDIS_CONSUMER_GROUP="test-workers",
     )
