@@ -51,7 +51,7 @@ repository와 Candidate Resolver 판정은 구현하지 않고 protocol 뒤에 �
 - 출력: `CandidateIndexBuildFailure` 또는 후속 Task가 완성할 `CandidateIndexBuildSuccess`
 - 생성 함수: `build_candidate_index(catalog, config, embedding_port=None)`
 
-- [ ] **Step 1: 실패 enum과 최소 Catalog fixture를 요구하는 테스트 작성**
+- [x] **Step 1: 실패 enum과 최소 Catalog fixture를 요구하는 테스트 작성**
 
 ```python
 from dataclasses import replace
@@ -77,7 +77,7 @@ def test_unapproved_catalog_fails_without_partial_output() -> None:
     assert not hasattr(result, "manifest")
 ```
 
-- [ ] **Step 2: 테스트가 올바른 이유로 실패하는지 확인**
+- [x] **Step 2: 테스트가 올바른 이유로 실패하는지 확인**
 
 실행:
 
@@ -88,7 +88,7 @@ uv run pytest ai_worker/tests/rag/test_candidate_index.py::test_unapproved_catal
 기대 결과: `ai_worker.tasks.rag.candidate_index`가 없어 collection error가 발생한다. 테스트 파일 import와
 이름 오타를 제거한 뒤에도 production module 부재 때문에 실패하는 것을 확인한다.
 
-- [ ] **Step 3: enum과 불변 입력·실패 타입의 최소 구현 추가**
+- [x] **Step 3: enum과 불변 입력·실패 타입의 최소 구현 추가**
 
 ```python
 from dataclasses import dataclass
@@ -122,7 +122,7 @@ class CandidateIndexBuildFailure:
 정의한다. `build_candidate_index(...)`는 승인, freshness, completeness, SHA-256 형식과 설정
 nullability를 먼저 검증하고 정확한 failure reason을 반환한다.
 
-- [ ] **Step 4: Catalog envelope와 config negative matrix 추가**
+- [x] **Step 4: Catalog envelope와 config negative matrix 추가**
 
 ```python
 @pytest.mark.parametrize(
@@ -145,7 +145,7 @@ def test_catalog_envelope_fails_closed(catalog, reason) -> None:
 `LEXICAL_ONLY`에 embedding 필드가 있거나 `HYBRID`에 provider/model/version/dimension/COSINE 설정이
 빠진 경우 `BUILD_CONFIG_INVALID`인지 별도 parameterized test로 고정한다.
 
-- [ ] **Step 5: Task 1 테스트와 정적 검사를 통과시킨다**
+- [x] **Step 5: Task 1 테스트와 정적 검사를 통과시킨다**
 
 ```bash
 uv run pytest ai_worker/tests/rag/test_candidate_index.py -q
@@ -153,7 +153,7 @@ uv run ruff check ai_worker/tasks/rag/candidate_index.py ai_worker/tests/rag/tes
 uv run mypy ai_worker/tasks/rag/candidate_index.py
 ```
 
-- [ ] **Step 6: Task 1 커밋**
+- [x] **Step 6: Task 1 커밋**
 
 ```bash
 git add ai_worker/tasks/rag/candidate_index.py ai_worker/tests/rag/test_candidate_index.py
