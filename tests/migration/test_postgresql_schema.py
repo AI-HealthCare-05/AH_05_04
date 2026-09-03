@@ -937,3 +937,43 @@ async def test_confirmed_required_ocr_field_rejects_null(
                 )
         finally:
             await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_user_account_lifecycle_columns_default_to_active(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """PD-206: 신규 계정은 `account_status=ACTIVE`, `token_version=0`으로 시작하고,
+    기존 계정도 이 migration으로 같은 기본값을 갖게 됩니다."""
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            user_id = str(uuid4())
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO "user" (id, email, hashed_password, name, is_active, is_admin)
+                    VALUES (:id, :email, 'hashed', '테스트 사용자', true, false)
+                    """
+                ),
+                {"id": user_id, "email": f"u{uuid4().hex[:12]}@t.local"},
+            )
+
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT account_status, withdrawal_requested_at, withdrawn_at, token_version
+                    FROM "user"
+                    WHERE id = :id
+                    """
+                ),
+                {"id": user_id},
+            )
+            row = result.one()
+        finally:
+            await transaction.rollback()
+
+    assert row.account_status == "ACTIVE"
+    assert row.withdrawal_requested_at is None
+    assert row.withdrawn_at is None
+    assert row.token_version == 0

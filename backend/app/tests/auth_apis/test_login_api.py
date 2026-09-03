@@ -73,6 +73,18 @@ class TestLoginAPI:
         assert response.headers["www-authenticate"] == "Bearer"
         assert response.headers.get_list("cache-control") == ["no-store"]
 
+    async def test_login_rejects_email_over_max_length(self):
+        login_data = {
+            "email": f"{'a' * 32}@example.com",
+            "password": "Password123!",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/auth/login", json=login_data)
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_FAILED"
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
     async def test_login_rejects_wrong_password_for_existing_user(self):
         signup_data = {
             "email": "wrong_password@example.com",

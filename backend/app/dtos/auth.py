@@ -17,7 +17,10 @@ class SignUpRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: Annotated[
+        EmailStr,
+        Field(max_length=40),
+    ]
     password: Annotated[str, Field(min_length=8)]
 
 

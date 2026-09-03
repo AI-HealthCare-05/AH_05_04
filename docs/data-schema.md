@@ -56,10 +56,17 @@ DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함�
 | `gender` | `ENUM('MALE', 'FEMALE')` | Yes | Post-MVP 추가 정보 입력 대상                                                 |
 | `birthday` | `DATE` | Yes | Post-MVP 추가 정보 입력 대상                                                 |
 | `phone_number` | `VARCHAR(20)` | Yes | Post-MVP 추가 정보 입력 대상. unique                                         |
+| `is_active` | `BOOLEAN` | No | 로그인 가능 여부. `account_status`가 `ACTIVE`가 아니면 함께 `false` |
+| `account_status` | `VARCHAR(25)` | No | 계정 상태. `ACTIVE`, `WITHDRAWAL_REQUESTED`, `WITHDRAWN` |
+| `withdrawal_requested_at` | timezone datetime | Yes | 회원탈퇴 요청 시각 |
+| `withdrawn_at` | timezone datetime | Yes | 회원탈퇴 완료 시각 |
+| `token_version` | `INTEGER` | No | 로그아웃·비밀번호 재설정·회원탈퇴 시 증가하는 세션 무효화 카운터. 기본값 `0` |
 
 MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 
 이메일은 회원가입, 로그인 및 내 정보 수정 시 Backend에서 소문자로 정규화합니다. DB에는 정규화된 값만 저장하며, 조회 API도 저장된 소문자 값을 반환합니다. 이메일 unique와 중복 판정 역시 정규화된 값을 기준으로 적용하므로 대소문자만 다른 이메일은 동일하게 취급합니다.
+
+access token과 refresh token에는 발급 시점의 `token_version`을 포함합니다. 인증된 요청과 `GET /api/v1/auth/token/refresh`는 DB의 `user.token_version`, `account_status`, `is_active`를 다시 확인하며, 로그아웃은 `token_version`을 DB에서 원자적으로 `+1`하고 `refresh_token` 쿠키를 삭제합니다.
 
 ## PROFILE SELF 소유권
 

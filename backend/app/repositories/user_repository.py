@@ -4,7 +4,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import EmailStr
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -204,6 +204,18 @@ class UserRepository:
         if user is not None:
             user.last_login = datetime.now(config.TIMEZONE)
             await self.session.flush()
+
+    async def increment_token_version(
+        self,
+        user: User,
+    ) -> None:
+        await self.session.execute(
+            update(User)
+            .where(User.id == user.id)
+            .values(
+                token_version=User.token_version + 1,
+            )
+        )
 
     async def update_instance(
         self,
