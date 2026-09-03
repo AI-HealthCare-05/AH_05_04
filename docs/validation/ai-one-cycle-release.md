@@ -25,6 +25,7 @@ Frontend E2E 또는 Production 배포 승인이 아닙니다. `local-live-ai`는
 - [ ] 실제 Provider 호출 비용이 발생하는 local live 실행임을 operator가 확인했습니다.
 - [ ] runner의 `OCR_STRUCTURE_LLM_ENABLED`, `CLOVA_OCR_TIMEOUT_SECONDS`, `OCR_STRUCTURE_TIMEOUT_SECONDS`, `OPENAI_TIMEOUT_SECONDS`가 검증 대상 Backend 설정과 일치합니다.
 - [ ] `local-live-full` 실행 전 Backend process에도 별도로 `ENV=local`, `RELEASE_VALIDATION_ALLOWED=true`를 주입했습니다. runner의 같은 이름 설정은 Backend 설정을 대신하거나 증명하지 않습니다.
+- [ ] runner의 `RELEASE_VALIDATION_ALLOWED`는 raw 문자열 `true` 또는 `1`만 허용하며, 공백/대소문자 변경은 허용하지 않습니다. 이는 Backend의 boolean 설정 파싱 계약을 변경하지 않습니다.
 - [ ] Backend stdout Provider log의 접근·발췌·보존 범위와 지정 수동 검토자를 Security·Privacy 책임자가 승인했습니다.
 - [ ] one-cycle read timeout은 `max(C + E × S, T) + 5초`로 계산됩니다.
 

@@ -1031,8 +1031,9 @@
 
 .prescription-review__medication-values dt {
   color: #475167;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
+  line-height: 16px;
 }
 
 .prescription-review__medication-values dd {
