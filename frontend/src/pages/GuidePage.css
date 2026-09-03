@@ -84,6 +84,34 @@
   line-height: 1.65;
 }
 
+.guide-page__timing-list {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-page__timing-list li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+  gap: 16px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-top: 1px solid rgb(255 255 255 / 28%);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.guide-page__timing-list span {
+  color: rgb(255 255 255 / 78%);
+  overflow-wrap: anywhere;
+}
+
+.guide-page__timing-list strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .guide-page__hero small {
   display: block;
   margin-top: 14px;
@@ -122,6 +150,112 @@
 
 .guide-page__guide-label {
   color: var(--ds-action);
+}
+
+.guide-page__structured-guide {
+  margin-top: 22px;
+}
+
+.guide-page__structured-guide > h2 {
+  margin: 0 0 14px;
+  font-size: 17px;
+}
+
+.guide-page__medication-list {
+  display: grid;
+  gap: 12px;
+}
+
+.guide-page__medication-card {
+  min-width: 0;
+  padding: 20px 16px;
+  border: 1px solid var(--ds-line);
+  border-radius: 14px;
+  background: var(--ds-surface);
+}
+
+.guide-page__medication-card h3 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.guide-page__medication-details {
+  margin: 0;
+}
+
+.guide-page__medication-details > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(84px, auto) minmax(0, 1fr);
+  gap: 16px;
+  align-items: baseline;
+  padding: 11px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.guide-page__medication-details dt {
+  color: #343b45;
+  font-size: 14px;
+}
+
+.guide-page__medication-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ds-text);
+  font-size: 15px;
+  font-weight: 800;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.guide-page__medication-notice {
+  margin: 14px 0 0;
+  color: var(--ds-attention);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.guide-page__guidance {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #eef4fd;
+}
+
+.guide-page__guidance h4,
+.guide-page__common-notice h3,
+.guide-page__safety-notice h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.guide-page__guidance p,
+.guide-page__common-notice p,
+.guide-page__safety-notice p {
+  margin: 7px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.guide-page__common-notice,
+.guide-page__safety-notice {
+  margin-top: 12px;
+  padding: 15px;
+  border: 1px solid #dbe6f4;
+  border-radius: 12px;
+  background: #f7f9fc;
+}
+
+.guide-page__safety-notice {
+  border-color: #ead9a6;
+  background: #fff9e7;
+}
+
+.guide-page__safety-notice h3 {
+  color: #9a4d00;
 }
 
 .guide-page__guide-intro {

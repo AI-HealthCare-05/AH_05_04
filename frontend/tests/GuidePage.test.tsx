@@ -1,4 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -63,6 +71,26 @@ function completedGuideResponse(
   }
 }
 
+function structuredGuideContent(medicationCount = 1) {
+  const medications = Array.from({ length: medicationCount }, (_, index) => {
+    const number = index + 1
+    return [
+      `[${number}] 합성 처방약 ${number} 매우 긴 이름`,
+      '용량: 1 정',
+      `복용 횟수: 하루 ${number}회`,
+      '복용 시점: 아침 저녁 식후',
+      `복용 기간: ${number + 4}일`,
+      '복약 안내: 처방에 안내된 복용 계획을 확인하고 지켜 주세요.',
+    ].join('\n')
+  })
+
+  return [
+    '복약 가이드',
+    ...medications,
+    '공통 안내: 불명확한 내용은 의료진 또는 약사에게 확인해 주세요.\n안전 안내: 임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요.',
+  ].join('\n\n')
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -82,6 +110,64 @@ afterEach(() => {
 })
 
 describe('GuidePage', () => {
+  it('표준 Guide 원문을 약별 카드와 의미 있는 라벨 구조로 표시한다', async () => {
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', structuredGuideContent()),
+    )
+
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
+    ).toBeTruthy()
+    const medicationCard = screen
+      .getByRole('heading', { name: '합성 처방약 1 매우 긴 이름' })
+      .closest('article')
+    expect(medicationCard).not.toBeNull()
+    expect(within(medicationCard!).getByText('1회량').tagName).toBe('DT')
+    expect(within(medicationCard!).getByText('1 정').tagName).toBe('DD')
+    expect(within(medicationCard!).getByText('하루 횟수').tagName).toBe('DT')
+    expect(within(medicationCard!).getByText('하루 1회').tagName).toBe('DD')
+    expect(within(medicationCard!).getByRole('heading', { name: '복약 안내' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '공통 안내' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '안전 안내' })).toBeTruthy()
+    expect(screen.getByRole('list', { name: '확인된 복용 시점' })).toBeTruthy()
+    expect(screen.queryByText('가이드 전체 내용')).toBeNull()
+  })
+
+  it('약이 4개 이상이어도 모든 약을 독립된 카드로 표시한다', async () => {
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', structuredGuideContent(4)),
+    )
+
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 4개' }),
+    ).toBeTruthy()
+    for (let number = 1; number <= 4; number += 1) {
+      expect(
+        screen.getByRole('heading', {
+          name: `합성 처방약 ${number} 매우 긴 이름`,
+        }),
+      ).toBeTruthy()
+    }
+    expect(document.querySelectorAll('.guide-page__medication-card')).toHaveLength(4)
+  })
+
+  it('예상하지 못한 Guide 형식은 원문을 생략하지 않고 평문으로 표시한다', async () => {
+    const content = '자유 형식 제목\n예상하지 못한 항목: 그대로 보존\n마지막 안내'
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', content),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('가이드 전체 내용')).toBeTruthy()
+    expect(document.querySelector('.guide-page__guide-text')?.textContent).toBe(content)
+    expect(screen.queryByText(/확인된 약 목록/)).toBeNull()
+  })
+
   it('실제 Guide 조회 응답의 평문 content를 표시한다', async () => {
     vi.mocked(getGuide).mockResolvedValue({
       data: {
