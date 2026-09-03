@@ -309,9 +309,9 @@ def build_artifact_draft(material: RunMaterial) -> ArtifactDraft:
     )
 
 
-def build_content_manifest(run_id: str, files: Mapping[str, bytes]) -> tuple[ContentManifest, bytes]:
+def content_artifact_entries(files: Mapping[str, bytes]) -> tuple[ContentArtifact, ...]:
     excluded = {"run.json", "result-content-manifest.json"}
-    entries = tuple(
+    return tuple(
         ContentArtifact(
             relative_path=cast(ContentArtifactPath, path),
             sha256=sha256_hex(files[path]),
@@ -319,6 +319,10 @@ def build_content_manifest(run_id: str, files: Mapping[str, bytes]) -> tuple[Con
         )
         for path in sorted((set(files) - excluded), key=lambda value: value.encode("utf-16-be"))
     )
+
+
+def build_content_manifest(run_id: str, files: Mapping[str, bytes]) -> tuple[ContentManifest, bytes]:
+    entries = content_artifact_entries(files)
     payload: dict[str, JsonValue] = {
         "schema_id": "rag-eval.content-manifest",
         "schema_version": "1.0.0",
@@ -336,19 +340,23 @@ def build_content_manifest(run_id: str, files: Mapping[str, bytes]) -> tuple[Con
     return manifest, canonical_json_bytes(cast(JsonValue, manifest.model_dump(mode="json")))
 
 
+def machine_artifact_files(draft: ArtifactDraft) -> dict[str, bytes]:
+    return {
+        "cases.jsonl": serialize_jsonl(draft.cases),
+        "metrics.json": canonical_json_bytes(cast(JsonValue, draft.metrics.model_dump(mode="json"))),
+        "suite-results.json": canonical_json_bytes(cast(JsonValue, draft.suite_results.model_dump(mode="json"))),
+        "failures.jsonl": serialize_jsonl(draft.failures),
+    }
+
+
 def finalize_artifacts(
     draft: ArtifactDraft,
     report_bytes: bytes,
     *,
     completed_at: str,
 ) -> PublishedArtifacts:
-    files: dict[str, bytes] = {
-        "cases.jsonl": serialize_jsonl(draft.cases),
-        "metrics.json": canonical_json_bytes(cast(JsonValue, draft.metrics.model_dump(mode="json"))),
-        "suite-results.json": canonical_json_bytes(cast(JsonValue, draft.suite_results.model_dump(mode="json"))),
-        "failures.jsonl": serialize_jsonl(draft.failures),
-        "report.md": report_bytes,
-    }
+    files = machine_artifact_files(draft)
+    files["report.md"] = report_bytes
     content_manifest, content_bytes = build_content_manifest(draft.report_data.run_id, files)
     run_payload = dict(draft.run_payload)
     if draft.report_data.execution_status is ExecutionStatus.COMPLETED:
