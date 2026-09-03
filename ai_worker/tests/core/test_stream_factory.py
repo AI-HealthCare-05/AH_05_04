@@ -19,6 +19,10 @@ def test_create_redis_client_uses_worker_config() -> None:
     config = Config(  # type: ignore[call-arg]
         _env_file=None,
         ENV=DeploymentEnvironment.LOCAL,
+        DB_HOST="127.0.0.1",
+        DB_NAME="test",
+        DB_USER="worker",
+        DB_PASSWORD="worker-password",
         REDIS_HOST="redis-test",
         REDIS_PORT=6380,
         REDIS_PASSWORD="synthetic-password",
@@ -50,6 +54,10 @@ async def test_create_stream_adapter_uses_stream_config() -> None:
     config = Config(  # type: ignore[call-arg]
         _env_file=None,
         ENV=DeploymentEnvironment.LOCAL,
+        DB_HOST="127.0.0.1",
+        DB_NAME="test",
+        DB_USER="worker",
+        DB_PASSWORD="worker-password",
         REDIS_STREAM_NAME="test:jobs",
         REDIS_CONSUMER_GROUP="test-workers",
     )
