@@ -12,7 +12,6 @@ from sqlalchemy.engine import URL
 
 from provider_contracts.observability import DeploymentEnvironment as Env
 
-
 # IDEMPOTENCY_HMAC_KEY 필드 기본값과 envs/example.prod.env·example.local.env에 공개된 예시
 # 값입니다. 전부 저장소에 노출돼 있어 실제 비밀값이 아니므로, non-local 환경 기동 시 그대로
 # 쓰이면 거부해야 합니다(예: local 템플릿 값을 실수로 staging 설정에 복사하는 경로 차단).

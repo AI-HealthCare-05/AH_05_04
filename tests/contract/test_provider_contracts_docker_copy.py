@@ -25,6 +25,8 @@ def test_image_copies_provider_contracts_package(dockerfile: Path) -> None:
 def test_production_worker_receives_required_environment() -> None:
     compose_file = PROJECT_ROOT / "infra" / "docker" / "docker-compose.prod.yml"
     worker_service = compose_file.read_text(encoding="utf-8").split("  ai-worker:\n", maxsplit=1)[1]
-    worker_environment = worker_service.split("    environment:\n", maxsplit=1)[1].split("\n    restart:", maxsplit=1)[0]
+    worker_environment = worker_service.split("    environment:\n", maxsplit=1)[1].split("\n    restart:", maxsplit=1)[
+        0
+    ]
 
     assert "      ENV: ${ENV}" in worker_environment
