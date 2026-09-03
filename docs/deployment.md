@@ -8,7 +8,7 @@
 
 ## Production 운영 책임 체계
 
-아래 역할은 제품·공개 게이트 승인, 기술 승인·실행, 도메인별 운영 검증을 분리한다. 담당자가 `미정`이거나 대체 담당자·실행 권한·증빙 위치가 비어 있는 역할이 하나라도 있으면 Production 배포를 승인하거나 시작하지 않는다. 팀 내부 검토는 외부 의료·약학·Privacy·Source 승인이나 Production 공개 승인을 대체하지 않는다.
+아래 역할은 제품·공개 게이트 승인, 기술 승인·실행, 도메인별 운영 검증을 분리한다. 담당자가 `미정`이거나 대체 담당자·증빙 위치 또는 해당 역할 수행에 필요한 접근·승인·실행 권한이 비어 있는 역할이 하나라도 있으면 Production 배포를 승인하거나 시작하지 않는다. 실제 배포 명령과 Rollback 명령의 실행 권한은 각각 `배포 실행`과 `Rollback 실행` 담당자에게만 요구하며, 제품 담당자와 도메인별 운영 검증 담당자에게 자동으로 부여하지 않는다. 팀 내부 검토는 외부 의료·약학·Privacy·Source 승인이나 Production 공개 승인을 대체하지 않는다.
 
 | 역할 | 주 담당 | 대체 담당 | 권한과 책임 | 현재 상태·선행조건 |
 | --- | --- | --- | --- | --- |
@@ -48,17 +48,19 @@
 
 ### 운영 증빙 기록
 
-배포마다 아래 기록을 해당 배포 PR에 정본으로 남기고 이 문서의 환경별 기록에서 링크한다. 별도 incident·복구 Issue가 필요하면 배포 PR에서 양방향으로 연결한다. API Key, token, 비밀번호, 실제 환자 정보와 원본 의료문서는 기록하지 않는다.
+배포마다 아래 기록을 해당 배포 PR에 정본으로 남기고 이 문서의 환경별 기록에서 링크한다. `모든 배포`는 현재 동기 경로에도 필수이고, `Outbox·Worker Production 적용 이후`는 DB Outbox publisher와 reclaim·retry·DLQ 경로를 구현·검증하여 Production에 적용한 뒤에만 추가로 필수이다. 별도 incident·복구 Issue가 필요하면 배포 PR에서 양방향으로 연결한다. API Key, token, 비밀번호, 실제 환자 정보와 원본 의료문서는 기록하지 않는다.
 
-| 구간 | 필수 기록 |
-| --- | --- |
-| 배포 전 | 대상 환경, commit/image digest, migration revision, 승인자·승인 시각, 외부 승인·공개 게이트 상태, rollback 대상 버전 |
-| 배포 실행 | 실행자·실행 시각, 적용 순서, health check 결과, 비민감 로그·CI·배포 실행 링크 |
-| 배포 후 관제 | 관제 총괄·도메인별 검증 담당자·관찰 시간, API 오류율·latency·DB·Provider 상태, Stream PEL·예약 retry, `DLQ_OUTBOX_EVENT`의 `PENDING\|CLAIMED`, 신규 `MESSAGE_QUARANTINE`, non-terminal `AI_JOB` 적체와 중단 조건 충족 여부 |
-| Rollback 판단 | 제품 중단·비공개 판단자와 기술 Rollback 판단자, 각 판단 시각, 발동 조건, 영향 범위, 애플리케이션 rollback 또는 DB forward-fix 결정과 근거 |
-| Rollback 실행 | 실행자·실행 시각, 복구 애플리케이션 버전, Stream PEL·예약 retry drain과 구·신 Consumer 호환 확인, Production DB 무-downgrade·forward-fix 처리, 복구 health check와 후속 Issue |
+| 구간 | 적용 범위 | 필수 기록 |
+| --- | --- | --- |
+| 배포 전 | 모든 배포 | 대상 환경, commit/image digest, migration revision, 승인자·승인 시각, 외부 승인·공개 게이트 상태, rollback 대상 버전 |
+| 배포 실행 | 모든 배포 | 실행자·실행 시각, 적용 순서, health check 결과, 비민감 로그·CI·배포 실행 링크 |
+| 배포 후 관제 | 모든 배포 | 관제 총괄·도메인별 검증 담당자·관찰 시간, API 오류율·latency·DB·Provider 상태와 현재 배포 범위에 구현된 중단 조건 충족 여부 |
+| 배포 후 관제 | Outbox·Worker Production 적용 이후 | Stream PEL·예약 retry, `DLQ_OUTBOX_EVENT`의 `PENDING\|CLAIMED`, 신규 `MESSAGE_QUARANTINE`, non-terminal `AI_JOB` 적체와 해당 비동기 중단 조건 충족 여부 |
+| Rollback 판단 | 모든 배포 | 제품 중단·비공개 판단자와 기술 Rollback 판단자, 각 판단 시각, 발동 조건, 영향 범위, 애플리케이션 rollback 또는 DB forward-fix 결정과 근거 |
+| Rollback 실행 | 모든 배포 | 실행자·실행 시각, 복구 애플리케이션 버전, Production DB 무-downgrade·forward-fix 처리, 복구 health check와 후속 Issue |
+| Rollback 실행 | Outbox·Worker Production 적용 이후 | Stream PEL·예약 retry drain과 구·신 Consumer 호환 확인 |
 
-[Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)은 **Approved Target·Not implemented** 상태이며 현재 runtime 동작을 증명하지 않는다. 해당 target을 구현하고 Production에 적용하기 전에 계약과 테스트를 동기화하고 아래 관제·호환 조건을 검증한다. 목표 계약은 DLQ publish 실패를 정해진 backoff로 재시도하고 10회 연속 실패부터 매 시도 alert하도록 정의한다. 구 Consumer major 제거 전에는 해당 Outbox·Stream·PEL·예약 retry가 모두 0이고 마지막 처리 후 7일 관찰기간이 지났는지 확인한다. `RETRY_WAIT` 중 Runtime Bundle 변경과 구·신 Consumer 동시 배포 방식은 같은 계약이 가리키는 후속 Product Decision이 확정되기 전까지 Production 적용 차단 조건이다.
+[Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)은 **Approved Target**이며 아직 `current` runtime 계약으로 승격되지 않았다. 이 상태는 모든 지원 구성요소가 미구현이라는 뜻은 아니다. Redis Streams Adapter·Event Publisher(#140/PR #213), Worker lease·fencing·commit-before-ACK(#141/PR #217), 공통 Job 접수 transaction(#147/PR #215)은 병합되었지만, DB Outbox 선점·발행(#219)과 Pending Reclaim·재시도·DLQ(#142) 경로는 미구현이며 현재 Production runtime 동작을 증명하지 않는다. 해당 경로를 Production에 적용하기 전에 계약과 테스트를 동기화하고 아래 관제·호환 조건을 검증한다. 목표 계약은 DLQ publish 실패를 정해진 backoff로 재시도하고 10회 연속 실패부터 매 시도 alert하도록 정의한다. 구 Consumer major 제거 전에는 해당 Outbox·Stream·PEL·예약 retry가 모두 0이고 마지막 처리 후 7일 관찰기간이 지났는지 확인한다. `RETRY_WAIT` 중 Runtime Bundle 변경과 구·신 Consumer 동시 배포 방식은 같은 계약이 가리키는 후속 Product Decision이 확정되기 전까지 Production 적용 차단 조건이다.
 
 ## 배포 절차
 
