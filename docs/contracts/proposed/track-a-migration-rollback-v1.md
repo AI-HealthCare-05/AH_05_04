@@ -256,6 +256,15 @@ PR 단계에서는 feature flag 기본값, flag off 시 접수 경로, drain 검
 
 기존 OCR 행을 nullable로 두는 이유는 기존 OCR 행의 실행 사실과 결과 상태를 공통 `AI_JOB`으로 되살리는 기준이 없기 때문이다. 근거 없이 기존 행마다 synthetic completed Job을 만들면 실제 실행 시각, attempt, provider 실패 여부가 왜곡될 수 있다.
 
+구현 상태(2026-09-03, #212):
+
+- `ocr_job.ai_job_id` nullable FK 모델과 revision `c3f8a12d9e47` 구현
+- `ai_job.id` 참조 및 `ON DELETE SET NULL` 적용
+- `uq_ocr_job_ai_job` unique 제약 적용
+- 기존 OCR 행 `NULL` 유지 및 synthetic Job·backfill 미생성
+- non-null 연결이 존재하면 downgrade를 차단하는 데이터 안전 가드 적용
+- 실제 신규 OCR 접수 연결과 `job_type='OCR'`·전체 도메인 단일 결과 연결 검증은 #148 범위
+
 ### 11.2 Guide
 
 - 기존 Guide 행에는 synthetic Job을 만들지 않는다.
