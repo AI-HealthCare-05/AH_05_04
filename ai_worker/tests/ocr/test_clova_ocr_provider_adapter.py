@@ -5,7 +5,13 @@ from dataclasses import dataclass
 import pytest
 
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
+from ai_worker.tasks.ocr.handler import (
+    OcrProviderInputError as WorkerOcrProviderInputError,
+)
 from ai_worker.tasks.ocr.handler import OcrProviderResult, OcrRecognizedField
+from ai_worker.tasks.ocr.handler import (
+    OcrProviderSafetyError as WorkerOcrProviderSafetyError,
+)
 from ai_worker.tasks.ocr.handler import (
     OcrProviderSchemaError as WorkerOcrProviderSchemaError,
 )
@@ -164,3 +170,108 @@ async def test_clova_adapter_normalizes_existing_engine_errors(
         )
 
     assert "SYNTHETIC" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("object_key", "file_mime_type"),
+    [
+        ("", "image/png"),
+        ("   ", "image/png"),
+        ("synthetic/input.png", ""),
+        ("synthetic/input.txt", "text/plain"),
+    ],
+)
+async def test_clova_adapter_rejects_invalid_input_before_engine_call(
+    object_key: str,
+    file_mime_type: str,
+) -> None:
+    engine = FakeOcrEngine(OcrRecognitionResult())
+    adapter = ClovaOcrProviderAdapter(engine)
+
+    with pytest.raises(WorkerOcrProviderInputError):
+        await adapter.recognize(
+            object_key=object_key,
+            file_mime_type=file_mime_type,
+            deadline=1055.0,
+        )
+
+    assert engine.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fields", "expected_error_type"),
+    [
+        (
+            [
+                RecognizedField(
+                    medication_index=1,
+                    field_type="UNKNOWN_FIELD",
+                    raw_value="synthetic",
+                    confidence_score=0.9,
+                )
+            ],
+            WorkerOcrProviderSchemaError,
+        ),
+        (
+            [
+                RecognizedField(
+                    medication_index=0,
+                    field_type="MEDICATION_NAME",
+                    raw_value="synthetic",
+                    confidence_score=0.9,
+                )
+            ],
+            WorkerOcrProviderSchemaError,
+        ),
+        (
+            [
+                RecognizedField(
+                    medication_index=1,
+                    field_type="MEDICATION_NAME",
+                    raw_value="synthetic",
+                    confidence_score=1.1,
+                )
+            ],
+            WorkerOcrProviderSafetyError,
+        ),
+        (
+            [
+                RecognizedField(
+                    medication_index=1,
+                    field_type="MEDICATION_NAME",
+                    raw_value="synthetic",
+                    confidence_score=0.9,
+                ),
+                RecognizedField(
+                    medication_index=1,
+                    field_type="MEDICATION_NAME",
+                    raw_value="synthetic duplicate",
+                    confidence_score=0.8,
+                ),
+            ],
+            WorkerOcrProviderSchemaError,
+        ),
+    ],
+)
+async def test_clova_adapter_rejects_invalid_normalized_result(
+    fields: list[RecognizedField],
+    expected_error_type: type[Exception],
+) -> None:
+    engine = FakeOcrEngine(
+        OcrRecognitionResult(
+            fields=fields,
+            engine_name="CLOVA_OCR",
+        )
+    )
+    adapter = ClovaOcrProviderAdapter(engine)
+
+    with pytest.raises(expected_error_type):
+        await adapter.recognize(
+            object_key="synthetic/input.png",
+            file_mime_type="image/png",
+            deadline=1055.0,
+        )
+
+    assert len(engine.calls) == 1
