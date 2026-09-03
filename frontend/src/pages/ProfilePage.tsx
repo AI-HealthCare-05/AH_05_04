@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { logout } from '../api/auth'
 import { ApiError } from '../api/client'
 import {
   getCurrentUser,
@@ -87,6 +88,7 @@ function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
 
@@ -164,6 +166,26 @@ function ProfilePage() {
     setFieldErrors({})
     setSaveError('')
     setIsEditing(false)
+  }
+
+  const handleLogout = async () => {
+    if (isLoggingOut) return
+
+    setIsLoggingOut(true)
+    setSaveError('')
+    setSuccessMessage('')
+
+    try {
+      await logout()
+    } catch (error) {
+      if (!isAuthenticationError(error)) {
+        setSaveError('로그아웃하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+        setIsLoggingOut(false)
+        return
+      }
+    }
+
+    expireSession()
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -370,6 +392,22 @@ function ProfilePage() {
                       이 정보는 현재 화면에서 수정할 수 없습니다.
                     </p>
                   </Card>
+
+                  {saveError && (
+                    <p className="mvp-form__message" role="alert">
+                      {saveError}
+                    </p>
+                  )}
+
+                  <Button
+                    fullWidth
+                    variant="ghost"
+                    onClick={() => void handleLogout()}
+                    disabled={isLoggingOut}
+                    aria-busy={isLoggingOut}
+                  >
+                    {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
+                  </Button>
                 </>
               )}
             </>
