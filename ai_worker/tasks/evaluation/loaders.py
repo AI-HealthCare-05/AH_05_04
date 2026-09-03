@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import json
+import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -171,10 +172,10 @@ class _SnapshotReader:
 
     def path(self, relative_path: str) -> Path:
         normalized = normalize_resource_path(relative_path)
-        return _safe_path(self.root, self.root / normalized)
+        return safe_path_under_root(self.root, self.root / normalized)
 
     def read_path(self, path: Path) -> _JsonSnapshot:
-        safe_path = _safe_path(self.root, path)
+        safe_path = safe_path_under_root(self.root, path)
         cached = self._cache.get(safe_path)
         if cached is not None:
             return cached
@@ -186,7 +187,7 @@ class _SnapshotReader:
             if error.errno in {errno.ENOTDIR, errno.EISDIR, errno.EACCES, errno.EPERM, errno.ELOOP}:
                 raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
             raise
-        value = _parse_json_object(raw_bytes)
+        value = parse_json_object_bytes(raw_bytes)
         relative = safe_path.relative_to(self.root).as_posix()
         snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, value)
         self._cache[safe_path] = snapshot
@@ -209,7 +210,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, JsonValue]]) -> dict[str, Json
     return result
 
 
-def _parse_json_object(raw_bytes: bytes) -> dict[str, JsonValue]:
+def parse_json_object_bytes(raw_bytes: bytes) -> dict[str, JsonValue]:
     try:
         decoded = raw_bytes.decode("utf-8", errors="strict")
         value = json.loads(decoded, object_pairs_hook=_reject_duplicate_keys)
@@ -232,9 +233,9 @@ def _parse_json_object(raw_bytes: bytes) -> dict[str, JsonValue]:
     return cast(dict[str, JsonValue], value)
 
 
-def _safe_path(root: Path, path: Path) -> Path:
-    root_absolute = root.absolute()
-    path_absolute = path.absolute()
+def safe_path_under_root(root: Path, path: Path) -> Path:
+    root_absolute = Path(os.path.abspath(root))
+    path_absolute = Path(os.path.abspath(path))
     try:
         relative = path_absolute.relative_to(root_absolute)
     except ValueError as error:
