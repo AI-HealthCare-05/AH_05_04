@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -7,12 +8,20 @@ from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical
 from ai_worker.tasks.evaluation.config import (
     RepositoryState,
     load_dev_execution_request,
+    preflight_dev_manifest,
+    validate_loaded_bindings,
 )
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes, safe_path_under_root
+from ai_worker.tasks.evaluation.loaders import (
+    load_dataset,
+    parse_json_object_bytes,
+    safe_path_under_root,
+)
+from ai_worker.tasks.evaluation.schemas.common import ExperimentType, Partition
 
 AUTHORITY_MANIFEST_HASH = "f2c98884c841d3fccdbec552f14aad1fd471730eae6d80c472c1b332ed95a570"
 REPOSITORY_ROOT = Path(__file__).parents[3]
+SOURCE_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/dev-foundation-v1.dataset.json"
 
 
 def _retrieval_variant() -> dict[str, Any]:
@@ -87,6 +96,41 @@ def _write_request(root: Path, **overrides: Any) -> Path:
 def _load_request(root: Path, **overrides: Any):
     return load_dev_execution_request(
         _write_request(root, **overrides),
+        repository_root=root,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+
+def _manifest_payload(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "dataset_code": "another-synthetic-dev",
+        "dataset_version": "9.8.7",
+        "status": "REVIEWED",
+        "data_classification": "SYNTHETIC",
+        "partition_counts": {
+            "AUTHORING": 0,
+            "DEV": 1,
+            "HOLDOUT": 0,
+            "SAFETY_REGRESSION": 0,
+        },
+        "case_resources": [
+            {
+                "case_id": "different-case-count-001",
+                "partition": "DEV",
+                "path": "retrieval/cases/not-created.json",
+                "sha256": "1" * 64,
+            }
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _resolved_for_manifest(root: Path, manifest: dict[str, Any]):
+    request_path = _write_request(root)
+    (root / "evals/retrieval/manifests/dev.dataset.json").write_bytes(canonical_json_bytes(manifest))
+    return load_dev_execution_request(
+        request_path,
         repository_root=root,
         repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
     )
@@ -277,3 +321,131 @@ def test_checked_in_execution_request_is_canonical_and_loadable(
     )
     assert resolved.request.experiment_type.value == experiment_type
     assert (resolved.request.answer_variant is not None) is has_answer_variant
+
+
+def test_preflight_is_not_bound_to_foundation_id_status_or_case_count(tmp_path: Path) -> None:
+    resolved = _resolved_for_manifest(tmp_path, _manifest_payload())
+
+    preflight_dev_manifest(resolved)
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        _manifest_payload(
+            partition_counts={"AUTHORING": 0, "DEV": 0, "HOLDOUT": 1, "SAFETY_REGRESSION": 0},
+            case_resources=[
+                {
+                    "case_id": "holdout-001",
+                    "partition": "HOLDOUT",
+                    "path": "retrieval/cases/not-created.json",
+                    "sha256": "1" * 64,
+                }
+            ],
+        ),
+        _manifest_payload(
+            partition_counts={"AUTHORING": 1, "DEV": 1, "HOLDOUT": 0, "SAFETY_REGRESSION": 0},
+        ),
+        _manifest_payload(
+            partition_counts={"AUTHORING": 0, "DEV": 1, "HOLDOUT": 0, "SAFETY_REGRESSION": 1},
+        ),
+        _manifest_payload(partition_counts={"AUTHORING": 0, "DEV": 0, "HOLDOUT": 0, "SAFETY_REGRESSION": 0}),
+        _manifest_payload(data_classification="APPROVED_DEIDENTIFIED"),
+        _manifest_payload(
+            case_resources=[
+                {
+                    "case_id": "wrong-partition-001",
+                    "partition": "SAFETY_REGRESSION",
+                    "path": "retrieval/cases/not-created.json",
+                    "sha256": "1" * 64,
+                }
+            ]
+        ),
+    ],
+)
+def test_preflight_rejects_non_dev_or_non_synthetic_manifest(
+    tmp_path: Path,
+    manifest: dict[str, Any],
+) -> None:
+    resolved = _resolved_for_manifest(tmp_path, manifest)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        preflight_dev_manifest(resolved)
+
+    assert caught.value.code is EvaluationErrorCode.PARTITION_INVALID
+
+
+def test_validate_loaded_bindings_accepts_checked_in_dev_graph() -> None:
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    dataset = load_dataset(SOURCE_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+
+    validate_loaded_bindings(resolved, dataset)
+
+
+def test_validate_loaded_bindings_rejects_reference_hash_mismatch() -> None:
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    dataset = load_dataset(SOURCE_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    changed = replace(
+        resolved,
+        referenced_file_hashes=tuple(
+            (path, "0" * 64 if path == resolved.request.profile_path else value)
+            for path, value in resolved.referenced_file_hashes
+        ),
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_loaded_bindings(changed, dataset)
+
+    assert caught.value.code is EvaluationErrorCode.HASH_MISMATCH
+
+
+@pytest.mark.parametrize(
+    ("dataset_change", "expected_code"),
+    [
+        ("runtime_eligible", EvaluationErrorCode.STATE_COMBINATION_INVALID),
+        ("profile_partition", EvaluationErrorCode.PARTITION_INVALID),
+        ("suite_partition", EvaluationErrorCode.PARTITION_INVALID),
+        ("experiment_type", EvaluationErrorCode.STATE_COMBINATION_INVALID),
+        ("dataset_selector", EvaluationErrorCode.MANIFEST_INVALID),
+    ],
+)
+def test_validate_loaded_bindings_rejects_incompatible_loaded_graph(
+    dataset_change: str,
+    expected_code: EvaluationErrorCode,
+) -> None:
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    dataset = load_dataset(SOURCE_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    if dataset_change == "runtime_eligible":
+        dataset = replace(dataset, profile=dataset.profile.model_copy(update={"runtime_eligible": True}))
+    elif dataset_change == "profile_partition":
+        dataset = replace(
+            dataset, profile=dataset.profile.model_copy(update={"required_partitions": (Partition.HOLDOUT,)})
+        )
+    elif dataset_change == "suite_partition":
+        selector = dataset.suite.input_selector.model_copy(update={"partitions": (Partition.HOLDOUT,)})
+        dataset = replace(dataset, suite=dataset.suite.model_copy(update={"input_selector": selector}))
+    elif dataset_change == "experiment_type":
+        dataset = replace(
+            dataset,
+            profile=dataset.profile.model_copy(update={"required_experiment_types": (ExperimentType.END_TO_END_RAG,)}),
+        )
+    else:
+        selector = dataset.suite.input_selector.model_copy(update={"dataset_code": "different-dataset"})
+        dataset = replace(dataset, suite=dataset.suite.model_copy(update={"input_selector": selector}))
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_loaded_bindings(resolved, dataset)
+
+    assert caught.value.code is expected_code

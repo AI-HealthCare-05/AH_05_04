@@ -12,8 +12,13 @@ from pydantic import BeforeValidator, Field, ValidationError
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes, safe_path_under_root
+from ai_worker.tasks.evaluation.loaders import (
+    ValidatedDataset,
+    parse_json_object_bytes,
+    safe_path_under_root,
+)
 from ai_worker.tasks.evaluation.schemas.common import (
+    Partition,
     ResourcePath,
     SafeInteger,
     SemanticVersion,
@@ -111,11 +116,7 @@ def git_repository_state(repository_root: Path) -> RepositoryState:
 
 
 def _request_error_code(error: ValidationError) -> EvaluationErrorCode:
-    locations = {
-        str(location)
-        for item in error.errors(include_input=False)
-        for location in item["loc"]
-    }
+    locations = {str(location) for item in error.errors(include_input=False) for location in item["loc"]}
     if locations & set(_REFERENCE_FIELDS):
         return EvaluationErrorCode.RESOURCE_PATH_INVALID
     if "evaluated_partitions" in locations:
@@ -147,12 +148,17 @@ def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[Dev
         request.experiment_type is ExperimentType.KNOWLEDGE_RETRIEVAL
         and retrieval is not None
         and answer is None
-        or request.experiment_type
-        in {ExperimentType.ANSWER_GROUNDING_SAFETY, ExperimentType.END_TO_END_RAG}
+        or request.experiment_type in {ExperimentType.ANSWER_GROUNDING_SAFETY, ExperimentType.END_TO_END_RAG}
         and retrieval is not None
         and answer is not None
     )
-    if not valid_matrix or retrieval is not None and retrieval.kind != "RETRIEVAL" or answer is not None and answer.kind != "ANSWER":
+    if (
+        not valid_matrix
+        or retrieval is not None
+        and retrieval.kind != "RETRIEVAL"
+        or answer is not None
+        and answer.kind != "ANSWER"
+    ):
         raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
 
     active_variants = tuple(variant for variant in (retrieval, answer) if variant is not None)
@@ -200,8 +206,7 @@ def load_dev_execution_request(
     resolved_preimage: JsonValue = {
         "request": cast(JsonValue, request.model_dump(mode="json", by_alias=True)),
         "referenced_files": [
-            {"path": reference_path, "sha256": file_hash}
-            for reference_path, file_hash in referenced_file_hashes
+            {"path": reference_path, "sha256": file_hash} for reference_path, file_hash in referenced_file_hashes
         ],
         "retrieval_variant_manifest_hash": retrieval_hash,
         "answer_variant_manifest_hash": answer_hash,
@@ -219,3 +224,62 @@ def load_dev_execution_request(
         prompt_version=prompt_version,
         runner_commit_sha=repository_state.commit_sha,
     )
+
+
+def preflight_dev_manifest(resolved: ResolvedDevExecution) -> None:
+    repository_root = resolved.dataset_manifest_path
+    for _part in Path(resolved.request.dataset_manifest_path).parts:
+        repository_root = repository_root.parent
+    payload = parse_json_object_bytes(_read_file_under_root(repository_root, resolved.dataset_manifest_path))
+    counts = payload.get("partition_counts")
+    resources = payload.get("case_resources")
+    if type(counts) is not dict or type(resources) is not list:
+        raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
+    partition_counts = cast(dict[str, JsonValue], counts)
+    case_resources = cast(list[JsonValue], resources)
+    dev_count = partition_counts.get("DEV")
+    if type(dev_count) is not int:
+        raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
+    exact_dev_count = cast(int, dev_count)
+    valid = (
+        resolved.request.evaluated_partitions == ("DEV",)
+        and exact_dev_count > 0
+        and all(partition_counts.get(name) == 0 for name in ("AUTHORING", "HOLDOUT", "SAFETY_REGRESSION"))
+        and len(case_resources) == exact_dev_count
+        and all(type(item) is dict and item.get("partition") == "DEV" for item in case_resources)
+        and payload.get("data_classification") == "SYNTHETIC"
+    )
+    if not valid:
+        raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
+
+
+def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedDataset) -> None:
+    expected_paths = {
+        Path(path).relative_to("evals").as_posix()
+        for path in (
+            resolved.request.profile_path,
+            resolved.request.comparison_policy_path,
+            resolved.request.evaluation_policy_path,
+            resolved.request.suite_path,
+        )
+    }
+    loaded_hashes = dict(dataset.resource_hashes)
+    if not expected_paths.issubset(loaded_hashes):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    if dataset.profile.required_partitions != (Partition.DEV,):
+        raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
+    if dataset.profile.runtime_eligible:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    if resolved.request.experiment_type not in dataset.profile.required_experiment_types:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    if dataset.suite.input_selector.partitions != (Partition.DEV,):
+        raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
+    if (
+        dataset.suite.input_selector.dataset_code != dataset.manifest.dataset_code
+        or dataset.suite.input_selector.dataset_version != dataset.manifest.dataset_version
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    for path, expected_hash in resolved.referenced_file_hashes:
+        evals_relative = Path(path).relative_to("evals").as_posix()
+        if loaded_hashes.get(evals_relative) != expected_hash:
+            raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
