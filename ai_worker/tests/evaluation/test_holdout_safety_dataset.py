@@ -1738,34 +1738,25 @@ def test_holdout_safety_dataset_binds_evidence_and_separates_every_leakage_axis(
         assert groups_by_partition["HOLDOUT"].isdisjoint(groups_by_partition["SAFETY_REGRESSION"])
 
 
-def test_holdout_safety_dataset_is_loadable_pre_review_draft_with_non_release_configuration() -> None:
+def test_holdout_safety_dataset_is_loadable_frozen_with_non_release_configuration() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
 
     assert dataset.manifest.schema_version == "1.2.0"
     assert dataset.manifest.data_classification.value == "SYNTHETIC"
-    assert dataset.manifest.status.value == "DRAFT"
-    assert dataset.manifest.frozen_at is None
+    assert dataset.manifest.status.value == "FROZEN"
+    assert dataset.manifest.frozen_at is not None
     assert dataset.manifest.fixture_git_commit_sha is None
     assert dataset.manifest.protected_artifact_receipt_ref is not None
     assert dataset.protected_artifact_receipt is not None
 
-    pre_review_provenance = (
-        dataset.manifest.review_provenance,
-        *(case.review_provenance for case in dataset.cases),
-        dataset.evidence_mapping.review_provenance,
-        dataset.rubric.review_provenance,
-        dataset.profile.review_provenance,
-        dataset.evaluation_policy.review_provenance,
-        dataset.suite.review_provenance,
-        dataset.protected_artifact_receipt.recorded_by,
+    required_approved_provenance = (
+        (dataset.manifest.review_provenance, "DATASET_CUSTODIAN"),
+        *((case.review_provenance, "PRODUCT_SAFETY_REVIEWER") for case in dataset.cases),
+        (dataset.evidence_mapping.review_provenance, "DATASET_CUSTODIAN"),
+        (dataset.rubric.review_provenance, "PRODUCT_SAFETY_REVIEWER"),
     )
-    for provenance in pre_review_provenance:
-        assert provenance.team_gold_status.value == "DRAFT"
-        assert provenance.reviewed_by is None
-        assert provenance.reviewed_at is None
-        assert provenance.evidence_review_refs == ()
-        assert provenance.approved_by is None
-        assert provenance.approved_at is None
+    for provenance, approver_role in required_approved_provenance:
+        _assert_approved_provenance(provenance, approver_role=approver_role)
 
     assert tuple(value.value for value in dataset.profile.required_experiment_types) == (
         "ANSWER_GROUNDING_SAFETY",

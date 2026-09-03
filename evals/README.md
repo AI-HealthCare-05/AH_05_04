@@ -46,21 +46,20 @@ uv run python -m ai_worker.tasks.evaluation.schema_exports \
   --schema-set-version 1.2.0
 ```
 
-## RAG HOLDOUT·SAFETY_REGRESSION Dataset 후보
+## RAG HOLDOUT·SAFETY_REGRESSION Dataset Freeze
 
 `dev-foundation-v1`은 구현 중 반복 검증과 튜닝에 사용하는 합성 `DEV` fixture다. 별도 Dataset
 `rag-holdout-safety@1.0.0`은 60개 `HOLDOUT`과 93개 `SAFETY_REGRESSION` Case를 고정하기 위한 합성
 후보다. 향후 승인된 임상 데이터가 필요해도 이 합성 Dataset에 섞지 않고 별도 보호·승인 경계를
 따른다.
 
-현재 커밋의 `rag-holdout-safety@1.0.0`은 `status=DRAFT`이고 Schema Set `1.2.0`을 사용한다.
-Gold·Evidence·Rubric을 포함한 자식 `ReviewProvenance`와 receipt의 `recorded_by`도 모두 Team
-`DRAFT`이며 `reviewed_by=null`, `reviewed_at=null`, `evidence_review_refs=[]`다. 지정 검토자는
-실제 검토가 끝난 뒤에만 `EVALUATION_REVIEWER`와 immutable review evidence를 기록해 `REVIEWED`로
-전환한다. 이후 `@hazelnutflavoured` Dataset·Safety 승인을 받아야 Dataset과 필수 Gold closure를
-`APPROVED/FROZEN`으로 전환할 수 있다. `@phina-io` Schema·Loader 교차 검토도 별도로 남아 있다.
+현재 커밋의 `rag-holdout-safety@1.0.0`은 `status=FROZEN`이고 Schema Set `1.2.0`을 사용한다.
+Dataset Manifest와 153개 Case, Evidence Mapping, Critical Claim Rubric은 `APPROVED` provenance로
+freeze되었다. `@Jye-rookie`는 `EVALUATION_REVIEWER`, `@hazelnutflavoured`는 Dataset Custodian 또는
+Safety approver로 기록되며 review evidence는 PR #236 승인 event에 결속된다. Profile, Evaluation
+Policy, Suite 및 integrity receipt는 별도의 non-release 계약 상태를 유지한다.
 
-전체 DRAFT 그래프는 다음 validation-only 명령으로 검증한다.
+전체 frozen Dataset graph는 다음 validation-only 명령으로 검증한다.
 
 ```bash
 uv run python -m ai_worker.tasks.evaluation validate \
@@ -69,13 +68,13 @@ uv run python -m ai_worker.tasks.evaluation validate \
 ```
 
 검증 성공은 Dataset 구조·hash·privacy·leakage 계약이 일치한다는 뜻일 뿐, HOLDOUT 실행이나 Release
-`PASS`, 임상·의료·약학·Privacy·Source·Production 승인을 뜻하지 않는다. 이 후보에 연결된
+`PASS`, 임상·의료·약학·Privacy·Source·Production 승인을 뜻하지 않는다. 이 Dataset에 연결된
 Comparison Policy의 필수 `approved_by`에는 SYSTEM actor `rag-eval-draft-validator`가 들어 있지만,
-이는 DRAFT 그래프를 load하기 위한 진단용 validation envelope 표시일 뿐 사람의 Dataset/Policy
+이는 non-release graph를 load하기 위한 진단용 validation envelope 표시일 뿐 사람의 Dataset/Policy
 승인이 아니다. Policy 자체도 `holdout_execution_authorized=false`다.
 
-현재 차단 조건은 #214의 지정 사람 검토와 `FROZEN/APPROVED` 완료다. Issue 순서상 #157의 DEV
-Runner 작업도 #214가 완료된 뒤 시작하며, 그 뒤에도 HOLDOUT을 load·execute하거나 결과를 관찰해서는
+현재 차단 조건은 HOLDOUT 실행용 Comparison/Evaluation Policy 승인이다. Issue 순서상 #157의 DEV
+Runner 작업은 Dataset Freeze 이후 시작하며, 그 뒤에도 HOLDOUT을 load·execute하거나 결과를 관찰해서는
 안 된다. #214 완료 후 최초 HOLDOUT 실행 시점에는 독립된 실행용 Comparison/Evaluation Policy가
 승인될 때까지 `WAITING_FOR_APPROVED_COMPARISON_POLICY`가 후속 차단 조건으로 남는다.
 
@@ -83,28 +82,28 @@ Runner 작업도 #214가 완료된 뒤 시작하며, 그 뒤에도 HOLDOUT을 lo
 Rubric description)은 한국어(`ko-KR`)다. 불변 식별자·enum·reason code·locator와 `FICTIONAL_*`,
 `SYNTHETIC_*` 토큰은 계약 호환성을 위해 원문 표기를 유지한다.
 
-### #157 DRAFT 인계 참조
+### #157 Freeze 인계 참조
 
 | 항목 | 불변 ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `1feaca37deca87466acf6b28a429c9484f9718c014ff687618a2540e8ef63717` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `e0f997f1085f4cce397bc473af80442a02535ecdcae38a1ba29c3a8ceecf3eb2` |
-| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `e376dc8b347babf097fca9f507bed55696d43d684f119f8b455da89ea6e23d9b` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `4678cc81a98703b3154b08f8297c2dca32399e926065341a5a617959b95d0131` |
-| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6f623450952b55e321009970381b65c6b266f56a37e1f750f59ca232c5a4c437` |
-| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `afa570eec5bf30a7c4ce518e9483be8a5c24ab99230f946ffdcfe0a46c997cd2` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `3b14ec72149dd6d50e3c88eaeb683482012890858019d96dd7e4bc7b55f8e793` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `72f1a83868db6d8179d106a9ba7f3e7cef7c1befe620423c5f24b461d48e7a70` |
+| HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `bb2117879318fef8f6c017b5a164a3e924b2b1e521c8838a211dd251445e2f0b` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `0cd9ffabd6b619ff2eeb474e7435b9ebd24e0f5c2cc664046ba90cd80c02493e` |
+| Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `ccb46bcfb3b131fe7f4f318d36e1e345c8a711e14b782df0bfa22c884bed800b` |
+| Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `f902e8f42114fbafbda761480ab611f7fa1fa25047c3b04925802c4b8c714d01` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `812ff6bb8cce18cd0e0c80f22ac468005a128e4ed2b30f21ad0381d7b91a0ed1` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `d4f254adfe28a2cc789c02ce7de18d26e79ff1ead21e2bbebdf3df0eda551f8e` |
-| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `034b0c58816774512e6b90ba9c96265f2b01eda2d001438e15b56ec12c2e48bb` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `b892c5099cb7ab2a098f02fb210a7f0e062c56329c8779fa86ff2c5002e7d106` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `9c30fb50f4dd93e3e176b8c55bf2fc7b39ff7ab45d5cfc9ba7352e3fc5cea8e6` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `f04011915018dd178841171da2bcc652178c9724be9f1905248e03786147c1ca` |
-| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `4434847bf7d3f74bfb35cbe376fbccdc1da14104527d6a9f8079f30bf0246976` |
+| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `5f1eec191d90de461553b65392dc9c065ccc5639019b03e2f7e759a8f3b26ae9` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 Receipt 표의 SHA-256은 Dataset Manifest가 참조하는 canonical file hash다. Receipt 내부 self-hash는
-`188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24`이며, 이 receipt는 153개 Case
+`5f1eec191d90de461553b65392dc9c065ccc5639019b03e2f7e759a8f3b26ae9`이며, 이 receipt는 153개 Case
 resource만 보호하고 Evidence·Rubric·Profile·Policy·Suite 승인을 증명하지 않는다.
 
 Dataset가 실제 검토 뒤 `FROZEN`되면 `rag-holdout-safety@1.0.0`의 Case, Gold, Evidence Mapping,
