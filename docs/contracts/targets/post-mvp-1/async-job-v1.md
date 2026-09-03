@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Partially implemented (#148) — 공통 Job 상태 조회(`GET /jobs/{job_id}`)와 OCR·Guide rediscovery GET(`GET /documents/{id}/ocr-jobs`, `GET /prescriptions/{id}/guides`) 구현·테스트 완료. OCR·Guide·Chat 접수(POST) 3종의 `accept_job()` 연결과 Publisher·Worker·Reconciler는 Not implemented — 전체 승격 대기 |
+| 구현·리뷰 | Partially implemented (#148) — 공통 Job 상태 조회(`GET /jobs/{job_id}`) 구현·테스트·라우트 등록 완료. OCR·Guide rediscovery GET(`GET /documents/{id}/ocr-jobs`, `GET /prescriptions/{id}/guides`)은 서비스 로직·테스트만 완료하고 라우트 등록은 접수(POST) `accept_job()` 연결 시점까지 보류(#148 세 번째 리뷰 — 접수 미연결 상태에서는 성공 경로 없는 API가 되기 때문). OCR·Guide·Chat 접수(POST) 3종의 `accept_job()` 연결과 Publisher·Worker·Reconciler는 Not implemented — 전체 승격 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-08-31 |
 

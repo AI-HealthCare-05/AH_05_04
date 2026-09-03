@@ -144,7 +144,7 @@ class JobStatusService:
             raise _job_not_found_error()
         return await self._rediscover_job(
             user=user,
-            persistent_job_id=None,
+            persistent_job_id=guide.ai_job_id,
             domain_type=DomainType.GUIDE,
             domain_id=guide.id,
         )
@@ -173,12 +173,17 @@ class JobStatusService:
     async def _resolve_domain_reference(self, *, job: AiJob) -> tuple[DomainType, UUID] | None:
         """가능하면 도메인 row의 영속 `ai_job_id` 역참조를 우선 쓰고, 아직 없으면
         `AsyncJobRepository.get_interim_domain_reference()`(Outbox 기반 임시 조회, Outbox
-        30일 보존 후 조회 불가)로 fallback합니다. OCR은 #212로 `ocr_job.ai_job_id`가 이미
-        있어 여기서 바로 쓸 수 있고, Guide·Chat은 아직 이슈가 없어 계속 fallback만 탑니다."""
+        30일 보존 후 조회 불가)로 fallback합니다. OCR은 #212로 `ocr_job.ai_job_id`가, Guide도
+        같은 목적으로 `guide.ai_job_id`가 있어 여기서 바로 쓸 수 있고, Chat은 아직 이슈가
+        없어 계속 fallback만 탑니다."""
         if job.job_type is AiJobType.OCR:
             ocr_job = await self.ocr_repository.get_by_ai_job_id(ai_job_id=job.id)
             if ocr_job is not None:
                 return (DomainType.OCR_JOB, ocr_job.id)
+        if job.job_type is AiJobType.GUIDE:
+            guide = await self.guide_repository.get_by_ai_job_id(ai_job_id=job.id)
+            if guide is not None:
+                return (DomainType.GUIDE, guide.id)
         return await self.job_repository.get_interim_domain_reference(job=job)
 
     async def _resolve_owned_result_url(

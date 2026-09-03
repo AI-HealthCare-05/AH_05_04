@@ -44,6 +44,7 @@ class Guide(Base):
         ),
         Index("idx_guide_prescription_requested", "prescription_id", "requested_at", "id"),
         Index("idx_guide_profile_requested", "profile_id", "requested_at", "id"),
+        UniqueConstraint("ai_job_id", name="uq_guide_ai_job"),
         CheckConstraint(
             "generation_status IN ('PENDING', 'GENERATING', 'COMPLETED', 'FAILED')",
             name="chk_guide_generation_status",
@@ -53,6 +54,15 @@ class Guide(Base):
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
+    ai_job_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "ai_job.id",
+            name="fk_guide_ai_job",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
     generation_status: Mapped[GuideGenerationStatus] = mapped_column(
         Enum(GuideGenerationStatus, native_enum=False, length=20),
         nullable=False,

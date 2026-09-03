@@ -5,15 +5,12 @@ from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse as Response
 
-from app.apis.v1.job_routers import JOB_STATUS_OPENAPI_RESPONSES, build_job_status_response
 from app.dependencies.security import get_request_user
 from app.dependencies.services import (
-    get_job_status_service,
     get_medical_document_service,
     get_ocr_service,
     get_prescription_service,
 )
-from app.dtos.jobs import JobStatusResponse
 from app.dtos.medical_documents import (
     MedicalDocumentType,
     PrescriptionDocumentUploadData,
@@ -23,7 +20,6 @@ from app.dtos.medical_documents import (
 from app.dtos.ocr import ExecuteOcrRequest, OcrJobResponse
 from app.dtos.prescriptions import PrescriptionResponse
 from app.models.users import User
-from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.ocr import OcrService
 from app.services.prescriptions import PrescriptionService
@@ -83,21 +79,11 @@ async def execute_ocr(
     )
 
 
-@medical_document_router.get(
-    "/{document_id}/ocr-jobs",
-    response_model=JobStatusResponse,
-    status_code=status.HTTP_200_OK,
-    responses=JOB_STATUS_OPENAPI_RESPONSES,
-)
-async def rediscover_ocr_job(
-    document_id: UUID,
-    user: Annotated[User, Depends(get_request_user)],
-    job_status_service: Annotated[JobStatusService, Depends(get_job_status_service)],
-) -> Response:
-    # async-job-v1.md "공통 화면 재접속 복구": 화면 재진입 시 이 문서의 가장 최근 OCR Job으로
-    # polling을 재개합니다. Cache-Control: no-store는 NoStoreMiddleware가 일괄 적용합니다.
-    result = await job_status_service.rediscover_ocr_job(user=user, document_id=document_id)
-    return build_job_status_response(result)
+# GET /{document_id}/ocr-jobs (재접속 복구): execute_ocr가 JobIntakeService.accept_job()에
+# 연결되기 전까지는(#219/#232/#233) 실제 사용자가 생성한 어떤 OCR Job도 AiJob 매핑을 가질 수
+# 없어 정상 200 경로가 존재하지 않습니다. 라우트 등록과 docs/api.md 현재 API 목록 등재를
+# 접수 연결 시점까지 보류합니다(#148 세 번째 리뷰). 서비스 로직(JobStatusService.rediscover_ocr_job)과
+# 그 테스트는 남겨 두어 연결 시점에 라우트만 다시 추가하면 되도록 합니다.
 
 
 @medical_document_router.post(

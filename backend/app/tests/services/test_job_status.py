@@ -402,3 +402,55 @@ async def test_rediscover_guide_job_raises_404_when_no_guide_exists(db_session: 
     with pytest.raises(ApiError) as exc_info:
         await _service(db_session).rediscover_guide_job(user=user, prescription_id=prescription.id)
     assert exc_info.value.status_code == 404
+
+
+async def test_get_job_status_uses_persistent_guide_ai_job_id_when_outbox_event_is_purged(
+    db_session: AsyncSession,
+) -> None:
+    """`guide.ai_job_id`가 채워져 있으면, Outbox row가 30일 보존 후 이미 삭제된 상태(여기서는
+    애초에 만들지 않아 재현)에서도 영속 매핑으로 값을 찾아야 합니다 — OCR의 #212와 같은
+    이유로, `get_interim_domain_reference()`(Outbox 기반)만 쓰면 이 경우 `404`가 됩니다."""
+    user = await _create_user(db_session, email=f"js-gpersist-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    prescription = await _create_confirmed_prescription(db_session, user=user, document=document)
+
+    repo = AsyncJobRepository(db_session)
+    job = await repo.create_job(user_id=user.id, job_type=AiJobType.GUIDE, prescription_version_id=None)
+    guide = Guide(
+        prescription_id=prescription.id,
+        profile_id=prescription.profile_id,
+        generation_status=GuideGenerationStatus.GENERATING,
+        ai_job_id=job.id,
+    )
+    db_session.add(guide)
+    await db_session.flush()
+
+    result = await _service(db_session).get_job_status(user=user, job_id=job.id)
+
+    assert result.data.domain_type == DomainType.GUIDE
+    assert result.data.domain_id == guide.id
+
+
+async def test_rediscover_guide_job_uses_persistent_ai_job_id_when_outbox_event_is_purged(
+    db_session: AsyncSession,
+) -> None:
+    """`rediscover_guide_job`도 같은 이유로 `guide.ai_job_id`를 Outbox 역조회보다 먼저
+    확인해야 합니다."""
+    user = await _create_user(db_session, email=f"js-gredi-persist-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    prescription = await _create_confirmed_prescription(db_session, user=user, document=document)
+
+    repo = AsyncJobRepository(db_session)
+    job = await repo.create_job(user_id=user.id, job_type=AiJobType.GUIDE, prescription_version_id=None)
+    guide = Guide(
+        prescription_id=prescription.id,
+        profile_id=prescription.profile_id,
+        generation_status=GuideGenerationStatus.GENERATING,
+        ai_job_id=job.id,
+    )
+    db_session.add(guide)
+    await db_session.flush()
+
+    result = await _service(db_session).rediscover_guide_job(user=user, prescription_id=prescription.id)
+
+    assert result.data.job_id == job.id

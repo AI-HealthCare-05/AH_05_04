@@ -46,6 +46,14 @@ class GuideRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_ai_job_id(self, *, ai_job_id: UUID) -> Guide | None:
+        """`guide.ai_job_id`(unique) 영속 매핑으로 조회합니다. Outbox 기반 임시 조회
+        (`AsyncJobRepository.get_interim_domain_reference`)와 달리 Outbox 30일 보존과
+        무관하게 Job 90일 보존 동안 유지됩니다 — rediscovery·`GET /jobs/{job_id}`가 이 값이
+        채워진 뒤에는 이 경로를 우선 사용해야 합니다(OCR의 #212와 같은 목적)."""
+        result = await self.session.execute(select(Guide).where(Guide.ai_job_id == ai_job_id))
+        return result.scalar_one_or_none()
+
     async def get_latest_for_prescription_owned(self, *, prescription_id: UUID, user_id: UUID) -> Guide | None:
         """async-job-v1.md "공통 화면 재접속 복구": 화면 재진입 시 새 Job을 만들지 않고 기존 Job의
         polling을 재개하기 위해, 이 처방의 가장 최근 Guide 하나만 돌려줍니다(`idx_guide_prescription_requested`

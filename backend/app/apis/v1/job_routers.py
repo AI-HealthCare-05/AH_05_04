@@ -34,6 +34,12 @@ JOB_STATUS_OPENAPI_RESPONSES: dict[int | str, dict] = {
     status.HTTP_401_UNAUTHORIZED: {
         "model": ErrorResponse,
         "description": "인증 정보가 없거나 유효하지 않습니다. `code`는 `UNAUTHORIZED` 또는 `INVALID_TOKEN`입니다.",
+        "headers": {
+            "WWW-Authenticate": {
+                "description": "계약된 `Bearer` 고정값입니다.",
+                "schema": {"type": "string"},
+            }
+        },
     },
     status.HTTP_404_NOT_FOUND: {
         "model": ErrorResponse,
@@ -48,6 +54,14 @@ JOB_STATUS_OPENAPI_RESPONSES: dict[int | str, dict] = {
                 }
             }
         },
+    },
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ErrorResponse,
+        "description": (
+            "Path parameter(UUID 등) 형식이 올바르지 않습니다. FastAPI가 자동 생성하는 "
+            "`HTTPValidationError`가 아니라, 전역 `RequestValidationError` 핸들러가 만드는 "
+            "`ErrorResponse`(`code=VALIDATION_FAILED`)가 실제 응답입니다."
+        ),
     },
 }
 
