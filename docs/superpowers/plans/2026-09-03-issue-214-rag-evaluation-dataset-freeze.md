@@ -12,7 +12,7 @@
 
 > **2026-09-03 amendment:** #245 merged Schema Set `1.2.0`. This candidate must use its DRAFT provenance rules: reviewer and review timestamp are `null`, and review evidence is empty until a real `EVALUATION_REVIEWER` review occurs. Retrieval resource records exclude authoring-only `expected_*` fields so a future #157 runner cannot retrieve Gold outcome metadata.
 
-> **Freeze completion:** `@Jye-rookie` PR #256 review `5102210603` (`2026-09-03T13:00:53Z`)와 `@hazelnutflavoured` review `5102473823` (`2026-09-03T13:25:03Z`)를 Dataset, Case, Evidence Mapping, Critical Claim Rubric에 결속해 `APPROVED/FROZEN`으로 전환했다. exact freeze commit 검토는 별도 PR review 단계다.
+> **Freeze completion:** `@Jye-rookie` PR #256 review `5102210603` (`2026-09-03T13:00:53Z`)와 `@hazelnutflavoured` review `5102473823` (`2026-09-03T13:25:03Z`)를 Dataset, Case, Evidence Mapping, Critical Claim Rubric에 결속해 `APPROVED/FROZEN`으로 전환했다. Freeze 상태를 포함한 최신 PR HEAD 검토는 별도 PR review 단계다.
 
 ## Global Constraints
 
@@ -279,7 +279,7 @@ Explain DEV versus frozen synthetic HOLDOUT/SAFETY_REGRESSION, prohibit in-place
 
 Record #216's merged Schema Set `1.1.0` reference as a resolved historical prerequisite, and hand off the frozen Dataset's Schema Set `1.2.0` immutable reference. Retain `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the later HOLDOUT execution blocker.
 
-The current frozen Dataset has recorded Dataset Custodian approval; only the exact Freeze-commit review remains before merge:
+The current frozen Dataset has recorded Dataset Custodian approval; only the official review of the Freeze-state-containing latest PR HEAD remains before merge:
 
 The scored natural-language surface is Korean (`ko-KR`) for queries, Gold claims, forbidden semantic rules,
 Evidence statements, and Rubric descriptions. Stable IDs, enums, reason codes, locators, and synthetic contract
@@ -348,9 +348,9 @@ For every required child, add the actual `@Jye-rookie` review timestamp and `EVA
 
 Run the complete Evaluation suite, validate the Dataset twice, compare all semantic hashes, and run the negative test that downgrades one child to `REVIEWED`.
 
-- [ ] **Step 4: Request final Dataset Custodian review on the freeze commit**
+- [ ] **Step 4: Request final Dataset Custodian review on the Freeze-state-containing latest PR HEAD**
 
-The exact freeze commit must be approved before merge. If review requests content changes, return to `DRAFT`, publish a new reviewed candidate, and repeat this task.
+The Freeze-state-containing latest PR HEAD must be approved before merge. If review requests content changes, return to `DRAFT`, publish a new reviewed candidate, and repeat this task.
 
 - [ ] **Step 5: Record the #157 immutable handoff**
 

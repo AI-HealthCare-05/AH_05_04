@@ -33,8 +33,8 @@ The implementation follows these sources in order:
 The `FinalProject Documents/` folder is not an authority for Dataset size or partition allocation in this
 design. The normative RAG evaluation plan supplies 12 per-category initial minimums whose arithmetic sum is
 153. It describes those values as workload estimates; it does not prescribe an exact total or the 60/93
-partition split. Exact v1 size 153 and allocation 60/93 are Issue #214 project decisions that remain proposed
-until the named Dataset Custodian approves the completed Case set and its derived allocation projection. The
+partition split. Exact v1 size 153 and allocation 60/93 are Issue #214 project decisions recorded by the
+completed Dataset Freeze and are immutable for this version. The
 repository target and #122 schemas remain authoritative for machine-readable fields, enum values, validation,
 and status semantics.
 
@@ -76,8 +76,9 @@ The merged compatibility contract:
 - add schema, exported-schema parity, loader, privacy, and negative contract tests
 - update the authoritative repository target and Decision/Contract Freeze version in the same focused PR
 
-`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` is resolved. The current blockers are the named human reviews for
-#214 and its `FROZEN/APPROVED` completion. Only after #214 completes does
+`BLOCKED_BY_RAG_EVAL_SCHEMA_COMPATIBILITY` is resolved. The Dataset's `FROZEN/APPROVED` transition is complete;
+the only current PR merge blocker is an official review of the Freeze-state-containing latest PR HEAD. Only after
+#214 completes does
 `WAITING_FOR_APPROVED_COMPARISON_POLICY` remain as the later blocker for the first HOLDOUT execution. The
 committed Comparison Policy is a diagnostic validation-only envelope and does not authorize #157 to load,
 execute, or inspect HOLDOUT results. This design does not choose placeholder Rule IDs, encode faults in
@@ -177,7 +178,7 @@ still separate and remains `PENDING` where required.
 Dataset Manifest, all 153 Cases, Evidence Mapping, and Critical Claim Rubric now record the completed
 `@Jye-rookie` PR #256 review `5102210603` as Team `APPROVED`, with an `EVALUATION_REVIEWER`, the real UTC
 review timestamp, immutable captured review evidence, and the later `@hazelnutflavoured` approval event
-`5102473823`. The exact Freeze commit review remains a separate PR merge gate and is not embedded back into
+`5102473823`. Review of the Freeze-state-containing latest PR HEAD remains a separate PR merge gate and is not embedded back into
 the artifact hash graph.
 
 The Comparison Policy contract separately requires `approved_by` and `approved_at`. In the DRAFT graph those
@@ -205,7 +206,7 @@ The Dataset freeze transition occurs inside the PR in three reviewable stages:
    - After those approvals are recorded, a follow-up commit changes the Dataset to `status=FROZEN`.
    - Dataset provenance becomes `team_gold_status=APPROVED` with the real Dataset Custodian actor and review
      timestamp; `frozen_at` records the same freeze event.
-   - The Dataset Custodian performs a final review on the exact freeze commit.
+   - The Dataset Custodian performs a final review on the Freeze-state-containing latest PR HEAD.
 
 The implementer must not pre-populate or fabricate approval. Self-approval is rejected by the schema and is
 not treated as a recoverable validation error.
@@ -624,7 +625,7 @@ The #157 handoff contains the exact immutable references and hashes for:
 
 The handoff marks the protected receipt as Case-only, records #216 as the resolved historical compatibility
 prerequisite, and binds #241's current Schema Set 1.2 immutable reference. The Dataset is already
-`FROZEN/APPROVED`; the remaining PR merge blocker is the exact Freeze-commit review. After #214 completes,
+`FROZEN/APPROVED`; the remaining PR merge blocker is the official review of the Freeze-state-containing latest PR HEAD. After #214 completes,
 `WAITING_FOR_APPROVED_COMPARISON_POLICY` becomes the later
 HOLDOUT blocker until the first Baseline is authorized.
 
@@ -666,7 +667,7 @@ Release decision.
 | Risk | Mitigation |
 | --- | --- |
 | Frozen data is tuned against after becoming visible. | Immutable versioning, no in-place edits, and derived tuning cases go to DEV. |
-| Team approval is fabricated before review. | Three-stage authoring, review, and freeze transition with final review on the exact freeze commit. |
+| Team approval is fabricated before review. | Three-stage authoring, review, and freeze transition with final review on the Freeze-state-containing latest PR HEAD. |
 | Squash merge invalidates a recorded fixture commit. | Use content hashes and protected artifact receipt; #157 records Runner/Baseline commits later. |
 | The initial 153-Case workload is mistaken for a permanent maximum or Release-quality statistical sample. | `runtime_eligible=false`, diagnostic Policy scopes, no Gate refs, explicit future `INCONCLUSIVE` behavior, and append-only Safety versioning. |
 | A later active OTC Rule Set contains Rule IDs absent from independently executed Safety groups. | Evaluate set inclusion, keep HOLDOUT v1 immutable, and publish a new Dataset version that appends Safety Cases until every active positive Rule member is executed. |
@@ -682,9 +683,9 @@ Release decision.
 
 Issue #214's #216 prerequisite remains resolved by historical `rag-eval.schema-set@1.1.0`; the current Dataset
 consumes `rag-eval.schema-set@1.2.0`. Required Dataset provenance is `APPROVED` and the Dataset is `FROZEN`;
-the immediate remaining PR step is the exact freeze-commit review. After Freeze, the
+the immediate remaining PR step is review of the Freeze-state-containing latest PR HEAD. After Freeze, the
 distinct approved Comparison Policy remains required before #157 may execute HOLDOUT. Issue #214 is complete only when the merged Dataset is `FROZEN`, the final freeze
-commit has Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests
+PR HEAD has Dataset Custodian approval, all child Gold closure, integrity, privacy, allocation, and leakage tests
 pass, and the #157 handoff references are recorded. Only then may #157 begin DEV Runner work, without loading
 or inspecting HOLDOUT. Completion does not authorize a HOLDOUT run or Release decision. The later first
 HOLDOUT Baseline remains `WAITING_FOR_APPROVED_COMPARISON_POLICY` until the independently approved Policy and

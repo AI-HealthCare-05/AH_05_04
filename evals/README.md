@@ -56,8 +56,8 @@ uv run python -m ai_worker.tasks.evaluation.schema_exports \
 현재 커밋의 `rag-holdout-safety@1.0.0`은 `status=FROZEN`이고 Schema Set `1.2.0`을 사용한다.
 Dataset Manifest와 153개 Case, Evidence Mapping, Critical Claim Rubric은 `@Jye-rookie`의 실제 PR #256
 검토 event `5102210603` (`2026-09-03T13:00:53Z`)와 `@hazelnutflavoured`의 승인 event `5102473823`
-(`2026-09-03T13:25:03Z`)를 immutable provenance로 결속했다. Freeze commit 자체의 최종 검토는 별도
-PR review 절차로 수행한다.
+(`2026-09-03T13:25:03Z`)를 immutable provenance로 결속했다. Freeze 상태를 포함한 최신 PR HEAD의 최종
+검토는 별도 PR review 절차로 수행한다.
 외부 의료 검토는 `PENDING`이며 Profile, Evaluation Policy, Suite 및 integrity receipt는 별도의
 non-release 계약 상태를 유지한다.
 
