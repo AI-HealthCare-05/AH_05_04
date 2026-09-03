@@ -1,5 +1,7 @@
 """DLQ Outbox 발행 재시도 정책 테스트입니다."""
 
+from typing import cast
+
 import pytest
 
 from ai_worker.core.dlq import (
@@ -137,5 +139,5 @@ def test_dlq_retry_rejects_invalid_random_value(
     ):
         calculate_dlq_retry_decision(
             attempt_count=1,
-            random_value=lambda: random_value,  # type: ignore[return-value]
+            random_value=lambda: cast(float, random_value),
         )

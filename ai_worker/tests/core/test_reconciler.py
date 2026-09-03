@@ -68,17 +68,16 @@ async def test_reconciler_recovers_schedules_commits_then_reclaims() -> None:
         commit=AsyncMock(side_effect=lambda: events.append("commit")),
         rollback=AsyncMock(side_effect=lambda: events.append("rollback")),
     )
-    stream = SimpleNamespace(
-        auto_claim=AsyncMock(
-            side_effect=lambda **_: (
-                events.append("auto_claim")
-                or AutoClaimResult(
-                    next_start_id="0-0",
-                    deliveries=(delivery,),
-                )
-            )
+
+    def auto_claim(**_: object) -> AutoClaimResult:
+        events.append("auto_claim")
+        return AutoClaimResult(
+            next_start_id="0-0",
+            deliveries=(delivery,),
         )
-    )
+
+    stream = SimpleNamespace(auto_claim=AsyncMock(side_effect=auto_claim))
+
     executor = SimpleNamespace(execute=AsyncMock(side_effect=lambda _: events.append("execute")))
 
     reconciler = PendingMessageReconciler(

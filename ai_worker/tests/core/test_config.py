@@ -181,5 +181,5 @@ def test_config_rejects_invalid_recovery_setting(
     with pytest.raises(ValidationError):
         Config(  # type: ignore[call-arg]
             _env_file=None,
-            **{field_name: invalid_value},
+            **{field_name: invalid_value},  # type: ignore[arg-type]
         )

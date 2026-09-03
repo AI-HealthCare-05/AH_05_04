@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ClauseElement
 
 from ai_worker.adapters.sqlalchemy_quarantine_repository import (
     SqlAlchemyQuarantineRepository,
@@ -29,7 +30,7 @@ def build_request(*, job_id=None) -> QuarantineRequest:
     )
 
 
-def compiled_sql(statement: object) -> str:
+def compiled_sql(statement: ClauseElement) -> str:
     return str(
         statement.compile(
             dialect=postgresql.dialect(),

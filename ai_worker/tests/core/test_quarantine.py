@@ -82,6 +82,7 @@ def test_dead_letter_envelope_excludes_job_and_message_content() -> None:
 
     field_names = {field.name for field in fields(DeadLetterEnvelope)}
 
+    assert envelope.message_digest == "c" * 64
     assert field_names == {
         "event_id",
         "quarantine_id",

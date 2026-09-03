@@ -38,7 +38,13 @@ async def test_quarantine_commits_before_acknowledging_original_message() -> Non
     )
     events: list[str] = []
 
-    repository = SimpleNamespace(record=AsyncMock(side_effect=lambda _: (events.append("record") or receipt)))
+    async def record_request(
+        _: QuarantineRequest,
+    ) -> QuarantineReceipt:
+        events.append("record")
+        return receipt
+
+    repository = SimpleNamespace(record=AsyncMock(side_effect=record_request))
     transaction = SimpleNamespace(
         commit=AsyncMock(side_effect=lambda: events.append("commit")),
         rollback=AsyncMock(side_effect=lambda: events.append("rollback")),

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql import ClauseElement
 
 from ai_worker.adapters.sqlalchemy_dlq_outbox_repository import (
     DlqOutboxStateError,
@@ -14,7 +15,7 @@ from ai_worker.adapters.sqlalchemy_dlq_outbox_repository import (
 from ai_worker.core.quarantine import QuarantineFailureCode
 
 
-def compiled_sql(statement: object) -> str:
+def compiled_sql(statement: ClauseElement) -> str:
     return str(
         statement.compile(
             dialect=postgresql.dialect(),

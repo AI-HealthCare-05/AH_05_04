@@ -45,8 +45,20 @@ async def test_dlq_publisher_commits_claim_before_stream_publish() -> None:
     claimed = build_claimed_event()
     events: list[str] = []
 
+    async def claim_next(
+        **_: object,
+    ) -> ClaimedDlqEvent:
+        events.append("claim")
+        return claimed
+
+    async def publish(
+        _: DeadLetterEnvelope,
+    ) -> str:
+        events.append("publish")
+        return "9000-0"
+
     repository = SimpleNamespace(
-        claim_next=AsyncMock(side_effect=lambda **_: (events.append("claim") or claimed)),
+        claim_next=AsyncMock(side_effect=claim_next),
         mark_published=AsyncMock(side_effect=lambda **_: events.append("mark_published")),
         reschedule=AsyncMock(),
     )
@@ -54,7 +66,7 @@ async def test_dlq_publisher_commits_claim_before_stream_publish() -> None:
         commit=AsyncMock(side_effect=lambda: events.append("commit")),
         rollback=AsyncMock(),
     )
-    stream = SimpleNamespace(publish=AsyncMock(side_effect=lambda _: (events.append("publish") or "9000-0")))
+    stream = SimpleNamespace(publish=AsyncMock(side_effect=publish))
     alerter = SimpleNamespace(notify_publish_failure=AsyncMock())
 
     publisher = DlqOutboxPublisher(
