@@ -7,6 +7,8 @@ import {
   waitFor,
   within,
 } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -23,6 +25,11 @@ import type {
 import { ApiError } from '../src/api/client'
 import { createGuide, type GuideResponse } from '../src/api/guides'
 import PrescriptionReviewPage from '../src/pages/PrescriptionReviewPage'
+
+const prescriptionReviewStyles = readFileSync(
+  join(process.cwd(), 'src/pages/PrescriptionReviewPage.css'),
+  'utf8',
+)
 import {
   confirmPrescription,
   getOcrJob,
@@ -307,6 +314,12 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     ).toBeTruthy()
     expect(screen.getByText('1회 복용량')).toBeTruthy()
     expect(screen.getByText('하루횟수')).toBeTruthy()
+    expect(screen.getByText('제품함량').tagName).toBe('DT')
+    const medicationLabelRule = prescriptionReviewStyles.match(
+      /\.prescription-review__medication-values dt\s*\{([^}]*)\}/,
+    )?.[1]
+    expect(medicationLabelRule).toContain('font-size: 12px')
+    expect(medicationLabelRule).toContain('line-height: 16px')
     expect(screen.getByText('약 1/1개 검토 완료')).toBeTruthy()
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100')
   })

@@ -203,7 +203,7 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
   다음 입력을 fixture 생성 전에 거부한다.
 
   - `ENV != staging`인 `staging-live` mode
-  - `RELEASE_VALIDATION_ALLOWED != 1`인 live mode
+  - `RELEASE_VALIDATION_ALLOWED != true` 및 `!= 1`인 live mode
   - UUID가 아닌 run ID
   - 합의된 staging DB host·DB name과 일치하지 않는 값
   - HTTPS가 아니거나 합의된 staging API host와 일치하지 않는 base URL
@@ -348,7 +348,7 @@ OpenAI-only 수동 진단은 이번 MVP 구현과 완료 조건에서 제외한�
   위 `local-preflight` CLI로 후보 이미지와 기대값 draft를 전달한다. 별도 process의 host FastAPI와 runner를
   사용해 Backend login·업로드·OCR 실행·조회 API만 실제 TCP network로 호출한다.
   이 preflight는 OpenAI를 호출하지 않으며 one-cycle PASS 증거가 아니다. `ENV=local`, loopback FastAPI·
-  PostgreSQL, 같은 resolved `STORAGE_DIR`과 `RELEASE_VALIDATION_ALLOWED=1`을 확인한다. 기존
+  PostgreSQL, 같은 resolved `STORAGE_DIR`과 `RELEASE_VALIDATION_ALLOWED=true 또는 1`을 확인한다. 기존
   `prescription_clean.png`는 CLOVA 평가에서 필수 필드 누락과 오탐 행이 확인됐으므로 최종 fixture로
   고정하지 않는다. 실제 CLOVA preflight에서 현재 structurer가 정확한 medication index와 필수 field type
   집합을 만드는 최소 합성 이미지를 선정하거나 새로 만든다. 확정 이미지는
