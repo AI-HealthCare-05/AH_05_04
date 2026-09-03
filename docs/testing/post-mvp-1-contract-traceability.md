@@ -26,4 +26,15 @@
 
 RAG-08과 RAG-09는 위 hash의 Receipt를 상류 입력 경계로 사용한다. 다만 `PRESCRIPTION_VERSION_NOT_IMPLEMENTED`가 해소되고 Receipt가 새 상태로 재생성되기 전에는 착수 가능 또는 완료로 표시하지 않는다.
 
+## RAG Source Governance (#185) Receipt
+
+Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Governance Contract Receipt](../validation/rag/rag-source-governance-contract-receipt.md)와 [JSON fixture](../../tests/fixtures/rag/source_contract_receipt.json)에 고정하며 canonical hash는 `sha256:d687e75ebfbb3bc10b9887280e5c994bcc7bc0481722c660c6ce2cda8c3d402a`다. 합성 계약 검증은 `COMPLETED/PASS`지만 #155/#165/#166 Source Receipt가 연결되지 않아 실제 Source readiness는 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. 실제 Source 활성화나 `PUBLIC_TRACK_F` 해제의 근거로 사용하지 않는다.
+
+| 후속 Issue | #185 Receipt 입력 | 현재 판정 |
+| --- | --- | --- |
+| RAG-07A (#167) | Source 목적·Snapshot·Approval·Resolver 입력 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
+| RAG-07B (#168) | Candidate Index Source/version·물리 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
+| RAG-08 (#170) | 승인 Catalog provenance와 Resolver allowlist | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
+| RAG-12A (#175) | Runtime Bundle Source/Member·rollback 적합성 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
+
 Former Track D 요구사항 ID는 결정 이력과 traceability를 위해 보존할 수 있지만 일정·담당·완료 판정과 공개 flag는 Track F에서 관리한다. GitHub handle과 팀 역할 이름을 임의 매핑하지 않으며 실제 Issue와 PR마다 구현 담당자와 담당 리뷰어를 별도로 지정한다.
