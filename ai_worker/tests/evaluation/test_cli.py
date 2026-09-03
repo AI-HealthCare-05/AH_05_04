@@ -24,6 +24,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FOUNDATION_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/dev-foundation-v1.dataset.json"
 
 
+class FixedClock:
+    def __init__(self, timestamp: str) -> None:
+        self.timestamp = timestamp
+
+    def __call__(self) -> str:
+        return self.timestamp
+
+
 def test_cli_validates_fixture_without_creating_release_artifacts(tmp_path: Path) -> None:
     result = tmp_path / "receipt.json"
 
@@ -676,7 +684,7 @@ def test_run_dev_is_semantically_stable_across_run_identity_and_clock(tmp_path: 
             allowed_result_root=tmp_path,
             repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
             adapter_registry=StaticRegistry(CountingAdapter()),
-            clock=lambda timestamp=timestamp: timestamp,
+            clock=FixedClock(timestamp),
         )
         assert exit_code == 0
 
