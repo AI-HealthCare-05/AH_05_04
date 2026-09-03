@@ -56,6 +56,7 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 
 | 환경변수 | 기본값 | 의미 |
 | --- | --- | --- |
+| `ENV` | 없음(필수) | Worker 실행 환경: `local`, `staging`, `production` |
 | `REDIS_HOST` | `redis` | Redis hostname |
 | `REDIS_PORT` | `6379` | Redis port |
 | `REDIS_PASSWORD` | 없음 | Redis 인증값 |
@@ -72,6 +73,26 @@ Production 차단 조건입니다.
 `REDIS_SOCKET_TIMEOUT_SECONDS`는 `REDIS_BLOCK_MS / 1000`보다 길어야 합니다.
 이를 통해 정상적인 `XREADGROUP` blocking read가 socket timeout으로 먼저 중단되지 않도록 합니다.
 
+### Provider observability 공용 계약
+
+Provider context·descriptor·enum은 `provider_contracts.observability`에 있습니다.
+Worker는 검증된 `WorkerMessage`와 명시적인 `DeploymentEnvironment`로 context를 만듭니다.
+이 과정은 Backend 설정·DB·logger를 초기화하지 않습니다.
+
+```python
+from ai_worker.core.provider_observability import create_worker_provider_call_context
+from provider_contracts.observability import DeploymentEnvironment
+
+context = create_worker_provider_call_context(
+    message=worker_message,
+    environment=DeploymentEnvironment.LOCAL,
+)
+```
+
+생성된 context는 message의 `trace_id`를 유지하고, `validation_run_id=None`,
+`validation_enabled=False`를 사용합니다. 이 문서 시점에는 Worker Provider adapter와
+Handler 조립은 구현하지 않았습니다.
+
 ### 생성 예시
 
 ```python
@@ -81,6 +102,7 @@ from ai_worker.adapters.factory import (
 )
 from ai_worker.core.config import Config
 
+# 프로세스 환경에 ENV=local|staging|production을 명시합니다.
 config = Config()
 client = create_redis_client(config)
 adapter = create_stream_adapter(config, client=client)

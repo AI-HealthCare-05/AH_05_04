@@ -4,18 +4,13 @@ import uuid
 import zoneinfo
 from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
-from enum import StrEnum
 from pathlib import Path
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
-
-class Env(StrEnum):
-    LOCAL = "local"
-    STAGING = "staging"
-    PRODUCTION = "production"
+from provider_contracts.observability import DeploymentEnvironment as Env
 
 
 # IDEMPOTENCY_HMAC_KEY 필드 기본값과 envs/example.prod.env·example.local.env에 공개된 예시
