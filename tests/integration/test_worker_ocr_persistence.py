@@ -61,15 +61,9 @@ session_factory = async_sessionmaker(
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def repository_schema() -> AsyncIterator[None]:
     async with test_engine.begin() as connection:
-        await connection.execute(
-            text(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE")
-        )
-        await connection.execute(
-            text(f"CREATE SCHEMA {TEST_SCHEMA}")
-        )
-        await connection.execute(
-            text(f"SET search_path TO {TEST_SCHEMA}")
-        )
+        await connection.execute(text(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE"))
+        await connection.execute(text(f"CREATE SCHEMA {TEST_SCHEMA}"))
+        await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
         await connection.execute(
             text(
                 """
@@ -131,9 +125,7 @@ async def repository_schema() -> AsyncIterator[None]:
     yield
 
     async with test_engine.begin() as connection:
-        await connection.execute(
-            text(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE")
-        )
+        await connection.execute(text(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE"))
 
     await test_engine.dispose()
 
@@ -204,9 +196,7 @@ async def test_ocr_input_and_result_share_one_external_transaction() -> None:
     )
 
     async with test_engine.begin() as connection:
-        await connection.execute(
-            text(f"SET search_path TO {TEST_SCHEMA}")
-        )
+        await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
         await connection.execute(
             text("INSERT INTO ai_job (id) VALUES (:job_id)"),
             {"job_id": str(job_id)},
@@ -294,12 +284,8 @@ async def test_ocr_input_and_result_share_one_external_transaction() -> None:
 
         # ResultStore가 직접 commit하지 않았으므로 외부 session에는
         # 아직 변경 결과가 보여서는 안 됩니다.
-        assert await read_persisted_result(
-            domain_id=domain_id
-        ) == ("PENDING", 0)
+        assert await read_persisted_result(domain_id=domain_id) == ("PENDING", 0)
 
         await session.commit()
 
-    assert await read_persisted_result(
-        domain_id=domain_id
-    ) == ("COMPLETED", 1)
+    assert await read_persisted_result(domain_id=domain_id) == ("COMPLETED", 1)
