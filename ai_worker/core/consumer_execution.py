@@ -1,6 +1,8 @@
 """Handler 결과 검증 이후 저장·commit·ACK 순서를 조정합니다."""
 
 import asyncio
+import math
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -11,6 +13,7 @@ from ai_worker.core.errors import (
     ConsumerPersistenceError,
     WorkerError,
 )
+from ai_worker.core.handler import HandlerExecutionContext
 from ai_worker.core.job_execution import (
     CommittedDelivery,
     ExecutionLease,
@@ -139,7 +142,17 @@ class LeaseAwareConsumerExecution:
         heartbeat: LeaseHeartbeat,
         lease_duration: timedelta,
         clock: Callable[[], datetime],
+        hard_timeout_seconds: float | None = None,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        if hard_timeout_seconds is not None and (
+            isinstance(hard_timeout_seconds, bool)
+            or not isinstance(hard_timeout_seconds, int | float)
+            or not math.isfinite(hard_timeout_seconds)
+            or hard_timeout_seconds <= 0
+        ):
+            raise ValueError("hard_timeout_seconds는 유한한 양수여야 합니다.")
+
         self._dispatcher = dispatcher
         self._result_store = result_store
         self._transaction = transaction
@@ -148,6 +161,8 @@ class LeaseAwareConsumerExecution:
         self._heartbeat = heartbeat
         self._lease_duration = lease_duration
         self._clock = clock
+        self._hard_timeout_seconds = None if hard_timeout_seconds is None else float(hard_timeout_seconds)
+        self._monotonic_clock = monotonic_clock
 
     async def execute(
         self,
@@ -170,17 +185,10 @@ class LeaseAwareConsumerExecution:
         await self._commit()
         heartbeat_handle = await self._start_heartbeat(acquired)
 
-        try:
-            result = await self._dispatch_until_heartbeat_ends(
-                delivery,
-                heartbeat_handle,
-            )
-        except BaseException:
-            # Dispatcher와 heartbeat 어느 쪽에서 예외가 발생하더라도
-            # background heartbeat를 남기지 않습니다.
-            await self._stop_heartbeat_safely(heartbeat_handle)
-            await self._rollback_safely()
-            raise
+        result = await self._run_handler(
+            delivery,
+            heartbeat_handle,
+        )
 
         if isinstance(result, LeaseNotAcquired):
             await self._rollback_safely()
@@ -224,14 +232,96 @@ class LeaseAwareConsumerExecution:
 
         return result
 
-    async def _dispatch_until_heartbeat_ends(
+    async def _run_handler(
         self,
         delivery: WorkerDelivery,
         heartbeat_handle: LeaseHeartbeatHandle,
     ) -> HandlerSuccess | LeaseNotAcquired:
+        """Handler 실행과 timeout·heartbeat 정리를 담당합니다."""
+
+        execution_context = self._create_execution_context()
+        hard_timeout_reached = False
+
+        try:
+            return await self._dispatch_with_hard_timeout(
+                delivery,
+                heartbeat_handle,
+                context=execution_context,
+            )
+        except TimeoutError:
+            # timeout으로 Handler task가 취소된 뒤 heartbeat와 현재
+            # transaction을 정리합니다. 결과 commit과 ACK는 수행하지 않습니다.
+            await self._stop_heartbeat_safely(heartbeat_handle)
+            await self._rollback_safely()
+            hard_timeout_reached = True
+        except BaseException:
+            # Dispatcher와 heartbeat 어느 쪽에서 예외가 발생하더라도
+            # background heartbeat를 남기지 않습니다.
+            await self._stop_heartbeat_safely(heartbeat_handle)
+            await self._rollback_safely()
+            raise
+
+        if hard_timeout_reached:
+            # 활성 TimeoutError 처리 구간 밖에서 승인된 오류를 생성합니다.
+            raise WorkerError(failure_code="TIMEOUT") from None
+
+        raise WorkerError(failure_code="INTERNAL_ERROR")
+
+    def _create_execution_context(
+        self,
+    ) -> HandlerExecutionContext | None:
+        """설정된 hard timeout으로 Handler의 절대 deadline을 생성합니다."""
+
+        if self._hard_timeout_seconds is None:
+            return None
+
+        return HandlerExecutionContext(
+            worker_deadline=(self._monotonic_clock() + self._hard_timeout_seconds),
+        )
+
+    async def _dispatch_with_hard_timeout(
+        self,
+        delivery: WorkerDelivery,
+        heartbeat_handle: LeaseHeartbeatHandle,
+        *,
+        context: HandlerExecutionContext | None,
+    ) -> HandlerSuccess | LeaseNotAcquired:
+        """동일한 absolute deadline으로 Handler 실행을 제한합니다."""
+
+        if context is None:
+            return await self._dispatch_until_heartbeat_ends(
+                delivery,
+                heartbeat_handle,
+                context=None,
+            )
+
+        remaining_seconds = context.worker_deadline - self._monotonic_clock()
+
+        if remaining_seconds <= 0:
+            raise TimeoutError
+
+        async with asyncio.timeout(remaining_seconds):
+            return await self._dispatch_until_heartbeat_ends(
+                delivery,
+                heartbeat_handle,
+                context=context,
+            )
+
+    async def _dispatch_until_heartbeat_ends(
+        self,
+        delivery: WorkerDelivery,
+        heartbeat_handle: LeaseHeartbeatHandle,
+        *,
+        context: HandlerExecutionContext | None,
+    ) -> HandlerSuccess | LeaseNotAcquired:
         """Handler 완료와 heartbeat 소유권 상실 중 먼저 발생한 쪽을 처리합니다."""
 
-        dispatch_task = asyncio.create_task(self._dispatcher.dispatch(delivery.message))
+        dispatch_task = asyncio.create_task(
+            self._dispatcher.dispatch(
+                delivery.message,
+                context=context,
+            )
+        )
         heartbeat_wait_task = asyncio.create_task(heartbeat_handle.wait())
 
         try:
