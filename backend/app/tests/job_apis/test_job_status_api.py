@@ -202,6 +202,29 @@ class TestJobStatusApi:
         assert data["status"] == "STALE"
         assert data["result_url"] is None
 
+    async def test_get_job_status_returns_error_for_failed_job(self, db_session: AsyncSession) -> None:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            access_token, job_id = await _setup_owner_with_job(client, db_session)
+
+            job = await db_session.get(AiJob, job_id)
+            assert job is not None
+            job.status = AiJobStatus.FAILED
+            job.failure_code = "TIMEOUT"
+            job.completed_at = datetime.now(UTC)
+            await db_session.flush()
+
+            response = await client.get(
+                f"/api/v1/jobs/{job_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["status"] == "FAILED"
+        assert data["result_url"] is None
+        assert data["error"] == {"code": "TIMEOUT", "message": "처리 시간이 초과되어 작업이 실패했습니다."}
+        assert data["retry_after_seconds"] is None
+
     async def test_get_job_status_returns_404_for_other_users_job(self, db_session: AsyncSession) -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             _owner_token, job_id = await _setup_owner_with_job(client, db_session, label="owner")
