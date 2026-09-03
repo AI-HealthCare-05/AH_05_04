@@ -9,6 +9,7 @@ from scripts.verify_rag_01_receipt import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RECEIPT_PATH = PROJECT_ROOT / "docs" / "validation" / "rag" / "rag-01-ocr-input-contract-receipt.json"
+HUMAN_RECEIPT_PATH = PROJECT_ROOT / "docs" / "validation" / "rag" / "rag-01-ocr-input-contract-receipt.md"
 TRACEABILITY_PATH = PROJECT_ROOT / "docs" / "testing" / "post-mvp-1-contract-traceability.md"
 
 
@@ -54,6 +55,21 @@ def test_required_source_locations_are_machine_readable() -> None:
         assert location["lines"]
         assert location["commit_sha"]
         assert location["evidence_type"]
+
+
+def test_machine_and_human_receipts_have_same_source_mapping_evidence() -> None:
+    receipt = load_receipt(RECEIPT_PATH)
+    human_receipt = HUMAN_RECEIPT_PATH.read_text(encoding="utf-8")
+    source_locations = receipt["current_runtime_model"]["source_locations"]
+
+    for location in source_locations:
+        expected_row = (
+            f"| `{location['path']}` | {location['lines']} | "
+            f"`{location['commit_sha']}` | `{location['evidence_type']}` | "
+            f"{location['meaning']} |"
+        )
+
+        assert expected_row in human_receipt
 
 
 def test_migration_source_and_postgresql_execution_are_distinguished() -> None:

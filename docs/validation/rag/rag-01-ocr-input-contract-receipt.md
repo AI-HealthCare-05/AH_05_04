@@ -131,22 +131,23 @@ backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py
 ```
 ### 3.1 Commit·line-level 증빙
 
-현재 Runtime 감사의 기준 Commit은 `723758ec361a29e97a256ac45ae7a17d8b0dae50`이다.
+아래 표는 JSON Receipt의 `current_runtime_model.source_locations`와 동일한 파일·줄·Commit SHA·증빙 유형·검증 의미를 기록한다. JSON과 Markdown의 증빙은 항상 함께 갱신해야 한다.
 
-| 영역 | 파일 | 줄 | 검증 방식 | 확인 내용 |
-| --- | --- | ---: | --- | --- |
-| API router | `backend/app/apis/v1/medical_document_routers.py` | 78-94 | Source inspection | 처방 확정 API가 `PrescriptionService`를 호출하고 `PrescriptionResponse`를 201로 반환 |
-| 확정값 선택 | `backend/app/services/prescriptions.py` | 27-36 | Source inspection | `confirmed_value`만 사용하고 `raw_value`·`normalized_value` fallback 금지 |
-| 확정 transaction | `backend/app/services/prescriptions.py` | 72-125 | Source inspection | 소유권·row lock·중복 확정 검사 후 Prescription과 Medication 생성 |
-| 현재 Prescription | `backend/app/models/prescriptions.py` | 39-85 | Source inspection | 현재 저장 구조와 `profile_id` 소유권 경계 |
-| 현재 Medication | `backend/app/models/prescriptions.py` | 88-130 | Source inspection | `medication_name`과 nullable 문자열 `strength_text` |
-| 저장 Repository | `backend/app/repositories/prescription_repository.py` | 33-55 | Source inspection | Prescription과 Medication을 동일 DB session에서 생성하고 flush |
-| 공개 DTO | `backend/app/dtos/prescriptions.py` | 13-33 | Source inspection | `medication_name: str`, `strength_text: str \| None` |
-| PR #96 Migration | `backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py` | 22-126 | Source inspection | nullable `strength_text`, `MEDICATION_STRENGTH` 제약 및 downgrade 안전 가드 |
-| 정상 확정 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 117-130 | Regression test | 사용자 확정 필드 기반 Medication 생성 |
-| 소유권 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 254-267 | Regression test | 타 사용자 의료문서 처방 확정 404 |
-| nullable 함량 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 270-337 | Regression test | 확정된 선택 함량이 `strength_text=NULL`로 보존 |
-| 동시성 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_concurrency.py` | 215-316 | Regression test | PATCH·확정 직렬화와 동시 확정 단일 성공 |
+| 파일 | 줄 | Commit SHA | 증빙 유형 | 검증 의미 |
+| --- | ---: | --- | --- | --- |
+| `backend/app/apis/v1/medical_document_routers.py` | 78-94 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | 처방 확정 API가 PrescriptionService를 호출하고 PrescriptionResponse를 201로 반환한다. |
+| `backend/app/services/prescriptions.py` | 27-36 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | confirmed_value만 읽고 raw_value 또는 normalized_value로 대체하지 않는다. |
+| `backend/app/services/prescriptions.py` | 72-125 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | 문서 소유권과 직렬화 잠금을 확인한 뒤 확정 Prescription과 Medication을 생성한다. |
+| `backend/app/models/prescriptions.py` | 39-85 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | 현재 Prescription 모델과 profile_id 소유권 경계다. |
+| `backend/app/models/prescriptions.py` | 88-130 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | 현재 Medication의 medication_name과 nullable strength_text 저장 구조다. |
+| `backend/app/repositories/prescription_repository.py` | 33-55 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | Prescription과 Medication을 동일 세션에서 생성하고 flush한다. |
+| `backend/app/dtos/prescriptions.py` | 13-33 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | 공개 DTO의 medication_name과 nullable strength_text 구조다. |
+| `backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py` | 22-126 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `SOURCE_INSPECTION` | medication.strength_text nullable 컬럼, MEDICATION_STRENGTH 허용 제약 및 downgrade 안전 가드를 정의한다. |
+| `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 117-130 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `REGRESSION_TEST` | 확정 필드가 처방 확정 API의 Medication 결과로 저장되는 정상 흐름을 검증한다. |
+| `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 254-267 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `REGRESSION_TEST` | 타 사용자 의료문서의 처방 확정 요청이 404로 차단되는지 검증한다. |
+| `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 270-337 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `REGRESSION_TEST` | 확정된 nullable MEDICATION_STRENGTH가 medication.strength_text NULL로 보존되는지 검증한다. |
+| `backend/app/tests/ocr/test_prescription_confirmation_concurrency.py` | 215-316 | `723758ec361a29e97a256ac45ae7a17d8b0dae50` | `REGRESSION_TEST` | PATCH와 처방 확정의 row lock 직렬화 및 동시 확정의 단일 성공 경계를 검증한다. |
+| `backend/app/tests/ocr/test_prescription_confirmation_validation.py` | 56-89 | `2c1a9b1859e09a89398162858bfad6ce43985e82` | `REGRESSION_TEST` | 복합 함량 문자열 5mg/100mg을 그대로 보존하고, confirmed_value가 NULL인 미확정 OCR 값은 raw_value 또는 normalized_value로 대체하지 않는 입력 경계를 검증한다. |
 
 ### 3.2 Migration 검증 수준
 
