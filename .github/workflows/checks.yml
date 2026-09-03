@@ -97,8 +97,7 @@ jobs:
       - name: Run Tests with Coverage
         run: |
                     # 구현된 Worker 공통 및 OCR 테스트도 PR 필수 검사에 포함합니다.
-                    uv run coverage run -m pytest backend/app tests/contract ai_worker/tests/core ai_worker/tests/ocr
-          uv run coverage report -m
+                    uv run coverage run -m pytest backend/app tests/contract ai_worker/tests/core ai_worker/tests/ocr tests/integration/test_worker_ocr_persistence.py
 
   frontend:
     runs-on: ubuntu-latest

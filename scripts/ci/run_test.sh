@@ -76,9 +76,10 @@ HAS_TESTS=false
 for test_dir in \
   ./backend/app/tests \
   ./tests/contract \
-    ./tests/migration \
+  ./tests/migration \
   ./ai_worker/tests/core \
-  ./ai_worker/tests/ocr; do
+  ./ai_worker/tests/ocr \
+  ./tests/integration; do
   if [ -d "$test_dir" ] &&
     find "$test_dir" -type f -name 'test_*.py' -print -quit |
       grep -q .; then
@@ -185,7 +186,8 @@ if ! run_with_test_database \
   backend/app \
   tests/contract \
   ai_worker/tests/core \
-  ai_worker/tests/ocr; then
+  ai_worker/tests/ocr \
+  tests/integration/test_worker_ocr_persistence.py; then
   echo
   echo "Pytest failed."
   echo "Fix the test failures above and re-run."
