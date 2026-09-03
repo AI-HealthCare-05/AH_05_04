@@ -52,6 +52,8 @@ reviewer·review timestamp 또는 approver·approval timestamp의 한쪽만 기�
 
 `REVIEWED`·`APPROVED` 상태의 `reviewed_by.role`은 `EVALUATION_REVIEWER`만 허용한다. 이 역할은 팀 내부 Gold·Fixture·Evidence·Evaluation artifact의 검토 역할이며, `MEDICAL_REVIEWER`, 외부 의료 검토, 의료·약학 승인 또는 Production 공개 승인을 뜻하지 않는다. `external_medical_review_status`와 external approval receipt의 기존 규칙은 유지한다.
 
+Exported Draft 2020-12 JSON Schema는 구조 preflight만 담당한다. author/reviewer/approver의 cross-field identity 중복, system actor, role 조합과 event timestamp 순서는 표준 JSON Schema만으로 portable하게 표현하지 않으며, Loader의 Pydantic `ReviewProvenanceV12` 검증이 이 관계 제약의 권위 있는 fail-closed 수용 경계다. JSON Schema 성공은 Dataset 수용·Freeze 자격을 뜻하지 않는다.
+
 Safety Case와 End-to-End Case의 Team approval은 계속 `PRODUCT_SAFETY_REVIEWER | MEDICAL_REVIEWER`만 허용하고 Dataset Manifest Team approval은 `DATASET_CUSTODIAN`만 허용한다. `EVALUATION_REVIEWER`는 approval-role allowlist를 넓히지 않는다.
 
 ## Freeze and migration boundary

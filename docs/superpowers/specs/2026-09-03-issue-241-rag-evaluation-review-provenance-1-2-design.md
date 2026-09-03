@@ -26,7 +26,7 @@ Gold·Fixture 교차 검토자를 `MEDICAL_REVIEWER`로 기록했지만, 실제 
 2. `DRAFT`, `REVIEWED`, `APPROVED` 상태와 review·approval 필드를 양방향으로 결속한다.
 3. 비임상 Evaluation 검토와 의료 검토를 역할 수준에서 구분한다.
 4. 기존 Schema Set `1.0.0`과 `1.1.0`의 모델 동작과 canonical bytes를 변경하지 않는다.
-5. Pydantic, exported JSON Schema, Loader가 동일한 `1.2.0` 계약을 집행한다.
+5. Pydantic·Loader가 모든 provenance 관계 제약을 fail-closed하고, exported JSON Schema는 portable한 구조 preflight 제약을 집행한다.
 
 ## Chosen Approach
 
@@ -152,8 +152,10 @@ Schema registry에 `SCHEMA_REGISTRY_V1_2`를 추가하고 18개 unique member를
 명시적인 `--schema-set-version 1.2.0`을 지원하되 기본값 `1.0.0`을 유지한다.
 
 Export 후처리는 `ReviewProvenanceV12` definition에 Team Gold state matrix와 같은 Draft 2020-12
-conditional을 추가한다. Pydantic과 JSON Schema에 동일한 positive/negative payload matrix를
-적용해 parity를 확인한다.
+conditional을 추가한다. JSON Schema는 field type·requiredness·enum·state conditional의 portable
+preflight를 제공한다. author/reviewer/approver cross-field identity 중복, system actor·role 조합,
+event timestamp 순서는 표준 JSON Schema만으로 portable하게 비교할 수 없으므로 Pydantic과 Loader가
+권위 있는 fail-closed 수용 경계로 검증한다. JSON Schema 단독 통과는 Dataset 수용을 뜻하지 않는다.
 
 다음 불변 조건을 byte-level test로 고정한다.
 
@@ -187,7 +189,7 @@ PR #236의 NO_MATCH 입력, duplicate ingredient, Evidence 정답 메타데이�
 
 - Model tests: 각 Team Gold 상태의 valid shape와 null/non-null pair 오류
 - Role tests: 1.2 `EVALUATION_REVIEWER` 허용, 1.0·1.1 거부, approval role 불변
-- Schema parity tests: 같은 payload matrix를 Pydantic과 exported JSON Schema에 적용
+- Schema tests: portable state/role 구조 제약은 exported JSON Schema와 Pydantic에 함께 적용하고, 관계 제약은 Loader/Pydantic negative matrix로 검증
 - Loader tests: 1.2 complete graph load, mixed member version 거부, unknown version 거부
 - Closure tests: 1.2 FROZEN child DRAFT/REVIEWED 거부
 - Regression tests: 1.0 DEV fixture, 1.1 authoring behavior, committed schema bytes 불변

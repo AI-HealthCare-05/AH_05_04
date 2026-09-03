@@ -63,6 +63,8 @@ Schema `1.1.0`의 `FROZEN` Dataset은 모든 Case Gold, Evidence Mapping과 Crit
 
 `REVIEWED`·`APPROVED` 상태의 `reviewed_by.role`은 `EVALUATION_REVIEWER`만 허용한다. 이 역할은 Case Gold·Fixture·Evidence 등 팀 내부 Evaluation 검토를 뜻하며, `MEDICAL_REVIEWER` 또는 외부 의료·약학 approval을 뜻하지 않는다. `external_medical_review_status`와 immutable external receipt 규칙을 대체하지 않는다. Safety Case와 Dataset Manifest의 Team approval 역할 제한은 기존대로 각각 `PRODUCT_SAFETY_REVIEWER | MEDICAL_REVIEWER`, `DATASET_CUSTODIAN`을 유지한다.
 
+Exported Draft 2020-12 JSON Schema는 field type·requiredness·enum·state conditional 등 구조 제약의 portable preflight다. 작성자·검토자·승인자의 cross-field identity 중복, system actor, actor role 조합과 event timestamp 순서는 표준 JSON Schema만으로 portable하게 비교할 수 없으므로 Loader가 Pydantic `ReviewProvenanceV12` 검증으로 fail-closed한다. JSON Schema 단독 통과는 Dataset 수용이나 Freeze 자격을 뜻하지 않으며, Dataset graph는 반드시 Loader로 검증한다.
+
 Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping, Rubric, Profile, Evaluation Policy, Suite, Protected Artifact Receipt까지 검증하고, graph의 모든 schema payload version을 registry member version과 exact-match한다. 기존 1.0/1.1의 validation·canonical bytes는 불변이다. 상세 결정은 [RAG Evaluation Schema Set 1.2 Freeze](../../../governance/decisions/2026-09-03-rag-evaluation-schema-set-1-2-freeze.md)를 따른다.
 
 ## 비교 원칙
