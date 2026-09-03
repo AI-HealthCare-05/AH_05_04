@@ -191,7 +191,7 @@ field identity가 일치할 때만 모든 필드를 manifest 기대값으로 확
 - migration 계정과 DB 초기화 계정은 runner에 전달하지 않는다.
 - image build·push와 staging 배포는 기존 팀 절차를 사용하고 #61에서 새로 구현하지 않는다.
 
-fixture를 만들기 전에 `ENV=staging`, `RELEASE_VALIDATION_ALLOWED=1`, 합의된 HTTPS FastAPI host,
+fixture를 만들기 전에 `ENV=staging`, `RELEASE_VALIDATION_ALLOWED=true 또는 1`, 합의된 HTTPS FastAPI host,
 staging DB host·DB name과 commit SHA 또는 image digest를 모두 확인한다. 하나라도 다르면 DB session을
 열기 전에 종료한다. Production DB 이름에 특정 문자열이 들어가는지만 확인하는 deny-list는 사용하지
 않는다.
