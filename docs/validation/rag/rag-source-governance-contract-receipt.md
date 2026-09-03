@@ -31,7 +31,7 @@ Source·Endpoint·Operation·Approval·License·재사용 조건·Attribution·C
 
 Machine Receipt는 Source hash/version/lifecycle, Endpoint·Operation 상태축, Snapshot version/checksum/parser/normalization/schema/verification, license·reuse·attribution, clinical scope, Approval purpose/effective/expiry, Freshness Policy와 검증 시각을 위한 typed slot을 모두 정의한다. 현재 실제 값은 #155/#165/#166 Receipt가 연결되지 않아 `NOT_CONNECTED/null`이다. 회수 뒤에는 신규 사용을 차단하되 과거 Identification·Citation provenance는 보존하고 현재 결과로 재사용하지 않는다.
 
-실행형 합성 Guard 범위는 `REQUEST | CITATION_AUTHORIZATION`이다. 요청·활성 Bundle은 신뢰된 Target Bundle ID/Manifest와 모두 exact-match해야 하며 Target·Selection은 `ELIGIBILITY_TARGET | OPERATION_SELECTION`과 `RELEASE_SOURCE | SNAPSHOT_MEMBER`의 네 Canonical Envelope로 분리하여 Count/Hash/부분집합을 다시 계산한다. 두 Target과 실행 대상 Selection은 entry kind별 Count가 각각 1 이상이어야 한다. Envelope는 UTF-8·Unicode NFC·RFC 8785 JCS 규칙과 명시적 JSON `null`을 사용하고 중복 Entry를 거부한다. `RELEASE_SOURCE`의 Endpoint·Artifact 필드는 모두 null이어야 하며, `SNAPSHOT_MEMBER`는 Endpoint+Operation 또는 Artifact+Version 중 정확히 한 쌍만 가져야 한다. Citation은 별도 `PATIENT_CITATION` Approval과 원 `REQUEST/PASS` Guard의 Bundle ID·환경·Manifest·정렬 요청 Scope 목록·Scope Manifest Hash exact-match를 요구한다. 합성 Scope witness는 비어 있지 않은 중복 없는 NFC Scope Code를 UTF-8 byte 순으로 정렬한 compact JSON array의 SHA-256으로 재계산하며 Runtime wire schema 권한을 주장하지 않는다.
+실행형 합성 Guard 범위는 `REQUEST | CITATION_AUTHORIZATION`이다. 요청·활성 Bundle은 신뢰된 Target Bundle ID/Manifest와 모두 exact-match해야 하며 Target·Selection은 `ELIGIBILITY_TARGET | OPERATION_SELECTION`과 `RELEASE_SOURCE | SNAPSHOT_MEMBER`의 네 Canonical Envelope로 분리하여 Count/Hash/부분집합을 다시 계산한다. `member_kind`도 같은 `RELEASE_SOURCE | SNAPSHOT_MEMBER` enum만 사용한다. 두 Target과 실행 대상 Selection은 entry kind별 Count가 각각 1 이상이어야 한다. Target과 Selection 각각에서 모든 `SNAPSHOT_MEMBER`는 같은 집합의 `RELEASE_SOURCE`와 `source_code`, 불변 Snapshot 식별자인 `source_version`, 목적·승인·Scope/Freshness Policy 및 `bundle_build_source_verification_stable_key`가 모두 일치해야 하며, 실행 대상 Selection의 모든 Entry는 요청 목적과 같은 `purpose_code`를 가져야 한다. 따라서 같은 Source의 서로 다른 Snapshot에서 Endpoint/Artifact Member를 섞는 조합도 차단한다. Envelope는 UTF-8·Unicode NFC·RFC 8785 JCS 규칙과 명시적 JSON `null`을 사용하고 중복 Entry를 거부한다. `RELEASE_SOURCE`의 Endpoint·Artifact 필드는 모두 null이어야 하며, `SNAPSHOT_MEMBER`는 Endpoint+Operation 또는 Artifact+Version 중 정확히 한 쌍만 가져야 한다. Citation은 별도 `PATIENT_CITATION` Approval과 원 `REQUEST/PASS` Guard의 Bundle ID·환경·Manifest·정렬 요청 Scope 목록·Scope Manifest Hash exact-match를 요구한다. 합성 Scope witness는 비어 있지 않은 중복 없는 NFC Scope Code를 UTF-8 byte 순으로 정렬한 compact JSON array의 SHA-256으로 재계산하며 Runtime wire schema 권한을 주장하지 않는다.
 
 `EVALUATION_CANDIDATE | EVALUATION_REQUEST | PLANNED_ACTIVATION | EMERGENCY_ROLLBACK | RESUME`의 BUILDING candidate, protected runner, current/candidate 분리와 환경 전환은 정본 계약에만 기록된 후속 Runtime/Evaluation 경계다. 이 #185 evaluator는 필요한 전체 context가 없으므로 해당 Operation에 `PASS`를 반환하지 않고 `OPERATION_CONTEXT_NOT_MODELED`로 차단한다. 적격 rollback 후보가 없을 때 환경 결과는 `SUSPENDED`다.
 
@@ -57,7 +57,7 @@ Machine Receipt는 Source hash/version/lifecycle, Endpoint·Operation 상태축,
 
 ## Receipt 무결성과 후속 입력
 
-Canonical Receipt hash는 `sha256:5a1a706ce9d8be94c9745c02893c90531d49946d816d8988e13b9ace1850045c`다. 이 합성 Receipt는 #167, #168, #170, #175의 입력 선행조건으로 연결되지만 실제 Source binding이 채워진 새 Receipt 전까지 네 Issue 모두 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다.
+Canonical Receipt hash는 `sha256:d687e75ebfbb3bc10b9887280e5c994bcc7bc0481722c660c6ce2cda8c3d402a`다. 이 합성 Receipt는 #167, #168, #170, #175의 입력 선행조건으로 연결되지만 실제 Source binding이 채워진 새 Receipt 전까지 네 Issue 모두 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다.
 
 ## 사용 범위
 

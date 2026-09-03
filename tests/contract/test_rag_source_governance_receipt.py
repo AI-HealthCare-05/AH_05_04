@@ -8,6 +8,7 @@ from ai_worker.tasks.rag.source_governance import (
     SyntheticEnvironment,
     SyntheticGuardDecision,
     SyntheticGuardManifestEntry,
+    SyntheticGuardManifestEntryKind,
     SyntheticGuardOperation,
     SyntheticImmutableReference,
     SyntheticOriginGuardBinding,
@@ -42,6 +43,7 @@ def _synthetic_facts(receipt: dict[str, Any], overrides: dict[str, Any]) -> Synt
             SyntheticGuardManifestEntry(
                 **{
                     **entry,
+                    "member_kind": SyntheticGuardManifestEntryKind(entry["member_kind"]),
                     "purpose_code": SyntheticUsePurpose(entry["purpose_code"]),
                 }
             )
@@ -245,9 +247,26 @@ def test_machine_receipt_captures_operation_specific_guard_boundaries() -> None:
         "RELEASE_SOURCE",
         "SNAPSHOT_MEMBER",
     ]
+    assert boundary["target_and_selection_manifest_validation"]["member_kind_values"] == [
+        "RELEASE_SOURCE",
+        "SNAPSHOT_MEMBER",
+    ]
     assert boundary["target_and_selection_manifest_validation"]["minimum_count_per_required_entry_kind"] == 1
     assert boundary["target_and_selection_manifest_validation"]["separate_count_and_hash_per_entry_kind"] is True
     assert boundary["target_and_selection_manifest_validation"]["duplicate_entries_rejected"] is True
+    assert (
+        boundary["target_and_selection_manifest_validation"]["snapshot_member_requires_same_set_release_source"] is True
+    )
+    assert boundary["target_and_selection_manifest_validation"]["source_snapshot_binding_fields"] == [
+        "source_code",
+        "source_version",
+        "purpose_code",
+        "approval_version",
+        "scope_policy_hash",
+        "freshness_policy_hash",
+        "bundle_build_source_verification_stable_key",
+    ]
+    assert boundary["target_and_selection_manifest_validation"]["selection_entry_purpose_exact_match"] is True
     assert boundary["target_and_selection_manifest_validation"]["member_null_rules"] == {
         "RELEASE_SOURCE": "endpoint_code, operation_code, artifact_code, artifact_version are null",
         "SNAPSHOT_MEMBER": ("exactly one of endpoint_code+operation_code or artifact_code+artifact_version is present"),

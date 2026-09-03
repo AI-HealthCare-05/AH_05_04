@@ -39,15 +39,15 @@
     "suite_artifacts": [
       {
         "path": "ai_worker/tasks/rag/source_governance.py",
-        "sha256": "08ce57c2d53ede0ac4a9e369012d4872662a0f6b4484d3c97852ccef0123d871"
+        "sha256": "1d17635f383d997ad178286c4377f748ca1aa857d45df1c0910209263da7220f"
       },
       {
         "path": "tests/contract/test_rag_source_governance_receipt.py",
-        "sha256": "f145a68a7752ff87c92c30857874fa2c2ac21611e3286f723e8bbb65a6ecd348"
+        "sha256": "f5df74f0ae0c6beba191ab8e5ae315e76aac9acbdd2315b41ba434ed9acb5612"
       },
       {
         "path": "ai_worker/tests/rag/test_source_governance.py",
-        "sha256": "f8fb676dadf8ff93d0c4ec734355a8383acd50481e9754692af3e58c0806b8b2"
+        "sha256": "739803c457f3de64821bd9eeb45c21f60bc36de06a4df7807502dbaccf63b8cd"
       }
     ],
     "verified_repository_base_commit": "57e21fca5e9299bad4e30da7c05cb0ee457bfb18",
@@ -203,7 +203,7 @@
     "guard_target_manifest_spec_version": "guard-target-manifest-v1",
     "target_manifest_entries": [
       {
-        "member_kind": "SOURCE",
+        "member_kind": "RELEASE_SOURCE",
         "source_code": "SYNTHETIC_SOURCE",
         "endpoint_code": null,
         "operation_code": null,
@@ -241,7 +241,7 @@
     ],
     "selection_manifest_entries": [
       {
-        "member_kind": "SOURCE",
+        "member_kind": "RELEASE_SOURCE",
         "source_code": "SYNTHETIC_SOURCE",
         "endpoint_code": null,
         "operation_code": null,
@@ -430,9 +430,24 @@
         "RELEASE_SOURCE",
         "SNAPSHOT_MEMBER"
       ],
+      "member_kind_values": [
+        "RELEASE_SOURCE",
+        "SNAPSHOT_MEMBER"
+      ],
       "minimum_count_per_required_entry_kind": 1,
       "separate_count_and_hash_per_entry_kind": true,
       "duplicate_entries_rejected": true,
+      "snapshot_member_requires_same_set_release_source": true,
+      "source_snapshot_binding_fields": [
+        "source_code",
+        "source_version",
+        "purpose_code",
+        "approval_version",
+        "scope_policy_hash",
+        "freshness_policy_hash",
+        "bundle_build_source_verification_stable_key"
+      ],
+      "selection_entry_purpose_exact_match": true,
       "member_null_rules": {
         "RELEASE_SOURCE": "endpoint_code, operation_code, artifact_code, artifact_version are null",
         "SNAPSHOT_MEMBER": "exactly one of endpoint_code+operation_code or artifact_code+artifact_version is present"
@@ -554,6 +569,6 @@
   "receipt_hash": {
     "algorithm": "sha256",
     "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
-    "value": "5a1a706ce9d8be94c9745c02893c90531d49946d816d8988e13b9ace1850045c"
+    "value": "d687e75ebfbb3bc10b9887280e5c994bcc7bc0481722c660c6ce2cda8c3d402a"
   }
 }

@@ -9,6 +9,7 @@ from ai_worker.tasks.rag.source_governance import (
     SyntheticGovernanceReason,
     SyntheticGuardDecision,
     SyntheticGuardManifestEntry,
+    SyntheticGuardManifestEntryKind,
     SyntheticGuardOperation,
     SyntheticImmutableReference,
     SyntheticOriginGuardBinding,
@@ -42,7 +43,7 @@ def synthetic_manifest_entries() -> tuple[SyntheticGuardManifestEntry, Synthetic
     }
     return (
         SyntheticGuardManifestEntry(
-            member_kind="SOURCE",
+            member_kind=SyntheticGuardManifestEntryKind.RELEASE_SOURCE,
             endpoint_code=None,
             operation_code=None,
             artifact_code=None,
@@ -53,7 +54,7 @@ def synthetic_manifest_entries() -> tuple[SyntheticGuardManifestEntry, Synthetic
             **shared,
         ),
         SyntheticGuardManifestEntry(
-            member_kind="SNAPSHOT_MEMBER",
+            member_kind=SyntheticGuardManifestEntryKind.SNAPSHOT_MEMBER,
             endpoint_code="SYNTHETIC_ENDPOINT",
             operation_code="SYNTHETIC_OPERATION",
             artifact_code=None,
@@ -62,6 +63,52 @@ def synthetic_manifest_entries() -> tuple[SyntheticGuardManifestEntry, Synthetic
             source_manifest_member_hash=None,
             canonical_checksum="6" * 64,
             **shared,
+        ),
+    )
+
+
+def second_source_manifest_entries() -> tuple[SyntheticGuardManifestEntry, SyntheticGuardManifestEntry]:
+    source_entry, snapshot_entry = synthetic_manifest_entries()
+    return (
+        replace(
+            source_entry,
+            source_code="SYNTHETIC_SOURCE_B",
+            content_sha256="a" * 64,
+            source_manifest_member_hash="c" * 64,
+            canonical_checksum="d" * 64,
+            bundle_build_source_verification_stable_key="verification-b",
+        ),
+        replace(
+            snapshot_entry,
+            source_code="SYNTHETIC_SOURCE_B",
+            endpoint_code="SYNTHETIC_ENDPOINT_B",
+            operation_code="SYNTHETIC_OPERATION_B",
+            content_sha256="e" * 64,
+            canonical_checksum="f" * 64,
+            bundle_build_source_verification_stable_key="verification-b",
+        ),
+    )
+
+
+def second_snapshot_manifest_entries() -> tuple[SyntheticGuardManifestEntry, SyntheticGuardManifestEntry]:
+    source_entry, snapshot_entry = synthetic_manifest_entries()
+    return (
+        replace(
+            source_entry,
+            source_version="v2",
+            content_sha256="9" * 64,
+            source_manifest_member_hash="8" * 64,
+            canonical_checksum="a" * 64,
+            bundle_build_source_verification_stable_key="verification-2",
+        ),
+        replace(
+            snapshot_entry,
+            source_version="v2",
+            endpoint_code="SYNTHETIC_ENDPOINT_V2",
+            operation_code="SYNTHETIC_OPERATION_V2",
+            content_sha256="b" * 64,
+            canonical_checksum="c" * 64,
+            bundle_build_source_verification_stable_key="verification-2",
         ),
     )
 
@@ -133,7 +180,11 @@ def citation_manifest_fields() -> dict[str, object]:
             entry,
             purpose_code=SyntheticUsePurpose.PATIENT_CITATION,
             approval_version="citation-approval-v1",
-            content_sha256="8" * 64 if entry.member_kind == "SOURCE" else entry.content_sha256,
+            content_sha256=(
+                "8" * 64
+                if entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE
+                else entry.content_sha256
+            ),
         )
         for entry in synthetic_manifest_entries()
     )
@@ -152,6 +203,146 @@ def test_complete_exact_matching_synthetic_evidence_passes() -> None:
 
     assert result.decision is SyntheticGuardDecision.PASS
     assert result.observation_reasons == ()
+
+
+def test_target_rejects_snapshot_member_without_same_source_release_entry() -> None:
+    source_a, _ = synthetic_manifest_entries()
+    _, snapshot_b = second_source_manifest_entries()
+    cross_source_entries = (source_a, snapshot_b)
+    result = evaluate_synthetic_source_governance(
+        changed_facts(
+            {
+                "target_manifest_entries": cross_source_entries,
+                "selection_manifest_entries": cross_source_entries,
+                "expected_target_snapshot_member_manifest_hash": (
+                    "54207659c8cbdfea23b9062c567616b7f5436b2a5476e4b44b38b189ba00b421"
+                ),
+                "expected_selection_snapshot_member_manifest_hash": (
+                    "91ac2fc38c55d2f7fff0cc696d351ead517ff64c722f52f07b8291a41df50fb3"
+                ),
+            }
+        )
+    )
+
+    assert result.decision is SyntheticGuardDecision.FAIL
+    assert result.observation_reasons == (
+        SyntheticGovernanceReason.TARGET_SOURCE_MEMBER_RELATION_INVALID,
+        SyntheticGovernanceReason.SELECTION_SOURCE_MEMBER_RELATION_INVALID,
+    )
+
+
+def test_target_rejects_member_from_a_different_snapshot_of_the_same_source() -> None:
+    source_v1, _ = synthetic_manifest_entries()
+    _, snapshot_v2 = second_snapshot_manifest_entries()
+    mismatched_entries = (source_v1, snapshot_v2)
+    result = evaluate_synthetic_source_governance(
+        changed_facts(
+            {
+                "target_manifest_entries": mismatched_entries,
+                "selection_manifest_entries": mismatched_entries,
+                "expected_target_snapshot_member_manifest_hash": (
+                    "c3bd45d2878fde4e283c823980c76a5e018714bdb0c0f0778c445ae820ceecf3"
+                ),
+                "expected_selection_snapshot_member_manifest_hash": (
+                    "270d7dba22d6d248d747aa7d64674f878f3863ad4fb2e7ae4f6bded50fbac9fc"
+                ),
+            }
+        )
+    )
+
+    assert result.decision is SyntheticGuardDecision.FAIL
+    assert result.observation_reasons == (
+        SyntheticGovernanceReason.TARGET_SOURCE_MEMBER_RELATION_INVALID,
+        SyntheticGovernanceReason.SELECTION_SOURCE_MEMBER_RELATION_INVALID,
+    )
+
+
+def test_selection_rejects_cross_source_release_and_snapshot_combination() -> None:
+    source_a, snapshot_a = synthetic_manifest_entries()
+    source_b, snapshot_b = second_source_manifest_entries()
+    result = evaluate_synthetic_source_governance(
+        changed_facts(
+            {
+                "target_manifest_entries": (source_a, snapshot_a, source_b, snapshot_b),
+                "selection_manifest_entries": (source_a, snapshot_b),
+                "expected_target_release_source_count": 2,
+                "expected_target_release_source_manifest_hash": (
+                    "f68a451e5fe28fa389b7bfb43600a34794cee50384429734992bab245521a80e"
+                ),
+                "expected_target_snapshot_member_count": 2,
+                "expected_target_snapshot_member_manifest_hash": (
+                    "40a02d237121b086279fc4dfde5539337d82353482037a7f3c8d151fba6cd143"
+                ),
+                "expected_selection_snapshot_member_manifest_hash": (
+                    "91ac2fc38c55d2f7fff0cc696d351ead517ff64c722f52f07b8291a41df50fb3"
+                ),
+            }
+        )
+    )
+
+    assert result.decision is SyntheticGuardDecision.FAIL
+    assert result.observation_reasons == (SyntheticGovernanceReason.SELECTION_SOURCE_MEMBER_RELATION_INVALID,)
+
+
+def test_selection_rejects_members_from_a_different_snapshot_of_the_same_source() -> None:
+    source_v1, snapshot_v1 = synthetic_manifest_entries()
+    source_v2, snapshot_v2 = second_snapshot_manifest_entries()
+    result = evaluate_synthetic_source_governance(
+        changed_facts(
+            {
+                "target_manifest_entries": (source_v1, snapshot_v1, source_v2, snapshot_v2),
+                "selection_manifest_entries": (source_v1, snapshot_v2),
+                "expected_target_release_source_count": 2,
+                "expected_target_release_source_manifest_hash": (
+                    "8f14e50235fdc39ce104c985bb59d481e086d09413bfb83686cdfc42af0c790a"
+                ),
+                "expected_target_snapshot_member_count": 2,
+                "expected_target_snapshot_member_manifest_hash": (
+                    "c8b7aa8cac5038fbd3cfd60866ee0eab2f302918c9431630bc3f924cf24a326a"
+                ),
+                "expected_selection_snapshot_member_manifest_hash": (
+                    "270d7dba22d6d248d747aa7d64674f878f3863ad4fb2e7ae4f6bded50fbac9fc"
+                ),
+            }
+        )
+    )
+
+    assert result.decision is SyntheticGuardDecision.FAIL
+    assert result.observation_reasons == (SyntheticGovernanceReason.SELECTION_SOURCE_MEMBER_RELATION_INVALID,)
+
+
+def test_request_rejects_selection_approved_for_a_different_purpose() -> None:
+    safety_entries = tuple(
+        replace(
+            entry,
+            purpose_code=SyntheticUsePurpose.SAFETY_ROUTING,
+            approval_version="safety-approval-v1",
+        )
+        for entry in synthetic_manifest_entries()
+    )
+    result = evaluate_synthetic_source_governance(
+        changed_facts(
+            {
+                "target_manifest_entries": safety_entries,
+                "selection_manifest_entries": safety_entries,
+                "expected_target_release_source_manifest_hash": (
+                    "0b03c46ffcae2453bac9e73aea09d5fd172509cfb3b48f0324cbb9478f11069f"
+                ),
+                "expected_target_snapshot_member_manifest_hash": (
+                    "16ed2c3b53b29fe168d6fa7ddb3f290b10061103ca5b0873ec896f2bc2f02f6a"
+                ),
+                "expected_selection_release_source_manifest_hash": (
+                    "e8b597d3a65692f21448000b74ea5545a6d405ea68bbbc8c96765f4649877bdf"
+                ),
+                "expected_selection_snapshot_member_manifest_hash": (
+                    "8bf37a0e985c440c1379c5d0539e1524fac97cb4e31b68057a2b1c81c1c42c27"
+                ),
+            }
+        )
+    )
+
+    assert result.decision is SyntheticGuardDecision.FAIL
+    assert result.observation_reasons == (SyntheticGovernanceReason.SELECTION_PURPOSE_MISMATCH,)
 
 
 @pytest.mark.parametrize(
@@ -452,7 +643,7 @@ def test_citation_authorization_rejects_retrieval_manifest_entries() -> None:
     )
 
     assert result.decision is SyntheticGuardDecision.FAIL
-    assert result.observation_reasons == (SyntheticGovernanceReason.CITATION_SELECTION_PURPOSE_INVALID,)
+    assert result.observation_reasons == (SyntheticGovernanceReason.SELECTION_PURPOSE_MISMATCH,)
 
 
 def test_request_and_citation_bundle_identity_must_match_trusted_target() -> None:
@@ -556,7 +747,11 @@ def test_each_required_split_manifest_rejects_zero_count_even_with_matching_empt
     reason: SyntheticGovernanceReason,
 ) -> None:
     source_entry, snapshot_entry = synthetic_manifest_entries()
-    removed_kind = "SOURCE" if "release_source" in next(iter(changes)) else "SNAPSHOT_MEMBER"
+    removed_kind = (
+        SyntheticGuardManifestEntryKind.RELEASE_SOURCE
+        if "release_source" in next(iter(changes))
+        else SyntheticGuardManifestEntryKind.SNAPSHOT_MEMBER
+    )
     remaining_entries = tuple(entry for entry in (source_entry, snapshot_entry) if entry.member_kind != removed_kind)
     manifest_change = {
         "target_manifest_entries" if entry_set == "target" else "selection_manifest_entries": remaining_entries
@@ -589,7 +784,14 @@ def test_guard_rejects_duplicate_or_unknown_canonical_manifest_entries() -> None
         changed_facts({"target_manifest_entries": (source_entry, snapshot_entry, snapshot_entry)})
     )
     unknown_kind_result = evaluate_synthetic_source_governance(
-        changed_facts({"target_manifest_entries": (source_entry, replace(snapshot_entry, member_kind="UNKNOWN"))})
+        changed_facts(
+            {
+                "target_manifest_entries": (
+                    source_entry,
+                    replace(snapshot_entry, member_kind=cast(Any, "UNKNOWN")),
+                )
+            }
+        )
     )
 
     assert SyntheticGovernanceReason.CANONICAL_MANIFEST_ENTRY_INVALID in duplicate_result.observation_reasons
@@ -653,7 +855,9 @@ def test_guard_rejects_invalid_null_combinations_for_canonical_entry_kind(
 ) -> None:
     source_entry, snapshot_entry = synthetic_manifest_entries()
     target_entries = (
-        (invalid_entry, snapshot_entry) if invalid_entry.member_kind == "SOURCE" else (source_entry, invalid_entry)
+        (invalid_entry, snapshot_entry)
+        if invalid_entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE
+        else (source_entry, invalid_entry)
     )
 
     result = evaluate_synthetic_source_governance(changed_facts({"target_manifest_entries": target_entries}))

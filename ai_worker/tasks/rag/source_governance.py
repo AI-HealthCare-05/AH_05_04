@@ -32,6 +32,11 @@ class SyntheticUsePurpose(StrEnum):
     PATIENT_CITATION = "PATIENT_CITATION"
 
 
+class SyntheticGuardManifestEntryKind(StrEnum):
+    RELEASE_SOURCE = "RELEASE_SOURCE"
+    SNAPSHOT_MEMBER = "SNAPSHOT_MEMBER"
+
+
 class SyntheticEnvironment(StrEnum):
     LOCAL = "LOCAL"
     TEST = "TEST"
@@ -69,7 +74,9 @@ class SyntheticGovernanceReason(StrEnum):
     REQUEST_SCOPE_INVALID = "REQUEST_SCOPE_INVALID"
     CITATION_PURPOSE_REQUIRED = "CITATION_PURPOSE_REQUIRED"
     CITATION_ORIGIN_REQUEST_MISMATCH = "CITATION_ORIGIN_REQUEST_MISMATCH"
-    CITATION_SELECTION_PURPOSE_INVALID = "CITATION_SELECTION_PURPOSE_INVALID"
+    SELECTION_PURPOSE_MISMATCH = "SELECTION_PURPOSE_MISMATCH"
+    TARGET_SOURCE_MEMBER_RELATION_INVALID = "TARGET_SOURCE_MEMBER_RELATION_INVALID"
+    SELECTION_SOURCE_MEMBER_RELATION_INVALID = "SELECTION_SOURCE_MEMBER_RELATION_INVALID"
     OPERATION_CONTEXT_NOT_MODELED = "OPERATION_CONTEXT_NOT_MODELED"
     CANONICAL_MANIFEST_ENTRY_INVALID = "CANONICAL_MANIFEST_ENTRY_INVALID"
     TARGET_RELEASE_SOURCE_MANIFEST_MISMATCH = "TARGET_RELEASE_SOURCE_MANIFEST_MISMATCH"
@@ -91,7 +98,7 @@ class SyntheticImmutableReference:
 class SyntheticGuardManifestEntry:
     """Stable Source Manifest union key used to recompute Guard manifests."""
 
-    member_kind: str
+    member_kind: SyntheticGuardManifestEntryKind
     source_code: str
     endpoint_code: str | None
     operation_code: str | None
@@ -200,7 +207,7 @@ def _references_are_valid(references: tuple[SyntheticImmutableReference, ...]) -
 
 def _manifest_entry_payload(entry: SyntheticGuardManifestEntry) -> dict[str, str | None]:
     return {
-        "member_kind": entry.member_kind,
+        "member_kind": str(entry.member_kind),
         "source_code": entry.source_code,
         "endpoint_code": entry.endpoint_code,
         "operation_code": entry.operation_code,
@@ -259,12 +266,12 @@ def _canonical_guard_manifest_hash(
 
 
 def _manifest_entry_null_combination_is_valid(entry: SyntheticGuardManifestEntry) -> bool:
-    if entry.member_kind == "SOURCE":
+    if entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE:
         return _is_sha256(entry.source_manifest_member_hash or "") and all(
             value is None
             for value in (entry.endpoint_code, entry.operation_code, entry.artifact_code, entry.artifact_version)
         )
-    if entry.member_kind != "SNAPSHOT_MEMBER":
+    if entry.member_kind is not SyntheticGuardManifestEntryKind.SNAPSHOT_MEMBER:
         return False
     if entry.source_manifest_member_hash is not None:
         return False
@@ -285,7 +292,11 @@ def _manifest_entry_null_combination_is_valid(entry: SyntheticGuardManifestEntry
 
 def _canonical_manifest_entries_are_valid(facts: SyntheticSourceGovernanceFacts) -> bool:
     def canonical_payload(entry: SyntheticGuardManifestEntry) -> dict[str, str | None]:
-        return _release_source_payload(entry) if entry.member_kind == "SOURCE" else _manifest_entry_payload(entry)
+        return (
+            _release_source_payload(entry)
+            if entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE
+            else _manifest_entry_payload(entry)
+        )
 
     target_payloads = [canonical_payload(entry) for entry in facts.target_manifest_entries]
     selection_payloads = [canonical_payload(entry) for entry in facts.selection_manifest_entries]
@@ -334,27 +345,48 @@ def _selection_is_not_target_subset(facts: SyntheticSourceGovernanceFacts) -> bo
     target_release_sources = {
         _canonical_json_bytes(_release_source_payload(entry))
         for entry in facts.target_manifest_entries
-        if entry.member_kind == "SOURCE"
+        if entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE
     }
     target_snapshot_members = {
         _canonical_json_bytes(_manifest_entry_payload(entry))
         for entry in facts.target_manifest_entries
-        if entry.member_kind == "SNAPSHOT_MEMBER"
+        if entry.member_kind is SyntheticGuardManifestEntryKind.SNAPSHOT_MEMBER
     }
     selection_release_sources = {
         _canonical_json_bytes(_release_source_payload(entry))
         for entry in facts.selection_manifest_entries
-        if entry.member_kind == "SOURCE"
+        if entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE
     }
     selection_snapshot_members = {
         _canonical_json_bytes(_manifest_entry_payload(entry))
         for entry in facts.selection_manifest_entries
-        if entry.member_kind == "SNAPSHOT_MEMBER"
+        if entry.member_kind is SyntheticGuardManifestEntryKind.SNAPSHOT_MEMBER
     }
     return not (
         selection_release_sources.issubset(target_release_sources)
         and selection_snapshot_members.issubset(target_snapshot_members)
     )
+
+
+def _snapshot_members_have_release_sources(
+    release_sources: tuple[SyntheticGuardManifestEntry, ...],
+    snapshot_members: tuple[SyntheticGuardManifestEntry, ...],
+) -> bool:
+    def binding(entry: SyntheticGuardManifestEntry) -> bytes:
+        return _canonical_json_bytes(
+            {
+                "source_code": entry.source_code,
+                "source_version": entry.source_version,
+                "purpose_code": entry.purpose_code.value,
+                "approval_version": entry.approval_version,
+                "scope_policy_hash": entry.scope_policy_hash,
+                "freshness_policy_hash": entry.freshness_policy_hash,
+                "bundle_build_source_verification_stable_key": (entry.bundle_build_source_verification_stable_key),
+            }
+        )
+
+    release_source_bindings = {binding(entry) for entry in release_sources}
+    return all(binding(entry) in release_source_bindings for entry in snapshot_members)
 
 
 def _scope_codes_are_canonical(scope_codes: tuple[str, ...] | None) -> bool:
@@ -393,15 +425,36 @@ def _evidence_checks(
     selection_present = bool(facts.selection_manifest_entries) and all(value is not None for value in selection_values)
     selection_absent = not facts.selection_manifest_entries and all(value is None for value in selection_values)
     selection_is_not_subset = _selection_is_not_target_subset(facts)
-    target_release_sources = tuple(entry for entry in facts.target_manifest_entries if entry.member_kind == "SOURCE")
+    target_release_sources = tuple(
+        entry
+        for entry in facts.target_manifest_entries
+        if entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE
+    )
     target_snapshot_members = tuple(
-        entry for entry in facts.target_manifest_entries if entry.member_kind == "SNAPSHOT_MEMBER"
+        entry
+        for entry in facts.target_manifest_entries
+        if entry.member_kind is SyntheticGuardManifestEntryKind.SNAPSHOT_MEMBER
     )
     selection_release_sources = tuple(
-        entry for entry in facts.selection_manifest_entries if entry.member_kind == "SOURCE"
+        entry
+        for entry in facts.selection_manifest_entries
+        if entry.member_kind is SyntheticGuardManifestEntryKind.RELEASE_SOURCE
     )
     selection_snapshot_members = tuple(
-        entry for entry in facts.selection_manifest_entries if entry.member_kind == "SNAPSHOT_MEMBER"
+        entry
+        for entry in facts.selection_manifest_entries
+        if entry.member_kind is SyntheticGuardManifestEntryKind.SNAPSHOT_MEMBER
+    )
+    target_source_member_relation_valid = _snapshot_members_have_release_sources(
+        target_release_sources,
+        target_snapshot_members,
+    )
+    selection_source_member_relation_valid = _snapshot_members_have_release_sources(
+        selection_release_sources,
+        selection_snapshot_members,
+    )
+    selection_purpose_matches = not selection_present or all(
+        entry.purpose_code is facts.expected_purpose for entry in facts.selection_manifest_entries
     )
     canonical_entries_valid = _canonical_manifest_entries_are_valid(facts)
     target_release_source_manifest_matches = (
@@ -477,10 +530,6 @@ def _evidence_checks(
         facts.expected_purpose is SyntheticUsePurpose.PATIENT_CITATION
         and facts.observed_purpose is SyntheticUsePurpose.PATIENT_CITATION
     )
-    citation_selection_purpose_allowed = facts.operation is not SyntheticGuardOperation.CITATION_AUTHORIZATION or (
-        not selection_present
-        or all(entry.purpose_code is SyntheticUsePurpose.PATIENT_CITATION for entry in facts.selection_manifest_entries)
-    )
     request_scope_valid = facts.operation not in _MODELED_OPERATIONS or (
         _scope_codes_are_canonical(facts.request_scope_codes)
         and facts.request_scope_codes is not None
@@ -532,6 +581,18 @@ def _evidence_checks(
         ),
         (selection_is_not_subset, SyntheticGovernanceReason.SELECTION_NOT_TARGET_SUBSET),
         (
+            not target_source_member_relation_valid,
+            SyntheticGovernanceReason.TARGET_SOURCE_MEMBER_RELATION_INVALID,
+        ),
+        (
+            operation_modeled and selection_present and not selection_source_member_relation_valid,
+            SyntheticGovernanceReason.SELECTION_SOURCE_MEMBER_RELATION_INVALID,
+        ),
+        (
+            operation_modeled and selection_present and not selection_purpose_matches,
+            SyntheticGovernanceReason.SELECTION_PURPOSE_MISMATCH,
+        ),
+        (
             facts.observed_governance_revision != facts.expected_governance_revision,
             SyntheticGovernanceReason.GOVERNANCE_REVISION_MISMATCH,
         ),
@@ -562,10 +623,6 @@ def _evidence_checks(
         (
             citation_purpose_allowed and not citation_origin_matches,
             SyntheticGovernanceReason.CITATION_ORIGIN_REQUEST_MISMATCH,
-        ),
-        (
-            citation_purpose_allowed and not citation_selection_purpose_allowed,
-            SyntheticGovernanceReason.CITATION_SELECTION_PURPOSE_INVALID,
         ),
         (
             facts.operation not in _MODELED_OPERATIONS,
