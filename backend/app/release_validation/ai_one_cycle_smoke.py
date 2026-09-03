@@ -241,6 +241,11 @@ def _validated_base_url(mode: str, base_url: str, env: Mapping[str, str]) -> str
     return base_url.rstrip("/")
 
 
+def _validate_release_validation_allowed(env: Mapping[str, str]) -> None:
+    if env.get("RELEASE_VALIDATION_ALLOWED") not in {"true", "1"}:
+        raise GuardError("RELEASE_VALIDATION_ALLOWED must be enabled")
+
+
 def validate_live_environment(
     *,
     mode: str,
@@ -249,8 +254,7 @@ def validate_live_environment(
     commit_sha: str | None,
     image_repo_digest: str | None,
 ) -> ValidatedEnvironment:
-    if env.get("RELEASE_VALIDATION_ALLOWED") != "1":
-        raise GuardError("RELEASE_VALIDATION_ALLOWED must be enabled")
+    _validate_release_validation_allowed(env)
     normalized_url = _validated_base_url(mode, base_url, env)
     environment = env.get("ENV", "")
     if mode == "staging-live":
@@ -279,8 +283,7 @@ def validate_cleanup_environment(  # noqa: C901
     *, mode: str, base_url: str, env: Mapping[str, str]
 ) -> ValidatedEnvironment:
     """Validate cleanup identity without requiring Provider credentials."""
-    if env.get("RELEASE_VALIDATION_ALLOWED") != "1":
-        raise GuardError("RELEASE_VALIDATION_ALLOWED must be enabled")
+    _validate_release_validation_allowed(env)
     normalized_url = _validated_base_url(mode, base_url, env)
     environment = env.get("ENV", "")
     if mode == "staging-live":
