@@ -196,6 +196,27 @@ class FakeJobExecutionRepository:
         return self._complete_successfully
 
 
+class FakeDomainExecutionStarter:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        start_successfully: bool = True,
+    ) -> None:
+        self._events = events
+        self._start_successfully = start_successfully
+
+    async def start(
+        self,
+        *,
+        message: WorkerMessage,
+        started_at: datetime,
+    ) -> bool:
+        _ = message, started_at
+        self._events.append("start")
+        return self._start_successfully
+
+
 class FakeLeaseHeartbeatHandle:
     def __init__(
         self,
@@ -1207,4 +1228,91 @@ async def test_hard_timeout_cancels_handler_without_result_commit_or_ack() -> No
     assert "save" not in events
     assert "complete" not in events
     assert "ack" not in events
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_commits_domain_processing_before_handler() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: now,
+        execution_starter=FakeDomainExecutionStarter(events),
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2010-0",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, HandlerSuccess)
+    assert events == [
+        "acquire",
+        "start",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "heartbeat_stop",
+        "save",
+        "complete",
+        "commit",
+        "ack",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_does_not_run_handler_when_domain_start_fails() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: now,
+        execution_starter=FakeDomainExecutionStarter(
+            events,
+            start_successfully=False,
+        ),
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2011-0",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "start",
+        "rollback",
+    ]
     assert acknowledger.acknowledged_ids == []

@@ -22,6 +22,7 @@ from ai_worker.core.runtime_assembly import (
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType
 from provider_contracts.observability import DeploymentEnvironment
+from provider_contracts.ocr import OcrEngine
 
 _BASE_SETTINGS: dict[str, Any] = {
     "ENV": DeploymentEnvironment.LOCAL,
@@ -92,14 +93,14 @@ def test_config_rejects_hard_timeout_not_shorter_than_lease() -> None:
         )
 
 
-def test_config_exposes_lease_and_heartbeat_as_timedelta() -> None:
-    config = _config(
-        WORKER_LEASE_DURATION_SECONDS=120.0,
-        WORKER_HEARTBEAT_INTERVAL_SECONDS=30.0,
-    )
+def test_config_has_approved_worker_runtime_defaults() -> None:
+    config = _config()
 
-    assert config.lease_duration.total_seconds() == 120.0
-    assert config.heartbeat_interval.total_seconds() == 30.0
+    assert config.WORKER_HARD_TIMEOUT_SECONDS == 60.0
+    assert config.WORKER_LEASE_DURATION_SECONDS == 75.0
+    assert config.WORKER_HEARTBEAT_INTERVAL_SECONDS == 10.0
+    assert config.lease_duration.total_seconds() == 75.0
+    assert config.heartbeat_interval.total_seconds() == 10.0
 
 
 # --- Handler 등록 경계 -----------------------------------------------------
@@ -224,3 +225,16 @@ def _engine_stub() -> Any:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     return create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:5432/test")
+
+
+def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() -> None:
+    assembled = build_worker_runtime(
+        _config(),
+        logger=logging.getLogger("test"),
+        clock=lambda: datetime.now(UTC),
+        ocr_engine=cast(OcrEngine, object()),
+        redis_client=_RedisStub(),  # type: ignore[arg-type]
+        engine=_EngineStub(),  # type: ignore[arg-type]
+    )
+
+    assert assembled.registered_types == frozenset({JobType.OCR})

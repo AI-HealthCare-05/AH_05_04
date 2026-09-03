@@ -72,11 +72,9 @@ class Config(BaseSettings):
 
     # async-job-v1.md "시도와 재시도": lease가 만료되기 전에 heartbeat가 반드시 한 번 이상
     # 갱신되어야 하므로 두 값의 관계를 기동 시 검증합니다.
-    WORKER_LEASE_DURATION_SECONDS: float = Field(default=120.0, gt=0)
-    WORKER_HEARTBEAT_INTERVAL_SECONDS: float = Field(default=30.0, gt=0)
-    # Handler 실행 전체에 적용하는 절대 상한입니다. lease 안에서 결과 commit까지 끝내야 하므로
-    # lease_duration보다 짧아야 합니다.
-    WORKER_HARD_TIMEOUT_SECONDS: float = Field(default=90.0, gt=0)
+    WORKER_LEASE_DURATION_SECONDS: float = Field(default=75.0, gt=0)
+    WORKER_HEARTBEAT_INTERVAL_SECONDS: float = Field(default=10.0, gt=0)
+    WORKER_HARD_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
     # 한 프로세스가 동시에 처리하는 delivery 수입니다.
     WORKER_CONCURRENCY: int = Field(default=1, ge=1)
     # 종료 신호 후 진행 중 실행을 기다리는 상한입니다.

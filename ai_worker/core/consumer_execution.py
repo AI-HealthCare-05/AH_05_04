@@ -40,6 +40,19 @@ class ResultStore(Protocol):
         ...
 
 
+class DomainExecutionStarter(Protocol):
+    """Provider 호출 전에 도메인 상태 변경을 준비합니다."""
+
+    async def start(
+        self,
+        *,
+        message: WorkerMessage,
+        started_at: datetime,
+    ) -> bool:
+        """현재 transaction에 시작 상태를 적재하되 commit하지 않습니다."""
+        ...
+
+
 class Transaction(Protocol):
     """Consumer가 소유하는 DB transaction 경계입니다."""
 
@@ -144,6 +157,7 @@ class LeaseAwareConsumerExecution:
         clock: Callable[[], datetime],
         hard_timeout_seconds: float | None = None,
         monotonic_clock: Callable[[], float] = time.monotonic,
+        execution_starter: DomainExecutionStarter | None = None,
     ) -> None:
         if hard_timeout_seconds is not None and (
             isinstance(hard_timeout_seconds, bool)
@@ -163,6 +177,7 @@ class LeaseAwareConsumerExecution:
         self._clock = clock
         self._hard_timeout_seconds = None if hard_timeout_seconds is None else float(hard_timeout_seconds)
         self._monotonic_clock = monotonic_clock
+        self._execution_starter = execution_starter
 
     async def execute(
         self,
@@ -180,8 +195,17 @@ class LeaseAwareConsumerExecution:
             await self._commit()
             await self._acknowledge(delivery.stream_message_id)
             return acquired
-        # lease 획득과 attempt 생성은 짧은 transaction에서 먼저 확정합니다.
-        # Handler·Provider 실행 중 Job row lock을 유지하지 않습니다.
+        # AI Job lease·attempt와 도메인 PROCESSING 전이를 같은 짧은
+        # transaction으로 확정합니다. Provider 실행 중에는 row lock을
+        # 유지하지 않습니다.
+        domain_started = await self._start_domain_execution(
+            delivery.message,
+        )
+
+        if not domain_started:
+            await self._rollback_safely()
+            return LeaseNotAcquired()
+
         await self._commit()
         heartbeat_handle = await self._start_heartbeat(acquired)
 
@@ -366,6 +390,34 @@ class LeaseAwareConsumerExecution:
             await task
         except BaseException:
             return
+
+    async def _start_domain_execution(
+        self,
+        message: WorkerMessage,
+    ) -> bool:
+        """도메인 실행 시작 상태를 현재 lease transaction에 적재합니다."""
+
+        if self._execution_starter is None:
+            return True
+
+        persistence_error: ConsumerPersistenceError | None = None
+
+        try:
+            started = await self._execution_starter.start(
+                message=message,
+                started_at=self._clock(),
+            )
+        except asyncio.CancelledError:
+            await self._rollback_safely()
+            raise
+        except Exception:
+            await self._rollback_safely()
+            persistence_error = ConsumerPersistenceError()
+
+        if persistence_error is not None:
+            raise persistence_error
+
+        return started
 
     async def _start_heartbeat(
         self,

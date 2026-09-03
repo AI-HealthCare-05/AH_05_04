@@ -24,6 +24,9 @@ from ai_worker.adapters.factory import create_redis_client, create_stream_adapte
 from ai_worker.adapters.redis_stream import RedisStreamAdapter
 from ai_worker.adapters.sqlalchemy_job_execution_repository import SqlAlchemyJobExecutionRepository
 from ai_worker.adapters.sqlalchemy_lease_heartbeat import SqlAlchemyLeaseHeartbeat
+from ai_worker.adapters.sqlalchemy_ocr_execution_starter import (
+    SqlAlchemyOcrExecutionStarter,
+)
 from ai_worker.adapters.sqlalchemy_ocr_input_repository import SqlAlchemyOcrInputRepository
 from ai_worker.adapters.sqlalchemy_ocr_result_store import SqlAlchemyOcrResultStore
 from ai_worker.adapters.sqlalchemy_transaction import SqlAlchemyTransaction
@@ -142,7 +145,10 @@ class SessionScopedDeliveryExecution:
     def registered_types(self) -> frozenset[JobType]:
         """조립된 Handler 종류입니다. 등록되지 않은 종류는 Provider를 호출하지 않습니다."""
 
-        return self._build_registry(session=None).registered_types
+        if self._ocr_provider is None:
+            return frozenset()
+
+        return frozenset({JobType.OCR})
 
     async def execute(self, delivery: WorkerDelivery) -> object:
         async with self._session_factory() as session:
@@ -174,9 +180,14 @@ class SessionScopedDeliveryExecution:
     def _build_execution(self, session: AsyncSession) -> LeaseAwareConsumerExecution:
         registry = self._build_registry(session=session)
         stores: dict[JobType, ResultStoreLike] = {}
+        execution_starter = None
 
         if JobType.OCR in registry.registered_types:
-            stores[JobType.OCR] = SqlAlchemyOcrResultStore(session, clock=self._clock)
+            stores[JobType.OCR] = SqlAlchemyOcrResultStore(
+                session,
+                clock=self._clock,
+            )
+            execution_starter = SqlAlchemyOcrExecutionStarter(session)
 
         keyword_arguments = {
             "dispatcher": Dispatcher(registry),
@@ -188,6 +199,7 @@ class SessionScopedDeliveryExecution:
             "lease_duration": self._config.lease_duration,
             "clock": self._clock,
             "hard_timeout_seconds": self._config.WORKER_HARD_TIMEOUT_SECONDS,
+            "execution_starter": execution_starter,
         }
 
         if self._monotonic_clock is not None:
