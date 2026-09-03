@@ -95,7 +95,7 @@ afterEach(() => {
 })
 
 describe('PrescriptionUploadPage OCR polling', () => {
-  it('#227 공백 없는 긴 파일명을 두 줄 안에서 카드 폭에 맞춰 표시한다', () => {
+  it('#227 긴 파일명을 기본 2줄로 제한하고 전체 파일명과 확장자를 펼쳐 확인할 수 있다', () => {
     const longFilename =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_FINAL-2026.png'
     const { container } = renderPage()
@@ -104,6 +104,8 @@ describe('PrescriptionUploadPage OCR polling', () => {
 
     const filename = screen.getByText(longFilename)
     expect(filename.classList.contains('mvp-upload__filename')).toBe(true)
+    expect(filename.classList.contains('mvp-upload__filename--expanded')).toBe(false)
+    expect(filename.textContent).toBe(longFilename)
     const filenameRule = mvpPageStyles.match(
       /\.mvp-upload__filename\s*\{([^}]*)\}/,
     )?.[1]
@@ -111,6 +113,30 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(filenameRule).toContain('overflow-wrap: anywhere')
     expect(filenameRule).toContain('word-break: break-word')
     expect(filenameRule).toContain('-webkit-line-clamp: 2')
+
+    const toggle = screen.getByRole('button', { name: '전체 파일명 보기' })
+    expect(toggle.tagName).toBe('BUTTON')
+    expect(toggle.getAttribute('type')).toBe('button')
+    expect(toggle.tabIndex).toBe(0)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.getAttribute('aria-controls')).toBe(filename.id)
+
+    fireEvent.click(toggle)
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: '파일명 접기' })).toBeTruthy()
+    expect(filename.classList.contains('mvp-upload__filename--expanded')).toBe(true)
+    expect(filename.textContent?.endsWith('.png')).toBe(true)
+    const expandedFilenameRule = mvpPageStyles.match(
+      /\.mvp-upload__filename--expanded\s*\{([^}]*)\}/,
+    )?.[1]
+    expect(expandedFilenameRule).toContain('display: block')
+    expect(expandedFilenameRule).toContain('overflow: visible')
+
+    fireEvent.click(screen.getByRole('button', { name: '파일명 접기' }))
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(filename.classList.contains('mvp-upload__filename--expanded')).toBe(false)
   })
 
   it('PENDING → PROCESSING → COMPLETED 후 document_id와 job_id를 유지해 review route로 이동한다', async () => {

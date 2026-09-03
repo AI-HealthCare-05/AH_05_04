@@ -559,9 +559,18 @@
 
 .mvp-upload__zone {
   min-height: 180px;
-  cursor: pointer;
+  cursor: default;
   border: 1px solid var(--ds-line);
   border-radius: 18px;
+}
+
+.mvp-upload__picker {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  justify-items: center;
+  gap: 10px;
+  cursor: pointer;
 }
 
 .mvp-upload__zone strong,
@@ -579,6 +588,31 @@
   word-break: break-word;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.mvp-upload__filename--expanded {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
+.mvp-upload__filename-toggle {
+  border: 0;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--ds-action);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.mvp-upload__filename-toggle:focus-visible {
+  outline: 2px solid var(--ds-action);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .mvp-upload__zone-icon {
