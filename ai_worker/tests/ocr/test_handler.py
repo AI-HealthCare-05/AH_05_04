@@ -9,7 +9,11 @@ from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.errors import WorkerError
 from ai_worker.core.handler import HandlerExecutionContext
 from ai_worker.core.registry import HandlerRegistry
-from ai_worker.schemas.messages import JobType, WorkerMessage
+from ai_worker.schemas.messages import (
+    DomainType,
+    JobType,
+    WorkerMessage,
+)
 from ai_worker.tasks.ocr.handler import (
     OcrDomainInput,
     OcrHandler,
@@ -348,3 +352,79 @@ async def test_registered_ocr_handler_is_dispatched_with_worker_context() -> Non
     assert result.handler_type is JobType.OCR
     assert result.domain_id == domain_id
     assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_ocr_handler_rejects_non_ocr_message_before_lookup() -> None:
+    domain_id = uuid4()
+    message = build_message(domain_id=domain_id).model_copy(
+        update={
+            "job_type": JobType.GUIDE,
+            "domain_type": DomainType.GUIDE,
+        }
+    )
+    repository = FakeOcrInputRepository(
+        OcrDomainInput(
+            object_key="synthetic/input.png",
+            file_mime_type="image/png",
+        )
+    )
+    provider = FakeOcrProvider(
+        OcrProviderResult(
+            fields=(),
+            engine_name="CLOVA_OCR",
+            model_version=None,
+            prompt_version=None,
+        )
+    )
+    handler = OcrHandler(
+        input_repository=repository,
+        provider=provider,
+        clock=lambda: 1000.0,
+        provider_budget_seconds=55.0,
+    )
+
+    with pytest.raises(WorkerError) as exc_info:
+        await handler.handle(
+            message,
+            context=HandlerExecutionContext(
+                worker_deadline=1060.0,
+            ),
+        )
+
+    assert exc_info.value.failure_code == "UNSUPPORTED_SCHEMA"
+    assert repository.received_lookups == []
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_ocr_handler_requires_worker_execution_context() -> None:
+    domain_id = uuid4()
+    message = build_message(domain_id=domain_id)
+    repository = FakeOcrInputRepository(
+        OcrDomainInput(
+            object_key="synthetic/input.png",
+            file_mime_type="image/png",
+        )
+    )
+    provider = FakeOcrProvider(
+        OcrProviderResult(
+            fields=(),
+            engine_name="CLOVA_OCR",
+            model_version=None,
+            prompt_version=None,
+        )
+    )
+    handler = OcrHandler(
+        input_repository=repository,
+        provider=provider,
+        clock=lambda: 1000.0,
+        provider_budget_seconds=55.0,
+    )
+
+    with pytest.raises(WorkerError) as exc_info:
+        await handler.handle(message)
+
+    assert exc_info.value.failure_code == "INTERNAL_ERROR"
+    assert repository.received_lookups == []
+    assert provider.calls == []
