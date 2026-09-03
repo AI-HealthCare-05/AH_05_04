@@ -2,6 +2,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -230,7 +231,10 @@ def test_catalog_envelope_fails_closed(
     reason: CandidateIndexBuildFailureReason,
     details: tuple[str, ...],
 ) -> None:
-    result = build_candidate_index(replace(valid_catalog(), **catalog_change), lexical_config())
+    result = build_candidate_index(
+        replace(valid_catalog(), **cast(Any, catalog_change)),
+        lexical_config(),
+    )
 
     assert result == CandidateIndexBuildFailure(reason=reason, details=details)
 
@@ -259,7 +263,10 @@ def test_declared_catalog_count_mismatch_fails_closed() -> None:
     ],
 )
 def test_invalid_lexical_config_fails_closed(config_change: dict[str, object]) -> None:
-    result = build_candidate_index(valid_catalog(), replace(lexical_config(), **config_change))
+    result = build_candidate_index(
+        valid_catalog(),
+        replace(lexical_config(), **cast(Any, config_change)),
+    )
 
     assert isinstance(result, CandidateIndexBuildFailure)
     assert result.reason is CandidateIndexBuildFailureReason.BUILD_CONFIG_INVALID
@@ -663,7 +670,7 @@ class MismatchedHitPort(RecordingSearchPort):
 
     def _hit(self, stage: CandidateSearchStage, manifest) -> tuple[CandidateRawHit, ...]:
         hit = super()._hit(stage, manifest)[0]
-        return (replace(hit, **{self.field: "mismatch"}),)
+        return (replace(hit, **cast(Any, {self.field: "mismatch"})),)
 
 
 @pytest.mark.parametrize(
@@ -702,7 +709,7 @@ class MalformedFirstHitPort(RecordingSearchPort):
 
     def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
         hit = self._hit(CandidateSearchStage.PRODUCT_NAME_EXACT, manifest)[0]
-        return (replace(hit, **self.changes),)
+        return (replace(hit, **cast(Any, self.changes)),)
 
 
 @pytest.mark.parametrize(
