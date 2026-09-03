@@ -1,6 +1,8 @@
 import asyncio
 from collections.abc import AsyncIterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 import pytest
@@ -18,6 +20,7 @@ from app.core import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRE_PROFILE_REVISION = "77585c0c9792"
 PROFILE_EXPAND_REVISION = "117a8c9d4e21"
+OCR_AI_JOB_BASE_REVISION = "8d4f1a6c9e2b"
 
 
 def create_test_database_url() -> URL:
@@ -937,3 +940,658 @@ async def test_confirmed_required_ocr_field_rejects_null(
                 )
         finally:
             await transaction.rollback()
+
+
+async def _insert_ai_job_for_ocr_mapping(
+    connection: AsyncConnection,
+    *,
+    user_id: str,
+) -> str:
+    ai_job_id = str(uuid4())
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO ai_job (
+                id,
+                user_id,
+                job_type,
+                status,
+                attempt_count,
+                max_attempts
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'OCR',
+                'PENDING',
+                0,
+                3
+            )
+            """
+        ),
+        {
+            "id": ai_job_id,
+            "user_id": user_id,
+        },
+    )
+
+    return ai_job_id
+
+
+@pytest.mark.asyncio
+async def test_ocr_ai_job_mapping_constraints_exist(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        column_result = await connection.execute(
+            text(
+                """
+                SELECT is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'ocr_job'
+                  AND column_name = 'ai_job_id'
+                """
+            )
+        )
+        constraint_result = await connection.execute(
+            text(
+                """
+                SELECT
+                    conname,
+                    pg_get_constraintdef(oid) AS definition
+                FROM pg_constraint
+                WHERE conrelid = 'ocr_job'::regclass
+                  AND conname IN (
+                      'fk_ocr_job_ai_job',
+                      'uq_ocr_job_ai_job'
+                  )
+                """
+            )
+        )
+
+    assert column_result.scalar_one() == "YES"
+
+    constraints = {row._mapping["conname"]: row._mapping["definition"] for row in constraint_result}
+
+    assert constraints["fk_ocr_job_ai_job"] == "FOREIGN KEY (ai_job_id) REFERENCES ai_job(id) ON DELETE SET NULL"
+    assert constraints["uq_ocr_job_ai_job"] == "UNIQUE (ai_job_id)"
+
+
+@pytest.mark.asyncio
+async def test_ocr_ai_job_mapping_rejects_unknown_ai_job(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            _, _, ocr_job_id = await insert_ocr_parent_chain(connection)
+
+            with pytest.raises(
+                IntegrityError,
+                match="fk_ocr_job_ai_job",
+            ):
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE ocr_job
+                        SET ai_job_id = :ai_job_id
+                        WHERE id = :ocr_job_id
+                        """
+                    ),
+                    {
+                        "ai_job_id": str(uuid4()),
+                        "ocr_job_id": ocr_job_id,
+                    },
+                )
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_deleting_ai_job_sets_ocr_mapping_to_null(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            user_id, _, ocr_job_id = await insert_ocr_parent_chain(connection)
+            ai_job_id = await _insert_ai_job_for_ocr_mapping(
+                connection,
+                user_id=user_id,
+            )
+
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ocr_job
+                    SET ai_job_id = :ai_job_id
+                    WHERE id = :ocr_job_id
+                    """
+                ),
+                {
+                    "ai_job_id": ai_job_id,
+                    "ocr_job_id": ocr_job_id,
+                },
+            )
+
+            await connection.execute(
+                text("DELETE FROM ai_job WHERE id = :id"),
+                {"id": ai_job_id},
+            )
+
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT ai_job_id
+                    FROM ocr_job
+                    WHERE id = :id
+                    """
+                ),
+                {"id": ocr_job_id},
+            )
+
+            assert result.scalar_one() is None
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_one_ai_job_cannot_map_to_multiple_ocr_jobs(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            user_id, document_id, first_ocr_job_id = await insert_ocr_parent_chain(connection)
+            second_ocr_job_id = str(uuid4())
+            ai_job_id = await _insert_ai_job_for_ocr_mapping(
+                connection,
+                user_id=user_id,
+            )
+
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO ocr_job (
+                        id,
+                        document_id,
+                        ocr_status
+                    )
+                    VALUES (
+                        :id,
+                        :document_id,
+                        'PENDING'
+                    )
+                    """
+                ),
+                {
+                    "id": second_ocr_job_id,
+                    "document_id": document_id,
+                },
+            )
+
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ocr_job
+                    SET ai_job_id = :ai_job_id
+                    WHERE id = :ocr_job_id
+                    """
+                ),
+                {
+                    "ai_job_id": ai_job_id,
+                    "ocr_job_id": first_ocr_job_id,
+                },
+            )
+
+            with pytest.raises(
+                IntegrityError,
+                match="uq_ocr_job_ai_job",
+            ):
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE ocr_job
+                        SET ai_job_id = :ai_job_id
+                        WHERE id = :ocr_job_id
+                        """
+                    ),
+                    {
+                        "ai_job_id": ai_job_id,
+                        "ocr_job_id": second_ocr_job_id,
+                    },
+                )
+        finally:
+            await transaction.rollback()
+
+
+async def _fetch_ocr_ai_job_column_exists() -> bool:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'ocr_job'
+                          AND column_name = 'ai_job_id'
+                    )
+                    """
+                )
+            )
+            return bool(result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_ocr_ai_job_id(ocr_job_id: str) -> str | None:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT ai_job_id
+                    FROM ocr_job
+                    WHERE id = :id
+                    """
+                ),
+                {"id": ocr_job_id},
+            )
+            return result.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def _insert_pre_mapping_ocr_job() -> tuple[str, str, str]:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            return await insert_ocr_parent_chain(connection)
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup_ocr_mapping_roundtrip_data(
+    *,
+    user_id: str,
+    document_id: str,
+    ocr_job_id: str,
+) -> None:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM ocr_job WHERE id = :id"),
+                {"id": ocr_job_id},
+            )
+            await connection.execute(
+                text("DELETE FROM medical_document WHERE id = :id"),
+                {"id": document_id},
+            )
+            await connection.execute(
+                text("DELETE FROM profile WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            await connection.execute(
+                text('DELETE FROM "user" WHERE id = :id'),
+                {"id": user_id},
+            )
+    finally:
+        await engine.dispose()
+
+
+def test_ocr_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows() -> None:
+    alembic_config = create_alembic_config()
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+
+    try:
+        command.downgrade(
+            alembic_config,
+            OCR_AI_JOB_BASE_REVISION,
+        )
+        assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is False
+
+        user_id, document_id, ocr_job_id = asyncio.run(_insert_pre_mapping_ocr_job())
+
+        command.upgrade(alembic_config, "head")
+
+        assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
+
+        # 이미 head인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
+        command.upgrade(alembic_config, "head")
+
+        assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
+
+        command.downgrade(
+            alembic_config,
+            OCR_AI_JOB_BASE_REVISION,
+        )
+        assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is False
+
+        command.upgrade(alembic_config, "head")
+
+        assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
+    finally:
+        command.upgrade(alembic_config, "head")
+
+        if user_id and document_id and ocr_job_id:
+            asyncio.run(
+                _cleanup_ocr_mapping_roundtrip_data(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                )
+            )
+
+
+async def _insert_linked_ocr_ai_job() -> tuple[str, str, str, str]:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            user_id, document_id, ocr_job_id = await insert_ocr_parent_chain(connection)
+            ai_job_id = await _insert_ai_job_for_ocr_mapping(
+                connection,
+                user_id=user_id,
+            )
+
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ocr_job
+                    SET ai_job_id = :ai_job_id
+                    WHERE id = :ocr_job_id
+                    """
+                ),
+                {
+                    "ai_job_id": ai_job_id,
+                    "ocr_job_id": ocr_job_id,
+                },
+            )
+
+            return user_id, document_id, ocr_job_id, ai_job_id
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup_linked_ocr_ai_job(
+    *,
+    user_id: str,
+    document_id: str,
+    ocr_job_id: str,
+    ai_job_id: str,
+) -> None:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM ocr_job WHERE id = :id"),
+                {"id": ocr_job_id},
+            )
+            await connection.execute(
+                text("DELETE FROM ai_job WHERE id = :id"),
+                {"id": ai_job_id},
+            )
+            await connection.execute(
+                text("DELETE FROM medical_document WHERE id = :id"),
+                {"id": document_id},
+            )
+            await connection.execute(
+                text("DELETE FROM profile WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            await connection.execute(
+                text('DELETE FROM "user" WHERE id = :id'),
+                {"id": user_id},
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _write_ocr_ai_job_link_and_wait(
+    *,
+    writer_ready: Event,
+    release_writer: Event,
+) -> tuple[str, str, str, str]:
+    """OCR mapping을 기록한 transaction을 commit 직전까지 유지합니다."""
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+
+            try:
+                user_id, document_id, ocr_job_id = await insert_ocr_parent_chain(connection)
+                ai_job_id = await _insert_ai_job_for_ocr_mapping(
+                    connection,
+                    user_id=user_id,
+                )
+
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE ocr_job
+                        SET ai_job_id = :ai_job_id
+                        WHERE id = :ocr_job_id
+                        """
+                    ),
+                    {
+                        "ai_job_id": ai_job_id,
+                        "ocr_job_id": ocr_job_id,
+                    },
+                )
+
+                writer_ready.set()
+
+                released = await asyncio.to_thread(
+                    release_writer.wait,
+                    10,
+                )
+                if not released:
+                    raise TimeoutError("Timed out waiting to release the concurrent OCR writer.")
+
+                await transaction.commit()
+
+                return user_id, document_id, ocr_job_id, ai_job_id
+            except BaseException:
+                if transaction.is_active:
+                    await transaction.rollback()
+                raise
+    finally:
+        await engine.dispose()
+
+
+async def _wait_for_ocr_downgrade_lock() -> None:
+    """downgrade가 ocr_job ACCESS EXCLUSIVE lock을 기다리는지 확인합니다."""
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        for _ in range(100):
+            async with engine.connect() as connection:
+                result = await connection.execute(
+                    text(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM pg_locks AS lock_info
+                            JOIN pg_class AS table_info
+                              ON table_info.oid = lock_info.relation
+                            JOIN pg_namespace AS namespace_info
+                              ON namespace_info.oid = table_info.relnamespace
+                            WHERE namespace_info.nspname = 'public'
+                              AND table_info.relname = 'ocr_job'
+                              AND lock_info.mode = 'AccessExclusiveLock'
+                              AND lock_info.granted = false
+                        )
+                        """
+                    )
+                )
+
+                if result.scalar_one():
+                    return
+
+            await asyncio.sleep(0.05)
+
+        raise AssertionError("Downgrade did not wait for the ocr_job ACCESS EXCLUSIVE lock.")
+    finally:
+        await engine.dispose()
+
+
+def test_ocr_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
+    alembic_config = create_alembic_config()
+    writer_ready = Event()
+    release_writer = Event()
+
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+    ai_job_id = ""
+
+    writer_future: Future[tuple[str, str, str, str]] | None = None
+    downgrade_future: Future[None] | None = None
+
+    try:
+        command.upgrade(alembic_config, "head")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            writer_future = executor.submit(
+                asyncio.run,
+                _write_ocr_ai_job_link_and_wait(
+                    writer_ready=writer_ready,
+                    release_writer=release_writer,
+                ),
+            )
+
+            if not writer_ready.wait(timeout=10):
+                if writer_future.done():
+                    writer_future.result()
+
+                raise AssertionError("Concurrent OCR writer did not reach the uncommitted state.")
+
+            downgrade_future = executor.submit(
+                command.downgrade,
+                alembic_config,
+                OCR_AI_JOB_BASE_REVISION,
+            )
+
+            asyncio.run(_wait_for_ocr_downgrade_lock())
+
+            # writer가 commit하기 전에는 downgrade가 완료되면 안 됩니다.
+            assert downgrade_future.done() is False
+
+            release_writer.set()
+
+            user_id, document_id, ocr_job_id, ai_job_id = writer_future.result(timeout=10)
+
+            # lock 획득 후 다시 검사하므로 방금 commit된 연결을 확인하고
+            # 컬럼 삭제를 거부해야 합니다.
+            with pytest.raises(
+                RuntimeError,
+                match=r"Cannot downgrade while ocr_job\.ai_job_id contains linked AI Jobs",
+            ):
+                downgrade_future.result(timeout=10)
+
+        assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) == ai_job_id
+    finally:
+        release_writer.set()
+
+        if writer_future is not None and not writer_future.done():
+            writer_future.result(timeout=10)
+
+        if downgrade_future is not None and not downgrade_future.done():
+            try:
+                downgrade_future.result(timeout=10)
+            except RuntimeError:
+                pass
+
+        command.upgrade(alembic_config, "head")
+
+        if user_id and document_id and ocr_job_id and ai_job_id:
+            asyncio.run(
+                _cleanup_linked_ocr_ai_job(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                    ai_job_id=ai_job_id,
+                )
+            )
+
+
+def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
+    alembic_config = create_alembic_config()
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+    ai_job_id = ""
+
+    try:
+        command.upgrade(alembic_config, "head")
+
+        user_id, document_id, ocr_job_id, ai_job_id = asyncio.run(_insert_linked_ocr_ai_job())
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"Cannot downgrade while ocr_job\.ai_job_id contains linked AI Jobs",
+        ):
+            command.downgrade(
+                alembic_config,
+                OCR_AI_JOB_BASE_REVISION,
+            )
+
+        assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) == ai_job_id
+    finally:
+        command.upgrade(alembic_config, "head")
+
+        if user_id and document_id and ocr_job_id and ai_job_id:
+            asyncio.run(
+                _cleanup_linked_ocr_ai_job(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                    ai_job_id=ai_job_id,
+                )
+            )

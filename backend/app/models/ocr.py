@@ -60,6 +60,7 @@ class OcrJob(Base):
         Index("idx_ocr_document_created", "document_id", "created_at", "id"),
         Index("idx_ocr_document_created_seq", "document_id", "created_at", "created_sequence"),
         UniqueConstraint("id", "document_id", name="uq_ocr_job_id_document"),
+        UniqueConstraint("ai_job_id", name="uq_ocr_job_ai_job"),
         CheckConstraint(
             "ocr_status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')",
             name="chk_ocr_status",
@@ -86,6 +87,15 @@ class OcrJob(Base):
         nullable=False,
     )
     document_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("medical_document.id"), nullable=False)
+    ai_job_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "ai_job.id",
+            name="fk_ocr_job_ai_job",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
     ocr_status: Mapped[OcrStatus] = mapped_column(
         Enum(OcrStatus, native_enum=False, length=20),
         nullable=False,
