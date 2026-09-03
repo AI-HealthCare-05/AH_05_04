@@ -3,11 +3,11 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.async_jobs import AiJobStatus, AiJobType, DomainType
+from app.models.async_jobs import AiJobFailureCode, AiJobStatus, AiJobType, DomainType
 
 
 class JobErrorData(BaseModel):
-    code: str
+    code: AiJobFailureCode
     message: str
 
 

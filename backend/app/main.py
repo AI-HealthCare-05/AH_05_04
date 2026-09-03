@@ -53,7 +53,10 @@ cors_app = CORSMiddleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Trace-Id"],
+    # Retry-After: job_routers.build_job_status_response()가 RETRY_WAIT에서 설정하는 값을
+    # cross-origin Frontend가 fetch()로 읽으려면 CORS expose 대상에 있어야 합니다 — 없으면
+    # 브라우저가 응답 자체는 받아도 스크립트에서 헤더값을 읽지 못합니다.
+    expose_headers=["X-Trace-Id", "Retry-After"],
 )
 
 # trace 경계는 CORS preflight를 포함한 모든 HTTP 응답을 감싸도록 가장 바깥에 둡니다.

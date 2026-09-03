@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse as Response
 
-from app.apis.v1.job_routers import build_job_status_response
+from app.apis.v1.job_routers import JOB_STATUS_OPENAPI_RESPONSES, build_job_status_response
 from app.dependencies.security import get_request_user
 from app.dependencies.services import (
     get_job_status_service,
@@ -87,6 +87,7 @@ async def execute_ocr(
     "/{document_id}/ocr-jobs",
     response_model=JobStatusResponse,
     status_code=status.HTTP_200_OK,
+    responses=JOB_STATUS_OPENAPI_RESPONSES,
 )
 async def rediscover_ocr_job(
     document_id: UUID,

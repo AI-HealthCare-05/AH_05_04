@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | Partially implemented (#148) — 공통 Job 상태 조회(`GET /jobs/{job_id}`)와 OCR·Guide rediscovery GET(`GET /documents/{id}/ocr-jobs`, `GET /prescriptions/{id}/guides`) 구현·테스트 완료. OCR·Guide·Chat 접수(POST) 3종의 `accept_job()` 연결과 Publisher·Worker·Reconciler는 Not implemented — 전체 승격 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-08-31 |
 
@@ -85,8 +85,10 @@ OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.sta
 |---|---|---|---|
 | `Cache-Control: no-store` | 접수 3종, 상태 조회, 결과 조회 | 항상 | Job 상태와 의료·AI 결과를 캐시하지 않는다. |
 | `Location` | 접수 3종 | `202 Accepted` | `data.status_url`과 같은 Job 조회 URL이다. |
-| `Retry-After` | 상태 조회 | `status = RETRY_WAIT` | `retry_after_seconds`와 같은 초 단위 값이다. |
+| `Retry-After` | 상태 조회 | `status = RETRY_WAIT` | `retry_after_seconds`와 같은 초 단위 값이며, 아래 최소값 규칙을 따른다. |
 | `WWW-Authenticate: Bearer` | 접수 3종, 상태 조회 | `401` | 인증 실패 응답에 포함한다. |
+
+`Retry-After`/`retry_after_seconds`는 `available_at`이 지나도 `0`을 반환하지 않는다. `available_at` 경과 후에도 Job은 Reconciler 주기 → 새 Outbox 생성 → Publisher `XADD`(#219) → Worker lease 획득까지 `RETRY_WAIT`를 유지하므로, `0`을 보내면 Client가 대기 없이 재조회를 반복한다. 최소 1초 하한을 적용하며(#148), 정확한 하한값은 #142에서 Reconciler 실행 주기가 확정되면 그 값(또는 그 값 기반 최소치)으로 교체한다. `Retry-After`는 Backend CORS 설정의 `Access-Control-Expose-Headers`에 포함해 cross-origin Frontend가 읽을 수 있어야 한다(#148).
 
 승인된 ERD에는 `AI_JOB_ATTEMPT.attempt_status=BLOCKED` enum 값이 포함된다. 다만 이 값의 의미, 기록 조건, 상태 전이와 OCR·Guide·Chat 적용 범위는 후속 Decision 대상이다. ERD나 enum을 Proposed로 낮추지 않되, 전이 계약이 승인될 때까지 Worker 구현에서 `BLOCKED`를 생성·전이·저장하지 않는다. Track F의 `safety_disposition=BLOCKED_ACTION`과는 연동하지 않는다.
 

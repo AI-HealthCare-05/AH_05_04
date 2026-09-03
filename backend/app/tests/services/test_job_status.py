@@ -221,6 +221,10 @@ async def test_get_job_status_returns_result_url_only_when_completed(db_session:
 
 
 async def test_get_job_status_sets_retry_after_seconds_when_retry_wait(db_session: AsyncSession) -> None:
+    """outbox-stream-v1.md §소비와 fencing: `RETRY_WAIT` 전환 직후~Reconciler가 다음 attempt
+    Outbox를 만들기 전에는 fencing을 지키기 위해 `job.expected_event_id`가 `NULL`입니다.
+    실제 Reconciler가 이 값을 비우는 것과 같은 상태를 재현해, 그 gap에서도 `404`가 되지
+    않는지 검증합니다."""
     user = await _create_user(db_session, email=f"js-retry-{uuid4().hex[:10]}@test.local")
     document = await _create_document(db_session, user=user)
     job_id = await _accept_ocr_job(db_session, user=user, document=document)
@@ -230,6 +234,9 @@ async def test_get_job_status_sets_retry_after_seconds_when_retry_wait(db_sessio
     assert job is not None
     job.status = AiJobStatus.RETRY_WAIT
     job.available_at = datetime.now(UTC) + timedelta(seconds=30)
+    # 실제 전이처럼 last_consumed_event_id를 채운 뒤 expected_event_id를 비웁니다.
+    job.last_consumed_event_id = job.expected_event_id
+    job.expected_event_id = None
     await db_session.flush()
 
     result = await _service(db_session).get_job_status(user=user, job_id=job_id)
@@ -240,7 +247,36 @@ async def test_get_job_status_sets_retry_after_seconds_when_retry_wait(db_sessio
     assert result.data.result_url is None
 
 
+async def test_get_job_status_floors_retry_after_seconds_once_available_at_has_passed(
+    db_session: AsyncSession,
+) -> None:
+    """`available_at`이 지나도 Job은 바로 `PROCESSING`이 되지 않고, Reconciler 주기 → 새
+    Outbox 생성 → Publisher `XADD`(#219) → Worker lease 획득까지는 `RETRY_WAIT`가 유지됩니다.
+    그 구간에 `Retry-After: 0`을 보내면 client가 대기 없이 재조회를 반복하므로, 0이 아니라
+    최소 1초 하한을 반환해야 합니다."""
+    user = await _create_user(db_session, email=f"js-retry2-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    job_id = await _accept_ocr_job(db_session, user=user, document=document)
+
+    repo = AsyncJobRepository(db_session)
+    job = await repo.get_job(job_id=job_id)
+    assert job is not None
+    job.status = AiJobStatus.RETRY_WAIT
+    job.available_at = datetime.now(UTC) - timedelta(seconds=5)
+    # 실제 전이처럼 last_consumed_event_id를 채운 뒤 expected_event_id를 비웁니다.
+    job.last_consumed_event_id = job.expected_event_id
+    job.expected_event_id = None
+    await db_session.flush()
+
+    result = await _service(db_session).get_job_status(user=user, job_id=job_id)
+
+    assert result.data.status == AiJobStatus.RETRY_WAIT
+    assert result.retry_after_seconds == 1
+
+
 async def test_get_job_status_returns_safe_error_for_failed_job(db_session: AsyncSession) -> None:
+    """`FAILED`로 종결된 뒤에는 `job.expected_event_id`가 다시 채워지지 않고 `NULL`로 남으므로,
+    그 상태를 재현해 `404`가 되지 않는지 검증합니다."""
     user = await _create_user(db_session, email=f"js-fail-{uuid4().hex[:10]}@test.local")
     document = await _create_document(db_session, user=user)
     job_id = await _accept_ocr_job(db_session, user=user, document=document)
@@ -252,6 +288,9 @@ async def test_get_job_status_returns_safe_error_for_failed_job(db_session: Asyn
     job.completed_at = datetime.now(UTC)
     job.failure_code = "TIMEOUT"
     job.failure_detail = "내부 원문 오류 — 외부에 노출되면 안 됨"
+    # 실제 전이처럼 last_consumed_event_id를 채운 뒤 expected_event_id를 비웁니다.
+    job.last_consumed_event_id = job.expected_event_id
+    job.expected_event_id = None
     await db_session.flush()
 
     result = await _service(db_session).get_job_status(user=user, job_id=job_id)
@@ -259,6 +298,46 @@ async def test_get_job_status_returns_safe_error_for_failed_job(db_session: Asyn
     assert result.data.error is not None
     assert result.data.error.code == "TIMEOUT"
     assert "내부 원문 오류" not in result.data.error.message
+
+
+async def test_get_job_status_uses_persistent_ai_job_id_when_outbox_event_is_purged(
+    db_session: AsyncSession,
+) -> None:
+    """#212: `ocr_job.ai_job_id`가 채워져 있으면, Outbox row가 30일 보존 후 이미 삭제된
+    상태(여기서는 애초에 만들지 않아 재현)에서도 영속 매핑으로 값을 찾아야 합니다 —
+    `get_interim_domain_reference()`(Outbox 기반)만 쓰면 이 경우 `404`가 됩니다."""
+    user = await _create_user(db_session, email=f"js-persist-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+
+    repo = AsyncJobRepository(db_session)
+    job = await repo.create_job(user_id=user.id, job_type=AiJobType.OCR, prescription_version_id=None)
+    ocr_job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING, ai_job_id=job.id)
+    db_session.add(ocr_job)
+    await db_session.flush()
+
+    result = await _service(db_session).get_job_status(user=user, job_id=job.id)
+
+    assert result.data.domain_type == DomainType.OCR_JOB
+    assert result.data.domain_id == ocr_job.id
+
+
+async def test_rediscover_ocr_job_uses_persistent_ai_job_id_when_outbox_event_is_purged(
+    db_session: AsyncSession,
+) -> None:
+    """`rediscover_ocr_job`도 같은 이유로 `ocr_job.ai_job_id`를 Outbox 역조회보다 먼저
+    확인해야 합니다."""
+    user = await _create_user(db_session, email=f"js-redi-persist-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+
+    repo = AsyncJobRepository(db_session)
+    job = await repo.create_job(user_id=user.id, job_type=AiJobType.OCR, prescription_version_id=None)
+    ocr_job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING, ai_job_id=job.id)
+    db_session.add(ocr_job)
+    await db_session.flush()
+
+    result = await _service(db_session).rediscover_ocr_job(user=user, document_id=document.id)
+
+    assert result.data.job_id == job.id
 
 
 async def test_rediscover_ocr_job_returns_latest_job_status(db_session: AsyncSession) -> None:

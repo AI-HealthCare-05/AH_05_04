@@ -41,6 +41,14 @@ class OcrRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_ai_job_id(self, *, ai_job_id: UUID) -> OcrJob | None:
+        """#212가 추가한 `ocr_job.ai_job_id`(unique) 영속 매핑으로 조회합니다. Outbox 기반
+        임시 조회(`AsyncJobRepository.get_interim_domain_reference`)와 달리 Outbox 30일
+        보존과 무관하게 Job 90일 보존 동안 유지됩니다 — rediscovery·`GET /jobs/{job_id}`가
+        이 값이 채워진 뒤에는 이 경로를 우선 사용해야 합니다."""
+        result = await self.session.execute(select(OcrJob).where(OcrJob.ai_job_id == ai_job_id))
+        return result.scalar_one_or_none()
+
     async def get_job_owned(self, *, job_id: UUID, user_id: UUID) -> OcrJob | None:
         result = await self.session.execute(
             select(OcrJob)

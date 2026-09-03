@@ -4,7 +4,7 @@
 
 이 디렉터리의 계약은 승인된 Post-MVP-1 구현 목표이며 현재 API, DB, Worker 또는 공개 기능으로 해석하지 않습니다. 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../../../governance/post-mvp-1-document-authority.md)를 따릅니다.
 
-- [비동기 Job 계약 v1](./async-job-v1.md)
+- [비동기 Job 계약 v1](./async-job-v1.md) — Job 상태 조회·OCR/Guide rediscovery GET 구현 완료(#148) · 접수(POST) `accept_job()` 연결·Publisher/Worker/Reconciler 미구현
 - [멱등성 계약 v1](./idempotency-v1.md)
 - [Transactional Outbox와 Redis Stream 계약 v1](./outbox-stream-v1.md)
 - [처방 버전 계약 v1](./prescription-version-v1.md)

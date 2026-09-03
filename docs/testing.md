@@ -173,6 +173,7 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 동일 멱등 키·다른 요청은 `409 IDEMPOTENCY_KEY_CONFLICT`입니다.
 - OCR·Guide·Chat 접수 `202 Accepted` 응답은 `{"data": JobStatusResponse}` envelope와 `Location = data.status_url`을 함께 반환합니다.
 - `GET /api/v1/jobs/{job_id}`는 `{"data": JobStatusResponse}` envelope를 반환하고, `RETRY_WAIT`에서는 `Retry-After`와 `retry_after_seconds`가 같은 값입니다. `#148`의 `test_job_status_api.py`로 실제 HTTP 요청(인증, 소유권 404, `RETRY_WAIT`의 `retry_after_seconds`/`Retry-After`, `FAILED`의 `error` 필드, `COMPLETED`/`STALE`의 `result_url` 노출 기준, `Cache-Control: no-store`) 기준 검증 완료. OCR·Guide·Chat 접수 자체의 `202` 응답은 접수 API가 아직 `accept_job()`에 연결되지 않아 이 범위 밖입니다.
+- `GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`(rediscovery)는 문서·처방의 최신 Job 상태를 `get_job_status`와 같은 응답으로 돌려줍니다. `#148`의 `test_job_status.py`(서비스 계층, `accept_job()` seed 기준 최신 Job 판별·소유권·no-job `404`)와 `test_job_status_api.py`(실제 `POST /documents/{id}/ocr-jobs` → 이 GET 흐름)로 검증 완료. 지금은 OCR 접수가 `accept_job()`에 연결되지 않아 실제 업로드 뒤 이 GET을 호출하면 대응하는 Job이 없어 `404`이며, 이는 현재 상태에서 기대되는 동작입니다 — 접수가 연결되면 재검증합니다.
 - Job 접수·상태 조회·결과 조회의 성공 응답과 `400`, `401`, `404`, `409`, `500`, `503` 오류 응답은 모두 `Cache-Control: no-store`를 포함합니다.
 - Job 접수·상태 조회 오류 응답은 공통 오류 envelope를 사용하고 `details`를 객체가 아니라 배열로 반환합니다.
 - HMAC key rotation 중 미만료 record가 존재할 수 있는 모든 retained key version 조회와 혼합 writer 차단 또는 rotation-invariant 원자 잠금으로 같은 원문 key의 중복 실행을 방지합니다. 현재·직전 key version만 조회하는 구현은 rotation 주기가 최대 멱등 레코드 보존기간보다 길 때만 허용합니다.

@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse as Response
 
-from app.apis.v1.job_routers import build_job_status_response
+from app.apis.v1.job_routers import JOB_STATUS_OPENAPI_RESPONSES, build_job_status_response
 from app.dependencies.security import get_request_user
 from app.dependencies.services import get_chat_service, get_job_status_service, get_prescription_service
 from app.dtos.chat import ChatSessionResponse
@@ -42,6 +42,7 @@ async def get_prescription_detail(
     "/{prescription_id}/guides",
     response_model=JobStatusResponse,
     status_code=status.HTTP_200_OK,
+    responses=JOB_STATUS_OPENAPI_RESPONSES,
 )
 async def rediscover_guide_job(
     prescription_id: UUID,
