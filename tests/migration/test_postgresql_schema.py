@@ -1441,7 +1441,13 @@ async def _write_ocr_ai_job_link_and_wait(
 
 
 async def _wait_for_ocr_downgrade_lock() -> None:
-    """downgrade가 ocr_job ACCESS EXCLUSIVE lock을 기다리는지 확인합니다."""
+    """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
+    기다리는지 확인합니다. `OCR_AI_JOB_BASE_REVISION`으로 내려가는 경로에 #206의
+    `d1e2f3a4b5c6`(user 컬럼 추가)이 head로 얹히면서, writer가 `insert_ocr_parent_chain()`로
+    같은 transaction에서 만든 `user` row 때문에 downgrade가 `ocr_job` 단계에 도달하기 전에
+    먼저 `user` 테이블의 `ALTER TABLE ... DROP COLUMN` 단계에서 대기할 수 있습니다 — 두 테이블
+    모두 writer의 같은 uncommitted transaction이 잠그고 있어 어느 쪽에서 관찰되든 같은 대기
+    상태를 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
         poolclass=NullPool,
@@ -1461,7 +1467,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname = 'ocr_job'
+                              AND table_info.relname IN ('user', 'ocr_job')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -1474,7 +1480,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the ocr_job ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/ocr_job ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 

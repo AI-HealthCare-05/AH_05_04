@@ -5,15 +5,10 @@ from fastapi.responses import JSONResponse as Response
 
 from app.core import config
 from app.core.config import Env
-from app.core.errors import ApiError
-from app.dependencies.security import (
-    get_request_user,
-    invalid_token_error,
-    parse_token_user_id_and_version,
-    validate_active_token_user,
-)
+from app.core.errors import ApiError, ErrorResponse
+from app.dependencies.security import get_request_user, resolve_active_user_from_payload
 from app.dependencies.services import get_auth_service, get_user_repository
-from app.dtos.auth import LoginRequest, LoginResponse, SignUpRequest, TokenRefreshResponse
+from app.dtos.auth import LoginRequest, LoginResponse, LogoutResponse, SignUpRequest, TokenRefreshResponse
 from app.models.users import User
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
@@ -70,26 +65,32 @@ async def token_refresh(
             headers={"WWW-Authenticate": "Bearer"},
         )
     verified_refresh_token = jwt_service.verify_jwt(refresh_token, token_type="refresh")
-    user_id, token_version = parse_token_user_id_and_version(verified_refresh_token.payload)
-    user = await user_repository.get_user(user_id)
-
-    if user is None:
-        raise invalid_token_error()
-
-    validate_active_token_user(user=user, token_version=token_version)
+    await resolve_active_user_from_payload(payload=verified_refresh_token.payload, repository=user_repository)
     access_token = verified_refresh_token.access_token
     return Response(
         content=TokenRefreshResponse(access_token=str(access_token)).model_dump(), status_code=status.HTTP_200_OK
     )
 
 
-@auth_router.post("/logout", status_code=status.HTTP_200_OK)
+@auth_router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": ErrorResponse,
+            "description": "인증 정보가 없거나 유효하지 않습니다. `code`는 `UNAUTHORIZED` 또는 `INVALID_TOKEN`입니다.",
+        },
+    },
+)
 async def logout(
     user: Annotated[User, Depends(get_request_user)],
     user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> Response:
     await user_repository.increment_token_version(user)
-    response = Response(content={"detail": "로그아웃되었습니다."}, status_code=status.HTTP_200_OK)
+    response = Response(
+        content=LogoutResponse(detail="로그아웃되었습니다.").model_dump(), status_code=status.HTTP_200_OK
+    )
     response.delete_cookie(
         key="refresh_token",
         domain=config.COOKIE_DOMAIN or None,

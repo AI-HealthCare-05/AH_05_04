@@ -29,3 +29,7 @@ class LoginResponse(BaseModel):
 
 
 class TokenRefreshResponse(LoginResponse): ...
+
+
+class LogoutResponse(BaseModel):
+    detail: str

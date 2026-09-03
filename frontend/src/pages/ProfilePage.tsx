@@ -92,6 +92,11 @@ function ProfilePage() {
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
 
+  const clearFeedback = useCallback(() => {
+    setSaveError('')
+    setSuccessMessage('')
+  }, [])
+
   const expireSession = useCallback(() => {
     localStorage.removeItem('access_token')
     setUser(null)
@@ -148,16 +153,14 @@ function ProfilePage() {
       delete nextErrors[field]
       return nextErrors
     })
-    setSaveError('')
-    setSuccessMessage('')
+    clearFeedback()
   }
 
   const startEditing = () => {
     if (!user) return
     setForm({ name: user.name, email: user.email })
     setFieldErrors({})
-    setSaveError('')
-    setSuccessMessage('')
+    clearFeedback()
     setIsEditing(true)
   }
 
@@ -172,17 +175,13 @@ function ProfilePage() {
     if (isLoggingOut) return
 
     setIsLoggingOut(true)
-    setSaveError('')
-    setSuccessMessage('')
+    clearFeedback()
 
     try {
       await logout()
-    } catch (error) {
-      if (!isAuthenticationError(error)) {
-        setSaveError('로그아웃하지 못했습니다. 잠시 후 다시 시도해 주세요.')
-        setIsLoggingOut(false)
-        return
-      }
+    } catch {
+      // 네트워크 오류·5xx 등 서버 로그아웃 요청이 실패해도 계정 생명주기 계약(PD-206)에 따라
+      // 클라이언트는 서버 응답과 무관하게 로컬 자격증명을 항상 먼저 제거합니다.
     }
 
     expireSession()
@@ -200,8 +199,7 @@ function ProfilePage() {
 
     setIsSaving(true)
     setFieldErrors({})
-    setSaveError('')
-    setSuccessMessage('')
+    clearFeedback()
 
     try {
       const response = await updateCurrentUser({

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { logout } from '../src/api/auth'
 import { ApiError } from '../src/api/client'
 import {
   getCurrentUser,
@@ -13,6 +14,10 @@ import ProfilePage from '../src/pages/ProfilePage'
 vi.mock('../src/api/users', () => ({
   getCurrentUser: vi.fn(),
   updateCurrentUser: vi.fn(),
+}))
+
+vi.mock('../src/api/auth', () => ({
+  logout: vi.fn(),
 }))
 
 const CURRENT_USER: CurrentUser = {
@@ -57,6 +62,7 @@ beforeEach(() => {
   localStorage.setItem('access_token', 'fixture-token')
   vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
+  vi.mocked(logout).mockResolvedValue({ detail: '로그아웃되었습니다.' })
 })
 
 afterEach(() => {
@@ -239,6 +245,75 @@ describe('내 정보 수정', () => {
 
     pending.resolve(CURRENT_USER)
     expect(await screen.findByText('내 정보가 저장되었습니다.')).toBeTruthy()
+  })
+})
+
+describe('로그아웃', () => {
+  it('logout API 성공 후 토큰을 지우고 로그인 화면으로 이동한다', async () => {
+    renderProfile()
+    await screen.findByText(CURRENT_USER.email)
+
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(logout).toHaveBeenCalledTimes(1)
+  })
+
+  it('logout API가 네트워크 오류로 실패해도 로컬 자격증명을 지우고 로그인 화면으로 이동한다', async () => {
+    vi.mocked(logout).mockRejectedValue(new Error('network unavailable'))
+    renderProfile()
+    await screen.findByText(CURRENT_USER.email)
+
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+  })
+
+  it('logout API가 5xx로 실패해도 로컬 자격증명을 지우고 로그인 화면으로 이동한다', async () => {
+    vi.mocked(logout).mockRejectedValue(new ApiError(500, 'server fixture', 'INTERNAL_SERVER_ERROR'))
+    renderProfile()
+    await screen.findByText(CURRENT_USER.email)
+
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+  })
+
+  it('로그아웃 처리 중 중복 클릭해도 logout API를 한 번만 호출한다', async () => {
+    const pending = deferred<{ detail: string }>()
+    vi.mocked(logout).mockReturnValue(pending.promise)
+    renderProfile()
+    await screen.findByText(CURRENT_USER.email)
+
+    const logoutButton = screen.getByRole('button', { name: '로그아웃' })
+    fireEvent.click(logoutButton)
+    fireEvent.click(logoutButton)
+    fireEvent.click(logoutButton)
+
+    expect(logout).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: '로그아웃 중...' })).toHaveProperty('disabled', true)
+
+    pending.resolve({ detail: '로그아웃되었습니다.' })
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+  })
+
+  it('로그아웃 후 보호된 route를 다시 렌더링하면 API 호출 없이 로그인 화면으로 보낸다', async () => {
+    const rendered = renderProfile()
+    await screen.findByText(CURRENT_USER.email)
+
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+
+    vi.mocked(getCurrentUser).mockClear()
+    rendered.unmount()
+    renderProfile()
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(getCurrentUser).not.toHaveBeenCalled()
+    expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
   })
 })
 

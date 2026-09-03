@@ -48,6 +48,23 @@ def validate_active_token_user(*, user: User, token_version: int) -> None:
         raise invalid_token_error()
 
 
+async def resolve_active_user_from_payload(
+    *,
+    payload: dict[str, object],
+    repository: UserRepository,
+) -> User:
+    """검증된 토큰 payload에서 사용자를 조회하고 계정 상태·`token_version`까지 재확인합니다.
+    `get_request_user()`(access token)와 `token_refresh()`(refresh token)가 공유합니다."""
+    user_id, token_version = parse_token_user_id_and_version(payload)
+    user = await repository.get_user(user_id)
+
+    if user is None:
+        raise invalid_token_error()
+
+    validate_active_token_user(user=user, token_version=token_version)
+    return user
+
+
 async def get_request_user(
     credential: Annotated[
         HTTPAuthorizationCredentials | None,
@@ -66,18 +83,8 @@ async def get_request_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = credential.credentials
     verified = JwtService().verify_jwt(
-        token=token,
+        token=credential.credentials,
         token_type="access",
     )
-
-    user_id, token_version = parse_token_user_id_and_version(verified.payload)
-
-    user = await repository.get_user(user_id)
-
-    if user is None:
-        raise invalid_token_error()
-
-    validate_active_token_user(user=user, token_version=token_version)
-    return user
+    return await resolve_active_user_from_payload(payload=verified.payload, repository=repository)

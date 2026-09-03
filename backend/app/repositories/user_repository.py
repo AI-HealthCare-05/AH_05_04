@@ -128,6 +128,18 @@ class UserRepository:
     ) -> User | None:
         return await self.session.get(User, user_id)
 
+    async def get_user_for_update(
+        self,
+        user_id: UUID,
+    ) -> User | None:
+        """로그인·로그아웃 동시 실행 경쟁을 막기 위해 row lock을 걸고 조회합니다.
+        토큰 발급 직전에 이 메서드로 다시 읽어야, 인증 조회 이후 다른 요청이 먼저 커밋한
+        `token_version` 증가분을 반영한 최신 값으로 토큰을 발급합니다. 동시 로그아웃이
+        이 트랜잭션 commit까지 대기하다가, 그 이후 다시 증가시키면 방금 발급한 토큰도
+        정상적으로 무효화됩니다(기존 세션 무효화 규칙과 동일)."""
+        result = await self.session.execute(select(User).where(User.id == user_id).with_for_update())
+        return result.scalar_one_or_none()
+
     # phone_number/gender/birthday는 현재 signup 호출부에서 넘기지 않아 항상 None이지만,
     # 해당 값 입력이 Post-MVP로 돌아왔을 때 이 Repository 메서드까지 다시 만들지 않아도 되도록 남겨둡니다.
     async def create_user(
@@ -156,18 +168,7 @@ class UserRepository:
         )
 
         self.session.add(user)
-
-        try:
-            await self.session.flush()
-        except IntegrityError as exc:
-            duplicate_field = get_duplicate_user_field(exc)
-
-            if duplicate_field is None:
-                raise
-
-            raise DuplicateUserFieldError(
-                duplicate_field,
-            ) from exc
+        await self._flush_or_raise_duplicate_field_error()
 
         profile = Profile(
             user_id=user.id,
@@ -232,20 +233,21 @@ class UserRepository:
 
             setattr(user, key, value)
 
+        # 사전 중복 조회 이후 발생할 수 있는 동시 수정 경쟁도 DB unique 제약을 기준으로
+        # 다시 검증합니다.
+        await self._flush_or_raise_duplicate_field_error()
+        return user
+
+    async def _flush_or_raise_duplicate_field_error(self) -> None:
+        """DB unique 제약 위반을 email/phone_number 중복 도메인 오류로 변환합니다.
+        `create_user()`와 `update_instance()`가 공유합니다. 이메일·전화번호 이외의 무결성
+        오류는 원인을 숨기지 않고 그대로 다시 발생시킵니다."""
         try:
-            # 사전 중복 조회 이후 발생할 수 있는 동시 수정 경쟁도
-            # DB unique 제약을 기준으로 다시 검증합니다.
             await self.session.flush()
         except IntegrityError as exc:
             duplicate_field = get_duplicate_user_field(exc)
 
-            # 이메일·전화번호 이외의 무결성 오류는 원인을 숨기지 않고
-            # 기존 예외 처리 계층으로 전달합니다.
             if duplicate_field is None:
                 raise
 
-            raise DuplicateUserFieldError(
-                duplicate_field,
-            ) from exc
-
-        return user
+            raise DuplicateUserFieldError(duplicate_field) from exc
