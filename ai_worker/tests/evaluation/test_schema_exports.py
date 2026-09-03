@@ -139,6 +139,25 @@ def test_schema_set_1_1_reuses_unchanged_members_byte_for_byte() -> None:
         assert canonical_json_bytes(version_1_1[path]) == canonical_json_bytes(version_1[path])
 
 
+def test_schema_set_1_2_versions_exactly_the_provenance_bearing_members() -> None:
+    registry = SCHEMA_REGISTRIES["1.2.0"]
+    documents = schema_documents("1.2.0")
+    versions = {entry.schema_id: entry.member_version for entry in registry}
+
+    assert len(registry) == len({entry.relative_path for entry in registry}) == 18
+    assert set(documents) == {entry.relative_path for entry in registry}
+    assert {schema_id for schema_id, version in versions.items() if version == "1.2.0"} == {
+        "rag-eval.case",
+        "rag-eval.dataset-manifest",
+        "rag-eval.evidence-mapping-manifest",
+        "rag-eval.critical-claim-rubric",
+        "rag-eval.evaluation-profile",
+        "rag-eval.suite-definition",
+        "rag-eval.evaluation-policy",
+        "rag-eval.protected-artifact-receipt",
+    }
+
+
 @pytest.mark.parametrize(
     ("relative_path", "pattern"),
     [
@@ -356,6 +375,47 @@ def test_exported_review_provenance_schema_encodes_team_and_external_approval_co
     )
 
 
+def test_exported_review_provenance_v12_schema_encodes_draft_and_reviewed_state_matrix() -> None:
+    authoring_schema = cast(
+        dict[str, Any],
+        schema_documents("1.2.0")["authoring/rag-eval.dataset-manifest.schema.json"],
+    )
+    provenance_schema = cast(dict[str, Any], authoring_schema["$defs"]["ReviewProvenanceV12"])
+    conditions = cast(list[dict[str, Any]], provenance_schema["allOf"])
+
+    assert {
+        "if": {
+            "properties": {"team_gold_status": {"const": "DRAFT"}},
+            "required": ["team_gold_status"],
+        },
+        "then": {
+            "properties": {
+                "reviewed_by": {"type": "null"},
+                "reviewed_at": {"type": "null"},
+                "approved_by": {"type": "null"},
+                "approved_at": {"type": "null"},
+                "evidence_review_refs": {"maxItems": 0},
+            }
+        },
+    } in conditions
+    assert any(
+        condition.get("if", {}).get("properties", {}).get("team_gold_status") == {"const": "REVIEWED"}
+        and condition["then"]["properties"]["reviewed_by"]
+        == {
+            "allOf": [
+                {"not": {"type": "null"}},
+                {
+                    "type": "object",
+                    "properties": {"role": {"const": "EVALUATION_REVIEWER"}},
+                    "required": ["role"],
+                },
+            ]
+        }
+        and condition["then"]["properties"]["evidence_review_refs"] == {"minItems": 1}
+        for condition in conditions
+    )
+
+
 def _containing_approval_role_condition(roles: list[str]) -> dict[str, Any]:
     return {
         "if": {
@@ -434,3 +494,37 @@ def test_committed_schema_set_1_1_matches_fresh_canonical_export_byte_for_byte(t
 
     committed_root = Path("evals/schemas/1.1.0")
     assert _files(tmp_path) == _files(committed_root)
+
+
+def test_committed_schema_set_1_2_matches_fresh_canonical_export_byte_for_byte(tmp_path: Path) -> None:
+    write_schema_documents(tmp_path, "1.2.0")
+
+    committed_root = Path("evals/schemas/1.2.0")
+    assert _files(tmp_path) == _files(committed_root)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern"),
+    [
+        (
+            "docs/contracts/targets/post-mvp-1/rag-evaluation-v1.md",
+            r"rag-eval\.schema-set@1\.2\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "docs/governance/decisions/2026-09-03-rag-evaluation-schema-set-1-2-freeze.md",
+            r"Schema Set SHA-256 \| `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "evals/README.md",
+            r"rag-eval\.schema-set@1\.2\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+    ],
+)
+def test_documented_schema_set_1_2_hash_matches_committed_schema_set(
+    relative_path: str,
+    pattern: str,
+) -> None:
+    documented = re.search(pattern, (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8"))
+
+    assert documented is not None
+    assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.2.0")
