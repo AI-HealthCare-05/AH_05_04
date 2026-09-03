@@ -91,6 +91,7 @@ services:
       # 애플리케이션 기본 설정
       ENV: ${ENV}
       SECRET_KEY: ${SECRET_KEY}
+      IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
       TIMEZONE: ${TIMEZONE:-Asia/Seoul}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
