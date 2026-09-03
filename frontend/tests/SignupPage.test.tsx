@@ -65,6 +65,26 @@ describe('SignupPage', () => {
     expect(screen.getByLabelText('비밀번호')).toHaveProperty('required', true)
   })
 
+  it('#224 정상 입력 중 현재 필드의 focus와 입력값을 유지한다', () => {
+    renderPage()
+
+    const nameInput = screen.getByLabelText('이름')
+    const emailInput = screen.getByLabelText('이메일')
+
+    fireEvent.change(nameInput, {
+      target: { value: '홍길동' },
+    })
+    emailInput.focus()
+    fireEvent.change(emailInput, {
+      target: { value: 'd' },
+    })
+
+    expect(document.activeElement).toBe(emailInput)
+    expect(nameInput).toHaveProperty('value', '홍길동')
+    expect(emailInput).toHaveProperty('value', 'd')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('빈 값과 Backend 비밀번호 정책 불일치 시 API를 호출하지 않고 오류를 연결한다', () => {
     renderPage()
 
@@ -90,6 +110,7 @@ describe('SignupPage', () => {
     expect(
       screen.getByText('8자 이상이며 대문자·소문자·숫자·특수문자를 포함해 주세요.'),
     ).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByLabelText('비밀번호'))
     expect(signup).not.toHaveBeenCalled()
   })
 
@@ -129,6 +150,7 @@ describe('SignupPage', () => {
 
     expect(await screen.findByText('이미 사용중인 이메일입니다.')).toBeTruthy()
     expect(screen.getByLabelText('이메일').getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(screen.getByLabelText('이메일'))
   })
 
   it('네트워크 실패를 Backend 입력 오류와 구분해 안내한다', async () => {
