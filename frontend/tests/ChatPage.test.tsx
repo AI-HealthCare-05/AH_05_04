@@ -373,6 +373,114 @@ describe('ChatPage', () => {
     expect(sendChatMessage).toHaveBeenCalledTimes(2)
   })
 
+  it('history 복구 후에도 기존 optimistic 사용자 질문의 순서를 유지한다', async () => {
+    vi.mocked(sendChatMessage).mockRejectedValue(
+      new ApiError(503, 'AI 서비스에 잠시 연결할 수 없습니다.'),
+    )
+    vi.mocked(getChatMessages)
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: [] },
+      })
+      .mockRejectedValueOnce(
+        new ApiError(503, '첫 번째 대화 이력을 다시 불러올 수 없습니다.'),
+      )
+      .mockResolvedValueOnce({
+        data: {
+          session_id: sessionId,
+          messages: [
+            {
+              message_id: 'canonical-user-b',
+              role: 'USER',
+              content: '질문 B',
+              generation_status: 'NOT_APPLICABLE',
+              created_at: '2026-09-03T00:00:02Z',
+            },
+            {
+              message_id: 'canonical-assistant-b',
+              role: 'ASSISTANT',
+              content: '질문 B의 실패 결과',
+              generation_status: 'FAILED',
+              created_at: '2026-09-03T00:00:03Z',
+            },
+          ],
+        },
+      })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    const sendButton = screen.getByRole('button', { name: '질문 전송' })
+    fireEvent.change(input, { target: { value: '질문 A' } })
+    fireEvent.click(sendButton)
+
+    await waitFor(() => expect(getChatMessages).toHaveBeenCalledTimes(2))
+    fireEvent.change(input, { target: { value: '질문 B' } })
+    fireEvent.click(sendButton)
+
+    await waitFor(() =>
+      expect(
+        Array.from(document.querySelectorAll('.chat-message')).map(
+          (message) => message.textContent,
+        ),
+      ).toEqual(['질문 A', '질문 B', '질문 B의 실패 결과']),
+    )
+    expect(screen.getAllByText('질문 A')).toHaveLength(1)
+    expect(screen.getAllByText('질문 B')).toHaveLength(1)
+  })
+
+  it('동일한 질문을 반복해도 최신 canonical USER와 안정적으로 reconcile한다', async () => {
+    vi.mocked(sendChatMessage).mockRejectedValue(
+      new ApiError(503, 'AI 서비스에 잠시 연결할 수 없습니다.'),
+    )
+    vi.mocked(getChatMessages)
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: [] },
+      })
+      .mockRejectedValueOnce(
+        new ApiError(503, '첫 번째 대화 이력을 다시 불러올 수 없습니다.'),
+      )
+      .mockResolvedValueOnce({
+        data: {
+          session_id: sessionId,
+          messages: [
+            {
+              message_id: 'canonical-repeated-user',
+              role: 'USER',
+              content: '같은 질문',
+              generation_status: 'NOT_APPLICABLE',
+              created_at: '2026-09-03T00:00:02Z',
+            },
+            {
+              message_id: 'canonical-repeated-assistant',
+              role: 'ASSISTANT',
+              content: '두 번째 질문의 실패 결과',
+              generation_status: 'FAILED',
+              created_at: '2026-09-03T00:00:03Z',
+            },
+          ],
+        },
+      })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    const sendButton = screen.getByRole('button', { name: '질문 전송' })
+    fireEvent.change(input, { target: { value: '같은 질문' } })
+    fireEvent.click(sendButton)
+
+    await waitFor(() => expect(getChatMessages).toHaveBeenCalledTimes(2))
+    fireEvent.change(input, { target: { value: '같은 질문' } })
+    fireEvent.click(sendButton)
+
+    await waitFor(() =>
+      expect(
+        Array.from(document.querySelectorAll('.chat-message')).map(
+          (message) => message.textContent,
+        ),
+      ).toEqual(['같은 질문', '같은 질문', '두 번째 질문의 실패 결과']),
+    )
+    expect(screen.getAllByText('같은 질문')).toHaveLength(2)
+    expect(sendChatMessage).toHaveBeenCalledTimes(2)
+  })
+
   it('저장된 session_id의 기존 대화 이력을 표시한다', async () => {
     sessionStorage.setItem(`dosey_chat_session:${prescriptionId}`, sessionId)
     vi.mocked(getChatMessages).mockResolvedValue({

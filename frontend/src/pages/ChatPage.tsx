@@ -15,6 +15,100 @@ const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const optimisticUserMessageIdPrefix = 'optimistic-user-'
 
+function isOptimisticUserMessage(message: ChatMessageData) {
+  return (
+    message.role === 'USER' &&
+    message.message_id.startsWith(optimisticUserMessageIdPrefix)
+  )
+}
+
+function reconcileHistoryMessages(
+  currentMessages: ChatMessageData[],
+  historyMessages: ChatMessageData[],
+  knownMessageIds: Set<string>,
+) {
+  const optimisticUserMessages = currentMessages.filter(
+    isOptimisticUserMessage,
+  )
+  const unmatchedCanonicalUsers = historyMessages.filter(
+    (message) =>
+      message.role === 'USER' && !knownMessageIds.has(message.message_id),
+  )
+  const canonicalIdByOptimisticId = new Map<string, string>()
+
+  for (let index = optimisticUserMessages.length - 1; index >= 0; index -= 1) {
+    const optimisticMessage = optimisticUserMessages[index]
+    let canonicalIndex = -1
+
+    for (
+      let candidateIndex = unmatchedCanonicalUsers.length - 1;
+      candidateIndex >= 0;
+      candidateIndex -= 1
+    ) {
+      if (
+        unmatchedCanonicalUsers[candidateIndex].content ===
+        optimisticMessage.content
+      ) {
+        canonicalIndex = candidateIndex
+        break
+      }
+    }
+
+    if (canonicalIndex === -1) continue
+
+    const [canonicalMessage] = unmatchedCanonicalUsers.splice(
+      canonicalIndex,
+      1,
+    )
+    canonicalIdByOptimisticId.set(
+      optimisticMessage.message_id,
+      canonicalMessage.message_id,
+    )
+  }
+
+  const mergedMessages = [...historyMessages]
+  const historyMessageIds = new Set(
+    historyMessages.map((message) => message.message_id),
+  )
+
+  for (const optimisticMessage of optimisticUserMessages) {
+    if (canonicalIdByOptimisticId.has(optimisticMessage.message_id)) continue
+
+    const currentIndex = currentMessages.findIndex(
+      (message) => message.message_id === optimisticMessage.message_id,
+    )
+    let nextHistoryMessageId: string | undefined
+
+    for (
+      let index = currentIndex + 1;
+      index < currentMessages.length;
+      index += 1
+    ) {
+      const nextMessage = currentMessages[index]
+      const candidateId = isOptimisticUserMessage(nextMessage)
+        ? canonicalIdByOptimisticId.get(nextMessage.message_id)
+        : nextMessage.message_id
+
+      if (candidateId && historyMessageIds.has(candidateId)) {
+        nextHistoryMessageId = candidateId
+        break
+      }
+    }
+
+    if (!nextHistoryMessageId) {
+      mergedMessages.push(optimisticMessage)
+      continue
+    }
+
+    const insertionIndex = mergedMessages.findIndex(
+      (message) => message.message_id === nextHistoryMessageId,
+    )
+    mergedMessages.splice(insertionIndex, 0, optimisticMessage)
+  }
+
+  return mergedMessages
+}
+
 const sessionCreationRequests = new Map<
   string,
   ReturnType<typeof createChatSession>
@@ -219,31 +313,13 @@ function ChatPage() {
           const historyResponse = await getChatMessages(requestedSessionId)
           if (!isCurrentRequest()) return
           const historyMessages = historyResponse.data.messages
-          const canonicalUserMessages = historyMessages.filter(
-            (message) =>
-              message.role === 'USER' &&
-              !knownMessageIds.has(message.message_id),
+          setMessages((current) =>
+            reconcileHistoryMessages(
+              current,
+              historyMessages,
+              knownMessageIds,
+            ),
           )
-          setMessages((current) => {
-            const unmatchedCanonicalUsers = [...canonicalUserMessages]
-            const unmatchedOptimisticUsers = current.filter((message) => {
-              if (
-                !message.message_id.startsWith(optimisticUserMessageIdPrefix)
-              ) {
-                return false
-              }
-
-              const canonicalIndex = unmatchedCanonicalUsers.findIndex(
-                (canonical) => canonical.content === message.content,
-              )
-              if (canonicalIndex === -1) return true
-
-              unmatchedCanonicalUsers.splice(canonicalIndex, 1)
-              return false
-            })
-
-            return [...historyMessages, ...unmatchedOptimisticUsers]
-          })
         } catch {
           if (!isCurrentRequest()) return
         }
