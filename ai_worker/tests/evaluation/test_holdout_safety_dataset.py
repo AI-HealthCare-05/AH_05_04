@@ -17,17 +17,28 @@ from ai_worker.tasks.evaluation.cli import main as evaluation_cli_main
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
-from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
-    EVALUATION_CASE_ADAPTER_V1_1,
-    EvaluationCaseV11,
-    SafetyExpectedV11,
+from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import SafetyExpectedV11
+from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import (
+    EVALUATION_CASE_ADAPTER_V1_2,
+    EvaluationCaseV12,
 )
-from ai_worker.tasks.evaluation.schemas.common import ReviewProvenance
+from ai_worker.tasks.evaluation.schemas.common_v1_2 import ReviewProvenanceV12
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-holdout-safety-v1.dataset.json"
 CASE_ROOT = EVALS_ROOT / "retrieval/cases/rag-holdout-safety-v1"
 PREFIX = "rag-holdout-safety-v1"
+
+
+def _contains_expected_authoring_field(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key.startswith("expected_") or _contains_expected_authoring_field(item) for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_expected_authoring_field(item) for item in value)
+    return False
+
 
 CASE_ID_PATTERN = re.compile(r"^rag-hs-v1-(?:h|s)-[a-z0-9-]+-(?:ret|ansq|grnd|safe|e2e)-[a-z0-9-]+-[0-9]{3}$")
 
@@ -578,7 +589,7 @@ def _slice_value(slice_ids: tuple[str, ...], prefix: str) -> str:
 
 
 def _case_projection(
-    cases: Iterable[EvaluationCaseV11],
+    cases: Iterable[EvaluationCaseV12],
 ) -> tuple[
     Counter[tuple[str, str, str]],
     Counter[tuple[str, str, str, str]],
@@ -613,9 +624,9 @@ def _catalog_projection(
     return category_tasks, archetypes
 
 
-def _load_committed_cases() -> tuple[EvaluationCaseV11, ...]:
+def _load_committed_cases() -> tuple[EvaluationCaseV12, ...]:
     return tuple(
-        EVALUATION_CASE_ADAPTER_V1_1.validate_json(case_path.read_bytes())
+        EVALUATION_CASE_ADAPTER_V1_2.validate_json(case_path.read_bytes())
         for case_path in sorted(CASE_ROOT.glob("*.json"))
     )
 
@@ -720,7 +731,7 @@ def _assert_runtime_cause_graph(
     )
 
 
-def _case_evidence_refs(case: EvaluationCaseV11) -> set[str]:
+def _case_evidence_refs(case: EvaluationCaseV12) -> set[str]:
     expected = case.expected
     evidence_refs = set(expected.relevant_evidence_refs or ())
     evidence_refs.update(expected.required_evidence_refs or ())
@@ -751,7 +762,7 @@ def _load_evidence_entity_tokens() -> Mapping[str, set[str]]:
 
 
 def _assert_case_entities_resolve(
-    case: EvaluationCaseV11,
+    case: EvaluationCaseV12,
     evidence_tokens_by_ref: Mapping[str, set[str]],
 ) -> None:
     context_entities: list[str] = []
@@ -780,7 +791,7 @@ def _assert_case_entities_resolve(
     assert all(entity_counts[entity] == 1 for entity in referenced_entities), case.case_id
 
 
-def _canonical_medication_seed(case: EvaluationCaseV11) -> str:
+def _canonical_medication_seed(case: EvaluationCaseV12) -> str:
     entities = sorted(
         token.removeprefix("FICTIONAL_")
         for token in _extract_entity_tokens(case.query)
@@ -801,7 +812,7 @@ def _assert_nonpublication_gold_is_empty(expected: SafetyExpectedV11) -> None:
 
 
 def _assert_metamorphic_cause_refs_are_unique(
-    group: Iterable[EvaluationCaseV11],
+    group: Iterable[EvaluationCaseV12],
     category: str,
 ) -> None:
     cause_refs = []
@@ -867,9 +878,16 @@ class MutableHoldoutSafetyDataset:
         provenance["reviewed_by"] = {
             "actor_id": "Jye-rookie",
             "namespace": "GITHUB_LOGIN",
-            "role": "MEDICAL_REVIEWER",
+            "role": "EVALUATION_REVIEWER",
         }
         provenance["reviewed_at"] = "2026-09-02T17:06:55.000000Z"
+        provenance["evidence_review_refs"] = [
+            {
+                "id": "rag-hs-test-review-evidence",
+                "version": "1.0.0",
+                "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            }
+        ]
         provenance["team_gold_status"] = "APPROVED" if approved else "REVIEWED"
         provenance["approved_by"] = (
             {
@@ -1079,12 +1097,13 @@ def _assert_dataset_error(
         assert sentinel not in str(caught.value)
 
 
-def _assert_approved_provenance(provenance: ReviewProvenance, *, approver_role: str) -> None:
+def _assert_approved_provenance(provenance: ReviewProvenanceV12, *, approver_role: str) -> None:
     assert provenance.team_gold_status.value == "APPROVED"
     assert provenance.reviewed_by is not None
     assert provenance.reviewed_by.namespace.value == "GITHUB_LOGIN"
     assert provenance.reviewed_by.actor_id == "Jye-rookie"
-    assert provenance.reviewed_by.role.value == "MEDICAL_REVIEWER"
+    assert provenance.reviewed_by.role.value == "EVALUATION_REVIEWER"
+    assert provenance.evidence_review_refs
     assert provenance.approved_by is not None
     assert provenance.approved_by.namespace.value == "GITHUB_LOGIN"
     assert provenance.approved_by.actor_id == "hazelnutflavoured"
@@ -1379,7 +1398,7 @@ def test_entity_conformance_rejects_context_token_substitution(mutated_field: st
         medication["ingredient_tokens"] = ["SYNTHETIC_INGREDIENT_FIXTURE_FICTIONAL_RX_WRONG"]
     else:
         value["context"]["patient_context_fixture"]["condition_tokens"] = ["SYNTHETIC_FICTIONAL_CONDITION_WRONG"]
-    mutated_case = EVALUATION_CASE_ADAPTER_V1_1.validate_python(value)
+    mutated_case = EVALUATION_CASE_ADAPTER_V1_2.validate_python(value)
 
     with pytest.raises(AssertionError):
         _assert_case_entities_resolve(mutated_case, evidence_tokens_by_ref)
@@ -1430,7 +1449,7 @@ def test_every_query_exclusively_matches_its_partition_and_question_template_sca
 
 def test_runtime_variants_use_neutral_queries_and_only_intentional_duplicates() -> None:
     cases = _load_committed_cases()
-    cases_by_query: defaultdict[str, list[EvaluationCaseV11]] = defaultdict(list)
+    cases_by_query: defaultdict[str, list[EvaluationCaseV12]] = defaultdict(list)
 
     for case in cases:
         category = _slice_value(case.slice_ids, "category:")
@@ -1711,7 +1730,7 @@ def test_holdout_safety_dataset_binds_evidence_and_separates_every_leakage_axis(
 def test_holdout_safety_dataset_is_loadable_pre_review_draft_with_non_release_configuration() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
 
-    assert dataset.manifest.schema_version == "1.1.0"
+    assert dataset.manifest.schema_version == "1.2.0"
     assert dataset.manifest.data_classification.value == "SYNTHETIC"
     assert dataset.manifest.status.value == "DRAFT"
     assert dataset.manifest.frozen_at is None
@@ -1731,13 +1750,11 @@ def test_holdout_safety_dataset_is_loadable_pre_review_draft_with_non_release_co
     )
     for provenance in pre_review_provenance:
         assert provenance.team_gold_status.value == "DRAFT"
+        assert provenance.reviewed_by is None
+        assert provenance.reviewed_at is None
+        assert provenance.evidence_review_refs == ()
         assert provenance.approved_by is None
         assert provenance.approved_at is None
-        assert provenance.reviewed_at == provenance.authored_at
-        assert provenance.reviewed_by is not None
-        assert provenance.reviewed_by.namespace.value == "GITHUB_LOGIN"
-        assert provenance.reviewed_by.actor_id == "Jye-rookie"
-        assert provenance.reviewed_by.role.value == "MEDICAL_REVIEWER"
 
     assert tuple(value.value for value in dataset.profile.required_experiment_types) == (
         "ANSWER_GROUNDING_SAFETY",
@@ -1787,8 +1804,15 @@ def test_holdout_safety_dataset_is_loadable_pre_review_draft_with_non_release_co
     assert len(dataset.evaluation_policy.required_suite_refs) == 1
     schema_set_ref = dataset.evaluation_policy.artifact_schema_set_ref.reference
     assert schema_set_ref.id == "rag-eval.schema-set"
-    assert schema_set_ref.version == "1.1.0"
-    assert schema_set_ref.hash == "5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0"
+    assert schema_set_ref.version == "1.2.0"
+    assert schema_set_ref.hash == "1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06"
+
+
+def test_holdout_safety_evidence_resources_do_not_expose_authoring_expected_fields() -> None:
+    resources_root = EVALS_ROOT / "retrieval/evidence/resources" / PREFIX
+    for resource_path in sorted(resources_root.glob("*.json")):
+        resource = json.loads(resource_path.read_text(encoding="utf-8"))
+        assert not _contains_expected_authoring_field(resource), resource_path
 
 
 @pytest.mark.parametrize(
@@ -1991,9 +2015,16 @@ def test_future_frozen_dataset_rejects_child_below_approved(
     assert provenance["reviewed_by"] == {
         "actor_id": "Jye-rookie",
         "namespace": "GITHUB_LOGIN",
-        "role": "MEDICAL_REVIEWER",
+        "role": "EVALUATION_REVIEWER",
     }
     assert provenance["reviewed_at"] == "2026-09-02T17:06:55.000000Z"
+    assert provenance["evidence_review_refs"] == [
+        {
+            "id": "rag-hs-test-review-evidence",
+            "version": "1.0.0",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        }
+    ]
     assert provenance["approved_by"] is None
     assert provenance["approved_at"] is None
     _assert_dataset_error(mutable_dataset, EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
