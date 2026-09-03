@@ -95,6 +95,41 @@ PostgreSQL은 nullable unique 컬럼의 복수 `NULL`을 허용하므로 기존 
 
 하나의 OCR Job이 여러 AI Job 실행 이력을 직접 참조하는 구조는 이번 범위에 포함하지 않는다. 실행별 이력은 `ai_job_attempt`가 관리한다.
 
+### 3.3.1 AI Job 유형 및 전체 도메인 연결 불변조건
+
+`ocr_job.ai_job_id`는 `ai_job.job_type = 'OCR'`인 AI Job만 참조할 수 있다.
+
+또한 하나의 AI Job은 OCR·Guide·Chat을 포함한 전체 도메인에서 최대 하나의
+결과 row에만 연결할 수 있다. 예를 들어 하나의 AI Job이 `ocr_job`과 향후
+`guide` 또는 `chat_message` 결과 row에 동시에 연결되어서는 안 된다.
+
+`ocr_job.ai_job_id`의 FK와 unique 제약은 다음 항목만 DB에서 직접 보장한다.
+
+- 참조하는 AI Job의 존재
+- 하나의 AI Job이 두 개 이상의 `ocr_job`에 연결되지 않음
+
+일반 FK와 개별 도메인 테이블의 unique 제약만으로는 다음 항목을 보장할 수 없다.
+
+- OCR Job이 `job_type='OCR'`인 AI Job만 참조하는지
+- 하나의 AI Job이 서로 다른 도메인 결과 row에 동시에 연결되지 않는지
+
+따라서 AI Job 유형과 전체 도메인 연결 불변조건의 검증 책임은 공통 Job 접수
+Service가 가진다.
+
+Service는 도메인 결과를 연결하기 전에 다음 순서로 처리한다.
+
+1. 대상 `ai_job` row를 `SELECT ... FOR UPDATE`로 잠근다.
+2. 요청 도메인과 `ai_job.job_type`이 일치하는지 확인한다.
+3. 지원되는 모든 도메인 결과 테이블에서 해당 `ai_job_id`의 기존 연결이 없는지 확인한다.
+4. 도메인 결과 row와 `ai_job_id` 연결을 같은 transaction에서 생성한다.
+5. 유형 불일치나 기존 도메인 연결이 있으면 전체 transaction을 rollback한다.
+
+향후 Guide·Chat 연결도 도메인별 독립 검증을 구현하지 않고 동일한 공통 검증
+경로를 사용해야 한다. 모든 도메인 연결이 같은 `ai_job` row를 먼저 잠그므로
+서로 다른 도메인에서 동시에 연결을 시도해도 하나만 성공할 수 있다.
+
+Service를 우회하여 `ocr_job.ai_job_id`를 직접 쓰는 것은 허용하지 않는다.
+
 ### 3.4 기존 OCR 행 처리
 
 Migration 적용 시 기존 `ocr_job` 행의 `ai_job_id`는 모두 `NULL`로 유지한다.
@@ -112,13 +147,18 @@ Migration 적용 시 기존 `ocr_job` 행의 `ai_job_id`는 모두 `NULL`로 유
 
 ### 3.5 신규 OCR 연결 시점
 
-신규 비동기 OCR 접수에서는 하나의 DB transaction 안에서 다음 관계를 생성한다.
+신규 비동기 OCR 접수에서는 하나의 DB transaction 안에서 다음 순서로 처리한다.
 
-1. 공통 `ai_job`
-2. 대응하는 `outbox_event`
-3. 신규 `ocr_job`
-4. `ocr_job.ai_job_id = ai_job.id`
-5. 필요한 멱등성 레코드
+1. 공통 `ai_job`을 `job_type='OCR'`로 생성한다.
+2. 해당 `ai_job` row를 잠그고 공통 도메인 연결 검증을 수행한다.
+3. 기존 OCR·Guide·Chat 결과 연결이 없음을 확인한다.
+4. 대응하는 `outbox_event`를 생성한다.
+5. 신규 `ocr_job`을 생성한다.
+6. `ocr_job.ai_job_id = ai_job.id`로 연결한다.
+7. 필요한 멱등성 레코드를 생성한다.
+
+`job_type`이 `OCR`이 아니거나 다른 도메인 결과가 이미 연결된 경우에는
+`ocr_job`을 생성하지 않고 전체 transaction을 rollback한다.
 
 이 transaction 중 하나라도 실패하면 전체 접수를 rollback해야 한다.
 
@@ -178,8 +218,18 @@ Migration downgrade는 `ocr_job.ai_job_id` 컬럼을 제거하기 전에 non-nul
 다음 조건이면 downgrade를 중단한다.
 
 ```text
-COUNT(ocr_job.ai_job_id IS NOT NULL) > 0
+SELECT COUNT(*)
+FROM ocr_job
+WHERE ai_job_id IS NOT NULL;
 ```
+조회 결과가 0보다 크면 downgrade를 중단한다.
+
+`COUNT(ai_job_id)`도 사용할 수 있지만, 구현에서는 조건의 의미가 명확한
+`COUNT(*) ... WHERE ai_job_id IS NOT NULL` 형태를 사용한다.
+
+`COUNT(ai_job_id IS NOT NULL)`은 사용하지 않는다. PostgreSQL에서
+`ai_job_id IS NOT NULL`은 `TRUE` 또는 `FALSE`를 반환하고 두 값 모두
+non-null이므로, 연결되지 않은 기존 OCR 행까지 모두 계산하기 때문이다.
 
 연결 데이터가 존재하는 상태에서 컬럼을 제거하면 OCR Job과 AI Job 사이의 검증 가능한 연결 정보가 유실되기 때문이다.
 
@@ -291,6 +341,8 @@ docs/contracts/proposed/track-a-migration-rollback-v1.md
 8. 연결 데이터가 존재하면 downgrade가 자동으로 진행되지 않는다.
 9. Migration은 실제 환자·처방·OCR 데이터를 생성하지 않는다.
 10. 로그와 테스트 출력에 의료정보 또는 비밀정보를 포함하지 않는다.
+11. `ocr_job.ai_job_id`는 `job_type='OCR'`인 AI Job만 참조한다.
+12. 하나의 AI Job은 OCR·Guide·Chat 전체에서 최대 하나의 도메인 결과 row에만 연결된다.
 
 ## 7. 필수 테스트
 
@@ -311,7 +363,18 @@ docs/contracts/proposed/track-a-migration-rollback-v1.md
 - AI Job 삭제 후 OCR Job 유지
 - AI Job 삭제 후 `ocr_job.ai_job_id=NULL`
 
-### 7.3 Migration
+### 7.3 Service 연결 불변조건
+
+다음 테스트는 실제 Job 접수 연결을 구현하는 #148에서 필수로 추가한다.
+
+- `job_type='GUIDE'`인 AI Job을 OCR Job에 연결하면 거부되고 OCR row가 생성되지 않음
+- `job_type='CHAT'`인 AI Job을 OCR Job에 연결하면 거부되고 OCR row가 생성되지 않음
+- 이미 OCR 결과에 연결된 AI Job을 Guide·Chat 결과에 연결하면 거부됨
+- 이미 Guide·Chat 결과에 연결된 AI Job을 OCR 결과에 연결하면 거부됨
+- 서로 다른 도메인에서 같은 AI Job을 동시에 연결해도 하나만 성공
+- 유형 또는 기존 연결 검증 실패 시 AI Job·Outbox·도메인 row·멱등성 변경 전체 rollback
+
+### 7.4 Migration
 
 - 기존 데이터가 있는 상태에서 upgrade 성공
 - 기존 OCR 행의 `ai_job_id=NULL`
@@ -321,7 +384,7 @@ docs/contracts/proposed/track-a-migration-rollback-v1.md
 - non-null 연결이 있는 상태에서 downgrade 차단
 - downgrade 후 재-upgrade 성공
 
-### 7.4 보안·개인정보
+### 7.5 보안·개인정보
 
 - 합성 UUID와 비식별 fixture만 사용
 - 교차 사용자 결과 접근 404 경계 유지
@@ -449,4 +512,5 @@ Proposed → Approved
 
 | 날짜 | 변경 | 작성자 |
 | --- | --- | --- |
+| 2026-09-03 | PR #239 리뷰 반영: downgrade COUNT 조건 수정, AI Job 유형·전체 도메인 연결 불변조건 및 Service 검증 책임 명시 | 김지혜 |
 | 2026-09-03 | 최초 Proposed Decision 작성 | 김지혜 |
