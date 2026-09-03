@@ -7,7 +7,7 @@
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — 평가 상태·결과 표현·승인 분리 |
 | 교차 리뷰 | 송은영 (`@phina-io`) — Artifact 저장·DB 경계 |
 | 기준 브랜치 | `feat/157-rag-evaluation-runner-reporter` |
-| 문서 상태 | 설계 승인·구현 대기 |
+| 문서 상태 | 설계 보완 완료·재검토 대기 |
 | 완료 의미 | 합성 DEV Runner·Reporter 기반 구현. HOLDOUT 실행·Baseline Freeze·Release 승인이 아님 |
 
 ## 1. 목적
@@ -58,6 +58,7 @@ Runner 구현을 중단하고 새 Decision 또는 Contract Freeze version으로 
 ### 3.1 포함
 
 - 기존 Evaluation CLI에 `run-dev` 명령 추가
+- versioned DEV execution request loader와 resolved configuration hash 계산
 - Manifest-only partition preflight와 DEV 전용 실행 경계
 - 기존 `load_dataset()`을 통한 전체 Schema·hash graph·privacy·provenance 재검증
 - Experiment Type별 Task Type 선택
@@ -108,24 +109,62 @@ Issue #157의 전체 수명주기는 두 단계로 분리한다.
 argument parsing, 허용된 결과 root, Manifest preflight, exit code와 안전한 오류 code 출력만 담당한다.
 Runner 내부 상태를 문자열 메시지로 추정하지 않는다.
 
-`run-dev`는 최소한 Dataset Manifest, Experiment Type, Variant ID, Run ID, 결과 root와 실행 주체를 명시적으로
-받는다. 테스트에서는 clock과 Adapter registry를 dependency로 주입한다. Production 경로는 저장소의
+`run-dev`는 versioned DEV execution request, Run ID, 결과 root와 실행 주체를 명시적으로 받는다. Dataset
+Manifest를 별도 argument로 중복 입력하지 않고 request의 검증된 참조에서만 해석한다. 테스트에서는 clock과
+Adapter registry를 dependency로 주입한다. Production 경로는 저장소의
 `evals/results/<run_id>/`만 허용하고 테스트는 임시 allowed root를 주입한다.
+
+#### 5.1.1 DEV execution request
+
+`evals/configs/dev-foundation-v1.execution.json` 같은 저장소 관례의 파일은 CLI argument의 흩어진 문자열로 provenance를
+조립하지 않기 위한 Runner 전용 입력이다. `DevExecutionRequest` Pydantic model은 `extra="forbid"`로 다음 필드를
+검증한다.
+
+- `config_id`, `config_version`, `experiment_id`, `experiment_type`, `variant_id`, `evaluated_partitions=["DEV"]`
+- `dataset_manifest_path`, `profile_path`, `comparison_policy_path`, `evaluation_policy_path`, `suite_path`
+- `upstream_contract_manifest_hash`
+- `retrieval_variant`, `answer_variant` — 적용되지 않으면 명시적 `null`; 적용되면 ID, version, kind,
+  `model_config`, `prompt_version`과 JSON-compatible parameter map을 가진 내부 value object
+- `seed`
+- `retry_policy="NO_AUTOMATIC_RETRY"`, `max_attempts=1`
+
+이 파일은 `run-dev` CLI와 Runner만 소비하는 저장소 내부 실행 요청이며 기존 `rag-eval.*` 공유 Schema나
+교차 도메인 DTO가 아니다. 따라서 이번 PR에서 `evals/schemas/`, `docs/contracts/` 또는 동결 Artifact를
+변경하지 않는다. 다른 도메인이 이 형식을 소비해야 하는 요구가 생기면 구현을 중단하고 별도 공유 계약으로
+승격한다.
+
+Loader는 저장소 root 기준 정규화 상대경로만 허용하고 symlink, root 이탈, 중복 key와 알려지지 않은 필드를
+거부한다. 각 참조 파일을 기존 Loader로 검증한 뒤 execution request의 모든 의미 필드와 검증된 입력의 실제
+canonical hash를 고정 순서 map으로 직렬화한다. 그 bytes의 SHA-256이
+`resolved_evaluation_config_hash`이다. 사용자가 hash를 직접 입력하거나 Runner가 placeholder 값을 만들지 않는다.
+각 non-null variant value object의 canonical bytes SHA-256을 해당
+`retrieval_variant_manifest_hash`·`answer_variant_manifest_hash`로 사용한다. `RagEvaluationRun`에 존재하는
+`experiment_id`, `experiment_type`, `variant_id`, 각 variant manifest hash, `upstream_contract_manifest_hash`,
+`prompt_version`은 검증된 요청에서 복사하고 `model_config_hash`는 실제 `model_config` canonical bytes에서
+계산한다. Runner code commit은 tracked config 안에 자기 자신의 commit SHA를 넣는 순환을 만들지 않고 실행
+시점의 현재 commit을 읽어 resolved configuration hash preimage에 추가한다. 현재 commit을 확인할 수 없거나
+working tree가 dirty이면 Production `run-dev`를 거부하며 테스트는 commit provider를 주입한다. `seed`와 Runner
+code commit은 현재 Artifact Schema에 독립 필드가 없으므로 값을 새 필드로 꾸며내지 않고 resolved configuration
+hash에만 결속한다. 두 variant가 동시에 존재할 때 서로 다른 model/prompt 설정을 허용해야 한다면 현재 단일
+`model_config_hash`·`prompt_version` 계약으로 표현할 수 없으므로 실행 전 `INVALID/null`로 거부하고 별도 Schema
+version 논의로 분리한다.
 
 ### 5.2 Manifest preflight
 
 preflight는 Dataset Manifest 한 파일만 안전하게 읽어 다음 조건을 확인한다.
 
-- `dataset_code=rag-dev-foundation`
-- `status=DRAFT`
-- `partition_counts.DEV=5`
+- execution request가 요구하는 partition이 정확히 `DEV`
+- Manifest가 선언한 DEV Case 수가 1개 이상
 - `AUTHORING=0`, `HOLDOUT=0`, `SAFETY_REGRESSION=0`
-- 요청 partition이 정확히 `DEV`
+- Manifest의 모든 `case_resources[].partition`이 정확히 `DEV`
+- `data_classification=SYNTHETIC`
 
 공식 HOLDOUT Manifest처럼 DEV 외 partition을 선언한 입력은 `load_dataset()` 호출 전에 거부한다. preflight는
 전체 Dataset 수용 경계가 아니며, 통과 뒤 기존 Loader가 child resource와 hash graph 전체를 다시 검증한다.
 Manifest가 partition count를 거짓으로 표시한 비정상 입력은 Loader의 Case·Manifest 정합성 검사에서
-`INVALID/null`로 실패한다.
+`INVALID/null`로 실패한다. Dataset ID/version, 정확한 Case set과 Task Type, Profile·Policy·Suite 연결은
+preflight에 중복 하드코딩하지 않고 기존 Loader와 Suite의 selector/hash 검증에 맡긴다. Dataset의 review status는
+Artifact에 사실대로 보존하되, 합성 DEV 여부를 대신하는 접근 제어 조건으로 사용하지 않는다.
 
 ### 5.3 Runner
 
@@ -160,7 +199,7 @@ Runner는 Provider SDK, Backend DI, DB session에 직접 의존하지 않는다.
 
 ### 5.5 Manifest와 Artifact builder
 
-`manifest.py`는 resolved evaluation configuration, 선택 Case set, artifact bytes와 hash를 계산한다.
+`manifest.py`는 선택 Case set, artifact bytes와 hash를 계산한다.
 serialization은 기존 `canonical_json_bytes()`를 재사용한다. JSONL은 각 record를 canonical JSON 한 줄로
 직렬화하고 LF로 종료하며 빈 줄·주석·header record를 만들지 않는다.
 
@@ -173,7 +212,7 @@ Provider body, 내부 reasoning을 출력하지 않고 다음 비민감 정보�
 - Dataset·Profile·Policy·Suite ID/version/hash
 - 실행·판정 상태와 정렬된 blocking status
 - Task Type별 Case 수와 안전한 failure code
-- 생성 Artifact 상대경로와 hash
+- Reporter 자신과 content manifest를 제외한 기계 Artifact 상대경로와 hash
 - `DEV validation only`, `Not a Release decision` 고지
 
 Markdown은 판정 입력이 아니며 수정·삭제해도 JSON 기계 판정이 바뀌지 않는다.
@@ -182,15 +221,16 @@ Markdown은 판정 입력이 아니며 수정·삭제해도 JSON 기계 판정�
 
 ```text
 run-dev arguments
+  → DEV execution request와 Variant value object 검증·resolved config hash 계산
   → safe path 및 Manifest-only partition preflight
   → load_dataset() 전체 graph 검증
   → Profile·Policy·Suite와 요청 Experiment 정합성 검증
   → Case set 결정·정렬
   → Case별 Adapter 실행과 Failure 격리
   → Case·Suite·Metric·Run 상태 집계
-  → schema-valid JSON/JSONL payload 생성
-  → 검증된 기계 payload 기반 report.md 생성
-  → run.json과 자기 자신을 제외한 result-content-manifest.json 생성
+  → schema-valid JSON/JSONL payload와 machine entry 목록 생성
+  → machine entry 목록 기반 report.md 생성
+  → report.md를 포함하고 run.json과 자기 자신을 제외한 result-content-manifest.json 생성
   → run.json의 허용된 completion field 확정
   → 전체 Artifact 재검증과 privacy 검사
   → private staging directory fsync
@@ -227,7 +267,9 @@ Artifact만 발행한다.
 존재하지 않는 사실 자체를 PASS·FAIL·INCONCLUSIVE로 변환하지 않는다.
 
 `result-content-manifest.json`은 실제 생성된 payload 중 `run.json`과 자기 자신을 제외한 허용 파일만
-`relative_path` UTF-16BE lexical order로 기록한다.
+`relative_path` UTF-16BE lexical order로 기록한다. Reporter에는 `report.md`와 content manifest를 제외한
+machine entry 목록의 읽기 전용 view만 전달한다. Reporter는 자신의 hash를 표시하거나 content manifest를
+다시 hash하거나 파일 시스템을 재탐색하지 않으므로 self-reference와 hash cycle이 생기지 않는다.
 
 ## 8. 상태와 실패 처리
 
@@ -252,16 +294,33 @@ INVALID > ERROR > NOT_IMPLEMENTED > NOT_EVALUATED
 Case 예외의 원문, path, payload는 Artifact와 stderr에 쓰지 않는다. allowlist의 안정된 Evaluation error code,
 Case ID와 failure stage만 남긴다. 예상하지 못한 예외는 `EVAL_INTERNAL_ERROR`로 정규화한다.
 
+Manifest-only preflight나 전체 Loader가 실패하면 `RagEvaluationRun`의 필수 provenance를 정직하게 채울 수
+없으므로 최종 Run directory와 부분 Artifact를 만들지 않는다. CLI는 안전한 오류 code와 non-zero exit만
+반환한다. 위 표의 `INVALID/null` Run Artifact는 필수 입력 graph 검증이 끝난 뒤 Experiment·Variant 정합성 같은
+실행 전 조건에서 실패하여 필수 provenance를 모두 기록할 수 있을 때만 생성한다.
+
+### 8.1 재시도 정책
+
+이번 DEV Runner는 자동 재시도를 하지 않는다. execution request는
+`retry_policy="NO_AUTOMATIC_RETRY"`, `max_attempts=1`이어야 하며 Runner는 선택된 `(case_id, task_type)`마다
+Adapter를 정확히 한 번만 호출한다. timeout, provider 오류, 내부 예외도 같은 Run 안에서 재호출하지 않고
+Failure와 blocking status로 보존한다.
+
+운영자가 재실행할 때는 새 Run ID를 사용해야 하며 기존 결과를 덮어쓰지 않는다. Provider별 retry가 필요해지면
+실패 분류, backoff, 최대 시도 수, 중복 비용과 결정성 영향이 포함된 승인된 Policy/version을 먼저 추가한다.
+기존 Worker의 일반 retry 모듈을 Evaluation Runner에 암묵적으로 재사용하지 않는다.
+
 ## 9. 원자적 발행
 
-결과는 허용 root 내부의 private staging directory에서 완성한다.
+preflight와 전체 입력 graph 검증을 통과한 결과만 허용 root 내부의 private staging directory에서 완성한다.
 
 1. `<run_id>.lock`을 exclusive create한다.
 2. mode `0700` staging directory를 만든다.
 3. 각 파일을 mode `0600`으로 write하고 fsync한다.
 4. Pydantic model, exported JSON Schema와 privacy boundary를 검증한다.
-5. 검증된 기계 payload에서 Markdown을 만들고, 그 파일까지 포함한 content manifest를 생성한다.
-6. 허용되는 경우 `run.json.result_content_manifest_hash`를 확정하고 전체 Artifact를 다시 검증한다.
+5. 검증된 기계 payload에서 Markdown을 만들고, 생성된 machine payload와 Markdown만 content manifest에 넣는다.
+6. `COMPLETED` Run이면 `run.json.result_content_manifest_hash`를 확정한다. 미완료 Run은 Schema 계약대로
+   해당 필드를 `null`로 유지하되 진단 보존을 위해 content manifest 파일 자체는 발행할 수 있다.
 7. staging directory를 fsync한다.
 8. 최종 `evals/results/<run_id>/`로 원자 rename한다.
 9. parent directory를 fsync하고 lock을 정리한다.
@@ -277,10 +336,10 @@ staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 �
 - `result-content-manifest.json`은 단일 Run의 실제 파일 bytes와 크기를 고정한다.
 - semantic content hash는 반복 실행의 의미 결과를 비교한다.
 
-semantic projection은 `run.json`, `cases.jsonl`, `metrics.json`, `suite-results.json`, `failures.jsonl`과 후속
-단계에서 실제 존재하는 `comparison.json`, `gate.json`의 기계 payload만 입력으로 사용한다. 비정본
-`report.md`와 byte-integrity 전용 `result-content-manifest.json`은 semantic hash 입력에서 제외한다. 각 기계
-payload에서는 schema-aware 방식으로 다음 실행 식별 필드만 제외한다.
+이번 PR의 semantic projection은 단일 DEV Run의 `run.json`, `cases.jsonl`, `metrics.json`,
+`suite-results.json`, `failures.jsonl`만 입력으로 사용한다. 비정본 `report.md`와 byte-integrity 전용
+`result-content-manifest.json`은 semantic hash 입력에서 제외한다. 각 기계 payload에서는 schema-aware 방식으로
+다음 실행 식별 필드만 제외한다.
 
 - 모든 Artifact record의 `run_id`
 - `run.json`의 `started_at`, `completed_at`
@@ -290,6 +349,10 @@ Case 결과, 상태, failure code, Dataset·Policy·Suite·config hash, 선택 C
 제외 필드는 명시적 allowlist이며 이름 패턴으로 광범위하게 제거하지 않는다. 같은 입력·seed·설정·Fake Adapter로
 서로 다른 Run ID와 clock을 사용해 두 번 실행했을 때 semantic hash가 같아야 한다. 의미 필드 하나를 바꾸면
 달라져야 한다.
+
+`comparison.json`과 `gate.json`은 Baseline/Candidate Run ID와 hash 자체가 의미 필드이므로 이번 allowlist로
+정규화하지 않는다. 후속 비교·Gate 단계에서는 해당 Artifact의 독립 semantic projection과 정규화 규칙을 계약
+승인 후 정의한다.
 
 semantic hash는 이번 Schema에 새 필드로 저장하지 않는다. Schema 변경 없이 테스트와 PR 실행 증빙에서
 계산·비교한다. Baseline Freeze Receipt에 영구 기록할 필드는 후속 승인 단계에서 별도 계약으로 확정한다.
@@ -311,11 +374,13 @@ semantic hash는 이번 Schema에 새 필드로 저장하지 않는다. Schema �
 | 파일 | 책임 |
 | --- | --- |
 | `ai_worker/tasks/evaluation/runner.py` | 실행 요청, Adapter 경계, Case 선택·정렬, 오류 격리와 상태 집계 |
-| `ai_worker/tasks/evaluation/manifest.py` | resolved config, Artifact serialization·hash, content/semantic manifest 계산 |
+| `ai_worker/tasks/evaluation/config.py` | DEV execution request model·loader, 참조 경로 검증, resolved config hash |
+| `ai_worker/tasks/evaluation/manifest.py` | Artifact serialization·hash, content/semantic manifest 계산 |
 | `ai_worker/tasks/evaluation/reporter.py` | 검증된 JSON에서 비민감 Markdown Projection 생성 |
 | `ai_worker/tasks/evaluation/cli.py` | `run-dev`, preflight, 안전한 경로·exit code·원자적 발행 연결 |
 | `ai_worker/tasks/evaluation/errors.py` | 필요한 안정 오류 code 추가 |
 | `ai_worker/tests/evaluation/test_runner.py` | 실행 순서, Adapter 성공·오류·미구현, 상태 집계 |
+| `ai_worker/tests/evaluation/test_config.py` | execution request 필드·경로·hash·provenance 검증 |
 | `ai_worker/tests/evaluation/test_result_manifest.py` | canonical bytes, content manifest, semantic hash |
 | `ai_worker/tests/evaluation/test_reporter.py` | JSON projection, privacy, Markdown 비정본성 |
 | `ai_worker/tests/evaluation/test_cli.py` | DEV 실행, HOLDOUT 사전 차단, path·atomic publication |
@@ -328,6 +393,8 @@ semantic hash는 이번 Schema에 새 필드로 저장하지 않는다. Schema �
 
 - Case ID와 Task Type의 결정적 정렬
 - Experiment Type별 정확한 Case 선택
+- execution request의 명시적 null, 참조 hash와 resolved config hash
+- 선택된 `(case_id, task_type)`별 Adapter 호출이 정확히 1회임을 검증
 - `INVALID > ERROR > NOT_IMPLEMENTED > NOT_EVALUATED` 집계
 - Adapter 예외의 비민감 Failure 변환
 - canonical JSONL과 semantic projection
@@ -339,7 +406,8 @@ semantic hash는 이번 Schema에 새 필드로 저장하지 않는다. Schema �
 - `cases.jsonl`, `failures.jsonl` 모든 record의 `schema_id`, `schema_version`, `run_id` 확인
 - Task별 비적용 actual 필드의 명시적 `null` 확인
 - 미완료 상태의 `decision_status=null`과 계산 필드 `null` 확인
-- content manifest의 정렬, count, path allowlist와 self hash 확인
+- content manifest의 정렬, count, path allowlist와 self-reference 부재 확인
+- `COMPLETED` Run만 content manifest hash를 연결하고 미완료 Run은 `null` 유지
 
 ### 13.3 통합 테스트
 
@@ -354,6 +422,8 @@ semantic hash는 이번 Schema에 새 필드로 저장하지 않는다. Schema �
 
 - 공식 HOLDOUT Manifest가 `load_dataset()` 호출 전에 거부됨
 - `SAFETY_REGRESSION`, `AUTHORING`, 혼합 partition 요청 거부
+- Dataset ID·status·고정 Case 수에 의존하지 않는 합성 DEV-only Manifest 허용
+- automatic retry 설정, `max_attempts != 1`, 같은 Run 내부 Adapter 재호출 거부
 - 결과 root 이탈, 절대경로 오용, `..`, symlink ancestor 거부
 - 기존 Run directory·lock no-clobber
 - short write, fsync, rename 실패 시 최종 directory 미노출
@@ -381,7 +451,9 @@ DB schema·migration·환자 Application 저장 경계를 침범하지 않는지
 
 - 합성 DEV Runner·Reporter가 schema-valid Artifact를 원자적으로 생성한다.
 - 동일 의미 입력의 반복 실행 semantic hash가 일치한다.
+- resolved evaluation configuration hash가 versioned execution request와 실제 참조 입력 전체를 결속한다.
 - Case 오류가 격리되고 모든 blocking status가 보존된다.
+- 각 Case·Task Adapter 호출은 한 Run에서 정확히 1회이며 재실행은 새 Run ID를 요구한다.
 - 미구현·미실행을 PASS·FAIL·INCONCLUSIVE로 위장하지 않는다.
 - HOLDOUT·SAFETY_REGRESSION이 Loader 전에 차단된다.
 - 실제 환자정보·원문·credential이 Artifact와 로그에 없다.
