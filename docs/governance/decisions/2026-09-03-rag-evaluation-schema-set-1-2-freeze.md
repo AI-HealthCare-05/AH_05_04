@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-241-20260903` |
-| 상태 | Implemented candidate · Designated reviewer approval pending |
+| 상태 | Approved · Implemented by PR #245 |
 | 제안일 | 2026-09-03 |
 | 제안자·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Safety·Evaluation 계약 승인 |
@@ -13,7 +13,7 @@
 
 ## 결정
 
-`rag-eval.schema-set@1.2.0`을 #214 HOLDOUT·SAFETY_REGRESSION Dataset 후보가 실제 Team Gold 검토를 기록할 때 사용할 Evaluation authoring 계약 후보로 고정한다. 이 Decision은 기존 Schema Set `1.0.0`과 `1.1.0`의 bytes, member version, Loader 동작을 변경하지 않는다. 지정 책임 리뷰 승인 전에는 #214 Dataset을 REVIEWED·APPROVED·FROZEN으로 해석하지 않는다.
+`rag-eval.schema-set@1.2.0`을 #214 HOLDOUT·SAFETY_REGRESSION Dataset 후보가 실제 Team Gold 검토를 기록할 때 사용할 Evaluation authoring 계약으로 고정한다. 이 Decision은 기존 Schema Set `1.0.0`과 `1.1.0`의 bytes, member version, Loader 동작을 변경하지 않는다. 이 Schema 승인·병합은 #214 Dataset 자체의 지정 검토나 `REVIEWED`·`APPROVED`·`FROZEN` 전이를 대신하지 않는다.
 
 | Immutable field | 값 |
 | --- | --- |
