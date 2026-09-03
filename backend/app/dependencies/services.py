@@ -54,21 +54,20 @@ def get_provider_call_context(request: Request) -> ProviderCallContext:
     return request.state.provider_call_context
 
 
-class _ProviderObservabilityKwargs(TypedDict, total=False):
+class _ProviderObservabilityKwargs(TypedDict):
     context: ProviderCallContext
     descriptor: ProviderCallDescriptor
 
 
 def _provider_observability_kwargs(
-    context: ProviderCallContext | None,
+    context: ProviderCallContext,
     *,
     provider: Provider,
     operation: ProviderOperation,
     prompt_version: str | None,
 ) -> _ProviderObservabilityKwargs:
-    # Direct factory tests may omit request context; request-time dependency wiring never does.
     if context is None:
-        return {}
+        raise ValueError("Provider call context is required")
     return {
         "context": context,
         "descriptor": ProviderCallDescriptor(
@@ -121,9 +120,9 @@ def get_ocr_structurer(
         Depends(get_openai_client),
     ],
     context: Annotated[
-        ProviderCallContext | None,
+        ProviderCallContext,
         Depends(get_provider_call_context),
-    ] = None,
+    ],
 ) -> OcrStructurer:
     if not config.OCR_STRUCTURE_LLM_ENABLED:
         # 기본값은 OFF입니다.
@@ -154,9 +153,9 @@ def get_ocr_engine(
         Depends(get_ocr_structurer),
     ],
     context: Annotated[
-        ProviderCallContext | None,
+        ProviderCallContext,
         Depends(get_provider_call_context),
-    ] = None,
+    ],
 ) -> OcrEngine:
     return ClovaOcrEngine(
         invoke_url=config.CLOVA_OCR_INVOKE_URL,
@@ -241,9 +240,9 @@ def get_guide_generator(
         Depends(get_openai_client),
     ],
     context: Annotated[
-        ProviderCallContext | None,
+        ProviderCallContext,
         Depends(get_provider_call_context),
-    ] = None,
+    ],
 ) -> GuideGenerator:
     return GuideGenerator(
         provider=GuideOpenAIResponsesClient(
@@ -288,9 +287,9 @@ def get_chat_engine(
         Depends(get_openai_client),
     ],
     context: Annotated[
-        ProviderCallContext | None,
+        ProviderCallContext,
         Depends(get_provider_call_context),
-    ] = None,
+    ],
 ) -> ChatEngine:
     return ChatGeneratorEngine(
         provider=ChatOpenAIResponsesClient(

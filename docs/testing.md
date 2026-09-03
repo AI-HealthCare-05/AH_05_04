@@ -56,6 +56,20 @@ GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migrat
 bash scripts/ci/run_test.sh
 ```
 
+### test runner가 격리하는 설정
+
+`run_test.sh`는 `uv run --env-file`로 `envs/.local.env` 전체를 주입하지만, 그 파일은 컨테이너용이라 host 실행에서 달라야 하는 값을 아래와 같이 덮어씁니다. uv가 shell 환경변수를 `--env-file`보다 우선 적용하는 성질을 사용합니다.
+
+| 설정 | test 실행 값 | 격리하는 이유 |
+| --- | --- | --- |
+| `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
+| `DB_USER`·`DB_PASSWORD` | 환경파일 값 사용(shell 값 제거) | 실행자 shell의 계정이 섞이지 않게 합니다 |
+| `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다 |
+| `RELEASE_VALIDATION_ALLOWED` | `false` | local live 검증 절차가 켜두도록 안내하는 gate입니다 |
+| `OCR_STRUCTURE_LLM_ENABLED` | `false` | 위와 같습니다. 켜진 값이 필요한 테스트는 각자 `monkeypatch`로 설정합니다 |
+
+그 외 값은 환경파일을 그대로 따릅니다. 위 목록은 `tests/contract/test_run_test_env_isolation.py`가 고정하므로, 새로 격리해야 할 설정이 생기면 그 테스트도 함께 갱신합니다.
+
 기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
 - `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
 - `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.

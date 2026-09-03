@@ -108,6 +108,33 @@ def _events(stream: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in stream.getvalue().splitlines()]
 
 
+def _unobserved_adapter_factories(tmp_path: Path) -> list[Any]:
+    return [
+        lambda **kwargs: ChatOpenAIResponsesClient(FakeAsyncOpenAI(), **kwargs),
+        lambda **kwargs: GuideOpenAIResponsesClient(FakeAsyncOpenAI(), **kwargs),
+        lambda **kwargs: OpenAIOcrStructureClient(FakeAsyncOpenAI(), **kwargs),
+        lambda **kwargs: ClovaOcrEngine(
+            invoke_url="https://synthetic.example/ocr",
+            secret_key="SENSITIVE_CLOVA_SECRET",
+            storage_dir=str(tmp_path),
+            timeout_seconds=5,
+            structurer=FakeStructurer(),  # type: ignore[arg-type]
+            **kwargs,
+        ),
+    ]
+
+
+def test_provider_adapters_reject_implicit_observability_omission(tmp_path: Path) -> None:
+    for construct in _unobserved_adapter_factories(tmp_path):
+        with pytest.raises(ValueError, match="requires context and descriptor"):
+            construct()
+
+
+def test_provider_adapters_allow_explicit_observability_opt_out(tmp_path: Path) -> None:
+    for construct in _unobserved_adapter_factories(tmp_path):
+        construct(observability_disabled=True)
+
+
 def _clova_engine(tmp_path: Path, client: httpx.AsyncClient, logger: ProviderCallLogger) -> ClovaOcrEngine:
     (tmp_path / "synthetic.png").write_bytes(b"synthetic-image")
     return ClovaOcrEngine(
@@ -407,8 +434,12 @@ async def test_clova_client_logs_response_validation_failure_without_body(tmp_pa
     assert events[1]["failure_phase"] == "RESPONSE_VALIDATION"
     assert events[1]["error_code"] == "PROVIDER_RESPONSE_INVALID"
     assert events[1]["http_status"] == 200
-    assert "SENSITIVE_CLOVA_SECRET" not in stream.getvalue()
-    assert "SENSITIVE_OCR_BODY" not in stream.getvalue()
+    logged_output = stream.getvalue()
+
+    assert "SENSITIVE_CLOVA_SECRET" not in logged_output
+    assert "SENSITIVE_OCR_BODY" not in logged_output
+    assert "synthetic.png" not in logged_output
+    assert "synthetic-image" not in logged_output
 
 
 async def test_clova_client_logs_success_with_actual_http_status(tmp_path: Path) -> None:

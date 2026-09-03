@@ -18,6 +18,21 @@ class Env(StrEnum):
     PRODUCTION = "production"
 
 
+# IDEMPOTENCY_HMAC_KEY 필드 기본값과 envs/example.prod.env·example.local.env에 공개된 예시
+# 값입니다. 전부 저장소에 노출돼 있어 실제 비밀값이 아니므로, non-local 환경 기동 시 그대로
+# 쓰이면 거부해야 합니다(예: local 템플릿 값을 실수로 staging 설정에 복사하는 경로 차단).
+_IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS = frozenset(
+    {
+        "not-configured-idempotency-hmac-key",
+        "replace-with-random-production-idempotency-hmac-key-at-least-32-characters",
+        "replace-with-random-local-idempotency-hmac-key-at-least-32-characters",
+    }
+)
+
+# example 파일들의 placeholder 명명 규칙("-at-least-32-characters")과 맞춘 최소 길이입니다.
+_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH = 32
+
+
 def get_default_timezone() -> tzinfo:
     # 로컬 Windows 개발 환경에 tzdata가 없어도 Asia/Seoul 기준 시간을 쓸 수 있게 하는 fallback입니다
     # (CI는 ubuntu-latest, macOS 개발 환경은 tzdata가 이미 있어서 영향 없음).
@@ -103,9 +118,26 @@ class Config(BaseSettings):
     # Idempotency-Key를 서로 다른 HMAC으로 계산하면 기존 레코드를 찾지 못해 중복 Job·Outbox가 생깁니다.
     # 그래서 uuid4() 같은 프로세스별 난수 대신 안정적인 placeholder 문자열을 쓰고, production 기동은
     # 아래 validator가 이 placeholder·빈 값으로 시작하지 못하게 막습니다.
+    #
+    # 운영 주의: 이 키를 교체하면 같은 원문 Idempotency-Key라도 새 digest가 계산되어, 교체 이전
+    # 레코드에 대한 재시도가 중복으로 인식되지 못하고 새 Job·Outbox가 생길 수 있습니다(현재는
+    # active key 하나로만 조회하며 key_hmac_version별 조회는 지원하지 않음). "rotation 주기를
+    # 보존기간보다 길게 제한"하는 것만으로는 안전하지 않습니다 — 교체 직전에 생성된 레코드는
+    # 교체 이후에도 최대 IDEMPOTENCY_RECORD_TTL_DAYS만큼 남아 있어, 그 기간 안에 같은 요청이
+    # 새 키로 재시도되면 기존 레코드를 찾지 못합니다. 그래서 #235(retained key 전체 조회 구현)
+    # 전까지는 이 키를 절대 교체하지 않습니다.
     IDEMPOTENCY_HMAC_KEY: str = "not-configured-idempotency-hmac-key"
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
+
+    @field_validator("IDEMPOTENCY_HMAC_KEY", mode="after")
+    @classmethod
+    def _strip_idempotency_hmac_key(cls, value: str) -> str:
+        # 검증(validate_idempotency_hmac_key_configured)과 실제 HMAC 계산
+        # (job_intake.py의 compute_key_hmac 호출)이 항상 같은 값을 보도록, 필드 자체를
+        # 정규화합니다. 앞뒤 공백만 다른 값이 인스턴스마다 주입되면(K8s secret, YAML
+        # quoting 차이 등) 검증은 통과해도 실제 digest가 달라져 기존 레코드를 못 찾습니다.
+        return value.strip()
 
     # app/services/guide_ai 및 chat_ai 연동용 OpenAI 설정.
     # CI의 test 잡 env에는 OPENAI_API_KEY가 없어서 필수값(DB_*처럼)으로 두면 전체 테스트가 깨집니다.
@@ -150,11 +182,25 @@ class Config(BaseSettings):
 
     @model_validator(mode="after")
     def validate_idempotency_hmac_key_configured(self) -> "Config":
-        if self.ENV is Env.PRODUCTION:
-            if not self.IDEMPOTENCY_HMAC_KEY.strip():
-                raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty in production")
-            if self.IDEMPOTENCY_HMAC_KEY == "not-configured-idempotency-hmac-key":
-                raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret in production")
+        if self.ENV is not Env.LOCAL:
+            key = self.IDEMPOTENCY_HMAC_KEY
+            if not key:
+                raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty outside local environment")
+            if key in _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS:
+                raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret outside local environment")
+            if len(key) < _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH:
+                raise ValueError(
+                    f"IDEMPOTENCY_HMAC_KEY must be at least {_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH} "
+                    "characters outside local environment"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_idempotency_record_ttl_days(self) -> "Config":
+        # 0 이하 값이 들어오면 레코드가 저장 즉시(또는 그 전에) 만료돼 재조회에서 항상 걸러지므로,
+        # 멱등성 자체가 조용히 무력화됩니다. 환경 구분 없이 항상 막습니다.
+        if self.IDEMPOTENCY_RECORD_TTL_DAYS <= 0:
+            raise ValueError("IDEMPOTENCY_RECORD_TTL_DAYS must be a positive number of days")
         return self
 
     @property
