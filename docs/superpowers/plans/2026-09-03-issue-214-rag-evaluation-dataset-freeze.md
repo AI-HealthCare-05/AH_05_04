@@ -277,9 +277,9 @@ Explain DEV versus frozen synthetic HOLDOUT/SAFETY_REGRESSION, prohibit in-place
 
 - [ ] **Step 2: Record the resolved #216 prerequisite**
 
-Record #216's merged Schema Set `1.1.0` reference as a resolved historical prerequisite, and hand off the current candidate's Schema Set `1.2.0` immutable reference. Retain `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the later HOLDOUT execution blocker.
+Record #216's merged Schema Set `1.1.0` reference as a resolved historical prerequisite, and hand off the frozen Dataset's Schema Set `1.2.0` immutable reference. Retain `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the later HOLDOUT execution blocker.
 
-The current review-recorded candidate awaiting Dataset Custodian approval is:
+The current frozen Dataset has recorded Dataset Custodian approval; only the exact Freeze-commit review remains before merge:
 
 The scored natural-language surface is Korean (`ko-KR`) for queries, Gold claims, forbidden semantic rules,
 Evidence statements, and Rubric descriptions. Stable IDs, enums, reason codes, locators, and synthetic contract

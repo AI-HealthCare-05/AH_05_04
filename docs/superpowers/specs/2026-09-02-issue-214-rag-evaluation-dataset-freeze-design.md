@@ -175,8 +175,10 @@ and Gold-evidence review. Issue #214 records all three actual GitHub identities.
 still separate and remains `PENDING` where required.
 
 Dataset Manifest, all 153 Cases, Evidence Mapping, and Critical Claim Rubric now record the completed
-`@Jye-rookie` PR #256 review as Team `REVIEWED`, with an `EVALUATION_REVIEWER`, the real UTC event timestamp,
-and immutable captured evidence. Approval fields remain null until the later Dataset Custodian/Safety approval.
+`@Jye-rookie` PR #256 review `5102210603` as Team `APPROVED`, with an `EVALUATION_REVIEWER`, the real UTC
+review timestamp, immutable captured review evidence, and the later `@hazelnutflavoured` approval event
+`5102473823`. The exact Freeze commit review remains a separate PR merge gate and is not embedded back into
+the artifact hash graph.
 
 The Comparison Policy contract separately requires `approved_by` and `approved_at`. In the DRAFT graph those
 fields use SYSTEM actor `rag-eval-draft-validator` / `SYSTEM_VALIDATOR` only to identify a diagnostic
@@ -216,9 +218,9 @@ tuning.
 
 ## 6. Case allocation and catalog contract
 
-Version `1.0.0` proposes exactly 153 synthetic cases: 60 `HOLDOUT` and 93 `SAFETY_REGRESSION`. The 153 is the
+Version `1.0.0` freezes exactly 153 synthetic cases: 60 `HOLDOUT` and 93 `SAFETY_REGRESSION`. The 153 is the
 sum of the normative evaluation plan's 12 per-category initial minimums; exact size and partition allocation
-are the proposed #214 Freeze decision pending Dataset Custodian approval. They are not a permanent maximum and
+are the recorded #214 Dataset Freeze decision. They are not a permanent maximum and
 do not prove statistical sufficiency. Metric-specific minimum Case counts, independent-group counts,
 estimators, confidence intervals, and thresholds remain owned by later approved Comparison Policy versions in
 #158–#163. An executed scope below those approved minimums becomes `COMPLETED/INCONCLUSIVE`, never `PASS`.
@@ -621,8 +623,9 @@ The #157 handoff contains the exact immutable references and hashes for:
 - protected artifact receipt
 
 The handoff marks the protected receipt as Case-only, records #216 as the resolved historical compatibility
-prerequisite, and binds #241's current Schema Set 1.2 immutable reference. The current blockers are the named #214 human reviews and the
-`FROZEN/APPROVED` transition. After #214 completes, `WAITING_FOR_APPROVED_COMPARISON_POLICY` becomes the later
+prerequisite, and binds #241's current Schema Set 1.2 immutable reference. The Dataset is already
+`FROZEN/APPROVED`; the remaining PR merge blocker is the exact Freeze-commit review. After #214 completes,
+`WAITING_FOR_APPROVED_COMPARISON_POLICY` becomes the later
 HOLDOUT blocker until the first Baseline is authorized.
 
 The scored natural-language surface is Korean (`ko-KR`): queries, Gold claims, forbidden semantic rules,
