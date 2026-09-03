@@ -500,13 +500,13 @@ git commit -m "✨ feat: Candidate Index 검색 단계 계약 추가"
 **완료 기준:** 모든 local pure test와 static check가 통과하고, DB integration은 정확한 blocker로 보고되며,
 변경 파일이 Issue #167 소유 경계 안에 있다.
 
-- [ ] **Step 1: RAG 단위 테스트 전체 실행**
+- [x] **Step 1: RAG 단위 테스트 전체 실행**
 
 ```bash
 uv run pytest ai_worker/tests/rag -q
 ```
 
-- [ ] **Step 2: Ruff·format·Mypy 실행**
+- [x] **Step 2: Ruff·format·Mypy 실행**
 
 ```bash
 uv run ruff check ai_worker/tasks/rag ai_worker/tests/rag
@@ -514,7 +514,7 @@ uv run ruff format ai_worker/tasks/rag ai_worker/tests/rag --check
 uv run mypy ai_worker/tasks/rag
 ```
 
-- [ ] **Step 3: integration test 상태 확인**
+- [x] **Step 3: integration test 상태 확인**
 
 ```bash
 test -f tests/integration/rag/test_candidate_index_query.py
@@ -524,7 +524,7 @@ test -f tests/integration/rag/test_candidate_index_query.py
 `BLOCKED_BY_RAG_04_OR_06`으로 최종 보고하며 테스트 성공 수에 포함하지 않는다. 파일이 병렬 작업으로
 새로 생겼다면 내용을 검토한 후 PostgreSQL 선행조건을 충족하는 환경에서 별도로 실행한다.
 
-- [ ] **Step 4: 금지된 변경과 민감정보 확인**
+- [x] **Step 4: 금지된 변경과 민감정보 확인**
 
 ```bash
 git diff --name-only origin/develop...HEAD
@@ -536,7 +536,7 @@ rg -n "API_KEY|PASSWORD|patient_name|raw_value|KNOWLEDGE_EVIDENCE|PUBLIC_TRACK_F
 혼합·공개 게이트 활성화가 없다. 계약상 금지 필드명을 검증하는 negative test 문자열만 발견되면 해당
 줄이 assertion임을 직접 확인한다.
 
-- [ ] **Step 5: 전체 diff와 whitespace 검증**
+- [x] **Step 5: 전체 diff와 whitespace 검증**
 
 ```bash
 git diff --check origin/develop...HEAD
@@ -544,7 +544,7 @@ git diff --stat origin/develop...HEAD
 git status --short --branch
 ```
 
-- [ ] **Step 6: 검증 중 수정이 발생한 경우에만 마무리 커밋**
+- [x] **Step 6: 검증 중 수정이 발생한 경우에만 마무리 커밋**
 
 ```bash
 git add ai_worker/tasks/rag/candidate_index.py ai_worker/tests/rag/test_candidate_index.py
