@@ -26,6 +26,7 @@ from ai_worker.tasks.evaluation.schemas.common import ReviewProvenance
 from ai_worker.tasks.evaluation.schemas.common_v1_2 import ReviewProvenanceV12
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
+REPOSITORY_ROOT = EVALS_ROOT.parent
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-holdout-safety-v1.dataset.json"
 CASE_ROOT = EVALS_ROOT / "retrieval/cases/rag-holdout-safety-v1"
 PREFIX = "rag-holdout-safety-v1"
@@ -1844,6 +1845,42 @@ def test_duplicate_ingredient_cases_have_a_shared_typed_ingredient() -> None:
 
         ingredient_sets = [set(fixture.ingredient_tokens) for fixture in case.context.medication_fixtures]
         assert any(left & right for index, left in enumerate(ingredient_sets) for right in ingredient_sets[index + 1 :])
+
+
+def test_typed_medication_fixtures_do_not_encode_rule_pairs_as_products() -> None:
+    for case in _load_committed_cases():
+        for medication in case.context.medication_fixtures:
+            assert "_PLUS_" not in medication.display_name_token, case.case_id
+
+
+def test_dataset_handoff_docs_match_the_current_dataset_graph() -> None:
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    receipt_path = EVALS_ROOT / f"provenance/{PREFIX}.protected-artifact-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    policy = json.loads((EVALS_ROOT / f"policies/{PREFIX}.evaluation-policy.json").read_text(encoding="utf-8"))
+    suite = json.loads((EVALS_ROOT / f"suites/{PREFIX}.suite.json").read_text(encoding="utf-8"))
+    handoff_hashes = (
+        manifest["manifest_sha256"],
+        manifest["resource_set_hash"],
+        *(member["reference"]["hash"] for member in policy["required_partition_refs"]),
+        policy["evaluation_policy_hash"],
+        policy["member_manifest_hash"],
+        suite["suite_hash"],
+        suite["expected_case_set_hash"],
+        sha256_hex(receipt_path.read_bytes()),
+        receipt["receipt_hash"],
+        policy["artifact_schema_set_ref"]["reference"]["hash"],
+    )
+    documentation_paths = (
+        EVALS_ROOT / "README.md",
+        REPOSITORY_ROOT / "docs/superpowers/specs/2026-09-02-issue-214-rag-evaluation-dataset-freeze-design.md",
+        REPOSITORY_ROOT / "docs/superpowers/plans/2026-09-03-issue-214-rag-evaluation-dataset-freeze.md",
+    )
+
+    for documentation_path in documentation_paths:
+        documentation = documentation_path.read_text(encoding="utf-8")
+        for handoff_hash in handoff_hashes:
+            assert handoff_hash in documentation, documentation_path
 
 
 def test_interaction_rule_evidence_entails_the_safety_actions_it_supports() -> None:

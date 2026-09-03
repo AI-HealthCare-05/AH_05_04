@@ -87,23 +87,23 @@ Rubric description)은 한국어(`ko-KR`)다. 불변 식별자·enum·reason cod
 
 | 항목 | 불변 ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `ec2953512d52ee10f584363fd8f3ad576e1163471b2cebdef3c808fb6f321ffe` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `78a11c4a298925fd1f4a6c49435afd433eb0d5d839ff49fdec0b0c4c429b26b0` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `1feaca37deca87466acf6b28a429c9484f9718c014ff687618a2540e8ef63717` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `e0f997f1085f4cce397bc473af80442a02535ecdcae38a1ba29c3a8ceecf3eb2` |
 | HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `e376dc8b347babf097fca9f507bed55696d43d684f119f8b455da89ea6e23d9b` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `5a2c738468b66ced3642364507d685480787a4a70c2b6f7d8c3a7fd7550e1e1f` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `4678cc81a98703b3154b08f8297c2dca32399e926065341a5a617959b95d0131` |
 | Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6f623450952b55e321009970381b65c6b266f56a37e1f750f59ca232c5a4c437` |
 | Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `afa570eec5bf30a7c4ce518e9483be8a5c24ab99230f946ffdcfe0a46c997cd2` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `812ff6bb8cce18cd0e0c80f22ac468005a128e4ed2b30f21ad0381d7b91a0ed1` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `f816553735b5dca9cd9aee883ef2ec18770093d68bd114fd3bfed629dd4f693d` |
-| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `b015506a9c396e55c414ef8b3348883a83a11750adf57b0019112c4590394a37` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `d4f254adfe28a2cc789c02ce7de18d26e79ff1ead21e2bbebdf3df0eda551f8e` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `034b0c58816774512e6b90ba9c96265f2b01eda2d001438e15b56ec12c2e48bb` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `cf77ae5fddce5a3a1cab34979ae8f1f3bdd09d328adfe47bd34ce01bb28a9dcd` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `f04011915018dd178841171da2bcc652178c9724be9f1905248e03786147c1ca` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 Receipt 표의 SHA-256은 Dataset Manifest가 참조하는 canonical file hash다. Receipt 내부 self-hash는
-`0ad1e6785fefbcbd6373282d265b6428e5fcd4f4a5186bdd1751d42ae45de477`이며, 이 receipt는 153개 Case
+`188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24`이며, 이 receipt는 153개 Case
 resource만 보호하고 Evidence·Rubric·Profile·Policy·Suite 승인을 증명하지 않는다.
 
 Dataset가 실제 검토 뒤 `FROZEN`되면 `rag-holdout-safety@1.0.0`의 Case, Gold, Evidence Mapping,

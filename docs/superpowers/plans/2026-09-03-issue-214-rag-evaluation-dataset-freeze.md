@@ -107,7 +107,7 @@ Use one or more synthetic records per approved evidence type. Each file is canon
 
 - [ ] **Step 2: Create the Evidence Mapping candidate**
 
-Use `schema_version=1.0.0`, `mapping_id=rag-holdout-safety-evidence`, `mapping_version=1.0.0`, sorted unique entries, `target_kind=FIXTURE_RECORD`, and exact file hashes. Keep `team_gold_status=DRAFT` and `approved_by=null` until the named human review occurs. Because Schema Set `1.1.0` requires reviewer fields even for `DRAFT`, record `@Jye-rookie` only as the assigned reviewer and use the authoring handoff timestamp; do not represent that assignment as a completed review or external approval.
+Use `schema_version=1.2.0`, `mapping_id=rag-holdout-safety-evidence`, `mapping_version=1.0.0`, sorted unique entries, `target_kind=FIXTURE_RECORD`, and exact file hashes. Keep `team_gold_status=DRAFT`, `reviewed_by=null`, `reviewed_at=null`, `evidence_review_refs=[]`, and approval fields `null` until the named human review occurs. Record `@Jye-rookie` as `EVALUATION_REVIEWER` with immutable review evidence only after that completed review.
 
 - [ ] **Step 3: Create the Rubric candidate**
 
@@ -130,12 +130,12 @@ git commit -m "feat(evals): add holdout safety evidence and rubric"
 - Create: `evals/retrieval/cases/rag-holdout-safety-v1/*.json` (153 files)
 
 **Interfaces:**
-- Consumes: `rag-eval.case@1.1.0`, final Evidence Mapping IDs/locators, final Rubric reference, and the Spec matrices.
+- Consumes: `rag-eval.case@1.2.0`, final Evidence Mapping IDs/locators, final Rubric reference, and the Spec matrices.
 - Produces: The sole allocation authority consumed by the Dataset Manifest and conformance tests.
 
 - [ ] **Step 1: Build an execution-only authoring script outside the repository**
 
-Create `/private/tmp/build_issue214_dataset.py` with explicit in-memory matrix constants copied from Spec section 6. The script must call `EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)` before writing each canonical JSON file and must reject duplicate Case IDs or leakage-axis reuse across partitions. Do not commit this script or an allocation manifest.
+Create `/private/tmp/build_issue214_dataset.py` with explicit in-memory matrix constants copied from Spec section 6. The script must call `EVALUATION_CASE_ADAPTER_V1_2.validate_python(payload)` before writing each canonical JSON file and must reject duplicate Case IDs or leakage-axis reuse across partitions. Do not commit this script or an allocation manifest.
 
 - [ ] **Step 2: Generate HOLDOUT cases**
 
@@ -196,7 +196,7 @@ Create only `required=false` scopes with canonical threshold `0`; no scope may a
 
 - [ ] **Step 3: Create the Evaluation Policy**
 
-Bind Profile, Comparison Policy, both partition references, Suite, and `rag-eval.schema-set@1.1.0` hash `5cfb113e...822c0`. Derive the member manifest and policy self-hash from canonical content.
+Bind Profile, Comparison Policy, both partition references, Suite, and `rag-eval.schema-set@1.2.0` hash `1bdc6c8d...b06`. Derive the member manifest and policy self-hash from canonical content.
 
 - [ ] **Step 4: Create the Case-only protected receipt**
 
@@ -275,7 +275,7 @@ Explain DEV versus frozen synthetic HOLDOUT/SAFETY_REGRESSION, prohibit in-place
 
 - [ ] **Step 2: Record the resolved #216 prerequisite**
 
-Replace the blocked wording with the merged Schema Set `1.1.0` immutable reference and retain `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the later HOLDOUT execution blocker.
+Record #216's merged Schema Set `1.1.0` reference as a resolved historical prerequisite, and hand off the current candidate's Schema Set `1.2.0` immutable reference. Retain `WAITING_FOR_APPROVED_COMPARISON_POLICY` as the later HOLDOUT execution blocker.
 
 The current post-final-review-remediation DRAFT graph handed to the named reviewers is:
 
@@ -285,23 +285,23 @@ tokens retain their canonical spelling.
 
 | Item | Immutable ID@version | SHA-256 |
 | --- | --- | --- |
-| Dataset Manifest | `rag-holdout-safety@1.0.0` | `ec2953512d52ee10f584363fd8f3ad576e1163471b2cebdef3c808fb6f321ffe` |
-| Case resource set | `rag-holdout-safety@1.0.0` | `78a11c4a298925fd1f4a6c49435afd433eb0d5d839ff49fdec0b0c4c429b26b0` |
+| Dataset Manifest | `rag-holdout-safety@1.0.0` | `1feaca37deca87466acf6b28a429c9484f9718c014ff687618a2540e8ef63717` |
+| Case resource set | `rag-holdout-safety@1.0.0` | `e0f997f1085f4cce397bc473af80442a02535ecdcae38a1ba29c3a8ceecf3eb2` |
 | HOLDOUT partition | `rag-holdout-safety:HOLDOUT@1.0.0` | `e376dc8b347babf097fca9f507bed55696d43d684f119f8b455da89ea6e23d9b` |
-| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `5a2c738468b66ced3642364507d685480787a4a70c2b6f7d8c3a7fd7550e1e1f` |
+| SAFETY_REGRESSION partition | `rag-holdout-safety:SAFETY_REGRESSION@1.0.0` | `4678cc81a98703b3154b08f8297c2dca32399e926065341a5a617959b95d0131` |
 | Evidence Mapping | `rag-holdout-safety-evidence@1.0.0` | `6f623450952b55e321009970381b65c6b266f56a37e1f750f59ca232c5a4c437` |
 | Critical Claim Rubric | `rag-holdout-safety-critical-claims@1.0.0` | `afa570eec5bf30a7c4ce518e9483be8a5c24ab99230f946ffdcfe0a46c997cd2` |
 | Evaluation Profile | `rag-holdout-safety-profile@1.0.0` | `812ff6bb8cce18cd0e0c80f22ac468005a128e4ed2b30f21ad0381d7b91a0ed1` |
 | Comparison Policy (validation-only) | `rag-holdout-safety-comparison@1.0.0` | `9d15cccbb271c3b3bd0735352a7e58f3c2b590d81df991f47de5db7ef292189f` |
-| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `f816553735b5dca9cd9aee883ef2ec18770093d68bd114fd3bfed629dd4f693d` |
-| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `b015506a9c396e55c414ef8b3348883a83a11750adf57b0019112c4590394a37` |
+| Evaluation Policy | `rag-holdout-safety-policy@1.0.0` | `d4f254adfe28a2cc789c02ce7de18d26e79ff1ead21e2bbebdf3df0eda551f8e` |
+| Evaluation Policy member manifest | `rag-holdout-safety-policy@1.0.0` | `034b0c58816774512e6b90ba9c96265f2b01eda2d001438e15b56ec12c2e48bb` |
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
-| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `cf77ae5fddce5a3a1cab34979ae8f1f3bdd09d328adfe47bd34ce01bb28a9dcd` |
+| Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `f04011915018dd178841171da2bcc652178c9724be9f1905248e03786147c1ca` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 The receipt reference uses its canonical file hash; its internal `receipt_hash` is
-`0ad1e6785fefbcbd6373282d265b6428e5fcd4f4a5186bdd1751d42ae45de477`.
+`188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24`.
 
 These values remain DRAFT review inputs. They do not record completed human review, Dataset approval, freeze,
 HOLDOUT execution, or Release authorization. Task 7 remains gated on the actual named review events.
@@ -339,7 +339,7 @@ Do not continue unless GitHub shows `@Jye-rookie` completed the assigned review 
 
 - [ ] **Step 2: Promote provenance without altering Gold content**
 
-For every required child, replace the DRAFT handoff timestamp with the actual `@Jye-rookie` review timestamp, verify `authored_at < reviewed_at`, and record the `REVIEWED` transition. Then set each approved child to `team_gold_status=APPROVED` with its actual approver actor and approval timestamp, requiring `reviewed_at <= approved_at`. Set Dataset `status=FROZEN`, `frozen_at` to the freeze event, and Dataset approval to `DATASET_CUSTODIAN`. Recompute every affected canonical hash and downstream reference; do not change questions, Gold, allocation, or Leakage axes in this step.
+For every required child, add the actual `@Jye-rookie` review timestamp and `EVALUATION_REVIEWER` identity with immutable review evidence, verify `authored_at < reviewed_at`, and record the `REVIEWED` transition. Then set each approved child to `team_gold_status=APPROVED` with its actual approver actor and approval timestamp, requiring `reviewed_at <= approved_at`. Set Dataset `status=FROZEN`, `frozen_at` to the freeze event, and Dataset approval to `DATASET_CUSTODIAN`. Recompute every affected canonical hash and downstream reference; do not change questions, Gold, allocation, or Leakage axes in this step.
 
 - [ ] **Step 3: Prove freeze closure and determinism**
 
