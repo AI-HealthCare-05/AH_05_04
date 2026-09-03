@@ -39,6 +39,19 @@ class PendingMessage:
             raise ValueError("delivery_count는 1 이상이어야 합니다.")
 
 
+@dataclass(frozen=True, slots=True)
+class AutoClaimResult:
+    """XAUTOCLAIM의 다음 cursor와 회수 결과입니다."""
+
+    next_start_id: str
+    deliveries: tuple[WorkerDelivery, ...]
+    deleted_message_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.next_start_id.strip():
+            raise ValueError("next_start_id는 비어 있을 수 없습니다.")
+
+
 class StreamAcknowledger(Protocol):
     async def acknowledge(self, stream_message_id: str) -> None:
         """처리가 완료된 Stream entry를 ACK합니다."""
@@ -82,6 +95,17 @@ class StreamConsumer(StreamAcknowledger, Protocol):
         min_idle_ms: int,
     ) -> Sequence[WorkerDelivery]:
         """유휴 시간이 지난 Pending entry의 소유권을 가져옵니다."""
+        ...
+
+    async def auto_claim(
+        self,
+        *,
+        consumer_name: str,
+        min_idle_ms: int,
+        start_id: str = "0-0",
+        count: int = 100,
+    ) -> AutoClaimResult:
+        """유휴 시간이 지난 Pending entry를 cursor 기반으로 회수합니다."""
         ...
 
 

@@ -92,7 +92,14 @@ class SqlAlchemyJobExecutionRepository:
             )
             .where(
                 _AI_JOB.c.id == job_id,
-                _AI_JOB.c.status.in_(("COMPLETED", "FAILED")),
+                _AI_JOB.c.status.in_(
+                    (
+                        "RETRY_WAIT",
+                        "COMPLETED",
+                        "FAILED",
+                        "STALE",
+                    )
+                ),
                 _AI_JOB.c.last_consumed_event_id == event_id,
                 _OUTBOX_EVENT.c.event_id == event_id,
                 _OUTBOX_EVENT.c.job_id == job_id,

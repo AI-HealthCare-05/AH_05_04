@@ -13,7 +13,11 @@ from ai_worker.adapters.redis_message_codec import (
     decode_stream_message,
     encode_stream_message,
 )
-from ai_worker.core.stream import PendingMessage, WorkerDelivery
+from ai_worker.core.stream import (
+    AutoClaimResult,
+    PendingMessage,
+    WorkerDelivery,
+)
 from ai_worker.schemas.messages import WorkerMessage
 
 type RedisStreamId = str | bytes
@@ -180,6 +184,39 @@ class RedisStreamAdapter:
 
         return _decode_claim_result(result)
 
+    async def auto_claim(
+        self,
+        *,
+        consumer_name: str,
+        min_idle_ms: int,
+        start_id: str = "0-0",
+        count: int = 100,
+    ) -> AutoClaimResult:
+        if not consumer_name.strip():
+            raise ValueError("consumer_name은 비어 있을 수 없습니다.")
+        if min_idle_ms < 0:
+            raise ValueError("min_idle_ms는 0 이상이어야 합니다.")
+        if not start_id.strip():
+            raise ValueError("start_id는 비어 있을 수 없습니다.")
+        if count < 1:
+            raise ValueError("count는 1 이상이어야 합니다.")
+
+        try:
+            result = await _run_redis(
+                self._client.xautoclaim(
+                    self._stream_name,
+                    self._group_name,
+                    consumer_name,
+                    min_idle_ms,
+                    start_id,
+                    count=count,
+                )
+            )
+        except RedisError:
+            raise StreamOperationError() from None
+
+        return _decode_auto_claim_result(result)
+
 
 def _decode_read_result(result: object) -> tuple[WorkerDelivery, ...]:
     redis_result = cast(RedisReadResult, result)
@@ -232,6 +269,41 @@ def _decode_claim_result(
         )
 
     return tuple(deliveries)
+
+
+def _decode_auto_claim_result(
+    result: object,
+) -> AutoClaimResult:
+    if not isinstance(result, (list, tuple)):
+        raise StreamOperationError()
+
+    if len(result) not in (2, 3):
+        raise StreamOperationError()
+
+    next_start_id = _decode_stream_id(result[0])
+
+    raw_entries = result[1]
+
+    if not isinstance(raw_entries, list):
+        raise StreamOperationError()
+
+    deliveries = _decode_claim_result(raw_entries)
+
+    deleted_message_ids: tuple[str, ...] = ()
+
+    if len(result) == 3:
+        raw_deleted_ids = result[2]
+
+        if not isinstance(raw_deleted_ids, list):
+            raise StreamOperationError()
+
+        deleted_message_ids = tuple(_decode_stream_id(stream_message_id) for stream_message_id in raw_deleted_ids)
+
+    return AutoClaimResult(
+        next_start_id=next_start_id,
+        deliveries=deliveries,
+        deleted_message_ids=deleted_message_ids,
+    )
 
 
 def _decode_pending_result(

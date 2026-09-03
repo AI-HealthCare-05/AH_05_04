@@ -110,6 +110,37 @@ async def test_pending_message_can_be_claimed_after_idle_time() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pending_message_can_be_auto_claimed_after_idle_time() -> None:
+    clock = FakeClock()
+    adapter: StreamAdapter = FakeStreamAdapter(clock=clock)
+    await adapter.ensure_consumer_group()
+
+    stream_id = await adapter.publish(build_message())
+    await adapter.read(consumer_name="worker-1")
+
+    before_expiry = await adapter.auto_claim(
+        consumer_name="worker-2",
+        min_idle_ms=1000,
+    )
+
+    assert before_expiry.deliveries == ()
+
+    clock.advance(1000)
+
+    result = await adapter.auto_claim(
+        consumer_name="worker-2",
+        min_idle_ms=1000,
+    )
+    pending = await adapter.list_pending()
+
+    assert result.next_start_id == "0-0"
+    assert [delivery.stream_message_id for delivery in result.deliveries] == [stream_id]
+    assert result.deleted_message_ids == ()
+    assert pending[0].consumer_name == "worker-2"
+    assert pending[0].delivery_count == 2
+
+
+@pytest.mark.asyncio
 async def test_unknown_ack_is_not_treated_as_success() -> None:
     adapter = FakeStreamAdapter()
 

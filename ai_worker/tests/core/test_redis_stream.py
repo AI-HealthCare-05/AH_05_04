@@ -48,7 +48,7 @@ def build_message() -> WorkerMessage:
 
 def build_redis_client() -> MagicMock:
     client = MagicMock(spec=Redis)
-
+    client.xautoclaim = AsyncMock()
     client.xgroup_create = AsyncMock()
     client.xadd = AsyncMock()
     client.xreadgroup = AsyncMock()
@@ -219,3 +219,41 @@ async def test_acknowledge_succeeds_only_for_one_entry() -> None:
     await adapter.acknowledge("1004-0")
 
     client.xack.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pending_entries_are_auto_claimed() -> None:
+    client = build_redis_client()
+    message = build_message()
+    encoded = encode_stream_message(message)
+    fields = {key.encode(): value.encode() for key, value in encoded.items()}
+
+    client.xautoclaim.return_value = [
+        b"0-0",
+        [(b"1005-0", fields)],
+        [b"999-0"],
+    ]
+
+    adapter = RedisStreamAdapter(cast(Redis, client))
+
+    result = await adapter.auto_claim(
+        consumer_name="worker-2",
+        min_idle_ms=1000,
+        start_id="0-0",
+        count=10,
+    )
+
+    assert result.next_start_id == "0-0"
+    assert len(result.deliveries) == 1
+    assert result.deliveries[0].stream_message_id == "1005-0"
+    assert result.deliveries[0].message == message
+    assert result.deleted_message_ids == ("999-0",)
+
+    client.xautoclaim.assert_awaited_once_with(
+        "oryak:jobs",
+        "ai-workers",
+        "worker-2",
+        1000,
+        "0-0",
+        count=10,
+    )
