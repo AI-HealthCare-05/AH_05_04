@@ -119,6 +119,7 @@ DB 제약:
 | 컬럼 | 타입           | Nullable | 설명 |
 |---|----------------|---:|---|
 | `created_sequence` | `BIGINT`       | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |
+| `ai_job_id` | `CHAR(36)` | Yes | `ai_job.id` nullable FK. AI Job 삭제 시 `NULL`로 전환되며 하나의 AI Job은 최대 하나의 OCR 작업에만 연결 |
 | `error_code` | `VARCHAR(100)` | Yes | 실패 상태의 안전한 오류 코드 |
 | `error_message` | `VARCHAR(500)` | Yes | 실패 상태 조회 응답에 포함할 수 있는 안전한 사용자 안내 문구 |
 | `engine_name` | `VARCHAR(100)` | Yes | 실제 OCR 실행 엔진 식별자 |
@@ -132,6 +133,20 @@ DB 제약:
 - 규칙 기반 구조화 경로에서는 `model_version`과 `prompt_version`이 `null`입니다.
 - 기존 작업이나 구조화 단계 이전에 실패한 작업에서는 실행 metadata가 `null`일 수 있습니다.
 - Provider 원문 응답, 처방전 원문 또는 API Key는 실행 metadata에 저장하지 않습니다.
+
+`ocr_job.ai_job_id`는 공통 비동기 AI Job과 OCR 결과를 연결하기 위한 nullable FK입니다.
+
+- FK: `fk_ocr_job_ai_job`
+- 참조 대상: `ai_job.id`
+- 삭제 동작: `ON DELETE SET NULL`
+- unique 제약: `uq_ocr_job_ai_job`
+- 기존 OCR 행: `ai_job_id=NULL` 유지
+- 기존 행을 위한 synthetic AI Job이나 backfill은 생성하지 않음
+- 신규 비동기 OCR 접수에서 실제 값을 연결하는 서비스 로직은 #148 범위
+
+FK와 unique 제약은 존재하는 AI Job 참조와 OCR 영역 내부의 일대일 연결을 DB에서 보장합니다. `job_type='OCR'` 검증과 OCR·Guide·Chat 전체 영역에서 하나의 결과 row만 연결되도록 하는 검증은 #148의 Job 접수 서비스가 담당합니다.
+
+OCR 결과 소유권은 `ai_job_id`만으로 판단하지 않고 기존 `ocr_job → medical_document → profile_id` 경로로 확인합니다.
 
 ## OCR 추출 필드
 
@@ -186,6 +201,14 @@ Revision `529b2a36b677`은 다음 schema를 추가합니다.
 Production에서는 해당 revision을 downgrade하지 않고 후속 migration으로 forward-fix합니다.
 
 비운영 환경에서 downgrade하려면 위 필드에 저장된 데이터가 없어야 합니다. 데이터가 하나라도 존재하면 migration은 constraint 또는 컬럼을 변경하기 전에 중단됩니다. 데이터 삭제나 변환이 필요하면 백업·영향 확인 및 승인된 rollback 절차를 먼저 수행해야 합니다.
+
+## OCR–AI Job Mapping Migration rollback 정책
+
+Revision `c3f8a12d9e47`은 `ocr_job.ai_job_id` nullable FK와 `uq_ocr_job_ai_job` unique 제약을 추가합니다.
+
+기존 OCR 행은 `ai_job_id=NULL`로 유지하며 synthetic AI Job 생성이나 backfill을 수행하지 않습니다. `ai_job` 삭제 시 OCR 결과 행은 보존되고 `ai_job_id`만 `NULL`로 전환됩니다.
+
+Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix를 사용합니다. 비운영 환경에서도 `ocr_job.ai_job_id IS NOT NULL`인 행이 하나라도 존재하면 migration은 제약이나 컬럼을 제거하기 전에 downgrade를 중단합니다. downgrade가 필요하면 승인된 절차에 따라 연결 정보를 백업하거나 정리한 뒤 non-null 행이 0건인지 다시 검증해야 합니다.
 
 ## 생성 상태
 

@@ -180,3 +180,33 @@ def test_config_rejects_missing_environment(monkeypatch: pytest.MonkeyPatch) -> 
 def test_config_rejects_unknown_environment(configured_value: str) -> None:
     with pytest.raises(ValidationError):
         Config.model_validate({"ENV": configured_value})
+
+
+def test_config_has_approved_ocr_budget_defaults() -> None:
+    config = _config()
+
+    assert config.OCR_REQUEST_DEADLINE_SECONDS == 60.0
+    assert config.OCR_RESPONSE_MARGIN_SECONDS == 5.0
+    assert config.OCR_PROVIDER_BUDGET_SECONDS == 55.0
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"OCR_REQUEST_DEADLINE_SECONDS": 0.0},
+        {"OCR_RESPONSE_MARGIN_SECONDS": -1.0},
+        {
+            "OCR_REQUEST_DEADLINE_SECONDS": 60.0,
+            "OCR_RESPONSE_MARGIN_SECONDS": 60.0,
+        },
+        {
+            "OCR_REQUEST_DEADLINE_SECONDS": 60.0,
+            "OCR_RESPONSE_MARGIN_SECONDS": 61.0,
+        },
+    ],
+)
+def test_config_rejects_invalid_ocr_budget(
+    overrides: dict[str, float],
+) -> None:
+    with pytest.raises(ValidationError):
+        _config(**overrides)

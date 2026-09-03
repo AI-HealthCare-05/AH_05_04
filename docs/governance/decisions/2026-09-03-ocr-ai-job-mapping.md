@@ -3,8 +3,10 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-212-20260903` |
-| 상태 | Proposed |
+| 상태 | Approved |
 | 결정 요청일 | 2026-09-03 |
+| 승인일 | 2026-09-03 |
+| 승인 근거 | PR #239 권가빈·송은영 승인 리뷰 |
 | 결정 요청자 | 김지혜 (`@Jye-rookie`) |
 | 결정자 | 권가빈 (`@hazelnutflavoured`) |
 | Backend·DB 검토 | 송은영 (`@phina-io`) |
@@ -461,31 +463,32 @@ uq_ocr_job_ai_job
 - 필요하다면 향후 별도 감사 메타데이터를 승인된 Issue에서 추가해야 한다.
 - downgrade는 연결 데이터가 존재하면 수동 승인 절차가 필요하다.
 
-## 11. 승인 조건
+## 11. 승인 결과
 
-다음 검토가 완료되기 전에는 상태를 `Approved`로 변경하지 않는다.
+이 Decision은 2026-09-03 PR #239에서 권가빈·송은영의 검토와 승인을 받아 `Approved` 상태로 확정되었다.
 
-- [ ] 권가빈: 기존 OCR 행 synthetic Job·backfill 금지 승인
-- [ ] 권가빈: nullable FK와 `ON DELETE SET NULL` 승인
-- [ ] 송은영: Backend·DB 모델 및 Migration 경계 승인
-- [ ] 송은영: unique 제약과 downgrade 안전 가드 승인
-- [ ] 김지혜: Worker·OCR 연결 경계 확인
-- [ ] #212 Issue에 승인 근거 댓글 또는 리뷰 링크 기록
-- [ ] 승인 결과와 문서 내용이 일치하는지 재확인
+승인 근거:
 
-승인 후 문서 상단의 상태를 다음과 같이 변경한다.
+- 권가빈 승인 리뷰: [PR #239 review](https://github.com/AI-HealthCare-05/AH_05_04/pull/239#pullrequestreview-5097210270)
+- 송은영 승인 리뷰: [PR #239 review](https://github.com/AI-HealthCare-05/AH_05_04/pull/239#pullrequestreview-5097224706)
 
-```text
-Proposed → Approved
-```
+완료된 승인 조건:
 
-승인 없이 Model·Migration·공유 계약 구현을 병합하지 않는다.
+- [x] 권가빈: 기존 OCR 행 synthetic Job·backfill 금지 승인
+- [x] 권가빈: nullable FK와 `ON DELETE SET NULL` 승인
+- [x] 송은영: Backend·DB 모델 및 Migration 경계 승인
+- [x] 송은영: unique 제약과 downgrade 안전 가드 승인
+- [x] 김지혜: Worker·OCR 연결 경계 확인
+- [x] PR #239에 승인 근거 리뷰 기록
+- [x] 승인 결과와 문서 내용의 일치 여부 재확인
+
+PR #239의 승인에 따라 Model·Migration 구현을 진행하며, 구현 결과는 PR #247에서 별도로 검토한다.
 
 ## 12. 후속 연결
 
 ### #212
 
-이 Decision 승인 후 다음을 구현한다.
+이 Decision의 승인에 따라 PR #247에서 다음을 구현한다.
 
 - `OcrJob.ai_job_id`
 - 신규 Alembic Migration
@@ -512,5 +515,6 @@ Proposed → Approved
 
 | 날짜 | 변경 | 작성자 |
 | --- | --- | --- |
+| 2026-09-03 | PR #239 권가빈·송은영 승인 근거 반영 및 상태를 Approved로 변경 | 김지혜 |
 | 2026-09-03 | PR #239 리뷰 반영: downgrade COUNT 조건 수정, AI Job 유형·전체 도메인 연결 불변조건 및 Service 검증 책임 명시 | 김지혜 |
 | 2026-09-03 | 최초 Proposed Decision 작성 | 김지혜 |

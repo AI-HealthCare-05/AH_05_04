@@ -53,6 +53,42 @@ def test_build_confirmed_data_accepts_fully_confirmed_medication() -> None:
     ]
 
 
+def test_build_confirmed_data_preserves_composite_strength_text() -> None:
+    fields = [
+        _valid_prescribed_date(),
+        *_valid_medication_fields(1),
+        _field(
+            1,
+            FieldType.MEDICATION_STRENGTH,
+            "5mg/100mg",
+        ),
+    ]
+
+    _, medications = PrescriptionService._build_confirmed_data(fields)
+
+    assert medications[0]["strength_text"] == "5mg/100mg"
+
+
+def test_build_confirmed_data_does_not_use_unconfirmed_ocr_values() -> None:
+    medication_fields = _valid_medication_fields(1)
+    medication_name = next(field for field in medication_fields if field.field_type == FieldType.MEDICATION_NAME)
+    medication_name.confirmed_value = None
+    medication_name.raw_value = "OCR 원문 약품명"
+    medication_name.normalized_value = "정규화 약품명"
+
+    fields = [
+        _valid_prescribed_date(),
+        *medication_fields,
+    ]
+
+    with pytest.raises(ApiError) as exc_info:
+        PrescriptionService._build_confirmed_data(fields)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.code == "PRESCRIPTION_REQUIRED_FIELD_MISSING"
+    assert any(detail.field == "medications[1].medication_name" for detail in exc_info.value.details)
+
+
 def test_build_confirmed_data_saves_confirmed_strength_text() -> None:
     fields = [
         _valid_prescribed_date(),
