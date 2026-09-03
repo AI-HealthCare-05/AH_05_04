@@ -84,8 +84,9 @@ class OcrInputRepository(Protocol):
         self,
         *,
         domain_id: UUID,
+        job_id: UUID,
     ) -> OcrDomainInput | None:
-        """OCR Job과 연결된 문서의 최소 실행 입력을 반환합니다."""
+        """현재 AI Job에 연결된 OCR Job의 최소 실행 입력을 반환합니다."""
         ...
 
 
@@ -164,7 +165,9 @@ class OcrHandler:
 
         domain_input = await self._input_repository.get_input(
             domain_id=message.domain_id,
+            job_id=message.job_id,
         )
+
         if domain_input is None:
             raise WorkerError(failure_code="INVALID_INPUT")
 

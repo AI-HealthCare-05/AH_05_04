@@ -34,14 +34,15 @@ class ProviderCall:
 class FakeOcrInputRepository:
     def __init__(self, domain_input: OcrDomainInput | None) -> None:
         self._domain_input = domain_input
-        self.received_domain_ids: list[UUID] = []
+        self.received_lookups: list[tuple[UUID, UUID]] = []
 
     async def get_input(
         self,
         *,
         domain_id: UUID,
+        job_id: UUID,
     ) -> OcrDomainInput | None:
-        self.received_domain_ids.append(domain_id)
+        self.received_lookups.append((domain_id, job_id))
         return self._domain_input
 
 
@@ -146,7 +147,9 @@ async def test_ocr_handler_loads_input_and_returns_normalized_result() -> None:
         ),
     )
 
-    assert repository.received_domain_ids == [domain_id]
+    assert repository.received_lookups == [
+        (domain_id, message.job_id),
+    ]
     assert provider.calls == [
         ProviderCall(
             object_key="synthetic/input.png",
@@ -195,7 +198,9 @@ async def test_ocr_handler_rejects_missing_domain_input() -> None:
         )
 
     assert exc_info.value.failure_code == "INVALID_INPUT"
-    assert repository.received_domain_ids == [domain_id]
+    assert repository.received_lookups == [
+        (domain_id, message.job_id),
+    ]
     assert provider.calls == []
 
 
@@ -233,7 +238,9 @@ async def test_ocr_handler_rejects_exhausted_provider_budget() -> None:
         )
 
     assert exc_info.value.failure_code == "TIMEOUT"
-    assert repository.received_domain_ids == [domain_id]
+    assert repository.received_lookups == [
+        (domain_id, message.job_id),
+    ]
     assert provider.calls == []
 
 
