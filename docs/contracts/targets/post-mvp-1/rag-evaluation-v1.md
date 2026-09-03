@@ -3,12 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Evaluation Schema Set 1.2 implemented candidate · 지정 책임 리뷰와 나머지 Track F 구현·외부 승인 대기 |
+| 구현·리뷰 | Evaluation Schema Set 1.2 승인·병합 완료 · #214 Dataset 지정 리뷰와 나머지 Track F 구현·외부 승인 대기 |
 | 실행 환경 | 실제 RAG 평가는 Local Runner에서만 수행 · Development/Staging 서버 미사용 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `evaluation-plan.md@1.35` · SHA-256 `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-02 |
+| Last verified | 2026-09-03 |
 
 ## 목적과 평가 경계
 
@@ -43,9 +43,9 @@ Dataset Manifest는 Case ID, partition, task type, 합성·비식별 분류, 입
 
 필수 Partition을 실행하지 않았으면 `execution_status=NOT_EVALUATED`, `decision_status=null`로 Release를 차단한다. 실행을 완료했지만 분모가 0이거나 최소 Case·독립 Group 수가 부족할 때만 `COMPLETED/INCONCLUSIVE`로 기록한다. 미실행 결과를 0점, `FAIL`, `INCONCLUSIVE` 또는 성공으로 위장하지 않는다.
 
-### Evaluation Schema Set 1.1
+### Evaluation Schema Set 1.1 — 역사적 호환성 선행조건
 
-`#214` Dataset Freeze 입력 후보는 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. 18개 전체 member 중 `rag-eval.case`와 `rag-eval.dataset-manifest`만 `1.1.0`이며 나머지 16개 member는 기존 `1.0.0` canonical 계약을 byte-for-byte 재사용한다. 지정 책임 리뷰 승인 전에는 이 후보를 승인 완료된 Freeze 입력으로 해석하지 않는다.
+`#216`에서 승인·병합된 역사적 호환성 선행조건은 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. 18개 전체 member 중 `rag-eval.case`와 `rag-eval.dataset-manifest`만 `1.1.0`이며 나머지 16개 member는 기존 `1.0.0` canonical 계약을 byte-for-byte 재사용한다. `#241` 이전의 #214 후보가 이 Set을 사용했으며, 현재 #214 Dataset Freeze 입력은 아래 Schema Set 1.2를 사용한다.
 
 Safety·End-to-End Gold는 Rule 결과를 `MATCHED_RULES | NO_MATCH | NOT_INVOKED`로 구분한다. `MATCHED_RULES`만 비어 있지 않은 `expected_rule_ids`를 가지며, `NO_MATCH`와 `NOT_INVOKED`는 빈 배열을 사용한다. `MATCHED_RULES | NO_MATCH`는 Source·Bundle이 모두 적격이어야 한다. `NOT_INVOKED`는 `SAFETY_ROUTED | SOURCE_INELIGIBLE | BUNDLE_INELIGIBLE` 중 하나의 typed reason, `dependency_fault=NONE`, Provider·Retrieval 미호출을 요구한다. `SAFETY_ROUTED`는 Source·Bundle이 모두 적격일 때만 허용하며 Source 비적격은 `SOURCE_INELIGIBLE`, Scope·Member 비적격은 `BUNDLE_INELIGIBLE`로 기록한다. Provider·Retrieval fault는 Rule-first 이후의 실패이므로 이미 확정된 `MATCHED_RULES | NO_MATCH` 결과와만 결속한다. Answer-only Case는 Rule outcome을 소유하지 않으므로 Rule ID도 `null`이다.
 

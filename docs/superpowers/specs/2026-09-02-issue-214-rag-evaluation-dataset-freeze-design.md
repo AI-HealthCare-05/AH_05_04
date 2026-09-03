@@ -88,7 +88,7 @@ free-form tags, or weaken the required Safety coverage to fit schema version `1.
 [#241](https://github.com/AI-HealthCare-05/AH_05_04/issues/241) was merged by PR #245 after the original
 candidate was authored. The candidate now consumes `rag-eval.schema-set@1.2.0` with SHA-256
 `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06`.
-All 153 Case artifacts and the six provenance-bearing Dataset artifacts use the 1.2 member contracts.
+All 153 Case artifacts and the seven non-Case provenance-bearing Dataset artifacts use the 1.2 member contracts.
 While status is `DRAFT`, `reviewed_by` and `reviewed_at` are null and `evidence_review_refs` is empty;
 actual Gold·Fixture review is recorded later as `EVALUATION_REVIEWER` with immutable evidence. Retrieval
 resource records also remove `expected_*` authoring metadata so a future runner cannot expose it as retrieved
@@ -616,8 +616,8 @@ The #157 handoff contains the exact immutable references and hashes for:
 - artifact schema set
 - protected artifact receipt
 
-The handoff marks the protected receipt as Case-only and records #216 as a resolved prerequisite with the exact
-Schema Set immutable reference. The current blockers are the named #214 human reviews and the
+The handoff marks the protected receipt as Case-only, records #216 as the resolved historical compatibility
+prerequisite, and binds #241's current Schema Set 1.2 immutable reference. The current blockers are the named #214 human reviews and the
 `FROZEN/APPROVED` transition. After #214 completes, `WAITING_FOR_APPROVED_COMPARISON_POLICY` becomes the later
 HOLDOUT blocker until the first Baseline is authorized.
 
@@ -642,6 +642,7 @@ The current DRAFT handoff values are:
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
 | Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `f04011915018dd178841171da2bcc652178c9724be9f1905248e03786147c1ca` |
+| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 The receipt SHA-256 in the table is its canonical file hash referenced by the Dataset Manifest. Its internal

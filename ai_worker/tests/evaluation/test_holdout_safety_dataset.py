@@ -1847,30 +1847,141 @@ def test_duplicate_ingredient_cases_have_a_shared_typed_ingredient() -> None:
         assert any(left & right for index, left in enumerate(ingredient_sets) for right in ingredient_sets[index + 1 :])
 
 
-def test_typed_medication_fixtures_do_not_encode_rule_pairs_as_products() -> None:
+def test_matched_rule_cases_bind_medications_and_gold_to_the_resolved_rule() -> None:
+    mapping = _load_evidence_mapping_value()
+    entries_by_id = {entry["evidence_ref_id"]: entry for entry in mapping["entries"]}
+    matched_cases_by_partition: Counter[str] = Counter()
+
     for case in _load_committed_cases():
-        for medication in case.context.medication_fixtures:
-            assert "_PLUS_" not in medication.display_name_token, case.case_id
+        expected = case.expected
+        if expected.expected_rule_outcome is None or expected.expected_rule_outcome.value != "MATCHED_RULES":
+            continue
+        rule_ids = set(expected.expected_rule_ids or ())
+        assert len(rule_ids) == 1, case.case_id
+        rule_id = next(iter(rule_ids))
+        rule_entry = entries_by_id[rule_id]
+        assert rule_entry["evidence_type"] == "INTERACTION_RULE", case.case_id
+        evidence_medications = {
+            token
+            for token in _extract_entity_tokens(_resolve_fixture_locator(rule_entry))
+            if token.startswith(("FICTIONAL_RX_", "FICTIONAL_OTC_"))
+        }
+        query_medications = {
+            token
+            for token in _extract_entity_tokens(case.query)
+            if token.startswith(("FICTIONAL_RX_", "FICTIONAL_OTC_"))
+        }
+        typed_medications = {
+            medication.display_name_token.removeprefix("SYNTHETIC_") for medication in case.context.medication_fixtures
+        }
+        assert query_medications == typed_medications == evidence_medications, case.case_id
+        assert len(typed_medications) == 2, case.case_id
+        assert rule_id in set(expected.required_evidence_refs or ()), case.case_id
+        assert rule_id in {citation.evidence_ref_id for citation in expected.expected_citations or ()}, case.case_id
+        assert rule_id in {
+            evidence_ref for claim in expected.gold_claims or () for evidence_ref in claim.supporting_evidence_ref_ids
+        }, case.case_id
+        matched_cases_by_partition[case.partition.value] += 1
+
+    assert matched_cases_by_partition == Counter({"HOLDOUT": 4, "SAFETY_REGRESSION": 10})
+
+
+HANDOFF_ROW_PATTERN = re.compile(
+    r"^\| (?P<label>[^|]+?) \| `(?P<reference>[^`]+)` \| `(?P<hash>[0-9a-f]{64})` \|$",
+    re.MULTILINE,
+)
+
+
+def _assert_handoff_document(
+    documentation: str,
+    expected_rows: Mapping[str, tuple[str, str]],
+) -> None:
+    relevant_matches = [
+        match for match in HANDOFF_ROW_PATTERN.finditer(documentation) if match.group("label") in expected_rows
+    ]
+    assert len(relevant_matches) == len(expected_rows)
+    parsed_rows = {match.group("label"): (match.group("reference"), match.group("hash")) for match in relevant_matches}
+    assert parsed_rows == expected_rows
 
 
 def test_dataset_handoff_docs_match_the_current_dataset_graph() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    evidence = json.loads(
+        (EVALS_ROOT / f"retrieval/evidence/{PREFIX}.evidence-mapping.json").read_text(encoding="utf-8")
+    )
+    rubric = json.loads(
+        (EVALS_ROOT / f"retrieval/manifests/{PREFIX}.critical-claim-rubric.json").read_text(encoding="utf-8")
+    )
+    profile = json.loads((EVALS_ROOT / f"profiles/{PREFIX}.profile.json").read_text(encoding="utf-8"))
+    comparison = json.loads((EVALS_ROOT / f"policies/{PREFIX}.comparison-policy.json").read_text(encoding="utf-8"))
     receipt_path = EVALS_ROOT / f"provenance/{PREFIX}.protected-artifact-receipt.json"
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     policy = json.loads((EVALS_ROOT / f"policies/{PREFIX}.evaluation-policy.json").read_text(encoding="utf-8"))
     suite = json.loads((EVALS_ROOT / f"suites/{PREFIX}.suite.json").read_text(encoding="utf-8"))
-    handoff_hashes = (
-        manifest["manifest_sha256"],
-        manifest["resource_set_hash"],
-        *(member["reference"]["hash"] for member in policy["required_partition_refs"]),
-        policy["evaluation_policy_hash"],
-        policy["member_manifest_hash"],
-        suite["suite_hash"],
-        suite["expected_case_set_hash"],
-        sha256_hex(receipt_path.read_bytes()),
-        receipt["receipt_hash"],
-        policy["artifact_schema_set_ref"]["reference"]["hash"],
-    )
+    partition_refs = {member["reference"]["id"]: member["reference"] for member in policy["required_partition_refs"]}
+    schema_set_ref = policy["artifact_schema_set_ref"]["reference"]
+    expected_rows = {
+        "Dataset Manifest": (
+            f"{manifest['dataset_code']}@{manifest['dataset_version']}",
+            manifest["manifest_sha256"],
+        ),
+        "Case resource set": (
+            f"{manifest['dataset_code']}@{manifest['dataset_version']}",
+            manifest["resource_set_hash"],
+        ),
+        "HOLDOUT partition": (
+            f"rag-holdout-safety:HOLDOUT@{partition_refs['rag-holdout-safety:HOLDOUT']['version']}",
+            partition_refs["rag-holdout-safety:HOLDOUT"]["hash"],
+        ),
+        "SAFETY_REGRESSION partition": (
+            f"rag-holdout-safety:SAFETY_REGRESSION@{partition_refs['rag-holdout-safety:SAFETY_REGRESSION']['version']}",
+            partition_refs["rag-holdout-safety:SAFETY_REGRESSION"]["hash"],
+        ),
+        "Evidence Mapping": (
+            f"{evidence['mapping_id']}@{evidence['mapping_version']}",
+            evidence["manifest_sha256"],
+        ),
+        "Critical Claim Rubric": (
+            f"{rubric['rubric_id']}@{rubric['rubric_version']}",
+            rubric["rubric_hash"],
+        ),
+        "Evaluation Profile": (
+            f"{profile['evaluation_profile_id']}@{profile['evaluation_profile_version']}",
+            profile["evaluation_profile_hash"],
+        ),
+        "Comparison Policy (validation-only)": (
+            f"{comparison['comparison_policy_id']}@{comparison['comparison_policy_version']}",
+            comparison["comparison_policy_hash"],
+        ),
+        "Evaluation Policy": (
+            f"{policy['evaluation_policy_id']}@{policy['evaluation_policy_version']}",
+            policy["evaluation_policy_hash"],
+        ),
+        "Evaluation Policy member manifest": (
+            f"{policy['evaluation_policy_id']}@{policy['evaluation_policy_version']}",
+            policy["member_manifest_hash"],
+        ),
+        "Suite": (
+            f"{suite['suite_id']}@{suite['suite_version']}",
+            suite["suite_hash"],
+        ),
+        "Selected Case set": (
+            f"{suite['suite_id']}@{suite['suite_version']}",
+            suite["expected_case_set_hash"],
+        ),
+        "Case-only protected artifact receipt": (
+            f"{receipt['receipt_id']}@{receipt['receipt_version']}",
+            sha256_hex(receipt_path.read_bytes()),
+        ),
+        "Protected receipt internal self-hash": (
+            f"{receipt['receipt_id']}@{receipt['receipt_version']}",
+            receipt["receipt_hash"],
+        ),
+        "Artifact Schema Set": (
+            f"{schema_set_ref['id']}@{schema_set_ref['version']}",
+            schema_set_ref["hash"],
+        ),
+    }
     documentation_paths = (
         EVALS_ROOT / "README.md",
         REPOSITORY_ROOT / "docs/superpowers/specs/2026-09-02-issue-214-rag-evaluation-dataset-freeze-design.md",
@@ -1879,8 +1990,15 @@ def test_dataset_handoff_docs_match_the_current_dataset_graph() -> None:
 
     for documentation_path in documentation_paths:
         documentation = documentation_path.read_text(encoding="utf-8")
-        for handoff_hash in handoff_hashes:
-            assert handoff_hash in documentation, documentation_path
+        _assert_handoff_document(documentation, expected_rows)
+
+        swapped_rows = documentation.replace(
+            expected_rows["Dataset Manifest"][1],
+            expected_rows["Case-only protected artifact receipt"][1],
+            1,
+        )
+        with pytest.raises(AssertionError):
+            _assert_handoff_document(swapped_rows, expected_rows)
 
 
 def test_interaction_rule_evidence_entails_the_safety_actions_it_supports() -> None:

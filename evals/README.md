@@ -100,6 +100,7 @@ Rubric description)은 한국어(`ko-KR`)다. 불변 식별자·enum·reason cod
 | Suite | `rag-holdout-safety-validation-suite@1.0.0` | `b942271d8c842a0e3e6fd8c5fb595678aa5504ee1571f12e0cacaf01283042e4` |
 | Selected Case set | `rag-holdout-safety-validation-suite@1.0.0` | `df3e20f532548ed92b5c4231a95d0d8f4be268ad6494155d70cc5ccc73a94bbd` |
 | Case-only protected artifact receipt | `rag-holdout-safety-protected-receipt@1.0.0` | `f04011915018dd178841171da2bcc652178c9724be9f1905248e03786147c1ca` |
+| Protected receipt internal self-hash | `rag-holdout-safety-protected-receipt@1.0.0` | `188bc557265a322c85ac332195a4b7aeab7e05701fe7463e78f508f69070ef24` |
 | Artifact Schema Set | `rag-eval.schema-set@1.2.0` | `1bdc6c8d2c5b62415b7f2f59e42ffdf7d67243ae4cccd1e6b3a3116daae73b06` |
 
 Receipt 표의 SHA-256은 Dataset Manifest가 참조하는 canonical file hash다. Receipt 내부 self-hash는
