@@ -66,12 +66,41 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 | `REDIS_BLOCK_MS` | `5000` | blocking read 시간 |
 | `REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS` | `5.0` | Redis 연결 수립 timeout(초) |
 | `REDIS_SOCKET_TIMEOUT_SECONDS` | `10.0` | Redis 명령 socket timeout(초) |
+| `OCR_REQUEST_DEADLINE_SECONDS` | `60.0` | OCR Handler 전체 실행 deadline |
+| `OCR_PROVIDER_BUDGET_SECONDS` | `55.0` | CLOVA 호출과 구조화를 포함한 Provider 경로 최대 예산 |
+| `OCR_RESPONSE_MARGIN_SECONDS` | `5.0` | 결과 검증·저장을 위해 남겨두는 완료 여유 |
 
 실제 비밀번호를 저장소·로그·이슈·문서에 기록하지 않습니다.
 운영 Redis 외부 노출과 인증 설정은 별도 Infrastructure 작업의
 Production 차단 조건입니다.
 `REDIS_SOCKET_TIMEOUT_SECONDS`는 `REDIS_BLOCK_MS / 1000`보다 길어야 합니다.
 이를 통해 정상적인 `XREADGROUP` blocking read가 socket timeout으로 먼저 중단되지 않도록 합니다.
+
+### OCR Worker Handler
+
+`job_type=OCR`, `domain_type=OCR_JOB` 메시지는 OCR Handler가 처리합니다.
+
+- `domain_id`와 `job_id`가 모두 일치하는 `ocr_job.ai_job_id` 연결만 조회합니다.
+- Provider에는 저장소 object key, MIME type, monotonic absolute deadline만 전달합니다.
+- Provider 경로는 기본 55초 안에 종료하고 결과 검증·저장을 위해 5초를 남깁니다.
+- OCR 원문과 Provider raw response는 Worker 결과에 포함하지 않습니다.
+- Handler와 OCR Repository·ResultStore는 직접 commit하거나 Redis ACK를 수행하지 않습니다.
+- OCR 결과와 공통 Job 완료는 #141 실행 계층의 fencing 검증을 통과한 동일 transaction에서 commit합니다.
+
+기동 설정은 다음 관계를 만족해야 합니다.
+
+```text
+OCR_PROVIDER_BUDGET_SECONDS + OCR_RESPONSE_MARGIN_SECONDS
+<= OCR_REQUEST_DEADLINE_SECONDS
+```
+
+Worker hard timeout 60초, Job lease 75초, heartbeat 10초의 실제 실행 조립과
+timeout 시 Handler 취소·결과 미저장·ACK 금지는 #233에서 적용합니다.
+timeout attempt의 재시도 가능한 TIMEOUT 처리와 lease reclaim·retry는 #142가 담당합니다.
+
+현재 Worker 이미지는 Backend의 실제 ClovaOcrEngine을 포함하지 않으므로,
+Provider 생성과 장기 실행 Worker 조립이 완료되기 전에는 이 Handler를
+Production 실행 경로로 활성화하지 않습니다.
 
 ### Provider observability 공용 계약
 

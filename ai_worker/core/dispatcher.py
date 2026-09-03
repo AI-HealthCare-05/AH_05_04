@@ -1,9 +1,15 @@
 """검증된 Worker 메시지를 알맞은 Handler로 전달합니다."""
 
+from typing import cast
+
 from ai_worker.core.errors import (
     HandlerExecutionError,
     HandlerResultMismatchError,
     WorkerError,
+)
+from ai_worker.core.handler import (
+    ContextAwareHandler,
+    HandlerExecutionContext,
 )
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
@@ -17,7 +23,12 @@ class Dispatcher:
     def __init__(self, registry: HandlerRegistry) -> None:
         self._registry = registry
 
-    async def dispatch(self, message: WorkerMessage) -> HandlerSuccess:
+    async def dispatch(
+        self,
+        message: WorkerMessage,
+        *,
+        context: HandlerExecutionContext | None = None,
+    ) -> HandlerSuccess:
         """Handler를 선택하고 결과 식별자의 일치 여부를 검증합니다."""
 
         # 외부 Stream 계약의 job_type을 내부 handler_type으로 사용합니다.
@@ -28,7 +39,17 @@ class Dispatcher:
         execution_failed = False
 
         try:
-            result = await handler.handle(message)
+            if context is None:
+                result = await handler.handle(message)
+            else:
+                context_aware_handler = cast(
+                    ContextAwareHandler,
+                    handler,
+                )
+                result = await context_aware_handler.handle(
+                    message,
+                    context=context,
+                )
         except WorkerError as exc:
             # Handler 오류도 승인된 코드·고정 메시지 조합일 때만 전달합니다.
             # 계약을 위반한 오류에는 Provider 응답이나 secret이 포함될 수
