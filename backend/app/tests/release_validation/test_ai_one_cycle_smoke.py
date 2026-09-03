@@ -391,6 +391,72 @@ def test_local_runtime_environment_excludes_provider_credentials(mode: str, monk
     assert "OPENAI_API_KEY" not in runtime_environment
 
 
+@pytest.mark.parametrize("value", ["false", "0", "", "yes", "random", " true", "TRUE", "1 "])
+@pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
+def test_local_live_environment_rejects_non_strict_release_validation_allowed(
+    mode: str, value: str, tmp_path: Path
+) -> None:
+    env = {
+        "ENV": "local",
+        "RELEASE_VALIDATION_ALLOWED": value,
+        "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "STORAGE_DIR": str(tmp_path),
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
+    }
+
+    with pytest.raises(
+        GuardError,
+        match="RELEASE_VALIDATION_ALLOWED must be enabled",
+    ):
+        validate_live_environment(
+            mode=mode,
+            base_url="http://127.0.0.1:8000/api/v1",
+            env=env,
+            commit_sha=None,
+            image_repo_digest=None,
+        )
+
+    with pytest.raises(
+        GuardError,
+        match="RELEASE_VALIDATION_ALLOWED must be enabled",
+    ):
+        smoke_module.validate_cleanup_environment(
+            mode=mode,
+            base_url="http://127.0.0.1:8000/api/v1",
+            env=env,
+        )
+
+
+@pytest.mark.parametrize("value", ["true", "1"])
+@pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
+def test_local_live_environment_accepts_true_and_one_for_gate(mode: str, value: str, tmp_path: Path) -> None:
+    env = {
+        "ENV": "local",
+        "RELEASE_VALIDATION_ALLOWED": value,
+        "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "STORAGE_DIR": str(tmp_path),
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
+    }
+
+    validated_live = validate_live_environment(
+        mode=mode,
+        base_url="http://127.0.0.1:8000/api/v1",
+        env=env,
+        commit_sha=None,
+        image_repo_digest=None,
+    )
+    validated_cleanup = smoke_module.validate_cleanup_environment(
+        mode=mode,
+        base_url="http://127.0.0.1:8000/api/v1",
+        env=env,
+    )
+
+    assert validated_live.environment == "local"
+    assert validated_cleanup.environment == "local"
+
+
 def test_local_runner_does_not_load_provider_credentials_from_dotenv(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "OPENAI_API_KEY=synthetic-openai-sentinel\nCLOVA_OCR_SECRET=synthetic-clova-sentinel\n",

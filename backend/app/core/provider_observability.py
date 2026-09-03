@@ -2,82 +2,30 @@ import json
 import logging
 import sys
 import time
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from app.core.config import Env
+from provider_contracts.observability import (
+    Provider,
+    ProviderCallContext,
+    ProviderCallDescriptor,
+    ProviderErrorCode,
+    ProviderFailurePhase,
+    ProviderOperation,
+)
 
-
-class Provider(StrEnum):
-    CLOVA_OCR = "CLOVA_OCR"
-    OPENAI = "OPENAI"
-
-
-class ProviderOperation(StrEnum):
-    PRESCRIPTION_RECOGNITION = "PRESCRIPTION_RECOGNITION"
-    OCR_STRUCTURING = "OCR_STRUCTURING"
-    GUIDE_GENERATION = "GUIDE_GENERATION"
-    CHAT_GENERATION = "CHAT_GENERATION"
-
-
-class ProviderFailurePhase(StrEnum):
-    TRANSPORT_TIMEOUT = "TRANSPORT_TIMEOUT"
-    TRANSPORT_CONNECTION = "TRANSPORT_CONNECTION"
-    HTTP_STATUS = "HTTP_STATUS"
-    RESPONSE_VALIDATION = "RESPONSE_VALIDATION"
-    PROVIDER_POLICY = "PROVIDER_POLICY"
-    APPLICATION_DEADLINE = "APPLICATION_DEADLINE"
-    UNKNOWN_INTERNAL = "UNKNOWN_INTERNAL"
-
-
-class ProviderErrorCode(StrEnum):
-    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
-    PROVIDER_CONNECTION_FAILED = "PROVIDER_CONNECTION_FAILED"
-    PROVIDER_RATE_LIMITED = "PROVIDER_RATE_LIMITED"
-    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
-    PROVIDER_REQUEST_REJECTED = "PROVIDER_REQUEST_REJECTED"
-    PROVIDER_RESPONSE_INVALID = "PROVIDER_RESPONSE_INVALID"
-    PROVIDER_REFUSAL = "PROVIDER_REFUSAL"
-    PROVIDER_SAFETY_FILTERED = "PROVIDER_SAFETY_FILTERED"
-    PROVIDER_CALL_ABORTED = "PROVIDER_CALL_ABORTED"
-    PROVIDER_INTERNAL_FAILURE = "PROVIDER_INTERNAL_FAILURE"
-
-
-@dataclass(frozen=True)
-class ProviderCallContext:
-    trace_id: str
-    validation_run_id: UUID | None
-    environment: Env
-    validation_enabled: bool
-
-    def __post_init__(self) -> None:
-        if len(self.trace_id) != 32:
-            raise ValueError("trace_id must be a 128-bit hexadecimal value")
-        try:
-            int(self.trace_id, 16)
-        except ValueError as error:
-            raise ValueError("trace_id must be a 128-bit hexadecimal value") from error
-        if self.validation_run_id is not None and (not self.validation_enabled or self.environment is not Env.LOCAL):
-            raise ValueError("validation run context is allowed only for enabled local validation")
-
-
-@dataclass(frozen=True)
-class ProviderCallDescriptor:
-    provider: Provider
-    operation: ProviderOperation
-    prompt_version: str | None
-
-    def __post_init__(self) -> None:
-        if self.provider is Provider.CLOVA_OCR:
-            if self.operation is not ProviderOperation.PRESCRIPTION_RECOGNITION or self.prompt_version is not None:
-                raise ValueError("CLOVA OCR descriptor must use prescription recognition without a prompt")
-            return
-        if self.operation is ProviderOperation.PRESCRIPTION_RECOGNITION:
-            raise ValueError("OpenAI descriptor cannot use prescription recognition")
-        if not self.prompt_version:
-            raise ValueError("OpenAI descriptor requires a prompt version")
+__all__ = [
+    "Provider",
+    "ProviderCallContext",
+    "ProviderCallDescriptor",
+    "ProviderCallLogger",
+    "ProviderCallObserver",
+    "ProviderCallSpan",
+    "ProviderErrorCode",
+    "ProviderFailurePhase",
+    "ProviderOperation",
+]
 
 
 class ProviderCallSpan:
@@ -273,12 +221,19 @@ class ProviderCallObserver:
         context: ProviderCallContext | None,
         descriptor: ProviderCallDescriptor | None,
         call_logger: ProviderCallLogger,
+        observability_disabled: bool = False,
     ) -> None:
-        if (context is None) is not (descriptor is None):
+        if observability_disabled:
+            if context is not None or descriptor is not None:
+                raise ValueError("disabled observability must not include context or descriptor")
+        elif context is None and descriptor is None:
+            raise ValueError("active observability requires context and descriptor")
+        elif (context is None) is not (descriptor is None):
             raise ValueError("context and descriptor must be provided together")
         self._context = context
         self._descriptor = descriptor
         self._call_logger = call_logger
+        self._observability_disabled = observability_disabled
 
     def start(
         self,
@@ -286,8 +241,12 @@ class ProviderCallObserver:
         requested_model: str | None,
         provider_request_id: str | None = None,
     ) -> ProviderCallSpan | None:
-        if self._context is None or self._descriptor is None:
+        if self._observability_disabled:
             return None
+        # __init__이 active 상태의 두 값을 보장합니다. 향후 alternate construction이나
+        # 내부 상태 변경이 이 불변식을 우회해도 무기록 Provider 호출로 진행하지 않습니다.
+        if self._context is None or self._descriptor is None:
+            raise RuntimeError("active Provider observability is not configured")
         return self._call_logger.start(
             context=self._context,
             descriptor=self._descriptor,

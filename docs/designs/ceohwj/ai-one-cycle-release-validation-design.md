@@ -191,7 +191,7 @@ field identity가 일치할 때만 모든 필드를 manifest 기대값으로 확
 - migration 계정과 DB 초기화 계정은 runner에 전달하지 않는다.
 - image build·push와 staging 배포는 기존 팀 절차를 사용하고 #61에서 새로 구현하지 않는다.
 
-fixture를 만들기 전에 `ENV=staging`, `RELEASE_VALIDATION_ALLOWED=1`, 합의된 HTTPS FastAPI host,
+fixture를 만들기 전에 `ENV=staging`, `RELEASE_VALIDATION_ALLOWED=true 또는 1`, 합의된 HTTPS FastAPI host,
 staging DB host·DB name과 commit SHA 또는 image digest를 모두 확인한다. 하나라도 다르면 DB session을
 열기 전에 종료한다. Production DB 이름에 특정 문자열이 들어가는지만 확인하는 deny-list는 사용하지
 않는다.
@@ -534,6 +534,8 @@ dirty worktree에서도 개인 진단 실행 결과는 낼 수 있지만 `eviden
   "db_error_code": "GENERATION_REQUEST_FAILED"
 }
 ```
+
+`api_reason`은 공개 오류 body의 `details.reason`이 `DEADLINE_EXCEEDED|PROVIDER_TIMEOUT`인 경우에만 해당 고정값으로 존재하고, 그 외에는 필드를 생략한다. `details`의 다른 값은 복사하지 않는다. `local-live-full` 실행 경계에 진입한 결과는 성공·실패 모두 `execution_mode=LIVE`를 기록한다. `database_verification`은 `NOT_RUN|FAIL|PASS`, `provider_log_verification`은 수동 검토 가능한 trace 유무에 따라 `MANUAL_REQUIRED|UNVERIFIED`이며 자동 `PASS`는 금지한다.
 
 `failure_stage`는 다음 값 또는 null만 허용한다.
 

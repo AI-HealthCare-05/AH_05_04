@@ -38,7 +38,9 @@ function getOcrResponseStatus(response: OcrJobResponse): AiJobViewStatus {
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
   const inputId = useId()
+  const filenameId = useId()
   const [file, setFile] = useState<File | null>(null)
+  const [isFilenameExpanded, setIsFilenameExpanded] = useState(false)
   const [pollingTarget, setPollingTarget] = useState<OcrPollingTarget | null>(null)
   const [message, setMessage] = useState('')
   const [isPreparing, setIsPreparing] = useState(false)
@@ -78,6 +80,7 @@ function PrescriptionUploadPage() {
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] ?? null
     setFile(selectedFile)
+    setIsFilenameExpanded(false)
     setPollingTarget(null)
     setMessage('')
   }
@@ -121,6 +124,7 @@ function PrescriptionUploadPage() {
   const resetToUpload = () => {
     setPollingTarget(null)
     setFile(null)
+    setIsFilenameExpanded(false)
     setMessage('')
   }
 
@@ -205,13 +209,35 @@ function PrescriptionUploadPage() {
             accept="image/jpeg,image/png,application/pdf"
             onChange={handleFileChange}
           />
-          <label className={`upload-zone mvp-upload__zone ${file ? 'selected' : ''}`} htmlFor={inputId}>
-            <span className="mvp-upload__zone-icon" aria-hidden="true">
-              <span />
-            </span>
-            <strong>{file?.name ?? '사진 촬영 또는 파일 선택'}</strong>
-            <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 10MB'}</small>
-          </label>
+          <div className={`upload-zone mvp-upload__zone ${file ? 'selected' : ''}`}>
+            <label className="mvp-upload__picker" htmlFor={inputId}>
+              <span className="mvp-upload__zone-icon" aria-hidden="true">
+                <span />
+              </span>
+              <strong
+                id={file ? filenameId : undefined}
+                className={
+                  file
+                    ? `mvp-upload__filename${isFilenameExpanded ? ' mvp-upload__filename--expanded' : ''}`
+                    : undefined
+                }
+              >
+                {file?.name ?? '사진 촬영 또는 파일 선택'}
+              </strong>
+              <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 10MB'}</small>
+            </label>
+            {file && (
+              <button
+                type="button"
+                className="mvp-upload__filename-toggle"
+                aria-expanded={isFilenameExpanded}
+                aria-controls={filenameId}
+                onClick={() => setIsFilenameExpanded((current) => !current)}
+              >
+                {isFilenameExpanded ? '파일명 접기' : '전체 파일명 보기'}
+              </button>
+            )}
+          </div>
 
           <div className="notice mvp-upload__notice">
             <strong>개인정보를 확인해 주세요.</strong><br />

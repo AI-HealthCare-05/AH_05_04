@@ -54,6 +54,10 @@ class RaisingAsyncOpenAI:
         self.responses = RaisingResponses(error)
 
 
+def _client(client: object) -> OpenAIOcrStructureClient:
+    return OpenAIOcrStructureClient(client, observability_disabled=True)
+
+
 def _draft() -> GeneratedPrescriptionDraft:
     return GeneratedPrescriptionDraft(
         medications=[
@@ -84,7 +88,7 @@ def _response(
 
 async def test_client_uses_structured_parse_without_provider_storage() -> None:
     sdk_client = FakeAsyncOpenAI(_response())
-    client = OpenAIOcrStructureClient(sdk_client)
+    client = _client(sdk_client)
 
     result = await client.generate(
         model="gpt-4o-mini",
@@ -129,7 +133,7 @@ async def test_client_rejects_refusal() -> None:
         OcrProcessingError,
         match="응답 생성을 거부",
     ):
-        await OpenAIOcrStructureClient(FakeAsyncOpenAI(response)).generate(
+        await _client(FakeAsyncOpenAI(response)).generate(
             model="gpt-4o-mini",
             instructions="rules",
             input_json="{}",
@@ -151,7 +155,7 @@ async def test_client_rejects_incomplete_or_malformed_response(
     response: object,
 ) -> None:
     with pytest.raises(OcrProcessingError):
-        await OpenAIOcrStructureClient(FakeAsyncOpenAI(response)).generate(
+        await _client(FakeAsyncOpenAI(response)).generate(
             model="gpt-4o-mini",
             instructions="rules",
             input_json="{}",
@@ -235,7 +239,7 @@ async def test_client_maps_provider_errors(
     domain_error: type[Exception],
 ) -> None:
     with pytest.raises(domain_error) as exc_info:
-        await OpenAIOcrStructureClient(RaisingAsyncOpenAI(provider_error)).generate(
+        await _client(RaisingAsyncOpenAI(provider_error)).generate(
             model="gpt-4o-mini",
             instructions="rules",
             input_json="{}",
@@ -253,7 +257,7 @@ async def test_client_does_not_wrap_programming_errors() -> None:
         RuntimeError,
         match="programming failure",
     ):
-        await OpenAIOcrStructureClient(RaisingAsyncOpenAI(error)).generate(
+        await _client(RaisingAsyncOpenAI(error)).generate(
             model="gpt-4o-mini",
             instructions="rules",
             input_json="{}",

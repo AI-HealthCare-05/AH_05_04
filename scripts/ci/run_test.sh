@@ -5,6 +5,7 @@ set -euo pipefail
 
 # 저장소 루트에서 명령이 실행되도록 이동합니다.
 cd "$(dirname "$0")/../.."
+REPOSITORY_ROOT="$(pwd)"
 
 ENV_FILE="${ENV_FILE:-envs/.local.env}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
@@ -160,6 +161,7 @@ run_with_test_database() {
     DB_PORT="$HOST_DB_PORT" \
     DB_EXPOSE_PORT="$HOST_DB_PORT" \
     DB_NAME=test \
+    PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT" \
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \

@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+import provider_contracts.observability as shared_observability
 from app.core.config import Env
 from app.core.provider_observability import (
     Provider,
@@ -25,6 +26,15 @@ def _logger(stream: io.StringIO) -> ProviderCallLogger:
     logger.addHandler(handler)
     logger.propagate = False
     return ProviderCallLogger(logger)
+
+
+def test_backend_reexports_shared_provider_contract_types() -> None:
+    assert Provider is shared_observability.Provider
+    assert ProviderCallContext is shared_observability.ProviderCallContext
+    assert ProviderCallDescriptor is shared_observability.ProviderCallDescriptor
+    assert ProviderErrorCode is shared_observability.ProviderErrorCode
+    assert ProviderFailurePhase is shared_observability.ProviderFailurePhase
+    assert ProviderOperation is shared_observability.ProviderOperation
 
 
 def _context(*, validation: bool = True) -> ProviderCallContext:
@@ -135,10 +145,34 @@ def test_provider_descriptor_rejects_prompt_on_clova_operation() -> None:
         )
 
 
-def test_provider_observer_allows_explicit_unobserved_compatibility_mode() -> None:
-    observer = ProviderCallObserver(context=None, descriptor=None, call_logger=_logger(io.StringIO()))
+def test_provider_observer_rejects_implicit_unobserved_mode() -> None:
+    with pytest.raises(ValueError, match="requires context and descriptor"):
+        ProviderCallObserver(context=None, descriptor=None, call_logger=_logger(io.StringIO()))
+
+
+def test_provider_observer_allows_explicit_disabled_mode() -> None:
+    observer = ProviderCallObserver(
+        context=None,
+        descriptor=None,
+        call_logger=_logger(io.StringIO()),
+        observability_disabled=True,
+    )
 
     assert observer.start(requested_model="gpt-4o-mini") is None
+
+
+def test_provider_observer_rejects_configuration_in_disabled_mode() -> None:
+    with pytest.raises(ValueError, match="must not include context or descriptor"):
+        ProviderCallObserver(
+            context=_context(),
+            descriptor=ProviderCallDescriptor(
+                provider=Provider.OPENAI,
+                operation=ProviderOperation.CHAT_GENERATION,
+                prompt_version="chat-prompt-v2",
+            ),
+            call_logger=_logger(io.StringIO()),
+            observability_disabled=True,
+        )
 
 
 @pytest.mark.parametrize("missing", ["context", "descriptor"])

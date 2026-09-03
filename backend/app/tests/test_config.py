@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Config, Env
+from provider_contracts.observability import DeploymentEnvironment
 
 BASE_CONFIG = {
     "DB_HOST": "localhost",
@@ -11,6 +12,10 @@ BASE_CONFIG = {
     "DB_NAME": "test_database",
     "CHAT_HISTORY_CONTEXT_ENABLED": False,
 }
+
+
+def test_backend_env_is_shared_deployment_environment() -> None:
+    assert Env is DeploymentEnvironment
 
 
 def test_config_builds_postgresql_async_url() -> None:
@@ -38,6 +43,9 @@ def test_config_parses_environment(
         {
             **BASE_CONFIG,
             "ENV": env_value,
+            # production은 IDEMPOTENCY_HMAC_KEY placeholder·길이 검증을 거부하므로, 이 테스트가
+            # 검증하는 ENV 파싱과 무관한 실패를 피하려면 32자 이상의 실제 값을 넣어야 합니다.
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
         }
     )
 
@@ -181,3 +189,132 @@ def test_config_rejects_non_positive_ocr_deadline() -> None:
                 "OCR_REQUEST_DEADLINE_SECONDS": 0.0,
             }
         )
+
+
+def test_idempotency_hmac_key_default_is_a_fixed_placeholder() -> None:
+    """서버 재시작·여러 인스턴스에서 기본값이 매번 달라지면 같은 Idempotency-Key가 서로 다른
+    key_hmac으로 계산되어 기존 레코드를 찾지 못하고 중복 Job·Outbox가 생깁니다. `uuid.uuid4()`
+    같은 프로세스별 난수 기본값은 같은 프로세스 안에서 두 인스턴스를 비교해서는 잡히지 않으므로
+    (클래스 정의 시점에 한 번만 평가되어 프로세스 내에서는 항상 동일), 필드 기본값 자체가 고정
+    literal인지 `model_fields`로 직접 확인합니다(실제 환경변수 값에 영향받지 않는 유일한 방법)."""
+    assert Config.model_fields["IDEMPOTENCY_HMAC_KEY"].default == "not-configured-idempotency-hmac-key"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_placeholder_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                # 실행 환경의 실제 IDEMPOTENCY_HMAC_KEY 환경변수가 이 값을 덮어쓰지 않도록 명시적으로
+                # placeholder를 지정합니다 — pydantic-settings는 dict에 없는 키만 env var로 채우므로,
+                # 키를 생략하면 로컬 .env에 실제 값이 설정된 환경에서 이 테스트가 거짓으로 통과합니다.
+                "IDEMPOTENCY_HMAC_KEY": "not-configured-idempotency-hmac-key",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_blank_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "   ",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_whitespace_padded_placeholder_outside_local(environment: str) -> None:
+    """앞뒤 공백으로 감싼 placeholder가 문자열 완전 일치 검사를 우회하지 못하는지 확인합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "  not-configured-idempotency-hmac-key  ",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_example_prod_env_placeholder_outside_local(environment: str) -> None:
+    """envs/example.prod.env에 저장소 공개로 노출된 예시 값도 실제 비밀값이 아니므로 거부합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "replace-with-random-production-idempotency-hmac-key-at-least-32-characters",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_example_local_env_placeholder_outside_local(environment: str) -> None:
+    """envs/example.local.env에 공개된 예시 값도 실수로 non-local 환경에 복사될 수 있으니 거부합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "replace-with-random-local-idempotency-hmac-key-at-least-32-characters",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_too_short_value_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-but-short-secret",
+            }
+        )
+
+
+@pytest.mark.parametrize("ttl_days", [0, -1])
+def test_idempotency_record_ttl_days_rejects_non_positive_value(ttl_days: int) -> None:
+    """0 이하 값은 레코드를 저장 즉시(또는 그 전에) 만료시켜 멱등성을 조용히 무력화하므로,
+    환경 구분 없이 항상 거부합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "IDEMPOTENCY_RECORD_TTL_DAYS": ttl_days,
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_field_is_normalized_to_stripped_value(environment: str) -> None:
+    """검증(validator)과 실제 HMAC 계산이 항상 같은 값을 보도록, 필드 자체가 앞뒤 공백을
+    제거한 값으로 정규화되는지 확인합니다 — 공백만 다른 값이 인스턴스마다 주입되면
+    검증은 통과해도 계산된 digest가 달라질 수 있습니다."""
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": environment,
+            "IDEMPOTENCY_HMAC_KEY": "  a-real-idempotency-hmac-secret-value  ",
+        }
+    )
+
+    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret-value"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_accepts_configured_value_outside_local(environment: str) -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": environment,
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+        }
+    )
+
+    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret-value"

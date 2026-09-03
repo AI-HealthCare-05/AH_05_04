@@ -51,6 +51,14 @@ def test_run_test_script_replaces_container_storage_dir_with_host_directory() ->
     assert "trap 'rm -rf \"$TEST_STORAGE_DIR\"' EXIT" in script
 
 
+def test_run_test_script_exposes_backend_and_shared_contract_packages() -> None:
+    """Console entry points must import both `app` and root-level shared contracts."""
+    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'REPOSITORY_ROOT="$(pwd)"' in script
+    assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' in _run_with_test_database_body()
+
+
 def test_example_local_env_storage_dir_is_a_container_path() -> None:
     """위 override가 필요한 이유를 고정합니다 — 이 값이 host 경로로 바뀌면 override 근거도 바뀝니다."""
     storage_dir = re.search(

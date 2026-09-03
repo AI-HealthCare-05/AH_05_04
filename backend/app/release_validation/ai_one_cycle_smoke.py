@@ -57,6 +57,7 @@ PLACEHOLDERS = frozenset(
     }
 )
 LOCAL_MODES = frozenset({"local-preflight", "local-live-full"})
+SAFE_API_FAILURE_REASONS = frozenset({"DEADLINE_EXCEEDED", "PROVIDER_TIMEOUT"})
 LIVE_SCENARIO_VERSIONS = {
     "local-live-full": "ai-one-cycle-clova-openai-v1",
     "staging-live": "ai-one-cycle-v1",
@@ -81,6 +82,26 @@ _LIVE_READ_TIMEOUT_MARGIN_SECONDS = 5.0
 # fsync도 지원하지 않습니다. 파일 fsync와 atomic replace는 계속 수행합니다.
 _STRICT_POSIX_FILE_MODES = os.name != "nt"
 _DIRECTORY_FSYNC_SUPPORTED = os.name != "nt"
+
+
+def _safe_api_failure_reason(body: object) -> str | None:
+    if not isinstance(body, Mapping):
+        return None
+    details = body.get("details")
+    if not isinstance(details, Mapping):
+        return None
+    reason = details.get("reason")
+    return reason if isinstance(reason, str) and reason in SAFE_API_FAILURE_REASONS else None
+
+
+def _is_valid_trace_id(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 32:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
 
 
 def _parse_positive_timeout(
@@ -220,6 +241,11 @@ def _validated_base_url(mode: str, base_url: str, env: Mapping[str, str]) -> str
     return base_url.rstrip("/")
 
 
+def _validate_release_validation_allowed(env: Mapping[str, str]) -> None:
+    if env.get("RELEASE_VALIDATION_ALLOWED") not in {"true", "1"}:
+        raise GuardError("RELEASE_VALIDATION_ALLOWED must be enabled")
+
+
 def validate_live_environment(
     *,
     mode: str,
@@ -228,8 +254,7 @@ def validate_live_environment(
     commit_sha: str | None,
     image_repo_digest: str | None,
 ) -> ValidatedEnvironment:
-    if env.get("RELEASE_VALIDATION_ALLOWED") != "1":
-        raise GuardError("RELEASE_VALIDATION_ALLOWED must be enabled")
+    _validate_release_validation_allowed(env)
     normalized_url = _validated_base_url(mode, base_url, env)
     environment = env.get("ENV", "")
     if mode == "staging-live":
@@ -258,8 +283,7 @@ def validate_cleanup_environment(  # noqa: C901
     *, mode: str, base_url: str, env: Mapping[str, str]
 ) -> ValidatedEnvironment:
     """Validate cleanup identity without requiring Provider credentials."""
-    if env.get("RELEASE_VALIDATION_ALLOWED") != "1":
-        raise GuardError("RELEASE_VALIDATION_ALLOWED must be enabled")
+    _validate_release_validation_allowed(env)
     normalized_url = _validated_base_url(mode, base_url, env)
     environment = env.get("ENV", "")
     if mode == "staging-live":
@@ -1063,14 +1087,14 @@ class NetworkOneCycleRunner:
                 )
             if mutating:
                 self._complete_request()
-            raise HttpFlowError(
-                stage,
-                {
-                    "http_status": response.status_code,
-                    "api_code": body.get("code"),
-                    "trace_id": trace_id or body.get("trace_id"),
-                },
-            )
+            evidence = {
+                "http_status": response.status_code,
+                "api_code": body.get("code"),
+                "trace_id": trace_id or body.get("trace_id"),
+            }
+            if api_reason := _safe_api_failure_reason(body):
+                evidence["api_reason"] = api_reason
+            raise HttpFlowError(stage, evidence)
         try:
             body = response.json()
         except ValueError:
@@ -1093,15 +1117,7 @@ class NetworkOneCycleRunner:
                 stage,
                 {"http_status": response.status_code, "api_code": "TRACE_ID_MISSING"},
             )
-        if len(trace_id) != 32:
-            self._complete_request()
-            raise HttpFlowError(
-                stage,
-                {"http_status": response.status_code, "api_code": "TRACE_ID_INVALID"},
-            )
-        try:
-            int(trace_id, 16)
-        except ValueError:
+        if not _is_valid_trace_id(trace_id):
             self._complete_request()
             raise HttpFlowError(
                 stage,
@@ -1429,12 +1445,32 @@ def _failure(
     return result
 
 
-def _apply_local_live_evidence_contract(result: dict[str, Any], *, mode: str) -> dict[str, Any]:
+def _has_valid_provider_trace(result: Mapping[str, Any]) -> bool:
+    provider_traces = result.get("provider_traces")
+    if not isinstance(provider_traces, Mapping):
+        return False
+    for trace in provider_traces.values():
+        if not isinstance(trace, Mapping):
+            continue
+        trace_id = trace.get("trace_id")
+        if _is_valid_trace_id(trace_id):
+            return True
+    return False
+
+
+def _apply_local_live_evidence_contract(
+    result: dict[str, Any],
+    *,
+    mode: str,
+    database_verification: str,
+) -> dict[str, Any]:
     if mode == "local-live-full":
+        if database_verification not in {"NOT_RUN", "FAIL", "PASS"}:
+            raise ValueError("invalid database verification status")
         result.update(
             execution_mode="LIVE",
-            database_verification="PASS",
-            provider_log_verification="MANUAL_REQUIRED",
+            database_verification=database_verification,
+            provider_log_verification=("MANUAL_REQUIRED" if _has_valid_provider_trace(result) else "UNVERIFIED"),
         )
     return result
 
@@ -1753,6 +1789,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         runtime_env,
     )
     runner: NetworkOneCycleRunner | None = None
+    database_verification = "NOT_RUN"
     try:
 
         async def prescription_check(prescription_id: str, document_id: str) -> None:
@@ -1807,6 +1844,11 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         result["failure_evidence"] = evidence or None
         if store.read().get("in_flight_stage"):
             result["cleanup"] = "PENDING"
+            result = _apply_local_live_evidence_contract(
+                result,
+                mode=args.mode,
+                database_verification=database_verification,
+            )
             return result, 3
 
     if args.mode != "local-preflight" and result.get("execution") != "FAIL":
@@ -1825,6 +1867,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
             if any(marker in model.lower() for model in model_names for marker in ("fake", "sentinel", "test-model")):
                 raise HttpFlowError("DB_VERIFICATION")
         except HttpFlowError as exc:
+            database_verification = "FAIL"
             existing_traces = result.get("provider_traces")
             result = _failure(
                 run_id=str(run_id),
@@ -1834,6 +1877,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
             )
             result["failure_evidence"] = exc.evidence or None
         else:
+            database_verification = "PASS"
             try:
                 with (
                     Path("/dev/tty").open("r", encoding="utf-8") as tty_input,
@@ -1872,7 +1916,6 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
                 "ocr": result.get("ocr"),
                 **({"provider_traces": result.get("provider_traces")} if args.mode == "local-live-full" else {}),
             }
-            result = _apply_local_live_evidence_contract(result, mode=args.mode)
             if args.mode == "local-live-full":
                 commit = subprocess.run(
                     ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
@@ -1894,6 +1937,11 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
         )
     cleanup = "PASS" if rows == files == 0 else "FAIL"
     result.update({"run_id": str(run_id), "mode": args.mode, "cleanup": cleanup})
+    result = _apply_local_live_evidence_contract(
+        result,
+        mode=args.mode,
+        database_verification=database_verification,
+    )
     if cleanup == "PASS":
         store.path.unlink(missing_ok=True)
     if cleanup != "PASS":

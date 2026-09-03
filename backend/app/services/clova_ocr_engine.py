@@ -64,6 +64,7 @@ class ClovaOcrEngine:
         context: ProviderCallContext | None = None,
         descriptor: ProviderCallDescriptor | None = None,
         call_logger: ProviderCallLogger = provider_call_logger,
+        observability_disabled: bool = False,
     ) -> None:
         self._invoke_url = invoke_url
         self._secret_key = secret_key
@@ -74,6 +75,7 @@ class ClovaOcrEngine:
             context=context,
             descriptor=descriptor,
             call_logger=call_logger,
+            observability_disabled=observability_disabled,
         )
         # 설정에 따라 규칙 기반 또는 LLM 구조화기를 주입받습니다.
         self._structurer = structurer
