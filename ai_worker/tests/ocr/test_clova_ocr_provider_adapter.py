@@ -3,6 +3,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 
@@ -353,3 +354,42 @@ async def test_clova_adapter_rejects_expired_deadline_before_engine_call() -> No
         )
 
     assert engine.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "medication_index",
+    [
+        True,
+        1.5,
+    ],
+)
+async def test_clova_adapter_rejects_non_integer_medication_index(
+    medication_index: object,
+) -> None:
+    engine = FakeOcrEngine(
+        OcrRecognitionResult(
+            fields=[
+                RecognizedField(
+                    medication_index=cast(int, medication_index),
+                    field_type="MEDICATION_NAME",
+                    raw_value="synthetic",
+                    confidence_score=0.9,
+                )
+            ],
+            engine_name="CLOVA_OCR",
+        )
+    )
+    adapter = ClovaOcrProviderAdapter(
+        engine,
+        clock=lambda: 1000.0,
+    )
+
+    with pytest.raises(WorkerOcrProviderSchemaError):
+        await adapter.recognize(
+            object_key="synthetic/input.png",
+            file_mime_type="image/png",
+            deadline=1055.0,
+        )
+
+    assert len(engine.calls) == 1

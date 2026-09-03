@@ -176,6 +176,12 @@ class ClovaOcrProviderAdapter:
     ) -> None:
         """DB 제약에 맞지 않는 OCR 결과를 저장 전에 차단합니다."""
 
+        if isinstance(medication_index, bool) or not isinstance(
+            medication_index,
+            int,
+        ):
+            raise OcrProviderSchemaError()
+
         if field_type not in cls._SUPPORTED_FIELD_TYPES:
             raise OcrProviderSchemaError()
 
