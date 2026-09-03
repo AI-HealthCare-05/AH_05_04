@@ -11,15 +11,15 @@ from ai_worker.tasks.evaluation.schemas.policy import (
 
 
 class EvaluationProfileV12(EvaluationProfile):
-    schema_version: Literal["1.2.0"]
-    review_provenance: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    review_provenance: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.
 
 
 class SuiteDefinitionV12(SuiteDefinition):
-    schema_version: Literal["1.2.0"]
-    review_provenance: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    review_provenance: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.
 
 
 class EvaluationPolicyV12(EvaluationPolicy):
-    schema_version: Literal["1.2.0"]
-    review_provenance: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    review_provenance: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.

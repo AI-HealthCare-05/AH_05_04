@@ -32,15 +32,18 @@ uv run python -m ai_worker.tasks.evaluation validate \
 
 - `evals/schemas/1.0.0/`: Issue #122의 기존 DEV foundation 계약. canonical bytes와 loader 동작을 유지한다.
 - `evals/schemas/1.1.0/`: Issue #216의 18-member implemented candidate. Case·Dataset Manifest는 member `1.1.0`, 나머지 16개 member는 `1.0.0`을 byte-for-byte 재사용한다.
+- `evals/schemas/1.2.0/`: Issue #241의 review provenance compatibility 계약. Case·Manifest·Evidence Mapping·Rubric·Profile·Suite·Evaluation Policy·Protected Artifact Receipt 8개 member는 `1.2.0`, 나머지 10개 member는 이전 canonical bytes를 재사용한다.
 
 Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. 지정 책임 리뷰 승인 전에는 #214 Dataset Freeze의 승인 입력으로 사용하지 않는다.
 
-두 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
+Schema Set `1.2.0`의 불변 참조는 `rag-eval.schema-set@1.2.0`, SHA-256 `0b0561f23e067fec7c9b702943988fc8d641b6902597472020cdfc0b326e8d6f`이다. DRAFT artifact는 reviewer identity·timestamp·review evidence를 기록하지 않으며, 실제 팀 검토부터 `EVALUATION_REVIEWER`와 immutable review evidence를 기록한다. 이 내부 역할은 외부 의료 검토가 아니며 #214 Dataset Freeze 승인 입력은 지정 책임 리뷰 승인 전까지 계속 후보 상태다.
+
+세 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 
 ```bash
 uv run python -m ai_worker.tasks.evaluation.schema_exports \
-  --output /tmp/rag-eval-schemas-1.1.0 \
-  --schema-set-version 1.1.0
+  --output /tmp/rag-eval-schemas-1.2.0 \
+  --schema-set-version 1.2.0
 ```
 
 ## Chat history 평가

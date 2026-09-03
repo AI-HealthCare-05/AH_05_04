@@ -5,7 +5,7 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -69,6 +69,11 @@ type EvaluationProfileContract = EvaluationProfile | EvaluationProfileV12
 type EvaluationPolicyContract = EvaluationPolicy | EvaluationPolicyV12
 type SuiteDefinitionContract = SuiteDefinition | SuiteDefinitionV12
 type ProtectedArtifactReceiptContract = ProtectedArtifactReceipt | ProtectedArtifactReceiptV12
+
+
+class _SchemaVersioned(Protocol):
+    @property
+    def schema_version(self) -> str: ...
 
 
 class _DuplicateKeyError(ValueError):
@@ -841,7 +846,7 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
     if registry is None:
         raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
     member_versions = {entry.schema_id: entry.member_version for entry in registry}
-    graph_members: list[tuple[str, BaseModel]] = [
+    graph_members: list[tuple[str, _SchemaVersioned]] = [
         ("rag-eval.dataset-manifest", manifest),
         *(("rag-eval.case", case) for case in cases),
         ("rag-eval.evidence-mapping-manifest", evidence),

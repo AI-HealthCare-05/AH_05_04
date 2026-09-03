@@ -40,8 +40,8 @@ def _require_team_approval_role_v12(
 
 
 class _CaseBaseV12(_CaseBaseV11):
-    schema_version: Literal["1.2.0"]
-    review_provenance: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    review_provenance: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.
 
 
 class RetrievalCaseV12(_CaseBaseV12):
@@ -110,8 +110,8 @@ EVALUATION_CASE_ADAPTER_V1_2: TypeAdapter[EvaluationCaseV12] = TypeAdapter(Evalu
 
 
 class DatasetManifestV12(DatasetManifestV11):
-    schema_version: Literal["1.2.0"]
-    review_provenance: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    review_provenance: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.
 
     @model_validator(mode="after")
     def validate_manifest(self) -> DatasetManifestV12:
@@ -119,7 +119,10 @@ class DatasetManifestV12(DatasetManifestV11):
         _require_team_approval_role_v12(provenance, frozenset({ActorRoleV12.DATASET_CUSTODIAN}))
         if (self.fixture_git_commit_sha is None) == (self.protected_artifact_receipt_ref is None):
             raise ValueError("exactly one dataset source provenance is required")
-        if self.data_classification.value == "APPROVED_DEIDENTIFIED" and self.deidentification_approval_receipt_ref is None:
+        if (
+            self.data_classification.value == "APPROVED_DEIDENTIFIED"
+            and self.deidentification_approval_receipt_ref is None
+        ):
             raise ValueError("approved deidentified data requires an approval receipt")
         if self.data_classification.value == "SYNTHETIC" and self.deidentification_approval_receipt_ref is not None:
             raise ValueError("synthetic data must not claim deidentification approval")
@@ -135,15 +138,15 @@ class DatasetManifestV12(DatasetManifestV11):
 
 
 class EvidenceMappingManifestV12(EvidenceMappingManifest):
-    schema_version: Literal["1.2.0"]
-    review_provenance: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    review_provenance: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.
 
 
 class CriticalClaimRubricV12(CriticalClaimRubric):
-    schema_version: Literal["1.2.0"]
-    review_provenance: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    review_provenance: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.
 
 
 class ProtectedArtifactReceiptV12(ProtectedArtifactReceipt):
-    schema_version: Literal["1.2.0"]
-    recorded_by: ReviewProvenanceV12
+    schema_version: Literal["1.2.0"]  # type: ignore[assignment]  # Pydantic versioned contract override.
+    recorded_by: ReviewProvenanceV12  # type: ignore[assignment]  # Pydantic versioned contract override.

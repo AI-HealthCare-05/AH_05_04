@@ -484,3 +484,37 @@ def test_committed_schema_set_1_1_matches_fresh_canonical_export_byte_for_byte(t
 
     committed_root = Path("evals/schemas/1.1.0")
     assert _files(tmp_path) == _files(committed_root)
+
+
+def test_committed_schema_set_1_2_matches_fresh_canonical_export_byte_for_byte(tmp_path: Path) -> None:
+    write_schema_documents(tmp_path, "1.2.0")
+
+    committed_root = Path("evals/schemas/1.2.0")
+    assert _files(tmp_path) == _files(committed_root)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern"),
+    [
+        (
+            "docs/contracts/targets/post-mvp-1/rag-evaluation-v1.md",
+            r"rag-eval\.schema-set@1\.2\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "docs/governance/decisions/2026-09-03-rag-evaluation-schema-set-1-2-freeze.md",
+            r"Schema Set SHA-256 \| `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "evals/README.md",
+            r"rag-eval\.schema-set@1\.2\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+    ],
+)
+def test_documented_schema_set_1_2_hash_matches_committed_schema_set(
+    relative_path: str,
+    pattern: str,
+) -> None:
+    documented = re.search(pattern, (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8"))
+
+    assert documented is not None
+    assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.2.0")

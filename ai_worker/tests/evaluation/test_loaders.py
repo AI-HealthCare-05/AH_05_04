@@ -455,7 +455,7 @@ def test_loader_compares_payload_versions_with_authoring_members_not_set_version
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tmp_dataset.upgrade_to_v1_1()
-    shutil.copytree(tmp_dataset.root / "schemas/1.1.0", tmp_dataset.root / "schemas/1.2.0")
+    shutil.copytree(tmp_dataset.root / "schemas/1.1.0", tmp_dataset.root / "schemas/1.2.0", dirs_exist_ok=True)
     registries = dict(SCHEMA_REGISTRIES)
     registries["1.2.0"] = SCHEMA_REGISTRIES["1.1.0"]
     monkeypatch.setattr(evaluation_loaders, "SCHEMA_REGISTRIES", registries)
