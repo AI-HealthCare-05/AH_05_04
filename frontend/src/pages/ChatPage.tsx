@@ -13,6 +13,101 @@ import './ChatPage.css'
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const optimisticUserMessageIdPrefix = 'optimistic-user-'
+
+function isOptimisticUserMessage(message: ChatMessageData) {
+  return (
+    message.role === 'USER' &&
+    message.message_id.startsWith(optimisticUserMessageIdPrefix)
+  )
+}
+
+function reconcileHistoryMessages(
+  currentMessages: ChatMessageData[],
+  historyMessages: ChatMessageData[],
+  knownMessageIds: Set<string>,
+) {
+  const optimisticUserMessages = currentMessages.filter(
+    isOptimisticUserMessage,
+  )
+  const unmatchedCanonicalUsers = historyMessages.filter(
+    (message) =>
+      message.role === 'USER' && !knownMessageIds.has(message.message_id),
+  )
+  const canonicalIdByOptimisticId = new Map<string, string>()
+
+  for (let index = optimisticUserMessages.length - 1; index >= 0; index -= 1) {
+    const optimisticMessage = optimisticUserMessages[index]
+    let canonicalIndex = -1
+
+    for (
+      let candidateIndex = unmatchedCanonicalUsers.length - 1;
+      candidateIndex >= 0;
+      candidateIndex -= 1
+    ) {
+      if (
+        unmatchedCanonicalUsers[candidateIndex].content ===
+        optimisticMessage.content
+      ) {
+        canonicalIndex = candidateIndex
+        break
+      }
+    }
+
+    if (canonicalIndex === -1) continue
+
+    const [canonicalMessage] = unmatchedCanonicalUsers.splice(
+      canonicalIndex,
+      1,
+    )
+    canonicalIdByOptimisticId.set(
+      optimisticMessage.message_id,
+      canonicalMessage.message_id,
+    )
+  }
+
+  const mergedMessages = [...historyMessages]
+  const historyMessageIds = new Set(
+    historyMessages.map((message) => message.message_id),
+  )
+
+  for (const optimisticMessage of optimisticUserMessages) {
+    if (canonicalIdByOptimisticId.has(optimisticMessage.message_id)) continue
+
+    const currentIndex = currentMessages.findIndex(
+      (message) => message.message_id === optimisticMessage.message_id,
+    )
+    let nextHistoryMessageId: string | undefined
+
+    for (
+      let index = currentIndex + 1;
+      index < currentMessages.length;
+      index += 1
+    ) {
+      const nextMessage = currentMessages[index]
+      const candidateId = isOptimisticUserMessage(nextMessage)
+        ? canonicalIdByOptimisticId.get(nextMessage.message_id)
+        : nextMessage.message_id
+
+      if (candidateId && historyMessageIds.has(candidateId)) {
+        nextHistoryMessageId = candidateId
+        break
+      }
+    }
+
+    if (!nextHistoryMessageId) {
+      mergedMessages.push(optimisticMessage)
+      continue
+    }
+
+    const insertionIndex = mergedMessages.findIndex(
+      (message) => message.message_id === nextHistoryMessageId,
+    )
+    mergedMessages.splice(insertionIndex, 0, optimisticMessage)
+  }
+
+  return mergedMessages
+}
 
 const sessionCreationRequests = new Map<
   string,
@@ -163,6 +258,16 @@ function ChatPage() {
     const requestedPrescriptionId = prescriptionId
     const requestedSessionId = currentSessionId
     const requestId = ++sendRequestRef.current
+    const knownMessageIds = new Set(
+      currentMessages.map((message) => message.message_id),
+    )
+    const optimisticUserMessage: ChatMessageData = {
+      message_id: `${optimisticUserMessageIdPrefix}${requestId}`,
+      role: 'USER',
+      content,
+      generation_status: 'NOT_APPLICABLE',
+      created_at: new Date().toISOString(),
+    }
     const isCurrentRequest = () =>
       sendRequestRef.current === requestId &&
       activePrescriptionRef.current === requestedPrescriptionId
@@ -170,28 +275,35 @@ function ChatPage() {
     try {
       setIsSending(true)
       setErrorMessage('')
+      setDraft('')
+      setMessages((current) => [...current, optimisticUserMessage])
       const response = await sendChatMessage(requestedSessionId, content)
       if (!isCurrentRequest()) return
       const completedAt = response.data.completed_at ?? response.data.created_at
+      const canonicalUserMessage: ChatMessageData = {
+        ...optimisticUserMessage,
+        message_id: response.data.user_message_id,
+        created_at: response.data.created_at,
+      }
 
-      setMessages((current) => [
-        ...current,
-        {
-          message_id: response.data.user_message_id,
-          role: 'USER',
-          content,
-          generation_status: 'NOT_APPLICABLE',
-          created_at: response.data.created_at,
-        },
-        {
-          message_id: response.data.assistant_message_id,
-          role: 'ASSISTANT',
-          content: response.data.content,
-          generation_status: response.data.generation_status,
-          created_at: completedAt,
-        },
-      ])
-      setDraft('')
+      setMessages((current) => {
+        const reconciledMessages = current.map((message) =>
+          message.message_id === optimisticUserMessage.message_id
+            ? canonicalUserMessage
+            : message,
+        )
+
+        return [
+          ...reconciledMessages,
+          {
+            message_id: response.data.assistant_message_id,
+            role: 'ASSISTANT',
+            content: response.data.content,
+            generation_status: response.data.generation_status,
+            created_at: completedAt,
+          },
+        ]
+      })
     } catch (error) {
       if (!isCurrentRequest()) return
       if (error instanceof ApiError && error.status === 401) {
@@ -200,12 +312,18 @@ function ChatPage() {
         try {
           const historyResponse = await getChatMessages(requestedSessionId)
           if (!isCurrentRequest()) return
-          setMessages(historyResponse.data.messages)
+          const historyMessages = historyResponse.data.messages
+          setMessages((current) =>
+            reconcileHistoryMessages(
+              current,
+              historyMessages,
+              knownMessageIds,
+            ),
+          )
         } catch {
           if (!isCurrentRequest()) return
         }
       }
-      setDraft('')
       setErrorMessage(
         getErrorMessage(error, 'AI 답변을 받는 중 오류가 발생했습니다.'),
       )
