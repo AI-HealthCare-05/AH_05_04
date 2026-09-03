@@ -173,7 +173,7 @@ git commit -m "✨ feat: Candidate Index 계약과 검증 경계 추가"
 - 생성: `CandidateIndexMember`, `CandidateIndexManifest`, `CandidateIndexBuildSuccess`
 - 완성: `build_candidate_index(...)`의 `LEXICAL_ONLY` 경로
 
-- [ ] **Step 1: 입력 순서와 중복에 무관한 결정성 테스트 작성**
+- [x] **Step 1: 입력 순서와 중복에 무관한 결정성 테스트 작성**
 
 ```python
 def test_lexical_build_is_deterministic_across_input_order() -> None:
@@ -190,7 +190,7 @@ def test_lexical_build_is_deterministic_across_input_order() -> None:
     )
 ```
 
-- [ ] **Step 2: 새 테스트가 success 타입 또는 build 결과 부재로 실패하는지 확인**
+- [x] **Step 2: 새 테스트가 success 타입 또는 build 결과 부재로 실패하는지 확인**
 
 ```bash
 uv run pytest ai_worker/tests/rag/test_candidate_index.py::test_lexical_build_is_deterministic_across_input_order -q
@@ -198,7 +198,7 @@ uv run pytest ai_worker/tests/rag/test_candidate_index.py::test_lexical_build_is
 
 기대 결과: `CandidateIndexBuildSuccess` 또는 lexical member build가 아직 없어 실패한다.
 
-- [ ] **Step 3: canonicalization과 hash helper 구현**
+- [x] **Step 3: canonicalization과 hash helper 구현**
 
 ```python
 def _canonical_json_bytes(value: object) -> bytes:
@@ -220,7 +220,7 @@ def _sha256(value: object) -> str:
 normalized text, Source Snapshot, Catalog와 normalization provenance를 명시적 null과 함께 포함한다.
 구성원은 canonical bytes 기준으로 정렬한다.
 
-- [ ] **Step 4: identity·참조 무결성과 conflict 테스트 작성**
+- [x] **Step 4: identity·참조 무결성과 conflict 테스트 작성**
 
 ```python
 def test_same_name_different_official_product_identities_remain_distinct() -> None:
@@ -239,7 +239,7 @@ def test_orphan_alias_fails_without_members() -> None:
 `MEMBER_CONFLICT`, conflicting approved alias는 `ALIAS_CONFLICT`로 분리한다. Ingredient alias,
 미승인·비활성 alias와 HIRA identifier가 구성원에 들어오지 않는 테스트를 각각 둔다.
 
-- [ ] **Step 5: manifest count와 hash를 구현하고 golden assertion 추가**
+- [x] **Step 5: manifest count와 hash를 구현하고 golden assertion 추가**
 
 ```python
 def test_manifest_records_lexical_provenance_and_reproducible_hashes() -> None:
@@ -262,7 +262,7 @@ def test_manifest_records_lexical_provenance_and_reproducible_hashes() -> None:
 변경하면 hash가 달라지는 negative assertion도 함께 추가한다. 테스트는 구현 내부 helper를 직접
 호출하지 않는다.
 
-- [ ] **Step 6: Task 2 전체 검증**
+- [x] **Step 6: Task 2 전체 검증**
 
 ```bash
 uv run pytest ai_worker/tests/rag/test_candidate_index.py -q
@@ -271,7 +271,7 @@ uv run ruff format ai_worker/tasks/rag/candidate_index.py ai_worker/tests/rag/te
 uv run mypy ai_worker/tasks/rag/candidate_index.py
 ```
 
-- [ ] **Step 7: Task 2 커밋**
+- [x] **Step 7: Task 2 커밋**
 
 ```bash
 git add ai_worker/tasks/rag/candidate_index.py ai_worker/tests/rag/test_candidate_index.py

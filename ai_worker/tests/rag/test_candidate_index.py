@@ -13,6 +13,8 @@ from ai_worker.tasks.rag.candidate_index import (
     CandidateIndexBuildFailure,
     CandidateIndexBuildFailureReason,
     CandidateIndexBuildMode,
+    CandidateIndexBuildSuccess,
+    CandidateIndexKind,
     CandidateRecordStatus,
     CatalogAlias,
     CatalogComponent,
@@ -238,3 +240,185 @@ def test_invalid_lexical_config_fails_closed(config_change: dict[str, object]) -
     assert result.reason is CandidateIndexBuildFailureReason.BUILD_CONFIG_INVALID
     assert not hasattr(result, "members")
     assert not hasattr(result, "manifest")
+
+
+def test_lexical_build_is_deterministic_across_input_order() -> None:
+    catalog = valid_catalog()
+    reversed_catalog = replace(
+        catalog,
+        products=tuple(reversed(catalog.products)),
+        ingredients=tuple(reversed(catalog.ingredients)),
+        components=tuple(reversed(catalog.components)),
+        aliases=tuple(reversed(catalog.aliases)),
+        search_entries=tuple(reversed(catalog.search_entries)),
+    )
+
+    forward = build_candidate_index(catalog, lexical_config())
+    backward = build_candidate_index(reversed_catalog, lexical_config())
+
+    assert isinstance(forward, CandidateIndexBuildSuccess)
+    assert isinstance(backward, CandidateIndexBuildSuccess)
+    assert forward == backward
+    assert tuple(member.entry_type for member in forward.members) == (
+        CandidateEntryType.APPROVED_ALIAS,
+        CandidateEntryType.PRODUCT_NAME,
+    )
+
+
+def test_identical_repeated_search_entry_is_collapsed() -> None:
+    catalog = valid_catalog()
+    repeated = (*catalog.search_entries, catalog.search_entries[0])
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            search_entries=repeated,
+            declared_counts=replace(catalog.declared_counts, search_entry_count=3),
+        ),
+        lexical_config(),
+    )
+
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    assert len(result.members) == 2
+
+
+def test_same_name_different_official_product_identities_remain_distinct() -> None:
+    catalog = valid_catalog()
+    first_product = catalog.products[0]
+    second_product = replace(
+        first_product,
+        product_ref="product-row-2",
+        identity=product_identity("P-002"),
+    )
+    second_entry = replace(
+        catalog.search_entries[0],
+        entry_ref="search-entry-product-2",
+        product_ref=second_product.product_ref,
+        identity=second_product.identity,
+    )
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            products=(*catalog.products, second_product),
+            search_entries=(*catalog.search_entries, second_entry),
+            declared_counts=replace(catalog.declared_counts, product_count=2, search_entry_count=3),
+        ),
+        lexical_config(),
+    )
+
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    assert {member.identity.canonical_code for member in result.members} == {"P-001", "P-002"}
+    assert result.manifest.product_identity_count == 2
+
+
+def test_duplicate_official_product_identity_definition_fails_closed() -> None:
+    catalog = valid_catalog()
+    duplicate = replace(catalog.products[0], product_ref="product-row-duplicate")
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            products=(*catalog.products, duplicate),
+            declared_counts=replace(catalog.declared_counts, product_count=2),
+        ),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.DUPLICATE_PRODUCT_IDENTITY,
+        details=("PRODUCT:MFDS_ITEM_SEQ:P-001",),
+    )
+
+
+def test_orphan_alias_search_entry_fails_closed() -> None:
+    catalog = valid_catalog()
+    orphan_entry = replace(catalog.search_entries[1], alias_ref="missing-alias")
+
+    result = build_candidate_index(
+        replace(catalog, search_entries=(catalog.search_entries[0], orphan_entry)),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+        details=("search-entry-alias-1",),
+    )
+
+
+def test_ingredient_alias_does_not_create_product_candidate_member() -> None:
+    catalog = valid_catalog()
+    ingredient_alias = replace(
+        catalog.aliases[0],
+        alias_ref="ingredient-alias-1",
+        identity=catalog.ingredients[0].identity,
+        alias_text="합성 성분",
+        normalized_alias="합성성분별칭",
+    )
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            aliases=(*catalog.aliases, ingredient_alias),
+            declared_counts=replace(catalog.declared_counts, alias_count=2),
+        ),
+        lexical_config(),
+    )
+
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    assert {member.entry_ref for member in result.members} == {
+        "search-entry-product-1",
+        "search-entry-alias-1",
+    }
+
+
+def test_conflicting_member_content_fails_entire_build() -> None:
+    catalog = valid_catalog()
+    conflicting = replace(catalog.search_entries[0], normalized_text="충돌값")
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            search_entries=(*catalog.search_entries, conflicting),
+            declared_counts=replace(catalog.declared_counts, search_entry_count=3),
+        ),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.MEMBER_CONFLICT,
+        details=("search-entry-product-1",),
+    )
+
+
+def test_manifest_records_lexical_provenance_and_reproducible_hashes() -> None:
+    result = build_candidate_index(valid_catalog(), lexical_config())
+
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    assert result.manifest.index_kind is CandidateIndexKind.MEDICATION_CANDIDATE
+    assert result.manifest.catalog_version == "catalog-v1"
+    assert result.manifest.catalog_manifest_hash == "a" * 64
+    assert result.manifest.source_snapshot_ids == ("snapshot-1",)
+    assert result.manifest.source_versions == ("mfds-product-approval@v1",)
+    assert result.manifest.member_count == 2
+    assert result.manifest.product_identity_count == 1
+    assert result.manifest.product_name_count == 1
+    assert result.manifest.approved_alias_count == 1
+    assert result.manifest.vector_count == 0
+    for value in (
+        result.manifest.member_set_hash,
+        result.manifest.configuration_hash,
+        result.manifest.content_hash,
+    ):
+        assert len(value) == 64
+        assert set(value) <= set("0123456789abcdef")
+
+    repeated = build_candidate_index(valid_catalog(), lexical_config())
+    changed = build_candidate_index(
+        replace(valid_catalog(), catalog_version="catalog-v2"),
+        lexical_config(),
+    )
+    assert isinstance(repeated, CandidateIndexBuildSuccess)
+    assert isinstance(changed, CandidateIndexBuildSuccess)
+    assert repeated.manifest.content_hash == result.manifest.content_hash
+    assert changed.manifest.content_hash != result.manifest.content_hash
