@@ -1,0 +1,249 @@
+{
+  "receipt_version": "1.0",
+  "generated_at": "2026-09-03T11:04:36+09:00",
+  "verification_status": "COMPLETED_WITH_GAPS",
+  "verified_git_commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+  "pr_96_merge_commit_sha": "e82f782fa09e068d43d7e78c028f412620e1d0c5",
+  "contract_authority": {
+    "decision_id": "PD-125-20260831",
+    "decision_path": "docs/governance/decisions/2026-08-31-rag-p0-contract-freeze.md",
+    "prescription_version_contract": "docs/contracts/targets/post-mvp-1/prescription-version-v1.md",
+    "medication_identification_contract": "docs/contracts/targets/post-mvp-1/medication-identification-v1.md",
+    "note": "Issue #154에 기재된 medication-candidate-identification-v1 문서는 medication-identification-v1.md에 통합되어 별도 파일로 존재하지 않는다."
+  },
+  "current_runtime_model": {
+    "status": "IMPLEMENTED",
+    "prescription_table": "prescription",
+    "medication_table": "medication",
+    "confirmation_input": "extracted_field.confirmed_value",
+    "medication_name_mapping": {
+      "source": "extracted_field.confirmed_value",
+      "target": "medication.medication_name",
+      "nullable": false
+    },
+    "strength_text_mapping": {
+      "source": "extracted_field.confirmed_value",
+      "target": "medication.strength_text",
+      "nullable": true,
+      "representation": "string"
+    },
+    "ownership_boundary": "medical_document.profile_id",
+    "confirmation_lock": "medical_document row FOR UPDATE",
+    "source_locations": [
+      {
+        "path": "backend/app/apis/v1/medical_document_routers.py",
+        "lines": "78-94",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "처방 확정 API가 PrescriptionService를 호출하고 PrescriptionResponse를 201로 반환한다."
+      },
+      {
+        "path": "backend/app/services/prescriptions.py",
+        "lines": "27-36",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "confirmed_value만 읽고 raw_value 또는 normalized_value로 대체하지 않는다."
+      },
+      {
+        "path": "backend/app/services/prescriptions.py",
+        "lines": "72-125",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "문서 소유권과 직렬화 잠금을 확인한 뒤 확정 Prescription과 Medication을 생성한다."
+      },
+      {
+        "path": "backend/app/models/prescriptions.py",
+        "lines": "39-85",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "현재 Prescription 모델과 profile_id 소유권 경계다."
+      },
+      {
+        "path": "backend/app/models/prescriptions.py",
+        "lines": "88-130",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "현재 Medication의 medication_name과 nullable strength_text 저장 구조다."
+      },
+      {
+        "path": "backend/app/repositories/prescription_repository.py",
+        "lines": "33-55",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "Prescription과 Medication을 동일 세션에서 생성하고 flush한다."
+      },
+      {
+        "path": "backend/app/dtos/prescriptions.py",
+        "lines": "13-33",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "공개 DTO의 medication_name과 nullable strength_text 구조다."
+      },
+      {
+        "path": "backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py",
+        "lines": "22-126",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "medication.strength_text nullable 컬럼, MEDICATION_STRENGTH 허용 제약 및 downgrade 안전 가드를 정의한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_api.py",
+        "lines": "117-130",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "확정 필드가 처방 확정 API의 Medication 결과로 저장되는 정상 흐름을 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_api.py",
+        "lines": "254-267",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "타 사용자 의료문서의 처방 확정 요청이 404로 차단되는지 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_api.py",
+        "lines": "270-337",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "확정된 nullable MEDICATION_STRENGTH가 medication.strength_text NULL로 보존되는지 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_concurrency.py",
+        "lines": "215-316",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "PATCH와 처방 확정의 row lock 직렬화 및 동시 확정의 단일 성공 경계를 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_validation.py",
+        "lines": "56-89",
+        "commit_sha": "2c1a9b1859e09a89398162858bfad6ce43985e82",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "복합 함량 문자열 5mg/100mg을 그대로 보존하고, confirmed_value가 NULL인 미확정 OCR 값은 raw_value 또는 normalized_value로 대체하지 않는 입력 경계를 검증한다."
+      }
+    ]
+  },
+  "migration_verification": {
+    "revision": "529b2a36b677",
+    "source_inspection": {
+      "status": "PASS",
+      "path": "backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py",
+      "lines": "22-126",
+      "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50"
+    },
+    "postgresql_alembic_execution": {
+      "status": "PASS",
+      "command": "uv run alembic -c backend/alembic.ini upgrade head",
+      "environment": "PR #243 CI PostgreSQL",
+      "verified_commit_sha": "ac06ae9f88649455d26a154a1050cd449396af3f",
+      "evidence": "PR #243 Run PostgreSQL migrations"
+    }
+  },
+  "target_runtime_model": {
+    "status": "NOT_IMPLEMENTED",
+    "prescription_table": "prescription",
+    "prescription_version_table": "prescription_version",
+    "medication_snapshot_table": "prescription_version_medication",
+    "active_pointer": "prescription.active_version_id",
+    "required_input": "사용자가 명시적으로 확정하고 활성 불변 Prescription Version에 이관된 Medication snapshot",
+    "medication_name_target": "prescription_version_medication.medication_name",
+    "strength_text_target": "물리 컬럼명과 migration mapping은 구현 PR에서 확정",
+    "immutable_snapshot_required": true
+  },
+  "allowed_resolver_inputs": [
+    {
+      "field": "medication_name",
+      "nullable": false,
+      "condition": "활성 Prescription Version Medication에 저장된 사용자 확정 snapshot"
+    },
+    {
+      "field": "strength_text",
+      "nullable": true,
+      "condition": "활성 Prescription Version Medication에 저장된 사용자 확정 snapshot"
+    }
+  ],
+  "forbidden_resolver_inputs": [
+    "extracted_field.raw_value",
+    "extracted_field.normalized_value",
+    "검수 전 OCR 구조화 결과",
+    "LLM draft",
+    "source_ids",
+    "insurance_code_text",
+    "사용자가 수정만 하고 처방 확정을 완료하지 않은 값",
+    "비활성 또는 과거 Prescription Version Medication"
+  ],
+  "concurrency_dependency": {
+    "issue": 101,
+    "state": "CLOSED",
+    "result": "처방 확정과 extracted-field PATCH는 medical_document row lock으로 직렬화된다.",
+    "evidence": "backend/app/tests/ocr/test_prescription_confirmation_concurrency.py"
+  },
+  "gap_codes": [
+    {
+      "code": "PRESCRIPTION_VERSION_NOT_IMPLEMENTED",
+      "status": "OPEN",
+      "meaning": "현재 Runtime에는 prescription_version과 prescription_version_medication이 구현되어 있지 않다."
+    },
+    {
+      "code": "TARGET_STRENGTH_MAPPING_NOT_FROZEN",
+      "status": "OPEN",
+      "meaning": "목표 Medication Snapshot의 strength_text 물리 컬럼과 migration mapping은 구현 PR에서 확정해야 한다."
+    }
+  ],
+  "test_evidence": {
+    "executed_on": "2026-09-03",
+    "command": "uv run pytest backend/app/tests/ocr/test_prescription_confirmation_api.py backend/app/tests/ocr/test_prescription_confirmation_validation.py backend/app/tests/ocr/test_prescription_confirmation_concurrency.py -q",
+    "result": "49 passed",
+    "files": [
+      "backend/app/tests/ocr/test_prescription_confirmation_api.py",
+      "backend/app/tests/ocr/test_prescription_confirmation_validation.py",
+      "backend/app/tests/ocr/test_prescription_confirmation_concurrency.py"
+    ],
+    "verified_behaviors": [
+      "confirmed_value 기반 처방 생성",
+      "미검수 필드 차단",
+      "nullable strength_text 보존",
+      "문자열 strength_text 보존",
+      "타 사용자 문서 404",
+      "확정 이후 PATCH 차단",
+      "동시 PATCH와 확정 직렬화",
+      "복합 함량 문자열을 Decimal로 변환하지 않고 그대로 보존",
+      "confirmed_value가 없을 때 raw_value 또는 normalized_value로 대체하지 않음"
+    ]
+  },
+  "regression_evidence": {
+    "executed_on": "2026-09-03",
+    "command": "uv run pytest backend/app/tests/ocr backend/app/tests/ocr_ai backend/app/tests/repositories tests/contract -q",
+    "result": "306 passed",
+    "scope": [
+      "backend/app/tests/ocr",
+      "backend/app/tests/ocr_ai",
+      "backend/app/tests/repositories",
+      "tests/contract"
+    ]
+  },
+  "quality_evidence": {
+    "ruff_check": "PASS",
+    "ruff_format_check": "PASS",
+    "mypy_backend_app_ai_worker": "PASS",
+    "ci": {
+      "command": "bash scripts/ci/run_test.sh",
+      "result": "PASS"
+    }
+  },
+  "downstream_gate": {
+    "rag_08_09_ready": false,
+    "reason": "PRESCRIPTION_VERSION_NOT_IMPLEMENTED가 해소되기 전에는 활성 불변 Medication Snapshot을 Resolver 입력으로 제공할 수 없다."
+  },
+  "privacy_and_safety": {
+    "synthetic_data_only": true,
+    "contains_patient_data": false,
+    "contains_medical_document": false,
+    "contains_api_key": false
+  },
+  "receipt_hash": {
+    "algorithm": "sha256",
+    "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
+    "value": "e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe"
+  }
+}
