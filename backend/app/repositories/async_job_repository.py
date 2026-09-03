@@ -114,8 +114,8 @@ class AsyncJobRepository:
         *,
         job: AiJob,
         trace_id: str,
-        domain_type: DomainType | None = None,
-        domain_id: UUID | None = None,
+        domain_type: DomainType,
+        domain_id: UUID,
     ) -> OutboxEvent:
         event = OutboxEvent(
             job_id=job.id,

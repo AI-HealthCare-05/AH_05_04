@@ -38,9 +38,9 @@ def test_config_parses_environment(
         {
             **BASE_CONFIG,
             "ENV": env_value,
-            # production은 IDEMPOTENCY_HMAC_KEY placeholder 기동을 거부하므로, 이 테스트가 검증하는
-            # ENV 파싱과 무관한 실패를 피하려면 실제 값을 넣어야 합니다.
-            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret",
+            # production은 IDEMPOTENCY_HMAC_KEY placeholder·길이 검증을 거부하므로, 이 테스트가
+            # 검증하는 ENV 파싱과 무관한 실패를 피하려면 32자 이상의 실제 값을 넣어야 합니다.
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
         }
     )
 
@@ -249,13 +249,54 @@ def test_idempotency_hmac_key_rejects_example_prod_env_placeholder_outside_local
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_example_local_env_placeholder_outside_local(environment: str) -> None:
+    """envs/example.local.env에 공개된 예시 값도 실수로 non-local 환경에 복사될 수 있으니 거부합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "replace-with-random-local-idempotency-hmac-key-at-least-32-characters",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_rejects_too_short_value_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-but-short-secret",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_key_field_is_normalized_to_stripped_value(environment: str) -> None:
+    """검증(validator)과 실제 HMAC 계산이 항상 같은 값을 보도록, 필드 자체가 앞뒤 공백을
+    제거한 값으로 정규화되는지 확인합니다 — 공백만 다른 값이 인스턴스마다 주입되면
+    검증은 통과해도 계산된 digest가 달라질 수 있습니다."""
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": environment,
+            "IDEMPOTENCY_HMAC_KEY": "  a-real-idempotency-hmac-secret-value  ",
+        }
+    )
+
+    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret-value"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
 def test_idempotency_hmac_key_accepts_configured_value_outside_local(environment: str) -> None:
     config = Config.model_validate(
         {
             **BASE_CONFIG,
             "ENV": environment,
-            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret",
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
         }
     )
 
-    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret"
+    assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret-value"

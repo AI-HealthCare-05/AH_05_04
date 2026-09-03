@@ -18,14 +18,19 @@ class Env(StrEnum):
     PRODUCTION = "production"
 
 
-# IDEMPOTENCY_HMAC_KEY 필드 기본값과 envs/example.prod.env에 공개된 예시 값입니다. 둘 다 저장소에
-# 노출돼 있어 실제 비밀값이 아니므로, non-local 환경 기동 시 그대로 쓰이면 거부해야 합니다.
+# IDEMPOTENCY_HMAC_KEY 필드 기본값과 envs/example.prod.env·example.local.env에 공개된 예시
+# 값입니다. 전부 저장소에 노출돼 있어 실제 비밀값이 아니므로, non-local 환경 기동 시 그대로
+# 쓰이면 거부해야 합니다(예: local 템플릿 값을 실수로 staging 설정에 복사하는 경로 차단).
 _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS = frozenset(
     {
         "not-configured-idempotency-hmac-key",
         "replace-with-random-production-idempotency-hmac-key-at-least-32-characters",
+        "replace-with-random-local-idempotency-hmac-key-at-least-32-characters",
     }
 )
+
+# example 파일들의 placeholder 명명 규칙("-at-least-32-characters")과 맞춘 최소 길이입니다.
+_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH = 32
 
 
 def get_default_timezone() -> tzinfo:
@@ -122,6 +127,15 @@ class Config(BaseSettings):
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
 
+    @field_validator("IDEMPOTENCY_HMAC_KEY", mode="after")
+    @classmethod
+    def _strip_idempotency_hmac_key(cls, value: str) -> str:
+        # 검증(validate_idempotency_hmac_key_configured)과 실제 HMAC 계산
+        # (job_intake.py의 compute_key_hmac 호출)이 항상 같은 값을 보도록, 필드 자체를
+        # 정규화합니다. 앞뒤 공백만 다른 값이 인스턴스마다 주입되면(K8s secret, YAML
+        # quoting 차이 등) 검증은 통과해도 실제 digest가 달라져 기존 레코드를 못 찾습니다.
+        return value.strip()
+
     # app/services/guide_ai 및 chat_ai 연동용 OpenAI 설정.
     # CI의 test 잡 env에는 OPENAI_API_KEY가 없어서 필수값(DB_*처럼)으로 두면 전체 테스트가 깨집니다.
     # 실제 키가 없으면 OpenAI 호출 시점에만 401 -> 500으로 실패하도록 placeholder 기본값을 둡니다.
@@ -166,11 +180,16 @@ class Config(BaseSettings):
     @model_validator(mode="after")
     def validate_idempotency_hmac_key_configured(self) -> "Config":
         if self.ENV is not Env.LOCAL:
-            key = self.IDEMPOTENCY_HMAC_KEY.strip()
+            key = self.IDEMPOTENCY_HMAC_KEY
             if not key:
                 raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty outside local environment")
             if key in _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS:
                 raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret outside local environment")
+            if len(key) < _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH:
+                raise ValueError(
+                    f"IDEMPOTENCY_HMAC_KEY must be at least {_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH} "
+                    "characters outside local environment"
+                )
         return self
 
     @property

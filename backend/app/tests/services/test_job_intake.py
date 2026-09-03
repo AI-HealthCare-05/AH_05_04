@@ -21,6 +21,7 @@ from app.repositories.medical_document_repository import MedicalDocumentReposito
 from app.services.job_intake import (
     CreateDomainPlaceholder,
     DomainReference,
+    DomainTypeMismatchError,
     IdempotencyKeyConflictError,
     JobIntakeResult,
     JobIntakeService,
@@ -356,6 +357,41 @@ async def test_accept_job_rolls_back_all_records_when_document_not_owned_by_user
     assert record_count is None
     outbox_count = await db_session.scalar(
         select(OutboxEvent).join(AiJob, OutboxEvent.job_id == AiJob.id).where(AiJob.user_id == other_user.id)
+    )
+    assert outbox_count is None
+
+
+@pytest.mark.asyncio
+async def test_accept_job_rolls_back_all_records_when_domain_type_mismatches(
+    db_session: AsyncSession,
+) -> None:
+    """콜백이 `job_type`에 대응하지 않는 `domain_type`을 반환하면(`DOMAIN_TYPE_BY_JOB_TYPE`과
+    불일치) `DomainTypeMismatchError`로 접수 자체를 거부하고, 같은 transaction의
+    AI_JOB·OUTBOX_EVENT·IDEMPOTENCY_RECORD도 함께 롤백돼야 합니다.
+    """
+    user = await _create_user(db_session, email=f"intake-mismatch-{uuid4().hex[:12]}@test.local")
+    service = JobIntakeService(AsyncJobRepository(db_session))
+
+    async def mismatched_placeholder(job_id: UUID) -> DomainReference:
+        return DomainReference(domain_type=DomainType.GUIDE, domain_id=uuid4())
+
+    with pytest.raises(DomainTypeMismatchError):
+        await service.accept_job(
+            user_id=user.id,
+            job_type=AiJobType.OCR,
+            operation_id="ocr.create_job",
+            idempotency_key="test-idempotency-key-0005",
+            fingerprint={"job_type": "OCR", "document_id": str(uuid4())},
+            create_domain_placeholder=mismatched_placeholder,
+            trace_id="a" * 32,
+        )
+
+    job_count = await db_session.scalar(select(AiJob).where(AiJob.user_id == user.id))
+    assert job_count is None
+    record_count = await db_session.scalar(select(IdempotencyRecord).where(IdempotencyRecord.user_id == user.id))
+    assert record_count is None
+    outbox_count = await db_session.scalar(
+        select(OutboxEvent).join(AiJob, OutboxEvent.job_id == AiJob.id).where(AiJob.user_id == user.id)
     )
     assert outbox_count is None
 
