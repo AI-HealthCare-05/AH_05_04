@@ -7,6 +7,9 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
+from ai_worker.core.consumer_execution import Transaction
+from ai_worker.core.stream import StreamAcknowledger
+
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _STREAM_ENTRY_ID_PATTERN = re.compile(r"^[0-9]+-[0-9]+$")
@@ -83,6 +86,49 @@ class QuarantineRepository(Protocol):
     ) -> QuarantineReceipt:
         """격리 row와 DLQ Outbox를 같은 transaction에 저장합니다."""
         ...
+
+
+class QuarantineExecution:
+    """Quarantine과 DLQ Outbox를 commit한 뒤 원본 메시지를 ACK합니다."""
+
+    def __init__(
+        self,
+        *,
+        repository: QuarantineRepository,
+        transaction: Transaction,
+        acknowledger: StreamAcknowledger,
+    ) -> None:
+        self._repository = repository
+        self._transaction = transaction
+        self._acknowledger = acknowledger
+
+    async def execute(
+        self,
+        request: QuarantineRequest,
+    ) -> QuarantineReceipt:
+        """Durable quarantine 저장이 완료된 경우에만 원본을 ACK합니다."""
+
+        try:
+            receipt = await self._repository.record(request)
+            await self._transaction.commit()
+        except BaseException:
+            await self._rollback_safely()
+            raise
+
+        # commit 이후 ACK가 실패하면 DB 기록은 유지합니다.
+        # 원본 메시지가 재전달될 때 repository의 unique 경계가
+        # 같은 quarantine과 DLQ Outbox를 재사용합니다.
+        await self._acknowledger.acknowledge(request.stream_entry_id)
+
+        return receipt
+
+    async def _rollback_safely(self) -> None:
+        """rollback 실패가 원래 저장·commit 오류를 덮어쓰지 않게 합니다."""
+
+        try:
+            await self._transaction.rollback()
+        except Exception:
+            return
 
 
 def _validate_stream_name(stream_name: str) -> None:
