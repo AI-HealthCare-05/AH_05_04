@@ -111,6 +111,7 @@ def _create_engine(
         timeout_seconds=20.0,
         client=client,
         structurer=(structurer if structurer is not None else RecordingStructurer()),
+        observability_disabled=True,
     )
 
 

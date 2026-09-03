@@ -50,6 +50,10 @@ class RaisingAsyncOpenAI:
         self.responses = RaisingResponses(error)
 
 
+def _client(client: object) -> OpenAIResponsesClient:
+    return OpenAIResponsesClient(client, observability_disabled=True)
+
+
 def _response(
     *,
     status: str = "completed",
@@ -72,7 +76,7 @@ def _response(
 
 async def test_client_uses_non_streaming_create_and_returns_plain_text() -> None:
     sdk_client = FakeAsyncOpenAI(_response())
-    client = OpenAIResponsesClient(sdk_client)
+    client = _client(sdk_client)
 
     result = await client.generate(
         model="gpt-4o-mini",
@@ -101,7 +105,7 @@ async def test_client_rejects_refusal_before_other_response_errors() -> None:
     response.error = SimpleNamespace(code="server_error", message="must not escape")
 
     with pytest.raises(ChatGenerationInvalidResponseError) as exc_info:
-        await OpenAIResponsesClient(FakeAsyncOpenAI(response)).generate(
+        await _client(FakeAsyncOpenAI(response)).generate(
             model="gpt-4o-mini", instructions="rules", input_json="{}", max_output_tokens=800
         )
 
@@ -115,7 +119,7 @@ async def test_client_maps_returned_provider_availability_errors(error_code: str
     response.error = SimpleNamespace(code=error_code, message="must not escape")
 
     with pytest.raises(ChatGenerationUnavailableError) as exc_info:
-        await OpenAIResponsesClient(FakeAsyncOpenAI(response)).generate(
+        await _client(FakeAsyncOpenAI(response)).generate(
             model="gpt-4o-mini", instructions="rules", input_json="{}", max_output_tokens=800
         )
 
@@ -135,7 +139,7 @@ async def test_client_maps_returned_provider_availability_errors(error_code: str
 )
 async def test_client_rejects_incomplete_or_malformed_response(response: object) -> None:
     with pytest.raises(ChatGenerationInvalidResponseError):
-        await OpenAIResponsesClient(FakeAsyncOpenAI(response)).generate(
+        await _client(FakeAsyncOpenAI(response)).generate(
             model="gpt-4o-mini", instructions="rules", input_json="{}", max_output_tokens=800
         )
 
@@ -180,7 +184,7 @@ async def test_client_maps_sdk_errors_to_provider_neutral_errors(
     domain_error: type[Exception],
 ) -> None:
     with pytest.raises(domain_error) as exc_info:
-        await OpenAIResponsesClient(RaisingAsyncOpenAI(provider_error)).generate(
+        await _client(RaisingAsyncOpenAI(provider_error)).generate(
             model="gpt-4o-mini", instructions="rules", input_json="{}", max_output_tokens=800
         )
 
@@ -191,6 +195,6 @@ async def test_client_does_not_wrap_programming_errors() -> None:
     error = RuntimeError("programming failure")
 
     with pytest.raises(RuntimeError, match="programming failure"):
-        await OpenAIResponsesClient(RaisingAsyncOpenAI(error)).generate(
+        await _client(RaisingAsyncOpenAI(error)).generate(
             model="gpt-4o-mini", instructions="rules", input_json="{}", max_output_tokens=800
         )
