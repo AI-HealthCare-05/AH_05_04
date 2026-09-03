@@ -569,6 +569,18 @@
   text-align: center;
 }
 
+.mvp-upload__filename {
+  display: -webkit-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .mvp-upload__zone-icon {
   width: 64px;
   height: 64px;

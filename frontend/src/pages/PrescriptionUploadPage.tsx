@@ -209,7 +209,9 @@ function PrescriptionUploadPage() {
             <span className="mvp-upload__zone-icon" aria-hidden="true">
               <span />
             </span>
-            <strong>{file?.name ?? '사진 촬영 또는 파일 선택'}</strong>
+            <strong className={file ? 'mvp-upload__filename' : undefined}>
+              {file?.name ?? '사진 촬영 또는 파일 선택'}
+            </strong>
             <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 10MB'}</small>
           </label>
 
