@@ -60,6 +60,7 @@ from app.tests.conftest import test_engine
 # 실행하는 파이썬은 pytest의 rootdir 기반 sys.path 삽입을 물려받지 않아 app 패키지를
 # 직접 찾지 못한다. PYTHONPATH로 backend/를 명시해 `-m app...` import를 가능하게 한다.
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 _SCENARIO_ROOT = Path(__file__).resolve().parents[2] / "release_validation" / "scenarios"
 
 
@@ -67,11 +68,20 @@ def _load_real_scenario(filename: str) -> dict[str, Any]:
     return json.loads((_SCENARIO_ROOT / filename).read_text(encoding="utf-8"))
 
 
-def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
+def _subprocess_env(
+    base_env: Mapping[str, str],
+) -> dict[str, str]:
     process_env = dict(base_env)
     existing_pythonpath = process_env.get("PYTHONPATH")
-    process_env["PYTHONPATH"] = (
-        f"{_BACKEND_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(_BACKEND_ROOT)
+    process_env["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            (
+                str(_BACKEND_ROOT),
+                str(_REPOSITORY_ROOT),
+                existing_pythonpath,
+            ),
+        )
     )
     return process_env
 
@@ -478,8 +488,7 @@ def test_local_runner_does_not_load_provider_credentials_from_dotenv(tmp_path: P
             "DB_NAME": "synthetic-runner-db",
         }
     )
-    repository_root = Path(__file__).resolve().parents[3]
-    process_env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(repository_root), process_env.get("PYTHONPATH"))))
+    process_env = _subprocess_env(process_env)
     script = """
 import json
 from app.release_validation.ai_one_cycle_smoke import _runtime_environment

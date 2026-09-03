@@ -77,7 +77,9 @@ for test_dir in \
   ./backend/app/tests \
   ./tests/contract \
   ./tests/migration \
-  ./ai_worker/tests/core; do
+  ./ai_worker/tests/core \
+  ./ai_worker/tests/ocr \
+  ./tests/integration; do
   if [ -d "$test_dir" ] &&
     find "$test_dir" -type f -name 'test_*.py' -print -quit |
       grep -q .; then
@@ -178,12 +180,14 @@ run_with_test_database pytest tests/migration -v
 
 echo "Run Pytest with Coverage"
 
-# Backend, 공통 계약, Worker 공통 골격 테스트를 한 번만 실행합니다.
+# Backend, 공통 계약, Worker 공통·OCR 테스트를 한 번만 실행합니다.
 if ! run_with_test_database \
   coverage run -m pytest \
   backend/app \
   tests/contract \
-  ai_worker/tests/core; then
+  ai_worker/tests/core \
+  ai_worker/tests/ocr \
+  tests/integration/test_worker_ocr_persistence.py; then
   echo
   echo "Pytest failed."
   echo "Fix the test failures above and re-run."
