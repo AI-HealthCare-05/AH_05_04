@@ -22,7 +22,7 @@ Provider observability는 기본적으로 활성입니다. 활성 상태에서�
 
 Provider observability data contract는 `provider_contracts.observability`에 있습니다. Backend `Env`는 `DeploymentEnvironment`의 alias이고, 기존 `app.core.provider_observability` import 경로는 공용 Provider context·descriptor·enum을 다시 노출합니다. 공용 package는 Backend·Worker 설정, DB, FastAPI, logger를 import하지 않습니다.
 
-현재 Worker에는 Provider adapter 조립 경로가 없고 #141도 OCR·Guide·Chat Handler 비즈니스 로직을 제외합니다. Worker는 `create_worker_provider_call_context()`로 검증된 message trace와 Worker `environment`를 사용해 context를 만듭니다. 이 factory는 설정·logger를 초기화하거나 Backend를 import하지 않으며, 현재 비동기 계약에서는 `validation_run_id=null`, `validation_enabled=false`로 고정합니다. Worker `Config.ENV`는 `local`, `staging`, `production` 중 하나를 명시해야 하며, 실제 Provider adapter 조립은 후속 Handler 구현의 책임입니다. Worker에 Backend DB credential을 주입하거나 Provider observability 타입을 중복 정의하거나 Provider adapter를 opt-out 상태로 조립하지 않습니다.
+현재 Worker에는 Provider adapter 조립 경로가 없고 #141도 OCR·Guide·Chat Handler 비즈니스 로직을 제외합니다. Worker는 `create_worker_provider_call_context()`로 검증된 message trace와 Worker `Config.ENV`를 사용해 context를 만듭니다. 호출자는 `Config.ENV`를 factory의 `environment`에 그대로 전달해야 합니다. 이 factory는 설정·logger를 초기화하거나 Backend를 import하지 않으며, 현재 비동기 계약에서는 `validation_run_id=null`, `validation_enabled=false`로 고정합니다. Worker `Config.ENV`는 `local`, `staging`, `production` 중 하나를 명시해야 하며 production compose는 `ENV`를 Worker에 전달합니다. 실제 Provider adapter 조립은 후속 Handler 구현의 책임입니다. Worker에 Backend DB credential을 주입하거나 Provider observability 타입을 중복 정의하거나 Provider adapter를 opt-out 상태로 조립하지 않습니다.
 
 Provider는 `CLOVA_OCR`, `OPENAI`만 허용합니다. operation은 다음 네 값만 허용합니다.
 
