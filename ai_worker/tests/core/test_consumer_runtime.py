@@ -34,6 +34,7 @@ def build_delivery() -> WorkerDelivery:
         message=message,
     )
 
+
 class FakeStreamConsumer:
     def __init__(
         self,
@@ -124,7 +125,7 @@ async def test_runtime_reads_with_configured_consumer_settings() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_processes_deliveries_sequentially() -> None:
+async def test_runtime_processes_every_delivery_in_batch() -> None:
     first = build_delivery()
     second = WorkerDelivery(
         stream_message_id="2-0",
@@ -216,3 +217,52 @@ async def test_runtime_does_not_read_when_stop_was_already_requested() -> None:
     ]
 
 
+class BlockingExecution:
+    """두 delivery가 모두 시작될 때까지 실행 완료를 막습니다."""
+
+    def __init__(self) -> None:
+        self.started_count = 0
+        self.all_started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(self, delivery: WorkerDelivery) -> None:
+        _ = delivery
+        self.started_count += 1
+
+        if self.started_count == 2:
+            self.all_started.set()
+
+        await self.release.wait()
+
+
+@pytest.mark.asyncio
+async def test_runtime_processes_batch_with_configured_concurrency() -> None:
+    first = build_delivery()
+    second = WorkerDelivery(
+        stream_message_id="2-0",
+        message=build_delivery().message,
+    )
+    stream = FakeStreamConsumer((first, second))
+    execution = BlockingExecution()
+    runtime = ConsumerRuntime(
+        stream=stream,
+        execution=execution,
+        consumer_name="worker-1",
+        batch_size=2,
+        block_ms=1000,
+    )
+
+    run_task = asyncio.create_task(runtime.run_once())
+
+    try:
+        await asyncio.wait_for(
+            execution.all_started.wait(),
+            timeout=0.1,
+        )
+    finally:
+        execution.release.set()
+
+    processed_count = await run_task
+
+    assert processed_count == 2
+    assert execution.started_count == 2

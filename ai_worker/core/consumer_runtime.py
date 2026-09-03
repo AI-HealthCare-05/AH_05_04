@@ -74,7 +74,7 @@ class ConsumerRuntime:
             await self.run_once()
 
     async def run_once(self) -> int:
-        """한 번 읽은 delivery를 순서대로 처리하고 처리 개수를 반환합니다."""
+        """한 번 읽은 delivery를 설정된 batch 안에서 동시에 처리합니다."""
 
         deliveries = await self._stream.read(
             consumer_name=self._consumer_name,
@@ -82,7 +82,6 @@ class ConsumerRuntime:
             block_ms=self._block_ms,
         )
 
-        for delivery in deliveries:
-            await self._execution.execute(delivery)
+        await asyncio.gather(*(self._execution.execute(delivery) for delivery in deliveries))
 
         return len(deliveries)

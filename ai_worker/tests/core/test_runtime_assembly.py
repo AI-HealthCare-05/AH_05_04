@@ -103,6 +103,18 @@ def test_config_has_approved_worker_runtime_defaults() -> None:
     assert config.heartbeat_interval.total_seconds() == 10.0
 
 
+def test_config_rejects_hard_timeout_plus_completion_budget_exceeding_lease() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="WORKER_HARD_TIMEOUT_SECONDS와 OCR_RESPONSE_MARGIN_SECONDS",
+    ):
+        _config(
+            WORKER_LEASE_DURATION_SECONDS=64.0,
+            WORKER_HARD_TIMEOUT_SECONDS=60.0,
+            OCR_RESPONSE_MARGIN_SECONDS=5.0,
+        )
+
+
 # --- Handler 등록 경계 -----------------------------------------------------
 
 

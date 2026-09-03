@@ -148,7 +148,11 @@ class Config(BaseSettings):
 
         if self.WORKER_HARD_TIMEOUT_SECONDS >= self.WORKER_LEASE_DURATION_SECONDS:
             raise ValueError("WORKER_HARD_TIMEOUT_SECONDS는 WORKER_LEASE_DURATION_SECONDS보다 짧아야 합니다.")
-
+        if self.WORKER_HARD_TIMEOUT_SECONDS + self.OCR_RESPONSE_MARGIN_SECONDS > self.WORKER_LEASE_DURATION_SECONDS:
+            raise ValueError(
+                "WORKER_HARD_TIMEOUT_SECONDS와 OCR_RESPONSE_MARGIN_SECONDS의 합은 "
+                "WORKER_LEASE_DURATION_SECONDS를 초과할 수 없습니다."
+            )
         return self
 
     @property
