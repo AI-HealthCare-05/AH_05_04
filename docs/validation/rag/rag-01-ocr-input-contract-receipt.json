@@ -31,36 +31,106 @@
     "confirmation_lock": "medical_document row FOR UPDATE",
     "source_locations": [
       {
+        "path": "backend/app/apis/v1/medical_document_routers.py",
+        "lines": "78-94",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "처방 확정 API가 PrescriptionService를 호출하고 PrescriptionResponse를 201로 반환한다."
+      },
+      {
         "path": "backend/app/services/prescriptions.py",
         "lines": "27-36",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
         "meaning": "confirmed_value만 읽고 raw_value 또는 normalized_value로 대체하지 않는다."
       },
       {
         "path": "backend/app/services/prescriptions.py",
         "lines": "72-125",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
         "meaning": "문서 소유권과 직렬화 잠금을 확인한 뒤 확정 Prescription과 Medication을 생성한다."
       },
       {
         "path": "backend/app/models/prescriptions.py",
         "lines": "39-85",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
         "meaning": "현재 Prescription 모델과 profile_id 소유권 경계다."
       },
       {
         "path": "backend/app/models/prescriptions.py",
         "lines": "88-130",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
         "meaning": "현재 Medication의 medication_name과 nullable strength_text 저장 구조다."
       },
       {
         "path": "backend/app/repositories/prescription_repository.py",
         "lines": "33-55",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
         "meaning": "Prescription과 Medication을 동일 세션에서 생성하고 flush한다."
       },
       {
         "path": "backend/app/dtos/prescriptions.py",
         "lines": "13-33",
-        "meaning": "현재 공개 DTO의 medication_name과 nullable strength_text 구조다."
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "공개 DTO의 medication_name과 nullable strength_text 구조다."
+      },
+      {
+        "path": "backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py",
+        "lines": "22-126",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "SOURCE_INSPECTION",
+        "meaning": "medication.strength_text nullable 컬럼, MEDICATION_STRENGTH 허용 제약 및 downgrade 안전 가드를 정의한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_api.py",
+        "lines": "117-130",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "확정 필드가 처방 확정 API의 Medication 결과로 저장되는 정상 흐름을 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_api.py",
+        "lines": "254-267",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "타 사용자 의료문서의 처방 확정 요청이 404로 차단되는지 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_api.py",
+        "lines": "270-337",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "확정된 nullable MEDICATION_STRENGTH가 medication.strength_text NULL로 보존되는지 검증한다."
+      },
+      {
+        "path": "backend/app/tests/ocr/test_prescription_confirmation_concurrency.py",
+        "lines": "215-316",
+        "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50",
+        "evidence_type": "REGRESSION_TEST",
+        "meaning": "PATCH와 처방 확정의 row lock 직렬화 및 동시 확정의 단일 성공 경계를 검증한다."
       }
     ]
+  },
+  "migration_verification": {
+    "revision": "529b2a36b677",
+    "source_inspection": {
+      "status": "PASS",
+      "path": "backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py",
+      "lines": "22-126",
+      "commit_sha": "723758ec361a29e97a256ac45ae7a17d8b0dae50"
+    },
+    "postgresql_alembic_execution": {
+      "status": "PASS",
+      "command": "uv run alembic -c backend/alembic.ini upgrade head",
+      "environment": "PR #243 CI PostgreSQL",
+      "verified_commit_sha": "ac06ae9f88649455d26a154a1050cd449396af3f",
+      "evidence": "PR #243 Run PostgreSQL migrations"
+    }
   },
   "target_runtime_model": {
     "status": "NOT_IMPLEMENTED",
@@ -163,5 +233,10 @@
     "contains_patient_data": false,
     "contains_medical_document": false,
     "contains_api_key": false
+  },
+  "receipt_hash": {
+    "algorithm": "sha256",
+    "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
+    "value": "a613cbddcba21d180e0441f034a4b6d84370190b1c61dcfeff4a9926aa6d62c4"
   }
 }

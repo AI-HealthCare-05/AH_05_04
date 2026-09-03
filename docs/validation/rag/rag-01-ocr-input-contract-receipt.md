@@ -3,6 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | Receipt version | `1.0` |
+| Canonical Receipt hash | `sha256:a613cbddcba21d180e0441f034a4b6d84370190b1c61dcfeff4a9926aa6d62c4` |
 | 검증 상태 | `COMPLETED_WITH_GAPS` |
 | 검증일 | 2026-09-03 |
 | 검증 기준 Commit | `723758ec361a29e97a256ac45ae7a17d8b0dae50` |
@@ -13,6 +14,37 @@
 | RAG 소비 경계 리뷰 | 정현우 (`@ceohwj`) |
 
 > 실제 환자 정보, 의료문서, API Key 또는 Provider credential을 이 문서와 테스트 증빙에 포함하지 않는다.
+
+## Canonical Receipt hash
+
+이 Receipt의 기계 판독 정본 hash는 다음과 같다.
+
+```text
+sha256:a613cbddcba21d180e0441f034a4b6d84370190b1c61dcfeff4a9926aa6d62c4
+```
+Canonicalization 규칙:
+1. 최상위 generated_at과 receipt_hash 필드를 제외한다.
+2. JSON object key를 오름차순으로 정렬한다.
+3. 불필요한 공백 없이 compact JSON으로 직렬화한다.
+4. 문자열은 UTF-8로 인코딩하며 ASCII escape를 강제하지 않는다.
+5. 직렬화된 bytes에 SHA-256을 적용한다.
+
+규칙 식별자는 다음과 같다.
+
+```text
+sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1
+```
+따라서 같은 commit·schema·의미를 가진 Receipt는 generated_at이 달라져도 같은 hash를 생성한다. 그 밖의 의미 있는 필드가 변경되면 hash를 다시 생성하고 모든 선행조건 문서의 참조값을 함께 갱신해야 한다.
+재생성 및 검증 명령:
+
+```bash
+uv run python scripts/verify_rag_01_receipt.py \
+  docs/validation/rag/rag-01-ocr-input-contract-receipt.json \
+  --write
+
+uv run python scripts/verify_rag_01_receipt.py \
+  docs/validation/rag/rag-01-ocr-input-contract-receipt.json
+```
 
 ## 1. 목적
 
@@ -97,6 +129,36 @@ PR #96에서 추가된 `medication.strength_text` Migration은 다음 파일에�
 ```text
 backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py
 ```
+### 3.1 Commit·line-level 증빙
+
+현재 Runtime 감사의 기준 Commit은 `723758ec361a29e97a256ac45ae7a17d8b0dae50`이다.
+
+| 영역 | 파일 | 줄 | 검증 방식 | 확인 내용 |
+| --- | --- | ---: | --- | --- |
+| API router | `backend/app/apis/v1/medical_document_routers.py` | 78-94 | Source inspection | 처방 확정 API가 `PrescriptionService`를 호출하고 `PrescriptionResponse`를 201로 반환 |
+| 확정값 선택 | `backend/app/services/prescriptions.py` | 27-36 | Source inspection | `confirmed_value`만 사용하고 `raw_value`·`normalized_value` fallback 금지 |
+| 확정 transaction | `backend/app/services/prescriptions.py` | 72-125 | Source inspection | 소유권·row lock·중복 확정 검사 후 Prescription과 Medication 생성 |
+| 현재 Prescription | `backend/app/models/prescriptions.py` | 39-85 | Source inspection | 현재 저장 구조와 `profile_id` 소유권 경계 |
+| 현재 Medication | `backend/app/models/prescriptions.py` | 88-130 | Source inspection | `medication_name`과 nullable 문자열 `strength_text` |
+| 저장 Repository | `backend/app/repositories/prescription_repository.py` | 33-55 | Source inspection | Prescription과 Medication을 동일 DB session에서 생성하고 flush |
+| 공개 DTO | `backend/app/dtos/prescriptions.py` | 13-33 | Source inspection | `medication_name: str`, `strength_text: str \| None` |
+| PR #96 Migration | `backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py` | 22-126 | Source inspection | nullable `strength_text`, `MEDICATION_STRENGTH` 제약 및 downgrade 안전 가드 |
+| 정상 확정 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 117-130 | Regression test | 사용자 확정 필드 기반 Medication 생성 |
+| 소유권 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 254-267 | Regression test | 타 사용자 의료문서 처방 확정 404 |
+| nullable 함량 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_api.py` | 270-337 | Regression test | 확정된 선택 함량이 `strength_text=NULL`로 보존 |
+| 동시성 회귀 | `backend/app/tests/ocr/test_prescription_confirmation_concurrency.py` | 215-316 | Regression test | PATCH·확정 직렬화와 동시 확정 단일 성공 |
+
+### 3.2 Migration 검증 수준
+
+PR #96 Migration은 코드 확인과 실제 PostgreSQL 실행을 구분해 기록한다.
+
+| 검증 | 결과 | 증빙 |
+| --- | --- | --- |
+| Migration source inspection | PASS | 기준 Commit `723758ec361a29e97a256ac45ae7a17d8b0dae50`, revision `529b2a36b677`, lines 22-126 |
+| PostgreSQL Alembic 실행 | PASS | PR #243 commit `ac06ae9f88649455d26a154a1050cd449396af3f`의 `Run PostgreSQL migrations` |
+| 실행 명령 | PASS | `uv run alembic -c backend/alembic.ini upgrade head` |
+
+따라서 Migration 존재 여부만 정적으로 확인한 것이 아니라 PostgreSQL에서 Alembic migration 적용이 성공했음을 별도 증빙으로 기록한다.
 
 ## 4. 현재 Runtime 감사
 
