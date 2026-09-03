@@ -62,9 +62,22 @@ class _RaisingExecution:
 # --- 설정 검증 -------------------------------------------------------------
 
 
-def test_config_requires_database_settings() -> None:
+def test_config_requires_database_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for setting_name in (
+        "DB_HOST",
+        "DB_NAME",
+        "DB_USER",
+        "DB_PASSWORD",
+    ):
+        monkeypatch.delenv(setting_name, raising=False)
+
     with pytest.raises(ValidationError):
-        Config(_env_file=None, ENV=DeploymentEnvironment.LOCAL)  # type: ignore[call-arg]
+        Config(
+            _env_file=None,
+            ENV=DeploymentEnvironment.LOCAL,
+        )  # type: ignore[call-arg]
 
 
 def test_config_builds_database_url_with_special_characters() -> None:
@@ -112,6 +125,17 @@ def test_config_rejects_hard_timeout_plus_completion_budget_exceeding_lease() ->
             WORKER_LEASE_DURATION_SECONDS=64.0,
             WORKER_HARD_TIMEOUT_SECONDS=60.0,
             OCR_RESPONSE_MARGIN_SECONDS=5.0,
+        )
+
+
+def test_config_rejects_ocr_deadline_exceeding_worker_hard_timeout() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="OCR_REQUEST_DEADLINE_SECONDS",
+    ):
+        _config(
+            OCR_REQUEST_DEADLINE_SECONDS=61.0,
+            WORKER_HARD_TIMEOUT_SECONDS=60.0,
         )
 
 
