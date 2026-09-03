@@ -22,6 +22,7 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import (
     EVALUATION_CASE_ADAPTER_V1_2,
     EvaluationCaseV12,
 )
+from ai_worker.tasks.evaluation.schemas.common import ReviewProvenance
 from ai_worker.tasks.evaluation.schemas.common_v1_2 import ReviewProvenanceV12
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
@@ -1097,7 +1098,7 @@ def _assert_dataset_error(
         assert sentinel not in str(caught.value)
 
 
-def _assert_approved_provenance(provenance: ReviewProvenanceV12, *, approver_role: str) -> None:
+def _assert_approved_provenance(provenance: ReviewProvenance | ReviewProvenanceV12, *, approver_role: str) -> None:
     assert provenance.team_gold_status.value == "APPROVED"
     assert provenance.reviewed_by is not None
     assert provenance.reviewed_by.namespace.value == "GITHUB_LOGIN"
