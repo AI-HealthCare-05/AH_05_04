@@ -223,6 +223,7 @@ class _RunPublication:
             self.lock_identity = None
 
     def cleanup(self) -> BaseException | None:
+        rolled_back = False
         try:
             if self.staging_fd is not None and self.committed:
                 os.close(self.staging_fd)
@@ -234,6 +235,7 @@ class _RunPublication:
                     self.staging_identity,
                     self.created_files,
                 )
+                rolled_back = True
             elif self.staging_fd is not None:
                 _cleanup_staging(
                     self.root_fd,
@@ -244,6 +246,8 @@ class _RunPublication:
                 )
             self.staging_fd = None
             self.remove_lock()
+            if rolled_back:
+                os.fsync(self.root_fd)
         except BaseException as error:
             return _normalize_error(error)
         return None

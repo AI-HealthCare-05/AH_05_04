@@ -357,6 +357,7 @@ preflight와 전체 입력 graph 검증을 통과한 결과만 허용 root 내�
 symlink component, root 이탈, Unicode 비정규화, `.`·`..`, cross-filesystem rename은 거부한다. 실패 시 새로 만든
 staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 삭제하지 않는다. rename 뒤 parent fsync 또는 lock
 제거가 실패하면 final directory의 inode ownership을 확인하고 자신이 발행한 Bundle만 rollback한다.
+rollback과 lock 정리가 끝난 뒤 parent directory를 다시 fsync하여 제거 상태도 내구성 있게 확정한다.
 
 ## 10. 결정성
 

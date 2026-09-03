@@ -167,6 +167,7 @@ def test_publish_rolls_back_final_directory_after_parent_fsync_failure(
     assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
     assert not (tmp_path / RUN_ID).exists()
     assert list(tmp_path.iterdir()) == []
+    assert root_fsync_calls == root_fsync_number + 1
 
 
 def test_publish_rolls_back_final_directory_after_lock_removal_failure(
@@ -174,7 +175,17 @@ def test_publish_rolls_back_final_directory_after_lock_removal_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     real_remove = publisher_module._remove_file_if_owned
+    real_fsync = os.fsync
     failed_once = False
+    root_identity = (tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+    root_fsync_calls = 0
+
+    def count_root_fsync(descriptor: int) -> None:
+        nonlocal root_fsync_calls
+        metadata = os.fstat(descriptor)
+        if (metadata.st_dev, metadata.st_ino) == root_identity:
+            root_fsync_calls += 1
+        real_fsync(descriptor)
 
     def fail_first_lock_removal(directory_fd: int, name: str, identity: tuple[int, int]) -> None:
         nonlocal failed_once
@@ -184,6 +195,7 @@ def test_publish_rolls_back_final_directory_after_lock_removal_failure(
         real_remove(directory_fd, name, identity)
 
     monkeypatch.setattr(publisher_module, "_remove_file_if_owned", fail_first_lock_removal)
+    monkeypatch.setattr(publisher_module.os, "fsync", count_root_fsync)
 
     with pytest.raises(EvaluationValidationError) as caught:
         publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
@@ -191,6 +203,7 @@ def test_publish_rolls_back_final_directory_after_lock_removal_failure(
     assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
     assert not (tmp_path / RUN_ID).exists()
     assert list(tmp_path.iterdir()) == []
+    assert root_fsync_calls == 2
 
 
 def test_publish_fails_closed_when_exclusive_rename_is_unsupported(
