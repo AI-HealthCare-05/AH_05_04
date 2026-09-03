@@ -578,6 +578,79 @@ def _add_review_provenance_conditions(value: JsonValue) -> None:
         _add_review_provenance_conditions(item)
 
 
+def _add_v1_2_review_provenance_conditions(value: JsonValue) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _add_v1_2_review_provenance_conditions(item)
+        return
+    if not isinstance(value, dict):
+        return
+    properties = value.get("properties")
+    required_properties = {
+        "team_gold_status",
+        "reviewed_by",
+        "reviewed_at",
+        "approved_by",
+        "approved_at",
+        "evidence_review_refs",
+    }
+    if isinstance(properties, dict) and required_properties.issubset(properties):
+        all_of = value.setdefault("allOf", [])
+        if not isinstance(all_of, list):
+            raise TypeError("ReviewProvenanceV12 allOf must be an array")
+        all_of.extend(
+            [
+                {
+                    "if": {
+                        "properties": {"team_gold_status": {"const": "DRAFT"}},
+                        "required": ["team_gold_status"],
+                    },
+                    "then": {
+                        "properties": {
+                            "reviewed_by": {"type": "null"},
+                            "reviewed_at": {"type": "null"},
+                            "approved_by": {"type": "null"},
+                            "approved_at": {"type": "null"},
+                            "evidence_review_refs": {"maxItems": 0},
+                        }
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"team_gold_status": {"const": "REVIEWED"}},
+                        "required": ["team_gold_status"],
+                    },
+                    "then": {
+                        "properties": {
+                            "reviewed_by": {"not": {"type": "null"}},
+                            "reviewed_at": {"not": {"type": "null"}},
+                            "approved_by": {"type": "null"},
+                            "approved_at": {"type": "null"},
+                            "evidence_review_refs": {"minItems": 1},
+                        }
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"team_gold_status": {"const": "APPROVED"}},
+                        "required": ["team_gold_status"],
+                    },
+                    "then": {
+                        "properties": {
+                            "reviewed_by": {"not": {"type": "null"}},
+                            "reviewed_at": {"not": {"type": "null"}},
+                            "approved_by": {"not": {"type": "null"}},
+                            "approved_at": {"not": {"type": "null"}},
+                            "evidence_review_refs": {"minItems": 1},
+                        }
+                    },
+                },
+            ]
+        )
+    for item in value.values():
+        _add_v1_2_review_provenance_conditions(item)
+
+
 def _containing_approval_role_condition(roles: list[str]) -> dict[str, JsonValue]:
     role_values: list[JsonValue] = [role for role in roles]
     return {
@@ -625,7 +698,17 @@ def _add_authoring_role_conditions(schema_id: str, document: dict[str, JsonValue
         raise TypeError("case schema definitions must be an object")
     roles = ["PRODUCT_SAFETY_REVIEWER", "MEDICAL_REVIEWER"]
     definition_names = [
-        name for name in definitions if name in {"SafetyCase", "EndToEndRagCase", "SafetyCaseV11", "EndToEndRagCaseV11"}
+        name
+        for name in definitions
+        if name
+        in {
+            "SafetyCase",
+            "EndToEndRagCase",
+            "SafetyCaseV11",
+            "EndToEndRagCaseV11",
+            "SafetyCaseV12",
+            "EndToEndRagCaseV12",
+        }
     ]
     if len(definition_names) != 2:
         raise TypeError("case schema must contain Safety and End-to-End definitions")
@@ -831,8 +914,15 @@ def _add_v1_1_case_context_conditions(definitions: dict[str, JsonValue]) -> None
             runtime_if={"dependency_fault": {"const": "RETRIEVAL_FAILURE"}},
         ),
     ]
-    for definition_name in ("SafetyCaseV11", "EndToEndRagCaseV11"):
+    for definition_name in (
+        "SafetyCaseV11",
+        "EndToEndRagCaseV11",
+        "SafetyCaseV12",
+        "EndToEndRagCaseV12",
+    ):
         case = definitions.get(definition_name)
+        if case is None:
+            continue
         if not isinstance(case, dict):
             raise TypeError(f"{definition_name} schema must be an object")
         all_of = case.setdefault("allOf", [])
@@ -841,8 +931,8 @@ def _add_v1_1_case_context_conditions(definitions: dict[str, JsonValue]) -> None
         all_of.extend(conditions)
 
 
-def _add_v1_1_authoring_conditions(entry: SchemaRegistryEntry, document: dict[str, JsonValue]) -> None:
-    if entry.schema_id != "rag-eval.case" or entry.member_version != "1.1.0":
+def _add_versioned_authoring_conditions(entry: SchemaRegistryEntry, document: dict[str, JsonValue]) -> None:
+    if entry.schema_id != "rag-eval.case" or entry.member_version not in {"1.1.0", "1.2.0"}:
         return
     definitions = document.get("$defs")
     if not isinstance(definitions, dict):
@@ -863,8 +953,10 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
         document["additionalProperties"] = False
     _add_execution_decision_conditions(document)
     _add_review_provenance_conditions(document)
+    if entry.member_version == "1.2.0":
+        _add_v1_2_review_provenance_conditions(document)
     _add_authoring_role_conditions(schema_id, document)
-    _add_v1_1_authoring_conditions(entry, document)
+    _add_versioned_authoring_conditions(entry, document)
     if schema_id == "rag-eval.dataset-manifest":
         _add_dataset_source_provenance_condition(document)
     if schema_id == "rag-eval.evidence-mapping-manifest":

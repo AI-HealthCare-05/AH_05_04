@@ -139,6 +139,25 @@ def test_schema_set_1_1_reuses_unchanged_members_byte_for_byte() -> None:
         assert canonical_json_bytes(version_1_1[path]) == canonical_json_bytes(version_1[path])
 
 
+def test_schema_set_1_2_versions_exactly_the_provenance_bearing_members() -> None:
+    registry = SCHEMA_REGISTRIES["1.2.0"]
+    documents = schema_documents("1.2.0")
+    versions = {entry.schema_id: entry.member_version for entry in registry}
+
+    assert len(registry) == len({entry.relative_path for entry in registry}) == 18
+    assert set(documents) == {entry.relative_path for entry in registry}
+    assert {schema_id for schema_id, version in versions.items() if version == "1.2.0"} == {
+        "rag-eval.case",
+        "rag-eval.dataset-manifest",
+        "rag-eval.evidence-mapping-manifest",
+        "rag-eval.critical-claim-rubric",
+        "rag-eval.evaluation-profile",
+        "rag-eval.suite-definition",
+        "rag-eval.evaluation-policy",
+        "rag-eval.protected-artifact-receipt",
+    }
+
+
 @pytest.mark.parametrize(
     ("relative_path", "pattern"),
     [
@@ -352,6 +371,37 @@ def test_exported_review_provenance_schema_encodes_team_and_external_approval_co
     assert any(
         condition.get("if", {}).get("properties", {}).get("external_medical_review_status") == {"const": "APPROVED"}
         and condition["then"]["properties"]["external_medical_approval_receipt_ref"] == {"not": {"type": "null"}}
+        for condition in conditions
+    )
+
+
+def test_exported_review_provenance_v12_schema_encodes_draft_and_reviewed_state_matrix() -> None:
+    authoring_schema = cast(
+        dict[str, Any],
+        schema_documents("1.2.0")["authoring/rag-eval.dataset-manifest.schema.json"],
+    )
+    provenance_schema = cast(dict[str, Any], authoring_schema["$defs"]["ReviewProvenanceV12"])
+    conditions = cast(list[dict[str, Any]], provenance_schema["allOf"])
+
+    assert {
+        "if": {
+            "properties": {"team_gold_status": {"const": "DRAFT"}},
+            "required": ["team_gold_status"],
+        },
+        "then": {
+            "properties": {
+                "reviewed_by": {"type": "null"},
+                "reviewed_at": {"type": "null"},
+                "approved_by": {"type": "null"},
+                "approved_at": {"type": "null"},
+                "evidence_review_refs": {"maxItems": 0},
+            }
+        },
+    } in conditions
+    assert any(
+        condition.get("if", {}).get("properties", {}).get("team_gold_status") == {"const": "REVIEWED"}
+        and condition["then"]["properties"]["reviewed_by"] == {"not": {"type": "null"}}
+        and condition["then"]["properties"]["evidence_review_refs"] == {"minItems": 1}
         for condition in conditions
     )
 
