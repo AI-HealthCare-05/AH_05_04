@@ -7,7 +7,7 @@
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — 평가 상태·결과 표현·승인 분리 |
 | 교차 리뷰 | 송은영 (`@phina-io`) — Artifact 저장·DB 경계 |
 | 기준 브랜치 | `feat/157-rag-evaluation-runner-reporter` |
-| 문서 상태 | 설계 보완 완료·재검토 대기 |
+| 문서 상태 | 설계 승인·구현 계획 완료 |
 | 완료 의미 | 합성 DEV Runner·Reporter 기반 구현. HOLDOUT 실행·Baseline Freeze·Release 승인이 아님 |
 
 ## 1. 목적
@@ -121,6 +121,7 @@ Adapter registry를 dependency로 주입한다. Production 경로는 저장소�
 검증한다.
 
 - `config_id`, `config_version`, `experiment_id`, `experiment_type`, `variant_id`, `evaluated_partitions=["DEV"]`
+- `environment="LOCAL" | "CI"`
 - `dataset_manifest_path`, `profile_path`, `comparison_policy_path`, `evaluation_policy_path`, `suite_path`
 - `upstream_contract_manifest_hash`
 - `retrieval_variant`, `answer_variant` — 적용되지 않으면 명시적 `null`; 적용되면 ID, version, kind,
@@ -169,8 +170,8 @@ Artifact에 사실대로 보존하되, 합성 DEV 여부를 대신하는 접근 
 ### 5.3 Runner
 
 `runner.py`는 순수 orchestration과 상태 집계를 담당한다. Loader가 반환한 immutable model을 변경하지 않으며
-Case를 `case_id`의 UTF-16BE lexical order로 실행한다. 한 Case의 Adapter 예외는 비민감 Failure Record로
-변환하고 다음 Case 실행을 계속한다.
+Case를 `case_id`의 UTF-16BE lexical order로 실행한다. 한 Case의 Adapter 예외는 schema-valid
+`CaseResult(ERROR/null)`와 비민감 `failure_codes`로 변환하고 다음 Case 실행을 계속한다.
 
 Experiment Type과 Task Type은 다음처럼 고정한다.
 
@@ -197,16 +198,35 @@ Runner는 Provider SDK, Backend DI, DB session에 직접 의존하지 않는다.
 성공 Fake의 `N/A`는 DEV infrastructure 검증이며 Metric 또는 Release PASS가 아니다. Gold 값을 actual 결과로
 복사해 성공을 제조하지 않고 테스트가 독립적으로 제공한 합성 actual payload를 사용한다.
 
+Artifact Schema 1.0은 실행 상태와 무관하게 일부 Task별 actual 필드를 요구한다. 미구현·오류 Case에는
+collection을 빈 배열, invocation boolean을 `false`, nullable 필드를 `null`로 기록한다. Answer 계열의 필수
+`answer_sha256`은 실제 Answer가 없다는 byte-level 사실을 나타내는 `SHA-256(empty bytes)`
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`로 기록한다. 이 값은 PASS, 생성 Answer,
+Provider 호출 또는 Gold 복사를 의미하지 않으며 `execution_status != COMPLETED`, `decision_status=null`과 함께만
+사용한다.
+
 ### 5.5 Manifest와 Artifact builder
 
 `manifest.py`는 선택 Case set, artifact bytes와 hash를 계산한다.
 serialization은 기존 `canonical_json_bytes()`를 재사용한다. JSONL은 각 record를 canonical JSON 한 줄로
 직렬화하고 LF로 종료하며 빈 줄·주석·header record를 만들지 않는다.
 
+각 `CaseResult.input_sha256`은 다음 map의 canonical JSON bytes를 SHA-256한 값으로 고정한다.
+
+```text
+case_id, task_type, partition, case_resource_sha256,
+dataset_manifest_sha256, evidence_mapping_manifest_sha256,
+critical_claim_rubric_hash, resolved_evaluation_config_hash
+```
+
+Case 파일 hash만 사용하거나 질문·Gold·Evidence 원문을 preimage에 직접 복사하지 않는다. 동일 Case라도 Variant,
+config 또는 provenance graph가 바뀌면 `input_sha256`이 달라져야 한다.
+
 ### 5.6 Reporter
 
-`reporter.py`는 발행 직전 검증된 JSON model만 입력받아 `report.md`를 생성한다. Dataset 질문, 답변 원문,
-Provider body, 내부 reasoning을 출력하지 않고 다음 비민감 정보만 표시한다.
+`reporter.py`는 검증된 Dataset·config·Case/Metric/Suite model에서 만든 immutable `ReportData`와 machine entry만
+입력받아 `report.md`를 생성한다. content manifest hash가 아직 없는 미완성 `run.json`이나 Dataset 질문, 답변
+원문, Provider body, 내부 reasoning을 입력받지 않고 다음 비민감 정보만 표시한다.
 
 - Run ID, Experiment Type, Variant ID
 - Dataset·Profile·Policy·Suite ID/version/hash
@@ -228,10 +248,10 @@ run-dev arguments
   → Case set 결정·정렬
   → Case별 Adapter 실행과 Failure 격리
   → Case·Suite·Metric·Run 상태 집계
-  → schema-valid JSON/JSONL payload와 machine entry 목록 생성
+  → run.json을 제외한 schema-valid JSON/JSONL payload와 machine entry 목록 생성
   → machine entry 목록 기반 report.md 생성
   → report.md를 포함하고 run.json과 자기 자신을 제외한 result-content-manifest.json 생성
-  → run.json의 허용된 completion field 확정
+  → content manifest hash로 schema-valid run.json 확정
   → 전체 Artifact 재검증과 privacy 검사
   → private staging directory fsync
   → evals/results/<run_id>/ no-clobber atomic rename
@@ -271,6 +291,11 @@ Artifact만 발행한다.
 machine entry 목록의 읽기 전용 view만 전달한다. Reporter는 자신의 hash를 표시하거나 content manifest를
 다시 hash하거나 파일 시스템을 재탐색하지 않으므로 self-reference와 hash cycle이 생기지 않는다.
 
+`failures.jsonl`의 `FailureRecord.expected_summary/actual_summary`는 기존 Schema enum으로 정확히 표현 가능한
+평가 분석 실패만 기록하며 해당 실패가 없으면 빈 파일이다. Adapter 예외를 기존 의료·근거 실패 enum 중 하나로
+오표현하지 않는다. 기술 실행 오류의 정본은 `cases.jsonl`의 `execution_status=ERROR`, `decision_status=null`,
+안전한 `failure_codes`이며 Suite와 Run이 이를 blocking status로 집계한다.
+
 ## 8. 상태와 실패 처리
 
 실행 상태와 판정 상태는 독립 축이다.
@@ -291,8 +316,8 @@ Required child 또는 선택된 Case에 미완료 상태가 있으면 부모 판
 INVALID > ERROR > NOT_IMPLEMENTED > NOT_EVALUATED
 ```
 
-Case 예외의 원문, path, payload는 Artifact와 stderr에 쓰지 않는다. allowlist의 안정된 Evaluation error code,
-Case ID와 failure stage만 남긴다. 예상하지 못한 예외는 `EVAL_INTERNAL_ERROR`로 정규화한다.
+Case 예외의 원문, path, payload는 Artifact와 stderr에 쓰지 않는다. `cases.jsonl`에 allowlist의 안정된
+Evaluation error code와 Case ID만 남긴다. 예상하지 못한 예외는 `EVAL_INTERNAL_ERROR`로 정규화한다.
 
 Manifest-only preflight나 전체 Loader가 실패하면 `RagEvaluationRun`의 필수 provenance를 정직하게 채울 수
 없으므로 최종 Run directory와 부분 Artifact를 만들지 않는다. CLI는 안전한 오류 code와 non-zero exit만
@@ -317,13 +342,14 @@ preflight와 전체 입력 graph 검증을 통과한 결과만 허용 root 내�
 1. `<run_id>.lock`을 exclusive create한다.
 2. mode `0700` staging directory를 만든다.
 3. 각 파일을 mode `0600`으로 write하고 fsync한다.
-4. Pydantic model, exported JSON Schema와 privacy boundary를 검증한다.
-5. 검증된 기계 payload에서 Markdown을 만들고, 생성된 machine payload와 Markdown만 content manifest에 넣는다.
+4. run.json 이외의 Pydantic model, exported JSON Schema와 privacy boundary를 검증한다.
+5. typed `ReportData`와 machine entry에서 Markdown을 만들고, 생성된 machine payload와 Markdown만 content manifest에 넣는다.
 6. `COMPLETED` Run이면 `run.json.result_content_manifest_hash`를 확정한다. 미완료 Run은 Schema 계약대로
    해당 필드를 `null`로 유지하되 진단 보존을 위해 content manifest 파일 자체는 발행할 수 있다.
-7. staging directory를 fsync한다.
-8. 최종 `evals/results/<run_id>/`로 원자 rename한다.
-9. parent directory를 fsync하고 lock을 정리한다.
+7. 최종 run.json을 Pydantic model, exported JSON Schema와 privacy boundary로 검증한다.
+8. staging directory를 fsync한다.
+9. 최종 `evals/results/<run_id>/`로 원자 rename한다.
+10. parent directory를 fsync하고 lock을 정리한다.
 
 기존 최종 디렉터리나 lock이 있으면 덮어쓰거나 삭제하지 않고 `EVAL_RESULT_PATH_CONFLICT`로 실패한다.
 symlink component, root 이탈, Unicode 비정규화, `.`·`..`, cross-filesystem rename은 거부한다. 실패 시 새로 만든
@@ -376,7 +402,7 @@ semantic hash는 이번 Schema에 새 필드로 저장하지 않는다. Schema �
 | `ai_worker/tasks/evaluation/runner.py` | 실행 요청, Adapter 경계, Case 선택·정렬, 오류 격리와 상태 집계 |
 | `ai_worker/tasks/evaluation/config.py` | DEV execution request model·loader, 참조 경로 검증, resolved config hash |
 | `ai_worker/tasks/evaluation/manifest.py` | Artifact serialization·hash, content/semantic manifest 계산 |
-| `ai_worker/tasks/evaluation/reporter.py` | 검증된 JSON에서 비민감 Markdown Projection 생성 |
+| `ai_worker/tasks/evaluation/reporter.py` | typed `ReportData`와 machine entry에서 비민감 Markdown Projection 생성 |
 | `ai_worker/tasks/evaluation/cli.py` | `run-dev`, preflight, 안전한 경로·exit code·원자적 발행 연결 |
 | `ai_worker/tasks/evaluation/errors.py` | 필요한 안정 오류 code 추가 |
 | `ai_worker/tests/evaluation/test_runner.py` | 실행 순서, Adapter 성공·오류·미구현, 상태 집계 |
@@ -396,7 +422,9 @@ semantic hash는 이번 Schema에 새 필드로 저장하지 않는다. Schema �
 - execution request의 명시적 null, 참조 hash와 resolved config hash
 - 선택된 `(case_id, task_type)`별 Adapter 호출이 정확히 1회임을 검증
 - `INVALID > ERROR > NOT_IMPLEMENTED > NOT_EVALUATED` 집계
-- Adapter 예외의 비민감 Failure 변환
+- Adapter 예외의 비민감 `CaseResult(ERROR/null)` 변환과 빈 `failures.jsonl`
+- 미완료 Answer의 empty-output hash와 Task별 명시적 empty/null 필드
+- provenance-bound `input_sha256` preimage와 config 변경 시 hash 변화
 - canonical JSONL과 semantic projection
 - Markdown이 JSON 상태를 그대로 표시하고 원문을 포함하지 않음
 
