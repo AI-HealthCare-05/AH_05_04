@@ -143,10 +143,7 @@ class Config(BaseSettings):
         실행 중이 아니라 기동 시점에 드러내기 위해 여기서 먼저 막습니다.
         """
         if self.OCR_REQUEST_DEADLINE_SECONDS > self.WORKER_HARD_TIMEOUT_SECONDS:
-            raise ValueError(
-                "OCR_REQUEST_DEADLINE_SECONDS는 "
-                "WORKER_HARD_TIMEOUT_SECONDS를 초과할 수 없습니다."
-            )
+            raise ValueError("OCR_REQUEST_DEADLINE_SECONDS는 WORKER_HARD_TIMEOUT_SECONDS를 초과할 수 없습니다.")
         if self.WORKER_HEARTBEAT_INTERVAL_SECONDS >= self.WORKER_LEASE_DURATION_SECONDS:
             raise ValueError("WORKER_HEARTBEAT_INTERVAL_SECONDS는 WORKER_LEASE_DURATION_SECONDS보다 짧아야 합니다.")
 
