@@ -773,7 +773,13 @@ def _assert_case_entities_resolve(
         assert ENTITY_TOKEN_PATTERN.fullmatch(entity)
         assert medication.medication_fixture_id == f"SYNTHETIC_MEDICATION_FIXTURE_{entity}"
         assert medication.medication_product_fixture_id == f"SYNTHETIC_PRODUCT_FIXTURE_{entity}"
-        assert medication.ingredient_tokens == (f"SYNTHETIC_INGREDIENT_FIXTURE_{entity}",)
+        if _slice_value(case.slice_ids, "archetype:") == "duplicate-ingredient" and entity in {
+            "FICTIONAL_OTC_FLARE",
+            "FICTIONAL_RX_NEBULA",
+        }:
+            assert medication.ingredient_tokens == ("SYNTHETIC_INGREDIENT_FIXTURE_SHARED_NEBULA_FLARE",)
+        else:
+            assert medication.ingredient_tokens == (f"SYNTHETIC_INGREDIENT_FIXTURE_{entity}",)
         assert medication.strength_text_token == f"SYNTHETIC_STRENGTH_FIXTURE_{entity}"
         context_entities.append(entity)
 
@@ -788,7 +794,11 @@ def _assert_case_entities_resolve(
     entity_counts = Counter(context_entities)
     referenced_entities = _extract_entity_tokens(case.query)
     for evidence_ref in _case_evidence_refs(case):
-        referenced_entities.update(evidence_tokens_by_ref[evidence_ref])
+        evidence_entities = evidence_tokens_by_ref[evidence_ref]
+        if _slice_value(case.slice_ids, "archetype:") == "no-match":
+            assert evidence_entities - set(context_entities) == {"FICTIONAL_OTC_FLARE"}
+        else:
+            referenced_entities.update(evidence_entities)
     assert all(entity_counts[entity] == 1 for entity in referenced_entities), case.case_id
 
 
@@ -1376,7 +1386,6 @@ def test_runtime_cause_conformance_rejects_graph_mutation(mutation: str) -> None
 
 def test_committed_query_and_evidence_entities_resolve_once_to_typed_context() -> None:
     evidence_tokens_by_ref = _load_evidence_entity_tokens()
-
     for case in _load_committed_cases():
         _assert_case_entities_resolve(case, evidence_tokens_by_ref)
 
@@ -1814,6 +1823,38 @@ def test_holdout_safety_evidence_resources_do_not_expose_authoring_expected_fiel
     for resource_path in sorted(resources_root.glob("*.json")):
         resource = json.loads(resource_path.read_text(encoding="utf-8"))
         assert not _contains_expected_authoring_field(resource), resource_path
+
+
+def test_no_match_cases_exclude_the_positive_rule_pair_from_typed_input() -> None:
+    for case in _load_committed_cases():
+        if _slice_value(case.slice_ids, "archetype:") != "no-match":
+            continue
+
+        display_tokens = {fixture.display_name_token for fixture in case.context.medication_fixtures}
+        assert display_tokens == {
+            "SYNTHETIC_FICTIONAL_OTC_MIST",
+            "SYNTHETIC_FICTIONAL_RX_NEBULA",
+        }
+
+
+def test_duplicate_ingredient_cases_have_a_shared_typed_ingredient() -> None:
+    for case in _load_committed_cases():
+        if _slice_value(case.slice_ids, "archetype:") != "duplicate-ingredient":
+            continue
+
+        ingredient_sets = [set(fixture.ingredient_tokens) for fixture in case.context.medication_fixtures]
+        assert any(left & right for index, left in enumerate(ingredient_sets) for right in ingredient_sets[index + 1 :])
+
+
+def test_interaction_rule_evidence_entails_the_safety_actions_it_supports() -> None:
+    resource_path = (
+        EVALS_ROOT / "retrieval/evidence/resources/rag-holdout-safety-v1/synthetic-safety-interaction-rules.json"
+    )
+    statement = json.loads(resource_path.read_text(encoding="utf-8"))["records"]["positive_rule"]["statement"]
+
+    assert "시나리오 표" not in statement
+    for required_statement in ("반드시 실행", "중복 성분", "차단", "뒤집어서는 안"):
+        assert required_statement in statement
 
 
 @pytest.mark.parametrize(
