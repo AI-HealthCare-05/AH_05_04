@@ -135,10 +135,34 @@ def test_provider_descriptor_rejects_prompt_on_clova_operation() -> None:
         )
 
 
-def test_provider_observer_allows_explicit_unobserved_compatibility_mode() -> None:
-    observer = ProviderCallObserver(context=None, descriptor=None, call_logger=_logger(io.StringIO()))
+def test_provider_observer_rejects_implicit_unobserved_mode() -> None:
+    with pytest.raises(ValueError, match="requires context and descriptor"):
+        ProviderCallObserver(context=None, descriptor=None, call_logger=_logger(io.StringIO()))
+
+
+def test_provider_observer_allows_explicit_disabled_mode() -> None:
+    observer = ProviderCallObserver(
+        context=None,
+        descriptor=None,
+        call_logger=_logger(io.StringIO()),
+        observability_disabled=True,
+    )
 
     assert observer.start(requested_model="gpt-4o-mini") is None
+
+
+def test_provider_observer_rejects_configuration_in_disabled_mode() -> None:
+    with pytest.raises(ValueError, match="must not include context or descriptor"):
+        ProviderCallObserver(
+            context=_context(),
+            descriptor=ProviderCallDescriptor(
+                provider=Provider.OPENAI,
+                operation=ProviderOperation.CHAT_GENERATION,
+                prompt_version="chat-prompt-v2",
+            ),
+            call_logger=_logger(io.StringIO()),
+            observability_disabled=True,
+        )
 
 
 @pytest.mark.parametrize("missing", ["context", "descriptor"])

@@ -18,6 +18,10 @@
 
 `ProviderCallContext`는 서버 생성 `trace_id`, nullable UUID `validation_run_id`, Backend `environment`, `validation_enabled`만 가집니다. `ProviderCallDescriptor`는 `provider`, 승인된 `operation`, nullable `prompt_version`만 가집니다. FastAPI `Request`, payload, 예외 객체는 Provider logger 직렬화 경계로 전달하지 않습니다.
 
+Provider observability는 기본적으로 활성입니다. 활성 상태에서는 context와 descriptor를 모두 전달해야 하며 누락을 로그 0건으로 조용히 처리하지 않습니다. 테스트를 제외한 runtime `observability_disabled=true` allowlist는 local release evidence 범위 밖의 독립 평가 진입점 `backend.app.evaluation.chat_history_runner.execute` 하나뿐이며, 이 상태에는 context나 descriptor를 함께 전달하지 않습니다. 새 runtime opt-out은 이 current contract와 관련 회귀 테스트를 함께 갱신하고 Backend/API·Security 및 영향 도메인 리뷰를 받아야 합니다. HTTP dependency wiring은 opt-out하지 않습니다.
+
+현재 Worker에는 Provider adapter 조립 경로가 없고 #141도 OCR·Guide·Chat Handler 비즈니스 로직을 제외합니다. Worker Provider 경로를 추가하려면 먼저 [Issue #231](https://github.com/AI-HealthCare-05/AH_05_04/issues/231)에서 Backend 설정을 import하지 않는 공용 context·descriptor·enum 경계와 Worker `environment` 출처를 구현해야 합니다. #231 병합 전에는 Worker에 Backend DB credential을 주입하거나 Provider observability 타입을 중복 정의하거나 Provider adapter를 opt-out 상태로 조립하지 않습니다. #231 이후 Worker는 검증된 message trace와 operation descriptor를 사용하고, 현재 비동기 계약에서는 `validation_run_id=null`, `validation_enabled=false`로 context를 만듭니다.
+
 Provider는 `CLOVA_OCR`, `OPENAI`만 허용합니다. operation은 다음 네 값만 허용합니다.
 
 - `PRESCRIPTION_RECOGNITION`
@@ -48,6 +52,10 @@ API Key, CLOVA Secret, Authorization·Provider 인증 Header, 이미지 byte·�
 `local-live-full` runner만 validation Header와 trace 강제 검증을 사용합니다. trace 누락·비hex·오류 body 불일치는 실행 실패입니다. `provider_traces`는 CLOVA와 활성화된 OCR 구조화, Guide, Chat의 요청 trace를 기록합니다. OCR 구조화 비활성은 `SKIPPED`, `OCR_STRUCTURE_LLM_DISABLED`, `trace_id=null`입니다.
 
 OCR 구조화 활성 경로는 DB `model_version`·`prompt_version`과 `OCR_STRUCTURING` 로그가 모두 있어야 하고 비활성 경로는 모두 없어야 합니다. runner 결과는 API·DB·cleanup 성공 시에도 `provider_log_verification=MANUAL_REQUIRED`를 유지합니다.
+
+`local-live-full` 실행 경계에 진입한 결과는 성공과 실패 모두 `execution_mode=LIVE`를 기록합니다. `database_verification`은 실제 검증 단계에 따라 `NOT_RUN|FAIL|PASS`, `provider_log_verification`은 trace가 있으면 `MANUAL_REQUIRED`, 없으면 `UNVERIFIED`입니다. 수행하지 않은 검증을 `PASS`로 기록하지 않으며 Provider 로그 판정도 자동으로 `PASS`가 되지 않습니다.
+
+실패 Artifact는 공개 오류 body의 `details.reason` 중 `DEADLINE_EXCEEDED|PROVIDER_TIMEOUT`만 runner 전용 `failure_evidence.api_reason`으로 복사할 수 있습니다. 다른 reason과 `details`의 나머지 내용은 기록하지 않습니다.
 
 전체 증빙은 동일 `run_id`의 다음 세 Artifact와 지정 검토자 수동 판정으로 구성합니다.
 

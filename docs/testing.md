@@ -56,6 +56,20 @@ GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migrat
 bash scripts/ci/run_test.sh
 ```
 
+### test runner가 격리하는 설정
+
+`run_test.sh`는 `uv run --env-file`로 `envs/.local.env` 전체를 주입하지만, 그 파일은 컨테이너용이라 host 실행에서 달라야 하는 값을 아래와 같이 덮어씁니다. uv가 shell 환경변수를 `--env-file`보다 우선 적용하는 성질을 사용합니다.
+
+| 설정 | test 실행 값 | 격리하는 이유 |
+| --- | --- | --- |
+| `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
+| `DB_USER`·`DB_PASSWORD` | 환경파일 값 사용(shell 값 제거) | 실행자 shell의 계정이 섞이지 않게 합니다 |
+| `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다 |
+| `RELEASE_VALIDATION_ALLOWED` | `false` | local live 검증 절차가 켜두도록 안내하는 gate입니다 |
+| `OCR_STRUCTURE_LLM_ENABLED` | `false` | 위와 같습니다. 켜진 값이 필요한 테스트는 각자 `monkeypatch`로 설정합니다 |
+
+그 외 값은 환경파일을 그대로 따릅니다. 위 목록은 `tests/contract/test_run_test_env_isolation.py`가 고정하므로, 새로 격리해야 할 설정이 생기면 그 테스트도 함께 갱신합니다.
+
 기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
 - `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
 - `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
@@ -162,10 +176,10 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - Job 접수·상태 조회·결과 조회의 성공 응답과 `400`, `401`, `404`, `409`, `500`, `503` 오류 응답은 모두 `Cache-Control: no-store`를 포함합니다.
 - Job 접수·상태 조회 오류 응답은 공통 오류 envelope를 사용하고 `details`를 객체가 아니라 배열로 반환합니다.
 - HMAC key rotation 중 미만료 record가 존재할 수 있는 모든 retained key version 조회와 혼합 writer 차단 또는 rotation-invariant 원자 잠금으로 같은 원문 key의 중복 실행을 방지합니다. 현재·직전 key version만 조회하는 구현은 rotation 주기가 최대 멱등 레코드 보존기간보다 길 때만 허용합니다.
-- 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다.
-- 같은 멱등 키 동시 접수는 DB unique constraint로 하나만 Job을 생성하고 나머지는 기존 Job의 최신 `202`를 반환합니다.
+- 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다. Service·Repository 계층은 `#147`의 `test_job_intake.py`(`test_accept_job_rolls_back_all_records_when_document_not_owned_by_user` 등)로 real Postgres 기준 검증됐습니다. API 라우트가 없어 실제 `202`/오류 응답 형태 확인은 `#148`에서 이어집니다.
+- 같은 멱등 키 동시 접수는 DB unique constraint로 하나만 Job을 생성하고 나머지는 기존 Job의 최신 `202`를 반환합니다. DB unique constraint 기반 동시성 처리는 `#147`의 `test_accept_job_concurrent_same_key_creates_only_one_job`으로 검증됐고, 실제 `202` 응답은 `#148`에서 확인합니다.
 - 비동기 요청은 `record_type + user_id + operation_id + key_hmac`, 동기 요청은 `record_type + user_id + operation_id + parent_resource_id + key_hmac` unique 기준으로 동시 중복 생성을 차단합니다.
-- 만료된 멱등 row 정리와 새 Job 생성은 중복 Job·Outbox·Provider 호출을 만들지 않습니다.
+- 만료된 멱등 row 정리와 새 Job 생성은 중복 Job·Outbox·Provider 호출을 만들지 않습니다. Service·Repository 계층의 원자적 reclaim(만료 row 삭제 후 새 Job 생성, 경쟁 시 기존 unique constraint 재조회 경로로 합류)은 `#147`의 `test_accept_job_expired_record_is_reclaimed_and_creates_new_job`으로 검증됐습니다. 실제 `202` 응답은 `#148`에서 확인합니다.
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
 - Publisher가 `CLAIMED` Outbox row 선점 뒤 종료하면 claim 만료 후 같은 Outbox row를 재선점하며, Reconciler가 미발행 `PENDING` Job에 대해 새 attempt Outbox를 만들지 않는지 검증합니다.
 - Worker 종료 후 lease가 만료된 `PROCESSING` Job은 Reconciler가 회수해 재시도 가능하면 `RETRY_WAIT`, 재시도 소진이면 `FAILED`로 전환하며, 새 Provider 호출은 증가한 attempt의 새 Outbox 이후에만 발생합니다.

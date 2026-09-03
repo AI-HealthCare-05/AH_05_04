@@ -88,13 +88,11 @@ class OcrProviderTimeoutError(OcrProviderUnavailableError):
 
 
 class NotConfiguredOcrEngine:
-    """
-    TODO(김지혜): NAVER CLOVA OCR 실제 연동.
-    - object_key로 저장된 이미지를 읽어 CLOVA OCR API에 전송
-    - 인식 결과를 RecognizedField 목록(field_type: MEDICATION_NAME/DOSE_VALUE/DOSE_UNIT/
-      FREQUENCY_PER_DAY/TIMING/PRESCRIBED_DATE/DURATION_DAYS)으로 변환
-    - 연결 실패·타임아웃은 OcrProviderUnavailableError, 응답 처리 실패는 OcrProcessingError를
-      발생시켜야 OcrService가 명세된 503/500 오류로 변환합니다.
+    """실제 CLOVA OCR 연동은 `app/services/clova_ocr_engine.py`의 `ClovaOcrEngine`이 담당합니다.
+
+    이 클래스는 `OcrService`가 engine 없이 직접 생성될 때만 쓰이는 안전한 기본값(fallback)이며,
+    실제 요청 처리 경로에서는 `dependencies/services.py`의 `get_ocr_engine()`이 항상
+    `ClovaOcrEngine`을 주입하므로 호출되지 않습니다.
     """
 
     async def recognize(self, *, object_key: str, file_mime_type: str, deadline: OcrDeadline) -> OcrRecognitionResult:

@@ -52,6 +52,10 @@ class RaisingAsyncOpenAI:
         self.responses = RaisingResponses(error)
 
 
+def _client(client: object) -> OpenAIResponsesClient:
+    return OpenAIResponsesClient(client, observability_disabled=True)
+
+
 def _draft() -> GeneratedGuideDraft:
     return GeneratedGuideDraft(
         medications=[
@@ -84,7 +88,7 @@ def _response(
 
 async def test_client_uses_non_streaming_parse_and_returns_single_parsed_draft() -> None:
     sdk_client = FakeAsyncOpenAI(_response())
-    client = OpenAIResponsesClient(sdk_client)
+    client = _client(sdk_client)
 
     result = await client.generate(
         model="gpt-4o-mini",
@@ -111,16 +115,14 @@ async def test_client_uses_non_streaming_parse_and_returns_single_parsed_draft()
 
 
 async def test_client_rejects_refusal() -> None:
-    client = OpenAIResponsesClient(
-        FakeAsyncOpenAI(_response(content=[SimpleNamespace(type="refusal", refusal="refused")]))
-    )
+    client = _client(FakeAsyncOpenAI(_response(content=[SimpleNamespace(type="refusal", refusal="refused")])))
 
     with pytest.raises(GuideGenerationSafetyError):
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
 
 
 async def test_client_maps_provider_content_filter_to_safety_error() -> None:
-    client = OpenAIResponsesClient(FakeAsyncOpenAI(_response(status="incomplete", incomplete_reason="content_filter")))
+    client = _client(FakeAsyncOpenAI(_response(status="incomplete", incomplete_reason="content_filter")))
 
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
@@ -134,7 +136,7 @@ async def test_client_maps_refusal_before_generic_incomplete_status() -> None:
         content=[SimpleNamespace(type="refusal", refusal="refused")],
         incomplete_reason="max_output_tokens",
     )
-    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+    client = _client(FakeAsyncOpenAI(response))
 
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
@@ -145,7 +147,7 @@ async def test_client_maps_refusal_before_generic_incomplete_status() -> None:
 async def test_client_rejects_incomplete_message_inside_completed_response() -> None:
     response = _response()
     response.output[0].status = "incomplete"
-    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+    client = _client(FakeAsyncOpenAI(response))
 
     with pytest.raises(GuideGenerationInvalidResponseError):
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
@@ -163,7 +165,7 @@ async def test_client_rejects_multiple_messages_or_parsed_content_items() -> Non
 
     for response in (multiple_messages, multiple_content_items):
         with pytest.raises(GuideGenerationInvalidResponseError):
-            await OpenAIResponsesClient(FakeAsyncOpenAI(response)).generate(
+            await _client(FakeAsyncOpenAI(response)).generate(
                 model="gpt-4o-mini",
                 instructions="rules",
                 input_json="[]",
@@ -175,7 +177,7 @@ async def test_client_rejects_multiple_messages_or_parsed_content_items() -> Non
 async def test_client_maps_returned_provider_availability_errors(error_code: str) -> None:
     response = _response(status="failed")
     response.error = SimpleNamespace(code=error_code, message="must not escape")
-    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+    client = _client(FakeAsyncOpenAI(response))
 
     with pytest.raises(GuideGenerationUnavailableError) as exc_info:
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
@@ -193,7 +195,7 @@ async def test_client_maps_returned_provider_availability_errors(error_code: str
     ],
 )
 async def test_client_rejects_incomplete_or_unparseable_output(response: object) -> None:
-    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+    client = _client(FakeAsyncOpenAI(response))
 
     with pytest.raises(GuideGenerationInvalidResponseError):
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
@@ -202,7 +204,7 @@ async def test_client_rejects_incomplete_or_unparseable_output(response: object)
 async def test_client_maps_missing_actual_model_id_to_invalid_response() -> None:
     response = _response()
     response.model = None
-    client = OpenAIResponsesClient(FakeAsyncOpenAI(response))
+    client = _client(FakeAsyncOpenAI(response))
 
     with pytest.raises(GuideGenerationInvalidResponseError):
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
@@ -255,21 +257,21 @@ async def test_client_maps_missing_actual_model_id_to_invalid_response() -> None
 async def test_client_maps_sdk_errors_to_provider_neutral_errors(
     provider_error: Exception, domain_error: type[Exception]
 ) -> None:
-    client = OpenAIResponsesClient(RaisingAsyncOpenAI(provider_error))
+    client = _client(RaisingAsyncOpenAI(provider_error))
 
     with pytest.raises(domain_error):
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
 
 
 async def test_client_does_not_mask_unexpected_programming_errors() -> None:
-    client = OpenAIResponsesClient(RaisingAsyncOpenAI(RuntimeError("unexpected programming error")))
+    client = _client(RaisingAsyncOpenAI(RuntimeError("unexpected programming error")))
 
     with pytest.raises(RuntimeError, match="unexpected programming error"):
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)
 
 
 async def test_client_propagates_cancellation() -> None:
-    client = OpenAIResponsesClient(RaisingAsyncOpenAI(asyncio.CancelledError()))
+    client = _client(RaisingAsyncOpenAI(asyncio.CancelledError()))
 
     with pytest.raises(asyncio.CancelledError):
         await client.generate(model="gpt-4o-mini", instructions="rules", input_json="[]", max_output_tokens=400)

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, GateResult, MetricResults, SuiteResults
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest, EvidenceMappingManifest
+from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import EVALUATION_CASE_ADAPTER_V1_1
 from ai_worker.tests.evaluation.test_artifact_schemas import (
     _comparison_payload,
     _gate_payload,
@@ -46,6 +47,157 @@ def _assert_external_runtime_parity(
     assert external_errors
     with pytest.raises(ValidationError):
         runtime_model.model_validate(payload)
+
+
+def _v1_1_safety_case() -> dict[str, Any]:
+    payload = _json("retrieval/cases/dev-foundation-v1/rag-dev-safety-001.json")
+    payload["schema_version"] = "1.1.0"
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="ELIGIBLE",
+        bundle_eligibility_status="ELIGIBLE",
+        dependency_fault="NONE",
+    )
+    payload["expected"].update(
+        expected_rule_outcome="MATCHED_RULES",
+        expected_rule_not_invoked_reason=None,
+    )
+    return payload
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "matched-without-rules",
+        "no-match-with-rules",
+        "not-invoked-without-reason",
+        "source-axis-contradiction",
+        "reason-context-mismatch",
+        "bundle-reason-masks-source",
+        "fault-status-mismatch",
+        "not-invoked-with-dependency-fault",
+        "matched-with-ineligible-inputs",
+        "not-invoked-with-provider-invocation",
+        "not-invoked-with-retrieval-invocation",
+    ],
+)
+def test_external_v1_1_case_schema_matches_runtime_rule_and_fixture_invariants(mutation: str) -> None:
+    payload = _v1_1_safety_case()
+    if mutation == "matched-without-rules":
+        payload["expected"]["expected_rule_ids"] = []
+    elif mutation == "no-match-with-rules":
+        payload["expected"]["expected_rule_outcome"] = "NO_MATCH"
+    elif mutation == "not-invoked-without-reason":
+        payload["expected"].update(expected_rule_outcome="NOT_INVOKED", expected_rule_ids=[])
+    elif mutation == "source-axis-contradiction":
+        payload["context"]["runtime_fixture"]["source_eligibility_status"] = "EXPIRED"
+    elif mutation == "reason-context-mismatch":
+        payload["expected"].update(
+            expected_rule_outcome="NOT_INVOKED",
+            expected_rule_ids=[],
+            expected_rule_not_invoked_reason="BUNDLE_INELIGIBLE",
+        )
+    elif mutation == "bundle-reason-masks-source":
+        payload["context"]["runtime_fixture"].update(
+            source_eligibility_status="EXPIRED",
+            bundle_eligibility_status="SOURCE_INELIGIBLE",
+        )
+        payload["expected"].update(
+            expected_rule_outcome="NOT_INVOKED",
+            expected_rule_ids=[],
+            expected_rule_not_invoked_reason="BUNDLE_INELIGIBLE",
+        )
+    elif mutation == "not-invoked-with-dependency-fault":
+        payload["context"]["runtime_fixture"].update(
+            source_eligibility_status="EXPIRED",
+            bundle_eligibility_status="SOURCE_INELIGIBLE",
+            dependency_fault="PROVIDER_TIMEOUT",
+        )
+        payload["expected"].update(
+            expected_rule_outcome="NOT_INVOKED",
+            expected_rule_ids=[],
+            expected_rule_not_invoked_reason="SOURCE_INELIGIBLE",
+            expected_execution_status="TIMED_OUT",
+            expected_provider_invocation=True,
+        )
+    elif mutation == "matched-with-ineligible-inputs":
+        payload["context"]["runtime_fixture"].update(
+            source_eligibility_status="EXPIRED",
+            bundle_eligibility_status="SOURCE_INELIGIBLE",
+        )
+    elif mutation in {"not-invoked-with-provider-invocation", "not-invoked-with-retrieval-invocation"}:
+        payload["context"]["runtime_fixture"].update(
+            source_eligibility_status="EXPIRED",
+            bundle_eligibility_status="SOURCE_INELIGIBLE",
+        )
+        payload["expected"].update(
+            expected_rule_outcome="NOT_INVOKED",
+            expected_rule_ids=[],
+            expected_rule_not_invoked_reason="SOURCE_INELIGIBLE",
+            expected_provider_invocation=mutation == "not-invoked-with-provider-invocation",
+            expected_retrieval_invocation=mutation == "not-invoked-with-retrieval-invocation",
+        )
+    else:
+        payload["context"]["runtime_fixture"]["dependency_fault"] = "PROVIDER_TIMEOUT"
+
+    schema = _json("schemas/1.1.0/authoring/rag-eval.case.schema.json")
+    assert list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    ("source_status", "bundle_status"),
+    [
+        ("EXPIRED", "SOURCE_INELIGIBLE"),
+        ("ELIGIBLE", "SCOPE_INELIGIBLE"),
+        ("ELIGIBLE", "MEMBER_INELIGIBLE"),
+    ],
+)
+def test_external_v1_1_case_schema_rejects_safety_routed_masking_ineligible_inputs(
+    source_status: str,
+    bundle_status: str,
+) -> None:
+    payload = _v1_1_safety_case()
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status=source_status,
+        bundle_eligibility_status=bundle_status,
+    )
+    payload["expected"].update(
+        expected_rule_outcome="NOT_INVOKED",
+        expected_rule_ids=[],
+        expected_rule_not_invoked_reason="SAFETY_ROUTED",
+        expected_provider_invocation=False,
+        expected_retrieval_invocation=False,
+    )
+
+    schema = _json("schemas/1.1.0/authoring/rag-eval.case.schema.json")
+    assert list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    ["rag-dev-answer-quality-001.json", "rag-dev-answer-grounding-001.json"],
+)
+def test_external_v1_1_answer_schema_rejects_rule_ids_without_rule_outcome(fixture: str) -> None:
+    payload = _json(f"retrieval/cases/dev-foundation-v1/{fixture}")
+    payload["schema_version"] = "1.1.0"
+    payload["context"]["runtime_fixture"].update(
+        source_eligibility_status="ELIGIBLE",
+        bundle_eligibility_status="ELIGIBLE",
+        dependency_fault="NONE",
+    )
+    payload["expected"].update(
+        expected_rule_ids=["ev-synthetic-rule-001"],
+        expected_rule_outcome=None,
+        expected_rule_not_invoked_reason=None,
+    )
+
+    schema = _json("schemas/1.1.0/authoring/rag-eval.case.schema.json")
+    assert list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
+    with pytest.raises(ValidationError):
+        EVALUATION_CASE_ADAPTER_V1_1.validate_python(payload)
 
 
 @pytest.mark.parametrize(

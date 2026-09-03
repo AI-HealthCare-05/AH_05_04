@@ -35,6 +35,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): `AI_JOB`, Outbox, Idempotency, Prescription Version 도입 순서와 rollback 경계
+- [계정 생명주기 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 로그아웃·비밀번호 재설정·회원탈퇴의 `account_status`, `token_version` 세션 무효화와 transaction 경계 (Draft — 권가빈 승인 대기)
 - [Guide·Chat Session·Message 상태 구현 골격 v1](./proposed/guide-chat-session-message-status-ui-v1.md): Session/Message/Job 결과 상태축, SAFETY-STALE 경계, PROFILE 기반 소유권의 Frontend 구현 골격
 
 Proposed 계약은 관련 schema·service·CLI·테스트가 함께 병합되고 상태가 갱신되기 전에는 실행 가능한 계약으로 간주하지 않습니다.
@@ -52,7 +53,7 @@ Proposed 계약은 관련 schema·service·CLI·테스트가 함께 병합되고
 - [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): Approved v4 이력과 Track C 공통 Safety 기준; Track F 후속 의미는 v2가 대체
 - [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속
 - [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름
-- [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric과 Release 차단 기준
+- [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.1 후보와 Release 차단 기준
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
