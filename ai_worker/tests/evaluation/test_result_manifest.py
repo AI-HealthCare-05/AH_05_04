@@ -28,6 +28,7 @@ from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.runner import execute_dev_cases
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
+    ComparisonResult,
     ContentManifest,
     FailureRecord,
     MetricResults,
@@ -318,6 +319,56 @@ def test_content_manifest_excludes_run_and_self_but_includes_report() -> None:
         excluded_top_level_keys=frozenset({"manifest_sha256"}),
     )
     assert ContentManifest.model_validate_json(payload) == manifest
+
+
+def test_machine_artifacts_include_optional_comparison_and_bind_its_content() -> None:
+    draft = _draft()
+    comparison = ComparisonResult.model_validate(
+        {
+            "schema_id": "rag-eval.comparison",
+            "schema_version": "1.0.0",
+            "run_id": RUN_ID_A,
+            "experiment_id": "rag-dev-foundation",
+            "baseline_run_id": RUN_ID_B,
+            "baseline_run_hash": "a" * 64,
+            "candidate_run_id": RUN_ID_A,
+            "candidate_run_hash": "b" * 64,
+            "controlled_variable_checks": [
+                {
+                    "variable_key": "DATASET",
+                    "baseline_value_hash": "c" * 64,
+                    "candidate_value_hash": "c" * 64,
+                    "matched": True,
+                }
+            ],
+            "scope_comparisons": [
+                {
+                    "metric_id": "RECALL_AT_5",
+                    "partition": "DEV",
+                    "slice_id": "ALL",
+                    "baseline_value": "0.8",
+                    "candidate_value": "1",
+                    "absolute_delta": "0.2",
+                    "relative_delta": "0.25",
+                    "paired_test_method": None,
+                    "p_value": None,
+                    "comparison_decision": "INCONCLUSIVE",
+                }
+            ],
+            "execution_status": "COMPLETED",
+            "decision_status": "INCONCLUSIVE",
+        }
+    )
+
+    artifacts = finalize_artifacts(
+        replace(draft, comparison=comparison),
+        b"safe report\n",
+        completed_at=TIME_B,
+    )
+
+    assert ComparisonResult.model_validate_json(artifacts.files["comparison.json"]) == comparison
+    entry = next(item for item in artifacts.content_manifest.artifacts if item.relative_path == "comparison.json")
+    assert entry.size_bytes == len(artifacts.files["comparison.json"])
 
 
 def test_completed_run_links_content_manifest_but_incomplete_run_does_not() -> None:

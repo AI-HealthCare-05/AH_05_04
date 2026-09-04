@@ -24,6 +24,7 @@ from ai_worker.tasks.evaluation.schema_exports import schema_documents
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
     CaseResult,
+    ComparisonResult,
     ContentArtifact,
     ContentArtifactPath,
     ContentManifest,
@@ -98,6 +99,7 @@ class ArtifactDraft:
     cases: Sequence[CaseResult]
     metrics: MetricResults
     suite_results: SuiteResults
+    comparison: ComparisonResult | None
     failures: Sequence[FailureRecord]
 
 
@@ -366,6 +368,7 @@ def build_artifact_draft(material: RunMaterial) -> ArtifactDraft:
         cases=material.outcome.case_results,
         metrics=_build_metrics(material),
         suite_results=_build_suite_results(material),
+        comparison=None,
         failures=material.outcome.failure_records,
     )
 
@@ -402,12 +405,15 @@ def build_content_manifest(run_id: str, files: Mapping[str, bytes]) -> tuple[Con
 
 
 def machine_artifact_files(draft: ArtifactDraft) -> dict[str, bytes]:
-    return {
+    files = {
         "cases.jsonl": serialize_jsonl(draft.cases),
         "metrics.json": canonical_json_bytes(cast(JsonValue, draft.metrics.model_dump(mode="json"))),
         "suite-results.json": canonical_json_bytes(cast(JsonValue, draft.suite_results.model_dump(mode="json"))),
         "failures.jsonl": serialize_jsonl(draft.failures),
     }
+    if draft.comparison is not None:
+        files["comparison.json"] = canonical_json_bytes(cast(JsonValue, draft.comparison.model_dump(mode="json")))
+    return files
 
 
 def finalize_artifacts(
