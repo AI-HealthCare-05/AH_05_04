@@ -29,6 +29,8 @@ Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획�
 - 종료 신호 수신, 진행 중 실행 정리와 Redis·DB resource 종료
 - 실제 Redis·PostgreSQL과 명시적으로 주입한 Fake OCR Engine을 사용한
   OCR Handler 등록·dispatch one-cycle 통합 검증
+- DB Outbox due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·
+  `claim_token` fencing 완료 처리 (#219)
 
 남은 연결:
 
@@ -38,7 +40,7 @@ Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획�
   실제 Provider smoke: #258
 - Guide·Chat Handler 등록
 - lease 만료 reclaim·retry·quarantine·DLQ의 runtime 연결은 #142
-- Backend Outbox와 실제 요청 접수 경로 연결은 #219 및 관련 Track A 작업
+- Publisher 주기 실행·health check·운영 배포 조립
 
 #233의 완료 기준은 실제 CLOVA OCR 호출이 아니라, `OcrEngine`을 주입할 수 있는
 composition root와 명시적으로 주입한 Fake Engine을 사용한 Redis·PostgreSQL
@@ -61,6 +63,8 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 - 메시지 Codec: `ai_worker/adapters/redis_message_codec.py`
 - 생성 경계: `ai_worker/adapters/factory.py`
 - Event Publisher: `ai_worker/core/event_publisher.py`
+- Outbox Publisher: `ai_worker/core/outbox_publisher.py`
+- SQLAlchemy Outbox Repository: `ai_worker/adapters/sqlalchemy_outbox_repository.py`
 
 ### 설정
 
