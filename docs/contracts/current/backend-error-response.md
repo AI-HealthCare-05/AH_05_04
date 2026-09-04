@@ -229,7 +229,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 409 | `CONCURRENT_UPDATE_IN_PROGRESS` | "같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요." | 같은 문서의 처방 확정과 extracted-field PATCH가 동시에 요청되어 문서 row 잠금을 3초 안에 획득하지 못함 |
 | 422 | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | "처방 확정에 필요한 항목이 누락되었습니다." | 처방 확정 요청에 필수 항목이 없음 |
 | 409 | `OCR_JOB_NOT_COMPLETED` | "OCR 처리가 완료된 결과가 없어 처방을 확정할 수 없습니다." | OCR이 완료되기 전에 처방 확정을 요청함 |
-| 400 | `UPLOAD_FILE_TOO_LARGE` | "파일 크기는 10MB 이하만 업로드할 수 있습니다." | 10MB를 초과한 파일을 업로드함 |
+| 400 | `UPLOAD_FILE_TOO_LARGE` | "파일 크기는 30MB 이하만 업로드할 수 있습니다." | 30MB를 초과한 파일을 업로드함 |
 | 400 | `UPLOAD_FILE_INVALID_TYPE` | 상황별 안내 문구 (형식 미지원 / 확장자·MIME 불일치 / 시그니처 불일치) | 허용되지 않은 파일 형식을 업로드함 |
 | 404 | `MEDICAL_DOCUMENT_NOT_FOUND` | "의료문서를 찾을 수 없습니다." | 요청한 의료 문서가 없거나 다른 사용자 소유 |
 | 404 | `OCR_JOB_NOT_FOUND` | "OCR 작업 정보를 찾을 수 없습니다." | 요청한 OCR 작업 ID가 존재하지 않거나 다른 사용자 소유 |
