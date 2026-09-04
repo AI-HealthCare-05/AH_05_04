@@ -212,6 +212,8 @@ def test_query_binding_failures_stop_before_search(
     assert outcome.diagnostic_code is diagnostic
     assert verifier.calls == 1
     assert search.calls == 0
+    assert outcome.trace is not None
+    assert to_sanitized_trace_dict(outcome.trace)["diagnostic_code"] == diagnostic.value
 
 
 def test_search_results_normalize_same_evidence_into_one_candidate() -> None:

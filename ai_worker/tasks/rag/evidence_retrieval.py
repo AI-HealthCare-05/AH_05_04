@@ -285,6 +285,7 @@ def retrieve_knowledge_evidence(
         return _outcome(
             KernelExecutionStatus.VALIDATION_ERROR,
             KernelDiagnosticCode.REQUEST_INVALID,
+            request,
         )
 
     binding_failure = _query_binding_failure(request, query_verifier)
@@ -293,20 +294,20 @@ def retrieve_knowledge_evidence(
 
     candidates = _search_candidates(request, search_port)
     if candidates is None:
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.SEARCH_RESULT_INVALID)
+        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.SEARCH_RESULT_INVALID, request)
     if not candidates:
-        return _outcome(KernelExecutionStatus.SUCCEEDED, KernelDiagnosticCode.NO_HITS)
+        return _outcome(KernelExecutionStatus.SUCCEEDED, KernelDiagnosticCode.NO_HITS, request)
     rerank = getattr(rerank_port, "rerank", None)
     if not callable(rerank):
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR)
+        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR, request)
     rerank_request = _rerank_request(request, candidates)
     try:
         response = rerank(rerank_request)
     except Exception:
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR)
+        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR, request)
     selections = _validated_selections(request, rerank_request, response)
     if selections is None:
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID)
+        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID, request)
     return EvidenceRetrievalKernelOutcome(
         KernelExecutionStatus.SUCCEEDED,
         KernelDiagnosticCode.CANDIDATES_RERANKED,
@@ -438,8 +439,12 @@ def _validated_selections(
 def _outcome(
     execution_status: KernelExecutionStatus,
     diagnostic_code: KernelDiagnosticCode,
+    request: EvidenceRetrievalKernelRequest | None = None,
 ) -> EvidenceRetrievalKernelOutcome:
-    return EvidenceRetrievalKernelOutcome(execution_status, diagnostic_code)
+    trace = None
+    if isinstance(request, EvidenceRetrievalKernelRequest):
+        trace = _trace(request, execution_status, diagnostic_code, ())
+    return EvidenceRetrievalKernelOutcome(execution_status, diagnostic_code, trace=trace)
 
 
 def _query_binding_failure(
@@ -454,6 +459,7 @@ def _query_binding_failure(
         return _outcome(
             KernelExecutionStatus.DEPENDENCY_ERROR,
             KernelDiagnosticCode.QUERY_BINDING_DEPENDENCY_ERROR,
+            request,
         )
     if isinstance(verification, QueryBindingVerificationFailure):
         diagnostic = (
@@ -466,11 +472,12 @@ def _query_binding_failure(
             if verification.reason is QueryBindingFailureReason.INVALID_BINDING
             else KernelExecutionStatus.DEPENDENCY_ERROR
         )
-        return _outcome(status, diagnostic)
+        return _outcome(status, diagnostic, request)
     if not _is_matching_verification(verification, request.query_fingerprint):
         return _outcome(
             KernelExecutionStatus.DEPENDENCY_ERROR,
             KernelDiagnosticCode.QUERY_BINDING_RECEIPT_MISMATCH,
+            request,
         )
     return None
 
