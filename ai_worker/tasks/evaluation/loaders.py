@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import json
+import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,8 +91,23 @@ class ResolvedReference:
 
 
 @dataclass(frozen=True, slots=True)
+class LoadedResourceBinding:
+    relative_path: str
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationResourceBindings:
+    profile: LoadedResourceBinding
+    comparison_policy: LoadedResourceBinding
+    evaluation_policy: LoadedResourceBinding
+    suite: LoadedResourceBinding
+
+
+@dataclass(frozen=True, slots=True)
 class ValidatedDataset:
     manifest: DatasetManifestContract
+    dataset_manifest_resource: LoadedResourceBinding
     cases: tuple[EvaluationCaseContract, ...]
     evidence_mapping: EvidenceMappingContract
     rubric: CriticalClaimRubricContract
@@ -100,6 +116,7 @@ class ValidatedDataset:
     evaluation_policy: EvaluationPolicyContract
     suite: SuiteDefinitionContract
     protected_artifact_receipt: ProtectedArtifactReceiptContract | None
+    configuration_resources: ConfigurationResourceBindings
     reference_graph: tuple[ResolvedReference, ...]
     resource_hashes: tuple[tuple[str, str], ...]
 
@@ -171,10 +188,10 @@ class _SnapshotReader:
 
     def path(self, relative_path: str) -> Path:
         normalized = normalize_resource_path(relative_path)
-        return _safe_path(self.root, self.root / normalized)
+        return safe_path_under_root(self.root, self.root / normalized)
 
     def read_path(self, path: Path) -> _JsonSnapshot:
-        safe_path = _safe_path(self.root, path)
+        safe_path = safe_path_under_root(self.root, path)
         cached = self._cache.get(safe_path)
         if cached is not None:
             return cached
@@ -186,9 +203,16 @@ class _SnapshotReader:
             if error.errno in {errno.ENOTDIR, errno.EISDIR, errno.EACCES, errno.EPERM, errno.ELOOP}:
                 raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
             raise
-        value = _parse_json_object(raw_bytes)
+        value = parse_json_object_bytes(raw_bytes)
         relative = safe_path.relative_to(self.root).as_posix()
         snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, value)
+        self._cache[safe_path] = snapshot
+        return snapshot
+
+    def seed_path(self, path: Path, raw_bytes: bytes) -> _JsonSnapshot:
+        safe_path = safe_path_under_root(self.root, path)
+        relative = safe_path.relative_to(self.root).as_posix()
+        snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, parse_json_object_bytes(raw_bytes))
         self._cache[safe_path] = snapshot
         return snapshot
 
@@ -209,7 +233,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, JsonValue]]) -> dict[str, Json
     return result
 
 
-def _parse_json_object(raw_bytes: bytes) -> dict[str, JsonValue]:
+def parse_json_object_bytes(raw_bytes: bytes) -> dict[str, JsonValue]:
     try:
         decoded = raw_bytes.decode("utf-8", errors="strict")
         value = json.loads(decoded, object_pairs_hook=_reject_duplicate_keys)
@@ -232,9 +256,9 @@ def _parse_json_object(raw_bytes: bytes) -> dict[str, JsonValue]:
     return cast(dict[str, JsonValue], value)
 
 
-def _safe_path(root: Path, path: Path) -> Path:
-    root_absolute = root.absolute()
-    path_absolute = path.absolute()
+def safe_path_under_root(root: Path, path: Path) -> Path:
+    root_absolute = Path(os.path.abspath(root))
+    path_absolute = Path(os.path.abspath(path))
     try:
         relative = path_absolute.relative_to(root_absolute)
     except ValueError as error:
@@ -623,22 +647,32 @@ def _load_configuration(
     reader: _SnapshotReader,
     prefix: str,
     authoring: _AuthoringContract,
-) -> tuple[EvaluationProfileContract, ComparisonPolicy, EvaluationPolicyContract, SuiteDefinitionContract]:
+) -> tuple[
+    EvaluationProfileContract,
+    ComparisonPolicy,
+    EvaluationPolicyContract,
+    SuiteDefinitionContract,
+    ConfigurationResourceBindings,
+]:
+    profile_snapshot = reader.read(f"profiles/{prefix}.profile.json")
+    comparison_snapshot = reader.read(f"policies/{prefix}.comparison-policy.json")
+    policy_snapshot = reader.read(f"policies/{prefix}.evaluation-policy.json")
+    suite_snapshot = reader.read(f"suites/{prefix}.suite.json")
     profile = cast(
         EvaluationProfileContract,
-        _validate_model(reader.read(f"profiles/{prefix}.profile.json"), authoring.profile_model),
+        _validate_model(profile_snapshot, authoring.profile_model),
     )
     comparison = _validate_model(
-        reader.read(f"policies/{prefix}.comparison-policy.json"),
+        comparison_snapshot,
         ComparisonPolicy,
     )
     policy = cast(
         EvaluationPolicyContract,
-        _validate_model(reader.read(f"policies/{prefix}.evaluation-policy.json"), authoring.evaluation_policy_model),
+        _validate_model(policy_snapshot, authoring.evaluation_policy_model),
     )
     suite = cast(
         SuiteDefinitionContract,
-        _validate_model(reader.read(f"suites/{prefix}.suite.json"), authoring.suite_model),
+        _validate_model(suite_snapshot, authoring.suite_model),
     )
     for model, field in (
         (profile, "evaluation_profile_hash"),
@@ -647,7 +681,13 @@ def _load_configuration(
         (suite, "suite_hash"),
     ):
         _verify_self_hash(model, field)
-    return profile, comparison, policy, suite
+    bindings = ConfigurationResourceBindings(
+        profile=LoadedResourceBinding(profile_snapshot.relative_path, profile_snapshot.file_sha256),
+        comparison_policy=LoadedResourceBinding(comparison_snapshot.relative_path, comparison_snapshot.file_sha256),
+        evaluation_policy=LoadedResourceBinding(policy_snapshot.relative_path, policy_snapshot.file_sha256),
+        suite=LoadedResourceBinding(suite_snapshot.relative_path, suite_snapshot.file_sha256),
+    )
+    return profile, comparison, policy, suite, bindings
 
 
 def _resolve_reference(
@@ -795,9 +835,16 @@ def _validate_frozen_gold_closure(
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
 
-def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
+def load_dataset(
+    manifest_path: Path,
+    *,
+    evals_root: Path,
+    manifest_bytes: bytes | None = None,
+) -> ValidatedDataset:
     reader = _SnapshotReader(evals_root)
-    manifest_snapshot = reader.read_path(manifest_path)
+    manifest_snapshot = (
+        reader.read_path(manifest_path) if manifest_bytes is None else reader.seed_path(manifest_path, manifest_bytes)
+    )
     authoring = _authoring_contract(manifest_snapshot)
     manifest = cast(
         DatasetManifestContract,
@@ -823,7 +870,7 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
         if manifest.protected_artifact_receipt_ref is not None
         else None
     )
-    profile, comparison, policy, suite = _load_configuration(reader, prefix, authoring)
+    profile, comparison, policy, suite, configuration_resources = _load_configuration(reader, prefix, authoring)
     _validate_configuration_graph(manifest, cases, profile, comparison, policy, suite)
     if (
         suite.input_selector.dataset_code != manifest.dataset_code
@@ -877,6 +924,10 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
             raise EvaluationValidationError(EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED)
     return ValidatedDataset(
         manifest=manifest,
+        dataset_manifest_resource=LoadedResourceBinding(
+            relative_path=manifest_snapshot.relative_path,
+            sha256=manifest_snapshot.file_sha256,
+        ),
         cases=cases,
         evidence_mapping=evidence,
         rubric=rubric,
@@ -885,6 +936,7 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
         evaluation_policy=policy,
         suite=suite,
         protected_artifact_receipt=receipt,
+        configuration_resources=configuration_resources,
         reference_graph=graph,
         resource_hashes=reader.resource_hashes,
     )

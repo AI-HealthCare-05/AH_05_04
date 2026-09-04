@@ -348,7 +348,7 @@ def downgrade() -> None:
     op.drop_index("idx_dlq_outbox_claim_expires", table_name="dlq_outbox_event")
     op.drop_table("dlq_outbox_event")
 
-    op.drop_index("idx_message_quarantine_job", table_name="message_quarantine")
+    op.execute("DROP INDEX IF EXISTS idx_message_quarantine_job")
     op.drop_index("idx_message_quarantine_received", table_name="message_quarantine")
     op.drop_index("idx_message_quarantine_failure", table_name="message_quarantine")
     op.drop_table("message_quarantine")
@@ -369,8 +369,8 @@ def downgrade() -> None:
     op.drop_index("idx_ai_job_attempt_status_started", table_name="ai_job_attempt")
     op.drop_table("ai_job_attempt")
 
-    op.drop_index("idx_ai_job_lease_expires", table_name="ai_job")
+    op.execute("DROP INDEX IF EXISTS idx_ai_job_lease_expires")
     op.drop_index("idx_ai_job_status_available", table_name="ai_job")
-    op.drop_index("idx_ai_job_user_status_updated", table_name="ai_job")
+    op.execute("DROP INDEX IF EXISTS idx_ai_job_user_status_updated")
     op.drop_index("idx_ai_job_expected_event", table_name="ai_job")
     op.drop_table("ai_job")
