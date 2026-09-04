@@ -16,7 +16,7 @@ from ai_worker.tasks.evaluation.manifest import (
     finalize_artifacts,
     semantic_content_hash,
 )
-from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, FailureRecord
+from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, FailureRecord, FailureSummary
 from ai_worker.tests.evaluation.test_result_manifest import (
     RUN_ID_A,
     RUN_ID_B,
@@ -91,8 +91,8 @@ def _failure(run_id: str) -> FailureRecord:
         case_id="rag-ret-dev-001",
         failure_code="SYNTHETIC_FAILURE",
         failure_stage="RETRIEVAL",
-        expected_summary="EXPECTED_REQUIRED_EVIDENCE",
-        actual_summary="ACTUAL_REQUIRED_EVIDENCE_MISSING",
+        expected_summary=FailureSummary.EXPECTED_REQUIRED_EVIDENCE,
+        actual_summary=FailureSummary.ACTUAL_REQUIRED_EVIDENCE_MISSING,
         root_cause_code=None,
         followup_issue_ref=None,
         created_at=TIME_A,
@@ -162,7 +162,9 @@ def test_controlled_variable_mismatch_invalidates_comparison(
     candidate = _draft("RET-HR", run_id=RUN_ID_B)
     run_payload = dict(candidate.run_payload)
     if field == "comparison_policy_ref":
-        reference = dict(run_payload[field])
+        reference_value = run_payload[field]
+        assert isinstance(reference_value, dict)
+        reference = dict(reference_value)
         reference["hash"] = "b" * 64
         run_payload[field] = reference
     else:
