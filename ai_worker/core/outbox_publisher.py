@@ -12,6 +12,7 @@ from ai_worker.schemas.messages import WorkerMessage
 
 MAX_OUTBOX_BATCH_SIZE = 100
 
+
 @dataclass(frozen=True, slots=True)
 class ClaimedOutboxEvent:
     """발행 lease를 획득한 Outbox row의 비민감 envelope 필드입니다."""
@@ -85,9 +86,7 @@ class OutboxPublisher:
         if claim_lease <= timedelta(0):
             raise ValueError("claim_lease는 양수여야 합니다.")
         if not 1 <= batch_size <= MAX_OUTBOX_BATCH_SIZE:
-            raise ValueError(
-                f"batch_size는 1 이상 {MAX_OUTBOX_BATCH_SIZE} 이하여야 합니다."
-            )
+            raise ValueError(f"batch_size는 1 이상 {MAX_OUTBOX_BATCH_SIZE} 이하여야 합니다.")
 
         self._repository = repository
         self._event_publisher = event_publisher
