@@ -239,9 +239,11 @@ class DiagnosticHitRecord:
     rank: int
     stage_score: CanonicalScore
     content_sha256: str
+    evidence_index_ref: ImmutableArtifactRef
     source_snapshot_ref: ImmutableArtifactRef
     source_version: str
     locator: str
+    canonicalization_spec_version: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,11 +333,17 @@ def retrieve_knowledge_evidence(
         return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR, request, binding, search_result)
     if not isinstance(response, EvidenceRerankSuccess):
         return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID, request, binding, search_result)
+    rerank_adapter = (
+        response.adapter_artifact_ref
+        if _is_valid_artifact_ref(response.adapter_artifact_ref)
+        else None
+    )
+    observed_selections = _traceable_selection_records(response.selections)
     if not _rerank_receipt_matches(request, rerank_request, response):
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RECEIPT_MISMATCH, request, binding, search_result)
+        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RECEIPT_MISMATCH, request, binding, search_result, rerank_adapter, observed_selections)
     selections = _validated_selections(request, rerank_request, response)
     if selections is None:
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID, request, binding, search_result)
+        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID, request, binding, search_result, rerank_adapter, observed_selections)
     return EvidenceRetrievalKernelOutcome(
         KernelExecutionStatus.SUCCEEDED,
         KernelDiagnosticCode.CANDIDATES_RERANKED,
@@ -390,6 +398,7 @@ def _trace(
     search_result: _SearchExecution | None = None,
     rerank_adapter_artifact_ref: ImmutableArtifactRef | None = None,
     selections: tuple[UntrustedKnowledgeEvidenceSelection, ...] = (),
+    diagnostic_selections: tuple[DiagnosticSelectionRecord, ...] = (),
 ) -> EvidenceRetrievalDiagnosticTrace:
     adapters = dict(search_result.adapter_artifacts) if search_result else {}
     return EvidenceRetrievalDiagnosticTrace(
@@ -401,7 +410,15 @@ def _trace(
         adapters.get(EvidenceSearchStage.DENSE),
         rerank_adapter_artifact_ref,
         search_result.hits if search_result else (),
-        tuple(DiagnosticSelectionRecord(item.candidate.provenance.evidence_key, item.rerank_rank, item.rerank_score) for item in selections),
+        diagnostic_selections
+        or tuple(
+            DiagnosticSelectionRecord(
+                item.candidate.provenance.evidence_key,
+                item.rerank_rank,
+                item.rerank_score,
+            )
+            for item in selections
+        ),
     )
 
 
@@ -413,9 +430,11 @@ def _diagnostic_hit_dict(item: DiagnosticHitRecord) -> dict[str, object]:
         "rank": item.rank,
         "stage_score": item.stage_score.value,
         "content_sha256": item.content_sha256,
+        "evidence_index_ref": _artifact_dict(item.evidence_index_ref),
         "source_snapshot_ref": _artifact_dict(item.source_snapshot_ref),
         "source_version": item.source_version,
         "locator": item.locator,
+        "canonicalization_spec_version": item.canonicalization_spec_version,
     }
 
 
@@ -479,7 +498,11 @@ def _validated_selections(
 ) -> tuple[UntrustedKnowledgeEvidenceSelection, ...] | None:
     if not isinstance(response.selections, tuple) or len(response.selections) > request.selection_limit:
         return None
-    if not all(isinstance(item, EvidenceRerankSelection) for item in response.selections):
+    if not all(
+        isinstance(item, EvidenceRerankSelection)
+        and _is_nonempty_nfc_string(item.evidence_key)
+        for item in response.selections
+    ):
         return None
     candidates = {item.provenance.evidence_key: item for item in rerank_request.candidates}
     if len({item.evidence_key for item in response.selections}) != len(response.selections):
@@ -491,6 +514,26 @@ def _validated_selections(
             return None
         resolved.append(UntrustedKnowledgeEvidenceSelection(candidate, item.rerank_rank, item.rerank_score))
     return tuple(resolved)
+
+
+def _traceable_selection_records(value: object) -> tuple[DiagnosticSelectionRecord, ...]:
+    if not isinstance(value, tuple):
+        return ()
+    records: list[DiagnosticSelectionRecord] = []
+    for item in value:
+        if (
+            not isinstance(item, EvidenceRerankSelection)
+            or not _is_nonempty_nfc_string(item.evidence_key)
+            or not _is_positive_int(item.rerank_rank)
+            or not _is_valid_score(item.rerank_score)
+        ):
+            return ()
+        records.append(
+            DiagnosticSelectionRecord(
+                item.evidence_key, item.rerank_rank, item.rerank_score
+            )
+        )
+    return tuple(records)
 
 
 def _rerank_receipt_matches(
@@ -516,6 +559,8 @@ def _outcome(
     request: EvidenceRetrievalKernelRequest | None = None,
     query_verifier_artifact_ref: ImmutableArtifactRef | None = None,
     search_result: _SearchExecution | None = None,
+    rerank_adapter_artifact_ref: ImmutableArtifactRef | None = None,
+    diagnostic_selections: tuple[DiagnosticSelectionRecord, ...] = (),
 ) -> EvidenceRetrievalKernelOutcome:
     trace = None
     if isinstance(request, EvidenceRetrievalKernelRequest):
@@ -525,6 +570,8 @@ def _outcome(
             diagnostic_code,
             query_verifier_artifact_ref,
             search_result,
+            rerank_adapter_artifact_ref,
+            diagnostic_selections=diagnostic_selections,
         )
     return EvidenceRetrievalKernelOutcome(execution_status, diagnostic_code, trace=trace)
 
@@ -544,17 +591,23 @@ def _query_binding(
             request,
         )
     if isinstance(verification, QueryBindingVerificationFailure):
-        diagnostic = (
-            KernelDiagnosticCode.QUERY_BINDING_INVALID
-            if verification.reason is QueryBindingFailureReason.INVALID_BINDING
-            else KernelDiagnosticCode.QUERY_BINDING_DEPENDENCY_ERROR
+        if verification.reason is QueryBindingFailureReason.INVALID_BINDING:
+            return _outcome(
+                KernelExecutionStatus.VALIDATION_ERROR,
+                KernelDiagnosticCode.QUERY_BINDING_INVALID,
+                request,
+            )
+        if verification.reason is QueryBindingFailureReason.DEPENDENCY_ERROR:
+            return _outcome(
+                KernelExecutionStatus.DEPENDENCY_ERROR,
+                KernelDiagnosticCode.QUERY_BINDING_DEPENDENCY_ERROR,
+                request,
+            )
+        return _outcome(
+            KernelExecutionStatus.DEPENDENCY_ERROR,
+            KernelDiagnosticCode.QUERY_BINDING_RECEIPT_MISMATCH,
+            request,
         )
-        status = (
-            KernelExecutionStatus.VALIDATION_ERROR
-            if verification.reason is QueryBindingFailureReason.INVALID_BINDING
-            else KernelExecutionStatus.DEPENDENCY_ERROR
-        )
-        return _outcome(status, diagnostic, request)
     if not _is_matching_verification(verification, request.query_fingerprint):
         return _outcome(
             KernelExecutionStatus.DEPENDENCY_ERROR,
@@ -593,11 +646,12 @@ def _search_candidates(
             return _search_failure(KernelDiagnosticCode.SEARCH_DEPENDENCY_ERROR, all_hits, adapter_artifacts)
         if not isinstance(response, EvidenceSearchSuccess):
             return _search_failure(KernelDiagnosticCode.SEARCH_RESULT_INVALID, all_hits, adapter_artifacts)
+        if _is_valid_artifact_ref(response.adapter_artifact_ref):
+            adapter_artifacts[stage] = response.adapter_artifact_ref
         if not _search_receipt_matches(request, stage, response):
             return _search_failure(KernelDiagnosticCode.SEARCH_RECEIPT_MISMATCH, all_hits, adapter_artifacts)
         if not _search_hits_are_valid(request, stage, response):
             return _search_failure(KernelDiagnosticCode.SEARCH_RESULT_INVALID, all_hits, adapter_artifacts)
-        adapter_artifacts[stage] = response.adapter_artifact_ref
         all_hits.extend(response.hits)
     normalized = _normalize_candidates(all_hits)
     if isinstance(normalized, KernelDiagnosticCode):
@@ -630,9 +684,11 @@ def _search_execution(
             item.rank,
             item.stage_score,
             item.provenance.content_sha256,
+            item.provenance.evidence_index_ref,
             item.provenance.source_snapshot_ref,
             item.provenance.source_version,
             item.provenance.locator,
+            item.provenance.canonicalization_spec_version,
         )
         for item in hits
     )
@@ -715,9 +771,9 @@ def _is_valid_search_hit(
     return (
         item.stage is stage
         and item.rank == expected_rank
-        and item.provenance.evidence_index_ref == expected_evidence_index_ref
         and _is_valid_score(item.stage_score)
         and _is_valid_provenance(item.provenance)
+        and item.provenance.evidence_index_ref == expected_evidence_index_ref
         and _is_valid_sensitive_text(item.content_text)
         and hashlib.sha256(item.content_text.reveal().encode("utf-8")).hexdigest()
         == item.provenance.content_sha256

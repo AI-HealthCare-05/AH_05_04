@@ -2,6 +2,7 @@ import dataclasses
 import hashlib
 import json
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 
@@ -318,13 +319,15 @@ def test_valid_rerank_rebinds_selection_to_canonical_candidate() -> None:
     assert outcome.diagnostic_code is KernelDiagnosticCode.CANDIDATES_RERANKED
     assert outcome.untrusted_selections[0].candidate.provenance.evidence_key == "knowledge:chunk-1"
     assert outcome.trace is not None
-    trace = to_sanitized_trace_dict(outcome.trace)
+    trace = cast(dict[str, Any], to_sanitized_trace_dict(outcome.trace))
     assert "합성 복약 정보" not in json.dumps(trace, ensure_ascii=False)
     assert "normalized_query" not in trace
     assert trace["adapter_artifacts"]["query_verifier"]["artifact_code"] == "query-verifier"
     assert trace["adapter_artifacts"]["lexical"]["artifact_code"] == "search-adapter"
     assert trace["adapter_artifacts"]["rerank"]["artifact_code"] == "rerank-adapter"
     assert trace["hits"][0]["content_sha256"] == content_hash("합성 복약 근거")
+    assert trace["hits"][0]["evidence_index_ref"]["artifact_code"] == "knowledge-index"
+    assert trace["hits"][0]["canonicalization_spec_version"] == "knowledge-text@1"
     assert "content_text" not in trace["hits"][0]
     assert trace["selections"] == [
         {"evidence_key": "knowledge:chunk-1", "rerank_rank": 1, "rerank_score": "0.95"}
@@ -423,6 +426,8 @@ def test_search_receipt_mismatch_has_receipt_diagnostic() -> None:
     )
 
     assert outcome.diagnostic_code is KernelDiagnosticCode.SEARCH_RECEIPT_MISMATCH
+    assert outcome.trace is not None
+    assert outcome.trace.lexical_adapter_artifact_ref == artifact("search-adapter")
 
 
 def test_duplicate_evidence_key_in_one_stage_fails_closed() -> None:
@@ -465,6 +470,8 @@ def test_rerank_failures_are_classified_and_do_not_escape(
     )
 
     assert outcome.diagnostic_code is diagnostic
+    assert outcome.trace is not None
+    assert outcome.trace.rerank_adapter_artifact_ref == artifact("rerank-adapter")
 
 
 def test_malformed_score_fails_closed_without_exception() -> None:
@@ -485,3 +492,54 @@ def test_malformed_score_fails_closed_without_exception() -> None:
     )
 
     assert outcome.diagnostic_code is KernelDiagnosticCode.SEARCH_RESULT_INVALID
+
+
+def test_malformed_nested_provenance_fails_closed_without_exception() -> None:
+    request = lexical_request()
+    malformed = replace(
+        hit(EvidenceSearchStage.LEXICAL, "0.9"),
+        provenance=object(),  # type: ignore[arg-type]
+    )
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (malformed,))
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: response}),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.SEARCH_RESULT_INVALID
+
+
+def test_unhashable_rerank_key_fails_closed_without_exception() -> None:
+    request = lexical_request()
+    response = search_success(
+        request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),)
+    )
+
+    class UnhashableKeyRerank(SuccessfulRerankPort):
+        def rerank(self, rerank_request: EvidenceRerankRequest) -> EvidenceRerankSuccess:
+            selection = EvidenceRerankSelection([], 1, CanonicalScore("0.95"))  # type: ignore[arg-type]
+            return replace(super().rerank(rerank_request), selections=(selection,))
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: response}),
+        rerank_port=UnhashableKeyRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.RERANK_RESULT_INVALID
+
+
+def test_malformed_query_failure_reason_is_receipt_mismatch() -> None:
+    malformed = QueryBindingVerificationFailure("not-an-enum")  # type: ignore[arg-type]
+    outcome = retrieve_knowledge_evidence(
+        lexical_request(),
+        query_verifier=QueryVerifier(malformed),
+        search_port=NeverSearch(),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.QUERY_BINDING_RECEIPT_MISMATCH
