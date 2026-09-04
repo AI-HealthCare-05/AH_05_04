@@ -8,6 +8,7 @@ retrieval candidates only.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -207,6 +208,13 @@ class KnowledgeEvidenceCandidate:
 
 @dataclass(frozen=True, slots=True)
 class EvidenceRerankRequest:
+    query_fingerprint: QueryFingerprint
+    filter_snapshot_ref: ImmutableArtifactRef
+    evidence_index_ref: ImmutableArtifactRef
+    retrieval_config_ref: ImmutableArtifactRef
+    rerank_config_ref: ImmutableArtifactRef
+    projection_version: str
+    input_set_hash: str
     candidates: tuple[KnowledgeEvidenceCandidate, ...]
 
 
@@ -216,10 +224,37 @@ class EvidenceRerankFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceRerankSelection:
+    evidence_key: str
+    rerank_rank: int
+    rerank_score: CanonicalScore
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceRerankSuccess:
+    query_fingerprint: QueryFingerprint
+    filter_snapshot_ref: ImmutableArtifactRef
+    evidence_index_ref: ImmutableArtifactRef
+    retrieval_config_ref: ImmutableArtifactRef
+    rerank_config_ref: ImmutableArtifactRef
+    projection_version: str
+    input_set_hash: str
+    adapter_artifact_ref: ImmutableArtifactRef
+    selections: tuple[EvidenceRerankSelection, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UntrustedKnowledgeEvidenceSelection:
+    candidate: KnowledgeEvidenceCandidate
+    rerank_rank: int
+    rerank_score: CanonicalScore
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceRetrievalKernelOutcome:
     execution_status: KernelExecutionStatus
     diagnostic_code: KernelDiagnosticCode
-    untrusted_selections: tuple[object, ...] = ()
+    untrusted_selections: tuple[UntrustedKnowledgeEvidenceSelection, ...] = ()
     failure_details: tuple[str, ...] = ()
 
 
@@ -249,11 +284,90 @@ def retrieve_knowledge_evidence(
     rerank = getattr(rerank_port, "rerank", None)
     if not callable(rerank):
         return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR)
+    rerank_request = _rerank_request(request, candidates)
     try:
-        rerank(EvidenceRerankRequest(candidates))
+        response = rerank(rerank_request)
     except Exception:
         return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR)
-    return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID)
+    selections = _validated_selections(request, rerank_request, response)
+    if selections is None:
+        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID)
+    return EvidenceRetrievalKernelOutcome(
+        KernelExecutionStatus.SUCCEEDED,
+        KernelDiagnosticCode.CANDIDATES_RERANKED,
+        selections,
+    )
+
+
+def canonical_rerank_input_hash(
+    projection_version: str, candidates: tuple[KnowledgeEvidenceCandidate, ...]
+) -> str:
+    payload = {
+        "projection_version": projection_version,
+        "candidates": [
+            {
+                "evidence_key": item.provenance.evidence_key,
+                "knowledge_chunk_ref": item.provenance.knowledge_chunk_ref,
+                "content_sha256": item.provenance.content_sha256,
+                "signals": [
+                    {"stage": signal.stage.value, "rank": signal.rank, "score": signal.score.value}
+                    for signal in item.stage_signals
+                ],
+            }
+            for item in sorted(candidates, key=lambda value: value.provenance.evidence_key.encode())
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _rerank_request(
+    request: EvidenceRetrievalKernelRequest,
+    candidates: tuple[KnowledgeEvidenceCandidate, ...],
+) -> EvidenceRerankRequest:
+    return EvidenceRerankRequest(
+        request.query_fingerprint, request.filter_snapshot_ref, request.evidence_index_ref,
+        request.retrieval_config_ref, request.rerank_config_ref,
+        request.rerank_input_projection_version,
+        canonical_rerank_input_hash(request.rerank_input_projection_version, candidates), candidates,
+    )
+
+
+def _validated_selections(
+    request: EvidenceRetrievalKernelRequest,
+    rerank_request: EvidenceRerankRequest,
+    response: object,
+) -> tuple[UntrustedKnowledgeEvidenceSelection, ...] | None:
+    if not isinstance(response, EvidenceRerankSuccess):
+        return None
+    if (
+        response.query_fingerprint != request.query_fingerprint
+        or response.filter_snapshot_ref != request.filter_snapshot_ref
+        or response.evidence_index_ref != request.evidence_index_ref
+        or response.retrieval_config_ref != request.retrieval_config_ref
+        or response.rerank_config_ref != request.rerank_config_ref
+        or response.projection_version != rerank_request.projection_version
+        or response.input_set_hash != rerank_request.input_set_hash
+        or not _is_valid_artifact_ref(response.adapter_artifact_ref)
+        or len(response.selections) > request.selection_limit
+    ):
+        return None
+    candidates = {item.provenance.evidence_key: item for item in rerank_request.candidates}
+    if len({item.evidence_key for item in response.selections}) != len(response.selections):
+        return None
+    resolved: list[UntrustedKnowledgeEvidenceSelection] = []
+    for rank, item in enumerate(response.selections, start=1):
+        candidate = candidates.get(item.evidence_key)
+        if (
+            not isinstance(item, EvidenceRerankSelection)
+            or item.rerank_rank != rank
+            or candidate is None
+            or not _is_valid_score(item.rerank_score)
+        ):
+            return None
+        resolved.append(UntrustedKnowledgeEvidenceSelection(candidate, item.rerank_rank, item.rerank_score))
+    return tuple(resolved)
 
 
 def _outcome(

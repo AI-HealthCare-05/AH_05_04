@@ -9,6 +9,8 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     CanonicalScore,
     EvidenceRerankFailure,
     EvidenceRerankRequest,
+    EvidenceRerankSelection,
+    EvidenceRerankSuccess,
     EvidenceRetrievalKernelRequest,
     EvidenceSearchStage,
     EvidenceSearchSuccess,
@@ -139,6 +141,21 @@ class CapturingRerankPort:
         return EvidenceRerankFailure()
 
 
+class SuccessfulRerankPort:
+    def rerank(self, request: EvidenceRerankRequest) -> EvidenceRerankSuccess:
+        return EvidenceRerankSuccess(
+            request.query_fingerprint,
+            request.filter_snapshot_ref,
+            request.evidence_index_ref,
+            request.retrieval_config_ref,
+            request.rerank_config_ref,
+            request.projection_version,
+            request.input_set_hash,
+            artifact("rerank-adapter"),
+            (EvidenceRerankSelection("knowledge:chunk-1", 1, CanonicalScore("0.95")),),
+        )
+
+
 def test_sensitive_text_redacts_representation_and_is_not_json_serializable() -> None:
     secret = "이 민감한 질의는 로그에 남으면 안 됩니다"
     value = SensitiveText(secret)
@@ -226,3 +243,26 @@ def test_search_results_normalize_same_evidence_into_one_candidate() -> None:
         StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),
         StageSignal(EvidenceSearchStage.DENSE, 1, CanonicalScore("0.8")),
     )
+
+
+def test_valid_rerank_rebinds_selection_to_canonical_candidate() -> None:
+    request = lexical_request()
+    search = SearchPort(
+        {
+            EvidenceSearchStage.LEXICAL: EvidenceSearchSuccess.from_request(
+                request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),)
+            )
+        }
+    )
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(
+            QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))
+        ),
+        search_port=search,
+        rerank_port=SuccessfulRerankPort(),
+    )
+
+    assert outcome.execution_status is KernelExecutionStatus.SUCCEEDED
+    assert outcome.diagnostic_code is KernelDiagnosticCode.CANDIDATES_RERANKED
+    assert outcome.untrusted_selections[0].candidate.provenance.evidence_key == "knowledge:chunk-1"
