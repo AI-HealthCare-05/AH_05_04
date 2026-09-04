@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -62,6 +62,21 @@ _FAILURE_CODE_VALUES = (
     "INTERNAL_ERROR",
 )
 _FAILURE_CODE_LIST_SQL = _sql_in_list(_FAILURE_CODE_VALUES)
+
+# `JobErrorData.code`(dtos/jobs.py)의 타입입니다. `str`로 두면 OpenAPI가 이 필드를 그냥
+# string으로 표현해 FE 생성 타입이 실제 7개 값을 알 수 없습니다(#148 리뷰 지적). 이 리터럴이
+# `_FAILURE_CODE_VALUES`와 어긋나지 않는지는
+# test_async_job_schema.test_ai_job_failure_code_literal_matches_check_constraint_values로
+# 고정합니다.
+AiJobFailureCode = Literal[
+    "TIMEOUT",
+    "DEPENDENCY_UNAVAILABLE",
+    "INVALID_INPUT",
+    "UNSUPPORTED_SCHEMA",
+    "SAFETY_VALIDATION_FAILED",
+    "RETRY_EXHAUSTED",
+    "INTERNAL_ERROR",
+]
 
 
 class AiJobType(StrEnum):

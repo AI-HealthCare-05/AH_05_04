@@ -203,6 +203,21 @@ Revision `c3f8a12d9e47`은 `ocr_job.ai_job_id` nullable FK와 `uq_ocr_job_ai_job
 
 Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix를 사용합니다. 비운영 환경에서도 `ocr_job.ai_job_id IS NOT NULL`인 행이 하나라도 존재하면 migration은 제약이나 컬럼을 제거하기 전에 downgrade를 중단합니다. downgrade가 필요하면 승인된 절차에 따라 연결 정보를 백업하거나 정리한 뒤 non-null 행이 0건인지 다시 검증해야 합니다.
 
+## Guide–AI Job Mapping Migration rollback 정책
+
+Revision `20fd11d29ecc`는 OCR과 같은 목적으로 `guide.ai_job_id` nullable FK와 `uq_guide_ai_job` unique 제약을 추가합니다.
+
+- FK: `fk_guide_ai_job`
+- 참조 대상: `ai_job.id`
+- 삭제 동작: `ON DELETE SET NULL`
+- unique 제약: `uq_guide_ai_job`
+- 기존 Guide 행: `ai_job_id=NULL` 유지
+- 기존 행을 위한 synthetic AI Job이나 backfill은 생성하지 않음
+
+Outbox는 30일, Job은 90일 보존이므로 이 컬럼 없이 Outbox 역조회(`get_interim_domain_reference`)에만 의존하면 31~90일 구간에서 Job이 살아있어도 rediscovery·`GET /jobs/{job_id}`가 `404`를 반환할 수 있습니다(#148 네 번째 리뷰 지적). `JobStatusService`는 `guide.ai_job_id`가 채워진 뒤에는 이 값을 Outbox 역조회보다 우선 사용합니다.
+
+Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix를 사용합니다. 비운영 환경에서도 `guide.ai_job_id IS NOT NULL`인 행이 하나라도 존재하면 migration은 제약이나 컬럼을 제거하기 전에 downgrade를 중단합니다. downgrade가 필요하면 승인된 절차에 따라 연결 정보를 백업하거나 정리한 뒤 non-null 행이 0건인지 다시 검증해야 합니다.
+
 ## 생성 상태
 
 - `guide.generation_status`: `PENDING | GENERATING | COMPLETED | FAILED`

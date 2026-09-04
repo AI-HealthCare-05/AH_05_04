@@ -6,7 +6,11 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse as Response
 
 from app.dependencies.security import get_request_user
-from app.dependencies.services import get_medical_document_service, get_ocr_service, get_prescription_service
+from app.dependencies.services import (
+    get_medical_document_service,
+    get_ocr_service,
+    get_prescription_service,
+)
 from app.dtos.medical_documents import (
     MedicalDocumentType,
     PrescriptionDocumentUploadData,
@@ -73,6 +77,13 @@ async def execute_ocr(
         content=OcrJobResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_202_ACCEPTED,
     )
+
+
+# GET /{document_id}/ocr-jobs (재접속 복구): execute_ocr가 JobIntakeService.accept_job()에
+# 연결되기 전까지는(#219/#232/#233) 실제 사용자가 생성한 어떤 OCR Job도 AiJob 매핑을 가질 수
+# 없어 정상 200 경로가 존재하지 않습니다. 라우트 등록과 docs/api.md 현재 API 목록 등재를
+# 접수 연결 시점까지 보류합니다(#148 세 번째 리뷰). 서비스 로직(JobStatusService.rediscover_ocr_job)과
+# 그 테스트는 남겨 두어 연결 시점에 라우트만 다시 추가하면 되도록 합니다.
 
 
 @medical_document_router.post(
