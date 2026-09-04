@@ -1,7 +1,7 @@
 """create medication candidate search
 
 Revision ID: 164a1b2c3d4e
-Revises: c3f8a12d9e47
+Revises: d1e2f3a4b5c6
 Create Date: 2026-09-04
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "164a1b2c3d4e"
-down_revision: str | Sequence[str] | None = "c3f8a12d9e47"
+down_revision: str | Sequence[str] | None = "d1e2f3a4b5c6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
