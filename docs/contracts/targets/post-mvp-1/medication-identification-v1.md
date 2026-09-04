@@ -38,6 +38,19 @@ OCR `raw_value`, `normalized_value`, 검수 전 Structured Output, `source_ids`,
 - 비활성 Source는 신규 후보·Rule 평가에서 제외하되 과거 Identification과 Citation provenance는 보존한다.
 - OCR Candidate Index와 의료 Evidence Index는 version과 물리 경계를 분리한다. pgvector는 Candidate Resolver의 보조 단계이며 자동 확정 근거가 아니다.
 
+Candidate Catalog와 Candidate Index manifest는 Source Snapshot ID와 Source version을 독립 배열로
+저장하지 않고 `(snapshot_id, source_version)`이 결속된 불변 Source reference 목록으로 보존한다.
+Product-name Search Entry는 Product publication Snapshot과, 승인 Alias Search Entry는 Alias publication
+Snapshot과 일치해야 한다. Product와 내부 승인 Alias는 서로 다른 Snapshot일 수 있으나 둘 다 같은
+Catalog export에 포함돼야 한다. Candidate 구성원은 Product·Entry·nullable Alias Snapshot을 각각
+보존하며 하나의 모호한 Source 필드로 합치지 않는다.
+
+필수 Catalog·Source·Identity·reference·검색 문자열이 비어 있거나, active·approved Entry가 비활성
+Product 또는 유효하지 않은 Alias를 참조하거나, 검증 뒤 Candidate 구성원이 0건이면 Candidate Index를
+활성화하지 않는다. Catalog와 query 문자열은 Unicode NFC여야 하며 입력 경계에서 조용히 변환하지
+않는다. 실패 응답과 내부 failure detail에는 원문 검색 문자열·Alias·vector·credential을 포함하지
+않는다.
+
 ### 조건부 보험코드 확장 — P0 비활성
 
 PR #96과 현재 OCR·Prescription 계약에는 보험코드를 추출·Grounding·사용자 확정하여 Prescription Version Medication에 이관하는 경계가 없다. 따라서 RAG P0 기본 Bundle에서는 `insurance_code_text`를 입력 DTO·Exact 검색·공개 UI·Contract Test의 활성 신호로 사용하지 않는다. 필드가 없거나 null이어도 제품명 경로를 계속한다.

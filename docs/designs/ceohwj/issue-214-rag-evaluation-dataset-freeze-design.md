@@ -25,6 +25,13 @@ Dataset과 필수 Gold provenance는 Team `APPROVED`, Dataset은 `FROZEN`이다.
 4. `docs/privacy-safety.md`, `docs/testing.md`
 5. RAG 문서 정본 manifest `2026-08-29.11`의 `evaluation-plan.md@1.35`
 
+이관 뒤에도 정본 식별을 재현할 수 있도록 다음 authority hash를 보존한다.
+
+| 정본 | SHA-256 |
+| --- | --- |
+| `evaluation-plan.md@1.35` | `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
+| 역사적 `rag-eval.schema-set@1.1.0` | `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0` |
+
 정본 계획의 12개 category 최소값 합은 153이지만 정확한 `60/93` 분할은 Issue #214의 Dataset Freeze
 결정이다. 오래된 `END_TO_END_FINAL`, `NOT_RUN`, 미실행을 `INCONCLUSIVE`로 보는 값은 사용하지 않는다.
 
