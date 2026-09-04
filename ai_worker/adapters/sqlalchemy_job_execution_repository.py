@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Integer,
     String,
+    and_,
     column,
     exists,
     func,
@@ -23,6 +24,7 @@ from ai_worker.core.job_execution import (
     ExecutionLease,
     LeaseAcquisitionResult,
     LeaseNotAcquired,
+    LeaseRejectionReason,
 )
 from ai_worker.schemas.messages import WorkerMessage
 
@@ -138,6 +140,15 @@ class SqlAlchemyJobExecutionRepository:
 
         job_id = str(message.job_id)
         event_id = str(message.event_id)
+        rejection_reason = await self._classify_poison_message(
+            message,
+        )
+
+        if rejection_reason is not None:
+            return LeaseNotAcquired(
+                rejection_reason=rejection_reason,
+            )
+
         lease_token = uuid4().hex
         lease_expires_at = now + lease_duration
 
@@ -199,6 +210,61 @@ class SqlAlchemyJobExecutionRepository:
             lease_token=lease_token,
             lease_expires_at=lease_expires_at,
         )
+
+    async def _classify_poison_message(
+        self,
+        message: WorkerMessage,
+    ) -> LeaseRejectionReason | None:
+        job_id = str(message.job_id)
+        event_id = str(message.event_id)
+        statement = (
+            select(
+                _AI_JOB.c.expected_event_id,
+                _AI_JOB.c.attempt_count,
+                _AI_JOB.c.status,
+                _AI_JOB.c.job_type,
+                _OUTBOX_EVENT.c.event_id.label("outbox_event_id"),
+                _OUTBOX_EVENT.c.attempt.label("outbox_attempt"),
+                _OUTBOX_EVENT.c.event_kind.label("outbox_event_kind"),
+            )
+            .select_from(
+                _AI_JOB.outerjoin(
+                    _OUTBOX_EVENT,
+                    and_(
+                        _OUTBOX_EVENT.c.event_id == event_id,
+                        _OUTBOX_EVENT.c.job_id == job_id,
+                    ),
+                )
+            )
+            .where(_AI_JOB.c.id == job_id)
+        )
+        result = await self._session.execute(statement)
+        row = result.mappings().one_or_none()
+
+        if row is None:
+            return LeaseRejectionReason.JOB_NOT_FOUND
+
+        if (
+            str(row["expected_event_id"]) != event_id
+            or str(row["job_type"]) != message.job_type.value
+            or row["outbox_event_id"] is None
+            or str(row["outbox_event_kind"]) != message.event_kind
+        ):
+            return LeaseRejectionReason.EVENT_MISMATCH
+
+        if int(row["outbox_attempt"]) != message.attempt:
+            return LeaseRejectionReason.ATTEMPT_MISMATCH
+
+        current_attempt = int(row["attempt_count"])
+
+        # 다른 Worker가 같은 event의 lease를 먼저 획득한 정상 경합입니다.
+        if str(row["status"]) == "PROCESSING" and current_attempt == message.attempt:
+            return None
+
+        if current_attempt != message.attempt - 1:
+            return LeaseRejectionReason.ATTEMPT_MISMATCH
+
+        return None
 
     async def refresh_heartbeat(
         self,

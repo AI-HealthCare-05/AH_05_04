@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
-| 구현·리뷰 | 부분 구현 · Outbox 접수(#147), Redis Adapter·EventPublisher(#140), DB Outbox 선점·발행(#219), Worker lease·fencing(#141) 구현. reclaim·retry·quarantine·DLQ(#142) 대기 |
+| 구현·리뷰 | Outbox 접수(#147), Redis Adapter·EventPublisher(#140), DB Outbox 선점·발행(#219), Worker lease·fencing(#141), reclaim·retry·quarantine·DLQ(#142) 구현 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
 | Last verified | 2026-08-27 |
 

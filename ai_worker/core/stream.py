@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from ai_worker.schemas.messages import WorkerMessage
+
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 if TYPE_CHECKING:
     from ai_worker.core.quarantine import RejectedWorkerDelivery
@@ -18,10 +21,16 @@ class WorkerDelivery:
 
     stream_message_id: str
     message: WorkerMessage
+    stream_name: str | None = None
+    message_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not self.stream_message_id.strip():
             raise ValueError("stream_message_id는 비어 있을 수 없습니다.")
+        if self.stream_name is not None and not self.stream_name.strip():
+            raise ValueError("stream_name은 비어 있을 수 없습니다.")
+        if self.message_digest is not None and _SHA256_PATTERN.fullmatch(self.message_digest) is None:
+            raise ValueError("message_digest는 64자리 lowercase SHA-256이어야 합니다.")
 
 
 @dataclass(frozen=True, slots=True)

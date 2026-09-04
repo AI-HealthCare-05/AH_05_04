@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
@@ -28,9 +29,19 @@ class CommittedDelivery:
     attempt: int
 
 
+class LeaseRejectionReason(StrEnum):
+    """정상 lease 경합과 구분되는 poison message 사유입니다."""
+
+    JOB_NOT_FOUND = "JOB_NOT_FOUND"
+    EVENT_MISMATCH = "EVENT_MISMATCH"
+    ATTEMPT_MISMATCH = "ATTEMPT_MISMATCH"
+
+
 @dataclass(frozen=True, slots=True)
 class LeaseNotAcquired:
     """조건 불일치 또는 동시 경합으로 lease를 얻지 못했습니다."""
+
+    rejection_reason: LeaseRejectionReason | None = None
 
 
 type LeaseAcquisitionResult = ExecutionLease | CommittedDelivery | LeaseNotAcquired

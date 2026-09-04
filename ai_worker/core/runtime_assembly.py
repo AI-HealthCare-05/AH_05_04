@@ -1,7 +1,7 @@
 """승인된 Adapter·Repository·Handler를 실행 가능한 Consumer runtime으로 조립합니다.
 
-이 모듈은 Worker core나 도메인 Handler를 재구현하지 않고 연결만 담당합니다(#233).
-Pending reclaim·retry Outbox·DLQ 전이는 #142가 소유하므로 여기서 다루지 않습니다.
+이 모듈은 Worker core나 도메인 Handler를 재구현하지 않고 연결만 담당합니다.
+Consumer 실행과 Pending reclaim·retry·quarantine·DLQ 복구 경계를 조립합니다.
 """
 
 import logging
@@ -49,8 +49,11 @@ from ai_worker.core.consumer_runtime import ConsumerRuntime
 from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.job_execution import LeaseNotAcquired
 from ai_worker.core.quarantine import (
     QuarantineExecution,
+    QuarantineFailureCode,
+    QuarantineRequest,
     RejectedWorkerDelivery,
 )
 from ai_worker.core.reconciler import PendingMessageReconciler
@@ -180,7 +183,18 @@ class SessionScopedDeliveryExecution:
             execution = self._build_execution(session)
 
             try:
-                return await execution.execute(delivery)
+                result = await execution.execute(delivery)
+
+                if isinstance(result, LeaseNotAcquired) and result.rejection_reason is not None:
+                    return await self._quarantine_poison_delivery(
+                        session,
+                        delivery=delivery,
+                        failure_code=QuarantineFailureCode(
+                            result.rejection_reason.value,
+                        ),
+                    )
+
+                return result
             except WorkerError as error:
                 self._logger.warning(
                     "worker delivery failed",
@@ -201,6 +215,41 @@ class SessionScopedDeliveryExecution:
                     },
                 )
                 return None
+
+    async def _quarantine_poison_delivery(
+        self,
+        session: AsyncSession,
+        *,
+        delivery: WorkerDelivery,
+        failure_code: QuarantineFailureCode,
+    ) -> object:
+        if delivery.stream_name is None or delivery.message_digest is None:
+            raise ValueError("격리에 필요한 Stream metadata가 없습니다.")
+
+        request = QuarantineRequest(
+            stream_name=delivery.stream_name,
+            stream_entry_id=delivery.stream_message_id,
+            message_digest=delivery.message_digest,
+            failure_code=failure_code,
+            job_id=delivery.message.job_id,
+            original_event_id=delivery.message.event_id,
+            original_schema_version=delivery.message.schema_version,
+            trace_id=delivery.message.trace_id,
+            received_at=self._clock(),
+        )
+        execution = self._build_quarantine_execution(session)
+
+        return await execution.execute(request)
+
+    def _build_quarantine_execution(
+        self,
+        session: AsyncSession,
+    ) -> QuarantineExecution:
+        return QuarantineExecution(
+            repository=SqlAlchemyQuarantineRepository(session),
+            transaction=SqlAlchemyTransaction(session),
+            acknowledger=self._acknowledger,
+        )
 
     def _build_execution(self, session: AsyncSession) -> LeaseAwareConsumerExecution:
         registry = self._build_registry(session=session)

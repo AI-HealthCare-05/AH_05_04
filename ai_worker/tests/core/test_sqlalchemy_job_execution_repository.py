@@ -14,6 +14,7 @@ from ai_worker.core.job_execution import (
     CommittedDelivery,
     ExecutionLease,
     LeaseNotAcquired,
+    LeaseRejectionReason,
 )
 from ai_worker.schemas.messages import WorkerMessage
 
@@ -36,6 +37,25 @@ def build_message() -> WorkerMessage:
             "trace_id": uuid4().hex,
         }
     )
+
+
+def matching_message_result(
+    message: WorkerMessage,
+    *,
+    attempt_count: int = 0,
+    status: str = "PENDING",
+) -> MagicMock:
+    result = MagicMock()
+    result.mappings.return_value.one_or_none.return_value = {
+        "expected_event_id": str(message.event_id),
+        "attempt_count": attempt_count,
+        "status": status,
+        "job_type": message.job_type.value,
+        "outbox_event_id": str(message.event_id),
+        "outbox_attempt": message.attempt,
+        "outbox_event_kind": message.event_kind,
+    }
+    return result
 
 
 @pytest.mark.asyncio
@@ -78,6 +98,7 @@ async def test_pending_job_acquires_first_lease_atomically() -> None:
 
     session.execute.side_effect = [
         committed_result,
+        matching_message_result(message),
         update_result,
         MagicMock(),
     ]
@@ -96,9 +117,9 @@ async def test_pending_job_acquires_first_lease_atomically() -> None:
     assert result.attempt == message.attempt
     assert result.lease_expires_at == now + lease_duration
     assert len(result.lease_token) == 32
-    assert session.execute.await_count == 3
+    assert session.execute.await_count == 4
 
-    lease_statement = session.execute.await_args_list[1].args[0]
+    lease_statement = session.execute.await_args_list[2].args[0]
     lease_sql = str(lease_statement)
     where_sql = lease_sql.partition(" WHERE ")[2]
 
@@ -129,6 +150,7 @@ async def test_zero_row_update_does_not_create_attempt() -> None:
 
     session.execute.side_effect = [
         committed_result,
+        matching_message_result(message),
         update_result,
     ]
 
@@ -141,6 +163,82 @@ async def test_zero_row_update_does_not_create_attempt() -> None:
     )
 
     assert isinstance(result, LeaseNotAcquired)
+    assert result.rejection_reason is None
+    assert session.execute.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_row", "expected_reason"),
+    [
+        (None, LeaseRejectionReason.JOB_NOT_FOUND),
+        (
+            {
+                "expected_event_id": str(uuid4()),
+                "attempt_count": 0,
+                "status": "PENDING",
+                "job_type": "OCR",
+                "outbox_event_id": None,
+                "outbox_attempt": None,
+                "outbox_event_kind": None,
+            },
+            LeaseRejectionReason.EVENT_MISMATCH,
+        ),
+    ],
+)
+async def test_poison_message_is_classified_before_lease_update(
+    message_row: dict[str, object] | None,
+    expected_reason: LeaseRejectionReason,
+) -> None:
+    message = build_message()
+    session = AsyncMock(spec=AsyncSession)
+    committed_result = MagicMock()
+    committed_result.scalar_one_or_none.return_value = None
+    classification_result = MagicMock()
+    classification_result.mappings.return_value.one_or_none.return_value = message_row
+    session.execute.side_effect = [
+        committed_result,
+        classification_result,
+    ]
+    repository = SqlAlchemyJobExecutionRepository(session)
+
+    result = await repository.acquire_lease(
+        message,
+        now=datetime.now(UTC),
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result == LeaseNotAcquired(
+        rejection_reason=expected_reason,
+    )
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_attempt_mismatch_is_classified_before_lease_update() -> None:
+    message = build_message()
+    session = AsyncMock(spec=AsyncSession)
+    committed_result = MagicMock()
+    committed_result.scalar_one_or_none.return_value = None
+    classification_result = matching_message_result(
+        message,
+        attempt_count=message.attempt + 1,
+    )
+    session.execute.side_effect = [
+        committed_result,
+        classification_result,
+    ]
+    repository = SqlAlchemyJobExecutionRepository(session)
+
+    result = await repository.acquire_lease(
+        message,
+        now=datetime.now(UTC),
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result == LeaseNotAcquired(
+        rejection_reason=LeaseRejectionReason.ATTEMPT_MISMATCH,
+    )
     assert session.execute.await_count == 2
 
 

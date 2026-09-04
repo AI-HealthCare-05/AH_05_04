@@ -107,6 +107,8 @@ async def test_read_decodes_worker_delivery() -> None:
     assert isinstance(deliveries[0], WorkerDelivery)
     assert deliveries[0].stream_message_id == "1001-0"
     assert deliveries[0].message == message
+    assert deliveries[0].stream_name == "oryak:jobs"
+    assert len(deliveries[0].message_digest or "") == 64
 
 
 @pytest.mark.asyncio
@@ -162,6 +164,8 @@ async def test_pending_entry_can_be_claimed() -> None:
     assert isinstance(claimed[0], WorkerDelivery)
     assert claimed[0].stream_message_id == "1002-0"
     assert claimed[0].message == message
+    assert claimed[0].stream_name == "oryak:jobs"
+    assert len(claimed[0].message_digest or "") == 64
 
     client.xclaim.assert_awaited_once_with(
         "oryak:jobs",

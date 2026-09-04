@@ -1,26 +1,35 @@
 """실제 PostgreSQL에서 DLQ Outbox 선점과 fencing을 검증합니다."""
 
 import asyncio
+import logging
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
+    async_sessionmaker,
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
 
+from ai_worker.adapters.redis_stream import RedisStreamAdapter
 from ai_worker.adapters.sqlalchemy_dlq_outbox_repository import (
     DlqOutboxStateError,
     SqlAlchemyDlqOutboxRepository,
 )
+from ai_worker.core.consumer_runtime import ConsumerRuntime
 from ai_worker.core.dlq import ClaimedDlqEvent
+from ai_worker.core.runtime_assembly import SessionScopedRejectedDeliveryExecution
 
 app_core = import_module("app.core")
 config = app_core.config
@@ -64,10 +73,18 @@ async def repository_schema() -> AsyncIterator[None]:
                 """
                 CREATE TABLE message_quarantine (
                     id VARCHAR(36) PRIMARY KEY,
+                    stream_name VARCHAR(100) NOT NULL DEFAULT 'oryak:jobs',
                     stream_entry_id VARCHAR(100) NOT NULL,
                     message_digest VARCHAR(128) NOT NULL,
+                    job_id VARCHAR(36),
+                    original_event_id VARCHAR(36),
                     failure_code VARCHAR(100) NOT NULL,
-                    trace_id VARCHAR(100)
+                    failure_detail TEXT,
+                    original_schema_version VARCHAR(20),
+                    trace_id VARCHAR(100),
+                    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    UNIQUE (stream_name, stream_entry_id)
                 )
                 """
             )
@@ -80,6 +97,8 @@ async def repository_schema() -> AsyncIterator[None]:
                     event_id VARCHAR(36) PRIMARY KEY,
                     quarantine_id VARCHAR(36) NOT NULL
                         REFERENCES message_quarantine(id),
+                    event_kind VARCHAR(30) NOT NULL DEFAULT 'QUARANTINE_RECORDED',
+                    schema_version VARCHAR(20) NOT NULL DEFAULT '1.0',
                     original_schema_version VARCHAR(20),
                     status VARCHAR(20) NOT NULL,
                     attempt_count INTEGER NOT NULL,
@@ -88,7 +107,8 @@ async def repository_schema() -> AsyncIterator[None]:
                     claim_expires_at TIMESTAMPTZ,
                     last_error_code VARCHAR(100),
                     published_at TIMESTAMPTZ,
-                    updated_at TIMESTAMPTZ NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     UNIQUE (quarantine_id)
                 )
                 """
@@ -109,6 +129,7 @@ async def insert_pending_dlq_event(
 ) -> tuple[str, str]:
     quarantine_id = str(uuid4())
     event_id = str(uuid4())
+    stream_name = f"oryak:jobs:{uuid4().hex}"
 
     async with test_engine.begin() as connection:
         await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
@@ -117,6 +138,7 @@ async def insert_pending_dlq_event(
                 """
                 INSERT INTO message_quarantine (
                     id,
+                    stream_name,
                     stream_entry_id,
                     message_digest,
                     failure_code,
@@ -124,6 +146,7 @@ async def insert_pending_dlq_event(
                 )
                 VALUES (
                     :id,
+                    :stream_name,
                     '1000-0',
                     :message_digest,
                     'INVALID_MESSAGE_SCHEMA',
@@ -133,6 +156,7 @@ async def insert_pending_dlq_event(
             ),
             {
                 "id": quarantine_id,
+                "stream_name": stream_name,
                 "message_digest": "a" * 64,
                 "trace_id": "b" * 32,
             },
@@ -309,3 +333,119 @@ async def test_stale_claim_token_cannot_publish_dlq_event() -> None:
     assert status == "PUBLISHED"
     assert claim_token is None
     assert published_at == now
+
+
+@pytest.mark.asyncio
+async def test_invalid_stream_message_is_quarantined_before_ack() -> None:
+    stream_name = f"oryak:quarantine-test:{uuid4().hex}"
+    group_name = f"quarantine-workers-{uuid4().hex}"
+    sentinel = "SYNTHETIC_MEDICAL_CONTENT_MUST_NOT_BE_STORED"
+    trace_id = uuid4().hex
+    redis_client = Redis(
+        host=os.getenv("TEST_REDIS_HOST", "127.0.0.1"),
+        port=int(os.getenv("TEST_REDIS_PORT", "6379")),
+        password=os.getenv("TEST_REDIS_PASSWORD") or None,
+        decode_responses=False,
+    )
+    stream = RedisStreamAdapter(
+        redis_client,
+        stream_name=stream_name,
+        group_name=group_name,
+    )
+    session_factory = async_sessionmaker(
+        bind=test_engine,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+    rejected_execution = SessionScopedRejectedDeliveryExecution(
+        session_factory=session_factory,
+        acknowledger=stream,
+        clock=lambda: datetime.now(UTC),
+        logger=logging.getLogger("worker-quarantine-integration-test"),
+    )
+    normal_execution = SimpleNamespace(execute=AsyncMock())
+    runtime = ConsumerRuntime(
+        stream=stream,
+        execution=normal_execution,
+        rejected_execution=rejected_execution,
+        consumer_name="quarantine-worker-1",
+        batch_size=1,
+        block_ms=100,
+    )
+
+    try:
+        await redis_client.ping()
+        await runtime.initialize()
+        raw_stream_id = await redis_client.xadd(
+            stream_name,
+            {
+                "schema_version": "9.0",
+                "trace_id": trace_id,
+                "medical_text": sentinel,
+            },
+        )
+        stream_entry_id = raw_stream_id.decode("utf-8") if isinstance(raw_stream_id, bytes) else str(raw_stream_id)
+
+        processed_count = await runtime.run_once()
+
+        async with AsyncSession(
+            bind=test_engine,
+            expire_on_commit=False,
+        ) as observer:
+            await use_test_schema(observer)
+            quarantine_result = await observer.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        message_digest,
+                        failure_code,
+                        original_schema_version,
+                        trace_id,
+                        failure_detail
+                    FROM message_quarantine
+                    WHERE stream_name = :stream_name
+                      AND stream_entry_id = :stream_entry_id
+                    """
+                ),
+                {
+                    "stream_name": stream_name,
+                    "stream_entry_id": stream_entry_id,
+                },
+            )
+            quarantine_row = quarantine_result.one()
+
+            dlq_result = await observer.execute(
+                text(
+                    """
+                    SELECT
+                        event_kind,
+                        schema_version,
+                        original_schema_version,
+                        status,
+                        attempt_count
+                    FROM dlq_outbox_event
+                    WHERE quarantine_id = :quarantine_id
+                    """
+                ),
+                {"quarantine_id": quarantine_row.id},
+            )
+            dlq_row = dlq_result.one()
+
+        assert processed_count == 1
+        assert quarantine_row.failure_code == "UNSUPPORTED_SCHEMA_VERSION"
+        assert quarantine_row.original_schema_version == "9.0"
+        assert quarantine_row.trace_id == trace_id
+        assert len(quarantine_row.message_digest) == 64
+        assert quarantine_row.failure_detail is None
+        assert sentinel not in repr(quarantine_row)
+        assert dlq_row.event_kind == "QUARANTINE_RECORDED"
+        assert dlq_row.schema_version == "1.0"
+        assert dlq_row.original_schema_version == "9.0"
+        assert dlq_row.status == "PENDING"
+        assert dlq_row.attempt_count == 0
+        assert await stream.list_pending() == ()
+        normal_execution.execute.assert_not_awaited()
+    finally:
+        await redis_client.delete(stream_name)
+        await redis_client.aclose()

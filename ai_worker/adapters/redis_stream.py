@@ -265,6 +265,8 @@ def _decode_read_result(
                 WorkerDelivery(
                     stream_message_id=_decode_stream_id(stream_message_id),
                     message=message,
+                    stream_name=stream_name,
+                    message_digest=_digest_stream_fields(fields),
                 )
             )
 
@@ -411,6 +413,8 @@ def _decode_claim_result(
             WorkerDelivery(
                 stream_message_id=_decode_stream_id(stream_message_id),
                 message=message,
+                stream_name=stream_name,
+                message_digest=_digest_stream_fields(fields),
             )
         )
 

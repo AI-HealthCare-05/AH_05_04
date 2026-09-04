@@ -12,6 +12,10 @@ from pydantic import ValidationError
 from ai_worker.core.config import Config
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.job_execution import (
+    LeaseNotAcquired,
+    LeaseRejectionReason,
+)
 from ai_worker.core.quarantine import (
     QuarantineExecution,
     QuarantineFailureCode,
@@ -27,7 +31,7 @@ from ai_worker.core.runtime_assembly import (
     create_session_factory,
 )
 from ai_worker.core.stream import WorkerDelivery
-from ai_worker.schemas.messages import JobType
+from ai_worker.schemas.messages import JobType, WorkerMessage
 from provider_contracts.observability import DeploymentEnvironment
 from provider_contracts.ocr import OcrEngine
 
@@ -73,6 +77,14 @@ class _RecordingQuarantineExecution:
     async def execute(self, request: QuarantineRequest) -> object:
         self.requests.append(request)
         return request
+
+
+class _RejectedLeaseExecution:
+    async def execute(self, delivery: WorkerDelivery) -> object:
+        _ = delivery
+        return LeaseNotAcquired(
+            rejection_reason=LeaseRejectionReason.EVENT_MISMATCH,
+        )
 
 
 # --- 설정 검증 -------------------------------------------------------------
@@ -252,6 +264,61 @@ async def test_rejected_delivery_is_converted_to_quarantine_request() -> None:
 
     assert result is inner.requests[0]
     assert inner.requests == [rejected.to_quarantine_request(received_at=received_at)]
+
+
+@pytest.mark.asyncio
+async def test_valid_schema_event_mismatch_is_quarantined() -> None:
+    received_at = datetime.now(UTC)
+    message = WorkerMessage.model_validate(
+        {
+            "schema_version": "1.0",
+            "event_id": str(uuid4()),
+            "event_kind": "JOB_EXECUTE",
+            "job_id": str(uuid4()),
+            "job_type": "OCR",
+            "domain_type": "OCR_JOB",
+            "domain_id": str(uuid4()),
+            "attempt": 1,
+            "available_at": received_at.isoformat(),
+            "enqueued_at": received_at.isoformat(),
+            "trace_id": uuid4().hex,
+        }
+    )
+    delivery = WorkerDelivery(
+        stream_message_id="1001-0",
+        message=message,
+        stream_name="oryak:jobs",
+        message_digest="b" * 64,
+    )
+    execution = SessionScopedDeliveryExecution(
+        config=_config(),
+        session_factory=lambda: _StubSession(),  # type: ignore[arg-type, return-value]
+        acknowledger=_AcknowledgerStub(),
+        clock=lambda: received_at,
+        logger=logging.getLogger("ai_worker.test"),
+        ocr_provider=None,
+    )
+    lease_execution = _RejectedLeaseExecution()
+    quarantine_execution = _RecordingQuarantineExecution()
+    execution._build_execution = lambda session: cast(  # type: ignore[method-assign]
+        LeaseAwareConsumerExecution,
+        lease_execution,
+    )
+    execution._build_quarantine_execution = lambda session: cast(  # type: ignore[method-assign]
+        QuarantineExecution,
+        quarantine_execution,
+    )
+
+    result = await execution.execute(delivery)
+
+    assert result is quarantine_execution.requests[0]
+    request = quarantine_execution.requests[0]
+    assert request.failure_code is QuarantineFailureCode.EVENT_MISMATCH
+    assert request.stream_name == "oryak:jobs"
+    assert request.stream_entry_id == "1001-0"
+    assert request.message_digest == "b" * 64
+    assert request.job_id == message.job_id
+    assert request.original_event_id == message.event_id
 
 
 # --- 조립과 종료 -----------------------------------------------------------
