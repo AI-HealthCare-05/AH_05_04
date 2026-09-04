@@ -21,6 +21,7 @@ def build_lease(now: datetime) -> ExecutionLease:
         job_id=uuid4(),
         event_id=uuid4(),
         attempt=1,
+        max_attempts=3,
         lease_token=uuid4().hex,
         lease_expires_at=now + timedelta(seconds=30),
     )

@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
+from ai_worker.core.retry import FailureCode
 from ai_worker.schemas.messages import WorkerMessage
 
 
@@ -16,6 +17,7 @@ class ExecutionLease:
     job_id: UUID
     event_id: UUID
     attempt: int
+    max_attempts: int
     lease_token: str
     lease_expires_at: datetime
 
@@ -35,6 +37,25 @@ class LeaseRejectionReason(StrEnum):
     JOB_NOT_FOUND = "JOB_NOT_FOUND"
     EVENT_MISMATCH = "EVENT_MISMATCH"
     ATTEMPT_MISMATCH = "ATTEMPT_MISMATCH"
+
+
+class FailureDisposition(StrEnum):
+    """Handler 실패를 저장한 뒤의 Job 상태입니다."""
+
+    RETRY_WAIT = "RETRY_WAIT"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedFailure:
+    """현재 lease 소유자가 DB에 확정한 Handler 실패입니다."""
+
+    job_id: UUID
+    event_id: UUID
+    attempt: int
+    failure_code: FailureCode
+    disposition: FailureDisposition
+    available_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,4 +124,15 @@ class JobExecutionRepository(Protocol):
         completed_at: datetime,
     ) -> bool:
         """현재 실행 소유자만 Job과 소비 event를 완료 상태로 갱신합니다."""
+        ...
+
+    async def record_failure(
+        self,
+        lease: ExecutionLease,
+        *,
+        failure_code: FailureCode,
+        failed_at: datetime,
+        retry_at: datetime | None,
+    ) -> bool:
+        """현재 실행 소유자만 Job과 Attempt의 실패를 함께 기록합니다."""
         ...

@@ -26,6 +26,7 @@ from ai_worker.core.job_execution import (
     LeaseNotAcquired,
     LeaseRejectionReason,
 )
+from ai_worker.core.retry import FailureCode
 from ai_worker.schemas.messages import WorkerMessage
 
 _AI_JOB = table(
@@ -41,6 +42,7 @@ _AI_JOB = table(
     column("lease_token", String(100)),
     column("lease_expires_at", DateTime(timezone=True)),
     column("heartbeat_at", DateTime(timezone=True)),
+    column("failure_code", String(100)),
     column("started_at", DateTime(timezone=True)),
     column("completed_at", DateTime(timezone=True)),
 )
@@ -59,6 +61,7 @@ _AI_JOB_ATTEMPT = table(
     column("ai_job_id", String(36)),
     column("attempt_no", Integer),
     column("attempt_status", String(30)),
+    column("error_code", String(100)),
     column("retryable", Boolean),
     column("timed_out", Boolean),
     column("started_at", DateTime(timezone=True)),
@@ -183,13 +186,13 @@ class SqlAlchemyJobExecutionRepository:
                 heartbeat_at=now,
                 started_at=func.coalesce(_AI_JOB.c.started_at, now),
             )
-            .returning(_AI_JOB.c.id)
+            .returning(_AI_JOB.c.id, _AI_JOB.c.max_attempts)
         )
 
         update_result = await self._session.execute(lease_statement)
-        acquired_job_id = update_result.scalar_one_or_none()
+        acquired_row = update_result.mappings().one_or_none()
 
-        if acquired_job_id is None:
+        if acquired_row is None:
             return LeaseNotAcquired()
 
         attempt_statement = insert(_AI_JOB_ATTEMPT).values(
@@ -207,6 +210,7 @@ class SqlAlchemyJobExecutionRepository:
             job_id=message.job_id,
             event_id=message.event_id,
             attempt=message.attempt,
+            max_attempts=int(acquired_row["max_attempts"]),
             lease_token=lease_token,
             lease_expires_at=lease_expires_at,
         )
@@ -303,6 +307,7 @@ class SqlAlchemyJobExecutionRepository:
             job_id=lease.job_id,
             event_id=lease.event_id,
             attempt=lease.attempt,
+            max_attempts=lease.max_attempts,
             lease_token=lease.lease_token,
             lease_expires_at=lease_expires_at,
         )
@@ -355,4 +360,64 @@ class SqlAlchemyJobExecutionRepository:
 
         attempt_result = await self._session.execute(attempt_statement)
 
+        return attempt_result.scalar_one_or_none() is not None
+
+    async def record_failure(
+        self,
+        lease: ExecutionLease,
+        *,
+        failure_code: FailureCode,
+        failed_at: datetime,
+        retry_at: datetime | None,
+    ) -> bool:
+        """Handler 실패를 lease fencing 조건으로 Job과 Attempt에 기록합니다."""
+
+        retryable = retry_at is not None
+        next_status = "RETRY_WAIT" if retryable else "FAILED"
+
+        job_statement = (
+            update(_AI_JOB)
+            .where(
+                _AI_JOB.c.id == str(lease.job_id),
+                _AI_JOB.c.expected_event_id == str(lease.event_id),
+                _AI_JOB.c.attempt_count == lease.attempt,
+                _AI_JOB.c.lease_token == lease.lease_token,
+                _AI_JOB.c.status == "PROCESSING",
+                _AI_JOB.c.lease_expires_at > failed_at,
+            )
+            .values(
+                status=next_status,
+                last_consumed_event_id=str(lease.event_id),
+                expected_event_id=None,
+                available_at=retry_at if retryable else failed_at,
+                lease_token=None,
+                lease_expires_at=None,
+                heartbeat_at=None,
+                failure_code=None if retryable else failure_code,
+                completed_at=None if retryable else failed_at,
+            )
+            .returning(_AI_JOB.c.id)
+        )
+        job_result = await self._session.execute(job_statement)
+
+        if job_result.scalar_one_or_none() is None:
+            return False
+
+        attempt_statement = (
+            update(_AI_JOB_ATTEMPT)
+            .where(
+                _AI_JOB_ATTEMPT.c.ai_job_id == str(lease.job_id),
+                _AI_JOB_ATTEMPT.c.attempt_no == lease.attempt,
+                _AI_JOB_ATTEMPT.c.attempt_status == "PROCESSING",
+            )
+            .values(
+                attempt_status="FAILED",
+                error_code=failure_code,
+                retryable=retryable,
+                timed_out=failure_code == "TIMEOUT",
+                completed_at=failed_at,
+            )
+            .returning(_AI_JOB_ATTEMPT.c.attempt_no)
+        )
+        attempt_result = await self._session.execute(attempt_statement)
         return attempt_result.scalar_one_or_none() is not None

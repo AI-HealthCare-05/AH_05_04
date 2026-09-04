@@ -94,7 +94,10 @@ async def test_pending_job_acquires_first_lease_atomically() -> None:
     committed_result.scalar_one_or_none.return_value = None
 
     update_result = MagicMock()
-    update_result.scalar_one_or_none.return_value = str(message.job_id)
+    update_result.mappings.return_value.one_or_none.return_value = {
+        "id": str(message.job_id),
+        "max_attempts": 3,
+    }
 
     session.execute.side_effect = [
         committed_result,
@@ -115,6 +118,7 @@ async def test_pending_job_acquires_first_lease_atomically() -> None:
     assert result.job_id == message.job_id
     assert result.event_id == message.event_id
     assert result.attempt == message.attempt
+    assert result.max_attempts == 3
     assert result.lease_expires_at == now + lease_duration
     assert len(result.lease_token) == 32
     assert session.execute.await_count == 4
@@ -146,7 +150,7 @@ async def test_zero_row_update_does_not_create_attempt() -> None:
     committed_result.scalar_one_or_none.return_value = None
 
     update_result = MagicMock()
-    update_result.scalar_one_or_none.return_value = None
+    update_result.mappings.return_value.one_or_none.return_value = None
 
     session.execute.side_effect = [
         committed_result,
@@ -251,6 +255,7 @@ async def test_current_lease_refreshes_heartbeat_conditionally() -> None:
         job_id=message.job_id,
         event_id=message.event_id,
         attempt=message.attempt,
+        max_attempts=3,
         lease_token=uuid4().hex,
         lease_expires_at=now + lease_duration,
     )
@@ -272,6 +277,7 @@ async def test_current_lease_refreshes_heartbeat_conditionally() -> None:
         job_id=lease.job_id,
         event_id=lease.event_id,
         attempt=lease.attempt,
+        max_attempts=lease.max_attempts,
         lease_token=lease.lease_token,
         lease_expires_at=now + lease_duration,
     )
@@ -295,6 +301,7 @@ async def test_lost_or_expired_lease_cannot_refresh_heartbeat() -> None:
         job_id=message.job_id,
         event_id=message.event_id,
         attempt=message.attempt,
+        max_attempts=3,
         lease_token=uuid4().hex,
         lease_expires_at=now,
     )
@@ -324,6 +331,7 @@ async def test_current_lease_completes_job_and_attempt() -> None:
         job_id=message.job_id,
         event_id=message.event_id,
         attempt=message.attempt,
+        max_attempts=3,
         lease_token=uuid4().hex,
         lease_expires_at=completed_at + timedelta(seconds=30),
     )
@@ -370,6 +378,7 @@ async def test_lost_lease_cannot_complete_job_or_attempt() -> None:
         job_id=message.job_id,
         event_id=message.event_id,
         attempt=message.attempt,
+        max_attempts=3,
         lease_token=uuid4().hex,
         lease_expires_at=completed_at + timedelta(seconds=30),
     )

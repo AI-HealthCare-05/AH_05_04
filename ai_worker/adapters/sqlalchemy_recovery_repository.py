@@ -4,9 +4,11 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Integer,
     String,
+    and_,
     column,
     insert,
     select,
@@ -45,8 +47,8 @@ _AI_JOB_ATTEMPT = table(
     column("attempt_no", Integer),
     column("attempt_status", String(30)),
     column("error_code", String(100)),
-    column("retryable", Integer),
-    column("timed_out", Integer),
+    column("retryable", Boolean),
+    column("timed_out", Boolean),
     column("completed_at", DateTime(timezone=True)),
 )
 
@@ -59,6 +61,9 @@ _OUTBOX_EVENT = table(
     column("schema_version", String(20)),
     column("status", String(20)),
     column("available_at", DateTime(timezone=True)),
+    column("trace_id", String(100)),
+    column("domain_type", String(20)),
+    column("domain_id", String(36)),
 )
 
 
@@ -141,6 +146,19 @@ class SqlAlchemyRecoveryRepository:
                 _AI_JOB.c.attempt_count,
                 _AI_JOB.c.max_attempts,
                 _AI_JOB.c.available_at,
+                _OUTBOX_EVENT.c.trace_id,
+                _OUTBOX_EVENT.c.domain_type,
+                _OUTBOX_EVENT.c.domain_id,
+            )
+            .select_from(
+                _AI_JOB.join(
+                    _OUTBOX_EVENT,
+                    and_(
+                        _OUTBOX_EVENT.c.event_id == _AI_JOB.c.last_consumed_event_id,
+                        _OUTBOX_EVENT.c.job_id == _AI_JOB.c.id,
+                        _OUTBOX_EVENT.c.attempt == _AI_JOB.c.attempt_count,
+                    ),
+                )
             )
             .where(
                 _AI_JOB.c.status == "RETRY_WAIT",
@@ -175,6 +193,9 @@ class SqlAlchemyRecoveryRepository:
                 schema_version="1.0",
                 status="PENDING",
                 available_at=now,
+                trace_id=row["trace_id"],
+                domain_type=row["domain_type"],
+                domain_id=row["domain_id"],
             )
             await self._session.execute(outbox_statement)
 

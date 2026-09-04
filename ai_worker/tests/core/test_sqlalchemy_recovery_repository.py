@@ -203,6 +203,8 @@ async def test_recovery_requires_matching_current_event_and_attempt() -> None:
 @pytest.mark.asyncio
 async def test_due_retry_creates_one_next_attempt_outbox() -> None:
     job_id = uuid4()
+    domain_id = uuid4()
+    trace_id = uuid4().hex
     now = datetime.now(UTC)
 
     session = AsyncMock(spec=AsyncSession)
@@ -214,6 +216,9 @@ async def test_due_retry_creates_one_next_attempt_outbox() -> None:
             "attempt_count": 1,
             "max_attempts": 3,
             "available_at": now,
+            "trace_id": trace_id,
+            "domain_type": "OCR_JOB",
+            "domain_id": str(domain_id),
         }
     ]
 
@@ -250,6 +255,11 @@ async def test_due_retry_creates_one_next_attempt_outbox() -> None:
     assert "ai_job.expected_event_id" in select_sql
     assert "ai_job.attempt_count" in select_sql
     assert "ai_job.max_attempts" in select_sql
+    assert "ai_job.last_consumed_event_id" in select_sql
+    assert "outbox_event.event_id" in select_sql
+    assert "outbox_event.trace_id" in select_sql
+    assert "outbox_event.domain_type" in select_sql
+    assert "outbox_event.domain_id" in select_sql
     assert "FOR UPDATE" in select_sql
 
     insert_statement = session.execute.await_args_list[1].args[0]
@@ -261,6 +271,9 @@ async def test_due_retry_creates_one_next_attempt_outbox() -> None:
     assert 2 in insert_params.values()
     assert "JOB_EXECUTE" in insert_params.values()
     assert "PENDING" in insert_params.values()
+    assert trace_id in insert_params.values()
+    assert "OCR_JOB" in insert_params.values()
+    assert str(domain_id) in insert_params.values()
 
     update_statement = session.execute.await_args_list[2].args[0]
     update_sql = str(update_statement)
