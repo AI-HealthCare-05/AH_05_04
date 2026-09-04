@@ -3,6 +3,7 @@ from decimal import Decimal
 from ai_worker.tasks.evaluation.retrieval_metrics import (
     RetrievalObservation,
     aggregate_metric_scores,
+    observations_from_case_results,
     metric_scores,
 )
 
@@ -47,3 +48,16 @@ def test_aggregate_metric_scores_marks_insufficient_sample_inconclusive() -> Non
     assert aggregate["RECALL_AT_5"].numerator == 4
     assert aggregate["RECALL_AT_5"].denominator == 4
     assert aggregate["RECALL_AT_5"].reason_code == "MINIMUM_CASE_COUNT_NOT_MET"
+
+
+def test_observations_bind_gold_to_ranked_case_results() -> None:
+    cases = {
+        "case-1": (("required",), ("required", "related")),
+    }
+    results = {"case-1": ("noise", "required")}
+
+    observation = observations_from_case_results(cases, results)[0]
+
+    assert observation.required_ids == ("required",)
+    assert observation.relevant_ids == ("required", "related")
+    assert observation.ranked_ids == ("noise", "required")

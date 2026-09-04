@@ -90,3 +90,21 @@ def aggregate_metric_scores(
             reason_code=reason,
         )
     return aggregates
+
+
+def observations_from_case_results(
+    gold_by_case: dict[str, tuple[tuple[str, ...], tuple[str, ...]]],
+    ranked_by_case: dict[str, tuple[str, ...]],
+) -> tuple[RetrievalObservation, ...]:
+    """Bind immutable Gold IDs to ranked output; mismatched case sets are invalid."""
+
+    if set(gold_by_case) != set(ranked_by_case):
+        raise ValueError("gold and ranked case sets must match")
+    return tuple(
+        RetrievalObservation(
+            required_ids=gold_by_case[case_id][0],
+            relevant_ids=gold_by_case[case_id][1],
+            ranked_ids=ranked_by_case[case_id],
+        )
+        for case_id in sorted(gold_by_case)
+    )
