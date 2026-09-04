@@ -17,19 +17,6 @@ Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획�
 
 ## 현재 구현 상태
 
-- `main.py`: placeholder 로그를 남기고 종료 코드 `0`으로 종료
-- `tasks/ocr/`, `tasks/rag/`, `tasks/llm/`, `tasks/evaluation/`: package 골격만 존재하며 작업 처리 로직 없음
-- 공통 재시도 여부·backoff 순수 계산 로직: 구현
-- 공통 Handler·Registry·Dispatcher와 Handler 결과 식별자 검증: 구현
-- 검증된 Handler 결과를 저장·commit한 뒤 ACK하도록 강제하는 추상 Consumer 실행 경계: 구현
-- Redis Streams Adapter 계약과 Fake·redis-py 구현: 구현
-- Consumer Group·발행·읽기·ACK·Pending·Claim: 구현 및 로컬 Redis 통합 테스트 완료
-- Event Publisher의 Redis 발행·식별자 보존 경계: 구현
-- DB Outbox due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·`claim_token` fencing 완료 처리: 구현 (#219)
-- SQLAlchemy Job lease 획득·heartbeat·fencing Repository와 commit-before-ACK 실행 경계: 구현
-- 도메인 SQLAlchemy 결과 저장, Worker 실행 loop, reclaim·retry·quarantine·DLQ: 미구현
-- Publisher 주기 실행·health check·운영 배포 조립: 미구현
-
 구현 완료:
 
 - Redis Consumer Group 생성과 blocking read
@@ -76,8 +63,6 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 - 메시지 Codec: `ai_worker/adapters/redis_message_codec.py`
 - 생성 경계: `ai_worker/adapters/factory.py`
 - Event Publisher: `ai_worker/core/event_publisher.py`
-- Outbox Publisher: `ai_worker/core/outbox_publisher.py`
-- SQLAlchemy Outbox Repository: `ai_worker/adapters/sqlalchemy_outbox_repository.py`
 - Outbox Publisher: `ai_worker/core/outbox_publisher.py`
 - SQLAlchemy Outbox Repository: `ai_worker/adapters/sqlalchemy_outbox_repository.py`
 
