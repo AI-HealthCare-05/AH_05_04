@@ -17,6 +17,7 @@ from ai_worker.core.config import Config
 from ai_worker.core.runtime_assembly import (
     AssembledWorkerRuntime,
     build_worker_runtime,
+    create_clova_ocr_provider,
 )
 from provider_contracts.ocr import OcrEngine
 
@@ -92,11 +93,10 @@ async def _serve(
 
 
 async def run(*, ocr_engine: OcrEngine | None = None) -> None:
-    """Worker runtime을 조립해 실행하고 종료 시 자원을 정리합니다.
+    """Worker runtime을 실제 CLOVA OCR Engine과 조립하고 자원을 정리합니다.
 
-    `ocr_engine`을 주입하지 않으면 OCR Handler가 등록되지 않고, OCR 메시지는 Provider
-    호출 없이 승인된 실패로 처리됩니다. 저장소에 Worker에서 쓸 수 있는 승인된 CLOVA
-    engine 구현이 아직 없어 기본값을 `None`으로 둡니다.
+    테스트나 검증에서 `ocr_engine`을 명시적으로 주입할 수 있으며, 생략하면
+    Worker 설정으로 규칙 기반 구조화기를 사용하는 실제 CLOVA Engine을 생성합니다.
     """
 
     logger = get_logger()
@@ -108,6 +108,7 @@ async def run(*, ocr_engine: OcrEngine | None = None) -> None:
         logger=logger,
         clock=_create_clock(config),
         ocr_engine=ocr_engine,
+        ocr_provider=(create_clova_ocr_provider(config) if ocr_engine is None else None),
     )
 
     logger.info(

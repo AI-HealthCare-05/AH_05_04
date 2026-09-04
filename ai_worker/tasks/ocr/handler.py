@@ -98,6 +98,7 @@ class OcrProvider(Protocol):
         *,
         object_key: str,
         file_mime_type: str,
+        trace_id: str,
         deadline: float,
     ) -> OcrProviderResult:
         """monotonic absolute deadline 안에서 OCR을 실행합니다."""
@@ -182,6 +183,7 @@ class OcrHandler:
         provider_result = await self._recognize(
             domain_input=domain_input,
             provider_deadline=provider_deadline,
+            trace_id=message.trace_id,
         )
 
         return OcrHandlerSuccess(
@@ -200,6 +202,7 @@ class OcrHandler:
         *,
         domain_input: OcrDomainInput,
         provider_deadline: float,
+        trace_id: str,
     ) -> OcrProviderResult:
         """Provider 오류를 승인된 Worker failure code로 정규화합니다."""
 
@@ -210,6 +213,7 @@ class OcrHandler:
             provider_result = await self._provider.recognize(
                 object_key=domain_input.object_key,
                 file_mime_type=domain_input.file_mime_type,
+                trace_id=trace_id,
                 deadline=provider_deadline,
             )
         except OcrProviderTimeoutError:
