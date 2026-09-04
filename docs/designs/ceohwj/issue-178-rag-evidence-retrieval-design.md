@@ -134,6 +134,12 @@ wrapper다. 내부 원문은 명시적인 `reveal()` 호출로만 읽고 `repr()
 반환한다. 기본 JSON encoder로 직렬화할 수 없으며 generic dataclass recursive projection에서도 원문
 문자열로 풀리지 않는다. Kernel은 query와 content를 일반 `str` 필드로 보존하지 않는다.
 
+Python의 `frozen` dataclass는 내부에 중첩된 객체의 불변성까지 보장하지 않는다. Kernel은 유효한 request를
+실행 시작 시 deep snapshot하고 verifier, search, rerank port마다 별도 snapshot만 전달한다. Port 호출 뒤
+전달본의 query·fingerprint·artifact·candidate content·provenance가 바뀌었으면 해당 Receipt 또는 result를
+dependency 오류로 거부한다. 최종 selection은 reranker에 노출되지 않은 canonical candidate snapshot에만
+재결속한다.
+
 ### `EvidenceRetrievalKernelRequest`
 
 실행 입력은 다음 값을 가진다.
@@ -155,6 +161,11 @@ wrapper다. 내부 원문은 명시적인 `reveal()` 호출로만 읽고 `repr()
 `selection_limit <= lexical_limit + dense_limit`이어야 한다. Dense stage가 비활성인
 경우 `dense_config_ref=null`이고 `dense_limit=0`이어야 한다. 활성인 경우 reference가 존재하고
 `dense_limit > 0`이어야 한다. lexical limit은 stage별 상한이며 dense limit은 별도 stage별 상한이다.
+
+Diagnostic trace는 이 세 scalar를 기록해 실행을 구분하지만, provisional Receipt는 adapter가 해당 값을
+실제로 적용했다는 production-grade configuration provenance까지 증명하지 않는다. 실제 Retrieval Run에서는
+승인된 configuration artifact에서 effective scalar를 resolve하거나 canonical execution-config hash로 결속해야
+한다.
 
 ### Query binding 검증
 
@@ -343,14 +354,18 @@ Trace에는 다음만 포함한다.
 
 - query fingerprint; `normalized_query` 제외
 - filter, Evidence Index와 requested configuration reference
+- 실제 실행에 사용한 lexical, dense와 selection limit
 - 실제 query verifier, search와 rerank adapter artifact reference
 - 각 hit의 Evidence key, stage, rank, score, content hash와 provenance
 - rerank rank·score와 selection 여부
 - Kernel execution status와 diagnostic code
 
-Trace는 `content_text`, Source 원문, 질문 원문, credential, 환자 식별자, 생성 답변, Bundle ID, Guard 상세와
-실행 시각을 포함하지 않는다. 실행 시각과 filter snapshot 내용을 포함하는 실제 Retrieval Run persistence는
-승인된 DB·Privacy 계약이 별도로 정의한다.
+Trace는 `content_text`, Source 원문, 질문 원문, credential, 생성 답변, Bundle ID, Guard 상세와 실행 시각을
+Kernel이 새로 추가하지 않는다. 다만 `evidence_key`, `source_version`, `locator`와 artifact 식별자는 검증된
+합성 adapter metadata를 그대로 보존하므로 `to_sanitized_trace_dict(...)`는 PII 탐지기나 의미 기반 scrubber가
+아니다. 이 slice에서는 합성 fixture만 허용하며 trace를 일반 로그·DB·Stream으로 보내지 않는다. 실제 adapter
+연결 전에는 승인된 제한 타입 또는 Privacy allowlist가 이 metadata에 적용돼야 한다. 실행 시각과 filter
+snapshot 내용을 포함하는 실제 Retrieval Run persistence는 승인된 DB·Privacy 계약이 별도로 정의한다.
 
 Kernel outcome과 transient request/hit/selection은 generic serializer를 제공하지 않는다. 외부로 내보낼 수
 있는 유일한 projection은 명시적 `to_sanitized_trace_dict(...)` 결과다. `SensitiveText` 때문에 whole-outcome
@@ -386,7 +401,10 @@ query, content 또는 port exception message가 나타나면 안 된다.
 - 동일 chunk의 복수 evidence key와 동일 key의 복수 chunk binding 거부
 - stage hit를 key별 canonical candidate와 정렬된 signal tuple로 정규화
 - rerank input-set hash mismatch 거부
-- projection golden hash가 Unicode·null·lexical-only·mixed-stage·음수 score에서 동일함
+- projection golden hash가 Unicode·lexical-only·mixed-stage·음수 score·다중 candidate 입력 순서에서 동일함
+- nullable dense config와 nullable adapter reference가 diagnostic trace에서 명시적 JSON `null`로 유지됨
+- verifier/search/rerank에 전달한 query·fingerprint·artifact·candidate 또는 port가 반환한 Receipt·hit·selection을
+  값 교체, 타입 훼손 또는 필드 삭제 방식으로 변조하면 검증 예외를 노출하지 않고 fail-closed
 - `-0`, exponent, leading/trailing zero와 NaN·infinite score 표현 거부
 - rerank의 알 수 없는 key, 중복·비연속 rank 거부와 canonical candidate의 exact selection 재결속
 - 동일 입력·동일 port output의 동일 diagnostic trace

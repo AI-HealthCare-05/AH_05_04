@@ -27,6 +27,15 @@ class SensitiveText:
     def __init__(self, value: str) -> None:
         self.__value = value
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "_SensitiveText__value" and not hasattr(self, name):
+            object.__setattr__(self, name, value)
+            return
+        raise AttributeError("SensitiveText is immutable")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> SensitiveText:
+        return SensitiveText(self.__value)
+
     def reveal(self) -> str:
         return self.__value
 
@@ -260,6 +269,9 @@ class EvidenceRetrievalDiagnosticTrace:
     lexical_config_ref: ImmutableArtifactRef
     dense_config_ref: ImmutableArtifactRef | None
     rerank_config_ref: ImmutableArtifactRef
+    lexical_limit: int
+    dense_limit: int
+    selection_limit: int
     execution_status: KernelExecutionStatus
     diagnostic_code: KernelDiagnosticCode
     query_verifier_artifact_ref: ImmutableArtifactRef | None = None
@@ -292,6 +304,11 @@ class _SearchExecutionFailure:
     partial_execution: _SearchExecution
 
 
+@dataclass(frozen=True, slots=True)
+class _PortCallFailure:
+    diagnostic_code: KernelDiagnosticCode
+
+
 def retrieve_knowledge_evidence(
     request: EvidenceRetrievalKernelRequest,
     *,
@@ -305,6 +322,8 @@ def retrieve_knowledge_evidence(
             KernelExecutionStatus.VALIDATION_ERROR,
             KernelDiagnosticCode.REQUEST_INVALID,
         )
+
+    request = _snapshot_request(request)
 
     binding = _query_binding(request, query_verifier)
     if isinstance(binding, EvidenceRetrievalKernelOutcome):
@@ -323,12 +342,11 @@ def retrieve_knowledge_evidence(
     if not candidates:
         return _outcome(KernelExecutionStatus.SUCCEEDED, KernelDiagnosticCode.NO_HITS, request, binding, search_result)
     rerank_request = _rerank_request(request, candidates)
-    try:
-        response = rerank_port.rerank(rerank_request)
-    except Exception:
+    response = _call_rerank_port(rerank_port, rerank_request, request, candidates)
+    if isinstance(response, _PortCallFailure):
         return _outcome(
             KernelExecutionStatus.DEPENDENCY_ERROR,
-            KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR,
+            response.diagnostic_code,
             request,
             binding,
             search_result,
@@ -349,9 +367,14 @@ def retrieve_knowledge_evidence(
             binding,
             search_result,
         )
-    rerank_adapter = response.adapter_artifact_ref if _is_valid_artifact_ref(response.adapter_artifact_ref) else None
+    response_adapter = getattr(response, "adapter_artifact_ref", None)
+    rerank_adapter = (
+        _snapshot_artifact_ref(response_adapter)
+        if isinstance(response_adapter, ImmutableArtifactRef) and _is_valid_artifact_ref(response_adapter)
+        else None
+    )
     observed_selections = _traceable_selection_records(
-        response.selections,
+        getattr(response, "selections", None),
         frozenset(item.provenance.evidence_key for item in candidates),
     )
     if not _rerank_receipt_matches(request, rerank_request, response):
@@ -364,7 +387,7 @@ def retrieve_knowledge_evidence(
             rerank_adapter,
             observed_selections,
         )
-    selections = _validated_selections(request, rerank_request, response)
+    selections = _validated_selections(request, candidates, response)
     if selections is None:
         return _outcome(
             KernelExecutionStatus.DEPENDENCY_ERROR,
@@ -385,14 +408,14 @@ def retrieve_knowledge_evidence(
             KernelDiagnosticCode.CANDIDATES_RERANKED,
             binding,
             search_result,
-            response.adapter_artifact_ref,
+            rerank_adapter,
             selections,
         ),
     )
 
 
 def to_sanitized_trace_dict(trace: EvidenceRetrievalDiagnosticTrace) -> dict[str, object]:
-    """Render an explicit, non-sensitive diagnostic representation."""
+    """Render a structurally redacted synthetic-only diagnostic representation."""
     return {
         "query_fingerprint": {
             "algorithm": trace.query_fingerprint.algorithm,
@@ -405,6 +428,11 @@ def to_sanitized_trace_dict(trace: EvidenceRetrievalDiagnosticTrace) -> dict[str
         "lexical_config_ref": _artifact_dict(trace.lexical_config_ref),
         "dense_config_ref": _artifact_dict(trace.dense_config_ref),
         "rerank_config_ref": _artifact_dict(trace.rerank_config_ref),
+        "execution_limits": {
+            "lexical": trace.lexical_limit,
+            "dense": trace.dense_limit,
+            "selection": trace.selection_limit,
+        },
         "execution_status": trace.execution_status.value,
         "diagnostic_code": trace.diagnostic_code.value,
         "adapter_artifacts": {
@@ -444,6 +472,9 @@ def _trace(
         request.lexical_config_ref,
         request.dense_config_ref,
         request.rerank_config_ref,
+        request.lexical_limit,
+        request.dense_limit,
+        request.selection_limit,
         status,
         diagnostic,
         query_verifier_artifact_ref,
@@ -523,34 +554,53 @@ def _rerank_request(
     candidates: tuple[KnowledgeEvidenceCandidate, ...],
 ) -> EvidenceRerankRequest:
     return EvidenceRerankRequest(
-        request.query_fingerprint,
-        request.filter_snapshot_ref,
-        request.evidence_index_ref,
-        request.retrieval_config_ref,
-        request.rerank_config_ref,
+        _snapshot_fingerprint(request.query_fingerprint),
+        _snapshot_artifact_ref(request.filter_snapshot_ref),
+        _snapshot_artifact_ref(request.evidence_index_ref),
+        _snapshot_artifact_ref(request.retrieval_config_ref),
+        _snapshot_artifact_ref(request.rerank_config_ref),
         request.rerank_input_projection_version,
         canonical_rerank_input_hash(request.rerank_input_projection_version, candidates),
-        candidates,
+        tuple(_snapshot_candidate(candidate) for candidate in candidates),
     )
+
+
+def _call_rerank_port(
+    rerank_port: EvidenceRerankPort,
+    rerank_request: EvidenceRerankRequest,
+    request: EvidenceRetrievalKernelRequest,
+    canonical_candidates: tuple[KnowledgeEvidenceCandidate, ...],
+) -> object | _PortCallFailure:
+    try:
+        response = rerank_port.rerank(rerank_request)
+    except Exception:
+        return _PortCallFailure(KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR)
+    if not _rerank_request_is_unchanged(rerank_request, request, canonical_candidates):
+        return _PortCallFailure(KernelDiagnosticCode.RERANK_RESULT_INVALID)
+    return response
 
 
 def _validated_selections(
     request: EvidenceRetrievalKernelRequest,
-    rerank_request: EvidenceRerankRequest,
+    canonical_candidates: tuple[KnowledgeEvidenceCandidate, ...],
     response: EvidenceRerankSuccess,
 ) -> tuple[UntrustedKnowledgeEvidenceSelection, ...] | None:
-    if not isinstance(response.selections, tuple) or len(response.selections) > request.selection_limit:
+    selections = getattr(response, "selections", None)
+    if not isinstance(selections, tuple) or len(selections) > request.selection_limit:
         return None
     if not all(
-        isinstance(item, EvidenceRerankSelection) and _is_nonempty_nfc_string(item.evidence_key)
-        for item in response.selections
+        isinstance(item, EvidenceRerankSelection)
+        and _is_nonempty_nfc_string(getattr(item, "evidence_key", None))
+        and _is_positive_int(getattr(item, "rerank_rank", None))
+        and _is_valid_score(getattr(item, "rerank_score", None))
+        for item in selections
     ):
         return None
-    candidates = {item.provenance.evidence_key: item for item in rerank_request.candidates}
-    if len({item.evidence_key for item in response.selections}) != len(response.selections):
+    candidates = {item.provenance.evidence_key: item for item in canonical_candidates}
+    if len({item.evidence_key for item in selections}) != len(selections):
         return None
     resolved: list[UntrustedKnowledgeEvidenceSelection] = []
-    for rank, item in enumerate(response.selections, start=1):
+    for rank, item in enumerate(selections, start=1):
         candidate = candidates.get(item.evidence_key)
         if (
             not _is_positive_int(item.rerank_rank)
@@ -559,7 +609,13 @@ def _validated_selections(
             or not _is_valid_score(item.rerank_score)
         ):
             return None
-        resolved.append(UntrustedKnowledgeEvidenceSelection(candidate, item.rerank_rank, item.rerank_score))
+        resolved.append(
+            UntrustedKnowledgeEvidenceSelection(
+                candidate,
+                item.rerank_rank,
+                CanonicalScore(item.rerank_score.value),
+            )
+        )
     return tuple(resolved)
 
 
@@ -573,13 +629,19 @@ def _traceable_selection_records(
     for item in value:
         if (
             not isinstance(item, EvidenceRerankSelection)
-            or not _is_nonempty_nfc_string(item.evidence_key)
-            or item.evidence_key not in allowed_evidence_keys
-            or not _is_positive_int(item.rerank_rank)
-            or not _is_valid_score(item.rerank_score)
+            or not _is_nonempty_nfc_string(getattr(item, "evidence_key", None))
+            or getattr(item, "evidence_key", None) not in allowed_evidence_keys
+            or not _is_positive_int(getattr(item, "rerank_rank", None))
+            or not _is_valid_score(getattr(item, "rerank_score", None))
         ):
             return ()
-        records.append(DiagnosticSelectionRecord(item.evidence_key, item.rerank_rank, item.rerank_score))
+        records.append(
+            DiagnosticSelectionRecord(
+                item.evidence_key,
+                item.rerank_rank,
+                CanonicalScore(item.rerank_score.value),
+            )
+        )
     return tuple(records)
 
 
@@ -588,16 +650,19 @@ def _rerank_receipt_matches(
     rerank_request: EvidenceRerankRequest,
     response: EvidenceRerankSuccess,
 ) -> bool:
-    return not (
-        response.query_fingerprint != request.query_fingerprint
-        or response.filter_snapshot_ref != request.filter_snapshot_ref
-        or response.evidence_index_ref != request.evidence_index_ref
-        or response.retrieval_config_ref != request.retrieval_config_ref
-        or response.rerank_config_ref != request.rerank_config_ref
-        or response.projection_version != rerank_request.projection_version
-        or response.input_set_hash != rerank_request.input_set_hash
-        or not _is_valid_artifact_ref(response.adapter_artifact_ref)
-    )
+    try:
+        return not (
+            response.query_fingerprint != request.query_fingerprint
+            or response.filter_snapshot_ref != request.filter_snapshot_ref
+            or response.evidence_index_ref != request.evidence_index_ref
+            or response.retrieval_config_ref != request.retrieval_config_ref
+            or response.rerank_config_ref != request.rerank_config_ref
+            or response.projection_version != rerank_request.projection_version
+            or response.input_set_hash != rerank_request.input_set_hash
+            or not _is_valid_artifact_ref(response.adapter_artifact_ref)
+        )
+    except Exception:
+        return False
 
 
 def _outcome(
@@ -627,22 +692,31 @@ def _query_binding(
     request: EvidenceRetrievalKernelRequest,
     query_verifier: QueryBindingVerifierPort,
 ) -> ImmutableArtifactRef | EvidenceRetrievalKernelOutcome:
+    query = SensitiveText(request.normalized_query.reveal())
+    query_fingerprint = _snapshot_fingerprint(request.query_fingerprint)
     try:
-        verification = query_verifier.verify(request.normalized_query, request.query_fingerprint)
+        verification = query_verifier.verify(query, query_fingerprint)
     except Exception:
         return _outcome(
             KernelExecutionStatus.DEPENDENCY_ERROR,
             KernelDiagnosticCode.QUERY_BINDING_DEPENDENCY_ERROR,
             request,
         )
+    if not _query_binding_inputs_match_snapshot(query, query_fingerprint, request):
+        return _outcome(
+            KernelExecutionStatus.DEPENDENCY_ERROR,
+            KernelDiagnosticCode.QUERY_BINDING_RECEIPT_MISMATCH,
+            request,
+        )
     if isinstance(verification, QueryBindingVerificationFailure):
-        if verification.reason is QueryBindingFailureReason.INVALID_BINDING:
+        reason = getattr(verification, "reason", None)
+        if reason is QueryBindingFailureReason.INVALID_BINDING:
             return _outcome(
                 KernelExecutionStatus.VALIDATION_ERROR,
                 KernelDiagnosticCode.QUERY_BINDING_INVALID,
                 request,
             )
-        if verification.reason is QueryBindingFailureReason.DEPENDENCY_ERROR:
+        if reason is QueryBindingFailureReason.DEPENDENCY_ERROR:
             return _outcome(
                 KernelExecutionStatus.DEPENDENCY_ERROR,
                 KernelDiagnosticCode.QUERY_BINDING_DEPENDENCY_ERROR,
@@ -659,19 +733,22 @@ def _query_binding(
             KernelDiagnosticCode.QUERY_BINDING_RECEIPT_MISMATCH,
             request,
         )
-    return verification.verifier_artifact_ref
+    return _snapshot_artifact_ref(verification.verifier_artifact_ref)
 
 
 def _is_matching_verification(
     verification: object,
     expected_fingerprint: QueryFingerprint,
 ) -> bool:
-    return (
-        isinstance(verification, QueryBindingVerificationSuccess)
-        and verification.query_fingerprint == expected_fingerprint
-        and _is_valid_fingerprint(verification.query_fingerprint)
-        and _is_valid_artifact_ref(verification.verifier_artifact_ref)
-    )
+    try:
+        return (
+            isinstance(verification, QueryBindingVerificationSuccess)
+            and verification.query_fingerprint == expected_fingerprint
+            and _is_valid_fingerprint(verification.query_fingerprint)
+            and _is_valid_artifact_ref(verification.verifier_artifact_ref)
+        )
+    except Exception:
+        return False
 
 
 def _search_candidates(
@@ -683,26 +760,42 @@ def _search_candidates(
     if request.dense_limit:
         stages.append(EvidenceSearchStage.DENSE)
     for stage in stages:
-        try:
-            response = search_port.search(request, stage)
-        except Exception:
-            return _search_failure(KernelDiagnosticCode.SEARCH_DEPENDENCY_ERROR, all_hits, adapter_artifacts)
+        adapter_request = _snapshot_request(request)
+        response = _call_search_port(search_port, adapter_request, request, stage)
+        if isinstance(response, _PortCallFailure):
+            return _search_failure(response.diagnostic_code, all_hits, adapter_artifacts)
         if isinstance(response, EvidenceSearchFailure):
             return _search_failure(KernelDiagnosticCode.SEARCH_DEPENDENCY_ERROR, all_hits, adapter_artifacts)
         if not isinstance(response, EvidenceSearchSuccess):
             return _search_failure(KernelDiagnosticCode.SEARCH_RESULT_INVALID, all_hits, adapter_artifacts)
-        if _is_valid_artifact_ref(response.adapter_artifact_ref):
-            adapter_artifacts[stage] = response.adapter_artifact_ref
+        response_adapter = getattr(response, "adapter_artifact_ref", None)
+        if isinstance(response_adapter, ImmutableArtifactRef) and _is_valid_artifact_ref(response_adapter):
+            adapter_artifacts[stage] = _snapshot_artifact_ref(response_adapter)
         if not _search_receipt_matches(request, stage, response):
             return _search_failure(KernelDiagnosticCode.SEARCH_RECEIPT_MISMATCH, all_hits, adapter_artifacts)
         if not _search_hits_are_valid(request, stage, response):
             return _search_failure(KernelDiagnosticCode.SEARCH_RESULT_INVALID, all_hits, adapter_artifacts)
-        all_hits.extend(response.hits)
+        all_hits.extend(_snapshot_search_hit(item) for item in response.hits)
     normalized = _normalize_candidates(all_hits)
     if isinstance(normalized, KernelDiagnosticCode):
         return _search_failure(normalized, all_hits, adapter_artifacts)
     candidates = normalized
     return _search_execution(candidates, all_hits, adapter_artifacts)
+
+
+def _call_search_port(
+    search_port: EvidenceSearchPort,
+    adapter_request: EvidenceRetrievalKernelRequest,
+    request: EvidenceRetrievalKernelRequest,
+    stage: EvidenceSearchStage,
+) -> object | _PortCallFailure:
+    try:
+        response = search_port.search(adapter_request, stage)
+    except Exception:
+        return _PortCallFailure(KernelDiagnosticCode.SEARCH_DEPENDENCY_ERROR)
+    if not _request_matches_snapshot(adapter_request, request):
+        return _PortCallFailure(KernelDiagnosticCode.SEARCH_RECEIPT_MISMATCH)
+    return response
 
 
 def _search_failure(
@@ -777,16 +870,21 @@ def _search_receipt_matches(
     stage: EvidenceSearchStage,
     response: EvidenceSearchSuccess,
 ) -> bool:
-    expected_config = request.lexical_config_ref if stage is EvidenceSearchStage.LEXICAL else request.dense_config_ref
-    return not (
-        response.query_fingerprint != request.query_fingerprint
-        or response.filter_snapshot_ref != request.filter_snapshot_ref
-        or response.evidence_index_ref != request.evidence_index_ref
-        or response.retrieval_config_ref != request.retrieval_config_ref
-        or response.stage_config_ref != expected_config
-        or response.stage is not stage
-        or not _is_valid_artifact_ref(response.adapter_artifact_ref)
-    )
+    try:
+        expected_config = (
+            request.lexical_config_ref if stage is EvidenceSearchStage.LEXICAL else request.dense_config_ref
+        )
+        return not (
+            response.query_fingerprint != request.query_fingerprint
+            or response.filter_snapshot_ref != request.filter_snapshot_ref
+            or response.evidence_index_ref != request.evidence_index_ref
+            or response.retrieval_config_ref != request.retrieval_config_ref
+            or response.stage_config_ref != expected_config
+            or response.stage is not stage
+            or not _is_valid_artifact_ref(response.adapter_artifact_ref)
+        )
+    except Exception:
+        return False
 
 
 def _search_hits_are_valid(
@@ -794,13 +892,16 @@ def _search_hits_are_valid(
     stage: EvidenceSearchStage,
     response: EvidenceSearchSuccess,
 ) -> bool:
-    limit = request.lexical_limit if stage is EvidenceSearchStage.LEXICAL else request.dense_limit
-    if not isinstance(response.hits, tuple):
+    try:
+        limit = request.lexical_limit if stage is EvidenceSearchStage.LEXICAL else request.dense_limit
+        if not isinstance(response.hits, tuple):
+            return False
+        return len(response.hits) <= limit and all(
+            _is_valid_search_hit(item, stage, rank, request.evidence_index_ref)
+            for rank, item in enumerate(response.hits, start=1)
+        )
+    except Exception:
         return False
-    return len(response.hits) <= limit and all(
-        _is_valid_search_hit(item, stage, rank, request.evidence_index_ref)
-        for rank, item in enumerate(response.hits, start=1)
-    )
 
 
 def _is_valid_search_hit(
@@ -811,50 +912,208 @@ def _is_valid_search_hit(
 ) -> bool:
     if not isinstance(item, KnowledgeEvidenceSearchHit):
         return False
-    return (
-        item.stage is stage
-        and _is_positive_int(item.rank)
-        and item.rank == expected_rank
-        and _is_valid_score(item.stage_score)
-        and _is_valid_provenance(item.provenance)
-        and item.provenance.evidence_index_ref == expected_evidence_index_ref
-        and _is_valid_sensitive_text(item.content_text)
-        and hashlib.sha256(item.content_text.reveal().encode("utf-8")).hexdigest() == item.provenance.content_sha256
-    )
+    try:
+        return (
+            item.stage is stage
+            and _is_positive_int(item.rank)
+            and item.rank == expected_rank
+            and _is_valid_score(item.stage_score)
+            and _is_valid_provenance(item.provenance)
+            and item.provenance.evidence_index_ref == expected_evidence_index_ref
+            and _is_valid_sensitive_text(item.content_text)
+            and hashlib.sha256(item.content_text.reveal().encode("utf-8")).hexdigest() == item.provenance.content_sha256
+        )
+    except Exception:
+        return False
 
 
 def _is_valid_score(value: object) -> bool:
-    return (
-        isinstance(value, CanonicalScore)
-        and isinstance(value.value, str)
-        and bool(re.fullmatch(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$", value.value))
-    )
+    try:
+        return (
+            isinstance(value, CanonicalScore)
+            and isinstance(value.value, str)
+            and bool(re.fullmatch(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$", value.value))
+        )
+    except Exception:
+        return False
 
 
 def _is_valid_provenance(value: object) -> bool:
-    return (
-        isinstance(value, KnowledgeEvidenceProvenance)
-        and all(
-            _is_nonempty_nfc_string(item)
-            for item in (
-                value.evidence_key,
-                value.knowledge_chunk_ref,
-                value.source_version,
-                value.locator,
-                value.canonicalization_spec_version,
+    try:
+        return (
+            isinstance(value, KnowledgeEvidenceProvenance)
+            and all(
+                _is_nonempty_nfc_string(item)
+                for item in (
+                    value.evidence_key,
+                    value.knowledge_chunk_ref,
+                    value.source_version,
+                    value.locator,
+                    value.canonicalization_spec_version,
+                )
+            )
+            and _is_valid_artifact_ref(value.evidence_index_ref)
+            and _is_valid_artifact_ref(value.source_snapshot_ref)
+            and isinstance(value.content_sha256, str)
+            and bool(_SHA256_RE.fullmatch(value.content_sha256))
+        )
+    except Exception:
+        return False
+
+
+def _snapshot_fingerprint(value: QueryFingerprint) -> QueryFingerprint:
+    return QueryFingerprint(value.algorithm, value.key_version, value.digest)
+
+
+def _snapshot_artifact_ref(value: ImmutableArtifactRef) -> ImmutableArtifactRef:
+    return ImmutableArtifactRef(value.artifact_code, value.version, value.content_sha256)
+
+
+def _snapshot_optional_artifact_ref(value: ImmutableArtifactRef | None) -> ImmutableArtifactRef | None:
+    return None if value is None else _snapshot_artifact_ref(value)
+
+
+def _snapshot_request(value: EvidenceRetrievalKernelRequest) -> EvidenceRetrievalKernelRequest:
+    return EvidenceRetrievalKernelRequest(
+        SensitiveText(value.normalized_query.reveal()),
+        _snapshot_fingerprint(value.query_fingerprint),
+        _snapshot_artifact_ref(value.filter_snapshot_ref),
+        _snapshot_artifact_ref(value.evidence_index_ref),
+        _snapshot_artifact_ref(value.retrieval_config_ref),
+        _snapshot_artifact_ref(value.lexical_config_ref),
+        _snapshot_optional_artifact_ref(value.dense_config_ref),
+        _snapshot_artifact_ref(value.rerank_config_ref),
+        value.rerank_input_projection_version,
+        value.lexical_limit,
+        value.dense_limit,
+        value.selection_limit,
+    )
+
+
+def _query_binding_inputs_match_snapshot(
+    query: SensitiveText,
+    query_fingerprint: QueryFingerprint,
+    request: EvidenceRetrievalKernelRequest,
+) -> bool:
+    try:
+        return (
+            _is_valid_sensitive_text(query)
+            and query.reveal() == request.normalized_query.reveal()
+            and query_fingerprint == request.query_fingerprint
+        )
+    except Exception:
+        return False
+
+
+def _request_matches_snapshot(
+    observed: EvidenceRetrievalKernelRequest,
+    expected: EvidenceRetrievalKernelRequest,
+) -> bool:
+    try:
+        return (
+            isinstance(observed, EvidenceRetrievalKernelRequest)
+            and _is_valid_sensitive_text(observed.normalized_query)
+            and observed.normalized_query.reveal() == expected.normalized_query.reveal()
+            and observed.query_fingerprint == expected.query_fingerprint
+            and observed.filter_snapshot_ref == expected.filter_snapshot_ref
+            and observed.evidence_index_ref == expected.evidence_index_ref
+            and observed.retrieval_config_ref == expected.retrieval_config_ref
+            and observed.lexical_config_ref == expected.lexical_config_ref
+            and observed.dense_config_ref == expected.dense_config_ref
+            and observed.rerank_config_ref == expected.rerank_config_ref
+            and observed.rerank_input_projection_version == expected.rerank_input_projection_version
+            and observed.lexical_limit == expected.lexical_limit
+            and observed.dense_limit == expected.dense_limit
+            and observed.selection_limit == expected.selection_limit
+        )
+    except Exception:
+        return False
+
+
+def _snapshot_provenance(value: KnowledgeEvidenceProvenance) -> KnowledgeEvidenceProvenance:
+    return KnowledgeEvidenceProvenance(
+        value.evidence_key,
+        value.knowledge_chunk_ref,
+        _snapshot_artifact_ref(value.evidence_index_ref),
+        _snapshot_artifact_ref(value.source_snapshot_ref),
+        value.source_version,
+        value.locator,
+        value.content_sha256,
+        value.canonicalization_spec_version,
+    )
+
+
+def _snapshot_search_hit(value: KnowledgeEvidenceSearchHit) -> KnowledgeEvidenceSearchHit:
+    return KnowledgeEvidenceSearchHit(
+        _snapshot_provenance(value.provenance),
+        value.stage,
+        value.rank,
+        CanonicalScore(value.stage_score.value),
+        SensitiveText(value.content_text.reveal()),
+    )
+
+
+def _snapshot_candidate(value: KnowledgeEvidenceCandidate) -> KnowledgeEvidenceCandidate:
+    return KnowledgeEvidenceCandidate(
+        _snapshot_provenance(value.provenance),
+        SensitiveText(value.content_text.reveal()),
+        tuple(
+            StageSignal(signal.stage, signal.rank, CanonicalScore(signal.score.value)) for signal in value.stage_signals
+        ),
+    )
+
+
+def _candidate_matches_snapshot(observed: object, expected: KnowledgeEvidenceCandidate) -> bool:
+    try:
+        return (
+            isinstance(observed, KnowledgeEvidenceCandidate)
+            and observed.provenance == expected.provenance
+            and _is_valid_sensitive_text(observed.content_text)
+            and observed.content_text.reveal() == expected.content_text.reveal()
+            and observed.stage_signals == expected.stage_signals
+            and hashlib.sha256(observed.content_text.reveal().encode("utf-8")).hexdigest()
+            == observed.provenance.content_sha256
+        )
+    except Exception:
+        return False
+
+
+def _rerank_request_is_unchanged(
+    observed: EvidenceRerankRequest,
+    request: EvidenceRetrievalKernelRequest,
+    canonical_candidates: tuple[KnowledgeEvidenceCandidate, ...],
+) -> bool:
+    try:
+        return (
+            observed.query_fingerprint == request.query_fingerprint
+            and observed.filter_snapshot_ref == request.filter_snapshot_ref
+            and observed.evidence_index_ref == request.evidence_index_ref
+            and observed.retrieval_config_ref == request.retrieval_config_ref
+            and observed.rerank_config_ref == request.rerank_config_ref
+            and observed.projection_version == request.rerank_input_projection_version
+            and observed.input_set_hash
+            == canonical_rerank_input_hash(request.rerank_input_projection_version, canonical_candidates)
+            and isinstance(observed.candidates, tuple)
+            and len(observed.candidates) == len(canonical_candidates)
+            and all(
+                _candidate_matches_snapshot(candidate, expected)
+                for candidate, expected in zip(observed.candidates, canonical_candidates, strict=True)
             )
         )
-        and _is_valid_artifact_ref(value.evidence_index_ref)
-        and _is_valid_artifact_ref(value.source_snapshot_ref)
-        and isinstance(value.content_sha256, str)
-        and bool(_SHA256_RE.fullmatch(value.content_sha256))
-    )
+    except Exception:
+        return False
 
 
 def _is_valid_request(request: object) -> bool:
     if not isinstance(request, EvidenceRetrievalKernelRequest):
         return False
+    try:
+        return _request_fields_are_valid(request)
+    except Exception:
+        return False
 
+
+def _request_fields_are_valid(request: EvidenceRetrievalKernelRequest) -> bool:
     if not _is_valid_sensitive_text(request.normalized_query):
         return False
     if not _is_valid_fingerprint(request.query_fingerprint):
@@ -886,28 +1145,37 @@ def _is_valid_request(request: object) -> bool:
 def _is_valid_sensitive_text(value: object) -> bool:
     if not isinstance(value, SensitiveText):
         return False
-    revealed = value.reveal()
+    try:
+        revealed = value.reveal()
+    except Exception:
+        return False
     return isinstance(revealed, str) and bool(revealed.strip()) and _is_nfc(revealed)
 
 
 def _is_valid_fingerprint(value: object) -> bool:
-    return (
-        isinstance(value, QueryFingerprint)
-        and _is_nonempty_nfc_string(value.algorithm)
-        and _is_nonempty_nfc_string(value.key_version)
-        and isinstance(value.digest, str)
-        and bool(_SHA256_RE.fullmatch(value.digest))
-    )
+    try:
+        return (
+            isinstance(value, QueryFingerprint)
+            and _is_nonempty_nfc_string(value.algorithm)
+            and _is_nonempty_nfc_string(value.key_version)
+            and isinstance(value.digest, str)
+            and bool(_SHA256_RE.fullmatch(value.digest))
+        )
+    except Exception:
+        return False
 
 
 def _is_valid_artifact_ref(value: object) -> bool:
-    return (
-        isinstance(value, ImmutableArtifactRef)
-        and _is_nonempty_nfc_string(value.artifact_code)
-        and _is_nonempty_nfc_string(value.version)
-        and isinstance(value.content_sha256, str)
-        and bool(_SHA256_RE.fullmatch(value.content_sha256))
-    )
+    try:
+        return (
+            isinstance(value, ImmutableArtifactRef)
+            and _is_nonempty_nfc_string(value.artifact_code)
+            and _is_nonempty_nfc_string(value.version)
+            and isinstance(value.content_sha256, str)
+            and bool(_SHA256_RE.fullmatch(value.content_sha256))
+        )
+    except Exception:
+        return False
 
 
 def _is_nonempty_nfc_string(value: object) -> bool:

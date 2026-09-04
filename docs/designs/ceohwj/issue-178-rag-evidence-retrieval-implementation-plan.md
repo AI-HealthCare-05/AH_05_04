@@ -228,6 +228,15 @@ class SensitiveText:
     def __init__(self, value: str) -> None:
         self.__value = value
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "_SensitiveText__value" and not hasattr(self, name):
+            object.__setattr__(self, name, value)
+            return
+        raise AttributeError("SensitiveText is immutable")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "SensitiveText":
+        return SensitiveText(self.__value)
+
     def reveal(self) -> str:
         return self.__value
 
@@ -933,6 +942,9 @@ class EvidenceRetrievalDiagnosticTrace:
     lexical_config_ref: ImmutableArtifactRef
     dense_config_ref: ImmutableArtifactRef | None
     rerank_config_ref: ImmutableArtifactRef
+    lexical_limit: int
+    dense_limit: int
+    selection_limit: int
     query_verifier_artifact_ref: ImmutableArtifactRef | None
     lexical_adapter_artifact_ref: ImmutableArtifactRef | None
     dense_adapter_artifact_ref: ImmutableArtifactRef | None
@@ -948,11 +960,14 @@ class EvidenceRetrievalDiagnosticTrace:
 - StrEnum은 `.value`
 - CanonicalScore는 `.value`
 - Artifact ref는 code/version/hash
+- 실행 limit은 lexical/dense/selection scalar
 - nullable adapter ref는 JSON `null`
 - hits는 stage/rank 순
 - selections는 rerank rank 순
 
 Outcome은 `trace`, `untrusted_selections`, 빈 `failure_details`만 가진다. 어떤 failure path도 exception 객체 또는 message를 저장하지 않는다.
+이 projection은 transient query/content를 구조적으로 제외하지만 adapter metadata의 의미를 판별하는 PII
+scrubber는 아니다. 실제 adapter 연결 전에는 승인된 metadata 제한 타입 또는 Privacy allowlist가 필요하다.
 
 - [ ] **Step 5: 모든 trace/privacy 테스트를 GREEN으로 만든다**
 
@@ -1023,6 +1038,7 @@ git diff --check origin/develop...HEAD
 - 합성 Knowledge Evidence에 대한 query/search/rerank orchestration
 - requested/applied immutable reference exact-match
 - canonical candidate와 rerank input hash 결정성
+- port별 deep snapshot, 호출 후 mutation 검증과 비노출 canonical candidate 재결속
 - rank·score·content·provenance fail-closed 검증
 - sanitized non-authoritative diagnostic trace
 
