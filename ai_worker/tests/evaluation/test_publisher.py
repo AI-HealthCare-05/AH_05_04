@@ -167,6 +167,215 @@ def test_publish_cleans_created_staging_when_open_fails(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_publish_cleans_created_staging_when_initial_identity_stat_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_stat = os.stat
+    failed_once = False
+
+    def fail_initial_staging_stat(*args: object, **kwargs: object) -> os.stat_result:
+        nonlocal failed_once
+        path = args[0] if args else kwargs.get("path")
+        if isinstance(path, str) and path.startswith(f".{RUN_ID}.tmp.") and not failed_once:
+            failed_once = True
+            raise OSError(errno.EIO, "staging identity stat failed")
+        return real_stat(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(publisher_module.os, "stat", fail_initial_staging_stat)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert failed_once
+    assert not (tmp_path / RUN_ID).exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_publish_cleans_created_lock_when_initial_fstat_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_open = os.open
+    real_fstat = os.fstat
+    lock_descriptor: int | None = None
+
+    def capture_lock_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal lock_descriptor
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path == f"{RUN_ID}.lock":
+            lock_descriptor = descriptor
+        return descriptor
+
+    def fail_lock_fstat(descriptor: int) -> os.stat_result:
+        if descriptor == lock_descriptor:
+            raise OSError(errno.EIO, "lock identity fstat failed")
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(publisher_module.os, "open", capture_lock_open)
+    monkeypatch.setattr(publisher_module.os, "fstat", fail_lock_fstat)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert lock_descriptor is not None
+    with pytest.raises(OSError) as closed:
+        real_fstat(lock_descriptor)
+    assert closed.value.errno == errno.EBADF
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_publish_fails_closed_when_staging_entry_is_replaced_before_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_fsync = os.fsync
+    real_mkdir = os.mkdir
+    root_identity = (tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+    staging_name: str | None = None
+    staging_root_fd: int | None = None
+    staging_descriptor: int | None = None
+    swapped = False
+
+    def capture_staging_mkdir(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        nonlocal staging_name, staging_root_fd
+        real_mkdir(path, mode, dir_fd=dir_fd)
+        if isinstance(path, str) and path.startswith(f".{RUN_ID}.tmp.") and not swapped:
+            staging_name = path
+            staging_root_fd = dir_fd
+
+    def replace_staging_after_fsync(descriptor: int) -> None:
+        nonlocal staging_descriptor, swapped
+        metadata = os.fstat(descriptor)
+        real_fsync(descriptor)
+        if swapped or not stat.S_ISDIR(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) == root_identity:
+            return
+        assert staging_name is not None
+        assert staging_root_fd is not None
+        staging_descriptor = descriptor
+        swapped = True
+        os.rename(
+            staging_name,
+            f"{staging_name}.orphan",
+            src_dir_fd=staging_root_fd,
+            dst_dir_fd=staging_root_fd,
+        )
+        replacement = tmp_path / staging_name
+        replacement.mkdir(mode=0o700)
+        (replacement / "rogue.txt").write_bytes(b"rogue")
+
+    monkeypatch.setattr(publisher_module.os, "mkdir", capture_staging_mkdir)
+    monkeypatch.setattr(publisher_module.os, "fsync", replace_staging_after_fsync)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert staging_name is not None
+    assert staging_descriptor is not None
+    assert not (tmp_path / RUN_ID).exists()
+    assert (tmp_path / staging_name / "rogue.txt").read_bytes() == b"rogue"
+    assert not (tmp_path / f"{RUN_ID}.lock").exists()
+    with pytest.raises(OSError) as closed:
+        os.fstat(staging_descriptor)
+    assert closed.value.errno == errno.EBADF
+
+
+def test_publish_fails_closed_when_staging_entry_is_swapped_at_rename_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pre-rename check can close this gap: `exclusive_rename` renames by
+    path, so a swap landing between the last check and the syscall itself is
+    only detectable after the fact. This asserts the post-rename identity
+    check catches it instead of silently publishing the swapped-in entry."""
+    real_exclusive_rename = publisher_module.exclusive_rename
+    swapped = False
+
+    def swap_then_rename(parent_fd: int, source: str, target: str) -> None:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            os.rename(source, f"{source}.orphan", src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            os.mkdir(source, 0o700, dir_fd=parent_fd)
+            rogue_dir_fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY, dir_fd=parent_fd)
+            try:
+                rogue_fd = os.open(
+                    "rogue.txt",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                    dir_fd=rogue_dir_fd,
+                )
+                os.write(rogue_fd, b"rogue")
+                os.close(rogue_fd)
+            finally:
+                os.close(rogue_dir_fd)
+        real_exclusive_rename(parent_fd, source, target)
+
+    monkeypatch.setattr(publisher_module, "exclusive_rename", swap_then_rename)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert swapped
+    orphaned = list(tmp_path.glob(f".{RUN_ID}.tmp.*.orphan"))
+    assert len(orphaned) == 1
+    assert {path.name for path in orphaned[0].iterdir()} == set(_bundle())
+    assert (tmp_path / RUN_ID / "rogue.txt").read_bytes() == b"rogue"
+
+
+def test_publish_fails_closed_when_staging_contains_an_unowned_extra_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_fsync = os.fsync
+    root_identity = (tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+    injected = False
+
+    def inject_extra_file_after_staging_fsync(descriptor: int) -> None:
+        nonlocal injected
+        metadata = os.fstat(descriptor)
+        real_fsync(descriptor)
+        if injected or not stat.S_ISDIR(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) == root_identity:
+            return
+        injected = True
+        rogue_fd = os.open(
+            "rogue.txt",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=descriptor,
+        )
+        os.write(rogue_fd, b"rogue")
+        os.close(rogue_fd)
+
+    monkeypatch.setattr(publisher_module.os, "fsync", inject_extra_file_after_staging_fsync)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.MANIFEST_INVALID
+    assert injected
+    assert not (tmp_path / RUN_ID).exists()
+    assert not (tmp_path / f"{RUN_ID}.lock").exists()
+    staging_directories = list(tmp_path.glob(f".{RUN_ID}.tmp.*"))
+    assert len(staging_directories) == 1
+    assert (staging_directories[0] / "rogue.txt").read_bytes() == b"rogue"
+
+
 @pytest.mark.parametrize("root_fsync_number", [1, 2])
 def test_publish_rolls_back_final_directory_after_parent_fsync_failure(
     tmp_path: Path,

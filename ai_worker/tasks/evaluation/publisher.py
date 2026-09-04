@@ -100,22 +100,44 @@ def _identity(directory_fd: int, name: str) -> FileIdentity | None:
     return metadata.st_dev, metadata.st_ino
 
 
+def _descriptor_identity(descriptor: int) -> FileIdentity:
+    metadata = os.fstat(descriptor)
+    return metadata.st_dev, metadata.st_ino
+
+
 def _create_file(directory_fd: int, name: str, payload: bytes) -> FileIdentity:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
-    metadata = os.fstat(descriptor)
-    identity = metadata.st_dev, metadata.st_ino
+    identity: FileIdentity | None = None
+    close_attempted = False
     try:
+        entry_identity = _identity(directory_fd, name)
+        identity = _descriptor_identity(descriptor)
+        if entry_identity != identity:
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
         os.fchmod(descriptor, 0o600)
         if os.write(descriptor, payload) != len(payload):
             raise OSError(errno.EIO, "short write")
         os.fsync(descriptor)
-    except BaseException:
+        close_attempted = True
         os.close(descriptor)
-        _remove_file_if_owned(directory_fd, name, identity)
+        return identity
+    except BaseException as error:
+        cleanup_error: BaseException | None = None
+        if not close_attempted:
+            try:
+                os.close(descriptor)
+            except BaseException as close_error:
+                cleanup_error = close_error
+        try:
+            cleanup_identity = identity if identity is not None else _identity(directory_fd, name)
+            if cleanup_identity is not None:
+                _remove_file_if_owned(directory_fd, name, cleanup_identity)
+        except BaseException as remove_error:
+            cleanup_error = cleanup_error or remove_error
+        if cleanup_error is not None:
+            raise cleanup_error from error
         raise
-    os.close(descriptor)
-    return identity
 
 
 def _remove_file_if_owned(directory_fd: int, name: str, identity: FileIdentity) -> None:
@@ -152,25 +174,56 @@ def _cleanup_staging(
     staging_name: str,
     staging_identity: FileIdentity | None,
     created_files: Mapping[str, FileIdentity],
-) -> None:
+) -> bool:
     if staging_fd is None or staging_identity is None:
-        return
-    if _identity(root_fd, staging_name) != staging_identity:
-        return
-    for name, identity in created_files.items():
-        _remove_file_if_owned(staging_fd, name, identity)
-    os.close(staging_fd)
-    os.rmdir(staging_name, dir_fd=root_fd)
+        return False
+    entry_matches = False
+    try:
+        entry_matches = _identity(root_fd, staging_name) == staging_identity
+        if entry_matches:
+            for name, identity in created_files.items():
+                _remove_file_if_owned(staging_fd, name, identity)
+    finally:
+        os.close(staging_fd)
+    if not entry_matches:
+        return False
+    try:
+        os.rmdir(staging_name, dir_fd=root_fd)
+    except OSError as error:
+        if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+            return False
+        raise
+    return True
 
 
 def _cleanup_unopened_staging(
     root_fd: int,
     staging_name: str,
     staging_identity: FileIdentity | None,
-) -> None:
-    if staging_identity is None or _identity(root_fd, staging_name) != staging_identity:
-        return
+    *,
+    created: bool,
+) -> bool:
+    if not created:
+        return False
+    if staging_identity is not None and _identity(root_fd, staging_name) != staging_identity:
+        return False
     os.rmdir(staging_name, dir_fd=root_fd)
+    return True
+
+
+def _verify_staging_entry(
+    root_fd: int,
+    staging_fd: int,
+    staging_name: str,
+    staging_identity: FileIdentity,
+    *,
+    verify_contents: bool = False,
+) -> None:
+    descriptor_identity = _descriptor_identity(staging_fd)
+    if descriptor_identity != staging_identity or _identity(root_fd, staging_name) != descriptor_identity:
+        raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+    if verify_contents and set(os.listdir(staging_fd)) != _BUNDLE_FILENAMES:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
 
 
 def _cleanup_published(
@@ -180,11 +233,13 @@ def _cleanup_published(
     published_identity: FileIdentity | None,
     created_files: Mapping[str, FileIdentity],
 ) -> None:
-    if published_identity is None or _identity(root_fd, run_id) != published_identity:
-        raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
-    for name, identity in created_files.items():
-        _remove_file_if_owned(published_fd, name, identity)
-    os.close(published_fd)
+    try:
+        if published_identity is None or _identity(root_fd, run_id) != published_identity:
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        for name, identity in created_files.items():
+            _remove_file_if_owned(published_fd, name, identity)
+    finally:
+        os.close(published_fd)
     os.rmdir(run_id, dir_fd=root_fd)
 
 
@@ -195,6 +250,7 @@ class _RunPublication:
     lock_name: str = field(init=False)
     staging_name: str = field(init=False)
     lock_identity: FileIdentity | None = None
+    staging_created: bool = False
     staging_identity: FileIdentity | None = None
     staging_fd: int | None = None
     created_files: dict[str, FileIdentity] = field(default_factory=dict)
@@ -212,16 +268,38 @@ class _RunPublication:
         if _identity(self.root_fd, self.run_id) is not None:
             raise EvaluationValidationError(EvaluationErrorCode.RESULT_PATH_CONFLICT)
         os.mkdir(self.staging_name, 0o700, dir_fd=self.root_fd)
+        self.staging_created = True
         self.staging_identity = _identity(self.root_fd, self.staging_name)
         if self.staging_identity is None:
             raise OSError(errno.ENOENT, "staging directory missing")
         self.staging_fd = os.open(self.staging_name, _directory_flags(), dir_fd=self.root_fd)
+        _verify_staging_entry(
+            self.root_fd,
+            self.staging_fd,
+            self.staging_name,
+            self.staging_identity,
+        )
         os.fchmod(self.staging_fd, 0o700)
         for name in sorted(files, key=lambda value: value.encode("utf-16-be")):
             self.created_files[name] = _create_file(self.staging_fd, name, files[name])
         os.fsync(self.staging_fd)
+        _verify_staging_entry(
+            self.root_fd,
+            self.staging_fd,
+            self.staging_name,
+            self.staging_identity,
+            verify_contents=True,
+        )
+        # Re-verify immediately adjacent to the rename call, with no work in
+        # between, to shrink (but not eliminate) the TOCTOU window: rename
+        # operates on the name, not this fd, so a swap landing in that gap is
+        # only detectable, never preventable — the post-rename check below is
+        # what actually fails closed on it.
+        _verify_staging_entry(self.root_fd, self.staging_fd, self.staging_name, self.staging_identity)
         exclusive_rename(self.root_fd, self.staging_name, self.run_id)
         self.renamed = True
+        if _identity(self.root_fd, self.run_id) != self.staging_identity:
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
         os.fsync(self.root_fd)
         self.remove_lock()
         os.fsync(self.root_fd)
@@ -247,21 +325,20 @@ class _RunPublication:
                 )
                 cleaned_directory_entry = True
             elif self.staging_fd is not None:
-                _cleanup_staging(
+                cleaned_directory_entry = _cleanup_staging(
                     self.root_fd,
                     self.staging_fd,
                     self.staging_name,
                     self.staging_identity,
                     self.created_files,
                 )
-                cleaned_directory_entry = True
-            elif self.staging_identity is not None:
-                _cleanup_unopened_staging(
+            elif self.staging_created:
+                cleaned_directory_entry = _cleanup_unopened_staging(
                     self.root_fd,
                     self.staging_name,
                     self.staging_identity,
+                    created=self.staging_created,
                 )
-                cleaned_directory_entry = True
             self.staging_fd = None
             had_lock = self.lock_identity is not None
             self.remove_lock()
