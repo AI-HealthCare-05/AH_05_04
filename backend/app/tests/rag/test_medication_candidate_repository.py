@@ -123,9 +123,7 @@ async def _create_medication(
 async def _create_search(
     repository: MedicationCandidateRepository, *, prescription: Prescription, display_order: int = 1
 ):
-    medication = await _create_medication(
-        repository.session, prescription=prescription, display_order=display_order
-    )
+    medication = await _create_medication(repository.session, prescription=prescription, display_order=display_order)
     return await repository.create_search(
         prescription_version_medication_id=medication.id,
         medication_name_snapshot="테스트약",

@@ -15,6 +15,7 @@ from app.models.prescriptions import Medication, Prescription
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
     MedicationCandidateSearchStatus,
+    MedicationIdentification,
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
@@ -276,6 +277,80 @@ async def test_confirm_identification_rejects_reconfirm_of_consumed_search(db_se
     assert exc_info.value.details[0].reason == "SEARCH_NOT_READY"
 
 
+async def test_confirm_identification_rejects_expired_search(db_session: AsyncSession) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="owner17@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    medication = await _create_medication(db_session, prescription=prescription)
+    search = (
+        await service.record_candidate_search(
+            prescription_version_medication_id=medication.id,
+            medication_name_snapshot="테스트약",
+            strength_text_snapshot="500mg",
+            query_digest="query-digest",
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+        )
+    ).search
+    finalized = await service.finalize_candidate_search(
+        search_id=search.id,
+        user_id=owner.id,
+        status=MedicationCandidateSearchStatus.READY,
+        results=[_ready_result()],
+        finalized_at=datetime.now(config.TIMEZONE),
+    )
+    finalized.search.expires_at = datetime.now(config.TIMEZONE) - timedelta(seconds=1)
+    await db_session.flush()
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.confirm_identification(
+            prescription_version_medication_id=medication.id,
+            candidate_search_result_id=finalized.results[0].id,
+            user_id=owner.id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "CANDIDATE_SEARCH_STALE"
+    assert exc_info.value.details[0].reason == "SEARCH_EXPIRED"
+
+
+async def test_confirm_identification_rejects_search_medication_mismatch(db_session: AsyncSession) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="owner18@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    search_medication = await _create_medication(db_session, prescription=prescription, display_order=1)
+    other_medication = await _create_medication(db_session, prescription=prescription, display_order=2)
+    search = (
+        await service.record_candidate_search(
+            prescription_version_medication_id=search_medication.id,
+            medication_name_snapshot="테스트약",
+            strength_text_snapshot="500mg",
+            query_digest="query-digest",
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+        )
+    ).search
+    finalized = await service.finalize_candidate_search(
+        search_id=search.id,
+        user_id=owner.id,
+        status=MedicationCandidateSearchStatus.READY,
+        results=[_ready_result()],
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.confirm_identification(
+            prescription_version_medication_id=other_medication.id,
+            candidate_search_result_id=finalized.results[0].id,
+            user_id=owner.id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "CANDIDATE_SEARCH_STALE"
+    assert exc_info.value.details[0].reason == "SEARCH_MEDICATION_MISMATCH"
+
+
 async def test_record_candidate_search_rejects_existing_identification(db_session: AsyncSession) -> None:
     service = _service(db_session)
     owner = await _create_user(db_session, email="owner4@example.com")
@@ -397,6 +472,66 @@ async def test_reject_identification_rejects_re_reject_of_invalidated_search(db_
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "CANDIDATE_SEARCH_STALE"
     assert exc_info.value.details[0].reason == "SEARCH_NOT_READY"
+
+
+async def test_record_candidate_search_rejects_after_user_rejected_identification(
+    db_session: AsyncSession,
+) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="owner19@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    medication = await _create_medication(db_session, prescription=prescription)
+    search = (
+        await service.record_candidate_search(
+            prescription_version_medication_id=medication.id,
+            medication_name_snapshot="테스트약",
+            strength_text_snapshot="500mg",
+            query_digest="query-digest",
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+        )
+    ).search
+    finalized = await service.finalize_candidate_search(
+        search_id=search.id,
+        user_id=owner.id,
+        status=MedicationCandidateSearchStatus.READY,
+        results=[_ready_result()],
+    )
+
+    rejected = await service.reject_identification(
+        search_id=search.id,
+        candidate_search_result_id=finalized.results[0].id,
+        user_id=owner.id,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.record_candidate_search(
+            prescription_version_medication_id=medication.id,
+            medication_name_snapshot="테스트약",
+            strength_text_snapshot="500mg",
+            query_digest="query-digest-after-reject",
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=None,
+        )
+
+    identifications = (
+        (
+            await db_session.execute(
+                select(MedicationIdentification).where(
+                    MedicationIdentification.prescription_version_medication_id == medication.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [item.id for item in identifications] == [rejected.id]
+    assert identifications[0].status == MedicationIdentificationStatus.UNRESOLVED
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "IDENTIFICATION_CONTEXT_STALE"
+    assert exc_info.value.details[0].reason == "IDENTIFICATION_ALREADY_EXISTS"
 
 
 async def test_expired_active_search_does_not_block_new_search(db_session: AsyncSession) -> None:

@@ -197,6 +197,7 @@ if ! run_with_test_database \
   tests/contract \
   ai_worker/tests/core \
   ai_worker/tests/ocr \
+  tests/integration/rag \
   tests/integration/test_worker_ocr_persistence.py \
   tests/integration/test_outbox_publisher.py; then
   echo
