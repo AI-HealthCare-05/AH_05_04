@@ -1,0 +1,16 @@
+{
+  "synthetic_header": {
+    "result_code": "SYNTHETIC_SUCCESS"
+  },
+  "synthetic_body": {
+    "items": [
+      {
+        "synthetic_id": "product-003",
+        "name": "합성 의약품 C"
+      }
+    ],
+    "page": 2,
+    "page_size": 2,
+    "total_count": 3
+  }
+}
