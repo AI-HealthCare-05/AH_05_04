@@ -12,15 +12,20 @@ from pydantic import ValidationError
 from ai_worker.core.config import Config
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.provider_observability import (
+    create_worker_provider_call_context_from_trace_id,
+)
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.runtime_assembly import (
     RoutingResultStore,
     SessionScopedDeliveryExecution,
     build_worker_runtime,
+    create_clova_ocr_engine,
     create_session_factory,
 )
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType
+from ocr_runtime.clova_engine import ClovaOcrEngine
 from provider_contracts.observability import DeploymentEnvironment
 from provider_contracts.ocr import OcrEngine
 
@@ -30,6 +35,9 @@ _BASE_SETTINGS: dict[str, Any] = {
     "DB_NAME": "test",
     "DB_USER": "worker",
     "DB_PASSWORD": "worker-password",
+    "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
+    "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+    "STORAGE_DIR": "/tmp/medical-documents",
 }
 
 
@@ -137,6 +145,20 @@ def test_config_rejects_ocr_deadline_exceeding_worker_hard_timeout() -> None:
             OCR_REQUEST_DEADLINE_SECONDS=61.0,
             WORKER_HARD_TIMEOUT_SECONDS=60.0,
         )
+
+
+def test_create_clova_ocr_engine_builds_real_shared_engine(
+    tmp_path,
+) -> None:
+    config = _config(STORAGE_DIR=str(tmp_path))
+
+    ocr_engine = create_clova_ocr_engine(
+        config,
+        trace_id="a" * 32,
+    )
+
+    assert isinstance(ocr_engine, ClovaOcrEngine)
+    assert "synthetic-clova-secret" not in repr(ocr_engine)
 
 
 # --- Handler 등록 경계 -----------------------------------------------------
@@ -263,6 +285,20 @@ def _engine_stub() -> Any:
     return create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:5432/test")
 
 
+def test_build_worker_runtime_rejects_multiple_ocr_sources() -> None:
+    with pytest.raises(
+        ValueError,
+        match="ocr_engine과 ocr_provider 중 하나만 전달할 수 있습니다",
+    ):
+        build_worker_runtime(
+            _config(),
+            logger=logging.getLogger("test"),
+            clock=lambda: datetime.now(UTC),
+            ocr_engine=cast(OcrEngine, object()),
+            ocr_provider=cast(Any, object()),
+        )
+
+
 def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() -> None:
     assembled = build_worker_runtime(
         _config(),
@@ -274,3 +310,15 @@ def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() ->
     )
 
     assert assembled.registered_types == frozenset({JobType.OCR})
+
+
+def test_worker_provider_context_uses_delivery_trace_id() -> None:
+    context = create_worker_provider_call_context_from_trace_id(
+        trace_id="a" * 32,
+        environment=DeploymentEnvironment.STAGING,
+    )
+
+    assert context.trace_id == "a" * 32
+    assert context.environment is DeploymentEnvironment.STAGING
+    assert context.validation_run_id is None
+    assert context.validation_enabled is False
