@@ -481,6 +481,29 @@ def test_invalid_lexical_config_fails_closed(config_change: dict[str, object]) -
     assert not hasattr(result, "manifest")
 
 
+@pytest.mark.parametrize(
+    "config_change",
+    [
+        {"build_mode": "HYBRID"},
+        {"ann_config": ()},
+        {"ann_config": (("hnsw_m", "16"), ("hnsw_m", "32"))},
+        {"ann_config": (("", "16"),)},
+        {"ann_config": (("hnsw_m", "   "),)},
+    ],
+)
+def test_invalid_hybrid_config_fails_closed(config_change: dict[str, object]) -> None:
+    result = build_candidate_index(
+        valid_catalog(),
+        replace(hybrid_config(), **cast(Any, config_change)),
+        embedding_port=FixedEmbeddingPort(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.BUILD_CONFIG_INVALID,
+        details=("config",),
+    )
+
+
 def test_lexical_build_is_deterministic_across_input_order() -> None:
     catalog = valid_catalog()
     reversed_catalog = replace(

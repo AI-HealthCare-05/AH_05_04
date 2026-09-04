@@ -484,8 +484,31 @@ def _catalog_count_mismatches(catalog: CandidateCatalogExport) -> tuple[str, ...
     )
 
 
+def _ann_config_is_valid(value: object) -> bool:
+    if not isinstance(value, tuple) or not value:
+        return False
+    keys: set[str] = set()
+    for item in value:
+        if not isinstance(item, tuple) or len(item) != 2:
+            return False
+        key, setting = item
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(setting, str)
+            or not setting.strip()
+            or key in keys
+        ):
+            return False
+        keys.add(key)
+    return True
+
+
 def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuildConfig) -> bool:
-    if _non_nfc_text_paths(dataclasses.asdict(config)):
+    if not isinstance(config.build_mode, CandidateIndexBuildMode):
+        return False
+    config_values = dataclasses.asdict(config)
+    if _non_nfc_text_paths(config_values) or _blank_text_paths(config_values):
         return False
     if not all(
         (
@@ -520,6 +543,7 @@ def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuil
         and config.embedding_dimension is not None
         and config.embedding_dimension > 0
         and config.distance_metric is CandidateDistanceMetric.COSINE
+        and _ann_config_is_valid(config.ann_config)
     )
 
 
