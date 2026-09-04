@@ -22,7 +22,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [OCR Provider 약품명 필드 Alias 예방 계약](./current/ocr-provider-field-aliases.md): 현재 외부 alias가 없는 상태에서 `medication_name`·`MEDICATION_NAME` 정본과 향후 Source별 Provider Adapter 변환 경계를 고정
 - [OCR 약품 행 구조화 계약](./current/ocr-medication-structuring.md): 현재 약품 행 판정·부분 인식·사용자 확인 경계
 - [처방 확정 Backend 계약](./current/prescription-confirmation.md): OCR 검수 필드로 처방을 확정할 때의 필수값, DB 경계값, Post-MVP `job_id` 검증 경계
-- [회원가입·사용자 정보 계약](./current/user-account.md): 회원가입 허용 필드, 내 정보 수정 범위와 개인정보 nullable 상태
+- [회원가입·사용자 정보 계약](./current/user-account.md): 회원가입 허용 필드, 내 정보 수정 범위, 개인정보 nullable 상태, 현재 구현된 `token_version` 기반 인증 세션 무효화
 - [OCR 작업 상태 조회 계약](./current/ocr-job-status.md): OCR 작업 실패 코드와 `error_message` 노출 기준, 최신 작업 판별 기준
 - [공통 Job 상태 조회 계약 v1](./current/job-status-v1.md): `GET /api/v1/jobs/{job_id}` 응답 필드, 6개 Job 상태 의미, 소유권 이중 확인, 오류 계약
 - [Backend 공통 오류 응답 계약](./current/backend-error-response.md): `ApiError` 사용법, 공통·도메인 오류 코드
@@ -36,7 +36,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
-- [계정 생명주기 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 로그아웃·비밀번호 재설정·회원탈퇴의 `account_status`, `token_version` 세션 무효화와 transaction 경계 (Draft — 권가빈 승인 대기)
+- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 비밀번호 재설정·회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃과 `token_version` 재검증은 현재 구현 계약에 반영됨
 - [Guide·Chat Session·Message 상태 구현 골격 v1](./proposed/guide-chat-session-message-status-ui-v1.md): Session/Message/Job 결과 상태축, SAFETY-STALE 경계, PROFILE 기반 소유권의 Frontend 구현 골격
 
 Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 구현은 전체 계약 완료나 Current 승격을 의미하지 않으며, 관련 schema·service·CLI·테스트와 남은 전환 단계가 완료되고 상태가 갱신되기 전에는 실행 가능한 전체 계약으로 간주하지 않습니다.

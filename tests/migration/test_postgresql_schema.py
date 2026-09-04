@@ -1465,16 +1465,19 @@ async def _write_ocr_ai_job_link_and_wait(
 
 
 async def _wait_for_ocr_downgrade_lock() -> None:
-    """downgrade가 ocr_job ACCESS EXCLUSIVE lock을 기다리는지 확인합니다.
+    """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
+    기다리는지 확인합니다.
 
-    OCR_AI_JOB_BASE_REVISION까지의 downgrade는 이제 `20fd11d29ecc`(Guide mapping) 1단계를
-    먼저 거칩니다. 그 단계의 `ALTER TABLE guide DROP CONSTRAINT fk_guide_ai_job`은 `guide`
-    뿐 아니라 참조 대상인 `ai_job` 테이블에도 ACCESS EXCLUSIVE lock을 요구하므로(PostgreSQL의
-    FK 제약 삭제 규칙), 이 테스트의 writer가 만든 미commit `ai_job` insert 때문에 downgrade가
-    ocr_job 단계에 도달하기 전에 먼저 `ai_job`에서 대기합니다 — writer가 commit해야 두 단계
-    모두 통과해 마지막 ocr_job 단계(및 그 데이터 검증)에 도달합니다. 따라서 `ai_job`과
-    `ocr_job` 둘 중 어느 테이블에서 대기하든 "downgrade가 concurrent writer를 기다린다"는
-    같은 사실을 증명합니다."""
+    OCR_AI_JOB_BASE_REVISION까지의 downgrade는 이제 `d1e2f3a4b5c6`(#206 user 컬럼 추가) →
+    `20fd11d29ecc`(Guide mapping) 두 단계를 먼저 거칩니다. `d1e2f3a4b5c6`의
+    `ALTER TABLE "user" ... DROP COLUMN`은 이 테스트의 writer가 `insert_ocr_parent_chain()`로
+    같은 transaction에서 만든 `user` row 때문에 대기하고, `20fd11d29ecc`의
+    `ALTER TABLE guide DROP CONSTRAINT fk_guide_ai_job`은 `guide`뿐 아니라 참조 대상인
+    `ai_job` 테이블에도 ACCESS EXCLUSIVE lock을 요구하므로(PostgreSQL의 FK 제약 삭제 규칙)
+    writer가 만든 미commit `ai_job` insert 때문에 대기합니다. 두 단계 모두 writer가
+    commit해야 통과해 마지막 ocr_job 단계(및 그 데이터 검증)에 도달합니다. 따라서 `user`·
+    `ai_job`·`ocr_job` 중 어느 테이블에서 대기하든 "downgrade가 concurrent writer를
+    기다린다"는 같은 사실을 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
         poolclass=NullPool,
@@ -1494,7 +1497,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname IN ('ai_job', 'ocr_job')
+                              AND table_info.relname IN ('user', 'ai_job', 'ocr_job')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -1507,7 +1510,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the ai_job/ocr_job ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/ai_job/ocr_job ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 
@@ -2342,7 +2345,13 @@ async def _write_guide_ai_job_link_and_wait(
 
 
 async def _wait_for_guide_downgrade_lock() -> None:
-    """downgrade가 guide ACCESS EXCLUSIVE lock을 기다리는지 확인합니다."""
+    """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
+    기다리는지 확인합니다. `GUIDE_AI_JOB_BASE_REVISION`으로 내려가는 경로에 #206의
+    `d1e2f3a4b5c6`(user 컬럼 추가)이 head로 얹히면서, writer가 `insert_guide_parent_chain()`로
+    같은 transaction에서 만든 `user` row 때문에 downgrade가 `guide` 단계(FK 제약 삭제)에
+    도달하기 전에 먼저 `user` 테이블의 `ALTER TABLE ... DROP COLUMN` 단계에서 대기합니다 —
+    두 테이블 모두 writer의 같은 uncommitted transaction이 잠그고 있어 어느 쪽에서
+    관찰되든 같은 대기 상태를 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
         poolclass=NullPool,
@@ -2362,7 +2371,7 @@ async def _wait_for_guide_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname = 'guide'
+                              AND table_info.relname IN ('user', 'guide')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -2375,7 +2384,7 @@ async def _wait_for_guide_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the guide ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/guide ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 
@@ -2506,3 +2515,43 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
+
+
+@pytest.mark.asyncio
+async def test_user_account_lifecycle_columns_default_to_active(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """PD-206: 신규 계정은 `account_status=ACTIVE`, `token_version=0`으로 시작하고,
+    기존 계정도 이 migration으로 같은 기본값을 갖게 됩니다."""
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            user_id = str(uuid4())
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO "user" (id, email, hashed_password, name, is_active, is_admin)
+                    VALUES (:id, :email, 'hashed', '테스트 사용자', true, false)
+                    """
+                ),
+                {"id": user_id, "email": f"u{uuid4().hex[:12]}@t.local"},
+            )
+
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT account_status, withdrawal_requested_at, withdrawn_at, token_version
+                    FROM "user"
+                    WHERE id = :id
+                    """
+                ),
+                {"id": user_id},
+            )
+            row = result.one()
+        finally:
+            await transaction.rollback()
+
+    assert row.account_status == "ACTIVE"
+    assert row.withdrawal_requested_at is None
+    assert row.withdrawn_at is None
+    assert row.token_version == 0
