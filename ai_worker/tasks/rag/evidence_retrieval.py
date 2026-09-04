@@ -552,7 +552,12 @@ def _validated_selections(
     resolved: list[UntrustedKnowledgeEvidenceSelection] = []
     for rank, item in enumerate(response.selections, start=1):
         candidate = candidates.get(item.evidence_key)
-        if item.rerank_rank != rank or candidate is None or not _is_valid_score(item.rerank_score):
+        if (
+            not _is_positive_int(item.rerank_rank)
+            or item.rerank_rank != rank
+            or candidate is None
+            or not _is_valid_score(item.rerank_score)
+        ):
             return None
         resolved.append(UntrustedKnowledgeEvidenceSelection(candidate, item.rerank_rank, item.rerank_score))
     return tuple(resolved)
@@ -808,6 +813,7 @@ def _is_valid_search_hit(
         return False
     return (
         item.stage is stage
+        and _is_positive_int(item.rank)
         and item.rank == expected_rank
         and _is_valid_score(item.stage_score)
         and _is_valid_provenance(item.provenance)

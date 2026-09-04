@@ -691,3 +691,37 @@ def test_trace_is_deterministic_private_and_outcome_is_not_default_serializable(
     assert "합성 복약 근거" not in rendered
     with pytest.raises(TypeError):
         json.dumps(dataclasses.asdict(first))
+
+
+def test_boolean_search_rank_fails_closed() -> None:
+    request = lexical_request()
+    malformed = replace(hit(EvidenceSearchStage.LEXICAL, "0.9"), rank=True)
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort(
+            {EvidenceSearchStage.LEXICAL: search_success(request, EvidenceSearchStage.LEXICAL, (malformed,))}
+        ),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.SEARCH_RESULT_INVALID
+
+
+def test_boolean_rerank_rank_fails_closed() -> None:
+    request = lexical_request()
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),))
+
+    class BooleanRankRerank(SuccessfulRerankPort):
+        def rerank(self, rerank_request: EvidenceRerankRequest) -> EvidenceRerankSuccess:
+            selection = EvidenceRerankSelection("knowledge:chunk-1", True, CanonicalScore("0.95"))
+            return replace(super().rerank(rerank_request), selections=(selection,))
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: response}),
+        rerank_port=BooleanRankRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.RERANK_RESULT_INVALID
