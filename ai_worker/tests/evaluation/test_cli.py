@@ -770,3 +770,144 @@ def test_run_dev_is_semantically_stable_across_run_identity_and_clock(tmp_path: 
         }
 
     assert semantic_content_hash(machine_files(run_ids[0])) == semantic_content_hash(machine_files(run_ids[1]))
+
+
+def _run_retrieval_cli(
+    tmp_path: Path,
+    config_name: str,
+    run_id: str,
+    *,
+    baseline_run_id: str | None = None,
+) -> int:
+    arguments = [
+        "run-dev",
+        "--config",
+        f"evals/configs/{config_name}",
+        "--run-id",
+        run_id,
+        "--executed-by",
+        "ceohwj",
+    ]
+    if baseline_run_id is not None:
+        arguments.extend(["--baseline-run-id", baseline_run_id])
+    return main(
+        arguments,
+        allowed_result_root=tmp_path,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+        clock=FixedClock("2026-09-04T00:00:00.000000Z"),
+    )
+
+
+def test_run_dev_with_baseline_writes_comparison_into_candidate_bundle(tmp_path: Path) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-hr-v1.execution.json",
+            candidate_run_id,
+            baseline_run_id=baseline_run_id,
+        )
+        == 0
+    )
+
+    comparison = json.loads((tmp_path / candidate_run_id / "comparison.json").read_bytes())
+    assert comparison["baseline_run_id"] == baseline_run_id
+    assert comparison["candidate_run_id"] == candidate_run_id
+    assert comparison["decision_status"] == "INCONCLUSIVE"
+
+
+@pytest.mark.parametrize(
+    "candidate_config",
+    [
+        "rag-retrieval-dev-ret-l-v1.execution.json",
+        "dev-foundation-answer-grounding-safety-v1.execution.json",
+    ],
+)
+def test_run_dev_rejects_invalid_baseline_candidate_state(
+    tmp_path: Path,
+    candidate_config: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        candidate_config,
+        candidate_run_id,
+        baseline_run_id=baseline_run_id,
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / candidate_run_id).exists()
+    assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
+
+
+def test_verify_result_prints_only_semantic_hash(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            run_id,
+        )
+        == 0
+    )
+
+    exit_code = main(["verify-result", "--run-id", run_id], allowed_result_root=tmp_path)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == "5062fc278acefada2a5afc027867c324bb03ab62aaf934f964e692b9ad128b87\n"
+
+
+@pytest.mark.parametrize("invalid_kind", ["missing", "symlink", "tampered"])
+def test_verify_result_rejects_invalid_bundle_without_payload_output(
+    tmp_path: Path,
+    invalid_kind: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_id = str(uuid4())
+    if invalid_kind != "missing":
+        assert (
+            _run_retrieval_cli(
+                tmp_path,
+                "rag-retrieval-dev-ret-l-v1.execution.json",
+                run_id,
+            )
+            == 0
+        )
+    if invalid_kind == "symlink":
+        target = tmp_path / run_id
+        linked_run_id = str(uuid4())
+        (tmp_path / linked_run_id).symlink_to(target, target_is_directory=True)
+        run_id = linked_run_id
+    elif invalid_kind == "tampered":
+        (tmp_path / run_id / "metrics.json").write_bytes(b"SENSITIVE_SENTINEL")
+
+    exit_code = main(["verify-result", "--run-id", run_id], allowed_result_root=tmp_path)
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert captured.out == ""
+    assert captured.err == f"{EvaluationErrorCode.BASELINE_ARTIFACT_INVALID.value}\n"
+    assert "SENSITIVE_SENTINEL" not in captured.err
