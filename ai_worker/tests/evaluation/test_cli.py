@@ -4,6 +4,7 @@ import errno
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
 from typing import Any
@@ -860,6 +861,35 @@ def test_run_dev_rejects_invalid_baseline_candidate_state(
     assert exit_code == 2
     assert not (tmp_path / candidate_run_id).exists()
     assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
+
+
+def test_candidate_comparison_rejects_identical_retrieval_variant_manifest_hash(
+    tmp_path: Path,
+) -> None:
+    baseline_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+    baseline = cli_module.load_published_run_bundle(tmp_path, baseline_run_id)
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    relabeled = replace(
+        resolved,
+        request=resolved.request.model_copy(update={"variant_id": "RET-ALIAS"}),
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        cli_module._validate_baseline_candidate_state(baseline, relabeled)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
 
 
 def test_non_retrieval_baseline_option_rejects_state_before_missing_baseline(

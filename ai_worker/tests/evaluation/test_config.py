@@ -439,6 +439,17 @@ def test_replay_adapter_config_requires_replay_path_and_full_provenance(tmp_path
     assert caught.value.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
 
 
+def test_replay_adapter_config_rejects_top_level_variant_relabeling(tmp_path: Path) -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        _load_request(
+            tmp_path,
+            variant_id="RET-ALIAS",
+            retrieval_variant=_replay_variant(),
+        )
+
+    assert caught.value.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
+
+
 def test_replay_artifact_path_rejects_parent_traversal(tmp_path: Path) -> None:
     with pytest.raises(EvaluationValidationError) as caught:
         _load_request(tmp_path, retrieval_variant=_replay_variant(replay_path="evals/../replay.json"))
@@ -450,7 +461,7 @@ def test_resolved_hash_changes_when_replay_bytes_change(tmp_path: Path) -> None:
     roots = (tmp_path / "first", tmp_path / "second")
     resolved = []
     for root, evidence_id in zip(roots, ("evidence-first", "evidence-second"), strict=True):
-        request_path = _write_request(root, retrieval_variant=_replay_variant())
+        request_path = _write_request(root, variant_id="RET-L", retrieval_variant=_replay_variant())
         dataset_path = root / "evals/retrieval/manifests/dev.dataset.json"
         dataset_path.write_bytes(
             canonical_json_bytes(

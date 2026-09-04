@@ -661,6 +661,7 @@ def _validate_baseline_candidate_state(
         baseline_run.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
         or candidate_request.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
         or baseline_run.variant_id == candidate_request.variant_id
+        or baseline_run.retrieval_variant_manifest_hash == resolved.retrieval_variant_manifest_hash
     ):
         raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
 

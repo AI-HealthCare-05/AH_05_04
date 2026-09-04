@@ -200,6 +200,35 @@ def test_required_scope_never_passes_invalid_sample(fixture: str, reason: str) -
     assert metric.reason_code == reason
 
 
+def test_empty_relevant_gold_only_invalidates_metrics_with_undefined_relevance_denominator() -> None:
+    case = DATASET.cases[0]
+    changed_case = case.model_copy(update={"expected": case.expected.model_copy(update={"relevant_evidence_refs": ()})})
+    dataset = replace(DATASET, cases=(changed_case, *DATASET.cases[1:]))
+
+    metrics = build_retrieval_metrics(dataset, ret_l_case_results()).metrics
+
+    assert [
+        (
+            item.metric_id,
+            item.execution_status.value,
+            item.decision_status.value if item.decision_status is not None else None,
+            item.numerator,
+            item.denominator,
+            item.metric_value,
+            item.ci_lower,
+            item.ci_upper,
+            item.reason_code,
+        )
+        for item in metrics
+    ] == [
+        ("MRR", "COMPLETED", "INCONCLUSIVE", 0, 0, None, None, None, "ZERO_DENOMINATOR"),
+        ("NDCG_AT_5", "COMPLETED", "INCONCLUSIVE", 0, 0, None, None, None, "ZERO_DENOMINATOR"),
+        ("NO_HIT_RATE", "COMPLETED", "INCONCLUSIVE", 0, 0, None, None, None, "ZERO_DENOMINATOR"),
+        ("PRECISION_AT_5", "COMPLETED", "N/A", 3, 25, "0.12", "0.04", "0.2", None),
+        ("RECALL_AT_5", "COMPLETED", "N/A", 4, 5, "0.8", "0.4", "1", None),
+    ]
+
+
 def test_duplicate_ranked_evidence_marks_metrics_invalid() -> None:
     results = list(ret_l_case_results())
     duplicate = results[0].model_copy(update={"retrieved_evidence_ids": ("ev-ret-dev-med-a", "ev-ret-dev-med-a")})

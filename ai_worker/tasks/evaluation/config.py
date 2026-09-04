@@ -200,7 +200,7 @@ def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[Dev
     if retrieval is not None and retrieval.model_config_payload.get("adapter_id") == "retrieval-replay.v1":
         if request.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL:
             raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
-        if retrieval.replay_artifact_path is None:
+        if request.variant_id != retrieval.variant_id or retrieval.replay_artifact_path is None:
             raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
         try:
             RetrievalReplayModelConfig.model_validate(retrieval.model_config_payload)

@@ -15,6 +15,7 @@ from ai_worker.tasks.evaluation.schemas.policy import ComparisonScope
 
 _SIX_PLACES = Decimal("0.000001")
 _SUPPORTED_METRICS = frozenset({"MRR", "NDCG_AT_5", "NO_HIT_RATE", "PRECISION_AT_5", "RECALL_AT_5"})
+_RELEVANCE_DENOMINATOR_METRICS = frozenset({"MRR", "NDCG_AT_5", "NO_HIT_RATE"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,7 +375,9 @@ def _ratio_counts(
 
 def _completed_metric(scope: ComparisonScope, observations: tuple[RetrievalObservation, ...]) -> MetricResult:
     group_count = len({item.independent_group_id for item in observations})
-    zero_denominator = scope.metric_id == "RECALL_AT_5" and any(not item.required_ids for item in observations)
+    zero_denominator = (scope.metric_id == "RECALL_AT_5" and any(not item.required_ids for item in observations)) or (
+        scope.metric_id in _RELEVANCE_DENOMINATOR_METRICS and any(not item.relevant_ids for item in observations)
+    )
     if zero_denominator:
         return MetricResult(
             **_scope_fields(scope),
