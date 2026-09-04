@@ -56,6 +56,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 인증 | `POST` | `/api/v1/auth/signup` | `201` |
 | 인증 | `POST` | `/api/v1/auth/login` | `200` |
 | 인증 | `GET` | `/api/v1/auth/token/refresh` | `200` |
+| 인증 | `POST` | `/api/v1/auth/logout` | `200` |
 | 사용자 | `GET` | `/api/v1/users/me` | `200` |
 | 사용자 | `PATCH` | `/api/v1/users/me` | `200` |
 | 의료문서 | `POST` | `/api/v1/documents` | `201` |
@@ -84,6 +85,8 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 ## 인증과 사용자
 
+회원가입, 로그인, 내 정보 수정의 `email` 입력은 `EmailStr`, 최대 40자 기준으로 검증합니다.
+
 ### 회원가입
 
 | Method | Path | 성공 상태 | 동작 |
@@ -102,7 +105,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 - `name`, `email`, `password`는 모두 필수입니다.
 - `password`는 8~72자이며 대문자, 소문자, 숫자, 특수문자를 각각 1개 이상 포함해야 합니다.
-- `gender`, `birth_date`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 허용하지 않습니다.
+- `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 허용하지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
 
 ### 내 정보 조회·수정
@@ -115,6 +118,19 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 - MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다.
 - `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+
+### 토큰 갱신·로그아웃
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token을 발급합니다. |
+| `POST` | `/api/v1/auth/logout` | `200 OK` | 현재 사용자의 세션 무효화 카운터를 증가시키고 `refresh_token` 쿠키를 삭제합니다. |
+
+- access token과 refresh token에는 발급 시점의 `token_version`이 포함됩니다.
+- 인증된 요청과 토큰 갱신은 DB의 현재 사용자 상태를 다시 확인합니다.
+- `account_status != ACTIVE`, `is_active=false`, 또는 토큰의 `token_version`이 DB의 `user.token_version`과 다르면 `401 INVALID_TOKEN`을 반환합니다.
+- 로그아웃 성공 후 기존 access token으로 보호 API를 호출하거나 기존 refresh token으로 재발급을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
+- 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
 
 ## Post-MVP-1 목표 API — 미구현
 

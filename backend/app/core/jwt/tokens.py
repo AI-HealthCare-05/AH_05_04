@@ -1,4 +1,3 @@
-from calendar import timegm
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 from uuid import uuid4
@@ -75,7 +74,11 @@ class Token:
         assert lifetime is not None
 
         dt = from_time + lifetime
-        self.payload["exp"] = timegm(dt.timetuple())
+        # `dt.timetuple()`은 tzinfo를 버리고 벽시계 값만 남기므로, 이전에는 `timegm()`이
+        # `TIMEZONE`(Asia/Seoul, UTC+9)의 벽시계 값을 UTC로 오인해 모든 발급 토큰의 실제
+        # 만료 시각이 의도한 값보다 항상 9시간 늦게 계산되는 버그가 있었습니다. `datetime.timestamp()`는
+        # aware datetime의 tzinfo를 그대로 반영해 올바른 UTC epoch을 계산합니다.
+        self.payload["exp"] = int(dt.timestamp())
 
     def set_jti(self) -> None:
         self.payload["jti"] = uuid4().hex
@@ -84,6 +87,7 @@ class Token:
     def for_user(cls, user: User) -> Self:
         token = cls()
         token["user_id"] = str(user.id)
+        token["token_version"] = int(user.token_version or 0)
         return token
 
 
@@ -94,7 +98,7 @@ class AccessToken(Token):
 
 class RefreshToken(Token):
     token_type = "refresh"
-    lifetime = timedelta(days=config.REFRESH_TOKEN_EXPIRE_MINUTES)
+    lifetime = timedelta(minutes=config.REFRESH_TOKEN_EXPIRE_MINUTES)
     no_copy_claims = ("type", "exp", "jti")
 
     @property
