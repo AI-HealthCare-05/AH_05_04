@@ -199,6 +199,7 @@ async def test_fencing_failure_reports_ownership_loss_after_stream_publish() -> 
     [
         (timedelta(0), 1),
         (timedelta(seconds=30), 0),
+        (timedelta(seconds=30), 101),
     ],
 )
 def test_invalid_publisher_settings_are_rejected(

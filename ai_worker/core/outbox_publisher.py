@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from ai_worker.core.event_publisher import EventPublisher
 from ai_worker.schemas.messages import WorkerMessage
 
+MAX_OUTBOX_BATCH_SIZE = 100
 
 @dataclass(frozen=True, slots=True)
 class ClaimedOutboxEvent:
@@ -78,13 +79,15 @@ class OutboxPublisher:
         event_publisher: EventPublisher,
         clock: Callable[[], datetime],
         claim_lease: timedelta = timedelta(seconds=30),
-        batch_size: int = 100,
+        batch_size: int = MAX_OUTBOX_BATCH_SIZE,
         claim_token_factory: Callable[[], str] = lambda: uuid4().hex,
     ) -> None:
         if claim_lease <= timedelta(0):
             raise ValueError("claim_lease는 양수여야 합니다.")
-        if batch_size < 1:
-            raise ValueError("batch_size는 1 이상이어야 합니다.")
+        if not 1 <= batch_size <= MAX_OUTBOX_BATCH_SIZE:
+            raise ValueError(
+                f"batch_size는 1 이상 {MAX_OUTBOX_BATCH_SIZE} 이하여야 합니다."
+            )
 
         self._repository = repository
         self._event_publisher = event_publisher
