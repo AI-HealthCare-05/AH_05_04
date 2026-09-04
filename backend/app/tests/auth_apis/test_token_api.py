@@ -1,11 +1,12 @@
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from httpx import ASGITransport, AsyncClient
 from starlette import status
 
+from app.core import config
 from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.dependencies.services import get_user_repository
 from app.main import app, fastapi_app
@@ -54,6 +55,37 @@ class TestJWTTokenRefreshAPI:
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
         assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_token_refresh_issues_access_token_with_correct_lifetime_after_refresh_fix(self):
+        """4차 리뷰(refresh token 수명·쿠키 Expires 버그) 수정이 `/token/refresh`가 새로
+        발급하는 access token의 수명(`ACCESS_TOKEN_EXPIRE_MINUTES`, 기본 60분)에 실수로
+        영향을 주지 않았는지 실제 HTTP 왕복으로 확인합니다."""
+        signup_data = {
+            "email": "refresh-lifetime@example.com",
+            "password": "Password123!",
+            "name": "리프레시수명테스터",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/v1/auth/signup", json=signup_data)
+
+            login_response = await client.post(
+                "/api/v1/auth/login", json={"email": "refresh-lifetime@example.com", "password": "Password123!"}
+            )
+            client.cookies["refresh_token"] = extract_refresh_token(login_response)
+
+            before_refresh = datetime.now(UTC)
+            response = await client.get("/api/v1/auth/token/refresh")
+            after_refresh = datetime.now(UTC)
+
+        assert response.status_code == status.HTTP_200_OK
+        new_access_token = AccessToken(token=response.json()["access_token"])
+        exp = datetime.fromtimestamp(new_access_token.payload["exp"], tz=UTC)
+
+        expected_earliest = (
+            before_refresh + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES) - timedelta(seconds=2)
+        )
+        expected_latest = after_refresh + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES) + timedelta(seconds=2)
+        assert expected_earliest <= exp <= expected_latest
 
     async def test_token_refresh_missing_token(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -284,3 +316,39 @@ class TestLogoutAPI:
             "refresh_token=" in header and "Max-Age=0" in header
             for header in logout_response.headers.get_list("set-cookie")
         )
+
+    async def test_logout_immediately_invalidates_the_now_correctly_long_lived_refresh_token(self):
+        """4차 리뷰 배경: refresh token 수명 버그(55년) 수정 후에는 진짜로 14일짜리 refresh
+        token이 발급된다. 만약 `token_version` 재검증이 없었다면 탈취된 토큰이 14일 내내
+        유효했을 것이다 — 로그아웃이 그 값을 즉시 무효화한다는 것을 이 실제 14일짜리 토큰으로
+        직접 확인해, 수명 수정이 보안 완화장치(`token_version` 재검증)를 우회하지 않는다는
+        점을 명시적으로 검증한다."""
+        email = f"logout-longlived-{uuid4().hex[:10]}@example.com"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/v1/auth/signup",
+                json={"email": email, "password": "Password123!", "name": "장수명토큰테스터"},
+            )
+            login_response = await client.post(
+                "/api/v1/auth/login",
+                json={"email": email, "password": "Password123!"},
+            )
+            access_token = login_response.json()["access_token"]
+            refresh_token = extract_refresh_token(login_response)
+
+            # 수정 후 실제로 ~14일짜리 토큰인지 먼저 확인 — 이 값이 작으면 아래 무효화 검증이
+            # 우연히 "이미 만료돼서" 통과하는 거짓 양성이 됩니다.
+            decoded_refresh = RefreshToken(token=refresh_token)
+            exp = datetime.fromtimestamp(decoded_refresh.payload["exp"], tz=UTC)
+            assert exp > datetime.now(UTC) + timedelta(days=10)
+
+            await client.post(
+                "/api/v1/auth/logout",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+            client.cookies["refresh_token"] = refresh_token
+            refresh_response = await client.get("/api/v1/auth/token/refresh")
+
+        assert refresh_response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert refresh_response.json()["code"] == "INVALID_TOKEN"

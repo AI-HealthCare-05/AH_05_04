@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, Request, status
@@ -50,7 +51,11 @@ async def login(
         httponly=True,
         secure=should_use_secure_cookie(config.ENV),
         domain=config.COOKIE_DOMAIN or None,
-        expires=tokens["access_token"].payload["exp"],
+        # `expires`에 정수를 그대로 넘기면 Python `http.cookies`가 이를 절대 epoch이 아니라
+        # "지금부터 몇 초 후"로 해석해(`http.cookies._getdate`) 실제 만료가 의도보다 훨씬
+        # 뒤로 밀립니다(4차 리뷰가 지적한 access_token.exp 오사용을 refresh_token.exp로만
+        # 바꿔도 이 문제는 그대로 남습니다). `datetime`으로 변환해 절대 시각으로 넘겨야 합니다.
+        expires=datetime.fromtimestamp(tokens["refresh_token"].payload["exp"], tz=UTC),
     )
     return resp
 
