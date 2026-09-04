@@ -532,9 +532,10 @@ rg -n "API_KEY|PASSWORD|patient_name|raw_value|KNOWLEDGE_EVIDENCE|PUBLIC_TRACK_F
   ai_worker/tasks/rag/candidate_index.py ai_worker/tests/rag/test_candidate_index.py
 ```
 
-기대 결과: 변경 파일은 이 계획의 네 파일뿐이며, 두 Python 파일에 secret·실환자 값·Evidence index
-혼합·공개 게이트 활성화가 없다. 계약상 금지 필드명을 검증하는 negative test 문자열만 발견되면 해당
-줄이 assertion임을 직접 확인한다.
+기대 결과: Candidate runtime 변경은 전용 Python 구현·테스트에 한정되고, 같은 PR에 사용자가 지정한
+Issue #214·#216·#231·#241 한국어 설계 문서 이관과 경로 검증이 함께 있음을 전체 diff에서 명시한다.
+두 Python 파일에 secret·실환자 값·Evidence index 혼합·공개 게이트 활성화가 없어야 한다. 계약상 금지
+필드명을 검증하는 negative test 문자열만 발견되면 해당 줄이 assertion임을 직접 확인한다.
 
 - [x] **Step 5: 전체 diff와 whitespace 검증**
 
@@ -596,5 +597,16 @@ git commit -m "✅ test: Candidate Index 계약 회귀 보강"
   충돌한 두 `alias_ref`로 교체한다.
 - [x] 위 5건과 Source 결속 계약을 검증하는 회귀 테스트 16건 추가
   (`ai_worker/tests/rag/test_candidate_index.py`)
-- [x] `uv run pytest ai_worker/tests/rag -q` — 138 passed
+- [x] `uv run pytest ai_worker/tests/rag -q` — Task 6 checkpoint `138 passed`
+- [x] `uv run ruff check`, `uv run ruff format --check`, `uv run mypy ai_worker` — 통과
+
+## Task 7: 최종 fail-closed 입력·Port 불변식 보완
+
+- [x] Catalog·BuildConfig·Query의 runtime 문자열·enum·bool·정수 타입을 파생 연산 전에 검증
+- [x] 문자열 limit·dimension의 예외 탈출과 `bool` limit·dimension의 정수 오인 차단
+- [x] embedding vector의 immutable tuple과 raw hit의 중첩 Product Identity·필수값 검증
+- [x] 같은 Search Entry reference의 다른 Identity·payload 재사용을 `MEMBER_CONFLICT`로 차단
+- [x] ANN key/value 설정을 key 기준 canonical ordering해 입력 순서와 무관한 hash 생성
+- [x] 위 경계의 RED 18건 확인 후 GREEN 전환
+- [x] `uv run pytest ai_worker/tests/rag -q` — 최종 `161 passed`
 - [x] `uv run ruff check`, `uv run ruff format --check`, `uv run mypy ai_worker` — 통과

@@ -7,7 +7,8 @@
 | 책임 리뷰 | 송은영 — Backend·DB·소유권·Transaction, 김지혜 — OCR 확정 입력 경계, 남한솔 — 확인 UI·공개 DTO, 권가빈 — 제품 범위·안전 문구 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; Design `1.50` SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a`; DB `1.47` SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
 | 기준 관계 | Approved Contract Freeze v4의 공식 의약품 식별 기준을 유지하고 RAG-00 Candidate 공유 계약을 이 파일에 통합 · [처방 버전 계약 v1](./prescription-version-v1.md) |
-| Last verified | 2026-09-01 |
+| 보완 Decision | [`PD-167-20260904`](../../../governance/decisions/2026-09-04-rag-candidate-index-input-boundary.md) · PR #260 최신 HEAD 교차 승인 대기 |
+| Last verified | 2026-09-04 |
 
 ## 목적과 변경 분류
 

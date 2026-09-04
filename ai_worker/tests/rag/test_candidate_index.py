@@ -400,6 +400,48 @@ def test_blank_required_catalog_field_fails_closed(
     assert not hasattr(result, "manifest")
 
 
+def test_invalid_catalog_manifest_hash_type_fails_closed_without_crash() -> None:
+    result = build_candidate_index(
+        replace(valid_catalog(), catalog_manifest_hash=cast(Any, None)),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID,
+        details=("catalog_manifest_hash",),
+    )
+
+
+def test_invalid_product_identity_enum_type_fails_closed_without_crash() -> None:
+    catalog = valid_catalog()
+    invalid_identity = replace(catalog.products[0].identity, entity_type=cast(Any, "PRODUCT"))
+
+    result = build_candidate_index(
+        replace(catalog, products=(replace(catalog.products[0], identity=invalid_identity),)),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+        details=("products.identity",),
+    )
+
+
+def test_invalid_source_version_type_fails_closed_without_crash() -> None:
+    catalog = valid_catalog()
+    invalid_source_ref = replace(catalog.source_refs[0], source_version=cast(Any, 1))
+
+    result = build_candidate_index(
+        replace(catalog, source_refs=(invalid_source_ref,)),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.CATALOG_SOURCE_BINDING_INVALID,
+        details=("source_refs",),
+    )
+
+
 @pytest.mark.parametrize(
     ("catalog_change", "detail"),
     [
@@ -463,7 +505,11 @@ def test_source_ref_binding_conflict_fails_closed(source_refs: tuple[CandidateCa
     "config_change",
     [
         {"candidate_limit": 0},
+        {"candidate_limit": True},
+        {"candidate_limit": "20"},
         {"display_limit": 2},
+        {"display_limit": True},
+        {"index_code": 123},
         {"normalization_version": "other-normalization-v1"},
         {"embedding_provider": "synthetic-provider"},
         {"distance_metric": CandidateDistanceMetric.COSINE},
@@ -489,6 +535,9 @@ def test_invalid_lexical_config_fails_closed(config_change: dict[str, object]) -
         {"ann_config": (("hnsw_m", "16"), ("hnsw_m", "32"))},
         {"ann_config": (("", "16"),)},
         {"ann_config": (("hnsw_m", "   "),)},
+        {"embedding_provider": 123},
+        {"embedding_dimension": True},
+        {"embedding_dimension": "2"},
     ],
 )
 def test_invalid_hybrid_config_fails_closed(config_change: dict[str, object]) -> None:
@@ -542,6 +591,35 @@ def test_identical_repeated_search_entry_is_collapsed() -> None:
 
     assert isinstance(result, CandidateIndexBuildSuccess)
     assert len(result.members) == 2
+
+
+def test_conflicting_reuse_of_search_entry_ref_fails_closed() -> None:
+    catalog = valid_catalog()
+    second_product = replace(
+        catalog.products[0],
+        product_ref="product-row-2",
+        identity=product_identity("P-002"),
+    )
+    conflicting_entry = replace(
+        catalog.search_entries[0],
+        product_ref=second_product.product_ref,
+        identity=second_product.identity,
+    )
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            products=(*catalog.products, second_product),
+            search_entries=(*catalog.search_entries, conflicting_entry),
+            declared_counts=replace(catalog.declared_counts, product_count=2, search_entry_count=3),
+        ),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.MEMBER_CONFLICT,
+        details=("search-entry-product-1",),
+    )
 
 
 def test_same_name_different_official_product_identities_remain_distinct() -> None:
@@ -813,6 +891,21 @@ def test_hybrid_build_binds_vectors_to_sorted_members() -> None:
     assert result.manifest.distance_metric is CandidateDistanceMetric.COSINE
 
 
+def test_ann_configuration_order_does_not_change_manifest_hashes() -> None:
+    first_config = replace(
+        hybrid_config(),
+        ann_config=(("hnsw_m", "16"), ("ef_construction", "64")),
+    )
+    reversed_config = replace(first_config, ann_config=tuple(reversed(first_config.ann_config or ())))
+
+    first = build_candidate_index(valid_catalog(), first_config, FixedEmbeddingPort())
+    reversed_result = build_candidate_index(valid_catalog(), reversed_config, FixedEmbeddingPort())
+
+    assert isinstance(first, CandidateIndexBuildSuccess)
+    assert isinstance(reversed_result, CandidateIndexBuildSuccess)
+    assert first == reversed_result
+
+
 class StaticEmbeddingPort:
     def __init__(self, vectors: tuple[tuple[float, ...], ...], *, reverse_keys: bool = False) -> None:
         self.vectors = vectors
@@ -894,6 +987,31 @@ class NullEmbeddingPort:
 
 def test_embedding_port_returning_invalid_container_fails_closed_without_crash() -> None:
     result = build_candidate_index(valid_catalog(), hybrid_config(), NullEmbeddingPort())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+        details=("embedding_output",),
+    )
+
+
+class MutableValuesEmbeddingPort:
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        del config
+        return tuple(
+            CandidateEmbeddingVector(
+                member_key=request.member_key,
+                values=cast(Any, [1.0, 0.0]),
+            )
+            for request in requests
+        )
+
+
+def test_embedding_port_returning_mutable_vector_fails_closed() -> None:
+    result = build_candidate_index(valid_catalog(), hybrid_config(), MutableValuesEmbeddingPort())
 
     assert result == CandidateIndexBuildFailure(
         reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
@@ -997,6 +1115,8 @@ def test_hybrid_search_calls_dense_only_as_final_auxiliary_stage() -> None:
         CandidateSearchQuery("candidate-index-v1", "   ", 5),
         CandidateSearchQuery("candidate-index-v1", "가나다정", 0),
         CandidateSearchQuery("candidate-index-v1", "가나다정", 21),
+        CandidateSearchQuery("candidate-index-v1", "가나다정", cast(Any, "5")),
+        CandidateSearchQuery("candidate-index-v1", "가나다정", cast(Any, True)),
     ],
 )
 def test_invalid_search_query_fails_before_port_call(query: CandidateSearchQuery) -> None:
@@ -1120,6 +1240,34 @@ class NullSearchPort(RecordingSearchPort):
 
 def test_search_port_returning_invalid_container_fails_closed_without_crash() -> None:
     result = search_candidate_index(valid_query(), lexical_manifest(), NullSearchPort())
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.PORT_FAILURE,
+        details=(CandidateSearchStage.PRODUCT_NAME_EXACT.value,),
+        raw_hits=(),
+    )
+
+
+class InvalidNestedHitPort(RecordingSearchPort):
+    def __init__(self, identity: object) -> None:
+        super().__init__()
+        self.identity = identity
+
+    def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        hit = self._hit(CandidateSearchStage.PRODUCT_NAME_EXACT, manifest)[0]
+        return (replace(hit, identity=cast(Any, self.identity)),)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        None,
+        ProductIdentity(CandidateEntityType.PRODUCT, "", "P-001"),
+        ProductIdentity(CandidateEntityType.PRODUCT, "MFDS_ITEM_SEQ", ""),
+    ],
+)
+def test_search_port_returning_invalid_nested_hit_fails_closed(identity: object) -> None:
+    result = search_candidate_index(valid_query(), lexical_manifest(), InvalidNestedHitPort(identity))
 
     assert result == CandidateIndexSearchFailure(
         reason=CandidateIndexSearchFailureReason.PORT_FAILURE,

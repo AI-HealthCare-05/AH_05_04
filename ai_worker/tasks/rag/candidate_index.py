@@ -357,8 +357,20 @@ class CandidateEmbeddingPort(Protocol):
     ) -> tuple[CandidateEmbeddingVector, ...]: ...
 
 
-def _is_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+def _is_nonblank_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_positive_int(value: object) -> bool:
+    return type(value) is int and value > 0
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -378,6 +390,15 @@ def _sha256(value: object) -> str:
 
 def _identity_key(identity: ProductIdentity) -> str:
     return f"{identity.entity_type.value}:{identity.code_system}:{identity.canonical_code}"
+
+
+def _identity_shape_is_valid(value: object) -> bool:
+    return (
+        isinstance(value, ProductIdentity)
+        and isinstance(value.entity_type, CandidateEntityType)
+        and _is_nonblank_text(value.code_system)
+        and _is_nonblank_text(value.canonical_code)
+    )
 
 
 def _stable_text_sort_key(value: str) -> bytes:
@@ -436,6 +457,212 @@ def _blank_text_paths(value: object) -> tuple[str, ...]:
 
 def _source_snapshot_ids(catalog: CandidateCatalogExport) -> frozenset[str]:
     return frozenset(ref.snapshot_id for ref in catalog.source_refs)
+
+
+def _catalog_header_shape_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
+    if not isinstance(catalog.catalog_manifest_hash, str):
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID,
+            ("catalog_manifest_hash",),
+        )
+    required_text = (
+        ("catalog_version", catalog.catalog_version),
+        ("schema_version", catalog.schema_version),
+        ("normalization_version", catalog.normalization_version),
+    )
+    for text_path, text_value in required_text:
+        if not isinstance(text_value, str):
+            return CandidateIndexBuildFailure(
+                CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+                (text_path,),
+            )
+    enum_and_bool_fields = (
+        ("verification_status", catalog.verification_status, CatalogVerificationStatus),
+        ("freshness_status", catalog.freshness_status, CatalogFreshnessStatus),
+        ("is_complete", catalog.is_complete, bool),
+    )
+    for field_path, field_value, expected_type in enum_and_bool_fields:
+        if not isinstance(field_value, expected_type):
+            return CandidateIndexBuildFailure(
+                CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+                (field_path,),
+            )
+    if not isinstance(catalog.source_refs, tuple) or not all(
+        isinstance(ref, CandidateCatalogSourceRef)
+        and isinstance(ref.snapshot_id, str)
+        and isinstance(ref.source_version, str)
+        for ref in catalog.source_refs
+    ):
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_SOURCE_BINDING_INVALID,
+            ("source_refs",),
+        )
+    return None
+
+
+def _catalog_collection_shape_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
+    collection_types = (
+        ("products", catalog.products, CatalogProduct),
+        ("ingredients", catalog.ingredients, CatalogIngredient),
+        ("components", catalog.components, CatalogComponent),
+        ("aliases", catalog.aliases, CatalogAlias),
+        ("search_entries", catalog.search_entries, CatalogSearchEntry),
+    )
+    for path, values, item_type in collection_types:
+        if not isinstance(values, tuple) or not all(isinstance(value, item_type) for value in values):
+            return CandidateIndexBuildFailure(
+                CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+                (path,),
+            )
+    return None
+
+
+def _product_shape_is_valid(product: CatalogProduct) -> bool:
+    required_texts = (
+        product.product_ref,
+        product.product_name,
+        product.normalized_product_name,
+        product.source_snapshot_id,
+        product.normalization_version,
+    )
+    optional_texts = (product.strength_text, product.dosage_form, product.manufacturer_name)
+    return (
+        all(isinstance(value, str) for value in required_texts)
+        and all(value is None or isinstance(value, str) for value in optional_texts)
+        and isinstance(product.status, CandidateRecordStatus)
+    )
+
+
+def _ingredient_shape_is_valid(ingredient: CatalogIngredient) -> bool:
+    required_texts = (
+        ingredient.ingredient_ref,
+        ingredient.ingredient_name,
+        ingredient.normalized_ingredient_name,
+        ingredient.source_snapshot_id,
+        ingredient.normalization_version,
+    )
+    return all(isinstance(value, str) for value in required_texts) and isinstance(
+        ingredient.status, CandidateRecordStatus
+    )
+
+
+def _component_shape_is_valid(component: CatalogComponent) -> bool:
+    required_texts = (
+        component.component_ref,
+        component.product_ref,
+        component.ingredient_ref,
+        component.strength_value,
+        component.strength_unit,
+        component.source_snapshot_id,
+    )
+    return all(isinstance(value, str) for value in required_texts) and _is_positive_int(component.component_order)
+
+
+def _alias_shape_is_valid(alias: CatalogAlias) -> bool:
+    required_texts = (
+        alias.alias_ref,
+        alias.alias_text,
+        alias.normalized_alias,
+        alias.source_snapshot_id,
+        alias.normalization_version,
+    )
+    return (
+        all(isinstance(value, str) for value in required_texts)
+        and isinstance(alias.review_status, CandidateAliasReviewStatus)
+        and isinstance(alias.status, CandidateRecordStatus)
+        and isinstance(alias.is_effective, bool)
+    )
+
+
+def _search_entry_shape_is_valid(entry: CatalogSearchEntry) -> bool:
+    required_texts = (
+        entry.entry_ref,
+        entry.product_ref,
+        entry.display_text,
+        entry.normalized_text,
+        entry.source_snapshot_id,
+        entry.normalization_version,
+    )
+    return (
+        all(isinstance(value, str) for value in required_texts)
+        and (entry.alias_ref is None or isinstance(entry.alias_ref, str))
+        and isinstance(entry.entry_type, CandidateEntryType)
+        and isinstance(entry.review_status, CandidateAliasReviewStatus)
+        and isinstance(entry.status, CandidateRecordStatus)
+    )
+
+
+def _catalog_record_shape_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
+    for path, records in (
+        ("products.identity", catalog.products),
+        ("ingredients.identity", catalog.ingredients),
+        ("aliases.identity", catalog.aliases),
+        ("search_entries.identity", catalog.search_entries),
+    ):
+        if any(not _identity_shape_is_valid(record.identity) for record in records):
+            return CandidateIndexBuildFailure(
+                CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+                (path,),
+            )
+    record_checks = (
+        ("products", all(_product_shape_is_valid(value) for value in catalog.products)),
+        ("ingredients", all(_ingredient_shape_is_valid(value) for value in catalog.ingredients)),
+        ("components", all(_component_shape_is_valid(value) for value in catalog.components)),
+        ("aliases", all(_alias_shape_is_valid(value) for value in catalog.aliases)),
+        ("search_entries", all(_search_entry_shape_is_valid(value) for value in catalog.search_entries)),
+    )
+    for path, is_valid in record_checks:
+        if not is_valid:
+            return CandidateIndexBuildFailure(
+                CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+                (path,),
+            )
+    return None
+
+
+def _catalog_count_shape_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
+    if not isinstance(catalog.declared_counts, CandidateCatalogCounts) or any(
+        not _is_nonnegative_int(getattr(catalog.declared_counts, field))
+        for field in (
+            "product_count",
+            "ingredient_count",
+            "component_count",
+            "alias_count",
+            "search_entry_count",
+        )
+    ):
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_COUNT_MISMATCH,
+            ("declared_counts",),
+        )
+    if any(
+        not _is_nonnegative_int(value)
+        for value in (catalog.duplicate_identity_count, catalog.orphan_count, catalog.conflict_count)
+    ):
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_COUNT_MISMATCH,
+            ("declared_counts",),
+        )
+    return None
+
+
+def _catalog_shape_failure(catalog: object) -> CandidateIndexBuildFailure | None:
+    if not isinstance(catalog, CandidateCatalogExport):
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+            ("catalog",),
+        )
+    validators = (
+        _catalog_header_shape_failure,
+        _catalog_collection_shape_failure,
+        _catalog_record_shape_failure,
+        _catalog_count_shape_failure,
+    )
+    for validate in validators:
+        failure = validate(catalog)
+        if failure is not None:
+            return failure
+    return None
 
 
 def _source_ref_binding_failure(
@@ -505,24 +732,26 @@ def _ann_config_is_valid(value: object) -> bool:
 
 
 def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuildConfig) -> bool:
+    if not isinstance(config, CandidateIndexBuildConfig):
+        return False
+    required_texts = (
+        config.index_code,
+        config.index_version,
+        config.normalization_version,
+        config.lexical_config_version,
+        config.search_order_version,
+    )
+    if not all(_is_nonblank_text(value) for value in required_texts):
+        return False
     if not isinstance(config.build_mode, CandidateIndexBuildMode):
-        return False
-    config_values = dataclasses.asdict(config)
-    if _non_nfc_text_paths(config_values) or _blank_text_paths(config_values):
-        return False
-    if not all(
-        (
-            config.index_code,
-            config.index_version,
-            config.normalization_version,
-            config.lexical_config_version,
-            config.search_order_version,
-        )
-    ):
         return False
     if config.normalization_version != catalog.normalization_version:
         return False
-    if config.candidate_limit < 1 or config.display_limit != 1:
+    if (
+        not _is_positive_int(config.candidate_limit)
+        or type(config.display_limit) is not int
+        or config.display_limit != 1
+    ):
         return False
 
     embedding_fields = (
@@ -534,17 +763,20 @@ def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuil
         config.ann_config,
     )
     if config.build_mode is CandidateIndexBuildMode.LEXICAL_ONLY:
-        return all(value is None for value in embedding_fields)
-    return (
-        all(value is not None for value in embedding_fields)
-        and bool(config.embedding_provider)
-        and bool(config.embedding_model)
-        and bool(config.embedding_model_version)
-        and config.embedding_dimension is not None
-        and config.embedding_dimension > 0
-        and config.distance_metric is CandidateDistanceMetric.COSINE
-        and _ann_config_is_valid(config.ann_config)
-    )
+        mode_is_valid = all(value is None for value in embedding_fields)
+    else:
+        mode_is_valid = (
+            _is_nonblank_text(config.embedding_provider)
+            and _is_nonblank_text(config.embedding_model)
+            and _is_nonblank_text(config.embedding_model_version)
+            and _is_positive_int(config.embedding_dimension)
+            and config.distance_metric is CandidateDistanceMetric.COSINE
+            and _ann_config_is_valid(config.ann_config)
+        )
+    if not mode_is_valid:
+        return False
+    config_values = dataclasses.asdict(config)
+    return not _non_nfc_text_paths(config_values) and not _blank_text_paths(config_values)
 
 
 def _product_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
@@ -662,7 +894,15 @@ def _search_entry_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuil
     product_by_ref = {item.product_ref: item for item in catalog.products}
     alias_by_ref = {item.alias_ref: item for item in catalog.aliases}
     source_snapshot_ids = _source_snapshot_ids(catalog)
+    entries_by_ref: dict[str, CatalogSearchEntry] = {}
     for entry in catalog.search_entries:
+        existing_entry = entries_by_ref.get(entry.entry_ref)
+        if existing_entry is not None and existing_entry != entry:
+            return CandidateIndexBuildFailure(
+                CandidateIndexBuildFailureReason.MEMBER_CONFLICT,
+                (entry.entry_ref,),
+            )
+        entries_by_ref[entry.entry_ref] = entry
         entry_product = product_by_ref.get(entry.product_ref)
         if (
             not entry.entry_ref
@@ -818,9 +1058,13 @@ def _build_lexical_members(
     return tuple(sorted(members_by_key.values(), key=_member_sort_key))
 
 
-def _embedding_values_are_valid(values: tuple[float, ...], dimension: int) -> bool:
-    return len(values) == dimension and all(
-        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in values
+def _embedding_values_are_valid(values: object, dimension: int) -> bool:
+    return (
+        isinstance(values, tuple)
+        and len(values) == dimension
+        and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in values
+        )
     )
 
 
@@ -845,7 +1089,12 @@ def _attach_embeddings(
             CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
             ("embedding_port",),
         )
-    if not isinstance(vectors, tuple) or not all(isinstance(vector, CandidateEmbeddingVector) for vector in vectors):
+    if not isinstance(vectors, tuple) or not all(
+        isinstance(vector, CandidateEmbeddingVector)
+        and isinstance(vector.member_key, str)
+        and isinstance(vector.values, tuple)
+        for vector in vectors
+    ):
         return CandidateIndexBuildFailure(
             CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
             ("embedding_output",),
@@ -894,8 +1143,14 @@ def _configuration_payload(config: CandidateIndexBuildConfig) -> dict[str, objec
         "embedding_model_version": config.embedding_model_version,
         "embedding_dimension": config.embedding_dimension,
         "distance_metric": config.distance_metric.value if config.distance_metric is not None else None,
-        "ann_config": config.ann_config,
+        "ann_config": _canonical_ann_config(config.ann_config),
     }
+
+
+def _canonical_ann_config(value: tuple[tuple[str, str], ...] | None) -> tuple[tuple[str, str], ...] | None:
+    if value is None:
+        return None
+    return tuple(sorted(value, key=lambda item: _stable_text_sort_key(item[0])))
 
 
 def _build_manifest(
@@ -913,6 +1168,7 @@ def _build_manifest(
             key=lambda ref: (_stable_text_sort_key(ref.snapshot_id), _stable_text_sort_key(ref.source_version)),
         )
     )
+    ann_config = _canonical_ann_config(config.ann_config)
     member_count = len(members)
     product_identity_count = len({_identity_key(member.identity) for member in members})
     product_name_count = sum(member.entry_type is CandidateEntryType.PRODUCT_NAME for member in members)
@@ -937,7 +1193,7 @@ def _build_manifest(
         "embedding_model_version": config.embedding_model_version,
         "embedding_dimension": config.embedding_dimension,
         "distance_metric": config.distance_metric.value if config.distance_metric is not None else None,
-        "ann_config": config.ann_config,
+        "ann_config": ann_config,
         "member_count": member_count,
         "product_identity_count": product_identity_count,
         "product_name_count": product_name_count,
@@ -965,7 +1221,7 @@ def _build_manifest(
         embedding_model_version=config.embedding_model_version,
         embedding_dimension=config.embedding_dimension,
         distance_metric=config.distance_metric,
-        ann_config=config.ann_config,
+        ann_config=ann_config,
         member_count=member_count,
         product_identity_count=product_identity_count,
         product_name_count=product_name_count,
@@ -1052,6 +1308,9 @@ def build_candidate_index(
 ) -> CandidateIndexBuildSuccess | CandidateIndexBuildFailure:
     """Validate the RAG-06 handoff before any Candidate members are constructed."""
 
+    shape_failure = _catalog_shape_failure(catalog)
+    if shape_failure is not None:
+        return shape_failure
     envelope_failure = _catalog_envelope_failure(catalog)
     if envelope_failure is not None:
         return envelope_failure
@@ -1086,13 +1345,20 @@ def _search_query_failure(
     query: CandidateSearchQuery,
     manifest: CandidateIndexManifest,
 ) -> CandidateIndexSearchFailure | None:
+    if (
+        not isinstance(query, CandidateSearchQuery)
+        or not _is_nonblank_text(query.index_version)
+        or not _is_nonblank_text(query.normalized_query)
+        or not _is_positive_int(query.retrieval_limit)
+    ):
+        return CandidateIndexSearchFailure(
+            CandidateIndexSearchFailureReason.QUERY_INVALID,
+            ("query",),
+        )
     normalized_query = unicodedata.normalize("NFC", query.normalized_query)
     if (
-        not query.index_version
-        or not query.normalized_query
-        or query.normalized_query != query.normalized_query.strip()
+        query.normalized_query != query.normalized_query.strip()
         or query.normalized_query != normalized_query
-        or query.retrieval_limit < 1
         or query.retrieval_limit > manifest.candidate_limit
     ):
         return CandidateIndexSearchFailure(
@@ -1105,6 +1371,28 @@ def _search_query_failure(
             ("index_version",),
         )
     return None
+
+
+def _raw_hit_shape_is_valid(hit: object) -> bool:
+    return (
+        isinstance(hit, CandidateRawHit)
+        and _identity_shape_is_valid(hit.identity)
+        and isinstance(hit.stage, CandidateSearchStage)
+        and _is_positive_int(hit.rank)
+        and isinstance(hit.stage_score, (int, float))
+        and not isinstance(hit.stage_score, bool)
+        and all(
+            _is_nonblank_text(value)
+            for value in (
+                hit.member_key,
+                hit.index_version,
+                hit.catalog_version,
+                hit.source_snapshot_id,
+                hit.normalization_version,
+            )
+        )
+        and (hit.embedding_model_version is None or _is_nonblank_text(hit.embedding_model_version))
+    )
 
 
 def _hit_failure_detail(
@@ -1177,7 +1465,7 @@ def search_candidate_index(
                 CandidateIndexSearchFailureReason.PORT_FAILURE,
                 (stage.value,),
             )
-        if not isinstance(hits, tuple) or not all(isinstance(hit, CandidateRawHit) for hit in hits):
+        if not isinstance(hits, tuple) or not all(_raw_hit_shape_is_valid(hit) for hit in hits):
             return CandidateIndexSearchFailure(
                 CandidateIndexSearchFailureReason.PORT_FAILURE,
                 (stage.value,),

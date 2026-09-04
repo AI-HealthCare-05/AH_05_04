@@ -197,6 +197,10 @@ hash는 일시적인 runtime object를 제외한 전체 canonical 구성원 payl
 반복된 입력 구성원은 하나로 합친다. 동일한 stable key가 다른 content를 가지면 conflict로 판단해
 전체 build를 실패시킨다.
 
+같은 `entry_ref`의 완전히 동일한 Search Entry 반복만 병합할 수 있다. 같은 `entry_ref`를 다른 Product
+Identity 또는 다른 payload에 재사용하면 member key가 우연히 달라지더라도 `MEMBER_CONFLICT`로 전체
+build를 실패시킨다.
+
 구성원의 `product_source_snapshot_id`, `entry_source_snapshot_id`, `alias_source_snapshot_id`는 위
 Source 결속 검증을 통과한 값을 그대로 보존한다. Alias가 아닌 구성원은
 `alias_source_snapshot_id=null`이어야 한다. 하나의 모호한 Source 필드로 세 publication의 근거를
@@ -225,7 +229,14 @@ lexical-only로 자동 강등하지 않는다.
 Build configuration의 필수 문자열과 `HYBRID`의 provider·model·model version은 비어 있으면 안 된다.
 ANN configuration은 비어 있지 않아야 하며 key는 중복될 수 없고 key와 value 모두 canonical payload로
 직렬화 가능한 유효 값이어야 한다. enum 자리는 문자열 유사값이 아니라 선언된 enum instance만
-허용한다. `display_limit=1` 고정 규칙과 별개로 도달할 수 없는 중복 범위 검사는 두지 않는다.
+허용한다. ANN key/value는 순서 없는 설정 집합이며 manifest와 configuration hash에는 key의 UTF-8
+byte 순으로 정렬해 포함한다. 입력 tuple 순서만 달라져 hash가 바뀌면 안 된다. `display_limit=1` 고정
+규칙과 별개로 도달할 수 없는 중복 범위 검사는 두지 않는다.
+
+RAG-06과 RAG-07B adapter가 아직 없으므로 dataclass 타입 주석을 런타임 검증으로 간주하지 않는다.
+Catalog·build configuration·query의 문자열, enum, bool과 정수(`bool` 제외)는 비교·정렬·hash 계산
+전에 실제 타입을 검증한다. 타입이 잘못된 입력은 예외를 외부로 전파하거나 truthiness로 수용하지 않고
+각 경계의 typed failure로 닫는다.
 
 embedding 구현은 좁은 protocol로 주입한다. Production model 선택, model download, network access,
 batching과 PostgreSQL 저장은 이 Issue의 범위가 아니다.
@@ -324,6 +335,10 @@ port의 잘못된 container나 원소는 `EMBEDDING_OUTPUT_INVALID`, search port
 실패는 `PORT_FAILURE`를 사용한다. 이미 타입이 지정된 hit의 index·Catalog·Source provenance가
 manifest와 다르면 `HIT_PROVENANCE_MISMATCH`다.
 
+최상위 dataclass 타입만으로 정상 payload라고 간주하지 않는다. Embedding vector는 immutable tuple과
+유한 숫자만 허용하고, raw hit는 Product Identity·enum·필수 문자열·정수 rank·score 타입을 속성 접근
+전에 검증한다. 중첩 shape가 잘못된 payload는 partial hit나 mutable vector를 보존하지 않는다.
+
 출력은 여러 단계에서 같은 Product Identity가 반복되더라도 raw stage hit를 보존한다. RAG-07B와 후속
 Resolver가 감사와 fusion을 위해 개별 Exact·Alias·Trigram·Vector signal을 필요로 하기 때문이다.
 RAG-07A는 grouped 또는 deduplicated 검색 결과 view, 최종 Resolver score, RRF, attribute
@@ -362,6 +377,7 @@ vector와 Evidence vector를 혼합하거나 내부 hit metadata를 환자 DTO�
 
 - 순서가 다른 동일 입력은 같은 구성원과 hash를 생성한다.
 - 완전히 동일한 Search Entry 반복은 결정적으로 하나로 합쳐진다.
+- 같은 Search Entry reference의 다른 Identity·payload 재사용은 fail-closed한다.
 - 동일 stable member key가 다른 content를 가지면 전체 build가 실패한다.
 - 이름이 같은 서로 다른 공식 Product Identity는 분리해서 유지한다.
 - 중복 공식 Product Identity 정의는 fail-closed한다.
@@ -377,7 +393,10 @@ vector와 Evidence vector를 혼합하거나 내부 hit metadata를 환자 DTO�
   승인 Product·Alias Snapshot은 같은 Catalog export 안에서 보존한다.
 - active·approved Entry가 비활성 Product 또는 유효하지 않은 Alias를 참조하면 부분 제외하지 않는다.
 - lexical-only와 hybrid configuration의 nullability 규칙을 검증한다.
+- Catalog·configuration·query의 잘못된 runtime primitive·enum 타입은 예외 없이 typed failure가 된다.
+- ANN 설정의 입력 순서만 바뀌면 manifest와 configuration hash가 같고 중복 key는 실패한다.
 - 누락, non-finite, 잘못된 count·순서·dimension의 embedding은 구성원을 반환하지 않는다.
+- mutable vector와 잘못된 중첩 raw-hit Identity는 port failure로 닫는다.
 - manifest count와 모든 SHA-256 값을 정확히 재현한다.
 - 검색 단계 호출 순서와 dense 단계가 마지막에만 호출되는 동작을 검증한다.
 - retrieval limit은 양수이고 설정된 candidate limit 이하이며 각 단계에 동일하게 전달된다.
