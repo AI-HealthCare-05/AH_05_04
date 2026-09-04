@@ -55,6 +55,8 @@ def _ready_result(*, product_id=None, result_rank: int = 1) -> MedicationCandida
         manufacturer_name="테스트제약",
         product_status="ACTIVE",
         result_rank=result_rank,
+        result_score=0.95,
+        result_method="PRODUCT_NAME",
         is_displayed=True,
         selection_eligible=True,
     )

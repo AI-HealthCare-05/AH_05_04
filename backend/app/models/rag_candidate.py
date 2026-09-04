@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -212,6 +213,12 @@ class MedicationCandidateSearchResult(Base):
     manufacturer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     product_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     result_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Resolver(#170)가 후보를 찾을 때 이미 계산해두는 순위 신호다. 계약 문서
+    # (medication-identification-v1.md:132,158)가 score·rank·distance를 공개 DTO에
+    # 포함하지 말라고 명시하므로, 이 두 컬럼은 내부 전용이며 외부 응답에 노출하면 안 된다.
+    # result_method의 허용값 목록은 RAG-08이 아직 확정하지 않아 CHECK 제약을 걸지 않는다.
+    result_score: Mapped[float] = mapped_column(Float, nullable=False)
+    result_method: Mapped[str] = mapped_column(String(50), nullable=False)
     is_displayed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     selection_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

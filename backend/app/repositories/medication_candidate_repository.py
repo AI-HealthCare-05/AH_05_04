@@ -27,6 +27,8 @@ class MedicationCandidateResultCreate:
     manufacturer_name: str | None
     product_status: str | None
     result_rank: int
+    result_score: float
+    result_method: str
     is_displayed: bool = False
     selection_eligible: bool = False
 
@@ -177,6 +179,8 @@ class MedicationCandidateRepository:
                 manufacturer_name=item.manufacturer_name,
                 product_status=item.product_status,
                 result_rank=item.result_rank,
+                result_score=item.result_score,
+                result_method=item.result_method,
                 is_displayed=item.is_displayed,
                 selection_eligible=item.selection_eligible,
             )
