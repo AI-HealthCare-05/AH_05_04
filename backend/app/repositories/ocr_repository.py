@@ -41,6 +41,14 @@ class OcrRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_ai_job_id(self, *, ai_job_id: UUID) -> OcrJob | None:
+        """#212가 추가한 `ocr_job.ai_job_id`(unique) 영속 매핑으로 조회합니다. Outbox 기반
+        임시 조회(`AsyncJobRepository.get_interim_domain_reference`)와 달리 Outbox 30일
+        보존과 무관하게 Job 90일 보존 동안 유지됩니다 — rediscovery·`GET /jobs/{job_id}`가
+        이 값이 채워진 뒤에는 이 경로를 우선 사용해야 합니다."""
+        result = await self.session.execute(select(OcrJob).where(OcrJob.ai_job_id == ai_job_id))
+        return result.scalar_one_or_none()
+
     async def get_job_owned(self, *, job_id: UUID, user_id: UUID) -> OcrJob | None:
         result = await self.session.execute(
             select(OcrJob)
@@ -75,6 +83,24 @@ class OcrRepository:
                 # 다른 사용자의 필드는 존재 여부가 노출되지 않도록 조회 자체에서 걸러집니다.
                 owned_by_self(MedicalDocument.profile_id, user_id),
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_job_for_document_owned(self, *, document_id: UUID, user_id: UUID) -> OcrJob | None:
+        """async-job-v1.md "공통 화면 재접속 복구": 화면 재진입 시 새 Job을 만들지 않고 기존 Job의
+        polling을 재개하기 위해, 이 문서의 가장 최근 OCR Job 하나만 돌려줍니다. `id`는 무작위 UUID라
+        같은 transaction 안에서 `created_at`이 동일할 때(Postgres `now()`는 transaction 시작
+        시각) 정렬 기준이 될 수 없으므로, `get_latest_completed_job`과 같이 `created_sequence`
+        (`idx_ocr_document_created_seq`)로 타이브레이크합니다."""
+        result = await self.session.execute(
+            select(OcrJob)
+            .join(MedicalDocument, MedicalDocument.id == OcrJob.document_id)
+            .where(
+                OcrJob.document_id == document_id,
+                owned_by_self(MedicalDocument.profile_id, user_id),
+            )
+            .order_by(OcrJob.created_at.desc(), OcrJob.created_sequence.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 

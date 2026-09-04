@@ -159,6 +159,8 @@ raise ApiError(
 | `PRESCRIPTION_NOT_FOUND` | 404 | false | 리소스 부재 |
 | `GUIDE_NOT_FOUND` | 404 | false | 리소스 부재 |
 | `CHAT_SESSION_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `AI_JOB_NOT_FOUND` | 404 | false | 리소스 부재 |
+| `IDEMPOTENCY_KEY_CONFLICT` | 409 | false | 같은 키로 다른 요청 지문이 접수된 것이므로 새 `Idempotency-Key`가 필요한 충돌 |
 | `OCR_PROCESSING_FAILED` | 500 | false | 원인 확인 없이 재전송하면 같은 실패가 반복됨 |
 | `GUIDE_GENERATION_FAILED` | 500 | false | 동일 |
 | `AI_RESPONSE_FAILED` | 500 | false | 동일 |
@@ -206,6 +208,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 401 | `EXPIRED_TOKEN` | "인증 정보가 만료되었습니다. 다시 로그인해 주세요." | |
 | 403 | `FORBIDDEN` | "비활성화된 계정입니다." | 현재는 비활성 계정 로그인 시도에만 사용 |
 | 409 | `CONFLICT` | 상황에 따른 안내 문구 (예: "이미 사용중인 이메일입니다.") | 회원가입 중복, 종료된 대화 세션 등 여러 상황에서 재사용 |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수가 공유하는 `JobIntakeService`에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
 | 422 | `VALIDATION_FAILED` | 상황에 따른 안내 문구 (예: "입력값을 확인해 주세요.", "MVP에서는 처방전 문서만 업로드할 수 있습니다.") | Pydantic 요청 검증 실패 시 자동 발생 또는 Service에서 수동 발생 |
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
 | 503 | `SERVICE_UNAVAILABLE` | "현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요." | |
@@ -243,6 +246,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 500 | `GUIDE_GENERATION_FAILED` | "복약 가이드 생성에 실패했습니다. 다시 시도해 주세요." | AI 가이드 생성 처리에 실패함 |
 | 404 | `CHAT_SESSION_NOT_FOUND` | "대화 세션을 찾을 수 없습니다." | 요청한 상담 세션이 존재하지 않거나 다른 사용자 소유 |
 | 500 | `AI_RESPONSE_FAILED` | "AI 답변 생성에 실패했습니다." | AI 답변 생성에 실패함 |
+| 404 | `AI_JOB_NOT_FOUND` | "작업 정보를 찾을 수 없습니다." | 요청한 공통 Job ID가 존재하지 않거나 다른 사용자 소유, 또는 도메인 결과 소유권 확인 실패(`GET /api/v1/jobs/{job_id}`) — 세부 계약은 [공통 Job 상태 조회 계약 v1](./job-status-v1.md) 참고 |
 
 가이드·챗봇 생성은 현재 한 요청 안에서 동기적으로 완료된 뒤 `201 Created`로 응답합니다. 별도의 "생성 중" 상태나 진행률 조회는 없습니다.
 
