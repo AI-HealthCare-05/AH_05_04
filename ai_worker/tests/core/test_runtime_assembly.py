@@ -12,10 +12,17 @@ from pydantic import ValidationError
 from ai_worker.core.config import Config
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.quarantine import (
+    QuarantineExecution,
+    QuarantineFailureCode,
+    QuarantineRequest,
+    RejectedWorkerDelivery,
+)
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.runtime_assembly import (
     RoutingResultStore,
     SessionScopedDeliveryExecution,
+    SessionScopedRejectedDeliveryExecution,
     build_worker_runtime,
     create_session_factory,
 )
@@ -57,6 +64,15 @@ class _RaisingExecution:
     async def execute(self, delivery: WorkerDelivery) -> object:
         self.calls += 1
         raise self._error
+
+
+class _RecordingQuarantineExecution:
+    def __init__(self) -> None:
+        self.requests: list[QuarantineRequest] = []
+
+    async def execute(self, request: QuarantineRequest) -> object:
+        self.requests.append(request)
+        return request
 
 
 # --- 설정 검증 -------------------------------------------------------------
@@ -205,6 +221,37 @@ async def test_delivery_failure_does_not_escape_execution_boundary(
 
     assert inner.calls == 1
     assert "provider raw response should never be logged" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_rejected_delivery_is_converted_to_quarantine_request() -> None:
+    received_at = datetime.now(UTC)
+    rejected = RejectedWorkerDelivery(
+        stream_name="oryak:jobs",
+        stream_entry_id="1000-0",
+        message_digest="a" * 64,
+        failure_code=QuarantineFailureCode.INVALID_MESSAGE_SCHEMA,
+        job_id=None,
+        original_event_id=None,
+        original_schema_version="1.0",
+        trace_id=uuid4().hex,
+    )
+    execution = SessionScopedRejectedDeliveryExecution(
+        session_factory=lambda: _StubSession(),  # type: ignore[arg-type, return-value]
+        acknowledger=_AcknowledgerStub(),
+        clock=lambda: received_at,
+        logger=logging.getLogger("ai_worker.test"),
+    )
+    inner = _RecordingQuarantineExecution()
+    execution._build_execution = lambda session: cast(  # type: ignore[method-assign]
+        QuarantineExecution,
+        inner,
+    )
+
+    result = await execution.execute(rejected)
+
+    assert result is inner.requests[0]
+    assert inner.requests == [rejected.to_quarantine_request(received_at=received_at)]
 
 
 # --- 조립과 종료 -----------------------------------------------------------

@@ -17,11 +17,17 @@ from redis.exceptions import (
     TimeoutError as RedisTimeoutError,
 )
 
+from ai_worker.adapters import redis_stream as redis_stream_module
 from ai_worker.adapters.errors import (
     StreamOperationError,
 )
 from ai_worker.adapters.redis_message_codec import encode_stream_message
 from ai_worker.adapters.redis_stream import RedisStreamAdapter
+from ai_worker.core.quarantine import (
+    QuarantineFailureCode,
+    RejectedWorkerDelivery,
+)
+from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import WorkerMessage
 
 
@@ -98,6 +104,7 @@ async def test_read_decodes_worker_delivery() -> None:
     deliveries = await adapter.read(consumer_name="worker-1")
 
     assert len(deliveries) == 1
+    assert isinstance(deliveries[0], WorkerDelivery)
     assert deliveries[0].stream_message_id == "1001-0"
     assert deliveries[0].message == message
 
@@ -217,9 +224,22 @@ async def test_read_isolates_invalid_message_and_returns_valid_delivery() -> Non
         count=2,
     )
 
-    assert len(deliveries) == 1
-    assert deliveries[0].stream_message_id == "1004-0"
-    assert deliveries[0].message == message
+    assert len(deliveries) == 2
+
+    rejected = deliveries[0]
+    assert isinstance(rejected, RejectedWorkerDelivery)
+    assert rejected.stream_entry_id == "1003-0"
+    assert rejected.failure_code is QuarantineFailureCode.UNSUPPORTED_SCHEMA_VERSION
+    assert rejected.original_schema_version == "9.0"
+    assert rejected.job_id == message.job_id
+    assert rejected.original_event_id == message.event_id
+    assert rejected.trace_id == message.trace_id
+    assert len(rejected.message_digest) == 64
+
+    valid = deliveries[1]
+    assert isinstance(valid, WorkerDelivery)
+    assert valid.stream_message_id == "1004-0"
+    assert valid.message == message
 
 
 @pytest.mark.asyncio
@@ -269,3 +289,55 @@ async def test_pending_entries_are_auto_claimed() -> None:
         "0-0",
         count=10,
     )
+
+
+def test_rejected_delivery_keeps_only_safe_metadata() -> None:
+    event_id = uuid4()
+    job_id = uuid4()
+    trace_id = uuid4().hex
+    fields: dict[str | bytes, str | bytes | int | float] = {
+        b"schema_version": b"9.0",
+        b"event_id": str(event_id).encode(),
+        b"job_id": str(job_id).encode(),
+        b"trace_id": trace_id.encode(),
+        b"raw_prescription": b"SYNTHETIC_SENSITIVE_CONTENT",
+    }
+
+    delivery = redis_stream_module._build_rejected_delivery(
+        stream_name="oryak:jobs",
+        stream_message_id=b"1005-0",
+        fields=fields,
+    )
+
+    assert isinstance(delivery, RejectedWorkerDelivery)
+    assert delivery.stream_entry_id == "1005-0"
+    assert delivery.failure_code is QuarantineFailureCode.UNSUPPORTED_SCHEMA_VERSION
+    assert delivery.job_id == job_id
+    assert delivery.original_event_id == event_id
+    assert delivery.original_schema_version == "9.0"
+    assert delivery.trace_id == trace_id
+    assert len(delivery.message_digest) == 64
+    assert "SYNTHETIC_SENSITIVE_CONTENT" not in repr(delivery)
+
+
+def test_rejected_delivery_digest_is_independent_of_field_order() -> None:
+    fields: dict[str | bytes, str | bytes | int | float] = {
+        b"schema_version": b"1.0",
+        b"event_id": str(uuid4()).encode(),
+        b"invalid": b"value",
+    }
+    reversed_fields: dict[str | bytes, str | bytes | int | float] = dict(reversed(tuple(fields.items())))
+
+    first = redis_stream_module._build_rejected_delivery(
+        stream_name="oryak:jobs",
+        stream_message_id=b"1006-0",
+        fields=fields,
+    )
+    second = redis_stream_module._build_rejected_delivery(
+        stream_name="oryak:jobs",
+        stream_message_id=b"1006-0",
+        fields=reversed_fields,
+    )
+
+    assert first.failure_code is QuarantineFailureCode.INVALID_MESSAGE_SCHEMA
+    assert first.message_digest == second.message_digest

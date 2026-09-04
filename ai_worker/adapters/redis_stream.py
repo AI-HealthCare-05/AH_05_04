@@ -1,7 +1,10 @@
 """redis-py를 사용하는 Redis Streams Adapter입니다."""
 
+import hashlib
+import re
 from collections.abc import Awaitable, Sequence
 from typing import cast
+from uuid import UUID
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError, ResponseError
@@ -15,6 +18,10 @@ from ai_worker.adapters.redis_message_codec import (
     RedisValue,
     decode_stream_message,
     encode_stream_message,
+)
+from ai_worker.core.quarantine import (
+    QuarantineFailureCode,
+    RejectedWorkerDelivery,
 )
 from ai_worker.core.stream import (
     AutoClaimResult,
@@ -32,6 +39,8 @@ type RedisReadResult = list[
     ]
 ]
 type RedisCommandValue = bytes | bytearray | memoryview[int] | str | int | float
+
+_SAFE_TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 class RedisStreamAdapter:
@@ -95,7 +104,7 @@ class RedisStreamAdapter:
         consumer_name: str,
         count: int = 1,
         block_ms: int = 5000,
-    ) -> tuple[WorkerDelivery, ...]:
+    ) -> tuple[WorkerDelivery | RejectedWorkerDelivery, ...]:
         if not consumer_name.strip():
             raise ValueError("consumer_name은 비어 있을 수 없습니다.")
         if count < 1:
@@ -117,7 +126,10 @@ class RedisStreamAdapter:
         except RedisError:
             raise StreamOperationError() from None
 
-        return _decode_read_result(result)
+        return _decode_read_result(
+            result,
+            stream_name=self._stream_name,
+        )
 
     async def acknowledge(self, stream_message_id: str) -> None:
         try:
@@ -221,17 +233,26 @@ class RedisStreamAdapter:
         return _decode_auto_claim_result(result)
 
 
-def _decode_read_result(result: object) -> tuple[WorkerDelivery, ...]:
+def _decode_read_result(
+    result: object,
+    *,
+    stream_name: str,
+) -> tuple[WorkerDelivery | RejectedWorkerDelivery, ...]:
     redis_result = cast(RedisReadResult, result)
-    deliveries: list[WorkerDelivery] = []
+    deliveries: list[WorkerDelivery | RejectedWorkerDelivery] = []
 
     for _, entries in redis_result:
         for stream_message_id, fields in entries:
             try:
                 message = decode_stream_message(fields)
             except StreamMessageDecodingError:
-                # quarantine·ACK 처리는 #142에서 구현합니다.
-                # 현재는 잘못된 entry만 PEL에 남기고 정상 entry 처리를 계속합니다.
+                deliveries.append(
+                    _build_rejected_delivery(
+                        stream_name=stream_name,
+                        stream_message_id=stream_message_id,
+                        fields=fields,
+                    )
+                )
                 continue
 
             deliveries.append(
@@ -255,6 +276,105 @@ def _decode_stream_id(value: object) -> str:
         return value
 
     raise StreamOperationError()
+
+
+def _build_rejected_delivery(
+    *,
+    stream_name: str,
+    stream_message_id: RedisStreamId,
+    fields: RedisFields,
+) -> RejectedWorkerDelivery:
+    raw_schema_version = _safe_text_field(fields, "schema_version")
+
+    failure_code = (
+        QuarantineFailureCode.UNSUPPORTED_SCHEMA_VERSION
+        if raw_schema_version is not None and raw_schema_version != "1.0"
+        else QuarantineFailureCode.INVALID_MESSAGE_SCHEMA
+    )
+
+    original_schema_version = raw_schema_version
+    if original_schema_version is not None and (
+        not original_schema_version.strip() or len(original_schema_version) > 20
+    ):
+        original_schema_version = None
+
+    trace_id = _safe_text_field(fields, "trace_id")
+    if trace_id is not None and _SAFE_TRACE_ID_PATTERN.fullmatch(trace_id) is None:
+        trace_id = None
+
+    return RejectedWorkerDelivery(
+        stream_name=stream_name,
+        stream_entry_id=_decode_stream_id(stream_message_id),
+        message_digest=_digest_stream_fields(fields),
+        failure_code=failure_code,
+        job_id=_safe_uuid_field(fields, "job_id"),
+        original_event_id=_safe_uuid_field(fields, "event_id"),
+        original_schema_version=original_schema_version,
+        trace_id=trace_id,
+    )
+
+
+def _safe_uuid_field(
+    fields: RedisFields,
+    field_name: str,
+) -> UUID | None:
+    value = _safe_text_field(fields, field_name)
+
+    if value is None:
+        return None
+
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
+def _safe_text_field(
+    fields: RedisFields,
+    field_name: str,
+) -> str | None:
+    value = fields.get(field_name)
+
+    if value is None:
+        value = fields.get(field_name.encode())
+
+    if value is None:
+        return None
+
+    try:
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+
+        return str(value)
+    except UnicodeDecodeError:
+        return None
+
+
+def _digest_stream_fields(fields: RedisFields) -> str:
+    """순서와 무관한 Redis field SHA-256을 만들고 원문은 보존하지 않습니다."""
+
+    encoded_items = sorted(
+        (
+            _digest_component(key),
+            _digest_component(value),
+        )
+        for key, value in fields.items()
+    )
+    digest = hashlib.sha256()
+
+    for key, value in encoded_items:
+        for component in (key, value):
+            digest.update(len(component).to_bytes(8, byteorder="big"))
+            digest.update(component)
+
+    return digest.hexdigest()
+
+
+def _digest_component(value: RedisKey | RedisValue) -> bytes:
+    if isinstance(value, bytes):
+        return b"bytes:" + value
+
+    return f"{type(value).__name__}:{value}".encode()
 
 
 def _decode_claim_result(

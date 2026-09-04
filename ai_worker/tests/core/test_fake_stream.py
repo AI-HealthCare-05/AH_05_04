@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from ai_worker.adapters.fake_stream import FakeStreamAdapter
-from ai_worker.core.stream import StreamAdapter
+from ai_worker.core.stream import StreamAdapter, WorkerDelivery
 from ai_worker.schemas.messages import WorkerMessage
 
 
@@ -49,7 +49,10 @@ async def test_publish_read_and_ack() -> None:
     stream_id = await adapter.publish(build_message())
     deliveries = await adapter.read(consumer_name="worker-1")
 
-    assert [delivery.stream_message_id for delivery in deliveries] == [stream_id]
+    assert len(deliveries) == 1
+    delivery = deliveries[0]
+    assert isinstance(delivery, WorkerDelivery)
+    assert delivery.stream_message_id == stream_id
     assert len(await adapter.list_pending()) == 1
 
     await adapter.acknowledge(stream_id)
@@ -71,10 +74,12 @@ async def test_duplicate_event_is_delivered_with_distinct_stream_ids() -> None:
     )
 
     assert first_id != second_id
-    assert [delivery.message.event_id for delivery in deliveries] == [
-        message.event_id,
-        message.event_id,
-    ]
+    assert len(deliveries) == 2
+    first_delivery, second_delivery = deliveries
+    assert isinstance(first_delivery, WorkerDelivery)
+    assert isinstance(second_delivery, WorkerDelivery)
+    assert first_delivery.message.event_id == message.event_id
+    assert second_delivery.message.event_id == message.event_id
 
 
 @pytest.mark.asyncio

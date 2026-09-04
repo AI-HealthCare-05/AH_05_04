@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import Protocol
 
+from ai_worker.core.quarantine import RejectedWorkerDelivery
 from ai_worker.core.stream import WorkerDelivery
 
 
@@ -20,7 +21,7 @@ class RuntimeStreamConsumer(Protocol):
         consumer_name: str,
         count: int = 1,
         block_ms: int = 5000,
-    ) -> Sequence[WorkerDelivery]:
+    ) -> Sequence[WorkerDelivery | RejectedWorkerDelivery]:
         """처리할 새 메시지를 읽습니다."""
         ...
 
@@ -33,6 +34,14 @@ class DeliveryExecution(Protocol):
         ...
 
 
+class RejectedDeliveryExecution(Protocol):
+    """역직렬화에 실패한 Stream delivery를 격리하는 실행 계약입니다."""
+
+    async def execute(self, delivery: RejectedWorkerDelivery) -> object:
+        """Quarantine과 DLQ Outbox 저장 후 원본 entry를 ACK합니다."""
+        ...
+
+
 class ConsumerRuntime:
     """Stream 읽기와 delivery 실행 순서를 조정합니다."""
 
@@ -41,6 +50,7 @@ class ConsumerRuntime:
         *,
         stream: RuntimeStreamConsumer,
         execution: DeliveryExecution,
+        rejected_execution: RejectedDeliveryExecution | None = None,
         consumer_name: str,
         batch_size: int = 1,
         block_ms: int = 5000,
@@ -56,6 +66,7 @@ class ConsumerRuntime:
 
         self._stream = stream
         self._execution = execution
+        self._rejected_execution = rejected_execution
         self._consumer_name = normalized_consumer_name
         self._batch_size = batch_size
         self._block_ms = block_ms
@@ -82,6 +93,18 @@ class ConsumerRuntime:
             block_ms=self._block_ms,
         )
 
-        await asyncio.gather(*(self._execution.execute(delivery) for delivery in deliveries))
+        await asyncio.gather(*(self._execute_delivery(delivery) for delivery in deliveries))
 
         return len(deliveries)
+
+    async def _execute_delivery(
+        self,
+        delivery: WorkerDelivery | RejectedWorkerDelivery,
+    ) -> object:
+        if isinstance(delivery, RejectedWorkerDelivery):
+            if self._rejected_execution is None:
+                raise RuntimeError("Rejected delivery 실행기가 구성되지 않았습니다.")
+
+            return await self._rejected_execution.execute(delivery)
+
+        return await self._execution.execute(delivery)

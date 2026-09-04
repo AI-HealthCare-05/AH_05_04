@@ -1,10 +1,15 @@
 """Redis Streams 구현과 Worker 실행 계층 사이의 계약입니다."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ai_worker.schemas.messages import WorkerMessage
+
+if TYPE_CHECKING:
+    from ai_worker.core.quarantine import RejectedWorkerDelivery
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +80,7 @@ class StreamConsumer(StreamAcknowledger, Protocol):
         consumer_name: str,
         count: int = 1,
         block_ms: int = 5000,
-    ) -> Sequence[WorkerDelivery]:
+    ) -> Sequence[WorkerDelivery | RejectedWorkerDelivery]:
         """Consumer Group을 통해 새 메시지를 읽습니다."""
         ...
 

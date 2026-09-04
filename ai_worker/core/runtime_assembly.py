@@ -36,6 +36,9 @@ from ai_worker.adapters.sqlalchemy_ocr_execution_starter import (
 )
 from ai_worker.adapters.sqlalchemy_ocr_input_repository import SqlAlchemyOcrInputRepository
 from ai_worker.adapters.sqlalchemy_ocr_result_store import SqlAlchemyOcrResultStore
+from ai_worker.adapters.sqlalchemy_quarantine_repository import (
+    SqlAlchemyQuarantineRepository,
+)
 from ai_worker.adapters.sqlalchemy_recovery_repository import (
     SqlAlchemyRecoveryRepository,
 )
@@ -46,6 +49,10 @@ from ai_worker.core.consumer_runtime import ConsumerRuntime
 from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.quarantine import (
+    QuarantineExecution,
+    RejectedWorkerDelivery,
+)
 from ai_worker.core.reconciler import PendingMessageReconciler
 from ai_worker.core.recovery_observability import (
     ObservedDlqPublisher,
@@ -248,6 +255,56 @@ class SessionScopedDeliveryExecution:
         return registry
 
 
+class SessionScopedRejectedDeliveryExecution:
+    """거부된 delivery마다 독립된 DB transaction으로 격리합니다."""
+
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        acknowledger: StreamAcknowledger,
+        clock: Clock,
+        logger: logging.Logger,
+    ) -> None:
+        self._session_factory = session_factory
+        self._acknowledger = acknowledger
+        self._clock = clock
+        self._logger = logger
+
+    async def execute(
+        self,
+        delivery: RejectedWorkerDelivery,
+    ) -> object:
+        async with self._session_factory() as session:
+            execution = self._build_execution(session)
+
+            try:
+                request = delivery.to_quarantine_request(
+                    received_at=self._clock(),
+                )
+                return await execution.execute(request)
+            except Exception:
+                # Redis 원문이나 예외 메시지는 로그에 포함하지 않습니다.
+                self._logger.error(
+                    "rejected worker delivery quarantine failed",
+                    extra={
+                        "stream_message_id": delivery.stream_entry_id,
+                        "failure_code": delivery.failure_code.value,
+                    },
+                )
+                return None
+
+    def _build_execution(
+        self,
+        session: AsyncSession,
+    ) -> QuarantineExecution:
+        return QuarantineExecution(
+            repository=SqlAlchemyQuarantineRepository(session),
+            transaction=SqlAlchemyTransaction(session),
+            acknowledger=self._acknowledger,
+        )
+
+
 def _default_monotonic() -> float:
     return time.monotonic()
 
@@ -378,7 +435,12 @@ def build_worker_runtime(
         logger=logger,
         ocr_provider=None if ocr_engine is None else create_ocr_provider(ocr_engine),
     )
-
+    rejected_execution = SessionScopedRejectedDeliveryExecution(
+        session_factory=session_factory,
+        acknowledger=stream,
+        clock=clock,
+        logger=logger,
+    )
     assembled_recovery = build_recovery_scheduler(
         config,
         session_factory=session_factory,
@@ -392,6 +454,7 @@ def build_worker_runtime(
     runtime = ConsumerRuntime(
         stream=stream,
         execution=execution,
+        rejected_execution=rejected_execution,
         consumer_name=config.REDIS_CONSUMER_NAME,
         batch_size=config.WORKER_CONCURRENCY,
         block_ms=config.REDIS_BLOCK_MS,

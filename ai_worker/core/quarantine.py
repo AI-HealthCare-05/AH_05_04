@@ -52,6 +52,45 @@ class QuarantineRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RejectedWorkerDelivery:
+    """역직렬화할 수 없는 Stream entry의 안전한 메타데이터입니다."""
+
+    stream_name: str
+    stream_entry_id: str
+    message_digest: str
+    failure_code: QuarantineFailureCode
+    job_id: UUID | None
+    original_event_id: UUID | None
+    original_schema_version: str | None
+    trace_id: str | None
+
+    def __post_init__(self) -> None:
+        _validate_stream_name(self.stream_name)
+        _validate_stream_entry_id(self.stream_entry_id)
+        _validate_message_digest(self.message_digest)
+        _validate_failure_code(self.failure_code)
+        _validate_schema_version(self.original_schema_version)
+        _validate_trace_id(self.trace_id)
+
+    def to_quarantine_request(
+        self,
+        *,
+        received_at: datetime,
+    ) -> QuarantineRequest:
+        return QuarantineRequest(
+            stream_name=self.stream_name,
+            stream_entry_id=self.stream_entry_id,
+            message_digest=self.message_digest,
+            failure_code=self.failure_code,
+            job_id=self.job_id,
+            original_event_id=self.original_event_id,
+            original_schema_version=self.original_schema_version,
+            trace_id=self.trace_id,
+            received_at=received_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class QuarantineReceipt:
     """격리 row와 DLQ Outbox의 식별자입니다."""
 
