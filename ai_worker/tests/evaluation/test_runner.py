@@ -9,6 +9,7 @@ from ai_worker.tasks.evaluation.canonical import sha256_hex
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.runner import (
     AdapterRequest,
     EvaluationAdapter,
@@ -20,6 +21,7 @@ from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionS
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
 SOURCE_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/dev-foundation-v1.dataset.json"
+RETRIEVAL_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/rag-retrieval-dev-v1.dataset.json"
 RUN_ID = "123e4567-e89b-42d3-a456-426614174000"
 
 
@@ -223,6 +225,32 @@ def test_adapter_request_is_bound_to_active_variant(loaded_dev_dataset: Validate
 
     assert adapter.requests[0].variant_id == "dev-synthetic-retrieval-v1"
     assert adapter.requests[0].variant_manifest_hash == resolved.retrieval_variant_manifest_hash
+
+
+def test_retrieval_miss_creates_stable_non_sensitive_failure_record() -> None:
+    dataset = load_dataset(RETRIEVAL_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=build_adapter_registry(resolved),
+    )
+
+    assert len(outcome.failure_records) == 1
+    failure = outcome.failure_records[0]
+    assert failure.case_id == "rag-ret-dev-004"
+    assert failure.failure_stage == "RETRIEVAL_MISS"
+    assert failure.failure_code == "REQUIRED_EVIDENCE_NOT_IN_TOP_5"
+    assert failure.expected_summary.value == "EXPECTED_REQUIRED_EVIDENCE"
+    assert failure.actual_summary.value == "ACTUAL_REQUIRED_EVIDENCE_MISSING"
+    assert failure.root_cause_code is None
+    assert failure.followup_issue_ref is None
 
 
 def test_missing_adapter_produces_not_implemented_without_fake_answer(

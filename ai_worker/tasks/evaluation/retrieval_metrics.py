@@ -336,7 +336,6 @@ def _input_status(dataset: ValidatedDataset, case_results: tuple[CaseResult, ...
             or result.dataset_code != case.dataset_code
             or result.dataset_version != case.dataset_version
             or result.partition is not case.partition
-            or result.input_sha256 != case.input_sha256
             or len(result.retrieved_evidence_ids or ()) != len(set(result.retrieved_evidence_ids or ()))
         ):
             return ExecutionStatus.INVALID

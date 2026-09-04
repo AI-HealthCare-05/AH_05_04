@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol, cast
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
@@ -13,6 +14,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
     CaseResult,
     FailureRecord,
+    FailureSummary,
 )
 from ai_worker.tasks.evaluation.schemas.common import (
     DecisionStatus,
@@ -249,12 +251,50 @@ def _select_cases(
     return selected
 
 
+def _retrieval_failure_records(
+    dataset: ValidatedDataset,
+    case_results: tuple[CaseResult, ...],
+    *,
+    created_at: str,
+) -> tuple[FailureRecord, ...]:
+    cases_by_id = {case.case_id: case for case in dataset.cases}
+    failures: list[FailureRecord] = []
+    for result in case_results:
+        case = cases_by_id[result.case_id]
+        required_ids = set(case.expected.required_evidence_refs or ())
+        ranked_ids = set((result.retrieved_evidence_ids or ())[:5])
+        if (
+            result.task_type is not TaskType.RETRIEVAL
+            or result.execution_status is not ExecutionStatus.COMPLETED
+            or not required_ids
+            or required_ids.issubset(ranked_ids)
+        ):
+            continue
+        failures.append(
+            FailureRecord(
+                schema_id="rag-eval.failure",
+                schema_version="1.0.0",
+                run_id=result.run_id,
+                case_id=result.case_id,
+                failure_code="REQUIRED_EVIDENCE_NOT_IN_TOP_5",
+                failure_stage="RETRIEVAL_MISS",
+                expected_summary=FailureSummary.EXPECTED_REQUIRED_EVIDENCE,
+                actual_summary=FailureSummary.ACTUAL_REQUIRED_EVIDENCE_MISSING,
+                root_cause_code=None,
+                followup_issue_ref=None,
+                created_at=created_at,
+            )
+        )
+    return tuple(failures)
+
+
 def execute_dev_cases(
     dataset: ValidatedDataset,
     resolved: ResolvedDevExecution,
     *,
     run_id: str,
     adapter_registry: AdapterRegistry,
+    failure_created_at: str | None = None,
 ) -> RunOutcome:
     task_types = TASK_TYPES_BY_EXPERIMENT[resolved.request.experiment_type]
     selected = _select_cases(dataset, resolved.request.experiment_type)
@@ -287,9 +327,14 @@ def execute_dev_cases(
     else:
         case_results = tuple(_execute_once(request, adapter) for request in requests)
     status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
+    failure_records = _retrieval_failure_records(
+        dataset,
+        case_results,
+        created_at=failure_created_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+    )
     return RunOutcome(
         case_results=case_results,
-        failure_records=(),
+        failure_records=failure_records,
         execution_status=status,
         decision_status=decision,
         blocking_execution_statuses=blockers,

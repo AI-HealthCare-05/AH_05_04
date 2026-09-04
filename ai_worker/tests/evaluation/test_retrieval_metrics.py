@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
+from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.retrieval_metrics import (
     RetrievalObservation,
@@ -20,7 +21,8 @@ from ai_worker.tasks.evaluation.retrieval_metrics import (
     recall_at_k,
     reciprocal_rank,
 )
-from ai_worker.tasks.evaluation.retrieval_replay import load_retrieval_replay
+from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry, load_retrieval_replay
+from ai_worker.tasks.evaluation.runner import execute_dev_cases
 from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResult, MetricResults
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
@@ -112,6 +114,24 @@ def test_five_case_fixture_matches_hand_calculated_metrics() -> None:
         "PRECISION_AT_5": Decimal("0.160000"),
         "RECALL_AT_5": Decimal("0.800000"),
     }
+
+
+def test_metric_builder_accepts_runner_bound_case_input_hashes() -> None:
+    resolved = load_dev_execution_request(
+        EVALS_ROOT / "configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=EVALS_ROOT.parent,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    outcome = execute_dev_cases(
+        DATASET,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=build_adapter_registry(resolved),
+    )
+
+    metrics = build_retrieval_metrics(DATASET, outcome.case_results)
+
+    assert {metric.execution_status.value for metric in metrics.metrics} == {"COMPLETED"}
 
 
 def test_point_estimators_match_hand_calculated_top_five_values() -> None:
