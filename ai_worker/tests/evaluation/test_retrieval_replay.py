@@ -33,9 +33,7 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "dataset_version": "1.0.0",
         "variant_id": "RET-L",
         "top_k": 5,
-        "case_results": [
-            {"case_id": "rag-ret-dev-001", "ranked_evidence_ids": ["evidence-1", "evidence-2"]}
-        ],
+        "case_results": [{"case_id": "rag-ret-dev-001", "ranked_evidence_ids": ["evidence-1", "evidence-2"]}],
         "replay_sha256": "0" * 64,
     }
     payload.update(overrides)

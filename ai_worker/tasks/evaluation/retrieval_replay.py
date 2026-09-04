@@ -126,10 +126,7 @@ class ReplayRetrievalAdapter:
             and request.case.dataset_code == self._replay.dataset_code
             and request.case.dataset_version == self._replay.dataset_version
             and request.variant_id == self._replay.variant_id
-            and (
-                self._variant_manifest_hash is None
-                or request.variant_manifest_hash == self._variant_manifest_hash
-            )
+            and (self._variant_manifest_hash is None or request.variant_manifest_hash == self._variant_manifest_hash)
         )
         ranked = self._case_results.get(request.case.case_id)
         if not binding_valid or ranked is None:

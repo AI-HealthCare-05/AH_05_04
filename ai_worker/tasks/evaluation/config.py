@@ -356,7 +356,10 @@ def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedD
     ):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     for path, expected_hash in resolved.referenced_file_hashes:
-        if resolved.request.retrieval_variant is not None and path == resolved.request.retrieval_variant.replay_artifact_path:
+        if (
+            resolved.request.retrieval_variant is not None
+            and path == resolved.request.retrieval_variant.replay_artifact_path
+        ):
             continue
         try:
             evals_relative = Path(path).relative_to("evals").as_posix()
