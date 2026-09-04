@@ -85,7 +85,7 @@ class ConfirmMedicationCandidateResponse(BaseModel):
 
 
 class RejectMedicationCandidateData(BaseModel):
-    identification_event_id: UUID
+    identification_id: UUID
     prescription_version_medication_id: UUID
     status: MedicationIdentificationStatus
     search_status: MedicationCandidateSearchStatus

@@ -96,6 +96,11 @@ class MedicationCandidateSearch(Base):
             name="chk_medication_candidate_search_ready_counts",
         ),
         CheckConstraint(
+            "status NOT IN ('AMBIGUOUS', 'NO_CANDIDATE', 'INGREDIENT_ONLY', 'INVALID_INPUT', 'FAILED') "
+            "OR displayed_candidate_count = 0",
+            name="chk_medication_candidate_search_non_ready_zero_displayed",
+        ),
+        CheckConstraint(
             "status <> 'INGREDIENT_ONLY' OR status_reason = 'PRODUCT_NAME_REQUIRED'",
             name="chk_medication_candidate_search_ingredient_reason",
         ),
@@ -114,7 +119,9 @@ class MedicationCandidateSearch(Base):
     # 중복 생성하지 않기 위해 우선 값만 저장하고, FK는 #169 이후 별도 migration에서 추가한다.
     prescription_version_medication_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     query_digest: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Runtime Bundle 테이블은 #175(RAG-12A)에서 생성된다. FK는 그 이후 별도 migration에서 추가한다.
     runtime_release_bundle_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    # Candidate Index 영속 테이블은 #168(RAG-07B)에서 생성된다. FK는 그 이후 별도 migration에서 추가한다.
     candidate_index_version_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
     status: Mapped[MedicationCandidateSearchStatus] = mapped_column(
         Enum(MedicationCandidateSearchStatus, native_enum=False, length=40),

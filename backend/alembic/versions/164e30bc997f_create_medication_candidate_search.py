@@ -65,7 +65,9 @@ def upgrade() -> None:
         # FK는 prescription_version_medication 구현 이후 별도 migration에서 추가한다.
         sa.Column("prescription_version_medication_id", sa.CHAR(length=36), nullable=False),
         sa.Column("query_digest", sa.String(length=128), nullable=False),
+        # Runtime Bundle 테이블은 #175(RAG-12A)에서 생성된다. FK는 그 이후 별도 migration에서 추가한다.
         sa.Column("runtime_release_bundle_id", sa.CHAR(length=36), nullable=True),
+        # Candidate Index 영속 테이블은 #168(RAG-07B)에서 생성된다. FK는 그 이후 별도 migration에서 추가한다.
         sa.Column("candidate_index_version_id", sa.CHAR(length=36), nullable=True),
         sa.Column(
             "status",
@@ -104,6 +106,11 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "status <> 'READY' OR (candidate_count >= 1 AND displayed_candidate_count = 1)",
             name="chk_medication_candidate_search_ready_counts",
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('AMBIGUOUS', 'NO_CANDIDATE', 'INGREDIENT_ONLY', 'INVALID_INPUT', 'FAILED') "
+            "OR displayed_candidate_count = 0",
+            name="chk_medication_candidate_search_non_ready_zero_displayed",
         ),
         sa.CheckConstraint(
             "status <> 'INGREDIENT_ONLY' OR status_reason = 'PRODUCT_NAME_REQUIRED'",
