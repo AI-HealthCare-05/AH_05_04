@@ -107,6 +107,7 @@ class ConfigurationResourceBindings:
 @dataclass(frozen=True, slots=True)
 class ValidatedDataset:
     manifest: DatasetManifestContract
+    dataset_manifest_resource: LoadedResourceBinding
     cases: tuple[EvaluationCaseContract, ...]
     evidence_mapping: EvidenceMappingContract
     rubric: CriticalClaimRubricContract
@@ -923,6 +924,10 @@ def load_dataset(
             raise EvaluationValidationError(EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED)
     return ValidatedDataset(
         manifest=manifest,
+        dataset_manifest_resource=LoadedResourceBinding(
+            relative_path=manifest_snapshot.relative_path,
+            sha256=manifest_snapshot.file_sha256,
+        ),
         cases=cases,
         evidence_mapping=evidence,
         rubric=rubric,

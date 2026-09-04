@@ -140,6 +140,8 @@ def _read_file_under_root(repository_root: Path, path: Path) -> bytes:
 
 
 def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[DevVariant, ...], bytes, str]:
+    if any(not cast(str, getattr(request, field)).startswith("evals/") for field in _REFERENCE_FIELDS):
+        raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID)
     if request.upstream_contract_manifest_hash != AUTHORITY_MANIFEST_HASH:
         raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
 
@@ -263,6 +265,7 @@ def _validate_configuration_resource_bindings(
 ) -> None:
     requested_hashes = dict(resolved.referenced_file_hashes)
     role_bindings = {
+        "dataset_manifest_path": dataset.dataset_manifest_resource,
         "profile_path": dataset.configuration_resources.profile,
         "comparison_policy_path": dataset.configuration_resources.comparison_policy,
         "evaluation_policy_path": dataset.configuration_resources.evaluation_policy,
@@ -293,6 +296,9 @@ def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedD
     ):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     for path, expected_hash in resolved.referenced_file_hashes:
-        evals_relative = Path(path).relative_to("evals").as_posix()
+        try:
+            evals_relative = Path(path).relative_to("evals").as_posix()
+        except ValueError as error:
+            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
         if loaded_hashes.get(evals_relative) != expected_hash:
             raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)

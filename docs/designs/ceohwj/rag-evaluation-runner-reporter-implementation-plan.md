@@ -389,6 +389,7 @@ def preflight_dev_manifest(resolved: ResolvedDevExecution) -> None:
 def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedDataset) -> None:
     requested_hashes = dict(resolved.referenced_file_hashes)
     role_bindings = {
+        "dataset_manifest_path": dataset.dataset_manifest_resource,
         "profile_path": dataset.configuration_resources.profile,
         "comparison_policy_path": dataset.configuration_resources.comparison_policy,
         "evaluation_policy_path": dataset.configuration_resources.evaluation_policy,
@@ -420,10 +421,17 @@ if (
     raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
 loaded_hashes = dict(dataset.resource_hashes)
 for path, expected_hash in resolved.referenced_file_hashes:
-    evals_relative = Path(path).relative_to("evals").as_posix()
+    try:
+        evals_relative = Path(path).relative_to("evals").as_posix()
+    except ValueError as error:
+        raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
     if loaded_hashes.get(evals_relative) != expected_hash:
         raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
 ```
+
+모든 request reference는 파일 read 전에 `evals/` namespace인지 검사한다. Dataset Manifest도 Loader가 실제 읽은
+snapshot의 path/hash binding을 별도로 보존하여 나머지 네 역할과 동일하게 검증하고, `Path.relative_to("evals")`
+실패는 순수 `ValueError`로 유출하지 않고 `EVAL_RESOURCE_PATH_INVALID`로 정규화한다.
 
 - [ ] **Step 6: Task 2 테스트를 실행하고 커밋한다**
 

@@ -265,6 +265,23 @@ def test_execution_request_rejects_absolute_reference_path(tmp_path: Path) -> No
     assert caught.value.code is EvaluationErrorCode.RESOURCE_PATH_INVALID
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "dataset_manifest_path",
+        "profile_path",
+        "comparison_policy_path",
+        "evaluation_policy_path",
+        "suite_path",
+    ],
+)
+def test_execution_request_rejects_reference_outside_evals(tmp_path: Path, field: str) -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        _load_request(tmp_path, **{field: f"backend/{field}.json"})
+
+    assert caught.value.code is EvaluationErrorCode.RESOURCE_PATH_INVALID
+
+
 def test_execution_request_rejects_symlinked_reference(tmp_path: Path) -> None:
     request_path = _write_request(tmp_path)
     profile_path = tmp_path / "evals/profiles/dev.profile.json"
@@ -479,6 +496,30 @@ def test_validate_loaded_bindings_rejects_role_paths_miswired_to_one_case() -> N
             (case_path, case_hash),
             (case_path, case_hash),
             (case_path, case_hash),
+        ),
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_loaded_bindings(miswired, dataset)
+
+    assert caught.value.code is EvaluationErrorCode.MANIFEST_INVALID
+
+
+def test_validate_loaded_bindings_rejects_dataset_manifest_path_miswired_to_case() -> None:
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    dataset = load_dataset(SOURCE_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    case_path = f"evals/{dataset.manifest.case_resources[0].path}"
+    case_hash = dict(dataset.resource_hashes)[dataset.manifest.case_resources[0].path]
+    miswired = replace(
+        resolved,
+        request=resolved.request.model_copy(update={"dataset_manifest_path": case_path}),
+        referenced_file_hashes=tuple(
+            (case_path, case_hash) if path == resolved.request.dataset_manifest_path else (path, value)
+            for path, value in resolved.referenced_file_hashes
         ),
     )
 

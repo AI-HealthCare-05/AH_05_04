@@ -134,14 +134,15 @@ Adapter registry를 dependency로 주입한다. Production 경로는 저장소�
 변경하지 않는다. 다른 도메인이 이 형식을 소비해야 하는 요구가 생기면 구현을 중단하고 별도 공유 계약으로
 승격한다.
 
-Loader는 저장소 root 기준 정규화 상대경로만 허용하고 symlink, root 이탈, 중복 key와 알려지지 않은 필드를
-거부한다. 각 참조 파일을 기존 Loader로 검증한 뒤 execution request의 모든 의미 필드와 검증된 입력의 실제
+Loader는 저장소 root 기준 `evals/` namespace 아래의 정규화 상대경로만 허용하고 symlink, root 이탈, 중복 key와
+알려지지 않은 필드를 거부한다. namespace 밖 참조는 파일을 읽기 전에 `EVAL_RESOURCE_PATH_INVALID`로 실패한다.
+각 참조 파일을 기존 Loader로 검증한 뒤 execution request의 모든 의미 필드와 검증된 입력의 실제
 canonical hash를 고정 순서 map으로 직렬화한다. 그 bytes의 SHA-256이
 `resolved_evaluation_config_hash`이다. 사용자가 hash를 직접 입력하거나 Runner가 placeholder 값을 만들지 않는다.
-Loader는 Profile, Comparison Policy, Evaluation Policy, Suite를 읽은 각 snapshot의 상대경로와 file SHA-256을
-역할별 binding으로 보존한다. 실행 전 검증은 네 request path를 하나의 set으로 축약하지 않고 각 필드를 해당
-역할의 실제 binding과 개별 비교한다. path가 다르면 `EVAL_MANIFEST_INVALID`, 같은 path의 hash가 다르면
-`EVAL_HASH_MISMATCH`로 실패하므로 Case JSON 등 이미 graph에 존재하는 다른 리소스로 역할을 오배선할 수 없다.
+Loader는 Dataset Manifest, Profile, Comparison Policy, Evaluation Policy, Suite를 읽은 각 snapshot의 상대경로와
+file SHA-256을 역할별 binding으로 보존한다. 실행 전 검증은 다섯 request path를 하나의 set으로 축약하지 않고
+각 필드를 해당 역할의 실제 binding과 개별 비교한다. path가 다르면 `EVAL_MANIFEST_INVALID`, 같은 path의 hash가
+다르면 `EVAL_HASH_MISMATCH`로 실패하므로 Case JSON 등 이미 graph에 존재하는 다른 리소스로 역할을 오배선할 수 없다.
 각 non-null variant value object의 canonical bytes SHA-256을 해당
 `retrieval_variant_manifest_hash`·`answer_variant_manifest_hash`로 사용한다. `RagEvaluationRun`에 존재하는
 `experiment_id`, `experiment_type`, `variant_id`, 각 variant manifest hash, `upstream_contract_manifest_hash`,
