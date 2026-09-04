@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import hashlib
 import os
 import platform
 import stat
@@ -112,9 +113,10 @@ def _create_file(directory_fd: int, name: str, payload: bytes) -> FileIdentity:
     close_attempted = False
     try:
         entry_identity = _identity(directory_fd, name)
-        identity = _descriptor_identity(descriptor)
-        if entry_identity != identity:
+        descriptor_identity = _descriptor_identity(descriptor)
+        if entry_identity is None or entry_identity != descriptor_identity:
             raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        identity = descriptor_identity
         os.fchmod(descriptor, 0o600)
         if os.write(descriptor, payload) != len(payload):
             raise OSError(errno.EIO, "short write")
@@ -130,9 +132,8 @@ def _create_file(directory_fd: int, name: str, payload: bytes) -> FileIdentity:
             except BaseException as close_error:
                 cleanup_error = close_error
         try:
-            cleanup_identity = identity if identity is not None else _identity(directory_fd, name)
-            if cleanup_identity is not None:
-                _remove_file_if_owned(directory_fd, name, cleanup_identity)
+            if identity is not None:
+                _remove_file_if_owned(directory_fd, name, identity)
         except BaseException as remove_error:
             cleanup_error = cleanup_error or remove_error
         if cleanup_error is not None:
@@ -141,12 +142,14 @@ def _create_file(directory_fd: int, name: str, payload: bytes) -> FileIdentity:
 
 
 def _remove_file_if_owned(directory_fd: int, name: str, identity: FileIdentity) -> None:
-    current = _identity(directory_fd, name)
-    if current is None:
+    quarantine_name = _isolate_owned_entry(directory_fd, name, identity)
+    if quarantine_name is None:
         return
-    if current != identity:
-        raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
-    os.unlink(name, dir_fd=directory_fd)
+    try:
+        os.unlink(quarantine_name, dir_fd=directory_fd)
+    except BaseException:
+        _restore_isolated_entry(directory_fd, quarantine_name, name)
+        raise
 
 
 def exclusive_rename(parent_fd: int, source: str, target: str) -> None:
@@ -168,6 +171,48 @@ def exclusive_rename(parent_fd: int, source: str, target: str) -> None:
         raise OSError(error_number, os.strerror(error_number))
 
 
+def _restore_isolated_entry(directory_fd: int, quarantine_name: str, original_name: str) -> None:
+    if _identity(directory_fd, quarantine_name) is None:
+        return
+    exclusive_rename(directory_fd, quarantine_name, original_name)
+
+
+def _isolate_owned_entry(
+    directory_fd: int,
+    name: str,
+    identity: FileIdentity,
+) -> str | None:
+    quarantine_name = f".cleanup.{uuid4()}"
+    try:
+        exclusive_rename(directory_fd, name, quarantine_name)
+    except FileNotFoundError:
+        return None
+    try:
+        isolated_identity = _identity(directory_fd, quarantine_name)
+    except BaseException:
+        _restore_isolated_entry(directory_fd, quarantine_name, name)
+        raise
+    if isolated_identity != identity:
+        _restore_isolated_entry(directory_fd, quarantine_name, name)
+        raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+    return quarantine_name
+
+
+def _remove_isolated_directory(
+    directory_fd: int,
+    quarantine_name: str,
+    original_name: str,
+) -> bool:
+    try:
+        os.rmdir(quarantine_name, dir_fd=directory_fd)
+    except OSError as error:
+        _restore_isolated_entry(directory_fd, quarantine_name, original_name)
+        if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+            raise
+        return False
+    return True
+
+
 def _cleanup_staging(
     root_fd: int,
     staging_fd: int | None,
@@ -177,23 +222,20 @@ def _cleanup_staging(
 ) -> bool:
     if staging_fd is None or staging_identity is None:
         return False
-    entry_matches = False
+    quarantine_name: str | None = None
     try:
-        entry_matches = _identity(root_fd, staging_name) == staging_identity
-        if entry_matches:
-            for name, identity in created_files.items():
-                _remove_file_if_owned(staging_fd, name, identity)
+        quarantine_name = _isolate_owned_entry(root_fd, staging_name, staging_identity)
+        if quarantine_name is None:
+            return False
+        for name, identity in created_files.items():
+            _remove_file_if_owned(staging_fd, name, identity)
+    except BaseException:
+        if quarantine_name is not None:
+            _restore_isolated_entry(root_fd, quarantine_name, staging_name)
+        raise
     finally:
         os.close(staging_fd)
-    if not entry_matches:
-        return False
-    try:
-        os.rmdir(staging_name, dir_fd=root_fd)
-    except OSError as error:
-        if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
-            return False
-        raise
-    return True
+    return _remove_isolated_directory(root_fd, quarantine_name, staging_name)
 
 
 def _cleanup_unopened_staging(
@@ -203,12 +245,12 @@ def _cleanup_unopened_staging(
     *,
     created: bool,
 ) -> bool:
-    if not created:
+    if not created or staging_identity is None:
         return False
-    if staging_identity is not None and _identity(root_fd, staging_name) != staging_identity:
+    quarantine_name = _isolate_owned_entry(root_fd, staging_name, staging_identity)
+    if quarantine_name is None:
         return False
-    os.rmdir(staging_name, dir_fd=root_fd)
-    return True
+    return _remove_isolated_directory(root_fd, quarantine_name, staging_name)
 
 
 def _verify_staging_entry(
@@ -218,12 +260,48 @@ def _verify_staging_entry(
     staging_identity: FileIdentity,
     *,
     verify_contents: bool = False,
+    created_files: Mapping[str, FileIdentity] | None = None,
+    expected_files: Mapping[str, bytes] | None = None,
 ) -> None:
     descriptor_identity = _descriptor_identity(staging_fd)
     if descriptor_identity != staging_identity or _identity(root_fd, staging_name) != descriptor_identity:
         raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
     if verify_contents and set(os.listdir(staging_fd)) != _BUNDLE_FILENAMES:
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    if verify_contents:
+        if (
+            created_files is None
+            or expected_files is None
+            or set(created_files) != _BUNDLE_FILENAMES
+            or set(expected_files) != _BUNDLE_FILENAMES
+        ):
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        for name, identity in created_files.items():
+            _verify_file_content(staging_fd, name, identity, expected_files[name])
+
+
+def _verify_file_content(
+    directory_fd: int,
+    name: str,
+    identity: FileIdentity,
+    expected: bytes,
+) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(name, flags, dir_fd=directory_fd)
+    try:
+        if _descriptor_identity(descriptor) != identity or _identity(directory_fd, name) != identity:
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+        if size != len(expected) or digest.digest() != hashlib.sha256(expected).digest():
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        if _descriptor_identity(descriptor) != identity or _identity(directory_fd, name) != identity:
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+    finally:
+        os.close(descriptor)
 
 
 def _cleanup_published(
@@ -232,15 +310,24 @@ def _cleanup_published(
     run_id: str,
     published_identity: FileIdentity | None,
     created_files: Mapping[str, FileIdentity],
-) -> None:
+) -> bool:
+    if published_identity is None:
+        os.close(published_fd)
+        return False
+    quarantine_name: str | None = None
     try:
-        if published_identity is None or _identity(root_fd, run_id) != published_identity:
-            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        quarantine_name = _isolate_owned_entry(root_fd, run_id, published_identity)
+        if quarantine_name is None:
+            return False
         for name, identity in created_files.items():
             _remove_file_if_owned(published_fd, name, identity)
+    except BaseException:
+        if quarantine_name is not None:
+            _restore_isolated_entry(root_fd, quarantine_name, run_id)
+        raise
     finally:
         os.close(published_fd)
-    os.rmdir(run_id, dir_fd=root_fd)
+    return _remove_isolated_directory(root_fd, quarantine_name, run_id)
 
 
 @dataclass(slots=True)
@@ -251,6 +338,7 @@ class _RunPublication:
     staging_name: str = field(init=False)
     lock_identity: FileIdentity | None = None
     staging_created: bool = False
+    staging_bound: bool = False
     staging_identity: FileIdentity | None = None
     staging_fd: int | None = None
     created_files: dict[str, FileIdentity] = field(default_factory=dict)
@@ -279,6 +367,7 @@ class _RunPublication:
             self.staging_name,
             self.staging_identity,
         )
+        self.staging_bound = True
         os.fchmod(self.staging_fd, 0o700)
         for name in sorted(files, key=lambda value: value.encode("utf-16-be")):
             self.created_files[name] = _create_file(self.staging_fd, name, files[name])
@@ -289,6 +378,8 @@ class _RunPublication:
             self.staging_name,
             self.staging_identity,
             verify_contents=True,
+            created_files=self.created_files,
+            expected_files=files,
         )
         # Re-verify immediately adjacent to the rename call, with no work in
         # between, to shrink (but not eliminate) the TOCTOU window: rename
@@ -298,8 +389,15 @@ class _RunPublication:
         _verify_staging_entry(self.root_fd, self.staging_fd, self.staging_name, self.staging_identity)
         exclusive_rename(self.root_fd, self.staging_name, self.run_id)
         self.renamed = True
-        if _identity(self.root_fd, self.run_id) != self.staging_identity:
-            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        _verify_staging_entry(
+            self.root_fd,
+            self.staging_fd,
+            self.run_id,
+            self.staging_identity,
+            verify_contents=True,
+            created_files=self.created_files,
+            expected_files=files,
+        )
         os.fsync(self.root_fd)
         self.remove_lock()
         os.fsync(self.root_fd)
@@ -312,18 +410,20 @@ class _RunPublication:
 
     def cleanup(self) -> BaseException | None:
         cleaned_directory_entry = False
+        cleanup_errors: list[BaseException] = []
         try:
             if self.staging_fd is not None and self.committed:
                 os.close(self.staging_fd)
+            elif self.staging_fd is not None and not self.staging_bound:
+                os.close(self.staging_fd)
             elif self.staging_fd is not None and self.renamed:
-                _cleanup_published(
+                cleaned_directory_entry = _cleanup_published(
                     self.root_fd,
                     self.staging_fd,
                     self.run_id,
                     self.staging_identity,
                     self.created_files,
                 )
-                cleaned_directory_entry = True
             elif self.staging_fd is not None:
                 cleaned_directory_entry = _cleanup_staging(
                     self.root_fd,
@@ -339,14 +439,20 @@ class _RunPublication:
                     self.staging_identity,
                     created=self.staging_created,
                 )
-            self.staging_fd = None
-            had_lock = self.lock_identity is not None
-            self.remove_lock()
-            if cleaned_directory_entry or had_lock:
-                os.fsync(self.root_fd)
         except BaseException as error:
-            return _normalize_error(error)
-        return None
+            cleanup_errors.append(error)
+        self.staging_fd = None
+        had_lock = self.lock_identity is not None
+        try:
+            self.remove_lock()
+        except BaseException as error:
+            cleanup_errors.append(error)
+        if cleaned_directory_entry or had_lock:
+            try:
+                os.fsync(self.root_fd)
+            except BaseException as error:
+                cleanup_errors.append(error)
+        return _normalize_error(cleanup_errors[0]) if cleanup_errors else None
 
 
 def _validate_publication_input(run_id: str, files: Mapping[str, bytes]) -> None:

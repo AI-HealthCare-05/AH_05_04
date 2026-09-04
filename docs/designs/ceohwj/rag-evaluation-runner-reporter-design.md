@@ -362,9 +362,26 @@ symlink component, root 이탈, Unicode 비정규화, `.`·`..`, cross-filesyste
 staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 삭제하지 않는다. staging 생성 여부와 열린 fd는
 별도로 추적한다. 따라서 `mkdir` 성공 직후 staging `open`이 실패해 fd를 얻지 못한 경우에도 생성 당시 inode
 identity와 현재 entry를 비교해 자신이 만든 빈 staging만 제거하고 lock 제거와 parent fsync까지 수행한다.
+파일과 열린 staging의 ownership은 descriptor identity와 directory-entry identity가 일치한 뒤에만 확정한다.
+identity 조회가 실패하거나 두 identity가 다르면 현재 경로를 다시 조회한 값으로 ownership을 추정하지 않고 해당
+entry를 보존한 채 `EVAL_INTERNAL_ERROR`로 실패한다. 이는 잔존물보다 다른 실행의 replacement 오삭제 방지를
+우선하는 fail-closed 규칙이다. cleanup은 대상 이름을 예측 불가능한 격리 이름으로 먼저 exclusive rename하고,
+격리된 entry의 identity가 기록한 identity와 일치할 때만 삭제한다. 격리 identity가 다르거나 조회·삭제가 실패하면
+원래 이름으로 복원하거나, 원래 이름이 이미 점유됐다면 격리 entry까지 보존한다. 발행 직전에는 열린 staging fd와
+이름의 identity, 실제 파일명 set과 생성 시 기록한 각 파일 identity가 정확한 7-file Bundle과 일치하는지 다시
+확인하고, 각 파일의 byte length와 SHA-256도 생성 입력과 비교한다. 이름 기반 exclusive rename 직후에도 final
+entry와 각 파일의 identity·content fingerprint를 재확인하여 마지막 검사와 syscall 사이에 발생한 교체나 같은
+inode의 내용 변조를 성공으로 보고하지 않는다. identity가 다른 replacement는 rollback 대상으로 취급하지 않고
+보존하되 자신이 확정한 lock cleanup은 독립적으로 계속 수행한다.
 rename 뒤 parent fsync 또는 lock 제거가 실패하면 final directory의 inode ownership을 확인하고 자신이 발행한
 Bundle만 rollback한다.
 rollback과 lock 정리가 끝난 뒤 parent directory를 다시 fsync하여 제거 상태도 내구성 있게 확정한다.
+
+이 보장은 private allowed root와 예측 불가능한 cleanup 이름을 같은 OS identity에서 실행되는 협조적 publisher들이
+준수한다는 신뢰 경계를 전제로 한다. POSIX의 `unlink`/`rmdir`은 열린 descriptor 자체가 아니라 이름을 삭제하므로,
+격리 identity 확인 뒤 삭제 syscall 안에서 임의로 이름을 바꿀 수 있는 비협조적 same-UID 프로세스나 syscall
+interception까지 replacement 비삭제를 절대 보장하지 않는다. 그런 격리가 필요하면 Runner를 별도 OS identity 또는
+전용 mount/프로세스 sandbox에서 실행해야 한다.
 
 ## 10. 결정성
 

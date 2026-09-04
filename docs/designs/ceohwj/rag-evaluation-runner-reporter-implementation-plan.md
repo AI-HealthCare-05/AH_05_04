@@ -1113,6 +1113,10 @@ def test_publish_does_not_remove_operator_owned_lock(tmp_path: Path) -> None:
 만든 staging만 제거되는지 확인한다. cross-filesystem `EXDEV`는 `EVAL_ATOMIC_PUBLISH_UNSUPPORTED`로 mapping한다.
 추가로 staging `mkdir` 성공 직후 `os.open`에 `EIO`를 주입한다. fd가 아직 없더라도 생성 시 저장한 inode identity로
 본인이 만든 빈 staging을 제거하고 lock과 임시 directory가 모두 남지 않는지 검증한다.
+lock·staging entry 교체와 descriptor 또는 entry identity 조회 실패를 동시에 주입한다. descriptor와 entry의
+일치를 확정하지 못한 경우 replacement와 원본을 모두 보존하고 안정 오류로 실패하는지 확인한다. staging
+fsync 뒤 entry 교체, rename syscall 경계 교체, 허용되지 않은 추가 파일 주입도 각각 재현하여 잘못된 final을
+성공으로 반환하지 않고 자신이 확정한 lock만 정리하는지 확인한다.
 
 - [ ] **Step 4: Publisher 테스트가 실패하는지 확인한다**
 
@@ -1145,6 +1149,17 @@ filename allowlist는 `run.json`, `cases.jsonl`, `metrics.json`, `suite-results.
 `result-content-manifest.json`, `report.md`로 고정한다. cleanup은 inode identity를 확인한 staging/lock에만 수행한다.
 staging directory 생성 identity는 fd 획득 여부와 별도로 보존하며, `mkdir` 뒤 `open` 실패 cleanup은 identity가
 일치하는 빈 directory에만 `rmdir`을 수행한다. directory 또는 lock entry를 제거한 뒤에는 parent를 fsync한다.
+파일과 열린 staging은 descriptor identity와 entry identity가 일치한 경우에만 owned로 표시한다. identity가
+미확정이거나 불일치하면 현재 경로의 identity를 cleanup ownership으로 다시 채우지 않고 entry를 보존한다.
+rename 직전에는 fd/name identity와 실제 7-file set을 검증하고, 이름 기반 exclusive rename 직후 final identity를
+같은 fd identity와 다시 비교한다. post-rename 불일치 시 replacement final은 삭제하지 않고 fail-closed하되,
+확정된 lock은 제거한다. cleanup 대상은 예측 불가능한 격리 이름으로 exclusive rename한 뒤 기록된 identity와
+재비교하고, 일치한 격리 entry만 삭제한다. identity 조회·비교·삭제가 실패하면 원래 이름으로 복원하거나 원래
+이름이 점유된 경우 격리 이름으로도 보존한다. Bundle 검증은 파일명 set뿐 아니라 생성 시 기록한 일곱 파일의
+개별 identity와 생성 입력의 byte length·SHA-256까지 확인하며, directory cleanup 실패와 lock cleanup은 서로
+독립적으로 시도한다. 이 cleanup 보장은 private root와 예측 불가능한 격리 이름을 준수하는 협조적 publisher를
+대상으로 하며, 삭제 syscall 내부에서 이름을 바꿀 수 있는 비협조적 same-UID actor는 별도 OS identity 또는
+프로세스 sandbox로 격리해야 한다.
 입력 key set이 이 일곱 파일과 정확히 같지 않으면 staging 생성 전에 `EVAL_MANIFEST_INVALID`로 거부한다.
 
 `rename_staging_no_clobber()`는 일반 `os.rename()`을 사용하지 않는다. Darwin에서는 libc
