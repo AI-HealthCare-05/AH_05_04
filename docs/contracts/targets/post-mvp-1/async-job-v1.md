@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | Partially implemented (#148) — 공통 Job 상태 조회(`GET /jobs/{job_id}`) 구현·테스트·라우트 등록이 완료되어 해당 부분은 [공통 Job 상태 조회 계약 v1](../../current/job-status-v1.md)로 승격했습니다(#148 다섯 번째 리뷰 — AGENTS.md 문서 권위 규칙에 따라 구현된 부분만 current로 분리). OCR·Guide rediscovery GET(`GET /documents/{id}/ocr-jobs`, `GET /prescriptions/{id}/guides`)은 서비스 로직·테스트만 완료하고 라우트 등록은 접수(POST) `accept_job()` 연결 시점까지 보류(#148 세 번째 리뷰 — 접수 미연결 상태에서는 성공 경로 없는 API가 되기 때문). OCR·Guide·Chat 접수(POST) 3종의 `accept_job()` 연결과 Publisher·Worker·Reconciler는 Not implemented — 전체 승격 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-08-31 |
 
@@ -54,7 +54,7 @@ OCR 접수는 기존 라우터의 path parameter 방식과 `202` 응답을 유�
 
 ## 공통 조회 응답
 
-`GET /api/v1/jobs/{job_id}`는 다음 envelope를 반환한다.
+`GET /api/v1/jobs/{job_id}`는 구현·테스트가 완료되어 [공통 Job 상태 조회 계약 v1](../../current/job-status-v1.md)로 승격했습니다. 응답 envelope, `result_url`·`Retry-After`·`error` 필드 규칙, 소유권 이중 확인, 오류 코드의 정본은 그 문서를 따릅니다. 아래는 OCR·Guide·Chat 접수(POST, 아직 미구현)가 만들 것으로 목표하는 응답 예시입니다 — 같은 envelope를 공유합니다.
 
 ```json
 {
@@ -75,8 +75,6 @@ OCR 접수는 기존 라우터의 path parameter 방식과 `202` 응답을 유�
 }
 ```
 
-성공 응답은 `{"data": JobStatusResponse}`로 감싸고 오류는 공통 top-level 오류 envelope를 사용한다. 공통 오류 응답의 `details`는 객체가 아니라 배열이며, 구체 형식은 [Backend 오류 응답 계약](../../current/backend-error-response.md)을 따른다. #117 병합 이후 Job과 `result_url`이 가리키는 도메인 결과는 SELF `profile_id` 또는 부모 chain의 `profile_id`를 기준으로 소유권을 확인한다. Job과 도메인 결과의 소유권 기준이 서로 맞지 않거나 인증 사용자의 SELF profile에 속하지 않으면 fail-closed `404`로 응답한다. 모든 성공·오류 응답에 `Cache-Control: no-store`를 포함한다. `result_url`은 안전한 도메인 결과가 저장된 `COMPLETED`에서만 제공하고 그 전에는 `null`이다. Track F의 `REJECTED` fallback도 `COMPLETED + result_url`로 조회한다. `RETRY_WAIT`에서는 `Retry-After` 헤더와 같은 값의 `retry_after_seconds`를 제공한다. `error`는 도메인 결과를 저장하지 못한 terminal `FAILED`에서만 안전한 `{code, message}`를 반환하며 `attempt_count`, progress, `failure_detail`과 Provider 원문 오류는 외부 응답에 포함하지 않는다.
-
 OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.status_url`을 같은 Job 조회 URL로 제공한다.
 
 공통 header 기준은 다음과 같다.
@@ -85,8 +83,10 @@ OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.sta
 |---|---|---|---|
 | `Cache-Control: no-store` | 접수 3종, 상태 조회, 결과 조회 | 항상 | Job 상태와 의료·AI 결과를 캐시하지 않는다. |
 | `Location` | 접수 3종 | `202 Accepted` | `data.status_url`과 같은 Job 조회 URL이다. |
-| `Retry-After` | 상태 조회 | `status = RETRY_WAIT` | `retry_after_seconds`와 같은 초 단위 값이다. |
+| `Retry-After` | 상태 조회 | `status = RETRY_WAIT` | `retry_after_seconds`와 같은 초 단위 값이며, 아래 최소값 규칙을 따른다. |
 | `WWW-Authenticate: Bearer` | 접수 3종, 상태 조회 | `401` | 인증 실패 응답에 포함한다. |
+
+`Retry-After`/`retry_after_seconds`는 `available_at`이 지나도 `0`을 반환하지 않는다. `available_at` 경과 후에도 Job은 Reconciler 주기 → 새 Outbox 생성 → Publisher `XADD`(#219) → Worker lease 획득까지 `RETRY_WAIT`를 유지하므로, `0`을 보내면 Client가 대기 없이 재조회를 반복한다. 최소 1초 하한을 적용하며(#148), 정확한 하한값은 #142에서 Reconciler 실행 주기가 확정되면 그 값(또는 그 값 기반 최소치)으로 교체한다. `Retry-After`는 Backend CORS 설정의 `Access-Control-Expose-Headers`에 포함해 cross-origin Frontend가 읽을 수 있어야 한다(#148).
 
 승인된 ERD에는 `AI_JOB_ATTEMPT.attempt_status=BLOCKED` enum 값이 포함된다. 다만 이 값의 의미, 기록 조건, 상태 전이와 OCR·Guide·Chat 적용 범위는 후속 Decision 대상이다. ERD나 enum을 Proposed로 낮추지 않되, 전이 계약이 승인될 때까지 Worker 구현에서 `BLOCKED`를 생성·전이·저장하지 않는다. Track F의 `safety_disposition=BLOCKED_ACTION`과는 연동하지 않는다.
 

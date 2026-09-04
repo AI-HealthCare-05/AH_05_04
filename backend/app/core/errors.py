@@ -8,6 +8,8 @@ from fastapi.responses import ORJSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.services.job_intake import IdempotencyKeyConflictError
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,22 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=body.model_dump(mode="json"),
             headers=exc.headers,
         )
+
+    @app.exception_handler(IdempotencyKeyConflictError)
+    async def handle_idempotency_key_conflict(
+        request: Request,
+        exc: IdempotencyKeyConflictError,
+    ) -> ORJSONResponse:
+        # idempotency-v1.md: 같은 Idempotency-Key로 다른 요청 지문이 접수되면 409로 응답합니다.
+        # OCR·Guide·Chat 접수 3종이 공유하는 JobIntakeService에서 발생하므로 도메인별 라우트마다
+        # 반복해서 잡지 않고 여기서 한 번만 매핑합니다.
+        body = ErrorResponse(
+            code="IDEMPOTENCY_KEY_CONFLICT",
+            message="같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다.",
+            details=[],
+            trace_id=_get_trace_id(request),
+        )
+        return ORJSONResponse(status_code=409, content=body.model_dump(mode="json"))
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, exc: RequestValidationError) -> ORJSONResponse:
