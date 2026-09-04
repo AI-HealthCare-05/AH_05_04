@@ -224,7 +224,7 @@ function PrescriptionUploadPage() {
               >
                 {file?.name ?? '사진 촬영 또는 파일 선택'}
               </strong>
-              <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 10MB'}</small>
+              <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 30MB'}</small>
             </label>
             {file && (
               <button
