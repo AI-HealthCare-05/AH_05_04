@@ -13,6 +13,12 @@ from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset
+from ai_worker.tasks.evaluation.retrieval_metrics import (
+    aggregate_metric_scores,
+    metric_result_fields,
+    metric_scores,
+    observations_from_case_results,
+)
 from ai_worker.tasks.evaluation.schema_exports import schema_documents
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
@@ -131,8 +137,56 @@ def _partition_manifest_hash(dataset: ValidatedDataset) -> str:
 
 def _build_metrics(material: RunMaterial) -> MetricResults:
     metrics: list[MetricResult] = []
+    retrieval_cases = {
+        case.case_id: (
+            tuple(case.expected.required_evidence_refs or ()),
+            tuple(case.expected.relevant_evidence_refs or ()),
+        )
+        for case in material.dataset.cases
+        if case.task_type.value == "RETRIEVAL"
+    }
+    retrieval_results = {
+        result.case_id: tuple(result.retrieved_evidence_ids or result.selected_evidence_ids or ())
+        for result in material.outcome.case_results
+        if result.case_id in retrieval_cases and result.execution_status is ExecutionStatus.COMPLETED
+    }
     for scope in material.dataset.comparison_policy.scopes:
         ci_parameters = dict(scope.ci_parameters)
+        aggregate = None
+        if (
+            scope.metric_id in {"RECALL_AT_5", "PRECISION_AT_5", "MRR", "NDCG_AT_5", "NO_HIT_RATE"}
+            and set(retrieval_cases) == set(retrieval_results)
+        ):
+            observations = observations_from_case_results(retrieval_cases, retrieval_results)
+            aggregate = aggregate_metric_scores(
+                [metric_scores(observation) for observation in observations],
+                minimum_case_count=scope.minimum_case_count,
+            ).get(scope.metric_id)
+        if aggregate is not None:
+            calculated = metric_result_fields(aggregate, sample_group_count=len(retrieval_results))
+            metrics.append(
+                MetricResult(
+                    metric_id=scope.metric_id,
+                    metric_version=scope.metric_version,
+                    partition=scope.partition,
+                    slice_id=scope.slice_id,
+                    required=scope.required,
+                    unit_of_analysis=scope.unit_of_analysis,
+                    estimator_id=scope.estimator_id,
+                    estimator_version=scope.estimator_version,
+                    independence_unit=scope.independence_unit,
+                    cluster_dimension=None if scope.cluster_dimension is None else scope.cluster_dimension.value,
+                    ci_lower=None,
+                    ci_upper=None,
+                    ci_method_id=scope.ci_method_id,
+                    ci_method_version=scope.ci_method_version,
+                    ci_level=cast(str | None, ci_parameters.get("level")),
+                    ci_sidedness=cast(str | None, ci_parameters.get("sidedness")),
+                    threshold=scope.threshold,
+                    **calculated,
+                )
+            )
+            continue
         metrics.append(
             MetricResult(
                 metric_id=scope.metric_id,
