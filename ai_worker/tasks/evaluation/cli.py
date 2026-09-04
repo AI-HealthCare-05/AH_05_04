@@ -6,25 +6,59 @@ import os
 import stat
 import sys
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 from uuid import uuid4
 
+from pydantic import TypeAdapter, ValidationError
+
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, normalize_resource_path
+from ai_worker.tasks.evaluation.config import (
+    RepositoryStateProvider,
+    git_repository_state,
+    load_dev_execution_request,
+    preflight_dev_manifest,
+    validate_loaded_bindings,
+)
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.manifest import (
+    RunMaterial,
+    build_artifact_draft,
+    content_artifact_entries,
+    finalize_artifacts,
+    machine_artifact_files,
+    validate_published_artifact_contracts,
+)
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
+from ai_worker.tasks.evaluation.publisher import publish_run_directory
+from ai_worker.tasks.evaluation.reporter import render_report
+from ai_worker.tasks.evaluation.runner import (
+    EMPTY_ADAPTER_REGISTRY,
+    AdapterRegistry,
+    execute_dev_cases,
+)
 from ai_worker.tasks.evaluation.schemas.artifacts import ValidationReceipt
-from ai_worker.tasks.evaluation.schemas.common import ImmutableReference
+from ai_worker.tasks.evaluation.schemas.common import (
+    ActorNamespace,
+    ActorRef,
+    ActorRole,
+    CanonicalUuid,
+    ImmutableReference,
+)
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _PRODUCTION_RESULT_ROOT = _REPOSITORY_ROOT / "evals/validation-results"
+_PRODUCTION_RUN_ROOT = _REPOSITORY_ROOT / "evals/results"
 _VALIDATOR_VERSION = "1.0.0"
 _UNKNOWN_DATASET_CODE = "unknown-dataset"
 _UNKNOWN_DATASET_VERSION = "0.0.0"
+_RUN_ID_ADAPTER = TypeAdapter(CanonicalUuid)
+
+type Clock = Callable[[], str]
 
 
 _UNSUPPORTED_ERRNOS = {
@@ -58,6 +92,10 @@ def _parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate")
     validate.add_argument("--manifest", required=True)
     validate.add_argument("--result", required=True)
+    run_dev = commands.add_parser("run-dev")
+    run_dev.add_argument("--config", required=True)
+    run_dev.add_argument("--run-id", required=True)
+    run_dev.add_argument("--executed-by", required=True)
     return parser
 
 
@@ -519,17 +557,7 @@ def _publish_outcome(
     return intended_exit
 
 
-def main(argv: Sequence[str] | None = None, *, allowed_result_root: Path | None = None) -> int:
-    """Validate one dataset and write only a non-release validation receipt."""
-
-    try:
-        arguments = _parser().parse_args(argv)
-    except _CliArgumentError:
-        _emit_error(EvaluationErrorCode.SCHEMA_INVALID.value)
-        return 2
-    except SystemExit as error:
-        return error.code if isinstance(error.code, int) else 1
-
+def _run_validate(arguments: argparse.Namespace, *, allowed_result_root: Path | None) -> int:
     production = allowed_result_root is None
     try:
         result_root = _prepare_allowed_root(
@@ -592,3 +620,125 @@ def main(argv: Sequence[str] | None = None, *, allowed_result_root: Path | None 
         _emit_error(EvaluationErrorCode.INTERNAL_ERROR.value)
         return 1
     return 0
+
+
+def _validate_run_identity(run_id: str, executed_by: str) -> ActorRef:
+    try:
+        _RUN_ID_ADAPTER.validate_python(run_id)
+        return ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN,
+            actor_id=executed_by,
+            role=ActorRole.EVALUATION_IMPLEMENTER,
+        )
+    except ValidationError:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
+
+
+def _validate_bundle_privacy(files: dict[str, bytes]) -> None:
+    for relative_path, payload in files.items():
+        validate_privacy_boundary(
+            {
+                "relative_path": relative_path,
+                "content": payload.decode("utf-8", errors="strict"),
+            }
+        )
+
+
+def _run_dev(
+    arguments: argparse.Namespace,
+    *,
+    allowed_result_root: Path | None,
+    repository_state_provider: RepositoryStateProvider,
+    adapter_registry: AdapterRegistry,
+    clock: Clock,
+) -> int:
+    try:
+        executed_by = _validate_run_identity(arguments.run_id, arguments.executed_by)
+        config_path = Path(arguments.config)
+        if not config_path.is_absolute():
+            config_path = _REPOSITORY_ROOT / config_path
+        resolved = load_dev_execution_request(
+            config_path,
+            repository_root=_REPOSITORY_ROOT,
+            repository_state_provider=repository_state_provider,
+        )
+        preflight_dev_manifest(resolved)
+        dataset = load_dataset(
+            resolved.dataset_manifest_path,
+            evals_root=_REPOSITORY_ROOT / "evals",
+            manifest_bytes=resolved.dataset_manifest_bytes,
+        )
+        validate_loaded_bindings(resolved, dataset)
+        started_at = clock()
+        outcome = execute_dev_cases(
+            dataset,
+            resolved,
+            run_id=arguments.run_id,
+            adapter_registry=adapter_registry,
+        )
+        draft = build_artifact_draft(
+            RunMaterial(
+                outcome=outcome,
+                dataset=dataset,
+                resolved=resolved,
+                run_id=arguments.run_id,
+                executed_by=executed_by,
+                started_at=started_at,
+            )
+        )
+        machine_files = machine_artifact_files(draft)
+        report = render_report(
+            draft.report_data,
+            draft.metrics,
+            draft.suite_results,
+            content_artifact_entries(machine_files),
+        )
+        artifacts = finalize_artifacts(draft, report, completed_at=clock())
+        files = dict(artifacts.files)
+        schema_set_version = dataset.evaluation_policy.artifact_schema_set_ref.reference.version
+        validate_published_artifact_contracts(
+            files,
+            schema_root=_REPOSITORY_ROOT / "evals/schemas" / schema_set_version,
+            schema_set_version=schema_set_version,
+        )
+        _validate_bundle_privacy(files)
+        publish_run_directory(
+            allowed_root=_PRODUCTION_RUN_ROOT if allowed_result_root is None else allowed_result_root,
+            run_id=arguments.run_id,
+            files=files,
+        )
+    except EvaluationValidationError as error:
+        return _emit_failure(error)
+    except Exception:
+        _emit_error(EvaluationErrorCode.INTERNAL_ERROR.value)
+        return 1
+    return 0
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    allowed_result_root: Path | None = None,
+    repository_state_provider: RepositoryStateProvider = git_repository_state,
+    adapter_registry: AdapterRegistry = EMPTY_ADAPTER_REGISTRY,
+    clock: Clock = _utc_timestamp,
+) -> int:
+    """Validate a dataset receipt or run the synthetic DEV evaluation workflow."""
+
+    try:
+        arguments = _parser().parse_args(argv)
+    except _CliArgumentError:
+        _emit_error(EvaluationErrorCode.SCHEMA_INVALID.value)
+        return 2
+    except SystemExit as error:
+        return error.code if isinstance(error.code, int) else 1
+
+    if arguments.command == "validate":
+        return _run_validate(arguments, allowed_result_root=allowed_result_root)
+    return _run_dev(
+        arguments,
+        allowed_result_root=allowed_result_root,
+        repository_state_provider=repository_state_provider,
+        adapter_registry=adapter_registry,
+        clock=clock,
+    )
