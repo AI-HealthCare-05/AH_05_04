@@ -65,6 +65,38 @@ async def resolve_active_user_from_payload(
     return user
 
 
+async def resolve_logout_user(
+    *,
+    credential: HTTPAuthorizationCredentials | None,
+    refresh_token: str | None,
+    repository: UserRepository,
+    jwt_service: JwtService,
+) -> User:
+    """로그아웃 전용 신원 확인입니다. access token이 만료돼도 유효한 `refresh_token`으로
+    fallback해 `token_version`을 증가시킬 수 있어야 합니다 — 그렇지 않으면 만료된 access
+    token으로 로그아웃해도 `token_version`이 증가하지 않고 `refresh_token`이 살아남아
+    재발급이 가능해집니다(PD-206 리뷰). `credential`이 아예 없거나 access token이 만료가
+    아닌 다른 이유로 무효하면(서명 오류 등) fallback하지 않습니다 — 신원을 확인할 근거가
+    없거나 access token 자체의 무결성 문제이기 때문입니다."""
+    if credential is None:
+        raise ApiError(
+            status_code=401,
+            code="UNAUTHORIZED",
+            message="로그인이 필요합니다.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        verified_access = jwt_service.verify_jwt(token=credential.credentials, token_type="access")
+        return await resolve_active_user_from_payload(payload=verified_access.payload, repository=repository)
+    except ApiError as exc:
+        if exc.code != "EXPIRED_TOKEN" or not refresh_token:
+            raise
+
+    verified_refresh = jwt_service.verify_jwt(token=refresh_token, token_type="refresh")
+    return await resolve_active_user_from_payload(payload=verified_refresh.payload, repository=repository)
+
+
 async def get_request_user(
     credential: Annotated[
         HTTPAuthorizationCredentials | None,

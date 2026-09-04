@@ -1,15 +1,19 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, status
+from fastapi import APIRouter, Cookie, Depends, Request, status
 from fastapi.responses import JSONResponse as Response
+from fastapi.security import HTTPAuthorizationCredentials
 
 from app.core import config
 from app.core.config import Env
 from app.core.errors import ApiError, ErrorResponse
-from app.dependencies.security import get_request_user, resolve_active_user_from_payload
+from app.dependencies.security import (
+    resolve_active_user_from_payload,
+    resolve_logout_user,
+    security,
+)
 from app.dependencies.services import get_auth_service, get_user_repository
 from app.dtos.auth import LoginRequest, LoginResponse, LogoutResponse, SignUpRequest, TokenRefreshResponse
-from app.models.users import User
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.jwt import JwtService
@@ -79,14 +83,42 @@ async def token_refresh(
     responses={
         status.HTTP_401_UNAUTHORIZED: {
             "model": ErrorResponse,
-            "description": "인증 정보가 없거나 유효하지 않습니다. `code`는 `UNAUTHORIZED` 또는 `INVALID_TOKEN`입니다.",
+            "description": "인증 정보가 없거나 유효하지 않습니다. `code`는 `UNAUTHORIZED`·`INVALID_TOKEN`·`EXPIRED_TOKEN`입니다.",
         },
     },
 )
 async def logout(
-    user: Annotated[User, Depends(get_request_user)],
+    request: Request,
+    credential: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     user_repository: Annotated[UserRepository, Depends(get_user_repository)],
+    jwt_service: Annotated[JwtService, Depends(JwtService)],
+    refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> Response:
+    # PD-206 리뷰: access token이 만료된 상태로 로그아웃해도 세션을 확실히 끊어야 합니다.
+    # resolve_logout_user()가 만료된 access token을 유효한 refresh token으로 fallback
+    # 확인하고, 인증 성공·실패와 무관하게 이 라우트는 항상 refresh_token 쿠키를 삭제합니다 —
+    # 그렇지 않으면 브라우저에 남은 refresh_token으로 세션이 재발급될 수 있습니다.
+    try:
+        user = await resolve_logout_user(
+            credential=credential,
+            refresh_token=refresh_token,
+            repository=user_repository,
+            jwt_service=jwt_service,
+        )
+    except ApiError as exc:
+        error_response = Response(
+            content=ErrorResponse(
+                code=exc.code,
+                message=exc.message,
+                details=exc.details,
+                trace_id=request.state.trace_id,
+            ).model_dump(mode="json"),
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
+        error_response.delete_cookie(key="refresh_token", domain=config.COOKIE_DOMAIN or None)
+        return error_response
+
     await user_repository.increment_token_version(user)
     response = Response(
         content=LogoutResponse(detail="로그아웃되었습니다.").model_dump(), status_code=status.HTTP_200_OK
