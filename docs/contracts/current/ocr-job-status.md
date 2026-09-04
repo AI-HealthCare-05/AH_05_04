@@ -30,7 +30,7 @@ OCR 작업 실행·조회 API가 성공·실패 상태를 Frontend에 전달할 
 | (생성) → `PENDING` | OCR 작업 생성 | `completed_at=null` |
 | `PENDING` → `PROCESSING` | Provider 호출 시작 전 | `started_at` 기록, `completed_at=null` |
 | `PROCESSING` → `COMPLETED` | 인식·구조화·필드 저장 성공 | `completed_at`, `engine_name` 기록. `error_code`·`error_message`는 `null` |
-| `PROCESSING` → `FAILED` | Provider 실패, 예산 소진, 처리 실패 | `completed_at`, `error_code` 기록 |
+| `PROCESSING` → `FAILED` | 동기 MVP 경로의 Provider 실패·예산 소진·처리 실패, 또는 비동기 Worker 경로의 재시도 불가·소진 확정 | `completed_at`, `error_code` 기록 |
 
 DB CHECK 제약으로 강제되는 불변식입니다.
 
@@ -39,9 +39,23 @@ DB CHECK 제약으로 강제되는 불변식입니다.
 - `FAILED`는 `error_code IS NOT NULL`
 - `COMPLETED`는 `error_code`·`error_message`가 모두 `NULL`
 
-전체 deadline이 소진되어 Provider를 호출하지 않은 경우에도 Job을 `PROCESSING`으로 남기지
-않고 `FAILED`로 전이합니다. `error_code`는 `OCR_PROVIDER_TIMEOUT`이며 내부 사유는
-응답 `details[].reason=DEADLINE_EXCEEDED`로 구분합니다.
+동기 MVP 경로에서 전체 deadline이 소진되어 Provider를 호출하지 않은 경우에는 Job을
+`PROCESSING`으로 남기지 않고 `FAILED`로 전이합니다. `error_code`는
+`OCR_PROVIDER_TIMEOUT`이며 내부 사유는 응답 `details[].reason=DEADLINE_EXCEEDED`로
+구분합니다.
+
+### 비동기 Worker timeout과 재시도
+
+#233으로 조립된 비동기 Worker 경로는 Provider 호출 전 `PENDING → PROCESSING`을
+AI Job lease·attempt 획득과 같은 짧은 transaction에서 commit합니다. Handler가 hard
+timeout에 도달하면 결과를 commit하거나 Stream 메시지를 ACK하지 않고,
+OCR Job은 이미 commit된 `PROCESSING`을 유지합니다. lease 만료 전에 즉시
+`FAILED`로 전이하지 않습니다.
+
+만료된 lease의 reclaim, 재시도 가능 여부 판정, 다음 attempt 실행, 재시도 소진 후
+`FAILED` 확정과 안전한 OCR 오류 저장은 #142의 구현 범위입니다. #142가 병합되기
+전의 #233 runtime은 timeout 발생 시 `PROCESSING`과 ACK하지 않은 Stream 메시지를 남기며,
+이 상태만으로 재시도나 최종 `FAILED` 전이가 완료된 것으로 보지 않습니다.
 
 ## Post-MVP 이관
 
@@ -49,7 +63,11 @@ DB CHECK 제약으로 강제되는 불변식입니다.
 
 ## 검증과 변경 규칙
 
-구현 계약은 `backend/app/tests/ocr`에서 검증합니다.
+동기 MVP 구현 계약은 `backend/app/tests/ocr`에서 검증합니다. #233 비동기
+Worker의 `PROCESSING` 전이·timeout·commit-before-ACK 경계는
+`ai_worker/tests/core/test_sqlalchemy_ocr_execution_starter.py`와
+`ai_worker/tests/core/test_consumer_execution.py`에서 검증합니다. reclaim·재시도 소진·최종
+`FAILED` 전이는 #142에서 구현과 테스트를 함께 추가합니다.
 
 다음 변경은 이 문서, 구현, API 문서와 관련 테스트를 같은 PR에서 갱신해야 합니다.
 

@@ -53,6 +53,10 @@ dev = [
     { name = "types-passlib" },
     { name = "types-python-dateutil" },
 ]
+worker = [
+    { name = "asyncpg" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -94,6 +98,10 @@ dev = [
     { name = "ruff", specifier = ">=0.14.14" },
     { name = "types-passlib", specifier = ">=1.7.7.20250602" },
     { name = "types-python-dateutil", specifier = ">=2.9.0.20260124" },
+]
+worker = [
+    { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.43" },
 ]
 
 [[package]]
