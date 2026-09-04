@@ -1,77 +1,277 @@
-from decimal import Decimal
+from __future__ import annotations
 
+from dataclasses import replace
+from decimal import Decimal
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
+from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.retrieval_metrics import (
     RetrievalObservation,
-    aggregate_metric_scores,
-    observations_from_case_results,
-    metric_result_fields,
-    metric_scores,
+    build_retrieval_metrics,
+    ndcg_at_k,
+    no_hit,
+    percentile_group_bootstrap_ci,
+    precision_at_k,
+    recall_at_k,
+    reciprocal_rank,
 )
+from ai_worker.tasks.evaluation.retrieval_replay import load_retrieval_replay
+from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResult
+
+EVALS_ROOT = Path(__file__).parents[3] / "evals"
+MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-retrieval-dev-v1.dataset.json"
+REPLAY = Path("evals/retrieval/replays/rag-retrieval-dev-v1/ret-l-v1.replay.json")
+RUN_ID = "15800000-0000-4000-8000-000000000003"
+DATASET = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
 
 
-def test_metric_scores_match_hand_calculated_top_five_retrieval() -> None:
+def _case_result(
+    case_id: str,
+    ranked_ids: tuple[str, ...],
+    *,
+    execution_status: str = "COMPLETED",
+) -> CaseResult:
+    case = next(item for item in DATASET.cases if item.case_id == case_id)
+    completed = execution_status == "COMPLETED"
+    return CASE_RESULT_ADAPTER.validate_python(
+        {
+            "schema_id": "rag-eval.case-result",
+            "schema_version": "1.0.0",
+            "run_id": RUN_ID,
+            "case_id": case.case_id,
+            "dataset_code": case.dataset_code,
+            "dataset_version": case.dataset_version,
+            "task_type": "RETRIEVAL",
+            "partition": case.partition.value,
+            "input_sha256": case.input_sha256,
+            "execution_status": execution_status,
+            "decision_status": "N/A" if completed else None,
+            "failure_codes": [] if completed else ["SYNTHETIC_RETRIEVAL_FAILURE"],
+            "retrieved_evidence_ids": list(ranked_ids),
+            "selected_evidence_ids": list(ranked_ids),
+            "actual_claim_ids": None,
+            "actual_citation_evidence_ids": None,
+            "actual_rule_ids": None,
+            "actual_scope_codes": None,
+            "actual_response_level": None,
+            "actual_safety_disposition": None,
+            "actual_execution_status": None,
+            "actual_release_decision": None,
+            "actual_fallback_code": None,
+            "actual_provider_invocation": None,
+            "actual_retrieval_invocation": True,
+            "actual_publication_allowed": None,
+            "actual_sections": None,
+            "omitted_sections": None,
+            "risk_level": None,
+            "answer_sha256": None,
+            "latency_ms": 0,
+            "input_token_count": None,
+            "output_token_count": None,
+            "estimated_cost": None,
+        }
+    )
+
+
+def ret_l_case_results() -> tuple[CaseResult, ...]:
+    replay = load_retrieval_replay(REPLAY, repository_root=EVALS_ROOT.parent)
+    return tuple(_case_result(item.case_id, item.ranked_evidence_ids) for item in replay.case_results)
+
+
+def _required_dataset(dataset: ValidatedDataset = DATASET) -> ValidatedDataset:
+    policy = dataset.comparison_policy.model_copy(
+        update={
+            "scopes": tuple(
+                scope.model_copy(update={"required": scope.metric_id == "RECALL_AT_5"})
+                for scope in dataset.comparison_policy.scopes
+            )
+        }
+    )
+    return replace(dataset, comparison_policy=policy)
+
+
+def _metric(metrics: tuple[MetricResult, ...], metric_id: str = "RECALL_AT_5") -> MetricResult:
+    return next(item for item in metrics if item.metric_id == metric_id)
+
+
+def test_five_case_fixture_matches_hand_calculated_metrics() -> None:
+    metrics = build_retrieval_metrics(DATASET, ret_l_case_results())
+    values = {metric.metric_id: metric.metric_value for metric in metrics.metrics}
+
+    assert values == {
+        "MRR": "0.416667",
+        "NDCG_AT_5": "0.434951",
+        "NO_HIT_RATE": "0.200000",
+        "PRECISION_AT_5": "0.160000",
+        "RECALL_AT_5": "0.800000",
+    }
+
+
+def test_point_estimators_match_hand_calculated_top_five_values() -> None:
     observation = RetrievalObservation(
+        case_id="case-1",
+        slice_ids=("ALL",),
+        independent_group_id="group-1",
         required_ids=("required",),
         relevant_ids=("required", "secondary"),
-        ranked_ids=("noise", "required", "secondary", "other", "last"),
+        ranked_ids=("unknown", "required", "secondary", "other", "last"),
     )
 
-    assert metric_scores(observation) == {
-        "RECALL_AT_5": Decimal("1.000000"),
-        "PRECISION_AT_5": Decimal("0.400000"),
-        "MRR": Decimal("0.500000"),
-        "NDCG_AT_5": Decimal("0.693426"),
-        "NO_HIT_RATE": Decimal("0.000000"),
+    assert recall_at_k(observation) == Decimal("1.000000")
+    assert precision_at_k(observation) == Decimal("0.400000")
+    assert reciprocal_rank(observation) == Decimal("0.500000")
+    assert ndcg_at_k(observation) == Decimal("0.693426")
+    assert no_hit(observation) == Decimal("0.000000")
+
+
+def test_percentile_group_bootstrap_uses_fixed_seed_and_index_rule() -> None:
+    group_scores = {
+        "group-a": (Decimal("0.000000"),),
+        "group-b": (Decimal("1.000000"),),
     }
 
+    first = percentile_group_bootstrap_ci(group_scores, seed=7, iterations=4, level=Decimal("0.95"))
+    second = percentile_group_bootstrap_ci(group_scores, seed=7, iterations=4, level=Decimal("0.95"))
 
-def test_metric_scores_reject_zero_required_denominator() -> None:
-    observation = RetrievalObservation(
-        required_ids=(),
-        relevant_ids=("relevant",),
-        ranked_ids=("relevant",),
-    )
-
-    assert metric_scores(observation) is None
+    assert first == (Decimal("0.000000"), Decimal("0.500000"))
+    assert second == first
 
 
-def test_aggregate_metric_scores_marks_insufficient_sample_inconclusive() -> None:
-    scores = [
-        metric_scores(
-            RetrievalObservation(("required",), ("required",), ("required",)),
+@pytest.mark.parametrize(
+    ("fixture", "reason"),
+    [
+        ("zero_required_evidence", "ZERO_DENOMINATOR"),
+        ("four_independent_groups", "MINIMUM_INDEPENDENT_GROUP_COUNT_NOT_MET"),
+        ("four_cases", "MINIMUM_CASE_COUNT_NOT_MET"),
+    ],
+)
+def test_required_scope_never_passes_invalid_sample(fixture: str, reason: str) -> None:
+    dataset = _required_dataset()
+    results = ret_l_case_results()
+    if fixture == "zero_required_evidence":
+        case = dataset.cases[0]
+        changed_case = case.model_copy(
+            update={"expected": case.expected.model_copy(update={"required_evidence_refs": ()})}
         )
-        for _ in range(4)
+        dataset = replace(dataset, cases=(changed_case, *dataset.cases[1:]))
+    elif fixture == "four_independent_groups":
+        first_group = dataset.cases[0].leakage_group_ids.question_template
+        case = dataset.cases[-1]
+        changed_case = case.model_copy(
+            update={"leakage_group_ids": case.leakage_group_ids.model_copy(update={"question_template": first_group})}
+        )
+        dataset = replace(dataset, cases=(*dataset.cases[:-1], changed_case))
+    else:
+        dataset = replace(dataset, cases=dataset.cases[:4])
+        results = results[:4]
+
+    metric = _metric(build_retrieval_metrics(dataset, results).metrics)
+
+    assert metric.execution_status.value == "COMPLETED"
+    assert metric.decision_status is not None
+    assert metric.decision_status.value == "INCONCLUSIVE"
+    assert metric.reason_code == reason
+
+
+def test_duplicate_ranked_evidence_marks_metrics_invalid() -> None:
+    results = list(ret_l_case_results())
+    duplicate = results[0].model_copy(update={"retrieved_evidence_ids": ("ev-ret-dev-med-a", "ev-ret-dev-med-a")})
+    results[0] = cast(CaseResult, duplicate)
+
+    metrics = build_retrieval_metrics(DATASET, tuple(results))
+
+    assert {item.execution_status.value for item in metrics.metrics} == {"INVALID"}
+    assert all(item.decision_status is None for item in metrics.metrics)
+    assert all(
+        (
+            item.sample_case_count,
+            item.sample_independent_group_count,
+            item.numerator,
+            item.denominator,
+            item.metric_value,
+            item.ci_lower,
+            item.ci_upper,
+            item.reason_code,
+        )
+        == (None,) * 8
+        for item in metrics.metrics
+    )
+
+
+def test_duplicate_case_results_mark_metrics_invalid() -> None:
+    results = ret_l_case_results()
+
+    metrics = build_retrieval_metrics(DATASET, (*results[:-1], results[0]))
+
+    assert {item.execution_status.value for item in metrics.metrics} == {"INVALID"}
+    assert all(item.decision_status is None for item in metrics.metrics)
+
+
+def test_failed_case_marks_metrics_error_without_partial_values() -> None:
+    results = list(ret_l_case_results())
+    results[0] = _case_result(results[0].case_id, (), execution_status="ERROR")
+
+    metrics = build_retrieval_metrics(DATASET, tuple(results))
+
+    assert {item.execution_status.value for item in metrics.metrics} == {"ERROR"}
+    assert all(item.decision_status is None for item in metrics.metrics)
+    assert all(
+        (
+            item.sample_case_count,
+            item.sample_independent_group_count,
+            item.numerator,
+            item.denominator,
+            item.metric_value,
+            item.ci_lower,
+            item.ci_upper,
+            item.reason_code,
+        )
+        == (None,) * 8
+        for item in metrics.metrics
+    )
+
+
+def test_metric_counts_ci_and_serialization_are_deterministic() -> None:
+    first = build_retrieval_metrics(DATASET, ret_l_case_results())
+    second = build_retrieval_metrics(DATASET, tuple(reversed(ret_l_case_results())))
+
+    assert [(item.metric_id, item.numerator, item.denominator) for item in first.metrics] == [
+        ("MRR", 4, 5),
+        ("NDCG_AT_5", 4, 5),
+        ("NO_HIT_RATE", 1, 5),
+        ("PRECISION_AT_5", 4, 25),
+        ("RECALL_AT_5", 4, 5),
     ]
-
-    aggregate = aggregate_metric_scores(scores, minimum_case_count=5)
-
-    assert aggregate["RECALL_AT_5"].value == Decimal("1.000000")
-    assert aggregate["RECALL_AT_5"].numerator == 4
-    assert aggregate["RECALL_AT_5"].denominator == 4
-    assert aggregate["RECALL_AT_5"].reason_code == "MINIMUM_CASE_COUNT_NOT_MET"
-
-
-def test_observations_bind_gold_to_ranked_case_results() -> None:
-    cases = {
-        "case-1": (("required",), ("required", "related")),
+    assert all(item.sample_case_count == 5 for item in first.metrics)
+    assert all(item.sample_independent_group_count == 5 for item in first.metrics)
+    assert {item.metric_id: (item.ci_lower, item.ci_upper) for item in first.metrics} == {
+        "MRR": ("0.150000", "0.716667"),
+        "NDCG_AT_5": ("0.208765", "0.597631"),
+        "NO_HIT_RATE": ("0.000000", "0.600000"),
+        "PRECISION_AT_5": ("0.080000", "0.200000"),
+        "RECALL_AT_5": ("0.400000", "1.000000"),
     }
-    results = {"case-1": ("noise", "required")}
-
-    observation = observations_from_case_results(cases, results)[0]
-
-    assert observation.required_ids == ("required",)
-    assert observation.relevant_ids == ("required", "related")
-    assert observation.ranked_ids == ("noise", "required")
+    assert canonical_json_bytes(cast(JsonValue, first.model_dump(mode="json"))) == canonical_json_bytes(
+        cast(JsonValue, second.model_dump(mode="json"))
+    )
 
 
-def test_metric_result_fields_mark_insufficient_sample_inconclusive() -> None:
-    aggregate = aggregate_metric_scores(
-        [metric_scores(RetrievalObservation(("required",), ("required",), ("required",)))],
-        minimum_case_count=5,
-    )["RECALL_AT_5"]
+def test_metric_results_use_contract_sort_key_not_policy_order() -> None:
+    reversed_policy = DATASET.comparison_policy.model_copy(
+        update={"scopes": tuple(reversed(DATASET.comparison_policy.scopes))}
+    )
+    dataset = replace(DATASET, comparison_policy=reversed_policy)
 
-    fields = metric_result_fields(aggregate, sample_group_count=1)
+    metrics = build_retrieval_metrics(dataset, ret_l_case_results()).metrics
 
-    assert fields["execution_status"] == "COMPLETED"
-    assert fields["decision_status"] == "INCONCLUSIVE"
-    assert fields["reason_code"] == "MINIMUM_CASE_COUNT_NOT_MET"
+    assert [item.metric_id for item in metrics] == [
+        "MRR",
+        "NDCG_AT_5",
+        "NO_HIT_RATE",
+        "PRECISION_AT_5",
+        "RECALL_AT_5",
+    ]
