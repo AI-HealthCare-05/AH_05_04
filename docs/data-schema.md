@@ -35,7 +35,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 채팅 | `chat_session`, `chat_message` | 세션과 USER·ASSISTANT 메시지, 생성 상태 저장 |
 | 의료 지식 | `knowledge_document`, `knowledge_chunk` | Schema-only Post-MVP 골격, 현재 검색 경로에서 미사용 |
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
-| 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction에서 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
+| 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·기록과 감사 로그는 아직 목표 계약과 현재 구현을 구분합니다.
@@ -56,10 +56,17 @@ DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함�
 | `gender` | `ENUM('MALE', 'FEMALE')` | Yes | Post-MVP 추가 정보 입력 대상                                                 |
 | `birthday` | `DATE` | Yes | Post-MVP 추가 정보 입력 대상                                                 |
 | `phone_number` | `VARCHAR(20)` | Yes | Post-MVP 추가 정보 입력 대상. unique                                         |
+| `is_active` | `BOOLEAN` | No | 로그인 가능 여부. `account_status`가 `ACTIVE`가 아니면 함께 `false` |
+| `account_status` | `VARCHAR(25)` | No | 계정 상태. `ACTIVE`, `WITHDRAWAL_REQUESTED`, `WITHDRAWN` |
+| `withdrawal_requested_at` | timezone datetime | Yes | 회원탈퇴 요청 시각 |
+| `withdrawn_at` | timezone datetime | Yes | 회원탈퇴 완료 시각 |
+| `token_version` | `INTEGER` | No | 로그아웃·비밀번호 재설정·회원탈퇴 시 증가하는 세션 무효화 카운터. 기본값 `0` |
 
 MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 
 이메일은 회원가입, 로그인 및 내 정보 수정 시 Backend에서 소문자로 정규화합니다. DB에는 정규화된 값만 저장하며, 조회 API도 저장된 소문자 값을 반환합니다. 이메일 unique와 중복 판정 역시 정규화된 값을 기준으로 적용하므로 대소문자만 다른 이메일은 동일하게 취급합니다.
+
+access token과 refresh token에는 발급 시점의 `token_version`을 포함합니다. 인증된 요청과 `GET /api/v1/auth/token/refresh`는 DB의 `user.token_version`, `account_status`, `is_active`를 다시 확인하며, 로그아웃은 `token_version`을 DB에서 원자적으로 `+1`하고 `refresh_token` 쿠키를 삭제합니다.
 
 ## PROFILE SELF 소유권
 
@@ -203,6 +210,21 @@ Revision `c3f8a12d9e47`은 `ocr_job.ai_job_id` nullable FK와 `uq_ocr_job_ai_job
 
 Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix를 사용합니다. 비운영 환경에서도 `ocr_job.ai_job_id IS NOT NULL`인 행이 하나라도 존재하면 migration은 제약이나 컬럼을 제거하기 전에 downgrade를 중단합니다. downgrade가 필요하면 승인된 절차에 따라 연결 정보를 백업하거나 정리한 뒤 non-null 행이 0건인지 다시 검증해야 합니다.
 
+## Guide–AI Job Mapping Migration rollback 정책
+
+Revision `20fd11d29ecc`는 OCR과 같은 목적으로 `guide.ai_job_id` nullable FK와 `uq_guide_ai_job` unique 제약을 추가합니다.
+
+- FK: `fk_guide_ai_job`
+- 참조 대상: `ai_job.id`
+- 삭제 동작: `ON DELETE SET NULL`
+- unique 제약: `uq_guide_ai_job`
+- 기존 Guide 행: `ai_job_id=NULL` 유지
+- 기존 행을 위한 synthetic AI Job이나 backfill은 생성하지 않음
+
+Outbox는 30일, Job은 90일 보존이므로 이 컬럼 없이 Outbox 역조회(`get_interim_domain_reference`)에만 의존하면 31~90일 구간에서 Job이 살아있어도 rediscovery·`GET /jobs/{job_id}`가 `404`를 반환할 수 있습니다(#148 네 번째 리뷰 지적). `JobStatusService`는 `guide.ai_job_id`가 채워진 뒤에는 이 값을 Outbox 역조회보다 우선 사용합니다.
+
+Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix를 사용합니다. 비운영 환경에서도 `guide.ai_job_id IS NOT NULL`인 행이 하나라도 존재하면 migration은 제약이나 컬럼을 제거하기 전에 downgrade를 중단합니다. downgrade가 필요하면 승인된 절차에 따라 연결 정보를 백업하거나 정리한 뒤 non-null 행이 0건인지 다시 검증해야 합니다.
+
 ## 생성 상태
 
 - `guide.generation_status`: `PENDING | GENERATING | COMPLETED | FAILED`
@@ -212,7 +234,7 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## Post-MVP schema-only 테이블
 
-`knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation`, `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event`는 migration과 SQLAlchemy 모델에는 존재하지만 현재 repository, service, API DTO와 응답에는 연결되지 않습니다. `ai_job`, `outbox_event`, `idempotency_record`는 `JobIntakeService`(#147)의 Job 접수 transaction에서 repository·service 계층에 연결되었으나, 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 연결되지 않았습니다(#148). 테이블 존재를 RAG, 출처 인용, Citation·Safety 검증 또는 Track A 비동기 Job 실행 구현 완료로 해석하지 않습니다.
+`knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation`, `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event`는 migration과 SQLAlchemy 모델에는 존재하지만 현재 repository, service, API DTO와 응답에는 연결되지 않습니다. `ai_job`, `outbox_event`, `idempotency_record`는 `JobIntakeService`(#147)의 Job 접수 transaction에 연결되었고, `outbox_event`는 due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·`claim_token` fencing 완료 경계(#219)에 연결되었습니다. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 연결되지 않았습니다(#148). 이 부분 연결을 RAG, 출처 인용, Citation·Safety 검증 또는 Track A 비동기 Job 실행 전체 완료로 해석하지 않습니다.
 
 ## Post-MVP-1 목표 스키마 — 미구현
 

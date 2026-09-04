@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { logout } from '../api/auth'
 import { ApiError } from '../api/client'
 import {
   getCurrentUser,
@@ -87,8 +88,14 @@ function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
+
+  const clearFeedback = useCallback(() => {
+    setSaveError('')
+    setSuccessMessage('')
+  }, [])
 
   const expireSession = useCallback(() => {
     localStorage.removeItem('access_token')
@@ -146,16 +153,14 @@ function ProfilePage() {
       delete nextErrors[field]
       return nextErrors
     })
-    setSaveError('')
-    setSuccessMessage('')
+    clearFeedback()
   }
 
   const startEditing = () => {
     if (!user) return
     setForm({ name: user.name, email: user.email })
     setFieldErrors({})
-    setSaveError('')
-    setSuccessMessage('')
+    clearFeedback()
     setIsEditing(true)
   }
 
@@ -164,6 +169,25 @@ function ProfilePage() {
     setFieldErrors({})
     setSaveError('')
     setIsEditing(false)
+  }
+
+  const handleLogout = () => {
+    if (isLoggingOut) return
+
+    setIsLoggingOut(true)
+    clearFeedback()
+
+    // 계정 생명주기 계약(PD-206): 서버 요청이 실패하거나 응답 없이 계속 pending이어도
+    // 로컬 자격증명을 먼저 제거합니다. await하면 요청이 끝내 settle되지 않는 경우(네트워크
+    // 행, 서버 무응답) expireSession()이 영원히 호출되지 않으므로, 서버 호출은
+    // fire-and-forget으로 분리하고 로컬 세션 정리는 이 요청의 완료를 기다리지 않고
+    // 즉시 실행합니다. logout()이 Authorization 헤더에 쓸 access_token을 이 호출 시점에
+    // 이미 읽으므로, expireSession()이 뒤이어 그 값을 지워도 요청에는 영향이 없습니다.
+    logout().catch(() => {
+      // 네트워크 오류·5xx 등 서버 로그아웃 요청이 실패해도 로컬 세션은 이미 제거됩니다.
+    })
+
+    expireSession()
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -178,8 +202,7 @@ function ProfilePage() {
 
     setIsSaving(true)
     setFieldErrors({})
-    setSaveError('')
-    setSuccessMessage('')
+    clearFeedback()
 
     try {
       const response = await updateCurrentUser({
@@ -370,6 +393,16 @@ function ProfilePage() {
                       이 정보는 현재 화면에서 수정할 수 없습니다.
                     </p>
                   </Card>
+
+                  <Button
+                    fullWidth
+                    variant="ghost"
+                    onClick={() => void handleLogout()}
+                    disabled={isLoggingOut}
+                    aria-busy={isLoggingOut}
+                  >
+                    {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
+                  </Button>
                 </>
               )}
             </>

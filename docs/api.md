@@ -43,6 +43,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 - Backend는 `CORS_ALLOWED_ORIGINS=http://localhost:5173`을 허용 origin으로 사용합니다.
 - `CORSMiddleware`가 `CORS_ALLOWED_ORIGINS` 환경변수(콤마로 구분된 origin 목록)를 기준으로 허용 origin을 관리합니다.
 - 브라우저가 상관관계 값을 읽을 수 있도록 `X-Trace-Id`를 CORS exposed header로 제공합니다.
+- `GET /api/v1/jobs/{job_id}`가 `RETRY_WAIT`에서 반환하는 `Retry-After`도 CORS exposed header로 제공합니다 — 없으면 cross-origin Frontend가 응답은 받아도 그 값을 읽지 못합니다.
 - CORS preflight는 실제 API 처리 이전에 응답될 수 있으므로 `/api/v1/*` 공통 오류 envelope와 `no-store` 검증 범위에서 제외합니다.
 - 단, 가장 바깥 trace 경계가 preflight도 감싸므로 preflight 응답에도 `X-Trace-Id`는 포함됩니다.
 
@@ -55,6 +56,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 인증 | `POST` | `/api/v1/auth/signup` | `201` |
 | 인증 | `POST` | `/api/v1/auth/login` | `200` |
 | 인증 | `GET` | `/api/v1/auth/token/refresh` | `200` |
+| 인증 | `POST` | `/api/v1/auth/logout` | `200` |
 | 사용자 | `GET` | `/api/v1/users/me` | `200` |
 | 사용자 | `PATCH` | `/api/v1/users/me` | `200` |
 | 의료문서 | `POST` | `/api/v1/documents` | `201` |
@@ -69,10 +71,21 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 가이드 | `GET` | `/api/v1/guides/{guide_id}` | `200` |
 | 채팅 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200` |
 | 채팅 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201` |
+| Job | `GET` | `/api/v1/jobs/{job_id}` | `200` |
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동기 queue 접수가 아닙니다. 같은 HTTP 요청에서 CLOVA OCR 호출과 결과 저장을 완료합니다.
 
+`GET /api/v1/jobs/{job_id}`(공통 Job 상태 조회)는 [비동기 Job 계약 v1](./contracts/targets/post-mvp-1/async-job-v1.md) 목표 중 조회 경로만 먼저 구현한 것입니다(#148).
+
+### 구현했지만 라우트 등록을 보류한 API
+
+OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`)은 서비스 로직(`JobStatusService.rediscover_ocr_job`/`rediscover_guide_job`)과 그 테스트까지는 구현되어 있지만, 라우트로는 등록하지 않았습니다. OCR·Guide 접수(POST)가 아직 `accept_job()`에 연결되지 않아(#219/#232/#233 대기) 지금 접수 가능한 어떤 Job에도 대응하는 공통 Job이 생기지 않으므로, 이 GET을 등록해도 실제 사용자에게는 항상 `404`만 발생하는 성공 경로 없는 API가 됩니다(#148 세 번째 리뷰 지적). 접수가 `accept_job()`에 연결되는 시점에 라우트만 다시 추가하면 됩니다.
+
+두 도메인 모두 `ai_job_id` 영속 매핑(OCR은 #212의 `ocr_job.ai_job_id`, Guide는 같은 목적의 `guide.ai_job_id`)을 갖추고 있어, Outbox 30일 보존과 Job 90일 보존 사이의 31~90일 구간에서도 rediscovery가 값을 찾을 수 있습니다(#148 네 번째 리뷰 지적 — 접수 연결 전에 미리 반영).
+
 ## 인증과 사용자
+
+회원가입, 로그인, 내 정보 수정의 `email` 입력은 `EmailStr`, 최대 40자 기준으로 검증합니다.
 
 ### 회원가입
 
@@ -92,7 +105,7 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 
 - `name`, `email`, `password`는 모두 필수입니다.
 - `password`는 8~72자이며 대문자, 소문자, 숫자, 특수문자를 각각 1개 이상 포함해야 합니다.
-- `gender`, `birth_date`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 허용하지 않습니다.
+- `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 허용하지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
 
 ### 내 정보 조회·수정
@@ -106,16 +119,28 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동
 - MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다.
 - `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
 
+### 토큰 갱신·로그아웃
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token을 발급합니다. |
+| `POST` | `/api/v1/auth/logout` | `200 OK` | 현재 사용자의 세션 무효화 카운터를 증가시키고 `refresh_token` 쿠키를 삭제합니다. |
+
+- access token과 refresh token에는 발급 시점의 `token_version`이 포함됩니다.
+- 인증된 요청과 토큰 갱신은 DB의 현재 사용자 상태를 다시 확인합니다.
+- `account_status != ACTIVE`, `is_active=false`, 또는 토큰의 `token_version`이 DB의 `user.token_version`과 다르면 `401 INVALID_TOKEN`을 반환합니다.
+- 로그아웃 성공 후 기존 access token으로 보호 API를 호출하거나 기존 refresh token으로 재발급을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
+- 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
+
 ## Post-MVP-1 목표 API — 미구현
 
-아래 내용은 2026-08-27 Approved Contract Freeze v4의 목표 계약이며 현재 Router·OpenAPI 동작이 아닙니다. 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
+아래 내용은 2026-08-27 Approved Contract Freeze v4의 목표 계약 중 아직 구현하지 않은 범위입니다. 현재 Router·OpenAPI 동작이 아닙니다. `GET /api/v1/jobs/{job_id}`는 이미 구현되어 위 현재 API 목록으로 이동했습니다(#148). OCR·Guide 재접속 복구 GET은 서비스 로직까지는 구현했지만 라우트 등록을 보류했습니다 — 위 [구현했지만 라우트 등록을 보류한 API](#구현했지만-라우트-등록을-보류한-api)를 참고하세요. 남은 접수(POST) 세 개는 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
 
 | Method | Path | 목표 성공 상태 | 목표 동작 |
 | --- | --- | ---: | --- |
 | `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202 Accepted` | OCR Job 접수 |
 | `POST` | `/api/v1/guides` | `202 Accepted` | Guide Job 접수 |
 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `202 Accepted` | Chat Job 접수 |
-| `GET` | `/api/v1/jobs/{job_id}` | `200 OK` | 공통 Job 상태 조회 |
 | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200 OK` | 완료된 OCR 결과 조회 |
 | `GET` | `/api/v1/guides/{domain_id}` | `200 OK` | 완료된 Guide 결과 조회 |
 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200 OK` | 완료된 Chat 결과가 포함된 메시지 목록 조회 |

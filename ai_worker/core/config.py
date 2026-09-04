@@ -5,6 +5,7 @@ from typing import Self
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 from provider_contracts.observability import DeploymentEnvironment
 
@@ -57,6 +58,27 @@ class Config(BaseSettings):
         default=5.0,
         ge=0,
     )
+
+    # Worker runtime은 Job 실행 DB에만 접근합니다. Admin·Migration 계정과 Provider secret은
+    # 주입하지 않습니다(infra/docker/docker-compose.prod.yml의 ai-worker environment 참고).
+    DB_HOST: str
+    DB_PORT: int = Field(default=5432, ge=1, le=65535)
+    DB_NAME: str
+    DB_USER: str
+    DB_PASSWORD: str
+    DB_CONNECT_TIMEOUT: int = Field(default=5, gt=0)
+    DB_CONNECTION_POOL_MAXSIZE: int = Field(default=10, gt=0)
+    SQLALCHEMY_ECHO: bool = False
+
+    # async-job-v1.md "시도와 재시도": lease가 만료되기 전에 heartbeat가 반드시 한 번 이상
+    # 갱신되어야 하므로 두 값의 관계를 기동 시 검증합니다.
+    WORKER_LEASE_DURATION_SECONDS: float = Field(default=75.0, gt=0)
+    WORKER_HEARTBEAT_INTERVAL_SECONDS: float = Field(default=10.0, gt=0)
+    WORKER_HARD_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
+    # 한 프로세스가 동시에 처리하는 delivery 수입니다.
+    WORKER_CONCURRENCY: int = Field(default=1, ge=1)
+    # 종료 신호 후 진행 중 실행을 기다리는 상한입니다.
+    WORKER_SHUTDOWN_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
 
     @field_validator("TIMEZONE", mode="before")
     @classmethod
@@ -112,3 +134,45 @@ class Config(BaseSettings):
             raise ValueError("OCR Provider 예산과 완료 여유의 합은 OCR_REQUEST_DEADLINE_SECONDS를 초과할 수 없습니다.")
 
         return self
+
+    @model_validator(mode="after")
+    def _validate_lease_relationship(self) -> Self:
+        """heartbeat가 lease 만료 전에 갱신되고, 실행이 lease 안에서 끝나게 합니다.
+
+        `SqlAlchemyLeaseHeartbeat`도 같은 조건을 생성자에서 검사하지만, 잘못된 설정을
+        실행 중이 아니라 기동 시점에 드러내기 위해 여기서 먼저 막습니다.
+        """
+        if self.OCR_REQUEST_DEADLINE_SECONDS > self.WORKER_HARD_TIMEOUT_SECONDS:
+            raise ValueError("OCR_REQUEST_DEADLINE_SECONDS는 WORKER_HARD_TIMEOUT_SECONDS를 초과할 수 없습니다.")
+        if self.WORKER_HEARTBEAT_INTERVAL_SECONDS >= self.WORKER_LEASE_DURATION_SECONDS:
+            raise ValueError("WORKER_HEARTBEAT_INTERVAL_SECONDS는 WORKER_LEASE_DURATION_SECONDS보다 짧아야 합니다.")
+
+        if self.WORKER_HARD_TIMEOUT_SECONDS >= self.WORKER_LEASE_DURATION_SECONDS:
+            raise ValueError("WORKER_HARD_TIMEOUT_SECONDS는 WORKER_LEASE_DURATION_SECONDS보다 짧아야 합니다.")
+        if self.WORKER_HARD_TIMEOUT_SECONDS + self.OCR_RESPONSE_MARGIN_SECONDS > self.WORKER_LEASE_DURATION_SECONDS:
+            raise ValueError(
+                "WORKER_HARD_TIMEOUT_SECONDS와 OCR_RESPONSE_MARGIN_SECONDS의 합은 "
+                "WORKER_LEASE_DURATION_SECONDS를 초과할 수 없습니다."
+            )
+        return self
+
+    @property
+    def database_url(self) -> URL:
+        """URL.create를 사용해 비밀번호의 @·/·% 문자도 안전하게 처리합니다."""
+
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.DB_USER,
+            password=self.DB_PASSWORD,
+            host=self.DB_HOST,
+            port=self.DB_PORT,
+            database=self.DB_NAME,
+        )
+
+    @property
+    def lease_duration(self) -> timedelta:
+        return timedelta(seconds=self.WORKER_LEASE_DURATION_SECONDS)
+
+    @property
+    def heartbeat_interval(self) -> timedelta:
+        return timedelta(seconds=self.WORKER_HEARTBEAT_INTERVAL_SECONDS)

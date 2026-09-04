@@ -6,10 +6,12 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.async_jobs import AiJobType
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob, OcrStatus
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
+from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.tests.conftest import test_engine
 
@@ -59,6 +61,35 @@ async def _create_document(session: AsyncSession) -> MedicalDocument:
     session.add(document)
     await session.flush()
     return document
+
+
+async def test_get_by_ai_job_id_returns_matching_ocr_job(db_session: AsyncSession) -> None:
+    """#212 영속 매핑: `ocr_job.ai_job_id`로 직접 조회할 수 있어야 rediscovery·
+    `GET /jobs/{job_id}`가 Outbox 30일 보존과 무관하게 Job 90일 보존 동안 값을 찾을 수
+    있습니다."""
+    document = await _create_document(db_session)
+    ai_job = await AsyncJobRepository(db_session).create_job(
+        user_id=document.uploaded_by, job_type=AiJobType.OCR, prescription_version_id=None
+    )
+    job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING, ai_job_id=ai_job.id)
+    db_session.add(job)
+    await db_session.flush()
+
+    found = await OcrRepository(db_session).get_by_ai_job_id(ai_job_id=ai_job.id)
+
+    assert found is not None
+    assert found.id == job.id
+
+
+async def test_get_by_ai_job_id_returns_none_when_unset(db_session: AsyncSession) -> None:
+    document = await _create_document(db_session)
+    job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING)
+    db_session.add(job)
+    await db_session.flush()
+
+    found = await OcrRepository(db_session).get_by_ai_job_id(ai_job_id=uuid4())
+
+    assert found is None
 
 
 @pytest.mark.asyncio

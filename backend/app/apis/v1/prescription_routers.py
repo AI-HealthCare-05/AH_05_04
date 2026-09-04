@@ -35,6 +35,13 @@ async def get_prescription_detail(
     )
 
 
+# GET /{prescription_id}/guides (재접속 복구): Guide 생성이 JobIntakeService.accept_job()에
+# 연결되기 전까지는(#219/#232/#233) 실제 사용자가 생성한 어떤 Guide Job도 AiJob 매핑을 가질 수
+# 없어 정상 200 경로가 존재하지 않습니다. 라우트 등록과 docs/api.md 현재 API 목록 등재를
+# 접수 연결 시점까지 보류합니다(#148 세 번째 리뷰). 서비스 로직(JobStatusService.rediscover_guide_job)과
+# 그 테스트는 남겨 두어 연결 시점에 라우트만 다시 추가하면 되도록 합니다.
+
+
 @prescription_router.post(
     "/{prescription_id}/chat-sessions",
     response_model=ChatSessionResponse,

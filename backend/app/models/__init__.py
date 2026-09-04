@@ -29,9 +29,10 @@ from app.models.rag_candidate import (
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
-from app.models.users import Gender, User
+from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "AccountStatus",
     "AiJob",
     "AiJobAttempt",
     "AiJobAttemptStatus",
