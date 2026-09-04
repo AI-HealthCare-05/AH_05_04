@@ -78,6 +78,7 @@ def test_validate_file_rejects_oversized_file(service: MedicalDocumentService) -
     error = exc_info.value
     assert error.code == "UPLOAD_FILE_TOO_LARGE"
     assert error.status_code == 400
+    assert error.message == "파일 크기는 30MB 이하만 업로드할 수 있습니다."
 
 
 def test_validate_file_accepts_pdf(service: MedicalDocumentService) -> None:
@@ -128,6 +129,7 @@ def test_validate_file_accepts_file_at_exact_size_limit(service: MedicalDocument
 
     assert extension == ".jpg"
     assert len(content) == MAX_DOCUMENT_SIZE_BYTES
+    assert MAX_DOCUMENT_SIZE_BYTES == 30 * 1024 * 1024
 
 
 def test_validate_file_rejects_filename_without_extension(service: MedicalDocumentService) -> None:
