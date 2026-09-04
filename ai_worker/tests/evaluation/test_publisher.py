@@ -140,6 +140,33 @@ def test_publish_cleans_staging_and_lock_after_staging_fsync_failure(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_publish_cleans_created_staging_when_open_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_open = os.open
+
+    def fail_staging_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if isinstance(path, str) and path.startswith(f".{RUN_ID}.tmp."):
+            raise OSError(errno.EIO, "staging open failed")
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(publisher_module.os, "open", fail_staging_open)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert not (tmp_path / RUN_ID).exists()
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize("root_fsync_number", [1, 2])
 def test_publish_rolls_back_final_directory_after_parent_fsync_failure(
     tmp_path: Path,

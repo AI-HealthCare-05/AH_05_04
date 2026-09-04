@@ -387,18 +387,19 @@ def preflight_dev_manifest(resolved: ResolvedDevExecution) -> None:
 
 ```python
 def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedDataset) -> None:
-    expected = {
-        Path(path).relative_to("evals").as_posix()
-        for path in (
-            resolved.request.profile_path,
-            resolved.request.comparison_policy_path,
-            resolved.request.evaluation_policy_path,
-            resolved.request.suite_path,
-        )
+    requested_hashes = dict(resolved.referenced_file_hashes)
+    role_bindings = {
+        "profile_path": dataset.configuration_resources.profile,
+        "comparison_policy_path": dataset.configuration_resources.comparison_policy,
+        "evaluation_policy_path": dataset.configuration_resources.evaluation_policy,
+        "suite_path": dataset.configuration_resources.suite,
     }
-    loaded_paths = {path for path, _hash in dataset.resource_hashes}
-    if not expected.issubset(loaded_paths):
-        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    for field, binding in role_bindings.items():
+        requested_path = getattr(resolved.request, field)
+        if requested_path != f"evals/{binding.relative_path}":
+            raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+        if requested_hashes.get(requested_path) != binding.sha256:
+            raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
     if dataset.profile.required_partitions != (Partition.DEV,):
         raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
     if dataset.profile.runtime_eligible:
@@ -1110,6 +1111,8 @@ def test_publish_does_not_remove_operator_owned_lock(tmp_path: Path) -> None:
 
 `os.write`, `os.fsync`, `exclusive_rename`을 각각 monkeypatch해 실패시키고 final directory가 노출되지 않으며 해당 호출이
 만든 staging만 제거되는지 확인한다. cross-filesystem `EXDEV`는 `EVAL_ATOMIC_PUBLISH_UNSUPPORTED`로 mapping한다.
+추가로 staging `mkdir` 성공 직후 `os.open`에 `EIO`를 주입한다. fd가 아직 없더라도 생성 시 저장한 inode identity로
+본인이 만든 빈 staging을 제거하고 lock과 임시 directory가 모두 남지 않는지 검증한다.
 
 - [ ] **Step 4: Publisher 테스트가 실패하는지 확인한다**
 
@@ -1140,6 +1143,8 @@ def publish_run_directory(
 
 filename allowlist는 `run.json`, `cases.jsonl`, `metrics.json`, `suite-results.json`, `failures.jsonl`,
 `result-content-manifest.json`, `report.md`로 고정한다. cleanup은 inode identity를 확인한 staging/lock에만 수행한다.
+staging directory 생성 identity는 fd 획득 여부와 별도로 보존하며, `mkdir` 뒤 `open` 실패 cleanup은 identity가
+일치하는 빈 directory에만 `rmdir`을 수행한다. directory 또는 lock entry를 제거한 뒤에는 parent를 fsync한다.
 입력 key set이 이 일곱 파일과 정확히 같지 않으면 staging 생성 전에 `EVAL_MANIFEST_INVALID`로 거부한다.
 
 `rename_staging_no_clobber()`는 일반 `os.rename()`을 사용하지 않는다. Darwin에서는 libc

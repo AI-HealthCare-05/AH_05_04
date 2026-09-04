@@ -91,6 +91,20 @@ class ResolvedReference:
 
 
 @dataclass(frozen=True, slots=True)
+class LoadedResourceBinding:
+    relative_path: str
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationResourceBindings:
+    profile: LoadedResourceBinding
+    comparison_policy: LoadedResourceBinding
+    evaluation_policy: LoadedResourceBinding
+    suite: LoadedResourceBinding
+
+
+@dataclass(frozen=True, slots=True)
 class ValidatedDataset:
     manifest: DatasetManifestContract
     cases: tuple[EvaluationCaseContract, ...]
@@ -101,6 +115,7 @@ class ValidatedDataset:
     evaluation_policy: EvaluationPolicyContract
     suite: SuiteDefinitionContract
     protected_artifact_receipt: ProtectedArtifactReceiptContract | None
+    configuration_resources: ConfigurationResourceBindings
     reference_graph: tuple[ResolvedReference, ...]
     resource_hashes: tuple[tuple[str, str], ...]
 
@@ -631,22 +646,32 @@ def _load_configuration(
     reader: _SnapshotReader,
     prefix: str,
     authoring: _AuthoringContract,
-) -> tuple[EvaluationProfileContract, ComparisonPolicy, EvaluationPolicyContract, SuiteDefinitionContract]:
+) -> tuple[
+    EvaluationProfileContract,
+    ComparisonPolicy,
+    EvaluationPolicyContract,
+    SuiteDefinitionContract,
+    ConfigurationResourceBindings,
+]:
+    profile_snapshot = reader.read(f"profiles/{prefix}.profile.json")
+    comparison_snapshot = reader.read(f"policies/{prefix}.comparison-policy.json")
+    policy_snapshot = reader.read(f"policies/{prefix}.evaluation-policy.json")
+    suite_snapshot = reader.read(f"suites/{prefix}.suite.json")
     profile = cast(
         EvaluationProfileContract,
-        _validate_model(reader.read(f"profiles/{prefix}.profile.json"), authoring.profile_model),
+        _validate_model(profile_snapshot, authoring.profile_model),
     )
     comparison = _validate_model(
-        reader.read(f"policies/{prefix}.comparison-policy.json"),
+        comparison_snapshot,
         ComparisonPolicy,
     )
     policy = cast(
         EvaluationPolicyContract,
-        _validate_model(reader.read(f"policies/{prefix}.evaluation-policy.json"), authoring.evaluation_policy_model),
+        _validate_model(policy_snapshot, authoring.evaluation_policy_model),
     )
     suite = cast(
         SuiteDefinitionContract,
-        _validate_model(reader.read(f"suites/{prefix}.suite.json"), authoring.suite_model),
+        _validate_model(suite_snapshot, authoring.suite_model),
     )
     for model, field in (
         (profile, "evaluation_profile_hash"),
@@ -655,7 +680,13 @@ def _load_configuration(
         (suite, "suite_hash"),
     ):
         _verify_self_hash(model, field)
-    return profile, comparison, policy, suite
+    bindings = ConfigurationResourceBindings(
+        profile=LoadedResourceBinding(profile_snapshot.relative_path, profile_snapshot.file_sha256),
+        comparison_policy=LoadedResourceBinding(comparison_snapshot.relative_path, comparison_snapshot.file_sha256),
+        evaluation_policy=LoadedResourceBinding(policy_snapshot.relative_path, policy_snapshot.file_sha256),
+        suite=LoadedResourceBinding(suite_snapshot.relative_path, suite_snapshot.file_sha256),
+    )
+    return profile, comparison, policy, suite, bindings
 
 
 def _resolve_reference(
@@ -838,7 +869,7 @@ def load_dataset(
         if manifest.protected_artifact_receipt_ref is not None
         else None
     )
-    profile, comparison, policy, suite = _load_configuration(reader, prefix, authoring)
+    profile, comparison, policy, suite, configuration_resources = _load_configuration(reader, prefix, authoring)
     _validate_configuration_graph(manifest, cases, profile, comparison, policy, suite)
     if (
         suite.input_selector.dataset_code != manifest.dataset_code
@@ -900,6 +931,7 @@ def load_dataset(
         evaluation_policy=policy,
         suite=suite,
         protected_artifact_receipt=receipt,
+        configuration_resources=configuration_resources,
         reference_graph=graph,
         resource_hashes=reader.resource_hashes,
     )

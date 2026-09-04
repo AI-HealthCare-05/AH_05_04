@@ -257,19 +257,28 @@ def preflight_dev_manifest(resolved: ResolvedDevExecution) -> None:
         raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
 
 
-def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedDataset) -> None:
-    expected_paths = {
-        Path(path).relative_to("evals").as_posix()
-        for path in (
-            resolved.request.profile_path,
-            resolved.request.comparison_policy_path,
-            resolved.request.evaluation_policy_path,
-            resolved.request.suite_path,
-        )
+def _validate_configuration_resource_bindings(
+    resolved: ResolvedDevExecution,
+    dataset: ValidatedDataset,
+) -> None:
+    requested_hashes = dict(resolved.referenced_file_hashes)
+    role_bindings = {
+        "profile_path": dataset.configuration_resources.profile,
+        "comparison_policy_path": dataset.configuration_resources.comparison_policy,
+        "evaluation_policy_path": dataset.configuration_resources.evaluation_policy,
+        "suite_path": dataset.configuration_resources.suite,
     }
+    for field, binding in role_bindings.items():
+        requested_path = cast(str, getattr(resolved.request, field))
+        if requested_path != f"evals/{binding.relative_path}":
+            raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+        if requested_hashes.get(requested_path) != binding.sha256:
+            raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+
+
+def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedDataset) -> None:
+    _validate_configuration_resource_bindings(resolved, dataset)
     loaded_hashes = dict(dataset.resource_hashes)
-    if not expected_paths.issubset(loaded_hashes):
-        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     if dataset.profile.required_partitions != (Partition.DEV,):
         raise EvaluationValidationError(EvaluationErrorCode.PARTITION_INVALID)
     if dataset.profile.runtime_eligible:

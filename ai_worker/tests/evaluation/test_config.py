@@ -450,6 +450,44 @@ def test_validate_loaded_bindings_rejects_reference_hash_mismatch() -> None:
     assert caught.value.code is EvaluationErrorCode.HASH_MISMATCH
 
 
+def test_validate_loaded_bindings_rejects_role_paths_miswired_to_one_case() -> None:
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    dataset = load_dataset(SOURCE_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    case_path = f"evals/{dataset.manifest.case_resources[0].path}"
+    case_hash = dict(dataset.resource_hashes)[dataset.manifest.case_resources[0].path]
+    miswired_request = resolved.request.model_copy(
+        update={
+            "profile_path": case_path,
+            "comparison_policy_path": case_path,
+            "evaluation_policy_path": case_path,
+            "suite_path": case_path,
+        }
+    )
+    miswired = replace(
+        resolved,
+        request=miswired_request,
+        referenced_file_hashes=(
+            (
+                resolved.request.dataset_manifest_path,
+                dict(resolved.referenced_file_hashes)[resolved.request.dataset_manifest_path],
+            ),
+            (case_path, case_hash),
+            (case_path, case_hash),
+            (case_path, case_hash),
+            (case_path, case_hash),
+        ),
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_loaded_bindings(miswired, dataset)
+
+    assert caught.value.code is EvaluationErrorCode.MANIFEST_INVALID
+
+
 @pytest.mark.parametrize(
     ("dataset_change", "expected_code"),
     [

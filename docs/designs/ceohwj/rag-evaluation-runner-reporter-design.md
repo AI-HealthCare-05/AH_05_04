@@ -138,6 +138,10 @@ Loader는 저장소 root 기준 정규화 상대경로만 허용하고 symlink, 
 거부한다. 각 참조 파일을 기존 Loader로 검증한 뒤 execution request의 모든 의미 필드와 검증된 입력의 실제
 canonical hash를 고정 순서 map으로 직렬화한다. 그 bytes의 SHA-256이
 `resolved_evaluation_config_hash`이다. 사용자가 hash를 직접 입력하거나 Runner가 placeholder 값을 만들지 않는다.
+Loader는 Profile, Comparison Policy, Evaluation Policy, Suite를 읽은 각 snapshot의 상대경로와 file SHA-256을
+역할별 binding으로 보존한다. 실행 전 검증은 네 request path를 하나의 set으로 축약하지 않고 각 필드를 해당
+역할의 실제 binding과 개별 비교한다. path가 다르면 `EVAL_MANIFEST_INVALID`, 같은 path의 hash가 다르면
+`EVAL_HASH_MISMATCH`로 실패하므로 Case JSON 등 이미 graph에 존재하는 다른 리소스로 역할을 오배선할 수 없다.
 각 non-null variant value object의 canonical bytes SHA-256을 해당
 `retrieval_variant_manifest_hash`·`answer_variant_manifest_hash`로 사용한다. `RagEvaluationRun`에 존재하는
 `experiment_id`, `experiment_type`, `variant_id`, 각 variant manifest hash, `upstream_contract_manifest_hash`,
@@ -355,8 +359,11 @@ preflight와 전체 입력 graph 검증을 통과한 결과만 허용 root 내�
 
 기존 최종 디렉터리나 lock이 있으면 덮어쓰거나 삭제하지 않고 `EVAL_RESULT_PATH_CONFLICT`로 실패한다.
 symlink component, root 이탈, Unicode 비정규화, `.`·`..`, cross-filesystem rename은 거부한다. 실패 시 새로 만든
-staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 삭제하지 않는다. rename 뒤 parent fsync 또는 lock
-제거가 실패하면 final directory의 inode ownership을 확인하고 자신이 발행한 Bundle만 rollback한다.
+staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 삭제하지 않는다. staging 생성 여부와 열린 fd는
+별도로 추적한다. 따라서 `mkdir` 성공 직후 staging `open`이 실패해 fd를 얻지 못한 경우에도 생성 당시 inode
+identity와 현재 entry를 비교해 자신이 만든 빈 staging만 제거하고 lock 제거와 parent fsync까지 수행한다.
+rename 뒤 parent fsync 또는 lock 제거가 실패하면 final directory의 inode ownership을 확인하고 자신이 발행한
+Bundle만 rollback한다.
 rollback과 lock 정리가 끝난 뒤 parent directory를 다시 fsync하여 제거 상태도 내구성 있게 확정한다.
 
 ## 10. 결정성

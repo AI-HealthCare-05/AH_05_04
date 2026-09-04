@@ -163,6 +163,16 @@ def _cleanup_staging(
     os.rmdir(staging_name, dir_fd=root_fd)
 
 
+def _cleanup_unopened_staging(
+    root_fd: int,
+    staging_name: str,
+    staging_identity: FileIdentity | None,
+) -> None:
+    if staging_identity is None or _identity(root_fd, staging_name) != staging_identity:
+        return
+    os.rmdir(staging_name, dir_fd=root_fd)
+
+
 def _cleanup_published(
     root_fd: int,
     published_fd: int,
@@ -223,7 +233,7 @@ class _RunPublication:
             self.lock_identity = None
 
     def cleanup(self) -> BaseException | None:
-        rolled_back = False
+        cleaned_directory_entry = False
         try:
             if self.staging_fd is not None and self.committed:
                 os.close(self.staging_fd)
@@ -235,7 +245,7 @@ class _RunPublication:
                     self.staging_identity,
                     self.created_files,
                 )
-                rolled_back = True
+                cleaned_directory_entry = True
             elif self.staging_fd is not None:
                 _cleanup_staging(
                     self.root_fd,
@@ -244,9 +254,18 @@ class _RunPublication:
                     self.staging_identity,
                     self.created_files,
                 )
+                cleaned_directory_entry = True
+            elif self.staging_identity is not None:
+                _cleanup_unopened_staging(
+                    self.root_fd,
+                    self.staging_name,
+                    self.staging_identity,
+                )
+                cleaned_directory_entry = True
             self.staging_fd = None
+            had_lock = self.lock_identity is not None
             self.remove_lock()
-            if rolled_back:
+            if cleaned_directory_entry or had_lock:
                 os.fsync(self.root_fd)
         except BaseException as error:
             return _normalize_error(error)
