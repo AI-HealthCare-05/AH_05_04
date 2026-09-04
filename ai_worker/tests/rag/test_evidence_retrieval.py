@@ -26,6 +26,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     SensitiveText,
     StageSignal,
     retrieve_knowledge_evidence,
+    to_sanitized_trace_dict,
 )
 
 
@@ -266,3 +267,7 @@ def test_valid_rerank_rebinds_selection_to_canonical_candidate() -> None:
     assert outcome.execution_status is KernelExecutionStatus.SUCCEEDED
     assert outcome.diagnostic_code is KernelDiagnosticCode.CANDIDATES_RERANKED
     assert outcome.untrusted_selections[0].candidate.provenance.evidence_key == "knowledge:chunk-1"
+    assert outcome.trace is not None
+    trace = to_sanitized_trace_dict(outcome.trace)
+    assert "합성 복약 정보" not in json.dumps(trace, ensure_ascii=False)
+    assert "normalized_query" not in trace

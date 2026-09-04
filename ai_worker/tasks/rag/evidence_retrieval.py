@@ -251,11 +251,26 @@ class UntrustedKnowledgeEvidenceSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceRetrievalDiagnosticTrace:
+    query_fingerprint: QueryFingerprint
+    filter_snapshot_ref: ImmutableArtifactRef
+    evidence_index_ref: ImmutableArtifactRef
+    retrieval_config_ref: ImmutableArtifactRef
+    lexical_config_ref: ImmutableArtifactRef
+    dense_config_ref: ImmutableArtifactRef | None
+    rerank_config_ref: ImmutableArtifactRef
+    execution_status: KernelExecutionStatus
+    diagnostic_code: KernelDiagnosticCode
+    evidence_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceRetrievalKernelOutcome:
     execution_status: KernelExecutionStatus
     diagnostic_code: KernelDiagnosticCode
     untrusted_selections: tuple[UntrustedKnowledgeEvidenceSelection, ...] = ()
     failure_details: tuple[str, ...] = ()
+    trace: EvidenceRetrievalDiagnosticTrace | None = None
 
 
 def retrieve_knowledge_evidence(
@@ -296,7 +311,57 @@ def retrieve_knowledge_evidence(
         KernelExecutionStatus.SUCCEEDED,
         KernelDiagnosticCode.CANDIDATES_RERANKED,
         selections,
+        trace=_trace(
+            request,
+            KernelExecutionStatus.SUCCEEDED,
+            KernelDiagnosticCode.CANDIDATES_RERANKED,
+            candidates,
+        ),
     )
+
+
+def to_sanitized_trace_dict(trace: EvidenceRetrievalDiagnosticTrace) -> dict[str, object]:
+    """Render an explicit, non-sensitive diagnostic representation."""
+    return {
+        "query_fingerprint": {
+            "algorithm": trace.query_fingerprint.algorithm,
+            "key_version": trace.query_fingerprint.key_version,
+            "digest": trace.query_fingerprint.digest,
+        },
+        "filter_snapshot_ref": _artifact_dict(trace.filter_snapshot_ref),
+        "evidence_index_ref": _artifact_dict(trace.evidence_index_ref),
+        "retrieval_config_ref": _artifact_dict(trace.retrieval_config_ref),
+        "lexical_config_ref": _artifact_dict(trace.lexical_config_ref),
+        "dense_config_ref": _artifact_dict(trace.dense_config_ref),
+        "rerank_config_ref": _artifact_dict(trace.rerank_config_ref),
+        "execution_status": trace.execution_status.value,
+        "diagnostic_code": trace.diagnostic_code.value,
+        "evidence_keys": list(trace.evidence_keys),
+    }
+
+
+def _trace(
+    request: EvidenceRetrievalKernelRequest,
+    status: KernelExecutionStatus,
+    diagnostic: KernelDiagnosticCode,
+    candidates: tuple[KnowledgeEvidenceCandidate, ...],
+) -> EvidenceRetrievalDiagnosticTrace:
+    return EvidenceRetrievalDiagnosticTrace(
+        request.query_fingerprint, request.filter_snapshot_ref, request.evidence_index_ref,
+        request.retrieval_config_ref, request.lexical_config_ref, request.dense_config_ref,
+        request.rerank_config_ref, status, diagnostic,
+        tuple(item.provenance.evidence_key for item in candidates),
+    )
+
+
+def _artifact_dict(reference: ImmutableArtifactRef | None) -> dict[str, str] | None:
+    if reference is None:
+        return None
+    return {
+        "artifact_code": reference.artifact_code,
+        "version": reference.version,
+        "content_sha256": reference.content_sha256,
+    }
 
 
 def canonical_rerank_input_hash(
