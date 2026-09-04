@@ -36,3 +36,5 @@
 - 코드 또는 API가 변경되면 관련 문서도 같은 Pull Request에서 갱신합니다.
 - 현재 구현, schema-only 골격과 Post-MVP 목표를 같은 상태로 표현하지 않습니다.
 - Post-MVP-1 상태 해석과 원본 충돌 처리는 [문서 권위 규칙](./governance/post-mvp-1-document-authority.md)을 따릅니다.
+- `.superpowers/`와 `docs/superpowers/`는 로컬 작업 초안 경로이며 Git에 올리지 않습니다. 검토할 한국어
+  설계와 구현 계획은 `docs/designs/<담당자>/`에 두고, 이관 전 경로 참조가 남지 않았는지 확인합니다.
