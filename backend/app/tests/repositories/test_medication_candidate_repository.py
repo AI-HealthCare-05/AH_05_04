@@ -47,6 +47,8 @@ def _service(session: AsyncSession) -> MedicationIdentificationService:
 def _ready_result(*, product_id=None, result_rank: int = 1) -> MedicationCandidateResultCreate:
     return MedicationCandidateResultCreate(
         product_id=product_id or uuid4(),
+        code_system="MFDS_ITEM_SEQ",
+        canonical_code="200012345",
         product_name="테스트정",
         strength_text="500mg",
         dosage_form="정제",

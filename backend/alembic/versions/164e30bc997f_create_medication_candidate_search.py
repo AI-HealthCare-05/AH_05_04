@@ -1,6 +1,6 @@
 """create medication candidate search
 
-Revision ID: 164a1b2c3d4e
+Revision ID: 164e30bc997f
 Revises: d1e2f3a4b5c6
 Create Date: 2026-09-04
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "164a1b2c3d4e"
+revision: str = "164e30bc997f"
 down_revision: str | Sequence[str] | None = "d1e2f3a4b5c6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -150,9 +150,13 @@ def upgrade() -> None:
         sa.Column("id", sa.CHAR(length=36), nullable=False),
         sa.Column("search_id", sa.CHAR(length=36), nullable=False),
         # 공식 제품 Catalog 테이블은 별도 Source/Catalog slice에서 생성된다.
-        # 지금은 Candidate Result가 선택한 제품 identity 값을 보존하고,
-        # Catalog 테이블 확정 후 product_id FK를 별도 migration에서 추가한다.
+        # product_id는 그 테이블이 생기면 FK가 될 편의 포인터일 뿐, 정체성 판단에 쓰지 않는다.
+        # Catalog row는 Source Snapshot을 다시 적재할 때마다 새 UUID로 재생성될 수 있어
+        # product_id만으로는 시간이 지나도 "같은 공식 제품"을 재식별할 수 없다(#260 Product
+        # Identity 원칙). 실제 정체성은 code_system·canonical_code tuple로 보존한다.
         sa.Column("product_id", sa.CHAR(length=36), nullable=True),
+        sa.Column("code_system", sa.String(length=50), nullable=True),
+        sa.Column("canonical_code", sa.String(length=100), nullable=True),
         sa.Column("product_name", sa.String(length=255), nullable=True),
         sa.Column("strength_text", sa.String(length=100), nullable=True),
         sa.Column("dosage_form", sa.String(length=100), nullable=True),
@@ -168,7 +172,8 @@ def upgrade() -> None:
             name="chk_medication_candidate_result_selectable_displayed",
         ),
         sa.CheckConstraint(
-            "is_displayed = false OR (product_id IS NOT NULL AND product_name IS NOT NULL AND product_status IS NOT NULL)",
+            "is_displayed = false OR (product_id IS NOT NULL AND code_system IS NOT NULL "
+            "AND canonical_code IS NOT NULL AND product_name IS NOT NULL AND product_status IS NOT NULL)",
             name="chk_medication_candidate_result_display_snapshot",
         ),
         sa.ForeignKeyConstraint(
@@ -214,8 +219,12 @@ def upgrade() -> None:
         sa.Column("prescription_version_medication_id", sa.CHAR(length=36), nullable=False),
         sa.Column("candidate_search_id", sa.CHAR(length=36), nullable=False),
         sa.Column("candidate_search_result_id", sa.CHAR(length=36), nullable=True),
-        # 공식 Product Catalog 테이블 확정 전까지 FK 없이 공식 제품 identity 값만 보존한다.
+        # product_id는 Catalog 테이블이 생기면 FK가 될 편의 포인터일 뿐이다. 이 테이블은
+        # append-only라 나중에 값을 보정할 수 없으므로, 재적재 후에도 안정적인 정체성은
+        # code_system·canonical_code tuple로 보존한다(#260 Product Identity 원칙).
         sa.Column("product_id", sa.CHAR(length=36), nullable=True),
+        sa.Column("code_system", sa.String(length=50), nullable=True),
+        sa.Column("canonical_code", sa.String(length=100), nullable=True),
         sa.Column(
             "status",
             sa.Enum(
@@ -250,12 +259,14 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "status <> 'MATCHED' OR (source = 'USER_SELECTED' AND candidate_search_result_id IS NOT NULL "
-            "AND product_id IS NOT NULL AND confirmed_at IS NOT NULL)",
+            "AND product_id IS NOT NULL AND code_system IS NOT NULL AND canonical_code IS NOT NULL "
+            "AND confirmed_at IS NOT NULL)",
             name="chk_medication_identification_matched_payload",
         ),
         sa.CheckConstraint(
             "status <> 'UNRESOLVED' OR (source = 'USER_REJECTED' AND candidate_search_result_id IS NOT NULL "
-            "AND product_id IS NULL AND confirmed_at IS NULL AND rejected_at IS NOT NULL "
+            "AND product_id IS NULL AND code_system IS NULL AND canonical_code IS NULL "
+            "AND confirmed_at IS NULL AND rejected_at IS NOT NULL "
             "AND decision_reason = 'USER_REJECTED_DISPLAYED_CANDIDATE')",
             name="chk_medication_identification_unresolved_source",
         ),

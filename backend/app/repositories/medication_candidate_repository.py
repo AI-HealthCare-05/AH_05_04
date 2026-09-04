@@ -19,6 +19,8 @@ from app.models.rag_candidate import (
 @dataclass(frozen=True)
 class MedicationCandidateResultCreate:
     product_id: UUID | None
+    code_system: str | None
+    canonical_code: str | None
     product_name: str | None
     strength_text: str | None
     dosage_form: str | None
@@ -167,6 +169,8 @@ class MedicationCandidateRepository:
             result = MedicationCandidateSearchResult(
                 search_id=search.id,
                 product_id=item.product_id,
+                code_system=item.code_system,
+                canonical_code=item.canonical_code,
                 product_name=item.product_name,
                 strength_text=item.strength_text,
                 dosage_form=item.dosage_form,
@@ -261,6 +265,8 @@ class MedicationCandidateRepository:
             candidate_search_id=candidate_search.id,
             candidate_search_result_id=candidate_search_result.id,
             product_id=candidate_search_result.product_id,
+            code_system=candidate_search_result.code_system,
+            canonical_code=candidate_search_result.canonical_code,
             status=MedicationIdentificationStatus.MATCHED,
             source=MedicationIdentificationSource.USER_SELECTED,
             confirmed_at=confirmed_at,
@@ -282,6 +288,8 @@ class MedicationCandidateRepository:
             candidate_search_id=candidate_search.id,
             candidate_search_result_id=candidate_search_result.id,
             product_id=None,
+            code_system=None,
+            canonical_code=None,
             status=MedicationIdentificationStatus.UNRESOLVED,
             source=MedicationIdentificationSource.USER_REJECTED,
             decision_reason="USER_REJECTED_DISPLAYED_CANDIDATE",

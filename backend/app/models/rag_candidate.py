@@ -183,16 +183,22 @@ class MedicationCandidateSearchResult(Base):
             name="chk_medication_candidate_result_selectable_displayed",
         ),
         CheckConstraint(
-            "is_displayed = false OR (product_id IS NOT NULL AND product_name IS NOT NULL AND product_status IS NOT NULL)",
+            "is_displayed = false OR (product_id IS NOT NULL AND code_system IS NOT NULL "
+            "AND canonical_code IS NOT NULL AND product_name IS NOT NULL AND product_status IS NOT NULL)",
             name="chk_medication_candidate_result_display_snapshot",
         ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     search_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("medication_candidate_search.id"), nullable=False)
-    # 공식 제품 Catalog는 #164의 Source/Catalog slice 또는 #166 이후 생성된다.
-    # Candidate Result는 우선 product_id 값을 보존하고, 실제 FK는 Catalog 테이블 확정 후 추가한다.
+    # 공식 제품 Catalog는 #164의 Source/Catalog slice 또는 #166 이후 생성된다. product_id는 그
+    # 테이블이 생기면 FK가 될 편의 포인터일 뿐, 정체성 판단에 쓰지 않는다 — Catalog row는 Source
+    # Snapshot을 다시 적재할 때마다 새 UUID로 재생성될 수 있어 product_id만으로는 시간이 지나도
+    # "같은 공식 제품"을 재식별할 수 없다(#260 Product Identity 원칙). 실제 정체성은
+    # code_system·canonical_code tuple로 보존한다.
     product_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    code_system: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    canonical_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     product_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     strength_text: Mapped[str | None] = mapped_column(String(100), nullable=True)
     dosage_form: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -242,12 +248,14 @@ class MedicationIdentification(Base):
         ),
         CheckConstraint(
             "status <> 'MATCHED' OR (source = 'USER_SELECTED' AND candidate_search_result_id IS NOT NULL "
-            "AND product_id IS NOT NULL AND confirmed_at IS NOT NULL)",
+            "AND product_id IS NOT NULL AND code_system IS NOT NULL AND canonical_code IS NOT NULL "
+            "AND confirmed_at IS NOT NULL)",
             name="chk_medication_identification_matched_payload",
         ),
         CheckConstraint(
             "status <> 'UNRESOLVED' OR (source = 'USER_REJECTED' AND candidate_search_result_id IS NOT NULL "
-            "AND product_id IS NULL AND confirmed_at IS NULL AND rejected_at IS NOT NULL "
+            "AND product_id IS NULL AND code_system IS NULL AND canonical_code IS NULL "
+            "AND confirmed_at IS NULL AND rejected_at IS NOT NULL "
             "AND decision_reason = 'USER_REJECTED_DISPLAYED_CANDIDATE')",
             name="chk_medication_identification_unresolved_source",
         ),
@@ -271,8 +279,12 @@ class MedicationIdentification(Base):
         ForeignKey("medication_candidate_search_result.id"),
         nullable=True,
     )
-    # 공식 Product Catalog 테이블 확정 전까지 FK 없이 공식 제품 identity 값만 보존한다.
+    # product_id는 Catalog 테이블이 생기면 FK가 될 편의 포인터일 뿐이다. 이 테이블은
+    # append-only라 나중에 값을 보정할 수 없으므로, 재적재 후에도 안정적인 정체성은
+    # code_system·canonical_code tuple로 보존한다(#260 Product Identity 원칙).
     product_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    code_system: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    canonical_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[MedicationIdentificationStatus] = mapped_column(
         Enum(MedicationIdentificationStatus, native_enum=False, length=20),
         nullable=False,

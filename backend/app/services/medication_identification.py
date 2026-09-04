@@ -145,7 +145,11 @@ class MedicationIdentificationService:
             result=selection.result,
             prescription_version_medication_id=prescription_version_medication_id,
         )
-        if selection.result.product_id is None:
+        if (
+            selection.result.product_id is None
+            or selection.result.code_system is None
+            or selection.result.canonical_code is None
+        ):
             raise self._stale_error(field="candidate_search_result_id", reason="PRODUCT_ID_MISSING")
 
         existing = await self._repository.get_latest_matched_identification(
@@ -280,7 +284,13 @@ class MedicationIdentificationService:
                     reason="READY_REQUIRES_SINGLE_DISPLAYED_SELECTABLE_RESULT",
                 )
             displayed = next(result for result in results if result.is_displayed)
-            if displayed.product_id is None or displayed.product_name is None or displayed.product_status is None:
+            if (
+                displayed.product_id is None
+                or displayed.code_system is None
+                or displayed.canonical_code is None
+                or displayed.product_name is None
+                or displayed.product_status is None
+            ):
                 raise MedicationIdentificationService._invalid_state_error(
                     field="candidate",
                     reason="READY_REQUIRES_PRODUCT_SNAPSHOT",
