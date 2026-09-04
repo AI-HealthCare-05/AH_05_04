@@ -29,6 +29,8 @@ from provider_contracts.ocr import (
     OcrRecognitionResult,
 )
 
+OcrEngineFactory = Callable[[str], OcrEngine]
+
 
 class ClovaOcrProviderAdapter:
     """기존 OCR Engine 결과와 오류를 Worker 계약으로 변환합니다."""
@@ -55,11 +57,16 @@ class ClovaOcrProviderAdapter:
 
     def __init__(
         self,
-        engine: OcrEngine,
+        engine: OcrEngine | None = None,
         *,
+        engine_factory: OcrEngineFactory | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        if (engine is None) == (engine_factory is None):
+            raise ValueError("engine과 engine_factory 중 정확히 하나가 필요합니다.")
+
         self._engine = engine
+        self._engine_factory = engine_factory
         self._clock = clock
 
     async def recognize(
@@ -67,6 +74,7 @@ class ClovaOcrProviderAdapter:
         *,
         object_key: str,
         file_mime_type: str,
+        trace_id: str,
         deadline: float,
     ) -> OcrProviderResult:
         """최소 입력만 전달하고 원문을 제외한 결과를 반환합니다."""
@@ -74,11 +82,14 @@ class ClovaOcrProviderAdapter:
         if not object_key.strip() or file_mime_type not in self._SUPPORTED_FILE_MIME_TYPES:
             raise OcrProviderInputError()
 
+        engine = self._resolve_engine(trace_id)
+
         engine_result: OcrRecognitionResult | None = None
         normalized_error: Exception | None = None
 
         try:
             engine_result = await self._recognize_before_deadline(
+                engine=engine,
                 object_key=object_key,
                 file_mime_type=file_mime_type,
                 deadline=deadline,
@@ -97,8 +108,7 @@ class ClovaOcrProviderAdapter:
         except OcrProcessingError:
             normalized_error = OcrProviderSchemaError()
 
-        # 활성 Provider 예외 처리 구간 밖에서 새 오류를 발생시켜
-        # Provider 응답·Secret·object key의 예외 연결을 제거합니다.
+        # Provider 예외의 원문, Secret, object key가 예외 체인에 남지 않게 합니다.
         if normalized_error is not None:
             raise normalized_error
 
@@ -110,6 +120,7 @@ class ClovaOcrProviderAdapter:
     async def _recognize_before_deadline(
         self,
         *,
+        engine: OcrEngine,
         object_key: str,
         file_mime_type: str,
         deadline: float,
@@ -122,13 +133,22 @@ class ClovaOcrProviderAdapter:
             raise TimeoutError
 
         async with asyncio.timeout(remaining_seconds):
-            return await self._engine.recognize(
+            return await engine.recognize(
                 object_key=object_key,
                 file_mime_type=file_mime_type,
                 deadline=OcrDeadline(
                     provider_path_deadline=deadline,
                 ),
             )
+
+    def _resolve_engine(self, trace_id: str) -> OcrEngine:
+        if self._engine is not None:
+            return self._engine
+
+        if self._engine_factory is None:
+            raise RuntimeError("OCR engine factory가 설정되지 않았습니다.")
+
+        return self._engine_factory(trace_id)
 
     @classmethod
     def _normalize_result(

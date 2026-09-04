@@ -55,6 +55,7 @@ dev = [
 ]
 worker = [
     { name = "asyncpg" },
+    { name = "httpx" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
@@ -101,6 +102,7 @@ dev = [
 ]
 worker = [
     { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.43" },
 ]
 

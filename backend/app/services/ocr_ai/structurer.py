@@ -1,11 +1,6 @@
 import asyncio
 import math
-from dataclasses import dataclass
-from typing import Protocol
 
-from app.services.medication_name_normalizer import (
-    MedicationNameNormalizer,
-)
 from app.services.ocr_ai.client import OcrStructureProvider
 from app.services.ocr_ai.prompt import (
     PROMPT_VERSION,
@@ -22,53 +17,11 @@ from app.services.ocr_engine import (
     OcrProcessingError,
     OcrProviderTimeoutError,
     RawRecognizedField,
-    RecognizedField,
 )
-from app.services.prescription_ocr_structurer import (
-    PrescriptionOcrStructurer,
-)
-
-
-@dataclass(frozen=True)
-class OcrStructureResult:
-    """LLM 구조화 결과와 재현에 필요한 실행 정보입니다."""
-
-    fields: list[RecognizedField]
-    model_name: str | None
-    prompt_version: str | None
-
-
-class OcrStructurer(Protocol):
-    async def structure(
-        self,
-        raw_fields: list[RawRecognizedField],
-    ) -> OcrStructureResult: ...
-
-
-class RuleBasedPrescriptionStructurer:
-    """LLM이 비활성화된 환경에서 기존 규칙 기반 구조화를 제공합니다."""
-
-    def __init__(
-        self,
-        normalizer: MedicationNameNormalizer | None = None,
-    ) -> None:
-        self._structurer = PrescriptionOcrStructurer(
-            normalizer=normalizer,
-        )
-
-    async def structure(
-        self,
-        raw_fields: list[RawRecognizedField],
-    ) -> OcrStructureResult:
-        # 규칙 기반 구조화는 외부 Provider를 호출하지 않습니다.
-        # 따라서 LLM model 및 prompt 실행 metadata는 기록하지 않습니다.
-        fields = self._structurer.structure(raw_fields)
-
-        return OcrStructureResult(
-            fields=fields,
-            model_name=None,
-            prompt_version=None,
-        )
+from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
+from ocr_runtime.structuring import OcrStructurer as OcrStructurer
+from ocr_runtime.structuring import OcrStructureResult as OcrStructureResult
+from ocr_runtime.structuring import RuleBasedPrescriptionStructurer as RuleBasedPrescriptionStructurer
 
 
 class LlmPrescriptionStructurer:

@@ -27,6 +27,7 @@ from ai_worker.tasks.ocr.handler import (
 from provider_contracts.ocr import (
     OcrDeadline,
     OcrDeadlineExceededError,
+    OcrEngine,
     OcrProcessingError,
     OcrProviderConnectionError,
     OcrProviderTimeoutError,
@@ -104,6 +105,27 @@ class HangingOcrEngine:
         raise AssertionError("Engine 실행이 취소되지 않았습니다.")
 
 
+def test_clova_adapter_rejects_missing_engine_source() -> None:
+    with pytest.raises(
+        ValueError,
+        match="engine과 engine_factory 중 정확히 하나가 필요합니다",
+    ):
+        ClovaOcrProviderAdapter()
+
+
+def test_clova_adapter_rejects_multiple_engine_sources() -> None:
+    engine = FakeOcrEngine(OcrRecognitionResult(fields=[]))
+
+    with pytest.raises(
+        ValueError,
+        match="engine과 engine_factory 중 정확히 하나가 필요합니다",
+    ):
+        ClovaOcrProviderAdapter(
+            engine,
+            engine_factory=lambda _trace_id: engine,
+        )
+
+
 @pytest.mark.asyncio
 async def test_clova_adapter_forwards_only_minimum_provider_input() -> None:
     engine = FakeOcrEngine(
@@ -131,6 +153,7 @@ async def test_clova_adapter_forwards_only_minimum_provider_input() -> None:
     result = await adapter.recognize(
         object_key="synthetic/input.png",
         file_mime_type="image/png",
+        trace_id="a" * 32,
         deadline=1055.0,
     )
 
@@ -199,6 +222,7 @@ async def test_clova_adapter_normalizes_existing_engine_errors(
         await adapter.recognize(
             object_key="synthetic/input.png",
             file_mime_type="image/png",
+            trace_id="a" * 32,
             deadline=1055.0,
         )
 
@@ -229,6 +253,7 @@ async def test_clova_adapter_rejects_invalid_input_before_engine_call(
         await adapter.recognize(
             object_key=object_key,
             file_mime_type=file_mime_type,
+            trace_id="a" * 32,
             deadline=1055.0,
         )
 
@@ -310,6 +335,7 @@ async def test_clova_adapter_rejects_invalid_normalized_result(
         await adapter.recognize(
             object_key="synthetic/input.png",
             file_mime_type="image/png",
+            trace_id="a" * 32,
             deadline=1055.0,
         )
 
@@ -329,6 +355,7 @@ async def test_clova_adapter_enforces_absolute_deadline() -> None:
             adapter.recognize(
                 object_key="synthetic/input.png",
                 file_mime_type="image/png",
+                trace_id="a" * 32,
                 deadline=time.monotonic() + 0.01,
             ),
             timeout=1,
@@ -350,6 +377,7 @@ async def test_clova_adapter_rejects_expired_deadline_before_engine_call() -> No
         await adapter.recognize(
             object_key="synthetic/input.png",
             file_mime_type="image/png",
+            trace_id="a" * 32,
             deadline=1000.0,
         )
 
@@ -389,7 +417,37 @@ async def test_clova_adapter_rejects_non_integer_medication_index(
         await adapter.recognize(
             object_key="synthetic/input.png",
             file_mime_type="image/png",
+            trace_id="a" * 32,
             deadline=1055.0,
         )
 
     assert len(engine.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_clova_adapter_builds_engine_for_each_trace_id() -> None:
+    created_trace_ids: list[str] = []
+
+    def create_engine(trace_id: str) -> OcrEngine:
+        created_trace_ids.append(trace_id)
+        return FakeOcrEngine(OcrRecognitionResult(fields=[]))
+
+    adapter = ClovaOcrProviderAdapter(
+        engine_factory=create_engine,
+        clock=lambda: 1_000.0,
+    )
+
+    await adapter.recognize(
+        object_key="prescriptions/a.png",
+        file_mime_type="image/png",
+        trace_id="a" * 32,
+        deadline=1_055.0,
+    )
+    await adapter.recognize(
+        object_key="prescriptions/b.png",
+        file_mime_type="image/png",
+        trace_id="b" * 32,
+        deadline=1_055.0,
+    )
+
+    assert created_trace_ids == ["a" * 32, "b" * 32]

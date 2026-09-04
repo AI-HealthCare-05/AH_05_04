@@ -4,6 +4,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 from redis.asyncio import Redis
 
 from ai_worker.adapters.factory import (
@@ -23,6 +24,9 @@ def test_create_redis_client_uses_worker_config() -> None:
         DB_NAME="test",
         DB_USER="worker",
         DB_PASSWORD="worker-password",
+        CLOVA_OCR_INVOKE_URL="https://clova.test/ocr",
+        CLOVA_OCR_SECRET=SecretStr("synthetic-clova-secret"),
+        STORAGE_DIR="/tmp/medical-documents",
         REDIS_HOST="redis-test",
         REDIS_PORT=6380,
         REDIS_PASSWORD="synthetic-password",
@@ -58,6 +62,9 @@ async def test_create_stream_adapter_uses_stream_config() -> None:
         DB_NAME="test",
         DB_USER="worker",
         DB_PASSWORD="worker-password",
+        CLOVA_OCR_INVOKE_URL="https://clova.test/ocr",
+        CLOVA_OCR_SECRET=SecretStr("synthetic-clova-secret"),
+        STORAGE_DIR="/tmp/medical-documents",
         REDIS_STREAM_NAME="test:jobs",
         REDIS_CONSUMER_GROUP="test-workers",
     )

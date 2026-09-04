@@ -5,6 +5,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
+from pathlib import Path
 from uuid import uuid4
 
 import pytest_asyncio
@@ -894,7 +895,9 @@ async def test_postgresql_heartbeat_loss_blocks_result_and_ack() -> None:
     assert acknowledger.acknowledged_ids == []
 
 
-async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle() -> None:
+async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
+    tmp_path: Path,
+) -> None:
     message = build_message()
     now = datetime.now(UTC)
     document_id = uuid4()
@@ -924,6 +927,9 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle() ->
         REDIS_CONSUMER_GROUP=group_name,
         REDIS_CONSUMER_NAME="runtime-worker-1",
         REDIS_BLOCK_MS=100,
+        CLOVA_OCR_INVOKE_URL="https://clova.test/ocr",
+        CLOVA_OCR_SECRET="synthetic-clova-secret",
+        STORAGE_DIR=str(tmp_path),
     )
 
     async with test_engine.begin() as connection:
