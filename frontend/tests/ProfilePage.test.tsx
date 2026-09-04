@@ -282,22 +282,20 @@ describe('로그아웃', () => {
     expect(localStorage.getItem('access_token')).toBeNull()
   })
 
-  it('로그아웃 처리 중 중복 클릭해도 logout API를 한 번만 호출한다', async () => {
+  it('로그아웃 요청이 응답 없이 pending 상태로 남아도 즉시 토큰을 지우고 로그인 화면으로 이동한다', async () => {
+    // PD-206: 서버 요청이 성공·실패·pending 중 어느 상태여도 클라이언트는 로컬 자격증명을
+    // 먼저 제거해야 합니다. 이 promise는 테스트 동안 절대 resolve/reject되지 않습니다 —
+    // await 없이도 화면이 즉시 이동해야 이 계약을 지키는 것입니다.
     const pending = deferred<{ detail: string }>()
     vi.mocked(logout).mockReturnValue(pending.promise)
     renderProfile()
     await screen.findByText(CURRENT_USER.email)
 
-    const logoutButton = screen.getByRole('button', { name: '로그아웃' })
-    fireEvent.click(logoutButton)
-    fireEvent.click(logoutButton)
-    fireEvent.click(logoutButton)
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
 
-    expect(logout).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: '로그아웃 중...' })).toHaveProperty('disabled', true)
-
-    pending.resolve({ detail: '로그아웃되었습니다.' })
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(logout).toHaveBeenCalledTimes(1)
   })
 
   it('로그아웃 후 보호된 route를 다시 렌더링하면 API 호출 없이 로그인 화면으로 보낸다', async () => {

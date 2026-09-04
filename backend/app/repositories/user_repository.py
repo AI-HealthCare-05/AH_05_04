@@ -136,8 +136,17 @@ class UserRepository:
         토큰 발급 직전에 이 메서드로 다시 읽어야, 인증 조회 이후 다른 요청이 먼저 커밋한
         `token_version` 증가분을 반영한 최신 값으로 토큰을 발급합니다. 동시 로그아웃이
         이 트랜잭션 commit까지 대기하다가, 그 이후 다시 증가시키면 방금 발급한 토큰도
-        정상적으로 무효화됩니다(기존 세션 무효화 규칙과 동일)."""
-        result = await self.session.execute(select(User).where(User.id == user_id).with_for_update())
+        정상적으로 무효화됩니다(기존 세션 무효화 규칙과 동일).
+
+        `populate_existing=True`가 없으면 실제 로그인 흐름에서 문제가 생깁니다 —
+        `AuthService.authenticate()`가 같은 세션에 이미 `User(token_version=0)`을
+        identity map에 로드해 둔 상태라, SQLAlchemy는 이 SELECT ... FOR UPDATE가 최신 row를
+        읽어와도 그 값으로 기존 파이썬 객체를 덮어쓰지 않고 identity map의 낡은 객체를
+        그대로 반환합니다. 그러면 row lock 자체는 정상 동작해도 반환된 `token_version`이
+        여전히 낡은 값이라, 로그인 직후 이미 무효한 토큰이 발급됩니다."""
+        result = await self.session.execute(
+            select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+        )
         return result.scalar_one_or_none()
 
     # phone_number/gender/birthday는 현재 signup 호출부에서 넘기지 않아 항상 None이지만,

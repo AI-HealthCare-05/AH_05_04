@@ -85,6 +85,15 @@ async def token_refresh(
             "model": ErrorResponse,
             "description": "인증 정보가 없거나 유효하지 않습니다. `code`는 `UNAUTHORIZED`·`INVALID_TOKEN`·`EXPIRED_TOKEN`입니다.",
         },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+            "description": (
+                "이 라우트가 실제로 422를 반환할 입력은 없지만, `refresh_token` Cookie parameter가 있어 "
+                "FastAPI가 기본 `HTTPValidationError`를 자동 문서화합니다. 만약 422가 발생하면 전역 "
+                "`RequestValidationError` 핸들러가 만드는 `ErrorResponse`(`code=VALIDATION_FAILED`)가 "
+                "실제 응답입니다(#148/#250 리뷰와 같은 종류의 문서·실제 응답 불일치)."
+            ),
+        },
     },
 )
 async def logout(
