@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -48,12 +48,14 @@ _REQUIRED_FILENAMES = frozenset(
     }
 )
 _OPTIONAL_FILENAMES = frozenset({"comparison.json"})
-_CONTROLLED_VARIABLE_KEYS = (
-    "CASE_SET",
-    "DATASET",
-    "GOLD",
-    "METRIC_POLICY",
-    "SOURCE_INDEX_FILTER_MODEL",
+_SUPPORTED_CONTROLLED_VARIABLE_KEYS = frozenset(
+    {
+        "CASE_SET",
+        "DATASET",
+        "GOLD",
+        "METRIC_POLICY",
+        "SOURCE_INDEX_FILTER_MODEL",
+    }
 )
 
 
@@ -171,6 +173,9 @@ def load_published_run_bundle(result_root: Path, run_id: str) -> LoadedRunBundle
             if entry.size_bytes != len(payload) or entry.sha256 != sha256_hex(payload):
                 raise _baseline_invalid()
         immutable_files = MappingProxyType(dict(files))
+        semantic_hash = semantic_content_hash(immutable_files)
+        if comparison is not None:
+            _validate_candidate_comparison_binding(comparison, run, metrics, semantic_hash)
         return LoadedRunBundle(
             root=bundle_root,
             run=run,
@@ -180,7 +185,7 @@ def load_published_run_bundle(result_root: Path, run_id: str) -> LoadedRunBundle
             comparison=comparison,
             content_manifest=content_manifest,
             files=immutable_files,
-            semantic_hash=semantic_content_hash(immutable_files),
+            semantic_hash=semantic_hash,
         )
     except EvaluationValidationError as error:
         if error.code is EvaluationErrorCode.BASELINE_ARTIFACT_INVALID:
@@ -226,6 +231,38 @@ def _controlled_values(run: RagEvaluationRun | Mapping[str, JsonValue]) -> dict[
     }
 
 
+def _validate_candidate_comparison_binding(
+    comparison: ComparisonResult,
+    run: RagEvaluationRun,
+    metrics: MetricResults,
+    semantic_hash: str,
+) -> None:
+    if (
+        comparison.candidate_run_hash != semantic_hash
+        or comparison.candidate_run_id != run.run_id
+        or comparison.experiment_id != run.experiment_id
+    ):
+        raise _baseline_invalid()
+    candidate_values = _controlled_values(run)
+    checks = {check.variable_key: check for check in comparison.controlled_variable_checks}
+    if (
+        len(checks) != len(comparison.controlled_variable_checks)
+        or not set(checks) <= _SUPPORTED_CONTROLLED_VARIABLE_KEYS
+    ):
+        raise _baseline_invalid()
+    if any(check.candidate_value_hash != candidate_values[key] for key, check in checks.items()):
+        raise _baseline_invalid()
+    metric_values = {
+        (metric.metric_id, metric.partition, metric.slice_id): metric.metric_value for metric in metrics.metrics
+    }
+    scope_values = {
+        (scope.metric_id, scope.partition, scope.slice_id): scope.candidate_value
+        for scope in comparison.scope_comparisons
+    }
+    if len(metric_values) != len(metrics.metrics) or scope_values != metric_values:
+        raise _baseline_invalid()
+
+
 def _candidate_material(
     candidate: ArtifactDraft | PublishedArtifacts | LoadedRunBundle,
 ) -> tuple[Mapping[str, JsonValue] | RagEvaluationRun, MetricResults, Mapping[str, bytes], str, str]:
@@ -258,6 +295,11 @@ def _scope_comparisons(baseline: MetricResults, candidate: MetricResults) -> tup
         (item.metric_id, item.metric_version, item.partition.value, item.slice_id): item for item in candidate.metrics
     }
     if baseline_metrics.keys() != candidate_metrics.keys():
+        return ()
+    if any(
+        metric.execution_status is not ExecutionStatus.COMPLETED or metric.metric_value is None
+        for metric in (*baseline.metrics, *candidate.metrics)
+    ):
         return ()
     comparisons: list[ScopeComparison] = []
     for key in sorted(baseline_metrics):
@@ -293,10 +335,13 @@ def _scope_comparisons(baseline: MetricResults, candidate: MetricResults) -> tup
 def build_retrieval_comparison(
     baseline: LoadedRunBundle,
     candidate: ArtifactDraft | PublishedArtifacts | LoadedRunBundle,
+    controlled_variable_keys: Sequence[str],
 ) -> ComparisonResult:
     candidate_run, candidate_metrics, candidate_files, candidate_run_id, experiment_id = _candidate_material(candidate)
     baseline_values = _controlled_values(baseline.run)
     candidate_values = _controlled_values(candidate_run)
+    if not controlled_variable_keys or not set(controlled_variable_keys) <= _SUPPORTED_CONTROLLED_VARIABLE_KEYS:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
     checks = tuple(
         ControlledVariableCheck(
             variable_key=key,
@@ -304,10 +349,21 @@ def build_retrieval_comparison(
             candidate_value_hash=candidate_values[key],
             matched=baseline_values[key] == candidate_values[key],
         )
-        for key in _CONTROLLED_VARIABLE_KEYS
+        for key in controlled_variable_keys
     )
     scopes = _scope_comparisons(baseline.metrics, candidate_metrics)
-    valid = bool(scopes) and all(check.matched for check in checks)
+    baseline_completed = baseline.run.execution_status is ExecutionStatus.COMPLETED
+    candidate_status = (
+        candidate_run.execution_status
+        if isinstance(candidate_run, RagEvaluationRun)
+        else ExecutionStatus(cast(str, candidate_run["execution_status"]))
+    )
+    valid = (
+        baseline_completed
+        and candidate_status is ExecutionStatus.COMPLETED
+        and bool(scopes)
+        and all(check.matched for check in checks)
+    )
     return ComparisonResult(
         schema_id="rag-eval.comparison",
         schema_version="1.0.0",

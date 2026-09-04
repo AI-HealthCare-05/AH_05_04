@@ -17,21 +17,10 @@
       "reason_code": "SYNTHETIC_NO_CLAIM"
     }
   ],
-  "review_provenance": {
-    "approved_at": null,
-    "approved_by": null,
-    "authored_at": "2026-09-04T00:00:00.000000Z",
-    "authored_by": {"actor_id": "ceohwj", "namespace": "GITHUB_LOGIN", "role": "EVALUATION_IMPLEMENTER"},
-    "evidence_review_refs": [],
-    "external_medical_approval_receipt_ref": null,
-    "external_medical_review_status": "NOT_REQUESTED",
-    "reviewed_at": "2026-09-04T00:01:00.000000Z",
-    "reviewed_by": {"actor_id": "hazelnutflavoured", "namespace": "GITHUB_LOGIN", "role": "DATASET_CUSTODIAN"},
-    "team_gold_status": "REVIEWED"
-  },
-  "rubric_hash": "15d5b5d7b8f474815621545fde169312ad787d6a4afcd5c43c898e1b78cf0ea2",
+  "review_provenance": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":null,"reviewed_by":null,"team_gold_status":"DRAFT"},
+  "rubric_hash": "56a414832ea1d94228b4fe2766e58ae46ef5ece01a1906ec2f7c3467d6b7bd1b",
   "rubric_id": "rag-retrieval-dev-critical-claims",
   "rubric_version": "1.0.0",
   "schema_id": "rag-eval.critical-claim-rubric",
-  "schema_version": "1.0.0"
+  "schema_version": "1.2.0"
 }

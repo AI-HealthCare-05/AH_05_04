@@ -79,6 +79,7 @@ class ReportData:
     experiment_id: str
     experiment_type: ExperimentType
     variant_id: str
+    adapter_id: str
     dataset_code: str
     dataset_version: str
     evaluation_profile_ref: ImmutableReference
@@ -295,6 +296,7 @@ def build_artifact_draft(material: RunMaterial) -> ArtifactDraft:
         experiment_id=resolved.request.experiment_id,
         experiment_type=resolved.request.experiment_type,
         variant_id=resolved.request.variant_id,
+        adapter_id=dataset.suite.adapter_id,
         dataset_code=dataset.manifest.dataset_code,
         dataset_version=dataset.manifest.dataset_version,
         evaluation_profile_ref=profile_ref,

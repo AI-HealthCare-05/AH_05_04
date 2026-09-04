@@ -53,6 +53,8 @@ artifact만 달라진다.
 
 새 Dataset `rag-retrieval-dev@1.0.0`은 정확히 5개의 `RETRIEVAL/DEV/SYNTHETIC` Case를 가진다. 각 Case는
 required evidence 하나와 relevant evidence 하나 이상을 가지며 `question_template` Group이 서로 다르다.
+Authoring graph의 8개 provenance-aware member는 Schema Set 1.2를 사용하고 실제 review evidence가 없으므로
+`team_gold_status=DRAFT`, reviewer·approver·review timestamp는 `null`로 유지한다.
 
 Baseline과 Candidate config는 다음 통제 변수를 동일하게 유지한다.
 

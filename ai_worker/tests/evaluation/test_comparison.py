@@ -17,12 +17,21 @@ from ai_worker.tasks.evaluation.manifest import (
     semantic_content_hash,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, FailureRecord, FailureSummary
+from ai_worker.tasks.evaluation.schemas.common import ExecutionStatus
 from ai_worker.tests.evaluation.test_result_manifest import (
     RUN_ID_A,
     RUN_ID_B,
     TIME_A,
     TIME_B,
     retrieval_run_material,
+)
+
+CONTROLLED_VARIABLE_KEYS = (
+    "CASE_SET",
+    "DATASET",
+    "GOLD",
+    "METRIC_POLICY",
+    "SOURCE_INDEX_FILTER_MODEL",
 )
 
 
@@ -126,7 +135,7 @@ def test_comparison_binds_semantic_hashes_and_reports_metric_delta(tmp_path: Pat
         completed_at=TIME_B,
     )
 
-    comparison = build_retrieval_comparison(baseline, candidate)
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
     recall = next(item for item in comparison.scope_comparisons if item.metric_id == "RECALL_AT_5")
 
     assert comparison.baseline_run_hash == semantic_content_hash(baseline.files)
@@ -171,7 +180,7 @@ def test_controlled_variable_mismatch_invalidates_comparison(
         run_payload[field] = "b" * 64
     candidate = replace(candidate, run_payload=run_payload)
 
-    comparison = build_retrieval_comparison(baseline, candidate)
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
 
     checks = {check.variable_key: check for check in comparison.controlled_variable_checks}
     assert list(checks) == [
@@ -194,7 +203,7 @@ def test_metric_natural_key_mismatch_invalidates_comparison(tmp_path: Path) -> N
         metrics=candidate.metrics.model_copy(update={"metrics": candidate.metrics.metrics[:-1]}),
     )
 
-    comparison = build_retrieval_comparison(baseline, candidate)
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
 
     assert comparison.scope_comparisons == ()
     assert comparison.execution_status.value == "INVALID"
@@ -210,10 +219,38 @@ def test_metric_version_mismatch_invalidates_comparison(tmp_path: Path) -> None:
         metrics=candidate.metrics.model_copy(update={"metrics": (changed_metric, *candidate.metrics.metrics[1:])}),
     )
 
-    comparison = build_retrieval_comparison(baseline, candidate)
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
 
     assert comparison.scope_comparisons == ()
     assert comparison.execution_status.value == "INVALID"
+    assert comparison.decision_status is None
+
+
+def test_incomplete_candidate_metric_invalidates_comparison(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+    incomplete = candidate.metrics.metrics[0].model_copy(
+        update={
+            "execution_status": ExecutionStatus.ERROR,
+            "decision_status": None,
+            "sample_case_count": None,
+            "sample_independent_group_count": None,
+            "numerator": None,
+            "denominator": None,
+            "metric_value": None,
+            "ci_lower": None,
+            "ci_upper": None,
+            "reason_code": None,
+        }
+    )
+    candidate = replace(
+        candidate,
+        metrics=candidate.metrics.model_copy(update={"metrics": (incomplete, *candidate.metrics.metrics[1:])}),
+    )
+
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+
+    assert comparison.execution_status is ExecutionStatus.INVALID
     assert comparison.decision_status is None
 
 
@@ -291,22 +328,38 @@ def test_loader_binds_each_comparison_identity_to_directory_run(
     assert caught.value.code is EvaluationErrorCode.BASELINE_ARTIFACT_INVALID
 
 
+def test_loader_rejects_rehashed_comparison_with_wrong_candidate_semantic_hash(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS).model_copy(
+        update={"candidate_run_hash": "b" * 64}
+    )
+    run_root = _publish(tmp_path, replace(candidate, comparison=comparison))
+    _rehash_bundle_payload(run_root, "comparison.json")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        load_published_run_bundle(tmp_path, RUN_ID_B)
+
+    assert caught.value.code is EvaluationErrorCode.BASELINE_ARTIFACT_INVALID
+
+
 def test_loader_retains_validated_case_failure_and_comparison_records(tmp_path: Path) -> None:
-    draft = _draft("RET-L", run_id=RUN_ID_A)
+    baseline = _loaded_baseline(tmp_path)
+    draft = replace(_draft("RET-HR", run_id=RUN_ID_B), failures=(_failure(RUN_ID_B),))
+    comparison = build_retrieval_comparison(baseline, draft, CONTROLLED_VARIABLE_KEYS)
     run_root = _publish(
         tmp_path,
         replace(
             draft,
-            failures=(_failure(RUN_ID_A),),
-            comparison=_comparison(RUN_ID_A),
+            comparison=comparison,
         ),
     )
 
-    loaded = load_published_run_bundle(tmp_path, RUN_ID_A)
+    loaded = load_published_run_bundle(tmp_path, RUN_ID_B)
 
     assert loaded.root == run_root
-    assert {case.run_id for case in loaded.cases} == {RUN_ID_A}
-    assert tuple(failure.run_id for failure in loaded.failures) == (RUN_ID_A,)
+    assert {case.run_id for case in loaded.cases} == {RUN_ID_B}
+    assert tuple(failure.run_id for failure in loaded.failures) == (RUN_ID_B,)
     assert loaded.comparison is not None
-    assert loaded.comparison.run_id == RUN_ID_A
-    assert loaded.comparison.candidate_run_id == RUN_ID_A
+    assert loaded.comparison.run_id == RUN_ID_B
+    assert loaded.comparison.candidate_run_id == RUN_ID_B

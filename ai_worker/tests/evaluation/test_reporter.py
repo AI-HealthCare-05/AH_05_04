@@ -85,7 +85,11 @@ def test_candidate_report_projects_metric_counts_ci_and_dev_boundary(tmp_path: P
     baseline = load_published_run_bundle(tmp_path, RUN_ID_A)
     candidate_material = retrieval_run_material("RET-HR", run_id=RUN_ID_B, started_at=TIME_A)
     candidate_draft = build_artifact_draft(candidate_material)
-    comparison = build_retrieval_comparison(baseline, candidate_draft)
+    comparison = build_retrieval_comparison(
+        baseline,
+        candidate_draft,
+        ("CASE_SET", "DATASET", "GOLD", "METRIC_POLICY", "SOURCE_INDEX_FILTER_MODEL"),
+    )
     candidate_draft = replace(candidate_draft, comparison=comparison)
 
     report = render_report(
@@ -138,7 +142,11 @@ def test_comparison_report_rejects_missing_baseline_context(
         (baseline_root / name).write_bytes(payload)
     baseline = load_published_run_bundle(tmp_path, RUN_ID_A)
     candidate = build_artifact_draft(retrieval_run_material("RET-HR", run_id=RUN_ID_B))
-    comparison = build_retrieval_comparison(baseline, candidate)
+    comparison = build_retrieval_comparison(
+        baseline,
+        candidate,
+        ("CASE_SET", "DATASET", "GOLD", "METRIC_POLICY", "SOURCE_INDEX_FILTER_MODEL"),
+    )
 
     with pytest.raises(ValueError, match="comparison requires complete baseline report context"):
         render_report(
@@ -171,3 +179,20 @@ def test_report_projects_real_retrieval_failure_row() -> None:
     ).decode("utf-8")
 
     assert "| `rag-ret-dev-004` | `REQUIRED_EVIDENCE_NOT_IN_TOP_5` |" in report
+
+
+def test_non_replay_retrieval_report_does_not_claim_synthetic_replay_source() -> None:
+    draft = build_artifact_draft(retrieval_run_material("RET-L", run_id=RUN_ID_A))
+    report_data = replace(draft.report_data, adapter_id="live-retrieval.v1")
+
+    report = render_report(
+        report_data,
+        draft.metrics,
+        draft.suite_results,
+        draft.failures,
+        content_artifact_entries(machine_artifact_files(draft)),
+    ).decode("utf-8")
+
+    assert "Data Source: `ADAPTER_EXECUTION_DEV`" in report
+    assert "Production Integration: `NOT_ASSESSED_BY_DEV_REPORT`" in report
+    assert "SYNTHETIC_REPLAY_DEV" not in report

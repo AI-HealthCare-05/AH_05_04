@@ -21,7 +21,7 @@ from ai_worker.tasks.evaluation.manifest import semantic_content_hash
 from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.schemas.artifacts import ContentManifest, MetricResults, RagEvaluationRun, SuiteResults
 from ai_worker.tests.evaluation.test_config import _manifest_payload, _resolved_for_manifest
-from ai_worker.tests.evaluation.test_runner import CountingAdapter, StaticRegistry
+from ai_worker.tests.evaluation.test_runner import CountingAdapter, RetrievalRegistry, StaticRegistry
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FOUNDATION_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/dev-foundation-v1.dataset.json"
@@ -780,6 +780,7 @@ def _run_retrieval_cli(
     run_id: str,
     *,
     baseline_run_id: str | None = None,
+    adapter_registry: Any | None = None,
 ) -> int:
     arguments = [
         "run-dev",
@@ -796,6 +797,7 @@ def _run_retrieval_cli(
         arguments,
         allowed_result_root=tmp_path,
         repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+        adapter_registry=adapter_registry,
         clock=FixedClock("2026-09-04T00:00:00.000000Z"),
     )
 
@@ -826,6 +828,34 @@ def test_run_dev_with_baseline_writes_comparison_into_candidate_bundle(tmp_path:
     assert comparison["baseline_run_id"] == baseline_run_id
     assert comparison["candidate_run_id"] == candidate_run_id
     assert comparison["decision_status"] == "INCONCLUSIVE"
+
+
+def test_failed_candidate_cli_publishes_invalid_null_decision_comparison(tmp_path: Path) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        "rag-retrieval-dev-ret-hr-v1.execution.json",
+        candidate_run_id,
+        baseline_run_id=baseline_run_id,
+        adapter_registry=RetrievalRegistry(CountingAdapter(fail_case_id="rag-ret-dev-001")),
+    )
+
+    assert exit_code == 0
+    comparison = json.loads((tmp_path / candidate_run_id / "comparison.json").read_bytes())
+    assert comparison["execution_status"] == "INVALID"
+    assert comparison["decision_status"] is None
+    failures = (tmp_path / candidate_run_id / "failures.jsonl").read_text(encoding="utf-8")
+    assert "EVAL_INTERNAL_ERROR" in failures
 
 
 @pytest.mark.parametrize(
@@ -926,7 +956,7 @@ def test_verify_result_prints_only_semantic_hash(tmp_path: Path, capsys: pytest.
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    assert captured.out == "5062fc278acefada2a5afc027867c324bb03ab62aaf934f964e692b9ad128b87\n"
+    assert captured.out == "3253a5abb89c2b40d1c50c0d297501834e5bae791b460ed761db996b6f0381d4\n"
 
 
 def test_verify_result_accepts_valid_clock_rewrite_outside_semantic_hash(
@@ -953,7 +983,7 @@ def test_verify_result_accepts_valid_clock_rewrite_outside_semantic_hash(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    assert captured.out == "5062fc278acefada2a5afc027867c324bb03ab62aaf934f964e692b9ad128b87\n"
+    assert captured.out == "3253a5abb89c2b40d1c50c0d297501834e5bae791b460ed761db996b6f0381d4\n"
 
 
 @pytest.mark.parametrize("invalid_kind", ["missing", "symlink", "tampered"])

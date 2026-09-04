@@ -720,7 +720,14 @@ def _run_dev(
             )
         )
         if baseline is not None:
-            draft = replace(draft, comparison=build_retrieval_comparison(baseline, draft))
+            draft = replace(
+                draft,
+                comparison=build_retrieval_comparison(
+                    baseline,
+                    draft,
+                    dataset.comparison_policy.controlled_variable_keys,
+                ),
+            )
         machine_files = machine_artifact_files(draft)
         report = render_report(
             draft.report_data,

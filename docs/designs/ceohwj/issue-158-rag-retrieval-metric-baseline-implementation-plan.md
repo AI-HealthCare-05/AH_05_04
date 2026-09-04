@@ -6,14 +6,14 @@
 
 **Architecture:** 기존 #157 Runner·Reporter를 유지하면서 versioned replay fixture를 `RetrievalCaseResult`로 변환하는 Adapter, Case 결과만 소비하는 독립 Metric Kernel, 두 불변 Run Bundle을 검증하는 Comparison Builder를 추가한다. 공통 Source/Index/filter/embedding/parser provenance는 두 config의 동일 `model_config_hash`로 결속한다. Baseline은 기존 7-file Bundle로, Candidate는 `comparison.json`을 포함한 8-file Bundle로 원자 발행하며 JSON을 기계 정본으로 사용한다.
 
-**Tech Stack:** Python 3.13, Pydantic v2, `Decimal`/`random.Random`, pytest, Ruff, mypy, 기존 canonical JSON·Schema 1.0.0·atomic publisher.
+**Tech Stack:** Python 3.13, Pydantic v2, `Decimal`/`random.Random`, pytest, Ruff, mypy, 기존 canonical JSON·Schema Set 1.2 authoring·Artifact Schema 1.0.0·atomic publisher.
 
 **Spec:** `docs/designs/ceohwj/issue-158-rag-retrieval-metric-baseline-design.md`
 
 ## Global Constraints
 
 - `DEV`와 `SYNTHETIC`만 실행하며 `HOLDOUT`·`SAFETY_REGRESSION`을 load·execute·observe하지 않는다.
-- 공유 Evaluation Artifact Schema 1.0.0의 필드·enum·requiredness를 변경하지 않는다.
+- Authoring graph는 Schema Set 1.2의 `DRAFT` provenance를 사용하고, 공유 Evaluation Artifact Schema 1.0.0의 필드·enum·requiredness는 변경하지 않는다.
 - Resolver Candidate 결과는 Retrieval Case·Metric·comparison에 포함하지 않는다.
 - 승인된 Release threshold가 없으므로 비교 delta는 기록하되 Release PASS를 만들지 않는다.
 - 실제 환자정보, OCR 원문, 보험코드, Provider trace, credential을 fixture·result·log에 기록하지 않는다.
@@ -89,7 +89,7 @@
 - Test: `ai_worker/tests/evaluation/test_retrieval_dev_fixture.py`
 
 **Interfaces:**
-- Consumes: `load_dataset(Path, evals_root=Path) -> ValidatedDataset`, canonical self-hash 규칙, Schema Set 1.0.0.
+- Consumes: `load_dataset(Path, evals_root=Path) -> ValidatedDataset`, canonical self-hash 규칙, Schema Set 1.2.0.
 - Produces: load 가능한 `rag-retrieval-dev@1.0.0`, exact Case IDs 5개, replay manifest 2개.
 
 - [ ] **Step 1: Dataset invariants를 고정하는 실패 테스트 작성**

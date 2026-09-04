@@ -46,13 +46,16 @@ def _retrieval_sections(
     baseline_variant_id: str | None,
     baseline_metrics: MetricResults | None,
 ) -> list[str]:
+    replay_source = report_data.adapter_id == "retrieval-replay.v1"
+    data_source = "SYNTHETIC_REPLAY_DEV" if replay_source else "ADAPTER_EXECUTION_DEV"
+    production_integration = "BLOCKED_BY_RAG_07A_07B_OR_08" if replay_source else "NOT_ASSESSED_BY_DEV_REPORT"
     lines = [
         "",
         "## Retrieval Metrics",
         "",
-        "- Data Source: `SYNTHETIC_REPLAY_DEV`",
+        f"- Data Source: `{data_source}`",
         "- HOLDOUT Baseline Freeze: `NOT_PERFORMED`",
-        "- Production Integration: `BLOCKED_BY_RAG_07A_07B_OR_08`",
+        f"- Production Integration: `{production_integration}`",
         "",
         "| Metric ID@Version | Estimator@Version | Cases/Groups | Numerator/Denominator | Value | 95% CI | Execution | Decision | Reason |",
         "| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- |",

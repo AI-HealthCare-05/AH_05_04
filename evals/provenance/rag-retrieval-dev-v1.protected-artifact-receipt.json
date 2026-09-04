@@ -9,12 +9,12 @@
   "data_classification": "SYNTHETIC",
   "dataset_code": "rag-retrieval-dev",
   "dataset_version": "1.0.0",
-  "receipt_hash": "fb4738e18837fc84ee705967b11c779a7116d509e89ce3f4225f7e4baeb47f6f",
+  "receipt_hash": "8ac7ffc59209634dcabe13c2dc405545289988c77c755b25fda4241191053ceb",
   "receipt_id": "rag-retrieval-dev-protected-receipt",
   "receipt_version": "1.0.0",
   "recorded_at": "2026-09-04T00:02:00.000000Z",
-  "recorded_by": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":"2026-09-04T00:01:00.000000Z","reviewed_by":{"actor_id":"hazelnutflavoured","namespace":"GITHUB_LOGIN","role":"DATASET_CUSTODIAN"},"team_gold_status":"REVIEWED"},
-  "resource_set_hash": "e8793d2a35521c1eb2b8e65f96d718ab52ba021050731a7ece7a9769461e1c84",
+  "recorded_by": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":null,"reviewed_by":null,"team_gold_status":"DRAFT"},
+  "resource_set_hash": "cd65071e1bf050e162f65385dcc4c49ac01e0c581c52f915483f1114d2339401",
   "schema_id": "rag-eval.protected-artifact-receipt",
-  "schema_version": "1.0.0"
+  "schema_version": "1.2.0"
 }

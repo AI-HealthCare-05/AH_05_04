@@ -263,12 +263,27 @@ def _retrieval_failure_records(
         case = cases_by_id[result.case_id]
         required_ids = set(case.expected.required_evidence_refs or ())
         ranked_ids = set((result.retrieved_evidence_ids or ())[:5])
-        if (
-            result.task_type is not TaskType.RETRIEVAL
-            or result.execution_status is not ExecutionStatus.COMPLETED
-            or not required_ids
-            or required_ids.issubset(ranked_ids)
-        ):
+        if result.task_type is TaskType.RETRIEVAL and result.execution_status is not ExecutionStatus.COMPLETED:
+            failure_code = (
+                result.failure_codes[0] if result.failure_codes else f"RETRIEVAL_{result.execution_status.value}"
+            )
+            failures.append(
+                FailureRecord(
+                    schema_id="rag-eval.failure",
+                    schema_version="1.0.0",
+                    run_id=result.run_id,
+                    case_id=result.case_id,
+                    failure_code=failure_code,
+                    failure_stage="RETRIEVAL_EXECUTION",
+                    expected_summary=FailureSummary.EXPECTED_REQUIRED_EVIDENCE,
+                    actual_summary=FailureSummary.ACTUAL_REQUIRED_EVIDENCE_MISSING,
+                    root_cause_code=None,
+                    followup_issue_ref=None,
+                    created_at=created_at,
+                )
+            )
+            continue
+        if result.task_type is not TaskType.RETRIEVAL or not required_ids or required_ids.issubset(ranked_ids):
             continue
         failures.append(
             FailureRecord(

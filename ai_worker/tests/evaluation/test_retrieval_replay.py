@@ -306,6 +306,9 @@ def test_runner_rejects_replay_case_set_mismatch_before_case_execution(tmp_path:
     assert outcome.execution_status is ExecutionStatus.INVALID
     assert len(outcome.case_results) == 5
     assert {result.failure_codes for result in outcome.case_results} == {("EVAL_RETRIEVAL_REPLAY_INVALID",)}
+    assert len(outcome.failure_records) == 5
+    assert {failure.failure_stage for failure in outcome.failure_records} == {"RETRIEVAL_EXECUTION"}
+    assert {failure.failure_code for failure in outcome.failure_records} == {"EVAL_RETRIEVAL_REPLAY_INVALID"}
 
 
 def test_registry_preserves_validation_only_configs_as_unimplemented() -> None:

@@ -146,6 +146,15 @@ class StaticRegistry:
         return self.adapter
 
 
+class RetrievalRegistry:
+    def __init__(self, adapter: EvaluationAdapter | None) -> None:
+        self.adapter = adapter
+
+    def resolve(self, adapter_id: str) -> EvaluationAdapter | None:
+        assert adapter_id == "retrieval-replay.v1"
+        return self.adapter
+
+
 @pytest.mark.parametrize(
     ("experiment_type", "expected_tasks"),
     [
@@ -251,6 +260,28 @@ def test_retrieval_miss_creates_stable_non_sensitive_failure_record() -> None:
     assert failure.actual_summary.value == "ACTUAL_REQUIRED_EVIDENCE_MISSING"
     assert failure.root_cause_code is None
     assert failure.followup_issue_ref is None
+
+
+def test_retrieval_adapter_error_creates_stable_non_sensitive_failure_record() -> None:
+    dataset = load_dataset(RETRIEVAL_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=RetrievalRegistry(CountingAdapter(fail_case_id="rag-ret-dev-001")),
+    )
+
+    failure = next(item for item in outcome.failure_records if item.case_id == "rag-ret-dev-001")
+    assert failure.failure_stage == "RETRIEVAL_EXECUTION"
+    assert failure.failure_code == "EVAL_INTERNAL_ERROR"
+    assert failure.expected_summary.value == "EXPECTED_REQUIRED_EVIDENCE"
+    assert failure.actual_summary.value == "ACTUAL_REQUIRED_EVIDENCE_MISSING"
 
 
 def test_missing_adapter_produces_not_implemented_without_fake_answer(

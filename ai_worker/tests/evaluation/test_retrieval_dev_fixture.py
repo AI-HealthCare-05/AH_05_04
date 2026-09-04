@@ -16,6 +16,32 @@ EVIDENCE_INDEX = EVALS_ROOT / "retrieval/evidence/resources/rag-retrieval-dev-v1
 CASES = EVALS_ROOT / "retrieval/cases/rag-retrieval-dev-v1"
 
 
+def test_retrieval_dev_authoring_graph_uses_v1_2_draft_provenance() -> None:
+    paths = [
+        MANIFEST,
+        EVALS_ROOT / "retrieval/manifests/rag-retrieval-dev-v1.critical-claim-rubric.json",
+        EVALS_ROOT / "retrieval/evidence/rag-retrieval-dev-v1.evidence-mapping.json",
+        EVALS_ROOT / "profiles/rag-retrieval-dev-v1.profile.json",
+        EVALS_ROOT / "policies/rag-retrieval-dev-v1.evaluation-policy.json",
+        EVALS_ROOT / "suites/rag-retrieval-dev-v1.suite.json",
+        *sorted(CASES.glob("*.json")),
+    ]
+    receipt = json.loads((EVALS_ROOT / "provenance/rag-retrieval-dev-v1.protected-artifact-receipt.json").read_bytes())
+
+    for path in paths:
+        payload = json.loads(path.read_bytes())
+        provenance = payload["review_provenance"]
+        assert payload["schema_version"] == "1.2.0"
+        assert provenance["team_gold_status"] == "DRAFT"
+        assert provenance["reviewed_by"] is None
+        assert provenance["reviewed_at"] is None
+        assert provenance["evidence_review_refs"] == []
+    assert receipt["schema_version"] == "1.2.0"
+    assert receipt["recorded_by"]["team_gold_status"] == "DRAFT"
+    assert receipt["recorded_by"]["reviewed_by"] is None
+    assert receipt["recorded_by"]["reviewed_at"] is None
+
+
 def test_retrieval_dev_dataset_is_synthetic_dev_only_with_five_independent_cases() -> None:
     dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
 
