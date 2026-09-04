@@ -16,6 +16,7 @@ from ai_worker.tasks.evaluation.cli import main, publish_receipt_no_clobber
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.manifest import semantic_content_hash
+from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.schemas.artifacts import ContentManifest, MetricResults, RagEvaluationRun, SuiteResults
 from ai_worker.tests.evaluation.test_config import _manifest_payload, _resolved_for_manifest
 from ai_worker.tests.evaluation.test_runner import CountingAdapter, StaticRegistry
@@ -569,6 +570,40 @@ def test_run_dev_publishes_schema_valid_bundle(config_name: str, tmp_path: Path)
     MetricResults.model_validate_json((result / "metrics.json").read_bytes())
     SuiteResults.model_validate_json((result / "suite-results.json").read_bytes())
     ContentManifest.model_validate_json((result / "result-content-manifest.json").read_bytes())
+
+
+def test_retrieval_run_failure_timestamp_uses_controlled_run_clock(tmp_path: Path) -> None:
+    timestamp = "2026-09-04T00:00:00.000000Z"
+    run_id = str(uuid4())
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    exit_code = main(
+        [
+            "run-dev",
+            "--config",
+            "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+            "--run-id",
+            run_id,
+            "--executed-by",
+            "ceohwj",
+        ],
+        allowed_result_root=tmp_path,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+        adapter_registry=build_adapter_registry(resolved),
+        clock=FixedClock(timestamp),
+    )
+
+    assert exit_code == 0
+    result = tmp_path / run_id
+    run = json.loads((result / "run.json").read_bytes())
+    failures = [json.loads(line) for line in (result / "failures.jsonl").read_bytes().splitlines()]
+    assert len(failures) == 1
+    assert failures[0]["created_at"] == timestamp
+    assert run["started_at"] <= failures[0]["created_at"] <= run["completed_at"]
 
 
 def test_run_dev_rejects_holdout_before_load_dataset(

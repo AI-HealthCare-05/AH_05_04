@@ -675,6 +675,7 @@ def _run_dev(
             resolved,
             run_id=arguments.run_id,
             adapter_registry=adapter_registry,
+            failure_created_at=started_at,
         )
         draft = build_artifact_draft(
             RunMaterial(
