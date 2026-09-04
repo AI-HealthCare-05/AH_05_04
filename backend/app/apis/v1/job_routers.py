@@ -33,7 +33,9 @@ JOB_STATUS_OPENAPI_RESPONSES: dict[int | str, dict] = {
     },
     status.HTTP_401_UNAUTHORIZED: {
         "model": ErrorResponse,
-        "description": "인증 정보가 없거나 유효하지 않습니다. `code`는 `UNAUTHORIZED` 또는 `INVALID_TOKEN`입니다.",
+        "description": (
+            "인증 정보가 없거나 유효하지 않습니다. `code`는 `UNAUTHORIZED`·`INVALID_TOKEN`·`EXPIRED_TOKEN`입니다."
+        ),
         "headers": {
             "WWW-Authenticate": {
                 "description": "계약된 `Bearer` 고정값입니다.",

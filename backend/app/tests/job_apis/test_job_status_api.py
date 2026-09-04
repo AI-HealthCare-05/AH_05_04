@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from app.core.db.databases import get_db_session
+from app.core.jwt.tokens import AccessToken
 from app.main import app, fastapi_app
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType, DomainType
 from app.models.medical_documents import MedicalDocument
@@ -69,6 +70,16 @@ async def _get_user(session: AsyncSession, *, email: str) -> User:
     user = await session.scalar(select(User).where(User.email == email))
     assert user is not None
     return user
+
+
+def _build_expired_access_token(user: User) -> str:
+    """`AccessToken.set_exp()`는 `TIMEZONE`(Asia/Seoul, UTC+9) 벽시계 값을 `timegm()`으로
+    UTC로 오인해 실제 만료 시각이 의도보다 9시간 늦게 계산되는 기존 버그가 있어, `from_time`을
+    과거로 줘도 실제로는 만료되지 않습니다. `exp` claim을 지나간 실제 UTC epoch으로 직접
+    덮어써 이 버그와 무관하게 만료 토큰을 재현합니다."""
+    token = AccessToken.for_user(user)
+    token.payload["exp"] = int(datetime.now(UTC).timestamp()) - 600
+    return str(token)
 
 
 async def _create_document(session: AsyncSession, *, user: User) -> MedicalDocument:
@@ -319,6 +330,26 @@ class TestJobStatusApi:
             response = await client.get(f"/api/v1/jobs/{uuid4()}")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    async def test_get_job_status_returns_401_expired_token_for_expired_access_token(
+        self, db_session: AsyncSession
+    ) -> None:
+        """리뷰 지적: 실제 인증 경계(`get_request_user` → `JwtService.verify_jwt`)는 만료된
+        access token에 `code=EXPIRED_TOKEN`을 반환하는데, `JOB_STATUS_OPENAPI_RESPONSES`와
+        `job-status-v1.md` 401 표에는 `UNAUTHORIZED`\\|`INVALID_TOKEN`만 있어 실제 응답과
+        문서가 어긋났습니다."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            email, _access_token = await _signup_and_login(client, label="expired")
+            user = await _get_user(db_session, email=email)
+            expired_token = _build_expired_access_token(user)
+
+            response = await client.get(
+                f"/api/v1/jobs/{uuid4()}",
+                headers={"Authorization": f"Bearer {expired_token}"},
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["code"] == "EXPIRED_TOKEN"
 
     async def test_get_job_status_returns_422_for_invalid_job_id(self) -> None:
         """#148 세 번째 리뷰: path parameter UUID 검증 실패는 FastAPI 기본

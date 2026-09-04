@@ -54,7 +54,7 @@
 
 | HTTP | `code` | 조건 |
 | --- | --- | --- |
-| `401` | `UNAUTHORIZED` \| `INVALID_TOKEN` | 인증 정보가 없거나 유효하지 않음. `WWW-Authenticate: Bearer` 헤더 포함 |
+| `401` | `UNAUTHORIZED` \| `INVALID_TOKEN` \| `EXPIRED_TOKEN` | 인증 정보가 없거나 유효하지 않거나 만료됨. `WWW-Authenticate: Bearer` 헤더 포함 |
 | `404` | `AI_JOB_NOT_FOUND` | Job이 없거나 다른 사용자 소유, 또는 소유권 이중 확인 실패 |
 | `422` | `VALIDATION_FAILED` | `job_id` path parameter가 UUID 형식이 아님. FastAPI 기본 `HTTPValidationError`가 아니라 전역 `RequestValidationError` 핸들러가 만드는 `ErrorResponse`가 실제 응답입니다 |
 
