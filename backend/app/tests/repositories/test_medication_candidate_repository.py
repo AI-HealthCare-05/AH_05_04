@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from uuid import uuid4
 
 import pytest
@@ -9,22 +9,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
-from app.core.errors import ApiError
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
 from app.models.profiles import Profile, ProfileType
-from app.models.rag_candidate import (
-    MedicationCandidateSearchStatus,
-    MedicationIdentificationSource,
-    MedicationIdentificationStatus,
-)
 from app.models.users import Gender, User
 from app.repositories.medication_candidate_repository import (
     MedicationCandidateRepository,
     MedicationCandidateResultCreate,
 )
-from app.services.medication_identification import MedicationIdentificationService
 from app.tests.conftest import test_engine
 
 
@@ -44,10 +37,6 @@ async def db_session() -> AsyncIterator[AsyncSession]:
             await session.close()
             if transaction.is_active:
                 await transaction.rollback()
-
-
-def _service(session: AsyncSession) -> MedicationIdentificationService:
-    return MedicationIdentificationService(MedicationCandidateRepository(session))
 
 
 def _ready_result(*, product_id=None, result_rank: int = 1) -> MedicationCandidateResultCreate:
@@ -131,349 +120,31 @@ async def _create_medication(
     return medication
 
 
-async def test_record_candidate_search_reuses_same_context(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    bundle_id = uuid4()
-    index_id = uuid4()
-    expires_at = datetime.now(config.TIMEZONE) + timedelta(minutes=10)
-
-    first = await service.record_candidate_search(
-        prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
-        query_digest="query-digest-1",
-        runtime_release_bundle_id=bundle_id,
-        candidate_index_version_id=index_id,
-        expires_at=expires_at,
+async def _create_search(
+    repository: MedicationCandidateRepository, *, prescription: Prescription, display_order: int = 1
+):
+    medication = await _create_medication(
+        repository.session, prescription=prescription, display_order=display_order
     )
-    second = await service.record_candidate_search(
+    return await repository.create_search(
         prescription_version_medication_id=medication.id,
         medication_name_snapshot="테스트약",
         strength_text_snapshot="500mg",
-        query_digest="query-digest-1",
-        runtime_release_bundle_id=bundle_id,
-        candidate_index_version_id=index_id,
-        expires_at=expires_at,
-    )
-
-    assert first.is_reused is False
-    assert second.is_reused is True
-    assert second.search.id == first.search.id
-
-
-async def test_record_candidate_search_invalidates_changed_context(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner2@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-
-    first = await service.record_candidate_search(
-        prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
-        query_digest="query-digest-1",
+        query_digest="query-digest",
         runtime_release_bundle_id=None,
         candidate_index_version_id=None,
         expires_at=None,
     )
-    second = await service.record_candidate_search(
-        prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
-        query_digest="query-digest-2",
-        runtime_release_bundle_id=None,
-        candidate_index_version_id=None,
-        expires_at=None,
-    )
-
-    assert second.is_reused is False
-    assert second.search.id != first.search.id
-    assert first.search.status == MedicationCandidateSearchStatus.INVALIDATED_INPUT_CHANGED
-    assert first.search.invalidated_at is not None
-
-
-async def test_confirm_identification_consumes_ready_search(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner3@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    product_id = uuid4()
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
-        )
-    ).search
-    finalized = await service.finalize_candidate_search(
-        search_id=search.id,
-        user_id=owner.id,
-        status=MedicationCandidateSearchStatus.READY,
-        results=[_ready_result(product_id=product_id)],
-    )
-
-    identification = await service.confirm_identification(
-        prescription_version_medication_id=medication.id,
-        candidate_search_result_id=finalized.results[0].id,
-        user_id=owner.id,
-    )
-
-    assert identification.status == MedicationIdentificationStatus.MATCHED
-    assert identification.source == MedicationIdentificationSource.USER_SELECTED
-    assert identification.product_id == product_id
-    assert identification.confirmed_at is not None
-    assert identification.decision_reason is None
-    assert finalized.search.status == MedicationCandidateSearchStatus.CONSUMED
-    assert finalized.search.consumed_at is not None
-
-
-async def test_record_candidate_search_rejects_existing_identification(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner4@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
-        )
-    ).search
-    finalized = await service.finalize_candidate_search(
-        search_id=search.id,
-        user_id=owner.id,
-        status=MedicationCandidateSearchStatus.READY,
-        results=[_ready_result()],
-    )
-    await service.confirm_identification(
-        prescription_version_medication_id=medication.id,
-        candidate_search_result_id=finalized.results[0].id,
-        user_id=owner.id,
-    )
-
-    with pytest.raises(ApiError) as exc_info:
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest-2",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=None,
-        )
-
-    assert exc_info.value.code == "IDENTIFICATION_CONTEXT_STALE"
-    assert exc_info.value.details[0].reason == "IDENTIFICATION_ALREADY_EXISTS"
-
-
-async def test_reject_identification_invalidates_ready_search(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner5@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
-        )
-    ).search
-    finalized = await service.finalize_candidate_search(
-        search_id=search.id,
-        user_id=owner.id,
-        status=MedicationCandidateSearchStatus.READY,
-        results=[_ready_result()],
-    )
-
-    identification = await service.reject_identification(
-        search_id=search.id,
-        candidate_search_result_id=finalized.results[0].id,
-        user_id=owner.id,
-    )
-
-    assert identification.status == MedicationIdentificationStatus.UNRESOLVED
-    assert identification.source == MedicationIdentificationSource.USER_REJECTED
-    assert identification.product_id is None
-    assert identification.confirmed_at is None
-    assert identification.rejected_at is not None
-    assert identification.decision_reason == "USER_REJECTED_DISPLAYED_CANDIDATE"
-    assert finalized.search.status == MedicationCandidateSearchStatus.INVALIDATED_USER_REJECTED
-    assert finalized.search.invalidated_at is not None
-
-
-async def test_expired_active_search_does_not_block_new_search(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner6@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    first = await service.record_candidate_search(
-        prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
-        query_digest="query-digest-1",
-        runtime_release_bundle_id=None,
-        candidate_index_version_id=None,
-        expires_at=datetime.now(config.TIMEZONE) - timedelta(seconds=1),
-    )
-
-    second = await service.record_candidate_search(
-        prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
-        query_digest="query-digest-1",
-        runtime_release_bundle_id=None,
-        candidate_index_version_id=None,
-        expires_at=None,
-    )
-
-    assert first.search.status == MedicationCandidateSearchStatus.EXPIRED
-    assert second.is_reused is False
-    assert second.search.id != first.search.id
-
-
-async def test_non_ready_search_must_not_expose_selectable_result(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner7@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=None,
-        )
-    ).search
-
-    with pytest.raises(ApiError) as exc_info:
-        await service.finalize_candidate_search(
-            search_id=search.id,
-            user_id=owner.id,
-            status=MedicationCandidateSearchStatus.AMBIGUOUS,
-            results=[_ready_result()],
-        )
-
-    assert exc_info.value.code == "VALIDATION_FAILED"
-    assert exc_info.value.details[0].reason == "NON_READY_RESULT_MUST_NOT_BE_DISPLAYED"
-
-
-async def test_preflight_passes_when_all_medications_are_matched(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner8@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    first_medication = await _create_medication(db_session, prescription=prescription, display_order=1)
-    second_medication = await _create_medication(db_session, prescription=prescription, display_order=2)
-
-    for medication in (first_medication, second_medication):
-        search = (
-            await service.record_candidate_search(
-                prescription_version_medication_id=medication.id,
-                medication_name_snapshot="테스트약",
-                strength_text_snapshot="500mg",
-                query_digest=f"query-digest-{medication.id}",
-                runtime_release_bundle_id=None,
-                candidate_index_version_id=None,
-                expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
-            )
-        ).search
-        finalized = await service.finalize_candidate_search(
-            search_id=search.id,
-            user_id=owner.id,
-            status=MedicationCandidateSearchStatus.READY,
-            results=[_ready_result()],
-        )
-        await service.confirm_identification(
-            prescription_version_medication_id=medication.id,
-            candidate_search_result_id=finalized.results[0].id,
-            user_id=owner.id,
-        )
-
-    result = await service.ensure_matched_for_preflight(
-        prescription_version_medication_ids=[first_medication.id, second_medication.id, first_medication.id]
-    )
-
-    assert result.prescription_version_medication_count == 2
-    assert result.matched_identification_count == 2
-
-
-async def test_preflight_rejects_when_any_medication_is_not_matched(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner9@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
-    matched_medication = await _create_medication(db_session, prescription=prescription)
-    unmatched_medication_id = uuid4()
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=matched_medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
-        )
-    ).search
-    finalized = await service.finalize_candidate_search(
-        search_id=search.id,
-        user_id=owner.id,
-        status=MedicationCandidateSearchStatus.READY,
-        results=[_ready_result()],
-    )
-    await service.confirm_identification(
-        prescription_version_medication_id=matched_medication.id,
-        candidate_search_result_id=finalized.results[0].id,
-        user_id=owner.id,
-    )
-
-    with pytest.raises(ApiError) as exc_info:
-        await service.ensure_matched_for_preflight(
-            prescription_version_medication_ids=[matched_medication.id, unmatched_medication_id]
-        )
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE"
-    assert exc_info.value.details[0].field == "prescription_version_medication_ids"
-    assert exc_info.value.details[0].reason == "MATCHED_IDENTIFICATION_REQUIRED"
-    assert exc_info.value.details[0].rejected_value is None
 
 
 async def test_search_cannot_have_multiple_displayed_or_selectable_results(db_session: AsyncSession) -> None:
-    service = _service(db_session)
+    repository = MedicationCandidateRepository(db_session)
     owner = await _create_user(db_session, email="owner10@example.com")
     prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=None,
-        )
-    ).search
+    search = await _create_search(repository, prescription=prescription)
 
     with pytest.raises(IntegrityError):
-        await MedicationCandidateRepository(db_session).add_results(
+        await repository.add_results(
             search=search,
             results=[
                 _ready_result(result_rank=1),
@@ -482,73 +153,36 @@ async def test_search_cannot_have_multiple_displayed_or_selectable_results(db_se
         )
 
 
-async def test_finalize_candidate_search_rejects_other_users_search(db_session: AsyncSession) -> None:
-    """다른 사용자의 Search를 search_id만 알면 최종화할 수 있으면 안 됩니다."""
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner11@example.com")
-    intruder = await _create_user(db_session, email="intruder11@example.com")
+async def test_get_search_for_update_owned_rejects_other_users_search(db_session: AsyncSession) -> None:
+    """search_id만 알아도 다른 사용자의 Search는 owned 조회로 가져올 수 없어야 합니다."""
+    repository = MedicationCandidateRepository(db_session)
+    owner = await _create_user(db_session, email="owner15@example.com")
+    intruder = await _create_user(db_session, email="intruder15@example.com")
     prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=None,
-        )
-    ).search
+    search = await _create_search(repository, prescription=prescription)
 
-    with pytest.raises(ApiError) as exc_info:
-        await service.finalize_candidate_search(
-            search_id=search.id,
-            user_id=intruder.id,
-            status=MedicationCandidateSearchStatus.READY,
-            results=[_ready_result()],
-        )
+    owned = await repository.get_search_for_update_owned(search_id=search.id, user_id=owner.id)
+    assert owned is not None
 
-    assert exc_info.value.status_code == 404
+    stolen = await repository.get_search_for_update_owned(search_id=search.id, user_id=intruder.id)
+    assert stolen is None
 
 
-async def test_confirm_and_reject_reject_other_users_result(db_session: AsyncSession) -> None:
-    """다른 사용자의 candidate_search_result_id를 알아도 확인·거절할 수 없어야 합니다."""
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="owner12@example.com")
-    intruder = await _create_user(db_session, email="intruder12@example.com")
+async def test_get_result_selection_for_update_owned_rejects_other_users_result(db_session: AsyncSession) -> None:
+    """candidate_search_result_id만 알아도 다른 사용자의 Result는 owned 조회로 가져올 수 없어야 합니다."""
+    repository = MedicationCandidateRepository(db_session)
+    owner = await _create_user(db_session, email="owner16@example.com")
+    intruder = await _create_user(db_session, email="intruder16@example.com")
     prescription = await _create_prescription(db_session, user=owner)
-    medication = await _create_medication(db_session, prescription=prescription)
-    search = (
-        await service.record_candidate_search(
-            prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
-            query_digest="query-digest",
-            runtime_release_bundle_id=None,
-            candidate_index_version_id=None,
-            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
-        )
-    ).search
-    finalized = await service.finalize_candidate_search(
-        search_id=search.id,
-        user_id=owner.id,
-        status=MedicationCandidateSearchStatus.READY,
-        results=[_ready_result()],
+    search = await _create_search(repository, prescription=prescription)
+    results = await repository.add_results(search=search, results=[_ready_result()])
+
+    owned = await repository.get_result_selection_for_update_owned(
+        candidate_search_result_id=results[0].id, user_id=owner.id
     )
+    assert owned is not None
 
-    with pytest.raises(ApiError) as confirm_exc_info:
-        await service.confirm_identification(
-            prescription_version_medication_id=medication.id,
-            candidate_search_result_id=finalized.results[0].id,
-            user_id=intruder.id,
-        )
-    assert confirm_exc_info.value.status_code == 404
-
-    with pytest.raises(ApiError) as reject_exc_info:
-        await service.reject_identification(
-            search_id=search.id,
-            candidate_search_result_id=finalized.results[0].id,
-            user_id=intruder.id,
-        )
-    assert reject_exc_info.value.status_code == 404
+    stolen = await repository.get_result_selection_for_update_owned(
+        candidate_search_result_id=results[0].id, user_id=intruder.id
+    )
+    assert stolen is None
