@@ -227,6 +227,9 @@ DB Outbox 발행 transaction, lease·fencing, reclaim·retry·DLQ 및 Worker
 `ocr_engine=None`이므로 OCR Handler를 등록하지 않습니다. 실제 CLOVA Engine,
 secret과 object storage가 연결되기 전에는 Production OCR 처리 경로로
 활성화하지 않습니다.
+- 현재 Consumer는 필수 필드 오류나 미지원 schema entry를 batch 안에서 격리하고,
+같은 batch의 정상 entry 처리를 계속합니다. 격리된 entry는 ACK하지 않고 PEL에
+남기며, quarantine·DLQ 기록과 최종 ACK는 #142에서 구현합니다.
 
 ## 실행과 상태 확인
 
