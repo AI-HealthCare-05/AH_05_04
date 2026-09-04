@@ -13,6 +13,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     EvidenceRerankRequest,
     EvidenceRerankSelection,
     EvidenceRerankSuccess,
+    EvidenceRetrievalKernelOutcome,
     EvidenceRetrievalKernelRequest,
     EvidenceSearchStage,
     EvidenceSearchSuccess,
@@ -99,11 +100,7 @@ def search_success(
     stage: EvidenceSearchStage,
     hits: tuple[KnowledgeEvidenceSearchHit, ...],
 ) -> EvidenceSearchSuccess:
-    stage_config_ref = (
-        request.lexical_config_ref
-        if stage is EvidenceSearchStage.LEXICAL
-        else request.dense_config_ref
-    )
+    stage_config_ref = request.lexical_config_ref if stage is EvidenceSearchStage.LEXICAL else request.dense_config_ref
     assert stage_config_ref is not None
     return EvidenceSearchSuccess(
         request.query_fingerprint,
@@ -138,17 +135,13 @@ class NeverSearch:
     def __init__(self) -> None:
         self.calls = 0
 
-    def search(
-        self, request: EvidenceRetrievalKernelRequest, stage: EvidenceSearchStage
-    ) -> EvidenceSearchSuccess:
+    def search(self, request: EvidenceRetrievalKernelRequest, stage: EvidenceSearchStage) -> EvidenceSearchSuccess:
         self.calls += 1
         raise AssertionError("search must not be called")
 
 
 class NeverRerank:
-    def rerank(
-        self, request: EvidenceRerankRequest
-    ) -> EvidenceRerankSuccess | EvidenceRerankFailure:
+    def rerank(self, request: EvidenceRerankRequest) -> EvidenceRerankSuccess | EvidenceRerankFailure:
         raise AssertionError("rerank must not be called")
 
 
@@ -156,16 +149,12 @@ class SearchPort:
     def __init__(self, responses: dict[EvidenceSearchStage, EvidenceSearchSuccess]) -> None:
         self.responses = responses
 
-    def search(
-        self, request: EvidenceRetrievalKernelRequest, stage: EvidenceSearchStage
-    ) -> EvidenceSearchSuccess:
+    def search(self, request: EvidenceRetrievalKernelRequest, stage: EvidenceSearchStage) -> EvidenceSearchSuccess:
         return self.responses[stage]
 
 
 class RaisingSearchPort:
-    def search(
-        self, request: EvidenceRetrievalKernelRequest, stage: EvidenceSearchStage
-    ) -> EvidenceSearchSuccess:
+    def search(self, request: EvidenceRetrievalKernelRequest, stage: EvidenceSearchStage) -> EvidenceSearchSuccess:
         raise RuntimeError("provider-secret")
 
 
@@ -266,9 +255,7 @@ def test_query_binding_failures_stop_before_search(
 
 
 def test_search_results_normalize_same_evidence_into_one_candidate() -> None:
-    request = replace(
-        lexical_request(), dense_config_ref=artifact("dense-config"), dense_limit=5
-    )
+    request = replace(lexical_request(), dense_config_ref=artifact("dense-config"), dense_limit=5)
     search = SearchPort(
         {
             EvidenceSearchStage.LEXICAL: search_success(
@@ -283,9 +270,7 @@ def test_search_results_normalize_same_evidence_into_one_candidate() -> None:
 
     retrieve_knowledge_evidence(
         request,
-        query_verifier=QueryVerifier(
-            QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))
-        ),
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
         search_port=search,
         rerank_port=rerank,
     )
@@ -308,9 +293,7 @@ def test_valid_rerank_rebinds_selection_to_canonical_candidate() -> None:
     )
     outcome = retrieve_knowledge_evidence(
         request,
-        query_verifier=QueryVerifier(
-            QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))
-        ),
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
         search_port=search,
         rerank_port=SuccessfulRerankPort(),
     )
@@ -329,9 +312,7 @@ def test_valid_rerank_rebinds_selection_to_canonical_candidate() -> None:
     assert trace["hits"][0]["evidence_index_ref"]["artifact_code"] == "knowledge-index"
     assert trace["hits"][0]["canonicalization_spec_version"] == "knowledge-text@1"
     assert "content_text" not in trace["hits"][0]
-    assert trace["selections"] == [
-        {"evidence_key": "knowledge:chunk-1", "rerank_rank": 1, "rerank_score": "0.95"}
-    ]
+    assert trace["selections"] == [{"evidence_key": "knowledge:chunk-1", "rerank_rank": 1, "rerank_score": "0.95"}]
 
 
 def test_hit_from_different_evidence_index_fails_closed() -> None:
@@ -340,9 +321,7 @@ def test_hit_from_different_evidence_index_fails_closed() -> None:
         hit(EvidenceSearchStage.LEXICAL, "0.9"),
         provenance=replace(provenance(), evidence_index_ref=artifact("other-index")),
     )
-    search = SearchPort(
-        {EvidenceSearchStage.LEXICAL: search_success(request, EvidenceSearchStage.LEXICAL, (wrong,))}
-    )
+    search = SearchPort({EvidenceSearchStage.LEXICAL: search_success(request, EvidenceSearchStage.LEXICAL, (wrong,))})
 
     outcome = retrieve_knowledge_evidence(
         request,
@@ -377,17 +356,16 @@ def test_rerank_projection_has_approved_golden_hash() -> None:
         ),
     )
 
-    assert canonical_rerank_input_hash(
-        "knowledge-rerank-input-v1", (candidate,)
-    ) == "e01b174ebf70c08b24db48efafd908219d77fa242502fe54443fe753fcce894c"
+    assert (
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,))
+        == "e01b174ebf70c08b24db48efafd908219d77fa242502fe54443fe753fcce894c"
+    )
 
 
 def test_invalid_request_does_not_create_trace_from_untrusted_metadata() -> None:
     request = replace(
         lexical_request(),
-        query_fingerprint=replace(
-            fingerprint(), algorithm="PATIENT-SECRET", digest="invalid"
-        ),
+        query_fingerprint=replace(fingerprint(), algorithm="PATIENT-SECRET", digest="invalid"),
     )
 
     outcome = retrieve_knowledge_evidence(
@@ -434,9 +412,7 @@ def test_duplicate_evidence_key_in_one_stage_fails_closed() -> None:
     request = lexical_request()
     first = hit(EvidenceSearchStage.LEXICAL, "0.9")
     second = replace(first, rank=2, stage_score=CanonicalScore("0.8"))
-    response = search_success(
-        request, EvidenceSearchStage.LEXICAL, (first, second)
-    )
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (first, second))
     outcome = retrieve_knowledge_evidence(
         request,
         query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
@@ -458,9 +434,7 @@ def test_rerank_failures_are_classified_and_do_not_escape(
     rerank_port: EvidenceRerankPort, diagnostic: KernelDiagnosticCode
 ) -> None:
     request = lexical_request()
-    response = search_success(
-        request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),)
-    )
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),))
 
     outcome = retrieve_knowledge_evidence(
         request,
@@ -480,9 +454,7 @@ def test_malformed_score_fails_closed_without_exception() -> None:
         hit(EvidenceSearchStage.LEXICAL, "0.9"),
         stage_score=CanonicalScore(None),  # type: ignore[arg-type]
     )
-    response = search_success(
-        request, EvidenceSearchStage.LEXICAL, (malformed,)
-    )
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (malformed,))
 
     outcome = retrieve_knowledge_evidence(
         request,
@@ -514,9 +486,7 @@ def test_malformed_nested_provenance_fails_closed_without_exception() -> None:
 
 def test_unhashable_rerank_key_fails_closed_without_exception() -> None:
     request = lexical_request()
-    response = search_success(
-        request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),)
-    )
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),))
 
     class UnhashableKeyRerank(SuccessfulRerankPort):
         def rerank(self, rerank_request: EvidenceRerankRequest) -> EvidenceRerankSuccess:
@@ -543,3 +513,181 @@ def test_malformed_query_failure_reason_is_receipt_mismatch() -> None:
     )
 
     assert outcome.diagnostic_code is KernelDiagnosticCode.QUERY_BINDING_RECEIPT_MISMATCH
+
+
+def test_unknown_rerank_key_is_not_exposed_in_sanitized_trace() -> None:
+    request = lexical_request()
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),))
+
+    class UnknownKeyRerank(SuccessfulRerankPort):
+        def rerank(self, rerank_request: EvidenceRerankRequest) -> EvidenceRerankSuccess:
+            selection = EvidenceRerankSelection("PATIENT-SECRET-IDENTIFIER", 1, CanonicalScore("0.95"))
+            return replace(super().rerank(rerank_request), selections=(selection,))
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: response}),
+        rerank_port=UnknownKeyRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.RERANK_RESULT_INVALID
+    assert outcome.trace is not None
+    serialized = json.dumps(to_sanitized_trace_dict(outcome.trace), ensure_ascii=False)
+    assert "PATIENT-SECRET-IDENTIFIER" not in serialized
+
+
+def test_no_hits_succeeds_without_reranking() -> None:
+    request = lexical_request()
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: search_success(request, EvidenceSearchStage.LEXICAL, ())}),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.execution_status is KernelExecutionStatus.SUCCEEDED
+    assert outcome.diagnostic_code is KernelDiagnosticCode.NO_HITS
+    assert outcome.untrusted_selections == ()
+
+
+@pytest.mark.parametrize(
+    "invalid_request",
+    [
+        replace(lexical_request(), normalized_query=SensitiveText("")),
+        replace(lexical_request(), query_fingerprint=replace(fingerprint(), digest="bad")),
+        replace(lexical_request(), filter_snapshot_ref=replace(artifact("filter-snapshot"), content_sha256="BAD")),
+        replace(lexical_request(), rerank_input_projection_version="unknown"),
+        replace(lexical_request(), lexical_limit=True),
+        replace(lexical_request(), dense_limit=1, dense_config_ref=None),
+        replace(lexical_request(), selection_limit=6),
+    ],
+)
+def test_invalid_request_matrix_fails_before_dependencies(
+    invalid_request: EvidenceRetrievalKernelRequest,
+) -> None:
+    outcome = retrieve_knowledge_evidence(
+        invalid_request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=NeverSearch(),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.REQUEST_INVALID
+    assert outcome.trace is None
+
+
+@pytest.mark.parametrize("score", ["-0", "1e-3", "1.0", "01", "+1", "NaN", "Infinity"])
+def test_noncanonical_search_scores_fail_closed(score: str) -> None:
+    request = lexical_request()
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, score),))
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: response}),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.SEARCH_RESULT_INVALID
+
+
+@pytest.mark.parametrize("mutation", ["rank", "stage", "content_hash"])
+def test_invalid_search_hit_matrix_fails_closed(mutation: str) -> None:
+    request = lexical_request()
+    value = hit(EvidenceSearchStage.LEXICAL, "0.9")
+    if mutation == "rank":
+        value = replace(value, rank=0)
+    elif mutation == "stage":
+        value = replace(value, stage=EvidenceSearchStage.DENSE)
+    else:
+        value = replace(value, provenance=replace(value.provenance, content_sha256="c" * 64))
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (value,))
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: response}),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.SEARCH_RESULT_INVALID
+
+
+def test_cross_stage_provenance_mismatch_fails_closed() -> None:
+    request = replace(lexical_request(), dense_limit=5, dense_config_ref=artifact("dense-config"))
+    dense = replace(
+        hit(EvidenceSearchStage.DENSE, "0.8"),
+        provenance=replace(provenance(), locator="$.different"),
+    )
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort(
+            {
+                EvidenceSearchStage.LEXICAL: search_success(
+                    request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),)
+                ),
+                EvidenceSearchStage.DENSE: search_success(request, EvidenceSearchStage.DENSE, (dense,)),
+            }
+        ),
+        rerank_port=NeverRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.SEARCH_RESULT_INVALID
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("query_fingerprint", QueryFingerprint("HMAC-SHA-256", "query-hmac@1", "c" * 64)),
+        ("filter_snapshot_ref", artifact("other-filter")),
+        ("evidence_index_ref", artifact("other-index")),
+        ("retrieval_config_ref", artifact("other-retrieval")),
+        ("rerank_config_ref", artifact("other-rerank")),
+        ("projection_version", "other-version"),
+        ("input_set_hash", "f" * 64),
+    ],
+)
+def test_rerank_receipt_mutation_matrix(field: str, value: object) -> None:
+    request = lexical_request()
+    response = search_success(request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),))
+
+    class MutatedRerank(SuccessfulRerankPort):
+        def rerank(self, rerank_request: EvidenceRerankRequest) -> EvidenceRerankSuccess:
+            return replace(super().rerank(rerank_request), **{field: value})  # type: ignore[arg-type]
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SearchPort({EvidenceSearchStage.LEXICAL: response}),
+        rerank_port=MutatedRerank(),
+    )
+
+    assert outcome.diagnostic_code is KernelDiagnosticCode.RERANK_RECEIPT_MISMATCH
+
+
+def test_trace_is_deterministic_private_and_outcome_is_not_default_serializable() -> None:
+    def run() -> EvidenceRetrievalKernelOutcome:
+        request = lexical_request()
+        return retrieve_knowledge_evidence(
+            request,
+            query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+            search_port=SearchPort(
+                {
+                    EvidenceSearchStage.LEXICAL: search_success(
+                        request, EvidenceSearchStage.LEXICAL, (hit(EvidenceSearchStage.LEXICAL, "0.9"),)
+                    )
+                }
+            ),
+            rerank_port=SuccessfulRerankPort(),
+        )
+
+    first = run()
+    second = run()
+    assert first.trace is not None and second.trace is not None
+    assert to_sanitized_trace_dict(first.trace) == to_sanitized_trace_dict(second.trace)
+    rendered = json.dumps(to_sanitized_trace_dict(first.trace), ensure_ascii=False)
+    assert "합성 복약 정보" not in rendered
+    assert "합성 복약 근거" not in rendered
+    with pytest.raises(TypeError):
+        json.dumps(dataclasses.asdict(first))

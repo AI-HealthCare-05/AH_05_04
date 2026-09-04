@@ -219,9 +219,7 @@ class EvidenceRerankSuccess:
 
 
 class EvidenceRerankPort(Protocol):
-    def rerank(
-        self, request: EvidenceRerankRequest
-    ) -> EvidenceRerankSuccess | EvidenceRerankFailure: ...
+    def rerank(self, request: EvidenceRerankRequest) -> EvidenceRerankSuccess | EvidenceRerankFailure: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,22 +326,55 @@ def retrieve_knowledge_evidence(
     try:
         response = rerank_port.rerank(rerank_request)
     except Exception:
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR, request, binding, search_result)
+        return _outcome(
+            KernelExecutionStatus.DEPENDENCY_ERROR,
+            KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR,
+            request,
+            binding,
+            search_result,
+        )
     if isinstance(response, EvidenceRerankFailure):
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR, request, binding, search_result)
+        return _outcome(
+            KernelExecutionStatus.DEPENDENCY_ERROR,
+            KernelDiagnosticCode.RERANK_DEPENDENCY_ERROR,
+            request,
+            binding,
+            search_result,
+        )
     if not isinstance(response, EvidenceRerankSuccess):
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID, request, binding, search_result)
-    rerank_adapter = (
-        response.adapter_artifact_ref
-        if _is_valid_artifact_ref(response.adapter_artifact_ref)
-        else None
+        return _outcome(
+            KernelExecutionStatus.DEPENDENCY_ERROR,
+            KernelDiagnosticCode.RERANK_RESULT_INVALID,
+            request,
+            binding,
+            search_result,
+        )
+    rerank_adapter = response.adapter_artifact_ref if _is_valid_artifact_ref(response.adapter_artifact_ref) else None
+    observed_selections = _traceable_selection_records(
+        response.selections,
+        frozenset(item.provenance.evidence_key for item in candidates),
     )
-    observed_selections = _traceable_selection_records(response.selections)
     if not _rerank_receipt_matches(request, rerank_request, response):
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RECEIPT_MISMATCH, request, binding, search_result, rerank_adapter, observed_selections)
+        return _outcome(
+            KernelExecutionStatus.DEPENDENCY_ERROR,
+            KernelDiagnosticCode.RERANK_RECEIPT_MISMATCH,
+            request,
+            binding,
+            search_result,
+            rerank_adapter,
+            observed_selections,
+        )
     selections = _validated_selections(request, rerank_request, response)
     if selections is None:
-        return _outcome(KernelExecutionStatus.DEPENDENCY_ERROR, KernelDiagnosticCode.RERANK_RESULT_INVALID, request, binding, search_result, rerank_adapter, observed_selections)
+        return _outcome(
+            KernelExecutionStatus.DEPENDENCY_ERROR,
+            KernelDiagnosticCode.RERANK_RESULT_INVALID,
+            request,
+            binding,
+            search_result,
+            rerank_adapter,
+            observed_selections,
+        )
     return EvidenceRetrievalKernelOutcome(
         KernelExecutionStatus.SUCCEEDED,
         KernelDiagnosticCode.CANDIDATES_RERANKED,
@@ -384,7 +415,11 @@ def to_sanitized_trace_dict(trace: EvidenceRetrievalDiagnosticTrace) -> dict[str
         },
         "hits": [_diagnostic_hit_dict(item) for item in trace.hits],
         "selections": [
-            {"evidence_key": item.evidence_key, "rerank_rank": item.rerank_rank, "rerank_score": item.rerank_score.value}
+            {
+                "evidence_key": item.evidence_key,
+                "rerank_rank": item.rerank_rank,
+                "rerank_score": item.rerank_score.value,
+            }
             for item in trace.selections
         ],
     }
@@ -402,9 +437,15 @@ def _trace(
 ) -> EvidenceRetrievalDiagnosticTrace:
     adapters = dict(search_result.adapter_artifacts) if search_result else {}
     return EvidenceRetrievalDiagnosticTrace(
-        request.query_fingerprint, request.filter_snapshot_ref, request.evidence_index_ref,
-        request.retrieval_config_ref, request.lexical_config_ref, request.dense_config_ref,
-        request.rerank_config_ref, status, diagnostic,
+        request.query_fingerprint,
+        request.filter_snapshot_ref,
+        request.evidence_index_ref,
+        request.retrieval_config_ref,
+        request.lexical_config_ref,
+        request.dense_config_ref,
+        request.rerank_config_ref,
+        status,
+        diagnostic,
         query_verifier_artifact_ref,
         adapters.get(EvidenceSearchStage.LEXICAL),
         adapters.get(EvidenceSearchStage.DENSE),
@@ -448,9 +489,7 @@ def _artifact_dict(reference: ImmutableArtifactRef | None) -> dict[str, str] | N
     }
 
 
-def canonical_rerank_input_hash(
-    projection_version: str, candidates: tuple[KnowledgeEvidenceCandidate, ...]
-) -> str:
+def canonical_rerank_input_hash(projection_version: str, candidates: tuple[KnowledgeEvidenceCandidate, ...]) -> str:
     payload = {
         "projection_version": projection_version,
         "candidates": [
@@ -484,10 +523,14 @@ def _rerank_request(
     candidates: tuple[KnowledgeEvidenceCandidate, ...],
 ) -> EvidenceRerankRequest:
     return EvidenceRerankRequest(
-        request.query_fingerprint, request.filter_snapshot_ref, request.evidence_index_ref,
-        request.retrieval_config_ref, request.rerank_config_ref,
+        request.query_fingerprint,
+        request.filter_snapshot_ref,
+        request.evidence_index_ref,
+        request.retrieval_config_ref,
+        request.rerank_config_ref,
         request.rerank_input_projection_version,
-        canonical_rerank_input_hash(request.rerank_input_projection_version, candidates), candidates,
+        canonical_rerank_input_hash(request.rerank_input_projection_version, candidates),
+        candidates,
     )
 
 
@@ -499,8 +542,7 @@ def _validated_selections(
     if not isinstance(response.selections, tuple) or len(response.selections) > request.selection_limit:
         return None
     if not all(
-        isinstance(item, EvidenceRerankSelection)
-        and _is_nonempty_nfc_string(item.evidence_key)
+        isinstance(item, EvidenceRerankSelection) and _is_nonempty_nfc_string(item.evidence_key)
         for item in response.selections
     ):
         return None
@@ -516,7 +558,10 @@ def _validated_selections(
     return tuple(resolved)
 
 
-def _traceable_selection_records(value: object) -> tuple[DiagnosticSelectionRecord, ...]:
+def _traceable_selection_records(
+    value: object,
+    allowed_evidence_keys: frozenset[str],
+) -> tuple[DiagnosticSelectionRecord, ...]:
     if not isinstance(value, tuple):
         return ()
     records: list[DiagnosticSelectionRecord] = []
@@ -524,15 +569,12 @@ def _traceable_selection_records(value: object) -> tuple[DiagnosticSelectionReco
         if (
             not isinstance(item, EvidenceRerankSelection)
             or not _is_nonempty_nfc_string(item.evidence_key)
+            or item.evidence_key not in allowed_evidence_keys
             or not _is_positive_int(item.rerank_rank)
             or not _is_valid_score(item.rerank_score)
         ):
             return ()
-        records.append(
-            DiagnosticSelectionRecord(
-                item.evidence_key, item.rerank_rank, item.rerank_score
-            )
-        )
+        records.append(DiagnosticSelectionRecord(item.evidence_key, item.rerank_rank, item.rerank_score))
     return tuple(records)
 
 
@@ -581,9 +623,7 @@ def _query_binding(
     query_verifier: QueryBindingVerifierPort,
 ) -> ImmutableArtifactRef | EvidenceRetrievalKernelOutcome:
     try:
-        verification = query_verifier.verify(
-            request.normalized_query, request.query_fingerprint
-        )
+        verification = query_verifier.verify(request.normalized_query, request.query_fingerprint)
     except Exception:
         return _outcome(
             KernelExecutionStatus.DEPENDENCY_ERROR,
@@ -708,9 +748,7 @@ def _normalize_candidates(
     chunk_keys: dict[str, str] = {}
     for item in all_hits:
         stage_key = (item.stage, item.provenance.evidence_key)
-        bound_key = chunk_keys.setdefault(
-            item.provenance.knowledge_chunk_ref, item.provenance.evidence_key
-        )
+        bound_key = chunk_keys.setdefault(item.provenance.knowledge_chunk_ref, item.provenance.evidence_key)
         if stage_key in stage_keys or bound_key != item.provenance.evidence_key:
             return KernelDiagnosticCode.SEARCH_RESULT_INVALID
         stage_keys.add(stage_key)
@@ -775,25 +813,36 @@ def _is_valid_search_hit(
         and _is_valid_provenance(item.provenance)
         and item.provenance.evidence_index_ref == expected_evidence_index_ref
         and _is_valid_sensitive_text(item.content_text)
-        and hashlib.sha256(item.content_text.reveal().encode("utf-8")).hexdigest()
-        == item.provenance.content_sha256
+        and hashlib.sha256(item.content_text.reveal().encode("utf-8")).hexdigest() == item.provenance.content_sha256
     )
 
 
 def _is_valid_score(value: object) -> bool:
-    return isinstance(value, CanonicalScore) and isinstance(value.value, str) and bool(
-        re.fullmatch(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$", value.value)
+    return (
+        isinstance(value, CanonicalScore)
+        and isinstance(value.value, str)
+        and bool(re.fullmatch(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$", value.value))
     )
 
 
 def _is_valid_provenance(value: object) -> bool:
-    return isinstance(value, KnowledgeEvidenceProvenance) and all(
-        _is_nonempty_nfc_string(item)
-        for item in (
-            value.evidence_key, value.knowledge_chunk_ref, value.source_version,
-            value.locator, value.canonicalization_spec_version,
+    return (
+        isinstance(value, KnowledgeEvidenceProvenance)
+        and all(
+            _is_nonempty_nfc_string(item)
+            for item in (
+                value.evidence_key,
+                value.knowledge_chunk_ref,
+                value.source_version,
+                value.locator,
+                value.canonicalization_spec_version,
+            )
         )
-    ) and _is_valid_artifact_ref(value.evidence_index_ref) and _is_valid_artifact_ref(value.source_snapshot_ref) and isinstance(value.content_sha256, str) and bool(_SHA256_RE.fullmatch(value.content_sha256))
+        and _is_valid_artifact_ref(value.evidence_index_ref)
+        and _is_valid_artifact_ref(value.source_snapshot_ref)
+        and isinstance(value.content_sha256, str)
+        and bool(_SHA256_RE.fullmatch(value.content_sha256))
+    )
 
 
 def _is_valid_request(request: object) -> bool:
@@ -815,9 +864,7 @@ def _is_valid_request(request: object) -> bool:
         )
     ):
         return False
-    if request.dense_config_ref is not None and not _is_valid_artifact_ref(
-        request.dense_config_ref
-    ):
+    if request.dense_config_ref is not None and not _is_valid_artifact_ref(request.dense_config_ref):
         return False
     if request.rerank_input_projection_version != RERANK_INPUT_PROJECTION_VERSION:
         return False
