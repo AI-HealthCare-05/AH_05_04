@@ -56,15 +56,56 @@ uv run python -m ai_worker.tasks.evaluation run-dev \
 ```
 
 이 결과는 로컬·CI의 DEV infrastructure evidence이며 Release `PASS`, HOLDOUT 승인 또는 Baseline Freeze가
-아닙니다. 현재 실제 Provider와 Metric Adapter는 등록하지 않으므로 production 명령의 미구현 결과는
-`NOT_IMPLEMENTED/null`로 기록되며 성공 판정으로 해석하지 않습니다.
+아닙니다. 실제 Provider Adapter는 등록하지 않으므로 production 명령의 미구현 결과는
+`NOT_IMPLEMENTED/null`로 기록되며 성공 판정으로 해석하지 않습니다. 합성 retrieval replay Adapter와 Metric은
+아래 #158 전용 DEV workflow에서만 사용합니다.
 
 - `run-dev`는 `HOLDOUT`·`SAFETY_REGRESSION`을 load·execute·observe할 수 없습니다.
 - 기존 Run ID와 lock은 덮어쓰거나 자동 삭제하지 않습니다. 재실행에는 새 canonical UUID Run ID가 필요합니다.
 - #158~#161 DEV Metric과 승인된 Comparison/Evaluation Policy가 준비되기 전 HOLDOUT 단계는
   `WAITING_FOR_APPROVED_COMPARISON_POLICY`입니다.
-- `comparison.json`, `gate.json`, `baseline-freeze-receipt.json`은 이 명령으로 생성하지 않습니다.
+- `--baseline-run-id`가 없는 기존 DEV 명령은 `comparison.json`을 생성하지 않습니다. `gate.json`과
+  `baseline-freeze-receipt.json`은 어떤 `run-dev` 명령으로도 생성하지 않습니다.
 - `evals/results/`의 실행 결과는 Git 추적 대상이 아닙니다.
+
+### RAG Retrieval 합성 DEV Baseline·Candidate
+
+Issue #158의 다음 명령은 동일한 합성 DEV Dataset과 평가 Policy에서 `RET-L` lexical replay Baseline과
+`RET-HR` hybrid-plus-rerank replay Candidate를 순서대로 실행합니다. 실행 전 저장소가 clean 상태여야 하며,
+예시 Run ID가 이미 존재하면 기존 결과를 삭제하거나 덮어쓰지 말고 새 canonical UUID를 사용해야 합니다.
+
+```bash
+uv run python -m ai_worker.tasks.evaluation run-dev \
+  --config evals/configs/rag-retrieval-dev-ret-l-v1.execution.json \
+  --run-id 15800000-0000-4000-8000-000000000001 \
+  --executed-by ceohwj
+```
+
+```bash
+uv run python -m ai_worker.tasks.evaluation run-dev \
+  --config evals/configs/rag-retrieval-dev-ret-hr-v1.execution.json \
+  --run-id 15800000-0000-4000-8000-000000000002 \
+  --executed-by ceohwj \
+  --baseline-run-id 15800000-0000-4000-8000-000000000001
+```
+
+각 Run Bundle은 `evals/results/<run-id>/`에 저장됩니다. Baseline은 7개 파일, Candidate는 Baseline과의
+`comparison.json`을 포함한 8개 파일을 가집니다. 다음 read-only 명령은 runtime Schema, content manifest와
+파일 hash를 검증하고 성공 시 semantic content hash 한 줄만 출력합니다.
+
+```bash
+uv run python -m ai_worker.tasks.evaluation verify-result \
+  --run-id 15800000-0000-4000-8000-000000000001
+uv run python -m ai_worker.tasks.evaluation verify-result \
+  --run-id 15800000-0000-4000-8000-000000000002
+```
+
+이 Run Bundle은 Git 비추적 로컬·CI DEV Artifact입니다. CI에서 보존할 때는
+`rag-evaluation-<run-id>` Artifact 이름을 사용하며 소스 PR에 결과 파일을 commit하지 않습니다. 비교 delta와
+`INCONCLUSIVE` 판정은 진단 evidence일 뿐이고, 승인된 Release threshold가 없으므로 HOLDOUT Baseline Freeze가
+아닙니다. 또한 Release `PASS`, 임상적 유효성, Privacy·Source·Production 승인을 의미하지 않습니다. report의
+`SYNTHETIC_REPLAY_DEV`, HOLDOUT `NOT_PERFORMED`, production integration
+`BLOCKED_BY_RAG_07A_07B_OR_08` 경계를 유지합니다.
 
 ### Evaluation Schema Sets
 
