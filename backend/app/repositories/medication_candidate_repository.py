@@ -45,15 +45,37 @@ class MedicationCandidateRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def get_medication_for_candidate_search_owned(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        user_id: UUID,
+    ) -> Medication | None:
+        """Candidate Search 입력으로 사용할 약품 row를 서버 소유권 경계에서 조회합니다."""
+        result = await self.session.execute(
+            select(Medication)
+            .join(Prescription, Prescription.id == Medication.prescription_id)
+            .where(
+                Medication.id == prescription_version_medication_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+            .with_for_update(of=Medication)
+        )
+        return result.scalar_one_or_none()
+
     async def get_active_search_for_update(
         self,
         *,
         prescription_version_medication_id: UUID,
+        user_id: UUID,
     ) -> MedicationCandidateSearch | None:
         result = await self.session.execute(
             select(MedicationCandidateSearch)
+            .join(Medication, Medication.id == MedicationCandidateSearch.prescription_version_medication_id)
+            .join(Prescription, Prescription.id == Medication.prescription_id)
             .where(
                 MedicationCandidateSearch.prescription_version_medication_id == prescription_version_medication_id,
+                owned_by_self(Prescription.profile_id, user_id),
                 MedicationCandidateSearch.status.in_(
                     (
                         MedicationCandidateSearchStatus.RUNNING,
@@ -62,12 +84,6 @@ class MedicationCandidateRepository:
                 ),
             )
             .with_for_update()
-        )
-        return result.scalar_one_or_none()
-
-    async def get_search_for_update(self, *, search_id: UUID) -> MedicationCandidateSearch | None:
-        result = await self.session.execute(
-            select(MedicationCandidateSearch).where(MedicationCandidateSearch.id == search_id).with_for_update()
         )
         return result.scalar_one_or_none()
 
@@ -93,42 +109,40 @@ class MedicationCandidateRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_result_selection_for_update(
-        self,
-        *,
-        candidate_search_result_id: UUID,
-    ) -> MedicationCandidateSelection | None:
-        result = await self.session.execute(
-            select(MedicationCandidateSearchResult)
-            .where(MedicationCandidateSearchResult.id == candidate_search_result_id)
-            .with_for_update()
-        )
-        candidate_result = result.scalar_one_or_none()
-        if candidate_result is None:
-            return None
-
-        search = await self.get_search_for_update(search_id=candidate_result.search_id)
-        if search is None:
-            return None
-        return MedicationCandidateSelection(search=search, result=candidate_result)
-
     async def get_result_selection_for_update_owned(
         self,
         *,
         candidate_search_result_id: UUID,
         user_id: UUID,
     ) -> MedicationCandidateSelection | None:
+        search_result = await self.session.execute(
+            select(MedicationCandidateSearch)
+            .join(
+                MedicationCandidateSearchResult,
+                MedicationCandidateSearchResult.search_id == MedicationCandidateSearch.id,
+            )
+            .join(Medication, Medication.id == MedicationCandidateSearch.prescription_version_medication_id)
+            .join(Prescription, Prescription.id == Medication.prescription_id)
+            .where(
+                MedicationCandidateSearchResult.id == candidate_search_result_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+            .with_for_update(of=MedicationCandidateSearch)
+        )
+        search = search_result.scalar_one_or_none()
+        if search is None:
+            return None
+
         result = await self.session.execute(
             select(MedicationCandidateSearchResult)
-            .where(MedicationCandidateSearchResult.id == candidate_search_result_id)
-            .with_for_update()
+            .where(
+                MedicationCandidateSearchResult.id == candidate_search_result_id,
+                MedicationCandidateSearchResult.search_id == search.id,
+            )
+            .with_for_update(of=MedicationCandidateSearchResult)
         )
         candidate_result = result.scalar_one_or_none()
         if candidate_result is None:
-            return None
-
-        search = await self.get_search_for_update_owned(search_id=candidate_result.search_id, user_id=user_id)
-        if search is None:
             return None
         return MedicationCandidateSelection(search=search, result=candidate_result)
 
@@ -152,11 +166,15 @@ class MedicationCandidateRepository:
         self,
         *,
         prescription_version_medication_id: UUID,
+        user_id: UUID,
     ) -> MedicationIdentification | None:
         result = await self.session.execute(
             select(MedicationIdentification)
+            .join(Medication, Medication.id == MedicationIdentification.prescription_version_medication_id)
+            .join(Prescription, Prescription.id == Medication.prescription_id)
             .where(
                 MedicationIdentification.prescription_version_medication_id == prescription_version_medication_id,
+                owned_by_self(Prescription.profile_id, user_id),
             )
             .order_by(MedicationIdentification.created_at.desc(), MedicationIdentification.id.desc())
             .limit(1)

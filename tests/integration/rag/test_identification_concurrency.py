@@ -155,8 +155,7 @@ async def _create_ready_search() -> tuple[UUID, UUID, UUID, UUID]:
         search = (
             await service.record_candidate_search(
                 prescription_version_medication_id=medication.id,
-                medication_name_snapshot="테스트약",
-                strength_text_snapshot="500mg",
+                user_id=owner.id,
                 query_digest="query-digest",
                 runtime_release_bundle_id=None,
                 candidate_index_version_id=None,
@@ -170,6 +169,91 @@ async def _create_ready_search() -> tuple[UUID, UUID, UUID, UUID]:
             results=[_ready_result()],
         )
         return owner.id, medication.id, search.id, finalized.results[0].id
+
+
+async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUID, UUID, UUID, UUID]:
+    async with session_factory.begin() as session:
+        owner = await _create_user(session, email="different-search-owner@example.com")
+        profile = await session.scalar(
+            select(Profile).where(Profile.user_id == owner.id, Profile.profile_type == ProfileType.SELF)
+        )
+        assert profile is not None
+        document = MedicalDocument(
+            uploaded_by=owner.id,
+            profile_id=profile.id,
+            original_file_name="prescription.jpg",
+            object_key=f"{uuid4()}.jpg",
+            file_mime_type="image/jpeg",
+            file_size_bytes=100,
+        )
+        session.add(document)
+        await session.flush()
+
+        ocr_job = OcrJob(document_id=document.id)
+        session.add(ocr_job)
+        await session.flush()
+
+        prescription = Prescription(
+            document_id=document.id,
+            source_ocr_job_id=ocr_job.id,
+            profile_id=profile.id,
+            prescribed_date=date.today(),
+            confirmed_at=datetime.now(config.TIMEZONE),
+        )
+        session.add(prescription)
+        await session.flush()
+
+        medication = Medication(
+            prescription_id=prescription.id,
+            medication_name="테스트약",
+            strength_text="500mg",
+            display_order=1,
+        )
+        session.add(medication)
+        await session.flush()
+
+        service = _service(session)
+        replaced_search = (
+            await service.record_candidate_search(
+                prescription_version_medication_id=medication.id,
+                user_id=owner.id,
+                query_digest="query-digest-old",
+                runtime_release_bundle_id=None,
+                candidate_index_version_id=None,
+                expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+            )
+        ).search
+        replaced_finalized = await service.finalize_candidate_search(
+            search_id=replaced_search.id,
+            user_id=owner.id,
+            status=MedicationCandidateSearchStatus.READY,
+            results=[_ready_result()],
+        )
+
+        current_search = (
+            await service.record_candidate_search(
+                prescription_version_medication_id=medication.id,
+                user_id=owner.id,
+                query_digest="query-digest-current",
+                runtime_release_bundle_id=None,
+                candidate_index_version_id=None,
+                expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+            )
+        ).search
+        current_finalized = await service.finalize_candidate_search(
+            search_id=current_search.id,
+            user_id=owner.id,
+            status=MedicationCandidateSearchStatus.READY,
+            results=[_ready_result()],
+        )
+        return (
+            owner.id,
+            medication.id,
+            replaced_search.id,
+            replaced_finalized.results[0].id,
+            current_search.id,
+            current_finalized.results[0].id,
+        )
 
 
 async def _confirm_once(
@@ -229,3 +313,49 @@ async def test_concurrent_confirm_allows_only_one_identification() -> None:
     assert identifications[0].status == MedicationIdentificationStatus.MATCHED
     assert identifications[0].candidate_search_id == search_id
     assert search_status == MedicationCandidateSearchStatus.CONSUMED
+
+
+async def test_concurrent_confirm_different_searches_allows_only_current_search() -> None:
+    (
+        user_id,
+        medication_id,
+        replaced_search_id,
+        replaced_result_id,
+        current_search_id,
+        current_result_id,
+    ) = await _create_replaced_and_current_ready_searches()
+
+    results = await asyncio.gather(
+        _confirm_once(user_id=user_id, medication_id=medication_id, candidate_search_result_id=replaced_result_id),
+        _confirm_once(user_id=user_id, medication_id=medication_id, candidate_search_result_id=current_result_id),
+    )
+
+    assert results.count(("ok", None)) == 1
+    assert ("CANDIDATE_SEARCH_STALE", "SEARCH_NOT_READY") in results
+
+    async with session_factory() as session:
+        identifications = (
+            (
+                await session.execute(
+                    select(MedicationIdentification).where(
+                        MedicationIdentification.prescription_version_medication_id == medication_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        search_status_rows = (
+            await session.execute(
+                select(MedicationCandidateSearch.id, MedicationCandidateSearch.status).where(
+                    MedicationCandidateSearch.id.in_([replaced_search_id, current_search_id])
+                )
+            )
+        ).all()
+        search_statuses: dict[UUID, MedicationCandidateSearchStatus] = {row[0]: row[1] for row in search_status_rows}
+
+    assert len(identifications) == 1
+    assert identifications[0].status == MedicationIdentificationStatus.MATCHED
+    assert identifications[0].candidate_search_id == current_search_id
+    assert search_statuses[replaced_search_id] == MedicationCandidateSearchStatus.INVALIDATED_INPUT_CHANGED
+    assert search_statuses[current_search_id] == MedicationCandidateSearchStatus.CONSUMED

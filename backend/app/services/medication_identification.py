@@ -56,15 +56,22 @@ class MedicationIdentificationService:
         self,
         *,
         prescription_version_medication_id: UUID,
-        medication_name_snapshot: str,
-        strength_text_snapshot: str | None,
+        user_id: UUID,
         query_digest: str,
         runtime_release_bundle_id: UUID | None,
         candidate_index_version_id: UUID | None,
         expires_at: datetime | None,
     ) -> CandidateSearchRecordResult:
+        medication = await self._repository.get_medication_for_candidate_search_owned(
+            prescription_version_medication_id=prescription_version_medication_id,
+            user_id=user_id,
+        )
+        if medication is None:
+            raise self._not_found_error(field="prescription_version_medication_id")
+
         active_search = await self._repository.get_active_search_for_update(
-            prescription_version_medication_id=prescription_version_medication_id
+            prescription_version_medication_id=prescription_version_medication_id,
+            user_id=user_id,
         )
         now = datetime.now(config.TIMEZONE)
         if active_search is not None and self._is_expired(active_search, now=now):
@@ -72,7 +79,8 @@ class MedicationIdentificationService:
             active_search = None
 
         existing_identification = await self._repository.get_latest_identification(
-            prescription_version_medication_id=prescription_version_medication_id
+            prescription_version_medication_id=prescription_version_medication_id,
+            user_id=user_id,
         )
         if existing_identification is not None:
             raise self._context_stale_error(
@@ -93,8 +101,8 @@ class MedicationIdentificationService:
 
         search = await self._repository.create_search(
             prescription_version_medication_id=prescription_version_medication_id,
-            medication_name_snapshot=medication_name_snapshot,
-            strength_text_snapshot=strength_text_snapshot,
+            medication_name_snapshot=medication.medication_name,
+            strength_text_snapshot=medication.strength_text,
             query_digest=query_digest,
             runtime_release_bundle_id=runtime_release_bundle_id,
             candidate_index_version_id=candidate_index_version_id,

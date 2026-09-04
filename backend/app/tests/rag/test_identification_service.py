@@ -144,8 +144,7 @@ async def test_record_candidate_search_reuses_same_context(db_session: AsyncSess
 
     first = await service.record_candidate_search(
         prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
+        user_id=owner.id,
         query_digest="query-digest-1",
         runtime_release_bundle_id=bundle_id,
         candidate_index_version_id=index_id,
@@ -153,8 +152,7 @@ async def test_record_candidate_search_reuses_same_context(db_session: AsyncSess
     )
     second = await service.record_candidate_search(
         prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
+        user_id=owner.id,
         query_digest="query-digest-1",
         runtime_release_bundle_id=bundle_id,
         candidate_index_version_id=index_id,
@@ -166,6 +164,50 @@ async def test_record_candidate_search_reuses_same_context(db_session: AsyncSess
     assert second.search.id == first.search.id
 
 
+async def test_record_candidate_search_uses_owned_medication_snapshot(db_session: AsyncSession) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="snapshot-owner@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    medication = await _create_medication(db_session, prescription=prescription)
+    medication.medication_name = "서버확정약"
+    medication.strength_text = "250mg"
+    await db_session.flush()
+
+    result = await service.record_candidate_search(
+        prescription_version_medication_id=medication.id,
+        user_id=owner.id,
+        query_digest="query-digest-server-snapshot",
+        runtime_release_bundle_id=None,
+        candidate_index_version_id=None,
+        expires_at=None,
+    )
+
+    assert result.search.medication_name_snapshot == "서버확정약"
+    assert result.search.strength_text_snapshot == "250mg"
+
+
+async def test_record_candidate_search_rejects_other_users_medication(db_session: AsyncSession) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="search-owner@example.com")
+    intruder = await _create_user(db_session, email="search-intruder@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    medication = await _create_medication(db_session, prescription=prescription)
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.record_candidate_search(
+            prescription_version_medication_id=medication.id,
+            user_id=intruder.id,
+            query_digest="query-digest-cross-owner",
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=None,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.code == "CANDIDATE_SEARCH_NOT_FOUND"
+    assert exc_info.value.details[0].field == "prescription_version_medication_id"
+
+
 async def test_record_candidate_search_invalidates_changed_context(db_session: AsyncSession) -> None:
     service = _service(db_session)
     owner = await _create_user(db_session, email="owner2@example.com")
@@ -174,8 +216,7 @@ async def test_record_candidate_search_invalidates_changed_context(db_session: A
 
     first = await service.record_candidate_search(
         prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
+        user_id=owner.id,
         query_digest="query-digest-1",
         runtime_release_bundle_id=None,
         candidate_index_version_id=None,
@@ -183,8 +224,7 @@ async def test_record_candidate_search_invalidates_changed_context(db_session: A
     )
     second = await service.record_candidate_search(
         prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
+        user_id=owner.id,
         query_digest="query-digest-2",
         runtime_release_bundle_id=None,
         candidate_index_version_id=None,
@@ -206,8 +246,7 @@ async def test_confirm_identification_consumes_ready_search(db_session: AsyncSes
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -245,8 +284,7 @@ async def test_confirm_identification_rejects_reconfirm_of_consumed_search(db_se
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -285,8 +323,7 @@ async def test_confirm_identification_rejects_expired_search(db_session: AsyncSe
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -324,8 +361,7 @@ async def test_confirm_identification_rejects_search_medication_mismatch(db_sess
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=search_medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -359,8 +395,7 @@ async def test_record_candidate_search_rejects_existing_identification(db_sessio
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -382,8 +417,7 @@ async def test_record_candidate_search_rejects_existing_identification(db_sessio
     with pytest.raises(ApiError) as exc_info:
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest-2",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -402,8 +436,7 @@ async def test_reject_identification_invalidates_ready_search(db_session: AsyncS
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -442,8 +475,7 @@ async def test_reject_identification_rejects_re_reject_of_invalidated_search(db_
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -484,8 +516,7 @@ async def test_record_candidate_search_rejects_after_user_rejected_identificatio
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -508,8 +539,7 @@ async def test_record_candidate_search_rejects_after_user_rejected_identificatio
     with pytest.raises(ApiError) as exc_info:
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest-after-reject",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -541,8 +571,7 @@ async def test_expired_active_search_does_not_block_new_search(db_session: Async
     medication = await _create_medication(db_session, prescription=prescription)
     first = await service.record_candidate_search(
         prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
+        user_id=owner.id,
         query_digest="query-digest-1",
         runtime_release_bundle_id=None,
         candidate_index_version_id=None,
@@ -551,8 +580,7 @@ async def test_expired_active_search_does_not_block_new_search(db_session: Async
 
     second = await service.record_candidate_search(
         prescription_version_medication_id=medication.id,
-        medication_name_snapshot="테스트약",
-        strength_text_snapshot="500mg",
+        user_id=owner.id,
         query_digest="query-digest-1",
         runtime_release_bundle_id=None,
         candidate_index_version_id=None,
@@ -572,8 +600,7 @@ async def test_non_ready_search_must_not_expose_selectable_result(db_session: As
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -604,8 +631,7 @@ async def test_preflight_passes_when_all_medications_are_matched(db_session: Asy
         search = (
             await service.record_candidate_search(
                 prescription_version_medication_id=medication.id,
-                medication_name_snapshot="테스트약",
-                strength_text_snapshot="500mg",
+                user_id=owner.id,
                 query_digest=f"query-digest-{medication.id}",
                 runtime_release_bundle_id=None,
                 candidate_index_version_id=None,
@@ -641,8 +667,7 @@ async def test_preflight_rejects_when_any_medication_is_not_matched(db_session: 
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=matched_medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -683,8 +708,7 @@ async def test_finalize_candidate_search_rejects_other_users_search(db_session: 
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
@@ -713,8 +737,7 @@ async def test_confirm_and_reject_reject_other_users_result(db_session: AsyncSes
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=medication.id,
-            medication_name_snapshot="테스트약",
-            strength_text_snapshot="500mg",
+            user_id=owner.id,
             query_digest="query-digest",
             runtime_release_bundle_id=None,
             candidate_index_version_id=None,
