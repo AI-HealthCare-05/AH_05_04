@@ -13,7 +13,7 @@ from app.models.medical_documents import MedicalDocument
 from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 
-MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
+MAX_DOCUMENT_SIZE_BYTES = 30 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 CONTENT_TYPE_BY_EXTENSION = {
@@ -135,7 +135,7 @@ class MedicalDocumentService:
             raise ApiError(
                 status_code=400,
                 code="UPLOAD_FILE_TOO_LARGE",
-                message="파일 크기는 10MB 이하만 업로드할 수 있습니다.",
+                message="파일 크기는 30MB 이하만 업로드할 수 있습니다.",
                 details=[ErrorDetail(field="file", reason="TOO_LARGE", rejected_value=str(len(content)))],
             )
 

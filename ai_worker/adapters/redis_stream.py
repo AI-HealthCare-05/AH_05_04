@@ -6,7 +6,10 @@ from typing import cast
 from redis.asyncio import Redis
 from redis.exceptions import RedisError, ResponseError
 
-from ai_worker.adapters.errors import StreamOperationError
+from ai_worker.adapters.errors import (
+    StreamMessageDecodingError,
+    StreamOperationError,
+)
 from ai_worker.adapters.redis_message_codec import (
     RedisKey,
     RedisValue,
@@ -187,12 +190,17 @@ def _decode_read_result(result: object) -> tuple[WorkerDelivery, ...]:
 
     for _, entries in redis_result:
         for stream_message_id, fields in entries:
+            try:
+                message = decode_stream_message(fields)
+            except StreamMessageDecodingError:
+                # quarantine·ACK 처리는 #142에서 구현합니다.
+                # 현재는 잘못된 entry만 PEL에 남기고 정상 entry 처리를 계속합니다.
+                continue
+
             deliveries.append(
                 WorkerDelivery(
-                    stream_message_id=_decode_stream_id(
-                        stream_message_id,
-                    ),
-                    message=decode_stream_message(fields),
+                    stream_message_id=_decode_stream_id(stream_message_id),
+                    message=message,
                 )
             )
 

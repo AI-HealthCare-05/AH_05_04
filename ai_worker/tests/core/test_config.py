@@ -15,11 +15,22 @@ from provider_contracts.observability import DeploymentEnvironment
 _REFERENCE_INSTANT = datetime(2026, 1, 1)
 
 
+# Worker runtime은 Job 실행 DB에 접속해야 하므로 DB_* 4개가 필수입니다(#233).
+# 기본값을 주면 오설정된 배포가 조용히 localhost로 붙으므로 필수로 두고, 테스트는
+# 합성 값을 명시합니다.
+_REQUIRED_SETTINGS: dict[str, Any] = {
+    "ENV": DeploymentEnvironment.LOCAL,
+    "DB_HOST": "127.0.0.1",
+    "DB_NAME": "test",
+    "DB_USER": "worker",
+    "DB_PASSWORD": "worker-password",
+}
+
+
 def _config(**overrides: Any) -> Config:
     return Config(  # type: ignore[call-arg]
         _env_file=None,
-        ENV=DeploymentEnvironment.LOCAL,
-        **overrides,
+        **{**_REQUIRED_SETTINGS, **overrides},
     )
 
 
@@ -116,21 +127,13 @@ def test_config_accepts_redis_environment_values(
 
 def test_config_rejects_blank_redis_group() -> None:
     with pytest.raises(ValidationError):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            ENV=DeploymentEnvironment.LOCAL,
-            REDIS_CONSUMER_GROUP="   ",
-        )
+        _config(REDIS_CONSUMER_GROUP="   ")
 
 
 @pytest.mark.parametrize("port", [0, 65536])
 def test_config_rejects_invalid_redis_port(port: int) -> None:
     with pytest.raises(ValidationError):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            ENV=DeploymentEnvironment.LOCAL,
-            REDIS_PORT=port,
-        )
+        _config(REDIS_PORT=port)
 
 
 @pytest.mark.parametrize(
@@ -144,9 +147,7 @@ def test_config_rejects_socket_timeout_not_longer_than_blocking_read(
         ValidationError,
         match="REDIS_SOCKET_TIMEOUT_SECONDS",
     ):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            ENV=DeploymentEnvironment.LOCAL,
+        _config(
             REDIS_BLOCK_MS=5000,
             REDIS_SOCKET_TIMEOUT_SECONDS=socket_timeout_seconds,
         )
@@ -164,7 +165,7 @@ def test_config_parses_required_environment(
     configured_value: str,
     expected: DeploymentEnvironment,
 ) -> None:
-    config = Config.model_validate({"ENV": configured_value})
+    config = Config.model_validate({**_REQUIRED_SETTINGS, "ENV": configured_value})
 
     assert config.ENV is expected
 
@@ -179,7 +180,7 @@ def test_config_rejects_missing_environment(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.parametrize("configured_value", ["test", "dev", "prod"])
 def test_config_rejects_unknown_environment(configured_value: str) -> None:
     with pytest.raises(ValidationError):
-        Config.model_validate({"ENV": configured_value})
+        Config.model_validate({**_REQUIRED_SETTINGS, "ENV": configured_value})
 
 
 def test_config_has_approved_ocr_budget_defaults() -> None:

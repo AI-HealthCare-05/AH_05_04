@@ -8,7 +8,7 @@
 
 이 문서는 구현 완료 보고서가 아니라, Post-MVP-1 Sprint 1 착수 전에 개발환경과 비밀정보 주입 경로의 차단 요소를 확인하고 실구현 PR에서 따라야 할 조건을 정리한 Proposed 운영 계약이다.
 
-문서가 병합되더라도 Redis Consumer Group, 실제 Worker 처리 경로, Provider secret 검증, 로그·Stream·오류 응답 비밀정보 비노출 테스트가 완료된 것으로 간주하지 않는다. 관련 구현과 테스트가 병합되고 상태가 갱신되기 전에는 현재 실행 계약이 아니다.
+Redis Consumer Group과 Worker 실행 경로는 #140·#141·#233으로 구현되었다. 다만 이 문서가 병합되더라도 Provider secret 주입·검증, Provider 실호출 기준 로그·Stream·오류 응답 비밀정보 비노출 테스트, 운영 Redis 인증·노출 차단이 완료된 것으로 간주하지 않는다. 남은 항목은 #258(실제 Provider 연결과 secret 주입), #150(운영 Redis 인증·노출 차단), #142(reclaim·retry·DLQ)에서 다루며, 관련 구현과 테스트가 병합되고 상태가 갱신되기 전에는 이 부분이 현재 실행 계약이 아니다.
 
 실제 API key, 비밀번호, token, cookie, 환자 정보, 원본 처방전, 원본 OCR 결과는 이 문서와 Issue, PR, 로그에 기록하지 않는다.
 
@@ -29,14 +29,14 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 | --- | --- |
 | Redis 운영 노출 | 운영 Redis는 기본적으로 host port에 공개하지 않는다. 공개가 필요한 경우 Redis 인증과 접근 제한을 먼저 적용한다. |
 | Redis 연결 설정 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` 사용 여부와 기본값을 Backend/Worker 기준으로 통일한다. |
-| Worker 실행 | 공통 Handler·Dispatcher·commit-before-ACK 경계는 재사용하고, 실제 Redis Consumer Group·ACK adapter·결과 저장 adapter는 별도 구현한다. |
+| Worker 실행 | #140·#141·#233에서 Redis Consumer Group·ACK adapter·SQLAlchemy 결과 저장·lease·fencing·commit-before-ACK runtime이 조립되었다. reclaim·retry·DLQ는 #142, 실제 Provider 연결은 #258에서 완성한다. |
 | Provider secret | 실제 Provider 호출이 켜진 환경에서는 CLOVA/OpenAI 설정 누락을 startup 또는 client 생성 시점에 차단한다. |
 | Runner secret 경계 | release validation runner에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다. 현재 동기 경로에서는 FastAPI에 Provider secret을 주입하고, Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 주입한다. |
 | Provider endpoint | CLOVA endpoint는 허용된 HTTPS Provider endpoint인지 검증하고, full endpoint query를 로그·오류 응답에 남기지 않는다. |
 | 오류 응답 | secret, token, cookie, DB password, Provider 원문 응답, OCR 원문, 의료 원문을 응답 body에 포함하지 않는다. |
 | 로그·Stream·DLQ | 일반 로그, Stream, quarantine, DLQ, 평가 artifact에 의료 원문과 인증정보를 남기지 않는다. |
 | PostgreSQL pool | `pool_size`, `max_overflow`, pool wait timeout, process 수를 포함해 운영 connection 예산을 문서화한다. |
-| Production 배포 | 실제 Worker 처리 로직 연결 전에는 placeholder `ai-worker`를 Production 처리 서비스처럼 배포하지 않는다. |
+| Production 배포 | `ai-worker`는 #233으로 실제 Consumer runtime이 되었으나, reclaim·retry·DLQ(#142), 실제 Provider 연결과 secret 주입(#258), 운영 Redis 인증·노출 차단(#150)이 병합되기 전에는 Production 처리 서비스로 배포하지 않는다. |
 | 공개 차단 | 이 문서는 `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`를 새로 정의하지 않고 `docs/release-gates/post-mvp-1-external-approvals.md`의 공개 차단 기준을 따른다. |
 | 문서 승격 | 구현 완료 시 실행 계약은 `current`, 운영 절차는 `deployment`, 공개 조건은 `release-gates`, 결정 이유는 ADR 또는 governance decision으로 분리한다. |
 
@@ -44,16 +44,16 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 
 ### Redis
 
-| 항목 | 현재 상태 | 근거 |
-| --- | --- | --- |
+| 항목 | 현재 상태                                                                                                                                         | 근거 |
+| --- |---------------------------------------------------------------------------------------------------------------------------------------------------| --- |
 | 로컬 Redis 서비스 | 있음. host port는 `"6379:6379"`로 하드코딩 | `docker-compose.yml:8-9` |
 | 운영 Redis 서비스 | 있음. host port는 `"${REDIS_PORT}:6379"`로 공개 | `infra/docker/docker-compose.prod.yml:8-9` |
 | Redis 인증 | 없음. `REDIS_PASSWORD`, `requirepass`, ACL 설정 없음 | 저장소 설정 검색 기준 |
 | Redis 연결 env | `REDIS_PORT`는 예시 env에 있으나 `REDIS_HOST`, `REDIS_PASSWORD`는 없음 | `envs/example.local.env`, `envs/example.prod.env` |
-| Redis client 코드 | 현재 Backend와 AI Worker에 redis client 사용 경로 없음 | `backend/`, `ai_worker/` 검색 기준 |
-| AI Worker 진입점 | placeholder 로그를 남기고 종료 코드 `0`으로 종료 | `ai_worker/main.py`, `ai_worker/README.md:15` |
-| AI Worker 공통 실행 골격 | 재시도 계산, Handler·Registry·Dispatcher, 결과 저장·commit 후 ACK를 강제하는 추상 Consumer 실행 경계는 구현됨 | `ai_worker/README.md:17-19`, `ai_worker/core/consumer_execution.py` |
-| AI Worker 미구현 영역 | 실제 Redis Consumer Group, SQLAlchemy 결과 저장, ACK adapter, lease·fencing, reclaim, 멱등성, health check, Backend API 연결은 미구현 | `ai_worker/README.md:20-21` |
+| Redis client 코드 | AI Worker에 `redis.asyncio` client와 Stream Adapter 구현됨 (#140) | `ai_worker/adapters/redis_stream.py`, `ai_worker/adapters/factory.py` |
+| AI Worker 진입점 | Consumer runtime을 조립해 Redis Stream을 소비하고 종료 신호까지 loop를 유지함 (#233) | `ai_worker/main.py`, `ai_worker/core/runtime_assembly.py`, `ai_worker/README.md:15` |
+| AI Worker 공통 실행 runtime | Redis Consumer Group·ACK adapter·SQLAlchemy 결과 저장·lease·heartbeat·fencing·commit-before-ACK 경계가 조립됨 (#140·#141·#233) | `ai_worker/core/consumer_execution.py`, `ai_worker/core/runtime_assembly.py` |
+| AI Worker 미구현 영역 | reclaim·retry·DLQ(#142), 실제 CLOVA Provider 연결(#258), health check는 미구현 | `ai_worker/README.md:20-21` |
 
 운영 compose에서 Redis를 host port로 공개하면서 인증 설정이 없으면, 외부 접근이 가능한 환경에서 `oryak:jobs` Stream에 임의 메시지를 `XADD`할 수 있다. Worker가 연결된 뒤에는 위조된 실행 요청으로 이어질 수 있으므로, 이 항목은 단순 후속 개선이 아니라 운영 배포 전 차단 요소로 본다.
 
@@ -68,7 +68,7 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 | Stream 금지 데이터 | 처방 내용, 약품명, 질문, 답변, OCR 텍스트, 사용자 식별정보 | `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md:48-49` |
 | quarantine·DLQ 금지 데이터 | 원본 메시지나 의료정보를 저장하지 않고 digest, failure code, trace metadata 등만 저장 | `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md:51-54`, `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md:90` |
 
-위 항목은 승인된 Post-MVP-1 목표 계약이며, 현재 실행 가능한 Redis Consumer 구현을 의미하지 않는다. 최신 develop에는 Worker 공통 실행 골격과 commit-before-ACK 추상 경계가 구현되어 있으나, Redis Consumer Group과 실제 ACK adapter는 아직 연결되지 않았다.
+위 항목은 승인된 Post-MVP-1 목표 계약이다. #140·#141·#233으로 Redis Consumer Group과 실제 ACK adapter, SQLAlchemy 결과 저장, lease·heartbeat·fencing, commit-before-ACK runtime까지 연결되었다. 다만 reclaim·retry·DLQ(#142), 실제 Provider 연결(#258), health check와 운영 Redis 인증(#150)이 남아 있으므로 아직 Production 처리 서비스 완료를 의미하지는 않는다.
 
 ### PostgreSQL
 
@@ -139,7 +139,7 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 
 ### Redis Consumer Group 구현 경계
 
-이 문서는 Redis Consumer Group 미구현 상태와 필요한 설정을 확인하는 문서다. 다음 구현은 별도 Issue 또는 Draft PR에서 다룬다.
+이 문서는 Redis Consumer Group 착수 전 설정 경계를 확인한 문서다. 아래 목록은 #140·#141·#233으로 구현되었으며, 남은 reclaim·retry·DLQ는 #142, 실제 Provider 연결은 #258에서 다룬다.
 
 - Redis client 생성
 - Consumer Group 자동 생성
@@ -234,7 +234,7 @@ Stream envelope 테스트는 Redis/Outbox 발행 골격이 구현된 뒤 추가�
 | 로그 비밀정보 비노출 테스트 | TODO | Backend/Worker log masking 또는 sentinel 검색 테스트 Issue/PR |
 | Stream envelope 비노출 테스트 | TODO | Redis/Outbox 발행 골격 구현 후 payload 금지 필드 테스트 Issue/PR |
 | PostgreSQL pool 예산 문서화 | TODO | process 수, `pool_size`, `max_overflow`, pool wait 기준 정리 Issue/PR |
-| Production placeholder Worker 배포 차단 | TODO | 실제 처리 로직 연결 전 `ai-worker`를 Production 처리 서비스처럼 배포하지 않도록 설정·문서화 Issue/PR |
+| Production Worker 배포 차단 | TODO | reclaim·retry·DLQ, 실제 Provider, health check, 운영 Redis 인증이 완료되기 전 `ai-worker`를 Production 처리 서비스로 활성화하지 않도록 설정·문서화 Issue/PR |
 | 공개 차단 기준 연결 | TODO | `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F` 해제 조건은 release-gates 문서를 따르고 이 문서에서 중복 정의하지 않음 |
 | 문서 분리·승격 | TODO | 구현 완료 항목을 `current`, `deployment`, `release-gates`, ADR/governance decision으로 분리하고 proposed 문서 제거 또는 대체 처리 |
 
@@ -485,14 +485,14 @@ AI 외부 호출 동안 DB transaction과 connection을 유지하는 경로가 �
 - `SHOW lock_timeout` 결과와 단위가 기록된다.
 - pool wait timeout 또는 queue 정책이 기록된다.
 
-#### 2.4 Production placeholder Worker 배포 차단 기준
+#### 2.4 Production Worker 배포 차단 기준
 
 실구현 완료 시 deployment 문서에는 다음 내용을 반영한다.
 
 ```text
-실제 Redis Consumer Group, ACK adapter, 결과 저장 adapter, lease·fencing, health check가 연결되기 전에는 placeholder `ai-worker`를 Production 처리 서비스처럼 배포하지 않는다.
+실제 Redis Consumer Group, ACK adapter, 결과 저장 adapter, lease·fencing은 #140·#141·#233으로 연결되었다. reclaim·retry·DLQ, 실제 Provider, health check, 운영 Redis 인증이 완료되기 전에는 `ai-worker`를 Production 처리 서비스로 활성화하지 않는다.
 
-placeholder Worker image가 Production compose에 포함되는 경우 restart loop가 발생하지 않도록 배포 대상에서 제외하거나 restart 정책을 별도로 확정한다.
+Worker image가 Production compose에 포함되는 경우 미완료 의존성으로 restart loop가 발생하지 않도록 배포 대상에서 제외하거나 restart 정책을 별도로 확정한다.
 
 Worker를 Production에 포함하는 PR은 실제 처리 경로, health check, graceful shutdown, ACK 순서, failure handling, 비밀정보 비노출 테스트를 함께 제출한다.
 ```
@@ -564,18 +564,18 @@ Decision: CLOVA/OpenAI 호출이 활성화된 경로는 필수 설정을 사전�
 Consequence: 실제 Provider smoke나 운영 배포는 secret 주입이 없으면 시작되지 않는다. 오류 응답과 로그에는 secret 값이나 Provider 원문 응답을 남기지 않는다.
 ```
 
-#### 4.3 Worker 구현 전 Production 제외 결정
+#### 4.3 Worker 운영 요건 완료 전 Production 제외 결정
 
 Worker 배포 정책이 확정되면 ADR 또는 governance decision에는 다음 내용을 남긴다.
 
 ```text
-Decision: 실제 Redis Consumer와 결과 저장 경로가 연결되기 전에는 placeholder `ai-worker`를 Production 처리 서비스로 배포하지 않는다.
+Decision: reclaim·retry·DLQ, 실제 Provider, health check, 운영 Redis 인증이 완료되기 전에는 `ai-worker`를 Production 처리 서비스로 활성화하지 않는다.
 
-Context: 최신 develop 기준 Worker 공통 실행 골격은 구현되어 있으나, 실제 Redis Consumer Group, ACK adapter, SQLAlchemy 결과 저장, lease·fencing, reclaim, health check, Backend API 연결은 미구현이다.
+Context: Redis Consumer Group, ACK adapter, SQLAlchemy 결과 저장, lease·fencing은 #140·#141·#233으로 구현되었다. reclaim·retry·DLQ(#142), 실제 Provider 연결과 secret 주입(#258), health check, 운영 Redis 인증(#150)은 미구현이다.
 
-Decision: Worker를 Production에 포함하려면 Redis consumer, ACK adapter, DB 결과 저장, health check, graceful shutdown, 장애·재시도 테스트를 함께 구현한다.
+Decision: Worker를 Production에 포함하려면 이미 연결된 Redis consumer, ACK adapter, DB 결과 저장, lease·fencing, graceful shutdown에 더해 남은 health check, Provider, 장애·재시도 테스트까지 완료한다.
 
-Consequence: Worker placeholder가 Production compose에서 restart loop를 만들거나 실제 처리 가능 서비스로 오해되지 않도록 배포 문서와 compose 설정을 함께 관리한다.
+Consequence: 미완료 운영 요건으로 Worker가 Production compose에서 restart loop를 만들거나 완전한 처리 서비스로 오해되지 않도록 배포 문서와 compose 설정을 함께 관리한다.
 ```
 
 ### 5. `docs/testing.md`와 traceability 문서로 이동할 내용
