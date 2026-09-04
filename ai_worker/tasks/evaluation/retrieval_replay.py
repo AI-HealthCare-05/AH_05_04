@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 
@@ -84,8 +85,8 @@ def _read_replay_bytes(path: Path, repository_root: Path) -> bytes:
         raise
 
 
-def load_retrieval_replay(path: Path, *, repository_root: Path) -> RetrievalReplayManifest:
-    payload = parse_json_object_bytes(_read_replay_bytes(path, repository_root))
+def parse_retrieval_replay_bytes(raw_bytes: bytes) -> RetrievalReplayManifest:
+    payload = parse_json_object_bytes(raw_bytes)
     try:
         replay = RetrievalReplayManifest.model_validate(payload)
     except ValidationError:
@@ -99,6 +100,10 @@ def load_retrieval_replay(path: Path, *, repository_root: Path) -> RetrievalRepl
     return replay
 
 
+def load_retrieval_replay(path: Path, *, repository_root: Path) -> RetrievalReplayManifest:
+    return parse_retrieval_replay_bytes(_read_replay_bytes(path, repository_root))
+
+
 class ReplayRetrievalAdapter:
     def __init__(
         self,
@@ -109,6 +114,11 @@ class ReplayRetrievalAdapter:
         self._replay = replay
         self._variant_manifest_hash = variant_manifest_hash
         self._case_results = {item.case_id: item.ranked_evidence_ids for item in replay.case_results}
+
+    def validate_case_set(self, case_ids: Sequence[str]) -> None:
+        selected = tuple(sorted(case_ids, key=lambda value: value.encode("utf-16-be")))
+        if tuple(self._case_results) != selected:
+            raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
 
     def execute(self, request: AdapterRequest) -> CaseResult:
         binding_valid = (
@@ -176,9 +186,8 @@ def build_adapter_registry(resolved: ResolvedDevExecution) -> _ReplayAdapterRegi
     variant = resolved.request.retrieval_variant
     if variant is None or variant.model_config_payload.get("adapter_id") != "retrieval-replay.v1":
         return _ReplayAdapterRegistry(None)
-    replay_path = resolved.replay_artifact_path
+    replay = resolved.retrieval_replay
     variant_hash = resolved.retrieval_variant_manifest_hash
-    if replay_path is None or variant.replay_artifact_path is None or variant_hash is None:
+    if replay is None or variant.replay_artifact_path is None or variant_hash is None:
         raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
-    replay = load_retrieval_replay(Path(variant.replay_artifact_path), repository_root=resolved.repository_root)
     return _ReplayAdapterRegistry(ReplayRetrievalAdapter(replay, variant_manifest_hash=variant_hash))

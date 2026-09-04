@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.config import (
     RepositoryState,
     load_dev_execution_request,
@@ -449,11 +449,35 @@ def test_replay_artifact_path_rejects_parent_traversal(tmp_path: Path) -> None:
 def test_resolved_hash_changes_when_replay_bytes_change(tmp_path: Path) -> None:
     roots = (tmp_path / "first", tmp_path / "second")
     resolved = []
-    for root, replay_bytes in zip(roots, (b"first replay", b"second replay"), strict=True):
+    for root, evidence_id in zip(roots, ("evidence-first", "evidence-second"), strict=True):
         request_path = _write_request(root, retrieval_variant=_replay_variant())
+        dataset_path = root / "evals/retrieval/manifests/dev.dataset.json"
+        dataset_path.write_bytes(
+            canonical_json_bytes(
+                {
+                    "case_resources": [{"case_id": "case-1", "partition": "DEV"}],
+                    "dataset_code": "rag-retrieval-dev",
+                    "dataset_version": "1.0.0",
+                }
+            )
+        )
         replay_path = root / "evals/retrieval/replays/test.replay.json"
         replay_path.parent.mkdir(parents=True, exist_ok=True)
-        replay_path.write_bytes(replay_bytes)
+        replay_payload: dict[str, JsonValue] = {
+            "case_results": [{"case_id": "case-1", "ranked_evidence_ids": [evidence_id]}],
+            "dataset_code": "rag-retrieval-dev",
+            "dataset_version": "1.0.0",
+            "replay_sha256": "0" * 64,
+            "schema_id": "rag-eval.retrieval-replay",
+            "schema_version": "1.0.0",
+            "top_k": 5,
+            "variant_id": "RET-L",
+        }
+        replay_payload["replay_sha256"] = canonical_sha256(
+            replay_payload,
+            excluded_top_level_keys=frozenset({"replay_sha256"}),
+        )
+        replay_path.write_bytes(canonical_json_bytes(replay_payload))
         resolved.append(
             load_dev_execution_request(
                 request_path,

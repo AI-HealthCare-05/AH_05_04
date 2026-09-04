@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
@@ -55,6 +55,10 @@ class EvaluationAdapter(Protocol):
 
 class AdapterRegistry(Protocol):
     def resolve(self, adapter_id: str) -> EvaluationAdapter | None: ...
+
+
+class CaseSetValidator(Protocol):
+    def validate_case_set(self, case_ids: Sequence[str]) -> None: ...
 
 
 class EmptyAdapterRegistry:
@@ -265,7 +269,23 @@ def execute_dev_cases(
             task_types=task_types,
         )
     adapter = adapter_registry.resolve(dataset.suite.adapter_id)
-    case_results = tuple(_execute_once(_case_request(case, dataset, resolved, run_id), adapter) for case in selected)
+    requests = tuple(_case_request(case, dataset, resolved, run_id) for case in selected)
+    validator = getattr(adapter, "validate_case_set", None)
+    if callable(validator):
+        try:
+            cast(CaseSetValidator, adapter).validate_case_set(tuple(case.case_id for case in selected))
+        except EvaluationValidationError as error:
+            status = (
+                ExecutionStatus.INVALID
+                if error.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
+                else ExecutionStatus.ERROR
+            )
+            code = error.code if status is ExecutionStatus.INVALID else EvaluationErrorCode.INTERNAL_ERROR
+            case_results = tuple(_neutral_result(request, status, code) for request in requests)
+        else:
+            case_results = tuple(_execute_once(request, adapter) for request in requests)
+    else:
+        case_results = tuple(_execute_once(request, adapter) for request in requests)
     status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
     return RunOutcome(
         case_results=case_results,
