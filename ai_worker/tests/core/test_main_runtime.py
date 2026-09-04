@@ -17,6 +17,9 @@ _BASE_SETTINGS: dict[str, Any] = {
     "DB_NAME": "test",
     "DB_USER": "worker",
     "DB_PASSWORD": "worker-password",
+    "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
+    "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+    "STORAGE_DIR": "/tmp/medical-documents",
 }
 
 
@@ -134,14 +137,30 @@ async def test_run_closes_resources_even_when_serve_fails(
 
     assembled, closed = _assembled(_FailingRuntime())
 
+    fake_ocr_provider = object()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        worker_main,
+        "create_clova_ocr_provider",
+        lambda config: fake_ocr_provider,
+    )
+
+    def build_runtime(*args, **kwargs):
+        captured["ocr_engine"] = kwargs["ocr_engine"]
+        captured["ocr_provider"] = kwargs["ocr_provider"]
+        return assembled
+
     monkeypatch.setattr(worker_main, "get_config", _config)
     monkeypatch.setattr(worker_main, "get_logger", lambda: logging.getLogger("test"))
-    monkeypatch.setattr(worker_main, "build_worker_runtime", lambda *_, **__: assembled)
+    monkeypatch.setattr(worker_main, "build_worker_runtime", build_runtime)
 
     with pytest.raises(RuntimeError):
         await worker_main.run()
 
     assert closed == ["closed"]
+    assert captured["ocr_engine"] is None
+    assert captured["ocr_provider"] is fake_ocr_provider
 
 
 @pytest.mark.asyncio

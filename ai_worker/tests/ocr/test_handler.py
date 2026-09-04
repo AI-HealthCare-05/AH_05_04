@@ -33,6 +33,7 @@ class ProviderCall:
     object_key: str
     file_mime_type: str
     deadline: float
+    trace_id: str
 
 
 class FakeOcrInputRepository:
@@ -61,11 +62,13 @@ class FakeOcrProvider:
         object_key: str,
         file_mime_type: str,
         deadline: float,
+        trace_id: str,
     ) -> OcrProviderResult:
         self.calls.append(
             ProviderCall(
                 object_key=object_key,
                 file_mime_type=file_mime_type,
+                trace_id=trace_id,
                 deadline=deadline,
             )
         )
@@ -83,11 +86,13 @@ class FailingOcrProvider:
         object_key: str,
         file_mime_type: str,
         deadline: float,
+        trace_id: str,
     ) -> OcrProviderResult:
         self.calls.append(
             ProviderCall(
                 object_key=object_key,
                 file_mime_type=file_mime_type,
+                trace_id=trace_id,
                 deadline=deadline,
             )
         )
@@ -158,6 +163,7 @@ async def test_ocr_handler_loads_input_and_returns_normalized_result() -> None:
         ProviderCall(
             object_key="synthetic/input.png",
             file_mime_type="image/png",
+            trace_id=message.trace_id,
             deadline=1055.0,
         )
     ]

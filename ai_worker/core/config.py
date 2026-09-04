@@ -3,7 +3,7 @@ from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
 from typing import Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -82,9 +82,13 @@ class Config(BaseSettings):
         default=5.0,
         ge=0,
     )
+    CLOVA_OCR_INVOKE_URL: str
+    CLOVA_OCR_SECRET: SecretStr
+    CLOVA_OCR_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0)
+    STORAGE_DIR: str
 
-    # Worker runtime은 Job 실행 DB에만 접근합니다. Admin·Migration 계정과 Provider secret은
-    # 주입하지 않습니다(infra/docker/docker-compose.prod.yml의 ai-worker environment 참고).
+    # Worker runtime의 DB 연결에는 Job 실행 계정만 사용하며,
+    # Admin·Migration DB 계정은 주입하지 않습니다.
     DB_HOST: str
     DB_PORT: int = Field(default=5432, ge=1, le=65535)
     DB_NAME: str
@@ -127,6 +131,32 @@ class Config(BaseSettings):
             raise ValueError("Redis 설정값은 비어 있을 수 없습니다.")
 
         return normalized
+
+    @field_validator("CLOVA_OCR_INVOKE_URL")
+    @classmethod
+    def _validate_clova_invoke_url(cls, value: str) -> str:
+        normalized = value.strip()
+
+        if not normalized.startswith("https://"):
+            raise ValueError("CLOVA_OCR_INVOKE_URL은 HTTPS URL이어야 합니다.")
+
+        return normalized
+
+    @field_validator("CLOVA_OCR_SECRET")
+    @classmethod
+    def _validate_clova_secret(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("CLOVA_OCR_SECRET은 비어 있을 수 없습니다.")
+
+        return value
+
+    @field_validator("STORAGE_DIR")
+    @classmethod
+    def _validate_storage_dir(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("STORAGE_DIR은 비어 있을 수 없습니다.")
+
+        return value
 
     @field_validator("REDIS_PASSWORD", mode="before")
     @classmethod

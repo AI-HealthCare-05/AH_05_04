@@ -50,6 +50,9 @@ from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
 from ai_worker.core.job_execution import LeaseNotAcquired
+from ai_worker.core.provider_observability import (
+    create_worker_provider_call_context_from_trace_id,
+)
 from ai_worker.core.quarantine import (
     QuarantineExecution,
     QuarantineFailureCode,
@@ -68,6 +71,13 @@ from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
 from ai_worker.tasks.ocr.handler import OcrHandler, OcrProvider
+from ocr_runtime.clova_engine import ClovaOcrEngine
+from ocr_runtime.structuring import RuleBasedPrescriptionStructurer
+from provider_contracts.observability import (
+    Provider,
+    ProviderCallDescriptor,
+    ProviderOperation,
+)
 from provider_contracts.ocr import OcrEngine
 
 
@@ -129,10 +139,46 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
 
+def create_clova_ocr_engine(
+    config: Config,
+    *,
+    trace_id: str,
+) -> OcrEngine:
+    """메시지의 관측 컨텍스트와 함께 실제 CLOVA OCR Engine을 조립합니다."""
+
+    return ClovaOcrEngine(
+        invoke_url=config.CLOVA_OCR_INVOKE_URL,
+        secret_key=config.CLOVA_OCR_SECRET.get_secret_value(),
+        storage_dir=config.STORAGE_DIR,
+        timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
+        structurer=RuleBasedPrescriptionStructurer(),
+        context=create_worker_provider_call_context_from_trace_id(
+            trace_id=trace_id,
+            environment=config.ENV,
+        ),
+        descriptor=ProviderCallDescriptor(
+            provider=Provider.CLOVA_OCR,
+            operation=ProviderOperation.PRESCRIPTION_RECOGNITION,
+            prompt_version=None,
+        ),
+    )
+
+
 def create_ocr_provider(engine: OcrEngine) -> OcrProvider:
     """승인된 OCR engine을 Worker Provider Adapter로 감쌉니다."""
 
     return ClovaOcrProviderAdapter(engine)
+
+
+def create_clova_ocr_provider(config: Config) -> OcrProvider:
+    """메시지별 trace_id로 실제 CLOVA Engine을 만드는 Provider입니다."""
+
+    return ClovaOcrProviderAdapter(
+        engine_factory=lambda trace_id: create_clova_ocr_engine(
+            config,
+            trace_id=trace_id,
+        )
+    )
 
 
 class SessionScopedDeliveryExecution:
@@ -459,15 +505,24 @@ def build_worker_runtime(
     logger: logging.Logger,
     clock: Clock,
     ocr_engine: OcrEngine | None = None,
+    ocr_provider: OcrProvider | None = None,
     redis_client: Redis | None = None,
     engine: AsyncEngine | None = None,
 ) -> AssembledWorkerRuntime:
     """설정으로 Redis·DB·Handler를 조립한 Consumer runtime을 만듭니다.
 
-    `ocr_engine`이 없으면 OCR Handler를 등록하지 않습니다. 현재 저장소에는 Worker에서
-    쓸 수 있는 승인된 CLOVA engine 구현이 없어, 실제 engine 조립은 별도 결정이
-    필요합니다(리뷰 노트 참고).
+    `ocr_engine`과 `ocr_provider`가 모두 없으면 OCR Handler를 등록하지 않습니다.
+    프로세스 진입점은 `create_clova_ocr_provider()`로 실제 Provider를 만들어
+    명시적으로 전달하며, 테스트에서는 Fake Engine 또는 Provider를 주입할 수 있습니다.
     """
+
+    if ocr_engine is not None and ocr_provider is not None:
+        raise ValueError("ocr_engine과 ocr_provider 중 하나만 전달할 수 있습니다.")
+
+    resolved_ocr_provider = ocr_provider
+
+    if resolved_ocr_provider is None and ocr_engine is not None:
+        resolved_ocr_provider = create_ocr_provider(ocr_engine)
 
     owned_redis = redis_client is None
     owned_engine = engine is None
@@ -484,7 +539,7 @@ def build_worker_runtime(
         acknowledger=stream,
         clock=clock,
         logger=logger,
-        ocr_provider=None if ocr_engine is None else create_ocr_provider(ocr_engine),
+        ocr_provider=resolved_ocr_provider,
     )
     rejected_execution = SessionScopedRejectedDeliveryExecution(
         session_factory=session_factory,

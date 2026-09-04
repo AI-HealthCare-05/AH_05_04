@@ -24,6 +24,9 @@ _REQUIRED_SETTINGS: dict[str, Any] = {
     "DB_NAME": "test",
     "DB_USER": "worker",
     "DB_PASSWORD": "worker-password",
+    "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
+    "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+    "STORAGE_DIR": "/tmp/medical-documents",
 }
 
 
@@ -262,3 +265,34 @@ def test_config_rejects_invalid_ocr_budget(
 ) -> None:
     with pytest.raises(ValidationError):
         _config(**overrides)
+
+
+def test_config_exposes_clova_secret_only_explicitly() -> None:
+    config = _config()
+
+    assert config.CLOVA_OCR_SECRET.get_secret_value() == "synthetic-clova-secret"
+    assert "synthetic-clova-secret" not in repr(config)
+    assert "synthetic-clova-secret" not in str(config)
+
+
+@pytest.mark.parametrize(
+    "invoke_url",
+    [
+        "",
+        "http://clova.test/ocr",
+        "clova.test/ocr",
+    ],
+)
+def test_config_rejects_non_https_clova_url(invoke_url: str) -> None:
+    with pytest.raises(ValidationError):
+        _config(CLOVA_OCR_INVOKE_URL=invoke_url)
+
+
+def test_config_rejects_blank_clova_secret() -> None:
+    with pytest.raises(ValidationError):
+        _config(CLOVA_OCR_SECRET="   ")
+
+
+def test_config_rejects_blank_storage_dir() -> None:
+    with pytest.raises(ValidationError):
+        _config(STORAGE_DIR="   ")
