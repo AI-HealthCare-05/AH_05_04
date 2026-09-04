@@ -573,3 +573,28 @@ git commit -m "✅ test: Candidate Index 계약 회귀 보강"
 - [x] `PRODUCT_NAME` Search Entry의 표시명·정규명을 Product row와 exact-match
 - [x] 고정된 `display_limit=1` 검사 뒤의 도달 불가능한 중복 비교 제거
 - [x] RAG-06 manifest hash canonicalization 책임과 단계별 raw hit limit 의미를 설계 문서에 명시
+
+## Task 6: Source 결속 계약과 재검토 blocking 결함 수정
+
+리뷰(코덱스 세션)가 재현한 5건의 결함을 설계의 Source 결속 계약과 함께 구현한다. `source_snapshot_ids`/
+`source_versions` 독립 배열을 `CandidateCatalogSourceRef` 기반 `source_refs`로 교체하는 작업이 선행
+조건이므로 같은 Task에서 함께 처리한다.
+
+- [x] **결함 1 — 필수 Catalog 값 미검증**: `catalog_version`·`schema_version`·Source·Identity·필수
+  문자열이 비어 있어도 성공하던 경로를 `CATALOG_REQUIRED_FIELD_INVALID`로 닫는다. 빈 `source_refs`,
+  빈 `products`, 필터링 후 구성원 0건도 같은 reason으로 실패시킨다.
+- [x] **결함 2 — 비활성 Product fail-open**: `_search_entry_failure`가 active·approved Search Entry의
+  Product 활성 상태를 PRODUCT_NAME·APPROVED_ALIAS 양쪽에서 검증하도록 수정한다.
+  `_build_lexical_members`의 조용한 `continue`를 제거한다.
+- [x] **결함 3 — Alias Snapshot provenance 손실**: `CandidateIndexMember.source_snapshot_id` 단일
+  필드를 `product_source_snapshot_id`/`entry_source_snapshot_id`/`alias_source_snapshot_id`로 분리하고
+  `CandidateCatalogSourceRef` 결속(`CATALOG_SOURCE_BINDING_INVALID`)을 도입한다.
+- [x] **추가 결함 — Port `None` 반환 시 TypeError 탈출**: `search_candidate_index`와
+  `_attach_embeddings`가 port 반환값의 container·원소 타입을 검증한 뒤에만 처리하도록 방어 검사를
+  추가한다.
+- [x] **추가 결함 — Alias 원문 노출**: `ALIAS_CONFLICT` failure detail을 `normalized_alias` 원문 대신
+  충돌한 두 `alias_ref`로 교체한다.
+- [x] 위 5건과 Source 결속 계약을 검증하는 회귀 테스트 16건 추가
+  (`ai_worker/tests/rag/test_candidate_index.py`)
+- [x] `uv run pytest ai_worker/tests/rag -q` — 138 passed
+- [x] `uv run ruff check`, `uv run ruff format --check`, `uv run mypy ai_worker` — 통과

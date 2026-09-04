@@ -12,6 +12,7 @@ from ai_worker.tasks.rag.candidate_index import (
     CandidateAliasReviewStatus,
     CandidateCatalogCounts,
     CandidateCatalogExport,
+    CandidateCatalogSourceRef,
     CandidateDistanceMetric,
     CandidateEmbeddingRequest,
     CandidateEmbeddingVector,
@@ -132,8 +133,7 @@ def valid_catalog() -> CandidateCatalogExport:
     return CandidateCatalogExport(
         catalog_version="catalog-v1",
         catalog_manifest_hash="a" * 64,
-        source_snapshot_ids=("snapshot-1",),
-        source_versions=("mfds-product-approval@v1",),
+        source_refs=(CandidateCatalogSourceRef(snapshot_id="snapshot-1", source_version="mfds-product-approval@v1"),),
         schema_version="candidate-catalog-export-v1",
         normalization_version="medication-catalog-normalization-v1",
         verification_status=CatalogVerificationStatus.APPROVED,
@@ -362,6 +362,104 @@ def test_build_config_text_must_be_nfc() -> None:
 
 
 @pytest.mark.parametrize(
+    ("mutate", "detail"),
+    [
+        (lambda catalog: replace(catalog, catalog_version=""), "catalog_version"),
+        (lambda catalog: replace(catalog, schema_version=""), "schema_version"),
+        (lambda catalog: replace(catalog, catalog_version="   "), "catalog_version"),
+        (
+            lambda catalog: replace(
+                catalog,
+                products=(replace(catalog.products[0], product_name=""),),
+            ),
+            "products.product_name",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                search_entries=(
+                    replace(catalog.search_entries[0], entry_ref=""),
+                    catalog.search_entries[1],
+                ),
+            ),
+            "search_entries.entry_ref",
+        ),
+    ],
+)
+def test_blank_required_catalog_field_fails_closed(
+    mutate: Callable[[CandidateCatalogExport], CandidateCatalogExport],
+    detail: str,
+) -> None:
+    result = build_candidate_index(mutate(valid_catalog()), lexical_config())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+        details=(detail,),
+    )
+    assert not hasattr(result, "members")
+    assert not hasattr(result, "manifest")
+
+
+@pytest.mark.parametrize(
+    ("catalog_change", "detail"),
+    [
+        ({"source_refs": ()}, "source_refs"),
+        (
+            {"products": (), "declared_counts": replace(valid_catalog().declared_counts, product_count=0)},
+            "products",
+        ),
+    ],
+)
+def test_empty_required_catalog_collection_fails_closed(
+    catalog_change: dict[str, object],
+    detail: str,
+) -> None:
+    result = build_candidate_index(
+        replace(valid_catalog(), **cast(Any, catalog_change)),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+        details=(detail,),
+    )
+
+
+def test_zero_members_after_filtering_fails_closed() -> None:
+    catalog = valid_catalog()
+    inactive_entries = tuple(replace(entry, status=CandidateRecordStatus.INACTIVE) for entry in catalog.search_entries)
+
+    result = build_candidate_index(replace(catalog, search_entries=inactive_entries), lexical_config())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+        details=("members",),
+    )
+
+
+@pytest.mark.parametrize(
+    "source_refs",
+    [
+        (
+            CandidateCatalogSourceRef(snapshot_id="snapshot-1", source_version="mfds-product-approval@v1"),
+            CandidateCatalogSourceRef(snapshot_id="snapshot-1", source_version="mfds-product-approval@v1"),
+        ),
+        (
+            CandidateCatalogSourceRef(snapshot_id="snapshot-1", source_version="mfds-product-approval@v1"),
+            CandidateCatalogSourceRef(snapshot_id="snapshot-1", source_version="mfds-product-approval@v2"),
+        ),
+    ],
+)
+def test_source_ref_binding_conflict_fails_closed(source_refs: tuple[CandidateCatalogSourceRef, ...]) -> None:
+    result = build_candidate_index(replace(valid_catalog(), source_refs=source_refs), lexical_config())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.CATALOG_SOURCE_BINDING_INVALID,
+        details=("snapshot-1",),
+    )
+
+
+@pytest.mark.parametrize(
     "config_change",
     [
         {"candidate_limit": 0},
@@ -538,6 +636,99 @@ def test_product_name_search_entry_must_match_product_row(entry_change: dict[str
     )
 
 
+def test_active_approved_product_name_entry_referencing_inactive_product_fails_closed() -> None:
+    catalog = valid_catalog()
+    inactive_product = replace(catalog.products[0], status=CandidateRecordStatus.INACTIVE)
+
+    result = build_candidate_index(replace(catalog, products=(inactive_product,)), lexical_config())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+        details=("search-entry-product-1",),
+    )
+
+
+def test_active_approved_alias_entry_referencing_inactive_product_fails_closed() -> None:
+    catalog = valid_catalog()
+    inactive_product = replace(catalog.products[0], status=CandidateRecordStatus.INACTIVE)
+    alias_only_entries = (catalog.search_entries[1],)
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            products=(inactive_product,),
+            search_entries=alias_only_entries,
+            declared_counts=replace(catalog.declared_counts, search_entry_count=1),
+        ),
+        lexical_config(),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+        details=("search-entry-alias-1",),
+    )
+
+
+def test_alias_source_snapshot_is_preserved_separately_from_product_and_entry() -> None:
+    catalog = valid_catalog()
+    second_ref = CandidateCatalogSourceRef(snapshot_id="snapshot-2", source_version="mfds-alias-approval@v1")
+    alias_with_own_snapshot = replace(catalog.aliases[0], source_snapshot_id="snapshot-2")
+    alias_entry_with_own_snapshot = replace(catalog.search_entries[1], source_snapshot_id="snapshot-2")
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            source_refs=(*catalog.source_refs, second_ref),
+            aliases=(alias_with_own_snapshot,),
+            search_entries=(catalog.search_entries[0], alias_entry_with_own_snapshot),
+        ),
+        lexical_config(),
+    )
+
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    members_by_ref = {member.entry_ref: member for member in result.members}
+    product_name_member = members_by_ref["search-entry-product-1"]
+    alias_member = members_by_ref["search-entry-alias-1"]
+
+    assert product_name_member.product_source_snapshot_id == "snapshot-1"
+    assert product_name_member.entry_source_snapshot_id == "snapshot-1"
+    assert product_name_member.alias_source_snapshot_id is None
+
+    assert alias_member.product_source_snapshot_id == "snapshot-1"
+    assert alias_member.entry_source_snapshot_id == "snapshot-2"
+    assert alias_member.alias_source_snapshot_id == "snapshot-2"
+
+
+def test_alias_target_conflict_detail_excludes_alias_text() -> None:
+    catalog = valid_catalog()
+    second_product = replace(
+        catalog.products[0],
+        product_ref="product-row-2",
+        identity=product_identity("P-002"),
+    )
+    conflicting_alias = replace(
+        catalog.aliases[0],
+        alias_ref="alias-row-2",
+        identity=second_product.identity,
+    )
+
+    result = build_candidate_index(
+        replace(
+            catalog,
+            products=(*catalog.products, second_product),
+            aliases=(*catalog.aliases, conflicting_alias),
+            declared_counts=replace(catalog.declared_counts, product_count=2, alias_count=2),
+        ),
+        lexical_config(),
+    )
+
+    assert isinstance(result, CandidateIndexBuildFailure)
+    assert result.reason is CandidateIndexBuildFailureReason.ALIAS_CONFLICT
+    assert result.details == ("alias-row-1", "alias-row-2")
+    assert catalog.aliases[0].normalized_alias not in result.details
+    assert catalog.aliases[0].alias_text not in result.details
+
+
 def test_manifest_records_lexical_provenance_and_reproducible_hashes() -> None:
     result = build_candidate_index(valid_catalog(), lexical_config())
 
@@ -545,8 +736,9 @@ def test_manifest_records_lexical_provenance_and_reproducible_hashes() -> None:
     assert result.manifest.index_kind is CandidateIndexKind.MEDICATION_CANDIDATE
     assert result.manifest.catalog_version == "catalog-v1"
     assert result.manifest.catalog_manifest_hash == "a" * 64
-    assert result.manifest.source_snapshot_ids == ("snapshot-1",)
-    assert result.manifest.source_versions == ("mfds-product-approval@v1",)
+    assert result.manifest.source_refs == (
+        CandidateCatalogSourceRef(snapshot_id="snapshot-1", source_version="mfds-product-approval@v1"),
+    )
     assert result.manifest.member_count == 2
     assert result.manifest.product_identity_count == 1
     assert result.manifest.product_name_count == 1
@@ -664,6 +856,25 @@ def test_embedding_provider_error_is_replaced_with_safe_failure() -> None:
     assert result == CandidateIndexBuildFailure(
         reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
         details=("embedding_port",),
+    )
+
+
+class NullEmbeddingPort:
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        del requests, config
+        return cast(Any, None)
+
+
+def test_embedding_port_returning_invalid_container_fails_closed_without_crash() -> None:
+    result = build_candidate_index(valid_catalog(), hybrid_config(), NullEmbeddingPort())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+        details=("embedding_output",),
     )
 
 
@@ -870,6 +1081,22 @@ class FailingSearchPort(RecordingSearchPort):
 
 def test_search_port_error_is_replaced_with_safe_failure() -> None:
     result = search_candidate_index(valid_query(), lexical_manifest(), FailingSearchPort())
+
+    assert result == CandidateIndexSearchFailure(
+        reason=CandidateIndexSearchFailureReason.PORT_FAILURE,
+        details=(CandidateSearchStage.PRODUCT_NAME_EXACT.value,),
+        raw_hits=(),
+    )
+
+
+class NullSearchPort(RecordingSearchPort):
+    def search_product_name_exact(self, query, manifest) -> tuple[CandidateRawHit, ...]:
+        del query, manifest
+        return cast(Any, None)
+
+
+def test_search_port_returning_invalid_container_fails_closed_without_crash() -> None:
+    result = search_candidate_index(valid_query(), lexical_manifest(), NullSearchPort())
 
     assert result == CandidateIndexSearchFailure(
         reason=CandidateIndexSearchFailureReason.PORT_FAILURE,

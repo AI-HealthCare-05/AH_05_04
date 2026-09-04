@@ -8,6 +8,7 @@
 - 구현 담당자: 정현우 (`@ceohwj`)
 - 담당 리뷰어: 김지혜 (`@Jye-rookie`)
 - 교차 영역 리뷰어: 송은영 (`@phina-io`)
+- Product·Safety·Evaluation provenance 리뷰어: 권가빈 (`@hazelnutflavoured`)
 - 공개 게이트: `PUBLIC_TRACK_F=false`
 
 ## 정본과 착수 상태
@@ -97,7 +98,7 @@ credential 또는 환자정보를 요구하지 않는다.
 
 - `catalog_version`
 - `catalog_manifest_hash`
-- 비어 있지 않은 `source_snapshot_ids`와 `source_versions`
+- 비어 있지 않은 `source_refs`
 - `schema_version`과 `normalization_version`
 - `verification_status`, `freshness_status`, `is_complete`
 - Product, Ingredient, Component, Alias와 Search Entry record
@@ -121,6 +122,56 @@ Catalog export의 모든 문자열은 Unicode NFC여야 한다. RAG-07A는 NFD �
 `product_name`, `normalized_product_name`과 각각 exact-match해야 한다. Alias Entry가 Alias row와
 대조되는 것과 같은 참조 무결성 규칙이며, 불일치하면 구성원을 만들기 전에 fail-closed한다.
 
+### Source 결속 계약
+
+`CandidateCatalogSourceRef`는 `snapshot_id`와 `source_version`을 하나의 불변 값으로 결속한다.
+Catalog와 manifest는 이 값의 정렬된 tuple인 `source_refs`를 사용하며, 두 필드를 서로 독립된 배열로
+저장하지 않는다. 독립 배열은 정렬 뒤 Snapshot과 Version의 대응 관계를 잃어 서로 다른 Source
+조합이 같은 hash로 표현될 수 있기 때문이다.
+
+각 Source reference의 두 필드는 비어 있지 않고 Unicode NFC여야 한다. 하나의 Catalog export에서
+같은 `snapshot_id`가 다른 `source_version`과 결속되거나 동일한 Source reference가 중복되면
+`CATALOG_SOURCE_BINDING_INVALID`로 전체 build를 실패시킨다. Canonical payload와 manifest hash는
+`(snapshot_id, source_version)` UTF-8 byte 순으로 정렬한 전체 `source_refs`를 포함하므로 결속이
+달라지면 hash도 달라진다.
+
+Product, Ingredient, Component, Alias와 Search Entry는 각각 자신의 `source_snapshot_id`를 가지며
+그 값은 Catalog의 `source_refs` 중 하나를 참조해야 한다. 이 참조가 `source_refs`에 없으면 orphan
+Component·Alias reference와 동일하게 `REFERENTIAL_INTEGRITY_INVALID`로 실패시킨다.
+`CATALOG_SOURCE_BINDING_INVALID`는 `source_refs` 자체의 내부 무결성(중복 reference, 동일
+`snapshot_id`의 상충하는 `source_version`)에만 사용하고 개별 record의 참조 실패에는 사용하지 않는다.
+Source 결속 규칙은 다음과 같다.
+
+- `PRODUCT_NAME` Search Entry의 Source Snapshot은 연결된 Product publication의 Snapshot과 같아야 한다.
+- `APPROVED_ALIAS` Search Entry의 Source Snapshot은 연결된 Alias publication의 Snapshot과 같아야 한다.
+- Alias와 Product는 서로 다른 승인 Snapshot에서 관리될 수 있으므로 두 Snapshot이 같을 필요는 없다.
+  다만 Product와 Alias의 Snapshot은 모두 같은 Catalog export의 `source_refs`에 포함돼야 한다.
+
+RAG-06은 Catalog manifest의 정본 envelope와 canonicalization specification version을 발행해야 한다.
+RAG-07A는 현재 `catalog_manifest_hash`의 형식과 위 Source 결속을 검증하며, 정본 envelope가 확정되기
+전까지 알 수 없는 canonicalization version을 추정하거나 hash 일치로 간주하지 않는다.
+
+### 필수값과 상태 무결성
+
+Catalog envelope의 version·schema·normalization·manifest hash, 모든 Source reference, 공식 Identity,
+publication/reference와 검색 문자열의 필수 필드는 비어 있으면 안 된다. nullable 필드는 `null`이거나
+비어 있지 않은 값이어야 하며 공백 문자열을 값으로 사용하지 않는다. Product, Alias, Search Entry의
+표시 문자열과 normalized 문자열도 이 규칙을 따른다. 위반은 원문 없이 안정적인 필드 경로를 담은
+`CATALOG_REQUIRED_FIELD_INVALID`로 실패시킨다.
+
+Catalog는 `source_refs`와 Product를 하나 이상 포함해야 한다. 둘 중 하나라도 비어 있으면 필수 필드
+누락과 동일하게 `CATALOG_REQUIRED_FIELD_INVALID`로 실패시키며 `details`에 `source_refs` 또는
+`products`를 담는다.
+
+필터링과 중복 제거가 끝난 뒤에도 active·approved Candidate 구성원이 하나 이상 존재해야 한다. 선언된
+Source reference와 Product가 개별적으로는 유효했지만 필터링 결과 구성원이 0건이면 같은
+`CATALOG_REQUIRED_FIELD_INVALID`를 `details=("members",)`로 사용하며, 빈 Candidate index는 성공으로
+발행하지 않는다.
+
+선언된 active·approved Search Entry가 비활성 Product를 참조하거나, 승인 Alias Entry가
+미승인·비활성·비유효 Alias를 참조하는 상태 모순은 정상적인 제외가 아니라
+`REFERENTIAL_INTEGRITY_INVALID`다. inactive 또는 pending Search Entry만 의도적으로 제외할 수 있다.
+
 ## Candidate 구성원 계약
 
 `CandidateIndexMember`는 검색 가능한 Product entry 하나에 대한 결정적 build output이다. 다음 값을
@@ -131,7 +182,8 @@ Catalog export의 모든 문자열은 Unicode NFC여야 한다. RAG-07A는 NFD �
 - `entry_type`
 - 표시용 문자열과 normalized 검색 문자열
 - nullable 승인 Alias reference
-- Source Snapshot과 Catalog provenance
+- Product Source Snapshot, Entry Source Snapshot과 nullable Alias Source Snapshot
+- Catalog provenance
 - normalization version
 - 안정적인 `member_key`와 `member_content_hash`
 - 버전이 고정된 embedding port가 제공하는 nullable embedding vector
@@ -144,6 +196,11 @@ Citation locator, HIRA 파생 코드 또는 환자 공개 status를 포함하지
 hash는 일시적인 runtime object를 제외한 전체 canonical 구성원 payload로 계산한다. 완전히 동일하게
 반복된 입력 구성원은 하나로 합친다. 동일한 stable key가 다른 content를 가지면 conflict로 판단해
 전체 build를 실패시킨다.
+
+구성원의 `product_source_snapshot_id`, `entry_source_snapshot_id`, `alias_source_snapshot_id`는 위
+Source 결속 검증을 통과한 값을 그대로 보존한다. Alias가 아닌 구성원은
+`alias_source_snapshot_id=null`이어야 한다. 하나의 모호한 Source 필드로 세 publication의 근거를
+합치지 않는다.
 
 ## 빌드 설정과 임베딩
 
@@ -165,6 +222,11 @@ hash는 일시적인 runtime object를 제외한 전체 canonical 구성원 payl
 provenance를 검증한다. vector가 없거나 유효하지 않으면 전체 build를 실패시키며 설정된 index를
 lexical-only로 자동 강등하지 않는다.
 
+Build configuration의 필수 문자열과 `HYBRID`의 provider·model·model version은 비어 있으면 안 된다.
+ANN configuration은 비어 있지 않아야 하며 key는 중복될 수 없고 key와 value 모두 canonical payload로
+직렬화 가능한 유효 값이어야 한다. enum 자리는 문자열 유사값이 아니라 선언된 enum instance만
+허용한다. `display_limit=1` 고정 규칙과 별개로 도달할 수 없는 중복 범위 검사는 두지 않는다.
+
 embedding 구현은 좁은 protocol로 주입한다. Production model 선택, model download, network access,
 batching과 PostgreSQL 저장은 이 Issue의 범위가 아니다.
 
@@ -175,8 +237,8 @@ builder는 다음 순서로 처리한다.
 1. Catalog envelope, 선언 count, 승인 상태, freshness, completeness와 duplicate·orphan·conflict
    count가 모두 0인지 검증한다.
 2. Product identity, publication, component, alias와 Search Entry 사이의 참조 무결성을 검증한다.
-3. active·approved Product name 또는 Product alias가 아닌 entry를 제외한다. 승인 Candidate entry라고
-   선언했지만 status가 모순된 record는 조용히 부분 제외하지 않고 오류로 처리한다.
+3. inactive 또는 pending Search Entry를 제외한다. active·approved Candidate entry가 비활성 Product나
+   유효하지 않은 Alias를 참조하면 조용히 부분 제외하지 않고 오류로 처리한다.
 4. 구성원을 생성하고 stable member key conflict를 거부한다.
 5. 명시적으로 버전이 고정된 UTF-8 byte-order key로 구성원을 정렬한다.
 6. configuration이 `HYBRID`이면 embedding을 생성하고 검증한다.
@@ -200,7 +262,7 @@ Canonical payload는 UTF-8, Unicode NFC, compact sorted-key JSON, 명시적 null
 
 - index code/version과 build mode
 - Catalog version과 Catalog manifest hash
-- 정렬된 Source Snapshot ID와 Source version
+- `(snapshot_id, source_version)`이 결속된 정렬 `source_refs`
 - schema 및 normalization version
 - lexical, 검색 순서, embedding, distance와 ANN configuration provenance
 - 구성원 count, Product Identity count, Product-name count, approved-alias count와 vector count
@@ -220,6 +282,8 @@ Build failure는 다음 closed enum만 사용한다.
 - `CATALOG_MANIFEST_INVALID`
 - `CATALOG_COUNT_MISMATCH`
 - `CATALOG_TEXT_NOT_NFC`
+- `CATALOG_REQUIRED_FIELD_INVALID`
+- `CATALOG_SOURCE_BINDING_INVALID`
 - `DUPLICATE_PRODUCT_IDENTITY`
 - `REFERENTIAL_INTEGRITY_INVALID`
 - `ALIAS_CONFLICT`
@@ -228,7 +292,9 @@ Build failure는 다음 closed enum만 사용한다.
 - `EMBEDDING_OUTPUT_INVALID`
 
 failure는 안정적인 reason code와 안전한 구조 정보만 노출한다. Source raw row, OCR 문자열, 처방 문자열,
-vector, credential 또는 provider 원문 오류를 포함하면 안 된다.
+vector, credential 또는 provider 원문 오류를 포함하면 안 된다. Alias·member conflict detail도
+`normalized_alias`, 표시 문자열 또는 검색 문자열 대신 record reference와 안정적인 필드 경로만
+사용한다.
 
 ## 검색 계약
 
@@ -251,6 +317,12 @@ Raw OCR, 미확정 structured output, nullable strength metadata와 환자 DTO �
 `HYBRID`일 때만 마지막 보조 recall 단계로 호출한다. 모든 hit가 요청된 active index version을
 참조하고 Product Identity, member key, stage, rank, stage score, Catalog version, Source Snapshot
 provenance, normalization version과 해당 시 embedding version을 포함하는지 검증한다.
+
+Search port가 `None`, tuple이 아닌 container, 선언된 raw-hit 타입이 아닌 원소 또는 유효하지 않은
+반환 구조를 주면 예외를 외부로 전파하지 않고 타입이 지정된 search failure로 닫는다. embedding
+port의 잘못된 container나 원소는 `EMBEDDING_OUTPUT_INVALID`, search port 호출 또는 반환 구조의
+실패는 `PORT_FAILURE`를 사용한다. 이미 타입이 지정된 hit의 index·Catalog·Source provenance가
+manifest와 다르면 `HIT_PROVENANCE_MISMATCH`다.
 
 출력은 여러 단계에서 같은 Product Identity가 반복되더라도 raw stage hit를 보존한다. RAG-07B와 후속
 Resolver가 감사와 fusion을 위해 개별 Exact·Alias·Trigram·Vector signal을 필요로 하기 때문이다.
@@ -280,6 +352,9 @@ RAG-07B는 불변 build success, manifest, 구성원, query, search port와 raw 
 
 RAG-07B는 실패한 RAG-07A build를 partial success로 해석하거나 manifest hash를 변경하거나 Candidate
 vector와 Evidence vector를 혼합하거나 내부 hit metadata를 환자 DTO로 반환하면 안 된다.
+또한 raw hit의 member key와 Entry Source Snapshot이 실제 active index 구성원에 존재하는지 저장소
+경계에서 검증해야 한다. RAG-07A의 순수 search port는 DB 구성원 집합을 소유하지 않으므로 문자열
+형식 검사만으로 실제 membership을 증명했다고 간주하지 않는다.
 
 ## 테스트 전략
 
@@ -294,14 +369,21 @@ vector와 Evidence vector를 혼합하거나 내부 hit metadata를 환자 DTO�
 - Ingredient Alias, 미승인 Alias, 비활성 Alias와 HIRA 파생값은 Product Candidate 구성원이 되지 않는다.
 - orphan Component, Alias와 Search Entry reference는 fail-closed한다.
 - partial, stale, unapproved, count mismatch 또는 invalid-hash Catalog는 구성원을 반환하지 않는다.
+- 비어 있는 Catalog·Source·Identity·reference·필수 문자열과 구성원 0건 결과는 성공하지 않는다.
+- Source Snapshot과 Version의 결속 변경은 다른 manifest/content hash를 만들며 중복·충돌은 실패한다.
 - Catalog와 build config의 문자열이 NFC가 아니면 자동 변환 없이 구성원을 반환하지 않는다.
 - Product-name Search Entry 문자열이 Product row와 다르면 참조 무결성 오류로 실패한다.
+- Product-name Entry와 Product, Alias Entry와 Alias의 Source Snapshot 결속을 각각 검증하고, 서로 다른
+  승인 Product·Alias Snapshot은 같은 Catalog export 안에서 보존한다.
+- active·approved Entry가 비활성 Product 또는 유효하지 않은 Alias를 참조하면 부분 제외하지 않는다.
 - lexical-only와 hybrid configuration의 nullability 규칙을 검증한다.
 - 누락, non-finite, 잘못된 count·순서·dimension의 embedding은 구성원을 반환하지 않는다.
 - manifest count와 모든 SHA-256 값을 정확히 재현한다.
 - 검색 단계 호출 순서와 dense 단계가 마지막에만 호출되는 동작을 검증한다.
 - retrieval limit은 양수이고 설정된 candidate limit 이하이며 각 단계에 동일하게 전달된다.
 - hit의 index·Catalog·Source·model provenance mismatch는 fail-closed한다.
+- embedding/search port의 `None`, 잘못된 container와 원소 타입은 예외 없이 typed failure가 된다.
+- conflict failure detail에 Alias나 Candidate 원문이 포함되지 않는다.
 - 반복 Product raw hit가 단계별 signal을 각각 보존한다.
 - production import가 Backend setting, SQLAlchemy, PostgreSQL, 외부 model download 또는 환자 DTO
   module을 요구하지 않는다.
@@ -321,10 +403,15 @@ PostgreSQL 경계가 만들어질 때까지 `BLOCKED_BY_RAG_04_OR_06`이다. 존
 
 ## 병렬 작업과 통합 안전
 
-Issue #157은 별도 worktree에서 Evaluation runner·reporter 영역을 작업 중이다. Issue #167은
-`ai_worker/tasks/evaluation/`, `ai_worker/tests/evaluation/`, Evaluation schema 또는 고정 Dataset을
-수정하지 않는다. 변경 소유권은 새 Candidate Index 모듈, 전용 테스트와 Issue 설계·계획 문서 안으로
-제한한다.
+PR #260은 Issue #167 구현과 함께 사용자가 같은 브랜치에 통합하도록 지정한 한국어 설계 문서 이관을
+포함한다. 이관 문서는 Issue #214, #216, #231, #241의 승인된 설계·계획과 경로 검증이며 Evaluation
+runtime 코드, schema, 고정 Dataset 내용은 변경하지 않는다. 따라서 Pull Request 본문은 Issue #167만
+완료한다고 축약하지 않고 관련 Issue, 문서 이관 범위와 현재 검증 수치를 정확히 기재한다.
+
+리뷰 요청은 실제 변경 영역을 따른다. Candidate Index와 MFDS Catalog 인계는 `@Jye-rookie`,
+Backend·Source·loader/provider 경계는 `@phina-io`, Product·Safety·Evaluation provenance는
+`@hazelnutflavoured`의 검토 범위로 명시한다. 문서 이관을 별도 PR로 이미 올렸다는 이유로 이 브랜치의
+실제 diff와 교차 영역 리뷰를 숨기거나 생략하지 않는다.
 
 매 commit 전에 현재 branch, worktree status와 전체 diff를 확인한다. 병렬 변경을 보존하고 이
 Issue의 일부로 prunable worktree metadata를 제거하지 않는다.

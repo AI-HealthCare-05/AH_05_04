@@ -62,6 +62,8 @@ class CandidateIndexBuildFailureReason(StrEnum):
     CATALOG_MANIFEST_INVALID = "CATALOG_MANIFEST_INVALID"
     CATALOG_COUNT_MISMATCH = "CATALOG_COUNT_MISMATCH"
     CATALOG_TEXT_NOT_NFC = "CATALOG_TEXT_NOT_NFC"
+    CATALOG_REQUIRED_FIELD_INVALID = "CATALOG_REQUIRED_FIELD_INVALID"
+    CATALOG_SOURCE_BINDING_INVALID = "CATALOG_SOURCE_BINDING_INVALID"
     DUPLICATE_PRODUCT_IDENTITY = "DUPLICATE_PRODUCT_IDENTITY"
     REFERENTIAL_INTEGRITY_INVALID = "REFERENTIAL_INTEGRITY_INVALID"
     ALIAS_CONFLICT = "ALIAS_CONFLICT"
@@ -142,6 +144,12 @@ class CatalogSearchEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateCatalogSourceRef:
+    snapshot_id: str
+    source_version: str
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateCatalogCounts:
     product_count: int
     ingredient_count: int
@@ -154,8 +162,7 @@ class CandidateCatalogCounts:
 class CandidateCatalogExport:
     catalog_version: str
     catalog_manifest_hash: str
-    source_snapshot_ids: tuple[str, ...]
-    source_versions: tuple[str, ...]
+    source_refs: tuple[CandidateCatalogSourceRef, ...]
     schema_version: str
     normalization_version: str
     verification_status: CatalogVerificationStatus
@@ -209,7 +216,9 @@ class CandidateIndexMember:
     strength_text: str | None
     dosage_form: str | None
     manufacturer_name: str | None
-    source_snapshot_id: str
+    product_source_snapshot_id: str
+    entry_source_snapshot_id: str
+    alias_source_snapshot_id: str | None
     catalog_version: str
     catalog_manifest_hash: str
     normalization_version: str
@@ -226,8 +235,7 @@ class CandidateIndexManifest:
     build_mode: CandidateIndexBuildMode
     catalog_version: str
     catalog_manifest_hash: str
-    source_snapshot_ids: tuple[str, ...]
-    source_versions: tuple[str, ...]
+    source_refs: tuple[CandidateCatalogSourceRef, ...]
     schema_version: str
     normalization_version: str
     lexical_config_version: str
@@ -401,6 +409,58 @@ def _non_nfc_text_paths(value: object) -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
+def _collect_blank_text_paths(
+    value: object,
+    path: tuple[str, ...],
+    found: set[str],
+) -> None:
+    if isinstance(value, str):
+        if not value.strip():
+            found.add(".".join(path))
+        return
+    if isinstance(value, Mapping):
+        for field_name, field_value in value.items():
+            if isinstance(field_name, str):
+                _collect_blank_text_paths(field_value, (*path, field_name), found)
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            _collect_blank_text_paths(item, path, found)
+
+
+def _blank_text_paths(value: object) -> tuple[str, ...]:
+    found: set[str] = set()
+    _collect_blank_text_paths(value, (), found)
+    return tuple(sorted(found))
+
+
+def _source_snapshot_ids(catalog: CandidateCatalogExport) -> frozenset[str]:
+    return frozenset(ref.snapshot_id for ref in catalog.source_refs)
+
+
+def _source_ref_binding_failure(
+    source_refs: tuple[CandidateCatalogSourceRef, ...],
+) -> CandidateIndexBuildFailure | None:
+    seen_refs: set[tuple[str, str]] = set()
+    snapshot_versions: dict[str, str] = {}
+    conflicts: set[str] = set()
+    for ref in source_refs:
+        pair = (ref.snapshot_id, ref.source_version)
+        if pair in seen_refs:
+            conflicts.add(ref.snapshot_id)
+        seen_refs.add(pair)
+        existing_version = snapshot_versions.get(ref.snapshot_id)
+        if existing_version is not None and existing_version != ref.source_version:
+            conflicts.add(ref.snapshot_id)
+        snapshot_versions[ref.snapshot_id] = ref.source_version
+    if conflicts:
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_SOURCE_BINDING_INVALID,
+            tuple(sorted(conflicts)),
+        )
+    return None
+
+
 def _member_sort_key(member: CandidateIndexMember) -> tuple[bytes, bytes, bytes]:
     return (
         _stable_text_sort_key(_identity_key(member.identity)),
@@ -454,6 +514,9 @@ def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuil
         return all(value is None for value in embedding_fields)
     return (
         all(value is not None for value in embedding_fields)
+        and bool(config.embedding_provider)
+        and bool(config.embedding_model)
+        and bool(config.embedding_model_version)
         and config.embedding_dimension is not None
         and config.embedding_dimension > 0
         and config.distance_metric is CandidateDistanceMetric.COSINE
@@ -463,6 +526,7 @@ def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuil
 def _product_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
     product_by_ref: dict[str, CatalogProduct] = {}
     product_identity_keys: set[str] = set()
+    source_snapshot_ids = _source_snapshot_ids(catalog)
     for product in catalog.products:
         identity_key = _identity_key(product.identity)
         if identity_key in product_identity_keys:
@@ -474,7 +538,7 @@ def _product_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFail
             not product.product_ref
             or product.product_ref in product_by_ref
             or product.identity.entity_type is not CandidateEntityType.PRODUCT
-            or product.source_snapshot_id not in catalog.source_snapshot_ids
+            or product.source_snapshot_id not in source_snapshot_ids
             or product.normalization_version != catalog.normalization_version
         ):
             return CandidateIndexBuildFailure(
@@ -489,6 +553,7 @@ def _product_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFail
 def _ingredient_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
     ingredient_by_ref: dict[str, CatalogIngredient] = {}
     ingredient_identity_keys: set[str] = set()
+    source_snapshot_ids = _source_snapshot_ids(catalog)
     for ingredient in catalog.ingredients:
         identity_key = _identity_key(ingredient.identity)
         if (
@@ -496,7 +561,7 @@ def _ingredient_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildF
             or ingredient.ingredient_ref in ingredient_by_ref
             or identity_key in ingredient_identity_keys
             or ingredient.identity.entity_type is not CandidateEntityType.INGREDIENT
-            or ingredient.source_snapshot_id not in catalog.source_snapshot_ids
+            or ingredient.source_snapshot_id not in source_snapshot_ids
             or ingredient.normalization_version != catalog.normalization_version
         ):
             return CandidateIndexBuildFailure(
@@ -536,15 +601,16 @@ def _alias_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailur
     product_identity_keys = {_identity_key(item.identity) for item in catalog.products}
     ingredient_identity_keys = {_identity_key(item.identity) for item in catalog.ingredients}
     alias_by_ref: dict[str, CatalogAlias] = {}
-    approved_product_alias_targets: dict[str, str] = {}
+    approved_product_alias_targets: dict[str, tuple[str, str]] = {}
     all_identity_keys = product_identity_keys | ingredient_identity_keys
+    source_snapshot_ids = _source_snapshot_ids(catalog)
     for alias in catalog.aliases:
         identity_key = _identity_key(alias.identity)
         if (
             not alias.alias_ref
             or alias.alias_ref in alias_by_ref
             or identity_key not in all_identity_keys
-            or alias.source_snapshot_id not in catalog.source_snapshot_ids
+            or alias.source_snapshot_id not in source_snapshot_ids
             or alias.normalization_version != catalog.normalization_version
         ):
             return CandidateIndexBuildFailure(
@@ -558,12 +624,12 @@ def _alias_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailur
             and alias.is_effective
         ):
             existing_target = approved_product_alias_targets.get(alias.normalized_alias)
-            if existing_target is not None and existing_target != identity_key:
+            if existing_target is not None and existing_target[0] != identity_key:
                 return CandidateIndexBuildFailure(
                     CandidateIndexBuildFailureReason.ALIAS_CONFLICT,
-                    (alias.normalized_alias,),
+                    tuple(sorted((existing_target[1], alias.alias_ref))),
                 )
-            approved_product_alias_targets[alias.normalized_alias] = identity_key
+            approved_product_alias_targets[alias.normalized_alias] = (identity_key, alias.alias_ref)
         alias_by_ref[alias.alias_ref] = alias
     return None
 
@@ -571,6 +637,7 @@ def _alias_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailur
 def _search_entry_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFailure | None:
     product_by_ref = {item.product_ref: item for item in catalog.products}
     alias_by_ref = {item.alias_ref: item for item in catalog.aliases}
+    source_snapshot_ids = _source_snapshot_ids(catalog)
     for entry in catalog.search_entries:
         entry_product = product_by_ref.get(entry.product_ref)
         if (
@@ -578,42 +645,55 @@ def _search_entry_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuil
             or entry_product is None
             or entry.identity != entry_product.identity
             or entry.identity.entity_type is not CandidateEntityType.PRODUCT
-            or entry.source_snapshot_id != entry_product.source_snapshot_id
+            or entry.source_snapshot_id not in source_snapshot_ids
             or entry.normalization_version != catalog.normalization_version
         ):
             return CandidateIndexBuildFailure(
                 CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
                 (entry.entry_ref,),
             )
+        entry_is_declared_active = (
+            entry.status is CandidateRecordStatus.ACTIVE and entry.review_status is CandidateAliasReviewStatus.APPROVED
+        )
         if entry.entry_type is CandidateEntryType.PRODUCT_NAME:
             if (
                 entry.alias_ref is not None
                 or entry.display_text != entry_product.product_name
                 or entry.normalized_text != entry_product.normalized_product_name
+                or entry.source_snapshot_id != entry_product.source_snapshot_id
             ):
+                return CandidateIndexBuildFailure(
+                    CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+                    (entry.entry_ref,),
+                )
+            if entry_is_declared_active and entry_product.status is not CandidateRecordStatus.ACTIVE:
                 return CandidateIndexBuildFailure(
                     CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
                     (entry.entry_ref,),
                 )
             continue
         entry_alias = alias_by_ref.get(entry.alias_ref or "")
-        if entry_alias is None or entry_alias.identity != entry.identity:
+        if (
+            entry_alias is None
+            or entry_alias.identity != entry.identity
+            or entry.source_snapshot_id != entry_alias.source_snapshot_id
+        ):
             return CandidateIndexBuildFailure(
                 CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
                 (entry.entry_ref,),
             )
-        if entry.status is CandidateRecordStatus.ACTIVE and entry.review_status is CandidateAliasReviewStatus.APPROVED:
-            if (
-                entry_alias.review_status is not CandidateAliasReviewStatus.APPROVED
-                or entry_alias.status is not CandidateRecordStatus.ACTIVE
-                or not entry_alias.is_effective
-                or entry.display_text != entry_alias.alias_text
-                or entry.normalized_text != entry_alias.normalized_alias
-            ):
-                return CandidateIndexBuildFailure(
-                    CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
-                    (entry.entry_ref,),
-                )
+        if entry_is_declared_active and (
+            entry_alias.review_status is not CandidateAliasReviewStatus.APPROVED
+            or entry_alias.status is not CandidateRecordStatus.ACTIVE
+            or not entry_alias.is_effective
+            or entry.display_text != entry_alias.alias_text
+            or entry.normalized_text != entry_alias.normalized_alias
+            or entry_product.status is not CandidateRecordStatus.ACTIVE
+        ):
+            return CandidateIndexBuildFailure(
+                CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
+                (entry.entry_ref,),
+            )
     return None
 
 
@@ -636,6 +716,7 @@ def _member_payload(
     catalog: CandidateCatalogExport,
     product: CatalogProduct,
     entry: CatalogSearchEntry,
+    alias_source_snapshot_id: str | None,
 ) -> dict[str, object]:
     return {
         "identity": dataclasses.asdict(entry.identity),
@@ -649,7 +730,9 @@ def _member_payload(
         "strength_text": product.strength_text,
         "dosage_form": product.dosage_form,
         "manufacturer_name": product.manufacturer_name,
-        "source_snapshot_id": entry.source_snapshot_id,
+        "product_source_snapshot_id": product.source_snapshot_id,
+        "entry_source_snapshot_id": entry.source_snapshot_id,
+        "alias_source_snapshot_id": alias_source_snapshot_id,
         "catalog_version": catalog.catalog_version,
         "catalog_manifest_hash": catalog.catalog_manifest_hash,
         "normalization_version": entry.normalization_version,
@@ -660,6 +743,7 @@ def _build_lexical_members(
     catalog: CandidateCatalogExport,
 ) -> CandidateIndexBuildFailure | tuple[CandidateIndexMember, ...]:
     product_by_ref = {product.product_ref: product for product in catalog.products}
+    alias_by_ref = {alias.alias_ref: alias for alias in catalog.aliases}
     members_by_key: dict[str, CandidateIndexMember] = {}
     for entry in catalog.search_entries:
         if (
@@ -668,8 +752,8 @@ def _build_lexical_members(
         ):
             continue
         product = product_by_ref[entry.product_ref]
-        if product.status is not CandidateRecordStatus.ACTIVE:
-            continue
+        entry_alias = alias_by_ref.get(entry.alias_ref) if entry.alias_ref is not None else None
+        alias_source_snapshot_id = entry_alias.source_snapshot_id if entry_alias is not None else None
         member_key = _sha256(
             {
                 "identity": _identity_key(entry.identity),
@@ -677,7 +761,7 @@ def _build_lexical_members(
                 "entry_ref": entry.entry_ref,
             }
         )
-        payload = _member_payload(catalog, product, entry)
+        payload = _member_payload(catalog, product, entry, alias_source_snapshot_id)
         member = CandidateIndexMember(
             identity=entry.identity,
             product_ref=product.product_ref,
@@ -690,7 +774,9 @@ def _build_lexical_members(
             strength_text=product.strength_text,
             dosage_form=product.dosage_form,
             manufacturer_name=product.manufacturer_name,
-            source_snapshot_id=entry.source_snapshot_id,
+            product_source_snapshot_id=product.source_snapshot_id,
+            entry_source_snapshot_id=entry.source_snapshot_id,
+            alias_source_snapshot_id=alias_source_snapshot_id,
             catalog_version=catalog.catalog_version,
             catalog_manifest_hash=catalog.catalog_manifest_hash,
             normalization_version=entry.normalization_version,
@@ -734,6 +820,11 @@ def _attach_embeddings(
         return CandidateIndexBuildFailure(
             CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
             ("embedding_port",),
+        )
+    if not isinstance(vectors, tuple) or not all(isinstance(vector, CandidateEmbeddingVector) for vector in vectors):
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+            ("embedding_output",),
         )
     expected_keys = tuple(request.member_key for request in requests)
     observed_keys = tuple(vector.member_key for vector in vectors)
@@ -792,8 +883,12 @@ def _build_manifest(
         [{"member_key": member.member_key, "member_content_hash": member.member_content_hash} for member in members]
     )
     configuration_hash = _sha256(_configuration_payload(config))
-    source_snapshot_ids = tuple(sorted(catalog.source_snapshot_ids, key=_stable_text_sort_key))
-    source_versions = tuple(sorted(catalog.source_versions, key=_stable_text_sort_key))
+    source_refs = tuple(
+        sorted(
+            catalog.source_refs,
+            key=lambda ref: (_stable_text_sort_key(ref.snapshot_id), _stable_text_sort_key(ref.source_version)),
+        )
+    )
     member_count = len(members)
     product_identity_count = len({_identity_key(member.identity) for member in members})
     product_name_count = sum(member.entry_type is CandidateEntryType.PRODUCT_NAME for member in members)
@@ -806,8 +901,7 @@ def _build_manifest(
         "build_mode": config.build_mode.value,
         "catalog_version": catalog.catalog_version,
         "catalog_manifest_hash": catalog.catalog_manifest_hash,
-        "source_snapshot_ids": source_snapshot_ids,
-        "source_versions": source_versions,
+        "source_refs": [{"snapshot_id": ref.snapshot_id, "source_version": ref.source_version} for ref in source_refs],
         "schema_version": catalog.schema_version,
         "normalization_version": config.normalization_version,
         "lexical_config_version": config.lexical_config_version,
@@ -835,8 +929,7 @@ def _build_manifest(
         build_mode=config.build_mode,
         catalog_version=catalog.catalog_version,
         catalog_manifest_hash=catalog.catalog_manifest_hash,
-        source_snapshot_ids=source_snapshot_ids,
-        source_versions=source_versions,
+        source_refs=source_refs,
         schema_version=catalog.schema_version,
         normalization_version=config.normalization_version,
         lexical_config_version=config.lexical_config_version,
@@ -901,6 +994,30 @@ def _catalog_envelope_failure(catalog: CandidateCatalogExport) -> CandidateIndex
             CandidateIndexBuildFailureReason.CATALOG_TEXT_NOT_NFC,
             non_nfc_fields,
         )
+    empty_collections = tuple(
+        sorted(
+            name
+            for name, empty in (
+                ("source_refs", not catalog.source_refs),
+                ("products", not catalog.products),
+            )
+            if empty
+        )
+    )
+    if empty_collections:
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+            empty_collections,
+        )
+    blank_fields = _blank_text_paths(dataclasses.asdict(catalog))
+    if blank_fields:
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+            blank_fields,
+        )
+    source_binding_failure = _source_ref_binding_failure(catalog.source_refs)
+    if source_binding_failure is not None:
+        return source_binding_failure
     return None
 
 
@@ -925,6 +1042,11 @@ def build_candidate_index(
     members = _build_lexical_members(catalog)
     if isinstance(members, CandidateIndexBuildFailure):
         return members
+    if not members:
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_REQUIRED_FIELD_INVALID,
+            ("members",),
+        )
     if config.build_mode is CandidateIndexBuildMode.HYBRID:
         embedded_members = _attach_embeddings(members, config, embedding_port)
         if isinstance(embedded_members, CandidateIndexBuildFailure):
@@ -969,12 +1091,13 @@ def _hit_failure_detail(
 ) -> str | None:
     if len(hits) > query.retrieval_limit:
         return "retrieval_limit"
+    manifest_snapshot_ids = {ref.snapshot_id for ref in manifest.source_refs}
     for expected_rank, hit in enumerate(hits, start=1):
         checks = (
             (hit.stage is expected_stage, "stage"),
             (hit.index_version == manifest.index_version, "index_version"),
             (hit.catalog_version == manifest.catalog_version, "catalog_version"),
-            (hit.source_snapshot_id in manifest.source_snapshot_ids, "source_snapshot_id"),
+            (hit.source_snapshot_id in manifest_snapshot_ids, "source_snapshot_id"),
             (hit.normalization_version == manifest.normalization_version, "normalization_version"),
             (hit.identity.entity_type is CandidateEntityType.PRODUCT, "identity"),
             (_is_sha256(hit.member_key), "member_key"),
@@ -1026,6 +1149,11 @@ def search_candidate_index(
         try:
             hits = search(query, manifest)
         except Exception:
+            return CandidateIndexSearchFailure(
+                CandidateIndexSearchFailureReason.PORT_FAILURE,
+                (stage.value,),
+            )
+        if not isinstance(hits, tuple) or not all(isinstance(hit, CandidateRawHit) for hit in hits):
             return CandidateIndexSearchFailure(
                 CandidateIndexSearchFailureReason.PORT_FAILURE,
                 (stage.value,),
