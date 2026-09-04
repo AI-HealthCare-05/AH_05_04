@@ -15,6 +15,14 @@ class RetrievalObservation:
     ranked_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class AggregatedMetric:
+    value: Decimal
+    numerator: int
+    denominator: int
+    reason_code: str | None
+
+
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(_SIX_PLACES, rounding=ROUND_HALF_EVEN)
 
@@ -49,3 +57,36 @@ def metric_scores(observation: RetrievalObservation, *, k: int = 5) -> dict[str,
         "NDCG_AT_5": Decimal(0) if idcg == 0 else _quantize(dcg / idcg),
         "NO_HIT_RATE": Decimal(0) if relevant_hits else Decimal(1),
     }
+
+
+def aggregate_metric_scores(
+    score_sets: list[dict[str, Decimal] | None],
+    *,
+    minimum_case_count: int,
+) -> dict[str, AggregatedMetric]:
+    """Aggregate per-case Retrieval diagnostics without treating insufficient data as a pass."""
+
+    completed = [scores for scores in score_sets if scores is not None]
+    if not completed:
+        return {}
+    case_count = len(completed)
+    reason = "MINIMUM_CASE_COUNT_NOT_MET" if case_count < minimum_case_count else None
+    aggregates: dict[str, AggregatedMetric] = {}
+    for metric_id in completed[0]:
+        values = [scores[metric_id] for scores in completed]
+        if metric_id == "PRECISION_AT_5":
+            numerator = int(sum(values, Decimal(0)) * Decimal(5))
+            denominator = case_count * 5
+        elif metric_id in {"RECALL_AT_5", "NO_HIT_RATE"}:
+            numerator = int(sum(values, Decimal(0)))
+            denominator = case_count
+        else:
+            numerator = sum(value > 0 for value in values)
+            denominator = case_count
+        aggregates[metric_id] = AggregatedMetric(
+            value=_quantize(sum(values, Decimal(0)) / Decimal(case_count)),
+            numerator=numerator,
+            denominator=denominator,
+            reason_code=reason,
+        )
+    return aggregates
