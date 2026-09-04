@@ -102,6 +102,20 @@ async def recovery_schema() -> AsyncIterator[None]:
         await connection.execute(
             text(
                 f"""
+                CREATE TABLE {TEST_SCHEMA}.ocr_job (
+                    id VARCHAR(36) PRIMARY KEY,
+                    ai_job_id VARCHAR(36) NOT NULL UNIQUE,
+                    ocr_status VARCHAR(20) NOT NULL,
+                    completed_at TIMESTAMPTZ,
+                    error_code VARCHAR(100),
+                    error_message VARCHAR(500)
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                f"""
                 CREATE TABLE {TEST_SCHEMA}.ai_job_attempt (
                     id VARCHAR(36) PRIMARY KEY,
                     ai_job_id VARCHAR(36) NOT NULL,
@@ -132,6 +146,7 @@ async def clean_rows() -> AsyncIterator[None]:
     async with session_factory.begin() as session:
         await session.execute(text("DELETE FROM ai_job_attempt"))
         await session.execute(text("DELETE FROM outbox_event"))
+        await session.execute(text("DELETE FROM ocr_job"))
         await session.execute(text("DELETE FROM ai_job"))
     yield
 
@@ -219,6 +234,113 @@ async def test_expired_execution_updates_real_boolean_attempt_columns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_expired_last_attempt_marks_linked_ocr_job_failed() -> None:
+    now = datetime.now(UTC)
+    job_id = uuid4()
+    event_id = uuid4()
+    lease_expires_at = now - timedelta(seconds=1)
+
+    async with session_factory.begin() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO ai_job (
+                    id, job_type, status, expected_event_id,
+                    attempt_count, max_attempts, available_at,
+                    lease_token, lease_expires_at, heartbeat_at
+                ) VALUES (
+                    :job_id, 'OCR', 'PROCESSING', :event_id,
+                    3, 3, :now, 'lease-owner', :lease_expires_at, :now
+                )
+                """
+            ),
+            {
+                "job_id": str(job_id),
+                "event_id": str(event_id),
+                "now": now,
+                "lease_expires_at": lease_expires_at,
+            },
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO ai_job_attempt (
+                    id, ai_job_id, attempt_no, attempt_status,
+                    retryable, timed_out, started_at
+                ) VALUES (
+                    :attempt_id, :job_id, 3, 'PROCESSING', false, false, :now
+                )
+                """
+            ),
+            {
+                "attempt_id": str(uuid4()),
+                "job_id": str(job_id),
+                "now": now,
+            },
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO ocr_job (
+                    id, ai_job_id, ocr_status
+                ) VALUES (
+                    :ocr_job_id, :job_id, 'PROCESSING'
+                )
+                """
+            ),
+            {
+                "ocr_job_id": str(uuid4()),
+                "job_id": str(job_id),
+            },
+        )
+
+    async with session_factory.begin() as session:
+        disposition = await SqlAlchemyRecoveryRepository(session).recover_expired_execution(
+            ExpiredExecution(
+                job_id=job_id,
+                event_id=event_id,
+                attempt=3,
+                max_attempts=3,
+                lease_expires_at=lease_expires_at,
+            ),
+            now=now,
+            retry_at=now,
+            failure_code="TIMEOUT",
+        )
+
+    assert disposition is RecoveryDisposition.FAILED
+
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT j.status, j.failure_code,
+                           a.attempt_status, a.error_code,
+                           o.ocr_status, o.error_code AS ocr_error_code,
+                           o.error_message AS ocr_error_message,
+                           o.completed_at AS ocr_completed_at
+                    FROM ai_job AS j
+                    JOIN ai_job_attempt AS a ON a.ai_job_id = j.id
+                    JOIN ocr_job AS o ON o.ai_job_id = j.id
+                    WHERE j.id = :job_id
+                    """
+                ),
+                {"job_id": str(job_id)},
+            )
+        ).one()
+
+    assert row.status == "FAILED"
+    assert row.failure_code == "RETRY_EXHAUSTED"
+    assert row.attempt_status == "FAILED"
+    assert row.error_code == "TIMEOUT"
+    assert row.ocr_status == "FAILED"
+    assert row.ocr_error_code == "OCR_PROVIDER_TIMEOUT"
+    assert row.ocr_error_message == "OCR 서비스 응답 시간이 초과되었습니다."
+    assert row.ocr_completed_at == now
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure_code", "expects_retry"),
     [
@@ -266,6 +388,21 @@ async def test_handler_failure_updates_job_and_attempt_in_one_transaction(
         await session.execute(
             text(
                 """
+                INSERT INTO ocr_job (
+                    id, ai_job_id, ocr_status
+                ) VALUES (
+                    :ocr_job_id, :job_id, 'PROCESSING'
+                )
+                """
+            ),
+            {
+                "ocr_job_id": str(uuid4()),
+                "job_id": str(job_id),
+            },
+        )
+        await session.execute(
+            text(
+                """
                 INSERT INTO ai_job_attempt (
                     id, ai_job_id, attempt_no, attempt_status,
                     retryable, timed_out, started_at
@@ -306,9 +443,13 @@ async def test_handler_failure_updates_job_and_attempt_in_one_transaction(
                     """
                     SELECT j.status, j.failure_code, j.expected_event_id,
                            j.last_consumed_event_id, j.available_at,
-                           a.attempt_status, a.error_code, a.retryable, a.timed_out
+                           a.attempt_status, a.error_code, a.retryable, a.timed_out,
+                           o.ocr_status, o.error_code AS ocr_error_code,
+                           o.error_message AS ocr_error_message,
+                           o.completed_at AS ocr_completed_at
                     FROM ai_job AS j
                     JOIN ai_job_attempt AS a ON a.ai_job_id = j.id
+                    JOIN ocr_job AS o ON o.ai_job_id = j.id
                     WHERE j.id = :job_id
                     """
                 ),
@@ -325,6 +466,17 @@ async def test_handler_failure_updates_job_and_attempt_in_one_transaction(
     assert row.error_code == failure_code
     assert row.retryable is expects_retry
     assert row.timed_out is (failure_code == "TIMEOUT")
+
+    if expects_retry:
+        assert row.ocr_status == "PROCESSING"
+        assert row.ocr_error_code is None
+        assert row.ocr_error_message is None
+        assert row.ocr_completed_at is None
+    else:
+        assert row.ocr_status == "FAILED"
+        assert row.ocr_error_code == ("OCR_PROVIDER_TIMEOUT" if failure_code == "TIMEOUT" else "OCR_PROCESSING_FAILED")
+        assert row.ocr_error_message
+        assert row.ocr_completed_at == now
 
 
 @pytest.mark.asyncio

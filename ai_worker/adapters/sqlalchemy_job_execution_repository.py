@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.adapters.sqlalchemy_ocr_failure import mark_linked_ocr_job_failed
 from ai_worker.core.job_execution import (
     CommittedDelivery,
     ExecutionLease,
@@ -67,6 +68,13 @@ _AI_JOB_ATTEMPT = table(
     column("started_at", DateTime(timezone=True)),
     column("completed_at", DateTime(timezone=True)),
 )
+
+
+class JobExecutionStateError(RuntimeError):
+    """Job·Attempt·도메인 상태를 함께 저장하지 못한 안전한 오류입니다."""
+
+    def __init__(self) -> None:
+        super().__init__("Worker 실패 상태 저장에 실패했습니다.")
 
 
 class SqlAlchemyJobExecutionRepository:
@@ -396,11 +404,12 @@ class SqlAlchemyJobExecutionRepository:
                 failure_code=None if retryable else failure_code,
                 completed_at=None if retryable else failed_at,
             )
-            .returning(_AI_JOB.c.id)
+            .returning(_AI_JOB.c.job_type)
         )
         job_result = await self._session.execute(job_statement)
+        job_type = job_result.scalar_one_or_none()
 
-        if job_result.scalar_one_or_none() is None:
+        if job_type is None:
             return False
 
         attempt_statement = (
@@ -420,4 +429,18 @@ class SqlAlchemyJobExecutionRepository:
             .returning(_AI_JOB_ATTEMPT.c.attempt_no)
         )
         attempt_result = await self._session.execute(attempt_statement)
-        return attempt_result.scalar_one_or_none() is not None
+
+        if attempt_result.scalar_one_or_none() is None:
+            raise JobExecutionStateError()
+
+        if not retryable and str(job_type) == "OCR":
+            ocr_failed = await mark_linked_ocr_job_failed(
+                self._session,
+                ai_job_id=str(lease.job_id),
+                failure_code=failure_code,
+                completed_at=failed_at,
+            )
+            if not ocr_failed:
+                raise JobExecutionStateError()
+
+        return True

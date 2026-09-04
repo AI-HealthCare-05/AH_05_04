@@ -17,6 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.adapters.sqlalchemy_ocr_failure import mark_linked_ocr_job_failed
 from ai_worker.core.recovery import (
     ExpiredExecution,
     RecoveryDisposition,
@@ -27,6 +28,7 @@ from ai_worker.core.retry import FailureCode
 _AI_JOB = table(
     "ai_job",
     column("id", String(36)),
+    column("job_type", String(20)),
     column("status", String(20)),
     column("expected_event_id", String(36)),
     column("last_consumed_event_id", String(36)),
@@ -263,12 +265,13 @@ class SqlAlchemyRecoveryRepository:
                 failure_code=None if retryable else "RETRY_EXHAUSTED",
                 completed_at=None if retryable else now,
             )
-            .returning(_AI_JOB.c.id)
+            .returning(_AI_JOB.c.job_type)
         )
 
         job_result = await self._session.execute(job_statement)
+        job_type = job_result.scalar_one_or_none()
 
-        if job_result.scalar_one_or_none() is None:
+        if job_type is None:
             return RecoveryDisposition.NOT_RECOVERED
 
         attempt_statement = (
@@ -293,6 +296,16 @@ class SqlAlchemyRecoveryRepository:
         if attempt_result.scalar_one_or_none() is None:
             # 호출자가 이 예외를 받고 전체 트랜잭션을 rollback해야 합니다.
             raise RecoveryStateError()
+
+        if not retryable and str(job_type) == "OCR":
+            ocr_failed = await mark_linked_ocr_job_failed(
+                self._session,
+                ai_job_id=str(execution.job_id),
+                failure_code=failure_code,
+                completed_at=now,
+            )
+            if not ocr_failed:
+                raise RecoveryStateError()
 
         if retryable:
             return RecoveryDisposition.RETRY_WAIT

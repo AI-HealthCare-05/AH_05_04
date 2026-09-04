@@ -44,7 +44,7 @@ async def test_expired_execution_moves_to_retry_wait() -> None:
     session = AsyncMock(spec=AsyncSession)
 
     job_result = MagicMock()
-    job_result.scalar_one_or_none.return_value = str(execution.job_id)
+    job_result.scalar_one_or_none.return_value = "OCR"
 
     attempt_result = MagicMock()
     attempt_result.scalar_one_or_none.return_value = execution.attempt
@@ -108,14 +108,18 @@ async def test_last_attempt_moves_job_to_failed() -> None:
     session = AsyncMock(spec=AsyncSession)
 
     job_result = MagicMock()
-    job_result.scalar_one_or_none.return_value = str(execution.job_id)
+    job_result.scalar_one_or_none.return_value = "OCR"
 
     attempt_result = MagicMock()
     attempt_result.scalar_one_or_none.return_value = execution.attempt
 
+    ocr_result = MagicMock()
+    ocr_result.scalar_one_or_none.return_value = "ocr-job-id"
+
     session.execute.side_effect = [
         job_result,
         attempt_result,
+        ocr_result,
     ]
 
     repository = SqlAlchemyRecoveryRepository(session)
@@ -128,7 +132,7 @@ async def test_last_attempt_moves_job_to_failed() -> None:
     )
 
     assert result is RecoveryDisposition.FAILED
-    assert session.execute.await_count == 2
+    assert session.execute.await_count == 3
 
     job_statement = session.execute.await_args_list[0].args[0]
     job_params = job_statement.compile().params
@@ -143,6 +147,13 @@ async def test_last_attempt_moves_job_to_failed() -> None:
     assert "FAILED" in attempt_params.values()
     assert "DEPENDENCY_UNAVAILABLE" in attempt_params.values()
     assert False in attempt_params.values()
+
+    ocr_statement = session.execute.await_args_list[2].args[0]
+    ocr_params = ocr_statement.compile().params
+
+    assert "UPDATE ocr_job SET" in str(ocr_statement)
+    assert "FAILED" in ocr_params.values()
+    assert "OCR_PROVIDER_UNAVAILABLE" in ocr_params.values()
 
 
 @pytest.mark.asyncio
