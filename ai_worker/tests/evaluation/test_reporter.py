@@ -30,7 +30,13 @@ def test_report_contains_only_machine_summary() -> None:
     draft = build_artifact_draft(_material(run_id=RUN_ID, started_at=TIME_B, complete=True))
     entries = content_artifact_entries(machine_artifact_files(draft))
 
-    report = render_report(draft.report_data, draft.metrics, draft.suite_results, entries).decode()
+    report = render_report(
+        draft.report_data,
+        draft.metrics,
+        draft.suite_results,
+        draft.failures,
+        entries,
+    ).decode()
 
     assert f"Run ID: `{RUN_ID}`" in report
     assert "DEV validation only" in report
@@ -48,6 +54,7 @@ def test_report_never_projects_dataset_query_or_gold_text() -> None:
         draft.report_data,
         draft.metrics,
         draft.suite_results,
+        draft.failures,
         content_artifact_entries(machine_artifact_files(draft)),
     )
 
@@ -85,6 +92,7 @@ def test_candidate_report_projects_metric_counts_ci_and_dev_boundary(tmp_path: P
         candidate_draft.report_data,
         candidate_draft.metrics,
         candidate_draft.suite_results,
+        candidate_draft.failures,
         content_artifact_entries(machine_artifact_files(candidate_draft)),
         comparison,
         baseline_variant_id=baseline.run.variant_id,
@@ -115,7 +123,7 @@ def test_candidate_report_projects_metric_counts_ci_and_dev_boundary(tmp_path: P
 
 @pytest.mark.parametrize(
     ("baseline_variant_id", "baseline_metrics"),
-    [(None, "present"), ("", "present"), ("RET-L", None)],
+    [(None, "present"), ("", "present"), ("RET-L", None), ("RET-L", "empty")],
 )
 def test_comparison_report_rejects_missing_baseline_context(
     tmp_path: Path,
@@ -137,23 +145,29 @@ def test_comparison_report_rejects_missing_baseline_context(
             candidate.report_data,
             candidate.metrics,
             candidate.suite_results,
+            candidate.failures,
             content_artifact_entries(machine_artifact_files(candidate)),
             comparison,
             baseline_variant_id=baseline_variant_id,
-            baseline_metrics=baseline.metrics if baseline_metrics == "present" else None,
+            baseline_metrics=(
+                baseline.metrics
+                if baseline_metrics == "present"
+                else baseline.metrics.model_copy(update={"metrics": ()})
+                if baseline_metrics == "empty"
+                else None
+            ),
         )
 
 
-def test_report_projects_deterministic_suite_failure_row() -> None:
-    draft = build_artifact_draft(_material(run_id=RUN_ID, started_at=TIME_B, complete=True))
-    failed_case = draft.suite_results.case_results[0].model_copy(update={"failure_code": "SAFE_SYNTHETIC_FAILURE"})
-    suite_results = draft.suite_results.model_copy(update={"case_results": (failed_case,)})
+def test_report_projects_real_retrieval_failure_row() -> None:
+    draft = build_artifact_draft(retrieval_run_material("RET-L", run_id=RUN_ID_A))
 
     report = render_report(
         draft.report_data,
         draft.metrics,
-        suite_results,
+        draft.suite_results,
+        draft.failures,
         content_artifact_entries(machine_artifact_files(draft)),
     ).decode("utf-8")
 
-    assert "| `rag-dev-retrieval-001` | `SAFE_SYNTHETIC_FAILURE` |" in report
+    assert "| `rag-ret-dev-004` | `REQUIRED_EVIDENCE_NOT_IN_TOP_5` |" in report

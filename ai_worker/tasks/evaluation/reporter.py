@@ -6,6 +6,7 @@ from ai_worker.tasks.evaluation.manifest import ReportData
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     ComparisonResult,
     ContentArtifact,
+    FailureRecord,
     MetricResult,
     MetricResults,
     SuiteResults,
@@ -96,13 +97,14 @@ def render_report(
     report_data: ReportData,
     metrics: MetricResults,
     suite_results: SuiteResults,
+    failures: Sequence[FailureRecord],
     entries: Sequence[ContentArtifact],
     comparison: ComparisonResult | None = None,
     *,
     baseline_variant_id: str | None = None,
     baseline_metrics: MetricResults | None = None,
 ) -> bytes:
-    if comparison is not None and (not baseline_variant_id or baseline_metrics is None):
+    if comparison is not None and (not baseline_variant_id or baseline_metrics is None or not baseline_metrics.metrics):
         raise ValueError("comparison requires complete baseline report context")
     decision = report_data.decision_status.value if report_data.decision_status is not None else "null"
     lines = [
@@ -149,19 +151,19 @@ def render_report(
     lines.extend(["", "## Blocking and Failures", ""])
     lines.extend(f"- `{status.value}`" for status in report_data.blocking_execution_statuses)
     lines.extend(f"- `{code}`" for code in report_data.failure_codes)
-    suite_failures = sorted(
-        (item for item in suite_results.case_results if item.failure_code is not None),
-        key=lambda item: item.case_code.encode("utf-16-be"),
+    ordered_failures = sorted(
+        failures,
+        key=lambda item: (item.case_id.encode("utf-16-be"), item.failure_code.encode("utf-16-be")),
     )
-    if suite_failures:
+    if ordered_failures:
         lines.extend(
             [
                 "",
-                "### Suite Failure Rows",
+                "### Failure Rows",
                 "",
-                "| Case Code | Failure Code |",
+                "| Case ID | Failure Code |",
                 "| --- | --- |",
-                *(f"| `{item.case_code}` | `{item.failure_code}` |" for item in suite_failures),
+                *(f"| `{item.case_id}` | `{item.failure_code}` |" for item in ordered_failures),
             ]
         )
     if report_data.experiment_type.value == "KNOWLEDGE_RETRIEVAL":

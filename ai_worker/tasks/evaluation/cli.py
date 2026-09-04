@@ -725,6 +725,7 @@ def _run_dev(
             draft.report_data,
             draft.metrics,
             draft.suite_results,
+            draft.failures,
             content_artifact_entries(machine_files),
             draft.comparison,
             baseline_variant_id=None if baseline is None else baseline.run.variant_id,
