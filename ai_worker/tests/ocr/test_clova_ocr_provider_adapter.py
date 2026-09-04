@@ -105,6 +105,27 @@ class HangingOcrEngine:
         raise AssertionError("Engine 실행이 취소되지 않았습니다.")
 
 
+def test_clova_adapter_rejects_missing_engine_source() -> None:
+    with pytest.raises(
+        ValueError,
+        match="engine과 engine_factory 중 정확히 하나가 필요합니다",
+    ):
+        ClovaOcrProviderAdapter()
+
+
+def test_clova_adapter_rejects_multiple_engine_sources() -> None:
+    engine = FakeOcrEngine(OcrRecognitionResult(fields=[]))
+
+    with pytest.raises(
+        ValueError,
+        match="engine과 engine_factory 중 정확히 하나가 필요합니다",
+    ):
+        ClovaOcrProviderAdapter(
+            engine,
+            engine_factory=lambda _trace_id: engine,
+        )
+
+
 @pytest.mark.asyncio
 async def test_clova_adapter_forwards_only_minimum_provider_input() -> None:
     engine = FakeOcrEngine(

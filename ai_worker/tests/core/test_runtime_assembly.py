@@ -285,6 +285,20 @@ def _engine_stub() -> Any:
     return create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:5432/test")
 
 
+def test_build_worker_runtime_rejects_multiple_ocr_sources() -> None:
+    with pytest.raises(
+        ValueError,
+        match="ocr_engine과 ocr_provider 중 하나만 전달할 수 있습니다",
+    ):
+        build_worker_runtime(
+            _config(),
+            logger=logging.getLogger("test"),
+            clock=lambda: datetime.now(UTC),
+            ocr_engine=cast(OcrEngine, object()),
+            ocr_provider=cast(Any, object()),
+        )
+
+
 def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() -> None:
     assembled = build_worker_runtime(
         _config(),

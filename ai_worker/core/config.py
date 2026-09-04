@@ -63,8 +63,8 @@ class Config(BaseSettings):
     CLOVA_OCR_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0)
     STORAGE_DIR: str
 
-    # Worker runtime은 Job 실행 DB에만 접근합니다. Admin·Migration 계정과 Provider secret은
-    # 주입하지 않습니다(infra/docker/docker-compose.prod.yml의 ai-worker environment 참고).
+    # Worker runtime의 DB 연결에는 Job 실행 계정만 사용하며,
+    # Admin·Migration DB 계정은 주입하지 않습니다.
     DB_HOST: str
     DB_PORT: int = Field(default=5432, ge=1, le=65535)
     DB_NAME: str
