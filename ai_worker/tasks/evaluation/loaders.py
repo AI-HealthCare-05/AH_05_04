@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import errno
 import json
+import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -35,6 +36,14 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import (
     DatasetManifestV11,
     EvaluationCaseV11,
 )
+from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import (
+    EVALUATION_CASE_ADAPTER_V1_2,
+    CriticalClaimRubricV12,
+    DatasetManifestV12,
+    EvaluationCaseV12,
+    EvidenceMappingManifestV12,
+    ProtectedArtifactReceiptV12,
+)
 from ai_worker.tasks.evaluation.schemas.common import (
     ContentClassification,
     ImmutableReference,
@@ -47,9 +56,25 @@ from ai_worker.tasks.evaluation.schemas.policy import (
     EvaluationProfile,
     SuiteDefinition,
 )
+from ai_worker.tasks.evaluation.schemas.policy_v1_2 import (
+    EvaluationPolicyV12,
+    EvaluationProfileV12,
+    SuiteDefinitionV12,
+)
 
-type DatasetManifestContract = DatasetManifest | DatasetManifestV11
-type EvaluationCaseContract = EvaluationCase | EvaluationCaseV11
+type DatasetManifestContract = DatasetManifest | DatasetManifestV11 | DatasetManifestV12
+type EvaluationCaseContract = EvaluationCase | EvaluationCaseV11 | EvaluationCaseV12
+type EvidenceMappingContract = EvidenceMappingManifest | EvidenceMappingManifestV12
+type CriticalClaimRubricContract = CriticalClaimRubric | CriticalClaimRubricV12
+type EvaluationProfileContract = EvaluationProfile | EvaluationProfileV12
+type EvaluationPolicyContract = EvaluationPolicy | EvaluationPolicyV12
+type SuiteDefinitionContract = SuiteDefinition | SuiteDefinitionV12
+type ProtectedArtifactReceiptContract = ProtectedArtifactReceipt | ProtectedArtifactReceiptV12
+
+
+class _SchemaVersioned(Protocol):
+    @property
+    def schema_version(self) -> str: ...
 
 
 class _DuplicateKeyError(ValueError):
@@ -66,16 +91,32 @@ class ResolvedReference:
 
 
 @dataclass(frozen=True, slots=True)
+class LoadedResourceBinding:
+    relative_path: str
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationResourceBindings:
+    profile: LoadedResourceBinding
+    comparison_policy: LoadedResourceBinding
+    evaluation_policy: LoadedResourceBinding
+    suite: LoadedResourceBinding
+
+
+@dataclass(frozen=True, slots=True)
 class ValidatedDataset:
     manifest: DatasetManifestContract
+    dataset_manifest_resource: LoadedResourceBinding
     cases: tuple[EvaluationCaseContract, ...]
-    evidence_mapping: EvidenceMappingManifest
-    rubric: CriticalClaimRubric
-    profile: EvaluationProfile
+    evidence_mapping: EvidenceMappingContract
+    rubric: CriticalClaimRubricContract
+    profile: EvaluationProfileContract
     comparison_policy: ComparisonPolicy
-    evaluation_policy: EvaluationPolicy
-    suite: SuiteDefinition
-    protected_artifact_receipt: ProtectedArtifactReceipt | None
+    evaluation_policy: EvaluationPolicyContract
+    suite: SuiteDefinitionContract
+    protected_artifact_receipt: ProtectedArtifactReceiptContract | None
+    configuration_resources: ConfigurationResourceBindings
     reference_graph: tuple[ResolvedReference, ...]
     resource_hashes: tuple[tuple[str, str], ...]
 
@@ -96,11 +137,45 @@ class _JsonSnapshot:
 class _AuthoringContract:
     manifest_model: type[BaseModel]
     case_adapter: TypeAdapter[Any]
+    evidence_mapping_model: type[BaseModel]
+    rubric_model: type[BaseModel]
+    profile_model: type[BaseModel]
+    evaluation_policy_model: type[BaseModel]
+    suite_model: type[BaseModel]
+    protected_artifact_receipt_model: type[BaseModel]
 
 
 _AUTHORING_CONTRACTS = {
-    "1.0.0": _AuthoringContract(DatasetManifest, EVALUATION_CASE_ADAPTER),
-    "1.1.0": _AuthoringContract(DatasetManifestV11, EVALUATION_CASE_ADAPTER_V1_1),
+    "1.0.0": _AuthoringContract(
+        DatasetManifest,
+        EVALUATION_CASE_ADAPTER,
+        EvidenceMappingManifest,
+        CriticalClaimRubric,
+        EvaluationProfile,
+        EvaluationPolicy,
+        SuiteDefinition,
+        ProtectedArtifactReceipt,
+    ),
+    "1.1.0": _AuthoringContract(
+        DatasetManifestV11,
+        EVALUATION_CASE_ADAPTER_V1_1,
+        EvidenceMappingManifest,
+        CriticalClaimRubric,
+        EvaluationProfile,
+        EvaluationPolicy,
+        SuiteDefinition,
+        ProtectedArtifactReceipt,
+    ),
+    "1.2.0": _AuthoringContract(
+        DatasetManifestV12,
+        EVALUATION_CASE_ADAPTER_V1_2,
+        EvidenceMappingManifestV12,
+        CriticalClaimRubricV12,
+        EvaluationProfileV12,
+        EvaluationPolicyV12,
+        SuiteDefinitionV12,
+        ProtectedArtifactReceiptV12,
+    ),
 }
 
 
@@ -113,10 +188,10 @@ class _SnapshotReader:
 
     def path(self, relative_path: str) -> Path:
         normalized = normalize_resource_path(relative_path)
-        return _safe_path(self.root, self.root / normalized)
+        return safe_path_under_root(self.root, self.root / normalized)
 
     def read_path(self, path: Path) -> _JsonSnapshot:
-        safe_path = _safe_path(self.root, path)
+        safe_path = safe_path_under_root(self.root, path)
         cached = self._cache.get(safe_path)
         if cached is not None:
             return cached
@@ -128,9 +203,16 @@ class _SnapshotReader:
             if error.errno in {errno.ENOTDIR, errno.EISDIR, errno.EACCES, errno.EPERM, errno.ELOOP}:
                 raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
             raise
-        value = _parse_json_object(raw_bytes)
+        value = parse_json_object_bytes(raw_bytes)
         relative = safe_path.relative_to(self.root).as_posix()
         snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, value)
+        self._cache[safe_path] = snapshot
+        return snapshot
+
+    def seed_path(self, path: Path, raw_bytes: bytes) -> _JsonSnapshot:
+        safe_path = safe_path_under_root(self.root, path)
+        relative = safe_path.relative_to(self.root).as_posix()
+        snapshot = _JsonSnapshot(safe_path, relative, raw_bytes, parse_json_object_bytes(raw_bytes))
         self._cache[safe_path] = snapshot
         return snapshot
 
@@ -151,7 +233,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, JsonValue]]) -> dict[str, Json
     return result
 
 
-def _parse_json_object(raw_bytes: bytes) -> dict[str, JsonValue]:
+def parse_json_object_bytes(raw_bytes: bytes) -> dict[str, JsonValue]:
     try:
         decoded = raw_bytes.decode("utf-8", errors="strict")
         value = json.loads(decoded, object_pairs_hook=_reject_duplicate_keys)
@@ -174,9 +256,9 @@ def _parse_json_object(raw_bytes: bytes) -> dict[str, JsonValue]:
     return cast(dict[str, JsonValue], value)
 
 
-def _safe_path(root: Path, path: Path) -> Path:
-    root_absolute = root.absolute()
-    path_absolute = path.absolute()
+def safe_path_under_root(root: Path, path: Path) -> Path:
+    root_absolute = Path(os.path.abspath(root))
+    path_absolute = Path(os.path.abspath(path))
     try:
         relative = path_absolute.relative_to(root_absolute)
     except ValueError as error:
@@ -204,11 +286,21 @@ def _model_error_code(
     messages = tuple(str(cast(dict[str, object], item.get("ctx", {})).get("error", "")) for item in details)
     if model_name == "ValidationReceipt":
         return EvaluationErrorCode.STATE_COMBINATION_INVALID
-    if model_name == "EvidenceMappingManifest" and any(item["loc"] == () for item in details):
+    if model_name in {"EvidenceMappingManifest", "EvidenceMappingManifestV12"} and any(
+        item["loc"] == () for item in details
+    ):
         return EvaluationErrorCode.EVIDENCE_MAPPING_INVALID
-    if model_name in {"EvaluationProfile", "ComparisonPolicy", "EvaluationPolicy", "SuiteDefinition"}:
+    if model_name in {
+        "EvaluationProfile",
+        "EvaluationProfileV12",
+        "ComparisonPolicy",
+        "EvaluationPolicy",
+        "EvaluationPolicyV12",
+        "SuiteDefinition",
+        "SuiteDefinitionV12",
+    }:
         return EvaluationErrorCode.MANIFEST_INVALID
-    if model_name in {"DatasetManifest", "DatasetManifestV11"}:
+    if model_name in {"DatasetManifest", "DatasetManifestV11", "DatasetManifestV12"}:
         if any("Case resources must be unique" in message for message in messages):
             return EvaluationErrorCode.CASE_DUPLICATE
         if any("approved deidentified data requires" in message for message in messages):
@@ -426,9 +518,10 @@ def _load_evidence(
     prefix: str,
     manifest: DatasetManifestContract,
     cases: tuple[EvaluationCaseContract, ...],
-) -> tuple[EvidenceMappingManifest, dict[tuple[str, str, str], str]]:
+    evidence_mapping_model: type[BaseModel],
+) -> tuple[EvidenceMappingContract, dict[tuple[str, str, str], str]]:
     snapshot = reader.read(f"retrieval/evidence/{prefix}.evidence-mapping.json")
-    evidence = _validate_model(snapshot, EvidenceMappingManifest)
+    evidence = cast(EvidenceMappingContract, _validate_model(snapshot, evidence_mapping_model))
     _verify_self_hash(evidence, "manifest_sha256")
     if evidence.manifest_sha256 != manifest.evidence_mapping_manifest_sha256:
         raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
@@ -473,9 +566,10 @@ def _load_rubric(
     prefix: str,
     manifest: DatasetManifestContract,
     cases: tuple[EvaluationCaseContract, ...],
-) -> CriticalClaimRubric:
+    rubric_model: type[BaseModel],
+) -> CriticalClaimRubricContract:
     snapshot = reader.read(f"retrieval/manifests/{prefix}.critical-claim-rubric.json")
-    rubric = _validate_model(snapshot, CriticalClaimRubric)
+    rubric = cast(CriticalClaimRubricContract, _validate_model(snapshot, rubric_model))
     _verify_self_hash(rubric, "rubric_hash")
     expected_ref = ImmutableReference(id=rubric.rubric_id, version=rubric.rubric_version, hash=rubric.rubric_hash)
     if manifest.critical_claim_rubric_ref != expected_ref:
@@ -500,9 +594,10 @@ def _load_receipt(
     reader: _SnapshotReader,
     prefix: str,
     manifest: DatasetManifestContract,
-) -> ProtectedArtifactReceipt:
+    protected_artifact_receipt_model: type[BaseModel],
+) -> ProtectedArtifactReceiptContract:
     snapshot = reader.read(f"provenance/{prefix}.protected-artifact-receipt.json")
-    receipt = _validate_model(snapshot, ProtectedArtifactReceipt)
+    receipt = cast(ProtectedArtifactReceiptContract, _validate_model(snapshot, protected_artifact_receipt_model))
     _verify_self_hash(receipt, "receipt_hash")
     expected = ImmutableReference(id=receipt.receipt_id, version=receipt.receipt_version, hash=snapshot.file_sha256)
     if manifest.protected_artifact_receipt_ref != expected:
@@ -551,14 +646,34 @@ def _schema_set_hash(reader: _SnapshotReader, schema_set_version: str) -> str:
 def _load_configuration(
     reader: _SnapshotReader,
     prefix: str,
-) -> tuple[EvaluationProfile, ComparisonPolicy, EvaluationPolicy, SuiteDefinition]:
-    profile = _validate_model(reader.read(f"profiles/{prefix}.profile.json"), EvaluationProfile)
+    authoring: _AuthoringContract,
+) -> tuple[
+    EvaluationProfileContract,
+    ComparisonPolicy,
+    EvaluationPolicyContract,
+    SuiteDefinitionContract,
+    ConfigurationResourceBindings,
+]:
+    profile_snapshot = reader.read(f"profiles/{prefix}.profile.json")
+    comparison_snapshot = reader.read(f"policies/{prefix}.comparison-policy.json")
+    policy_snapshot = reader.read(f"policies/{prefix}.evaluation-policy.json")
+    suite_snapshot = reader.read(f"suites/{prefix}.suite.json")
+    profile = cast(
+        EvaluationProfileContract,
+        _validate_model(profile_snapshot, authoring.profile_model),
+    )
     comparison = _validate_model(
-        reader.read(f"policies/{prefix}.comparison-policy.json"),
+        comparison_snapshot,
         ComparisonPolicy,
     )
-    policy = _validate_model(reader.read(f"policies/{prefix}.evaluation-policy.json"), EvaluationPolicy)
-    suite = _validate_model(reader.read(f"suites/{prefix}.suite.json"), SuiteDefinition)
+    policy = cast(
+        EvaluationPolicyContract,
+        _validate_model(policy_snapshot, authoring.evaluation_policy_model),
+    )
+    suite = cast(
+        SuiteDefinitionContract,
+        _validate_model(suite_snapshot, authoring.suite_model),
+    )
     for model, field in (
         (profile, "evaluation_profile_hash"),
         (comparison, "comparison_policy_hash"),
@@ -566,7 +681,13 @@ def _load_configuration(
         (suite, "suite_hash"),
     ):
         _verify_self_hash(model, field)
-    return profile, comparison, policy, suite
+    bindings = ConfigurationResourceBindings(
+        profile=LoadedResourceBinding(profile_snapshot.relative_path, profile_snapshot.file_sha256),
+        comparison_policy=LoadedResourceBinding(comparison_snapshot.relative_path, comparison_snapshot.file_sha256),
+        evaluation_policy=LoadedResourceBinding(policy_snapshot.relative_path, policy_snapshot.file_sha256),
+        suite=LoadedResourceBinding(suite_snapshot.relative_path, suite_snapshot.file_sha256),
+    )
+    return profile, comparison, policy, suite, bindings
 
 
 def _resolve_reference(
@@ -586,10 +707,10 @@ def _validate_reference_graph(
     manifest: DatasetManifestContract,
     cases: tuple[EvaluationCaseContract, ...],
     evidence_registry: dict[tuple[str, str, str], str],
-    profile: EvaluationProfile,
+    profile: EvaluationProfileContract,
     comparison: ComparisonPolicy,
-    policy: EvaluationPolicy,
-    suite: SuiteDefinition,
+    policy: EvaluationPolicyContract,
+    suite: SuiteDefinitionContract,
     schema_set_hash: str,
     schema_set_version: str,
 ) -> tuple[ResolvedReference, ...]:
@@ -649,10 +770,10 @@ def _validate_reference_graph(
 def _validate_configuration_graph(
     manifest: DatasetManifestContract,
     cases: tuple[EvaluationCaseContract, ...],
-    profile: EvaluationProfile,
+    profile: EvaluationProfileContract,
     comparison: ComparisonPolicy,
-    policy: EvaluationPolicy,
-    suite: SuiteDefinition,
+    policy: EvaluationPolicyContract,
+    suite: SuiteDefinitionContract,
 ) -> None:
     dataset_partitions = {
         partition for partition in Partition if getattr(manifest.partition_counts, partition.value) > 0
@@ -700,8 +821,8 @@ def _validate_configuration_graph(
 def _validate_frozen_gold_closure(
     manifest: DatasetManifestContract,
     cases: tuple[EvaluationCaseContract, ...],
-    evidence: EvidenceMappingManifest,
-    rubric: CriticalClaimRubric,
+    evidence: EvidenceMappingContract,
+    rubric: CriticalClaimRubricContract,
 ) -> None:
     if not isinstance(manifest, DatasetManifestV11) or manifest.status.value != "FROZEN":
         return
@@ -714,9 +835,16 @@ def _validate_frozen_gold_closure(
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
 
-def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
+def load_dataset(
+    manifest_path: Path,
+    *,
+    evals_root: Path,
+    manifest_bytes: bytes | None = None,
+) -> ValidatedDataset:
     reader = _SnapshotReader(evals_root)
-    manifest_snapshot = reader.read_path(manifest_path)
+    manifest_snapshot = (
+        reader.read_path(manifest_path) if manifest_bytes is None else reader.seed_path(manifest_path, manifest_bytes)
+    )
     authoring = _authoring_contract(manifest_snapshot)
     manifest = cast(
         DatasetManifestContract,
@@ -728,11 +856,21 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
     prefix = _prefix(manifest_path)
     cases = _validate_cases(reader, manifest, authoring.case_adapter)
     _validate_leakage(cases)
-    evidence, evidence_registry = _load_evidence(reader, prefix, manifest, cases)
-    rubric = _load_rubric(reader, prefix, manifest, cases)
+    evidence, evidence_registry = _load_evidence(
+        reader,
+        prefix,
+        manifest,
+        cases,
+        authoring.evidence_mapping_model,
+    )
+    rubric = _load_rubric(reader, prefix, manifest, cases, authoring.rubric_model)
     _validate_frozen_gold_closure(manifest, cases, evidence, rubric)
-    receipt = _load_receipt(reader, prefix, manifest) if manifest.protected_artifact_receipt_ref is not None else None
-    profile, comparison, policy, suite = _load_configuration(reader, prefix)
+    receipt = (
+        _load_receipt(reader, prefix, manifest, authoring.protected_artifact_receipt_model)
+        if manifest.protected_artifact_receipt_ref is not None
+        else None
+    )
+    profile, comparison, policy, suite, configuration_resources = _load_configuration(reader, prefix, authoring)
     _validate_configuration_graph(manifest, cases, profile, comparison, policy, suite)
     if (
         suite.input_selector.dataset_code != manifest.dataset_code
@@ -755,9 +893,19 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
     if registry is None:
         raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
     member_versions = {entry.schema_id: entry.member_version for entry in registry}
-    if member_versions.get("rag-eval.dataset-manifest") != manifest.schema_version or any(
-        member_versions.get("rag-eval.case") != case.schema_version for case in cases
-    ):
+    graph_members: list[tuple[str, _SchemaVersioned]] = [
+        ("rag-eval.dataset-manifest", manifest),
+        *(("rag-eval.case", case) for case in cases),
+        ("rag-eval.evidence-mapping-manifest", evidence),
+        ("rag-eval.critical-claim-rubric", rubric),
+        ("rag-eval.evaluation-profile", profile),
+        ("rag-eval.comparison-policy", comparison),
+        ("rag-eval.evaluation-policy", policy),
+        ("rag-eval.suite-definition", suite),
+    ]
+    if receipt is not None:
+        graph_members.append(("rag-eval.protected-artifact-receipt", receipt))
+    if any(member_versions.get(schema_id) != resource.schema_version for schema_id, resource in graph_members):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     schema_set_hash = _schema_set_hash(reader, schema_set_version)
     graph = _validate_reference_graph(
@@ -776,6 +924,10 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
             raise EvaluationValidationError(EvaluationErrorCode.DEIDENTIFICATION_APPROVAL_REQUIRED)
     return ValidatedDataset(
         manifest=manifest,
+        dataset_manifest_resource=LoadedResourceBinding(
+            relative_path=manifest_snapshot.relative_path,
+            sha256=manifest_snapshot.file_sha256,
+        ),
         cases=cases,
         evidence_mapping=evidence,
         rubric=rubric,
@@ -784,6 +936,7 @@ def load_dataset(manifest_path: Path, *, evals_root: Path) -> ValidatedDataset:
         evaluation_policy=policy,
         suite=suite,
         protected_artifact_receipt=receipt,
+        configuration_resources=configuration_resources,
         reference_graph=graph,
         resource_hashes=reader.resource_hashes,
     )

@@ -12,6 +12,7 @@ from app.core.provider_observability import (
     ProviderCallDescriptor,
     ProviderOperation,
 )
+from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
@@ -29,6 +30,8 @@ from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
 from app.services.guide_ai.prompt import PROMPT_VERSION as GUIDE_PROMPT_VERSION
 from app.services.guides import GuideService
+from app.services.job_intake import JobIntakeService
+from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.ocr import OcrService
 from app.services.ocr_ai import (
@@ -347,4 +350,48 @@ def get_user_manage_service(
     return UserManageService(
         repository=repository,
         auth_service=auth_service,
+    )
+
+
+def get_async_job_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> AsyncJobRepository:
+    return AsyncJobRepository(session)
+
+
+def get_job_intake_service(
+    repository: Annotated[
+        AsyncJobRepository,
+        Depends(get_async_job_repository),
+    ],
+) -> JobIntakeService:
+    return JobIntakeService(repository)
+
+
+def get_job_status_service(
+    job_repository: Annotated[
+        AsyncJobRepository,
+        Depends(get_async_job_repository),
+    ],
+    ocr_repository: Annotated[
+        OcrRepository,
+        Depends(get_ocr_repository),
+    ],
+    guide_repository: Annotated[
+        GuideRepository,
+        Depends(get_guide_repository),
+    ],
+    chat_repository: Annotated[
+        ChatRepository,
+        Depends(get_chat_repository),
+    ],
+) -> JobStatusService:
+    return JobStatusService(
+        job_repository=job_repository,
+        ocr_repository=ocr_repository,
+        guide_repository=guide_repository,
+        chat_repository=chat_repository,
     )

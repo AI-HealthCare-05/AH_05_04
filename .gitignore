@@ -29,6 +29,8 @@ ai_worker/models/*
 *.ckpt
 *.onnx
 .codex-tmp/
+.superpowers/
+docs/superpowers/
 
 # Medical / project data
 data/*

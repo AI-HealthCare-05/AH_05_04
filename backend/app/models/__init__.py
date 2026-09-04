@@ -21,9 +21,18 @@ from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ExtractedField, OcrJob
 from app.models.prescriptions import Medication, Prescription
 from app.models.profiles import Profile, ProfileType
-from app.models.users import Gender, User
+from app.models.rag_candidate import (
+    MedicationCandidateSearch,
+    MedicationCandidateSearchResult,
+    MedicationCandidateSearchStatus,
+    MedicationIdentification,
+    MedicationIdentificationSource,
+    MedicationIdentificationStatus,
+)
+from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "AccountStatus",
     "AiJob",
     "AiJobAttempt",
     "AiJobAttemptStatus",
@@ -44,6 +53,12 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeDocument",
     "Medication",
+    "MedicationCandidateSearch",
+    "MedicationCandidateSearchResult",
+    "MedicationCandidateSearchStatus",
+    "MedicationIdentification",
+    "MedicationIdentificationSource",
+    "MedicationIdentificationStatus",
     "MedicalDocument",
     "MessageQuarantine",
     "OcrJob",

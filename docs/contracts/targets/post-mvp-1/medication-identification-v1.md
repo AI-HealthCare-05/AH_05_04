@@ -7,7 +7,8 @@
 | 책임 리뷰 | 송은영 — Backend·DB·소유권·Transaction, 김지혜 — OCR 확정 입력 경계, 남한솔 — 확인 UI·공개 DTO, 권가빈 — 제품 범위·안전 문구 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; Design `1.50` SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a`; DB `1.47` SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
 | 기준 관계 | Approved Contract Freeze v4의 공식 의약품 식별 기준을 유지하고 RAG-00 Candidate 공유 계약을 이 파일에 통합 · [처방 버전 계약 v1](./prescription-version-v1.md) |
-| Last verified | 2026-09-01 |
+| 보완 Decision | [`PD-167-20260904`](../../../governance/decisions/2026-09-04-rag-candidate-index-input-boundary.md) · PR #260 최신 HEAD 교차 승인 대기 |
+| Last verified | 2026-09-04 |
 
 ## 목적과 변경 분류
 
@@ -37,6 +38,19 @@ OCR `raw_value`, `normalized_value`, 검수 전 Structured Output, `source_ids`,
 - 필수 schema drift, 부분 적재, 중복 Identity, checksum 불일치와 미승인 Snapshot은 활성화하지 않는다.
 - 비활성 Source는 신규 후보·Rule 평가에서 제외하되 과거 Identification과 Citation provenance는 보존한다.
 - OCR Candidate Index와 의료 Evidence Index는 version과 물리 경계를 분리한다. pgvector는 Candidate Resolver의 보조 단계이며 자동 확정 근거가 아니다.
+
+Candidate Catalog와 Candidate Index manifest는 Source Snapshot ID와 Source version을 독립 배열로
+저장하지 않고 `(snapshot_id, source_version)`이 결속된 불변 Source reference 목록으로 보존한다.
+Product-name Search Entry는 Product publication Snapshot과, 승인 Alias Search Entry는 Alias publication
+Snapshot과 일치해야 한다. Product와 내부 승인 Alias는 서로 다른 Snapshot일 수 있으나 둘 다 같은
+Catalog export에 포함돼야 한다. Candidate 구성원은 Product·Entry·nullable Alias Snapshot을 각각
+보존하며 하나의 모호한 Source 필드로 합치지 않는다.
+
+필수 Catalog·Source·Identity·reference·검색 문자열이 비어 있거나, active·approved Entry가 비활성
+Product 또는 유효하지 않은 Alias를 참조하거나, 검증 뒤 Candidate 구성원이 0건이면 Candidate Index를
+활성화하지 않는다. Catalog와 query 문자열은 Unicode NFC여야 하며 입력 경계에서 조용히 변환하지
+않는다. 실패 응답과 내부 failure detail에는 원문 검색 문자열·Alias·vector·credential을 포함하지
+않는다.
 
 ### 조건부 보험코드 확장 — P0 비활성
 

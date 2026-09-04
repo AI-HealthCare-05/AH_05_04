@@ -183,7 +183,7 @@ function UploadScreen({ onBack, onNext }: { onBack: () => void; onNext: () => vo
         <h1 className="screen-title">처방전을<br />등록해 주세요</h1>
         <p className="screen-description">사진 또는 PDF에서 약 이름·용량·횟수·기간을 읽어요.</p>
         <button type="button" className={`upload-zone ${selected ? 'selected' : ''}`} onClick={() => setSelected(true)}>
-          <span aria-hidden="true">▧</span><strong>{selected ? '처방전_20260820.jpg' : '사진 촬영 또는 파일 선택'}</strong><small>{selected ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 10MB'}</small>
+          <span aria-hidden="true">▧</span><strong>{selected ? '처방전_20260820.jpg' : '사진 촬영 또는 파일 선택'}</strong><small>{selected ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 30MB'}</small>
         </button>
         <div className="notice"><strong>가릴 수 있는 정보</strong><br />이름·주소·환자번호·주민등록번호·바코드·QR을 가린 뒤 등록할 수 있어요.</div>
         <Button fullWidth disabled={!selected} style={{ marginTop: 18 }} onClick={onNext}>처방전 읽기</Button>

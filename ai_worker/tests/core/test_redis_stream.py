@@ -18,7 +18,6 @@ from redis.exceptions import (
 )
 
 from ai_worker.adapters.errors import (
-    StreamMessageDecodingError,
     StreamOperationError,
 )
 from ai_worker.adapters.redis_message_codec import encode_stream_message
@@ -192,22 +191,35 @@ async def test_timeout_is_safely_converted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_message_schema_is_rejected() -> None:
+async def test_read_isolates_invalid_message_and_returns_valid_delivery() -> None:
     client = build_redis_client()
+    adapter = RedisStreamAdapter(cast(Redis, client))
     message = build_message()
-    encoded = encode_stream_message(message)
-    encoded["schema_version"] = "9.0"
-    fields = {key.encode(): value.encode() for key, value in encoded.items()}
+
+    valid_encoded = encode_stream_message(message)
+    valid_fields = {key.encode(): value.encode() for key, value in valid_encoded.items()}
+
+    invalid_fields = dict(valid_fields)
+    invalid_fields[b"schema_version"] = b"9.0"
+
     client.xreadgroup.return_value = [
         (
             b"oryak:jobs",
-            [(b"1003-0", fields)],
+            [
+                (b"1003-0", invalid_fields),
+                (b"1004-0", valid_fields),
+            ],
         )
     ]
-    adapter = RedisStreamAdapter(cast(Redis, client))
 
-    with pytest.raises(StreamMessageDecodingError):
-        await adapter.read(consumer_name="worker-1")
+    deliveries = await adapter.read(
+        consumer_name="worker-1",
+        count=2,
+    )
+
+    assert len(deliveries) == 1
+    assert deliveries[0].stream_message_id == "1004-0"
+    assert deliveries[0].message == message
 
 
 @pytest.mark.asyncio

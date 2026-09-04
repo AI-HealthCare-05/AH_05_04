@@ -5,6 +5,7 @@ set -euo pipefail
 
 # 저장소 루트에서 명령이 실행되도록 이동합니다.
 cd "$(dirname "$0")/../.."
+REPOSITORY_ROOT="$(pwd)"
 
 ENV_FILE="${ENV_FILE:-envs/.local.env}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
@@ -76,7 +77,9 @@ for test_dir in \
   ./backend/app/tests \
   ./tests/contract \
   ./tests/migration \
-  ./ai_worker/tests/core; do
+  ./ai_worker/tests/core \
+  ./ai_worker/tests/ocr \
+  ./tests/integration; do
   if [ -d "$test_dir" ] &&
     find "$test_dir" -type f -name 'test_*.py' -print -quit |
       grep -q .; then
@@ -92,7 +95,7 @@ if [ "$HAS_TESTS" != true ]; then
   exit 0
 fi
 
-# Compose 프로젝트의 PostgreSQL 서비스가 실제 실행 중인지 확인합니다.
+# Compose 프로젝트의 PostgreSQL·Redis 서비스가 실제 실행 중인지 확인합니다.
 if ! docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
@@ -100,6 +103,16 @@ if ! docker compose \
   grep -qx postgres; then
   echo "PostgreSQL container not found."
   echo "Run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d postgres"
+  exit 1
+fi
+
+if ! docker compose \
+  --env-file "$ENV_FILE" \
+  -f "$COMPOSE_FILE" \
+  ps --services --status running |
+  grep -qx redis; then
+  echo "Redis container not found."
+  echo "Run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d redis"
   exit 1
 fi
 
@@ -160,6 +173,7 @@ run_with_test_database() {
     DB_PORT="$HOST_DB_PORT" \
     DB_EXPOSE_PORT="$HOST_DB_PORT" \
     DB_NAME=test \
+    PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT" \
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \
@@ -176,12 +190,15 @@ run_with_test_database pytest tests/migration -v
 
 echo "Run Pytest with Coverage"
 
-# Backend, 공통 계약, Worker 공통 골격 테스트를 한 번만 실행합니다.
+# Backend, 공통 계약, Worker 공통·OCR 테스트를 한 번만 실행합니다.
 if ! run_with_test_database \
   coverage run -m pytest \
   backend/app \
   tests/contract \
-  ai_worker/tests/core; then
+  ai_worker/tests/core \
+  ai_worker/tests/ocr \
+  tests/integration/test_worker_ocr_persistence.py \
+  tests/integration/test_outbox_publisher.py; then
   echo
   echo "Pytest failed."
   echo "Fix the test failures above and re-run."

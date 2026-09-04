@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 from uuid import uuid4
 
 import pytest_asyncio
@@ -7,12 +8,15 @@ from sqlalchemy import CheckConstraint, UniqueConstraint, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.core.retry import ALL_FAILURE_CODES
+from ai_worker.schemas.messages import DomainType as WorkerDomainType
 from app.core.db.databases import Base
 from app.models.async_jobs import (
     _FAILURE_CODE_VALUES,
     AiJob,
+    AiJobFailureCode,
     AiJobStatus,
     AiJobType,
+    DomainType,
     MessageQuarantine,
     OutboxEvent,
     OutboxEventKind,
@@ -26,6 +30,20 @@ def test_failure_code_allowlist_matches_worker_retry_contract() -> None:
     """ai_worker/core/retry.py의 ALL_FAILURE_CODES와 DB CHECK 제약의 allowlist가 어긋나면
     Worker가 기록한 failure_code를 DB가 거부할 수 있으므로 두 목록을 동기화된 상태로 고정합니다."""
     assert set(_FAILURE_CODE_VALUES) == set(ALL_FAILURE_CODES)
+
+
+def test_ai_job_failure_code_literal_matches_check_constraint_values() -> None:
+    """`AiJobFailureCode`(dtos/jobs.py의 `JobErrorData.code` 타입)가 DB CHECK 제약의
+    allowlist와 어긋나면, OpenAPI가 실제로는 나올 수 없는 값을 문서화하거나 실제 나올 수 있는
+    값을 누락하게 되므로 두 목록을 동기화된 상태로 고정합니다."""
+    assert set(get_args(AiJobFailureCode)) == set(_FAILURE_CODE_VALUES)
+
+
+def test_domain_type_matches_worker_message_schema() -> None:
+    """`ai_worker/schemas/messages.py`의 `DomainType`과 이 값이 어긋나면, Backend가 접수 시점에
+    저장한 `outbox_event.domain_type`을 Publisher가 `WorkerMessage`로 조립할 때 검증에서
+    거부될 수 있으므로 두 enum을 동기화된 상태로 고정합니다."""
+    assert {member.value for member in DomainType} == {member.value for member in WorkerDomainType}
 
 
 def test_track_a_async_tables_are_registered() -> None:
@@ -121,6 +139,10 @@ def test_outbox_event_contains_publish_and_claim_columns() -> None:
         "claim_token",
         "claim_expires_at",
         "published_at",
+        "stream_message_id",
+        "trace_id",
+        "domain_type",
+        "domain_id",
         "created_at",
         "updated_at",
     }
@@ -296,7 +318,7 @@ async def test_message_quarantine_job_id_accepts_reference_to_missing_ai_job(
         stream_entry_id=f"{uuid4().hex}-0",
         message_digest=uuid4().hex,
         job_id=uuid4(),
-        failure_code="UNSUPPORTED_REQUEST",
+        failure_code="UNSUPPORTED_SCHEMA",
     )
     db_session.add(quarantine)
     await db_session.flush()

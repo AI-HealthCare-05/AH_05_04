@@ -6,6 +6,62 @@
 - Staging
 - Production
 
+## Production 운영 책임 체계
+
+아래 역할은 제품·공개 게이트 승인, 기술 승인·실행, 도메인별 운영 검증을 분리한다. 담당자가 `미정`이거나 대체 담당자·증빙 위치 또는 해당 역할 수행에 필요한 접근·승인·실행 권한이 비어 있는 역할이 하나라도 있으면 Production 배포를 승인하거나 시작하지 않는다. 실제 배포 명령과 Rollback 명령의 실행 권한은 각각 `배포 실행`과 `Rollback 실행` 담당자에게만 요구하며, 제품 담당자와 도메인별 운영 검증 담당자에게 자동으로 부여하지 않는다. 팀 내부 검토는 외부 의료·약학·Privacy·Source 승인이나 Production 공개 승인을 대체하지 않는다.
+
+| 역할 | 주 담당 | 대체 담당 | 권한과 책임 | 현재 상태·선행조건 |
+| --- | --- | --- | --- | --- |
+| 제품·Release Gate 확인 | 권가빈 | 미정 | 제품 인수, 공개 제한과 외부 승인 상태를 확인한다. 기술 배포 명령을 실행하거나 기술 안전성을 단독 승인하지 않는다. | 외부 승인·공개 게이트와 필수 회귀 증빙 충족 전 승인 불가 |
+| 기술 배포 승인 | 미정 | 미정 | 대상 환경의 migration, secret, 수용량, health check와 rollback 준비 상태를 검토하고 기술 배포 가능 여부를 승인한다. | Production 환경·권한·배포 방식 확정 필요 |
+| 배포 실행 | 미정 | 미정 | 승인된 commit/image digest와 migration 순서로 배포하고 실행 증빙을 기록한다. | 실행 계정과 배포 Runbook 확정 필요 |
+| 배포 후 관제 총괄 | 미정 | 미정 | 도메인별 운영 검증 결과를 취합하고 중단 조건을 감시하며 incident 대응을 조율한다. 각 도메인을 대신 검증하지 않는다. | 관제 도구·지표·알림 채널·관찰 시간·취합 Runbook 확정 필요 |
+| Backend·API·DB·Security 운영 검증 | 송은영 | 미정 | health check, API 오류율·latency, DB·migration과 Security 통제 상태를 검증해 관제 총괄에 전달한다. 기술 배포 명령을 자동으로 승인하거나 실행하는 역할은 아니다. | Production 관제·DB 증빙 접근권한 확인 필요 |
+| Worker·Redis·OCR 운영 검증 | 김지혜 | 미정 | Stream PEL·예약 retry·DLQ·quarantine·non-terminal Job 적체와 OCR 상태를 검증하고, Worker drain 상태를 확인해 관제 총괄과 Rollback 실행자에게 전달한다. 배포 명령이나 DB migration 실행 역할은 아니다. | Worker·Redis·OCR 관제 접근권한과 drain 절차 확인 필요 |
+| AI·RAG·Provider·Safety 운영 검증 | 정현우 | 미정 | 모델·프롬프트·Runtime Bundle, RAG·Provider·Safety·Evaluation 상태와 복구 결과를 검증해 관제 총괄에 전달한다. 배포나 rollback 명령을 승인·실행하는 역할은 아니다. | Provider·Safety·Evaluation 증빙 접근권한 확인 필요 |
+| Frontend 운영 검증 | 남한솔 | 미정 | Frontend smoke/E2E와 주요 사용자 흐름·연동 상태를 검증하고 Frontend rollback 필요성의 근거를 관제 총괄에 전달한다. Production 공개나 전체 기술 배포를 승인하지 않는다. | Production Frontend와 E2E 증빙 접근권한 확인 필요 |
+| 제품 중단·비공개 판단 | 권가빈 | 미정 | 제품·사용자 영향과 공개 게이트를 근거로 공개 중단 또는 비공개 유지를 판단하고 전체 incident coordination을 맡는다. 기술 rollback 방식을 단독 결정하지 않는다. | 연락 경로와 제품 중단 기준 확정 필요 |
+| 기술 Rollback 판단 | 미정 | 미정 | 기술 중단 조건과 영향 범위를 근거로 애플리케이션 rollback, 기존 호환 버전 유지 또는 DB forward-fix를 결정한다. 제품 공개 여부는 결정하지 않는다. | 중단 임계값·의사결정 권한·연락 경로 확정 필요 |
+| Rollback 실행 | 미정 | 미정 | 승인된 절차로 애플리케이션 버전을 복구하고, Worker·Redis·OCR 운영 검증 담당자가 전달한 drain 확인 결과와 복구 상태를 확인한다. Production DB migration은 downgrade하지 않고 후속 migration으로 forward-fix한다. | 실행 권한·backup·복구 검증·Stream PEL·예약 retry drain·구·신 Consumer 호환 기준·Runbook 확정 필요 |
+
+### 담당자 확정 및 에스컬레이션
+
+- 각 역할의 주 담당과 대체 담당은 실제 Production 접근 권한과 실행 역량을 확인한 뒤 팀 합의로 기록한다. 파일 이력이나 인접 업무만으로 담당자를 추정하지 않는다.
+- 권가빈은 담당자 확정의 조율과 추적을 맡지만, 그 책임만으로 미정인 기술 승인·배포·rollback 실행자가 되지는 않는다.
+- 기존 절차의 `Infrastructure 담당자`는 별도 실명 역할이 아니라 Production 실행 계정과 배포·복구 Runbook을 보유한 실행 역량을 뜻한다. 이 문서에서는 `배포 실행`과 `Rollback 실행`에 대응하며, schema·secret 변경 검토에는 `기술 배포 승인`과 함께 참여한다. 승인자와 실행자는 원칙적으로 분리한다.
+- `기술 책임자`를 단일 직책처럼 사용하지 않는다. 배포 전에는 `기술 배포 승인` 담당자, 장애 시에는 `기술 Rollback 판단` 담당자를 뜻하며, 에스컬레이션할 때 해당 역할을 명시한다.
+- 담당자 부재 시 대체 담당자가 같은 증빙과 승인 조건을 확인한다. 대체 담당자도 없으면 배포를 중단하고 제품·Release Gate 확인 담당자와 해당 단계의 기술 승인 또는 판단 담당자에게 에스컬레이션한다.
+- 제품·Release Gate 확인자와 기술 배포 승인·실행자는 서로의 책임을 대신하지 않는다. 외부 승인 누락은 수동 승인이나 담당자 합의만으로 예외 처리하지 않는다.
+
+미정 역할의 결정과 확정 결과는 [Issue #230](https://github.com/AI-HealthCare-05/AH_05_04/issues/230)에서 추적한다. 모든 결정 기한은 **최초 Production 배포 PR 생성 전**이다. 미정 항목이 남아 있어도 이 문서 PR의 병합을 차단하지는 않지만, 아래 항목과 각 대체 담당자가 확정되기 전에는 Production 배포 PR을 생성하거나 배포를 승인·시작하지 않고 `미정/배포 차단` 상태를 유지한다.
+
+| 미정 역할 | 결정 주체 | 선행조건 | 추적 위치 |
+| --- | --- | --- | --- |
+| 기술 배포 승인 | 권가빈과 Backend·DB·Security 담당 공동 합의 | Production 환경과 migration·secret·수용량 검토 권한 확인 | Issue #230 |
+| 배포 실행 | 권가빈과 Infrastructure·Backend 담당 공동 합의 | 실행 계정, 배포 Runbook과 migration 수행 역량 확인 | Issue #230 |
+| 배포 후 관제 총괄 | 권가빈과 각 도메인 담당 공동 합의 | 관제 도구·알림 채널 접근과 결과 취합 절차 확인 | Issue #230 |
+| 기술 Rollback 판단 | 권가빈과 Backend·DB·Security 담당 공동 합의 | 중단 임계값, DB forward-fix 기준과 연락 경로 확인 | Issue #230 |
+| Rollback 실행 | 권가빈과 Infrastructure·Backend 담당 공동 합의 | 실행 권한, backup·복구 검증, Worker drain 포함 Runbook 확인 | Issue #230 |
+| 각 역할의 대체 담당 | 해당 역할의 결정 주체 | 주 담당과 같은 권한·증빙·Runbook 수행 가능성 확인 | Issue #230 |
+
+`미정/배포 차단`은 이 문서가 정의하는 governance 상태이며 저장소에 `production_enabled`라는 runtime flag가 구현되어 있다는 뜻이 아니다. `PUBLIC_TRACK_C`와 `PUBLIC_TRACK_F`는 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)가 정의한 Publication gate 식별자와 해제 기준이며, 현재 runtime 설정으로 구현되어 있다는 의미가 아니다. 문서상의 gate 상태를 runtime 차단 증빙으로 대신 사용하지 않는다.
+
+### 운영 증빙 기록
+
+배포마다 아래 기록을 해당 배포 PR에 정본으로 남기고 이 문서의 환경별 기록에서 링크한다. `모든 배포`는 현재 동기 경로에도 필수이고, `Outbox·Worker Production 적용 이후`는 DB Outbox publisher와 reclaim·retry·DLQ 경로를 구현·검증하여 Production에 적용한 뒤에만 추가로 필수이다. 별도 incident·복구 Issue가 필요하면 배포 PR에서 양방향으로 연결한다. API Key, token, 비밀번호, 실제 환자 정보와 원본 의료문서는 기록하지 않는다.
+
+| 구간 | 적용 범위 | 필수 기록 |
+| --- | --- | --- |
+| 배포 전 | 모든 배포 | 대상 환경, commit/image digest, migration revision, 승인자·승인 시각, 외부 승인·공개 게이트 상태, rollback 대상 버전 |
+| 배포 실행 | 모든 배포 | 실행자·실행 시각, 적용 순서, health check 결과, 비민감 로그·CI·배포 실행 링크 |
+| 배포 후 관제 | 모든 배포 | 관제 총괄·도메인별 검증 담당자·관찰 시간, API 오류율·latency·DB·Provider 상태와 현재 배포 범위에 구현된 중단 조건 충족 여부 |
+| 배포 후 관제 | Outbox·Worker Production 적용 이후 | Stream PEL·예약 retry, `DLQ_OUTBOX_EVENT`의 `PENDING\|CLAIMED`, 신규 `MESSAGE_QUARANTINE`, non-terminal `AI_JOB` 적체와 해당 비동기 중단 조건 충족 여부 |
+| Rollback 판단 | 모든 배포 | 제품 중단·비공개 판단자와 기술 Rollback 판단자, 각 판단 시각, 발동 조건, 영향 범위, 애플리케이션 rollback 또는 DB forward-fix 결정과 근거 |
+| Rollback 실행 | 모든 배포 | 실행자·실행 시각, 복구 애플리케이션 버전, Production DB 무-downgrade·forward-fix 처리, 복구 health check와 후속 Issue |
+| Rollback 실행 | Outbox·Worker Production 적용 이후 | Stream PEL·예약 retry drain과 구·신 Consumer 호환 확인 |
+
+[Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)은 **Approved Target**이며 아직 `current` runtime 계약으로 승격되지 않았다. 이 상태는 모든 지원 구성요소가 미구현이라는 뜻은 아니다. Redis Streams Adapter·Event Publisher(#140/PR #213), Worker lease·fencing·commit-before-ACK(#141/PR #217), 공통 Job 접수 transaction(#147/PR #215), DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)는 구현되었지만, Pending Reclaim·재시도·quarantine·DLQ(#142) 경로와 Publisher 주기 실행·health check·운영 배포 조립은 미구현이며 현재 Production runtime 동작을 증명하지 않는다. 해당 경로를 Production에 적용하기 전에 계약과 테스트를 동기화하고 아래 관제·호환 조건을 검증한다. 목표 계약은 DLQ publish 실패를 정해진 backoff로 재시도하고 10회 연속 실패부터 매 시도 alert하도록 정의한다. 구 Consumer major 제거 전에는 해당 Outbox·Stream·PEL·예약 retry가 모두 0이고 마지막 처리 후 7일 관찰기간이 지났는지 확인한다. `RETRY_WAIT` 중 Runtime Bundle 변경과 구·신 Consumer 동시 배포 방식은 같은 계약이 가리키는 후속 Product Decision이 확정되기 전까지 Production 적용 차단 조건이다.
+
 ## 배포 절차
 
 인프라가 확정되면 이미지 빌드, 환경변수 설정, DB 마이그레이션, 배포 및 롤백 절차를 기록합니다.

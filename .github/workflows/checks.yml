@@ -48,6 +48,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      PYTHONPATH: ${{ github.workspace }}
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
       DB_EXPOSE_PORT: "5432"
@@ -56,6 +57,15 @@ jobs:
       DB_NAME: test
 
     services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
       postgres:
         image: postgres:17-alpine
         env:
@@ -95,9 +105,8 @@ jobs:
 
       - name: Run Tests with Coverage
         run: |
-          # 구현된 Worker 공통 단위 테스트도 PR 필수 검사에 포함합니다.
-          uv run coverage run -m pytest backend/app tests/contract ai_worker/tests/core
-          uv run coverage report -m
+                    # 구현된 Worker 공통 및 OCR 테스트도 PR 필수 검사에 포함합니다.
+                    uv run coverage run -m pytest backend/app tests/contract ai_worker/tests/core ai_worker/tests/ocr tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py
 
   frontend:
     runs-on: ubuntu-latest

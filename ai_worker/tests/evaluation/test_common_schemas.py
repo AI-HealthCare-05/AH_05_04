@@ -24,6 +24,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     UtcTimestamp,
     ensure_unique_resource_paths,
 )
+from ai_worker.tasks.evaluation.schemas.common_v1_2 import ReviewProvenanceV12
 
 
 class ExecutionDecision(ExecutionDecisionMixin):
@@ -323,3 +324,85 @@ def test_review_provenance_rejects_legacy_shape_and_invalid_status_role_combinat
     payload["reviewed_by"] = _review_actor("reviewer-1", "SYSTEM_VALIDATOR")
     with pytest.raises(ValidationError):
         ReviewProvenance.model_validate(payload)
+
+
+def _v12_review_payload(status: str) -> dict[str, Any]:
+    return {
+        "authored_by": _review_actor("author-1", "EVALUATION_IMPLEMENTER"),
+        "reviewed_by": None,
+        "approved_by": None,
+        "authored_at": "2026-09-03T00:00:00.000000Z",
+        "reviewed_at": None,
+        "approved_at": None,
+        "team_gold_status": status,
+        "external_medical_review_status": "NOT_REQUESTED",
+        "external_medical_approval_receipt_ref": None,
+        "evidence_review_refs": [],
+    }
+
+
+def _v12_review_ref() -> dict[str, str]:
+    return {"id": "review-evidence-1", "version": "1.0.0", "hash": "a" * 64}
+
+
+def test_review_provenance_v12_accepts_draft_without_reviewer() -> None:
+    provenance = ReviewProvenanceV12.model_validate(_v12_review_payload("DRAFT"))
+
+    assert provenance.reviewed_by is None
+    assert provenance.reviewed_at is None
+    assert provenance.evidence_review_refs == ()
+
+
+@pytest.mark.parametrize(
+    ("status", "reviewed_by", "reviewed_at", "evidence_review_refs"),
+    [
+        ("DRAFT", _review_actor("reviewer-1", "EVALUATION_REVIEWER"), None, []),
+        ("DRAFT", None, "2026-09-03T00:01:00.000000Z", []),
+        ("DRAFT", None, None, [_v12_review_ref()]),
+        ("REVIEWED", None, "2026-09-03T00:01:00.000000Z", [_v12_review_ref()]),
+        ("REVIEWED", _review_actor("reviewer-1", "EVALUATION_REVIEWER"), None, [_v12_review_ref()]),
+        ("REVIEWED", _review_actor("reviewer-1", "EVALUATION_REVIEWER"), "2026-09-03T00:01:00.000000Z", []),
+    ],
+)
+def test_review_provenance_v12_rejects_inconsistent_review_state(
+    status: str,
+    reviewed_by: dict[str, str] | None,
+    reviewed_at: str | None,
+    evidence_review_refs: list[dict[str, str]],
+) -> None:
+    payload = _v12_review_payload(status)
+    payload.update(
+        reviewed_by=reviewed_by,
+        reviewed_at=reviewed_at,
+        evidence_review_refs=evidence_review_refs,
+    )
+
+    with pytest.raises(ValidationError):
+        ReviewProvenanceV12.model_validate(payload)
+
+
+def test_review_provenance_v12_accepts_internal_evaluation_reviewer_after_actual_review() -> None:
+    payload = _v12_review_payload("REVIEWED")
+    payload.update(
+        reviewed_by=_review_actor("gold-fixture-reviewer", "EVALUATION_REVIEWER"),
+        reviewed_at="2026-09-03T00:01:00.000000Z",
+        evidence_review_refs=[_v12_review_ref()],
+    )
+
+    provenance = ReviewProvenanceV12.model_validate(payload)
+
+    assert provenance.reviewed_by is not None
+    assert provenance.reviewed_by.role.value == "EVALUATION_REVIEWER"
+
+
+@pytest.mark.parametrize("role", ["MEDICAL_REVIEWER", "PRIVACY_REVIEWER"])
+def test_review_provenance_v12_rejects_non_evaluation_reviewer_roles(role: str) -> None:
+    payload = _v12_review_payload("REVIEWED")
+    payload.update(
+        reviewed_by=_review_actor("gold-fixture-reviewer", role),
+        reviewed_at="2026-09-03T00:01:00.000000Z",
+        evidence_review_refs=[_v12_review_ref()],
+    )
+
+    with pytest.raises(ValidationError, match="team review provenance requires an evaluation reviewer"):
+        ReviewProvenanceV12.model_validate(payload)

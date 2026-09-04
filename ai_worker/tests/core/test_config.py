@@ -1,10 +1,12 @@
 import zoneinfo
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from ai_worker.core.config import Config
+from provider_contracts.observability import DeploymentEnvironment
 
 # ZoneInfo.utcoffset()은 offset 조회 기준 datetime이 필요합니다(None으로는 조회 불가).
 # 참조 시각을 고정하지 않으면 tzdata 유무에 따라 fallback timezone(고정 offset, None 허용)과
@@ -13,13 +15,32 @@ from ai_worker.core.config import Config
 _REFERENCE_INSTANT = datetime(2026, 1, 1)
 
 
+# Worker runtime은 Job 실행 DB에 접속해야 하므로 DB_* 4개가 필수입니다(#233).
+# 기본값을 주면 오설정된 배포가 조용히 localhost로 붙으므로 필수로 두고, 테스트는
+# 합성 값을 명시합니다.
+_REQUIRED_SETTINGS: dict[str, Any] = {
+    "ENV": DeploymentEnvironment.LOCAL,
+    "DB_HOST": "127.0.0.1",
+    "DB_NAME": "test",
+    "DB_USER": "worker",
+    "DB_PASSWORD": "worker-password",
+}
+
+
+def _config(**overrides: Any) -> Config:
+    return Config(  # type: ignore[call-arg]
+        _env_file=None,
+        **{**_REQUIRED_SETTINGS, **overrides},
+    )
+
+
 def _raise_zoneinfo_not_found(key: str) -> zoneinfo.ZoneInfo:
     raise zoneinfo.ZoneInfoNotFoundError(f"No time zone found with key {key}")
 
 
 def test_config_loads_with_default_timezone() -> None:
     """환경변수 없이도 tzdata 유무와 무관하게 Config가 생성됩니다(현재 실행 환경의 정상 경로)."""
-    config = Config()
+    config = _config()
 
     assert config.TIMEZONE.utcoffset(_REFERENCE_INSTANT) == timedelta(hours=9)
 
@@ -28,7 +49,7 @@ def test_config_accepts_timezone_env_var_string(monkeypatch: pytest.MonkeyPatch)
     """TIMEZONE 환경변수 문자열이 tzinfo로 변환되어 검증을 통과합니다(현재 실행 환경의 정상 경로)."""
     monkeypatch.setenv("TIMEZONE", "Asia/Seoul")
 
-    config = Config()
+    config = _config()
 
     assert config.TIMEZONE.utcoffset(_REFERENCE_INSTANT) == timedelta(hours=9)
 
@@ -37,7 +58,7 @@ def test_config_default_factory_falls_back_when_zoneinfo_unavailable(monkeypatch
     """tzdata가 없어 ZoneInfo가 실패하는 환경(Windows 로컬 등)을 직접 재현해 기본값 fallback을 확인합니다."""
     monkeypatch.setattr(zoneinfo, "ZoneInfo", _raise_zoneinfo_not_found)
 
-    config = Config(_env_file=None)  # type: ignore[call-arg]
+    config = _config()
 
     assert config.TIMEZONE == timezone(timedelta(hours=9), name="Asia/Seoul")
 
@@ -47,7 +68,7 @@ def test_config_env_var_falls_back_when_zoneinfo_unavailable(monkeypatch: pytest
     monkeypatch.setattr(zoneinfo, "ZoneInfo", _raise_zoneinfo_not_found)
     monkeypatch.setenv("TIMEZONE", "Asia/Seoul")
 
-    config = Config(_env_file=None)  # type: ignore[call-arg]
+    config = _config()
 
     assert config.TIMEZONE == timezone(timedelta(hours=9), name="Asia/Seoul")
 
@@ -56,7 +77,7 @@ def test_config_accepts_utc_timezone_env_var(monkeypatch: pytest.MonkeyPatch) ->
     """UTC 문자열도 대소문자와 무관하게 정상 변환됩니다."""
     monkeypatch.setenv("TIMEZONE", "UTC")
 
-    config = Config()
+    config = _config()
 
     assert config.TIMEZONE.utcoffset(None) == timedelta(0)
 
@@ -64,7 +85,7 @@ def test_config_accepts_utc_timezone_env_var(monkeypatch: pytest.MonkeyPatch) ->
 def test_config_accepts_already_constructed_timezone_object(monkeypatch: pytest.MonkeyPatch) -> None:
     """문자열이 아닌 tzinfo 인스턴스가 들어와도 그대로 통과합니다."""
     fixed_offset = timezone(timedelta(hours=9), name="Asia/Seoul")
-    config = Config(TIMEZONE=fixed_offset)
+    config = _config(TIMEZONE=fixed_offset)
 
     assert config.TIMEZONE is fixed_offset
 
@@ -74,11 +95,11 @@ def test_config_rejects_unknown_timezone_name(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("TIMEZONE", "Not/A_Real_Zone")
 
     with pytest.raises(zoneinfo.ZoneInfoNotFoundError):
-        Config()
+        _config()
 
 
 def test_config_has_approved_redis_defaults() -> None:
-    config = Config(_env_file=None)  # type: ignore[call-arg]
+    config = _config()
 
     assert config.REDIS_HOST == "redis"
     assert config.REDIS_PORT == 6379
@@ -106,7 +127,7 @@ def test_config_accepts_redis_environment_values(
     monkeypatch.setenv("REDIS_PORT", "6380")
     monkeypatch.setenv("REDIS_CONSUMER_NAME", "worker-test-1")
 
-    config = Config(_env_file=None)  # type: ignore[call-arg]
+    config = _config()
 
     assert config.REDIS_HOST == "localhost"
     assert config.REDIS_PORT == 6380
@@ -115,19 +136,13 @@ def test_config_accepts_redis_environment_values(
 
 def test_config_rejects_blank_redis_group() -> None:
     with pytest.raises(ValidationError):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            REDIS_CONSUMER_GROUP="   ",
-        )
+        _config(REDIS_CONSUMER_GROUP="   ")
 
 
 @pytest.mark.parametrize("port", [0, 65536])
 def test_config_rejects_invalid_redis_port(port: int) -> None:
     with pytest.raises(ValidationError):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            REDIS_PORT=port,
-        )
+        _config(REDIS_PORT=port)
 
 
 @pytest.mark.parametrize(
@@ -141,8 +156,7 @@ def test_config_rejects_socket_timeout_not_longer_than_blocking_read(
         ValidationError,
         match="REDIS_SOCKET_TIMEOUT_SECONDS",
     ):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
+        _config(
             REDIS_BLOCK_MS=5000,
             REDIS_SOCKET_TIMEOUT_SECONDS=socket_timeout_seconds,
         )
@@ -150,18 +164,12 @@ def test_config_rejects_socket_timeout_not_longer_than_blocking_read(
 
 def test_config_rejects_blank_dlq_stream_name() -> None:
     with pytest.raises(ValidationError):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            REDIS_DLQ_STREAM_NAME="   ",
-        )
+        _config(REDIS_DLQ_STREAM_NAME="   ")
 
 
 def test_config_rejects_blank_reconciler_consumer_name() -> None:
     with pytest.raises(ValidationError):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            RECONCILER_CONSUMER_NAME="   ",
-        )
+        _config(RECONCILER_CONSUMER_NAME="   ")
 
 
 @pytest.mark.parametrize(
@@ -179,7 +187,78 @@ def test_config_rejects_invalid_recovery_setting(
     invalid_value: int,
 ) -> None:
     with pytest.raises(ValidationError):
-        Config(  # type: ignore[call-arg]
-            _env_file=None,
-            **{field_name: invalid_value},  # type: ignore[arg-type]
+        _config(**{field_name: invalid_value})
+
+
+@pytest.mark.parametrize(
+    ("configured_value", "expected"),
+    [
+        ("local", DeploymentEnvironment.LOCAL),
+        ("staging", DeploymentEnvironment.STAGING),
+        ("production", DeploymentEnvironment.PRODUCTION),
+    ],
+)
+def test_config_parses_required_environment(
+    configured_value: str,
+    expected: DeploymentEnvironment,
+) -> None:
+    config = Config.model_validate(
+        {
+            **_REQUIRED_SETTINGS,
+            "ENV": configured_value,
+        }
+    )
+
+    assert config.ENV is expected
+
+
+def test_config_rejects_missing_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ENV", raising=False)
+
+    with pytest.raises(ValidationError):
+        Config(_env_file=None)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("configured_value", ["test", "dev", "prod"])
+def test_config_rejects_unknown_environment(
+    configured_value: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **_REQUIRED_SETTINGS,
+                "ENV": configured_value,
+            }
         )
+
+
+def test_config_has_approved_ocr_budget_defaults() -> None:
+    config = _config()
+
+    assert config.OCR_REQUEST_DEADLINE_SECONDS == 60.0
+    assert config.OCR_RESPONSE_MARGIN_SECONDS == 5.0
+    assert config.OCR_PROVIDER_BUDGET_SECONDS == 55.0
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"OCR_REQUEST_DEADLINE_SECONDS": 0.0},
+        {"OCR_RESPONSE_MARGIN_SECONDS": -1.0},
+        {
+            "OCR_REQUEST_DEADLINE_SECONDS": 60.0,
+            "OCR_RESPONSE_MARGIN_SECONDS": 60.0,
+        },
+        {
+            "OCR_REQUEST_DEADLINE_SECONDS": 60.0,
+            "OCR_RESPONSE_MARGIN_SECONDS": 61.0,
+        },
+    ],
+)
+def test_config_rejects_invalid_ocr_budget(
+    overrides: dict[str, float],
+) -> None:
+    with pytest.raises(ValidationError):
+        _config(**overrides)
