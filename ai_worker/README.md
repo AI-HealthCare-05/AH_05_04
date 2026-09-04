@@ -20,9 +20,10 @@
 - Redis Streams Adapter 계약과 Fake·redis-py 구현: 구현
 - Consumer Group·발행·읽기·ACK·Pending·Claim: 구현 및 로컬 Redis 통합 테스트 완료
 - Event Publisher의 Redis 발행·식별자 보존 경계: 구현
+- DB Outbox due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·`claim_token` fencing 완료 처리: 구현 (#219)
 - SQLAlchemy Job lease 획득·heartbeat·fencing Repository와 commit-before-ACK 실행 경계: 구현
 - 도메인 SQLAlchemy 결과 저장, Worker 실행 loop, reclaim·retry·quarantine·DLQ: 미구현
-- Backend Outbox 선점·발행 완료 transaction과 실제 요청 경로 연결: 미구현
+- Publisher 주기 실행·health check·운영 배포 조립: 미구현
 
 따라서 Compose의 `ai-worker` 서비스가 존재하거나 컨테이너가 정상 종료해도 비동기 AI 처리가 구현된 것으로 간주하지 않습니다. 로컬 Compose에서는 불필요한 재시작 루프를 막기 위해 다음 정책을 사용합니다.
 
@@ -51,6 +52,8 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 - 메시지 Codec: `ai_worker/adapters/redis_message_codec.py`
 - 생성 경계: `ai_worker/adapters/factory.py`
 - Event Publisher: `ai_worker/core/event_publisher.py`
+- Outbox Publisher: `ai_worker/core/outbox_publisher.py`
+- SQLAlchemy Outbox Repository: `ai_worker/adapters/sqlalchemy_outbox_repository.py`
 
 ### 설정
 

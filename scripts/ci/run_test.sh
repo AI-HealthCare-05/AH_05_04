@@ -95,7 +95,7 @@ if [ "$HAS_TESTS" != true ]; then
   exit 0
 fi
 
-# Compose 프로젝트의 PostgreSQL 서비스가 실제 실행 중인지 확인합니다.
+# Compose 프로젝트의 PostgreSQL·Redis 서비스가 실제 실행 중인지 확인합니다.
 if ! docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
@@ -103,6 +103,16 @@ if ! docker compose \
   grep -qx postgres; then
   echo "PostgreSQL container not found."
   echo "Run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d postgres"
+  exit 1
+fi
+
+if ! docker compose \
+  --env-file "$ENV_FILE" \
+  -f "$COMPOSE_FILE" \
+  ps --services --status running |
+  grep -qx redis; then
+  echo "Redis container not found."
+  echo "Run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d redis"
   exit 1
 fi
 
@@ -187,7 +197,8 @@ if ! run_with_test_database \
   tests/contract \
   ai_worker/tests/core \
   ai_worker/tests/ocr \
-  tests/integration/test_worker_ocr_persistence.py; then
+  tests/integration/test_worker_ocr_persistence.py \
+  tests/integration/test_outbox_publisher.py; then
   echo
   echo "Pytest failed."
   echo "Fix the test failures above and re-run."

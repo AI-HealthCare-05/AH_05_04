@@ -275,6 +275,7 @@ class OutboxEvent(_CreatedUpdatedColumns, Base):
     claim_token: Mapped[str | None] = mapped_column(String(100), nullable=True)
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stream_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # outbox-stream-v1.md Stream envelope의 required trace_id입니다. 접수 시점의 request.state.trace_id를
     # 저장해두지 않으면, 나중에 실제 발행(XADD) 시점에는 원래 HTTP 요청이 이미 끝나 그 값을 잃어버려
     # live-provider-call-evidence.md가 세우는 runner→Backend 로그→provider 로그 상관관계가 접수 경로에서
