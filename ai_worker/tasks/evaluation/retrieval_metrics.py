@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
-from typing import Any, TypedDict, cast
+from typing import TypedDict, cast
 
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset
 from ai_worker.tasks.evaluation.schemas.artifacts import CaseResult, MetricResult, MetricResults
@@ -69,7 +69,10 @@ def _quantize_six(value: Decimal) -> Decimal:
 
 
 def _canonical_decimal(value: Decimal) -> str:
-    return format(_quantize_six(value), "f")
+    quantized = _quantize_six(value)
+    if quantized == 0:
+        return "0"
+    return format(quantized, "f").rstrip("0").rstrip(".")
 
 
 def _validate_ranked_ids(observation: RetrievalObservation) -> None:
@@ -411,24 +414,19 @@ def _completed_metric(scope: ComparisonScope, observations: tuple[RetrievalObser
             level=Decimal(cast(str, parameters["level"])),
         )
     decision_status = DecisionStatus.INCONCLUSIVE if reason_code else DecisionStatus.NOT_APPLICABLE
-    # Contract Freeze v4 fixes metric estimates and CI bounds at six decimal places,
-    # while the pre-existing CanonicalDecimal validator strips trailing zeroes.
-    # Constructing the already-validated field set preserves the frozen metric format
-    # without changing the shared 1.0.0 artifact schema in this implementation task.
-    values: dict[str, Any] = {
+    return MetricResult(
         **_scope_fields(scope),
-        "execution_status": ExecutionStatus.COMPLETED,
-        "decision_status": decision_status,
-        "sample_case_count": len(observations),
-        "sample_independent_group_count": group_count,
-        "numerator": numerator,
-        "denominator": denominator,
-        "metric_value": None if value is None else _canonical_decimal(value),
-        "ci_lower": None if ci_lower is None else _canonical_decimal(ci_lower),
-        "ci_upper": None if ci_upper is None else _canonical_decimal(ci_upper),
-        "reason_code": reason_code,
-    }
-    return MetricResult.model_construct(**values)
+        execution_status=ExecutionStatus.COMPLETED,
+        decision_status=decision_status,
+        sample_case_count=len(observations),
+        sample_independent_group_count=group_count,
+        numerator=numerator,
+        denominator=denominator,
+        metric_value=None if value is None else _canonical_decimal(value),
+        ci_lower=None if ci_lower is None else _canonical_decimal(ci_lower),
+        ci_upper=None if ci_upper is None else _canonical_decimal(ci_upper),
+        reason_code=reason_code,
+    )
 
 
 def build_retrieval_metrics(

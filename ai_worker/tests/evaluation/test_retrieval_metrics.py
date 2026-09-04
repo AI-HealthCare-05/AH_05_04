@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +21,7 @@ from ai_worker.tasks.evaluation.retrieval_metrics import (
     reciprocal_rank,
 )
 from ai_worker.tasks.evaluation.retrieval_replay import load_retrieval_replay
-from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResult
+from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResult, MetricResults
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-retrieval-dev-v1.dataset.json"
@@ -100,14 +101,16 @@ def _metric(metrics: tuple[MetricResult, ...], metric_id: str = "RECALL_AT_5") -
 
 def test_five_case_fixture_matches_hand_calculated_metrics() -> None:
     metrics = build_retrieval_metrics(DATASET, ret_l_case_results())
-    values = {metric.metric_id: metric.metric_value for metric in metrics.metrics}
+    values = {
+        metric.metric_id: Decimal(metric.metric_value) for metric in metrics.metrics if metric.metric_value is not None
+    }
 
     assert values == {
-        "MRR": "0.416667",
-        "NDCG_AT_5": "0.434951",
-        "NO_HIT_RATE": "0.200000",
-        "PRECISION_AT_5": "0.160000",
-        "RECALL_AT_5": "0.800000",
+        "MRR": Decimal("0.416667"),
+        "NDCG_AT_5": Decimal("0.434951"),
+        "NO_HIT_RATE": Decimal("0.200000"),
+        "PRECISION_AT_5": Decimal("0.160000"),
+        "RECALL_AT_5": Decimal("0.800000"),
     }
 
 
@@ -248,16 +251,53 @@ def test_metric_counts_ci_and_serialization_are_deterministic() -> None:
     ]
     assert all(item.sample_case_count == 5 for item in first.metrics)
     assert all(item.sample_independent_group_count == 5 for item in first.metrics)
-    assert {item.metric_id: (item.ci_lower, item.ci_upper) for item in first.metrics} == {
-        "MRR": ("0.150000", "0.716667"),
-        "NDCG_AT_5": ("0.208765", "0.597631"),
-        "NO_HIT_RATE": ("0.000000", "0.600000"),
-        "PRECISION_AT_5": ("0.080000", "0.200000"),
-        "RECALL_AT_5": ("0.400000", "1.000000"),
+    assert {
+        item.metric_id: (Decimal(item.ci_lower), Decimal(item.ci_upper))
+        for item in first.metrics
+        if item.ci_lower is not None and item.ci_upper is not None
+    } == {
+        "MRR": (Decimal("0.150000"), Decimal("0.716667")),
+        "NDCG_AT_5": (Decimal("0.208765"), Decimal("0.597631")),
+        "NO_HIT_RATE": (Decimal("0.000000"), Decimal("0.600000")),
+        "PRECISION_AT_5": (Decimal("0.080000"), Decimal("0.200000")),
+        "RECALL_AT_5": (Decimal("0.400000"), Decimal("1.000000")),
     }
     assert canonical_json_bytes(cast(JsonValue, first.model_dump(mode="json"))) == canonical_json_bytes(
         cast(JsonValue, second.model_dump(mode="json"))
     )
+
+
+def test_serialized_metric_results_round_trip_through_runtime_contract() -> None:
+    metrics = build_retrieval_metrics(DATASET, ret_l_case_results())
+
+    revalidated = MetricResults.model_validate_json(metrics.model_dump_json())
+
+    assert revalidated == metrics
+    assert {item.metric_id: item.metric_value for item in revalidated.metrics} == {
+        "MRR": "0.416667",
+        "NDCG_AT_5": "0.434951",
+        "NO_HIT_RATE": "0.2",
+        "PRECISION_AT_5": "0.16",
+        "RECALL_AT_5": "0.8",
+    }
+    assert {item.metric_id: (item.ci_lower, item.ci_upper) for item in revalidated.metrics} == {
+        "MRR": ("0.15", "0.716667"),
+        "NDCG_AT_5": ("0.208765", "0.597631"),
+        "NO_HIT_RATE": ("0", "0.6"),
+        "PRECISION_AT_5": ("0.08", "0.2"),
+        "RECALL_AT_5": ("0.4", "1"),
+    }
+
+
+def test_serialized_metric_results_match_checked_in_artifact_schema() -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    schema_path = EVALS_ROOT / "schemas/1.0.0/artifacts/rag-eval.metrics.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    payload = json.loads(build_retrieval_metrics(DATASET, ret_l_case_results()).model_dump_json())
+
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(payload))
+
+    assert errors == []
 
 
 def test_metric_results_use_contract_sort_key_not_policy_order() -> None:
