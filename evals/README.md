@@ -28,6 +28,44 @@ uv run python -m ai_worker.tasks.evaluation validate \
 
 이 명령은 validation 전용입니다. Evaluation Run, Metric, Gate, PASS/FAIL, Markdown report를 생성하지 않고 Provider를 호출하지 않으며 `PUBLIC_TRACK_F`를 변경할 수 없습니다. 기존 result나 lock은 덮어쓰거나 자동 삭제하지 않습니다. 생성되는 `evals/validation-results/` 파일은 로컬 검증 산출물이며 Git 추적 대상이 아닙니다.
 
+## RAG 합성 DEV Runner·Reporter
+
+Issue #157의 `run-dev` 명령은 versioned execution request와 합성 DEV Dataset graph를 검증한 뒤
+`evals/results/<run-id>/`에 기계 Artifact와 비정본 Markdown report를 발행합니다. 세 Experiment Type은
+각각 다음 명령으로 실행합니다.
+
+```bash
+uv run python -m ai_worker.tasks.evaluation run-dev \
+  --config evals/configs/dev-foundation-knowledge-retrieval-v1.execution.json \
+  --run-id 123e4567-e89b-42d3-a456-426614174000 \
+  --executed-by ceohwj
+```
+
+```bash
+uv run python -m ai_worker.tasks.evaluation run-dev \
+  --config evals/configs/dev-foundation-answer-grounding-safety-v1.execution.json \
+  --run-id 123e4567-e89b-42d3-a456-426614174001 \
+  --executed-by ceohwj
+```
+
+```bash
+uv run python -m ai_worker.tasks.evaluation run-dev \
+  --config evals/configs/dev-foundation-end-to-end-rag-v1.execution.json \
+  --run-id 123e4567-e89b-42d3-a456-426614174002 \
+  --executed-by ceohwj
+```
+
+이 결과는 로컬·CI의 DEV infrastructure evidence이며 Release `PASS`, HOLDOUT 승인 또는 Baseline Freeze가
+아닙니다. 현재 실제 Provider와 Metric Adapter는 등록하지 않으므로 production 명령의 미구현 결과는
+`NOT_IMPLEMENTED/null`로 기록되며 성공 판정으로 해석하지 않습니다.
+
+- `run-dev`는 `HOLDOUT`·`SAFETY_REGRESSION`을 load·execute·observe할 수 없습니다.
+- 기존 Run ID와 lock은 덮어쓰거나 자동 삭제하지 않습니다. 재실행에는 새 canonical UUID Run ID가 필요합니다.
+- #158~#161 DEV Metric과 승인된 Comparison/Evaluation Policy가 준비되기 전 HOLDOUT 단계는
+  `WAITING_FOR_APPROVED_COMPARISON_POLICY`입니다.
+- `comparison.json`, `gate.json`, `baseline-freeze-receipt.json`은 이 명령으로 생성하지 않습니다.
+- `evals/results/`의 실행 결과는 Git 추적 대상이 아닙니다.
+
 ### Evaluation Schema Sets
 
 - `evals/schemas/1.0.0/`: Issue #122의 기존 DEV foundation 계약. canonical bytes와 loader 동작을 유지한다.
