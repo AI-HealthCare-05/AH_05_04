@@ -2033,8 +2033,8 @@ def test_dataset_handoff_docs_match_the_current_dataset_graph() -> None:
     }
     documentation_paths = (
         EVALS_ROOT / "README.md",
-        REPOSITORY_ROOT / "docs/superpowers/specs/2026-09-02-issue-214-rag-evaluation-dataset-freeze-design.md",
-        REPOSITORY_ROOT / "docs/superpowers/plans/2026-09-03-issue-214-rag-evaluation-dataset-freeze.md",
+        REPOSITORY_ROOT / "docs/designs/ceohwj/issue-214-rag-evaluation-dataset-freeze-design.md",
+        REPOSITORY_ROOT / "docs/designs/ceohwj/issue-214-rag-evaluation-dataset-freeze-implementation-plan.md",
     )
 
     for documentation_path in documentation_paths:
