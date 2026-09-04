@@ -32,8 +32,9 @@ def _metric_row(metric: MetricResult) -> str:
     reason = metric.reason_code or "N/A"
     label = _RETRIEVAL_METRIC_LABELS.get(metric.metric_id, metric.metric_id)
     return (
-        f"| {label} (`{metric.metric_id}`) | {sample} | {count} | {metric.metric_value or 'N/A'} | "
-        f"{interval} | {metric.execution_status.value} | {decision} | {reason} |"
+        f"| {label} (`{metric.metric_id}@{metric.metric_version}`) | "
+        f"`{metric.estimator_id}@{metric.estimator_version}` | {sample} | {count} | "
+        f"{metric.metric_value or 'N/A'} | {interval} | {metric.execution_status.value} | {decision} | {reason} |"
     )
 
 
@@ -52,13 +53,15 @@ def _retrieval_sections(
         "- HOLDOUT Baseline Freeze: `NOT_PERFORMED`",
         "- Production Integration: `BLOCKED_BY_RAG_07A_07B_OR_08`",
         "",
-        "| Metric ID | Cases/Groups | Numerator/Denominator | Value | 95% CI | Execution | Decision | Reason |",
-        "| --- | ---: | ---: | ---: | --- | --- | --- | --- |",
+        "| Metric ID@Version | Estimator@Version | Cases/Groups | Numerator/Denominator | Value | 95% CI | Execution | Decision | Reason |",
+        "| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- |",
     ]
     lines.extend(_metric_row(metric) for metric in metrics.metrics)
     if comparison is None:
         return lines
-    baseline_variant = baseline_variant_id or "UNKNOWN"
+    if not baseline_variant_id or baseline_metrics is None:
+        raise ValueError("comparison requires complete baseline report context")
+    baseline_variant = baseline_variant_id
     comparison_decision = comparison.decision_status.value if comparison.decision_status is not None else "null"
     lines.extend(
         [
@@ -72,9 +75,9 @@ def _retrieval_sections(
             "",
             f"### Baseline Retrieval Metrics (`{baseline_variant}`)",
             "",
-            "| Metric ID | Cases/Groups | Numerator/Denominator | Value | 95% CI | Execution | Decision | Reason |",
-            "| --- | ---: | ---: | ---: | --- | --- | --- | --- |",
-            *([] if baseline_metrics is None else [_metric_row(metric) for metric in baseline_metrics.metrics]),
+            "| Metric ID@Version | Estimator@Version | Cases/Groups | Numerator/Denominator | Value | 95% CI | Execution | Decision | Reason |",
+            "| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- |",
+            *[_metric_row(metric) for metric in baseline_metrics.metrics],
             "",
             "| Metric ID | Baseline | Candidate | Absolute Delta | Decision |",
             "| --- | ---: | ---: | ---: | --- |",
@@ -99,6 +102,8 @@ def render_report(
     baseline_variant_id: str | None = None,
     baseline_metrics: MetricResults | None = None,
 ) -> bytes:
+    if comparison is not None and (not baseline_variant_id or baseline_metrics is None):
+        raise ValueError("comparison requires complete baseline report context")
     decision = report_data.decision_status.value if report_data.decision_status is not None else "null"
     lines = [
         (
@@ -144,6 +149,21 @@ def render_report(
     lines.extend(["", "## Blocking and Failures", ""])
     lines.extend(f"- `{status.value}`" for status in report_data.blocking_execution_statuses)
     lines.extend(f"- `{code}`" for code in report_data.failure_codes)
+    suite_failures = sorted(
+        (item for item in suite_results.case_results if item.failure_code is not None),
+        key=lambda item: item.case_code.encode("utf-16-be"),
+    )
+    if suite_failures:
+        lines.extend(
+            [
+                "",
+                "### Suite Failure Rows",
+                "",
+                "| Case Code | Failure Code |",
+                "| --- | --- |",
+                *(f"| `{item.case_code}` | `{item.failure_code}` |" for item in suite_failures),
+            ]
+        )
     if report_data.experiment_type.value == "KNOWLEDGE_RETRIEVAL":
         lines.extend(_retrieval_sections(report_data, metrics, comparison, baseline_variant_id, baseline_metrics))
     lines.extend(["", "## Machine Artifacts", ""])

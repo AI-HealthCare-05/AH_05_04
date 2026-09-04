@@ -1,6 +1,8 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from ai_worker.tasks.evaluation.comparison import build_retrieval_comparison, load_published_run_bundle
 from ai_worker.tasks.evaluation.manifest import (
     build_artifact_draft,
@@ -92,6 +94,8 @@ def test_candidate_report_projects_metric_counts_ci_and_dev_boundary(tmp_path: P
     assert "# RAG Evaluation DEV Retrieval Report" in report
     assert "SYNTHETIC_REPLAY_DEV" in report
     assert "Recall@5" in report
+    assert "`RECALL_AT_5@1.0.0`" in report
+    assert "`CASE_MEAN@1.0.0`" in report
     assert "4/5" in report
     assert "95% CI" in report
     assert "RET-L" in report and "RET-HR" in report
@@ -107,3 +111,49 @@ def test_candidate_report_projects_metric_counts_ci_and_dev_boundary(tmp_path: P
         claim.claim_text for case in candidate_material.dataset.cases for claim in (case.expected.gold_claims or ())
     ]
     assert all(value not in report for value in forbidden)
+
+
+@pytest.mark.parametrize(
+    ("baseline_variant_id", "baseline_metrics"),
+    [(None, "present"), ("", "present"), ("RET-L", None)],
+)
+def test_comparison_report_rejects_missing_baseline_context(
+    tmp_path: Path,
+    baseline_variant_id: str | None,
+    baseline_metrics: str | None,
+) -> None:
+    baseline_draft = build_artifact_draft(retrieval_run_material("RET-L", run_id=RUN_ID_A))
+    baseline_artifacts = finalize_artifacts(baseline_draft, b"safe report\n", completed_at=TIME_B)
+    baseline_root = tmp_path / RUN_ID_A
+    baseline_root.mkdir()
+    for name, payload in baseline_artifacts.files.items():
+        (baseline_root / name).write_bytes(payload)
+    baseline = load_published_run_bundle(tmp_path, RUN_ID_A)
+    candidate = build_artifact_draft(retrieval_run_material("RET-HR", run_id=RUN_ID_B))
+    comparison = build_retrieval_comparison(baseline, candidate)
+
+    with pytest.raises(ValueError, match="comparison requires complete baseline report context"):
+        render_report(
+            candidate.report_data,
+            candidate.metrics,
+            candidate.suite_results,
+            content_artifact_entries(machine_artifact_files(candidate)),
+            comparison,
+            baseline_variant_id=baseline_variant_id,
+            baseline_metrics=baseline.metrics if baseline_metrics == "present" else None,
+        )
+
+
+def test_report_projects_deterministic_suite_failure_row() -> None:
+    draft = build_artifact_draft(_material(run_id=RUN_ID, started_at=TIME_B, complete=True))
+    failed_case = draft.suite_results.case_results[0].model_copy(update={"failure_code": "SAFE_SYNTHETIC_FAILURE"})
+    suite_results = draft.suite_results.model_copy(update={"case_results": (failed_case,)})
+
+    report = render_report(
+        draft.report_data,
+        draft.metrics,
+        suite_results,
+        content_artifact_entries(machine_artifact_files(draft)),
+    ).decode("utf-8")
+
+    assert "| `rag-dev-retrieval-001` | `SAFE_SYNTHETIC_FAILURE` |" in report

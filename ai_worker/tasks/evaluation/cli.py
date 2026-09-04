@@ -683,6 +683,11 @@ def _run_dev(
             repository_root=_REPOSITORY_ROOT,
             repository_state_provider=repository_state_provider,
         )
+        if (
+            arguments.baseline_run_id is not None
+            and resolved.request.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
+        ):
+            raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
         preflight_dev_manifest(resolved)
         dataset = load_dataset(
             resolved.dataset_manifest_path,

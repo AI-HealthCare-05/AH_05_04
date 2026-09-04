@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from ai_worker.tasks.evaluation import cli as cli_module
+from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
 from ai_worker.tasks.evaluation.cli import main, publish_receipt_no_clobber
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
@@ -861,6 +862,24 @@ def test_run_dev_rejects_invalid_baseline_candidate_state(
     assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
 
 
+def test_non_retrieval_baseline_option_rejects_state_before_missing_baseline(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidate_run_id = str(uuid4())
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        "dev-foundation-answer-grounding-safety-v1.execution.json",
+        candidate_run_id,
+        baseline_run_id=str(uuid4()),
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / candidate_run_id).exists()
+    assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
+
+
 def test_verify_result_prints_only_semantic_hash(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run_id = str(uuid4())
     assert (
@@ -871,6 +890,33 @@ def test_verify_result_prints_only_semantic_hash(tmp_path: Path, capsys: pytest.
         )
         == 0
     )
+
+    exit_code = main(["verify-result", "--run-id", run_id], allowed_result_root=tmp_path)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == "5062fc278acefada2a5afc027867c324bb03ab62aaf934f964e692b9ad128b87\n"
+
+
+def test_verify_result_accepts_valid_clock_rewrite_outside_semantic_hash(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            run_id,
+        )
+        == 0
+    )
+    run_path = tmp_path / run_id / "run.json"
+    run = json.loads(run_path.read_bytes())
+    run["started_at"] = "2026-09-04T01:00:00.000000Z"
+    run["completed_at"] = "2026-09-04T01:01:00.000000Z"
+    run_path.write_bytes(canonical_json_bytes(run))
 
     exit_code = main(["verify-result", "--run-id", run_id], allowed_result_root=tmp_path)
 
