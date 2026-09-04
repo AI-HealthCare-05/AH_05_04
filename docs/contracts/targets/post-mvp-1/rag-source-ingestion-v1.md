@@ -143,13 +143,6 @@ KEY_ACQUIRED
 
 - 원문 Artifact는 보존하고 정규화 결과를 원문에 덮어쓰지 않는다.
 - 제품·성분·Alias·복합제 Component는 안정적인 공식 Identity와 Source provenance를 유지한다.
-- Candidate Catalog export는 Source Snapshot과 Source version을 `(snapshot_id, source_version)` 단위로
-  결속해 전달한다. Product, Ingredient, Component, Alias와 Search Entry는 각 publication의 Snapshot을
-  유지하고 Catalog의 결속된 Source reference를 참조한다. Product-name Entry는 Product Snapshot,
-  Alias Entry는 Alias Snapshot과 일치해야 하며 Product와 내부 승인 Alias가 서로 다른 Snapshot인
-  것은 허용한다.
-- Catalog의 canonicalization specification version과 canonical 의미 필드 목록을 manifest 계약에
-  명시한다. Consumer는 형식이 유효한 hash만으로 내용 검증이 끝났다고 간주하지 않는다.
 - DUR 행을 `interaction_rule`로 변환할 때 원 Source 행과 `rule_evidence`를 역추적할 수 있어야 한다.
 - 의료 산문은 versioned document·chunk로 변환하며 chunk가 Source Snapshot과 locator를 잃지 않도록 한다.
 - OCR Candidate Index와 의료 Evidence Index는 PostgreSQL 안에서 별도 version과 물리 경계를 사용한다. OCR Candidate용 pgvector 결과를 의료 근거로 인용하지 않는다.
@@ -204,8 +197,6 @@ Runtime Release Bundle의 상세 구성과 현재성 검사는 [RAG Runtime 계�
 - 같은 원본·같은 parser/normalization/canonicalization version의 결정적 checksum과 record count. 동일 Raw Artifact 집합의 열거 순서만 바뀌면 `raw_manifest_checksum`이 같고, Provider의 record/page 재배치로 Raw Byte가 달라져도 Canonical 내용이 같으면 동일 `canonical_checksum`의 `NO_CHANGE`
 - 부분 page·부분 record 실패 시 Snapshot 비활성
 - 제품·성분·Alias·Component 참조 무결성과 중복 Identity 차단
-- Candidate Catalog의 Source Snapshot·version 결속, Product/Entry와 Alias/Entry Snapshot 일치,
-  Unicode NFC 및 비어 있지 않은 필수값 검증
 - DUR Source 행 → Rule → Evidence 역추적
 - Candidate Index와 Knowledge Index의 version·물리 경계
 - Source·Endpoint·Operation·목적별 Approval·Freshness 중 하나라도 부적격일 때 신규 사용 차단과 과거 Citation provenance 보존
