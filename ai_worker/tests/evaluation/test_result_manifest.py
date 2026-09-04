@@ -179,6 +179,53 @@ def ret_l_artifacts(
     return finalize_artifacts(draft, b"safe retrieval report\n", completed_at=completed_at)
 
 
+def _comparison_result() -> ComparisonResult:
+    return ComparisonResult.model_validate(
+        {
+            "schema_id": "rag-eval.comparison",
+            "schema_version": "1.0.0",
+            "run_id": RUN_ID_A,
+            "experiment_id": "rag-dev-foundation",
+            "baseline_run_id": RUN_ID_B,
+            "baseline_run_hash": "a" * 64,
+            "candidate_run_id": RUN_ID_A,
+            "candidate_run_hash": "b" * 64,
+            "controlled_variable_checks": [
+                {
+                    "variable_key": "DATASET",
+                    "baseline_value_hash": "c" * 64,
+                    "candidate_value_hash": "c" * 64,
+                    "matched": True,
+                }
+            ],
+            "scope_comparisons": [
+                {
+                    "metric_id": "RECALL_AT_5",
+                    "partition": "DEV",
+                    "slice_id": "ALL",
+                    "baseline_value": "0.8",
+                    "candidate_value": "1",
+                    "absolute_delta": "0.2",
+                    "relative_delta": "0.25",
+                    "paired_test_method": None,
+                    "p_value": None,
+                    "comparison_decision": "INCONCLUSIVE",
+                }
+            ],
+            "execution_status": "COMPLETED",
+            "decision_status": "INCONCLUSIVE",
+        }
+    )
+
+
+def _candidate_artifacts():
+    return finalize_artifacts(
+        replace(_draft(), comparison=_comparison_result()),
+        b"safe report\n",
+        completed_at=TIME_B,
+    )
+
+
 def _validate_jsonl(adapter: Any, payload: bytes) -> None:
     for line in payload.splitlines():
         validator = getattr(adapter, "validate_python", None)
@@ -296,6 +343,51 @@ def test_artifact_contract_validation_rejects_finalized_payload_drift() -> None:
     assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
 
 
+def test_candidate_artifact_contracts_validate_comparison_runtime_model() -> None:
+    artifacts = _candidate_artifacts()
+    files = dict(artifacts.files)
+    comparison = json.loads(files["comparison.json"])
+    comparison["unexpected"] = True
+    files["comparison.json"] = canonical_json_bytes(comparison)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_published_artifact_contracts(
+            files,
+            schema_root=REPOSITORY_ROOT / "evals/schemas/1.0.0",
+            schema_set_version="1.0.0",
+        )
+
+    assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_candidate_artifact_contracts_reject_checked_in_comparison_schema_drift(tmp_path: Path) -> None:
+    artifacts = _candidate_artifacts()
+    source_root = REPOSITORY_ROOT / "evals/schemas/1.0.0"
+    schema_root = tmp_path / "schemas"
+    for relative_path in (
+        "artifacts/rag-eval.run.schema.json",
+        "artifacts/rag-eval.case-result.schema.json",
+        "artifacts/rag-eval.metrics.schema.json",
+        "artifacts/rag-eval.suite-results.schema.json",
+        "artifacts/rag-eval.comparison.schema.json",
+        "artifacts/rag-eval.failure.schema.json",
+        "artifacts/rag-eval.content-manifest.schema.json",
+    ):
+        destination = schema_root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((source_root / relative_path).read_bytes())
+    (schema_root / "artifacts/rag-eval.comparison.schema.json").write_bytes(b"{}")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_published_artifact_contracts(
+            artifacts.files,
+            schema_root=schema_root,
+            schema_set_version="1.0.0",
+        )
+
+    assert caught.value.code is EvaluationErrorCode.HASH_MISMATCH
+
+
 def test_content_manifest_excludes_run_and_self_but_includes_report() -> None:
     files = {
         "run.json": b"ignored",
@@ -323,42 +415,7 @@ def test_content_manifest_excludes_run_and_self_but_includes_report() -> None:
 
 def test_machine_artifacts_include_optional_comparison_and_bind_its_content() -> None:
     draft = _draft()
-    comparison = ComparisonResult.model_validate(
-        {
-            "schema_id": "rag-eval.comparison",
-            "schema_version": "1.0.0",
-            "run_id": RUN_ID_A,
-            "experiment_id": "rag-dev-foundation",
-            "baseline_run_id": RUN_ID_B,
-            "baseline_run_hash": "a" * 64,
-            "candidate_run_id": RUN_ID_A,
-            "candidate_run_hash": "b" * 64,
-            "controlled_variable_checks": [
-                {
-                    "variable_key": "DATASET",
-                    "baseline_value_hash": "c" * 64,
-                    "candidate_value_hash": "c" * 64,
-                    "matched": True,
-                }
-            ],
-            "scope_comparisons": [
-                {
-                    "metric_id": "RECALL_AT_5",
-                    "partition": "DEV",
-                    "slice_id": "ALL",
-                    "baseline_value": "0.8",
-                    "candidate_value": "1",
-                    "absolute_delta": "0.2",
-                    "relative_delta": "0.25",
-                    "paired_test_method": None,
-                    "p_value": None,
-                    "comparison_decision": "INCONCLUSIVE",
-                }
-            ],
-            "execution_status": "COMPLETED",
-            "decision_status": "INCONCLUSIVE",
-        }
-    )
+    comparison = _comparison_result()
 
     artifacts = finalize_artifacts(
         replace(draft, comparison=comparison),

@@ -447,6 +447,17 @@ _PUBLISHED_SCHEMA_PATHS = {
     "failures.jsonl": "artifacts/rag-eval.failure.schema.json",
     "result-content-manifest.json": "artifacts/rag-eval.content-manifest.schema.json",
 }
+_COMPARISON_SCHEMA_PATH = "artifacts/rag-eval.comparison.schema.json"
+
+
+def _published_schema_paths(files: Mapping[str, bytes]) -> tuple[str, ...]:
+    optional = (_COMPARISON_SCHEMA_PATH,) if "comparison.json" in files else ()
+    return (*_PUBLISHED_SCHEMA_PATHS.values(), *optional)
+
+
+def _validate_comparison_contract(files: Mapping[str, bytes]) -> None:
+    if "comparison.json" in files:
+        ComparisonResult.model_validate_json(files["comparison.json"])
 
 
 def validate_published_artifact_contracts(
@@ -463,7 +474,7 @@ def validate_published_artifact_contracts(
         generated = schema_documents(schema_set_version)
     except KeyError:
         raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
-    for schema_path in _PUBLISHED_SCHEMA_PATHS.values():
+    for schema_path in _published_schema_paths(files):
         try:
             committed_bytes = (schema_root / schema_path).read_bytes()
         except FileNotFoundError:
@@ -477,6 +488,7 @@ def validate_published_artifact_contracts(
         MetricResults.model_validate_json(files["metrics.json"])
         SuiteResults.model_validate_json(files["suite-results.json"])
         ContentManifest.model_validate_json(files["result-content-manifest.json"])
+        _validate_comparison_contract(files)
         for line in files["cases.jsonl"].splitlines():
             CASE_RESULT_ADAPTER.validate_json(line)
         for line in files["failures.jsonl"].splitlines():
