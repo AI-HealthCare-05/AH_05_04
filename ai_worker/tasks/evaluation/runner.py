@@ -6,7 +6,7 @@ from typing import Protocol
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
-from ai_worker.tasks.evaluation.errors import EvaluationErrorCode
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset
 from ai_worker.tasks.evaluation.manifest import CaseInputBinding, case_input_sha256
 from ai_worker.tasks.evaluation.schemas.artifacts import (
@@ -45,6 +45,8 @@ class AdapterRequest:
     case: EvaluationCaseContract
     task_type: TaskType
     input_sha256: str
+    variant_id: str
+    variant_manifest_hash: str
 
 
 class EvaluationAdapter(Protocol):
@@ -169,6 +171,14 @@ def _case_request(
     resolved: ResolvedDevExecution,
     run_id: str,
 ) -> AdapterRequest:
+    if case.task_type is TaskType.RETRIEVAL:
+        variant = resolved.request.retrieval_variant
+        variant_hash = resolved.retrieval_variant_manifest_hash
+    else:
+        variant = resolved.request.answer_variant
+        variant_hash = resolved.answer_variant_manifest_hash
+    if variant is None or variant_hash is None:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
     resource_hashes = {item.case_id: item.sha256 for item in dataset.manifest.case_resources}
     binding = CaseInputBinding(
         case_id=case.case_id,
@@ -185,6 +195,8 @@ def _case_request(
         case=case,
         task_type=case.task_type,
         input_sha256=case_input_sha256(binding),
+        variant_id=variant.variant_id,
+        variant_manifest_hash=variant_hash,
     )
 
 
@@ -205,6 +217,10 @@ def _execute_once(request: AdapterRequest, adapter: EvaluationAdapter | None) ->
         return _neutral_result(request, ExecutionStatus.NOT_IMPLEMENTED, None)
     try:
         result = CASE_RESULT_ADAPTER.validate_python(adapter.execute(request))
+    except EvaluationValidationError as error:
+        if error.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID:
+            return _neutral_result(request, ExecutionStatus.INVALID, error.code)
+        return _neutral_result(request, ExecutionStatus.ERROR, EvaluationErrorCode.INTERNAL_ERROR)
     except Exception:
         return _neutral_result(request, ExecutionStatus.ERROR, EvaluationErrorCode.INTERNAL_ERROR)
     if not _binding_matches(result, request):

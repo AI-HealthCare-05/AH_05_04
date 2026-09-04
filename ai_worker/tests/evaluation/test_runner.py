@@ -7,6 +7,7 @@ import pytest
 
 from ai_worker.tasks.evaluation.canonical import sha256_hex
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.runner import (
     AdapterRequest,
@@ -114,15 +115,24 @@ class CountingAdapter(EvaluationAdapter):
         self.fail_case_id = fail_case_id
         self.corrupt_run_id = corrupt_run_id
         self.calls: list[str] = []
+        self.requests: list[AdapterRequest] = []
 
     def execute(self, request: AdapterRequest) -> CaseResult:
         self.calls.append(request.case.case_id)
+        self.requests.append(request)
         if request.case.case_id == self.fail_case_id:
             raise RuntimeError("technical failure patient@example.com")
         payload = _result_payload(request)
         if self.corrupt_run_id:
             payload["run_id"] = "123e4567-e89b-42d3-a456-426614174999"
         return CASE_RESULT_ADAPTER.validate_python(payload)
+
+
+class InvalidReplayAdapter(CountingAdapter):
+    def execute(self, request: AdapterRequest) -> CaseResult:
+        if request.case.case_id == "rag-dev-answer-quality-001":
+            raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
+        return super().execute(request)
 
 
 class StaticRegistry:
@@ -184,6 +194,35 @@ def test_adapter_exception_is_recorded_once_and_next_case_runs(
     assert outcome.failure_records == ()
     assert "patient@example.com" not in repr(outcome)
     assert "patient@example.com" not in capsys.readouterr().err
+
+
+def test_replay_validation_error_is_invalid_and_next_case_runs(loaded_dev_dataset: ValidatedDataset) -> None:
+    outcome = execute_dev_cases(
+        loaded_dev_dataset,
+        _resolved("ANSWER_GROUNDING_SAFETY"),
+        run_id=RUN_ID,
+        adapter_registry=StaticRegistry(InvalidReplayAdapter()),
+    )
+
+    failed = next(item for item in outcome.case_results if item.case_id == "rag-dev-answer-quality-001")
+    assert failed.execution_status is ExecutionStatus.INVALID
+    assert failed.failure_codes == ("EVAL_RETRIEVAL_REPLAY_INVALID",)
+    assert outcome.execution_status is ExecutionStatus.INVALID
+
+
+def test_adapter_request_is_bound_to_active_variant(loaded_dev_dataset: ValidatedDataset) -> None:
+    adapter = CountingAdapter()
+    resolved = _resolved("KNOWLEDGE_RETRIEVAL")
+
+    execute_dev_cases(
+        loaded_dev_dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=StaticRegistry(adapter),
+    )
+
+    assert adapter.requests[0].variant_id == "dev-synthetic-retrieval-v1"
+    assert adapter.requests[0].variant_manifest_hash == resolved.retrieval_variant_manifest_hash
 
 
 def test_missing_adapter_produces_not_implemented_without_fake_answer(
