@@ -56,6 +56,8 @@ class MedicationIdentificationService:
         self,
         *,
         prescription_version_medication_id: UUID,
+        medication_name_snapshot: str,
+        strength_text_snapshot: str | None,
         query_digest: str,
         runtime_release_bundle_id: UUID | None,
         candidate_index_version_id: UUID | None,
@@ -91,6 +93,8 @@ class MedicationIdentificationService:
 
         search = await self._repository.create_search(
             prescription_version_medication_id=prescription_version_medication_id,
+            medication_name_snapshot=medication_name_snapshot,
+            strength_text_snapshot=strength_text_snapshot,
             query_digest=query_digest,
             runtime_release_bundle_id=runtime_release_bundle_id,
             candidate_index_version_id=candidate_index_version_id,
@@ -102,12 +106,13 @@ class MedicationIdentificationService:
         self,
         *,
         search_id: UUID,
+        user_id: UUID,
         status: MedicationCandidateSearchStatus,
         results: list[MedicationCandidateResultCreate],
         status_reason: str | None = None,
         finalized_at: datetime | None = None,
     ) -> CandidateSearchFinalizeResult:
-        search = await self._repository.get_search_for_update(search_id=search_id)
+        search = await self._repository.get_search_for_update_owned(search_id=search_id, user_id=user_id)
         if search is None:
             raise self._not_found_error(field="search_id")
         if search.status != MedicationCandidateSearchStatus.RUNNING:
@@ -132,10 +137,11 @@ class MedicationIdentificationService:
         *,
         prescription_version_medication_id: UUID,
         candidate_search_result_id: UUID,
+        user_id: UUID,
         confirmed_at: datetime | None = None,
     ) -> MedicationIdentification:
-        selection = await self._repository.get_result_selection_for_update(
-            candidate_search_result_id=candidate_search_result_id
+        selection = await self._repository.get_result_selection_for_update_owned(
+            candidate_search_result_id=candidate_search_result_id, user_id=user_id
         )
         if selection is None:
             raise self._not_found_error(field="candidate_search_result_id")
@@ -180,10 +186,11 @@ class MedicationIdentificationService:
         *,
         search_id: UUID,
         candidate_search_result_id: UUID,
+        user_id: UUID,
         rejected_at: datetime | None = None,
     ) -> MedicationIdentification:
-        selection = await self._repository.get_result_selection_for_update(
-            candidate_search_result_id=candidate_search_result_id
+        selection = await self._repository.get_result_selection_for_update_owned(
+            candidate_search_result_id=candidate_search_result_id, user_id=user_id
         )
         if selection is None or selection.search.id != search_id:
             raise self._not_found_error(field="candidate_search_result_id")

@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.prescriptions import Medication, Prescription
 from app.models.rag_candidate import (
     MedicationCandidateSearch,
     MedicationCandidateSearchResult,
@@ -14,6 +15,7 @@ from app.models.rag_candidate import (
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
+from app.repositories.profile_ownership import owned_by_self
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,28 @@ class MedicationCandidateRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_search_for_update_owned(
+        self,
+        *,
+        search_id: UUID,
+        user_id: UUID,
+    ) -> MedicationCandidateSearch | None:
+        """다른 사용자의 Search를 조회·최종화하지 못하도록 소유권을 확인합니다.
+        prescription_version_medication_id는 #169 이전까지 medication.id 값을 담는
+        placeholder라 FK 제약은 없지만, 조회 시점에는 명시적 join 조건으로 같은
+        경로(medication → prescription → profile)를 검증할 수 있습니다."""
+        result = await self.session.execute(
+            select(MedicationCandidateSearch)
+            .join(Medication, Medication.id == MedicationCandidateSearch.prescription_version_medication_id)
+            .join(Prescription, Prescription.id == Medication.prescription_id)
+            .where(
+                MedicationCandidateSearch.id == search_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+            .with_for_update(of=MedicationCandidateSearch)
+        )
+        return result.scalar_one_or_none()
+
     async def get_result_selection_for_update(
         self,
         *,
@@ -84,6 +108,26 @@ class MedicationCandidateRepository:
             return None
 
         search = await self.get_search_for_update(search_id=candidate_result.search_id)
+        if search is None:
+            return None
+        return MedicationCandidateSelection(search=search, result=candidate_result)
+
+    async def get_result_selection_for_update_owned(
+        self,
+        *,
+        candidate_search_result_id: UUID,
+        user_id: UUID,
+    ) -> MedicationCandidateSelection | None:
+        result = await self.session.execute(
+            select(MedicationCandidateSearchResult)
+            .where(MedicationCandidateSearchResult.id == candidate_search_result_id)
+            .with_for_update()
+        )
+        candidate_result = result.scalar_one_or_none()
+        if candidate_result is None:
+            return None
+
+        search = await self.get_search_for_update_owned(search_id=candidate_result.search_id, user_id=user_id)
         if search is None:
             return None
         return MedicationCandidateSelection(search=search, result=candidate_result)
@@ -141,6 +185,8 @@ class MedicationCandidateRepository:
         self,
         *,
         prescription_version_medication_id: UUID,
+        medication_name_snapshot: str,
+        strength_text_snapshot: str | None,
         query_digest: str,
         runtime_release_bundle_id: UUID | None,
         candidate_index_version_id: UUID | None,
@@ -148,6 +194,8 @@ class MedicationCandidateRepository:
     ) -> MedicationCandidateSearch:
         search = MedicationCandidateSearch(
             prescription_version_medication_id=prescription_version_medication_id,
+            medication_name_snapshot=medication_name_snapshot,
+            strength_text_snapshot=strength_text_snapshot,
             query_digest=query_digest,
             runtime_release_bundle_id=runtime_release_bundle_id,
             candidate_index_version_id=candidate_index_version_id,
