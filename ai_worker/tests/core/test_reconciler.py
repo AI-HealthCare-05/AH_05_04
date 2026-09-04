@@ -5,6 +5,10 @@ from uuid import uuid4
 
 import pytest
 
+from ai_worker.core.quarantine import (
+    QuarantineFailureCode,
+    RejectedWorkerDelivery,
+)
 from ai_worker.core.reconciler import (
     PendingMessageReconciler,
     ReconciliationReport,
@@ -279,3 +283,56 @@ async def test_reconciler_continues_from_auto_claim_cursor() -> None:
     assert stream.auto_claim.await_args_list[0].kwargs["start_id"] == "0-0"
     assert stream.auto_claim.await_args_list[1].kwargs["start_id"] == "2000-0"
     assert transaction.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reconciler_routes_rejected_pending_delivery_to_quarantine() -> None:
+    now = datetime.now(UTC)
+    rejected = RejectedWorkerDelivery(
+        stream_name="oryak:jobs",
+        stream_entry_id="1007-0",
+        message_digest="a" * 64,
+        failure_code=QuarantineFailureCode.INVALID_MESSAGE_SCHEMA,
+        job_id=None,
+        original_event_id=None,
+        original_schema_version="1.0",
+        trace_id=None,
+    )
+    repository = SimpleNamespace(
+        list_expired_executions=AsyncMock(return_value=()),
+        recover_expired_execution=AsyncMock(),
+        schedule_due_retries=AsyncMock(return_value=()),
+    )
+    transaction = SimpleNamespace(
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+    stream = SimpleNamespace(
+        auto_claim=AsyncMock(
+            return_value=AutoClaimResult(
+                next_start_id="0-0",
+                deliveries=(rejected,),
+            )
+        )
+    )
+    executor = SimpleNamespace(execute=AsyncMock())
+    rejected_executor = SimpleNamespace(execute=AsyncMock())
+
+    reconciler = PendingMessageReconciler(
+        repository=repository,
+        transaction=transaction,
+        stream=stream,
+        executor=executor,
+        rejected_executor=rejected_executor,
+        consumer_name="reconciler-1",
+        min_idle_ms=30_000,
+        batch_size=100,
+        clock=lambda: now,
+        random_value=lambda: 0.0,
+    )
+
+    report = await reconciler.run_once()
+
+    assert report.reclaimed == 1
+    executor.execute.assert_not_awaited()
+    rejected_executor.execute.assert_awaited_once_with(rejected)

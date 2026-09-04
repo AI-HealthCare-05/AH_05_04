@@ -109,7 +109,10 @@ async def test_pending_message_can_be_claimed_after_idle_time() -> None:
     )
     pending = await adapter.list_pending()
 
-    assert [delivery.stream_message_id for delivery in claimed] == [stream_id]
+    assert len(claimed) == 1
+    claimed_delivery = claimed[0]
+    assert isinstance(claimed_delivery, WorkerDelivery)
+    assert claimed_delivery.stream_message_id == stream_id
     assert pending[0].consumer_name == "worker-2"
     assert pending[0].delivery_count == 2
 
@@ -139,7 +142,10 @@ async def test_pending_message_can_be_auto_claimed_after_idle_time() -> None:
     pending = await adapter.list_pending()
 
     assert result.next_start_id == "0-0"
-    assert [delivery.stream_message_id for delivery in result.deliveries] == [stream_id]
+    assert len(result.deliveries) == 1
+    claimed_delivery = result.deliveries[0]
+    assert isinstance(claimed_delivery, WorkerDelivery)
+    assert claimed_delivery.stream_message_id == stream_id
     assert result.deleted_message_ids == ()
     assert pending[0].consumer_name == "worker-2"
     assert pending[0].delivery_count == 2

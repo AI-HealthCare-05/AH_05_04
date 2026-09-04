@@ -49,7 +49,7 @@ class AutoClaimResult:
     """XAUTOCLAIM의 다음 cursor와 회수 결과입니다."""
 
     next_start_id: str
-    deliveries: tuple[WorkerDelivery, ...]
+    deliveries: tuple[WorkerDelivery | RejectedWorkerDelivery, ...]
     deleted_message_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -98,7 +98,7 @@ class StreamConsumer(StreamAcknowledger, Protocol):
         consumer_name: str,
         stream_message_ids: Sequence[str],
         min_idle_ms: int,
-    ) -> Sequence[WorkerDelivery]:
+    ) -> Sequence[WorkerDelivery | RejectedWorkerDelivery]:
         """유휴 시간이 지난 Pending entry의 소유권을 가져옵니다."""
         ...
 

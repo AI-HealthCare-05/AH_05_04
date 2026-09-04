@@ -176,7 +176,7 @@ class RedisStreamAdapter:
         consumer_name: str,
         stream_message_ids: Sequence[str],
         min_idle_ms: int,
-    ) -> tuple[WorkerDelivery, ...]:
+    ) -> tuple[WorkerDelivery | RejectedWorkerDelivery, ...]:
         if not consumer_name.strip():
             raise ValueError("consumer_name은 비어 있을 수 없습니다.")
         if min_idle_ms < 0:
@@ -197,7 +197,10 @@ class RedisStreamAdapter:
         except RedisError:
             raise StreamOperationError() from None
 
-        return _decode_claim_result(result)
+        return _decode_claim_result(
+            result,
+            stream_name=self._stream_name,
+        )
 
     async def auto_claim(
         self,
@@ -230,7 +233,10 @@ class RedisStreamAdapter:
         except RedisError:
             raise StreamOperationError() from None
 
-        return _decode_auto_claim_result(result)
+        return _decode_auto_claim_result(
+            result,
+            stream_name=self._stream_name,
+        )
 
 
 def _decode_read_result(
@@ -379,20 +385,32 @@ def _digest_component(value: RedisKey | RedisValue) -> bytes:
 
 def _decode_claim_result(
     result: object,
-) -> tuple[WorkerDelivery, ...]:
+    *,
+    stream_name: str,
+) -> tuple[WorkerDelivery | RejectedWorkerDelivery, ...]:
     entries = cast(
         list[tuple[RedisStreamId, RedisFields]],
         result,
     )
-    deliveries: list[WorkerDelivery] = []
+    deliveries: list[WorkerDelivery | RejectedWorkerDelivery] = []
 
     for stream_message_id, fields in entries:
+        try:
+            message = decode_stream_message(fields)
+        except StreamMessageDecodingError:
+            deliveries.append(
+                _build_rejected_delivery(
+                    stream_name=stream_name,
+                    stream_message_id=stream_message_id,
+                    fields=fields,
+                )
+            )
+            continue
+
         deliveries.append(
             WorkerDelivery(
-                stream_message_id=_decode_stream_id(
-                    stream_message_id,
-                ),
-                message=decode_stream_message(fields),
+                stream_message_id=_decode_stream_id(stream_message_id),
+                message=message,
             )
         )
 
@@ -401,6 +419,8 @@ def _decode_claim_result(
 
 def _decode_auto_claim_result(
     result: object,
+    *,
+    stream_name: str,
 ) -> AutoClaimResult:
     if not isinstance(result, (list, tuple)):
         raise StreamOperationError()
@@ -415,7 +435,10 @@ def _decode_auto_claim_result(
     if not isinstance(raw_entries, list):
         raise StreamOperationError()
 
-    deliveries = _decode_claim_result(raw_entries)
+    deliveries = _decode_claim_result(
+        raw_entries,
+        stream_name=stream_name,
+    )
 
     deleted_message_ids: tuple[str, ...] = ()
 

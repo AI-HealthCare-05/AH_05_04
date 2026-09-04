@@ -324,6 +324,7 @@ def build_recovery_scheduler(
     execution: SessionScopedDeliveryExecution,
     clock: Clock,
     logger: logging.Logger,
+    rejected_execution: SessionScopedRejectedDeliveryExecution,
 ) -> AssembledRecoveryScheduler:
     """Pending 복구와 DLQ 발행 Scheduler를 실제 Adapter로 조립합니다."""
 
@@ -347,6 +348,7 @@ def build_recovery_scheduler(
         batch_size=config.RECONCILER_BATCH_SIZE,
         clock=clock,
         random_value=random.random,
+        rejected_executor=rejected_execution,
     )
 
     dlq_publisher = DlqOutboxPublisher(
@@ -449,6 +451,7 @@ def build_worker_runtime(
         execution=execution,
         clock=clock,
         logger=logger,
+        rejected_execution=rejected_execution,
     )
 
     runtime = ConsumerRuntime(

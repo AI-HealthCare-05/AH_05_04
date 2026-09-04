@@ -159,6 +159,7 @@ async def test_pending_entry_can_be_claimed() -> None:
     )
 
     assert len(claimed) == 1
+    assert isinstance(claimed[0], WorkerDelivery)
     assert claimed[0].stream_message_id == "1002-0"
     assert claimed[0].message == message
 
@@ -277,6 +278,7 @@ async def test_pending_entries_are_auto_claimed() -> None:
 
     assert result.next_start_id == "0-0"
     assert len(result.deliveries) == 1
+    assert isinstance(result.deliveries[0], WorkerDelivery)
     assert result.deliveries[0].stream_message_id == "1005-0"
     assert result.deliveries[0].message == message
     assert result.deleted_message_ids == ("999-0",)
@@ -341,3 +343,31 @@ def test_rejected_delivery_digest_is_independent_of_field_order() -> None:
 
     assert first.failure_code is QuarantineFailureCode.INVALID_MESSAGE_SCHEMA
     assert first.message_digest == second.message_digest
+
+
+@pytest.mark.asyncio
+async def test_auto_claim_isolates_invalid_pending_message() -> None:
+    client = build_redis_client()
+    message = build_message()
+    encoded = encode_stream_message(message)
+    invalid_fields = {key.encode(): value.encode() for key, value in encoded.items()}
+    invalid_fields[b"schema_version"] = b"9.0"
+
+    client.xautoclaim.return_value = [
+        b"0-0",
+        [(b"1007-0", invalid_fields)],
+        [],
+    ]
+    adapter = RedisStreamAdapter(cast(Redis, client))
+
+    result = await adapter.auto_claim(
+        consumer_name="worker-2",
+        min_idle_ms=1000,
+    )
+
+    assert len(result.deliveries) == 1
+    rejected = result.deliveries[0]
+    assert isinstance(rejected, RejectedWorkerDelivery)
+    assert rejected.stream_entry_id == "1007-0"
+    assert rejected.failure_code is QuarantineFailureCode.UNSUPPORTED_SCHEMA_VERSION
+    assert rejected.original_schema_version == "9.0"

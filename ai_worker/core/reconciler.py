@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from ai_worker.core.consumer_execution import Transaction
+from ai_worker.core.consumer_runtime import RejectedDeliveryExecution
+from ai_worker.core.quarantine import RejectedWorkerDelivery
 from ai_worker.core.recovery import (
     RecoveryDisposition,
     RecoveryRepository,
@@ -48,6 +50,7 @@ class PendingMessageReconciler:
         batch_size: int,
         clock: Callable[[], datetime],
         random_value: Callable[[], float],
+        rejected_executor: RejectedDeliveryExecution | None = None,
     ) -> None:
         normalized_consumer_name = consumer_name.strip()
 
@@ -70,6 +73,7 @@ class PendingMessageReconciler:
         self._clock = clock
         self._random_value = random_value
         self._next_start_id = "0-0"
+        self._rejected_executor = rejected_executor
 
     async def run_once(self) -> ReconciliationReport:
         """만료 lease와 due retry를 저장한 뒤 Pending entry를 회수합니다."""
@@ -129,7 +133,7 @@ class PendingMessageReconciler:
         self._next_start_id = claim_result.next_start_id
 
         for delivery in claim_result.deliveries:
-            await self._executor.execute(delivery)
+            await self._execute_reclaimed_delivery(delivery)
 
         return ReconciliationReport(
             expired_scanned=len(expired_executions),
@@ -140,6 +144,19 @@ class PendingMessageReconciler:
             next_start_id=claim_result.next_start_id,
             not_recovered=not_recovered,
         )
+
+    async def _execute_reclaimed_delivery(
+        self,
+        delivery: WorkerDelivery | RejectedWorkerDelivery,
+    ) -> None:
+        if isinstance(delivery, RejectedWorkerDelivery):
+            if self._rejected_executor is None:
+                raise RuntimeError("Rejected delivery 실행기가 구성되지 않았습니다.")
+
+            await self._rejected_executor.execute(delivery)
+            return
+
+        await self._executor.execute(delivery)
 
     async def _rollback_safely(self) -> None:
         try:
