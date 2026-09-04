@@ -139,6 +139,7 @@ def test_outbox_event_contains_publish_and_claim_columns() -> None:
         "claim_token",
         "claim_expires_at",
         "published_at",
+        "stream_message_id",
         "trace_id",
         "domain_type",
         "domain_id",

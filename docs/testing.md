@@ -44,7 +44,7 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 
 GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
 
-1. 개발 DB와 분리된 PostgreSQL `test` DB를 새로 생성합니다.
+1. 개발 DB와 분리된 PostgreSQL `test` DB와 격리된 Redis Stream을 사용합니다.
 2. 선택한 환경파일의 DB 계정으로 `alembic upgrade head`를 실행합니다.
 3. `tests/migration/`에서 Alembic이 생성한 실제 PostgreSQL 스키마를 검증합니다.
 4. Backend·공통 계약·Worker 공통 테스트를 실행합니다.
@@ -73,7 +73,7 @@ bash scripts/ci/run_test.sh
 기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
 - `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
 - `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
-- `tests/integration/`, `tests/e2e/`, `ai_worker/tests/ocr/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`, `ai_worker/tests/evaluation/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
+- `tests/integration/test_worker_ocr_persistence.py`와 `tests/integration/test_outbox_publisher.py`는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`, `ai_worker/tests/evaluation/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.
@@ -183,14 +183,14 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 비동기 요청은 `record_type + user_id + operation_id + key_hmac`, 동기 요청은 `record_type + user_id + operation_id + parent_resource_id + key_hmac` unique 기준으로 동시 중복 생성을 차단합니다.
 - 만료된 멱등 row 정리와 새 Job 생성은 중복 Job·Outbox·Provider 호출을 만들지 않습니다. Service·Repository 계층의 원자적 reclaim(만료 row 삭제 후 새 Job 생성, 경쟁 시 기존 unique constraint 재조회 경로로 합류)은 `#147`의 `test_accept_job_expired_record_is_reclaimed_and_creates_new_job`으로 검증됐습니다. 실제 `202` 응답은 `#148`에서 확인합니다.
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
-- Publisher가 `CLAIMED` Outbox row 선점 뒤 종료하면 claim 만료 후 같은 Outbox row를 재선점하며, Reconciler가 미발행 `PENDING` Job에 대해 새 attempt Outbox를 만들지 않는지 검증합니다.
+- Publisher가 `CLAIMED` Outbox row 선점 뒤 종료하면 claim 만료 후 같은 Outbox row를 재선점하고, 두 Publisher는 `FOR UPDATE SKIP LOCKED`로 같은 row를 동시 선점하지 않습니다. #219의 단위·PostgreSQL 통합 테스트로 검증합니다. Reconciler가 미발행 `PENDING` Job에 대해 새 attempt Outbox를 만들지 않는 검증은 #142 범위입니다.
 - Worker 종료 후 lease가 만료된 `PROCESSING` Job은 Reconciler가 회수해 재시도 가능하면 `RETRY_WAIT`, 재시도 소진이면 `FAILED`로 전환하며, 새 Provider 호출은 증가한 attempt의 새 Outbox 이후에만 발생합니다.
 - poison 메시지는 quarantine 기록을 먼저 commit한 뒤 ACK하며, commit 실패 시 ACK하지 않아 다시 회수할 수 있어야 합니다.
 - poison 메시지에서 파싱한 `job_id`만으로 정상 Job을 `FAILED` 처리하지 않습니다. 실제 Outbox event, `expected_event_id`, Job-event 연결과 attempt 검증이 모두 성공한 경우에만 Job 상태를 변경합니다.
 - 만료된 lease의 Worker가 새 Worker의 결과를 덮어쓰지 못합니다.
 - lease 만료로 같은 Stream 메시지를 재획득해도 같은 attempt에서 Provider를 반복 호출하지 않습니다.
 - `available_at`이 지난 `RETRY_WAIT` Job은 Reconciler가 DB row claim과 unique 제약으로 후속 Outbox를 하나만 생성합니다.
-- Publisher가 `CLAIMED` Outbox row 선점 뒤 종료해도 만료된 claim을 재선점할 수 있으며, 발행 완료 갱신은 `claim_token` fencing으로 보호됩니다.
+- Publisher가 `CLAIMED` Outbox row 선점 뒤 종료해도 만료된 claim을 재선점할 수 있으며, Redis 발행 성공 후에만 `published_at`·`stream_message_id`를 저장하고 발행 완료 갱신은 `event_id + claim_token + status=CLAIMED` fencing으로 보호됩니다. #219의 단위·PostgreSQL·Redis 통합 테스트로 검증합니다.
 - OCR의 CLOVA 20초·구조화 LLM 30초 순차 호출 경계에서 `hard timeout 60초 / lease 75초`를 검증하고, timeout 직전 정상 결과가 재시도 소진으로 오분류되지 않는지 확인합니다.
 - 단일 `idempotency_record`의 `record_type=ASYNC_JOB|SYNC_MUTATION`, 타입별 nullability CHECK, 동기 snapshot `BYTEA` 암호화와 비동기 snapshot 미저장을 계약·migration 테스트로 검증합니다.
 - Outbox 30일 보존과 Job 90일 보존이 충돌하지 않도록 nullable FK, `ON DELETE SET NULL` 또는 삭제 전 참조 해제 기준을 migration 테스트로 검증합니다. Outbox 삭제는 연결된 Job이 terminal이고 관련 Stream entry, PEL, 예약 retry와 재발행 대상이 모두 정리된 경우에만 허용합니다.

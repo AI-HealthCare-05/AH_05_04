@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
-| 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | 부분 구현 · Outbox 접수(#147), Redis Adapter·EventPublisher(#140), DB Outbox 선점·발행(#219), Worker lease·fencing(#141) 구현. reclaim·retry·quarantine·DLQ(#142) 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md` |
 | Last verified | 2026-08-27 |
 
@@ -24,7 +24,9 @@ Outbox publisher는 미발행 row를 짧은 lease로 선점하고 Redis Stream�
 - Reconciler는 `RETRY_WAIT` due Job과 lease가 만료된 `PROCESSING` Job을 복구 대상으로 확인한다. 증가한 attempt의 후속 Outbox 생성은 `RETRY_WAIT` due Job에서만 수행하며, 미발행 `PENDING` Job의 기존 Outbox 재발행은 Publisher 책임이다. Reconciler는 미발행 `PENDING` Job에 대해 다음 attempt를 만들지 않는다.
 - `PENDING` Job의 `expected_event_id`가 가리키는 Outbox가 없거나 Job·Outbox 연결이 깨진 경우는 데이터 무결성 오류로 기록하고 alert한다. 이 경우 Reconciler가 추정으로 새 Outbox를 만들지 않는다.
 
-`OUTBOX_EVENT`는 최소 `event_id`, `job_id`, `attempt`, `event_kind`, `schema_version`, `status`, `available_at`, nullable claim token·만료, nullable `published_at`, `created_at`을 저장한다. 상태는 `PENDING`, `CLAIMED`, `PUBLISHED`, `CANCELLED`이며 `(job_id, attempt, event_kind)`는 unique다. 최초 접수와 Reconciler 모두 Job의 `expected_event_id`와 Outbox `event_id`를 같은 transaction에서 설정한다.
+`OUTBOX_EVENT`는 최소 `event_id`, `job_id`, `attempt`, `event_kind`, `schema_version`, `status`, `available_at`, nullable claim token·만료, nullable `published_at`, nullable `stream_message_id`, `created_at`을 저장한다. `stream_message_id`는 Redis `XADD` 성공 후 같은 `event_id + claim_token + status=CLAIMED` fencing UPDATE로 `published_at`과 함께 기록한다. 상태는 `PENDING`, `CLAIMED`, `PUBLISHED`, `CANCELLED`이며 `(job_id, attempt, event_kind)`는 unique다. 최초 접수와 Reconciler 모두 Job의 `expected_event_id`와 Outbox `event_id`를 같은 transaction에서 설정한다.
+
+#219 Publisher는 due row를 `available_at`, `event_id` 순서로 최대 100건 선점한다. claim transaction은 `FOR UPDATE SKIP LOCKED`로 경합을 분리하고 즉시 commit하며, Redis `XADD`를 실행하는 동안 DB row lock을 유지하지 않는다. `trace_id`를 포함한 envelope 검증 실패나 Redis 발행 실패 시에는 `PUBLISHED`·`published_at`·`stream_message_id`를 기록하지 않고, claim 만료 후 같은 Outbox를 재선점한다. 이 경계의 중복 `XADD`는 at-least-once 계약으로 허용한다.
 
 ## Stream envelope
 

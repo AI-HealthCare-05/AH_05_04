@@ -16,6 +16,7 @@ from ai_worker.core.errors import (
     ConsumerAcknowledgementError,
     ConsumerPersistenceError,
     HandlerResultMismatchError,
+    WorkerError,
 )
 from ai_worker.core.handler import Handler, HandlerExecutionContext
 from ai_worker.core.job_execution import (
@@ -195,6 +196,27 @@ class FakeJobExecutionRepository:
         return self._complete_successfully
 
 
+class FakeDomainExecutionStarter:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        start_successfully: bool = True,
+    ) -> None:
+        self._events = events
+        self._start_successfully = start_successfully
+
+    async def start(
+        self,
+        *,
+        message: WorkerMessage,
+        started_at: datetime,
+    ) -> bool:
+        _ = message, started_at
+        self._events.append("start")
+        return self._start_successfully
+
+
 class FakeLeaseHeartbeatHandle:
     def __init__(
         self,
@@ -348,6 +370,58 @@ class CancellableHandler:
             raise
 
         raise AssertionError("테스트 Handler가 예기치 않게 해제됐습니다.")
+
+
+class DeadlineRecordingHandler:
+    handler_type = JobType.OCR
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.received_context: HandlerExecutionContext | None = None
+
+    async def handle(
+        self,
+        message: WorkerMessage,
+        *,
+        context: HandlerExecutionContext | None = None,
+    ) -> HandlerSuccess:
+        self._events.append("handle")
+        self.received_context = context
+
+        return HandlerSuccess(
+            event_id=message.event_id,
+            job_id=message.job_id,
+            handler_type=self.handler_type,
+        )
+
+
+class DeadlineAwareCancellableHandler:
+    handler_type = JobType.OCR
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def handle(
+        self,
+        message: WorkerMessage,
+        *,
+        context: HandlerExecutionContext | None = None,
+    ) -> HandlerSuccess:
+        assert context is not None
+
+        self._events.append("handle")
+        self.started.set()
+
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self._events.append("handler_cancelled")
+            self.cancelled.set()
+            raise
+
+        raise AssertionError("취소되지 않은 Handler가 반환됐습니다.")
 
 
 def build_execution(
@@ -1053,3 +1127,192 @@ async def test_leased_consumer_does_not_rollback_after_ack_failure() -> None:
         "ack",
     ]
     assert "rollback" not in events
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_passes_worker_deadline_to_handler() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    monotonic_now = 1000.0
+    handler = DeadlineRecordingHandler(events)
+    registry = HandlerRegistry()
+    registry.register(handler)
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: now,
+        hard_timeout_seconds=60.0,
+        monotonic_clock=lambda: monotonic_now,
+    )
+
+    await execution.execute(
+        WorkerDelivery(
+            stream_message_id="3000-0",
+            message=build_message(),
+        )
+    )
+
+    assert handler.received_context == HandlerExecutionContext(
+        worker_deadline=1060.0,
+    )
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "heartbeat_stop",
+        "save",
+        "complete",
+        "commit",
+        "ack",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hard_timeout_cancels_handler_without_result_commit_or_ack() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    handler = DeadlineAwareCancellableHandler(events)
+    registry = HandlerRegistry()
+    registry.register(handler)
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: now,
+        hard_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(WorkerError) as captured:
+        await asyncio.wait_for(
+            execution.execute(
+                WorkerDelivery(
+                    stream_message_id="3001-0",
+                    message=build_message(),
+                )
+            ),
+            timeout=1,
+        )
+
+    assert captured.value.failure_code == "TIMEOUT"
+    assert handler.started.is_set()
+    assert handler.cancelled.is_set()
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "handler_cancelled",
+        "heartbeat_stop",
+        "rollback",
+    ]
+    assert "save" not in events
+    assert "complete" not in events
+    assert "ack" not in events
+    assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_commits_domain_processing_before_handler() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: now,
+        execution_starter=FakeDomainExecutionStarter(events),
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2010-0",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, HandlerSuccess)
+    assert events == [
+        "acquire",
+        "start",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "heartbeat_stop",
+        "save",
+        "complete",
+        "commit",
+        "ack",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_leased_consumer_does_not_run_handler_when_domain_start_fails() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events))
+    acknowledger = FakeAcknowledger(events)
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=FakeJobExecutionRepository(
+            events,
+            complete_successfully=True,
+        ),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: now,
+        execution_starter=FakeDomainExecutionStarter(
+            events,
+            start_successfully=False,
+        ),
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="2011-0",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, LeaseNotAcquired)
+    assert events == [
+        "acquire",
+        "start",
+        "rollback",
+    ]
+    assert acknowledger.acknowledged_ids == []
