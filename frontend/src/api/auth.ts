@@ -34,3 +34,9 @@ export async function login(data: LoginRequest) {
     body: JSON.stringify(data),
   })
 }
+
+export async function logout() {
+  return apiRequest<{ detail: string }>('/api/v1/auth/logout', {
+    method: 'POST',
+  })
+}

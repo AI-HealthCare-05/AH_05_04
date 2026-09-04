@@ -3,12 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-206-20260902` |
-| 상태 | Draft — 권가빈 승인 대기 |
+| 상태 | 결정 기록 — 로그아웃·`token_version` 재검증 구현 반영, 비밀번호 재설정·회원탈퇴 후속 구현 대기 |
 | 결정일 | 2026-09-02 |
 | 결정자(제안) | 송은영 (Backend/DB) |
 | 추적 Issue | [#206](https://github.com/AI-HealthCare-05/AH_05_04/issues/206) |
 | 근거 문서 | 계정 기능 범위 확정(남한솔, 권가빈 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. 동의·외부 처리 범위 정리 §6/§8/§10(권가빈, 송은영 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. [[공통-S1] Account·Security·Privacy 계약·inventory](https://app.notion.com/p/S1-Account-Security-Privacy-inventory-3c6233603e278184ba03e3b231d8cf13?pvs=21). `요구사항_정의서.xlsx` `CH02_회원_동의` 시트 REQ-USR-007/008/009/010/020. |
-| 적용 범위 | User 계정 상태, 로그아웃/비밀번호 재설정/회원탈퇴 API·transaction 경계 |
+| 적용 범위 | User 계정 상태, 로그아웃 구현 기준, 비밀번호 재설정/회원탈퇴 API·transaction 경계 |
 
 ## 결정 1: 계정 상태 표현 + 세션 무효화 카운터
 
@@ -32,17 +32,17 @@
 
 **`token_version`은 시간 비교가 아니라 정수 일치 비교라 이 문제 자체가 존재하지 않는다.** 무효화 시 `token_version`을 원자적으로 `+1`하고, 토큰 검증은 `token.token_version == user.token_version` 정확히 일치하는지만 확인한다. 발급과 무효화가 물리적으로 아무리 가깝게 일어나도, 둘 다 같은 `user` row에 대한 쓰기라 DB가 순서를 보장하며 — 어느 한쪽이 먼저 commit되고 그 이후 읽는 값만 유효하다. "같은 순간에 걸치면 어느 쪽이 이기는가"라는 질문 자체가 성립하지 않는다.
 
-이 방식을 쓰려면 토큰 payload에 `token_version` 클레임이 있어야 하는데, 현재 `Token.__init__`은 `exp`/`jti`만 설정한다 — 구현 PR에서 `set_exp`와 함께 발급 시점의 `user.token_version` 값을 payload에 명시적으로 추가해야 한다. 기존 초안에서 논의됐던 `iat`/`iat_ms` 클레임은 이 Decision에서는 더 이상 필요하지 않다(로깅 목적으로 표준 `iat`를 남겨도 무방하나 무효화 판정과는 무관하다).
+구현은 토큰 payload에 발급 시점의 `user.token_version` 값을 명시적으로 포함한다. 기존 초안에서 논의됐던 `iat`/`iat_ms` 클레임은 이 Decision에서는 더 이상 필요하지 않다(로깅 목적으로 표준 `iat`를 남겨도 무방하나 무효화 판정과는 무관하다).
 
 **노출·변조 위험 검토.** JWT는 서명만 하고 암호화하지 않으므로 `user_id`처럼 `token_version`도 토큰을 가진 누구나 읽을 수 있지만, 이 값은 세션 무효화 횟수를 나타내는 정수일 뿐 계정 식별·의료정보와 무관해 노출돼도 추가 위험이 없다. 서명 검증을 통과하지 못하면 클레임을 변조할 수 없는 것도 기존 `exp`/`jti`와 동일하다.
 
-**모든 인증된 요청의 재검증(REQ-USR-010, REQ-USR-020 AC-03 대응).** 현재 `dependencies/security.py`의 `get_request_user()`는 요청마다 `repository.get_user(user_id)`로 DB를 조회하지만 `is_active`/`account_status`/토큰 버전을 확인하지 않는다 — 로그인 시점에만 `services/auth.py`의 `authenticate()`가 `is_active`를 검사하므로, 로그인 이후 로그아웃·탈퇴된 계정의 기존 access token은 만료 전까지 계속 통과한다. `get_request_user()`에 다음 두 체크를 추가하고, 실패 시 계약된 401을 반환하도록 구현 PR에서 반영한다.
+**모든 인증된 요청의 재검증(REQ-USR-010, REQ-USR-020 AC-03 대응).** `dependencies/security.py`의 `get_request_user()`는 요청마다 `repository.get_user(user_id)`로 DB를 조회한 뒤 다음 두 체크를 수행한다. 실패 시 계약된 401을 반환한다.
 - `account_status == ACTIVE`(또는 동등하게 `is_active`) — 계정 자체가 살아있는지.
 - 토큰의 `token_version` `==` `user.token_version` — 이 토큰이 마지막 전체 세션 무효화 이후에 발급됐는지.
 
 REQ-USR-010("서버가 화면 표시 여부와 별개로 모든 접근 권한을 재검증한다")과 REQ-USR-020 AC-03("이미 종료된 session으로 API를 호출하면 계약된 401/재인증 응답이 반환된다")이 이 동작을 요구한다.
 
-**`GET /auth/token/refresh`도 같은 재검증을 거쳐야 한다.** 현재 `token_refresh`는 `jwt_service.refresh_jwt()`만 호출하는데, 이 메서드는 refresh token의 서명·만료만 검증하고 DB를 전혀 조회하지 않는다 — `get_request_user()`의 재검증 로직을 거치지 않는다. 이 상태로는 로그아웃 이후에도 이미 발급된 refresh token으로 새 access token을 계속 발급받아 `token_version` 무효화를 완전히 우회할 수 있다. 구현 PR에서 `token_refresh`도 다음을 확인해야 한다.
+**`GET /auth/token/refresh`도 같은 재검증을 거친다.** `token_refresh`는 refresh token의 서명·만료만으로 새 access token을 발급하지 않고 DB의 사용자 상태를 다시 조회해 다음을 확인한다.
 - `account_status == ACTIVE`
 - **refresh token 자체의 `token_version`** `==` `user.token_version` — 새로 발급하는 access token의 `token_version`이 아니라, 지금 제시된 refresh token이 원래 발급될 때 담겼던 값을 기준으로 판단한다. access token 쪽 값으로 대신 검사하면 refresh할 때마다 값이 최신으로 갱신되어 무효화가 무력화된다.
 - 두 조건 중 하나라도 실패하면 `get_request_user()`와 동일한 401을 반환하고 새 access token을 발급하지 않는다.

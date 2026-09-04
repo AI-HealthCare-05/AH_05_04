@@ -68,6 +68,21 @@ describe('LoginPage', () => {
     expect(screen.getByText('비밀번호를 8자 이상 입력해 주세요.')).toBeTruthy()
   })
 
+  it('이메일이 40자를 넘으면 API를 호출하지 않고 안내한다', () => {
+    renderPage()
+
+    fireEvent.change(screen.getByLabelText('이메일'), {
+      target: { value: `${'a'.repeat(35)}@example.com` },
+    })
+    fireEvent.change(screen.getByLabelText('비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(login).not.toHaveBeenCalled()
+    expect(screen.getByText('올바른 이메일 주소를 40자 이하로 입력해 주세요.')).toBeTruthy()
+  })
+
   it('로그인 성공 시 토큰을 저장하고 홈으로 이동한다', async () => {
     renderPage()
     fillValidForm()

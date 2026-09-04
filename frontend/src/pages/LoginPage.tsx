@@ -24,8 +24,8 @@ function validateLogin(form: LoginForm): LoginFieldErrors {
 
   if (!email) {
     errors.email = '이메일을 입력해 주세요.'
-  } else if (!EMAIL_PATTERN.test(email)) {
-    errors.email = '올바른 이메일 주소를 입력해 주세요.'
+  } else if (email.length > 40 || !EMAIL_PATTERN.test(email)) {
+    errors.email = '올바른 이메일 주소를 40자 이하로 입력해 주세요.'
   }
 
   if (form.password.length < 8) {
@@ -46,12 +46,16 @@ function LoginPage() {
   const emailInputRef = useRef<HTMLInputElement>(null)
   const passwordInputRef = useRef<HTMLInputElement>(null)
 
+  const clearFeedback = () => {
+    setHasCredentialError(false)
+    setMessage('')
+  }
+
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target
     setForm((prev) => ({ ...prev, [name]: value }))
     setFieldErrors((prev) => ({ ...prev, [name]: undefined }))
-    setHasCredentialError(false)
-    setMessage('')
+    clearFeedback()
   }
 
   useEffect(() => {
@@ -71,8 +75,7 @@ function LoginPage() {
     const validationErrors = validateLogin(form)
     if (Object.keys(validationErrors).length > 0) {
       setFieldErrors(validationErrors)
-      setHasCredentialError(false)
-      setMessage('')
+      clearFeedback()
       return
     }
 
@@ -80,8 +83,7 @@ function LoginPage() {
       isSubmittingRef.current = true
       setIsSubmitting(true)
       setFieldErrors({})
-      setHasCredentialError(false)
-      setMessage('')
+      clearFeedback()
       const response = await login({
         email: form.email.trim(),
         password: form.password,
@@ -126,6 +128,7 @@ function LoginPage() {
                   placeholder="가입한 이메일을 입력해 주세요"
                   autoComplete="email"
                   required
+                  maxLength={40}
                   aria-invalid={Boolean(fieldErrors.email) || hasCredentialError}
                   aria-describedby={fieldErrors.email ? 'login-email-error' : undefined}
                   value={form.email}
