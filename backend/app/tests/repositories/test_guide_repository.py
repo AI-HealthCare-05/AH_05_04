@@ -6,12 +6,14 @@ import pytest_asyncio
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.models.async_jobs import AiJobType
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
+from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.guide_repository import GuideRepository
 from app.tests.conftest import test_engine
 
@@ -147,6 +149,35 @@ async def test_get_owned_guide_rejects_other_users_guide(db_session: AsyncSessio
 
     stolen = await repo.get_owned(guide_id=guide.id, user_id=intruder.id)
     assert stolen is None
+
+
+async def test_get_by_ai_job_id_returns_matching_guide(db_session: AsyncSession) -> None:
+    """Guide 영속 매핑: `guide.ai_job_id`로 직접 조회할 수 있어야 rediscovery·
+    `GET /jobs/{job_id}`가 Outbox 30일 보존과 무관하게 Job 90일 보존 동안 값을 찾을 수
+    있습니다(OCR의 #212와 같은 목적)."""
+    owner = await _create_user(db_session, email=f"guide-persist-{uuid4().hex[:10]}@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    guide = await GuideRepository(db_session).create(prescription=prescription)
+    ai_job = await AsyncJobRepository(db_session).create_job(
+        user_id=owner.id, job_type=AiJobType.GUIDE, prescription_version_id=None
+    )
+    guide.ai_job_id = ai_job.id
+    await db_session.flush()
+
+    found = await GuideRepository(db_session).get_by_ai_job_id(ai_job_id=ai_job.id)
+
+    assert found is not None
+    assert found.id == guide.id
+
+
+async def test_get_by_ai_job_id_returns_none_when_unset(db_session: AsyncSession) -> None:
+    owner = await _create_user(db_session, email=f"guide-unset-{uuid4().hex[:10]}@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    await GuideRepository(db_session).create(prescription=prescription)
+
+    found = await GuideRepository(db_session).get_by_ai_job_id(ai_job_id=uuid4())
+
+    assert found is None
 
 
 async def test_mark_failed_persists_after_writer_session_closes_and_new_session_reloads() -> None:

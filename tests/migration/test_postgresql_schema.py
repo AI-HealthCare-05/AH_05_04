@@ -21,6 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRE_PROFILE_REVISION = "77585c0c9792"
 PROFILE_EXPAND_REVISION = "117a8c9d4e21"
 OCR_AI_JOB_BASE_REVISION = "8d4f1a6c9e2b"
+GUIDE_AI_JOB_BASE_REVISION = "c3f8a12d9e47"
 
 
 def create_test_database_url() -> URL:
@@ -1442,12 +1443,18 @@ async def _write_ocr_ai_job_link_and_wait(
 
 async def _wait_for_ocr_downgrade_lock() -> None:
     """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
-    기다리는지 확인합니다. `OCR_AI_JOB_BASE_REVISION`으로 내려가는 경로에 #206의
-    `d1e2f3a4b5c6`(user 컬럼 추가)이 head로 얹히면서, writer가 `insert_ocr_parent_chain()`로
-    같은 transaction에서 만든 `user` row 때문에 downgrade가 `ocr_job` 단계에 도달하기 전에
-    먼저 `user` 테이블의 `ALTER TABLE ... DROP COLUMN` 단계에서 대기할 수 있습니다 — 두 테이블
-    모두 writer의 같은 uncommitted transaction이 잠그고 있어 어느 쪽에서 관찰되든 같은 대기
-    상태를 증명합니다."""
+    기다리는지 확인합니다.
+
+    OCR_AI_JOB_BASE_REVISION까지의 downgrade는 이제 `d1e2f3a4b5c6`(#206 user 컬럼 추가) →
+    `20fd11d29ecc`(Guide mapping) 두 단계를 먼저 거칩니다. `d1e2f3a4b5c6`의
+    `ALTER TABLE "user" ... DROP COLUMN`은 이 테스트의 writer가 `insert_ocr_parent_chain()`로
+    같은 transaction에서 만든 `user` row 때문에 대기하고, `20fd11d29ecc`의
+    `ALTER TABLE guide DROP CONSTRAINT fk_guide_ai_job`은 `guide`뿐 아니라 참조 대상인
+    `ai_job` 테이블에도 ACCESS EXCLUSIVE lock을 요구하므로(PostgreSQL의 FK 제약 삭제 규칙)
+    writer가 만든 미commit `ai_job` insert 때문에 대기합니다. 두 단계 모두 writer가
+    commit해야 통과해 마지막 ocr_job 단계(및 그 데이터 검증)에 도달합니다. 따라서 `user`·
+    `ai_job`·`ocr_job` 중 어느 테이블에서 대기하든 "downgrade가 concurrent writer를
+    기다린다"는 같은 사실을 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
         poolclass=NullPool,
@@ -1467,7 +1474,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname IN ('user', 'ocr_job')
+                              AND table_info.relname IN ('user', 'ai_job', 'ocr_job')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -1480,7 +1487,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the user/ocr_job ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/ai_job/ocr_job ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 
@@ -1598,6 +1605,884 @@ def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
                     user_id=user_id,
                     document_id=document_id,
                     ocr_job_id=ocr_job_id,
+                    ai_job_id=ai_job_id,
+                )
+            )
+
+
+async def insert_guide_parent_chain(
+    connection: AsyncConnection,
+) -> tuple[str, str, str, str, str]:
+    """Guide 제약조건 테스트에 필요한 최소 부모 데이터를 생성합니다.
+    반환값은 (user_id, document_id, ocr_job_id, prescription_id, guide_id)."""
+    user_id = str(uuid4())
+    profile_id = str(uuid4())
+    document_id = str(uuid4())
+    ocr_job_id = str(uuid4())
+    prescription_id = str(uuid4())
+    guide_id = str(uuid4())
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO "user" (
+                id,
+                email,
+                hashed_password,
+                name,
+                is_active,
+                is_admin
+            )
+            VALUES (
+                :id,
+                :email,
+                :hashed_password,
+                :name,
+                true,
+                false
+            )
+            """
+        ),
+        {
+            "id": user_id,
+            "email": f"guide-constraint-{uuid4().hex[:12]}@test.local",
+            "hashed_password": "migration-test-password-hash",
+            "name": "guide-constraint",
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO profile (
+                id,
+                user_id,
+                profile_type,
+                display_name
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'SELF',
+                'guide-constraint'
+            )
+            """
+        ),
+        {
+            "id": profile_id,
+            "user_id": user_id,
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO medical_document (
+                id,
+                uploaded_by,
+                profile_id,
+                document_type,
+                original_file_name,
+                object_key,
+                file_mime_type,
+                file_size_bytes,
+                upload_status
+            )
+            VALUES (
+                :id,
+                :uploaded_by,
+                :profile_id,
+                'PRESCRIPTION',
+                'guide-constraint-test.png',
+                :object_key,
+                'image/png',
+                1,
+                'UPLOADED'
+            )
+            """
+        ),
+        {
+            "id": document_id,
+            "uploaded_by": user_id,
+            "profile_id": profile_id,
+            "object_key": f"migration-test/{document_id}.png",
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO ocr_job (
+                id,
+                document_id,
+                ocr_status
+            )
+            VALUES (
+                :id,
+                :document_id,
+                'PENDING'
+            )
+            """
+        ),
+        {
+            "id": ocr_job_id,
+            "document_id": document_id,
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO prescription (
+                id,
+                document_id,
+                source_ocr_job_id,
+                profile_id,
+                prescribed_date,
+                prescription_status,
+                confirmed_at
+            )
+            VALUES (
+                :id,
+                :document_id,
+                :source_ocr_job_id,
+                :profile_id,
+                DATE '2026-09-03',
+                'CONFIRMED',
+                now()
+            )
+            """
+        ),
+        {
+            "id": prescription_id,
+            "document_id": document_id,
+            "source_ocr_job_id": ocr_job_id,
+            "profile_id": profile_id,
+        },
+    )
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO guide (
+                id,
+                prescription_id,
+                profile_id,
+                generation_status
+            )
+            VALUES (
+                :id,
+                :prescription_id,
+                :profile_id,
+                'PENDING'
+            )
+            """
+        ),
+        {
+            "id": guide_id,
+            "prescription_id": prescription_id,
+            "profile_id": profile_id,
+        },
+    )
+
+    return user_id, document_id, ocr_job_id, prescription_id, guide_id
+
+
+async def _insert_ai_job_for_guide_mapping(
+    connection: AsyncConnection,
+    *,
+    user_id: str,
+) -> str:
+    ai_job_id = str(uuid4())
+
+    await connection.execute(
+        text(
+            """
+            INSERT INTO ai_job (
+                id,
+                user_id,
+                job_type,
+                status,
+                attempt_count,
+                max_attempts
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'GUIDE',
+                'PENDING',
+                0,
+                3
+            )
+            """
+        ),
+        {
+            "id": ai_job_id,
+            "user_id": user_id,
+        },
+    )
+
+    return ai_job_id
+
+
+@pytest.mark.asyncio
+async def test_guide_ai_job_mapping_constraints_exist(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        column_result = await connection.execute(
+            text(
+                """
+                SELECT is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'guide'
+                  AND column_name = 'ai_job_id'
+                """
+            )
+        )
+        constraint_result = await connection.execute(
+            text(
+                """
+                SELECT
+                    conname,
+                    pg_get_constraintdef(oid) AS definition
+                FROM pg_constraint
+                WHERE conrelid = 'guide'::regclass
+                  AND conname IN (
+                      'fk_guide_ai_job',
+                      'uq_guide_ai_job'
+                  )
+                """
+            )
+        )
+
+    assert column_result.scalar_one() == "YES"
+
+    constraints = {row._mapping["conname"]: row._mapping["definition"] for row in constraint_result}
+
+    assert constraints["fk_guide_ai_job"] == "FOREIGN KEY (ai_job_id) REFERENCES ai_job(id) ON DELETE SET NULL"
+    assert constraints["uq_guide_ai_job"] == "UNIQUE (ai_job_id)"
+
+
+@pytest.mark.asyncio
+async def test_guide_ai_job_mapping_rejects_unknown_ai_job(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            _, _, _, _, guide_id = await insert_guide_parent_chain(connection)
+
+            with pytest.raises(
+                IntegrityError,
+                match="fk_guide_ai_job",
+            ):
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE guide
+                        SET ai_job_id = :ai_job_id
+                        WHERE id = :guide_id
+                        """
+                    ),
+                    {
+                        "ai_job_id": str(uuid4()),
+                        "guide_id": guide_id,
+                    },
+                )
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_deleting_ai_job_sets_guide_mapping_to_null(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            user_id, _, _, _, guide_id = await insert_guide_parent_chain(connection)
+            ai_job_id = await _insert_ai_job_for_guide_mapping(
+                connection,
+                user_id=user_id,
+            )
+
+            await connection.execute(
+                text(
+                    """
+                    UPDATE guide
+                    SET ai_job_id = :ai_job_id
+                    WHERE id = :guide_id
+                    """
+                ),
+                {
+                    "ai_job_id": ai_job_id,
+                    "guide_id": guide_id,
+                },
+            )
+
+            await connection.execute(
+                text("DELETE FROM ai_job WHERE id = :id"),
+                {"id": ai_job_id},
+            )
+
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT ai_job_id
+                    FROM guide
+                    WHERE id = :id
+                    """
+                ),
+                {"id": guide_id},
+            )
+
+            assert result.scalar_one() is None
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_one_ai_job_cannot_map_to_multiple_guides(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+
+        try:
+            user_id, _, _, prescription_id, first_guide_id = await insert_guide_parent_chain(connection)
+            second_guide_id = str(uuid4())
+            ai_job_id = await _insert_ai_job_for_guide_mapping(
+                connection,
+                user_id=user_id,
+            )
+
+            profile_id_result = await connection.execute(
+                text("SELECT profile_id FROM prescription WHERE id = :id"),
+                {"id": prescription_id},
+            )
+            profile_id = profile_id_result.scalar_one()
+
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO guide (
+                        id,
+                        prescription_id,
+                        profile_id,
+                        generation_status
+                    )
+                    VALUES (
+                        :id,
+                        :prescription_id,
+                        :profile_id,
+                        'PENDING'
+                    )
+                    """
+                ),
+                {
+                    "id": second_guide_id,
+                    "prescription_id": prescription_id,
+                    "profile_id": profile_id,
+                },
+            )
+
+            await connection.execute(
+                text(
+                    """
+                    UPDATE guide
+                    SET ai_job_id = :ai_job_id
+                    WHERE id = :guide_id
+                    """
+                ),
+                {
+                    "ai_job_id": ai_job_id,
+                    "guide_id": first_guide_id,
+                },
+            )
+
+            with pytest.raises(
+                IntegrityError,
+                match="uq_guide_ai_job",
+            ):
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE guide
+                        SET ai_job_id = :ai_job_id
+                        WHERE id = :guide_id
+                        """
+                    ),
+                    {
+                        "ai_job_id": ai_job_id,
+                        "guide_id": second_guide_id,
+                    },
+                )
+        finally:
+            await transaction.rollback()
+
+
+async def _fetch_guide_ai_job_column_exists() -> bool:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'guide'
+                          AND column_name = 'ai_job_id'
+                    )
+                    """
+                )
+            )
+            return bool(result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_guide_ai_job_id(guide_id: str) -> str | None:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT ai_job_id
+                    FROM guide
+                    WHERE id = :id
+                    """
+                ),
+                {"id": guide_id},
+            )
+            return result.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def _insert_pre_mapping_guide() -> tuple[str, str, str, str, str]:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            return await insert_guide_parent_chain(connection)
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup_guide_mapping_roundtrip_data(
+    *,
+    user_id: str,
+    document_id: str,
+    ocr_job_id: str,
+    prescription_id: str,
+    guide_id: str,
+) -> None:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM guide WHERE id = :id"),
+                {"id": guide_id},
+            )
+            await connection.execute(
+                text("DELETE FROM prescription WHERE id = :id"),
+                {"id": prescription_id},
+            )
+            await connection.execute(
+                text("DELETE FROM ocr_job WHERE id = :id"),
+                {"id": ocr_job_id},
+            )
+            await connection.execute(
+                text("DELETE FROM medical_document WHERE id = :id"),
+                {"id": document_id},
+            )
+            await connection.execute(
+                text("DELETE FROM profile WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            await connection.execute(
+                text('DELETE FROM "user" WHERE id = :id'),
+                {"id": user_id},
+            )
+    finally:
+        await engine.dispose()
+
+
+def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows() -> None:
+    alembic_config = create_alembic_config()
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+    prescription_id = ""
+    guide_id = ""
+
+    try:
+        command.downgrade(
+            alembic_config,
+            GUIDE_AI_JOB_BASE_REVISION,
+        )
+        assert asyncio.run(_fetch_guide_ai_job_column_exists()) is False
+
+        user_id, document_id, ocr_job_id, prescription_id, guide_id = asyncio.run(_insert_pre_mapping_guide())
+
+        command.upgrade(alembic_config, "head")
+
+        assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
+
+        # 이미 head인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
+        command.upgrade(alembic_config, "head")
+
+        assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
+
+        command.downgrade(
+            alembic_config,
+            GUIDE_AI_JOB_BASE_REVISION,
+        )
+        assert asyncio.run(_fetch_guide_ai_job_column_exists()) is False
+
+        command.upgrade(alembic_config, "head")
+
+        assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
+    finally:
+        command.upgrade(alembic_config, "head")
+
+        if user_id and document_id and ocr_job_id and prescription_id and guide_id:
+            asyncio.run(
+                _cleanup_guide_mapping_roundtrip_data(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                    prescription_id=prescription_id,
+                    guide_id=guide_id,
+                )
+            )
+
+
+async def _insert_linked_guide_ai_job() -> tuple[str, str, str, str, str, str]:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            user_id, document_id, ocr_job_id, prescription_id, guide_id = await insert_guide_parent_chain(connection)
+            ai_job_id = await _insert_ai_job_for_guide_mapping(
+                connection,
+                user_id=user_id,
+            )
+
+            await connection.execute(
+                text(
+                    """
+                    UPDATE guide
+                    SET ai_job_id = :ai_job_id
+                    WHERE id = :guide_id
+                    """
+                ),
+                {
+                    "ai_job_id": ai_job_id,
+                    "guide_id": guide_id,
+                },
+            )
+
+            return user_id, document_id, ocr_job_id, prescription_id, guide_id, ai_job_id
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup_linked_guide_ai_job(
+    *,
+    user_id: str,
+    document_id: str,
+    ocr_job_id: str,
+    prescription_id: str,
+    guide_id: str,
+    ai_job_id: str,
+) -> None:
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM guide WHERE id = :id"),
+                {"id": guide_id},
+            )
+            await connection.execute(
+                text("DELETE FROM ai_job WHERE id = :id"),
+                {"id": ai_job_id},
+            )
+            await connection.execute(
+                text("DELETE FROM prescription WHERE id = :id"),
+                {"id": prescription_id},
+            )
+            await connection.execute(
+                text("DELETE FROM ocr_job WHERE id = :id"),
+                {"id": ocr_job_id},
+            )
+            await connection.execute(
+                text("DELETE FROM medical_document WHERE id = :id"),
+                {"id": document_id},
+            )
+            await connection.execute(
+                text("DELETE FROM profile WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            await connection.execute(
+                text('DELETE FROM "user" WHERE id = :id'),
+                {"id": user_id},
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _write_guide_ai_job_link_and_wait(
+    *,
+    writer_ready: Event,
+    release_writer: Event,
+) -> tuple[str, str, str, str, str, str]:
+    """Guide mapping을 기록한 transaction을 commit 직전까지 유지합니다."""
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+
+            try:
+                user_id, document_id, ocr_job_id, prescription_id, guide_id = await insert_guide_parent_chain(
+                    connection
+                )
+                ai_job_id = await _insert_ai_job_for_guide_mapping(
+                    connection,
+                    user_id=user_id,
+                )
+
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE guide
+                        SET ai_job_id = :ai_job_id
+                        WHERE id = :guide_id
+                        """
+                    ),
+                    {
+                        "ai_job_id": ai_job_id,
+                        "guide_id": guide_id,
+                    },
+                )
+
+                writer_ready.set()
+
+                released = await asyncio.to_thread(
+                    release_writer.wait,
+                    10,
+                )
+                if not released:
+                    raise TimeoutError("Timed out waiting to release the concurrent Guide writer.")
+
+                await transaction.commit()
+
+                return user_id, document_id, ocr_job_id, prescription_id, guide_id, ai_job_id
+            except BaseException:
+                if transaction.is_active:
+                    await transaction.rollback()
+                raise
+    finally:
+        await engine.dispose()
+
+
+async def _wait_for_guide_downgrade_lock() -> None:
+    """downgrade가 guide ACCESS EXCLUSIVE lock을 기다리는지 확인합니다."""
+    engine = create_async_engine(
+        create_alembic_database_url(),
+        poolclass=NullPool,
+    )
+
+    try:
+        for _ in range(100):
+            async with engine.connect() as connection:
+                result = await connection.execute(
+                    text(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM pg_locks AS lock_info
+                            JOIN pg_class AS table_info
+                              ON table_info.oid = lock_info.relation
+                            JOIN pg_namespace AS namespace_info
+                              ON namespace_info.oid = table_info.relnamespace
+                            WHERE namespace_info.nspname = 'public'
+                              AND table_info.relname = 'guide'
+                              AND lock_info.mode = 'AccessExclusiveLock'
+                              AND lock_info.granted = false
+                        )
+                        """
+                    )
+                )
+
+                if result.scalar_one():
+                    return
+
+            await asyncio.sleep(0.05)
+
+        raise AssertionError("Downgrade did not wait for the guide ACCESS EXCLUSIVE lock.")
+    finally:
+        await engine.dispose()
+
+
+def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
+    alembic_config = create_alembic_config()
+    writer_ready = Event()
+    release_writer = Event()
+
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+    prescription_id = ""
+    guide_id = ""
+    ai_job_id = ""
+
+    writer_future: Future[tuple[str, str, str, str, str, str]] | None = None
+    downgrade_future: Future[None] | None = None
+
+    try:
+        command.upgrade(alembic_config, "head")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            writer_future = executor.submit(
+                asyncio.run,
+                _write_guide_ai_job_link_and_wait(
+                    writer_ready=writer_ready,
+                    release_writer=release_writer,
+                ),
+            )
+
+            if not writer_ready.wait(timeout=10):
+                if writer_future.done():
+                    writer_future.result()
+
+                raise AssertionError("Concurrent Guide writer did not reach the uncommitted state.")
+
+            downgrade_future = executor.submit(
+                command.downgrade,
+                alembic_config,
+                GUIDE_AI_JOB_BASE_REVISION,
+            )
+
+            asyncio.run(_wait_for_guide_downgrade_lock())
+
+            # writer가 commit하기 전에는 downgrade가 완료되면 안 됩니다.
+            assert downgrade_future.done() is False
+
+            release_writer.set()
+
+            user_id, document_id, ocr_job_id, prescription_id, guide_id, ai_job_id = writer_future.result(timeout=10)
+
+            # lock 획득 후 다시 검사하므로 방금 commit된 연결을 확인하고
+            # 컬럼 삭제를 거부해야 합니다.
+            with pytest.raises(
+                RuntimeError,
+                match=r"Cannot downgrade while guide\.ai_job_id contains linked AI Jobs",
+            ):
+                downgrade_future.result(timeout=10)
+
+        assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) == ai_job_id
+    finally:
+        release_writer.set()
+
+        if writer_future is not None and not writer_future.done():
+            writer_future.result(timeout=10)
+
+        if downgrade_future is not None and not downgrade_future.done():
+            try:
+                downgrade_future.result(timeout=10)
+            except RuntimeError:
+                pass
+
+        command.upgrade(alembic_config, "head")
+
+        if user_id and document_id and ocr_job_id and prescription_id and guide_id and ai_job_id:
+            asyncio.run(
+                _cleanup_linked_guide_ai_job(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                    prescription_id=prescription_id,
+                    guide_id=guide_id,
+                    ai_job_id=ai_job_id,
+                )
+            )
+
+
+def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
+    alembic_config = create_alembic_config()
+    user_id = ""
+    document_id = ""
+    ocr_job_id = ""
+    prescription_id = ""
+    guide_id = ""
+    ai_job_id = ""
+
+    try:
+        command.upgrade(alembic_config, "head")
+
+        user_id, document_id, ocr_job_id, prescription_id, guide_id, ai_job_id = asyncio.run(
+            _insert_linked_guide_ai_job()
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"Cannot downgrade while guide\.ai_job_id contains linked AI Jobs",
+        ):
+            command.downgrade(
+                alembic_config,
+                GUIDE_AI_JOB_BASE_REVISION,
+            )
+
+        assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
+        assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) == ai_job_id
+    finally:
+        command.upgrade(alembic_config, "head")
+
+        if user_id and document_id and ocr_job_id and prescription_id and guide_id and ai_job_id:
+            asyncio.run(
+                _cleanup_linked_guide_ai_job(
+                    user_id=user_id,
+                    document_id=document_id,
+                    ocr_job_id=ocr_job_id,
+                    prescription_id=prescription_id,
+                    guide_id=guide_id,
                     ai_job_id=ai_job_id,
                 )
             )
