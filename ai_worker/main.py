@@ -47,6 +47,43 @@ def _install_shutdown_handlers(stop_event: asyncio.Event, logger: logging.Logger
     logger.info("worker shutdown handlers installed")
 
 
+async def _run_worker_services(
+    assembled: AssembledWorkerRuntime,
+    stop_event: asyncio.Event,
+) -> None:
+    """Consumer와 복구 Scheduler를 하나의 프로세스 경계에서 실행합니다."""
+
+    service_tasks: set[asyncio.Task[None]] = {asyncio.create_task(assembled.runtime.run(stop_event))}
+
+    if assembled.recovery_scheduler is not None:
+        service_tasks.add(
+            asyncio.create_task(
+                assembled.recovery_scheduler.run(
+                    stop_event=stop_event,
+                )
+            )
+        )
+
+    try:
+        done, _ = await asyncio.wait(
+            service_tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        # 어느 서비스든 예상보다 먼저 종료되거나 실패하면 결과를 전파합니다.
+        for task in done:
+            task.result()
+    finally:
+        for task in service_tasks:
+            if not task.done():
+                task.cancel()
+
+        await asyncio.gather(
+            *service_tasks,
+            return_exceptions=True,
+        )
+
+
 async def _serve(
     assembled: AssembledWorkerRuntime,
     config: Config,
@@ -59,7 +96,12 @@ async def _serve(
     테스트는 signal 없이 종료 경로만 검증할 수 있습니다.
     """
 
-    run_task = asyncio.create_task(assembled.runtime.run(stop_event))
+    run_task = asyncio.create_task(
+        _run_worker_services(
+            assembled,
+            stop_event,
+        )
+    )
     stop_task = asyncio.create_task(stop_event.wait())
 
     try:

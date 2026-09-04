@@ -210,27 +210,29 @@ async def test_delivery_failure_does_not_escape_execution_boundary(
 # --- 조립과 종료 -----------------------------------------------------------
 
 
-def test_build_worker_runtime_closes_only_owned_resources() -> None:
+@pytest.mark.asyncio
+async def test_build_worker_runtime_closes_only_owned_resources() -> None:
     redis_client = _RedisStub()
-    engine = _EngineStub()
+    engine = _engine_stub()
+    original_pool = engine.sync_engine.pool
 
-    assembled = build_worker_runtime(
-        _config(),
-        logger=logging.getLogger("test"),
-        clock=lambda: datetime.now(UTC),
-        redis_client=redis_client,  # type: ignore[arg-type]
-        engine=engine,  # type: ignore[arg-type]
-    )
+    try:
+        assembled = build_worker_runtime(
+            _config(),
+            logger=logging.getLogger("test"),
+            clock=lambda: datetime.now(UTC),
+            redis_client=redis_client,  # type: ignore[arg-type]
+            engine=engine,
+        )
 
-    asyncio.run(_close(assembled.aclose))
+        await assembled.aclose()
 
-    assert redis_client.closed is False
-    assert engine.disposed is False
-    assert assembled.registered_types == frozenset()
-
-
-async def _close(aclose: Any) -> None:
-    await aclose()
+        assert redis_client.closed is False
+        assert engine.sync_engine.pool is original_pool
+        assert assembled.registered_types == frozenset()
+        assert assembled.recovery_scheduler is not None
+    finally:
+        await engine.dispose()
 
 
 class _AcknowledgerStub:
@@ -249,28 +251,35 @@ class _RedisStub:
         self.closed = True
 
 
-class _EngineStub:
-    def __init__(self) -> None:
-        self.disposed = False
-
-    async def dispose(self) -> None:
-        self.disposed = True
-
-
 def _engine_stub() -> Any:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     return create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:5432/test")
 
 
-def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() -> None:
-    assembled = build_worker_runtime(
-        _config(),
-        logger=logging.getLogger("test"),
-        clock=lambda: datetime.now(UTC),
-        ocr_engine=cast(OcrEngine, object()),
-        redis_client=_RedisStub(),  # type: ignore[arg-type]
-        engine=_EngineStub(),  # type: ignore[arg-type]
-    )
+@pytest.mark.asyncio
+async def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() -> None:
+    engine = _engine_stub()
+    assembled = None
 
-    assert assembled.registered_types == frozenset({JobType.OCR})
+    try:
+        assembled = build_worker_runtime(
+            _config(),
+            logger=logging.getLogger("test"),
+            clock=lambda: datetime.now(UTC),
+            ocr_engine=cast(OcrEngine, object()),
+            redis_client=_RedisStub(),  # type: ignore[arg-type]
+            engine=engine,
+        )
+
+        assert assembled.registered_types == frozenset(
+            {
+                JobType.OCR,
+            }
+        )
+        assert assembled.recovery_scheduler is not None
+    finally:
+        if assembled is not None:
+            await assembled.aclose()
+
+        await engine.dispose()

@@ -5,10 +5,11 @@ Pending reclaim·retry Outbox·DLQ 전이는 #142가 소유하므로 여기서 �
 """
 
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from redis.asyncio import Redis
@@ -21,7 +22,13 @@ from sqlalchemy.ext.asyncio import (
 
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
 from ai_worker.adapters.factory import create_redis_client, create_stream_adapter
+from ai_worker.adapters.redis_dead_letter_stream import (
+    RedisDeadLetterStreamPublisher,
+)
 from ai_worker.adapters.redis_stream import RedisStreamAdapter
+from ai_worker.adapters.sqlalchemy_dlq_outbox_repository import (
+    SqlAlchemyDlqOutboxRepository,
+)
 from ai_worker.adapters.sqlalchemy_job_execution_repository import SqlAlchemyJobExecutionRepository
 from ai_worker.adapters.sqlalchemy_lease_heartbeat import SqlAlchemyLeaseHeartbeat
 from ai_worker.adapters.sqlalchemy_ocr_execution_starter import (
@@ -29,12 +36,23 @@ from ai_worker.adapters.sqlalchemy_ocr_execution_starter import (
 )
 from ai_worker.adapters.sqlalchemy_ocr_input_repository import SqlAlchemyOcrInputRepository
 from ai_worker.adapters.sqlalchemy_ocr_result_store import SqlAlchemyOcrResultStore
+from ai_worker.adapters.sqlalchemy_recovery_repository import (
+    SqlAlchemyRecoveryRepository,
+)
 from ai_worker.adapters.sqlalchemy_transaction import SqlAlchemyTransaction
 from ai_worker.core.config import Config
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.consumer_runtime import ConsumerRuntime
 from ai_worker.core.dispatcher import Dispatcher
+from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.reconciler import PendingMessageReconciler
+from ai_worker.core.recovery_observability import (
+    ObservedDlqPublisher,
+    ObservedPendingReconciler,
+    RecoveryMetricLogger,
+)
+from ai_worker.core.recovery_scheduler import RecoveryScheduler
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
@@ -235,12 +253,96 @@ def _default_monotonic() -> float:
 
 
 @dataclass(frozen=True, slots=True)
+class AssembledRecoveryScheduler:
+    scheduler: RecoveryScheduler
+    aclose: Callable[[], Awaitable[None]]
+
+
+def build_recovery_scheduler(
+    config: Config,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    redis_client: Redis,
+    stream: RedisStreamAdapter,
+    execution: SessionScopedDeliveryExecution,
+    clock: Clock,
+    logger: logging.Logger,
+) -> AssembledRecoveryScheduler:
+    """Pending 복구와 DLQ 발행 Scheduler를 실제 Adapter로 조립합니다."""
+
+    # 두 주기 작업은 동시에 실행되므로 AsyncSession을 공유하지 않습니다.
+    recovery_session = session_factory()
+    dlq_session = session_factory()
+
+    metrics = RecoveryMetricLogger(logger)
+
+    reconciler = PendingMessageReconciler(
+        repository=SqlAlchemyRecoveryRepository(
+            recovery_session,
+        ),
+        transaction=SqlAlchemyTransaction(
+            recovery_session,
+        ),
+        stream=stream,
+        executor=execution,
+        consumer_name=config.RECONCILER_CONSUMER_NAME,
+        min_idle_ms=config.RECONCILER_MIN_IDLE_MS,
+        batch_size=config.RECONCILER_BATCH_SIZE,
+        clock=clock,
+        random_value=random.random,
+    )
+
+    dlq_publisher = DlqOutboxPublisher(
+        repository=SqlAlchemyDlqOutboxRepository(
+            dlq_session,
+        ),
+        transaction=SqlAlchemyTransaction(
+            dlq_session,
+        ),
+        stream=RedisDeadLetterStreamPublisher(
+            redis_client,
+            stream_name=config.REDIS_DLQ_STREAM_NAME,
+        ),
+        alerter=metrics,
+        claim_ttl=timedelta(
+            seconds=config.DLQ_OUTBOX_CLAIM_TTL_SECONDS,
+        ),
+        clock=clock,
+        random_value=random.random,
+    )
+
+    scheduler = RecoveryScheduler(
+        reconciler=ObservedPendingReconciler(
+            task=reconciler,
+            metrics=metrics,
+        ),
+        dlq_publisher=ObservedDlqPublisher(
+            task=dlq_publisher,
+            metrics=metrics,
+        ),
+        failure_reporter=metrics,
+        reconciler_interval_seconds=(config.RECONCILER_INTERVAL_SECONDS),
+        dlq_publisher_interval_seconds=(config.DLQ_PUBLISHER_INTERVAL_SECONDS),
+    )
+
+    async def aclose() -> None:
+        await recovery_session.close()
+        await dlq_session.close()
+
+    return AssembledRecoveryScheduler(
+        scheduler=scheduler,
+        aclose=aclose,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class AssembledWorkerRuntime:
     """조립된 runtime과 정상 종료 절차입니다."""
 
     runtime: ConsumerRuntime
     registered_types: frozenset[JobType]
     aclose: Callable[[], Awaitable[None]]
+    recovery_scheduler: RecoveryScheduler | None = None
 
 
 def build_worker_runtime(
@@ -277,6 +379,16 @@ def build_worker_runtime(
         ocr_provider=None if ocr_engine is None else create_ocr_provider(ocr_engine),
     )
 
+    assembled_recovery = build_recovery_scheduler(
+        config,
+        session_factory=session_factory,
+        redis_client=resolved_redis,
+        stream=stream,
+        execution=execution,
+        clock=clock,
+        logger=logger,
+    )
+
     runtime = ConsumerRuntime(
         stream=stream,
         execution=execution,
@@ -287,6 +399,7 @@ def build_worker_runtime(
 
     async def aclose() -> None:
         """Redis와 DB 연결을 정상 종료합니다. 소유하지 않은 자원은 닫지 않습니다."""
+        await assembled_recovery.aclose()
 
         if owned_redis:
             await resolved_redis.aclose()
@@ -298,4 +411,5 @@ def build_worker_runtime(
         runtime=runtime,
         registered_types=execution.registered_types,
         aclose=aclose,
+        recovery_scheduler=assembled_recovery.scheduler,
     )

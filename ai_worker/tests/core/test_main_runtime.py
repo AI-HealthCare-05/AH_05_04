@@ -29,9 +29,26 @@ class _StopAwareRuntime:
 
     def __init__(self) -> None:
         self.started = False
+        self.started_event = asyncio.Event()
 
     async def run(self, stop_event: asyncio.Event) -> None:
         self.started = True
+        self.started_event.set()
+        await stop_event.wait()
+
+
+class _StopAwareRecoveryScheduler:
+    def __init__(self) -> None:
+        self.started = False
+        self.started_event = asyncio.Event()
+
+    async def run(
+        self,
+        *,
+        stop_event: asyncio.Event,
+    ) -> None:
+        self.started = True
+        self.started_event.set()
         await stop_event.wait()
 
 
@@ -54,7 +71,10 @@ class _FailingRuntime:
         raise RuntimeError("redis connection lost")
 
 
-def _assembled(runtime: Any) -> tuple[AssembledWorkerRuntime, list[str]]:
+def _assembled(
+    runtime: Any,
+    recovery_scheduler: Any | None = None,
+) -> tuple[AssembledWorkerRuntime, list[str]]:
     closed: list[str] = []
 
     async def aclose() -> None:
@@ -65,24 +85,10 @@ def _assembled(runtime: Any) -> tuple[AssembledWorkerRuntime, list[str]]:
             runtime=runtime,  # type: ignore[arg-type]
             registered_types=frozenset(),
             aclose=aclose,
+            recovery_scheduler=recovery_scheduler,
         ),
         closed,
     )
-
-
-@pytest.mark.asyncio
-async def test_serve_returns_when_stop_is_requested() -> None:
-    runtime = _StopAwareRuntime()
-    assembled, _ = _assembled(runtime)
-    stop_event = asyncio.Event()
-
-    serve_task = asyncio.create_task(worker_main._serve(assembled, _config(), logging.getLogger("test"), stop_event))
-    await asyncio.sleep(0)
-    stop_event.set()
-
-    await asyncio.wait_for(serve_task, timeout=1.0)
-
-    assert runtime.started is True
 
 
 @pytest.mark.asyncio
@@ -136,3 +142,38 @@ async def test_run_closes_resources_even_when_serve_fails(
         await worker_main.run()
 
     assert closed == ["closed"]
+
+
+@pytest.mark.asyncio
+async def test_serve_runs_consumer_and_recovery_scheduler_together() -> None:
+    runtime = _StopAwareRuntime()
+    recovery_scheduler = _StopAwareRecoveryScheduler()
+    assembled, _ = _assembled(
+        runtime,
+        recovery_scheduler=recovery_scheduler,
+    )
+    stop_event = asyncio.Event()
+
+    serve_task = asyncio.create_task(
+        worker_main._serve(
+            assembled,
+            _config(),
+            logging.getLogger("test"),
+            stop_event,
+        )
+    )
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                runtime.started_event.wait(),
+                recovery_scheduler.started_event.wait(),
+            ),
+            timeout=1.0,
+        )
+
+        assert runtime.started is True
+        assert recovery_scheduler.started is True
+    finally:
+        stop_event.set()
+        await asyncio.wait_for(serve_task, timeout=1.0)

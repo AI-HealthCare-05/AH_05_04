@@ -3,6 +3,10 @@
 import json
 import logging
 from typing import Literal, Protocol
+from uuid import UUID
+
+from ai_worker.core.dlq import DlqPublishReport
+from ai_worker.core.reconciler import ReconciliationReport
 
 type RecoveryTaskName = Literal[
     "pending_reconciler",
@@ -43,6 +47,63 @@ class RecoveryMetrics(Protocol):
     ) -> None:
         """예외 원문 없이 실패한 복구 task만 기록합니다."""
         ...
+
+
+class ReconciliationTask(Protocol):
+    async def run_once(self) -> ReconciliationReport: ...
+
+
+class DlqPublishTask(Protocol):
+    async def run_once(self) -> DlqPublishReport: ...
+
+
+class ObservedPendingReconciler:
+    """Reconciler 결과를 안전한 집계 메트릭으로 기록합니다."""
+
+    def __init__(
+        self,
+        task: ReconciliationTask,
+        metrics: RecoveryMetrics,
+    ) -> None:
+        self._task = task
+        self._metrics = metrics
+
+    async def run_once(self) -> ReconciliationReport:
+        report = await self._task.run_once()
+
+        self._metrics.record_reconciliation(
+            expired_scanned=report.expired_scanned,
+            recovered_retry_wait=report.recovered_retry_wait,
+            recovered_failed=report.recovered_failed,
+            retries_scheduled=report.retries_scheduled,
+            reclaimed=report.reclaimed,
+            not_recovered=report.not_recovered,
+        )
+
+        return report
+
+
+class ObservedDlqPublisher:
+    """DLQ 발행 결과를 안전한 집계 메트릭으로 기록합니다."""
+
+    def __init__(
+        self,
+        task: DlqPublishTask,
+        metrics: RecoveryMetrics,
+    ) -> None:
+        self._task = task
+        self._metrics = metrics
+
+    async def run_once(self) -> DlqPublishReport:
+        report = await self._task.run_once()
+
+        self._metrics.record_dlq_publish(
+            published=report.published,
+            retry_scheduled=report.retry_scheduled,
+            alert_required=report.alert_required,
+        )
+
+        return report
 
 
 class NoOpRecoveryMetrics:
@@ -155,14 +216,58 @@ class RecoveryMetricLogger:
             }
         )
 
-    def _emit(self, event: dict[str, object]) -> None:
+    async def report_failure(
+        self,
+        *,
+        task_name: str,
+    ) -> None:
+        """Scheduler 실패를 예외 원문 없이 기록합니다."""
+
+        if task_name == "pending_reconciler":
+            safe_task_name: RecoveryTaskName = "pending_reconciler"
+        elif task_name == "dlq_publisher":
+            safe_task_name = "dlq_publisher"
+        else:
+            raise ValueError("승인되지 않은 recovery task_name입니다.")
+
+        self.record_cycle_failure(
+            task_name=safe_task_name,
+        )
+
+    async def notify_publish_failure(
+        self,
+        *,
+        event_id: UUID,
+        attempt_count: int,
+    ) -> None:
+        """반복된 DLQ 발행 실패를 비민감 식별자로 경보합니다."""
+
+        if isinstance(attempt_count, bool) or not isinstance(attempt_count, int) or attempt_count < 1:
+            raise ValueError("attempt_count는 1 이상의 정수여야 합니다.")
+
+        self._emit(
+            {
+                "event": "worker_dlq_publish_alert",
+                "event_id": str(event_id),
+                "attempt_count": attempt_count,
+            },
+            level=logging.ERROR,
+        )
+
+    def _emit(
+        self,
+        event: dict[str, object],
+        *,
+        level: int = logging.INFO,
+    ) -> None:
         try:
-            self._logger.info(
+            self._logger.log(
+                level,
                 json.dumps(
                     event,
                     ensure_ascii=False,
                     separators=(",", ":"),
-                )
+                ),
             )
         except Exception:
             # 관측성 실패가 reclaim·DLQ 처리 결과를 변경하지 않게 합니다.
