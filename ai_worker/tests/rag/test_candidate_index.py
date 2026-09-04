@@ -1,5 +1,7 @@
 import subprocess
 import sys
+import unicodedata
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -187,6 +189,12 @@ def hybrid_config(dimension: int = 2) -> CandidateIndexBuildConfig:
     )
 
 
+def _nfd(value: str) -> str:
+    decomposed = unicodedata.normalize("NFD", value)
+    assert decomposed != value
+    return decomposed
+
+
 def test_unapproved_catalog_fails_without_partial_output() -> None:
     result = build_candidate_index(
         replace(valid_catalog(), verification_status=CatalogVerificationStatus.NOT_APPROVED),
@@ -249,6 +257,107 @@ def test_declared_catalog_count_mismatch_fails_closed() -> None:
     assert result == CandidateIndexBuildFailure(
         reason=CandidateIndexBuildFailureReason.CATALOG_COUNT_MISMATCH,
         details=("search_entry_count",),
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "detail"),
+    [
+        (
+            lambda catalog: replace(
+                catalog,
+                products=(replace(catalog.products[0], product_name=_nfd("가나다정")),),
+            ),
+            "products.product_name",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                products=(replace(catalog.products[0], normalized_product_name=_nfd("가나다정")),),
+            ),
+            "products.normalized_product_name",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                products=(replace(catalog.products[0], manufacturer_name=_nfd("합성제약")),),
+            ),
+            "products.manufacturer_name",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                ingredients=(replace(catalog.ingredients[0], ingredient_name=_nfd("합성성분")),),
+            ),
+            "ingredients.ingredient_name",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                components=(replace(catalog.components[0], strength_unit=_nfd("밀리그램")),),
+            ),
+            "components.strength_unit",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                aliases=(replace(catalog.aliases[0], alias_text=_nfd("가나다 정")),),
+            ),
+            "aliases.alias_text",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                aliases=(replace(catalog.aliases[0], normalized_alias=_nfd("가나다정별칭")),),
+            ),
+            "aliases.normalized_alias",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                search_entries=(
+                    replace(catalog.search_entries[0], display_text=_nfd("가나다정")),
+                    catalog.search_entries[1],
+                ),
+            ),
+            "search_entries.display_text",
+        ),
+        (
+            lambda catalog: replace(
+                catalog,
+                search_entries=(
+                    replace(catalog.search_entries[0], normalized_text=_nfd("가나다정")),
+                    catalog.search_entries[1],
+                ),
+            ),
+            "search_entries.normalized_text",
+        ),
+    ],
+)
+def test_catalog_text_must_be_nfc_before_build(
+    mutate: Callable[[CandidateCatalogExport], CandidateCatalogExport],
+    detail: str,
+) -> None:
+    result = build_candidate_index(mutate(valid_catalog()), lexical_config())
+
+    assert isinstance(result, CandidateIndexBuildFailure)
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.CATALOG_TEXT_NOT_NFC,
+        details=(detail,),
+    )
+    assert not hasattr(result, "members")
+    assert not hasattr(result, "manifest")
+
+
+def test_build_config_text_must_be_nfc() -> None:
+    result = build_candidate_index(
+        valid_catalog(),
+        replace(lexical_config(), index_code=_nfd("의약품후보")),
+    )
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.BUILD_CONFIG_INVALID,
+        details=("config",),
     )
 
 
@@ -404,21 +513,27 @@ def test_ingredient_alias_does_not_create_product_candidate_member() -> None:
     }
 
 
-def test_conflicting_member_content_fails_entire_build() -> None:
+@pytest.mark.parametrize(
+    "entry_change",
+    [
+        {"display_text": "전혀다른이름"},
+        {"normalized_text": "전혀다른정규명"},
+    ],
+)
+def test_product_name_search_entry_must_match_product_row(entry_change: dict[str, str]) -> None:
     catalog = valid_catalog()
-    conflicting = replace(catalog.search_entries[0], normalized_text="충돌값")
+    conflicting = replace(catalog.search_entries[0], **cast(Any, entry_change))
 
     result = build_candidate_index(
         replace(
             catalog,
-            search_entries=(*catalog.search_entries, conflicting),
-            declared_counts=replace(catalog.declared_counts, search_entry_count=3),
+            search_entries=(conflicting, catalog.search_entries[1]),
         ),
         lexical_config(),
     )
 
     assert result == CandidateIndexBuildFailure(
-        reason=CandidateIndexBuildFailureReason.MEMBER_CONFLICT,
+        reason=CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
         details=("search-entry-product-1",),
     )
 

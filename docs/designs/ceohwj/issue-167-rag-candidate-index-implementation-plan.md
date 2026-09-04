@@ -564,3 +564,12 @@ git commit -m "✅ test: Candidate Index 계약 회귀 보강"
   `BLOCKED_BY_RAG_04_OR_06` 상태
 - DB·migration·repository·API·환자 DTO 변경 0건
 - `PUBLIC_TRACK_F=false` 유지
+
+## 리뷰 보완: Catalog NFC와 Product-name 결속
+
+- [x] NFC/NFD가 다른 저장 문자열인데 같은 member·manifest hash를 만드는 회귀 테스트를 RED로 확인
+- [x] Catalog 전체 문자열을 자동 변환하지 않고 `CATALOG_TEXT_NOT_NFC`로 fail-closed
+- [x] build config 문자열도 NFC가 아니면 `BUILD_CONFIG_INVALID`
+- [x] `PRODUCT_NAME` Search Entry의 표시명·정규명을 Product row와 exact-match
+- [x] 고정된 `display_limit=1` 검사 뒤의 도달 불가능한 중복 비교 제거
+- [x] RAG-06 manifest hash canonicalization 책임과 단계별 raw hit limit 의미를 설계 문서에 명시

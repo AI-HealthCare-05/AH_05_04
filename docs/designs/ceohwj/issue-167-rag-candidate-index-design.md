@@ -112,6 +112,15 @@ Identity를 대상으로 해야 하고 active, approved, effective 상태이며 
 한다. Ingredient Alias는 후속 ingredient-exact 진단 경계에서만 사용하며 이 인덱스의 Product
 Candidate 구성원이 되면 안 된다.
 
+Catalog export의 모든 문자열은 Unicode NFC여야 한다. RAG-07A는 NFD 등 다른 표현을 조용히 NFC로
+변환하지 않는다. 자동 변환은 RAG-06 Parser의 계약 위반을 숨기고 저장 문자열과 canonical hash가 서로
+다른 내용을 식별하게 만들 수 있으므로, NFC가 아닌 문자열이 하나라도 있으면 전체 build를
+`CATALOG_TEXT_NOT_NFC`로 실패시킨다. 실패 detail에는 원문이 아니라 안정적인 필드 경로만 포함한다.
+
+`PRODUCT_NAME` Search Entry의 `display_text`와 `normalized_text`는 연결된 Product row의
+`product_name`, `normalized_product_name`과 각각 exact-match해야 한다. Alias Entry가 Alias row와
+대조되는 것과 같은 참조 무결성 규칙이며, 불일치하면 구성원을 만들기 전에 fail-closed한다.
+
 ## Candidate 구성원 계약
 
 `CandidateIndexMember`는 검색 가능한 Product entry 하나에 대한 결정적 build output이다. 다음 값을
@@ -180,6 +189,11 @@ Canonical payload는 UTF-8, Unicode NFC, compact sorted-key JSON, 명시적 null
 소문자 64자리 SHA-256을 사용한다. 승인된 RAG-06 export 계약이 안정적인 의미 필드로 지정하지 않는
 한 DB ID, 입력 순서, timestamp, object key와 process-local value는 결정적 hash에서 제외한다.
 
+현재 RAG-07A는 `catalog_manifest_hash`가 소문자 64자리 SHA-256 형식인지 검증하지만 RAG-06 export
+전체를 재계산할 정본 envelope가 아직 없으므로 값 자체를 재계산하지 않는다. RAG-06은 RAG-07A와
+동일한 UTF-8·NFC·compact sorted-key canonicalization과 명시적 의미 필드 목록으로 manifest hash를
+발행해야 하며, 그 계약이 확정되면 RAG-07A 또는 RAG-07B 통합 경계에서 exact recomputation을 추가한다.
+
 ## Manifest 계약
 
 `CandidateIndexManifest`는 다음 값을 포함한다.
@@ -205,6 +219,7 @@ Build failure는 다음 closed enum만 사용한다.
 - `CATALOG_PARTIAL`
 - `CATALOG_MANIFEST_INVALID`
 - `CATALOG_COUNT_MISMATCH`
+- `CATALOG_TEXT_NOT_NFC`
 - `DUPLICATE_PRODUCT_IDENTITY`
 - `REFERENTIAL_INTEGRITY_INVALID`
 - `ALIAS_CONFLICT`
@@ -243,6 +258,11 @@ RAG-07A는 grouped 또는 deduplicated 검색 결과 view, 최종 Resolver score
 compatibility, `SINGLE_CANDIDATE` 판정, Candidate Search row 생성 또는 `MATCHED` 저장을 제공하지
 않는다.
 
+`retrieval_limit`은 각 검색 단계가 반환할 수 있는 raw hit의 상한이다. RAG-07A는 단계 signal을
+보존하므로 전체 raw hit 수는 `검색 단계 수 × retrieval_limit`까지 가능하다. RAG-07B와 Resolver는
+이 합계를 `candidate_limit` 이하로 가정하지 말고, 별도의 fusion·공식 Identity dedupe 뒤 외부 노출
+한도를 적용해야 한다.
+
 score, rank, distance, limit, hash와 raw hit는 내부 정보이며 이 모듈에서 환자 응답으로 투영하면 안
 된다.
 
@@ -274,6 +294,8 @@ vector와 Evidence vector를 혼합하거나 내부 hit metadata를 환자 DTO�
 - Ingredient Alias, 미승인 Alias, 비활성 Alias와 HIRA 파생값은 Product Candidate 구성원이 되지 않는다.
 - orphan Component, Alias와 Search Entry reference는 fail-closed한다.
 - partial, stale, unapproved, count mismatch 또는 invalid-hash Catalog는 구성원을 반환하지 않는다.
+- Catalog와 build config의 문자열이 NFC가 아니면 자동 변환 없이 구성원을 반환하지 않는다.
+- Product-name Search Entry 문자열이 Product row와 다르면 참조 무결성 오류로 실패한다.
 - lexical-only와 hybrid configuration의 nullability 규칙을 검증한다.
 - 누락, non-finite, 잘못된 count·순서·dimension의 embedding은 구성원을 반환하지 않는다.
 - manifest count와 모든 SHA-256 값을 정확히 재현한다.

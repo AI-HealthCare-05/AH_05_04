@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -60,6 +61,7 @@ class CandidateIndexBuildFailureReason(StrEnum):
     CATALOG_PARTIAL = "CATALOG_PARTIAL"
     CATALOG_MANIFEST_INVALID = "CATALOG_MANIFEST_INVALID"
     CATALOG_COUNT_MISMATCH = "CATALOG_COUNT_MISMATCH"
+    CATALOG_TEXT_NOT_NFC = "CATALOG_TEXT_NOT_NFC"
     DUPLICATE_PRODUCT_IDENTITY = "DUPLICATE_PRODUCT_IDENTITY"
     REFERENTIAL_INTEGRITY_INVALID = "REFERENTIAL_INTEGRITY_INVALID"
     ALIAS_CONFLICT = "ALIAS_CONFLICT"
@@ -374,6 +376,31 @@ def _stable_text_sort_key(value: str) -> bytes:
     return unicodedata.normalize("NFC", value).encode("utf-8")
 
 
+def _collect_non_nfc_text_paths(
+    value: object,
+    path: tuple[str, ...],
+    found: set[str],
+) -> None:
+    if isinstance(value, str):
+        if not unicodedata.is_normalized("NFC", value):
+            found.add(".".join(path))
+        return
+    if isinstance(value, Mapping):
+        for field_name, field_value in value.items():
+            if isinstance(field_name, str):
+                _collect_non_nfc_text_paths(field_value, (*path, field_name), found)
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            _collect_non_nfc_text_paths(item, path, found)
+
+
+def _non_nfc_text_paths(value: object) -> tuple[str, ...]:
+    found: set[str] = set()
+    _collect_non_nfc_text_paths(value, (), found)
+    return tuple(sorted(found))
+
+
 def _member_sort_key(member: CandidateIndexMember) -> tuple[bytes, bytes, bytes]:
     return (
         _stable_text_sort_key(_identity_key(member.identity)),
@@ -398,6 +425,8 @@ def _catalog_count_mismatches(catalog: CandidateCatalogExport) -> tuple[str, ...
 
 
 def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuildConfig) -> bool:
+    if _non_nfc_text_paths(dataclasses.asdict(config)):
+        return False
     if not all(
         (
             config.index_code,
@@ -410,7 +439,7 @@ def _config_is_valid(catalog: CandidateCatalogExport, config: CandidateIndexBuil
         return False
     if config.normalization_version != catalog.normalization_version:
         return False
-    if config.candidate_limit < 1 or config.display_limit != 1 or config.display_limit > config.candidate_limit:
+    if config.candidate_limit < 1 or config.display_limit != 1:
         return False
 
     embedding_fields = (
@@ -557,7 +586,11 @@ def _search_entry_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuil
                 (entry.entry_ref,),
             )
         if entry.entry_type is CandidateEntryType.PRODUCT_NAME:
-            if entry.alias_ref is not None:
+            if (
+                entry.alias_ref is not None
+                or entry.display_text != entry_product.product_name
+                or entry.normalized_text != entry_product.normalized_product_name
+            ):
                 return CandidateIndexBuildFailure(
                     CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
                     (entry.entry_ref,),
@@ -861,6 +894,12 @@ def _catalog_envelope_failure(catalog: CandidateCatalogExport) -> CandidateIndex
         return CandidateIndexBuildFailure(
             CandidateIndexBuildFailureReason.CATALOG_COUNT_MISMATCH,
             count_mismatches,
+        )
+    non_nfc_fields = _non_nfc_text_paths(dataclasses.asdict(catalog))
+    if non_nfc_fields:
+        return CandidateIndexBuildFailure(
+            CandidateIndexBuildFailureReason.CATALOG_TEXT_NOT_NFC,
+            non_nfc_fields,
         )
     return None
 
