@@ -6,7 +6,6 @@ import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import cast
@@ -24,6 +23,7 @@ from ai_worker.tasks.evaluation.manifest import (
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
+    CaseResult,
     ComparisonDecision,
     ComparisonResult,
     ContentManifest,
@@ -35,11 +35,6 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     SuiteResults,
 )
 from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionStatus
-
-
-class _ComparisonErrorCode(StrEnum):
-    BASELINE_ARTIFACT_INVALID = "EVAL_BASELINE_ARTIFACT_INVALID"
-
 
 _REQUIRED_FILENAMES = frozenset(
     {
@@ -66,14 +61,17 @@ _CONTROLLED_VARIABLE_KEYS = (
 class LoadedRunBundle:
     root: Path
     run: RagEvaluationRun
+    cases: tuple[CaseResult, ...]
     metrics: MetricResults
+    failures: tuple[FailureRecord, ...]
+    comparison: ComparisonResult | None
     content_manifest: ContentManifest
     files: Mapping[str, bytes]
     semantic_hash: str
 
 
 def _baseline_invalid() -> EvaluationValidationError:
-    return EvaluationValidationError(cast(EvaluationErrorCode, _ComparisonErrorCode.BASELINE_ARTIFACT_INVALID))
+    return EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
 
 
 def _directory_flags() -> int:
@@ -106,21 +104,37 @@ def _validate_run_id(run_id: str) -> None:
         raise _baseline_invalid()
 
 
-def _validate_runtime_files(files: Mapping[str, bytes]) -> tuple[RagEvaluationRun, MetricResults, ContentManifest]:
+def _validate_runtime_files(
+    files: Mapping[str, bytes],
+    expected_run_id: str,
+) -> tuple[
+    RagEvaluationRun,
+    tuple[CaseResult, ...],
+    MetricResults,
+    tuple[FailureRecord, ...],
+    ComparisonResult | None,
+    ContentManifest,
+]:
     run = RagEvaluationRun.model_validate_json(files["run.json"])
     metrics = MetricResults.model_validate_json(files["metrics.json"])
     suite = SuiteResults.model_validate_json(files["suite-results.json"])
     content_manifest = ContentManifest.model_validate_json(files["result-content-manifest.json"])
-    for line in files["cases.jsonl"].splitlines():
-        CASE_RESULT_ADAPTER.validate_json(line)
-    for line in files["failures.jsonl"].splitlines():
-        FailureRecord.model_validate_json(line)
-    if "comparison.json" in files:
-        ComparisonResult.model_validate_json(files["comparison.json"])
-    run_ids = {run.run_id, metrics.run_id, suite.run_id, content_manifest.run_id}
-    if len(run_ids) != 1:
+    cases = tuple(CASE_RESULT_ADAPTER.validate_json(line) for line in files["cases.jsonl"].splitlines())
+    failures = tuple(FailureRecord.model_validate_json(line) for line in files["failures.jsonl"].splitlines())
+    comparison = ComparisonResult.model_validate_json(files["comparison.json"]) if "comparison.json" in files else None
+    record_run_ids = {
+        run.run_id,
+        metrics.run_id,
+        suite.run_id,
+        content_manifest.run_id,
+        *(case.run_id for case in cases),
+        *(failure.run_id for failure in failures),
+    }
+    if comparison is not None:
+        record_run_ids.update({comparison.run_id, comparison.candidate_run_id})
+    if record_run_ids != {expected_run_id}:
         raise _baseline_invalid()
-    return run, metrics, content_manifest
+    return run, cases, metrics, failures, comparison, content_manifest
 
 
 def _read_bundle_files(result_root: Path, run_id: str) -> tuple[Path, dict[str, bytes]]:
@@ -145,7 +159,7 @@ def load_published_run_bundle(result_root: Path, run_id: str) -> LoadedRunBundle
     try:
         _validate_run_id(run_id)
         bundle_root, files = _read_bundle_files(result_root, run_id)
-        run, metrics, content_manifest = _validate_runtime_files(files)
+        run, cases, metrics, failures, comparison, content_manifest = _validate_runtime_files(files, run_id)
         if run.run_id != run_id or run.result_content_manifest_hash != content_manifest.manifest_sha256:
             raise _baseline_invalid()
         expected_payload_names = set(files) - {"run.json", "result-content-manifest.json"}
@@ -160,13 +174,16 @@ def load_published_run_bundle(result_root: Path, run_id: str) -> LoadedRunBundle
         return LoadedRunBundle(
             root=bundle_root,
             run=run,
+            cases=cases,
             metrics=metrics,
+            failures=failures,
+            comparison=comparison,
             content_manifest=content_manifest,
             files=immutable_files,
             semantic_hash=semantic_content_hash(immutable_files),
         )
     except EvaluationValidationError as error:
-        if str(error) == _ComparisonErrorCode.BASELINE_ARTIFACT_INVALID.value:
+        if error.code is EvaluationErrorCode.BASELINE_ARTIFACT_INVALID:
             raise
         raise _baseline_invalid() from None
     except (OSError, KeyError, TypeError, ValueError, ValidationError, json.JSONDecodeError):
