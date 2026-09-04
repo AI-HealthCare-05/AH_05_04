@@ -1,7 +1,7 @@
 """add account lifecycle columns to user
 
 Revision ID: d1e2f3a4b5c6
-Revises: 20fd11d29ecc
+Revises: 2a9f4c7d8e10
 Create Date: 2026-09-03
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d1e2f3a4b5c6"
-down_revision: str | Sequence[str] | None = "20fd11d29ecc"
+down_revision: str | Sequence[str] | None = "2a9f4c7d8e10"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
