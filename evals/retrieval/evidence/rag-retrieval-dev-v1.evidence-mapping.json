@@ -1,0 +1,32 @@
+{
+  "entries": [
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-med-a","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[0]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_001","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-med-a-detail","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[1]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_002","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-precaution-b","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[2]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_003","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-lifestyle-c","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[3]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_004","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-storage-d","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[4]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_005","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-missed-dose-e","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[5]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_006","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-noise-01","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[6]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_007","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-noise-02","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[7]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_008","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-noise-03","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[8]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_009","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-noise-04","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[9]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_010","target_kind":"FIXTURE_RECORD"},
+    {"content_sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7","evidence_ref_id":"ev-ret-dev-noise-05","evidence_type":"KNOWLEDGE_CHUNK","fixture_record_ref":{"path":"retrieval/evidence/resources/rag-retrieval-dev-v1/synthetic-retrieval-index.json","sha256":"1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"},"locator":"$.records[10]","runtime_typed_ref":null,"source_version":"1.0.0","stable_key":"SYNTHETIC_INDEX_RECORD_011","target_kind":"FIXTURE_RECORD"}
+  ],
+  "manifest_sha256": "e2fdeda9ad30c969883b10abbf2aef455a65a3298784ac19ef7f1ca27dd4dd51",
+  "mapping_id": "rag-retrieval-dev-evidence",
+  "mapping_version": "1.0.0",
+  "review_provenance": {
+    "approved_at": null,
+    "approved_by": null,
+    "authored_at": "2026-09-04T00:00:00.000000Z",
+    "authored_by": {"actor_id": "ceohwj", "namespace": "GITHUB_LOGIN", "role": "EVALUATION_IMPLEMENTER"},
+    "evidence_review_refs": [],
+    "external_medical_approval_receipt_ref": null,
+    "external_medical_review_status": "NOT_REQUESTED",
+    "reviewed_at": "2026-09-04T00:01:00.000000Z",
+    "reviewed_by": {"actor_id": "hazelnutflavoured", "namespace": "GITHUB_LOGIN", "role": "DATASET_CUSTODIAN"},
+    "team_gold_status": "REVIEWED"
+  },
+  "schema_id": "rag-eval.evidence-mapping-manifest",
+  "schema_version": "1.0.0"
+}

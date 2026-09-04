@@ -1,0 +1,16 @@
+{
+  "evaluation_profile_hash": "44cec716bd2cab12f486ac06385a62069ca0b260fb5694209859ea496ee81ce4",
+  "evaluation_profile_id": "rag-retrieval-dev-profile",
+  "evaluation_profile_version": "1.0.0",
+  "required_experiment_types": ["KNOWLEDGE_RETRIEVAL"],
+  "required_gate_refs": [],
+  "required_partitions": ["DEV"],
+  "required_suite_refs": [
+    {"hash":"6e398b57b7ad93a35bc39ecb7fe9053d2b4cba8d4f1ebf96a5f6c27663843b38","id":"rag-retrieval-dev-suite","version":"1.0.0"}
+  ],
+  "review_provenance": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":"2026-09-04T00:01:00.000000Z","reviewed_by":{"actor_id":"hazelnutflavoured","namespace":"GITHUB_LOGIN","role":"DATASET_CUSTODIAN"},"team_gold_status":"REVIEWED"},
+  "runtime_eligible": false,
+  "schema_id": "rag-eval.evaluation-profile",
+  "schema_version": "1.0.0",
+  "trigger_catalog": [{"member_order":1,"trigger_id":"SYNTHETIC_RETRIEVAL_DEV_MANUAL"}]
+}

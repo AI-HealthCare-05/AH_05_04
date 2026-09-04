@@ -1,0 +1,16 @@
+{
+  "schema_id": "rag-eval.retrieval-replay",
+  "schema_version": "1.0.0",
+  "dataset_code": "rag-retrieval-dev",
+  "dataset_version": "1.0.0",
+  "variant_id": "RET-HR",
+  "top_k": 5,
+  "replay_sha256": "2efb18d8cf7612f607b669cb275685888013d43ecbe1edb9b68e04d6239f7e71",
+  "case_results": [
+    {"case_id":"rag-ret-dev-001","ranked_evidence_ids":["ev-ret-dev-med-a","ev-ret-dev-med-a-detail","ev-ret-dev-noise-01","ev-ret-dev-noise-02","ev-ret-dev-noise-03"]},
+    {"case_id":"rag-ret-dev-002","ranked_evidence_ids":["ev-ret-dev-precaution-b","ev-ret-dev-noise-01","ev-ret-dev-noise-02","ev-ret-dev-noise-03","ev-ret-dev-noise-04"]},
+    {"case_id":"rag-ret-dev-003","ranked_evidence_ids":["ev-ret-dev-lifestyle-c","ev-ret-dev-noise-01","ev-ret-dev-noise-02","ev-ret-dev-noise-03","ev-ret-dev-noise-04"]},
+    {"case_id":"rag-ret-dev-004","ranked_evidence_ids":["ev-ret-dev-noise-01","ev-ret-dev-storage-d","ev-ret-dev-noise-02","ev-ret-dev-noise-03","ev-ret-dev-noise-04"]},
+    {"case_id":"rag-ret-dev-005","ranked_evidence_ids":["ev-ret-dev-missed-dose-e","ev-ret-dev-noise-01","ev-ret-dev-noise-02","ev-ret-dev-noise-03","ev-ret-dev-noise-04"]}
+  ]
+}

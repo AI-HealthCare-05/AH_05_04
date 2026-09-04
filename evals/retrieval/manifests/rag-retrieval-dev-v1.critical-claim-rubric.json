@@ -1,0 +1,37 @@
+{
+  "applicable_scope_codes": ["ALL"],
+  "applicable_task_types": ["RETRIEVAL"],
+  "classification_rules": [
+    {
+      "condition_code": "SYNTHETIC_NO_CLAIM_SCORING",
+      "criticality": "NON_CRITICAL",
+      "description": "SYNTHETIC_RETRIEVAL_HAS_NO_CLAIM_SCORING",
+      "member_order": 1,
+      "rule_id": "SYNTHETIC_NO_CLAIM_RULE"
+    }
+  ],
+  "reason_code_catalog": [
+    {
+      "description": "SYNTHETIC_RETRIEVAL_NO_CLAIM_REASON",
+      "member_order": 1,
+      "reason_code": "SYNTHETIC_NO_CLAIM"
+    }
+  ],
+  "review_provenance": {
+    "approved_at": null,
+    "approved_by": null,
+    "authored_at": "2026-09-04T00:00:00.000000Z",
+    "authored_by": {"actor_id": "ceohwj", "namespace": "GITHUB_LOGIN", "role": "EVALUATION_IMPLEMENTER"},
+    "evidence_review_refs": [],
+    "external_medical_approval_receipt_ref": null,
+    "external_medical_review_status": "NOT_REQUESTED",
+    "reviewed_at": "2026-09-04T00:01:00.000000Z",
+    "reviewed_by": {"actor_id": "hazelnutflavoured", "namespace": "GITHUB_LOGIN", "role": "DATASET_CUSTODIAN"},
+    "team_gold_status": "REVIEWED"
+  },
+  "rubric_hash": "15d5b5d7b8f474815621545fde169312ad787d6a4afcd5c43c898e1b78cf0ea2",
+  "rubric_id": "rag-retrieval-dev-critical-claims",
+  "rubric_version": "1.0.0",
+  "schema_id": "rag-eval.critical-claim-rubric",
+  "schema_version": "1.0.0"
+}

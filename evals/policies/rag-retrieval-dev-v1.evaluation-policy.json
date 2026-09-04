@@ -1,0 +1,15 @@
+{
+  "artifact_schema_set_ref": {"member_order":5,"member_type":"ARTIFACT_SCHEMA_SET","reference":{"hash":"e0b9e83460927fc5e01ca5f7ee5033c0e3f75035c4af14dafcebef8f3f04e6d1","id":"rag-eval.schema-set","version":"1.0.0"}},
+  "comparison_policy_ref": {"member_order":2,"member_type":"COMPARISON_POLICY","reference":{"hash":"f4c380c312e5a5ac9755067fe0ba227a7f0b1d34f4fc079d21d597d077880fb3","id":"rag-retrieval-dev-comparison","version":"1.0.0"}},
+  "evaluation_policy_hash": "0944aaeb87ee638577d1a0ed8b376475ae9cfb01510837b170f554f85e64a838",
+  "evaluation_policy_id": "rag-retrieval-dev-policy",
+  "evaluation_policy_version": "1.0.0",
+  "evaluation_profile_ref": {"member_order":1,"member_type":"PROFILE","reference":{"hash":"44cec716bd2cab12f486ac06385a62069ca0b260fb5694209859ea496ee81ce4","id":"rag-retrieval-dev-profile","version":"1.0.0"}},
+  "member_manifest_hash": "f9dfcd6d5fbd6073fd4c3120f9fdd75e961fd6c34ef616aaaa2631a4991297ee",
+  "required_gate_refs": [],
+  "required_partition_refs": [{"member_order":3,"member_type":"PARTITION","reference":{"hash":"8784961327361beb064afc20e4faa10bad856549ecb95f9f46372a7d2fbca7d6","id":"rag-retrieval-dev:DEV","version":"1.0.0"}}],
+  "required_suite_refs": [{"member_order":4,"member_type":"SUITE","reference":{"hash":"6e398b57b7ad93a35bc39ecb7fe9053d2b4cba8d4f1ebf96a5f6c27663843b38","id":"rag-retrieval-dev-suite","version":"1.0.0"}}],
+  "review_provenance": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":"2026-09-04T00:01:00.000000Z","reviewed_by":{"actor_id":"hazelnutflavoured","namespace":"GITHUB_LOGIN","role":"DATASET_CUSTODIAN"},"team_gold_status":"REVIEWED"},
+  "schema_id": "rag-eval.evaluation-policy",
+  "schema_version": "1.0.0"
+}

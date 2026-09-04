@@ -1,0 +1,15 @@
+{
+  "records": [
+    {"evidence_ref_id": "ev-ret-dev-med-a", "statement": "SYNTHETIC_MED_INFO_A_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-med-a-detail", "statement": "SYNTHETIC_MED_INFO_A_DETAIL_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-precaution-b", "statement": "SYNTHETIC_PRECAUTION_B_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-lifestyle-c", "statement": "SYNTHETIC_LIFESTYLE_C_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-storage-d", "statement": "SYNTHETIC_STORAGE_D_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-missed-dose-e", "statement": "SYNTHETIC_MISSED_DOSE_E_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-noise-01", "statement": "SYNTHETIC_NOISE_01_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-noise-02", "statement": "SYNTHETIC_NOISE_02_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-noise-03", "statement": "SYNTHETIC_NOISE_03_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-noise-04", "statement": "SYNTHETIC_NOISE_04_STATEMENT"},
+    {"evidence_ref_id": "ev-ret-dev-noise-05", "statement": "SYNTHETIC_NOISE_05_STATEMENT"}
+  ]
+}

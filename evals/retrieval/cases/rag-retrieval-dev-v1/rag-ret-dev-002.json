@@ -1,0 +1,20 @@
+{
+  "case_id": "rag-ret-dev-002",
+  "context": {"medication_fixtures":[{"display_name_token":"SYNTHETIC_DISPLAY_PRECAUTION_B","identification_status":"MATCHED","ingredient_tokens":["SYNTHETIC_INGREDIENT_PRECAUTION_B"],"medication_fixture_id":"SYNTHETIC_MEDICATION_PRECAUTION_B","medication_product_fixture_id":"SYNTHETIC_PRODUCT_PRECAUTION_B","strength_text_token":"SYNTHETIC_STRENGTH_PRECAUTION_B"}],"patient_context_fixture":null,"prescription_fixture":null,"runtime_fixture":null},
+  "critical_claim_rubric_ref": {"hash":"15d5b5d7b8f474815621545fde169312ad787d6a4afcd5c43c898e1b78cf0ea2","id":"rag-retrieval-dev-critical-claims","version":"1.0.0"},
+  "data_classification": "SYNTHETIC",
+  "dataset_code": "rag-retrieval-dev",
+  "dataset_version": "1.0.0",
+  "expected": {"expected_citations":null,"expected_execution_status":null,"expected_fallback_code":null,"expected_provider_invocation":null,"expected_publication_allowed":null,"expected_release_decision":null,"expected_response_level":null,"expected_retrieval_invocation":true,"expected_rule_ids":null,"expected_safety_disposition":null,"expected_scope_codes":null,"expected_sections":null,"forbidden_claims":null,"gold_claims":null,"omitted_sections":null,"relevant_evidence_refs":["ev-ret-dev-precaution-b"],"required_evidence_refs":["ev-ret-dev-precaution-b"],"risk_level":null},
+  "gold_version": "1.0.0",
+  "input_sha256": "dcd0a1d2411997b2f91fdbd8de1f4adb749a2a888a4519f1b6ec1a02d640c60e",
+  "leakage_group_ids": {"medication_family":"SYNTHETIC_MEDICATION_FAMILY_B","question_template":"SYNTHETIC_QT_PRECAUTION_B","source_segment":"SYNTHETIC_SOURCE_SEGMENT_B","transform_origin":"SYNTHETIC_TRANSFORM_ORIGIN_B"},
+  "partition": "DEV",
+  "query": "SYNTHETIC_QUERY_PRECAUTION_B",
+  "review_provenance": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":"2026-09-04T00:01:00.000000Z","reviewed_by":{"actor_id":"hazelnutflavoured","namespace":"GITHUB_LOGIN","role":"DATASET_CUSTODIAN"},"team_gold_status":"REVIEWED"},
+  "schema_id": "rag-eval.case",
+  "schema_version": "1.0.0",
+  "slice_ids": ["ALL"],
+  "tags": ["SYNTHETIC_RETRIEVAL_DEV"],
+  "task_type": "RETRIEVAL"
+}

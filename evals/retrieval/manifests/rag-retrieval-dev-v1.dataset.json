@@ -1,0 +1,28 @@
+{
+  "case_resources": [
+    {"case_id":"rag-ret-dev-001","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-001.json","sha256":"800bbd5d3660d95a6ad7ebf5acae04f1c59ebba62879eb25ff00f60930a67762"},
+    {"case_id":"rag-ret-dev-002","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-002.json","sha256":"15ce74a6c13396a06c0aac9557ad0d66d29dca019ab7775cf4ca0c043ce6ade0"},
+    {"case_id":"rag-ret-dev-003","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-003.json","sha256":"8659c32f7931479bdc8683b45128abf593691cd8b46dc0d8d6c511761771ddec"},
+    {"case_id":"rag-ret-dev-004","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-004.json","sha256":"c099784633585dc72e86a821315d0657249b41791de217727b2954768bf6f24e"},
+    {"case_id":"rag-ret-dev-005","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-005.json","sha256":"99804e312dbf3d16f24d505cc1dc55792dffe1207f36ba084213b5fdd0edb2bf"}
+  ],
+  "critical_claim_rubric_ref": {"hash":"15d5b5d7b8f474815621545fde169312ad787d6a4afcd5c43c898e1b78cf0ea2","id":"rag-retrieval-dev-critical-claims","version":"1.0.0"},
+  "data_classification": "SYNTHETIC",
+  "dataset_code": "rag-retrieval-dev",
+  "dataset_version": "1.0.0",
+  "deidentification_approval_receipt_ref": null,
+  "description": "SYNTHETIC_DEV_RETRIEVAL_DIAGNOSTIC_DATASET",
+  "evaluation_corpus_snapshot_ref": {"hash":"e2fdeda9ad30c969883b10abbf2aef455a65a3298784ac19ef7f1ca27dd4dd51","id":"rag-retrieval-dev-evidence","version":"1.0.0"},
+  "evidence_mapping_manifest_sha256": "e2fdeda9ad30c969883b10abbf2aef455a65a3298784ac19ef7f1ca27dd4dd51",
+  "fixture_git_commit_sha": null,
+  "frozen_at": null,
+  "manifest_sha256": "dad79ef6447f457b9f1f3bdac61fb9e39b1c30cc0ab4b945fcc6a5da463d4c25",
+  "partition_counts": {"AUTHORING":0,"DEV":5,"HOLDOUT":0,"SAFETY_REGRESSION":0},
+  "protected_artifact_receipt_ref": {"hash":"71dd0e6b9c6533af342f87932b7b63b529871473a3ca0be8f9432f87857a3dba","id":"rag-retrieval-dev-protected-receipt","version":"1.0.0"},
+  "resource_set_hash": "e8793d2a35521c1eb2b8e65f96d718ab52ba021050731a7ece7a9769461e1c84",
+  "review_provenance": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":"2026-09-04T00:01:00.000000Z","reviewed_by":{"actor_id":"hazelnutflavoured","namespace":"GITHUB_LOGIN","role":"DATASET_CUSTODIAN"},"team_gold_status":"REVIEWED"},
+  "schema_id": "rag-eval.dataset-manifest",
+  "schema_version": "1.0.0",
+  "scope": "SYNTHETIC_DEV_RETRIEVAL",
+  "status": "DRAFT"
+}
