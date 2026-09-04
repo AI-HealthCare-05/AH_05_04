@@ -43,6 +43,17 @@ class ChatRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_message_owned(self, *, message_id: UUID, user_id: UUID) -> ChatMessage | None:
+        result = await self.session.execute(
+            select(ChatMessage)
+            .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+            .where(
+                ChatMessage.id == message_id,
+                owned_by_self(ChatSession.profile_id, user_id),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list_messages(self, *, session: ChatSession) -> list[ChatMessage]:
         result = await self.session.execute(
             select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.message_seq)

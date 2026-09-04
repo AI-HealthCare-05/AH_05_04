@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Proposed — 전체 Track A 계획은 승인 전 제안 |
-| 구현 상태 | Partially implemented — 공통 Job 기반은 `develop` 반영, OCR–AI Job mapping은 본 PR 구현 |
+| 구현 상태 | Partially implemented — 공통 Job 기반은 `develop` 반영, OCR–AI Job mapping은 #212 구현, Guide `ai_job_id` schema는 본 PR(#250) 구현. 두 도메인 모두 신규 접수 시 실제로 값을 채우는 runtime mapping은 아직 미구현(#148 보류) |
 | 관련 Issue | #75 |
 | 선행 계약 | `docs/contracts/current/profile-self-ownership-v1.md` |
 | 적용 범위 | Post-MVP-1 Track A, Backend/API, Database, AI Worker 공통, OCR·Guide·Chat 연결 경계 |
@@ -11,9 +11,11 @@
 
 이 문서는 Post-MVP-1 Track A의 `AI_JOB`, Outbox, Idempotency, Prescription Version을 실제 migration PR로 나누기 전에 대상 테이블, 적용 순서, rollback 경계, PR 분리 기준을 정리하는 제안이다.
 
-현재 `develop`에는 공통 `ai_job`·attempt·Outbox·idempotency 기반과 공통 Job 접수 service가 구현되어 있다. 이 문서가 포함된 revision에는 `ocr_job.ai_job_id` nullable mapping도 구현되어 있다.
+현재 `develop`에는 공통 `ai_job`·attempt·Outbox·idempotency 기반과 공통 Job 접수 service가 구현되어 있다. `ocr_job.ai_job_id`(#212)와 `guide.ai_job_id`(본 PR, #250) nullable mapping *schema*(컬럼·FK·unique 제약)도 구현되어 있다.
 
-아직 구현되지 않은 범위는 Guide·Chat 결과 row의 `ai_job_id` 연결, 신규 OCR 접수 시 실제 mapping 저장, Prescription Version, 전체 비동기 API·Worker 전환, 기존 데이터 backfill, read cutover와 Contract 단계다. 따라서 이 문서는 전체 Track A 계획 관점에서 Proposed이며, 부분 구현 상태를 Track A 완료나 Current 계약 승격으로 해석하지 않는다.
+다만 schema 존재와 실제 mapping 연결은 별개다. OCR·Guide 모두 신규 접수 시 실제로 `ai_job_id`에 값을 채우는 runtime mapping 저장은 아직 구현되지 않았다 — OCR/Guide 접수 API가 아직 `JobIntakeService.accept_job()`에 연결되지 않았기 때문이다(#148, Worker/Publisher #219·Handler #232/#233 준비 전까지 팀 결정으로 보류). 즉 두 컬럼 모두 현재 운영 경로에서는 항상 `NULL`이다.
+
+아직 구현되지 않은 범위는 OCR·Guide 신규 접수 시 실제 mapping 저장, Chat 결과 row의 `ai_job_id` 연결(schema 포함 전체 미구현), Prescription Version, 전체 비동기 API·Worker 전환, 기존 데이터 backfill, read cutover와 Contract 단계다. 따라서 이 문서는 전체 Track A 계획 관점에서 Proposed이며, 부분 구현 상태를 Track A 완료나 Current 계약 승격으로 해석하지 않는다.
 
 ## 1. 목적
 
@@ -276,6 +278,15 @@ PR 단계에서는 feature flag 기본값, flag off 시 접수 경로, drain 검
 
 Guide는 기존 행을 사용자에게 보여줄 수 있는 결과 데이터로 보존해야 하므로, 과거 행을 공통 Job으로 억지 연결하지 않는다. 신규 비동기 생성부터만 `AI_JOB`을 연결하면 기존 데이터의 의미를 바꾸지 않고 전환할 수 있다.
 
+구현 상태(2026-09-03, 본 PR #250):
+
+- `guide.ai_job_id` nullable FK 모델과 revision `20fd11d29ecc`(parent `c3f8a12d9e47`) 구현
+- `ai_job.id` 참조 및 `ON DELETE SET NULL` 적용
+- `uq_guide_ai_job` unique 제약 적용
+- 기존 Guide 행 `NULL` 유지 및 synthetic Job·backfill 미생성
+- downgrade 검사 전 `guide`에 `ACCESS EXCLUSIVE` lock을 획득하고, non-null 연결이 존재하면 downgrade를 차단하는 동시성 안전 가드 적용(OCR #212와 동일 패턴)
+- `GuideRepository.get_by_ai_job_id()` 조회 helper까지만 구현되어 있다. Guide 접수 API가 실제로 이 컬럼에 값을 쓰는 경로는 없다 — schema와 조회 helper만 준비된 상태이며, 실제 신규 Guide 접수 연결과 `job_type='GUIDE'` 검증은 #148 범위(현재 보류)다.
+
 ### 11.3 Chat
 
 - 기존 Chat message에는 synthetic Job을 만들지 않는다.
@@ -285,6 +296,8 @@ Guide는 기존 행을 사용자에게 보여줄 수 있는 결과 데이터로 
 - Track F의 RAG·Citation·Safety·OTC 세부 구현은 별도 계약을 따른다.
 
 Chat도 같은 이유로 기존 메시지를 synthetic Job에 연결하지 않는다. 특히 Chat은 사용자 메시지와 ASSISTANT 메시지가 대화 이력으로 남기 때문에, 과거 메시지의 생성 상태를 새 Job lifecycle로 재해석하면 화면 복구와 감사 의미가 달라질 수 있다.
+
+구현 상태: `chat_message.ai_job_id` 컬럼은 아직 없다 — OCR(#212)·Guide(본 PR #250)와 달리 schema 단계부터 미착수 상태다. 이 격차는 #148 후속 작업에서 추적하며, Chat 비동기 202 전환 착수 전에 먼저 해소한다.
 
 ## 12. Outbox, quarantine, DLQ
 

@@ -22,6 +22,11 @@ ai = [
     "sentence-transformers>=5.2.0"
 ]
 
+worker = [
+    "asyncpg>=0.30.0",
+    "sqlalchemy[asyncio]>=2.0.43",
+]
+
 app = [
     "alembic>=1.16.5",
      # PostgreSQL용 비동기 드라이버입니다.

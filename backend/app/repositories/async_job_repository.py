@@ -90,6 +90,63 @@ class AsyncJobRepository:
         result = await self.session.execute(select(AiJob).where(AiJob.id == job_id))
         return result.scalars().first()
 
+    async def get_interim_domain_reference(self, *, job: AiJob) -> tuple[DomainType, UUID] | None:
+        """임시 구현(fallback 전용) — `GET /jobs/{job_id}`의 `domain_type`/`domain_id`/
+        `result_url` 구성과 소유권 이중 확인(track-a-migration-rollback-v1.md §6)에 필요한
+        값입니다. 정식 값의 원본은 도메인 row의 영속 `ai_job_id` 역참조이며, OCR은 #212로
+        `ocr_job.ai_job_id`가, Guide도 같은 목적으로 `guide.ai_job_id`가 이미 있어
+        `JobStatusService._resolve_domain_reference()`가 이 메서드보다 그 값을 우선
+        사용합니다(값이 채워진 뒤에만) — 이 메서드는 그 값이 아직 없는 OCR·Guide row와,
+        `ai_job_id`가 아직 없는 Chat(이슈 미생성)에만 쓰입니다. 그 경우 `job.id`로 이 Job의
+        `outbox_event`를 직접 조회해 대신 씁니다. Outbox는 30일 보존이라 그 이후
+        삭제되면(`ON DELETE SET NULL`) 이 경로로는 값을 찾을 수 없습니다 — Chat도 도메인
+        row에 `ai_job_id`가 추가되면 이 fallback 의존을 없애야 합니다.
+
+        Job 실행 메타데이터는 terminal 후 90일 보존이라, `COMPLETED`/`FAILED`/`STALE` Job이
+        Outbox 보존 기간(30일)은 지났지만 Job 보존 기간(90일)은 아직 안 지난 31~90일째에는
+        Job은 남아 있어도 이 메서드가 `None`을 반환해 `GET /jobs/{job_id}`가 `404`가
+        됩니다 — `job_id` 기준 조회로 바꿔도 Outbox row 자체가 사라지므로 해결되지 않고,
+        도메인 row에 `ai_job_id`가 채워지는 것만이 이 gap의 답입니다(OCR·Guide는 이미 컬럼이
+        있으므로 접수가 그 값을 채우면, Chat은 같은 목적의 컬럼이 추가되면).
+
+        `job.expected_event_id`는 쓰지 않습니다 — outbox-stream-v1.md §소비와 fencing에 따라
+        Reconciler가 다음 attempt Outbox를 만들기 전까지(`RETRY_WAIT` 전환 직후, 또는 재시도
+        소진 뒤 `FAILED`로 종결된 이후)는 fencing이 깨지지 않도록 이 값이 `NULL`로 비어
+        있습니다. 그 값을 신원 조회 기준으로 쓰면 이 두 구간에서 `GET /jobs/{job_id}`가
+        `404`가 됩니다. `job.id`로 직접 조회하면 attempt가 몇 번 진행돼도, Reconciler가 아직
+        다음 attempt Outbox를 만들지 않았어도 항상 값을 찾습니다. `domain_type`/`domain_id`가
+        `NOT NULL`인 row만 걸러 최신 attempt를 선택하므로, 재시도 Outbox가 아직 직전 event의
+        `domain_type`/`domain_id`를 복사하지 않는 상태(#142 진행 중)에서도 attempt 1의 값으로
+        안전하게 fallback합니다.
+        """
+        result = await self.session.execute(
+            select(OutboxEvent.domain_type, OutboxEvent.domain_id)
+            .where(
+                OutboxEvent.job_id == job.id,
+                OutboxEvent.domain_type.is_not(None),
+                OutboxEvent.domain_id.is_not(None),
+            )
+            .order_by(OutboxEvent.attempt.desc())
+            .limit(1)
+        )
+        row = result.first()
+        if row is None:
+            return None
+        return (row.domain_type, row.domain_id)
+
+    async def get_latest_job_id_for_domain(self, *, domain_type: DomainType, domain_id: UUID) -> UUID | None:
+        """`get_interim_domain_reference()`의 역방향이며 같은 이유로 fallback 전용입니다 —
+        rediscovery(#148)가 도메인 row(예: `ocr_job.id`, `guide.id`)로부터 `job_id`를 찾을 때,
+        영속 `ai_job_id`가 없는 경우(`rediscover_ocr_job`/`rediscover_guide_job` 참고)에만
+        씁니다."""
+        result = await self.session.execute(
+            select(OutboxEvent.job_id)
+            .where(OutboxEvent.domain_type == domain_type, OutboxEvent.domain_id == domain_id)
+            .order_by(OutboxEvent.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def create_job(
         self,
         *,
