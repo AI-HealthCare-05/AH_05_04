@@ -301,10 +301,11 @@ def build_worker_runtime(
 ) -> AssembledWorkerRuntime:
     """설정으로 Redis·DB·Handler를 조립한 Consumer runtime을 만듭니다.
 
-    `ocr_engine`이 없으면 OCR Handler를 등록하지 않습니다. 프로세스 진입점은
-    `create_clova_ocr_engine()`으로 실제 Engine을 만들어 명시적으로 전달합니다.
-    테스트에서는 Fake Engine을 주입할 수 있습니다.
+    `ocr_engine`과 `ocr_provider`가 모두 없으면 OCR Handler를 등록하지 않습니다.
+    프로세스 진입점은 `create_clova_ocr_provider()`로 실제 Provider를 만들어
+    명시적으로 전달하며, 테스트에서는 Fake Engine 또는 Provider를 주입할 수 있습니다.
     """
+
     if ocr_engine is not None and ocr_provider is not None:
         raise ValueError("ocr_engine과 ocr_provider 중 하나만 전달할 수 있습니다.")
 
