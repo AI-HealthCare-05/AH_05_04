@@ -1021,6 +1021,29 @@ async def test_ocr_ai_job_mapping_constraints_exist(
 
 
 @pytest.mark.asyncio
+async def test_outbox_event_stores_redis_stream_message_id(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.connect() as connection:
+        result = await connection.execute(
+            text(
+                """
+                SELECT data_type, character_maximum_length, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'outbox_event'
+                  AND column_name = 'stream_message_id'
+                """
+            )
+        )
+
+    column = result.mappings().one()
+    assert column["data_type"] == "character varying"
+    assert column["character_maximum_length"] == 100
+    assert column["is_nullable"] == "YES"
+
+
+@pytest.mark.asyncio
 async def test_ocr_ai_job_mapping_rejects_unknown_ai_job(
     migrated_engine: AsyncEngine,
 ) -> None:
