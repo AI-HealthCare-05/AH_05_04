@@ -4,6 +4,7 @@ from ai_worker.tasks.evaluation.retrieval_metrics import (
     RetrievalObservation,
     aggregate_metric_scores,
     observations_from_case_results,
+    metric_result_fields,
     metric_scores,
 )
 
@@ -61,3 +62,16 @@ def test_observations_bind_gold_to_ranked_case_results() -> None:
     assert observation.required_ids == ("required",)
     assert observation.relevant_ids == ("required", "related")
     assert observation.ranked_ids == ("noise", "required")
+
+
+def test_metric_result_fields_mark_insufficient_sample_inconclusive() -> None:
+    aggregate = aggregate_metric_scores(
+        [metric_scores(RetrievalObservation(("required",), ("required",), ("required",)))],
+        minimum_case_count=5,
+    )["RECALL_AT_5"]
+
+    fields = metric_result_fields(aggregate, sample_group_count=1)
+
+    assert fields["execution_status"] == "COMPLETED"
+    assert fields["decision_status"] == "INCONCLUSIVE"
+    assert fields["reason_code"] == "MINIMUM_CASE_COUNT_NOT_MET"

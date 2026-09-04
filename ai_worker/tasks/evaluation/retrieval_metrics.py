@@ -92,6 +92,25 @@ def aggregate_metric_scores(
     return aggregates
 
 
+def metric_result_fields(
+    aggregate: AggregatedMetric,
+    *,
+    sample_group_count: int,
+) -> dict[str, object]:
+    """Translate an aggregate into the invariant fields of a MetricResult."""
+
+    return {
+        "execution_status": "COMPLETED",
+        "decision_status": "INCONCLUSIVE" if aggregate.reason_code else "N/A",
+        "sample_case_count": sample_group_count,
+        "sample_independent_group_count": sample_group_count,
+        "numerator": aggregate.numerator,
+        "denominator": aggregate.denominator,
+        "metric_value": aggregate.value,
+        "reason_code": aggregate.reason_code,
+    }
+
+
 def observations_from_case_results(
     gold_by_case: dict[str, tuple[tuple[str, ...], tuple[str, ...]]],
     ranked_by_case: dict[str, tuple[str, ...]],
