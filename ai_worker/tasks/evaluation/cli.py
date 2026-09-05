@@ -20,6 +20,7 @@ from ai_worker.tasks.evaluation.comparison import (
     LoadedRunBundle,
     build_retrieval_comparison,
     load_published_run_bundle,
+    validate_retrieval_comparison_pair,
 )
 from ai_worker.tasks.evaluation.config import (
     RepositoryStateProvider,
@@ -654,16 +655,17 @@ def _validate_bundle_privacy(files: dict[str, bytes]) -> None:
 def _validate_baseline_candidate_state(
     baseline: LoadedRunBundle,
     resolved: ResolvedDevExecution,
+    candidate_run_id: str,
 ) -> None:
-    baseline_run = baseline.run
     candidate_request = resolved.request
-    if (
-        baseline_run.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
-        or candidate_request.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
-        or baseline_run.variant_id == candidate_request.variant_id
-        or baseline_run.retrieval_variant_manifest_hash == resolved.retrieval_variant_manifest_hash
-    ):
-        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    validate_retrieval_comparison_pair(
+        baseline.run,
+        candidate_run_id=candidate_run_id,
+        candidate_experiment_id=candidate_request.experiment_id,
+        candidate_experiment_type=candidate_request.experiment_type,
+        candidate_variant_id=candidate_request.variant_id,
+        candidate_retrieval_variant_manifest_hash=resolved.retrieval_variant_manifest_hash,
+    )
 
 
 def _run_dev(
@@ -700,7 +702,7 @@ def _run_dev(
         baseline = None
         if arguments.baseline_run_id is not None:
             baseline = load_published_run_bundle(result_root, arguments.baseline_run_id)
-            _validate_baseline_candidate_state(baseline, resolved)
+            _validate_baseline_candidate_state(baseline, resolved, arguments.run_id)
         started_at = clock()
         outcome = execute_dev_cases(
             dataset,

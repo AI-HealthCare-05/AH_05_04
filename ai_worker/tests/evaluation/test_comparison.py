@@ -17,7 +17,7 @@ from ai_worker.tasks.evaluation.manifest import (
     semantic_content_hash,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import ComparisonResult, FailureRecord, FailureSummary
-from ai_worker.tasks.evaluation.schemas.common import ExecutionStatus
+from ai_worker.tasks.evaluation.schemas.common import ExecutionStatus, ExperimentType
 from ai_worker.tests.evaluation.test_result_manifest import (
     RUN_ID_A,
     RUN_ID_B,
@@ -149,6 +149,127 @@ def test_comparison_binds_semantic_hashes_and_reports_metric_delta(tmp_path: Pat
     assert recall.p_value is None
     assert comparison.decision_status is not None
     assert comparison.decision_status.value == "INCONCLUSIVE"
+
+
+def test_comparison_builder_rejects_different_experiment_id(tmp_path: Path) -> None:
+    baseline_draft = _draft("RET-L", run_id=RUN_ID_A)
+    baseline_draft = replace(
+        baseline_draft,
+        report_data=replace(baseline_draft.report_data, experiment_id="unrelated-experiment"),
+        run_payload={**baseline_draft.run_payload, "experiment_id": "unrelated-experiment"},
+    )
+    _publish(tmp_path, baseline_draft)
+    baseline = load_published_run_bundle(tmp_path, RUN_ID_A)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_comparison_builder_rejects_same_run(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, baseline, CONTROLLED_VARIABLE_KEYS)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_comparison_builder_rejects_same_variant(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-L", run_id=RUN_ID_B)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_comparison_builder_rejects_relabeled_variant_with_same_manifest_hash(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-L", run_id=RUN_ID_B)
+    candidate = replace(
+        candidate,
+        report_data=replace(candidate.report_data, variant_id="RET-ALIAS"),
+        run_payload={**candidate.run_payload, "variant_id": "RET-ALIAS"},
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_comparison_builder_rejects_non_retrieval_candidate(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+    candidate = replace(
+        candidate,
+        report_data=replace(candidate.report_data, experiment_type=ExperimentType.END_TO_END_RAG),
+        run_payload={**candidate.run_payload, "experiment_type": ExperimentType.END_TO_END_RAG.value},
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_comparison_builder_rejects_inconsistent_draft_identity(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+    candidate = replace(
+        candidate,
+        run_payload={**candidate.run_payload, "experiment_id": "unrelated-experiment"},
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_comparison_builder_rejects_inconsistent_published_artifact(tmp_path: Path) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = finalize_artifacts(
+        _draft("RET-HR", run_id=RUN_ID_B),
+        b"safe retrieval report\n",
+        completed_at=TIME_B,
+    )
+    files = dict(candidate.files)
+    run_payload = json.loads(files["run.json"])
+    run_payload["experiment_id"] = "unrelated-experiment"
+    files["run.json"] = canonical_json_bytes(run_payload)
+    candidate = replace(candidate, files=files)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+@pytest.mark.parametrize(
+    "controlled_variable_keys",
+    [
+        CONTROLLED_VARIABLE_KEYS[:-1],
+        tuple(reversed(CONTROLLED_VARIABLE_KEYS)),
+        (*CONTROLLED_VARIABLE_KEYS, "DATASET"),
+        (*CONTROLLED_VARIABLE_KEYS[:-1], "UNKNOWN"),
+    ],
+)
+def test_comparison_builder_requires_exact_control_signature(
+    tmp_path: Path,
+    controlled_variable_keys: tuple[str, ...],
+) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        build_retrieval_comparison(baseline, candidate, controlled_variable_keys)
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
 
 
 @pytest.mark.parametrize(
@@ -336,6 +457,69 @@ def test_loader_rejects_rehashed_comparison_with_wrong_candidate_semantic_hash(t
     )
     run_root = _publish(tmp_path, replace(candidate, comparison=comparison))
     _rehash_bundle_payload(run_root, "comparison.json")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        load_published_run_bundle(tmp_path, RUN_ID_B)
+
+    assert caught.value.code is EvaluationErrorCode.BASELINE_ARTIFACT_INVALID
+
+
+@pytest.mark.parametrize(
+    "tamper_kind",
+    [
+        "baseline_run_id",
+        "baseline_run_hash",
+        "baseline_control_value",
+        "baseline_metric_value",
+        "missing_control",
+        "decision_semantics",
+        "delta",
+    ],
+)
+def test_loader_rejects_rehashed_comparison_with_wrong_baseline_binding(
+    tmp_path: Path,
+    tamper_kind: str,
+) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+    run_root = _publish(tmp_path, replace(candidate, comparison=comparison))
+    comparison_path = run_root / "comparison.json"
+    payload = json.loads(comparison_path.read_bytes())
+    if tamper_kind == "baseline_run_id":
+        payload["baseline_run_id"] = RUN_ID_B
+    elif tamper_kind == "baseline_run_hash":
+        payload["baseline_run_hash"] = "b" * 64
+    elif tamper_kind == "baseline_control_value":
+        payload["controlled_variable_checks"][0]["baseline_value_hash"] = "b" * 64
+    elif tamper_kind == "baseline_metric_value":
+        payload["scope_comparisons"][0]["baseline_value"] = "0.123456"
+    elif tamper_kind == "decision_semantics":
+        for scope in payload["scope_comparisons"]:
+            scope["comparison_decision"] = "IMPROVED"
+        payload["decision_status"] = "PASS"
+    elif tamper_kind == "delta":
+        payload["scope_comparisons"][0]["absolute_delta"] = "999"
+        payload["scope_comparisons"][0]["relative_delta"] = "999"
+    else:
+        payload["controlled_variable_checks"].pop()
+    comparison_path.write_bytes(canonical_json_bytes(payload))
+    _rehash_bundle_payload(run_root, "comparison.json")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        load_published_run_bundle(tmp_path, RUN_ID_B)
+
+    assert caught.value.code is EvaluationErrorCode.BASELINE_ARTIFACT_INVALID
+
+
+def test_loader_rejects_candidate_when_referenced_baseline_is_not_in_result_root(tmp_path: Path) -> None:
+    external_root = tmp_path / "external"
+    external_root.mkdir()
+    _publish(external_root, _draft("RET-L", run_id=RUN_ID_A))
+    baseline = load_published_run_bundle(external_root, RUN_ID_A)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+    _publish(tmp_path, replace(candidate, comparison=comparison))
 
     with pytest.raises(EvaluationValidationError) as caught:
         load_published_run_bundle(tmp_path, RUN_ID_B)

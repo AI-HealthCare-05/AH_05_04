@@ -101,7 +101,9 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 ```
 
 이 Run Bundle은 Git 비추적 로컬·CI DEV Artifact입니다. CI에서 보존할 때는
-`rag-evaluation-<run-id>` Artifact 이름을 사용하며 소스 PR에 결과 파일을 commit하지 않습니다. 비교 delta와
+`rag-evaluation-<run-id>` Artifact 이름을 사용하며 소스 PR에 결과 파일을 commit하지 않습니다. Candidate를
+검증할 때는 참조 baseline bundle도 같은 `evals/results/` root에 있어야 하므로, 두 Artifact를 따로 보존했다면
+각 Run ID 디렉터리를 같은 root 아래 복원한 뒤 `verify-result`를 실행합니다. 비교 delta와
 `INCONCLUSIVE` 판정은 진단 evidence일 뿐이고, 승인된 Release threshold가 없으므로 HOLDOUT Baseline Freeze가
 아닙니다. 또한 Release `PASS`, 임상적 유효성, Privacy·Source·Production 승인을 의미하지 않습니다. report의
 `SYNTHETIC_REPLAY_DEV`, HOLDOUT `NOT_PERFORMED`, production integration

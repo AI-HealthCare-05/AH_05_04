@@ -48,6 +48,11 @@ Source/Index/embedding/parser/filter provenance는 versioned execution config �
 commit SHA로 결속한다. 두 variant의 `model_config_hash`는 같고 retrieval strategy·reranker 설정과 replay
 artifact만 달라진다.
 `comparison.json`은 두 Run의 semantic content hash와 통제 변수 hash 일치 여부를 기록한다.
+비교 가능한 두 Run은 모두 `KNOWLEDGE_RETRIEVAL`이고 같은 `experiment_id`에 속해야 하며, Run ID·variant ID·
+retrieval variant manifest hash는 서로 달라야 한다. 이 pair identity 불변식은 CLI 사전 검사와 comparison
+builder 직접 호출 경로에서 동일하게 적용하고, 위반 시 `EVAL_STATE_COMBINATION_INVALID`로 닫는다.
+발행된 candidate bundle을 다시 읽을 때는 참조된 baseline Run도 같은 result root에서 안전하게 로드해 baseline
+Run ID·semantic hash·통제 변수 hash·metric 값을 `comparison.json`과 대조한다.
 
 ## 4. 데이터와 실행 입력
 
@@ -68,6 +73,10 @@ Baseline과 Candidate config는 다음 통제 변수를 동일하게 유지한�
 - Parser와 embedding identity
 - top-k = 5
 - bootstrap seed와 iteration 수
+
+Comparison builder는 `CASE_SET`, `DATASET`, `GOLD`, `METRIC_POLICY`, `SOURCE_INDEX_FILTER_MODEL`의 정렬된 전체
+서명을 exact match로 요구한다. 일부 key 생략·중복·순서 변경·미지원 key는 provenance 검사를 약화시키므로
+`EVAL_STATE_COMBINATION_INVALID`로 거부한다.
 
 의도적으로 달라지는 값은 retrieval strategy와 reranker 사용 여부뿐이다.
 
@@ -141,7 +150,8 @@ evals/results/<candidate-run-id>/
 
 `evals/results/`는 기존 `.gitignore` 규칙을 유지한다. 로컬 결과는 프로젝트 폴더에 보존하고, CI는
 `rag-evaluation-<run-id>` Artifact로 업로드한다. 소스 PR에는 결과 전체를 커밋하지 않고 Run ID, semantic
-hash, Dataset/Policy hash와 비민감 요약만 남긴다.
+hash, Dataset/Policy hash와 비민감 요약만 남긴다. Candidate 검증은 참조 baseline bundle을 같은 result root에서
+resolve하므로, Artifact를 별도로 보존했다면 두 Run ID 디렉터리를 같은 root 아래 복원한다.
 
 ## 8. 오류와 상태
 

@@ -34,7 +34,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     ScopeComparison,
     SuiteResults,
 )
-from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionStatus
+from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionStatus, ExperimentType
 
 _REQUIRED_FILENAMES = frozenset(
     {
@@ -48,14 +48,12 @@ _REQUIRED_FILENAMES = frozenset(
     }
 )
 _OPTIONAL_FILENAMES = frozenset({"comparison.json"})
-_SUPPORTED_CONTROLLED_VARIABLE_KEYS = frozenset(
-    {
-        "CASE_SET",
-        "DATASET",
-        "GOLD",
-        "METRIC_POLICY",
-        "SOURCE_INDEX_FILTER_MODEL",
-    }
+_REQUIRED_CONTROLLED_VARIABLE_KEYS = (
+    "CASE_SET",
+    "DATASET",
+    "GOLD",
+    "METRIC_POLICY",
+    "SOURCE_INDEX_FILTER_MODEL",
 )
 
 
@@ -70,6 +68,18 @@ class LoadedRunBundle:
     content_manifest: ContentManifest
     files: Mapping[str, bytes]
     semantic_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateMaterial:
+    run: Mapping[str, JsonValue] | RagEvaluationRun
+    metrics: MetricResults
+    files: Mapping[str, bytes]
+    run_id: str
+    experiment_id: str
+    experiment_type: ExperimentType
+    variant_id: str
+    retrieval_variant_manifest_hash: str | None
 
 
 def _baseline_invalid() -> EvaluationValidationError:
@@ -158,6 +168,15 @@ def _read_bundle_files(result_root: Path, run_id: str) -> tuple[Path, dict[str, 
 def load_published_run_bundle(result_root: Path, run_id: str) -> LoadedRunBundle:
     """Load one immutable run directory without following symbolic links."""
 
+    return _load_published_run_bundle(result_root, run_id, validate_baseline_reference=True)
+
+
+def _load_published_run_bundle(
+    result_root: Path,
+    run_id: str,
+    *,
+    validate_baseline_reference: bool,
+) -> LoadedRunBundle:
     try:
         _validate_run_id(run_id)
         bundle_root, files = _read_bundle_files(result_root, run_id)
@@ -176,7 +195,7 @@ def load_published_run_bundle(result_root: Path, run_id: str) -> LoadedRunBundle
         semantic_hash = semantic_content_hash(immutable_files)
         if comparison is not None:
             _validate_candidate_comparison_binding(comparison, run, metrics, semantic_hash)
-        return LoadedRunBundle(
+        loaded = LoadedRunBundle(
             root=bundle_root,
             run=run,
             cases=cases,
@@ -187,6 +206,14 @@ def load_published_run_bundle(result_root: Path, run_id: str) -> LoadedRunBundle
             files=immutable_files,
             semantic_hash=semantic_hash,
         )
+        if comparison is not None and validate_baseline_reference:
+            baseline = _load_published_run_bundle(
+                result_root,
+                comparison.baseline_run_id,
+                validate_baseline_reference=False,
+            )
+            _validate_baseline_comparison_binding(comparison, loaded, baseline)
+        return loaded
     except EvaluationValidationError as error:
         if error.code is EvaluationErrorCode.BASELINE_ARTIFACT_INVALID:
             raise
@@ -245,10 +272,8 @@ def _validate_candidate_comparison_binding(
         raise _baseline_invalid()
     candidate_values = _controlled_values(run)
     checks = {check.variable_key: check for check in comparison.controlled_variable_checks}
-    if (
-        len(checks) != len(comparison.controlled_variable_checks)
-        or not set(checks) <= _SUPPORTED_CONTROLLED_VARIABLE_KEYS
-    ):
+    ordered_keys = tuple(check.variable_key for check in comparison.controlled_variable_checks)
+    if ordered_keys != _REQUIRED_CONTROLLED_VARIABLE_KEYS or tuple(checks) != ordered_keys:
         raise _baseline_invalid()
     if any(check.candidate_value_hash != candidate_values[key] for key, check in checks.items()):
         raise _baseline_invalid()
@@ -263,23 +288,133 @@ def _validate_candidate_comparison_binding(
         raise _baseline_invalid()
 
 
+def _validate_baseline_comparison_binding(
+    comparison: ComparisonResult,
+    candidate: LoadedRunBundle,
+    baseline: LoadedRunBundle,
+) -> None:
+    expected = build_retrieval_comparison(
+        baseline,
+        candidate,
+        _REQUIRED_CONTROLLED_VARIABLE_KEYS,
+    )
+    if comparison != expected:
+        raise _baseline_invalid()
+
+
+def _draft_candidate_material(candidate: ArtifactDraft) -> _CandidateMaterial:
+    try:
+        run_id = cast(str, candidate.run_payload["run_id"])
+        experiment_id = cast(str, candidate.run_payload["experiment_id"])
+        experiment_type = ExperimentType(cast(str, candidate.run_payload["experiment_type"]))
+        variant_id = cast(str, candidate.run_payload["variant_id"])
+        retrieval_variant_manifest_hash = cast(
+            str | None,
+            candidate.run_payload["retrieval_variant_manifest_hash"],
+        )
+    except (KeyError, TypeError, ValueError):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID) from None
+    if (
+        candidate.report_data.run_id != run_id
+        or candidate.report_data.experiment_id != experiment_id
+        or candidate.report_data.experiment_type is not experiment_type
+        or candidate.report_data.variant_id != variant_id
+        or candidate.metrics.run_id != run_id
+        or candidate.suite_results.run_id != run_id
+        or any(case.run_id != run_id for case in candidate.cases)
+        or any(failure.run_id != run_id for failure in candidate.failures)
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    files = machine_artifact_files(candidate)
+    files["run.json"] = canonical_json_bytes(cast(JsonValue, dict(candidate.run_payload)))
+    return _CandidateMaterial(
+        run=candidate.run_payload,
+        metrics=candidate.metrics,
+        files=files,
+        run_id=run_id,
+        experiment_id=experiment_id,
+        experiment_type=experiment_type,
+        variant_id=variant_id,
+        retrieval_variant_manifest_hash=retrieval_variant_manifest_hash,
+    )
+
+
+def _published_candidate_material(candidate: PublishedArtifacts) -> _CandidateMaterial:
+    try:
+        names = set(candidate.files)
+        if not _REQUIRED_FILENAMES.issubset(names) or not names <= _REQUIRED_FILENAMES | _OPTIONAL_FILENAMES:
+            raise ValueError
+        run, _cases, metrics, _failures, _comparison, content_manifest = _validate_runtime_files(
+            candidate.files,
+            candidate.run.run_id,
+        )
+        if (
+            run != candidate.run
+            or content_manifest != candidate.content_manifest
+            or run.result_content_manifest_hash != content_manifest.manifest_sha256
+        ):
+            raise ValueError
+        expected_payload_names = names - {"run.json", "result-content-manifest.json"}
+        if {entry.relative_path for entry in content_manifest.artifacts} != expected_payload_names:
+            raise ValueError
+        for entry in content_manifest.artifacts:
+            payload = candidate.files[entry.relative_path]
+            if entry.size_bytes != len(payload) or entry.sha256 != sha256_hex(payload):
+                raise ValueError
+    except (EvaluationValidationError, KeyError, TypeError, ValueError, ValidationError, json.JSONDecodeError):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID) from None
+    return _typed_candidate_material(run, metrics, candidate.files)
+
+
+def _typed_candidate_material(
+    run: RagEvaluationRun,
+    metrics: MetricResults,
+    files: Mapping[str, bytes],
+) -> _CandidateMaterial:
+    if metrics.run_id != run.run_id:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    return _CandidateMaterial(
+        run=run,
+        metrics=metrics,
+        files=files,
+        run_id=run.run_id,
+        experiment_id=run.experiment_id,
+        experiment_type=run.experiment_type,
+        variant_id=run.variant_id,
+        retrieval_variant_manifest_hash=run.retrieval_variant_manifest_hash,
+    )
+
+
 def _candidate_material(
     candidate: ArtifactDraft | PublishedArtifacts | LoadedRunBundle,
-) -> tuple[Mapping[str, JsonValue] | RagEvaluationRun, MetricResults, Mapping[str, bytes], str, str]:
+) -> _CandidateMaterial:
     if isinstance(candidate, ArtifactDraft):
-        files = machine_artifact_files(candidate)
-        files["run.json"] = canonical_json_bytes(cast(JsonValue, dict(candidate.run_payload)))
-        return (
-            candidate.run_payload,
-            candidate.metrics,
-            files,
-            candidate.report_data.run_id,
-            candidate.report_data.experiment_id,
-        )
-    if isinstance(candidate, LoadedRunBundle):
-        return candidate.run, candidate.metrics, candidate.files, candidate.run.run_id, candidate.run.experiment_id
-    metrics = MetricResults.model_validate_json(candidate.files["metrics.json"])
-    return candidate.run, metrics, candidate.files, candidate.run.run_id, candidate.run.experiment_id
+        return _draft_candidate_material(candidate)
+    if isinstance(candidate, PublishedArtifacts):
+        return _published_candidate_material(candidate)
+    return _typed_candidate_material(candidate.run, candidate.metrics, candidate.files)
+
+
+def validate_retrieval_comparison_pair(
+    baseline_run: RagEvaluationRun,
+    *,
+    candidate_run_id: str,
+    candidate_experiment_id: str,
+    candidate_experiment_type: ExperimentType,
+    candidate_variant_id: str,
+    candidate_retrieval_variant_manifest_hash: str | None,
+) -> None:
+    if (
+        baseline_run.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
+        or candidate_experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
+        or baseline_run.experiment_id != candidate_experiment_id
+        or baseline_run.run_id == candidate_run_id
+        or baseline_run.variant_id == candidate_variant_id
+        or baseline_run.retrieval_variant_manifest_hash is None
+        or candidate_retrieval_variant_manifest_hash is None
+        or baseline_run.retrieval_variant_manifest_hash == candidate_retrieval_variant_manifest_hash
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
 
 
 def _decimal(value: Decimal) -> str:
@@ -337,10 +472,18 @@ def build_retrieval_comparison(
     candidate: ArtifactDraft | PublishedArtifacts | LoadedRunBundle,
     controlled_variable_keys: Sequence[str],
 ) -> ComparisonResult:
-    candidate_run, candidate_metrics, candidate_files, candidate_run_id, experiment_id = _candidate_material(candidate)
+    material = _candidate_material(candidate)
+    validate_retrieval_comparison_pair(
+        baseline.run,
+        candidate_run_id=material.run_id,
+        candidate_experiment_id=material.experiment_id,
+        candidate_experiment_type=material.experiment_type,
+        candidate_variant_id=material.variant_id,
+        candidate_retrieval_variant_manifest_hash=material.retrieval_variant_manifest_hash,
+    )
     baseline_values = _controlled_values(baseline.run)
-    candidate_values = _controlled_values(candidate_run)
-    if not controlled_variable_keys or not set(controlled_variable_keys) <= _SUPPORTED_CONTROLLED_VARIABLE_KEYS:
+    candidate_values = _controlled_values(material.run)
+    if tuple(controlled_variable_keys) != _REQUIRED_CONTROLLED_VARIABLE_KEYS:
         raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
     checks = tuple(
         ControlledVariableCheck(
@@ -351,12 +494,12 @@ def build_retrieval_comparison(
         )
         for key in controlled_variable_keys
     )
-    scopes = _scope_comparisons(baseline.metrics, candidate_metrics)
+    scopes = _scope_comparisons(baseline.metrics, material.metrics)
     baseline_completed = baseline.run.execution_status is ExecutionStatus.COMPLETED
     candidate_status = (
-        candidate_run.execution_status
-        if isinstance(candidate_run, RagEvaluationRun)
-        else ExecutionStatus(cast(str, candidate_run["execution_status"]))
+        material.run.execution_status
+        if isinstance(material.run, RagEvaluationRun)
+        else ExecutionStatus(cast(str, material.run["execution_status"]))
     )
     valid = (
         baseline_completed
@@ -367,12 +510,12 @@ def build_retrieval_comparison(
     return ComparisonResult(
         schema_id="rag-eval.comparison",
         schema_version="1.0.0",
-        run_id=candidate_run_id,
-        experiment_id=experiment_id,
+        run_id=material.run_id,
+        experiment_id=material.experiment_id,
         baseline_run_id=baseline.run.run_id,
         baseline_run_hash=baseline.semantic_hash,
-        candidate_run_id=candidate_run_id,
-        candidate_run_hash=semantic_content_hash(candidate_files),
+        candidate_run_id=material.run_id,
+        candidate_run_hash=semantic_content_hash(material.files),
         controlled_variable_checks=checks,
         scope_comparisons=scopes,
         execution_status=ExecutionStatus.COMPLETED if valid else ExecutionStatus.INVALID,

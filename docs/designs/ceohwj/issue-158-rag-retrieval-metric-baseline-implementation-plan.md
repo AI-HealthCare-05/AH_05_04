@@ -605,10 +605,15 @@ class LoadedRunBundle:
 
 Loader는 canonical UUID directory 한 단계만 열고 symlink를 따르지 않으며, content manifest의 모든 payload
 hash/size와 runtime schema를 검증한다. baseline에 `comparison.json`이 있어도 semantic hash 입력에서는 제외한다.
+Candidate comparison을 읽을 때는 참조 baseline bundle을 같은 root에서 로드해 `baseline_run_id`, semantic hash,
+통제 변수 baseline hash와 scope baseline metric 값을 exact 검증한다. 참조 baseline 자체의 과거 comparison은
+현재 candidate의 직접 provenance가 아니므로 재귀 추적하지 않는다.
 
 - [ ] **Step 5: 통제 변수와 Scope delta builder 구현**
 
 통제 key는 `CASE_SET`, `DATASET`, `GOLD`, `METRIC_POLICY`, `SOURCE_INDEX_FILTER_MODEL`로 정렬한다.
+Builder 입력은 이 다섯 key의 정렬된 tuple과 exact match해야 하며 부분집합·중복·순서 변경·미지원 key를
+`EVAL_STATE_COMBINATION_INVALID`로 거부한다.
 `SOURCE_INDEX_FILTER_MODEL`은 두 Run의 `model_config_hash`를 비교하며, 실제 Source/Index/embedding/parser/filter
 값은 해당 Run의 Git commit에 있는 versioned config에서 해석한다.
 Baseline/Candidate Metric natural key 집합이 다르면 comparison 자체를 `INVALID/null`로 만든다. 승인 threshold가
@@ -747,8 +752,10 @@ def test_run_dev_with_baseline_writes_comparison_into_candidate_bundle(tmp_path:
     assert comparison["decision_status"] == "INCONCLUSIVE"
 ```
 
-`--baseline-run-id`가 `KNOWLEDGE_RETRIEVAL` 외 실험에 쓰이거나 baseline과 candidate variant가 같으면
-`EVAL_STATE_COMBINATION_INVALID`로 거부하는 테스트도 추가한다.
+`--baseline-run-id`가 `KNOWLEDGE_RETRIEVAL` 외 실험에 쓰이거나 두 Run의 `experiment_id`가 다르거나,
+Run ID·variant ID·retrieval variant manifest hash가 같으면 `EVAL_STATE_COMBINATION_INVALID`로 거부하는
+테스트도 추가한다. 같은 pair identity 검사는 comparison builder 직접 호출에도 적용하며, `ArtifactDraft`의
+`report_data`와 실제 `run_payload` identity가 다를 때도 fail-closed한다.
 
 - [ ] **Step 2: Report Retrieval/Comparison Projection 실패 테스트 작성**
 
@@ -901,6 +908,8 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 ```
 
 두 명령은 모든 runtime Schema와 content hash를 검증하고 stdout에 semantic hash 한 줄만 출력해야 한다.
+Candidate 검증 시 baseline Run ID 디렉터리가 같은 result root에 없으면 provenance를 완결할 수 없으므로
+`EVAL_BASELINE_ARTIFACT_INVALID`로 실패한다. CI Artifact를 따로 내려받았다면 두 디렉터리를 같은 root에 복원한다.
 
 - [ ] **Step 8: 최종 Artifact와 PR 요약 검토**
 

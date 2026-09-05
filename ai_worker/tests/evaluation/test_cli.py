@@ -917,9 +917,40 @@ def test_candidate_comparison_rejects_identical_retrieval_variant_manifest_hash(
     )
 
     with pytest.raises(EvaluationValidationError) as caught:
-        cli_module._validate_baseline_candidate_state(baseline, relabeled)
+        cli_module._validate_baseline_candidate_state(baseline, relabeled, str(uuid4()))
 
     assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_candidate_comparison_rejects_different_experiment_id(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+    baseline_path = tmp_path / baseline_run_id / "run.json"
+    baseline_payload = json.loads(baseline_path.read_bytes())
+    baseline_payload["experiment_id"] = "unrelated-experiment"
+    baseline_path.write_bytes(canonical_json_bytes(baseline_payload))
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        "rag-retrieval-dev-ret-hr-v1.execution.json",
+        candidate_run_id,
+        baseline_run_id=baseline_run_id,
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / candidate_run_id).exists()
+    assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
 
 
 def test_non_retrieval_baseline_option_rejects_state_before_missing_baseline(
