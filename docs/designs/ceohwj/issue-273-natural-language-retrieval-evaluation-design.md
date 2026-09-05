@@ -78,24 +78,41 @@ actual retrieval 품질을 다시 혼동하게 되므로 채택하지 않는다.
 HOLDOUT 질문이 DEV 튜닝에 노출되고 Freeze 전 결과를 관찰할 수 있다. HOLDOUT 40개는 별도 접근 통제와
 Freeze Receipt가 확정된 뒤 저장소 밖 보호 경로에서 작성한다.
 
-### 별도 Issue 제안: 증상 기반 OTC 후보·상호작용 평가
+### 별도 Issue #278: 증상 기반 OTC 후보·상호작용 평가
 
 `#273`의 100개는 Knowledge Evidence Retrieval만 소유한다. 아래 OTC 50개는 제품 후보 제시 전에 증상
 위험도, 현재 복용약, 금기, 동일 성분 중복과 Rule Evidence를 확인해야 하므로 별도 Issue와 별도 Dataset으로
-관리한다.
+관리한다. 추적과 승인 기록은
+[#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278)에서 소유하며, `#278`의 차단 상태는
+`#273`의 완료를 차단하지 않는다.
 
-| 제안된 OTC 평가 범위 | DEV | HOLDOUT | 합계 |
+| 계획된 OTC 평가 범위 | DEV | HOLDOUT | 합계 |
 | --- | ---: | ---: | ---: |
 | 증상 기반 OTC 후보 | 18 | 12 | 30 |
 | 처방약–OTC 상호작용 | 12 | 8 | 20 |
 | **합계** | **30** | **20** | **50** |
 
-별도 Issue가 승인되면 두 평가를 합친 프로그램 전체 질문 수는 `DEV=90`, `HOLDOUT=60`, 총 150개다. 이
-수량은 해당 Issue 승인 전까지 `PROPOSED`다. OTC Issue는 승인된
+`#278`의 범위와 수량이 책임 리뷰어에게 승인되면 두 평가를 합친 프로그램 전체 질문 수는 `DEV=90`,
+`HOLDOUT=60`, 총 150개다. 승인 전에는 OTC 50개와 전체 150개를 모두 `PROPOSED`로 취급한다. OTC
+Issue는 승인된
 `증상 범주 → 허가 효능·효과 → 성분 → 제품` Catalog, 위험 신호에서 제품 제시 0건, Rule·Safety Gate,
 Answer·Citation 검증과 의사·약사 상담 안내를 완료 조건으로 가진다. 상담 문구만 추가해 안전 판정을
-대체하지 않는다. 새 Issue 생성과 번호 부여는 이 설계 변경의 범위 밖이며 담당자·리뷰어가 Issue 본문을
-검토한 뒤 수행한다.
+대체하지 않는다.
+
+`#278`은 2026-09-05에 `PLANNED/BLOCKED` 상태로 미리 생성했다. 실행 시점은 Issue의 Open/Closed 상태가
+아니라 다음 승인 산출물로 결정한다.
+
+| 단계 | 가장 빠른 시작 | 시작 조건 |
+| --- | --- | --- |
+| 범위·계약 설계 | 2026-09-05 | Issue 생성 완료. 질문 본문은 아직 작성하지 않음 |
+| 공개 DEV 30개 작성 | 2026-09-14 | 증상 기반 OTC Product·Safety Decision과 `#166` Catalog, `#176` Identity, `#177` Rule 계약·합성 fixture 승인 |
+| 실제 DEV 실행 | 2026-09-15 | `#180` 실제 OTC Runtime과 `#159` Answer, `#160` Citation, `#161` Safety 평가기 준비 |
+| 보호 HOLDOUT 20개 작성·Freeze | 가장 빨라도 2026-09-16 | DEV 결과·실패 taxonomy 검토, threshold 승인, protected root·audit·Freeze Receipt·cross-dataset leakage validator 준비 |
+| 최종 실행·종료 | HOLDOUT Freeze 이후 승인된 단일 평가 창 | 고정된 동일 artifact로 DEV/HOLDOUT 실행, 치명적 안전 실패 0건, 전 도메인·약사/의료 리뷰 완료 |
+
+표의 날짜는 현재 연계 Issue 계획에 따른 earliest date이며, 시작 조건이 충족되지 않으면 자동으로 순연한다.
+따라서 일정만 도달했다는 이유로 다음 단계로 넘어가지 않는다. HOLDOUT 질문 본문·Gold·leakage sidecar는
+항상 보호 경계 안에만 둔다.
 
 ## 5. Dataset identity와 파일 배치
 
