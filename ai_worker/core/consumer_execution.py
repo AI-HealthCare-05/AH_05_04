@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import random
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -17,12 +18,15 @@ from ai_worker.core.handler import HandlerExecutionContext
 from ai_worker.core.job_execution import (
     CommittedDelivery,
     ExecutionLease,
+    FailureDisposition,
     JobExecutionRepository,
     LeaseHeartbeat,
     LeaseHeartbeatHandle,
     LeaseNotAcquired,
+    RecordedFailure,
 )
 from ai_worker.core.results import HandlerSuccess
+from ai_worker.core.retry import RandomValueProvider, calculate_retry_decision
 from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
 from ai_worker.schemas.messages import WorkerMessage
 
@@ -138,7 +142,7 @@ class ConsumerExecution:
             return
 
 
-type LeaseAwareExecutionResult = HandlerSuccess | CommittedDelivery | LeaseNotAcquired
+type LeaseAwareExecutionResult = HandlerSuccess | CommittedDelivery | LeaseNotAcquired | RecordedFailure
 
 
 class LeaseAwareConsumerExecution:
@@ -158,6 +162,7 @@ class LeaseAwareConsumerExecution:
         hard_timeout_seconds: float | None = None,
         monotonic_clock: Callable[[], float] = time.monotonic,
         execution_starter: DomainExecutionStarter | None = None,
+        random_value: RandomValueProvider = random.random,
     ) -> None:
         if hard_timeout_seconds is not None and (
             isinstance(hard_timeout_seconds, bool)
@@ -178,6 +183,7 @@ class LeaseAwareConsumerExecution:
         self._hard_timeout_seconds = None if hard_timeout_seconds is None else float(hard_timeout_seconds)
         self._monotonic_clock = monotonic_clock
         self._execution_starter = execution_starter
+        self._random_value = random_value
 
     async def execute(
         self,
@@ -209,15 +215,32 @@ class LeaseAwareConsumerExecution:
         await self._commit()
         heartbeat_handle = await self._start_heartbeat(acquired)
 
-        result = await self._run_handler(
+        result = await self._execute_handler(
             delivery,
-            heartbeat_handle,
+            lease=acquired,
+            heartbeat_handle=heartbeat_handle,
         )
 
-        if isinstance(result, LeaseNotAcquired):
-            await self._rollback_safely()
+        if isinstance(result, RecordedFailure | LeaseNotAcquired):
+            if isinstance(result, LeaseNotAcquired):
+                await self._rollback_safely()
             return result
 
+        return await self._complete_handler_success(
+            delivery,
+            lease=acquired,
+            heartbeat_handle=heartbeat_handle,
+            result=result,
+        )
+
+    async def _complete_handler_success(
+        self,
+        delivery: WorkerDelivery,
+        *,
+        lease: ExecutionLease,
+        heartbeat_handle: LeaseHeartbeatHandle,
+        result: HandlerSuccess,
+    ) -> HandlerSuccess | LeaseNotAcquired:
         ownership_retained = await self._stop_heartbeat(heartbeat_handle)
 
         if not ownership_retained:
@@ -233,7 +256,7 @@ class LeaseAwareConsumerExecution:
             )
 
             completed = await self._job_repository.complete_execution(
-                acquired,
+                lease,
                 completed_at=self._clock(),
             )
 
@@ -256,6 +279,33 @@ class LeaseAwareConsumerExecution:
 
         return result
 
+    async def _execute_handler(
+        self,
+        delivery: WorkerDelivery,
+        *,
+        lease: ExecutionLease,
+        heartbeat_handle: LeaseHeartbeatHandle,
+    ) -> HandlerSuccess | LeaseNotAcquired | RecordedFailure:
+        try:
+            return await self._run_handler(
+                delivery,
+                heartbeat_handle,
+            )
+        except WorkerError as error:
+            # Handler가 실패 전에 남긴 현재 transaction의 변경은 폐기하고,
+            # Job·Attempt 실패만 새 transaction에 함께 기록합니다.
+            await self._rollback_safely()
+            return await self._record_handler_failure(
+                delivery,
+                lease=lease,
+                heartbeat_handle=heartbeat_handle,
+                error=error,
+            )
+        except BaseException:
+            await self._stop_heartbeat_safely(heartbeat_handle)
+            await self._rollback_safely()
+            raise
+
     async def _run_handler(
         self,
         delivery: WorkerDelivery,
@@ -264,7 +314,6 @@ class LeaseAwareConsumerExecution:
         """Handler 실행과 timeout·heartbeat 정리를 담당합니다."""
 
         execution_context = self._create_execution_context()
-        hard_timeout_reached = False
 
         try:
             return await self._dispatch_with_hard_timeout(
@@ -273,23 +322,74 @@ class LeaseAwareConsumerExecution:
                 context=execution_context,
             )
         except TimeoutError:
-            # timeout으로 Handler task가 취소된 뒤 heartbeat와 현재
-            # transaction을 정리합니다. 결과 commit과 ACK는 수행하지 않습니다.
-            await self._stop_heartbeat_safely(heartbeat_handle)
-            await self._rollback_safely()
-            hard_timeout_reached = True
-        except BaseException:
-            # Dispatcher와 heartbeat 어느 쪽에서 예외가 발생하더라도
-            # background heartbeat를 남기지 않습니다.
-            await self._stop_heartbeat_safely(heartbeat_handle)
-            await self._rollback_safely()
-            raise
-
-        if hard_timeout_reached:
             # 활성 TimeoutError 처리 구간 밖에서 승인된 오류를 생성합니다.
             raise WorkerError(failure_code="TIMEOUT") from None
 
-        raise WorkerError(failure_code="INTERNAL_ERROR")
+    async def _record_handler_failure(
+        self,
+        delivery: WorkerDelivery,
+        *,
+        lease: ExecutionLease,
+        heartbeat_handle: LeaseHeartbeatHandle,
+        error: WorkerError,
+    ) -> RecordedFailure | LeaseNotAcquired:
+        """실제 failure_code를 commit한 뒤에만 원본 entry를 ACK합니다."""
+
+        ownership_retained = await self._stop_heartbeat(heartbeat_handle)
+
+        if not ownership_retained:
+            await self._rollback_safely()
+            return LeaseNotAcquired()
+
+        failed_at = self._clock()
+        decision = calculate_retry_decision(
+            attempt_count=lease.attempt,
+            max_attempts=lease.max_attempts,
+            failure_code=error.failure_code,
+            random_value=self._random_value,
+        )
+        retry_at = (
+            failed_at + timedelta(seconds=decision.delay_seconds)
+            if decision.should_retry and decision.delay_seconds is not None
+            else None
+        )
+
+        persistence_error: ConsumerPersistenceError | None = None
+
+        try:
+            recorded = await self._job_repository.record_failure(
+                lease,
+                failure_code=error.failure_code,
+                failed_at=failed_at,
+                retry_at=retry_at,
+            )
+
+            if not recorded:
+                await self._rollback_safely()
+                return LeaseNotAcquired()
+
+            await self._transaction.commit()
+        except asyncio.CancelledError:
+            await self._rollback_safely()
+            raise
+        except Exception:
+            await self._rollback_safely()
+            persistence_error = ConsumerPersistenceError()
+
+        if persistence_error is not None:
+            raise persistence_error
+
+        await self._acknowledge(delivery.stream_message_id)
+
+        disposition = FailureDisposition.RETRY_WAIT if retry_at is not None else FailureDisposition.FAILED
+        return RecordedFailure(
+            job_id=lease.job_id,
+            event_id=lease.event_id,
+            attempt=lease.attempt,
+            failure_code=error.failure_code,
+            disposition=disposition,
+            available_at=retry_at if retry_at is not None else failed_at,
+        )
 
     def _create_execution_context(
         self,

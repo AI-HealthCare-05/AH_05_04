@@ -7,6 +7,10 @@ from uuid import uuid4
 import pytest
 
 from ai_worker.core.consumer_runtime import ConsumerRuntime
+from ai_worker.core.quarantine import (
+    QuarantineFailureCode,
+    RejectedWorkerDelivery,
+)
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import WorkerMessage
 
@@ -72,6 +76,16 @@ class FakeExecution:
 
     async def execute(self, delivery: WorkerDelivery) -> None:
         self.events.append("execute")
+        self.deliveries.append(delivery)
+
+
+class FakeRejectedExecution:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.deliveries: list[RejectedWorkerDelivery] = []
+
+    async def execute(self, delivery: RejectedWorkerDelivery) -> None:
+        self.events.append("quarantine")
         self.deliveries.append(delivery)
 
 
@@ -266,3 +280,44 @@ async def test_runtime_processes_batch_with_configured_concurrency() -> None:
 
     assert processed_count == 2
     assert execution.started_count == 2
+
+
+@pytest.mark.asyncio
+async def test_runtime_routes_rejected_delivery_to_quarantine_execution() -> None:
+    valid_delivery = build_delivery()
+    rejected_delivery = RejectedWorkerDelivery(
+        stream_name="oryak:jobs",
+        stream_entry_id="2-0",
+        message_digest="a" * 64,
+        failure_code=QuarantineFailureCode.INVALID_MESSAGE_SCHEMA,
+        job_id=None,
+        original_event_id=None,
+        original_schema_version="1.0",
+        trace_id=None,
+    )
+    stream = FakeStreamConsumer()  # 기본값으로 생성한 뒤 혼합 delivery를 주입합니다.
+    stream.deliveries = (  # type: ignore[assignment]
+        valid_delivery,
+        rejected_delivery,
+    )
+    execution = FakeExecution(stream.events)
+    rejected_execution = FakeRejectedExecution(stream.events)
+    runtime = ConsumerRuntime(
+        stream=stream,  # type: ignore[arg-type]
+        execution=execution,
+        rejected_execution=rejected_execution,
+        consumer_name="worker-1",
+        batch_size=2,
+        block_ms=1000,
+    )
+
+    processed_count = await runtime.run_once()
+
+    assert processed_count == 2
+    assert execution.deliveries == [valid_delivery]
+    assert rejected_execution.deliveries == [rejected_delivery]
+    assert set(stream.events) == {
+        "read",
+        "execute",
+        "quarantine",
+    }

@@ -25,6 +25,12 @@ CONTAINER_ONLY_SETTINGS = {
     "OCR_STRUCTURE_LLM_ENABLED": "false",
 }
 
+REQUIRED_WORKER_INTEGRATION_TARGETS = (
+    "tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle",
+    "tests/integration/test_worker_dlq_outbox_repository.py",
+    "tests/integration/test_worker_recovery_repository.py",
+)
+
 
 def _run_with_test_database_body() -> str:
     script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
@@ -57,6 +63,14 @@ def test_run_test_script_exposes_backend_and_shared_contract_packages() -> None:
 
     assert 'REPOSITORY_ROOT="$(pwd)"' in script
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' in _run_with_test_database_body()
+
+
+@pytest.mark.parametrize("target", REQUIRED_WORKER_INTEGRATION_TARGETS)
+def test_run_test_script_includes_worker_recovery_integration_target(target: str) -> None:
+    """GitHub Actions와 로컬 기본 runner가 같은 Worker 복구 경계를 검증해야 합니다."""
+    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+
+    assert target in script
 
 
 def test_example_local_env_storage_dir_is_a_container_path() -> None:

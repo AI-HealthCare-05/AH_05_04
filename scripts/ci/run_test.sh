@@ -199,7 +199,11 @@ if ! run_with_test_database \
   ai_worker/tests/ocr \
   tests/integration/rag \
   tests/integration/test_worker_ocr_persistence.py \
-  tests/integration/test_outbox_publisher.py; then
+  tests/integration/test_outbox_publisher.py \
+  tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed \
+  tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle \
+  tests/integration/test_worker_dlq_outbox_repository.py \
+  tests/integration/test_worker_recovery_repository.py; then
   echo
   echo "Pytest failed."
   echo "Fix the test failures above and re-run."
