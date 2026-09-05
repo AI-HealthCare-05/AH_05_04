@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { ApiError } from '../api/client'
 import { getCurrentUser, type CurrentUser } from '../api/users'
+import { clearOcrJobRecovery } from '../features/ai-jobs/ocrJobRecovery'
 import DesignPrototypePage from '../pages/DesignPrototypePage'
 import HomePage from '../pages/HomePage'
 import LoginPage from '../pages/LoginPage'
@@ -58,6 +59,7 @@ function useAuthStatus(): AuthState {
       } catch (error) {
         if (isStaleTokenError(error)) {
           localStorage.removeItem('access_token')
+          clearOcrJobRecovery()
         }
         if (isMounted) setAuthState({ status: 'guest', user: null })
       }

@@ -152,11 +152,20 @@ function makeOcrResponse(
   }
 }
 
-function renderPage() {
+function renderPage(prefetchedOcrResponse?: OcrJobResponse) {
+  const reviewPath =
+    '/prescriptions/review?document_id=document-1&job_id=job-1'
+
   return render(
     <MemoryRouter
       initialEntries={[
-        '/prescriptions/review?document_id=document-1&job_id=job-1',
+        prefetchedOcrResponse
+          ? {
+              pathname: '/prescriptions/review',
+              search: '?document_id=document-1&job_id=job-1',
+              state: { ocrResponse: prefetchedOcrResponse },
+            }
+          : reviewPath,
       ]}
     >
       <Routes>
@@ -293,6 +302,21 @@ afterEach(() => {
 })
 
 describe('PrescriptionReviewPage confirmation gate', () => {
+  it('result_url에서 미리 받은 OCR fields를 재조회 없이 DOC-03에 표시한다', async () => {
+    const prefetchedResult = makeOcrResponse(makeCompleteFields())
+
+    renderPage(prefetchedResult)
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '처방약 1 100mg',
+        level: 2,
+      }),
+    ).toBeTruthy()
+    expect(getOcrJob).not.toHaveBeenCalled()
+    expect(getPrescriptionDocumentFile).toHaveBeenCalledWith('document-1')
+  })
+
   it('DOC-03 Dosey 구조에 실제 OCR 처방일과 약물 요약을 표시한다', async () => {
     vi.mocked(getOcrJob).mockResolvedValue(
       makeOcrResponse(makeCompleteFields()),
