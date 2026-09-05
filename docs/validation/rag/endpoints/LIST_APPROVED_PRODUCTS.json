@@ -1,0 +1,114 @@
+{
+  "allowed_content_types": [
+    "application/json"
+  ],
+  "authentication_failure_codes": [
+    "20",
+    "30",
+    "31"
+  ],
+  "blocking_code": null,
+  "body_error_code_path": "header.resultCode",
+  "body_success_code_path": "header.resultCode",
+  "body_success_codes": [
+    "00"
+  ],
+  "daily_limit_codes": [
+    "22"
+  ],
+  "encoding": "UTF-8",
+  "execution_status": "COMPLETED",
+  "external_version_field": null,
+  "external_version_field_exists": null,
+  "failure_code": null,
+  "fixture_evidence": [
+    {
+      "path": "tests/fixtures/rag/mfds/list_approved_products_success.json",
+      "scenario": "LIST_APPROVED_PRODUCTS_SUCCESS",
+      "sha256": "227e4eff000ad8048460399c9c670740bffe65e066de3f0edfe848f81432d4f0"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_auth_failure.json",
+      "scenario": "SYNTHETIC_AUTH_FAILURE",
+      "sha256": "be6d2256676817ef17182bd92307b59e4449225495156528c6124e79f49f5dbc"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_daily_limit.json",
+      "scenario": "SYNTHETIC_DAILY_LIMIT",
+      "sha256": "a0b6e4b1b3c728c359a9ae73f3b51114463d7c8b653c28c134419e279deac347"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_empty.json",
+      "scenario": "SYNTHETIC_EMPTY",
+      "sha256": "e8e99ca7692ff15560d1ee67e8d9ddc3e4132ddad92c6e3250a5b1cfe3dbc81d"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_schema_drift.json",
+      "scenario": "SYNTHETIC_SCHEMA_DRIFT",
+      "sha256": "ac40eb8d47fe8b38278e609642a69485aaf144c0bc75833c469b20c48621339c"
+    }
+  ],
+  "generated_at": "2026-09-05T03:34:13+00:00",
+  "identity": {
+    "endpoint_code": "MFDS_PRODUCT_APPROVAL_API",
+    "operation_code": "LIST_APPROVED_PRODUCTS",
+    "source_code": "MFDS_PRODUCT_APPROVAL"
+  },
+  "limits": {
+    "connect_timeout_seconds": 3,
+    "max_decompressed_bytes": 10000000,
+    "max_pages": 500,
+    "max_redirects": 0,
+    "max_response_bytes": 5000000,
+    "max_retry_attempts": 2,
+    "read_timeout_seconds": 10,
+    "total_timeout_seconds": 600
+  },
+  "live_validation_git_sha": "38b57c6fff11c40ead2779abefb88e4d77a1f0da",
+  "official_document_checked_at": "2026-09-05",
+  "official_document_url": "https://www.data.go.kr/data/15095677/openapi.do",
+  "pagination": {
+    "end_condition": "TOTAL_COUNT_REACHED",
+    "mode": "PAGE_NUMBER",
+    "page_base": 1,
+    "page_parameter": "pageNo",
+    "page_size_limit": 100,
+    "page_size_parameter": "numOfRows"
+  },
+  "parser_activation_allowed": true,
+  "primary_key_duplicate_count": 0,
+  "primary_key_fields": [
+    "ITEM_SEQ"
+  ],
+  "primary_key_null_count": 0,
+  "receipt_hash": "1f96b97008a66d98b7a5e21c004ef7802c32a91787cfbcbe1abcf97d3f73e64c",
+  "receipt_version": "1.1",
+  "regression_fixture_git_sha": "41b826871b363f86e387234a7c93824869cb973c",
+  "required_parameters": [
+    {
+      "location": "query",
+      "name": "serviceKey",
+      "sensitive": true,
+      "type_name": "string"
+    },
+    {
+      "location": "query",
+      "name": "type",
+      "sensitive": false,
+      "type_name": "string"
+    }
+  ],
+  "retry_mapping": {
+    "authentication_failure": "NOT_RETRYABLE",
+    "daily_limit": "RETRY_AT_RESET",
+    "temporary_failure": "BACKOFF"
+  },
+  "source_run_status": "SUCCEEDED",
+  "validated_at": "2026-09-05T02:10:46+00:00",
+  "validated_record_count": 42989,
+  "verified_host": "apis.data.go.kr",
+  "verified_http_method": "GET",
+  "verified_path_template": "/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnInq07",
+  "verified_scheme": "https",
+  "whole_record_duplicate_count": 0
+}
