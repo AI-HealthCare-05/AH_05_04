@@ -6,6 +6,7 @@ from pydantic import BaseModel, BeforeValidator, Field, StrictInt, StringConstra
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
+from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.schemas.common import (
     ImmutableReference,
     LeakageAxis,
@@ -187,6 +188,12 @@ def _parse_hashed_model[T: BaseModel](
         != expected
     ):
         raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+    try:
+        validate_privacy_boundary(canonical_payload)
+    except EvaluationValidationError as error:
+        if error.code is EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN:
+            raise EvaluationValidationError(EvaluationErrorCode.PRIVACY_VALUE_DETECTED, error.safe_path) from None
+        raise
     return validated
 
 

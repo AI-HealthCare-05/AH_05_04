@@ -245,6 +245,65 @@ def test_parsers_reject_self_hash_mismatch(
 
 
 @pytest.mark.parametrize(
+    ("payload_factory", "parser", "inject_sensitive_value", "expected_safe_path", "sentinel"),
+    [
+        (
+            _authoring_payload,
+            parse_authoring_identity_manifest_bytes,
+            lambda payload, value: payload["entries"][0].__setitem__("question_template_spec", value),
+            "/*/0/*",
+            "patient@example.com",
+        ),
+        (
+            _index_receipt_payload,
+            parse_index_build_receipt_bytes,
+            lambda payload, value: payload["bridge_entries"][0].__setitem__("source_locator", value),
+            "/*/0/*",
+            "010-1234-5678",
+        ),
+        (
+            _study_split_payload,
+            parse_study_split_receipt_bytes,
+            lambda payload, value: payload.__setitem__("hmac_key_version", value),
+            "/*",
+            "sk-proj-abcdefghijklmnop",
+        ),
+    ],
+)
+def test_parsers_reject_rehashed_sensitive_values_without_exposing_them(
+    payload_factory: Callable[[], Payload],
+    parser: Parser,
+    inject_sensitive_value: Callable[[Payload, str], None],
+    expected_safe_path: str,
+    sentinel: str,
+) -> None:
+    payload = payload_factory()
+    inject_sensitive_value(payload, sentinel)
+    hash_field = "manifest_sha256" if "manifest_sha256" in payload else "receipt_sha256"
+    payload = _with_self_hash(payload, hash_field)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        parser(canonical_json_bytes(payload))
+
+    assert caught.value.code is EvaluationErrorCode.PRIVACY_VALUE_DETECTED
+    assert caught.value.safe_path == expected_safe_path
+    assert sentinel not in str(caught.value)
+
+
+def test_self_hash_mismatch_takes_precedence_over_sensitive_value_detection() -> None:
+    payload = _authoring_payload()
+    entries: list[Payload] = payload["entries"]
+    entries[0]["question_template_spec"] = "patient@example.com"
+    payload["manifest_sha256"] = "0" * 64
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        parse_authoring_identity_manifest_bytes(canonical_json_bytes(payload))
+
+    assert caught.value.code is EvaluationErrorCode.HASH_MISMATCH
+    assert "patient@example.com" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
     ("raw_bytes", "parser"),
     [
         (b'{"schema_id":"first","schema_id":"second"}', parse_authoring_identity_manifest_bytes),
