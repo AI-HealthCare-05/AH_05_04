@@ -12,6 +12,10 @@ must not be copied into runtime defaults, migrations, DTOs, public contracts, or
 All Product and Ingredient names and identities use the explicit `SYNTH_*` namespace. The fixture contains no
 patient data, prescription data, raw OCR values, Source IDs, credentials, or real medication data.
 
+Each `synthetic_input` contains exactly the Resolver direct-input allowlist: `medication_name` and nullable
+`strength_text`. Candidate form, version mismatch, input validation relation, and permutation details are separate
+draft evidence/condition metadata with `direct_input=false`; they are not additional Resolver input fields.
+
 Every case belongs to the `DEV` partition and has a `lg-dev-resolver-*` leakage group plus named reviewer
 provenance. Future `HOLDOUT` and `SAFETY` partitions are reserved with different namespaces and contain no cases
 in this fixture; they must not reuse DEV leakage groups or examples. Reviewer provenance also uses distinct
@@ -23,3 +27,7 @@ margin gates, dense-only and ingredient-only branches, invalid input axes, versi
 and deterministic input permutation. Every row records raw/deduped/eligible/persisted counts, a draft outcome or
 typed failure, a non-authoritative/TBC DB projection, public candidate count, internal-evidence retention,
 unresolved reason code, partition, leakage group, and reviewer provenance.
+
+Resolver business success is written as `SINGLE_CANDIDATE`, never as lifecycle `READY`. A corresponding
+`db_projection.search_status=READY` appears only as an explicitly `NON_AUTHORITATIVE_DRAFT` projection into the
+unresolved #171 lifecycle boundary.

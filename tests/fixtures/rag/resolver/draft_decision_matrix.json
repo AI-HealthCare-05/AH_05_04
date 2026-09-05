@@ -62,12 +62,11 @@
       "case_axis": "exact single",
       "synthetic_input": {
         "medication_name": "SYNTH_PRODUCT_ALPHA",
-        "strength_text": "SYNTH_STRENGTH_A",
-        "form_text": "SYNTH_FORM_TABLET"
+        "strength_text": "SYNTH_STRENGTH_A"
       },
       "draft_scenario": "One Product Exact signal resolves to SYNTH_PRODUCT:SYNTH-P-001.",
       "counts": {"raw_count": 1, "deduped_count": 1, "eligible_count": 1, "persisted_count": 1},
-      "expected": {"kind": "OUTCOME", "value": "READY", "typed_failure": null},
+      "expected": {"kind": "OUTCOME", "value": "SINGLE_CANDIDATE", "typed_failure": null},
       "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "READY", "result_rows": 1},
       "public_candidate_count": 1,
       "retained_internal_evidence": true,
@@ -77,10 +76,10 @@
     {
       "case_id": "alias-single",
       "case_axis": "alias single",
-      "synthetic_input": {"medication_name": "SYNTH_ALIAS_ALPHA", "strength_text": "SYNTH_STRENGTH_A", "form_text": "SYNTH_FORM_TABLET"},
+      "synthetic_input": {"medication_name": "SYNTH_ALIAS_ALPHA", "strength_text": "SYNTH_STRENGTH_A"},
       "draft_scenario": "One Approved Alias Exact signal resolves to SYNTH_PRODUCT:SYNTH-P-001.",
       "counts": {"raw_count": 1, "deduped_count": 1, "eligible_count": 1, "persisted_count": 1},
-      "expected": {"kind": "OUTCOME", "value": "READY", "typed_failure": null},
+      "expected": {"kind": "OUTCOME", "value": "SINGLE_CANDIDATE", "typed_failure": null},
       "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "READY", "result_rows": 1},
       "public_candidate_count": 1,
       "retained_internal_evidence": true,
@@ -90,10 +89,10 @@
     {
       "case_id": "cross-stage-duplicate",
       "case_axis": "cross-stage duplicate",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_BETA", "strength_text": "SYNTH_STRENGTH_B", "form_text": "SYNTH_FORM_CAPSULE"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_BETA", "strength_text": "SYNTH_STRENGTH_B"},
       "draft_scenario": "Product Exact and Approved Alias Exact return the same SYNTH_PRODUCT:SYNTH-P-002 identity.",
       "counts": {"raw_count": 2, "deduped_count": 1, "eligible_count": 1, "persisted_count": 1},
-      "expected": {"kind": "OUTCOME", "value": "READY", "typed_failure": null},
+      "expected": {"kind": "OUTCOME", "value": "SINGLE_CANDIDATE", "typed_failure": null},
       "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "READY", "result_rows": 1},
       "public_candidate_count": 1,
       "retained_internal_evidence": true,
@@ -103,7 +102,7 @@
     {
       "case_id": "same-name-multiple-strength",
       "case_axis": "same-name multiple strength",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_GAMMA", "strength_text": null, "form_text": "SYNTH_FORM_TABLET"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_GAMMA", "strength_text": null},
       "draft_scenario": "Two official Product identities share a synthetic name and differ by synthetic strength.",
       "counts": {"raw_count": 2, "deduped_count": 2, "eligible_count": 2, "persisted_count": 2},
       "expected": {"kind": "OUTCOME", "value": "AMBIGUOUS", "typed_failure": null},
@@ -116,7 +115,7 @@
     {
       "case_id": "missing-strength",
       "case_axis": "missing strength",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_DELTA", "strength_text": null, "form_text": "SYNTH_FORM_CAPSULE"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_DELTA", "strength_text": null},
       "draft_scenario": "Nullable strength is accepted as input, but two strength variants prevent automatic selection.",
       "counts": {"raw_count": 2, "deduped_count": 2, "eligible_count": 2, "persisted_count": 2},
       "expected": {"kind": "OUTCOME", "value": "AMBIGUOUS", "typed_failure": null},
@@ -129,10 +128,10 @@
     {
       "case_id": "one-compatible-strength",
       "case_axis": "one compatible strength",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_EPSILON", "strength_text": "SYNTH_STRENGTH_C", "form_text": "SYNTH_FORM_TABLET"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_EPSILON", "strength_text": "SYNTH_STRENGTH_C"},
       "draft_scenario": "Two Product identities are found; only SYNTH_PRODUCT:SYNTH-P-005 is strength-compatible.",
       "counts": {"raw_count": 2, "deduped_count": 2, "eligible_count": 1, "persisted_count": 2},
-      "expected": {"kind": "OUTCOME", "value": "READY", "typed_failure": null},
+      "expected": {"kind": "OUTCOME", "value": "SINGLE_CANDIDATE", "typed_failure": null},
       "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "READY", "result_rows": 2},
       "public_candidate_count": 1,
       "retained_internal_evidence": true,
@@ -142,7 +141,7 @@
     {
       "case_id": "explicit-strength-conflict",
       "case_axis": "explicit strength conflict",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_ZETA", "strength_text": "SYNTH_STRENGTH_REQUESTED", "form_text": "SYNTH_FORM_TABLET"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_ZETA", "strength_text": "SYNTH_STRENGTH_REQUESTED"},
       "draft_scenario": "The only Product identity has SYNTH_STRENGTH_DIFFERENT and is ineligible.",
       "counts": {"raw_count": 1, "deduped_count": 1, "eligible_count": 0, "persisted_count": 1},
       "expected": {"kind": "OUTCOME", "value": "NO_CANDIDATE", "typed_failure": null},
@@ -155,7 +154,8 @@
     {
       "case_id": "form-conflict",
       "case_axis": "form conflict",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_ETA", "strength_text": "SYNTH_STRENGTH_D", "form_text": "SYNTH_FORM_REQUESTED"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_ETA", "strength_text": "SYNTH_STRENGTH_D"},
+      "candidate_evidence": {"candidate_form": "SYNTH_FORM_DIFFERENT", "derived_requested_form": "TBC", "direct_input": false},
       "draft_scenario": "The only Product identity has SYNTH_FORM_DIFFERENT and is ineligible.",
       "counts": {"raw_count": 1, "deduped_count": 1, "eligible_count": 0, "persisted_count": 1},
       "expected": {"kind": "OUTCOME", "value": "NO_CANDIDATE", "typed_failure": null},
@@ -168,7 +168,7 @@
     {
       "case_id": "low-relevance",
       "case_axis": "low relevance",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_THETA", "strength_text": "SYNTH_STRENGTH_E", "form_text": "SYNTH_FORM_TABLET"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_THETA", "strength_text": "SYNTH_STRENGTH_E"},
       "draft_scenario": "A Product signal is below the unresolved relevance threshold.",
       "counts": {"raw_count": 1, "deduped_count": 1, "eligible_count": 0, "persisted_count": 1},
       "expected": {"kind": "OUTCOME", "value": "NO_CANDIDATE", "typed_failure": null},
@@ -181,7 +181,7 @@
     {
       "case_id": "insufficient-margin",
       "case_axis": "insufficient margin",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_IOTA", "strength_text": "SYNTH_STRENGTH_F", "form_text": "SYNTH_FORM_TABLET"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_IOTA", "strength_text": "SYNTH_STRENGTH_F"},
       "draft_scenario": "Two eligible Product identities have a gap below the unresolved margin threshold.",
       "counts": {"raw_count": 2, "deduped_count": 2, "eligible_count": 2, "persisted_count": 2},
       "expected": {"kind": "OUTCOME", "value": "AMBIGUOUS", "typed_failure": null},
@@ -194,7 +194,7 @@
     {
       "case_id": "dense-only",
       "case_axis": "dense-only",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_KAPPA", "strength_text": "SYNTH_STRENGTH_G", "form_text": "SYNTH_FORM_CAPSULE"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_KAPPA", "strength_text": "SYNTH_STRENGTH_G"},
       "draft_scenario": "Only the synthetic dense stage returns a Product signal; automatic selection remains closed.",
       "counts": {"raw_count": 1, "deduped_count": 1, "eligible_count": 0, "persisted_count": 1},
       "expected": {"kind": "OUTCOME", "value": "NO_CANDIDATE", "typed_failure": null},
@@ -207,7 +207,7 @@
     {
       "case_id": "ingredient-only",
       "case_axis": "ingredient-only",
-      "synthetic_input": {"medication_name": "SYNTH_INGREDIENT_ALPHA", "strength_text": null, "form_text": null},
+      "synthetic_input": {"medication_name": "SYNTH_INGREDIENT_ALPHA", "strength_text": null},
       "draft_scenario": "A SYNTH_INGREDIENT:SYNTH-I-001 diagnostic signal exists without a Product identity.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "OUTCOME", "value": "INGREDIENT_ONLY", "typed_failure": null},
@@ -220,7 +220,7 @@
     {
       "case_id": "empty-input",
       "case_axis": "empty input",
-      "synthetic_input": {"medication_name": "", "strength_text": null, "form_text": null},
+      "synthetic_input": {"medication_name": "", "strength_text": null},
       "draft_scenario": "An empty synthetic medication name is rejected before search.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "OUTCOME", "value": "INVALID_INPUT", "typed_failure": null},
@@ -233,7 +233,8 @@
     {
       "case_id": "oversized-input",
       "case_axis": "oversized input",
-      "synthetic_input": {"medication_name": "SYNTH_OVERSIZED_NAME_SENTINEL", "strength_text": null, "form_text": null, "length_relation": "ABOVE_TBC_MAXIMUM"},
+      "synthetic_input": {"medication_name": "SYNTH_OVERSIZED_NAME_SENTINEL", "strength_text": null},
+      "draft_condition": {"length_relation": "ABOVE_TBC_MAXIMUM", "direct_input": false},
       "draft_scenario": "A generated synthetic name above the unresolved maximum length is rejected before search.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "OUTCOME", "value": "INVALID_INPUT", "typed_failure": null},
@@ -246,7 +247,8 @@
     {
       "case_id": "non-nfc-input",
       "case_axis": "non-NFC input",
-      "synthetic_input": {"medication_name": "SYNTH_NON_NFC_SENTINEL", "strength_text": null, "form_text": null, "normalization_relation": "NOT_TBC_NORMALIZATION_FORM"},
+      "synthetic_input": {"medication_name": "SYNTH_NON_NFC_SENTINEL", "strength_text": null},
+      "draft_condition": {"normalization_relation": "NOT_TBC_NORMALIZATION_FORM", "direct_input": false},
       "draft_scenario": "A synthetic non-normalized sentinel is rejected without embedding raw non-NFC medication text in the fixture.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "OUTCOME", "value": "INVALID_INPUT", "typed_failure": null},
@@ -259,7 +261,8 @@
     {
       "case_id": "version-mismatch",
       "case_axis": "version mismatch",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_LAMBDA", "strength_text": "SYNTH_STRENGTH_H", "form_text": "SYNTH_FORM_TABLET", "resolver_input_version": "SYNTH-VERSION-A", "active_version": "SYNTH-VERSION-B"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_LAMBDA", "strength_text": "SYNTH_STRENGTH_H"},
+      "version_evidence": {"resolver_input_version": "SYNTH-VERSION-A", "active_version": "SYNTH-VERSION-B", "direct_input": false},
       "draft_scenario": "Synthetic immutable input version and active version do not match.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "TYPED_FAILURE", "value": "FAILED", "typed_failure": "TBC"},
@@ -272,7 +275,7 @@
     {
       "case_id": "malformed-hit",
       "case_axis": "malformed hit",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_MU", "strength_text": "SYNTH_STRENGTH_I", "form_text": "SYNTH_FORM_TABLET"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_MU", "strength_text": "SYNTH_STRENGTH_I"},
       "draft_scenario": "A synthetic port hit omits a required Product identity component and is rejected before count acceptance.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "TYPED_FAILURE", "value": "FAILED", "typed_failure": "TBC"},
@@ -285,7 +288,7 @@
     {
       "case_id": "non-finite-hit",
       "case_axis": "non-finite hit",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_NU", "strength_text": "SYNTH_STRENGTH_J", "form_text": "SYNTH_FORM_CAPSULE"},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_NU", "strength_text": "SYNTH_STRENGTH_J"},
       "draft_scenario": "A synthetic port hit declares a NON_FINITE_SCORE sentinel and is rejected before count acceptance.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "TYPED_FAILURE", "value": "FAILED", "typed_failure": "TBC"},
@@ -298,10 +301,11 @@
     {
       "case_id": "deterministic-input-permutation",
       "case_axis": "deterministic input permutation",
-      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_XI", "strength_text": "SYNTH_STRENGTH_K", "form_text": "SYNTH_FORM_TABLET", "permutations": ["SYNTH_ORDER_A", "SYNTH_ORDER_B"]},
+      "synthetic_input": {"medication_name": "SYNTH_PRODUCT_XI", "strength_text": "SYNTH_STRENGTH_K"},
+      "candidate_evidence": {"permutations": ["SYNTH_ORDER_A", "SYNTH_ORDER_B"], "direct_input": false},
       "draft_scenario": "Two permutations of the same three synthetic stage signals must produce an identical decision and Product ordering.",
       "counts": {"raw_count": 3, "deduped_count": 2, "eligible_count": 1, "persisted_count": 2},
-      "expected": {"kind": "OUTCOME", "value": "READY", "typed_failure": null, "permutation_invariant": true},
+      "expected": {"kind": "OUTCOME", "value": "SINGLE_CANDIDATE", "typed_failure": null, "permutation_invariant": true},
       "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "READY", "result_rows": 2, "projection_equal_across_permutations": true},
       "public_candidate_count": 1,
       "retained_internal_evidence": true,
