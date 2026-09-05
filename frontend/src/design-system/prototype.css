@@ -525,6 +525,18 @@
   top: -162.568px;
 }
 
+.dosey-mascot--navigation {
+  width: 28px;
+  height: 28px;
+}
+
+.dosey-mascot--navigation img {
+  width: 204.547px;
+  height: 166.971px;
+  left: -44.211px;
+  top: -126.613px;
+}
+
 .app-back-row {
   min-height: 40px;
   flex: 0 0 40px;
@@ -924,19 +936,26 @@
 }
 
 .bottom-nav {
-  min-height: calc(72px + var(--ds-safe-bottom));
+  min-height: calc(88px + var(--ds-safe-bottom));
   position: absolute;
   inset: auto 0 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  padding: 7px 12px var(--ds-safe-bottom);
+  grid-template-columns: repeat(5, 1fr);
+  padding: 8px 0 var(--ds-safe-bottom);
   border-top: 1px solid var(--ds-line);
   background: rgb(255 255 255 / 96%);
 }
 
 .bottom-nav button {
-  min-height: 54px;
+  min-width: 0;
+  min-height: 68px;
   position: relative;
+  display: grid;
+  grid-template-rows: 34px 20px;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  padding: 4px 0;
   border: 0;
   background: transparent;
   color: #737d89;
@@ -954,7 +973,7 @@
   width: 18px;
   height: 3px;
   position: absolute;
-  top: 3px;
+  top: 0;
   left: 50%;
   border-radius: 999px;
   background: var(--ds-action);
@@ -964,6 +983,29 @@
 .bottom-nav button:disabled {
   cursor: default;
   color: #9aa3ad;
+}
+
+.bottom-nav__icon {
+  width: 26px;
+  height: 26px;
+  display: block;
+}
+
+.bottom-nav__doji-icon {
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  align-self: end;
+  border: 1px solid #e5eaf1;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 9%);
+}
+
+.bottom-nav__label {
+  font-size: 12px;
+  line-height: 20px;
 }
 
 .compact-two-column {

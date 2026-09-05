@@ -1,4 +1,50 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import calendarIcon from '../assets/icon-calendar-schedule.svg'
+import guideIcon from '../assets/icon-book-open-guide.svg'
+import menuIcon from '../assets/icon-menu.svg'
+import { DoseyMascot } from './DoseyMascot'
+
+export type MainNavigationItem = '홈' | '일정' | '도지' | '가이드' | '메뉴'
+
+const mainNavigationItems: readonly MainNavigationItem[] = [
+  '홈',
+  '일정',
+  '도지',
+  '가이드',
+  '메뉴',
+]
+
+function NavigationIcon({ item }: { item: MainNavigationItem }) {
+  if (item === '홈') {
+    return (
+      <svg
+        className="bottom-nav__icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M4 10.4 12 4l8 6.4V20h-5.25v-5.5h-5.5V20H4v-9.6Z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )
+  }
+
+  if (item === '도지') {
+    return (
+      <span className="bottom-nav__doji-icon" aria-hidden="true">
+        <DoseyMascot variant="navigation" />
+      </span>
+    )
+  }
+
+  const icon = item === '일정' ? calendarIcon : item === '가이드' ? guideIcon : menuIcon
+  return <img className="bottom-nav__icon" src={icon} alt="" aria-hidden="true" />
+}
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost'
@@ -88,9 +134,9 @@ export function MobileShell({
   backPlacement?: 'topbar' | 'content'
   hideHeader?: boolean
   hideNavigation?: boolean
-  activeNavigation?: '홈' | '일정' | '가이드' | '메뉴'
-  disabledNavigation?: readonly ('홈' | '일정' | '가이드' | '메뉴')[]
-  onNavigate?: (item: '홈' | '일정' | '가이드' | '메뉴') => void
+  activeNavigation?: MainNavigationItem
+  disabledNavigation?: readonly MainNavigationItem[]
+  onNavigate?: (item: MainNavigationItem) => void
 }) {
   return (
     <div className="mobile-app">
@@ -114,7 +160,7 @@ export function MobileShell({
       {children}
       {!hideNavigation && (
         <nav className="bottom-nav" aria-label="주요 메뉴">
-          {(['홈', '일정', '가이드', '메뉴'] as const).map((item) => (
+          {mainNavigationItems.map((item) => (
             <button
               key={item}
               type="button"
@@ -123,7 +169,8 @@ export function MobileShell({
               disabled={disabledNavigation.includes(item)}
               onClick={() => onNavigate?.(item)}
             >
-              {item}
+              <NavigationIcon item={item} />
+              <span className="bottom-nav__label">{item}</span>
             </button>
           ))}
         </nav>
