@@ -86,12 +86,13 @@ def upgrade() -> None:
         """
     )
 
-    # Result 변경 없이 Search.displayed_candidate_count만 바뀌는 경로(정상 흐름에는 없지만
-    # 직접 SQL로 값을 고치는 실수를 막기 위한 방어선)도 같은 함수로 재검증한다.
+    # Result 변경 없이 Search.displayed_candidate_count만 바뀌거나 불일치 값으로 Search가
+    # 직접 생성되는 경로(정상 흐름에는 없지만 직접 SQL 실수를 막기 위한 방어선)도
+    # 같은 함수로 재검증한다.
     op.execute(
         """
         CREATE CONSTRAINT TRIGGER trg_candidate_search_displayed_count
-        AFTER UPDATE OF displayed_candidate_count ON medication_candidate_search
+        AFTER INSERT OR UPDATE OF displayed_candidate_count ON medication_candidate_search
         DEFERRABLE INITIALLY DEFERRED
         FOR EACH ROW
         EXECUTE FUNCTION check_medication_candidate_search_displayed_count();

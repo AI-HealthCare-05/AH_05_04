@@ -2627,6 +2627,37 @@ async def test_candidate_search_displayed_count_deferred_constraint_blocks_misma
 
 
 @pytest.mark.asyncio
+async def test_candidate_search_displayed_count_deferred_constraint_blocks_insert_mismatch(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """Search를 직접 INSERT할 때 displayed_candidate_count가 실제 표시 Result 수와
+    불일치해도 commit 시점에 rollback되는지 확인한다."""
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO medication_candidate_search
+                        (id, prescription_version_medication_id, medication_name_snapshot, query_digest,
+                         status, candidate_count, displayed_candidate_count)
+                    VALUES (:id, :pvm_id, '테스트약', :digest, 'RUNNING', 1, 1)
+                    """
+                ),
+                {
+                    "id": str(uuid4()),
+                    "pvm_id": str(uuid4()),
+                    "digest": f"digest-{uuid4().hex[:8]}",
+                },
+            )
+            with pytest.raises(DBAPIError, match="does not match actual displayed"):
+                await connection.commit()
+        finally:
+            if transaction.is_active:
+                await transaction.rollback()
+
+
+@pytest.mark.asyncio
 async def test_candidate_search_displayed_count_deferred_constraint_allows_match(
     migrated_engine: AsyncEngine,
 ) -> None:

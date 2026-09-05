@@ -52,7 +52,13 @@ def _service(session: AsyncSession) -> MedicationIdentificationService:
     return MedicationIdentificationService(MedicationCandidateRepository(session))
 
 
-def _ready_result(*, product_id=None, result_rank: int = 1) -> MedicationCandidateResultCreate:
+def _ready_result(
+    *,
+    product_id=None,
+    result_rank: int = 1,
+    result_score: float = 0.95,
+    result_method: str = "PRODUCT_NAME",
+) -> MedicationCandidateResultCreate:
     return MedicationCandidateResultCreate(
         product_id=product_id or uuid4(),
         code_system="MFDS_ITEM_SEQ",
@@ -63,8 +69,8 @@ def _ready_result(*, product_id=None, result_rank: int = 1) -> MedicationCandida
         manufacturer_name="테스트제약",
         product_status="ACTIVE",
         result_rank=result_rank,
-        result_score=0.95,
-        result_method="PRODUCT_NAME",
+        result_score=result_score,
+        result_method=result_method,
         is_displayed=True,
         selection_eligible=True,
     )
@@ -273,6 +279,66 @@ async def test_confirm_identification_consumes_ready_search(db_session: AsyncSes
     assert identification.decision_reason is None
     assert finalized.search.status == MedicationCandidateSearchStatus.CONSUMED
     assert finalized.search.consumed_at is not None
+
+
+async def test_finalize_candidate_search_rejects_non_finite_result_score(db_session: AsyncSession) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="non-finite-score@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    medication = await _create_medication(db_session, prescription=prescription)
+    search = (
+        await service.record_candidate_search(
+            prescription_version_medication_id=medication.id,
+            user_id=owner.id,
+            query_digest="query-digest",
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+        )
+    ).search
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.finalize_candidate_search(
+            search_id=search.id,
+            user_id=owner.id,
+            status=MedicationCandidateSearchStatus.READY,
+            results=[_ready_result(result_score=float("nan"))],
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.code == "VALIDATION_FAILED"
+    assert exc_info.value.details[0].field == "result_score"
+    assert exc_info.value.details[0].reason == "FINITE_NUMBER_REQUIRED"
+
+
+async def test_finalize_candidate_search_rejects_blank_result_method(db_session: AsyncSession) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="blank-method@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    medication = await _create_medication(db_session, prescription=prescription)
+    search = (
+        await service.record_candidate_search(
+            prescription_version_medication_id=medication.id,
+            user_id=owner.id,
+            query_digest="query-digest",
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+        )
+    ).search
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.finalize_candidate_search(
+            search_id=search.id,
+            user_id=owner.id,
+            status=MedicationCandidateSearchStatus.READY,
+            results=[_ready_result(result_method="  ")],
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.code == "VALIDATION_FAILED"
+    assert exc_info.value.details[0].field == "result_method"
+    assert exc_info.value.details[0].reason == "NONBLANK_TEXT_REQUIRED"
 
 
 async def test_confirm_identification_rejects_reconfirm_of_consumed_search(db_session: AsyncSession) -> None:

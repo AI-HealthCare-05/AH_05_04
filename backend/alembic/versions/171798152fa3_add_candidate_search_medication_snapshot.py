@@ -25,6 +25,7 @@ def upgrade() -> None:
     # 대상으로 실행됐는지는 여기 스냅샷 컬럼에 검색 생성 시점 값을 복사해 보존한다
     # (#260 Product Identity 원칙과 같은 이유 — 살아있는 FK 참조만으로는 과거 시점 값을
     # 재구성할 수 없다).
+    # 이 테이블은 아직 사용자 트래픽에 연결되지 않아 기존 행과의 충돌 위험이 없다.
     op.add_column(
         "medication_candidate_search",
         sa.Column("medication_name_snapshot", sa.String(length=255), nullable=False),

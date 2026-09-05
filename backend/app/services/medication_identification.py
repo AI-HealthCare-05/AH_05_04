@@ -1,3 +1,4 @@
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -281,6 +282,8 @@ class MedicationIdentificationService:
         displayed_count = sum(1 for result in results if result.is_displayed)
         selectable_count = sum(1 for result in results if result.selection_eligible)
 
+        MedicationIdentificationService._validate_result_metadata(results)
+
         if status not in _FINALIZABLE_SEARCH_STATUSES:
             raise MedicationIdentificationService._invalid_state_error(
                 field="status",
@@ -327,6 +330,20 @@ class MedicationIdentificationService:
                 field="status_reason",
                 reason="INVALID_INPUT",
             )
+
+    @staticmethod
+    def _validate_result_metadata(results: list[MedicationCandidateResultCreate]) -> None:
+        for result in results:
+            if not math.isfinite(result.result_score):
+                raise MedicationIdentificationService._invalid_state_error(
+                    field="result_score",
+                    reason="FINITE_NUMBER_REQUIRED",
+                )
+            if not result.result_method.strip():
+                raise MedicationIdentificationService._invalid_state_error(
+                    field="result_method",
+                    reason="NONBLANK_TEXT_REQUIRED",
+                )
 
     @staticmethod
     def _is_expired(search: MedicationCandidateSearch, *, now: datetime) -> bool:
