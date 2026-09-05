@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
+from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
+from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
+    parse_status_bytes,
+    render_report,
+)
+
+REPOSITORY_ROOT = Path(__file__).parents[3]
+STATUS_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/status.json"
+REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
+SCHEMA_SET_HASH = "e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f"
+
+
+def _status_payload() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": "1.0.0",
+        "issue": "#273",
+        "phase": "PHASE_0_SCHEMA_CANDIDATE",
+        "status_label": "Candidate · Review Required",
+        "schema_set_status": "REVIEW_REQUIRED",
+        "dataset_ref": "rag-natural-language-retrieval-dev@1.0.0",
+        "planned_counts": {
+            "dev_questions": 60,
+            "holdout_questions": 40,
+            "topics": 5,
+            "expression_types": 6,
+            "independent_groups": 20,
+        },
+        "created_counts": {"dev_questions": 0, "holdout_questions": 0, "gold_records": 0},
+        "schema_set_ref": {
+            "id": "rag-eval.schema-set",
+            "version": "1.3.0",
+            "hash": SCHEMA_SET_HASH,
+        },
+        "schema_set_decision": "docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md",
+        "responsible_reviewer": "@hazelnutflavoured",
+        "approval_transition": "FUTURE_PULL_REQUEST_REVIEW_EVENT",
+        "dataset_status": "NOT_CREATED",
+        "gold_review_status": "NOT_STARTED",
+        "holdout_freeze_status": "NOT_STARTED",
+        "adapter_status": "NOT_IMPLEMENTED",
+        "actual_run_ref": None,
+        "release_eligible": False,
+        "blocking_codes": [
+            "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
+            "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
+            "BLOCKED_BY_RAG_14_ADAPTER",
+            "WAITING_FOR_HOLDOUT_FREEZE",
+        ],
+        "checks": [
+            {
+                "check_id": "TASK_1_PROVENANCE_CONTRACTS",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+                "exit_code": 0,
+                "result": "47 passed",
+            },
+            {
+                "check_id": "TASK_2_SCHEMA_SET_EXPORT",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable -q",
+                "exit_code": 0,
+                "result": "3 passed",
+            },
+            {
+                "check_id": "TASK_3_LOADER_BINDING",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
+                "exit_code": 0,
+                "result": "154 passed",
+            },
+        ],
+        "updated_at": "2026-09-05T00:00:00.000000Z",
+        "status_sha256": "0" * 64,
+    }
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+    return payload
+
+
+def _status_bytes(payload: dict[str, Any]) -> bytes:
+    return canonical_json_bytes(payload)
+
+
+def test_phase_0_status_accepts_only_the_candidate_state() -> None:
+    status = parse_status_bytes(_status_bytes(_status_payload()))
+
+    assert status.phase == "PHASE_0_SCHEMA_CANDIDATE"
+    assert status.schema_set_ref.hash == SCHEMA_SET_HASH
+    assert status.actual_run_ref is None
+    assert status.release_eligible is False
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        (lambda payload: payload.update({"unknown": True}), EvaluationErrorCode.SCHEMA_INVALID),
+        (
+            lambda payload: payload["blocking_codes"].reverse(),
+            EvaluationErrorCode.SCHEMA_INVALID,
+        ),
+        (
+            lambda payload: payload["blocking_codes"].append(payload["blocking_codes"][0]),
+            EvaluationErrorCode.SCHEMA_INVALID,
+        ),
+        (lambda payload: payload["checks"].reverse(), EvaluationErrorCode.SCHEMA_INVALID),
+        (lambda payload: payload["checks"].append(deepcopy(payload["checks"][0])), EvaluationErrorCode.SCHEMA_INVALID),
+        (
+            lambda payload: payload.update(
+                {
+                    "actual_run_ref": {
+                        "run_id": "123e4567-e89b-42d3-a456-426614174000",
+                        "semantic_hash": "1" * 64,
+                        "result_content_manifest_sha256": "2" * 64,
+                    }
+                }
+            ),
+            EvaluationErrorCode.SCHEMA_INVALID,
+        ),
+        (lambda payload: payload.update({"metric_summary": []}), EvaluationErrorCode.SCHEMA_INVALID),
+    ],
+)
+def test_phase_0_status_rejects_invalid_state(
+    mutation: Any,
+    expected_code: EvaluationErrorCode,
+) -> None:
+    payload = _status_payload()
+    mutation(payload)
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is expected_code
+
+
+def test_status_parser_rejects_duplicate_json_keys() -> None:
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(b'{"schema_version":"1.0.0","schema_version":"1.0.0"}')
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_status_parser_rejects_invalid_self_hash() -> None:
+    payload = _status_payload()
+    payload["status_sha256"] = "f" * 64
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.HASH_MISMATCH
+
+
+@pytest.mark.parametrize(
+    "forbidden_key",
+    [
+        "query",
+        "nested_evidence_body_copy",
+        "provider_payload",
+        "credential_ref",
+        "protected_path_hint",
+        "holdout_content_note",
+        "fingerprint_value_copy",
+        "hmac_value_copy",
+    ],
+)
+def test_status_parser_rejects_forbidden_key_fragments_recursively(forbidden_key: str) -> None:
+    payload = _status_payload()
+    payload["checks"][0]["details"] = {"nested": {forbidden_key: "redacted"}}
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
+    raw_status = STATUS_PATH.read_bytes()
+    status = parse_status_bytes(raw_status)
+
+    assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
+    assert render_report(status) == REPORT_PATH.read_bytes()
+    assert b"Candidate \xc2\xb7 Review Required" in REPORT_PATH.read_bytes()
+    assert b"Production remains closed" in REPORT_PATH.read_bytes()
