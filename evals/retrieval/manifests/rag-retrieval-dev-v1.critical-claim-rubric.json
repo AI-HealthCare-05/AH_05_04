@@ -1,0 +1,26 @@
+{
+  "applicable_scope_codes": ["ALL"],
+  "applicable_task_types": ["RETRIEVAL"],
+  "classification_rules": [
+    {
+      "condition_code": "SYNTHETIC_NO_CLAIM_SCORING",
+      "criticality": "NON_CRITICAL",
+      "description": "SYNTHETIC_RETRIEVAL_HAS_NO_CLAIM_SCORING",
+      "member_order": 1,
+      "rule_id": "SYNTHETIC_NO_CLAIM_RULE"
+    }
+  ],
+  "reason_code_catalog": [
+    {
+      "description": "SYNTHETIC_RETRIEVAL_NO_CLAIM_REASON",
+      "member_order": 1,
+      "reason_code": "SYNTHETIC_NO_CLAIM"
+    }
+  ],
+  "review_provenance": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":null,"reviewed_by":null,"team_gold_status":"DRAFT"},
+  "rubric_hash": "56a414832ea1d94228b4fe2766e58ae46ef5ece01a1906ec2f7c3467d6b7bd1b",
+  "rubric_id": "rag-retrieval-dev-critical-claims",
+  "rubric_version": "1.0.0",
+  "schema_id": "rag-eval.critical-claim-rubric",
+  "schema_version": "1.2.0"
+}

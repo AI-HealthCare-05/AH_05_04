@@ -26,6 +26,10 @@ def _bundle() -> dict[str, bytes]:
     }
 
 
+def _candidate_bundle() -> dict[str, bytes]:
+    return {**_bundle(), "comparison.json": b"comparison"}
+
+
 def test_publish_run_directory_is_private_and_complete(tmp_path: Path) -> None:
     destination = publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
 
@@ -33,6 +37,15 @@ def test_publish_run_directory_is_private_and_complete(tmp_path: Path) -> None:
     assert destination.stat().st_mode & 0o777 == 0o700
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in destination.iterdir())
     assert sorted(path.name for path in tmp_path.iterdir()) == [RUN_ID]
+
+
+def test_publisher_atomically_publishes_candidate_bundle_with_comparison(tmp_path: Path) -> None:
+    files = _candidate_bundle()
+
+    published = publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=files)
+
+    assert {path.name for path in published.iterdir()} == set(files)
+    assert (published / "comparison.json").read_bytes() == files["comparison.json"]
 
 
 def test_publish_does_not_overwrite_existing_directory(tmp_path: Path) -> None:
@@ -810,6 +823,25 @@ def test_publish_rejects_incomplete_file_set_before_creating_state(tmp_path: Pat
     files = _bundle()
     files.pop("report.md")
 
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=files)
+
+    assert caught.value.code is EvaluationErrorCode.MANIFEST_INVALID
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {name: payload for name, payload in _candidate_bundle().items() if name != "report.md"},
+        {**_bundle(), "unknown.json": b"unknown"},
+    ],
+    ids=["candidate-missing-core-file", "unknown-file"],
+)
+def test_publish_rejects_malformed_bundle_sets_before_creating_state(
+    tmp_path: Path,
+    files: dict[str, bytes],
+) -> None:
     with pytest.raises(EvaluationValidationError) as caught:
         publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=files)
 

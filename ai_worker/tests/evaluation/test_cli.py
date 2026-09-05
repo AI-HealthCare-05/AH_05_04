@@ -4,6 +4,7 @@ import errno
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
 from typing import Any
@@ -12,13 +13,15 @@ from uuid import uuid4
 import pytest
 
 from ai_worker.tasks.evaluation import cli as cli_module
+from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
 from ai_worker.tasks.evaluation.cli import main, publish_receipt_no_clobber
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.manifest import semantic_content_hash
+from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.schemas.artifacts import ContentManifest, MetricResults, RagEvaluationRun, SuiteResults
 from ai_worker.tests.evaluation.test_config import _manifest_payload, _resolved_for_manifest
-from ai_worker.tests.evaluation.test_runner import CountingAdapter, StaticRegistry
+from ai_worker.tests.evaluation.test_runner import CountingAdapter, RetrievalRegistry, StaticRegistry
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FOUNDATION_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/dev-foundation-v1.dataset.json"
@@ -571,6 +574,40 @@ def test_run_dev_publishes_schema_valid_bundle(config_name: str, tmp_path: Path)
     ContentManifest.model_validate_json((result / "result-content-manifest.json").read_bytes())
 
 
+def test_retrieval_run_failure_timestamp_uses_controlled_run_clock(tmp_path: Path) -> None:
+    timestamp = "2026-09-04T00:00:00.000000Z"
+    run_id = str(uuid4())
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    exit_code = main(
+        [
+            "run-dev",
+            "--config",
+            "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+            "--run-id",
+            run_id,
+            "--executed-by",
+            "ceohwj",
+        ],
+        allowed_result_root=tmp_path,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+        adapter_registry=build_adapter_registry(resolved),
+        clock=FixedClock(timestamp),
+    )
+
+    assert exit_code == 0
+    result = tmp_path / run_id
+    run = json.loads((result / "run.json").read_bytes())
+    failures = [json.loads(line) for line in (result / "failures.jsonl").read_bytes().splitlines()]
+    assert len(failures) == 1
+    assert failures[0]["created_at"] == timestamp
+    assert run["started_at"] <= failures[0]["created_at"] <= run["completed_at"]
+
+
 def test_run_dev_rejects_holdout_before_load_dataset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -735,3 +772,279 @@ def test_run_dev_is_semantically_stable_across_run_identity_and_clock(tmp_path: 
         }
 
     assert semantic_content_hash(machine_files(run_ids[0])) == semantic_content_hash(machine_files(run_ids[1]))
+
+
+def _run_retrieval_cli(
+    tmp_path: Path,
+    config_name: str,
+    run_id: str,
+    *,
+    baseline_run_id: str | None = None,
+    adapter_registry: Any | None = None,
+) -> int:
+    arguments = [
+        "run-dev",
+        "--config",
+        f"evals/configs/{config_name}",
+        "--run-id",
+        run_id,
+        "--executed-by",
+        "ceohwj",
+    ]
+    if baseline_run_id is not None:
+        arguments.extend(["--baseline-run-id", baseline_run_id])
+    return main(
+        arguments,
+        allowed_result_root=tmp_path,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+        adapter_registry=adapter_registry,
+        clock=FixedClock("2026-09-04T00:00:00.000000Z"),
+    )
+
+
+def test_run_dev_with_baseline_writes_comparison_into_candidate_bundle(tmp_path: Path) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-hr-v1.execution.json",
+            candidate_run_id,
+            baseline_run_id=baseline_run_id,
+        )
+        == 0
+    )
+
+    comparison = json.loads((tmp_path / candidate_run_id / "comparison.json").read_bytes())
+    assert comparison["baseline_run_id"] == baseline_run_id
+    assert comparison["candidate_run_id"] == candidate_run_id
+    assert comparison["decision_status"] == "INCONCLUSIVE"
+
+
+def test_failed_candidate_cli_publishes_invalid_null_decision_comparison(tmp_path: Path) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        "rag-retrieval-dev-ret-hr-v1.execution.json",
+        candidate_run_id,
+        baseline_run_id=baseline_run_id,
+        adapter_registry=RetrievalRegistry(CountingAdapter(fail_case_id="rag-ret-dev-001")),
+    )
+
+    assert exit_code == 0
+    comparison = json.loads((tmp_path / candidate_run_id / "comparison.json").read_bytes())
+    assert comparison["execution_status"] == "INVALID"
+    assert comparison["decision_status"] is None
+    failures = (tmp_path / candidate_run_id / "failures.jsonl").read_text(encoding="utf-8")
+    assert "EVAL_INTERNAL_ERROR" in failures
+
+
+@pytest.mark.parametrize(
+    "candidate_config",
+    [
+        "rag-retrieval-dev-ret-l-v1.execution.json",
+        "dev-foundation-answer-grounding-safety-v1.execution.json",
+    ],
+)
+def test_run_dev_rejects_invalid_baseline_candidate_state(
+    tmp_path: Path,
+    candidate_config: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        candidate_config,
+        candidate_run_id,
+        baseline_run_id=baseline_run_id,
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / candidate_run_id).exists()
+    assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
+
+
+def test_candidate_comparison_rejects_identical_retrieval_variant_manifest_hash(
+    tmp_path: Path,
+) -> None:
+    baseline_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+    baseline = cli_module.load_published_run_bundle(tmp_path, baseline_run_id)
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    relabeled = replace(
+        resolved,
+        request=resolved.request.model_copy(update={"variant_id": "RET-ALIAS"}),
+    )
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        cli_module._validate_baseline_candidate_state(baseline, relabeled, str(uuid4()))
+
+    assert caught.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_candidate_comparison_rejects_different_experiment_id(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline_run_id = str(uuid4())
+    candidate_run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            baseline_run_id,
+        )
+        == 0
+    )
+    baseline_path = tmp_path / baseline_run_id / "run.json"
+    baseline_payload = json.loads(baseline_path.read_bytes())
+    baseline_payload["experiment_id"] = "unrelated-experiment"
+    baseline_path.write_bytes(canonical_json_bytes(baseline_payload))
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        "rag-retrieval-dev-ret-hr-v1.execution.json",
+        candidate_run_id,
+        baseline_run_id=baseline_run_id,
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / candidate_run_id).exists()
+    assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
+
+
+def test_non_retrieval_baseline_option_rejects_state_before_missing_baseline(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidate_run_id = str(uuid4())
+
+    exit_code = _run_retrieval_cli(
+        tmp_path,
+        "dev-foundation-answer-grounding-safety-v1.execution.json",
+        candidate_run_id,
+        baseline_run_id=str(uuid4()),
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / candidate_run_id).exists()
+    assert capsys.readouterr().err == f"{EvaluationErrorCode.STATE_COMBINATION_INVALID.value}\n"
+
+
+def test_verify_result_prints_only_semantic_hash(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            run_id,
+        )
+        == 0
+    )
+
+    exit_code = main(["verify-result", "--run-id", run_id], allowed_result_root=tmp_path)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == "965b9e898293f7e5784bbab6ab02a97a66992d1d854da8f70ef8c52fe2a61e68\n"
+
+
+def test_verify_result_accepts_valid_clock_rewrite_outside_semantic_hash(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_id = str(uuid4())
+    assert (
+        _run_retrieval_cli(
+            tmp_path,
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            run_id,
+        )
+        == 0
+    )
+    run_path = tmp_path / run_id / "run.json"
+    run = json.loads(run_path.read_bytes())
+    run["started_at"] = "2026-09-04T01:00:00.000000Z"
+    run["completed_at"] = "2026-09-04T01:01:00.000000Z"
+    run_path.write_bytes(canonical_json_bytes(run))
+
+    exit_code = main(["verify-result", "--run-id", run_id], allowed_result_root=tmp_path)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == "965b9e898293f7e5784bbab6ab02a97a66992d1d854da8f70ef8c52fe2a61e68\n"
+
+
+@pytest.mark.parametrize("invalid_kind", ["missing", "symlink", "tampered"])
+def test_verify_result_rejects_invalid_bundle_without_payload_output(
+    tmp_path: Path,
+    invalid_kind: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_id = str(uuid4())
+    if invalid_kind != "missing":
+        assert (
+            _run_retrieval_cli(
+                tmp_path,
+                "rag-retrieval-dev-ret-l-v1.execution.json",
+                run_id,
+            )
+            == 0
+        )
+    if invalid_kind == "symlink":
+        target = tmp_path / run_id
+        linked_run_id = str(uuid4())
+        (tmp_path / linked_run_id).symlink_to(target, target_is_directory=True)
+        run_id = linked_run_id
+    elif invalid_kind == "tampered":
+        (tmp_path / run_id / "metrics.json").write_bytes(b"SENSITIVE_SENTINEL")
+
+    exit_code = main(["verify-result", "--run-id", run_id], allowed_result_root=tmp_path)
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert captured.out == ""
+    assert captured.err == f"{EvaluationErrorCode.BASELINE_ARTIFACT_INVALID.value}\n"
+    assert "SENSITIVE_SENTINEL" not in captured.err

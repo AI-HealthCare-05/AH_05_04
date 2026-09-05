@@ -1,0 +1,22 @@
+{
+  "case_resources": [{"case_id":"rag-ret-dev-001","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-001.json","sha256":"0b879ec3d4b9b8747d3d287246270e94ec9d3e61c448c02e24f3745896160d4f"},{"case_id":"rag-ret-dev-002","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-002.json","sha256":"bcdfe12c452c5ee6695ffa7d485f14553ea06c5ee8e5743bd07120ade48c48e0"},{"case_id":"rag-ret-dev-003","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-003.json","sha256":"4670142dcbf9355520d90e50f0e44bfbaf32d3e7523ad83f8dd9886d3a3db54b"},{"case_id":"rag-ret-dev-004","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-004.json","sha256":"52cc4b7d7854812ddebef9378366696e335c96ff83d76b4eb4b3d6e6ab780492"},{"case_id":"rag-ret-dev-005","partition":"DEV","path":"retrieval/cases/rag-retrieval-dev-v1/rag-ret-dev-005.json","sha256":"b255f66b53b1b0163a4b6320a48710248c9d6ccb744497fcee7c6208086bb3db"}],
+  "critical_claim_rubric_ref": {"id":"rag-retrieval-dev-critical-claims","version":"1.0.0","hash":"56a414832ea1d94228b4fe2766e58ae46ef5ece01a1906ec2f7c3467d6b7bd1b"},
+  "data_classification": "SYNTHETIC",
+  "dataset_code": "rag-retrieval-dev",
+  "dataset_version": "1.0.0",
+  "deidentification_approval_receipt_ref": null,
+  "description": "SYNTHETIC_DEV_RETRIEVAL_DIAGNOSTIC_DATASET",
+  "evaluation_corpus_snapshot_ref": {"id":"rag-retrieval-dev-evidence","version":"1.0.0","hash":"e64c4728924102ded2bbe5c0915fd655836854890e312d82021cd43552b687ab"},
+  "evidence_mapping_manifest_sha256": "e64c4728924102ded2bbe5c0915fd655836854890e312d82021cd43552b687ab",
+  "fixture_git_commit_sha": null,
+  "frozen_at": null,
+  "manifest_sha256": "182895dbacc5e46456da5c13d03bd8ff4362a03378a1407f5fcccabbde68f926",
+  "partition_counts": {"AUTHORING":0,"DEV":5,"HOLDOUT":0,"SAFETY_REGRESSION":0},
+  "protected_artifact_receipt_ref": {"hash":"d195b05e367afbef09a8dff1d0c2532a7eb64538ba3f563ee803b4e0ba100b6e","id":"rag-retrieval-dev-protected-receipt","version":"1.0.0"},
+  "resource_set_hash": "cd65071e1bf050e162f65385dcc4c49ac01e0c581c52f915483f1114d2339401",
+  "review_provenance": {"approved_at":null,"approved_by":null,"authored_at":"2026-09-04T00:00:00.000000Z","authored_by":{"actor_id":"ceohwj","namespace":"GITHUB_LOGIN","role":"EVALUATION_IMPLEMENTER"},"evidence_review_refs":[],"external_medical_approval_receipt_ref":null,"external_medical_review_status":"NOT_REQUESTED","reviewed_at":null,"reviewed_by":null,"team_gold_status":"DRAFT"},
+  "schema_id": "rag-eval.dataset-manifest",
+  "schema_version": "1.2.0",
+  "scope": "SYNTHETIC_DEV_RETRIEVAL",
+  "status": "DRAFT"
+}

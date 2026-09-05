@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +24,11 @@ from ai_worker.tasks.evaluation.manifest import (
     serialize_jsonl,
     validate_published_artifact_contracts,
 )
+from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.runner import execute_dev_cases
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
+    ComparisonResult,
     ContentManifest,
     FailureRecord,
     MetricResults,
@@ -36,6 +40,7 @@ from ai_worker.tests.evaluation.test_runner import CountingAdapter, StaticRegist
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
 SOURCE_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/dev-foundation-v1.dataset.json"
+RETRIEVAL_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/rag-retrieval-dev-v1.dataset.json"
 RUN_ID_A = "123e4567-e89b-42d3-a456-426614174000"
 RUN_ID_B = "123e4567-e89b-42d3-a456-426614174001"
 TIME_A = "2026-09-04T00:00:00.000000Z"
@@ -105,9 +110,129 @@ def _draft(*, complete: bool = True, run_id: str = RUN_ID_A, started_at: str = T
     return build_artifact_draft(_material(run_id=run_id, started_at=started_at, complete=complete))
 
 
+def retrieval_run_material(
+    variant: str,
+    *,
+    run_id: str = RUN_ID_A,
+    started_at: str = TIME_A,
+    rank_override: Mapping[str, Sequence[str]] | None = None,
+) -> RunMaterial:
+    config_name = {
+        "RET-L": "rag-retrieval-dev-ret-l-v1.execution.json",
+        "RET-HR": "rag-retrieval-dev-ret-hr-v1.execution.json",
+    }[variant]
+    dataset = load_dataset(RETRIEVAL_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs" / config_name,
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=run_id,
+        adapter_registry=build_adapter_registry(resolved),
+        failure_created_at=started_at,
+    )
+    if rank_override:
+        case_results = tuple(
+            result.model_copy(
+                update={
+                    "retrieved_evidence_ids": tuple(rank_override[result.case_id]),
+                    "selected_evidence_ids": tuple(rank_override[result.case_id]),
+                }
+            )
+            if result.case_id in rank_override
+            else result
+            for result in outcome.case_results
+        )
+        outcome = replace(outcome, case_results=case_results)
+    return RunMaterial(
+        outcome=outcome,
+        dataset=dataset,
+        resolved=resolved,
+        run_id=run_id,
+        executed_by=ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN,
+            actor_id="ceohwj",
+            role=ActorRole.EVALUATION_IMPLEMENTER,
+        ),
+        started_at=started_at,
+    )
+
+
+def ret_l_artifacts(
+    *,
+    run_id: str = RUN_ID_A,
+    started_at: str = TIME_A,
+    completed_at: str = TIME_B,
+    rank_override: Mapping[str, Sequence[str]] | None = None,
+):
+    draft = build_artifact_draft(
+        retrieval_run_material(
+            "RET-L",
+            run_id=run_id,
+            started_at=started_at,
+            rank_override=rank_override,
+        )
+    )
+    return finalize_artifacts(draft, b"safe retrieval report\n", completed_at=completed_at)
+
+
+def _comparison_result() -> ComparisonResult:
+    return ComparisonResult.model_validate(
+        {
+            "schema_id": "rag-eval.comparison",
+            "schema_version": "1.0.0",
+            "run_id": RUN_ID_A,
+            "experiment_id": "rag-dev-foundation",
+            "baseline_run_id": RUN_ID_B,
+            "baseline_run_hash": "a" * 64,
+            "candidate_run_id": RUN_ID_A,
+            "candidate_run_hash": "b" * 64,
+            "controlled_variable_checks": [
+                {
+                    "variable_key": "DATASET",
+                    "baseline_value_hash": "c" * 64,
+                    "candidate_value_hash": "c" * 64,
+                    "matched": True,
+                }
+            ],
+            "scope_comparisons": [
+                {
+                    "metric_id": "RECALL_AT_5",
+                    "partition": "DEV",
+                    "slice_id": "ALL",
+                    "baseline_value": "0.8",
+                    "candidate_value": "1",
+                    "absolute_delta": "0.2",
+                    "relative_delta": "0.25",
+                    "paired_test_method": None,
+                    "p_value": None,
+                    "comparison_decision": "INCONCLUSIVE",
+                }
+            ],
+            "execution_status": "COMPLETED",
+            "decision_status": "INCONCLUSIVE",
+        }
+    )
+
+
+def _candidate_artifacts():
+    return finalize_artifacts(
+        replace(_draft(), comparison=_comparison_result()),
+        b"safe report\n",
+        completed_at=TIME_B,
+    )
+
+
 def _validate_jsonl(adapter: Any, payload: bytes) -> None:
     for line in payload.splitlines():
-        adapter.validate_python(json.loads(line))
+        validator = getattr(adapter, "validate_python", None)
+        if validator is None:
+            adapter.model_validate(json.loads(line))
+        else:
+            validator(json.loads(line))
 
 
 def test_jsonl_is_canonical_and_lf_terminated() -> None:
@@ -137,6 +262,41 @@ def test_machine_artifacts_validate_against_models_and_exported_schemas() -> Non
     assert run.schema_id == "rag-eval.run"
     assert metrics.schema_id == "rag-eval.metrics"
     assert suite.schema_id == "rag-eval.suite-results"
+
+
+def test_retrieval_artifact_draft_contains_completed_metric_counts_and_ci() -> None:
+    draft = build_artifact_draft(retrieval_run_material("RET-L"))
+    recall = next(metric for metric in draft.metrics.metrics if metric.metric_id == "RECALL_AT_5")
+
+    assert recall.execution_status.value == "COMPLETED"
+    assert (recall.numerator, recall.denominator) == (4, 5)
+    assert recall.metric_value == "0.8"
+    assert recall.ci_lower is not None
+    assert recall.ci_upper is not None
+
+
+def test_non_retrieval_artifact_draft_keeps_placeholder_metrics() -> None:
+    dataset = load_dataset(SOURCE_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-answer-grounding-safety-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=RUN_ID_A,
+        adapter_registry=StaticRegistry(CountingAdapter()),
+    )
+    material = replace(
+        _material(run_id=RUN_ID_A, started_at=TIME_A, complete=True),
+        outcome=outcome,
+        resolved=resolved,
+    )
+
+    draft = build_artifact_draft(material)
+
+    assert {metric.execution_status.value for metric in draft.metrics.metrics} == {"NOT_IMPLEMENTED"}
 
 
 def test_artifact_contract_validation_rejects_checked_in_schema_drift(tmp_path: Path) -> None:
@@ -183,6 +343,51 @@ def test_artifact_contract_validation_rejects_finalized_payload_drift() -> None:
     assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
 
 
+def test_candidate_artifact_contracts_validate_comparison_runtime_model() -> None:
+    artifacts = _candidate_artifacts()
+    files = dict(artifacts.files)
+    comparison = json.loads(files["comparison.json"])
+    comparison["unexpected"] = True
+    files["comparison.json"] = canonical_json_bytes(comparison)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_published_artifact_contracts(
+            files,
+            schema_root=REPOSITORY_ROOT / "evals/schemas/1.0.0",
+            schema_set_version="1.0.0",
+        )
+
+    assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_candidate_artifact_contracts_reject_checked_in_comparison_schema_drift(tmp_path: Path) -> None:
+    artifacts = _candidate_artifacts()
+    source_root = REPOSITORY_ROOT / "evals/schemas/1.0.0"
+    schema_root = tmp_path / "schemas"
+    for relative_path in (
+        "artifacts/rag-eval.run.schema.json",
+        "artifacts/rag-eval.case-result.schema.json",
+        "artifacts/rag-eval.metrics.schema.json",
+        "artifacts/rag-eval.suite-results.schema.json",
+        "artifacts/rag-eval.comparison.schema.json",
+        "artifacts/rag-eval.failure.schema.json",
+        "artifacts/rag-eval.content-manifest.schema.json",
+    ):
+        destination = schema_root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((source_root / relative_path).read_bytes())
+    (schema_root / "artifacts/rag-eval.comparison.schema.json").write_bytes(b"{}")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        validate_published_artifact_contracts(
+            artifacts.files,
+            schema_root=schema_root,
+            schema_set_version="1.0.0",
+        )
+
+    assert caught.value.code is EvaluationErrorCode.HASH_MISMATCH
+
+
 def test_content_manifest_excludes_run_and_self_but_includes_report() -> None:
     files = {
         "run.json": b"ignored",
@@ -208,6 +413,21 @@ def test_content_manifest_excludes_run_and_self_but_includes_report() -> None:
     assert ContentManifest.model_validate_json(payload) == manifest
 
 
+def test_machine_artifacts_include_optional_comparison_and_bind_its_content() -> None:
+    draft = _draft()
+    comparison = _comparison_result()
+
+    artifacts = finalize_artifacts(
+        replace(draft, comparison=comparison),
+        b"safe report\n",
+        completed_at=TIME_B,
+    )
+
+    assert ComparisonResult.model_validate_json(artifacts.files["comparison.json"]) == comparison
+    entry = next(item for item in artifacts.content_manifest.artifacts if item.relative_path == "comparison.json")
+    assert entry.size_bytes == len(artifacts.files["comparison.json"])
+
+
 def test_completed_run_links_content_manifest_but_incomplete_run_does_not() -> None:
     completed = finalize_artifacts(_draft(complete=True), b"safe\n", completed_at=TIME_B).run
     incomplete = finalize_artifacts(_draft(complete=False), b"safe\n", completed_at=TIME_B).run
@@ -219,17 +439,9 @@ def test_completed_run_links_content_manifest_but_incomplete_run_does_not() -> N
     assert incomplete.decision_status is None
 
 
-def test_semantic_hash_ignores_only_run_identity_and_clock() -> None:
-    first = finalize_artifacts(
-        _draft(run_id=RUN_ID_A, started_at=TIME_A),
-        b"first report\n",
-        completed_at=TIME_A,
-    )
-    second = finalize_artifacts(
-        _draft(run_id=RUN_ID_B, started_at=TIME_B),
-        b"second report\n",
-        completed_at=TIME_B,
-    )
+def test_semantic_hash_ignores_run_identity_and_all_artifact_clocks() -> None:
+    first = ret_l_artifacts(run_id=RUN_ID_A, started_at=TIME_A, completed_at=TIME_A)
+    second = ret_l_artifacts(run_id=RUN_ID_B, started_at=TIME_B, completed_at=TIME_B)
 
     assert semantic_content_hash(first.files) == semantic_content_hash(second.files)
     changed_files = dict(second.files)
@@ -237,3 +449,10 @@ def test_semantic_hash_ignores_only_run_identity_and_clock() -> None:
     changed_run["resolved_evaluation_config_hash"] = "b" * 64
     changed_files["run.json"] = canonical_json_bytes(changed_run)
     assert semantic_content_hash(first.files) != semantic_content_hash(changed_files)
+
+
+def test_semantic_hash_changes_when_ranked_retrieval_result_changes() -> None:
+    before = semantic_content_hash(ret_l_artifacts().files)
+    after = semantic_content_hash(ret_l_artifacts(rank_override={"rag-ret-dev-004": ["ev-ret-dev-storage-d"]}).files)
+
+    assert before != after

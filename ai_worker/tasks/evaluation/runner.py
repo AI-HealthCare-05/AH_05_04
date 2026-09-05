@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import UTC, datetime
+from typing import Protocol, cast
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
-from ai_worker.tasks.evaluation.errors import EvaluationErrorCode
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset
 from ai_worker.tasks.evaluation.manifest import CaseInputBinding, case_input_sha256
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
     CaseResult,
     FailureRecord,
+    FailureSummary,
 )
 from ai_worker.tasks.evaluation.schemas.common import (
     DecisionStatus,
@@ -45,6 +47,9 @@ class AdapterRequest:
     case: EvaluationCaseContract
     task_type: TaskType
     input_sha256: str
+    case_resource_sha256: str
+    variant_id: str
+    variant_manifest_hash: str
 
 
 class EvaluationAdapter(Protocol):
@@ -53,6 +58,10 @@ class EvaluationAdapter(Protocol):
 
 class AdapterRegistry(Protocol):
     def resolve(self, adapter_id: str) -> EvaluationAdapter | None: ...
+
+
+class CaseSetValidator(Protocol):
+    def validate_case_set(self, case_ids: Sequence[str]) -> None: ...
 
 
 class EmptyAdapterRegistry:
@@ -169,6 +178,14 @@ def _case_request(
     resolved: ResolvedDevExecution,
     run_id: str,
 ) -> AdapterRequest:
+    if case.task_type is TaskType.RETRIEVAL:
+        variant = resolved.request.retrieval_variant
+        variant_hash = resolved.retrieval_variant_manifest_hash
+    else:
+        variant = resolved.request.answer_variant
+        variant_hash = resolved.answer_variant_manifest_hash
+    if variant is None or variant_hash is None:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
     resource_hashes = {item.case_id: item.sha256 for item in dataset.manifest.case_resources}
     binding = CaseInputBinding(
         case_id=case.case_id,
@@ -185,6 +202,9 @@ def _case_request(
         case=case,
         task_type=case.task_type,
         input_sha256=case_input_sha256(binding),
+        case_resource_sha256=binding.case_resource_sha256,
+        variant_id=variant.variant_id,
+        variant_manifest_hash=variant_hash,
     )
 
 
@@ -200,15 +220,32 @@ def _binding_matches(result: CaseResult, request: AdapterRequest) -> bool:
     )
 
 
+def _result_contract_matches(result: CaseResult) -> bool:
+    if result.task_type is not TaskType.RETRIEVAL:
+        return True
+    ranked_fields = (result.retrieved_evidence_ids or (), result.selected_evidence_ids or ())
+    return all(len(evidence_ids) == len(set(evidence_ids)) for evidence_ids in ranked_fields)
+
+
 def _execute_once(request: AdapterRequest, adapter: EvaluationAdapter | None) -> CaseResult:
     if adapter is None:
         return _neutral_result(request, ExecutionStatus.NOT_IMPLEMENTED, None)
     try:
         result = CASE_RESULT_ADAPTER.validate_python(adapter.execute(request))
+    except EvaluationValidationError as error:
+        if error.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID:
+            return _neutral_result(request, ExecutionStatus.INVALID, error.code)
+        return _neutral_result(request, ExecutionStatus.ERROR, EvaluationErrorCode.INTERNAL_ERROR)
     except Exception:
         return _neutral_result(request, ExecutionStatus.ERROR, EvaluationErrorCode.INTERNAL_ERROR)
     if not _binding_matches(result, request):
         return _neutral_result(request, ExecutionStatus.INVALID, EvaluationErrorCode.MANIFEST_INVALID)
+    if not _result_contract_matches(result):
+        return _neutral_result(
+            request,
+            ExecutionStatus.INVALID,
+            EvaluationErrorCode.RETRIEVAL_RESULT_INVALID,
+        )
     return result
 
 
@@ -229,12 +266,65 @@ def _select_cases(
     return selected
 
 
+def _retrieval_failure_records(
+    dataset: ValidatedDataset,
+    case_results: tuple[CaseResult, ...],
+    *,
+    created_at: str,
+) -> tuple[FailureRecord, ...]:
+    cases_by_id = {case.case_id: case for case in dataset.cases}
+    failures: list[FailureRecord] = []
+    for result in case_results:
+        case = cases_by_id[result.case_id]
+        required_ids = set(case.expected.required_evidence_refs or ())
+        ranked_ids = set((result.retrieved_evidence_ids or ())[:5])
+        if result.task_type is TaskType.RETRIEVAL and result.execution_status is not ExecutionStatus.COMPLETED:
+            failure_code = (
+                result.failure_codes[0] if result.failure_codes else f"RETRIEVAL_{result.execution_status.value}"
+            )
+            failures.append(
+                FailureRecord(
+                    schema_id="rag-eval.failure",
+                    schema_version="1.0.0",
+                    run_id=result.run_id,
+                    case_id=result.case_id,
+                    failure_code=failure_code,
+                    failure_stage="RETRIEVAL_EXECUTION",
+                    expected_summary=FailureSummary.EXPECTED_REQUIRED_EVIDENCE,
+                    actual_summary=FailureSummary.ACTUAL_REQUIRED_EVIDENCE_MISSING,
+                    root_cause_code=None,
+                    followup_issue_ref=None,
+                    created_at=created_at,
+                )
+            )
+            continue
+        if result.task_type is not TaskType.RETRIEVAL or not required_ids or required_ids.issubset(ranked_ids):
+            continue
+        failures.append(
+            FailureRecord(
+                schema_id="rag-eval.failure",
+                schema_version="1.0.0",
+                run_id=result.run_id,
+                case_id=result.case_id,
+                failure_code="REQUIRED_EVIDENCE_NOT_IN_TOP_5",
+                failure_stage="RETRIEVAL_MISS",
+                expected_summary=FailureSummary.EXPECTED_REQUIRED_EVIDENCE,
+                actual_summary=FailureSummary.ACTUAL_REQUIRED_EVIDENCE_MISSING,
+                root_cause_code=None,
+                followup_issue_ref=None,
+                created_at=created_at,
+            )
+        )
+    return tuple(failures)
+
+
 def execute_dev_cases(
     dataset: ValidatedDataset,
     resolved: ResolvedDevExecution,
     *,
     run_id: str,
     adapter_registry: AdapterRegistry,
+    failure_created_at: str | None = None,
 ) -> RunOutcome:
     task_types = TASK_TYPES_BY_EXPERIMENT[resolved.request.experiment_type]
     selected = _select_cases(dataset, resolved.request.experiment_type)
@@ -249,11 +339,32 @@ def execute_dev_cases(
             task_types=task_types,
         )
     adapter = adapter_registry.resolve(dataset.suite.adapter_id)
-    case_results = tuple(_execute_once(_case_request(case, dataset, resolved, run_id), adapter) for case in selected)
+    requests = tuple(_case_request(case, dataset, resolved, run_id) for case in selected)
+    validator = getattr(adapter, "validate_case_set", None)
+    if callable(validator):
+        try:
+            cast(CaseSetValidator, adapter).validate_case_set(tuple(case.case_id for case in selected))
+        except EvaluationValidationError as error:
+            status = (
+                ExecutionStatus.INVALID
+                if error.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
+                else ExecutionStatus.ERROR
+            )
+            code = error.code if status is ExecutionStatus.INVALID else EvaluationErrorCode.INTERNAL_ERROR
+            case_results = tuple(_neutral_result(request, status, code) for request in requests)
+        else:
+            case_results = tuple(_execute_once(request, adapter) for request in requests)
+    else:
+        case_results = tuple(_execute_once(request, adapter) for request in requests)
     status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
+    failure_records = _retrieval_failure_records(
+        dataset,
+        case_results,
+        created_at=failure_created_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+    )
     return RunOutcome(
         case_results=case_results,
-        failure_records=(),
+        failure_records=failure_records,
         execution_status=status,
         decision_status=decision,
         blocking_execution_statuses=blockers,
