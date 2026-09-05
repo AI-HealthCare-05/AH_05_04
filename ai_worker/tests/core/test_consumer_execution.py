@@ -22,11 +22,14 @@ from ai_worker.core.handler import Handler, HandlerExecutionContext
 from ai_worker.core.job_execution import (
     CommittedDelivery,
     ExecutionLease,
+    FailureDisposition,
     LeaseAcquisitionResult,
     LeaseNotAcquired,
+    RecordedFailure,
 )
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
+from ai_worker.core.retry import FailureCode
 from ai_worker.schemas.messages import JobType, WorkerMessage
 
 
@@ -154,10 +157,13 @@ class FakeJobExecutionRepository:
         *,
         complete_successfully: bool,
         acquisition_result: LeaseAcquisitionResult | None = None,
+        max_attempts: int = 3,
     ) -> None:
         self._events = events
         self._complete_successfully = complete_successfully
         self._acquisition_result = acquisition_result
+        self._max_attempts = max_attempts
+        self.recorded_failure: tuple[FailureCode, datetime, datetime | None] | None = None
 
     async def acquire_lease(
         self,
@@ -173,6 +179,7 @@ class FakeJobExecutionRepository:
             job_id=message.job_id,
             event_id=message.event_id,
             attempt=message.attempt,
+            max_attempts=self._max_attempts,
             lease_token=uuid4().hex,
             lease_expires_at=now + lease_duration,
         )
@@ -193,6 +200,19 @@ class FakeJobExecutionRepository:
         completed_at: datetime,
     ) -> bool:
         self._events.append("complete")
+        return self._complete_successfully
+
+    async def record_failure(
+        self,
+        lease: ExecutionLease,
+        *,
+        failure_code: FailureCode,
+        failed_at: datetime,
+        retry_at: datetime | None,
+    ) -> bool:
+        _ = lease
+        self._events.append("record_failure")
+        self.recorded_failure = (failure_code, failed_at, retry_at)
         return self._complete_successfully
 
 
@@ -1179,7 +1199,7 @@ async def test_leased_consumer_passes_worker_deadline_to_handler() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hard_timeout_cancels_handler_without_result_commit_or_ack() -> None:
+async def test_hard_timeout_records_retry_before_ack() -> None:
     events: list[str] = []
     now = datetime.now(UTC)
     handler = DeadlineAwareCancellableHandler(events)
@@ -1202,18 +1222,19 @@ async def test_hard_timeout_cancels_handler_without_result_commit_or_ack() -> No
         hard_timeout_seconds=0.01,
     )
 
-    with pytest.raises(WorkerError) as captured:
-        await asyncio.wait_for(
-            execution.execute(
-                WorkerDelivery(
-                    stream_message_id="3001-0",
-                    message=build_message(),
-                )
-            ),
-            timeout=1,
-        )
+    result = await asyncio.wait_for(
+        execution.execute(
+            WorkerDelivery(
+                stream_message_id="3001-0",
+                message=build_message(),
+            )
+        ),
+        timeout=1,
+    )
 
-    assert captured.value.failure_code == "TIMEOUT"
+    assert isinstance(result, RecordedFailure)
+    assert result.failure_code == "TIMEOUT"
+    assert result.disposition is FailureDisposition.RETRY_WAIT
     assert handler.started.is_set()
     assert handler.cancelled.is_set()
     assert events == [
@@ -1222,13 +1243,129 @@ async def test_hard_timeout_cancels_handler_without_result_commit_or_ack() -> No
         "heartbeat_start",
         "handle",
         "handler_cancelled",
-        "heartbeat_stop",
         "rollback",
+        "heartbeat_stop",
+        "record_failure",
+        "commit",
+        "ack",
     ]
     assert "save" not in events
     assert "complete" not in events
-    assert "ack" not in events
-    assert acknowledger.acknowledged_ids == []
+    assert acknowledger.acknowledged_ids == ["3001-0"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_code", "expected_disposition", "expects_retry"),
+    [
+        ("TIMEOUT", FailureDisposition.RETRY_WAIT, True),
+        ("DEPENDENCY_UNAVAILABLE", FailureDisposition.RETRY_WAIT, True),
+        ("INVALID_INPUT", FailureDisposition.FAILED, False),
+        ("UNSUPPORTED_SCHEMA", FailureDisposition.FAILED, False),
+        ("SAFETY_VALIDATION_FAILED", FailureDisposition.FAILED, False),
+        ("RETRY_EXHAUSTED", FailureDisposition.FAILED, False),
+        ("INTERNAL_ERROR", FailureDisposition.FAILED, False),
+    ],
+)
+async def test_worker_failure_is_recorded_before_ack(
+    failure_code: FailureCode,
+    expected_disposition: FailureDisposition,
+    expects_retry: bool,
+) -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(
+        FakeHandler(
+            events=events,
+            error=WorkerError(failure_code=failure_code),
+        )
+    )
+    acknowledger = FakeAcknowledger(events)
+    repository = FakeJobExecutionRepository(
+        events,
+        complete_successfully=True,
+    )
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=acknowledger,
+        job_repository=repository,
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+        random_value=lambda: 0.0,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="failure-1",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, RecordedFailure)
+    assert result.failure_code == failure_code
+    assert result.disposition is expected_disposition
+    assert repository.recorded_failure is not None
+    assert (repository.recorded_failure[2] is not None) is expects_retry
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "rollback",
+        "heartbeat_stop",
+        "record_failure",
+        "commit",
+        "ack",
+    ]
+    assert acknowledger.acknowledged_ids == ["failure-1"]
+
+
+@pytest.mark.asyncio
+async def test_retryable_failure_at_attempt_limit_keeps_actual_failure_code() -> None:
+    events: list[str] = []
+    now = datetime.now(UTC)
+    registry = HandlerRegistry()
+    registry.register(
+        FakeHandler(
+            error=WorkerError(failure_code="DEPENDENCY_UNAVAILABLE"),
+        )
+    )
+    repository = FakeJobExecutionRepository(
+        events,
+        complete_successfully=True,
+        max_attempts=1,
+    )
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=FakeAcknowledger(events),
+        job_repository=repository,
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=30),
+        clock=lambda: now,
+        random_value=lambda: 0.0,
+    )
+
+    result = await execution.execute(
+        WorkerDelivery(
+            stream_message_id="failure-final",
+            message=build_message(),
+        )
+    )
+
+    assert isinstance(result, RecordedFailure)
+    assert result.disposition is FailureDisposition.FAILED
+    assert result.failure_code == "DEPENDENCY_UNAVAILABLE"
+    assert repository.recorded_failure == (
+        "DEPENDENCY_UNAVAILABLE",
+        now,
+        None,
+    )
 
 
 @pytest.mark.asyncio

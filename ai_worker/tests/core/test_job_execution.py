@@ -25,6 +25,7 @@ def test_execution_lease_is_immutable() -> None:
         job_id=uuid4(),
         event_id=uuid4(),
         attempt=1,
+        max_attempts=3,
         lease_token=uuid4().hex,
         lease_expires_at=datetime.now(UTC),
     )

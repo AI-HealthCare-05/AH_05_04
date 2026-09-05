@@ -35,11 +35,14 @@ from ai_worker.adapters.sqlalchemy_transaction import (
 from ai_worker.core.config import Config as WorkerConfig
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.dispatcher import Dispatcher
+from ai_worker.core.errors import WorkerError
 from ai_worker.core.job_execution import (
     CommittedDelivery,
     ExecutionLease,
+    FailureDisposition,
     LeaseAcquisitionResult,
     LeaseNotAcquired,
+    RecordedFailure,
 )
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
@@ -124,6 +127,19 @@ class BlockingHandler:
             job_id=message.job_id,
             handler_type=self.handler_type,
         )
+
+
+class PermanentlyFailingHandler:
+    """영구 실패 Handler의 실제 PostgreSQL 상태 전이를 재현합니다."""
+
+    handler_type = JobType.OCR
+
+    async def handle(
+        self,
+        message: WorkerMessage,
+    ) -> HandlerSuccess:
+        _ = message
+        raise WorkerError(failure_code="INVALID_INPUT")
 
 
 class NoopResultStore:
@@ -223,6 +239,7 @@ async def repository_schema() -> AsyncIterator[None]:
                     lease_token VARCHAR(100),
                     lease_expires_at TIMESTAMPTZ,
                     heartbeat_at TIMESTAMPTZ,
+                    failure_code VARCHAR(100),
                     started_at TIMESTAMPTZ,
                     completed_at TIMESTAMPTZ
                 )
@@ -300,6 +317,7 @@ async def repository_schema() -> AsyncIterator[None]:
                     ai_job_id VARCHAR(36) NOT NULL,
                     attempt_no INTEGER NOT NULL,
                     attempt_status VARCHAR(30) NOT NULL,
+                    error_code VARCHAR(100),
                     retryable BOOLEAN NOT NULL,
                     timed_out BOOLEAN NOT NULL,
                     started_at TIMESTAMPTZ NOT NULL,
@@ -764,6 +782,203 @@ async def test_handler_runs_after_visible_lease_commit_without_job_row_lock() ->
 
     assert isinstance(result, HandlerSuccess)
     assert acknowledger.acknowledged_ids == ["3000-0"]
+
+
+async def test_handler_permanent_failure_marks_real_ocr_job_failed() -> None:
+    message = build_message()
+    now = datetime.now(UTC)
+
+    async with test_engine.begin() as connection:
+        await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
+        await connection.execute(
+            text(
+                """
+                INSERT INTO ai_job (
+                    id,
+                    job_type,
+                    status,
+                    expected_event_id,
+                    attempt_count,
+                    max_attempts,
+                    available_at
+                )
+                VALUES (
+                    :job_id,
+                    'OCR',
+                    'PENDING',
+                    :event_id,
+                    0,
+                    3,
+                    :available_at
+                )
+                """
+            ),
+            {
+                "job_id": str(message.job_id),
+                "event_id": str(message.event_id),
+                "available_at": now,
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO outbox_event (
+                    event_id,
+                    job_id,
+                    attempt,
+                    event_kind
+                )
+                VALUES (
+                    :event_id,
+                    :job_id,
+                    :attempt,
+                    'JOB_EXECUTE'
+                )
+                """
+            ),
+            {
+                "event_id": str(message.event_id),
+                "job_id": str(message.job_id),
+                "attempt": message.attempt,
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO medical_document (
+                    id,
+                    object_key,
+                    file_mime_type
+                )
+                VALUES (
+                    :document_id,
+                    'synthetic/invalid-input.png',
+                    'image/png'
+                )
+                """
+            ),
+            {"document_id": str(message.domain_id)},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO ocr_job (
+                    id,
+                    document_id,
+                    ai_job_id,
+                    ocr_status
+                )
+                VALUES (
+                    :domain_id,
+                    :document_id,
+                    :job_id,
+                    'PENDING'
+                )
+                """
+            ),
+            {
+                "domain_id": str(message.domain_id),
+                "document_id": str(message.domain_id),
+                "job_id": str(message.job_id),
+            },
+        )
+
+    async with AsyncSession(
+        bind=test_engine,
+        expire_on_commit=False,
+    ) as worker_session:
+        await use_test_schema(worker_session)
+        registry = HandlerRegistry()
+        registry.register(PermanentlyFailingHandler())
+        acknowledger = RecordingAcknowledger()
+        execution = LeaseAwareConsumerExecution(
+            dispatcher=Dispatcher(registry),
+            result_store=NoopResultStore(),
+            transaction=SqlAlchemyTransaction(worker_session),
+            acknowledger=acknowledger,
+            job_repository=SqlAlchemyJobExecutionRepository(worker_session),
+            heartbeat=RetainedHeartbeat(),
+            lease_duration=timedelta(seconds=30),
+            clock=lambda: now,
+            execution_starter=SqlAlchemyOcrExecutionStarter(worker_session),
+        )
+
+        result = await execution.execute(
+            WorkerDelivery(
+                stream_message_id="permanent-failure-1",
+                message=message,
+            )
+        )
+
+    async with AsyncSession(
+        bind=test_engine,
+        expire_on_commit=False,
+    ) as observer_session:
+        await use_test_schema(observer_session)
+        job_result = await observer_session.execute(
+            text(
+                """
+                SELECT
+                    status,
+                    last_consumed_event_id,
+                    failure_code,
+                    completed_at
+                FROM ai_job
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": str(message.job_id)},
+        )
+        job_status, consumed_event_id, failure_code, job_completed_at = job_result.one()
+        attempt_result = await observer_session.execute(
+            text(
+                """
+                SELECT
+                    attempt_status,
+                    error_code,
+                    retryable,
+                    timed_out,
+                    completed_at
+                FROM ai_job_attempt
+                WHERE ai_job_id = :job_id
+                """
+            ),
+            {"job_id": str(message.job_id)},
+        )
+        attempt_status, attempt_error, retryable, timed_out, attempt_completed_at = attempt_result.one()
+        ocr_result = await observer_session.execute(
+            text(
+                """
+                SELECT
+                    ocr_status,
+                    completed_at,
+                    error_code,
+                    error_message
+                FROM ocr_job
+                WHERE id = :domain_id
+                """
+            ),
+            {"domain_id": str(message.domain_id)},
+        )
+        ocr_status, ocr_completed_at, ocr_error_code, ocr_error_message = ocr_result.one()
+
+    assert isinstance(result, RecordedFailure)
+    assert result.failure_code == "INVALID_INPUT"
+    assert result.disposition is FailureDisposition.FAILED
+    assert job_status == "FAILED"
+    assert consumed_event_id == str(message.event_id)
+    assert failure_code == "INVALID_INPUT"
+    assert job_completed_at == now
+    assert attempt_status == "FAILED"
+    assert attempt_error == "INVALID_INPUT"
+    assert retryable is False
+    assert timed_out is False
+    assert attempt_completed_at == now
+    assert ocr_status == "FAILED"
+    assert ocr_completed_at == now
+    assert ocr_error_code == "OCR_PROCESSING_FAILED"
+    assert ocr_error_message == "OCR 처리 중 오류가 발생했습니다."
+    assert acknowledger.acknowledged_ids == ["permanent-failure-1"]
 
 
 async def test_postgresql_heartbeat_loss_blocks_result_and_ack() -> None:

@@ -53,9 +53,12 @@ OCR Job은 이미 commit된 `PROCESSING`을 유지합니다. lease 만료 전에
 `FAILED`로 전이하지 않습니다.
 
 만료된 lease의 reclaim, 재시도 가능 여부 판정, 다음 attempt 실행, 재시도 소진 후
-`FAILED` 확정과 안전한 OCR 오류 저장은 #142의 구현 범위입니다. #142가 병합되기
-전의 #233 runtime은 timeout 발생 시 `PROCESSING`과 ACK하지 않은 Stream 메시지를 남기며,
-이 상태만으로 재시도나 최종 `FAILED` 전이가 완료된 것으로 보지 않습니다.
+`FAILED` 확정은 #142에서 구현합니다. 재시도 가능한 실패 동안 OCR Job은
+`PROCESSING`을 유지하고, Handler 영구 실패 또는 재시도 소진으로 AI Job이 최종
+실패할 때 연결된 OCR Job도 같은 transaction에서 `FAILED`와 `completed_at`을 저장합니다.
+Worker의 상세 실패 코드는 AI Job에 유지하고, OCR 공개 상태에는 Provider timeout을
+`OCR_PROVIDER_TIMEOUT`, Provider 가용성 실패를 `OCR_PROVIDER_UNAVAILABLE`, 그 밖의
+실패를 안전한 `OCR_PROCESSING_FAILED`로 투영합니다.
 
 ## Post-MVP 이관
 
@@ -67,7 +70,8 @@ OCR Job은 이미 commit된 `PROCESSING`을 유지합니다. lease 만료 전에
 Worker의 `PROCESSING` 전이·timeout·commit-before-ACK 경계는
 `ai_worker/tests/core/test_sqlalchemy_ocr_execution_starter.py`와
 `ai_worker/tests/core/test_consumer_execution.py`에서 검증합니다. reclaim·재시도 소진·최종
-`FAILED` 전이는 #142에서 구현과 테스트를 함께 추가합니다.
+`FAILED` 전이와 연결된 OCR Job의 원자적 실패 처리는 #142의 단위 테스트와
+`tests/integration/test_worker_recovery_repository.py` PostgreSQL 통합 테스트에서 검증합니다.
 
 다음 변경은 이 문서, 구현, API 문서와 관련 테스트를 같은 PR에서 갱신해야 합니다.
 

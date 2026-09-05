@@ -39,7 +39,8 @@ Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획�
 - CLOVA secret 주입, 공유 object storage volume, Worker 이미지 구성과
   실제 Provider smoke: #258
 - Guide·Chat Handler 등록
-- lease 만료 reclaim·retry·quarantine·DLQ의 runtime 연결은 #142
+- Pending reclaim·retry·quarantine·DLQ 운영 절차:
+  `../docs/runbooks/worker-pending-dlq.md`
 - Publisher 주기 실행·health check·운영 배포 조립
 
 #233의 완료 기준은 실제 CLOVA OCR 호출이 아니라, `OcrEngine`을 주입할 수 있는
@@ -132,7 +133,8 @@ WORKER_HEARTBEAT_INTERVAL_SECONDS
 
 Worker hard timeout 60초, Job lease 75초, heartbeat 10초를 기본값으로 사용합니다.
 hard timeout이 발생하면 Handler task를 취소하고 해당 attempt의 결과와 ACK를 남기지
-않습니다. 만료된 lease의 reclaim·retry와 최종 실패 처리는 #142가 담당합니다.
+않습니다. Recovery Scheduler가 만료 lease를 reclaim하고 재시도 또는 최종 실패로
+전환하며, poison message는 quarantine과 DLQ Outbox를 commit한 뒤 ACK합니다.
 
 #233의 완료 기준은 실제 CLOVA OCR 호출이 아니라 `OcrEngine`을 주입할 수 있는
 composition root와 명시적으로 주입한 Fake Engine 기반 one-cycle 검증입니다.
@@ -164,7 +166,8 @@ OCR delivery 한 건은 다음 순서로 처리합니다.
 - lease 또는 fencing을 잃으면 결과를 저장하거나 ACK하지 않습니다.
 - hard timeout이나 Handler 실패 failure이 발생하면 해당 attempt의 성공 결과와 ACK를 남기지 않습니다.
 - DB commit 전에는 Redis ACK를 수행하지 않습니다.
-- 만료된 lease의 reclaim·retry와 최종 실패·quarantine·DLQ 처리는 #142 범위입니다.
+- 만료된 lease의 reclaim·retry와 최종 실패·quarantine·DLQ 처리는 Recovery
+  Scheduler가 담당합니다.
 
 ### Provider observability 공용 계약
 
@@ -231,9 +234,10 @@ DB Outbox 발행 transaction, lease·fencing, reclaim·retry·DLQ 및 Worker
 `ocr_engine=None`이므로 OCR Handler를 등록하지 않습니다. 실제 CLOVA Engine,
 secret과 object storage가 연결되기 전에는 Production OCR 처리 경로로
 활성화하지 않습니다.
-- 현재 Consumer는 필수 필드 오류나 미지원 schema entry를 batch 안에서 격리하고,
-같은 batch의 정상 entry 처리를 계속합니다. 격리된 entry는 ACK하지 않고 PEL에
-남기며, quarantine·DLQ 기록과 최종 ACK는 #142에서 구현합니다.
+- Consumer는 필수 필드 오류나 미지원 schema entry를 batch 안에서 격리하고,
+  같은 batch의 정상 entry 처리를 계속합니다. 격리된 entry는 원문 없이
+  `message_quarantine`과 `dlq_outbox_event`를 같은 transaction에서 commit한 뒤
+  ACK하며, DLQ Publisher가 별도 dead-letter Stream으로 발행합니다.
 
 ## 실행과 상태 확인
 
