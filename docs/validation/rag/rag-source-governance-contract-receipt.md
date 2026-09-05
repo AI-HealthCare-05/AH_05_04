@@ -21,7 +21,7 @@
 
 ## 선행 Receipt gate
 
-`#155` endpoint verification, `#165` parser/source snapshot, `#166` catalog 산출물의 Receipt·Interface 연결이 없으므로 현재 상태는 `BLOCKED`이며 차단 코드는 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. Issue Close 여부만으로 이 gate를 통과시키지 않는다.
+`#155`의 Local Endpoint 검증은 [MFDS P0 Endpoint Receipt](./endpoints/README.md)와 세 JSON Receipt로 연결됐다. 제품 허가정보는 Endpoint parser gate를 통과했지만 DUR과 환자용 복약정보는 실제 Source의 불안정한 자연키로 인해 fail-closed 상태다. 또한 `#165` parser/source snapshot과 `#166` catalog 산출물의 Receipt·Interface가 아직 연결되지 않았으므로 전체 상태는 계속 `BLOCKED`이며 차단 코드는 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. Issue Close 여부나 제품 Endpoint 단독 성공만으로 이 gate를 통과시키지 않는다.
 
 실제 Service ID, Path, Primary Key, Response Schema, Content-Type, 성공 코드, Pagination, live DTO field는 이 Receipt에서 정하지 않는다. 외부 Policy와 로컬 Target의 bundle 요청 field(`runtime_release_bundle_id` 대 `bundle_id`)도 승인된 shared DTO Receipt 전까지 미확정이다.
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -16,6 +17,9 @@ from ai_worker.tasks.rag.source_client.receipts import (
     fixture_sha256,
     write_endpoint_receipt,
 )
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+ENDPOINT_RECEIPT_DIRECTORY = REPOSITORY_ROOT / "docs" / "validation" / "rag" / "endpoints"
 
 
 def not_run_receipt() -> EndpointReceipt:
@@ -150,3 +154,107 @@ def test_fixture_sha256_is_deterministic(tmp_path: Path) -> None:
 
     assert first_hash == second_hash
     assert len(first_hash) == 64
+
+
+@pytest.mark.parametrize(
+    "receipt_name",
+    (
+        "LIST_APPROVED_PRODUCTS.json",
+        "LIST_INGREDIENT_CONTRAINDICATIONS.json",
+        "LIST_PATIENT_MEDICATION_GUIDES.json",
+    ),
+)
+def test_checked_in_endpoint_receipt_hashes_are_valid(
+    receipt_name: str,
+) -> None:
+    receipt_path = ENDPOINT_RECEIPT_DIRECTORY / receipt_name
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    expected_hash = payload.pop("receipt_hash")
+    payload.pop("generated_at")
+    canonical_bytes = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert hashlib.sha256(canonical_bytes).hexdigest() == expected_hash
+
+
+@pytest.mark.parametrize(
+    "receipt_name",
+    (
+        "LIST_APPROVED_PRODUCTS.json",
+        "LIST_INGREDIENT_CONTRAINDICATIONS.json",
+        "LIST_PATIENT_MEDICATION_GUIDES.json",
+    ),
+)
+def test_checked_in_endpoint_receipt_fixture_hashes_are_valid(
+    receipt_name: str,
+) -> None:
+    payload = json.loads(
+        (ENDPOINT_RECEIPT_DIRECTORY / receipt_name).read_text(
+            encoding="utf-8",
+        )
+    )
+
+    for evidence in payload["fixture_evidence"]:
+        fixture_path = REPOSITORY_ROOT / evidence["path"]
+
+        assert fixture_path.is_file()
+        assert fixture_sha256(fixture_path) == evidence["sha256"]
+
+
+def test_checked_in_endpoint_receipts_preserve_activation_boundary() -> None:
+    product = json.loads((ENDPOINT_RECEIPT_DIRECTORY / "LIST_APPROVED_PRODUCTS.json").read_text(encoding="utf-8"))
+    dur = json.loads(
+        (ENDPOINT_RECEIPT_DIRECTORY / "LIST_INGREDIENT_CONTRAINDICATIONS.json").read_text(encoding="utf-8")
+    )
+    patient_guide = json.loads(
+        (ENDPOINT_RECEIPT_DIRECTORY / "LIST_PATIENT_MEDICATION_GUIDES.json").read_text(encoding="utf-8")
+    )
+
+    assert product["execution_status"] == "COMPLETED"
+    assert product["parser_activation_allowed"] is True
+    assert product["primary_key_duplicate_count"] == 0
+
+    assert dur["execution_status"] == "FAILED"
+    assert dur["parser_activation_allowed"] is False
+    assert dur["primary_key_duplicate_count"] == 469
+    assert dur["whole_record_duplicate_count"] == 1
+
+    assert patient_guide["execution_status"] == "FAILED"
+    assert patient_guide["parser_activation_allowed"] is False
+    assert patient_guide["primary_key_duplicate_count"] == 17
+
+
+@pytest.mark.parametrize(
+    "receipt_name",
+    (
+        "LIST_APPROVED_PRODUCTS.json",
+        "LIST_INGREDIENT_CONTRAINDICATIONS.json",
+        "LIST_PATIENT_MEDICATION_GUIDES.json",
+    ),
+)
+def test_checked_in_endpoint_receipts_contain_no_secret_values(
+    receipt_name: str,
+) -> None:
+    payload = json.loads(
+        (ENDPOINT_RECEIPT_DIRECTORY / receipt_name).read_text(
+            encoding="utf-8",
+        )
+    )
+
+    for parameter in payload["required_parameters"]:
+        assert set(parameter) == {
+            "location",
+            "name",
+            "sensitive",
+            "type_name",
+        }
+
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "credential_value" not in serialized
+    assert "secret_value" not in serialized
+    assert "api_key_value" not in serialized
+    assert "provider_raw_body" not in serialized
