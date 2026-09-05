@@ -36,21 +36,25 @@
   },
   "partition_policy": {
     "active_partition": "DEV",
+    "active_reviewer_provenance_namespace": "review-dev-resolver-*",
     "future_partitions": [
       {
         "partition": "HOLDOUT",
         "status": "RESERVED_NO_CASES_IN_THIS_FIXTURE",
         "leakage_group_namespace": "lg-holdout-resolver-*",
+        "reviewer_provenance_namespace": "review-holdout-resolver-*",
         "reviewer_provenance": "TBC"
       },
       {
         "partition": "SAFETY",
         "status": "RESERVED_NO_CASES_IN_THIS_FIXTURE",
         "leakage_group_namespace": "lg-safety-resolver-*",
+        "reviewer_provenance_namespace": "review-safety-resolver-*",
         "reviewer_provenance": "TBC"
       }
     ],
-    "separation_rule": "DEV leakage groups must never be reused by future HOLDOUT or SAFETY datasets."
+    "separation_rule": "DEV leakage groups must never be reused by future HOLDOUT or SAFETY datasets.",
+    "reviewer_separation_rule": "Future HOLDOUT and SAFETY reviewer provenance must be independently assigned and reviewed; reviewer provenance namespaces must not be reused across DEV, HOLDOUT, or SAFETY."
   },
   "cases": [
     {
@@ -219,8 +223,8 @@
       "synthetic_input": {"medication_name": "", "strength_text": null, "form_text": null},
       "draft_scenario": "An empty synthetic medication name is rejected before search.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
-      "expected": {"kind": "TYPED_FAILURE", "value": "INVALID_INPUT", "typed_failure": "TBC"},
-      "db_projection": {"authority": "TBC", "search_status": "TBC", "result_rows": 0},
+      "expected": {"kind": "OUTCOME", "value": "INVALID_INPUT", "typed_failure": null},
+      "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "TBC", "result_rows": 0},
       "public_candidate_count": 0,
       "retained_internal_evidence": false,
       "reason_code": "TBC",
@@ -232,8 +236,8 @@
       "synthetic_input": {"medication_name": "SYNTH_OVERSIZED_NAME_SENTINEL", "strength_text": null, "form_text": null, "length_relation": "ABOVE_TBC_MAXIMUM"},
       "draft_scenario": "A generated synthetic name above the unresolved maximum length is rejected before search.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
-      "expected": {"kind": "TYPED_FAILURE", "value": "INVALID_INPUT", "typed_failure": "TBC"},
-      "db_projection": {"authority": "TBC", "search_status": "TBC", "result_rows": 0},
+      "expected": {"kind": "OUTCOME", "value": "INVALID_INPUT", "typed_failure": null},
+      "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "TBC", "result_rows": 0},
       "public_candidate_count": 0,
       "retained_internal_evidence": false,
       "reason_code": "TBC",
@@ -245,8 +249,8 @@
       "synthetic_input": {"medication_name": "SYNTH_NON_NFC_SENTINEL", "strength_text": null, "form_text": null, "normalization_relation": "NOT_TBC_NORMALIZATION_FORM"},
       "draft_scenario": "A synthetic non-normalized sentinel is rejected without embedding raw non-NFC medication text in the fixture.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
-      "expected": {"kind": "TYPED_FAILURE", "value": "INVALID_INPUT", "typed_failure": "TBC"},
-      "db_projection": {"authority": "TBC", "search_status": "TBC", "result_rows": 0},
+      "expected": {"kind": "OUTCOME", "value": "INVALID_INPUT", "typed_failure": null},
+      "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "TBC", "result_rows": 0},
       "public_candidate_count": 0,
       "retained_internal_evidence": false,
       "reason_code": "TBC",
@@ -259,7 +263,7 @@
       "draft_scenario": "Synthetic immutable input version and active version do not match.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "TYPED_FAILURE", "value": "FAILED", "typed_failure": "TBC"},
-      "db_projection": {"authority": "TBC", "search_status": "TBC", "result_rows": 0},
+      "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "TBC", "result_rows": 0},
       "public_candidate_count": 0,
       "retained_internal_evidence": false,
       "reason_code": "TBC",
@@ -272,7 +276,7 @@
       "draft_scenario": "A synthetic port hit omits a required Product identity component and is rejected before count acceptance.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "TYPED_FAILURE", "value": "FAILED", "typed_failure": "TBC"},
-      "db_projection": {"authority": "TBC", "search_status": "TBC", "result_rows": 0},
+      "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "TBC", "result_rows": 0},
       "public_candidate_count": 0,
       "retained_internal_evidence": false,
       "reason_code": "TBC",
@@ -285,7 +289,7 @@
       "draft_scenario": "A synthetic port hit declares a NON_FINITE_SCORE sentinel and is rejected before count acceptance.",
       "counts": {"raw_count": 0, "deduped_count": 0, "eligible_count": 0, "persisted_count": 0},
       "expected": {"kind": "TYPED_FAILURE", "value": "FAILED", "typed_failure": "TBC"},
-      "db_projection": {"authority": "TBC", "search_status": "TBC", "result_rows": 0},
+      "db_projection": {"authority": "NON_AUTHORITATIVE_DRAFT", "search_status": "TBC", "result_rows": 0},
       "public_candidate_count": 0,
       "retained_internal_evidence": false,
       "reason_code": "TBC",

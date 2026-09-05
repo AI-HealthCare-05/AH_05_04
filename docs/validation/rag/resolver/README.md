@@ -14,7 +14,9 @@ patient data, prescription data, raw OCR values, Source IDs, credentials, or rea
 
 Every case belongs to the `DEV` partition and has a `lg-dev-resolver-*` leakage group plus named reviewer
 provenance. Future `HOLDOUT` and `SAFETY` partitions are reserved with different namespaces and contain no cases
-in this fixture; they must not reuse DEV leakage groups or examples.
+in this fixture; they must not reuse DEV leakage groups or examples. Reviewer provenance also uses distinct
+`review-dev-resolver-*`, `review-holdout-resolver-*`, and `review-safety-resolver-*` namespaces. Future HOLDOUT
+and SAFETY reviewers remain `TBC` and must be independently assigned and reviewed rather than inferred from DEV.
 
 The draft matrix covers exact and alias singles, cross-stage dedupe, strength and form gates, relevance and
 margin gates, dense-only and ingredient-only branches, invalid input axes, version mismatch, invalid port hits,
