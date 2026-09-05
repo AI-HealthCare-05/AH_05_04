@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -500,10 +499,7 @@ def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
         },
     }
 
-    try:
-        jsonschema = importlib.import_module("jsonschema")
-    except ModuleNotFoundError:
-        return
+    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     invalid_draft = {
         "authored_by": {
             "namespace": "GITHUB_LOGIN",
