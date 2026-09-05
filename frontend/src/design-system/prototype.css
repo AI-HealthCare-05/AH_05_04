@@ -525,6 +525,30 @@
   top: -162.568px;
 }
 
+.dosey-mascot--nav {
+  width: 28px;
+  height: 27.3px;
+}
+
+.dosey-mascot--nav img {
+  width: 204.547px;
+  height: 167.194px;
+  left: -44.21px;
+  top: -126.613px;
+}
+
+.dosey-mascot--chat {
+  width: 44px;
+  height: 42.84px;
+}
+
+.dosey-mascot--chat img {
+  width: 321.432px;
+  height: 262.379px;
+  left: -69.474px;
+  top: -198.695px;
+}
+
 .app-back-row {
   min-height: 40px;
   flex: 0 0 40px;
@@ -543,8 +567,8 @@
 }
 
 .icon-button {
-  min-width: 34px;
-  min-height: 36px;
+  min-width: 52px;
+  min-height: 52px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -924,41 +948,74 @@
 }
 
 .bottom-nav {
-  min-height: calc(72px + var(--ds-safe-bottom));
+  min-height: calc(88px + var(--ds-safe-bottom));
   position: absolute;
   inset: auto 0 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  padding: 7px 12px var(--ds-safe-bottom);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 4px 0 var(--ds-safe-bottom);
   border-top: 1px solid var(--ds-line);
   background: rgb(255 255 255 / 96%);
 }
 
 .bottom-nav button {
-  min-height: 54px;
+  min-width: 0;
+  min-height: 64px;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 4px 2px 6px;
   border: 0;
   background: transparent;
-  color: #737d89;
-  font-size: 11px;
+  color: #667085;
+  font-size: 12px;
   font-weight: 700;
 }
 
+.bottom-nav__icon,
+.bottom-nav__home {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+}
+
+.bottom-nav__icon {
+  background: currentColor;
+  -webkit-mask: var(--bottom-nav-icon) center / contain no-repeat;
+  mask: var(--bottom-nav-icon) center / contain no-repeat;
+}
+
+.bottom-nav__home {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bottom-nav__doji {
+  width: 58px;
+  height: 38px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin-top: -18px;
+  border: 1px solid #e5eaf1;
+  border-radius: 999px 999px 0 0;
+  background: #fff;
+  box-shadow: 0 -5px 16px rgb(23 26 33 / 7%);
+}
+
 .bottom-nav button[aria-current='page'] {
-  color: var(--ds-action);
+  color: #0066cc;
   font-weight: 900;
 }
 
 .bottom-nav button[aria-current='page']::before {
-  content: '';
-  width: 18px;
-  height: 3px;
-  position: absolute;
-  top: 3px;
-  left: 50%;
-  border-radius: 999px;
-  background: var(--ds-action);
-  transform: translateX(-50%);
+  content: none;
 }
 
 .bottom-nav button:disabled {

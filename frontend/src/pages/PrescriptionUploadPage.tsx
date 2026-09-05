@@ -35,14 +35,31 @@ function getOcrResponseStatus(response: OcrJobResponse): AiJobViewStatus {
   return adaptOcrJobStatus(response.data.ocr_status)
 }
 
+function getUploadFailureMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return '로그인 정보를 다시 확인한 뒤 시도해 주세요.'
+    if (error.status >= 500) return '서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'
+  }
+
+  if (error instanceof TypeError) {
+    return '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'
+  }
+
+  return '선택한 처방전을 처리하지 못했어요. 다시 시도해 주세요.'
+}
+
+type UploadSource = 'camera' | 'file'
+
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
   const inputId = useId()
   const filenameId = useId()
   const [file, setFile] = useState<File | null>(null)
+  const [uploadSource, setUploadSource] = useState<UploadSource | null>(null)
   const [isFilenameExpanded, setIsFilenameExpanded] = useState(false)
   const [pollingTarget, setPollingTarget] = useState<OcrPollingTarget | null>(null)
   const [message, setMessage] = useState('')
+  const [hasUploadFailed, setHasUploadFailed] = useState(false)
   const [isPreparing, setIsPreparing] = useState(false)
   const preparationRequestRef = useRef(0)
 
@@ -77,12 +94,19 @@ function PrescriptionUploadPage() {
     )
   }, [navigate, pollingState.jobKey, pollingState.status, pollingTarget])
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (
+    source: UploadSource,
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const selectedFile = event.target.files?.[0] ?? null
+    if (!selectedFile) return
+
     setFile(selectedFile)
+    setUploadSource(source)
     setIsFilenameExpanded(false)
     setPollingTarget(null)
     setMessage('')
+    setHasUploadFailed(false)
   }
 
   const handleUpload = async () => {
@@ -109,11 +133,8 @@ function PrescriptionUploadPage() {
       })
     } catch (error) {
       if (!isCurrentRequest()) return
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '처방전 처리 중 오류가 발생했습니다.',
-      )
+      setMessage(getUploadFailureMessage(error))
+      setHasUploadFailed(true)
     } finally {
       if (isCurrentRequest()) {
         setIsPreparing(false)
@@ -124,8 +145,40 @@ function PrescriptionUploadPage() {
   const resetToUpload = () => {
     setPollingTarget(null)
     setFile(null)
+    setUploadSource(null)
     setIsFilenameExpanded(false)
     setMessage('')
+    setHasUploadFailed(false)
+  }
+
+  if (hasUploadFailed) {
+    return (
+      <div className="mvp-page mvp-upload-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={resetToUpload}
+          brandMark={<DoseyMascot variant="header" />}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-upload__failure">
+            <span className="mvp-upload__failure-icon" aria-hidden="true" />
+            <h1>
+              {uploadSource === 'camera'
+                ? '처방전을 촬영하지 못했어요'
+                : '처방전을 등록하지 못했어요'}
+            </h1>
+            <p role="alert">{message}</p>
+            <Button fullWidth onClick={resetToUpload}>
+              다시 선택하기
+            </Button>
+            <Button fullWidth variant="secondary" onClick={() => navigate('/')}>
+              홈으로 돌아가기
+            </Button>
+          </main>
+        </MobileShell>
+      </div>
+    )
   }
 
   if (isPreparing || pollingTarget) {
@@ -191,9 +244,7 @@ function PrescriptionUploadPage() {
       >
         <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-upload__content">
           <h1 className="mvp-page__title">처방전을 등록해 주세요</h1>
-          <p className="mvp-page__description">
-            촬영하거나 저장한 처방전을 읽은 뒤 원본과 인식 결과를 직접 비교합니다.
-          </p>
+          <p className="mvp-page__description">등록 방법을 선택해 주세요.</p>
 
           <Card className="mvp-upload__summary">
             <span>
@@ -202,31 +253,59 @@ function PrescriptionUploadPage() {
             </span>
           </Card>
 
-          <input
-            id={inputId}
-            className="mvp-upload__input"
-            type="file"
-            accept="image/jpeg,image/png,application/pdf"
-            onChange={handleFileChange}
-          />
-          <div className={`upload-zone mvp-upload__zone ${file ? 'selected' : ''}`}>
-            <label className="mvp-upload__picker" htmlFor={inputId}>
-              <span className="mvp-upload__zone-icon" aria-hidden="true">
-                <span />
+          <div className="mvp-upload__methods" role="group" aria-label="처방전 등록 방법">
+            <input
+              id={`${inputId}-camera`}
+              className="mvp-upload__input"
+              type="file"
+              accept="image/jpeg,image/png"
+              capture="environment"
+              onChange={(event) => handleFileChange('camera', event)}
+            />
+            <label
+              className={`mvp-upload__method ${uploadSource === 'camera' ? 'selected' : ''}`}
+              htmlFor={`${inputId}-camera`}
+            >
+              <span className="mvp-upload__method-icon mvp-upload__method-icon--camera" aria-hidden="true" />
+              <span>
+                <strong>카메라로 촬영하기</strong>
+                <small>지금 처방전을 직접 촬영해요</small>
               </span>
-              <strong
-                id={file ? filenameId : undefined}
-                className={
-                  file
-                    ? `mvp-upload__filename${isFilenameExpanded ? ' mvp-upload__filename--expanded' : ''}`
-                    : undefined
-                }
-              >
-                {file?.name ?? '사진 촬영 또는 파일 선택'}
-              </strong>
-              <small>{file ? '선택 완료 · 눌러서 변경' : 'JPG · PNG · PDF / 최대 30MB'}</small>
+              <span className="mvp-upload__radio" aria-hidden="true" />
             </label>
-            {file && (
+
+            <input
+              id={`${inputId}-file`}
+              className="mvp-upload__input"
+              type="file"
+              accept="image/jpeg,image/png,application/pdf"
+              onChange={(event) => handleFileChange('file', event)}
+            />
+            <label
+              className={`mvp-upload__method ${uploadSource === 'file' ? 'selected' : ''}`}
+              htmlFor={`${inputId}-file`}
+            >
+              <span className="mvp-upload__method-icon mvp-upload__method-icon--file" aria-hidden="true" />
+              <span>
+                <strong>저장된 처방전 선택하기</strong>
+                <small>사진이나 파일로 저장된 처방전을 불러와요</small>
+              </span>
+              <span className="mvp-upload__radio" aria-hidden="true" />
+            </label>
+          </div>
+
+          <p className="mvp-upload__contract">
+            지원 파일: JPG · JPEG · PNG · PDF / 최대 30MB
+          </p>
+
+          {file && (
+            <div className="mvp-upload__selection">
+              <strong
+                id={filenameId}
+                className={`mvp-upload__filename${isFilenameExpanded ? ' mvp-upload__filename--expanded' : ''}`}
+              >
+                {file.name}
+              </strong>
               <button
                 type="button"
                 className="mvp-upload__filename-toggle"
@@ -236,12 +315,17 @@ function PrescriptionUploadPage() {
               >
                 {isFilenameExpanded ? '파일명 접기' : '전체 파일명 보기'}
               </button>
-            )}
+            </div>
+          )}
+
+          <div className="mvp-upload__tip">
+            <strong>처방전 촬영 팁</strong>
+            <p>정방향으로 놓고, 밝은 곳에서 기울어지지 않게 촬영해 주세요.</p>
           </div>
 
           <div className="notice mvp-upload__notice">
             <strong>개인정보를 확인해 주세요.</strong><br />
-            주민등록번호는 가리고 문서 전체가 선명하게 보이도록 촬영해 주세요.
+            주민등록번호 등 민감 정보는 가리고 촬영해 주세요.
           </div>
 
           {message && <p className="mvp-form__message" role="alert">{message}</p>}

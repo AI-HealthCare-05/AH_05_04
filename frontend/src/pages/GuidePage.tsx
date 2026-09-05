@@ -6,8 +6,8 @@ import {
   Button,
   Card,
   MobileShell,
-  StatusBadge,
 } from '../design-system/components'
+import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './GuidePage.css'
 
@@ -21,6 +21,20 @@ function formatCompletedAt(value: string | null) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(date)
+}
+
+function getGuideLoadFailureMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return '로그인 정보를 다시 확인한 뒤 시도해 주세요.'
+    if (error.status === 404) return '요청한 복약 가이드를 찾을 수 없어요.'
+    if (error.status >= 500) return '서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'
+  }
+
+  if (error instanceof TypeError) {
+    return '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'
+  }
+
+  return '복약 가이드를 불러오지 못했어요. 다시 시도해 주세요.'
 }
 
 type GuideDetail = {
@@ -120,28 +134,41 @@ function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
       </h2>
       <div className="guide-page__medication-list">
         {guide.medications.map((medication, index) => (
-          <article className="guide-page__medication-card" key={`${index}-${medication.name}`}>
-            <h3>{medication.name}</h3>
-            {medication.details.length > 0 && (
-              <dl className="guide-page__medication-details">
-                {medication.details.map((detail) => (
-                  <div key={detail.label}>
-                    <dt>{detail.label}</dt>
-                    <dd>{detail.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-            {medication.notices.map((notice) => (
-              <p className="guide-page__medication-notice" key={notice}>
-                {notice}
-              </p>
-            ))}
-            <section className="guide-page__guidance" aria-labelledby={`guide-guidance-${index}`}>
-              <h4 id={`guide-guidance-${index}`}>복약 안내</h4>
-              <p>{medication.guidance}</p>
-            </section>
-          </article>
+          <details className="guide-page__medication-card" key={`${index}-${medication.name}`}>
+            <summary>
+              <span>
+                <h3>{medication.name}</h3>
+                <small>
+                  {medication.details
+                    .filter((detail) => detail.label === '하루 횟수' || detail.label === '복용 시점')
+                    .map((detail) => detail.value)
+                    .join(' · ') || '복용 정보를 확인해 주세요'}
+                </small>
+              </span>
+              <span className="guide-page__chevron" aria-hidden="true" />
+            </summary>
+            <div className="guide-page__medication-body">
+              {medication.details.length > 0 && (
+                <dl className="guide-page__medication-details">
+                  {medication.details.map((detail) => (
+                    <div key={detail.label}>
+                      <dt>{detail.label}</dt>
+                      <dd>{detail.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {medication.notices.map((notice) => (
+                <p className="guide-page__medication-notice" key={notice}>
+                  {notice}
+                </p>
+              ))}
+              <section className="guide-page__guidance" aria-labelledby={`guide-guidance-${index}`}>
+                <h3 id={`guide-guidance-${index}`}>복약 안내</h3>
+                <p>{medication.guidance}</p>
+              </section>
+            </div>
+          </details>
         ))}
       </div>
 
@@ -196,11 +223,7 @@ function GuidePage() {
     } catch (error) {
       if (!isCurrentRequest()) return
       setGuide(null)
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '복약 가이드를 불러오는 중 오류가 발생했습니다.',
-      )
+      setMessage(getGuideLoadFailureMessage(error))
     } finally {
       if (isCurrentRequest()) {
         setIsLoading(false)
@@ -228,14 +251,6 @@ function GuidePage() {
   const structuredGuide = currentGuide?.content
     ? parseGuideContent(currentGuide.content)
     : null
-  const confirmedTimings =
-    structuredGuide?.medications.flatMap((medication) => {
-      const timing = medication.details.find(
-        (detail) => detail.label === '복용 시점',
-      )
-      return timing ? [{ name: medication.name, timing: timing.value }] : []
-    }) ?? []
-
   return (
     <div className="guide-page">
       <MobileShell
@@ -245,13 +260,20 @@ function GuidePage() {
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
           if (item === '가이드' && !guideId) navigate('/guides')
-          if (item === '메뉴') navigate('/profile')
+          if (item === '도지') {
+            navigate(
+              currentGuide?.prescription_id
+                ? `/chat?prescription_id=${currentGuide.prescription_id}`
+                : '/chat',
+            )
+          }
+          if (item === '메뉴') navigate('/menu')
         }}
       >
         <main className="app-scroll guide-page__content">
           <h1 className="screen-title">복약 가이드</h1>
           <p className="screen-description">
-            약마다 언제·어떻게 복용하는지 먼저 보여드려요.
+            확인한 처방에 맞춰 복용 정보를 정리했어요.
           </p>
 
           {!currentIsLoading && !guideId && (
@@ -266,23 +288,26 @@ function GuidePage() {
           )}
 
           {currentIsLoading && (
-            <Card className="guide-page__state">
-              <div aria-live="polite">
-                <strong>복약 가이드를 불러오고 있어요</strong>
-                <p>잠시만 기다려 주세요.</p>
+            <section className="guide-page__status" aria-live="polite" aria-busy="true">
+              <div className="guide-page__status-visual guide-page__status-visual--loading">
+                <DoseyMascot variant="chat" />
               </div>
-            </Card>
+              <h2>복약 가이드를 불러오고 있어요</h2>
+              <p>잠시만 기다려 주세요.</p>
+            </section>
           )}
 
           {!currentIsLoading && currentMessage && (
-            <Card className="guide-page__state">
-              <StatusBadge tone="attention">불러오기 실패</StatusBadge>
+            <section className="guide-page__status" role="alert">
+              <div className="guide-page__status-visual guide-page__status-visual--failed">
+                <DoseyMascot variant="chat" />
+              </div>
               <h2>가이드를 표시할 수 없어요</h2>
               <p role="alert">{currentMessage}</p>
               <Button fullWidth onClick={() => void loadGuide()}>
                 다시 불러오기
               </Button>
-            </Card>
+            </section>
           )}
 
           {!currentIsLoading &&
@@ -290,27 +315,6 @@ function GuidePage() {
             currentGuide &&
             hasCompletedContent && (
             <>
-              <Card className="guide-page__hero">
-                <span className="guide-page__hero-label">오늘 확인한 복용</span>
-                <h2>확인된 복용 조건</h2>
-                {confirmedTimings.length > 0 ? (
-                  <ul className="guide-page__timing-list" aria-label="확인된 복용 시점">
-                    {confirmedTimings.map((item, index) => (
-                      <li key={`${index}-${item.name}`}>
-                        <span>{item.timing}</span>
-                        <strong>{item.name}</strong>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>직접 확인한 처방을 기준으로 생성된 안내를 표시해요.</p>
-                )}
-                {completedAt && <small>{completedAt} 생성</small>}
-                <button className="guide-page__schedule-button" type="button" disabled>
-                  복용 일정 준비 중
-                </button>
-              </Card>
-
               {structuredGuide ? (
                 <StructuredGuideContent guide={structuredGuide} />
               ) : (
@@ -329,9 +333,7 @@ function GuidePage() {
                 </Card>
               )}
 
-              <div className="notice attention guide-page__notice">
-                이 화면은 생성된 복약 가이드 내용을 표시해요.
-              </div>
+              {completedAt && <p className="guide-page__completed-at">{completedAt} 생성</p>}
 
               <Button
                 fullWidth
@@ -351,32 +353,51 @@ function GuidePage() {
             !currentMessage &&
             currentGuide &&
             !hasCompletedContent && (
-            <Card className="guide-page__state">
-              <StatusBadge tone="attention">
-                {currentGuide.generation_status === 'FAILED'
-                  ? '생성 실패'
-                  : currentGuide.generation_status === 'COMPLETED'
-                    ? '내용 없음'
-                    : '생성 중'}
-              </StatusBadge>
+            <section
+              className="guide-page__status"
+              role={currentGuide.generation_status === 'FAILED' ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              <div
+                className={`guide-page__status-visual ${
+                  currentGuide.generation_status === 'FAILED'
+                    ? 'guide-page__status-visual--failed'
+                    : currentGuide.generation_status === 'GENERATING'
+                      ? 'guide-page__status-visual--generating'
+                      : 'guide-page__status-visual--empty'
+                }`}
+              >
+                <DoseyMascot variant="chat" />
+              </div>
               <h2>
                 {currentGuide.generation_status === 'FAILED'
-                  ? '가이드를 표시할 수 없어요'
+                  ? '가이드를 만들지 못했어요'
                   : currentGuide.generation_status === 'COMPLETED'
                     ? '가이드 내용이 아직 없어요'
                     : '복약 가이드를 만들고 있어요'}
               </h2>
               <p>
                 {currentGuide.generation_status === 'FAILED'
-                  ? '처방 검수 화면에서 가이드 생성을 다시 시도해 주세요.'
+                  ? '다시 시도해 주세요.'
                   : currentGuide.generation_status === 'COMPLETED'
                     ? '생성된 내용을 확인할 수 없어 다시 불러와야 해요.'
-                    : '잠시 후 다시 불러와 주세요.'}
+                    : '도지가 복약 가이드를 준비하고 있어요.'}
               </p>
-              <Button fullWidth variant="secondary" onClick={() => void loadGuide()}>
-                다시 불러오기
+              {currentGuide.generation_status === 'GENERATING' && (
+                <span className="guide-page__generating-label">가이드를 생성하고 있어요...</span>
+              )}
+              <Button
+                fullWidth
+                variant={currentGuide.generation_status === 'FAILED' ? 'primary' : 'secondary'}
+                onClick={() => void loadGuide()}
+              >
+                {currentGuide.generation_status === 'FAILED'
+                  ? '다시 시도하기'
+                  : currentGuide.generation_status === 'COMPLETED'
+                    ? '다시 불러오기'
+                    : '다시 확인하기'}
               </Button>
-            </Card>
+            </section>
           )}
         </main>
       </MobileShell>

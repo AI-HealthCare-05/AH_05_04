@@ -1,4 +1,42 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react'
+import navCalendarIcon from '../assets/nav-calendar.svg'
+import navGuideIcon from '../assets/nav-guide.svg'
+import navMenuIcon from '../assets/nav-menu.svg'
+import { DoseyMascot } from './DoseyMascot'
+
+export type MainNavigationItem = '홈' | '일정' | '도지' | '가이드' | '메뉴'
+
+const mainNavigationItems: readonly MainNavigationItem[] = [
+  '홈',
+  '일정',
+  '도지',
+  '가이드',
+  '메뉴',
+]
+
+function NavigationIcon({ item }: { item: MainNavigationItem }) {
+  if (item === '도지') {
+    return (
+      <span className="bottom-nav__doji" aria-hidden="true">
+        <DoseyMascot variant="nav" />
+      </span>
+    )
+  }
+
+  if (item === '홈') {
+    return <span className="bottom-nav__home" aria-hidden="true">⌂</span>
+  }
+
+  const icon = item === '일정' ? navCalendarIcon : item === '가이드' ? navGuideIcon : navMenuIcon
+
+  return (
+    <span
+      className="bottom-nav__icon"
+      aria-hidden="true"
+      style={{ '--bottom-nav-icon': `url(${icon})` } as CSSProperties}
+    />
+  )
+}
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost'
@@ -88,9 +126,9 @@ export function MobileShell({
   backPlacement?: 'topbar' | 'content'
   hideHeader?: boolean
   hideNavigation?: boolean
-  activeNavigation?: '홈' | '일정' | '가이드' | '메뉴'
-  disabledNavigation?: readonly ('홈' | '일정' | '가이드' | '메뉴')[]
-  onNavigate?: (item: '홈' | '일정' | '가이드' | '메뉴') => void
+  activeNavigation?: MainNavigationItem
+  disabledNavigation?: readonly MainNavigationItem[]
+  onNavigate?: (item: MainNavigationItem) => void
 }) {
   return (
     <div className="mobile-app">
@@ -114,7 +152,7 @@ export function MobileShell({
       {children}
       {!hideNavigation && (
         <nav className="bottom-nav" aria-label="주요 메뉴">
-          {(['홈', '일정', '가이드', '메뉴'] as const).map((item) => (
+          {mainNavigationItems.map((item) => (
             <button
               key={item}
               type="button"
@@ -123,7 +161,8 @@ export function MobileShell({
               disabled={disabledNavigation.includes(item)}
               onClick={() => onNavigate?.(item)}
             >
-              {item}
+              <NavigationIcon item={item} />
+              <span>{item}</span>
             </button>
           ))}
         </nav>

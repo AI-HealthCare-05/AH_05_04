@@ -16,6 +16,7 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
+import { ApiError } from '../src/api/client'
 import { getGuide, type GuideResponse } from '../src/api/guides'
 import GuidePage from '../src/pages/GuidePage'
 
@@ -34,7 +35,7 @@ function GuideRouteControls() {
 
 function LocationProbe() {
   const location = useLocation()
-  return <output data-testid="location">{location.pathname}</output>
+  return <output data-testid="location">{location.pathname}{location.search}</output>
 }
 
 function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
@@ -47,7 +48,8 @@ function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
         <Route path="/guides/:guideId" element={<GuidePage />} />
         <Route path="/prescriptions/upload" element={<div>처방전 업로드 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
-        <Route path="/profile" element={<div>내 정보 화면</div>} />
+        <Route path="/menu" element={<div>메뉴 화면</div>} />
+        <Route path="/chat" element={<div>도지 대화 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -122,8 +124,13 @@ describe('GuidePage', () => {
     ).toBeTruthy()
     const medicationCard = screen
       .getByRole('heading', { name: '합성 처방약 1 매우 긴 이름' })
-      .closest('article')
+      .closest('details')
     expect(medicationCard).not.toBeNull()
+    expect(medicationCard!.hasAttribute('open')).toBe(false)
+
+    fireEvent.click(within(medicationCard!).getByText('합성 처방약 1 매우 긴 이름'))
+
+    expect(medicationCard!.hasAttribute('open')).toBe(true)
     expect(within(medicationCard!).getByText('1회량').tagName).toBe('DT')
     expect(within(medicationCard!).getByText('1 정').tagName).toBe('DD')
     expect(within(medicationCard!).getByText('하루 횟수').tagName).toBe('DT')
@@ -156,7 +163,7 @@ describe('GuidePage', () => {
         '임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요.',
       ),
     ).toBeTruthy()
-    expect(screen.getByRole('list', { name: '확인된 복용 시점' })).toBeTruthy()
+    expect(within(medicationCard!).getByText('하루 1회 · 아침 저녁 식후')).toBeTruthy()
     expect(screen.queryByText('가이드 전체 내용')).toBeNull()
   })
 
@@ -244,7 +251,7 @@ describe('GuidePage', () => {
 
     renderPage()
 
-    expect(await screen.findByText('확인된 복용 조건')).toBeTruthy()
+    expect(await screen.findByText('확인된 복약 안내')).toBeTruthy()
     expect(screen.getByText(/하루 3회 복용하세요/)).toBeTruthy()
     await waitFor(() => expect(getGuide).toHaveBeenCalledWith('guide-1'))
   })
@@ -281,6 +288,49 @@ describe('GuidePage', () => {
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
   })
 
+  it('GENERATING 응답을 최신 생성 중 상태로 표시하고 실제 조회만 다시 시도한다', async () => {
+    vi.mocked(getGuide).mockResolvedValue({
+      data: {
+        guide_id: 'guide-1',
+        prescription_id: 'prescription-1',
+        generation_status: 'GENERATING',
+        content: null,
+        model_name: null,
+        prompt_version: null,
+        requested_at: '2026-08-22T00:00:00Z',
+        completed_at: null,
+      },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('복약 가이드를 만들고 있어요')).toBeTruthy()
+    expect(screen.getByText('가이드를 생성하고 있어요...')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '다시 확인하기' }))
+    await waitFor(() => expect(getGuide).toHaveBeenCalledTimes(2))
+  })
+
+  it('FAILED 응답을 최신 실패 상태로 표시하고 raw 오류 상태를 만들지 않는다', async () => {
+    vi.mocked(getGuide).mockResolvedValue({
+      data: {
+        guide_id: 'guide-1',
+        prescription_id: 'prescription-1',
+        generation_status: 'FAILED',
+        content: null,
+        model_name: 'guide-model',
+        prompt_version: 'guide-prompt-v1',
+        requested_at: '2026-08-22T00:00:00Z',
+        completed_at: '2026-08-22T00:00:03Z',
+      },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('가이드를 만들지 못했어요')).toBeTruthy()
+    expect(screen.getByText('다시 시도해 주세요.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '다시 시도하기' })).toBeTruthy()
+  })
+
   it('공통 Navigation의 Guide active, 일정 disabled, 기존 route 이동을 유지한다', async () => {
     const firstRender = renderPage('/guides')
 
@@ -293,7 +343,7 @@ describe('GuidePage', () => {
       true,
     )
     fireEvent.click(screen.getByRole('button', { name: '메뉴' }))
-    expect(screen.getByText('내 정보 화면')).toBeTruthy()
+    expect(screen.getByText('메뉴 화면')).toBeTruthy()
 
     firstRender.unmount()
     renderPage('/guides')
@@ -360,5 +410,34 @@ describe('GuidePage', () => {
       await screen.findByText('요청한 가이드와 다른 응답을 받았어요. 다시 불러와 주세요.'),
     ).toBeTruthy()
     expect(screen.queryByText('다른 Guide 내용')).toBeNull()
+  })
+
+  it('Guide 조회 실패에서 raw Backend 오류를 숨긴다', async () => {
+    vi.mocked(getGuide).mockRejectedValue(
+      new ApiError(503, 'provider stack and internal guide detail', 'PROVIDER_DOWN'),
+    )
+
+    renderPage()
+
+    expect(
+      await screen.findByText('서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByText(/provider stack|PROVIDER_DOWN/)).toBeNull()
+  })
+
+  it('상세 Guide의 도지 탭은 현재 prescription_id를 보존한다', async () => {
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', structuredGuideContent()),
+    )
+
+    renderPage()
+    await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' })
+
+    fireEvent.click(screen.getByRole('button', { name: '도지' }))
+
+    expect(screen.getByText('도지 대화 화면')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/chat?prescription_id=prescription-guide-1',
+    )
   })
 })

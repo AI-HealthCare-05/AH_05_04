@@ -48,12 +48,13 @@ type PrototypeScreen =
   | 'support-hub'
   | 'support-review'
 
-type MainNavigationItem = '홈' | '일정' | '가이드' | '메뉴'
+type MainNavigationItem = '홈' | '일정' | '도지' | '가이드' | '메뉴'
 type Navigate = (screen: PrototypeScreen) => void
 
 const mainNavigationTarget: Record<MainNavigationItem, PrototypeScreen> = {
   홈: 'home',
   일정: 'schedule',
+  도지: 'chat',
   가이드: 'guide',
   메뉴: 'menu',
 }
