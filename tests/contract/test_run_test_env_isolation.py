@@ -150,6 +150,15 @@ def test_run_test_script_includes_worker_recovery_integration_target(target: str
     assert target in workflow
 
 
+def test_rag_integration_tests_run_in_local_runner_and_github_actions() -> None:
+    """RAG integration 테스트 범위도 로컬 runner와 GitHub Actions가 같아야 합니다."""
+    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+    workflow = GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8")
+
+    assert "tests/integration/rag" in script
+    assert "tests/integration/rag" in workflow
+
+
 def test_example_local_env_storage_dir_is_a_container_path() -> None:
     """위 override가 필요한 이유를 고정합니다 — 이 값이 host 경로로 바뀌면 override 근거도 바뀝니다."""
     storage_dir = re.search(
