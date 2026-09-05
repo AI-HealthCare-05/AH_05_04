@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from ai_worker.tasks.evaluation import natural_language_retrieval_validation as validation_module
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
@@ -141,6 +142,62 @@ def test_phase_0_status_rejects_invalid_state(
     assert raised.value.code is expected_code
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload["checks"][0].update({"command": "python arbitrary.py"}),
+        lambda payload: payload["checks"][0].update({"result": "arbitrary result"}),
+        lambda payload: payload["checks"][0].update({"exit_code": 1}),
+        lambda payload: payload["checks"].pop(),
+        lambda payload: payload["checks"].append(
+            {
+                "check_id": "TASK_4_UNDECLARED",
+                "command": "uv run pytest undeclared.py -q",
+                "exit_code": 0,
+                "result": "1 passed",
+            }
+        ),
+        lambda payload: payload["checks"].reverse(),
+    ],
+)
+def test_phase_0_status_rejects_rehashed_check_catalog_mutation(mutation: Any) -> None:
+    payload = _status_payload()
+    mutation(payload)
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+@pytest.mark.parametrize(
+    ("sentinel", "expected_code"),
+    [
+        ("patient@example.com", EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN),
+        ("010-1234-5678", EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN),
+        ("Bearer abc.def.ghi", EvaluationErrorCode.PRIVACY_VALUE_FORBIDDEN),
+        ("provider payload body", EvaluationErrorCode.SCHEMA_INVALID),
+        ("/srv/protected/holdout/questions.json", EvaluationErrorCode.SCHEMA_INVALID),
+        ("HOLDOUT raw content", EvaluationErrorCode.SCHEMA_INVALID),
+        ("raw query text", EvaluationErrorCode.SCHEMA_INVALID),
+    ],
+)
+def test_status_parser_rejects_rehashed_sensitive_check_values_without_echo(
+    sentinel: str,
+    expected_code: EvaluationErrorCode,
+) -> None:
+    payload = _status_payload()
+    payload["checks"][0]["result"] = sentinel
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is expected_code
+    assert sentinel not in str(raised.value)
+
+
 def test_status_parser_rejects_duplicate_json_keys() -> None:
     with pytest.raises(EvaluationValidationError) as raised:
         parse_status_bytes(b'{"schema_version":"1.0.0","schema_version":"1.0.0"}')
@@ -189,19 +246,22 @@ def test_status_parser_rejects_rehashed_non_candidate_decision() -> None:
 
 
 @pytest.mark.parametrize(
-    "forbidden_key",
+    ("forbidden_key", "expected_code"),
     [
-        "query",
-        "nested_evidence_body_copy",
-        "provider_payload",
-        "credential_ref",
-        "protected_path_hint",
-        "holdout_content_note",
-        "fingerprint_value_copy",
-        "hmac_value_copy",
+        ("query", EvaluationErrorCode.SCHEMA_INVALID),
+        ("nested_evidence_body_copy", EvaluationErrorCode.SCHEMA_INVALID),
+        ("provider_payload", EvaluationErrorCode.PRIVACY_FIELD_FORBIDDEN),
+        ("credential_ref", EvaluationErrorCode.SCHEMA_INVALID),
+        ("protected_path_hint", EvaluationErrorCode.SCHEMA_INVALID),
+        ("holdout_content_note", EvaluationErrorCode.SCHEMA_INVALID),
+        ("fingerprint_value_copy", EvaluationErrorCode.SCHEMA_INVALID),
+        ("hmac_value_copy", EvaluationErrorCode.SCHEMA_INVALID),
     ],
 )
-def test_status_parser_rejects_forbidden_key_fragments_recursively(forbidden_key: str) -> None:
+def test_status_parser_rejects_forbidden_key_fragments_recursively(
+    forbidden_key: str,
+    expected_code: EvaluationErrorCode,
+) -> None:
     payload = _status_payload()
     payload["checks"][0]["details"] = {"nested": {forbidden_key: "redacted"}}
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
@@ -209,7 +269,7 @@ def test_status_parser_rejects_forbidden_key_fragments_recursively(forbidden_key
     with pytest.raises(EvaluationValidationError) as raised:
         parse_status_bytes(_status_bytes(payload))
 
-    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+    assert raised.value.code is expected_code
 
 
 @pytest.mark.parametrize(
@@ -243,14 +303,46 @@ def test_unverified_metric_guard_rejects_nested_metric_key_when_actual_run_is_nu
     assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
 
 
-def test_report_decision_display_and_href_are_derived_from_the_validated_status() -> None:
+def test_report_decision_display_and_href_are_derived_from_the_validated_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     status = parse_status_bytes(_status_bytes(_status_payload()))
-    alternate_decision = "docs/governance/decisions/alternate-candidate.md"
-    altered_status = status.model_copy(update={"schema_set_decision": alternate_decision})
+    observed_paths: list[str] = []
 
-    report = render_report(altered_status).decode("utf-8")
+    def decision_href(decision_path: str) -> str:
+        observed_paths.append(decision_path)
+        return "../../../verified-decision.md"
 
-    assert f"[`{alternate_decision}`](../../../governance/decisions/alternate-candidate.md)" in report
+    monkeypatch.setattr(validation_module, "_decision_href", decision_href)
+
+    report = render_report(status).decode("utf-8")
+
+    assert observed_paths == [status.schema_set_decision]
+    assert f"[`{status.schema_set_decision}`](../../../verified-decision.md)" in report
+
+
+def test_markdown_table_cell_escapes_pipe_backslash_and_line_break_injection() -> None:
+    injected = "safe\\value|cell\n\n## Injected heading\rafter"
+
+    escaped = validation_module._markdown_table_cell(injected)
+
+    assert escaped == "safe\\\\value\\|cell  ## Injected heading after"
+    assert "\n" not in escaped
+    assert "\r" not in escaped
+    assert "|" not in escaped.replace("\\|", "")
+
+
+def test_report_revalidates_model_copy_before_rendering_check_cells() -> None:
+    status = parse_status_bytes(_status_bytes(_status_payload()))
+    injected = "passed | forged\n\n## Follow-up heading"
+    altered_check = status.checks[0].model_copy(update={"result": injected})
+    altered_status = status.model_copy(update={"checks": (altered_check, *status.checks[1:])})
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        render_report(altered_status)
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+    assert injected not in str(raised.value)
 
 
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:

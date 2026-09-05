@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, cast
 
-from pydantic import BeforeValidator, Field, StrictInt, ValidationError, model_validator
+from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
+from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.schemas.common import (
     NonEmptyString,
     Sha256Hex,
-    StableId,
     StrictContractModel,
     UtcTimestamp,
 )
@@ -31,6 +31,26 @@ _PHASE_0_BLOCKERS = (
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
 _DECISION_DOCS_PREFIX = "docs/"
+_PHASE_0_CHECK_CATALOG = {
+    "TASK_1_PROVENANCE_CONTRACTS": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+        "47 passed",
+    ),
+    "TASK_2_SCHEMA_SET_EXPORT": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest "
+        "ai_worker/tests/evaluation/test_schema_exports.py::"
+        "test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable -q",
+        "3 passed",
+    ),
+    "TASK_3_LOADER_BINDING": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_authoring_identity_loader.py "
+        "ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
+        "154 passed",
+    ),
+}
+_PHASE_0_CHECK_IDS = tuple(_PHASE_0_CHECK_CATALOG)
 
 
 def _tuple_from_wire(value: object) -> object:
@@ -56,10 +76,20 @@ class CreatedCounts(StrictContractModel):
 
 
 class ValidationCheck(StrictContractModel):
-    check_id: StableId
+    check_id: Literal[
+        "TASK_1_PROVENANCE_CONTRACTS",
+        "TASK_2_SCHEMA_SET_EXPORT",
+        "TASK_3_LOADER_BINDING",
+    ]
     command: NonEmptyString
-    exit_code: Annotated[StrictInt, Field(ge=0, le=255)]
+    exit_code: Literal[0]
     result: NonEmptyString
+
+    @model_validator(mode="after")
+    def validate_catalog_entry(self) -> ValidationCheck:
+        if (self.command, self.result) != _PHASE_0_CHECK_CATALOG[self.check_id]:
+            raise ValueError("validation check must match the Phase 0 evidence catalog")
+        return self
 
 
 class CandidateSchemaSetRef(StrictContractModel):
@@ -114,6 +144,8 @@ class Issue273ValidationStatus(StrictContractModel):
             raise ValueError("Phase 0 blockers must be the exact UTF-16-sorted set")
         check_ids = [check.check_id for check in self.checks]
         commands = [check.command for check in self.checks]
+        if tuple(check_ids) != _PHASE_0_CHECK_IDS:
+            raise ValueError("validation checks must contain the exact Phase 0 evidence catalog")
         if len(check_ids) != len(set(check_ids)) or len(commands) != len(set(commands)):
             raise ValueError("validation checks must be unique")
         if check_ids != sorted(check_ids, key=_utf16_key):
@@ -150,15 +182,13 @@ def _reject_unverified_metric_fields(value: object) -> None:
     visit(value)
 
 
-def parse_status_bytes(raw_bytes: bytes) -> Issue273ValidationStatus:
-    from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
-
+def _validate_status_payload(payload: dict[str, JsonValue]) -> Issue273ValidationStatus:
+    validate_privacy_boundary(payload)
+    _reject_forbidden_keys(payload)
+    _reject_unverified_metric_fields(payload)
     try:
-        payload = parse_json_object_bytes(raw_bytes)
-        _reject_forbidden_keys(payload)
-        _reject_unverified_metric_fields(payload)
         status = Issue273ValidationStatus.model_validate(payload)
-    except (EvaluationValidationError, ValidationError):
+    except ValidationError:
         raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
     canonical_payload = cast(dict[str, JsonValue], status.model_dump(mode="json"))
     if canonical_sha256(
@@ -169,13 +199,29 @@ def parse_status_bytes(raw_bytes: bytes) -> Issue273ValidationStatus:
     return status
 
 
+def parse_status_bytes(raw_bytes: bytes) -> Issue273ValidationStatus:
+    from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
+
+    try:
+        payload = parse_json_object_bytes(raw_bytes)
+    except EvaluationValidationError:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
+    return _validate_status_payload(payload)
+
+
 def _decision_href(decision_path: str) -> str:
     if not decision_path.startswith(_DECISION_DOCS_PREFIX):
         raise ValueError("candidate Decision path must be under docs")
     return f"../../../{decision_path.removeprefix(_DECISION_DOCS_PREFIX)}"
 
 
+def _markdown_table_cell(value: str | int) -> str:
+    normalized = str(value).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    return normalized.replace("\\", "\\\\").replace("|", "\\|")
+
+
 def render_report(status: Issue273ValidationStatus) -> bytes:
+    status = _validate_status_payload(cast(dict[str, JsonValue], status.model_dump(mode="json")))
     schema_set = status.schema_set_ref
     decision_href = _decision_href(status.schema_set_decision)
     lines = [
@@ -222,7 +268,8 @@ def render_report(status: Issue273ValidationStatus) -> bytes:
         "| Check | Command | Exit | Result |",
         "| --- | --- | ---: | --- |",
         *(
-            f"| `{check.check_id}` | `{check.command}` | `{check.exit_code}` | {check.result} |"
+            f"| `{_markdown_table_cell(check.check_id)}` | `{_markdown_table_cell(check.command)}` | "
+            f"`{_markdown_table_cell(check.exit_code)}` | {_markdown_table_cell(check.result)} |"
             for check in status.checks
         ),
         "",
