@@ -13,6 +13,7 @@ import GuidePage from '../pages/GuidePage'
 import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
 import ProfilePage from '../pages/ProfilePage'
+import MenuPage from '../pages/MenuPage'
 
 type AuthState =
   | { status: 'checking'; user: null }
@@ -118,6 +119,7 @@ function AppRouter() {
         <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
         <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
         <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+        <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>

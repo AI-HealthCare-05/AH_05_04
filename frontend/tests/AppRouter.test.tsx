@@ -77,6 +77,15 @@ describe('인증 상태별 AppRouter 이동', () => {
     expect(await screen.findByText(CURRENT_USER.email)).toBeTruthy()
   })
 
+  it('로그인 사용자가 메뉴 화면에 직접 접속하면 최신 메뉴를 표시한다', async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
+    localStorage.setItem('access_token', 'fixture-access-token')
+    renderRoute('/menu')
+
+    expect(await screen.findByRole('heading', { name: '메뉴' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '사용자 정보' })).toBeTruthy()
+  })
+
   it('로그인 사용자가 로그인 화면에 접속하면 홈 화면으로 이동한다', async () => {
     vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
     localStorage.setItem('access_token', 'fixture-access-token')

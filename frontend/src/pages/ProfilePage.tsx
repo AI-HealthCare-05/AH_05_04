@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { logout } from '../api/auth'
 import { ApiError } from '../api/client'
 import {
   getCurrentUser,
@@ -88,7 +87,6 @@ function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
 
@@ -171,25 +169,6 @@ function ProfilePage() {
     setIsEditing(false)
   }
 
-  const handleLogout = () => {
-    if (isLoggingOut) return
-
-    setIsLoggingOut(true)
-    clearFeedback()
-
-    // 계정 생명주기 계약(PD-206): 서버 요청이 실패하거나 응답 없이 계속 pending이어도
-    // 로컬 자격증명을 먼저 제거합니다. await하면 요청이 끝내 settle되지 않는 경우(네트워크
-    // 행, 서버 무응답) expireSession()이 영원히 호출되지 않으므로, 서버 호출은
-    // fire-and-forget으로 분리하고 로컬 세션 정리는 이 요청의 완료를 기다리지 않고
-    // 즉시 실행합니다. logout()이 Authorization 헤더에 쓸 access_token을 이 호출 시점에
-    // 이미 읽으므로, expireSession()이 뒤이어 그 값을 지워도 요청에는 영향이 없습니다.
-    logout().catch(() => {
-      // 네트워크 오류·5xx 등 서버 로그아웃 요청이 실패해도 로컬 세션은 이미 제거됩니다.
-    })
-
-    expireSession()
-  }
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (isSaving) return
@@ -241,14 +220,15 @@ function ProfilePage() {
   return (
     <div className="mvp-page mvp-profile-page">
       <MobileShell
-        title="내 정보"
+        title="Dosey 도지"
         activeNavigation="메뉴"
         disabledNavigation={['일정']}
-        onBack={() => navigate('/')}
+        onBack={() => navigate('/menu')}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '도지') navigate('/chat')
           if (item === '가이드') navigate('/guides')
-          if (item === '메뉴') navigate('/profile')
+          if (item === '메뉴') navigate('/menu')
         }}
       >
         <main className="app-scroll mvp-page__content mvp-profile">
@@ -276,11 +256,7 @@ function ProfilePage() {
           {!isLoading && user && (
             <>
               <header className="mvp-profile__intro">
-                <p className="mvp-page__eyebrow">ACCOUNT</p>
-                <h2 className="mvp-page__title">내 정보</h2>
-                <p className="mvp-page__description">
-                  계정에 등록된 이름과 이메일을 확인하고 수정할 수 있어요.
-                </p>
+                <h2 className="mvp-page__title">{isEditing ? '이름·이메일 수정' : '사용자 정보'}</h2>
               </header>
 
               {successMessage && (
@@ -290,7 +266,7 @@ function ProfilePage() {
               )}
 
               {isEditing ? (
-                <Card className="mvp-profile__card">
+                <Card className="mvp-profile__card mvp-profile__edit-card">
                   <form className="mvp-form" onSubmit={handleSubmit} noValidate>
                     <div className="mvp-form__field">
                       <label htmlFor="profile-name">이름</label>
@@ -360,49 +336,49 @@ function ProfilePage() {
                 </Card>
               ) : (
                 <>
-                  <Card className="mvp-profile__card">
-                    <div className="mvp-profile__identity">
-                      <span aria-hidden="true">{user.name.slice(0, 1)}</span>
-                      <div>
-                        <strong>{user.name}</strong>
-                        <small>{user.email}</small>
-                      </div>
-                    </div>
-                    <Button fullWidth variant="secondary" onClick={startEditing}>
+                  <section className="mvp-profile__section" aria-labelledby="account-info-title">
+                    <h3 id="account-info-title">계정 정보</h3>
+                    <Card className="mvp-profile__card mvp-profile__account-card">
+                      <dl className="mvp-profile__details mvp-profile__account-details">
+                        <div>
+                          <dt>이름</dt>
+                          <dd>{user.name}</dd>
+                          <span>수정 가능</span>
+                        </div>
+                        <div>
+                          <dt>이메일</dt>
+                          <dd>{user.email}</dd>
+                          <span>수정 가능</span>
+                        </div>
+                      </dl>
+                    </Card>
+                    <Button fullWidth onClick={startEditing}>
                       이름·이메일 수정
                     </Button>
-                  </Card>
+                  </section>
 
-                  <Card className="mvp-profile__card">
-                    <h3>기본 정보</h3>
-                    <dl className="mvp-profile__details">
-                      <div>
-                        <dt>휴대폰 번호</dt>
-                        <dd>{nullableValue(user.phone_number)}</dd>
-                      </div>
-                      <div>
-                        <dt>생년월일</dt>
-                        <dd>{nullableValue(user.birthday)}</dd>
-                      </div>
-                      <div>
-                        <dt>성별</dt>
-                        <dd>{genderLabel(user.gender)}</dd>
-                      </div>
-                    </dl>
+                  <section className="mvp-profile__section" aria-labelledby="basic-info-title">
+                    <h3 id="basic-info-title">기본 정보</h3>
+                    <Card className="mvp-profile__card">
+                      <dl className="mvp-profile__details">
+                        <div>
+                          <dt>휴대폰 번호</dt>
+                          <dd>{nullableValue(user.phone_number)}</dd>
+                        </div>
+                        <div>
+                          <dt>생년월일</dt>
+                          <dd>{nullableValue(user.birthday)}</dd>
+                        </div>
+                        <div>
+                          <dt>성별</dt>
+                          <dd>{genderLabel(user.gender)}</dd>
+                        </div>
+                      </dl>
+                    </Card>
                     <p className="mvp-profile__readonly-note">
-                      이 정보는 현재 화면에서 수정할 수 없습니다.
+                      현재 기본 정보는 조회만 가능해요.
                     </p>
-                  </Card>
-
-                  <Button
-                    fullWidth
-                    variant="ghost"
-                    onClick={() => void handleLogout()}
-                    disabled={isLoggingOut}
-                    aria-busy={isLoggingOut}
-                  >
-                    {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
-                  </Button>
+                  </section>
                 </>
               )}
             </>
