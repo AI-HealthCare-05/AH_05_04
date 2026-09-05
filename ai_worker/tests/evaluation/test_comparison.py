@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
+from ai_worker.tasks.evaluation.cli import main
 from ai_worker.tasks.evaluation.comparison import build_retrieval_comparison, load_published_run_bundle
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.manifest import (
@@ -325,10 +326,13 @@ def test_metric_natural_key_mismatch_invalidates_comparison(tmp_path: Path) -> N
     )
 
     comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+    _publish(tmp_path, replace(candidate, comparison=comparison))
+    loaded = load_published_run_bundle(tmp_path, RUN_ID_B)
 
     assert comparison.scope_comparisons == ()
     assert comparison.execution_status.value == "INVALID"
     assert comparison.decision_status is None
+    assert loaded.comparison == comparison
 
 
 def test_metric_version_mismatch_invalidates_comparison(tmp_path: Path) -> None:
@@ -341,10 +345,13 @@ def test_metric_version_mismatch_invalidates_comparison(tmp_path: Path) -> None:
     )
 
     comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+    _publish(tmp_path, replace(candidate, comparison=comparison))
+    loaded = load_published_run_bundle(tmp_path, RUN_ID_B)
 
     assert comparison.scope_comparisons == ()
     assert comparison.execution_status.value == "INVALID"
     assert comparison.decision_status is None
+    assert loaded.comparison == comparison
 
 
 def test_incomplete_candidate_metric_invalidates_comparison(tmp_path: Path) -> None:
@@ -373,6 +380,48 @@ def test_incomplete_candidate_metric_invalidates_comparison(tmp_path: Path) -> N
 
     assert comparison.execution_status is ExecutionStatus.INVALID
     assert comparison.decision_status is None
+
+
+@pytest.mark.parametrize("metric_status", [ExecutionStatus.ERROR, ExecutionStatus.NOT_IMPLEMENTED])
+def test_incomplete_metric_invalid_comparison_survives_publish_reload(
+    tmp_path: Path,
+    metric_status: ExecutionStatus,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline = _loaded_baseline(tmp_path)
+    candidate = _draft("RET-HR", run_id=RUN_ID_B)
+    incomplete = candidate.metrics.metrics[0].model_copy(
+        update={
+            "execution_status": metric_status,
+            "decision_status": None,
+            "sample_case_count": None,
+            "sample_independent_group_count": None,
+            "numerator": None,
+            "denominator": None,
+            "metric_value": None,
+            "ci_lower": None,
+            "ci_upper": None,
+            "reason_code": None,
+        }
+    )
+    candidate = replace(
+        candidate,
+        metrics=candidate.metrics.model_copy(update={"metrics": (incomplete, *candidate.metrics.metrics[1:])}),
+    )
+    comparison = build_retrieval_comparison(baseline, candidate, CONTROLLED_VARIABLE_KEYS)
+    _publish(tmp_path, replace(candidate, comparison=comparison))
+
+    loaded = load_published_run_bundle(tmp_path, RUN_ID_B)
+    exit_code = main(["verify-result", "--run-id", RUN_ID_B], allowed_result_root=tmp_path)
+    captured = capsys.readouterr()
+
+    assert comparison.execution_status is ExecutionStatus.INVALID
+    assert comparison.decision_status is None
+    assert comparison.scope_comparisons == ()
+    assert loaded.comparison == comparison
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == f"{loaded.semantic_hash}\n"
 
 
 @pytest.mark.parametrize("tampered_name", ["run.json", "metrics.json", "result-content-manifest.json"])

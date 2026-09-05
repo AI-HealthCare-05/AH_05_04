@@ -53,6 +53,9 @@ retrieval variant manifest hash는 서로 달라야 한다. 이 pair identity �
 builder 직접 호출 경로에서 동일하게 적용하고, 위반 시 `EVAL_STATE_COMBINATION_INVALID`로 닫는다.
 발행된 candidate bundle을 다시 읽을 때는 참조된 baseline Run도 같은 result root에서 안전하게 로드해 baseline
 Run ID·semantic hash·통제 변수 hash·metric 값을 `comparison.json`과 대조한다.
+Metric `ERROR`·`NOT_IMPLEMENTED` 또는 metric scope 불일치로 builder가 만든 빈 scope의 `INVALID/null`
+comparison도 정상적인 진단 산출물이므로 발행·재로드·`verify-result`가 가능해야 한다. 이 경우에도 참조 baseline
+기반 expected comparison 전체 재계산으로 결속을 검증한다.
 
 ## 4. 데이터와 실행 입력
 

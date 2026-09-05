@@ -284,7 +284,7 @@ def _validate_candidate_comparison_binding(
         (scope.metric_id, scope.partition, scope.slice_id): scope.candidate_value
         for scope in comparison.scope_comparisons
     }
-    if len(metric_values) != len(metrics.metrics) or scope_values != metric_values:
+    if scope_values and (len(metric_values) != len(metrics.metrics) or scope_values != metric_values):
         raise _baseline_invalid()
 
 

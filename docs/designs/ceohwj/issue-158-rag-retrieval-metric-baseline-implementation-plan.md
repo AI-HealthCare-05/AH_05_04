@@ -608,6 +608,9 @@ hash/size와 runtime schema를 검증한다. baseline에 `comparison.json`이 �
 Candidate comparison을 읽을 때는 참조 baseline bundle을 같은 root에서 로드해 `baseline_run_id`, semantic hash,
 통제 변수 baseline hash와 scope baseline metric 값을 exact 검증한다. 참조 baseline 자체의 과거 comparison은
 현재 candidate의 직접 provenance가 아니므로 재귀 추적하지 않는다.
+Metric이 `ERROR`·`NOT_IMPLEMENTED`이거나 natural key/version이 달라 builder가 빈 scope의 `INVALID/null`을
+생성한 경우는 유효한 진단 상태로 발행·재로드를 허용하고, baseline 기반 expected comparison 재계산 결과와
+저장된 객체의 exact equality로 위조 여부를 판정한다.
 
 - [ ] **Step 5: 통제 변수와 Scope delta builder 구현**
 
