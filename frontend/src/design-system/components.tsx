@@ -120,6 +120,7 @@ export function MobileShell({
   children,
   onBack,
   brandMark,
+  headerAction,
   backPlacement = 'topbar',
   hideHeader = false,
   hideNavigation = false,
@@ -131,6 +132,7 @@ export function MobileShell({
   children: ReactNode
   onBack?: () => void
   brandMark?: ReactNode
+  headerAction?: ReactNode
   backPlacement?: 'topbar' | 'content'
   hideHeader?: boolean
   hideNavigation?: boolean
@@ -155,6 +157,7 @@ export function MobileShell({
             </span>
           )}
           <h1>{title ?? 'Dosey 도지'}</h1>
+          {headerAction && <div className="app-topbar__action">{headerAction}</div>}
         </header>
       )}
       {children}

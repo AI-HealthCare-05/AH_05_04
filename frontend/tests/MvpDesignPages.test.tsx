@@ -89,26 +89,21 @@ describe('Dosey MVP design pages', () => {
     ).toBeTruthy()
     expect(screen.getByText('도지 사용자님!')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '처방전 등록하기' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /처방약 복용 안내/ })).toBeTruthy()
   })
 
-  it('HOME-01은 실제 데이터가 없을 때 가짜 차트 대신 처방 등록을 안내한다', async () => {
+  it('HOME-01은 실제 데이터가 없어도 neutral 복약 달성도 영역을 표시한다', async () => {
     const { container } = renderHome()
 
     await screen.findByText('오늘도 건강한 하루 되세요')
-    expect(screen.getByText('복약 일정 연결을 준비하고 있어요')).toBeTruthy()
-    expect(container.querySelector('.mvp-home__flow-placeholder')).toBeNull()
+    expect(screen.getByRole('heading', { name: '이번 주 복약 달성도' })).toBeTruthy()
+    expect(screen.getByText('집계 준비 중')).toBeTruthy()
+    expect(screen.getByLabelText('이번 주 복약 달성도 집계 준비 중')).toBeTruthy()
+    expect(container.querySelector('.mvp-home__adherence-progress .dosey-mascot')).toBeTruthy()
     expect(screen.queryByText('85%')).toBeNull()
   })
 
-  it('HOME-01의 두 문서 등록 CTA를 기존 업로드 route에 연결한다', async () => {
-    const firstRender = renderHome()
-
-    await screen.findByText('오늘도 건강한 하루 되세요')
-    fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
-    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
-
-    firstRender.unmount()
+  it('HOME-01의 처방약 복용 안내를 기존 업로드 route에 연결한다', async () => {
     renderHome()
     await screen.findByText('오늘도 건강한 하루 되세요')
     fireEvent.click(screen.getByRole('button', { name: /처방약 복용 안내/ }))
@@ -122,6 +117,17 @@ describe('Dosey MVP design pages', () => {
     expect(
       screen.getByRole('button', { name: '미확인 복약 기록 (준비 중)' }),
     ).toHaveProperty('disabled', true)
+    expect(
+      screen.getByRole('button', { name: '일반의약품 안내 (준비 중)' }),
+    ).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '상세 보기 (준비 중)' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    expect(screen.getByRole('button', { name: '알림 (준비 중)' })).toHaveProperty(
+      'disabled',
+      true,
+    )
     expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty(
       'disabled',
       true,
