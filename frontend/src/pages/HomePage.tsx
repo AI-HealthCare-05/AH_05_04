@@ -94,7 +94,7 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
           if (item === '홈') navigate('/')
           if (item === '도지') navigate('/chat')
           if (item === '가이드') navigate('/guides')
-          if (item === '메뉴') navigate('/profile')
+          if (item === '메뉴') navigate('/menu')
         }}
       >
         <main className="app-scroll mvp-page__content">

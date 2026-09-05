@@ -26,7 +26,7 @@ function renderHome(currentUser = CURRENT_USER) {
         />
         <Route path="/chat" element={<div>처방전 ID 없는 챗봇 진입 화면</div>} />
         <Route path="/guides" element={<div>가이드 empty 화면</div>} />
-        <Route path="/profile" element={<div>내 정보 화면</div>} />
+        <Route path="/menu" element={<div>메뉴 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -150,7 +150,7 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('가이드 empty 화면')).toBeTruthy()
   })
 
-  it('HOME-01 Bottom Navigation은 최신 5-tab과 Profile 회귀를 유지한다', async () => {
+  it('HOME-01 Bottom Navigation은 최신 5-tab과 Menu 경로를 유지한다', async () => {
     renderHome()
 
     await screen.findByText('오늘도 건강한 하루 되세요')
@@ -159,6 +159,6 @@ describe('Dosey MVP design pages', () => {
     )
     expect(screen.getByRole('button', { name: '도지' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '메뉴' }))
-    expect(screen.getByText('내 정보 화면')).toBeTruthy()
+    expect(screen.getByText('메뉴 화면')).toBeTruthy()
   })
 })
