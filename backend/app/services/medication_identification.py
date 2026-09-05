@@ -1,3 +1,4 @@
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -56,13 +57,22 @@ class MedicationIdentificationService:
         self,
         *,
         prescription_version_medication_id: UUID,
+        user_id: UUID,
         query_digest: str,
         runtime_release_bundle_id: UUID | None,
         candidate_index_version_id: UUID | None,
         expires_at: datetime | None,
     ) -> CandidateSearchRecordResult:
+        medication = await self._repository.get_medication_for_candidate_search_owned(
+            prescription_version_medication_id=prescription_version_medication_id,
+            user_id=user_id,
+        )
+        if medication is None:
+            raise self._not_found_error(field="prescription_version_medication_id")
+
         active_search = await self._repository.get_active_search_for_update(
-            prescription_version_medication_id=prescription_version_medication_id
+            prescription_version_medication_id=prescription_version_medication_id,
+            user_id=user_id,
         )
         now = datetime.now(config.TIMEZONE)
         if active_search is not None and self._is_expired(active_search, now=now):
@@ -70,7 +80,8 @@ class MedicationIdentificationService:
             active_search = None
 
         existing_identification = await self._repository.get_latest_identification(
-            prescription_version_medication_id=prescription_version_medication_id
+            prescription_version_medication_id=prescription_version_medication_id,
+            user_id=user_id,
         )
         if existing_identification is not None:
             raise self._context_stale_error(
@@ -91,6 +102,8 @@ class MedicationIdentificationService:
 
         search = await self._repository.create_search(
             prescription_version_medication_id=prescription_version_medication_id,
+            medication_name_snapshot=medication.medication_name,
+            strength_text_snapshot=medication.strength_text,
             query_digest=query_digest,
             runtime_release_bundle_id=runtime_release_bundle_id,
             candidate_index_version_id=candidate_index_version_id,
@@ -102,12 +115,13 @@ class MedicationIdentificationService:
         self,
         *,
         search_id: UUID,
+        user_id: UUID,
         status: MedicationCandidateSearchStatus,
         results: list[MedicationCandidateResultCreate],
         status_reason: str | None = None,
         finalized_at: datetime | None = None,
     ) -> CandidateSearchFinalizeResult:
-        search = await self._repository.get_search_for_update(search_id=search_id)
+        search = await self._repository.get_search_for_update_owned(search_id=search_id, user_id=user_id)
         if search is None:
             raise self._not_found_error(field="search_id")
         if search.status != MedicationCandidateSearchStatus.RUNNING:
@@ -132,10 +146,11 @@ class MedicationIdentificationService:
         *,
         prescription_version_medication_id: UUID,
         candidate_search_result_id: UUID,
+        user_id: UUID,
         confirmed_at: datetime | None = None,
     ) -> MedicationIdentification:
-        selection = await self._repository.get_result_selection_for_update(
-            candidate_search_result_id=candidate_search_result_id
+        selection = await self._repository.get_result_selection_for_update_owned(
+            candidate_search_result_id=candidate_search_result_id, user_id=user_id
         )
         if selection is None:
             raise self._not_found_error(field="candidate_search_result_id")
@@ -180,10 +195,11 @@ class MedicationIdentificationService:
         *,
         search_id: UUID,
         candidate_search_result_id: UUID,
+        user_id: UUID,
         rejected_at: datetime | None = None,
     ) -> MedicationIdentification:
-        selection = await self._repository.get_result_selection_for_update(
-            candidate_search_result_id=candidate_search_result_id
+        selection = await self._repository.get_result_selection_for_update_owned(
+            candidate_search_result_id=candidate_search_result_id, user_id=user_id
         )
         if selection is None or selection.search.id != search_id:
             raise self._not_found_error(field="candidate_search_result_id")
@@ -266,6 +282,8 @@ class MedicationIdentificationService:
         displayed_count = sum(1 for result in results if result.is_displayed)
         selectable_count = sum(1 for result in results if result.selection_eligible)
 
+        MedicationIdentificationService._validate_result_metadata(results)
+
         if status not in _FINALIZABLE_SEARCH_STATUSES:
             raise MedicationIdentificationService._invalid_state_error(
                 field="status",
@@ -312,6 +330,20 @@ class MedicationIdentificationService:
                 field="status_reason",
                 reason="INVALID_INPUT",
             )
+
+    @staticmethod
+    def _validate_result_metadata(results: list[MedicationCandidateResultCreate]) -> None:
+        for result in results:
+            if not math.isfinite(result.result_score):
+                raise MedicationIdentificationService._invalid_state_error(
+                    field="result_score",
+                    reason="FINITE_NUMBER_REQUIRED",
+                )
+            if not result.result_method.strip():
+                raise MedicationIdentificationService._invalid_state_error(
+                    field="result_method",
+                    reason="NONBLANK_TEXT_REQUIRED",
+                )
 
     @staticmethod
     def _is_expired(search: MedicationCandidateSearch, *, now: datetime) -> bool:

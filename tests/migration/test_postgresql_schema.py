@@ -11,7 +11,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import URL, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -2555,3 +2555,138 @@ async def test_user_account_lifecycle_columns_default_to_active(
     assert row.withdrawal_requested_at is None
     assert row.withdrawn_at is None
     assert row.token_version == 0
+
+
+async def _insert_candidate_search_with_result(
+    connection: AsyncConnection,
+    *,
+    displayed_candidate_count: int,
+    is_displayed: bool,
+) -> tuple[str, str]:
+    search_id = str(uuid4())
+    result_id = str(uuid4())
+    await connection.execute(
+        text(
+            """
+            INSERT INTO medication_candidate_search
+                (id, prescription_version_medication_id, medication_name_snapshot, query_digest,
+                 status, candidate_count, displayed_candidate_count)
+            VALUES (:id, :pvm_id, '테스트약', :digest, 'RUNNING', 1, :displayed_candidate_count)
+            """
+        ),
+        {
+            "id": search_id,
+            "pvm_id": str(uuid4()),
+            "digest": f"digest-{uuid4().hex[:8]}",
+            "displayed_candidate_count": displayed_candidate_count,
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO medication_candidate_search_result
+                (id, search_id, product_id, code_system, canonical_code, product_name, product_status,
+                 result_rank, result_score, result_method, is_displayed, selection_eligible)
+            VALUES (:id, :search_id, :product_id, 'MFDS_ITEM_SEQ', '123', '테스트정', 'ACTIVE',
+                    1, 0.9, 'PRODUCT_NAME', :is_displayed, :is_displayed)
+            """
+        ),
+        {
+            "id": result_id,
+            "search_id": search_id,
+            "product_id": str(uuid4()),
+            "is_displayed": is_displayed,
+        },
+    )
+    return search_id, result_id
+
+
+@pytest.mark.asyncio
+async def test_candidate_search_displayed_count_deferred_constraint_blocks_mismatch(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """계약(medication-identification-v1.md:117): "Commit 시 Deferred Constraint는 실제 표시
+    Result 수, displayed_candidate_count... 를 검증한다. 불일치하면 전체를 rollback한다."
+    일반 CHECK 제약은 다른 테이블(medication_candidate_search_result)을 참조하지 못해
+    displayed_candidate_count가 실제 표시 Result 수와 정말 일치하는지는 검증할 수 없으므로,
+    DEFERRABLE INITIALLY DEFERRED CONSTRAINT TRIGGER로 커밋 시점에만 검증한다."""
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            # displayed_candidate_count=0인데 is_displayed=true인 Result가 있어 불일치.
+            await _insert_candidate_search_with_result(
+                connection,
+                displayed_candidate_count=0,
+                is_displayed=True,
+            )
+            with pytest.raises(DBAPIError, match="does not match actual displayed"):
+                await connection.commit()
+        finally:
+            if transaction.is_active:
+                await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_candidate_search_displayed_count_deferred_constraint_blocks_insert_mismatch(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """Search를 직접 INSERT할 때 displayed_candidate_count가 실제 표시 Result 수와
+    불일치해도 commit 시점에 rollback되는지 확인한다."""
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO medication_candidate_search
+                        (id, prescription_version_medication_id, medication_name_snapshot, query_digest,
+                         status, candidate_count, displayed_candidate_count)
+                    VALUES (:id, :pvm_id, '테스트약', :digest, 'RUNNING', 1, 1)
+                    """
+                ),
+                {
+                    "id": str(uuid4()),
+                    "pvm_id": str(uuid4()),
+                    "digest": f"digest-{uuid4().hex[:8]}",
+                },
+            )
+            with pytest.raises(DBAPIError, match="does not match actual displayed"):
+                await connection.commit()
+        finally:
+            if transaction.is_active:
+                await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_candidate_search_displayed_count_deferred_constraint_allows_match(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """실제 표시 Result 수와 displayed_candidate_count가 일치하면 정상적으로 commit된다 —
+    이 트리거가 정상 흐름까지 막지 않는지 실제 commit으로 확인한다."""
+    search_id = None
+    result_id = None
+    async with migrated_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            search_id, result_id = await _insert_candidate_search_with_result(
+                connection,
+                displayed_candidate_count=1,
+                is_displayed=True,
+            )
+            await connection.commit()
+        finally:
+            if transaction.is_active:
+                await transaction.rollback()
+
+    # 커밋된 행이라 위 rollback으로 정리되지 않으므로 별도 transaction에서 지운다.
+    async with migrated_engine.connect() as cleanup_connection:
+        cleanup_transaction = await cleanup_connection.begin()
+        await cleanup_connection.execute(
+            text("DELETE FROM medication_candidate_search_result WHERE id = :id"),
+            {"id": result_id},
+        )
+        await cleanup_connection.execute(
+            text("DELETE FROM medication_candidate_search WHERE id = :id"),
+            {"id": search_id},
+        )
+        await cleanup_transaction.commit()
