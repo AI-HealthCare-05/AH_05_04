@@ -2,15 +2,15 @@
 
 ## 목적
 
-`GET /api/v1/jobs/{job_id}`가 실제로 구현·등록되어(#148) 반환하는 응답 필드, 6개 Job 상태의 의미, 소유권 이중 확인과 오류 계약을 기록합니다. 이 문서는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md)(target) 중 이 endpoint 부분만 Current로 승격한 것입니다 — OCR·Guide·Chat 접수(`POST`)와 Worker·Reconciler·재시도 계약은 아직 target 문서에만 있고 이 문서의 범위가 아닙니다.
+`GET /api/v1/jobs/{job_id}`가 실제로 구현·등록되어(#148) 반환하는 응답 필드, 6개 Job 상태의 의미, 소유권 이중 확인과 오류 계약을 기록합니다. 이 문서는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md)(target) 중 이 endpoint 부분만 Current로 승격한 것입니다 — OCR 접수(`POST`)는 #148에서 공통 Job 접수로 연결되었지만, Guide·Chat 접수(`POST`)와 Worker·Reconciler·재시도 계약은 아직 target 문서에만 있고 이 문서의 범위가 아닙니다.
 
-## 현재 MVP 기준
+## 현재 구현 기준
 
 - Endpoint: `GET /api/v1/jobs/{job_id}`
 - 응답: `{"data": JobStatusResponse}` (오류는 top-level 공통 오류 envelope)
 - 모든 성공·오류 응답에 `Cache-Control: no-store`를 포함합니다.
 - `JobStatusData` 필드: `job_id`, `job_type`, `status`, `domain_type`, `domain_id`, `prescription_version_id`(nullable), `status_url`, `result_url`(nullable), `retry_after_seconds`(nullable), `error`(nullable `{code, message}`), `created_at`, `updated_at`.
-- 현재 실제로 `AiJob` row를 만드는 production 경로는 없습니다 — OCR/Guide/Chat 접수(`POST`)가 아직 `JobIntakeService.accept_job()`에 연결되지 않았습니다(#148, Worker/Publisher #219·Handler #232/#233 준비 전까지 팀 결정으로 보류). 이 endpoint 자체의 응답 계약은 구현·테스트로 뒷받침되지만, 실사용자가 오늘 이 endpoint로 실제 Job을 조회할 방법은 아직 없습니다.
+- 현재 실제로 `AiJob` row를 만드는 production 경로는 OCR 접수(`POST /api/v1/documents/{document_id}/ocr-jobs`)입니다. Guide/Chat 접수(`POST`)는 아직 `JobIntakeService.accept_job()`에 연결되지 않았습니다. 이 endpoint 자체의 응답 계약은 구현·테스트로 뒷받침되며, OCR 접수 응답의 `data.status_url`로 실제 Job을 조회할 수 있습니다.
 
 ## 6개 Job 상태
 

@@ -23,8 +23,8 @@ class OcrRepository:
         )
         return result.scalars().first()
 
-    async def create_job(self, *, document: MedicalDocument) -> OcrJob:
-        job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING)
+    async def create_job(self, *, document: MedicalDocument, ai_job_id: UUID | None = None) -> OcrJob:
+        job = OcrJob(document_id=document.id, ai_job_id=ai_job_id, ocr_status=OcrStatus.PENDING)
         self.session.add(job)
         await self.session.flush()
         await self.session.refresh(

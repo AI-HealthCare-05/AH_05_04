@@ -55,6 +55,7 @@ async def isolate_database() -> AsyncIterator[None]:
             autoflush=False,
             join_transaction_mode="create_savepoint",
         )
+        fastapi_app.state._test_db_session = session
 
         async def override_get_db_session() -> AsyncIterator[AsyncSession]:
             try:
@@ -70,7 +71,17 @@ async def isolate_database() -> AsyncIterator[None]:
             yield
         finally:
             fastapi_app.dependency_overrides.pop(get_db_session, None)
+            if hasattr(fastapi_app.state, "_test_db_session"):
+                delattr(fastapi_app.state, "_test_db_session")
             await session.close()
 
             if transaction.is_active:
                 await transaction.rollback()
+
+
+@pytest_asyncio.fixture
+async def db_session(isolate_database: None) -> AsyncSession:
+    """API tests can seed data through the same session used by request dependency overrides."""
+
+    _ = isolate_database
+    return fastapi_app.state._test_db_session

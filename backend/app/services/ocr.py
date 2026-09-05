@@ -5,6 +5,7 @@ from app.core import config
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.ocr import ExecuteOcrRequest, ExtractedFieldData, OcrJobData, OcrJobStatus
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
+from app.models.async_jobs import AiJobType, DomainType
 from app.models.ocr import ExtractedField, FieldType, OcrJob
 from app.models.users import User
 from app.repositories.medical_document_repository import (
@@ -13,6 +14,8 @@ from app.repositories.medical_document_repository import (
 )
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.job_intake import DomainReference, JobIntakeService
+from app.services.job_status import JobStatusResult, JobStatusService
 from app.services.ocr_engine import (
     NotConfiguredOcrEngine,
     OcrDeadline,
@@ -83,6 +86,63 @@ class OcrService:
         self._document_repo = document_repository
         self._ocr_repo = ocr_repository
         self._prescription_repo = prescription_repository
+
+    async def accept_ocr_job(
+        self,
+        *,
+        user: User,
+        document_id: UUID,
+        request: ExecuteOcrRequest,
+        idempotency_key: str,
+        trace_id: str,
+        job_intake_service: JobIntakeService,
+        job_status_service: JobStatusService,
+    ) -> JobStatusResult:
+        # OCR 접수 Backend 계약: API 요청에서는 Provider를 호출하지 않고 Job/Outbox/placeholder만
+        # 같은 transaction에 저장한 뒤 공통 Job 상태 응답을 반환합니다. 실제 OCR 실행은 Worker가 담당합니다.
+        async def create_domain_placeholder(ai_job_id: UUID) -> DomainReference:
+            document = await self._document_repo.get_owned(document_id=document_id, user=user)
+            if document is None:
+                raise ApiError(
+                    status_code=404,
+                    code="MEDICAL_DOCUMENT_NOT_FOUND",
+                    message="의료문서를 찾을 수 없습니다.",
+                    details=[
+                        ErrorDetail(
+                            field="document_id",
+                            reason="NOT_FOUND",
+                            rejected_value=str(document_id),
+                        )
+                    ],
+                )
+
+            if not request.force_reprocess:
+                active_job = await self._ocr_repo.get_active_job(document=document)
+                if active_job is not None:
+                    raise ApiError(
+                        status_code=409,
+                        code="OCR_JOB_ALREADY_PROCESSING",
+                        message="이미 OCR 처리가 진행 중입니다.",
+                        details=[ErrorDetail(field="document_id", reason="OCR_JOB_IN_PROGRESS")],
+                    )
+
+            ocr_job = await self._ocr_repo.create_job(document=document, ai_job_id=ai_job_id)
+            return DomainReference(domain_type=DomainType.OCR_JOB, domain_id=ocr_job.id)
+
+        intake_result = await job_intake_service.accept_job(
+            user_id=user.id,
+            job_type=AiJobType.OCR,
+            operation_id="ocr.create_job",
+            idempotency_key=idempotency_key,
+            fingerprint={
+                "job_type": AiJobType.OCR.value,
+                "document_id": str(document_id),
+                "force_reprocess": request.force_reprocess,
+            },
+            create_domain_placeholder=create_domain_placeholder,
+            trace_id=trace_id,
+        )
+        return await job_status_service.get_job_status(user=user, job_id=intake_result.job.id)
 
     async def execute_ocr(
         self,

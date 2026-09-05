@@ -1,25 +1,31 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Header, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse as Response
 
+from app.apis.v1.job_routers import JOB_ACCEPTED_OPENAPI_RESPONSES, build_job_accepted_response
 from app.dependencies.security import get_request_user
 from app.dependencies.services import (
+    get_job_intake_service,
+    get_job_status_service,
     get_medical_document_service,
     get_ocr_service,
     get_prescription_service,
 )
+from app.dtos.jobs import JobStatusResponse
 from app.dtos.medical_documents import (
     MedicalDocumentType,
     PrescriptionDocumentUploadData,
     PrescriptionDocumentUploadResponse,
     UploadStatus,
 )
-from app.dtos.ocr import ExecuteOcrRequest, OcrJobResponse
+from app.dtos.ocr import ExecuteOcrRequest
 from app.dtos.prescriptions import PrescriptionResponse
 from app.models.users import User
+from app.services.job_intake import JobIntakeService
+from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.ocr import OcrService
 from app.services.prescriptions import PrescriptionService
@@ -61,29 +67,50 @@ async def create_prescription_document(
 
 @medical_document_router.post(
     "/{document_id}/ocr-jobs",
-    response_model=OcrJobResponse,
+    response_model=JobStatusResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    responses=JOB_ACCEPTED_OPENAPI_RESPONSES,
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Idempotency-Key",
+                "in": "header",
+                "required": True,
+                "schema": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 255,
+                    "pattern": r"^[A-Za-z0-9._:-]+$",
+                },
+                "description": "비동기 OCR 접수 멱등성 키입니다. 원문 값은 저장하지 않고 HMAC digest만 저장합니다.",
+            }
+        ]
+    },
 )
 async def execute_ocr(
+    request_context: Request,
     document_id: UUID,
     user: Annotated[User, Depends(get_request_user)],
     ocr_service: Annotated[OcrService, Depends(get_ocr_service)],
+    job_intake_service: Annotated[JobIntakeService, Depends(get_job_intake_service)],
+    job_status_service: Annotated[JobStatusService, Depends(get_job_status_service)],
     request: Annotated[ExecuteOcrRequest, Body(default_factory=ExecuteOcrRequest)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", include_in_schema=False)] = None,
 ) -> Response:
-    # OCR 실행 Backend 계약: 실제 CLOVA OCR 호출을 같은 요청 안에서 수행하고 결과를 저장합니다.
-    result = await ocr_service.execute_ocr(user=user, document_id=document_id, request=request)
-
-    return Response(
-        content=OcrJobResponse(data=result).model_dump(mode="json"),
-        status_code=status.HTTP_202_ACCEPTED,
+    result = await ocr_service.accept_ocr_job(
+        user=user,
+        document_id=document_id,
+        request=request,
+        idempotency_key=idempotency_key or "",
+        trace_id=request_context.state.trace_id,
+        job_intake_service=job_intake_service,
+        job_status_service=job_status_service,
     )
+    return build_job_accepted_response(result)
 
 
-# GET /{document_id}/ocr-jobs (재접속 복구): execute_ocr가 JobIntakeService.accept_job()에
-# 연결되기 전까지는(#219/#232/#233) 실제 사용자가 생성한 어떤 OCR Job도 AiJob 매핑을 가질 수
-# 없어 정상 200 경로가 존재하지 않습니다. 라우트 등록과 docs/api.md 현재 API 목록 등재를
-# 접수 연결 시점까지 보류합니다(#148 세 번째 리뷰). 서비스 로직(JobStatusService.rediscover_ocr_job)과
-# 그 테스트는 남겨 두어 연결 시점에 라우트만 다시 추가하면 되도록 합니다.
+# GET /{document_id}/ocr-jobs 재접속 복구 라우트는 별도 계약 검토 후 노출합니다.
+# 현재 OCR 접수 API는 AiJob 매핑을 생성하므로 Job 상태는 `GET /api/v1/jobs/{job_id}`로 조회합니다.
 
 
 @medical_document_router.post(

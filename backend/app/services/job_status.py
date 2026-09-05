@@ -113,12 +113,9 @@ class JobStatusService:
         가장 최근 Job의 polling을 재개할 수 있도록, 문서의 가장 최근 OCR Job을 찾아 그 Job의
         상태를 그대로 돌려줍니다(`get_job_status`와 동일한 응답).
 
-        `POST /documents/{id}/ocr-jobs`(`execute_ocr`)는 아직 `accept_job()`에 연결되지
-        않아(#148, Publisher·Worker·Handler 준비 전까지 팀 결정으로 보류) OcrJob은 생성돼도
-        대응하는 AiJob/OutboxEvent가 없습니다. 그래서 지금은 이 메서드가 OcrJob은 찾고도
-        `404`를 반환하는 것이 현재 상태에서 기대되는 동작입니다(재개할 진행 중인 Job이 실제로
-        없음) — 버그가 아닙니다. `execute_ocr`가 `accept_job()`에 연결되면 이 경로도 정상
-        동작합니다."""
+        OCR 접수(`POST /documents/{id}/ocr-jobs`)는 `accept_job()`에 연결되어
+        OcrJob의 영속 `ai_job_id`를 생성합니다. 이 rediscovery 서비스는 라우트 노출 전에도
+        문서 기준 최신 OCR Job을 공통 Job 상태로 되찾을 수 있는지 검증하기 위해 유지합니다."""
         ocr_job = await self.ocr_repository.get_latest_job_for_document_owned(document_id=document_id, user_id=user.id)
         if ocr_job is None:
             raise _job_not_found_error()

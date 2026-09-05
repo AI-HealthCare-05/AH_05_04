@@ -19,18 +19,7 @@ job_router = APIRouter(prefix="/jobs", tags=["jobs"])
 # 실제로 나오는 형태를 여기 명시합니다(#148 리뷰 지적: 생성 타입만으로 FE error 계약을
 # 고정하기 어렵다는 문제). `GET /jobs/{job_id}`와 OCR/Guide rediscovery 라우트가 이 응답
 # 형태를 공유합니다.
-JOB_STATUS_OPENAPI_RESPONSES: dict[int | str, dict] = {
-    status.HTTP_200_OK: {
-        "headers": {
-            "Retry-After": {
-                "description": (
-                    "`RETRY_WAIT` 상태일 때만 포함되며 `data.retry_after_seconds`와 같은 값(초)입니다. "
-                    "Cross-origin Frontend가 읽을 수 있도록 CORS `Access-Control-Expose-Headers`에도 포함됩니다."
-                ),
-                "schema": {"type": "integer"},
-            }
-        }
-    },
+_JOB_ERROR_OPENAPI_RESPONSES: dict[int | str, dict] = {
     status.HTTP_401_UNAUTHORIZED: {
         "model": ErrorResponse,
         "description": (
@@ -68,6 +57,47 @@ JOB_STATUS_OPENAPI_RESPONSES: dict[int | str, dict] = {
 }
 
 
+JOB_STATUS_OPENAPI_RESPONSES: dict[int | str, dict] = {
+    status.HTTP_200_OK: {
+        "headers": {
+            "Retry-After": {
+                "description": (
+                    "`RETRY_WAIT` 상태일 때만 포함되며 `data.retry_after_seconds`와 같은 값(초)입니다. "
+                    "Cross-origin Frontend가 읽을 수 있도록 CORS `Access-Control-Expose-Headers`에도 포함됩니다."
+                ),
+                "schema": {"type": "integer"},
+            }
+        }
+    },
+    **_JOB_ERROR_OPENAPI_RESPONSES,
+}
+
+
+JOB_ACCEPTED_OPENAPI_RESPONSES: dict[int | str, dict] = {
+    status.HTTP_202_ACCEPTED: {
+        "headers": {
+            "Location": {
+                "description": "접수된 Job 상태 조회 URL입니다. 응답 body의 `data.status_url`과 같습니다.",
+                "schema": {"type": "string"},
+            },
+            "Retry-After": {
+                "description": "`RETRY_WAIT` 상태의 기존 Job을 멱등 재요청한 경우에만 포함됩니다.",
+                "schema": {"type": "integer"},
+            },
+        }
+    },
+    status.HTTP_400_BAD_REQUEST: {
+        "model": ErrorResponse,
+        "description": "`Idempotency-Key`가 없거나 형식이 올바르지 않습니다. `code`는 `IDEMPOTENCY_KEY_REQUIRED` 또는 `IDEMPOTENCY_KEY_INVALID`입니다.",
+    },
+    status.HTTP_409_CONFLICT: {
+        "model": ErrorResponse,
+        "description": "이미 처리 중인 OCR Job이 있거나 같은 `Idempotency-Key`로 다른 요청 지문이 접수됐습니다.",
+    },
+    **_JOB_ERROR_OPENAPI_RESPONSES,
+}
+
+
 def build_job_status_response(result: JobStatusResult) -> Response:
     """`GET /jobs/{job_id}`와 OCR/Guide rediscovery 라우트가 공유하는 응답 조립입니다.
     RETRY_WAIT에서만 `Retry-After` 헤더를 추가로 설정합니다."""
@@ -78,6 +108,18 @@ def build_job_status_response(result: JobStatusResult) -> Response:
     return Response(
         content=JobStatusResponse(data=result.data).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
+        headers=headers,
+    )
+
+
+def build_job_accepted_response(result: JobStatusResult) -> Response:
+    headers = {"Location": result.data.status_url}
+    if result.retry_after_seconds is not None:
+        headers["Retry-After"] = str(result.retry_after_seconds)
+
+    return Response(
+        content=JobStatusResponse(data=result.data).model_dump(mode="json"),
+        status_code=status.HTTP_202_ACCEPTED,
         headers=headers,
     )
 

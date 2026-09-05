@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Partially implemented (#148) — 공통 Job 상태 조회(`GET /jobs/{job_id}`) 구현·테스트·라우트 등록이 완료되어 해당 부분은 [공통 Job 상태 조회 계약 v1](../../current/job-status-v1.md)로 승격했습니다(#148 다섯 번째 리뷰 — AGENTS.md 문서 권위 규칙에 따라 구현된 부분만 current로 분리). OCR·Guide rediscovery GET(`GET /documents/{id}/ocr-jobs`, `GET /prescriptions/{id}/guides`)은 서비스 로직·테스트만 완료하고 라우트 등록은 접수(POST) `accept_job()` 연결 시점까지 보류(#148 세 번째 리뷰 — 접수 미연결 상태에서는 성공 경로 없는 API가 되기 때문). OCR·Guide·Chat 접수(POST) 3종의 `accept_job()` 연결과 Publisher·Worker·Reconciler는 Not implemented — 전체 승격 대기 |
+| 구현·리뷰 | Partially implemented (#148) — 공통 Job 상태 조회(`GET /jobs/{job_id}`)와 OCR 접수(`POST /documents/{document_id}/ocr-jobs`)는 구현·테스트·라우트 등록이 완료되었습니다. 공통 Job 상태 조회는 [공통 Job 상태 조회 계약 v1](../../current/job-status-v1.md)로 승격했습니다(#148 다섯 번째 리뷰 — AGENTS.md 문서 권위 규칙에 따라 구현된 부분만 current로 분리). OCR·Guide rediscovery GET(`GET /documents/{id}/ocr-jobs`, `GET /prescriptions/{id}/guides`)은 서비스 로직·테스트만 완료하고 라우트 등록은 별도 계약 검토 후 진행합니다. Guide·Chat 접수(POST)와 Reconciler는 Not implemented — 전체 승격 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-08-31 |
 
@@ -54,7 +54,7 @@ OCR 접수는 기존 라우터의 path parameter 방식과 `202` 응답을 유�
 
 ## 공통 조회 응답
 
-`GET /api/v1/jobs/{job_id}`는 구현·테스트가 완료되어 [공통 Job 상태 조회 계약 v1](../../current/job-status-v1.md)로 승격했습니다. 응답 envelope, `result_url`·`Retry-After`·`error` 필드 규칙, 소유권 이중 확인, 오류 코드의 정본은 그 문서를 따릅니다. 아래는 OCR·Guide·Chat 접수(POST, 아직 미구현)가 만들 것으로 목표하는 응답 예시입니다 — 같은 envelope를 공유합니다.
+`GET /api/v1/jobs/{job_id}`는 구현·테스트가 완료되어 [공통 Job 상태 조회 계약 v1](../../current/job-status-v1.md)로 승격했습니다. 응답 envelope, `result_url`·`Retry-After`·`error` 필드 규칙, 소유권 이중 확인, 오류 코드의 정본은 그 문서를 따릅니다. 아래는 OCR 접수(POST, 구현됨)와 Guide·Chat 접수(POST, 아직 미구현)가 공유하는 응답 envelope입니다.
 
 ```json
 {

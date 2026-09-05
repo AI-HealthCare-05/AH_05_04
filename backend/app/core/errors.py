@@ -8,6 +8,7 @@ from fastapi.responses import ORJSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.utils.idempotency import IdempotencyKeyFormatError
 from app.services.job_intake import IdempotencyKeyConflictError
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,25 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=body.model_dump(mode="json"),
             headers=exc.headers,
         )
+
+    @app.exception_handler(IdempotencyKeyFormatError)
+    async def handle_idempotency_key_format_error(
+        request: Request,
+        exc: IdempotencyKeyFormatError,
+    ) -> ORJSONResponse:
+        reason = str(exc) or "IDEMPOTENCY_KEY_INVALID"
+        message = (
+            "Idempotency-Key 헤더가 필요합니다."
+            if reason == "IDEMPOTENCY_KEY_REQUIRED"
+            else "Idempotency-Key 헤더 형식이 올바르지 않습니다."
+        )
+        body = ErrorResponse(
+            code=reason,
+            message=message,
+            details=[ErrorDetail(field="Idempotency-Key", reason=reason)],
+            trace_id=_get_trace_id(request),
+        )
+        return ORJSONResponse(status_code=400, content=body.model_dump(mode="json"))
 
     @app.exception_handler(IdempotencyKeyConflictError)
     async def handle_idempotency_key_conflict(

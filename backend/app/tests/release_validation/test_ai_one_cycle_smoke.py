@@ -1308,7 +1308,22 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
             "/api/v1/auth/login": ({"access_token": "synthetic-token"}, "200 OK"),
             "/api/v1/documents": ({"data": {"document_id": document_id}}, "201 Created"),
             f"/api/v1/documents/{document_id}/ocr-jobs": (
-                {"data": {"job_id": job_id, "fields": []}},
+                {
+                    "data": {
+                        "job_id": job_id,
+                        "job_type": "OCR",
+                        "status": "COMPLETED",
+                        "domain_type": "OCR_JOB",
+                        "domain_id": job_id,
+                        "prescription_version_id": None,
+                        "status_url": f"/api/v1/jobs/{job_id}",
+                        "result_url": f"/api/v1/ocr-jobs/{job_id}",
+                        "retry_after_seconds": None,
+                        "error": None,
+                        "created_at": "2026-09-01T00:00:00+09:00",
+                        "updated_at": "2026-09-01T00:00:00+09:00",
+                    }
+                },
                 "202 Accepted",
             ),
             f"/api/v1/ocr-jobs/{job_id}": (

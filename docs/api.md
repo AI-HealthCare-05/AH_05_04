@@ -63,7 +63,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | OCR 실행 | `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202` |
 | 처방 확정 | `POST` | `/api/v1/documents/{document_id}/prescription` | `201` |
 | 의료문서 | `GET` | `/api/v1/documents/{document_id}/file` | `200` |
-| OCR | `GET` | `/api/v1/ocr-jobs/{job_id}` | `200` |
+| OCR | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200` |
 | OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
 | 채팅 | `POST` | `/api/v1/prescriptions/{prescription_id}/chat-sessions` | `201` |
@@ -73,13 +73,13 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 채팅 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201` |
 | Job | `GET` | `/api/v1/jobs/{job_id}` | `200` |
 
-OCR 실행 endpoint는 `202 Accepted`를 반환하지만 현재 구현은 비동기 queue 접수가 아닙니다. 같은 HTTP 요청에서 CLOVA OCR 호출과 결과 저장을 완료합니다.
+OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 Job 접수입니다. 같은 요청에서는 CLOVA OCR을 호출하지 않고 `AI_JOB`, `IDEMPOTENCY_RECORD`, `OUTBOX_EVENT`, `OCR_JOB` placeholder를 같은 transaction에 저장한 뒤 `JobStatusResponse`를 반환합니다. 실제 OCR 실행은 Worker가 처리합니다.
 
-`GET /api/v1/jobs/{job_id}`(공통 Job 상태 조회)는 [비동기 Job 계약 v1](./contracts/targets/post-mvp-1/async-job-v1.md) 목표 중 조회 경로만 먼저 구현한 것입니다(#148).
+`GET /api/v1/jobs/{job_id}`(공통 Job 상태 조회)는 [비동기 Job 계약 v1](./contracts/targets/post-mvp-1/async-job-v1.md) 목표 중 조회 경로가 구현된 현재 API입니다(#148).
 
 ### 구현했지만 라우트 등록을 보류한 API
 
-OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`)은 서비스 로직(`JobStatusService.rediscover_ocr_job`/`rediscover_guide_job`)과 그 테스트까지는 구현되어 있지만, 라우트로는 등록하지 않았습니다. OCR·Guide 접수(POST)가 아직 `accept_job()`에 연결되지 않아(#219/#232/#233 대기) 지금 접수 가능한 어떤 Job에도 대응하는 공통 Job이 생기지 않으므로, 이 GET을 등록해도 실제 사용자에게는 항상 `404`만 발생하는 성공 경로 없는 API가 됩니다(#148 세 번째 리뷰 지적). 접수가 `accept_job()`에 연결되는 시점에 라우트만 다시 추가하면 됩니다.
+OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`)은 서비스 로직(`JobStatusService.rediscover_ocr_job`/`rediscover_guide_job`)과 그 테스트까지는 구현되어 있지만, 라우트로는 등록하지 않았습니다. OCR 접수는 `accept_job()`에 연결되어 공통 Job이 생성되지만, 클라이언트는 접수 응답의 `status_url`을 그대로 polling하면 되므로 문서 기준 rediscovery 라우트 노출은 별도 계약 검토 후 진행합니다. Guide rediscovery는 Guide 접수가 비동기로 전환되는 시점에 함께 검토합니다.
 
 두 도메인 모두 `ai_job_id` 영속 매핑(OCR은 #212의 `ocr_job.ai_job_id`, Guide는 같은 목적의 `guide.ai_job_id`)을 갖추고 있어, Outbox 30일 보존과 Job 90일 보존 사이의 31~90일 구간에서도 rediscovery가 값을 찾을 수 있습니다(#148 네 번째 리뷰 지적 — 접수 연결 전에 미리 반영).
 
@@ -134,11 +134,10 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 ## Post-MVP-1 목표 API — 미구현
 
-아래 내용은 2026-08-27 Approved Contract Freeze v4의 목표 계약 중 아직 구현하지 않은 범위입니다. 현재 Router·OpenAPI 동작이 아닙니다. `GET /api/v1/jobs/{job_id}`는 이미 구현되어 위 현재 API 목록으로 이동했습니다(#148). OCR·Guide 재접속 복구 GET은 서비스 로직까지는 구현했지만 라우트 등록을 보류했습니다 — 위 [구현했지만 라우트 등록을 보류한 API](#구현했지만-라우트-등록을-보류한-api)를 참고하세요. 남은 접수(POST) 세 개는 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
+아래 내용은 2026-08-27 Approved Contract Freeze v4의 목표 계약 중 아직 구현하지 않은 범위입니다. 현재 Router·OpenAPI 동작이 아닙니다. `GET /api/v1/jobs/{job_id}`와 OCR 접수 `POST /api/v1/documents/{document_id}/ocr-jobs`는 이미 구현되어 위 현재 API 목록으로 이동했습니다(#148). OCR·Guide 재접속 복구 GET은 서비스 로직까지는 구현했지만 라우트 등록을 보류했습니다 — 위 [구현했지만 라우트 등록을 보류한 API](#구현했지만-라우트-등록을-보류한-api)를 참고하세요. 남은 Guide/Chat 접수 POST는 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
 
 | Method | Path | 목표 성공 상태 | 목표 동작 |
 | --- | --- | ---: | --- |
-| `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202 Accepted` | OCR Job 접수 |
 | `POST` | `/api/v1/guides` | `202 Accepted` | Guide Job 접수 |
 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `202 Accepted` | Chat Job 접수 |
 | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200 OK` | 완료된 OCR 결과 조회 |
@@ -255,7 +254,7 @@ DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반�
 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
-| `GET` | `/api/v1/ocr-jobs/{job_id}` | `200 OK` | 저장된 OCR 작업과 추출 필드를 조회합니다. |
+| `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200 OK` | 완료된 OCR 작업과 추출 필드를 조회합니다. |
 
 ### OCR 작업 및 추출 필드 응답
 
