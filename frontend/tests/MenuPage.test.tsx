@@ -11,6 +11,10 @@ function deferred<T>() {
   return new Promise<T>(() => undefined)
 }
 
+function RootFixture() {
+  return <div>{localStorage.getItem('access_token') ? '홈 화면' : '시작 화면'}</div>
+}
+
 function renderMenu() {
   return render(
     <MemoryRouter initialEntries={['/menu']}>
@@ -18,7 +22,7 @@ function renderMenu() {
         <Route path="/menu" element={<MenuPage />} />
         <Route path="/profile" element={<div>사용자 정보 화면</div>} />
         <Route path="/login" element={<div>로그인 화면</div>} />
-        <Route path="/" element={<div>홈 화면</div>} />
+        <Route path="/" element={<RootFixture />} />
         <Route path="/guides" element={<div>가이드 화면</div>} />
         <Route path="/chat" element={<div>도지 화면</div>} />
       </Routes>
@@ -68,13 +72,13 @@ describe('Dosey 메뉴', () => {
 })
 
 describe('메뉴 로그아웃', () => {
-  it('서버 응답을 기다리지 않고 토큰을 제거한 뒤 로그인으로 이동한다', async () => {
+  it('서버 응답을 기다리지 않고 토큰을 제거한 뒤 시작 화면으로 이동한다', async () => {
     vi.mocked(logout).mockReturnValue(deferred())
     renderMenu()
 
     fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
 
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(await screen.findByText('시작 화면')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
     expect(logout).toHaveBeenCalledTimes(1)
   })
@@ -85,7 +89,7 @@ describe('메뉴 로그아웃', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
 
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(await screen.findByText('시작 화면')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
   })
 })
