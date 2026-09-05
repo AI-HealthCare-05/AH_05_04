@@ -44,6 +44,7 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import (
     EvidenceMappingManifestV12,
     ProtectedArtifactReceiptV12,
 )
+from ai_worker.tasks.evaluation.schemas.authoring_v1_3 import DatasetManifestV13
 from ai_worker.tasks.evaluation.schemas.common import (
     ContentClassification,
     ImmutableReference,
@@ -61,8 +62,9 @@ from ai_worker.tasks.evaluation.schemas.policy_v1_2 import (
     EvaluationProfileV12,
     SuiteDefinitionV12,
 )
+from ai_worker.tasks.evaluation.schemas.provenance_v1 import AuthoringIdentityManifest
 
-type DatasetManifestContract = DatasetManifest | DatasetManifestV11 | DatasetManifestV12
+type DatasetManifestContract = DatasetManifest | DatasetManifestV11 | DatasetManifestV12 | DatasetManifestV13
 type EvaluationCaseContract = EvaluationCase | EvaluationCaseV11 | EvaluationCaseV12
 type EvidenceMappingContract = EvidenceMappingManifest | EvidenceMappingManifestV12
 type CriticalClaimRubricContract = CriticalClaimRubric | CriticalClaimRubricV12
@@ -116,6 +118,7 @@ class ValidatedDataset:
     evaluation_policy: EvaluationPolicyContract
     suite: SuiteDefinitionContract
     protected_artifact_receipt: ProtectedArtifactReceiptContract | None
+    authoring_identity_manifest: AuthoringIdentityManifest | None
     configuration_resources: ConfigurationResourceBindings
     reference_graph: tuple[ResolvedReference, ...]
     resource_hashes: tuple[tuple[str, str], ...]
@@ -143,6 +146,7 @@ class _AuthoringContract:
     evaluation_policy_model: type[BaseModel]
     suite_model: type[BaseModel]
     protected_artifact_receipt_model: type[BaseModel]
+    authoring_identity_manifest_model: type[BaseModel] | None = None
 
 
 _AUTHORING_CONTRACTS = {
@@ -175,6 +179,17 @@ _AUTHORING_CONTRACTS = {
         EvaluationPolicyV12,
         SuiteDefinitionV12,
         ProtectedArtifactReceiptV12,
+    ),
+    "1.3.0": _AuthoringContract(
+        DatasetManifestV13,
+        EVALUATION_CASE_ADAPTER_V1_2,
+        EvidenceMappingManifestV12,
+        CriticalClaimRubricV12,
+        EvaluationProfileV12,
+        EvaluationPolicyV12,
+        SuiteDefinitionV12,
+        ProtectedArtifactReceiptV12,
+        AuthoringIdentityManifest,
     ),
 }
 
@@ -300,7 +315,11 @@ def _model_error_code(
         "SuiteDefinitionV12",
     }:
         return EvaluationErrorCode.MANIFEST_INVALID
-    if model_name in {"DatasetManifest", "DatasetManifestV11", "DatasetManifestV12"}:
+    if model_name == "AuthoringIdentityManifest" and any(
+        "authoring identity member orders and Case IDs must be unique" in message for message in messages
+    ):
+        return EvaluationErrorCode.MANIFEST_INVALID
+    if model_name in {"DatasetManifest", "DatasetManifestV11", "DatasetManifestV12", "DatasetManifestV13"}:
         if any("Case resources must be unique" in message for message in messages):
             return EvaluationErrorCode.CASE_DUPLICATE
         if any("approved deidentified data requires" in message for message in messages):
@@ -613,6 +632,67 @@ def _load_receipt(
     return receipt
 
 
+def _load_authoring_identity(
+    reader: _SnapshotReader,
+    prefix: str,
+    manifest: DatasetManifestV13,
+    cases: tuple[EvaluationCaseContract, ...],
+    model: type[BaseModel],
+) -> tuple[AuthoringIdentityManifest, ImmutableReference]:
+    expected_path = f"retrieval/manifests/{prefix}.authoring-identities.json"
+    if manifest.authoring_identity_manifest_ref.path != expected_path:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    snapshot = reader.read(expected_path)
+    authoring_identity = cast(AuthoringIdentityManifest, _validate_model(snapshot, model))
+    _verify_self_hash(authoring_identity, "manifest_sha256")
+    if manifest.authoring_identity_manifest_ref.sha256 != snapshot.file_sha256:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    if (
+        authoring_identity.dataset_code != manifest.dataset_code
+        or authoring_identity.dataset_version != manifest.dataset_version
+        or tuple(entry.case_id for entry in authoring_identity.entries) != tuple(case.case_id for case in cases)
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    leakage_fields = {
+        "question_template_id": "question_template",
+        "source_segment_id": "source_segment",
+        "medication_family_id": "medication_family",
+        "transform_origin_id": "transform_origin",
+    }
+    for entry, case in zip(authoring_identity.entries, cases, strict=True):
+        if any(
+            getattr(entry, sidecar_field) != getattr(case.leakage_group_ids, case_field)
+            for sidecar_field, case_field in leakage_fields.items()
+        ):
+            raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    reference = ImmutableReference(
+        id=authoring_identity.manifest_id,
+        version=authoring_identity.manifest_version,
+        hash=snapshot.file_sha256,
+    )
+    return authoring_identity, reference
+
+
+def _load_authoring_identity_if_required(
+    reader: _SnapshotReader,
+    prefix: str,
+    manifest: DatasetManifestContract,
+    cases: tuple[EvaluationCaseContract, ...],
+    authoring: _AuthoringContract,
+) -> tuple[AuthoringIdentityManifest | None, ImmutableReference | None]:
+    if not isinstance(manifest, DatasetManifestV13):
+        return None, None
+    if authoring.authoring_identity_manifest_model is None:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    return _load_authoring_identity(
+        reader,
+        prefix,
+        manifest,
+        cases,
+        authoring.authoring_identity_manifest_model,
+    )
+
+
 def _schema_set_hash(reader: _SnapshotReader, schema_set_version: str) -> str:
     entries: list[dict[str, str]] = []
     registry = SCHEMA_REGISTRIES.get(schema_set_version)
@@ -703,6 +783,17 @@ def _resolve_reference(
     graph.append(ResolvedReference(graph_kind or expected_kind, reference.id, reference.version, reference.hash))
 
 
+def _append_authoring_identity_reference(
+    reference: ImmutableReference | None,
+    registry: dict[tuple[str, str, str], str],
+    graph: list[ResolvedReference],
+) -> None:
+    if reference is None:
+        return
+    registry[(reference.id, reference.version, reference.hash)] = "AUTHORING_IDENTITY_MANIFEST"
+    _resolve_reference(reference, "AUTHORING_IDENTITY_MANIFEST", registry, graph)
+
+
 def _validate_reference_graph(
     manifest: DatasetManifestContract,
     cases: tuple[EvaluationCaseContract, ...],
@@ -713,6 +804,7 @@ def _validate_reference_graph(
     suite: SuiteDefinitionContract,
     schema_set_hash: str,
     schema_set_version: str,
+    authoring_identity_reference: ImmutableReference | None,
 ) -> tuple[ResolvedReference, ...]:
     registry = dict(evidence_registry)
     registry[(profile.evaluation_profile_id, profile.evaluation_profile_version, profile.evaluation_profile_hash)] = (
@@ -732,6 +824,7 @@ def _validate_reference_graph(
             )
         ] = "PARTITION"
     graph: list[ResolvedReference] = []
+    _append_authoring_identity_reference(authoring_identity_reference, registry, graph)
     _resolve_reference(
         manifest.evaluation_corpus_snapshot_ref,
         "CORPUS_SNAPSHOT",
@@ -856,6 +949,13 @@ def load_dataset(
     prefix = _prefix(manifest_path)
     cases = _validate_cases(reader, manifest, authoring.case_adapter)
     _validate_leakage(cases)
+    authoring_identity, authoring_identity_reference = _load_authoring_identity_if_required(
+        reader,
+        prefix,
+        manifest,
+        cases,
+        authoring,
+    )
     evidence, evidence_registry = _load_evidence(
         reader,
         prefix,
@@ -905,6 +1005,8 @@ def load_dataset(
     ]
     if receipt is not None:
         graph_members.append(("rag-eval.protected-artifact-receipt", receipt))
+    if authoring_identity is not None:
+        graph_members.append(("rag-eval.authoring-identity-manifest", authoring_identity))
     if any(member_versions.get(schema_id) != resource.schema_version for schema_id, resource in graph_members):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     schema_set_hash = _schema_set_hash(reader, schema_set_version)
@@ -918,6 +1020,7 @@ def load_dataset(
         suite,
         schema_set_hash,
         schema_set_version,
+        authoring_identity_reference,
     )
     if manifest.data_classification is ContentClassification.APPROVED_DEIDENTIFIED:
         if manifest.deidentification_approval_receipt_ref is None:
@@ -936,6 +1039,7 @@ def load_dataset(
         evaluation_policy=policy,
         suite=suite,
         protected_artifact_receipt=receipt,
+        authoring_identity_manifest=authoring_identity,
         configuration_resources=configuration_resources,
         reference_graph=graph,
         resource_hashes=reader.resource_hashes,
