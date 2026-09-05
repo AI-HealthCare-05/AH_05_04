@@ -1,0 +1,19 @@
+{
+  "header": {
+    "resultCode": "00",
+    "resultMsg": "NORMAL SERVICE"
+  },
+  "body": {
+    "items": [
+      {
+        "ITEM_SEQ": "synthetic-product-001",
+        "ITEM_NAME": "합성 허가 의약품",
+        "ITEM_PERMIT_DATE": "20990101",
+        "ENTP_NAME": "합성 제약사"
+      }
+    ],
+    "pageNo": 1,
+    "numOfRows": 100,
+    "totalCount": 1
+  }
+}

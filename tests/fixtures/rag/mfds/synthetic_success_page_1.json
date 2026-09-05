@@ -1,0 +1,20 @@
+{
+  "synthetic_header": {
+    "result_code": "SYNTHETIC_SUCCESS"
+  },
+  "synthetic_body": {
+    "items": [
+      {
+        "synthetic_id": "product-001",
+        "name": "합성 의약품 A"
+      },
+      {
+        "synthetic_id": "product-002",
+        "name": "합성 의약품 B"
+      }
+    ],
+    "page": 1,
+    "page_size": 2,
+    "total_count": 3
+  }
+}
