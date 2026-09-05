@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { login } from '../api/auth'
 import { ApiError } from '../api/client'
+import { clearOcrJobRecovery } from '../features/ai-jobs/ocrJobRecovery'
 import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
@@ -88,6 +89,7 @@ function LoginPage() {
         email: form.email.trim(),
         password: form.password,
       })
+      clearOcrJobRecovery()
       localStorage.setItem('access_token', response.access_token)
       navigate('/')
     } catch (error) {

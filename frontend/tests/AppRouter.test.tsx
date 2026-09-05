@@ -98,10 +98,12 @@ describe('인증 상태별 AppRouter 이동', () => {
       new ApiError(401, '만료된 토큰입니다.', 'EXPIRED_TOKEN'),
     )
     localStorage.setItem('access_token', 'stale-access-token')
+    sessionStorage.setItem('dosey_ocr_job_recovery:v1', '{"job":"active"}')
     renderRoute('/login')
 
     expect(await screen.findByRole('heading', { name: '다시 만나서 반가워요' })).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 })

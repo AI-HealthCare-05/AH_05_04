@@ -4,6 +4,12 @@ type ApiRequestOptions = RequestInit & {
   accessToken?: string
 }
 
+export type ApiResponse<T> = {
+  data: T
+  headers: Headers
+  status: number
+}
+
 type UnknownErrorBody = {
   code?: unknown
   message?: unknown
@@ -43,6 +49,20 @@ function getApiBaseUrl(): string {
   }
 
   return apiBaseUrl
+}
+
+function resolveApiUrl(path: string): string {
+  const apiBaseUrl = getApiBaseUrl()
+  const baseUrl = new URL(
+    apiBaseUrl.endsWith('/') ? apiBaseUrl : `${apiBaseUrl}/`,
+  )
+  const resolvedUrl = new URL(path, baseUrl)
+
+  if (resolvedUrl.origin !== baseUrl.origin) {
+    throw new Error('Cross-origin API response URL is not allowed')
+  }
+
+  return resolvedUrl.toString()
 }
 
 function isApiErrorResponse(body: UnknownErrorBody): body is ApiErrorResponse {
@@ -94,12 +114,21 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
+  const response = await apiRequestWithResponse<T>(path, options)
+
+  return response.data
+}
+
+export async function apiRequestWithResponse<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<ApiResponse<T>> {
   const { accessToken, headers, ...requestOptions } = options
 
   const token =
     accessToken ?? localStorage.getItem('access_token')
 
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+  const response = await fetch(resolveApiUrl(path), {
     ...requestOptions,
     credentials: 'include',
     headers: {
@@ -118,10 +147,18 @@ export async function apiRequest<T>(
   }
 
   if (response.status === 204) {
-    return undefined as T
+    return {
+      data: undefined as T,
+      headers: response.headers,
+      status: response.status,
+    }
   }
 
-  return (await response.json()) as T
+  return {
+    data: (await response.json()) as T,
+    headers: response.headers,
+    status: response.status,
+  }
 }
 
 export async function apiBlobRequest(
@@ -133,7 +170,7 @@ export async function apiBlobRequest(
   const token =
     accessToken ?? localStorage.getItem('access_token')
 
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+  const response = await fetch(resolveApiUrl(path), {
     ...requestOptions,
     credentials: 'include',
     headers: {

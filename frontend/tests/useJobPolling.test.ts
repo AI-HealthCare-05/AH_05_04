@@ -5,9 +5,14 @@ import { useJobPolling } from '../src/features/ai-jobs/useJobPolling'
 
 type TestJob = {
   status: AiJobViewStatus
+  retryAfterSeconds?: number | null
 }
 
 const getStatus = (job: TestJob) => job.status
+const getDelayMs = (job: TestJob, status: AiJobViewStatus) =>
+  status === 'RETRY_WAIT' && job.retryAfterSeconds
+    ? job.retryAfterSeconds * 1000
+    : null
 
 async function flushPromises() {
   await act(async () => {
@@ -72,6 +77,46 @@ describe('useJobPolling', () => {
     expect(result.current.phase).toBe('TERMINAL')
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('RETRY_WAIT에서 retry_after_seconds 지연을 존중한다', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce({ status: 'RETRY_WAIT', retryAfterSeconds: 3 })
+      .mockResolvedValueOnce({ status: 'PROCESSING' })
+
+    const { result } = renderHook(() => useJobPolling<TestJob>({
+      jobKey: 'existing-job',
+      fetcher,
+      getStatus,
+      getDelayMs,
+      intervalMs: 1000,
+    }))
+
+    await flushPromises()
+    expect(result.current.status).toBe('RETRY_WAIT')
+
+    await act(async () => vi.advanceTimersByTimeAsync(2999))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(result.current.status).toBe('PROCESSING')
+  })
+
+  it('STALE을 FAILED와 구분한 terminal 상태로 종료한다', async () => {
+    const fetcher = vi.fn().mockResolvedValue({ status: 'STALE' })
+    const { result } = renderHook(() => useJobPolling<TestJob>({
+      jobKey: 'existing-job',
+      fetcher,
+      getStatus,
+    }))
+
+    await flushPromises()
+
+    expect(result.current.status).toBe('STALE')
+    expect(result.current.phase).toBe('TERMINAL')
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
   it('unmount에서 예약 timer를 정리한다', async () => {
