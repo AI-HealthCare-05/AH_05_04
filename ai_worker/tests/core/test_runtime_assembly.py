@@ -12,19 +12,30 @@ from pydantic import ValidationError
 from ai_worker.core.config import Config
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.job_execution import (
+    LeaseNotAcquired,
+    LeaseRejectionReason,
+)
 from ai_worker.core.provider_observability import (
     create_worker_provider_call_context_from_trace_id,
+)
+from ai_worker.core.quarantine import (
+    QuarantineExecution,
+    QuarantineFailureCode,
+    QuarantineRequest,
+    RejectedWorkerDelivery,
 )
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.runtime_assembly import (
     RoutingResultStore,
     SessionScopedDeliveryExecution,
+    SessionScopedRejectedDeliveryExecution,
     build_worker_runtime,
     create_clova_ocr_engine,
     create_session_factory,
 )
 from ai_worker.core.stream import WorkerDelivery
-from ai_worker.schemas.messages import JobType
+from ai_worker.schemas.messages import JobType, WorkerMessage
 from ocr_runtime.clova_engine import ClovaOcrEngine
 from provider_contracts.observability import DeploymentEnvironment
 from provider_contracts.ocr import OcrEngine
@@ -65,6 +76,23 @@ class _RaisingExecution:
     async def execute(self, delivery: WorkerDelivery) -> object:
         self.calls += 1
         raise self._error
+
+
+class _RecordingQuarantineExecution:
+    def __init__(self) -> None:
+        self.requests: list[QuarantineRequest] = []
+
+    async def execute(self, request: QuarantineRequest) -> object:
+        self.requests.append(request)
+        return request
+
+
+class _RejectedLeaseExecution:
+    async def execute(self, delivery: WorkerDelivery) -> object:
+        _ = delivery
+        return LeaseNotAcquired(
+            rejection_reason=LeaseRejectionReason.EVENT_MISMATCH,
+        )
 
 
 # --- 설정 검증 -------------------------------------------------------------
@@ -229,30 +257,118 @@ async def test_delivery_failure_does_not_escape_execution_boundary(
     assert "provider raw response should never be logged" not in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_rejected_delivery_is_converted_to_quarantine_request() -> None:
+    received_at = datetime.now(UTC)
+    rejected = RejectedWorkerDelivery(
+        stream_name="oryak:jobs",
+        stream_entry_id="1000-0",
+        message_digest="a" * 64,
+        failure_code=QuarantineFailureCode.INVALID_MESSAGE_SCHEMA,
+        job_id=None,
+        original_event_id=None,
+        original_schema_version="1.0",
+        trace_id=uuid4().hex,
+    )
+    execution = SessionScopedRejectedDeliveryExecution(
+        session_factory=lambda: _StubSession(),  # type: ignore[arg-type, return-value]
+        acknowledger=_AcknowledgerStub(),
+        clock=lambda: received_at,
+        logger=logging.getLogger("ai_worker.test"),
+    )
+    inner = _RecordingQuarantineExecution()
+    execution._build_execution = lambda session: cast(  # type: ignore[method-assign]
+        QuarantineExecution,
+        inner,
+    )
+
+    result = await execution.execute(rejected)
+
+    assert result is inner.requests[0]
+    assert inner.requests == [rejected.to_quarantine_request(received_at=received_at)]
+
+
+@pytest.mark.asyncio
+async def test_valid_schema_event_mismatch_is_quarantined() -> None:
+    received_at = datetime.now(UTC)
+    message = WorkerMessage.model_validate(
+        {
+            "schema_version": "1.0",
+            "event_id": str(uuid4()),
+            "event_kind": "JOB_EXECUTE",
+            "job_id": str(uuid4()),
+            "job_type": "OCR",
+            "domain_type": "OCR_JOB",
+            "domain_id": str(uuid4()),
+            "attempt": 1,
+            "available_at": received_at.isoformat(),
+            "enqueued_at": received_at.isoformat(),
+            "trace_id": uuid4().hex,
+        }
+    )
+    delivery = WorkerDelivery(
+        stream_message_id="1001-0",
+        message=message,
+        stream_name="oryak:jobs",
+        message_digest="b" * 64,
+    )
+    execution = SessionScopedDeliveryExecution(
+        config=_config(),
+        session_factory=lambda: _StubSession(),  # type: ignore[arg-type, return-value]
+        acknowledger=_AcknowledgerStub(),
+        clock=lambda: received_at,
+        logger=logging.getLogger("ai_worker.test"),
+        ocr_provider=None,
+    )
+    lease_execution = _RejectedLeaseExecution()
+    quarantine_execution = _RecordingQuarantineExecution()
+    execution._build_execution = lambda session: cast(  # type: ignore[method-assign]
+        LeaseAwareConsumerExecution,
+        lease_execution,
+    )
+    execution._build_quarantine_execution = lambda session: cast(  # type: ignore[method-assign]
+        QuarantineExecution,
+        quarantine_execution,
+    )
+
+    result = await execution.execute(delivery)
+
+    assert result is quarantine_execution.requests[0]
+    request = quarantine_execution.requests[0]
+    assert request.failure_code is QuarantineFailureCode.EVENT_MISMATCH
+    assert request.stream_name == "oryak:jobs"
+    assert request.stream_entry_id == "1001-0"
+    assert request.message_digest == "b" * 64
+    assert request.job_id == message.job_id
+    assert request.original_event_id == message.event_id
+
+
 # --- 조립과 종료 -----------------------------------------------------------
 
 
-def test_build_worker_runtime_closes_only_owned_resources() -> None:
+@pytest.mark.asyncio
+async def test_build_worker_runtime_closes_only_owned_resources() -> None:
     redis_client = _RedisStub()
-    engine = _EngineStub()
+    engine = _engine_stub()
+    original_pool = engine.sync_engine.pool
 
-    assembled = build_worker_runtime(
-        _config(),
-        logger=logging.getLogger("test"),
-        clock=lambda: datetime.now(UTC),
-        redis_client=redis_client,  # type: ignore[arg-type]
-        engine=engine,  # type: ignore[arg-type]
-    )
+    try:
+        assembled = build_worker_runtime(
+            _config(),
+            logger=logging.getLogger("test"),
+            clock=lambda: datetime.now(UTC),
+            redis_client=redis_client,  # type: ignore[arg-type]
+            engine=engine,
+        )
 
-    asyncio.run(_close(assembled.aclose))
+        await assembled.aclose()
 
-    assert redis_client.closed is False
-    assert engine.disposed is False
-    assert assembled.registered_types == frozenset()
-
-
-async def _close(aclose: Any) -> None:
-    await aclose()
+        assert redis_client.closed is False
+        assert engine.sync_engine.pool is original_pool
+        assert assembled.registered_types == frozenset()
+        assert assembled.recovery_scheduler is not None
+    finally:
+        await engine.dispose()
 
 
 class _AcknowledgerStub:
@@ -271,18 +387,38 @@ class _RedisStub:
         self.closed = True
 
 
-class _EngineStub:
-    def __init__(self) -> None:
-        self.disposed = False
-
-    async def dispose(self) -> None:
-        self.disposed = True
-
-
 def _engine_stub() -> Any:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     return create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:5432/test")
+
+
+@pytest.mark.asyncio
+async def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() -> None:
+    engine = _engine_stub()
+    assembled = None
+
+    try:
+        assembled = build_worker_runtime(
+            _config(),
+            logger=logging.getLogger("test"),
+            clock=lambda: datetime.now(UTC),
+            ocr_engine=cast(OcrEngine, object()),
+            redis_client=_RedisStub(),  # type: ignore[arg-type]
+            engine=engine,
+        )
+
+        assert assembled.registered_types == frozenset(
+            {
+                JobType.OCR,
+            }
+        )
+        assert assembled.recovery_scheduler is not None
+    finally:
+        if assembled is not None:
+            await assembled.aclose()
+
+        await engine.dispose()
 
 
 def test_build_worker_runtime_rejects_multiple_ocr_sources() -> None:
@@ -297,19 +433,6 @@ def test_build_worker_runtime_rejects_multiple_ocr_sources() -> None:
             ocr_engine=cast(OcrEngine, object()),
             ocr_provider=cast(Any, object()),
         )
-
-
-def test_build_worker_runtime_registers_ocr_handler_when_engine_is_provided() -> None:
-    assembled = build_worker_runtime(
-        _config(),
-        logger=logging.getLogger("test"),
-        clock=lambda: datetime.now(UTC),
-        ocr_engine=cast(OcrEngine, object()),
-        redis_client=_RedisStub(),  # type: ignore[arg-type]
-        engine=_EngineStub(),  # type: ignore[arg-type]
-    )
-
-    assert assembled.registered_types == frozenset({JobType.OCR})
 
 
 def test_worker_provider_context_uses_delivery_trace_id() -> None:
