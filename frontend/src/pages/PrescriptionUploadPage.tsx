@@ -129,6 +129,17 @@ function PrescriptionUploadPage() {
     setHasUploadFailed(false)
   }
 
+  const selectUploadSource = (source: UploadSource) => {
+    if (uploadSource === source) return
+
+    setUploadSource(source)
+    setFile(null)
+    setIsFilenameExpanded(false)
+    setPollingTarget(null)
+    setMessage('')
+    setHasUploadFailed(false)
+  }
+
   const handleUpload = async () => {
     if (!file) {
       setMessage('처방전 파일을 선택해 주세요.')
@@ -286,7 +297,7 @@ function PrescriptionUploadPage() {
             <label
               className={`mvp-upload__method ${uploadSource === 'camera' ? 'selected' : ''}`}
               htmlFor={`${inputId}-camera`}
-              onClick={() => setUploadSource('camera')}
+              onClick={() => selectUploadSource('camera')}
             >
               <span className="mvp-upload__method-icon" aria-hidden="true">
                 <UploadMethodIcon source="camera" />
@@ -309,7 +320,7 @@ function PrescriptionUploadPage() {
             <label
               className={`mvp-upload__method ${uploadSource === 'file' ? 'selected' : ''}`}
               htmlFor={`${inputId}-file`}
-              onClick={() => setUploadSource('file')}
+              onClick={() => selectUploadSource('file')}
             >
               <span className="mvp-upload__method-icon" aria-hidden="true">
                 <UploadMethodIcon source="file" />

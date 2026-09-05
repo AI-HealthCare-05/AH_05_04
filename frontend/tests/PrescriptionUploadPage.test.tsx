@@ -160,6 +160,21 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(filename.classList.contains('mvp-upload__filename--expanded')).toBe(false)
   })
 
+  it('파일 선택 방식을 바꾼 뒤 picker를 취소해도 이전 처방전을 제출하지 않는다', () => {
+    const { container } = renderPage()
+
+    selectPrescriptionFile(container, 'camera-prescription.png')
+    expect(screen.getByRole('button', { name: '처방전 읽기' })).toBeTruthy()
+
+    fireEvent.click(screen.getByText('저장된 처방전 선택하기'))
+
+    expect(screen.queryByText('camera-prescription.png')).toBeNull()
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
+    expect(
+      screen.getByText('저장된 처방전 선택하기').closest('label')?.classList.contains('selected'),
+    ).toBe(true)
+  })
+
   it('PENDING → PROCESSING → COMPLETED 후 document_id와 job_id를 유지해 review route로 이동한다', async () => {
     vi.mocked(getOcrJob)
       .mockResolvedValueOnce(ocrResponse('PENDING'))
