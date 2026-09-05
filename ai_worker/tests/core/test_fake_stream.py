@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from ai_worker.adapters.fake_stream import FakeStreamAdapter
-from ai_worker.core.stream import StreamAdapter
+from ai_worker.core.stream import StreamAdapter, WorkerDelivery
 from ai_worker.schemas.messages import WorkerMessage
 
 
@@ -49,7 +49,10 @@ async def test_publish_read_and_ack() -> None:
     stream_id = await adapter.publish(build_message())
     deliveries = await adapter.read(consumer_name="worker-1")
 
-    assert [delivery.stream_message_id for delivery in deliveries] == [stream_id]
+    assert len(deliveries) == 1
+    delivery = deliveries[0]
+    assert isinstance(delivery, WorkerDelivery)
+    assert delivery.stream_message_id == stream_id
     assert len(await adapter.list_pending()) == 1
 
     await adapter.acknowledge(stream_id)
@@ -71,10 +74,12 @@ async def test_duplicate_event_is_delivered_with_distinct_stream_ids() -> None:
     )
 
     assert first_id != second_id
-    assert [delivery.message.event_id for delivery in deliveries] == [
-        message.event_id,
-        message.event_id,
-    ]
+    assert len(deliveries) == 2
+    first_delivery, second_delivery = deliveries
+    assert isinstance(first_delivery, WorkerDelivery)
+    assert isinstance(second_delivery, WorkerDelivery)
+    assert first_delivery.message.event_id == message.event_id
+    assert second_delivery.message.event_id == message.event_id
 
 
 @pytest.mark.asyncio
@@ -104,7 +109,44 @@ async def test_pending_message_can_be_claimed_after_idle_time() -> None:
     )
     pending = await adapter.list_pending()
 
-    assert [delivery.stream_message_id for delivery in claimed] == [stream_id]
+    assert len(claimed) == 1
+    claimed_delivery = claimed[0]
+    assert isinstance(claimed_delivery, WorkerDelivery)
+    assert claimed_delivery.stream_message_id == stream_id
+    assert pending[0].consumer_name == "worker-2"
+    assert pending[0].delivery_count == 2
+
+
+@pytest.mark.asyncio
+async def test_pending_message_can_be_auto_claimed_after_idle_time() -> None:
+    clock = FakeClock()
+    adapter: StreamAdapter = FakeStreamAdapter(clock=clock)
+    await adapter.ensure_consumer_group()
+
+    stream_id = await adapter.publish(build_message())
+    await adapter.read(consumer_name="worker-1")
+
+    before_expiry = await adapter.auto_claim(
+        consumer_name="worker-2",
+        min_idle_ms=1000,
+    )
+
+    assert before_expiry.deliveries == ()
+
+    clock.advance(1000)
+
+    result = await adapter.auto_claim(
+        consumer_name="worker-2",
+        min_idle_ms=1000,
+    )
+    pending = await adapter.list_pending()
+
+    assert result.next_start_id == "0-0"
+    assert len(result.deliveries) == 1
+    claimed_delivery = result.deliveries[0]
+    assert isinstance(claimed_delivery, WorkerDelivery)
+    assert claimed_delivery.stream_message_id == stream_id
+    assert result.deleted_message_ids == ()
     assert pending[0].consumer_name == "worker-2"
     assert pending[0].delivery_count == 2
 

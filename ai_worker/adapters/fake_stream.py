@@ -5,7 +5,11 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from ai_worker.core.stream import PendingMessage, WorkerDelivery
+from ai_worker.core.stream import (
+    AutoClaimResult,
+    PendingMessage,
+    WorkerDelivery,
+)
 from ai_worker.schemas.messages import WorkerMessage
 
 
@@ -140,6 +144,65 @@ class FakeStreamAdapter:
 
         return tuple(claimed)
 
+    async def auto_claim(
+        self,
+        *,
+        consumer_name: str,
+        min_idle_ms: int,
+        start_id: str = "0-0",
+        count: int = 100,
+    ) -> AutoClaimResult:
+        self._require_group()
+
+        if not consumer_name.strip():
+            raise ValueError("consumer_name은 비어 있을 수 없습니다.")
+        if min_idle_ms < 0:
+            raise ValueError("min_idle_ms는 0 이상이어야 합니다.")
+        if not start_id.strip():
+            raise ValueError("start_id는 비어 있을 수 없습니다.")
+        if count < 1:
+            raise ValueError("count는 1 이상이어야 합니다.")
+
+        start_key = _stream_id_key(start_id)
+        now = self._clock()
+
+        pending_items = sorted(
+            self._pending.items(),
+            key=lambda item: _stream_id_key(item[0]),
+        )
+        eligible_items = [item for item in pending_items if _stream_id_key(item[0]) >= start_key]
+
+        claimed: list[WorkerDelivery] = []
+        next_start_id = "0-0"
+
+        for index, (stream_message_id, state) in enumerate(eligible_items):
+            if index >= count:
+                next_start_id = stream_message_id
+                break
+
+            idle_ms = int((now - state.delivered_at) * 1000)
+
+            if idle_ms < min_idle_ms:
+                continue
+
+            state.consumer_name = consumer_name
+            state.delivered_at = now
+            state.delivery_count += 1
+            claimed.append(state.delivery)
+
+        return AutoClaimResult(
+            next_start_id=next_start_id,
+            deliveries=tuple(claimed),
+        )
+
     def _require_group(self) -> None:
         if not self._group_created:
             raise RuntimeError("Consumer Group이 생성되지 않았습니다.")
+
+
+def _stream_id_key(stream_message_id: str) -> tuple[int, int]:
+    try:
+        milliseconds, sequence = stream_message_id.split("-", maxsplit=1)
+        return int(milliseconds), int(sequence)
+    except (ValueError, AttributeError):
+        raise ValueError("올바르지 않은 Stream entry ID입니다.") from None
