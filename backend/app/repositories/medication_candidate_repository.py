@@ -83,7 +83,7 @@ class MedicationCandidateRepository:
                     )
                 ),
             )
-            .with_for_update()
+            .with_for_update(of=MedicationCandidateSearch)
         )
         return result.scalar_one_or_none()
 
@@ -195,7 +195,7 @@ class MedicationCandidateRepository:
                 MedicationIdentification.prescription_version_medication_id.in_(prescription_version_medication_ids),
                 MedicationIdentification.status == MedicationIdentificationStatus.MATCHED,
             )
-            .with_for_update()
+            .with_for_update(of=MedicationIdentification)
         )
         return list(result.scalars().all())
 
