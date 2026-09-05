@@ -144,6 +144,12 @@ def _study_split_payload() -> Payload:
             ),
             "evidence_index_ref": _ref("rag-natural-language-retrieval-study-index"),
             "evaluation_config_ref": _ref("rag-natural-language-retrieval-study-config"),
+            "gold_schema_ref": _ref("rag-eval.retrieval-gold-schema"),
+            "canonical_identity_hmac_algorithm_ref": _ref("canonical-identity-hmac-sha256"),
+            "hmac_key_version": "evaluation-hmac-key-v1",
+            "query_fingerprint_algorithm_ref": _ref("query-fingerprint"),
+            "simple_substitution_fingerprint_algorithm_ref": _ref("simple-substitution-fingerprint"),
+            "transform_fingerprint_algorithm_ref": _ref("transform-fingerprint"),
             "axis_summaries": [
                 _axis_summary("question_template"),
                 _axis_summary("source_segment"),
@@ -373,6 +379,39 @@ def test_study_split_rejects_invalid_partition_or_axis_summary(mutation: str) ->
         summaries[0]["comparison_count"] = 0
     else:
         summaries[0]["intersection_count"] = 1
+    payload = _with_self_hash(payload, "receipt_sha256")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        parse_study_split_receipt_bytes(canonical_json_bytes(payload))
+
+    assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_study_split_receipt_preserves_gold_and_fingerprint_algorithm_bindings() -> None:
+    parsed = parse_study_split_receipt_bytes(canonical_json_bytes(_study_split_payload()))
+
+    assert parsed.gold_schema_ref.id == "rag-eval.retrieval-gold-schema"
+    assert parsed.canonical_identity_hmac_algorithm_ref.id == "canonical-identity-hmac-sha256"
+    assert parsed.hmac_key_version == "evaluation-hmac-key-v1"
+    assert parsed.query_fingerprint_algorithm_ref.id == "query-fingerprint"
+    assert parsed.simple_substitution_fingerprint_algorithm_ref.id == "simple-substitution-fingerprint"
+    assert parsed.transform_fingerprint_algorithm_ref.id == "transform-fingerprint"
+
+
+@pytest.mark.parametrize(
+    "required_field",
+    [
+        "gold_schema_ref",
+        "canonical_identity_hmac_algorithm_ref",
+        "hmac_key_version",
+        "query_fingerprint_algorithm_ref",
+        "simple_substitution_fingerprint_algorithm_ref",
+        "transform_fingerprint_algorithm_ref",
+    ],
+)
+def test_study_split_receipt_rejects_missing_gold_or_fingerprint_algorithm_binding(required_field: str) -> None:
+    payload = _study_split_payload()
+    del payload[required_field]
     payload = _with_self_hash(payload, "receipt_sha256")
 
     with pytest.raises(EvaluationValidationError) as caught:

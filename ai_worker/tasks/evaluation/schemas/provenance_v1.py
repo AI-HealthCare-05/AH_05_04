@@ -132,6 +132,12 @@ class StudySplitReceipt(StrictContractModel):
     holdout_authoring_identity_manifest_ref: ImmutableReference
     evidence_index_ref: ImmutableReference
     evaluation_config_ref: ImmutableReference
+    gold_schema_ref: ImmutableReference
+    canonical_identity_hmac_algorithm_ref: ImmutableReference
+    hmac_key_version: StableId
+    query_fingerprint_algorithm_ref: ImmutableReference
+    simple_substitution_fingerprint_algorithm_ref: ImmutableReference
+    transform_fingerprint_algorithm_ref: ImmutableReference
     axis_summaries: Annotated[
         tuple[StudySplitAxisSummary, ...],
         BeforeValidator(_tuple_from_wire),
