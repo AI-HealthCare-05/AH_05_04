@@ -19,15 +19,31 @@ def _require_object(value: object) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def _decode_records(raw_items: object) -> tuple[Mapping[str, object], ...]:
+def _decode_records(
+    raw_items: object,
+) -> tuple[Mapping[str, object], ...]:
     if raw_items is None:
         return ()
 
-    # 일부 공공데이터 JSON 응답은 body.items를 바로 배열로 반환합니다.
+    raw_records: list[object] = []
+
     if isinstance(raw_items, list):
-        raw_records: list[object] = raw_items
+        for raw_entry in raw_items:
+            entry = _require_object(raw_entry)
+
+            # 일부 MFDS JSON 응답은 items 배열의 각 원소를
+            # {"item": {...}} 형태로 한 번 더 감쌉니다.
+            if set(entry) == {"item"}:
+                wrapped_item = entry["item"]
+
+                if isinstance(wrapped_item, list):
+                    raw_records.extend(wrapped_item)
+                else:
+                    raw_records.append(wrapped_item)
+            else:
+                raw_records.append(entry)
     else:
-        # Swagger 모델처럼 body.items.item으로 감싼 형태도 처리합니다.
+        # Swagger 형태: body.items.item
         item_container = _require_object(raw_items)
         raw_item = item_container.get("item")
 
@@ -35,11 +51,9 @@ def _decode_records(raw_items: object) -> tuple[Mapping[str, object], ...]:
             return ()
 
         if isinstance(raw_item, list):
-            raw_records = raw_item
-        elif isinstance(raw_item, dict):
-            raw_records = [raw_item]
+            raw_records.extend(raw_item)
         else:
-            raise TypeError("MFDS item collection has an invalid type.")
+            raw_records.append(raw_item)
 
     return tuple(_require_object(record) for record in raw_records)
 

@@ -45,6 +45,17 @@ def test_official_endpoint_candidate(
     assert sensitive_parameters == {expected_secret_name}
 
 
+def test_dur_endpoint_uses_observed_contraindication_fields_as_primary_key() -> None:
+    contract = MFDS_ENDPOINT_CANDIDATES["LIST_INGREDIENT_CONTRAINDICATIONS"].contract
+
+    assert contract.primary_key_fields == (
+        "INGR_CODE",
+        "MIXTURE_INGR_CODE",
+        "NOTIFICATION_DATE",
+    )
+    assert contract.external_version_field == "NOTIFICATION_DATE"
+
+
 def test_all_p0_endpoint_candidates_are_registered() -> None:
     assert set(MFDS_ENDPOINT_CANDIDATES) == {
         "LIST_APPROVED_PRODUCTS",

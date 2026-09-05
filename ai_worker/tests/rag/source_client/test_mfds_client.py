@@ -842,6 +842,11 @@ async def test_duplicate_primary_key_across_pages_fails_closed() -> None:
     assert result.pages == ()
     assert result.failure is not None
     assert result.failure.code is SourceFailureCode.SCHEMA_DRIFT
+    assert result.primary_key_validation is not None
+    assert result.primary_key_validation.null_count == 0
+    assert result.primary_key_validation.duplicate_count == 1
+    assert result.primary_key_validation.candidate_field_stats == (("name", 0, 0),)
+    assert result.primary_key_validation.whole_record_duplicate_count == 0
 
 
 async def test_null_primary_key_fails_closed() -> None:

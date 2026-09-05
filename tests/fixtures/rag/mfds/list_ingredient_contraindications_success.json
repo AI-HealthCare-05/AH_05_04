@@ -1,0 +1,23 @@
+{
+  "header": {
+    "resultCode": "00",
+    "resultMsg": "NORMAL SERVICE"
+  },
+  "body": {
+    "items": [
+      {
+        "item": {
+          "INGR_CODE": "synthetic-ingredient-a",
+          "INGR_KOR_NAME": "합성 성분 A",
+          "MIXTURE_INGR_CODE": "synthetic-ingredient-b",
+          "MIXTURE_INGR_KOR_NAME": "합성 성분 B",
+          "NOTIFICATION_DATE": "20990101",
+          "PROHBT_CONTENT": "합성 병용금기 설명"
+        }
+      }
+    ],
+    "pageNo": 1,
+    "numOfRows": 100,
+    "totalCount": 1
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "header": {
+    "resultCode": "00",
+    "resultMsg": "NORMAL SERVICE"
+  },
+  "body": {
+    "items": [
+      {
+        "item": {
+          "itemSeq": "synthetic-guide-001",
+          "itemName": "합성 일반의약품",
+          "entpName": "합성 제약사",
+          "efcyQesitm": "합성 효능 설명",
+          "useMethodQesitm": "합성 복용법",
+          "updateDe": "20990101"
+        }
+      }
+    ],
+    "pageNo": 1,
+    "numOfRows": 100,
+    "totalCount": 1
+  }
+}

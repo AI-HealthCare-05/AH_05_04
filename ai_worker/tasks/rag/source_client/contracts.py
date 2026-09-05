@@ -161,6 +161,20 @@ class SourceClientFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class PrimaryKeyValidationResult:
+    """Sanitized primary-key statistics for one complete source run."""
+
+    passed: bool
+    record_count: int
+    null_count: int
+    duplicate_count: int
+    missing_field_counts: tuple[tuple[str, int], ...] = ()
+    candidate_field_stats: tuple[tuple[str, int, int], ...] = ()
+    whole_record_duplicate_count: int = 0
+    observed_fields: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceRunResult:
     """Atomic result: failed runs never expose partial pages as candidates."""
 
@@ -168,6 +182,7 @@ class SourceRunResult:
     status: SourceRunStatus
     pages: tuple[ProviderPage, ...]
     failure: SourceClientFailure | None
+    primary_key_validation: PrimaryKeyValidationResult | None = None
 
     @property
     def record_count(self) -> int:

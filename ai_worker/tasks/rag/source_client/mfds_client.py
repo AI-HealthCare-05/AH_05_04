@@ -11,6 +11,7 @@ import httpx
 
 from ai_worker.tasks.rag.source_client.contracts import (
     EndpointContract,
+    PrimaryKeyValidationResult,
     ProviderPage,
     RetryDisposition,
     SourceClientFailure,
@@ -271,12 +272,15 @@ class MfdsSourceClient:
         self,
         pages: list[ProviderPage],
     ) -> SourceRunResult:
-        if not self._primary_keys_are_valid(pages):
+        validation = self._validate_primary_keys(pages)
+
+        if not validation.passed:
             return self._failed_result(
                 code=SourceFailureCode.SCHEMA_DRIFT,
                 retry=RetryDisposition.NOT_RETRYABLE,
                 safe_message="MFDS primary key validation failed.",
                 status=SourceRunStatus.SCHEMA_DRIFT,
+                primary_key_validation=validation,
             )
 
         return SourceRunResult(
@@ -284,44 +288,127 @@ class MfdsSourceClient:
             status=SourceRunStatus.SUCCEEDED,
             pages=tuple(pages),
             failure=None,
+            primary_key_validation=validation,
         )
 
-    def _primary_keys_are_valid(
+    def _candidate_field_stat(
         self,
-        pages: list[ProviderPage],
-    ) -> bool:
-        if not self._contract.primary_key_fields:
-            return False
-
+        records: list[Mapping[str, object]],
+        candidate_field: str,
+    ) -> tuple[str, int, int]:
+        key_fields = (
+            *self._contract.primary_key_fields,
+            candidate_field,
+        )
         observed_keys: set[tuple[str, ...]] = set()
+        null_count = 0
+        duplicate_count = 0
 
-        for page in pages:
-            for record in page.records:
-                key_parts: list[str] = []
+        for record in records:
+            if any(record.get(field_name) in (None, "") for field_name in key_fields):
+                null_count += 1
+                continue
 
-                for field_name in self._contract.primary_key_fields:
-                    value = record.get(field_name)
+            primary_key = tuple(
+                json.dumps(
+                    record[field_name],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for field_name in key_fields
+            )
 
-                    if value is None or value == "":
-                        return False
-
-                    key_parts.append(
-                        json.dumps(
-                            value,
-                            ensure_ascii=False,
-                            sort_keys=True,
-                            separators=(",", ":"),
-                        )
-                    )
-
-                primary_key = tuple(key_parts)
-
-                if primary_key in observed_keys:
-                    return False
-
+            if primary_key in observed_keys:
+                duplicate_count += 1
+            else:
                 observed_keys.add(primary_key)
 
-        return True
+        return candidate_field, null_count, duplicate_count
+
+    def _validate_primary_keys(
+        self,
+        pages: list[ProviderPage],
+    ) -> PrimaryKeyValidationResult:
+        records = [record for page in pages for record in page.records]
+        primary_key_fields = self._contract.primary_key_fields
+
+        if not primary_key_fields:
+            return PrimaryKeyValidationResult(
+                passed=False,
+                record_count=len(records),
+                null_count=len(records),
+                duplicate_count=0,
+                observed_fields=tuple(sorted({field_name for record in records for field_name in record})),
+            )
+
+        observed_keys: set[tuple[str, ...]] = set()
+        missing_field_counts = {field_name: 0 for field_name in primary_key_fields}
+        null_count = 0
+        duplicate_count = 0
+
+        for record in records:
+            missing_fields = tuple(
+                field_name for field_name in primary_key_fields if record.get(field_name) in (None, "")
+            )
+
+            if missing_fields:
+                null_count += 1
+
+                for field_name in missing_fields:
+                    missing_field_counts[field_name] += 1
+
+                continue
+
+            primary_key = tuple(
+                json.dumps(
+                    record[field_name],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for field_name in primary_key_fields
+            )
+
+            if primary_key in observed_keys:
+                duplicate_count += 1
+            else:
+                observed_keys.add(primary_key)
+
+        populated_missing_counts = tuple(
+            (field_name, count) for field_name, count in missing_field_counts.items() if count > 0
+        )
+        observed_fields = {field_name for record in records for field_name in record}
+        candidate_fields = sorted(observed_fields - set(primary_key_fields))
+        candidate_field_stats = tuple(
+            self._candidate_field_stat(records, candidate_field) for candidate_field in candidate_fields
+        )
+        observed_records: set[str] = set()
+        whole_record_duplicate_count = 0
+
+        for record in records:
+            serialized_record = json.dumps(
+                record,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+
+            if serialized_record in observed_records:
+                whole_record_duplicate_count += 1
+            else:
+                observed_records.add(serialized_record)
+
+        return PrimaryKeyValidationResult(
+            passed=null_count == 0 and duplicate_count == 0,
+            record_count=len(records),
+            null_count=null_count,
+            duplicate_count=duplicate_count,
+            missing_field_counts=populated_missing_counts,
+            candidate_field_stats=candidate_field_stats,
+            whole_record_duplicate_count=whole_record_duplicate_count,
+            observed_fields=tuple(sorted(observed_fields)),
+        )
 
     async def _prepare_request(
         self,
@@ -609,6 +696,7 @@ class MfdsSourceClient:
         safe_message: str,
         http_status: int | None = None,
         status: SourceRunStatus = SourceRunStatus.FAILED,
+        primary_key_validation: PrimaryKeyValidationResult | None = None,
     ) -> SourceRunResult:
         return SourceRunResult(
             operation=self._contract.identity,
@@ -620,4 +708,5 @@ class MfdsSourceClient:
                 safe_message=safe_message,
                 http_status=http_status,
             ),
+            primary_key_validation=primary_key_validation,
         )

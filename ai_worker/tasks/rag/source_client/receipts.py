@@ -14,7 +14,9 @@ from ai_worker.tasks.rag.source_client.contracts import (
     RequiredParameter,
     RetryDisposition,
     SourceClientLimits,
+    SourceFailureCode,
     SourceOperationIdentity,
+    SourceRunStatus,
 )
 
 
@@ -49,9 +51,13 @@ class EndpointReceipt:
     authentication_failure_codes: tuple[str, ...]
     daily_limit_codes: tuple[str, ...]
     pagination: PaginationContract | None
+    source_run_status: SourceRunStatus | None
+    validated_record_count: int | None
     primary_key_fields: tuple[str, ...]
     primary_key_null_count: int | None
     primary_key_duplicate_count: int | None
+    whole_record_duplicate_count: int | None
+    failure_code: SourceFailureCode | None
     external_version_field: str | None
     external_version_field_exists: bool | None
     limits: SourceClientLimits | None
