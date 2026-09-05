@@ -17,7 +17,9 @@ from ai_worker.tasks.evaluation.loaders import (
     parse_json_object_bytes,
     safe_path_under_root,
 )
+from ai_worker.tasks.evaluation.retrieval_replay import RetrievalReplayManifest, parse_retrieval_replay_bytes
 from ai_worker.tasks.evaluation.schemas.common import (
+    ImmutableReference,
     Partition,
     ResourcePath,
     SafeInteger,
@@ -46,6 +48,17 @@ class DevVariant(StrictContractModel):
     model_config_payload: dict[str, JsonValue] = Field(alias="model_config")
     prompt_version: StableId
     parameters: dict[str, JsonValue]
+    replay_artifact_path: ResourcePath | None = None
+
+
+class RetrievalReplayModelConfig(StrictContractModel):
+    adapter_id: Literal["retrieval-replay.v1"]
+    provider_invocation: Literal[False]
+    source_snapshot_ref: ImmutableReference
+    knowledge_index_ref: ImmutableReference
+    embedding_model_ref: ImmutableReference
+    parser_ref: ImmutableReference
+    filter_snapshot_hash: Sha256Hex
 
 
 class DevExecutionRequest(StrictContractModel):
@@ -93,6 +106,10 @@ class ResolvedDevExecution:
     model_config_hash: str
     prompt_version: str
     runner_commit_sha: str
+    repository_root: Path
+    replay_artifact_path: Path | None
+    replay_artifact_bytes: bytes | None
+    retrieval_replay: RetrievalReplayManifest | None
 
 
 def git_repository_state(repository_root: Path) -> RepositoryState:
@@ -118,7 +135,7 @@ def git_repository_state(repository_root: Path) -> RepositoryState:
 
 def _request_error_code(error: ValidationError) -> EvaluationErrorCode:
     locations = {str(location) for item in error.errors(include_input=False) for location in item["loc"]}
-    if locations & set(_REFERENCE_FIELDS):
+    if locations & {*_REFERENCE_FIELDS, "replay_artifact_path"}:
         return EvaluationErrorCode.RESOURCE_PATH_INVALID
     if "evaluated_partitions" in locations:
         return EvaluationErrorCode.PARTITION_INVALID
@@ -137,6 +154,21 @@ def _read_file_under_root(repository_root: Path, path: Path) -> bytes:
         if error.errno in {errno.ENOTDIR, errno.EISDIR, errno.EACCES, errno.EPERM, errno.ELOOP}:
             raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID) from error
         raise
+
+
+def _validate_replay_dataset_binding(
+    replay: RetrievalReplayManifest,
+    dataset_manifest_bytes: bytes,
+    variant: DevVariant | None,
+) -> None:
+    manifest_payload = parse_json_object_bytes(dataset_manifest_bytes)
+    if (
+        replay.dataset_code != manifest_payload.get("dataset_code")
+        or replay.dataset_version != manifest_payload.get("dataset_version")
+        or variant is None
+        or replay.variant_id != variant.variant_id
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
 
 
 def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[DevVariant, ...], bytes, str]:
@@ -165,6 +197,17 @@ def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[Dev
         raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
 
     active_variants = tuple(variant for variant in (retrieval, answer) if variant is not None)
+    if retrieval is not None and retrieval.model_config_payload.get("adapter_id") == "retrieval-replay.v1":
+        if request.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL:
+            raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
+        if request.variant_id != retrieval.variant_id or retrieval.replay_artifact_path is None:
+            raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
+        try:
+            RetrievalReplayModelConfig.model_validate(retrieval.model_config_payload)
+        except ValidationError:
+            raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID) from None
+    elif retrieval is not None and retrieval.replay_artifact_path is not None:
+        raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
     model_payloads = {canonical_json_bytes(variant.model_config_payload) for variant in active_variants}
     prompt_versions = {variant.prompt_version for variant in active_variants}
     if len(model_payloads) != 1 or len(prompt_versions) != 1:
@@ -198,8 +241,21 @@ def load_dev_execution_request(
         referenced_file_hashes.append((relative_path, sha256_hex(raw_bytes)))
         if field == "dataset_manifest_path":
             dataset_manifest_bytes = raw_bytes
+    replay_artifact_path: Path | None = None
+    replay_artifact_bytes: bytes | None = None
+    retrieval_replay: RetrievalReplayManifest | None = None
+    if request.retrieval_variant is not None and request.retrieval_variant.replay_artifact_path is not None:
+        replay_relative = request.retrieval_variant.replay_artifact_path
+        if not replay_relative.startswith("evals/"):
+            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID)
+        replay_artifact_path = safe_path_under_root(root, root / replay_relative)
+        replay_artifact_bytes = _read_file_under_root(root, replay_artifact_path)
+        retrieval_replay = parse_retrieval_replay_bytes(replay_artifact_bytes)
+        referenced_file_hashes.append((replay_relative, sha256_hex(replay_artifact_bytes)))
     if dataset_manifest_bytes is None:
         raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+    if retrieval_replay is not None:
+        _validate_replay_dataset_binding(retrieval_replay, dataset_manifest_bytes, request.retrieval_variant)
 
     retrieval_hash = (
         canonical_sha256(cast(JsonValue, request.retrieval_variant.model_dump(mode="json", by_alias=True)))
@@ -232,6 +288,10 @@ def load_dev_execution_request(
         model_config_hash=sha256_hex(model_config_bytes),
         prompt_version=prompt_version,
         runner_commit_sha=repository_state.commit_sha,
+        repository_root=root,
+        replay_artifact_path=replay_artifact_path,
+        replay_artifact_bytes=replay_artifact_bytes,
+        retrieval_replay=retrieval_replay,
     )
 
 
@@ -296,6 +356,11 @@ def validate_loaded_bindings(resolved: ResolvedDevExecution, dataset: ValidatedD
     ):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     for path, expected_hash in resolved.referenced_file_hashes:
+        if (
+            resolved.request.retrieval_variant is not None
+            and path == resolved.request.retrieval_variant.replay_artifact_path
+        ):
+            continue
         try:
             evals_relative = Path(path).relative_to("evals").as_posix()
         except ValueError as error:

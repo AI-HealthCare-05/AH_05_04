@@ -3,18 +3,119 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ai_worker.tasks.evaluation.manifest import ReportData
-from ai_worker.tasks.evaluation.schemas.artifacts import ContentArtifact, MetricResults, SuiteResults
+from ai_worker.tasks.evaluation.schemas.artifacts import (
+    ComparisonResult,
+    ContentArtifact,
+    FailureRecord,
+    MetricResult,
+    MetricResults,
+    SuiteResults,
+)
+
+_RETRIEVAL_METRIC_LABELS = {
+    "MRR": "MRR",
+    "NDCG_AT_5": "nDCG@5",
+    "NO_HIT_RATE": "No-hit Rate",
+    "PRECISION_AT_5": "Precision@5",
+    "RECALL_AT_5": "Recall@5",
+}
+
+
+def _metric_row(metric: MetricResult) -> str:
+    decision = metric.decision_status.value if metric.decision_status is not None else "null"
+    count = f"{metric.numerator}/{metric.denominator}" if metric.numerator is not None else "N/A"
+    sample = (
+        f"{metric.sample_case_count}/{metric.sample_independent_group_count}"
+        if metric.sample_case_count is not None
+        else "N/A"
+    )
+    interval = f"[{metric.ci_lower}, {metric.ci_upper}]" if metric.ci_lower is not None else "N/A"
+    reason = metric.reason_code or "N/A"
+    label = _RETRIEVAL_METRIC_LABELS.get(metric.metric_id, metric.metric_id)
+    return (
+        f"| {label} (`{metric.metric_id}@{metric.metric_version}`) | "
+        f"`{metric.estimator_id}@{metric.estimator_version}` | {sample} | {count} | "
+        f"{metric.metric_value or 'N/A'} | {interval} | {metric.execution_status.value} | {decision} | {reason} |"
+    )
+
+
+def _retrieval_sections(
+    report_data: ReportData,
+    metrics: MetricResults,
+    comparison: ComparisonResult | None,
+    baseline_variant_id: str | None,
+    baseline_metrics: MetricResults | None,
+) -> list[str]:
+    replay_source = report_data.adapter_id == "retrieval-replay.v1"
+    data_source = "SYNTHETIC_REPLAY_DEV" if replay_source else "ADAPTER_EXECUTION_DEV"
+    production_integration = "BLOCKED_BY_RAG_07A_07B_OR_08" if replay_source else "NOT_ASSESSED_BY_DEV_REPORT"
+    lines = [
+        "",
+        "## Retrieval Metrics",
+        "",
+        f"- Data Source: `{data_source}`",
+        "- HOLDOUT Baseline Freeze: `NOT_PERFORMED`",
+        f"- Production Integration: `{production_integration}`",
+        "",
+        "| Metric ID@Version | Estimator@Version | Cases/Groups | Numerator/Denominator | Value | 95% CI | Execution | Decision | Reason |",
+        "| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- |",
+    ]
+    lines.extend(_metric_row(metric) for metric in metrics.metrics)
+    if comparison is None:
+        return lines
+    if not baseline_variant_id or baseline_metrics is None:
+        raise ValueError("comparison requires complete baseline report context")
+    baseline_variant = baseline_variant_id
+    comparison_decision = comparison.decision_status.value if comparison.decision_status is not None else "null"
+    lines.extend(
+        [
+            "",
+            "## Baseline Comparison",
+            "",
+            f"- Baseline: `{baseline_variant}` Run `{comparison.baseline_run_id}` Semantic Hash `{comparison.baseline_run_hash}`",
+            f"- Candidate: `{report_data.variant_id}` Run `{comparison.candidate_run_id}` Semantic Hash `{comparison.candidate_run_hash}`",
+            f"- Comparison Execution: `{comparison.execution_status.value}`",
+            f"- Comparison Decision: `{comparison_decision}`",
+            "",
+            f"### Baseline Retrieval Metrics (`{baseline_variant}`)",
+            "",
+            "| Metric ID@Version | Estimator@Version | Cases/Groups | Numerator/Denominator | Value | 95% CI | Execution | Decision | Reason |",
+            "| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- |",
+            *[_metric_row(metric) for metric in baseline_metrics.metrics],
+            "",
+            "| Metric ID | Baseline | Candidate | Absolute Delta | Decision |",
+            "| --- | ---: | ---: | ---: | --- |",
+        ]
+    )
+    lines.extend(
+        f"| {_RETRIEVAL_METRIC_LABELS.get(scope.metric_id, scope.metric_id)} (`{scope.metric_id}`) | "
+        f"{scope.baseline_value or 'N/A'} | {scope.candidate_value or 'N/A'} | "
+        f"{scope.absolute_delta or 'N/A'} | {scope.comparison_decision.value} |"
+        for scope in comparison.scope_comparisons
+    )
+    return lines
 
 
 def render_report(
     report_data: ReportData,
     metrics: MetricResults,
     suite_results: SuiteResults,
+    failures: Sequence[FailureRecord],
     entries: Sequence[ContentArtifact],
+    comparison: ComparisonResult | None = None,
+    *,
+    baseline_variant_id: str | None = None,
+    baseline_metrics: MetricResults | None = None,
 ) -> bytes:
+    if comparison is not None and (not baseline_variant_id or baseline_metrics is None or not baseline_metrics.metrics):
+        raise ValueError("comparison requires complete baseline report context")
     decision = report_data.decision_status.value if report_data.decision_status is not None else "null"
     lines = [
-        "# RAG Evaluation DEV Report",
+        (
+            "# RAG Evaluation DEV Retrieval Report"
+            if report_data.experiment_type.value == "KNOWLEDGE_RETRIEVAL"
+            else "# RAG Evaluation DEV Report"
+        ),
         "",
         "> DEV validation only — Not a Release decision",
         "",
@@ -53,6 +154,23 @@ def render_report(
     lines.extend(["", "## Blocking and Failures", ""])
     lines.extend(f"- `{status.value}`" for status in report_data.blocking_execution_statuses)
     lines.extend(f"- `{code}`" for code in report_data.failure_codes)
+    ordered_failures = sorted(
+        failures,
+        key=lambda item: (item.case_id.encode("utf-16-be"), item.failure_code.encode("utf-16-be")),
+    )
+    if ordered_failures:
+        lines.extend(
+            [
+                "",
+                "### Failure Rows",
+                "",
+                "| Case ID | Failure Code |",
+                "| --- | --- |",
+                *(f"| `{item.case_id}` | `{item.failure_code}` |" for item in ordered_failures),
+            ]
+        )
+    if report_data.experiment_type.value == "KNOWLEDGE_RETRIEVAL":
+        lines.extend(_retrieval_sections(report_data, metrics, comparison, baseline_variant_id, baseline_metrics))
     lines.extend(["", "## Machine Artifacts", ""])
     lines.extend(f"- `{entry.relative_path}` `{entry.sha256}`" for entry in entries)
     return ("\n".join(lines) + "\n").encode("utf-8")

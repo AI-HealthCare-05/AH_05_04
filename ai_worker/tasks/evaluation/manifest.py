@@ -13,10 +13,18 @@ from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset
+from ai_worker.tasks.evaluation.retrieval_metrics import (
+    aggregate_metric_scores,
+    build_retrieval_metrics,
+    metric_result_fields,
+    metric_scores,
+    observations_from_case_results,
+)
 from ai_worker.tasks.evaluation.schema_exports import schema_documents
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
     CaseResult,
+    ComparisonResult,
     ContentArtifact,
     ContentArtifactPath,
     ContentManifest,
@@ -71,6 +79,7 @@ class ReportData:
     experiment_id: str
     experiment_type: ExperimentType
     variant_id: str
+    adapter_id: str
     dataset_code: str
     dataset_version: str
     evaluation_profile_ref: ImmutableReference
@@ -91,6 +100,7 @@ class ArtifactDraft:
     cases: Sequence[CaseResult]
     metrics: MetricResults
     suite_results: SuiteResults
+    comparison: ComparisonResult | None
     failures: Sequence[FailureRecord]
 
 
@@ -130,9 +140,59 @@ def _partition_manifest_hash(dataset: ValidatedDataset) -> str:
 
 
 def _build_metrics(material: RunMaterial) -> MetricResults:
+    if material.resolved.request.experiment_type is ExperimentType.KNOWLEDGE_RETRIEVAL:
+        return build_retrieval_metrics(material.dataset, material.outcome.case_results)
+
     metrics: list[MetricResult] = []
+    retrieval_cases = {
+        case.case_id: (
+            tuple(case.expected.required_evidence_refs or ()),
+            tuple(case.expected.relevant_evidence_refs or ()),
+        )
+        for case in material.dataset.cases
+        if case.task_type.value == "RETRIEVAL"
+    }
+    retrieval_results = {
+        result.case_id: tuple(result.retrieved_evidence_ids or result.selected_evidence_ids or ())
+        for result in material.outcome.case_results
+        if result.case_id in retrieval_cases and result.execution_status is ExecutionStatus.COMPLETED
+    }
     for scope in material.dataset.comparison_policy.scopes:
         ci_parameters = dict(scope.ci_parameters)
+        aggregate = None
+        if scope.metric_id in {"RECALL_AT_5", "PRECISION_AT_5", "MRR", "NDCG_AT_5", "NO_HIT_RATE"} and set(
+            retrieval_cases
+        ) == set(retrieval_results):
+            observations = observations_from_case_results(retrieval_cases, retrieval_results)
+            aggregate = aggregate_metric_scores(
+                [metric_scores(observation) for observation in observations],
+                minimum_case_count=scope.minimum_case_count,
+            ).get(scope.metric_id)
+        if aggregate is not None:
+            calculated = metric_result_fields(aggregate, sample_group_count=len(retrieval_results))
+            metrics.append(
+                MetricResult(
+                    metric_id=scope.metric_id,
+                    metric_version=scope.metric_version,
+                    partition=scope.partition,
+                    slice_id=scope.slice_id,
+                    required=scope.required,
+                    unit_of_analysis=scope.unit_of_analysis,
+                    estimator_id=scope.estimator_id,
+                    estimator_version=scope.estimator_version,
+                    independence_unit=scope.independence_unit,
+                    cluster_dimension=None if scope.cluster_dimension is None else scope.cluster_dimension.value,
+                    ci_lower=None,
+                    ci_upper=None,
+                    ci_method_id=scope.ci_method_id,
+                    ci_method_version=scope.ci_method_version,
+                    ci_level=cast(str | None, ci_parameters.get("level")),
+                    ci_sidedness=cast(str | None, ci_parameters.get("sidedness")),
+                    threshold=scope.threshold,
+                    **calculated,
+                )
+            )
+            continue
         metrics.append(
             MetricResult(
                 metric_id=scope.metric_id,
@@ -236,6 +296,7 @@ def build_artifact_draft(material: RunMaterial) -> ArtifactDraft:
         experiment_id=resolved.request.experiment_id,
         experiment_type=resolved.request.experiment_type,
         variant_id=resolved.request.variant_id,
+        adapter_id=dataset.suite.adapter_id,
         dataset_code=dataset.manifest.dataset_code,
         dataset_version=dataset.manifest.dataset_version,
         evaluation_profile_ref=profile_ref,
@@ -309,6 +370,7 @@ def build_artifact_draft(material: RunMaterial) -> ArtifactDraft:
         cases=material.outcome.case_results,
         metrics=_build_metrics(material),
         suite_results=_build_suite_results(material),
+        comparison=None,
         failures=material.outcome.failure_records,
     )
 
@@ -345,12 +407,15 @@ def build_content_manifest(run_id: str, files: Mapping[str, bytes]) -> tuple[Con
 
 
 def machine_artifact_files(draft: ArtifactDraft) -> dict[str, bytes]:
-    return {
+    files = {
         "cases.jsonl": serialize_jsonl(draft.cases),
         "metrics.json": canonical_json_bytes(cast(JsonValue, draft.metrics.model_dump(mode="json"))),
         "suite-results.json": canonical_json_bytes(cast(JsonValue, draft.suite_results.model_dump(mode="json"))),
         "failures.jsonl": serialize_jsonl(draft.failures),
     }
+    if draft.comparison is not None:
+        files["comparison.json"] = canonical_json_bytes(cast(JsonValue, draft.comparison.model_dump(mode="json")))
+    return files
 
 
 def finalize_artifacts(
@@ -384,6 +449,17 @@ _PUBLISHED_SCHEMA_PATHS = {
     "failures.jsonl": "artifacts/rag-eval.failure.schema.json",
     "result-content-manifest.json": "artifacts/rag-eval.content-manifest.schema.json",
 }
+_COMPARISON_SCHEMA_PATH = "artifacts/rag-eval.comparison.schema.json"
+
+
+def _published_schema_paths(files: Mapping[str, bytes]) -> tuple[str, ...]:
+    optional = (_COMPARISON_SCHEMA_PATH,) if "comparison.json" in files else ()
+    return (*_PUBLISHED_SCHEMA_PATHS.values(), *optional)
+
+
+def _validate_comparison_contract(files: Mapping[str, bytes]) -> None:
+    if "comparison.json" in files:
+        ComparisonResult.model_validate_json(files["comparison.json"])
 
 
 def validate_published_artifact_contracts(
@@ -400,7 +476,7 @@ def validate_published_artifact_contracts(
         generated = schema_documents(schema_set_version)
     except KeyError:
         raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
-    for schema_path in _PUBLISHED_SCHEMA_PATHS.values():
+    for schema_path in _published_schema_paths(files):
         try:
             committed_bytes = (schema_root / schema_path).read_bytes()
         except FileNotFoundError:
@@ -414,6 +490,7 @@ def validate_published_artifact_contracts(
         MetricResults.model_validate_json(files["metrics.json"])
         SuiteResults.model_validate_json(files["suite-results.json"])
         ContentManifest.model_validate_json(files["result-content-manifest.json"])
+        _validate_comparison_contract(files)
         for line in files["cases.jsonl"].splitlines():
             CASE_RESULT_ADAPTER.validate_json(line)
         for line in files["failures.jsonl"].splitlines():
@@ -431,7 +508,7 @@ _SEMANTIC_FILENAMES = (
 )
 
 
-def _semantic_record(value: JsonValue, *, is_run: bool) -> JsonValue:
+def _semantic_record(value: JsonValue, *, is_run: bool, is_failure: bool = False) -> JsonValue:
     if not isinstance(value, dict):
         return value
     projected = dict(value)
@@ -439,6 +516,8 @@ def _semantic_record(value: JsonValue, *, is_run: bool) -> JsonValue:
     if is_run:
         for field in ("started_at", "completed_at", "result_content_manifest_hash"):
             projected.pop(field, None)
+    if is_failure:
+        projected.pop("created_at", None)
     return projected
 
 
@@ -457,7 +536,12 @@ def semantic_content_hash(files: Mapping[str, bytes]) -> str:
             content = case_records
         elif path.endswith(".jsonl"):
             content = [
-                _semantic_record(cast(JsonValue, json.loads(line)), is_run=False) for line in raw_bytes.splitlines()
+                _semantic_record(
+                    cast(JsonValue, json.loads(line)),
+                    is_run=False,
+                    is_failure=path == "failures.jsonl",
+                )
+                for line in raw_bytes.splitlines()
             ]
         else:
             content = _semantic_record(cast(JsonValue, json.loads(raw_bytes)), is_run=path == "run.json")

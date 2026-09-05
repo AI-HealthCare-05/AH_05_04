@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import sha256_hex
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.retrieval_metrics import build_retrieval_metrics
+from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.runner import (
     AdapterRequest,
     EvaluationAdapter,
@@ -19,6 +22,7 @@ from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionS
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
 SOURCE_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/dev-foundation-v1.dataset.json"
+RETRIEVAL_MANIFEST = REPOSITORY_ROOT / "evals/retrieval/manifests/rag-retrieval-dev-v1.dataset.json"
 RUN_ID = "123e4567-e89b-42d3-a456-426614174000"
 
 
@@ -114,9 +118,11 @@ class CountingAdapter(EvaluationAdapter):
         self.fail_case_id = fail_case_id
         self.corrupt_run_id = corrupt_run_id
         self.calls: list[str] = []
+        self.requests: list[AdapterRequest] = []
 
     def execute(self, request: AdapterRequest) -> CaseResult:
         self.calls.append(request.case.case_id)
+        self.requests.append(request)
         if request.case.case_id == self.fail_case_id:
             raise RuntimeError("technical failure patient@example.com")
         payload = _result_payload(request)
@@ -125,12 +131,41 @@ class CountingAdapter(EvaluationAdapter):
         return CASE_RESULT_ADAPTER.validate_python(payload)
 
 
+class InvalidReplayAdapter(CountingAdapter):
+    def execute(self, request: AdapterRequest) -> CaseResult:
+        if request.case.case_id == "rag-dev-answer-quality-001":
+            raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
+        return super().execute(request)
+
+
+class DuplicateRankedIdsAdapter(CountingAdapter):
+    def execute(self, request: AdapterRequest) -> CaseResult:
+        result = super().execute(request)
+        if request.case.case_id == "rag-ret-dev-001":
+            result = result.model_copy(
+                update={
+                    "retrieved_evidence_ids": ("duplicate-evidence", "duplicate-evidence"),
+                    "selected_evidence_ids": ("duplicate-evidence", "duplicate-evidence"),
+                }
+            )
+        return cast(CaseResult, result)
+
+
 class StaticRegistry:
     def __init__(self, adapter: EvaluationAdapter | None) -> None:
         self.adapter = adapter
 
     def resolve(self, adapter_id: str) -> EvaluationAdapter | None:
         assert adapter_id == "validation-only.v1"
+        return self.adapter
+
+
+class RetrievalRegistry:
+    def __init__(self, adapter: EvaluationAdapter | None) -> None:
+        self.adapter = adapter
+
+    def resolve(self, adapter_id: str) -> EvaluationAdapter | None:
+        assert adapter_id == "retrieval-replay.v1"
         return self.adapter
 
 
@@ -184,6 +219,114 @@ def test_adapter_exception_is_recorded_once_and_next_case_runs(
     assert outcome.failure_records == ()
     assert "patient@example.com" not in repr(outcome)
     assert "patient@example.com" not in capsys.readouterr().err
+
+
+def test_replay_validation_error_is_invalid_and_next_case_runs(loaded_dev_dataset: ValidatedDataset) -> None:
+    outcome = execute_dev_cases(
+        loaded_dev_dataset,
+        _resolved("ANSWER_GROUNDING_SAFETY"),
+        run_id=RUN_ID,
+        adapter_registry=StaticRegistry(InvalidReplayAdapter()),
+    )
+
+    failed = next(item for item in outcome.case_results if item.case_id == "rag-dev-answer-quality-001")
+    assert failed.execution_status is ExecutionStatus.INVALID
+    assert failed.failure_codes == ("EVAL_RETRIEVAL_REPLAY_INVALID",)
+    assert outcome.execution_status is ExecutionStatus.INVALID
+
+
+def test_adapter_request_is_bound_to_active_variant(loaded_dev_dataset: ValidatedDataset) -> None:
+    adapter = CountingAdapter()
+    resolved = _resolved("KNOWLEDGE_RETRIEVAL")
+
+    execute_dev_cases(
+        loaded_dev_dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=StaticRegistry(adapter),
+    )
+
+    assert adapter.requests[0].variant_id == "dev-synthetic-retrieval-v1"
+    assert adapter.requests[0].variant_manifest_hash == resolved.retrieval_variant_manifest_hash
+
+
+def test_retrieval_miss_creates_stable_non_sensitive_failure_record() -> None:
+    dataset = load_dataset(RETRIEVAL_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=build_adapter_registry(resolved),
+    )
+
+    assert len(outcome.failure_records) == 1
+    failure = outcome.failure_records[0]
+    assert failure.case_id == "rag-ret-dev-004"
+    assert failure.failure_stage == "RETRIEVAL_MISS"
+    assert failure.failure_code == "REQUIRED_EVIDENCE_NOT_IN_TOP_5"
+    assert failure.expected_summary.value == "EXPECTED_REQUIRED_EVIDENCE"
+    assert failure.actual_summary.value == "ACTUAL_REQUIRED_EVIDENCE_MISSING"
+    assert failure.root_cause_code is None
+    assert failure.followup_issue_ref is None
+
+
+def test_retrieval_adapter_error_creates_stable_non_sensitive_failure_record() -> None:
+    dataset = load_dataset(RETRIEVAL_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=RetrievalRegistry(CountingAdapter(fail_case_id="rag-ret-dev-001")),
+    )
+
+    failure = next(item for item in outcome.failure_records if item.case_id == "rag-ret-dev-001")
+    assert failure.failure_stage == "RETRIEVAL_EXECUTION"
+    assert failure.failure_code == "EVAL_INTERNAL_ERROR"
+    assert failure.expected_summary.value == "EXPECTED_REQUIRED_EVIDENCE"
+    assert failure.actual_summary.value == "ACTUAL_REQUIRED_EVIDENCE_MISSING"
+
+
+def test_duplicate_ranked_ids_invalidate_case_run_and_metrics_with_stable_failure() -> None:
+    dataset = load_dataset(RETRIEVAL_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=RetrievalRegistry(DuplicateRankedIdsAdapter()),
+    )
+
+    invalid = next(item for item in outcome.case_results if item.case_id == "rag-ret-dev-001")
+    assert invalid.execution_status is ExecutionStatus.INVALID
+    assert invalid.decision_status is None
+    assert invalid.failure_codes == ("EVAL_RETRIEVAL_RESULT_INVALID",)
+    assert outcome.execution_status is ExecutionStatus.INVALID
+    failure = next(item for item in outcome.failure_records if item.case_id == invalid.case_id)
+    assert (failure.failure_stage, failure.failure_code) == (
+        "RETRIEVAL_EXECUTION",
+        "EVAL_RETRIEVAL_RESULT_INVALID",
+    )
+
+    metrics = build_retrieval_metrics(dataset, outcome.case_results)
+    assert {item.execution_status for item in metrics.metrics} == {ExecutionStatus.INVALID}
+    assert all(item.decision_status is None and item.metric_value is None for item in metrics.metrics)
 
 
 def test_missing_adapter_produces_not_implemented_without_fake_answer(

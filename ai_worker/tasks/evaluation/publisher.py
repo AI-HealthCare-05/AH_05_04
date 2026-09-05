@@ -17,7 +17,7 @@ from pydantic import TypeAdapter, ValidationError
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.schemas.common import CanonicalUuid
 
-_BUNDLE_FILENAMES = frozenset(
+_REQUIRED_BUNDLE_FILENAMES = frozenset(
     {
         "run.json",
         "cases.jsonl",
@@ -28,6 +28,7 @@ _BUNDLE_FILENAMES = frozenset(
         "report.md",
     }
 )
+_OPTIONAL_BUNDLE_FILENAMES = frozenset({"comparison.json"})
 _UUID_ADAPTER = TypeAdapter(CanonicalUuid)
 _UNSUPPORTED_ERRNOS = {
     errno.ENOSYS,
@@ -38,6 +39,12 @@ _UNSUPPORTED_ERRNOS = {
 }
 _PATH_ERRNOS = {errno.ELOOP, errno.ENOTDIR, errno.ENOENT, errno.EACCES, errno.EPERM}
 type FileIdentity = tuple[int, int]
+
+
+def _valid_bundle_files(names: set[str]) -> bool:
+    return _REQUIRED_BUNDLE_FILENAMES.issubset(names) and names <= (
+        _REQUIRED_BUNDLE_FILENAMES | _OPTIONAL_BUNDLE_FILENAMES
+    )
 
 
 def _normalize_error(error: BaseException) -> BaseException:
@@ -266,16 +273,16 @@ def _verify_staging_entry(
     descriptor_identity = _descriptor_identity(staging_fd)
     if descriptor_identity != staging_identity or _identity(root_fd, staging_name) != descriptor_identity:
         raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
-    if verify_contents and set(os.listdir(staging_fd)) != _BUNDLE_FILENAMES:
-        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     if verify_contents:
+        staged_names = set(os.listdir(staging_fd))
         if (
             created_files is None
             or expected_files is None
-            or set(created_files) != _BUNDLE_FILENAMES
-            or set(expected_files) != _BUNDLE_FILENAMES
+            or staged_names != set(expected_files)
+            or set(created_files) != set(expected_files)
+            or not _valid_bundle_files(staged_names)
         ):
-            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+            raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
         for name, identity in created_files.items():
             _verify_file_content(staging_fd, name, identity, expected_files[name])
 
@@ -456,7 +463,7 @@ class _RunPublication:
 
 
 def _validate_publication_input(run_id: str, files: Mapping[str, bytes]) -> None:
-    if set(files) != _BUNDLE_FILENAMES:
+    if not _valid_bundle_files(set(files)):
         raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     if unicodedata.normalize("NFC", run_id) != run_id:
         raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID)

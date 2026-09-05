@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.config import (
     RepositoryState,
     load_dev_execution_request,
@@ -44,6 +44,26 @@ def _answer_variant() -> dict[str, Any]:
         "model_config": {"adapter_id": "validation-only.v1", "provider_invocation": False},
         "prompt_version": "synthetic-no-provider-v1",
         "parameters": {"seed": 157},
+    }
+
+
+def _replay_variant(*, replay_path: str = "evals/retrieval/replays/test.replay.json") -> dict[str, Any]:
+    return {
+        "variant_id": "RET-L",
+        "variant_version": "1.0.0",
+        "kind": "RETRIEVAL",
+        "model_config": {
+            "adapter_id": "retrieval-replay.v1",
+            "provider_invocation": False,
+            "source_snapshot_ref": {"id": "source", "version": "1.0.0", "hash": "1" * 64},
+            "knowledge_index_ref": {"id": "index", "version": "1.0.0", "hash": "2" * 64},
+            "embedding_model_ref": {"id": "embedding", "version": "1.0.0", "hash": "3" * 64},
+            "parser_ref": {"id": "parser", "version": "1.0.0", "hash": "4" * 64},
+            "filter_snapshot_hash": "5" * 64,
+        },
+        "prompt_version": "synthetic-replay-v1",
+        "parameters": {"reranker_enabled": False, "retrieval_strategy": "LEXICAL"},
+        "replay_artifact_path": replay_path,
     }
 
 
@@ -339,6 +359,151 @@ def test_checked_in_execution_request_is_canonical_and_loadable(
     )
     assert resolved.request.experiment_type.value == experiment_type
     assert (resolved.request.answer_variant is not None) is has_answer_variant
+
+
+@pytest.mark.parametrize(
+    ("name", "variant_id", "strategy", "reranker_enabled", "replay_path"),
+    [
+        (
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            "RET-L",
+            "SYNTHETIC_LEXICAL_REPLAY",
+            False,
+            "evals/retrieval/replays/rag-retrieval-dev-v1/ret-l-v1.replay.json",
+        ),
+        (
+            "rag-retrieval-dev-ret-hr-v1.execution.json",
+            "RET-HR",
+            "SYNTHETIC_HYBRID_RERANK_REPLAY",
+            True,
+            "evals/retrieval/replays/rag-retrieval-dev-v1/ret-hr-v1.replay.json",
+        ),
+    ],
+)
+def test_checked_in_retrieval_replay_config_binds_provenance_and_replay_bytes(
+    name: str,
+    variant_id: str,
+    strategy: str,
+    reranker_enabled: bool,
+    replay_path: str,
+) -> None:
+    path = REPOSITORY_ROOT / "evals/configs" / name
+    raw_bytes = path.read_bytes()
+    assert raw_bytes == canonical_json_bytes(parse_json_object_bytes(raw_bytes))
+    resolved = load_dev_execution_request(
+        path,
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    variant = resolved.request.retrieval_variant
+    assert variant is not None
+    assert variant.variant_id == variant_id
+    assert variant.replay_artifact_path == replay_path
+    assert variant.parameters == {
+        "reranker_enabled": reranker_enabled,
+        "retrieval_strategy": strategy,
+    }
+    assert dict(resolved.referenced_file_hashes)[replay_path] == sha256_hex(
+        REPOSITORY_ROOT.joinpath(replay_path).read_bytes()
+    )
+
+
+def test_retrieval_replay_configs_keep_identical_model_provenance() -> None:
+    resolved = [
+        load_dev_execution_request(
+            REPOSITORY_ROOT / "evals/configs" / name,
+            repository_root=REPOSITORY_ROOT,
+            repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+        )
+        for name in (
+            "rag-retrieval-dev-ret-l-v1.execution.json",
+            "rag-retrieval-dev-ret-hr-v1.execution.json",
+        )
+    ]
+    first = resolved[0].request.retrieval_variant
+    second = resolved[1].request.retrieval_variant
+
+    assert first is not None and second is not None
+    assert canonical_json_bytes(first.model_config_payload) == canonical_json_bytes(second.model_config_payload)
+    assert resolved[0].model_config_hash == resolved[1].model_config_hash
+
+
+def test_replay_adapter_config_requires_replay_path_and_full_provenance(tmp_path: Path) -> None:
+    variant = _retrieval_variant()
+    variant["model_config"] = {"adapter_id": "retrieval-replay.v1", "provider_invocation": False}
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        _load_request(tmp_path, retrieval_variant=variant)
+
+    assert caught.value.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
+
+
+def test_replay_adapter_config_rejects_top_level_variant_relabeling(tmp_path: Path) -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        _load_request(
+            tmp_path,
+            variant_id="RET-ALIAS",
+            retrieval_variant=_replay_variant(),
+        )
+
+    assert caught.value.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
+
+
+def test_replay_artifact_path_rejects_parent_traversal(tmp_path: Path) -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        _load_request(tmp_path, retrieval_variant=_replay_variant(replay_path="evals/../replay.json"))
+
+    assert caught.value.code is EvaluationErrorCode.RESOURCE_PATH_INVALID
+
+
+def test_resolved_hash_changes_when_replay_bytes_change(tmp_path: Path) -> None:
+    roots = (tmp_path / "first", tmp_path / "second")
+    resolved = []
+    for root, evidence_id in zip(roots, ("evidence-first", "evidence-second"), strict=True):
+        request_path = _write_request(root, variant_id="RET-L", retrieval_variant=_replay_variant())
+        dataset_path = root / "evals/retrieval/manifests/dev.dataset.json"
+        dataset_path.write_bytes(
+            canonical_json_bytes(
+                {
+                    "case_resources": [{"case_id": "case-1", "partition": "DEV"}],
+                    "dataset_code": "rag-retrieval-dev",
+                    "dataset_version": "1.0.0",
+                }
+            )
+        )
+        replay_path = root / "evals/retrieval/replays/test.replay.json"
+        replay_path.parent.mkdir(parents=True, exist_ok=True)
+        replay_payload: dict[str, JsonValue] = {
+            "case_results": [
+                {
+                    "case_id": "case-1",
+                    "case_resource_sha256": "a" * 64,
+                    "ranked_evidence_ids": [evidence_id],
+                }
+            ],
+            "dataset_code": "rag-retrieval-dev",
+            "dataset_version": "1.0.0",
+            "replay_sha256": "0" * 64,
+            "schema_id": "rag-eval.retrieval-replay",
+            "schema_version": "1.0.0",
+            "top_k": 5,
+            "variant_id": "RET-L",
+        }
+        replay_payload["replay_sha256"] = canonical_sha256(
+            replay_payload,
+            excluded_top_level_keys=frozenset({"replay_sha256"}),
+        )
+        replay_path.write_bytes(canonical_json_bytes(replay_payload))
+        resolved.append(
+            load_dev_execution_request(
+                request_path,
+                repository_root=root,
+                repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+            )
+        )
+
+    assert resolved[0].resolved_evaluation_config_hash != resolved[1].resolved_evaluation_config_hash
 
 
 def test_preflight_is_not_bound_to_foundation_id_status_or_case_count(tmp_path: Path) -> None:

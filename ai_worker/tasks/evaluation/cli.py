@@ -7,7 +7,7 @@ import stat
 import sys
 import unicodedata
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
@@ -16,8 +16,15 @@ from uuid import uuid4
 from pydantic import TypeAdapter, ValidationError
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, normalize_resource_path
+from ai_worker.tasks.evaluation.comparison import (
+    LoadedRunBundle,
+    build_retrieval_comparison,
+    load_published_run_bundle,
+    validate_retrieval_comparison_pair,
+)
 from ai_worker.tasks.evaluation.config import (
     RepositoryStateProvider,
+    ResolvedDevExecution,
     git_repository_state,
     load_dev_execution_request,
     preflight_dev_manifest,
@@ -36,17 +43,15 @@ from ai_worker.tasks.evaluation.manifest import (
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.publisher import publish_run_directory
 from ai_worker.tasks.evaluation.reporter import render_report
-from ai_worker.tasks.evaluation.runner import (
-    EMPTY_ADAPTER_REGISTRY,
-    AdapterRegistry,
-    execute_dev_cases,
-)
+from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
+from ai_worker.tasks.evaluation.runner import AdapterRegistry, execute_dev_cases
 from ai_worker.tasks.evaluation.schemas.artifacts import ValidationReceipt
 from ai_worker.tasks.evaluation.schemas.common import (
     ActorNamespace,
     ActorRef,
     ActorRole,
     CanonicalUuid,
+    ExperimentType,
     ImmutableReference,
 )
 
@@ -96,6 +101,9 @@ def _parser() -> argparse.ArgumentParser:
     run_dev.add_argument("--config", required=True)
     run_dev.add_argument("--run-id", required=True)
     run_dev.add_argument("--executed-by", required=True)
+    run_dev.add_argument("--baseline-run-id")
+    verify_result = commands.add_parser("verify-result")
+    verify_result.add_argument("--run-id", required=True)
     return parser
 
 
@@ -644,12 +652,28 @@ def _validate_bundle_privacy(files: dict[str, bytes]) -> None:
         )
 
 
+def _validate_baseline_candidate_state(
+    baseline: LoadedRunBundle,
+    resolved: ResolvedDevExecution,
+    candidate_run_id: str,
+) -> None:
+    candidate_request = resolved.request
+    validate_retrieval_comparison_pair(
+        baseline.run,
+        candidate_run_id=candidate_run_id,
+        candidate_experiment_id=candidate_request.experiment_id,
+        candidate_experiment_type=candidate_request.experiment_type,
+        candidate_variant_id=candidate_request.variant_id,
+        candidate_retrieval_variant_manifest_hash=resolved.retrieval_variant_manifest_hash,
+    )
+
+
 def _run_dev(
     arguments: argparse.Namespace,
     *,
     allowed_result_root: Path | None,
     repository_state_provider: RepositoryStateProvider,
-    adapter_registry: AdapterRegistry,
+    adapter_registry: AdapterRegistry | None,
     clock: Clock,
 ) -> int:
     try:
@@ -662,6 +686,11 @@ def _run_dev(
             repository_root=_REPOSITORY_ROOT,
             repository_state_provider=repository_state_provider,
         )
+        if (
+            arguments.baseline_run_id is not None
+            and resolved.request.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL
+        ):
+            raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
         preflight_dev_manifest(resolved)
         dataset = load_dataset(
             resolved.dataset_manifest_path,
@@ -669,12 +698,18 @@ def _run_dev(
             manifest_bytes=resolved.dataset_manifest_bytes,
         )
         validate_loaded_bindings(resolved, dataset)
+        result_root = _PRODUCTION_RUN_ROOT if allowed_result_root is None else allowed_result_root
+        baseline = None
+        if arguments.baseline_run_id is not None:
+            baseline = load_published_run_bundle(result_root, arguments.baseline_run_id)
+            _validate_baseline_candidate_state(baseline, resolved, arguments.run_id)
         started_at = clock()
         outcome = execute_dev_cases(
             dataset,
             resolved,
             run_id=arguments.run_id,
-            adapter_registry=adapter_registry,
+            adapter_registry=adapter_registry if adapter_registry is not None else build_adapter_registry(resolved),
+            failure_created_at=started_at,
         )
         draft = build_artifact_draft(
             RunMaterial(
@@ -686,12 +721,25 @@ def _run_dev(
                 started_at=started_at,
             )
         )
+        if baseline is not None:
+            draft = replace(
+                draft,
+                comparison=build_retrieval_comparison(
+                    baseline,
+                    draft,
+                    dataset.comparison_policy.controlled_variable_keys,
+                ),
+            )
         machine_files = machine_artifact_files(draft)
         report = render_report(
             draft.report_data,
             draft.metrics,
             draft.suite_results,
+            draft.failures,
             content_artifact_entries(machine_files),
+            draft.comparison,
+            baseline_variant_id=None if baseline is None else baseline.run.variant_id,
+            baseline_metrics=None if baseline is None else baseline.metrics,
         )
         artifacts = finalize_artifacts(draft, report, completed_at=clock())
         files = dict(artifacts.files)
@@ -703,7 +751,7 @@ def _run_dev(
         )
         _validate_bundle_privacy(files)
         publish_run_directory(
-            allowed_root=_PRODUCTION_RUN_ROOT if allowed_result_root is None else allowed_result_root,
+            allowed_root=result_root,
             run_id=arguments.run_id,
             files=files,
         )
@@ -715,12 +763,26 @@ def _run_dev(
     return 0
 
 
+def _run_verify_result(arguments: argparse.Namespace, *, allowed_result_root: Path | None) -> int:
+    try:
+        bundle = load_published_run_bundle(
+            _PRODUCTION_RUN_ROOT if allowed_result_root is None else allowed_result_root,
+            arguments.run_id,
+        )
+    except EvaluationValidationError as error:
+        return _emit_failure(error)
+    except Exception:
+        return _emit_failure(EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID))
+    sys.stdout.write(f"{bundle.semantic_hash}\n")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
     allowed_result_root: Path | None = None,
     repository_state_provider: RepositoryStateProvider = git_repository_state,
-    adapter_registry: AdapterRegistry = EMPTY_ADAPTER_REGISTRY,
+    adapter_registry: AdapterRegistry | None = None,
     clock: Clock = _utc_timestamp,
 ) -> int:
     """Validate a dataset receipt or run the synthetic DEV evaluation workflow."""
@@ -735,6 +797,8 @@ def main(
 
     if arguments.command == "validate":
         return _run_validate(arguments, allowed_result_root=allowed_result_root)
+    if arguments.command == "verify-result":
+        return _run_verify_result(arguments, allowed_result_root=allowed_result_root)
     return _run_dev(
         arguments,
         allowed_result_root=allowed_result_root,
