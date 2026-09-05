@@ -188,6 +188,10 @@
   background: transparent;
 }
 
+.chat-page .chat-layout:not(.keyboard-open) .chat-composer {
+  margin-bottom: 16px;
+}
+
 .chat-page .chat-input {
   min-height: 52px;
 }

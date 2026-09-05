@@ -231,7 +231,11 @@ function ProfilePage() {
           if (item === '메뉴') navigate('/menu')
         }}
       >
-        <main className="app-scroll mvp-page__content mvp-profile">
+        <main
+          className={`app-scroll mvp-page__content mvp-profile${
+            isEditing ? ' mvp-profile--editing' : ''
+          }`}
+        >
           {isLoading && (
             <Card className="mvp-profile__state-card">
               <div role="status" aria-live="polite">
