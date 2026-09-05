@@ -1,0 +1,114 @@
+{
+  "allowed_content_types": [
+    "application/json"
+  ],
+  "authentication_failure_codes": [
+    "20",
+    "30",
+    "31"
+  ],
+  "blocking_code": "BLOCKED_BY_UNSTABLE_PRIMARY_KEY",
+  "body_error_code_path": "header.resultCode",
+  "body_success_code_path": "header.resultCode",
+  "body_success_codes": [
+    "00"
+  ],
+  "daily_limit_codes": [
+    "22"
+  ],
+  "encoding": "UTF-8",
+  "execution_status": "FAILED",
+  "external_version_field": "updateDe",
+  "external_version_field_exists": true,
+  "failure_code": "SCHEMA_DRIFT",
+  "fixture_evidence": [
+    {
+      "path": "tests/fixtures/rag/mfds/list_patient_medication_guides_success.json",
+      "scenario": "LIST_PATIENT_MEDICATION_GUIDES_SUCCESS",
+      "sha256": "d89d42f96c31bdf6b2a1748b410133844ca037d145ba6d9f3bd4d22ee6c9d56c"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_auth_failure.json",
+      "scenario": "SYNTHETIC_AUTH_FAILURE",
+      "sha256": "be6d2256676817ef17182bd92307b59e4449225495156528c6124e79f49f5dbc"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_daily_limit.json",
+      "scenario": "SYNTHETIC_DAILY_LIMIT",
+      "sha256": "a0b6e4b1b3c728c359a9ae73f3b51114463d7c8b653c28c134419e279deac347"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_empty.json",
+      "scenario": "SYNTHETIC_EMPTY",
+      "sha256": "e8e99ca7692ff15560d1ee67e8d9ddc3e4132ddad92c6e3250a5b1cfe3dbc81d"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_schema_drift.json",
+      "scenario": "SYNTHETIC_SCHEMA_DRIFT",
+      "sha256": "ac40eb8d47fe8b38278e609642a69485aaf144c0bc75833c469b20c48621339c"
+    }
+  ],
+  "generated_at": "2026-09-05T03:34:13+00:00",
+  "identity": {
+    "endpoint_code": "MFDS_PATIENT_GUIDE_API",
+    "operation_code": "LIST_PATIENT_MEDICATION_GUIDES",
+    "source_code": "MFDS_PATIENT_MEDICATION_GUIDE"
+  },
+  "limits": {
+    "connect_timeout_seconds": 3,
+    "max_decompressed_bytes": 10000000,
+    "max_pages": 100,
+    "max_redirects": 0,
+    "max_response_bytes": 5000000,
+    "max_retry_attempts": 2,
+    "read_timeout_seconds": 10,
+    "total_timeout_seconds": 240
+  },
+  "live_validation_git_sha": "38b57c6fff11c40ead2779abefb88e4d77a1f0da",
+  "official_document_checked_at": "2026-09-05",
+  "official_document_url": "https://www.data.go.kr/data/15075057/openapi.do",
+  "pagination": {
+    "end_condition": "TOTAL_COUNT_REACHED",
+    "mode": "PAGE_NUMBER",
+    "page_base": 1,
+    "page_parameter": "pageNo",
+    "page_size_limit": 100,
+    "page_size_parameter": "numOfRows"
+  },
+  "parser_activation_allowed": false,
+  "primary_key_duplicate_count": 17,
+  "primary_key_fields": [
+    "itemSeq"
+  ],
+  "primary_key_null_count": 0,
+  "receipt_hash": "4cd7e20483af4a815050f1d1bcf74dd3ef02423a5ff68d71a575ce035917b4bd",
+  "receipt_version": "1.1",
+  "regression_fixture_git_sha": "41b826871b363f86e387234a7c93824869cb973c",
+  "required_parameters": [
+    {
+      "location": "query",
+      "name": "ServiceKey",
+      "sensitive": true,
+      "type_name": "string"
+    },
+    {
+      "location": "query",
+      "name": "type",
+      "sensitive": false,
+      "type_name": "string"
+    }
+  ],
+  "retry_mapping": {
+    "authentication_failure": "NOT_RETRYABLE",
+    "daily_limit": "RETRY_AT_RESET",
+    "temporary_failure": "BACKOFF"
+  },
+  "source_run_status": "SCHEMA_DRIFT",
+  "validated_at": "2026-09-05T02:17:07+00:00",
+  "validated_record_count": 4782,
+  "verified_host": "apis.data.go.kr",
+  "verified_http_method": "GET",
+  "verified_path_template": "/1471000/DrbEasyDrugInfoService/getDrbEasyDrugList",
+  "verified_scheme": "https",
+  "whole_record_duplicate_count": 0
+}

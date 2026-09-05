@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -118,6 +119,11 @@ class MedicationCandidateSearch(Base):
     # prescription_version_medication은 #169에서 생성된다. 이 테이블은 그 선행 테이블을
     # 중복 생성하지 않기 위해 우선 값만 저장하고, FK는 #169 이후 별도 migration에서 추가한다.
     prescription_version_medication_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    # medication.medication_name/strength_text는 사용자가 나중에 정정하면 값이 바뀐다.
+    # Search가 실제로 어떤 값을 대상으로 실행됐는지는 살아있는 FK 참조만으로 재구성할 수
+    # 없으므로(#260 Product Identity 원칙과 동일한 이유) 생성 시점 값을 그대로 스냅샷한다.
+    medication_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    strength_text_snapshot: Mapped[str | None] = mapped_column(String(100), nullable=True)
     query_digest: Mapped[str] = mapped_column(String(128), nullable=False)
     # Runtime Bundle 테이블은 #175(RAG-12A)에서 생성된다. FK는 그 이후 별도 migration에서 추가한다.
     runtime_release_bundle_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
@@ -212,6 +218,12 @@ class MedicationCandidateSearchResult(Base):
     manufacturer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     product_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     result_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Resolver(#170)가 후보를 찾을 때 이미 계산해두는 순위 신호다. 계약 문서
+    # (medication-identification-v1.md:132,158)가 score·rank·distance를 공개 DTO에
+    # 포함하지 말라고 명시하므로, 이 두 컬럼은 내부 전용이며 외부 응답에 노출하면 안 된다.
+    # result_method의 허용값 목록은 RAG-08이 아직 확정하지 않아 CHECK 제약을 걸지 않는다.
+    result_score: Mapped[float] = mapped_column(Float, nullable=False)
+    result_method: Mapped[str] = mapped_column(String(50), nullable=False)
     is_displayed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     selection_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

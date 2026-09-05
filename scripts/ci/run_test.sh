@@ -212,6 +212,7 @@ if ! run_with_backend_test_database \
   coverage run -m pytest \
   backend/app \
   tests/contract \
+  tests/integration/rag \
   tests/integration/test_worker_ocr_persistence.py \
   tests/integration/test_outbox_publisher.py \
   tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed \
