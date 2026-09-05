@@ -54,7 +54,7 @@ function MenuPage() {
     setIsLoggingOut(true)
     logout().catch(() => undefined)
     localStorage.removeItem('access_token')
-    navigate('/', { replace: true })
+    navigate('/start', { replace: true })
   }
 
   return (

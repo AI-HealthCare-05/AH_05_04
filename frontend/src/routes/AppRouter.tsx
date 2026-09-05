@@ -85,7 +85,7 @@ function RootRoute() {
   return authState.status === 'authenticated' ? (
     <HomePage currentUser={authState.user} />
   ) : (
-    <StartPage />
+    <Navigate to="/start" replace />
   )
 }
 
@@ -110,7 +110,7 @@ function AppRouter() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<RootRoute />} />
-        <Route path="/start" element={<StartPage />} />
+        <Route path="/start" element={<PublicOnlyRoute><StartPage /></PublicOnlyRoute>} />
         <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
         <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
         <Route path="/prescriptions/upload" element={<ProtectedRoute><PrescriptionUploadPage /></ProtectedRoute>} />

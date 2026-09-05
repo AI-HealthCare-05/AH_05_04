@@ -34,18 +34,31 @@ function renderRoute(path: string, strict = false) {
 
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   vi.clearAllMocks()
 })
 
 describe('인증 상태별 AppRouter 이동', () => {
-  it('비로그인 사용자가 첫 화면에 접속하면 시작 화면을 표시한다', () => {
+  it('비로그인 사용자가 첫 화면에 접속하면 /start로 이동해 시작 화면을 표시한다', async () => {
     renderRoute('/')
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '처방과 일정을 쉽게 살펴봐요.',
+      }),
+    ).toBeTruthy()
+    expect(window.location.pathname).toBe('/start')
+  })
+
+  it('비로그인 사용자가 /start에 접속하면 시작 화면을 표시한다', () => {
+    renderRoute('/start')
 
     expect(
       screen.getByRole('heading', {
         name: '처방과 일정을 쉽게 살펴봐요.',
       }),
     ).toBeTruthy()
+    expect(window.location.pathname).toBe('/start')
   })
 
   it('로그인 사용자가 첫 화면에 접속하면 홈 화면을 표시한다', async () => {
@@ -79,6 +92,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     renderRoute(path)
 
     expect(screen.getByRole('heading', { name: '다시 만나서 반가워요' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/login')
   })
 
   it('로그인 사용자가 회원 전용 화면에 직접 접속하면 화면 접근을 허용한다', async () => {
@@ -112,6 +126,15 @@ describe('인증 상태별 AppRouter 이동', () => {
     renderRoute('/signup')
 
     expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+  })
+
+  it('로그인 사용자가 /start에 접속하면 홈 화면으로 이동한다', async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
+    localStorage.setItem('access_token', 'fixture-access-token')
+    renderRoute('/start')
+
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/')
   })
 
   it('남아 있는 토큰이 만료된 경우 로그인 화면 진입을 허용한다', async () => {

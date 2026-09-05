@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { logout } from '../src/api/auth'
 import MenuPage from '../src/pages/MenuPage'
 
@@ -11,18 +11,20 @@ function deferred<T>() {
   return new Promise<T>(() => undefined)
 }
 
-function RootFixture() {
-  return <div>{localStorage.getItem('access_token') ? '홈 화면' : '시작 화면'}</div>
+function LocationFixture() {
+  return <output data-testid="location">{useLocation().pathname}</output>
 }
 
 function renderMenu() {
   return render(
     <MemoryRouter initialEntries={['/menu']}>
+      <LocationFixture />
       <Routes>
         <Route path="/menu" element={<MenuPage />} />
         <Route path="/profile" element={<div>사용자 정보 화면</div>} />
         <Route path="/login" element={<div>로그인 화면</div>} />
-        <Route path="/" element={<RootFixture />} />
+        <Route path="/" element={<div>홈 화면</div>} />
+        <Route path="/start" element={<div>시작 화면</div>} />
         <Route path="/guides" element={<div>가이드 화면</div>} />
         <Route path="/chat" element={<div>도지 화면</div>} />
       </Routes>
@@ -79,6 +81,7 @@ describe('메뉴 로그아웃', () => {
     fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
 
     expect(await screen.findByText('시작 화면')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/start')
     expect(localStorage.getItem('access_token')).toBeNull()
     expect(logout).toHaveBeenCalledTimes(1)
   })
@@ -90,6 +93,7 @@ describe('메뉴 로그아웃', () => {
     fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
 
     expect(await screen.findByText('시작 화면')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/start')
     expect(localStorage.getItem('access_token')).toBeNull()
   })
 })
