@@ -158,6 +158,45 @@ def test_schema_set_1_2_versions_exactly_the_provenance_bearing_members() -> Non
     }
 
 
+def test_schema_set_1_3_replaces_only_dataset_manifest_and_adds_provenance_members() -> None:
+    registry_v1_2 = SCHEMA_REGISTRIES["1.2.0"]
+    registry_v1_3 = SCHEMA_REGISTRIES["1.3.0"]
+    entries_v1_2 = {entry.relative_path: entry for entry in registry_v1_2}
+    entries_v1_3 = {entry.relative_path: entry for entry in registry_v1_3}
+    new_members = {
+        "authoring/rag-eval.authoring-identity-manifest.schema.json": (
+            "rag-eval.authoring-identity-manifest",
+            "1.0.0",
+        ),
+        "operational/rag-eval.index-build-receipt.schema.json": (
+            "rag-eval.index-build-receipt",
+            "1.0.0",
+        ),
+        "operational/rag-eval.study-split-receipt.schema.json": (
+            "rag-eval.study-split-receipt",
+            "1.0.0",
+        ),
+    }
+
+    assert len(registry_v1_3) == len(entries_v1_3) == 21
+    assert len({entry.schema_id for entry in registry_v1_3}) == 21
+    assert set(entries_v1_3) == set(entries_v1_2) | set(new_members)
+    assert entries_v1_3["authoring/rag-eval.dataset-manifest.schema.json"].member_version == "1.3.0"
+    assert {
+        path: (entry.schema_id, entry.member_version) for path, entry in entries_v1_3.items() if path in new_members
+    } == new_members
+    for path in set(entries_v1_2) - {"authoring/rag-eval.dataset-manifest.schema.json"}:
+        assert entries_v1_3[path] == entries_v1_2[path]
+
+
+def test_schema_set_1_3_reuses_unchanged_1_2_members_byte_for_byte() -> None:
+    version_1_2 = schema_documents("1.2.0")
+    version_1_3 = schema_documents("1.3.0")
+
+    for path in set(version_1_2) - {"authoring/rag-eval.dataset-manifest.schema.json"}:
+        assert canonical_json_bytes(version_1_3[path]) == canonical_json_bytes(version_1_2[path])
+
+
 @pytest.mark.parametrize(
     ("relative_path", "pattern"),
     [
@@ -416,6 +455,115 @@ def test_exported_review_provenance_v12_schema_encodes_draft_and_reviewed_state_
     )
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "authoring/rag-eval.dataset-manifest.schema.json",
+        "operational/rag-eval.index-build-receipt.schema.json",
+        "operational/rag-eval.study-split-receipt.schema.json",
+    ],
+)
+def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
+    relative_path: str,
+) -> None:
+    document = cast(dict[str, Any], schema_documents("1.3.0")[relative_path])
+    definitions = cast(dict[str, Any], document["$defs"])
+    provenance_schema = cast(dict[str, Any], definitions["ReviewProvenanceV12"])
+    conditions = cast(list[dict[str, Any]], provenance_schema["allOf"])
+    state_conditions = [
+        condition
+        for condition in conditions
+        if condition.get("if", {}).get("properties", {}).get("team_gold_status", {}).get("const")
+        in {"DRAFT", "REVIEWED", "APPROVED"}
+        and "else" not in condition
+    ]
+
+    assert [condition["if"]["properties"]["team_gold_status"]["const"] for condition in state_conditions] == [
+        "DRAFT",
+        "REVIEWED",
+        "APPROVED",
+    ]
+    assert state_conditions[0] == {
+        "if": {
+            "properties": {"team_gold_status": {"const": "DRAFT"}},
+            "required": ["team_gold_status"],
+        },
+        "then": {
+            "properties": {
+                "reviewed_by": {"type": "null"},
+                "reviewed_at": {"type": "null"},
+                "approved_by": {"type": "null"},
+                "approved_at": {"type": "null"},
+                "evidence_review_refs": {"maxItems": 0},
+            }
+        },
+    }
+
+    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
+    invalid_draft: dict[str, Any] = {
+        "authored_by": {
+            "namespace": "GITHUB_LOGIN",
+            "actor_id": "ceohwj",
+            "role": "EVALUATION_IMPLEMENTER",
+        },
+        "reviewed_by": {
+            "namespace": "GITHUB_LOGIN",
+            "actor_id": "evaluation-reviewer",
+            "role": "EVALUATION_REVIEWER",
+        },
+        "approved_by": None,
+        "authored_at": "2026-09-05T00:00:00.000000Z",
+        "reviewed_at": "2026-09-05T01:00:00.000000Z",
+        "approved_at": None,
+        "team_gold_status": "DRAFT",
+        "external_medical_review_status": "NOT_REQUESTED",
+        "external_medical_approval_receipt_ref": None,
+        "evidence_review_refs": [],
+    }
+    portable_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": definitions,
+        "$ref": "#/$defs/ReviewProvenanceV12",
+    }
+
+    assert list(jsonschema.Draft202012Validator(portable_schema).iter_errors(invalid_draft))
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "definition_name", "field_name"),
+    [
+        (
+            "authoring/rag-eval.authoring-identity-manifest.schema.json",
+            "AuthoringIdentityEntry",
+            "member_order",
+        ),
+        (
+            "operational/rag-eval.study-split-receipt.schema.json",
+            "StudySplitAxisSummary",
+            "comparison_count",
+        ),
+    ],
+)
+def test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary(
+    relative_path: str,
+    definition_name: str,
+    field_name: str,
+) -> None:
+    document = cast(dict[str, Any], schema_documents("1.3.0")[relative_path])
+    definitions = cast(dict[str, Any], document["$defs"])
+    definition = cast(dict[str, Any], definitions[definition_name])
+    properties = cast(dict[str, Any], definition["properties"])
+    field_schema = cast(dict[str, Any], properties[field_name])
+    assert field_schema["exclusiveMinimum"] == 0
+    assert field_schema["maximum"] == (2**53) - 1
+
+    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
+    validator = jsonschema.Draft202012Validator(field_schema)
+
+    assert validator.is_valid((2**53) - 1)
+    assert not validator.is_valid(2**53)
+
+
 def _containing_approval_role_condition(roles: list[str]) -> dict[str, Any]:
     return {
         "if": {
@@ -503,6 +651,13 @@ def test_committed_schema_set_1_2_matches_fresh_canonical_export_byte_for_byte(t
     assert _files(tmp_path) == _files(committed_root)
 
 
+def test_committed_schema_set_1_3_matches_fresh_canonical_export_byte_for_byte(tmp_path: Path) -> None:
+    write_schema_documents(tmp_path, "1.3.0")
+
+    committed_root = Path("evals/schemas/1.3.0")
+    assert _files(tmp_path) == _files(committed_root)
+
+
 @pytest.mark.parametrize(
     ("relative_path", "pattern"),
     [
@@ -528,3 +683,30 @@ def test_documented_schema_set_1_2_hash_matches_committed_schema_set(
 
     assert documented is not None
     assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.2.0")
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern"),
+    [
+        (
+            "docs/contracts/targets/post-mvp-1/rag-evaluation-v1.md",
+            r"rag-eval\.schema-set@1\.3\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md",
+            r"Schema Set SHA-256 \| `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "evals/README.md",
+            r"rag-eval\.schema-set@1\.3\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+    ],
+)
+def test_documented_schema_set_1_3_hash_matches_committed_schema_set(
+    relative_path: str,
+    pattern: str,
+) -> None:
+    documented = re.search(pattern, (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8"))
+
+    assert documented is not None
+    assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.3.0")

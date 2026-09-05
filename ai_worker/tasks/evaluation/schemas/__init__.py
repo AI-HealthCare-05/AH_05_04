@@ -50,6 +50,7 @@ from ai_worker.tasks.evaluation.schemas.authoring import (
     SafetyExpected,
     validate_evaluation_case,
 )
+from ai_worker.tasks.evaluation.schemas.authoring_v1_3 import DatasetManifestV13
 from ai_worker.tasks.evaluation.schemas.common import (
     SCHEMA_VERSION,
     ActorNamespace,
@@ -93,6 +94,14 @@ from ai_worker.tasks.evaluation.schemas.policy import (
     SuiteInputSelector,
     TriggerCatalogEntry,
     evaluation_policy_member_manifest_hash,
+)
+from ai_worker.tasks.evaluation.schemas.provenance_v1 import (
+    AuthoringIdentityManifest,
+    IndexBuildReceipt,
+    StudySplitReceipt,
+    parse_authoring_identity_manifest_bytes,
+    parse_index_build_receipt_bytes,
+    parse_study_split_receipt_bytes,
 )
 
 __all__ = [
@@ -167,6 +176,13 @@ __all__ = [
     "SafetyExpected",
     "RuntimeFixture",
     "validate_evaluation_case",
+    "DatasetManifestV13",
+    "AuthoringIdentityManifest",
+    "IndexBuildReceipt",
+    "StudySplitReceipt",
+    "parse_authoring_identity_manifest_bytes",
+    "parse_index_build_receipt_bytes",
+    "parse_study_split_receipt_bytes",
     "CASE_RESULT_ADAPTER",
     "RESULT_ARTIFACT_MODELS",
     "AnswerGroundingCaseResult",

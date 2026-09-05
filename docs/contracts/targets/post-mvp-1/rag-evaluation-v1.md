@@ -3,12 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Evaluation Schema Set 1.2 승인·병합 완료 · #214 Dataset 지정 리뷰와 나머지 Track F 구현·외부 승인 대기 |
+| 구현·리뷰 | Evaluation Schema Set 1.3 Candidate · Review Required · 책임 리뷰어 PR review event 대기 |
 | 실행 환경 | 실제 RAG 평가는 Local Runner에서만 수행 · Development/Staging 서버 미사용 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `evaluation-plan.md@1.35` · SHA-256 `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-03 |
+| Last verified | 2026-09-05 |
 
 ## 목적과 평가 경계
 
@@ -66,6 +66,22 @@ Schema `1.1.0`의 `FROZEN` Dataset은 모든 Case Gold, Evidence Mapping과 Crit
 Exported Draft 2020-12 JSON Schema는 field type·requiredness·enum·state conditional 등 구조 제약의 portable preflight다. 작성자·검토자·승인자의 cross-field identity 중복, system actor, actor role 조합과 event timestamp 순서는 표준 JSON Schema만으로 portable하게 비교할 수 없으므로 Loader가 Pydantic `ReviewProvenanceV12` 검증으로 fail-closed한다. JSON Schema 단독 통과는 Dataset 수용이나 Freeze 자격을 뜻하지 않으며, Dataset graph는 반드시 Loader로 검증한다.
 
 Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping, Rubric, Profile, Evaluation Policy, Suite, Protected Artifact Receipt까지 검증하고, graph의 모든 schema payload version을 registry member version과 exact-match한다. 기존 1.0/1.1의 validation·canonical bytes는 불변이다. 상세 결정은 [RAG Evaluation Schema Set 1.2 Freeze](../../../governance/decisions/2026-09-03-rag-evaluation-schema-set-1-2-freeze.md)를 따른다.
+
+### Evaluation Schema Set 1.3 후보
+
+자연어 Retrieval 평가 provenance 확장 후보는 `rag-eval.schema-set@1.3.0`, SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
+
+21개 member는 Schema Set 1.2의 Dataset Manifest만 `rag-eval.dataset-manifest@1.3.0`으로 교체하고, 나머지 17개 member의 version과 canonical bytes를 그대로 재사용한다. 다음 세 계약은 member `1.0.0`으로 추가한다.
+
+- `rag-eval.authoring-identity-manifest@1.0.0`
+- `rag-eval.index-build-receipt@1.0.0`
+- `rag-eval.study-split-receipt@1.0.0`
+
+Dataset Manifest 1.3은 authoring identity manifest reference를 필수로 결속한다. 신규 member는 각각 Case의 partition-neutral authoring identity 입력, Gold–runtime Index bridge receipt, DEV/HOLDOUT split 검증 receipt를 소유한다. 기존 Schema Set 1.0.0·1.1.0·1.2.0과 exporter 기본 version은 변경하지 않는다. 상세 후보 경계는 [RAG Evaluation Schema Set 1.3 Candidate](../../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md)를 따른다.
+
+신규 provenance의 양의 정수는 canonical safe-integer 상한 `2^53-1`을 넘을 수 없다. Study Split의 DEV와
+HOLDOUT은 Dataset reference `id`와 Authoring Identity Manifest reference `id`가 각각 달라야 하며, 같은
+logical ID의 version/hash만 바꾼 입력은 유효한 분리 증거가 아니다.
 
 ## 비교 원칙
 
