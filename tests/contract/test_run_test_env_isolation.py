@@ -10,6 +10,7 @@ uv는 shell 환경변수를 `--env-file`보다 우선 적용하므로 `env VAR=.
 덮어쓸 수 있습니다. 아래 테스트는 그 override 목록이 유지되는지 고정합니다.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 RUN_TEST_SCRIPT = PROJECT_ROOT / "scripts" / "ci" / "run_test.sh"
 GITHUB_ACTIONS_CHECKS = PROJECT_ROOT / ".github" / "workflows" / "checks.yml"
+AI_WORKER_ROOT = PROJECT_ROOT / "ai_worker"
 EXAMPLE_LOCAL_ENV = PROJECT_ROOT / "envs" / "example.local.env"
 
 # ENV_FILE에서 값을 물려받으면 host 테스트가 깨지는 설정과, run_test.sh가 강제해야 하는 값입니다.
@@ -86,8 +88,41 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     assert "coverage run --append -m pytest \\" in script
     assert "ai_worker/tests/core" in script
     assert "ai_worker/tests/ocr" in script
+    assert "ai_worker/tests/rag" in script
+    assert "./ai_worker/tests/rag" in script
     assert 'PYTHONPATH="$REPOSITORY_ROOT"' in worker_body
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' not in worker_body
+
+
+def _is_forbidden_worker_backend_import(module_name: str) -> bool:
+    return (
+        module_name == "app"
+        or module_name.startswith("app.")
+        or module_name == "backend.app"
+        or module_name.startswith("backend.app.")
+    )
+
+
+def test_ai_worker_source_does_not_import_backend_app_modules() -> None:
+    """Worker 소스는 backend/app 내부 모듈을 직접 import하지 않습니다."""
+    offenders: list[str] = []
+
+    for source_path in sorted(AI_WORKER_ROOT.rglob("*.py")):
+        relative_path = source_path.relative_to(PROJECT_ROOT)
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(relative_path))
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if _is_forbidden_worker_backend_import(alias.name):
+                        offenders.append(f"{relative_path}:{node.lineno} import {alias.name}")
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                module_name = node.module or ""
+                imports_backend_app = module_name == "backend" and any(alias.name == "app" for alias in node.names)
+                if _is_forbidden_worker_backend_import(module_name) or imports_backend_app:
+                    offenders.append(f"{relative_path}:{node.lineno} from {module_name} import ...")
+
+    assert not offenders, "AI Worker must not import backend/app modules:\n" + "\n".join(offenders)
 
 
 def test_github_actions_excludes_backend_from_ai_worker_unit_test_pythonpath() -> None:
@@ -96,7 +131,7 @@ def test_github_actions_excludes_backend_from_ai_worker_unit_test_pythonpath() -
 
     assert "PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}" in workflow
     assert (
-        "PYTHONPATH: ${{ github.workspace }}\n        run: |\n          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr"
+        "PYTHONPATH: ${{ github.workspace }}\n        run: |\n          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag"
         in workflow
     )
     assert (

@@ -116,7 +116,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr
+          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag
 
       - name: Coverage Report
         run: |
