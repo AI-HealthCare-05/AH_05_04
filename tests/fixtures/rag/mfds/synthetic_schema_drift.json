@@ -1,5 +1,11 @@
 {
-  "unexpected_envelope": {
-    "records": []
+  "header": {
+    "resultCode": "00"
+  },
+  "body": {
+    "items": null,
+    "numOfRows": 100,
+    "pageNo": 1,
+    "totalCount": "invalid"
   }
 }

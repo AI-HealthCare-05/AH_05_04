@@ -289,6 +289,7 @@ class MfdsSourceClient:
             pages=tuple(pages),
             failure=None,
             primary_key_validation=validation,
+            full_scan_completed=True,
         )
 
     def _candidate_field_stat(

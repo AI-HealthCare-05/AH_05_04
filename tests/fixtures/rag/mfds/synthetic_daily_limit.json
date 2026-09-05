@@ -1,9 +1,11 @@
 {
-  "synthetic_header": {
-    "result_code": "SYNTHETIC_DAILY_LIMIT",
-    "retry_reset_at": "2026-09-05T00:00:00+09:00"
+  "header": {
+    "resultCode": "22"
   },
-  "synthetic_body": {
-    "items": []
+  "body": {
+    "items": null,
+    "numOfRows": 100,
+    "pageNo": 1,
+    "totalCount": 0
   }
 }

@@ -122,6 +122,9 @@ MFDS_ENDPOINT_CANDIDATES = {
             "MIXTURE_INGR_CODE",
             "NOTIFICATION_DATE",
         ),
+        # #155 실측 후보일 뿐 canonical identity로 승인된 구성이 아닙니다.
+        # NOTIFICATION_DATE를 identity와 version 중 어디에 둘지는 #165에서
+        # 확정하며, 그전까지 이 Endpoint의 Parser gate는 fail-closed입니다.
         external_version_field="NOTIFICATION_DATE",
         total_timeout_seconds=180,
         max_pages=50,

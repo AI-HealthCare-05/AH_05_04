@@ -170,20 +170,26 @@ def build_live_receipt(
     validated_at: str,
     git_sha: str,
 ) -> EndpointReceipt:
-    """Build sanitized evidence from one completed full-scan validation."""
+    """전체 수집의 성공 또는 실패 결과를 안전한 증빙으로 변환합니다."""
 
     candidate = MFDS_ENDPOINT_CANDIDATES[operation_code]
     contract = candidate.contract
     validation = result.primary_key_validation
-
-    if validation is None:
-        raise ValueError("Full-scan primary-key validation evidence is required.")
-
-    parser_activation_allowed = result.status is SourceRunStatus.SUCCEEDED and validation.passed
+    parser_activation_allowed = result.snapshot_candidate_allowed
     external_version_field = contract.external_version_field
     external_version_field_exists = (
-        external_version_field in validation.observed_fields if external_version_field is not None else None
+        external_version_field in validation.observed_fields
+        if validation is not None and external_version_field is not None
+        else None
     )
+    blocking_code = None
+
+    if not parser_activation_allowed:
+        blocking_code = (
+            "BLOCKED_BY_UNSTABLE_PRIMARY_KEY"
+            if validation is not None and not validation.passed
+            else "BLOCKED_BY_SOURCE_RUN_FAILURE"
+        )
 
     return EndpointReceipt(
         receipt_version="1.0",
@@ -207,11 +213,11 @@ def build_live_receipt(
         daily_limit_codes=contract.body_codes.daily_limit_codes,
         pagination=contract.pagination,
         source_run_status=result.status,
-        validated_record_count=validation.record_count,
+        validated_record_count=(validation.record_count if validation is not None else None),
         primary_key_fields=contract.primary_key_fields,
-        primary_key_null_count=validation.null_count,
-        primary_key_duplicate_count=validation.duplicate_count,
-        whole_record_duplicate_count=(validation.whole_record_duplicate_count),
+        primary_key_null_count=(validation.null_count if validation is not None else None),
+        primary_key_duplicate_count=(validation.duplicate_count if validation is not None else None),
+        whole_record_duplicate_count=(validation.whole_record_duplicate_count if validation is not None else None),
         failure_code=(result.failure.code if result.failure is not None else None),
         external_version_field=external_version_field,
         external_version_field_exists=external_version_field_exists,
@@ -223,7 +229,7 @@ def build_live_receipt(
         },
         fixture_evidence=build_fixture_evidence(operation_code),
         parser_activation_allowed=parser_activation_allowed,
-        blocking_code=(None if parser_activation_allowed else "BLOCKED_BY_UNSTABLE_PRIMARY_KEY"),
+        blocking_code=blocking_code,
         validated_at=validated_at,
         git_sha=git_sha,
     )
@@ -455,7 +461,7 @@ def main(
         total_count = pages[0].total_count if pages else None
         receipt_path: Path | None = None
 
-        if args.write_receipt and primary_key_validation is not None:
+        if args.write_receipt:
             generated_at = datetime.now(UTC).isoformat(timespec="seconds")
             receipt = build_live_receipt(
                 operation_code=args.operation,

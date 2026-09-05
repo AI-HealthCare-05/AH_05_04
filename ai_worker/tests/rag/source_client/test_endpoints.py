@@ -45,7 +45,7 @@ def test_official_endpoint_candidate(
     assert sensitive_parameters == {expected_secret_name}
 
 
-def test_dur_endpoint_uses_observed_contraindication_fields_as_primary_key() -> None:
+def test_dur_endpoint_preserves_provisional_identity_version_overlap() -> None:
     contract = MFDS_ENDPOINT_CANDIDATES["LIST_INGREDIENT_CONTRAINDICATIONS"].contract
 
     assert contract.primary_key_fields == (

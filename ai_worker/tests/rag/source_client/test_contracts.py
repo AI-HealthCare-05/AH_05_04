@@ -1,5 +1,6 @@
 from ai_worker.tasks.rag.source_client.contracts import (
     P0_OPERATIONS,
+    PrimaryKeyValidationResult,
     ProviderPage,
     RetryDisposition,
     SourceClientFailure,
@@ -39,7 +40,7 @@ def test_p0_operations_use_the_frozen_stable_codes() -> None:
     }
 
 
-def test_successful_non_empty_run_allows_snapshot_candidate() -> None:
+def test_one_page_success_does_not_allow_snapshot_candidate() -> None:
     operation = P0_OPERATIONS[0]
     page = ProviderPage(
         page_number=1,
@@ -56,7 +57,59 @@ def test_successful_non_empty_run_allows_snapshot_candidate() -> None:
     )
 
     assert result.record_count == 1
+    assert result.snapshot_candidate_allowed is False
+
+
+def test_completed_full_scan_with_valid_primary_keys_allows_snapshot_candidate() -> None:
+    operation = P0_OPERATIONS[0]
+    page = ProviderPage(
+        page_number=1,
+        records=({"synthetic_id": "product-1"},),
+        response_checksum="a" * 64,
+        content_type="application/json",
+        total_count=1,
+    )
+    result = SourceRunResult(
+        operation=operation,
+        status=SourceRunStatus.SUCCEEDED,
+        pages=(page,),
+        failure=None,
+        primary_key_validation=PrimaryKeyValidationResult(
+            passed=True,
+            record_count=1,
+            null_count=0,
+            duplicate_count=0,
+        ),
+        full_scan_completed=True,
+    )
+
     assert result.snapshot_candidate_allowed is True
+
+
+def test_full_scan_with_mismatched_validation_count_is_not_snapshot_candidate() -> None:
+    operation = P0_OPERATIONS[0]
+    page = ProviderPage(
+        page_number=1,
+        records=({"synthetic_id": "product-1"},),
+        response_checksum="a" * 64,
+        content_type="application/json",
+        total_count=1,
+    )
+    result = SourceRunResult(
+        operation=operation,
+        status=SourceRunStatus.SUCCEEDED,
+        pages=(page,),
+        failure=None,
+        primary_key_validation=PrimaryKeyValidationResult(
+            passed=True,
+            record_count=2,
+            null_count=0,
+            duplicate_count=0,
+        ),
+        full_scan_completed=True,
+    )
+
+    assert result.snapshot_candidate_allowed is False
 
 
 def test_failed_run_does_not_expose_partial_pages_as_snapshot_candidate() -> None:

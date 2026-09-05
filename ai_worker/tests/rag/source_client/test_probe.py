@@ -206,6 +206,7 @@ def test_live_receipt_allows_parser_only_after_valid_full_scan() -> None:
             duplicate_count=0,
             observed_fields=("ITEM_SEQ",),
         ),
+        full_scan_completed=True,
     )
 
     receipt = build_live_receipt(
@@ -389,6 +390,7 @@ def test_live_full_scan_writes_sanitized_receipt(
                 duplicate_count=0,
                 observed_fields=("ITEM_SEQ",),
             ),
+            full_scan_completed=True,
         )
 
     monkeypatch.setattr(
@@ -423,3 +425,111 @@ def test_live_full_scan_writes_sanitized_receipt(
     assert receipt_payload["validated_record_count"] == 1
     assert "synthetic-local-secret" not in output
     assert "synthetic-local-secret" not in receipt_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("scenario", "failure_code", "retry", "http_status"),
+    (
+        (
+            "authentication",
+            SourceFailureCode.AUTHENTICATION_FAILED,
+            RetryDisposition.NOT_RETRYABLE,
+            403,
+        ),
+        (
+            "rate_limit",
+            SourceFailureCode.RATE_LIMITED,
+            RetryDisposition.RETRY_AT_RESET,
+            200,
+        ),
+        (
+            "timeout",
+            SourceFailureCode.TIMEOUT,
+            RetryDisposition.BACKOFF,
+            None,
+        ),
+        (
+            "page_two_failure",
+            SourceFailureCode.RETRY_BUDGET_EXHAUSTED,
+            RetryDisposition.NOT_RETRYABLE,
+            503,
+        ),
+    ),
+)
+def test_failed_full_scan_always_writes_sanitized_receipt(
+    scenario: str,
+    failure_code: SourceFailureCode,
+    retry: RetryDisposition,
+    http_status: int | None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_body_sentinel = "provider-body-must-not-be-stored"
+    secret = "synthetic-local-secret"
+
+    async def fake_run_live_probe(
+        *,
+        operation_code: str,
+        secret: str,
+        full_scan: bool = False,
+    ) -> SourceRunResult:
+        assert operation_code == "LIST_APPROVED_PRODUCTS"
+        assert secret == "synthetic-local-secret"
+        assert full_scan is True
+
+        return SourceRunResult(
+            operation=OPERATIONS[operation_code].identity,
+            status=SourceRunStatus.FAILED,
+            pages=(),
+            failure=SourceClientFailure(
+                code=failure_code,
+                retry=retry,
+                safe_message=f"Sanitized {scenario} failure.",
+                http_status=http_status,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "ai_worker.tasks.rag.source_client.probe.run_live_probe",
+        fake_run_live_probe,
+    )
+
+    exit_code = main(
+        [
+            "--operation",
+            "LIST_APPROVED_PRODUCTS",
+            "--output-dir",
+            str(tmp_path),
+            "--full-scan",
+            "--write-receipt",
+        ],
+        environment={
+            "RAG_MFDS_LIVE_VALIDATION": "1",
+            "RAG_MFDS_API_KEY": secret,
+        },
+    )
+
+    output = capsys.readouterr().out
+    command_payload = json.loads(output)
+    receipt_path = tmp_path / "LIST_APPROVED_PRODUCTS.json"
+    receipt_text = receipt_path.read_text(encoding="utf-8")
+    receipt_payload = json.loads(receipt_text)
+
+    assert exit_code == 1
+    assert command_payload["receipt_written"] is True
+    assert receipt_payload["execution_status"] == "FAILED"
+    assert receipt_payload["source_run_status"] == "FAILED"
+    assert receipt_payload["failure_code"] == failure_code
+    assert receipt_payload["validated_record_count"] is None
+    assert receipt_payload["primary_key_null_count"] is None
+    assert receipt_payload["primary_key_duplicate_count"] is None
+    assert receipt_payload["external_version_field_exists"] is None
+    assert receipt_payload["parser_activation_allowed"] is False
+    assert receipt_payload["blocking_code"] == "BLOCKED_BY_SOURCE_RUN_FAILURE"
+    assert receipt_payload["identity"]["operation_code"] == "LIST_APPROVED_PRODUCTS"
+    assert receipt_payload["validated_at"] is not None
+    assert receipt_payload["git_sha"]
+    assert secret not in output
+    assert secret not in receipt_text
+    assert provider_body_sentinel not in receipt_text

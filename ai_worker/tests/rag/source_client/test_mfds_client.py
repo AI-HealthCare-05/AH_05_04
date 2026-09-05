@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import cast
 
 import httpx
+import pytest
 
 from ai_worker.tasks.rag.source_client.contracts import (
     EmptyResultPolicy,
@@ -19,6 +20,8 @@ from ai_worker.tasks.rag.source_client.contracts import (
     SourceRequest,
     SourceRunStatus,
 )
+from ai_worker.tasks.rag.source_client.decoders import decode_mfds_json
+from ai_worker.tasks.rag.source_client.endpoints import MFDS_ENDPOINT_CANDIDATES
 from ai_worker.tasks.rag.source_client.mfds_client import (
     DecodedProviderPage,
     MfdsSourceClient,
@@ -206,6 +209,74 @@ def fixture_bytes(name: str) -> bytes:
     return (FIXTURE_DIR / name).read_bytes()
 
 
+@pytest.mark.parametrize(
+    "operation_code",
+    tuple(MFDS_ENDPOINT_CANDIDATES),
+)
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_status", "expected_failure_code"),
+    (
+        (
+            "synthetic_auth_failure.json",
+            SourceRunStatus.FAILED,
+            SourceFailureCode.AUTHENTICATION_FAILED,
+        ),
+        (
+            "synthetic_daily_limit.json",
+            SourceRunStatus.FAILED,
+            SourceFailureCode.RATE_LIMITED,
+        ),
+        (
+            "synthetic_empty.json",
+            SourceRunStatus.FAILED,
+            SourceFailureCode.EMPTY_RESULT,
+        ),
+        (
+            "synthetic_schema_drift.json",
+            SourceRunStatus.SCHEMA_DRIFT,
+            SourceFailureCode.SCHEMA_DRIFT,
+        ),
+    ),
+)
+async def test_actual_mfds_envelope_is_classified_by_registered_endpoint(
+    operation_code: str,
+    fixture_name: str,
+    expected_status: SourceRunStatus,
+    expected_failure_code: SourceFailureCode,
+) -> None:
+    candidate = MFDS_ENDPOINT_CANDIDATES[operation_code]
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=fixture_bytes(fixture_name),
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+    ) as http_client:
+        client = MfdsSourceClient(
+            contract=candidate.contract,
+            secret_parameter_name=candidate.secret_parameter_name,
+            secret_value="synthetic-local-secret",
+            decoder=decode_mfds_json,
+            client=http_client,
+            resolver=public_resolver,
+        )
+        result = await client.fetch_one_page(
+            SourceRequest(
+                operation=candidate.contract.identity,
+                parameters=dict(candidate.request_parameters),
+            )
+        )
+
+    assert result.status is expected_status
+    assert result.pages == ()
+    assert result.failure is not None
+    assert result.failure.code is expected_failure_code
+
+
 def synthetic_response_bytes(
     *,
     records: list[dict[str, object]],
@@ -260,7 +331,7 @@ async def test_fetch_one_page_accepts_http_and_body_success() -> None:
 
     assert result.status is SourceRunStatus.SUCCEEDED
     assert result.record_count == 2
-    assert result.snapshot_candidate_allowed is True
+    assert result.snapshot_candidate_allowed is False
     assert result.failure is None
 
 
@@ -269,7 +340,14 @@ async def test_http_200_body_authentication_failure_is_rejected() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            content=fixture_bytes("synthetic_auth_failure.json"),
+            content=json.dumps(
+                {
+                    "synthetic_header": {
+                        "result_code": "SYNTHETIC_AUTH_FAILURE",
+                    },
+                    "synthetic_body": {"items": []},
+                }
+            ).encode("utf-8"),
         )
 
     async with httpx.AsyncClient(
@@ -548,7 +626,15 @@ async def test_daily_limit_is_not_automatically_retried() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            content=fixture_bytes("synthetic_daily_limit.json"),
+            content=json.dumps(
+                {
+                    "synthetic_header": {
+                        "result_code": "SYNTHETIC_DAILY_LIMIT",
+                        "retry_reset_at": "2026-09-05T00:00:00+09:00",
+                    },
+                    "synthetic_body": {"items": []},
+                }
+            ).encode("utf-8"),
         )
 
     async with httpx.AsyncClient(

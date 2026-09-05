@@ -30,22 +30,22 @@
     {
       "path": "tests/fixtures/rag/mfds/synthetic_auth_failure.json",
       "scenario": "SYNTHETIC_AUTH_FAILURE",
-      "sha256": "81fbe526eb11b87a9dc22fabdc9b6aaa7916350d2081eb63be5c6cc53f26737e"
+      "sha256": "be6d2256676817ef17182bd92307b59e4449225495156528c6124e79f49f5dbc"
     },
     {
       "path": "tests/fixtures/rag/mfds/synthetic_daily_limit.json",
       "scenario": "SYNTHETIC_DAILY_LIMIT",
-      "sha256": "86ccff240c76dfe42d61e68673c463c224c52fbd8f6813e1e05845119055b3fb"
+      "sha256": "a0b6e4b1b3c728c359a9ae73f3b51114463d7c8b653c28c134419e279deac347"
     },
     {
       "path": "tests/fixtures/rag/mfds/synthetic_empty.json",
       "scenario": "SYNTHETIC_EMPTY",
-      "sha256": "ee04ace122aebec46109355d577387a95018f8d09965accfb3030f3b3d9cdb64"
+      "sha256": "e8e99ca7692ff15560d1ee67e8d9ddc3e4132ddad92c6e3250a5b1cfe3dbc81d"
     },
     {
       "path": "tests/fixtures/rag/mfds/synthetic_schema_drift.json",
       "scenario": "SYNTHETIC_SCHEMA_DRIFT",
-      "sha256": "3917217233806b93ca813606929d79bc9822fe0951448944432be97aff499133"
+      "sha256": "ac40eb8d47fe8b38278e609642a69485aaf144c0bc75833c469b20c48621339c"
     }
   ],
   "generated_at": "2026-09-05T02:16:36+00:00",
@@ -83,7 +83,7 @@
     "NOTIFICATION_DATE"
   ],
   "primary_key_null_count": 0,
-  "receipt_hash": "2985841d2a819c43733e72f5a1e3db32e35f34b5d474b4a709e48863312df7a9",
+  "receipt_hash": "fca05cb9f63e4bdb13df3da2bc04e628358dc8e5d44e61aff87bc55bc9d8ed08",
   "receipt_version": "1.0",
   "required_parameters": [
     {

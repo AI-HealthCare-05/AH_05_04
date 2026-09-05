@@ -183,6 +183,7 @@ class SourceRunResult:
     pages: tuple[ProviderPage, ...]
     failure: SourceClientFailure | None
     primary_key_validation: PrimaryKeyValidationResult | None = None
+    full_scan_completed: bool = False
 
     @property
     def record_count(self) -> int:
@@ -190,7 +191,17 @@ class SourceRunResult:
 
     @property
     def snapshot_candidate_allowed(self) -> bool:
-        return self.status is SourceRunStatus.SUCCEEDED and self.failure is None and self.record_count > 0
+        validation = self.primary_key_validation
+
+        return (
+            self.status is SourceRunStatus.SUCCEEDED
+            and self.failure is None
+            and self.full_scan_completed
+            and self.record_count > 0
+            and validation is not None
+            and validation.passed
+            and validation.record_count == self.record_count
+        )
 
 
 P0_OPERATIONS = (
