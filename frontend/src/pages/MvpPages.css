@@ -256,7 +256,7 @@
 }
 
 .mvp-home-page .app-topbar {
-  min-height: 68px;
+  min-height: 76px;
   gap: 10px;
   padding: 12px 20px 8px;
   border-bottom: 0;
@@ -264,9 +264,60 @@
   backdrop-filter: none;
 }
 
+.mvp-home-page .app-topbar > .dosey-mascot--header {
+  width: 44px;
+  height: 43px;
+}
+
+.mvp-home-page .app-topbar > .dosey-mascot--header img {
+  width: 321.431px;
+  height: 262.27px;
+  left: -69.474px;
+  top: -198.685px;
+}
+
 .mvp-home-page .app-topbar h1 {
   font-size: 24px;
   letter-spacing: -0.035em;
+}
+
+.mvp-home-page .app-topbar__action {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-right: -9px;
+}
+
+.mvp-home__notification {
+  width: 48px;
+  height: 48px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mvp-home__notification img {
+  width: 30px;
+  height: 30px;
+}
+
+.mvp-home__notification > span {
+  width: 7px;
+  height: 7px;
+  position: absolute;
+  top: 7px;
+  right: 6px;
+  border-radius: 50%;
+  background: #ff4d4f;
+}
+
+.mvp-home__notification:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .mvp-home-page .mvp-page__content {
@@ -290,10 +341,6 @@
 .mvp-page__section-heading {
   margin: 0;
   font-size: 20px;
-}
-
-.mvp-home__section {
-  margin-top: 26px;
 }
 
 .mvp-home__section-title {
@@ -324,6 +371,16 @@
   line-height: 1.4;
 }
 
+.mvp-home__hero {
+  position: relative;
+}
+
+.mvp-home__hero > .dosey-mascot {
+  position: absolute;
+  right: 12px;
+  bottom: -7px;
+}
+
 .mvp-home__greeting-row strong {
   color: var(--ds-action);
   font-weight: 900;
@@ -342,6 +399,7 @@
 
 .mvp-home__intro {
   margin: 2px 0 0;
+  padding-right: 58px;
   color: var(--ds-text-muted);
   font-size: 16px;
   line-height: 1.55;
@@ -354,50 +412,10 @@
   line-height: 1.55;
 }
 
-.mvp-home__today-card {
-  display: grid;
-  gap: 18px;
-  margin-top: 24px;
-  padding: 22px;
-  border: 0;
-  border-radius: 20px;
-  background: #eaf4ff;
-  box-shadow: 0 4px 14px rgb(0 0 0 / 6%);
-}
-
-.mvp-home__today-card h2 {
-  margin: 7px 0 6px;
-  font-size: 21px;
-  line-height: 1.4;
-}
-
-.mvp-home__today-card p {
-  margin: 0;
-  color: var(--ds-text-muted);
-  font-size: 15px;
-  line-height: 1.6;
-}
-
-.mvp-home__today-card button {
-  min-height: 56px;
-  border: 0;
-  border-radius: 14px;
-  background: var(--ds-action);
-  color: #fff;
-  font: inherit;
-  font-size: 16px;
-  font-weight: 900;
-}
-
-.mvp-home__eyebrow {
-  color: var(--ds-action);
-  font-size: 14px;
-  font-weight: 900;
-}
-
 .mvp-home__card-stack {
   display: grid;
   gap: 14px;
+  margin-top: 28px;
 }
 
 .mvp-home__hub-card {
@@ -418,7 +436,7 @@
   background: #eaf4ff;
 }
 
-.mvp-home__hub-card--guide {
+.mvp-home__hub-card--otc {
   background: #edf9f1;
 }
 
@@ -427,9 +445,14 @@
 }
 
 .mvp-home__hub-card:focus-visible,
-.mvp-home__today-card button:focus-visible {
+.mvp-home__notification:focus-visible {
   outline: 3px solid var(--ds-focus);
   outline-offset: 2px;
+}
+
+.mvp-home__hub-card:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .mvp-home__hub-icon {
@@ -472,6 +495,95 @@
   font-size: 30px;
   line-height: 1;
   text-align: center;
+}
+
+.mvp-home__adherence-card {
+  min-height: 240px;
+  margin-top: 26px;
+  padding: 15px;
+  border: 1px solid #e5eaf1;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 4px 7px rgb(0 0 0 / 6%);
+}
+
+.mvp-home__adherence-header {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mvp-home__adherence-header h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+.mvp-home__adherence-header button {
+  min-height: 44px;
+  margin: -6px -5px -6px 0;
+  padding: 0 5px;
+  border: 0;
+  background: transparent;
+  color: var(--ds-text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mvp-home__adherence-header button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.mvp-home__adherence-status {
+  display: block;
+  margin-top: 5px;
+  color: var(--ds-action);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.mvp-home__adherence-progress {
+  height: 66px;
+  position: relative;
+  margin-top: 7px;
+}
+
+.mvp-home__adherence-track {
+  height: 12px;
+  position: absolute;
+  top: 40px;
+  right: 24px;
+  left: 24px;
+  border-radius: 6px;
+  background: #eef2f6;
+}
+
+.mvp-home__adherence-progress > .dosey-mascot {
+  position: absolute;
+  top: 0;
+  left: 24px;
+}
+
+.mvp-home__adherence-card > p {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: #f8fafd;
+  color: var(--ds-text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.mvp-home__section {
+  margin-top: 26px;
 }
 
 .mvp-home__pending-card {
@@ -911,6 +1023,22 @@
   .mvp-home__hub-icon {
     width: 56px;
     height: 56px;
+  }
+
+  .mvp-home__hub-copy strong {
+    font-size: 17px;
+  }
+
+  .mvp-home__hub-copy small {
+    font-size: 13px;
+  }
+
+  .mvp-home__adherence-card {
+    padding-inline: 14px;
+  }
+
+  .mvp-home__adherence-header h2 {
+    font-size: 18px;
   }
 
   .mvp-home__title {
