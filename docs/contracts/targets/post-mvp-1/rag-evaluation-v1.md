@@ -69,7 +69,7 @@ Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping
 
 ### Evaluation Schema Set 1.3 후보
 
-자연어 Retrieval 평가 provenance 확장 후보는 `rag-eval.schema-set@1.3.0`, SHA-256 `654416197159bf46620b7b875d05a07dbf51d3693d770e8a1b027c7a0b3deb77`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
+자연어 Retrieval 평가 provenance 확장 후보는 `rag-eval.schema-set@1.3.0`, SHA-256 `e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
 
 21개 member는 Schema Set 1.2의 Dataset Manifest만 `rag-eval.dataset-manifest@1.3.0`으로 교체하고, 나머지 17개 member의 version과 canonical bytes를 그대로 재사용한다. 다음 세 계약은 member `1.0.0`으로 추가한다.
 

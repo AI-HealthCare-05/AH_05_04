@@ -19,7 +19,7 @@ review event가 필요하며, 문서와 schema export의 존재만으로 그 eve
 | --- | --- |
 | Schema Set ID | `rag-eval.schema-set` |
 | Schema Set version | `1.3.0` |
-| Schema Set SHA-256 | `654416197159bf46620b7b875d05a07dbf51d3693d770e8a1b027c7a0b3deb77` |
+| Schema Set SHA-256 | `e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f` |
 | Canonical member root | `evals/schemas/1.3.0/` |
 | Member count | `21` |
 

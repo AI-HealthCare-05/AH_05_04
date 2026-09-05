@@ -661,6 +661,15 @@ def _add_v1_2_review_provenance_conditions(value: JsonValue) -> None:
         _add_v1_2_review_provenance_conditions(item)
 
 
+def _add_v1_2_review_provenance_definition_conditions(document: dict[str, JsonValue]) -> None:
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        return
+    review_provenance_v1_2 = definitions.get("ReviewProvenanceV12")
+    if review_provenance_v1_2 is not None:
+        _add_v1_2_review_provenance_conditions(review_provenance_v1_2)
+
+
 def _containing_approval_role_condition(roles: list[str]) -> dict[str, JsonValue]:
     role_values: list[JsonValue] = [role for role in roles]
     return {
@@ -963,8 +972,7 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
         document["additionalProperties"] = False
     _add_execution_decision_conditions(document)
     _add_review_provenance_conditions(document)
-    if entry.member_version == "1.2.0":
-        _add_v1_2_review_provenance_conditions(document)
+    _add_v1_2_review_provenance_definition_conditions(document)
     _add_authoring_role_conditions(schema_id, document)
     _add_versioned_authoring_conditions(entry, document)
     if schema_id == "rag-eval.dataset-manifest":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -453,6 +454,83 @@ def test_exported_review_provenance_v12_schema_encodes_draft_and_reviewed_state_
         and condition["then"]["properties"]["evidence_review_refs"] == {"minItems": 1}
         for condition in conditions
     )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "authoring/rag-eval.dataset-manifest.schema.json",
+        "operational/rag-eval.index-build-receipt.schema.json",
+        "operational/rag-eval.study-split-receipt.schema.json",
+    ],
+)
+def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
+    relative_path: str,
+) -> None:
+    document = cast(dict[str, Any], schema_documents("1.3.0")[relative_path])
+    definitions = cast(dict[str, Any], document["$defs"])
+    provenance_schema = cast(dict[str, Any], definitions["ReviewProvenanceV12"])
+    conditions = cast(list[dict[str, Any]], provenance_schema["allOf"])
+    state_conditions = [
+        condition
+        for condition in conditions
+        if condition.get("if", {}).get("properties", {}).get("team_gold_status", {}).get("const")
+        in {"DRAFT", "REVIEWED", "APPROVED"}
+        and "else" not in condition
+    ]
+
+    assert [condition["if"]["properties"]["team_gold_status"]["const"] for condition in state_conditions] == [
+        "DRAFT",
+        "REVIEWED",
+        "APPROVED",
+    ]
+    assert state_conditions[0] == {
+        "if": {
+            "properties": {"team_gold_status": {"const": "DRAFT"}},
+            "required": ["team_gold_status"],
+        },
+        "then": {
+            "properties": {
+                "reviewed_by": {"type": "null"},
+                "reviewed_at": {"type": "null"},
+                "approved_by": {"type": "null"},
+                "approved_at": {"type": "null"},
+                "evidence_review_refs": {"maxItems": 0},
+            }
+        },
+    }
+
+    try:
+        jsonschema = importlib.import_module("jsonschema")
+    except ModuleNotFoundError:
+        return
+    invalid_draft = {
+        "authored_by": {
+            "namespace": "GITHUB_LOGIN",
+            "actor_id": "ceohwj",
+            "role": "EVALUATION_IMPLEMENTER",
+        },
+        "reviewed_by": {
+            "namespace": "GITHUB_LOGIN",
+            "actor_id": "evaluation-reviewer",
+            "role": "EVALUATION_REVIEWER",
+        },
+        "approved_by": None,
+        "authored_at": "2026-09-05T00:00:00.000000Z",
+        "reviewed_at": "2026-09-05T01:00:00.000000Z",
+        "approved_at": None,
+        "team_gold_status": "DRAFT",
+        "external_medical_review_status": "NOT_REQUESTED",
+        "external_medical_approval_receipt_ref": None,
+        "evidence_review_refs": [],
+    }
+    portable_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": definitions,
+        "$ref": "#/$defs/ReviewProvenanceV12",
+    }
+
+    assert list(jsonschema.Draft202012Validator(portable_schema).iter_errors(invalid_draft))
 
 
 def _containing_approval_role_condition(roles: list[str]) -> dict[str, Any]:
