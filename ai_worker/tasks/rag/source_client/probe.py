@@ -120,7 +120,7 @@ def build_not_run_receipt(
     """Create a receipt without inventing an endpoint contract."""
 
     return EndpointReceipt(
-        receipt_version="1.0",
+        receipt_version="1.1",
         execution_status=EndpointExecutionStatus.NOT_RUN,
         identity=operation.identity,
         official_document_url=operation.official_document_url,
@@ -159,7 +159,8 @@ def build_not_run_receipt(
         parser_activation_allowed=False,
         blocking_code="BLOCKED_BY_ENDPOINT_RECEIPT",
         validated_at=None,
-        git_sha=git_sha,
+        live_validation_git_sha=None,
+        regression_fixture_git_sha=git_sha,
     )
 
 
@@ -192,7 +193,7 @@ def build_live_receipt(
         )
 
     return EndpointReceipt(
-        receipt_version="1.0",
+        receipt_version="1.1",
         execution_status=(
             EndpointExecutionStatus.COMPLETED if parser_activation_allowed else EndpointExecutionStatus.FAILED
         ),
@@ -231,7 +232,8 @@ def build_live_receipt(
         parser_activation_allowed=parser_activation_allowed,
         blocking_code=blocking_code,
         validated_at=validated_at,
-        git_sha=git_sha,
+        live_validation_git_sha=git_sha,
+        regression_fixture_git_sha=git_sha,
     )
 
 

@@ -24,7 +24,7 @@ ENDPOINT_RECEIPT_DIRECTORY = REPOSITORY_ROOT / "docs" / "validation" / "rag" / "
 
 def not_run_receipt() -> EndpointReceipt:
     return EndpointReceipt(
-        receipt_version="1.0",
+        receipt_version="1.1",
         execution_status=EndpointExecutionStatus.NOT_RUN,
         identity=SourceOperationIdentity(
             source_code="MFDS_PRODUCT_APPROVAL",
@@ -71,7 +71,8 @@ def not_run_receipt() -> EndpointReceipt:
         parser_activation_allowed=False,
         blocking_code="BLOCKED_BY_ENDPOINT_RECEIPT",
         validated_at=None,
-        git_sha="synthetic-git-sha",
+        live_validation_git_sha=None,
+        regression_fixture_git_sha="synthetic-git-sha",
     )
 
 
@@ -95,7 +96,7 @@ def test_meaningful_change_changes_receipt_hash() -> None:
     )
     changed_receipt = replace(
         not_run_receipt(),
-        git_sha="different-synthetic-git-sha",
+        regression_fixture_git_sha="different-synthetic-git-sha",
     )
     changed = build_receipt_payload(
         changed_receipt,
@@ -226,6 +227,28 @@ def test_checked_in_endpoint_receipts_preserve_activation_boundary() -> None:
     assert patient_guide["execution_status"] == "FAILED"
     assert patient_guide["parser_activation_allowed"] is False
     assert patient_guide["primary_key_duplicate_count"] == 17
+
+
+@pytest.mark.parametrize(
+    "receipt_name",
+    (
+        "LIST_APPROVED_PRODUCTS.json",
+        "LIST_INGREDIENT_CONTRAINDICATIONS.json",
+        "LIST_PATIENT_MEDICATION_GUIDES.json",
+    ),
+)
+def test_checked_in_endpoint_receipts_separate_live_and_fixture_provenance(
+    receipt_name: str,
+) -> None:
+    payload = json.loads(
+        (ENDPOINT_RECEIPT_DIRECTORY / receipt_name).read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert payload["live_validation_git_sha"] == ("38b57c6fff11c40ead2779abefb88e4d77a1f0da")
+    assert payload["regression_fixture_git_sha"] == ("41b826871b363f86e387234a7c93824869cb973c")
+    assert payload["validated_at"] < payload["generated_at"]
 
 
 @pytest.mark.parametrize(

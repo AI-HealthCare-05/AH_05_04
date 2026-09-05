@@ -48,6 +48,13 @@ DUR과 환자용 복약정보 Endpoint는 호출 및 Pagination 경계 검증에
 Client는 임의 식별자를 만들거나 중복 행을 조용히 제거하지 않고 해당 결과를
 fail-closed `SCHEMA_DRIFT`로 보존합니다.
 
+세 Receipt의 provenance는 실측과 회귀 증빙을 분리합니다.
+`live_validation_git_sha`는 실제 MFDS 전체 페이지를 호출해 검증한 커밋을,
+`regression_fixture_git_sha`는 Receipt에 연결된 비민감 fixture와 그 hash를
+검증한 커밋을 가리킵니다. `validated_at`은 실측 시각이고 `generated_at`은
+현재 fixture 증빙을 반영해 Receipt를 다시 생성한 시각입니다. 외부 호출을
+재실행하지 않고 fixture만 보강한 경우 두 SHA와 두 시각은 서로 다릅니다.
+
 DUR의 `NOTIFICATION_DATE`는 #155 실측 후보키 구성요소이면서 외부 버전 후보로도
 기록되어 있습니다. 이는 확정된 canonical identity가 아닙니다. #165에서 날짜가
 레코드 정체성의 일부인지 변경 버전인지 명시적으로 결정하기 전까지 DUR Parser와

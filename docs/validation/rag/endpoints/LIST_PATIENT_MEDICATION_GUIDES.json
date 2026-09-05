@@ -48,8 +48,7 @@
       "sha256": "ac40eb8d47fe8b38278e609642a69485aaf144c0bc75833c469b20c48621339c"
     }
   ],
-  "generated_at": "2026-09-05T02:17:07+00:00",
-  "git_sha": "38b57c6fff11c40ead2779abefb88e4d77a1f0da",
+  "generated_at": "2026-09-05T03:34:13+00:00",
   "identity": {
     "endpoint_code": "MFDS_PATIENT_GUIDE_API",
     "operation_code": "LIST_PATIENT_MEDICATION_GUIDES",
@@ -65,6 +64,7 @@
     "read_timeout_seconds": 10,
     "total_timeout_seconds": 240
   },
+  "live_validation_git_sha": "38b57c6fff11c40ead2779abefb88e4d77a1f0da",
   "official_document_checked_at": "2026-09-05",
   "official_document_url": "https://www.data.go.kr/data/15075057/openapi.do",
   "pagination": {
@@ -81,8 +81,9 @@
     "itemSeq"
   ],
   "primary_key_null_count": 0,
-  "receipt_hash": "4f3b6161200b358389fd215420b48e307291e1bc7989c0d4c91f10373dd304f4",
-  "receipt_version": "1.0",
+  "receipt_hash": "4cd7e20483af4a815050f1d1bcf74dd3ef02423a5ff68d71a575ce035917b4bd",
+  "receipt_version": "1.1",
+  "regression_fixture_git_sha": "41b826871b363f86e387234a7c93824869cb973c",
   "required_parameters": [
     {
       "location": "query",

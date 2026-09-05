@@ -66,7 +66,8 @@ class EndpointReceipt:
     parser_activation_allowed: bool
     blocking_code: str | None
     validated_at: str | None
-    git_sha: str
+    live_validation_git_sha: str | None
+    regression_fixture_git_sha: str
 
 
 _FORBIDDEN_FIELD_NAMES = {

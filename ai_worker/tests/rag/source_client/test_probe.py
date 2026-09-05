@@ -529,7 +529,8 @@ def test_failed_full_scan_always_writes_sanitized_receipt(
     assert receipt_payload["blocking_code"] == "BLOCKED_BY_SOURCE_RUN_FAILURE"
     assert receipt_payload["identity"]["operation_code"] == "LIST_APPROVED_PRODUCTS"
     assert receipt_payload["validated_at"] is not None
-    assert receipt_payload["git_sha"]
+    assert receipt_payload["live_validation_git_sha"]
+    assert receipt_payload["regression_fixture_git_sha"]
     assert secret not in output
     assert secret not in receipt_text
     assert provider_body_sentinel not in receipt_text

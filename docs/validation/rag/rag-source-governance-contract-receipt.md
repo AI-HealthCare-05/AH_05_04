@@ -25,9 +25,9 @@
 
 | Operation stable code | Endpoint Receipt 상태 | Receipt hash |
 | --- | --- | --- |
-| `LIST_APPROVED_PRODUCTS` | `COMPLETED` / Endpoint parser gate 허용 | `a86330b4a959aa7ce0d382e4cbbd587cd75afc34bad7d6ba7e76555aaaa02f27` |
-| `LIST_INGREDIENT_CONTRAINDICATIONS` | `FAILED` / `SCHEMA_DRIFT` | `fca05cb9f63e4bdb13df3da2bc04e628358dc8e5d44e61aff87bc55bc9d8ed08` |
-| `LIST_PATIENT_MEDICATION_GUIDES` | `FAILED` / `SCHEMA_DRIFT` | `4f3b6161200b358389fd215420b48e307291e1bc7989c0d4c91f10373dd304f4` |
+| `LIST_APPROVED_PRODUCTS` | `COMPLETED` / Endpoint parser gate 허용 | `1f96b97008a66d98b7a5e21c004ef7802c32a91787cfbcbe1abcf97d3f73e64c` |
+| `LIST_INGREDIENT_CONTRAINDICATIONS` | `FAILED` / `SCHEMA_DRIFT` | `f8505cfafd24e428210f55ca9399fd9068a8195c911d4df8e6be24af055ccb4e` |
+| `LIST_PATIENT_MEDICATION_GUIDES` | `FAILED` / `SCHEMA_DRIFT` | `4cd7e20483af4a815050f1d1bcf74dd3ef02423a5ff68d71a575ce035917b4bd` |
 
 `#165`는 위 stable code와 Receipt hash를 함께 입력으로 고정해야 합니다. DUR과 환자용 복약정보의 자연키 정책이 해결되기 전에는 해당 차단 상태를 유지하며 Parser 또는 Snapshot 후보 등록을 활성화하지 않습니다. DUR의 `NOTIFICATION_DATE`가 후보 identity와 external version에 동시에 포함된 현재 구성도 확정 계약이 아니며, `#165`에서 두 역할을 분리할지 명시적으로 결정합니다.
 
