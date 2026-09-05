@@ -156,7 +156,7 @@ describe('GuidePage', () => {
       ),
     ).toBeTruthy()
     const commonNotice = screen
-      .getByRole('heading', { name: '공통 안내' })
+      .getByRole('heading', { name: '공통 복약 안내' })
       .closest('aside')
     expect(commonNotice).not.toBeNull()
     expect(
@@ -164,15 +164,12 @@ describe('GuidePage', () => {
         '불명확한 내용은 의료진 또는 약사에게 확인해 주세요.',
       ),
     ).toBeTruthy()
-    const safetyNotice = screen
-      .getByRole('heading', { name: '안전 안내' })
-      .closest('aside')
-    expect(safetyNotice).not.toBeNull()
+    expect(screen.queryByRole('heading', { name: '안전 안내' })).toBeNull()
     expect(
-      within(safetyNotice!).getByText(
+      screen.queryByText(
         '임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요.',
       ),
-    ).toBeTruthy()
+    ).toBeNull()
     expect(within(medicationCard!).getByText('하루 1회 · 아침 저녁 식후')).toBeTruthy()
     expect(screen.queryByText('가이드 전체 내용')).toBeNull()
   })

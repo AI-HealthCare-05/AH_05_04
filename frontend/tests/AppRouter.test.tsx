@@ -41,7 +41,11 @@ describe('인증 상태별 AppRouter 이동', () => {
   it('비로그인 사용자가 첫 화면에 접속하면 시작 화면을 표시한다', () => {
     renderRoute('/')
 
-    expect(screen.getByRole('heading', { name: 'AI 복약 파트너' })).toBeTruthy()
+    expect(
+      screen.getByRole('heading', {
+        name: '처방과 일정을 쉽게 살펴봐요.',
+      }),
+    ).toBeTruthy()
   })
 
   it('로그인 사용자가 첫 화면에 접속하면 홈 화면을 표시한다', async () => {
@@ -65,8 +69,14 @@ describe('인증 상태별 AppRouter 이동', () => {
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
-  it('비로그인 사용자가 회원 전용 화면에 직접 접속하면 로그인 화면으로 이동한다', () => {
-    renderRoute('/profile')
+  it.each([
+    '/profile',
+    '/guides/00000000-0000-4000-8000-000000000105',
+    '/prescriptions/upload',
+    '/prescriptions/review',
+    '/chat',
+  ])('비로그인 사용자가 회원 전용 화면 %s에 직접 접속하면 로그인 화면으로 이동한다', (path) => {
+    renderRoute(path)
 
     expect(screen.getByRole('heading', { name: '다시 만나서 반가워요' })).toBeTruthy()
   })

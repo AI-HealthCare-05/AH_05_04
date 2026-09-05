@@ -165,27 +165,6 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
           </section>
 
           <HomeAdherenceCard />
-
-          <section className="mvp-home__section" aria-labelledby="home-records-heading">
-            <div className="mvp-home__section-title">
-              <h2 id="home-records-heading" className="mvp-page__section-heading">
-                미확인 기록
-              </h2>
-              <span>준비 중</span>
-            </div>
-            <button
-              className="mvp-home__pending-card"
-              type="button"
-              aria-label="미확인 복약 기록 (준비 중)"
-              disabled
-            >
-              <span>
-                <strong>확인이 필요한 복약 기록</strong>
-                <small>기록 기능이 연결되면 이곳에서 바로 확인할 수 있어요.</small>
-              </span>
-              <em>준비 중</em>
-            </button>
-          </section>
         </main>
       </MobileShell>
     </div>

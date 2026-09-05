@@ -28,7 +28,6 @@ const fieldLabels: Record<string, string> = {
   MEDICATION_STRENGTH: '제품함량',
 
   DOSE_VALUE: '1회 복용량',
-  DOSE_UNIT: '복용단위',
   FREQUENCY_PER_DAY: '하루횟수',
   TIMING: '복용조건',
   DURATION_DAYS: '투약일수',
@@ -416,7 +415,7 @@ function PrescriptionReviewPage() {
   )
 
   // 필수 필드와 값이 있는 선택 필드만 최종 확인 대상으로 계산합니다.
-  // 빈 TIMING, DOSE_UNIT, MEDICATION_STRENGTH 등은 화면에는 표시되지만
+  // 빈 TIMING, DOSE_UNIT, MEDICATION_STRENGTH 등 선택 필드는
   // 처방 확정을 막지 않습니다.
   const reviewTargetFields = useMemo(
     () =>
@@ -1100,7 +1099,6 @@ function PrescriptionReviewPage() {
     const rows = [
       'MEDICATION_STRENGTH',
       'DOSE_VALUE',
-      'DOSE_UNIT',
       'FREQUENCY_PER_DAY',
       'TIMING',
       'DURATION_DAYS',
@@ -1135,7 +1133,9 @@ function PrescriptionReviewPage() {
               수정 시작과 동시에 이 약의 검토 완료가 해제됐습니다.
             </p>
             <div className="prescription-review__edit-grid">
-              {group.fields.map(renderEditField)}
+              {group.fields
+                .filter((field) => field.field_type !== 'DOSE_UNIT')
+                .map(renderEditField)}
             </div>
             <div className="prescription-review__section-actions">
               <Button
@@ -1440,24 +1440,9 @@ function PrescriptionReviewPage() {
                   onChange={(event) => setUserConfirmed(event.target.checked)}
                 />
                 <span>
-                  {reviewReadyForAcknowledgement
-                    ? '원본 처방전의 모든 항목을 직접 확인했습니다.'
-                    : '처방일과 모든 약 검토 완료 후 원본 대조가 활성화됩니다.'}
+                  원본 처방전의 모든 항목을 직접 확인했습니다.
                 </span>
               </label>
-
-              <p
-                className={`prescription-review__condition-summary ${
-                  userConfirmed ? 'is-complete' : ''
-                }`}
-                role="status"
-              >
-                {userConfirmed
-                  ? `✓ 약 ${reviewedMedicationCount}/${medicationGroups.length}개 검토 완료 · 원본 대조 완료`
-                  : reviewReadyForAcknowledgement
-                    ? `약 ${reviewedMedicationCount}/${medicationGroups.length}개 검토 완료 · 원본 대조 필요`
-                    : `처방일 ${prescriptionDateReviewed ? '검토 완료' : '검토 전'} · 약 ${reviewedMedicationCount}/${medicationGroups.length}개 검토 완료`}
-              </p>
 
               <Button
                 fullWidth

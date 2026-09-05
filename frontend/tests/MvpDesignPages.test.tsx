@@ -49,13 +49,14 @@ describe('Dosey MVP design pages', () => {
     )
 
     expect(
-      screen.getByRole('heading', { name: 'AI 복약 파트너' }),
+      screen.getByRole('heading', { name: '처방과 일정을 쉽게 살펴봐요.' }),
     ).toBeTruthy()
+    expect(screen.getByText('Dose + Easy')).toBeTruthy()
     expect(screen.getByText('처방전 등록')).toBeTruthy()
     expect(screen.getByText('쉬운 가이드')).toBeTruthy()
-    expect(screen.getByText('복약 챗봇 도지')).toBeTruthy()
+    expect(screen.getByText('도지에게 질문')).toBeTruthy()
     expect(screen.getByText('복약 지속 도움')).toBeTruthy()
-    expect(screen.getByText('AI가 처방을 바꾸지 않아요.')).toBeTruthy()
+    expect(screen.queryByText('AI가 처방을 바꾸지 않아요.')).toBeNull()
     expect(
       screen
         .getByRole('link', { name: '이미 계정이 있어요 · 로그인' })
@@ -110,13 +111,11 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
   })
 
-  it('계약 없는 HOME 기능은 비활성 상태이며 추가 API를 호출하지 않는다', async () => {
+  it('계약 없는 HOME 기능은 비활성 상태이며 미확인 기록을 임의 표시하지 않는다', async () => {
     renderHome()
 
     await screen.findByText('오늘도 건강한 하루 되세요')
-    expect(
-      screen.getByRole('button', { name: '미확인 복약 기록 (준비 중)' }),
-    ).toHaveProperty('disabled', true)
+    expect(screen.queryByRole('heading', { name: '미확인 기록' })).toBeNull()
     expect(
       screen.getByRole('button', { name: '일반의약품 안내 (준비 중)' }),
     ).toHaveProperty('disabled', true)

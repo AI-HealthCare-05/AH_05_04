@@ -206,37 +206,25 @@
 }
 
 .guide-page__guidance h3,
-.guide-page__common-notice h3,
-.guide-page__safety-notice h3 {
+.guide-page__common-notice h3 {
   margin: 0;
   font-size: 14px;
 }
 
 .guide-page__guidance p,
-.guide-page__common-notice p,
-.guide-page__safety-notice p {
+.guide-page__common-notice p {
   margin: 7px 0 0;
   font-size: 13px;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
-.guide-page__common-notice,
-.guide-page__safety-notice {
+.guide-page__common-notice {
   margin-top: 12px;
   padding: 15px;
   border: 1px solid #dce2ea;
   border-radius: 14px;
   background: #fff;
-}
-
-.guide-page__safety-notice {
-  border-color: #ecd996;
-  background: #fff9e8;
-}
-
-.guide-page__safety-notice h3 {
-  color: #8a4b00;
 }
 
 .guide-page__guide-card {

@@ -1,23 +1,29 @@
 .chat-page {
   width: min(100%, 390px);
-  min-height: 100dvh;
+  height: 100dvh;
+  min-height: 0;
   margin: 0 auto;
+  overflow: hidden;
   color: var(--ds-text);
   font-family: var(--ds-font);
 }
 
 .chat-page .mobile-app {
   height: 100dvh;
-  min-height: 680px;
+  min-height: 0;
 }
 
 .chat-page .chat-layout {
   flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: calc(88px + var(--ds-safe-bottom));
 }
 
 .chat-page__intro {
   flex: 0 0 auto;
-  padding: 28px 20px 20px;
+  padding: 24px 20px 16px;
 }
 
 .chat-page__intro h1 {
@@ -37,13 +43,14 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin: 0 18px;
+  margin: 0 20px;
   overflow: hidden;
   background: transparent;
 }
 
 .chat-page .chat-messages {
-  padding: 18px 16px;
+  overscroll-behavior: contain;
+  padding: 18px 8px;
 }
 
 .chat-page__state {
@@ -176,16 +183,13 @@
 .chat-page .chat-composer {
   grid-template-columns: minmax(0, 1fr) 52px;
   margin-bottom: 0;
-  padding: 11px 12px 12px;
-  background: #fff;
+  padding: 11px 0 16px;
+  border-top: 0;
+  background: transparent;
 }
 
 .chat-page .chat-input {
   min-height: 52px;
-}
-
-.chat-page .chat-layout:not(.keyboard-open) .chat-composer {
-  margin-bottom: calc(88px + var(--ds-safe-bottom));
 }
 
 .chat-page__composer-label {
