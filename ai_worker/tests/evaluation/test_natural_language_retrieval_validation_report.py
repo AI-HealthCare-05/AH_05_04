@@ -82,7 +82,7 @@ def _status_payload() -> dict[str, Any]:
                 "result": "151 passed, 3 skipped",
             },
         ],
-        "updated_at": "2026-09-05T00:00:00.000000Z",
+        "updated_at": "2026-09-05T13:06:16.000000Z",
         "status_sha256": "0" * 64,
     }
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
@@ -388,3 +388,9 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert b"51 passed" in REPORT_PATH.read_bytes() and b"151 passed, 3 skipped" in REPORT_PATH.read_bytes()
     assert b"47 passed" not in raw_status and b"154 passed" not in raw_status
     assert b"47 passed" not in REPORT_PATH.read_bytes() and b"154 passed" not in REPORT_PATH.read_bytes()
+    assert b"2026-09-05T13:06:16.000000Z" in raw_status
+    assert b"2026-09-05T13:06:16.000000Z" in REPORT_PATH.read_bytes()
+    assert b"2026-09-05T00:00:00.000000Z" not in raw_status
+    assert b"2026-09-05T00:00:00.000000Z" not in REPORT_PATH.read_bytes()
+    assert b"75b5b2a7f90407698ac73ce864e420f4db08061f20714cbf4b0d547027882994" not in raw_status
+    assert b"75b5b2a7f90407698ac73ce864e420f4db08061f20714cbf4b0d547027882994" not in REPORT_PATH.read_bytes()
