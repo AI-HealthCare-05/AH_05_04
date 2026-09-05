@@ -38,6 +38,16 @@ function LocationProbe() {
   return <output data-testid="location">{location.pathname}{location.search}</output>
 }
 
+function ChatRouteProbe() {
+  const navigate = useNavigate()
+  return (
+    <div>
+      도지 대화 화면
+      <button type="button" onClick={() => navigate(-1)}>뒤로가기</button>
+    </div>
+  )
+}
+
 function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
@@ -49,7 +59,7 @@ function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
         <Route path="/prescriptions/upload" element={<div>처방전 업로드 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
-        <Route path="/chat" element={<div>도지 대화 화면</div>} />
+        <Route path="/chat" element={<ChatRouteProbe />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -439,5 +449,9 @@ describe('GuidePage', () => {
     expect(screen.getByTestId('location').textContent).toBe(
       '/chat?prescription_id=prescription-guide-1',
     )
+
+    fireEvent.click(screen.getByRole('button', { name: '뒤로가기' }))
+    expect(await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
   })
 })

@@ -256,10 +256,10 @@ function GuidePage() {
       <MobileShell
         title="Dosey 도지"
         activeNavigation="가이드"
+        onBack={() => navigate('/')}
         disabledNavigation={['일정']}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
-          if (item === '도지') navigate('/chat')
           if (item === '가이드' && !guideId) navigate('/guides')
           if (item === '도지') {
             navigate(
@@ -273,19 +273,27 @@ function GuidePage() {
       >
         <main className="app-scroll guide-page__content">
           <h1 className="screen-title">복약 가이드</h1>
-          <p className="screen-description">
-            확인한 처방에 맞춰 복용 정보를 정리했어요.
-          </p>
+          {guideId && (
+            <p className="screen-description">
+              확인한 처방에 맞춰 복용 정보를 정리했어요.
+            </p>
+          )}
 
           {!currentIsLoading && !guideId && (
-            <Card className="guide-page__empty">
-              <span className="guide-page__spark" aria-hidden="true" />
-              <h2>아직 만들어진 가이드가 없어요</h2>
-              <p>처방전을 등록하고 시작하면 복약 가이드를 확인할 수 있어요.</p>
-              <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
+            <div className="guide-page__empty-state">
+              <Card className="guide-page__empty">
+                <span className="guide-page__spark" aria-hidden="true" />
+                <h2>아직 만들어진 가이드가 없어요</h2>
+                <p>처방전 등록부터 시작하면 복약 가이드를 확인할 수 있어요.</p>
+              </Card>
+              <Button
+                fullWidth
+                className="guide-page__empty-action"
+                onClick={() => navigate('/prescriptions/upload')}
+              >
                 처방전 등록하기
               </Button>
-            </Card>
+            </div>
           )}
 
           {currentIsLoading && (

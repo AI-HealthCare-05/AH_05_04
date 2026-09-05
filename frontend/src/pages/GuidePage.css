@@ -1,4 +1,6 @@
 .guide-page {
+  --ds-action: #0066cc;
+  --ds-action-pressed: #0052a3;
   width: min(100%, 390px);
   min-height: 100dvh;
   margin: 0 auto;
@@ -13,7 +15,7 @@
 }
 
 .guide-page__content {
-  padding: 26px 20px calc(96px + var(--ds-safe-bottom));
+  padding: 40px 20px calc(96px + var(--ds-safe-bottom));
 }
 
 .guide-page .screen-title {
@@ -30,12 +32,15 @@
   line-height: 1.55;
 }
 
+.guide-page__empty-state {
+  margin-top: 66px;
+}
+
 .guide-page__empty {
   min-height: 180px;
   display: grid;
   align-content: center;
   justify-items: center;
-  margin-top: 36px;
   padding: 24px 18px;
   border-color: #dce2ea;
   border-radius: 18px;
@@ -55,31 +60,29 @@
   line-height: 1.6;
 }
 
-.guide-page__empty .ds-button,
+.guide-page__empty-action,
 .guide-page__chat-button,
 .guide-page__status .ds-button {
   min-height: 56px;
   border-radius: 14px;
 }
 
+.guide-page__empty-action {
+  margin-top: 12px;
+}
+
 .guide-page__spark {
   width: 32px;
   height: 32px;
-  position: relative;
+  display: grid;
+  place-items: center;
 }
 
-.guide-page__spark::before,
-.guide-page__spark::after {
-  content: '';
-  position: absolute;
-  inset: 6px 14px;
-  border-radius: 999px;
-  background: var(--ds-action);
-  transform: rotate(45deg);
-}
-
-.guide-page__spark::after {
-  transform: rotate(135deg);
+.guide-page__spark::before {
+  content: '✦';
+  color: var(--ds-action);
+  font-size: 30px;
+  line-height: 1;
 }
 
 .guide-page__structured-guide {

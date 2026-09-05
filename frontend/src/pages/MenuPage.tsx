@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { logout } from '../api/auth'
+import notificationIcon from '../assets/icon-bell-notification.svg'
 import { MobileShell } from '../design-system/components'
 import '../design-system/prototype.css'
 import './MvpPages.css'
@@ -39,11 +40,7 @@ function MenuRow({ icon, label, detail, disabled = false, onClick }: MenuRowProp
         <strong>{label}</strong>
         {detail && <small>{detail}</small>}
       </span>
-      {disabled ? (
-        <span className="mvp-menu__pending">준비 중</span>
-      ) : (
-        <img className="mvp-menu__chevron" src={ICONS.chevron} alt="" width="24" height="24" />
-      )}
+      <img className="mvp-menu__chevron" src={ICONS.chevron} alt="" width="24" height="24" />
     </button>
   )
 }
@@ -64,6 +61,17 @@ function MenuPage() {
     <div className="mvp-page mvp-menu-page">
       <MobileShell
         title="Dosey 도지"
+        headerAction={
+          <button
+            className="mvp-menu__notification"
+            type="button"
+            aria-label="알림 (준비 중)"
+            disabled
+          >
+            <img src={notificationIcon} alt="" aria-hidden="true" />
+            <span aria-hidden="true" />
+          </button>
+        }
         activeNavigation="메뉴"
         disabledNavigation={['일정']}
         onNavigate={(item) => {

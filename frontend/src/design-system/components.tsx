@@ -33,7 +33,10 @@ function NavigationIcon({ item }: { item: MainNavigationItem }) {
     <span
       className="bottom-nav__icon"
       aria-hidden="true"
-      style={{ '--bottom-nav-icon': `url(${icon})` } as CSSProperties}
+      style={{
+        WebkitMaskImage: `url("${icon}")`,
+        maskImage: `url("${icon}")`,
+      } as CSSProperties}
     />
   )
 }
@@ -144,9 +147,7 @@ export function MobileShell({
           </button>
           )}
           {brandMark ?? (
-            <span className="brand-mark" aria-hidden="true">
-              <span className="brand-mark__ring" />
-            </span>
+            <DoseyMascot variant="header" />
           )}
           <h1>{title ?? 'Dosey 도지'}</h1>
           {headerAction && <div className="app-topbar__action">{headerAction}</div>}

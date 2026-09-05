@@ -50,10 +50,30 @@ function getUploadFailureMessage(error: unknown) {
 
 type UploadSource = 'camera' | 'file'
 
+function UploadMethodIcon({ source }: { source: UploadSource }) {
+  if (source === 'camera') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 7.5h3l1.3-2h5.4l1.3 2h3a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9.5a2 2 0 0 1 2-2Z" />
+        <circle cx="12" cy="13.5" r="3.5" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8" cy="9" r="1.5" />
+      <path d="m5.5 17 4-4 3 3 2.5-2.5 3.5 3.5" />
+    </svg>
+  )
+}
+
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
   const inputId = useId()
   const filenameId = useId()
+  const contractId = useId()
   const [file, setFile] = useState<File | null>(null)
   const [uploadSource, setUploadSource] = useState<UploadSource | null>(null)
   const [isFilenameExpanded, setIsFilenameExpanded] = useState(false)
@@ -260,13 +280,17 @@ function PrescriptionUploadPage() {
               type="file"
               accept="image/jpeg,image/png"
               capture="environment"
+              aria-describedby={contractId}
               onChange={(event) => handleFileChange('camera', event)}
             />
             <label
               className={`mvp-upload__method ${uploadSource === 'camera' ? 'selected' : ''}`}
               htmlFor={`${inputId}-camera`}
+              onClick={() => setUploadSource('camera')}
             >
-              <span className="mvp-upload__method-icon mvp-upload__method-icon--camera" aria-hidden="true" />
+              <span className="mvp-upload__method-icon" aria-hidden="true">
+                <UploadMethodIcon source="camera" />
+              </span>
               <span>
                 <strong>카메라로 촬영하기</strong>
                 <small>지금 처방전을 직접 촬영해요</small>
@@ -279,13 +303,17 @@ function PrescriptionUploadPage() {
               className="mvp-upload__input"
               type="file"
               accept="image/jpeg,image/png,application/pdf"
+              aria-describedby={contractId}
               onChange={(event) => handleFileChange('file', event)}
             />
             <label
               className={`mvp-upload__method ${uploadSource === 'file' ? 'selected' : ''}`}
               htmlFor={`${inputId}-file`}
+              onClick={() => setUploadSource('file')}
             >
-              <span className="mvp-upload__method-icon mvp-upload__method-icon--file" aria-hidden="true" />
+              <span className="mvp-upload__method-icon" aria-hidden="true">
+                <UploadMethodIcon source="file" />
+              </span>
               <span>
                 <strong>저장된 처방전 선택하기</strong>
                 <small>사진이나 파일로 저장된 처방전을 불러와요</small>
@@ -294,7 +322,7 @@ function PrescriptionUploadPage() {
             </label>
           </div>
 
-          <p className="mvp-upload__contract">
+          <p id={contractId} className="mvp-upload__contract">
             지원 파일: JPG · JPEG · PNG · PDF / 최대 30MB
           </p>
 
@@ -324,15 +352,17 @@ function PrescriptionUploadPage() {
           </div>
 
           <div className="notice mvp-upload__notice">
-            <strong>개인정보를 확인해 주세요.</strong><br />
+            <strong>개인정보를 확인해 주세요</strong><br />
             주민등록번호 등 민감 정보는 가리고 촬영해 주세요.
           </div>
 
           {message && <p className="mvp-form__message" role="alert">{message}</p>}
 
-          <Button fullWidth disabled={!file} onClick={handleUpload}>
-            처방전 읽기
-          </Button>
+          {file && (
+            <Button fullWidth onClick={handleUpload}>
+              처방전 읽기
+            </Button>
+          )}
         </main>
       </MobileShell>
     </div>

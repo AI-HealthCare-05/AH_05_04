@@ -109,6 +109,11 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(inputs[0].getAttribute('capture')).toBe('environment')
     expect(inputs[1].accept).toBe('image/jpeg,image/png,application/pdf')
     expect(screen.getByText('지원 파일: JPG · JPEG · PNG · PDF / 최대 30MB')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
+
+    fireEvent.click(screen.getByText('카메라로 촬영하기'))
+    expect(screen.getByText('카메라로 촬영하기').closest('label')?.classList.contains('selected')).toBe(true)
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
   })
 
   it('#227 긴 파일명을 기본 2줄로 제한하고 전체 파일명과 확장자를 펼쳐 확인할 수 있다', () => {
@@ -242,9 +247,6 @@ describe('PrescriptionUploadPage OCR polling', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '다시 선택하기' }))
     expect(screen.getByText('카메라로 촬영하기')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '처방전 읽기' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
   })
 })

@@ -15,7 +15,14 @@
 .mvp-menu__copy strong { font-size: 19px; line-height: 1.3; }
 .mvp-menu__copy small { color: #526074; font-size: 14px; line-height: 1.35; }
 .mvp-menu__chevron { width: 24px; height: 24px; display: block; }
-.mvp-menu__pending { min-height: 30px; display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 11px; background: #f1f5f9; color: #526074; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.mvp-menu-page .app-topbar { min-height: 76px; gap: 10px; padding: 12px 20px 8px; border-bottom: 0; background: #fff; backdrop-filter: none; }
+.mvp-menu-page .app-topbar > .dosey-mascot--header { width: 44px; height: 43px; }
+.mvp-menu-page .app-topbar > .dosey-mascot--header img { width: 321.431px; height: 262.27px; left: -69.474px; top: -198.685px; }
+.mvp-menu-page .app-topbar h1 { font-size: 24px; letter-spacing: -.035em; }
+.mvp-menu-page .app-topbar__action { width: 48px; height: 48px; display: grid; place-items: center; margin-right: -9px; }
+.mvp-menu__notification { width: 48px; height: 48px; position: relative; display: grid; place-items: center; padding: 0; border: 0; background: transparent; }
+.mvp-menu__notification img { width: 30px; height: 30px; }
+.mvp-menu__notification > span { width: 7px; height: 7px; position: absolute; top: 7px; right: 6px; border-radius: 50%; background: #ff4d4f; }
 @media (max-width: 340px) {
   .mvp-menu__row { grid-template-columns: 44px minmax(0, 1fr) auto; gap: 10px; padding-inline: 12px; }
   .mvp-menu__icon { width: 44px; height: 44px; }
