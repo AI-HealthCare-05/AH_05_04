@@ -33,7 +33,13 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "dataset_version": "1.0.0",
         "variant_id": "RET-L",
         "top_k": 5,
-        "case_results": [{"case_id": "rag-ret-dev-001", "ranked_evidence_ids": ["evidence-1", "evidence-2"]}],
+        "case_results": [
+            {
+                "case_id": "rag-ret-dev-001",
+                "case_resource_sha256": "a" * 64,
+                "ranked_evidence_ids": ["evidence-1", "evidence-2"],
+            }
+        ],
         "replay_sha256": "0" * 64,
     }
     payload.update(overrides)
@@ -87,11 +93,13 @@ def _resolve_replay_config(root: Path):
 def _adapter_request(case_id: str, *, variant_id: str = "RET-L") -> AdapterRequest:
     dataset = load_dataset(DATASET_PATH, evals_root=REPOSITORY_ROOT / "evals")
     case = next(item for item in dataset.cases if item.case_id == case_id)
+    case_resource_sha256 = next(item.sha256 for item in dataset.manifest.case_resources if item.case_id == case_id)
     return AdapterRequest(
         run_id=RUN_ID,
         case=case,
         task_type=TaskType.RETRIEVAL,
         input_sha256="a" * 64,
+        case_resource_sha256=case_resource_sha256,
         variant_id=variant_id,
         variant_manifest_hash="b" * 64,
     )
@@ -110,6 +118,14 @@ def test_replay_adapter_returns_ranked_ids_for_exact_case_binding() -> None:
         "ev-ret-dev-precaution-b",
     )
     assert result.selected_evidence_ids == result.retrieved_evidence_ids[:5]
+
+
+def test_replay_rows_bind_rankings_to_the_case_resource_hash() -> None:
+    replay = load_retrieval_replay(REPLAY_PATH, repository_root=REPOSITORY_ROOT)
+    dataset = load_dataset(DATASET_PATH, evals_root=REPOSITORY_ROOT / "evals")
+    expected_hashes = {item.case_id: item.sha256 for item in dataset.manifest.case_resources}
+
+    assert {item.case_id: item.case_resource_sha256 for item in replay.case_results} == expected_hashes
 
 
 @pytest.mark.parametrize(
@@ -177,6 +193,7 @@ def test_replay_adapter_rejects_dataset_mismatch() -> None:
         case=request.case.model_copy(update={"dataset_code": "another-dataset"}),
         task_type=request.task_type,
         input_sha256=request.input_sha256,
+        case_resource_sha256=request.case_resource_sha256,
         variant_id=request.variant_id,
         variant_manifest_hash=request.variant_manifest_hash,
     )
@@ -198,6 +215,47 @@ def test_replay_adapter_rejects_dataset_version_mismatch() -> None:
     assert caught.value.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
 
 
+def test_replay_adapter_rejects_case_resource_hash_mismatch() -> None:
+    replay = load_retrieval_replay(REPLAY_PATH, repository_root=REPOSITORY_ROOT)
+    request = replace(_adapter_request("rag-ret-dev-001"), case_resource_sha256="f" * 64)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        ReplayRetrievalAdapter(replay).execute(request)
+
+    assert caught.value.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
+
+
+def test_runner_invalidates_replay_when_bound_case_resource_hash_changes() -> None:
+    dataset = load_dataset(DATASET_PATH, evals_root=REPOSITORY_ROOT / "evals")
+    changed_resource = dataset.manifest.case_resources[0].model_copy(update={"sha256": "f" * 64})
+    changed_manifest = dataset.manifest.model_copy(
+        update={"case_resources": (changed_resource, *dataset.manifest.case_resources[1:])}
+    )
+    changed_dataset = replace(dataset, manifest=changed_manifest)
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    outcome = execute_dev_cases(
+        changed_dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=build_adapter_registry(resolved),
+    )
+
+    invalid = next(item for item in outcome.case_results if item.case_id == changed_resource.case_id)
+    assert invalid.execution_status is ExecutionStatus.INVALID
+    assert invalid.failure_codes == ("EVAL_RETRIEVAL_REPLAY_INVALID",)
+    assert outcome.execution_status is ExecutionStatus.INVALID
+    failure = next(item for item in outcome.failure_records if item.case_id == invalid.case_id)
+    assert (failure.failure_stage, failure.failure_code) == (
+        "RETRIEVAL_EXECUTION",
+        "EVAL_RETRIEVAL_REPLAY_INVALID",
+    )
+
+
 def test_replay_adapter_rejects_unknown_case() -> None:
     replay = load_retrieval_replay(REPLAY_PATH, repository_root=REPOSITORY_ROOT)
     request = _adapter_request("rag-ret-dev-001")
@@ -206,6 +264,7 @@ def test_replay_adapter_rejects_unknown_case() -> None:
         case=request.case.model_copy(update={"case_id": "rag-ret-dev-999"}),
         task_type=request.task_type,
         input_sha256=request.input_sha256,
+        case_resource_sha256=request.case_resource_sha256,
         variant_id=request.variant_id,
         variant_manifest_hash=request.variant_manifest_hash,
     )
@@ -282,7 +341,7 @@ def test_runner_rejects_replay_case_set_mismatch_before_case_execution(tmp_path:
     if mutation == "missing":
         case_results.pop()
     else:
-        case_results.append({"case_id": "rag-ret-dev-999", "ranked_evidence_ids": []})
+        case_results.append({"case_id": "rag-ret-dev-999", "case_resource_sha256": "f" * 64, "ranked_evidence_ids": []})
     payload["replay_sha256"] = canonical_sha256(
         cast(JsonValue, payload),
         excluded_top_level_keys=frozenset({"replay_sha256"}),

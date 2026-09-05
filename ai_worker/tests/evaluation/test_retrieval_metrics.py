@@ -24,6 +24,7 @@ from ai_worker.tasks.evaluation.retrieval_metrics import (
 from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry, load_retrieval_replay
 from ai_worker.tasks.evaluation.runner import execute_dev_cases
 from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResult, MetricResults
+from ai_worker.tasks.evaluation.schemas.common import LeakageAxis
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
 MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-retrieval-dev-v1.dataset.json"
@@ -261,6 +262,81 @@ def test_duplicate_case_results_mark_metrics_invalid() -> None:
 
     assert {item.execution_status.value for item in metrics.metrics} == {"INVALID"}
     assert all(item.decision_status is None for item in metrics.metrics)
+
+
+@pytest.mark.parametrize(
+    ("field", "unsupported_value"),
+    [
+        ("metric_version", "9.9.9"),
+        ("unit_of_analysis", "EVIDENCE"),
+        ("estimator_id", "MICRO_AVERAGE"),
+        ("estimator_version", "9.9.9"),
+        ("independence_unit", "CASE"),
+        ("cluster_dimension", LeakageAxis.SOURCE_SEGMENT),
+        ("ci_method_id", "BCa"),
+        ("ci_method_version", "9.9.9"),
+        ("ci_parameters", (("iterations", 10_000), ("level", "0.95"))),
+        (
+            "ci_parameters",
+            (("iterations", 10_000), ("level", "0.95"), ("sidedness", "ONE_SIDED")),
+        ),
+        (
+            "ci_parameters",
+            (
+                ("iterations", 10_000),
+                ("level", "0.95"),
+                ("sidedness", "TWO_SIDED"),
+                ("unknown", True),
+            ),
+        ),
+        (
+            "ci_parameters",
+            (("iterations", True), ("level", "0.95"), ("sidedness", "TWO_SIDED")),
+        ),
+        (
+            "ci_parameters",
+            (("iterations", 10_000), ("level", 95), ("sidedness", "TWO_SIDED")),
+        ),
+        (
+            "ci_parameters",
+            (("iterations", 10_000), ("level", "not-a-level"), ("sidedness", "TWO_SIDED")),
+        ),
+        (
+            "ci_parameters",
+            (("iterations", 10_000), ("level", "0.950"), ("sidedness", "TWO_SIDED")),
+        ),
+        (
+            "ci_parameters",
+            (("iterations", 10_000), ("level", "0.95"), ("sidedness", True)),
+        ),
+        ("seed", None),
+    ],
+)
+def test_unsupported_algorithm_signature_is_not_implemented(
+    field: str,
+    unsupported_value: object,
+) -> None:
+    target = DATASET.comparison_policy.scopes[0]
+    changed_scope = target.model_copy(update={field: unsupported_value})
+    changed_policy = DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, ret_l_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "NOT_IMPLEMENTED"
+    assert metric.decision_status is None
+    assert (
+        metric.sample_case_count,
+        metric.sample_independent_group_count,
+        metric.numerator,
+        metric.denominator,
+        metric.metric_value,
+        metric.ci_lower,
+        metric.ci_upper,
+        metric.reason_code,
+    ) == (None,) * 8
 
 
 def test_failed_case_marks_metrics_error_without_partial_values() -> None:

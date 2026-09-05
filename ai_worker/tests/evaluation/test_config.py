@@ -475,7 +475,13 @@ def test_resolved_hash_changes_when_replay_bytes_change(tmp_path: Path) -> None:
         replay_path = root / "evals/retrieval/replays/test.replay.json"
         replay_path.parent.mkdir(parents=True, exist_ok=True)
         replay_payload: dict[str, JsonValue] = {
-            "case_results": [{"case_id": "case-1", "ranked_evidence_ids": [evidence_id]}],
+            "case_results": [
+                {
+                    "case_id": "case-1",
+                    "case_resource_sha256": "a" * 64,
+                    "ranked_evidence_ids": [evidence_id],
+                }
+            ],
             "dataset_code": "rag-retrieval-dev",
             "dataset_version": "1.0.0",
             "replay_sha256": "0" * 64,

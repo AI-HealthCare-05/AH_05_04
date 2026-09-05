@@ -89,12 +89,15 @@ non-zero Case 수 / 전체 Case 수를 관측 support count로 저장하고, `me
 CI는 `question_template` 독립 Group을 sampling unit으로 하는 percentile bootstrap이며 seed와 iteration 수를
 Comparison Policy에서 읽는다. Group이 5개 미만이거나 Case가 5개 미만이면 Metric을 계산 완료하되
 `decision_status=INCONCLUSIVE`와 안정 reason code를 기록한다. 분모 0도 동일하게 `INCONCLUSIVE`이며 PASS가
-될 수 없다.
+될 수 없다. Kernel은 Metric version, estimator ID/version, CI method ID/version·parameter shape,
+unit/independence/cluster 설정을 포함한 전체 알고리즘 서명을 검증하고, 지원하지 않는 서명은 계산하지 않고
+`NOT_IMPLEMENTED/null`로 닫는다.
 
 ## 6. 실행과 비교 흐름
 
 1. `run-dev`가 config·Dataset graph·Git clean state를 검증한다.
-2. `retrieval-replay.v1` Adapter가 Case별 ranked Evidence ID를 `RetrievalCaseResult`로 변환한다.
+2. `retrieval-replay.v1` Adapter가 replay 행의 `case_resource_sha256`과 실행 Case resource hash를 exact match한
+   뒤 Case별 ranked Evidence ID를 `RetrievalCaseResult`로 변환한다.
 3. Metric Kernel이 Policy Scope별 Metric과 CI를 계산한다.
 4. Baseline Run을 `evals/results/<baseline-run-id>/`에 원자적으로 발행한다.
 5. Candidate 실행은 `--baseline-run-id`로 Baseline Bundle을 읽고 semantic content hash를 검증한다.
@@ -143,6 +146,9 @@ hash, Dataset/Policy hash와 비민감 요약만 남긴다.
 ## 8. 오류와 상태
 
 - Replay Case 누락·중복·알 수 없는 Case: `INVALID/null`
+- Replay Case resource hash 불일치: 해당 Case와 aggregate Run `INVALID/null`
+- Adapter가 반환한 retrieved/selected ranked ID 중복: 해당 Case와 aggregate Run `INVALID/null`, 안정 failure 기록
+- 지원하지 않는 Metric algorithm signature: 해당 Metric `NOT_IMPLEMENTED/null`
 - Adapter 예외: 해당 Case `ERROR/null`, 다음 Case는 계속 실행
 - required/relevant evidence 분모 0: Metric `COMPLETED/INCONCLUSIVE`
 - 최소 Case·독립 Group 부족: Metric `COMPLETED/INCONCLUSIVE`

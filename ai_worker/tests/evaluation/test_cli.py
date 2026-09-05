@@ -956,7 +956,7 @@ def test_verify_result_prints_only_semantic_hash(tmp_path: Path, capsys: pytest.
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    assert captured.out == "3253a5abb89c2b40d1c50c0d297501834e5bae791b460ed761db996b6f0381d4\n"
+    assert captured.out == "965b9e898293f7e5784bbab6ab02a97a66992d1d854da8f70ef8c52fe2a61e68\n"
 
 
 def test_verify_result_accepts_valid_clock_rewrite_outside_semantic_hash(
@@ -983,7 +983,7 @@ def test_verify_result_accepts_valid_clock_rewrite_outside_semantic_hash(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    assert captured.out == "3253a5abb89c2b40d1c50c0d297501834e5bae791b460ed761db996b6f0381d4\n"
+    assert captured.out == "965b9e898293f7e5784bbab6ab02a97a66992d1d854da8f70ef8c52fe2a61e68\n"
 
 
 @pytest.mark.parametrize("invalid_kind", ["missing", "symlink", "tampered"])

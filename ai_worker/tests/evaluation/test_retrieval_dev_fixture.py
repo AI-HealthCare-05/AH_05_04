@@ -196,6 +196,8 @@ def test_retrieval_dev_replay_envelope_and_self_hash_are_canonical(
     ranked_evidence_ids: dict[str, tuple[str, ...]],
 ) -> None:
     payload = json.loads((REPLAYS / filename).read_bytes())
+    dataset = load_dataset(MANIFEST, evals_root=EVALS_ROOT)
+    case_resource_hashes = {item.case_id: item.sha256 for item in dataset.manifest.case_resources}
 
     assert set(payload) == {
         "case_results",
@@ -214,7 +216,12 @@ def test_retrieval_dev_replay_envelope_and_self_hash_are_canonical(
     assert payload["variant_id"] == variant_id
     assert payload["top_k"] == 5
     assert payload["case_results"] == [
-        {"case_id": case_id, "ranked_evidence_ids": list(ranks)} for case_id, ranks in ranked_evidence_ids.items()
+        {
+            "case_id": case_id,
+            "case_resource_sha256": case_resource_hashes[case_id],
+            "ranked_evidence_ids": list(ranks),
+        }
+        for case_id, ranks in ranked_evidence_ids.items()
     ]
     assert payload["replay_sha256"] == canonical_sha256(
         cast(JsonValue, payload),

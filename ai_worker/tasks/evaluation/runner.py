@@ -47,6 +47,7 @@ class AdapterRequest:
     case: EvaluationCaseContract
     task_type: TaskType
     input_sha256: str
+    case_resource_sha256: str
     variant_id: str
     variant_manifest_hash: str
 
@@ -201,6 +202,7 @@ def _case_request(
         case=case,
         task_type=case.task_type,
         input_sha256=case_input_sha256(binding),
+        case_resource_sha256=binding.case_resource_sha256,
         variant_id=variant.variant_id,
         variant_manifest_hash=variant_hash,
     )
@@ -218,6 +220,13 @@ def _binding_matches(result: CaseResult, request: AdapterRequest) -> bool:
     )
 
 
+def _result_contract_matches(result: CaseResult) -> bool:
+    if result.task_type is not TaskType.RETRIEVAL:
+        return True
+    ranked_fields = (result.retrieved_evidence_ids or (), result.selected_evidence_ids or ())
+    return all(len(evidence_ids) == len(set(evidence_ids)) for evidence_ids in ranked_fields)
+
+
 def _execute_once(request: AdapterRequest, adapter: EvaluationAdapter | None) -> CaseResult:
     if adapter is None:
         return _neutral_result(request, ExecutionStatus.NOT_IMPLEMENTED, None)
@@ -231,6 +240,12 @@ def _execute_once(request: AdapterRequest, adapter: EvaluationAdapter | None) ->
         return _neutral_result(request, ExecutionStatus.ERROR, EvaluationErrorCode.INTERNAL_ERROR)
     if not _binding_matches(result, request):
         return _neutral_result(request, ExecutionStatus.INVALID, EvaluationErrorCode.MANIFEST_INVALID)
+    if not _result_contract_matches(result):
+        return _neutral_result(
+            request,
+            ExecutionStatus.INVALID,
+            EvaluationErrorCode.RETRIEVAL_RESULT_INVALID,
+        )
     return result
 
 

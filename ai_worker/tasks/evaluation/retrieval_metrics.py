@@ -5,17 +5,30 @@ import random
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import TypedDict, cast
 
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset
 from ai_worker.tasks.evaluation.schemas.artifacts import CaseResult, MetricResult, MetricResults
-from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionStatus, Partition, TaskType
+from ai_worker.tasks.evaluation.schemas.common import (
+    DecisionStatus,
+    ExecutionStatus,
+    LeakageAxis,
+    Partition,
+    TaskType,
+)
 from ai_worker.tasks.evaluation.schemas.policy import ComparisonScope
 
 _SIX_PLACES = Decimal("0.000001")
 _SUPPORTED_METRICS = frozenset({"MRR", "NDCG_AT_5", "NO_HIT_RATE", "PRECISION_AT_5", "RECALL_AT_5"})
 _RELEVANCE_DENOMINATOR_METRICS = frozenset({"MRR", "NDCG_AT_5", "NO_HIT_RATE"})
+_SUPPORTED_CI_PARAMETER_KEYS = frozenset({"iterations", "level", "sidedness"})
+_INPUT_STATUS_PRIORITY = {
+    ExecutionStatus.INVALID: 0,
+    ExecutionStatus.ERROR: 1,
+    ExecutionStatus.NOT_IMPLEMENTED: 2,
+    ExecutionStatus.NOT_EVALUATED: 3,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +87,23 @@ def _canonical_decimal(value: Decimal) -> str:
     if quantized == 0:
         return "0"
     return format(quantized, "f").rstrip("0").rstrip(".")
+
+
+def _canonical_ci_level(value: object) -> str | None:
+    if type(value) is not str:
+        return None
+    try:
+        parsed = Decimal(value)
+    except (InvalidOperation, ValueError):
+        return None
+    if not parsed.is_finite():
+        return None
+    normalized = format(parsed, "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    if normalized == "-0":
+        normalized = "0"
+    return value if value == normalized else None
 
 
 def _validate_ranked_ids(observation: RetrievalObservation) -> None:
@@ -257,6 +287,8 @@ def observations_from_case_results(
 
 def _scope_fields(scope: ComparisonScope) -> MetricScopeFields:
     ci_parameters = dict(scope.ci_parameters)
+    ci_level = ci_parameters.get("level")
+    ci_sidedness = ci_parameters.get("sidedness")
     return {
         "metric_id": scope.metric_id,
         "metric_version": scope.metric_version,
@@ -270,8 +302,8 @@ def _scope_fields(scope: ComparisonScope) -> MetricScopeFields:
         "cluster_dimension": None if scope.cluster_dimension is None else scope.cluster_dimension.value,
         "ci_method_id": scope.ci_method_id,
         "ci_method_version": scope.ci_method_version,
-        "ci_level": cast(str | None, ci_parameters.get("level")),
-        "ci_sidedness": cast(str | None, ci_parameters.get("sidedness")),
+        "ci_level": _canonical_ci_level(ci_level),
+        "ci_sidedness": ci_sidedness if type(ci_sidedness) is str else None,
         "threshold": scope.threshold,
     }
 
@@ -289,6 +321,40 @@ def _incomplete_metric(scope: ComparisonScope, status: ExecutionStatus) -> Metri
         ci_lower=None,
         ci_upper=None,
         reason_code=None,
+    )
+
+
+def _algorithm_signature_supported(scope: ComparisonScope) -> bool:
+    parameters = dict(scope.ci_parameters)
+    iterations = parameters.get("iterations")
+    level = parameters.get("level")
+    if set(parameters) != _SUPPORTED_CI_PARAMETER_KEYS:
+        return False
+    if type(iterations) is not int or iterations <= 0:
+        return False
+    if type(level) is not str:
+        return False
+    try:
+        confidence_level = Decimal(level)
+    except (InvalidOperation, ValueError):
+        return False
+    if _canonical_ci_level(level) != level:
+        return False
+    return (
+        scope.metric_id in _SUPPORTED_METRICS
+        and scope.metric_version == "1.0.0"
+        and scope.unit_of_analysis == "CASE"
+        and scope.estimator_id == "CASE_MEAN"
+        and scope.estimator_version == "1.0.0"
+        and scope.independence_unit == "question_template"
+        and scope.cluster_dimension is LeakageAxis.QUESTION_TEMPLATE
+        and scope.ci_method_id == "PERCENTILE_CLUSTER_BOOTSTRAP"
+        and scope.ci_method_version == "1.0.0"
+        and parameters.get("sidedness") == "TWO_SIDED"
+        and Decimal(0) < confidence_level < Decimal(1)
+        and type(scope.seed) is int
+        and scope.decision_basis == "DIAGNOSTIC_ONLY"
+        and scope.threshold == "0"
     )
 
 
@@ -342,8 +408,11 @@ def _input_status(dataset: ValidatedDataset, case_results: tuple[CaseResult, ...
             return ExecutionStatus.INVALID
     if len(run_ids) != 1:
         return ExecutionStatus.INVALID
-    if any(result.execution_status is not ExecutionStatus.COMPLETED for result in case_results):
-        return ExecutionStatus.ERROR
+    incomplete_statuses = {
+        result.execution_status for result in case_results if result.execution_status is not ExecutionStatus.COMPLETED
+    }
+    if incomplete_statuses:
+        return min(incomplete_statuses, key=_INPUT_STATUS_PRIORITY.__getitem__)
     return None
 
 
@@ -441,7 +510,7 @@ def build_retrieval_metrics(
     results_by_case = {result.case_id: result for result in case_results}
     metrics: list[MetricResult] = []
     for scope in dataset.comparison_policy.scopes:
-        if scope.metric_id not in _SUPPORTED_METRICS:
+        if not _algorithm_signature_supported(scope):
             metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
         elif input_status is not None:
             metrics.append(_incomplete_metric(scope, input_status))

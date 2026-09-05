@@ -154,6 +154,7 @@ statement는 `SYNTHETIC_*` 토큰만 사용한다.
 
 두 실제 replay 파일은 공통 envelope `schema_id=rag-eval.retrieval-replay`, `schema_version=1.0.0`,
 `dataset_code=rag-retrieval-dev`, `dataset_version=1.0.0`, `variant_id`, `top_k=5`, `case_results`를 사용한다.
+각 replay Case 행은 `case_resource_sha256`으로 당시 query와 Case resource 전체에 결속한다.
 
 - [ ] **Step 5: Comparison Policy Scope 고정**
 
@@ -230,6 +231,7 @@ Expected: FAIL with import error for `retrieval_replay`.
 ```python
 class ReplayCaseResult(StrictContractModel):
     case_id: StableId
+    case_resource_sha256: Sha256Hex
     ranked_evidence_ids: Annotated[tuple[StableId, ...], BeforeValidator(_tuple_from_wire)]
 
 
@@ -285,13 +287,15 @@ class AdapterRequest:
     case: EvaluationCaseContract
     task_type: TaskType
     input_sha256: str
+    case_resource_sha256: str
     variant_id: str
     variant_manifest_hash: str
 ```
 
 Adapter는 Case query나 Evidence 원문을 결과에 복제하지 않고 ranked stable evidence ID만 반환한다. Replay에
 Case가 없으면 `EvaluationValidationError(EVAL_RETRIEVAL_REPLAY_INVALID)`을 발생시켜 해당 Case를
-`INVALID/null`로 만든다.
+`INVALID/null`로 만든다. Replay 행의 `case_resource_sha256`과 실행 요청의 Case resource hash도 exact
+match하며, 불일치하면 과거 rank를 재사용하지 않는다.
 
 - [ ] **Step 6: Targeted tests 통과**
 
@@ -414,7 +418,8 @@ def no_hit(observation: RetrievalObservation, k: int = 5) -> Decimal:
 ```
 
 각 함수는 입력 tuple을 변경하지 않고, 결과를 `_quantize_six()`로 canonicalize한다. Unknown Evidence ID는
-non-relevant로 취급하되 duplicate ranked ID는 `INVALID` 입력으로 거부한다.
+non-relevant로 취급하되 duplicate ranked ID는 Adapter 결과 수용 경계에서 Case·Run을 `INVALID`로 만들고
+안정 `EVAL_RETRIEVAL_RESULT_INVALID` failure를 기록한다. Metric Kernel도 방어적으로 중복을 재검증한다.
 
 - [ ] **Step 5: deterministic group bootstrap 구현**
 

@@ -30,6 +30,7 @@ def _tuple_from_wire(value: object) -> object:
 
 class ReplayCaseResult(StrictContractModel):
     case_id: StableId
+    case_resource_sha256: Sha256Hex
     ranked_evidence_ids: Annotated[
         tuple[StableId, ...],
         BeforeValidator(_tuple_from_wire),
@@ -113,7 +114,9 @@ class ReplayRetrievalAdapter:
     ) -> None:
         self._replay = replay
         self._variant_manifest_hash = variant_manifest_hash
-        self._case_results = {item.case_id: item.ranked_evidence_ids for item in replay.case_results}
+        self._case_results = {
+            item.case_id: (item.case_resource_sha256, item.ranked_evidence_ids) for item in replay.case_results
+        }
 
     def validate_case_set(self, case_ids: Sequence[str]) -> None:
         selected = tuple(sorted(case_ids, key=lambda value: value.encode("utf-16-be")))
@@ -128,9 +131,10 @@ class ReplayRetrievalAdapter:
             and request.variant_id == self._replay.variant_id
             and (self._variant_manifest_hash is None or request.variant_manifest_hash == self._variant_manifest_hash)
         )
-        ranked = self._case_results.get(request.case.case_id)
-        if not binding_valid or ranked is None:
+        replay_case = self._case_results.get(request.case.case_id)
+        if not binding_valid or replay_case is None or replay_case[0] != request.case_resource_sha256:
             raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
+        ranked = replay_case[1]
         return CASE_RESULT_ADAPTER.validate_python(
             {
                 "schema_id": "rag-eval.case-result",

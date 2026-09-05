@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -9,6 +9,7 @@ from ai_worker.tasks.evaluation.canonical import sha256_hex
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.retrieval_metrics import build_retrieval_metrics
 from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.runner import (
     AdapterRequest,
@@ -135,6 +136,19 @@ class InvalidReplayAdapter(CountingAdapter):
         if request.case.case_id == "rag-dev-answer-quality-001":
             raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
         return super().execute(request)
+
+
+class DuplicateRankedIdsAdapter(CountingAdapter):
+    def execute(self, request: AdapterRequest) -> CaseResult:
+        result = super().execute(request)
+        if request.case.case_id == "rag-ret-dev-001":
+            result = result.model_copy(
+                update={
+                    "retrieved_evidence_ids": ("duplicate-evidence", "duplicate-evidence"),
+                    "selected_evidence_ids": ("duplicate-evidence", "duplicate-evidence"),
+                }
+            )
+        return cast(CaseResult, result)
 
 
 class StaticRegistry:
@@ -282,6 +296,37 @@ def test_retrieval_adapter_error_creates_stable_non_sensitive_failure_record() -
     assert failure.failure_code == "EVAL_INTERNAL_ERROR"
     assert failure.expected_summary.value == "EXPECTED_REQUIRED_EVIDENCE"
     assert failure.actual_summary.value == "ACTUAL_REQUIRED_EVIDENCE_MISSING"
+
+
+def test_duplicate_ranked_ids_invalidate_case_run_and_metrics_with_stable_failure() -> None:
+    dataset = load_dataset(RETRIEVAL_MANIFEST, evals_root=REPOSITORY_ROOT / "evals")
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/rag-retrieval-dev-ret-l-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+
+    outcome = execute_dev_cases(
+        dataset,
+        resolved,
+        run_id=RUN_ID,
+        adapter_registry=RetrievalRegistry(DuplicateRankedIdsAdapter()),
+    )
+
+    invalid = next(item for item in outcome.case_results if item.case_id == "rag-ret-dev-001")
+    assert invalid.execution_status is ExecutionStatus.INVALID
+    assert invalid.decision_status is None
+    assert invalid.failure_codes == ("EVAL_RETRIEVAL_RESULT_INVALID",)
+    assert outcome.execution_status is ExecutionStatus.INVALID
+    failure = next(item for item in outcome.failure_records if item.case_id == invalid.case_id)
+    assert (failure.failure_stage, failure.failure_code) == (
+        "RETRIEVAL_EXECUTION",
+        "EVAL_RETRIEVAL_RESULT_INVALID",
+    )
+
+    metrics = build_retrieval_metrics(dataset, outcome.case_results)
+    assert {item.execution_status for item in metrics.metrics} == {ExecutionStatus.INVALID}
+    assert all(item.decision_status is None and item.metric_value is None for item in metrics.metrics)
 
 
 def test_missing_adapter_produces_not_implemented_without_fake_answer(
