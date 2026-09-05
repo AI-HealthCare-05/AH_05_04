@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, BeforeValidator, Field, StrictInt, StringConstraints, ValidationError, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, StringConstraints, ValidationError, model_validator
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
@@ -10,6 +10,7 @@ from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.schemas.common import (
     ImmutableReference,
     LeakageAxis,
+    SafeInteger,
     SemanticVersion,
     Sha256Hex,
     StableId,
@@ -27,7 +28,7 @@ def _leakage_axis_from_wire(value: object) -> object:
     return LeakageAxis(value) if isinstance(value, str) else value
 
 
-PositiveInteger = Annotated[StrictInt, Field(gt=0)]
+PositiveInteger = Annotated[SafeInteger, Field(gt=0)]
 NonEmptyText = Annotated[str, StringConstraints(strict=True, min_length=1)]
 
 
@@ -151,9 +152,9 @@ class StudySplitReceipt(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_split(self) -> StudySplitReceipt:
-        if self.dev_dataset_ref == self.holdout_dataset_ref:
+        if self.dev_dataset_ref.id == self.holdout_dataset_ref.id:
             raise ValueError("DEV and HOLDOUT Dataset refs must be distinct")
-        if self.dev_authoring_identity_manifest_ref == self.holdout_authoring_identity_manifest_ref:
+        if self.dev_authoring_identity_manifest_ref.id == self.holdout_authoring_identity_manifest_ref.id:
             raise ValueError("DEV and HOLDOUT authoring identity manifest refs must be distinct")
         expected_axes = (
             LeakageAxis.QUESTION_TEMPLATE,

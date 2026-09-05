@@ -500,7 +500,7 @@ def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
     }
 
     jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
-    invalid_draft = {
+    invalid_draft: dict[str, Any] = {
         "authored_by": {
             "namespace": "GITHUB_LOGIN",
             "actor_id": "ceohwj",
@@ -527,6 +527,41 @@ def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
     }
 
     assert list(jsonschema.Draft202012Validator(portable_schema).iter_errors(invalid_draft))
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "definition_name", "field_name"),
+    [
+        (
+            "authoring/rag-eval.authoring-identity-manifest.schema.json",
+            "AuthoringIdentityEntry",
+            "member_order",
+        ),
+        (
+            "operational/rag-eval.study-split-receipt.schema.json",
+            "StudySplitAxisSummary",
+            "comparison_count",
+        ),
+    ],
+)
+def test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary(
+    relative_path: str,
+    definition_name: str,
+    field_name: str,
+) -> None:
+    document = cast(dict[str, Any], schema_documents("1.3.0")[relative_path])
+    definitions = cast(dict[str, Any], document["$defs"])
+    definition = cast(dict[str, Any], definitions[definition_name])
+    properties = cast(dict[str, Any], definition["properties"])
+    field_schema = cast(dict[str, Any], properties[field_name])
+    assert field_schema["exclusiveMinimum"] == 0
+    assert field_schema["maximum"] == (2**53) - 1
+
+    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
+    validator = jsonschema.Draft202012Validator(field_schema)
+
+    assert validator.is_valid((2**53) - 1)
+    assert not validator.is_valid(2**53)
 
 
 def _containing_approval_role_condition(roles: list[str]) -> dict[str, Any]:

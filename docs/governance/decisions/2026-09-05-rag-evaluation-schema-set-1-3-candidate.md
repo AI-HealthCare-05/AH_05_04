@@ -19,7 +19,7 @@ review event가 필요하며, 문서와 schema export의 존재만으로 그 eve
 | --- | --- |
 | Schema Set ID | `rag-eval.schema-set` |
 | Schema Set version | `1.3.0` |
-| Schema Set SHA-256 | `e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f` |
+| Schema Set SHA-256 | `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158` |
 | Canonical member root | `evals/schemas/1.3.0/` |
 | Member count | `21` |
 
@@ -38,6 +38,11 @@ bytes를 그대로 재사용한다. 다음 세 member를 `1.0.0`으로 추가한
 
 따라서 전체 member는 경로와 schema ID가 각각 고유한 21개다. 기본 exporter version은 계속 `1.0.0`이며,
 기존 `evals/schemas/1.0.0/`, `1.1.0/`, `1.2.0/`의 bytes와 hash는 변경하지 않는다.
+
+신규 provenance의 `member_order`와 `comparison_count`는 canonical JSON과 portable JSON Schema가 같은
+`1..2^53-1` 범위만 허용한다. Study Split Receipt의 DEV/HOLDOUT Dataset reference와 두 Authoring Identity
+Manifest reference는 각각 서로 다른 logical `id`를 사용해야 하며 version이나 hash 차이만으로 분리를
+주장할 수 없다.
 
 ## 적용 경계
 

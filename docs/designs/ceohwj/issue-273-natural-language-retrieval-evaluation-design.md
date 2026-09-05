@@ -39,7 +39,7 @@ HOLDOUT 40개의 질문 본문과 실제 Retriever 성능 수치는 승인된 �
 `EvidenceSearchPort`·rerank Adapter와 versioned Knowledge Evidence Index 연결이 없다. 따라서 이번 단계에서
 실행 가능한 것은 질문 matrix와 Schema Set `1.2.0` 호환 Case 초안의 준비까지다. provenance 확장 후보는
 [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md),
-SHA-256 `e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f`이며 상태는
+SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158`이며 상태는
 `Candidate · Review Required`다. 책임 리뷰어의 실제 Pull Request review event 전에는 승인된 Schema Set이나
 최종 Dataset graph 입력으로 취급하지 않고 Freeze하지 않는다. Kernel fake Port나 replay 순위를 실제 검색
 결과로 재해석하지 않는다.
@@ -141,7 +141,7 @@ Answer·Citation 검증과 의사·약사 상담 안내를 완료 조건으로 �
 | Partition | `DEV` 60, 나머지 0 |
 | 초기 상태 | `DRAFT` |
 | Authoring base | `rag-eval.schema-set@1.2.0` |
-| Final Schema Set candidate | [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md), SHA-256 `e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f` · `Candidate · Review Required`; 책임 리뷰어 Pull Request review event 전에는 미승인 |
+| Final Schema Set candidate | [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md), SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158` · `Candidate · Review Required`; 책임 리뷰어 Pull Request review event 전에는 미승인 |
 | Evaluation Profile runtime eligible | `false` |
 
 추적 대상 파일은 기존 `evals/` authoring graph 구조를 그대로 사용한다.
@@ -484,7 +484,8 @@ DEV와 HOLDOUT은 권한을 분리하기 위해 서로 다른 Dataset으로 둔�
 
 두 Dataset은 질문 본문을 포함하지 않는 `rag-natural-language-retrieval-study@1.0.0` split receipt로 결속한다.
 Receipt는 두 Dataset hash, 공통 Gold schema, 공통 study-wide Knowledge Index·config ref와 승인 주체를
-기록한다.
+기록한다. DEV/HOLDOUT Dataset reference와 두 Authoring Identity Manifest reference는 각각 서로 다른
+logical `id`를 사용해야 하며, 동일 ID에서 version이나 hash만 달라진 입력은 분리 증거로 인정하지 않는다.
 현재 Loader는 Dataset 내부 leakage만 확인하므로 별도 cross-dataset validator가 보호 환경에서 DEV/HOLDOUT
 전체 Case graph를 함께 읽고 다음 교집합이 모두 0인지 검사한다.
 
@@ -509,7 +510,7 @@ Index build receipt와 study split receipt는 기존 `ProtectedArtifactReceipt`�
 
 계약 문서는 `docs/contracts/targets/post-mvp-1/`와 계약 index에 등록돼 있으며, 후보
 [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md),
-SHA-256 `e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f`에서 schema member·canonical
+SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158`에서 schema member·canonical
 hash·registry를 고정한다. validator는 unknown key, ID/version/hash 불일치, per-record bridge,
 canonicalization version, HMAC algorithm/key version, intersection count와 승인 역할을 fail-closed 검증한다.
 이 Schema Set은 `Candidate · Review Required`이며 책임 리뷰어의 실제 Pull Request review event 전에는 승인된

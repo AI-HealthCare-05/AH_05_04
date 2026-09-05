@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
@@ -442,6 +443,81 @@ def test_study_split_rejects_invalid_partition_or_axis_summary(mutation: str) ->
 
     with pytest.raises(EvaluationValidationError) as caught:
         parse_study_split_receipt_bytes(canonical_json_bytes(payload))
+
+    assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+@pytest.mark.parametrize(
+    ("dev_field", "holdout_field", "changed_field", "changed_value"),
+    [
+        ("dev_dataset_ref", "holdout_dataset_ref", "hash", SHA_C),
+        ("dev_dataset_ref", "holdout_dataset_ref", "version", "2.0.0"),
+        (
+            "dev_authoring_identity_manifest_ref",
+            "holdout_authoring_identity_manifest_ref",
+            "hash",
+            SHA_C,
+        ),
+        (
+            "dev_authoring_identity_manifest_ref",
+            "holdout_authoring_identity_manifest_ref",
+            "version",
+            "2.0.0",
+        ),
+    ],
+)
+def test_study_split_rejects_same_logical_identity_with_different_version_or_hash(
+    dev_field: str,
+    holdout_field: str,
+    changed_field: str,
+    changed_value: str,
+) -> None:
+    payload = _study_split_payload()
+    dev_ref: Payload = payload[dev_field]
+    holdout_ref: Payload = payload[holdout_field]
+    holdout_ref["id"] = dev_ref["id"]
+    holdout_ref[changed_field] = changed_value
+    payload = _with_self_hash(payload, "receipt_sha256")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        parse_study_split_receipt_bytes(canonical_json_bytes(payload))
+
+    assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+@pytest.mark.parametrize(
+    ("payload_factory", "container_field", "integer_field"),
+    [
+        (_authoring_payload, "entries", "member_order"),
+        (_study_split_payload, "axis_summaries", "comparison_count"),
+    ],
+)
+def test_provenance_positive_integers_use_the_canonical_safe_integer_boundary(
+    payload_factory: Callable[[], Payload],
+    container_field: str,
+    integer_field: str,
+) -> None:
+    maximum_safe_integer = (2**53) - 1
+    payload = payload_factory()
+    members: list[Payload] = payload[container_field]
+    if container_field == "entries":
+        members[:] = [deepcopy(members[0])]
+    members[0][integer_field] = maximum_safe_integer
+    model = AuthoringIdentityManifest if container_field == "entries" else StudySplitReceipt
+
+    validated_members = getattr(model.model_validate(payload), container_field)
+    assert getattr(validated_members[0], integer_field) == maximum_safe_integer
+
+    members[0][integer_field] = 2**53
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+    raw_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    parser = (
+        parse_authoring_identity_manifest_bytes if container_field == "entries" else parse_study_split_receipt_bytes
+    )
+    with pytest.raises(EvaluationValidationError) as caught:
+        parser(raw_bytes)
 
     assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
 

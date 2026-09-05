@@ -69,7 +69,7 @@ Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping
 
 ### Evaluation Schema Set 1.3 후보
 
-자연어 Retrieval 평가 provenance 확장 후보는 `rag-eval.schema-set@1.3.0`, SHA-256 `e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
+자연어 Retrieval 평가 provenance 확장 후보는 `rag-eval.schema-set@1.3.0`, SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
 
 21개 member는 Schema Set 1.2의 Dataset Manifest만 `rag-eval.dataset-manifest@1.3.0`으로 교체하고, 나머지 17개 member의 version과 canonical bytes를 그대로 재사용한다. 다음 세 계약은 member `1.0.0`으로 추가한다.
 
@@ -78,6 +78,10 @@ Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping
 - `rag-eval.study-split-receipt@1.0.0`
 
 Dataset Manifest 1.3은 authoring identity manifest reference를 필수로 결속한다. 신규 member는 각각 Case의 partition-neutral authoring identity 입력, Gold–runtime Index bridge receipt, DEV/HOLDOUT split 검증 receipt를 소유한다. 기존 Schema Set 1.0.0·1.1.0·1.2.0과 exporter 기본 version은 변경하지 않는다. 상세 후보 경계는 [RAG Evaluation Schema Set 1.3 Candidate](../../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md)를 따른다.
+
+신규 provenance의 양의 정수는 canonical safe-integer 상한 `2^53-1`을 넘을 수 없다. Study Split의 DEV와
+HOLDOUT은 Dataset reference `id`와 Authoring Identity Manifest reference `id`가 각각 달라야 하며, 같은
+logical ID의 version/hash만 바꾼 입력은 유효한 분리 증거가 아니다.
 
 ## 비교 원칙
 

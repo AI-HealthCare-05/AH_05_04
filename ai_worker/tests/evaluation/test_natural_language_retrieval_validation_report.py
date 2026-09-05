@@ -23,7 +23,7 @@ from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
 REPOSITORY_ROOT = Path(__file__).parents[3]
 STATUS_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/status.json"
 REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
-SCHEMA_SET_HASH = "e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f"
+SCHEMA_SET_HASH = "611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158"
 
 
 def _status_payload() -> dict[str, Any]:
@@ -67,22 +67,22 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "TASK_1_PROVENANCE_CONTRACTS",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
                 "exit_code": 0,
-                "result": "51 passed",
+                "result": "57 passed",
             },
             {
                 "check_id": "TASK_2_SCHEMA_SET_EXPORT",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable -q",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary -q",
                 "exit_code": 0,
-                "result": "3 passed",
+                "result": "5 passed",
             },
             {
                 "check_id": "TASK_3_LOADER_BINDING",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
                 "exit_code": 0,
-                "result": "151 passed, 3 skipped",
+                "result": "151 passed, 5 skipped",
             },
         ],
-        "updated_at": "2026-09-05T13:06:16.000000Z",
+        "updated_at": "2026-09-05T15:28:41.000000Z",
         "status_sha256": "0" * 64,
     }
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
@@ -289,7 +289,7 @@ def test_status_parser_rejects_forbidden_key_fragments_recursively(
     ],
 )
 def test_forbidden_key_guard_rejects_each_fragment_inside_nested_dict_and_list(forbidden_fragment: str) -> None:
-    payload = {"level_one": [{"level_two": {f"copied_{forbidden_fragment}_field": "redacted"}}]}
+    payload: dict[str, Any] = {"level_one": [{"level_two": {f"copied_{forbidden_fragment}_field": "redacted"}}]}
 
     with pytest.raises(EvaluationValidationError) as raised:
         _reject_forbidden_keys(payload)
@@ -298,7 +298,7 @@ def test_forbidden_key_guard_rejects_each_fragment_inside_nested_dict_and_list(f
 
 
 def test_unverified_metric_guard_rejects_nested_metric_key_when_actual_run_is_null() -> None:
-    payload = {"actual_run_ref": None, "level_one": [{"level_two": {"metric_summary": []}}]}
+    payload: dict[str, Any] = {"actual_run_ref": None, "level_one": [{"level_two": {"metric_summary": []}}]}
 
     with pytest.raises(EvaluationValidationError) as raised:
         _reject_unverified_metric_fields(payload)
@@ -384,13 +384,14 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
     assert b"Candidate \xc2\xb7 Review Required" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    assert b"51 passed" in raw_status and b"151 passed, 3 skipped" in raw_status
-    assert b"51 passed" in REPORT_PATH.read_bytes() and b"151 passed, 3 skipped" in REPORT_PATH.read_bytes()
+    assert b"57 passed" in raw_status and b"151 passed, 5 skipped" in raw_status
+    assert b"57 passed" in REPORT_PATH.read_bytes() and b"151 passed, 5 skipped" in REPORT_PATH.read_bytes()
     assert b"47 passed" not in raw_status and b"154 passed" not in raw_status
     assert b"47 passed" not in REPORT_PATH.read_bytes() and b"154 passed" not in REPORT_PATH.read_bytes()
-    assert b"2026-09-05T13:06:16.000000Z" in raw_status
-    assert b"2026-09-05T13:06:16.000000Z" in REPORT_PATH.read_bytes()
-    assert b"2026-09-05T00:00:00.000000Z" not in raw_status
-    assert b"2026-09-05T00:00:00.000000Z" not in REPORT_PATH.read_bytes()
-    assert b"75b5b2a7f90407698ac73ce864e420f4db08061f20714cbf4b0d547027882994" not in raw_status
-    assert b"75b5b2a7f90407698ac73ce864e420f4db08061f20714cbf4b0d547027882994" not in REPORT_PATH.read_bytes()
+    assert b"5 passed" in raw_status and b"5 passed" in REPORT_PATH.read_bytes()
+    assert b"2026-09-05T15:28:41.000000Z" in raw_status
+    assert b"2026-09-05T15:28:41.000000Z" in REPORT_PATH.read_bytes()
+    assert b"2026-09-05T13:06:16.000000Z" not in raw_status
+    assert b"2026-09-05T13:06:16.000000Z" not in REPORT_PATH.read_bytes()
+    assert b"7f5921c9bc34b071407cbaae318f975c264d740cc8d2fdff77bab007622bd886" not in raw_status
+    assert b"7f5921c9bc34b071407cbaae318f975c264d740cc8d2fdff77bab007622bd886" not in REPORT_PATH.read_bytes()
