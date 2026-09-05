@@ -165,23 +165,23 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 
 위 평가 체계가 Post-MVP라는 분류는 현재 의료 안전 원칙을 유예한다는 뜻이 아닙니다. 구현 전 사용자 검증은 비식별 합성 데이터와 접근 통제를 사용하는 내부 staging 데모로 제한하며 Production 승인으로 간주하지 않습니다.
 
-## Post-MVP-1 목표 계약 테스트 — 미구현
+## Post-MVP-1 목표 계약 테스트 — 구현 상태별 관리
 
-다음 항목은 목표 계약의 완료 조건이며 현재 CI에서 통과한 것으로 간주하지 않습니다. 관련 기능 PR은 구현·OpenAPI·migration과 함께 해당 테스트를 추가하고 실제 실행 결과를 남겨야 합니다.
+다음 항목은 목표 계약의 완료 조건입니다. #148 등으로 구현·검증 완료가 명시된 항목은 현재 CI 증빙에 포함하고, 아직 미구현으로 표시된 항목은 완료로 간주하지 않습니다. 관련 기능 PR은 구현·OpenAPI·migration과 함께 해당 테스트를 추가하고 실제 실행 결과를 남겨야 합니다.
 
-- 동일 멱등 키·동일 요청은 Job을 하나만 만들고 기존 Job의 최신 `202`를 반환합니다.
-- 동일 멱등 키·다른 요청은 `409 IDEMPOTENCY_KEY_CONFLICT`입니다.
-- OCR·Guide·Chat 접수 `202 Accepted` 응답은 `{"data": JobStatusResponse}` envelope와 `Location = data.status_url`을 함께 반환합니다.
-- `GET /api/v1/jobs/{job_id}`는 `{"data": JobStatusResponse}` envelope를 반환하고, `RETRY_WAIT`에서는 `Retry-After`와 `retry_after_seconds`가 같은 값입니다. `#148`의 `test_job_status_api.py`로 실제 HTTP 요청(인증, 소유권 404, path parameter UUID 형식 오류의 `422 VALIDATION_FAILED`, `RETRY_WAIT`의 `retry_after_seconds`/`Retry-After`, `FAILED`의 `error` 필드, `COMPLETED`/`STALE`의 `result_url` 노출 기준, `Cache-Control: no-store`) 기준 검증 완료. OCR·Guide·Chat 접수 자체의 `202` 응답은 접수 API가 아직 `accept_job()`에 연결되지 않아 이 범위 밖입니다.
-- `GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`(rediscovery)는 문서·처방의 최신 Job 상태를 `get_job_status`와 같은 응답으로 돌려줍니다. 서비스 계층(`test_job_status.py`, `accept_job()` seed 기준 최신 Job 판별·소유권·no-job `404`)은 검증 완료했지만, OCR·Guide 접수가 아직 `accept_job()`에 연결되지 않아 실제 사용자에게는 이 GET의 성공 경로가 없으므로 라우트 등록 자체를 보류했습니다(`#148` 세 번째 리뷰). 라우트가 없어 route-level HTTP 테스트는 두지 않았습니다 — 접수가 연결되고 라우트를 다시 등록하는 시점에 실제 HTTP 흐름 테스트를 추가합니다.
+- OCR 접수의 동일 멱등 키·동일 요청은 Job을 하나만 만들고 기존 Job의 최신 `202`를 반환합니다(`#148`, `test_ocr_normalization_api.py`). Guide/Chat 접수는 아직 미구현입니다.
+- OCR 접수의 동일 멱등 키·다른 요청은 `409 IDEMPOTENCY_KEY_CONFLICT`입니다(`#148`, `test_ocr_normalization_api.py`). Guide/Chat 접수는 아직 미구현입니다.
+- OCR 접수 `202 Accepted` 응답은 `{"data": JobStatusResponse}` envelope와 `Location = data.status_url`을 함께 반환합니다(`#148`, `test_ocr_normalization_api.py`). Guide/Chat 접수는 아직 미구현입니다.
+- `GET /api/v1/jobs/{job_id}`는 `{"data": JobStatusResponse}` envelope를 반환하고, `RETRY_WAIT`에서는 `Retry-After`와 `retry_after_seconds`가 같은 값입니다. `#148`의 `test_job_status_api.py`로 실제 HTTP 요청(인증, 소유권 404, path parameter UUID 형식 오류의 `422 VALIDATION_FAILED`, `RETRY_WAIT`의 `retry_after_seconds`/`Retry-After`, `FAILED`의 `error` 필드, `COMPLETED`/`STALE`의 `result_url` 노출 기준, `Cache-Control: no-store`) 기준 검증 완료. OCR 접수의 `202` 응답은 `test_ocr_normalization_api.py`에서 별도로 검증합니다. Guide/Chat 접수는 아직 미구현입니다.
+- `GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`(rediscovery)는 문서·처방의 최신 Job 상태를 `get_job_status`와 같은 응답으로 돌려줍니다. 서비스 계층(`test_job_status.py`, `accept_job()` seed 기준 최신 Job 판별·소유권·no-job `404`)은 검증 완료했습니다. OCR 접수는 `accept_job()`에 연결되었지만 클라이언트는 접수 응답의 `status_url`로 polling하면 되므로 rediscovery 라우트 노출은 별도 계약 검토 후 진행합니다.
 - OCR은 #212로, Guide도 같은 목적으로 `guide.ai_job_id` 영속 매핑을 추가해(마이그레이션 `20fd11d29ecc`) Outbox 30일 보존과 무관하게 Job 90일 보존 동안 rediscovery·`GET /jobs/{job_id}`가 값을 찾을 수 있습니다(`#148` 네 번째 리뷰 지적). 모델 제약(`tests/models/test_guide_ai_job_mapping.py`), repository 조회(`tests/repositories/test_guide_repository.py`), 서비스 계층의 영속 매핑 우선 사용(`test_job_status.py`), 실제 PostgreSQL 제약·downgrade 데이터 안전성·동시 쓰기 차단(`tests/migration/test_postgresql_schema.py`, `test_guide_ai_job_mapping_downgrade.py`)까지 OCR의 #212 검증 범위와 동일하게 커버합니다.
 - Job 접수·상태 조회·결과 조회의 성공 응답과 `400`, `401`, `404`, `409`, `500`, `503` 오류 응답은 모두 `Cache-Control: no-store`를 포함합니다.
 - Job 접수·상태 조회 오류 응답은 공통 오류 envelope를 사용하고 `details`를 객체가 아니라 배열로 반환합니다.
 - HMAC key rotation 중 미만료 record가 존재할 수 있는 모든 retained key version 조회와 혼합 writer 차단 또는 rotation-invariant 원자 잠금으로 같은 원문 key의 중복 실행을 방지합니다. 현재·직전 key version만 조회하는 구현은 rotation 주기가 최대 멱등 레코드 보존기간보다 길 때만 허용합니다.
-- 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다. Service·Repository 계층은 `#147`의 `test_job_intake.py`(`test_accept_job_rolls_back_all_records_when_document_not_owned_by_user` 등)로 real Postgres 기준 검증됐습니다. API 라우트가 없어 실제 `202`/오류 응답 형태 확인은 `#148`에서 이어집니다.
-- 같은 멱등 키 동시 접수는 DB unique constraint로 하나만 Job을 생성하고 나머지는 기존 Job의 최신 `202`를 반환합니다. DB unique constraint 기반 동시성 처리는 `#147`의 `test_accept_job_concurrent_same_key_creates_only_one_job`으로 검증됐고, 실제 `202` 응답은 `#148`에서 확인합니다.
+- 접수 transaction 실패 시 Job·Outbox·placeholder·멱등 레코드가 함께 rollback됩니다. Service·Repository 계층은 `#147`의 `test_job_intake.py`(`test_accept_job_rolls_back_all_records_when_document_not_owned_by_user` 등)로 real Postgres 기준 검증됐습니다. OCR 접수 route의 실제 `202`/오류 응답 형태는 `#148`에서 확인 완료했고, Guide/Chat 접수 route 검증은 각 전환 PR에서 이어집니다.
+- 같은 멱등 키 동시 접수는 DB unique constraint로 하나만 Job을 생성하고 나머지는 기존 Job의 최신 `202`를 반환합니다. DB unique constraint 기반 동시성 처리는 `#147`의 `test_accept_job_concurrent_same_key_creates_only_one_job`으로 검증됐습니다. OCR 접수 route의 실제 `202` 응답은 `#148`에서 확인 완료했고, Guide/Chat 접수 route 검증은 각 전환 PR에서 이어집니다.
 - 비동기 요청은 `record_type + user_id + operation_id + key_hmac`, 동기 요청은 `record_type + user_id + operation_id + parent_resource_id + key_hmac` unique 기준으로 동시 중복 생성을 차단합니다.
-- 만료된 멱등 row 정리와 새 Job 생성은 중복 Job·Outbox·Provider 호출을 만들지 않습니다. Service·Repository 계층의 원자적 reclaim(만료 row 삭제 후 새 Job 생성, 경쟁 시 기존 unique constraint 재조회 경로로 합류)은 `#147`의 `test_accept_job_expired_record_is_reclaimed_and_creates_new_job`으로 검증됐습니다. 실제 `202` 응답은 `#148`에서 확인합니다.
+- 만료된 멱등 row 정리와 새 Job 생성은 중복 Job·Outbox·Provider 호출을 만들지 않습니다. Service·Repository 계층의 원자적 reclaim은 `#147`의 `test_accept_job_expired_record_is_reclaimed_and_creates_new_job`으로 검증됐습니다. OCR 접수 route의 실제 `202` 응답은 `#148`에서 확인 완료했고, Guide/Chat 접수 route 검증은 각 전환 PR에서 이어집니다.
 - 중복 전달과 Worker 재시작에도 결과 side effect는 한 번만 반영되고 DB commit 전에는 ACK하지 않습니다.
 - Publisher가 `CLAIMED` Outbox row 선점 뒤 종료하면 claim 만료 후 같은 Outbox row를 재선점하고, 두 Publisher는 `FOR UPDATE SKIP LOCKED`로 같은 row를 동시 선점하지 않습니다. #219의 단위·PostgreSQL 통합 테스트로 검증합니다. Reconciler가 미발행 `PENDING` Job에 대해 새 attempt Outbox를 만들지 않는 경계는 #142의 단위·PostgreSQL 통합 테스트로 검증합니다.
 - Worker 종료 후 lease가 만료된 `PROCESSING` Job은 Reconciler가 회수해 재시도 가능하면 `RETRY_WAIT`, 재시도 소진이면 `FAILED`로 전환하며, 새 Provider 호출은 증가한 attempt의 새 Outbox 이후에만 발생합니다.

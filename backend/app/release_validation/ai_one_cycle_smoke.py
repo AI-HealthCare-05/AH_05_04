@@ -1039,6 +1039,7 @@ class NetworkOneCycleRunner:
         json_body: Mapping[str, Any] | None = None,
         files: Mapping[str, tuple[str, bytes, str]] | None = None,
         form_data: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         if self._client is None:
             raise RuntimeError("network runner must be used as an async context manager")
@@ -1057,7 +1058,7 @@ class NetworkOneCycleRunner:
                 json=json_body,
                 files=files,
                 data=form_data,
-                headers=self._headers,
+                headers={**self._headers, **(headers or {})},
             )
         except httpx.TransportError:
             self._state.update(transport_failed_at=datetime.now(UTC).isoformat())
@@ -1287,13 +1288,43 @@ class NetworkOneCycleRunner:
             f"/documents/{document_id}/ocr-jobs",
             expected_status=202,
             json_body={"force_reprocess": False},
+            headers={"Idempotency-Key": f"release-validation-ocr-{document_id}"},
         )
-        job_id = str(ocr_request["data"]["job_id"])
-        self._record_id("ocr_job_id", job_id)
+        job_data = ocr_request["data"]
+        job_id = str(job_data["job_id"])
+        ocr_job_id = str(job_data["domain_id"])
+        self._record_id("ai_job_id", job_id)
+        self._record_id("ocr_job_id", ocr_job_id)
+
+        for _ in range(60):
+            if job_data.get("status") == "COMPLETED":
+                break
+            if job_data.get("status") in {"FAILED", "STALE"}:
+                raise HttpFlowError(
+                    "OCR_STATUS",
+                    {
+                        "http_status": 200,
+                        "api_code": (job_data.get("error") or {}).get("code") or job_data.get("status"),
+                    },
+                )
+            await asyncio.sleep(max(int(job_data.get("retry_after_seconds") or 1), 1))
+            job_status = await self._request(
+                "OCR_STATUS",
+                "GET",
+                str(job_data["status_url"]).removeprefix("/api/v1"),
+                expected_status=200,
+            )
+            job_data = job_status["data"]
+        else:
+            raise HttpFlowError("OCR_STATUS", {"http_status": 202, "api_code": "JOB_POLL_TIMEOUT"})
+
+        result_url = job_data.get("result_url")
+        if not result_url:
+            raise HttpFlowError("OCR_STATUS", {"http_status": 200, "api_code": "MISSING_RESULT_URL"})
         ocr_result = await self._request(
-            "OCR_REQUEST",
+            "OCR_RESULT",
             "GET",
-            f"/ocr-jobs/{job_id}",
+            str(result_url).removeprefix("/api/v1"),
             expected_status=200,
         )
         fields = ocr_result["data"].get("fields", [])

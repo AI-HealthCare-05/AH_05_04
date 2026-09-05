@@ -1,12 +1,16 @@
 from collections.abc import Generator
-from uuid import uuid4
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from app.dependencies.services import get_ocr_engine
 from app.main import app, fastapi_app
+from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
 from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
@@ -65,7 +69,48 @@ async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
     return login_response.json()["access_token"]
 
 
-async def _upload_and_run_ocr(client: AsyncClient, *, access_token: str) -> tuple[str, str]:
+async def _seed_completed_ocr_job(
+    db_session: AsyncSession,
+    *,
+    document_id: str,
+    fields: list[RecognizedField],
+) -> str:
+    completed_at = datetime.now(UTC)
+    ocr_job = OcrJob(
+        document_id=UUID(document_id),
+        ocr_status=OcrStatus.COMPLETED,
+        completed_at=completed_at,
+        engine_name="test",
+        model_version="test",
+        prompt_version="test",
+    )
+    db_session.add(ocr_job)
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            ExtractedField(
+                ocr_job_id=ocr_job.id,
+                medication_index=field.medication_index,
+                field_type=FieldType(field.field_type),
+                raw_value=field.raw_value,
+                normalized_value=field.normalized_value,
+                normalization_version=field.normalization_version,
+                confidence_score=(Decimal(str(field.confidence_score)) if field.confidence_score is not None else None),
+            )
+            for field in fields
+        ]
+    )
+    await db_session.flush()
+    return str(ocr_job.id)
+
+
+async def _upload_and_prepare_ocr(
+    client: AsyncClient,
+    *,
+    access_token: str,
+    db_session: AsyncSession,
+) -> tuple[str, str]:
     headers = {"Authorization": f"Bearer {access_token}"}
     upload_response = await client.post(
         "/api/v1/documents",
@@ -74,14 +119,12 @@ async def _upload_and_run_ocr(client: AsyncClient, *, access_token: str) -> tupl
     )
     assert upload_response.status_code == status.HTTP_201_CREATED
     document_id = upload_response.json()["data"]["document_id"]
-
-    ocr_response = await client.post(
-        f"/api/v1/documents/{document_id}/ocr-jobs",
-        json={"force_reprocess": True},
-        headers=headers,
+    job_id = await _seed_completed_ocr_job(
+        db_session,
+        document_id=document_id,
+        fields=list(ConfirmationTestOcrEngine.fields),
     )
-    assert ocr_response.status_code == status.HTTP_202_ACCEPTED
-    return document_id, ocr_response.json()["data"]["job_id"]
+    return document_id, job_id
 
 
 async def _confirm_all_fields(client: AsyncClient, *, job_id: str, access_token: str) -> None:
@@ -115,10 +158,10 @@ async def _confirm_fields(
 
 
 @pytest.mark.asyncio
-async def test_confirm_prescription_api_uses_confirmed_fields() -> None:
+async def test_confirm_prescription_api_uses_confirmed_fields(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="success")
-        document_id, job_id = await _upload_and_run_ocr(client, access_token=access_token)
+        document_id, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
         await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
 
         response = await client.post(
@@ -131,10 +174,10 @@ async def test_confirm_prescription_api_uses_confirmed_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirm_prescription_api_rejects_unreviewed_fields() -> None:
+async def test_confirm_prescription_api_rejects_unreviewed_fields(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="unreviewed")
-        document_id, _ = await _upload_and_run_ocr(client, access_token=access_token)
+        document_id, _ = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
 
         response = await client.post(
             f"/api/v1/documents/{document_id}/prescription",
@@ -149,7 +192,9 @@ async def test_confirm_prescription_api_rejects_unreviewed_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirm_prescription_api_rejects_when_only_one_of_two_medications_is_reviewed() -> None:
+async def test_confirm_prescription_api_rejects_when_only_one_of_two_medications_is_reviewed(
+    db_session: AsyncSession,
+) -> None:
     ConfirmationTestOcrEngine.fields = [
         *DEFAULT_RECOGNIZED_FIELDS,
         RecognizedField(2, "MEDICATION_NAME", "당뇨약정", 0.99),
@@ -161,7 +206,7 @@ async def test_confirm_prescription_api_rejects_when_only_one_of_two_medications
     ]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="partial-review")
-        document_id, job_id = await _upload_and_run_ocr(client, access_token=access_token)
+        document_id, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
         await _confirm_fields(client, job_id=job_id, access_token=access_token, medication_indexes={0, 1})
 
         response = await client.post(
@@ -183,10 +228,10 @@ async def test_confirm_prescription_api_rejects_when_only_one_of_two_medications
 
 
 @pytest.mark.asyncio
-async def test_confirm_prescription_api_rejects_invalid_numeric_value() -> None:
+async def test_confirm_prescription_api_rejects_invalid_numeric_value(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="invalid-number")
-        document_id, job_id = await _upload_and_run_ocr(client, access_token=access_token)
+        document_id, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
         await _confirm_fields(
             client,
             job_id=job_id,
@@ -225,13 +270,14 @@ async def test_confirm_prescription_api_rejects_invalid_numeric_value() -> None:
 )
 @pytest.mark.asyncio
 async def test_confirm_prescription_api_rejects_values_outside_db_limits(
+    db_session: AsyncSession,
     override_key: tuple[int, str],
     override_value: str,
     expected_field: str,
 ) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="db-limit")
-        document_id, job_id = await _upload_and_run_ocr(client, access_token=access_token)
+        document_id, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
         await _confirm_fields(
             client,
             job_id=job_id,
@@ -252,10 +298,10 @@ async def test_confirm_prescription_api_rejects_values_outside_db_limits(
 
 
 @pytest.mark.asyncio
-async def test_confirm_prescription_api_rejects_another_users_document() -> None:
+async def test_confirm_prescription_api_rejects_another_users_document(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner_token = await _signup_and_login(client, label="owner")
-        document_id, _ = await _upload_and_run_ocr(client, access_token=owner_token)
+        document_id, _ = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=owner_token)
         other_user_token = await _signup_and_login(client, label="other-user")
 
         response = await client.post(
@@ -268,7 +314,7 @@ async def test_confirm_prescription_api_rejects_another_users_document() -> None
 
 
 @pytest.mark.asyncio
-async def test_optional_extracted_field_accepts_confirmed_null() -> None:
+async def test_optional_extracted_field_accepts_confirmed_null(db_session: AsyncSession) -> None:
     ConfirmationTestOcrEngine.fields = [
         *DEFAULT_RECOGNIZED_FIELDS,
         RecognizedField(
@@ -291,8 +337,9 @@ async def test_optional_extracted_field_accepts_confirmed_null() -> None:
             "Authorization": f"Bearer {access_token}",
         }
 
-        document_id, job_id = await _upload_and_run_ocr(
+        document_id, job_id = await _upload_and_prepare_ocr(
             client,
+            db_session=db_session,
             access_token=access_token,
         )
 
@@ -338,7 +385,7 @@ async def test_optional_extracted_field_accepts_confirmed_null() -> None:
 
 
 @pytest.mark.asyncio
-async def test_required_extracted_field_rejects_confirmed_null() -> None:
+async def test_required_extracted_field_rejects_confirmed_null(db_session: AsyncSession) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -351,8 +398,9 @@ async def test_required_extracted_field_rejects_confirmed_null() -> None:
             "Authorization": f"Bearer {access_token}",
         }
 
-        _, job_id = await _upload_and_run_ocr(
+        _, job_id = await _upload_and_prepare_ocr(
             client,
+            db_session=db_session,
             access_token=access_token,
         )
 
@@ -389,7 +437,7 @@ async def test_required_extracted_field_rejects_confirmed_null() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_extracted_field_api_rejects_after_prescription_confirmed() -> None:
+async def test_update_extracted_field_api_rejects_after_prescription_confirmed(db_session: AsyncSession) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -403,8 +451,9 @@ async def test_update_extracted_field_api_rejects_after_prescription_confirmed()
             "Authorization": f"Bearer {access_token}",
         }
 
-        document_id, job_id = await _upload_and_run_ocr(
+        document_id, job_id = await _upload_and_prepare_ocr(
             client,
+            db_session=db_session,
             access_token=access_token,
         )
         await _confirm_all_fields(
