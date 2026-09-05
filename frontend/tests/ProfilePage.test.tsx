@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { logout } from '../src/api/auth'
 import { ApiError } from '../src/api/client'
 import {
   getCurrentUser,
@@ -14,10 +13,6 @@ import ProfilePage from '../src/pages/ProfilePage'
 vi.mock('../src/api/users', () => ({
   getCurrentUser: vi.fn(),
   updateCurrentUser: vi.fn(),
-}))
-
-vi.mock('../src/api/auth', () => ({
-  logout: vi.fn(),
 }))
 
 const CURRENT_USER: CurrentUser = {
@@ -45,9 +40,11 @@ function renderProfile() {
     <MemoryRouter initialEntries={['/profile']}>
       <Routes>
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/menu" element={<div>메뉴 화면</div>} />
         <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/guides" element={<div>가이드 화면</div>} />
+        <Route path="/chat" element={<div>도지 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -62,7 +59,6 @@ beforeEach(() => {
   localStorage.setItem('access_token', 'fixture-token')
   vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
-  vi.mocked(logout).mockResolvedValue({ detail: '로그아웃되었습니다.' })
 })
 
 afterEach(() => {
@@ -78,6 +74,8 @@ describe('내 정보 조회', () => {
     expect(screen.getByText(CURRENT_USER.phone_number!)).toBeTruthy()
     expect(screen.getByText(CURRENT_USER.birthday!)).toBeTruthy()
     expect(screen.getByText('여성')).toBeTruthy()
+    expect(screen.getAllByText('수정 가능')).toHaveLength(2)
+    expect(screen.getByText('현재 기본 정보는 조회만 가능해요.')).toBeTruthy()
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
@@ -245,73 +243,6 @@ describe('내 정보 수정', () => {
 
     pending.resolve(CURRENT_USER)
     expect(await screen.findByText('내 정보가 저장되었습니다.')).toBeTruthy()
-  })
-})
-
-describe('로그아웃', () => {
-  it('logout API 성공 후 토큰을 지우고 로그인 화면으로 이동한다', async () => {
-    renderProfile()
-    await screen.findByText(CURRENT_USER.email)
-
-    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
-
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
-    expect(localStorage.getItem('access_token')).toBeNull()
-    expect(logout).toHaveBeenCalledTimes(1)
-  })
-
-  it('logout API가 네트워크 오류로 실패해도 로컬 자격증명을 지우고 로그인 화면으로 이동한다', async () => {
-    vi.mocked(logout).mockRejectedValue(new Error('network unavailable'))
-    renderProfile()
-    await screen.findByText(CURRENT_USER.email)
-
-    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
-
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
-    expect(localStorage.getItem('access_token')).toBeNull()
-  })
-
-  it('logout API가 5xx로 실패해도 로컬 자격증명을 지우고 로그인 화면으로 이동한다', async () => {
-    vi.mocked(logout).mockRejectedValue(new ApiError(500, 'server fixture', 'INTERNAL_SERVER_ERROR'))
-    renderProfile()
-    await screen.findByText(CURRENT_USER.email)
-
-    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
-
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
-    expect(localStorage.getItem('access_token')).toBeNull()
-  })
-
-  it('로그아웃 요청이 응답 없이 pending 상태로 남아도 즉시 토큰을 지우고 로그인 화면으로 이동한다', async () => {
-    // PD-206: 서버 요청이 성공·실패·pending 중 어느 상태여도 클라이언트는 로컬 자격증명을
-    // 먼저 제거해야 합니다. 이 promise는 테스트 동안 절대 resolve/reject되지 않습니다 —
-    // await 없이도 화면이 즉시 이동해야 이 계약을 지키는 것입니다.
-    const pending = deferred<{ detail: string }>()
-    vi.mocked(logout).mockReturnValue(pending.promise)
-    renderProfile()
-    await screen.findByText(CURRENT_USER.email)
-
-    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
-
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
-    expect(localStorage.getItem('access_token')).toBeNull()
-    expect(logout).toHaveBeenCalledTimes(1)
-  })
-
-  it('로그아웃 후 보호된 route를 다시 렌더링하면 API 호출 없이 로그인 화면으로 보낸다', async () => {
-    const rendered = renderProfile()
-    await screen.findByText(CURRENT_USER.email)
-
-    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
-
-    vi.mocked(getCurrentUser).mockClear()
-    rendered.unmount()
-    renderProfile()
-
-    expect(await screen.findByText('로그인 화면')).toBeTruthy()
-    expect(getCurrentUser).not.toHaveBeenCalled()
-    expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
   })
 })
 

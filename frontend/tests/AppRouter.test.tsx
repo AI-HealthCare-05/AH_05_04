@@ -34,14 +34,31 @@ function renderRoute(path: string, strict = false) {
 
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   vi.clearAllMocks()
 })
 
 describe('인증 상태별 AppRouter 이동', () => {
-  it('비로그인 사용자가 첫 화면에 접속하면 시작 화면을 표시한다', () => {
+  it('비로그인 사용자가 첫 화면에 접속하면 /start로 이동해 시작 화면을 표시한다', async () => {
     renderRoute('/')
 
-    expect(screen.getByRole('heading', { name: 'AI 복약 파트너' })).toBeTruthy()
+    expect(
+      await screen.findByRole('heading', {
+        name: '처방과 일정을 쉽게 살펴봐요.',
+      }),
+    ).toBeTruthy()
+    expect(window.location.pathname).toBe('/start')
+  })
+
+  it('비로그인 사용자가 /start에 접속하면 시작 화면을 표시한다', () => {
+    renderRoute('/start')
+
+    expect(
+      screen.getByRole('heading', {
+        name: '처방과 일정을 쉽게 살펴봐요.',
+      }),
+    ).toBeTruthy()
+    expect(window.location.pathname).toBe('/start')
   })
 
   it('로그인 사용자가 첫 화면에 접속하면 홈 화면을 표시한다', async () => {
@@ -49,7 +66,8 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/')
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+    expect(screen.getByText('라우터 사용자님!')).toBeTruthy()
   })
 
   it('인증된 / 진입은 users/me를 한 번만 호출하고 조회한 이름으로 HOME을 표시한다', async () => {
@@ -59,14 +77,22 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/', true)
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+    expect(screen.getByText('라우터 사용자님!')).toBeTruthy()
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
-  it('비로그인 사용자가 회원 전용 화면에 직접 접속하면 로그인 화면으로 이동한다', () => {
-    renderRoute('/profile')
+  it.each([
+    '/profile',
+    '/guides/00000000-0000-4000-8000-000000000105',
+    '/prescriptions/upload',
+    '/prescriptions/review',
+    '/chat',
+  ])('비로그인 사용자가 회원 전용 화면 %s에 직접 접속하면 로그인 화면으로 이동한다', (path) => {
+    renderRoute(path)
 
     expect(screen.getByRole('heading', { name: '다시 만나서 반가워요' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/login')
   })
 
   it('로그인 사용자가 회원 전용 화면에 직접 접속하면 화면 접근을 허용한다', async () => {
@@ -77,12 +103,21 @@ describe('인증 상태별 AppRouter 이동', () => {
     expect(await screen.findByText(CURRENT_USER.email)).toBeTruthy()
   })
 
+  it('로그인 사용자가 메뉴 화면에 직접 접속하면 최신 메뉴를 표시한다', async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
+    localStorage.setItem('access_token', 'fixture-access-token')
+    renderRoute('/menu')
+
+    expect(await screen.findByRole('heading', { name: '메뉴' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '사용자 정보' })).toBeTruthy()
+  })
+
   it('로그인 사용자가 로그인 화면에 접속하면 홈 화면으로 이동한다', async () => {
     vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/login')
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
   })
 
   it('로그인 사용자가 회원가입 화면에 접속하면 홈 화면으로 이동한다', async () => {
@@ -90,7 +125,16 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/signup')
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+  })
+
+  it('로그인 사용자가 /start에 접속하면 홈 화면으로 이동한다', async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
+    localStorage.setItem('access_token', 'fixture-access-token')
+    renderRoute('/start')
+
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/')
   })
 
   it('남아 있는 토큰이 만료된 경우 로그인 화면 진입을 허용한다', async () => {

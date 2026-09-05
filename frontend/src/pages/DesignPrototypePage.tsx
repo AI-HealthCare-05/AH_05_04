@@ -48,12 +48,13 @@ type PrototypeScreen =
   | 'support-hub'
   | 'support-review'
 
-type MainNavigationItem = '홈' | '일정' | '가이드' | '메뉴'
+type MainNavigationItem = '홈' | '일정' | '도지' | '가이드' | '메뉴'
 type Navigate = (screen: PrototypeScreen) => void
 
 const mainNavigationTarget: Record<MainNavigationItem, PrototypeScreen> = {
   홈: 'home',
   일정: 'schedule',
+  도지: 'chat',
   가이드: 'guide',
   메뉴: 'menu',
 }
@@ -330,7 +331,7 @@ function ChatScreen({ keyboardOpen, onBack, onNavigate, scenario }: { keyboardOp
   const [sentMessage, setSentMessage] = useState('저녁 약을 깜빡했어요.')
 
   return (
-    <MobileShell title="복약 챗봇" onBack={onBack} hideNavigation={keyboardOpen} activeNavigation="가이드" onNavigate={(item) => onNavigate(mainNavigationTarget[item])}>
+    <MobileShell title="복약 챗봇" onBack={onBack} hideNavigation={keyboardOpen} activeNavigation="도지" onNavigate={(item) => onNavigate(mainNavigationTarget[item])}>
       <div className={`chat-layout ${keyboardOpen ? 'keyboard-open' : ''}`}>
         <div className="chat-messages" aria-live="polite">
           <div className="chat-message">{scenario.hasGuide ? '현재 확인된 처방 데이터를 기준으로 복용 질문에 답해 드릴게요.' : '확인된 처방 데이터가 아직 없어요. 먼저 처방전을 등록하고 내용을 확인해 주세요.'}</div>

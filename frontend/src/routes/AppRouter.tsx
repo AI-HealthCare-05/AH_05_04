@@ -13,6 +13,7 @@ import GuidePage from '../pages/GuidePage'
 import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
 import ProfilePage from '../pages/ProfilePage'
+import MenuPage from '../pages/MenuPage'
 
 type AuthState =
   | { status: 'checking'; user: null }
@@ -84,7 +85,7 @@ function RootRoute() {
   return authState.status === 'authenticated' ? (
     <HomePage currentUser={authState.user} />
   ) : (
-    <StartPage />
+    <Navigate to="/start" replace />
   )
 }
 
@@ -109,7 +110,7 @@ function AppRouter() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<RootRoute />} />
-        <Route path="/start" element={<StartPage />} />
+        <Route path="/start" element={<PublicOnlyRoute><StartPage /></PublicOnlyRoute>} />
         <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
         <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
         <Route path="/prescriptions/upload" element={<ProtectedRoute><PrescriptionUploadPage /></ProtectedRoute>} />
@@ -118,6 +119,7 @@ function AppRouter() {
         <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
         <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
         <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+        <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>

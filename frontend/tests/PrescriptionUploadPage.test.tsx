@@ -95,6 +95,27 @@ afterEach(() => {
 })
 
 describe('PrescriptionUploadPage OCR polling', () => {
+  it('최신 DOC-01의 카메라/저장 파일 선택과 실제 입력 형식을 제공한다', () => {
+    const { container } = renderPage()
+
+    expect(screen.getByText('등록 방법을 선택해 주세요.')).toBeTruthy()
+    expect(screen.getByText('카메라로 촬영하기')).toBeTruthy()
+    expect(screen.getByText('저장된 처방전 선택하기')).toBeTruthy()
+    expect(screen.getByText('처방전 촬영 팁')).toBeTruthy()
+
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]')
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0].accept).toBe('image/jpeg,image/png')
+    expect(inputs[0].getAttribute('capture')).toBe('environment')
+    expect(inputs[1].accept).toBe('image/jpeg,image/png,application/pdf')
+    expect(screen.getByText('지원 파일: JPG · JPEG · PNG · PDF / 최대 30MB')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
+
+    fireEvent.click(screen.getByText('카메라로 촬영하기'))
+    expect(screen.getByText('카메라로 촬영하기').closest('label')?.classList.contains('selected')).toBe(true)
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
+  })
+
   it('#227 긴 파일명을 기본 2줄로 제한하고 전체 파일명과 확장자를 펼쳐 확인할 수 있다', () => {
     const longFilename =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_FINAL-2026.png'
@@ -137,6 +158,21 @@ describe('PrescriptionUploadPage OCR polling', () => {
 
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(filename.classList.contains('mvp-upload__filename--expanded')).toBe(false)
+  })
+
+  it('파일 선택 방식을 바꾼 뒤 picker를 취소해도 이전 처방전을 제출하지 않는다', () => {
+    const { container } = renderPage()
+
+    selectPrescriptionFile(container, 'camera-prescription.png')
+    expect(screen.getByRole('button', { name: '처방전 읽기' })).toBeTruthy()
+
+    fireEvent.click(screen.getByText('저장된 처방전 선택하기'))
+
+    expect(screen.queryByText('camera-prescription.png')).toBeNull()
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
+    expect(
+      screen.getByText('저장된 처방전 선택하기').closest('label')?.classList.contains('selected'),
+    ).toBe(true)
   })
 
   it('PENDING → PROCESSING → COMPLETED 후 document_id와 job_id를 유지해 review route로 이동한다', async () => {
@@ -207,5 +243,25 @@ describe('PrescriptionUploadPage OCR polling', () => {
 
     expect(await screen.findByText('서버 응답이 원활하지 않아요')).toBeTruthy()
     expect(screen.queryByText('provider detail')).toBeNull()
+  })
+
+  it('업로드 실패 시 raw Backend 오류를 숨기고 DOC-01 복구 UI를 표시한다', async () => {
+    vi.mocked(uploadPrescription).mockRejectedValue(
+      new ApiError(503, 'provider stack and document detail', 'PROVIDER_DOWN'),
+    )
+    const { container } = renderPage()
+
+    selectPrescriptionFile(container)
+    fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
+
+    expect(await screen.findByText('처방전을 촬영하지 못했어요')).toBeTruthy()
+    expect(
+      screen.getByText('서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByText(/provider stack|PROVIDER_DOWN/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 선택하기' }))
+    expect(screen.getByText('카메라로 촬영하기')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
   })
 })

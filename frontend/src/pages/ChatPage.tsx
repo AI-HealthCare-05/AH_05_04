@@ -8,12 +8,18 @@ import {
 } from '../api/chat'
 import { ApiError } from '../api/client'
 import { Button, Card, MobileShell, StatusBadge } from '../design-system/components'
+import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './ChatPage.css'
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const optimisticUserMessageIdPrefix = 'optimistic-user-'
+const questionPresets = [
+  '아침 약은 언제 먹나요?',
+  '복용을 잊었어요',
+  '약을 함께 먹어도 되나요?',
+] as const
 
 function isOptimisticUserMessage(message: ChatMessageData) {
   return (
@@ -119,7 +125,17 @@ function getSessionStorageKey(prescriptionId: string) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof ApiError ? error.message : fallback
+  if (error instanceof ApiError) {
+    if (error.status === 401) return '로그인 정보를 다시 확인한 뒤 시도해 주세요.'
+    if (error.status === 404) return '대화 정보를 찾지 못했어요. 다시 불러와 주세요.'
+    if (error.status >= 500) return '도지와 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'
+  }
+
+  if (error instanceof TypeError) {
+    return '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'
+  }
+
+  return fallback
 }
 
 function createChatSessionOnce(prescriptionId: string) {
@@ -334,6 +350,13 @@ function ChatPage() {
     }
   }
 
+  const handleNavigation = (item: '홈' | '일정' | '도지' | '가이드' | '메뉴') => {
+    if (item === '홈') navigate('/')
+    if (item === '도지' && !prescriptionId) navigate('/chat')
+    if (item === '가이드') navigate('/guides')
+    if (item === '메뉴') navigate('/menu')
+  }
+
   if (currentRequiresLogin) {
     return (
       <div className="chat-page">
@@ -364,21 +387,24 @@ function ChatPage() {
         <MobileShell
           title="Dosey 도지"
           onBack={() => navigate('/')}
+          brandMark={<DoseyMascot variant="header" />}
           backPlacement="content"
-          hideNavigation
+          activeNavigation="도지"
+          disabledNavigation={['일정']}
+          onNavigate={handleNavigation}
         >
-          <main className="app-scroll chat-page__gate chat-page__gate--guide-required">
-            <h1>먼저 확정된 처방이 필요해요</h1>
-            <p>
-              처방전을 등록하고 인식 결과를 확인한 뒤 이용할 수 있어요.
-            </p>
-            <div className="notice attention chat-page__gate-notice">
-              현재 확인된 처방이 없어요. 처방전을 등록하고 인식 결과를 직접
-              확인해 주세요.
-            </div>
-            <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
-              처방전 등록하기
-            </Button>
+          <main className="app-scroll chat-page__gate chat-page__gate--no-prescription">
+            <span className="chat-page__prescription-icon" aria-hidden="true">▣</span>
+            <h1>도지와 처방에 대해 이야기하려면<br />먼저 처방전을 등록해 주세요</h1>
+            <p>처방전을 등록하고 내용을 확인하면<br />도지가 현재 처방을 참고해 답변할 수 있어요.</p>
+            <Card className="chat-page__gate-actions">
+              <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
+                처방전 등록하기
+              </Button>
+              <Button fullWidth variant="ghost" onClick={() => navigate('/')}>
+                홈으로 돌아가기
+              </Button>
+            </Card>
           </main>
         </MobileShell>
       </div>
@@ -390,23 +416,17 @@ function ChatPage() {
       <MobileShell
         title="Dosey 도지"
         onBack={() => navigate(-1)}
+        brandMark={<DoseyMascot variant="header" />}
         backPlacement="content"
-        hideNavigation
+        activeNavigation="도지"
+        disabledNavigation={['일정']}
+        onNavigate={handleNavigation}
       >
         <main className="chat-layout">
           <header className="chat-page__intro">
-            <h1>복약 챗봇</h1>
-            <p>확정된 처방 정보와 현재 질문으로 답변을 생성해요.</p>
+            <h1>도지와 대화하기</h1>
+            <p>현재 확인된 처방과 제공된 근거 범위에서만 답해요.</p>
           </header>
-
-          <div className="chat-page__suggestions" aria-label="추천 질문">
-            <button type="button" disabled>복용 방법 확인</button>
-            <button type="button" disabled>놓친 복용 안내</button>
-            <button type="button" disabled>불편·안전 확인</button>
-          </div>
-          <p className="chat-page__suggestions-notice" role="status">
-            추천 질문 기능은 준비 중이에요.
-          </p>
 
           <div className="chat-page__conversation">
             <div className="chat-messages" aria-live="polite">
@@ -420,14 +440,34 @@ function ChatPage() {
                 !currentErrorMessage &&
                 currentMessages.length === 0 && (
                 <div className="chat-page__state chat-page__empty">
-                  <div className="chat-page__empty-card">
-                    <strong>무엇을 확인하고 싶으신가요?</strong>
-                    <span>
-                      확정된 처방에 대해 궁금한 내용을 입력해 주세요.
-                    </span>
+                  <div className="chat-page__greeting">
+                    <DoseyMascot variant="chat" />
+                    <div className="chat-page__empty-card">
+                      <strong>도지</strong>
+                      <span>안녕하세요, 도지입니다.</span>
+                      <span>무엇을 도와드릴까요?</span>
+                    </div>
                   </div>
-                  <div className="chat-page__empty-callout">
-                    복약 질문을 입력해 주세요
+                  <div className="chat-page__presets" aria-label="이런 질문을 해보세요">
+                    <strong>이런 질문을 해보세요</strong>
+                    {questionPresets.map((question) => (
+                      <button
+                        key={question}
+                        type="button"
+                        onClick={() => setDraft(question)}
+                        disabled={!currentSessionId}
+                      >
+                        {question}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="chat-page__schedule-cta"
+                      aria-label="복약 일정 설정하기 (준비 중)"
+                      disabled
+                    >
+                      복약 일정 설정하기
+                    </button>
                   </div>
                 </div>
               )}
@@ -442,8 +482,11 @@ function ChatPage() {
               ))}
 
               {currentIsSending && (
-                <div className="chat-message chat-page__typing" role="status">
-                  AI 답변을 만들고 있어요…
+                <div className="chat-page__processing" role="status">
+                  <strong>CHAT · 처리 중</strong>
+                  <h2>답변을 확인하고 있어요</h2>
+                  <p>질문은 이미 보냈어요. 확인이 끝나면 이 자리에서 답변을 보여드릴게요.</p>
+                  <span>● ● ●&nbsp;&nbsp;도지가 확인하고 있어요…</span>
                 </div>
               )}
 
@@ -466,7 +509,7 @@ function ChatPage() {
 
             <form className="chat-composer" onSubmit={handleSend}>
               <label className="chat-page__composer-label" htmlFor="dosey-chat-input">
-                복약 질문
+                복약 챗봇 도지에게 질문
               </label>
               <textarea
                 id="dosey-chat-input"
