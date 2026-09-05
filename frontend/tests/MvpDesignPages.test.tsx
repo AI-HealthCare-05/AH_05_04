@@ -67,15 +67,16 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('회원가입 화면')).toBeTruthy()
   })
 
-  it('HOME-01은 users/me 이름과 기기 기준 날짜를 표시한다', async () => {
+  it('HOME-01은 users/me 이름과 현재 날짜를 표시한다', async () => {
     renderHome()
 
     expect(
       await screen.findByRole('heading', {
-        name: '테스트 사용자님, 오늘 복용할 약을 확인해 주세요',
+        name: '오늘도 건강한 하루 되세요',
       }),
     ).toBeTruthy()
-    expect(screen.getByText(/^기기 기준 /)).toBeTruthy()
+    expect(screen.getByText('테스트 사용자님!')).toBeTruthy()
+    expect(screen.getByText(/\d+월 \d+일/)).toBeTruthy()
   })
 
   it('HOME-01은 조회된 사용자의 이름이 비어 있을 때 개인화된 성공처럼 숨기지 않는다', () => {
@@ -86,48 +87,40 @@ describe('Dosey MVP design pages', () => {
         '사용자 이름을 불러오지 못했어요. 홈 기능은 계속 사용할 수 있어요.',
       ),
     ).toBeTruthy()
-    expect(
-      screen.getByRole('heading', { name: '오늘 복용할 약을 확인해 주세요' }),
-    ).toBeTruthy()
-    expect(screen.queryByText('사용자님, 오늘 복용할 약을 확인해 주세요')).toBeNull()
+    expect(screen.getByText('도지 사용자님!')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '처방전 등록하기' })).toBeTruthy()
   })
 
-  it('HOME-01은 실제 데이터가 없을 때 가짜 주간 그래프를 표시하지 않는다', async () => {
+  it('HOME-01은 실제 데이터가 없을 때 가짜 차트 대신 처방 등록을 안내한다', async () => {
     const { container } = renderHome()
 
-    await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
-    expect(screen.getByText('표시할 복약 기록이 아직 없어요')).toBeTruthy()
+    await screen.findByText('오늘도 건강한 하루 되세요')
+    expect(screen.getByText('복약 일정 연결을 준비하고 있어요')).toBeTruthy()
     expect(container.querySelector('.mvp-home__flow-placeholder')).toBeNull()
+    expect(screen.queryByText('85%')).toBeNull()
   })
 
   it('HOME-01의 두 문서 등록 CTA를 기존 업로드 route에 연결한다', async () => {
     const firstRender = renderHome()
 
-    await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
+    await screen.findByText('오늘도 건강한 하루 되세요')
     fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
 
     firstRender.unmount()
     renderHome()
-    await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
-    fireEvent.click(screen.getByRole('button', { name: '문서 등록' }))
+    await screen.findByText('오늘도 건강한 하루 되세요')
+    fireEvent.click(screen.getByRole('button', { name: /처방약 복용 안내/ }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
   })
 
   it('계약 없는 HOME 기능은 비활성 상태이며 추가 API를 호출하지 않는다', async () => {
     renderHome()
 
-    await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
+    await screen.findByText('오늘도 건강한 하루 되세요')
     expect(
-      screen.getByRole('button', { name: '건강정보 입력하기 (준비 중)' }),
-    ).toHaveProperty('disabled', true)
-    expect(screen.getByRole('button', { name: '복약 일정 (준비 중)' })).toHaveProperty(
-      'disabled',
-      true,
-    )
-    expect(
-      screen.getByRole('button', { name: '다른 약 물어보기 (준비 중)' }),
+      screen.getByRole('button', { name: '미확인 복약 기록 (준비 중)' }),
     ).toHaveProperty('disabled', true)
     expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty(
       'disabled',
@@ -138,26 +131,27 @@ describe('Dosey MVP design pages', () => {
   it('복약 챗봇은 ID를 추측하지 않고 기존 /chat route로만 이동한다', async () => {
     renderHome()
 
-    await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
-    fireEvent.click(screen.getByRole('button', { name: '복약 챗봇 도지' }))
+    await screen.findByText('오늘도 건강한 하루 되세요')
+    fireEvent.click(screen.getByRole('button', { name: /도지에게 질문하기/ }))
     expect(screen.getByText('처방전 ID 없는 챗봇 진입 화면')).toBeTruthy()
   })
 
   it('가이드 Bottom Navigation은 API 호출 없이 기존 /guides empty route로 이동한다', async () => {
     renderHome()
 
-    await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
+    await screen.findByText('오늘도 건강한 하루 되세요')
     fireEvent.click(screen.getByRole('button', { name: '가이드' }))
     expect(screen.getByText('가이드 empty 화면')).toBeTruthy()
   })
 
-  it('HOME-01 Bottom Navigation은 홈 active 상태와 Profile 회귀를 유지한다', async () => {
+  it('HOME-01 Bottom Navigation은 최신 5-tab과 Profile 회귀를 유지한다', async () => {
     renderHome()
 
-    await screen.findByText('테스트 사용자님, 오늘 복용할 약을 확인해 주세요')
+    await screen.findByText('오늘도 건강한 하루 되세요')
     expect(screen.getByRole('button', { name: '홈' }).getAttribute('aria-current')).toBe(
       'page',
     )
+    expect(screen.getByRole('button', { name: '도지' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '메뉴' }))
     expect(screen.getByText('내 정보 화면')).toBeTruthy()
   })

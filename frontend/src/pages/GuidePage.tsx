@@ -259,6 +259,7 @@ function GuidePage() {
         disabledNavigation={['일정']}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '도지') navigate('/chat')
           if (item === '가이드' && !guideId) navigate('/guides')
           if (item === '도지') {
             navigate(

@@ -49,7 +49,8 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/')
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+    expect(screen.getByText('라우터 사용자님!')).toBeTruthy()
   })
 
   it('인증된 / 진입은 users/me를 한 번만 호출하고 조회한 이름으로 HOME을 표시한다', async () => {
@@ -59,7 +60,8 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/', true)
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
+    expect(screen.getByText('라우터 사용자님!')).toBeTruthy()
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
@@ -91,7 +93,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/login')
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
   })
 
   it('로그인 사용자가 회원가입 화면에 접속하면 홈 화면으로 이동한다', async () => {
@@ -99,7 +101,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/signup')
 
-    expect(await screen.findByRole('heading', { name: '라우터 사용자님, 오늘 복용할 약을 확인해 주세요' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
   })
 
   it('남아 있는 토큰이 만료된 경우 로그인 화면 진입을 허용한다', async () => {
