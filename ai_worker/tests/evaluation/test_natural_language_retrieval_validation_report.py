@@ -10,6 +10,8 @@ from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
 from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
+    _reject_forbidden_keys,
+    _reject_unverified_metric_fields,
     parse_status_bytes,
     render_report,
 )
@@ -157,6 +159,36 @@ def test_status_parser_rejects_invalid_self_hash() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", "rag-eval.schema-set-alternate"),
+        ("version", "1.3.1"),
+        ("hash", "a" * 64),
+    ],
+)
+def test_status_parser_rejects_rehashed_non_candidate_schema_set(field: str, value: str) -> None:
+    payload = _status_payload()
+    payload["schema_set_ref"][field] = value
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_status_parser_rejects_rehashed_non_candidate_decision() -> None:
+    payload = _status_payload()
+    payload["schema_set_decision"] = "docs/governance/decisions/alternate.md"
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+@pytest.mark.parametrize(
     "forbidden_key",
     [
         "query",
@@ -178,6 +210,47 @@ def test_status_parser_rejects_forbidden_key_fragments_recursively(forbidden_key
         parse_status_bytes(_status_bytes(payload))
 
     assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+@pytest.mark.parametrize(
+    "forbidden_fragment",
+    [
+        "query",
+        "evidence_body",
+        "provider",
+        "credential",
+        "protected_path",
+        "holdout_content",
+        "fingerprint_value",
+        "hmac_value",
+    ],
+)
+def test_forbidden_key_guard_rejects_each_fragment_inside_nested_dict_and_list(forbidden_fragment: str) -> None:
+    payload = {"level_one": [{"level_two": {f"copied_{forbidden_fragment}_field": "redacted"}}]}
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        _reject_forbidden_keys(payload)
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_unverified_metric_guard_rejects_nested_metric_key_when_actual_run_is_null() -> None:
+    payload = {"actual_run_ref": None, "level_one": [{"level_two": {"metric_summary": []}}]}
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        _reject_unverified_metric_fields(payload)
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_report_decision_display_and_href_are_derived_from_the_validated_status() -> None:
+    status = parse_status_bytes(_status_bytes(_status_payload()))
+    alternate_decision = "docs/governance/decisions/alternate-candidate.md"
+    altered_status = status.model_copy(update={"schema_set_decision": alternate_decision})
+
+    report = render_report(altered_status).decode("utf-8")
+
+    assert f"[`{alternate_decision}`](../../../governance/decisions/alternate-candidate.md)" in report
 
 
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:

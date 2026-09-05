@@ -7,9 +7,7 @@ from pydantic import BeforeValidator, Field, StrictInt, ValidationError, model_v
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.schemas.common import (
-    ImmutableReference,
     NonEmptyString,
-    ResourcePath,
     Sha256Hex,
     StableId,
     StrictContractModel,
@@ -32,6 +30,7 @@ _PHASE_0_BLOCKERS = (
     "BLOCKED_BY_RAG_14_ADAPTER",
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
+_DECISION_DOCS_PREFIX = "docs/"
 
 
 def _tuple_from_wire(value: object) -> object:
@@ -63,6 +62,12 @@ class ValidationCheck(StrictContractModel):
     result: NonEmptyString
 
 
+class CandidateSchemaSetRef(StrictContractModel):
+    id: Literal["rag-eval.schema-set"]
+    version: Literal["1.3.0"]
+    hash: Literal["e9843e190fbfabc6305d709e04ea296aefd107e66739882471fa3aedee08092f"]
+
+
 class Issue273ValidationStatus(StrictContractModel):
     schema_version: Literal["1.0.0"]
     issue: Literal["#273"]
@@ -72,8 +77,8 @@ class Issue273ValidationStatus(StrictContractModel):
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
     created_counts: CreatedCounts
-    schema_set_ref: ImmutableReference
-    schema_set_decision: ResourcePath
+    schema_set_ref: CandidateSchemaSetRef
+    schema_set_decision: Literal["docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md"]
     responsible_reviewer: Literal["@hazelnutflavoured"]
     approval_transition: Literal["FUTURE_PULL_REQUEST_REVIEW_EVENT"]
     dataset_status: Literal["NOT_CREATED"]
@@ -164,8 +169,15 @@ def parse_status_bytes(raw_bytes: bytes) -> Issue273ValidationStatus:
     return status
 
 
+def _decision_href(decision_path: str) -> str:
+    if not decision_path.startswith(_DECISION_DOCS_PREFIX):
+        raise ValueError("candidate Decision path must be under docs")
+    return f"../../../{decision_path.removeprefix(_DECISION_DOCS_PREFIX)}"
+
+
 def render_report(status: Issue273ValidationStatus) -> bytes:
     schema_set = status.schema_set_ref
+    decision_href = _decision_href(status.schema_set_decision)
     lines = [
         "# Issue #273 Phase 0 Validation Report",
         "",
@@ -175,11 +187,7 @@ def render_report(status: Issue273ValidationStatus) -> bytes:
         f"- Schema Set Status: `{status.schema_set_status}`",
         f"- Dataset: `{status.dataset_ref}` (`{status.dataset_status}`)",
         f"- Schema Set: `{schema_set.id}@{schema_set.version}` `{schema_set.hash}`",
-        (
-            "- Candidate Decision: "
-            f"[`{status.schema_set_decision}`](../../../governance/decisions/"
-            "2026-09-05-rag-evaluation-schema-set-1-3-candidate.md)"
-        ),
+        (f"- Candidate Decision: [`{status.schema_set_decision}`]({decision_href})"),
         (
             f"- Approval Transition: `{status.approval_transition}` by responsible reviewer "
             f"`{status.responsible_reviewer}`; this future PR event has not occurred."
