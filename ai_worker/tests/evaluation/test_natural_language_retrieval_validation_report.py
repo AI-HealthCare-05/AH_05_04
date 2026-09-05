@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
 from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
+    Issue273ValidationStatus,
+    ValidationCheck,
     _reject_forbidden_keys,
     _reject_unverified_metric_fields,
     parse_status_bytes,
@@ -64,7 +67,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "TASK_1_PROVENANCE_CONTRACTS",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
                 "exit_code": 0,
-                "result": "47 passed",
+                "result": "51 passed",
             },
             {
                 "check_id": "TASK_2_SCHEMA_SET_EXPORT",
@@ -76,7 +79,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "TASK_3_LOADER_BINDING",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
                 "exit_code": 0,
-                "result": "154 passed",
+                "result": "151 passed, 3 skipped",
             },
         ],
         "updated_at": "2026-09-05T00:00:00.000000Z",
@@ -306,7 +309,8 @@ def test_unverified_metric_guard_rejects_nested_metric_key_when_actual_run_is_nu
 def test_report_decision_display_and_href_are_derived_from_the_validated_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    status = parse_status_bytes(_status_bytes(_status_payload()))
+    raw_status = _status_bytes(_status_payload())
+    status = parse_status_bytes(raw_status)
     observed_paths: list[str] = []
 
     def decision_href(decision_path: str) -> str:
@@ -315,7 +319,7 @@ def test_report_decision_display_and_href_are_derived_from_the_validated_status(
 
     monkeypatch.setattr(validation_module, "_decision_href", decision_href)
 
-    report = render_report(status).decode("utf-8")
+    report = render_report(raw_status).decode("utf-8")
 
     assert observed_paths == [status.schema_set_decision]
     assert f"[`{status.schema_set_decision}`](../../../verified-decision.md)" in report
@@ -333,23 +337,54 @@ def test_markdown_table_cell_escapes_pipe_backslash_and_line_break_injection() -
 
 
 def test_report_revalidates_model_copy_before_rendering_check_cells() -> None:
-    status = parse_status_bytes(_status_bytes(_status_payload()))
+    payload = _status_payload()
     injected = "passed | forged\n\n## Follow-up heading"
-    altered_check = status.checks[0].model_copy(update={"result": injected})
-    altered_status = status.model_copy(update={"checks": (altered_check, *status.checks[1:])})
+    payload["checks"][0]["result"] = injected
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
 
     with pytest.raises(EvaluationValidationError) as raised:
-        render_report(altered_status)
+        render_report(_status_bytes(payload))
 
     assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
     assert injected not in str(raised.value)
 
 
+def test_report_rejects_untrusted_objects_without_serialization_warning_or_sentinel_leak() -> None:
+    raw_status = _status_bytes(_status_payload())
+    status = parse_status_bytes(raw_status)
+    sentinel = "patient@example.com | raw HOLDOUT query\n## injected"
+    base = status.model_dump(mode="json")
+    raw_nested_model = Issue273ValidationStatus.model_construct(**{**base, "checks": [{"result": sentinel}]})
+    nested_check = ValidationCheck.model_construct(
+        check_id="TASK_1_PROVENANCE_CONTRACTS",
+        command="unsafe",
+        exit_code=0,
+        result=sentinel,
+    )
+    nested_construct_model = Issue273ValidationStatus.model_construct(
+        **{**base, "checks": (nested_check, *status.checks[1:])}
+    )
+
+    for probe in (raw_nested_model, nested_construct_model, {"nested": [sentinel]}, [sentinel]):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(EvaluationValidationError) as raised:
+                render_report(probe)  # type: ignore[arg-type]
+
+        assert caught == []
+        assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+        assert sentinel not in str(raised.value)
+
+
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     raw_status = STATUS_PATH.read_bytes()
-    status = parse_status_bytes(raw_status)
+    parse_status_bytes(raw_status)
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
-    assert render_report(status) == REPORT_PATH.read_bytes()
+    assert render_report(raw_status) == REPORT_PATH.read_bytes()
     assert b"Candidate \xc2\xb7 Review Required" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
+    assert b"51 passed" in raw_status and b"151 passed, 3 skipped" in raw_status
+    assert b"51 passed" in REPORT_PATH.read_bytes() and b"151 passed, 3 skipped" in REPORT_PATH.read_bytes()
+    assert b"47 passed" not in raw_status and b"154 passed" not in raw_status
+    assert b"47 passed" not in REPORT_PATH.read_bytes() and b"154 passed" not in REPORT_PATH.read_bytes()

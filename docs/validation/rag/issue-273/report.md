@@ -37,13 +37,13 @@ No DEV or HOLDOUT question bodies, Gold artifacts, actual Run, or Metric values 
 
 | Check | Command | Exit | Result |
 | --- | --- | ---: | --- |
-| `TASK_1_PROVENANCE_CONTRACTS` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 47 passed |
+| `TASK_1_PROVENANCE_CONTRACTS` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 51 passed |
 | `TASK_2_SCHEMA_SET_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable -q` | `0` | 3 passed |
-| `TASK_3_LOADER_BINDING` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q` | `0` | 154 passed |
+| `TASK_3_LOADER_BINDING` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q` | `0` | 151 passed, 3 skipped |
 
 ## Boundaries
 
 - Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.
 - No approval, Contract Freeze, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, or Production readiness is claimed.
 
-Status updated at `2026-09-05T00:00:00.000000Z`. Canonical status SHA-256: `78be8810bbe7eee524a115d3950b356eb9051113a004daa264383e3d523eaa5d`.
+Status updated at `2026-09-05T00:00:00.000000Z`. Canonical status SHA-256: `75b5b2a7f90407698ac73ce864e420f4db08061f20714cbf4b0d547027882994`.

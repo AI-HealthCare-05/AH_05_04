@@ -35,7 +35,7 @@ _PHASE_0_CHECK_CATALOG = {
     "TASK_1_PROVENANCE_CONTRACTS": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
-        "47 passed",
+        "51 passed",
     ),
     "TASK_2_SCHEMA_SET_EXPORT": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest "
@@ -47,7 +47,7 @@ _PHASE_0_CHECK_CATALOG = {
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_authoring_identity_loader.py "
         "ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
-        "154 passed",
+        "151 passed, 3 skipped",
     ),
 }
 _PHASE_0_CHECK_IDS = tuple(_PHASE_0_CHECK_CATALOG)
@@ -220,8 +220,10 @@ def _markdown_table_cell(value: str | int) -> str:
     return normalized.replace("\\", "\\\\").replace("|", "\\|")
 
 
-def render_report(status: Issue273ValidationStatus) -> bytes:
-    status = _validate_status_payload(cast(dict[str, JsonValue], status.model_dump(mode="json")))
+def render_report(raw_status: bytes) -> bytes:
+    if type(raw_status) is not bytes:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    status = parse_status_bytes(raw_status)
     schema_set = status.schema_set_ref
     decision_href = _decision_href(status.schema_set_decision)
     lines = [
