@@ -164,12 +164,15 @@ describe('GuidePage', () => {
         '불명확한 내용은 의료진 또는 약사에게 확인해 주세요.',
       ),
     ).toBeTruthy()
-    expect(screen.queryByRole('heading', { name: '안전 안내' })).toBeNull()
+    const safetyNotice = screen
+      .getByRole('heading', { name: '안전 안내' })
+      .closest('aside')
+    expect(safetyNotice).not.toBeNull()
     expect(
-      screen.queryByText(
+      within(safetyNotice!).getByText(
         '임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요.',
       ),
-    ).toBeNull()
+    ).toBeTruthy()
     expect(within(medicationCard!).getByText('하루 1회 · 아침 저녁 식후')).toBeTruthy()
     expect(screen.queryByText('가이드 전체 내용')).toBeNull()
   })
@@ -238,6 +241,9 @@ describe('GuidePage', () => {
 
     expect(await screen.findByText('가이드 전체 내용')).toBeTruthy()
     expect(document.querySelector('.guide-page__guide-text')?.textContent).toBe(content)
+    expect(document.querySelector('.guide-page__guide-text')?.textContent).toContain(
+      '안전 안내: 임의로 복용을 변경하지 마세요.',
+    )
     expect(screen.queryByText(/확인된 약 목록/)).toBeNull()
     expect(document.querySelectorAll('.guide-page__medication-card')).toHaveLength(0)
   })

@@ -82,6 +82,13 @@ function PrescriptionUploadPage() {
   const [hasUploadFailed, setHasUploadFailed] = useState(false)
   const [isPreparing, setIsPreparing] = useState(false)
   const preparationRequestRef = useRef(0)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const resetNativeFileInputs = () => {
+    if (cameraInputRef.current) cameraInputRef.current.value = ''
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
 
   const fetchOcrJob = useCallback(
     (jobId: string, signal: AbortSignal) => getOcrJob(jobId, signal),
@@ -123,6 +130,8 @@ function PrescriptionUploadPage() {
 
     setFile(selectedFile)
     setUploadSource(source)
+    const inactiveInput = source === 'camera' ? fileInputRef.current : cameraInputRef.current
+    if (inactiveInput) inactiveInput.value = ''
     setIsFilenameExpanded(false)
     setPollingTarget(null)
     setMessage('')
@@ -132,6 +141,7 @@ function PrescriptionUploadPage() {
   const selectUploadSource = (source: UploadSource) => {
     if (uploadSource === source) return
 
+    resetNativeFileInputs()
     setUploadSource(source)
     setFile(null)
     setIsFilenameExpanded(false)
@@ -174,6 +184,7 @@ function PrescriptionUploadPage() {
   }
 
   const resetToUpload = () => {
+    resetNativeFileInputs()
     setPollingTarget(null)
     setFile(null)
     setUploadSource(null)
@@ -286,6 +297,7 @@ function PrescriptionUploadPage() {
 
           <div className="mvp-upload__methods" role="group" aria-label="처방전 등록 방법">
             <input
+              ref={cameraInputRef}
               id={`${inputId}-camera`}
               className="mvp-upload__input"
               type="file"
@@ -310,6 +322,7 @@ function PrescriptionUploadPage() {
             </label>
 
             <input
+              ref={fileInputRef}
               id={`${inputId}-file`}
               className="mvp-upload__input"
               type="file"

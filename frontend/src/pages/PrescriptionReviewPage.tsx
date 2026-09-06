@@ -28,6 +28,7 @@ const fieldLabels: Record<string, string> = {
   MEDICATION_STRENGTH: '제품함량',
 
   DOSE_VALUE: '1회 복용량',
+  DOSE_UNIT: '복용단위',
   FREQUENCY_PER_DAY: '하루횟수',
   TIMING: '복용조건',
   DURATION_DAYS: '투약일수',
@@ -1099,6 +1100,7 @@ function PrescriptionReviewPage() {
     const rows = [
       'MEDICATION_STRENGTH',
       'DOSE_VALUE',
+      'DOSE_UNIT',
       'FREQUENCY_PER_DAY',
       'TIMING',
       'DURATION_DAYS',
@@ -1133,9 +1135,7 @@ function PrescriptionReviewPage() {
               수정 시작과 동시에 이 약의 검토 완료가 해제됐습니다.
             </p>
             <div className="prescription-review__edit-grid">
-              {group.fields
-                .filter((field) => field.field_type !== 'DOSE_UNIT')
-                .map(renderEditField)}
+              {group.fields.map(renderEditField)}
             </div>
             <div className="prescription-review__section-actions">
               <Button

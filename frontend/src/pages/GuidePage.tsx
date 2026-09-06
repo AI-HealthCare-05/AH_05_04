@@ -52,6 +52,7 @@ type StructuredMedication = {
 type StructuredGuide = {
   medications: StructuredMedication[]
   generalNotice: string
+  safetyNotice: string
 }
 
 const GUIDE_DETAIL_LABELS: Record<string, string> = {
@@ -119,7 +120,7 @@ function parseGuideContent(content: string): StructuredGuide | null {
   }
 
   if (medications.length === 0) return null
-  return { medications, generalNotice }
+  return { medications, generalNotice, safetyNotice }
 }
 
 function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
@@ -174,6 +175,10 @@ function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
       <aside className="guide-page__common-notice" aria-labelledby="guide-common-heading">
         <h3 id="guide-common-heading">공통 복약 안내</h3>
         <p>{guide.generalNotice}</p>
+      </aside>
+      <aside className="guide-page__safety-notice" aria-labelledby="guide-safety-heading">
+        <h3 id="guide-safety-heading">안전 안내</h3>
+        <p>{guide.safetyNotice}</p>
       </aside>
     </section>
   )

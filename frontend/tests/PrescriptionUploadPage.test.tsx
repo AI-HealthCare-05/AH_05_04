@@ -175,6 +175,36 @@ describe('PrescriptionUploadPage OCR polling', () => {
     ).toBe(true)
   })
 
+  it('방식 전환 뒤 같은 파일을 다시 선택하면 native value와 CTA가 복구된다', () => {
+    const { container } = renderPage()
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]')
+    const cameraInput = inputs[0]
+    const fileInput = inputs[1]
+    const sameFile = new File(['prescription'], 'prescription-a.png', {
+      type: 'image/png',
+    })
+
+    fireEvent.change(fileInput, { target: { files: [sameFile] } })
+    Object.defineProperty(fileInput, 'value', {
+      configurable: true,
+      writable: true,
+      value: 'C:\\fakepath\\prescription-a.png',
+    })
+    expect(screen.getByRole('button', { name: '처방전 읽기' })).toBeTruthy()
+
+    fireEvent.click(screen.getByText('카메라로 촬영하기'))
+    expect(fileInput.value).toBe('')
+    fireEvent.change(cameraInput, { target: { files: [] } })
+    expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
+
+    fireEvent.click(screen.getByText('저장된 처방전 선택하기'))
+    expect(cameraInput.value).toBe('')
+    fireEvent.change(fileInput, { target: { files: [sameFile] } })
+
+    expect(screen.getByText('prescription-a.png')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '처방전 읽기' })).toBeTruthy()
+  })
+
   it('PENDING → PROCESSING → COMPLETED 후 document_id와 job_id를 유지해 review route로 이동한다', async () => {
     vi.mocked(getOcrJob)
       .mockResolvedValueOnce(ocrResponse('PENDING'))
