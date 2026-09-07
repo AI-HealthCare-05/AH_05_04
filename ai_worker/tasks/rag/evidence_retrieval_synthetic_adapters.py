@@ -37,6 +37,8 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CANONICAL_SCORE_RE = re.compile(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$")
 _MATCHING_NORMALIZATION_STRATEGY = "unicode-nfc-casefold-collapse-whitespace-v1"
 _TRIGRAM_STRATEGY = "synthetic-trigram-jaccard-v1"
+_LEXICAL_ORDERING = "exact-first-then-score-desc-then-evidence-key-utf8-ascending"
+_DENSE_ORDERING = "score-desc-then-evidence-key-utf8-ascending"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +101,7 @@ class VersionedLexicalSearchConfig:
             "matching_normalization_strategy": _MATCHING_NORMALIZATION_STRATEGY,
             "trigram_strategy": _TRIGRAM_STRATEGY,
             "trigram_similarity_threshold": trigram_similarity_threshold,
+            "ordering": _LEXICAL_ORDERING,
             "score_places": 6,
             "decimal_context": _decimal_context_payload(),
         }
@@ -143,6 +146,7 @@ class VersionedDenseSearchConfig:
                 for item in sorted(query_vectors, key=_query_vector_sort_key)
             ],
             "minimum_similarity": minimum_similarity,
+            "ordering": _DENSE_ORDERING,
             "score_places": 6,
             "decimal_context": _decimal_context_payload(),
         }
@@ -469,11 +473,7 @@ def _valid_provenance(value: KnowledgeEvidenceProvenance) -> bool:
         )
         and _valid_artifact_ref(value.evidence_index_ref)
         and _valid_artifact_ref(value.source_snapshot_ref)
-        and _has_synthetic_provenance_marker(
-            value.evidence_index_ref,
-            value.source_snapshot_ref,
-            value.source_version,
-        )
+        and _has_synthetic_source_marker(value.source_snapshot_ref, value.source_version)
         and isinstance(value.content_sha256, str)
         and _SHA256_RE.fullmatch(value.content_sha256) is not None
     )
@@ -713,16 +713,6 @@ def _is_synthetic_artifact_ref(value: ImmutableArtifactRef) -> bool:
         value.artifact_code.startswith("synthetic-")
         or value.version.startswith("synthetic-")
         or "@synthetic-" in value.version
-    )
-
-
-def _has_synthetic_provenance_marker(
-    evidence_index_ref: ImmutableArtifactRef,
-    source_snapshot_ref: ImmutableArtifactRef,
-    source_version: str,
-) -> bool:
-    return _is_synthetic_artifact_ref(evidence_index_ref) or _has_synthetic_source_marker(
-        source_snapshot_ref, source_version
     )
 
 

@@ -2222,7 +2222,7 @@ def test_versioned_lexical_config_has_stable_golden_hash() -> None:
         "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
     )
 
-    assert config.artifact_ref.content_sha256 == "07832cbfb47c54ffdae42be7824bf1c8503c92478d9fa774d3038c70b8a5d15e"
+    assert config.artifact_ref.content_sha256 == "3f7f4a61337728b4d0f0112992feb8fdd66bc7ea842df3a7baf9d5d1a2d93e91"
 
 
 @pytest.mark.parametrize("mutation", ["provenance", "rerank-config", "adapter"])
@@ -2261,6 +2261,42 @@ def test_synthetic_rerank_adapter_rejects_non_synthetic_boundary(mutation: str) 
     adapter_ref = artifact("rerank-adapter" if mutation == "adapter" else "synthetic-rerank-adapter")
 
     result = VersionedEvidenceRerankAdapter(config, adapter_ref).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+def test_synthetic_rerank_adapter_rejects_approved_source_provenance_under_synthetic_index() -> None:
+    # A synthetic evidence index must not vouch for approved-Source-shaped provenance.
+    index_ref = artifact("synthetic-knowledge-index")
+    candidate = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_index_ref=index_ref,
+            source_snapshot_ref=artifact("mfds-product-approval"),
+            source_version="MFDS-2026-09",
+        ),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
+    )
+    config = VersionedRerankConfig.create(
+        "synthetic-rerank-config",
+        "synthetic-rerank-config@1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        index_ref,
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
 
     assert isinstance(result, EvidenceRerankFailure)
 

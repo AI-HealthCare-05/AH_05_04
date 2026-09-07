@@ -103,7 +103,9 @@ Receipt 경계를 검증하는 명시적 synthetic fixture adapter로 이름과 
 PR `#270`의 `LEXICAL/DENSE` Kernel stage를 유지한다. `LEXICAL` 내부에서 normalized substring exact match를
 우선하고 나머지 후보에 synthetic trigram similarity를 적용한다. `DENSE`는 query fingerprint에 결속된
 fixture vector와 record vector의 Decimal cosine similarity를 사용한다. Reranker는 versioned lexical/dense
-weight와 `top_k`를 적용한다. 모든 정렬은 score 내림차순, UTF-8 `evidence_key` 오름차순으로 결정적이다.
+weight와 `top_k`를 적용한다. `LEXICAL` 정렬은 exact 우선, score 내림차순, UTF-8 `evidence_key` 오름차순
+순서이며 trigram score가 `1`이어도 exact가 앞선다. `DENSE`와 rerank 정렬은 score 내림차순, UTF-8
+`evidence_key` 오름차순이다. 세 정렬 기준 모두 해당 stage/rerank config artifact에 결속한다.
 
 ## 모듈 경계
 
@@ -131,8 +133,8 @@ Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
 
 - `SyntheticEvidenceRecord`: provenance 구성 요소, `SensitiveText` 본문, 문자열 Decimal dense vector
 - `SyntheticEvidenceIndex`: record projection을 UTF-8 key 순으로 canonical JSON 직렬화한 SHA-256 artifact
-- `VersionedLexicalSearchConfig`: exact·matching normalization·trigram 전략, trigram threshold와 Decimal context를 결속한 artifact
-- `VersionedDenseSearchConfig`: query fingerprint별 synthetic vector, cosine threshold·metric·Decimal context artifact
+- `VersionedLexicalSearchConfig`: exact·matching normalization·trigram 전략, trigram threshold, ordering과 Decimal context를 결속한 artifact
+- `VersionedDenseSearchConfig`: query fingerprint별 synthetic vector, cosine threshold·metric·ordering·Decimal context artifact
 - `VersionedRerankConfig`: lexical/dense weight, `top_k`, tie-break·score precision·Decimal context artifact
 - `SyntheticEvidenceSearchAdapter`, `VersionedEvidenceRerankAdapter`: 기존 Port Protocol의 concrete 구현
 
@@ -151,6 +153,10 @@ canonical Decimal 문자열만 허용한다.
 namespace가 있어야 한다. Source record도 `source_snapshot_ref` 또는 `source_version`으로 synthetic임을
 식별할 수 있어야 한다. 운영 Source처럼 보이는 provenance와 Receipt가 들어오면 성공 결과를 만들지 않고
 typed failure로 닫는다.
+
+Source marker는 Index marker로 대체되지 않는다. Rerank candidate provenance는 `evidence_index_ref`가
+synthetic namespace를 갖더라도 `source_snapshot_ref` 또는 `source_version`이 synthetic으로 식별되지
+않으면 거부한다. synthetic Index가 승인 Source 형태의 provenance를 보증하지 못하게 하는 경계다.
 
 Lexical trigram 추출은 [PostgreSQL pg_trgm 문서](https://www.postgresql.org/docs/17/pgtrgm.html)의 원칙에 따라
 비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인 뒤 PostgreSQL `similarity()`와 같은
@@ -288,14 +294,14 @@ Safety v2 계약에 따라 `execution_status`와 `evidence_status`를 별도로 
 
 ### Query Receipt
 
-`QueryBindingVerificationReceipt`는 요청과 같은 query fingerprint와 실제 verifier의
-`adapter_artifact_ref`를 반환한다. query 원문이나 normalized query는 Receipt에 포함하지 않는다.
+`QueryBindingVerificationSuccess`는 요청과 같은 query fingerprint와 실제 verifier의
+`verifier_artifact_ref`를 반환한다. query 원문이나 normalized query는 Receipt에 포함하지 않는다.
 Kernel은 adapter reference의 형식을 검증하고 trace에 기록하지만, 승인된 Runtime Execution Manifest가
 없는 이번 slice에서 특정 adapter가 허용됐다고 판정하지 않는다.
 
 ### Search Receipt
 
-각 `EvidenceSearchResult`는 다음을 가진다.
+각 `EvidenceSearchSuccess`는 다음을 가진다.
 
 - `stage`: `LEXICAL` 또는 `DENSE`
 - 요청과 동일한 `query_fingerprint`
@@ -311,7 +317,7 @@ artifact는 비어 있지 않은 불변 reference여야 하며 trace에 기록�
 
 ### Rerank Receipt
 
-`EvidenceRerankResult`는 다음을 가진다.
+`EvidenceRerankSuccess`는 다음을 가진다.
 
 - 요청과 동일한 `query_fingerprint`, `filter_snapshot_ref`, `evidence_index_ref`
 - 요청과 동일한 `retrieval_config_ref`, `rerank_config_ref`
@@ -390,6 +396,20 @@ Source와 Evidence 파생물의 hash domain은 다음처럼 분리한다.
 아니다. `source_snapshot_ref.content_sha256`과 `rag_source_snapshot.canonical_checksum`의 실제 매핑은 RAG-06
 통합 계약과 DB·Source 교차리뷰에서 확정한다.
 
+이 Kernel의 provisional 이름은 `rag-db-schema`의 정규 이름과 1:1이 아니다. Production Adapter는 같은
+문자열을 같은 의미로 가정하지 않고 아래 매핑을 먼저 확정해야 한다.
+
+| 이 Kernel의 provisional 이름 | 의미 | `rag-db-schema`의 정규 대응 |
+| --- | --- | --- |
+| `KnowledgeEvidenceProvenance.content_sha256` | 개별 canonical Evidence text byte의 SHA-256 | `knowledge_chunk.content_hash` (정규화 본문 hash). 스키마의 `content_sha256`은 승인 capture·artifact byte용 이름이며 이 값이 아니다 |
+| `evidence_index_ref.content_sha256` | 이 모듈 fixture Index manifest의 SHA-256 | `index_version.corpus_manifest_hash`. 정규 preimage는 `(source_code, source_version, external_document_id, chunk_index, content_hash)` 정렬 목록이며, 이 모듈 payload는 dense vector까지 포함하므로 값이 다르다 |
+| `KnowledgeEvidenceProvenance.canonicalization_spec_version` | record별 Evidence text canonicalization 규격 문자열 | 스키마의 `canonicalization_spec_version`은 snapshot·bundle 단위 hash 직렬화 규격 버전이고 규격 변경 시 `normalization_version`과 함께 올려야 한다. 이 Kernel에는 `normalization_version` 대응이 없으므로 두 값을 같은 축으로 취급하지 않는다 |
+| `knowledge_chunk_ref` | 단일 문자열 chunk reference | `knowledge_chunk_id`(UUID)와 `(source_code, source_version, external_document_id, chunk_index)` 안정 좌표. 단일 문자열로 축약하지 않는다 |
+
+Provenance에 필요한 정규 필드 중 이번 slice가 표현하지 않는 것은 `source_code`, `endpoint_code`,
+`operation_code`, `external_record_id`, `supporting_excerpt`와 정확한 Snapshot Member reference다. Evidence
+Gate·Citation·Rule Evidence 연결은 이 값들이 생긴 뒤에만 가능하다.
+
 각 stage의 rank는 1부터 시작하는 중복 없는 연속 정수여야 하며 hit 수는 해당 stage limit 이하여야 한다.
 같은 `evidence_key`는 한 stage에서 한 번만 나타날 수 있다. lexical과 dense에 같은 key가 등장할 수 있지만
 provenance와 `content_text`는 exact-match해야 한다. 다르면 전체 실행을 `SEARCH_RESULT_INVALID`로 닫는다.
@@ -405,7 +425,7 @@ Kernel은 모든 raw hit를 구조적으로 검증하지만 Source 승인이나 
 ## rerank와 selection
 
 `EvidenceRerankPort`는 검증된 canonical candidate와 Kernel이 계산한 input projection hash를 포함하는
-`EvidenceRerankRequest`를 받아 `EvidenceRerankResult`를 반환한다. 각
+`EvidenceRerankRequest`를 받아 `EvidenceRerankSuccess`를 반환한다. 각
 `EvidenceRerankSelection`은 다음을 가진다.
 
 - raw hit에 존재하는 `evidence_key`
@@ -420,6 +440,13 @@ selection은 `selection_limit` 이하이고 rank가 중복 없는 연속 정수�
 
 동점 정렬 의미와 score fusion 공식은 rerank config artifact가 소유한다. Kernel은 받은 순서를 score로
 재정렬하지 않고 rank와 Receipt 일관성만 검증한다.
+
+이번 slice의 `weighted-stage-score-v1`은 `rag-design`이 고정한 Evidence 파이프라인의 RRF 단계가 아니다.
+정규 파이프라인은 `Lexical → Dense → RRF → Reranking → Evidence Gate → top-K`이고 RRF는 stage별 rank를
+융합한다. 이 adapter는 stage별 raw score를 가중합하므로 `[0,1]` trigram Jaccard와 음수가 가능한 cosine을
+같은 축에서 더한다. `minimum_similarity`를 음수로 둔 config에서는 dense 기여가 후보 점수를 내릴 수 있다.
+따라서 이 공식은 unit-level 계약 검증용이며, Production Adapter는 rank 기반 RRF 단계와 정규 candidate
+수량(RRF 20~30, reranker 입력 20, context 3~5)을 별도로 구현하고 이 가중합을 승격하지 않는다.
 
 ## 비권위적 diagnostic trace
 

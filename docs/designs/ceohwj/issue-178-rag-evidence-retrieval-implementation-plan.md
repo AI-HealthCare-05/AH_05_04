@@ -1096,7 +1096,8 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] 기존 `LEXICAL` stage 내부에서 normalized substring exact와 synthetic pg_trgm Jaccard-shaped similarity를 실행한다.
 - [x] `synthetic-trigram-jaccard-v1`과 matching normalization strategy를 lexical config artifact에 결속한다.
 - [x] `cat`/`car`의 hand-derived Jaccard score `0.333333` 회귀를 고정한다.
-- [x] score 내림차순, UTF-8 evidence key 오름차순, `lexical_limit`을 적용한다.
+- [x] exact 우선, score 내림차순, UTF-8 evidence key 오름차순, `lexical_limit`을 적용한다.
+- [x] lexical/dense ordering 기준을 stage config artifact payload에 결속한다.
 - [x] trigram threshold를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
 - [x] config·Index payload와 artifact SHA-256을 재계산해 detached payload를 typed failure로 거부한다.
 
@@ -1150,6 +1151,8 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] Source snapshot·Evidence Index·개별 Evidence content hash domain과 공개 Source 전용 SHA-256 경계를 문서화한다.
 - [x] record·candidate·`SensitiveText`를 exact runtime type으로 검증해 benign·stateful subclass를 typed failure로 거부한다.
 - [x] production `ai_worker` 모듈이 synthetic adapter 모듈을 import하지 않음을 CI 테스트로 고정한다.
+- [x] synthetic Index marker가 승인 Source 형태 provenance를 보증하지 못하도록 Source marker를 독립 요구한다.
+- [x] provisional 이름과 `rag-db-schema` 정규 이름의 매핑과 미표현 정규 필드를 설계 문서에 명시한다.
 - [x] 아래 전체 검증 명령을 fresh 실행한다.
 
 ```bash
