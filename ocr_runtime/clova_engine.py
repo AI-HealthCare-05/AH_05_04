@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import TypedDict
+from typing import BinaryIO, TypedDict
 from uuid import uuid4
 
 import httpx
@@ -101,11 +101,6 @@ class ClovaOcrEngine:
         provider_file_name = f"{self._PROVIDER_DOCUMENT_NAME}.{image_format}"
         file_path = self._resolve_file_path(object_key)
 
-        try:
-            file_content = await asyncio.to_thread(file_path.read_bytes)
-        except OSError as error:
-            raise OcrProcessingError("OCR 대상 파일을 읽을 수 없습니다.") from error
-
         message: _ClovaRequestMessage = {
             "version": "V2",
             "requestId": str(uuid4()),
@@ -124,7 +119,7 @@ class ClovaOcrEngine:
             span=span,
             request_id=request_id,
             file_name=provider_file_name,
-            file_content=file_content,
+            file_path=file_path,
             file_mime_type=file_mime_type,
             message=message,
             clova_timeout=clova_timeout,
@@ -155,7 +150,7 @@ class ClovaOcrEngine:
         span: ProviderCallSpan | None,
         request_id: str,
         file_name: str,
-        file_content: bytes,
+        file_path: Path,
         file_mime_type: str,
         message: _ClovaRequestMessage,
         clova_timeout: float,
@@ -164,7 +159,7 @@ class ClovaOcrEngine:
         try:
             response = await self._request(
                 file_name=file_name,
-                file_content=file_content,
+                file_path=file_path,
                 file_mime_type=file_mime_type,
                 message=message,
                 clova_timeout=clova_timeout,
@@ -271,7 +266,7 @@ class ClovaOcrEngine:
         self,
         *,
         file_name: str,
-        file_content: bytes,
+        file_path: Path,
         file_mime_type: str,
         message: _ClovaRequestMessage,
         clova_timeout: float,
@@ -279,40 +274,48 @@ class ClovaOcrEngine:
         headers = {
             "X-OCR-SECRET": self._secret_key,
         }
-        files: dict[
-            str,
-            tuple[str | None, bytes | str, str | None],
-        ] = {
-            "file": (file_name, file_content, file_mime_type),
-            "message": (
-                None,
-                json.dumps(message, ensure_ascii=False),
-                "application/json",
-            ),
-        }
 
         try:
-            if self._client is not None:
-                response = await self._client.post(
-                    self._invoke_url,
-                    headers=headers,
-                    files=files,
-                    timeout=clova_timeout,
-                )
-            else:
-                async with httpx.AsyncClient(
-                    timeout=clova_timeout,
-                ) as client:
-                    response = await client.post(
+            with file_path.open("rb") as file_stream:
+                files: dict[
+                    str,
+                    tuple[str | None, BinaryIO | str, str | None],
+                ] = {
+                    "file": (
+                        file_name,
+                        file_stream,
+                        file_mime_type,
+                    ),
+                    "message": (
+                        None,
+                        json.dumps(message, ensure_ascii=False),
+                        "application/json",
+                    ),
+                }
+
+                if self._client is not None:
+                    response = await self._client.post(
                         self._invoke_url,
                         headers=headers,
                         files=files,
+                        timeout=clova_timeout,
                     )
+                else:
+                    async with httpx.AsyncClient(
+                        timeout=clova_timeout,
+                    ) as client:
+                        response = await client.post(
+                            self._invoke_url,
+                            headers=headers,
+                            files=files,
+                        )
 
         except httpx.TimeoutException as error:
             raise OcrProviderTimeoutError("CLOVA OCR 응답 제한시간을 초과했습니다.") from error
         except httpx.RequestError as error:
             raise OcrProviderConnectionError("CLOVA OCR 연결에 실패했습니다.") from error
+        except OSError as error:
+            raise OcrProcessingError("OCR 대상 파일을 읽을 수 없습니다.") from error
 
         return response
 

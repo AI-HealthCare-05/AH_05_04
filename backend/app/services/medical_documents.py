@@ -14,6 +14,7 @@ from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 
 MAX_DOCUMENT_SIZE_BYTES = 30 * 1024 * 1024
+UPLOAD_READ_CHUNK_SIZE_BYTES = 1024 * 1024
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 CONTENT_TYPE_BY_EXTENSION = {
@@ -48,6 +49,22 @@ class MedicalDocumentService:
     def __init__(self, repository: MedicalDocumentRepository) -> None:
         self._repo = repository
 
+    async def _read_upload_content(self, *, file: UploadFile) -> bytes:
+        content = bytearray()
+        read_limit = MAX_DOCUMENT_SIZE_BYTES + 1
+
+        while len(content) < read_limit:
+            read_size = min(
+                UPLOAD_READ_CHUNK_SIZE_BYTES,
+                read_limit - len(content),
+            )
+            chunk = await file.read(read_size)
+            if not chunk:
+                break
+            content.extend(chunk)
+
+        return bytes(content)
+
     async def create_prescription_document(
         self,
         *,
@@ -64,7 +81,7 @@ class MedicalDocumentService:
                 details=[ErrorDetail(field="document_type", reason="INVALID_VALUE", rejected_value=str(document_type))],
             )
 
-        content = await file.read()
+        content = await self._read_upload_content(file=file)
         extension = self._validate_file(file=file, content=content)
 
         document = await self._repo.create(
