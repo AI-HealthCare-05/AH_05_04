@@ -61,6 +61,7 @@
 ## 3) 비밀번호 재설정
 
 - `password_reset_token(id, user_id, token_hash, created_at, expires_at, used_at)` — 원문 토큰은 저장하지 않고 해시만 저장한다.
+- 새 비밀번호는 현재 [회원가입·사용자 정보 계약의 비밀번호 기준](../current/user-account.md#회원가입)과 동일하게 필수, 8~72자, 대문자·소문자·숫자·특수문자 각 1개 이상 포함을 적용한다. 회원가입 비밀번호 정책이 바뀌면 비밀번호 재설정 정책과 검증도 같은 변경에서 함께 갱신한다.
 - 존재하지 않는 계정 요청도 존재하는 계정과 동일한 응답 형태·유사 처리시간을 반환한다(계정 존재 여부 비노출). 재설정 성공 자체는 `password_reset_token`만으로 인증되므로 anti-enumeration을 적용하지 않는다.
 - 토큰 소비는 원자적 일회성 소비다: 토큰 소비(`used_at` 조건부 갱신), 비밀번호 변경, `token_version` 증가를 단일 transaction에서 처리한다. 영향받은 row가 0건이면 이미 사용됐거나 만료된 토큰으로 간주해 실패 응답을 반환한다.
 - **같은 transaction에서 해당 사용자의 나머지 미사용·미만료 `password_reset_token`도 함께 소비 처리한다** — 한 사용자에게 유효한 재설정 토큰이 여러 개 있어도 재설정 성공 이후에는 전부 무효가 된다.
@@ -104,7 +105,7 @@
 
 탈퇴 대상은 `get_request_user()` 결과의 `user_id`로만 결정한다. 요청 body나 path parameter로 받은 `user_id`를 기준으로 다른 계정을 탈퇴 처리하지 않는다.
 
-재인증은 현재 access token이 유효한지만 확인하는 것이 아니라, `authenticate()`와 동일한 비밀번호 검증 경로로 현재 비밀번호를 다시 확인하는 것을 의미한다. 최종 확인 신호의 구체적인 필드명은 구현 PR의 OpenAPI에서 확정하되, 재인증과 최종 확인이 모두 성공하기 전에는 어떤 계정 상태도 변경하지 않는다.
+재인증은 현재 access token이 유효한지만 확인하는 것이 아니라, `authenticate()`와 동일한 비밀번호 검증 경로로 현재 비밀번호를 다시 확인하는 것을 의미한다. 이 재인증 엔드포인트에는 로그인과 동일 수준의 rate limit/lockout을 적용한다. 정확한 횟수·기간·잠금 해제 기준은 구현 PR에서 Backend/Security 리뷰로 확정한다. 최종 확인 신호의 구체적인 필드명은 구현 PR의 OpenAPI에서 확정하되, 재인증과 최종 확인이 모두 성공하기 전에는 어떤 계정 상태도 변경하지 않는다.
 
 탈퇴 요청 접수 transaction은 아래 순서로 처리한다.
 
@@ -256,10 +257,12 @@ Frontend는 `message` 문자열을 파싱하지 않고 `details[].field`와 `det
 | `token_version` 무효화 | 로그아웃, 비밀번호 재설정 성공, 회원탈퇴 요청 | 각 transaction 이후 기존 access/refresh token으로 보호 API 또는 token refresh를 호출하면 `401 INVALID_TOKEN`을 반환한다. |
 | 비밀번호 재설정 요청 | 존재하는 이메일과 존재하지 않는 이메일 | 계정 존재 여부를 응답 message, status, details로 구분할 수 없다. |
 | 비밀번호 재설정 완료 | 유효 token, 만료 token, 이미 사용된 token, 잘못된 token | 유효 token만 비밀번호 변경과 `token_version + 1`을 수행하고, 실패 케이스는 비밀번호와 세션 상태를 변경하지 않는다. |
+| 비밀번호 재설정 비밀번호 정책 | 회원가입과 재설정의 비밀번호 경계값·조합 | 두 흐름 모두 회원가입·사용자 정보 계약의 8~72자 및 대문자·소문자·숫자·특수문자 각 1개 이상 기준을 동일하게 적용한다. |
 | 비밀번호 재설정 오류 분기 | 새 비밀번호 정책 오류와 만료·사용됨·존재하지 않는 token | 공개 `code`는 모두 `VALIDATION_FAILED`를 유지하되 `new_password/PASSWORD_POLICY_VIOLATION`과 `token/RESET_TOKEN_INVALID`로 구분되며, Frontend가 `message`를 파싱하지 않는다. |
 | 비밀번호 재설정 동시성 | 같은 사용자의 서로 다른 유효 token 2개를 동시에 제출 | user row를 먼저 잠그는 단일 lock order로 deadlock 없이 한 요청만 성공하고, 다른 요청은 `422 VALIDATION_FAILED`와 `token/RESET_TOKEN_INVALID`로 종료되며 비밀번호·`token_version`이 한 번만 변경된다. |
 | 비밀번호 재설정 token 보안 | DB 저장값과 로그 | 원문 token과 새 비밀번호가 DB, 오류 응답, 로그에 남지 않는다. |
 | 회원탈퇴 재인증 | 올바른 비밀번호와 잘못된 비밀번호 | 올바른 비밀번호만 탈퇴 transaction을 시작하고, 실패 시 계정 상태·token·deletion request를 변경하지 않는다. |
+| 회원탈퇴 재인증 남용 방지 | 연속 실패와 rate limit/lockout 적용 중 요청 | 로그인과 동일 수준의 제어가 적용되고, 제한된 요청은 계정 상태·token·deletion request를 변경하지 않는다. 정확한 수치와 오류 응답은 구현 PR의 Backend/Security 리뷰 및 API 계약으로 고정한다. |
 | 회원탈퇴 transaction | 성공 요청 | `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`이 같은 commit 단위로 반영된다. |
 | 회원탈퇴 중복 요청 | 거의 동시에 들어온 동일 사용자 탈퇴 요청 | 활성 `account_deletion_request`가 사용자별 1개만 생성되고, 계정 상태와 `token_version`이 중복으로 증가하지 않는다. |
 | 삭제·보존 처리 완료 | PM/Privacy 정책에 따른 처리 성공 및 `EXT-PRIV-001` 승인 | `account_deletion_request.status=COMPLETED`, `completed_at`, `user.account_status=WITHDRAWN`, `withdrawn_at`이 정합성을 유지한다. |
@@ -277,7 +280,7 @@ Frontend는 `message` 문자열을 파싱하지 않고 `details[].field`와 `det
 - 보호자·멀티 프로필 계정 상태
 - 동의 상태(`GRANTED`/`WITHDRAWN`) 모델링 — [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207)
 - 실제 이메일 발송 Provider 연동
-- 비밀번호 재설정 rate limit 정확한 수치
+- 비밀번호 재설정과 회원탈퇴 재인증의 rate limit/lockout 정확한 수치
 - 개인정보·건강정보의 세부 보존 기간, 즉시 폐기 대상, 법정 보존 대상과 재가입 제한 여부의 정책 확정 — PM/Privacy 범위
 - 탈퇴 후 사용자-facing 상태 조회 API와 앱 내부 완료·실패 알림 — 제공하지 않음
 - 계정 이벤트 감사 로그 저장 여부
