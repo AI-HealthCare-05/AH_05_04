@@ -1,20 +1,32 @@
 """수집한 원본 Artifact 목록의 무결성을 검증합니다."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from ai_worker.tasks.rag.source_client.contracts import (
     ProviderPage,
     SourceRunResult,
 )
+from ai_worker.tasks.rag.source_client.mfds_client import ResponseDecoder
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
     RawArtifactMetadata,
+    read_verified_raw_artifact,
     verify_raw_artifact,
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
+from ai_worker.tasks.rag.source_ingestion.normalize import canonical_json_bytes
 from ai_worker.tasks.rag.source_ingestion.validation import (
     require_complete_source_run,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedSourceRunArtifacts:
+    """검증한 원본과 그 원본에서 직접 해석한 레코드입니다."""
+
+    raw_manifest_checksum: str
+    records: tuple[Mapping[str, object], ...]
 
 
 def verify_raw_artifact_manifest(
@@ -81,7 +93,9 @@ def verify_source_run_artifacts(
     *,
     result: SourceRunResult,
     artifacts: Iterable[tuple[int, Path, RawArtifactMetadata]],
-) -> str:
+    decoder: ResponseDecoder,
+    success_codes: tuple[str, ...],
+) -> VerifiedSourceRunArtifacts:
     """수집 페이지와 원본 Artifact가 정확히 대응하는지 검증합니다."""
     require_complete_source_run(result)
 
@@ -91,8 +105,12 @@ def verify_source_run_artifacts(
     if set(pages_by_number) != set(artifacts_by_page):
         raise ValueError("Source run pages do not match raw artifacts.")
 
-    for page_number, page in pages_by_number.items():
-        _, metadata = artifacts_by_page[page_number]
+    manifest_checksum = raw_manifest_checksum(metadata for _, metadata in artifacts_by_page.values())
+    verified_records: list[Mapping[str, object]] = []
+
+    for page_number in sorted(pages_by_number):
+        page = pages_by_number[page_number]
+        file_path, metadata = artifacts_by_page[page_number]
 
         if page.response_checksum != metadata.raw_checksum:
             raise ValueError("Source page checksum does not match raw artifact.")
@@ -100,4 +118,28 @@ def verify_source_run_artifacts(
         if page.content_type != metadata.content_type:
             raise ValueError("Source page content type does not match raw artifact.")
 
-    return verify_raw_artifact_manifest(artifacts_by_page.values())
+        content = read_verified_raw_artifact(
+            file_path=file_path,
+            metadata=metadata,
+        )
+
+        try:
+            decoded = decoder(content, metadata.content_type)
+        except (KeyError, TypeError, ValueError, UnicodeError):
+            raise ValueError("Raw artifact could not be decoded.") from None
+
+        if decoded.body_code not in success_codes:
+            raise ValueError("Raw artifact has a non-success body code.")
+
+        if decoded.total_count != page.total_count:
+            raise ValueError("Raw artifact total count does not match source page.")
+
+        if canonical_json_bytes(list(decoded.records)) != canonical_json_bytes(list(page.records)):
+            raise ValueError("Raw artifact records do not match source page.")
+
+        verified_records.extend(decoded.records)
+
+    return VerifiedSourceRunArtifacts(
+        raw_manifest_checksum=manifest_checksum,
+        records=tuple(verified_records),
+    )

@@ -84,6 +84,33 @@ Snapshot은 다음 정보를 불변으로 보존한다.
 
 `schema_version`은 외부 응답 Envelope·필수 필드 계약이고 `parser_version`은 해당 구조를 읽는 코드·배포 Artifact 버전이다. `normalization_version`과 함께 각각 기록하며 같은 Raw Artifact 재처리도 기존 Run을 덮어쓰지 않는다.
 
+### MFDS 제품 허가정보 canonicalization 계약
+
+`MFDS_PRODUCT_APPROVAL / MFDS_PRODUCT_APPROVAL_API / LIST_APPROVED_PRODUCTS`의 제품 canonicalization은 `mfds-product-approval@1`을 사용한다.
+
+- 원문 문자열의 Unicode 형태와 앞뒤 공백을 그대로 보존하며 NFC와 trim을 적용하지 않는다.
+- 숫자형 문자열을 숫자로 변환하지 않고 문자열·정수·boolean·null·빈 문자열·필드 누락을 구분한다.
+- 정수는 `-(2^53)+1`부터 `2^53-1`까지 허용하고 실수와 lone surrogate를 거부한다.
+- 모든 중첩 객체 key는 UTF-16 byte 순서로 정렬하고 객체 안의 배열 순서는 유지한다.
+- 모든 성공 페이지의 제품 레코드를 합친 뒤 `ITEM_SEQ` 원문 값으로 정렬한다. `ITEM_SEQ` 누락·타입 불일치·중복은 거부한다.
+- MFDS JSON 응답에서 Parser 입력으로 포함하는 정확한 경로는 `response.body.items.item`이며, 최상위 `response` wrapper가 없는 응답에서는 `body.items.item`이다. `items`가 배열인 변형에서는 각 원소 또는 각 원소의 `item` 값만 같은 제품 레코드 목록으로 해석한다.
+- 위 제품 레코드 목록 밖의 Operation Envelope인 `response.header`, `response.body.totalCount`와 그 밖의 `response.body` 필드는 canonical checksum 입력에서 제외한다. 최상위 `response` wrapper가 없는 응답에도 같은 상대 경로 제외 규칙을 적용한다.
+- 원본 Artifact의 크기와 SHA-256을 검증한 동일 바이트를 versioned MFDS decoder로 해석한다. 그 결과가 수집 중 기록된 page records·`totalCount`와 정확히 일치할 때만 canonical checksum을 계산한다.
+
+`ProductIngestionResult`는 검증 완료 경계에서 다음 값을 제공한다.
+
+| 필드 | 의미와 보장 |
+| --- | --- |
+| `identity` | 검증된 Source·Endpoint·Operation 식별자 |
+| `endpoint_receipt_hash` | 사용한 Endpoint Receipt 내용의 SHA-256 |
+| `raw_manifest_checksum` | 검증된 Raw Artifact 메타데이터 집합의 결정적 checksum |
+| `canonical_checksum` | 위 경로에서 같은 원본 바이트로 해석한 전체 제품 레코드의 canonical checksum |
+| `canonicalization_spec_version` | 적용한 불변 제품 canonicalization 규칙 version |
+| `record_count` | 원본 바이트에서 해석하고 checksum에 포함한 전체 레코드 수 |
+| `artifact_count` | 검증하고 수집 page와 일대일로 결속한 Raw Artifact 수 |
+
+이 결과는 Receipt·Fixture·Raw Artifact 무결성, 전체 수집 적격성, page와 원본의 결속, 제품 checksum의 결정성을 보장한다. Source version 생성, schema·parser·normalization version 선택, 거부 레코드 집계, 수집 시각, DB 저장·트랜잭션, Snapshot 상태 전이·승인·활성화와 `NO_CHANGE` 판정은 보장하지 않는다.
+
 ## 수집 파이프라인
 
 ```text

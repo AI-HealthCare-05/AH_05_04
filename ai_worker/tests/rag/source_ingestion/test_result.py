@@ -1,4 +1,6 @@
 import hashlib
+import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -53,6 +55,22 @@ def _source_result(content: bytes) -> SourceRunResult:
     )
 
 
+def _product_response(
+    records: list[dict[str, object]],
+) -> bytes:
+    return json.dumps(
+        {
+            "header": {"resultCode": "00"},
+            "body": {
+                "items": {"item": records},
+                "totalCount": len(records),
+            },
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+
+
 def _write_artifact(
     directory: Path,
     content: bytes,
@@ -74,7 +92,14 @@ def _write_artifact(
 def test_builds_verified_product_ingestion_result(
     tmp_path: Path,
 ) -> None:
-    content = b'{"synthetic_page":1}'
+    content = _product_response(
+        [
+            {
+                "ITEM_SEQ": "synthetic-product-001",
+                "ITEM_NAME": "합성 의약품",
+            }
+        ]
+    )
     file_path, metadata = _write_artifact(
         tmp_path,
         content,
@@ -102,7 +127,14 @@ def test_builds_verified_product_ingestion_result(
 def test_does_not_build_result_from_changed_artifact(
     tmp_path: Path,
 ) -> None:
-    original = b'{"synthetic_page":1}'
+    original = _product_response(
+        [
+            {
+                "ITEM_SEQ": "synthetic-product-001",
+                "ITEM_NAME": "합성 의약품",
+            }
+        ]
+    )
     file_path, metadata = _write_artifact(
         tmp_path,
         original,
@@ -111,12 +143,89 @@ def test_does_not_build_result_from_changed_artifact(
 
     file_path.write_bytes(b'{"synthetic_page":2}')
 
-    with pytest.raises(ValueError, match="checksum mismatch"):
+    with pytest.raises(ValueError, match="mismatch"):
         build_product_ingestion_result(
             result=source_result,
             artifacts=[
                 (1, file_path, metadata),
             ],
+            receipt_path=PRODUCT_RECEIPT_PATH,
+            repository_root=REPOSITORY_ROOT,
+        )
+
+
+def test_rejects_memory_record_changed_after_raw_capture(
+    tmp_path: Path,
+) -> None:
+    content = _product_response(
+        [
+            {
+                "ITEM_SEQ": "synthetic-product-001",
+                "ITEM_NAME": "합성 의약품",
+            }
+        ]
+    )
+    file_path, metadata = _write_artifact(tmp_path, content)
+    source_result = _source_result(content)
+    changed_page = replace(
+        source_result.pages[0],
+        records=(
+            {
+                "ITEM_SEQ": "synthetic-product-001",
+                "ITEM_NAME": "변경된 합성 의약품",
+            },
+        ),
+    )
+    changed_result = replace(source_result, pages=(changed_page,))
+
+    with pytest.raises(ValueError, match="records do not match"):
+        build_product_ingestion_result(
+            result=changed_result,
+            artifacts=[(1, file_path, metadata)],
+            receipt_path=PRODUCT_RECEIPT_PATH,
+            repository_root=REPOSITORY_ROOT,
+        )
+
+
+def test_rejects_memory_record_absent_from_raw_artifact(
+    tmp_path: Path,
+) -> None:
+    content = _product_response(
+        [
+            {
+                "ITEM_SEQ": "synthetic-product-001",
+                "ITEM_NAME": "합성 의약품",
+            }
+        ]
+    )
+    file_path, metadata = _write_artifact(tmp_path, content)
+    source_result = _source_result(content)
+    changed_page = replace(
+        source_result.pages[0],
+        records=(
+            *source_result.pages[0].records,
+            {
+                "ITEM_SEQ": "synthetic-product-002",
+                "ITEM_NAME": "원본에 없는 합성 의약품",
+            },
+        ),
+    )
+    primary_key_validation = source_result.primary_key_validation
+    assert primary_key_validation is not None
+    changed_validation = replace(
+        primary_key_validation,
+        record_count=2,
+    )
+    changed_result = replace(
+        source_result,
+        pages=(changed_page,),
+        primary_key_validation=changed_validation,
+    )
+
+    with pytest.raises(ValueError, match="records do not match"):
+        build_product_ingestion_result(
+            result=changed_result,
+            artifacts=[(1, file_path, metadata)],
             receipt_path=PRODUCT_RECEIPT_PATH,
             repository_root=REPOSITORY_ROOT,
         )

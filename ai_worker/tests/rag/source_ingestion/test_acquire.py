@@ -1,4 +1,5 @@
 import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from ai_worker.tasks.rag.source_client.contracts import (
     SourceRunResult,
     SourceRunStatus,
 )
+from ai_worker.tasks.rag.source_client.mfds_client import DecodedProviderPage
 from ai_worker.tasks.rag.source_ingestion.acquire import (
     verify_raw_artifact_manifest,
     verify_source_run_artifacts,
@@ -21,6 +23,23 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
 from ai_worker.tasks.rag.source_ingestion.checksums import (
     raw_manifest_checksum,
 )
+
+
+def _decode_synthetic_page(
+    body: bytes,
+    media_type: str,
+) -> DecodedProviderPage:
+    assert media_type == "application/json"
+    payload = json.loads(body)
+    assert isinstance(payload, dict)
+    page_number = payload["page"]
+    assert type(page_number) is int
+
+    return DecodedProviderPage(
+        body_code="00",
+        records=({"ITEM_SEQ": f"synthetic-product-{page_number:03d}"},),
+        total_count=2,
+    )
 
 
 def _write_artifact(
@@ -156,9 +175,15 @@ def test_verifies_source_run_page_artifact_bindings(
             (2, second[0], second[1]),
             (1, first[0], first[1]),
         ],
+        decoder=_decode_synthetic_page,
+        success_codes=("00",),
     )
 
-    assert actual == expected
+    assert actual.raw_manifest_checksum == expected
+    assert actual.records == (
+        {"ITEM_SEQ": "synthetic-product-001"},
+        {"ITEM_SEQ": "synthetic-product-002"},
+    )
 
 
 def test_rejects_missing_source_page_artifact(
@@ -182,6 +207,8 @@ def test_rejects_missing_source_page_artifact(
             artifacts=[
                 (1, first[0], first[1]),
             ],
+            decoder=_decode_synthetic_page,
+            success_codes=("00",),
         )
 
 
@@ -212,6 +239,8 @@ def test_rejects_duplicate_source_page_binding(
                 (1, first[0], first[1]),
                 (1, second[0], second[1]),
             ],
+            decoder=_decode_synthetic_page,
+            success_codes=("00",),
         )
 
 
@@ -271,4 +300,6 @@ def test_rejects_source_page_artifact_metadata_mismatch(
                 (1, first[0], first[1]),
                 (2, second[0], second[1]),
             ],
+            decoder=_decode_synthetic_page,
+            success_codes=("00",),
         )

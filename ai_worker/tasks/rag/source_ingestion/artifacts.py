@@ -36,9 +36,36 @@ def verify_raw_artifact(
     metadata: RawArtifactMetadata,
 ) -> None:
     """원본 파일의 실제 크기와 SHA-256이 메타데이터와 일치하는지 확인합니다."""
+    _read_verified_raw_artifact(
+        file_path=file_path,
+        metadata=metadata,
+        retain_content=False,
+    )
+
+
+def read_verified_raw_artifact(
+    *,
+    file_path: Path,
+    metadata: RawArtifactMetadata,
+) -> bytes:
+    """크기와 SHA-256을 확인한 동일 원본 바이트를 반환합니다."""
+    return _read_verified_raw_artifact(
+        file_path=file_path,
+        metadata=metadata,
+        retain_content=True,
+    )
+
+
+def _read_verified_raw_artifact(
+    *,
+    file_path: Path,
+    metadata: RawArtifactMetadata,
+    retain_content: bool,
+) -> bytes:
     digest = hashlib.sha256()
     bytes_read = 0
     chunk_size = 1024 * 1024
+    chunks: list[bytes] = []
 
     try:
         with file_path.open("rb") as file_stream:
@@ -59,6 +86,8 @@ def verify_raw_artifact(
                     raise ValueError("Raw artifact byte size mismatch.")
 
                 digest.update(chunk)
+                if retain_content:
+                    chunks.append(chunk)
     except OSError:
         # 예외 메시지에 파일 경로나 원문을 포함하지 않습니다.
         raise ValueError("Raw artifact could not be read.") from None
@@ -68,3 +97,5 @@ def verify_raw_artifact(
 
     if digest.hexdigest() != metadata.raw_checksum:
         raise ValueError("Raw artifact checksum mismatch.")
+
+    return b"".join(chunks)

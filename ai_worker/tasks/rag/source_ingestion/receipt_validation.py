@@ -17,6 +17,15 @@ from ai_worker.tasks.rag.source_client.endpoints import (
 
 _PRODUCT_CONTRACT = MFDS_ENDPOINT_CANDIDATES["LIST_APPROVED_PRODUCTS"].contract
 _PRODUCT_OPERATION = _PRODUCT_CONTRACT.identity
+_REQUIRED_FIXTURE_SCENARIOS = frozenset(
+    {
+        "LIST_APPROVED_PRODUCTS_SUCCESS",
+        "SYNTHETIC_AUTH_FAILURE",
+        "SYNTHETIC_DAILY_LIMIT",
+        "SYNTHETIC_EMPTY",
+        "SYNTHETIC_SCHEMA_DRIFT",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +104,33 @@ def _require_exact_value(
     key: str,
     expected: object,
 ) -> None:
-    if payload.get(key) != expected:
+    if key not in payload or not _is_exact_value(payload[key], expected):
         raise ValueError(f"Endpoint receipt has invalid {key}.")
+
+
+def _is_exact_value(actual: object, expected: object) -> bool:
+    """bool·int와 누락·null을 포함해 JSON 값을 정확히 비교합니다."""
+    if type(actual) is not type(expected):
+        return False
+
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict) or set(actual) != set(expected):
+            return False
+
+        return all(_is_exact_value(actual[key], value) for key, value in expected.items())
+
+    if isinstance(expected, list):
+        if not isinstance(actual, list) or len(actual) != len(expected):
+            return False
+
+        return all(_is_exact_value(left, right) for left, right in zip(actual, expected, strict=True))
+
+    return actual == expected
+
+
+def _require_fixture_scenarios(observed_scenarios: set[str]) -> None:
+    if not _REQUIRED_FIXTURE_SCENARIOS.issubset(observed_scenarios):
+        raise ValueError("Endpoint receipt is missing required fixture evidence.")
 
 
 def _parse_fixture_evidence(
@@ -152,6 +186,8 @@ def _parse_fixture_evidence(
                 sha256=sha256,
             )
         )
+
+    _require_fixture_scenarios(observed_scenarios)
 
     return tuple(evidence)
 
@@ -322,15 +358,13 @@ def load_product_endpoint_receipt(
         _PRODUCT_CONTRACT.external_version_field,
     )
 
-    identity_payload = payload.get("identity")
     expected_identity = {
         "source_code": _PRODUCT_OPERATION.source_code,
         "endpoint_code": _PRODUCT_OPERATION.endpoint_code,
         "operation_code": _PRODUCT_OPERATION.operation_code,
     }
 
-    if identity_payload != expected_identity:
-        raise ValueError("Endpoint receipt has invalid identity.")
+    _require_exact_value(payload, "identity", expected_identity)
 
     validated_record_count = payload.get("validated_record_count")
 

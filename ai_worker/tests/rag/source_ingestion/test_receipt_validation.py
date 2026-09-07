@@ -87,6 +87,30 @@ def test_rejects_other_operation_identity(tmp_path: Path) -> None:
         load_product_endpoint_receipt(path)
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda payload: payload.update(parser_activation_allowed=1),
+        lambda payload: payload.update(primary_key_null_count=False),
+        lambda payload: payload.pop("blocking_code"),
+        lambda payload: cast(list[dict[str, object]], payload["required_parameters"])[0].update(sensitive=1),
+        lambda payload: cast(dict[str, object], payload["pagination"]).update(page_base=True),
+    ],
+)
+def test_rejects_exact_contract_type_or_presence_mismatch(
+    tmp_path: Path,
+    change: Callable[[dict[str, object]], object],
+) -> None:
+    payload = deepcopy(_product_payload())
+    change(payload)
+
+    path = tmp_path / "receipt.json"
+    _write_payload(path, payload)
+
+    with pytest.raises(ValueError, match="invalid"):
+        load_product_endpoint_receipt(path)
+
+
 def test_rejects_changed_payload_with_stale_hash(
     tmp_path: Path,
 ) -> None:
@@ -248,6 +272,34 @@ def test_rejects_invalid_fixture_evidence(
     _write_payload(path, payload)
 
     with pytest.raises(ValueError, match="fixture"):
+        load_product_endpoint_receipt(path)
+
+
+@pytest.mark.parametrize(
+    "missing_scenario",
+    [
+        "LIST_APPROVED_PRODUCTS_SUCCESS",
+        "SYNTHETIC_AUTH_FAILURE",
+        "SYNTHETIC_DAILY_LIMIT",
+        "SYNTHETIC_EMPTY",
+        "SYNTHETIC_SCHEMA_DRIFT",
+    ],
+)
+def test_rejects_missing_required_fixture_scenario(
+    tmp_path: Path,
+    missing_scenario: str,
+) -> None:
+    payload = deepcopy(_product_payload())
+    fixture_evidence = payload["fixture_evidence"]
+    assert isinstance(fixture_evidence, list)
+    payload["fixture_evidence"] = [
+        item for item in fixture_evidence if isinstance(item, dict) and item.get("scenario") != missing_scenario
+    ]
+
+    path = tmp_path / "receipt.json"
+    _write_payload(path, payload)
+
+    with pytest.raises(ValueError, match="missing required fixture"):
         load_product_endpoint_receipt(path)
 
 

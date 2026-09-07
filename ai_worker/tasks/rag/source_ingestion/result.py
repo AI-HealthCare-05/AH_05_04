@@ -8,6 +8,8 @@ from ai_worker.tasks.rag.source_client.contracts import (
     SourceOperationIdentity,
     SourceRunResult,
 )
+from ai_worker.tasks.rag.source_client.decoders import decode_mfds_json
+from ai_worker.tasks.rag.source_client.endpoints import MFDS_ENDPOINT_CANDIDATES
 from ai_worker.tasks.rag.source_ingestion.acquire import (
     verify_source_run_artifacts,
 )
@@ -19,12 +21,13 @@ from ai_worker.tasks.rag.source_ingestion.checksums import (
 )
 from ai_worker.tasks.rag.source_ingestion.parse import (
     PRODUCT_CANONICALIZATION_SPEC_VERSION,
-    collect_product_records_from_evidence,
 )
 from ai_worker.tasks.rag.source_ingestion.receipt_validation import (
     load_product_endpoint_receipt,
     verify_receipt_fixture_evidence,
 )
+
+_PRODUCT_CONTRACT = MFDS_ENDPOINT_CANDIDATES["LIST_APPROVED_PRODUCTS"].contract
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,20 +59,22 @@ def build_product_ingestion_result(
         repository_root=repository_root,
     )
 
-    records = collect_product_records_from_evidence(
-        result=result,
-        evidence=receipt,
-    )
-    raw_manifest = verify_source_run_artifacts(
+    if receipt.identity != result.operation:
+        raise ValueError("Endpoint receipt identity does not match source run.")
+
+    verified_artifacts = verify_source_run_artifacts(
         result=result,
         artifacts=entries,
+        decoder=decode_mfds_json,
+        success_codes=_PRODUCT_CONTRACT.body_codes.success_codes,
     )
+    records = verified_artifacts.records
     canonical_checksum = product_canonical_checksum(records)
 
     return ProductIngestionResult(
         identity=result.operation,
         endpoint_receipt_hash=receipt.receipt_hash,
-        raw_manifest_checksum=raw_manifest,
+        raw_manifest_checksum=verified_artifacts.raw_manifest_checksum,
         canonical_checksum=canonical_checksum,
         canonicalization_spec_version=(PRODUCT_CANONICALIZATION_SPEC_VERSION),
         record_count=len(records),

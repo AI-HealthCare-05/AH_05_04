@@ -2,7 +2,7 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 154 passed
+- Source ingestion 단위 테스트: 166 passed
 - 실제 MFDS 호출과 DB 저장은 이번 단위 테스트에 포함하지 않는다.
 - Snapshot 생성·승인·Runtime 활성화는 아직 연결하지 않았다.
 
@@ -21,8 +21,12 @@
 - Endpoint Receipt 자체 hash와 연결된 합성 fixture 무결성 검증
 - 검증된 제품 Receipt를 Parser와 canonical checksum 계산 경계에 연결
 - 수집 페이지와 Raw Artifact의 누락·중복·checksum·content type 불일치 검증
+- 검증한 동일 원본 바이트의 MFDS 응답을 파싱하고 수집 레코드·전체 건수와 결속
+- 원본에 없거나 원본 이후 변경된 메모리 레코드의 checksum 입력 차단
 - 제품 canonicalization 규칙을 `mfds-product-approval@1`로 고정
 - Endpoint Receipt와 현재 MFDS 제품 Operation 계약의 HTTP·응답 코드·pagination·제한 설정 일치 검증
+- Receipt 필드 누락과 bool·int 타입 혼동을 중첩 계약까지 exact-match로 차단
+- 제품 성공·빈 결과·인증 실패·일일 한도·schema drift 필수 fixture 시나리오 검증
 - Receipt hash·Raw Manifest checksum·canonical checksum·버전·record count를 묶은 `ProductIngestionResult` 계약 추가
 
 ## 확정된 제품 canonicalization 규칙
@@ -63,6 +67,20 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 저장 경계에 전달할 identity, Endpoint Receipt hash,
 Raw Manifest checksum, canonical checksum,
 canonicalization spec version과 record count를 제공한다.
+
+PR #291의 `RagSourceSnapshotCreate` 저장 계약에 연결하려면 현재
+`ProductIngestionResult`에 없는 다음 6개 값을 #164 저장 adapter 경계에서
+확정해 함께 전달해야 한다.
+
+- `source_version`
+- `schema_version`
+- `parser_version`
+- `normalization_version`
+- `rejected_record_count`
+- `collected_at`
+
+이 값들은 원본 또는 checksum에서 임의로 추론하지 않으며 #164에서 승인된
+Source·Snapshot 저장 인터페이스와 수집 실행 provenance를 기준으로 채운다.
 
 DUR·환자용 복약정보의 기존 차단 상태는 유지한다.
 평가 Runner 전체 완료를 Parser 단위 작업의 선행조건으로 추가하지 않는다.
