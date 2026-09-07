@@ -5,10 +5,27 @@ services:
     container_name: redis
     networks:
       - ws
-    ports:
-      - "${REDIS_PORT}:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # requirepass를 --requirepass CLI 인자로 넘기면 컨테이너 프로세스 인자(`ps aux`,
+    # `docker top redis`, `/proc/<pid>/cmdline`)에 비밀번호 평문이 그대로 남는다. 대신
+    # 컨테이너 안에서만 임시 conf 파일을 생성해 그 경로만 인자로 넘긴다 — 값 자체는
+    # 이 sh 프로세스가 exec로 교체되기 전 stdin/redirection으로만 흐르고 별도 프로세스의
+    # argv로 노출되지 않는다.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        umask 077
+        cat > /tmp/redis-runtime.conf <<CONF
+        requirepass $${REDIS_PASSWORD}
+        CONF
+        exec redis-server /tmp/redis-runtime.conf
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      # -a 플래그도 redis-cli 프로세스의 argv로 비밀번호를 노출한다. REDISCLI_AUTH 환경변수를
+      # 쓰면 같은 위험 없이 인증할 수 있고, "Using a password with '-a'" 경고도 사라진다.
+      test: [ "CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -117,6 +134,8 @@ services:
       OCR_STRUCTURE_LLM_ENABLED: ${OCR_STRUCTURE_LLM_ENABLED:-false}
       OCR_STRUCTURE_MODEL: ${OCR_STRUCTURE_MODEL:-gpt-4o-mini}
       OCR_STRUCTURE_TIMEOUT_SECONDS: ${OCR_STRUCTURE_TIMEOUT_SECONDS:-30}
+      # RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 false를 유지합니다.
+      PUBLIC_TRACK_F_ENABLED: ${PUBLIC_TRACK_F_ENABLED:-false}
 
       # 업로드 파일이 영속 volume 아래에 저장되도록 고정합니다.
       STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}
@@ -161,6 +180,17 @@ services:
       CLOVA_OCR_INVOKE_URL: ${CLOVA_OCR_INVOKE_URL}
       CLOVA_OCR_SECRET: ${CLOVA_OCR_SECRET}
       CLOVA_OCR_TIMEOUT_SECONDS: ${CLOVA_OCR_TIMEOUT_SECONDS:-20}
+
+      # 운영 Redis는 host port에 공개하지 않고 내부 network + 인증으로만 접근합니다.
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_STREAM_NAME: ${REDIS_STREAM_NAME:-oryak:jobs}
+      REDIS_DLQ_STREAM_NAME: ${REDIS_DLQ_STREAM_NAME:-oryak:jobs:dead-letter}
+      REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP:-ai-workers}
+      REDIS_CONSUMER_NAME: ${REDIS_CONSUMER_NAME:-ai-worker-prod}
+      RECONCILER_CONSUMER_NAME: ${RECONCILER_CONSUMER_NAME:-ai-worker-reconciler}
+      REDIS_BLOCK_MS: ${REDIS_BLOCK_MS:-5000}
 
       # FastAPI와 동일한 업로드 volume 경로를 사용합니다.
       STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}

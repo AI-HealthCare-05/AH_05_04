@@ -47,15 +47,15 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 | 항목 | 현재 상태                                                                                                                                         | 근거 |
 | --- |---------------------------------------------------------------------------------------------------------------------------------------------------| --- |
 | 로컬 Redis 서비스 | 있음. host port는 `"6379:6379"`로 하드코딩 | `docker-compose.yml:8-9` |
-| 운영 Redis 서비스 | 있음. host port는 `"${REDIS_PORT}:6379"`로 공개 | `infra/docker/docker-compose.prod.yml:8-9` |
-| Redis 인증 | 없음. `REDIS_PASSWORD`, `requirepass`, ACL 설정 없음 | 저장소 설정 검색 기준 |
-| Redis 연결 env | `REDIS_PORT`는 예시 env에 있으나 `REDIS_HOST`, `REDIS_PASSWORD`는 없음 | `envs/example.local.env`, `envs/example.prod.env` |
+| 운영 Redis 서비스 | 있음. host port를 공개하지 않고 Docker 내부 network에서만 접근 | `infra/docker/docker-compose.prod.yml` |
+| Redis 인증 | 운영 compose는 `REDIS_PASSWORD` 기반 `requirepass`를 사용해야 하며, Worker는 local 외 환경에서 Redis password 누락을 거부한다. | `infra/docker/docker-compose.prod.yml`, `ai_worker/core/config.py` |
+| Redis 연결 env | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, Stream/Consumer 설정을 예시 env에 명시한다. 실제 secret 값은 예시 파일에 기록하지 않는다. | `envs/example.local.env`, `envs/example.prod.env` |
 | Redis client 코드 | AI Worker에 `redis.asyncio` client와 Stream Adapter 구현됨 (#140) | `ai_worker/adapters/redis_stream.py`, `ai_worker/adapters/factory.py` |
 | AI Worker 진입점 | Consumer runtime을 조립해 Redis Stream을 소비하고 종료 신호까지 loop를 유지함 (#233) | `ai_worker/main.py`, `ai_worker/core/runtime_assembly.py`, `ai_worker/README.md:15` |
 | AI Worker 공통 실행 runtime | Redis Consumer Group·ACK adapter·SQLAlchemy 결과 저장·lease·heartbeat·fencing·commit-before-ACK 경계가 조립됨 (#140·#141·#233) | `ai_worker/core/consumer_execution.py`, `ai_worker/core/runtime_assembly.py` |
 | AI Worker 남은 영역 | 실제 CLOVA Provider 연결(#258), health check와 Production 배포 조립은 미완료 | `ai_worker/README.md` |
 
-운영 compose에서 Redis를 host port로 공개하면서 인증 설정이 없으면, 외부 접근이 가능한 환경에서 `oryak:jobs` Stream에 임의 메시지를 `XADD`할 수 있다. Worker가 연결된 뒤에는 위조된 실행 요청으로 이어질 수 있으므로, 이 항목은 단순 후속 개선이 아니라 운영 배포 전 차단 요소로 본다.
+운영 compose에서는 Redis host port 공개를 제거하고 내부 Docker network 접근으로 제한한다. Redis 인증값은 운영 secret에서 주입하며, local 외 Worker는 password 누락이나 placeholder 값을 startup에서 거부한다. 외부 공개가 필요한 운영 구성이 별도로 승인되기 전까지 Redis host port를 다시 열지 않는다.
 
 ### Redis Stream 목표 계약
 
@@ -135,7 +135,7 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 - Redis 접속 실패 시 Provider 호출이나 Job 실행을 시작하지 않음
 - 비밀정보가 Redis connection error message에 포함되지 않음
 
-현재 `infra/docker/docker-compose.prod.yml`의 `"${REDIS_PORT}:6379"` 공개 설정은 위 조건이 충족될 때까지 운영 배포 전 차단 요소로 유지한다.
+운영 compose의 Redis host port 공개는 제거한다. 외부 접근이 필요한 운영 구성이 별도로 승인되는 경우에만 인증·ACL·접근 제한 기준을 함께 추가한다.
 
 ### Redis Consumer Group 구현 경계
 
@@ -250,7 +250,7 @@ Stream envelope 테스트는 Redis/Outbox 발행 골격이 구현된 뒤 추가�
 
 ### Redis 검증
 
-- 운영 compose에서 Redis host port 공개 제거 또는 인증 설정 확인
+- 운영 compose에서 Redis host port 공개 제거와 Redis 인증 설정 확인
 - 인증 설정이 필요한 환경에서 `REDIS_PASSWORD` 누락 시 startup 실패 확인
 - Redis connection error에 password가 노출되지 않는지 확인
 - Consumer Group 생성 책임과 재실행 방법 확인
@@ -425,7 +425,7 @@ Production Redis는 기본적으로 host port에 공개하지 않는다. Redis�
 
 구현 확인 기준:
 
-- `infra/docker/docker-compose.prod.yml`에서 Redis host port 공개가 제거되었거나 인증·접근 제한이 함께 적용되어 있다.
+- `infra/docker/docker-compose.prod.yml`에서 Redis host port 공개가 제거되어 있고 Redis 인증이 함께 적용되어 있다.
 - `REDIS_PASSWORD`가 필요한 구성에서는 값 누락 시 Worker/Publisher가 시작되지 않는다.
 - Redis connection error에 password가 노출되지 않는다.
 
