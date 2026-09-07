@@ -69,6 +69,10 @@ PostgreSQL 데이터베이스만 재생성한 뒤 Alembic migration과 `tests/in
 Redis Stream을 사용하고 fixture teardown에서 정리하며, runner의 임시 storage도 종료 시
 삭제됩니다. 실제 환자 데이터나 외부 CLOVA·OpenAI 호출은 사용하지 않습니다.
 
+`run_test.sh`와 `run_integration_test.sh`는 동시에 실행하지 않습니다. 두 runner 모두 이름이
+고정된 `test` 데이터베이스를 `DROP DATABASE ... WITH (FORCE)`로 재생성하고 통합테스트의
+고정 schema를 사용하므로, 동시 실행하면 상대 runner의 연결이나 schema를 제거할 수 있습니다.
+
 `run_integration_test.sh` 종료 코드는 다음과 같이 구분합니다. 기존 기본 runner인
 `run_test.sh`는 이전 동작을 유지하므로 환경 준비 실패도 `1`이며, 테스트가 전혀 없는
 초기 저장소에서는 `0`으로 skip합니다. 전체 통합 runner는 테스트 미발견을 환경 오류
@@ -82,10 +86,13 @@ Redis Stream을 사용하고 fixture teardown에서 정리하며, runner의 임�
 
 `ENV_FILE`과 `COMPOSE_FILE`로 local/test 설정을 선택할 수 있지만, 경로에 `prod`가 포함된
 파일과 `ENV`가 `local` 또는 `test`가 아닌 환경은 Docker Compose를 해석하기 전에
-차단합니다. 실행 중인 서비스의 readiness는 최대 30초 동안 확인하며, 준비되지 않았다는
+차단합니다. 실행 중인 서비스의 readiness는 약 30초 동안 재시도하며, 준비되지 않았다는
 안내가 나오면 출력된 `docker compose ... up -d` 명령과 Compose 로그를 확인한 뒤 다시
 시도합니다. 이 전체 통합 명령은 현재 GitHub Actions 필수 gate에는 포함되지 않으며,
-반복 안정성을 확인한 뒤 별도 Issue에서 편입 여부를 결정합니다.
+반복 안정성과 실행 시간을 확인한 뒤 [Issue #307](https://github.com/AI-HealthCare-05/AH_05_04/issues/307)에서
+편입 여부와 방식을 결정합니다. 현재 GitHub Actions의 선별 Redis 통합테스트는 로컬
+Compose의 동적 host port·인증 격리 대신, 인증 없는 service container와 고정 host port
+`127.0.0.1:6379`를 사용합니다.
 
 ### test runner가 격리하는 설정
 
