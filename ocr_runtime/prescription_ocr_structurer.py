@@ -8,12 +8,24 @@ from provider_contracts.ocr import RawRecognizedField, RecognizedField
 # CLOVA는 같은 템플릿이라도 날짜 텍스트 박스에 라벨(발행일 등)이나 앞뒤 공백을
 # 함께 인식할 수 있으므로 fullmatch 대신 값 내부에서 날짜 부분만 찾아 추출합니다.
 # 구분자는 숫자가 아니면 무엇이든 허용해 "-", ".", "/"뿐 아니라 한글식(년/월/일)
-# 표기도 함께 지원합니다. backend/app/services/ocr_ai/validator.py의
-# _normalize_date와 같은 방식입니다.
-_DATE_PATTERN = re.compile(r"(?P<year>\d{4})\D+(?P<month>\d{1,2})\D+(?P<day>\d{1,2})")
+# 표기도 함께 지원합니다. backend/app/services/ocr_ai/validator.py가 이 모듈의
+# normalize_prescribed_date_text를 그대로 import해서 같은 규칙을 씁니다.
+# day 뒤에 숫자가 더 있으면("2026-08-123") 오인식으로 보고 통째로 버립니다 — 두 자리만
+# 잘라 "12"로 확정하면 잘못된 날짜를 정상처럼 확정하게 됩니다.
+_DATE_PATTERN = re.compile(r"(?P<year>\d{4})\D+(?P<month>\d{1,2})\D+(?P<day>\d{1,2})(?!\d)")
+
+# 처방일은 과거 날짜여야 하므로, 자릿수만 맞는 임의의 숫자열(요양기관번호·환자번호 등)이
+# 우연히 날짜 모양이 되는 경우를 걸러내기 위한 최소 연도 하한입니다.
+_MIN_PRESCRIBED_YEAR = 2000
+
+# 이 라벨이 포함된 박스는 날짜 모양이어도 처방일 후보에서 제외합니다. 환자 생년월일이
+# 처방일로 오인식되면 의료 정확성뿐 아니라 개인정보(생년월일)가 PRESCRIBED_DATE로
+# 저장되는 문제까지 겹칩니다. 좌표 기반 열 판단이 없는 최소 방어이며, 라벨이 값과
+# 다른 박스에 분리되어 인식되는 경우까지는 막지 못합니다.
+_EXCLUDED_DATE_LABEL_PATTERN = re.compile(r"생년월일|생일|주민등록번호|주민번호")
 
 
-def _normalize_prescribed_date(value: str) -> str | None:
+def normalize_prescribed_date_text(value: str) -> str | None:
     match = _DATE_PATTERN.search(value)
 
     if match is None:
@@ -22,6 +34,9 @@ def _normalize_prescribed_date(value: str) -> str | None:
     year = int(match.group("year"))
     month = int(match.group("month"))
     day = int(match.group("day"))
+
+    if not (_MIN_PRESCRIBED_YEAR <= year <= date.today().year + 1):
+        return None
 
     try:
         # 자릿수만 맞고 실제로 존재하지 않는 날짜(예: 13월)는 오인식으로 보고 버립니다.
@@ -320,7 +335,10 @@ class PrescriptionOcrStructurer:
         raw_fields: list[RawRecognizedField],
     ) -> RecognizedField | None:
         for field in raw_fields:
-            normalized_date = _normalize_prescribed_date(field.raw_value)
+            if _EXCLUDED_DATE_LABEL_PATTERN.search(field.raw_value):
+                continue
+
+            normalized_date = normalize_prescribed_date_text(field.raw_value)
 
             if normalized_date is not None:
                 return RecognizedField(
