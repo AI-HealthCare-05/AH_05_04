@@ -487,6 +487,30 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(screen.queryByText(/원본 대조 (필요|완료)/)).toBeNull()
   })
 
+  it('처방일 raw_value가 대시 형식이 아니어도 Backend가 만든 normalized_value로 확정한다', async () => {
+    const fields = makePendingFields().map((field) =>
+      field.field_type === 'PRESCRIBED_DATE'
+        ? { ...field, raw_value: '2026.08.22', normalized_value: '2026-08-22' }
+        : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+    mockPatchConfirmation()
+
+    renderPage()
+
+    const reviewButtons = await screen.findAllByRole('button', {
+      name: '검토 완료',
+    })
+    fireEvent.click(reviewButtons[0])
+
+    await waitFor(() =>
+      expect(updateExtractedField).toHaveBeenCalledWith(
+        'PRESCRIBED_DATE-0',
+        '2026-08-22',
+      ),
+    )
+  })
+
   it('선택 필드를 비우면 PR #96 계약대로 confirmed_value null을 전송한다', async () => {
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(makeCompleteFields()))
     mockPatchConfirmation()

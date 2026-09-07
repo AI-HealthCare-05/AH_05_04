@@ -38,6 +38,29 @@ from app.models.rag_candidate import (
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
+from app.models.rag_catalog import (
+    RagMedicationAlias,
+    RagMedicationAliasTargetType,
+    RagMedicationComponentRole,
+    RagMedicationIngredient,
+    RagMedicationProduct,
+    RagMedicationProductComponent,
+)
+from app.models.rag_source import (
+    RagIngestionRunStatus,
+    RagSnapshotVerificationStatus,
+    RagSource,
+    RagSourceApprovalStatus,
+    RagSourceEndpoint,
+    RagSourceEndpointLifecycleStatus,
+    RagSourceIngestionRun,
+    RagSourceLifecycleStatus,
+    RagSourceOperation,
+    RagSourceSnapshot,
+    RagSourceSnapshotVerification,
+    RagSourceUsageStatus,
+    RagVerificationResultStatus,
+)
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
@@ -84,5 +107,24 @@ __all__ = [
     "Prescription",
     "Profile",
     "ProfileType",
+    "RagIngestionRunStatus",
+    "RagMedicationAlias",
+    "RagMedicationAliasTargetType",
+    "RagMedicationComponentRole",
+    "RagMedicationIngredient",
+    "RagMedicationProduct",
+    "RagMedicationProductComponent",
+    "RagSnapshotVerificationStatus",
+    "RagSource",
+    "RagSourceApprovalStatus",
+    "RagSourceEndpoint",
+    "RagSourceEndpointLifecycleStatus",
+    "RagSourceIngestionRun",
+    "RagSourceLifecycleStatus",
+    "RagSourceOperation",
+    "RagSourceSnapshot",
+    "RagSourceSnapshotVerification",
+    "RagSourceUsageStatus",
+    "RagVerificationResultStatus",
     "User",
 ]

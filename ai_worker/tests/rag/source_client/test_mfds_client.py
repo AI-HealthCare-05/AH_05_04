@@ -179,13 +179,18 @@ def decode_synthetic_json(
     raw_records = cast(list[dict[str, object]], body_envelope["items"])
 
     body_code = header["result_code"]
-    total_count = body_envelope.get("total_count")
+    page_number = body_envelope["page"]
+    page_size = body_envelope["page_size"]
+    total_count = body_envelope["total_count"]
     retry_reset_at = header.get("retry_reset_at")
 
     if not isinstance(body_code, str):
         raise TypeError
 
-    if total_count is not None and not isinstance(total_count, int):
+    if type(page_number) is not int or type(page_size) is not int:
+        raise TypeError
+
+    if type(total_count) is not int:
         raise TypeError
 
     if retry_reset_at is not None and not isinstance(retry_reset_at, str):
@@ -196,6 +201,8 @@ def decode_synthetic_json(
     return DecodedProviderPage(
         body_code=body_code,
         records=records,
+        page_number=page_number,
+        page_size=page_size,
         total_count=total_count,
         retry_reset_at=retry_reset_at,
     )
@@ -335,6 +342,84 @@ async def test_fetch_one_page_accepts_http_and_body_success() -> None:
     assert result.failure is None
 
 
+async def test_response_page_must_match_requested_page() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=synthetic_response_bytes(
+                records=[
+                    {
+                        "synthetic_id": "product-001",
+                        "name": "합성 의약품",
+                    }
+                ],
+                page=2,
+                total_count=1,
+            ),
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+    ) as http_client:
+        client = MfdsSourceClient(
+            contract=endpoint_contract(),
+            secret_parameter_name="serviceKey",
+            secret_value="synthetic-local-secret",
+            decoder=decode_synthetic_json,
+            client=http_client,
+            resolver=public_resolver,
+        )
+        result = await client.fetch_one_page(
+            SourceRequest(
+                operation=endpoint_contract().identity,
+                parameters={},
+            ),
+            page_number=1,
+        )
+
+    assert result.status is SourceRunStatus.SCHEMA_DRIFT
+    assert result.pages == ()
+    assert result.failure is not None
+    assert result.failure.code is SourceFailureCode.SCHEMA_DRIFT
+
+
+@pytest.mark.parametrize("page_number", (0, -1, True))
+async def test_rejects_invalid_requested_page_before_provider_call(
+    page_number: int,
+) -> None:
+    provider_called = False
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("invalid page must not reach provider")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+    ) as http_client:
+        client = MfdsSourceClient(
+            contract=endpoint_contract(),
+            secret_parameter_name="serviceKey",
+            secret_value="synthetic-local-secret",
+            decoder=decode_synthetic_json,
+            client=http_client,
+            resolver=public_resolver,
+        )
+        result = await client.fetch_one_page(
+            SourceRequest(
+                operation=endpoint_contract().identity,
+                parameters={},
+            ),
+            page_number=page_number,
+        )
+
+    assert provider_called is False
+    assert result.status is SourceRunStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.code is SourceFailureCode.INVALID_REQUEST
+
+
 async def test_http_200_body_authentication_failure_is_rejected() -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -345,7 +430,12 @@ async def test_http_200_body_authentication_failure_is_rejected() -> None:
                     "synthetic_header": {
                         "result_code": "SYNTHETIC_AUTH_FAILURE",
                     },
-                    "synthetic_body": {"items": []},
+                    "synthetic_body": {
+                        "items": [],
+                        "page": 1,
+                        "page_size": 2,
+                        "total_count": 0,
+                    },
                 }
             ).encode("utf-8"),
         )
@@ -632,7 +722,12 @@ async def test_daily_limit_is_not_automatically_retried() -> None:
                         "result_code": "SYNTHETIC_DAILY_LIMIT",
                         "retry_reset_at": "2026-09-05T00:00:00+09:00",
                     },
-                    "synthetic_body": {"items": []},
+                    "synthetic_body": {
+                        "items": [],
+                        "page": 1,
+                        "page_size": 2,
+                        "total_count": 0,
+                    },
                 }
             ).encode("utf-8"),
         )

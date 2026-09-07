@@ -45,6 +45,7 @@ class ApiChatFixture:
     closed_session_id: UUID
     foreign_session_id: UUID
     owner_prescription_id: UUID
+    owner_empty_prescription_id: UUID
     foreign_prescription_id: UUID
 
 
@@ -178,6 +179,7 @@ async def api_chat_fixture(api_db_session: AsyncSession) -> ApiChatFixture:
     )
     await api_db_session.flush()
     owner_prescription = await _add_prescription_graph(api_db_session, user=owner, token=uuid4().hex)
+    owner_empty_prescription = await _add_prescription_graph(api_db_session, user=owner, token=uuid4().hex)
     foreign_prescription = await _add_prescription_graph(api_db_session, user=outsider, token=uuid4().hex)
     active = ChatSession(prescription_id=owner_prescription.id, profile_id=owner_prescription.profile_id)
     closed = ChatSession(
@@ -195,6 +197,7 @@ async def api_chat_fixture(api_db_session: AsyncSession) -> ApiChatFixture:
         closed_session_id=closed.id,
         foreign_session_id=foreign.id,
         owner_prescription_id=owner_prescription.id,
+        owner_empty_prescription_id=owner_empty_prescription.id,
         foreign_prescription_id=foreign_prescription.id,
     )
 
@@ -287,11 +290,72 @@ async def test_create_and_list_route_successes_have_exact_no_store(
 
     create_response = await client.post(f"/api/v1/prescriptions/{api_chat_fixture.owner_prescription_id}/chat-sessions")
     list_response = await client.get(f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages")
+    rediscover_response = await client.get(
+        f"/api/v1/prescriptions/{api_chat_fixture.owner_prescription_id}/chat-session"
+    )
 
     assert create_response.status_code == 201
     assert list_response.status_code == 200
+    assert rediscover_response.status_code == 200
     assert create_response.headers.get_list("cache-control") == ["no-store"]
     assert list_response.headers.get_list("cache-control") == ["no-store"]
+    assert rediscover_response.headers.get_list("cache-control") == ["no-store"]
+
+
+async def test_get_latest_chat_session_for_prescription_rediscovers_existing_active_session_without_creating(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+) -> None:
+    _use_owner_and_engine(api_chat_fixture, FakeChatEngine())
+    before = await api_db_session.scalar(
+        select(func.count(ChatSession.id)).where(ChatSession.prescription_id == api_chat_fixture.owner_prescription_id)
+    )
+
+    response = await client.get(f"/api/v1/prescriptions/{api_chat_fixture.owner_prescription_id}/chat-session")
+
+    after = await api_db_session.scalar(
+        select(func.count(ChatSession.id)).where(ChatSession.prescription_id == api_chat_fixture.owner_prescription_id)
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "session_id": str(api_chat_fixture.active_session_id),
+        "prescription_id": str(api_chat_fixture.owner_prescription_id),
+        "session_status": "ACTIVE",
+        "created_at": response.json()["data"]["created_at"],
+    }
+    assert before == after == 2
+    assert response.headers.get_list("cache-control") == ["no-store"]
+
+
+async def test_get_latest_chat_session_for_prescription_returns_404_without_creating_when_none_exists(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+) -> None:
+    _use_owner_and_engine(api_chat_fixture, FakeChatEngine())
+
+    response = await client.get(f"/api/v1/prescriptions/{api_chat_fixture.owner_empty_prescription_id}/chat-session")
+
+    count = await api_db_session.scalar(
+        select(func.count(ChatSession.id)).where(
+            ChatSession.prescription_id == api_chat_fixture.owner_empty_prescription_id
+        )
+    )
+    assert count == 0
+    _assert_private_error(
+        response,
+        status_code=404,
+        code="CHAT_SESSION_NOT_FOUND",
+        message="대화 세션을 찾을 수 없습니다.",
+        details=[
+            {
+                "field": "prescription_id",
+                "reason": "NOT_FOUND",
+                "rejected_value": str(api_chat_fixture.owner_empty_prescription_id),
+            }
+        ],
+    )
 
 
 @pytest.mark.parametrize(
@@ -356,6 +420,7 @@ async def test_mapped_generation_errors_keep_exact_common_body_and_no_store(
         ("POST", "/api/v1/chat-sessions/not-a-uuid/messages", {"content": "합성 질문"}, "path.session_id"),
         ("GET", "/api/v1/chat-sessions/not-a-uuid/messages", None, "path.session_id"),
         ("POST", "/api/v1/prescriptions/not-a-uuid/chat-sessions", None, "path.prescription_id"),
+        ("GET", "/api/v1/prescriptions/not-a-uuid/chat-session", None, "path.prescription_id"),
     ],
 )
 async def test_malformed_uuid_422_has_exact_no_store_on_both_route_shapes(
@@ -410,6 +475,7 @@ async def _reject_user() -> None:
         ("POST", f"/api/v1/chat-sessions/{uuid4()}/messages", {"content": "합성 질문"}),
         ("GET", f"/api/v1/chat-sessions/{uuid4()}/messages", None),
         ("POST", f"/api/v1/prescriptions/{uuid4()}/chat-sessions", None),
+        ("GET", f"/api/v1/prescriptions/{uuid4()}/chat-session", None),
     ],
 )
 async def test_auth_error_preserves_www_authenticate_and_exact_no_store_on_both_route_shapes(
@@ -446,6 +512,9 @@ async def test_foreign_ownership_and_closed_session_are_rejected_before_engine(
     foreign_create = await client.post(
         f"/api/v1/prescriptions/{api_chat_fixture.foreign_prescription_id}/chat-sessions"
     )
+    foreign_rediscover = await client.get(
+        f"/api/v1/prescriptions/{api_chat_fixture.foreign_prescription_id}/chat-session"
+    )
     closed_send = await client.post(
         f"/api/v1/chat-sessions/{api_chat_fixture.closed_session_id}/messages",
         json={"content": "종료 세션 질문"},
@@ -466,6 +535,19 @@ async def test_foreign_ownership_and_closed_session_are_rejected_before_engine(
     )
     _assert_private_error(
         foreign_create,
+        status_code=404,
+        code="PRESCRIPTION_NOT_FOUND",
+        message="처방 정보를 찾을 수 없습니다.",
+        details=[
+            {
+                "field": "prescription_id",
+                "reason": "NOT_FOUND",
+                "rejected_value": str(api_chat_fixture.foreign_prescription_id),
+            }
+        ],
+    )
+    _assert_private_error(
+        foreign_rediscover,
         status_code=404,
         code="PRESCRIPTION_NOT_FOUND",
         message="처방 정보를 찾을 수 없습니다.",
@@ -506,6 +588,10 @@ class UnexpectedChatService:
         del kwargs
         raise RuntimeError("synthetic unexpected chat failure")
 
+    async def get_latest_session_for_prescription(self, **kwargs: object) -> None:
+        del kwargs
+        raise RuntimeError("synthetic unexpected chat failure")
+
 
 @pytest.mark.parametrize(
     ("method", "path", "json_body"),
@@ -513,6 +599,7 @@ class UnexpectedChatService:
         ("POST", f"/api/v1/chat-sessions/{uuid4()}/messages", {"content": "합성 질문"}),
         ("GET", f"/api/v1/chat-sessions/{uuid4()}/messages", None),
         ("POST", f"/api/v1/prescriptions/{uuid4()}/chat-sessions", None),
+        ("GET", f"/api/v1/prescriptions/{uuid4()}/chat-session", None),
     ],
 )
 async def test_unexpected_500_keeps_cors_and_exact_no_store_on_both_route_shapes(
