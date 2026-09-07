@@ -130,9 +130,9 @@ def _question(expression: Expression, product_code: str, subject: str) -> str:
     if expression == "EXPRESSION_CANONICAL":
         return f"{product_code} 제품의 {subject}에 대해 알려 주세요."
     if expression == "EXPRESSION_SYNONYM":
-        return f"{product_code} 제품에서 {_with_particle(subject, '을', '를')} 어떻게 확인할 수 있나요?"
+        return f"{product_code} 제품의 {_with_particle(subject, '은', '는')} 무엇인가요?"
     if expression == "EXPRESSION_WORD_ORDER_PARTICLE":
-        return f"{product_code} {subject}, 어디서 확인하나요?"
+        return f"{product_code} 제품, {_with_particle(subject, '을', '를')} 알려 주세요."
     if expression == "EXPRESSION_COLLOQUIAL":
         return f"{product_code} 제품 {_with_particle(subject, '이', '가')} 궁금해요."
     if expression == "EXPRESSION_FRAGMENT":
@@ -310,6 +310,29 @@ BASE_INTENTS = (
     ),
 )
 
+_GOLD_STATEMENTS = {
+    "NLR-MI01": "평가용 가상 설정에서 NLR-MI01 제품의 성분 정보는 청색 결정 성분 하나로 구성됩니다.",
+    "NLR-MI02": "평가용 가상 설정에서 NLR-MI02 제품의 제형과 외형 정보는 연보라색 삼각 필름 형태와 점 무늬 두 개입니다.",
+    "NLR-MI03": "평가용 가상 설정에서 NLR-MI03 제품의 사용 목적 정보는 가상 분류표의 단계 A 표식을 확인하는 연습으로 정의됩니다.",
+    "NLR-MI04": "평가용 가상 설정에서 NLR-MI04 제품의 라벨 식별 정보는 문자 MI04와 주황색 마름모 표식의 조합입니다.",
+    "NLR-PC01": "평가용 가상 설정에서 NLR-PC01 제품의 복용 전 주의사항은 봉인선과 확인표의 세 칸을 점검하는 절차입니다.",
+    "NLR-PC02": "평가용 가상 설정에서 NLR-PC02 제품의 알레르기 경고 정보는 별표 모양 성분 표식이 있으면 가상 확인 카드 B를 조회하라는 내용입니다.",
+    "NLR-PC03": "평가용 가상 설정에서 NLR-PC03 제품의 이상 반응 관찰 정보는 상태 카드의 초록·노랑·빨강 세 표식을 기록하는 방식입니다.",
+    "NLR-PC04": "평가용 가상 설정에서 NLR-PC04 제품의 전문가 확인이 필요한 조건은 가상 확인표가 빨강일 때 절차 C를 조회하는 경우입니다.",
+    "NLR-LM01": "평가용 가상 설정에서 NLR-LM01 제품의 수분 섭취 안내는 기록 카드의 물컵 세 칸을 차례로 표시하는 방식입니다.",
+    "NLR-LM02": "평가용 가상 설정에서 NLR-LM02 제품의 식사 습관 안내는 아침·낮·저녁 기록 칸을 같은 순서로 채우는 방식입니다.",
+    "NLR-LM03": "평가용 가상 설정에서 NLR-LM03 제품의 활동 안내는 걷기와 휴식 표식을 번갈아 기록하는 방식입니다.",
+    "NLR-LM04": "평가용 가상 설정에서 NLR-LM04 제품의 상태 기록 안내는 날짜·가상 코드·확인 표시 세 항목을 남기는 방식입니다.",
+    "NLR-ST01": "평가용 가상 설정에서 NLR-ST01 제품의 보관 온도 정보는 가상 눈금 B 구간으로 지정됩니다.",
+    "NLR-ST02": "평가용 가상 설정에서 NLR-ST02 제품의 빛과 습기 차단 정보는 남색 덮개와 마른 잎 표식을 함께 사용하는 것입니다.",
+    "NLR-ST03": "평가용 가상 설정에서 NLR-ST03 제품의 안전한 보관 위치 정보는 가상 보관함의 위쪽 C 칸으로 지정됩니다.",
+    "NLR-ST04": "평가용 가상 설정에서 NLR-ST04 제품의 원래 용기 보관 정보는 주황색 용기와 삼각형 뚜껑 표식을 유지하는 것입니다.",
+    "NLR-MD01": "평가용 가상 설정에서 NLR-MD01 제품의 복용 누락을 일찍 알았을 때의 안내는 기록 카드의 절차 A를 조회하는 것입니다.",
+    "NLR-MD02": "평가용 가상 설정에서 NLR-MD02 제품의 다음 복용 시각이 가까울 때의 안내는 절차 B와 시계 표식을 확인하는 것입니다.",
+    "NLR-MD03": "평가용 가상 설정에서 NLR-MD03 제품의 중복 복용 금지 안내는 X 표식을 한 번만 남기는 규칙입니다.",
+    "NLR-MD04": "평가용 가상 설정에서 NLR-MD04 제품의 반복해서 복용을 놓쳤을 때의 전문가 상담 안내는 누락 표식 세 개가 쌓이면 가상 상담 카드 C를 조회하는 것입니다.",
+}
+
 _GRAPH_MEMBER_PATHS = (
     INDEX_PATH,
     EVIDENCE_MAPPING_PATH,
@@ -393,7 +416,7 @@ def _record(
 def _runtime_support_object(
     *,
     evidence_ref_id: str,
-    evidence_type: Literal["INTERACTION_RULE", "SAFETY_POLICY"],
+    evidence_type: Literal["KNOWLEDGE_CHUNK", "INTERACTION_RULE", "SAFETY_POLICY"],
     stable_key: str,
     content: str,
 ) -> dict[str, JsonValue]:
@@ -407,10 +430,22 @@ def _runtime_support_object(
     }
 
 
-def _intent_subject(intent: BaseIntent) -> str:
-    if intent.gold_intent.startswith("제품"):
-        return f"{intent.product_code} {intent.gold_intent}"
-    return f"{intent.product_code} 제품의 {intent.gold_intent}"
+def _knowledge_index_support_object() -> dict[str, JsonValue]:
+    support = _runtime_support_object(
+        evidence_ref_id="ev-nlr-runtime-knowledge-index",
+        evidence_type="KNOWLEDGE_CHUNK",
+        stable_key="SYNTHETIC_NLR_KNOWLEDGE_INDEX",
+        content="다섯 주제의 평가용 가상 사실 100개를 모아 둔 전체 합성 지식 색인입니다.",
+    )
+    support.update(
+        {
+            "corpus_record_count": 100,
+            "gold_record_count": 20,
+            "hard_negative_record_count": 80,
+            "resource_scope": "COMPLETE_SYNTHETIC_KNOWLEDGE_INDEX",
+        }
+    )
+    return support
 
 
 def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
@@ -424,10 +459,7 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
                 product_code=intent.product_code,
                 topic=intent.topic,
                 record_kind="GOLD",
-                statement=(
-                    f"{_intent_subject(intent)}에 관한 평가용 가상 지식은 "
-                    "해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
-                ),
+                statement=_GOLD_STATEMENTS[intent.product_code],
             )
         )
 
@@ -437,22 +469,24 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
         statements = (
             (
                 intent.product_code,
-                f"{intent.product_code} 제품의 대조용 포장 순번은 이 합성 평가 자료에서 별도 항목으로 관리됩니다.",
+                f"평가용 가상 설정에서 {intent.product_code} 제품의 포장 표식은 "
+                f"PKG-{index + 1:02d} 코드와 은색 사각형 {(index % 4) + 1}개로 구성됩니다.",
             ),
             (
                 same_topic_intent.product_code,
-                f"{_intent_subject(same_topic_intent)} 항목은 같은 주제에 "
-                f"속하지만 {intent.product_code} 질문의 근거가 아닙니다.",
+                f"{_GOLD_STATEMENTS[same_topic_intent.product_code]} "
+                f"이 정보는 주제별 참고 카드 ST-{index + 1:02d}에도 기록됩니다.",
             ),
             (
                 intent.product_code,
-                f"{intent.product_code} 관련 {_TOPIC_OVERLAP_TERMS[intent.topic]} 자료의 목차를 "
-                "안내하지만, 질문에서 찾는 세부 속성은 제시하지 않습니다.",
+                f"평가용 가상 설정에서 {intent.product_code} 제품의 "
+                f"{_TOPIC_OVERLAP_TERMS[intent.topic]} 색인 번호는 IDX-{index + 1:02d}이며 "
+                f"목차의 {(index % 5) + 1}번째 칸에 표시됩니다.",
             ),
             (
                 cross_topic_intent.product_code,
-                f"{_intent_subject(cross_topic_intent)} 항목은 "
-                f"{intent.product_code} 질문과 일부 표현만 겹치는 다른 주제의 합성 자료입니다.",
+                f"{_GOLD_STATEMENTS[cross_topic_intent.product_code]} "
+                f"이 정보는 참조 카드 REF-{index + 1:02d}에도 기록됩니다.",
             ),
         )
         for negative_number, (negative_type, (product_code, statement)) in enumerate(
@@ -464,7 +498,7 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
                     evidence_ref_id=f"ev-nlr-{origin_lower}-neg-{negative_number:02d}",
                     transform_origin=intent.transform_origin,
                     product_code=product_code,
-                    topic=intent.topic,
+                    topic=(cross_topic_intent.topic if negative_type == "CROSS_TOPIC_OVERLAP" else intent.topic),
                     record_kind="HARD_NEGATIVE",
                     statement=statement,
                     negative_type=negative_type,
@@ -492,11 +526,23 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
                 "target_kind": "FIXTURE_RECORD",
             }
         )
-    # RuntimeFixtureV11 requires Rule and Safety references even for Retrieval Cases.
-    # These two mappings resolve only to typed runtime-support objects outside `records`;
-    # the 20 KNOWLEDGE_CHUNK mappings remain the complete Case Gold set from Task 2.
+    # RuntimeFixtureV11 requires Knowledge Index, Rule, and Safety references for Retrieval Cases.
+    # These three mappings resolve only to typed runtime-support objects outside `records`.
+    # The 20 record-located KNOWLEDGE_CHUNK mappings remain the complete Case Gold set from Task 2;
+    # the index binding represents the complete corpus container and is never Case Gold.
     entries.extend(
         (
+            {
+                "content_sha256": index_sha256,
+                "evidence_ref_id": "ev-nlr-runtime-knowledge-index",
+                "evidence_type": "KNOWLEDGE_CHUNK",
+                "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
+                "locator": "$.runtime_support.knowledge_index",
+                "runtime_typed_ref": None,
+                "source_version": DATASET_VERSION,
+                "stable_key": "SYNTHETIC_NLR_KNOWLEDGE_INDEX",
+                "target_kind": "FIXTURE_RECORD",
+            },
             {
                 "content_sha256": index_sha256,
                 "evidence_ref_id": "ev-nlr-runtime-rule-set",
@@ -593,7 +639,6 @@ def _case_context(
     intent: BaseIntent,
     *,
     mapping_ref: dict[str, JsonValue],
-    gold_stable_key: str,
     index_sha256: str,
 ) -> dict[str, JsonValue]:
     suffix = intent.product_code.replace("-", "_")
@@ -601,7 +646,7 @@ def _case_context(
         "bundle_eligibility_status": "ELIGIBLE",
         "dependency_fault": "NONE",
         "guideline_set_ref": None,
-        "knowledge_index_ref": _runtime_reference(gold_stable_key, index_sha256),
+        "knowledge_index_ref": _runtime_reference("SYNTHETIC_NLR_KNOWLEDGE_INDEX", index_sha256),
         "rule_set_ref": _runtime_reference("SYNTHETIC_NLR_RULE_SET", index_sha256),
         "safety_policy_set_ref": _runtime_reference("SYNTHETIC_NLR_SAFETY_POLICY_SET", index_sha256),
         "source_eligibility_status": "ELIGIBLE",
@@ -664,15 +709,13 @@ def _build_cases(
     cases: dict[str, bytes] = {}
     case_values: list[dict[str, JsonValue]] = []
     case_number = 1
-    for intent_index, intent in enumerate(BASE_INTENTS, start=1):
+    for intent in BASE_INTENTS:
         gold_id = f"ev-nlr-{intent.transform_origin.lower()}-gold"
-        gold_stable_key = f"SYNTHETIC_NLR_GOLD_{intent_index:03d}"
         for variant in intent.variants:
             case_id = f"rag-nlr-dev-{case_number:03d}"
             context = _case_context(
                 intent,
                 mapping_ref=mapping_ref,
-                gold_stable_key=gold_stable_key,
                 index_sha256=index_sha256,
             )
             payload: dict[str, JsonValue] = {
@@ -1002,6 +1045,7 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
         "index_version": DATASET_VERSION,
         "records": [record.to_json() for record in evidence_records],
         "runtime_support": {
+            "knowledge_index": _knowledge_index_support_object(),
             "rule_set": _runtime_support_object(
                 evidence_ref_id="ev-nlr-runtime-rule-set",
                 evidence_type="INTERACTION_RULE",

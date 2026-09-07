@@ -46,6 +46,21 @@ def _materialize_graph(tmp_path: Path, graph: dict[str, bytes]) -> Path:
     return root
 
 
+def _non_digest_strings(value: JsonValue) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [text for item in value for text in _non_digest_strings(item)]
+    if isinstance(value, dict):
+        return [
+            text
+            for key, item in value.items()
+            if key != "hash" and not key.endswith("_sha256") and not key.endswith("_hash")
+            for text in _non_digest_strings(item)
+        ]
+    return []
+
+
 def test_issue_273_complete_graph_loads_with_schema_set_1_3(tmp_path: Path) -> None:
     root = _materialize_graph(tmp_path, build_issue_273_dev_graph())
 
@@ -106,7 +121,7 @@ def test_issue_273_authoring_provenance_resolves_to_each_cases_gold_resource() -
 
 def test_issue_273_graph_excludes_sensitive_actual_and_holdout_content() -> None:
     graph = build_issue_273_dev_graph()
-    serialized = b"\n".join(graph.values()).decode("utf-8")
+    serialized = "\n".join(text for content in graph.values() for text in _non_digest_strings(json.loads(content)))
     actual_product_denylist = ("타이레놀", "게보린", "판콜", "아스피린")
 
     assert not re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", serialized)
@@ -307,7 +322,7 @@ def test_issue_273_runtime_support_mappings_resolve_to_typed_non_corpus_objects(
     corpus_ids = {record["evidence_ref_id"] for record in index["records"]}
 
     assert len(index["records"]) == 100
-    assert len(support_entries) == 2
+    assert len(support_entries) == 3
     assert corpus_ids.isdisjoint(entry["evidence_ref_id"] for entry in support_entries)
     for entry in support_entries:
         assert not entry["locator"].startswith("$.records[")
@@ -324,6 +339,35 @@ def test_issue_273_runtime_support_mappings_resolve_to_typed_non_corpus_objects(
         assert "record_kind" not in selected_object
 
 
+def test_issue_273_cases_share_one_complete_non_gold_knowledge_index_reference() -> None:
+    graph = build_issue_273_dev_graph()
+    index = json.loads(graph[INDEX_PATH])
+    mapping = json.loads(graph[MAPPING_PATH])
+    cases = [json.loads(content) for path, content in graph.items() if path.startswith(CASE_PREFIX)]
+    references = {tuple(sorted(case["context"]["runtime_fixture"]["knowledge_index_ref"].items())) for case in cases}
+    gold_stable_keys = {
+        entry["stable_key"] for entry in mapping["entries"] if entry["evidence_ref_id"].endswith("-gold")
+    }
+
+    assert len(references) == 1
+    reference = dict(references.pop())
+    assert reference["id"] == "SYNTHETIC_NLR_KNOWLEDGE_INDEX"
+    assert reference["id"] not in gold_stable_keys
+
+    entry = next(item for item in mapping["entries"] if item["stable_key"] == reference["id"])
+    assert entry["evidence_type"] == "KNOWLEDGE_CHUNK"
+    assert entry["locator"] == "$.runtime_support.knowledge_index"
+    selected = _resolve_json_locator(index, entry["locator"])
+    assert isinstance(selected, dict)
+    selected_index: dict[str, JsonValue] = selected
+    assert selected_index["stable_key"] == reference["id"]
+    assert selected_index["evidence_type"] == "KNOWLEDGE_CHUNK"
+    assert selected_index["resource_scope"] == "COMPLETE_SYNTHETIC_KNOWLEDGE_INDEX"
+    assert selected_index["corpus_record_count"] == 100
+    assert selected_index["gold_record_count"] == 20
+    assert selected_index["hard_negative_record_count"] == 80
+
+
 def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None:
     records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
     statements_by_id = {record["evidence_ref_id"]: record["statement"] for record in records}
@@ -334,22 +378,64 @@ def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None
         for malformed in ("제품의 제품의", "주의사항는", "조건는")
     )
     assert statements_by_id["ev-nlr-nlr-mi01-gold"] == (
-        "NLR-MI01 제품의 합성 성분 정보에 관한 평가용 가상 지식은 해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
+        "평가용 가상 설정에서 NLR-MI01 제품의 성분 정보는 청색 결정 성분 하나로 구성됩니다."
     )
     assert statements_by_id["ev-nlr-nlr-pc01-gold"] == (
-        "NLR-PC01 제품의 복용 전 확인할 합성 주의사항에 관한 평가용 가상 지식은 "
-        "해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
+        "평가용 가상 설정에서 NLR-PC01 제품의 복용 전 주의사항은 봉인선과 확인표의 세 칸을 점검하는 절차입니다."
     )
-    assert statements_by_id["ev-nlr-nlr-pc04-gold"] == (
-        "NLR-PC04 제품의 전문가 확인이 필요한 합성 조건에 관한 평가용 가상 지식은 "
-        "해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
+    assert statements_by_id["ev-nlr-nlr-lm01-gold"] == (
+        "평가용 가상 설정에서 NLR-LM01 제품의 수분 섭취 안내는 기록 카드의 물컵 세 칸을 차례로 표시하는 방식입니다."
     )
-    assert statements_by_id["ev-nlr-nlr-mi01-neg-02"] == (
-        "NLR-MI02 제품의 합성 제형·외형 정보 항목은 같은 주제에 속하지만 NLR-MI01 질문의 근거가 아닙니다."
+    assert statements_by_id["ev-nlr-nlr-st01-gold"] == (
+        "평가용 가상 설정에서 NLR-ST01 제품의 보관 온도 정보는 가상 눈금 B 구간으로 지정됩니다."
     )
-    assert statements_by_id["ev-nlr-nlr-mi01-neg-03"] == (
-        "NLR-MI01 관련 제품 정보 자료의 목차를 안내하지만, 질문에서 찾는 세부 속성은 제시하지 않습니다."
+    assert statements_by_id["ev-nlr-nlr-md01-gold"] == (
+        "평가용 가상 설정에서 NLR-MD01 제품의 복용 누락을 일찍 알았을 때의 안내는 기록 카드의 절차 A를 조회하는 것입니다."
     )
+
+
+def test_issue_273_corpus_contains_substantive_facts_without_class_label_leakage() -> None:
+    index = json.loads(build_issue_273_dev_graph()[INDEX_PATH])
+    records = index["records"]
+    gold_records = [record for record in records if record["record_kind"] == "GOLD"]
+    class_label_phrases = (
+        "정답",
+        "오답",
+        "근거가 아닙니다",
+        "질문의 근거",
+        "뒷받침하는",
+        "세부 속성은 제시하지",
+        "일부 표현만 겹치는",
+        "방해 자료",
+    )
+    retrieval_content = [
+        *(record["statement"] for record in records),
+        index["runtime_support"]["knowledge_index"]["content"],
+    ]
+    intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
+
+    assert all(record["statement"].startswith("평가용 가상 설정에서 ") for record in records)
+    assert all(
+        intents_by_origin[record["transform_origin"]].query_subject in record["statement"] for record in gold_records
+    )
+    assert all(record["product_code"] in record["statement"] for record in records)
+    assert not any(phrase in content for content in retrieval_content for phrase in class_label_phrases)
+
+
+def test_issue_273_cross_topic_distractors_use_their_source_topic_and_product() -> None:
+    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    intents_by_product = {intent.product_code: intent for intent in BASE_INTENTS}
+    intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
+    cross_topic_records = [record for record in records if record["negative_type"] == "CROSS_TOPIC_OVERLAP"]
+
+    assert len(cross_topic_records) == 20
+    assert all(record["topic"] == intents_by_product[record["product_code"]].topic for record in records)
+    for record in cross_topic_records:
+        source_intent = intents_by_product[record["product_code"]]
+        target_intent = intents_by_origin[record["adversarial_for_transform_origin"]]
+        assert record["topic"] == source_intent.topic
+        assert record["topic"] != target_intent.topic
+        assert record["product_code"] in record["statement"]
 
 
 def test_issue_273_reviewed_query_particles_are_natural_korean() -> None:
@@ -362,14 +448,19 @@ def test_issue_273_reviewed_query_particles_are_natural_korean() -> None:
     queries = [case["query"] for case in cases.values()]
     limited_typo_queries = [case["query"] for case in cases.values() if "EXPRESSION_LIMITED_TYPO" in case["slice_ids"]]
 
-    assert cases["rag-nlr-dev-014"]["query"] == ("NLR-PC01 제품에서 복용 전 주의사항을 어떻게 확인할 수 있나요?")
+    assert cases["rag-nlr-dev-014"]["query"] == "NLR-PC01 제품의 복용 전 주의사항은 무엇인가요?"
     assert cases["rag-nlr-dev-015"]["query"] == "NLR-PC01 제품 복용 전 주의사항이 궁금해요."
-    assert cases["rag-nlr-dev-022"]["query"] == (
-        "NLR-PC04 제품에서 전문가 확인이 필요한 조건을 어떻게 확인할 수 있나요?"
-    )
+    assert cases["rag-nlr-dev-022"]["query"] == "NLR-PC04 제품의 전문가 확인이 필요한 조건은 무엇인가요?"
+    content_request_expressions = {"EXPRESSION_SYNONYM", "EXPRESSION_WORD_ORDER_PARTICLE"}
+    content_requests = [
+        case["query"] for case in cases.values() if content_request_expressions.intersection(case["slice_ids"])
+    ]
+    assert all("어떻게 확인" not in query and "어디서 확인" not in query for query in content_requests)
+    assert all("무엇인가요?" in query or "알려 주세요." in query for query in content_requests)
     assert not any(malformed in query for query in queries for malformed in ("주의사항를", "주의사항가", "조건를"))
     assert len(limited_typo_queries) == 10
     assert all("알려 주새요." in query for query in limited_typo_queries)
+    assert [query for query in queries if "알려 주새요." in query] == limited_typo_queries
 
 
 def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> None:
@@ -386,7 +477,7 @@ def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> No
         evidence_id: mapping_by_id[evidence_id]
         for evidence_id in {record["evidence_ref_id"] for record in gold_by_origin.values()}
     }
-    assert len(mapping_by_id) == 22
+    assert len(mapping_by_id) == 23
     assert len(gold_mapping_by_id) == 20
     assert validated_mapping.schema_id == "rag-eval.evidence-mapping-manifest"
     assert validated_mapping.schema_version == "1.2.0"
