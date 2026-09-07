@@ -1,4 +1,5 @@
 from typing import Annotated, NoReturn
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse as Response
@@ -6,6 +7,7 @@ from fastapi.responses import JSONResponse as Response
 from app.core.errors import ApiError, ErrorDetail
 from app.core.utils.idempotency import IdempotencyKeyFormatError, validate_idempotency_key_format
 from app.dependencies.security import get_request_user
+from app.dependencies.services import get_medication_candidate_service
 from app.dtos.medication_candidates import (
     ConfirmMedicationCandidateRequest,
     ConfirmMedicationCandidateResponse,
@@ -15,6 +17,7 @@ from app.dtos.medication_candidates import (
     RejectMedicationCandidateResponse,
 )
 from app.models.users import User
+from app.services.medication_candidates import MedicationCandidateService
 
 medication_candidate_router = APIRouter(tags=["medication-candidates"])
 
@@ -58,6 +61,26 @@ async def create_medication_candidate_search(
     _raise_candidate_feature_unavailable()
 
 
+@medication_candidate_router.get(
+    "/medication-candidate-searches/{prescription_version_medication_id}",
+    response_model=MedicationCandidateSearchResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_medication_candidate_search(
+    prescription_version_medication_id: UUID,
+    user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[MedicationCandidateService, Depends(get_medication_candidate_service)],
+) -> Response:
+    result = await service.get_candidate_search(
+        user=user,
+        prescription_version_medication_id=prescription_version_medication_id,
+    )
+    return Response(
+        content=MedicationCandidateSearchResponse(data=result).model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
 @medication_candidate_router.post(
     "/medication-candidates/confirm",
     response_model=ConfirmMedicationCandidateResponse,
@@ -66,11 +89,15 @@ async def create_medication_candidate_search(
 async def confirm_medication_candidate(
     request: ConfirmMedicationCandidateRequest,
     user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[MedicationCandidateService, Depends(get_medication_candidate_service)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Response:
-    del request, user
     _validate_idempotency_header(idempotency_key)
-    _raise_candidate_feature_unavailable()
+    result = await service.confirm_candidate(user=user, request=request)
+    return Response(
+        content=ConfirmMedicationCandidateResponse(data=result).model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @medication_candidate_router.post(
@@ -81,8 +108,12 @@ async def confirm_medication_candidate(
 async def reject_medication_candidate(
     request: RejectMedicationCandidateRequest,
     user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[MedicationCandidateService, Depends(get_medication_candidate_service)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Response:
-    del request, user
     _validate_idempotency_header(idempotency_key)
-    _raise_candidate_feature_unavailable()
+    result = await service.reject_candidate(user=user, request=request)
+    return Response(
+        content=RejectMedicationCandidateResponse(data=result).model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
