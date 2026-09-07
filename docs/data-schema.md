@@ -249,12 +249,12 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 
 주요 제약:
 
-- operation당 `CURRENT` snapshot은 최대 1개만 허용합니다.
+- operation당 `CURRENT` snapshot은 최대 1개만 허용합니다. 여기서 `CURRENT`는 검증·최신성 상태이며, 실제 Runtime 사용 버전 선택은 Runtime Bundle에서 결정합니다. 새 Snapshot 검증 중에도 기존 승인 Bundle은 유지될 수 있습니다. 같은 operation에서 새 Snapshot을 `CURRENT`로 승격할 때는 기존 `CURRENT`를 먼저 `STALE`로 내린 뒤 새 Snapshot을 `CURRENT`로 전환합니다.
 - `rag_source_snapshot`의 version, checksum, parser/normalization/canonicalization version, record count, 선행 snapshot 참조 등 불변 필드는 UPDATE할 수 없습니다.
 - `rag_source_snapshot` 행은 DELETE할 수 없습니다. 재검증 결과는 `rag_source_snapshot_verification`에 append하고, 잘못된 snapshot은 새 snapshot 또는 forward-fix migration으로 정정합니다.
 - Alias와 Component는 product/ingredient와 같은 `source_snapshot_id`를 가져야 하며, composite FK로 DB에서 강제합니다.
 - `rejected_record_count`는 `record_count`보다 클 수 없습니다.
-- 같은 operation의 ingestion attempt number는 중복될 수 없습니다.
+- `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
 
 Rollback 정책:
 

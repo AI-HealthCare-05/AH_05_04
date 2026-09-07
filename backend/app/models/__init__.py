@@ -89,6 +89,8 @@ __all__ = [
     "OutboxEventKind",
     "OutboxEventStatus",
     "Prescription",
+    "Profile",
+    "ProfileType",
     "RagIngestionRunStatus",
     "RagMedicationAlias",
     "RagMedicationAliasTargetType",
@@ -108,7 +110,5 @@ __all__ = [
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",
-    "Profile",
-    "ProfileType",
     "User",
 ]

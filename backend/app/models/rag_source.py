@@ -194,6 +194,8 @@ class RagSourceOperation(Base):
 
 
 class RagSourceSnapshot(Base):
+    """Source verification snapshot. CURRENT is latest verified, not runtime-selected."""
+
     __tablename__ = "rag_source_snapshot"
     __table_args__ = (
         UniqueConstraint("operation_id", "source_version", name="uq_rag_source_snapshot_operation_version"),
@@ -254,8 +256,9 @@ class RagSourceSnapshot(Base):
 class RagSourceIngestionRun(Base):
     __tablename__ = "rag_source_ingestion_run"
     __table_args__ = (
-        UniqueConstraint("operation_id", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
+        UniqueConstraint("operation_id", "run_group_key", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
         Index("idx_rag_source_ingestion_run_operation_status", "operation_id", "run_status", "started_at"),
+        CheckConstraint("length(trim(run_group_key)) > 0", name="chk_rag_source_ingestion_run_group_key_nonblank"),
         CheckConstraint("attempt_number > 0", name="chk_rag_source_ingestion_run_attempt_positive"),
         CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="chk_rag_source_ingestion_run_duration"),
         CheckConstraint(
@@ -266,6 +269,7 @@ class RagSourceIngestionRun(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     operation_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_source_operation.id"), nullable=False)
+    run_group_key: Mapped[str] = mapped_column(String(100), nullable=False)
     snapshot_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("rag_source_snapshot.id"), nullable=True)
     run_status: Mapped[RagIngestionRunStatus] = mapped_column(
         Enum(RagIngestionRunStatus, native_enum=False, length=40),

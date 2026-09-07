@@ -84,6 +84,7 @@ class RagSourceSnapshotCreate:
 @dataclass(frozen=True)
 class RagSourceIngestionRunCreate:
     operation_id: UUID
+    run_group_key: str
     run_status: RagIngestionRunStatus
     attempt_number: int
     started_at: datetime
@@ -369,6 +370,7 @@ class RagSourceCatalogRepository:
     async def create_ingestion_run(self, item: RagSourceIngestionRunCreate) -> RagSourceIngestionRun:
         run = RagSourceIngestionRun(
             operation_id=item.operation_id,
+            run_group_key=item.run_group_key,
             snapshot_id=item.snapshot_id,
             run_status=item.run_status,
             attempt_number=item.attempt_number,

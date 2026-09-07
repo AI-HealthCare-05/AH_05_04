@@ -220,9 +220,9 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
                 text(
                     """
                     INSERT INTO rag_source_ingestion_run (
-                        id, operation_id, snapshot_id, run_status, attempt_number, started_at
+                        id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at
                     )
-                    VALUES (:ingestion_run_id, :operation_id, :snapshot_id, 'SUCCEEDED', 1, :collected_at)
+                    VALUES (:ingestion_run_id, :operation_id, 'initial-load', :snapshot_id, 'SUCCEEDED', 1, :collected_at)
                     """
                 ),
                 {**ids, "collected_at": collected_at},
@@ -383,12 +383,19 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
                 )
 
 
-async def _execute_expect_db_error(sql: str, params: Mapping[str, object]) -> None:
+async def _execute_expect_db_error(
+    sql: str,
+    params: Mapping[str, object],
+    *,
+    expected_text: str | None = None,
+) -> None:
     async with _connection() as connection:
         transaction = await connection.begin()
         try:
-            with pytest.raises(DBAPIError):
+            with pytest.raises(DBAPIError) as exc_info:
                 await connection.execute(text(sql), params)
+            if expected_text is not None:
+                assert expected_text in str(exc_info.value)
         finally:
             await transaction.rollback()
 
@@ -417,6 +424,7 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
 
     assert "uq_rag_source_snapshot_current" in schema_objects
     assert "chk_rag_source_snapshot_rejected_record_count_lte_record_count" in schema_objects
+    assert "chk_rag_source_ingestion_run_group_key_nonblank" in schema_objects
     assert "uq_rag_source_ingestion_run_attempt" in schema_objects
     assert "uq_rag_medication_product_id_snapshot" in schema_objects
     assert "uq_rag_medication_ingredient_id_snapshot" in schema_objects
@@ -461,6 +469,7 @@ def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrad
                     "checksum_b": "0" * 64,
                     "collected_at": datetime.now(UTC),
                 },
+                expected_text="uq_rag_source_snapshot_current",
             )
         )
         asyncio.run(
@@ -477,6 +486,7 @@ def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrad
                 )
                 """,
                 {**ids, "duplicate_product_id": str(uuid4())},
+                expected_text="uq_rag_medication_product_snapshot_identity",
             )
         )
     finally:
@@ -501,17 +511,82 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
                 WHERE id = :snapshot_id
                 """,
                 {**ids, "changed_checksum": "c" * 64},
+                expected_text="immutable fields cannot be updated",
             )
         )
+
+        stale_snapshot_id = asyncio.run(_create_stale_snapshot_for_same_operation(ids))
+
         asyncio.run(
             _execute_expect_db_error(
                 """
                 DELETE FROM rag_source_snapshot
-                WHERE id = :snapshot_id
+                WHERE id = :stale_snapshot_id
                 """,
-                ids,
+                {**ids, "stale_snapshot_id": stale_snapshot_id},
+                expected_text="rows are append-only",
             )
         )
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_rag_source_ingestion_attempt_is_scoped_by_run_group_after_alembic_upgrade() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+    collected_at = datetime.now(UTC)
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO rag_source_ingestion_run (
+                    id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at
+                )
+                VALUES (
+                    :duplicate_run_id, :operation_id, 'initial-load', :snapshot_id, 'FAILED', 1, :collected_at
+                )
+                """,
+                {**ids, "duplicate_run_id": str(uuid4()), "collected_at": collected_at},
+                expected_text="uq_rag_source_ingestion_run_attempt",
+            )
+        )
+
+        async def create_next_run() -> int:
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO rag_source_ingestion_run (
+                                id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at
+                            )
+                            VALUES (
+                                :next_run_id, :operation_id, 'manual-refresh', :snapshot_id, 'RUNNING', 1, :collected_at
+                            )
+                            """
+                        ),
+                        {**ids, "next_run_id": str(uuid4()), "collected_at": collected_at},
+                    )
+                    result = await connection.execute(
+                        text(
+                            """
+                            SELECT count(*)
+                            FROM rag_source_ingestion_run
+                            WHERE operation_id = :operation_id
+                              AND attempt_number = 1
+                            """
+                        ),
+                        ids,
+                    )
+                    return int(result.scalar_one())
+
+        assert asyncio.run(create_next_run()) == 2
     finally:
         command.upgrade(alembic_config, "head")
         if ids is not None:
@@ -546,6 +621,49 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
         ids = asyncio.run(_seed_source_catalog_chain())
 
         stale_snapshot_id = asyncio.run(_create_stale_snapshot_for_same_operation(ids))
+        stale_product_id = str(uuid4())
+        stale_ingredient_id = str(uuid4())
+
+        async def create_stale_catalog_rows() -> None:
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO rag_medication_product (
+                                id, source_snapshot_id, source_record_key, code_system,
+                                canonical_code, product_name, normalized_product_name, product_status
+                            )
+                            VALUES (
+                                :stale_product_id, :stale_snapshot_id, 'ITEM_SEQ:200000002',
+                                'MFDS_ITEM_SEQ', '200000002', '다른스냅샷제품',
+                                '다른스냅샷제품', 'ACTIVE'
+                            )
+                            """
+                        ),
+                        {**ids, "stale_snapshot_id": stale_snapshot_id, "stale_product_id": stale_product_id},
+                    )
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO rag_medication_ingredient (
+                                id, source_snapshot_id, source_record_key, ingredient_code_system,
+                                ingredient_code, ingredient_name, normalized_ingredient_name
+                            )
+                            VALUES (
+                                :stale_ingredient_id, :stale_snapshot_id, 'INGREDIENT:IBUPROFEN',
+                                'MFDS_INGREDIENT', 'I0002', '이부프로펜', '이부프로펜'
+                            )
+                            """
+                        ),
+                        {
+                            **ids,
+                            "stale_snapshot_id": stale_snapshot_id,
+                            "stale_ingredient_id": stale_ingredient_id,
+                        },
+                    )
+
+        asyncio.run(create_stale_catalog_rows())
 
         asyncio.run(
             _execute_expect_db_error(
@@ -564,6 +682,7 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
                     "bad_alias_id": str(uuid4()),
                     "stale_snapshot_id": stale_snapshot_id,
                 },
+                expected_text="fk_rag_medication_alias_product_snapshot",
             )
         )
         asyncio.run(
@@ -574,15 +693,38 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
                     component_role, display_order
                 )
                 VALUES (
-                    :bad_component_id, :stale_snapshot_id, :product_id, :ingredient_id,
-                    'ACTIVE_INGREDIENT', 2
+                    :bad_component_id, :stale_snapshot_id, :product_id, :stale_ingredient_id,
+                    'EXCIPIENT', 2
                 )
                 """,
                 {
                     **ids,
                     "bad_component_id": str(uuid4()),
                     "stale_snapshot_id": stale_snapshot_id,
+                    "stale_ingredient_id": stale_ingredient_id,
                 },
+                expected_text="fk_rag_medication_component_product_snapshot",
+            )
+        )
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO rag_medication_product_component (
+                    id, source_snapshot_id, product_id, ingredient_id,
+                    component_role, display_order
+                )
+                VALUES (
+                    :bad_component_id, :stale_snapshot_id, :stale_product_id, :ingredient_id,
+                    'UNKNOWN', 3
+                )
+                """,
+                {
+                    **ids,
+                    "bad_component_id": str(uuid4()),
+                    "stale_snapshot_id": stale_snapshot_id,
+                    "stale_product_id": stale_product_id,
+                },
+                expected_text="fk_rag_medication_component_ingredient_snapshot",
             )
         )
     finally:

@@ -126,6 +126,7 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
         RagSourceIngestionRunCreate(
             operation_id=snapshot.operation_id,
             snapshot_id=snapshot.id,
+            run_group_key="run-group-1",
             run_status=RagIngestionRunStatus.SUCCEEDED,
             attempt_number=1,
             started_at=datetime.now(config.TIMEZONE),
@@ -423,7 +424,7 @@ async def test_component_product_and_ingredient_must_use_same_snapshot(db_sessio
         )
 
 
-async def test_ingestion_attempt_number_is_unique_per_operation(db_session: AsyncSession) -> None:
+async def test_ingestion_attempt_number_is_unique_per_run_group(db_session: AsyncSession) -> None:
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
     started_at = datetime.now(config.TIMEZONE)
@@ -431,16 +432,30 @@ async def test_ingestion_attempt_number_is_unique_per_operation(db_session: Asyn
     await repository.create_ingestion_run(
         RagSourceIngestionRunCreate(
             operation_id=snapshot.operation_id,
+            run_group_key="retry-group-a",
             run_status=RagIngestionRunStatus.FAILED,
             attempt_number=1,
             started_at=started_at,
         )
     )
 
+    next_run = await repository.create_ingestion_run(
+        RagSourceIngestionRunCreate(
+            operation_id=snapshot.operation_id,
+            run_group_key="retry-group-b",
+            run_status=RagIngestionRunStatus.RUNNING,
+            attempt_number=1,
+            started_at=started_at,
+        )
+    )
+
+    assert next_run.attempt_number == 1
+
     with pytest.raises(IntegrityError):
         await repository.create_ingestion_run(
             RagSourceIngestionRunCreate(
                 operation_id=snapshot.operation_id,
+                run_group_key="retry-group-a",
                 run_status=RagIngestionRunStatus.FAILED,
                 attempt_number=1,
                 started_at=started_at,

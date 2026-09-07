@@ -271,6 +271,7 @@ def upgrade() -> None:
         "rag_source_ingestion_run",
         sa.Column("id", sa.CHAR(length=36), nullable=False),
         sa.Column("operation_id", sa.CHAR(length=36), nullable=False),
+        sa.Column("run_group_key", sa.String(length=100), nullable=False),
         sa.Column("snapshot_id", sa.CHAR(length=36), nullable=True),
         sa.Column("run_status", sa.String(length=40), nullable=False),
         sa.Column("attempt_number", sa.Integer(), nullable=False),
@@ -280,6 +281,7 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("length(trim(run_group_key)) > 0", name="chk_rag_source_ingestion_run_group_key_nonblank"),
         sa.CheckConstraint("attempt_number > 0", name="chk_rag_source_ingestion_run_attempt_positive"),
         sa.CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="chk_rag_source_ingestion_run_duration"),
         sa.CheckConstraint(
@@ -293,7 +295,9 @@ def upgrade() -> None:
             ["snapshot_id"], ["rag_source_snapshot.id"], name="fk_rag_source_ingestion_run_snapshot"
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("operation_id", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
+        sa.UniqueConstraint(
+            "operation_id", "run_group_key", "attempt_number", name="uq_rag_source_ingestion_run_attempt"
+        ),
     )
 
     op.create_index(
