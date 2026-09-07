@@ -16,8 +16,7 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 - `backend/app/tests/`: Backend API·서비스·DB, OCR·가이드·챗봇 AI 어댑터 테스트
 - `tests/contract/`: 현재 Backend–AI Core 경계 계약. OpenAPI 회귀 테스트는 아직 없음
 - `tests/integration/`: 공통 CORS·오류 동작과 선별된 PostgreSQL·Redis Worker 경계 검증. 선별 대상만 기본 CI 명령에 포함
-- `frontend/e2e/`: 합성 Mock API 기반 Playwright 브라우저 E2E. 현재 인증 차단, 처방전 업로드→OCR 상태→검수·확정→가이드→챗봇 핵심 여정, 확정 처방 없는 챗봇 차단을 Chromium에서 검증
-- `tests/e2e/`: 실제 Backend·DB·Provider까지 연결하는 Live E2E 준비 영역이며 현재 자동화된 Live E2E 테스트는 없음
+- `tests/e2e/`: 전체 사용자 여정 테스트를 위한 준비 영역이며 현재 자동화된 E2E 테스트는 없음
 - `tests/evals/ocr/`: OCR 엔진 검토 자료와 측정 결과
 
 ### Post-MVP 준비 영역
@@ -77,7 +76,6 @@ bash scripts/ci/run_test.sh
 - `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, 실제 Redis·PostgreSQL OCR one-cycle, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`, `ai_worker/tests/evaluation/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
-- Frontend Playwright IT-2 Mock E2E는 `pnpm --dir frontend test:e2e:it2`로 실행하며, 외부 Provider나 실제 환자정보 없이 Chromium에서 동작합니다. 실행마다 HTML report, trace, screenshot, video를 `frontend/playwright-report/it2/`와 `frontend/test-results/it2/`에 생성하고 CI artifact로 14일 보존합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.
 
 ### Guide AI v3 Local 검증
