@@ -6,6 +6,10 @@
 - Staging
 - Production
 
+AWS Free Plan의 단일 EC2에서 합성 데이터로 수행하는 내부 Staging 리허설은
+[AWS 무료 EC2 Staging Runbook](deployment/aws-free-staging.md)을 따릅니다. 이
+리허설은 아래 Production 책임·승인·공개 게이트를 대체하지 않습니다.
+
 ## Production 운영 책임 체계
 
 아래 역할은 제품·공개 게이트 승인, 기술 승인·실행, 도메인별 운영 검증을 분리한다. 담당자가 `미정`이거나 대체 담당자·증빙 위치 또는 해당 역할 수행에 필요한 접근·승인·실행 권한이 비어 있는 역할이 하나라도 있으면 Production 배포를 승인하거나 시작하지 않는다. 실제 배포 명령과 Rollback 명령의 실행 권한은 각각 `배포 실행`과 `Rollback 실행` 담당자에게만 요구하며, 제품 담당자와 도메인별 운영 검증 담당자에게 자동으로 부여하지 않는다. 팀 내부 검토는 외부 의료·약학·Privacy·Source 승인이나 Production 공개 승인을 대체하지 않는다.
