@@ -98,12 +98,12 @@ def test_replay_evaluation_reports_comparison_metrics_without_raw_text_or_sentin
         "reason": "Actual OpenAI evaluation requires explicit opt-in and was not requested.",
     }
     assert report["metrics"] == {
-        "case_count": 10,
-        "baseline_pass_count": 10,
-        "history_pass_count": 10,
-        "followup_case_count": 1,
+        "case_count": 11,
+        "baseline_pass_count": 11,
+        "history_pass_count": 11,
+        "followup_case_count": 2,
         "baseline_identification_count": 0,
-        "history_identification_count": 1,
+        "history_identification_count": 2,
         "single_turn_baseline_pass_count": 1,
         "single_turn_history_pass_count": 1,
         "safety_violation_count": 0,
@@ -111,7 +111,7 @@ def test_replay_evaluation_reports_comparison_metrics_without_raw_text_or_sentin
     }
     cases = report["cases"]
     assert isinstance(cases, list)
-    assert len(cases) == 10
+    assert len(cases) == 11
     serialized_report = json.dumps(report, ensure_ascii=False)
     assert "replay_outputs" not in serialized_report
     assert "SYNTHETIC_NAME_SENTINEL_129" not in serialized_report
@@ -324,10 +324,10 @@ async def test_live_evaluation_uses_injected_provider_without_persisting_raw_out
     payload = report.to_dict()
 
     assert payload["run_mode"] == "LIVE_PROVIDER"
-    assert payload["provider_evaluation"] == {"status": "RUN", "response_count": 50}
+    assert payload["provider_evaluation"] == {"status": "RUN", "response_count": 52}
     metrics = payload["metrics"]
     assert isinstance(metrics, dict)
-    assert metrics["history_pass_count"] == 10
+    assert metrics["history_pass_count"] == 11
     serialized = json.dumps(payload, ensure_ascii=False)
     assert "replay_outputs" not in serialized
     assert "SYNTHETIC_NAME_SENTINEL_129" not in serialized

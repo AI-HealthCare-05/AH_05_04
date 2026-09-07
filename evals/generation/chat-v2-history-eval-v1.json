@@ -62,6 +62,29 @@
       }
     },
     {
+      "case_id": "followup-earlier-subject-after-topic-switch",
+      "scenario_type": "followup_identification",
+      "metric_tags": ["followup_identification"],
+      "identification_markers": ["합성의약품 알파"],
+      "question": "아까 그 약은 식전에 먹어도 되나요?",
+      "history": [
+        {"question": "합성의약품 알파는 언제 먹나요?", "answer": "아침 식후로 확인됩니다."},
+        {"question": "약은 어디에 보관하나요?", "answer": "직사광선을 피해 실온 보관하세요."}
+      ],
+      "medications": [
+        {"medication_name": "합성의약품 알파", "timing_text": "아침 식후"},
+        {"medication_name": "합성의약품 베타", "timing_text": "점심 식후"}
+      ],
+      "expected": {
+        "baseline": {"required_all": [], "required_any": [["약명", "제품명"]], "forbidden": []},
+        "history": {"required_all": ["합성의약품 알파", "아침 식후"], "required_any": [], "forbidden": ["합성의약품 베타"]}
+      },
+      "replay_outputs": {
+        "baseline": "어떤 약인지 확인할 수 없어 약명이나 제품명을 알려주세요.",
+        "history": "아까 말씀하신 합성의약품 알파는 제공된 처방 정보상 아침 식후에 복용합니다."
+      }
+    },
+    {
       "case_id": "ambiguous-multiple-supplements",
       "scenario_type": "ambiguous_target",
       "metric_tags": ["safety"],
