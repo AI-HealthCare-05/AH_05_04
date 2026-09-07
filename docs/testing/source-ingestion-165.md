@@ -2,11 +2,11 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 180 passed
-- AI Worker 전체 테스트: 1863 passed, 8 skipped
-- SQLAlchemy 저장 어댑터는 SQL·transaction 소유권 단위 테스트까지 확인했다.
-- 실제 MFDS 호출과 PostgreSQL 통합 검증은 이번 단위 테스트에 포함하지 않는다.
-- Snapshot 승인·Runtime 활성화는 아직 연결하지 않았다.
+- Source ingestion 단위 테스트: 187 passed
+- AI Worker 전체 테스트: 1870 passed, 8 skipped
+- PostgreSQL Snapshot lifecycle 통합 테스트: 4 passed
+- 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
+- Runtime Bundle 활성화는 아직 연결하지 않았다.
 
 ## 구현한 범위
 
@@ -37,6 +37,10 @@
 - 동일 외부 Source version의 canonical 내용 또는 version 계약 변경을 `SOURCE_VERSION_CONFLICT`로 차단
 - 직전 Snapshot 기준 비교로 `A → B → A`를 세 개의 append-only Snapshot으로 보존
 - commit·rollback은 Worker 실행 transaction이 소유하고 저장 어댑터가 직접 실행하지 않도록 분리
+- 검증된 `PENDING` Snapshot의 `CURRENT` 선택과 기존 `CURRENT → STALE` 전이
+- 이전 `STALE` Snapshot을 다시 `CURRENT`로 선택하는 검증 상태 복원
+- `FAILED` Snapshot 선택 차단과 고정 failure code만 남기는 실패 이력
+- 실제 PostgreSQL에서 transaction rollback과 Operation 잠금 동시성 검증
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -76,15 +80,18 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 - 신규 Snapshot 후보 생성과 `PASSED` 검증·성공 Run 기록
 - `NO_CHANGE`, `A → B → A`, 동일 Source version 충돌 판단과 append-only 이력
 - Snapshot 후보를 `PENDING`으로 유지해 승인과 Runtime 활성화가 자동으로 일어나지 않는 경계
+- 검증 상태의 `PENDING → CURRENT`, 기존 `CURRENT → STALE`와 이전 Snapshot 복원
+- 실제 PostgreSQL transaction rollback과 같은 Operation의 동시 판단 직렬화
 
 ## 남은 범위
 
 - 접근 통제된 저장 계층과 Artifact Key 연결
 - 검증 이후에도 같은 원본을 사용하는 불변 저장 경계
-- 실제 PostgreSQL에서의 저장·동시성·rollback 통합 검증
-- Snapshot 검증 상태의 `PENDING → CURRENT`, 기존 `CURRENT → STALE` 승인 전이
-- 이전 승인 Snapshot으로의 rollback 검증
 - Catalog 적재와 Runtime Bundle 활성화 연결
+
+여기서 `CURRENT`는 #291에 정의된 검증·최신성 상태다. 이전 Snapshot을
+`CURRENT`로 복원해도 Runtime Release Bundle은 변경하지 않는다. 실제 Runtime
+활성화와 rollback은 승인된 Bundle 경계에서 별도로 수행한다.
 
 현재 `ProductIngestionResult`가 identity, Endpoint Receipt hash,
 Raw Manifest checksum, canonical checksum, canonicalization spec version과
@@ -110,4 +117,5 @@ DUR·환자용 복약정보의 기존 차단 상태는 유지한다.
 
 ```bash
 uv run pytest ai_worker/tests/rag/source_ingestion -q
+uv run pytest tests/integration/rag/test_source_snapshot_lifecycle.py -q
 ```

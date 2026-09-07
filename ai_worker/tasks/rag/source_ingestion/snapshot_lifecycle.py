@@ -1,5 +1,6 @@
 """검증된 Source 수집 결과를 Snapshot 이력에 연결하는 계약입니다."""
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -10,6 +11,7 @@ from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 
 SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
+_SAFE_FAILURE_CODE_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{0,99}")
 
 
 class SnapshotIngestionDecision(StrEnum):
@@ -18,6 +20,23 @@ class SnapshotIngestionDecision(StrEnum):
     CREATED = "CREATED"
     NO_CHANGE = "NO_CHANGE"
     SOURCE_VERSION_CONFLICT = SOURCE_VERSION_CONFLICT
+
+
+class SnapshotVerificationStatus(StrEnum):
+    """#291 Snapshot 검증 상태 계약입니다."""
+
+    PENDING = "PENDING"
+    CURRENT = "CURRENT"
+    STALE = "STALE"
+    FAILED = "FAILED"
+
+
+class SnapshotSelectionDecision(StrEnum):
+    """검증된 Snapshot의 현재성 선택 결과입니다."""
+
+    ACTIVATED = "ACTIVATED"
+    RESTORED = "RESTORED"
+    ALREADY_CURRENT = "ALREADY_CURRENT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +120,21 @@ class SnapshotPersistenceResult:
     snapshot_id: UUID | None
 
 
+@dataclass(frozen=True, slots=True)
+class SnapshotStatusReference:
+    snapshot_id: UUID
+    operation_id: UUID
+    verification_status: SnapshotVerificationStatus
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotSelectionResult:
+    decision: SnapshotSelectionDecision
+    operation_id: UUID
+    snapshot_id: UUID
+    replaced_snapshot_id: UUID | None
+
+
 class SnapshotLifecycleRepository(Protocol):
     """한 DB transaction 안에서 Snapshot lifecycle을 저장하는 포트입니다."""
 
@@ -123,12 +157,37 @@ class SnapshotLifecycleRepository(Protocol):
         self,
         *,
         snapshot_id: UUID,
+        check_name: str,
         result: str,
         verified_at: datetime,
         verified_by: str | None,
+        details_summary: str | None = None,
     ) -> None: ...
 
     async def create_run(self, record: SnapshotRunRecord) -> None: ...
+
+    async def lock_snapshot_operation(self, *, snapshot_id: UUID) -> UUID:
+        """Snapshot의 Operation을 잠그고, 없으면 ValueError를 발생시킵니다."""
+        ...
+
+    async def get_snapshot_status(
+        self,
+        *,
+        operation_id: UUID,
+        snapshot_id: UUID,
+    ) -> SnapshotStatusReference | None: ...
+
+    async def get_current_snapshot_status(self, *, operation_id: UUID) -> SnapshotStatusReference | None: ...
+
+    async def change_snapshot_status(
+        self,
+        *,
+        snapshot_id: UUID,
+        expected_status: SnapshotVerificationStatus,
+        new_status: SnapshotVerificationStatus,
+        verified_at: datetime | None = None,
+        effective_at: datetime | None = None,
+    ) -> bool: ...
 
 
 def decide_snapshot_ingestion(
@@ -184,6 +243,7 @@ async def persist_product_ingestion_result(
         )
         await repository.append_verification(
             snapshot_id=snapshot_id,
+            check_name="source-ingestion-integrity",
             result="PASSED",
             verified_at=metadata.finished_at,
             verified_by=metadata.verified_by,
@@ -205,6 +265,7 @@ async def persist_product_ingestion_result(
     if decision is SnapshotIngestionDecision.NO_CHANGE:
         await repository.append_verification(
             snapshot_id=comparison_snapshot.snapshot_id,
+            check_name="source-ingestion-integrity",
             result="NO_CHANGE",
             verified_at=metadata.finished_at,
             verified_by=metadata.verified_by,
@@ -229,6 +290,116 @@ async def persist_product_ingestion_result(
         )
     )
     return SnapshotPersistenceResult(decision, operation_id, None)
+
+
+async def select_current_snapshot(
+    *,
+    repository: SnapshotLifecycleRepository,
+    snapshot_id: UUID,
+    selected_at: datetime,
+    selected_by: str | None,
+) -> SnapshotSelectionResult:
+    """검증된 Snapshot을 CURRENT로 선택하며 Runtime Bundle은 변경하지 않습니다."""
+    if selected_at.tzinfo is None or selected_at.utcoffset() is None:
+        raise ValueError("Snapshot 선택 시각은 timezone-aware 값이어야 합니다.")
+
+    operation_id = await repository.lock_snapshot_operation(snapshot_id=snapshot_id)
+    target = await repository.get_snapshot_status(operation_id=operation_id, snapshot_id=snapshot_id)
+    if target is None:
+        raise ValueError("선택할 Snapshot을 찾을 수 없습니다.")
+    if target.verification_status is SnapshotVerificationStatus.FAILED:
+        raise ValueError("FAILED Snapshot은 CURRENT로 선택할 수 없습니다.")
+    if target.verification_status is SnapshotVerificationStatus.CURRENT:
+        return SnapshotSelectionResult(
+            decision=SnapshotSelectionDecision.ALREADY_CURRENT,
+            operation_id=operation_id,
+            snapshot_id=snapshot_id,
+            replaced_snapshot_id=None,
+        )
+
+    current = await repository.get_current_snapshot_status(operation_id=operation_id)
+    if current is not None:
+        changed = await repository.change_snapshot_status(
+            snapshot_id=current.snapshot_id,
+            expected_status=SnapshotVerificationStatus.CURRENT,
+            new_status=SnapshotVerificationStatus.STALE,
+        )
+        if not changed:
+            raise RuntimeError("기존 CURRENT Snapshot 상태가 변경되었습니다.")
+
+    previous_status = target.verification_status
+    changed = await repository.change_snapshot_status(
+        snapshot_id=target.snapshot_id,
+        expected_status=previous_status,
+        new_status=SnapshotVerificationStatus.CURRENT,
+        verified_at=selected_at if previous_status is SnapshotVerificationStatus.PENDING else None,
+        effective_at=selected_at,
+    )
+    if not changed:
+        raise RuntimeError("선택 대상 Snapshot 상태가 변경되었습니다.")
+
+    await repository.append_verification(
+        snapshot_id=target.snapshot_id,
+        check_name="snapshot-current-selection",
+        result="PASSED",
+        verified_at=selected_at,
+        verified_by=selected_by,
+    )
+    decision = (
+        SnapshotSelectionDecision.ACTIVATED
+        if previous_status is SnapshotVerificationStatus.PENDING
+        else SnapshotSelectionDecision.RESTORED
+    )
+    return SnapshotSelectionResult(
+        decision=decision,
+        operation_id=operation_id,
+        snapshot_id=target.snapshot_id,
+        replaced_snapshot_id=current.snapshot_id if current is not None else None,
+    )
+
+
+async def fail_snapshot_verification(
+    *,
+    repository: SnapshotLifecycleRepository,
+    snapshot_id: UUID,
+    failure_code: str,
+    failed_at: datetime,
+    verified_by: str | None,
+) -> SnapshotStatusReference:
+    """PENDING Snapshot을 안전한 고정 code로 실패 처리합니다."""
+    if _SAFE_FAILURE_CODE_PATTERN.fullmatch(failure_code) is None:
+        raise ValueError("Snapshot failure_code 형식이 올바르지 않습니다.")
+    if failed_at.tzinfo is None or failed_at.utcoffset() is None:
+        raise ValueError("Snapshot 실패 시각은 timezone-aware 값이어야 합니다.")
+
+    operation_id = await repository.lock_snapshot_operation(snapshot_id=snapshot_id)
+    target = await repository.get_snapshot_status(operation_id=operation_id, snapshot_id=snapshot_id)
+    if target is None:
+        raise ValueError("실패 처리할 Snapshot을 찾을 수 없습니다.")
+    if target.verification_status is not SnapshotVerificationStatus.PENDING:
+        raise ValueError("PENDING Snapshot만 실패 처리할 수 있습니다.")
+
+    changed = await repository.change_snapshot_status(
+        snapshot_id=snapshot_id,
+        expected_status=SnapshotVerificationStatus.PENDING,
+        new_status=SnapshotVerificationStatus.FAILED,
+        verified_at=failed_at,
+    )
+    if not changed:
+        raise RuntimeError("실패 처리 대상 Snapshot 상태가 변경되었습니다.")
+    await repository.append_verification(
+        snapshot_id=snapshot_id,
+        check_name="snapshot-verification",
+        result="FAILED",
+        verified_at=failed_at,
+        verified_by=verified_by,
+        details_summary=failure_code,
+    )
+    return SnapshotStatusReference(
+        snapshot_id=snapshot_id,
+        operation_id=operation_id,
+        verification_status=SnapshotVerificationStatus.FAILED,
+    )
 
 
 def _run_record(

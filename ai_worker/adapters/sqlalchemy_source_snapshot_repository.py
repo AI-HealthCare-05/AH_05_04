@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, String, column, insert, select, table
+from sqlalchemy import DateTime, Integer, String, column, insert, select, table, update
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,8 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotLifecycleRepository,
     SnapshotReference,
     SnapshotRunRecord,
+    SnapshotStatusReference,
+    SnapshotVerificationStatus,
 )
 
 _SOURCE = table(
@@ -181,17 +183,19 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         self,
         *,
         snapshot_id: UUID,
+        check_name: str,
         result: str,
         verified_at: datetime,
         verified_by: str | None,
+        details_summary: str | None = None,
     ) -> None:
         await self._session.execute(
             insert(_VERIFICATION).values(
                 id=str(uuid4()),
                 snapshot_id=str(snapshot_id),
-                check_name="source-ingestion-integrity",
+                check_name=check_name,
                 verification_result=result,
-                details_summary=None,
+                details_summary=details_summary,
                 verified_by=verified_by,
                 verified_at=verified_at,
             )
@@ -214,6 +218,74 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             )
         )
 
+    async def lock_snapshot_operation(self, *, snapshot_id: UUID) -> UUID:
+        statement = (
+            select(_OPERATION.c.id)
+            .select_from(_OPERATION.join(_SNAPSHOT, _SNAPSHOT.c.operation_id == _OPERATION.c.id))
+            .where(_SNAPSHOT.c.id == str(snapshot_id))
+            .with_for_update(of=_OPERATION)
+        )
+        result = await self._session.execute(statement)
+        operation_id = result.scalar_one_or_none()
+        if operation_id is None:
+            raise ValueError("Snapshot의 Source operation을 찾을 수 없습니다.")
+        return UUID(str(operation_id))
+
+    async def get_snapshot_status(
+        self,
+        *,
+        operation_id: UUID,
+        snapshot_id: UUID,
+    ) -> SnapshotStatusReference | None:
+        statement = select(
+            _SNAPSHOT.c.id,
+            _SNAPSHOT.c.operation_id,
+            _SNAPSHOT.c.verification_status,
+        ).where(
+            _SNAPSHOT.c.id == str(snapshot_id),
+            _SNAPSHOT.c.operation_id == str(operation_id),
+        )
+        result = await self._session.execute(statement)
+        return _snapshot_status_reference(result.mappings().one_or_none())
+
+    async def get_current_snapshot_status(self, *, operation_id: UUID) -> SnapshotStatusReference | None:
+        statement = select(
+            _SNAPSHOT.c.id,
+            _SNAPSHOT.c.operation_id,
+            _SNAPSHOT.c.verification_status,
+        ).where(
+            _SNAPSHOT.c.operation_id == str(operation_id),
+            _SNAPSHOT.c.verification_status == SnapshotVerificationStatus.CURRENT,
+        )
+        result = await self._session.execute(statement)
+        return _snapshot_status_reference(result.mappings().one_or_none())
+
+    async def change_snapshot_status(
+        self,
+        *,
+        snapshot_id: UUID,
+        expected_status: SnapshotVerificationStatus,
+        new_status: SnapshotVerificationStatus,
+        verified_at: datetime | None = None,
+        effective_at: datetime | None = None,
+    ) -> bool:
+        values: dict[str, object] = {"verification_status": new_status}
+        if verified_at is not None:
+            values["verified_at"] = verified_at
+        if effective_at is not None:
+            values["effective_at"] = effective_at
+        statement = (
+            update(_SNAPSHOT)
+            .where(
+                _SNAPSHOT.c.id == str(snapshot_id),
+                _SNAPSHOT.c.verification_status == expected_status,
+            )
+            .values(**values)
+            .returning(_SNAPSHOT.c.id)
+        )
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none() is not None
+
 
 def _snapshot_reference(row: RowMapping | None) -> SnapshotReference | None:
     if row is None:
@@ -226,4 +298,14 @@ def _snapshot_reference(row: RowMapping | None) -> SnapshotReference | None:
         parser_version=str(row["parser_version"]),
         normalization_version=str(row["normalization_version"]),
         canonicalization_spec_version=str(row["canonicalization_spec_version"]),
+    )
+
+
+def _snapshot_status_reference(row: RowMapping | None) -> SnapshotStatusReference | None:
+    if row is None:
+        return None
+    return SnapshotStatusReference(
+        snapshot_id=UUID(str(row["id"])),
+        operation_id=UUID(str(row["operation_id"])),
+        verification_status=SnapshotVerificationStatus(str(row["verification_status"])),
     )
