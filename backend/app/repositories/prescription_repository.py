@@ -30,6 +30,19 @@ class PrescriptionRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_latest_owned(self, *, user_id: UUID) -> Prescription | None:
+        """재접속 복구 지원: Frontend가 어떤 prescription_id도 들고 있지 않을 때
+        (로그아웃·재로그인 등) 이 사용자의 SELF profile 소유 처방 중 가장 최근 확정 건을
+        돌려줍니다. `idx_prescription_profile_created`(profile_id, created_at, id)를 사용합니다."""
+        result = await self.session.execute(
+            select(Prescription)
+            .options(selectinload(Prescription.document), selectinload(Prescription.medications))
+            .where(owned_by_self(Prescription.profile_id, user_id))
+            .order_by(Prescription.created_at.desc(), Prescription.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def create_with_medications(
         self,
         *,
