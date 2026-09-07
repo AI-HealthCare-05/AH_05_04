@@ -2,13 +2,14 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 229 passed
-- AI Worker 전체 테스트: 1912 passed, 8 skipped
+- Source ingestion 단위 테스트: 231 passed
+- AI Worker 전체 테스트: 1914 passed, 8 skipped
 - PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 7 passed
 - Source/Catalog·Artifact Migration 테스트: 10 passed
 - 전체 Migration 테스트: 49 passed
 - Backend 전체 테스트: 966 passed, 2 skipped
-- Mypy: 419개 핵심 소스 파일 통과
+- Mypy: 425개 핵심 소스 파일 통과
+- 실제 Worker 이미지에서 Source Snapshot adapter import·PostgreSQL 쿼리 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
 - Runtime Bundle 활성화는 아직 연결하지 않았다.
 
@@ -64,6 +65,8 @@
 - Provider 수집 실패를 안전한 `SourceFailureCode`로 Snapshot 없이 `FAILED` Run에 기록
 - Parser 검증과 거부 한도 초과를 고정 실패 코드로 기록하고 보존된 원본 Artifact 참조 연결
 - 실패 Source run의 부분 page, 거부 Artifact 누락과 실패 실행 내 Artifact 중복을 DB 접근 전에 차단
+- Worker 이미지의 runtime DB 설정으로 엔진·session·Source Snapshot adapter를 조립하는 smoke 진입점 추가
+- 실제 Worker 이미지에서 `rag_source_snapshot` 조회를 실행해 패키징·드라이버·연결·테이블 접근을 함께 검증
 
 ## 최종 검수 결과
 
@@ -72,6 +75,7 @@
 - RAW_RESPONSE와 REJECTS 사이의 중복 Artifact key를 DB unique 제약 도달 전에 거부한다.
 - 위 사전 검증 실패 시 내용 주소 객체와 DB row가 생성되지 않는 회귀 테스트를 추가했다.
 - Source ingestion 단위 테스트, AI Worker 전체 테스트, PostgreSQL lifecycle·Migration 집중 테스트를 다시 실행했다.
+- 현재 브랜치로 Worker 이미지를 빌드하고 로컬 PostgreSQL에 연결해 Source Snapshot 조회를 실행했다.
 
 ## Issue 완료 조건 대조
 
@@ -85,7 +89,7 @@
 | rollback provenance | 부분 완료 | DB transaction rollback은 검증했다. 미참조 내용 주소 객체 정리 정책은 미확정 |
 | 동일 Source 동시 acquisition 1회 | 완료 | 외부 호출 전 `SKIP LOCKED` 선점과 동시 Provider 1회 호출 PostgreSQL 테스트 |
 | #166 Catalog build 인계 | 부분 완료 | 검증된 Snapshot 결과 계약은 제공한다. Catalog 적재·Runtime 연결은 #166 범위 |
-| Worker DB adapter 실행 | 부분 완료 | Worker dependency group과 로컬 PostgreSQL import·연결은 검증했다. Worker 이미지 내부 실행은 미검증 |
+| Worker DB adapter 실행 | 완료 | 실제 Worker 이미지에서 runtime 엔진·session·adapter 조립과 `rag_source_snapshot` 조회 통과 |
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -132,7 +136,6 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 다음 항목은 #165를 완전히 닫기 위해 남아 있다.
 
-- Worker 이미지에서 Source DB adapter import·연결을 확인하는 smoke test
 - S3 계열 등 외부 Object Storage를 사용할 경우의 운영 어댑터와 credential 주입
 - DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책
 - REJECTS 세부 보존 기간과 승인된 reject code 목록 확정
@@ -186,3 +189,33 @@ DUR·환자용 복약정보의 기존 차단 상태는 유지한다.
 uv run pytest ai_worker/tests/rag/source_ingestion -q
 uv run pytest tests/integration/rag/test_source_snapshot_lifecycle.py -q
 ```
+
+## Worker 이미지 smoke 명령
+
+Worker 설정의 필수 환경변수를 주입하고, PostgreSQL과 같은 Docker network에서
+다음 진입점을 실행한다. 이 검증은 고정된 존재하지 않는 Operation ID로
+`rag_source_snapshot`을 조회하므로 Source·Snapshot 데이터를 변경하지 않는다.
+
+```bash
+docker build -f ai_worker/Dockerfile \
+  -t ah-05-04-source-snapshot-smoke:165 .
+
+docker run --rm \
+  --network <compose-network> \
+  --env-file <worker-env-file> \
+  -e DB_HOST=<postgres-service-name> \
+  -e STORAGE_DIR=/app/uploads/medical_documents \
+  ah-05-04-source-snapshot-smoke:165 \
+  uv run --no-sync python -m \
+  ai_worker.tasks.rag.source_ingestion.worker_image_smoke
+```
+
+성공 출력:
+
+```text
+PASS source snapshot adapter import and database connection
+```
+
+로컬 검증 환경 파일에는 `STORAGE_DIR`이 없어 smoke 명령에서 비민감 경로를
+명시했다. Source DB adapter 검증에는 영향을 주지 않으며, Worker 배포 환경은
+기존 OCR runtime 조립 범위에서 필수 저장 경로를 계속 주입해야 한다.
