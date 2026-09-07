@@ -29,7 +29,7 @@
 | File | Responsibility |
 | --- | --- |
 | `ai_worker/tasks/rag/evidence_retrieval.py` | provisional 내부 타입, 민감 문자열 wrapper, 입력 검증, search/rerank Receipt와 결과 검증, orchestration, sanitized trace |
-| `ai_worker/tasks/rag/evidence_retrieval_adapters.py` | synthetic fixture Index, versioned stage/rerank config, concrete search/rerank Port adapter |
+| `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py` | synthetic fixture Index, versioned stage/rerank config, concrete search/rerank Port adapter |
 | `ai_worker/tests/rag/test_evidence_retrieval.py` | 비식별 합성 fixture, deterministic fake ports, RED/GREEN 및 privacy·determinism 회귀 |
 
 `ai_worker/tasks/rag/__init__.py`에는 새 이름을 export하지 않는다. Knowledge Evidence Index와 Privacy 계약 전에는 이 모듈을 stable package surface로 승격하지 않는다.
@@ -1087,13 +1087,15 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 
 **Files:**
 
-- Create: `ai_worker/tasks/rag/evidence_retrieval_adapters.py`
+- Create: `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`
 - Modify: `ai_worker/tests/rag/test_evidence_retrieval.py`
 
 - [x] exact 후보가 trigram 후보보다 먼저 오는 실패 테스트를 작성한다.
 - [x] RED가 adapter module 부재로 발생하는지 확인한다.
 - [x] `SyntheticEvidenceRecord`, `SyntheticEvidenceIndex`, `VersionedLexicalSearchConfig`를 frozen/slots로 구현한다.
-- [x] 기존 `LEXICAL` stage 내부에서 normalized substring exact와 synthetic pg_trgm-shaped set similarity를 실행한다.
+- [x] 기존 `LEXICAL` stage 내부에서 normalized substring exact와 synthetic pg_trgm Jaccard-shaped similarity를 실행한다.
+- [x] `synthetic-trigram-jaccard-v1`과 matching normalization strategy를 lexical config artifact에 결속한다.
+- [x] `cat`/`car`의 hand-derived Jaccard score `0.333333` 회귀를 고정한다.
 - [x] score 내림차순, UTF-8 evidence key 오름차순, `lexical_limit`을 적용한다.
 - [x] trigram threshold를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
 - [x] config·Index payload와 artifact SHA-256을 재계산해 detached payload를 typed failure로 거부한다.
@@ -1102,7 +1104,7 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 
 **Files:**
 
-- Modify: `ai_worker/tasks/rag/evidence_retrieval_adapters.py`
+- Modify: `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`
 - Modify: `ai_worker/tests/rag/test_evidence_retrieval.py`
 
 - [x] query fingerprint에 결속된 vector가 cosine 순위를 만드는 실패 테스트를 작성한다.
@@ -1117,7 +1119,7 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 
 **Files:**
 
-- Modify: `ai_worker/tasks/rag/evidence_retrieval_adapters.py`
+- Modify: `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`
 - Modify: `ai_worker/tests/rag/test_evidence_retrieval.py`
 
 - [x] lexical/dense weight 변경이 순위를 바꾸는 실패 테스트를 작성한다.
@@ -1129,6 +1131,7 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] weighted score 내림차순, UTF-8 evidence key 오름차순으로 selection을 만든다.
 - [x] weight 변경 순위, 동점 tie-break와 `top_k > selection_limit` Kernel fail-closed를 검증한다.
 - [x] malformed/detached config와 내부 예외를 raw detail 없는 `EvidenceRerankFailure`로 반환한다.
+- [x] synthetic namespace 없는 Evidence provenance·config·adapter Receipt를 typed failure로 거부한다.
 
 ### Task D: Kernel DI·privacy·reproducibility 회귀
 
@@ -1143,6 +1146,8 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] trace에 raw query와 Source content가 없음을 검증한다.
 - [x] lexical config canonical projection의 golden SHA-256을 고정한다.
 - [x] duplicate fixture/candidate, detached config와 input-set hash mismatch 회귀를 고정한다.
+- [x] immutable `SensitiveText`를 불필요하게 unwrap·rewrap하지 않고 같은 instance로 전달한다.
+- [x] Source snapshot·Evidence Index·개별 Evidence content hash domain과 공개 Source 전용 SHA-256 경계를 문서화한다.
 - [x] 아래 전체 검증 명령을 fresh 실행한다.
 
 ```bash

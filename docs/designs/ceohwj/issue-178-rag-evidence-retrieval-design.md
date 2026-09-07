@@ -126,12 +126,12 @@ Composer를 import하지 않는다.
 
 ### Synthetic adapter 모듈
 
-`ai_worker/tasks/rag/evidence_retrieval_adapters.py`는 외부 DB, embedding provider, model download 또는
+`ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`는 외부 DB, embedding provider, model download 또는
 Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
 
 - `SyntheticEvidenceRecord`: provenance 구성 요소, `SensitiveText` 본문, 문자열 Decimal dense vector
 - `SyntheticEvidenceIndex`: record projection을 UTF-8 key 순으로 canonical JSON 직렬화한 SHA-256 artifact
-- `VersionedLexicalSearchConfig`: exact·trigram 전략, trigram threshold와 Decimal context를 결속한 artifact
+- `VersionedLexicalSearchConfig`: exact·matching normalization·trigram 전략, trigram threshold와 Decimal context를 결속한 artifact
 - `VersionedDenseSearchConfig`: query fingerprint별 synthetic vector, cosine threshold·metric·Decimal context artifact
 - `VersionedRerankConfig`: lexical/dense weight, `top_k`, tie-break·score precision·Decimal context artifact
 - `SyntheticEvidenceSearchAdapter`, `VersionedEvidenceRerankAdapter`: 기존 Port Protocol의 concrete 구현
@@ -142,9 +142,22 @@ exact-match한다. frozen dataclass가 `replace` 또는 저수준 mutation으로
 tuple이어야 하고, record·`SensitiveText`·canonical Decimal 문자열의 정확한 런타임 타입도 검증한다.
 Threshold와 rerank weight 역시 JSON number가 아닌 canonical Decimal 문자열만 허용한다.
 
+이 모듈이 직접 적용하는 Index·stage config·adapter artifact는 artifact code 또는 version에 `synthetic`
+namespace가 있어야 한다. Source record도 `source_snapshot_ref` 또는 `source_version`으로 synthetic임을
+식별할 수 있어야 한다. 운영 Source처럼 보이는 provenance와 Receipt가 들어오면 성공 결과를 만들지 않고
+typed failure로 닫는다.
+
 Lexical trigram 추출은 [PostgreSQL pg_trgm 문서](https://www.postgresql.org/docs/17/pgtrgm.html)의 원칙에 따라
-비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인다. 다만 이 구현은 synthetic fixture
-알고리즘이며 실제 extension, collation, index operator class 또는 운영 SQL과의 동등성을 주장하지 않는다.
+비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인 뒤 PostgreSQL `similarity()`와 같은
+Jaccard 분모 `|A ∩ B| / |A ∪ B|`를 사용한다. Artifact strategy는
+`synthetic-trigram-jaccard-v1`이며 실제 extension, collation, locale, index operator class 또는 운영 SQL과의
+동등성을 주장하지 않는다. Production Adapter는 synthetic threshold를 운영값으로 그대로 승격하지 않고
+실제 PostgreSQL과 Evaluation dataset으로 다시 검증해야 한다.
+
+Retrieval matching의 NFC·casefold·whitespace collapse는
+`unicode-nfc-casefold-collapse-whitespace-v1`로 lexical config artifact에 결속한다. 이 값은 검색 시점의
+matching normalization이며, Source snapshot의 `normalization_version` 또는 canonical JSON/checksum 규칙인
+`canonicalization_spec_version`과 같은 개념이 아니다. 서로의 version 문자열을 같다고 강제하지 않는다.
 
 Dense query fixture에는 raw query를 넣지 않고 `QueryFingerprint`와 vector만 저장한다. fingerprint 누락·중복,
 dimension mismatch, zero/non-finite/non-string vector나 mutable record collection은 `EvidenceSearchFailure`다. Reranker는
@@ -358,7 +371,19 @@ provenance에 포함하지 않는다. Knowledge Evidence Index 계약이 승인�
 
 Kernel은 `content_text`를 UTF-8로 encode해 SHA-256을 계산하고 `content_sha256`과 exact-match한다.
 문자열을 normalize하거나 변환한 뒤 hash하지 않는다. Adapter는 Evidence Index에 고정된 canonical text를
-그대로 반환해야 한다.
+그대로 반환해야 한다. 이 비밀키 없는 SHA-256은 공개·승인 Knowledge Source 본문의 결정적 무결성 확인에만
+사용한다. Query, OCR 결과, 환자 입력 또는 환자 유래 텍스트의 fingerprint 용도로 재사용하지 않는다.
+
+Source와 Evidence 파생물의 hash domain은 다음처럼 분리한다.
+
+- `rag_source_snapshot.canonical_checksum`: Source snapshot 전체 canonical JSON 내용의 SHA-256
+- `source_snapshot_ref.content_sha256`: Production mapping이 확정되기 전까지 별도 Source snapshot artifact 식별자
+- `evidence_index_ref.content_sha256`: Source에서 파생된 Evidence Index manifest의 SHA-256
+- `KnowledgeEvidenceProvenance.content_sha256`: 개별 canonical Evidence text byte의 SHA-256
+
+이 값들을 자동으로 같다고 간주하지 않는다. 특히 Source snapshot checksum은 Evidence Index artifact hash가
+아니다. `source_snapshot_ref.content_sha256`과 `rag_source_snapshot.canonical_checksum`의 실제 매핑은 RAG-06
+통합 계약과 DB·Source 교차리뷰에서 확정한다.
 
 각 stage의 rank는 1부터 시작하는 중복 없는 연속 정수여야 하며 hit 수는 해당 stage limit 이하여야 한다.
 같은 `evidence_key`는 한 stage에서 한 번만 나타날 수 있다. lexical과 dense에 같은 key가 등장할 수 있지만
@@ -458,7 +483,9 @@ query, content 또는 port exception message가 나타나면 안 된다.
 - request·outcome·failure `repr`/`str`과 port exception 처리에 query·content·exception message가 없음
 - whole-outcome 기본 JSON serialization 실패와 sanitized serializer만 성공
 - output이 Source approval, sufficiency, Safety 상태 또는 Composer 사용 가능성을 주장하지 않음
-- synthetic lexical exact 우선, trigram threshold와 dense cosine 순위가 동일 입력에서 재현됨
+- synthetic lexical exact 우선, Jaccard-shaped trigram threshold와 dense cosine 순위가 동일 입력에서 재현됨
+- synthetic namespace 없는 Index·Source provenance·config·adapter Receipt 거부
+- immutable `SensitiveText`를 unwrap·rewrap하지 않고 hit로 전달
 - lexical·dense·rerank config payload와 artifact SHA-256 분리 시 typed failure
 - versioned weighted rerank와 UTF-8 key tie-break, input-set hash 재검증
 - concrete adapter를 Kernel에 DI한 lexical+dense → rerank 실행에서도 raw query·본문 trace 비노출

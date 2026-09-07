@@ -35,6 +35,8 @@ _SCORE_PLACES = Decimal("0.000001")
 _DECIMAL_CONTEXT = Context(prec=50, rounding=ROUND_HALF_EVEN)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CANONICAL_SCORE_RE = re.compile(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$")
+_MATCHING_NORMALIZATION_STRATEGY = "unicode-nfc-casefold-collapse-whitespace-v1"
+_TRIGRAM_STRATEGY = "synthetic-trigram-jaccard-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +71,7 @@ class SyntheticEvidenceIndex:
                     "source_snapshot_ref": _artifact_dict(record.source_snapshot_ref),
                     "source_version": record.source_version,
                     "locator": record.locator,
-                    "content_sha256": _content_hash(record.content_text),
+                    "content_sha256": _source_content_sha256(record.content_text),
                     "canonicalization_spec_version": record.canonicalization_spec_version,
                     "dense_vector": list(record.dense_vector),
                 }
@@ -94,7 +96,8 @@ class VersionedLexicalSearchConfig:
     ) -> Self:
         payload = {
             "exact_strategy": "normalized-substring-v1",
-            "trigram_strategy": "pg-trgm-set-v1",
+            "matching_normalization_strategy": _MATCHING_NORMALIZATION_STRATEGY,
+            "trigram_strategy": _TRIGRAM_STRATEGY,
             "trigram_similarity_threshold": trigram_similarity_threshold,
             "score_places": 6,
             "decimal_context": _decimal_context_payload(),
@@ -198,7 +201,7 @@ class VersionedEvidenceRerankAdapter:
                 or request.projection_version != RERANK_INPUT_PROJECTION_VERSION
                 or request.input_set_hash != canonical_rerank_input_hash(request.projection_version, request.candidates)
                 or not _valid_rerank_candidates(request)
-                or not _valid_artifact_ref(self.adapter_artifact_ref)
+                or not _is_synthetic_artifact_ref(self.adapter_artifact_ref)
             ):
                 return EvidenceRerankFailure()
             with localcontext(_DECIMAL_CONTEXT):
@@ -259,7 +262,7 @@ class SyntheticEvidenceSearchAdapter:
                 request.evidence_index_ref != self.evidence_index.artifact_ref
                 or not _valid_evidence_index(self.evidence_index)
                 or not _evidence_index_is_bound(self.evidence_index)
-                or not _valid_artifact_ref(self.adapter_artifact_ref)
+                or not _is_synthetic_artifact_ref(self.adapter_artifact_ref)
             ):
                 return EvidenceSearchFailure()
             if stage is EvidenceSearchStage.DENSE:
@@ -360,7 +363,7 @@ def _search_hit(
         record.source_snapshot_ref,
         record.source_version,
         record.locator,
-        _content_hash(record.content_text),
+        _source_content_sha256(record.content_text),
         record.canonicalization_spec_version,
     )
     return KnowledgeEvidenceSearchHit(
@@ -368,7 +371,7 @@ def _search_hit(
         stage,
         rank,
         CanonicalScore(_canonical_decimal(score)),
-        SensitiveText(record.content_text.reveal()),
+        record.content_text,
     )
 
 
@@ -423,7 +426,7 @@ def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
             or provenance.evidence_key in evidence_keys
             or provenance.evidence_index_ref != request.evidence_index_ref
             or not isinstance(candidate.content_text, SensitiveText)
-            or hashlib.sha256(candidate.content_text.reveal().encode()).hexdigest() != provenance.content_sha256
+            or _source_content_sha256(candidate.content_text) != provenance.content_sha256
             or not isinstance(candidate.stage_signals, tuple)
             or not candidate.stage_signals
         ):
@@ -466,6 +469,11 @@ def _valid_provenance(value: KnowledgeEvidenceProvenance) -> bool:
         )
         and _valid_artifact_ref(value.evidence_index_ref)
         and _valid_artifact_ref(value.source_snapshot_ref)
+        and _has_synthetic_provenance_marker(
+            value.evidence_index_ref,
+            value.source_snapshot_ref,
+            value.source_version,
+        )
         and isinstance(value.content_sha256, str)
         and _SHA256_RE.fullmatch(value.content_sha256) is not None
     )
@@ -478,11 +486,12 @@ def _normalized_text(value: SensitiveText) -> str:
 def _trigram_similarity(left: str, right: str) -> Decimal:
     left_trigrams = _trigrams(left)
     right_trigrams = _trigrams(right)
-    denominator = max(len(left_trigrams), len(right_trigrams))
+    shared_count = len(left_trigrams & right_trigrams)
+    denominator = len(left_trigrams) + len(right_trigrams) - shared_count
     if denominator == 0:
         return Decimal(0)
     with localcontext(_DECIMAL_CONTEXT):
-        return Decimal(len(left_trigrams & right_trigrams)) / Decimal(denominator)
+        return Decimal(shared_count) / Decimal(denominator)
 
 
 def _trigrams(value: str) -> frozenset[str]:
@@ -501,7 +510,7 @@ def _trigrams(value: str) -> frozenset[str]:
     )
 
 
-def _content_hash(value: SensitiveText) -> str:
+def _source_content_sha256(value: SensitiveText) -> str:
     return hashlib.sha256(value.reveal().encode()).hexdigest()
 
 
@@ -561,7 +570,11 @@ def _evidence_index_is_bound(value: SyntheticEvidenceIndex) -> bool:
 
 
 def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
-    if not isinstance(value, SyntheticEvidenceIndex) or not isinstance(value.records, tuple):
+    if (
+        not isinstance(value, SyntheticEvidenceIndex)
+        or not _is_synthetic_artifact_ref(value.artifact_ref)
+        or not isinstance(value.records, tuple)
+    ):
         return False
     evidence_keys: set[str] = set()
     chunk_refs: set[str] = set()
@@ -582,6 +595,10 @@ def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
             or record.knowledge_chunk_ref in chunk_refs
             or not _valid_artifact_ref(record.source_snapshot_ref)
             or not _nonempty_nfc(record.source_version)
+            or not _has_synthetic_source_marker(
+                record.source_snapshot_ref,
+                record.source_version,
+            )
             or not _nonempty_nfc(record.locator)
             or not _nonempty_nfc(record.canonicalization_spec_version)
             or not _nonempty_nfc(content)
@@ -609,7 +626,11 @@ def _lexical_config_is_bound(value: VersionedLexicalSearchConfig) -> bool:
 
 
 def _valid_lexical_config(value: VersionedLexicalSearchConfig) -> bool:
-    return isinstance(value, VersionedLexicalSearchConfig) and _is_canonical_decimal(value.trigram_similarity_threshold)
+    return (
+        isinstance(value, VersionedLexicalSearchConfig)
+        and _is_synthetic_artifact_ref(value.artifact_ref)
+        and _is_canonical_decimal(value.trigram_similarity_threshold)
+    )
 
 
 def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
@@ -625,6 +646,7 @@ def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
 def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
     if (
         not isinstance(value, VersionedDenseSearchConfig)
+        or not _is_synthetic_artifact_ref(value.artifact_ref)
         or not _is_canonical_decimal(value.minimum_similarity)
         or not isinstance(value.query_vectors, tuple)
         or not value.query_vectors
@@ -678,8 +700,39 @@ def _rerank_config_is_bound(value: VersionedRerankConfig) -> bool:
 def _valid_rerank_config(value: VersionedRerankConfig) -> bool:
     return (
         isinstance(value, VersionedRerankConfig)
+        and _is_synthetic_artifact_ref(value.artifact_ref)
         and _is_canonical_decimal(value.lexical_weight)
         and _is_canonical_decimal(value.dense_weight)
         and isinstance(value.top_k, int)
         and not isinstance(value.top_k, bool)
+    )
+
+
+def _is_synthetic_artifact_ref(value: ImmutableArtifactRef) -> bool:
+    return _valid_artifact_ref(value) and (
+        value.artifact_code.startswith("synthetic-")
+        or value.version.startswith("synthetic-")
+        or "@synthetic-" in value.version
+    )
+
+
+def _has_synthetic_provenance_marker(
+    evidence_index_ref: ImmutableArtifactRef,
+    source_snapshot_ref: ImmutableArtifactRef,
+    source_version: str,
+) -> bool:
+    return _is_synthetic_artifact_ref(evidence_index_ref) or _has_synthetic_source_marker(
+        source_snapshot_ref, source_version
+    )
+
+
+def _has_synthetic_source_marker(
+    source_snapshot_ref: ImmutableArtifactRef,
+    source_version: str,
+) -> bool:
+    normalized_source_version = source_version.casefold()
+    return (
+        _is_synthetic_artifact_ref(source_snapshot_ref)
+        or normalized_source_version.startswith("synthetic@")
+        or "-synthetic@" in normalized_source_version
     )

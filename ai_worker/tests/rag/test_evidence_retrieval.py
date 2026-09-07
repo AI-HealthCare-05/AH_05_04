@@ -35,7 +35,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     retrieve_knowledge_evidence,
     to_sanitized_trace_dict,
 )
-from ai_worker.tasks.rag.evidence_retrieval_adapters import (
+from ai_worker.tasks.rag.evidence_retrieval_synthetic_adapters import (
     SyntheticDenseQueryVector,
     SyntheticEvidenceIndex,
     SyntheticEvidenceRecord,
@@ -1538,6 +1538,106 @@ def test_synthetic_search_adapter_ranks_exact_before_trigram_matches() -> None:
     assert first.hits[1].stage_score.value < "1"
 
 
+def test_synthetic_trigram_score_uses_pg_trgm_jaccard_denominator() -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:car",
+        "chunk-car",
+        artifact("synthetic-source-snapshot"),
+        "synthetic@1",
+        "$.records.car",
+        "synthetic-knowledge-text@1",
+        SensitiveText("car"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("synthetic-knowledge-index", "synthetic-knowledge-index@1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "synthetic-lexical-config",
+        "synthetic-lexical-config@1",
+        trigram_similarity_threshold="0",
+    )
+    request = replace(
+        lexical_request(),
+        normalized_query=SensitiveText("cat"),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter")).search(
+        request, EvidenceSearchStage.LEXICAL
+    )
+
+    assert isinstance(result, EvidenceSearchSuccess)
+    assert result.hits[0].stage_score == CanonicalScore("0.333333")
+
+
+@pytest.mark.parametrize("mutation", ["index", "source-record", "lexical-config", "adapter"])
+def test_synthetic_search_adapter_rejects_non_synthetic_boundary(mutation: str) -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot" if mutation == "source-record" else "synthetic-source-snapshot"),
+        "MFDS-2026-09" if mutation == "source-record" else "synthetic@1",
+        "$.records.one",
+        "synthetic-knowledge-text@1",
+        SensitiveText("합성 복약 정보"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create(
+        "knowledge-index" if mutation == "index" else "synthetic-knowledge-index",
+        "knowledge-index@1" if mutation == "index" else "synthetic-knowledge-index@1",
+        (record,),
+    )
+    config = VersionedLexicalSearchConfig.create(
+        "lexical-config" if mutation == "lexical-config" else "synthetic-lexical-config",
+        "lexical-config@1" if mutation == "lexical-config" else "synthetic-lexical-config@1",
+        trigram_similarity_threshold="0.3",
+    )
+    adapter_ref = artifact("search-adapter" if mutation == "adapter" else "synthetic-search-adapter")
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(index, config, None, adapter_ref).search(
+        request, EvidenceSearchStage.LEXICAL
+    )
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+def test_synthetic_search_hit_reuses_immutable_sensitive_text() -> None:
+    content = SensitiveText("합성 복약 정보")
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("synthetic-source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "synthetic-knowledge-text@1",
+        content,
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("synthetic-knowledge-index", "synthetic-knowledge-index@1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "synthetic-lexical-config",
+        "synthetic-lexical-config@1",
+        trigram_similarity_threshold="0.3",
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter")).search(
+        request, EvidenceSearchStage.LEXICAL
+    )
+
+    assert isinstance(result, EvidenceSearchSuccess)
+    assert result.hits[0].content_text is content
+
+
 def test_lexical_adapter_rejects_numeric_threshold_payload() -> None:
     record = SyntheticEvidenceRecord(
         "knowledge:one",
@@ -2055,7 +2155,47 @@ def test_versioned_lexical_config_has_stable_golden_hash() -> None:
         "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
     )
 
-    assert config.artifact_ref.content_sha256 == "f337227c0dd758b5e1d190b7b8f97897ba269a1fad99af39e5457f77295c0e7b"
+    assert config.artifact_ref.content_sha256 == "07832cbfb47c54ffdae42be7824bf1c8503c92478d9fa774d3038c70b8a5d15e"
+
+
+@pytest.mark.parametrize("mutation", ["provenance", "rerank-config", "adapter"])
+def test_synthetic_rerank_adapter_rejects_non_synthetic_boundary(mutation: str) -> None:
+    index_ref = artifact("knowledge-index" if mutation == "provenance" else "synthetic-knowledge-index")
+    candidate = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_index_ref=index_ref,
+            source_snapshot_ref=artifact(
+                "source-snapshot" if mutation == "provenance" else "synthetic-source-snapshot"
+            ),
+            source_version="MFDS-2026-09" if mutation == "provenance" else "synthetic@1",
+            canonicalization_spec_version="synthetic-knowledge-text@1",
+        ),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
+    )
+    config = VersionedRerankConfig.create(
+        "rerank-config" if mutation == "rerank-config" else "synthetic-rerank-config",
+        "rerank-config@1" if mutation == "rerank-config" else "synthetic-rerank-config@1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        index_ref,
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+    adapter_ref = artifact("rerank-adapter" if mutation == "adapter" else "synthetic-rerank-adapter")
+
+    result = VersionedEvidenceRerankAdapter(config, adapter_ref).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
 
 
 def test_rerank_adapter_rejects_input_set_hash_mismatch() -> None:
@@ -2492,8 +2632,8 @@ def test_rerank_adapter_changes_order_when_versioned_weights_change() -> None:
 
     def first_key(lexical_weight: str, dense_weight: str) -> str:
         config = VersionedRerankConfig.create(
-            "rerank-config",
-            f"rerank-config@{lexical_weight}-{dense_weight}",
+            "synthetic-rerank-config",
+            f"synthetic-rerank-config@{lexical_weight}-{dense_weight}",
             lexical_weight=lexical_weight,
             dense_weight=dense_weight,
             top_k=2,
@@ -2541,7 +2681,11 @@ def test_rerank_adapter_uses_utf8_evidence_key_tie_break() -> None:
     )
     candidates = (second, first)
     config = VersionedRerankConfig.create(
-        "rerank-config", "rerank-config@tie", lexical_weight="1", dense_weight="0", top_k=2
+        "synthetic-rerank-config",
+        "synthetic-rerank-config@tie",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=2,
     )
     request = EvidenceRerankRequest(
         fingerprint(),
@@ -2585,7 +2729,11 @@ def test_rerank_order_is_independent_of_callers_decimal_context() -> None:
     )
     candidates = (worse, best)
     config = VersionedRerankConfig.create(
-        "rerank-config", "rerank-config@context", lexical_weight="1", dense_weight="0", top_k=2
+        "synthetic-rerank-config",
+        "synthetic-rerank-config@context",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=2,
     )
     request = EvidenceRerankRequest(
         fingerprint(),
