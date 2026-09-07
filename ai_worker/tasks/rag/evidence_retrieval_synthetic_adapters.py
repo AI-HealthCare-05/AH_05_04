@@ -438,13 +438,13 @@ def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
         stages: set[EvidenceSearchStage] = set()
         for signal in candidate.stage_signals:
             if (
-                not isinstance(signal, StageSignal)
+                type(signal) is not StageSignal
                 or signal.stage in stages
                 or signal.stage not in (EvidenceSearchStage.LEXICAL, EvidenceSearchStage.DENSE)
                 or isinstance(signal.rank, bool)
                 or signal.rank <= 0
                 or signal.rank in stage_ranks.setdefault(signal.stage, set())
-                or not isinstance(signal.score, CanonicalScore)
+                or type(signal.score) is not CanonicalScore
                 or not isinstance(signal.score.value, str)
                 or _CANONICAL_SCORE_RE.fullmatch(signal.score.value) is None
             ):
@@ -460,7 +460,7 @@ def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
 
 def _valid_provenance(value: KnowledgeEvidenceProvenance) -> bool:
     return (
-        isinstance(value, KnowledgeEvidenceProvenance)
+        type(value) is KnowledgeEvidenceProvenance
         and all(
             _nonempty_nfc(item)
             for item in (
@@ -553,10 +553,11 @@ def _artifact_dict(value: ImmutableArtifactRef) -> dict[str, str]:
 
 def _valid_artifact_ref(value: ImmutableArtifactRef) -> bool:
     return (
-        bool(value.artifact_code.strip())
-        and bool(value.version.strip())
-        and len(value.content_sha256) == 64
-        and all(character in "0123456789abcdef" for character in value.content_sha256)
+        type(value) is ImmutableArtifactRef
+        and _nonempty_nfc(value.artifact_code)
+        and _nonempty_nfc(value.version)
+        and isinstance(value.content_sha256, str)
+        and _SHA256_RE.fullmatch(value.content_sha256) is not None
     )
 
 
@@ -571,7 +572,7 @@ def _evidence_index_is_bound(value: SyntheticEvidenceIndex) -> bool:
 
 def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
     if (
-        not isinstance(value, SyntheticEvidenceIndex)
+        type(value) is not SyntheticEvidenceIndex
         or not _is_synthetic_artifact_ref(value.artifact_ref)
         or not isinstance(value.records, tuple)
     ):
@@ -627,7 +628,7 @@ def _lexical_config_is_bound(value: VersionedLexicalSearchConfig) -> bool:
 
 def _valid_lexical_config(value: VersionedLexicalSearchConfig) -> bool:
     return (
-        isinstance(value, VersionedLexicalSearchConfig)
+        type(value) is VersionedLexicalSearchConfig
         and _is_synthetic_artifact_ref(value.artifact_ref)
         and _is_canonical_decimal(value.trigram_similarity_threshold)
     )
@@ -645,7 +646,7 @@ def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
 
 def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
     if (
-        not isinstance(value, VersionedDenseSearchConfig)
+        type(value) is not VersionedDenseSearchConfig
         or not _is_synthetic_artifact_ref(value.artifact_ref)
         or not _is_canonical_decimal(value.minimum_similarity)
         or not isinstance(value.query_vectors, tuple)
@@ -656,7 +657,7 @@ def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
     dimensions: set[int] = set()
     for item in value.query_vectors:
         if (
-            not isinstance(item, SyntheticDenseQueryVector)
+            type(item) is not SyntheticDenseQueryVector
             or not _valid_fingerprint(item.query_fingerprint)
             or item.query_fingerprint in fingerprints
             or not isinstance(item.values, tuple)
@@ -678,7 +679,7 @@ def _is_canonical_decimal(value: object) -> bool:
 
 def _valid_fingerprint(value: QueryFingerprint) -> bool:
     return (
-        isinstance(value, QueryFingerprint)
+        type(value) is QueryFingerprint
         and _nonempty_nfc(value.algorithm)
         and _nonempty_nfc(value.key_version)
         and isinstance(value.digest, str)
@@ -699,7 +700,7 @@ def _rerank_config_is_bound(value: VersionedRerankConfig) -> bool:
 
 def _valid_rerank_config(value: VersionedRerankConfig) -> bool:
     return (
-        isinstance(value, VersionedRerankConfig)
+        type(value) is VersionedRerankConfig
         and _is_synthetic_artifact_ref(value.artifact_ref)
         and _is_canonical_decimal(value.lexical_weight)
         and _is_canonical_decimal(value.dense_weight)

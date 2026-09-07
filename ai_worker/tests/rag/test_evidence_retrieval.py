@@ -1705,6 +1705,270 @@ def test_synthetic_search_adapter_rejects_stateful_sensitive_text_subclass() -> 
     assert isinstance(result, EvidenceSearchFailure)
 
 
+def test_lexical_adapter_rejects_stateful_threshold_config_subclass() -> None:
+    # A config whose threshold changes between validation and execution would make the
+    # success Receipt point at one config hash while a different threshold ran.
+    reads = [0]
+
+    class StatefulLexicalConfig(VersionedLexicalSearchConfig):
+        @property
+        def trigram_similarity_threshold(self) -> str:  # type: ignore[override]
+            reads[0] += 1
+            return "0.3" if reads[0] <= 2 else "0"
+
+        @trigram_similarity_threshold.setter
+        def trigram_similarity_threshold(self, value: str) -> None:
+            return None
+
+    bound = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    records = (
+        SyntheticEvidenceRecord(
+            "knowledge:one",
+            "chunk-one",
+            artifact("source-snapshot"),
+            "synthetic@1",
+            "$.records.one",
+            "knowledge-text@1",
+            SensitiveText("합성 복약 정보"),
+            ("1", "0"),
+        ),
+        SyntheticEvidenceRecord(
+            "knowledge:unrelated",
+            "chunk-unrelated",
+            artifact("source-snapshot"),
+            "synthetic@1",
+            "$.records.unrelated",
+            "knowledge-text@1",
+            SensitiveText("zzz qqq xxx"),
+            ("0", "1"),
+        ),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", records)
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=bound.artifact_ref,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(
+        index,
+        StatefulLexicalConfig(bound.artifact_ref, "0.3"),
+        None,
+        artifact("synthetic-search-adapter"),
+    )
+
+    result = adapter.search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+def test_dense_adapter_rejects_stateful_minimum_similarity_config_subclass() -> None:
+    reads = [0]
+
+    class StatefulDenseConfig(VersionedDenseSearchConfig):
+        @property
+        def minimum_similarity(self) -> str:  # type: ignore[override]
+            reads[0] += 1
+            return "0.5" if reads[0] <= 2 else "-1"
+
+        @minimum_similarity.setter
+        def minimum_similarity(self, value: str) -> None:
+            return None
+
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 dense 근거"),
+        ("0", "1"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    bound = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(SyntheticDenseQueryVector(fingerprint(), ("1", "0")),),
+        minimum_similarity="0.5",
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+        dense_config_ref=bound.artifact_ref,
+        dense_limit=3,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(
+        index,
+        lexical_config,
+        StatefulDenseConfig(bound.artifact_ref, bound.query_vectors, "0.5"),
+        artifact("synthetic-search-adapter"),
+    )
+
+    result = adapter.search(request, EvidenceSearchStage.DENSE)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+def test_rerank_adapter_rejects_stateful_top_k_config_subclass() -> None:
+    reads = [0]
+
+    class StatefulRerankConfig(VersionedRerankConfig):
+        @property
+        def top_k(self) -> int:  # type: ignore[override]
+            # validation reads top_k three times before execution; flip only after the
+            # artifact rebinding check so the bound check cannot mask the type hole.
+            reads[0] += 1
+            return 1 if reads[0] <= 3 else 2
+
+        @top_k.setter
+        def top_k(self, value: int) -> None:
+            return None
+
+    candidates = tuple(
+        KnowledgeEvidenceCandidate(
+            replace(provenance(), evidence_key=key, knowledge_chunk_ref=f"chunk-{key}"),
+            SensitiveText("합성 복약 근거"),
+            (StageSignal(EvidenceSearchStage.LEXICAL, rank, CanonicalScore("0.9")),),
+        )
+        for rank, key in enumerate(("knowledge:a", "knowledge:b"), start=1)
+    )
+    bound = VersionedRerankConfig.create(
+        "rerank-config",
+        "rerank-config@synthetic-1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        bound.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", candidates),
+        candidates,
+    )
+    adapter = VersionedEvidenceRerankAdapter(
+        StatefulRerankConfig(bound.artifact_ref, "1", "0", 1),
+        artifact("synthetic-rerank-adapter"),
+    )
+
+    result = adapter.rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+def test_dense_adapter_rejects_query_vector_subclass() -> None:
+    class BenignQueryVector(SyntheticDenseQueryVector):
+        pass
+
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 dense 근거"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    dense_config = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(BenignQueryVector(fingerprint(), ("1", "0")),),
+        minimum_similarity="0.5",
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+        dense_config_ref=dense_config.artifact_ref,
+        dense_limit=3,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(index, lexical_config, dense_config, artifact("synthetic-search-adapter"))
+
+    result = adapter.search(request, EvidenceSearchStage.DENSE)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+def test_synthetic_search_adapter_rejects_index_subclass() -> None:
+    class BenignIndex(SyntheticEvidenceIndex):
+        pass
+
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 복약 정보"),
+        ("1", "0"),
+    )
+    bound = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=bound.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(
+        BenignIndex(bound.artifact_ref, (record,)), config, None, artifact("synthetic-search-adapter")
+    )
+
+    result = adapter.search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+@pytest.mark.parametrize("field", ["artifact_code", "version"])
+def test_synthetic_search_adapter_rejects_non_nfc_artifact_ref(field: str) -> None:
+    decomposed = "synthetic-é"
+    snapshot_ref = ImmutableArtifactRef(
+        decomposed if field == "artifact_code" else "synthetic-source-snapshot",
+        decomposed if field == "version" else "synthetic-source-snapshot@1",
+        "a" * 64,
+    )
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        snapshot_ref,
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 복약 정보"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter"))
+
+    result = adapter.search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
 def test_lexical_adapter_rejects_numeric_threshold_payload() -> None:
     record = SyntheticEvidenceRecord(
         "knowledge:one",
