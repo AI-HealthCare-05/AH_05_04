@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   confirmPrescription,
@@ -7,6 +7,7 @@ import {
   getPrescriptionDocumentFile,
   updateExtractedField,
   type ExtractedField,
+  type OcrJobResponse,
   type PrescriptionResponse,
 } from '../api/prescriptions'
 import {
@@ -318,9 +319,13 @@ function formatFieldValue(fieldType: string, value: string) {
 
 function PrescriptionReviewPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const documentId = searchParams.get('document_id')
   const jobId = searchParams.get('job_id')
+  const prefetchedOcrResponse = (
+    location.state as { ocrResponse?: OcrJobResponse } | null
+  )?.ocrResponse
   const reviewRequestKey = `${documentId ?? ''}:${jobId ?? ''}`
   const latestReviewRequestKeyRef = useRef(reviewRequestKey)
   const guideCreationRequestRef = useRef<symbol | null>(null)
@@ -538,12 +543,21 @@ function PrescriptionReviewPage() {
       }
     }
 
+    const resolvedDocumentId = documentId
+    const resolvedJobId = jobId
+
     async function loadReviewData() {
       try {
-        const ocrResponse = await getOcrJob(jobId as string)
+        const canUsePrefetchedResult =
+          prefetchedOcrResponse?.data.document_id === resolvedDocumentId &&
+          prefetchedOcrResponse.data.job_id === resolvedJobId &&
+          prefetchedOcrResponse.data.ocr_status === 'COMPLETED'
+        const ocrResponse = canUsePrefetchedResult
+          ? prefetchedOcrResponse
+          : await getOcrJob(resolvedJobId)
         if (!isLatestRequest()) return
 
-        if (ocrResponse.data.document_id !== documentId) {
+        if (ocrResponse.data.document_id !== resolvedDocumentId) {
           setBlockingState({
             title: '검수를 진행할 수 없어요',
             message: '검수하려는 처방전과 OCR 결과가 일치하지 않습니다.',
@@ -560,7 +574,7 @@ function PrescriptionReviewPage() {
           return
         }
 
-        const documentBlob = await getPrescriptionDocumentFile(documentId)
+        const documentBlob = await getPrescriptionDocumentFile(resolvedDocumentId)
         if (!isLatestRequest()) return
 
         setFields(ocrResponse.data.fields)
@@ -598,7 +612,7 @@ function PrescriptionReviewPage() {
       guideCreationRequestRef.current = null
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [applyReviewError, documentId, jobId, reviewRequestKey])
+  }, [applyReviewError, documentId, jobId, prefetchedOcrResponse, reviewRequestKey])
 
   const startEditing = (sectionKey: ReviewSectionKey) => {
     setEditingSections((current) => new Set(current).add(sectionKey))

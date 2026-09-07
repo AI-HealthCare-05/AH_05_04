@@ -190,21 +190,19 @@ def get_ocr_service(
         OcrRepository,
         Depends(get_ocr_repository),
     ],
-    engine: Annotated[
-        OcrEngine,
-        Depends(get_ocr_engine),
-    ],
     # PATCH가 lock 획득 이후 확정 여부를 다시 확인할 때 사용합니다.
     prescription_repository: Annotated[
         PrescriptionRepository,
         Depends(get_prescription_repository),
     ],
 ) -> OcrService:
+    # API 계층의 OCR 접수/조회/필드 수정은 Provider를 직접 호출하지 않습니다.
+    # 실제 Worker OCR 실행은 ai_worker의 handler/provider 경로에서 처리합니다.
+    # 이 서비스의 execute_ocr 경로와 get_ocr_engine 의존성 정리는 후속 작업으로 분리합니다.
     return OcrService(
         document_repository,
         ocr_repository,
-        engine,
-        prescription_repository,
+        prescription_repository=prescription_repository,
     )
 
 

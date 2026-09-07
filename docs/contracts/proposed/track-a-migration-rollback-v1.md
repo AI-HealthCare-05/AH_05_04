@@ -13,7 +13,7 @@
 
 현재 `develop`에는 공통 `ai_job`·attempt·Outbox·idempotency 기반과 공통 Job 접수 service가 구현되어 있다. `ocr_job.ai_job_id`(#212)와 `guide.ai_job_id`(본 PR, #250) nullable mapping *schema*(컬럼·FK·unique 제약)도 구현되어 있다.
 
-다만 schema 존재와 실제 mapping 연결은 별개다. OCR·Guide 모두 신규 접수 시 실제로 `ai_job_id`에 값을 채우는 runtime mapping 저장은 아직 구현되지 않았다 — OCR/Guide 접수 API가 아직 `JobIntakeService.accept_job()`에 연결되지 않았기 때문이다(#148, Worker/Publisher #219·Handler #232/#233 준비 전까지 팀 결정으로 보류). 즉 두 컬럼 모두 현재 운영 경로에서는 항상 `NULL`이다.
+다만 schema 존재와 실제 mapping 연결은 별개다. OCR 신규 접수는 `JobIntakeService.accept_job()`에 연결되어 `ocr_job.ai_job_id` runtime mapping을 저장한다(#148). Guide 신규 접수의 `guide.ai_job_id` runtime mapping 저장은 아직 구현되지 않아, Guide 접수 API가 비동기로 전환되기 전까지 운영 경로에서는 `NULL`일 수 있다.
 
 아직 구현되지 않은 범위는 OCR·Guide 신규 접수 시 실제 mapping 저장, Chat 결과 row의 `ai_job_id` 연결(schema 포함 전체 미구현), Prescription Version, 전체 비동기 API·Worker 전환, 기존 데이터 backfill, read cutover와 Contract 단계다. 따라서 이 문서는 전체 Track A 계획 관점에서 Proposed이며, 부분 구현 상태를 Track A 완료나 Current 계약 승격으로 해석하지 않는다.
 

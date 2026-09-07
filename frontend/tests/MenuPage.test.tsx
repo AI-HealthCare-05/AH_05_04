@@ -34,6 +34,7 @@ function renderMenu() {
 
 beforeEach(() => {
   localStorage.setItem('access_token', 'fixture-token')
+  sessionStorage.clear()
   vi.mocked(logout).mockResolvedValue({ detail: '로그아웃되었습니다.' })
 })
 
@@ -75,6 +76,7 @@ describe('Dosey 메뉴', () => {
 
 describe('메뉴 로그아웃', () => {
   it('서버 응답을 기다리지 않고 토큰을 제거한 뒤 시작 화면으로 이동한다', async () => {
+    sessionStorage.setItem('dosey_ocr_job_recovery:v1', '{"job":"active"}')
     vi.mocked(logout).mockReturnValue(deferred())
     renderMenu()
 
@@ -83,6 +85,7 @@ describe('메뉴 로그아웃', () => {
     expect(await screen.findByText('시작 화면')).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe('/start')
     expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
     expect(logout).toHaveBeenCalledTimes(1)
   })
 

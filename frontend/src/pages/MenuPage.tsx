@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { logout } from '../api/auth'
 import notificationIcon from '../assets/icon-bell-notification.svg'
 import { MobileShell } from '../design-system/components'
+import { clearOcrJobRecovery } from '../features/ai-jobs/ocrJobRecovery'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 import './MenuPage.css'
@@ -54,6 +55,7 @@ function MenuPage() {
     setIsLoggingOut(true)
     logout().catch(() => undefined)
     localStorage.removeItem('access_token')
+    clearOcrJobRecovery()
     navigate('/start', { replace: true })
   }
 
