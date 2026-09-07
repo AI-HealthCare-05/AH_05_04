@@ -10,7 +10,7 @@ import pytest
 from ai_worker.tasks.evaluation import natural_language_retrieval_validation as validation_module
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
+from ai_worker.tasks.evaluation.loaders import load_dataset, parse_json_object_bytes
 from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
     Issue273ValidationStatus,
     ValidationCheck,
@@ -23,6 +23,8 @@ from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
 REPOSITORY_ROOT = Path(__file__).parents[3]
 STATUS_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/status.json"
 REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
+EVALS_ROOT = REPOSITORY_ROOT / "evals"
+DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
 DATASET_MANIFEST_HASH = "490289ae8a103b4f12f8e30e2f9152a1dafbcfff3bdbedc5905aec30712fa73a"
 
@@ -106,6 +108,47 @@ def _status_payload() -> dict[str, Any]:
 
 def _status_bytes(payload: dict[str, Any]) -> bytes:
     return canonical_json_bytes(payload)
+
+
+def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -> None:
+    manifest_payload: dict[str, Any] = parse_json_object_bytes(DATASET_MANIFEST_PATH.read_bytes())
+    declared_manifest_hash = manifest_payload["manifest_sha256"]
+    recomputed_manifest_hash = canonical_sha256(
+        manifest_payload,
+        excluded_top_level_keys=frozenset({"manifest_sha256"}),
+    )
+    assert recomputed_manifest_hash == declared_manifest_hash == status.dataset_manifest_sha256
+
+    loaded = load_dataset(DATASET_MANIFEST_PATH, evals_root=EVALS_ROOT)
+    loaded_manifest = loaded.manifest.model_dump(mode="json")
+    assert status.dataset_ref == f"{loaded_manifest['dataset_code']}@{loaded_manifest['dataset_version']}"
+    assert status.dataset_status == loaded_manifest["status"]
+
+    cases = [case.model_dump(mode="json") for case in loaded.cases]
+    required_gold_ids = {evidence_id for case in cases for evidence_id in case["expected"]["required_evidence_refs"]}
+    mapping = loaded.evidence_mapping.model_dump(mode="json")
+    mapping_by_id = {entry["evidence_ref_id"]: entry for entry in mapping["entries"]}
+    corpus_paths = {mapping_by_id[evidence_id]["fixture_record_ref"]["path"] for evidence_id in required_gold_ids}
+    assert len(corpus_paths) == 1
+    corpus = parse_json_object_bytes((EVALS_ROOT / corpus_paths.pop()).read_bytes())
+    records = corpus["records"]
+    assert isinstance(records, list)
+
+    topic_ids = {slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("TOPIC_")}
+    expression_ids = {
+        slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("EXPRESSION_")
+    }
+    transform_origins = {case["leakage_group_ids"]["transform_origin"] for case in cases}
+    partition_counts = loaded_manifest["partition_counts"]
+    assert status.created_counts.model_dump(mode="json") == {
+        "dev_questions": partition_counts["DEV"],
+        "holdout_questions": partition_counts["HOLDOUT"],
+        "gold_records": sum(record["record_kind"] == "GOLD" for record in records),
+        "corpus_records": len(records),
+        "topics": len(topic_ids),
+        "expression_types": len(expression_ids),
+        "independent_groups": len(transform_origins),
+    }
 
 
 def test_phase_a_status_accepts_only_the_verified_dev_authoring_state() -> None:
@@ -407,7 +450,12 @@ def test_report_rejects_untrusted_objects_without_serialization_warning_or_senti
 
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     raw_status = STATUS_PATH.read_bytes()
-    parse_status_bytes(raw_status)
+    status = parse_status_bytes(raw_status)
+
+    _assert_status_matches_committed_dataset(status)
+    stale_status = status.model_copy(update={"dataset_manifest_sha256": "0" * 64})
+    with pytest.raises(AssertionError):
+        _assert_status_matches_committed_dataset(stale_status)
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
