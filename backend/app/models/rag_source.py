@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from app.core.db.databases import Base
 from app.core.db.types import UUIDChar
@@ -198,11 +198,21 @@ class RagSourceSnapshot(Base):
     __table_args__ = (
         UniqueConstraint("operation_id", "source_version", name="uq_rag_source_snapshot_operation_version"),
         Index("idx_rag_source_snapshot_operation_status", "operation_id", "verification_status"),
+        Index(
+            "uq_rag_source_snapshot_current",
+            "operation_id",
+            unique=True,
+            postgresql_where=text("verification_status = 'CURRENT'"),
+        ),
         CheckConstraint("length(trim(source_version)) > 0", name="chk_rag_source_snapshot_version_nonblank"),
         CheckConstraint("length(raw_manifest_checksum) = 64", name="chk_rag_source_snapshot_raw_manifest_checksum"),
         CheckConstraint("length(canonical_checksum) = 64", name="chk_rag_source_snapshot_canonical_checksum"),
         CheckConstraint("record_count >= 0", name="chk_rag_source_snapshot_record_count"),
         CheckConstraint("rejected_record_count >= 0", name="chk_rag_source_snapshot_rejected_record_count"),
+        CheckConstraint(
+            "rejected_record_count <= record_count",
+            name="chk_rag_source_snapshot_rejected_record_count_lte_record_count",
+        ),
         CheckConstraint(
             f"verification_status IN ({_sql_in_list(RagSnapshotVerificationStatus)})",
             name="chk_rag_source_snapshot_verification_status",
@@ -244,6 +254,7 @@ class RagSourceSnapshot(Base):
 class RagSourceIngestionRun(Base):
     __tablename__ = "rag_source_ingestion_run"
     __table_args__ = (
+        UniqueConstraint("operation_id", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
         Index("idx_rag_source_ingestion_run_operation_status", "operation_id", "run_status", "started_at"),
         CheckConstraint("attempt_number > 0", name="chk_rag_source_ingestion_run_attempt_positive"),
         CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="chk_rag_source_ingestion_run_duration"),

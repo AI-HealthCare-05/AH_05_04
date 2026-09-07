@@ -167,9 +167,31 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
         == product
     )
     assert (
+        await repository.get_product_by_record_key(
+            source_snapshot_id=snapshot.id,
+            source_record_key="ITEM_SEQ:200012345",
+        )
+        == product
+    )
+    assert (
         await repository.get_ingredient_by_normalized_name(
             source_snapshot_id=snapshot.id,
             normalized_ingredient_name="아세트아미노펜",
+        )
+        == ingredient
+    )
+    assert (
+        await repository.get_ingredient_by_record_key(
+            source_snapshot_id=snapshot.id,
+            source_record_key="INGREDIENT:ACETAMINOPHEN",
+        )
+        == ingredient
+    )
+    assert (
+        await repository.get_ingredient_by_code(
+            source_snapshot_id=snapshot.id,
+            ingredient_code_system="MFDS_INGREDIENT",
+            ingredient_code="I0001",
         )
         == ingredient
     )
@@ -252,5 +274,175 @@ async def test_alias_requires_exactly_one_target(db_session: AsyncSession) -> No
                 target_type=RagMedicationAliasTargetType.PRODUCT,
                 alias_text="잘못된 별칭",
                 normalized_alias_text="잘못된별칭",
+            )
+        )
+
+
+async def test_only_one_current_snapshot_per_operation(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+
+    with pytest.raises(IntegrityError):
+        await repository.create_snapshot(
+            RagSourceSnapshotCreate(
+                operation_id=snapshot.operation_id,
+                source_version="api:2026-09-07T00:01:00.000000Z:" + _OTHER_CHECKSUM,
+                raw_manifest_checksum=_OTHER_CHECKSUM,
+                canonical_checksum=_CHECKSUM,
+                schema_version="schema-v1",
+                parser_version="parser-v1",
+                normalization_version="normalization-v1",
+                canonicalization_spec_version="canonical-v1",
+                record_count=1,
+                rejected_record_count=0,
+                verification_status=RagSnapshotVerificationStatus.CURRENT,
+                collected_at=datetime.now(config.TIMEZONE),
+            )
+        )
+
+
+async def test_rejected_record_count_cannot_exceed_record_count(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    source = await repository.create_source(RagSourceCreate(source_code="MFDS_DUR", display_name="MFDS DUR"))
+    endpoint = await repository.create_endpoint(
+        RagSourceEndpointCreate(source_id=source.id, endpoint_code="MFDS_DUR_API", display_name="MFDS DUR API")
+    )
+    operation = await repository.create_operation(
+        RagSourceOperationCreate(endpoint_id=endpoint.id, operation_code="LIST_DUR", display_name="List DUR")
+    )
+
+    with pytest.raises(IntegrityError):
+        await repository.create_snapshot(
+            RagSourceSnapshotCreate(
+                operation_id=operation.id,
+                source_version="api:bad-count:" + _CHECKSUM,
+                raw_manifest_checksum=_CHECKSUM,
+                canonical_checksum=_OTHER_CHECKSUM,
+                schema_version="schema-v1",
+                parser_version="parser-v1",
+                normalization_version="normalization-v1",
+                canonicalization_spec_version="canonical-v1",
+                record_count=1,
+                rejected_record_count=2,
+                collected_at=datetime.now(config.TIMEZONE),
+            )
+        )
+
+
+async def test_alias_product_must_use_same_snapshot(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    newer_snapshot = await repository.create_snapshot(
+        RagSourceSnapshotCreate(
+            operation_id=snapshot.operation_id,
+            source_version="api:2026-09-07T00:02:00.000000Z:" + _OTHER_CHECKSUM,
+            raw_manifest_checksum=_OTHER_CHECKSUM,
+            canonical_checksum=_CHECKSUM,
+            schema_version="schema-v1",
+            parser_version="parser-v1",
+            normalization_version="normalization-v1",
+            canonicalization_spec_version="canonical-v1",
+            record_count=1,
+            rejected_record_count=0,
+            verification_status=RagSnapshotVerificationStatus.STALE,
+            collected_at=datetime.now(config.TIMEZONE),
+        )
+    )
+    product = await repository.create_product(
+        RagMedicationProductCreate(
+            source_snapshot_id=snapshot.id,
+            source_record_key="ITEM_SEQ:200012347",
+            code_system="MFDS_ITEM_SEQ",
+            canonical_code="200012347",
+            product_name="스냅샷제품",
+            normalized_product_name="스냅샷제품",
+            product_status="ACTIVE",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        await repository.create_alias(
+            RagMedicationAliasCreate(
+                source_snapshot_id=newer_snapshot.id,
+                product_id=product.id,
+                target_type=RagMedicationAliasTargetType.PRODUCT,
+                alias_text="다른 스냅샷 별칭",
+                normalized_alias_text="다른스냅샷별칭",
+            )
+        )
+
+
+async def test_component_product_and_ingredient_must_use_same_snapshot(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    newer_snapshot = await repository.create_snapshot(
+        RagSourceSnapshotCreate(
+            operation_id=snapshot.operation_id,
+            source_version="api:2026-09-07T00:03:00.000000Z:" + _OTHER_CHECKSUM,
+            raw_manifest_checksum=_OTHER_CHECKSUM,
+            canonical_checksum=_CHECKSUM,
+            schema_version="schema-v1",
+            parser_version="parser-v1",
+            normalization_version="normalization-v1",
+            canonicalization_spec_version="canonical-v1",
+            record_count=1,
+            rejected_record_count=0,
+            verification_status=RagSnapshotVerificationStatus.STALE,
+            collected_at=datetime.now(config.TIMEZONE),
+        )
+    )
+    product = await repository.create_product(
+        RagMedicationProductCreate(
+            source_snapshot_id=snapshot.id,
+            source_record_key="ITEM_SEQ:200012348",
+            code_system="MFDS_ITEM_SEQ",
+            canonical_code="200012348",
+            product_name="컴포넌트제품",
+            normalized_product_name="컴포넌트제품",
+            product_status="ACTIVE",
+        )
+    )
+    ingredient = await repository.create_ingredient(
+        RagMedicationIngredientCreate(
+            source_snapshot_id=newer_snapshot.id,
+            source_record_key="INGREDIENT:SNAPSHOT_MISMATCH",
+            ingredient_name="다른스냅샷성분",
+            normalized_ingredient_name="다른스냅샷성분",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        await repository.create_component(
+            RagMedicationProductComponentCreate(
+                source_snapshot_id=snapshot.id,
+                product_id=product.id,
+                ingredient_id=ingredient.id,
+                component_role=RagMedicationComponentRole.ACTIVE_INGREDIENT,
+                display_order=1,
+            )
+        )
+
+
+async def test_ingestion_attempt_number_is_unique_per_operation(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    started_at = datetime.now(config.TIMEZONE)
+
+    await repository.create_ingestion_run(
+        RagSourceIngestionRunCreate(
+            operation_id=snapshot.operation_id,
+            run_status=RagIngestionRunStatus.FAILED,
+            attempt_number=1,
+            started_at=started_at,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        await repository.create_ingestion_run(
+            RagSourceIngestionRunCreate(
+                operation_id=snapshot.operation_id,
+                run_status=RagIngestionRunStatus.FAILED,
+                attempt_number=1,
+                started_at=started_at,
             )
         )

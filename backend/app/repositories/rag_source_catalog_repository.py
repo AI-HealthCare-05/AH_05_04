@@ -202,6 +202,20 @@ class RagSourceCatalogRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_product_by_record_key(
+        self,
+        *,
+        source_snapshot_id: UUID,
+        source_record_key: str,
+    ) -> RagMedicationProduct | None:
+        result = await self.session.execute(
+            select(RagMedicationProduct).where(
+                RagMedicationProduct.source_snapshot_id == source_snapshot_id,
+                RagMedicationProduct.source_record_key == source_record_key,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_ingredient_by_normalized_name(
         self,
         *,
@@ -212,6 +226,36 @@ class RagSourceCatalogRepository:
             select(RagMedicationIngredient).where(
                 RagMedicationIngredient.source_snapshot_id == source_snapshot_id,
                 RagMedicationIngredient.normalized_ingredient_name == normalized_ingredient_name,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_ingredient_by_record_key(
+        self,
+        *,
+        source_snapshot_id: UUID,
+        source_record_key: str,
+    ) -> RagMedicationIngredient | None:
+        result = await self.session.execute(
+            select(RagMedicationIngredient).where(
+                RagMedicationIngredient.source_snapshot_id == source_snapshot_id,
+                RagMedicationIngredient.source_record_key == source_record_key,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_ingredient_by_code(
+        self,
+        *,
+        source_snapshot_id: UUID,
+        ingredient_code_system: str,
+        ingredient_code: str,
+    ) -> RagMedicationIngredient | None:
+        result = await self.session.execute(
+            select(RagMedicationIngredient).where(
+                RagMedicationIngredient.source_snapshot_id == source_snapshot_id,
+                RagMedicationIngredient.ingredient_code_system == ingredient_code_system,
+                RagMedicationIngredient.ingredient_code == ingredient_code,
             )
         )
         return result.scalar_one_or_none()

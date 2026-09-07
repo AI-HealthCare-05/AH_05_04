@@ -140,6 +140,10 @@ def upgrade() -> None:
         sa.CheckConstraint("record_count >= 0", name="chk_rag_source_snapshot_record_count"),
         sa.CheckConstraint("rejected_record_count >= 0", name="chk_rag_source_snapshot_rejected_record_count"),
         sa.CheckConstraint(
+            "rejected_record_count <= record_count",
+            name="chk_rag_source_snapshot_rejected_record_count_lte_record_count",
+        ),
+        sa.CheckConstraint(
             f"verification_status IN ({_sql_in_list(_SNAPSHOT_VERIFICATION_STATUS_VALUES)})",
             name="chk_rag_source_snapshot_verification_status",
         ),
@@ -158,6 +162,13 @@ def upgrade() -> None:
         "idx_rag_source_snapshot_operation_status",
         "rag_source_snapshot",
         ["operation_id", "verification_status"],
+    )
+    op.create_index(
+        "uq_rag_source_snapshot_current",
+        "rag_source_snapshot",
+        ["operation_id"],
+        unique=True,
+        postgresql_where=sa.text("verification_status = 'CURRENT'"),
     )
 
     op.create_table(
@@ -186,6 +197,7 @@ def upgrade() -> None:
             ["snapshot_id"], ["rag_source_snapshot.id"], name="fk_rag_source_ingestion_run_snapshot"
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("operation_id", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
     )
 
     op.create_index(
@@ -256,6 +268,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "source_snapshot_id", "source_record_key", name="uq_rag_medication_product_snapshot_record"
         ),
+        sa.UniqueConstraint("id", "source_snapshot_id", name="uq_rag_medication_product_id_snapshot"),
     )
     op.create_index("idx_rag_medication_product_identity", "rag_medication_product", ["code_system", "canonical_code"])
     op.create_index("idx_rag_medication_product_snapshot", "rag_medication_product", ["source_snapshot_id"])
@@ -300,6 +313,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "source_snapshot_id", "source_record_key", name="uq_rag_medication_ingredient_snapshot_record"
         ),
+        sa.UniqueConstraint("id", "source_snapshot_id", name="uq_rag_medication_ingredient_id_snapshot"),
     )
     op.create_index("idx_rag_medication_ingredient_snapshot", "rag_medication_ingredient", ["source_snapshot_id"])
     op.create_index(
@@ -338,9 +352,15 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["source_snapshot_id"], ["rag_source_snapshot.id"], name="fk_rag_medication_alias_snapshot"
         ),
-        sa.ForeignKeyConstraint(["product_id"], ["rag_medication_product.id"], name="fk_rag_medication_alias_product"),
         sa.ForeignKeyConstraint(
-            ["ingredient_id"], ["rag_medication_ingredient.id"], name="fk_rag_medication_alias_ingredient"
+            ["product_id", "source_snapshot_id"],
+            ["rag_medication_product.id", "rag_medication_product.source_snapshot_id"],
+            name="fk_rag_medication_alias_product_snapshot",
+        ),
+        sa.ForeignKeyConstraint(
+            ["ingredient_id", "source_snapshot_id"],
+            ["rag_medication_ingredient.id", "rag_medication_ingredient.source_snapshot_id"],
+            name="fk_rag_medication_alias_ingredient_snapshot",
         ),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -392,10 +412,14 @@ def upgrade() -> None:
             ["source_snapshot_id"], ["rag_source_snapshot.id"], name="fk_rag_medication_component_snapshot"
         ),
         sa.ForeignKeyConstraint(
-            ["product_id"], ["rag_medication_product.id"], name="fk_rag_medication_component_product"
+            ["product_id", "source_snapshot_id"],
+            ["rag_medication_product.id", "rag_medication_product.source_snapshot_id"],
+            name="fk_rag_medication_component_product_snapshot",
         ),
         sa.ForeignKeyConstraint(
-            ["ingredient_id"], ["rag_medication_ingredient.id"], name="fk_rag_medication_component_ingredient"
+            ["ingredient_id", "source_snapshot_id"],
+            ["rag_medication_ingredient.id", "rag_medication_ingredient.source_snapshot_id"],
+            name="fk_rag_medication_component_ingredient_snapshot",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("product_id", "ingredient_id", "component_role", name="uq_rag_medication_component_role"),
@@ -422,6 +446,7 @@ def downgrade() -> None:
     op.drop_table("rag_source_snapshot_verification")
     op.drop_index("idx_rag_source_ingestion_run_operation_status", table_name="rag_source_ingestion_run")
     op.drop_table("rag_source_ingestion_run")
+    op.execute("DROP INDEX IF EXISTS uq_rag_source_snapshot_current")
     op.drop_index("idx_rag_source_snapshot_operation_status", table_name="rag_source_snapshot")
     op.drop_table("rag_source_snapshot")
     op.drop_index("idx_rag_source_operation_endpoint", table_name="rag_source_operation")
