@@ -1,4 +1,6 @@
-from sqlalchemy import DateTime
+from typing import cast
+
+from sqlalchemy import DateTime, Table, UniqueConstraint
 
 from app.models.medication_schedules import (
     MedicationOccurrence,
@@ -19,25 +21,31 @@ def test_track_b_status_enums_match_approved_contract() -> None:
 
 
 def test_schedule_stable_medication_fk_and_unique_are_deferred_until_issue_169() -> None:
-    table = MedicationSchedule.__table__
+    table = cast(Table, MedicationSchedule.__table__)
     column = table.c.prescription_version_medication_id
 
     assert not column.foreign_keys
     assert not any(
-        set(constraint.columns.keys()) == {"prescription_version_medication_id"} for constraint in table.constraints
+        isinstance(constraint, UniqueConstraint)
+        and set(constraint.columns.keys()) == {"prescription_version_medication_id"}
+        for constraint in table.constraints
     )
 
 
 def test_schedule_time_and_occurrence_have_independent_duplicate_guards() -> None:
+    schedule_time_table = cast(Table, MedicationScheduleTime.__table__)
+    occurrence_table = cast(Table, MedicationOccurrence.__table__)
+
     schedule_time_unique = next(
         constraint
-        for constraint in MedicationScheduleTime.__table__.constraints
-        if constraint.name == "uq_medication_schedule_time_revision_local_time"
+        for constraint in schedule_time_table.constraints
+        if isinstance(constraint, UniqueConstraint)
+        and constraint.name == "uq_medication_schedule_time_revision_local_time"
     )
     occurrence_unique = next(
         constraint
-        for constraint in MedicationOccurrence.__table__.constraints
-        if constraint.name == "uq_medication_occurrence_time_local_date"
+        for constraint in occurrence_table.constraints
+        if isinstance(constraint, UniqueConstraint) and constraint.name == "uq_medication_occurrence_time_local_date"
     )
 
     assert list(schedule_time_unique.columns.keys()) == [
