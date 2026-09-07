@@ -31,7 +31,7 @@
 | 현재 상태 | 다음 상태 | 전이 조건 | 함께 처리할 값 |
 | --- | --- | --- | --- |
 | `ACTIVE` | `WITHDRAWAL_REQUESTED` | 비밀번호 재입력 재인증과 최종 확인 성공 | `is_active=false`, `withdrawal_requested_at=now()`, `token_version + 1`, `account_deletion_request.status=PENDING` 생성 |
-| `WITHDRAWAL_REQUESTED` | `WITHDRAWN` | PM/Privacy 정책에 맞춘 삭제·보존 처리 완료 | `withdrawn_at=now()`, `account_deletion_request.status=COMPLETED` |
+| `WITHDRAWAL_REQUESTED` | `WITHDRAWN` | PM/Privacy 정책에 맞춘 삭제·보존 처리 완료 및 `EXT-PRIV-001` 승인 게이트 충족 | `withdrawn_at=now()`, `account_deletion_request.status=COMPLETED` |
 
 `WITHDRAWAL_REQUESTED` 또는 `WITHDRAWN`에서 `ACTIVE`로 되돌리는 전이는 이 계약에 없다. 실패나 rollback이 발생하면 성공 상태처럼 보이는 부분 전이를 남기지 않고, 이미 커밋된 탈퇴 요청의 삭제·보존 처리 실패는 `account_deletion_request.status=FAILED`로 남겨 운영 재시도 또는 확인 대상으로 관리한다.
 
@@ -74,15 +74,19 @@
 | 재설정 요청 | 이메일 등 확정된 본인 확인 입력 | 계정이 존재하고 정책상 발송 가능하면 `password_reset_token`을 생성하고 원문 토큰은 사용자 전달 경로로만 사용한다. DB에는 `token_hash`만 저장한다. | 계정 존재 여부를 노출하지 않도록 존재/미존재 모두 같은 형태의 응답을 반환한다. |
 | 재설정 완료 | 원문 재설정 토큰, 새 비밀번호 | `token_hash`, `used_at IS NULL`, `expires_at > now()` 조건으로 토큰을 원자적으로 소비하고, 같은 transaction에서 비밀번호 해시 저장, `token_version + 1`, 같은 사용자의 나머지 미사용·미만료 토큰 소비를 함께 처리한다. | 성공 시 새 access/refresh token을 발급하지 않고 재로그인을 요구한다. |
 
-재설정 완료 transaction은 아래 순서를 하나의 commit 단위로 처리한다.
+재설정 완료 transaction은 아래 순서를 하나의 commit 단위로 처리한다. 같은 사용자의 서로 다른 유효 token이 동시에 제출되어도 모든 완료 transaction이 **user row → password reset token row** 순서로 잠금을 획득해야 한다. token row를 먼저 갱신하거나 잠근 뒤 user row를 기다리는 경로는 두지 않는다.
 
-1. 원문 토큰을 서버에서 hash로 변환한다.
-2. `password_reset_token`을 조건부로 소비한다(`used_at IS NULL`, `expires_at > now()`).
-3. 조건에 맞는 row가 없으면 비밀번호를 변경하지 않고 실패 응답을 반환한다.
-4. 대상 사용자의 비밀번호 hash를 새 값으로 저장한다.
-5. 대상 사용자의 `token_version`을 원자적으로 `+1`한다.
-6. 같은 사용자의 나머지 미사용·미만료 `password_reset_token`을 모두 소비 처리한다.
-7. transaction을 commit한다.
+1. 요청 schema와 새 비밀번호 정책을 검증한다. 실패하면 token, 비밀번호, `token_version`을 변경하지 않는다.
+2. 원문 토큰을 서버에서 hash로 변환한다.
+3. `token_hash`로 candidate token의 `user_id`를 조회한다. 이 조회에서는 token row를 잠그거나 소비하지 않는다. candidate가 없으면 비밀번호를 변경하지 않고 실패 응답을 반환한다.
+4. 대상 user row를 `FOR UPDATE`로 먼저 잠근다.
+5. user lock을 보유한 상태에서 제출된 token이 `used_at IS NULL`, `expires_at > now()`를 충족하는지 다시 확인한다. 조건에 맞지 않으면 비밀번호와 `token_version`을 변경하지 않고 실패 응답을 반환한다.
+6. 같은 사용자의 미사용·미만료 `password_reset_token` row를 `id` 오름차순으로 잠그고 모두 소비 처리한다. 제출된 token도 이 집합에 포함하며, token row 잠금 순서는 항상 동일하게 유지한다.
+7. 대상 사용자의 비밀번호 hash를 새 값으로 저장한다.
+8. 대상 사용자의 `token_version`을 원자적으로 `+1`한다.
+9. transaction을 commit한다.
+
+재설정 token 발급·만료 정리처럼 user row와 token row를 함께 잠그는 다른 경로도 같은 잠금 순서를 따른다. candidate 조회 뒤 user lock을 기다리는 동안 상태가 바뀔 수 있으므로, 제출된 token의 유효성은 user lock 획득 후 반드시 다시 확인한다.
 
 보안 규칙은 다음과 같다.
 
@@ -113,11 +117,13 @@
 | 5 | 계정 이용 종료 처리 | `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at=now()`를 같은 transaction에서 저장한다. |
 | 6 | 세션 무효화 | 같은 transaction에서 `token_version`을 원자적으로 `+1`한다. |
 | 7 | 삭제 요청 기록 생성 | 같은 transaction에서 `account_deletion_request.status=PENDING` row를 생성한다. |
-| 8 | commit 이후 응답 | refresh token cookie를 만료시키고 "탈퇴되었습니다." 수준의 단순 완료 응답을 반환한다. |
+| 8 | commit 이후 응답 | refresh token cookie를 만료시키고 계정 이용 종료와 탈퇴 요청 접수가 완료되었다는 응답을 반환한다. 이 응답은 개인정보·건강정보의 물리 삭제 완료를 뜻하지 않는다. |
 
-위 transaction은 조건부 원자적 전이(`WHERE account_status='ACTIVE'`)로 구현한다. 영향받은 user row가 0이면 이미 탈퇴 요청이 접수되었거나 탈퇴 완료된 계정으로 보고 새 `account_deletion_request`를 만들지 않으며, 사용자에게는 동일한 탈퇴 완료 응답을 반환한다. 재인증 성공 후 아주 좁은 경쟁 구간에서 중복 요청이 들어와도 계정 상태와 삭제 요청 row가 중복 생성되면 안 된다.
+위 transaction은 조건부 원자적 전이(`WHERE account_status='ACTIVE'`)로 구현한다. 영향받은 user row가 0이면 이미 탈퇴 요청이 접수되었거나 탈퇴 완료된 계정으로 보고 새 `account_deletion_request`를 만들지 않으며, 사용자에게는 동일한 계정 이용 종료·탈퇴 요청 접수 완료 응답을 반환한다. 재인증 성공 후 아주 좁은 경쟁 구간에서 중복 요청이 들어와도 계정 상태와 삭제 요청 row가 중복 생성되면 안 된다.
 
 개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 탈퇴 기능을 실제 사용자에게 제공하는 구현 PR은 `account_deletion_request.status=PENDING` row만 만들고 종료하지 않으며, PM/Privacy가 확정한 삭제·보존 정책에 맞춰 삭제·보존 처리와 최종 계정 상태 전이를 함께 포함한다.
+
+`EXT-PRIV-001` 승인 전에는 Production에서 물리 삭제·보존 job을 실행하거나 `account_deletion_request`를 `IN_PROGRESS`/`COMPLETED`로 전이하지 않고, `user.account_status=WITHDRAWN`도 기록하지 않는다. 미승인 상태에서는 비식별 합성 fixture를 사용한 Local/Test 구현·검증만 허용한다. 실제 사용자 대상 탈퇴 기능도 삭제·보존 정책과 `EXT-PRIV-001` 승인 없이 `PENDING` 요청만 쌓는 형태로 공개하지 않는다.
 
 삭제·보존 처리 상태는 Track A `AI_JOB` 상태 머신을 재사용하지 않고 Account 전용 `account_deletion_request`가 관리한다. 상태값과 계정 상태 정합성은 [5) account_deletion_request 테이블](#5-account_deletion_request-테이블)을 따른다.
 
@@ -125,9 +131,9 @@
 
 실패 사유는 새 사용자 노출 오류 코드를 늘리지 않고, 필요 시 `TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `INTERNAL_ERROR` 같은 공통 내부 실패 사유를 재사용한다. 단, 이 값은 사용자 응답이나 화면에 내부 오류 상세로 노출하지 않는다.
 
-사용자-facing 범위는 탈퇴 요청 성공 응답까지로 제한한다. 탈퇴 처리 상태는 사용자에게 조회 API나 앱 내부 알림으로 제공하지 않는다. Frontend는 탈퇴 성공 응답을 받으면 로컬 인증 정보를 제거하고 완료 화면을 보여준다. 완료 화면에 필요한 삭제·보존 안내 문구, 재가입 제한, 법정 보존 기간, 즉시 폐기 대상, 이메일 안내 여부는 이 계약에서 임의로 정하지 않고 PM/Privacy 정책을 기준으로 표시한다.
+사용자-facing 범위는 탈퇴 요청 성공 응답과 완료 화면까지로 제한한다. Frontend는 성공 응답을 받으면 로컬 인증 정보를 제거하고, 완료 화면에 사용자-facing 처리 상태 "삭제 요청 접수됨"을 표시한다. 이 상태는 계정 이용이 종료되고 삭제 요청이 접수되었다는 뜻이며, 개인정보·건강정보의 물리 삭제 또는 법정 보존 처리가 완료됐다는 뜻이 아니다. 완료 화면의 즉시 삭제 정보, 보존 정보·기간·근거, 재가입 제한, 이메일 안내 여부와 보조 문구는 승인된 PM/Privacy 정책을 기준으로 표시한다.
 
-요구사항정의서 REQ-USR-008의 "삭제 요청 처리 상태 안내"는 탈퇴 후 별도 상태 조회 API를 제공한다는 뜻이 아니라, 탈퇴 성공 응답과 완료 화면에서 계정 이용 종료 및 삭제·보존 처리 기준을 사용자에게 안내하는 것으로 해석한다. 내부 처리의 세부 상태(`PENDING`, `IN_PROGRESS`, `FAILED`, `COMPLETED`)는 운영·감사·재처리용으로만 사용한다.
+요구사항정의서 REQ-USR-008 AC-04의 "별도 삭제 요청 처리 상태"는 완료 화면의 "삭제 요청 접수됨" 상태로 충족한다. 별도 상태 조회 API나 앱 내부 완료·실패 알림은 제공하지 않는다. 내부 처리의 세부 상태(`PENDING`, `IN_PROGRESS`, `FAILED`, `COMPLETED`)와 실패 사유·재시도 횟수는 운영·감사·재처리용으로만 사용하며 사용자-facing 상태로 노출하지 않는다.
 
 ## 5) account_deletion_request 테이블
 
@@ -185,7 +191,7 @@
 
 ### 5.5 내부 운영 상태와 사용자-facing 정보 분리
 
-이 테이블의 상세 상태는 Backend 운영·감사·재처리용 정보이며 사용자-facing API로 제공하지 않는다. 사용자는 탈퇴 요청 성공 시점에 계정 이용이 종료되었다는 완료 안내만 받는다.
+이 테이블의 상세 상태는 Backend 운영·감사·재처리용 정보이며 사용자-facing API로 제공하지 않는다. 사용자는 탈퇴 요청 성공 시점에 계정 이용 종료와 "삭제 요청 접수됨" 상태를 안내받는다. 이 사용자-facing 상태는 내부 enum을 그대로 노출한 값이 아니며 물리 삭제 완료를 의미하지 않는다.
 
 운영자는 이 테이블을 통해 아래 항목을 확인할 수 있어야 한다.
 
@@ -205,8 +211,8 @@
 | --- | --- | --- |
 | 탈퇴 요청 접수 | 재인증, 최종 확인, `WITHDRAWAL_REQUESTED`, `token_version + 1`, `account_deletion_request.status=PENDING` 생성 | 탈퇴 전 사용자에게 고지할 문구와 법적 안내 |
 | 계정 접근 차단 | 탈퇴 요청 commit 이후 로그인·보호 API 접근 차단 | 탈퇴 후 재가입 제한이 필요한지 여부 |
-| 삭제·보존 처리 | 처리 상태를 `account_deletion_request`에 남기고 완료 시 `WITHDRAWN`으로 전환 | 즉시 폐기 대상, 법정 보존 대상, 보존 기간, 삭제 예외 사유 |
-| 사용자 안내 | 탈퇴 성공 응답과 Frontend 로컬 인증 정보 제거. 내부 처리 상태 조회 API는 제공하지 않음 | 완료 화면의 삭제·보존 안내 문구, 완료 이후 이메일 등 별도 통지 필요 여부 |
+| 삭제·보존 처리 | 처리 상태를 `account_deletion_request`에 남기고, `EXT-PRIV-001` 승인 뒤 완료 시 `WITHDRAWN`으로 전환 | 즉시 폐기 대상, 법정 보존 대상, 보존 기간, 삭제 예외 사유 |
+| 사용자 안내 | 탈퇴 성공 응답, Frontend 로컬 인증 정보 제거, 완료 화면의 사용자-facing 상태 `삭제 요청 접수됨`. 내부 상세 상태 조회 API는 제공하지 않음 | 완료 화면의 즉시 삭제 정보, 보존 정보·기간·근거와 보조 문구, 완료 이후 이메일 등 별도 통지 필요 여부 |
 | 운영·감사 | 요청·시작·완료·실패 시각, 재시도 횟수, 내부 실패 사유 저장 | 감사 증빙에 필요한 보존 항목과 접근 권한 |
 | 오류·로그 | 사용자 응답과 로그에 민감정보 원문을 남기지 않음 | 개인정보처리방침·이용약관·내부 운영 정책 문구 |
 
@@ -225,13 +231,16 @@ PM/Privacy 정책이 확정되지 않은 항목을 Backend에서 임의로 정�
 | `is_active=false` | 401 | `INVALID_TOKEN` | 비활성 사유를 사용자 응답에서 세분화하지 않는다. |
 | token payload의 `token_version`과 DB 값 불일치 | 401 | `INVALID_TOKEN` | 로그아웃·비밀번호 재설정·회원탈퇴로 무효화된 토큰이다. |
 | 비밀번호 재설정 요청의 이메일 형식 오류 | 422 | `VALIDATION_FAILED` | Pydantic 또는 Service validation 기준을 따른다. |
-| 비밀번호 재설정 완료의 token 누락·형식 오류 또는 새 비밀번호 형식 오류 | 422 | `VALIDATION_FAILED` | 원문 token과 새 비밀번호는 `details[].rejected_value`에 넣지 않는다. |
-| 비밀번호 재설정 token이 만료·사용됨·존재하지 않음 | 422 | `VALIDATION_FAILED` | 비밀번호를 변경하지 않는다. 계정 존재 여부나 token 존재 여부를 세분화해 노출하지 않는다. |
+| 비밀번호 재설정 완료의 token 누락·형식 오류 | 422 | `VALIDATION_FAILED` | `details[].field=token`과 `reason=REQUIRED` 또는 `reason=INVALID_FORMAT`. 원문 token은 `rejected_value`에 넣지 않는다. |
+| 새 비밀번호 누락·형식·정책 오류 | 422 | `VALIDATION_FAILED` | `details[].field=new_password`와 `reason=REQUIRED`, `INVALID_FORMAT`, `PASSWORD_POLICY_VIOLATION` 중 해당 값. 새 비밀번호는 `rejected_value`에 넣지 않는다. |
+| 비밀번호 재설정 token이 만료·사용됨·존재하지 않음 | 422 | `VALIDATION_FAILED` | `details[].field=token`, `reason=RESET_TOKEN_INVALID`. 비밀번호를 변경하지 않으며 만료·사용됨·존재하지 않음을 서로 다른 reason이나 message로 세분화하지 않는다. |
 | 회원탈퇴 재인증 비밀번호 불일치 | 401 | `UNAUTHORIZED` | 로그인 실패와 같은 수준의 메시지를 사용하고 계정 상태는 변경하지 않는다. |
 | 회원탈퇴 최종 확인 신호 누락·불일치 | 422 | `VALIDATION_FAILED` | 계정 상태, token, deletion request를 변경하지 않는다. |
 | 예상하지 못한 서버 오류 | 500 | `INTERNAL_SERVER_ERROR` | 공통 500 fallback 기준을 따른다. 민감정보 원문을 message/details/log에 남기지 않는다. |
 
 비밀번호 재설정 요청 단계에서는 계정 존재 여부를 노출하지 않는다. 존재하지 않는 이메일이어도 가능한 한 존재하는 계정과 같은 형태의 성공 응답을 반환하며, 계정 없음 여부를 `USER_NOT_FOUND` 같은 별도 오류 코드로 노출하지 않는다.
+
+Frontend는 `message` 문자열을 파싱하지 않고 `details[].field`와 `details[].reason`으로 복구 흐름을 선택한다. `new_password/PASSWORD_POLICY_VIOLATION`은 새 비밀번호 입력 수정으로, `token/RESET_TOKEN_INVALID`은 재설정 링크 다시 받기로 연결한다. 두 경우 모두 공개 `code`는 `VALIDATION_FAILED`를 유지하며 `rejected_value`는 `null`이다.
 
 회원탈퇴는 요청 URL이나 body로 다른 사용자의 ID를 받지 않으므로 다른 사용자 리소스 접근을 의미하는 `404 *_NOT_FOUND` 오류를 새로 만들지 않는다. 탈퇴 대상은 항상 현재 인증 사용자이며, 인증에 실패하면 위 401 계열 오류를 따른다.
 
@@ -247,16 +256,19 @@ PM/Privacy 정책이 확정되지 않은 항목을 Backend에서 임의로 정�
 | `token_version` 무효화 | 로그아웃, 비밀번호 재설정 성공, 회원탈퇴 요청 | 각 transaction 이후 기존 access/refresh token으로 보호 API 또는 token refresh를 호출하면 `401 INVALID_TOKEN`을 반환한다. |
 | 비밀번호 재설정 요청 | 존재하는 이메일과 존재하지 않는 이메일 | 계정 존재 여부를 응답 message, status, details로 구분할 수 없다. |
 | 비밀번호 재설정 완료 | 유효 token, 만료 token, 이미 사용된 token, 잘못된 token | 유효 token만 비밀번호 변경과 `token_version + 1`을 수행하고, 실패 케이스는 비밀번호와 세션 상태를 변경하지 않는다. |
+| 비밀번호 재설정 오류 분기 | 새 비밀번호 정책 오류와 만료·사용됨·존재하지 않는 token | 공개 `code`는 모두 `VALIDATION_FAILED`를 유지하되 `new_password/PASSWORD_POLICY_VIOLATION`과 `token/RESET_TOKEN_INVALID`로 구분되며, Frontend가 `message`를 파싱하지 않는다. |
+| 비밀번호 재설정 동시성 | 같은 사용자의 서로 다른 유효 token 2개를 동시에 제출 | user row를 먼저 잠그는 단일 lock order로 deadlock 없이 한 요청만 성공하고, 다른 요청은 `422 VALIDATION_FAILED`와 `token/RESET_TOKEN_INVALID`로 종료되며 비밀번호·`token_version`이 한 번만 변경된다. |
 | 비밀번호 재설정 token 보안 | DB 저장값과 로그 | 원문 token과 새 비밀번호가 DB, 오류 응답, 로그에 남지 않는다. |
 | 회원탈퇴 재인증 | 올바른 비밀번호와 잘못된 비밀번호 | 올바른 비밀번호만 탈퇴 transaction을 시작하고, 실패 시 계정 상태·token·deletion request를 변경하지 않는다. |
 | 회원탈퇴 transaction | 성공 요청 | `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`이 같은 commit 단위로 반영된다. |
 | 회원탈퇴 중복 요청 | 거의 동시에 들어온 동일 사용자 탈퇴 요청 | 활성 `account_deletion_request`가 사용자별 1개만 생성되고, 계정 상태와 `token_version`이 중복으로 증가하지 않는다. |
-| 삭제·보존 처리 완료 | PM/Privacy 정책에 따른 처리 성공 | `account_deletion_request.status=COMPLETED`, `completed_at`, `user.account_status=WITHDRAWN`, `withdrawn_at`이 정합성을 유지한다. |
+| 삭제·보존 처리 완료 | PM/Privacy 정책에 따른 처리 성공 및 `EXT-PRIV-001` 승인 | `account_deletion_request.status=COMPLETED`, `completed_at`, `user.account_status=WITHDRAWN`, `withdrawn_at`이 정합성을 유지한다. |
 | 삭제·보존 처리 실패 | 처리 중 예외 또는 rollback | 성공 상태처럼 보이는 부분 전이를 남기지 않고, 이미 접수된 탈퇴 요청은 `WITHDRAWAL_REQUESTED` 접근 차단 상태와 `account_deletion_request.status=FAILED`로 운영 확인 가능해야 한다. |
-| 사용자-facing 응답 | 회원탈퇴 성공 후 화면/API 응답 | 사용자는 탈퇴 완료 안내와 PM/Privacy 정책에 따른 삭제·보존 안내만 받고, `account_deletion_request.status`, `retry_count`, `last_error_code`를 응답으로 받지 않는다. |
+| 사용자-facing 응답 | 회원탈퇴 성공 후 화면/API 응답 | API 성공 의미는 계정 이용 종료·탈퇴 요청 접수로 한정되고, 완료 화면은 `삭제 요청 접수됨`과 PM/Privacy 정책에 따른 즉시 삭제 정보·보존 정보·기간·근거를 표시한다. 물리 삭제 완료로 표현하지 않으며 `account_deletion_request.status`, `retry_count`, `last_error_code`를 응답으로 받지 않는다. |
 | 오류 응답 | 인증 오류, validation 오류, 서버 오류 | 기존 `{code, message, details, trace_id}` 형식을 따르고 새 `ACCOUNT_*`, `PASSWORD_RESET_*`, `WITHDRAWAL_*` 공개 오류 코드를 만들지 않는다. |
 | 민감정보 비노출 | 오류 응답과 로그 | 이메일 존재 여부, 원문 token, 비밀번호, refresh token, 의료문서/OCR 원문, provider 응답 원문이 `message`, `details[].rejected_value`, 로그에 남지 않는다. |
 | PM/Privacy 경계 | 정책 미확정 항목 | 재가입 제한, 법정 보존 기간, 이메일 통지, 삭제 제외 대상은 승인된 정책 문서나 이슈 없이 하드코딩하지 않는다. |
+| 외부 Privacy 승인 게이트 | `EXT-PRIV-001` Pending | Production 물리 삭제·보존 job, `IN_PROGRESS`/`COMPLETED`, `WITHDRAWN` 전이와 실제 사용자 공개가 차단되고 Local/Test 합성 fixture 검증만 허용된다. |
 
 구현 PR에서는 최소한 관련 단위 테스트, API 테스트, migration 테스트를 포함한다. 실제 이메일 Provider 연동이나 PM/Privacy 정책 확정 전에는 이메일 발송 성공 여부와 세부 보존 기간 검증을 완료 조건으로 두지 않는다.
 
