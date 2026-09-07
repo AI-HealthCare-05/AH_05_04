@@ -43,7 +43,7 @@ DEV cannot produce a Release PASS; Production remains closed.
 | --- | --- | ---: | --- |
 | `PHASE_A_DEV_FIXTURE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q` | `0` | 22 passed |
 | `PHASE_A_LOADER` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q` | `0` | 132 passed |
-| `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 49 passed |
+| `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 50 passed |
 | `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 94 passed, 7 skipped |
 
 ## Boundaries
@@ -54,4 +54,4 @@ DEV cannot produce a Release PASS; Production remains closed.
 - The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-07T08:20:00.000000Z`. Canonical status SHA-256: `efec131346b5744cb82e7f6c42d84e2e6a5bf12bf7504003a0a70dd8c9056838`.
+Status updated at `2026-09-07T13:05:00.000000Z`. Canonical status SHA-256: `1f6ee5eba3cb650b1fac4c0e3b4efa917db473cbb11c552e14d811b099980023`.

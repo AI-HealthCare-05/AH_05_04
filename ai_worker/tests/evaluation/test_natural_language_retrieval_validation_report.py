@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import warnings
 from copy import deepcopy
 from pathlib import Path
@@ -25,6 +26,7 @@ STATUS_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/status.json"
 REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
 EVALS_ROOT = REPOSITORY_ROOT / "evals"
 DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
+EVALS_README_PATH = EVALS_ROOT / "README.md"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
 DATASET_MANIFEST_HASH = "18a6a176ccce1edf996bf06e96c8b90b0a4d3edb3c9c10752c3c5792ce33dd9d"
 
@@ -90,7 +92,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_REPORT_PROJECTION",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
                 "exit_code": 0,
-                "result": "49 passed",
+                "result": "50 passed",
             },
             {
                 "check_id": "PHASE_A_SCHEMA_EXPORT",
@@ -452,6 +454,24 @@ def test_report_rejects_untrusted_objects_without_serialization_warning_or_senti
         assert sentinel not in str(raised.value)
 
 
+def test_evals_readme_quotes_the_current_dataset_manifest_hash() -> None:
+    """`evals/README.md` tells consumers how to verify this Dataset's integrity.
+
+    A regeneration changes the manifest self-hash, so a stale README value makes a correct
+    artifact look tampered with. Bind the documented value to the committed manifest.
+    """
+    manifest_payload: dict[str, Any] = parse_json_object_bytes(DATASET_MANIFEST_PATH.read_bytes())
+    declared_manifest_hash = manifest_payload["manifest_sha256"]
+    assert isinstance(declared_manifest_hash, str)
+    readme = EVALS_README_PATH.read_text(encoding="utf-8")
+    section = readme.split("### Issue #273 자연어 Retrieval DEV authoring", maxsplit=1)
+    assert len(section) == 2, "evals/README.md must keep the Issue #273 section heading"
+    issue_273_section = section[1].split("\n### ", maxsplit=1)[0]
+
+    quoted_hashes = set(re.findall(r"\b[0-9a-f]{64}\b", issue_273_section))
+    assert quoted_hashes == {declared_manifest_hash}, quoted_hashes
+
+
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     raw_status = STATUS_PATH.read_bytes()
     status = parse_status_bytes(raw_status)
@@ -470,7 +490,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    for result in (b"22 passed", b"49 passed", b"132 passed", b"94 passed, 7 skipped"):
+    for result in (b"22 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status
