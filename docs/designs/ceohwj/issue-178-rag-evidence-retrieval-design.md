@@ -3,8 +3,8 @@
 ## 상태
 
 - Issue: `#178`
-- 브랜치: `feat/178-rag-evidence-retrieval`
-- 범위: Knowledge Evidence Retrieval의 순수 kernel과 합성 검증
+- 브랜치: `codex/178-evidence-retrieval-adapters`
+- 범위: Knowledge Evidence Retrieval Kernel과 synthetic exact·trigram·dense·rerank adapter 단위 검증
 - 구현 담당자: 정현우 (`@ceohwj`)
 - 담당 리뷰어: 권가빈 (`@hazelnutflavoured`) — Evidence·Scope·Safety
 - DB·Source 리뷰어: 송은영 (`@phina-io`), 김지혜 (`@Jye-rookie`)
@@ -28,6 +28,13 @@ Evidence Index, Retrieval Run persistence와 Safety Result v2도 Current Runtime
 Candidate Index의 구성원, vector, score 또는 검색 포트를 입력으로 사용하지 않는다. Candidate Index와
 Evidence Index는 version과 물리 경계를 공유하지 않는다.
 
+## Slice 이력
+
+- PR `#270`: `evidence_retrieval.py`의 Kernel, Port Protocol, Receipt·trace·fail-closed 검증만 구현했다.
+- 이번 slice: 위 Protocol을 구현하는 synthetic fixture adapter와 versioned configuration을 추가한다.
+- 후속 slice: RAG-06 공식 Catalog·Evidence Index, PostgreSQL `pg_trgm`·pgvector, Retrieval Run persistence,
+  EVAL `#160` 연결을 담당한다.
+
 ## 문제
 
 현재 저장소에는 Knowledge Evidence를 대상으로 lexical·dense 검색과 rerank를 순서대로 호출하고,
@@ -50,7 +57,7 @@ Evidence Index는 version과 물리 경계를 공유하지 않는다.
 
 ## 제외 범위
 
-- PostgreSQL `pg_trgm`, pgvector query, migration과 repository
+- 실제 PostgreSQL `pg_trgm`, pgvector query, migration과 repository
 - Knowledge Document parsing, chunking, embedding build와 Evidence Index persistence
 - 실제 embedding provider 또는 model download
 - Source 승인, Runtime Bundle membership, Guard Decision과 operation selection 판정
@@ -88,7 +95,15 @@ Citation 금지 조건을 약화하므로 채택하지 않는다.
 ### 미선택: PostgreSQL score를 Python으로 모사
 
 extension 설정, tokenizer, vector distance와 tie-break가 확정되지 않은 상태에서 Python으로 모사하면
-실제 adapter와 다른 결과를 만든다. Kernel은 score 계산이 아니라 port output 검증만 소유한다.
+실제 adapter와 다른 결과를 만든다. 따라서 이번 구현은 PostgreSQL 호환성 adapter가 아니라 알고리즘과
+Receipt 경계를 검증하는 명시적 synthetic fixture adapter로 이름과 완료 주장을 제한한다.
+
+### 선택: synthetic exact·trigram·dense와 versioned rerank adapter
+
+PR `#270`의 `LEXICAL/DENSE` Kernel stage를 유지한다. `LEXICAL` 내부에서 normalized substring exact match를
+우선하고 나머지 후보에 synthetic trigram similarity를 적용한다. `DENSE`는 query fingerprint에 결속된
+fixture vector와 record vector의 Decimal cosine similarity를 사용한다. Reranker는 versioned lexical/dense
+weight와 `top_k`를 적용한다. 모든 정렬은 score 내림차순, UTF-8 `evidence_key` 오름차순으로 결정적이다.
 
 ## 모듈 경계
 
@@ -108,6 +123,31 @@ Composer를 import하지 않는다.
 
 모든 공개 타입은 이 단위 구현을 위한 내부 provisional API다. Knowledge Evidence Index와 Privacy 계약이
 승인되기 전에는 Production adapter 또는 다른 도메인의 안정 import contract로 승격하지 않는다.
+
+### Synthetic adapter 모듈
+
+`ai_worker/tasks/rag/evidence_retrieval_adapters.py`는 외부 DB, embedding provider, model download 또는
+Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
+
+- `SyntheticEvidenceRecord`: provenance 구성 요소, `SensitiveText` 본문, 문자열 Decimal dense vector
+- `SyntheticEvidenceIndex`: record projection을 UTF-8 key 순으로 canonical JSON 직렬화한 SHA-256 artifact
+- `VersionedLexicalSearchConfig`: exact·trigram 전략과 trigram threshold를 결속한 artifact
+- `VersionedDenseSearchConfig`: query fingerprint별 synthetic vector, cosine threshold와 metric version artifact
+- `VersionedRerankConfig`: lexical/dense weight, `top_k`, tie-break와 score precision artifact
+- `SyntheticEvidenceSearchAdapter`, `VersionedEvidenceRerankAdapter`: 기존 Port Protocol의 concrete 구현
+
+각 adapter는 요청 reference뿐 아니라 현재 fixture/config payload를 다시 canonicalize해 artifact hash와
+exact-match한다. frozen dataclass가 `replace` 또는 저수준 mutation으로 분리되었거나 record/key/vector가
+잘못된 경우 성공 Receipt를 만들지 않고 typed failure를 반환한다.
+
+Lexical trigram 추출은 [PostgreSQL pg_trgm 문서](https://www.postgresql.org/docs/17/pgtrgm.html)의 원칙에 따라
+비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인다. 다만 이 구현은 synthetic fixture
+알고리즘이며 실제 extension, collation, index operator class 또는 운영 SQL과의 동등성을 주장하지 않는다.
+
+Dense query fixture에는 raw query를 넣지 않고 `QueryFingerprint`와 vector만 저장한다. fingerprint 누락·중복,
+dimension mismatch, zero/non-finite vector는 `EvidenceSearchFailure`다. Reranker는
+`knowledge-rerank-input-v1` hash를 재계산하고, 중복 candidate key·stage signal, 비정상 rank·score,
+config/hash mismatch 또는 내부 예외를 raw detail 없이 `EvidenceRerankFailure`로 닫는다.
 
 ### 테스트 모듈
 
@@ -412,6 +452,10 @@ query, content 또는 port exception message가 나타나면 안 된다.
 - request·outcome·failure `repr`/`str`과 port exception 처리에 query·content·exception message가 없음
 - whole-outcome 기본 JSON serialization 실패와 sanitized serializer만 성공
 - output이 Source approval, sufficiency, Safety 상태 또는 Composer 사용 가능성을 주장하지 않음
+- synthetic lexical exact 우선, trigram threshold와 dense cosine 순위가 동일 입력에서 재현됨
+- lexical·dense·rerank config payload와 artifact SHA-256 분리 시 typed failure
+- versioned weighted rerank와 UTF-8 key tie-break, input-set hash 재검증
+- concrete adapter를 Kernel에 DI한 lexical+dense → rerank 실행에서도 raw query·본문 trace 비노출
 
 검증 명령은 다음과 같다.
 
@@ -431,7 +475,7 @@ git diff --check
 - `#165/#166` 실제 Source Snapshot·Catalog Receipt
 - Full Execution Context와 Runtime Bundle의 승인된 shared DTO·Guard binding
 - query HMAC algorithm·canonical input·key rotation을 소유하는 Privacy·Security 계약
-- PostgreSQL lexical/dense adapter와 configuration Receipt
+- Production PostgreSQL `pg_trgm`·pgvector adapter와 configuration Receipt
 - `#177` positive interaction rule과 Rule Evidence binding
 - Safety v2의 execution/evidence/release 상태 매핑
 - Retrieval Run persistence schema와 transaction owner
@@ -444,7 +488,7 @@ git diff --check
 
 ## 완료 주장 경계
 
-이 변경이 검증할 수 있는 주장은 “합성 Knowledge Evidence와 versioned port Receipt에 대해 검색·rerank
-orchestration과 결과 무결성 검증이 결정적이다”까지다. 실제 Source 승인, Evidence sufficiency/conflict,
-Safety 상태, `pg_trgm`·dense 품질, Retrieval Run 저장, Recall@5, Citation 정확성, Runtime Bundle 활성화
-또는 환자 공개 안전성을 완료로 주장하지 않는다.
+이 변경이 검증할 수 있는 주장은 “합성 Knowledge Evidence와 versioned port Receipt에 대해 exact·trigram·
+dense 검색, weighted rerank orchestration과 결과 무결성 검증이 결정적이다”까지다. 실제 Source 승인,
+Evidence sufficiency/conflict, Safety 상태, Production `pg_trgm`·pgvector 품질, Retrieval Run 저장,
+Recall@5, Citation 정확성, Runtime Bundle 활성화 또는 환자 공개 안전성을 완료로 주장하지 않는다.
