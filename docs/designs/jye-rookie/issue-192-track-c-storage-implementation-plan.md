@@ -6,7 +6,7 @@
 - 구현 담당: 김지혜 (`@Jye-rookie`)
 - 주 리뷰어: 송은영 (`@phina-io`)
 - PM 범위 확인: 권가빈 (`@hazelnutflavoured`)
-- 현재 판단: Track B 부모 모델과 HandlerConfig Decision 대기
+- 현재 판단: Track B #199→#200→#201 부모 모델과 HandlerConfig Decision 대기
 - 현재 local Alembic head: `171c0f751206` (Track B 병합 후 재확인)
 - 공개 게이트: `PUBLIC_TRACK_C=false` 유지
 
@@ -25,6 +25,26 @@
 - Track C 결과는 동기 도메인 결과이며 `AI_JOB`에 귀속하지 않는다.
 - Safety·Barrier·일반 Support는 현재 Check-in이 `NOT_TAKEN`일 때만 허용한다.
 - 실제 환자 fixture와 Production 공개는 범위 밖이다.
+
+## 2026-09-07 담당자 확인 결과
+
+- Track B의 `medication_checkin`은 아직 구현되지 않았으며 #199 Schedule·Occurrence,
+  #200 Rolling Occurrence·중복 방지·처방 변경, #201 Check-in·Audit 순서로 진행한다.
+- Check-in은 `occurrence_id`별 현재 row 하나를 유지하고 정정 시 같은 row의 revision을
+  올린다. 이전 값은 별도 append-only `checkin_audit`에 보존한다.
+- Check-in의 `profile_id` 직접 저장 여부와 소유권 FK 형태는 #199~#201에서 확정한다.
+- `symptom_codes`는 개별 코드 검색·집계 요구가 없으므로 JSON 배열로 저장한다.
+- SafetyAssessment와 BarrierResponse는 모두 revision별 append-only로 저장하며 가장 높은
+  revision을 현재 상태로 해석한다.
+- Barrier 하나당 `ACTIVE` ActionPlan은 최대 하나이며 PostgreSQL partial unique index로
+  동시 생성을 차단한다. 기존 Plan이 `COMPLETED` 또는 `CANCELLED`면 새 Plan을 허용한다.
+- ActionPlan은 `support_code`, `rule_version`, `copy_version`, 선택 당시
+  `action_config_snapshot`을 보존한다. Handler별 config field와 schema version은 별도
+  Product Decision 또는 Contract Freeze 전까지 구현하지 않는다.
+- ActionPlan별 논리적 follow-up은 하나다. 최초 응답은 `HELPED | NOT_HELPED | NOT_SURE`이며
+  “나중에 응답”은 row를 만들지 않는다. 재제출은 현재 row와 revision을 갱신하고 이전 값은
+  append-only audit에 보존한다.
+- 데이터가 존재하는 downgrade는 중단하고 forward-fix만 허용한다.
 
 ## 확정 가능한 Enum
 
@@ -71,10 +91,13 @@ Barrier의 명시적 거절은 `response_status=DECLINED`과 `barrier_code=null`
 
 구현 전 확정할 항목:
 
-- `symptom_codes`를 JSON 배열로 저장할지 자식 테이블로 분리할지
 - 동일 Check-in revision에서 assessment revision을 식별하는 unique key
-- 현재 assessment를 부분 unique index로 표시할지 최고 revision 조회로 계산할지
 - `profile_id`를 직접 저장해 복합 FK를 만들지 부모 chain 조회로만 검증할지
+
+확정된 저장 방식:
+
+- `symptom_codes`는 JSON 배열로 저장한다.
+- assessment는 append-only이며 가장 높은 revision을 현재 결과로 계산한다.
 
 ### `barrier_response`
 
@@ -99,8 +122,12 @@ OR
 구현 전 확정할 항목:
 
 - Barrier가 근거로 삼은 `safety_assessment_id`를 직접 FK로 고정할지
-- Check-in revision별 단일 row를 수정할지 revision별 append-only row를 만들지
-- 정정 이력을 위한 활성 표시와 unique key
+- append-only Barrier의 revision별 unique key
+
+확정된 저장 방식:
+
+- Barrier도 Safety와 동일하게 revision별 append-only로 저장한다.
+- 별도 현재 row를 수정하지 않고 가장 높은 revision을 현재 응답으로 계산한다.
 
 ### `support_action_plan`
 
@@ -117,13 +144,17 @@ OR
 
 - 취소되거나 완료된 ActionPlan을 다시 `ACTIVE`로 덮어쓰지 않는 이력 보존
 - 부모 Check-in revision이 바뀌면 과거 row를 보존하고 활성 계획만 취소
-- 활성 계획을 구분하는 PostgreSQL partial unique index 여부 검토
+- Barrier별 `status='ACTIVE'` Plan을 하나로 제한하는 PostgreSQL partial unique index
 
 구현 전 확정할 항목:
 
 - 저장할 HandlerConfig의 필드·타입·version
 - ActionPlan에 snapshot할 rule·copy·rationale·action config의 정확한 컬럼
-- Barrier 하나당 선택 가능한 ActionPlan 수와 활성 계획 cardinality
+
+확정된 저장 방식:
+
+- `support_code`, `rule_version`, `copy_version`, `action_config_snapshot`을 보존한다.
+- 기존 Plan이 `COMPLETED` 또는 `CANCELLED`일 때만 같은 Barrier에 새 Plan을 만들 수 있다.
 
 ### ActionPlan follow-up
 
@@ -136,9 +167,14 @@ OR
 구현 전 확정할 항목:
 
 - 테이블 이름
-- follow-up을 한 번만 허용할지 append-only 다회 이력으로 둘지
-- follow-up revision과 정정 허용 여부
 - ActionPlan 상태와 follow-up response의 허용 조합
+
+확정된 저장 방식:
+
+- ActionPlan별 현재 follow-up row는 최대 하나다.
+- 재제출은 현재 row와 revision을 갱신하고 이전 값은 별도 append-only audit에 보존한다.
+- 동일 멱등 키 재전송은 최초 성공 응답을 재현하고 신규 키 수정은
+  `expected_revision`을 검사한다.
 
 ## 소유권과 FK 전략
 
@@ -177,14 +213,9 @@ Migration은 중복 실행을 정상 동작으로 정의하지 않는다. Alembi
 ## Downgrade 기준
 
 Issue의 “rollback 시 기존 데이터 보존”은 테이블을 제거하는 일반 downgrade와 동시에
-만족할 수 없다. 데이터가 존재할 때 다음 중 어느 정책을 사용할지 주 리뷰어가 확정해야 한다.
-
-- Production에서는 downgrade를 금지하고 forward-fix만 허용
-- 비운영 환경에서도 row가 있으면 downgrade를 중단
-- 승인된 백업·정리 절차 이후에만 테이블 제거 허용
-
-현재 저장소의 연결 정보 보존 Migration과 같은 방식으로, Track C row가 존재하면
-`RuntimeError`로 downgrade를 중단하는 안을 우선 검토한다.
+만족할 수 없다. 기존 Migration의 안전 기준과 동일하게 Track C row가 하나라도 존재하면
+`RuntimeError`로 downgrade를 중단하고 forward-fix만 허용한다. 데이터가 없는 환경에서만
+승인된 downgrade가 Track C 테이블을 제거할 수 있다.
 
 ## 테스트 계획
 
@@ -226,12 +257,9 @@ git diff --check
 
 1. Track B Check-in 모델·Migration PR과 확정 revision
 2. Check-in의 `profile_id`, `(id, profile_id)` unique, revision 물리 계약
-3. `symptom_codes` 저장 방식
-4. Safety·Barrier의 revision별 unique와 현재 row 판정 방식
-5. ActionPlan 활성 cardinality와 partial unique index 기준
-6. ActionPlan에 snapshot할 HandlerConfig 필드·version
-7. follow-up 단일/다회 및 정정 정책
-8. 데이터가 존재하는 downgrade의 forward-fix 또는 중단 정책
+3. Safety·Barrier의 revision별 unique key
+4. ActionPlan에 snapshot할 HandlerConfig 상세 필드·schema version
+5. ActionPlan 상태와 follow-up response의 허용 조합
 
 ## 시작 조건
 
@@ -239,5 +267,5 @@ git diff --check
 
 - Track B Check-in ID·revision·소유권 계약이 실제 모델과 Migration으로 병합됨
 - HandlerConfig 저장 구조가 Decision 또는 Contract Freeze에 기록됨
-- 위 미확정 항목에 대한 주 리뷰어와 PM 답변이 Issue에 남음
+- 위의 남은 미확정 항목에 대한 주 리뷰어와 PM 답변이 Issue에 남음
 - 새 브랜치를 답변 시점의 최신 `develop`에서 다시 정렬함
