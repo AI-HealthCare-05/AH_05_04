@@ -166,6 +166,10 @@ class Config(BaseSettings):
     # 실패 상태 저장과 응답 생성에 남겨두는 여유입니다.
     OCR_RESPONSE_MARGIN_SECONDS: float = 5.0
 
+    # 비동기 OCR 접수 후 Publisher/Worker까지 전달되지 못한 PENDING placeholder가
+    # 같은 문서를 영구히 잠그지 않도록, 이 시간 이후의 PENDING은 새 접수를 막지 않습니다.
+    OCR_PENDING_ACTIVE_WINDOW_SECONDS: float = 300.0
+
     @model_validator(mode="after")
     def validate_chat_history_environment(self) -> "Config":
         if self.CHAT_HISTORY_CONTEXT_ENABLED and self.ENV is not Env.LOCAL:
@@ -219,6 +223,7 @@ class Config(BaseSettings):
             ("OCR_REQUEST_DEADLINE_SECONDS", self.OCR_REQUEST_DEADLINE_SECONDS),
             ("OCR_LOCAL_PROCESSING_RESERVE_SECONDS", self.OCR_LOCAL_PROCESSING_RESERVE_SECONDS),
             ("OCR_RESPONSE_MARGIN_SECONDS", self.OCR_RESPONSE_MARGIN_SECONDS),
+            ("OCR_PENDING_ACTIVE_WINDOW_SECONDS", self.OCR_PENDING_ACTIVE_WINDOW_SECONDS),
             ("CLOVA_OCR_TIMEOUT_SECONDS", self.CLOVA_OCR_TIMEOUT_SECONDS),
             ("OCR_STRUCTURE_TIMEOUT_SECONDS", self.OCR_STRUCTURE_TIMEOUT_SECONDS),
         ):

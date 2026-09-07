@@ -4,10 +4,11 @@
 
 OCR 작업 실행·조회 API가 성공·실패 상태를 Frontend에 전달할 때 사용하는 필드와 오류 코드 기준을 기록합니다.
 
-## 현재 MVP 기준
+## 현재 구현 기준
 
-- Endpoint: `POST /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/ocr-jobs/{job_id}`
-- 응답 `data`에는 `error_code`, `error_message`를 포함해 실패 상태를 화면에서 안내할 수 있도록 합니다.
+- Endpoint: `POST /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/ocr-jobs/{domain_id}`
+- `POST /api/v1/documents/{document_id}/ocr-jobs`는 공통 Job 접수 응답(`JobStatusResponse`)을 반환합니다. 완료된 OCR 결과는 `GET /api/v1/ocr-jobs/{domain_id}`에서 조회합니다.
+- OCR 결과 조회 응답 `data`에는 `error_code`, `error_message`를 포함해 실패 상태를 화면에서 안내할 수 있도록 합니다.
 - `error_message`는 외부 OCR 제공자의 원본 오류나 민감한 내부 예외 메시지를 그대로 노출하지 않고, Backend가 정의한 고정된 안전한 문구만 반환합니다.
 - 문서에 연결된 OCR 작업이 여러 개이고 `created_at`이 동일한 경우, `created_sequence` 컬럼으로 최신 작업을 안정적으로 판별합니다.
 
@@ -39,7 +40,7 @@ DB CHECK 제약으로 강제되는 불변식입니다.
 - `FAILED`는 `error_code IS NOT NULL`
 - `COMPLETED`는 `error_code`·`error_message`가 모두 `NULL`
 
-동기 MVP 경로에서 전체 deadline이 소진되어 Provider를 호출하지 않은 경우에는 Job을
+서비스 직접 실행 경로에서 전체 deadline이 소진되어 Provider를 호출하지 않은 경우에는 Job을
 `PROCESSING`으로 남기지 않고 `FAILED`로 전이합니다. `error_code`는
 `OCR_PROVIDER_TIMEOUT`이며 내부 사유는 응답 `details[].reason=DEADLINE_EXCEEDED`로
 구분합니다.
@@ -66,7 +67,7 @@ Worker의 상세 실패 코드는 AI Job에 유지하고, OCR 공개 상태에�
 
 ## 검증과 변경 규칙
 
-동기 MVP 구현 계약은 `backend/app/tests/ocr`에서 검증합니다. #233 비동기
+OCR 결과 저장·조회 구현 계약은 `backend/app/tests/ocr`에서 검증합니다. #233 비동기
 Worker의 `PROCESSING` 전이·timeout·commit-before-ACK 경계는
 `ai_worker/tests/core/test_sqlalchemy_ocr_execution_starter.py`와
 `ai_worker/tests/core/test_consumer_execution.py`에서 검증합니다. reclaim·재시도 소진·최종
