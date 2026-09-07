@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.engine import URL
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -22,6 +23,7 @@ from app.models.prescriptions import Medication, Prescription
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
     MedicationCandidateSearch,
+    MedicationCandidateSearchResult,
     MedicationCandidateSearchStatus,
     MedicationIdentification,
     MedicationIdentificationStatus,
@@ -256,6 +258,121 @@ async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUI
         )
 
 
+async def _assert_active_search_unique_index_exists() -> None:
+    async with test_engine.begin() as connection:
+        index_name = await connection.scalar(text("SELECT to_regclass('uq_medication_candidate_search_active')"))
+    assert index_name is not None
+
+
+async def _drop_active_search_unique_index() -> None:
+    await _assert_active_search_unique_index_exists()
+    async with test_engine.begin() as connection:
+        await connection.execute(text("DROP INDEX uq_medication_candidate_search_active"))
+
+
+async def _restore_active_search_unique_index() -> None:
+    async with test_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_medication_candidate_search_active "
+                "ON medication_candidate_search (prescription_version_medication_id) "
+                "WHERE status IN ('RUNNING', 'READY')"
+            )
+        )
+
+
+async def _create_two_ready_searches_for_same_medication() -> tuple[UUID, UUID, UUID, UUID, UUID, UUID]:
+    """비정상 DB 상태에서도 medication당 MATCHED Identification은 1개만 허용되는지 검증합니다.
+
+    운영 schema는 active Search unique index로 두 READY Search를 먼저 차단합니다.
+    이 테스트는 그 방어선 바깥에서 직접 DB로 잘못된 상태가 생겨도
+    Identification partial unique index가 마지막 방어선으로 작동하는지 보기 위해
+    격리 schema 안에서만 active Search index를 잠시 내립니다.
+    """
+    async with session_factory.begin() as session:
+        owner = await _create_user(session, email="two-ready-owner@example.com")
+        profile = await session.scalar(
+            select(Profile).where(Profile.user_id == owner.id, Profile.profile_type == ProfileType.SELF)
+        )
+        assert profile is not None
+        document = MedicalDocument(
+            uploaded_by=owner.id,
+            profile_id=profile.id,
+            original_file_name="prescription.jpg",
+            object_key=f"{uuid4()}.jpg",
+            file_mime_type="image/jpeg",
+            file_size_bytes=100,
+        )
+        session.add(document)
+        await session.flush()
+
+        ocr_job = OcrJob(document_id=document.id)
+        session.add(ocr_job)
+        await session.flush()
+
+        prescription = Prescription(
+            document_id=document.id,
+            source_ocr_job_id=ocr_job.id,
+            profile_id=profile.id,
+            prescribed_date=date.today(),
+            confirmed_at=datetime.now(config.TIMEZONE),
+        )
+        session.add(prescription)
+        await session.flush()
+
+        medication = Medication(
+            prescription_id=prescription.id,
+            medication_name="테스트약",
+            strength_text="500mg",
+            display_order=1,
+        )
+        session.add(medication)
+        await session.flush()
+
+        searches: list[MedicationCandidateSearch] = []
+        result_ids: list[UUID] = []
+        for index in range(2):
+            search = MedicationCandidateSearch(
+                prescription_version_medication_id=medication.id,
+                medication_name_snapshot=medication.medication_name,
+                strength_text_snapshot=medication.strength_text,
+                query_digest=f"query-digest-two-ready-{index}",
+                runtime_release_bundle_id=None,
+                candidate_index_version_id=None,
+                status=MedicationCandidateSearchStatus.READY,
+                candidate_count=1,
+                displayed_candidate_count=1,
+                expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=10),
+                finalized_at=datetime.now(config.TIMEZONE),
+            )
+            session.add(search)
+            await session.flush()
+
+            result = MedicationCandidateSearchResult(
+                search_id=search.id,
+                product_id=uuid4(),
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code=f"20001234{index}",
+                product_name=f"테스트정{index}",
+                strength_text="500mg",
+                dosage_form="정제",
+                manufacturer_name="테스트제약",
+                product_status="ACTIVE",
+                result_rank=1,
+                result_score=0.95,
+                result_method="PRODUCT_NAME",
+                is_displayed=True,
+                selection_eligible=True,
+            )
+            session.add(result)
+            await session.flush()
+
+            searches.append(search)
+            result_ids.append(result.id)
+
+        return owner.id, medication.id, searches[0].id, result_ids[0], searches[1].id, result_ids[1]
+
+
 async def _confirm_once(
     *,
     user_id: UUID,
@@ -264,6 +381,89 @@ async def _confirm_once(
 ) -> tuple[str, str | None]:
     async with session_factory() as session:
         service = _service(session)
+        try:
+            await service.confirm_identification(
+                prescription_version_medication_id=medication_id,
+                candidate_search_result_id=candidate_search_result_id,
+                user_id=user_id,
+            )
+            await session.commit()
+            return ("ok", None)
+        except ApiError as exc:
+            await session.rollback()
+            reason = exc.details[0].reason if exc.details else None
+            return (exc.code, reason)
+
+
+class _BarrierMedicationCandidateRepository(MedicationCandidateRepository):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        matched_precheck_barrier: asyncio.Barrier,
+        precheck_none_count: list[UUID],
+        insert_attempt_count: list[UUID],
+        integrity_error_count: list[UUID],
+    ) -> None:
+        super().__init__(session)
+        self._matched_precheck_barrier = matched_precheck_barrier
+        self._precheck_none_count = precheck_none_count
+        self._insert_attempt_count = insert_attempt_count
+        self._integrity_error_count = integrity_error_count
+
+    async def get_latest_matched_identification(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+    ) -> MedicationIdentification | None:
+        existing = await super().get_latest_matched_identification(
+            prescription_version_medication_id=prescription_version_medication_id
+        )
+        if existing is None:
+            self._precheck_none_count.append(prescription_version_medication_id)
+            await self._matched_precheck_barrier.wait()
+        return existing
+
+    async def create_matched_identification(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        candidate_search: MedicationCandidateSearch,
+        candidate_search_result: MedicationCandidateSearchResult,
+        confirmed_at: datetime,
+    ) -> MedicationIdentification:
+        self._insert_attempt_count.append(candidate_search.id)
+        try:
+            return await super().create_matched_identification(
+                prescription_version_medication_id=prescription_version_medication_id,
+                candidate_search=candidate_search,
+                candidate_search_result=candidate_search_result,
+                confirmed_at=confirmed_at,
+            )
+        except IntegrityError:
+            self._integrity_error_count.append(candidate_search.id)
+            raise
+
+
+async def _confirm_once_after_matched_precheck_barrier(
+    *,
+    user_id: UUID,
+    medication_id: UUID,
+    candidate_search_result_id: UUID,
+    matched_precheck_barrier: asyncio.Barrier,
+    precheck_none_count: list[UUID],
+    insert_attempt_count: list[UUID],
+    integrity_error_count: list[UUID],
+) -> tuple[str, str | None]:
+    async with session_factory() as session:
+        repository = _BarrierMedicationCandidateRepository(
+            session,
+            matched_precheck_barrier=matched_precheck_barrier,
+            precheck_none_count=precheck_none_count,
+            insert_attempt_count=insert_attempt_count,
+            integrity_error_count=integrity_error_count,
+        )
+        service = MedicationIdentificationService(repository)
         try:
             await service.confirm_identification(
                 prescription_version_medication_id=medication_id,
@@ -359,3 +559,85 @@ async def test_concurrent_confirm_different_searches_allows_only_current_search(
     assert identifications[0].candidate_search_id == current_search_id
     assert search_statuses[replaced_search_id] == MedicationCandidateSearchStatus.INVALIDATED_INPUT_CHANGED
     assert search_statuses[current_search_id] == MedicationCandidateSearchStatus.CONSUMED
+
+
+async def test_concurrent_confirm_two_ready_searches_allows_only_one_matched_identification() -> None:
+    await _drop_active_search_unique_index()
+    try:
+        (
+            user_id,
+            medication_id,
+            first_search_id,
+            first_result_id,
+            second_search_id,
+            second_result_id,
+        ) = await _create_two_ready_searches_for_same_medication()
+
+        matched_precheck_barrier = asyncio.Barrier(2)
+        precheck_none_count: list[UUID] = []
+        insert_attempt_count: list[UUID] = []
+        integrity_error_count: list[UUID] = []
+
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                _confirm_once_after_matched_precheck_barrier(
+                    user_id=user_id,
+                    medication_id=medication_id,
+                    candidate_search_result_id=first_result_id,
+                    matched_precheck_barrier=matched_precheck_barrier,
+                    precheck_none_count=precheck_none_count,
+                    insert_attempt_count=insert_attempt_count,
+                    integrity_error_count=integrity_error_count,
+                ),
+                _confirm_once_after_matched_precheck_barrier(
+                    user_id=user_id,
+                    medication_id=medication_id,
+                    candidate_search_result_id=second_result_id,
+                    matched_precheck_barrier=matched_precheck_barrier,
+                    precheck_none_count=precheck_none_count,
+                    insert_attempt_count=insert_attempt_count,
+                    integrity_error_count=integrity_error_count,
+                ),
+            ),
+            timeout=10,
+        )
+
+        assert len(precheck_none_count) == 2
+        assert len(insert_attempt_count) == 2
+        assert len(integrity_error_count) == 1
+        assert results.count(("ok", None)) == 1
+        assert any(
+            code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"} and reason == "ALREADY_MATCHED"
+            for code, reason in results
+        )
+
+        async with session_factory() as session:
+            identifications = (
+                (
+                    await session.execute(
+                        select(MedicationIdentification).where(
+                            MedicationIdentification.prescription_version_medication_id == medication_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            search_status_rows = (
+                await session.execute(
+                    select(MedicationCandidateSearch.id, MedicationCandidateSearch.status).where(
+                        MedicationCandidateSearch.id.in_([first_search_id, second_search_id])
+                    )
+                )
+            ).all()
+            search_statuses: dict[UUID, MedicationCandidateSearchStatus] = {
+                row[0]: row[1] for row in search_status_rows
+            }
+
+        assert len(identifications) == 1
+        assert identifications[0].status == MedicationIdentificationStatus.MATCHED
+        assert identifications[0].candidate_search_id in {first_search_id, second_search_id}
+        assert list(search_statuses.values()).count(MedicationCandidateSearchStatus.CONSUMED) == 1
+        assert list(search_statuses.values()).count(MedicationCandidateSearchStatus.READY) == 1
+    finally:
+        await _restore_active_search_unique_index()

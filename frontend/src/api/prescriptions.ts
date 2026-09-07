@@ -1,4 +1,11 @@
-import { apiBlobRequest, apiRequest } from './client'
+import {
+  apiBlobRequest,
+  apiRequest,
+  apiRequestWithResponse,
+} from './client'
+import type { JobStatusResponse } from '../types/jobs'
+
+export type { JobStatusResponse } from '../types/jobs'
 
 export type UploadStatus = 'UPLOADED' | 'FAILED'
 
@@ -47,6 +54,20 @@ export type OcrJobResponse = {
   }
 }
 
+export type OcrIntakeResponse = JobStatusResponse | OcrJobResponse
+
+export function isJobStatusResponse(
+  response: OcrIntakeResponse,
+): response is JobStatusResponse {
+  return 'status' in response.data && 'status_url' in response.data
+}
+
+export function isLegacyOcrJobResponse(
+  response: OcrIntakeResponse,
+): response is OcrJobResponse {
+  return 'ocr_status' in response.data && 'fields' in response.data
+}
+
 export async function uploadPrescription(
   file: File,
 ): Promise<PrescriptionDocumentUploadResponse> {
@@ -66,19 +87,70 @@ export async function uploadPrescription(
 
 export async function executeOcr(
   documentId: string,
-): Promise<OcrJobResponse> {
-  return apiRequest<OcrJobResponse>(
+  idempotencyKey: string,
+  signal?: AbortSignal,
+): Promise<OcrIntakeResponse> {
+  return apiRequest<OcrIntakeResponse>(
     `/api/v1/documents/${documentId}/ocr-jobs`,
     {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
       },
       body: JSON.stringify({
         force_reprocess: false,
       }),
     },
   )
+}
+
+function parseRetryAfterSeconds(value: string | null): number | null {
+  if (value === null || !/^\d+$/.test(value)) {
+    return null
+  }
+
+  const seconds = Number(value)
+
+  return Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null
+}
+
+export async function getJobStatus(
+  statusUrl: string,
+  signal?: AbortSignal,
+): Promise<{
+  body: JobStatusResponse
+  retryAfterSeconds: number | null
+}> {
+  const response = await apiRequestWithResponse<JobStatusResponse>(
+    statusUrl,
+    { signal },
+  )
+  const bodyRetryAfterSeconds = response.data.data.retry_after_seconds
+  const headerRetryAfterSeconds = parseRetryAfterSeconds(
+    response.headers.get('Retry-After'),
+  )
+
+  if (
+    bodyRetryAfterSeconds !== null &&
+    headerRetryAfterSeconds !== null &&
+    bodyRetryAfterSeconds !== headerRetryAfterSeconds
+  ) {
+    throw new Error('Retry-After header does not match retry_after_seconds')
+  }
+
+  return {
+    body: response.data,
+    retryAfterSeconds: bodyRetryAfterSeconds ?? headerRetryAfterSeconds,
+  }
+}
+
+export async function getOcrResult(
+  resultUrl: string,
+  signal?: AbortSignal,
+): Promise<OcrJobResponse> {
+  return apiRequest<OcrJobResponse>(resultUrl, { signal })
 }
 
 export async function getOcrJob(
