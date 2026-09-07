@@ -117,6 +117,36 @@ async def _fetch_evaluation_check_definitions() -> list[str]:
         return [row[0] for row in result]
 
 
+async def _fetch_column_comments() -> dict[tuple[str, str], str]:
+    async with _connection() as connection:
+        result = await connection.execute(
+            text(
+                """
+                SELECT pg_class.relname, pg_attribute.attname,
+                       col_description(pg_attribute.attrelid, pg_attribute.attnum) AS comment
+                FROM pg_attribute
+                JOIN pg_class ON pg_class.oid = pg_attribute.attrelid
+                JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+                WHERE pg_namespace.nspname = 'public'
+                  AND pg_class.relname = ANY(:table_names)
+                  AND pg_attribute.attname = ANY(:column_names)
+                  AND pg_attribute.attnum > 0
+                  AND NOT pg_attribute.attisdropped
+                """
+            ),
+            {
+                "table_names": list(RAG_EVALUATION_TABLES),
+                "column_names": [
+                    "question_template",
+                    "source_segment",
+                    "non_sensitive_summary",
+                    "non_sensitive_context",
+                ],
+            },
+        )
+        return {(row[0], row[1]): row[2] for row in result}
+
+
 async def _table_exists(table_name: str) -> bool:
     async with _connection() as connection:
         result = await connection.execute(

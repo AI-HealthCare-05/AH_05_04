@@ -290,6 +290,8 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 | Runtime 배포 | runtime execution manifest·release bundle·environment 계열 | Source·Index·Rule·Prompt·Model·Validator·Worker artifact version을 환경별 단일 active bundle로 고정 |
 | Evaluation | `eval_dataset`, `eval_case`, `eval_experiment`, `eval_variant`, `eval_run`, `eval_case_result`, `eval_metric`, `eval_failure` 최소 DB 기반 구현 중(#164) | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료 후 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`. Runner·Release approval·Runtime 활성화 연결은 후속 |
 
+Evaluation의 `question_template`, `source_segment`, `non_sensitive_summary`, `non_sensitive_context`는 합성 template/segment 식별자, metric 이름·개수, enum code, artifact reference 같은 비민감 구조화 값만 허용합니다. 자유 텍스트, 모델 출력, retrieved chunk, 실제 환자정보, OCR 원문, 처방 원문은 저장하지 않습니다.
+
 OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계를 가지며, pgvector는 OCR 후보 보조 단계에만 사용합니다. HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상호작용 근거로 사용하지 않습니다.
 
 `OTC_IDENTIFICATION`, `OTC_EVALUATION`, `OTC_RULE_MATCH` 같은 Track D 전용 평가 모델은 목표 schema에서 사용하지 않습니다. OTC는 기존 Chat 결과·Citation을 재사용하지만 `interaction_rule`과 `rule_evidence`는 Track F 내부 결정 규칙과 근거 원장으로 유지합니다.

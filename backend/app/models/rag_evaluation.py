@@ -175,8 +175,16 @@ class EvalCase(Base):
     )
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     gold_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    question_template: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    source_segment: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    question_template: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Non-sensitive template identifier or synthetic prompt template label only; patient-derived free text is prohibited.",
+    )
+    source_segment: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Non-sensitive synthetic segment identifier only; source excerpts, OCR text, and prescription text are prohibited.",
+    )
     medication_family: Mapped[str | None] = mapped_column(String(120), nullable=True)
     transform_origin: Mapped[str | None] = mapped_column(String(120), nullable=True)
     expected_scope_codes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -393,7 +401,11 @@ class EvalCaseResult(Base):
     )
     request_guard_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result_summary_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    non_sensitive_summary: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    non_sensitive_summary: Mapped[dict[str, object] | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Structured non-sensitive counters, enum codes, and metric labels only; free text, model output, retrieved chunks, patient data, OCR text, and prescription text are prohibited.",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -535,7 +547,11 @@ class EvalFailure(Base):
     failure_code: Mapped[str] = mapped_column(String(120), nullable=False)
     failure_area: Mapped[str] = mapped_column(String(80), nullable=False)
     context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    non_sensitive_context: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    non_sensitive_context: Mapped[dict[str, object] | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Structured non-sensitive failure codes, counters, and artifact references only; free text, model output, retrieved chunks, patient data, OCR text, and prescription text are prohibited.",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     run: Mapped[EvalRun | None] = relationship(back_populates="failures")
