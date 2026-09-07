@@ -138,18 +138,19 @@ Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
 
 각 adapter는 요청 reference뿐 아니라 현재 fixture/config payload를 다시 canonicalize해 artifact hash와
 exact-match한다. frozen dataclass가 `replace` 또는 저수준 mutation으로 분리되었거나 record/key/vector가
-잘못된 경우 성공 Receipt를 만들지 않고 typed failure를 반환한다.
+잘못된 경우 성공 Receipt를 만들지 않고 typed failure를 반환한다. Index records와 dense vector는 각각
+tuple이어야 하고, record·`SensitiveText`·canonical Decimal 문자열의 정확한 런타임 타입도 검증한다.
 
 Lexical trigram 추출은 [PostgreSQL pg_trgm 문서](https://www.postgresql.org/docs/17/pgtrgm.html)의 원칙에 따라
 비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인다. 다만 이 구현은 synthetic fixture
 알고리즘이며 실제 extension, collation, index operator class 또는 운영 SQL과의 동등성을 주장하지 않는다.
 
 Dense query fixture에는 raw query를 넣지 않고 `QueryFingerprint`와 vector만 저장한다. fingerprint 누락·중복,
-dimension mismatch, zero/non-finite vector는 `EvidenceSearchFailure`다. Reranker는
+dimension mismatch, zero/non-finite/non-string vector나 mutable record collection은 `EvidenceSearchFailure`다. Reranker는
 `knowledge-rerank-input-v1` hash를 재계산하고, 중복 candidate key·stage signal, 비정상 rank·score,
 config/hash mismatch 또는 내부 예외를 raw detail 없이 `EvidenceRerankFailure`로 닫는다.
 
-모든 trigram division, cosine, weighted score와 6자리 score 양자화는 caller의 전역 Decimal 설정을 사용하지
+모든 trigram division, cosine, weighted score, score 정렬과 6자리 score 양자화는 caller의 전역 Decimal 설정을 사용하지
 않고 config artifact에 기록된 precision `50`, `ROUND_HALF_EVEN` local context에서 실행한다. 따라서 동일한
 fixture/config 입력은 호출 프로세스의 Decimal precision과 무관하게 같은 score와 artifact를 만든다.
 

@@ -2214,6 +2214,80 @@ def test_dense_adapter_rejects_invalid_configuration_boundaries(mutation: str) -
     assert isinstance(result, EvidenceSearchFailure)
 
 
+@pytest.mark.parametrize("mutation", ["record-vector-number", "query-vector-number", "records-list"])
+def test_dense_adapter_rejects_non_string_or_mutable_fixture_shapes(mutation: str) -> None:
+    dense_vector = cast(tuple[str, ...], (1, 0)) if mutation == "record-vector-number" else ("1", "0")
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 dense 근거"),
+        dense_vector,
+    )
+    records = cast(tuple[SyntheticEvidenceRecord, ...], [record]) if mutation == "records-list" else (record,)
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", records)
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    query_values = cast(tuple[str, ...], (1, 0)) if mutation == "query-vector-number" else ("1", "0")
+    dense_config = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(SyntheticDenseQueryVector(fingerprint(), query_values),),
+        minimum_similarity="0",
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+        dense_config_ref=dense_config.artifact_ref,
+        dense_limit=1,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(
+        index, lexical_config, dense_config, artifact("synthetic-search-adapter")
+    ).search(request, EvidenceSearchStage.DENSE)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+@pytest.mark.parametrize("mutation", ["duck-record", "raw-content"])
+def test_search_adapter_rejects_noncanonical_record_shapes(mutation: str) -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 근거"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    if mutation == "duck-record":
+        invalid_records = cast(tuple[SyntheticEvidenceRecord, ...], (object(),))
+    else:
+        invalid_records = (replace(record, content_text=cast(SensitiveText, "합성 근거")),)
+    invalid_index = SyntheticEvidenceIndex(index.artifact_ref, invalid_records)
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(
+        invalid_index, lexical_config, None, artifact("synthetic-search-adapter")
+    ).search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
 @pytest.mark.parametrize("mutation", ["empty-chunk-ref", "noncanonical-score"])
 def test_rerank_adapter_rejects_malformed_candidate_fields(mutation: str) -> None:
     candidate = KnowledgeEvidenceCandidate(
@@ -2439,6 +2513,60 @@ def test_rerank_adapter_uses_utf8_evidence_key_tie_break() -> None:
 
     assert isinstance(result, EvidenceRerankSuccess)
     assert [item.evidence_key for item in result.selections] == ["knowledge:a", "knowledge:b"]
+
+
+def test_rerank_order_is_independent_of_callers_decimal_context() -> None:
+    best_text = "합성 근접 점수 상위 근거"
+    worse_text = "합성 근접 점수 하위 근거"
+    best = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_key="knowledge:z-best",
+            knowledge_chunk_ref="chunk-best",
+            content_sha256=content_hash(best_text),
+        ),
+        SensitiveText(best_text),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.99904")),),
+    )
+    worse = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_key="knowledge:a-worse",
+            knowledge_chunk_ref="chunk-worse",
+            content_sha256=content_hash(worse_text),
+        ),
+        SensitiveText(worse_text),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 2, CanonicalScore("0.99903")),),
+    )
+    candidates = (worse, best)
+    config = VersionedRerankConfig.create(
+        "rerank-config", "rerank-config@context", lexical_weight="1", dense_weight="0", top_k=2
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", candidates),
+        candidates,
+    )
+    adapter = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter"))
+
+    with localcontext() as low_precision:
+        low_precision.prec = 3
+        low = adapter.rerank(request)
+    with localcontext() as high_precision:
+        high_precision.prec = 50
+        high = adapter.rerank(request)
+
+    assert isinstance(low, EvidenceRerankSuccess)
+    assert isinstance(high, EvidenceRerankSuccess)
+    assert [item.evidence_key for item in low.selections] == [item.evidence_key for item in high.selections] == [
+        "knowledge:z-best",
+        "knowledge:a-worse",
+    ]
 
 
 def test_kernel_fails_closed_when_rerank_top_k_exceeds_selection_limit() -> None:

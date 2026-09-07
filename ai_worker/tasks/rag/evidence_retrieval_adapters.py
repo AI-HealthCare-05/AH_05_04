@@ -221,7 +221,8 @@ class VersionedEvidenceRerankAdapter:
                     )
                     for candidate in request.candidates
                 ]
-            ranked.sort(key=lambda item: (-item[0], item[1].encode()))
+            with localcontext(_DECIMAL_CONTEXT):
+                ranked.sort(key=lambda item: (-item[0], item[1].encode()))
             selections = tuple(
                 EvidenceRerankSelection(evidence_key, rank, CanonicalScore(_canonical_decimal(score)))
                 for rank, (score, evidence_key) in enumerate(ranked[: self.config.top_k], start=1)
@@ -256,8 +257,8 @@ class SyntheticEvidenceSearchAdapter:
         try:
             if (
                 request.evidence_index_ref != self.evidence_index.artifact_ref
-                or not _evidence_index_is_bound(self.evidence_index)
                 or not _valid_evidence_index(self.evidence_index)
+                or not _evidence_index_is_bound(self.evidence_index)
                 or not _valid_artifact_ref(self.adapter_artifact_ref)
             ):
                 return EvidenceSearchFailure()
@@ -280,7 +281,8 @@ class SyntheticEvidenceSearchAdapter:
                 score = Decimal(1) if is_exact else _trigram_similarity(query, content)
                 if score >= threshold:
                     ranked.append((is_exact, score, record))
-            ranked.sort(key=lambda item: (-int(item[0]), -item[1], item[2].evidence_key.encode()))
+            with localcontext(_DECIMAL_CONTEXT):
+                ranked.sort(key=lambda item: (-int(item[0]), -item[1], item[2].evidence_key.encode()))
             hits = tuple(
                 _search_hit(self.evidence_index.artifact_ref, record, stage, rank, score)
                 for rank, (_, score, record) in enumerate(ranked[: request.lexical_limit], start=1)
@@ -305,8 +307,8 @@ class SyntheticEvidenceSearchAdapter:
         if (
             self.dense_config is None
             or request.dense_config_ref != self.dense_config.artifact_ref
-            or not _dense_config_is_bound(self.dense_config)
             or not _valid_dense_config(self.dense_config)
+            or not _dense_config_is_bound(self.dense_config)
         ):
             return EvidenceSearchFailure()
         minimum_similarity = Decimal(self.dense_config.minimum_similarity)
@@ -323,7 +325,8 @@ class SyntheticEvidenceSearchAdapter:
             score = _cosine_similarity(query_vector, record.dense_vector)
             if score >= minimum_similarity:
                 ranked.append((score, record))
-        ranked.sort(key=lambda item: (-item[0], item[1].evidence_key.encode()))
+        with localcontext(_DECIMAL_CONTEXT):
+            ranked.sort(key=lambda item: (-item[0], item[1].evidence_key.encode()))
         hits = tuple(
             _search_hit(self.evidence_index.artifact_ref, record, EvidenceSearchStage.DENSE, rank, score)
             for rank, (score, record) in enumerate(ranked[: request.dense_limit], start=1)
@@ -559,9 +562,19 @@ def _evidence_index_is_bound(value: SyntheticEvidenceIndex) -> bool:
 
 
 def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
+    if not isinstance(value, SyntheticEvidenceIndex) or not isinstance(value.records, tuple):
+        return False
     evidence_keys: set[str] = set()
     chunk_refs: set[str] = set()
     for record in value.records:
+        if (
+            not isinstance(record, SyntheticEvidenceRecord)
+            or not isinstance(record.content_text, SensitiveText)
+            or not isinstance(record.dense_vector, tuple)
+            or not record.dense_vector
+            or not all(_is_canonical_decimal(component) for component in record.dense_vector)
+        ):
+            return False
         content = record.content_text.reveal()
         if (
             not _nonempty_nfc(record.evidence_key)
@@ -573,8 +586,6 @@ def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
             or not _nonempty_nfc(record.locator)
             or not _nonempty_nfc(record.canonicalization_spec_version)
             or not _nonempty_nfc(content)
-            or not isinstance(record.dense_vector, tuple)
-            or not record.dense_vector
         ):
             return False
         vector = tuple(Decimal(component) for component in record.dense_vector)
@@ -609,7 +620,11 @@ def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
 
 
 def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
-    if not isinstance(value.query_vectors, tuple) or not value.query_vectors:
+    if (
+        not isinstance(value, VersionedDenseSearchConfig)
+        or not isinstance(value.query_vectors, tuple)
+        or not value.query_vectors
+    ):
         return False
     fingerprints: set[QueryFingerprint] = set()
     dimensions: set[int] = set()
@@ -620,6 +635,7 @@ def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
             or item.query_fingerprint in fingerprints
             or not isinstance(item.values, tuple)
             or not item.values
+            or not all(_is_canonical_decimal(component) for component in item.values)
         ):
             return False
         vector = tuple(Decimal(component) for component in item.values)
@@ -628,6 +644,10 @@ def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
         fingerprints.add(item.query_fingerprint)
         dimensions.add(len(vector))
     return len(dimensions) == 1
+
+
+def _is_canonical_decimal(value: object) -> bool:
+    return isinstance(value, str) and _CANONICAL_SCORE_RE.fullmatch(value) is not None
 
 
 def _valid_fingerprint(value: QueryFingerprint) -> bool:

@@ -1107,8 +1107,8 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] query fingerprint에 결속된 vector가 cosine 순위를 만드는 실패 테스트를 작성한다.
 - [x] `SyntheticDenseQueryVector`, `VersionedDenseSearchConfig`를 추가한다.
 - [x] raw query 없이 fingerprint와 문자열 Decimal vector만 config artifact에 포함한다.
-- [x] query vector 누락·중복, dimension mismatch, zero/non-finite vector와 threshold 오류를 typed failure로 닫는다.
-- [x] query vector 입력 순서와 caller Decimal context가 artifact/score를 바꾸지 않는지 검증한다.
+- [x] query vector 누락·중복, dimension mismatch, zero/non-finite/non-string vector, mutable record collection과 threshold 오류를 typed failure로 닫는다.
+- [x] query vector 입력 순서와 caller Decimal context가 artifact/score/정렬을 바꾸지 않는지 검증한다.
 - [x] `DENSE` stage Receipt에 실제 config와 adapter artifact를 반환한다.
 
 ### Task C: versioned weighted reranker
