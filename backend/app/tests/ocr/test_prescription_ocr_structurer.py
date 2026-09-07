@@ -90,6 +90,8 @@ def test_structure_extracts_date_and_two_medication_rows() -> None:
 
     prescribed_date = fields_by_identity[(0, "PRESCRIBED_DATE")]
     assert prescribed_date.raw_value == "2026-08-12"
+    assert prescribed_date.normalized_value == "2026-08-12"
+    assert prescribed_date.normalization_version == "date-rule-v1"
     assert prescribed_date.confidence_score == 0.9998913
 
     first_name = fields_by_identity[(1, "MEDICATION_NAME")]
@@ -140,6 +142,100 @@ def test_structure_does_not_invent_medication_without_table() -> None:
     assert len(result) == 1
     assert result[0].field_type == "PRESCRIBED_DATE"
     assert result[0].raw_value == "2026-08-12"
+    assert result[0].normalized_value == "2026-08-12"
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        "2026-08-12 ",  # 뒤 공백
+        " 2026-08-12",  # 앞 공백
+        "발행일 2026-08-12",  # 라벨과 같은 박스로 인식
+        "2026.08.12",  # 점 구분자
+        "2026/08/12",  # 슬래시 구분자
+        "2026-8-2",  # 한 자리 월/일
+        "2026년 08월 12일",  # 한글식 표기
+        "2026년08월12일",  # 한글식 표기, 공백 없음
+    ],
+)
+def test_structure_extracts_prescribed_date_from_noisy_or_alternate_formats(
+    raw_value: str,
+) -> None:
+    raw_fields = [_raw_field(raw_value, 338, 399, 0.99)]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    expected_normalized = "2026-08-02" if raw_value == "2026-8-2" else "2026-08-12"
+
+    assert len(result) == 1
+    assert result[0].field_type == "PRESCRIBED_DATE"
+    assert result[0].raw_value == raw_value
+    assert result[0].normalized_value == expected_normalized
+
+
+def test_structure_ignores_date_shaped_but_nonexistent_date() -> None:
+    raw_fields = [_raw_field("2026-13-45", 338, 399, 0.99)]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert result == []
+
+
+@pytest.mark.parametrize(
+    "birthdate_raw_value",
+    [
+        "생년월일 1990-12-31",  # 라벨과 값이 같은 박스로 인식
+        "1990년 12월 31일 생년월일",  # 라벨이 값 뒤에 붙는 경우
+    ],
+)
+def test_structure_prefers_issue_date_over_labeled_birthdate(birthdate_raw_value: str) -> None:
+    # 생년월일 박스가 처방일(교부일자) 박스보다 raw_fields 순서에서 앞에 와도,
+    # PRESCRIBED_DATE는 반드시 교부일자여야 합니다 — 아니면 환자 생년월일이
+    # 의료 정보(처방일)로 오인식·저장되고 개인정보(생년월일)까지 함께 유출됩니다.
+    raw_fields = [
+        _raw_field(birthdate_raw_value, 338, 350, 0.99),
+        _raw_field("교부일자 2026-08-12", 338, 399, 0.99),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert len(result) == 1
+    assert result[0].field_type == "PRESCRIBED_DATE"
+    assert result[0].normalized_value == "2026-08-12"
+
+
+def test_structure_does_not_extract_prescribed_date_from_code_like_number_sequence() -> None:
+    # 환자번호처럼 긴 숫자열 안에서 우연히 4자리+구분자+한두 자리 조합이 나오면
+    # 안 되는 연도(6469년)로 파싱될 수 있습니다. 연도 범위 검증으로 걸러냅니다.
+    raw_fields = [_raw_field("환자번호 8806469 12 5정", 338, 399, 0.99)]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert result == []
+
+
+def test_structure_rejects_date_with_trailing_extra_digit() -> None:
+    # day 뒤에 숫자가 더 있으면(OCR 오인식 등) "12"만 잘라 정상 날짜로 확정하지 않고
+    # 통째로 거부합니다 — 잘못된 값을 정상처럼 확정하는 것이 누락보다 나쁩니다.
+    raw_fields = [_raw_field("2026-08-123", 338, 399, 0.99)]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert result == []
+
+
+def test_structure_selects_first_matching_date_when_multiple_candidates_exist() -> None:
+    # 날짜 모양 박스가 여러 개일 때의 선택 규칙(raw_fields 순서상 첫 매치)을
+    # 테스트로 고정해, 이후 회귀 시 조용히 바뀌지 않도록 합니다.
+    raw_fields = [
+        _raw_field("2026-08-12", 338, 399, 0.99),
+        _raw_field("2026-09-01", 338, 450, 0.99),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert len(result) == 1
+    assert result[0].normalized_value == "2026-08-12"
 
 
 def test_structure_normalizes_medication_name() -> None:
