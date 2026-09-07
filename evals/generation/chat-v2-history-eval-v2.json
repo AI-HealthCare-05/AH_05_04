@@ -1,5 +1,5 @@
 {
-  "dataset_id": "chat-v2-history-eval-v1",
+  "dataset_id": "chat-v2-history-eval-v2",
   "schema_version": 1,
   "data_classification": "SYNTHETIC",
   "comparison": {
@@ -59,6 +59,29 @@
       "replay_outputs": {
         "baseline": "마지막에 말한 약을 확인할 수 없어 약명이나 제품명을 알려주세요.",
         "history": "마지막에 말한 합성의약품 감마는 제공된 처방 정보상 저녁 식후에 복용합니다."
+      }
+    },
+    {
+      "case_id": "followup-earlier-subject-over-latest",
+      "scenario_type": "followup_identification",
+      "metric_tags": ["followup_identification"],
+      "identification_markers": ["합성의약품 알파"],
+      "question": "처음에 물어본 약은 식전에 먹어도 되나요?",
+      "history": [
+        {"question": "합성의약품 알파는 언제 먹나요?", "answer": "아침 식후로 확인됩니다."},
+        {"question": "합성의약품 베타는 언제 먹나요?", "answer": "점심 식후로 확인됩니다."}
+      ],
+      "medications": [
+        {"medication_name": "합성의약품 알파", "timing_text": "아침 식후"},
+        {"medication_name": "합성의약품 베타", "timing_text": "점심 식후"}
+      ],
+      "expected": {
+        "baseline": {"required_all": [], "required_any": [["약명", "제품명"]], "forbidden": []},
+        "history": {"required_all": ["합성의약품 알파", "아침 식후"], "required_any": [], "forbidden": ["합성의약품 베타"]}
+      },
+      "replay_outputs": {
+        "baseline": "처음에 물어본 약을 확인할 수 없어 약명이나 제품명을 알려주세요.",
+        "history": "처음에 물어본 합성의약품 알파는 제공된 처방 정보상 아침 식후에 복용합니다."
       }
     },
     {

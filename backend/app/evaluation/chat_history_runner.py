@@ -19,10 +19,10 @@ from app.evaluation.chat_history import (
 from app.services.chat_ai.client import OpenAIResponsesClient
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
-_DEFAULT_DATASET_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-v2-history-eval-v1.json"
-_LIVE_DATASET_ID = "chat-v2-history-eval-v1"
+_DEFAULT_DATASET_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-v2-history-eval-v2.json"
+_LIVE_DATASET_ID = "chat-v2-history-eval-v2"
 _LIVE_DATA_CLASSIFICATION = "SYNTHETIC"
-_LIVE_DATASET_SHA256 = "a65ebb2782409c9be0412cddce55a413686d541b23b4bc9bf278b4c057f41531"
+_LIVE_DATASET_SHA256 = "b8e6f08140a9e8efe9a8bfe5c09919292e7d16cf63d786d88a5f4de47c2406bc"
 
 
 @dataclass(frozen=True)
