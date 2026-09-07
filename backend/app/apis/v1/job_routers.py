@@ -92,7 +92,7 @@ JOB_ACCEPTED_OPENAPI_RESPONSES: dict[int | str, dict] = {
     },
     status.HTTP_409_CONFLICT: {
         "model": ErrorResponse,
-        "description": "이미 처리 중인 OCR Job이 있거나 같은 `Idempotency-Key`로 다른 요청 지문이 접수됐습니다.",
+        "description": "이미 처리 중인 OCR Job이 있거나, 같은 `Idempotency-Key`로 다른 요청 지문이 접수됐거나, 같은 문서의 동시 요청으로 lock을 획득하지 못했습니다. `code`는 `OCR_JOB_ALREADY_PROCESSING`·`IDEMPOTENCY_KEY_CONFLICT`·`CONCURRENT_UPDATE_IN_PROGRESS`입니다.",
     },
     **_JOB_ERROR_OPENAPI_RESPONSES,
 }
