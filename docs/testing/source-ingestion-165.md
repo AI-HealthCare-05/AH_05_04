@@ -2,13 +2,13 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 219 passed
-- AI Worker 전체 테스트: 1902 passed, 8 skipped
-- PostgreSQL Snapshot lifecycle 통합 테스트: 5 passed
+- Source ingestion 단위 테스트: 223 passed
+- AI Worker 전체 테스트: 1906 passed, 8 skipped
+- PostgreSQL Snapshot lifecycle·acquisition lock 통합 테스트: 6 passed
 - Source/Catalog·Artifact Migration 테스트: 10 passed
 - 전체 Migration 테스트: 49 passed
 - Backend 전체 테스트: 966 passed, 2 skipped
-- Mypy: 415개 핵심 소스 파일 통과
+- Mypy: 417개 핵심 소스 파일 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
 - Runtime Bundle 활성화는 아직 연결하지 않았다.
 
@@ -59,6 +59,8 @@
 - REJECTS 데이터가 존재할 때 관련 필드를 제거하는 downgrade 차단
 - DB 문자열 길이 제한과 `parser_location` 제어문자를 Artifact 보존 전에 차단
 - RAW_RESPONSE와 REJECTS를 합친 수집 실행 전체에서 중복 Artifact key를 파일 보존 전에 차단
+- 외부 Source 호출 전에 Operation 행을 `SKIP LOCKED`로 선점해 동시 acquisition을 즉시 차단
+- 같은 Operation의 동시 요청에서 Provider 호출이 한 번만 실행되는 PostgreSQL 통합 테스트
 
 ## 최종 검수 결과
 
@@ -78,7 +80,7 @@
 | reject 원문 비로그·접근 통제 보존 | 완료 | DB에는 참조와 안전한 code·location만 저장 |
 | Snapshot 불변성과 상태 전이 | 완료 | append-only 제약, `PENDING/CURRENT/STALE/FAILED` 전이 테스트 |
 | rollback provenance | 부분 완료 | DB transaction rollback은 검증했다. 미참조 내용 주소 객체 정리 정책은 미확정 |
-| 동일 Source 동시 acquisition 1회 | 미완료 | 저장 판단은 Operation row lock으로 직렬화하지만 외부 호출 전 acquisition lock은 아직 없음 |
+| 동일 Source 동시 acquisition 1회 | 완료 | 외부 호출 전 `SKIP LOCKED` 선점과 동시 Provider 1회 호출 PostgreSQL 테스트 |
 | #166 Catalog build 인계 | 부분 완료 | 검증된 Snapshot 결과 계약은 제공한다. Catalog 적재·Runtime 연결은 #166 범위 |
 | Worker DB adapter 실행 | 부분 완료 | Worker dependency group과 로컬 PostgreSQL import·연결은 검증했다. Worker 이미지 내부 실행은 미검증 |
 
@@ -127,7 +129,6 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 다음 항목은 #165를 완전히 닫기 위해 남아 있다.
 
-- 외부 호출 전에 같은 Source acquisition을 하나로 제한하는 lock과 동시 호출 테스트
 - 수집·Parser·거부 한도 실패를 Snapshot 없이 `FAILED` Run으로 기록하는 orchestration
 - Worker 이미지에서 Source DB adapter import·연결을 확인하는 smoke test
 - S3 계열 등 외부 Object Storage를 사용할 경우의 운영 어댑터와 credential 주입
@@ -156,6 +157,11 @@ record count를 제공한다. 저장 호출자는 다음 값을 원본이나 che
 DB commit·rollback은 기존 Worker transaction 경계를 재사용한다. 동일
 Operation의 판단과 저장은 Operation 행 잠금 뒤 실행해 동시 수집이 서로 다른
 결정을 내리지 않도록 한다.
+
+외부 수집 진입점은 같은 Operation 행을 `SKIP LOCKED`로 먼저 선점한다. 이미
+수집 중이면 `SourceAcquisitionInProgressError`로 즉시 종료하며 Provider를
+호출하지 않는다. 호출자는 외부 수집이 끝날 때까지 잠금을 얻은 DB transaction을
+유지하고, 반환 또는 예외 뒤 commit·rollback한다.
 
 로컬 Artifact 저장은 DB transaction보다 먼저 완료된다. DB rollback은 이미
 생성된 내용 주소 객체를 삭제하지 않으며, 참조되지 않은 객체의 보존·정리는 위

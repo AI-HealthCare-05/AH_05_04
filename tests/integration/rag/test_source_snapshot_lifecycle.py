@@ -16,7 +16,12 @@ import app.models  # noqa: F401
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
 )
-from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_client.contracts import (
+    SourceOperationIdentity,
+    SourceRequest,
+    SourceRunResult,
+    SourceRunStatus,
+)
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
     IngestionArtifactKind,
     RawArtifactMetadata,
@@ -24,6 +29,10 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
+from ai_worker.tasks.rag.source_ingestion.service import (
+    SourceAcquisitionInProgressError,
+    acquire_source_exclusively,
+)
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
@@ -431,3 +440,56 @@ async def test_operation_lock_serializes_concurrent_snapshot_decisions() -> None
         await waiting_session.commit()
 
     assert result.decision is SnapshotIngestionDecision.CREATED
+
+
+class _BlockingSourceClient:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def fetch_all_pages(self, request: SourceRequest) -> SourceRunResult:
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return SourceRunResult(
+            operation=request.operation,
+            status=SourceRunStatus.SUCCEEDED,
+            pages=(),
+            failure=None,
+        )
+
+
+async def test_acquisition_lock_allows_only_one_concurrent_provider_call() -> None:
+    identity = await _seed_operation("ACQUISITION_LOCK")
+    request = SourceRequest(operation=identity, parameters={})
+    client = _BlockingSourceClient()
+
+    async with session_factory() as first_session, session_factory() as second_session:
+        await first_session.begin()
+        await second_session.begin()
+        first_task = asyncio.create_task(
+            acquire_source_exclusively(
+                gate=SqlAlchemySourceSnapshotRepository(first_session),
+                client=client,
+                request=request,
+            )
+        )
+        await asyncio.wait_for(client.started.wait(), timeout=2)
+
+        try:
+            with pytest.raises(SourceAcquisitionInProgressError):
+                await acquire_source_exclusively(
+                    gate=SqlAlchemySourceSnapshotRepository(second_session),
+                    client=client,
+                    request=request,
+                )
+        finally:
+            client.release.set()
+
+        result = await asyncio.wait_for(first_task, timeout=2)
+        await first_session.commit()
+        await second_session.rollback()
+
+    assert result.operation == identity
+    assert client.calls == 1

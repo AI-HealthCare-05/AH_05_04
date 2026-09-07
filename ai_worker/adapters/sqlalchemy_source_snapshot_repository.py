@@ -1,14 +1,17 @@
 """SQLAlchemy 기반 Source Snapshot lifecycle 저장소입니다."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Integer, String, column, insert, select, table, update
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
+from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProgressError
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotCreateRequest,
     SnapshotLifecycleRepository,
@@ -103,26 +106,28 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         self._session = session
 
     async def lock_operation(self, identity: SourceOperationIdentity) -> UUID:
-        statement = (
-            select(_OPERATION.c.id)
-            .select_from(
-                _OPERATION.join(_ENDPOINT, _OPERATION.c.endpoint_id == _ENDPOINT.c.id).join(
-                    _SOURCE,
-                    _ENDPOINT.c.source_id == _SOURCE.c.id,
-                )
-            )
-            .where(
-                _SOURCE.c.source_code == identity.source_code,
-                _ENDPOINT.c.endpoint_code == identity.endpoint_code,
-                _OPERATION.c.operation_code == identity.operation_code,
-            )
-            .with_for_update(of=_OPERATION)
-        )
+        statement = _operation_lookup(identity).with_for_update(of=_OPERATION)
         result = await self._session.execute(statement)
         operation_id = result.scalar_one_or_none()
         if operation_id is None:
             raise ValueError("Source operation 저장 대상을 찾을 수 없습니다.")
         return UUID(str(operation_id))
+
+    async def try_lock_acquisition(self, identity: SourceOperationIdentity) -> UUID:
+        """동시 수집 중이면 기다리지 않고 안전한 고정 예외를 반환합니다."""
+        statement = _operation_lookup(identity).with_for_update(
+            of=_OPERATION,
+            skip_locked=True,
+        )
+        result = await self._session.execute(statement)
+        operation_id = result.scalar_one_or_none()
+        if operation_id is not None:
+            return UUID(str(operation_id))
+
+        existence_result = await self._session.execute(_operation_lookup(identity))
+        if existence_result.scalar_one_or_none() is None:
+            raise ValueError("Source operation 수집 대상을 찾을 수 없습니다.")
+        raise SourceAcquisitionInProgressError("Source acquisition is already in progress.")
 
     async def get_snapshot_by_version(
         self,
@@ -351,4 +356,21 @@ def _snapshot_status_reference(row: RowMapping | None) -> SnapshotStatusReferenc
         snapshot_id=UUID(str(row["id"])),
         operation_id=UUID(str(row["operation_id"])),
         verification_status=SnapshotVerificationStatus(str(row["verification_status"])),
+    )
+
+
+def _operation_lookup(identity: SourceOperationIdentity) -> Select[tuple[Any]]:
+    return (
+        select(_OPERATION.c.id)
+        .select_from(
+            _OPERATION.join(_ENDPOINT, _OPERATION.c.endpoint_id == _ENDPOINT.c.id).join(
+                _SOURCE,
+                _ENDPOINT.c.source_id == _SOURCE.c.id,
+            )
+        )
+        .where(
+            _SOURCE.c.source_code == identity.source_code,
+            _ENDPOINT.c.endpoint_code == identity.endpoint_code,
+            _OPERATION.c.operation_code == identity.operation_code,
+        )
     )

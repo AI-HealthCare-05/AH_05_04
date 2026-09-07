@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
+import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
@@ -13,6 +15,7 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     StoredRawArtifact,
 )
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
+from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProgressError
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotCreateRequest,
     SnapshotIngestionMetadata,
@@ -78,6 +81,36 @@ async def test_operation_lookup_locks_exact_source_endpoint_and_operation() -> N
     assert "rag_source_endpoint.endpoint_code" in sql
     assert "rag_source_operation.operation_code" in sql
     assert "FOR UPDATE" in sql
+
+
+async def test_acquisition_lock_skips_locked_operation_without_waiting() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    locked_result = MagicMock()
+    locked_result.scalar_one_or_none.return_value = None
+    existence_result = MagicMock()
+    existence_result.scalar_one_or_none.return_value = str(_OPERATION_ID)
+    session.execute.side_effect = [locked_result, existence_result]
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    with pytest.raises(SourceAcquisitionInProgressError):
+        await repository.try_lock_acquisition(_identity())
+
+    lock_statement = session.execute.await_args_list[0].args[0]
+    lock_sql = str(lock_statement.compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" in lock_sql
+    assert "SKIP LOCKED" in lock_sql
+    assert "FOR UPDATE" not in str(session.execute.await_args_list[1].args[0])
+
+
+async def test_acquisition_lock_distinguishes_missing_operation() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    missing_result = MagicMock()
+    missing_result.scalar_one_or_none.return_value = None
+    session.execute.side_effect = [missing_result, missing_result]
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    with pytest.raises(ValueError, match="찾을 수 없습니다"):
+        await repository.try_lock_acquisition(_identity())
 
 
 async def test_snapshot_candidate_is_inserted_as_pending_without_commit() -> None:
