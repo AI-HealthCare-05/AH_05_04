@@ -10,6 +10,7 @@ from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.loaders import _resolve_json_locator, load_dataset
 from ai_worker.tasks.evaluation.natural_language_retrieval_dev_authoring import (
     BASE_INTENTS,
+    DISTRACTOR_FACT_CATALOG,
     FILE_PREFIX,
     RESERVED_PRODUCT_CODES,
     build_issue_273_dev_graph,
@@ -420,6 +421,71 @@ def test_issue_273_corpus_contains_substantive_facts_without_class_label_leakage
     )
     assert all(record["product_code"] in record["statement"] for record in records)
     assert not any(phrase in content for content in retrieval_content for phrase in class_label_phrases)
+
+
+def test_issue_273_no_hard_negative_reproduces_or_answers_any_gold_intent() -> None:
+    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    gold_statements = [record["statement"] for record in records if record["record_kind"] == "GOLD"]
+    negative_records = [record for record in records if record["record_kind"] == "HARD_NEGATIVE"]
+    normalized_gold = {re.sub(r"[^0-9A-Za-z가-힣]", "", statement).casefold() for statement in gold_statements}
+    intents_by_product = {intent.product_code: intent for intent in BASE_INTENTS}
+
+    assert len(gold_statements) == 20
+    assert len(negative_records) == 80
+    for record in negative_records:
+        statement = record["statement"]
+        source_intent = intents_by_product[record["product_code"]]
+        normalized_statement = re.sub(r"[^0-9A-Za-z가-힣]", "", statement).casefold()
+        assert not any(gold_statement in statement for gold_statement in gold_statements)
+        assert normalized_statement not in normalized_gold
+        assert source_intent.query_subject not in statement
+        assert [code for code in RESERVED_PRODUCT_CODES if code in statement] == [record["product_code"]]
+
+
+def test_issue_273_hard_negative_types_use_fixed_unqueried_fact_categories() -> None:
+    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
+    intents_by_product = {intent.product_code: intent for intent in BASE_INTENTS}
+    intent_indexes = {intent.transform_origin: index for index, intent in enumerate(BASE_INTENTS)}
+    required_fact_category = {
+        "SAME_FAMILY_DIFFERENT_ATTRIBUTE": "포장 관리 코드",
+        "SAME_TOPIC_DIFFERENT_FAMILY": "주제 분류 카드",
+        "LEXICAL_OVERLAP_UNSUPPORTED": "합성 색인의",
+        "CROSS_TOPIC_OVERLAP": "참조 카드 등록 순번",
+    }
+    catalog_statements = {statement for facts in DISTRACTOR_FACT_CATALOG.values() for statement in facts.values()}
+
+    assert tuple(DISTRACTOR_FACT_CATALOG) == RESERVED_PRODUCT_CODES
+    assert all(set(facts) == NEGATIVE_TYPES for facts in DISTRACTOR_FACT_CATALOG.values())
+    assert len(catalog_statements) == 80
+    assert {record["product_code"] for record in records} == set(RESERVED_PRODUCT_CODES)
+    assert {record["statement"] for record in records if record["record_kind"] == "HARD_NEGATIVE"} == catalog_statements
+
+    for record in records:
+        if record["record_kind"] != "HARD_NEGATIVE":
+            continue
+        negative_type = record["negative_type"]
+        target_intent = intents_by_origin[record["adversarial_for_transform_origin"]]
+        source_intent = intents_by_product[record["product_code"]]
+        target_index = intent_indexes[target_intent.transform_origin]
+        topic_start = (target_index // 4) * 4
+        expected_source_by_type = {
+            "SAME_FAMILY_DIFFERENT_ATTRIBUTE": target_intent.product_code,
+            "SAME_TOPIC_DIFFERENT_FAMILY": BASE_INTENTS[topic_start + ((target_index + 1) % 4)].product_code,
+            "LEXICAL_OVERLAP_UNSUPPORTED": target_intent.product_code,
+            "CROSS_TOPIC_OVERLAP": BASE_INTENTS[(target_index + 4) % len(BASE_INTENTS)].product_code,
+        }
+        assert required_fact_category[negative_type] in record["statement"]
+        assert record["product_code"] == expected_source_by_type[negative_type]
+        assert record["statement"] == DISTRACTOR_FACT_CATALOG[record["product_code"]][negative_type]
+        assert record["topic"] == source_intent.topic
+        if negative_type in {"SAME_FAMILY_DIFFERENT_ATTRIBUTE", "LEXICAL_OVERLAP_UNSUPPORTED"}:
+            assert source_intent == target_intent
+        elif negative_type == "SAME_TOPIC_DIFFERENT_FAMILY":
+            assert source_intent != target_intent
+            assert source_intent.topic == target_intent.topic
+        else:
+            assert source_intent.topic != target_intent.topic
 
 
 def test_issue_273_cross_topic_distractors_use_their_source_topic_and_product() -> None:

@@ -354,6 +354,58 @@ _TOPIC_OVERLAP_TERMS: dict[Topic, str] = {
     "TOPIC_MISSED_DOSE": "복용 누락 안내",
 }
 
+_DISTRACTOR_FACT_MARKERS = {
+    "NLR-MI01": ("PKG-01", "CARD-01", "IDX-01", "REF-01"),
+    "NLR-MI02": ("PKG-02", "CARD-02", "IDX-02", "REF-02"),
+    "NLR-MI03": ("PKG-03", "CARD-03", "IDX-03", "REF-03"),
+    "NLR-MI04": ("PKG-04", "CARD-04", "IDX-04", "REF-04"),
+    "NLR-PC01": ("PKG-05", "CARD-05", "IDX-05", "REF-05"),
+    "NLR-PC02": ("PKG-06", "CARD-06", "IDX-06", "REF-06"),
+    "NLR-PC03": ("PKG-07", "CARD-07", "IDX-07", "REF-07"),
+    "NLR-PC04": ("PKG-08", "CARD-08", "IDX-08", "REF-08"),
+    "NLR-LM01": ("PKG-09", "CARD-09", "IDX-09", "REF-09"),
+    "NLR-LM02": ("PKG-10", "CARD-10", "IDX-10", "REF-10"),
+    "NLR-LM03": ("PKG-11", "CARD-11", "IDX-11", "REF-11"),
+    "NLR-LM04": ("PKG-12", "CARD-12", "IDX-12", "REF-12"),
+    "NLR-ST01": ("PKG-13", "CARD-13", "IDX-13", "REF-13"),
+    "NLR-ST02": ("PKG-14", "CARD-14", "IDX-14", "REF-14"),
+    "NLR-ST03": ("PKG-15", "CARD-15", "IDX-15", "REF-15"),
+    "NLR-ST04": ("PKG-16", "CARD-16", "IDX-16", "REF-16"),
+    "NLR-MD01": ("PKG-17", "CARD-17", "IDX-17", "REF-17"),
+    "NLR-MD02": ("PKG-18", "CARD-18", "IDX-18", "REF-18"),
+    "NLR-MD03": ("PKG-19", "CARD-19", "IDX-19", "REF-19"),
+    "NLR-MD04": ("PKG-20", "CARD-20", "IDX-20", "REF-20"),
+}
+
+
+def _build_distractor_fact_catalog() -> dict[str, dict[NegativeType, str]]:
+    intents_by_product = {intent.product_code: intent for intent in BASE_INTENTS}
+    catalog: dict[str, dict[NegativeType, str]] = {}
+    for product_code, (package_code, topic_card_code, index_code, reference_code) in _DISTRACTOR_FACT_MARKERS.items():
+        intent = intents_by_product[product_code]
+        catalog[product_code] = {
+            "SAME_FAMILY_DIFFERENT_ATTRIBUTE": (
+                f"평가용 가상 설정에서 {product_code} 제품의 포장 관리 코드는 {package_code}이고 "
+                "상자 모서리에는 은색 원이 표시됩니다."
+            ),
+            "SAME_TOPIC_DIFFERENT_FAMILY": (
+                f"평가용 가상 설정에서 {product_code} 제품의 주제 분류 카드에는 "
+                f"{topic_card_code} 관리 번호와 파란 테두리가 표시됩니다."
+            ),
+            "LEXICAL_OVERLAP_UNSUPPORTED": (
+                f"평가용 가상 설정에서 {product_code} 제품의 {_TOPIC_OVERLAP_TERMS[intent.topic]} 자료는 "
+                f"합성 색인의 {index_code} 행에 등록되어 있습니다."
+            ),
+            "CROSS_TOPIC_OVERLAP": (
+                f"평가용 가상 설정에서 {product_code} 제품의 참조 카드 등록 순번은 "
+                f"{reference_code}이고 카드 모서리는 회색입니다."
+            ),
+        }
+    return catalog
+
+
+DISTRACTOR_FACT_CATALOG = _build_distractor_fact_catalog()
+
 _DRAFT_REVIEW_PROVENANCE: JsonValue = {
     "approved_at": None,
     "approved_by": None,
@@ -387,6 +439,21 @@ def _validate_catalog() -> None:
     expression_counts = Counter(variant.expression for intent in BASE_INTENTS for variant in intent.variants)
     if set(expression_counts.values()) != {10}:
         raise RuntimeError("Issue 273 expression plan must produce ten cases per expression")
+    _validate_distractor_catalog()
+
+
+def _validate_distractor_catalog() -> None:
+    if tuple(DISTRACTOR_FACT_CATALOG) != RESERVED_PRODUCT_CODES:
+        raise RuntimeError("Issue 273 distractor catalog must follow the reserved product allowlist")
+    distractor_statements = [statement for facts in DISTRACTOR_FACT_CATALOG.values() for statement in facts.values()]
+    if any(set(facts) != set(NEGATIVE_TYPES) for facts in DISTRACTOR_FACT_CATALOG.values()):
+        raise RuntimeError("Issue 273 distractor catalog must contain every negative fact category")
+    if len(distractor_statements) != 80 or len(set(distractor_statements)) != 80:
+        raise RuntimeError("Issue 273 distractor catalog must contain 80 unique facts")
+    for intent in BASE_INTENTS:
+        for statement in DISTRACTOR_FACT_CATALOG[intent.product_code].values():
+            if intent.query_subject in statement or any(gold in statement for gold in _GOLD_STATEMENTS.values()):
+                raise RuntimeError("Issue 273 distractor facts must not reproduce a query answer")
 
 
 def _record(
@@ -469,24 +536,19 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
         statements = (
             (
                 intent.product_code,
-                f"평가용 가상 설정에서 {intent.product_code} 제품의 포장 표식은 "
-                f"PKG-{index + 1:02d} 코드와 은색 사각형 {(index % 4) + 1}개로 구성됩니다.",
+                DISTRACTOR_FACT_CATALOG[intent.product_code]["SAME_FAMILY_DIFFERENT_ATTRIBUTE"],
             ),
             (
                 same_topic_intent.product_code,
-                f"{_GOLD_STATEMENTS[same_topic_intent.product_code]} "
-                f"이 정보는 주제별 참고 카드 ST-{index + 1:02d}에도 기록됩니다.",
+                DISTRACTOR_FACT_CATALOG[same_topic_intent.product_code]["SAME_TOPIC_DIFFERENT_FAMILY"],
             ),
             (
                 intent.product_code,
-                f"평가용 가상 설정에서 {intent.product_code} 제품의 "
-                f"{_TOPIC_OVERLAP_TERMS[intent.topic]} 색인 번호는 IDX-{index + 1:02d}이며 "
-                f"목차의 {(index % 5) + 1}번째 칸에 표시됩니다.",
+                DISTRACTOR_FACT_CATALOG[intent.product_code]["LEXICAL_OVERLAP_UNSUPPORTED"],
             ),
             (
                 cross_topic_intent.product_code,
-                f"{_GOLD_STATEMENTS[cross_topic_intent.product_code]} "
-                f"이 정보는 참조 카드 REF-{index + 1:02d}에도 기록됩니다.",
+                DISTRACTOR_FACT_CATALOG[cross_topic_intent.product_code]["CROSS_TOPIC_OVERLAP"],
             ),
         )
         for negative_number, (negative_type, (product_code, statement)) in enumerate(

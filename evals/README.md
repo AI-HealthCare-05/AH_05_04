@@ -115,7 +115,7 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 합성 DEV 질문 60개를 담은 `DRAFT` Dataset이다. 다섯 Topic, 여섯 Expression 유형, 20개 독립
 `transform_origin` group과 합성 Gold 20개를 가지며, study-wide 합성 corpus는 Gold 20개와 hard negative
 80개로 구성된 100개 record다. Dataset Manifest의 canonical self-hash는
-`939f13b5ff0510d2095139f1858b5f5d681d4878d02fb60df96c13bda8f19895`이다.
+`e41dfffeae7a27ec4af97239f21b8e9a3f5cd8b1d741bc240a24b194ed980466`이다.
 
 이 authoring graph는 아직 사람의 Gold 검토를 받지 않았고 모든 review provenance는 `DRAFT` 또는
 `NOT_STARTED`다. 실제 Knowledge Evidence Retrieval Adapter는 `NOT_IMPLEMENTED`이며 actual retrieval Run과
