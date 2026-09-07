@@ -21,7 +21,8 @@
 - Endpoint Receipt 자체 hash와 연결된 합성 fixture 무결성 검증
 - 검증된 제품 Receipt를 Parser와 canonical checksum 계산 경계에 연결
 - 수집 페이지와 Raw Artifact의 누락·중복·checksum·content type 불일치 검증
-- 제품 canonicalization 규칙을 `mfds-product-approval@1`로 고정- Endpoint Receipt와 현재 MFDS 제품 Operation 계약의 HTTP·응답 코드·pagination·제한 설정 일치 검증
+- 제품 canonicalization 규칙을 `mfds-product-approval@1`로 고정
+- Endpoint Receipt와 현재 MFDS 제품 Operation 계약의 HTTP·응답 코드·pagination·제한 설정 일치 검증
 - Receipt hash·Raw Manifest checksum·canonical checksum·버전·record count를 묶은 `ProductIngestionResult` 계약 추가
 
 ## 확정된 제품 canonicalization 규칙
