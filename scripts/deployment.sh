@@ -6,7 +6,7 @@ set -euo pipefail
 # 어느 위치에서 실행해도 저장소 루트 기준으로 동작하도록 이동합니다.
 cd "$(dirname "$0")/.."
 
-PROD_ENV_FILE="envs/.prod.env"
+PROD_ENV_FILE="${PROD_ENV_FILE:-envs/.prod.env}"
 
 if [ ! -f "$PROD_ENV_FILE" ]; then
   echo "운영 환경파일을 찾을 수 없습니다: $PROD_ENV_FILE"
@@ -36,6 +36,15 @@ for variable_name in "${required_db_variables[@]}"; do
     exit 1
   fi
 done
+
+# ---------- Redis 인증 검증 ----------
+# PUBLIC_TRACK_F_ENABLED/Track A Worker 모두 non-local(STAGING/PRODUCTION) 환경에서
+# Redis 인증을 강제한다(#150). 값이 비어 있으면 compose가 빈 문자열로 치환해
+# 무인증 Redis가 뜰 수 있으므로, docker login/build/push 같은 외부 작업 전에 차단한다.
+if [ -z "${REDIS_PASSWORD:-}" ]; then
+  echo "필수 운영 환경변수가 비어 있습니다: REDIS_PASSWORD"
+  exit 1
+fi
 
 if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
   [ "$DB_ADMIN_USER" = "$DB_APP_USER" ] ||
