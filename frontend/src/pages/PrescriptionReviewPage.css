@@ -1127,26 +1127,6 @@
   opacity: 0.62;
 }
 
-.prescription-review__condition-summary {
-  min-height: 36px;
-  display: grid;
-  place-items: center;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0 12px;
-  border-radius: 10px;
-  background: #f2f4f7;
-  color: #667085;
-  font-size: 11px;
-  font-weight: 800;
-  text-align: center;
-}
-
-.prescription-review__condition-summary.is-complete {
-  background: #ecfbf2;
-  color: #148040;
-}
-
 .prescription-review-page .prescription-review__confirm {
   min-height: 52px;
   margin: 0;

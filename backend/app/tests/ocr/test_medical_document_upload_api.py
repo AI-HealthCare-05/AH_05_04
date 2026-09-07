@@ -1,7 +1,12 @@
+from pathlib import Path
+
+import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette import status
 
+from app.core import config
 from app.main import app
+from app.services.medical_documents import MAX_DOCUMENT_SIZE_BYTES
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -58,3 +63,52 @@ class TestCreatePrescriptionDocumentAPI:
         body = response.json()
         assert body["code"] == "UPLOAD_FILE_INVALID_TYPE"
         assert "trace_id" in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra_bytes", [0, 1])
+async def test_upload_api_size_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra_bytes: int,
+) -> None:
+    storage_dir = tmp_path / "uploaded"
+    storage_dir.mkdir()
+    monkeypatch.setattr(config, "STORAGE_DIR", str(storage_dir))
+
+    content = JPEG_SIGNATURE + b"x" * (MAX_DOCUMENT_SIZE_BYTES - len(JPEG_SIGNATURE) + extra_bytes)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        access_token = await _signup_and_login(
+            client,
+            email=f"upload-boundary-{extra_bytes}@example.com",
+        )
+        response = await client.post(
+            "/api/v1/documents",
+            files={
+                "file": (
+                    "synthetic-boundary.jpg",
+                    content,
+                    "image/jpeg",
+                )
+            },
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    body = response.json()
+    stored_files = list(storage_dir.iterdir())
+
+    if extra_bytes == 0:
+        assert response.status_code == status.HTTP_201_CREATED
+        assert body["data"]["upload_status"] == "UPLOADED"
+        assert len(stored_files) == 1
+        assert stored_files[0].name == (f"{body['data']['document_id']}.jpg")
+        assert stored_files[0].stat().st_size == MAX_DOCUMENT_SIZE_BYTES
+    else:
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert body["code"] == "UPLOAD_FILE_TOO_LARGE"
+        assert "trace_id" in body
+        assert stored_files == []

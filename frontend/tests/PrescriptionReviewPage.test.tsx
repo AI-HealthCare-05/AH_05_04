@@ -338,6 +338,8 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     ).toBeTruthy()
     expect(screen.getByText('1회 복용량')).toBeTruthy()
     expect(screen.getByText('하루횟수')).toBeTruthy()
+    expect(screen.getByText('복용단위')).toBeTruthy()
+    expect(screen.getByText('정')).toBeTruthy()
     expect(screen.getByText('제품함량').tagName).toBe('DT')
     const medicationLabelRule = prescriptionReviewStyles.match(
       /\.prescription-review__medication-values dt\s*\{([^}]*)\}/,
@@ -395,7 +397,10 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     expect(await screen.findByText('약 0/1개 검토 완료')).toBeTruthy()
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0')
-    expect(screen.getByRole<HTMLInputElement>('checkbox').disabled).toBe(true)
+    const acknowledgement = screen.getByRole<HTMLInputElement>('checkbox')
+    expect(acknowledgement.disabled).toBe(true)
+    expect(screen.getByText('원본 처방전의 모든 항목을 직접 확인했습니다.')).toBeTruthy()
+    expect(screen.queryByText(/원본 대조 (필요|완료)/)).toBeNull()
     expect((await getConfirmationButton() as HTMLButtonElement).disabled).toBe(true)
   })
 
@@ -431,6 +436,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     renderPage()
 
     fireEvent.click(await screen.findByRole('button', { name: '수정하기' }))
+    expect(screen.getByLabelText<HTMLInputElement>('복용단위').value).toBe('정')
     fireEvent.change(screen.getByLabelText('약물이름'), {
       target: { value: '수정된 약' },
     })
@@ -465,6 +471,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '검토 완료' }))
     await waitFor(() => expect(updateExtractedField).toHaveBeenCalledTimes(8))
+    expect(updateExtractedField).toHaveBeenCalledWith('DOSE_UNIT-1', '정')
 
     const acknowledgement = screen.getByRole<HTMLInputElement>('checkbox')
     const confirmButton = await getConfirmationButton() as HTMLButtonElement
@@ -476,7 +483,8 @@ describe('PrescriptionReviewPage confirmation gate', () => {
 
     expect(acknowledgement.checked).toBe(true)
     expect(confirmButton.disabled).toBe(false)
-    expect(screen.getByText('✓ 약 1/1개 검토 완료 · 원본 대조 완료')).toBeTruthy()
+    expect(screen.getByText('원본 처방전의 모든 항목을 직접 확인했습니다.')).toBeTruthy()
+    expect(screen.queryByText(/원본 대조 (필요|완료)/)).toBeNull()
   })
 
   it('선택 필드를 비우면 PR #96 계약대로 confirmed_value null을 전송한다', async () => {
@@ -706,6 +714,52 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     const acknowledgement = await screen.findByRole('checkbox')
     expect(acknowledgement).toHaveProperty('disabled', true)
     expect(await getConfirmationButton()).toHaveProperty('disabled', true)
+    expect(screen.getByText('복용단위')).toBeTruthy()
+    expect(screen.getByText('정')).toBeTruthy()
+    expect(updateExtractedField).not.toHaveBeenCalled()
+  })
+
+  it('잘못 인식된 DOSE_UNIT은 사용자가 수정한 값만 confirmed_value로 저장한다', async () => {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'DOSE_UNIT'
+        ? {
+            ...field,
+            raw_value: '캡슐',
+            confirmed_value: null,
+            confirmation_status: 'PENDING' as const,
+          }
+        : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+    vi.mocked(updateExtractedField).mockImplementation(
+      async (fieldId, confirmedValue) => {
+        const field = fields.find((candidate) => candidate.field_id === fieldId)
+        if (!field) throw new Error('field not found')
+        return {
+          data: {
+            ...field,
+            confirmed_value: confirmedValue,
+            confirmation_status: 'CONFIRMED',
+          },
+        }
+      },
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('캡슐')).toBeTruthy()
+    expect(updateExtractedField).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    const doseUnitInput = screen.getByLabelText<HTMLInputElement>('복용단위')
+    expect(doseUnitInput.value).toBe('캡슐')
+    fireEvent.change(doseUnitInput, { target: { value: '정' } })
+    fireEvent.click(screen.getByRole('button', { name: '수정완료' }))
+
+    await waitFor(() =>
+      expect(updateExtractedField).toHaveBeenCalledWith('DOSE_UNIT-1', '정'),
+    )
+    expect(updateExtractedField).toHaveBeenCalledTimes(1)
   })
 
   it.each([
