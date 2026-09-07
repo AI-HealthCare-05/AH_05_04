@@ -25,6 +25,7 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import (
     EvidenceMappingManifestV12,
     ProtectedArtifactReceiptV12,
 )
+from ai_worker.tasks.evaluation.schemas.authoring_v1_3 import DatasetManifestV13
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     EvaluationPolicy,
@@ -35,6 +36,11 @@ from ai_worker.tasks.evaluation.schemas.policy_v1_2 import (
     EvaluationPolicyV12,
     EvaluationProfileV12,
     SuiteDefinitionV12,
+)
+from ai_worker.tasks.evaluation.schemas.provenance_v1 import (
+    AuthoringIdentityManifest,
+    IndexBuildReceipt,
+    StudySplitReceipt,
 )
 
 SCHEMA_VERSION = "1.0.0"
@@ -186,14 +192,48 @@ SCHEMA_REGISTRY_V1_2: tuple[SchemaRegistryEntry, ...] = (
     *(entry for entry in SCHEMA_REGISTRY if entry.schema_id not in _PROVENANCE_MEMBER_IDS_V1_2),
 )
 
+SCHEMA_REGISTRY_V1_3: tuple[SchemaRegistryEntry, ...] = (
+    SchemaRegistryEntry(
+        "authoring/rag-eval.dataset-manifest.schema.json",
+        "rag-eval.dataset-manifest",
+        DatasetManifestV13,
+        "1.3.0",
+    ),
+    *(entry for entry in SCHEMA_REGISTRY_V1_2 if entry.schema_id != "rag-eval.dataset-manifest"),
+    SchemaRegistryEntry(
+        "authoring/rag-eval.authoring-identity-manifest.schema.json",
+        "rag-eval.authoring-identity-manifest",
+        AuthoringIdentityManifest,
+    ),
+    SchemaRegistryEntry(
+        "operational/rag-eval.index-build-receipt.schema.json",
+        "rag-eval.index-build-receipt",
+        IndexBuildReceipt,
+    ),
+    SchemaRegistryEntry(
+        "operational/rag-eval.study-split-receipt.schema.json",
+        "rag-eval.study-split-receipt",
+        StudySplitReceipt,
+    ),
+)
+
 SCHEMA_REGISTRIES = MappingProxyType(
     {
         "1.0.0": SCHEMA_REGISTRY,
         "1.1.0": SCHEMA_REGISTRY_V1_1,
         "1.2.0": SCHEMA_REGISTRY_V1_2,
+        "1.3.0": SCHEMA_REGISTRY_V1_3,
     }
 )
 
+_SCHEMA_SET_MEMBER_COUNTS = {"1.0.0": 18, "1.1.0": 18, "1.2.0": 18, "1.3.0": 21}
+
 for schema_set_version, registry in SCHEMA_REGISTRIES.items():
-    if len({entry.relative_path for entry in registry}) != 18 or len({entry.schema_id for entry in registry}) != 18:
-        raise RuntimeError(f"RAG evaluation schema registry {schema_set_version} must contain 18 unique entries")
+    expected_count = _SCHEMA_SET_MEMBER_COUNTS[schema_set_version]
+    if (
+        len({entry.relative_path for entry in registry}) != expected_count
+        or len({entry.schema_id for entry in registry}) != expected_count
+    ):
+        raise RuntimeError(
+            f"RAG evaluation schema registry {schema_set_version} must contain {expected_count} unique entries"
+        )
