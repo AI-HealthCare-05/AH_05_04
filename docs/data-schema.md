@@ -257,6 +257,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 - `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
 - `rag_source_ingestion_artifact`는 원본 바이트를 DB에 저장하지 않습니다. 접근 통제 저장소의 backend·object key, 페이지 번호, Artifact key, SHA-256, 크기와 content type만 수집 실행에 연결합니다.
 - 로컬 저장 어댑터는 `sha256/{앞 2자리}/{SHA-256}.artifact` 형식의 내용 주소를 사용합니다. 완성 전 임시 파일은 참조하지 않으며 크기·checksum 검증과 파일 동기화가 끝난 뒤에만 mode `0600`의 불변 객체를 원자적으로 공개합니다. 저장소 디렉터리는 mode `0700`으로 제한합니다.
+- S3 호환 비공개 저장 어댑터는 `{prefix}/sha256/{앞 2자리}/{SHA-256}.artifact`를 사용합니다. `If-None-Match: *`, SHA-256 upload checksum과 명시적으로 선택한 AES256 또는 KMS 서버 측 암호화를 요구하고, 기존 객체는 크기·content type·checksum metadata·암호화 상태가 모두 일치할 때만 재사용합니다. credential은 DB에 저장하지 않고 Worker 실행 역할 또는 표준 AWS credential provider chain으로 주입합니다.
 - `NO_CHANGE`와 `SOURCE_VERSION_CONFLICT`를 포함한 모든 검증 실행은 자체 Artifact 참조를 보존합니다. Snapshot이 생성되지 않은 실행도 감사 가능한 원본 근거를 잃지 않습니다.
 - 같은 수집 실행에서 페이지 번호와 Artifact key는 각각 중복될 수 없으며 Artifact 참조 행은 UPDATE·DELETE할 수 없습니다.
 - `artifact_kind=RAW_RESPONSE`는 양의 페이지 번호를 가지며 거부 메타데이터를 가질 수 없습니다. `artifact_kind=REJECTS`는 페이지 번호 대신 안전한 고정 `reject_code`와 원문을 포함하지 않는 `parser_location`을 필수로 기록합니다.
@@ -270,7 +271,7 @@ Rollback 정책:
 
 범위 제외:
 
-- 실제 MFDS 네트워크 수집과 외부 Object Storage 어댑터, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
+- 실제 MFDS 네트워크 수집과 외부 Object Storage bucket·credential의 배포 환경 연결, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
 - DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책과 REJECTS 보존 기간
 - Source 승인·Runtime 활성화
 - RAG 검색, Resolver ranking, Preflight 정책

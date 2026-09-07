@@ -2,14 +2,16 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 231 passed
-- AI Worker 전체 테스트: 1914 passed, 8 skipped
+- Source ingestion 단위 테스트: 253 passed
+- AI Worker 전체 테스트: 1944 passed, 8 skipped
 - PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 7 passed
 - Source/Catalog·Artifact Migration 테스트: 10 passed
 - 전체 Migration 테스트: 49 passed
 - Backend 전체 테스트: 966 passed, 2 skipped
-- Mypy: 425개 핵심 소스 파일 통과
+- Ruff 전체 검사 통과, 491 files already formatted
+- Mypy: 429개 핵심 소스 파일 통과
 - 실제 Worker 이미지에서 Source Snapshot adapter import·PostgreSQL 쿼리 통과
+- S3 호환 비공개 Object Storage adapter·SDK 계약 테스트 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
 - Runtime Bundle 활성화는 아직 연결하지 않았다.
 
@@ -67,6 +69,12 @@
 - 실패 Source run의 부분 page, 거부 Artifact 누락과 실패 실행 내 Artifact 중복을 DB 접근 전에 차단
 - Worker 이미지의 runtime DB 설정으로 엔진·session·Source Snapshot adapter를 조립하는 smoke 진입점 추가
 - 실제 Worker 이미지에서 `rag_source_snapshot` 조회를 실행해 패키징·드라이버·연결·테이블 접근을 함께 검증
+- S3 호환 저장소의 SHA-256 내용 주소·조건부 생성·업로드 checksum·명시적 AES256 또는 KMS 암호화 검증
+- 동일 객체 재시도 시 HEAD metadata·크기·content type·checksum·암호화 상태를 확인한 뒤에만 재사용
+- Source Artifact 저장소를 기본 `DISABLED`로 두고 승인된 local root 또는 S3 bucket이 있을 때만 조립
+- S3 credential을 설정 모델·DB에 저장하지 않고 AWS SDK 표준 credential provider chain으로만 주입
+- S3 endpoint의 평문 HTTP·URL credential·query·fragment를 설정 검증에서 차단
+- Provider·transport 오류를 endpoint·credential 세부정보가 없는 고정 오류로 변환
 
 ## 최종 검수 결과
 
@@ -90,6 +98,8 @@
 | 동일 Source 동시 acquisition 1회 | 완료 | 외부 호출 전 `SKIP LOCKED` 선점과 동시 Provider 1회 호출 PostgreSQL 테스트 |
 | #166 Catalog build 인계 | 부분 완료 | 검증된 Snapshot 결과 계약은 제공한다. Catalog 적재·Runtime 연결은 #166 범위 |
 | Worker DB adapter 실행 | 완료 | 실제 Worker 이미지에서 runtime 엔진·session·adapter 조립과 `rag_source_snapshot` 조회 통과 |
+| 외부 Object Storage adapter | 완료 | S3 조건부 생성·checksum·암호화·재사용 검증과 표준 credential chain factory |
+| Artifact 보존·정리 정책 | 결정 대기 | 승인 전 자동 삭제 없음. Runtime 저장소 기본 `DISABLED` |
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -136,7 +146,6 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 다음 항목은 #165를 완전히 닫기 위해 남아 있다.
 
-- S3 계열 등 외부 Object Storage를 사용할 경우의 운영 어댑터와 credential 주입
 - DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책
 - REJECTS 세부 보존 기간과 승인된 reject code 목록 확정
 
@@ -179,6 +188,17 @@ Provider 수집 실패는 `SourceFailureCode`만 `failure_code`로 기록하고 
 로컬 Artifact 저장은 DB transaction보다 먼저 완료된다. DB rollback은 이미
 생성된 내용 주소 객체를 삭제하지 않으며, 참조되지 않은 객체의 보존·정리는 위
 후속 운영 정책에서 결정한다. 동일 checksum 객체는 재수집 때 안전하게 재사용한다.
+
+S3 adapter도 DB transaction보다 먼저 조건부 객체 생성을 완료한다. rollback이나
+실패 뒤 객체를 자동 삭제하지 않으며, 승인된 보존·정리 정책이 확정되기 전에는
+수명주기 규칙 또는 정리 Worker를 구성하지 않는다. REJECTS 보존 기간과 승인 코드
+목록도 같은 정책 결정 전에는 운영 활성화 조건을 충족한 것으로 보지 않는다.
+
+Source Artifact runtime 저장소는 기본 `DISABLED`다. `LOCAL_PRIVATE`는 전용 root,
+`S3_PRIVATE`는 bucket과 서버 측 암호화 방식을 명시해야 factory가 저장소를 생성한다. S3 access key와
+secret key는 Worker `Config`, DB, 로그에 넣지 않고 AWS SDK의 실행 역할·Web
+Identity·표준 환경 credential provider chain으로 주입한다. Catalog 적재와 함께
+이 factory를 실제 Source 수집 실행에 연결하는 작업은 #166 Runtime 범위다.
 
 DUR·환자용 복약정보의 기존 차단 상태는 유지한다.
 평가 Runner 전체 완료를 Parser 단위 작업의 선행조건으로 추가하지 않는다.
