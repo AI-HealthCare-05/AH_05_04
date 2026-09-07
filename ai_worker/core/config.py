@@ -170,6 +170,15 @@ class Config(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def _validate_redis_password_for_non_local(self) -> Self:
+        if self.ENV is not DeploymentEnvironment.LOCAL:
+            password = self.REDIS_PASSWORD.strip() if self.REDIS_PASSWORD else ""
+            if not password or password.startswith("replace-with-"):
+                raise ValueError("REDIS_PASSWORD는 local 외 환경에서 실제 값이어야 합니다.")
+
+        return self
+
+    @model_validator(mode="after")
     def _validate_redis_timeout_relationship(self) -> Self:
         """Blocking read보다 socket timeout을 길게 유지합니다."""
 
