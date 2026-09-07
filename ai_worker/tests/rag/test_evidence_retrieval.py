@@ -2213,7 +2213,7 @@ def test_dense_adapter_rejects_invalid_configuration_boundaries(mutation: str) -
         "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
     )
     other_fingerprint = QueryFingerprint("HMAC-SHA-256", "query-hmac@2", "c" * 64)
-    query_vectors = (SyntheticDenseQueryVector(fingerprint(), ("1", "0")),)
+    query_vectors: tuple[SyntheticDenseQueryVector, ...] = (SyntheticDenseQueryVector(fingerprint(), ("1", "0")),)
     threshold = "0"
     if mutation == "missing-query":
         query_vectors = (SyntheticDenseQueryVector(other_fingerprint, ("1", "0")),)
@@ -2415,7 +2415,7 @@ def test_rerank_adapter_rejects_invalid_candidate_set_shape(mutation: str) -> No
     ],
 )
 def test_rerank_adapter_rejects_invalid_configuration_and_signals(mutation: str) -> None:
-    stage_signals = (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),)
+    stage_signals: tuple[StageSignal, ...] = (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),)
     if mutation == "duplicate-stage":
         stage_signals += (StageSignal(EvidenceSearchStage.LEXICAL, 2, CanonicalScore("0.8")),)
     elif mutation == "nonfinite-score":
