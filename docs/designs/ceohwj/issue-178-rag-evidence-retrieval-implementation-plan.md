@@ -1108,6 +1108,7 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] `SyntheticDenseQueryVector`, `VersionedDenseSearchConfig`를 추가한다.
 - [x] raw query 없이 fingerprint와 문자열 Decimal vector만 config artifact에 포함한다.
 - [x] query vector 누락·중복, dimension mismatch, zero/non-finite vector와 threshold 오류를 typed failure로 닫는다.
+- [x] query vector 입력 순서와 caller Decimal context가 artifact/score를 바꾸지 않는지 검증한다.
 - [x] `DENSE` stage Receipt에 실제 config와 adapter artifact를 반환한다.
 
 ### Task C: versioned weighted reranker
@@ -1121,7 +1122,9 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] `VersionedRerankConfig`, `VersionedEvidenceRerankAdapter`를 구현한다.
 - [x] `knowledge-rerank-input-v1` projection hash를 adapter에서 재계산한다.
 - [x] weight 합 `1`, positive `top_k`, unique candidate key와 unique stage signal을 검증한다.
+- [x] malformed provenance·score, empty candidate set과 stage rank 충돌을 typed failure로 거부한다.
 - [x] weighted score 내림차순, UTF-8 evidence key 오름차순으로 selection을 만든다.
+- [x] weight 변경 순위, 동점 tie-break와 `top_k > selection_limit` Kernel fail-closed를 검증한다.
 - [x] malformed/detached config와 내부 예외를 raw detail 없는 `EvidenceRerankFailure`로 반환한다.
 
 ### Task D: Kernel DI·privacy·reproducibility 회귀

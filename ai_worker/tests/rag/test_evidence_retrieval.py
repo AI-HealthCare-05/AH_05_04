@@ -2,6 +2,7 @@ import dataclasses
 import hashlib
 import json
 from dataclasses import replace
+from decimal import localcontext
 from typing import Any, cast
 
 import pytest
@@ -1688,6 +1689,50 @@ def test_synthetic_dense_adapter_canonicalizes_negative_zero_score() -> None:
     assert result.hits[0].stage_score == CanonicalScore("0")
 
 
+def test_synthetic_dense_score_is_independent_of_callers_decimal_context() -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:context",
+        "chunk-context",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.context",
+        "knowledge-text@1",
+        SensitiveText("합성 Decimal context 근거"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    dense_config = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(SyntheticDenseQueryVector(fingerprint(), ("1", "1")),),
+        minimum_similarity="0",
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+        dense_config_ref=dense_config.artifact_ref,
+        dense_limit=1,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(
+        index, lexical_config, dense_config, artifact("synthetic-search-adapter")
+    )
+
+    with localcontext() as low_precision:
+        low_precision.prec = 6
+        low = adapter.search(request, EvidenceSearchStage.DENSE)
+    with localcontext() as high_precision:
+        high_precision.prec = 40
+        high = adapter.search(request, EvidenceSearchStage.DENSE)
+
+    assert isinstance(low, EvidenceSearchSuccess)
+    assert isinstance(high, EvidenceSearchSuccess)
+    assert low.hits[0].stage_score == high.hits[0].stage_score == CanonicalScore("0.707107")
+
+
 def test_versioned_rerank_adapter_applies_weighted_configuration() -> None:
     first_text = "합성 첫 번째 근거"
     second_text = "합성 두 번째 근거"
@@ -1984,7 +2029,7 @@ def test_versioned_lexical_config_has_stable_golden_hash() -> None:
         "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
     )
 
-    assert config.artifact_ref.content_sha256 == "9f318b313d8ad12c7f0cf826e477afa5dd1136ede770a6be58609fd5478077ae"
+    assert config.artifact_ref.content_sha256 == "f337227c0dd758b5e1d190b7b8f97897ba269a1fad99af39e5457f77295c0e7b"
 
 
 def test_rerank_adapter_rejects_input_set_hash_mismatch() -> None:
@@ -2044,3 +2089,414 @@ def test_rerank_adapter_rejects_duplicate_candidate_keys() -> None:
     result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
 
     assert isinstance(result, EvidenceRerankFailure)
+
+
+def test_dense_adapter_rejects_duplicate_fingerprint_entries_outside_active_query() -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 dense 근거"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    other_fingerprint = QueryFingerprint("HMAC-SHA-256", "query-hmac@2", "c" * 64)
+    dense_config = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(
+            SyntheticDenseQueryVector(fingerprint(), ("1", "0")),
+            SyntheticDenseQueryVector(other_fingerprint, ("0", "1")),
+            SyntheticDenseQueryVector(other_fingerprint, ("0", "1")),
+        ),
+        minimum_similarity="0",
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+        dense_config_ref=dense_config.artifact_ref,
+        dense_limit=1,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(
+        index, lexical_config, dense_config, artifact("synthetic-search-adapter")
+    ).search(request, EvidenceSearchStage.DENSE)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+def test_dense_config_hash_is_independent_of_query_vector_input_order() -> None:
+    shared_digest = "d" * 64
+    first = SyntheticDenseQueryVector(
+        QueryFingerprint("HMAC-SHA-256", "query-hmac@1", shared_digest),
+        ("1", "0"),
+    )
+    second = SyntheticDenseQueryVector(
+        QueryFingerprint("SHA-256", "query-hash@1", shared_digest),
+        ("0", "1"),
+    )
+
+    forward = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(first, second),
+        minimum_similarity="0",
+    )
+    reverse = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(second, first),
+        minimum_similarity="0",
+    )
+
+    assert forward.artifact_ref == reverse.artifact_ref
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing-query", "duplicate-query", "dimension-mismatch", "zero-vector", "nonfinite-vector", "bad-threshold"],
+)
+def test_dense_adapter_rejects_invalid_configuration_boundaries(mutation: str) -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 dense 근거"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    other_fingerprint = QueryFingerprint("HMAC-SHA-256", "query-hmac@2", "c" * 64)
+    query_vectors = (SyntheticDenseQueryVector(fingerprint(), ("1", "0")),)
+    threshold = "0"
+    if mutation == "missing-query":
+        query_vectors = (SyntheticDenseQueryVector(other_fingerprint, ("1", "0")),)
+    elif mutation == "duplicate-query":
+        query_vectors = query_vectors * 2
+    elif mutation == "dimension-mismatch":
+        query_vectors = (SyntheticDenseQueryVector(fingerprint(), ("1",)),)
+    elif mutation == "zero-vector":
+        query_vectors = (SyntheticDenseQueryVector(fingerprint(), ("0", "0")),)
+    elif mutation == "nonfinite-vector":
+        query_vectors = (SyntheticDenseQueryVector(fingerprint(), ("NaN", "0")),)
+    else:
+        threshold = "1.1"
+    dense_config = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=query_vectors,
+        minimum_similarity=threshold,
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+        dense_config_ref=dense_config.artifact_ref,
+        dense_limit=1,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(
+        index, lexical_config, dense_config, artifact("synthetic-search-adapter")
+    ).search(request, EvidenceSearchStage.DENSE)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+@pytest.mark.parametrize("mutation", ["empty-chunk-ref", "noncanonical-score"])
+def test_rerank_adapter_rejects_malformed_candidate_fields(mutation: str) -> None:
+    candidate = KnowledgeEvidenceCandidate(
+        provenance(),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
+    )
+    if mutation == "empty-chunk-ref":
+        candidate = replace(candidate, provenance=replace(candidate.provenance, knowledge_chunk_ref=""))
+    else:
+        candidate = replace(
+            candidate,
+            stage_signals=(StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("01")),),
+        )
+    config = VersionedRerankConfig.create(
+        "rerank-config",
+        "rerank-config@synthetic-1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+@pytest.mark.parametrize("mutation", ["empty-candidates", "duplicate-stage-rank"])
+def test_rerank_adapter_rejects_invalid_candidate_set_shape(mutation: str) -> None:
+    first = KnowledgeEvidenceCandidate(
+        provenance(),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
+    )
+    second_text = "합성 두 번째 근거"
+    second = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_key="knowledge:chunk-2",
+            knowledge_chunk_ref="chunk-2",
+            content_sha256=content_hash(second_text),
+        ),
+        SensitiveText(second_text),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.8")),),
+    )
+    candidates = () if mutation == "empty-candidates" else (first, second)
+    config = VersionedRerankConfig.create(
+        "rerank-config",
+        "rerank-config@synthetic-1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=2,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", candidates),
+        candidates,
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["invalid-weight-sum", "zero-top-k", "bool-top-k", "duplicate-stage", "nonfinite-score"],
+)
+def test_rerank_adapter_rejects_invalid_configuration_and_signals(mutation: str) -> None:
+    stage_signals = (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),)
+    if mutation == "duplicate-stage":
+        stage_signals += (StageSignal(EvidenceSearchStage.LEXICAL, 2, CanonicalScore("0.8")),)
+    elif mutation == "nonfinite-score":
+        stage_signals = (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("NaN")),)
+    candidate = KnowledgeEvidenceCandidate(
+        provenance(),
+        SensitiveText("합성 복약 근거"),
+        stage_signals,
+    )
+    lexical_weight = "1"
+    dense_weight = "0"
+    top_k: int = 1
+    if mutation == "invalid-weight-sum":
+        lexical_weight = dense_weight = "0.6"
+    elif mutation == "zero-top-k":
+        top_k = 0
+    elif mutation == "bool-top-k":
+        top_k = cast(int, True)
+    config = VersionedRerankConfig.create(
+        "rerank-config",
+        "rerank-config@synthetic-1",
+        lexical_weight=lexical_weight,
+        dense_weight=dense_weight,
+        top_k=top_k,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+def test_rerank_adapter_changes_order_when_versioned_weights_change() -> None:
+    lexical_text = "합성 lexical 근거"
+    dense_text = "합성 dense 근거"
+    lexical_candidate = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_key="knowledge:lexical",
+            knowledge_chunk_ref="chunk-lexical",
+            content_sha256=content_hash(lexical_text),
+        ),
+        SensitiveText(lexical_text),
+        (
+            StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("1")),
+            StageSignal(EvidenceSearchStage.DENSE, 2, CanonicalScore("0")),
+        ),
+    )
+    dense_candidate = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_key="knowledge:dense",
+            knowledge_chunk_ref="chunk-dense",
+            content_sha256=content_hash(dense_text),
+        ),
+        SensitiveText(dense_text),
+        (
+            StageSignal(EvidenceSearchStage.LEXICAL, 2, CanonicalScore("0")),
+            StageSignal(EvidenceSearchStage.DENSE, 1, CanonicalScore("1")),
+        ),
+    )
+    candidates = (lexical_candidate, dense_candidate)
+
+    def first_key(lexical_weight: str, dense_weight: str) -> str:
+        config = VersionedRerankConfig.create(
+            "rerank-config",
+            f"rerank-config@{lexical_weight}-{dense_weight}",
+            lexical_weight=lexical_weight,
+            dense_weight=dense_weight,
+            top_k=2,
+        )
+        request = EvidenceRerankRequest(
+            fingerprint(),
+            artifact("filter-snapshot"),
+            artifact("knowledge-index"),
+            artifact("retrieval-config"),
+            config.artifact_ref,
+            "knowledge-rerank-input-v1",
+            canonical_rerank_input_hash("knowledge-rerank-input-v1", candidates),
+            candidates,
+        )
+        result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+        assert isinstance(result, EvidenceRerankSuccess)
+        return result.selections[0].evidence_key
+
+    assert first_key("0.75", "0.25") == "knowledge:lexical"
+    assert first_key("0.25", "0.75") == "knowledge:dense"
+
+
+def test_rerank_adapter_uses_utf8_evidence_key_tie_break() -> None:
+    first_text = "합성 a 근거"
+    second_text = "합성 b 근거"
+    first = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_key="knowledge:a",
+            knowledge_chunk_ref="chunk-a",
+            content_sha256=content_hash(first_text),
+        ),
+        SensitiveText(first_text),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 2, CanonicalScore("0.5")),),
+    )
+    second = KnowledgeEvidenceCandidate(
+        replace(
+            provenance(),
+            evidence_key="knowledge:b",
+            knowledge_chunk_ref="chunk-b",
+            content_sha256=content_hash(second_text),
+        ),
+        SensitiveText(second_text),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.5")),),
+    )
+    candidates = (second, first)
+    config = VersionedRerankConfig.create(
+        "rerank-config", "rerank-config@tie", lexical_weight="1", dense_weight="0", top_k=2
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", candidates),
+        candidates,
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankSuccess)
+    assert [item.evidence_key for item in result.selections] == ["knowledge:a", "knowledge:b"]
+
+
+def test_kernel_fails_closed_when_rerank_top_k_exceeds_selection_limit() -> None:
+    records = (
+        SyntheticEvidenceRecord(
+            "knowledge:one",
+            "chunk-one",
+            artifact("source-snapshot"),
+            "synthetic@1",
+            "$.records.one",
+            "knowledge-text@1",
+            SensitiveText("합성 복약 정보 하나"),
+            ("1", "0"),
+        ),
+        SyntheticEvidenceRecord(
+            "knowledge:two",
+            "chunk-two",
+            artifact("source-snapshot"),
+            "synthetic@1",
+            "$.records.two",
+            "knowledge-text@1",
+            SensitiveText("합성 복약 정보 둘"),
+            ("0", "1"),
+        ),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", records)
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    rerank_config = VersionedRerankConfig.create(
+        "rerank-config", "rerank-config@synthetic-1", lexical_weight="1", dense_weight="0", top_k=2
+    )
+    request = EvidenceRetrievalKernelRequest(
+        SensitiveText("합성 복약 정보"),
+        fingerprint(),
+        artifact("filter-snapshot"),
+        index.artifact_ref,
+        artifact("retrieval-config"),
+        lexical_config.artifact_ref,
+        None,
+        rerank_config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        2,
+        0,
+        1,
+    )
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SyntheticEvidenceSearchAdapter(
+            index, lexical_config, None, artifact("synthetic-search-adapter")
+        ),
+        rerank_port=VersionedEvidenceRerankAdapter(
+            rerank_config, artifact("synthetic-rerank-adapter")
+        ),
+    )
+
+    assert outcome.execution_status is KernelExecutionStatus.DEPENDENCY_ERROR
+    assert outcome.diagnostic_code is KernelDiagnosticCode.RERANK_RESULT_INVALID
+    assert outcome.untrusted_selections == ()

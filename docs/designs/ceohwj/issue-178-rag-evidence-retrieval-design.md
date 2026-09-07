@@ -131,9 +131,9 @@ Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
 
 - `SyntheticEvidenceRecord`: provenance 구성 요소, `SensitiveText` 본문, 문자열 Decimal dense vector
 - `SyntheticEvidenceIndex`: record projection을 UTF-8 key 순으로 canonical JSON 직렬화한 SHA-256 artifact
-- `VersionedLexicalSearchConfig`: exact·trigram 전략과 trigram threshold를 결속한 artifact
-- `VersionedDenseSearchConfig`: query fingerprint별 synthetic vector, cosine threshold와 metric version artifact
-- `VersionedRerankConfig`: lexical/dense weight, `top_k`, tie-break와 score precision artifact
+- `VersionedLexicalSearchConfig`: exact·trigram 전략, trigram threshold와 Decimal context를 결속한 artifact
+- `VersionedDenseSearchConfig`: query fingerprint별 synthetic vector, cosine threshold·metric·Decimal context artifact
+- `VersionedRerankConfig`: lexical/dense weight, `top_k`, tie-break·score precision·Decimal context artifact
 - `SyntheticEvidenceSearchAdapter`, `VersionedEvidenceRerankAdapter`: 기존 Port Protocol의 concrete 구현
 
 각 adapter는 요청 reference뿐 아니라 현재 fixture/config payload를 다시 canonicalize해 artifact hash와
@@ -148,6 +148,10 @@ Dense query fixture에는 raw query를 넣지 않고 `QueryFingerprint`와 vecto
 dimension mismatch, zero/non-finite vector는 `EvidenceSearchFailure`다. Reranker는
 `knowledge-rerank-input-v1` hash를 재계산하고, 중복 candidate key·stage signal, 비정상 rank·score,
 config/hash mismatch 또는 내부 예외를 raw detail 없이 `EvidenceRerankFailure`로 닫는다.
+
+모든 trigram division, cosine, weighted score와 6자리 score 양자화는 caller의 전역 Decimal 설정을 사용하지
+않고 config artifact에 기록된 precision `50`, `ROUND_HALF_EVEN` local context에서 실행한다. 따라서 동일한
+fixture/config 입력은 호출 프로세스의 Decimal precision과 무관하게 같은 score와 artifact를 만든다.
 
 ### 테스트 모듈
 

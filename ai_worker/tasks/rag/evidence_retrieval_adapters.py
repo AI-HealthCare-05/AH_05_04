@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unicodedata
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from typing import Self
 
 from ai_worker.tasks.rag.evidence_retrieval import (
@@ -31,6 +32,9 @@ from ai_worker.tasks.rag.evidence_retrieval import (
 )
 
 _SCORE_PLACES = Decimal("0.000001")
+_DECIMAL_CONTEXT = Context(prec=50, rounding=ROUND_HALF_EVEN)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_CANONICAL_SCORE_RE = re.compile(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +97,7 @@ class VersionedLexicalSearchConfig:
             "trigram_strategy": "pg-trgm-set-v1",
             "trigram_similarity_threshold": trigram_similarity_threshold,
             "score_places": 6,
+            "decimal_context": _decimal_context_payload(),
         }
         return cls(
             _artifact_ref(artifact_code, version, payload),
@@ -132,10 +137,11 @@ class VersionedDenseSearchConfig:
                     },
                     "values": list(item.values),
                 }
-                for item in sorted(query_vectors, key=lambda item: item.query_fingerprint.digest.encode())
+                for item in sorted(query_vectors, key=_query_vector_sort_key)
             ],
             "minimum_similarity": minimum_similarity,
             "score_places": 6,
+            "decimal_context": _decimal_context_payload(),
         }
         return cls(
             _artifact_ref(artifact_code, version, payload),
@@ -168,6 +174,7 @@ class VersionedRerankConfig:
             "top_k": top_k,
             "tie_break": "evidence-key-utf8-ascending",
             "score_places": 6,
+            "decimal_context": _decimal_context_payload(),
         }
         return cls(
             _artifact_ref(artifact_code, version, payload),
@@ -194,22 +201,26 @@ class VersionedEvidenceRerankAdapter:
                 or not _valid_artifact_ref(self.adapter_artifact_ref)
             ):
                 return EvidenceRerankFailure()
-            lexical_weight = Decimal(self.config.lexical_weight)
-            dense_weight = Decimal(self.config.dense_weight)
-            if (
-                not lexical_weight.is_finite()
-                or not dense_weight.is_finite()
-                or lexical_weight < 0
-                or dense_weight < 0
-                or lexical_weight + dense_weight != 1
-                or isinstance(self.config.top_k, bool)
-                or self.config.top_k <= 0
-            ):
-                return EvidenceRerankFailure()
-            ranked = [
-                (_weighted_score(candidate.stage_signals, lexical_weight, dense_weight), candidate.provenance.evidence_key)
-                for candidate in request.candidates
-            ]
+            with localcontext(_DECIMAL_CONTEXT):
+                lexical_weight = Decimal(self.config.lexical_weight)
+                dense_weight = Decimal(self.config.dense_weight)
+                if (
+                    not lexical_weight.is_finite()
+                    or not dense_weight.is_finite()
+                    or lexical_weight < 0
+                    or dense_weight < 0
+                    or lexical_weight + dense_weight != 1
+                    or isinstance(self.config.top_k, bool)
+                    or self.config.top_k <= 0
+                ):
+                    return EvidenceRerankFailure()
+                ranked = [
+                    (
+                        _weighted_score(candidate.stage_signals, lexical_weight, dense_weight),
+                        candidate.provenance.evidence_key,
+                    )
+                    for candidate in request.candidates
+                ]
             ranked.sort(key=lambda item: (-item[0], item[1].encode()))
             selections = tuple(
                 EvidenceRerankSelection(evidence_key, rank, CanonicalScore(_canonical_decimal(score)))
@@ -295,6 +306,7 @@ class SyntheticEvidenceSearchAdapter:
             self.dense_config is None
             or request.dense_config_ref != self.dense_config.artifact_ref
             or not _dense_config_is_bound(self.dense_config)
+            or not _valid_dense_config(self.dense_config)
         ):
             return EvidenceSearchFailure()
         minimum_similarity = Decimal(self.dense_config.minimum_similarity)
@@ -355,47 +367,54 @@ def _search_hit(
 
 
 def _cosine_similarity(left: tuple[str, ...], right: tuple[str, ...]) -> Decimal:
-    if not left or len(left) != len(right):
-        raise ValueError("dense vector dimensions must match")
-    left_values = tuple(Decimal(value) for value in left)
-    right_values = tuple(Decimal(value) for value in right)
-    if not all(value.is_finite() for value in left_values + right_values):
-        raise ValueError("dense vectors must be finite")
-    left_norm = sum((value * value for value in left_values), Decimal(0)).sqrt()
-    right_norm = sum((value * value for value in right_values), Decimal(0)).sqrt()
-    if left_norm == 0 or right_norm == 0:
-        raise ValueError("dense vectors must be non-zero")
-    return sum(
-        (left_value * right_value for left_value, right_value in zip(left_values, right_values, strict=True)),
-        Decimal(0),
-    ) / (left_norm * right_norm)
+    with localcontext(_DECIMAL_CONTEXT):
+        if not left or len(left) != len(right):
+            raise ValueError("dense vector dimensions must match")
+        left_values = tuple(Decimal(value) for value in left)
+        right_values = tuple(Decimal(value) for value in right)
+        if not all(value.is_finite() for value in left_values + right_values):
+            raise ValueError("dense vectors must be finite")
+        left_norm = sum((value * value for value in left_values), Decimal(0)).sqrt()
+        right_norm = sum((value * value for value in right_values), Decimal(0)).sqrt()
+        if left_norm == 0 or right_norm == 0:
+            raise ValueError("dense vectors must be non-zero")
+        return sum(
+            (left_value * right_value for left_value, right_value in zip(left_values, right_values, strict=True)),
+            Decimal(0),
+        ) / (left_norm * right_norm)
 
 
 def _weighted_score(
     stage_signals: tuple[StageSignal, ...], lexical_weight: Decimal, dense_weight: Decimal
 ) -> Decimal:
-    observed: dict[EvidenceSearchStage, Decimal] = {}
-    for signal in stage_signals:
-        stage = signal.stage
-        score = Decimal(signal.score.value)
-        if stage in observed or stage not in (EvidenceSearchStage.LEXICAL, EvidenceSearchStage.DENSE) or not score.is_finite():
-            raise ValueError("invalid stage signal")
-        observed[stage] = score
-    return observed.get(EvidenceSearchStage.LEXICAL, Decimal(0)) * lexical_weight + observed.get(
-        EvidenceSearchStage.DENSE, Decimal(0)
-    ) * dense_weight
+    with localcontext(_DECIMAL_CONTEXT):
+        observed: dict[EvidenceSearchStage, Decimal] = {}
+        for signal in stage_signals:
+            stage = signal.stage
+            score = Decimal(signal.score.value)
+            if (
+                stage in observed
+                or stage not in (EvidenceSearchStage.LEXICAL, EvidenceSearchStage.DENSE)
+                or not score.is_finite()
+            ):
+                raise ValueError("invalid stage signal")
+            observed[stage] = score
+        return observed.get(EvidenceSearchStage.LEXICAL, Decimal(0)) * lexical_weight + observed.get(
+            EvidenceSearchStage.DENSE, Decimal(0)
+        ) * dense_weight
 
 
 def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
-    if not isinstance(request.candidates, tuple):
+    if not isinstance(request.candidates, tuple) or not request.candidates:
         return False
     evidence_keys: set[str] = set()
+    stage_ranks: dict[EvidenceSearchStage, set[int]] = {}
     for candidate in request.candidates:
         if not isinstance(candidate, KnowledgeEvidenceCandidate):
             return False
         provenance = candidate.provenance
         if (
-            not _nonempty_nfc(provenance.evidence_key)
+            not _valid_provenance(provenance)
             or provenance.evidence_key in evidence_keys
             or provenance.evidence_index_ref != request.evidence_index_ref
             or not isinstance(candidate.content_text, SensitiveText)
@@ -412,14 +431,39 @@ def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
                 or signal.stage not in (EvidenceSearchStage.LEXICAL, EvidenceSearchStage.DENSE)
                 or isinstance(signal.rank, bool)
                 or signal.rank <= 0
+                or signal.rank in stage_ranks.setdefault(signal.stage, set())
+                or not isinstance(signal.score, CanonicalScore)
+                or not isinstance(signal.score.value, str)
+                or _CANONICAL_SCORE_RE.fullmatch(signal.score.value) is None
             ):
                 return False
             score = Decimal(signal.score.value)
             if not score.is_finite():
                 return False
             stages.add(signal.stage)
+            stage_ranks[signal.stage].add(signal.rank)
         evidence_keys.add(provenance.evidence_key)
-    return True
+    return all(ranks == set(range(1, len(ranks) + 1)) for ranks in stage_ranks.values())
+
+
+def _valid_provenance(value: KnowledgeEvidenceProvenance) -> bool:
+    return (
+        isinstance(value, KnowledgeEvidenceProvenance)
+        and all(
+            _nonempty_nfc(item)
+            for item in (
+                value.evidence_key,
+                value.knowledge_chunk_ref,
+                value.source_version,
+                value.locator,
+                value.canonicalization_spec_version,
+            )
+        )
+        and _valid_artifact_ref(value.evidence_index_ref)
+        and _valid_artifact_ref(value.source_snapshot_ref)
+        and isinstance(value.content_sha256, str)
+        and _SHA256_RE.fullmatch(value.content_sha256) is not None
+    )
 
 
 def _normalized_text(value: SensitiveText) -> str:
@@ -432,7 +476,8 @@ def _trigram_similarity(left: str, right: str) -> Decimal:
     denominator = max(len(left_trigrams), len(right_trigrams))
     if denominator == 0:
         return Decimal(0)
-    return Decimal(len(left_trigrams & right_trigrams)) / Decimal(denominator)
+    with localcontext(_DECIMAL_CONTEXT):
+        return Decimal(len(left_trigrams & right_trigrams)) / Decimal(denominator)
 
 
 def _trigrams(value: str) -> frozenset[str]:
@@ -459,7 +504,8 @@ def _content_hash(value: SensitiveText) -> str:
 
 
 def _canonical_decimal(value: Decimal) -> str:
-    quantized = value.quantize(_SCORE_PLACES)
+    with localcontext(_DECIMAL_CONTEXT):
+        quantized = value.quantize(_SCORE_PLACES)
     if quantized == 0:
         return "0"
     rendered = format(quantized, "f").rstrip("0").rstrip(".")
@@ -471,6 +517,19 @@ def _artifact_ref(artifact_code: str, version: str, payload: object) -> Immutabl
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return ImmutableArtifactRef(artifact_code, version, digest)
+
+
+def _decimal_context_payload() -> dict[str, object]:
+    return {"precision": _DECIMAL_CONTEXT.prec, "rounding": "ROUND_HALF_EVEN"}
+
+
+def _query_vector_sort_key(value: SyntheticDenseQueryVector) -> tuple[bytes, bytes, bytes]:
+    fingerprint = value.query_fingerprint
+    return (
+        fingerprint.algorithm.encode(),
+        fingerprint.key_version.encode(),
+        fingerprint.digest.encode(),
+    )
 
 
 def _artifact_dict(value: ImmutableArtifactRef) -> dict[str, str]:
@@ -547,6 +606,38 @@ def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
         minimum_similarity=value.minimum_similarity,
     )
     return expected.artifact_ref == value.artifact_ref
+
+
+def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
+    if not isinstance(value.query_vectors, tuple) or not value.query_vectors:
+        return False
+    fingerprints: set[QueryFingerprint] = set()
+    dimensions: set[int] = set()
+    for item in value.query_vectors:
+        if (
+            not isinstance(item, SyntheticDenseQueryVector)
+            or not _valid_fingerprint(item.query_fingerprint)
+            or item.query_fingerprint in fingerprints
+            or not isinstance(item.values, tuple)
+            or not item.values
+        ):
+            return False
+        vector = tuple(Decimal(component) for component in item.values)
+        if not all(component.is_finite() for component in vector) or all(component == 0 for component in vector):
+            return False
+        fingerprints.add(item.query_fingerprint)
+        dimensions.add(len(vector))
+    return len(dimensions) == 1
+
+
+def _valid_fingerprint(value: QueryFingerprint) -> bool:
+    return (
+        isinstance(value, QueryFingerprint)
+        and _nonempty_nfc(value.algorithm)
+        and _nonempty_nfc(value.key_version)
+        and isinstance(value.digest, str)
+        and _SHA256_RE.fullmatch(value.digest) is not None
+    )
 
 
 def _rerank_config_is_bound(value: VersionedRerankConfig) -> bool:
