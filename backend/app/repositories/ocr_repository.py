@@ -1,9 +1,10 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ConfirmationStatus, ExtractedField, OcrJob, OcrStatus
@@ -14,17 +15,32 @@ class OcrRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_active_job(self, *, document: MedicalDocument) -> OcrJob | None:
+    async def get_active_job(
+        self,
+        *,
+        document: MedicalDocument,
+        pending_created_after: datetime | None = None,
+    ) -> OcrJob | None:
+        active_status_filter: ColumnElement[bool] = OcrJob.ocr_status.in_([OcrStatus.PENDING, OcrStatus.PROCESSING])
+        if pending_created_after is not None:
+            active_status_filter = or_(
+                OcrJob.ocr_status == OcrStatus.PROCESSING,
+                and_(
+                    OcrJob.ocr_status == OcrStatus.PENDING,
+                    OcrJob.created_at >= pending_created_after,
+                ),
+            )
+
         result = await self.session.execute(
             select(OcrJob).where(
                 OcrJob.document_id == document.id,
-                OcrJob.ocr_status.in_([OcrStatus.PENDING, OcrStatus.PROCESSING]),
+                active_status_filter,
             )
         )
         return result.scalars().first()
 
-    async def create_job(self, *, document: MedicalDocument) -> OcrJob:
-        job = OcrJob(document_id=document.id, ocr_status=OcrStatus.PENDING)
+    async def create_job(self, *, document: MedicalDocument, ai_job_id: UUID | None = None) -> OcrJob:
+        job = OcrJob(document_id=document.id, ai_job_id=ai_job_id, ocr_status=OcrStatus.PENDING)
         self.session.add(job)
         await self.session.flush()
         await self.session.refresh(

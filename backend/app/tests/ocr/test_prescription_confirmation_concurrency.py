@@ -9,6 +9,7 @@ row lock이 없어도 요청이 직렬화되어 회귀를 잡지 못합니다.
 import asyncio
 from collections.abc import AsyncIterator, Generator
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -22,6 +23,7 @@ from starlette import status
 from app.core.db.databases import get_db_session
 from app.dependencies.services import get_ocr_engine
 from app.main import app, fastapi_app
+from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.prescriptions import Prescription, PrescriptionStatus
 from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 from app.tests.conftest import test_engine
@@ -139,7 +141,39 @@ async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
     return login.json()["access_token"]
 
 
-async def _upload_and_run_ocr(client: AsyncClient, *, access_token: str) -> tuple[str, str]:
+async def _seed_completed_ocr_job(*, document_id: str) -> str:
+    async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as session:
+        ocr_job = OcrJob(
+            document_id=UUID(document_id),
+            ocr_status=OcrStatus.COMPLETED,
+            completed_at=datetime.now(UTC),
+            engine_name="test",
+            model_version="test",
+            prompt_version="test",
+        )
+        session.add(ocr_job)
+        await session.flush()
+        session.add_all(
+            [
+                ExtractedField(
+                    ocr_job_id=ocr_job.id,
+                    medication_index=field.medication_index,
+                    field_type=FieldType(field.field_type),
+                    raw_value=field.raw_value,
+                    normalized_value=field.normalized_value,
+                    normalization_version=field.normalization_version,
+                    confidence_score=(
+                        Decimal(str(field.confidence_score)) if field.confidence_score is not None else None
+                    ),
+                )
+                for field in DEFAULT_RECOGNIZED_FIELDS
+            ]
+        )
+        await session.commit()
+        return str(ocr_job.id)
+
+
+async def _upload_and_prepare_ocr(client: AsyncClient, *, access_token: str) -> tuple[str, str]:
     headers = {"Authorization": f"Bearer {access_token}"}
     upload = await client.post(
         "/api/v1/documents",
@@ -148,14 +182,8 @@ async def _upload_and_run_ocr(client: AsyncClient, *, access_token: str) -> tupl
     )
     assert upload.status_code == status.HTTP_201_CREATED, upload.text
     document_id = upload.json()["data"]["document_id"]
-
-    ocr = await client.post(
-        f"/api/v1/documents/{document_id}/ocr-jobs",
-        json={"force_reprocess": True},
-        headers=headers,
-    )
-    assert ocr.status_code == status.HTTP_202_ACCEPTED, ocr.text
-    return document_id, ocr.json()["data"]["job_id"]
+    job_id = await _seed_completed_ocr_job(document_id=document_id)
+    return document_id, job_id
 
 
 async def _confirm_all_fields(client: AsyncClient, *, job_id: str, access_token: str) -> list[dict]:
@@ -178,7 +206,7 @@ async def _confirm_all_fields(client: AsyncClient, *, job_id: str, access_token:
 
 async def _prepare_reviewed_document(client: AsyncClient, *, label: str) -> tuple[str, str, str, list[dict]]:
     access_token = await _signup_and_login(client, label=label)
-    document_id, job_id = await _upload_and_run_ocr(client, access_token=access_token)
+    document_id, job_id = await _upload_and_prepare_ocr(client, access_token=access_token)
     fields = await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
     return access_token, document_id, job_id, fields
 

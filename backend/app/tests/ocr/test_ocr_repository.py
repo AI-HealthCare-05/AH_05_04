@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -90,6 +90,48 @@ async def test_get_by_ai_job_id_returns_none_when_unset(db_session: AsyncSession
     found = await OcrRepository(db_session).get_by_ai_job_id(ai_job_id=uuid4())
 
     assert found is None
+
+
+async def test_get_active_job_ignores_stale_pending_but_keeps_processing(
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=5)
+    stale_pending_document = await _create_document(db_session)
+    processing_document = await _create_document(db_session)
+
+    db_session.add_all(
+        [
+            OcrJob(
+                document_id=stale_pending_document.id,
+                ocr_status=OcrStatus.PENDING,
+                created_at=now - timedelta(minutes=10),
+            ),
+            OcrJob(
+                document_id=processing_document.id,
+                ocr_status=OcrStatus.PROCESSING,
+                created_at=now - timedelta(minutes=10),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    repository = OcrRepository(db_session)
+
+    assert (
+        await repository.get_active_job(
+            document=stale_pending_document,
+            pending_created_after=cutoff,
+        )
+        is None
+    )
+    assert (
+        await repository.get_active_job(
+            document=processing_document,
+            pending_created_after=cutoff,
+        )
+        is not None
+    )
 
 
 @pytest.mark.asyncio
