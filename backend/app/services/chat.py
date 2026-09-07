@@ -95,6 +95,36 @@ class ChatService:
             created_at=chat_session.created_at,
         )
 
+    async def get_latest_session_for_prescription(self, *, user: User, prescription_id: UUID) -> ChatSessionData:
+        # 재접속 복구 Backend 계약(#295): 기존 세션이 있으면 반환하고, 없으면 새로 만들지 않습니다.
+        prescription = await self._prescription_repo.get_owned(prescription_id=prescription_id, user_id=user.id)
+        if prescription is None:
+            raise ApiError(
+                status_code=404,
+                code="PRESCRIPTION_NOT_FOUND",
+                message="처방 정보를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
+            )
+
+        chat_session = await self._chat_repo.get_latest_session_for_prescription_owned(
+            prescription_id=prescription_id,
+            user_id=user.id,
+        )
+        if chat_session is None:
+            raise ApiError(
+                status_code=404,
+                code="CHAT_SESSION_NOT_FOUND",
+                message="대화 세션을 찾을 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
+            )
+
+        return ChatSessionData(
+            session_id=chat_session.id,
+            prescription_id=prescription.id,
+            session_status=str(chat_session.session_status),
+            created_at=chat_session.created_at,
+        )
+
     async def list_messages(self, *, user: User, session_id: UUID) -> list[ChatMessageData]:
         chat_session = await self._chat_repo.get_session_owned(session_id=session_id, user_id=user.id)
         if chat_session is None:
