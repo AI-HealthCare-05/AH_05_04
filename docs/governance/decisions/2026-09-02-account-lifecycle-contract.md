@@ -7,7 +7,7 @@
 | 결정일 | 2026-09-02 |
 | 결정자(제안) | 송은영 (Backend/DB) |
 | 추적 Issue | [#206](https://github.com/AI-HealthCare-05/AH_05_04/issues/206) |
-| 근거 문서 | 계정 기능 범위 확정(남한솔, 권가빈 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. 동의·외부 처리 범위 정리 §6/§8/§10(권가빈, 송은영 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. [[공통-S1] Account·Security·Privacy 계약·inventory](https://app.notion.com/p/S1-Account-Security-Privacy-inventory-3c6233603e278184ba03e3b231d8cf13?pvs=21). `요구사항_정의서.xlsx` `CH02_회원_동의` 시트 REQ-USR-007/008/009/010/020. |
+| 근거 문서 | 계정 기능 범위 확정(남한솔, 권가빈 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. 동의·외부 처리 범위 정리 §6/§8/§10(권가빈, 송은영 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. [[공통-S1] Account·Security·Privacy 계약·inventory](https://app.notion.com/p/S1-Account-Security-Privacy-inventory-3c6233603e278184ba03e3b231d8cf13?pvs=21). 요구사항정의서 `CH02_회원_동의` 시트 REQ-USR-007/008/009/010/020. |
 | 적용 범위 | User 계정 상태, 로그아웃 구현 기준, 비밀번호 재설정/회원탈퇴 API·transaction 경계 |
 
 ## 결정 1: 계정 상태 표현 + 세션 무효화 카운터
@@ -74,26 +74,26 @@ REQ-USR-009 설계메모는 "본인 확인 방식과 기존 세션 무효화 범
 
 0. **대상과 재인증의 정의.** 탈퇴 대상 계정은 요청 URL/body의 별도 파라미터가 아니라 **인증된 요청의 `get_request_user()` 결과(`user_id`)로만** 결정한다 — 다른 사용자의 계정 ID를 지정해 탈퇴시킬 수 있는 경로를 두지 않는다. "재인증"은 세션이 살아있다는 사실만으로 충족되지 않고, `services/auth.py`의 `authenticate()`와 동일한 경로로 **비밀번호 재입력을 검증**하는 것을 의미한다. 이 재인증 엔드포인트는 로그인(`/auth/login`)과 별개의 "비밀번호 맞춰보기" 경로가 되므로, 동일한 수준의 rate limit/lockout을 적용한다(정확한 수치는 결정 3과 같이 구현 PR에서 확정).
 1. 재인증 성공 → 최종확인 → **단일 transaction**으로 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at=now()` 커밋. 이 시점부터 즉시 재로그인 차단. 이 UPDATE는 `WHERE account_status = 'ACTIVE'` 조건부 원자적 전이로 구현하고, 영향받은 row가 0이면 이미 처리된 것으로 간주한다 — read-then-write로 구현하면 동시 중복 요청이 둘 다 커밋될 수 있다([#101](https://github.com/AI-HealthCare-05/AH_05_04/issues/101)과 동일한 클래스의 동시성 결함).
-2. 같은 요청은 멱등 처리한다 — 이미 `WITHDRAWAL_REQUESTED`/`WITHDRAWN`인 계정에 중복 탈퇴 요청이 오면(위 조건부 UPDATE의 영향 row 0건으로 식별) 새 transaction 없이 현재 상태를 반환한다. **이 멱등 처리는 재인증에 성공한 여러 요청이 거의 동시에 도착하는 좁은 경쟁 구간에만 적용된다.** 1번에서 `token_version`이 증가하고 나면 그 시점 이전에 발급된 access token은 결정 1의 재검증 로직에 의해 즉시 무효화되므로, 탈퇴가 실제로 반영된 뒤 도착하는 재요청은 이 멱등 로직에 도달하기 전에 `get_request_user()` 단계에서 표준 401로 차단된다. 즉 탈퇴 완료 후 상태를 조회하기 위한 별도 idempotency key나 인증 없는 상태 조회 경로는 두지 않는다 — 탈퇴 확정 API의 마지막 성공 응답을 화면에 보존해 안내하는 것으로 충분하며, 그 UX 처리는 #206 Frontend 리뷰 범위에서 다룬다.
-3. 실제 건강정보 삭제·보존 처리는 **비동기**로 진행하고, 완료 시 `account_status=WITHDRAWN`, `withdrawn_at=now()`로 전환한다. 부분 실패는 상태로 식별 가능해야 하며 재시도 가능해야 한다.
+2. 같은 요청은 멱등 처리한다 — 이미 `WITHDRAWAL_REQUESTED`/`WITHDRAWN`인 계정에 중복 탈퇴 요청이 오면(위 조건부 UPDATE의 영향 row 0건으로 식별) 새 transaction 없이 동일한 탈퇴 완료 응답을 반환한다. **이 멱등 처리는 재인증에 성공한 여러 요청이 거의 동시에 도착하는 좁은 경쟁 구간에만 적용된다.** 1번에서 `token_version`이 증가하고 나면 그 시점 이전에 발급된 access token은 결정 1의 재검증 로직에 의해 즉시 무효화되므로, 탈퇴가 실제로 반영된 뒤 도착하는 재요청은 이 멱등 로직에 도달하기 전에 `get_request_user()` 단계에서 표준 401로 차단된다. 즉 탈퇴 완료 후 상태를 조회하기 위한 별도 idempotency key나 인증 없는 상태 조회 경로는 두지 않는다 — 탈퇴 확정 API의 마지막 성공 응답을 화면에 보존해 안내하는 것으로 충분하며, 그 UX 처리는 #206 Frontend 리뷰 범위에서 다룬다.
+3. 실제 개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 탈퇴 기능을 실제 사용자에게 제공하는 구현 PR은 단순히 `PENDING` row만 만들고 종료하지 않으며, PM/Privacy가 확정한 삭제·보존 정책에 맞춰 삭제·보존 처리와 최종 계정 상태 전이를 함께 포함한다. 완료 시 `account_status=WITHDRAWN`, `withdrawn_at=now()`로 전환한다. 부분 실패는 사용자 화면에 노출하지 않더라도 운영·감사 관점에서 상태로 식별 가능해야 하며 재시도 가능해야 한다.
 
-   **초안(멘토 자문 후 확정) — 전용 `account_deletion_request` 테이블.** Track A `AI_JOB` 상태 머신을 재사용하지 않고, 삭제 처리 전용 테이블을 별도로 둔다.
-   - `account_deletion_request(id, user_id, status, requested_at, completed_at, failed_at, retry_count, last_error_code)`
-   - `status`: `PENDING` → `IN_PROGRESS` → `COMPLETED` | `FAILED`(재시도 가능)
+   **전용 `account_deletion_request` 테이블.** Track A `AI_JOB` 상태 머신을 재사용하지 않고, 삭제 처리 전용 테이블을 별도로 둔다.
+   - 최소 컬럼과 상태 전이 상세는 [계정 생명주기 후속 계약 v1](../../contracts/proposed/account-lifecycle-v1.md)의 `account_deletion_request` 테이블 계약을 따른다.
+   - `status`: `PENDING` → `IN_PROGRESS` → `COMPLETED` | `FAILED`(재시도 가능). `COMPLETED`는 terminal 상태다.
    - 1번의 `WITHDRAWAL_REQUESTED` 전이와 **같은 transaction**에서 `status=PENDING` row를 생성한다.
    - `account_status`는 로그인 가능 여부를 판단하는 게이트로만 유지하고, 삭제 진행 상태·재시도·실패 사유는 이 테이블이 전담한다 — AI_JOB은 단일 실행 단위(Provider 호출 1회) 기준으로 설계돼 있어 DB·백업·로그·외부 Provider에 걸친 다단계 삭제 작업과 도메인이 맞지 않는다.
-   - 이 테이블은 `EXT-PRIV-001`(외부 Privacy 승인) 관련 삭제 요청·완료 시각의 감사 기록 역할도 겸한다.
-   - **이 방향은 아직 확정이 아니다.** 멘토 자문 후 이 초안을 유지·수정할지 결정하고, 이 문단을 갱신한다.
-4. 실제 데이터 물리 삭제 실행은 `EXT-PRIV-001` 외부 Privacy 승인 전까지 수행하지 않는다 — 이 Decision은 상태 추적까지만 다루고 물리 삭제는 별도 승인 후 별도 PR로 분리한다.
+   - 이 테이블은 PM/Privacy 정책에 따른 삭제 요청·처리·완료·실패 시각의 감사 기록 역할도 겸한다.
+   - 실패 사유는 새 사용자 노출 오류 코드를 늘리지 않고, 필요 시 `TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `INTERNAL_ERROR` 같은 공통 내부 실패 사유를 재사용한다.
+4. 탈퇴 처리 상태는 사용자에게 조회 API나 앱 내부 알림으로 제공하지 않는다. Frontend는 탈퇴 확정 API의 마지막 성공 응답을 화면에 보존해 "탈퇴되었습니다." 수준의 완료 안내를 표시하고, 로컬 인증 정보를 제거한다. 완료 화면에 필요한 삭제·보존 안내 문구와 최종 완료 통지 여부는 PM/Privacy 정책에서 별도 확정한다.
 5. 탈퇴 확정(1번) 시점에 결정 1을 재사용해 해당 사용자의 `token_version`을 원자적으로 `+1`하고 `refresh_token` 쿠키를 종료한다 — REQ-USR-008의 "즉시 로그인 차단"은 `is_active=false`뿐 아니라 이미 발급된 access token의 즉시 무효화(결정 1의 재검증 로직)까지 포함한다.
 
 ## 제외
 
 - 보호자·멀티 프로필 계정 상태 (해당 없음, 본인 단일 계정 기준)
-- 동의 상태(`GRANTED`/`WITHDRAWN`) 자체의 모델링 — 별도 Decision
 - 실제 이메일 발송 Provider 연동
 - 비밀번호 재설정 rate limit 정확한 수치
-- 건강정보 실제 물리 삭제 실행 (`EXT-PRIV-001` 승인 후)
+- 개인정보·건강정보의 세부 보존 기간, 즉시 폐기 대상, 법정 보존 대상과 재가입 제한 여부의 정책 확정 — PM/Privacy 범위
+- 탈퇴 후 사용자-facing 상태 조회 API와 앱 내부 완료·실패 알림 — 제공하지 않음
 - 목적별 동의 상태(`GRANTED`/`WITHDRAWN`) 자체 모델링 — [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207)로 분리
 - 계정 이벤트(로그아웃·비밀번호 재설정·회원탈퇴) 감사 로그 저장 여부 — 이 Decision 범위에서 확정하지 않는다
 
