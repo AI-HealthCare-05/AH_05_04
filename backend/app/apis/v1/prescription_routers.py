@@ -92,6 +92,26 @@ async def get_latest_guide_for_prescription(
     )
 
 
+@prescription_router.get(
+    "/{prescription_id}/chat-session",
+    response_model=ChatSessionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_latest_chat_session_for_prescription(
+    prescription_id: UUID,
+    user: Annotated[User, Depends(get_request_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+) -> Response:
+    # 재접속 복구 Backend 계약(#295): 로그아웃·재로그인 등으로 Frontend가 session_id를
+    # 잃어도 처방 소유권 기준으로 기존 활성 Chat session을 다시 찾을 수 있게 합니다.
+    result = await chat_service.get_latest_session_for_prescription(user=user, prescription_id=prescription_id)
+
+    return Response(
+        content=ChatSessionResponse(data=result).model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
 @prescription_router.post(
     "/{prescription_id}/chat-sessions",
     response_model=ChatSessionResponse,

@@ -74,7 +74,7 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 | `ENV` | 없음(필수) | Worker 실행 환경: `local`, `staging`, `production` |
 | `REDIS_HOST` | `redis` | Redis hostname |
 | `REDIS_PORT` | `6379` | Redis port |
-| `REDIS_PASSWORD` | 없음 | Redis 인증값 |
+| `REDIS_PASSWORD` | local 없음 / non-local 필수 | Redis 인증값. `staging`, `production`에서는 빈 값과 placeholder를 startup에서 거부합니다. |
 | `REDIS_STREAM_NAME` | `oryak:jobs` | 실행 Stream |
 | `REDIS_CONSUMER_GROUP` | `ai-workers` | Consumer Group |
 | `REDIS_CONSUMER_NAME` | `ai-worker-local` | Consumer 식별자 |
@@ -99,8 +99,8 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 | `OCR_RESPONSE_MARGIN_SECONDS` | `5.0` | 결과 검증·저장을 위해 남겨두는 완료 여유 |
 
 실제 비밀번호를 저장소·로그·이슈·문서에 기록하지 않습니다.
-운영 Redis 외부 노출과 인증 설정은 별도 Infrastructure 작업의
-Production 차단 조건입니다.
+운영 Redis는 host port에 공개하지 않고 Docker 내부 network와 인증으로만 접근합니다.
+`staging`, `production` Worker는 `REDIS_PASSWORD`가 비어 있거나 `replace-with-` placeholder이면 시작하지 않습니다.
 `REDIS_SOCKET_TIMEOUT_SECONDS`는 `REDIS_BLOCK_MS / 1000`보다 길어야 합니다.
 이를 통해 정상적인 `XREADGROUP` blocking read가 socket timeout으로 먼저 중단되지 않도록 합니다.
 

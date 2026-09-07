@@ -3,12 +3,12 @@
 ## 현재 검증 상태
 
 - Source ingestion 단위 테스트: 253 passed
-- AI Worker 전체 테스트: 1944 passed, 8 skipped
+- AI Worker 전체 테스트: 1023 passed
 - PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 7 passed
 - Source/Catalog·Artifact Migration 테스트: 10 passed
 - 전체 Migration 테스트: 49 passed
-- Backend 전체 테스트: 966 passed, 2 skipped
-- Ruff 전체 검사 통과, 491 files already formatted
+- Backend·계약·통합 전체 테스트: 1088 passed, 2 skipped
+- Ruff 전체 검사 통과, 492 files already formatted
 - Mypy: 429개 핵심 소스 파일 통과
 - 실제 Worker 이미지에서 Source Snapshot adapter import·PostgreSQL 쿼리 통과
 - S3 호환 비공개 Object Storage adapter·SDK 계약 테스트 통과
