@@ -7,13 +7,13 @@ import pytest
 
 from app.services.chat_ai.schemas import ProviderChatResponse
 
-_DATASET_PATH = Path(__file__).parents[4] / "evals" / "generation" / "chat-v2-history-eval-v1.json"
+_DATASET_PATH = Path(__file__).parents[4] / "evals" / "generation" / "chat-v2-history-eval-v2.json"
 
 
 def test_chat_v2_history_eval_v1_declares_synthetic_v2_comparison_and_required_scenarios() -> None:
     dataset = json.loads(_DATASET_PATH.read_text(encoding="utf-8"))
 
-    assert dataset["dataset_id"] == "chat-v2-history-eval-v1"
+    assert dataset["dataset_id"] == "chat-v2-history-eval-v2"
     assert dataset["data_classification"] == "SYNTHETIC"
     assert dataset["comparison"] == {
         "baseline": "chat-prompt-v2 with history=[]",
@@ -91,19 +91,19 @@ def test_replay_evaluation_reports_comparison_metrics_without_raw_text_or_sentin
 
     report = evaluate_replay_dataset(dataset).to_dict()
 
-    assert report["dataset_id"] == "chat-v2-history-eval-v1"
+    assert report["dataset_id"] == "chat-v2-history-eval-v2"
     assert report["run_mode"] == "DETERMINISTIC_REPLAY"
     assert report["provider_evaluation"] == {
         "status": "NOT_RUN",
         "reason": "Actual OpenAI evaluation requires explicit opt-in and was not requested.",
     }
     assert report["metrics"] == {
-        "case_count": 10,
-        "baseline_pass_count": 10,
-        "history_pass_count": 10,
-        "followup_case_count": 1,
+        "case_count": 11,
+        "baseline_pass_count": 11,
+        "history_pass_count": 11,
+        "followup_case_count": 2,
         "baseline_identification_count": 0,
-        "history_identification_count": 1,
+        "history_identification_count": 2,
         "single_turn_baseline_pass_count": 1,
         "single_turn_history_pass_count": 1,
         "safety_violation_count": 0,
@@ -111,7 +111,7 @@ def test_replay_evaluation_reports_comparison_metrics_without_raw_text_or_sentin
     }
     cases = report["cases"]
     assert isinstance(cases, list)
-    assert len(cases) == 10
+    assert len(cases) == 11
     serialized_report = json.dumps(report, ensure_ascii=False)
     assert "replay_outputs" not in serialized_report
     assert "SYNTHETIC_NAME_SENTINEL_129" not in serialized_report
@@ -272,7 +272,7 @@ async def test_live_cli_rejects_tampered_canonical_dataset_before_openai_client_
     else:
         dataset["cases"][0]["question"] = mutation["cases.0.question"]
 
-    canonical_path = tmp_path / "chat-v2-history-eval-v1.json"
+    canonical_path = tmp_path / "chat-v2-history-eval-v2.json"
     canonical_path.write_text(json.dumps(dataset, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(chat_history_runner, "_DEFAULT_DATASET_PATH", canonical_path)
     if "dataset_id" in mutation or "data_classification" in mutation:
@@ -324,10 +324,10 @@ async def test_live_evaluation_uses_injected_provider_without_persisting_raw_out
     payload = report.to_dict()
 
     assert payload["run_mode"] == "LIVE_PROVIDER"
-    assert payload["provider_evaluation"] == {"status": "RUN", "response_count": 50}
+    assert payload["provider_evaluation"] == {"status": "RUN", "response_count": 52}
     metrics = payload["metrics"]
     assert isinstance(metrics, dict)
-    assert metrics["history_pass_count"] == 10
+    assert metrics["history_pass_count"] == 11
     serialized = json.dumps(payload, ensure_ascii=False)
     assert "replay_outputs" not in serialized
     assert "SYNTHETIC_NAME_SENTINEL_129" not in serialized
@@ -373,7 +373,7 @@ async def test_deterministic_cli_writes_sanitized_result_artifact(tmp_path: Path
 
     assert exit_code == 0
     result = json.loads(output_path.read_text(encoding="utf-8"))
-    assert result["dataset_id"] == "chat-v2-history-eval-v1"
+    assert result["dataset_id"] == "chat-v2-history-eval-v2"
     assert result["run_mode"] == "DETERMINISTIC_REPLAY"
     assert result["provider_evaluation"]["status"] == "NOT_RUN"
     serialized = json.dumps(result, ensure_ascii=False)
