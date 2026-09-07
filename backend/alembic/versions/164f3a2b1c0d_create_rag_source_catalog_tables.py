@@ -32,6 +32,102 @@ def _sql_in_list(values: Sequence[str]) -> str:
     return ", ".join(f"'{value}'" for value in values)
 
 
+_RAG_SOURCE_CATALOG_TABLES = (
+    "rag_medication_product_component",
+    "rag_medication_alias",
+    "rag_medication_ingredient",
+    "rag_medication_product",
+    "rag_source_snapshot_verification",
+    "rag_source_ingestion_run",
+    "rag_source_snapshot",
+    "rag_source_operation",
+    "rag_source_endpoint",
+    "rag_source",
+)
+
+_RAG_SOURCE_SNAPSHOT_IMMUTABLE_COLUMNS = (
+    "operation_id",
+    "source_version",
+    "raw_manifest_checksum",
+    "canonical_checksum",
+    "schema_version",
+    "parser_version",
+    "normalization_version",
+    "canonicalization_spec_version",
+    "record_count",
+    "rejected_record_count",
+    "collected_at",
+    "supersedes_snapshot_id",
+    "created_at",
+)
+
+
+def _ensure_downgrade_is_data_safe(connection: sa.engine.Connection) -> None:
+    for table_name in _RAG_SOURCE_CATALOG_TABLES:
+        connection.execute(sa.text(f"LOCK TABLE {table_name} IN ACCESS EXCLUSIVE MODE"))
+
+    non_empty_tables: list[str] = []
+    for table_name in _RAG_SOURCE_CATALOG_TABLES:
+        count = connection.execute(sa.text(f"SELECT count(*) FROM {table_name}")).scalar_one()
+        if count:
+            non_empty_tables.append(table_name)
+
+    if non_empty_tables:
+        joined_tables = ", ".join(non_empty_tables)
+        raise RuntimeError(
+            "Cannot downgrade revision 164f3a2b1c0d while RAG Source/Catalog data exists. "
+            f"Non-empty tables: {joined_tables}. Use a forward-fix migration or an approved backup and "
+            "data-retention rollback procedure instead."
+        )
+
+
+def _create_snapshot_immutability_guard() -> None:
+    immutable_checks = " OR\n                ".join(
+        f"OLD.{column_name} IS DISTINCT FROM NEW.{column_name}"
+        for column_name in _RAG_SOURCE_SNAPSHOT_IMMUTABLE_COLUMNS
+    )
+    op.execute(
+        sa.text(
+            f"""
+            CREATE OR REPLACE FUNCTION prevent_rag_source_snapshot_mutation()
+            RETURNS trigger AS $$
+            BEGIN
+                IF TG_OP = 'DELETE' THEN
+                    RAISE EXCEPTION 'rag_source_snapshot rows are append-only; use a forward-fix snapshot instead';
+                END IF;
+
+                IF {immutable_checks} THEN
+                    RAISE EXCEPTION 'rag_source_snapshot immutable fields cannot be updated; append verification rows or create a new snapshot';
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE TRIGGER trg_rag_source_snapshot_prevent_update
+            BEFORE UPDATE ON rag_source_snapshot
+            FOR EACH ROW
+            EXECUTE FUNCTION prevent_rag_source_snapshot_mutation()
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE TRIGGER trg_rag_source_snapshot_prevent_delete
+            BEFORE DELETE ON rag_source_snapshot
+            FOR EACH ROW
+            EXECUTE FUNCTION prevent_rag_source_snapshot_mutation()
+            """
+        )
+    )
+
+
 def upgrade() -> None:
     op.create_table(
         "rag_source",
@@ -427,8 +523,12 @@ def upgrade() -> None:
     op.create_index("idx_rag_medication_component_snapshot", "rag_medication_product_component", ["source_snapshot_id"])
     op.create_index("idx_rag_medication_component_ingredient", "rag_medication_product_component", ["ingredient_id"])
 
+    _create_snapshot_immutability_guard()
+
 
 def downgrade() -> None:
+    _ensure_downgrade_is_data_safe(op.get_bind())
+
     op.drop_index("idx_rag_medication_component_ingredient", table_name="rag_medication_product_component")
     op.drop_index("idx_rag_medication_component_snapshot", table_name="rag_medication_product_component")
     op.drop_table("rag_medication_product_component")
@@ -446,6 +546,9 @@ def downgrade() -> None:
     op.drop_table("rag_source_snapshot_verification")
     op.drop_index("idx_rag_source_ingestion_run_operation_status", table_name="rag_source_ingestion_run")
     op.drop_table("rag_source_ingestion_run")
+    op.execute("DROP TRIGGER IF EXISTS trg_rag_source_snapshot_prevent_delete ON rag_source_snapshot")
+    op.execute("DROP TRIGGER IF EXISTS trg_rag_source_snapshot_prevent_update ON rag_source_snapshot")
+    op.execute("DROP FUNCTION IF EXISTS prevent_rag_source_snapshot_mutation()")
     op.execute("DROP INDEX IF EXISTS uq_rag_source_snapshot_current")
     op.drop_index("idx_rag_source_snapshot_operation_status", table_name="rag_source_snapshot")
     op.drop_table("rag_source_snapshot")
