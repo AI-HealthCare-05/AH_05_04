@@ -22,8 +22,12 @@ Cache-Control: no-store 및 Backend의 허용 Origin 기반 CORS 정책을 따�
 파일 자체의 전체 크기를 확인하지 않았으므로 rejected_value는 null이다.
 
 오류 응답 전용 경로는 OpenAPI에서 제외하고 Nginx의 internal location으로
-직접 접근을 차단한다. include_in_schema=False 자체는 접근 통제가 아니다.
-Backend 포트 직접 접근에 대한 네트워크 통제는 별도 배포 설정에 따른다.
+Nginx를 경유한 직접 접근을 404로 차단한다. include_in_schema=False 자체는 접근 통제가 아니다.
+운영 Compose(`infra/docker/docker-compose.prod.yml`)는 FastAPI 포트를 host에 publish하지 않는다.
+Nginx는 공유 `ws` 네트워크에서 `fastapi:8000`으로 연결한다. 이 경계는 외부 클라이언트의
+host 포트 우회를 막으며, 같은 Docker 네트워크의 컨테이너를 인증하는 기능은 아니다.
+개발용 Compose의 8000 포트 공개는 로컬 개발용이며 운영 배포에 사용하지 않는다.
+배포 시 최종 Compose 설정과 실행 컨테이너에서도 FastAPI host port binding이 없는지 확인한다.
 
 이 처리는 Backend가 정상적으로 응답할 수 있는 경우를 기준으로 한다.
 Backend 장애로 발생하는 프록시 오류는 이 업로드 오류 변환의 범위 밖이다.

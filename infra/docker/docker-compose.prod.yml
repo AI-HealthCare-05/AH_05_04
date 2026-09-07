@@ -126,8 +126,7 @@ services:
       - media_volume:/app/media
 
     restart: always
-    ports:
-      - "8000:8000"
+    # 운영 API 요청은 Nginx를 통해 받고, FastAPI는 내부 네트워크로 연결합니다.
     networks:
       - ws
     depends_on:
