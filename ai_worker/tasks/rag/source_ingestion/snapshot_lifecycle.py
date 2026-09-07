@@ -1,0 +1,267 @@
+"""검증된 Source 수집 결과를 Snapshot 이력에 연결하는 계약입니다."""
+
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from typing import Protocol
+from uuid import UUID
+
+from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
+
+SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
+
+
+class SnapshotIngestionDecision(StrEnum):
+    """검증된 수집 결과와 기존 Snapshot을 비교한 결과입니다."""
+
+    CREATED = "CREATED"
+    NO_CHANGE = "NO_CHANGE"
+    SOURCE_VERSION_CONFLICT = SOURCE_VERSION_CONFLICT
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotReference:
+    """수집 결과 비교에 필요한 기존 Snapshot의 최소 정보입니다."""
+
+    snapshot_id: UUID
+    source_version: str
+    canonical_checksum: str
+    schema_version: str
+    parser_version: str
+    normalization_version: str
+    canonicalization_spec_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotIngestionMetadata:
+    """검증 결과 외에 Source 수집 실행 계층이 선택하는 저장 메타데이터입니다."""
+
+    source_version: str
+    schema_version: str
+    parser_version: str
+    normalization_version: str
+    rejected_record_count: int
+    run_group_key: str
+    attempt_number: int
+    started_at: datetime
+    finished_at: datetime
+    collected_at: datetime
+    duration_ms: int | None = None
+    verified_by: str | None = None
+
+    def __post_init__(self) -> None:
+        required_text = (
+            self.source_version,
+            self.schema_version,
+            self.parser_version,
+            self.normalization_version,
+            self.run_group_key,
+        )
+        if any(not value.strip() for value in required_text):
+            raise ValueError("Snapshot 저장 version과 run group은 비어 있을 수 없습니다.")
+        if self.rejected_record_count < 0:
+            raise ValueError("rejected_record_count는 0 이상이어야 합니다.")
+        if self.attempt_number < 1:
+            raise ValueError("attempt_number는 1 이상이어야 합니다.")
+        if self.duration_ms is not None and self.duration_ms < 0:
+            raise ValueError("duration_ms는 0 이상이어야 합니다.")
+        for timestamp in (self.started_at, self.finished_at, self.collected_at):
+            if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+                raise ValueError("Snapshot 저장 시각은 timezone-aware 값이어야 합니다.")
+        if self.finished_at < self.started_at:
+            raise ValueError("finished_at은 started_at보다 빠를 수 없습니다.")
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotCreateRequest:
+    operation_id: UUID
+    ingestion: ProductIngestionResult
+    metadata: SnapshotIngestionMetadata
+    supersedes_snapshot_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotRunRecord:
+    operation_id: UUID
+    snapshot_id: UUID | None
+    run_group_key: str
+    attempt_number: int
+    run_status: str
+    started_at: datetime
+    finished_at: datetime
+    duration_ms: int | None
+    failure_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotPersistenceResult:
+    decision: SnapshotIngestionDecision
+    operation_id: UUID
+    snapshot_id: UUID | None
+
+
+class SnapshotLifecycleRepository(Protocol):
+    """한 DB transaction 안에서 Snapshot lifecycle을 저장하는 포트입니다."""
+
+    async def lock_operation(self, identity: SourceOperationIdentity) -> UUID:
+        """Operation을 조회해 잠그고, 없으면 ValueError를 발생시킵니다."""
+        ...
+
+    async def get_snapshot_by_version(
+        self,
+        *,
+        operation_id: UUID,
+        source_version: str,
+    ) -> SnapshotReference | None: ...
+
+    async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None: ...
+
+    async def create_snapshot(self, request: SnapshotCreateRequest) -> UUID: ...
+
+    async def append_verification(
+        self,
+        *,
+        snapshot_id: UUID,
+        result: str,
+        verified_at: datetime,
+        verified_by: str | None,
+    ) -> None: ...
+
+    async def create_run(self, record: SnapshotRunRecord) -> None: ...
+
+
+def decide_snapshot_ingestion(
+    *,
+    ingestion: ProductIngestionResult,
+    metadata: SnapshotIngestionMetadata,
+    same_version: SnapshotReference | None,
+    latest: SnapshotReference | None,
+) -> tuple[SnapshotIngestionDecision, SnapshotReference | None]:
+    """동일 version 충돌을 우선 차단하고 직전 내용과 변화 여부를 판단합니다."""
+    if same_version is not None:
+        if not _has_same_canonical_contract(same_version, ingestion=ingestion, metadata=metadata):
+            return SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT, same_version
+        return SnapshotIngestionDecision.NO_CHANGE, same_version
+
+    if latest is not None and _has_same_canonical_contract(latest, ingestion=ingestion, metadata=metadata):
+        return SnapshotIngestionDecision.NO_CHANGE, latest
+
+    return SnapshotIngestionDecision.CREATED, latest
+
+
+async def persist_product_ingestion_result(
+    *,
+    repository: SnapshotLifecycleRepository,
+    ingestion: ProductIngestionResult,
+    metadata: SnapshotIngestionMetadata,
+) -> SnapshotPersistenceResult:
+    """검증된 결과를 현재 transaction에 기록하며 commit은 호출자가 담당합니다."""
+    if metadata.rejected_record_count > ingestion.record_count:
+        raise ValueError("rejected_record_count는 record_count를 초과할 수 없습니다.")
+
+    operation_id = await repository.lock_operation(ingestion.identity)
+    same_version = await repository.get_snapshot_by_version(
+        operation_id=operation_id,
+        source_version=metadata.source_version,
+    )
+    latest = await repository.get_latest_snapshot(operation_id=operation_id)
+    decision, comparison_snapshot = decide_snapshot_ingestion(
+        ingestion=ingestion,
+        metadata=metadata,
+        same_version=same_version,
+        latest=latest,
+    )
+
+    if decision is SnapshotIngestionDecision.CREATED:
+        snapshot_id = await repository.create_snapshot(
+            SnapshotCreateRequest(
+                operation_id=operation_id,
+                ingestion=ingestion,
+                metadata=metadata,
+                supersedes_snapshot_id=(comparison_snapshot.snapshot_id if comparison_snapshot is not None else None),
+            )
+        )
+        await repository.append_verification(
+            snapshot_id=snapshot_id,
+            result="PASSED",
+            verified_at=metadata.finished_at,
+            verified_by=metadata.verified_by,
+        )
+        run_status = "SUCCEEDED_WITH_REJECTIONS" if metadata.rejected_record_count else "SUCCEEDED"
+        await repository.create_run(
+            _run_record(
+                operation_id=operation_id,
+                snapshot_id=snapshot_id,
+                metadata=metadata,
+                run_status=run_status,
+            )
+        )
+        return SnapshotPersistenceResult(decision, operation_id, snapshot_id)
+
+    if comparison_snapshot is None:
+        raise RuntimeError("Snapshot 비교 결과가 없습니다.")
+
+    if decision is SnapshotIngestionDecision.NO_CHANGE:
+        await repository.append_verification(
+            snapshot_id=comparison_snapshot.snapshot_id,
+            result="NO_CHANGE",
+            verified_at=metadata.finished_at,
+            verified_by=metadata.verified_by,
+        )
+        await repository.create_run(
+            _run_record(
+                operation_id=operation_id,
+                snapshot_id=comparison_snapshot.snapshot_id,
+                metadata=metadata,
+                run_status="NO_CHANGE",
+            )
+        )
+        return SnapshotPersistenceResult(decision, operation_id, comparison_snapshot.snapshot_id)
+
+    await repository.create_run(
+        _run_record(
+            operation_id=operation_id,
+            snapshot_id=None,
+            metadata=metadata,
+            run_status="FAILED",
+            failure_code=SOURCE_VERSION_CONFLICT,
+        )
+    )
+    return SnapshotPersistenceResult(decision, operation_id, None)
+
+
+def _run_record(
+    *,
+    operation_id: UUID,
+    snapshot_id: UUID | None,
+    metadata: SnapshotIngestionMetadata,
+    run_status: str,
+    failure_code: str | None = None,
+) -> SnapshotRunRecord:
+    return SnapshotRunRecord(
+        operation_id=operation_id,
+        snapshot_id=snapshot_id,
+        run_group_key=metadata.run_group_key,
+        attempt_number=metadata.attempt_number,
+        run_status=run_status,
+        started_at=metadata.started_at,
+        finished_at=metadata.finished_at,
+        duration_ms=metadata.duration_ms,
+        failure_code=failure_code,
+    )
+
+
+def _has_same_canonical_contract(
+    snapshot: SnapshotReference,
+    *,
+    ingestion: ProductIngestionResult,
+    metadata: SnapshotIngestionMetadata,
+) -> bool:
+    return (
+        snapshot.canonical_checksum == ingestion.canonical_checksum
+        and snapshot.schema_version == metadata.schema_version
+        and snapshot.parser_version == metadata.parser_version
+        and snapshot.normalization_version == metadata.normalization_version
+        and snapshot.canonicalization_spec_version == ingestion.canonicalization_spec_version
+    )

@@ -2,9 +2,11 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 166 passed
-- 실제 MFDS 호출과 DB 저장은 이번 단위 테스트에 포함하지 않는다.
-- Snapshot 생성·승인·Runtime 활성화는 아직 연결하지 않았다.
+- Source ingestion 단위 테스트: 180 passed
+- AI Worker 전체 테스트: 1863 passed, 8 skipped
+- SQLAlchemy 저장 어댑터는 SQL·transaction 소유권 단위 테스트까지 확인했다.
+- 실제 MFDS 호출과 PostgreSQL 통합 검증은 이번 단위 테스트에 포함하지 않는다.
+- Snapshot 승인·Runtime 활성화는 아직 연결하지 않았다.
 
 ## 구현한 범위
 
@@ -28,6 +30,13 @@
 - Receipt 필드 누락과 bool·int 타입 혼동을 중첩 계약까지 exact-match로 차단
 - 제품 성공·빈 결과·인증 실패·일일 한도·schema drift 필수 fixture 시나리오 검증
 - Receipt hash·Raw Manifest checksum·canonical checksum·버전·record count를 묶은 `ProductIngestionResult` 계약 추가
+- 검증 결과에 Source version·schema·parser·normalization version과 실행 metadata를 결합하는 저장 계약 추가
+- Source·Endpoint·Operation exact-match 조회와 Operation 행 잠금 경계 추가
+- 신규 결과를 승인 전 `PENDING` Snapshot과 append-only 검증·수집 이력으로 저장
+- 동일 canonical 내용과 동일 version 계약의 재수집을 기존 Snapshot의 `NO_CHANGE` 이력으로 저장
+- 동일 외부 Source version의 canonical 내용 또는 version 계약 변경을 `SOURCE_VERSION_CONFLICT`로 차단
+- 직전 Snapshot 기준 비교로 `A → B → A`를 세 개의 append-only Snapshot으로 보존
+- commit·rollback은 Worker 실행 transaction이 소유하고 저장 어댑터가 직접 실행하지 않도록 분리
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -59,23 +68,28 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 결과를 덮어쓰지 않고 새 Source 전용 규칙과 버전을 추가한다.
 검색용 파생값과 Resource 경로 정규화는 별도 범위로 다룬다.
 
-## #164 연결 후 남은 범위
+## #164 연결 후 반영한 범위
+
+- #291의 Source·Endpoint·Operation·Snapshot·Verification·Ingestion Run 테이블 연결
+- 수집 실행 계층이 선택한 `source_version`, schema·parser·normalization version과 실행 metadata 전달
+- 같은 Operation의 lifecycle 판단 전 행 잠금
+- 신규 Snapshot 후보 생성과 `PASSED` 검증·성공 Run 기록
+- `NO_CHANGE`, `A → B → A`, 동일 Source version 충돌 판단과 append-only 이력
+- Snapshot 후보를 `PENDING`으로 유지해 승인과 Runtime 활성화가 자동으로 일어나지 않는 경계
+
+## 남은 범위
 
 - 접근 통제된 저장 계층과 Artifact Key 연결
 - 검증 이후에도 같은 원본을 사용하는 불변 저장 경계
-- #164에서 승인된 Source/Snapshot 저장 인터페이스와 Worker adapter 연결
-- Snapshot 상태 전이와 `NO_CHANGE`, A→B→A, 외부 version 충돌 검증
+- 실제 PostgreSQL에서의 저장·동시성·rollback 통합 검증
+- Snapshot 검증 상태의 `PENDING → CURRENT`, 기존 `CURRENT → STALE` 승인 전이
 - 이전 승인 Snapshot으로의 rollback 검증
+- Catalog 적재와 Runtime Bundle 활성화 연결
 
-위 항목은 #164의 Source·Snapshot 모델, migration, 제약과 저장
-인터페이스가 확정된 뒤 연결한다. 현재 `ProductIngestionResult`가
-저장 경계에 전달할 identity, Endpoint Receipt hash,
-Raw Manifest checksum, canonical checksum,
-canonicalization spec version과 record count를 제공한다.
-
-PR #291의 `RagSourceSnapshotCreate` 저장 계약에 연결하려면 현재
-`ProductIngestionResult`에 없는 다음 6개 값을 #164 저장 adapter 경계에서
-확정해 함께 전달해야 한다.
+현재 `ProductIngestionResult`가 identity, Endpoint Receipt hash,
+Raw Manifest checksum, canonical checksum, canonicalization spec version과
+record count를 제공한다. 저장 호출자는 다음 값을 원본이나 checksum에서
+추론하지 않고 승인된 수집 실행 provenance에 따라 함께 전달한다.
 
 - `source_version`
 - `schema_version`
@@ -83,9 +97,11 @@ PR #291의 `RagSourceSnapshotCreate` 저장 계약에 연결하려면 현재
 - `normalization_version`
 - `rejected_record_count`
 - `collected_at`
+- `run_group_key`, `attempt_number`, 실행 시작·종료 시각
 
-이 값들은 원본 또는 checksum에서 임의로 추론하지 않으며 #164에서 승인된
-Source·Snapshot 저장 인터페이스와 수집 실행 provenance를 기준으로 채운다.
+DB commit·rollback은 기존 Worker transaction 경계를 재사용한다. 동일
+Operation의 판단과 저장은 Operation 행 잠금 뒤 실행해 동시 수집이 서로 다른
+결정을 내리지 않도록 한다.
 
 DUR·환자용 복약정보의 기존 차단 상태는 유지한다.
 평가 Runner 전체 완료를 Parser 단위 작업의 선행조건으로 추가하지 않는다.
