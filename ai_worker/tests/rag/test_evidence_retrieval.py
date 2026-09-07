@@ -1538,6 +1538,36 @@ def test_synthetic_search_adapter_ranks_exact_before_trigram_matches() -> None:
     assert first.hits[1].stage_score.value < "1"
 
 
+def test_lexical_adapter_rejects_numeric_threshold_payload() -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 근거"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "lexical-config",
+        "lexical-config@synthetic-1",
+        trigram_similarity_threshold=cast(str, 0.3),
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter")).search(
+        request, EvidenceSearchStage.LEXICAL
+    )
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
 def test_synthetic_search_adapter_keeps_exact_first_when_trigram_score_is_one() -> None:
     records = (
         SyntheticEvidenceRecord(
@@ -2161,7 +2191,15 @@ def test_dense_config_hash_is_independent_of_query_vector_input_order() -> None:
 
 @pytest.mark.parametrize(
     "mutation",
-    ["missing-query", "duplicate-query", "dimension-mismatch", "zero-vector", "nonfinite-vector", "bad-threshold"],
+    [
+        "missing-query",
+        "duplicate-query",
+        "dimension-mismatch",
+        "zero-vector",
+        "nonfinite-vector",
+        "bad-threshold",
+        "numeric-threshold",
+    ],
 )
 def test_dense_adapter_rejects_invalid_configuration_boundaries(mutation: str) -> None:
     record = SyntheticEvidenceRecord(
@@ -2191,8 +2229,10 @@ def test_dense_adapter_rejects_invalid_configuration_boundaries(mutation: str) -
         query_vectors = (SyntheticDenseQueryVector(fingerprint(), ("0", "0")),)
     elif mutation == "nonfinite-vector":
         query_vectors = (SyntheticDenseQueryVector(fingerprint(), ("NaN", "0")),)
-    else:
+    elif mutation == "bad-threshold":
         threshold = "1.1"
+    else:
+        threshold = cast(str, 0)
     dense_config = VersionedDenseSearchConfig.create(
         "dense-config",
         "dense-config@synthetic-1",
@@ -2369,7 +2409,14 @@ def test_rerank_adapter_rejects_invalid_candidate_set_shape(mutation: str) -> No
 
 @pytest.mark.parametrize(
     "mutation",
-    ["invalid-weight-sum", "zero-top-k", "bool-top-k", "duplicate-stage", "nonfinite-score"],
+    [
+        "invalid-weight-sum",
+        "numeric-weight",
+        "zero-top-k",
+        "bool-top-k",
+        "duplicate-stage",
+        "nonfinite-score",
+    ],
 )
 def test_rerank_adapter_rejects_invalid_configuration_and_signals(mutation: str) -> None:
     stage_signals = (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),)
@@ -2387,6 +2434,8 @@ def test_rerank_adapter_rejects_invalid_configuration_and_signals(mutation: str)
     top_k: int = 1
     if mutation == "invalid-weight-sum":
         lexical_weight = dense_weight = "0.6"
+    elif mutation == "numeric-weight":
+        lexical_weight = cast(str, 1)
     elif mutation == "zero-top-k":
         top_k = 0
     elif mutation == "bool-top-k":

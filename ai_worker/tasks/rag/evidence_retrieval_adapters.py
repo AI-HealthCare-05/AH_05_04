@@ -193,6 +193,7 @@ class VersionedEvidenceRerankAdapter:
         try:
             if (
                 request.rerank_config_ref != self.config.artifact_ref
+                or not _valid_rerank_config(self.config)
                 or not _rerank_config_is_bound(self.config)
                 or request.projection_version != RERANK_INPUT_PROJECTION_VERSION
                 or request.input_set_hash
@@ -267,6 +268,7 @@ class SyntheticEvidenceSearchAdapter:
             if (
                 stage is not EvidenceSearchStage.LEXICAL
                 or request.lexical_config_ref != self.lexical_config.artifact_ref
+                or not _valid_lexical_config(self.lexical_config)
                 or not _lexical_config_is_bound(self.lexical_config)
             ):
                 return EvidenceSearchFailure()
@@ -609,6 +611,12 @@ def _lexical_config_is_bound(value: VersionedLexicalSearchConfig) -> bool:
     return expected.artifact_ref == value.artifact_ref
 
 
+def _valid_lexical_config(value: VersionedLexicalSearchConfig) -> bool:
+    return isinstance(value, VersionedLexicalSearchConfig) and _is_canonical_decimal(
+        value.trigram_similarity_threshold
+    )
+
+
 def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
     expected = VersionedDenseSearchConfig.create(
         value.artifact_ref.artifact_code,
@@ -622,6 +630,7 @@ def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
 def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
     if (
         not isinstance(value, VersionedDenseSearchConfig)
+        or not _is_canonical_decimal(value.minimum_similarity)
         or not isinstance(value.query_vectors, tuple)
         or not value.query_vectors
     ):
@@ -669,3 +678,13 @@ def _rerank_config_is_bound(value: VersionedRerankConfig) -> bool:
         top_k=value.top_k,
     )
     return expected.artifact_ref == value.artifact_ref
+
+
+def _valid_rerank_config(value: VersionedRerankConfig) -> bool:
+    return (
+        isinstance(value, VersionedRerankConfig)
+        and _is_canonical_decimal(value.lexical_weight)
+        and _is_canonical_decimal(value.dense_weight)
+        and isinstance(value.top_k, int)
+        and not isinstance(value.top_k, bool)
+    )

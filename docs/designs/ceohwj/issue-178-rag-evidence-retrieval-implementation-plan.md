@@ -1095,6 +1095,7 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] `SyntheticEvidenceRecord`, `SyntheticEvidenceIndex`, `VersionedLexicalSearchConfig`를 frozen/slots로 구현한다.
 - [x] 기존 `LEXICAL` stage 내부에서 normalized substring exact와 synthetic pg_trgm-shaped set similarity를 실행한다.
 - [x] score 내림차순, UTF-8 evidence key 오름차순, `lexical_limit`을 적용한다.
+- [x] trigram threshold를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
 - [x] config·Index payload와 artifact SHA-256을 재계산해 detached payload를 typed failure로 거부한다.
 
 ### Task B: fingerprint-bound dense adapter
@@ -1108,6 +1109,7 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] `SyntheticDenseQueryVector`, `VersionedDenseSearchConfig`를 추가한다.
 - [x] raw query 없이 fingerprint와 문자열 Decimal vector만 config artifact에 포함한다.
 - [x] query vector 누락·중복, dimension mismatch, zero/non-finite/non-string vector, mutable record collection과 threshold 오류를 typed failure로 닫는다.
+- [x] dense threshold를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
 - [x] query vector 입력 순서와 caller Decimal context가 artifact/score/정렬을 바꾸지 않는지 검증한다.
 - [x] `DENSE` stage Receipt에 실제 config와 adapter artifact를 반환한다.
 
@@ -1122,6 +1124,7 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] `VersionedRerankConfig`, `VersionedEvidenceRerankAdapter`를 구현한다.
 - [x] `knowledge-rerank-input-v1` projection hash를 adapter에서 재계산한다.
 - [x] weight 합 `1`, positive `top_k`, unique candidate key와 unique stage signal을 검증한다.
+- [x] rerank weight를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
 - [x] malformed provenance·score, empty candidate set과 stage rank 충돌을 typed failure로 거부한다.
 - [x] weighted score 내림차순, UTF-8 evidence key 오름차순으로 selection을 만든다.
 - [x] weight 변경 순위, 동점 tie-break와 `top_k > selection_limit` Kernel fail-closed를 검증한다.

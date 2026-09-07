@@ -140,6 +140,7 @@ Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
 exact-match한다. frozen dataclass가 `replace` 또는 저수준 mutation으로 분리되었거나 record/key/vector가
 잘못된 경우 성공 Receipt를 만들지 않고 typed failure를 반환한다. Index records와 dense vector는 각각
 tuple이어야 하고, record·`SensitiveText`·canonical Decimal 문자열의 정확한 런타임 타입도 검증한다.
+Threshold와 rerank weight 역시 JSON number가 아닌 canonical Decimal 문자열만 허용한다.
 
 Lexical trigram 추출은 [PostgreSQL pg_trgm 문서](https://www.postgresql.org/docs/17/pgtrgm.html)의 원칙에 따라
 비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인다. 다만 이 구현은 synthetic fixture
