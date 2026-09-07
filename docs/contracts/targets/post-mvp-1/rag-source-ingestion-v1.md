@@ -84,6 +84,36 @@ Snapshot은 다음 정보를 불변으로 보존한다.
 
 `schema_version`은 외부 응답 Envelope·필수 필드 계약이고 `parser_version`은 해당 구조를 읽는 코드·배포 Artifact 버전이다. `normalization_version`과 함께 각각 기록하며 같은 Raw Artifact 재처리도 기존 Run을 덮어쓰지 않는다.
 
+### MFDS 제품 허가정보 canonicalization 계약
+
+`MFDS_PRODUCT_APPROVAL / MFDS_PRODUCT_APPROVAL_API / LIST_APPROVED_PRODUCTS`의 제품 canonicalization은 `mfds-product-approval@1`을 사용한다.
+
+- 원문 문자열의 Unicode 형태와 앞뒤 공백을 그대로 보존하며 NFC와 trim을 적용하지 않는다.
+- 숫자형 문자열을 숫자로 변환하지 않고 문자열·정수·boolean·null·빈 문자열·필드 누락을 구분한다.
+- 정수는 `-(2^53)+1`부터 `2^53-1`까지 허용하고 실수와 lone surrogate를 거부한다.
+- 모든 중첩 객체 key는 아래 canonical 문자열 comparator로 정렬하고 객체 안의 배열 순서는 유지한다.
+- 모든 성공 페이지의 제품 레코드를 합친 뒤 `ITEM_SEQ` 원문 값을 같은 canonical 문자열 comparator로 정렬한다. `ITEM_SEQ` 누락·타입 불일치·중복은 거부한다.
+- Canonical 문자열 comparator는 문자열을 UTF-16 big-endian으로 인코딩한 바이트열의 사전식 비교, 즉 UTF-16 code unit 순서다. 객체 key, `ITEM_SEQ`, `raw_manifest_checksum`의 Artifact Key에 모두 같은 comparator를 적용한다. code point 순서로 정렬하면 non-BMP 문자에서 결과가 갈린다 — `U+FFFD`(0xFFFD)와 `U+10000`(surrogate pair 0xD800 0xDC00)의 경우 code point 순서는 `U+FFFD`가 앞이지만 UTF-16 code unit 순서는 0xD800 < 0xFFFD이므로 `U+10000`이 앞이다. 구현 언어의 기본 문자열 비교에 의존하지 않고 이 comparator를 명시적으로 사용해야 같은 입력에서 같은 checksum이 재현된다.
+- MFDS JSON 응답에서 Parser 입력으로 포함하는 정확한 경로는 `response.body.items.item`이며, 최상위 `response` wrapper가 없는 응답에서는 `body.items.item`이다. `items`가 배열인 변형에서는 각 원소 또는 각 원소의 `item` 값만 같은 제품 레코드 목록으로 해석한다.
+- Operation Envelope에서 canonical checksum 입력에 포함하는 값은 위 제품 레코드 목록뿐이다. `response.header` 전체와 확인된 pagination 필드인 `response.body.totalCount`, `response.body.pageNo`, `response.body.numOfRows`는 제외한다. 최상위 `response` wrapper가 없는 응답에도 같은 상대 경로 제외 규칙을 적용한다. `response.body`에 `items`, `totalCount`, `pageNo`, `numOfRows` 이외의 필드가 있으면 자동 제외하지 않고 schema drift로 거부한다.
+- 제품 Operation의 `response.body`에서는 `items`, `pageNo`, `numOfRows`, `totalCount`를 모두 필수로 검증하고 pagination 세 필드는 boolean을 제외한 정수만 허용한다. `pageNo`는 1 이상, `totalCount`는 0 이상이어야 한다. 응답 `pageNo`는 요청한 `pageNo`와 정확히 같아야 하며 다르면 schema drift로 거부한다. `numOfRows`는 실응답 Receipt에서 값의 동일성 의미가 별도로 확정되지 않았으므로 존재와 타입만 검증하고 요청값과의 일치를 추정하지 않는다.
+- `items`가 객체 wrapper인 경우 정확히 `item` 필드 하나만 허용한다. 원본 JSON 객체의 중복 key와 JSON 표준 밖의 `NaN`, `Infinity`, `-Infinity`는 마지막 값으로 덮어쓰거나 값으로 유지하지 않고 모든 깊이에서 파싱 실패로 처리한다. 거부된 key 이름과 원문 값은 오류 메시지나 일반 로그에 포함하지 않는다.
+- 원본 Artifact의 크기와 SHA-256을 검증한 동일 바이트를 versioned MFDS decoder로 해석한다. 그 결과가 수집 중 기록된 page records·`totalCount`와 정확히 일치할 때만 canonical checksum을 계산한다.
+
+`ProductIngestionResult`는 검증 완료 경계에서 다음 값을 제공한다.
+
+| 필드 | 의미와 보장 |
+| --- | --- |
+| `identity` | 검증된 Source·Endpoint·Operation 식별자 |
+| `endpoint_receipt_hash` | 사용한 Endpoint Receipt 내용의 SHA-256 |
+| `raw_manifest_checksum` | 검증된 Raw Artifact 메타데이터 집합의 결정적 checksum |
+| `canonical_checksum` | 위 경로에서 같은 원본 바이트로 해석한 전체 제품 레코드의 canonical checksum |
+| `canonicalization_spec_version` | 적용한 불변 제품 canonicalization 규칙 version |
+| `record_count` | 원본 바이트에서 해석하고 checksum에 포함한 전체 레코드 수 |
+| `artifact_count` | 검증하고 수집 page와 일대일로 결속한 Raw Artifact 수 |
+
+이 결과는 Receipt·Fixture·Raw Artifact 무결성, 전체 수집 적격성, page와 원본의 결속, 제품 checksum의 결정성을 보장한다. Source version 생성, schema·parser·normalization version 선택, 거부 레코드 집계, 수집 시각, DB 저장·트랜잭션, Snapshot 상태 전이·승인·활성화와 `NO_CHANGE` 판정은 보장하지 않는다.
+
 ## 수집 파이프라인
 
 ```text
