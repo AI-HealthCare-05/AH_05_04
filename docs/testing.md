@@ -56,14 +56,57 @@ GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migrat
 bash scripts/ci/run_test.sh
 ```
 
+`tests/integration/` 전체를 PostgreSQL·Redis와 함께 재현하는 공식 로컬 명령은 다음과 같습니다.
+
+```bash
+docker compose --env-file envs/.local.env -f docker-compose.yml up -d postgres redis
+bash scripts/ci/run_integration_test.sh
+```
+
+통합 runner는 실행 중인 Compose의 실제 host port를 확인하고, 이름이 정확히 `test`인
+PostgreSQL 데이터베이스만 재생성한 뒤 Alembic migration과 `tests/integration/` 전체를
+실행합니다. 현재 `develop` 기준 수집 대상은 45건입니다. 각 테스트는 고유 schema와
+Redis Stream을 사용하고 fixture teardown에서 정리하며, runner의 임시 storage도 종료 시
+삭제됩니다. 실제 환자 데이터나 외부 CLOVA·OpenAI 호출은 사용하지 않습니다.
+
+`run_test.sh`와 `run_integration_test.sh`는 동시에 실행하지 않습니다. 두 runner 모두 이름이
+고정된 `test` 데이터베이스를 `DROP DATABASE ... WITH (FORCE)`로 재생성하고 통합테스트의
+고정 schema를 사용하므로, 동시 실행하면 상대 runner의 연결이나 schema를 제거할 수 있습니다.
+
+`run_integration_test.sh` 종료 코드는 다음과 같이 구분합니다. 기존 기본 runner인
+`run_test.sh`는 이전 동작을 유지하므로 환경 준비 실패도 `1`이며, 테스트가 전혀 없는
+초기 저장소에서는 `0`으로 skip합니다. 전체 통합 runner는 테스트 미발견을 환경 오류
+`2`로 처리해 실행 범위가 비어 있는 상태를 성공으로 오인하지 않습니다.
+
+| 종료 코드 | 의미 |
+| --- | --- |
+| `0` | migration과 통합테스트 전체 성공 |
+| `1` | migration 또는 pytest 실패 |
+| `2` | 환경파일·Compose·Docker·PostgreSQL·Redis 준비 실패 |
+
+`ENV_FILE`과 `COMPOSE_FILE`로 local/test 설정을 선택할 수 있지만, 경로에 `prod`가 포함된
+파일과 `ENV`가 `local` 또는 `test`가 아닌 환경은 Docker Compose를 해석하기 전에
+차단합니다. 실행 중인 서비스의 readiness는 약 30초 동안 재시도하며, 준비되지 않았다는
+안내가 나오면 출력된 `docker compose ... up -d` 명령과 Compose 로그를 확인한 뒤 다시
+시도합니다. 이 전체 통합 명령은 현재 GitHub Actions 필수 gate에는 포함되지 않으며,
+반복 안정성과 실행 시간을 확인한 뒤 [Issue #307](https://github.com/AI-HealthCare-05/AH_05_04/issues/307)에서
+편입 여부와 방식을 결정합니다. 현재 GitHub Actions의 선별 Redis 통합테스트는 로컬
+Compose의 동적 host port·인증 격리 대신, 인증 없는 service container와 고정 host port
+`127.0.0.1:6379`를 사용합니다.
+
 ### test runner가 격리하는 설정
 
-`run_test.sh`는 `uv run --env-file`로 `envs/.local.env` 전체를 주입하지만, 그 파일은 컨테이너용이라 host 실행에서 달라야 하는 값을 아래와 같이 덮어씁니다. uv가 shell 환경변수를 `--env-file`보다 우선 적용하는 성질을 사용합니다.
+`run_test.sh`와 `run_integration_test.sh`는 공용 test environment helper를 사용합니다.
+두 runner 모두 `uv run --env-file`로 `envs/.local.env` 전체를 주입하지만, 그 파일은
+컨테이너용이라 host 실행에서 달라야 하는 값을 아래와 같이 덮어씁니다. uv가 shell
+환경변수를 `--env-file`보다 우선 적용하는 성질을 사용합니다.
 
 | 설정 | test 실행 값 | 격리하는 이유 |
 | --- | --- | --- |
 | `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
 | `DB_USER`·`DB_PASSWORD` | 환경파일 값 사용(shell 값 제거) | 실행자 shell의 계정이 섞이지 않게 합니다 |
+| `REDIS_HOST`·`REDIS_PORT`·`TEST_REDIS_HOST`·`TEST_REDIS_PORT` | 두 runner의 Redis 의존 통합테스트에서 loopback과 Compose가 공개한 Redis port | 컨테이너 hostname이나 다른 Redis로 접속하지 않습니다 |
+| `REDIS_PASSWORD`·`TEST_REDIS_PASSWORD` | 두 runner의 Redis 의존 통합테스트에서 shell 값 제거 | 실행자 shell의 다른 Redis 인증정보가 섞이지 않게 합니다 |
 | `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다 |
 | `RELEASE_VALIDATION_ALLOWED` | `false` | local live 검증 절차가 켜두도록 안내하는 gate입니다 |
 | `OCR_STRUCTURE_LLM_ENABLED` | `false` | 위와 같습니다. 켜진 값이 필요한 테스트는 각자 `monkeypatch`로 설정합니다 |
