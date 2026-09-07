@@ -238,6 +238,18 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## Post-MVP-1 목표 스키마 — 미구현
 
+### Track B Schedule·Occurrence 착수 상태 (#199)
+
+`MedicationSchedule`, `MedicationScheduleTime`, `MedicationOccurrence` ORM과 Repository 골격은
+#169 Prescription Version과 병행 가능한 범위에서 먼저 준비한다. 상태 enum, revision별 local time,
+occurrence 중복 방지 기준과 aware datetime의 UTC 정규화는 단위 테스트로 고정한다.
+
+`prescription_version_medication`은 아직 현재 migration과 ORM에 없으므로
+`medication_schedule.prescription_version_medication_id`는 stable id placeholder이며, 기존
+`medication.id`로 fallback하지 않는다. 실제 FK, 약품별 schedule unique 제약, migration,
+SELF `profile_id` parent-chain 조회 adapter와 PostgreSQL upgrade/downgrade 검증은 #169 산출물 이후
+같은 기준으로 추가하기 전까지 미구현 상태다. 따라서 이 골격만으로 #199를 완료 또는 Close하지 않는다.
+
 Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐지만 아래 RAG/Eval 테이블과 제약은 현재 migration·모델에 구현된 것으로 간주하지 않습니다. 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK는 호환을 위해 `CHAR(36)`을 유지하고 신규 독립 RAG/Eval ID만 PostgreSQL native `UUID`를 허용합니다.
 
 | 영역 | 목표 테이블 | 목표 제약 |
