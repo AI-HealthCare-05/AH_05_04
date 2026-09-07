@@ -22,11 +22,26 @@ type Expression = Literal[
     "EXPRESSION_FRAGMENT",
     "EXPRESSION_LIMITED_TYPO",
 ]
+type NegativeType = Literal[
+    "SAME_FAMILY_DIFFERENT_ATTRIBUTE",
+    "SAME_TOPIC_DIFFERENT_FAMILY",
+    "LEXICAL_OVERLAP_UNSUPPORTED",
+    "CROSS_TOPIC_OVERLAP",
+]
 
 DATASET_CODE = "rag-natural-language-retrieval-dev"
 DATASET_VERSION = "1.0.0"
 FILE_PREFIX = "rag-natural-language-retrieval-dev-v1"
 CASE_DIRECTORY = f"retrieval/cases/{FILE_PREFIX}"
+INDEX_PATH = f"retrieval/evidence/resources/{FILE_PREFIX}/synthetic-knowledge-index.json"
+EVIDENCE_MAPPING_PATH = f"retrieval/evidence/{FILE_PREFIX}.evidence-mapping.json"
+
+NEGATIVE_TYPES: tuple[NegativeType, ...] = (
+    "SAME_FAMILY_DIFFERENT_ATTRIBUTE",
+    "SAME_TOPIC_DIFFERENT_FAMILY",
+    "LEXICAL_OVERLAP_UNSUPPORTED",
+    "CROSS_TOPIC_OVERLAP",
+)
 
 EXPRESSION_PLAN: tuple[tuple[Expression, Expression, Expression], ...] = (
     ("EXPRESSION_CANONICAL", "EXPRESSION_SYNONYM", "EXPRESSION_COLLOQUIAL"),
@@ -79,9 +94,26 @@ class BaseIntent:
 class EvidenceRecord:
     evidence_ref_id: str
     transform_origin: str
+    product_code: str
+    topic: Topic
     record_kind: Literal["GOLD", "HARD_NEGATIVE"]
     statement: str
     content_sha256: str
+    negative_type: NegativeType | None
+    adversarial_for_transform_origin: str | None
+
+    def to_json(self) -> dict[str, JsonValue]:
+        return {
+            "adversarial_for_transform_origin": self.adversarial_for_transform_origin,
+            "content_sha256": self.content_sha256,
+            "evidence_ref_id": self.evidence_ref_id,
+            "negative_type": self.negative_type,
+            "product_code": self.product_code,
+            "record_kind": self.record_kind,
+            "statement": self.statement,
+            "topic": self.topic,
+            "transform_origin": self.transform_origin,
+        }
 
 
 def _question(expression: Expression, product_code: str, subject: str) -> str:
@@ -263,8 +295,8 @@ BASE_INTENTS = (
 )
 
 _GRAPH_MEMBER_PATHS = (
-    f"retrieval/evidence/resources/{FILE_PREFIX}/synthetic-knowledge-index.json",
-    f"retrieval/evidence/{FILE_PREFIX}.evidence-mapping.json",
+    INDEX_PATH,
+    EVIDENCE_MAPPING_PATH,
     f"retrieval/manifests/{FILE_PREFIX}.critical-claim-rubric.json",
     f"retrieval/manifests/{FILE_PREFIX}.authoring-identities.json",
     f"retrieval/manifests/{FILE_PREFIX}.dataset.json",
@@ -274,6 +306,32 @@ _GRAPH_MEMBER_PATHS = (
     f"suites/{FILE_PREFIX}.suite.json",
     f"provenance/{FILE_PREFIX}.protected-artifact-receipt.json",
 )
+_IMPLEMENTED_GRAPH_PATHS = (INDEX_PATH, EVIDENCE_MAPPING_PATH)
+
+_TOPIC_OVERLAP_TERMS: dict[Topic, str] = {
+    "TOPIC_MEDICATION_INFORMATION": "제품 정보",
+    "TOPIC_PRECAUTIONS": "주의 안내",
+    "TOPIC_LIFESTYLE_MANAGEMENT": "생활 관리",
+    "TOPIC_STORAGE": "보관 안내",
+    "TOPIC_MISSED_DOSE": "복용 누락 안내",
+}
+
+_DRAFT_REVIEW_PROVENANCE: JsonValue = {
+    "approved_at": None,
+    "approved_by": None,
+    "authored_at": "2026-09-05T00:00:00.000000Z",
+    "authored_by": {
+        "actor_id": "ceohwj",
+        "namespace": "GITHUB_LOGIN",
+        "role": "EVALUATION_IMPLEMENTER",
+    },
+    "evidence_review_refs": [],
+    "external_medical_approval_receipt_ref": None,
+    "external_medical_review_status": "NOT_REQUESTED",
+    "reviewed_at": None,
+    "reviewed_by": None,
+    "team_gold_status": "DRAFT",
+}
 
 
 def _validate_catalog() -> None:
@@ -293,11 +351,140 @@ def _validate_catalog() -> None:
         raise RuntimeError("Issue 273 expression plan must produce ten cases per expression")
 
 
+def _record(
+    *,
+    evidence_ref_id: str,
+    transform_origin: str,
+    product_code: str,
+    topic: Topic,
+    record_kind: Literal["GOLD", "HARD_NEGATIVE"],
+    statement: str,
+    negative_type: NegativeType | None = None,
+    adversarial_for_transform_origin: str | None = None,
+) -> EvidenceRecord:
+    return EvidenceRecord(
+        evidence_ref_id=evidence_ref_id,
+        transform_origin=transform_origin,
+        product_code=product_code,
+        topic=topic,
+        record_kind=record_kind,
+        statement=statement,
+        content_sha256=sha256_hex(statement.encode("utf-8")),
+        negative_type=negative_type,
+        adversarial_for_transform_origin=adversarial_for_transform_origin,
+    )
+
+
+def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
+    records: list[EvidenceRecord] = []
+    for index, intent in enumerate(BASE_INTENTS):
+        origin_lower = intent.transform_origin.lower()
+        records.append(
+            _record(
+                evidence_ref_id=f"ev-nlr-{origin_lower}-gold",
+                transform_origin=intent.transform_origin,
+                product_code=intent.product_code,
+                topic=intent.topic,
+                record_kind="GOLD",
+                statement=(
+                    f"{intent.product_code} 제품의 {intent.gold_intent}는 이 평가용 가상 지식에서 "
+                    "해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
+                ),
+            )
+        )
+
+        topic_start = (index // 4) * 4
+        same_topic_intent = BASE_INTENTS[topic_start + ((index + 1) % 4)]
+        cross_topic_intent = BASE_INTENTS[(index + 4) % len(BASE_INTENTS)]
+        statements = (
+            (
+                intent.product_code,
+                f"{intent.product_code} 제품의 대조용 포장 순번은 이 합성 평가 자료에서 별도 항목으로 관리됩니다.",
+            ),
+            (
+                same_topic_intent.product_code,
+                f"{same_topic_intent.product_code} 제품의 {same_topic_intent.gold_intent}는 같은 주제에 "
+                f"속하지만 {intent.product_code} 질문의 근거가 아닙니다.",
+            ),
+            (
+                intent.product_code,
+                f"{intent.product_code} 제품 관련 {_TOPIC_OVERLAP_TERMS[intent.topic]} 자료의 목차를 "
+                "안내하지만, 질문에서 찾는 세부 속성은 제시하지 않습니다.",
+            ),
+            (
+                cross_topic_intent.product_code,
+                f"{cross_topic_intent.product_code} 제품의 {cross_topic_intent.gold_intent}는 "
+                f"{intent.product_code} 질문과 일부 표현만 겹치는 다른 주제의 합성 자료입니다.",
+            ),
+        )
+        for negative_number, (negative_type, (product_code, statement)) in enumerate(
+            zip(NEGATIVE_TYPES, statements, strict=True),
+            start=1,
+        ):
+            records.append(
+                _record(
+                    evidence_ref_id=f"ev-nlr-{origin_lower}-neg-{negative_number:02d}",
+                    transform_origin=intent.transform_origin,
+                    product_code=product_code,
+                    topic=intent.topic,
+                    record_kind="HARD_NEGATIVE",
+                    statement=statement,
+                    negative_type=negative_type,
+                    adversarial_for_transform_origin=intent.transform_origin,
+                )
+            )
+    return tuple(records)
+
+
+def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, ...]) -> bytes:
+    index_sha256 = sha256_hex(index_bytes)
+    entries: list[JsonValue] = []
+    for gold_number, record_index in enumerate(range(0, len(records), 5), start=1):
+        record = records[record_index]
+        entries.append(
+            {
+                "content_sha256": index_sha256,
+                "evidence_ref_id": record.evidence_ref_id,
+                "evidence_type": "KNOWLEDGE_CHUNK",
+                "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
+                "locator": f"$.records[{record_index}]",
+                "runtime_typed_ref": None,
+                "source_version": DATASET_VERSION,
+                "stable_key": f"SYNTHETIC_NLR_GOLD_{gold_number:03d}",
+                "target_kind": "FIXTURE_RECORD",
+            }
+        )
+    payload: dict[str, JsonValue] = {
+        "entries": entries,
+        "manifest_sha256": "0" * 64,
+        "mapping_id": f"{DATASET_CODE}-evidence",
+        "mapping_version": DATASET_VERSION,
+        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "schema_id": "rag-eval.evidence-mapping-manifest",
+        "schema_version": "1.2.0",
+    }
+    payload["manifest_sha256"] = canonical_sha256(
+        payload,
+        excluded_top_level_keys=frozenset({"manifest_sha256"}),
+    )
+    return canonical_json_bytes(payload)
+
+
 def build_issue_273_dev_graph() -> dict[str, bytes]:
     _validate_catalog()
     graph = {path: canonical_json_bytes({}) for path in _GRAPH_MEMBER_PATHS}
+    evidence_records = _build_evidence_records()
+    index_payload: JsonValue = {
+        "data_classification": "SYNTHETIC",
+        "index_id": f"{DATASET_CODE}-synthetic-index",
+        "index_version": DATASET_VERSION,
+        "records": [record.to_json() for record in evidence_records],
+    }
+    graph[INDEX_PATH] = canonical_json_bytes(index_payload)
+    graph[EVIDENCE_MAPPING_PATH] = _build_evidence_mapping(graph[INDEX_PATH], evidence_records)
     case_number = 1
     for intent in BASE_INTENTS:
+        gold_id = f"ev-nlr-{intent.transform_origin.lower()}-gold"
         for variant in intent.variants:
             case_id = f"rag-nlr-dev-{case_number:03d}"
             input_value: JsonValue = {
@@ -314,6 +501,8 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
                 "product_code": intent.product_code,
                 "query": variant.query,
                 "query_sha256": sha256_hex(variant.query.encode("utf-8")),
+                "relevant_evidence_refs": [gold_id],
+                "required_evidence_refs": [gold_id],
                 "topic": intent.topic,
                 "transform_origin": intent.transform_origin,
             }
@@ -323,7 +512,9 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
 
 
 def write_issue_273_dev_graph(evals_root: Path) -> None:
-    for relative_path, content in build_issue_273_dev_graph().items():
+    graph = build_issue_273_dev_graph()
+    for relative_path in _IMPLEMENTED_GRAPH_PATHS:
+        content = graph[relative_path]
         destination = evals_root / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)

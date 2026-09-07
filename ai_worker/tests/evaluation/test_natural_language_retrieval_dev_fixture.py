@@ -3,13 +3,25 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from pathlib import Path
 
+from ai_worker.tasks.evaluation.canonical import canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.natural_language_retrieval_dev_authoring import (
+    BASE_INTENTS,
     RESERVED_PRODUCT_CODES,
     build_issue_273_dev_graph,
 )
 
 CASE_PREFIX = "retrieval/cases/rag-natural-language-retrieval-dev-v1/"
+INDEX_PATH = "retrieval/evidence/resources/rag-natural-language-retrieval-dev-v1/synthetic-knowledge-index.json"
+MAPPING_PATH = "retrieval/evidence/rag-natural-language-retrieval-dev-v1.evidence-mapping.json"
+NEGATIVE_TYPES = {
+    "SAME_FAMILY_DIFFERENT_ATTRIBUTE",
+    "SAME_TOPIC_DIFFERENT_FAMILY",
+    "LEXICAL_OVERLAP_UNSUPPORTED",
+    "CROSS_TOPIC_OVERLAP",
+}
+EVALS_ROOT = Path(__file__).parents[3] / "evals"
 
 
 def test_issue_273_dev_graph_has_fixed_identity_and_distribution() -> None:
@@ -71,3 +83,95 @@ def test_issue_273_dev_graph_has_fixed_identity_and_distribution() -> None:
     )
     assert all(re.search(r"[가-힣]", case["query"]) for case in cases)
     assert all("SYNTHETIC_QUERY" not in case["query"] for case in cases)
+
+
+def test_issue_273_corpus_has_one_gold_and_four_hard_negatives_per_origin() -> None:
+    graph = build_issue_273_dev_graph()
+    records = json.loads(graph[INDEX_PATH])["records"]
+    gold_records = [record for record in records if record["record_kind"] == "GOLD"]
+    negative_records = [record for record in records if record["record_kind"] == "HARD_NEGATIVE"]
+
+    assert len(records) == 100
+    assert len(gold_records) == 20
+    assert len(negative_records) == 80
+    assert Counter(record["transform_origin"] for record in gold_records) == {
+        code: 1 for code in RESERVED_PRODUCT_CODES
+    }
+    assert Counter(record["adversarial_for_transform_origin"] for record in negative_records) == {
+        code: 4 for code in RESERVED_PRODUCT_CODES
+    }
+    for origin in RESERVED_PRODUCT_CODES:
+        origin_negatives = [
+            record for record in negative_records if record["adversarial_for_transform_origin"] == origin
+        ]
+        assert {record["negative_type"] for record in origin_negatives} == NEGATIVE_TYPES
+
+    record_ids = [record["evidence_ref_id"] for record in records]
+    content_hashes = [record["content_sha256"] for record in records]
+    assert len(record_ids) == len(set(record_ids))
+    assert len(content_hashes) == len(set(content_hashes))
+    assert {record["evidence_ref_id"] for record in gold_records}.isdisjoint(
+        record["evidence_ref_id"] for record in negative_records
+    )
+    assert {record["content_sha256"] for record in gold_records}.isdisjoint(
+        record["content_sha256"] for record in negative_records
+    )
+    assert all(re.search(r"[가-힣]", record["statement"]) for record in records)
+    assert all(record["content_sha256"] == sha256_hex(record["statement"].encode("utf-8")) for record in records)
+
+    intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
+    for record in negative_records:
+        intent = intents_by_origin[record["adversarial_for_transform_origin"]]
+        if record["negative_type"] in {
+            "SAME_FAMILY_DIFFERENT_ATTRIBUTE",
+            "LEXICAL_OVERLAP_UNSUPPORTED",
+        }:
+            assert record["product_code"] == intent.product_code
+            assert intent.query_subject not in record["statement"]
+
+
+def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> None:
+    graph = build_issue_273_dev_graph()
+    records = json.loads(graph[INDEX_PATH])["records"]
+    mapping = json.loads(graph[MAPPING_PATH])
+    cases = [json.loads(content) for path, content in graph.items() if path.startswith(CASE_PREFIX)]
+    gold_by_origin = {record["transform_origin"]: record for record in records if record["record_kind"] == "GOLD"}
+    mapping_by_id = {entry["evidence_ref_id"]: entry for entry in mapping["entries"]}
+    index_sha256 = sha256_hex(graph[INDEX_PATH])
+
+    assert len(mapping_by_id) == 20
+    assert set(mapping_by_id) == {record["evidence_ref_id"] for record in gold_by_origin.values()}
+    for case in cases:
+        gold_id = gold_by_origin[case["transform_origin"]]["evidence_ref_id"]
+        assert case["required_evidence_refs"] == [gold_id]
+        assert case["relevant_evidence_refs"] == [gold_id]
+
+    for gold_index, intent in enumerate(BASE_INTENTS):
+        gold_id = gold_by_origin[intent.transform_origin]["evidence_ref_id"]
+        entry = mapping_by_id[gold_id]
+        assert entry == {
+            "content_sha256": index_sha256,
+            "evidence_ref_id": gold_id,
+            "evidence_type": "KNOWLEDGE_CHUNK",
+            "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
+            "locator": f"$.records[{gold_index * 5}]",
+            "runtime_typed_ref": None,
+            "source_version": "1.0.0",
+            "stable_key": f"SYNTHETIC_NLR_GOLD_{gold_index + 1:03d}",
+            "target_kind": "FIXTURE_RECORD",
+        }
+    assert mapping["review_provenance"]["team_gold_status"] == "DRAFT"
+    assert mapping["review_provenance"]["evidence_review_refs"] == []
+    assert mapping["review_provenance"]["reviewed_by"] is None
+    assert mapping["review_provenance"]["approved_by"] is None
+    assert mapping["manifest_sha256"] == canonical_sha256(
+        mapping,
+        excluded_top_level_keys=frozenset({"manifest_sha256"}),
+    )
+
+
+def test_issue_273_committed_corpus_artifacts_match_fresh_build() -> None:
+    graph = build_issue_273_dev_graph()
+
+    assert (EVALS_ROOT / INDEX_PATH).read_bytes() == graph[INDEX_PATH]
+    assert (EVALS_ROOT / MAPPING_PATH).read_bytes() == graph[MAPPING_PATH]
