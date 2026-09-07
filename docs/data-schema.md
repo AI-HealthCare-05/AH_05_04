@@ -269,17 +269,32 @@ Rollback 정책:
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`
 
+## Prescription Version 최소 DB 기반
+
+Revision `169a1b2c3d4e`는 #169의 Expand 단계로 `prescription_version`, `prescription_version_medication`과 nullable `prescription.active_version_id`를 추가합니다. 이 단계는 API·기존 read/write 동작을 변경하거나 기존 처방을 backfill하지 않습니다.
+
+| 관계 | 제약 |
+| --- | --- |
+| Version sequence | `(prescription_id, version_number)` unique, `version_number > 0` |
+| 활성 Version | `(prescription.active_version_id, prescription.id)`가 `(prescription_version.id, prescription_version.prescription_id)`를 참조하므로 다른 처방의 Version을 가리킬 수 없음 |
+| Version Medication | `(prescription_version_id, display_order)` unique, 양수 display order·dose·frequency·duration 및 비어 있지 않은 약명 CHECK |
+| 불변성 | 두 snapshot 테이블의 UPDATE·DELETE를 PostgreSQL trigger로 차단 |
+
+현재 `prescription`, `medication`, `medical_document`, `profile` 테이블은 그대로 유지합니다. 소유권은 `prescription.profile_id`, 출처는 기존 `prescription.document_id`와 `source_ocr_job_id` chain을 사용합니다. Candidate Search·Identification FK 연결, Version 1 backfill, dual-write, read cutover와 `active_version_id NOT NULL` 전환은 후속 분할 PR 범위입니다.
+
+Production에서는 생성된 처방 version을 제거하는 downgrade 대신 forward-fix를 사용합니다. 비운영 환경도 Version 또는 Version Medication row가 있으면 downgrade를 중단하며, 두 테이블이 비어 있을 때만 downgrade → upgrade 왕복을 허용합니다.
+
 ## Post-MVP schema-only 테이블
 
 `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation`, `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event`는 migration과 SQLAlchemy 모델에는 존재하지만 현재 repository, service, API DTO와 응답에는 연결되지 않습니다. `ai_job`, `outbox_event`, `idempotency_record`는 `JobIntakeService`(#147)의 Job 접수 transaction에 연결되었고, `outbox_event`는 due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·`claim_token` fencing 완료 경계(#219)에 연결되었습니다. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 연결되지 않았습니다(#148). 이 부분 연결을 RAG, 출처 인용, Citation·Safety 검증 또는 Track A 비동기 Job 실행 전체 완료로 해석하지 않습니다.
 
-## Post-MVP-1 목표 스키마 — 미구현
+## Post-MVP-1 잔여 목표 스키마 — 미구현
 
 Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐지만 아래 RAG/Eval 테이블과 제약은 현재 migration·모델에 구현된 것으로 간주하지 않습니다. 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK는 호환을 위해 `CHAR(36)`을 유지하고 신규 독립 RAG/Eval ID만 PostgreSQL native `UUID`를 허용합니다.
 
 | 영역 | 목표 테이블 | 목표 제약 |
 | --- | --- | --- |
-| 처방 버전 | `prescription_version`, `prescription_version_medication` | 불변 snapshot과 처방별 단일 active version |
+| 처방 버전 후속 | Version 1 backfill, 하위 FK, dual-write/read cutover | PR 1 DB 기반 위에서 기존 처방 이관과 active pointer 필수화 |
 | OCR LLM provenance | OCR 구조화 실행·필드 provenance 계열 | `raw_value`, rule 정규화값, LLM 초안, 사용자 수정값, 확정값과 allowlist·schema·prompt·model·validator version 분리 |
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |
