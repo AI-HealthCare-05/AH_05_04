@@ -174,6 +174,7 @@ def test_issue_273_graph_has_only_draft_non_human_review_state() -> None:
     review_paths = (MAPPING_PATH, RUBRIC_PATH, PROFILE_PATH, POLICY_PATH, SUITE_PATH)
     provenance_values = [json.loads(graph[path])["review_provenance"] for path in review_paths]
     provenance_values.append(json.loads(graph[RECEIPT_PATH])["recorded_by"])
+    provenance_values.append(json.loads(graph[MANIFEST_PATH])["review_provenance"])
     provenance_values.extend(
         json.loads(content)["review_provenance"] for path, content in graph.items() if path.startswith(CASE_PREFIX)
     )
@@ -301,6 +302,27 @@ def test_issue_273_corpus_has_one_gold_and_four_hard_negatives_per_origin() -> N
             assert intent.query_subject not in record["statement"]
 
 
+def test_issue_273_runtime_support_mappings_resolve_to_typed_non_corpus_objects() -> None:
+    graph = build_issue_273_dev_graph()
+    index = json.loads(graph[INDEX_PATH])
+    mapping = json.loads(graph[MAPPING_PATH])
+    support_entries = [entry for entry in mapping["entries"] if entry["evidence_ref_id"].startswith("ev-nlr-runtime-")]
+    corpus_ids = {record["evidence_ref_id"] for record in index["records"]}
+
+    assert len(index["records"]) == 100
+    assert len(support_entries) == 2
+    assert corpus_ids.isdisjoint(entry["evidence_ref_id"] for entry in support_entries)
+    for entry in support_entries:
+        assert not entry["locator"].startswith("$.records[")
+        selected = _resolve_json_locator(index, entry["locator"])
+        assert selected["evidence_ref_id"] == entry["evidence_ref_id"]
+        assert selected["evidence_type"] == entry["evidence_type"]
+        assert selected["stable_key"] == entry["stable_key"]
+        assert selected["source_version"] == entry["source_version"]
+        assert selected["content_sha256"] == sha256_hex(selected["content"].encode("utf-8"))
+        assert "record_kind" not in selected
+
+
 def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None:
     records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
     statements_by_id = {record["evidence_ref_id"]: record["statement"] for record in records}
@@ -327,6 +349,26 @@ def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None
     assert statements_by_id["ev-nlr-nlr-mi01-neg-03"] == (
         "NLR-MI01 관련 제품 정보 자료의 목차를 안내하지만, 질문에서 찾는 세부 속성은 제시하지 않습니다."
     )
+
+
+def test_issue_273_reviewed_query_particles_are_natural_korean() -> None:
+    graph = build_issue_273_dev_graph()
+    cases = {
+        json.loads(content)["case_id"]: json.loads(content)
+        for path, content in graph.items()
+        if path.startswith(CASE_PREFIX)
+    }
+    queries = [case["query"] for case in cases.values()]
+    limited_typo_queries = [case["query"] for case in cases.values() if "EXPRESSION_LIMITED_TYPO" in case["slice_ids"]]
+
+    assert cases["rag-nlr-dev-014"]["query"] == ("NLR-PC01 제품에서 복용 전 주의사항을 어떻게 확인할 수 있나요?")
+    assert cases["rag-nlr-dev-015"]["query"] == "NLR-PC01 제품 복용 전 주의사항이 궁금해요."
+    assert cases["rag-nlr-dev-022"]["query"] == (
+        "NLR-PC04 제품에서 전문가 확인이 필요한 조건을 어떻게 확인할 수 있나요?"
+    )
+    assert not any(malformed in query for query in queries for malformed in ("주의사항를", "주의사항가", "조건를"))
+    assert len(limited_typo_queries) == 10
+    assert all("알려 주새요." in query for query in limited_typo_queries)
 
 
 def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> None:

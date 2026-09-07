@@ -130,14 +130,20 @@ def _question(expression: Expression, product_code: str, subject: str) -> str:
     if expression == "EXPRESSION_CANONICAL":
         return f"{product_code} 제품의 {subject}에 대해 알려 주세요."
     if expression == "EXPRESSION_SYNONYM":
-        return f"{product_code} 제품에서 {subject}를 어떻게 확인할 수 있나요?"
+        return f"{product_code} 제품에서 {_with_particle(subject, '을', '를')} 어떻게 확인할 수 있나요?"
     if expression == "EXPRESSION_WORD_ORDER_PARTICLE":
         return f"{product_code} {subject}, 어디서 확인하나요?"
     if expression == "EXPRESSION_COLLOQUIAL":
-        return f"{product_code} 제품 {subject}가 궁금해요."
+        return f"{product_code} 제품 {_with_particle(subject, '이', '가')} 궁금해요."
     if expression == "EXPRESSION_FRAGMENT":
         return f"{product_code} 제품 {subject} 궁금합니다."
     return f"{product_code} 제품의 {subject}에 대해 알려 주새요."
+
+
+def _with_particle(value: str, consonant_particle: str, vowel_particle: str) -> str:
+    final_character = value[-1]
+    has_final_consonant = "가" <= final_character <= "힣" and (ord(final_character) - ord("가")) % 28 != 0
+    return f"{value}{consonant_particle if has_final_consonant else vowel_particle}"
 
 
 def _intent(
@@ -384,6 +390,23 @@ def _record(
     )
 
 
+def _runtime_support_object(
+    *,
+    evidence_ref_id: str,
+    evidence_type: Literal["INTERACTION_RULE", "SAFETY_POLICY"],
+    stable_key: str,
+    content: str,
+) -> dict[str, JsonValue]:
+    return {
+        "content": content,
+        "content_sha256": sha256_hex(content.encode("utf-8")),
+        "evidence_ref_id": evidence_ref_id,
+        "evidence_type": evidence_type,
+        "source_version": DATASET_VERSION,
+        "stable_key": stable_key,
+    }
+
+
 def _intent_subject(intent: BaseIntent) -> str:
     if intent.gold_intent.startswith("제품"):
         return f"{intent.product_code} {intent.gold_intent}"
@@ -469,6 +492,9 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
                 "target_kind": "FIXTURE_RECORD",
             }
         )
+    # RuntimeFixtureV11 requires Rule and Safety references even for Retrieval Cases.
+    # These two mappings resolve only to typed runtime-support objects outside `records`;
+    # the 20 KNOWLEDGE_CHUNK mappings remain the complete Case Gold set from Task 2.
     entries.extend(
         (
             {
@@ -476,7 +502,7 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
                 "evidence_ref_id": "ev-nlr-runtime-rule-set",
                 "evidence_type": "INTERACTION_RULE",
                 "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
-                "locator": "$.records[1]",
+                "locator": "$.runtime_support.rule_set",
                 "runtime_typed_ref": None,
                 "source_version": DATASET_VERSION,
                 "stable_key": "SYNTHETIC_NLR_RULE_SET",
@@ -487,7 +513,7 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
                 "evidence_ref_id": "ev-nlr-runtime-safety-policy-set",
                 "evidence_type": "SAFETY_POLICY",
                 "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
-                "locator": "$.records[2]",
+                "locator": "$.runtime_support.safety_policy_set",
                 "runtime_typed_ref": None,
                 "source_version": DATASET_VERSION,
                 "stable_key": "SYNTHETIC_NLR_SAFETY_POLICY_SET",
@@ -975,6 +1001,20 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
         "index_id": f"{DATASET_CODE}-synthetic-index",
         "index_version": DATASET_VERSION,
         "records": [record.to_json() for record in evidence_records],
+        "runtime_support": {
+            "rule_set": _runtime_support_object(
+                evidence_ref_id="ev-nlr-runtime-rule-set",
+                evidence_type="INTERACTION_RULE",
+                stable_key="SYNTHETIC_NLR_RULE_SET",
+                content="합성 자연어 검색 평가의 런타임 참조 무결성만 확인하는 가상 규칙 집합입니다.",
+            ),
+            "safety_policy_set": _runtime_support_object(
+                evidence_ref_id="ev-nlr-runtime-safety-policy-set",
+                evidence_type="SAFETY_POLICY",
+                stable_key="SYNTHETIC_NLR_SAFETY_POLICY_SET",
+                content="합성 자연어 검색 평가의 런타임 참조 무결성만 확인하는 가상 안전 정책 집합입니다.",
+            ),
+        },
     }
     graph[INDEX_PATH] = canonical_json_bytes(index_payload)
     graph[EVIDENCE_MAPPING_PATH] = _build_evidence_mapping(graph[INDEX_PATH], evidence_records)
