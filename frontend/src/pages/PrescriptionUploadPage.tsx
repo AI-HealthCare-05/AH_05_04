@@ -2,8 +2,12 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   executeOcr,
+  getJobStatus,
   getOcrJob,
+  getOcrResult,
+  isJobStatusResponse,
   uploadPrescription,
+  type JobStatusResponse,
   type OcrJobResponse,
 } from '../api/prescriptions'
 import { ApiError } from '../api/client'
@@ -11,6 +15,12 @@ import AiJobStatusState from '../components/AiJobStatusState'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import { adaptOcrJobStatus } from '../features/ai-jobs/ocrJobAdapter'
+import {
+  clearOcrJobRecovery,
+  loadOcrJobRecovery,
+  saveOcrJobRecovery,
+  type OcrJobRecoveryTarget,
+} from '../features/ai-jobs/ocrJobRecovery'
 import {
   getJobFailurePresentation,
   getJobRequestErrorPresentation,
@@ -24,15 +34,62 @@ import '../design-system/prototype.css'
 import './MvpPages.css'
 
 const OCR_POLL_INTERVAL_MS = 1000
+// Frontend의 기술적 무한-polling 방지용이며 Backend Job timeout을 정의하지 않습니다.
 const OCR_POLL_MAX_ATTEMPTS = 80
 
-type OcrPollingTarget = {
-  documentId: string
-  jobId: string
+type OcrPollingTarget = OcrJobRecoveryTarget
+
+type OcrPollingSnapshot =
+  | {
+      kind: 'ASYNC'
+      body: JobStatusResponse
+      retryAfterSeconds: number | null
+    }
+  | {
+      kind: 'LEGACY'
+      body: OcrJobResponse
+      retryAfterSeconds: null
+    }
+
+type OcrIntakeIntent = {
+  file: File
+  documentId: string | null
+  idempotencyKey: string
 }
 
-function getOcrResponseStatus(response: OcrJobResponse): AiJobViewStatus {
-  return adaptOcrJobStatus(response.data.ocr_status)
+type OcrCompletionError = {
+  error: unknown
+  canRetry: boolean
+}
+
+function createOcrIdempotencyKey(): string {
+  // 키 원문은 현재 화면의 OCR intent lifecycle 안에서만 유지합니다.
+  return `ocr:${globalThis.crypto.randomUUID()}`
+}
+
+function getOcrResponseStatus(response: OcrPollingSnapshot): AiJobViewStatus {
+  return response.kind === 'ASYNC'
+    ? response.body.data.status
+    : adaptOcrJobStatus(response.body.data.ocr_status)
+}
+
+function getOcrRetryDelayMs(
+  response: OcrPollingSnapshot,
+  status: AiJobViewStatus,
+): number | null {
+  if (status !== 'RETRY_WAIT' || response.kind !== 'ASYNC') return null
+
+  const retryAfterSeconds =
+    response.body.data.retry_after_seconds ?? response.retryAfterSeconds
+
+  return retryAfterSeconds === null
+    ? null
+    : Math.max(retryAfterSeconds, 1) * 1000
+}
+
+function canRetryResultRequest(error: unknown): boolean {
+  return error instanceof TypeError ||
+    (error instanceof ApiError && error.status >= 500)
 }
 
 function PrescriptionUploadPage() {
@@ -41,26 +98,51 @@ function PrescriptionUploadPage() {
   const filenameId = useId()
   const [file, setFile] = useState<File | null>(null)
   const [isFilenameExpanded, setIsFilenameExpanded] = useState(false)
-  const [pollingTarget, setPollingTarget] = useState<OcrPollingTarget | null>(null)
+  const [pollingTarget, setPollingTarget] =
+    useState<OcrPollingTarget | null>(loadOcrJobRecovery)
   const [message, setMessage] = useState('')
   const [isPreparing, setIsPreparing] = useState(false)
+  const [completionError, setCompletionError] =
+    useState<OcrCompletionError | null>(null)
+  const [pollingRestartKey, setPollingRestartKey] = useState(0)
+  const [completionRestartKey, setCompletionRestartKey] = useState(0)
   const preparationRequestRef = useRef(0)
+  const preparationControllerRef = useRef<AbortController | null>(null)
+  const intakeIntentRef = useRef<OcrIntakeIntent | null>(null)
 
-  const fetchOcrJob = useCallback(
-    (jobId: string, signal: AbortSignal) => getOcrJob(jobId, signal),
-    [],
-  )
-  const pollingState = useJobPolling<OcrJobResponse>({
-    jobKey: pollingTarget?.jobId ?? null,
+  const fetchOcrJob = useCallback(async (
+    pollingKey: string,
+    signal: AbortSignal,
+  ): Promise<OcrPollingSnapshot> => {
+    if (!pollingTarget || pollingTarget.pollingKey !== pollingKey) {
+      throw new Error('OCR polling target changed')
+    }
+
+    if (pollingTarget.kind === 'ASYNC') {
+      const response = await getJobStatus(pollingKey, signal)
+      return { kind: 'ASYNC', ...response }
+    }
+
+    return {
+      kind: 'LEGACY',
+      body: await getOcrJob(pollingTarget.jobId, signal),
+      retryAfterSeconds: null,
+    }
+  }, [pollingTarget])
+  const pollingState = useJobPolling<OcrPollingSnapshot>({
+    jobKey: pollingTarget?.pollingKey ?? null,
     fetcher: fetchOcrJob,
     getStatus: getOcrResponseStatus,
+    getDelayMs: getOcrRetryDelayMs,
     intervalMs: OCR_POLL_INTERVAL_MS,
     maxAttempts: OCR_POLL_MAX_ATTEMPTS,
+    restartKey: pollingRestartKey,
   })
 
   useEffect(
     () => () => {
       preparationRequestRef.current += 1
+      preparationControllerRef.current?.abort()
     },
     [],
   )
@@ -69,20 +151,108 @@ function PrescriptionUploadPage() {
     if (
       pollingState.status !== 'COMPLETED' ||
       !pollingTarget ||
-      pollingState.jobKey !== pollingTarget.jobId
+      !pollingState.data ||
+      pollingState.jobKey !== pollingTarget.pollingKey
     ) return
 
-    navigate(
-      `/prescriptions/review?document_id=${pollingTarget.documentId}&job_id=${pollingTarget.jobId}`,
-    )
-  }, [navigate, pollingState.jobKey, pollingState.status, pollingTarget])
+    const snapshot = pollingState.data
+    const controller = new AbortController()
+    let isActive = true
+
+    const openReview = (ocrResponse: OcrJobResponse) => {
+      if (!isActive) return
+
+      if (
+        ocrResponse.data.document_id !== pollingTarget.documentId ||
+        ocrResponse.data.ocr_status !== 'COMPLETED'
+      ) {
+        clearOcrJobRecovery()
+        setCompletionError({
+          error: new Error('OCR result is not reviewable'),
+          canRetry: false,
+        })
+        return
+      }
+
+      clearOcrJobRecovery()
+      navigate(
+        `/prescriptions/review?document_id=${pollingTarget.documentId}&job_id=${ocrResponse.data.job_id}`,
+        { state: { ocrResponse } },
+      )
+    }
+
+    if (snapshot.kind === 'LEGACY') {
+      openReview(snapshot.body)
+      return () => {
+        isActive = false
+      }
+    }
+
+    const resultUrl = snapshot.body.data.result_url
+    if (!resultUrl) {
+      clearOcrJobRecovery()
+      setCompletionError({
+        error: new Error('Completed OCR Job has no result URL'),
+        canRetry: false,
+      })
+      return () => {
+        isActive = false
+      }
+    }
+
+    void getOcrResult(resultUrl, controller.signal)
+      .then(openReview)
+      .catch((error: unknown) => {
+        if (!isActive || controller.signal.aborted) return
+        setCompletionError({
+          error,
+          canRetry: canRetryResultRequest(error),
+        })
+      })
+
+    return () => {
+      isActive = false
+      controller.abort()
+    }
+  }, [
+    completionRestartKey,
+    navigate,
+    pollingState.data,
+    pollingState.jobKey,
+    pollingState.status,
+    pollingTarget,
+  ])
+
+  useEffect(() => {
+    if (
+      pollingState.jobKey === pollingTarget?.pollingKey &&
+      (pollingState.status === 'FAILED' || pollingState.status === 'STALE')
+    ) {
+      clearOcrJobRecovery()
+    }
+  }, [pollingState.jobKey, pollingState.status, pollingTarget])
+
+  const expireOcrSession = useCallback(() => {
+    clearOcrJobRecovery()
+    localStorage.removeItem('access_token')
+    navigate('/login', { replace: true })
+  }, [navigate])
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] ?? null
     setFile(selectedFile)
     setIsFilenameExpanded(false)
     setPollingTarget(null)
+    setCompletionError(null)
     setMessage('')
+    clearOcrJobRecovery()
+    intakeIntentRef.current = selectedFile
+      ? {
+          file: selectedFile,
+          documentId: null,
+          idempotencyKey: createOcrIdempotencyKey(),
+        }
+      : null
   }
 
   const handleUpload = async () => {
@@ -92,67 +262,161 @@ function PrescriptionUploadPage() {
     }
 
     const requestId = ++preparationRequestRef.current
+    preparationControllerRef.current?.abort()
+    const preparationController = new AbortController()
+    preparationControllerRef.current = preparationController
     const isCurrentRequest = () => preparationRequestRef.current === requestId
 
     try {
       setIsPreparing(true)
       setMessage('')
       setPollingTarget(null)
-      const uploadResponse = await uploadPrescription(file)
-      if (!isCurrentRequest()) return
-      const ocrResponse = await executeOcr(uploadResponse.data.document_id)
+      setCompletionError(null)
+
+      let intent = intakeIntentRef.current
+      if (!intent || intent.file !== file) {
+        intent = {
+          file,
+          documentId: null,
+          idempotencyKey: createOcrIdempotencyKey(),
+        }
+        intakeIntentRef.current = intent
+      }
+
+      let documentId = intent.documentId
+      if (!documentId) {
+        const uploadResponse = await uploadPrescription(file)
+        if (!isCurrentRequest()) return
+        documentId = uploadResponse.data.document_id
+        intent.documentId = documentId
+      }
+
+      const ocrResponse = await executeOcr(
+        documentId,
+        intent.idempotencyKey,
+        preparationController.signal,
+      )
       if (!isCurrentRequest()) return
 
-      setPollingTarget({
-        documentId: uploadResponse.data.document_id,
-        jobId: ocrResponse.data.job_id,
-      })
+      if (
+        isJobStatusResponse(ocrResponse) &&
+        !ocrResponse.data.status_url.trim()
+      ) {
+        throw new Error('OCR Job status URL is missing')
+      }
+
+      const nextPollingTarget: OcrPollingTarget = isJobStatusResponse(ocrResponse)
+        ? {
+            kind: 'ASYNC',
+            documentId,
+            jobId: ocrResponse.data.job_id,
+            pollingKey: ocrResponse.data.status_url,
+          }
+        : {
+            kind: 'LEGACY',
+            documentId,
+            jobId: ocrResponse.data.job_id,
+            pollingKey: `legacy:${ocrResponse.data.job_id}`,
+          }
+      saveOcrJobRecovery(nextPollingTarget)
+      setPollingTarget(nextPollingTarget)
     } catch (error) {
       if (!isCurrentRequest()) return
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '처방전 처리 중 오류가 발생했습니다.',
-      )
+      if (error instanceof ApiError && error.status === 401) {
+        expireOcrSession()
+        return
+      }
+      setMessage(getJobRequestErrorPresentation(error).description)
     } finally {
       if (isCurrentRequest()) {
         setIsPreparing(false)
+        preparationControllerRef.current = null
       }
     }
   }
 
   const resetToUpload = () => {
+    preparationRequestRef.current += 1
+    preparationControllerRef.current?.abort()
+    preparationControllerRef.current = null
+    setIsPreparing(false)
     setPollingTarget(null)
     setFile(null)
     setIsFilenameExpanded(false)
+    setCompletionError(null)
     setMessage('')
+    intakeIntentRef.current = null
+    clearOcrJobRecovery()
+  }
+
+  const resumePolling = () => {
+    setCompletionError(null)
+    setPollingRestartKey((current) => current + 1)
+  }
+
+  const retryCompletedResult = () => {
+    setCompletionError(null)
+    setCompletionRestartKey((current) => current + 1)
   }
 
   if (isPreparing || pollingTarget) {
-    const isCurrentPollingTarget = pollingState.jobKey === pollingTarget?.jobId
+    const isCurrentPollingTarget =
+      pollingState.jobKey === pollingTarget?.pollingKey
     let status: Exclude<AiJobViewStatus, 'COMPLETED'> | 'REQUEST_ERROR' | 'POLL_TIMEOUT' = 'PENDING'
     let presentation: AiJobPresentation = getJobStatusPresentation('PENDING')
     let onAction: (() => void) | undefined
 
-    if (isCurrentPollingTarget && pollingState.phase === 'ERROR') {
+    if (completionError) {
+      status = 'REQUEST_ERROR'
+      presentation = getJobRequestErrorPresentation(completionError.error)
+      if (
+        completionError.error instanceof ApiError &&
+        completionError.error.status === 401
+      ) {
+        onAction = expireOcrSession
+      } else if (completionError.canRetry) {
+        presentation = { ...presentation, actionLabel: '상태 다시 확인하기' }
+        onAction = retryCompletedResult
+      } else {
+        onAction = resetToUpload
+      }
+    } else if (isCurrentPollingTarget && pollingState.phase === 'ERROR') {
       status = 'REQUEST_ERROR'
       presentation = getJobRequestErrorPresentation(pollingState.error)
-      onAction =
-        pollingState.error instanceof ApiError && pollingState.error.status === 401
-          ? () => navigate('/login')
+      const terminalRequestError =
+        pollingState.error instanceof ApiError &&
+        [401, 403, 404, 409].includes(pollingState.error.status)
+      if (terminalRequestError) {
+        onAction = pollingState.error instanceof ApiError && pollingState.error.status === 401
+          ? expireOcrSession
           : resetToUpload
+      } else {
+        presentation = { ...presentation, actionLabel: '상태 다시 확인하기' }
+        onAction = resumePolling
+      }
     } else if (isCurrentPollingTarget && pollingState.phase === 'TIMED_OUT') {
       status = 'POLL_TIMEOUT'
-      presentation = getPollingTimeoutPresentation()
-      onAction = resetToUpload
+      presentation = {
+        ...getPollingTimeoutPresentation(),
+        actionLabel: '상태 다시 확인하기',
+      }
+      onAction = resumePolling
     } else if (isCurrentPollingTarget && pollingState.status === 'FAILED') {
       status = 'FAILED'
-      presentation = getJobFailurePresentation(pollingState.data?.data.error_code)
+      const failureCode = pollingState.data?.kind === 'ASYNC'
+        ? pollingState.data.body.data.error?.code
+        : pollingState.data?.body.data.error_code
+      presentation = getJobFailurePresentation(failureCode)
+      onAction = resetToUpload
+    } else if (isCurrentPollingTarget && pollingState.status === 'STALE') {
+      status = 'STALE'
+      presentation = getJobStatusPresentation('STALE')
       onAction = resetToUpload
     } else if (
       isCurrentPollingTarget &&
       pollingState.status &&
       pollingState.status !== 'FAILED' &&
+      pollingState.status !== 'STALE' &&
       pollingState.status !== 'COMPLETED'
     ) {
       status = pollingState.status

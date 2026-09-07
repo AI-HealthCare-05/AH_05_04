@@ -250,6 +250,7 @@ describe('내 정보 수정', () => {
 
 describe('로그아웃', () => {
   it('logout API 성공 후 토큰을 지우고 로그인 화면으로 이동한다', async () => {
+    sessionStorage.setItem('dosey_ocr_job_recovery:v1', '{"job":"active"}')
     renderProfile()
     await screen.findByText(CURRENT_USER.email)
 
@@ -257,6 +258,7 @@ describe('로그아웃', () => {
 
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
     expect(logout).toHaveBeenCalledTimes(1)
   })
 
