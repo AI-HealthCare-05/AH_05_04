@@ -135,6 +135,19 @@ class PrescriptionService:
             )
         return _to_prescription_data(prescription, list(prescription.medications))
 
+    async def get_latest_prescription(self, *, user: User) -> PrescriptionData:
+        # 재접속 복구 Backend 계약(#295): Frontend가 어떤 prescription_id도 들고 있지 않을 때
+        # (로그아웃·재로그인 등) 이 사용자의 가장 최근 확정 처방을 다시 찾을 수 있게 합니다.
+        prescription = await self._prescription_repo.get_latest_owned(user_id=user.id)
+        if prescription is None:
+            raise ApiError(
+                status_code=404,
+                code="PRESCRIPTION_NOT_FOUND",
+                message="처방 정보를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND")],
+            )
+        return _to_prescription_data(prescription, list(prescription.medications))
+
     @staticmethod
     def _build_confirmed_data(
         extracted_fields: list[ExtractedField],
