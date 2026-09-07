@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,15 @@ FILE_PREFIX = "rag-natural-language-retrieval-dev-v1"
 CASE_DIRECTORY = f"retrieval/cases/{FILE_PREFIX}"
 INDEX_PATH = f"retrieval/evidence/resources/{FILE_PREFIX}/synthetic-knowledge-index.json"
 EVIDENCE_MAPPING_PATH = f"retrieval/evidence/{FILE_PREFIX}.evidence-mapping.json"
+RUBRIC_PATH = f"retrieval/manifests/{FILE_PREFIX}.critical-claim-rubric.json"
+AUTHORING_IDENTITY_PATH = f"retrieval/manifests/{FILE_PREFIX}.authoring-identities.json"
+DATASET_MANIFEST_PATH = f"retrieval/manifests/{FILE_PREFIX}.dataset.json"
+PROFILE_PATH = f"profiles/{FILE_PREFIX}.profile.json"
+COMPARISON_POLICY_PATH = f"policies/{FILE_PREFIX}.comparison-policy.json"
+EVALUATION_POLICY_PATH = f"policies/{FILE_PREFIX}.evaluation-policy.json"
+SUITE_PATH = f"suites/{FILE_PREFIX}.suite.json"
+PROTECTED_RECEIPT_PATH = f"provenance/{FILE_PREFIX}.protected-artifact-receipt.json"
+SCHEMA_SET_SHA256 = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
 
 NEGATIVE_TYPES: tuple[NegativeType, ...] = (
     "SAME_FAMILY_DIFFERENT_ATTRIBUTE",
@@ -297,16 +307,15 @@ BASE_INTENTS = (
 _GRAPH_MEMBER_PATHS = (
     INDEX_PATH,
     EVIDENCE_MAPPING_PATH,
-    f"retrieval/manifests/{FILE_PREFIX}.critical-claim-rubric.json",
-    f"retrieval/manifests/{FILE_PREFIX}.authoring-identities.json",
-    f"retrieval/manifests/{FILE_PREFIX}.dataset.json",
-    f"profiles/{FILE_PREFIX}.profile.json",
-    f"policies/{FILE_PREFIX}.comparison-policy.json",
-    f"policies/{FILE_PREFIX}.evaluation-policy.json",
-    f"suites/{FILE_PREFIX}.suite.json",
-    f"provenance/{FILE_PREFIX}.protected-artifact-receipt.json",
+    RUBRIC_PATH,
+    AUTHORING_IDENTITY_PATH,
+    DATASET_MANIFEST_PATH,
+    PROFILE_PATH,
+    COMPARISON_POLICY_PATH,
+    EVALUATION_POLICY_PATH,
+    SUITE_PATH,
+    PROTECTED_RECEIPT_PATH,
 )
-_IMPLEMENTED_GRAPH_PATHS = (INDEX_PATH, EVIDENCE_MAPPING_PATH)
 
 _TOPIC_OVERLAP_TERMS: dict[Topic, str] = {
     "TOPIC_MEDICATION_INFORMATION": "제품 정보",
@@ -460,6 +469,41 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
                 "target_kind": "FIXTURE_RECORD",
             }
         )
+    entries.extend(
+        (
+            {
+                "content_sha256": index_sha256,
+                "evidence_ref_id": "ev-nlr-runtime-rule-set",
+                "evidence_type": "INTERACTION_RULE",
+                "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
+                "locator": "$.records[1]",
+                "runtime_typed_ref": None,
+                "source_version": DATASET_VERSION,
+                "stable_key": "SYNTHETIC_NLR_RULE_SET",
+                "target_kind": "FIXTURE_RECORD",
+            },
+            {
+                "content_sha256": index_sha256,
+                "evidence_ref_id": "ev-nlr-runtime-safety-policy-set",
+                "evidence_type": "SAFETY_POLICY",
+                "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
+                "locator": "$.records[2]",
+                "runtime_typed_ref": None,
+                "source_version": DATASET_VERSION,
+                "stable_key": "SYNTHETIC_NLR_SAFETY_POLICY_SET",
+                "target_kind": "FIXTURE_RECORD",
+            },
+        )
+    )
+    entries.sort(
+        key=lambda item: (
+            cast(dict[str, JsonValue], item)["evidence_type"],
+            cast(dict[str, JsonValue], item)["stable_key"],
+            cast(dict[str, JsonValue], item)["source_version"],
+            cast(dict[str, JsonValue], item)["locator"],
+            cast(dict[str, JsonValue], item)["evidence_ref_id"],
+        )
+    )
     payload: dict[str, JsonValue] = {
         "entries": entries,
         "manifest_sha256": "0" * 64,
@@ -476,11 +520,457 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
     return canonical_json_bytes(payload)
 
 
+def _with_self_hash(payload: dict[str, JsonValue], field: str) -> bytes:
+    payload[field] = canonical_sha256(payload, excluded_top_level_keys=frozenset({field}))
+    return canonical_json_bytes(payload)
+
+
+def _reference(identifier: str, digest: str) -> dict[str, JsonValue]:
+    return {"hash": digest, "id": identifier, "version": DATASET_VERSION}
+
+
+def _build_rubric() -> bytes:
+    payload: dict[str, JsonValue] = {
+        "applicable_scope_codes": ["ALL"],
+        "applicable_task_types": ["RETRIEVAL"],
+        "classification_rules": [
+            {
+                "condition_code": "SYNTHETIC_NO_CLAIM_SCORING",
+                "criticality": "NON_CRITICAL",
+                "description": "SYNTHETIC_NATURAL_LANGUAGE_RETRIEVAL_HAS_NO_CLAIM_SCORING",
+                "member_order": 1,
+                "rule_id": "SYNTHETIC_NO_CLAIM_RULE",
+            }
+        ],
+        "reason_code_catalog": [
+            {
+                "description": "SYNTHETIC_NATURAL_LANGUAGE_RETRIEVAL_NO_CLAIM_REASON",
+                "member_order": 1,
+                "reason_code": "SYNTHETIC_NO_CLAIM",
+            }
+        ],
+        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "rubric_hash": "0" * 64,
+        "rubric_id": f"{DATASET_CODE}-critical-claims",
+        "rubric_version": DATASET_VERSION,
+        "schema_id": "rag-eval.critical-claim-rubric",
+        "schema_version": "1.2.0",
+    }
+    return _with_self_hash(payload, "rubric_hash")
+
+
+def _runtime_reference(identifier: str, index_sha256: str) -> dict[str, JsonValue]:
+    return _reference(identifier, index_sha256)
+
+
+def _case_context(
+    intent: BaseIntent,
+    *,
+    mapping_ref: dict[str, JsonValue],
+    gold_stable_key: str,
+    index_sha256: str,
+) -> dict[str, JsonValue]:
+    suffix = intent.product_code.replace("-", "_")
+    runtime: dict[str, JsonValue] = {
+        "bundle_eligibility_status": "ELIGIBLE",
+        "dependency_fault": "NONE",
+        "guideline_set_ref": None,
+        "knowledge_index_ref": _runtime_reference(gold_stable_key, index_sha256),
+        "rule_set_ref": _runtime_reference("SYNTHETIC_NLR_RULE_SET", index_sha256),
+        "safety_policy_set_ref": _runtime_reference("SYNTHETIC_NLR_SAFETY_POLICY_SET", index_sha256),
+        "source_eligibility_status": "ELIGIBLE",
+        "source_snapshot_ref": mapping_ref,
+    }
+    runtime["runtime_bundle_manifest_hash"] = canonical_sha256(runtime)
+    return {
+        "medication_fixtures": [
+            {
+                "display_name_token": f"SYNTHETIC_DISPLAY_{suffix}",
+                "identification_status": "MATCHED",
+                "ingredient_tokens": [f"SYNTHETIC_INGREDIENT_{suffix}"],
+                "medication_fixture_id": f"SYNTHETIC_MEDICATION_{suffix}",
+                "medication_product_fixture_id": f"SYNTHETIC_PRODUCT_{suffix}",
+                "strength_text_token": f"SYNTHETIC_STRENGTH_{suffix}",
+            }
+        ],
+        "patient_context_fixture": None,
+        "prescription_fixture": None,
+        "runtime_fixture": runtime,
+    }
+
+
+def _retrieval_expected(gold_id: str) -> dict[str, JsonValue]:
+    return {
+        "expected_citations": None,
+        "expected_execution_status": None,
+        "expected_fallback_code": None,
+        "expected_provider_invocation": None,
+        "expected_publication_allowed": None,
+        "expected_release_decision": None,
+        "expected_response_level": None,
+        "expected_retrieval_invocation": True,
+        "expected_rule_ids": None,
+        "expected_rule_not_invoked_reason": None,
+        "expected_rule_outcome": None,
+        "expected_safety_disposition": None,
+        "expected_scope_codes": None,
+        "expected_sections": None,
+        "forbidden_claims": None,
+        "gold_claims": None,
+        "omitted_sections": None,
+        "relevant_evidence_refs": [gold_id],
+        "required_evidence_refs": [gold_id],
+        "risk_level": None,
+    }
+
+
+def _build_cases(
+    *,
+    mapping: dict[str, JsonValue],
+    rubric: dict[str, JsonValue],
+    index_sha256: str,
+) -> tuple[dict[str, bytes], list[dict[str, JsonValue]]]:
+    mapping_ref = _reference(
+        cast(str, mapping["mapping_id"]),
+        cast(str, mapping["manifest_sha256"]),
+    )
+    rubric_ref = _reference(cast(str, rubric["rubric_id"]), cast(str, rubric["rubric_hash"]))
+    cases: dict[str, bytes] = {}
+    case_values: list[dict[str, JsonValue]] = []
+    case_number = 1
+    for intent_index, intent in enumerate(BASE_INTENTS, start=1):
+        gold_id = f"ev-nlr-{intent.transform_origin.lower()}-gold"
+        gold_stable_key = f"SYNTHETIC_NLR_GOLD_{intent_index:03d}"
+        for variant in intent.variants:
+            case_id = f"rag-nlr-dev-{case_number:03d}"
+            context = _case_context(
+                intent,
+                mapping_ref=mapping_ref,
+                gold_stable_key=gold_stable_key,
+                index_sha256=index_sha256,
+            )
+            payload: dict[str, JsonValue] = {
+                "case_id": case_id,
+                "context": context,
+                "critical_claim_rubric_ref": rubric_ref,
+                "data_classification": "SYNTHETIC",
+                "dataset_code": DATASET_CODE,
+                "dataset_version": DATASET_VERSION,
+                "expected": _retrieval_expected(gold_id),
+                "gold_version": DATASET_VERSION,
+                "input_sha256": canonical_sha256({"context": context, "query": variant.query}),
+                "leakage_group_ids": {
+                    "medication_family": f"NLR-FAMILY-{intent.transform_origin}",
+                    "question_template": f"NLR-TEMPLATE-{variant.expression}",
+                    "source_segment": f"NLR-SOURCE-{intent.transform_origin}",
+                    "transform_origin": intent.transform_origin,
+                },
+                "partition": "DEV",
+                "query": variant.query,
+                "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+                "schema_id": "rag-eval.case",
+                "schema_version": "1.2.0",
+                "slice_ids": cast(JsonValue, sorted(["ALL", intent.topic, variant.expression])),
+                "tags": ["SYNTHETIC_NATURAL_LANGUAGE_RETRIEVAL_DEV"],
+                "task_type": "RETRIEVAL",
+            }
+            cases[f"{CASE_DIRECTORY}/{case_id}.json"] = canonical_json_bytes(payload)
+            case_values.append(payload)
+            case_number += 1
+    return cases, case_values
+
+
+def _build_authoring_identity(
+    cases: list[dict[str, JsonValue]],
+    mapping: dict[str, JsonValue],
+    index_payload: dict[str, JsonValue],
+) -> bytes:
+    mapping_by_id = {
+        cast(str, cast(dict[str, JsonValue], item)["evidence_ref_id"]): cast(dict[str, JsonValue], item)
+        for item in cast(list[JsonValue], mapping["entries"])
+    }
+    records = cast(list[JsonValue], index_payload["records"])
+    entries: list[JsonValue] = []
+    for member_order, case in enumerate(cases, start=1):
+        expected = cast(dict[str, JsonValue], case["expected"])
+        gold_id = cast(str, cast(list[JsonValue], expected["required_evidence_refs"])[0])
+        gold = mapping_by_id[gold_id]
+        locator = cast(str, gold["locator"])
+        record_index = int(locator.removeprefix("$.records[").removesuffix("]"))
+        leakage = cast(dict[str, JsonValue], case["leakage_group_ids"])
+        transform_origin = cast(str, leakage["transform_origin"])
+        context = cast(dict[str, JsonValue], case["context"])
+        runtime = cast(dict[str, JsonValue], context["runtime_fixture"])
+        expression = next(
+            cast(str, item)
+            for item in cast(list[JsonValue], case["slice_ids"])
+            if cast(str, item).startswith("EXPRESSION_")
+        )
+        entries.append(
+            {
+                "base_intent_seed": f"NLR-BASE-{transform_origin}",
+                "case_id": case["case_id"],
+                "medication_family_fixture_id": f"NLR-FAMILY-FIXTURE-{transform_origin}",
+                "medication_family_id": leakage["medication_family"],
+                "member_order": member_order,
+                "question_template_id": leakage["question_template"],
+                "question_template_spec": f"{expression} Korean natural-language question form",
+                "source_chunk_sha256": canonical_sha256(records[record_index]),
+                "source_locator": locator,
+                "source_segment_id": leakage["source_segment"],
+                "source_snapshot_ref": runtime["source_snapshot_ref"],
+                "transform_origin_id": leakage["transform_origin"],
+                "transform_spec": f"{expression} surface transformation",
+            }
+        )
+    payload: dict[str, JsonValue] = {
+        "canonicalization_spec_version": "1.0.0",
+        "dataset_code": DATASET_CODE,
+        "dataset_version": DATASET_VERSION,
+        "entries": entries,
+        "manifest_id": f"{DATASET_CODE}-authoring-identities",
+        "manifest_sha256": "0" * 64,
+        "manifest_version": DATASET_VERSION,
+        "schema_id": "rag-eval.authoring-identity-manifest",
+        "schema_version": "1.0.0",
+    }
+    return _with_self_hash(payload, "manifest_sha256")
+
+
+def _build_suite(case_values: list[dict[str, JsonValue]]) -> bytes:
+    payload: dict[str, JsonValue] = {
+        "adapter_id": "knowledge-evidence-retrieval.actual.v1",
+        "artifact_contract_version": DATASET_VERSION,
+        "command": ["uv", "run", "python", "-m", "ai_worker.tasks.evaluation", "run-dev"],
+        "critical_invariant_ids": ["NLR_EXACT_CASE_SET", "NLR_GOLD_PROVENANCE_BOUND"],
+        "expected_case_set_hash": canonical_sha256({"case_ids": [cast(str, case["case_id"]) for case in case_values]}),
+        "input_selector": {
+            "dataset_code": DATASET_CODE,
+            "dataset_version": DATASET_VERSION,
+            "partitions": ["DEV"],
+            "task_types": ["RETRIEVAL"],
+        },
+        "pass_rule": "DIAGNOSTIC_ONLY_NO_RELEASE_DECISION",
+        "required": False,
+        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "schema_id": "rag-eval.suite-definition",
+        "schema_version": "1.2.0",
+        "suite_hash": "0" * 64,
+        "suite_id": f"{DATASET_CODE}-suite",
+        "suite_version": DATASET_VERSION,
+    }
+    return _with_self_hash(payload, "suite_hash")
+
+
+def _build_comparison_policy() -> bytes:
+    metrics = ("MRR", "NDCG_AT_5", "NO_HIT_RATE", "PRECISION_AT_5", "RECALL_AT_5")
+    slices = (
+        ("ALL", 60, 20),
+        *((topic, 12, 4) for topic in sorted({intent.topic for intent in BASE_INTENTS})),
+        *(
+            (expression, 10, 10)
+            for expression in sorted({variant.expression for intent in BASE_INTENTS for variant in intent.variants})
+        ),
+    )
+    scopes: list[JsonValue] = []
+    for metric in metrics:
+        for slice_id, case_count, group_count in slices:
+            scopes.append(
+                {
+                    "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
+                    "ci_method_version": DATASET_VERSION,
+                    "ci_parameters": {"iterations": 10000, "level": "0.95", "sidedness": "TWO_SIDED"},
+                    "cluster_dimension": "transform_origin",
+                    "decision_basis": "DIAGNOSTIC_ONLY",
+                    "estimator_id": "CASE_MEAN",
+                    "estimator_version": DATASET_VERSION,
+                    "independence_unit": "transform_origin",
+                    "metric_id": metric,
+                    "metric_version": DATASET_VERSION,
+                    "minimum_case_count": case_count,
+                    "minimum_independent_group_count": group_count,
+                    "partition": "DEV",
+                    "required": False,
+                    "seed": 273,
+                    "slice_id": slice_id,
+                    "threshold": "0",
+                    "unit_of_analysis": "CASE",
+                }
+            )
+    payload: dict[str, JsonValue] = {
+        "approved_at": "2026-09-05T00:02:00.000000Z",
+        "approved_by": {
+            "actor_id": "rag-eval-draft-validator",
+            "namespace": "SYSTEM",
+            "role": "SYSTEM_VALIDATOR",
+        },
+        "comparison_policy_hash": "0" * 64,
+        "comparison_policy_id": f"{DATASET_CODE}-comparison",
+        "comparison_policy_version": DATASET_VERSION,
+        "controlled_variable_keys": ["CASE_SET", "DATASET", "GOLD", "METRIC_POLICY", "SOURCE_INDEX_FILTER_MODEL"],
+        "proposed_by": {
+            "actor_id": "ceohwj",
+            "namespace": "GITHUB_LOGIN",
+            "role": "EVALUATION_IMPLEMENTER",
+        },
+        "schema_id": "rag-eval.comparison-policy",
+        "schema_version": "1.0.0",
+        "scopes": scopes,
+    }
+    return _with_self_hash(payload, "comparison_policy_hash")
+
+
+def _build_profile(suite: dict[str, JsonValue]) -> bytes:
+    payload: dict[str, JsonValue] = {
+        "evaluation_profile_hash": "0" * 64,
+        "evaluation_profile_id": f"{DATASET_CODE}-profile",
+        "evaluation_profile_version": DATASET_VERSION,
+        "required_experiment_types": ["KNOWLEDGE_RETRIEVAL"],
+        "required_gate_refs": [],
+        "required_partitions": ["DEV"],
+        "required_suite_refs": [_reference(cast(str, suite["suite_id"]), cast(str, suite["suite_hash"]))],
+        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "runtime_eligible": False,
+        "schema_id": "rag-eval.evaluation-profile",
+        "schema_version": "1.2.0",
+        "trigger_catalog": [{"member_order": 1, "trigger_id": "NLR_DEV_MANUAL"}],
+    }
+    return _with_self_hash(payload, "evaluation_profile_hash")
+
+
+def _partition_hash(case_resources: list[dict[str, JsonValue]]) -> str:
+    resources: list[JsonValue] = [
+        {"case_id": item["case_id"], "path": item["path"], "sha256": item["sha256"]} for item in case_resources
+    ]
+    return canonical_sha256({"partition": "DEV", "resources": resources})
+
+
+def _build_evaluation_policy(
+    profile: dict[str, JsonValue],
+    comparison: dict[str, JsonValue],
+    suite: dict[str, JsonValue],
+    case_resources: list[dict[str, JsonValue]],
+) -> bytes:
+    members: list[dict[str, JsonValue]] = [
+        {
+            "member_order": 1,
+            "member_type": "PROFILE",
+            "reference": _reference(
+                cast(str, profile["evaluation_profile_id"]), cast(str, profile["evaluation_profile_hash"])
+            ),
+        },
+        {
+            "member_order": 2,
+            "member_type": "COMPARISON_POLICY",
+            "reference": _reference(
+                cast(str, comparison["comparison_policy_id"]), cast(str, comparison["comparison_policy_hash"])
+            ),
+        },
+        {
+            "member_order": 3,
+            "member_type": "PARTITION",
+            "reference": _reference(f"{DATASET_CODE}:DEV", _partition_hash(case_resources)),
+        },
+        {
+            "member_order": 4,
+            "member_type": "SUITE",
+            "reference": _reference(cast(str, suite["suite_id"]), cast(str, suite["suite_hash"])),
+        },
+        {
+            "member_order": 5,
+            "member_type": "ARTIFACT_SCHEMA_SET",
+            "reference": {"hash": SCHEMA_SET_SHA256, "id": "rag-eval.schema-set", "version": "1.3.0"},
+        },
+    ]
+    payload: dict[str, JsonValue] = {
+        "artifact_schema_set_ref": members[4],
+        "comparison_policy_ref": members[1],
+        "evaluation_policy_hash": "0" * 64,
+        "evaluation_policy_id": f"{DATASET_CODE}-policy",
+        "evaluation_policy_version": DATASET_VERSION,
+        "evaluation_profile_ref": members[0],
+        "member_manifest_hash": canonical_sha256({"members": cast(list[JsonValue], members)}),
+        "required_gate_refs": [],
+        "required_partition_refs": [members[2]],
+        "required_suite_refs": [members[3]],
+        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "schema_id": "rag-eval.evaluation-policy",
+        "schema_version": "1.2.0",
+    }
+    return _with_self_hash(payload, "evaluation_policy_hash")
+
+
+def _resource_set_hash(case_resources: list[dict[str, JsonValue]]) -> str:
+    resources: list[JsonValue] = [
+        {"partition": item["partition"], "path": item["path"], "sha256": item["sha256"]} for item in case_resources
+    ]
+    return canonical_sha256({"resources": resources})
+
+
+def _build_protected_receipt(case_resources: list[dict[str, JsonValue]], resource_set_hash: str) -> bytes:
+    payload: dict[str, JsonValue] = {
+        "artifact_paths": [item["path"] for item in case_resources],
+        "data_classification": "SYNTHETIC",
+        "dataset_code": DATASET_CODE,
+        "dataset_version": DATASET_VERSION,
+        "receipt_hash": "0" * 64,
+        "receipt_id": f"{DATASET_CODE}-protected-receipt",
+        "receipt_version": DATASET_VERSION,
+        "recorded_at": "2026-09-05T00:02:00.000000Z",
+        "recorded_by": _DRAFT_REVIEW_PROVENANCE,
+        "resource_set_hash": resource_set_hash,
+        "schema_id": "rag-eval.protected-artifact-receipt",
+        "schema_version": "1.2.0",
+    }
+    return _with_self_hash(payload, "receipt_hash")
+
+
+def _build_dataset_manifest(
+    *,
+    case_resources: list[dict[str, JsonValue]],
+    mapping: dict[str, JsonValue],
+    rubric: dict[str, JsonValue],
+    authoring_bytes: bytes,
+    receipt: dict[str, JsonValue],
+    receipt_bytes: bytes,
+    resource_set_hash: str,
+) -> bytes:
+    payload: dict[str, JsonValue] = {
+        "authoring_identity_manifest_ref": {
+            "path": AUTHORING_IDENTITY_PATH,
+            "sha256": sha256_hex(authoring_bytes),
+        },
+        "case_resources": cast(list[JsonValue], case_resources),
+        "critical_claim_rubric_ref": _reference(cast(str, rubric["rubric_id"]), cast(str, rubric["rubric_hash"])),
+        "data_classification": "SYNTHETIC",
+        "dataset_code": DATASET_CODE,
+        "dataset_version": DATASET_VERSION,
+        "deidentification_approval_receipt_ref": None,
+        "description": "SYNTHETIC_NATURAL_LANGUAGE_RETRIEVAL_DEV_DRAFT_DATASET",
+        "evaluation_corpus_snapshot_ref": _reference(
+            cast(str, mapping["mapping_id"]), cast(str, mapping["manifest_sha256"])
+        ),
+        "evidence_mapping_manifest_sha256": mapping["manifest_sha256"],
+        "fixture_git_commit_sha": None,
+        "frozen_at": None,
+        "manifest_sha256": "0" * 64,
+        "partition_counts": {"AUTHORING": 0, "DEV": 60, "HOLDOUT": 0, "SAFETY_REGRESSION": 0},
+        "protected_artifact_receipt_ref": _reference(cast(str, receipt["receipt_id"]), sha256_hex(receipt_bytes)),
+        "resource_set_hash": resource_set_hash,
+        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "schema_id": "rag-eval.dataset-manifest",
+        "schema_version": "1.3.0",
+        "scope": "SYNTHETIC_NATURAL_LANGUAGE_RETRIEVAL_DEV",
+        "status": "DRAFT",
+    }
+    return _with_self_hash(payload, "manifest_sha256")
+
+
 def build_issue_273_dev_graph() -> dict[str, bytes]:
     _validate_catalog()
-    graph = {path: canonical_json_bytes({}) for path in _GRAPH_MEMBER_PATHS}
+    graph: dict[str, bytes] = {}
     evidence_records = _build_evidence_records()
-    index_payload: JsonValue = {
+    index_payload: dict[str, JsonValue] = {
         "data_classification": "SYNTHETIC",
         "index_id": f"{DATASET_CODE}-synthetic-index",
         "index_version": DATASET_VERSION,
@@ -488,39 +978,57 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
     }
     graph[INDEX_PATH] = canonical_json_bytes(index_payload)
     graph[EVIDENCE_MAPPING_PATH] = _build_evidence_mapping(graph[INDEX_PATH], evidence_records)
-    case_number = 1
-    for intent in BASE_INTENTS:
-        gold_id = f"ev-nlr-{intent.transform_origin.lower()}-gold"
-        for variant in intent.variants:
-            case_id = f"rag-nlr-dev-{case_number:03d}"
-            input_value: JsonValue = {
-                "product_code": intent.product_code,
-                "query": variant.query,
-                "transform_origin": intent.transform_origin,
-            }
-            payload: JsonValue = {
-                "case_id": case_id,
-                "dataset_code": DATASET_CODE,
-                "dataset_version": DATASET_VERSION,
-                "expression": variant.expression,
-                "input_sha256": canonical_sha256(input_value),
-                "product_code": intent.product_code,
-                "query": variant.query,
-                "query_sha256": sha256_hex(variant.query.encode("utf-8")),
-                "relevant_evidence_refs": [gold_id],
-                "required_evidence_refs": [gold_id],
-                "topic": intent.topic,
-                "transform_origin": intent.transform_origin,
-            }
-            graph[f"{CASE_DIRECTORY}/{case_id}.json"] = canonical_json_bytes(payload)
-            case_number += 1
+    mapping = cast(dict[str, JsonValue], json.loads(graph[EVIDENCE_MAPPING_PATH]))
+    graph[RUBRIC_PATH] = _build_rubric()
+    rubric = cast(dict[str, JsonValue], json.loads(graph[RUBRIC_PATH]))
+    cases, case_values = _build_cases(
+        mapping=mapping,
+        rubric=rubric,
+        index_sha256=sha256_hex(graph[INDEX_PATH]),
+    )
+    graph.update(cases)
+    graph[AUTHORING_IDENTITY_PATH] = _build_authoring_identity(case_values, mapping, index_payload)
+    graph[SUITE_PATH] = _build_suite(case_values)
+    suite = cast(dict[str, JsonValue], json.loads(graph[SUITE_PATH]))
+    graph[PROFILE_PATH] = _build_profile(suite)
+    profile = cast(dict[str, JsonValue], json.loads(graph[PROFILE_PATH]))
+    graph[COMPARISON_POLICY_PATH] = _build_comparison_policy()
+    comparison = cast(dict[str, JsonValue], json.loads(graph[COMPARISON_POLICY_PATH]))
+    case_resources: list[dict[str, JsonValue]] = [
+        {
+            "case_id": cast(str, case["case_id"]),
+            "partition": "DEV",
+            "path": path,
+            "sha256": sha256_hex(graph[path]),
+        }
+        for path, case in zip(sorted(cases), case_values, strict=True)
+    ]
+    graph[EVALUATION_POLICY_PATH] = _build_evaluation_policy(
+        profile,
+        comparison,
+        suite,
+        case_resources,
+    )
+    resource_set_hash = _resource_set_hash(case_resources)
+    graph[PROTECTED_RECEIPT_PATH] = _build_protected_receipt(case_resources, resource_set_hash)
+    receipt = cast(dict[str, JsonValue], json.loads(graph[PROTECTED_RECEIPT_PATH]))
+    graph[DATASET_MANIFEST_PATH] = _build_dataset_manifest(
+        case_resources=case_resources,
+        mapping=mapping,
+        rubric=rubric,
+        authoring_bytes=graph[AUTHORING_IDENTITY_PATH],
+        receipt=receipt,
+        receipt_bytes=graph[PROTECTED_RECEIPT_PATH],
+        resource_set_hash=resource_set_hash,
+    )
+    if set(graph) != {*_GRAPH_MEMBER_PATHS, *cases}:
+        raise RuntimeError("Issue 273 graph members are incomplete")
     return graph
 
 
 def write_issue_273_dev_graph(evals_root: Path) -> None:
     graph = build_issue_273_dev_graph()
-    for relative_path in _IMPLEMENTED_GRAPH_PATHS:
-        content = graph[relative_path]
+    for relative_path, content in graph.items():
         destination = evals_root / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
