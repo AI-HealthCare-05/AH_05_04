@@ -1,10 +1,10 @@
 # Post-MVP-1 목표 계약
 
-> 상태: Approved Post-MVP-1 targets / Not implemented
+> 상태: Approved Post-MVP-1 targets / 문서별 구현 상태 별도 표시
 
-이 디렉터리의 계약은 승인된 Post-MVP-1 구현 목표이며 현재 API, DB, Worker 또는 공개 기능으로 해석하지 않습니다. 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../../../governance/post-mvp-1-document-authority.md)를 따릅니다.
+이 디렉터리의 계약은 승인된 Post-MVP-1 구현 목표입니다. 일부 항목은 구현 PR에서 current 문서로 분리·승격될 수 있으며, 각 문서의 구현 상태 표기를 우선합니다. 구현 상태가 명시되지 않은 항목은 현재 API, DB, Worker 또는 공개 기능으로 해석하지 않습니다. 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../../../governance/post-mvp-1-document-authority.md)를 따릅니다.
 
-- [비동기 Job 계약 v1](./async-job-v1.md) — Job 상태 조회 GET 구현 완료(#148) · OCR/Guide rediscovery GET은 서비스 로직 구현·라우트 등록 보류 · 접수(POST) `accept_job()` 연결·Publisher/Worker/Reconciler 미구현
+- [비동기 Job 계약 v1](./async-job-v1.md) — Job 상태 조회 GET과 OCR 접수 POST 구현 완료(#148) · OCR/Guide rediscovery GET은 서비스 로직 구현·라우트 등록 보류 · Guide/Chat 접수 POST와 Reconciler 미구현
 - [멱등성 계약 v1](./idempotency-v1.md)
 - [Transactional Outbox와 Redis Stream 계약 v1](./outbox-stream-v1.md)
 - [처방 버전 계약 v1](./prescription-version-v1.md)
