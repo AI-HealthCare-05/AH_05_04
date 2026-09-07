@@ -45,6 +45,8 @@ class Prescription(Base):
             ["prescription_version.id", "prescription_version.prescription_id"],
             name="fk_prescription_active_version",
             use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["document_id", "profile_id"],
@@ -155,6 +157,7 @@ class PrescriptionVersion(Base):
             ["prescription_id"],
             ["prescription.id"],
             name="fk_prescription_version_prescription",
+            ondelete="CASCADE",
         ),
         UniqueConstraint("id", "prescription_id", name="uq_prescription_version_id_prescription"),
         UniqueConstraint(
@@ -236,6 +239,7 @@ class PrescriptionVersionMedication(Base):
         ForeignKey(
             "prescription_version.id",
             name="fk_prescription_version_medication_version",
+            ondelete="CASCADE",
         ),
         nullable=False,
     )

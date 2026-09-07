@@ -52,7 +52,11 @@ def _create_immutability_guards() -> None:
             CREATE OR REPLACE FUNCTION prevent_prescription_version_mutation()
             RETURNS trigger AS $$
             BEGIN
-                RAISE EXCEPTION '% rows are immutable; create a new prescription version instead', TG_TABLE_NAME;
+                IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 THEN
+                    RETURN OLD;
+                END IF;
+
+                RAISE EXCEPTION '% rows are immutable; direct mutation is forbidden', TG_TABLE_NAME;
             END;
             $$ LANGUAGE plpgsql;
             """
@@ -81,6 +85,144 @@ def _create_immutability_guards() -> None:
         )
 
 
+def _create_membership_guards() -> None:
+    op.execute(
+        sa.text(
+            """
+            CREATE OR REPLACE FUNCTION prevent_frozen_prescription_version_medication_insert()
+            RETURNS trigger AS $$
+            DECLARE
+                parent_prescription_id char(36);
+                active_version_id char(36);
+                prescription_xmin bigint;
+                version_xmin bigint;
+            BEGIN
+                SELECT prescription_id, xmin::text::bigint
+                INTO parent_prescription_id, version_xmin
+                FROM prescription_version
+                WHERE id = NEW.prescription_version_id;
+
+                IF NOT FOUND THEN
+                    RETURN NEW;
+                END IF;
+
+                SELECT prescription.active_version_id, prescription.xmin::text::bigint
+                INTO active_version_id, prescription_xmin
+                FROM prescription
+                WHERE id = parent_prescription_id
+                FOR UPDATE;
+
+                -- A version activation transaction may assemble its medication set before
+                -- commit. Once that prescription tuple is committed, active and superseded
+                -- versions reject all further membership changes.
+                IF active_version_id = NEW.prescription_version_id
+                   AND prescription_xmin = txid_current()
+                   AND version_xmin = txid_current() THEN
+                    RETURN NEW;
+                END IF;
+
+                IF active_version_id = NEW.prescription_version_id
+                   OR EXISTS (
+                       SELECT 1
+                       FROM prescription_version AS newer_version
+                       JOIN prescription_version AS target_version
+                         ON target_version.id = NEW.prescription_version_id
+                       WHERE newer_version.prescription_id = target_version.prescription_id
+                         AND newer_version.version_number > target_version.version_number
+                   ) THEN
+                    RAISE EXCEPTION
+                        'prescription version medication set is frozen; create a new version instead'
+                        USING ERRCODE = '23514',
+                              CONSTRAINT = 'chk_prescription_version_medication_frozen';
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE TRIGGER trg_prescription_version_medication_prevent_frozen_insert
+            BEFORE INSERT ON prescription_version_medication
+            FOR EACH ROW
+            EXECUTE FUNCTION prevent_frozen_prescription_version_medication_insert()
+            """
+        )
+    )
+
+    op.execute(
+        sa.text(
+            """
+            CREATE OR REPLACE FUNCTION check_prescription_version_medications()
+            RETURNS trigger AS $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM prescription_version_medication
+                    WHERE prescription_version_id = NEW.id
+                ) THEN
+                    RAISE EXCEPTION 'prescription version requires at least one medication'
+                        USING ERRCODE = '23514',
+                              CONSTRAINT = 'chk_prescription_version_medication';
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE CONSTRAINT TRIGGER trg_prescription_version_medication_required
+            AFTER INSERT ON prescription_version
+            DEFERRABLE INITIALLY DEFERRED
+            FOR EACH ROW
+            EXECUTE FUNCTION check_prescription_version_medications()
+            """
+        )
+    )
+
+    op.execute(
+        sa.text(
+            """
+            CREATE OR REPLACE FUNCTION check_prescription_active_version_medications()
+            RETURNS trigger AS $$
+            BEGIN
+                IF NEW.active_version_id IS NOT NULL
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM prescription_version_medication
+                       WHERE prescription_version_id = NEW.active_version_id
+                   ) THEN
+                    RAISE EXCEPTION 'active prescription version requires at least one medication'
+                        USING ERRCODE = '23514',
+                              CONSTRAINT = 'chk_prescription_active_version_medication';
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE CONSTRAINT TRIGGER trg_prescription_active_version_medication
+            AFTER INSERT OR UPDATE ON prescription
+            DEFERRABLE INITIALLY DEFERRED
+            FOR EACH ROW
+            EXECUTE FUNCTION check_prescription_active_version_medications()
+            """
+        )
+    )
+
+
 def upgrade() -> None:
     op.create_table(
         "prescription_version",
@@ -95,6 +237,7 @@ def upgrade() -> None:
             ["prescription_id"],
             ["prescription.id"],
             name="fk_prescription_version_prescription",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("id", "prescription_id", name="uq_prescription_version_id_prescription"),
@@ -147,6 +290,7 @@ def upgrade() -> None:
             ["prescription_version_id"],
             ["prescription_version.id"],
             name="fk_prescription_version_medication_version",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
@@ -169,15 +313,27 @@ def upgrade() -> None:
         "prescription_version",
         ["active_version_id", "id"],
         ["id", "prescription_id"],
+        deferrable=True,
+        initially="DEFERRED",
     )
     op.create_index("idx_prescription_active_version", "prescription", ["active_version_id"])
 
     _create_immutability_guards()
+    _create_membership_guards()
 
 
 def downgrade() -> None:
     _ensure_downgrade_is_data_safe(op.get_bind())
 
+    op.execute("DROP TRIGGER IF EXISTS trg_prescription_active_version_medication ON prescription")
+    op.execute("DROP FUNCTION IF EXISTS check_prescription_active_version_medications()")
+    op.execute("DROP TRIGGER IF EXISTS trg_prescription_version_medication_required ON prescription_version")
+    op.execute("DROP FUNCTION IF EXISTS check_prescription_version_medications()")
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_prescription_version_medication_prevent_frozen_insert "
+        "ON prescription_version_medication"
+    )
+    op.execute("DROP FUNCTION IF EXISTS prevent_frozen_prescription_version_medication_insert()")
     op.execute(
         "DROP TRIGGER IF EXISTS trg_prescription_version_medication_prevent_delete ON prescription_version_medication"
     )

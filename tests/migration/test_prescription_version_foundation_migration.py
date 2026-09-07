@@ -93,6 +93,7 @@ async def _fetch_schema_object_names() -> set[str]:
                 FROM information_schema.triggers
                 WHERE event_object_schema = 'public'
                   AND event_object_table IN (
+                    'prescription',
                     'prescription_version',
                     'prescription_version_medication'
                   )
@@ -220,27 +221,30 @@ async def _seed_prescription_version() -> dict[str, str]:
 async def _cleanup_prescription_version(ids: Mapping[str, str]) -> None:
     async with _connection() as connection:
         async with connection.begin():
-            await connection.execute(
-                text("UPDATE prescription SET active_version_id = NULL WHERE id = :prescription_id"),
-                ids,
-            )
-            for table_name in ("prescription_version_medication", "prescription_version"):
-                await connection.execute(text(f"ALTER TABLE {table_name} DISABLE TRIGGER USER"))
-            await connection.execute(
-                text("DELETE FROM prescription_version_medication WHERE prescription_version_id = :version_id"),
-                ids,
-            )
-            await connection.execute(
-                text("DELETE FROM prescription_version WHERE id = :version_id"),
-                ids,
-            )
-            for table_name in ("prescription_version_medication", "prescription_version"):
-                await connection.execute(text(f"ALTER TABLE {table_name} ENABLE TRIGGER USER"))
             await connection.execute(text("DELETE FROM prescription WHERE id = :prescription_id"), ids)
             await connection.execute(text("DELETE FROM ocr_job WHERE id = :ocr_job_id"), ids)
             await connection.execute(text("DELETE FROM medical_document WHERE id = :document_id"), ids)
             await connection.execute(text("DELETE FROM profile WHERE id = :profile_id"), ids)
             await connection.execute(text('DELETE FROM "user" WHERE id = :user_id'), ids)
+
+
+async def _activate_version(ids: Mapping[str, str], version_id: str | None = None) -> None:
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text("UPDATE prescription SET active_version_id = :active_version_id WHERE id = :prescription_id"),
+                {**ids, "active_version_id": version_id or ids["version_id"]},
+            )
+            await connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+
+async def _count_rows(table_name: str, where_clause: str, params: Mapping[str, object]) -> int:
+    async with _connection() as connection:
+        result = await connection.execute(
+            text(f"SELECT count(*) FROM {table_name} WHERE {where_clause}"),
+            params,
+        )
+        return int(result.scalar_one())
 
 
 async def _execute_expect_db_error(
@@ -254,6 +258,7 @@ async def _execute_expect_db_error(
         try:
             with pytest.raises(DBAPIError) as exc_info:
                 await connection.execute(text(sql), params)
+                await connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
             assert expected_text in str(exc_info.value)
         finally:
             await transaction.rollback()
@@ -286,6 +291,9 @@ def test_prescription_version_schema_constraints_exist() -> None:
     assert "trg_prescription_version_prevent_delete" in schema_objects
     assert "trg_prescription_version_medication_prevent_update" in schema_objects
     assert "trg_prescription_version_medication_prevent_delete" in schema_objects
+    assert "trg_prescription_version_medication_prevent_frozen_insert" in schema_objects
+    assert "trg_prescription_version_medication_required" in schema_objects
+    assert "trg_prescription_active_version_medication" in schema_objects
 
 
 def test_prescription_version_constraints_and_immutability_are_enforced() -> None:
@@ -360,6 +368,258 @@ def test_active_version_must_belong_to_the_same_prescription() -> None:
     finally:
         asyncio.run(_cleanup_prescription_version(first))
         asyncio.run(_cleanup_prescription_version(second))
+
+
+def test_active_version_requires_at_least_one_medication() -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_prescription_version())
+    empty_version_id = str(uuid4())
+
+    async def create_empty_version_and_reject_activation() -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version (
+                            id, prescription_id, version_number, prescribed_date, confirmed_at
+                        )
+                        VALUES (:empty_version_id, :prescription_id, 2, DATE '2026-09-08', now())
+                        """
+                    ),
+                    {**ids, "empty_version_id": empty_version_id},
+                )
+                await connection.execute(
+                    text("UPDATE prescription SET active_version_id = :empty_version_id WHERE id = :prescription_id"),
+                    {**ids, "empty_version_id": empty_version_id},
+                )
+                with pytest.raises(DBAPIError) as exc_info:
+                    await connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                assert "prescription version requires at least one medication" in str(exc_info.value)
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(create_empty_version_and_reject_activation())
+    finally:
+        asyncio.run(_cleanup_prescription_version(ids))
+
+
+def test_active_and_historical_version_medication_sets_are_frozen() -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_prescription_version())
+    second_version_id = str(uuid4())
+    second_medication_id = str(uuid4())
+
+    async def create_and_activate_second_version() -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version (
+                            id, prescription_id, version_number, prescribed_date, confirmed_at
+                        )
+                        VALUES (:second_version_id, :prescription_id, 2, DATE '2026-09-08', now())
+                        """
+                    ),
+                    {**ids, "second_version_id": second_version_id},
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version_medication (
+                            id, prescription_version_id, medication_name, display_order
+                        )
+                        VALUES (:second_medication_id, :second_version_id, '합성두번째약', 1)
+                        """
+                    ),
+                    {
+                        **ids,
+                        "second_version_id": second_version_id,
+                        "second_medication_id": second_medication_id,
+                    },
+                )
+                await connection.execute(
+                    text("UPDATE prescription SET active_version_id = :second_version_id WHERE id = :prescription_id"),
+                    {**ids, "second_version_id": second_version_id},
+                )
+                await connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+    try:
+        asyncio.run(_activate_version(ids))
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO prescription_version_medication (
+                    id, prescription_version_id, medication_name, display_order
+                )
+                VALUES (:late_id, :version_id, '활성버전추가약', 2)
+                """,
+                {**ids, "late_id": str(uuid4())},
+                expected_text="prescription version medication set is frozen",
+            )
+        )
+
+        asyncio.run(create_and_activate_second_version())
+
+        for frozen_version_id in (ids["version_id"], second_version_id):
+            asyncio.run(
+                _execute_expect_db_error(
+                    """
+                    INSERT INTO prescription_version_medication (
+                        id, prescription_version_id, medication_name, display_order
+                    )
+                    VALUES (:late_id, :frozen_version_id, '과거버전추가약', 2)
+                    """,
+                    {
+                        **ids,
+                        "frozen_version_id": frozen_version_id,
+                        "late_id": str(uuid4()),
+                    },
+                    expected_text="prescription version medication set is frozen",
+                )
+            )
+    finally:
+        asyncio.run(_cleanup_prescription_version(ids))
+
+
+def test_deferred_active_fk_supports_future_not_null_creation_transaction() -> None:
+    command.upgrade(create_alembic_config(), "head")
+
+    async def create_graph_with_final_not_null_shape() -> None:
+        ids = {
+            "user_id": str(uuid4()),
+            "profile_id": str(uuid4()),
+            "document_id": str(uuid4()),
+            "ocr_job_id": str(uuid4()),
+            "prescription_id": str(uuid4()),
+            "version_id": str(uuid4()),
+            "medication_id": str(uuid4()),
+            "email": f"deferred-{uuid4().hex[:10]}@test.local",
+        }
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.execute(text("ALTER TABLE prescription ALTER COLUMN active_version_id SET NOT NULL"))
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO "user" (id, email, hashed_password, name, is_active, is_admin)
+                        VALUES (:user_id, :email, 'synthetic-password-hash', 'deferred-test', true, false)
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO profile (id, user_id, profile_type, display_name)
+                        VALUES (:profile_id, :user_id, 'SELF', 'deferred-test')
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO medical_document (
+                            id, uploaded_by, profile_id, document_type, original_file_name,
+                            object_key, file_mime_type, file_size_bytes, upload_status
+                        )
+                        VALUES (
+                            :document_id, :user_id, :profile_id, 'PRESCRIPTION',
+                            'deferred-test.png', 'synthetic/deferred-test.png',
+                            'image/png', 1, 'UPLOADED'
+                        )
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO ocr_job (id, document_id, ocr_status)
+                        VALUES (:ocr_job_id, :document_id, 'PENDING')
+                        """
+                    ),
+                    ids,
+                )
+                # The active version does not exist yet. This INSERT succeeds only
+                # because fk_prescription_active_version is initially deferred.
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription (
+                            id, active_version_id, document_id, source_ocr_job_id,
+                            profile_id, prescribed_date, prescription_status, confirmed_at
+                        )
+                        VALUES (
+                            :prescription_id, :version_id, :document_id, :ocr_job_id,
+                            :profile_id, DATE '2026-09-08', 'CONFIRMED', now()
+                        )
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version (
+                            id, prescription_id, version_number, prescribed_date, confirmed_at
+                        )
+                        VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now())
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version_medication (
+                            id, prescription_version_id, medication_name, display_order
+                        )
+                        VALUES (:medication_id, :version_id, '합성지연제약약', 1)
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+            finally:
+                await transaction.rollback()
+
+    asyncio.run(create_graph_with_final_not_null_shape())
+
+
+def test_parent_prescription_delete_cascades_immutable_snapshots() -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_prescription_version())
+    try:
+        asyncio.run(_activate_version(ids))
+
+        async def delete_parent() -> None:
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(
+                        text("DELETE FROM prescription WHERE id = :prescription_id"),
+                        ids,
+                    )
+
+        asyncio.run(delete_parent())
+        assert asyncio.run(_count_rows("prescription_version", "prescription_id = :prescription_id", ids)) == 0
+        assert (
+            asyncio.run(
+                _count_rows(
+                    "prescription_version_medication",
+                    "id = :version_medication_id",
+                    ids,
+                )
+            )
+            == 0
+        )
+    finally:
+        asyncio.run(_cleanup_prescription_version(ids))
 
 
 def test_prescription_version_downgrade_rejects_immutable_history() -> None:

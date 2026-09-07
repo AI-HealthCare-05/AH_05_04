@@ -29,11 +29,15 @@ Revision `169a1b2c3d4e`는 API 동작을 변경하지 않는 Expand 단계다. A
 | `prescription_version` | `id`, `prescription_id`, `version_number`, `prescribed_date`, `confirmed_at`, `created_at` |
 | `prescription_version_medication` | `id`, `prescription_version_id`, `medication_name`, nullable `strength_text`, nullable `dose_value`, nullable `dose_unit`, nullable `frequency_per_day`, nullable `timing_text`, nullable `duration_days`, `display_order`, `created_at` |
 
-`prescription.active_version_id`는 `(active_version_id, prescription.id) → prescription_version(id, prescription_id)` composite FK로 같은 처방의 version만 가리키게 한다. `active_version_id`는 기존 처방 Backfill 전까지 nullable이며 PR 2에서 version 1 생성·검증과 함께 채운다. 별도 active/current 상태 컬럼은 만들지 않는다.
+`prescription.active_version_id`는 `(active_version_id, prescription.id) → prescription_version(id, prescription_id)` composite FK로 같은 처방의 version만 가리키게 한다. FK는 `DEFERRABLE INITIALLY DEFERRED`이므로 후속 NOT NULL 전환 뒤에도 미리 생성한 ID로 Prescription → Version → Medication을 같은 transaction에서 만들 수 있고 commit 시점에 완전한 graph를 검증한다. `active_version_id`는 기존 처방 Backfill 전까지 nullable이며 PR 2에서 version 1 생성·검증과 함께 채운다. 별도 active/current 상태 컬럼은 만들지 않는다.
 
-Version sequence는 양수이고 `(prescription_id, version_number)`가 unique다. 약물 표시 순서는 양수이며 `(prescription_version_id, display_order)`가 unique다. 두 snapshot 테이블은 DB trigger로 UPDATE와 DELETE를 차단한다.
+Version sequence는 양수이고 `(prescription_id, version_number)`가 unique다. 약물 표시 순서는 양수이며 `(prescription_version_id, display_order)`가 unique다. 지연 제약은 commit 시 모든 Version과 active pointer에 medication snapshot이 1개 이상인지 확인한다. Medication INSERT는 최신 draft를 조립하는 transaction에서만 허용하며, active 또는 더 최신 version이 존재하는 historical version의 집합에는 추가할 수 없다. 두 snapshot 테이블은 DB trigger로 직접 UPDATE·DELETE를 차단한다.
+
+사용자 데이터 삭제는 `prescription`을 삭제하는 기존 애플리케이션 경계에서만 시작한다. `prescription → prescription_version → prescription_version_medication` FK는 `ON DELETE CASCADE`이고, 불변성 trigger는 이 부모 연쇄 삭제만 허용한다. Version 또는 Version Medication 직접 삭제는 계속 차단한다. Migration downgrade는 런타임 사용자 삭제와 별개이며 version data가 있으면 중단한다.
 
 `profile`, `medical_document`, `ocr_job` 소유권·출처는 PR 1에서 중복 snapshot FK를 추가하지 않고 현재의 `prescription → profile`, `prescription → medical_document`, `prescription → ocr_job` 관계를 따른다. Candidate·Identification의 기존 문자열 FK 자리에는 아직 FK를 연결하지 않는다. Backfill되지 않은 현재 데이터와 API 호환성을 유지한 뒤 PR 3 Read cutover 범위에서 연결한다.
+
+v2 이상은 같은 확정 처방 데이터에 대한 사용자 정정으로 생성하며 같은 문서를 새 OCR Job으로 재스캔·재확정하는 흐름은 PR 2/3 범위에 포함하지 않는다. 그런 흐름을 추가하려면 Version별 OCR provenance 필드와 계약을 별도로 승인한다.
 
 ## 활성화
 
