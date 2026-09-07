@@ -1,12 +1,29 @@
 """Strict decoders for documented MFDS JSON response envelopes."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 from ai_worker.tasks.rag.source_client.mfds_client import (
     DecodedProviderPage,
 )
+
+_MFDS_BODY_FIELDS = frozenset({"items", "pageNo", "numOfRows", "totalCount"})
+
+
+def _reject_duplicate_object_keys(
+    pairs: Sequence[tuple[str, object]],
+) -> dict[str, object]:
+    """모든 깊이에서 중복 JSON key를 원문 값 노출 없이 거부합니다."""
+    decoded: dict[str, object] = {}
+
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError("MFDS JSON contains a duplicate object key.")
+
+        decoded[key] = value
+
+    return decoded
 
 
 def _require_object(value: object) -> dict[str, object]:
@@ -67,7 +84,10 @@ def decode_mfds_json(
     if media_type != "application/json":
         raise ValueError("MFDS JSON decoder received another media type.")
 
-    payload: object = json.loads(body)
+    payload: object = json.loads(
+        body,
+        object_pairs_hook=_reject_duplicate_object_keys,
+    )
     root = _require_object(payload)
 
     # 일부 Gateway 응답은 최상위를 response로 한 번 더 감쌀 수 있습니다.
@@ -75,6 +95,9 @@ def decode_mfds_json(
     response = _require_object(response_value)
     header = _require_object(response["header"])
     body_envelope = _require_object(response["body"])
+
+    if not set(body_envelope).issubset(_MFDS_BODY_FIELDS):
+        raise ValueError("MFDS response body contains an unsupported envelope field.")
 
     result_code = header["resultCode"]
     total_count = body_envelope.get("totalCount")

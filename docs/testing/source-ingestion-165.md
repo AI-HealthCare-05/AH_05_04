@@ -43,7 +43,9 @@
 - 중첩 객체 key는 UTF-16 byte 기준으로 정렬한다.
 - 전체 제품 레코드는 `ITEM_SEQ` 원문 값으로 정렬한다.
 - 레코드 내부 배열 순서는 유지한다.
-- Operation Envelope는 제품 Parser가 반환한 레코드 목록에 포함하지 않는다.
+- Operation Envelope 중 `header`, `totalCount`, `pageNo`, `numOfRows`는 제품 Parser가 반환한 레코드 목록에 포함하지 않는다.
+- `body`의 미등록 Envelope 필드는 자동 제외하지 않고 schema drift로 거부한다.
+- 원본 JSON 객체의 중복 key는 모든 깊이에서 거부하며 마지막 값으로 덮어쓰지 않는다.
 
 기존 Evaluation serializer는 변경하지 않았다. Source checksum과
 Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각각의

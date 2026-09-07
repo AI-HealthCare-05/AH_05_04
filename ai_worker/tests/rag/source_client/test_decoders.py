@@ -157,3 +157,31 @@ def test_rejects_non_integer_total_count() -> None:
 def test_rejects_wrong_media_type() -> None:
     with pytest.raises(ValueError, match="media type"):
         decode_mfds_json(b"{}", "application/xml")
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        b'{"header":{"resultCode":"00","resultCode":"99"},"body":{"items":[],"totalCount":0}}',
+        b'{"header":{"resultCode":"00"},"body":{"items":['
+        b'{"ITEM_SEQ":"product-001","ITEM_NAME":"first",'
+        b'"ITEM_NAME":"second"}],"totalCount":1}}',
+    ),
+)
+def test_rejects_duplicate_object_keys_at_any_depth(body: bytes) -> None:
+    with pytest.raises(ValueError, match="duplicate object key"):
+        decode_mfds_json(body, "application/json")
+
+
+def test_rejects_unlisted_response_body_envelope_fields() -> None:
+    with pytest.raises(ValueError, match="unsupported envelope field"):
+        _decode(
+            {
+                "header": {"resultCode": "00"},
+                "body": {
+                    "items": [],
+                    "totalCount": 0,
+                    "generatedAt": "2099-01-01T00:00:00Z",
+                },
+            }
+        )

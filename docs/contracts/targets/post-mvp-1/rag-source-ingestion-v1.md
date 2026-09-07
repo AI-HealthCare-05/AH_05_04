@@ -94,7 +94,8 @@ Snapshot은 다음 정보를 불변으로 보존한다.
 - 모든 중첩 객체 key는 UTF-16 byte 순서로 정렬하고 객체 안의 배열 순서는 유지한다.
 - 모든 성공 페이지의 제품 레코드를 합친 뒤 `ITEM_SEQ` 원문 값으로 정렬한다. `ITEM_SEQ` 누락·타입 불일치·중복은 거부한다.
 - MFDS JSON 응답에서 Parser 입력으로 포함하는 정확한 경로는 `response.body.items.item`이며, 최상위 `response` wrapper가 없는 응답에서는 `body.items.item`이다. `items`가 배열인 변형에서는 각 원소 또는 각 원소의 `item` 값만 같은 제품 레코드 목록으로 해석한다.
-- 위 제품 레코드 목록 밖의 Operation Envelope인 `response.header`, `response.body.totalCount`와 그 밖의 `response.body` 필드는 canonical checksum 입력에서 제외한다. 최상위 `response` wrapper가 없는 응답에도 같은 상대 경로 제외 규칙을 적용한다.
+- Operation Envelope에서 canonical checksum 입력에 포함하는 값은 위 제품 레코드 목록뿐이다. `response.header` 전체와 확인된 pagination 필드인 `response.body.totalCount`, `response.body.pageNo`, `response.body.numOfRows`는 제외한다. 최상위 `response` wrapper가 없는 응답에도 같은 상대 경로 제외 규칙을 적용한다. `response.body`에 `items`, `totalCount`, `pageNo`, `numOfRows` 이외의 필드가 있으면 자동 제외하지 않고 schema drift로 거부한다.
+- 원본 JSON 객체의 중복 key는 마지막 값으로 덮어쓰지 않고 모든 깊이에서 파싱 실패로 처리한다. 중복 key 이름과 원문 값은 오류 메시지나 일반 로그에 포함하지 않는다.
 - 원본 Artifact의 크기와 SHA-256을 검증한 동일 바이트를 versioned MFDS decoder로 해석한다. 그 결과가 수집 중 기록된 page records·`totalCount`와 정확히 일치할 때만 canonical checksum을 계산한다.
 
 `ProductIngestionResult`는 검증 완료 경계에서 다음 값을 제공한다.
