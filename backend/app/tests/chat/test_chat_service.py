@@ -358,6 +358,12 @@ async def test_history_context_stops_when_next_valid_pair_exceeds_total_characte
 async def test_history_context_keeps_earlier_medication_pair_after_unrelated_topic_switch() -> None:
     # Issue #293 재현: 약물 A -> 무관한 주제 -> 약물명을 생략한 후속 질문.
     # 완료 pair가 2개뿐이라 3쌍 제한에도, 12,000자 예산에도 걸리지 않아야 합니다.
+    #
+    # 검증 범위: service가 주어진 완료 pair를 오래된 순으로 그대로 전달하는지만 확인합니다.
+    # FAILED·GENERATING pair 배제 자체는 fake repository가 아니라 실제 쿼리의 책임이며
+    # test_chat_repository.py::
+    #   test_list_recent_completed_pairs_returns_only_latest_complete_consecutive_pairs_from_same_session
+    # 이 실제 PostgreSQL에서 고정합니다.
     pairs = [
         _history_pair(3, "약은 어디에 보관하나요?", "직사광선을 피해 실온 보관하세요."),
         _history_pair(1, "합성의약품 알파는 언제 먹나요?", "아침 식후로 확인됩니다."),
@@ -383,30 +389,6 @@ async def test_history_context_keeps_earlier_medication_pair_after_unrelated_top
         ("약은 어디에 보관하나요?", "직사광선을 피해 실온 보관하세요."),
     ]
     assert "합성의약품 알파" in history[0].question
-
-
-async def test_history_context_survives_failed_intermediate_turn() -> None:
-    # 중간 대화가 FAILED면 repository 쿼리 단계에서 제외되므로,
-    # 주제 전환 이전의 완료된 약물 pair는 그대로 남아야 합니다.
-    pairs = [_history_pair(1, "합성의약품 알파는 언제 먹나요?", "아침 식후로 확인됩니다.")]
-    engine = RecordingEngine(
-        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
-    )
-    service, _, _, chat_session = _service_fixture(
-        engine=engine,
-        history_context_enabled=True,
-        recent_pairs=pairs,
-    )
-
-    await service.send_message(
-        user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
-        session_id=chat_session.id,
-        request=SendChatMessageRequest(content="아까 그 약은 식전에 먹어도 되나요?"),
-    )
-
-    assert [(item.question, item.answer) for item in engine.inputs[0].history] == [
-        ("합성의약품 알파는 언제 먹나요?", "아침 식후로 확인됩니다.")
-    ]
 
 
 @pytest.mark.parametrize(
