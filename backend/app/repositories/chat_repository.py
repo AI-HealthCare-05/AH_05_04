@@ -5,7 +5,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
+from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession, ChatSessionStatus
 from app.models.prescriptions import Prescription
 from app.repositories.profile_ownership import owned_by_self
 
@@ -29,6 +29,24 @@ class ChatRepository:
                 ChatSession.id == session_id,
                 owned_by_self(ChatSession.profile_id, user_id),
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_session_for_prescription_owned(
+        self,
+        *,
+        prescription_id: UUID,
+        user_id: UUID,
+    ) -> ChatSession | None:
+        result = await self.session.execute(
+            select(ChatSession)
+            .where(
+                ChatSession.prescription_id == prescription_id,
+                ChatSession.session_status == ChatSessionStatus.ACTIVE,
+                owned_by_self(ChatSession.profile_id, user_id),
+            )
+            .order_by(ChatSession.last_message_at.desc(), ChatSession.created_at.desc(), ChatSession.id.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
