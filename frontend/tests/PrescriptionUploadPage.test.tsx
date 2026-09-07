@@ -557,9 +557,7 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(statusCalls[1]?.[0]).toBe(statusUrl)
     expect(uploadPrescription).toHaveBeenCalledTimes(1)
     expect(executeOcr).toHaveBeenCalledTimes(1)
-    await waitFor(() => {
-      expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
-    })
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
   })
 
   it('result_url network 오류 후에도 새 Job 접수 없이 같은 결과 URL을 다시 조회한다', async () => {

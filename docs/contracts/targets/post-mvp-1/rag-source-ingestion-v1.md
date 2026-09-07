@@ -91,8 +91,9 @@ Snapshot은 다음 정보를 불변으로 보존한다.
 - 원문 문자열의 Unicode 형태와 앞뒤 공백을 그대로 보존하며 NFC와 trim을 적용하지 않는다.
 - 숫자형 문자열을 숫자로 변환하지 않고 문자열·정수·boolean·null·빈 문자열·필드 누락을 구분한다.
 - 정수는 `-(2^53)+1`부터 `2^53-1`까지 허용하고 실수와 lone surrogate를 거부한다.
-- 모든 중첩 객체 key는 UTF-16 byte 순서로 정렬하고 객체 안의 배열 순서는 유지한다.
-- 모든 성공 페이지의 제품 레코드를 합친 뒤 `ITEM_SEQ` 원문 값으로 정렬한다. `ITEM_SEQ` 누락·타입 불일치·중복은 거부한다.
+- 모든 중첩 객체 key는 아래 canonical 문자열 comparator로 정렬하고 객체 안의 배열 순서는 유지한다.
+- 모든 성공 페이지의 제품 레코드를 합친 뒤 `ITEM_SEQ` 원문 값을 같은 canonical 문자열 comparator로 정렬한다. `ITEM_SEQ` 누락·타입 불일치·중복은 거부한다.
+- Canonical 문자열 comparator는 문자열을 UTF-16 big-endian으로 인코딩한 바이트열의 사전식 비교, 즉 UTF-16 code unit 순서다. 객체 key, `ITEM_SEQ`, `raw_manifest_checksum`의 Artifact Key에 모두 같은 comparator를 적용한다. code point 순서로 정렬하면 non-BMP 문자에서 결과가 갈린다 — `U+FFFD`(0xFFFD)와 `U+10000`(surrogate pair 0xD800 0xDC00)의 경우 code point 순서는 `U+FFFD`가 앞이지만 UTF-16 code unit 순서는 0xD800 < 0xFFFD이므로 `U+10000`이 앞이다. 구현 언어의 기본 문자열 비교에 의존하지 않고 이 comparator를 명시적으로 사용해야 같은 입력에서 같은 checksum이 재현된다.
 - MFDS JSON 응답에서 Parser 입력으로 포함하는 정확한 경로는 `response.body.items.item`이며, 최상위 `response` wrapper가 없는 응답에서는 `body.items.item`이다. `items`가 배열인 변형에서는 각 원소 또는 각 원소의 `item` 값만 같은 제품 레코드 목록으로 해석한다.
 - Operation Envelope에서 canonical checksum 입력에 포함하는 값은 위 제품 레코드 목록뿐이다. `response.header` 전체와 확인된 pagination 필드인 `response.body.totalCount`, `response.body.pageNo`, `response.body.numOfRows`는 제외한다. 최상위 `response` wrapper가 없는 응답에도 같은 상대 경로 제외 규칙을 적용한다. `response.body`에 `items`, `totalCount`, `pageNo`, `numOfRows` 이외의 필드가 있으면 자동 제외하지 않고 schema drift로 거부한다.
 - 제품 Operation의 `response.body`에서는 `items`, `pageNo`, `numOfRows`, `totalCount`를 모두 필수로 검증하고 pagination 세 필드는 boolean을 제외한 정수만 허용한다. `pageNo`는 1 이상, `totalCount`는 0 이상이어야 한다. 응답 `pageNo`는 요청한 `pageNo`와 정확히 같아야 하며 다르면 schema drift로 거부한다. `numOfRows`는 실응답 Receipt에서 값의 동일성 의미가 별도로 확정되지 않았으므로 존재와 타입만 검증하고 요청값과의 일치를 추정하지 않는다.

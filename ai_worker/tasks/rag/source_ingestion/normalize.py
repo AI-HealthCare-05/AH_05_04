@@ -6,6 +6,18 @@ _MIN_SAFE_INTEGER = -(2**53) + 1
 _MAX_SAFE_INTEGER = (2**53) - 1
 
 
+def utf16_sort_key(value: str) -> bytes:
+    """Canonical 정렬에 쓰는 UTF-16 code unit 순서 key입니다.
+
+    Python 기본 문자열 비교는 code point 순서라 non-BMP 문자에서 UTF-16 code unit
+    순서와 어긋납니다. 예를 들어 code point 순서에서는 `U+FFFD`(0xFFFD)가
+    `U+10000`(surrogate pair 0xD800 0xDC00)보다 앞이지만, UTF-16 code unit
+    순서에서는 0xD800 < 0xFFFD이므로 `U+10000`이 앞입니다. 다른 언어로 구현한
+    Loader도 같은 checksum을 재현할 수 있도록 이 comparator를 계약으로 고정합니다.
+    """
+    return value.encode("utf-16-be")
+
+
 def _validate_string(value: str) -> None:
     """UTF-8로 안전하게 표현할 수 없는 lone surrogate를 거부합니다."""
     if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
@@ -54,13 +66,7 @@ def _order_json_objects(value: object) -> object:
         return [_order_json_objects(item) for item in value]
 
     if isinstance(value, dict):
-        return {
-            key: _order_json_objects(value[key])
-            for key in sorted(
-                value,
-                key=lambda item: item.encode("utf-16-be"),
-            )
-        }
+        return {key: _order_json_objects(value[key]) for key in sorted(value, key=utf16_sort_key)}
 
     return value
 
