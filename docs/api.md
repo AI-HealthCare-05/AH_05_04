@@ -83,6 +83,7 @@ OCR 접수 요청에는 `Idempotency-Key` header가 필수입니다. 키는 16~2
 | `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
 | `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 key로 이전과 다른 요청 지문이 접수되었습니다. |
 | `409` | `OCR_JOB_ALREADY_PROCESSING` | 같은 문서에 대해 진행 중인 OCR Job이 있습니다. |
+| `409` | `CONCURRENT_UPDATE_IN_PROGRESS` | 같은 문서의 OCR 접수 또는 다른 수정 요청이 처리 중이라 문서 row lock을 획득하지 못했습니다. |
 
 `GET /api/v1/jobs/{job_id}`(공통 Job 상태 조회)는 [비동기 Job 계약 v1](./contracts/targets/post-mvp-1/async-job-v1.md) 목표 중 조회 경로가 구현된 현재 API입니다(#148).
 

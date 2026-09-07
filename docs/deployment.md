@@ -82,6 +82,7 @@ OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단
 | OCR 요청 전체 deadline `D` | 실제 `OCR_REQUEST_DEADLINE_SECONDS`: ____초 (코드 기본값: 60초) |
 | OCR 응답 여유 `M_ocr` | 실제 `OCR_RESPONSE_MARGIN_SECONDS`: ____초 (코드 기본값: 5초) |
 | OCR 로컬 처리 예약 `L` | 실제 `OCR_LOCAL_PROCESSING_RESERVE_SECONDS`: ____초 (코드 기본값: 3초) |
+| OCR PENDING active 판단 시간 창 | 실제 `OCR_PENDING_ACTIVE_WINDOW_SECONDS`: ____초 (코드 기본값: 300초) |
 | Chat 애플리케이션 처리 여유 `M_chat` | ____초 (기본 참고값: 5초) |
 | 애플리케이션 처리 여유 `M` | ____초 (기본 참고값: 5초)                                                                                        |
 | 동일 세션 최대 동시 전송 `N` | 코드로 강제되는 admission 한도: ____ / 초과 시 응답: ____                                                        |
@@ -173,6 +174,7 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
 | OCR 요청 전체 deadline `D` | 실제 `OCR_REQUEST_DEADLINE_SECONDS`: ____초 |
 | OCR 응답 여유 `M_ocr` | 실제 `OCR_RESPONSE_MARGIN_SECONDS`: ____초 |
 | OCR 로컬 처리 예약 `L` | 실제 `OCR_LOCAL_PROCESSING_RESERVE_SECONDS`: ____초 |
+| OCR PENDING active 판단 시간 창 | 실제 `OCR_PENDING_ACTIVE_WINDOW_SECONDS`: ____초 |
 | OCR 구조화 LLM 활성화 `E` | 실제 `OCR_STRUCTURE_LLM_ENABLED`: ____ |
 | OCR 구조화 timeout `S` | 실제 `OCR_STRUCTURE_TIMEOUT_SECONDS`: ____초 |
 | OCR 기동 예산 검증 | `C + E × S + M_ocr + L <= D`: ____ / 충족 여부: ____ |
