@@ -98,6 +98,66 @@ def test_issue_273_cases_are_natural_korean_draft_retrieval_cases() -> None:
         assert case["slice_ids"] == sorted(["ALL", topic, expression])
 
 
+def _queries_by_expression(graph: dict[str, bytes]) -> dict[str, list[tuple[str, str]]]:
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for path, content in graph.items():
+        if not path.startswith(CASE_PREFIX):
+            continue
+        case = json.loads(content)
+        expression = next(item for item in case["slice_ids"] if item.startswith("EXPRESSION_"))
+        grouped.setdefault(expression, []).append((case["leakage_group_ids"]["transform_origin"], case["query"]))
+    return grouped
+
+
+def test_issue_273_paraphrase_slices_never_reuse_the_gold_subject_phrase() -> None:
+    """Guard the property the per-expression Comparison Policy scopes claim to measure.
+
+    Collapsing every `_question` branch onto the canonical template still yields 60 distinct
+    queries, so the structural assertions above cannot catch it. These assertions can.
+    """
+    grouped = _queries_by_expression(build_issue_273_dev_graph())
+    intents = {intent.transform_origin: intent for intent in BASE_INTENTS}
+
+    assert set(grouped) == {
+        "EXPRESSION_CANONICAL",
+        "EXPRESSION_SYNONYM",
+        "EXPRESSION_WORD_ORDER_PARTICLE",
+        "EXPRESSION_COLLOQUIAL",
+        "EXPRESSION_FRAGMENT",
+        "EXPRESSION_LIMITED_TYPO",
+    }
+
+    for origin, query in grouped["EXPRESSION_SYNONYM"]:
+        assert intents[origin].query_subject not in query, query
+        assert intents[origin].synonym_subject in query, query
+    for origin, query in grouped["EXPRESSION_FRAGMENT"]:
+        assert intents[origin].query_subject not in query, query
+        assert intents[origin].fragment_subject in query, query
+        assert not any(marker in query for marker in ("알려 주", "궁금", "싶어요")), query
+        assert query.endswith("?")
+
+
+def test_issue_273_surface_form_slices_keep_the_subject_but_move_the_sentence_frame() -> None:
+    grouped = _queries_by_expression(build_issue_273_dev_graph())
+    intents = {intent.transform_origin: intent for intent in BASE_INTENTS}
+
+    for expression in ("EXPRESSION_CANONICAL", "EXPRESSION_COLLOQUIAL", "EXPRESSION_LIMITED_TYPO"):
+        for origin, query in grouped[expression]:
+            assert intents[origin].query_subject in query, (expression, query)
+
+    for origin, query in grouped["EXPRESSION_WORD_ORDER_PARTICLE"]:
+        subject = intents[origin].query_subject
+        assert subject in query
+        assert query.index(subject) < query.index(origin), query
+        assert f"{origin} 제품의 {subject}" not in query, query
+
+    # No intent carries both CANONICAL and LIMITED_TYPO, so state the canonical form independently.
+    for origin, query in grouped["EXPRESSION_LIMITED_TYPO"]:
+        canonical = f"{origin} 제품의 {intents[origin].query_subject}에 대해 알려 주세요."
+        assert len(query) == len(canonical)
+        assert sum(left != right for left, right in zip(query, canonical, strict=True)) == 1
+
+
 def test_issue_273_authoring_provenance_resolves_to_each_cases_gold_resource() -> None:
     graph = build_issue_273_dev_graph()
     cases = {
@@ -514,15 +574,15 @@ def test_issue_273_reviewed_query_particles_are_natural_korean() -> None:
     queries = [case["query"] for case in cases.values()]
     limited_typo_queries = [case["query"] for case in cases.values() if "EXPRESSION_LIMITED_TYPO" in case["slice_ids"]]
 
-    assert cases["rag-nlr-dev-014"]["query"] == "NLR-PC01 제품의 복용 전 주의사항은 무엇인가요?"
+    assert cases["rag-nlr-dev-014"]["query"] == "NLR-PC01 제품, 먹기 전에 무엇을 조심해야 하는지 알고 싶어요."
     assert cases["rag-nlr-dev-015"]["query"] == "NLR-PC01 제품 복용 전 주의사항이 궁금해요."
-    assert cases["rag-nlr-dev-022"]["query"] == "NLR-PC04 제품의 전문가 확인이 필요한 조건은 무엇인가요?"
+    assert cases["rag-nlr-dev-022"]["query"] == "NLR-PC04 제품, 언제 의료진에게 물어봐야 하는지 알고 싶어요."
     content_request_expressions = {"EXPRESSION_SYNONYM", "EXPRESSION_WORD_ORDER_PARTICLE"}
     content_requests = [
         case["query"] for case in cases.values() if content_request_expressions.intersection(case["slice_ids"])
     ]
     assert all("어떻게 확인" not in query and "어디서 확인" not in query for query in content_requests)
-    assert all("무엇인가요?" in query or "알려 주세요." in query for query in content_requests)
+    assert all(query.endswith(("알고 싶어요.", "제품이요.")) for query in content_requests)
     assert not any(malformed in query for query in queries for malformed in ("주의사항를", "주의사항가", "조건를"))
     assert len(limited_typo_queries) == 10
     assert all("알려 주새요." in query for query in limited_typo_queries)

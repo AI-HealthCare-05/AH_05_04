@@ -34,7 +34,7 @@ _PHASE_A_CHECK_CATALOG = {
     "PHASE_A_DEV_FIXTURE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
-        "20 passed",
+        "22 passed",
     ),
     "PHASE_A_LOADER": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
@@ -117,7 +117,7 @@ class Issue273ValidationStatus(StrictContractModel):
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
     created_counts: CreatedCounts
-    dataset_manifest_sha256: Literal["e41dfffeae7a27ec4af97239f21b8e9a3f5cd8b1d741bc240a24b194ed980466"]
+    dataset_manifest_sha256: Literal["1aaf0f6ddd24f049e45f6782c750d29b287abc6850e145e51198cd09cf46fd84"]
     schema_set_ref: CandidateSchemaSetRef
     schema_set_decision: Literal["docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md"]
     responsible_reviewer: Literal["@hazelnutflavoured"]

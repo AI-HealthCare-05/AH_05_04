@@ -53,6 +53,15 @@ NEGATIVE_TYPES: tuple[NegativeType, ...] = (
     "CROSS_TOPIC_OVERLAP",
 )
 
+ALL_EXPRESSIONS: tuple[Expression, ...] = (
+    "EXPRESSION_CANONICAL",
+    "EXPRESSION_SYNONYM",
+    "EXPRESSION_WORD_ORDER_PARTICLE",
+    "EXPRESSION_COLLOQUIAL",
+    "EXPRESSION_FRAGMENT",
+    "EXPRESSION_LIMITED_TYPO",
+)
+
 EXPRESSION_PLAN: tuple[tuple[Expression, Expression, Expression], ...] = (
     ("EXPRESSION_CANONICAL", "EXPRESSION_SYNONYM", "EXPRESSION_COLLOQUIAL"),
     ("EXPRESSION_WORD_ORDER_PARTICLE", "EXPRESSION_FRAGMENT", "EXPRESSION_LIMITED_TYPO"),
@@ -97,6 +106,8 @@ class BaseIntent:
     product_code: str
     gold_intent: str
     query_subject: str
+    synonym_subject: str
+    fragment_subject: str
     variants: tuple[QuestionVariant, QuestionVariant, QuestionVariant]
 
 
@@ -126,17 +137,25 @@ class EvidenceRecord:
         }
 
 
-def _question(expression: Expression, product_code: str, subject: str) -> str:
+def _question(
+    expression: Expression,
+    product_code: str,
+    subject: str,
+    synonym_subject: str,
+    fragment_subject: str,
+) -> str:
+    # Every branch must realise the surface transformation its slice is named after; see
+    # `_validate_expression_surfaces` for the machine-checked form of that requirement.
     if expression == "EXPRESSION_CANONICAL":
         return f"{product_code} 제품의 {subject}에 대해 알려 주세요."
     if expression == "EXPRESSION_SYNONYM":
-        return f"{product_code} 제품의 {_with_particle(subject, '은', '는')} 무엇인가요?"
+        return f"{product_code} 제품, {synonym_subject} 알고 싶어요."
     if expression == "EXPRESSION_WORD_ORDER_PARTICLE":
-        return f"{product_code} 제품, {_with_particle(subject, '을', '를')} 알려 주세요."
+        return f"{subject} 알려 주세요, {product_code} 제품이요."
     if expression == "EXPRESSION_COLLOQUIAL":
         return f"{product_code} 제품 {_with_particle(subject, '이', '가')} 궁금해요."
     if expression == "EXPRESSION_FRAGMENT":
-        return f"{product_code} 제품 {subject} 궁금합니다."
+        return f"{product_code} {fragment_subject}?"
     return f"{product_code} 제품의 {subject}에 대해 알려 주새요."
 
 
@@ -151,10 +170,15 @@ def _intent(
     origin: str,
     gold_intent: str,
     query_subject: str,
+    synonym_subject: str,
+    fragment_subject: str,
     expressions: tuple[Expression, Expression, Expression],
 ) -> BaseIntent:
     variants = tuple(
-        QuestionVariant(expression=expression, query=_question(expression, origin, query_subject))
+        QuestionVariant(
+            expression=expression,
+            query=_question(expression, origin, query_subject, synonym_subject, fragment_subject),
+        )
         for expression in expressions
     )
     return BaseIntent(
@@ -163,6 +187,8 @@ def _intent(
         product_code=origin,
         gold_intent=gold_intent,
         query_subject=query_subject,
+        synonym_subject=synonym_subject,
+        fragment_subject=fragment_subject,
         variants=cast(tuple[QuestionVariant, QuestionVariant, QuestionVariant], variants),
     )
 
@@ -173,6 +199,8 @@ BASE_INTENTS = (
         "NLR-MI01",
         "제품의 합성 성분 정보",
         "성분 정보",
+        "어떤 원료로 만들어졌는지",
+        "성분",
         EXPRESSION_PLAN[0],
     ),
     _intent(
@@ -180,6 +208,8 @@ BASE_INTENTS = (
         "NLR-MI02",
         "제품의 합성 제형·외형 정보",
         "제형과 외형 정보",
+        "겉모습과 알약 형태가 어떤지",
+        "제형 외형",
         EXPRESSION_PLAN[1],
     ),
     _intent(
@@ -187,6 +217,8 @@ BASE_INTENTS = (
         "NLR-MI03",
         "제품의 합성 사용 목적 정보",
         "사용 목적 정보",
+        "무엇에 쓰는 약인지",
+        "사용 목적",
         EXPRESSION_PLAN[2],
     ),
     _intent(
@@ -194,6 +226,8 @@ BASE_INTENTS = (
         "NLR-MI04",
         "제품 라벨의 합성 식별 정보",
         "라벨 식별 정보",
+        "겉면 표시로 어떻게 구분하는지",
+        "라벨 표시",
         EXPRESSION_PLAN[3],
     ),
     _intent(
@@ -201,6 +235,8 @@ BASE_INTENTS = (
         "NLR-PC01",
         "복용 전 확인할 합성 주의사항",
         "복용 전 주의사항",
+        "먹기 전에 무엇을 조심해야 하는지",
+        "복용 전 주의",
         EXPRESSION_PLAN[0],
     ),
     _intent(
@@ -208,6 +244,8 @@ BASE_INTENTS = (
         "NLR-PC02",
         "합성 알레르기 경고 정보",
         "알레르기 경고 정보",
+        "과민 반응이 있을 때 어떻게 안내되는지",
+        "알레르기 경고",
         EXPRESSION_PLAN[1],
     ),
     _intent(
@@ -215,6 +253,8 @@ BASE_INTENTS = (
         "NLR-PC03",
         "합성 이상 반응 관찰 정보",
         "이상 반응 관찰 정보",
+        "몸에 나타나는 변화를 어떻게 살피는지",
+        "이상 반응",
         EXPRESSION_PLAN[2],
     ),
     _intent(
@@ -222,6 +262,8 @@ BASE_INTENTS = (
         "NLR-PC04",
         "전문가 확인이 필요한 합성 조건",
         "전문가 확인이 필요한 조건",
+        "언제 의료진에게 물어봐야 하는지",
+        "전문가 확인",
         EXPRESSION_PLAN[3],
     ),
     _intent(
@@ -229,6 +271,8 @@ BASE_INTENTS = (
         "NLR-LM01",
         "합성 수분 섭취 안내",
         "수분 섭취 안내",
+        "물을 얼마나 마시라고 하는지",
+        "수분 섭취",
         EXPRESSION_PLAN[0],
     ),
     _intent(
@@ -236,6 +280,8 @@ BASE_INTENTS = (
         "NLR-LM02",
         "합성 식사 습관 안내",
         "식사 습관 안내",
+        "끼니를 어떻게 챙기라고 하는지",
+        "식사 습관",
         EXPRESSION_PLAN[1],
     ),
     _intent(
@@ -243,6 +289,8 @@ BASE_INTENTS = (
         "NLR-LM03",
         "합성 활동 안내",
         "활동 안내",
+        "몸을 어떻게 움직이라고 하는지",
+        "활동 방법",
         EXPRESSION_PLAN[2],
     ),
     _intent(
@@ -250,6 +298,8 @@ BASE_INTENTS = (
         "NLR-LM04",
         "합성 상태 기록 안내",
         "상태 기록 안내",
+        "몸 상태를 어떻게 적어 두라고 하는지",
+        "상태 기록",
         EXPRESSION_PLAN[3],
     ),
     _intent(
@@ -257,6 +307,8 @@ BASE_INTENTS = (
         "NLR-ST01",
         "합성 보관 온도 정보",
         "보관 온도 정보",
+        "몇 도에서 두어야 하는지",
+        "보관 온도",
         EXPRESSION_PLAN[0],
     ),
     _intent(
@@ -264,6 +316,8 @@ BASE_INTENTS = (
         "NLR-ST02",
         "합성 빛·습기 차단 정보",
         "빛과 습기 차단 정보",
+        "햇빛과 물기를 어떻게 막는지",
+        "빛 습기 차단",
         EXPRESSION_PLAN[1],
     ),
     _intent(
@@ -271,6 +325,8 @@ BASE_INTENTS = (
         "NLR-ST03",
         "합성 안전 보관 위치 정보",
         "안전한 보관 위치 정보",
+        "어디에 두어야 안전한지",
+        "보관 위치",
         EXPRESSION_PLAN[2],
     ),
     _intent(
@@ -278,6 +334,8 @@ BASE_INTENTS = (
         "NLR-ST04",
         "합성 원래 용기 보관 정보",
         "원래 용기 보관 정보",
+        "처음 담겨 있던 통을 어떻게 쓰는지",
+        "원래 용기",
         EXPRESSION_PLAN[3],
     ),
     _intent(
@@ -285,6 +343,8 @@ BASE_INTENTS = (
         "NLR-MD01",
         "누락을 일찍 알았을 때의 합성 안내",
         "복용 누락을 일찍 알았을 때의 안내",
+        "약을 빠뜨린 걸 금방 알아챘을 때 어떻게 하는지",
+        "복용 누락 직후",
         EXPRESSION_PLAN[0],
     ),
     _intent(
@@ -292,6 +352,8 @@ BASE_INTENTS = (
         "NLR-MD02",
         "다음 시각이 가까울 때의 합성 안내",
         "다음 복용 시각이 가까울 때의 안내",
+        "곧 다음에 먹을 시간이 다가왔을 때 어떻게 하는지",
+        "다음 시각 임박",
         EXPRESSION_PLAN[1],
     ),
     _intent(
@@ -299,6 +361,8 @@ BASE_INTENTS = (
         "NLR-MD03",
         "합성 중복 복용 금지 안내",
         "중복 복용 금지 안내",
+        "두 번 겹쳐 먹으면 왜 안 되는지",
+        "중복 복용",
         EXPRESSION_PLAN[2],
     ),
     _intent(
@@ -306,6 +370,8 @@ BASE_INTENTS = (
         "NLR-MD04",
         "반복 누락 시 전문가 상담 안내",
         "반복해서 복용을 놓쳤을 때의 전문가 상담 안내",
+        "자꾸 빠뜨릴 때 의료진과 어떻게 상의하는지",
+        "반복 누락 상담",
         EXPRESSION_PLAN[3],
     ),
 )
@@ -439,7 +505,60 @@ def _validate_catalog() -> None:
     expression_counts = Counter(variant.expression for intent in BASE_INTENTS for variant in intent.variants)
     if set(expression_counts.values()) != {10}:
         raise RuntimeError("Issue 273 expression plan must produce ten cases per expression")
+    _validate_expression_surfaces()
     _validate_distractor_catalog()
+
+
+def _validate_expression_surfaces() -> None:
+    """Force every expression slice to realise the transformation the design names it after.
+
+    Without this, `_question` could emit six near-identical polite sentences that still satisfy the
+    structural fixture assertions, and the per-expression Comparison Policy scopes would report
+    retrieval robustness that was never exercised.
+    """
+    polite_verb_markers = ("알려 주세요", "알려 주새요", "알고 싶어요", "궁금해요")
+    for intent in BASE_INTENTS:
+        canonical = _question(
+            "EXPRESSION_CANONICAL",
+            intent.product_code,
+            intent.query_subject,
+            intent.synonym_subject,
+            intent.fragment_subject,
+        )
+        surfaces = {
+            expression: _question(
+                expression,
+                intent.product_code,
+                intent.query_subject,
+                intent.synonym_subject,
+                intent.fragment_subject,
+            )
+            for expression in ALL_EXPRESSIONS
+        }
+        if len(set(surfaces.values())) != len(surfaces):
+            raise RuntimeError("Issue 273 expression templates must produce distinct surface forms")
+
+        # SYNONYM must paraphrase: the canonical subject phrase may not survive verbatim.
+        synonym = surfaces["EXPRESSION_SYNONYM"]
+        if intent.query_subject in synonym or intent.synonym_subject not in synonym:
+            raise RuntimeError("Issue 273 synonym expressions must replace the canonical subject phrase")
+
+        # WORD_ORDER_PARTICLE must reorder: the subject moves ahead of the product mention.
+        word_order = surfaces["EXPRESSION_WORD_ORDER_PARTICLE"]
+        if word_order.index(intent.query_subject) > word_order.index(intent.product_code):
+            raise RuntimeError("Issue 273 word-order expressions must front the subject phrase")
+        if f"{intent.product_code} 제품의 {intent.query_subject}" in word_order:
+            raise RuntimeError("Issue 273 word-order expressions must omit the canonical particle chain")
+
+        # FRAGMENT must be short and verbless.
+        fragment = surfaces["EXPRESSION_FRAGMENT"]
+        if len(fragment) >= len(canonical) or any(marker in fragment for marker in polite_verb_markers):
+            raise RuntimeError("Issue 273 fragment expressions must be shorter and carry no polite verb")
+
+        # LIMITED_TYPO must differ from canonical by a single character.
+        typo = surfaces["EXPRESSION_LIMITED_TYPO"]
+        if len(typo) != len(canonical) or sum(a != b for a, b in zip(typo, canonical, strict=True)) != 1:
+            raise RuntimeError("Issue 273 limited-typo expressions must differ from canonical by one character")
 
 
 def _validate_distractor_catalog() -> None:
@@ -450,10 +569,16 @@ def _validate_distractor_catalog() -> None:
         raise RuntimeError("Issue 273 distractor catalog must contain every negative fact category")
     if len(distractor_statements) != 80 or len(set(distractor_statements)) != 80:
         raise RuntimeError("Issue 273 distractor catalog must contain 80 unique facts")
-    for intent in BASE_INTENTS:
-        for statement in DISTRACTOR_FACT_CATALOG[intent.product_code].values():
-            if intent.query_subject in statement or any(gold in statement for gold in _GOLD_STATEMENTS.values()):
-                raise RuntimeError("Issue 273 distractor facts must not reproduce a query answer")
+    # A distractor is cross-assigned to other origins, so check every subject phrasing against every
+    # fact rather than only against the fact's own product.
+    subject_phrasings = {
+        phrasing for intent in BASE_INTENTS for phrasing in (intent.query_subject, intent.synonym_subject)
+    }
+    for statement in distractor_statements:
+        if any(phrasing in statement for phrasing in subject_phrasings):
+            raise RuntimeError("Issue 273 distractor facts must not reproduce a query answer")
+        if any(gold in statement for gold in _GOLD_STATEMENTS.values()):
+            raise RuntimeError("Issue 273 distractor facts must not reproduce a Gold statement")
 
 
 def _record(
