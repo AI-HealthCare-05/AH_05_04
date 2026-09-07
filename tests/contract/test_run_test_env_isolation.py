@@ -1,4 +1,4 @@
-"""`scripts/ci/run_test.sh`가 컨테이너용 설정을 host 테스트에 흘리지 않는지 확인합니다.
+"""공용 test environment helper가 컨테이너용 설정을 host 테스트에 흘리지 않는지 확인합니다.
 
 `run_test.sh`는 `uv run --env-file "$ENV_FILE"`로 `envs/.local.env` 전체를 주입합니다.
 그 파일은 컨테이너용이라 `STORAGE_DIR`이 컨테이너 절대경로이고, local live 검증 절차
@@ -18,6 +18,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 RUN_TEST_SCRIPT = PROJECT_ROOT / "scripts" / "ci" / "run_test.sh"
+TEST_ENVIRONMENT_SCRIPT = PROJECT_ROOT / "scripts" / "ci" / "test_environment.sh"
 GITHUB_ACTIONS_CHECKS = PROJECT_ROOT / ".github" / "workflows" / "checks.yml"
 AI_WORKER_ROOT = PROJECT_ROOT / "ai_worker"
 EXAMPLE_LOCAL_ENV = PROJECT_ROOT / "envs" / "example.local.env"
@@ -36,7 +37,7 @@ REQUIRED_WORKER_INTEGRATION_TARGETS = (
 
 
 def _function_body(function_name: str) -> str:
-    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+    script = TEST_ENVIRONMENT_SCRIPT.read_text(encoding="utf-8")
     body = re.search(rf"{function_name}\(\)\s*\{{(?P<body>.*?)\n\}}", script, re.DOTALL)
 
     assert body is not None, f"{function_name}() 함수를 찾지 못했습니다."
@@ -52,6 +53,10 @@ def _run_with_worker_test_environment_body() -> str:
     return _function_body("run_with_worker_test_environment")
 
 
+def _run_with_integration_test_environment_body() -> str:
+    return _function_body("run_with_integration_test_environment")
+
+
 @pytest.mark.parametrize(("name", "expected"), sorted(CONTAINER_ONLY_SETTINGS.items()))
 def test_run_test_script_forces_test_value_for_container_only_setting(name: str, expected: str) -> None:
     assert f"{name}={expected}" in _run_with_backend_test_database_body(), (
@@ -64,12 +69,13 @@ def test_run_test_script_forces_test_value_for_container_only_setting(name: str,
 
 def test_run_test_script_replaces_container_storage_dir_with_host_directory() -> None:
     """`STORAGE_DIR`은 고정 문자열이 아니라 host 임시 디렉터리로 덮어써야 합니다."""
-    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+    script = TEST_ENVIRONMENT_SCRIPT.read_text(encoding="utf-8")
 
     assert 'STORAGE_DIR="$TEST_STORAGE_DIR"' in _run_with_backend_test_database_body()
     assert 'STORAGE_DIR="$TEST_STORAGE_DIR"' in _run_with_worker_test_environment_body()
     assert 'TEST_STORAGE_DIR="$(mktemp -d)"' in script
-    assert "trap 'rm -rf \"$TEST_STORAGE_DIR\"' EXIT" in script
+    assert "trap cleanup_test_environment EXIT" in script
+    assert 'rm -rf -- "$TEST_STORAGE_DIR"' in script
 
 
 def test_run_test_script_exposes_backend_and_shared_contract_packages_for_backend_tests() -> None:
@@ -77,6 +83,7 @@ def test_run_test_script_exposes_backend_and_shared_contract_packages_for_backen
     script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
 
     assert 'REPOSITORY_ROOT="$(pwd)"' in script
+    assert "source scripts/ci/test_environment.sh" in script
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' in _run_with_backend_test_database_body()
 
 
@@ -92,6 +99,30 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     assert "./ai_worker/tests/rag" in script
     assert 'PYTHONPATH="$REPOSITORY_ROOT"' in worker_body
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' not in worker_body
+
+
+def test_shared_environment_forces_literal_test_database_and_loopback_services() -> None:
+    """두 runner 모두 개발 DB나 컨테이너 hostname으로 접속할 수 없어야 합니다."""
+    script = TEST_ENVIRONMENT_SCRIPT.read_text(encoding="utf-8")
+    backend_body = _run_with_backend_test_database_body()
+    worker_body = _run_with_worker_test_environment_body()
+    integration_body = _run_with_integration_test_environment_body()
+
+    assert 'TEST_DATABASE_NAME="test"' in script
+    assert "DROP DATABASE IF EXISTS test WITH (FORCE);" in script
+    assert 'DB_NAME="$TEST_DATABASE_NAME"' in backend_body
+    assert 'DB_NAME="$TEST_DATABASE_NAME"' in worker_body
+    assert "DB_HOST=127.0.0.1" in backend_body
+    assert "TEST_REDIS_HOST=127.0.0.1" in integration_body
+    assert 'TEST_REDIS_PORT="$HOST_REDIS_PORT"' in integration_body
+
+
+def test_default_worker_runner_preserves_approved_redis_defaults() -> None:
+    """기본 Worker 단위 테스트에는 host 통합테스트용 Redis override를 주입하지 않습니다."""
+    worker_body = _run_with_worker_test_environment_body()
+
+    assert "REDIS_HOST=127.0.0.1" not in worker_body
+    assert "TEST_REDIS_HOST=127.0.0.1" not in worker_body
 
 
 def _is_forbidden_worker_backend_import(module_name: str) -> bool:
