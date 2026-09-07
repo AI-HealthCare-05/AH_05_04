@@ -55,6 +55,11 @@ class RagIngestionRunStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class RagSourceIngestionArtifactKind(StrEnum):
+    RAW_RESPONSE = "RAW_RESPONSE"
+    REJECTS = "REJECTS"
+
+
 class RagVerificationResultStatus(StrEnum):
     PASSED = "PASSED"
     FAILED = "FAILED"
@@ -299,6 +304,15 @@ class RagSourceIngestionArtifact(Base):
         Index("idx_rag_source_artifact_run", "ingestion_run_id"),
         Index("idx_rag_source_artifact_object", "storage_backend", "object_key"),
         CheckConstraint("page_number > 0", name="chk_rag_source_artifact_page_positive"),
+        CheckConstraint(
+            "(artifact_kind = 'RAW_RESPONSE' AND page_number IS NOT NULL "
+            "AND reject_code IS NULL AND parser_location IS NULL) OR "
+            "(artifact_kind = 'REJECTS' AND page_number IS NULL "
+            "AND reject_code ~ '^[A-Z][A-Z0-9_]{0,99}$' "
+            "AND length(trim(parser_location)) > 0 "
+            "AND parser_location !~ '[[:cntrl:]]')",
+            name="chk_rag_source_artifact_kind_metadata",
+        ),
         CheckConstraint("length(trim(artifact_key)) > 0", name="chk_rag_source_artifact_key_nonblank"),
         CheckConstraint("length(trim(storage_backend)) > 0", name="chk_rag_source_artifact_backend_nonblank"),
         CheckConstraint("length(trim(object_key)) > 0", name="chk_rag_source_artifact_object_key_nonblank"),
@@ -316,13 +330,20 @@ class RagSourceIngestionArtifact(Base):
         ForeignKey("rag_source_ingestion_run.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    artifact_kind: Mapped[RagSourceIngestionArtifactKind] = mapped_column(
+        Enum(RagSourceIngestionArtifactKind, native_enum=False, length=20),
+        nullable=False,
+        default=RagSourceIngestionArtifactKind.RAW_RESPONSE,
+    )
     artifact_key: Mapped[str] = mapped_column(String(500), nullable=False)
     storage_backend: Mapped[str] = mapped_column(String(50), nullable=False)
     object_key: Mapped[str] = mapped_column(String(500), nullable=False)
     raw_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    reject_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    parser_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     ingestion_run: Mapped[RagSourceIngestionRun] = relationship(back_populates="artifacts")

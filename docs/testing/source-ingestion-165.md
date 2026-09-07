@@ -2,11 +2,11 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 199 passed
-- AI Worker 전체 테스트: 1882 passed, 8 skipped
-- PostgreSQL Snapshot lifecycle 통합 테스트: 4 passed
-- Source/Catalog·Artifact Migration 테스트: 9 passed
-- 전체 Migration 테스트: 48 passed
+- Source ingestion 단위 테스트: 208 passed
+- AI Worker 전체 테스트: 1891 passed, 8 skipped
+- PostgreSQL Snapshot lifecycle 통합 테스트: 5 passed
+- Source/Catalog·Artifact Migration 테스트: 10 passed
+- 전체 Migration 테스트: 49 passed
 - Backend 전체 테스트: 966 passed, 2 skipped
 - Mypy: 414개 핵심 소스 파일 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
@@ -53,6 +53,10 @@
 - 복사 중 크기·SHA-256 재검증과 임시 파일 완료 후 원자적 공개
 - 동일 원본 재시도의 불변 객체 재사용과 기존 객체 변조 차단
 - manifest 불일치를 파일·DB 쓰기 전에 차단하는 단일 보관·저장 진입점
+- `RAW_RESPONSE`와 `REJECTS` Artifact 종류 및 메타데이터 조합을 DB CHECK로 제한
+- 거부 건수가 있으면 REJECTS 원본 참조를 요구하고, 거부 건수가 없으면 REJECTS 저장을 차단
+- REJECTS에는 안전한 고정 `reject_code`와 원문 없는 `parser_location`만 기록
+- REJECTS 데이터가 존재할 때 관련 필드를 제거하는 downgrade 차단
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -99,7 +103,7 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 - S3 계열 등 외부 Object Storage를 사용할 경우의 운영 어댑터와 credential 주입
 - DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책
-- REJECTS Artifact 종류와 보존 정책 확정
+- REJECTS 세부 보존 기간과 승인된 reject code 목록 확정
 - Catalog 적재와 Runtime Bundle 활성화 연결
 
 여기서 `CURRENT`는 #291에 정의된 검증·최신성 상태다. 이전 Snapshot을

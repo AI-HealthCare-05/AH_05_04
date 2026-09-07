@@ -8,7 +8,10 @@ from typing import Protocol
 from uuid import UUID
 
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
-from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
+from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
+    StoredRawArtifact,
+)
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 
@@ -229,7 +232,11 @@ async def persist_product_ingestion_result(
     """검증된 결과를 현재 transaction에 기록하며 commit은 호출자가 담당합니다."""
     if metadata.rejected_record_count > ingestion.record_count:
         raise ValueError("rejected_record_count는 record_count를 초과할 수 없습니다.")
-    _validate_ingestion_artifacts(ingestion=ingestion, artifacts=artifacts)
+    _validate_ingestion_artifacts(
+        ingestion=ingestion,
+        rejected_record_count=metadata.rejected_record_count,
+        artifacts=artifacts,
+    )
 
     operation_id = await repository.lock_operation(ingestion.identity)
     same_version = await repository.get_snapshot_by_version(
@@ -315,14 +322,25 @@ async def persist_product_ingestion_result(
 def _validate_ingestion_artifacts(
     *,
     ingestion: ProductIngestionResult,
+    rejected_record_count: int,
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> None:
-    if len(artifacts) != ingestion.artifact_count:
+    raw_artifacts = tuple(
+        artifact for artifact in artifacts if artifact.artifact_kind is IngestionArtifactKind.RAW_RESPONSE
+    )
+    rejection_artifacts = tuple(
+        artifact for artifact in artifacts if artifact.artifact_kind is IngestionArtifactKind.REJECTS
+    )
+    if len(raw_artifacts) != ingestion.artifact_count:
         raise ValueError("Artifact 개수가 검증된 수집 결과와 일치하지 않습니다.")
-    page_numbers = {artifact.page_number for artifact in artifacts}
-    if len(page_numbers) != len(artifacts):
+    page_numbers = {artifact.page_number for artifact in raw_artifacts}
+    if len(page_numbers) != len(raw_artifacts):
         raise ValueError("Artifact page_number는 수집 실행 안에서 중복될 수 없습니다.")
-    manifest_checksum = raw_manifest_checksum(artifact.metadata for artifact in artifacts)
+    if rejected_record_count == 0 and rejection_artifacts:
+        raise ValueError("거부 레코드가 없는 실행에는 REJECTS Artifact를 기록할 수 없습니다.")
+    if rejected_record_count > 0 and not rejection_artifacts:
+        raise ValueError("거부 레코드가 있는 실행에는 REJECTS Artifact가 필요합니다.")
+    manifest_checksum = raw_manifest_checksum(artifact.metadata for artifact in raw_artifacts)
     if manifest_checksum != ingestion.raw_manifest_checksum:
         raise ValueError("Artifact manifest checksum이 검증된 수집 결과와 일치하지 않습니다.")
 

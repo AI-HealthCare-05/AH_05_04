@@ -10,6 +10,7 @@ from ai_worker.tasks.rag.source_client.contracts import (
 )
 from ai_worker.tasks.rag.source_client.mfds_client import ResponseDecoder
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
     RawArtifactMetadata,
     RawArtifactStore,
     StoredRawArtifact,
@@ -47,6 +48,25 @@ def preserve_raw_artifacts(
             metadata=metadata,
         )
         for page_number, (file_path, metadata) in sorted(artifacts_by_page.items())
+    )
+
+
+def preserve_rejection_artifact(
+    *,
+    file_path: Path,
+    metadata: RawArtifactMetadata,
+    reject_code: str,
+    parser_location: str,
+    store: RawArtifactStore,
+) -> StoredRawArtifact:
+    """거부 원문을 안전한 코드·Parser 위치와 함께 불변 보존합니다."""
+    return store.put_verified(
+        page_number=None,
+        file_path=file_path,
+        metadata=metadata,
+        artifact_kind=IngestionArtifactKind.REJECTS,
+        reject_code=reject_code,
+        parser_location=parser_location,
     )
 
 

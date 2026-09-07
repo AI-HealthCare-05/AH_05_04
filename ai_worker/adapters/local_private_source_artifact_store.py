@@ -6,8 +6,10 @@ import tempfile
 from pathlib import Path
 
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
     RawArtifactMetadata,
     StoredRawArtifact,
+    validate_artifact_binding,
     verify_raw_artifact,
 )
 
@@ -28,10 +30,19 @@ class LocalPrivateSourceArtifactStore:
     def put_verified(
         self,
         *,
-        page_number: int,
+        page_number: int | None,
         file_path: Path,
         metadata: RawArtifactMetadata,
+        artifact_kind: IngestionArtifactKind = IngestionArtifactKind.RAW_RESPONSE,
+        reject_code: str | None = None,
+        parser_location: str | None = None,
     ) -> StoredRawArtifact:
+        validate_artifact_binding(
+            page_number=page_number,
+            artifact_kind=artifact_kind,
+            reject_code=reject_code,
+            parser_location=parser_location,
+        )
         object_key = self._object_key(metadata.raw_checksum)
         destination = self._resolve_object_key(object_key)
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -40,7 +51,14 @@ class LocalPrivateSourceArtifactStore:
         if destination.exists():
             verify_raw_artifact(file_path=file_path, metadata=metadata)
             verify_raw_artifact(file_path=destination, metadata=metadata)
-            return self._reference(page_number, metadata, object_key)
+            return self._reference(
+                page_number,
+                metadata,
+                object_key,
+                artifact_kind,
+                reject_code,
+                parser_location,
+            )
 
         temporary_path: Path | None = None
         try:
@@ -66,7 +84,14 @@ class LocalPrivateSourceArtifactStore:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
 
-        return self._reference(page_number, metadata, object_key)
+        return self._reference(
+            page_number,
+            metadata,
+            object_key,
+            artifact_kind,
+            reject_code,
+            parser_location,
+        )
 
     @staticmethod
     def _object_key(raw_checksum: str) -> str:
@@ -119,13 +144,19 @@ class LocalPrivateSourceArtifactStore:
 
     @staticmethod
     def _reference(
-        page_number: int,
+        page_number: int | None,
         metadata: RawArtifactMetadata,
         object_key: str,
+        artifact_kind: IngestionArtifactKind,
+        reject_code: str | None,
+        parser_location: str | None,
     ) -> StoredRawArtifact:
         return StoredRawArtifact(
             page_number=page_number,
             metadata=metadata,
             storage_backend=_STORAGE_BACKEND,
             object_key=object_key,
+            artifact_kind=artifact_kind,
+            reject_code=reject_code,
+            parser_location=parser_location,
         )

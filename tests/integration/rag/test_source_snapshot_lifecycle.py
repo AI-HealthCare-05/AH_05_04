@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -17,6 +18,7 @@ from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
     RawArtifactMetadata,
     StoredRawArtifact,
 )
@@ -36,6 +38,7 @@ from app.models.rag_source import (
     RagIngestionRunStatus,
     RagSnapshotVerificationStatus,
     RagSourceIngestionArtifact,
+    RagSourceIngestionArtifactKind,
     RagSourceIngestionRun,
     RagSourceSnapshot,
     RagSourceSnapshotVerification,
@@ -319,6 +322,53 @@ async def test_outer_transaction_rollback_removes_snapshot_and_histories() -> No
             )
             == 0
         )
+
+
+async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
+    identity = await _seed_operation("REJECTIONS")
+    raw_artifacts = _stored_artifacts(minute=9)
+    rejection = StoredRawArtifact(
+        page_number=None,
+        metadata=RawArtifactMetadata(
+            artifact_key="reject-0001.json",
+            raw_checksum="e" * 64,
+            byte_size=64,
+            content_type="application/json",
+        ),
+        storage_backend="PRIVATE_OBJECT_STORAGE",
+        object_key="source-ingestion/synthetic/reject-0001.json",
+        artifact_kind=IngestionArtifactKind.REJECTS,
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="page[1].record[3]",
+    )
+
+    async with session_factory.begin() as session:
+        result = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=replace(_metadata("external:rejections", minute=9), rejected_record_count=1),
+            artifacts=(*raw_artifacts, rejection),
+        )
+
+    async with session_factory() as session:
+        run = await session.get(RagSourceIngestionRun, result.ingestion_run_id)
+        artifacts = (
+            await session.scalars(
+                select(RagSourceIngestionArtifact).where(
+                    RagSourceIngestionArtifact.ingestion_run_id == result.ingestion_run_id
+                )
+            )
+        ).all()
+
+    assert run is not None
+    assert run.run_status is RagIngestionRunStatus.SUCCEEDED_WITH_REJECTIONS
+    assert len(artifacts) == 2
+    stored_rejection = next(
+        artifact for artifact in artifacts if artifact.artifact_kind is RagSourceIngestionArtifactKind.REJECTS
+    )
+    assert stored_rejection.page_number is None
+    assert stored_rejection.reject_code == "MISSING_ITEM_SEQ"
+    assert stored_rejection.parser_location == "page[1].record[3]"
 
 
 async def test_failed_snapshot_is_persisted_and_cannot_be_selected() -> None:

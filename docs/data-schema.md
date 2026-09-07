@@ -235,7 +235,7 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## RAG Source·Catalog 최소 DB 기반
 
-Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가합니다.
+Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가하고, `165b5c4d3e2f`는 거부 원문의 안전한 추적 필드를 추가합니다.
 
 이번 분할 범위의 ID/FK 매핑은 기존 애플리케이션 호환성을 우선해 `UUIDChar` 기반 `CHAR(36)`을 사용합니다. 신규 독립 RAG/Eval ID의 PostgreSQL native `UUID` 전환은 별도 승인 migration 범위이며, 이 PR에서 타입을 섞지 않습니다.
 
@@ -259,6 +259,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 - 로컬 저장 어댑터는 `sha256/{앞 2자리}/{SHA-256}.artifact` 형식의 내용 주소를 사용합니다. 완성 전 임시 파일은 참조하지 않으며 크기·checksum 검증과 파일 동기화가 끝난 뒤에만 mode `0600`의 불변 객체를 원자적으로 공개합니다. 저장소 디렉터리는 mode `0700`으로 제한합니다.
 - `NO_CHANGE`와 `SOURCE_VERSION_CONFLICT`를 포함한 모든 검증 실행은 자체 Artifact 참조를 보존합니다. Snapshot이 생성되지 않은 실행도 감사 가능한 원본 근거를 잃지 않습니다.
 - 같은 수집 실행에서 페이지 번호와 Artifact key는 각각 중복될 수 없으며 Artifact 참조 행은 UPDATE·DELETE할 수 없습니다.
+- `artifact_kind=RAW_RESPONSE`는 양의 페이지 번호를 가지며 거부 메타데이터를 가질 수 없습니다. `artifact_kind=REJECTS`는 페이지 번호 대신 안전한 고정 `reject_code`와 원문을 포함하지 않는 `parser_location`을 필수로 기록합니다.
 
 Rollback 정책:
 

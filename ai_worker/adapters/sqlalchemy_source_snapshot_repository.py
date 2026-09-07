@@ -74,12 +74,15 @@ _INGESTION_ARTIFACT = table(
     column("id", String(36)),
     column("ingestion_run_id", String(36)),
     column("page_number", Integer),
+    column("artifact_kind", String(20)),
     column("artifact_key", String(500)),
     column("storage_backend", String(50)),
     column("object_key", String(500)),
     column("raw_checksum", String(64)),
     column("byte_size", Integer),
     column("content_type", String(255)),
+    column("reject_code", String(100)),
+    column("parser_location", String(255)),
 )
 _VERIFICATION = table(
     "rag_source_snapshot_verification",
@@ -244,12 +247,15 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 "id": str(uuid4()),
                 "ingestion_run_id": str(ingestion_run_id),
                 "page_number": artifact.page_number,
+                "artifact_kind": artifact.artifact_kind,
                 "artifact_key": artifact.metadata.artifact_key,
                 "storage_backend": artifact.storage_backend,
                 "object_key": artifact.object_key,
                 "raw_checksum": artifact.metadata.raw_checksum,
                 "byte_size": artifact.metadata.byte_size,
                 "content_type": artifact.metadata.content_type,
+                "reject_code": artifact.reject_code,
+                "parser_location": artifact.parser_location,
             }
             for artifact in artifacts
         ]

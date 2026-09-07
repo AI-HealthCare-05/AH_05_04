@@ -15,10 +15,12 @@ from ai_worker.tasks.rag.source_client.contracts import (
 from ai_worker.tasks.rag.source_client.mfds_client import DecodedProviderPage
 from ai_worker.tasks.rag.source_ingestion.acquire import (
     preserve_raw_artifacts,
+    preserve_rejection_artifact,
     verify_raw_artifact_manifest,
     verify_source_run_artifacts,
 )
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
     RawArtifactMetadata,
     RawArtifactStore,
     StoredRawArtifact,
@@ -72,17 +74,24 @@ class RecordingArtifactStore(RawArtifactStore):
     def put_verified(
         self,
         *,
-        page_number: int,
+        page_number: int | None,
         file_path: Path,
         metadata: RawArtifactMetadata,
+        artifact_kind: IngestionArtifactKind = IngestionArtifactKind.RAW_RESPONSE,
+        reject_code: str | None = None,
+        parser_location: str | None = None,
     ) -> StoredRawArtifact:
         assert file_path.exists()
-        self.pages.append(page_number)
+        if page_number is not None:
+            self.pages.append(page_number)
         return StoredRawArtifact(
             page_number=page_number,
             metadata=metadata,
             storage_backend="SYNTHETIC_PRIVATE",
             object_key=f"synthetic/{metadata.raw_checksum}",
+            artifact_kind=artifact_kind,
+            reject_code=reject_code,
+            parser_location=parser_location,
         )
 
 
@@ -118,6 +127,24 @@ def test_duplicate_page_is_rejected_before_storage(tmp_path: Path) -> None:
         )
 
     assert store.pages == []
+
+
+def test_preserves_rejection_with_safe_metadata(tmp_path: Path) -> None:
+    rejection = _write_artifact(tmp_path, "reject-1.json", b'{"ITEM_SEQ":null}')
+    store = RecordingArtifactStore()
+
+    stored = preserve_rejection_artifact(
+        file_path=rejection[0],
+        metadata=rejection[1],
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="page[1].record[3]",
+        store=store,
+    )
+
+    assert stored.artifact_kind is IngestionArtifactKind.REJECTS
+    assert stored.page_number is None
+    assert stored.reject_code == "MISSING_ITEM_SEQ"
+    assert stored.parser_location == "page[1].record[3]"
 
 
 def _complete_run(

@@ -462,6 +462,7 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
     assert "uq_rag_source_artifact_run_page" in schema_objects
     assert "uq_rag_source_artifact_run_key" in schema_objects
     assert "chk_rag_source_artifact_checksum" in schema_objects
+    assert "chk_rag_source_artifact_kind_metadata" in schema_objects
     assert "trg_rag_source_ingestion_artifact_prevent_update" in schema_objects
     assert "trg_rag_source_ingestion_artifact_prevent_delete" in schema_objects
 
@@ -560,6 +561,70 @@ def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references()
 
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 165a4b3c2d1e"):
             command.downgrade(alembic_config, RAG_SOURCE_CATALOG_REVISION)
+
+        assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_rejection(ids: dict[str, str]) -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_ingestion_artifact (
+                            id, ingestion_run_id, page_number, artifact_kind,
+                            artifact_key, storage_backend, object_key,
+                            raw_checksum, byte_size, content_type,
+                            reject_code, parser_location
+                        )
+                        VALUES (
+                            :artifact_id, :ingestion_run_id, NULL, 'REJECTS',
+                            'reject-0001.json', 'PRIVATE_OBJECT_STORAGE',
+                            'source/synthetic/reject-0001.json', :raw_checksum,
+                            64, 'application/json', 'MISSING_ITEM_SEQ',
+                            'page[1].record[3]'
+                        )
+                        """
+                    ),
+                    {**ids, "artifact_id": str(uuid4()), "raw_checksum": "d" * 64},
+                )
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        asyncio.run(insert_rejection(ids))
+
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO rag_source_ingestion_artifact (
+                    id, ingestion_run_id, page_number, artifact_kind,
+                    artifact_key, storage_backend, object_key,
+                    raw_checksum, byte_size, content_type,
+                    reject_code, parser_location
+                )
+                VALUES (
+                    :artifact_id, :ingestion_run_id, NULL, 'REJECTS',
+                    'reject-0002.json', 'PRIVATE_OBJECT_STORAGE',
+                    'source/synthetic/reject-0002.json', :raw_checksum,
+                    64, 'application/json', 'unsafe-code', 'page[1].record[4]'
+                )
+                """,
+                {**ids, "artifact_id": str(uuid4()), "raw_checksum": "e" * 64},
+                expected_text="chk_rag_source_artifact_kind_metadata",
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165b5c4d3e2f"):
+            command.downgrade(alembic_config, "165a4b3c2d1e")
 
         assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
     finally:

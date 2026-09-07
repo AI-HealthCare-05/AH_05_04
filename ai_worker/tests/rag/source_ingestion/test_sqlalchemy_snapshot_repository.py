@@ -155,6 +155,9 @@ async def test_artifact_references_are_inserted_without_raw_content_or_commit() 
     assert values[0]["ingestion_run_id"] == str(_OPERATION_ID)
     assert values[0]["object_key"] == artifact.object_key
     assert values[0]["raw_checksum"] == artifact.metadata.raw_checksum
+    assert values[0]["artifact_kind"] == artifact.artifact_kind
+    assert values[0]["reject_code"] is None
+    assert values[0]["parser_location"] is None
     assert "content" not in values[0]
     session.commit.assert_not_awaited()
 

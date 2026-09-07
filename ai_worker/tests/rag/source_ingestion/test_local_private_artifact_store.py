@@ -7,7 +7,10 @@ import pytest
 from ai_worker.adapters.local_private_source_artifact_store import (
     LocalPrivateSourceArtifactStore,
 )
-from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
+    RawArtifactMetadata,
+)
 
 
 def _metadata(content: bytes, *, artifact_key: str = "page-0001.json") -> RawArtifactMetadata:
@@ -81,3 +84,45 @@ def test_rejects_tampered_existing_object(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="checksum mismatch"):
         store.put_verified(page_number=1, file_path=source, metadata=metadata)
+
+
+def test_preserves_rejection_reference_without_putting_raw_value_in_metadata(tmp_path: Path) -> None:
+    source = tmp_path / "rejection.json"
+    content = b'{"ITEM_SEQ":null}'
+    source.write_bytes(content)
+    metadata = _metadata(content, artifact_key="reject-0001.json")
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+
+    stored = store.put_verified(
+        page_number=None,
+        file_path=source,
+        metadata=metadata,
+        artifact_kind=IngestionArtifactKind.REJECTS,
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="page[1].record[3]",
+    )
+
+    assert stored.artifact_kind is IngestionArtifactKind.REJECTS
+    assert stored.reject_code == "MISSING_ITEM_SEQ"
+    assert stored.parser_location == "page[1].record[3]"
+    assert content.decode() not in repr(stored)
+
+
+def test_invalid_rejection_metadata_is_rejected_before_file_write(tmp_path: Path) -> None:
+    source = tmp_path / "rejection.json"
+    content = b'{"ITEM_SEQ":null}'
+    source.write_bytes(content)
+    storage_root = tmp_path / "private"
+    store = LocalPrivateSourceArtifactStore(storage_root)
+
+    with pytest.raises(ValueError, match="고정 코드"):
+        store.put_verified(
+            page_number=None,
+            file_path=source,
+            metadata=_metadata(content, artifact_key="reject-0001.json"),
+            artifact_kind=IngestionArtifactKind.REJECTS,
+            reject_code="unsafe-code",
+            parser_location="page[1].record[3]",
+        )
+
+    assert list(storage_root.rglob("*.artifact")) == []

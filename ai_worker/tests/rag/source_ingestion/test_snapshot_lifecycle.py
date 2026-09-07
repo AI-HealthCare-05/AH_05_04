@@ -11,11 +11,13 @@ from ai_worker.adapters.local_private_source_artifact_store import (
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
     RawArtifactMetadata,
     StoredRawArtifact,
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.persistence import (
+    RejectionArtifactInput,
     preserve_and_persist_product_ingestion_result,
 )
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
@@ -185,6 +187,23 @@ def _ingestion(checksum: str = _CHECKSUM_A) -> ProductIngestionResult:
     )
 
 
+def _stored_rejection_artifact() -> StoredRawArtifact:
+    return StoredRawArtifact(
+        page_number=None,
+        metadata=RawArtifactMetadata(
+            artifact_key="reject-0001.json",
+            raw_checksum="e" * 64,
+            byte_size=64,
+            content_type="application/json",
+        ),
+        storage_backend="PRIVATE_OBJECT_STORAGE",
+        object_key="source-ingestion/synthetic/reject-0001.json",
+        artifact_kind=IngestionArtifactKind.REJECTS,
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="page[1].record[3]",
+    )
+
+
 def _metadata(source_version: str) -> SnapshotIngestionMetadata:
     return SnapshotIngestionMetadata(
         source_version=source_version,
@@ -318,6 +337,57 @@ async def test_manifest_mismatch_is_rejected_before_file_or_database_write(
     assert repository.locked_identities == []
 
 
+async def test_preserves_rejection_before_success_with_rejections_run(
+    tmp_path: Path,
+) -> None:
+    raw_content = b'{"page":1}'
+    raw_path = tmp_path / "page-0001.json"
+    raw_path.write_bytes(raw_content)
+    raw_metadata = RawArtifactMetadata(
+        artifact_key="page-0001.json",
+        raw_checksum=hashlib.sha256(raw_content).hexdigest(),
+        byte_size=len(raw_content),
+        content_type="application/json",
+    )
+    rejection_content = b'{"ITEM_SEQ":null}'
+    rejection_path = tmp_path / "reject-0001.json"
+    rejection_path.write_bytes(rejection_content)
+    rejection_metadata = RawArtifactMetadata(
+        artifact_key="reject-0001.json",
+        raw_checksum=hashlib.sha256(rejection_content).hexdigest(),
+        byte_size=len(rejection_content),
+        content_type="application/json",
+    )
+    ingestion = replace(
+        _ingestion(),
+        raw_manifest_checksum=raw_manifest_checksum((raw_metadata,)),
+    )
+    repository = FakeSnapshotRepository()
+
+    result = await preserve_and_persist_product_ingestion_result(
+        repository=repository,
+        artifact_store=LocalPrivateSourceArtifactStore(tmp_path / "private"),
+        ingestion=ingestion,
+        metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+        raw_artifacts=((1, raw_path, raw_metadata),),
+        rejection_artifacts=(
+            RejectionArtifactInput(
+                file_path=rejection_path,
+                metadata=rejection_metadata,
+                reject_code="MISSING_ITEM_SEQ",
+                parser_location="page[1].record[3]",
+            ),
+        ),
+    )
+
+    stored = repository.run_artifacts[result.ingestion_run_id]
+    assert [artifact.artifact_kind for artifact in stored] == [
+        IngestionArtifactKind.RAW_RESPONSE,
+        IngestionArtifactKind.REJECTS,
+    ]
+    assert repository.runs[0].run_status == "SUCCEEDED_WITH_REJECTIONS"
+
+
 async def test_same_content_with_new_version_appends_no_change_to_latest_snapshot() -> None:
     repository = FakeSnapshotRepository()
     first = await persist_product_ingestion_result(
@@ -426,10 +496,27 @@ async def test_rejections_are_reflected_in_success_status() -> None:
         repository=repository,
         ingestion=_ingestion(),
         metadata=metadata,
-        artifacts=_stored_artifacts(),
+        artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
     )
 
     assert repository.runs[0].run_status == "SUCCEEDED_WITH_REJECTIONS"
+    assert repository.run_artifacts[next(iter(repository.run_artifacts))][-1].artifact_kind is (
+        IngestionArtifactKind.REJECTS
+    )
+
+
+async def test_rejected_count_requires_rejection_artifact_before_database_write() -> None:
+    repository = FakeSnapshotRepository()
+
+    with pytest.raises(ValueError, match="REJECTS Artifact"):
+        await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(),
+            metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+            artifacts=_stored_artifacts(),
+        )
+
+    assert repository.locked_identities == []
 
 
 async def test_selecting_new_snapshot_marks_previous_current_stale() -> None:
