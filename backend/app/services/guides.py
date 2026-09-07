@@ -158,3 +158,21 @@ class GuideService:
                 details=[ErrorDetail(field="guide_id", reason="NOT_FOUND", rejected_value=str(guide_id))],
             )
         return _to_guide_data(guide)
+
+    async def get_latest_guide_for_prescription(self, *, user: User, prescription_id: UUID) -> GuideData:
+        # 재접속 복구 지원 API: guide_id를 잃어버린 Frontend(로그아웃·재로그인 등)가
+        # 처방 소유권만으로 가장 최근 Guide를 다시 찾을 수 있게 합니다. Guide 생성이
+        # 아직 JobIntakeService.accept_job()에 연결되지 않은 동기(one-cycle) 흐름이라
+        # AiJob 상태와 무관하게 단순 조회로 처리합니다 — Job 기반 rediscovery(#148)와는 별개입니다.
+        guide = await self._repo.get_latest_for_prescription_owned(
+            prescription_id=prescription_id,
+            user_id=user.id,
+        )
+        if guide is None:
+            raise ApiError(
+                status_code=404,
+                code="GUIDE_NOT_FOUND",
+                message="가이드를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
+            )
+        return _to_guide_data(guide)

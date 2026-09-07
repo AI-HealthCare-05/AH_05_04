@@ -350,6 +350,22 @@ function ChatPage() {
     }
   }
 
+  const handleComposerKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+  ) => {
+    if (
+      event.key !== 'Enter' ||
+      event.shiftKey ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229
+    ) {
+      return
+    }
+
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
+  }
+
   const handleNavigation = (item: '홈' | '일정' | '도지' | '가이드' | '메뉴') => {
     if (item === '홈') navigate('/')
     if (item === '도지' && !prescriptionId) navigate('/chat')
@@ -509,16 +525,18 @@ function ChatPage() {
 
             <form className="chat-composer" onSubmit={handleSend}>
               <label className="chat-page__composer-label" htmlFor="dosey-chat-input">
-                복약 챗봇 도지에게 질문
+                복약 질문
               </label>
               <textarea
                 id="dosey-chat-input"
                 className="chat-input"
                 value={currentDraft}
                 onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
                 aria-label="복약 질문"
                 placeholder="궁금한 내용을 입력하세요"
                 rows={1}
+                enterKeyHint="send"
                 disabled={
                   currentIsLoading || currentIsSending || !currentSessionId
                 }
