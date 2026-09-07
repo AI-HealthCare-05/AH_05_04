@@ -23,7 +23,7 @@
     "local_target": {
       "repository_path": "docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md",
       "version": "1",
-      "sha256": "1f653ad6e09cb7a69b392c1126ded141ed66bdfcbdf0d5031dcec547148e08af"
+      "sha256": "42a0688cb0833484f8585b7e13aa6a2cf9594e63f5ffd337b40b7a0a6b96448e"
     },
     "decision": {
       "repository_path": "docs/governance/decisions/2026-08-31-rag-p0-contract-freeze.md",
@@ -317,31 +317,44 @@
   "source_purpose_eligibility_matrix": [
     {
       "purpose": "PRODUCT_IDENTIFICATION",
-      "eligible_source_classes": ["MFDS_PRODUCT_APPROVAL", "TEAM_APPROVED_MEDICATION_ALIAS"],
+      "eligible_source_classes": [
+        "MFDS_PRODUCT_APPROVAL",
+        "TEAM_APPROVED_MEDICATION_ALIAS"
+      ],
       "separate_approval_required": true,
       "retrieval_approval_is_sufficient": false
     },
     {
       "purpose": "SAFETY_ROUTING",
-      "eligible_source_classes": ["MFDS_DUR"],
+      "eligible_source_classes": [
+        "MFDS_DUR"
+      ],
       "separate_approval_required": true,
       "retrieval_approval_is_sufficient": false
     },
     {
       "purpose": "RULE_DERIVATION",
-      "eligible_source_classes": ["MFDS_DUR"],
+      "eligible_source_classes": [
+        "MFDS_DUR"
+      ],
       "separate_approval_required": true,
       "retrieval_approval_is_sufficient": false
     },
     {
       "purpose": "RETRIEVAL",
-      "eligible_source_classes": ["MFDS_PATIENT_MEDICATION_GUIDE", "INTERNAL_REVIEWED_GUIDELINE"],
+      "eligible_source_classes": [
+        "MFDS_PATIENT_MEDICATION_GUIDE",
+        "INTERNAL_REVIEWED_GUIDELINE"
+      ],
       "separate_approval_required": true,
       "retrieval_approval_is_sufficient": true
     },
     {
       "purpose": "PATIENT_CITATION",
-      "eligible_source_classes": ["MFDS_PATIENT_MEDICATION_GUIDE", "INTERNAL_REVIEWED_GUIDELINE"],
+      "eligible_source_classes": [
+        "MFDS_PATIENT_MEDICATION_GUIDE",
+        "INTERNAL_REVIEWED_GUIDELINE"
+      ],
       "separate_approval_required": true,
       "retrieval_approval_is_sufficient": false
     }
@@ -569,6 +582,6 @@
   "receipt_hash": {
     "algorithm": "sha256",
     "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
-    "value": "691f92549428f2ba330febcbcc0630338fa575a6cf21596aa96e56ad15749877"
+    "value": "15a0998f2ef7ee14900deb991a206b4c466e0b77ed74b0e6c1fc80db0d95ae35"
   }
 }
