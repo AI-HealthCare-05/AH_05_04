@@ -20,6 +20,7 @@ from ai_worker.tasks.rag.catalog.types import (
     CandidateRecordStatus,
     CatalogAlias,
     CatalogComponent,
+    CatalogComponentRole,
     CatalogFreshnessStatus,
     CatalogIngredient,
     CatalogProduct,
@@ -435,7 +436,12 @@ def _component_shape_is_valid(component: CatalogComponent) -> bool:
         component.strength_unit,
         component.source_snapshot_id,
     )
-    return all(isinstance(value, str) for value in required_texts) and _is_positive_int(component.component_order)
+    return (
+        all(isinstance(value, str) for value in required_texts)
+        and isinstance(component.component_role, CatalogComponentRole)
+        and (component.release_profile is None or isinstance(component.release_profile, str))
+        and _is_positive_int(component.component_order)
+    )
 
 
 def _alias_shape_is_valid(alias: CatalogAlias) -> bool:
@@ -445,6 +451,7 @@ def _alias_shape_is_valid(alias: CatalogAlias) -> bool:
         alias.normalized_alias,
         alias.source_snapshot_id,
         alias.normalization_version,
+        alias.alias_source,
     )
     return (
         all(isinstance(value, str) for value in required_texts)

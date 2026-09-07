@@ -35,6 +35,12 @@ class CatalogFreshnessStatus(StrEnum):
     STALE = "STALE"
 
 
+class CatalogComponentRole(StrEnum):
+    ACTIVE_INGREDIENT = "ACTIVE_INGREDIENT"
+    EXCIPIENT = "EXCIPIENT"
+    UNKNOWN = "UNKNOWN"
+
+
 @dataclass(frozen=True, slots=True)
 class ProductIdentity:
     entity_type: CandidateEntityType
@@ -76,6 +82,8 @@ class CatalogComponent:
     strength_value: str
     strength_unit: str
     source_snapshot_id: str
+    component_role: CatalogComponentRole = CatalogComponentRole.ACTIVE_INGREDIENT
+    release_profile: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +97,7 @@ class CatalogAlias:
     review_status: CandidateAliasReviewStatus
     status: CandidateRecordStatus
     is_effective: bool
+    alias_source: str = "UNSPECIFIED"
 
 
 @dataclass(frozen=True, slots=True)

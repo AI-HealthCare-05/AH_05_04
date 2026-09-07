@@ -2,6 +2,8 @@
   "schema_version": "synthetic-catalog-input-v1",
   "records": [
     {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "product_code_system": "MFDS_ITEM_SEQ",
       "product_code": "000000001",
       "ingredient_code_system": "MFDS_INGREDIENT_CODE",
       "ingredient_code": "ING-0001",
@@ -12,6 +14,8 @@
       "strength_unit": "mg"
     },
     {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "product_code_system": "MFDS_ITEM_SEQ",
       "product_code": "000000002",
       "ingredient_code_system": "MFDS_INGREDIENT_CODE",
       "ingredient_code": "ING-0001",
@@ -22,6 +26,8 @@
       "strength_unit": "mg"
     },
     {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "product_code_system": "MFDS_ITEM_SEQ",
       "product_code": "000000002",
       "ingredient_code_system": "MFDS_INGREDIENT_CODE",
       "ingredient_code": "ING-0002",
