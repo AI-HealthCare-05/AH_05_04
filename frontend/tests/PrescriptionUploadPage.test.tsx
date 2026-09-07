@@ -8,6 +8,7 @@ import { ApiError } from '../src/api/client'
 import {
   executeOcr,
   getJobStatus,
+  getLatestPrescription,
   getOcrJob,
   getOcrResult,
   uploadPrescription,
@@ -28,6 +29,7 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => {
     uploadPrescription: vi.fn(),
     executeOcr: vi.fn(),
     getJobStatus: vi.fn(),
+    getLatestPrescription: vi.fn(),
     getOcrJob: vi.fn(),
     getOcrResult: vi.fn(),
   }
@@ -106,6 +108,7 @@ function renderPage() {
         <Route path="/prescriptions/upload" element={<PrescriptionUploadPage />} />
         <Route path="/prescriptions/review" element={<ReviewRoute />} />
         <Route path="/login" element={<div>로그인 화면</div>} />
+        <Route path="/guides" element={<div>가이드 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -124,6 +127,9 @@ function selectPrescriptionFile(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(getLatestPrescription).mockImplementation(() => {
+    throw new ApiError(404, '처방을 찾을 수 없습니다.', 'PRESCRIPTION_NOT_FOUND')
+  })
   vi.mocked(uploadPrescription).mockResolvedValue({
     data: {
       document_id: documentId,
@@ -141,6 +147,57 @@ afterEach(() => {
 })
 
 describe('PrescriptionUploadPage OCR polling', () => {
+  it('latest 처방이 있으면 업로드 폼을 표시하지 않고 /guides로 정규화한다', async () => {
+    vi.mocked(getLatestPrescription).mockResolvedValue({
+      data: {
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        document_id: documentId,
+        prescribed_date: '2026-09-07',
+        confirmed_at: '2026-09-07T08:00:00Z',
+        medications: [],
+      },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('가이드 화면')).toBeTruthy()
+    expect(screen.queryByText('처방전을 등록해 주세요')).toBeNull()
+    expect(uploadPrescription).not.toHaveBeenCalled()
+  })
+
+  it('latest 처방 404일 때만 기존 업로드 폼을 표시한다', () => {
+    renderPage()
+
+    expect(screen.getByText('처방전을 등록해 주세요')).toBeTruthy()
+    expect(getLatestPrescription).toHaveBeenCalledTimes(1)
+  })
+
+  it('latest 처방 5xx를 처방 없음으로 오인하지 않고 재시도 상태를 표시한다', async () => {
+    vi.mocked(getLatestPrescription).mockRejectedValue(
+      new ApiError(503, 'internal detail', 'SERVICE_UNAVAILABLE'),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('등록된 처방전을 확인하지 못했어요')).toBeTruthy()
+    expect(screen.queryByText('처방전을 등록해 주세요')).toBeNull()
+    expect(screen.getByRole('button', { name: '다시 확인하기' })).toBeTruthy()
+  })
+
+  it('latest 처방 401은 기존 Auth 계약대로 세션을 정리하고 로그인으로 이동한다', async () => {
+    localStorage.setItem('access_token', 'expired-access-token')
+    sessionStorage.setItem('dosey_ocr_job_recovery:v1', 'invalid-recovery-state')
+    vi.mocked(getLatestPrescription).mockRejectedValue(
+      new ApiError(401, '만료된 토큰', 'EXPIRED_TOKEN'),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+  })
+
   it('최신 DOC-01의 카메라/저장 파일 선택과 실제 입력 형식을 제공한다', () => {
     const { container } = renderPage()
 

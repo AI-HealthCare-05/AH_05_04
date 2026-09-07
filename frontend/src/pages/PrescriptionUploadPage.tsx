@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   executeOcr,
   getJobStatus,
+  getLatestPrescription,
   getOcrJob,
   getOcrResult,
   isJobStatusResponse,
@@ -15,6 +16,10 @@ import AiJobStatusState from '../components/AiJobStatusState'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import { adaptOcrJobStatus } from '../features/ai-jobs/ocrJobAdapter'
+import {
+  clearAuthenticatedSession,
+  isStaleTokenError,
+} from '../features/auth/authSession'
 import {
   clearOcrJobRecovery,
   loadOcrJobRecovery,
@@ -143,11 +148,62 @@ function PrescriptionUploadPage() {
     useState<OcrCompletionError | null>(null)
   const [pollingRestartKey, setPollingRestartKey] = useState(0)
   const [completionRestartKey, setCompletionRestartKey] = useState(0)
+  const [rediscoveryRestartKey, setRediscoveryRestartKey] = useState(0)
+  const [isCheckingExistingPrescription, setIsCheckingExistingPrescription] =
+    useState(() => loadOcrJobRecovery() === null)
+  const [rediscoveryError, setRediscoveryError] = useState<unknown>(null)
   const preparationRequestRef = useRef(0)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const preparationControllerRef = useRef<AbortController | null>(null)
   const intakeIntentRef = useRef<OcrIntakeIntent | null>(null)
+
+  useEffect(() => {
+    if (pollingTarget) {
+      setIsCheckingExistingPrescription(false)
+      setRediscoveryError(null)
+      return undefined
+    }
+
+    let isActive = true
+    setIsCheckingExistingPrescription(true)
+    setRediscoveryError(null)
+
+    const handleRediscoveryFailure = (error: unknown) => {
+      if (!isActive) return
+      if (error instanceof ApiError && error.status === 404) {
+        setIsCheckingExistingPrescription(false)
+        return
+      }
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
+        navigate('/login', { replace: true })
+        return
+      }
+      setRediscoveryError(error)
+      setIsCheckingExistingPrescription(false)
+    }
+
+    let rediscoveryRequest
+    try {
+      rediscoveryRequest = getLatestPrescription()
+    } catch (error) {
+      handleRediscoveryFailure(error)
+      return () => {
+        isActive = false
+      }
+    }
+
+    void rediscoveryRequest
+      .then(() => {
+        if (isActive) navigate('/guides', { replace: true })
+      })
+      .catch(handleRediscoveryFailure)
+
+    return () => {
+      isActive = false
+    }
+  }, [navigate, pollingTarget, rediscoveryRestartKey])
 
   const resetNativeFileInputs = () => {
     if (cameraInputRef.current) cameraInputRef.current.value = ''
@@ -439,6 +495,55 @@ function PrescriptionUploadPage() {
   const retryCompletedResult = () => {
     setCompletionError(null)
     setCompletionRestartKey((current) => current + 1)
+  }
+
+  if (isCheckingExistingPrescription) {
+    return (
+      <div className="mvp-page mvp-upload-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/')}
+          brandMark={<DoseyMascot variant="header" />}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-upload__failure" role="status">
+            <DoseyMascot variant="chat" />
+            <h1>등록된 처방전을 확인하고 있어요</h1>
+            <p>잠시만 기다려 주세요.</p>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
+  if (rediscoveryError) {
+    return (
+      <div className="mvp-page mvp-upload-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/')}
+          brandMark={<DoseyMascot variant="header" />}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-upload__failure">
+            <span className="mvp-upload__failure-icon" aria-hidden="true" />
+            <h1>등록된 처방전을 확인하지 못했어요</h1>
+            <p role="alert">{getUploadFailureMessage(rediscoveryError)}</p>
+            <Button
+              fullWidth
+              onClick={() => setRediscoveryRestartKey((current) => current + 1)}
+            >
+              다시 확인하기
+            </Button>
+            <Button fullWidth variant="secondary" onClick={() => navigate('/')}>
+              홈으로 돌아가기
+            </Button>
+          </main>
+        </MobileShell>
+      </div>
+    )
   }
 
   if (hasUploadFailed) {

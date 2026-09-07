@@ -2,11 +2,24 @@ import { cleanup, render, screen } from '@testing-library/react'
 import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../src/api/client'
+import { getGuide, getGuideForPrescription } from '../src/api/guides'
+import { getLatestPrescription } from '../src/api/prescriptions'
 import { getCurrentUser } from '../src/api/users'
 import AppRouter from '../src/routes/AppRouter'
 
 vi.mock('../src/api/users', () => ({
   getCurrentUser: vi.fn(),
+}))
+
+vi.mock('../src/api/guides', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/guides')>()),
+  getGuide: vi.fn(),
+  getGuideForPrescription: vi.fn(),
+}))
+
+vi.mock('../src/api/prescriptions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/prescriptions')>()),
+  getLatestPrescription: vi.fn(),
 }))
 
 const CURRENT_USER = {
@@ -35,6 +48,7 @@ function renderRoute(path: string, strict = false) {
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  sessionStorage.clear()
   vi.clearAllMocks()
 })
 
@@ -101,6 +115,52 @@ describe('인증 상태별 AppRouter 이동', () => {
     renderRoute('/profile')
 
     expect(await screen.findByText(CURRENT_USER.email)).toBeTruthy()
+  })
+
+  it('로그아웃으로 임시 상태가 비워진 뒤 재로그인한 /guides 진입은 서버에서 처방과 Guide를 복원한다', async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
+    vi.mocked(getLatestPrescription).mockResolvedValue({
+      data: {
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        document_id: '11111111-1111-4111-8111-111111111111',
+        prescribed_date: '2026-09-07',
+        confirmed_at: '2026-09-07T08:00:00Z',
+        medications: [],
+      },
+    })
+    const guideResponse = {
+      data: {
+        guide_id: '55555555-5555-4555-8555-555555555555',
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        generation_status: 'COMPLETED',
+        content: '재로그인 뒤 복원한 합성 Guide 내용',
+        model_name: 'guide-model',
+        prompt_version: 'guide-prompt-v1',
+        requested_at: '2026-09-07T08:00:00Z',
+        completed_at: '2026-09-07T08:00:03Z',
+      },
+    }
+    vi.mocked(getGuideForPrescription).mockResolvedValue(guideResponse)
+    vi.mocked(getGuide).mockResolvedValue(guideResponse)
+    localStorage.setItem('access_token', 'relogin-access-token')
+    expect(sessionStorage.length).toBe(0)
+
+    renderRoute('/guides')
+
+    expect(await screen.findByText('재로그인 뒤 복원한 합성 Guide 내용')).toBeTruthy()
+    expect(getCurrentUser).toHaveBeenCalledTimes(1)
+    expect(getLatestPrescription).toHaveBeenCalledTimes(1)
+    expect(getGuideForPrescription).toHaveBeenCalledWith(
+      '44444444-4444-4444-8444-444444444444',
+    )
+    expect(getGuide).toHaveBeenCalledWith(
+      '55555555-5555-4555-8555-555555555555',
+    )
+    expect(window.location.pathname).toBe(
+      '/guides/55555555-5555-4555-8555-555555555555',
+    )
+    expect(localStorage.length).toBe(1)
+    expect(sessionStorage.length).toBe(0)
   })
 
   it('로그인 사용자가 메뉴 화면에 직접 접속하면 최신 메뉴를 표시한다', async () => {
