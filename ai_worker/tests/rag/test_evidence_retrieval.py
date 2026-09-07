@@ -1602,9 +1602,9 @@ def test_synthetic_search_adapter_keeps_exact_first_when_trigram_score_is_one() 
         lexical_config_ref=config.artifact_ref,
     )
 
-    result = SyntheticEvidenceSearchAdapter(
-        index, config, None, artifact("synthetic-search-adapter")
-    ).search(request, EvidenceSearchStage.LEXICAL)
+    result = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter")).search(
+        request, EvidenceSearchStage.LEXICAL
+    )
 
     assert isinstance(result, EvidenceSearchSuccess)
     assert [item.provenance.evidence_key for item in result.hits] == [
@@ -1747,9 +1747,7 @@ def test_synthetic_dense_score_is_independent_of_callers_decimal_context() -> No
         dense_config_ref=dense_config.artifact_ref,
         dense_limit=1,
     )
-    adapter = SyntheticEvidenceSearchAdapter(
-        index, lexical_config, dense_config, artifact("synthetic-search-adapter")
-    )
+    adapter = SyntheticEvidenceSearchAdapter(index, lexical_config, dense_config, artifact("synthetic-search-adapter"))
 
     with localcontext() as low_precision:
         low_precision.prec = 6
@@ -1937,9 +1935,7 @@ def test_synthetic_search_adapter_contains_fixture_exceptions_as_typed_failure()
         SensitiveText("합성 복약 정보"),
         ("1", "0"),
     )
-    valid_index = SyntheticEvidenceIndex.create(
-        "knowledge-index", "knowledge-index@synthetic-1", (valid_record,)
-    )
+    valid_index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (valid_record,))
     invalid_index = replace(
         valid_index,
         records=(replace(valid_record, content_text=ExplodingSensitiveText(sentinel)),),
@@ -2612,10 +2608,14 @@ def test_rerank_order_is_independent_of_callers_decimal_context() -> None:
 
     assert isinstance(low, EvidenceRerankSuccess)
     assert isinstance(high, EvidenceRerankSuccess)
-    assert [item.evidence_key for item in low.selections] == [item.evidence_key for item in high.selections] == [
-        "knowledge:z-best",
-        "knowledge:a-worse",
-    ]
+    assert (
+        [item.evidence_key for item in low.selections]
+        == [item.evidence_key for item in high.selections]
+        == [
+            "knowledge:z-best",
+            "knowledge:a-worse",
+        ]
+    )
 
 
 def test_kernel_fails_closed_when_rerank_top_k_exceeds_selection_limit() -> None:
@@ -2666,12 +2666,8 @@ def test_kernel_fails_closed_when_rerank_top_k_exceeds_selection_limit() -> None
     outcome = retrieve_knowledge_evidence(
         request,
         query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
-        search_port=SyntheticEvidenceSearchAdapter(
-            index, lexical_config, None, artifact("synthetic-search-adapter")
-        ),
-        rerank_port=VersionedEvidenceRerankAdapter(
-            rerank_config, artifact("synthetic-rerank-adapter")
-        ),
+        search_port=SyntheticEvidenceSearchAdapter(index, lexical_config, None, artifact("synthetic-search-adapter")),
+        rerank_port=VersionedEvidenceRerankAdapter(rerank_config, artifact("synthetic-rerank-adapter")),
     )
 
     assert outcome.execution_status is KernelExecutionStatus.DEPENDENCY_ERROR

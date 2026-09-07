@@ -196,8 +196,7 @@ class VersionedEvidenceRerankAdapter:
                 or not _valid_rerank_config(self.config)
                 or not _rerank_config_is_bound(self.config)
                 or request.projection_version != RERANK_INPUT_PROJECTION_VERSION
-                or request.input_set_hash
-                != canonical_rerank_input_hash(request.projection_version, request.candidates)
+                or request.input_set_hash != canonical_rerank_input_hash(request.projection_version, request.candidates)
                 or not _valid_rerank_candidates(request)
                 or not _valid_artifact_ref(self.adapter_artifact_ref)
             ):
@@ -317,7 +316,9 @@ class SyntheticEvidenceSearchAdapter:
         if not Decimal(-1) <= minimum_similarity <= Decimal(1):
             return EvidenceSearchFailure()
         query_vectors = tuple(
-            item.values for item in self.dense_config.query_vectors if item.query_fingerprint == request.query_fingerprint
+            item.values
+            for item in self.dense_config.query_vectors
+            if item.query_fingerprint == request.query_fingerprint
         )
         if len(query_vectors) != 1:
             return EvidenceSearchFailure()
@@ -389,9 +390,7 @@ def _cosine_similarity(left: tuple[str, ...], right: tuple[str, ...]) -> Decimal
         ) / (left_norm * right_norm)
 
 
-def _weighted_score(
-    stage_signals: tuple[StageSignal, ...], lexical_weight: Decimal, dense_weight: Decimal
-) -> Decimal:
+def _weighted_score(stage_signals: tuple[StageSignal, ...], lexical_weight: Decimal, dense_weight: Decimal) -> Decimal:
     with localcontext(_DECIMAL_CONTEXT):
         observed: dict[EvidenceSearchStage, Decimal] = {}
         for signal in stage_signals:
@@ -404,9 +403,10 @@ def _weighted_score(
             ):
                 raise ValueError("invalid stage signal")
             observed[stage] = score
-        return observed.get(EvidenceSearchStage.LEXICAL, Decimal(0)) * lexical_weight + observed.get(
-            EvidenceSearchStage.DENSE, Decimal(0)
-        ) * dense_weight
+        return (
+            observed.get(EvidenceSearchStage.LEXICAL, Decimal(0)) * lexical_weight
+            + observed.get(EvidenceSearchStage.DENSE, Decimal(0)) * dense_weight
+        )
 
 
 def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
@@ -497,10 +497,7 @@ def _trigrams(value: str) -> frozenset[str]:
     if current:
         words.append("".join(current))
     return frozenset(
-        padded[index : index + 3]
-        for word in words
-        for padded in (f"  {word} ",)
-        for index in range(len(padded) - 2)
+        padded[index : index + 3] for word in words for padded in (f"  {word} ",) for index in range(len(padded) - 2)
     )
 
 
@@ -612,9 +609,7 @@ def _lexical_config_is_bound(value: VersionedLexicalSearchConfig) -> bool:
 
 
 def _valid_lexical_config(value: VersionedLexicalSearchConfig) -> bool:
-    return isinstance(value, VersionedLexicalSearchConfig) and _is_canonical_decimal(
-        value.trigram_similarity_threshold
-    )
+    return isinstance(value, VersionedLexicalSearchConfig) and _is_canonical_decimal(value.trigram_similarity_threshold)
 
 
 def _dense_config_is_bound(value: VersionedDenseSearchConfig) -> bool:
