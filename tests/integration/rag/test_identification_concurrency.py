@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.engine import URL
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -257,9 +258,16 @@ async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUI
         )
 
 
-async def _drop_active_search_unique_index() -> None:
+async def _assert_active_search_unique_index_exists() -> None:
     async with test_engine.begin() as connection:
-        await connection.execute(text("DROP INDEX IF EXISTS uq_medication_candidate_search_active"))
+        index_name = await connection.scalar(text("SELECT to_regclass('uq_medication_candidate_search_active')"))
+    assert index_name is not None
+
+
+async def _drop_active_search_unique_index() -> None:
+    await _assert_active_search_unique_index_exists()
+    async with test_engine.begin() as connection:
+        await connection.execute(text("DROP INDEX uq_medication_candidate_search_active"))
 
 
 async def _restore_active_search_unique_index() -> None:
@@ -387,6 +395,89 @@ async def _confirm_once(
             return (exc.code, reason)
 
 
+class _BarrierMedicationCandidateRepository(MedicationCandidateRepository):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        matched_precheck_barrier: asyncio.Barrier,
+        precheck_none_count: list[UUID],
+        insert_attempt_count: list[UUID],
+        integrity_error_count: list[UUID],
+    ) -> None:
+        super().__init__(session)
+        self._matched_precheck_barrier = matched_precheck_barrier
+        self._precheck_none_count = precheck_none_count
+        self._insert_attempt_count = insert_attempt_count
+        self._integrity_error_count = integrity_error_count
+
+    async def get_latest_matched_identification(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+    ) -> MedicationIdentification | None:
+        existing = await super().get_latest_matched_identification(
+            prescription_version_medication_id=prescription_version_medication_id
+        )
+        if existing is None:
+            self._precheck_none_count.append(prescription_version_medication_id)
+            await self._matched_precheck_barrier.wait()
+        return existing
+
+    async def create_matched_identification(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        candidate_search: MedicationCandidateSearch,
+        candidate_search_result: MedicationCandidateSearchResult,
+        confirmed_at: datetime,
+    ) -> MedicationIdentification:
+        self._insert_attempt_count.append(candidate_search.id)
+        try:
+            return await super().create_matched_identification(
+                prescription_version_medication_id=prescription_version_medication_id,
+                candidate_search=candidate_search,
+                candidate_search_result=candidate_search_result,
+                confirmed_at=confirmed_at,
+            )
+        except IntegrityError:
+            self._integrity_error_count.append(candidate_search.id)
+            raise
+
+
+async def _confirm_once_after_matched_precheck_barrier(
+    *,
+    user_id: UUID,
+    medication_id: UUID,
+    candidate_search_result_id: UUID,
+    matched_precheck_barrier: asyncio.Barrier,
+    precheck_none_count: list[UUID],
+    insert_attempt_count: list[UUID],
+    integrity_error_count: list[UUID],
+) -> tuple[str, str | None]:
+    async with session_factory() as session:
+        repository = _BarrierMedicationCandidateRepository(
+            session,
+            matched_precheck_barrier=matched_precheck_barrier,
+            precheck_none_count=precheck_none_count,
+            insert_attempt_count=insert_attempt_count,
+            integrity_error_count=integrity_error_count,
+        )
+        service = MedicationIdentificationService(repository)
+        try:
+            await service.confirm_identification(
+                prescription_version_medication_id=medication_id,
+                candidate_search_result_id=candidate_search_result_id,
+                user_id=user_id,
+            )
+            await session.commit()
+            return ("ok", None)
+        except ApiError as exc:
+            await session.rollback()
+            reason = exc.details[0].reason if exc.details else None
+            return (exc.code, reason)
+
+
 async def test_concurrent_confirm_allows_only_one_identification() -> None:
     user_id, medication_id, search_id, result_id = await _create_ready_search()
 
@@ -482,11 +573,38 @@ async def test_concurrent_confirm_two_ready_searches_allows_only_one_matched_ide
             second_result_id,
         ) = await _create_two_ready_searches_for_same_medication()
 
-        results = await asyncio.gather(
-            _confirm_once(user_id=user_id, medication_id=medication_id, candidate_search_result_id=first_result_id),
-            _confirm_once(user_id=user_id, medication_id=medication_id, candidate_search_result_id=second_result_id),
+        matched_precheck_barrier = asyncio.Barrier(2)
+        precheck_none_count: list[UUID] = []
+        insert_attempt_count: list[UUID] = []
+        integrity_error_count: list[UUID] = []
+
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                _confirm_once_after_matched_precheck_barrier(
+                    user_id=user_id,
+                    medication_id=medication_id,
+                    candidate_search_result_id=first_result_id,
+                    matched_precheck_barrier=matched_precheck_barrier,
+                    precheck_none_count=precheck_none_count,
+                    insert_attempt_count=insert_attempt_count,
+                    integrity_error_count=integrity_error_count,
+                ),
+                _confirm_once_after_matched_precheck_barrier(
+                    user_id=user_id,
+                    medication_id=medication_id,
+                    candidate_search_result_id=second_result_id,
+                    matched_precheck_barrier=matched_precheck_barrier,
+                    precheck_none_count=precheck_none_count,
+                    insert_attempt_count=insert_attempt_count,
+                    integrity_error_count=integrity_error_count,
+                ),
+            ),
+            timeout=10,
         )
 
+        assert len(precheck_none_count) == 2
+        assert len(insert_attempt_count) == 2
+        assert len(integrity_error_count) == 1
         assert results.count(("ok", None)) == 1
         assert any(
             code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"} and reason == "ALREADY_MATCHED"
