@@ -24,14 +24,15 @@ REPOSITORY_ROOT = Path(__file__).parents[3]
 STATUS_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/status.json"
 REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
+DATASET_MANIFEST_HASH = "490289ae8a103b4f12f8e30e2f9152a1dafbcfff3bdbedc5905aec30712fa73a"
 
 
 def _status_payload() -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schema_version": "1.0.0",
         "issue": "#273",
-        "phase": "PHASE_0_SCHEMA_CANDIDATE",
-        "status_label": "Candidate · Review Required",
+        "phase": "PHASE_A_DEV_AUTHORING",
+        "status_label": "Phase A · DEV Authoring Draft",
         "schema_set_status": "REVIEW_REQUIRED",
         "dataset_ref": "rag-natural-language-retrieval-dev@1.0.0",
         "planned_counts": {
@@ -41,7 +42,16 @@ def _status_payload() -> dict[str, Any]:
             "expression_types": 6,
             "independent_groups": 20,
         },
-        "created_counts": {"dev_questions": 0, "holdout_questions": 0, "gold_records": 0},
+        "created_counts": {
+            "dev_questions": 60,
+            "holdout_questions": 0,
+            "gold_records": 20,
+            "corpus_records": 100,
+            "topics": 5,
+            "expression_types": 6,
+            "independent_groups": 20,
+        },
+        "dataset_manifest_sha256": DATASET_MANIFEST_HASH,
         "schema_set_ref": {
             "id": "rag-eval.schema-set",
             "version": "1.3.0",
@@ -50,36 +60,41 @@ def _status_payload() -> dict[str, Any]:
         "schema_set_decision": "docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md",
         "responsible_reviewer": "@hazelnutflavoured",
         "approval_transition": "FUTURE_PULL_REQUEST_REVIEW_EVENT",
-        "dataset_status": "NOT_CREATED",
+        "dataset_status": "DRAFT",
         "gold_review_status": "NOT_STARTED",
         "holdout_freeze_status": "NOT_STARTED",
         "adapter_status": "NOT_IMPLEMENTED",
         "actual_run_ref": None,
         "release_eligible": False,
         "blocking_codes": [
-            "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
             "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
             "BLOCKED_BY_RAG_14_ADAPTER",
             "WAITING_FOR_HOLDOUT_FREEZE",
         ],
         "checks": [
             {
-                "check_id": "TASK_1_PROVENANCE_CONTRACTS",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+                "check_id": "PHASE_A_DEV_FIXTURE",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
                 "exit_code": 0,
-                "result": "61 passed",
+                "result": "15 passed",
             },
             {
-                "check_id": "TASK_2_SCHEMA_SET_EXPORT",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_study_split_axis_cardinality_is_portable -q",
+                "check_id": "PHASE_A_LOADER",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q",
                 "exit_code": 0,
-                "result": "6 passed",
+                "result": "132 passed",
             },
             {
-                "check_id": "TASK_3_LOADER_BINDING",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
+                "check_id": "PHASE_A_REPORT_PROJECTION",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
                 "exit_code": 0,
-                "result": "165 passed, 6 skipped",
+                "result": "49 passed",
+            },
+            {
+                "check_id": "PHASE_A_SCHEMA_EXPORT",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+                "exit_code": 0,
+                "result": "94 passed, 7 skipped",
             },
         ],
         "updated_at": "2026-09-07T01:23:38.000000Z",
@@ -93,11 +108,25 @@ def _status_bytes(payload: dict[str, Any]) -> bytes:
     return canonical_json_bytes(payload)
 
 
-def test_phase_0_status_accepts_only_the_candidate_state() -> None:
+def test_phase_a_status_accepts_only_the_verified_dev_authoring_state() -> None:
     status = parse_status_bytes(_status_bytes(_status_payload()))
 
-    assert status.phase == "PHASE_0_SCHEMA_CANDIDATE"
+    assert status.phase == "PHASE_A_DEV_AUTHORING"
+    assert status.dataset_status == "DRAFT"
+    assert status.dataset_manifest_sha256 == DATASET_MANIFEST_HASH
+    assert status.created_counts.model_dump() == {
+        "dev_questions": 60,
+        "holdout_questions": 0,
+        "gold_records": 20,
+        "corpus_records": 100,
+        "topics": 5,
+        "expression_types": 6,
+        "independent_groups": 20,
+    }
     assert status.schema_set_ref.hash == SCHEMA_SET_HASH
+    assert status.gold_review_status == "NOT_STARTED"
+    assert status.holdout_freeze_status == "NOT_STARTED"
+    assert status.adapter_status == "NOT_IMPLEMENTED"
     assert status.actual_run_ref is None
     assert status.release_eligible is False
 
@@ -131,7 +160,7 @@ def test_phase_0_status_accepts_only_the_candidate_state() -> None:
         (lambda payload: payload.update({"metric_summary": []}), EvaluationErrorCode.SCHEMA_INVALID),
     ],
 )
-def test_phase_0_status_rejects_invalid_state(
+def test_phase_a_status_rejects_invalid_state(
     mutation: Any,
     expected_code: EvaluationErrorCode,
 ) -> None:
@@ -154,7 +183,7 @@ def test_phase_0_status_rejects_invalid_state(
         lambda payload: payload["checks"].pop(),
         lambda payload: payload["checks"].append(
             {
-                "check_id": "TASK_4_UNDECLARED",
+                "check_id": "PHASE_A_UNDECLARED",
                 "command": "uv run pytest undeclared.py -q",
                 "exit_code": 0,
                 "result": "1 passed",
@@ -163,7 +192,7 @@ def test_phase_0_status_rejects_invalid_state(
         lambda payload: payload["checks"].reverse(),
     ],
 )
-def test_phase_0_status_rejects_rehashed_check_catalog_mutation(mutation: Any) -> None:
+def test_phase_a_status_rejects_rehashed_check_catalog_mutation(mutation: Any) -> None:
     payload = _status_payload()
     mutation(payload)
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
@@ -382,16 +411,15 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
-    assert b"Candidate \xc2\xb7 Review Required" in REPORT_PATH.read_bytes()
+    assert b"Phase A \xc2\xb7 DEV Authoring Draft" in REPORT_PATH.read_bytes()
+    assert "한국어 자연어 합성 DEV 질문" in REPORT_PATH.read_text()
+    assert b"DEV authoring exists but has not received human Gold review" in REPORT_PATH.read_bytes()
+    assert b"Actual retrieval was not run" in REPORT_PATH.read_bytes()
+    assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
+    assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    assert b"61 passed" in raw_status and b"165 passed, 6 skipped" in raw_status
-    assert b"61 passed" in REPORT_PATH.read_bytes() and b"165 passed, 6 skipped" in REPORT_PATH.read_bytes()
-    assert b"47 passed" not in raw_status and b"151 passed" not in raw_status
-    assert b"47 passed" not in REPORT_PATH.read_bytes() and b"151 passed" not in REPORT_PATH.read_bytes()
-    assert b"6 passed" in raw_status and b"6 passed" in REPORT_PATH.read_bytes()
-    assert b"2026-09-07T01:54:36.000000Z" in raw_status
-    assert b"2026-09-07T01:54:36.000000Z" in REPORT_PATH.read_bytes()
-    assert b"2026-09-05T15:28:41.000000Z" not in raw_status
-    assert b"2026-09-05T15:28:41.000000Z" not in REPORT_PATH.read_bytes()
-    assert b"dbfafe99a090b82559720707412a2b830231fd6dcc84ebd1cd834ca56675a5ea" not in raw_status
-    assert b"dbfafe99a090b82559720707412a2b830231fd6dcc84ebd1cd834ca56675a5ea" not in REPORT_PATH.read_bytes()
+    for result in (b"15 passed", b"49 passed", b"132 passed", b"94 passed, 7 skipped"):
+        assert result in raw_status
+        assert result in REPORT_PATH.read_bytes()
+    assert DATASET_MANIFEST_HASH.encode() in raw_status
+    assert DATASET_MANIFEST_HASH.encode() in REPORT_PATH.read_bytes()

@@ -109,6 +109,21 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 `SYNTHETIC_REPLAY_DEV`, HOLDOUT `NOT_PERFORMED`, production integration
 `BLOCKED_BY_RAG_07A_07B_OR_08` 경계를 유지합니다.
 
+### Issue #273 자연어 Retrieval DEV authoring
+
+`rag-natural-language-retrieval-dev@1.0.0`은 실제 환자 발화나 운영 traffic에서 수집하지 않은 한국어 자연어
+합성 DEV 질문 60개를 담은 `DRAFT` Dataset이다. 다섯 Topic, 여섯 Expression 유형, 20개 독립
+`transform_origin` group과 합성 Gold 20개를 가지며, study-wide 합성 corpus는 Gold 20개와 hard negative
+80개로 구성된 100개 record다. Dataset Manifest의 canonical self-hash는
+`490289ae8a103b4f12f8e30e2f9152a1dafbcfff3bdbedc5905aec30712fa73a`이다.
+
+이 authoring graph는 아직 사람의 Gold 검토를 받지 않았고 모든 review provenance는 `DRAFT` 또는
+`NOT_STARTED`다. 실제 Knowledge Evidence Retrieval Adapter는 `NOT_IMPLEMENTED`이며 actual retrieval Run과
+baseline Metric은 존재하지 않는다. 따라서 이 DEV Dataset은 Release `PASS`를 만들 수 없고 Production
+공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에 없으며, protected runner·actual Adapter·HOLDOUT Freeze는
+후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지
+않는다. 현재 기계 상태와 결정적 Markdown projection은 `docs/validation/rag/issue-273/`에 있다.
+
 ### Evaluation Schema Sets
 
 - `evals/schemas/1.0.0/`: Issue #122의 기존 DEV foundation 계약. canonical bytes와 loader 동작을 유지한다.
