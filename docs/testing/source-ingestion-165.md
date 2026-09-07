@@ -2,9 +2,12 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 187 passed
-- AI Worker 전체 테스트: 1870 passed, 8 skipped
+- Source ingestion 단위 테스트: 191 passed
+- AI Worker 전체 테스트: 1874 passed, 8 skipped
 - PostgreSQL Snapshot lifecycle 통합 테스트: 4 passed
+- Source/Catalog·Artifact Migration 테스트: 9 passed
+- 전체 Migration 테스트: 48 passed
+- Backend 전체 테스트: 966 passed, 2 skipped
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
 - Runtime Bundle 활성화는 아직 연결하지 않았다.
 
@@ -41,6 +44,10 @@
 - 이전 `STALE` Snapshot을 다시 `CURRENT`로 선택하는 검증 상태 복원
 - `FAILED` Snapshot 선택 차단과 고정 failure code만 남기는 실패 이력
 - 실제 PostgreSQL에서 transaction rollback과 Operation 잠금 동시성 검증
+- 검증된 Raw Artifact를 수집 실행별 접근 통제 저장소 참조로 연결
+- Artifact 개수·페이지 중복·Raw Manifest checksum을 DB 접근 전에 재검증
+- `CREATED`, `NO_CHANGE`, `SOURCE_VERSION_CONFLICT` 실행 모두의 원본 참조 보존
+- 원본 참조 append-only 제약과 데이터 존재 시 downgrade 차단
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -85,8 +92,8 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 ## 남은 범위
 
-- 접근 통제된 저장 계층과 Artifact Key 연결
-- 검증 이후에도 같은 원본을 사용하는 불변 저장 경계
+- 실제 MFDS 응답을 접근 통제 Object Storage에 업로드하는 운영 어댑터
+- REJECTS Artifact 종류와 보존 정책 확정
 - Catalog 적재와 Runtime Bundle 활성화 연결
 
 여기서 `CURRENT`는 #291에 정의된 검증·최신성 상태다. 이전 Snapshot을

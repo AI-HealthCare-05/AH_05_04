@@ -77,6 +77,7 @@ async def _fetch_schema_object_names() -> set[str]:
                   AND table_name IN (
                     'rag_source_snapshot',
                     'rag_source_ingestion_run',
+                    'rag_source_ingestion_artifact',
                     'rag_medication_product',
                     'rag_medication_ingredient',
                     'rag_medication_alias',
@@ -94,6 +95,7 @@ async def _fetch_schema_object_names() -> set[str]:
                   AND tablename IN (
                     'rag_source_snapshot',
                     'rag_source_ingestion_run',
+                    'rag_source_ingestion_artifact',
                     'rag_medication_product',
                     'rag_medication_ingredient',
                     'rag_medication_alias',
@@ -108,7 +110,10 @@ async def _fetch_schema_object_names() -> set[str]:
                 SELECT trigger_name
                 FROM information_schema.triggers
                 WHERE event_object_schema = 'public'
-                  AND event_object_table = 'rag_source_snapshot'
+                  AND event_object_table IN (
+                    'rag_source_snapshot',
+                    'rag_source_ingestion_artifact'
+                  )
                 """
             )
         )
@@ -334,7 +339,21 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
             await connection.execute(
                 text("ALTER TABLE rag_source_snapshot DISABLE TRIGGER trg_rag_source_snapshot_prevent_update")
             )
+            await connection.execute(
+                text(
+                    "ALTER TABLE rag_source_ingestion_artifact "
+                    "DISABLE TRIGGER trg_rag_source_ingestion_artifact_prevent_delete"
+                )
+            )
             try:
+                await connection.execute(
+                    text(
+                        "DELETE FROM rag_source_ingestion_artifact "
+                        "WHERE ingestion_run_id IN "
+                        "(SELECT id FROM rag_source_ingestion_run WHERE operation_id = :operation_id)"
+                    ),
+                    ids,
+                )
                 await connection.execute(
                     text(
                         "DELETE FROM rag_medication_product_component WHERE source_snapshot_id IN (SELECT id FROM rag_source_snapshot WHERE operation_id = :operation_id)"
@@ -375,6 +394,12 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
                 await connection.execute(text("DELETE FROM rag_source_endpoint WHERE id = :endpoint_id"), ids)
                 await connection.execute(text("DELETE FROM rag_source WHERE id = :source_id"), ids)
             finally:
+                await connection.execute(
+                    text(
+                        "ALTER TABLE rag_source_ingestion_artifact "
+                        "ENABLE TRIGGER trg_rag_source_ingestion_artifact_prevent_delete"
+                    )
+                )
                 await connection.execute(
                     text("ALTER TABLE rag_source_snapshot ENABLE TRIGGER trg_rag_source_snapshot_prevent_update")
                 )
@@ -434,6 +459,113 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
     assert "fk_rag_medication_component_ingredient_snapshot" in schema_objects
     assert "trg_rag_source_snapshot_prevent_update" in schema_objects
     assert "trg_rag_source_snapshot_prevent_delete" in schema_objects
+    assert "uq_rag_source_artifact_run_page" in schema_objects
+    assert "uq_rag_source_artifact_run_key" in schema_objects
+    assert "chk_rag_source_artifact_checksum" in schema_objects
+    assert "trg_rag_source_ingestion_artifact_prevent_update" in schema_objects
+    assert "trg_rag_source_ingestion_artifact_prevent_delete" in schema_objects
+
+
+def test_rag_source_ingestion_artifact_is_append_only_and_run_scoped() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_artifact(ids: dict[str, str]) -> str:
+        artifact_id = str(uuid4())
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_ingestion_artifact (
+                            id, ingestion_run_id, page_number, artifact_key,
+                            storage_backend, object_key, raw_checksum, byte_size, content_type
+                        )
+                        VALUES (
+                            :artifact_id, :ingestion_run_id, 1, 'page-0001.json',
+                            'PRIVATE_OBJECT_STORAGE', 'source/synthetic/page-0001.json',
+                            :raw_checksum, 128, 'application/json'
+                        )
+                        """
+                    ),
+                    {**ids, "artifact_id": artifact_id, "raw_checksum": "d" * 64},
+                )
+        return artifact_id
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        artifact_id = asyncio.run(insert_artifact(ids))
+
+        asyncio.run(
+            _execute_expect_db_error(
+                "UPDATE rag_source_ingestion_artifact SET byte_size = 129 WHERE id = :artifact_id",
+                {"artifact_id": artifact_id},
+                expected_text="rows are append-only",
+            )
+        )
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO rag_source_ingestion_artifact (
+                    id, ingestion_run_id, page_number, artifact_key,
+                    storage_backend, object_key, raw_checksum, byte_size, content_type
+                )
+                VALUES (
+                    :artifact_id, :ingestion_run_id, 1, 'page-0002.json',
+                    'PRIVATE_OBJECT_STORAGE', 'source/synthetic/page-0002.json',
+                    :raw_checksum, 128, 'application/json'
+                )
+                """,
+                {**ids, "artifact_id": str(uuid4()), "raw_checksum": "e" * 64},
+                expected_text="uq_rag_source_artifact_run_page",
+            )
+        )
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+
+        async def insert_artifact() -> None:
+            assert ids is not None
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO rag_source_ingestion_artifact (
+                                id, ingestion_run_id, page_number, artifact_key,
+                                storage_backend, object_key, raw_checksum, byte_size, content_type
+                            )
+                            VALUES (
+                                :artifact_id, :ingestion_run_id, 1, 'page-0001.json',
+                                'PRIVATE_OBJECT_STORAGE', 'source/synthetic/page-0001.json',
+                                :raw_checksum, 128, 'application/json'
+                            )
+                            """
+                        ),
+                        {**ids, "artifact_id": str(uuid4()), "raw_checksum": "d" * 64},
+                    )
+
+        asyncio.run(insert_artifact())
+
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165a4b3c2d1e"):
+            command.downgrade(alembic_config, RAG_SOURCE_CATALOG_REVISION)
+
+        assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
 
 
 def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrade() -> None:

@@ -5,6 +5,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SOURCE_VERSION_CONFLICT,
@@ -16,6 +18,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotSelectionDecision,
     SnapshotStatusReference,
     SnapshotVerificationStatus,
+    StoredRawArtifact,
     fail_snapshot_verification,
     persist_product_ingestion_result,
     select_current_snapshot,
@@ -34,6 +37,7 @@ class FakeSnapshotRepository:
         self.statuses: dict[UUID, SnapshotVerificationStatus] = {}
         self.verifications: list[tuple[UUID, str, str]] = []
         self.runs: list[SnapshotRunRecord] = []
+        self.run_artifacts: dict[UUID, tuple[StoredRawArtifact, ...]] = {}
         self.locked_identities: list[SourceOperationIdentity] = []
 
     async def lock_operation(self, identity: SourceOperationIdentity) -> UUID:
@@ -85,8 +89,18 @@ class FakeSnapshotRepository:
         self.verifications.append((snapshot_id, check_name, result))
         _ = details_summary
 
-    async def create_run(self, record: SnapshotRunRecord) -> None:
+    async def create_run(self, record: SnapshotRunRecord) -> UUID:
+        ingestion_run_id = uuid4()
         self.runs.append(record)
+        return ingestion_run_id
+
+    async def create_artifacts(
+        self,
+        *,
+        ingestion_run_id: UUID,
+        artifacts: tuple[StoredRawArtifact, ...],
+    ) -> None:
+        self.run_artifacts[ingestion_run_id] = artifacts
 
     async def lock_snapshot_operation(self, *, snapshot_id: UUID) -> UUID:
         if snapshot_id not in self.statuses:
@@ -128,7 +142,24 @@ class FakeSnapshotRepository:
         return True
 
 
+def _stored_artifacts() -> tuple[StoredRawArtifact, ...]:
+    return (
+        StoredRawArtifact(
+            page_number=1,
+            metadata=RawArtifactMetadata(
+                artifact_key="page-0001.json",
+                raw_checksum="d" * 64,
+                byte_size=128,
+                content_type="application/json",
+            ),
+            storage_backend="PRIVATE_OBJECT_STORAGE",
+            object_key="source-ingestion/synthetic/page-0001.json",
+        ),
+    )
+
+
 def _ingestion(checksum: str = _CHECKSUM_A) -> ProductIngestionResult:
+    artifacts = _stored_artifacts()
     return ProductIngestionResult(
         identity=SourceOperationIdentity(
             source_code="MFDS_PRODUCT_APPROVAL",
@@ -136,7 +167,7 @@ def _ingestion(checksum: str = _CHECKSUM_A) -> ProductIngestionResult:
             operation_code="LIST_APPROVED_PRODUCTS",
         ),
         endpoint_receipt_hash="c" * 64,
-        raw_manifest_checksum="d" * 64,
+        raw_manifest_checksum=raw_manifest_checksum(artifact.metadata for artifact in artifacts),
         canonical_checksum=checksum,
         canonicalization_spec_version="mfds-product-approval@1",
         record_count=2,
@@ -168,6 +199,7 @@ async def test_first_result_creates_pending_snapshot_candidate_and_success_histo
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
 
     assert result.decision is SnapshotIngestionDecision.CREATED
@@ -176,6 +208,45 @@ async def test_first_result_creates_pending_snapshot_candidate_and_success_histo
     assert repository.verifications == [(result.snapshot_id, "source-ingestion-integrity", "PASSED")]
     assert repository.runs[0].run_status == "SUCCEEDED"
     assert repository.runs[0].snapshot_id == result.snapshot_id
+    assert repository.run_artifacts[result.ingestion_run_id] == _stored_artifacts()
+
+
+@pytest.mark.parametrize(
+    ("ingestion", "artifacts", "message"),
+    [
+        (
+            replace(_ingestion(), artifact_count=2),
+            _stored_artifacts(),
+            "Artifact 개수",
+        ),
+        (
+            replace(_ingestion(), raw_manifest_checksum="0" * 64),
+            _stored_artifacts(),
+            "manifest checksum",
+        ),
+        (
+            replace(_ingestion(), artifact_count=2),
+            (_stored_artifacts()[0], _stored_artifacts()[0]),
+            "page_number",
+        ),
+    ],
+)
+async def test_invalid_artifact_set_is_rejected_before_operation_lock(
+    ingestion: ProductIngestionResult,
+    artifacts: tuple[StoredRawArtifact, ...],
+    message: str,
+) -> None:
+    repository = FakeSnapshotRepository()
+
+    with pytest.raises(ValueError, match=message):
+        await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=ingestion,
+            metadata=_metadata("source-v1"),
+            artifacts=artifacts,
+        )
+
+    assert repository.locked_identities == []
 
 
 async def test_same_content_with_new_version_appends_no_change_to_latest_snapshot() -> None:
@@ -184,12 +255,14 @@ async def test_same_content_with_new_version_appends_no_change_to_latest_snapsho
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
 
     repeated = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v2"),
+        artifacts=_stored_artifacts(),
     )
 
     assert repeated.decision is SnapshotIngestionDecision.NO_CHANGE
@@ -205,12 +278,14 @@ async def test_same_version_with_changed_content_records_conflict_without_snapsh
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
 
     conflict = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
 
     assert conflict.decision is SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
@@ -228,16 +303,19 @@ async def test_a_to_b_to_a_creates_three_append_only_snapshots() -> None:
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
     second = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
         metadata=_metadata("source-v2"),
+        artifacts=_stored_artifacts(),
     )
     third = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
         metadata=_metadata("source-v3"),
+        artifacts=_stored_artifacts(),
     )
 
     assert [first.decision, second.decision, third.decision] == [
@@ -256,12 +334,14 @@ async def test_changed_parser_version_creates_new_snapshot_even_when_checksum_ma
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
 
     changed_parser = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
         metadata=replace(_metadata("source-v2"), parser_version="parser-v2"),
+        artifacts=_stored_artifacts(),
     )
 
     assert changed_parser.decision is SnapshotIngestionDecision.CREATED
@@ -277,6 +357,7 @@ async def test_rejections_are_reflected_in_success_status() -> None:
         repository=repository,
         ingestion=_ingestion(),
         metadata=metadata,
+        artifacts=_stored_artifacts(),
     )
 
     assert repository.runs[0].run_status == "SUCCEEDED_WITH_REJECTIONS"
@@ -288,6 +369,7 @@ async def test_selecting_new_snapshot_marks_previous_current_stale() -> None:
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
     assert first.snapshot_id is not None
     first_selection = await select_current_snapshot(
@@ -300,6 +382,7 @@ async def test_selecting_new_snapshot_marks_previous_current_stale() -> None:
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
         metadata=_metadata("source-v2"),
+        artifacts=_stored_artifacts(),
     )
     assert second.snapshot_id is not None
 
@@ -328,11 +411,13 @@ async def test_previous_stale_snapshot_can_be_restored_without_runtime_activatio
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
     second = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
         metadata=_metadata("source-v2"),
+        artifacts=_stored_artifacts(),
     )
     assert first.snapshot_id is not None
     assert second.snapshot_id is not None
@@ -368,6 +453,7 @@ async def test_selecting_current_snapshot_is_idempotent() -> None:
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
     assert created.snapshot_id is not None
     await select_current_snapshot(
@@ -395,6 +481,7 @@ async def test_pending_snapshot_can_fail_with_safe_code() -> None:
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
     assert created.snapshot_id is not None
 
@@ -421,6 +508,7 @@ async def test_snapshot_failure_rejects_free_form_details() -> None:
         repository=repository,
         ingestion=_ingestion(),
         metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
     )
     assert created.snapshot_id is not None
 

@@ -16,11 +16,14 @@ from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
     SnapshotSelectionDecision,
+    StoredRawArtifact,
     fail_snapshot_verification,
     persist_product_ingestion_result,
     select_current_snapshot,
@@ -30,6 +33,7 @@ from app.core.db.databases import Base
 from app.models.rag_source import (
     RagIngestionRunStatus,
     RagSnapshotVerificationStatus,
+    RagSourceIngestionArtifact,
     RagSourceIngestionRun,
     RagSourceSnapshot,
     RagSourceSnapshotVerification,
@@ -112,11 +116,28 @@ async def _seed_operation(suffix: str) -> SourceOperationIdentity:
     return identity
 
 
+def _stored_artifacts(*, minute: int = 0) -> tuple[StoredRawArtifact, ...]:
+    return (
+        StoredRawArtifact(
+            page_number=1,
+            metadata=RawArtifactMetadata(
+                artifact_key="page-0001.json",
+                raw_checksum="d" * 64,
+                byte_size=128,
+                content_type="application/json",
+            ),
+            storage_backend="PRIVATE_OBJECT_STORAGE",
+            object_key=f"source-ingestion/synthetic/run-{minute}/page-0001.json",
+        ),
+    )
+
+
 def _ingestion(identity: SourceOperationIdentity, checksum: str) -> ProductIngestionResult:
+    artifacts = _stored_artifacts()
     return ProductIngestionResult(
         identity=identity,
         endpoint_receipt_hash="c" * 64,
-        raw_manifest_checksum="d" * 64,
+        raw_manifest_checksum=raw_manifest_checksum(artifact.metadata for artifact in artifacts),
         canonical_checksum=checksum,
         canonicalization_spec_version="mfds-product-approval@1",
         record_count=2,
@@ -151,6 +172,7 @@ async def test_snapshot_history_no_change_conflict_and_restore_are_atomic() -> N
             repository=repository,
             ingestion=_ingestion(identity, _CHECKSUM_A),
             metadata=_metadata("external:v1", minute=1),
+            artifacts=_stored_artifacts(minute=1),
         )
         assert first.snapshot_id is not None
         first_selection = await select_current_snapshot(
@@ -164,6 +186,7 @@ async def test_snapshot_history_no_change_conflict_and_restore_are_atomic() -> N
             repository=repository,
             ingestion=_ingestion(identity, _CHECKSUM_B),
             metadata=_metadata("external:v2", minute=3),
+            artifacts=_stored_artifacts(minute=3),
         )
         assert second.snapshot_id is not None
         second_selection = await select_current_snapshot(
@@ -177,16 +200,19 @@ async def test_snapshot_history_no_change_conflict_and_restore_are_atomic() -> N
             repository=repository,
             ingestion=_ingestion(identity, _CHECKSUM_A),
             metadata=_metadata("external:v3", minute=5),
+            artifacts=_stored_artifacts(minute=5),
         )
         no_change = await persist_product_ingestion_result(
             repository=repository,
             ingestion=_ingestion(identity, _CHECKSUM_A),
             metadata=_metadata("external:v4", minute=6),
+            artifacts=_stored_artifacts(minute=6),
         )
         conflict = await persist_product_ingestion_result(
             repository=repository,
             ingestion=_ingestion(identity, _CHECKSUM_B),
             metadata=_metadata("external:v3", minute=7),
+            artifacts=_stored_artifacts(minute=7),
         )
 
         restored = await select_current_snapshot(
@@ -235,6 +261,13 @@ async def test_snapshot_history_no_change_conflict_and_restore_are_atomic() -> N
             RagIngestionRunStatus.NO_CHANGE,
             RagIngestionRunStatus.FAILED,
         ]
+        artifact_count = await session.scalar(
+            select(func.count())
+            .select_from(RagSourceIngestionArtifact)
+            .join(RagSourceIngestionRun)
+            .where(RagSourceIngestionRun.operation_id == first.operation_id)
+        )
+        assert artifact_count == 5
         verification_count = await session.scalar(
             select(func.count())
             .select_from(RagSourceSnapshotVerification)
@@ -253,6 +286,7 @@ async def test_outer_transaction_rollback_removes_snapshot_and_histories() -> No
             repository=repository,
             ingestion=_ingestion(identity, _CHECKSUM_A),
             metadata=_metadata("external:rollback", minute=10),
+            artifacts=_stored_artifacts(minute=10),
         )
         assert created.snapshot_id is not None
         await session.rollback()
@@ -263,6 +297,15 @@ async def test_outer_transaction_rollback_removes_snapshot_and_histories() -> No
                 select(func.count())
                 .select_from(RagSourceSnapshot)
                 .where(RagSourceSnapshot.operation_id == created.operation_id)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceIngestionArtifact)
+                .join(RagSourceIngestionRun)
+                .where(RagSourceIngestionRun.run_group_key == "synthetic-external:rollback-10")
             )
             == 0
         )
@@ -285,6 +328,7 @@ async def test_failed_snapshot_is_persisted_and_cannot_be_selected() -> None:
             repository=repository,
             ingestion=_ingestion(identity, _CHECKSUM_A),
             metadata=_metadata("external:failed", minute=15),
+            artifacts=_stored_artifacts(minute=15),
         )
         assert created.snapshot_id is not None
         failed = await fail_snapshot_verification(
@@ -324,6 +368,7 @@ async def test_operation_lock_serializes_concurrent_snapshot_decisions() -> None
                 repository=waiting_repository,
                 ingestion=_ingestion(identity, _CHECKSUM_A),
                 metadata=_metadata("external:concurrent", minute=20),
+                artifacts=_stored_artifacts(minute=20),
             )
         )
         await asyncio.sleep(0.1)

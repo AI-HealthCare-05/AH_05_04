@@ -8,12 +8,14 @@ from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotCreateRequest,
     SnapshotIngestionMetadata,
     SnapshotRunRecord,
     SnapshotVerificationStatus,
+    StoredRawArtifact,
 )
 
 _OPERATION_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -103,7 +105,7 @@ async def test_conflict_run_records_only_safe_failure_code() -> None:
     session = AsyncMock(spec=AsyncSession)
     repository = SqlAlchemySourceSnapshotRepository(session)
 
-    await repository.create_run(
+    ingestion_run_id = await repository.create_run(
         SnapshotRunRecord(
             operation_id=_OPERATION_ID,
             snapshot_id=None,
@@ -121,6 +123,37 @@ async def test_conflict_run_records_only_safe_failure_code() -> None:
     parameters = statement.compile().params
     assert parameters["failure_code"] == "SOURCE_VERSION_CONFLICT"
     assert parameters["failure_message"] is None
+    assert isinstance(ingestion_run_id, UUID)
+    session.commit.assert_not_awaited()
+
+
+async def test_artifact_references_are_inserted_without_raw_content_or_commit() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    repository = SqlAlchemySourceSnapshotRepository(session)
+    artifact = StoredRawArtifact(
+        page_number=1,
+        metadata=RawArtifactMetadata(
+            artifact_key="page-0001.json",
+            raw_checksum="d" * 64,
+            byte_size=128,
+            content_type="application/json",
+        ),
+        storage_backend="PRIVATE_OBJECT_STORAGE",
+        object_key="source-ingestion/synthetic/page-0001.json",
+    )
+
+    await repository.create_artifacts(
+        ingestion_run_id=_OPERATION_ID,
+        artifacts=(artifact,),
+    )
+
+    statement = session.execute.await_args.args[0]
+    values = session.execute.await_args.args[1]
+    assert "INSERT INTO rag_source_ingestion_artifact" in str(statement)
+    assert values[0]["ingestion_run_id"] == str(_OPERATION_ID)
+    assert values[0]["object_key"] == artifact.object_key
+    assert values[0]["raw_checksum"] == artifact.metadata.raw_checksum
+    assert "content" not in values[0]
     session.commit.assert_not_awaited()
 
 

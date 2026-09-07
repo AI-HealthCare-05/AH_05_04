@@ -15,6 +15,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotRunRecord,
     SnapshotStatusReference,
     SnapshotVerificationStatus,
+    StoredRawArtifact,
 )
 
 _SOURCE = table(
@@ -67,6 +68,18 @@ _INGESTION_RUN = table(
     column("duration_ms", Integer),
     column("started_at", DateTime(timezone=True)),
     column("finished_at", DateTime(timezone=True)),
+)
+_INGESTION_ARTIFACT = table(
+    "rag_source_ingestion_artifact",
+    column("id", String(36)),
+    column("ingestion_run_id", String(36)),
+    column("page_number", Integer),
+    column("artifact_key", String(500)),
+    column("storage_backend", String(50)),
+    column("object_key", String(500)),
+    column("raw_checksum", String(64)),
+    column("byte_size", Integer),
+    column("content_type", String(255)),
 )
 _VERIFICATION = table(
     "rag_source_snapshot_verification",
@@ -201,10 +214,11 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             )
         )
 
-    async def create_run(self, record: SnapshotRunRecord) -> None:
+    async def create_run(self, record: SnapshotRunRecord) -> UUID:
+        ingestion_run_id = uuid4()
         await self._session.execute(
             insert(_INGESTION_RUN).values(
-                id=str(uuid4()),
+                id=str(ingestion_run_id),
                 operation_id=str(record.operation_id),
                 run_group_key=record.run_group_key,
                 snapshot_id=str(record.snapshot_id) if record.snapshot_id is not None else None,
@@ -217,6 +231,29 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 finished_at=record.finished_at,
             )
         )
+        return ingestion_run_id
+
+    async def create_artifacts(
+        self,
+        *,
+        ingestion_run_id: UUID,
+        artifacts: tuple[StoredRawArtifact, ...],
+    ) -> None:
+        values = [
+            {
+                "id": str(uuid4()),
+                "ingestion_run_id": str(ingestion_run_id),
+                "page_number": artifact.page_number,
+                "artifact_key": artifact.metadata.artifact_key,
+                "storage_backend": artifact.storage_backend,
+                "object_key": artifact.object_key,
+                "raw_checksum": artifact.metadata.raw_checksum,
+                "byte_size": artifact.metadata.byte_size,
+                "content_type": artifact.metadata.content_type,
+            }
+            for artifact in artifacts
+        ]
+        await self._session.execute(insert(_INGESTION_ARTIFACT), values)
 
     async def lock_snapshot_operation(self, *, snapshot_id: UUID) -> UUID:
         statement = (

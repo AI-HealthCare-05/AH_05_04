@@ -37,7 +37,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
-| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_snapshot_verification`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | #164 최소 DB 기반. 공식 Source 승인·수집·Parser·Catalog 적재·RAG 검색·Runtime 활성화는 후속 범위 |
+| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | #164 최소 DB 기반과 #165 원본 Artifact 참조. 공식 Source 승인·Catalog 적재·RAG 검색·Runtime 활성화는 후속 범위 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·기록과 감사 로그는 아직 목표 계약과 현재 구현을 구분합니다.
 
@@ -235,7 +235,7 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## RAG Source·Catalog 최소 DB 기반
 
-Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다.
+Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가합니다.
 
 이번 분할 범위의 ID/FK 매핑은 기존 애플리케이션 호환성을 우선해 `UUIDChar` 기반 `CHAR(36)`을 사용합니다. 신규 독립 RAG/Eval ID의 PostgreSQL native `UUID` 전환은 별도 승인 migration 범위이며, 이 PR에서 타입을 섞지 않습니다.
 
@@ -244,7 +244,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | 영역 | 테이블 | 설명 |
 | --- | --- | --- |
 | Source | `rag_source`, `rag_source_endpoint`, `rag_source_operation` | 공식 Source와 endpoint·operation metadata. Runtime 사용은 기본 비활성 |
-| Snapshot | `rag_source_snapshot`, `rag_source_snapshot_verification`, `rag_source_ingestion_run` | 수집 version, checksum, parser/normalization/canonicalization version, 검증 이력과 수집 실행 이력 |
+| Snapshot | `rag_source_snapshot`, `rag_source_snapshot_verification`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact` | 수집 version, checksum, parser/normalization/canonicalization version, 검증 이력, 수집 실행 이력과 원본 저장소 참조 |
 | Catalog | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | snapshot 단위 제품·성분·별칭·구성성분 참조 데이터 |
 
 주요 제약:
@@ -255,16 +255,19 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 - Alias와 Component는 product/ingredient와 같은 `source_snapshot_id`를 가져야 하며, composite FK로 DB에서 강제합니다.
 - `rejected_record_count`는 `record_count`보다 클 수 없습니다.
 - `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
+- `rag_source_ingestion_artifact`는 원본 바이트를 DB에 저장하지 않습니다. 접근 통제 저장소의 backend·object key, 페이지 번호, Artifact key, SHA-256, 크기와 content type만 수집 실행에 연결합니다.
+- `NO_CHANGE`와 `SOURCE_VERSION_CONFLICT`를 포함한 모든 검증 실행은 자체 Artifact 참조를 보존합니다. Snapshot이 생성되지 않은 실행도 감사 가능한 원본 근거를 잃지 않습니다.
+- 같은 수집 실행에서 페이지 번호와 Artifact key는 각각 중복될 수 없으며 Artifact 참조 행은 UPDATE·DELETE할 수 없습니다.
 
 Rollback 정책:
 
 - Production에서는 Source/Catalog 테이블을 삭제하는 downgrade를 사용하지 않고 forward-fix migration을 사용합니다.
-- 비운영 환경에서도 Source/Catalog 테이블에 데이터가 하나라도 있으면 downgrade는 테이블 삭제 전에 중단됩니다.
+- 비운영 환경에서도 Source/Catalog 또는 Artifact 참조 테이블에 데이터가 하나라도 있으면 downgrade는 테이블 삭제 전에 중단됩니다.
 - 빈 DB에서만 downgrade → upgrade 왕복을 허용합니다.
 
 범위 제외:
 
-- 실제 MFDS 수집 로직, Parser 구현, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
+- 실제 MFDS 네트워크 수집과 Object Storage 업로드, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
 - Source 승인·Runtime 활성화
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`

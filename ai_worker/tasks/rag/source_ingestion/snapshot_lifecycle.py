@@ -8,6 +8,8 @@ from typing import Protocol
 from uuid import UUID
 
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 
 SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
@@ -114,9 +116,36 @@ class SnapshotRunRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class StoredRawArtifact:
+    """접근 통제 저장소에 보존된 원본 Artifact의 불변 참조입니다."""
+
+    page_number: int
+    metadata: RawArtifactMetadata
+    storage_backend: str
+    object_key: str
+
+    def __post_init__(self) -> None:
+        if type(self.page_number) is not int or self.page_number < 1:
+            raise ValueError("Artifact page_number는 1 이상의 정수여야 합니다.")
+        if not self.storage_backend.strip():
+            raise ValueError("Artifact storage_backend는 비어 있을 수 없습니다.")
+        if not self.object_key.strip():
+            raise ValueError("Artifact object_key는 비어 있을 수 없습니다.")
+        if len(self.storage_backend) > 50:
+            raise ValueError("Artifact storage_backend는 50자를 초과할 수 없습니다.")
+        if len(self.object_key) > 500:
+            raise ValueError("Artifact object_key는 500자를 초과할 수 없습니다.")
+        if len(self.metadata.artifact_key) > 500:
+            raise ValueError("Artifact key는 500자를 초과할 수 없습니다.")
+        if len(self.metadata.content_type) > 255:
+            raise ValueError("Artifact content_type은 255자를 초과할 수 없습니다.")
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotPersistenceResult:
     decision: SnapshotIngestionDecision
     operation_id: UUID
+    ingestion_run_id: UUID
     snapshot_id: UUID | None
 
 
@@ -164,7 +193,14 @@ class SnapshotLifecycleRepository(Protocol):
         details_summary: str | None = None,
     ) -> None: ...
 
-    async def create_run(self, record: SnapshotRunRecord) -> None: ...
+    async def create_run(self, record: SnapshotRunRecord) -> UUID: ...
+
+    async def create_artifacts(
+        self,
+        *,
+        ingestion_run_id: UUID,
+        artifacts: tuple[StoredRawArtifact, ...],
+    ) -> None: ...
 
     async def lock_snapshot_operation(self, *, snapshot_id: UUID) -> UUID:
         """Snapshot의 Operation을 잠그고, 없으면 ValueError를 발생시킵니다."""
@@ -214,10 +250,12 @@ async def persist_product_ingestion_result(
     repository: SnapshotLifecycleRepository,
     ingestion: ProductIngestionResult,
     metadata: SnapshotIngestionMetadata,
+    artifacts: tuple[StoredRawArtifact, ...],
 ) -> SnapshotPersistenceResult:
     """검증된 결과를 현재 transaction에 기록하며 commit은 호출자가 담당합니다."""
     if metadata.rejected_record_count > ingestion.record_count:
         raise ValueError("rejected_record_count는 record_count를 초과할 수 없습니다.")
+    _validate_ingestion_artifacts(ingestion=ingestion, artifacts=artifacts)
 
     operation_id = await repository.lock_operation(ingestion.identity)
     same_version = await repository.get_snapshot_by_version(
@@ -249,7 +287,7 @@ async def persist_product_ingestion_result(
             verified_by=metadata.verified_by,
         )
         run_status = "SUCCEEDED_WITH_REJECTIONS" if metadata.rejected_record_count else "SUCCEEDED"
-        await repository.create_run(
+        ingestion_run_id = await repository.create_run(
             _run_record(
                 operation_id=operation_id,
                 snapshot_id=snapshot_id,
@@ -257,7 +295,8 @@ async def persist_product_ingestion_result(
                 run_status=run_status,
             )
         )
-        return SnapshotPersistenceResult(decision, operation_id, snapshot_id)
+        await repository.create_artifacts(ingestion_run_id=ingestion_run_id, artifacts=artifacts)
+        return SnapshotPersistenceResult(decision, operation_id, ingestion_run_id, snapshot_id)
 
     if comparison_snapshot is None:
         raise RuntimeError("Snapshot 비교 결과가 없습니다.")
@@ -270,7 +309,7 @@ async def persist_product_ingestion_result(
             verified_at=metadata.finished_at,
             verified_by=metadata.verified_by,
         )
-        await repository.create_run(
+        ingestion_run_id = await repository.create_run(
             _run_record(
                 operation_id=operation_id,
                 snapshot_id=comparison_snapshot.snapshot_id,
@@ -278,9 +317,15 @@ async def persist_product_ingestion_result(
                 run_status="NO_CHANGE",
             )
         )
-        return SnapshotPersistenceResult(decision, operation_id, comparison_snapshot.snapshot_id)
+        await repository.create_artifacts(ingestion_run_id=ingestion_run_id, artifacts=artifacts)
+        return SnapshotPersistenceResult(
+            decision,
+            operation_id,
+            ingestion_run_id,
+            comparison_snapshot.snapshot_id,
+        )
 
-    await repository.create_run(
+    ingestion_run_id = await repository.create_run(
         _run_record(
             operation_id=operation_id,
             snapshot_id=None,
@@ -289,7 +334,23 @@ async def persist_product_ingestion_result(
             failure_code=SOURCE_VERSION_CONFLICT,
         )
     )
-    return SnapshotPersistenceResult(decision, operation_id, None)
+    await repository.create_artifacts(ingestion_run_id=ingestion_run_id, artifacts=artifacts)
+    return SnapshotPersistenceResult(decision, operation_id, ingestion_run_id, None)
+
+
+def _validate_ingestion_artifacts(
+    *,
+    ingestion: ProductIngestionResult,
+    artifacts: tuple[StoredRawArtifact, ...],
+) -> None:
+    if len(artifacts) != ingestion.artifact_count:
+        raise ValueError("Artifact 개수가 검증된 수집 결과와 일치하지 않습니다.")
+    page_numbers = {artifact.page_number for artifact in artifacts}
+    if len(page_numbers) != len(artifacts):
+        raise ValueError("Artifact page_number는 수집 실행 안에서 중복될 수 없습니다.")
+    manifest_checksum = raw_manifest_checksum(artifact.metadata for artifact in artifacts)
+    if manifest_checksum != ingestion.raw_manifest_checksum:
+        raise ValueError("Artifact manifest checksum이 검증된 수집 결과와 일치하지 않습니다.")
 
 
 async def select_current_snapshot(

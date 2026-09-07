@@ -286,6 +286,46 @@ class RagSourceIngestionRun(Base):
 
     operation: Mapped[RagSourceOperation] = relationship(back_populates="ingestion_runs")
     snapshot: Mapped[RagSourceSnapshot | None] = relationship(back_populates="ingestion_runs")
+    artifacts: Mapped[list["RagSourceIngestionArtifact"]] = relationship(back_populates="ingestion_run")
+
+
+class RagSourceIngestionArtifact(Base):
+    """접근 통제 저장소에 보존한 수집 원본의 불변 참조입니다."""
+
+    __tablename__ = "rag_source_ingestion_artifact"
+    __table_args__ = (
+        UniqueConstraint("ingestion_run_id", "page_number", name="uq_rag_source_artifact_run_page"),
+        UniqueConstraint("ingestion_run_id", "artifact_key", name="uq_rag_source_artifact_run_key"),
+        Index("idx_rag_source_artifact_run", "ingestion_run_id"),
+        Index("idx_rag_source_artifact_object", "storage_backend", "object_key"),
+        CheckConstraint("page_number > 0", name="chk_rag_source_artifact_page_positive"),
+        CheckConstraint("length(trim(artifact_key)) > 0", name="chk_rag_source_artifact_key_nonblank"),
+        CheckConstraint("length(trim(storage_backend)) > 0", name="chk_rag_source_artifact_backend_nonblank"),
+        CheckConstraint("length(trim(object_key)) > 0", name="chk_rag_source_artifact_object_key_nonblank"),
+        CheckConstraint(
+            "raw_checksum ~ '^[0-9a-f]{64}$'",
+            name="chk_rag_source_artifact_checksum",
+        ),
+        CheckConstraint("byte_size >= 0", name="chk_rag_source_artifact_byte_size"),
+        CheckConstraint("length(trim(content_type)) > 0", name="chk_rag_source_artifact_content_type_nonblank"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    ingestion_run_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("rag_source_ingestion_run.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    artifact_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    storage_backend: Mapped[str] = mapped_column(String(50), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    raw_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    ingestion_run: Mapped[RagSourceIngestionRun] = relationship(back_populates="artifacts")
 
 
 class RagSourceSnapshotVerification(Base):
