@@ -134,6 +134,9 @@ def verify_source_run_artifacts(
         if decoded.total_count != page.total_count:
             raise ValueError("Raw artifact total count does not match source page.")
 
+        if decoded.page_number != page_number:
+            raise ValueError("Raw artifact page number does not match source page.")
+
         if canonical_json_bytes(list(decoded.records)) != canonical_json_bytes(list(page.records)):
             raise ValueError("Raw artifact records do not match source page.")
 

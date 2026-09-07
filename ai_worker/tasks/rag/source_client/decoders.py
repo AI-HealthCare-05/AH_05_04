@@ -26,6 +26,11 @@ def _reject_duplicate_object_keys(
     return decoded
 
 
+def _reject_nonstandard_json_constant(_value: str) -> object:
+    """JSON 표준 밖의 NaN·Infinity를 원문 값 노출 없이 거부합니다."""
+    raise ValueError("MFDS JSON contains a non-standard numeric constant.")
+
+
 def _require_object(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise TypeError("MFDS response object was expected.")
@@ -34,6 +39,14 @@ def _require_object(value: object) -> dict[str, object]:
         raise TypeError("MFDS response keys must be strings.")
 
     return cast(dict[str, object], value)
+
+
+def _require_integer(value: object, field_name: str) -> int:
+    """bool을 포함한 비정수 pagination 값을 거부합니다."""
+    if type(value) is not int:
+        raise TypeError(f"MFDS {field_name} must be an integer.")
+
+    return cast(int, value)
 
 
 def _decode_records(
@@ -62,7 +75,11 @@ def _decode_records(
     else:
         # Swagger 형태: body.items.item
         item_container = _require_object(raw_items)
-        raw_item = item_container.get("item")
+
+        if set(item_container) != {"item"}:
+            raise ValueError("MFDS items wrapper must contain only item.")
+
+        raw_item = item_container["item"]
 
         if raw_item is None:
             return ()
@@ -87,6 +104,7 @@ def decode_mfds_json(
     payload: object = json.loads(
         body,
         object_pairs_hook=_reject_duplicate_object_keys,
+        parse_constant=_reject_nonstandard_json_constant,
     )
     root = _require_object(payload)
 
@@ -100,19 +118,26 @@ def decode_mfds_json(
         raise ValueError("MFDS response body contains an unsupported envelope field.")
 
     result_code = header["resultCode"]
-    total_count = body_envelope.get("totalCount")
+    raw_items = body_envelope["items"]
+    page_number = _require_integer(body_envelope["pageNo"], "pageNo")
+    page_size = _require_integer(body_envelope["numOfRows"], "numOfRows")
+    total_count = _require_integer(body_envelope["totalCount"], "totalCount")
 
     if not isinstance(result_code, str):
         raise TypeError("MFDS resultCode must be a string.")
 
-    # bool은 int의 하위 타입이므로 명시적으로 제외합니다.
-    if total_count is not None and type(total_count) is not int:
-        raise TypeError("MFDS totalCount must be an integer.")
+    if page_number < 1:
+        raise ValueError("MFDS pageNo must be positive.")
 
-    records = _decode_records(body_envelope.get("items"))
+    if total_count < 0:
+        raise ValueError("MFDS totalCount must not be negative.")
+
+    records = _decode_records(raw_items)
 
     return DecodedProviderPage(
         body_code=result_code,
         records=records,
+        page_number=page_number,
+        page_size=page_size,
         total_count=total_count,
     )

@@ -63,6 +63,8 @@ def _product_response(
             "header": {"resultCode": "00"},
             "body": {
                 "items": {"item": records},
+                "pageNo": 1,
+                "numOfRows": 100,
                 "totalCount": len(records),
             },
         },

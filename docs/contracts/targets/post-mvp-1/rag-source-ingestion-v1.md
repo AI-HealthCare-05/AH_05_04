@@ -95,7 +95,8 @@ Snapshot은 다음 정보를 불변으로 보존한다.
 - 모든 성공 페이지의 제품 레코드를 합친 뒤 `ITEM_SEQ` 원문 값으로 정렬한다. `ITEM_SEQ` 누락·타입 불일치·중복은 거부한다.
 - MFDS JSON 응답에서 Parser 입력으로 포함하는 정확한 경로는 `response.body.items.item`이며, 최상위 `response` wrapper가 없는 응답에서는 `body.items.item`이다. `items`가 배열인 변형에서는 각 원소 또는 각 원소의 `item` 값만 같은 제품 레코드 목록으로 해석한다.
 - Operation Envelope에서 canonical checksum 입력에 포함하는 값은 위 제품 레코드 목록뿐이다. `response.header` 전체와 확인된 pagination 필드인 `response.body.totalCount`, `response.body.pageNo`, `response.body.numOfRows`는 제외한다. 최상위 `response` wrapper가 없는 응답에도 같은 상대 경로 제외 규칙을 적용한다. `response.body`에 `items`, `totalCount`, `pageNo`, `numOfRows` 이외의 필드가 있으면 자동 제외하지 않고 schema drift로 거부한다.
-- 원본 JSON 객체의 중복 key는 마지막 값으로 덮어쓰지 않고 모든 깊이에서 파싱 실패로 처리한다. 중복 key 이름과 원문 값은 오류 메시지나 일반 로그에 포함하지 않는다.
+- 제품 Operation의 `response.body`에서는 `items`, `pageNo`, `numOfRows`, `totalCount`를 모두 필수로 검증하고 pagination 세 필드는 boolean을 제외한 정수만 허용한다. `pageNo`는 1 이상, `totalCount`는 0 이상이어야 한다. 응답 `pageNo`는 요청한 `pageNo`와 정확히 같아야 하며 다르면 schema drift로 거부한다. `numOfRows`는 실응답 Receipt에서 값의 동일성 의미가 별도로 확정되지 않았으므로 존재와 타입만 검증하고 요청값과의 일치를 추정하지 않는다.
+- `items`가 객체 wrapper인 경우 정확히 `item` 필드 하나만 허용한다. 원본 JSON 객체의 중복 key와 JSON 표준 밖의 `NaN`, `Infinity`, `-Infinity`는 마지막 값으로 덮어쓰거나 값으로 유지하지 않고 모든 깊이에서 파싱 실패로 처리한다. 거부된 key 이름과 원문 값은 오류 메시지나 일반 로그에 포함하지 않는다.
 - 원본 Artifact의 크기와 SHA-256을 검증한 동일 바이트를 versioned MFDS decoder로 해석한다. 그 결과가 수집 중 기록된 page records·`totalCount`와 정확히 일치할 때만 canonical checksum을 계산한다.
 
 `ProductIngestionResult`는 검증 완료 경계에서 다음 값을 제공한다.

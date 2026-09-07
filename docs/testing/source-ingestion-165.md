@@ -46,6 +46,9 @@
 - Operation Envelope 중 `header`, `totalCount`, `pageNo`, `numOfRows`는 제품 Parser가 반환한 레코드 목록에 포함하지 않는다.
 - `body`의 미등록 Envelope 필드는 자동 제외하지 않고 schema drift로 거부한다.
 - 원본 JSON 객체의 중복 key는 모든 깊이에서 거부하며 마지막 값으로 덮어쓰지 않는다.
+- `items`, `pageNo`, `numOfRows`, `totalCount`의 누락과 pagination 필드의 비정수·boolean 값을 거부한다.
+- 응답 `pageNo`는 요청 page와 일치해야 한다. `numOfRows`는 확인된 실응답 계약에 따라 존재와 정수 타입만 검증하며 요청값과의 일치를 추정하지 않는다.
+- 1보다 작은 요청·응답 page, 음수 `totalCount`, `item` 이외의 wrapper 필드와 비표준 JSON 숫자 상수를 거부한다.
 
 기존 Evaluation serializer는 변경하지 않았다. Source checksum과
 Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각각의

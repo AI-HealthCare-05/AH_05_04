@@ -38,6 +38,8 @@ def _decode_synthetic_page(
     return DecodedProviderPage(
         body_code="00",
         records=({"ITEM_SEQ": f"synthetic-product-{page_number:03d}"},),
+        page_number=page_number,
+        page_size=1,
         total_count=2,
     )
 
@@ -296,6 +298,38 @@ def test_rejects_source_page_artifact_metadata_mismatch(
     with pytest.raises(ValueError, match=expected_message):
         verify_source_run_artifacts(
             result=changed_result,
+            artifacts=[
+                (1, first[0], first[1]),
+                (2, second[0], second[1]),
+            ],
+            decoder=_decode_synthetic_page,
+            success_codes=("00",),
+        )
+
+
+def test_rejects_raw_artifact_response_page_mismatch(
+    tmp_path: Path,
+) -> None:
+    mismatched_first_content = b'{"page":2}'
+    second_content = b'{"page":2}'
+    first = _write_artifact(
+        tmp_path,
+        "page-1.json",
+        mismatched_first_content,
+    )
+    second = _write_artifact(
+        tmp_path,
+        "page-2.json",
+        second_content,
+    )
+    result = _complete_run(
+        mismatched_first_content,
+        second_content,
+    )
+
+    with pytest.raises(ValueError, match="page number does not match"):
+        verify_source_run_artifacts(
+            result=result,
             artifacts=[
                 (1, first[0], first[1]),
                 (2, second[0], second[1]),
