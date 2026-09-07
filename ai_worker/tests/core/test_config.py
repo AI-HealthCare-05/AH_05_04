@@ -137,6 +137,37 @@ def test_config_accepts_redis_environment_values(
     assert config.REDIS_CONSUMER_NAME == "worker-test-1"
 
 
+@pytest.mark.parametrize(
+    "environment",
+    [DeploymentEnvironment.STAGING, DeploymentEnvironment.PRODUCTION],
+)
+def test_config_requires_redis_password_outside_local(
+    environment: DeploymentEnvironment,
+) -> None:
+    with pytest.raises(ValidationError, match="REDIS_PASSWORD"):
+        _config(ENV=environment, REDIS_PASSWORD=None)
+
+
+@pytest.mark.parametrize(
+    "configured_value",
+    ["", "   ", "replace-with-production-redis-password"],
+)
+def test_config_rejects_blank_or_placeholder_redis_password_outside_local(
+    configured_value: str,
+) -> None:
+    with pytest.raises(ValidationError, match="REDIS_PASSWORD"):
+        _config(ENV=DeploymentEnvironment.PRODUCTION, REDIS_PASSWORD=configured_value)
+
+
+def test_config_allows_redis_password_outside_local() -> None:
+    config = _config(
+        ENV=DeploymentEnvironment.PRODUCTION,
+        REDIS_PASSWORD="synthetic-production-redis-password",
+    )
+
+    assert config.REDIS_PASSWORD == "synthetic-production-redis-password"
+
+
 def test_config_rejects_blank_redis_group() -> None:
     with pytest.raises(ValidationError):
         _config(REDIS_CONSUMER_GROUP="   ")
@@ -205,12 +236,14 @@ def test_config_parses_required_environment(
     configured_value: str,
     expected: DeploymentEnvironment,
 ) -> None:
-    config = Config.model_validate(
-        {
-            **_REQUIRED_SETTINGS,
-            "ENV": configured_value,
-        }
-    )
+    settings = {
+        **_REQUIRED_SETTINGS,
+        "ENV": configured_value,
+    }
+    if expected is not DeploymentEnvironment.LOCAL:
+        settings["REDIS_PASSWORD"] = "synthetic-redis-password"
+
+    config = Config.model_validate(settings)
 
     assert config.ENV is expected
 

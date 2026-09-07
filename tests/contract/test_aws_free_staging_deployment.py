@@ -44,6 +44,31 @@ def test_staging_fastapi_uses_one_worker_and_safe_non_local_flags() -> None:
     assert not fastapi.get("ports")
 
 
+def test_staging_redis_requires_password() -> None:
+    """ai_worker/core/config.py의 _validate_redis_password_for_non_local은 STAGING도
+    PRODUCTION과 동일하게 REDIS_PASSWORD 실제 값을 요구한다. staging redis도 같은
+    기준으로 인증을 강제해야 하며, 프로덕션과 마찬가지로 비밀번호를 --requirepass
+    CLI 인자로 넘기면 ps aux/docker top/proc/<pid>/cmdline에 노출된다."""
+    redis = _compose()["services"]["redis"]
+    command = redis["command"]
+    script = command[2]
+
+    assert redis["environment"] == {"REDIS_PASSWORD": "${REDIS_PASSWORD}"}
+    assert command[:2] == ["sh", "-c"]
+    assert "--requirepass" not in script
+    assert "requirepass $${REDIS_PASSWORD}" in script
+    assert "exec redis-server /tmp/redis-runtime.conf" in script
+
+
+def test_staging_redis_healthcheck_avoids_password_in_argv() -> None:
+    redis = _compose()["services"]["redis"]
+    healthcheck_command = redis["healthcheck"]["test"][1]
+
+    assert " -a " not in healthcheck_command
+    assert "REDISCLI_AUTH=" in healthcheck_command
+    assert "REDIS_PASSWORD" in healthcheck_command
+
+
 def test_staging_migration_and_health_gate_nginx_startup() -> None:
     services = _compose()["services"]
 
@@ -88,6 +113,7 @@ def test_staging_example_contains_no_real_secret_file_values() -> None:
     assert "OPENAI_API_KEY=replace-with-" in example
     assert "CLOVA_OCR_SECRET=replace-with-" in example
     assert "STAGING_SSH_KEY_PATH=replace-with-absolute-path" in example
+    assert "REDIS_PASSWORD=replace-with-" in example
 
 
 def test_staging_deploy_script_rejects_example_placeholders_before_external_actions() -> None:
@@ -104,3 +130,54 @@ def test_staging_deploy_script_rejects_example_placeholders_before_external_acti
     assert completed.returncode != 0
     assert "placeholder" in completed.stderr
     assert script.stat().st_mode & 0o111
+
+
+def test_staging_deploy_script_rejects_missing_redis_password_before_external_actions(tmp_path: Path) -> None:
+    """staging Redis도 non-local REDIS_PASSWORD를 요구하므로(Major 리뷰 반영), 배포 스크립트가
+    docker login/build/push나 ssh 같은 외부 작업 전에 이를 필수 변수로 차단해야 한다."""
+    env_file = tmp_path / "staging.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "DOCKER_USER=dummy-docker-user",
+                "DOCKER_REPOSITORY=dummy-repo",
+                "APP_VERSION=1.0.0",
+                "FRONTEND_VERSION=1.0.0",
+                "STAGING_EC2_HOST=203.0.113.10",
+                "STAGING_SSH_KEY_PATH=/tmp/dummy-key.pem",
+                "STAGING_PUBLIC_ORIGIN=http://203.0.113.10",
+                "ENV=staging",
+                "SECRET_KEY=synthetic-secret-key-at-least-32-characters",
+                "IDEMPOTENCY_HMAC_KEY=synthetic-idempotency-key-at-least-32-characters",
+                "CORS_ALLOWED_ORIGINS=http://203.0.113.10",
+                "DB_NAME=dummy_db",
+                "DB_ADMIN_USER=dummy_admin",
+                "DB_ADMIN_PASSWORD=dummy-admin-password",
+                "DB_MIGRATION_USER=dummy_migration",
+                "DB_MIGRATION_PASSWORD=dummy-migration-password",
+                "DB_APP_USER=dummy_app",
+                "DB_APP_PASSWORD=dummy-app-password",
+                # REDIS_PASSWORD는 의도적으로 생략한다.
+                "OPENAI_API_KEY=dummy-openai-key",
+                "CLOVA_OCR_INVOKE_URL=https://dummy-clova.example",
+                "CLOVA_OCR_SECRET=dummy-clova-secret",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script = PROJECT_ROOT / "scripts/deploy-staging.sh"
+
+    completed = subprocess.run(
+        ["bash", str(script)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "STAGING_ENV_FILE": str(env_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "REDIS_PASSWORD" in completed.stderr
+    assert "docker" not in completed.stdout.lower()

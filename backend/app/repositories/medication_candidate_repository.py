@@ -63,6 +63,53 @@ class MedicationCandidateRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_medication_owned(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        user_id: UUID,
+    ) -> Medication | None:
+        """조회(GET) 전용 읽기 경로입니다. 쓰기 경로(get_medication_for_candidate_search_owned)와
+        달리 행을 잠그지 않습니다."""
+        result = await self.session.execute(
+            select(Medication)
+            .join(Prescription, Prescription.id == Medication.prescription_id)
+            .where(
+                Medication.id == prescription_version_medication_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_search_for_medication(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+    ) -> MedicationCandidateSearch | None:
+        """조회(GET) 전용 읽기 경로입니다. 소유권은 호출자가 get_medication_owned로 먼저 확인합니다."""
+        result = await self.session.execute(
+            select(MedicationCandidateSearch)
+            .where(MedicationCandidateSearch.prescription_version_medication_id == prescription_version_medication_id)
+            .order_by(MedicationCandidateSearch.created_at.desc(), MedicationCandidateSearch.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_displayed_result_for_search(
+        self,
+        *,
+        search_id: UUID,
+    ) -> MedicationCandidateSearchResult | None:
+        """READY Search에서 표시 중인 단일 Result를 조회합니다(uq_medication_candidate_result_displayed로
+        최대 1건이 보장됩니다)."""
+        result = await self.session.execute(
+            select(MedicationCandidateSearchResult).where(
+                MedicationCandidateSearchResult.search_id == search_id,
+                MedicationCandidateSearchResult.is_displayed.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_active_search_for_update(
         self,
         *,
