@@ -80,6 +80,9 @@ function renderPage(
       <Routes>
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/login" element={<div>로그인 화면</div>} />
+        <Route path="/prescriptions/upload" element={<div>처방전 등록 화면</div>} />
+        <Route path="/guides" element={<div>복약 가이드 화면</div>} />
+        <Route path="/menu" element={<div>메뉴 화면</div>} />
       </Routes>
     </MemoryRouter>
   )
@@ -119,7 +122,7 @@ describe('ChatPage', () => {
   it('확정된 prescription_id로 Chat session을 생성한다', async () => {
     renderPage()
 
-    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     expect(createChatSession).toHaveBeenCalledWith(prescriptionId)
     expect(getChatMessages).toHaveBeenCalledWith(sessionId)
     expect(
@@ -152,7 +155,7 @@ describe('ChatPage', () => {
       }),
     )
 
-    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     expect(createChatSession).toHaveBeenCalledTimes(1)
   })
 
@@ -202,7 +205,7 @@ describe('ChatPage', () => {
 
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
     expect(screen.getAllByText('중복 전송 확인')).toHaveLength(1)
-    expect(screen.getByText('AI 답변을 만들고 있어요…')).toBeTruthy()
+    expect(screen.getByText('답변을 확인하고 있어요')).toBeTruthy()
     expect(screen.queryByText('중복 없이 생성된 답변')).toBeNull()
     expect(input).toHaveProperty('value', '')
     expect(input).toHaveProperty('disabled', true)
@@ -228,7 +231,7 @@ describe('ChatPage', () => {
 
     expect(await screen.findByText('중복 없이 생성된 답변')).toBeTruthy()
     expect(screen.getAllByText('중복 전송 확인')).toHaveLength(1)
-    expect(screen.queryByText('AI 답변을 만들고 있어요…')).toBeNull()
+    expect(screen.queryByText('답변을 확인하고 있어요')).toBeNull()
     expect(input).toHaveProperty('value', '')
     expect(input).toHaveProperty('disabled', false)
   })
@@ -240,12 +243,13 @@ describe('ChatPage', () => {
     renderPage()
 
     expect(
-      await screen.findByText('현재 서비스를 사용할 수 없습니다.'),
+      await screen.findByText('도지와 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'),
     ).toBeTruthy()
+    expect(screen.queryByText('현재 서비스를 사용할 수 없습니다.')).toBeNull()
     mockSessionCreation()
     fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
 
-    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     expect(createChatSession).toHaveBeenCalledTimes(2)
   })
 
@@ -285,8 +289,9 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
 
     expect(
-      await screen.findByText('AI 서비스에 잠시 연결할 수 없습니다.'),
+      await screen.findByText('도지와 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'),
     ).toBeTruthy()
+    expect(screen.queryByText('AI 서비스에 잠시 연결할 수 없습니다.')).toBeNull()
     expect(screen.getByText('오류 후 다시 보낼 질문')).toBeTruthy()
     expect(screen.getByText('답변을 생성하지 못했어요.')).toBeTruthy()
     expect(getChatMessages).toHaveBeenCalledTimes(2)
@@ -317,7 +322,7 @@ describe('ChatPage', () => {
 
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
     expect(screen.getAllByText('실패 이력 확인 질문')).toHaveLength(1)
-    expect(screen.getByText('AI 답변을 만들고 있어요…')).toBeTruthy()
+    expect(screen.getByText('답변을 확인하고 있어요')).toBeTruthy()
 
     await act(async () =>
       messageRequest.reject(
@@ -326,10 +331,10 @@ describe('ChatPage', () => {
     )
 
     expect(
-      await screen.findByText('AI 서비스에 잠시 연결할 수 없습니다.'),
+      await screen.findByText('도지와 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'),
     ).toBeTruthy()
     expect(screen.getAllByText('실패 이력 확인 질문')).toHaveLength(1)
-    expect(screen.queryByText('AI 답변을 만들고 있어요…')).toBeNull()
+    expect(screen.queryByText('답변을 확인하고 있어요')).toBeNull()
     expect(input).toHaveProperty('value', '')
     expect(input).toHaveProperty('disabled', false)
     expect(sendChatMessage).toHaveBeenCalledTimes(1)
@@ -518,28 +523,45 @@ describe('ChatPage', () => {
     async (entry) => {
       renderPage(entry)
 
-      expect(await screen.findByText('먼저 확정된 처방이 필요해요')).toBeTruthy()
+      expect(
+        await screen.findByRole('heading', { name: /먼저 처방전을 등록해 주세요/ }),
+      ).toBeTruthy()
       expect(createChatSession).not.toHaveBeenCalled()
       expect(getChatMessages).not.toHaveBeenCalled()
     },
   )
 
-  it('추천 질문 chip을 준비 중인 미구현 기능으로 비활성화한다', async () => {
+  it('질문 예시는 API 호출 없이 입력창에만 채우고 일정 CTA는 비활성화한다', async () => {
     renderPage()
 
-    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
-    const suggestionButtons = [
-      screen.getByRole('button', { name: '복용 방법 확인' }),
-      screen.getByRole('button', { name: '놓친 복용 안내' }),
-      screen.getByRole('button', { name: '불편·안전 확인' }),
-    ]
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '아침 약은 언제 먹나요?' }))
 
-    for (const button of suggestionButtons) {
-      expect(button).toHaveProperty('disabled', true)
-    }
-    expect(screen.getByText('추천 질문 기능은 준비 중이에요.')).toBeTruthy()
     expect(sendChatMessage).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('복약 질문')).toHaveProperty('value', '')
+    expect(screen.getByLabelText('복약 질문')).toHaveProperty(
+      'value',
+      '아침 약은 언제 먹나요?',
+    )
+    expect(
+      screen.getByRole('button', { name: '복약 일정 설정하기 (준비 중)' }),
+    ).toHaveProperty('disabled', true)
+  })
+
+  it('활성 처방이 없을 때 등록 CTA와 최신 5-tab 도지 active 상태를 유지한다', async () => {
+    renderPage('/chat')
+
+    expect(
+      await screen.findByRole('heading', { name: /먼저 처방전을 등록해 주세요/ }),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: '도지' }).getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
+    expect(screen.getByText('처방전 등록 화면')).toBeTruthy()
   })
 
   it('인증 API가 401을 반환하면 로그인 안내로 전환한다', async () => {
@@ -586,7 +608,7 @@ describe('ChatPage', () => {
 
     renderPage()
 
-    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     expect(getChatMessages).toHaveBeenNthCalledWith(1, expiredSessionId)
     expect(createChatSession).toHaveBeenCalledWith(prescriptionId)
     expect(getChatMessages).toHaveBeenNthCalledWith(2, sessionId)
@@ -610,7 +632,7 @@ describe('ChatPage', () => {
     })
     renderPage()
 
-    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     fireEvent.click(screen.getByText('두 번째 처방으로 이동'))
 
     await waitFor(() =>
@@ -739,7 +761,7 @@ describe('ChatPage', () => {
         data: { session_id: secondSessionId, messages: [] },
       }),
     )
-    expect(await screen.findByText('무엇을 확인하고 싶으신가요?')).toBeTruthy()
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
   })
 
   it('처방 A 초기화 오류와 finally가 늦게 와도 처방 B 상태를 변경하지 않는다', async () => {
