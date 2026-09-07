@@ -213,13 +213,27 @@ Critical Claim Rubric, Leakage 배치를 제자리에서 수정하지 않는다.
 
 ## Chat history 평가
 
-`generation/chat-v2-history-eval-v1.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 기준선과 처리 경로 모두 `chat-prompt-v2`를 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
+`generation/chat-v2-history-eval-v1.json`과 `generation/chat-v2-history-eval-v2.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 기준선과 처리 경로 모두 `chat-prompt-v2`를 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
+
+| 버전 | Case 수 | 상태 | 비고 |
+| --- | --- | --- | --- |
+| `chat-v2-history-eval-v1` | 10 | 동결 | Issue #129 / PR #145에서 승인된 불변 버전이다. 제자리에서 수정하지 않는다. |
+| `chat-v2-history-eval-v2` | 11 | canonical | Issue #293 조사에서 확인한 커버리지 갭을 메운 `followup-earlier-subject-over-latest`를 추가했다. v1의 10 case는 byte-for-byte 재사용한다. |
+
+두 버전 모두 저장소에 유지한다. v1의 과거 실행 결과는 v1 경로로 그대로 재현하고, 새 case를 포함한 실행은 v2를 사용한다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v2를 가리킨다.
 
 ```bash
 cd backend
+# canonical(v2)
 uv run python -m app.evaluation.chat_history_runner \
   --mode deterministic \
+  --output ../evals/results/chat-v2-history-eval-v2-local-deterministic.json
+
+# 동결된 v1 재현
+uv run python -m app.evaluation.chat_history_runner \
+  --mode deterministic \
+  --dataset ../evals/generation/chat-v2-history-eval-v1.json \
   --output ../evals/results/chat-v2-history-eval-v1-local-deterministic.json
 ```
 
-결과에는 rule ID와 집계값만 기록하고 원시 질문·history·응답과 PII sentinel은 기록하지 않습니다. 실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. live 모드는 저장소의 canonical `chat-v2-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며 임의 `--dataset`과 변경된 fixture를 OpenAI client 생성 전에 거부합니다. SHA-256은 Windows CRLF checkout과 LF checkout을 동일하게 취급하도록 CRLF를 LF로 정규화한 bytes에 계산하며, 줄바꿈 외 내용 변경은 계속 거부합니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.
+결과에는 rule ID와 집계값만 기록하고 원시 질문·history·응답과 PII sentinel은 기록하지 않습니다. 실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. live 모드는 저장소의 canonical `chat-v2-history-eval-v2` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며 임의 `--dataset`과 변경된 fixture를 OpenAI client 생성 전에 거부합니다. SHA-256은 Windows CRLF checkout과 LF checkout을 동일하게 취급하도록 CRLF를 LF로 정규화한 bytes에 계산하며, 줄바꿈 외 내용 변경은 계속 거부합니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.
