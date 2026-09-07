@@ -21,8 +21,10 @@ type UseJobPollingOptions<T> = {
   jobKey: string | null
   fetcher: (jobKey: string, signal: AbortSignal) => Promise<T>
   getStatus: (data: T) => AiJobViewStatus
+  getDelayMs?: (data: T, status: AiJobViewStatus) => number | null
   intervalMs?: number
   maxAttempts?: number
+  restartKey?: number
 }
 
 const idleState: JobPollingState<never> = {
@@ -42,8 +44,10 @@ export function useJobPolling<T>({
   jobKey,
   fetcher,
   getStatus,
+  getDelayMs,
   intervalMs = 1000,
   maxAttempts = 80,
+  restartKey = 0,
 }: UseJobPollingOptions<T>): JobPollingState<T> {
   const [state, setState] = useState<JobPollingState<T>>(idleState)
 
@@ -110,10 +114,16 @@ export function useJobPolling<T>({
           attemptCount,
         })
 
+        const responseDelayMs = getDelayMs?.(data, status)
+        const nextDelayMs =
+          responseDelayMs !== null && responseDelayMs !== undefined
+            ? Math.max(responseDelayMs, intervalMs)
+            : intervalMs
+
         timerId = window.setTimeout(() => {
           timerId = undefined
           void poll()
-        }, intervalMs)
+        }, nextDelayMs)
       } catch (error) {
         if (!isActive || isAbortError(error)) return
 
@@ -137,7 +147,7 @@ export function useJobPolling<T>({
       }
       controller?.abort()
     }
-  }, [fetcher, getStatus, intervalMs, jobKey, maxAttempts])
+  }, [fetcher, getDelayMs, getStatus, intervalMs, jobKey, maxAttempts, restartKey])
 
   return state
 }
