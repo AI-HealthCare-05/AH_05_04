@@ -193,6 +193,107 @@ describe('ChatPage', () => {
     ).toHaveLength(1)
   })
 
+  it('세션 준비 후 입력창에 focus할 수 있고 accessible name을 제공한다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    expect(input).toHaveProperty('disabled', false)
+
+    input.focus()
+
+    expect(document.activeElement).toBe(input)
+    expect(input.getAttribute('aria-label')).toBe('복약 질문')
+    expect(screen.getByText('복약 질문')).toBeTruthy()
+  })
+
+  it('Enter는 공통 submit 경로로 메시지를 정확히 한 번 전송한다', async () => {
+    const messageRequest = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
+    vi.mocked(sendChatMessage).mockReturnValue(messageRequest.promise)
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '  Enter 합성 질문  ' } })
+
+    expect(fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })).toBe(false)
+
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
+    expect(sendChatMessage).toHaveBeenCalledWith(sessionId, 'Enter 합성 질문')
+    expect(screen.getAllByText('Enter 합성 질문')).toHaveLength(1)
+
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    expect(sendChatMessage).toHaveBeenCalledTimes(1)
+
+    await act(async () =>
+      messageRequest.resolve({
+        data: {
+          user_message_id: 'enter-user-message',
+          assistant_message_id: 'enter-assistant-message',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: 'Enter 응답',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-08-24T00:00:01Z',
+          completed_at: '2026-08-24T00:00:02Z',
+        },
+      }),
+    )
+
+    expect(await screen.findByText('Enter 응답')).toBeTruthy()
+  })
+
+  it('Shift+Enter는 submit하지 않고 줄바꿈을 유지한다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '첫 줄' } })
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        shiftKey: true,
+      }),
+    ).toBe(true)
+    fireEvent.change(input, { target: { value: '첫 줄\n둘째 줄' } })
+
+    expect(input).toHaveProperty('value', '첫 줄\n둘째 줄')
+    expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('한글 IME 조합 중 Enter는 submit하지 않는다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '조합 중 질문' } })
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        isComposing: true,
+      }),
+    ).toBe(true)
+    expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('WebKit IME 조합 경계의 Enter는 submit하지 않는다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: 'WebKit 조합 중 질문' } })
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 229,
+      }),
+    ).toBe(true)
+    expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
   it('사용자 질문을 즉시 표시하고 응답 완료 후 canonical 메시지로 reconcile한다', async () => {
     const messageRequest = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
     vi.mocked(sendChatMessage).mockReturnValue(messageRequest.promise)
