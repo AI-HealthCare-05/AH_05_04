@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse as Response
 
+from app.core import config
 from app.core.errors import ApiError, ErrorDetail
 from app.core.utils.idempotency import IdempotencyKeyFormatError, validate_idempotency_key_format
 from app.dependencies.security import get_request_user
@@ -34,6 +35,23 @@ def _raise_candidate_feature_unavailable() -> NoReturn:
             )
         ],
     )
+
+
+def _ensure_public_track_f_enabled() -> None:
+    # medication-identification-v1.md "공개 게이트": RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는
+    # 실제 사용자 트래픽에 공개하지 않습니다. 도메인 조회·조회 전용 side effect 이전에 먼저 차단합니다.
+    if not config.PUBLIC_TRACK_F_ENABLED:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="SERVICE_UNAVAILABLE",
+            message="약품 후보 확인 기능은 아직 공개되지 않았습니다.",
+            details=[
+                ErrorDetail(
+                    field="medication_candidate",
+                    reason="PUBLIC_TRACK_F_DISABLED",
+                )
+            ],
+        )
 
 
 def _validate_idempotency_header(idempotency_key: str | None) -> None:
@@ -71,6 +89,7 @@ async def get_medication_candidate_search(
     user: Annotated[User, Depends(get_request_user)],
     service: Annotated[MedicationCandidateService, Depends(get_medication_candidate_service)],
 ) -> Response:
+    _ensure_public_track_f_enabled()
     result = await service.get_candidate_search(
         user=user,
         prescription_version_medication_id=prescription_version_medication_id,
@@ -81,17 +100,33 @@ async def get_medication_candidate_search(
     )
 
 
+_IDEMPOTENCY_KEY_OPENAPI_PARAMETER = {
+    "name": "Idempotency-Key",
+    "in": "header",
+    "required": True,
+    "schema": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 255,
+        "pattern": r"^[A-Za-z0-9._:-]+$",
+    },
+    "description": "Candidate 확인·거절 멱등성 키입니다. 원문 값은 저장하지 않습니다.",
+}
+
+
 @medication_candidate_router.post(
     "/medication-candidates/confirm",
     response_model=ConfirmMedicationCandidateResponse,
     status_code=status.HTTP_200_OK,
+    openapi_extra={"parameters": [_IDEMPOTENCY_KEY_OPENAPI_PARAMETER]},
 )
 async def confirm_medication_candidate(
     request: ConfirmMedicationCandidateRequest,
     user: Annotated[User, Depends(get_request_user)],
     service: Annotated[MedicationCandidateService, Depends(get_medication_candidate_service)],
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", include_in_schema=False)] = None,
 ) -> Response:
+    _ensure_public_track_f_enabled()
     _validate_idempotency_header(idempotency_key)
     result = await service.confirm_candidate(user=user, request=request)
     return Response(
@@ -104,13 +139,15 @@ async def confirm_medication_candidate(
     "/medication-candidates/reject",
     response_model=RejectMedicationCandidateResponse,
     status_code=status.HTTP_200_OK,
+    openapi_extra={"parameters": [_IDEMPOTENCY_KEY_OPENAPI_PARAMETER]},
 )
 async def reject_medication_candidate(
     request: RejectMedicationCandidateRequest,
     user: Annotated[User, Depends(get_request_user)],
     service: Annotated[MedicationCandidateService, Depends(get_medication_candidate_service)],
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", include_in_schema=False)] = None,
 ) -> Response:
+    _ensure_public_track_f_enabled()
     _validate_idempotency_header(idempotency_key)
     result = await service.reject_candidate(user=user, request=request)
     return Response(

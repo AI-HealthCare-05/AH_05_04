@@ -1,5 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
+from app.core import config
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.medication_candidates import (
     ConfirmMedicationCandidateData,
@@ -60,10 +62,21 @@ class MedicationCandidateService:
                 details=[ErrorDetail(field="prescription_version_medication_id", reason="NOT_FOUND")],
             )
 
+        # READY지만 만료 시각이 지난 Search는, 다른 lifecycle 요청(확인·거절)이 아직 DB 상태를
+        # EXPIRED로 전환하기 전이라도 조회에서는 이미 만료된 것으로 투영한다. 계약상 EXPIRED는
+        # candidate_search_result_id/candidate가 모두 null이어야 한다(#312 리뷰 지적).
+        now = datetime.now(config.TIMEZONE)
+        is_expired = (
+            search.status == ModelCandidateSearchStatus.READY
+            and search.expires_at is not None
+            and search.expires_at <= now
+        )
+        public_status = ModelCandidateSearchStatus.EXPIRED if is_expired else search.status
+
         candidate_search_result_id: UUID | None = None
         candidate: MedicationCandidateSnapshot | None = None
         # READY가 아니면 과거 표시 이력이 남아 있어도(#260/계약 111행) 공개 후보를 반환하지 않는다.
-        if search.status == ModelCandidateSearchStatus.READY:
+        if public_status == ModelCandidateSearchStatus.READY:
             displayed = await self._repository.get_displayed_result_for_search(search_id=search.id)
             if displayed is not None:
                 # chk_medication_candidate_result_display_snapshot가 is_displayed=true일 때
@@ -83,7 +96,7 @@ class MedicationCandidateService:
             search_id=search.id,
             prescription_version_medication_id=search.prescription_version_medication_id,
             medication_index=medication.display_order,
-            status=MedicationCandidateSearchStatus(search.status),
+            status=MedicationCandidateSearchStatus(public_status),
             candidate_search_result_id=candidate_search_result_id,
             candidate=candidate,
             expires_at=search.expires_at,

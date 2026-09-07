@@ -43,6 +43,13 @@ async def client() -> AsyncIterator[AsyncClient]:
         fastapi_app.dependency_overrides.pop(get_request_user, None)
 
 
+@pytest.fixture
+def public_track_f_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GET/confirm/reject는 기본값(false)에서 공개 게이트에 fail-closed되므로, 게이트 뒤
+    실제 동작을 검증하는 테스트는 이 fixture로 명시적으로 활성화합니다."""
+    monkeypatch.setattr(config, "PUBLIC_TRACK_F_ENABLED", True)
+
+
 async def test_candidate_search_is_fail_closed_before_ownership_chain(client: AsyncClient) -> None:
     response = await client.post(
         "/api/v1/medication-candidate-searches",
@@ -82,6 +89,7 @@ async def test_candidate_search_is_fail_closed_before_ownership_chain(client: As
 )
 async def test_confirm_and_reject_require_idempotency_key(
     client: AsyncClient,
+    public_track_f_enabled: None,
     path: str,
     body: dict[str, str],
 ) -> None:
@@ -120,6 +128,7 @@ async def test_confirm_and_reject_require_idempotency_key(
 )
 async def test_confirm_and_reject_validate_idempotency_key_format(
     client: AsyncClient,
+    public_track_f_enabled: None,
     path: str,
     body: dict[str, str],
 ) -> None:
@@ -150,6 +159,7 @@ async def test_confirm_and_reject_validate_idempotency_key_format(
 )
 async def test_confirm_and_reject_are_not_found_for_unknown_result_after_idempotency_validation(
     client: AsyncClient,
+    public_track_f_enabled: None,
     path: str,
     body_factory,
 ) -> None:
@@ -166,12 +176,67 @@ async def test_confirm_and_reject_are_not_found_for_unknown_result_after_idempot
     assert response.json()["code"] == "CANDIDATE_SEARCH_NOT_FOUND"
 
 
-async def test_get_candidate_search_is_not_found_for_unknown_medication(client: AsyncClient) -> None:
+async def test_get_candidate_search_is_not_found_for_unknown_medication(
+    client: AsyncClient, public_track_f_enabled: None
+) -> None:
     response = await client.get(f"/api/v1/medication-candidate-searches/{uuid4()}")
 
     assert response.status_code == 404
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["code"] == "PRESCRIPTION_MEDICATION_NOT_FOUND"
+
+
+async def test_get_candidate_search_is_fail_closed_when_public_track_f_disabled(client: AsyncClient) -> None:
+    """PUBLIC_TRACK_F_ENABLED 기본값(false)에서는 조회조차 fail-closed되어야 합니다(#312 리뷰 지적)."""
+    response = await client.get(f"/api/v1/medication-candidate-searches/{uuid4()}")
+
+    assert response.status_code == 503
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["code"] == "SERVICE_UNAVAILABLE"
+    assert response.json()["details"] == [
+        {
+            "field": "medication_candidate",
+            "reason": "PUBLIC_TRACK_F_DISABLED",
+            "rejected_value": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        (
+            "/api/v1/medication-candidates/confirm",
+            {
+                "prescription_version_medication_id": str(uuid4()),
+                "candidate_search_result_id": str(uuid4()),
+            },
+        ),
+        (
+            "/api/v1/medication-candidates/reject",
+            {
+                "search_id": str(uuid4()),
+                "candidate_search_result_id": str(uuid4()),
+            },
+        ),
+    ],
+)
+async def test_confirm_and_reject_are_fail_closed_when_public_track_f_disabled(
+    client: AsyncClient,
+    path: str,
+    body: dict[str, str],
+) -> None:
+    """PUBLIC_TRACK_F_ENABLED 기본값(false)에서는 유효한 Idempotency-Key를 보내도
+    확인·거절 자체가 fail-closed되어야 합니다(#312 리뷰 지적)."""
+    response = await client.post(
+        path,
+        headers={"Idempotency-Key": "candidate-key-gate-disabled-001"},
+        json=body,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "SERVICE_UNAVAILABLE"
+    assert response.json()["details"][0]["reason"] == "PUBLIC_TRACK_F_DISABLED"
 
 
 @pytest_asyncio.fixture
@@ -299,7 +364,9 @@ async def _create_ready_search(session: AsyncSession, *, medication: Medication,
 
 
 class TestGetMedicationCandidateSearch:
-    async def test_returns_ready_snapshot_with_no_store(self, db_session: AsyncSession) -> None:
+    async def test_returns_ready_snapshot_with_no_store(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
         owner = await _create_owner(db_session)
         medication = await _create_medication(db_session, user=owner, display_order=2)
         search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
@@ -326,7 +393,7 @@ class TestGetMedicationCandidateSearch:
             "product_status": "ACTIVE",
         }
 
-    async def test_rejects_other_users_medication(self, db_session: AsyncSession) -> None:
+    async def test_rejects_other_users_medication(self, db_session: AsyncSession, public_track_f_enabled: None) -> None:
         owner = await _create_owner(db_session)
         intruder = await _create_owner(db_session)
         medication = await _create_medication(db_session, user=owner)
@@ -341,7 +408,9 @@ class TestGetMedicationCandidateSearch:
         assert response.status_code == 404
         assert response.json()["code"] == "PRESCRIPTION_MEDICATION_NOT_FOUND"
 
-    async def test_returns_candidate_search_not_found_when_no_search_yet(self, db_session: AsyncSession) -> None:
+    async def test_returns_candidate_search_not_found_when_no_search_yet(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
         owner = await _create_owner(db_session)
         medication = await _create_medication(db_session, user=owner)
         fastapi_app.dependency_overrides[get_request_user] = lambda: owner
@@ -356,7 +425,9 @@ class TestGetMedicationCandidateSearch:
 
 
 class TestConfirmAndRejectMedicationCandidate:
-    async def test_confirm_maps_identification_fields(self, db_session: AsyncSession) -> None:
+    async def test_confirm_maps_identification_fields(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
         owner = await _create_owner(db_session)
         medication = await _create_medication(db_session, user=owner)
         _search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
@@ -382,7 +453,9 @@ class TestConfirmAndRejectMedicationCandidate:
         assert data["source"] == "USER_SELECTED"
         assert data["confirmed_at"] is not None
 
-    async def test_reject_maps_identification_event_fields(self, db_session: AsyncSession) -> None:
+    async def test_reject_maps_identification_event_fields(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
         owner = await _create_owner(db_session)
         medication = await _create_medication(db_session, user=owner)
         search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)

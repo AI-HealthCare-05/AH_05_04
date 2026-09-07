@@ -186,6 +186,23 @@ async def test_get_candidate_search_returns_ready_snapshot_and_medication_index(
     assert result.candidate.product_name == "테스트정"
 
 
+async def test_get_candidate_search_projects_expired_ready_search_as_expired(db_session: AsyncSession) -> None:
+    """만료 시각이 지난 READY Search는, 다른 lifecycle 요청이 아직 DB 상태를 EXPIRED로
+    전환하기 전이라도 조회 응답에서는 candidate 없는 EXPIRED로 보여야 합니다(#312 리뷰 지적)."""
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="get5@example.com")
+    medication = await _create_medication(db_session, user=owner)
+    finalized = await _create_ready_search(db_session, medication=medication, user=owner)
+    finalized.search.expires_at = datetime.now(config.TIMEZONE) - timedelta(seconds=1)
+    await db_session.flush()
+
+    result = await service.get_candidate_search(user=owner, prescription_version_medication_id=medication.id)
+
+    assert result.status.value == "EXPIRED"
+    assert result.candidate_search_result_id is None
+    assert result.candidate is None
+
+
 async def test_get_candidate_search_hides_candidate_after_rejection(db_session: AsyncSession) -> None:
     """거절된 Search는 감사 이력상 is_displayed=true를 보존하지만(계약 111행), 공개 조회
     응답에는 candidate/ID가 노출되면 안 됩니다."""

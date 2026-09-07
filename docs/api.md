@@ -74,6 +74,11 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 채팅 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200` |
 | 채팅 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201` |
 | Job | `GET` | `/api/v1/jobs/{job_id}` | `200` |
+| Candidate | `GET` | `/api/v1/medication-candidate-searches/{prescription_version_medication_id}` | `200` |
+| Candidate | `POST` | `/api/v1/medication-candidates/confirm` | `200` |
+| Candidate | `POST` | `/api/v1/medication-candidates/reject` | `200` |
+
+Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 세 endpoint 모두 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 Job 접수입니다. 같은 요청에서는 CLOVA OCR을 호출하지 않고 `AI_JOB`, `IDEMPOTENCY_RECORD`, `OUTBOX_EVENT`, `OCR_JOB` placeholder를 같은 transaction에 저장한 뒤 `JobStatusResponse`를 반환합니다. 실제 OCR 실행은 Worker가 처리합니다.
 
