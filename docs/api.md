@@ -65,7 +65,9 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 의료문서 | `GET` | `/api/v1/documents/{document_id}/file` | `200` |
 | OCR | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200` |
 | OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
+| 처방 | `GET` | `/api/v1/prescriptions/latest` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
+| 가이드 | `GET` | `/api/v1/prescriptions/{prescription_id}/guide` | `200` |
 | 채팅 | `POST` | `/api/v1/prescriptions/{prescription_id}/chat-sessions` | `201` |
 | 가이드 | `POST` | `/api/v1/guides` | `201` |
 | 가이드 | `GET` | `/api/v1/guides/{guide_id}` | `200` |
@@ -92,6 +94,8 @@ OCR 접수 요청에는 `Idempotency-Key` header가 필수입니다. 키는 16~2
 OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`)은 서비스 로직(`JobStatusService.rediscover_ocr_job`/`rediscover_guide_job`)과 그 테스트까지는 구현되어 있지만, 라우트로는 등록하지 않았습니다. OCR 접수는 `accept_job()`에 연결되어 공통 Job이 생성되지만, 클라이언트는 접수 응답의 `status_url`을 그대로 polling하면 되므로 문서 기준 rediscovery 라우트 노출은 별도 계약 검토 후 진행합니다. Guide rediscovery는 Guide 접수가 비동기로 전환되는 시점에 함께 검토합니다.
 
 두 도메인 모두 `ai_job_id` 영속 매핑(OCR은 #212의 `ocr_job.ai_job_id`, Guide는 같은 목적의 `guide.ai_job_id`)을 갖추고 있어, Outbox 30일 보존과 Job 90일 보존 사이의 31~90일 구간에서도 rediscovery가 값을 찾을 수 있습니다(#148 네 번째 리뷰 지적 — 접수 연결 전에 미리 반영).
+
+위 보류 대상과 별개로, `GET /api/v1/prescriptions/latest`와 `GET /api/v1/prescriptions/{prescription_id}/guide`(단수형)는 실제로 등록되어 있습니다(#295). 로그아웃·재로그인 등으로 Frontend가 `prescription_id`/`guide_id`를 잃어버렸을 때, Job 상태나 `ai_job_id`와 무관하게 소유권 기준으로 가장 최근 확정 처방과 그 처방의 Guide를 다시 조회하기 위한 임시 rediscovery입니다. Guide 생성이 아직 동기(one-cycle)라 위 Job 기반 보류 대상과는 목적이 다르며, Guide 접수가 비동기로 전환되면 위 `GET /{prescription_id}/guides`(복수형)로 대체될 수 있습니다.
 
 ## 인증과 사용자
 
