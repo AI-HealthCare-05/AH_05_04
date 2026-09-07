@@ -134,6 +134,8 @@ services:
       OCR_STRUCTURE_LLM_ENABLED: ${OCR_STRUCTURE_LLM_ENABLED:-false}
       OCR_STRUCTURE_MODEL: ${OCR_STRUCTURE_MODEL:-gpt-4o-mini}
       OCR_STRUCTURE_TIMEOUT_SECONDS: ${OCR_STRUCTURE_TIMEOUT_SECONDS:-30}
+      # RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 false를 유지합니다.
+      PUBLIC_TRACK_F_ENABLED: ${PUBLIC_TRACK_F_ENABLED:-false}
 
       # 업로드 파일이 영속 volume 아래에 저장되도록 고정합니다.
       STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}
