@@ -62,7 +62,7 @@ from ai_worker.tasks.evaluation.schemas.policy_v1_2 import (
     EvaluationProfileV12,
     SuiteDefinitionV12,
 )
-from ai_worker.tasks.evaluation.schemas.provenance_v1 import AuthoringIdentityManifest
+from ai_worker.tasks.evaluation.schemas.provenance_v1 import AuthoringIdentityEntry, AuthoringIdentityManifest
 
 type DatasetManifestContract = DatasetManifest | DatasetManifestV11 | DatasetManifestV12 | DatasetManifestV13
 type EvaluationCaseContract = EvaluationCase | EvaluationCaseV11 | EvaluationCaseV12
@@ -483,6 +483,46 @@ def _validate_case_evidence_references(
         raise EvaluationValidationError(EvaluationErrorCode.EVIDENCE_MAPPING_INVALID)
 
 
+def _resolve_json_locator(value: JsonValue, locator: str) -> JsonValue:
+    if not locator.startswith("$."):
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    current = value
+    cursor = 1
+    while cursor < len(locator):
+        if locator[cursor] == ".":
+            start = cursor + 1
+            cursor = start
+            while cursor < len(locator) and locator[cursor] not in ".[":
+                cursor += 1
+            key = locator[start:cursor]
+            if not key or not isinstance(current, dict) or key not in current:
+                raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+            current = current[key]
+            continue
+        if locator[cursor] == "[":
+            end = locator.find("]", cursor + 1)
+            index_text = locator[cursor + 1 : end] if end != -1 else ""
+            if (
+                not isinstance(current, list)
+                or not index_text.isascii()
+                or not index_text.isdecimal()
+                or (len(index_text) > 1 and index_text.startswith("0"))
+                or not current
+            ):
+                raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+            maximum_index = str(len(current) - 1)
+            if len(index_text) > len(maximum_index) or (
+                len(index_text) == len(maximum_index) and index_text > maximum_index
+            ):
+                raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+            index = int(index_text)
+            current = current[index]
+            cursor = end + 1
+            continue
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+    return current
+
+
 def _validate_cases(
     reader: _SnapshotReader,
     manifest: DatasetManifestContract,
@@ -632,11 +672,32 @@ def _load_receipt(
     return receipt
 
 
+def _authoring_source_matches(
+    reader: _SnapshotReader,
+    entry: AuthoringIdentityEntry,
+    case: EvaluationCaseContract,
+    evidence_by_id: dict[str, EvidenceMappingEntry],
+) -> bool:
+    runtime = case.context.runtime_fixture
+    if runtime is None or entry.source_snapshot_ref != runtime.source_snapshot_ref:
+        return False
+    for evidence_ref_id in _expected_evidence_refs(case):
+        mapping = evidence_by_id[evidence_ref_id]
+        fixture_ref = mapping.fixture_record_ref
+        if fixture_ref is None or entry.source_locator != mapping.locator:
+            continue
+        source_value = _resolve_json_locator(reader.read(fixture_ref.path).value, mapping.locator)
+        if entry.source_chunk_sha256 == canonical_sha256(source_value):
+            return True
+    return False
+
+
 def _load_authoring_identity(
     reader: _SnapshotReader,
     prefix: str,
     manifest: DatasetManifestV13,
     cases: tuple[EvaluationCaseContract, ...],
+    evidence: EvidenceMappingContract,
     model: type[BaseModel],
 ) -> tuple[AuthoringIdentityManifest, ImmutableReference]:
     expected_path = f"retrieval/manifests/{prefix}.authoring-identities.json"
@@ -659,11 +720,14 @@ def _load_authoring_identity(
         "medication_family_id": "medication_family",
         "transform_origin_id": "transform_origin",
     }
+    evidence_by_id = {item.evidence_ref_id: item for item in evidence.entries}
     for entry, case in zip(authoring_identity.entries, cases, strict=True):
         if any(
             getattr(entry, sidecar_field) != getattr(case.leakage_group_ids, case_field)
             for sidecar_field, case_field in leakage_fields.items()
         ):
+            raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
+        if not _authoring_source_matches(reader, entry, case, evidence_by_id):
             raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     reference = ImmutableReference(
         id=authoring_identity.manifest_id,
@@ -678,6 +742,7 @@ def _load_authoring_identity_if_required(
     prefix: str,
     manifest: DatasetManifestContract,
     cases: tuple[EvaluationCaseContract, ...],
+    evidence: EvidenceMappingContract,
     authoring: _AuthoringContract,
 ) -> tuple[AuthoringIdentityManifest | None, ImmutableReference | None]:
     if not isinstance(manifest, DatasetManifestV13):
@@ -689,6 +754,7 @@ def _load_authoring_identity_if_required(
         prefix,
         manifest,
         cases,
+        evidence,
         authoring.authoring_identity_manifest_model,
     )
 
@@ -949,19 +1015,20 @@ def load_dataset(
     prefix = _prefix(manifest_path)
     cases = _validate_cases(reader, manifest, authoring.case_adapter)
     _validate_leakage(cases)
-    authoring_identity, authoring_identity_reference = _load_authoring_identity_if_required(
-        reader,
-        prefix,
-        manifest,
-        cases,
-        authoring,
-    )
     evidence, evidence_registry = _load_evidence(
         reader,
         prefix,
         manifest,
         cases,
         authoring.evidence_mapping_model,
+    )
+    authoring_identity, authoring_identity_reference = _load_authoring_identity_if_required(
+        reader,
+        prefix,
+        manifest,
+        cases,
+        evidence,
+        authoring,
     )
     rubric = _load_rubric(reader, prefix, manifest, cases, authoring.rubric_model)
     _validate_frozen_gold_closure(manifest, cases, evidence, rubric)

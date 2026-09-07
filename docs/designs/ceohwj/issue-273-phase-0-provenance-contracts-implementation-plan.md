@@ -73,12 +73,12 @@
       manifest_version: SemanticVersion
       dataset_code: StableId
       dataset_version: SemanticVersion
-      canonicalization_spec_version: SemanticVersion
+      canonicalization_spec_version: Literal["1.0.0"]
       entries: tuple[AuthoringIdentityEntry, ...]
       manifest_sha256: Sha256Hex
   ```
 
-  `IndexBuildReceipt` must bind `dataset_ref`, `evidence_mapping_ref`, `source_snapshot_ref`, `evidence_index_ref`, `build_config_ref`, `adapter_artifact_ref`, `canonicalization_spec_version`, ordered bridge entries, `built_at`, `built_by`, and `receipt_sha256`. `StudySplitReceipt` must bind DEV/HOLDOUT Dataset and authoring-manifest refs, common Index/config refs, the four axis summaries, `authorization_receipt_ref`, `recorded_at`, `recorded_by`, and `receipt_sha256`. Parsers accept bytes, reject duplicate JSON keys through the repository parser, validate Pydantic, and exact-match the self hash calculated with the hash field omitted.
+  `IndexBuildReceipt` must bind `dataset_ref`, `evidence_mapping_ref`, `source_snapshot_ref`, `evidence_index_ref`, `build_config_ref`, `adapter_artifact_ref`, `canonicalization_spec_version`, ordered bridge entries, `built_at`, `built_by`, and `receipt_sha256`. #178 runtime-owned reference versions, Source versions, and canonicalization versions use a bounded opaque token rather than `SemanticVersion`, so values such as `mfds-synthetic@1`, `knowledge-text@1`, and `<artifact-code>@1` remain exact-matchable. `StudySplitReceipt` must bind DEV/HOLDOUT Dataset and authoring-manifest refs, common Index/config refs, the four axis summaries, `authorization_receipt_ref`, `recorded_at`, `recorded_by`, and `receipt_sha256`. Parsers accept bytes, reject duplicate JSON keys through the repository parser, validate Pydantic, and exact-match the self hash calculated with the hash field omitted.
 
 - [ ] **Step 4: Verify GREEN**
 

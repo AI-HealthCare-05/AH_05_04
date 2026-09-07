@@ -35,21 +35,23 @@ _PHASE_0_CHECK_CATALOG = {
     "TASK_1_PROVENANCE_CONTRACTS": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
-        "57 passed",
+        "61 passed",
     ),
     "TASK_2_SCHEMA_SET_EXPORT": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest "
         "ai_worker/tests/evaluation/test_schema_exports.py::"
         "test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable "
         "ai_worker/tests/evaluation/test_schema_exports.py::"
-        "test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary -q",
-        "5 passed",
+        "test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary "
+        "ai_worker/tests/evaluation/test_schema_exports.py::"
+        "test_schema_set_1_3_study_split_axis_cardinality_is_portable -q",
+        "6 passed",
     ),
     "TASK_3_LOADER_BINDING": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_authoring_identity_loader.py "
         "ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
-        "151 passed, 5 skipped",
+        "165 passed, 6 skipped",
     ),
 }
 _PHASE_0_CHECK_IDS = tuple(_PHASE_0_CHECK_CATALOG)
@@ -97,7 +99,7 @@ class ValidationCheck(StrictContractModel):
 class CandidateSchemaSetRef(StrictContractModel):
     id: Literal["rag-eval.schema-set"]
     version: Literal["1.3.0"]
-    hash: Literal["611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158"]
+    hash: Literal["ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"]
 
 
 class Issue273ValidationStatus(StrictContractModel):

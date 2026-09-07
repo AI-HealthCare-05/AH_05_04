@@ -539,7 +539,7 @@ def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
         ),
         (
             "operational/rag-eval.study-split-receipt.schema.json",
-            "StudySplitAxisSummary",
+            "QuestionTemplateAxisSummary",
             "comparison_count",
         ),
     ],
@@ -562,6 +562,46 @@ def test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_bound
 
     assert validator.is_valid((2**53) - 1)
     assert not validator.is_valid(2**53)
+
+
+def test_schema_set_1_3_study_split_axis_cardinality_is_portable() -> None:
+    document = cast(
+        dict[str, Any],
+        schema_documents("1.3.0")["operational/rag-eval.study-split-receipt.schema.json"],
+    )
+    properties = cast(dict[str, Any], document["properties"])
+    axis_summaries = cast(dict[str, Any], properties["axis_summaries"])
+    assert axis_summaries["minItems"] == 4
+    assert axis_summaries["maxItems"] == 4
+    assert "minLength" not in axis_summaries
+    assert "maxLength" not in axis_summaries
+
+    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
+    portable_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": document["$defs"],
+        **axis_summaries,
+    }
+    four_axes = [
+        {"axis": axis, "comparison_count": 1, "intersection_count": 0}
+        for axis in ("question_template", "source_segment", "medication_family", "transform_origin")
+    ]
+    validator = jsonschema.Draft202012Validator(portable_schema)
+
+    assert validator.is_valid(four_axes)
+    assert not validator.is_valid([*four_axes, four_axes[0]])
+    duplicated_axes = [*four_axes[:-1], four_axes[0]]
+    reordered_axes = [four_axes[1], four_axes[0], *four_axes[2:]]
+    assert not validator.is_valid(duplicated_axes)
+    assert not validator.is_valid(reordered_axes)
+    assert not validator.is_valid([{}, {}, {}, {}])
+    for invalid_summary in (
+        {"axis": "question_template", "intersection_count": 0},
+        {"axis": "question_template", "comparison_count": 0, "intersection_count": 0},
+        {"axis": "question_template", "comparison_count": 1, "intersection_count": 1},
+        {"axis": "question_template", "comparison_count": 1, "intersection_count": 0, "extra": True},
+    ):
+        assert not validator.is_valid([invalid_summary, *four_axes[1:]])
 
 
 def _containing_approval_role_condition(roles: list[str]) -> dict[str, Any]:

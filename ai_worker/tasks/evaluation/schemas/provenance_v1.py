@@ -30,6 +30,21 @@ def _leakage_axis_from_wire(value: object) -> object:
 
 PositiveInteger = Annotated[SafeInteger, Field(gt=0)]
 NonEmptyText = Annotated[str, StringConstraints(strict=True, min_length=1)]
+RuntimeVersionToken = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[^\s\x00-\x1f\x7f]+$",
+    ),
+]
+
+
+class RuntimeArtifactReference(StrictContractModel):
+    id: StableId
+    version: RuntimeVersionToken
+    hash: Sha256Hex
 
 
 class AuthoringIdentityEntry(StrictContractModel):
@@ -55,7 +70,7 @@ class AuthoringIdentityManifest(StrictContractModel):
     manifest_version: SemanticVersion
     dataset_code: StableId
     dataset_version: SemanticVersion
-    canonicalization_spec_version: SemanticVersion
+    canonicalization_spec_version: Literal["1.0.0"]
     entries: Annotated[
         tuple[AuthoringIdentityEntry, ...],
         BeforeValidator(_tuple_from_wire),
@@ -80,7 +95,7 @@ class IndexBridgeEntry(StrictContractModel):
     evidence_key: StableId
     knowledge_chunk_ref: StableId
     source_locator: NonEmptyText
-    source_version: SemanticVersion
+    source_version: RuntimeVersionToken
     content_sha256: Sha256Hex
 
 
@@ -91,11 +106,11 @@ class IndexBuildReceipt(StrictContractModel):
     receipt_version: SemanticVersion
     dataset_ref: ImmutableReference
     evidence_mapping_ref: ImmutableReference
-    source_snapshot_ref: ImmutableReference
-    evidence_index_ref: ImmutableReference
-    build_config_ref: ImmutableReference
-    adapter_artifact_ref: ImmutableReference
-    canonicalization_spec_version: SemanticVersion
+    source_snapshot_ref: RuntimeArtifactReference
+    evidence_index_ref: RuntimeArtifactReference
+    build_config_ref: RuntimeArtifactReference
+    adapter_artifact_ref: RuntimeArtifactReference
+    canonicalization_spec_version: RuntimeVersionToken
     bridge_entries: Annotated[
         tuple[IndexBridgeEntry, ...],
         BeforeValidator(_tuple_from_wire),
@@ -123,6 +138,22 @@ class StudySplitAxisSummary(StrictContractModel):
     intersection_count: Literal[0]
 
 
+class QuestionTemplateAxisSummary(StudySplitAxisSummary):
+    axis: Literal[LeakageAxis.QUESTION_TEMPLATE]
+
+
+class SourceSegmentAxisSummary(StudySplitAxisSummary):
+    axis: Literal[LeakageAxis.SOURCE_SEGMENT]
+
+
+class MedicationFamilyAxisSummary(StudySplitAxisSummary):
+    axis: Literal[LeakageAxis.MEDICATION_FAMILY]
+
+
+class TransformOriginAxisSummary(StudySplitAxisSummary):
+    axis: Literal[LeakageAxis.TRANSFORM_ORIGIN]
+
+
 class StudySplitReceipt(StrictContractModel):
     schema_id: Literal["rag-eval.study-split-receipt"]
     schema_version: Literal["1.0.0"]
@@ -132,7 +163,7 @@ class StudySplitReceipt(StrictContractModel):
     holdout_dataset_ref: ImmutableReference
     dev_authoring_identity_manifest_ref: ImmutableReference
     holdout_authoring_identity_manifest_ref: ImmutableReference
-    evidence_index_ref: ImmutableReference
+    evidence_index_ref: RuntimeArtifactReference
     evaluation_config_ref: ImmutableReference
     gold_schema_ref: ImmutableReference
     canonical_identity_hmac_algorithm_ref: ImmutableReference
@@ -141,9 +172,13 @@ class StudySplitReceipt(StrictContractModel):
     simple_substitution_fingerprint_algorithm_ref: ImmutableReference
     transform_fingerprint_algorithm_ref: ImmutableReference
     axis_summaries: Annotated[
-        tuple[StudySplitAxisSummary, ...],
+        tuple[
+            QuestionTemplateAxisSummary,
+            SourceSegmentAxisSummary,
+            MedicationFamilyAxisSummary,
+            TransformOriginAxisSummary,
+        ],
         BeforeValidator(_tuple_from_wire),
-        Field(min_length=4, max_length=4),
     ]
     authorization_receipt_ref: ImmutableReference
     recorded_at: UtcTimestamp

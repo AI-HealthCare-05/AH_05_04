@@ -9,7 +9,7 @@ import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import load_dataset
+from ai_worker.tasks.evaluation.loaders import _resolve_json_locator, load_dataset
 from ai_worker.tasks.evaluation.schema_exports import write_schema_documents
 from ai_worker.tests.evaluation.test_loaders import SOURCE_EVALS, MutableDatasetFixture
 
@@ -25,10 +25,15 @@ def _refresh_self_hash(value: dict[str, Any]) -> None:
 
 def _authoring_payload(fixture: MutableDatasetFixture) -> dict[str, Any]:
     manifest = fixture.manifest_value()
+    evidence = fixture.read(fixture.root / "retrieval/evidence/dev-foundation-v1.evidence-mapping.json")
+    evidence_by_id = {item["evidence_ref_id"]: item for item in evidence["entries"]}
     entries = []
     for order, resource in enumerate(manifest["case_resources"], start=1):
         case = fixture.read(fixture.root / resource["path"])
         leakage = case["leakage_group_ids"]
+        evidence_ref_id = case["expected"]["relevant_evidence_refs"][0]
+        evidence_entry = evidence_by_id[evidence_ref_id]
+        source_resource = fixture.read(fixture.root / evidence_entry["fixture_record_ref"]["path"])
         entries.append(
             {
                 "member_order": order,
@@ -39,8 +44,10 @@ def _authoring_payload(fixture: MutableDatasetFixture) -> dict[str, Any]:
                 "transform_origin_id": leakage["transform_origin"],
                 "question_template_spec": f"template specification {order}",
                 "source_snapshot_ref": case["context"]["runtime_fixture"]["source_snapshot_ref"],
-                "source_locator": f"synthetic-section-{order}",
-                "source_chunk_sha256": "a" * 64,
+                "source_locator": evidence_entry["locator"],
+                "source_chunk_sha256": canonical_sha256(
+                    _resolve_json_locator(source_resource, evidence_entry["locator"])
+                ),
                 "medication_family_fixture_id": f"synthetic-medication-family-{order}",
                 "base_intent_seed": f"synthetic-base-intent-{order}",
                 "transform_spec": f"synthetic transform specification {order}",
@@ -199,7 +206,7 @@ def test_loader_rejects_authoring_identity_self_hash_mismatch(
     authoring_dataset: tuple[MutableDatasetFixture, dict[str, Any]],
 ) -> None:
     fixture, payload = authoring_dataset
-    payload["canonicalization_spec_version"] = "1.1.0"
+    payload["manifest_version"] = "1.1.0"
     _write_authoring(fixture, payload, refresh_self_hash=False)
 
     _assert_error(fixture, EvaluationErrorCode.HASH_MISMATCH)
@@ -262,6 +269,91 @@ def test_loader_rejects_each_authoring_identity_leakage_mismatch(
     _write_authoring(fixture, payload)
 
     _assert_error(fixture, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+@pytest.mark.parametrize(
+    ("field", "mismatched_value"),
+    [
+        (
+            "source_snapshot_ref",
+            {"id": "unrelated-source-snapshot", "version": "9.9.9", "hash": "f" * 64},
+        ),
+        ("source_locator", "$.unrelated.record"),
+        ("source_chunk_sha256", "f" * 64),
+    ],
+)
+def test_loader_rejects_authoring_identity_source_provenance_mismatch(
+    authoring_dataset: tuple[MutableDatasetFixture, dict[str, Any]],
+    field: str,
+    mismatched_value: object,
+) -> None:
+    fixture, payload = authoring_dataset
+    payload["entries"][0][field] = mismatched_value
+    _write_authoring(fixture, payload)
+
+    _assert_error(fixture, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_rejects_rehashed_provenance_from_real_but_unreferenced_evidence(
+    authoring_dataset: tuple[MutableDatasetFixture, dict[str, Any]],
+) -> None:
+    fixture, payload = authoring_dataset
+    manifest = fixture.manifest_value()
+    first_case = fixture.read(fixture.root / manifest["case_resources"][0]["path"])
+    referenced = set(first_case["expected"]["relevant_evidence_refs"])
+    evidence = fixture.read(fixture.root / "retrieval/evidence/dev-foundation-v1.evidence-mapping.json")
+    unrelated = next(item for item in evidence["entries"] if item["evidence_ref_id"] not in referenced)
+    resource = fixture.read(fixture.root / unrelated["fixture_record_ref"]["path"])
+    payload["entries"][0]["source_locator"] = unrelated["locator"]
+    payload["entries"][0]["source_chunk_sha256"] = canonical_sha256(
+        _resolve_json_locator(resource, unrelated["locator"])
+    )
+    _write_authoring(fixture, payload)
+
+    _assert_error(fixture, EvaluationErrorCode.MANIFEST_INVALID)
+
+
+def test_loader_accepts_second_referenced_evidence_as_authoring_source(
+    authoring_dataset: tuple[MutableDatasetFixture, dict[str, Any]],
+) -> None:
+    fixture, payload = authoring_dataset
+    manifest = fixture.manifest_value()
+    evidence = fixture.read(fixture.root / "retrieval/evidence/dev-foundation-v1.evidence-mapping.json")
+    evidence_by_id = {item["evidence_ref_id"]: item for item in evidence["entries"]}
+    selected: tuple[int, dict[str, Any]] | None = None
+    for index, case_resource in enumerate(manifest["case_resources"]):
+        case = fixture.read(fixture.root / case_resource["path"])
+        refs = case["expected"]["relevant_evidence_refs"]
+        if len(refs) > 1:
+            selected = (index, evidence_by_id[refs[1]])
+            break
+    assert selected is not None
+    case_index, mapping = selected
+    resource = fixture.read(fixture.root / mapping["fixture_record_ref"]["path"])
+    payload["entries"][case_index]["source_locator"] = mapping["locator"]
+    payload["entries"][case_index]["source_chunk_sha256"] = canonical_sha256(
+        _resolve_json_locator(resource, mapping["locator"])
+    )
+    _write_authoring(fixture, payload)
+
+    loaded = load_dataset(fixture.manifest, evals_root=fixture.root)
+
+    assert loaded.authoring_identity_manifest is not None
+
+
+@pytest.mark.parametrize(
+    "locator",
+    ["$", "$.", "$.items[]", "$.items[-1]", "$.items[01]", "$.items[١]", "$.items[" + ("9" * 5000) + "]", "$.items[2]"],
+)
+def test_json_locator_rejects_noncanonical_or_invalid_array_indices(locator: str) -> None:
+    with pytest.raises(EvaluationValidationError) as caught:
+        _resolve_json_locator({"items": ["first", "second"]}, locator)
+
+    assert caught.value.code is EvaluationErrorCode.MANIFEST_INVALID
+
+
+def test_json_locator_accepts_canonical_array_index() -> None:
+    assert _resolve_json_locator({"items": ["first", "second"]}, "$.items[1]") == "second"
 
 
 def test_loader_rejects_authoring_identity_member_schema_version_mismatch(

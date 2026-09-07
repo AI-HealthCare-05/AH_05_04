@@ -69,7 +69,7 @@ Loader는 manifest가 선택한 1.2 bundle로 Case뿐 아니라 Evidence Mapping
 
 ### Evaluation Schema Set 1.3 후보
 
-자연어 Retrieval 평가 provenance 확장 후보는 `rag-eval.schema-set@1.3.0`, SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
+자연어 Retrieval 평가 provenance 확장 후보는 `rag-eval.schema-set@1.3.0`, SHA-256 `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
 
 21개 member는 Schema Set 1.2의 Dataset Manifest만 `rag-eval.dataset-manifest@1.3.0`으로 교체하고, 나머지 17개 member의 version과 canonical bytes를 그대로 재사용한다. 다음 세 계약은 member `1.0.0`으로 추가한다.
 
@@ -82,6 +82,19 @@ Dataset Manifest 1.3은 authoring identity manifest reference를 필수로 결�
 신규 provenance의 양의 정수는 canonical safe-integer 상한 `2^53-1`을 넘을 수 없다. Study Split의 DEV와
 HOLDOUT은 Dataset reference `id`와 Authoring Identity Manifest reference `id`가 각각 달라야 하며, 같은
 logical ID의 version/hash만 바꾼 입력은 유효한 분리 증거가 아니다.
+
+Study Split의 `axis_summaries`는 네 leakage 축을 정확히 한 번씩 가지며 portable JSON Schema도
+`minItems=4`, `maxItems=4`와 ordered `prefixItems`로 동일한 cardinality·축 순서를 강제한다. Authoring Identity의 `source_snapshot_ref`는
+해당 Case runtime과 exact-match해야 한다. `source_locator`는 Case가 참조하는 Gold Evidence Mapping entry와
+일치해야 하며, `source_chunk_sha256`은 그 entry의 검증된 fixture resource에서 locator가 선택한 JSON 값의
+canonical SHA-256과 일치해야 한다.
+
+Authoring Identity의 canonicalization version은 현재 지원하는 `1.0.0`으로 고정한다. JSON locator의 배열
+index는 ASCII canonical decimal `0|[1-9][0-9]*`만 허용한다. Index Build Receipt가 #178 runtime과
+exact-match하는 Source·Index·build config·Adapter artifact reference의 version, Source version 및
+canonicalization version은 공백 없는 bounded opaque token으로 보존하며 `mfds-synthetic@1`,
+`knowledge-text@1`, `<artifact-code>@1` 형식을 손실 없이 수용한다. Study Split Receipt의 공통
+`evidence_index_ref`도 같은 runtime reference 계약을 사용한다.
 
 ## 비교 원칙
 

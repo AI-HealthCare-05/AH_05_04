@@ -19,7 +19,7 @@ review event가 필요하며, 문서와 schema export의 존재만으로 그 eve
 | --- | --- |
 | Schema Set ID | `rag-eval.schema-set` |
 | Schema Set version | `1.3.0` |
-| Schema Set SHA-256 | `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158` |
+| Schema Set SHA-256 | `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325` |
 | Canonical member root | `evals/schemas/1.3.0/` |
 | Member count | `21` |
 
@@ -43,6 +43,18 @@ bytes를 그대로 재사용한다. 다음 세 member를 `1.0.0`으로 추가한
 `1..2^53-1` 범위만 허용한다. Study Split Receipt의 DEV/HOLDOUT Dataset reference와 두 Authoring Identity
 Manifest reference는 각각 서로 다른 logical `id`를 사용해야 하며 version이나 hash 차이만으로 분리를
 주장할 수 없다.
+
+Study Split의 네 leakage axis cardinality는 Python validation과 portable JSON Schema의 `minItems=4`,
+`maxItems=4`, ordered `prefixItems`에서 같아야 한다. Authoring Identity sidecar의 source snapshot은 해당 Case runtime과
+exact-match하고, locator와 canonical chunk hash는 그 Case가 참조하는 검증된 Gold Evidence resource에서
+해석한 값과 exact-match한다. 임의 source provenance로 sidecar self-hash와 file hash만 다시 계산하는 입력은
+Loader가 거부한다.
+
+Authoring Identity canonicalization version은 지원 알고리즘 `1.0.0`으로 고정하고, locator 배열 index는
+ASCII canonical decimal만 허용한다. Index Build Receipt의 #178 runtime version 값은 SemVer로 재해석하지
+않고 최대 256자의 bounded opaque token으로 보존해 `mfds-synthetic@1`, `knowledge-text@1` 및
+`<artifact-code>@1` reference version을 exact-match할 수 있어야 한다. Study Split Receipt의 공통
+Knowledge Index reference도 이 runtime reference 계약을 사용한다.
 
 ## 적용 경계
 

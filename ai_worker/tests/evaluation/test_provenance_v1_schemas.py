@@ -223,6 +223,63 @@ def test_parsers_accept_valid_payloads_and_verify_self_hash(
     assert getattr(parsed, hash_field) == payload[hash_field]
 
 
+def test_index_receipt_accepts_actual_retriever_provenance_versions() -> None:
+    payload = _index_receipt_payload()
+    for field, artifact_code in (
+        ("source_snapshot_ref", "source-snapshot"),
+        ("evidence_index_ref", "knowledge-index"),
+        ("build_config_ref", "retrieval-config"),
+        ("adapter_artifact_ref", "knowledge-evidence-retrieval.actual.v1"),
+    ):
+        payload[field]["version"] = f"{artifact_code}@1"
+    payload["canonicalization_spec_version"] = "knowledge-text@1"
+    payload["bridge_entries"][0]["source_version"] = "mfds-synthetic@1"
+    payload["bridge_entries"][1]["source_version"] = "internal:fixture-v1:" + ("a" * 64)
+    payload = _with_self_hash(payload, "receipt_sha256")
+
+    parsed = parse_index_build_receipt_bytes(canonical_json_bytes(payload))
+
+    assert parsed.canonicalization_spec_version == "knowledge-text@1"
+    assert parsed.bridge_entries[0].source_version == "mfds-synthetic@1"
+    assert parsed.evidence_index_ref.version == "knowledge-index@1"
+
+
+def test_index_receipt_rejects_unbounded_or_whitespace_runtime_versions() -> None:
+    for field, value in (
+        ("canonicalization_spec_version", "knowledge text@1"),
+        ("canonicalization_spec_version", "v" * 257),
+    ):
+        payload = _index_receipt_payload()
+        payload[field] = value
+        payload = _with_self_hash(payload, "receipt_sha256")
+
+        with pytest.raises(EvaluationValidationError) as caught:
+            parse_index_build_receipt_bytes(canonical_json_bytes(payload))
+
+        assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_authoring_manifest_rejects_unsupported_canonicalization_version() -> None:
+    payload = _authoring_payload()
+    payload["canonicalization_spec_version"] = "9.9.9"
+    payload = _with_self_hash(payload, "manifest_sha256")
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        parse_authoring_identity_manifest_bytes(canonical_json_bytes(payload))
+
+    assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_study_split_receipt_accepts_actual_knowledge_index_version() -> None:
+    payload = _study_split_payload()
+    payload["evidence_index_ref"]["version"] = "knowledge-index@1"
+    payload = _with_self_hash(payload, "receipt_sha256")
+
+    parsed = parse_study_split_receipt_bytes(canonical_json_bytes(payload))
+
+    assert parsed.evidence_index_ref.version == "knowledge-index@1"
+
+
 @pytest.mark.parametrize(
     ("payload_factory", "parser", "hash_field"),
     [

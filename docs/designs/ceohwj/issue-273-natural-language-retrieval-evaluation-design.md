@@ -39,7 +39,7 @@ HOLDOUT 40개의 질문 본문과 실제 Retriever 성능 수치는 승인된 �
 `EvidenceSearchPort`·rerank Adapter와 versioned Knowledge Evidence Index 연결이 없다. 따라서 이번 단계에서
 실행 가능한 것은 질문 matrix와 Schema Set `1.2.0` 호환 Case 초안의 준비까지다. provenance 확장 후보는
 [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md),
-SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158`이며 상태는
+SHA-256 `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`이며 상태는
 `Candidate · Review Required`다. 책임 리뷰어의 실제 Pull Request review event 전에는 승인된 Schema Set이나
 최종 Dataset graph 입력으로 취급하지 않고 Freeze하지 않는다. Kernel fake Port나 replay 순위를 실제 검색
 결과로 재해석하지 않는다.
@@ -141,7 +141,7 @@ Answer·Citation 검증과 의사·약사 상담 안내를 완료 조건으로 �
 | Partition | `DEV` 60, 나머지 0 |
 | 초기 상태 | `DRAFT` |
 | Authoring base | `rag-eval.schema-set@1.2.0` |
-| Final Schema Set candidate | [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md), SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158` · `Candidate · Review Required`; 책임 리뷰어 Pull Request review event 전에는 미승인 |
+| Final Schema Set candidate | [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md), SHA-256 `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325` · `Candidate · Review Required`; 책임 리뷰어 Pull Request review event 전에는 미승인 |
 | Evaluation Profile runtime eligible | `false` |
 
 추적 대상 파일은 기존 `evals/` authoring graph 구조를 그대로 사용한다.
@@ -252,7 +252,12 @@ repository sidecar에 둘 수 있지만, HOLDOUT canonical identity input과 모
 sidecar는 canonical derivation algorithm version, question template specification, Source/locator/chunk hash,
 reserved medication family fixture identity, base-intent seed와 transform specification을 가진다. Dataset별
 sidecar content hash는 protected artifact와 study split receipt에 결속하며 validator가 Case set과 exact-match
-한다. 입력 누락, 중복 Case, derivation version 불일치 또는 hash 불일치는 Freeze 전 `INVALID/null`로 닫는다.
+한다. 각 entry의 Source Snapshot은 Case runtime과 같아야 하고, locator는 Case가 참조하는 Gold Evidence
+Mapping entry 중 하나와 같아야 한다. chunk hash는 검증된 fixture resource에서 그 locator가 선택한 JSON 값의
+canonical SHA-256으로 계산한다. canonical derivation algorithm은 현재 `1.0.0`만 지원하고 다른 version은
+해석하지 않는다. locator의 배열 index는 ASCII canonical decimal `0|[1-9][0-9]*`만 허용한다. 입력 누락,
+중복 Case, derivation version 불일치, source provenance 불일치
+또는 hash 불일치는 Freeze 전 `INVALID/null`로 닫는다.
 
 ## 8. Gold Evidence와 합성 Index
 
@@ -374,6 +379,12 @@ resource 파일 byte hash를 유지한다. 개별 chunk hash는 Index resource r
 실제 선택 결과는 `evidence_key`, `knowledge_chunk_ref`, locator, source version, per-chunk content hash,
 Source Snapshot과 Knowledge Index ref를 receipt와 모두 exact-match해야 한다. 하나라도 다르면 miss로
 채점하지 않고 Case를 `INVALID/null`로 닫는다.
+
+#178이 전달하는 Source version, canonicalization version과 Source Snapshot·Knowledge Index·build config·
+Adapter artifact reference version은 SemVer로 변환하지 않고 공백 없는 최대 256자의 opaque token으로
+receipt에 보존한다. 따라서 `mfds-synthetic@1`, `knowledge-text@1`, `<artifact-code>@1`을 그대로 수용하고
+runtime 결과와 exact-match한다. Study Split Receipt의 study-wide Knowledge Index reference도 동일한
+runtime reference 계약으로 Index Build Receipt와 exact-match한다.
 
 ### Kernel 상태 매핑
 
@@ -510,7 +521,7 @@ Index build receipt와 study split receipt는 기존 `ProtectedArtifactReceipt`�
 
 계약 문서는 `docs/contracts/targets/post-mvp-1/`와 계약 index에 등록돼 있으며, 후보
 [`rag-eval.schema-set@1.3.0`](../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md),
-SHA-256 `611738652c2f7cb8b79b091669212a257474c4d3d0aa81a829a4f534bb6a3158`에서 schema member·canonical
+SHA-256 `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`에서 schema member·canonical
 hash·registry를 고정한다. validator는 unknown key, ID/version/hash 불일치, per-record bridge,
 canonicalization version, HMAC algorithm/key version, intersection count와 승인 역할을 fail-closed 검증한다.
 이 Schema Set은 `Candidate · Review Required`이며 책임 리뷰어의 실제 Pull Request review event 전에는 승인된
