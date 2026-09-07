@@ -53,6 +53,10 @@ def test_environment_setup_checks_both_service_readiness_and_host_ports() -> Non
     assert "redis-cli ping" in script
     assert "port postgres 5432" in script
     assert "port redis 6379" in script
+    assert "TEST_SERVICE_READY_ATTEMPTS=15" in script
+    assert "TEST_SERVICE_READY_INTERVAL_SECONDS=2" in script
+    assert "wait_for_postgres" in script
+    assert "wait_for_redis" in script
 
 
 @pytest.mark.parametrize("unsafe_name", ["production.env", "docker-compose.prod.yml"])

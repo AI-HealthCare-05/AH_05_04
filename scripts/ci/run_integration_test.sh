@@ -12,6 +12,7 @@ ENVIRONMENT_ERROR_EXIT_CODE=2
 source scripts/ci/test_environment.sh
 
 if ! find tests/integration -type f -name 'test_*.py' -print -quit | grep -q .; then
+  # 이 runner는 전체 integration 범위를 보장하므로 빈 디렉터리를 성공으로 처리하지 않습니다.
   test_environment_error "tests/integration에서 실행할 테스트를 찾지 못했습니다."
 fi
 

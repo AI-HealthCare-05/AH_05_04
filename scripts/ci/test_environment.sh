@@ -7,6 +7,8 @@ ENV_FILE="${ENV_FILE:-envs/.local.env}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 ENVIRONMENT_ERROR_EXIT_CODE="${ENVIRONMENT_ERROR_EXIT_CODE:-1}"
 TEST_DATABASE_NAME="test"
+TEST_SERVICE_READY_ATTEMPTS=15
+TEST_SERVICE_READY_INTERVAL_SECONDS=2
 
 test_environment_error() {
   echo
@@ -58,6 +60,7 @@ run_with_integration_test_environment() {
   env \
     -u DB_USER \
     -u DB_PASSWORD \
+    -u REDIS_PASSWORD \
     -u TEST_REDIS_PASSWORD \
     DB_HOST=127.0.0.1 \
     DB_PORT="$HOST_DB_PORT" \
@@ -74,13 +77,58 @@ run_with_integration_test_environment() {
     uv run --env-file "$ENV_FILE" "$@"
 }
 
+wait_for_postgres() {
+  local attempt
+  local postgres_ready
+
+  for ((attempt = 1; attempt <= TEST_SERVICE_READY_ATTEMPTS; attempt += 1)); do
+    postgres_ready="$(
+      docker compose \
+        --env-file "$ENV_FILE" \
+        -f "$COMPOSE_FILE" \
+        exec -T postgres \
+        sh -lc 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' 2>/dev/null || true
+    )"
+    if [[ "$postgres_ready" == *"accepting connections"* ]]; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$TEST_SERVICE_READY_ATTEMPTS" ]; then
+      sleep "$TEST_SERVICE_READY_INTERVAL_SECONDS"
+    fi
+  done
+
+  return 1
+}
+
+wait_for_redis() {
+  local attempt
+  local redis_ready
+
+  for ((attempt = 1; attempt <= TEST_SERVICE_READY_ATTEMPTS; attempt += 1)); do
+    redis_ready="$(
+      docker compose \
+        --env-file "$ENV_FILE" \
+        -f "$COMPOSE_FILE" \
+        exec -T redis redis-cli ping 2>/dev/null || true
+    )"
+    if [ "$redis_ready" = "PONG" ]; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$TEST_SERVICE_READY_ATTEMPTS" ]; then
+      sleep "$TEST_SERVICE_READY_INTERVAL_SECONDS"
+    fi
+  done
+
+  return 1
+}
+
 prepare_test_environment() {
   local env_file_lower
   local compose_file_lower
   local selected_env
   local selected_env_lower
-  local postgres_ready
-  local redis_ready
 
   if [ ! -f "$ENV_FILE" ]; then
     test_environment_error "환경 파일을 찾을 수 없습니다: $ENV_FILE"
@@ -103,8 +151,8 @@ prepare_test_environment() {
     awk -F= '
       /^[[:space:]]*ENV[[:space:]]*=/ {
         value = substr($0, index($0, "=") + 1)
-        gsub(/^[[:space:]\"]+/, "", value)
-        gsub(/[[:space:]\"]+$/, "", value)
+        gsub(/^[[:space:]"]+/, "", value)
+        gsub(/[[:space:]"]+$/, "", value)
         print value
       }
     ' "$ENV_FILE" |
@@ -145,25 +193,12 @@ prepare_test_environment() {
     test_environment_error "Redis가 실행 중이 아닙니다. 실행: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d redis"
   fi
 
-  postgres_ready="$(
-    docker compose \
-      --env-file "$ENV_FILE" \
-      -f "$COMPOSE_FILE" \
-      exec -T postgres \
-      sh -lc 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' 2>/dev/null || true
-  )"
-  if [[ "$postgres_ready" != *"accepting connections"* ]]; then
-    test_environment_error "PostgreSQL이 아직 연결을 받을 준비가 되지 않았습니다. 잠시 후 다시 실행해 주세요."
+  if ! wait_for_postgres; then
+    test_environment_error "PostgreSQL이 30초 안에 연결 준비를 마치지 못했습니다. Compose 로그를 확인해 주세요."
   fi
 
-  redis_ready="$(
-    docker compose \
-      --env-file "$ENV_FILE" \
-      -f "$COMPOSE_FILE" \
-      exec -T redis redis-cli ping 2>/dev/null || true
-  )"
-  if [ "$redis_ready" != "PONG" ]; then
-    test_environment_error "Redis가 아직 연결을 받을 준비가 되지 않았습니다. 잠시 후 다시 실행해 주세요."
+  if ! wait_for_redis; then
+    test_environment_error "Redis가 30초 안에 연결 준비를 마치지 못했습니다. Compose 로그를 확인해 주세요."
   fi
 
   HOST_DB_PORT="$(

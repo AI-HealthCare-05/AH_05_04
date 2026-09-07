@@ -115,6 +115,8 @@ def test_shared_environment_forces_literal_test_database_and_loopback_services()
     assert "DB_HOST=127.0.0.1" in backend_body
     assert "TEST_REDIS_HOST=127.0.0.1" in integration_body
     assert 'TEST_REDIS_PORT="$HOST_REDIS_PORT"' in integration_body
+    assert "-u REDIS_PASSWORD" in integration_body
+    assert "-u TEST_REDIS_PASSWORD" in integration_body
 
 
 def test_default_worker_runner_preserves_approved_redis_defaults() -> None:
@@ -123,6 +125,19 @@ def test_default_worker_runner_preserves_approved_redis_defaults() -> None:
 
     assert "REDIS_HOST=127.0.0.1" not in worker_body
     assert "TEST_REDIS_HOST=127.0.0.1" not in worker_body
+
+
+def test_default_runner_uses_isolated_environment_for_redis_integration_tests() -> None:
+    """같은 Redis 통합테스트는 어느 로컬 runner에서나 동일한 host 환경을 사용합니다."""
+    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("if ! run_with_integration_test_environment")
+    end = script.index("; then", start)
+    isolated_call = script[start:end]
+
+    assert "tests/integration/test_outbox_publisher.py" in isolated_call
+    assert "test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle" in isolated_call
+    assert "tests/integration/test_worker_dlq_outbox_repository.py" in isolated_call
+    assert "tests/integration/test_worker_recovery_repository.py" in isolated_call
 
 
 def _is_forbidden_worker_backend_import(module_name: str) -> bool:
