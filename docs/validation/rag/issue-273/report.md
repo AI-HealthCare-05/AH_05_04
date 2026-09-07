@@ -5,7 +5,7 @@
 - Phase: `PHASE_A_DEV_AUTHORING`
 - Schema Set Status: `REVIEW_REQUIRED`
 - Dataset: `rag-natural-language-retrieval-dev@1.0.0` (`DRAFT`)
-- Dataset Manifest SHA-256: `1aaf0f6ddd24f049e45f6782c750d29b287abc6850e145e51198cd09cf46fd84`
+- Dataset Manifest SHA-256: `18a6a176ccce1edf996bf06e96c8b90b0a4d3edb3c9c10752c3c5792ce33dd9d`
 - Schema Set: `rag-eval.schema-set@1.3.0` `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`
 - Candidate Decision: [`docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md`](../../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md)
 - Approval Transition: `FUTURE_PULL_REQUEST_REVIEW_EVENT` by responsible reviewer `@hazelnutflavoured`; this future PR event has not occurred.
@@ -54,4 +54,4 @@ DEV cannot produce a Release PASS; Production remains closed.
 - The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-07T07:35:00.000000Z`. Canonical status SHA-256: `55ccb83d51ce7729317d0ac04410a2c4c0f0c90c021f09586f6000a889b81700`.
+Status updated at `2026-09-07T08:20:00.000000Z`. Canonical status SHA-256: `efec131346b5744cb82e7f6c42d84e2e6a5bf12bf7504003a0a70dd8c9056838`.

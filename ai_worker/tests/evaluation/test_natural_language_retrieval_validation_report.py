@@ -26,7 +26,7 @@ REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
 EVALS_ROOT = REPOSITORY_ROOT / "evals"
 DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
-DATASET_MANIFEST_HASH = "1aaf0f6ddd24f049e45f6782c750d29b287abc6850e145e51198cd09cf46fd84"
+DATASET_MANIFEST_HASH = "18a6a176ccce1edf996bf06e96c8b90b0a4d3edb3c9c10752c3c5792ce33dd9d"
 
 
 def _status_payload() -> dict[str, Any]:
