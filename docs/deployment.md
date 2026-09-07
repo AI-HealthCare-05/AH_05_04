@@ -70,6 +70,12 @@ AWS Free Plan의 단일 EC2에서 합성 데이터로 수행하는 내부 Stagin
 
 인프라가 확정되면 이미지 빌드, 환경변수 설정, DB 마이그레이션, 배포 및 롤백 절차를 기록합니다.
 
+### 운영 Redis 보안 기준
+
+Production Redis는 host port에 공개하지 않고 Docker 내부 network에서만 접근합니다. `infra/docker/docker-compose.prod.yml`의 Redis 서비스에는 `ports`를 두지 않습니다.
+
+Worker, Publisher, Reconciler가 Redis에 접근하는 non-local 환경에서는 `REDIS_PASSWORD`가 실제 secret 값으로 주입되어야 하며, 빈 값 또는 `replace-with-` placeholder는 startup 실패 조건입니다. 실제 Redis password는 저장소, Issue, PR, 로그에 기록하지 않습니다.
+
 ## 동기 AI 배포 기록
 
 OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단위 DB transaction과 connection을 유지합니다. 같은 채팅 세션의 요청은 row lock에서 추가로 직렬화됩니다. 배포마다 아래 값과 승인 결과를 실제 운영 설정 기준으로 기록합니다.
