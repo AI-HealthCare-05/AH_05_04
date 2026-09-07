@@ -7,12 +7,25 @@ services:
       - ws
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # requirepass를 --requirepass CLI 인자로 넘기면 컨테이너 프로세스 인자(`ps aux`,
+    # `docker top redis`, `/proc/<pid>/cmdline`)에 비밀번호 평문이 그대로 남는다. 대신
+    # 컨테이너 안에서만 임시 conf 파일을 생성해 그 경로만 인자로 넘긴다 — 값 자체는
+    # 이 sh 프로세스가 exec로 교체되기 전 stdin/redirection으로만 흐르고 별도 프로세스의
+    # argv로 노출되지 않는다.
     command:
       - sh
       - -c
-      - redis-server --requirepass "$${REDIS_PASSWORD}"
+      - |
+        set -e
+        umask 077
+        cat > /tmp/redis-runtime.conf <<CONF
+        requirepass $${REDIS_PASSWORD}
+        CONF
+        exec redis-server /tmp/redis-runtime.conf
     healthcheck:
-      test: [ "CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG" ]
+      # -a 플래그도 redis-cli 프로세스의 argv로 비밀번호를 노출한다. REDISCLI_AUTH 환경변수를
+      # 쓰면 같은 위험 없이 인증할 수 있고, "Using a password with '-a'" 경고도 사라진다.
+      test: [ "CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -21,10 +21,26 @@ def test_production_redis_is_not_published_to_host() -> None:
 def test_production_redis_requires_password() -> None:
     redis = _compose()["services"]["redis"]
     command = redis["command"]
+    script = command[2]
 
     assert redis["environment"] == {"REDIS_PASSWORD": "${REDIS_PASSWORD}"}
-    assert command == ["sh", "-c", 'redis-server --requirepass "$${REDIS_PASSWORD}"']
-    assert "REDIS_PASSWORD" in redis["healthcheck"]["test"][1]
+    assert command[:2] == ["sh", "-c"]
+    # requirepass 값은 conf 파일 경로로만 redis-server의 argv에 전달되어야 한다. --requirepass처럼
+    # 비밀번호를 직접 CLI 인자로 넘기면 `ps aux`/`docker top`/`/proc/<pid>/cmdline`에 평문이 남는다.
+    assert "--requirepass" not in script
+    assert "requirepass $${REDIS_PASSWORD}" in script
+    assert "exec redis-server /tmp/redis-runtime.conf" in script
+
+
+def test_production_redis_healthcheck_avoids_password_in_argv() -> None:
+    redis = _compose()["services"]["redis"]
+    healthcheck_command = redis["healthcheck"]["test"][1]
+
+    # redis-cli -a "<password>"도 redis-cli 프로세스의 argv에 비밀번호를 노출한다.
+    # REDISCLI_AUTH 환경변수 경유로 같은 위험 없이 인증해야 한다.
+    assert " -a " not in healthcheck_command
+    assert "REDISCLI_AUTH=" in healthcheck_command
+    assert "REDIS_PASSWORD" in healthcheck_command
 
 
 def test_production_ai_worker_receives_redis_settings() -> None:
