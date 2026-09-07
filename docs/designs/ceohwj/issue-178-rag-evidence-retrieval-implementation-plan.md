@@ -1148,6 +1148,8 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] duplicate fixture/candidate, detached config와 input-set hash mismatch 회귀를 고정한다.
 - [x] immutable `SensitiveText`를 불필요하게 unwrap·rewrap하지 않고 같은 instance로 전달한다.
 - [x] Source snapshot·Evidence Index·개별 Evidence content hash domain과 공개 Source 전용 SHA-256 경계를 문서화한다.
+- [x] record·candidate·`SensitiveText`를 exact runtime type으로 검증해 benign·stateful subclass를 typed failure로 거부한다.
+- [x] production `ai_worker` 모듈이 synthetic adapter 모듈을 import하지 않음을 CI 테스트로 고정한다.
 - [x] 아래 전체 검증 명령을 fresh 실행한다.
 
 ```bash

@@ -3,6 +3,7 @@ import hashlib
 import json
 from dataclasses import replace
 from decimal import localcontext
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -1638,6 +1639,72 @@ def test_synthetic_search_hit_reuses_immutable_sensitive_text() -> None:
     assert result.hits[0].content_text is content
 
 
+def test_synthetic_search_adapter_rejects_benign_sensitive_text_subclass() -> None:
+    class BenignSensitiveText(SensitiveText):
+        pass
+
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.one",
+        "knowledge-text@1",
+        BenignSensitiveText("합성 복약 정보"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter"))
+
+    result = adapter.search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
+def test_synthetic_search_adapter_rejects_stateful_sensitive_text_subclass() -> None:
+    # A stateful reveal() would let content_sha256 and content_text derive from different text.
+    call_count = [0]
+    first, second = "합성 근거 A", "합성 근거 B"
+
+    class StatefulSensitiveText(SensitiveText):
+        def reveal(self) -> str:
+            call_count[0] += 1
+            return first if call_count[0] <= 5 else second
+
+    record = SyntheticEvidenceRecord(
+        "knowledge:stateful",
+        "chunk-stateful",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.stateful",
+        "knowledge-text@1",
+        StatefulSensitiveText(first),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter"))
+
+    result = adapter.search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
 def test_lexical_adapter_rejects_numeric_threshold_payload() -> None:
     record = SyntheticEvidenceRecord(
         "knowledge:one",
@@ -2194,6 +2261,80 @@ def test_synthetic_rerank_adapter_rejects_non_synthetic_boundary(mutation: str) 
     adapter_ref = artifact("rerank-adapter" if mutation == "adapter" else "synthetic-rerank-adapter")
 
     result = VersionedEvidenceRerankAdapter(config, adapter_ref).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+@pytest.mark.parametrize("subclass", ["benign", "stateful"])
+def test_synthetic_rerank_adapter_rejects_sensitive_text_subclass(subclass: str) -> None:
+    call_count = [0]
+    text = "합성 복약 근거"
+
+    class BenignSensitiveText(SensitiveText):
+        pass
+
+    class StatefulSensitiveText(SensitiveText):
+        def reveal(self) -> str:
+            call_count[0] += 1
+            return text if call_count[0] <= 5 else f"{text} 변조"
+
+    content_text: SensitiveText = BenignSensitiveText(text) if subclass == "benign" else StatefulSensitiveText(text)
+    candidate = KnowledgeEvidenceCandidate(
+        provenance(),
+        content_text,
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
+    )
+    config = VersionedRerankConfig.create(
+        "rerank-config",
+        "rerank-config@synthetic-1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+def test_synthetic_rerank_adapter_rejects_candidate_subclass() -> None:
+    class SubclassedCandidate(KnowledgeEvidenceCandidate):
+        pass
+
+    candidate = SubclassedCandidate(
+        provenance(),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
+    )
+    config = VersionedRerankConfig.create(
+        "rerank-config",
+        "rerank-config@synthetic-1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        artifact("knowledge-index"),
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
 
     assert isinstance(result, EvidenceRerankFailure)
 
@@ -2821,3 +2962,17 @@ def test_kernel_fails_closed_when_rerank_top_k_exceeds_selection_limit() -> None
     assert outcome.execution_status is KernelExecutionStatus.DEPENDENCY_ERROR
     assert outcome.diagnostic_code is KernelDiagnosticCode.RERANK_RESULT_INVALID
     assert outcome.untrusted_selections == ()
+
+
+def test_synthetic_adapters_are_not_imported_by_production_modules() -> None:
+    package_root = Path(__file__).resolve().parents[2]
+    module_name = "evidence_retrieval_synthetic_adapters"
+    offenders = sorted(
+        path.relative_to(package_root).as_posix()
+        for path in package_root.rglob("*.py")
+        if "tests" not in path.parts
+        and path.name != f"{module_name}.py"
+        and module_name in path.read_text(encoding="utf-8")
+    )
+
+    assert offenders == []

@@ -139,8 +139,13 @@ Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
 각 adapter는 요청 reference뿐 아니라 현재 fixture/config payload를 다시 canonicalize해 artifact hash와
 exact-match한다. frozen dataclass가 `replace` 또는 저수준 mutation으로 분리되었거나 record/key/vector가
 잘못된 경우 성공 Receipt를 만들지 않고 typed failure를 반환한다. Index records와 dense vector는 각각
-tuple이어야 하고, record·`SensitiveText`·canonical Decimal 문자열의 정확한 런타임 타입도 검증한다.
-Threshold와 rerank weight 역시 JSON number가 아닌 canonical Decimal 문자열만 허용한다.
+tuple이어야 하고, record·candidate·`SensitiveText`는 `isinstance`가 아닌 exact runtime type으로 검증한다.
+따라서 `reveal()`을 재정의하지 않는 benign subclass와, 호출 순서에 따라 다른 본문을 돌려주는 stateful
+subclass 모두 typed failure로 닫힌다. 후자를 허용하면 provenance `content_sha256`과 이후 `content_text`
+reveal 결과가 서로 다른 본문에서 파생될 수 있다. Threshold와 rerank weight 역시 JSON number가 아닌
+canonical Decimal 문자열만 허용한다.
+
+이 모듈은 테스트만 import한다. `ai_worker` production 모듈이 이 모듈을 import하면 CI 테스트가 실패한다.
 
 이 모듈이 직접 적용하는 Index·stage config·adapter artifact는 artifact code 또는 version에 `synthetic`
 namespace가 있어야 한다. Source record도 `source_snapshot_ref` 또는 `source_version`으로 synthetic임을

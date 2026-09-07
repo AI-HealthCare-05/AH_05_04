@@ -418,14 +418,14 @@ def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
     evidence_keys: set[str] = set()
     stage_ranks: dict[EvidenceSearchStage, set[int]] = {}
     for candidate in request.candidates:
-        if not isinstance(candidate, KnowledgeEvidenceCandidate):
+        if type(candidate) is not KnowledgeEvidenceCandidate:
             return False
         provenance = candidate.provenance
         if (
             not _valid_provenance(provenance)
             or provenance.evidence_key in evidence_keys
             or provenance.evidence_index_ref != request.evidence_index_ref
-            or not isinstance(candidate.content_text, SensitiveText)
+            or type(candidate.content_text) is not SensitiveText
             or _source_content_sha256(candidate.content_text) != provenance.content_sha256
             or not isinstance(candidate.stage_signals, tuple)
             or not candidate.stage_signals
@@ -580,8 +580,8 @@ def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
     chunk_refs: set[str] = set()
     for record in value.records:
         if (
-            not isinstance(record, SyntheticEvidenceRecord)
-            or not isinstance(record.content_text, SensitiveText)
+            type(record) is not SyntheticEvidenceRecord
+            or type(record.content_text) is not SensitiveText
             or not isinstance(record.dense_vector, tuple)
             or not record.dense_vector
             or not all(_is_canonical_decimal(component) for component in record.dense_vector)
