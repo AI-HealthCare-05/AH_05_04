@@ -161,3 +161,48 @@ def test_safe_download_filename_does_not_reuse_original_filename(service: Medica
     assert "patient" not in filename
     assert "hypertension" not in filename
     assert "medication" not in filename
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra_bytes", [0, 1, 1024 * 1024])
+async def test_upload_read_stops_at_size_limit(
+    service: MedicalDocumentService,
+    extra_bytes: int,
+) -> None:
+    source = BytesIO(b"\xff\xd8\xff" + b"x" * (MAX_DOCUMENT_SIZE_BYTES - 3 + extra_bytes))
+    file = UploadFile(filename="prescription.jpg", file=source)
+
+    try:
+        content = await service._read_upload_content(file=file)
+
+        expected_read_size = min(
+            MAX_DOCUMENT_SIZE_BYTES + extra_bytes,
+            MAX_DOCUMENT_SIZE_BYTES + 1,
+        )
+        assert len(content) == expected_read_size
+        assert source.tell() == expected_read_size
+
+        validation_file = _file(
+            filename="prescription.jpg",
+            content_type="image/jpeg",
+        )
+
+        if extra_bytes == 0:
+            assert (
+                service._validate_file(
+                    file=validation_file,
+                    content=content,
+                )
+                == ".jpg"
+            )
+        else:
+            with pytest.raises(ApiError) as exc_info:
+                service._validate_file(
+                    file=validation_file,
+                    content=content,
+                )
+
+            assert exc_info.value.code == "UPLOAD_FILE_TOO_LARGE"
+            assert exc_info.value.status_code == 400
+    finally:
+        await file.close()
