@@ -8,12 +8,26 @@ from ai_worker.tasks.rag.catalog.build import (
     CatalogProductInput,
     build_catalog_members,
 )
+from ai_worker.tasks.rag.catalog.export import (
+    CATALOG_SCHEMA_VERSION,
+    CatalogExportArtifacts,
+    CatalogExportError,
+    create_catalog_export,
+    write_catalog_export,
+)
 from ai_worker.tasks.rag.catalog.normalize import (
     CATALOG_NORMALIZATION_VERSION,
     NormalizedCatalogText,
     normalize_catalog_text,
     normalize_optional_catalog_text,
     require_official_identity_text,
+)
+from ai_worker.tasks.rag.catalog.service import (
+    CatalogBuildDecision,
+    CatalogBuildRepository,
+    CatalogBuildRequest,
+    CatalogBuildResult,
+    build_catalog_candidate,
 )
 from ai_worker.tasks.rag.catalog.types import (
     CandidateAliasReviewStatus,
@@ -33,9 +47,16 @@ from ai_worker.tasks.rag.catalog.types import (
     CatalogVerificationStatus,
     ProductIdentity,
 )
+from ai_worker.tasks.rag.catalog.validate import (
+    CatalogValidationFailure,
+    CatalogValidationFailureReason,
+    CatalogValidationReport,
+    validate_catalog_members,
+)
 
 __all__ = [
     "CATALOG_NORMALIZATION_VERSION",
+    "CATALOG_SCHEMA_VERSION",
     "CandidateAliasReviewStatus",
     "CandidateCatalogCounts",
     "CandidateCatalogExport",
@@ -48,6 +69,12 @@ __all__ = [
     "CatalogComponent",
     "CatalogComponentInput",
     "CatalogComponentRole",
+    "CatalogBuildDecision",
+    "CatalogBuildRepository",
+    "CatalogBuildRequest",
+    "CatalogBuildResult",
+    "CatalogExportArtifacts",
+    "CatalogExportError",
     "CatalogFreshnessStatus",
     "CatalogIngredient",
     "CatalogMappingError",
@@ -59,7 +86,14 @@ __all__ = [
     "NormalizedCatalogText",
     "ProductIdentity",
     "build_catalog_members",
+    "build_catalog_candidate",
+    "create_catalog_export",
     "normalize_catalog_text",
     "normalize_optional_catalog_text",
     "require_official_identity_text",
+    "CatalogValidationFailure",
+    "CatalogValidationFailureReason",
+    "CatalogValidationReport",
+    "validate_catalog_members",
+    "write_catalog_export",
 ]

@@ -51,6 +51,7 @@ class ProductIdentity:
 @dataclass(frozen=True, slots=True)
 class CatalogProduct:
     product_ref: str
+    source_record_key: str
     identity: ProductIdentity
     product_name: str
     normalized_product_name: str
@@ -65,6 +66,7 @@ class CatalogProduct:
 @dataclass(frozen=True, slots=True)
 class CatalogIngredient:
     ingredient_ref: str
+    source_record_key: str
     identity: ProductIdentity
     ingredient_name: str
     normalized_ingredient_name: str

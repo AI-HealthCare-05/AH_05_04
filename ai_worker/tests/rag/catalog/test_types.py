@@ -73,6 +73,7 @@ def test_catalog_export_uses_tuple_collections_and_declared_counts() -> None:
     identity = _identity()
     product = CatalogProduct(
         product_ref="synthetic-product-row-001",
+        source_record_key="ITEM_SEQ:synthetic-product-001",
         identity=identity,
         product_name="합성 의약품",
         normalized_product_name="합성의약품",

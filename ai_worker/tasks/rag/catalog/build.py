@@ -27,6 +27,10 @@ from ai_worker.tasks.rag.catalog.types import (
 _REF_SPEC_VERSION = "catalog-member-ref-v1"
 
 
+def _is_hira_code_system(value: object) -> bool:
+    return isinstance(value, str) and value.strip().upper().startswith("HIRA")
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogProductInput:
     source_snapshot_id: str
@@ -43,6 +47,7 @@ class CatalogProductInput:
 @dataclass(frozen=True, slots=True)
 class CatalogComponentInput:
     source_snapshot_id: str
+    ingredient_source_record_key: str
     product_code_system: str
     product_canonical_code: str
     ingredient_code_system: str
@@ -128,13 +133,18 @@ def _normalized_optional(value: object | None, *, field_name: str) -> str | None
     return normalized.normalized_value if normalized is not None else None
 
 
+def _raw_optional(value: object | None, *, field_name: str) -> str | None:
+    normalized = normalize_optional_catalog_text(value, field_name=field_name)
+    return normalized.raw_value if normalized is not None else None
+
+
 def _product(input_record: CatalogProductInput) -> CatalogProduct:
     snapshot_id = require_official_identity_text(
         input_record.source_snapshot_id,
         field_name="source_snapshot_id",
     )
     # Source 레코드 키는 provenance 입력으로 검증하지만 공식 제품 식별자에는 포함하지 않습니다.
-    require_official_identity_text(
+    source_record_key = require_official_identity_text(
         input_record.source_record_key,
         field_name="source_record_key",
     )
@@ -152,12 +162,22 @@ def _product(input_record: CatalogProductInput) -> CatalogProduct:
                 "identity": _identity_values(identity),
             },
         ),
+        source_record_key=source_record_key,
         identity=identity,
-        product_name=product_name.normalized_value,
+        product_name=product_name.raw_value,
         normalized_product_name=product_name.normalized_value,
-        strength_text=_normalized_optional(input_record.strength_text, field_name="strength_text"),
-        dosage_form=_normalized_optional(input_record.dosage_form, field_name="dosage_form"),
-        manufacturer_name=_normalized_optional(input_record.manufacturer_name, field_name="manufacturer_name"),
+        strength_text=_raw_optional(
+            input_record.strength_text,
+            field_name="strength_text",
+        ),
+        dosage_form=_raw_optional(
+            input_record.dosage_form,
+            field_name="dosage_form",
+        ),
+        manufacturer_name=_raw_optional(
+            input_record.manufacturer_name,
+            field_name="manufacturer_name",
+        ),
         source_snapshot_id=snapshot_id,
         normalization_version=CATALOG_NORMALIZATION_VERSION,
         status=input_record.product_status,
@@ -165,6 +185,10 @@ def _product(input_record: CatalogProductInput) -> CatalogProduct:
 
 
 def _ingredient(input_record: CatalogComponentInput) -> CatalogIngredient:
+    source_record_key = require_official_identity_text(
+        input_record.ingredient_source_record_key,
+        field_name="ingredient_source_record_key",
+    )
     snapshot_id = require_official_identity_text(
         input_record.source_snapshot_id,
         field_name="source_snapshot_id",
@@ -183,8 +207,9 @@ def _ingredient(input_record: CatalogComponentInput) -> CatalogIngredient:
                 "identity": _identity_values(identity),
             },
         ),
+        source_record_key=source_record_key,
         identity=identity,
-        ingredient_name=ingredient_name.normalized_value,
+        ingredient_name=ingredient_name.raw_value,
         normalized_ingredient_name=ingredient_name.normalized_value,
         source_snapshot_id=snapshot_id,
         normalization_version=CATALOG_NORMALIZATION_VERSION,
@@ -277,7 +302,7 @@ def _alias(
             },
         ),
         identity=identity,
-        alias_text=alias_text.normalized_value,
+        alias_text=alias_text.raw_value,
         normalized_alias=alias_text.normalized_value,
         source_snapshot_id=snapshot_id,
         normalization_version=CATALOG_NORMALIZATION_VERSION,
@@ -322,6 +347,8 @@ def build_catalog_members(
     catalog_products: list[CatalogProduct] = []
     product_by_identity: dict[tuple[str, ProductIdentity], CatalogProduct] = {}
     for product_input in products:
+        if _is_hira_code_system(product_input.code_system):
+            continue
         catalog_product = _product(product_input)
         _append_exact_deduplicated(catalog_products, catalog_product)
         product_by_identity.setdefault(
@@ -333,6 +360,10 @@ def build_catalog_members(
     catalog_components: list[CatalogComponent] = []
     ingredient_by_identity: dict[tuple[str, ProductIdentity], CatalogIngredient] = {}
     for component_input in components:
+        if _is_hira_code_system(component_input.product_code_system) or _is_hira_code_system(
+            component_input.ingredient_code_system
+        ):
+            continue
         product_identity = _identity(
             entity_type=CandidateEntityType.PRODUCT,
             code_system=component_input.product_code_system,
@@ -356,9 +387,13 @@ def build_catalog_members(
             ),
         )
 
-    search_entries = [_product_entry(product) for product in catalog_products]
+    search_entries = [
+        _product_entry(product) for product in catalog_products if product.status is CandidateRecordStatus.ACTIVE
+    ]
     catalog_aliases: list[CatalogAlias] = []
     for alias_input in aliases:
+        if _is_hira_code_system(alias_input.target_code_system):
+            continue
         target_identity = _identity(
             entity_type=alias_input.target_type,
             code_system=alias_input.target_code_system,

@@ -64,6 +64,7 @@ def valid_catalog() -> CandidateCatalogExport:
     product = CatalogProduct(
         product_ref="product-row-1",
         identity=product_identity(),
+        source_record_key="ITEM_SEQ:P-001",
         product_name="가나다정",
         normalized_product_name="가나다정",
         strength_text="10mg",
@@ -75,6 +76,7 @@ def valid_catalog() -> CandidateCatalogExport:
     )
     ingredient = CatalogIngredient(
         ingredient_ref="ingredient-row-1",
+        source_record_key="INGREDIENT:I-001",
         identity=ingredient_identity(),
         ingredient_name="합성성분",
         normalized_ingredient_name="합성성분",

@@ -71,6 +71,10 @@ def _component_inputs() -> tuple[CatalogComponentInput, ...]:
                 ingredient_code_system=_text(record, "ingredient_code_system"),
                 ingredient_canonical_code=_text(record, "ingredient_code"),
                 ingredient_name=_text(record, "ingredient_name"),
+                ingredient_source_record_key=_text(
+                    record,
+                    "ingredient_source_record_key",
+                ),
                 component_role=CatalogComponentRole(_text(record, "component_role")),
                 component_order=component_order,
                 strength_value=_text(record, "strength_value"),
@@ -114,7 +118,7 @@ def _build_fixture():
 def test_builds_same_name_products_as_distinct_official_identities() -> None:
     catalog = _build_fixture()
 
-    same_name_products = [product for product in catalog.products if product.product_name == "합성 제품 A정"]
+    same_name_products = [product for product in catalog.products if product.normalized_product_name == "합성 제품 A정"]
 
     assert len(same_name_products) == 2
     assert {product.identity.canonical_code for product in same_name_products} == {"000000001", "000000002"}
@@ -135,11 +139,15 @@ def test_builds_single_and_multi_ingredient_components_in_source_order() -> None
 def test_exports_only_approved_effective_product_aliases_as_alias_entries() -> None:
     catalog = _build_fixture()
     alias_entries = [entry for entry in catalog.search_entries if entry.entry_type is CandidateEntryType.APPROVED_ALIAS]
+    normalized_aliases = {entry.normalized_text for entry in alias_entries}
 
-    assert {entry.display_text for entry in alias_entries} == {"합성 제품 별칭", "합성 충돌 별칭"}
+    assert normalized_aliases == {
+        "합성 제품 별칭",
+        "합성 충돌 별칭",
+    }
     assert all(entry.identity.entity_type is CandidateEntityType.PRODUCT for entry in alias_entries)
-    assert "합성 성분 별칭" not in {entry.display_text for entry in alias_entries}
-    assert "합성 만료 별칭" not in {entry.display_text for entry in alias_entries}
+    assert "합성 성분 별칭" not in normalized_aliases
+    assert "합성 만료 별칭" not in normalized_aliases
 
 
 def test_exact_duplicate_rows_are_deduplicated_and_input_order_does_not_change_refs() -> None:
@@ -170,6 +178,7 @@ def test_component_natural_key_keeps_role_distinct() -> None:
     base = _component_inputs()[0]
     excipient = CatalogComponentInput(
         source_snapshot_id=base.source_snapshot_id,
+        ingredient_source_record_key=base.ingredient_source_record_key,
         product_code_system=base.product_code_system,
         product_canonical_code=base.product_canonical_code,
         ingredient_code_system=base.ingredient_code_system,
@@ -216,6 +225,7 @@ def test_missing_component_product_fails_without_exposing_source_value() -> None
     component = _component_inputs()[0]
     missing = CatalogComponentInput(
         source_snapshot_id=component.source_snapshot_id,
+        ingredient_source_record_key=component.ingredient_source_record_key,
         product_code_system=component.product_code_system,
         product_canonical_code="SENSITIVE-MISSING-PRODUCT",
         ingredient_code_system=component.ingredient_code_system,
@@ -253,3 +263,79 @@ def test_missing_alias_target_fails_closed() -> None:
 
     with pytest.raises(CatalogMappingError, match="ALIAS_TARGET_NOT_FOUND"):
         build_catalog_members(products=_product_inputs(), components=(), aliases=(missing,))
+
+
+def test_preserves_raw_display_values_and_source_record_keys() -> None:
+    products = _product_inputs()
+
+    product = CatalogProductInput(
+        source_snapshot_id=products[0].source_snapshot_id,
+        source_record_key="ITEM_SEQ:RAW-001",
+        code_system="MFDS_ITEM_SEQ",
+        canonical_code="RAW-001",
+        product_name="  합성   제품  ",
+        strength_text=" 10 mg ",
+        dosage_form=" 정제 ",
+        manufacturer_name=" 합성   제약 ",
+        product_status=CandidateRecordStatus.ACTIVE,
+    )
+    component = CatalogComponentInput(
+        source_snapshot_id=product.source_snapshot_id,
+        ingredient_source_record_key="INGREDIENT:RAW-001",
+        product_code_system=product.code_system,
+        product_canonical_code=product.canonical_code,
+        ingredient_code_system="MFDS_INGREDIENT",
+        ingredient_canonical_code="RAW-001",
+        ingredient_name="  합성   성분  ",
+        component_role=CatalogComponentRole.ACTIVE_INGREDIENT,
+        component_order=1,
+        strength_value="10",
+        strength_unit="mg",
+    )
+
+    catalog = build_catalog_members(
+        products=(product,),
+        components=(component,),
+        aliases=(),
+    )
+
+    saved_product = catalog.products[0]
+    saved_ingredient = catalog.ingredients[0]
+
+    assert saved_product.source_record_key == "ITEM_SEQ:RAW-001"
+    assert saved_product.product_name == "  합성   제품  "
+    assert saved_product.normalized_product_name == "합성 제품"
+    assert saved_product.strength_text == " 10 mg "
+    assert saved_product.dosage_form == " 정제 "
+    assert saved_product.manufacturer_name == " 합성   제약 "
+
+    assert saved_ingredient.source_record_key == "INGREDIENT:RAW-001"
+    assert saved_ingredient.ingredient_name == "  합성   성분  "
+    assert saved_ingredient.normalized_ingredient_name == "합성 성분"
+
+
+def test_inactive_product_keeps_provenance_without_runtime_search_entry() -> None:
+    catalog = _build_fixture()
+    inactive = next(product for product in catalog.products if product.status is CandidateRecordStatus.INACTIVE)
+
+    assert all(entry.product_ref != inactive.product_ref for entry in catalog.search_entries)
+
+
+def test_hira_identity_is_excluded_from_p0_catalog() -> None:
+    hira_product = CatalogProductInput(
+        source_snapshot_id="synthetic-snapshot-001",
+        source_record_key="hira-record-001",
+        code_system="HIRA",
+        canonical_code="SYNTHETIC-HIRA-001",
+        product_name="합성 보험 제품",
+        product_status=CandidateRecordStatus.ACTIVE,
+    )
+
+    catalog = build_catalog_members(
+        products=(hira_product,),
+        components=(),
+        aliases=(),
+    )
+
+    assert catalog.products == ()
+    assert catalog.search_entries == ()
