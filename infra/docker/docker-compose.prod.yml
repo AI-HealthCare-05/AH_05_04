@@ -5,10 +5,14 @@ services:
     container_name: redis
     networks:
       - ws
-    ports:
-      - "${REDIS_PORT}:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - redis-server --requirepass "$${REDIS_PASSWORD}"
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -161,6 +165,17 @@ services:
       CLOVA_OCR_INVOKE_URL: ${CLOVA_OCR_INVOKE_URL}
       CLOVA_OCR_SECRET: ${CLOVA_OCR_SECRET}
       CLOVA_OCR_TIMEOUT_SECONDS: ${CLOVA_OCR_TIMEOUT_SECONDS:-20}
+
+      # 운영 Redis는 host port에 공개하지 않고 내부 network + 인증으로만 접근합니다.
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_STREAM_NAME: ${REDIS_STREAM_NAME:-oryak:jobs}
+      REDIS_DLQ_STREAM_NAME: ${REDIS_DLQ_STREAM_NAME:-oryak:jobs:dead-letter}
+      REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP:-ai-workers}
+      REDIS_CONSUMER_NAME: ${REDIS_CONSUMER_NAME:-ai-worker-prod}
+      RECONCILER_CONSUMER_NAME: ${RECONCILER_CONSUMER_NAME:-ai-worker-reconciler}
+      REDIS_BLOCK_MS: ${REDIS_BLOCK_MS:-5000}
 
       # FastAPI와 동일한 업로드 volume 경로를 사용합니다.
       STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}
