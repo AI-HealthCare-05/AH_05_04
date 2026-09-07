@@ -417,7 +417,7 @@ def _weighted_score(stage_signals: tuple[StageSignal, ...], lexical_weight: Deci
 
 
 def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
-    if not isinstance(request.candidates, tuple) or not request.candidates:
+    if type(request.candidates) is not tuple or not request.candidates:
         return False
     evidence_keys: set[str] = set()
     stage_ranks: dict[EvidenceSearchStage, set[int]] = {}
@@ -431,7 +431,7 @@ def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
             or provenance.evidence_index_ref != request.evidence_index_ref
             or type(candidate.content_text) is not SensitiveText
             or _source_content_sha256(candidate.content_text) != provenance.content_sha256
-            or not isinstance(candidate.stage_signals, tuple)
+            or type(candidate.stage_signals) is not tuple
             or not candidate.stage_signals
         ):
             return False
@@ -574,7 +574,7 @@ def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
     if (
         type(value) is not SyntheticEvidenceIndex
         or not _is_synthetic_artifact_ref(value.artifact_ref)
-        or not isinstance(value.records, tuple)
+        or type(value.records) is not tuple
     ):
         return False
     evidence_keys: set[str] = set()
@@ -583,7 +583,7 @@ def _valid_evidence_index(value: SyntheticEvidenceIndex) -> bool:
         if (
             type(record) is not SyntheticEvidenceRecord
             or type(record.content_text) is not SensitiveText
-            or not isinstance(record.dense_vector, tuple)
+            or type(record.dense_vector) is not tuple
             or not record.dense_vector
             or not all(_is_canonical_decimal(component) for component in record.dense_vector)
         ):
@@ -649,7 +649,7 @@ def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
         type(value) is not VersionedDenseSearchConfig
         or not _is_synthetic_artifact_ref(value.artifact_ref)
         or not _is_canonical_decimal(value.minimum_similarity)
-        or not isinstance(value.query_vectors, tuple)
+        or type(value.query_vectors) is not tuple
         or not value.query_vectors
     ):
         return False
@@ -660,7 +660,7 @@ def _valid_dense_config(value: VersionedDenseSearchConfig) -> bool:
             type(item) is not SyntheticDenseQueryVector
             or not _valid_fingerprint(item.query_fingerprint)
             or item.query_fingerprint in fingerprints
-            or not isinstance(item.values, tuple)
+            or type(item.values) is not tuple
             or not item.values
             or not all(_is_canonical_decimal(component) for component in item.values)
         ):
@@ -721,9 +721,10 @@ def _has_synthetic_source_marker(
     source_snapshot_ref: ImmutableArtifactRef,
     source_version: str,
 ) -> bool:
-    normalized_source_version = source_version.casefold()
+    # Marker matching is case-sensitive everywhere: a single canonical lowercase form
+    # keeps "MFDS-SYNTHETIC@2026" from reading as a synthetic marker.
     return (
         _is_synthetic_artifact_ref(source_snapshot_ref)
-        or normalized_source_version.startswith("synthetic@")
-        or "-synthetic@" in normalized_source_version
+        or source_version.startswith("synthetic@")
+        or "-synthetic@" in source_version
     )

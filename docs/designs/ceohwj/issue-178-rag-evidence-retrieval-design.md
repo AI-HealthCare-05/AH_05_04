@@ -158,6 +158,16 @@ Source marker는 Index marker로 대체되지 않는다. Rerank candidate proven
 synthetic namespace를 갖더라도 `source_snapshot_ref` 또는 `source_version`이 synthetic으로 식별되지
 않으면 거부한다. synthetic Index가 승인 Source 형태의 provenance를 보증하지 못하게 하는 경계다.
 
+marker 판정은 artifact ref와 `source_version` 모두 case-sensitive 소문자 canonical 형태만 인정한다.
+`MFDS-SYNTHETIC@2026`처럼 승인 Source 형태의 대문자 표기는 marker로 읽지 않는다.
+
+record·candidate·config·`SensitiveText`와 canonical container는 정확한 런타임 타입으로만 통과한다.
+`isinstance`를 쓰면 하위 타입이 검증 시점과 실행 시점에 다른 값을 반환할 수 있고, 그 경우 성공
+Receipt가 가리키는 artifact hash와 실제 적용값이 갈린다. `records`, `dense_vector`, `query_vectors`,
+`values`, rerank `candidates`, `stage_signals`는 `type(x) is tuple`로 검사한다. `__iter__`가 재결속
+검사 이후 다른 record를 내주는 tuple 하위 타입은 Kernel이 index payload를 모르기 때문에 이후 단계에서도
+잡히지 않으므로, 이 경계는 adapter가 직접 닫는다.
+
 Lexical trigram 추출은 [PostgreSQL pg_trgm 문서](https://www.postgresql.org/docs/17/pgtrgm.html)의 원칙에 따라
 비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인 뒤 PostgreSQL `similarity()`와 같은
 Jaccard 분모 `|A ∩ B| / |A ∪ B|`를 사용한다. Artifact strategy는

@@ -2565,6 +2565,35 @@ def test_synthetic_rerank_adapter_rejects_approved_source_provenance_under_synth
     assert isinstance(result, EvidenceRerankFailure)
 
 
+def test_synthetic_search_adapter_requires_canonical_lowercase_source_marker() -> None:
+    # Marker matching is case-sensitive, so an approved-looking uppercase version
+    # must not read as a synthetic marker.
+    record = SyntheticEvidenceRecord(
+        "knowledge:one",
+        "chunk-one",
+        artifact("mfds-product-approval"),
+        "MFDS-SYNTHETIC@2026",
+        "$.records.one",
+        "knowledge-text@1",
+        SensitiveText("합성 복약 정보"),
+        ("1", "0"),
+    )
+    index = SyntheticEvidenceIndex.create("synthetic-knowledge-index", "synthetic-knowledge-index@1", (record,))
+    config = VersionedLexicalSearchConfig.create(
+        "synthetic-lexical-config", "synthetic-lexical-config@1", trigram_similarity_threshold="0.3"
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+    adapter = SyntheticEvidenceSearchAdapter(index, config, None, artifact("synthetic-search-adapter"))
+
+    result = adapter.search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchFailure)
+
+
 @pytest.mark.parametrize("subclass", ["benign", "stateful"])
 def test_synthetic_rerank_adapter_rejects_sensitive_text_subclass(subclass: str) -> None:
     call_count = [0]
@@ -3265,14 +3294,92 @@ def test_kernel_fails_closed_when_rerank_top_k_exceeds_selection_limit() -> None
 
 
 def test_synthetic_adapters_are_not_imported_by_production_modules() -> None:
-    package_root = Path(__file__).resolve().parents[2]
+    # Scan the whole repo, not just ai_worker: with the repo root on PYTHONPATH the
+    # module is importable from backend/app or ocr_runtime too.
+    repo_root = Path(__file__).resolve().parents[3]
     module_name = "evidence_retrieval_synthetic_adapters"
     offenders = sorted(
-        path.relative_to(package_root).as_posix()
-        for path in package_root.rglob("*.py")
+        path.relative_to(repo_root).as_posix()
+        for path in repo_root.rglob("*.py")
         if "tests" not in path.parts
+        and "test" not in path.name
+        and ".venv" not in path.parts
         and path.name != f"{module_name}.py"
         and module_name in path.read_text(encoding="utf-8")
     )
 
     assert offenders == []
+
+
+def test_kernel_rejects_stateful_records_tuple_subclass_end_to_end() -> None:
+    # A tuple subclass whose __iter__ swaps records after the artifact rebinding check
+    # would return records that the bound index hash never covered. The Kernel cannot
+    # detect this on its own because it never sees the index payload.
+    iterations = [0]
+    first = SyntheticEvidenceRecord(
+        "knowledge:bound",
+        "chunk-bound",
+        artifact("synthetic-source-snapshot"),
+        "synthetic@1",
+        "$.records.bound",
+        "knowledge-text@1",
+        SensitiveText("합성 복약 정보 하나"),
+        ("1", "0"),
+    )
+    swapped = SyntheticEvidenceRecord(
+        "knowledge:swapped",
+        "chunk-swapped",
+        artifact("synthetic-source-snapshot"),
+        "synthetic@1",
+        "$.records.swapped",
+        "knowledge-text@1",
+        SensitiveText("합성 복약 정보 둘"),
+        ("1", "0"),
+    )
+
+    class StatefulRecords(tuple[SyntheticEvidenceRecord, ...]):
+        def __iter__(self) -> Any:
+            iterations[0] += 1
+            return iter((first,) if iterations[0] <= 3 else (swapped,))
+
+    index = SyntheticEvidenceIndex.create(
+        "synthetic-knowledge-index",
+        "synthetic-knowledge-index@1",
+        StatefulRecords((first,)),
+    )
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "synthetic-lexical-config",
+        "synthetic-lexical-config@1",
+        trigram_similarity_threshold="0.3",
+    )
+    rerank_config = VersionedRerankConfig.create(
+        "synthetic-rerank-config",
+        "synthetic-rerank-config@1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=2,
+    )
+    request = EvidenceRetrievalKernelRequest(
+        SensitiveText("합성 복약 정보"),
+        fingerprint(),
+        artifact("filter-snapshot"),
+        index.artifact_ref,
+        artifact("retrieval-config"),
+        lexical_config.artifact_ref,
+        None,
+        rerank_config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        5,
+        0,
+        2,
+    )
+
+    outcome = retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(QueryBindingVerificationSuccess(fingerprint(), artifact("query-verifier"))),
+        search_port=SyntheticEvidenceSearchAdapter(index, lexical_config, None, artifact("synthetic-search-adapter")),
+        rerank_port=VersionedEvidenceRerankAdapter(rerank_config, artifact("synthetic-rerank-adapter")),
+    )
+
+    assert outcome.execution_status is KernelExecutionStatus.DEPENDENCY_ERROR
+    assert outcome.untrusted_selections == ()

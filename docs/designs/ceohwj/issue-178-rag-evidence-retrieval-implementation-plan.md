@@ -1164,6 +1164,10 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] record·candidate·`SensitiveText`를 exact runtime type으로 검증해 benign·stateful subclass를 typed failure로 거부한다.
 - [x] production `ai_worker` 모듈이 synthetic adapter 모듈을 import하지 않음을 CI 테스트로 고정한다.
 - [x] synthetic Index marker가 승인 Source 형태 provenance를 보증하지 못하도록 Source marker를 독립 요구한다.
+- [x] versioned config·index·query vector·fingerprint·provenance·stage signal을 exact runtime type으로 검증한다.
+- [x] canonical container를 `type(x) is tuple`로 닫아 stateful tuple 하위 타입의 재결속 우회를 막고 end-to-end 회귀로 고정한다.
+- [x] marker 판정을 case-sensitive 소문자 canonical 형태로 통일한다.
+- [x] import 가드 스캔 범위를 repo 루트로 올려 `ai_worker` 밖 모듈도 덮는다.
 - [x] provisional 이름과 `rag-db-schema` 정규 이름의 매핑과 미표현 정규 필드를 설계 문서에 명시한다.
 - [x] 아래 전체 검증 명령을 fresh 실행한다.
 
