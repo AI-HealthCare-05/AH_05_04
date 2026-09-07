@@ -16,6 +16,7 @@ from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.user_repository import UserRepository
@@ -33,6 +34,8 @@ from app.services.guides import GuideService
 from app.services.job_intake import JobIntakeService
 from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
+from app.services.medication_candidates import MedicationCandidateService
+from app.services.medication_identification import MedicationIdentificationService
 from app.services.ocr import OcrService
 from app.services.ocr_ai import (
     LlmPrescriptionStructurer,
@@ -221,6 +224,37 @@ def get_prescription_service(
     ],
 ) -> PrescriptionService:
     return PrescriptionService(document_repository, ocr_repository, prescription_repository)
+
+
+def get_medication_candidate_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> MedicationCandidateRepository:
+    return MedicationCandidateRepository(session)
+
+
+def get_medication_identification_service(
+    repository: Annotated[
+        MedicationCandidateRepository,
+        Depends(get_medication_candidate_repository),
+    ],
+) -> MedicationIdentificationService:
+    return MedicationIdentificationService(repository)
+
+
+def get_medication_candidate_service(
+    repository: Annotated[
+        MedicationCandidateRepository,
+        Depends(get_medication_candidate_repository),
+    ],
+    identification_service: Annotated[
+        MedicationIdentificationService,
+        Depends(get_medication_identification_service),
+    ],
+) -> MedicationCandidateService:
+    return MedicationCandidateService(repository, identification_service)
 
 
 def get_guide_repository(
