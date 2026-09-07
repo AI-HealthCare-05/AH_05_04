@@ -48,7 +48,6 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      PYTHONPATH: ${{ github.workspace }}
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
       DB_EXPOSE_PORT: "5432"
@@ -97,16 +96,31 @@ jobs:
         run: uv sync --group app --frozen
 
       - name: Run PostgreSQL migrations
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: uv run alembic -c backend/alembic.ini upgrade head
       # backend/app/tests/conftest.py가 스키마를 재생성하기 전에
       # Alembic이 만든 실제 PostgreSQL 구조를 검증합니다.
       - name: Validate migrated PostgreSQL schema
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: uv run pytest tests/migration -v
 
-      - name: Run Tests with Coverage
+      - name: Run Backend Tests with Coverage
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: |
-          # 구현된 Worker 공통 및 OCR 테스트도 PR 필수 검사에 포함합니다.
-          uv run coverage run -m pytest backend/app tests/contract ai_worker/tests/core ai_worker/tests/ocr tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
+          uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
+
+      - name: Run AI Worker Unit Tests with Coverage
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag
+
+      - name: Coverage Report
+        run: |
+          uv run coverage report -m
 
   frontend:
     runs-on: ubuntu-latest

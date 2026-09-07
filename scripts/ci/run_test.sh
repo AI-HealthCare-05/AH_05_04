@@ -79,6 +79,7 @@ for test_dir in \
   ./tests/migration \
   ./ai_worker/tests/core \
   ./ai_worker/tests/ocr \
+  ./ai_worker/tests/rag \
   ./tests/integration; do
   if [ -d "$test_dir" ] &&
     find "$test_dir" -type f -name 'test_*.py' -print -quit |
@@ -165,7 +166,7 @@ trap 'rm -rf "$TEST_STORAGE_DIR"' EXIT
 
 # 기존 shell의 DB 계정은 제거하고, 선택한 ENV_FILE에서 DB_USER와
 # DB_PASSWORD를 로딩합니다. 호스트·포트·DB 이름만 test DB 기준으로 덮어씁니다.
-run_with_test_database() {
+run_with_backend_test_database() {
   env \
     -u DB_USER \
     -u DB_PASSWORD \
@@ -180,23 +181,37 @@ run_with_test_database() {
     uv run --env-file "$ENV_FILE" "$@"
 }
 
+run_with_worker_test_environment() {
+  env \
+    -u DB_USER \
+    -u DB_PASSWORD \
+    DB_HOST=127.0.0.1 \
+    DB_PORT="$HOST_DB_PORT" \
+    DB_EXPOSE_PORT="$HOST_DB_PORT" \
+    DB_NAME=test \
+    PYTHONPATH="$REPOSITORY_ROOT" \
+    STORAGE_DIR="$TEST_STORAGE_DIR" \
+    RELEASE_VALIDATION_ALLOWED=false \
+    OCR_STRUCTURE_LLM_ENABLED=false \
+    uv run --env-file "$ENV_FILE" "$@"
+}
+
 echo "Apply Alembic migrations to test database"
 
-run_with_test_database alembic -c backend/alembic.ini upgrade head
+run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
 
 echo "Validate migrated PostgreSQL schema"
 
-run_with_test_database pytest tests/migration -v
+run_with_backend_test_database pytest tests/migration -v
 
 echo "Run Pytest with Coverage"
 
-# Backend, 공통 계약, Worker 공통·OCR 테스트를 한 번만 실행합니다.
-if ! run_with_test_database \
+# Backend, 공통 계약, PostgreSQL·Redis 통합 테스트는 backend/app import 경로가
+# 필요한 프로세스에서 실행합니다.
+if ! run_with_backend_test_database \
   coverage run -m pytest \
   backend/app \
   tests/contract \
-  ai_worker/tests/core \
-  ai_worker/tests/ocr \
   tests/integration/rag \
   tests/integration/test_worker_ocr_persistence.py \
   tests/integration/test_outbox_publisher.py \
@@ -210,9 +225,22 @@ if ! run_with_test_database \
   exit 1
 fi
 
+# ai_worker 단위 테스트는 backend/app을 PYTHONPATH에서 제외한 별도 프로세스로
+# 실행하여 Worker가 Backend 내부 모듈에 의존하는 실수를 CI에서 잡습니다.
+if ! run_with_worker_test_environment \
+  coverage run --append -m pytest \
+  ai_worker/tests/core \
+  ai_worker/tests/ocr \
+  ai_worker/tests/rag; then
+  echo
+  echo "AI Worker pytest failed."
+  echo "Fix the test failures above and re-run."
+  exit 1
+fi
+
 echo "Coverage Report"
 
-if ! run_with_test_database coverage report -m; then
+if ! run_with_backend_test_database coverage report -m; then
   echo "Coverage check failed."
   exit 1
 fi
