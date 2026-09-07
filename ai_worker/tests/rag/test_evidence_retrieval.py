@@ -1537,6 +1537,51 @@ def test_synthetic_search_adapter_ranks_exact_before_trigram_matches() -> None:
     assert first.hits[1].stage_score.value < "1"
 
 
+def test_synthetic_search_adapter_keeps_exact_first_when_trigram_score_is_one() -> None:
+    records = (
+        SyntheticEvidenceRecord(
+            "knowledge:a-trigram",
+            "chunk-trigram",
+            artifact("source-snapshot"),
+            "synthetic@1",
+            "$.records.trigram",
+            "knowledge-text@1",
+            SensitiveText("beta alpha"),
+            ("0", "1"),
+        ),
+        SyntheticEvidenceRecord(
+            "knowledge:z-exact",
+            "chunk-exact",
+            artifact("source-snapshot"),
+            "synthetic@1",
+            "$.records.exact",
+            "knowledge-text@1",
+            SensitiveText("alpha beta"),
+            ("1", "0"),
+        ),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", records)
+    config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    request = replace(
+        lexical_request(),
+        normalized_query=SensitiveText("alpha beta"),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=config.artifact_ref,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(
+        index, config, None, artifact("synthetic-search-adapter")
+    ).search(request, EvidenceSearchStage.LEXICAL)
+
+    assert isinstance(result, EvidenceSearchSuccess)
+    assert [item.provenance.evidence_key for item in result.hits] == [
+        "knowledge:z-exact",
+        "knowledge:a-trigram",
+    ]
+
+
 def test_synthetic_search_adapter_runs_fingerprint_bound_dense_retrieval() -> None:
     records = (
         SyntheticEvidenceRecord(
@@ -1604,6 +1649,43 @@ def test_synthetic_search_adapter_runs_fingerprint_bound_dense_retrieval() -> No
     ]
     assert [item.stage for item in result.hits] == [EvidenceSearchStage.DENSE, EvidenceSearchStage.DENSE]
     assert result.hits[0].stage_score == CanonicalScore("1")
+
+
+def test_synthetic_dense_adapter_canonicalizes_negative_zero_score() -> None:
+    record = SyntheticEvidenceRecord(
+        "knowledge:near-zero",
+        "chunk-near-zero",
+        artifact("source-snapshot"),
+        "synthetic@1",
+        "$.records.near-zero",
+        "knowledge-text@1",
+        SensitiveText("합성 영점 근거"),
+        ("-0.0000001", "1"),
+    )
+    index = SyntheticEvidenceIndex.create("knowledge-index", "knowledge-index@synthetic-1", (record,))
+    lexical_config = VersionedLexicalSearchConfig.create(
+        "lexical-config", "lexical-config@synthetic-1", trigram_similarity_threshold="0.3"
+    )
+    dense_config = VersionedDenseSearchConfig.create(
+        "dense-config",
+        "dense-config@synthetic-1",
+        query_vectors=(SyntheticDenseQueryVector(fingerprint(), ("1", "0")),),
+        minimum_similarity="-1",
+    )
+    request = replace(
+        lexical_request(),
+        evidence_index_ref=index.artifact_ref,
+        lexical_config_ref=lexical_config.artifact_ref,
+        dense_config_ref=dense_config.artifact_ref,
+        dense_limit=1,
+    )
+
+    result = SyntheticEvidenceSearchAdapter(
+        index, lexical_config, dense_config, artifact("synthetic-search-adapter")
+    ).search(request, EvidenceSearchStage.DENSE)
+
+    assert isinstance(result, EvidenceSearchSuccess)
+    assert result.hits[0].stage_score == CanonicalScore("0")
 
 
 def test_versioned_rerank_adapter_applies_weighted_configuration() -> None:

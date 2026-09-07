@@ -262,16 +262,17 @@ class SyntheticEvidenceSearchAdapter:
             if not Decimal(0) <= threshold <= Decimal(1):
                 return EvidenceSearchFailure()
             query = _normalized_text(request.normalized_query)
-            ranked: list[tuple[Decimal, SyntheticEvidenceRecord]] = []
+            ranked: list[tuple[bool, Decimal, SyntheticEvidenceRecord]] = []
             for record in self.evidence_index.records:
                 content = _normalized_text(record.content_text)
-                score = Decimal(1) if query in content else _trigram_similarity(query, content)
+                is_exact = query in content
+                score = Decimal(1) if is_exact else _trigram_similarity(query, content)
                 if score >= threshold:
-                    ranked.append((score, record))
-            ranked.sort(key=lambda item: (-item[0], item[1].evidence_key.encode()))
+                    ranked.append((is_exact, score, record))
+            ranked.sort(key=lambda item: (-int(item[0]), -item[1], item[2].evidence_key.encode()))
             hits = tuple(
                 _search_hit(self.evidence_index.artifact_ref, record, stage, rank, score)
-                for rank, (score, record) in enumerate(ranked[: request.lexical_limit], start=1)
+                for rank, (_, score, record) in enumerate(ranked[: request.lexical_limit], start=1)
             )
             return EvidenceSearchSuccess(
                 request.query_fingerprint,
@@ -458,7 +459,10 @@ def _content_hash(value: SensitiveText) -> str:
 
 
 def _canonical_decimal(value: Decimal) -> str:
-    rendered = format(value.quantize(_SCORE_PLACES), "f").rstrip("0").rstrip(".")
+    quantized = value.quantize(_SCORE_PLACES)
+    if quantized == 0:
+        return "0"
+    rendered = format(quantized, "f").rstrip("0").rstrip(".")
     return rendered or "0"
 
 
