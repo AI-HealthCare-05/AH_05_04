@@ -105,7 +105,15 @@ class OcrService:
         # OCR 접수 Backend 계약: API 요청에서는 Provider를 호출하지 않고 Job/Outbox/placeholder만
         # 같은 transaction에 저장한 뒤 공통 Job 상태 응답을 반환합니다. 실제 OCR 실행은 Worker가 담당합니다.
         async def create_domain_placeholder(ai_job_id: UUID) -> DomainReference:
-            document = await self._document_repo.get_owned(document_id=document_id, user=user)
+            try:
+                document = await self._document_repo.get_owned_for_update(document_id=document_id, user=user)
+            except DocumentLockTimeoutError:
+                raise ApiError(
+                    status_code=409,
+                    code="CONCURRENT_UPDATE_IN_PROGRESS",
+                    message="같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.",
+                    details=[ErrorDetail(field="document_id", reason="CONCURRENT_UPDATE_IN_PROGRESS")],
+                ) from None
             if document is None:
                 raise ApiError(
                     status_code=404,

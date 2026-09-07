@@ -15,9 +15,12 @@ from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob, OcrStatus
 from app.models.users import User
 from app.repositories.medical_document_repository import (
+    DocumentLockTimeoutError,
     MedicalDocumentRepository,
 )
 from app.repositories.ocr_repository import OcrRepository
+from app.services.job_intake import JobIntakeResult, JobIntakeService
+from app.services.job_status import JobStatusService
 from app.services.ocr import OcrService
 from app.services.ocr_engine import (
     OcrDeadline,
@@ -162,6 +165,95 @@ async def test_execute_ocr_converts_engine_error_and_marks_job_failed(
     mark_failed_call = ocr_repository_mock.mark_failed.await_args
     assert mark_failed_call.kwargs["error_code"] == expected_code
     assert "민감한" not in mark_failed_call.kwargs["error_message"]
+
+
+async def test_accept_ocr_job_locks_document_before_active_job_check() -> None:
+    user = cast(User, SimpleNamespace(id=uuid4()))
+    document = cast(MedicalDocument, SimpleNamespace(id=uuid4()))
+    ocr_job = cast(OcrJob, SimpleNamespace(id=uuid4()))
+    ai_job = SimpleNamespace(id=uuid4())
+
+    document_repository_mock = AsyncMock(spec=MedicalDocumentRepository)
+    document_repository_mock.get_owned_for_update.return_value = document
+
+    ocr_repository_mock = AsyncMock(spec=OcrRepository)
+    ocr_repository_mock.get_active_job.return_value = None
+    ocr_repository_mock.create_job.return_value = ocr_job
+
+    job_intake_service_mock = AsyncMock(spec=JobIntakeService)
+
+    async def accept_job(**kwargs: object) -> JobIntakeResult:
+        placeholder = kwargs["create_domain_placeholder"]
+        assert callable(placeholder)
+        await placeholder(ai_job.id)
+        return JobIntakeResult(job=ai_job, is_duplicate=False)  # type: ignore[arg-type]
+
+    job_intake_service_mock.accept_job.side_effect = accept_job
+
+    job_status_service_mock = AsyncMock(spec=JobStatusService)
+    expected_result = SimpleNamespace(data=SimpleNamespace(job_id=ai_job.id))
+    job_status_service_mock.get_job_status.return_value = expected_result
+
+    service = OcrService(
+        document_repository=cast(MedicalDocumentRepository, document_repository_mock),
+        ocr_repository=cast(OcrRepository, ocr_repository_mock),
+    )
+
+    result = await service.accept_ocr_job(
+        user=user,
+        document_id=document.id,
+        request=ExecuteOcrRequest(force_reprocess=False),
+        idempotency_key="ocr-intake-lock-anchor-0001",
+        trace_id="a" * 32,
+        job_intake_service=cast(JobIntakeService, job_intake_service_mock),
+        job_status_service=cast(JobStatusService, job_status_service_mock),
+    )
+
+    assert result is expected_result
+    document_repository_mock.get_owned.assert_not_called()
+    document_repository_mock.get_owned_for_update.assert_awaited_once_with(document_id=document.id, user=user)
+    ocr_repository_mock.get_active_job.assert_awaited_once()
+    ocr_repository_mock.create_job.assert_awaited_once_with(document=document, ai_job_id=ai_job.id)
+
+
+async def test_accept_ocr_job_returns_409_when_document_lock_times_out() -> None:
+    user = cast(User, SimpleNamespace(id=uuid4()))
+    document_id = uuid4()
+
+    document_repository_mock = AsyncMock(spec=MedicalDocumentRepository)
+    document_repository_mock.get_owned_for_update.side_effect = DocumentLockTimeoutError
+
+    ocr_repository_mock = AsyncMock(spec=OcrRepository)
+    job_intake_service_mock = AsyncMock(spec=JobIntakeService)
+
+    async def accept_job(**kwargs: object) -> JobIntakeResult:
+        placeholder = kwargs["create_domain_placeholder"]
+        assert callable(placeholder)
+        await placeholder(uuid4())
+        raise AssertionError("lock timeout should abort placeholder creation")
+
+    job_intake_service_mock.accept_job.side_effect = accept_job
+
+    service = OcrService(
+        document_repository=cast(MedicalDocumentRepository, document_repository_mock),
+        ocr_repository=cast(OcrRepository, ocr_repository_mock),
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.accept_ocr_job(
+            user=user,
+            document_id=document_id,
+            request=ExecuteOcrRequest(force_reprocess=False),
+            idempotency_key="ocr-intake-lock-timeout-0001",
+            trace_id="a" * 32,
+            job_intake_service=cast(JobIntakeService, job_intake_service_mock),
+            job_status_service=cast(JobStatusService, AsyncMock(spec=JobStatusService)),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "CONCURRENT_UPDATE_IN_PROGRESS"
+    ocr_repository_mock.get_active_job.assert_not_called()
+    ocr_repository_mock.create_job.assert_not_called()
 
 
 async def test_execute_ocr_validation_failure_does_not_expose_recognized_content(
