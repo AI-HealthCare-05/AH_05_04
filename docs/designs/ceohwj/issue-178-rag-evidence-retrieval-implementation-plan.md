@@ -189,7 +189,12 @@ def test_query_binding_failures_stop_before_search(
     verifier = QueryVerifier(verification)
     search = NeverSearch()
 
-    result = retrieve_knowledge_evidence(lexical_request(), verifier, search, NeverRerank())
+    result = retrieve_knowledge_evidence(
+        lexical_request(),
+        query_verifier=verifier,
+        search_port=search,
+        rerank_port=NeverRerank(),
+    )
 
     assert result.execution_status is status
     assert result.diagnostic_code is code
@@ -465,7 +470,12 @@ def test_search_results_normalize_same_evidence_into_one_candidate() -> None:
     )
     rerank = CapturingRerankPort()
 
-    retrieve_knowledge_evidence(request, QueryVerifier(query_success()), search, rerank)
+    retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(query_success()),
+        search_port=search,
+        rerank_port=rerank,
+    )
 
     assert rerank.request is not None
     assert len(rerank.request.candidates) == 1
@@ -929,9 +939,11 @@ class DiagnosticHitRecord:
     rank: int
     stage_score: CanonicalScore
     content_sha256: str
+    evidence_index_ref: ImmutableArtifactRef
     source_snapshot_ref: ImmutableArtifactRef
     source_version: str
     locator: str
+    canonicalization_spec_version: str
 
 
 @dataclass(frozen=True, slots=True)
