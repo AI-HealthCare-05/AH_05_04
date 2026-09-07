@@ -38,7 +38,8 @@ class MedicationSchedule(Base):
     ``prescription_version_medication_id``는 #169가 제공할 stable id를 담는다.
     #169 병합 전에는 대상 테이블이 없으므로 FK와 약품별 schedule unique 제약을
     의도적으로 만들지 않는다. 두 제약은 #169 산출물에 맞춘 후속 migration에서
-    함께 추가한다.
+    함께 추가한다. ``times`` 관계는 revision 이력을 모두 보존하므로 현재 일정 시간만
+    필요한 호출자는 반드시 ``schedule_revision == revision``으로 범위를 제한해야 한다.
     """
 
     __tablename__ = "medication_schedule"

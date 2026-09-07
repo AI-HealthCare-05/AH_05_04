@@ -86,6 +86,38 @@ async def test_create_schedule_is_fail_closed_by_issue_169_boundary() -> None:
     session.flush.assert_not_awaited()
 
 
+async def test_add_schedule_times_uses_the_current_schedule_revision() -> None:
+    repository, session, _ = _repository()
+    schedule = _schedule()
+
+    rows = await repository.add_schedule_times(
+        schedule=schedule,
+        schedule_revision=schedule.revision,
+        local_times=[time(9, 30), time(21, 0)],
+    )
+
+    assert [row.schedule_revision for row in rows] == [schedule.revision, schedule.revision]
+    assert [row.local_time for row in rows] == [time(9, 30), time(21, 0)]
+    session.add_all.assert_called_once_with(rows)
+    session.flush.assert_awaited_once()
+
+
+@pytest.mark.parametrize("mismatched_revision", [0, 2])
+async def test_add_schedule_times_rejects_a_stale_or_future_revision(mismatched_revision: int) -> None:
+    repository, session, _ = _repository()
+    schedule = _schedule()
+
+    with pytest.raises(ValueError, match="must match schedule revision"):
+        await repository.add_schedule_times(
+            schedule=schedule,
+            schedule_revision=mismatched_revision,
+            local_times=[time(9, 30)],
+        )
+
+    session.add_all.assert_not_called()
+    session.flush.assert_not_awaited()
+
+
 async def test_owned_occurrence_is_returned_only_after_parent_schedule_ownership() -> None:
     repository, session, ownership = _repository(owned=True)
     schedule = _schedule()

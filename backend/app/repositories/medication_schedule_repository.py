@@ -88,6 +88,9 @@ class MedicationScheduleRepository:
         schedule_revision: int,
         local_times: Sequence[time],
     ) -> list[MedicationScheduleTime]:
+        if schedule_revision != schedule.revision:
+            raise ValueError("schedule_revision must match schedule revision")
+
         rows = [
             MedicationScheduleTime(
                 medication_schedule_id=schedule.id,
