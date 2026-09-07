@@ -17,6 +17,9 @@ from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
 )
 from ai_worker.tasks.rag.source_client.contracts import (
+    RetryDisposition,
+    SourceClientFailure,
+    SourceFailureCode,
     SourceOperationIdentity,
     SourceRequest,
     SourceRunResult,
@@ -28,6 +31,12 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     StoredRawArtifact,
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
+from ai_worker.tasks.rag.source_ingestion.failure_runs import (
+    FailedIngestionRunMetadata,
+    IngestionProcessingFailureCode,
+    record_processing_failure,
+    record_source_run_failure,
+)
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.service import (
     SourceAcquisitionInProgressError,
@@ -493,3 +502,67 @@ async def test_acquisition_lock_allows_only_one_concurrent_provider_call() -> No
 
     assert result.operation == identity
     assert client.calls == 1
+
+
+async def test_failures_before_snapshot_are_recorded_without_snapshot() -> None:
+    identity = await _seed_operation("PRE_SNAPSHOT_FAILURE")
+    metadata = FailedIngestionRunMetadata(
+        run_group_key="synthetic-pre-snapshot-failure",
+        attempt_number=1,
+        started_at=_NOW + timedelta(minutes=20),
+        finished_at=_NOW + timedelta(minutes=20, seconds=1),
+        duration_ms=1000,
+    )
+    source_failure = SourceRunResult(
+        operation=identity,
+        status=SourceRunStatus.FAILED,
+        pages=(),
+        failure=SourceClientFailure(
+            code=SourceFailureCode.TIMEOUT,
+            retry=RetryDisposition.BACKOFF,
+            safe_message="Synthetic timeout.",
+        ),
+    )
+
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        await record_source_run_failure(
+            repository=repository,
+            result=source_failure,
+            metadata=metadata,
+        )
+        await record_processing_failure(
+            repository=repository,
+            identity=identity,
+            metadata=replace(metadata, attempt_number=2),
+            failure_code=IngestionProcessingFailureCode.PARSER_VALIDATION_FAILED,
+            artifacts=_stored_artifacts(minute=20),
+        )
+
+    async with session_factory() as session:
+        runs = (
+            await session.scalars(
+                select(RagSourceIngestionRun)
+                .where(RagSourceIngestionRun.run_group_key == metadata.run_group_key)
+                .order_by(RagSourceIngestionRun.attempt_number)
+            )
+        ).all()
+        snapshot_count = await session.scalar(
+            select(func.count())
+            .select_from(RagSourceSnapshot)
+            .where(RagSourceSnapshot.operation_id == runs[0].operation_id)
+        )
+        artifact_count = await session.scalar(
+            select(func.count())
+            .select_from(RagSourceIngestionArtifact)
+            .where(RagSourceIngestionArtifact.ingestion_run_id == runs[1].id)
+        )
+
+    assert [run.run_status for run in runs] == [
+        RagIngestionRunStatus.FAILED,
+        RagIngestionRunStatus.FAILED,
+    ]
+    assert [run.failure_code for run in runs] == ["TIMEOUT", "PARSER_VALIDATION_FAILED"]
+    assert all(run.snapshot_id is None for run in runs)
+    assert snapshot_count == 0
+    assert artifact_count == 1

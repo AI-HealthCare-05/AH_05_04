@@ -2,13 +2,13 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 223 passed
-- AI Worker 전체 테스트: 1906 passed, 8 skipped
-- PostgreSQL Snapshot lifecycle·acquisition lock 통합 테스트: 6 passed
+- Source ingestion 단위 테스트: 229 passed
+- AI Worker 전체 테스트: 1912 passed, 8 skipped
+- PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 7 passed
 - Source/Catalog·Artifact Migration 테스트: 10 passed
 - 전체 Migration 테스트: 49 passed
 - Backend 전체 테스트: 966 passed, 2 skipped
-- Mypy: 417개 핵심 소스 파일 통과
+- Mypy: 419개 핵심 소스 파일 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
 - Runtime Bundle 활성화는 아직 연결하지 않았다.
 
@@ -61,6 +61,9 @@
 - RAW_RESPONSE와 REJECTS를 합친 수집 실행 전체에서 중복 Artifact key를 파일 보존 전에 차단
 - 외부 Source 호출 전에 Operation 행을 `SKIP LOCKED`로 선점해 동시 acquisition을 즉시 차단
 - 같은 Operation의 동시 요청에서 Provider 호출이 한 번만 실행되는 PostgreSQL 통합 테스트
+- Provider 수집 실패를 안전한 `SourceFailureCode`로 Snapshot 없이 `FAILED` Run에 기록
+- Parser 검증과 거부 한도 초과를 고정 실패 코드로 기록하고 보존된 원본 Artifact 참조 연결
+- 실패 Source run의 부분 page, 거부 Artifact 누락과 실패 실행 내 Artifact 중복을 DB 접근 전에 차단
 
 ## 최종 검수 결과
 
@@ -75,7 +78,7 @@
 | 완료 조건 | 상태 | 현재 증빙 또는 남은 작업 |
 | --- | --- | --- |
 | 결정적 checksum·record count | 완료 | canonical vector와 전체 page 결속 테스트 |
-| 부분 page·schema drift·version conflict 차단 | 부분 완료 | Parser·검증 경계는 차단한다. 저장 진입 전 실패를 `FAILED` Run으로 남기는 orchestration은 미연결 |
+| 부분 page·schema drift·version conflict 차단 | 완료 | 실패 Source run의 부분 page를 거부하고, 수집·Parser·거부 한도 실패를 Snapshot 없는 `FAILED` Run으로 기록 |
 | `NO_CHANGE`, `A → B → A` lineage | 완료 | 단위·PostgreSQL 통합 테스트 |
 | reject 원문 비로그·접근 통제 보존 | 완료 | DB에는 참조와 안전한 code·location만 저장 |
 | Snapshot 불변성과 상태 전이 | 완료 | append-only 제약, `PENDING/CURRENT/STALE/FAILED` 전이 테스트 |
@@ -129,7 +132,6 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 다음 항목은 #165를 완전히 닫기 위해 남아 있다.
 
-- 수집·Parser·거부 한도 실패를 Snapshot 없이 `FAILED` Run으로 기록하는 orchestration
 - Worker 이미지에서 Source DB adapter import·연결을 확인하는 smoke test
 - S3 계열 등 외부 Object Storage를 사용할 경우의 운영 어댑터와 credential 주입
 - DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책
@@ -162,6 +164,14 @@ Operation의 판단과 저장은 Operation 행 잠금 뒤 실행해 동시 수�
 수집 중이면 `SourceAcquisitionInProgressError`로 즉시 종료하며 Provider를
 호출하지 않는다. 호출자는 외부 수집이 끝날 때까지 잠금을 얻은 DB transaction을
 유지하고, 반환 또는 예외 뒤 commit·rollback한다.
+
+Provider 수집 실패는 `SourceFailureCode`만 `failure_code`로 기록하고 Provider의
+본문이나 오류 문자열은 저장하지 않는다. Parser 검증 실패는
+`PARSER_VALIDATION_FAILED`, 승인된 거부 한도 초과는
+`REJECTION_LIMIT_EXCEEDED`로 기록한다. 세 경로 모두 `snapshot_id=null`인
+`FAILED` Run으로 끝나며, Parser 단계까지 확보한 원본은 접근 통제 Artifact 참조로
+연결한다. 실패 Run의 생성과 Artifact 참조 저장은 호출자의 같은 DB transaction에
+포함된다.
 
 로컬 Artifact 저장은 DB transaction보다 먼저 완료된다. DB rollback은 이미
 생성된 내용 주소 객체를 삭제하지 않으며, 참조되지 않은 객체의 보존·정리는 위
