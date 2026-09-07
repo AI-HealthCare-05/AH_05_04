@@ -1,13 +1,26 @@
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from ai_worker.tasks.rag.source_client.contracts import (
+    P0_OPERATIONS,
+    PrimaryKeyValidationResult,
+    ProviderPage,
+    SourceRunResult,
+    SourceRunStatus,
+)
 from ai_worker.tasks.rag.source_ingestion.acquire import (
     verify_raw_artifact_manifest,
+    verify_source_run_artifacts,
 )
-from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
-from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
+from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    RawArtifactMetadata,
+)
+from ai_worker.tasks.rag.source_ingestion.checksums import (
+    raw_manifest_checksum,
+)
 
 
 def _write_artifact(
@@ -26,6 +39,40 @@ def _write_artifact(
     )
 
     return file_path, metadata
+
+
+def _complete_run(
+    first_content: bytes,
+    second_content: bytes,
+) -> SourceRunResult:
+    return SourceRunResult(
+        operation=P0_OPERATIONS[0],
+        status=SourceRunStatus.SUCCEEDED,
+        pages=(
+            ProviderPage(
+                page_number=1,
+                records=({"ITEM_SEQ": "synthetic-product-001"},),
+                response_checksum=hashlib.sha256(first_content).hexdigest(),
+                content_type="application/json",
+                total_count=2,
+            ),
+            ProviderPage(
+                page_number=2,
+                records=({"ITEM_SEQ": "synthetic-product-002"},),
+                response_checksum=hashlib.sha256(second_content).hexdigest(),
+                content_type="application/json",
+                total_count=2,
+            ),
+        ),
+        failure=None,
+        primary_key_validation=PrimaryKeyValidationResult(
+            passed=True,
+            record_count=2,
+            null_count=0,
+            duplicate_count=0,
+        ),
+        full_scan_completed=True,
+    )
 
 
 def test_verifies_all_files_and_preserves_manifest_order_independence(
@@ -80,3 +127,148 @@ def test_rejects_duplicate_keys_before_reading_files(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Duplicate"):
         verify_raw_artifact_manifest(entries)
+
+
+def test_verifies_source_run_page_artifact_bindings(
+    tmp_path: Path,
+) -> None:
+    first_content = b'{"page":1}'
+    second_content = b'{"page":2}'
+    first = _write_artifact(
+        tmp_path,
+        "page-1.json",
+        first_content,
+    )
+    second = _write_artifact(
+        tmp_path,
+        "page-2.json",
+        second_content,
+    )
+    result = _complete_run(
+        first_content,
+        second_content,
+    )
+    expected = raw_manifest_checksum([first[1], second[1]])
+
+    actual = verify_source_run_artifacts(
+        result=result,
+        artifacts=[
+            (2, second[0], second[1]),
+            (1, first[0], first[1]),
+        ],
+    )
+
+    assert actual == expected
+
+
+def test_rejects_missing_source_page_artifact(
+    tmp_path: Path,
+) -> None:
+    first_content = b'{"page":1}'
+    second_content = b'{"page":2}'
+    first = _write_artifact(
+        tmp_path,
+        "page-1.json",
+        first_content,
+    )
+    result = _complete_run(
+        first_content,
+        second_content,
+    )
+
+    with pytest.raises(ValueError, match="do not match"):
+        verify_source_run_artifacts(
+            result=result,
+            artifacts=[
+                (1, first[0], first[1]),
+            ],
+        )
+
+
+def test_rejects_duplicate_source_page_binding(
+    tmp_path: Path,
+) -> None:
+    first_content = b'{"page":1}'
+    second_content = b'{"page":2}'
+    first = _write_artifact(
+        tmp_path,
+        "page-1.json",
+        first_content,
+    )
+    second = _write_artifact(
+        tmp_path,
+        "page-2.json",
+        second_content,
+    )
+    result = _complete_run(
+        first_content,
+        second_content,
+    )
+
+    with pytest.raises(ValueError, match="duplicate page binding"):
+        verify_source_run_artifacts(
+            result=result,
+            artifacts=[
+                (1, first[0], first[1]),
+                (1, second[0], second[1]),
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "changed_field",
+    [
+        "checksum",
+        "content_type",
+    ],
+)
+def test_rejects_source_page_artifact_metadata_mismatch(
+    tmp_path: Path,
+    changed_field: str,
+) -> None:
+    first_content = b'{"page":1}'
+    second_content = b'{"page":2}'
+    first = _write_artifact(
+        tmp_path,
+        "page-1.json",
+        first_content,
+    )
+    second = _write_artifact(
+        tmp_path,
+        "page-2.json",
+        second_content,
+    )
+    result = _complete_run(
+        first_content,
+        second_content,
+    )
+
+    if changed_field == "checksum":
+        first_page = replace(
+            result.pages[0],
+            response_checksum="f" * 64,
+        )
+        expected_message = "checksum does not match"
+    else:
+        first_page = replace(
+            result.pages[0],
+            content_type="application/xml",
+        )
+        expected_message = "content type does not match"
+
+    changed_result = replace(
+        result,
+        pages=(
+            first_page,
+            result.pages[1],
+        ),
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        verify_source_run_artifacts(
+            result=changed_result,
+            artifacts=[
+                (1, first[0], first[1]),
+                (2, second[0], second[1]),
+            ],
+        )

@@ -35,7 +35,7 @@ def test_product_checksum_vector() -> None:
     expected_bytes = b'[{"ITEM_SEQ":"001"},{"ITEM_SEQ":"002"}]'
     expected_sha256 = "69a9513d80af6159c80b5d11bece974bf1dbe02f5d08a76520819c3ac36a5524"
 
-    # 固定したバイト列と、製品 checksum 関数の両方を同じ期待値で確認します。
+    # 고정한 바이트열과 제품 checksum 함수를 같은 기대값으로 확인합니다.
     assert hashlib.sha256(expected_bytes).hexdigest() == expected_sha256
     assert product_canonical_checksum(records) == expected_sha256
 

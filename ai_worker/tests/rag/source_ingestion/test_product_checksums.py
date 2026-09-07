@@ -28,14 +28,13 @@ def test_record_order_does_not_change_checksum() -> None:
     assert records[0]["ITEM_SEQ"] == "002"
 
 
-def test_nfc_equivalent_values_match_without_changing_original() -> None:
+def test_distinguishes_unicode_value_forms() -> None:
     decomposed = unicodedata.normalize("NFD", "합성")
     original = [{"ITEM_SEQ": "001", "ITEM_NAME": decomposed}]
     composed = [{"ITEM_SEQ": "001", "ITEM_NAME": "합성"}]
 
-    assert product_canonical_checksum(original) == (product_canonical_checksum(composed))
+    assert product_canonical_checksum(original) != (product_canonical_checksum(composed))
     assert original[0]["ITEM_NAME"] == decomposed
-    assert original[0]["ITEM_NAME"] != "합성"
 
 
 def test_preserves_field_content_in_checksum() -> None:
@@ -82,15 +81,15 @@ def test_rejects_duplicate_identity_even_if_content_differs() -> None:
         product_canonical_checksum(records)
 
 
-def test_rejects_identity_collision_after_nfc() -> None:
-    # 실제 제품 ID가 아닌 Unicode 충돌 검증용 합성 식별자입니다.
+def test_accepts_distinct_unicode_identity_forms() -> None:
     composed = "합성"
     decomposed = unicodedata.normalize("NFD", composed)
+    records = [
+        {"ITEM_SEQ": composed},
+        {"ITEM_SEQ": decomposed},
+    ]
 
-    with pytest.raises(ValueError, match="Duplicate"):
-        product_canonical_checksum(
-            [
-                {"ITEM_SEQ": composed},
-                {"ITEM_SEQ": decomposed},
-            ]
-        )
+    checksum = product_canonical_checksum(records)
+
+    assert len(checksum) == 64
+    assert checksum == product_canonical_checksum(reversed(records))

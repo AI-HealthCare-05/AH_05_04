@@ -1,7 +1,6 @@
 """Source 원본 및 제품 레코드의 checksum을 계산합니다."""
 
 import hashlib
-import unicodedata
 from collections.abc import Iterable, Mapping
 
 from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
@@ -31,14 +30,11 @@ def product_canonical_checksum(
         if not isinstance(item_seq, str) or not item_seq.strip():
             raise ValueError("Product ITEM_SEQ must be a non-empty string.")
 
-        # checksum용 JSON과 동일한 NFC 기준으로 정렬·중복 검사합니다.
-        # 원본 ITEM_SEQ와 앞뒤 공백은 변경하지 않습니다.
-        canonical_key = unicodedata.normalize("NFC", item_seq)
-
-        if canonical_key in records_by_key:
+        # 원본 ITEM_SEQ를 그대로 사용해 정렬하고 중복을 검사합니다.
+        if item_seq in records_by_key:
             raise ValueError("Duplicate product ITEM_SEQ.")
 
-        records_by_key[canonical_key] = dict(record)
+        records_by_key[item_seq] = dict(record)
 
     if not records_by_key:
         raise ValueError("Product records must not be empty.")
@@ -55,12 +51,10 @@ def raw_manifest_checksum(
     artifacts_by_key: dict[str, RawArtifactMetadata] = {}
 
     for artifact in artifacts:
-        canonical_key = unicodedata.normalize("NFC", artifact.artifact_key)
-
-        if canonical_key in artifacts_by_key:
+        if artifact.artifact_key in artifacts_by_key:
             raise ValueError("Duplicate artifact key.")
 
-        artifacts_by_key[canonical_key] = artifact
+        artifacts_by_key[artifact.artifact_key] = artifact
 
     if not artifacts_by_key:
         raise ValueError("Raw artifact manifest must not be empty.")

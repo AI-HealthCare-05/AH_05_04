@@ -1,49 +1,83 @@
-"""원본을 변경하지 않고 checksum용 JSON 바이트를 생성합니다."""
+"""원본 값을 변경하지 않고 checksum용 JSON 바이트를 생성합니다."""
 
 import json
-import unicodedata
+
+_MIN_SAFE_INTEGER = -(2**53) + 1
+_MAX_SAFE_INTEGER = (2**53) - 1
 
 
-def _validate_json_value(value: object) -> None:
-    """JSON 타입과 NFC 적용 후 객체 key의 유일성을 확인합니다."""
-    if value is None or type(value) in (str, bool, int, float):
-        return
+def _validate_string(value: str) -> None:
+    """UTF-8로 안전하게 표현할 수 없는 lone surrogate를 거부합니다."""
+    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
+        raise ValueError("JSON string contains an invalid Unicode surrogate.")
+
+
+def _validated_json_value(value: object) -> object:
+    """Source canonical JSON에서 허용하는 값만 복사해 반환합니다."""
+    if value is None or isinstance(value, bool):
+        return value
+
+    if isinstance(value, int):
+        if not _MIN_SAFE_INTEGER <= value <= _MAX_SAFE_INTEGER:
+            raise ValueError("JSON integer is outside the safe range.")
+
+        return value
+
+    if isinstance(value, float):
+        raise ValueError("Floating-point JSON numbers are not supported.")
+
+    if isinstance(value, str):
+        _validate_string(value)
+        return value
 
     if isinstance(value, list):
-        for item in value:
-            _validate_json_value(item)
-        return
+        return [_validated_json_value(item) for item in value]
 
     if isinstance(value, dict):
-        normalized_keys: set[str] = set()
+        validated: dict[str, object] = {}
 
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError("JSON object keys must be strings.")
 
-            normalized_key = unicodedata.normalize("NFC", key)
+            _validate_string(key)
+            validated[key] = _validated_json_value(item)
 
-            if normalized_key in normalized_keys:
-                raise ValueError("JSON object keys collide after NFC normalization.")
-
-            normalized_keys.add(normalized_key)
-            _validate_json_value(item)
-
-        return
+        return validated
 
     raise ValueError("Unsupported JSON value type.")
 
 
+def _order_json_objects(value: object) -> object:
+    """중첩 객체 key를 Evaluation과 같은 UTF-16 기준으로 정렬합니다."""
+    if isinstance(value, list):
+        return [_order_json_objects(item) for item in value]
+
+    if isinstance(value, dict):
+        return {
+            key: _order_json_objects(value[key])
+            for key in sorted(
+                value,
+                key=lambda item: item.encode("utf-16-be"),
+            )
+        }
+
+    return value
+
+
 def canonical_json_bytes(value: object) -> bytes:
-    """Key 정렬·compact JSON·NFC·UTF-8 규칙으로 직렬화합니다."""
-    _validate_json_value(value)
+    """원문을 보존하며 UTF-16 key 정렬·compact JSON·UTF-8로 직렬화합니다."""
+    validated = _validated_json_value(value)
+    ordered = _order_json_objects(validated)
 
-    serialized = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
+    try:
+        serialized = json.dumps(
+            ordered,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("Value cannot be serialized as canonical JSON.") from None
 
-    return unicodedata.normalize("NFC", serialized).encode("utf-8")
+    return serialized.encode("utf-8")

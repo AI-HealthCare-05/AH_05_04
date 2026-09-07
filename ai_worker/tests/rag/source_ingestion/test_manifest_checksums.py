@@ -57,17 +57,18 @@ def test_rejects_duplicate_artifact_keys() -> None:
         )
 
 
-def test_rejects_artifact_key_collision_after_nfc() -> None:
+def test_accepts_distinct_unicode_artifact_keys() -> None:
     composed = "synthetic/합성.json"
     decomposed = unicodedata.normalize("NFD", composed)
+    artifacts = [
+        _artifact(composed),
+        _artifact(decomposed),
+    ]
 
-    with pytest.raises(ValueError, match="Duplicate"):
-        raw_manifest_checksum(
-            [
-                _artifact(composed),
-                _artifact(decomposed),
-            ]
-        )
+    checksum = raw_manifest_checksum(artifacts)
+
+    assert len(checksum) == 64
+    assert checksum == raw_manifest_checksum(reversed(artifacts))
 
 
 def test_rejects_empty_manifest() -> None:
