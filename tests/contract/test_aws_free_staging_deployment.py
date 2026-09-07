@@ -69,6 +69,15 @@ def test_staging_redis_healthcheck_avoids_password_in_argv() -> None:
     assert "REDIS_PASSWORD" in healthcheck_command
 
 
+def test_staging_redis_runs_as_unprivileged_user() -> None:
+    """sh -c 형태의 command는 redis 공식 이미지 entrypoint의 gosu 권한 하향 분기를 타지
+    않아 명시하지 않으면 root로 기동된다(#322). 인증 경계가 된 프로세스는 비특권으로
+    실행해야 한다."""
+    redis = _compose()["services"]["redis"]
+
+    assert redis["user"] == "redis"
+
+
 def test_staging_migration_and_health_gate_nginx_startup() -> None:
     services = _compose()["services"]
 
