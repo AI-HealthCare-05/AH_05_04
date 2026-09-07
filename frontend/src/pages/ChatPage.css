@@ -196,6 +196,11 @@
   min-height: 52px;
 }
 
+.chat-page .chat-input:focus-visible {
+  outline: 3px solid var(--ds-focus);
+  outline-offset: -3px;
+}
+
 .chat-page__composer-label {
   grid-column: 1 / -1;
   color: var(--ds-text);
