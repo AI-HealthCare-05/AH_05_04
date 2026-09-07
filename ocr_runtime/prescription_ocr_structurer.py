@@ -1,10 +1,37 @@
 import re
+from datetime import date
 from statistics import median
 
 from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
 from provider_contracts.ocr import RawRecognizedField, RecognizedField
 
-_DATE_PATTERN = re.compile(r"\d{4}[-./]\d{1,2}[-./]\d{1,2}")
+# CLOVA는 같은 템플릿이라도 날짜 텍스트 박스에 라벨(발행일 등)이나 앞뒤 공백을
+# 함께 인식할 수 있으므로 fullmatch 대신 값 내부에서 날짜 부분만 찾아 추출합니다.
+# 구분자는 숫자가 아니면 무엇이든 허용해 "-", ".", "/"뿐 아니라 한글식(년/월/일)
+# 표기도 함께 지원합니다. backend/app/services/ocr_ai/validator.py의
+# _normalize_date와 같은 방식입니다.
+_DATE_PATTERN = re.compile(r"(?P<year>\d{4})\D+(?P<month>\d{1,2})\D+(?P<day>\d{1,2})")
+
+
+def _normalize_prescribed_date(value: str) -> str | None:
+    match = _DATE_PATTERN.search(value)
+
+    if match is None:
+        return None
+
+    year = int(match.group("year"))
+    month = int(match.group("month"))
+    day = int(match.group("day"))
+
+    try:
+        # 자릿수만 맞고 실제로 존재하지 않는 날짜(예: 13월)는 오인식으로 보고 버립니다.
+        date(year, month, day)
+    except ValueError:
+        return None
+
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
 # 숫자 1을 I, l, |로 오인식한 경우에도 원문을 삭제하지 않고
 # 미확인 필드로 남길 수 있도록 허용합니다.
 _OCR_NUMBER = r"(?:\d+(?:\.\d+)?|[Iil|])"
@@ -293,11 +320,15 @@ class PrescriptionOcrStructurer:
         raw_fields: list[RawRecognizedField],
     ) -> RecognizedField | None:
         for field in raw_fields:
-            if _DATE_PATTERN.fullmatch(field.raw_value):
+            normalized_date = _normalize_prescribed_date(field.raw_value)
+
+            if normalized_date is not None:
                 return RecognizedField(
                     medication_index=0,
                     field_type="PRESCRIBED_DATE",
                     raw_value=field.raw_value,
+                    normalized_value=normalized_date,
+                    normalization_version="date-rule-v1",
                     confidence_score=field.confidence_score,
                 )
         return None

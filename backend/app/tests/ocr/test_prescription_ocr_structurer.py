@@ -90,6 +90,8 @@ def test_structure_extracts_date_and_two_medication_rows() -> None:
 
     prescribed_date = fields_by_identity[(0, "PRESCRIBED_DATE")]
     assert prescribed_date.raw_value == "2026-08-12"
+    assert prescribed_date.normalized_value == "2026-08-12"
+    assert prescribed_date.normalization_version == "date-rule-v1"
     assert prescribed_date.confidence_score == 0.9998913
 
     first_name = fields_by_identity[(1, "MEDICATION_NAME")]
@@ -140,6 +142,43 @@ def test_structure_does_not_invent_medication_without_table() -> None:
     assert len(result) == 1
     assert result[0].field_type == "PRESCRIBED_DATE"
     assert result[0].raw_value == "2026-08-12"
+    assert result[0].normalized_value == "2026-08-12"
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        "2026-08-12 ",  # 뒤 공백
+        " 2026-08-12",  # 앞 공백
+        "발행일 2026-08-12",  # 라벨과 같은 박스로 인식
+        "2026.08.12",  # 점 구분자
+        "2026/08/12",  # 슬래시 구분자
+        "2026-8-2",  # 한 자리 월/일
+        "2026년 08월 12일",  # 한글식 표기
+        "2026년08월12일",  # 한글식 표기, 공백 없음
+    ],
+)
+def test_structure_extracts_prescribed_date_from_noisy_or_alternate_formats(
+    raw_value: str,
+) -> None:
+    raw_fields = [_raw_field(raw_value, 338, 399, 0.99)]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    expected_normalized = "2026-08-02" if raw_value == "2026-8-2" else "2026-08-12"
+
+    assert len(result) == 1
+    assert result[0].field_type == "PRESCRIBED_DATE"
+    assert result[0].raw_value == raw_value
+    assert result[0].normalized_value == expected_normalized
+
+
+def test_structure_ignores_date_shaped_but_nonexistent_date() -> None:
+    raw_fields = [_raw_field("2026-13-45", 338, 399, 0.99)]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert result == []
 
 
 def test_structure_normalizes_medication_name() -> None:
