@@ -63,6 +63,16 @@
 - Mypy: 373개 소스 파일 통과
 - Redis 실행 후 전체 테스트 스크립트: 통과
 - git diff --check: 통과
+- 프록시 오류 응답 Backend·업로드 API 테스트: 9 passed
+- 실제 Nginx HTTP 통합 검증: 5개 통과
+  - Origin 없음·허용·미허용 요청의 크기 초과 응답 확인
+  - 400 / UPLOAD_FILE_TOO_LARGE 공통 JSON 확인
+  - 본문 trace_id와 X-Trace-Id 일치 및 no-store 확인
+  - 내부 오류 경로 직접 접근: 404
+  - 일반 요청의 Backend 전달 정상
+- 검증 스크립트 Ruff·Mypy: 통과
+- 범위: prod_http.conf 기반 Content-Length 초과 처리.
+  HTTPS·chunked 업로드·실제 OCR 검증은 포함하지 않음.
 
 ## 남은 완료 조건
 

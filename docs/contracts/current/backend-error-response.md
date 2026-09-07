@@ -8,6 +8,27 @@ Backend 오류 응답 형식과 오류 코드를 팀 전체가 동일한 기준�
 
 FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은 다음 형식을 따릅니다.
 
+### Nginx 업로드 크기 초과 처리
+
+파일 자체의 허용 크기는 30MiB이며, Nginx의 API 요청 본문 제한은
+multipart 부가 데이터를 고려해 32MiB로 설정한다.
+
+Nginx에서 요청 본문 크기 초과가 발생하면 원래 파일 본문을 전달하지 않고
+`/api/v1/_internal/upload-too-large`로 내부 이동한다.
+Backend는 기존 `400 / UPLOAD_FILE_TOO_LARGE` 오류 응답을 생성한다.
+
+이 응답은 기존 공통 오류 envelope, 서버 생성 X-Trace-Id,
+Cache-Control: no-store 및 Backend의 허용 Origin 기반 CORS 정책을 따른다.
+파일 자체의 전체 크기를 확인하지 않았으므로 rejected_value는 null이다.
+
+오류 응답 전용 경로는 OpenAPI에서 제외하고 Nginx의 internal location으로
+직접 접근을 차단한다. include_in_schema=False 자체는 접근 통제가 아니다.
+Backend 포트 직접 접근에 대한 네트워크 통제는 별도 배포 설정에 따른다.
+
+이 처리는 Backend가 정상적으로 응답할 수 있는 경우를 기준으로 한다.
+Backend 장애로 발생하는 프록시 오류는 이 업로드 오류 변환의 범위 밖이다.
+
+
 ```json
 {
   "code": "PRESCRIPTION_NOT_FOUND",
