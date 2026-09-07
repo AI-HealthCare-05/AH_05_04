@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -21,11 +22,18 @@ class LocalPrivateSourceArtifactStore:
     """SHA-256 기반 object key로 원본을 원자적·멱등하게 보존합니다."""
 
     def __init__(self, root: Path) -> None:
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self._root = root.resolve()
-        if not self._root.is_dir():
-            raise ValueError("Source artifact storage root is not a directory.")
-        os.chmod(self._root, 0o700)
+        if not root.is_absolute():
+            raise ValueError("Source artifact storage root must be an absolute path.")
+        self._reject_symlink_path(root)
+        try:
+            root.mkdir(mode=0o700, parents=True, exist_ok=False)
+        except FileExistsError:
+            self._validate_existing_private_root(root)
+        except OSError:
+            raise ValueError("Source artifact storage root could not be created.") from None
+        else:
+            os.chmod(root, 0o700)
+        self._root = root.resolve(strict=True)
 
     def put_verified(
         self,
@@ -92,6 +100,25 @@ class LocalPrivateSourceArtifactStore:
             reject_code,
             parser_location,
         )
+
+    @staticmethod
+    def _reject_symlink_path(root: Path) -> None:
+        for path in (root, *root.parents):
+            if path.is_symlink():
+                raise ValueError("Source artifact storage root cannot use symlinks.")
+
+    @staticmethod
+    def _validate_existing_private_root(root: Path) -> None:
+        try:
+            root_stat = root.lstat()
+        except OSError:
+            raise ValueError("Source artifact storage root could not be inspected.") from None
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise ValueError("Source artifact storage root is not a directory.")
+        if root_stat.st_uid != os.geteuid():
+            raise ValueError("Source artifact storage root must be owned by the Worker user.")
+        if stat.S_IMODE(root_stat.st_mode) != 0o700:
+            raise ValueError("Existing Source artifact storage root must already use mode 0700.")
 
     @staticmethod
     def _object_key(raw_checksum: str) -> str:

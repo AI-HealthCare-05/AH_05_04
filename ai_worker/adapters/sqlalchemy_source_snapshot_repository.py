@@ -49,6 +49,7 @@ _SNAPSHOT = table(
     column("parser_version", String(100)),
     column("normalization_version", String(100)),
     column("canonicalization_spec_version", String(100)),
+    column("endpoint_receipt_hash", String(64)),
     column("record_count", Integer),
     column("rejected_record_count", Integer),
     column("verification_status", String(20)),
@@ -114,9 +115,9 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         return UUID(str(operation_id))
 
     async def try_lock_acquisition(self, identity: SourceOperationIdentity) -> UUID:
-        """동시 수집 중이면 기다리지 않고 안전한 고정 예외를 반환합니다."""
+        """같은 Source가 수집 중이면 기다리지 않고 안전한 고정 예외를 반환합니다."""
         statement = _operation_lookup(identity).with_for_update(
-            of=_OPERATION,
+            of=_SOURCE,
             skip_locked=True,
         )
         result = await self._session.execute(statement)
@@ -143,9 +144,13 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             _SNAPSHOT.c.parser_version,
             _SNAPSHOT.c.normalization_version,
             _SNAPSHOT.c.canonicalization_spec_version,
+            _SNAPSHOT.c.endpoint_receipt_hash,
+            _SNAPSHOT.c.rejected_record_count,
+            _SNAPSHOT.c.verification_status,
         ).where(
             _SNAPSHOT.c.operation_id == str(operation_id),
             _SNAPSHOT.c.source_version == source_version,
+            _SNAPSHOT.c.verification_status != SnapshotVerificationStatus.FAILED,
         )
         result = await self._session.execute(statement)
         row = result.mappings().one_or_none()
@@ -161,8 +166,14 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 _SNAPSHOT.c.parser_version,
                 _SNAPSHOT.c.normalization_version,
                 _SNAPSHOT.c.canonicalization_spec_version,
+                _SNAPSHOT.c.endpoint_receipt_hash,
+                _SNAPSHOT.c.rejected_record_count,
+                _SNAPSHOT.c.verification_status,
             )
-            .where(_SNAPSHOT.c.operation_id == str(operation_id))
+            .where(
+                _SNAPSHOT.c.operation_id == str(operation_id),
+                _SNAPSHOT.c.verification_status != SnapshotVerificationStatus.FAILED,
+            )
             .order_by(
                 _SNAPSHOT.c.collected_at.desc(),
                 _SNAPSHOT.c.created_at.desc(),
@@ -187,6 +198,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 parser_version=request.metadata.parser_version,
                 normalization_version=request.metadata.normalization_version,
                 canonicalization_spec_version=request.ingestion.canonicalization_spec_version,
+                endpoint_receipt_hash=request.ingestion.endpoint_receipt_hash,
                 record_count=request.ingestion.record_count,
                 rejected_record_count=request.metadata.rejected_record_count,
                 verification_status="PENDING",
@@ -289,6 +301,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             _SNAPSHOT.c.id,
             _SNAPSHOT.c.operation_id,
             _SNAPSHOT.c.verification_status,
+            _SNAPSHOT.c.rejected_record_count,
         ).where(
             _SNAPSHOT.c.id == str(snapshot_id),
             _SNAPSHOT.c.operation_id == str(operation_id),
@@ -301,12 +314,31 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             _SNAPSHOT.c.id,
             _SNAPSHOT.c.operation_id,
             _SNAPSHOT.c.verification_status,
+            _SNAPSHOT.c.rejected_record_count,
         ).where(
             _SNAPSHOT.c.operation_id == str(operation_id),
             _SNAPSHOT.c.verification_status == SnapshotVerificationStatus.CURRENT,
         )
         result = await self._session.execute(statement)
         return _snapshot_status_reference(result.mappings().one_or_none())
+
+    async def has_passed_verification(
+        self,
+        *,
+        snapshot_id: UUID,
+        check_name: str,
+    ) -> bool:
+        statement = (
+            select(_VERIFICATION.c.id)
+            .where(
+                _VERIFICATION.c.snapshot_id == str(snapshot_id),
+                _VERIFICATION.c.check_name == check_name,
+                _VERIFICATION.c.verification_result == "PASSED",
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none() is not None
 
     async def change_snapshot_status(
         self,
@@ -346,6 +378,9 @@ def _snapshot_reference(row: RowMapping | None) -> SnapshotReference | None:
         parser_version=str(row["parser_version"]),
         normalization_version=str(row["normalization_version"]),
         canonicalization_spec_version=str(row["canonicalization_spec_version"]),
+        endpoint_receipt_hash=(str(row["endpoint_receipt_hash"]) if row["endpoint_receipt_hash"] is not None else None),
+        rejected_record_count=int(row["rejected_record_count"]),
+        verification_status=SnapshotVerificationStatus(str(row["verification_status"])),
     )
 
 
@@ -356,6 +391,7 @@ def _snapshot_status_reference(row: RowMapping | None) -> SnapshotStatusReferenc
         snapshot_id=UUID(str(row["id"])),
         operation_id=UUID(str(row["operation_id"])),
         verification_status=SnapshotVerificationStatus(str(row["verification_status"])),
+        rejected_record_count=int(row["rejected_record_count"]),
     )
 
 

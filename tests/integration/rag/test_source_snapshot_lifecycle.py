@@ -43,6 +43,7 @@ from ai_worker.tasks.rag.source_ingestion.service import (
     acquire_source_exclusively,
 )
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
+    SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
     SnapshotSelectionDecision,
@@ -77,7 +78,7 @@ TEST_DATABASE_URL = URL.create(
     password=config.DB_PASSWORD,
     host="127.0.0.1",
     port=config.DB_EXPOSE_PORT,
-    database="test",
+    database=config.DB_NAME,
 )
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
@@ -139,6 +140,40 @@ async def _seed_operation(suffix: str) -> SourceOperationIdentity:
     return identity
 
 
+async def _seed_two_operations_for_one_source(
+    suffix: str,
+) -> tuple[SourceOperationIdentity, SourceOperationIdentity]:
+    identities = tuple(
+        SourceOperationIdentity(
+            source_code=f"SYNTHETIC_SHARED_SOURCE_{suffix}",
+            endpoint_code=f"SYNTHETIC_ENDPOINT_{suffix}_{index}",
+            operation_code=f"SYNTHETIC_OPERATION_{suffix}_{index}",
+        )
+        for index in (1, 2)
+    )
+    async with session_factory.begin() as session:
+        repository = RagSourceCatalogRepository(session)
+        source = await repository.create_source(
+            RagSourceCreate(source_code=identities[0].source_code, display_name="Synthetic Shared Source")
+        )
+        for identity in identities:
+            endpoint = await repository.create_endpoint(
+                RagSourceEndpointCreate(
+                    source_id=source.id,
+                    endpoint_code=identity.endpoint_code,
+                    display_name="Synthetic Endpoint",
+                )
+            )
+            await repository.create_operation(
+                RagSourceOperationCreate(
+                    endpoint_id=endpoint.id,
+                    operation_code=identity.operation_code,
+                    display_name="Synthetic Operation",
+                )
+            )
+    return identities
+
+
 def _stored_artifacts(*, minute: int = 0) -> tuple[StoredRawArtifact, ...]:
     return (
         StoredRawArtifact(
@@ -155,11 +190,16 @@ def _stored_artifacts(*, minute: int = 0) -> tuple[StoredRawArtifact, ...]:
     )
 
 
-def _ingestion(identity: SourceOperationIdentity, checksum: str) -> ProductIngestionResult:
+def _ingestion(
+    identity: SourceOperationIdentity,
+    checksum: str,
+    *,
+    endpoint_receipt_hash: str = "c" * 64,
+) -> ProductIngestionResult:
     artifacts = _stored_artifacts()
     return ProductIngestionResult(
         identity=identity,
-        endpoint_receipt_hash="c" * 64,
+        endpoint_receipt_hash=endpoint_receipt_hash,
         raw_manifest_checksum=raw_manifest_checksum(artifact.metadata for artifact in artifacts),
         canonical_checksum=checksum,
         canonicalization_spec_version="mfds-product-approval@1",
@@ -389,6 +429,65 @@ async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
     assert stored_rejection.parser_location == "page[1].record[3]"
 
 
+async def test_rejection_change_creates_candidate_and_requires_publication_approval() -> None:
+    identity = await _seed_operation("REJECTION_APPROVAL")
+    raw_artifacts = _stored_artifacts(minute=11)
+    rejection = StoredRawArtifact(
+        page_number=None,
+        metadata=RawArtifactMetadata(
+            artifact_key="reject-0001.json",
+            raw_checksum="e" * 64,
+            byte_size=64,
+            content_type="application/json",
+        ),
+        storage_backend="PRIVATE_OBJECT_STORAGE",
+        object_key="source-ingestion/synthetic/reject-approval.json",
+        artifact_kind=IngestionArtifactKind.REJECTS,
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="page[1].record[3]",
+    )
+
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        first = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:clean", minute=10),
+            artifacts=_stored_artifacts(minute=10),
+        )
+        rejected = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=replace(_metadata("external:rejected", minute=11), rejected_record_count=1),
+            artifacts=(*raw_artifacts, rejection),
+        )
+        assert rejected.snapshot_id is not None
+        with pytest.raises(ValueError, match="publication 승인"):
+            await select_current_snapshot(
+                repository=repository,
+                snapshot_id=rejected.snapshot_id,
+                selected_at=_NOW + timedelta(minutes=12),
+                selected_by="synthetic-reviewer",
+            )
+        await repository.append_verification(
+            snapshot_id=rejected.snapshot_id,
+            check_name=SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
+            result="PASSED",
+            verified_at=_NOW + timedelta(minutes=13),
+            verified_by="synthetic-reviewer",
+        )
+        selected = await select_current_snapshot(
+            repository=repository,
+            snapshot_id=rejected.snapshot_id,
+            selected_at=_NOW + timedelta(minutes=14),
+            selected_by="synthetic-reviewer",
+        )
+
+    assert first.decision is SnapshotIngestionDecision.CREATED
+    assert rejected.decision is SnapshotIngestionDecision.CREATED
+    assert selected.decision is SnapshotSelectionDecision.ACTIVATED
+
+
 async def test_failed_snapshot_is_persisted_and_cannot_be_selected() -> None:
     identity = await _seed_operation("FAILED")
 
@@ -421,6 +520,52 @@ async def test_failed_snapshot_is_persisted_and_cannot_be_selected() -> None:
         snapshot = await session.get(RagSourceSnapshot, failed.snapshot_id)
         assert snapshot is not None
         assert snapshot.verification_status is RagSnapshotVerificationStatus.FAILED
+
+
+async def test_failed_snapshot_can_be_retried_with_same_source_version() -> None:
+    identity = await _seed_operation("FAILED_RETRY")
+
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        first = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A, endpoint_receipt_hash="1" * 64),
+            metadata=_metadata("external:retry", minute=18),
+            artifacts=_stored_artifacts(minute=18),
+        )
+        assert first.snapshot_id is not None
+        await fail_snapshot_verification(
+            repository=repository,
+            snapshot_id=first.snapshot_id,
+            failure_code="SCHEMA_DRIFT",
+            failed_at=_NOW + timedelta(minutes=19),
+            verified_by="synthetic-reviewer",
+        )
+        retried = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A, endpoint_receipt_hash="2" * 64),
+            metadata=replace(
+                _metadata("external:retry", minute=20),
+                run_group_key="synthetic-external:retry-second",
+            ),
+            artifacts=_stored_artifacts(minute=20),
+        )
+
+    assert retried.decision is SnapshotIngestionDecision.CREATED
+    assert retried.snapshot_id != first.snapshot_id
+    async with session_factory() as session:
+        snapshots = (
+            await session.scalars(
+                select(RagSourceSnapshot)
+                .where(RagSourceSnapshot.operation_id == first.operation_id)
+                .order_by(RagSourceSnapshot.collected_at)
+            )
+        ).all()
+    assert [snapshot.verification_status for snapshot in snapshots] == [
+        RagSnapshotVerificationStatus.FAILED,
+        RagSnapshotVerificationStatus.PENDING,
+    ]
+    assert [snapshot.endpoint_receipt_hash for snapshot in snapshots] == ["1" * 64, "2" * 64]
 
 
 async def test_operation_lock_serializes_concurrent_snapshot_decisions() -> None:
@@ -501,6 +646,39 @@ async def test_acquisition_lock_allows_only_one_concurrent_provider_call() -> No
         await second_session.rollback()
 
     assert result.operation == identity
+    assert client.calls == 1
+
+
+async def test_acquisition_lock_is_shared_by_different_operations_of_one_source() -> None:
+    first_identity, second_identity = await _seed_two_operations_for_one_source("ACQUISITION_LOCK")
+    client = _BlockingSourceClient()
+
+    async with session_factory() as first_session, session_factory() as second_session:
+        await first_session.begin()
+        await second_session.begin()
+        first_task = asyncio.create_task(
+            acquire_source_exclusively(
+                gate=SqlAlchemySourceSnapshotRepository(first_session),
+                client=client,
+                request=SourceRequest(operation=first_identity, parameters={}),
+            )
+        )
+        await asyncio.wait_for(client.started.wait(), timeout=2)
+
+        try:
+            with pytest.raises(SourceAcquisitionInProgressError):
+                await acquire_source_exclusively(
+                    gate=SqlAlchemySourceSnapshotRepository(second_session),
+                    client=client,
+                    request=SourceRequest(operation=second_identity, parameters={}),
+                )
+        finally:
+            client.release.set()
+
+        await asyncio.wait_for(first_task, timeout=2)
+        await first_session.commit()
+        await second_session.rollback()
+
     assert client.calls == 1
 
 

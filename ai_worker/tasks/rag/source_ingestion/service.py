@@ -11,7 +11,7 @@ from ai_worker.tasks.rag.source_client.contracts import (
 
 
 class SourceAcquisitionInProgressError(RuntimeError):
-    """같은 Source Operation의 수집 transaction이 이미 실행 중입니다."""
+    """같은 Source의 수집 transaction이 이미 실행 중입니다."""
 
 
 class SourceAcquisitionGate(Protocol):

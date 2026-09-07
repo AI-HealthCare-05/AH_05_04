@@ -2,14 +2,14 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 253 passed
-- AI Worker 전체 테스트: 1023 passed
-- PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 7 passed
-- Source/Catalog·Artifact Migration 테스트: 10 passed
-- 전체 Migration 테스트: 49 passed
-- Backend·계약·통합 전체 테스트: 1088 passed, 2 skipped
-- Ruff 전체 검사 통과, 492 files already formatted
-- Mypy: 429개 핵심 소스 파일 통과
+- Source ingestion 단위 테스트: 262 passed
+- AI Worker 전체 테스트: 1032 passed
+- PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 10 passed
+- Source/Catalog·Artifact Migration 테스트: 12 passed
+- 전체 Migration 테스트: 51 passed
+- Backend·계약·통합 전체 테스트: 1131 passed, 2 skipped
+- Ruff 전체 검사 통과, 495 files already formatted
+- Mypy: 446개 소스 파일 통과
 - 실제 Worker 이미지에서 Source Snapshot adapter import·PostgreSQL 쿼리 통과
 - S3 호환 비공개 Object Storage adapter·SDK 계약 테스트 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
@@ -38,7 +38,7 @@
 - 제품 성공·빈 결과·인증 실패·일일 한도·schema drift 필수 fixture 시나리오 검증
 - Receipt hash·Raw Manifest checksum·canonical checksum·버전·record count를 묶은 `ProductIngestionResult` 계약 추가
 - 검증 결과에 Source version·schema·parser·normalization version과 실행 metadata를 결합하는 저장 계약 추가
-- Source·Endpoint·Operation exact-match 조회와 Operation 행 잠금 경계 추가
+- Source·Endpoint·Operation exact-match 조회와 Source 행 잠금 경계 추가
 - 신규 결과를 승인 전 `PENDING` Snapshot과 append-only 검증·수집 이력으로 저장
 - 동일 canonical 내용과 동일 version 계약의 재수집을 기존 Snapshot의 `NO_CHANGE` 이력으로 저장
 - 동일 외부 Source version의 canonical 내용 또는 version 계약 변경을 `SOURCE_VERSION_CONFLICT`로 차단
@@ -63,7 +63,7 @@
 - DB 문자열 길이 제한과 `parser_location` 제어문자를 Artifact 보존 전에 차단
 - RAW_RESPONSE와 REJECTS를 합친 수집 실행 전체에서 중복 Artifact key를 파일 보존 전에 차단
 - 외부 Source 호출 전에 Operation 행을 `SKIP LOCKED`로 선점해 동시 acquisition을 즉시 차단
-- 같은 Operation의 동시 요청에서 Provider 호출이 한 번만 실행되는 PostgreSQL 통합 테스트
+- 같은 Source의 서로 다른 Operation 동시 요청에서도 Provider 호출이 한 번만 실행되는 PostgreSQL 통합 테스트
 - Provider 수집 실패를 안전한 `SourceFailureCode`로 Snapshot 없이 `FAILED` Run에 기록
 - Parser 검증과 거부 한도 초과를 고정 실패 코드로 기록하고 보존된 원본 Artifact 참조 연결
 - 실패 Source run의 부분 page, 거부 Artifact 누락과 실패 실행 내 Artifact 중복을 DB 접근 전에 차단
@@ -135,12 +135,12 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 - #291의 Source·Endpoint·Operation·Snapshot·Verification·Ingestion Run 테이블 연결
 - 수집 실행 계층이 선택한 `source_version`, schema·parser·normalization version과 실행 metadata 전달
-- 같은 Operation의 lifecycle 판단 전 행 잠금
+- 같은 Source의 lifecycle 판단 전 Source 행 잠금
 - 신규 Snapshot 후보 생성과 `PASSED` 검증·성공 Run 기록
 - `NO_CHANGE`, `A → B → A`, 동일 Source version 충돌 판단과 append-only 이력
 - Snapshot 후보를 `PENDING`으로 유지해 승인과 Runtime 활성화가 자동으로 일어나지 않는 경계
 - 검증 상태의 `PENDING → CURRENT`, 기존 `CURRENT → STALE`와 이전 Snapshot 복원
-- 실제 PostgreSQL transaction rollback과 같은 Operation의 동시 판단 직렬화
+- 실제 PostgreSQL transaction rollback과 같은 Source의 동시 판단 직렬화
 
 ## 남은 범위
 
@@ -169,10 +169,10 @@ record count를 제공한다. 저장 호출자는 다음 값을 원본이나 che
 - `run_group_key`, `attempt_number`, 실행 시작·종료 시각
 
 DB commit·rollback은 기존 Worker transaction 경계를 재사용한다. 동일
-Operation의 판단과 저장은 Operation 행 잠금 뒤 실행해 동시 수집이 서로 다른
+Source의 판단과 저장은 Source 행 잠금 뒤 실행해 동시 수집이 서로 다른
 결정을 내리지 않도록 한다.
 
-외부 수집 진입점은 같은 Operation 행을 `SKIP LOCKED`로 먼저 선점한다. 이미
+외부 수집 진입점은 같은 Source 행을 `SKIP LOCKED`로 먼저 선점한다. 이미
 수집 중이면 `SourceAcquisitionInProgressError`로 즉시 종료하며 Provider를
 호출하지 않는다. 호출자는 외부 수집이 끝날 때까지 잠금을 얻은 DB transaction을
 유지하고, 반환 또는 예외 뒤 commit·rollback한다.

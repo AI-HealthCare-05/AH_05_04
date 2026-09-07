@@ -2,11 +2,11 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Not implemented · Track F Source·RAG 구현과 지정 리뷰어·Privacy·외부 Source 승인 대기 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
+| 문서 상태 | Approved Target · Partially implemented — #164·#165 / 2026-09-08 |
+| 구현·리뷰 | Source·Snapshot DB, Parser·checksum, 원본 Artifact 저장, 수집 이력과 현재성 전이 구현 · Source approval·보존 정책·Catalog·Runtime 연결 대기 |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Partially implemented` |
 | Normative Source | `rag-source-management-policy-v1.0.md@1.18` · SHA-256 `35842d2cbe54201ff9fb5580616055eda613fe4c16ac6d60daa7f8859d2f28e3` |
-| Last verified | 2026-09-01 |
+| Last verified | 2026-09-08 |
 
 ## 목적과 범위
 
@@ -125,6 +125,21 @@ Raw Artifact 수집
 → Source Snapshot 승인
 → Candidate Catalog / Rule / Knowledge Index 입력
 ```
+
+### 현재 물리 상태 매핑
+
+현재 구현은 Target의 논리 상태 일부를 다음 DB 상태와 Verification으로 표현한다.
+
+| Target 논리 상태 | 현재 DB 표현 | 구현 경계 |
+| --- | --- | --- |
+| `VALIDATING` | `rag_source_snapshot.verification_status = PENDING` | 수집 무결성 검사를 통과해도 publication 승인을 의미하지 않는다. |
+| `PUBLISHED` | `verification_status = CURRENT` + `snapshot-current-selection = PASSED` | 같은 Operation에서 하나만 허용한다. 거부 레코드가 있으면 `snapshot-publication-approval = PASSED`가 추가로 필요하다. |
+| 이전 `PUBLISHED` | `verification_status = STALE` | 이력은 보존하며 이전 Snapshot 복원 시 다시 `CURRENT`로 전환할 수 있다. |
+| 검증 실패 | `verification_status = FAILED` | 선택과 `NO_CHANGE` 재사용 대상에서 제외하며 동일 Source version 재수집으로 새 후보를 만들 수 있다. |
+
+`source-ingestion-integrity = PASSED`는 Parser·checksum·Artifact 결속 검증 결과이며 사람의 publication 승인을 대신하지 않는다. `CURRENT`는 Source Snapshot 현재성만 뜻하고 Runtime Bundle 활성화를 뜻하지 않는다. Source approval, 보존 정책, Catalog 적재와 Runtime 연결은 아직 구현되지 않았다.
+
+신규 Snapshot은 검증에 사용한 `endpoint_receipt_hash`를 불변 provenance로 저장한다. Migration 이전 Snapshot의 알 수 없는 hash는 `NULL`로 보존하고 `NO_CHANGE` 비교 대상으로 재사용하지 않는다. `NO_CHANGE`는 canonical checksum과 schema·parser·normalization·canonicalization version뿐 아니라 Endpoint Receipt hash와 거부 레코드 개수까지 모두 같고 비교 Snapshot이 `FAILED`가 아닐 때만 허용한다.
 
 - 모든 page와 필수 record가 성공한 경우에만 Snapshot 후보를 만든다.
 - HTTP 성공 status라도 본문의 인증 실패·호출 한도·Provider 오류 code를 성공으로 처리하지 않는다.

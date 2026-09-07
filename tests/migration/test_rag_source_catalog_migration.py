@@ -140,6 +140,7 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
     checksum_a = "a" * 64
     checksum_b = "b" * 64
     collected_at = datetime.now(UTC)
+    ids["source_version"] = f"api:2026-09-07:{uuid4().hex[:8]}"
 
     async with _connection() as connection:
         async with connection.begin():
@@ -204,7 +205,6 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
                 ),
                 {
                     **ids,
-                    "source_version": f"api:2026-09-07:{uuid4().hex[:8]}",
                     "checksum_a": checksum_a,
                     "checksum_b": checksum_b,
                     "collected_at": collected_at,
@@ -448,6 +448,8 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
     schema_objects = asyncio.run(_fetch_schema_object_names())
 
     assert "uq_rag_source_snapshot_current" in schema_objects
+    assert "uq_rag_source_snapshot_active_version" in schema_objects
+    assert "chk_rag_source_snapshot_endpoint_receipt_hash" in schema_objects
     assert "chk_rag_source_snapshot_rejected_record_count_lte_record_count" in schema_objects
     assert "chk_rag_source_ingestion_run_group_key_nonblank" in schema_objects
     assert "uq_rag_source_ingestion_run_attempt" in schema_objects
@@ -711,6 +713,17 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
                 expected_text="immutable fields cannot be updated",
             )
         )
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                UPDATE rag_source_snapshot
+                SET endpoint_receipt_hash = :endpoint_receipt_hash
+                WHERE id = :snapshot_id
+                """,
+                {**ids, "endpoint_receipt_hash": "d" * 64},
+                expected_text="immutable fields cannot be updated",
+            )
+        )
 
         stale_snapshot_id = asyncio.run(_create_stale_snapshot_for_same_operation(ids))
 
@@ -724,6 +737,113 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
                 expected_text="rows are append-only",
             )
         )
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_failed_snapshot_allows_same_version_retry_after_alembic_upgrade() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_failed_and_retry(ids: dict[str, str]) -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE rag_source_snapshot
+                        SET verification_status = 'FAILED'
+                        WHERE id = :snapshot_id
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_snapshot (
+                            id, operation_id, source_version, raw_manifest_checksum,
+                            canonical_checksum, schema_version, parser_version,
+                            normalization_version, canonicalization_spec_version,
+                            endpoint_receipt_hash, record_count, rejected_record_count,
+                            verification_status, collected_at
+                        )
+                        VALUES (
+                            :retry_snapshot_id, :operation_id, :source_version, :checksum_a,
+                            :checksum_b, 'schema-v1', 'parser-v1',
+                            'normalization-v1', 'canonical-v1',
+                            :endpoint_receipt_hash, 1, 0, 'PENDING', :collected_at
+                        )
+                        """
+                    ),
+                    {
+                        **ids,
+                        "retry_snapshot_id": str(uuid4()),
+                        "endpoint_receipt_hash": "f" * 64,
+                        "checksum_a": "a" * 64,
+                        "checksum_b": "b" * 64,
+                        "collected_at": datetime.now(UTC),
+                    },
+                )
+            finally:
+                await transaction.rollback()
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        asyncio.run(insert_failed_and_retry(ids))
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_snapshot_with_receipt(ids: dict[str, str]) -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_snapshot (
+                            id, operation_id, source_version, raw_manifest_checksum,
+                            canonical_checksum, schema_version, parser_version,
+                            normalization_version, canonicalization_spec_version,
+                            endpoint_receipt_hash, record_count, rejected_record_count,
+                            verification_status, collected_at
+                        )
+                        VALUES (
+                            :receipt_snapshot_id, :operation_id, :receipt_source_version,
+                            :checksum_a, :checksum_b, 'schema-v1', 'parser-v1',
+                            'normalization-v1', 'canonical-v1', :endpoint_receipt_hash,
+                            1, 0, 'STALE', :collected_at
+                        )
+                        """
+                    ),
+                    {
+                        **ids,
+                        "receipt_snapshot_id": str(uuid4()),
+                        "receipt_source_version": f"api:receipt:{uuid4().hex[:8]}",
+                        "endpoint_receipt_hash": "f" * 64,
+                        "checksum_a": "a" * 64,
+                        "checksum_b": "b" * 64,
+                        "collected_at": datetime.now(UTC),
+                    },
+                )
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        asyncio.run(insert_snapshot_with_receipt(ids))
+
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165c6d5e4f30"):
+            command.downgrade(alembic_config, "165b5c4d3e2f")
     finally:
         command.upgrade(alembic_config, "head")
         if ids is not None:
