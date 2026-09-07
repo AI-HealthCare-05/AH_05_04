@@ -408,7 +408,14 @@ Source와 Evidence 파생물의 hash domain은 다음처럼 분리한다.
 
 Provenance에 필요한 정규 필드 중 이번 slice가 표현하지 않는 것은 `source_code`, `endpoint_code`,
 `operation_code`, `external_record_id`, `supporting_excerpt`와 정확한 Snapshot Member reference다. Evidence
-Gate·Citation·Rule Evidence 연결은 이 값들이 생긴 뒤에만 가능하다.
+Gate·Citation·Rule Evidence 연결은 이 값들이 생긴 뒤에만 가능하다. `evidence_ref_id`와 `evidence_type`도
+없으며, 이 값들은 Evaluation bridge 계약이 소유한다.
+
+이 adapter는 fixture identifier에 nonblank NFC 문자열만 요구하고 Evaluation bridge의 문법을 강제하지
+않는다. 후속 bridge slice의 `IndexBridgeEntry`는 `evidence_key`·`knowledge_chunk_ref`에
+`^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$`, `source_version`·`canonicalization_spec_version`에 공백·제어문자
+없는 token을 요구하므로, fixture를 추가할 때 이 문법을 벗어나면 retrieval 단위 테스트는 통과하더라도
+bridge에 넣을 수 없다. 현재 fixture는 모두 이 문법을 만족한다. 강제 위치는 bridge 계약 확정 시 결정한다.
 
 각 stage의 rank는 1부터 시작하는 중복 없는 연속 정수여야 하며 hit 수는 해당 stage limit 이하여야 한다.
 같은 `evidence_key`는 한 stage에서 한 번만 나타날 수 있다. lexical과 dense에 같은 key가 등장할 수 있지만
