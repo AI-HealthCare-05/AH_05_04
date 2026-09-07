@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from ai_worker.tasks.evaluation import natural_language_retrieval_validation as validation_module
-from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import load_dataset, parse_json_object_bytes
 from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
@@ -28,7 +28,7 @@ EVALS_ROOT = REPOSITORY_ROOT / "evals"
 DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
 EVALS_README_PATH = EVALS_ROOT / "README.md"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
-DATASET_MANIFEST_HASH = "18a6a176ccce1edf996bf06e96c8b90b0a4d3edb3c9c10752c3c5792ce33dd9d"
+DATASET_MANIFEST_HASH = "e6a2e19e6ee283e160afa187d9d2b618272c68ddd4ba1a5b2b0dea277bd0e2d6"
 
 
 def _status_payload() -> dict[str, Any]:
@@ -80,7 +80,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_DEV_FIXTURE",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
                 "exit_code": 0,
-                "result": "22 passed",
+                "result": "24 passed",
             },
             {
                 "check_id": "PHASE_A_LOADER",
@@ -140,6 +140,18 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
         assert isinstance(record, dict)
         record_objects.append(record)
 
+    # Gold/negative labels are deliberately absent from the retrieval index, so the Gold count comes
+    # from the evaluation sidecar the index binds by hash.
+    label_ref = corpus["evaluation_label_ref"]
+    assert isinstance(label_ref, dict)
+    label_path = label_ref["path"]
+    assert isinstance(label_path, str)
+    label_bytes = (EVALS_ROOT / label_path).read_bytes()
+    assert sha256_hex(label_bytes) == label_ref["sha256"]
+    labels = parse_json_object_bytes(label_bytes)["labels"]
+    assert isinstance(labels, list)
+    gold_count = sum(1 for item in labels if isinstance(item, dict) and item.get("record_kind") == "GOLD")
+
     topic_ids = {slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("TOPIC_")}
     expression_ids = {
         slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("EXPRESSION_")
@@ -149,7 +161,7 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
     assert status.created_counts.model_dump(mode="json") == {
         "dev_questions": partition_counts["DEV"],
         "holdout_questions": partition_counts["HOLDOUT"],
-        "gold_records": sum(record["record_kind"] == "GOLD" for record in record_objects),
+        "gold_records": gold_count,
         "corpus_records": len(record_objects),
         "topics": len(topic_ids),
         "expression_types": len(expression_ids),
@@ -490,7 +502,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    for result in (b"22 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
+    for result in (b"24 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status

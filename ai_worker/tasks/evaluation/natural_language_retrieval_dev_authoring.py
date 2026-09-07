@@ -35,6 +35,7 @@ DATASET_VERSION = "1.0.0"
 FILE_PREFIX = "rag-natural-language-retrieval-dev-v1"
 CASE_DIRECTORY = f"retrieval/cases/{FILE_PREFIX}"
 INDEX_PATH = f"retrieval/evidence/resources/{FILE_PREFIX}/synthetic-knowledge-index.json"
+EVALUATION_LABEL_PATH = f"retrieval/evidence/resources/{FILE_PREFIX}/evaluation-labels.json"
 EVIDENCE_MAPPING_PATH = f"retrieval/evidence/{FILE_PREFIX}.evidence-mapping.json"
 RUBRIC_PATH = f"retrieval/manifests/{FILE_PREFIX}.critical-claim-rubric.json"
 AUTHORING_IDENTITY_PATH = f"retrieval/manifests/{FILE_PREFIX}.authoring-identities.json"
@@ -123,16 +124,30 @@ class EvidenceRecord:
     negative_type: NegativeType | None
     adversarial_for_transform_origin: str | None
 
-    def to_json(self) -> dict[str, JsonValue]:
+    def to_retrieval_json(self) -> dict[str, JsonValue]:
+        """The retrieval-facing projection: what a Knowledge Evidence Adapter may index.
+
+        Deliberately carries no evaluation label. `record_kind` alone would identify all twenty
+        Gold records out of the hundred, and `transform_origin`/`adversarial_for_transform_origin`
+        say which question group each record answers or attacks. An Adapter that indexed those
+        would separate Gold by label rather than by content, and the resulting Recall/MRR would
+        measure nothing. Labels live in the sidecar built by `to_label_json`.
+        """
         return {
-            "adversarial_for_transform_origin": self.adversarial_for_transform_origin,
             "content_sha256": self.content_sha256,
             "evidence_ref_id": self.evidence_ref_id,
-            "negative_type": self.negative_type,
             "product_code": self.product_code,
-            "record_kind": self.record_kind,
             "statement": self.statement,
             "topic": self.topic,
+        }
+
+    def to_label_json(self) -> dict[str, JsonValue]:
+        """Evaluation-only labels, kept out of every retrieval artifact."""
+        return {
+            "adversarial_for_transform_origin": self.adversarial_for_transform_origin,
+            "evidence_ref_id": self.evidence_ref_id,
+            "negative_type": self.negative_type,
+            "record_kind": self.record_kind,
             "transform_origin": self.transform_origin,
         }
 
@@ -399,8 +414,34 @@ _GOLD_STATEMENTS = {
     "NLR-MD04": "평가용 가상 설정에서 NLR-MD04 제품의 반복해서 복용을 놓쳤을 때의 전문가 상담 안내는 누락 표식 세 개가 쌓이면 가상 상담 카드 C를 조회하는 것입니다.",
 }
 
+# The distinctive part of each Gold answer. A hard negative may share the question's wording, but
+# never this: that is the line between "looks relevant" and "is the answer".
+_GOLD_ANSWER_FRAGMENTS = {
+    "NLR-MI01": "청색 결정 성분",
+    "NLR-MI02": "연보라색 삼각 필름",
+    "NLR-MI03": "가상 분류표의 단계 A 표식",
+    "NLR-MI04": "문자 MI04와 주황색 마름모 표식",
+    "NLR-PC01": "봉인선과 확인표의 세 칸",
+    "NLR-PC02": "별표 모양 성분 표식",
+    "NLR-PC03": "상태 카드의 초록·노랑·빨강 세 표식",
+    "NLR-PC04": "가상 확인표가 빨강일 때 절차 C",
+    "NLR-LM01": "기록 카드의 물컵 세 칸",
+    "NLR-LM02": "아침·낮·저녁 기록 칸",
+    "NLR-LM03": "걷기와 휴식 표식",
+    "NLR-LM04": "날짜·가상 코드·확인 표시 세 항목",
+    "NLR-ST01": "가상 눈금 B 구간",
+    "NLR-ST02": "남색 덮개와 마른 잎 표식",
+    "NLR-ST03": "가상 보관함의 위쪽 C 칸",
+    "NLR-ST04": "주황색 용기와 삼각형 뚜껑 표식",
+    "NLR-MD01": "기록 카드의 절차 A",
+    "NLR-MD02": "절차 B와 시계 표식",
+    "NLR-MD03": "X 표식을 한 번만 남기는 규칙",
+    "NLR-MD04": "누락 표식 세 개가 쌓이면 가상 상담 카드 C",
+}
+
 _GRAPH_MEMBER_PATHS = (
     INDEX_PATH,
+    EVALUATION_LABEL_PATH,
     EVIDENCE_MAPPING_PATH,
     RUBRIC_PATH,
     AUTHORING_IDENTITY_PATH,
@@ -412,7 +453,7 @@ _GRAPH_MEMBER_PATHS = (
     PROTECTED_RECEIPT_PATH,
 )
 
-_TOPIC_OVERLAP_TERMS: dict[Topic, str] = {
+TOPIC_OVERLAP_TERMS: dict[Topic, str] = {
     "TOPIC_MEDICATION_INFORMATION": "제품 정보",
     "TOPIC_PRECAUTIONS": "주의 안내",
     "TOPIC_LIFESTYLE_MANAGEMENT": "생활 관리",
@@ -444,33 +485,41 @@ _DISTRACTOR_FACT_MARKERS = {
 }
 
 
-def _build_distractor_fact_catalog() -> dict[str, dict[NegativeType, str]]:
-    intents_by_product = {intent.product_code: intent for intent in BASE_INTENTS}
-    catalog: dict[str, dict[NegativeType, str]] = {}
-    for product_code, (package_code, topic_card_code, index_code, reference_code) in _DISTRACTOR_FACT_MARKERS.items():
-        intent = intents_by_product[product_code]
-        catalog[product_code] = {
-            "SAME_FAMILY_DIFFERENT_ATTRIBUTE": (
-                f"평가용 가상 설정에서 {product_code} 제품의 포장 관리 코드는 {package_code}이고 "
-                "상자 모서리에는 은색 원이 표시됩니다."
-            ),
-            "SAME_TOPIC_DIFFERENT_FAMILY": (
-                f"평가용 가상 설정에서 {product_code} 제품의 주제 분류 카드에는 "
-                f"{topic_card_code} 관리 번호와 파란 테두리가 표시됩니다."
-            ),
-            "LEXICAL_OVERLAP_UNSUPPORTED": (
-                f"평가용 가상 설정에서 {product_code} 제품의 {_TOPIC_OVERLAP_TERMS[intent.topic]} 자료는 "
-                f"합성 색인의 {index_code} 행에 등록되어 있습니다."
-            ),
-            "CROSS_TOPIC_OVERLAP": (
-                f"평가용 가상 설정에서 {product_code} 제품의 참조 카드 등록 순번은 "
-                f"{reference_code}이고 카드 모서리는 회색입니다."
-            ),
-        }
-    return catalog
+def _negative_statement(negative_type: NegativeType, *, target: BaseIntent, source: BaseIntent) -> str:
+    """Build one hard negative that earns its type name in the retrieved text itself.
 
+    `target` is the intent whose question this record must tempt; `source` is the intent the record
+    is actually about. Each type has to realise its overlap in `statement`, because that string is
+    all a Knowledge Evidence Adapter sees — `record.topic` and the evaluation labels are not part of
+    the retrieval projection. Every branch must avoid the target's Gold answer fragment; that is
+    what keeps these negatives wrong rather than merely differently worded.
+    """
+    package_code, topic_card_code, index_code, reference_code = _DISTRACTOR_FACT_MARKERS[source.product_code]
+    if negative_type == "SAME_FAMILY_DIFFERENT_ATTRIBUTE":
+        # Same product as the question, a different attribute of it.
+        return (
+            f"평가용 가상 설정에서 {source.product_code} 제품의 포장 관리 코드는 {package_code}이고 "
+            "상자 모서리에는 은색 원이 표시됩니다."
+        )
+    if negative_type == "SAME_TOPIC_DIFFERENT_FAMILY":
+        # Different product, same topic — and the topic has to be visible in the sentence.
+        return (
+            f"평가용 가상 설정에서 {source.product_code} 제품의 {TOPIC_OVERLAP_TERMS[source.topic]} 자료는 "
+            f"{topic_card_code} 관리 번호로만 등록되어 있고 구체적인 내용은 적혀 있지 않습니다."
+        )
+    if negative_type == "LEXICAL_OVERLAP_UNSUPPORTED":
+        # Same product and topic wording, but the sentence only says where the entry lives.
+        return (
+            f"평가용 가상 설정에서 {source.product_code} 제품의 {TOPIC_OVERLAP_TERMS[source.topic]} 자료는 "
+            f"합성 색인의 {index_code} 행에 등록되어 있습니다."
+        )
+    # CROSS_TOPIC_OVERLAP: a different topic's document that nonetheless names the asked-about
+    # subject, and says outright that the value is absent.
+    return (
+        f"평가용 가상 설정에서 {source.product_code} 제품의 {TOPIC_OVERLAP_TERMS[source.topic]} 자료에는 "
+        f"{target.query_subject} 항목이 {reference_code} 표에만 표시되고 실제 내용은 비어 있습니다."
+    )
 
-DISTRACTOR_FACT_CATALOG = _build_distractor_fact_catalog()
 
 _DRAFT_REVIEW_PROVENANCE: JsonValue = {
     "approved_at": None,
@@ -506,7 +555,6 @@ def _validate_catalog() -> None:
     if set(expression_counts.values()) != {10}:
         raise RuntimeError("Issue 273 expression plan must produce ten cases per expression")
     _validate_expression_surfaces()
-    _validate_distractor_catalog()
 
 
 def _validate_expression_surfaces() -> None:
@@ -561,24 +609,58 @@ def _validate_expression_surfaces() -> None:
             raise RuntimeError("Issue 273 limited-typo expressions must differ from canonical by one character")
 
 
-def _validate_distractor_catalog() -> None:
-    if tuple(DISTRACTOR_FACT_CATALOG) != RESERVED_PRODUCT_CODES:
-        raise RuntimeError("Issue 273 distractor catalog must follow the reserved product allowlist")
-    distractor_statements = [statement for facts in DISTRACTOR_FACT_CATALOG.values() for statement in facts.values()]
-    if any(set(facts) != set(NEGATIVE_TYPES) for facts in DISTRACTOR_FACT_CATALOG.values()):
-        raise RuntimeError("Issue 273 distractor catalog must contain every negative fact category")
-    if len(distractor_statements) != 80 or len(set(distractor_statements)) != 80:
-        raise RuntimeError("Issue 273 distractor catalog must contain 80 unique facts")
-    # A distractor is cross-assigned to other origins, so check every subject phrasing against every
-    # fact rather than only against the fact's own product.
-    subject_phrasings = {
-        phrasing for intent in BASE_INTENTS for phrasing in (intent.query_subject, intent.synonym_subject)
-    }
-    for statement in distractor_statements:
-        if any(phrasing in statement for phrasing in subject_phrasings):
-            raise RuntimeError("Issue 273 distractor facts must not reproduce a query answer")
-        if any(gold in statement for gold in _GOLD_STATEMENTS.values()):
-            raise RuntimeError("Issue 273 distractor facts must not reproduce a Gold statement")
+def _validate_negative_corpus(records: tuple[EvidenceRecord, ...]) -> None:
+    """Require each hard negative to earn its type name in `statement`, and to stay wrong.
+
+    An earlier revision banned every question phrasing from every distractor. That was too blunt:
+    it made `CROSS_TOPIC_OVERLAP` impossible to realise, because sharing the asked-about wording is
+    exactly what that type is for. The line that actually matters is narrower — a negative may echo
+    the question, but must never carry the Gold answer fragment of any intent.
+    """
+    if tuple(_GOLD_ANSWER_FRAGMENTS) != RESERVED_PRODUCT_CODES:
+        raise RuntimeError("Issue 273 Gold answer fragments must follow the reserved product allowlist")
+    for product_code, fragment in _GOLD_ANSWER_FRAGMENTS.items():
+        if fragment not in _GOLD_STATEMENTS[product_code]:
+            raise RuntimeError("Issue 273 Gold answer fragments must appear in their Gold statement")
+
+    intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
+    negatives = [record for record in records if record.record_kind == "HARD_NEGATIVE"]
+    statements = [record.statement for record in negatives]
+    if len(negatives) != 80 or len(set(statements)) != 80:
+        raise RuntimeError("Issue 273 corpus must contain 80 unique hard negatives")
+
+    for record in negatives:
+        if any(fragment in record.statement for fragment in _GOLD_ANSWER_FRAGMENTS.values()):
+            raise RuntimeError("Issue 273 hard negatives must not carry any Gold answer fragment")
+        if any(gold in record.statement for gold in _GOLD_STATEMENTS.values()):
+            raise RuntimeError("Issue 273 hard negatives must not reproduce a Gold statement")
+        _validate_negative_overlap(record, intents_by_origin[cast(str, record.adversarial_for_transform_origin)])
+
+
+def _validate_negative_overlap(record: EvidenceRecord, target: BaseIntent) -> None:
+    """Check that this negative's declared type is true of `statement`, not only of its metadata."""
+    if record.negative_type == "SAME_FAMILY_DIFFERENT_ATTRIBUTE":
+        # Same product as the question, so the product code must be in the sentence.
+        if record.product_code != target.product_code or target.product_code not in record.statement:
+            raise RuntimeError("Issue 273 same-family negatives must name the question's own product")
+        return
+    if record.negative_type == "SAME_TOPIC_DIFFERENT_FAMILY":
+        # Different product, same topic — and the topic must be legible in the sentence, not only
+        # in the record metadata that no Adapter is required to index.
+        if record.product_code == target.product_code or record.topic != target.topic:
+            raise RuntimeError("Issue 273 same-topic negatives must use a different product in the same topic")
+        if TOPIC_OVERLAP_TERMS[target.topic] not in record.statement:
+            raise RuntimeError("Issue 273 same-topic negatives must express the shared topic in the statement")
+        return
+    if record.negative_type == "LEXICAL_OVERLAP_UNSUPPORTED":
+        if TOPIC_OVERLAP_TERMS[target.topic] not in record.statement:
+            raise RuntimeError("Issue 273 lexical-overlap negatives must share the topic wording")
+        return
+    # CROSS_TOPIC_OVERLAP: a different topic that still names what was asked about.
+    if record.topic == target.topic:
+        raise RuntimeError("Issue 273 cross-topic negatives must come from a different topic")
+    if target.query_subject not in record.statement:
+        raise RuntimeError("Issue 273 cross-topic negatives must share the asked-about subject wording")
 
 
 def _record(
@@ -658,36 +740,22 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
         topic_start = (index // 4) * 4
         same_topic_intent = BASE_INTENTS[topic_start + ((index + 1) % 4)]
         cross_topic_intent = BASE_INTENTS[(index + 4) % len(BASE_INTENTS)]
-        statements = (
-            (
-                intent.product_code,
-                DISTRACTOR_FACT_CATALOG[intent.product_code]["SAME_FAMILY_DIFFERENT_ATTRIBUTE"],
-            ),
-            (
-                same_topic_intent.product_code,
-                DISTRACTOR_FACT_CATALOG[same_topic_intent.product_code]["SAME_TOPIC_DIFFERENT_FAMILY"],
-            ),
-            (
-                intent.product_code,
-                DISTRACTOR_FACT_CATALOG[intent.product_code]["LEXICAL_OVERLAP_UNSUPPORTED"],
-            ),
-            (
-                cross_topic_intent.product_code,
-                DISTRACTOR_FACT_CATALOG[cross_topic_intent.product_code]["CROSS_TOPIC_OVERLAP"],
-            ),
-        )
-        for negative_number, (negative_type, (product_code, statement)) in enumerate(
-            zip(NEGATIVE_TYPES, statements, strict=True),
-            start=1,
-        ):
+        sources: dict[NegativeType, BaseIntent] = {
+            "SAME_FAMILY_DIFFERENT_ATTRIBUTE": intent,
+            "SAME_TOPIC_DIFFERENT_FAMILY": same_topic_intent,
+            "LEXICAL_OVERLAP_UNSUPPORTED": intent,
+            "CROSS_TOPIC_OVERLAP": cross_topic_intent,
+        }
+        for negative_number, negative_type in enumerate(NEGATIVE_TYPES, start=1):
+            source = sources[negative_type]
             records.append(
                 _record(
                     evidence_ref_id=f"ev-nlr-{origin_lower}-neg-{negative_number:02d}",
                     transform_origin=intent.transform_origin,
-                    product_code=product_code,
-                    topic=(cross_topic_intent.topic if negative_type == "CROSS_TOPIC_OVERLAP" else intent.topic),
+                    product_code=source.product_code,
+                    topic=source.topic,
                     record_kind="HARD_NEGATIVE",
-                    statement=statement,
+                    statement=_negative_statement(negative_type, target=intent, source=source),
                     negative_type=negative_type,
                     adversarial_for_transform_origin=intent.transform_origin,
                 )
@@ -1222,15 +1290,35 @@ def _build_dataset_manifest(
     return _with_self_hash(payload, "manifest_sha256")
 
 
+def _build_evaluation_labels(records: tuple[EvidenceRecord, ...]) -> bytes:
+    payload: dict[str, JsonValue] = {
+        "data_classification": "SYNTHETIC",
+        "label_id": f"{DATASET_CODE}-evaluation-labels",
+        "label_version": DATASET_VERSION,
+        "labels": [record.to_label_json() for record in records],
+        "retrieval_projection_ref": {"path": INDEX_PATH},
+        "scope": "EVALUATION_ONLY_NOT_FOR_RETRIEVAL",
+    }
+    return canonical_json_bytes(payload)
+
+
 def build_issue_273_dev_graph() -> dict[str, bytes]:
     _validate_catalog()
     graph: dict[str, bytes] = {}
     evidence_records = _build_evidence_records()
+    _validate_negative_corpus(evidence_records)
+    graph[EVALUATION_LABEL_PATH] = _build_evaluation_labels(evidence_records)
     index_payload: dict[str, JsonValue] = {
         "data_classification": "SYNTHETIC",
+        # The label sidecar is bound by hash from here, so `manifest -> mapping -> index -> labels`
+        # stays verifiable without putting an evaluation label inside a retrieval artifact.
+        "evaluation_label_ref": {
+            "path": EVALUATION_LABEL_PATH,
+            "sha256": sha256_hex(graph[EVALUATION_LABEL_PATH]),
+        },
         "index_id": f"{DATASET_CODE}-synthetic-index",
         "index_version": DATASET_VERSION,
-        "records": [record.to_json() for record in evidence_records],
+        "records": [record.to_retrieval_json() for record in evidence_records],
         "runtime_support": {
             "knowledge_index": _knowledge_index_support_object(),
             "rule_set": _runtime_support_object(

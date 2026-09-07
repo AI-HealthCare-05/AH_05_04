@@ -5,7 +5,7 @@
 - Phase: `PHASE_A_DEV_AUTHORING`
 - Schema Set Status: `REVIEW_REQUIRED`
 - Dataset: `rag-natural-language-retrieval-dev@1.0.0` (`DRAFT`)
-- Dataset Manifest SHA-256: `18a6a176ccce1edf996bf06e96c8b90b0a4d3edb3c9c10752c3c5792ce33dd9d`
+- Dataset Manifest SHA-256: `e6a2e19e6ee283e160afa187d9d2b618272c68ddd4ba1a5b2b0dea277bd0e2d6`
 - Schema Set: `rag-eval.schema-set@1.3.0` `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`
 - Candidate Decision: [`docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md`](../../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md)
 - Approval Transition: `FUTURE_PULL_REQUEST_REVIEW_EVENT` by responsible reviewer `@hazelnutflavoured`; this future PR event has not occurred.
@@ -41,7 +41,7 @@ DEV cannot produce a Release PASS; Production remains closed.
 
 | Check | Command | Exit | Result |
 | --- | --- | ---: | --- |
-| `PHASE_A_DEV_FIXTURE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q` | `0` | 22 passed |
+| `PHASE_A_DEV_FIXTURE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q` | `0` | 24 passed |
 | `PHASE_A_LOADER` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q` | `0` | 132 passed |
 | `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 50 passed |
 | `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 94 passed, 7 skipped |
@@ -54,4 +54,4 @@ DEV cannot produce a Release PASS; Production remains closed.
 - The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-07T13:05:00.000000Z`. Canonical status SHA-256: `1f6ee5eba3cb650b1fac4c0e3b4efa917db473cbb11c552e14d811b099980023`.
+Status updated at `2026-09-07T17:40:00.000000Z`. Canonical status SHA-256: `bb280f3421e378a7ed269b3087ae4b9a1b499b3761e74d1c0752fd20ed92d358`.

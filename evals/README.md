@@ -115,7 +115,15 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 합성 DEV 질문 60개를 담은 `DRAFT` Dataset이다. 다섯 Topic, 여섯 Expression 유형, 20개 독립
 `transform_origin` group과 합성 Gold 20개를 가지며, study-wide 합성 corpus는 Gold 20개와 hard negative
 80개로 구성된 100개 record다. Dataset Manifest의 canonical self-hash는
-`18a6a176ccce1edf996bf06e96c8b90b0a4d3edb3c9c10752c3c5792ce33dd9d`이다.
+`e6a2e19e6ee283e160afa187d9d2b618272c68ddd4ba1a5b2b0dea277bd0e2d6`이다.
+
+검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
+`evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·
+`negative_type`·`adversarial_for_transform_origin`·`transform_origin`은 같은 디렉터리의
+`evaluation-labels.json`에만 있다. `record_kind` 하나로 corpus 100건에서 Gold 20건을 그대로 골라낼 수
+있으므로, 이 라벨이 색인 대상에 남으면 후속 Adapter가 내용이 아니라 정답 표시로 Gold를 구분해 Recall·MRR이
+무효가 된다. 색인 파일은 sidecar를 `evaluation_label_ref`로 hash 결속하므로
+`Dataset manifest → Evidence Mapping → 색인 → 라벨` 사슬은 그대로 검증 가능하다.
 
 이 authoring graph는 아직 사람의 Gold 검토를 받지 않았고 모든 review provenance는 `DRAFT` 또는
 `NOT_STARTED`다. 실제 Knowledge Evidence Retrieval Adapter는 `NOT_IMPLEMENTED`이며 actual retrieval Run과

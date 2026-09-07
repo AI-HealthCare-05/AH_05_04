@@ -5,20 +5,25 @@ import re
 import shutil
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.loaders import _resolve_json_locator, load_dataset
 from ai_worker.tasks.evaluation.natural_language_retrieval_dev_authoring import (
     BASE_INTENTS,
-    DISTRACTOR_FACT_CATALOG,
     FILE_PREFIX,
     RESERVED_PRODUCT_CODES,
+    TOPIC_OVERLAP_TERMS,
     build_issue_273_dev_graph,
 )
 from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import EvidenceMappingManifestV12
 
 CASE_PREFIX = "retrieval/cases/rag-natural-language-retrieval-dev-v1/"
 INDEX_PATH = "retrieval/evidence/resources/rag-natural-language-retrieval-dev-v1/synthetic-knowledge-index.json"
+LABEL_PATH = "retrieval/evidence/resources/rag-natural-language-retrieval-dev-v1/evaluation-labels.json"
+EVALUATION_LABEL_KEYS = frozenset(
+    {"record_kind", "negative_type", "adversarial_for_transform_origin", "transform_origin"}
+)
 MAPPING_PATH = "retrieval/evidence/rag-natural-language-retrieval-dev-v1.evidence-mapping.json"
 MANIFEST_PATH = "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
 AUTHORING_PATH = "retrieval/manifests/rag-natural-language-retrieval-dev-v1.authoring-identities.json"
@@ -35,6 +40,17 @@ NEGATIVE_TYPES = {
     "CROSS_TOPIC_OVERLAP",
 }
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
+
+
+def _labelled_records(graph: dict[str, bytes]) -> list[dict[str, Any]]:
+    """Join the retrieval projection back onto its evaluation labels, for assertions only.
+
+    The committed index carries no label — that is the point of the sidecar — so tests that reason
+    about Gold/negative structure have to re-attach them here rather than read them from the
+    artifact a retrieval Adapter would index.
+    """
+    labels = {item["evidence_ref_id"]: item for item in json.loads(graph[LABEL_PATH])["labels"]}
+    return [record | labels[record["evidence_ref_id"]] for record in json.loads(graph[INDEX_PATH])["records"]]
 
 
 def _materialize_graph(tmp_path: Path, graph: dict[str, bytes]) -> Path:
@@ -197,7 +213,7 @@ def test_issue_273_graph_excludes_sensitive_actual_and_holdout_content() -> None
 
 def test_issue_273_gold_never_resolves_to_a_hard_negative() -> None:
     graph = build_issue_273_dev_graph()
-    records = json.loads(graph[INDEX_PATH])["records"]
+    records = _labelled_records(graph)
     records_by_id = {record["evidence_ref_id"]: record for record in records}
 
     cases = [json.loads(content) for path, content in graph.items() if path.startswith(CASE_PREFIX)]
@@ -266,6 +282,7 @@ def test_issue_273_dev_graph_has_fixed_identity_and_distribution() -> None:
     assert set(graph) == {
         *(f"{CASE_PREFIX}rag-nlr-dev-{index:03d}.json" for index in range(1, 61)),
         "retrieval/evidence/resources/rag-natural-language-retrieval-dev-v1/synthetic-knowledge-index.json",
+        "retrieval/evidence/resources/rag-natural-language-retrieval-dev-v1/evaluation-labels.json",
         "retrieval/evidence/rag-natural-language-retrieval-dev-v1.evidence-mapping.json",
         "retrieval/manifests/rag-natural-language-retrieval-dev-v1.critical-claim-rubric.json",
         "retrieval/manifests/rag-natural-language-retrieval-dev-v1.authoring-identities.json",
@@ -323,7 +340,7 @@ def test_issue_273_dev_graph_has_fixed_identity_and_distribution() -> None:
 
 def test_issue_273_corpus_has_one_gold_and_four_hard_negatives_per_origin() -> None:
     graph = build_issue_273_dev_graph()
-    records = json.loads(graph[INDEX_PATH])["records"]
+    records = _labelled_records(graph)
     gold_records = [record for record in records if record["record_kind"] == "GOLD"]
     negative_records = [record for record in records if record["record_kind"] == "HARD_NEGATIVE"]
 
@@ -430,7 +447,7 @@ def test_issue_273_cases_share_one_complete_non_gold_knowledge_index_reference()
 
 
 def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None:
-    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    records = _labelled_records(build_issue_273_dev_graph())
     statements_by_id = {record["evidence_ref_id"]: record["statement"] for record in records}
 
     assert not any(
@@ -456,8 +473,9 @@ def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None
 
 
 def test_issue_273_corpus_contains_substantive_facts_without_class_label_leakage() -> None:
-    index = json.loads(build_issue_273_dev_graph()[INDEX_PATH])
-    records = index["records"]
+    graph = build_issue_273_dev_graph()
+    index = json.loads(graph[INDEX_PATH])
+    records = _labelled_records(graph)
     gold_records = [record for record in records if record["record_kind"] == "GOLD"]
     class_label_phrases = (
         "정답",
@@ -484,7 +502,7 @@ def test_issue_273_corpus_contains_substantive_facts_without_class_label_leakage
 
 
 def test_issue_273_no_hard_negative_reproduces_or_answers_any_gold_intent() -> None:
-    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    records = _labelled_records(build_issue_273_dev_graph())
     gold_statements = [record["statement"] for record in records if record["record_kind"] == "GOLD"]
     negative_records = [record for record in records if record["record_kind"] == "HARD_NEGATIVE"]
     normalized_gold = {re.sub(r"[^0-9A-Za-z가-힣]", "", statement).casefold() for statement in gold_statements}
@@ -502,24 +520,79 @@ def test_issue_273_no_hard_negative_reproduces_or_answers_any_gold_intent() -> N
         assert [code for code in RESERVED_PRODUCT_CODES if code in statement] == [record["product_code"]]
 
 
+def test_issue_273_retrieval_projection_carries_no_evaluation_label() -> None:
+    """Whatever a Knowledge Evidence Adapter indexes must not reveal which record is the answer.
+
+    `record_kind` alone would separate all twenty Gold records from the eighty negatives, and
+    `transform_origin`/`adversarial_for_transform_origin` say which question each record serves or
+    attacks. Recall/MRR computed over an index carrying those measures label lookup, not retrieval.
+    """
+    graph = build_issue_273_dev_graph()
+    index = json.loads(graph[INDEX_PATH])
+    labels = json.loads(graph[LABEL_PATH])
+
+    for record in index["records"]:
+        assert EVALUATION_LABEL_KEYS.isdisjoint(record), record
+    # Not just absent from `records` — absent from the whole artifact, so that indexing the file
+    # wholesale cannot leak them either.
+    index_text = graph[INDEX_PATH].decode("utf-8")
+    for label_token in ("GOLD", "HARD_NEGATIVE", *NEGATIVE_TYPES, "adversarial_for_transform_origin"):
+        assert label_token not in index_text, label_token
+
+    assert len(labels["labels"]) == 100
+    assert {item["evidence_ref_id"] for item in labels["labels"]} == {
+        record["evidence_ref_id"] for record in index["records"]
+    }
+    # The sidecar is bound by hash from the retrieval artifact, so the split stays verifiable.
+    assert index["evaluation_label_ref"] == {"path": LABEL_PATH, "sha256": sha256_hex(graph[LABEL_PATH])}
+
+
+def test_issue_273_each_negative_type_realises_its_overlap_in_the_statement() -> None:
+    """A negative type has to be true of the retrieved sentence, not only of its metadata."""
+    graph = build_issue_273_dev_graph()
+    records = _labelled_records(graph)
+    intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
+    negatives = [record for record in records if record["record_kind"] == "HARD_NEGATIVE"]
+    gold_answer_fragments = {
+        record["statement"].split("는 ", maxsplit=1)[-1] for record in records if record["record_kind"] == "GOLD"
+    }
+
+    assert len(negatives) == 80
+    for record in negatives:
+        target = intents_by_origin[record["adversarial_for_transform_origin"]]
+        statement = record["statement"]
+        negative_type = record["negative_type"]
+
+        if negative_type == "SAME_FAMILY_DIFFERENT_ATTRIBUTE":
+            assert target.product_code in statement, statement
+        elif negative_type == "SAME_TOPIC_DIFFERENT_FAMILY":
+            assert TOPIC_OVERLAP_TERMS[target.topic] in statement, statement
+            assert record["product_code"] != target.product_code
+        elif negative_type == "LEXICAL_OVERLAP_UNSUPPORTED":
+            assert TOPIC_OVERLAP_TERMS[target.topic] in statement, statement
+        else:
+            assert target.query_subject in statement, statement
+            assert record["topic"] != target.topic
+
+        # Sharing the question's wording is the point; carrying the answer is not.
+        assert not any(fragment in statement for fragment in gold_answer_fragments), statement
+
+
 def test_issue_273_hard_negative_types_use_fixed_unqueried_fact_categories() -> None:
-    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    records = _labelled_records(build_issue_273_dev_graph())
     intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
     intents_by_product = {intent.product_code: intent for intent in BASE_INTENTS}
     intent_indexes = {intent.transform_origin: index for index, intent in enumerate(BASE_INTENTS)}
     required_fact_category = {
         "SAME_FAMILY_DIFFERENT_ATTRIBUTE": "포장 관리 코드",
-        "SAME_TOPIC_DIFFERENT_FAMILY": "주제 분류 카드",
+        "SAME_TOPIC_DIFFERENT_FAMILY": "관리 번호로만 등록",
         "LEXICAL_OVERLAP_UNSUPPORTED": "합성 색인의",
-        "CROSS_TOPIC_OVERLAP": "참조 카드 등록 순번",
+        "CROSS_TOPIC_OVERLAP": "표에만 표시되고 실제 내용은 비어",
     }
-    catalog_statements = {statement for facts in DISTRACTOR_FACT_CATALOG.values() for statement in facts.values()}
+    negative_statements = {record["statement"] for record in records if record["record_kind"] == "HARD_NEGATIVE"}
 
-    assert tuple(DISTRACTOR_FACT_CATALOG) == RESERVED_PRODUCT_CODES
-    assert all(set(facts) == NEGATIVE_TYPES for facts in DISTRACTOR_FACT_CATALOG.values())
-    assert len(catalog_statements) == 80
+    assert len(negative_statements) == 80
     assert {record["product_code"] for record in records} == set(RESERVED_PRODUCT_CODES)
-    assert {record["statement"] for record in records if record["record_kind"] == "HARD_NEGATIVE"} == catalog_statements
 
     for record in records:
         if record["record_kind"] != "HARD_NEGATIVE":
@@ -537,7 +610,6 @@ def test_issue_273_hard_negative_types_use_fixed_unqueried_fact_categories() -> 
         }
         assert required_fact_category[negative_type] in record["statement"]
         assert record["product_code"] == expected_source_by_type[negative_type]
-        assert record["statement"] == DISTRACTOR_FACT_CATALOG[record["product_code"]][negative_type]
         assert record["topic"] == source_intent.topic
         if negative_type in {"SAME_FAMILY_DIFFERENT_ATTRIBUTE", "LEXICAL_OVERLAP_UNSUPPORTED"}:
             assert source_intent == target_intent
@@ -549,7 +621,7 @@ def test_issue_273_hard_negative_types_use_fixed_unqueried_fact_categories() -> 
 
 
 def test_issue_273_cross_topic_distractors_use_their_source_topic_and_product() -> None:
-    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    records = _labelled_records(build_issue_273_dev_graph())
     intents_by_product = {intent.product_code: intent for intent in BASE_INTENTS}
     intents_by_origin = {intent.transform_origin: intent for intent in BASE_INTENTS}
     cross_topic_records = [record for record in records if record["negative_type"] == "CROSS_TOPIC_OVERLAP"]
@@ -591,7 +663,7 @@ def test_issue_273_reviewed_query_particles_are_natural_korean() -> None:
 
 def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> None:
     graph = build_issue_273_dev_graph()
-    records = json.loads(graph[INDEX_PATH])["records"]
+    records = _labelled_records(graph)
     mapping = json.loads(graph[MAPPING_PATH])
     validated_mapping = EvidenceMappingManifestV12.model_validate_json(graph[MAPPING_PATH])
     cases = [json.loads(content) for path, content in graph.items() if path.startswith(CASE_PREFIX)]
