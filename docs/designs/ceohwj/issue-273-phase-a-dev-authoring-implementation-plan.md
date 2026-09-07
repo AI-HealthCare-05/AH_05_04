@@ -250,4 +250,3 @@ NEGATIVE_TYPES = (
 - [ ] **Step 4: Prepare the PR**
 
   Use the repository PR template, link Issue #273, name 정현우 as implementation owner and 권가빈 (`@hazelnutflavoured`) as responsible Product·Safety·Evaluation reviewer. State explicitly that Gold review, Dataset Freeze, actual Adapter execution, metrics and HOLDOUT remain future work.
-

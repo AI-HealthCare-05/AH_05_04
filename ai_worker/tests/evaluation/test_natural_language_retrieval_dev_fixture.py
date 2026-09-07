@@ -6,7 +6,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.loaders import _resolve_json_locator, load_dataset
 from ai_worker.tasks.evaluation.natural_language_retrieval_dev_authoring import (
     BASE_INTENTS,
@@ -143,14 +143,11 @@ def test_issue_273_comparison_scopes_are_diagnostic_and_schema_approved_only() -
     graph = build_issue_273_dev_graph()
     comparison = json.loads(graph[COMPARISON_PATH])
     scopes = comparison["scopes"]
-    expected_slice_counts = {
-        "ALL": (60, 20),
-        **{topic: (12, 4) for topic in {intent.topic for intent in BASE_INTENTS}},
-        **{
-            expression: (10, 10)
-            for expression in {variant.expression for intent in BASE_INTENTS for variant in intent.variants}
-        },
-    }
+    expected_slice_counts: dict[str, tuple[int, int]] = {"ALL": (60, 20)}
+    expected_slice_counts.update({intent.topic: (12, 4) for intent in BASE_INTENTS})
+    expected_slice_counts.update(
+        {variant.expression: (10, 10) for intent in BASE_INTENTS for variant in intent.variants}
+    )
 
     assert comparison["approved_by"] == {
         "actor_id": "rag-eval-draft-validator",
@@ -315,12 +312,16 @@ def test_issue_273_runtime_support_mappings_resolve_to_typed_non_corpus_objects(
     for entry in support_entries:
         assert not entry["locator"].startswith("$.records[")
         selected = _resolve_json_locator(index, entry["locator"])
-        assert selected["evidence_ref_id"] == entry["evidence_ref_id"]
-        assert selected["evidence_type"] == entry["evidence_type"]
-        assert selected["stable_key"] == entry["stable_key"]
-        assert selected["source_version"] == entry["source_version"]
-        assert selected["content_sha256"] == sha256_hex(selected["content"].encode("utf-8"))
-        assert "record_kind" not in selected
+        assert isinstance(selected, dict)
+        selected_object: dict[str, JsonValue] = selected
+        selected_content = selected_object["content"]
+        assert isinstance(selected_content, str)
+        assert selected_object["evidence_ref_id"] == entry["evidence_ref_id"]
+        assert selected_object["evidence_type"] == entry["evidence_type"]
+        assert selected_object["stable_key"] == entry["stable_key"]
+        assert selected_object["source_version"] == entry["source_version"]
+        assert selected_object["content_sha256"] == sha256_hex(selected_content.encode("utf-8"))
+        assert "record_kind" not in selected_object
 
 
 def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None:

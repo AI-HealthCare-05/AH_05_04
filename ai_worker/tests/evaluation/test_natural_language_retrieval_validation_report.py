@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from ai_worker.tasks.evaluation import natural_language_retrieval_validation as validation_module
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import load_dataset, parse_json_object_bytes
 from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
@@ -133,6 +133,10 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
     corpus = parse_json_object_bytes((EVALS_ROOT / corpus_paths.pop()).read_bytes())
     records = corpus["records"]
     assert isinstance(records, list)
+    record_objects: list[dict[str, JsonValue]] = []
+    for record in records:
+        assert isinstance(record, dict)
+        record_objects.append(record)
 
     topic_ids = {slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("TOPIC_")}
     expression_ids = {
@@ -143,8 +147,8 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
     assert status.created_counts.model_dump(mode="json") == {
         "dev_questions": partition_counts["DEV"],
         "holdout_questions": partition_counts["HOLDOUT"],
-        "gold_records": sum(record["record_kind"] == "GOLD" for record in records),
-        "corpus_records": len(records),
+        "gold_records": sum(record["record_kind"] == "GOLD" for record in record_objects),
+        "corpus_records": len(record_objects),
         "topics": len(topic_ids),
         "expression_types": len(expression_ids),
         "independent_groups": len(transform_origins),
