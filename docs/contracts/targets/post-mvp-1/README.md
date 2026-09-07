@@ -12,7 +12,7 @@
 - [OCR 비-RAG LLM 구조화 계약 v1](./ocr-llm-structuring-v1.md)
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./medication-identification-v1.md)
 - [Safety Result 계약 v1](./safety-result-v1.md) — Approved v4 이력과 Track C 공통 Safety 기준
-- [RAG Source 수집·활성화 계약 v1](./rag-source-ingestion-v1.md)
+- [RAG Source 수집·활성화 계약 v1](./rag-source-ingestion-v1.md) — MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계 구현 중(#165)
 - [RAG Runtime 계약 v1](./rag-runtime-v1.md)
 - [RAG Evaluation·Release Gate 계약 v1](./rag-evaluation-v1.md): Schema Set 1.3 Candidate · Review Required · 책임 리뷰어 PR review event 대기
 - [Safety Result·Citation 계약 v2](./safety-result-v2.md) — Track F에서 v1의 Safety·Citation·STALE·Release Gate 목표를 대체
