@@ -19,6 +19,13 @@ SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
 _SAFE_FAILURE_CODE_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{0,99}")
 
 
+def _validate_bounded_text(field_name: str, value: str, maximum_length: int) -> None:
+    if not value.strip():
+        raise ValueError("Snapshot 저장 version과 run group은 비어 있을 수 없습니다.")
+    if len(value) > maximum_length:
+        raise ValueError(f"{field_name}은 {maximum_length}자를 초과할 수 없습니다.")
+
+
 class SnapshotIngestionDecision(StrEnum):
     """검증된 수집 결과와 기존 Snapshot을 비교한 결과입니다."""
 
@@ -75,15 +82,17 @@ class SnapshotIngestionMetadata:
     verified_by: str | None = None
 
     def __post_init__(self) -> None:
-        required_text = (
-            self.source_version,
-            self.schema_version,
-            self.parser_version,
-            self.normalization_version,
-            self.run_group_key,
+        bounded_text = (
+            ("source_version", self.source_version, 255),
+            ("schema_version", self.schema_version, 100),
+            ("parser_version", self.parser_version, 100),
+            ("normalization_version", self.normalization_version, 100),
+            ("run_group_key", self.run_group_key, 100),
         )
-        if any(not value.strip() for value in required_text):
-            raise ValueError("Snapshot 저장 version과 run group은 비어 있을 수 없습니다.")
+        for field_name, value, maximum_length in bounded_text:
+            _validate_bounded_text(field_name, value, maximum_length)
+        if self.verified_by is not None and len(self.verified_by) > 100:
+            raise ValueError("verified_by는 100자를 초과할 수 없습니다.")
         if self.rejected_record_count < 0:
             raise ValueError("rejected_record_count는 0 이상이어야 합니다.")
         if self.attempt_number < 1:

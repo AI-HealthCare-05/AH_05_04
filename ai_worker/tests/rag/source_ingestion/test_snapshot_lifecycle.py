@@ -1,4 +1,5 @@
 import hashlib
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -221,6 +222,28 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
     )
 
 
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (lambda: replace(_metadata("source-v1"), source_version="x" * 256), "source_version"),
+        (lambda: replace(_metadata("source-v1"), schema_version="x" * 101), "schema_version"),
+        (lambda: replace(_metadata("source-v1"), parser_version="x" * 101), "parser_version"),
+        (
+            lambda: replace(_metadata("source-v1"), normalization_version="x" * 101),
+            "normalization_version",
+        ),
+        (lambda: replace(_metadata("source-v1"), run_group_key="x" * 101), "run_group_key"),
+        (lambda: replace(_metadata("source-v1"), verified_by="x" * 101), "verified_by"),
+    ],
+)
+def test_rejects_snapshot_metadata_larger_than_database_contract(
+    factory: Callable[[], SnapshotIngestionMetadata],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        factory()
+
+
 async def test_first_result_creates_pending_snapshot_candidate_and_success_history() -> None:
     repository = FakeSnapshotRepository()
 
@@ -386,6 +409,54 @@ async def test_preserves_rejection_before_success_with_rejections_run(
         IngestionArtifactKind.REJECTS,
     ]
     assert repository.runs[0].run_status == "SUCCEEDED_WITH_REJECTIONS"
+
+
+async def test_duplicate_raw_and_rejection_keys_are_rejected_before_file_write(
+    tmp_path: Path,
+) -> None:
+    raw_content = b'{"page":1}'
+    raw_path = tmp_path / "page.json"
+    raw_path.write_bytes(raw_content)
+    raw_metadata = RawArtifactMetadata(
+        artifact_key="duplicate.json",
+        raw_checksum=hashlib.sha256(raw_content).hexdigest(),
+        byte_size=len(raw_content),
+        content_type="application/json",
+    )
+    rejection_content = b'{"ITEM_SEQ":null}'
+    rejection_path = tmp_path / "reject.json"
+    rejection_path.write_bytes(rejection_content)
+    rejection_metadata = RawArtifactMetadata(
+        artifact_key="duplicate.json",
+        raw_checksum=hashlib.sha256(rejection_content).hexdigest(),
+        byte_size=len(rejection_content),
+        content_type="application/json",
+    )
+    repository = FakeSnapshotRepository()
+    storage_root = tmp_path / "private"
+
+    with pytest.raises(ValueError, match="Artifact key"):
+        await preserve_and_persist_product_ingestion_result(
+            repository=repository,
+            artifact_store=LocalPrivateSourceArtifactStore(storage_root),
+            ingestion=replace(
+                _ingestion(),
+                raw_manifest_checksum=raw_manifest_checksum((raw_metadata,)),
+            ),
+            metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+            raw_artifacts=((1, raw_path, raw_metadata),),
+            rejection_artifacts=(
+                RejectionArtifactInput(
+                    file_path=rejection_path,
+                    metadata=rejection_metadata,
+                    reject_code="MISSING_ITEM_SEQ",
+                    parser_location="page[1].record[3]",
+                ),
+            ),
+        )
+
+    assert list(storage_root.rglob("*.artifact")) == []
+    assert repository.locked_identities == []
 
 
 async def test_same_content_with_new_version_appends_no_change_to_latest_snapshot() -> None:

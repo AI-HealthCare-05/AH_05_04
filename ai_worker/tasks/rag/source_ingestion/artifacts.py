@@ -2,6 +2,7 @@
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -25,6 +26,8 @@ class RawArtifactMetadata:
     def __post_init__(self) -> None:
         if not isinstance(self.artifact_key, str) or not self.artifact_key.strip():
             raise ValueError("Artifact key must not be empty.")
+        if len(self.artifact_key) > 500:
+            raise ValueError("Artifact key must not exceed 500 characters.")
 
         if not isinstance(self.raw_checksum, str) or not re.fullmatch(
             r"[0-9a-f]{64}",
@@ -37,6 +40,8 @@ class RawArtifactMetadata:
 
         if not isinstance(self.content_type, str) or not self.content_type.strip():
             raise ValueError("Artifact content type must not be empty.")
+        if len(self.content_type) > 255:
+            raise ValueError("Artifact content type must not exceed 255 characters.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +71,6 @@ class StoredRawArtifact:
             raise ValueError("Artifact storage_backend는 50자를 초과할 수 없습니다.")
         if len(self.object_key) > 500:
             raise ValueError("Artifact object_key는 500자를 초과할 수 없습니다.")
-        if len(self.metadata.artifact_key) > 500:
-            raise ValueError("Artifact key는 500자를 초과할 수 없습니다.")
-        if len(self.metadata.content_type) > 255:
-            raise ValueError("Artifact content_type은 255자를 초과할 수 없습니다.")
 
 
 def validate_artifact_binding(
@@ -109,7 +110,7 @@ def _validate_rejection_binding(
         raise ValueError("REJECTS reject_code는 안전한 고정 코드여야 합니다.")
     if parser_location is None or not parser_location.strip():
         raise ValueError("REJECTS parser_location은 비어 있을 수 없습니다.")
-    if len(parser_location) > 255 or any(ord(character) < 32 for character in parser_location):
+    if len(parser_location) > 255 or any(unicodedata.category(character) == "Cc" for character in parser_location):
         raise ValueError("REJECTS parser_location 형식이 올바르지 않습니다.")
 
 

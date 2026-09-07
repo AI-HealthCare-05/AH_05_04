@@ -260,6 +260,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 - `NO_CHANGE`와 `SOURCE_VERSION_CONFLICT`를 포함한 모든 검증 실행은 자체 Artifact 참조를 보존합니다. Snapshot이 생성되지 않은 실행도 감사 가능한 원본 근거를 잃지 않습니다.
 - 같은 수집 실행에서 페이지 번호와 Artifact key는 각각 중복될 수 없으며 Artifact 참조 행은 UPDATE·DELETE할 수 없습니다.
 - `artifact_kind=RAW_RESPONSE`는 양의 페이지 번호를 가지며 거부 메타데이터를 가질 수 없습니다. `artifact_kind=REJECTS`는 페이지 번호 대신 안전한 고정 `reject_code`와 원문을 포함하지 않는 `parser_location`을 필수로 기록합니다.
+- Artifact key·content type과 Snapshot 실행 metadata의 DB 길이 제한, REJECTS 위치의 제어문자, RAW_RESPONSE·REJECTS 전체의 중복 Artifact key는 파일 보존 전에 검사합니다.
 
 Rollback 정책:
 
@@ -270,6 +271,7 @@ Rollback 정책:
 범위 제외:
 
 - 실제 MFDS 네트워크 수집과 외부 Object Storage 어댑터, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
+- DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책과 REJECTS 보존 기간
 - Source 승인·Runtime 활성화
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`

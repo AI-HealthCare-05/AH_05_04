@@ -2,13 +2,13 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 208 passed
-- AI Worker 전체 테스트: 1891 passed, 8 skipped
+- Source ingestion 단위 테스트: 219 passed
+- AI Worker 전체 테스트: 1902 passed, 8 skipped
 - PostgreSQL Snapshot lifecycle 통합 테스트: 5 passed
 - Source/Catalog·Artifact Migration 테스트: 10 passed
 - 전체 Migration 테스트: 49 passed
 - Backend 전체 테스트: 966 passed, 2 skipped
-- Mypy: 414개 핵심 소스 파일 통과
+- Mypy: 415개 핵심 소스 파일 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
 - Runtime Bundle 활성화는 아직 연결하지 않았다.
 
@@ -57,6 +57,30 @@
 - 거부 건수가 있으면 REJECTS 원본 참조를 요구하고, 거부 건수가 없으면 REJECTS 저장을 차단
 - REJECTS에는 안전한 고정 `reject_code`와 원문 없는 `parser_location`만 기록
 - REJECTS 데이터가 존재할 때 관련 필드를 제거하는 downgrade 차단
+- DB 문자열 길이 제한과 `parser_location` 제어문자를 Artifact 보존 전에 차단
+- RAW_RESPONSE와 REJECTS를 합친 수집 실행 전체에서 중복 Artifact key를 파일 보존 전에 차단
+
+## 최종 검수 결과
+
+- Artifact와 Snapshot 저장 메타데이터의 길이를 DB column 제한과 대조했다.
+- `parser_location`은 Unicode 제어문자를 허용하지 않아 DB CHECK보다 늦게 실패하지 않도록 했다.
+- RAW_RESPONSE와 REJECTS 사이의 중복 Artifact key를 DB unique 제약 도달 전에 거부한다.
+- 위 사전 검증 실패 시 내용 주소 객체와 DB row가 생성되지 않는 회귀 테스트를 추가했다.
+- Source ingestion 단위 테스트, AI Worker 전체 테스트, PostgreSQL lifecycle·Migration 집중 테스트를 다시 실행했다.
+
+## Issue 완료 조건 대조
+
+| 완료 조건 | 상태 | 현재 증빙 또는 남은 작업 |
+| --- | --- | --- |
+| 결정적 checksum·record count | 완료 | canonical vector와 전체 page 결속 테스트 |
+| 부분 page·schema drift·version conflict 차단 | 부분 완료 | Parser·검증 경계는 차단한다. 저장 진입 전 실패를 `FAILED` Run으로 남기는 orchestration은 미연결 |
+| `NO_CHANGE`, `A → B → A` lineage | 완료 | 단위·PostgreSQL 통합 테스트 |
+| reject 원문 비로그·접근 통제 보존 | 완료 | DB에는 참조와 안전한 code·location만 저장 |
+| Snapshot 불변성과 상태 전이 | 완료 | append-only 제약, `PENDING/CURRENT/STALE/FAILED` 전이 테스트 |
+| rollback provenance | 부분 완료 | DB transaction rollback은 검증했다. 미참조 내용 주소 객체 정리 정책은 미확정 |
+| 동일 Source 동시 acquisition 1회 | 미완료 | 저장 판단은 Operation row lock으로 직렬화하지만 외부 호출 전 acquisition lock은 아직 없음 |
+| #166 Catalog build 인계 | 부분 완료 | 검증된 Snapshot 결과 계약은 제공한다. Catalog 적재·Runtime 연결은 #166 범위 |
+| Worker DB adapter 실행 | 부분 완료 | Worker dependency group과 로컬 PostgreSQL import·연결은 검증했다. Worker 이미지 내부 실행은 미검증 |
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -101,10 +125,16 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 ## 남은 범위
 
+다음 항목은 #165를 완전히 닫기 위해 남아 있다.
+
+- 외부 호출 전에 같은 Source acquisition을 하나로 제한하는 lock과 동시 호출 테스트
+- 수집·Parser·거부 한도 실패를 Snapshot 없이 `FAILED` Run으로 기록하는 orchestration
+- Worker 이미지에서 Source DB adapter import·연결을 확인하는 smoke test
 - S3 계열 등 외부 Object Storage를 사용할 경우의 운영 어댑터와 credential 주입
 - DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책
 - REJECTS 세부 보존 기간과 승인된 reject code 목록 확정
-- Catalog 적재와 Runtime Bundle 활성화 연결
+
+Catalog 적재와 Runtime Bundle 활성화 연결은 #166 범위로 유지한다.
 
 여기서 `CURRENT`는 #291에 정의된 검증·최신성 상태다. 이전 Snapshot을
 `CURRENT`로 복원해도 Runtime Release Bundle은 변경하지 않는다. 실제 Runtime
@@ -126,6 +156,10 @@ record count를 제공한다. 저장 호출자는 다음 값을 원본이나 che
 DB commit·rollback은 기존 Worker transaction 경계를 재사용한다. 동일
 Operation의 판단과 저장은 Operation 행 잠금 뒤 실행해 동시 수집이 서로 다른
 결정을 내리지 않도록 한다.
+
+로컬 Artifact 저장은 DB transaction보다 먼저 완료된다. DB rollback은 이미
+생성된 내용 주소 객체를 삭제하지 않으며, 참조되지 않은 객체의 보존·정리는 위
+후속 운영 정책에서 결정한다. 동일 checksum 객체는 재수집 때 안전하게 재사용한다.
 
 DUR·환자용 복약정보의 기존 차단 상태는 유지한다.
 평가 Runner 전체 완료를 Parser 단위 작업의 선행조건으로 추가하지 않는다.

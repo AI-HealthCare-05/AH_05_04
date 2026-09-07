@@ -1,6 +1,7 @@
 import hashlib
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -19,6 +20,35 @@ def _metadata(content: bytes) -> RawArtifactMetadata:
         byte_size=len(content),
         content_type="application/json",
     )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        ("artifact_key", "x" * 501, "500"),
+        ("content_type", "x" * 256, "255"),
+    ],
+)
+def test_rejects_metadata_larger_than_database_contract(
+    field_name: str,
+    value: str,
+    message: str,
+) -> None:
+    values: dict[str, object] = {
+        "artifact_key": "synthetic/source.json",
+        "raw_checksum": "a" * 64,
+        "byte_size": 1,
+        "content_type": "application/json",
+    }
+    values[field_name] = value
+
+    with pytest.raises(ValueError, match=message):
+        RawArtifactMetadata(
+            artifact_key=cast(str, values["artifact_key"]),
+            raw_checksum=cast(str, values["raw_checksum"]),
+            byte_size=cast(int, values["byte_size"]),
+            content_type=cast(str, values["content_type"]),
+        )
 
 
 @pytest.mark.parametrize(
@@ -102,6 +132,8 @@ def test_rejects_directory(tmp_path: Path) -> None:
         ("unsafe-code", "page[1].record[3]", "고정 코드"),
         ("MISSING_ITEM_SEQ", "", "비어"),
         ("MISSING_ITEM_SEQ", "page[1]\nrecord[3]", "형식"),
+        ("MISSING_ITEM_SEQ", "page[1]\x7frecord[3]", "형식"),
+        ("MISSING_ITEM_SEQ", "page[1]\x85record[3]", "형식"),
     ],
 )
 def test_rejects_unsafe_rejection_metadata(
