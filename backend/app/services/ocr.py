@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.core import config
@@ -39,6 +39,10 @@ _NULLABLE_CONFIRMED_FIELD_TYPES = frozenset(
         FieldType.TIMING,
     }
 )
+
+
+def _pending_active_cutoff() -> datetime:
+    return datetime.now(UTC) - timedelta(seconds=config.OCR_PENDING_ACTIVE_WINDOW_SECONDS)
 
 
 def _to_field_data(
@@ -117,7 +121,10 @@ class OcrService:
                 )
 
             if not request.force_reprocess:
-                active_job = await self._ocr_repo.get_active_job(document=document)
+                active_job = await self._ocr_repo.get_active_job(
+                    document=document,
+                    pending_created_after=_pending_active_cutoff(),
+                )
                 if active_job is not None:
                     raise ApiError(
                         status_code=409,
@@ -162,7 +169,10 @@ class OcrService:
             )
 
         if not request.force_reprocess:
-            active_job = await self._ocr_repo.get_active_job(document=document)
+            active_job = await self._ocr_repo.get_active_job(
+                document=document,
+                pending_created_after=_pending_active_cutoff(),
+            )
             if active_job is not None:
                 raise ApiError(
                     status_code=409,

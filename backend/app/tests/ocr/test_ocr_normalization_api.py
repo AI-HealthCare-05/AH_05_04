@@ -138,6 +138,29 @@ async def test_ocr_intake_requires_idempotency_key() -> None:
     assert body["details"][0]["field"] == "Idempotency-Key"
 
 
+async def test_ocr_intake_rejects_invalid_idempotency_key_format() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        access_token = await _signup_and_login(client, label="invalid-key")
+        document_id = await _upload_document(client, access_token=access_token)
+
+        response = await client.post(
+            f"/api/v1/documents/{document_id}/ocr-jobs",
+            json={"force_reprocess": False},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Idempotency-Key": "too-short",
+            },
+        )
+
+    body = response.json()
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert body["code"] == "IDEMPOTENCY_KEY_INVALID"
+    assert body["details"][0]["field"] == "Idempotency-Key"
+
+
 async def test_ocr_intake_reuses_same_idempotency_key_for_same_request() -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app),

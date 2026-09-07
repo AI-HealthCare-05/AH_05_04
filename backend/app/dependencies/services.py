@@ -197,7 +197,8 @@ def get_ocr_service(
     ],
 ) -> OcrService:
     # API 계층의 OCR 접수/조회/필드 수정은 Provider를 직접 호출하지 않습니다.
-    # 실제 OCR 실행은 Worker가 별도 OcrEngine을 주입해 `execute_ocr()`를 호출합니다.
+    # 실제 Worker OCR 실행은 ai_worker의 handler/provider 경로에서 처리합니다.
+    # 이 서비스의 execute_ocr 경로와 get_ocr_engine 의존성 정리는 후속 작업으로 분리합니다.
     return OcrService(
         document_repository,
         ocr_repository,

@@ -75,6 +75,15 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 Job 접수입니다. 같은 요청에서는 CLOVA OCR을 호출하지 않고 `AI_JOB`, `IDEMPOTENCY_RECORD`, `OUTBOX_EVENT`, `OCR_JOB` placeholder를 같은 transaction에 저장한 뒤 `JobStatusResponse`를 반환합니다. 실제 OCR 실행은 Worker가 처리합니다.
 
+OCR 접수 요청에는 `Idempotency-Key` header가 필수입니다. 키는 16~255자의 ASCII 영숫자와 `-._:`만 허용하며, 원문 값은 저장하지 않고 HMAC digest만 저장합니다.
+
+| 상태 | `code` | 발생 상황 |
+| ---: | --- | --- |
+| `400` | `IDEMPOTENCY_KEY_REQUIRED` | `Idempotency-Key` header가 없거나 빈 값입니다. |
+| `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
+| `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 key로 이전과 다른 요청 지문이 접수되었습니다. |
+| `409` | `OCR_JOB_ALREADY_PROCESSING` | 같은 문서에 대해 진행 중인 OCR Job이 있습니다. |
+
 `GET /api/v1/jobs/{job_id}`(공통 Job 상태 조회)는 [비동기 Job 계약 v1](./contracts/targets/post-mvp-1/async-job-v1.md) 목표 중 조회 경로가 구현된 현재 API입니다(#148).
 
 ### 구현했지만 라우트 등록을 보류한 API

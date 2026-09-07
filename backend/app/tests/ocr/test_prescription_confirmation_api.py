@@ -1,4 +1,3 @@
-from collections.abc import Generator
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -8,10 +7,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from app.dependencies.services import get_ocr_engine
-from app.main import app, fastapi_app
+from app.main import app
+from app.models.async_jobs import AiJob, AiJobStatus, AiJobType
+from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
-from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
+from app.repositories.async_job_repository import AsyncJobRepository
+from app.services.ocr_engine import RecognizedField
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -26,26 +27,13 @@ DEFAULT_RECOGNIZED_FIELDS = [
 ]
 
 
-class ConfirmationTestOcrEngine:
-    fields: list[RecognizedField] = DEFAULT_RECOGNIZED_FIELDS
-
-    async def recognize(
-        self,
-        *,
-        object_key: str,
-        file_mime_type: str,
-        deadline: OcrDeadline,
-    ) -> OcrRecognitionResult:
-        _ = object_key, file_mime_type, deadline
-        return OcrRecognitionResult(fields=list(self.fields))
+recognized_fields = list(DEFAULT_RECOGNIZED_FIELDS)
 
 
 @pytest.fixture(autouse=True)
-def override_ocr_engine() -> Generator[None]:
-    ConfirmationTestOcrEngine.fields = list(DEFAULT_RECOGNIZED_FIELDS)
-    fastapi_app.dependency_overrides[get_ocr_engine] = lambda: ConfirmationTestOcrEngine()
-    yield
-    fastapi_app.dependency_overrides.pop(get_ocr_engine, None)
+def reset_recognized_fields() -> None:
+    global recognized_fields
+    recognized_fields = list(DEFAULT_RECOGNIZED_FIELDS)
 
 
 async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
@@ -73,11 +61,22 @@ async def _seed_completed_ocr_job(
     db_session: AsyncSession,
     *,
     document_id: str,
+    user_id: UUID,
     fields: list[RecognizedField],
 ) -> str:
     completed_at = datetime.now(UTC)
+    job_repository = AsyncJobRepository(db_session)
+    ai_job = await job_repository.create_job(
+        user_id=user_id,
+        job_type=AiJobType.OCR,
+        prescription_version_id=None,
+    )
+    ai_job.status = AiJobStatus.COMPLETED
+    ai_job.completed_at = completed_at
+
     ocr_job = OcrJob(
         document_id=UUID(document_id),
+        ai_job_id=ai_job.id,
         ocr_status=OcrStatus.COMPLETED,
         completed_at=completed_at,
         engine_name="test",
@@ -119,10 +118,13 @@ async def _upload_and_prepare_ocr(
     )
     assert upload_response.status_code == status.HTTP_201_CREATED
     document_id = upload_response.json()["data"]["document_id"]
+    document = await db_session.get(MedicalDocument, UUID(document_id))
+    assert document is not None
     job_id = await _seed_completed_ocr_job(
         db_session,
         document_id=document_id,
-        fields=list(ConfirmationTestOcrEngine.fields),
+        user_id=document.uploaded_by,
+        fields=list(recognized_fields),
     )
     return document_id, job_id
 
@@ -155,6 +157,97 @@ async def _confirm_fields(
             headers=headers,
         )
         assert response.status_code == status.HTTP_200_OK
+
+
+async def _simulate_worker_completed_ocr_job(
+    db_session: AsyncSession,
+    *,
+    ai_job_id: str,
+    ocr_job_id: str,
+    fields: list[RecognizedField],
+) -> None:
+    completed_at = datetime.now(UTC)
+    ai_job = await db_session.get(AiJob, UUID(ai_job_id))
+    ocr_job = await db_session.get(OcrJob, UUID(ocr_job_id))
+    assert ai_job is not None
+    assert ocr_job is not None
+    assert ocr_job.ai_job_id == ai_job.id
+
+    ai_job.status = AiJobStatus.COMPLETED
+    ai_job.completed_at = completed_at
+    ocr_job.ocr_status = OcrStatus.COMPLETED
+    ocr_job.completed_at = completed_at
+    ocr_job.engine_name = "test-worker"
+    ocr_job.model_version = "test-worker"
+    ocr_job.prompt_version = "test-worker"
+
+    db_session.add_all(
+        [
+            ExtractedField(
+                ocr_job_id=ocr_job.id,
+                medication_index=field.medication_index,
+                field_type=FieldType(field.field_type),
+                raw_value=field.raw_value,
+                normalized_value=field.normalized_value,
+                normalization_version=field.normalization_version,
+                confidence_score=(Decimal(str(field.confidence_score)) if field.confidence_score is not None else None),
+            )
+            for field in fields
+        ]
+    )
+    await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_accepted_ocr_job_result_can_be_reviewed_and_confirmed(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="async-confirm")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        upload_response = await client.post(
+            "/api/v1/documents",
+            files={"file": ("prescription.jpg", JPEG_SIGNATURE + b"fake-jpeg", "image/jpeg")},
+            headers=headers,
+        )
+        assert upload_response.status_code == status.HTTP_201_CREATED, upload_response.text
+        document_id = upload_response.json()["data"]["document_id"]
+
+        intake_response = await client.post(
+            f"/api/v1/documents/{document_id}/ocr-jobs",
+            json={"force_reprocess": False},
+            headers={**headers, "Idempotency-Key": "ocr-confirm-happy-path-0001"},
+        )
+        assert intake_response.status_code == status.HTTP_202_ACCEPTED, intake_response.text
+        job_data = intake_response.json()["data"]
+        ocr_job_id = job_data["domain_id"]
+        assert job_data["status"] == "PENDING"
+        assert job_data["result_url"] is None
+
+        await _simulate_worker_completed_ocr_job(
+            db_session,
+            ai_job_id=job_data["job_id"],
+            ocr_job_id=ocr_job_id,
+            fields=list(recognized_fields),
+        )
+
+        status_response = await client.get(job_data["status_url"], headers=headers)
+        assert status_response.status_code == status.HTTP_200_OK, status_response.text
+        result_url = status_response.json()["data"]["result_url"]
+        assert result_url == f"/api/v1/ocr-jobs/{ocr_job_id}"
+
+        result_response = await client.get(result_url, headers=headers)
+        assert result_response.status_code == status.HTTP_200_OK, result_response.text
+        assert result_response.json()["data"]["job_id"] == ocr_job_id
+
+        await _confirm_all_fields(client, job_id=ocr_job_id, access_token=access_token)
+        confirm_response = await client.post(
+            f"/api/v1/documents/{document_id}/prescription",
+            headers=headers,
+        )
+
+    assert confirm_response.status_code == status.HTTP_201_CREATED, confirm_response.text
+    assert confirm_response.json()["data"]["medications"][0]["medication_name"] == "혈압약정"
 
 
 @pytest.mark.asyncio
@@ -195,7 +288,8 @@ async def test_confirm_prescription_api_rejects_unreviewed_fields(db_session: As
 async def test_confirm_prescription_api_rejects_when_only_one_of_two_medications_is_reviewed(
     db_session: AsyncSession,
 ) -> None:
-    ConfirmationTestOcrEngine.fields = [
+    global recognized_fields
+    recognized_fields = [
         *DEFAULT_RECOGNIZED_FIELDS,
         RecognizedField(2, "MEDICATION_NAME", "당뇨약정", 0.99),
         RecognizedField(2, "DOSE_VALUE", "1", 0.99),
@@ -315,7 +409,8 @@ async def test_confirm_prescription_api_rejects_another_users_document(db_sessio
 
 @pytest.mark.asyncio
 async def test_optional_extracted_field_accepts_confirmed_null(db_session: AsyncSession) -> None:
-    ConfirmationTestOcrEngine.fields = [
+    global recognized_fields
+    recognized_fields = [
         *DEFAULT_RECOGNIZED_FIELDS,
         RecognizedField(
             1,

@@ -64,6 +64,77 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 _SCENARIO_ROOT = Path(__file__).resolve().parents[2] / "release_validation" / "scenarios"
 
 
+def test_async_ocr_failure_stages_are_reportable() -> None:
+    assert {"OCR_STATUS", "OCR_RESULT"} <= smoke_module.ALLOWED_FAILURE_STAGES
+
+
+def _ocr_preflight_payload_for_path(
+    *,
+    path: str,
+    document_id: str,
+    job_id: str,
+) -> tuple[dict[str, object], str, bool]:
+    if path == "/api/v1/auth/login":
+        return {"access_token": "synthetic-token"}, "200 OK", False
+    if path == "/api/v1/documents":
+        return {"data": {"document_id": document_id}}, "201 Created", False
+    if path == f"/api/v1/documents/{document_id}/ocr-jobs":
+        return (
+            {
+                "data": {
+                    "job_id": job_id,
+                    "job_type": "OCR",
+                    "status": "PENDING",
+                    "domain_type": "OCR_JOB",
+                    "domain_id": job_id,
+                    "prescription_version_id": None,
+                    "status_url": f"/api/v1/jobs/{job_id}",
+                    "result_url": None,
+                    "retry_after_seconds": None,
+                    "error": None,
+                    "created_at": "2026-09-01T00:00:00+09:00",
+                    "updated_at": "2026-09-01T00:00:00+09:00",
+                }
+            },
+            "202 Accepted",
+            False,
+        )
+    if path == f"/api/v1/jobs/{job_id}":
+        return (
+            {
+                "data": {
+                    "job_id": job_id,
+                    "job_type": "OCR",
+                    "status": "COMPLETED",
+                    "domain_type": "OCR_JOB",
+                    "domain_id": job_id,
+                    "prescription_version_id": None,
+                    "status_url": f"/api/v1/jobs/{job_id}",
+                    "result_url": f"/api/v1/ocr-jobs/{job_id}",
+                    "retry_after_seconds": None,
+                    "error": None,
+                    "created_at": "2026-09-01T00:00:00+09:00",
+                    "updated_at": "2026-09-01T00:00:01+09:00",
+                }
+            },
+            "200 OK",
+            True,
+        )
+    if path == f"/api/v1/ocr-jobs/{job_id}":
+        return (
+            {
+                "data": {
+                    "job_id": job_id,
+                    "ocr_status": "COMPLETED",
+                    "fields": [{"medication_index": 0, "field_type": "PRESCRIBED_DATE"}],
+                }
+            },
+            "200 OK",
+            False,
+        )
+    raise AssertionError(f"unexpected path: {path}")
+
+
 def _load_real_scenario(filename: str) -> dict[str, Any]:
     return json.loads((_SCENARIO_ROOT / filename).read_text(encoding="utf-8"))
 
@@ -1291,6 +1362,7 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
     document_id = str(uuid4())
     job_id = str(uuid4())
     paths: list[str] = []
+    job_status_calls = 0
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         _, path, _ = (await reader.readline()).decode("ascii").split(" ", 2)
@@ -1304,39 +1376,14 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
                 content_length = int(value.strip())
         if content_length:
             await reader.readexactly(content_length)
-        payload, status = {
-            "/api/v1/auth/login": ({"access_token": "synthetic-token"}, "200 OK"),
-            "/api/v1/documents": ({"data": {"document_id": document_id}}, "201 Created"),
-            f"/api/v1/documents/{document_id}/ocr-jobs": (
-                {
-                    "data": {
-                        "job_id": job_id,
-                        "job_type": "OCR",
-                        "status": "COMPLETED",
-                        "domain_type": "OCR_JOB",
-                        "domain_id": job_id,
-                        "prescription_version_id": None,
-                        "status_url": f"/api/v1/jobs/{job_id}",
-                        "result_url": f"/api/v1/ocr-jobs/{job_id}",
-                        "retry_after_seconds": None,
-                        "error": None,
-                        "created_at": "2026-09-01T00:00:00+09:00",
-                        "updated_at": "2026-09-01T00:00:00+09:00",
-                    }
-                },
-                "202 Accepted",
-            ),
-            f"/api/v1/ocr-jobs/{job_id}": (
-                {
-                    "data": {
-                        "job_id": job_id,
-                        "ocr_status": "COMPLETED",
-                        "fields": [{"medication_index": 0, "field_type": "PRESCRIBED_DATE"}],
-                    }
-                },
-                "200 OK",
-            ),
-        }[path]
+        nonlocal job_status_calls
+        payload, status, counted_job_status = _ocr_preflight_payload_for_path(
+            path=path,
+            document_id=document_id,
+            job_id=job_id,
+        )
+        if counted_job_status:
+            job_status_calls += 1
         body = json.dumps(payload).encode()
         # NoStoreMiddleware가 /api/v1/* 전체에 no-store를 적용하므로 auth/login도 포함합니다.
         cache = b"Cache-Control: no-store\r\n"
@@ -1376,8 +1423,10 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
         "/api/v1/auth/login",
         "/api/v1/documents",
         f"/api/v1/documents/{document_id}/ocr-jobs",
+        f"/api/v1/jobs/{job_id}",
         f"/api/v1/ocr-jobs/{job_id}",
     ]
+    assert job_status_calls == 1
     assert result["preflight"] == "READY"
     assert result["field_identities_match"] is True
     assert result["field_count"] == 1

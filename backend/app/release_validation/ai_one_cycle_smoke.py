@@ -31,6 +31,8 @@ ALLOWED_FAILURE_STAGES = frozenset(
         "AUTH",
         "UPLOAD",
         "OCR_REQUEST",
+        "OCR_STATUS",
+        "OCR_RESULT",
         "OCR_OUTPUT_MISMATCH",
         "EXTRACTED_FIELD_CONFIRMATION",
         "PRESCRIPTION_INPUT",
