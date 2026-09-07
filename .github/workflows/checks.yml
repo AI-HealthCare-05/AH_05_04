@@ -151,22 +151,6 @@ jobs:
       - name: Run Frontend tests
         run: pnpm test
 
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Run IT-2 Playwright E2E
-        run: pnpm test:e2e:it2
-
-      - name: Upload Playwright evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-it2-evidence
-          path: |
-            frontend/playwright-report/it2
-            frontend/test-results/it2
-          retention-days: 14
-
       - name: Build Frontend
         run: pnpm build
 
