@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { login, signup } from '../src/api/auth'
+import { login, logout, signup } from '../src/api/auth'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -65,5 +65,30 @@ describe('login API', () => {
       email: 'dosey@example.com',
       password: 'Password1!',
     })
+  })
+})
+
+describe('logout API', () => {
+  it('기존 인증 토큰으로 logout endpoint에 POST한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '로그아웃 완료' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    localStorage.setItem('access_token', 'fixture-access-token')
+
+    await logout()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/auth/logout',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer fixture-access-token',
+        }),
+      }),
+    )
   })
 })

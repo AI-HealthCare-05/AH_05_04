@@ -14,26 +14,21 @@ function StartPage() {
           <header className="mvp-start__welcome">
             <div className="mvp-start__brand">
               <strong>Dosey</strong>
-              <span>도지</span>
+              <span>Dose + Easy</span>
             </div>
             <DoseyMascot variant="welcome" />
             <div className="mvp-start__hero">
-              <p>내 처방을 이해하고 함께하는</p>
-              <h1>AI 복약 파트너</h1>
+              <p>복약 도우미 도지와 함께</p>
+              <h1>처방과 일정을 쉽게 살펴봐요.</h1>
             </div>
           </header>
 
-          <div className="mvp-start__features" aria-label="Dosey 주요 기능">
-            <span>처방전 등록</span>
-            <span>쉬운 가이드</span>
-            <span>복약 챗봇 도지</span>
-            <span>복약 지속 도움</span>
-          </div>
-
-          <div className="notice attention mvp-start__notice">
-            <strong>AI가 처방을 바꾸지 않아요.</strong>
-            <span>확인된 처방과 출처 범위에서만 안내합니다.</span>
-          </div>
+          <ul className="mvp-start__features" aria-label="Dosey 주요 기능">
+            <li>처방전 등록</li>
+            <li>쉬운 가이드</li>
+            <li>도지에게 질문</li>
+            <li>복약 지속 도움</li>
+          </ul>
 
           <Button fullWidth onClick={() => navigate('/signup')}>
             회원가입하고 시작하기

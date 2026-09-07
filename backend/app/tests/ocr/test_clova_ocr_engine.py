@@ -1,8 +1,9 @@
+import asyncio
 import json
 from email.parser import BytesParser
 from email.policy import default
 from pathlib import Path
-from typing import cast
+from typing import BinaryIO, cast
 
 import httpx
 import pytest
@@ -539,3 +540,75 @@ async def test_recognize_does_not_call_provider_when_deadline_is_exhausted(
             )
 
     assert called is False, "예산이 없는데 Provider를 호출했습니다."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "timeout", "cancelled"])
+async def test_recognize_closes_upload_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    _create_test_image(tmp_path)
+
+    opened_files: list[BinaryIO] = []
+    original_open = Path.open
+
+    def recording_open(path: Path, mode: str = "r") -> BinaryIO:
+        stream = cast(BinaryIO, original_open(path, mode))
+        opened_files.append(stream)
+        return stream
+
+    monkeypatch.setattr(Path, "open", recording_open)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert len(opened_files) == 1
+        assert not opened_files[0].closed
+
+        if outcome == "timeout":
+            raise httpx.ReadTimeout(
+                "synthetic timeout",
+                request=request,
+            )
+
+        if outcome == "cancelled":
+            raise asyncio.CancelledError()
+
+        return httpx.Response(
+            200,
+            json={
+                "images": [
+                    {
+                        "inferResult": "SUCCESS",
+                        "fields": [],
+                    }
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        engine = _create_engine(
+            tmp_path=tmp_path,
+            client=client,
+        )
+
+        if outcome == "success":
+            result = await engine.recognize(
+                object_key="sample.png",
+                file_mime_type="image/png",
+                deadline=_test_deadline(),
+            )
+            assert result.raw_fields == []
+        else:
+            expected_error = OcrProviderTimeoutError if outcome == "timeout" else asyncio.CancelledError
+            with pytest.raises(expected_error):
+                await engine.recognize(
+                    object_key="sample.png",
+                    file_mime_type="image/png",
+                    deadline=_test_deadline(),
+                )
+
+        assert len(opened_files) == 1
+        assert opened_files[0].closed

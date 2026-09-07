@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 from app.apis.v1 import v1_routers
 from app.core import config
 from app.core.db.databases import close_database
-from app.core.errors import register_exception_handlers
+from app.core.errors import ApiError, ErrorDetail, register_exception_handlers
 from app.core.no_store_middleware import NoStoreMiddleware
 from app.core.validation_trace_middleware import RequestTraceMiddleware, ValidationTraceMiddleware
 
@@ -38,6 +38,26 @@ fastapi_app = FastAPI(
 register_exception_handlers(fastapi_app)
 
 fastapi_app.include_router(v1_routers)
+
+
+@fastapi_app.get(
+    "/api/v1/_internal/upload-too-large",
+    include_in_schema=False,
+)
+async def proxy_upload_too_large() -> None:
+    # Nginx가 차단한 파일 본문을 읽거나 저장하지 않고 오류만 반환합니다.
+    raise ApiError(
+        status_code=400,
+        code="UPLOAD_FILE_TOO_LARGE",
+        message="파일 크기는 30MB 이하만 업로드할 수 있습니다.",
+        details=[
+            ErrorDetail(
+                field="file",
+                reason="TOO_LARGE",
+            )
+        ],
+    )
+
 
 # validation 거부 응답도 CORS와 no-store 경계를 통과하도록 FastAPI 바로 바깥에 둡니다.
 validated_app = ValidationTraceMiddleware(

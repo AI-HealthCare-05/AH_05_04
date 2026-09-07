@@ -13,12 +13,7 @@ from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
 )
-
-_DATE_PATTERN = re.compile(
-    r"(?P<year>\d{4})\D+"
-    r"(?P<month>\d{1,2})\D+"
-    r"(?P<day>\d{1,2})"
-)
+from ocr_runtime.prescription_ocr_structurer import normalize_prescribed_date_text
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 # LLM이 값을 찾지 못하거나 grounding 검증에 실패했을 때
@@ -644,14 +639,13 @@ def _minimum_confidence(
 
 
 def _normalize_date(value: str) -> str | None:
-    """처방일 원문은 보존하고 normalized_value만 YYYY-MM-DD로 변환합니다."""
+    """처방일 원문은 보존하고 normalized_value만 YYYY-MM-DD로 변환합니다.
 
-    match = _DATE_PATTERN.search(value)
+    ocr_runtime.prescription_ocr_structurer의 normalize_prescribed_date_text를 그대로
+    재사용해, 규칙 기반 구조화 경로와 이 LLM 경로가 같은 date-rule-v1 정규화 규칙(구분자
+    허용 범위, 존재하지 않는 날짜·연도 범위 검증)을 공유하도록 합니다."""
 
-    if match is None:
-        return None
-
-    return f"{int(match.group('year')):04d}-{int(match.group('month')):02d}-{int(match.group('day')):02d}"
+    return normalize_prescribed_date_text(value)
 
 
 def _make_empty_review_field(
