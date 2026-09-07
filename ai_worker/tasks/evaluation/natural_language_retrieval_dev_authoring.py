@@ -375,6 +375,12 @@ def _record(
     )
 
 
+def _intent_subject(intent: BaseIntent) -> str:
+    if intent.gold_intent.startswith("제품"):
+        return f"{intent.product_code} {intent.gold_intent}"
+    return f"{intent.product_code} 제품의 {intent.gold_intent}"
+
+
 def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
     records: list[EvidenceRecord] = []
     for index, intent in enumerate(BASE_INTENTS):
@@ -387,7 +393,7 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
                 topic=intent.topic,
                 record_kind="GOLD",
                 statement=(
-                    f"{intent.product_code} 제품의 {intent.gold_intent}는 이 평가용 가상 지식에서 "
+                    f"{_intent_subject(intent)}에 관한 평가용 가상 지식은 "
                     "해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
                 ),
             )
@@ -403,17 +409,17 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
             ),
             (
                 same_topic_intent.product_code,
-                f"{same_topic_intent.product_code} 제품의 {same_topic_intent.gold_intent}는 같은 주제에 "
+                f"{_intent_subject(same_topic_intent)} 항목은 같은 주제에 "
                 f"속하지만 {intent.product_code} 질문의 근거가 아닙니다.",
             ),
             (
                 intent.product_code,
-                f"{intent.product_code} 제품 관련 {_TOPIC_OVERLAP_TERMS[intent.topic]} 자료의 목차를 "
+                f"{intent.product_code} 관련 {_TOPIC_OVERLAP_TERMS[intent.topic]} 자료의 목차를 "
                 "안내하지만, 질문에서 찾는 세부 속성은 제시하지 않습니다.",
             ),
             (
                 cross_topic_intent.product_code,
-                f"{cross_topic_intent.product_code} 제품의 {cross_topic_intent.gold_intent}는 "
+                f"{_intent_subject(cross_topic_intent)} 항목은 "
                 f"{intent.product_code} 질문과 일부 표현만 겹치는 다른 주제의 합성 자료입니다.",
             ),
         )

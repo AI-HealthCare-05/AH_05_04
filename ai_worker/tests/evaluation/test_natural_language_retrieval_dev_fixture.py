@@ -11,6 +11,7 @@ from ai_worker.tasks.evaluation.natural_language_retrieval_dev_authoring import 
     RESERVED_PRODUCT_CODES,
     build_issue_273_dev_graph,
 )
+from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import EvidenceMappingManifestV12
 
 CASE_PREFIX = "retrieval/cases/rag-natural-language-retrieval-dev-v1/"
 INDEX_PATH = "retrieval/evidence/resources/rag-natural-language-retrieval-dev-v1/synthetic-knowledge-index.json"
@@ -108,6 +109,15 @@ def test_issue_273_corpus_has_one_gold_and_four_hard_negatives_per_origin() -> N
 
     record_ids = [record["evidence_ref_id"] for record in records]
     content_hashes = [record["content_sha256"] for record in records]
+    expected_record_ids = [
+        evidence_id
+        for origin in RESERVED_PRODUCT_CODES
+        for evidence_id in (
+            f"ev-nlr-{origin.lower()}-gold",
+            *(f"ev-nlr-{origin.lower()}-neg-{number:02d}" for number in range(1, 5)),
+        )
+    ]
+    assert record_ids == expected_record_ids
     assert len(record_ids) == len(set(record_ids))
     assert len(content_hashes) == len(set(content_hashes))
     assert {record["evidence_ref_id"] for record in gold_records}.isdisjoint(
@@ -130,16 +140,48 @@ def test_issue_273_corpus_has_one_gold_and_four_hard_negatives_per_origin() -> N
             assert intent.query_subject not in record["statement"]
 
 
+def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None:
+    records = json.loads(build_issue_273_dev_graph()[INDEX_PATH])["records"]
+    statements_by_id = {record["evidence_ref_id"]: record["statement"] for record in records}
+
+    assert not any(
+        malformed in statement
+        for statement in statements_by_id.values()
+        for malformed in ("제품의 제품의", "주의사항는", "조건는")
+    )
+    assert statements_by_id["ev-nlr-nlr-mi01-gold"] == (
+        "NLR-MI01 제품의 합성 성분 정보에 관한 평가용 가상 지식은 해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
+    )
+    assert statements_by_id["ev-nlr-nlr-pc01-gold"] == (
+        "NLR-PC01 제품의 복용 전 확인할 합성 주의사항에 관한 평가용 가상 지식은 "
+        "해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
+    )
+    assert statements_by_id["ev-nlr-nlr-pc04-gold"] == (
+        "NLR-PC04 제품의 전문가 확인이 필요한 합성 조건에 관한 평가용 가상 지식은 "
+        "해당 질문을 뒷받침하는 정답 항목으로 구분됩니다."
+    )
+    assert statements_by_id["ev-nlr-nlr-mi01-neg-02"] == (
+        "NLR-MI02 제품의 합성 제형·외형 정보 항목은 같은 주제에 속하지만 NLR-MI01 질문의 근거가 아닙니다."
+    )
+    assert statements_by_id["ev-nlr-nlr-mi01-neg-03"] == (
+        "NLR-MI01 관련 제품 정보 자료의 목차를 안내하지만, 질문에서 찾는 세부 속성은 제시하지 않습니다."
+    )
+
+
 def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> None:
     graph = build_issue_273_dev_graph()
     records = json.loads(graph[INDEX_PATH])["records"]
     mapping = json.loads(graph[MAPPING_PATH])
+    validated_mapping = EvidenceMappingManifestV12.model_validate_json(graph[MAPPING_PATH])
     cases = [json.loads(content) for path, content in graph.items() if path.startswith(CASE_PREFIX)]
     gold_by_origin = {record["transform_origin"]: record for record in records if record["record_kind"] == "GOLD"}
     mapping_by_id = {entry["evidence_ref_id"]: entry for entry in mapping["entries"]}
     index_sha256 = sha256_hex(graph[INDEX_PATH])
 
     assert len(mapping_by_id) == 20
+    assert validated_mapping.schema_id == "rag-eval.evidence-mapping-manifest"
+    assert validated_mapping.schema_version == "1.2.0"
+    assert validated_mapping.model_dump(mode="json") == mapping
     assert set(mapping_by_id) == {record["evidence_ref_id"] for record in gold_by_origin.values()}
     for case in cases:
         gold_id = gold_by_origin[case["transform_origin"]]["evidence_ref_id"]
