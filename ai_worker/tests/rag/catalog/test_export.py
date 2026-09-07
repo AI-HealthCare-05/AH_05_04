@@ -46,8 +46,11 @@ def _alias(code: str, alias_ref: str, text: str) -> CatalogAliasInput:
 
 
 def _export(*, reversed_input: bool = False):
-    products = (_product("P-001"), _product("P-002"))
-    aliases = (
+    products: tuple[CatalogProductInput, ...] = (
+        _product("P-001"),
+        _product("P-002"),
+    )
+    aliases: tuple[CatalogAliasInput, ...] = (
         _alias("P-001", "alias-001", "합성 첫 별칭"),
         _alias("P-002", "alias-002", "합성 둘 별칭"),
     )
