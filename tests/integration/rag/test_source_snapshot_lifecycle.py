@@ -16,14 +16,16 @@ from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
-from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    RawArtifactMetadata,
+    StoredRawArtifact,
+)
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
     SnapshotSelectionDecision,
-    StoredRawArtifact,
     fail_snapshot_verification,
     persist_product_ingestion_result,
     select_current_snapshot,

@@ -11,6 +11,8 @@ from ai_worker.tasks.rag.source_client.contracts import (
 from ai_worker.tasks.rag.source_client.mfds_client import ResponseDecoder
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
     RawArtifactMetadata,
+    RawArtifactStore,
+    StoredRawArtifact,
     read_verified_raw_artifact,
     verify_raw_artifact,
 )
@@ -27,6 +29,25 @@ class VerifiedSourceRunArtifacts:
 
     raw_manifest_checksum: str
     records: tuple[Mapping[str, object], ...]
+
+
+def preserve_raw_artifacts(
+    *,
+    artifacts: Iterable[tuple[int, Path, RawArtifactMetadata]],
+    store: RawArtifactStore,
+) -> tuple[StoredRawArtifact, ...]:
+    """페이지 결속을 확인한 원본을 검증하며 불변 저장소에 보존합니다."""
+    artifacts_by_page = _index_raw_artifacts(artifacts)
+    raw_manifest_checksum(metadata for _, metadata in artifacts_by_page.values())
+
+    return tuple(
+        store.put_verified(
+            page_number=page_number,
+            file_path=file_path,
+            metadata=metadata,
+        )
+        for page_number, (file_path, metadata) in sorted(artifacts_by_page.items())
+    )
 
 
 def verify_raw_artifact_manifest(

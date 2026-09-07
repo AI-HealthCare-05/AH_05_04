@@ -2,12 +2,13 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 191 passed
-- AI Worker 전체 테스트: 1874 passed, 8 skipped
+- Source ingestion 단위 테스트: 199 passed
+- AI Worker 전체 테스트: 1882 passed, 8 skipped
 - PostgreSQL Snapshot lifecycle 통합 테스트: 4 passed
 - Source/Catalog·Artifact Migration 테스트: 9 passed
 - 전체 Migration 테스트: 48 passed
 - Backend 전체 테스트: 966 passed, 2 skipped
+- Mypy: 414개 핵심 소스 파일 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
 - Runtime Bundle 활성화는 아직 연결하지 않았다.
 
@@ -48,6 +49,10 @@
 - Artifact 개수·페이지 중복·Raw Manifest checksum을 DB 접근 전에 재검증
 - `CREATED`, `NO_CHANGE`, `SOURCE_VERSION_CONFLICT` 실행 모두의 원본 참조 보존
 - 원본 참조 append-only 제약과 데이터 존재 시 downgrade 차단
+- 로컬 비공개 저장소의 SHA-256 내용 주소, 디렉터리 `0700`, 파일 `0600` 적용
+- 복사 중 크기·SHA-256 재검증과 임시 파일 완료 후 원자적 공개
+- 동일 원본 재시도의 불변 객체 재사용과 기존 객체 변조 차단
+- manifest 불일치를 파일·DB 쓰기 전에 차단하는 단일 보관·저장 진입점
 
 ## 확정된 제품 canonicalization 규칙
 
@@ -92,7 +97,8 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 ## 남은 범위
 
-- 실제 MFDS 응답을 접근 통제 Object Storage에 업로드하는 운영 어댑터
+- S3 계열 등 외부 Object Storage를 사용할 경우의 운영 어댑터와 credential 주입
+- DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책
 - REJECTS Artifact 종류와 보존 정책 확정
 - Catalog 적재와 Runtime Bundle 활성화 연결
 

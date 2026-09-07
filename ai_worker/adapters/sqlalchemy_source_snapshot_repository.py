@@ -8,6 +8,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotCreateRequest,
     SnapshotLifecycleRepository,
@@ -15,7 +16,6 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotRunRecord,
     SnapshotStatusReference,
     SnapshotVerificationStatus,
-    StoredRawArtifact,
 )
 
 _SOURCE = table(

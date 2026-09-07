@@ -8,7 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
-from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 
@@ -113,32 +113,6 @@ class SnapshotRunRecord:
     finished_at: datetime
     duration_ms: int | None
     failure_code: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class StoredRawArtifact:
-    """접근 통제 저장소에 보존된 원본 Artifact의 불변 참조입니다."""
-
-    page_number: int
-    metadata: RawArtifactMetadata
-    storage_backend: str
-    object_key: str
-
-    def __post_init__(self) -> None:
-        if type(self.page_number) is not int or self.page_number < 1:
-            raise ValueError("Artifact page_number는 1 이상의 정수여야 합니다.")
-        if not self.storage_backend.strip():
-            raise ValueError("Artifact storage_backend는 비어 있을 수 없습니다.")
-        if not self.object_key.strip():
-            raise ValueError("Artifact object_key는 비어 있을 수 없습니다.")
-        if len(self.storage_backend) > 50:
-            raise ValueError("Artifact storage_backend는 50자를 초과할 수 없습니다.")
-        if len(self.object_key) > 500:
-            raise ValueError("Artifact object_key는 500자를 초과할 수 없습니다.")
-        if len(self.metadata.artifact_key) > 500:
-            raise ValueError("Artifact key는 500자를 초과할 수 없습니다.")
-        if len(self.metadata.content_type) > 255:
-            raise ValueError("Artifact content_type은 255자를 초과할 수 없습니다.")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,12 +1,23 @@
+import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 
+from ai_worker.adapters.local_private_source_artifact_store import (
+    LocalPrivateSourceArtifactStore,
+)
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
-from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    RawArtifactMetadata,
+    StoredRawArtifact,
+)
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
+from ai_worker.tasks.rag.source_ingestion.persistence import (
+    preserve_and_persist_product_ingestion_result,
+)
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SOURCE_VERSION_CONFLICT,
@@ -18,7 +29,6 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotSelectionDecision,
     SnapshotStatusReference,
     SnapshotVerificationStatus,
-    StoredRawArtifact,
     fail_snapshot_verification,
     persist_product_ingestion_result,
     select_current_snapshot,
@@ -246,6 +256,65 @@ async def test_invalid_artifact_set_is_rejected_before_operation_lock(
             artifacts=artifacts,
         )
 
+    assert repository.locked_identities == []
+
+
+async def test_preserves_verified_original_before_snapshot_transaction(
+    tmp_path: Path,
+) -> None:
+    content = b'{"synthetic":true}'
+    source = tmp_path / "page-0001.json"
+    source.write_bytes(content)
+    raw_metadata = RawArtifactMetadata(
+        artifact_key="page-0001.json",
+        raw_checksum=hashlib.sha256(content).hexdigest(),
+        byte_size=len(content),
+        content_type="application/json",
+    )
+    ingestion = replace(
+        _ingestion(),
+        raw_manifest_checksum=raw_manifest_checksum((raw_metadata,)),
+    )
+    repository = FakeSnapshotRepository()
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+
+    result = await preserve_and_persist_product_ingestion_result(
+        repository=repository,
+        artifact_store=store,
+        ingestion=ingestion,
+        metadata=_metadata("source-v1"),
+        raw_artifacts=((1, source, raw_metadata),),
+    )
+
+    stored = repository.run_artifacts[result.ingestion_run_id][0]
+    assert (tmp_path / "private" / stored.object_key).read_bytes() == content
+
+
+async def test_manifest_mismatch_is_rejected_before_file_or_database_write(
+    tmp_path: Path,
+) -> None:
+    content = b'{"synthetic":true}'
+    source = tmp_path / "page-0001.json"
+    source.write_bytes(content)
+    raw_metadata = RawArtifactMetadata(
+        artifact_key="page-0001.json",
+        raw_checksum=hashlib.sha256(content).hexdigest(),
+        byte_size=len(content),
+        content_type="application/json",
+    )
+    repository = FakeSnapshotRepository()
+    storage_root = tmp_path / "private"
+
+    with pytest.raises(ValueError, match="manifest checksum"):
+        await preserve_and_persist_product_ingestion_result(
+            repository=repository,
+            artifact_store=LocalPrivateSourceArtifactStore(storage_root),
+            ingestion=_ingestion(),
+            metadata=_metadata("source-v1"),
+            raw_artifacts=((1, source, raw_metadata),),
+        )
+
+    assert list(storage_root.rglob("*.artifact")) == []
     assert repository.locked_identities == []
 
 

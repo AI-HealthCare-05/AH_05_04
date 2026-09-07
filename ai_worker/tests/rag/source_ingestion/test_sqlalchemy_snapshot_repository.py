@@ -8,14 +8,16 @@ from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
-from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
+from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    RawArtifactMetadata,
+    StoredRawArtifact,
+)
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotCreateRequest,
     SnapshotIngestionMetadata,
     SnapshotRunRecord,
     SnapshotVerificationStatus,
-    StoredRawArtifact,
 )
 
 _OPERATION_ID = UUID("11111111-1111-4111-8111-111111111111")

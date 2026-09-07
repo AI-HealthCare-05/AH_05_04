@@ -256,6 +256,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 - `rejected_record_count`는 `record_count`보다 클 수 없습니다.
 - `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
 - `rag_source_ingestion_artifact`는 원본 바이트를 DB에 저장하지 않습니다. 접근 통제 저장소의 backend·object key, 페이지 번호, Artifact key, SHA-256, 크기와 content type만 수집 실행에 연결합니다.
+- 로컬 저장 어댑터는 `sha256/{앞 2자리}/{SHA-256}.artifact` 형식의 내용 주소를 사용합니다. 완성 전 임시 파일은 참조하지 않으며 크기·checksum 검증과 파일 동기화가 끝난 뒤에만 mode `0600`의 불변 객체를 원자적으로 공개합니다. 저장소 디렉터리는 mode `0700`으로 제한합니다.
 - `NO_CHANGE`와 `SOURCE_VERSION_CONFLICT`를 포함한 모든 검증 실행은 자체 Artifact 참조를 보존합니다. Snapshot이 생성되지 않은 실행도 감사 가능한 원본 근거를 잃지 않습니다.
 - 같은 수집 실행에서 페이지 번호와 Artifact key는 각각 중복될 수 없으며 Artifact 참조 행은 UPDATE·DELETE할 수 없습니다.
 
@@ -267,7 +268,7 @@ Rollback 정책:
 
 범위 제외:
 
-- 실제 MFDS 네트워크 수집과 Object Storage 업로드, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
+- 실제 MFDS 네트워크 수집과 외부 Object Storage 어댑터, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
 - Source 승인·Runtime 활성화
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`
