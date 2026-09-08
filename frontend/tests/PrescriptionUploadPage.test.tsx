@@ -681,7 +681,11 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(statusCalls[1]?.[0]).toBe(statusUrl)
     expect(uploadPrescription).toHaveBeenCalledTimes(1)
     expect(executeOcr).toHaveBeenCalledTimes(1)
-    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+    // 복구 레코드 삭제는 STALE 화면이 commit된 다음 effect에서 실행되므로,
+    // 화면 텍스트만 기다리면 effect flush 이전 상태를 볼 수 있습니다.
+    await waitFor(() =>
+      expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull(),
+    )
   })
 
   it('result_url network 오류 후에도 새 Job 접수 없이 같은 결과 URL을 다시 조회한다', async () => {
