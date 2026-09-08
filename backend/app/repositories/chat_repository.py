@@ -15,7 +15,13 @@ class ChatRepository:
         self.session = session
 
     async def create_session(self, *, prescription: Prescription) -> ChatSession:
-        chat_session = ChatSession(prescription_id=prescription.id, profile_id=prescription.profile_id)
+        if prescription.active_version_id is None:
+            raise RuntimeError("active prescription version is required")
+        chat_session = ChatSession(
+            prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
+            profile_id=prescription.profile_id,
+        )
         self.session.add(chat_session)
         await self.session.flush()
         await self.session.refresh(chat_session, attribute_names=["created_at", "last_message_at"])
@@ -64,6 +70,7 @@ class ChatRepository:
     async def get_message_owned(self, *, message_id: UUID, user_id: UUID) -> ChatMessage | None:
         result = await self.session.execute(
             select(ChatMessage)
+            .options(selectinload(ChatMessage.session))
             .join(ChatSession, ChatSession.id == ChatMessage.session_id)
             .where(
                 ChatMessage.id == message_id,

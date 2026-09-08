@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import config
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.medication_candidate_repository import (
@@ -94,7 +94,9 @@ async def _create_prescription(session: AsyncSession, *, user: User) -> Prescrip
     session.add(ocr_job)
     await session.flush()
 
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -103,14 +105,25 @@ async def _create_prescription(session: AsyncSession, *, user: User) -> Prescrip
     )
     session.add(prescription)
     await session.flush()
+    session.add(
+        PrescriptionVersion(
+            id=version_id,
+            prescription_id=prescription.id,
+            version_number=1,
+            prescribed_date=prescription.prescribed_date,
+            confirmed_at=prescription.confirmed_at,
+        )
+    )
+    await session.flush()
     return prescription
 
 
 async def _create_medication(
     session: AsyncSession, *, prescription: Prescription, display_order: int = 1
-) -> Medication:
-    medication = Medication(
-        prescription_id=prescription.id,
+) -> PrescriptionVersionMedication:
+    assert prescription.active_version_id is not None
+    medication = PrescriptionVersionMedication(
+        prescription_version_id=prescription.active_version_id,
         medication_name="테스트약",
         strength_text="500mg",
         display_order=display_order,

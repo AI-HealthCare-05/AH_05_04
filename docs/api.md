@@ -66,6 +66,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | OCR | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200` |
 | OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/latest` | `200` |
+| 처방 | `PATCH` | `/api/v1/prescriptions/{prescription_id}` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
 | 가이드 | `GET` | `/api/v1/prescriptions/{prescription_id}/guide` | `200` |
 | 채팅 | `GET` | `/api/v1/prescriptions/{prescription_id}/chat-session` | `200` |
@@ -78,6 +79,10 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | Candidate | `GET` | `/api/v1/medication-candidate-searches/{prescription_version_medication_id}` | `200` |
 | Candidate | `POST` | `/api/v1/medication-candidates/confirm` | `200` |
 | Candidate | `POST` | `/api/v1/medication-candidates/reject` | `200` |
+
+`PATCH /api/v1/prescriptions/{prescription_id}`는 PR 4의 이전 Version 결과 `STALE` 전이와 현재 노출
+차단이 병합될 때까지 `PRESCRIPTION_CORRECTION_ENABLED=false`가 기본이다. 비활성 상태에서는 인증 이후
+도메인 조회나 mutation 전에 `503 SERVICE_UNAVAILABLE` / `PRESCRIPTION_CORRECTION_DISABLED`로 차단한다.
 
 Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 세 endpoint 모두 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
 

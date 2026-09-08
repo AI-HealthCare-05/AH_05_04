@@ -2558,14 +2558,76 @@ async def test_user_account_lifecycle_columns_default_to_active(
     assert row.token_version == 0
 
 
+async def _insert_candidate_version_graph(connection: AsyncConnection) -> dict[str, str]:
+    user_id, document_id, ocr_job_id = await insert_ocr_parent_chain(connection)
+    profile_id = await connection.scalar(text("SELECT id FROM profile WHERE user_id = :user_id"), {"user_id": user_id})
+    assert profile_id is not None
+    prescription_id = str(uuid4())
+    version_id = str(uuid4())
+    pvm_id = str(uuid4())
+    await connection.execute(
+        text(
+            """
+            INSERT INTO prescription (
+                id, active_version_id, document_id, source_ocr_job_id, profile_id,
+                prescribed_date, prescription_status, confirmed_at
+            ) VALUES (
+                :prescription_id, NULL, :document_id, :ocr_job_id, :profile_id,
+                DATE '2026-09-08', 'CONFIRMED', now()
+            )
+            """
+        ),
+        {
+            "prescription_id": prescription_id,
+            "document_id": document_id,
+            "ocr_job_id": ocr_job_id,
+            "profile_id": profile_id,
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO prescription_version (
+                id, prescription_id, version_number, prescribed_date, confirmed_at
+            ) VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now())
+            """
+        ),
+        {"version_id": version_id, "prescription_id": prescription_id},
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO prescription_version_medication (
+                id, prescription_version_id, medication_name, display_order
+            ) VALUES (:pvm_id, :version_id, '테스트약', 1)
+            """
+        ),
+        {"pvm_id": pvm_id, "version_id": version_id},
+    )
+    await connection.execute(
+        text("UPDATE prescription SET active_version_id = :version_id WHERE id = :prescription_id"),
+        {"version_id": version_id, "prescription_id": prescription_id},
+    )
+    return {
+        "user_id": user_id,
+        "profile_id": str(profile_id),
+        "document_id": document_id,
+        "ocr_job_id": ocr_job_id,
+        "prescription_id": prescription_id,
+        "version_id": version_id,
+        "pvm_id": pvm_id,
+    }
+
+
 async def _insert_candidate_search_with_result(
     connection: AsyncConnection,
     *,
     displayed_candidate_count: int,
     is_displayed: bool,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, str]]:
     search_id = str(uuid4())
     result_id = str(uuid4())
+    graph = await _insert_candidate_version_graph(connection)
     await connection.execute(
         text(
             """
@@ -2577,7 +2639,7 @@ async def _insert_candidate_search_with_result(
         ),
         {
             "id": search_id,
-            "pvm_id": str(uuid4()),
+            "pvm_id": graph["pvm_id"],
             "digest": f"digest-{uuid4().hex[:8]}",
             "displayed_candidate_count": displayed_candidate_count,
         },
@@ -2599,7 +2661,7 @@ async def _insert_candidate_search_with_result(
             "is_displayed": is_displayed,
         },
     )
-    return search_id, result_id
+    return search_id, result_id, graph
 
 
 @pytest.mark.asyncio
@@ -2636,6 +2698,7 @@ async def test_candidate_search_displayed_count_deferred_constraint_blocks_inser
     async with migrated_engine.connect() as connection:
         transaction = await connection.begin()
         try:
+            graph = await _insert_candidate_version_graph(connection)
             await connection.execute(
                 text(
                     """
@@ -2647,7 +2710,7 @@ async def test_candidate_search_displayed_count_deferred_constraint_blocks_inser
                 ),
                 {
                     "id": str(uuid4()),
-                    "pvm_id": str(uuid4()),
+                    "pvm_id": graph["pvm_id"],
                     "digest": f"digest-{uuid4().hex[:8]}",
                 },
             )
@@ -2666,10 +2729,11 @@ async def test_candidate_search_displayed_count_deferred_constraint_allows_match
     이 트리거가 정상 흐름까지 막지 않는지 실제 commit으로 확인한다."""
     search_id = None
     result_id = None
+    graph = None
     async with migrated_engine.connect() as connection:
         transaction = await connection.begin()
         try:
-            search_id, result_id = await _insert_candidate_search_with_result(
+            search_id, result_id, graph = await _insert_candidate_search_with_result(
                 connection,
                 displayed_candidate_count=1,
                 is_displayed=True,
@@ -2690,4 +2754,13 @@ async def test_candidate_search_displayed_count_deferred_constraint_allows_match
             text("DELETE FROM medication_candidate_search WHERE id = :id"),
             {"id": search_id},
         )
+        assert graph is not None
+        await cleanup_connection.execute(
+            text("DELETE FROM prescription WHERE id = :prescription_id"),
+            graph,
+        )
+        await cleanup_connection.execute(text("DELETE FROM ocr_job WHERE id = :ocr_job_id"), graph)
+        await cleanup_connection.execute(text("DELETE FROM medical_document WHERE id = :document_id"), graph)
+        await cleanup_connection.execute(text("DELETE FROM profile WHERE id = :profile_id"), graph)
+        await cleanup_connection.execute(text('DELETE FROM "user" WHERE id = :user_id'), graph)
         await cleanup_transaction.commit()

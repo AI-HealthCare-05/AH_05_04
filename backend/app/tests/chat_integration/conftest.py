@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.chat import ChatMessage, ChatSession
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.tests.conftest import test_engine
@@ -81,7 +81,9 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             ocr_job = OcrJob(document_id=document.id)
             session.add(ocr_job)
             await session.flush()
+            version_id = uuid4()
             prescription = Prescription(
+                active_version_id=version_id,
                 document_id=document.id,
                 source_ocr_job_id=ocr_job.id,
                 profile_id=profile.id,
@@ -89,6 +91,16 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
                 confirmed_at=datetime.now(UTC),
             )
             session.add(prescription)
+            await session.flush()
+            session.add(
+                PrescriptionVersion(
+                    id=version_id,
+                    prescription_id=prescription.id,
+                    version_number=1,
+                    prescribed_date=prescription.prescribed_date,
+                    confirmed_at=prescription.confirmed_at,
+                )
+            )
             await session.flush()
             medication = Medication(
                 prescription_id=prescription.id,
@@ -100,9 +112,27 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
                 duration_days=7,
                 display_order=1,
             )
-            first_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
-            second_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
-            session.add_all([medication, first_session, second_session])
+            version_medication = PrescriptionVersionMedication(
+                prescription_version_id=version_id,
+                medication_name="동시성 검증용 합성약",
+                dose_value=Decimal("0.125"),
+                dose_unit="mg",
+                frequency_per_day=2,
+                timing_text="식후",
+                duration_days=7,
+                display_order=1,
+            )
+            first_session = ChatSession(
+                prescription_id=prescription.id,
+                prescription_version_id=version_id,
+                profile_id=profile.id,
+            )
+            second_session = ChatSession(
+                prescription_id=prescription.id,
+                prescription_version_id=version_id,
+                profile_id=profile.id,
+            )
+            session.add_all([medication, version_medication, first_session, second_session])
             await session.flush()
             fixture = CommittedChatFixture(
                 user=user,

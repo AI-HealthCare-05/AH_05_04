@@ -7,13 +7,16 @@
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-01 |
+| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Review pending |
+| Last verified | 2026-09-08 |
 
 ## 목적과 적용 범위
 
 사용자가 확정한 현재 처방과 공식 의약품 Identification을 기반으로 Guide·Chat·처방약–OTC 질문을 동일한 Rule-first RAG·Citation·Safety 경로에서 처리한다.
 
 이 문서는 외부 RAG 정본의 Local P0 Runtime 투영본이다. RAG-00은 Approved Target이지만 공유 DTO·DB 계약의 구현·테스트가 완료되기 전에는 현재 Runtime 계약이 아니며 기존 Current 동작을 자동으로 대체하지 않는다.
+
+#164 Runtime Bundle 최소 DB 기반 분할 PR은 `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval`의 저장 구조와 FK/unique/CHECK/append-only 이력 기반만 추가한다. 이 변경은 Runtime Bundle 활성화, 환경 포인터 전환, drain, mixed worker rollback, Production 공개 승인을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
 
 - 자유 ReAct Agent, 열린 웹 검색, Graph DB와 승인되지 않은 Source 자동 편입은 사용하지 않는다.
 - 고위험·응급·금지 행동 분기는 일반 Retrieval보다 먼저 수행한다.
@@ -168,9 +171,25 @@ Guide의 Citation Finalizer도 `claim_citation_validator`와 `release_gate` 사�
 
 ### Retrieval·Rerank·Evidence Gate
 
-- 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk와 Rule Evidence다.
+- RRF 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk다. Interaction Rule은 앞선 `rule_check`에서
+  결정론적으로 평가하고 연결된 Rule Evidence를 Citation·Evidence Gate로 전달하며, 같은 Rule Evidence를
+  RRF 후보로 다시 검색하지 않는다.
+- 내부 Evidence provenance는 `source_snapshot_id`, 해당 Snapshot의 `canonical_checksum`과 정확히 하나의
+  Endpoint/Operation 또는 Artifact Member를 함께 보존·검증한다. `canonical_checksum`은 bridge content hash
+  preimage가 아니라 당시 Snapshot 내용 동일성 확인 값이다.
+- `external:` Production `source_version`의 payload는 해당 Snapshot에 보존된 non-null
+  `external_version`과 byte-for-byte exact-match해야 하며, 외부 불변 version이 없는 API·Internal
+  Snapshot의 `external_version`은 `null`이어야 한다. 전체 `source_version` 200자 상한에 prefix가 포함되므로
+  `external_version` payload의 허용 상한은 191자다.
+- `api:`·`internal:` Production `source_version`의 hash suffix는 해당 `source_snapshot_id`의
+  `canonical_checksum`과 exact-match해야 한다. 이미 저장된 Snapshot을 읽는 Adapter에서 형식만 유효한 다른
+  hash가 발견되면 Source 내용 충돌이 아니라 Retrieval `VALIDATION_ERROR`로 닫고 Safety finalizer가
+  `VALIDATION_FAILED` fallback으로 변환한다.
 - `pg_trgm`·Dense 검색과 rerank 구현은 versioned configuration으로 재현한다.
 - 내부 Top-K·score는 공개 DTO에 노출하지 않는다.
+- 승인 근거가 없는 Retrieval `SUCCEEDED/NO_HITS`는 Safety finalizer에서
+  `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`,
+  `fallback_code=NO_APPROVED_EVIDENCE`로 변환한다.
 - 의료 Claim과 처방약 기반 Guideline Claim은 승인된 Source version과 locator를 가져야 한다.
 - 근거 없음·상충·Source 비활성·만료·Citation 불일치에서는 생성 내용을 폐기하고 승인 fallback만 저장한다.
 
@@ -228,7 +247,7 @@ Local Runtime 포인터 변경도 보호된 Guard Operation을 사용한다.
 - `EMERGENCY_ROLLBACK`: 현재 Bundle이 부적격일 때 Rollback 후보의 Source·Endpoint·Operation·Approval·Freshness·평가 PASS를 다시 검사한다. 적격 후보일 때만 포인터를 원자 교체하고, 현재·후보가 모두 부적격일 때 환경을 `SUSPENDED`로 전환한다.
 - `RESUME`: 중지 원인이 해소되고 대상 Bundle 전체가 다시 적격일 때만 `SUSPENDED → ACTIVE`를 허용한다.
 
-활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
+활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 활성 Bundle의 기준 원본은 환경의 active bundle pointer이며, Bundle 자체 status에 `ACTIVE` 값을 두지 않는다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
 
 ## 결과·Citation·상태
 

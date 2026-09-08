@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import HomePage from '../src/pages/HomePage'
 import StartPage from '../src/pages/StartPage'
 
@@ -16,13 +16,26 @@ const CURRENT_USER = {
 }
 
 function renderHome(currentUser = CURRENT_USER) {
+  function UploadRoute() {
+    const location = useLocation()
+
+    return (
+      <div>
+        처방전 업로드 화면
+        <output data-testid="upload-intent">
+          {(location.state as { intent?: string } | null)?.intent ?? ''}
+        </output>
+      </div>
+    )
+  }
+
   return render(
     <MemoryRouter initialEntries={['/']}>
       <Routes>
         <Route path="/" element={<HomePage currentUser={currentUser} />} />
         <Route
           path="/prescriptions/upload"
-          element={<div>처방전 업로드 화면</div>}
+          element={<UploadRoute />}
         />
         <Route path="/chat" element={<div>처방전 ID 없는 챗봇 진입 화면</div>} />
         <Route path="/guides" element={<div>가이드 empty 화면</div>} />
@@ -104,11 +117,12 @@ describe('Dosey MVP design pages', () => {
     expect(screen.queryByText('85%')).toBeNull()
   })
 
-  it('HOME-01의 처방약 복용 안내를 기존 업로드 route에 연결한다', async () => {
+  it('HOME-01의 처방약 복용 안내를 새 처방 등록 intent와 함께 업로드 route에 연결한다', async () => {
     renderHome()
     await screen.findByText('오늘도 건강한 하루 되세요')
     fireEvent.click(screen.getByRole('button', { name: /처방약 복용 안내/ }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+    expect(screen.getByTestId('upload-intent').textContent).toBe('new-prescription')
   })
 
   it('계약 없는 HOME 기능은 비활성 상태이며 미확인 기록을 임의 표시하지 않는다', async () => {
