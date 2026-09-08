@@ -114,11 +114,13 @@ jobs:
         run: |
           uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
 
+      # ai_worker/tests/evaluation은 외부 서비스 없이 evals/ artifact의 canonical byte와
+      # hash 결속만 검증합니다. Dataset·Schema Set 계약의 회귀를 CI에서 잡기 위해 포함합니다.
       - name: Run AI Worker Unit Tests with Coverage
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag
+          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation
 
       - name: Coverage Report
         run: |

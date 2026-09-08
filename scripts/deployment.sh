@@ -6,12 +6,25 @@ set -euo pipefail
 # 어느 위치에서 실행해도 저장소 루트 기준으로 동작하도록 이동합니다.
 cd "$(dirname "$0")/.."
 
-PROD_ENV_FILE="envs/.prod.env"
+PROD_ENV_FILE="${PROD_ENV_FILE:-envs/.prod.env}"
 
 if [ ! -f "$PROD_ENV_FILE" ]; then
   echo "운영 환경파일을 찾을 수 없습니다: $PROD_ENV_FILE"
   exit 1
 fi
+
+# ---------- 필수 키 선언 검증 (source 이전) ----------
+# source는 파일에 없는 변수를 초기화하지 않는다. 실행 셸에 REDIS_PASSWORD나 ENV가
+# 이미 설정돼 있으면 파일에 값이 없어도 아래 검증을 통과할 수 있는데, 원격 배포는
+# 이 파일 원문만 서버로 복사하므로(하단 scp 참고) 로컬 검증과 실제 전송 설정이
+# 어긋나 필수 값이 없는 채로 배포될 수 있다(#321 리뷰). source 전에 파일 자체가
+# 두 값을 직접 선언하는지 먼저 확인한다.
+for required_key in REDIS_PASSWORD ENV; do
+  if ! grep -Eq "^${required_key}=" "$PROD_ENV_FILE"; then
+    echo "$PROD_ENV_FILE에 $required_key가 선언되어 있지 않습니다."
+    exit 1
+  fi
+done
 
 # 이미지 버전 등 운영 배포 설정을 읽습니다.
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
@@ -36,6 +49,43 @@ for variable_name in "${required_db_variables[@]}"; do
     exit 1
   fi
 done
+
+# ---------- Redis 인증 검증 ----------
+# PUBLIC_TRACK_F_ENABLED/Track A Worker 모두 non-local(STAGING/PRODUCTION) 환경에서
+# Redis 인증을 강제한다(#150). 값이 비어 있으면 compose가 빈 문자열로 치환해
+# 무인증 Redis가 뜰 수 있으므로, docker login/build/push 같은 외부 작업 전에 차단한다.
+if [ -z "${REDIS_PASSWORD:-}" ]; then
+  echo "필수 운영 환경변수가 비어 있습니다: REDIS_PASSWORD"
+  exit 1
+fi
+
+# ---------- Placeholder 값 검증 ----------
+# example 파일을 그대로 복사해 배포하면 REDIS_PASSWORD 등 필수 값이 비어 있지 않아
+# 위 -z 검사를 통과한다. 그 상태로 배포되면 git에 커밋된 공개 placeholder 값으로
+# 운영 서비스가 인증을 걸고 뜬다(deploy-staging.sh와 동일한 검사).
+if grep -Eq '=(replace-with|replace_with)' "$PROD_ENV_FILE"; then
+  echo "$PROD_ENV_FILE 안의 placeholder를 실제 운영 값으로 교체해야 합니다."
+  exit 1
+fi
+
+# 위 파일 원문 검사는 REDIS_PASSWORD="replace-with-..."처럼 따옴표로 감싼 값을
+# 놓친다(#321 리뷰). source 이후 따옴표가 제거된 실제 셸 변수 값을 다시 검사한다.
+case "$REDIS_PASSWORD" in
+  replace-with* | replace_with*)
+    echo "REDIS_PASSWORD가 아직 placeholder 값입니다: $PROD_ENV_FILE 안의 값을 교체해야 합니다."
+    exit 1
+    ;;
+esac
+
+# ---------- ENV 값 검증 ----------
+# PROD_ENV_FILE 경로가 하드코딩이던 때는 문제가 아니었지만, override를 허용하면서
+# PROD_ENV_FILE=envs/.local.env 같은 다른 환경파일로 운영 배포를 실행할 수 있게
+# 됐다. deploy-staging.sh의 ENV 검사와 대칭으로 운영 배포는 ENV=production인
+# 환경파일로만 실행되도록 강제한다.
+if [ "${ENV:-}" != "production" ]; then
+  echo "ENV는 production이어야 합니다. 현재 값: ${ENV:-<empty>}"
+  exit 1
+fi
 
 if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
   [ "$DB_ADMIN_USER" = "$DB_APP_USER" ] ||
