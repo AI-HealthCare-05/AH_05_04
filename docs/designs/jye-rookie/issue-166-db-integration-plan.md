@@ -152,3 +152,22 @@ Success: no issues found in 36 source files
 고정 파일 3개의 SHA-256은 별도 `shasum -a 256` 결과와 `expected.json`의 값이 일치했다.
 신규 hash 회귀는 22건이다. 변경 Python 파일 format 검사 및 전체 diff 공백 검사를 함께 수행했다.
 PostgreSQL·Frontend·실제 외부 Source 승인·Runtime 검증은 이번 단계에서 수행하지 않았다.
+
+## 3단계 — 저장 자료 준비 구현
+
+[DB 적재·저장 연결안](../../contracts/proposed/post-mvp-1/catalog-db-integration-v2.md)에 D-03·D-04·D-06의
+구체안과 실제 Source 근거의 한계를 정리했다. 합의되지 않은 내용을 승인된 schema로 표시하지 않는다.
+
+`storage.py::prepare_catalog_storage`는 v2 members/artifacts를 검증하고 안정 Identity, 행별
+Source reference, 구성원 연결, canonical record bytes, 종류별 hash 계산 자료를 불변 객체로 만든다.
+SQL·migration·실행 ID·Set 상태를 만들지 않으며, 실제 PostgreSQL adapter 연결은 후속이다.
+기존 v2 서비스·저장 포트·Candidate hash 의미는 바꾸지 않았다.
+
+합성 Component 3행은 실제 Source의 role 단일성 근거가 아니다. 기존 `(product, ingredient, role)`
+의미를 유지하고 source_record_key를 임의 생성하지 않는다. v2 함량 문자열과 기존 Numeric 컬럼의
+표현 차이를 기록했으며, 준비 코드에서 함량·release profile을 숫자로 축소하지 않는다.
+
+저장 준비 성공은 실제 저장·정본 Set 구현·정규화 실행 구분·운영 승인 완료가 아니다.
+
+3단계 검증: `ai_worker/tests/rag` 963건 통과(신규 저장 준비 26건), RAG Ruff 통과,
+변경 Python 2개 format 통과, RAG Mypy 37파일 통과. PostgreSQL 저장·migration 적용은 수행하지 않았다.
