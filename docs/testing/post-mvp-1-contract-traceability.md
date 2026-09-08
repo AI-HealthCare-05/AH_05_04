@@ -32,7 +32,7 @@ Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Govern
 
 | 후속 Issue | #185 Receipt 입력 | 현재 판정 |
 | --- | --- | --- |
-| RAG-04 (#164) | Source/Snapshot/Catalog 최소 DB 기반. snapshot/provenance/canonicalization 저장 경계와 Catalog 적재 조회 key 정렬 포함. 수집·적재·Runtime 활성화·bulk upsert 제외 | `PARTIAL` · existing target contract absorption, not a new canonical contract |
+| RAG-04 (#164) | Source/Snapshot/Catalog 최소 DB 기반. snapshot/provenance/canonicalization 저장 경계와 Catalog 적재 조회 key 정렬 포함. 수집·적재·Runtime 활성화·bulk upsert 제외 | `PARTIAL` · 기존 target 계약 흡수용, 새 정본 계약 아님 |
 | RAG-04 (#164) | Evaluation 최소 DB 기반. Runner·Runtime 활성화·실제 환자 데이터 제외 | `PARTIAL` · evaluation schema foundation only |
 | RAG-07A (#167) | Source 목적·Snapshot·Approval·Resolver 입력 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-07B (#168) | Candidate Index Source/version·물리 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |

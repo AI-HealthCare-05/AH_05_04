@@ -235,7 +235,7 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## RAG Source·Catalog 최소 DB 기반
 
-Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. 이번 분할 PR은 새 정본 계약을 만들지 않고, 기존 `docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md`와 `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 기준을 구현·traceability 문서에 흡수합니다.
+Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. 이번 문서 정렬은 새 정본 계약을 만들지 않고, 기존 `docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md`와 `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 기준을 data schema·traceability 문서에 흡수합니다.
 
 이번 분할 범위의 ID/FK 매핑은 기존 애플리케이션 호환성을 우선해 `UUIDChar` 기반 `CHAR(36)`을 사용합니다. 신규 독립 RAG/Eval ID의 PostgreSQL native `UUID` 전환은 별도 승인 migration 범위이며, 이 PR에서 타입을 섞지 않습니다.
 
@@ -275,7 +275,7 @@ Downstream provenance 연결 기준:
 주요 제약:
 
 - #164 최소 DB 기반의 Snapshot은 Source 전체가 아니라 Operation 단위 산출물로 둡니다. 따라서 version unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 공존할 수 있습니다.
-- Evidence provenance는 `source_version` 단독이 아니라 `source_snapshot_id` 같은 snapshot 참조로 Snapshot을 특정합니다. `source_version`은 사람이 확인할 수 있는 version 값입니다.
+- 안정적인 수집 Operation은 `source_code + endpoint_code + operation_code`로 식별합니다. Evidence provenance는 `source_version` 단독이 아니라 `source_snapshot_id` 같은 snapshot 참조로 Snapshot을 특정합니다. `source_version`은 사람이 확인할 수 있는 version 값입니다.
 - `rag_source_ingestion_run`은 정규 목표의 ingestion run과 normalization run을 합친 최소 실행 이력입니다. `NO_CHANGE` 재검증이 동일 Snapshot을 반복 참조할 수 있으므로 `snapshot_id` 전체 unique는 두지 않습니다.
 - 이 최소 모델은 `rag-db-schema` v1.47의 Source 단위 Snapshot과 분리된 ingestion/normalization run 모델을 대체하지 않습니다. 정규 목표로 수렴할 때는 별도 Decision/Contract Freeze와 migration·테스트를 함께 갱신합니다.
 - operation당 `CURRENT` snapshot은 최대 1개만 허용합니다. 여기서 `CURRENT`는 검증·최신성 상태이며, 실제 Runtime 사용 버전 선택은 Runtime Bundle에서 결정합니다. 새 Snapshot 검증 중에도 기존 승인 Bundle은 유지될 수 있습니다. 같은 operation에서 새 Snapshot을 `CURRENT`로 승격할 때는 기존 `CURRENT`를 먼저 `STALE`로 내린 뒤 새 Snapshot을 `CURRENT`로 전환합니다.
@@ -338,14 +338,6 @@ Catalog 적재 연결성:
 | 적재 idempotency | unique/FK/CHECK 제약과 최소 조회 interface까지만 제공 | 대량 적재 재실행의 `ON CONFLICT DO NOTHING/UPDATE`, batch upsert, 충돌 복구 정책은 #166 범위 |
 | 대량 적재 성능 | row 단위 create/get 골격만 제공 | N+1 회피, bulk insert/upsert, chunk size, partial failure 처리는 #166에서 확정 |
 
-현재 최소 구현과 정규 목표의 차이:
-
-- 현재 `rag_source_snapshot`은 Source 전체가 아니라 `rag_source_operation`별 수집·정규화 산출물입니다. 따라서 Snapshot version의 unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 존재할 수 있습니다. 이는 #164 최소 DB 기반의 의도된 모델입니다.
-- 안정적인 수집 Operation은 `source_code + endpoint_code + operation_code`로 식별합니다. Evidence provenance는 `source_version`이 아니라 `source_snapshot_id` 등의 Snapshot 참조로 Snapshot을 특정하며, `source_version`은 사람이 확인하는 값으로 사용합니다(`rag-source-policy` v1.18 8장).
-- 현재 `rag_source_ingestion_run`은 정규 RAG 목표의 수집 실행과 정규화 실행을 하나의 실행 이력으로 합친 최소 구현입니다. `SUCCEEDED` 또는 `SUCCEEDED_WITH_REJECTIONS`는 새 Snapshot을 참조할 수 있고, `NO_CHANGE`는 재검증한 기존 Snapshot을 참조하며, `FAILED`는 `snapshot_id=NULL`일 수 있습니다.
-- 동일 Snapshot을 여러 `NO_CHANGE` 실행이 재검증할 수 있으므로 `rag_source_ingestion_run.snapshot_id` 전체에는 Unique 제약을 두지 않습니다. Snapshot을 최초 발행한 성공 실행을 1개로 제한할지는 부분 Unique Index와 부분 성공의 승인 의미를 함께 확정하는 후속 범위입니다.
-- 이 Operation 단위 모델은 `rag-db-schema` v1.47의 Source 단위 Snapshot과 `ingestion_run`·`normalization_run` 분리 모델을 대체하거나 변경하지 않습니다. 정규 목표로 수렴할 때는 Decision 또는 Contract Freeze, migration, 구현과 계약·통합 테스트를 함께 갱신합니다.
-
 Rollback 정책:
 
 - Production에서는 Source/Catalog 테이블을 삭제하는 downgrade를 사용하지 않고 forward-fix migration을 사용합니다.
@@ -355,7 +347,7 @@ Rollback 정책:
 범위 제외:
 
 - 실제 MFDS 수집 로직, Parser 구현, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
-- Source 승인·Runtime 활성화
+- Source 승인·Runtime 활성화·Production 공개 승인
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`
 
