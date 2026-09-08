@@ -329,8 +329,8 @@ class EvalRun(Base):
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     run_key: Mapped[str] = mapped_column(String(120), nullable=False)
     dataset_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
-    experiment_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_experiment.id"), nullable=False)
-    variant_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_variant.id"), nullable=False)
+    experiment_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    variant_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     experiment_type: Mapped[EvaluationExperimentType] = mapped_column(
         Enum(EvaluationExperimentType, native_enum=False, length=40),
         nullable=False,
@@ -408,9 +408,9 @@ class EvalCaseResult(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    run_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_run.id"), nullable=False)
-    case_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_case.id"), nullable=False)
-    dataset_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_dataset.id"), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    case_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    dataset_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     experiment_type: Mapped[EvaluationExperimentType] = mapped_column(
         Enum(EvaluationExperimentType, native_enum=False, length=40),
         nullable=False,

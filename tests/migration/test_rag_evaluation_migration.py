@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core import config
+from app.models.rag_evaluation import EvalCaseResult, EvalRun
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,6 +51,64 @@ async def _connection() -> AsyncIterator[AsyncConnection]:
             yield connection
     finally:
         await engine.dispose()
+
+
+async def _fetch_foreign_key_signatures(
+    table_names: set[str],
+) -> dict[str, set[tuple[str, tuple[str, ...], str, tuple[str, ...]]]]:
+    async with _connection() as connection:
+        result = await connection.execute(
+            text(
+                """
+                SELECT
+                    source_table.relname AS table_name,
+                    constraint_info.conname AS constraint_name,
+                    array_agg(source_column.attname ORDER BY key_order.ordinality) AS source_columns,
+                    target_table.relname AS target_table_name,
+                    array_agg(target_column.attname ORDER BY key_order.ordinality) AS target_columns
+                FROM pg_constraint AS constraint_info
+                JOIN pg_class AS source_table ON source_table.oid = constraint_info.conrelid
+                JOIN pg_namespace AS source_namespace ON source_namespace.oid = source_table.relnamespace
+                JOIN pg_class AS target_table ON target_table.oid = constraint_info.confrelid
+                JOIN unnest(constraint_info.conkey) WITH ORDINALITY AS key_order(attnum, ordinality) ON true
+                JOIN unnest(constraint_info.confkey) WITH ORDINALITY AS target_key_order(attnum, ordinality)
+                    ON target_key_order.ordinality = key_order.ordinality
+                JOIN pg_attribute AS source_column
+                    ON source_column.attrelid = source_table.oid AND source_column.attnum = key_order.attnum
+                JOIN pg_attribute AS target_column
+                    ON target_column.attrelid = target_table.oid AND target_column.attnum = target_key_order.attnum
+                WHERE source_namespace.nspname = 'public'
+                  AND source_table.relname = ANY(:table_names)
+                  AND constraint_info.contype = 'f'
+                GROUP BY source_table.relname, constraint_info.conname, target_table.relname
+                """
+            ),
+            {"table_names": list(table_names)},
+        )
+
+    signatures: dict[str, set[tuple[str, tuple[str, ...], str, tuple[str, ...]]]] = {}
+    for row in result:
+        signatures.setdefault(row[0], set()).add((row[1], tuple(row[2]), row[3], tuple(row[4])))
+    return signatures
+
+
+def _orm_foreign_key_signatures(*tables) -> dict[str, set[tuple[str, tuple[str, ...], str, tuple[str, ...]]]]:
+    signatures: dict[str, set[tuple[str, tuple[str, ...], str, tuple[str, ...]]]] = {}
+    for table in tables:
+        table_signatures = set()
+        for constraint in table.__table__.foreign_key_constraints:
+            if constraint.name is None:
+                continue
+            table_signatures.add(
+                (
+                    constraint.name,
+                    tuple(column.name for column in constraint.columns),
+                    next(iter(constraint.elements)).column.table.name,
+                    tuple(element.column.name for element in constraint.elements),
+                )
+            )
+        signatures[table.__tablename__] = table_signatures
+    return signatures
 
 
 async def _fetch_table_names() -> set[str]:
@@ -371,6 +430,17 @@ def test_rag_evaluation_tables_and_constraints_exist_after_alembic_upgrade() -> 
     assert "chk_eval_failure_single_owner" in schema_objects
     assert "chk_eval_metric_score_range" in schema_objects
     assert "chk_eval_metric_confidence_range" in schema_objects
+
+
+def test_rag_evaluation_orm_metadata_matches_migrated_foreign_keys() -> None:
+    alembic_config = create_alembic_config()
+
+    command.upgrade(alembic_config, "head")
+
+    migrated_fks = asyncio.run(_fetch_foreign_key_signatures({"eval_run", "eval_case_result"}))
+    orm_fks = _orm_foreign_key_signatures(EvalRun, EvalCaseResult)
+
+    assert migrated_fks == orm_fks
 
 
 def test_rag_evaluation_upgrade_uses_end_to_end_rag_and_rejects_end_to_end_final() -> None:
@@ -697,6 +767,8 @@ async def _seed_eval_dataset_and_experiment() -> dict[str, str]:
         "variant_id": str(uuid4()),
     }
     unique_suffix = uuid4().hex[:10]
+    dataset_manifest_hash = f"{unique_suffix:2<64}"[:64]
+    ids["dataset_manifest_hash"] = dataset_manifest_hash
 
     async with _connection() as connection:
         async with connection.begin():
@@ -719,7 +791,7 @@ async def _seed_eval_dataset_and_experiment() -> dict[str, str]:
                     **ids,
                     "dataset_key": f"synthetic-extra-{unique_suffix}",
                     "schema_set_sha256": "a" * 64,
-                    "manifest_hash": f"{unique_suffix:2<64}"[:64],
+                    "manifest_hash": dataset_manifest_hash,
                 },
             )
             await connection.execute(
@@ -803,11 +875,11 @@ def test_rag_evaluation_rejects_run_variant_from_another_experiment() -> None:
                 """
                 INSERT INTO eval_run (
                     id, run_key, dataset_id, experiment_id, variant_id, experiment_type, execution_status,
-                    git_commit_sha, dataset_manifest_hash
+                    decision_status, git_commit_sha, dataset_manifest_hash
                 )
                 VALUES (
                     :id, :run_key, :dataset_id, :experiment_id, :variant_id, 'END_TO_END_RAG', 'COMPLETED',
-                    'abcdef1', :dataset_manifest_hash
+                    'PASS', 'abcdef1', :dataset_manifest_hash
                 )
                 """,
                 {
@@ -816,7 +888,7 @@ def test_rag_evaluation_rejects_run_variant_from_another_experiment() -> None:
                     "dataset_id": first_ids["dataset_id"],
                     "experiment_id": first_ids["experiment_id"],
                     "variant_id": second_ids["variant_id"],
-                    "dataset_manifest_hash": "4" * 64,
+                    "dataset_manifest_hash": first_ids["dataset_manifest_hash"],
                 },
             )
         )
