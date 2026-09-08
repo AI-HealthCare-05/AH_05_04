@@ -353,3 +353,27 @@ def test_fill_missing_required_fields_does_not_touch_a_complete_medication_when_
 
     assert index_1_rows == [row for row in rows if row["medication_index"] == 1]  # 그대로, 추가 없음
     assert index_2_rows == {"MEDICATION_NAME", "DOSE_VALUE", "FREQUENCY_PER_DAY", "DURATION_DAYS"}
+
+
+def test_fill_missing_required_fields_never_backfills_medication_name() -> None:
+    """계약(docs/contracts/current/ocr-medication-structuring.md 「부분 인식」)이 MEDICATION_NAME을
+    빈 필드로 만들지 않도록 명시한다. 두 구조화 경로 모두 약품 행을 인식하는 시점에
+    MEDICATION_NAME을 함께 만들어 실제로는 이 상태(medication_index는 있는데
+    MEDICATION_NAME row만 없는 상태)가 발생하지 않지만, 저장 계층이 실수로 계약을
+    어기지 않도록 회귀 테스트로 고정한다."""
+    rows = [
+        _row(1, "MEDICATION_STRENGTH"),
+        # index 1은 MEDICATION_NAME 없이 선택 필드만 인식된, 계약상 발생하지 않아야 하는 입력이다.
+    ]
+
+    filled = _fill_missing_required_fields(rows, ocr_job_id="job-id")
+
+    keys = {(row["medication_index"], row["field_type"]) for row in filled}
+    assert (1, "MEDICATION_NAME") not in keys
+    assert keys == {
+        (1, "MEDICATION_STRENGTH"),
+        (1, "DOSE_VALUE"),
+        (1, "FREQUENCY_PER_DAY"),
+        (1, "DURATION_DAYS"),
+        (0, "PRESCRIBED_DATE"),
+    }

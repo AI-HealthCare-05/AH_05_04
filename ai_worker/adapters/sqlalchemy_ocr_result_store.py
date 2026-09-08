@@ -50,13 +50,18 @@ _EXTRACTED_FIELD = table(
 )
 
 
-# 처방 확정 필수 필드입니다. backend/app/models/ocr.py의 FieldType,
-# backend/app/services/prescriptions.py의 _build_confirmed_data/_build_medication 검증
-# 기준, Frontend PrescriptionReviewPage.tsx의 requiredMedicationFieldTypes와 반드시 같은
+# 처방 확정 필수 필드 중 저장 계층이 방어적으로 채우는 대상입니다. backend/app/models/ocr.py의
+# FieldType, backend/app/services/prescriptions.py의 _build_confirmed_data/_build_medication
+# 검증 기준, Frontend PrescriptionReviewPage.tsx의 requiredMedicationFieldTypes와 반드시 같은
 # 집합이어야 합니다. ai_worker는 backend ORM을 import하지 않는 별도 패키지라 값을
-# 문자열로 다시 선언합니다 — 넷 중 하나를 바꾸면 나머지도 맞춰야 합니다.
+# 문자열로 다시 선언합니다 — 셋 중 하나를 바꾸면 나머지도 맞춰야 합니다.
+#
+# MEDICATION_NAME은 의도적으로 제외합니다. docs/contracts/current/ocr-medication-structuring.md
+# 「부분 인식」이 명시하듯 두 구조화 경로 모두 약품 행을 인식하는 시점에 MEDICATION_NAME을
+# 함께 만들고, grounding 실패 시 빈 필드 대체 없이 구조화 전체를 실패시킵니다. 즉
+# medication_index는 있는데 MEDICATION_NAME row만 없는 상태는 발생하지 않으며, 계약도
+# MEDICATION_NAME을 빈 필드로 만들지 않도록 명시적으로 금지합니다.
 _REQUIRED_MEDICATION_FIELD_TYPES = (
-    "MEDICATION_NAME",
     "DOSE_VALUE",
     "FREQUENCY_PER_DAY",
     "DURATION_DAYS",
@@ -85,10 +90,14 @@ def _fill_missing_required_fields(field_rows: list[dict], *, ocr_job_id: str) ->
     자체가 없어 처방 확정·가이드 생성이 막힌다. 이미 감지된 medication_index에 대해서만
     누락된 필수 필드를 raw_value=null인 placeholder row로 채운다.
 
-    PRESCRIBED_DATE(medication_index=0)는 OCR이 아무 필드도 인식하지 못한 경우(빈 결과)
-    에도 항상 채운다 — #294가 실제로 재현된 시나리오다. medication이 하나도 감지되지
-    않은 경우는 여기서 새 medication index를 만들어내지 않는다 — 전체 약물 누락은
-    prescriptions.py의 별도 gap 검증 영역이다.
+    정본은 구조화 계층(backend/app/services/ocr_ai/validator.py,
+    ocr_runtime/prescription_ocr_structurer.py)이다 — 두 경로 모두 감지된 약품 행에 대해
+    누락 필드를 이미 빈 검수 필드로 채운다. 여기서는 회귀 방지를 위한 방어 계층으로만
+    같은 필드를 다시 채운다. PRESCRIBED_DATE(medication_index=0)는 예외로, 규칙 기반
+    경로(prescription_ocr_structurer.py)가 날짜를 전혀 인식하지 못하면 row 자체를 만들지
+    않으므로(#294가 실제로 재현된 시나리오) 이 저장 계층이 유일한 방어선이다. medication이
+    하나도 감지되지 않은 경우는 여기서 새 medication index를 만들어내지 않는다 — 전체
+    약물 누락은 prescriptions.py의 별도 gap 검증 영역이다.
     """
     present = {(row["medication_index"], row["field_type"]) for row in field_rows}
     medication_indexes = {row["medication_index"] for row in field_rows if row["medication_index"] != 0}

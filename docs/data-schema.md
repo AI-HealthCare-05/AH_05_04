@@ -165,7 +165,7 @@ OCR 결과 소유권은 `ai_job_id`만으로 판단하지 않고 기존 `ocr_job
 - LLM 경로의 `PRESCRIBED_DATE`에는 `YYYY-MM-DD` 정규화를 적용하며 `normalization_version`은 `date-rule-v1`입니다.
 - `MEDICATION_STRENGTH`를 포함한 그 밖의 필드는 현재 `normalized_value`와 `normalization_version`을 생성하지 않습니다.
 - OCR 원문이 없는 사용자 입력용 빈 검수 필드는 `raw_value`, `normalized_value`, `normalization_version`이 모두 `null`일 수 있습니다.
-- 필수 필드(`PRESCRIBED_DATE`, `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`)는 OCR이 인식하지 못해도 위 빈 검수 필드(`raw_value=null`, `confirmation_status=UNCONFIRMED`) row가 항상 보장됩니다(#294) — 이미 감지된 `medication_index`에 한해서만 채우며, 약물 자체가 하나도 감지되지 않은 경우는 포함하지 않습니다. `MEDICATION_STRENGTH`·`DOSE_UNIT`·`TIMING`은 선택 필드라 이 보장 대상이 아닙니다. 실제 채우기는 OCR 결과를 저장하는 `ai_worker/adapters/sqlalchemy_ocr_result_store.py`가 담당합니다.
+- 필수 필드(`PRESCRIBED_DATE`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`)는 OCR이 인식하지 못해도 위 빈 검수 필드(`raw_value=null`, `confirmation_status=UNCONFIRMED`) row가 항상 보장됩니다(#294) — `PRESCRIBED_DATE`(index 0)는 항상, 나머지는 이미 감지된 `medication_index`에 한해서만 채우며, 약물 자체가 하나도 감지되지 않은 경우는 포함하지 않습니다. `MEDICATION_STRENGTH`·`DOSE_UNIT`·`TIMING`은 선택 필드라 이 보장 대상이 아니며, `MEDICATION_NAME`은 계약상 빈 필드로 만들지 않으므로 이 목록에서 제외됩니다. 정본은 OCR 구조화 계층(`docs/contracts/current/ocr-medication-structuring.md`의 「부분 인식」)이고, OCR 결과를 저장하는 `ai_worker/adapters/sqlalchemy_ocr_result_store.py`는 회귀 방지를 위한 방어 계층으로만 동일 필드를 다시 채웁니다.
 - 사용자 확인 전에는 `confirmed_value`가 `null`이다.
 - 사용자 확인 전 `confirmation_status`는 `UNCONFIRMED`이다.
 - 최종 처방에는 사용자가 확인한 `confirmed_value`만 사용한다.
