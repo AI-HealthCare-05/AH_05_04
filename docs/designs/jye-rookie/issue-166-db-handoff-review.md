@@ -51,6 +51,7 @@ D-03·D-04·D-06의 일반 구현 선택은 김지혜의 제안에 대해 PR 리
 | 실제 승인 | verifier 포트와 합성 receipt, 복원 뒤 재확인 코드 | 승인 저장소·권한·철회/만료·revision 및 동시 변경 프로토콜 | 김지혜 adapter 연결안 / 두 리뷰어 검토 |
 | 이행 원본 | 현재 Catalog 구조와 읽기 전용 조사 SQL | 이행 대상 격리 복제본의 집계, 누락/상충 처리 근거 | 김지혜 조사·이행안 / 은영님 검토 |
 | migration 순서 | Evidence/Citation 이후 최신 head 연결 합의 | 선행 PR·병합 SHA·revision·down_revision과 #166 변경 중복 여부 | 은영님 선행 산출물 / 김지혜 착수 직전 대조 |
+| DB 확장 의존 | `rag_medication_alias.normalized_alias_text`에 GIN trigram 인덱스를 두어 `pg_trgm`이 필요하다 | 인덱스 유형 유지 여부, 확장을 설치할 schema와 운영 배포 절차의 설치 주체 | 은영님 결정 / 김지혜 테스트 경로 반영 |
 
 새 실행 구조가 필요하다는 검토 결론이 나더라도 그 자리에서 #166이 임의 신설하지 않는다.
 공유 구조 변경의 담당·계약 문서·migration 소유를 기록한 후 구현한다. 반대로 #164 전체 종료를
@@ -68,6 +69,27 @@ D-03·D-04·D-06의 일반 구현 선택은 김지혜의 제안에 대해 PR 리
 | H06 | 구성원 또는 Set 저장 중 실패, commit 결과 통신 단절 | 부분 공개 없음, 불명확 결과는 확정 key로 재조회 |
 | H07 | 저장·소비 도중 승인 철회 또는 Source 부적격 전이 | 공유 동시성 규칙에 따라 순서 결정, 부적격 입력 소비 차단 |
 | H08 | 실제 DB 왕복 후 v2 artifacts 복원 | 고정 JSONL/envelope bytes·digest와 Candidate 인계 일치 |
+
+### pg_trgm 확장 주의
+
+이번 제안은 `rag_medication_alias.normalized_alias_text`에 GIN trigram 인덱스를 두므로
+`gin_trgm_ops` 연산자 클래스가 필요하다. migration은 `CREATE EXTENSION IF NOT EXISTS pg_trgm`을
+수행하지만, `Base.metadata.create_all`로 스키마를 만드는 테스트 경로에는 확장 생성이 없어
+`operator class "gin_trgm_ops" does not exist`로 실패한다.
+
+참고 구현에서는 확장을 테이블이 없는 전용 schema(`test_extensions`)에 두고 조회 경로에만
+더하는 방식으로 해결했다. `public`이나 테스트 schema에 두면 `create_all`의 존재 검사가
+다른 schema의 동명 테이블을 보고 생성을 건너뛴다.
+
+**인덱스 유형이나 설치 schema를 바꾸시면 아래 네 곳을 함께 봐야 한다.**
+
+- `backend/app/tests/conftest.py`
+- `tests/integration/rag/test_source_snapshot_lifecycle.py`
+- `tests/integration/rag/test_identification_concurrency.py`
+- `tests/integration/test_ocr_required_field_placeholder_e2e.py`
+
+운영 배포에서 확장을 누가 설치할지도 정해야 한다. migration이 직접 만들지, 사전 준비 항목으로
+둘지는 권한 정책에 따라 달라진다.
 
 H01~H08은 참고 구현 브랜치에서 실제 PostgreSQL로 검증했다(`tests/migration/test_rag_source_catalog_migration.py`
 34건, `backend/app/tests/rag/test_rag_source_catalog_repository.py` 15건,
