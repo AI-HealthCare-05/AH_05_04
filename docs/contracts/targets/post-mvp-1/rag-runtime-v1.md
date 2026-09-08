@@ -15,6 +15,8 @@
 
 이 문서는 외부 RAG 정본의 Local P0 Runtime 투영본이다. RAG-00은 Approved Target이지만 공유 DTO·DB 계약의 구현·테스트가 완료되기 전에는 현재 Runtime 계약이 아니며 기존 Current 동작을 자동으로 대체하지 않는다.
 
+#164 Runtime Bundle 최소 DB 기반 분할 PR은 `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval`의 저장 구조와 FK/unique/CHECK/append-only 이력 기반만 추가한다. 이 변경은 Runtime Bundle 활성화, 환경 포인터 전환, drain, mixed worker rollback, Production 공개 승인을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
+
 - 자유 ReAct Agent, 열린 웹 검색, Graph DB와 승인되지 않은 Source 자동 편입은 사용하지 않는다.
 - 고위험·응급·금지 행동 분기는 일반 Retrieval보다 먼저 수행한다.
 - OTC는 별도 Job·API·Track이 아니라 기존 `CHAT` Job의 질문 유형이다.
