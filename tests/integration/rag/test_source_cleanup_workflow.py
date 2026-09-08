@@ -67,9 +67,13 @@ async def control():
         executor = roles["executor"]
         await connection.execute(text(f"GRANT EXECUTE ON FUNCTION source_cleanup.lock_references() TO {executor}"))
         await connection.execute(
-            text(f"GRANT INSERT (batch_hash,object_ref,attempt_id,event,payload) ON source_cleanup.audit TO {executor}")
+            text(f"GRANT EXECUTE ON FUNCTION source_cleanup.append_audit(text,text,text,text,text) TO {executor}")
         )
-        await connection.execute(text(f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA source_cleanup TO {executor}"))
+        for key, role in (("security", "DB_SECURITY"), ("pm", "PM")):
+            await connection.execute(
+                text("INSERT INTO source_cleanup.reviewer(actor,role) VALUES (:actor,:role)"),
+                {"actor": roles[key], "role": role},
+            )
     try:
         yield admin, engines, roles
     finally:
@@ -83,7 +87,7 @@ async def control():
 async def workflow(control, tmp_path):
     admin, engines, roles = control
     root = tmp_path.resolve() / "source"
-    workspace = await create_synthetic_workspace(admin, root)
+    workspace = await create_synthetic_workspace(admin, root, evaluation_offset_days=31)
     batch = await load_batch(engines["executor"], workspace)
     # Simulate elapsed time, without backdating physical metadata or the DB publication receipt.
     now = max(t.observation.created_at for t in batch.targets) + timedelta(days=31)
@@ -93,9 +97,10 @@ async def workflow(control, tmp_path):
     return admin, engines, roles, root, batch, now, verifier, journal, guard
 
 
-async def approve(workflow, *, expires=None, executor=None):
+async def approve(workflow, *, expires=None, executor=None, order=("security", "pm")):
     _, engines, roles, _, batch, now, *_ = workflow
-    for key, role in (("pm", "PM"), ("security", "DB_SECURITY")):
+    for key in order:
+        role = {"security": "DB_SECURITY", "pm": "PM"}[key]
         async with engines[key].begin() as connection:
             await connection.execute(
                 text("""INSERT INTO source_cleanup.review
@@ -597,3 +602,163 @@ async def test_adapter_downstream_evidence_reaches_fail_closed_survey(workflow, 
         assert all(item.reason == reason for item in report.items)
     assert not (await execute(workflow)).complete
     assert all((root / t.observation.object_key).exists() for t in batch.targets)
+
+
+async def append_report(engine, batch, *, event="INTENT", reason="FINAL_CHECKS_PASSED", attempt=None, ref=None):
+    import hashlib
+
+    target = batch.targets[0]
+    object_ref = ref or hashlib.sha256(f"{batch.digest()}:{target.observation.object_key}".encode()).hexdigest()
+    attempt = attempt or str(uuid4())
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("SELECT source_cleanup.append_audit(:hash,:ref,:attempt,:event,:reason)"),
+            {"hash": batch.digest(), "ref": object_ref, "attempt": attempt, "event": event, "reason": reason},
+        )
+    return attempt
+
+
+async def test_security_review_must_precede_final_pm_approval(workflow):
+    _, engines, _, root, batch, *_ = workflow
+    await approve(workflow, order=("pm", "security"))
+    assert not (await execute(workflow)).complete
+    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_APPROVAL_INVALID"):
+        await append_report(engines["executor"], batch)
+    assert all((root / t.observation.object_key).exists() for t in batch.targets)
+    await approve(workflow, order=("pm",))
+    assert (await execute(workflow)).complete
+
+
+async def test_new_security_revision_requires_pm_review_again(workflow):
+    _, engines, _, root, batch, *_ = workflow
+    await approve(workflow)
+    await approve(workflow, order=("security",))
+    assert not (await execute(workflow)).complete
+    assert all((root / t.observation.object_key).exists() for t in batch.targets)
+    await approve(workflow, order=("pm",))
+    assert (await execute(workflow)).complete
+
+
+@pytest.mark.parametrize("change", ["expired", "wrong-executor", "revoked"])
+async def test_direct_audit_function_cannot_bypass_current_approval(workflow, change):
+    _, engines, _, _, batch, now, *_ = workflow
+    await approve(
+        workflow,
+        expires=now if change == "expired" else None,
+        executor="wrong_executor" if change == "wrong-executor" else None,
+    )
+    if change == "revoked":
+        async with engines["pm"].begin() as connection:
+            await connection.execute(
+                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
+            )
+    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_APPROVAL_INVALID"):
+        await append_report(engines["executor"], batch)
+
+
+async def test_executor_has_no_freeform_audit_or_trusted_receipt_write(workflow):
+    _, engines, _, _, batch, *_ = workflow
+    await approve(workflow)
+    for table, columns, values in (
+        ("audit", "batch_hash,object_ref,attempt_id,event,payload", "'x','y','z','INTENT','{}'"),
+        ("batch_target", "batch_hash,object_ref,workspace_id,object_key", "'x','y','z','k'"),
+        ("reviewer", "actor,role", "'forged','PM'"),
+    ):
+        async with engines["executor"].begin() as connection:
+            with pytest.raises(DBAPIError, match="permission denied"):
+                await connection.execute(text(f"INSERT INTO source_cleanup.{table} ({columns}) VALUES ({values})"))
+
+
+async def test_audit_evidence_is_derived_from_database_not_entry_fields(workflow):
+    from ai_worker.tasks.rag.source_cleanup.execution import AuditEntry, _object_ref
+
+    _, engines, roles, _, batch, now, verifier, journal, _ = workflow
+    await approve(workflow)
+    receipt = await verifier.verify(batch_digest=batch.digest(), executor=roles["executor"])
+    attempt = str(uuid4())
+    target = batch.targets[0]
+    entry = AuditEntry(
+        batch.digest(),
+        _object_ref(batch, target),
+        attempt,
+        "INTENT",
+        "FINAL_CHECKS_PASSED",
+        "0" * 64,
+        "REJECTS",
+        batch.scope.policy_version,
+        "forged_receipt",
+        "forged_pm",
+        "forged_security",
+        roles["executor"],
+        "1900-01-01T00:00:00+00:00",
+        False,
+    )
+    await journal.append(entry)
+    await journal.append(replace(entry, event="UNKNOWN", reason="DELETE_RESULT_UNKNOWN"))
+    history = await journal.history(batch.digest(), entry.object_ref)
+    assert len(history) == 2
+    for recorded in history:
+        assert recorded.receipt_id == receipt.receipt_id
+        assert recorded.pm_actor == roles["pm"] and recorded.db_security_actor == roles["security"]
+        assert recorded.checksum == target.observation.checksum and recorded.artifact_kind == target.artifact_kind
+        assert recorded.references_verified is True
+        assert not recorded.occurred_at.startswith("1900")
+    async with engines["executor"].connect() as connection:
+        assert await connection.scalar(
+            text(
+                "SELECT bool_and((payload->>'occurred_at')::timestamptz=recorded_at) FROM source_cleanup.audit WHERE attempt_id=:id"
+            ),
+            {"id": attempt},
+        )
+
+
+@pytest.mark.parametrize("change", ["reason", "target", "no-intent"])
+async def test_audit_function_rejects_unbound_or_freeform_reports(workflow, change):
+    _, engines, _, _, batch, *_ = workflow
+    await approve(workflow)
+    with pytest.raises(DBAPIError):
+        await append_report(
+            engines["executor"],
+            batch,
+            ref="0" * 64 if change == "target" else None,
+            event="DELETED" if change == "no-intent" else "INTENT",
+            reason="DELETE_CONFIRMED"
+            if change == "no-intent"
+            else "private injected reason"
+            if change == "reason"
+            else "FINAL_CHECKS_PASSED",
+        )
+
+
+async def test_direct_audit_intent_preserves_referenced_objects(workflow):
+    admin, engines, _, _, batch, *_ = workflow
+    await approve(workflow)
+    async with publication_transaction(admin) as connection, AsyncSession(bind=connection) as session:
+        run = await seed_run(session)
+        await add_reference(session, run, batch.targets[0].observation.object_key)
+    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_REFERENCE_INVALID"):
+        await append_report(engines["executor"], batch)
+
+
+async def test_cli_clock_cannot_differ_from_registered_workspace(workflow):
+    from argparse import Namespace
+
+    from tools.source_cleanup.run import require_workspace_clock
+
+    _, engines, _, _, batch, *_ = workflow
+    args = Namespace(command="execute", workspace=batch.scope.database_id, simulate_elapsed_days=None)
+    with pytest.raises(ValueError, match="clock differs"):
+        await require_workspace_clock(engines["executor"], args)
+    args.simulate_elapsed_days = 31
+    await require_workspace_clock(engines["executor"], args)
+
+
+async def test_caller_future_clock_cannot_bypass_database_time(workflow, tmp_path):
+    admin, engines, _, _, _, now, *_ = workflow
+    workspace = await create_synthetic_workspace(admin, tmp_path.resolve() / "real-clock")
+    batch = await load_batch(engines["executor"], workspace)
+    changed = (*workflow[:4], batch, *workflow[5:])
+    # Caller-side simulated future approvals do not advance a workspace registered at offset zero.
+    await approve(changed)
+    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_APPROVAL_INVALID"):
+        await append_report(engines["executor"], batch)

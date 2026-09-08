@@ -65,7 +65,9 @@ async def run(args: argparse.Namespace) -> int:
         if args.command == "create":
             if args.root is None:
                 raise ValueError("New absolute synthetic root required")
-            workspace = await create_synthetic_workspace(engine, args.root)
+            workspace = await create_synthetic_workspace(
+                engine, args.root, evaluation_offset_days=args.simulate_elapsed_days or 0
+            )
             print(json.dumps({"workspace": workspace}))
             return 0
         return await handle_batch(engine, args)
@@ -78,11 +80,23 @@ def require_reviewed_digest(args: argparse.Namespace, digest: str) -> None:
         raise ValueError("Reviewed batch digest required")
 
 
+async def require_workspace_clock(engine: AsyncEngine, args: argparse.Namespace) -> None:
+    if args.command in {"review", "execute", "survey"}:
+        async with engine.connect() as connection:
+            offset = await connection.scalar(
+                text("SELECT evaluation_offset_days FROM source_cleanup.workspace WHERE id=:id"),
+                {"id": args.workspace},
+            )
+        if offset != (args.simulate_elapsed_days or 0):
+            raise ValueError("Synthetic clock differs from registered workspace")
+
+
 async def handle_batch(engine: AsyncEngine, args: argparse.Namespace) -> int:
     if not args.workspace:
         raise ValueError("Workspace required")
     batch = await load_batch(engine, args.workspace)
     require_reviewed_digest(args, batch.digest())
+    await require_workspace_clock(engine, args)
     started_at = datetime.now(UTC)
     now = started_at
     if args.simulate_elapsed_days:

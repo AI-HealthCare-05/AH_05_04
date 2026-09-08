@@ -316,3 +316,15 @@ private control schema는 전용 합성 DB 도구이며 앱 public schema나 운
 [runbook의 보완 절차](../../../runbooks/source-artifact-cleanup-347.md)와
 [검증 기록](../../../testing/source-artifact-cleanup-347.md)을 함께 리뷰한다.
 이는 PR #363의 내부 도구 보완안이며 운영 정책/공유 앱 DB의 승인 상태를 변경하지 않는다.
+
+
+### PR #363 추가 리뷰 — 승인 순서·DB 감사 근거
+
+기존 정책의 DB·보안 검토 → PM 최종 승인 순서를 최신 revision 비교로 강제한다.
+DB·보안 재검토 이후에는 PM이 다시 승인해야 한다. 실행자에게 자유형 audit INSERT 권한을 주지
+않고 전용 append 함수에서 관리자 등록 역할·대상 receipt·최신 승인·직접 참조·유효기간을 확인한다.
+승인/대상 필드와 실제 기록 시각은 DB가 생성한다. 합성 시간 offset은 생성 시 불변 workspace에
+등록하며 감사 시각을 미래/과거로 바꾸는 데 쓰지 않는다.
+
+결과 event/reason은 제한된 실행자 보고이며 DB의 독립적인 파일 삭제 관측이 아니다. 운영 활성화나
+실제 Source 정리 범위를 넓히지 않으며 자세한 검증·권한 절차는 runbook을 따른다.

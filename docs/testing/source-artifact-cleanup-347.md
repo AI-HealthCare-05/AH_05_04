@@ -412,3 +412,49 @@ mypy backend/app ai_worker tools/source_cleanup/run.py
 기존 승인·감사 DB의 schema를 덮어쓰지 않았다. 이전 control schema를 사용한 검증 자료는 보존하고,
 새 도구 검증에는 신규 DB/workspace가 필요하다. 원격 CI·Backend/Frontend 전체 서비스 테스트·
 운영 Source/Runtime·S3 삭제는 이번 로컬 검증에 포함하지 않는다.
+
+
+## PR #363 추가 리뷰 — 승인 순서·감사 근거 결속
+
+기준: `8a100aa`에 이 절과 함께 커밋한 추가 수정. 앞 절의 44건 결과는 이전 보완 검증 이력이다.
+
+- [가빈님 P1](https://github.com/AI-HealthCare-05/AH_05_04/pull/363#discussion_r3958271870):
+  최신 DB_SECURITY revision 뒤의 PM 최종 승인을 verifier와 DB 감사 함수에서 강제한다.
+  PM 선행은 삭제가 차단되고, DB_SECURITY 재검토 뒤에도 PM 재승인이 필요하다.
+- [가빈님 P2](https://github.com/AI-HealthCare-05/AH_05_04/pull/363#discussion_r3958272013):
+  실행자의 audit 직접 INSERT·sequence 권한을 제거한다. 전용 SECURITY DEFINER 함수가
+  관리자 등록 reviewer, 생성 계정의 batch_target/object receipt, 최신 승인과 인증 로그인,
+  DB 직접 참조 검사에서 근거를 채운다. 결과는 같은 INTENT의 근거에 결속한다.
+- [현우님 승인](https://github.com/AI-HealthCare-05/AH_05_04/pull/363#pullrequestreview-5142181824):
+  기존 downstream fail-closed와 승인 변경 잠금을 유지한다. 추가 요청은 없었다.
+
+### 실제 DB에서 추가 확인한 내용
+
+1. PM → DB_SECURITY 순서 및 DB_SECURITY 재검토 뒤 PM 미승인은 실행을 막는다.
+   PM 재승인 후에만 정상 실행한다. 함수 직접 호출로 순서를 우회할 수도 없다.
+2. 만료·철회·다른 실행자 승인으로 직접 감사 함수를 호출해도 INTENT를 기록할 수 없다.
+3. 비특권 실행자의 audit·reviewer·batch_target 직접 INSERT는 권한 오류다.
+4. 호출자 AuditEntry의 잘못된 actor/receipt/checksum/종류/시각/검사 flag는 DB 근거로 대체된다.
+   DB 기록 시각과 payload 시각이 같고, 결과는 원래 INTENT의 승인 근거를 보존한다.
+5. 임의 reason, 등록되지 않은 대상, INTENT 없는 결과 기록, 참조가 있는 대상의 INTENT는 거부한다.
+6. 합성 평가 offset은 생성 시 0/31로 고정한다. CLI 모드 불일치를 거부하고 호출자의 미래 시각만으로
+   DB 승인 검사를 통과하지 못한다. 감사 occurred_at은 offset을 적용하지 않은 실제 DB 기록 시각이다.
+
+`DELETED`는 제한된 실행자 결과 보고이며 DB가 물리 unlink를 독립적으로 관측한 증거는 아니다.
+DB는 승인/대상/직접 참조/시각 근거를 보장하고 기존 Local guard가 실제 파일 상태를 검사한다.
+이번 변경도 운영 삭제·Runtime·S3·전체 운영 writer를 연결하지 않는다.
+
+### 최종 로컬 검증
+
+| 검사 | 결과 |
+| --- | --- |
+| PostgreSQL 참조/workflow 통합 | **57 passed** (9.88초), 이전 44 + 추가 13 |
+| Worker core·OCR·RAG·evaluation 전체 | **2,356 passed, 8 skipped** (58.57초) |
+| 전체 Ruff·format | 통과, 549 files |
+| Backend·Worker·CLI Mypy | 통과, 461 source files |
+| 일회용 DB Alembic base → head | 성공, 앱 migration 추가 없음 |
+| git diff --check | 통과 |
+
+Python 3.13, 별도 loopback PostgreSQL 16 `source_cleanup347_test` DB만 사용했다.
+이전 control schema는 덮어쓰지 않고 새 테스트 DB에 설치했다. 실제 승인자·운영 환경·S3·원격 CI와
+전체 Backend/Frontend 서비스 테스트 결과는 이번 로컬 검증에 포함하지 않는다.

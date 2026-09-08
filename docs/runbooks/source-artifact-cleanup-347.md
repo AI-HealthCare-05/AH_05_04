@@ -31,10 +31,10 @@ PYTHONPATH=. uv run python tools/source_cleanup/run.py install
 
 `tools/source_cleanup/synthetic_control.sql`은 **합성 도구 전용 schema 설치 파일**이다.
 앱 public schema 변경이나 새 Alembic migration이 아니며 운영 DB에 적용하지 않는다.
-PR #363 리뷰 보완 버전은 `review.revision`과 승인 변경 잠금 trigger를 사용한다.
+PR #363 리뷰 보완 버전은 `review.revision`, 승인 변경 잠금, 관리자 등록 reviewer/batch_target 및 `append_audit` 함수를 사용한다.
 이전 설치 DB의 승인·감사를 삭제하거나 schema를 덮어쓰지 않는다. 이전 DB는 증빙으로 보존하고,
 새 일회용 `*_cleanup347_test` DB와 새 합성 workspace에 설치해 다시 검토한다.
-이전 schema에는 승인 revision이 없어 새 verifier가 실패하며 삭제를 진행하지 않는다.
+이전 schema는 승인 revision·workspace 컬럼·새 감사 함수 중 필요한 요소가 없어 검사/INTENT 기록에서 실패하며 삭제를 진행하지 않는다.
 
 관리자가 서로 다른 합성 DB 계정 3개를 준비한다. 아래 이름은 예시 역할이며 실제 팀원 계정을
 만들거나 권한을 부여했다는 뜻이 아니다. 암호는 URL 환경변수로 전달하고 문서·로그에 쓰지 않는다.
@@ -43,7 +43,7 @@ PR #363 리뷰 보완 버전은 `review.revision`과 승인 변경 잠금 trigge
 | --- | --- | --- |
 | `cleanup347_pm` | 배치 PM 검토 INSERT, 철회 INSERT, control SELECT | actor 위조·기존 승인 UPDATE/DELETE |
 | `cleanup347_security` | DB_SECURITY 검토 INSERT, 철회 INSERT, control SELECT | PM 신원 대체·기존 승인 수정 |
-| `cleanup347_executor` | control/Artifact SELECT, 고정 참조 잠금 함수 EXECUTE, audit INSERT·sequence USAGE | 승인·소유 receipt INSERT, 감사 UPDATE/DELETE/TRUNCATE, Source 참조 변경 |
+| `cleanup347_executor` | control/Artifact SELECT, 고정 참조 잠금·append_audit 함수 EXECUTE | 승인·소유 receipt INSERT, 감사 UPDATE/DELETE/TRUNCATE, Source 참조 변경 |
 
 권한 설정 예시(계정은 사전 생성, 비superuser이며 control table 소유자가 아니어야 함):
 
@@ -56,13 +56,17 @@ GRANT SELECT ON public.rag_source_ingestion_artifact TO cleanup347_executor;
 GRANT INSERT (batch_hash,role,executor,policy_version,valid_from,expires_at)
   ON source_cleanup.review TO cleanup347_pm, cleanup347_security;
 GRANT INSERT (batch_hash) ON source_cleanup.revocation TO cleanup347_pm, cleanup347_security;
-GRANT INSERT (batch_hash,object_ref,attempt_id,event,payload)
-  ON source_cleanup.audit TO cleanup347_executor;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA source_cleanup TO cleanup347_executor;
+INSERT INTO source_cleanup.reviewer(actor,role) VALUES
+  ('cleanup347_security','DB_SECURITY'), ('cleanup347_pm','PM');
+GRANT EXECUTE ON FUNCTION source_cleanup.append_audit(text,text,text,text,text)
+  TO cleanup347_executor;
 GRANT EXECUTE ON FUNCTION source_cleanup.lock_references() TO cleanup347_executor;
 ```
 
-`actor`와 `recorded_by`는 DB의 `current_user`로 기록한다. 검토자는 actor 컬럼에 직접 값을
+review의 `actor`는 DB `current_user`, audit의 `recorded_by`/executor는 인증된 로그인 `session_user`로 기록한다.
+관리자는 reviewer 역할 목록만 등록하고, 합성 생성 계정이 정확한 batch_target을 등록한다.
+실행자에게 audit 직접 INSERT·sequence USAGE·reviewer/batch_target 변경 권한을 주지 않는다.
+역할마다 별도 로그인 연결을 사용한다. SECURITY DEFINER 소유자를 실제 실행자로 기록하지 않는다. 검토자는 actor 컬럼에 직접 값을
 넣을 수 없다. PM/DB_SECURITY 두 actor는 verifier의 지정 역할과 각각 일치해야 한다.
 실행 계정은 검토자와 달라야 하며 superuser·BYPASSRLS·승인/receipt 생성 권한·감사 변경 권한이
 있으면 실행을 거부한다. 참조 잠금 함수는 고정 테이블의 SHARE lock만 취하며 Source 행 수정
@@ -76,7 +80,7 @@ GRANT EXECUTE ON FUNCTION source_cleanup.lock_references() TO cleanup347_executo
 1. 설치 관리 계정으로 신규 합성 디렉터리를 생성한다. 반환된 workspace ID를 기록한다.
 
 ```bash
-PYTHONPATH=. uv run python tools/source_cleanup/run.py create --root /absolute/new-synthetic-root
+PYTHONPATH=. uv run python tools/source_cleanup/run.py create --root /absolute/new-synthetic-root --simulate-elapsed-days 31
 ```
 
 2. 실행 계정으로 조사한다. 원문은 출력하지 않고 batch hash·객체별 안전한 참조·판정을 출력한다.
@@ -86,21 +90,24 @@ PYTHONPATH=. uv run python tools/source_cleanup/run.py create --root /absolute/n
 PYTHONPATH=. uv run python tools/source_cleanup/run.py survey --workspace WORKSPACE_ID
 ```
 
-3. 31일 경과를 합성 검증하려면 `--simulate-elapsed-days 31`을 사용한다. receipt 시각을 조작하지
-   않고 평가 시각만 실제 현재 시각+31일로 둔다. 이는 운영 유예 면제 기능이 아니다.
-   survey/review/execute에 같은 시간 모드를 사용한다.
-4. PM과 DB_SECURITY 계정으로 각각 **조사에서 확인한 동일 batch hash**를 승인한다.
+3. 31일 경과 합성 검증은 생성 시 `--simulate-elapsed-days 31`을 지정해 평가 offset을 불변 workspace에
+   등록한다. 이후 survey/review/execute도 같은 옵션을 사용해야 하며 불일치는 거부한다.
+   옵션 없이 만든 workspace는 offset 0이다. 승인자가 실행 중 임의로 시간을 바꾸지 못한다.
+   receipt 생성 시각·감사 기록 시각은 실제 DB 시각이고, offset은 합성 유예/승인 유효기간 평가에만 사용한다.
+4. **DB_SECURITY 검토를 먼저 기록한 뒤 PM이 최종 승인**한다. 두 계정 모두 조사에서 확인한
+   동일 batch hash와 실행자를 사용한다.
 
 ```bash
-PYTHONPATH=. uv run python tools/source_cleanup/run.py review --workspace WORKSPACE_ID --batch-hash REVIEWED_HASH --review-role PM --executor cleanup347_executor --simulate-elapsed-days 31
 PYTHONPATH=. uv run python tools/source_cleanup/run.py review --workspace WORKSPACE_ID --batch-hash REVIEWED_HASH --review-role DB_SECURITY --executor cleanup347_executor --simulate-elapsed-days 31
+PYTHONPATH=. uv run python tools/source_cleanup/run.py review --workspace WORKSPACE_ID --batch-hash REVIEWED_HASH --review-role PM --executor cleanup347_executor --simulate-elapsed-days 31
 ```
 
 두 명령은 서로 다른 지정 계정으로 실행한다. 합성 CLI의 검토 유효기간은 1시간이다.
 만료 또는 실행자 오기입을 고칠 때에는 동일 배치에 `review`를 다시 실행한다. 기존 행은 보존하고
 DB가 잠금 안에서 발급한 새 revision을 추가한다. 역할별 최신 revision만 검사하며, 최신 행이
 만료·신원 불일치·잘못된 실행자이면 과거 유효 승인으로 fallback하지 않는다. 두 역할 모두
-현재 실행자를 승인하고 유효기간이 겹쳐야 실행할 수 있다. audit의 `receipt_id`는 배치 hash와
+현재 실행자를 승인하고 유효기간이 겹쳐야 실행할 수 있다. 최신 DB_SECURITY revision보다
+PM revision이 커야 한다. DB_SECURITY가 재검토하면 기존 PM 승인은 사용할 수 없고 PM 재승인이 필요하다. audit의 `receipt_id`는 배치 hash와
 선택된 PM·DB_SECURITY revision의 SHA-256으로 실제 사용한 검토 쌍을 식별한다.
 철회는 해당 배치의 영구 차단으로 유지한다. 재승인은 만료·오기입을 고치는 기능이며 철회를
 해제하지 않는다. 철회된 배치에 새 검토를 넣는 것도 거부한다.
@@ -194,3 +201,23 @@ INTENT와 결과는 각각 **독립 DB transaction으로 commit**한다. 파일 
 이번 PR의 구현·리뷰·CI가 완료되면 #347의 합성 수동 정리 완료 범위를 판정할 수 있다.
 운영 S3/실제 Source 데이터 삭제·자동화·Runtime 활성화는 #347 제외 범위를 유지한다.
 #335·#165·#323에는 사용자가 게시할 결과/증빙 연결 초안을 제공하며 도구가 댓글을 게시하지 않는다.
+
+
+## DB가 생성하는 감사 근거와 실행자 보고
+
+`append_audit(batch_hash, object_ref, attempt_id, event, reason)`만 실행자에게 허용한다.
+임의 payload·승인자·receipt·checksum·시각은 함수 입력에 없다. INTENT 생성 시 DB가 아래를 확인한다.
+
+- 관리자 등록 reviewer와 실제 최신 DB_SECURITY → PM revision 순서·실행자·유효기간·철회 여부
+- 생성 계정이 등록한 배치/대상과 불변 object receipt의 결속
+- 실제 DB 시각과 생성 시 등록된 합성 offset으로 30일 유예 검사
+- 참조 테이블 잠금과 같은 backend/key 전체 직접 참조 0건
+
+DB가 checksum·종류·정책·승인 revision 해시·actor·실행자·실제 기록 시각을 구성한다.
+`references_verified`는 **INTENT 시점의 DB 직접 참조 검사 이력**이다. 현재 전체 downstream이나
+파일 상태의 증명으로 재사용하지 않는다. 전체 scope/bytes 검증은 기존 Local 실행 guard가 수행한다.
+후속 결과는 같은 로그인·batch/object/attempt의 기존 INTENT 근거를 보존하고 새 이벤트·시각만 추가한다.
+
+`event/reason`은 정해진 조합의 실행자 보고다. DB가 파일 시스템 unlink를 독립적으로 관측하는 것은
+아니므로 DELETED 행 하나만으로 물리 삭제를 별도 증명했다고 주장하지 않는다. 재시작 경로는
+실제 객체 상태도 다시 검사한다. 원문 없는 고정 reason만 허용하며 임의 설명·시각을 넣지 못한다.
