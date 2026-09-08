@@ -10,8 +10,14 @@ from ai_worker.adapters.sqlalchemy_catalog_write_support import (
     SqlAlchemyCatalogWriteSupport,
 )
 from ai_worker.tasks.rag.catalog import (
+    CandidateAliasReviewStatus,
     CandidateCatalogSourceRef,
+    CandidateEntityType,
     CandidateRecordStatus,
+    CatalogAliasInput,
+    CatalogComponentInput,
+    CatalogComponentRole,
+    CatalogIngredientInput,
     CatalogProductInput,
     build_catalog_members,
     create_catalog_export,
@@ -518,6 +524,132 @@ async def test_catalog_write_support_rejects_source_version_mismatch(db_session:
 
     with pytest.raises(CatalogDatabaseBindingError):
         await SqlAlchemyCatalogWriteSupport(db_session).bind(plan)
+
+
+async def test_catalog_write_support_stages_compatible_members_idempotently(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="ITEM_SEQ:200012352",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="200012352",
+                product_name="어댑터통합제품",
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        ingredients=(
+            CatalogIngredientInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="INGREDIENT:I0352",
+                code_system="MFDS_INGREDIENT_CODE",
+                canonical_code="I0352",
+                ingredient_name="통합성분",
+            ),
+        ),
+        components=(
+            CatalogComponentInput(
+                source_snapshot_id=str(snapshot.id),
+                product_code_system="MFDS_ITEM_SEQ",
+                product_canonical_code="200012352",
+                ingredient_code_system="MFDS_INGREDIENT_CODE",
+                ingredient_canonical_code="I0352",
+                component_role=CatalogComponentRole.ACTIVE_INGREDIENT,
+                component_order=1,
+                strength_value="500",
+                strength_unit="mg",
+            ),
+        ),
+        aliases=(
+            CatalogAliasInput(
+                source_snapshot_id=str(snapshot.id),
+                source_alias_ref="ALIAS:200012352:1",
+                target_type=CandidateEntityType.PRODUCT,
+                target_code_system="MFDS_ITEM_SEQ",
+                target_canonical_code="200012352",
+                alias_source="MFDS_PRODUCT_APPROVAL",
+                alias_text="어댑터 통합정",
+                review_status=CandidateAliasReviewStatus.APPROVED,
+                status=CandidateRecordStatus.ACTIVE,
+                is_effective=True,
+            ),
+        ),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="catalog-adapter-staging-v1",
+        source_refs=(CandidateCatalogSourceRef(str(snapshot.id), snapshot.source_version),),
+        members=members,
+    )
+    plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+    support = SqlAlchemyCatalogWriteSupport(db_session)
+
+    first = await support.stage_compatible_members(plan)
+    second = await support.stage_compatible_members(plan)
+
+    assert first.product_ids == second.product_ids
+    assert first.ingredient_ids == second.ingredient_ids
+    assert first.alias_ids == second.alias_ids
+    assert first.component_ids == second.component_ids
+    assert first.search_entry_ids == second.search_entry_ids
+    assert len(first.product_ids) == len(first.ingredient_ids) == len(first.alias_ids) == len(first.component_ids) == 1
+    assert len(first.search_entry_ids) == 2
+
+
+async def test_catalog_write_support_rolls_back_all_members_on_unsupported_row(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="ITEM_SEQ:200012353",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="200012353",
+                product_name="롤백검증제품",
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        ingredients=(
+            CatalogIngredientInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="INGREDIENT:I0353",
+                code_system="MFDS_INGREDIENT_CODE",
+                canonical_code="I0353",
+                ingredient_name="미지원비활성성분",
+                status=CandidateRecordStatus.INACTIVE,
+            ),
+        ),
+        components=(),
+        aliases=(),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="catalog-adapter-rollback-v1",
+        source_refs=(CandidateCatalogSourceRef(str(snapshot.id), snapshot.source_version),),
+        members=members,
+    )
+    plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+
+    with pytest.raises(CatalogDatabaseBindingError):
+        await SqlAlchemyCatalogWriteSupport(db_session).stage_compatible_members(plan)
+
+    assert (
+        await repository.get_product_by_identity(
+            source_snapshot_id=snapshot.id,
+            code_system="MFDS_ITEM_SEQ",
+            canonical_code="200012353",
+        )
+        is None
+    )
+    assert (
+        await repository.get_identity(
+            entity_type=RagMedicationAliasTargetType.PRODUCT,
+            code_system="MFDS_ITEM_SEQ",
+            canonical_code="200012353",
+        )
+        is None
+    )
 
 
 async def test_component_product_and_ingredient_must_use_same_snapshot(db_session: AsyncSession) -> None:
