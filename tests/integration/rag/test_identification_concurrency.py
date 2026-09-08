@@ -3,12 +3,15 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.engine import URL
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -16,6 +19,8 @@ import app.models  # noqa: F401
 from app.core import config
 from app.core.db.databases import Base
 from app.core.errors import ApiError
+from app.dtos.medication_candidates import RejectMedicationCandidateRequest
+from app.models.async_jobs import IdempotencyRecord
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -28,10 +33,13 @@ from app.models.rag_candidate import (
     MedicationIdentificationStatus,
 )
 from app.models.users import Gender, User
+from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medication_candidate_repository import (
     MedicationCandidateRepository,
     MedicationCandidateResultCreate,
 )
+from app.services.idempotency import SyncMutationIdempotencyService, get_default_snapshot_cipher
+from app.services.medication_candidates import MedicationCandidateService
 from app.services.medication_identification import MedicationIdentificationService
 
 pytestmark = pytest.mark.asyncio
@@ -145,7 +153,9 @@ async def _create_version_medication(
 
 async def _create_ready_search() -> tuple[UUID, UUID, UUID, UUID]:
     async with session_factory.begin() as session:
-        owner = await _create_user(session, email="owner@example.com")
+        # 이 helper는 여러 테스트에서 호출되므로(모듈 scope 격리 schema를 공유), 고정 이메일이면
+        # 두 번째 호출이 unique 제약을 위반한다.
+        owner = await _create_user(session, email=f"owner-{uuid4().hex[:8]}@example.com")
         profile = await session.scalar(
             select(Profile).where(Profile.user_id == owner.id, Profile.profile_type == ProfileType.SELF)
         )
@@ -451,6 +461,270 @@ async def _confirm_once(
             await session.rollback()
             reason = exc.details[0].reason if exc.details else None
             return (exc.code, reason)
+
+
+class _BarrierMedicationCandidateRepository(MedicationCandidateRepository):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        matched_precheck_barrier: asyncio.Barrier,
+        precheck_none_count: list[UUID],
+        insert_attempt_count: list[UUID],
+        integrity_error_count: list[UUID],
+    ) -> None:
+        super().__init__(session)
+        self._matched_precheck_barrier = matched_precheck_barrier
+        self._precheck_none_count = precheck_none_count
+        self._insert_attempt_count = insert_attempt_count
+        self._integrity_error_count = integrity_error_count
+
+    async def get_latest_matched_identification(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+    ) -> MedicationIdentification | None:
+        existing = await super().get_latest_matched_identification(
+            prescription_version_medication_id=prescription_version_medication_id
+        )
+        if existing is None:
+            self._precheck_none_count.append(prescription_version_medication_id)
+            await self._matched_precheck_barrier.wait()
+        return existing
+
+    async def create_matched_identification(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        candidate_search: MedicationCandidateSearch,
+        candidate_search_result: MedicationCandidateSearchResult,
+        confirmed_at: datetime,
+    ) -> MedicationIdentification:
+        self._insert_attempt_count.append(candidate_search.id)
+        try:
+            return await super().create_matched_identification(
+                prescription_version_medication_id=prescription_version_medication_id,
+                candidate_search=candidate_search,
+                candidate_search_result=candidate_search_result,
+                confirmed_at=confirmed_at,
+            )
+        except IntegrityError:
+            self._integrity_error_count.append(candidate_search.id)
+            raise
+
+
+async def _confirm_once_after_matched_precheck_barrier(
+    *,
+    user_id: UUID,
+    medication_id: UUID,
+    candidate_search_result_id: UUID,
+    matched_precheck_barrier: asyncio.Barrier,
+    precheck_none_count: list[UUID],
+    insert_attempt_count: list[UUID],
+    integrity_error_count: list[UUID],
+) -> tuple[str, str | None]:
+    async with session_factory() as session:
+        repository = _BarrierMedicationCandidateRepository(
+            session,
+            matched_precheck_barrier=matched_precheck_barrier,
+            precheck_none_count=precheck_none_count,
+            insert_attempt_count=insert_attempt_count,
+            integrity_error_count=integrity_error_count,
+        )
+        service = MedicationIdentificationService(repository)
+        try:
+            await service.confirm_identification(
+                prescription_version_medication_id=medication_id,
+                candidate_search_result_id=candidate_search_result_id,
+                user_id=user_id,
+            )
+            await session.commit()
+            return ("ok", None)
+        except ApiError as exc:
+            await session.rollback()
+            reason = exc.details[0].reason if exc.details else None
+            return (exc.code, reason)
+
+
+_IDEMPOTENCY_CONFIRM_OPERATION_ID = "medication-candidate.confirm"
+
+
+async def _confirm_once_with_idempotency(
+    *,
+    user_id: UUID,
+    medication_id: UUID,
+    candidate_search_result_id: UUID,
+    idempotency_key: str,
+) -> tuple[str, dict[str, Any] | None, bool | None]:
+    """PR #346 리뷰 회귀: 동시 confirm 요청이 실제 도메인 경쟁(FOR UPDATE/unique index)으로
+    패자가 ApiError(ALREADY_MATCHED)를 보게 되더라도, 같은 idempotency key·같은 지문이면
+    idempotency 계층이 승자의 snapshot을 재현해야 한다 — 도메인 409로 끝나면 계약 위반이다."""
+    async with session_factory() as session:
+        identification_service = _service(session)
+        idempotency_service = SyncMutationIdempotencyService(
+            IdempotencyRepository(session), get_default_snapshot_cipher()
+        )
+
+        async def mutate() -> dict[str, Any]:
+            identification = await identification_service.confirm_identification(
+                prescription_version_medication_id=medication_id,
+                candidate_search_result_id=candidate_search_result_id,
+                user_id=user_id,
+            )
+            return {"identification_id": str(identification.id), "status": identification.status.value}
+
+        try:
+            result = await idempotency_service.execute(
+                user_id=user_id,
+                operation_id=_IDEMPOTENCY_CONFIRM_OPERATION_ID,
+                parent_resource_id=medication_id,
+                idempotency_key=idempotency_key,
+                fingerprint={"candidate_search_result_id": str(candidate_search_result_id)},
+                success_status=200,
+                mutate=mutate,
+            )
+            await session.commit()
+            return ("ok", result.response_body, result.is_replay)
+        except ApiError as exc:
+            await session.rollback()
+            return (exc.code, None, None)
+
+
+async def test_concurrent_confirm_with_same_idempotency_key_replays_winner_instead_of_domain_conflict() -> None:
+    user_id, medication_id, search_id, result_id = await _create_ready_search()
+    idempotency_key = "same-key-concurrency-test-" + uuid4().hex[:8]
+
+    results = await asyncio.gather(
+        _confirm_once_with_idempotency(
+            user_id=user_id,
+            medication_id=medication_id,
+            candidate_search_result_id=result_id,
+            idempotency_key=idempotency_key,
+        ),
+        _confirm_once_with_idempotency(
+            user_id=user_id,
+            medication_id=medication_id,
+            candidate_search_result_id=result_id,
+            idempotency_key=idempotency_key,
+        ),
+    )
+
+    # 같은 key·같은 지문이므로 둘 다 성공해야 한다 — 도메인 409(ALREADY_MATCHED)로 끝나는
+    # 요청이 하나라도 있으면 계약 위반이다.
+    assert [code for code, _, _ in results] == ["ok", "ok"]
+    bodies = [body for _, body, _ in results]
+    assert bodies[0] == bodies[1]
+    # 하나는 실제로 mutate()를 실행(is_replay=False)하고, 다른 하나는 그 snapshot을
+    # 재현(is_replay=True)해야 한다 — 어느 쪽이 승자가 될지는 비결정적이라 순서로 확인하지 않는다.
+    replay_flags: list[bool] = [is_replay for _, _, is_replay in results if is_replay is not None]
+    assert len(replay_flags) == 2
+    assert sorted(replay_flags) == [False, True]
+
+    async with session_factory() as session:
+        identifications = (
+            (
+                await session.execute(
+                    select(MedicationIdentification).where(
+                        MedicationIdentification.prescription_version_medication_id == medication_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        idempotency_records = (
+            (
+                await session.execute(
+                    select(IdempotencyRecord).where(
+                        IdempotencyRecord.operation_id == _IDEMPOTENCY_CONFIRM_OPERATION_ID,
+                        IdempotencyRecord.parent_resource_id == medication_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert len(identifications) == 1
+    assert len(idempotency_records) == 1
+
+
+async def _reject_once_with_idempotency(
+    *,
+    user_id: UUID,
+    search_id: UUID,
+    candidate_search_result_id: UUID,
+    idempotency_key: str,
+) -> tuple[str, dict[str, Any] | None, bool | None]:
+    """reject_candidate는 confirm_candidate와 달리 idempotency 체크 전에
+    `get_result_selection_for_update_owned`(FOR UPDATE)로 parent_resource_id를 먼저
+    구하므로, 이 잠금이 동시 같은 key 요청을 완전히 직렬화해 도메인 충돌 자체가
+    발생하지 않는지 실제로 검증한다(confirm과 동일한 문제가 reject에도 있는지 확인)."""
+    async with session_factory() as session:
+        repository = MedicationCandidateRepository(session)
+        candidate_service = MedicationCandidateService(
+            repository,
+            _service(session),
+            SyncMutationIdempotencyService(IdempotencyRepository(session), get_default_snapshot_cipher()),
+        )
+
+        try:
+            result = await candidate_service.reject_candidate(
+                user=SimpleNamespace(id=user_id),  # type: ignore[arg-type]
+                request=RejectMedicationCandidateRequest(
+                    search_id=search_id,
+                    candidate_search_result_id=candidate_search_result_id,
+                ),
+                idempotency_key=idempotency_key,
+            )
+            await session.commit()
+            return ("ok", result.model_dump(mode="json"), None)
+        except ApiError as exc:
+            await session.rollback()
+            return (exc.code, None, None)
+
+
+async def test_concurrent_reject_with_same_idempotency_key_does_not_hit_domain_conflict() -> None:
+    user_id, medication_id, search_id, result_id = await _create_ready_search()
+    idempotency_key = "same-key-reject-concurrency-test-" + uuid4().hex[:8]
+
+    results = await asyncio.gather(
+        _reject_once_with_idempotency(
+            user_id=user_id, search_id=search_id, candidate_search_result_id=result_id, idempotency_key=idempotency_key
+        ),
+        _reject_once_with_idempotency(
+            user_id=user_id, search_id=search_id, candidate_search_result_id=result_id, idempotency_key=idempotency_key
+        ),
+    )
+
+    assert [code for code, _, _ in results] == ["ok", "ok"]
+    bodies = [body for _, body, _ in results]
+    assert bodies[0] == bodies[1]
+
+    async with session_factory() as session:
+        identifications = (
+            (
+                await session.execute(
+                    select(MedicationIdentification).where(
+                        MedicationIdentification.prescription_version_medication_id == medication_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        idempotency_records = (
+            (
+                await session.execute(
+                    select(IdempotencyRecord).where(IdempotencyRecord.parent_resource_id == medication_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert len(identifications) == 1
+    assert len(idempotency_records) == 1
 
 
 async def test_concurrent_confirm_allows_only_one_identification() -> None:

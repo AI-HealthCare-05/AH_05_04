@@ -37,6 +37,6 @@ Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Govern
 | RAG-07A (#167) | Source 목적·Snapshot·Approval·Resolver 입력 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-07B (#168) | Candidate Index Source/version·물리 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-08 (#170) | 승인 Catalog provenance와 Resolver allowlist | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
-| RAG-12A (#175) | Runtime Bundle Source/Member·rollback 적합성 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
+| RAG-12A (#175) | Runtime Bundle Source/Member·rollback 적합성. #164 Runtime Bundle 최소 DB 기반은 Source Snapshot FK, Evaluation Run approval FK, Candidate Index ref/hash, Environment transition history 저장까지만 포함 | `PARTIAL` · Runtime activation/rollback/drain/Production 공개는 `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 
 Former Track D 요구사항 ID는 결정 이력과 traceability를 위해 보존할 수 있지만 일정·담당·완료 판정과 공개 flag는 Track F에서 관리한다. GitHub handle과 팀 역할 이름을 임의 매핑하지 않으며 실제 Issue와 PR마다 구현 담당자와 담당 리뷰어를 별도로 지정한다.
