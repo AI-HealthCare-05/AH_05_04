@@ -138,7 +138,7 @@ async def test_snapshot_candidate_is_inserted_as_pending_without_commit() -> Non
     session.commit.assert_not_awaited()
 
 
-async def test_snapshot_comparison_queries_exclude_failed_snapshots() -> None:
+async def test_version_conflict_query_includes_failed_but_latest_excludes_failed() -> None:
     session = AsyncMock(spec=AsyncSession)
     query_result = MagicMock()
     query_result.mappings.return_value.one_or_none.return_value = None
@@ -152,7 +152,9 @@ async def test_snapshot_comparison_queries_exclude_failed_snapshots() -> None:
 
     assert "rag_source_snapshot.endpoint_receipt_hash" in by_version_sql
     assert "rag_source_snapshot.rejected_record_count" in by_version_sql
-    assert "rag_source_snapshot.verification_status !=" in by_version_sql
+    assert "rag_source_snapshot.verification_status !=" not in by_version_sql
+    assert "ORDER BY" in by_version_sql
+    assert "LIMIT" in by_version_sql
     assert "rag_source_snapshot.verification_status !=" in latest_sql
 
 

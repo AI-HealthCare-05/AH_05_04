@@ -68,9 +68,11 @@ class FakeSnapshotRepository:
         return next(
             (
                 replace(item, verification_status=self.statuses[item.snapshot_id])
-                for item in self.snapshots
+                for item in sorted(
+                    reversed(self.snapshots),
+                    key=lambda item: self.statuses[item.snapshot_id] is SnapshotVerificationStatus.FAILED,
+                )
                 if item.source_version == source_version
-                and self.statuses[item.snapshot_id] is not SnapshotVerificationStatus.FAILED
             ),
             None,
         )
@@ -883,3 +885,80 @@ async def test_snapshot_failure_rejects_free_form_details() -> None:
         )
 
     assert repository.statuses[created.snapshot_id] is SnapshotVerificationStatus.PENDING
+
+
+@pytest.mark.parametrize("changed", ["content", "receipt", "parser", "normalization", "rejections"])
+async def test_failed_same_version_preserves_contract_conflict(changed: str) -> None:
+    repository = FakeSnapshotRepository()
+    first = await persist_product_ingestion_result(
+        repository=repository, ingestion=_ingestion(), metadata=_metadata("external:v1"), artifacts=_stored_artifacts()
+    )
+    assert first.snapshot_id is not None
+    await fail_snapshot_verification(
+        repository=repository,
+        snapshot_id=first.snapshot_id,
+        failure_code="SCHEMA_DRIFT",
+        failed_at=_NOW,
+        verified_by="synthetic-reviewer",
+    )
+    ingestion = _ingestion(_CHECKSUM_B) if changed == "content" else _ingestion()
+    metadata = _metadata("external:v1")
+    artifacts = _stored_artifacts()
+    if changed == "receipt":
+        ingestion = replace(ingestion, endpoint_receipt_hash="f" * 64)
+    elif changed == "parser":
+        metadata = replace(metadata, parser_version="parser-v2")
+    elif changed == "normalization":
+        metadata = replace(metadata, normalization_version="normalization-v2")
+    elif changed == "rejections":
+        metadata = replace(metadata, rejected_record_count=1)
+        artifacts = (*artifacts, _stored_rejection_artifact())
+    result = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=ingestion,
+        metadata=metadata,
+        artifacts=artifacts,
+    )
+    assert result.decision is SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+    assert result.snapshot_id is None
+    assert len(repository.snapshots) == 1
+    assert repository.runs[-1].failure_code == SOURCE_VERSION_CONFLICT
+
+
+@pytest.mark.parametrize(("count", "artifact_count"), [(2, 1), (1, 2)])
+async def test_reject_count_mismatch_stops_before_database(count: int, artifact_count: int) -> None:
+    repository = FakeSnapshotRepository()
+    with pytest.raises(ValueError, match="개수가 rejected_record_count"):
+        await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(),
+            metadata=replace(_metadata("external:v1"), rejected_record_count=count),
+            artifacts=(*_stored_artifacts(), *(_stored_rejection_artifact(),) * artifact_count),
+        )
+    assert repository.locked_identities == []
+    assert repository.runs == []
+
+
+@pytest.mark.parametrize(("count", "artifact_count"), [(2, 1), (1, 2)])
+async def test_reject_count_mismatch_stops_before_file_write(tmp_path: Path, count: int, artifact_count: int) -> None:
+    repository = FakeSnapshotRepository()
+    metadata = _stored_artifacts()[0].metadata
+    # Input paths deliberately do not exist: cardinality must fail before reading/storing them.
+    rejection = RejectionArtifactInput(
+        file_path=tmp_path / "missing-reject.json",
+        metadata=_stored_rejection_artifact().metadata,
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="$.records[0]",
+    )
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    with pytest.raises(ValueError, match="개수가 rejected_record_count"):
+        await preserve_and_persist_product_ingestion_result(
+            repository=repository,
+            artifact_store=store,
+            ingestion=_ingestion(),
+            metadata=replace(_metadata("external:v1"), rejected_record_count=count),
+            raw_artifacts=((1, tmp_path / "missing-raw.json", metadata),),
+            rejection_artifacts=(rejection,) * artifact_count,
+        )
+    assert list((tmp_path / "private").iterdir()) == []
+    assert repository.locked_identities == []

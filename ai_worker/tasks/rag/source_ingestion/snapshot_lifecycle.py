@@ -235,9 +235,15 @@ def decide_snapshot_ingestion(
     if same_version is not None:
         if not _has_same_canonical_contract(same_version, ingestion=ingestion, metadata=metadata):
             return SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT, same_version
+        if same_version.verification_status is SnapshotVerificationStatus.FAILED:
+            return SnapshotIngestionDecision.CREATED, latest
         return SnapshotIngestionDecision.NO_CHANGE, same_version
 
-    if latest is not None and _has_same_canonical_contract(latest, ingestion=ingestion, metadata=metadata):
+    if (
+        latest is not None
+        and latest.verification_status is not SnapshotVerificationStatus.FAILED
+        and _has_same_canonical_contract(latest, ingestion=ingestion, metadata=metadata)
+    ):
         return SnapshotIngestionDecision.NO_CHANGE, latest
 
     return SnapshotIngestionDecision.CREATED, latest
@@ -361,6 +367,8 @@ def _validate_ingestion_artifacts(
         raise ValueError("거부 레코드가 없는 실행에는 REJECTS Artifact를 기록할 수 없습니다.")
     if rejected_record_count > 0 and not rejection_artifacts:
         raise ValueError("거부 레코드가 있는 실행에는 REJECTS Artifact가 필요합니다.")
+    if len(rejection_artifacts) != rejected_record_count:
+        raise ValueError("REJECTS Artifact 개수가 rejected_record_count와 일치하지 않습니다.")
     manifest_checksum = raw_manifest_checksum(artifact.metadata for artifact in raw_artifacts)
     if manifest_checksum != ingestion.raw_manifest_checksum:
         raise ValueError("Artifact manifest checksum이 검증된 수집 결과와 일치하지 않습니다.")
@@ -510,8 +518,7 @@ def _has_same_canonical_contract(
     metadata: SnapshotIngestionMetadata,
 ) -> bool:
     return (
-        snapshot.verification_status is not SnapshotVerificationStatus.FAILED
-        and snapshot.canonical_checksum == ingestion.canonical_checksum
+        snapshot.canonical_checksum == ingestion.canonical_checksum
         and snapshot.schema_version == metadata.schema_version
         and snapshot.parser_version == metadata.parser_version
         and snapshot.normalization_version == metadata.normalization_version

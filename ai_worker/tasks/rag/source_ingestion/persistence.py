@@ -64,6 +64,8 @@ async def preserve_and_persist_product_ingestion_result(
         raise ValueError("거부 레코드가 없는 실행에는 REJECTS Artifact를 기록할 수 없습니다.")
     if metadata.rejected_record_count > 0 and not rejection_entries:
         raise ValueError("거부 레코드가 있는 실행에는 REJECTS Artifact가 필요합니다.")
+    if len(rejection_entries) != metadata.rejected_record_count:
+        raise ValueError("REJECTS Artifact 개수가 rejected_record_count와 일치하지 않습니다.")
     artifact_keys = [entry_metadata.artifact_key for _, _, entry_metadata in entries]
     artifact_keys.extend(entry.metadata.artifact_key for entry in rejection_entries)
     if len(set(artifact_keys)) != len(artifact_keys):

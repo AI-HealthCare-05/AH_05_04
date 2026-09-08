@@ -543,7 +543,7 @@ async def test_failed_snapshot_can_be_retried_with_same_source_version() -> None
         )
         retried = await persist_product_ingestion_result(
             repository=repository,
-            ingestion=_ingestion(identity, _CHECKSUM_A, endpoint_receipt_hash="2" * 64),
+            ingestion=_ingestion(identity, _CHECKSUM_A, endpoint_receipt_hash="1" * 64),
             metadata=replace(
                 _metadata("external:retry", minute=20),
                 run_group_key="synthetic-external:retry-second",
@@ -565,7 +565,7 @@ async def test_failed_snapshot_can_be_retried_with_same_source_version() -> None
         RagSnapshotVerificationStatus.FAILED,
         RagSnapshotVerificationStatus.PENDING,
     ]
-    assert [snapshot.endpoint_receipt_hash for snapshot in snapshots] == ["1" * 64, "2" * 64]
+    assert [snapshot.endpoint_receipt_hash for snapshot in snapshots] == ["1" * 64, "1" * 64]
 
 
 async def test_operation_lock_serializes_concurrent_snapshot_decisions() -> None:
@@ -744,3 +744,50 @@ async def test_failures_before_snapshot_are_recorded_without_snapshot() -> None:
     assert all(run.snapshot_id is None for run in runs)
     assert snapshot_count == 0
     assert artifact_count == 1
+
+
+@pytest.mark.parametrize("changed", ["content", "receipt", "parser"])
+async def test_failed_same_version_different_contract_is_conflict(changed: str) -> None:
+    identity = await _seed_operation(f"FAILED_CONFLICT_{changed}")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        ingestion = _ingestion(identity, _CHECKSUM_A, endpoint_receipt_hash="1" * 64)
+        first = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=ingestion,
+            metadata=_metadata("external:conflict", minute=30),
+            artifacts=_stored_artifacts(minute=30),
+        )
+        assert first.snapshot_id is not None
+        await fail_snapshot_verification(
+            repository=repository,
+            snapshot_id=first.snapshot_id,
+            failure_code="SCHEMA_DRIFT",
+            failed_at=_NOW + timedelta(minutes=31),
+            verified_by="synthetic-reviewer",
+        )
+        retry_metadata = _metadata("external:conflict", minute=32)
+        if changed == "content":
+            ingestion = replace(ingestion, canonical_checksum=_CHECKSUM_B)
+        elif changed == "receipt":
+            ingestion = replace(ingestion, endpoint_receipt_hash="2" * 64)
+        else:
+            retry_metadata = replace(retry_metadata, parser_version="parser-v2")
+        result = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=ingestion,
+            metadata=replace(retry_metadata, run_group_key=f"synthetic-conflict-{changed}"),
+            artifacts=_stored_artifacts(minute=32),
+        )
+        assert result.decision is SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+        assert result.snapshot_id is None
+    async with session_factory() as session:
+        count = await session.scalar(
+            select(func.count())
+            .select_from(RagSourceSnapshot)
+            .where(RagSourceSnapshot.operation_id == first.operation_id)
+        )
+        assert count == 1
+        run = await session.get(RagSourceIngestionRun, result.ingestion_run_id)
+        assert run is not None
+        assert run.failure_code == "SOURCE_VERSION_CONFLICT"

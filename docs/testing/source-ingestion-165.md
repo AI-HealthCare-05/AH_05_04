@@ -239,3 +239,26 @@ PASS source snapshot adapter import and database connection
 로컬 검증 환경 파일에는 `STORAGE_DIR`이 없어 smoke 명령에서 비민감 경로를
 명시했다. Source DB adapter 검증에는 영향을 주지 않으며, Worker 배포 환경은
 기존 OCR runtime 조립 범위에서 필수 저장 경로를 계속 주입해야 한다.
+
+## PR #323 후속 리뷰 반영 (2026-09-08)
+
+- Verification 이력의 UPDATE·DELETE를 `165d7e6f5041` trigger로 차단한다. 이력이 존재하면 보호를 제거하는 downgrade도 차단하며, 기존 Artifact·Receipt·Catalog downgrade 테스트는 Verification 없는 fixture로 각 기존 보호를 독립 검증한다.
+- Publication PASSED는 NULL·빈 문자열·공백 승인자를 DB CHECK로 거부한다. 조회 adapter도 승인자가 있는 PASSED만 인정한다. 일반 자동 검증의 nullable 승인자는 유지한다.
+- FAILED 동일 Source version도 canonical 내용·계약 비교에 포함한다. 내용·Receipt·parser 계약이 달라지면 실패 Run만 남기고 새 Snapshot을 만들지 않는다. 같은 계약의 재시도는 새 PENDING 후보를 만든다.
+- REJECTS의 1:1 개수 검증은 파일 읽기·저장 전과 DB 잠금·저장 전 양쪽에서 수행한다.
+- 실패 재시도 테스트에서 Receipt hash를 바꾸던 기존 성공 fixture는 같은 hash를 사용하도록 바로잡고, hash 변경은 별도 충돌 회귀로 검증한다.
+- 보존 기간·정리 주체·운영 reject code allowlist와 FAILED Snapshot의 계보 포함 정책은 결정 대기로 유지한다. 자동 삭제와 Runtime 활성화는 추가하지 않는다.
+
+실제 PostgreSQL 검증에는 개발·운영 DB와 분리된 임시 PostgreSQL 17을 사용한다. 익명 publication 승인이 이미 있는 DB에서는 migration이 실패하며 승인자나 과거 이력을 자동 보정하지 않는다.
+
+후속 변경 검증 결과:
+
+- AI Worker 단위 테스트: **1,041 passed**
+- 전체 Migration 테스트: **52 passed**
+- Backend·계약·Source 통합 테스트: **1,116 passed, 2 skipped**
+- Redis·PostgreSQL Worker 통합 테스트: **18 passed**
+- Ruff 검사·서식 검사: 통과 (**496 files**)
+- Mypy: **421개 소스 파일 통과**
+- `git diff --check` 및 Source Governance Receipt hash 검증: 통과
+
+기존 Python 환경에 없던 S3 의존성은 임시 테스트 환경에 준비했다. DB 준비는 저장소 절차대로 최신 Alembic head를 적용한 뒤 migration 테스트와 Backend 테스트를 별도 프로세스로 실행했다. 실제 외부 MFDS·S3 호출이나 운영 배포는 수행하지 않았다.

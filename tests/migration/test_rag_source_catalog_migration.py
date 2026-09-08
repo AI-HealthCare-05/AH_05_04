@@ -124,7 +124,7 @@ async def _fetch_schema_object_names() -> set[str]:
         }
 
 
-async def _seed_source_catalog_chain() -> dict[str, str]:
+async def _seed_source_catalog_chain(*, include_verification: bool = True) -> dict[str, str]:
     ids = {
         "source_id": str(uuid4()),
         "endpoint_id": str(uuid4()),
@@ -210,17 +210,18 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
                     "collected_at": collected_at,
                 },
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_source_snapshot_verification (
-                        id, snapshot_id, check_name, verification_result, verified_at
-                    )
-                    VALUES (:verification_id, :snapshot_id, 'checksum', 'PASSED', :collected_at)
-                    """
-                ),
-                {**ids, "collected_at": collected_at},
-            )
+            if include_verification:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_snapshot_verification (
+                            id, snapshot_id, check_name, verification_result, verified_at
+                        )
+                        VALUES (:verification_id, :snapshot_id, 'checksum', 'PASSED', :collected_at)
+                        """
+                    ),
+                    {**ids, "collected_at": collected_at},
+                )
             await connection.execute(
                 text(
                     """
@@ -345,6 +346,11 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
                     "DISABLE TRIGGER trg_rag_source_ingestion_artifact_prevent_delete"
                 )
             )
+            await connection.execute(
+                text(
+                    "ALTER TABLE rag_source_snapshot_verification DISABLE TRIGGER trg_rag_snapshot_verification_immutable"
+                )
+            )
             try:
                 await connection.execute(
                     text(
@@ -394,6 +400,11 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
                 await connection.execute(text("DELETE FROM rag_source_endpoint WHERE id = :endpoint_id"), ids)
                 await connection.execute(text("DELETE FROM rag_source WHERE id = :source_id"), ids)
             finally:
+                await connection.execute(
+                    text(
+                        "ALTER TABLE rag_source_snapshot_verification ENABLE TRIGGER trg_rag_snapshot_verification_immutable"
+                    )
+                )
                 await connection.execute(
                     text(
                         "ALTER TABLE rag_source_ingestion_artifact "
@@ -536,7 +547,7 @@ def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references()
 
     try:
         command.upgrade(alembic_config, "head")
-        ids = asyncio.run(_seed_source_catalog_chain())
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
 
         async def insert_artifact() -> None:
             assert ids is not None
@@ -601,7 +612,7 @@ def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> 
 
     try:
         command.upgrade(alembic_config, "head")
-        ids = asyncio.run(_seed_source_catalog_chain())
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
         asyncio.run(insert_rejection(ids))
 
         asyncio.run(
@@ -839,7 +850,7 @@ def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
 
     try:
         command.upgrade(alembic_config, "head")
-        ids = asyncio.run(_seed_source_catalog_chain())
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
         asyncio.run(insert_snapshot_with_receipt(ids))
 
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 165c6d5e4f30"):
@@ -916,7 +927,7 @@ def test_rag_source_catalog_downgrade_blocks_non_empty_tables_and_preserves_data
 
     try:
         command.upgrade(alembic_config, "head")
-        ids = asyncio.run(_seed_source_catalog_chain())
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
 
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 164f3a2b1c0d"):
             command.downgrade(alembic_config, RAG_SOURCE_CATALOG_BASE_REVISION)
@@ -1046,5 +1057,50 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
         )
     finally:
         command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_verification_history_is_immutable_and_publication_requires_actor() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        for sql in (
+            "UPDATE rag_source_snapshot_verification SET verification_result = 'FAILED' WHERE id = :verification_id",
+            "DELETE FROM rag_source_snapshot_verification WHERE id = :verification_id",
+        ):
+            asyncio.run(_execute_expect_db_error(sql, ids, expected_text="append-only"))
+        for actor in (None, "", "   "):
+            asyncio.run(
+                _execute_expect_db_error(
+                    "INSERT INTO rag_source_snapshot_verification "
+                    "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
+                    "VALUES (:new_id, :snapshot_id, 'snapshot-publication-approval', 'PASSED', :actor, :now)",
+                    {**ids, "new_id": str(uuid4()), "actor": actor, "now": datetime.now(UTC)},
+                    expected_text="chk_rag_snapshot_publication_approver",
+                )
+            )
+
+        async def named_approval_is_accepted() -> None:
+            async with _connection() as connection:
+                transaction = await connection.begin()
+                try:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO rag_source_snapshot_verification "
+                            "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
+                            "VALUES (:new_id, :snapshot_id, 'snapshot-publication-approval', 'PASSED', 'synthetic-reviewer', :now)"
+                        ),
+                        {**ids, "new_id": str(uuid4()), "now": datetime.now(UTC)},
+                    )
+                finally:
+                    await transaction.rollback()
+
+        asyncio.run(named_approval_is_accepted())
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165d7e6f5041"):
+            command.downgrade(alembic_config, "165c6d5e4f30")
+    finally:
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))

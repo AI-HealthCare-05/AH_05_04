@@ -364,6 +364,11 @@ class RagSourceSnapshotVerification(Base):
     __tablename__ = "rag_source_snapshot_verification"
     __table_args__ = (
         Index("idx_rag_source_snapshot_verification_snapshot", "snapshot_id", "verified_at"),
+        CheckConstraint(
+            "check_name <> 'snapshot-publication-approval' OR verification_result <> 'PASSED' OR "
+            "(verified_by IS NOT NULL AND length(trim(verified_by)) > 0)",
+            name="chk_rag_snapshot_publication_approver",
+        ),
         CheckConstraint("length(trim(check_name)) > 0", name="chk_rag_source_snapshot_verification_check_nonblank"),
         CheckConstraint(
             f"verification_result IN ({_sql_in_list(RagVerificationResultStatus)})",

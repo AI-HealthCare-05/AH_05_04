@@ -135,11 +135,18 @@ Raw Artifact 수집
 | `VALIDATING` | `rag_source_snapshot.verification_status = PENDING` | 수집 무결성 검사를 통과해도 publication 승인을 의미하지 않는다. |
 | `PUBLISHED` | `verification_status = CURRENT` + `snapshot-current-selection = PASSED` | 같은 Operation에서 하나만 허용한다. 거부 레코드가 있으면 `snapshot-publication-approval = PASSED`가 추가로 필요하다. |
 | 이전 `PUBLISHED` | `verification_status = STALE` | 이력은 보존하며 이전 Snapshot 복원 시 다시 `CURRENT`로 전환할 수 있다. |
-| 검증 실패 | `verification_status = FAILED` | 선택과 `NO_CHANGE` 재사용 대상에서 제외하며 동일 Source version 재수집으로 새 후보를 만들 수 있다. |
+| 검증 실패 | `verification_status = FAILED` | 선택과 `NO_CHANGE` 재사용 대상에서 제외한다. 동일 Source version은 FAILED 이력과도 내용·계약을 비교하며, 일치할 때만 새 후보를 만들 수 있다. |
 
 `source-ingestion-integrity = PASSED`는 Parser·checksum·Artifact 결속 검증 결과이며 사람의 publication 승인을 대신하지 않는다. `CURRENT`는 Source Snapshot 현재성만 뜻하고 Runtime Bundle 활성화를 뜻하지 않는다. Source approval, 보존 정책, Catalog 적재와 Runtime 연결은 아직 구현되지 않았다.
 
 신규 Snapshot은 검증에 사용한 `endpoint_receipt_hash`를 불변 provenance로 저장한다. Migration 이전 Snapshot의 알 수 없는 hash는 `NULL`로 보존하고 `NO_CHANGE` 비교 대상으로 재사용하지 않는다. `NO_CHANGE`는 canonical checksum과 schema·parser·normalization·canonicalization version뿐 아니라 Endpoint Receipt hash와 거부 레코드 개수까지 모두 같고 비교 Snapshot이 `FAILED`가 아닐 때만 허용한다.
+
+### PR #323 후속 리뷰 반영 경계
+
+- `snapshot-publication-approval = PASSED`는 NULL 또는 공백인 `verified_by`를 허용하지 않는다. 일반 자동 무결성 검사의 nullable 승인자와는 구분한다. Verification 이력은 DB trigger로 UPDATE·DELETE를 차단하며 이력이 있으면 보호를 제거하는 downgrade도 거부한다. 기존 익명 publication 승인 데이터가 있으면 migration은 실패하며 임의 승인자 보정은 하지 않는다. 승인 주체의 존재 검사는 전체 Source Use Approval이나 권한 검증 구현을 대신하지 않는다.
+- 동일 Source version의 FAILED 이력도 canonical checksum·schema/parser/normalization/canonicalization version·Endpoint Receipt hash·거부 건수 비교에 포함한다. 하나라도 다르면 `SOURCE_VERSION_CONFLICT`로 기록하고 Snapshot을 생성하지 않는다. 모두 같은 FAILED 재시도만 새 PENDING 후보를 허용한다. 유효 후보가 이미 있으면 그 후보를 우선 조회하여 중복 재시도를 `NO_CHANGE`로 처리한다.
+- 현재 REJECTS는 거부 record 1개당 Artifact 1개다. `rejected_record_count`와 Artifact 개수의 일치를 파일 보존 전과 DB 저장 전에 모두 검사한다.
+- FAILED Snapshot을 `supersedes_snapshot_id` 계보에 포함할지는 별도 설계 확인 대기다. 이번 수정은 동일 version 충돌 비교만 복원하고, 직전 비FAILED Snapshot을 선택하는 기존 계보 동작은 유지한다.
 
 - 모든 page와 필수 record가 성공한 경우에만 Snapshot 후보를 만든다.
 - HTTP 성공 status라도 본문의 인증 실패·호출 한도·Provider 오류 code를 성공으로 처리하지 않는다.

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, String, column, insert, select, table, update
+from sqlalchemy import DateTime, Integer, String, column, func, insert, select, table, update
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -13,6 +13,7 @@ from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
 from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProgressError
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
+    SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SnapshotCreateRequest,
     SnapshotLifecycleRepository,
     SnapshotReference,
@@ -136,21 +137,30 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         operation_id: UUID,
         source_version: str,
     ) -> SnapshotReference | None:
-        statement = select(
-            _SNAPSHOT.c.id,
-            _SNAPSHOT.c.source_version,
-            _SNAPSHOT.c.canonical_checksum,
-            _SNAPSHOT.c.schema_version,
-            _SNAPSHOT.c.parser_version,
-            _SNAPSHOT.c.normalization_version,
-            _SNAPSHOT.c.canonicalization_spec_version,
-            _SNAPSHOT.c.endpoint_receipt_hash,
-            _SNAPSHOT.c.rejected_record_count,
-            _SNAPSHOT.c.verification_status,
-        ).where(
-            _SNAPSHOT.c.operation_id == str(operation_id),
-            _SNAPSHOT.c.source_version == source_version,
-            _SNAPSHOT.c.verification_status != SnapshotVerificationStatus.FAILED,
+        statement = (
+            select(
+                _SNAPSHOT.c.id,
+                _SNAPSHOT.c.source_version,
+                _SNAPSHOT.c.canonical_checksum,
+                _SNAPSHOT.c.schema_version,
+                _SNAPSHOT.c.parser_version,
+                _SNAPSHOT.c.normalization_version,
+                _SNAPSHOT.c.canonicalization_spec_version,
+                _SNAPSHOT.c.endpoint_receipt_hash,
+                _SNAPSHOT.c.rejected_record_count,
+                _SNAPSHOT.c.verification_status,
+            )
+            .where(
+                _SNAPSHOT.c.operation_id == str(operation_id),
+                _SNAPSHOT.c.source_version == source_version,
+            )
+            .order_by(
+                (_SNAPSHOT.c.verification_status == SnapshotVerificationStatus.FAILED).asc(),
+                _SNAPSHOT.c.collected_at.desc(),
+                _SNAPSHOT.c.created_at.desc(),
+                _SNAPSHOT.c.id.desc(),
+            )
+            .limit(1)
         )
         result = await self._session.execute(statement)
         row = result.mappings().one_or_none()
@@ -337,6 +347,11 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             )
             .limit(1)
         )
+        if check_name == SNAPSHOT_PUBLICATION_APPROVAL_CHECK:
+            statement = statement.where(
+                _VERIFICATION.c.verified_by.is_not(None),
+                func.length(func.trim(_VERIFICATION.c.verified_by)) > 0,
+            )
         result = await self._session.execute(statement)
         return result.scalar_one_or_none() is not None
 
