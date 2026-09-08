@@ -496,3 +496,65 @@ class TestConfirmAndRejectMedicationCandidate:
         assert data["status"] == "UNRESOLVED"
         assert data["search_status"] == "INVALIDATED_USER_REJECTED"
         assert data["rejected_at"] is not None
+
+    async def test_confirm_replays_stored_response_for_repeated_request(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        _search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        body = {
+            "prescription_version_medication_id": str(medication.id),
+            "candidate_search_result_id": str(result_id),
+        }
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                first = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-replay-001"},
+                    json=body,
+                )
+                second = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-replay-001"},
+                    json=body,
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_200_OK
+        assert second.json()["data"] == first.json()["data"]
+
+    async def test_confirm_rejects_same_key_with_different_body_as_conflict(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        _search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                first = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-conflict-001"},
+                    json={
+                        "prescription_version_medication_id": str(medication.id),
+                        "candidate_search_result_id": str(result_id),
+                    },
+                )
+                second = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-conflict-001"},
+                    json={
+                        "prescription_version_medication_id": str(medication.id),
+                        "candidate_search_result_id": str(uuid4()),
+                    },
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == 409
+        assert second.json()["code"] == "IDEMPOTENCY_KEY_CONFLICT"
