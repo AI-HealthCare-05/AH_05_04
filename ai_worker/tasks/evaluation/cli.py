@@ -491,7 +491,8 @@ class _PublishFiles:
             except BaseException as error:
                 first_error = first_error or error
         for descriptor in (self.temporary_descriptor, self.lock_descriptor):
-            first_error = first_error or self._close_descriptor(descriptor)
+            close_error = self._close_descriptor(descriptor)
+            first_error = first_error or close_error
         self.temporary_descriptor = None
         self.lock_descriptor = None
         try:

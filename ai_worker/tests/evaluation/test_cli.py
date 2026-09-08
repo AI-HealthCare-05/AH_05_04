@@ -499,6 +499,45 @@ def test_publish_receipt_releases_pinning_descriptors_on_success_and_failure(tmp
     assert open_descriptor_count() == baseline
 
 
+def test_publish_cleanup_releases_pinning_descriptors_after_ownership_mismatch(tmp_path: Path) -> None:
+    directory_fd = os.open(tmp_path, os.O_RDONLY)
+    files = cli_module._PublishFiles(
+        directory_fd=directory_fd,
+        destination_name="receipt.json",
+        lock_name="receipt.json.lock",
+        temporary_name="receipt.json.tmp",
+    )
+    files.acquire_lock()
+    files.write_temporary(b'{"safe":true}')
+    assert files.lock_descriptor is not None
+    assert files.temporary_descriptor is not None
+    descriptors = (files.lock_descriptor, files.temporary_descriptor)
+
+    os.unlink(files.lock_name, dir_fd=directory_fd)
+    replacement_descriptor = os.open(
+        files.lock_name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+        dir_fd=directory_fd,
+    )
+    os.close(replacement_descriptor)
+
+    cleanup_error = files.cleanup()
+    assert isinstance(cleanup_error, EvaluationValidationError)
+    assert cleanup_error.code is EvaluationErrorCode.INTERNAL_ERROR
+    try:
+        for descriptor in descriptors:
+            with pytest.raises(OSError) as caught:
+                os.fstat(descriptor)
+            assert caught.value.errno == errno.EBADF
+    finally:
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
 def test_cli_maps_publication_path_race_to_exit_two_without_raw_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
