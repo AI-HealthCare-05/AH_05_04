@@ -256,6 +256,14 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 - `rejected_record_count`는 `record_count`보다 클 수 없습니다.
 - `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
 
+현재 최소 구현과 정규 목표의 차이:
+
+- 현재 `rag_source_snapshot`은 Source 전체가 아니라 `rag_source_operation`별 수집·정규화 산출물입니다. 따라서 Snapshot version의 unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 존재할 수 있습니다. 이는 #164 최소 DB 기반의 의도된 모델입니다.
+- 안정적인 수집 Provenance는 `source_code + endpoint_code + operation_code`로 Operation을 식별하고, Snapshot 자체는 `source_snapshot_id`로 특정합니다. `source_version`만으로 Source 전체의 Snapshot을 특정하지 않습니다.
+- 현재 `rag_source_ingestion_run`은 정규 RAG 목표의 수집 실행과 정규화 실행을 하나의 실행 이력으로 합친 최소 구현입니다. `SUCCEEDED` 또는 `SUCCEEDED_WITH_REJECTIONS`는 새 Snapshot을 참조할 수 있고, `NO_CHANGE`는 재검증한 기존 Snapshot을 참조하며, `FAILED`는 `snapshot_id=NULL`일 수 있습니다.
+- 동일 Snapshot을 여러 `NO_CHANGE` 실행이 재검증할 수 있으므로 `rag_source_ingestion_run.snapshot_id` 전체에는 Unique 제약을 두지 않습니다. Snapshot을 최초 발행한 성공 실행을 1개로 제한할지는 부분 Unique Index와 부분 성공의 승인 의미를 함께 확정하는 후속 범위입니다.
+- 이 Operation 단위 모델은 `rag-db-schema` v1.47의 Source 단위 Snapshot과 `ingestion_run`·`normalization_run` 분리 모델을 대체하거나 변경하지 않습니다. 정규 목표로 수렴할 때는 Decision 또는 Contract Freeze, migration, 구현과 계약·통합 테스트를 함께 갱신합니다.
+
 Rollback 정책:
 
 - Production에서는 Source/Catalog 테이블을 삭제하는 downgrade를 사용하지 않고 forward-fix migration을 사용합니다.
