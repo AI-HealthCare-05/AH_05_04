@@ -275,6 +275,12 @@ AI에는 현재 요청의 질문과 해당 세션에 연결된 확정 처방의 
 
 같은 세션에 세 개 이상의 요청이 겹치면 뒤 요청은 앞선 요청 수에 비례해 더 오래 대기합니다. 현재 설계는 동시 요청 수를 제한하지 않으므로 세 개 이상에 대한 유한한 end-to-end 최대시간을 보장하지 않습니다.
 
+서로 다른 Chat session은 같은 처방에 속하더라도 Provider 호출을 병렬로 수행할 수 있습니다. Provider 호출
+구간에는 처방 row lock을 유지하지 않으며, 결과 저장 직전에 생성 기준 `prescription_version_id`가
+현재 `active_version_id`인지 처방 row를 잠가 다시 확인합니다. 호출 중 처방 정정이 commit되었다면 생성
+결과를 저장하지 않고 ASSISTANT placeholder를 `PRESCRIPTION_VERSION_STALE` 실패 이력으로 남긴 뒤
+`409 PRESCRIPTION_VERSION_CONFLICT`를 반환합니다.
+
 DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반환합니다. 잠금을 얻어 USER·ASSISTANT를 만들기 전에 transaction이 rollback되므로 새 메시지가 생성되지 않으며, 메시지 목록을 다시 조회해도 이전 결과와 같습니다.
 
 ## OCR 결과 조회

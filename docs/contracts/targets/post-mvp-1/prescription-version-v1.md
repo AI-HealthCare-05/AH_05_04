@@ -147,3 +147,11 @@ Guide·Chat의 ID 직접 조회·메시지 전송은 저장된 Version과 현재
 `409 PRESCRIPTION_VERSION_CONFLICT`로 거부한다. 처방 기준 최신 Guide·Chat 조회는 active Version
 결과만 선택한다. 완료된 이전 Version Job은 상태와 provenance를 계속 조회할 수 있지만
 `result_url`을 반환하지 않는다.
+
+현재 동기 Chat 메시지 전송은 동일 `CHAT_SESSION` row lock으로 같은 세션 요청만 직렬화한다. 서로 다른
+세션의 Provider 호출은 병렬로 수행하며 그 구간에는 `PRESCRIPTION` row lock을 유지하지 않는다. 결과
+commit 직전에 생성 기준 Version과 `active_version_id`의 일치를 `PRESCRIPTION` row lock으로 다시
+검증한다. Provider 호출 중 정정이 commit되어 불일치하면 결과 content·model·prompt metadata를 저장하지
+않고 ASSISTANT placeholder를 `FAILED / PRESCRIPTION_VERSION_STALE`로 보존하며
+`409 PRESCRIPTION_VERSION_CONFLICT`를 반환한다. 처방 활성화 transaction은 기존 `CHAT_SESSION` row를
+잠그지 않으므로 이 완료 fencing과 역방향 lock cycle을 만들지 않는다.

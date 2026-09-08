@@ -60,28 +60,27 @@ class ChatRepository:
         return result.scalar_one_or_none()
 
     async def get_session_owned_for_update(self, *, session_id: UUID, user_id: UUID) -> ChatSession | None:
-        prescription = await self.session.scalar(
-            select(Prescription)
-            .join(ChatSession, ChatSession.prescription_id == Prescription.id)
-            .where(
-                ChatSession.id == session_id,
-                owned_by_self(Prescription.profile_id, user_id),
-            )
-            .with_for_update(of=Prescription)
-        )
-        if prescription is None:
-            return None
         result = await self.session.execute(
             select(ChatSession)
             .options(selectinload(ChatSession.prescription).selectinload(Prescription.document))
             .where(
                 ChatSession.id == session_id,
-                ChatSession.prescription_id == prescription.id,
                 owned_by_self(ChatSession.profile_id, user_id),
             )
-            .with_for_update()
+            .with_for_update(of=ChatSession)
         )
         return result.scalar_one_or_none()
+
+    async def lock_if_current_version(self, *, chat_session: ChatSession) -> bool:
+        current = await self.session.scalar(
+            select(Prescription.id)
+            .where(
+                Prescription.id == chat_session.prescription_id,
+                Prescription.active_version_id == chat_session.prescription_version_id,
+            )
+            .with_for_update(of=Prescription)
+        )
+        return current is not None
 
     async def get_message_owned(self, *, message_id: UUID, user_id: UUID) -> ChatMessage | None:
         result = await self.session.execute(

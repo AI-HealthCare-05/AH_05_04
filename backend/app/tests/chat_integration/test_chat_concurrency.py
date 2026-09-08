@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, date, datetime
 from time import monotonic
 from uuid import UUID
 
@@ -38,6 +39,32 @@ class CommitControlledEngine:
             self.second_entered.set()
         return ChatReplyOutput(
             content=f"합성 답변 {call_number}",
+            model_name="synthetic-model",
+            prompt_version="chat-prompt-test-v1",
+        )
+
+
+class ParallelBarrierEngine:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.active = 0
+        self.max_active = 0
+        self.both_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def reply(self, chat_input: ChatReplyInput) -> ChatReplyOutput:
+        del chat_input
+        self.calls += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        if self.calls == 2:
+            self.both_entered.set()
+        try:
+            await self.release.wait()
+        finally:
+            self.active -= 1
+        return ChatReplyOutput(
+            content="합성 병렬 답변",
             model_name="synthetic-model",
             prompt_version="chat-prompt-test-v1",
         )
@@ -97,7 +124,7 @@ async def _send(
         await db_session.commit()
 
 
-async def _cancel_pending(*tasks: asyncio.Task[None]) -> None:
+async def _cancel_pending(*tasks: asyncio.Task[object]) -> None:
     for task in tasks:
         if not task.done():
             task.cancel()
@@ -225,30 +252,28 @@ async def test_three_same_session_requests_store_six_collision_free_messages_wit
     _assert_completed_pairs(messages, pair_count=3)
 
 
-async def test_different_sessions_for_same_prescription_wait_for_first_to_commit(
+async def test_different_sessions_for_same_prescription_enter_generation_in_parallel(
     committed_chat_fixture: CommittedChatFixture,
 ) -> None:
     first_chat_session_id, second_chat_session_id = committed_chat_fixture.session_ids
-    engine = CommitControlledEngine()
+    engine = ParallelBarrierEngine()
     async with (
         AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as first_db,
         AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as second_db,
     ):
         assert len(set(await _connection_ids(first_db, second_db))) == 2
-        first_task = asyncio.create_task(
-            _send(
-                db_session=first_db,
-                engine=engine,
-                user=committed_chat_fixture.user,
-                chat_session_id=first_chat_session_id,
-                content="첫 세션 합성 질문",
-                commit=True,
-            )
-        )
-        second_task: asyncio.Task[None] | None = None
-        try:
-            await asyncio.wait_for(engine.first_entered.wait(), timeout=1)
-            second_task = asyncio.create_task(
+        tasks = (
+            asyncio.create_task(
+                _send(
+                    db_session=first_db,
+                    engine=engine,
+                    user=committed_chat_fixture.user,
+                    chat_session_id=first_chat_session_id,
+                    content="첫 세션 합성 질문",
+                    commit=True,
+                )
+            ),
+            asyncio.create_task(
                 _send(
                     db_session=second_db,
                     engine=engine,
@@ -257,22 +282,67 @@ async def test_different_sessions_for_same_prescription_wait_for_first_to_commit
                     content="둘째 세션 합성 질문",
                     commit=True,
                 )
-            )
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(engine.second_entered.wait(), timeout=0.2)
-            assert not second_task.done()
-            engine.release_first.set()
-            await asyncio.wait_for(asyncio.gather(first_task, second_task), timeout=3)
+            ),
+        )
+        try:
+            await asyncio.wait_for(engine.both_entered.wait(), timeout=1)
+            assert engine.max_active == 2
+            engine.release.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=3)
         finally:
-            engine.release_first.set()
-            if second_task is None:
-                await _cancel_pending(first_task)
-            else:
-                await _cancel_pending(first_task, second_task)
+            engine.release.set()
+            await _cancel_pending(*tasks)
 
     assert engine.calls == 2
     for chat_session_id in committed_chat_fixture.session_ids:
         _assert_completed_pairs(await _messages(chat_session_id), pair_count=1)
+
+
+async def test_correction_committed_during_generation_rejects_stale_result(
+    committed_chat_fixture: CommittedChatFixture,
+) -> None:
+    chat_session_id = committed_chat_fixture.session_ids[0]
+    engine = CommitControlledEngine()
+    async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as send_db:
+        service = ChatService(PrescriptionRepository(send_db), ChatRepository(send_db), engine)
+        send_task = asyncio.create_task(
+            service.send_message(
+                user=committed_chat_fixture.user,
+                session_id=chat_session_id,
+                request=SendChatMessageRequest(content="정정과 경합하는 합성 질문"),
+            )
+        )
+        try:
+            await asyncio.wait_for(engine.first_entered.wait(), timeout=1)
+            async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as correction_db:
+                prescription_repo = PrescriptionRepository(correction_db)
+                prescription = await prescription_repo.get_owned_for_version_update(
+                    prescription_id=committed_chat_fixture.prescription_id,
+                    user_id=committed_chat_fixture.user.id,
+                )
+                assert prescription is not None
+                await prescription_repo.create_version(
+                    prescription=prescription,
+                    prescribed_date=date.today(),
+                    confirmed_at=datetime.now(UTC),
+                    medications=[{"medication_name": "정정된 합성약", "display_order": 1}],
+                )
+                await correction_db.commit()
+
+            engine.release_first.set()
+            with pytest.raises(ApiError) as captured:
+                await asyncio.wait_for(send_task, timeout=3)
+        finally:
+            engine.release_first.set()
+            await _cancel_pending(send_task)
+
+    assert captured.value.code == "PRESCRIPTION_VERSION_CONFLICT"
+    messages = await _messages(chat_session_id)
+    assert len(messages) == 2
+    assert messages[0].content == "정정과 경합하는 합성 질문"
+    assert messages[1].generation_status == ChatGenerationStatus.FAILED
+    assert messages[1].error_code == "PRESCRIPTION_VERSION_STALE"
+    assert (messages[1].content, messages[1].model_name, messages[1].prompt_version) == (None, None, None)
 
 
 async def test_two_same_session_requests_reflect_two_generation_delays_only_as_reference_behavior(

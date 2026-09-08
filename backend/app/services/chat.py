@@ -63,6 +63,28 @@ class ChatService:
         self._chat_repo = chat_repository
         self._history_context_enabled = history_context_enabled
 
+    async def _reject_stale_generation(
+        self,
+        *,
+        chat_session: ChatSession,
+        assistant_message: ChatMessage,
+        completed_at: datetime,
+    ) -> None:
+        if await self._chat_repo.lock_if_current_version(chat_session=chat_session):
+            return
+        await self._chat_repo.commit_failed_message_pair(
+            assistant_message,
+            error_code="PRESCRIPTION_VERSION_STALE",
+            error_message="처방 정보가 변경되어 생성 결과를 현재 결과로 사용할 수 없습니다.",
+            completed_at=completed_at,
+        )
+        raise ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_CONFLICT",
+            message="처방 정보가 변경되었습니다. 최신 처방으로 다시 질문해 주세요.",
+            details=[ErrorDetail(field="session_id", reason="ACTIVE_VERSION_MISMATCH")],
+        )
+
     @staticmethod
     def _select_history(
         pairs: list[tuple[ChatMessage, ChatMessage]],
@@ -303,6 +325,11 @@ class ChatService:
 
         assert result is not None
         completed_at = datetime.now(UTC)
+        await self._reject_stale_generation(
+            chat_session=chat_session,
+            assistant_message=assistant_message,
+            completed_at=completed_at,
+        )
         assistant_message = await self._chat_repo.mark_completed(
             assistant_message,
             content=result.content,
