@@ -256,7 +256,7 @@ Source/Snapshot 책임 경계:
 | `rag_source_operation` | endpoint 하위 operation의 stable provenance 단위와 수집 승인 상태를 보관 | Operation은 Snapshot 생성 범위이며 Runtime Bundle의 사용 버전 선택과 분리 |
 | `rag_source_snapshot` | 특정 operation 수집·정규화 결과의 불변 Snapshot과 checksum·version·record count를 보관 | `CURRENT`는 검증·최신성 상태이고 Runtime 활성 Snapshot 포인터가 아님 |
 | `rag_source_ingestion_run` | 수집/정규화 실행 시도, 재시도 scope, 성공/실패/NO_CHANGE 결과를 보관 | 실행 이력이며 성공이 곧 Runtime 사용 승인을 뜻하지 않음 |
-| `rag_source_snapshot_verification` | Snapshot 검증 결과를 append-only 이력으로 보관 | 검증 이력은 Runtime Bundle 승인 입력일 수 있지만 직접 활성화하지 않음 |
+| `rag_source_snapshot_verification` | Snapshot 검증 결과를 이력으로 보관하는 최소 구조를 제공 | DB 차원의 UPDATE/DELETE 방지와 publication 상태 전이는 #323에서 강제 |
 
 Downstream provenance 연결 기준:
 
@@ -264,10 +264,10 @@ Downstream provenance 연결 기준:
 | --- | --- | --- |
 | Source 원본 | `rag_source.source_code`, `owner_name`, `license_name`, `attribution_text` | Source 자체의 정적 출처·라이선스·표기 책임. 원문 payload 저장은 #165 Raw Artifact 상세 구조에서 분리 |
 | Endpoint | `rag_source_endpoint.source_id + endpoint_code` | Source 하위 API endpoint 식별. endpoint 승인·비활성 상태는 신규 수집 차단 입력이며 Snapshot 선택 기준은 아님 |
-| Operation | `rag_source_operation.endpoint_id + operation_code` | stable provenance operation 단위. Snapshot version unique와 수집 lock의 기준 |
+| Operation | `rag_source_operation.endpoint_id + operation_code` | stable provenance operation 단위. Snapshot version unique 기준이며, 수집 동시 실행 lock 기준과는 분리 |
 | Snapshot | `rag_source_snapshot.id`, 보조 표시값 `source_version`, checksum/version 필드 | 실제 Snapshot 특정은 ID 참조가 기준. `source_version` 단독 조회는 금지하고 operation과 함께만 사용 |
 | Ingestion Run | `operation_id + run_group_key + attempt_number`, nullable `snapshot_id` | 수집/정규화 실행 이력과 재시도 scope. 성공·NO_CHANGE·실패 기록이며 Runtime 활성화와 분리 |
-| Verification | `rag_source_snapshot_verification.snapshot_id`, `check_name`, `verification_result`, `verified_at` | Snapshot 검증 append-only 이력. 승인 입력으로 사용할 수 있으나 직접 Runtime 사용을 켜지 않음 |
+| Verification | `rag_source_snapshot_verification.snapshot_id`, `check_name`, `verification_result`, `verified_at` | Snapshot 검증 이력 저장 구조. append-only DB 강제와 DB-owned publication 상태 전이는 #323 범위 |
 | Catalog Product / Ingredient / Alias / Component | 각 행의 `source_snapshot_id`; Alias/Component는 대상 row와 같은 `source_snapshot_id` composite FK | Catalog 행은 Snapshot 단위 publication row다. 안정 Identity/Set/manifest 확장은 #166에서 별도 정렬 |
 | Candidate Index / Resolver 입력 | 안정 제품 tuple `code_system + canonical_code`, Candidate Index version/ref, Catalog manifest hash | 현재 Candidate는 tuple snapshot을 저장하고 `product_id` FK는 후속 연결. DB UUID를 공식 Identity로 사용하지 않음 |
 | Evaluation evidence | `source_snapshot_ref`, `candidate_index_ref`, dataset/manifest hash | Evaluation은 문자열 ref와 manifest hash로 재현성 근거를 보관한다. 실제 Evidence/Citation FK 전체 구조는 후속 PR 범위 |
@@ -275,6 +275,7 @@ Downstream provenance 연결 기준:
 주요 제약:
 
 - #164 최소 DB 기반의 Snapshot은 Source 전체가 아니라 Operation 단위 산출물로 둡니다. 따라서 version unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 공존할 수 있습니다.
+- #165의 동시 Acquisition lock은 `source_id` 단위입니다. 같은 Source의 서로 다른 Operation도 동시에 수집하지 않으며, Snapshot version unique 축과 수집 lock 축을 섞지 않습니다.
 - 안정적인 수집 Operation은 `source_code + endpoint_code + operation_code`로 식별합니다. Evidence provenance는 `source_version` 단독이 아니라 `source_snapshot_id` 같은 snapshot 참조로 Snapshot을 특정합니다. `source_version`은 사람이 확인할 수 있는 version 값입니다.
 - `rag_source_ingestion_run`은 정규 목표의 ingestion run과 normalization run을 합친 최소 실행 이력입니다. `NO_CHANGE` 재검증이 동일 Snapshot을 반복 참조할 수 있으므로 `snapshot_id` 전체 unique는 두지 않습니다.
 - 이 최소 모델은 `rag-db-schema` v1.47의 Source 단위 Snapshot과 분리된 ingestion/normalization run 모델을 대체하지 않습니다. 정규 목표로 수렴할 때는 별도 Decision/Contract Freeze와 migration·테스트를 함께 갱신합니다.
@@ -293,7 +294,7 @@ Snapshot verification 상태 의미:
 `QUARANTINED`는 현재 `RagSnapshotVerificationStatus` 값이 아닙니다. 격리 상태가 필요하면 Source ingestion 정책과 공개 게이트를 먼저 확정한 뒤 별도 Decision/Contract Freeze와 migration·테스트로 추가합니다.
 
 - `rag_source_snapshot`의 version, checksum, parser/normalization/canonicalization version, record count, 선행 snapshot 참조 등 불변 필드는 UPDATE할 수 없습니다.
-- `rag_source_snapshot` 행은 DELETE할 수 없습니다. 재검증 결과는 `rag_source_snapshot_verification`에 append하고, 잘못된 snapshot은 새 snapshot 또는 forward-fix migration으로 정정합니다.
+- `rag_source_snapshot` 행은 DELETE할 수 없습니다. 재검증 결과는 `rag_source_snapshot_verification`에 새 이력으로 기록하고, 잘못된 snapshot은 새 snapshot 또는 forward-fix migration으로 정정합니다. Verification row의 DB 차원 UPDATE/DELETE 방지는 #323에서 구현합니다.
 - Alias와 Component는 product/ingredient와 같은 `source_snapshot_id`를 가져야 하며, composite FK로 DB에서 강제합니다.
 - `rejected_record_count`는 `record_count`보다 클 수 없습니다.
 - `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
@@ -308,7 +309,7 @@ Ingestion Run / Receipt 기준:
 | 성공 이력 | `run_status=SUCCEEDED`, nullable `snapshot_id`, finished metadata | 수집·정규화가 Snapshot으로 귀결된 실행 기록. Runtime 활성화는 아님 |
 | 부분 성공 이력 | `run_status=SUCCEEDED_WITH_REJECTIONS` | 거부 record가 있었던 실행 기록. 자동 Runtime 편입으로 해석하지 않음 |
 | 실패 이력 | `run_status=FAILED`, `failure_code`, `failure_message` | Snapshot 미생성 또는 검증 실패 실행을 추적. 실패 원문 payload는 저장하지 않음 |
-| 검증 이력 | `rag_source_snapshot_verification`의 `verification_result` | Snapshot 검증 결과를 append-only로 보관하며 수집 실행 record와 구분 |
+| 검증 이력 | `rag_source_snapshot_verification`의 `verification_result` | Snapshot 검증 결과 저장 구조를 수집 실행 record와 구분. append-only DB 강제는 #323 범위 |
 | raw manifest checksum | `raw_manifest_checksum` | Raw Artifact 메타데이터 집합의 결정적 checksum. 원본 바이트/파일 목록 무결성 기준 |
 | canonical checksum | `canonical_checksum` | 성공적으로 해석된 전체 record의 canonical 내용 checksum. envelope 제외·정렬·정규화 규칙은 Operation 계약과 `canonicalization_spec_version`이 고정 |
 
