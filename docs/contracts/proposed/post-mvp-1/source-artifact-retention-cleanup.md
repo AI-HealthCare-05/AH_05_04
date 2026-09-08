@@ -7,7 +7,7 @@
 - 관련 작업: [#335](https://github.com/AI-HealthCare-05/AH_05_04/issues/335), [#165](https://github.com/AI-HealthCare-05/AH_05_04/issues/165), [#323](https://github.com/AI-HealthCare-05/AH_05_04/pull/323), [#166](https://github.com/AI-HealthCare-05/AH_05_04/issues/166)
 - 제안 기록: [Source 보존·삭제 정책 초안 기록](../../../governance/decisions/2026-09-08-source-artifact-cleanup-proposal.md)
 - 정책 버전 제안: `source-artifact-retention-v1` (문서 승인 전 제안 식별자).
-- 2026-09-08: [가빈님 정책 의견](https://github.com/AI-HealthCare-05/AH_05_04/issues/335#issuecomment-5580028895)과 은영님·현우님 기술 의견을 반영했다. PM 답변 대기 상태는 해소됐으며, 통합 문서의 DB·Source 검토와 후속 담당·이슈 연결이 남아 있다.
+- 2026-09-08: [가빈님 정책 의견](https://github.com/AI-HealthCare-05/AH_05_04/issues/335#issuecomment-5580028895)과 은영님·현우님 기술 의견을 반영했다. PM 답변 대기 상태는 해소됐으며, 후속 구현은 #347에 연결했고 김지혜가 담당한다. 통합 문서의 DB·Source 검토와 운영 실행 인계는 남아 있다.
 
 이번 PR은 정책 문서 작업이다. 정기 자동 삭제는 구현 범위에서 제외하고, 필요한 최소 후속 작업은 후보 산출·일회성 수동 정리·감사 기록으로 제한한다. 코드·migration·삭제 기능·운영 설정은 변경하지 않는다. 정책 반영은 #323 병합을 막지 않으며 실제 Source Runtime 활성화 승인도 아니다.
 
@@ -65,7 +65,7 @@ Source Artifact는 RAW_RESPONSE·REJECTS를 포괄하는 표현이며 별도의 
 | DB·보안 검토 | 송은영 (`@phina-io`) | 최종 참조 판정·감사·접근 통제 검토 |
 | Source·provenance 검토 | 정현우 (`@ceohwj`) | 보존 기준 검토. 매 배치 실행/승인 역할 아님 |
 | 삭제 실행 | Backend·운영 담당 | 실행할 개인과 종료 후 인계 담당은 후속 이슈/배치에 지정 |
-| 정책 정리 | 김지혜 (`@Jye-rookie`) | 코드 구현 담당으로 자동 지정하지 않음 |
+| 정책 정리·후속 코드 구현 | 김지혜 (`@Jye-rookie`) | #347 구현 담당. 실제 운영 삭제 실행자는 별도 지정 |
 
 아래 항목은 PM 답변을 다시 기다릴 정책 질문이 아니라 후속 구현·실행 전에 채울 인계 정보다.
 
@@ -207,15 +207,15 @@ DB와 객체 저장소는 하나의 transaction이 아니다. 삭제된 파일�
 | 승인·감사 | Source cleanup 전용 기능 없음 | 고정 배치 승인, 의도·결과 이력, 비특권 접근 통제 |
 | 삭제·복구 | cleanup 포트 없음 | 저장소별 삭제 의미·실패 복구·재시도 |
 
-후속 이슈는 정책과 구현 책임이 정리된 뒤 제목·범위를 구현 담당과 먼저 공유하고 생성한다. migration 테이블명·컬럼·enum·함수 signature는 이 문서에서 확정하지 않는다.
+후속 구현은 [#347 Source Artifact 일회성 수동 정리·감사 구현](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)에서 김지혜 (`@Jye-rookie`)가 담당한다. migration 테이블명·컬럼·enum·함수 signature는 이 문서에서 확정하지 않는다.
 
 ## 최소 후속 이슈와 완료 기준
 
-후속 이슈 제목 제안: **[Track F][Source] Source Artifact 일회성 수동 정리·감사 구현 (#335 후속)**
+후속 이슈: [#347 Source Artifact 일회성 수동 정리·감사 구현](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)
 
 범위: 읽기 전용 후보 산출, 30일·전체 참조 검사, 고정 배치와 PM 승인 인계, 실행 직전 재확인 및 경합 차단, Local 합성 객체의 수동 삭제·append-only 감사·실패 재시도 검증, 서비스 종료 작업 runbook. 정기 자동 삭제·운영 S3 실행·Runtime 활성화·OCR/Guide/Chat 삭제는 제외한다. 실제 사용할 저장소 adapter는 실행 환경과 담당을 지정한 뒤 결정한다.
 
-이슈 생성 전 제목·범위를 사용자에게 공유한다. 아직 생성하지 않았으므로 실제 번호나 담당자 확정으로 표현하지 않는다. 생성 시 #335·#165·#323에 연결하고 Backend·운영 실행자와 코드 구현 담당을 지정한다.
+#347은 사용자가 생성했으며 구현 담당은 김지혜 (`@Jye-rookie`)다. DB·보안 검토는 송은영, Source·provenance 검토는 정현우, 정책·배치 승인은 권가빈이 맡는다. 공유 DB migration은 은영님과 범위를 협의한다. 실제 Backend·운영 삭제 실행자와 종료 후 감사 인계는 실행 전에 별도 지정한다. #165·#323의 인계 댓글은 게시 전 초안으로 구분한다.
 
 | #335 완료 기준 | 이번 문서에서 처리 | 남은 일 |
 | --- | --- | --- |
@@ -225,7 +225,7 @@ DB와 객체 저장소는 하나의 transaction이 아니다. 삭제된 파일�
 | DB·Source 검토 | 두 검토 의견과 PM 의견 대조 완료 | 통합안의 최종 검토 |
 | 감사 기록 범위·보존 | 최소 필드·append-only·provenance 연동 보존 반영 | 종료 후 보관·관리·종료 기준 인계 |
 | 정본·결정 근거 | 본문·index·세 댓글·제안 기록 연결 | 승인 시 상태 승격 |
-| 후속 이슈·담당 | 최소 이슈 초안 준비 | 생성·번호 연결·담당 지정 |
+| 후속 이슈·담당 | #347 연결, 구현 김지혜 지정 | 운영 실행자·감사 인계는 #347에서 지정 |
 | #165·#323 인계 | 붙여넣기용 댓글 초안 준비 | 사용자 게시 |
 
 문서 작성 단계는 PM 의견 반영과 완료 기준 점검까지 마쳤다. 위 연결·검토가 남아 있으므로 #335는 Open으로 유지한다. 자동 삭제·Source Runtime은 계속 DISABLED이며 정책 완료만으로 활성화하지 않는다.
