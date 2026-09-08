@@ -1216,15 +1216,17 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
    Trigram·`ts_rank_cd` 순위는 PostgreSQL Adapter가 versioned lexical receipt로 반환한다.
 5. **정규 경계 반영:** RFC 8785 JCS serializer와 hash-domain golden vector, 유형별
    `evidence-bridge-content@1` projection 및 `INTERACTION_RULE.evidence_role`을 포함한 정규 Evidence provenance,
-   Snapshot `canonical_checksum` exact-match, Source metadata와 결속된 Production `source_version`, terminal
-   `retrieval_execution_status`,
+   Snapshot `canonical_checksum` exact-match, API·Internal `source_version` hash suffix와 Snapshot checksum의
+   exact-match, Source metadata와 결속된 Production `source_version`, terminal `retrieval_execution_status`,
    `retrieval_run.status` lifecycle과 diagnostic을 포함한 Safety finalizer 변환,
    `hybrid_retrieve` Node ID, Runtime identity와 Evaluation bridge ID의 분리 검증을 구현한다.
 6. **권위적 실행 결속:** PostgreSQL hybrid retrieval이 준비된 뒤 별도 DB·Safety 범위에서 authoritative
    Retrieval Run receipt, locator 검증과 Gate origin을 결속한다.
 7. **Evaluation 연결:** bridge producer가 Runtime identity를 Evaluation ID에 결속한 뒤 runner가 Runtime
    receipt를 `RET-L -> RET-D -> RET-H -> RET-HR`과 연결하고 Dataset·Index·configuration version/hash를
-   exact-match한다. Bridge와 runner는 SQL ranking을 재구현하지 않는다.
+   exact-match한다. 승인된 새 `source_version`은 내용 hash가 같아도 새 stable key·`evidence_ref_id`·mapping
+   manifest로 재평가하고, 새 Snapshot·version이 없는 `NO_CHANGE`만 기존 결속을 유지한다. Bridge와 runner는
+   SQL ranking을 재구현하지 않는다.
 
 ### Production 후속 완료 주장 차단 조건
 
@@ -1235,6 +1237,7 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
 - PostgreSQL Adapter가 `ts_rank_cd`를 포함한 Lexical configuration receipt를 재현하지 못함
 - Production provenance가 Snapshot `canonical_checksum`과 exact-match하지 않거나 정확히 하나의 Snapshot
   Member를 가리키지 않음
+- API·Internal `source_version` hash suffix가 해당 Snapshot `canonical_checksum`과 exact-match하지 않음
 - ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
 - Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
 - Production `source_version`을 Source metadata와 함께 검증하지 않거나 Runtime identity와 Evaluation bridge

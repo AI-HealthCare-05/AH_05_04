@@ -105,7 +105,7 @@ DEPENDENCY_ERROR | VALIDATION_ERROR`다. `retrieval_run.status`는 실행 중 `R
 | Retrieval·Gate·후속 결과 | Safety finalizer 결과 |
 | --- | --- |
 | Retrieval `SUCCEEDED/CANDIDATES_RERANKED` + Evidence `SUFFICIENT` + 생성·검증 성공 | `execution_status=SUCCEEDED`; 별도 Release Gate가 공개 여부 결정 |
-| Retrieval `SUCCEEDED/NO_HITS`, 승인 근거 없음, Retrieval 근거 부족 | `execution_status=NO_RESULT`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE` |
+| Retrieval `SUCCEEDED/NO_HITS`, 승인 근거 없음, Retrieval 근거 부족 | `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE` |
 | Source version 충돌 | `execution_status=NO_RESULT`, `evidence_status=CONFLICTED`, `release_decision=REJECTED`, `fallback=CONFLICTING_EVIDENCE` |
 | Source TTL 만료 | `execution_status=NO_RESULT`, `evidence_status=STALE`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE` |
 | 지원 범위 밖 또는 사용자 Context에 미적용 | 승인 policy가 `execution_status=SUCCEEDED`, `release_decision=LIMITED`와 Claim 생략·한계 안내를 결정할 수 있음 |
@@ -123,8 +123,12 @@ Production `source_version` 전체 값은 1~200자, NFC이며 공백·제어문�
 | 조건 | 허용 형식 |
 | --- | --- |
 | 제공자가 불변 version을 제공 | `external:<nonempty-version>` |
-| `source_type=API`이고 외부 불변 version이 없음 | `api:<RFC3339 UTC 고정 6자리 소수초>:<64-lower-hex>` |
-| `source_type=INTERNAL_CURATED_DATA` | `internal:<승인 Git tag 또는 commit과 Fixture Manifest에서 파생한 fixture_version>:<64-lower-hex>` |
+| `source_type=API`이고 외부 불변 version이 없음 | `api:<RFC3339 UTC 고정 6자리 소수초>:<canonical_checksum 64-lower-hex>` |
+| `source_type=INTERNAL_CURATED_DATA` | `internal:<승인 Git tag 또는 commit과 Fixture Manifest에서 파생한 fixture_version>:<canonical_checksum 64-lower-hex>` |
+
+API·Internal 형식의 hash suffix는 같은 `source_snapshot_id`의 `canonical_checksum`과 exact-match해야 하며,
+Source producer와 Production Retrieval Adapter가 각각 이 결속을 검증한다. 형식만 유효한 다른 hash는
+`SOURCE_VERSION_CONFLICT`로 fail-closed한다.
 
 Synthetic marker는 테스트 전용 namespace에서만 허용한다. Evaluation bridge의 네 stable ID는
 `^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$`를 따르고 `source_version`과
@@ -132,6 +136,11 @@ Synthetic marker는 테스트 전용 namespace에서만 허용한다. Evaluation
 각각 검증하므로 `1.0.0` 같은 Evaluation synthetic token을 Production Source version으로 오인하지 않는다.
 Runtime `locator`는 일반 Evidence Mapping의 `locator`, Knowledge Index Bridge의 `source_locator`에 값 변경 없이
 투영한다.
+
+승인된 새 `source_version`은 `canonical_checksum`이나 bridge `content_sha256`이 이전과 같아도 새 Runtime
+identity다. Bridge producer는 stable key와 `evidence_ref_id`를 새로 만들고 새
+`evidence-mapping-manifest.json`에 결속하며, 이전 Dataset·Run의 mapping을 이어 쓰지 않고 재평가한다. 같은
+내용 재수집이 `NO_CHANGE`로 끝나 새 Snapshot과 `source_version`을 만들지 않은 경우에는 재결속하지 않는다.
 
 ## 정규 근거와 현재 divergence
 

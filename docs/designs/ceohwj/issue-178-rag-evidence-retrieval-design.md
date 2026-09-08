@@ -311,7 +311,9 @@ Kernel은 Safety Result v2의 `evidence_status` 또는 `release_decision`을 생
 | `DEPENDENCY_ERROR` | query binding Receipt·dependency와 나머지 search·rerank 오류 |
 
 `NO_HITS`는 Evidence가 불충분하다는 권위적 판정이 아니다. 후속 Evidence Gate가 자신의 승인 policy와
-Safety v2 계약에 따라 `execution_status`와 `evidence_status`를 별도로 결정한다.
+Safety v2 계약에 따라 `execution_status`와 `evidence_status`를 별도로 결정한다. 승인 근거가 없는
+`SUCCEEDED/NO_HITS` 조합은 finalizer에서 `execution_status=NO_RESULT`,
+`evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE`로 변환한다.
 
 ## Port 실행 Receipt
 
@@ -455,11 +457,18 @@ Evidence Gate·실패 원인을 포함한 Safety finalizer 변환은 `PD-315-202
 
 Production `source_version`은 Source가 제공한 불변 version의 존재 여부와 `source_type`에 결속한다.
 외부 불변 version은 `external:<version>`, 외부 version이 없는 API는
-`api:<RFC3339 UTC 고정 6자리 소수초>:<64-lower-hex>`, `INTERNAL_CURATED_DATA`는 승인 Git tag 또는 commit과
-Fixture Manifest에서 파생한 `internal:<fixture-version>:<64-lower-hex>`를 사용한다. Source 생성 경계와
-Production Adapter가 metadata와 형식을 함께 검증하며 synthetic marker는 테스트 namespace에서만 허용한다.
+`api:<RFC3339 UTC 고정 6자리 소수초>:<canonical_checksum 64-lower-hex>`,
+`INTERNAL_CURATED_DATA`는 승인 Git tag 또는 commit과 Fixture Manifest에서 파생한
+`internal:<fixture-version>:<canonical_checksum 64-lower-hex>`를 사용한다. Source 생성 경계와
+Production Adapter가 metadata와 형식을 함께 검증하고, API·Internal의 hash suffix를 해당 Snapshot
+`canonical_checksum`과 exact-match한다. 형식만 유효한 다른 hash는 `SOURCE_VERSION_CONFLICT`로 닫으며
+synthetic marker는 테스트 namespace에서만 허용한다.
 현재 Source ingestion의 생산·길이·외부 Version 보존 경계는 #362가 소유하며 #178 Production Adapter의
 fail-closed 검증보다 먼저 완료돼야 한다.
+
+승인된 새 `source_version`은 같은 `canonical_checksum`·bridge `content_sha256`을 가져도 새 Runtime identity와
+새 Evaluation bridge ID·mapping manifest를 만들고 재평가한다. `NO_CHANGE`로 새 Snapshot·version이 생성되지
+않은 재수집은 기존 결속을 유지한다.
 
 각 stage의 rank는 1부터 시작하는 중복 없는 연속 정수여야 하며 hit 수는 해당 stage limit 이하여야 한다.
 같은 `evidence_key`는 한 stage에서 한 번만 나타날 수 있다. lexical과 dense에 같은 key가 등장할 수 있지만

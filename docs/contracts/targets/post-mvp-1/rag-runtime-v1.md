@@ -175,8 +175,13 @@ Guide의 Citation Finalizer도 `claim_citation_validator`와 `release_gate` 사�
 - 내부 Evidence provenance는 `source_snapshot_id`, 해당 Snapshot의 `canonical_checksum`과 정확히 하나의
   Endpoint/Operation 또는 Artifact Member를 함께 보존·검증한다. `canonical_checksum`은 bridge content hash
   preimage가 아니라 당시 Snapshot 내용 동일성 확인 값이다.
+- `api:`·`internal:` Production `source_version`의 hash suffix는 해당 `source_snapshot_id`의
+  `canonical_checksum`과 exact-match해야 한다. 형식만 유효한 다른 hash는 Source version 충돌로 닫는다.
 - `pg_trgm`·Dense 검색과 rerank 구현은 versioned configuration으로 재현한다.
 - 내부 Top-K·score는 공개 DTO에 노출하지 않는다.
+- 승인 근거가 없는 Retrieval `SUCCEEDED/NO_HITS`는 Safety finalizer에서
+  `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`,
+  `fallback=NO_APPROVED_EVIDENCE`로 변환한다.
 - 의료 Claim과 처방약 기반 Guideline Claim은 승인된 Source version과 locator를 가져야 한다.
 - 근거 없음·상충·Source 비활성·만료·Citation 불일치에서는 생성 내용을 폐기하고 승인 fallback만 저장한다.
 
