@@ -1237,7 +1237,9 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
 - PostgreSQL Adapter가 `ts_rank_cd`를 포함한 Lexical configuration receipt를 재현하지 못함
 - Production provenance가 Snapshot `canonical_checksum`과 exact-match하지 않거나 정확히 하나의 Snapshot
   Member를 가리키지 않음
-- API·Internal `source_version` hash suffix가 해당 Snapshot `canonical_checksum`과 exact-match하지 않음
+- API·Internal `source_version` hash suffix가 해당 Snapshot `canonical_checksum`과 exact-match하지 않는데
+  Retrieval `VALIDATION_ERROR`와 Safety `VALIDATION_FAILED`로 닫지 않거나 Source producer의
+  `SOURCE_VERSION_CONFLICT`로 오분류함
 - ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
 - Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
 - Production `source_version`을 Source metadata와 함께 검증하지 않거나 Runtime identity와 Evaluation bridge

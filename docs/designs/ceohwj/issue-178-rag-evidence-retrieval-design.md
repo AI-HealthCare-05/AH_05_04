@@ -461,8 +461,11 @@ Production `source_version`은 Source가 제공한 불변 version의 존재 여�
 `INTERNAL_CURATED_DATA`는 승인 Git tag 또는 commit과 Fixture Manifest에서 파생한
 `internal:<fixture-version>:<canonical_checksum 64-lower-hex>`를 사용한다. Source 생성 경계와
 Production Adapter가 metadata와 형식을 함께 검증하고, API·Internal의 hash suffix를 해당 Snapshot
-`canonical_checksum`과 exact-match한다. 형식만 유효한 다른 hash는 `SOURCE_VERSION_CONFLICT`로 닫으며
-synthetic marker는 테스트 namespace에서만 허용한다.
+`canonical_checksum`과 exact-match한다. Source producer의 수집 시점 불일치는 Snapshot 생성 전
+`SOURCE_VERSION_CONFLICT`로 기록하지만, Production Adapter가 저장된 suffix 불일치를 발견하면 detached
+provenance 검증 실패인 `VALIDATION_ERROR`로 닫고 Safety finalizer가 `VALIDATION_FAILED`로 변환한다. Adapter
+검증 실패를 `CONFLICTED/CONFLICTING_EVIDENCE`로 분류하지 않는다. synthetic marker는 테스트 namespace에서만
+허용한다.
 현재 Source ingestion의 생산·길이·외부 Version 보존 경계는 #362가 소유하며 #178 Production Adapter의
 fail-closed 검증보다 먼저 완료돼야 한다.
 

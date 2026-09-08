@@ -106,7 +106,7 @@ DEPENDENCY_ERROR | VALIDATION_ERROR`다. `retrieval_run.status`는 실행 중 `R
 | --- | --- |
 | Retrieval `SUCCEEDED/CANDIDATES_RERANKED` + Evidence `SUFFICIENT` + 생성·검증 성공 | `execution_status=SUCCEEDED`; 별도 Release Gate가 공개 여부 결정 |
 | Retrieval `SUCCEEDED/NO_HITS`, 승인 근거 없음, Retrieval 근거 부족 | `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE` |
-| Source version 충돌 | `execution_status=NO_RESULT`, `evidence_status=CONFLICTED`, `release_decision=REJECTED`, `fallback=CONFLICTING_EVIDENCE` |
+| Source producer가 기록한 `SOURCE_VERSION_CONFLICT` | `execution_status=NO_RESULT`, `evidence_status=CONFLICTED`, `release_decision=REJECTED`, `fallback=CONFLICTING_EVIDENCE` |
 | Source TTL 만료 | `execution_status=NO_RESULT`, `evidence_status=STALE`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE` |
 | 지원 범위 밖 또는 사용자 Context에 미적용 | 승인 policy가 `execution_status=SUCCEEDED`, `release_decision=LIMITED`와 Claim 생략·한계 안내를 결정할 수 있음 |
 | Retrieval `TIMED_OUT` | `execution_status=TIMED_OUT`, `release_decision=REJECTED`, 승인 timeout fallback |
@@ -127,8 +127,12 @@ Production `source_version` 전체 값은 1~200자, NFC이며 공백·제어문�
 | `source_type=INTERNAL_CURATED_DATA` | `internal:<승인 Git tag 또는 commit과 Fixture Manifest에서 파생한 fixture_version>:<canonical_checksum 64-lower-hex>` |
 
 API·Internal 형식의 hash suffix는 같은 `source_snapshot_id`의 `canonical_checksum`과 exact-match해야 하며,
-Source producer와 Production Retrieval Adapter가 각각 이 결속을 검증한다. 형식만 유효한 다른 hash는
-`SOURCE_VERSION_CONFLICT`로 fail-closed한다.
+Source producer와 Production Retrieval Adapter가 각각 이 결속을 검증한다. Source producer의 수집 시점
+불일치는 Snapshot을 생성하지 않고 기존 `SOURCE_VERSION_CONFLICT`로 기록한다. 이미 저장된 Snapshot을 읽는
+Production Retrieval Adapter에서 suffix와 `canonical_checksum`이 다르면 detached 또는 변조된 provenance
+결속 실패이므로 `retrieval_execution_status=VALIDATION_ERROR`로 닫고 Safety finalizer가
+`execution_status=VALIDATION_ERROR`, `release_decision=REJECTED`, `fallback=VALIDATION_FAILED`로 변환한다.
+Adapter 검증 실패를 `evidence_status=CONFLICTED` 또는 `CONFLICTING_EVIDENCE`로 분류하지 않는다.
 
 Synthetic marker는 테스트 전용 namespace에서만 허용한다. Evaluation bridge의 네 stable ID는
 `^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$`를 따르고 `source_version`과
