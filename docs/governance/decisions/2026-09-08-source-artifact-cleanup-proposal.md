@@ -1,11 +1,11 @@
-# Source Artifact 보존·삭제 정책 제안 기록 (#335)
+# Source Artifact 보존·삭제 정책 검토 기록 (#335)
 
-상태: Proposed / 최종 결정 전. 이 기록은 승인 Decision이나 새 Contract Freeze가 아니다.
+상태: Proposed / PM 의견 반영·통합 검토 대상. 실제 삭제 승인이나 새 Contract Freeze가 아니다.
 
-#165에서 분리한 #335의 보존·삭제 정책 논의를 문서로 정리한다. 은영님은 참조 판정·감사·Source 전용 책임 경계를, 현우님은 공유 객체·provenance 보호·삭제 직전 재확인·실패 재시도 방향을 제시했다. 구체 기간·기산점·종료 후 관리·승인 담당은 아직 확정되지 않았다.
+[가빈님 정책 의견](https://github.com/AI-HealthCare-05/AH_05_04/issues/335#issuecomment-5580028895)을 반영해 미참조 객체 생성 후 30일 유예, 전체 참조 0건, 운영 중 참조 객체 보존, 종료 시 일회성 수동 정리, DB·보안 검토 후 PM 배치 승인, append-only 감사와 실패 대상만 재시도를 기록한다. 정기 자동 삭제는 이번 구현 범위에서 제외한다.
 
-정책 초안의 유일한 본문은 [Source Artifact·REJECTS 보존·삭제 정책](../../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)이며, 댓글 근거·미확정 항목·설계 제안·검증 명세를 그 문서에서 관리한다.
+[은영님 DB·보안 의견](https://github.com/AI-HealthCare-05/AH_05_04/issues/335#issuecomment-5579761899), [현우님 Source 의견](https://github.com/AI-HealthCare-05/AH_05_04/issues/335#issuecomment-5579812614)과의 통합 본문은 [Source Artifact·REJECTS 정책](../../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md) 한 곳에서 관리한다. 제안 정책 식별자는 `source-artifact-retention-v1`이다. 최종 승인 후 본문을 targets로 이동하고 index·인계 링크를 갱신한다. Current 구현으로 승격하지 않는다.
 
-작성 김지혜, 정책 결정 권가빈, DB·보안 검토 송은영, Source 계약 검토 정현우. 실제 코드 구현자·삭제 실행자·배치 승인자는 자동 지정하지 않는다.
+정책·배치 승인 권가빈, DB·보안 검토 송은영, Source 검토 정현우, 문서 작성 김지혜. 삭제 실행 역할은 Backend·운영이며 실제 실행자·코드 구현 담당과 종료 후 감사 인계는 후속 이슈에서 지정한다.
 
-문서 PR은 #335를 종료하지 않으며 자동 삭제·Source Runtime은 비활성을 유지한다. 필요한 코드·운영 후속 이슈는 정책/책임 확정 후 제목과 범위를 먼저 공유한다. 최종 합의 시 결정 근거를 반영하고 저장소 문서 권위 규칙에 따라 상태를 갱신한다.
+#323 병합에 대한 추가 정책 blocker가 아니며, 실제 Source Runtime 활성화 승인이 아니다. 자동 삭제·Runtime은 DISABLED로 유지한다. 최소 수동 정리·감사 후속 이슈는 제목·범위를 사용자에게 먼저 공유한 뒤 생성한다. 아직 생성되지 않았고 #335 종료 조건도 아직 모두 충족되지 않았다.
