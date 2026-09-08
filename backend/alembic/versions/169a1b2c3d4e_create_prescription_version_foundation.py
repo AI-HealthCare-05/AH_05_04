@@ -1,7 +1,7 @@
 """create prescription version foundation
 
 Revision ID: 169a1b2c3d4e
-Revises: 164f3a2b1c0d
+Revises: 164a9c8e7d6f
 Create Date: 2026-09-07
 
 This is the Expand slice for Issue #169. It adds only schema and ORM support;
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "169a1b2c3d4e"
-down_revision: str | Sequence[str] | None = "164f3a2b1c0d"
+down_revision: str | Sequence[str] | None = "164a9c8e7d6f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

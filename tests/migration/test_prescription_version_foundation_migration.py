@@ -21,7 +21,7 @@ from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRESCRIPTION_VERSION_REVISION = "169a1b2c3d4e"
-PRESCRIPTION_VERSION_BASE_REVISION = "164f3a2b1c0d"
+PRESCRIPTION_VERSION_BASE_REVISION = "164a9c8e7d6f"
 
 
 def create_alembic_config() -> Config:
