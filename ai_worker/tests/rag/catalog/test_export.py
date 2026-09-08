@@ -89,7 +89,7 @@ def test_manifest_binds_counts_sources_and_export_checksum() -> None:
     assert manifest["export_checksum"] == hashlib.sha256(artifacts.catalog_jsonl).hexdigest()
     assert manifest["catalog_manifest_hash"] == artifacts.catalog.catalog_manifest_hash
     assert artifacts.catalog.catalog_manifest_hash == (
-        "d916588366a092479500bd4d68debfb58be6322b31cd07fcb29b0c04052b6b06"
+        "457dc3c8a0288fab4968fef23436bd3c4ce082312b00a8e414ee37a9437099df"
     )
     assert artifacts.export_checksum == ("c23811e1cf735c3c2f82b270f1447beb417798aa9f5fd2e847e269e7be0f3cfe")
 

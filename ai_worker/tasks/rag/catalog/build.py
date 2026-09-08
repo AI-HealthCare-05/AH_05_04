@@ -45,20 +45,27 @@ class CatalogProductInput:
 
 
 @dataclass(frozen=True, slots=True)
+class CatalogIngredientInput:
+    source_snapshot_id: str
+    source_record_key: str
+    code_system: str
+    canonical_code: str
+    ingredient_name: str
+    status: CandidateRecordStatus = CandidateRecordStatus.ACTIVE
+
+
+@dataclass(frozen=True, slots=True)
 class CatalogComponentInput:
     source_snapshot_id: str
-    ingredient_source_record_key: str
     product_code_system: str
     product_canonical_code: str
     ingredient_code_system: str
     ingredient_canonical_code: str
-    ingredient_name: str
     component_role: CatalogComponentRole
     component_order: int
     strength_value: str
     strength_unit: str
     release_profile: str | None = None
-    ingredient_status: CandidateRecordStatus = CandidateRecordStatus.ACTIVE
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,10 +191,10 @@ def _product(input_record: CatalogProductInput) -> CatalogProduct:
     )
 
 
-def _ingredient(input_record: CatalogComponentInput) -> CatalogIngredient:
+def _ingredient(input_record: CatalogIngredientInput) -> CatalogIngredient:
     source_record_key = require_official_identity_text(
-        input_record.ingredient_source_record_key,
-        field_name="ingredient_source_record_key",
+        input_record.source_record_key,
+        field_name="source_record_key",
     )
     snapshot_id = require_official_identity_text(
         input_record.source_snapshot_id,
@@ -195,8 +202,8 @@ def _ingredient(input_record: CatalogComponentInput) -> CatalogIngredient:
     )
     identity = _identity(
         entity_type=CandidateEntityType.INGREDIENT,
-        code_system=input_record.ingredient_code_system,
-        canonical_code=input_record.ingredient_canonical_code,
+        code_system=input_record.code_system,
+        canonical_code=input_record.canonical_code,
     )
     ingredient_name = normalize_catalog_text(input_record.ingredient_name, field_name="ingredient_name")
     return CatalogIngredient(
@@ -213,7 +220,7 @@ def _ingredient(input_record: CatalogComponentInput) -> CatalogIngredient:
         normalized_ingredient_name=ingredient_name.normalized_value,
         source_snapshot_id=snapshot_id,
         normalization_version=CATALOG_NORMALIZATION_VERSION,
-        status=input_record.ingredient_status,
+        status=input_record.status,
     )
 
 
@@ -346,14 +353,9 @@ def _alias_entry(alias: CatalogAlias, *, product: CatalogProduct) -> CatalogSear
     )
 
 
-def build_catalog_members(
-    *,
+def _product_registry(
     products: tuple[CatalogProductInput, ...],
-    components: tuple[CatalogComponentInput, ...],
-    aliases: tuple[CatalogAliasInput, ...],
-) -> CatalogMembers:
-    """입력 순서를 보존하면서 정확히 같은 행만 중복 제거해 Catalog 구성원을 만듭니다."""
-
+) -> tuple[dict[CatalogProduct, None], dict[tuple[str, ProductIdentity], CatalogProduct]]:
     catalog_products: dict[CatalogProduct, None] = {}
     product_by_identity: dict[tuple[str, ProductIdentity], CatalogProduct] = {}
     for product_input in products:
@@ -366,9 +368,35 @@ def build_catalog_members(
             catalog_product,
         )
 
+    return catalog_products, product_by_identity
+
+
+def _ingredient_registry(
+    ingredients: tuple[CatalogIngredientInput, ...],
+) -> tuple[dict[CatalogIngredient, None], dict[tuple[str, ProductIdentity], CatalogIngredient]]:
     catalog_ingredients: dict[CatalogIngredient, None] = {}
-    catalog_components: dict[CatalogComponent, None] = {}
     ingredient_by_identity: dict[tuple[str, ProductIdentity], CatalogIngredient] = {}
+    for ingredient_input in ingredients:
+        if _is_hira_code_system(ingredient_input.code_system):
+            continue
+        ingredient = _ingredient(ingredient_input)
+        _append_exact_deduplicated(catalog_ingredients, ingredient)
+        ingredient_by_identity.setdefault((ingredient.source_snapshot_id, ingredient.identity), ingredient)
+    return catalog_ingredients, ingredient_by_identity
+
+
+def build_catalog_members(
+    *,
+    products: tuple[CatalogProductInput, ...],
+    ingredients: tuple[CatalogIngredientInput, ...] = (),
+    components: tuple[CatalogComponentInput, ...],
+    aliases: tuple[CatalogAliasInput, ...],
+) -> CatalogMembers:
+    """입력 순서를 보존하면서 정확히 같은 행만 중복 제거해 Catalog 구성원을 만듭니다."""
+
+    catalog_products, product_by_identity = _product_registry(products)
+    catalog_ingredients, ingredient_by_identity = _ingredient_registry(ingredients)
+    catalog_components: dict[CatalogComponent, None] = {}
     for component_input in components:
         if _is_hira_code_system(component_input.product_code_system) or _is_hira_code_system(
             component_input.ingredient_code_system
@@ -382,12 +410,14 @@ def build_catalog_members(
         component_product = product_by_identity.get((component_input.source_snapshot_id, product_identity))
         if component_product is None:
             raise CatalogMappingError("COMPONENT_PRODUCT_NOT_FOUND", ("components.product_identity",))
-        component_ingredient = _ingredient(component_input)
-        _append_exact_deduplicated(catalog_ingredients, component_ingredient)
-        ingredient_by_identity.setdefault(
-            (component_ingredient.source_snapshot_id, component_ingredient.identity),
-            component_ingredient,
+        ingredient_identity = _identity(
+            entity_type=CandidateEntityType.INGREDIENT,
+            code_system=component_input.ingredient_code_system,
+            canonical_code=component_input.ingredient_canonical_code,
         )
+        component_ingredient = ingredient_by_identity.get((component_input.source_snapshot_id, ingredient_identity))
+        if component_ingredient is None:
+            raise CatalogMappingError("COMPONENT_INGREDIENT_NOT_FOUND", ("components.ingredient_identity",))
         _append_exact_deduplicated(
             catalog_components,
             _component(
@@ -402,6 +432,7 @@ def build_catalog_members(
     ]
     seen_search_entries = set(search_entries)
     catalog_aliases: dict[CatalogAlias, None] = {}
+    alias_entries: dict[tuple[str, str], CatalogSearchEntry] = {}
     for alias_input in aliases:
         if _is_hira_code_system(alias_input.target_code_system):
             continue
@@ -432,7 +463,12 @@ def build_catalog_members(
             and alias.status is CandidateRecordStatus.ACTIVE
             and alias.is_effective
         ):
-            _append_search_entry(search_entries, seen_search_entries, _alias_entry(alias, product=alias_product))
+            entry = _alias_entry(alias, product=alias_product)
+            key = (entry.product_ref, entry.normalized_text)
+            alias_entries[key] = min(entry, alias_entries.get(key, entry), key=lambda item: item.alias_ref or "")
+
+    for key in sorted(alias_entries):
+        _append_search_entry(search_entries, seen_search_entries, alias_entries[key])
 
     return CatalogMembers(
         products=tuple(catalog_products),

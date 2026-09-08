@@ -133,9 +133,9 @@ def _component_conflict_failures(
 def _duplicate_alias_failures(
     members: CatalogMembers,
 ) -> tuple[CatalogValidationFailure, ...]:
-    references_by_key: dict[tuple[tuple[str, str, str], str], list[str]] = {}
+    references_by_key: dict[tuple[str, str], list[str]] = {}
     for alias in members.aliases:
-        key = (_identity_sort_key(alias.identity), alias.normalized_alias)
+        key = (alias.alias_ref, alias.normalized_alias)
         references_by_key.setdefault(key, []).append(alias.alias_ref)
 
     return tuple(

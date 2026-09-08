@@ -135,3 +135,12 @@ Evaluation → Source Artifact → Receipt/FAILED 재시도 → Verification 보
 - PostgreSQL Source lifecycle·Evaluation repository 테스트: **16 passed**
 - 전체 Ruff·서식 검사 통과 (**518 files**), Mypy **441개 소스 파일 통과**
 - 이 수정은 Catalog 승인 receipt·Ingredient 입력·Alias 의미상 dedupe 등 기존 #329 리뷰의 해결을 의미하지 않는다.
+
+## #329 RAG 변경 요청 반영 v2
+
+- 독립 Ingredient registry를 입력으로 추가하고 Component의 암묵적 성분 생성을 제거했다. 기존 복합제 fixture 전체(Component 3개·Ingredient 2개)가 서비스 validate/export를 통과하며, 누락 Ingredient는 저장 없이 REJECTED다.
+- 같은 제품의 반복 Alias는 provenance 행을 보존하고 검색 항목만 결정적으로 선택한다. 같은/다른 Snapshot 반복·입력 순서 반전과 다른 제품의 Alias 충돌을 각각 검증한다.
+- Product/Ingredient/Alias 대상 누락 mapping 오류는 REFERENTIAL_INTEGRITY_INVALID로 서비스 REJECTED 처리한다.
+- 승인 verifier가 없거나 Source 미승인·STALE이면 NOT_APPROVED이며 Candidate Index가 거부한다. 합성 승인 경로, 잘못된 checksum/Source receipt 거부, gate 변조 및 manifest exact recomputation을 검증한다.
+- schema와 manifest는 v2로 갱신했다. 기존 합성 manifest의 APPROVED/CURRENT 자동 부여를 제거하고 새 golden으로 바꿨다. 파일 바이트 checksum과 승인 envelope hash는 별개다.
+- 실제 승인 adapter와 정본 projection hash 최종 대응·DB provenance는 후속 범위다. 상세 계약과 결정 기록은 Catalog build v2 문서를 따른다.

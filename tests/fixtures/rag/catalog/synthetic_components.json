@@ -1,5 +1,5 @@
 {
-  "schema_version": "synthetic-catalog-input-v1",
+  "schema_version": "synthetic-catalog-component-input-v2",
   "records": [
     {
       "source_snapshot_id": "synthetic-snapshot-001",
@@ -7,8 +7,6 @@
       "product_code": "000000001",
       "ingredient_code_system": "MFDS_INGREDIENT_CODE",
       "ingredient_code": "ING-0001",
-      "ingredient_source_record_key": "INGREDIENT:ING-0001",
-      "ingredient_name": "  합성   성분 하나  ",
       "component_role": "ACTIVE_INGREDIENT",
       "component_order": 1,
       "strength_value": "010.00",
@@ -20,8 +18,6 @@
       "product_code": "000000002",
       "ingredient_code_system": "MFDS_INGREDIENT_CODE",
       "ingredient_code": "ING-0001",
-      "ingredient_source_record_key": "INGREDIENT:ING-0001",
-      "ingredient_name": "합성 성분 하나",
       "component_role": "ACTIVE_INGREDIENT",
       "component_order": 1,
       "strength_value": "5.0",
@@ -33,8 +29,6 @@
       "product_code": "000000002",
       "ingredient_code_system": "MFDS_INGREDIENT_CODE",
       "ingredient_code": "ING-0002",
-      "ingredient_source_record_key": "INGREDIENT:ING-0002",
-      "ingredient_name": "합성 성분 둘",
       "component_role": "ACTIVE_INGREDIENT",
       "component_order": 2,
       "strength_value": "2.50",

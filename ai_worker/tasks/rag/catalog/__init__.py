@@ -1,8 +1,10 @@
 """공식 의약품 Catalog build 계약입니다."""
 
+from ai_worker.tasks.rag.catalog.approval import CatalogApprovalReceipt, CatalogApprovalVerifier, CatalogSourceApproval
 from ai_worker.tasks.rag.catalog.build import (
     CatalogAliasInput,
     CatalogComponentInput,
+    CatalogIngredientInput,
     CatalogMappingError,
     CatalogMembers,
     CatalogProductInput,
@@ -13,6 +15,7 @@ from ai_worker.tasks.rag.catalog.export import (
     CatalogExportArtifacts,
     CatalogExportError,
     create_catalog_export,
+    verify_catalog_export,
     write_catalog_export,
 )
 from ai_worker.tasks.rag.catalog.normalize import (
@@ -55,6 +58,9 @@ from ai_worker.tasks.rag.catalog.validate import (
 )
 
 __all__ = [
+    "CatalogApprovalReceipt",
+    "CatalogApprovalVerifier",
+    "CatalogSourceApproval",
     "CATALOG_NORMALIZATION_VERSION",
     "CATALOG_SCHEMA_VERSION",
     "CandidateAliasReviewStatus",
@@ -77,6 +83,7 @@ __all__ = [
     "CatalogExportError",
     "CatalogFreshnessStatus",
     "CatalogIngredient",
+    "CatalogIngredientInput",
     "CatalogMappingError",
     "CatalogMembers",
     "CatalogProduct",
@@ -96,4 +103,5 @@ __all__ = [
     "CatalogValidationReport",
     "validate_catalog_members",
     "write_catalog_export",
+    "verify_catalog_export",
 ]

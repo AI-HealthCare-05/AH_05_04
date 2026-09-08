@@ -13,6 +13,7 @@ from ai_worker.tasks.rag.catalog import (
     CatalogAliasInput,
     CatalogComponentInput,
     CatalogComponentRole,
+    CatalogIngredientInput,
     CatalogMappingError,
     CatalogProductInput,
     build_catalog_members,
@@ -71,11 +72,6 @@ def _component_inputs() -> tuple[CatalogComponentInput, ...]:
                 product_canonical_code=_text(record, "product_code"),
                 ingredient_code_system=_text(record, "ingredient_code_system"),
                 ingredient_canonical_code=_text(record, "ingredient_code"),
-                ingredient_name=_text(record, "ingredient_name"),
-                ingredient_source_record_key=_text(
-                    record,
-                    "ingredient_source_record_key",
-                ),
                 component_role=CatalogComponentRole(_text(record, "component_role")),
                 component_order=component_order,
                 strength_value=_text(record, "strength_value"),
@@ -108,8 +104,22 @@ def _alias_inputs() -> tuple[CatalogAliasInput, ...]:
     return tuple(inputs)
 
 
+def _ingredient_inputs() -> tuple[CatalogIngredientInput, ...]:
+    return tuple(
+        CatalogIngredientInput(
+            source_snapshot_id=_text(record, "source_snapshot_id"),
+            source_record_key=_text(record, "source_record_key"),
+            code_system=_text(record, "code_system"),
+            canonical_code=_text(record, "canonical_code"),
+            ingredient_name=_text(record, "ingredient_name"),
+        )
+        for record in _records("synthetic_ingredients.json")
+    )
+
+
 def _build_fixture():
     return build_catalog_members(
+        ingredients=_ingredient_inputs(),
         products=_product_inputs(),
         components=_component_inputs(),
         aliases=_alias_inputs(),
@@ -156,8 +166,11 @@ def test_exact_duplicate_rows_are_deduplicated_and_input_order_does_not_change_r
     components = _component_inputs()
     aliases = _alias_inputs()
 
-    original = build_catalog_members(products=products, components=components, aliases=aliases)
+    original = build_catalog_members(
+        ingredients=_ingredient_inputs(), products=products, components=components, aliases=aliases
+    )
     reordered = build_catalog_members(
+        ingredients=_ingredient_inputs(),
         products=tuple(reversed(products)) + (products[0],),
         components=tuple(reversed(components)) + (components[0],),
         aliases=tuple(reversed(aliases)) + (aliases[0],),
@@ -179,19 +192,19 @@ def test_component_natural_key_keeps_role_distinct() -> None:
     base = _component_inputs()[0]
     excipient = CatalogComponentInput(
         source_snapshot_id=base.source_snapshot_id,
-        ingredient_source_record_key=base.ingredient_source_record_key,
         product_code_system=base.product_code_system,
         product_canonical_code=base.product_canonical_code,
         ingredient_code_system=base.ingredient_code_system,
         ingredient_canonical_code=base.ingredient_canonical_code,
-        ingredient_name=base.ingredient_name,
         component_role=CatalogComponentRole.EXCIPIENT,
         component_order=2,
         strength_value=base.strength_value,
         strength_unit=base.strength_unit,
     )
 
-    catalog = build_catalog_members(products=_product_inputs(), components=(base, excipient), aliases=())
+    catalog = build_catalog_members(
+        ingredients=_ingredient_inputs(), products=_product_inputs(), components=(base, excipient), aliases=()
+    )
 
     assert len(catalog.components) == 2
     assert len({component.component_ref for component in catalog.components}) == 2
@@ -213,7 +226,9 @@ def test_alias_source_snapshot_can_differ_from_target_product_snapshot() -> None
         is_effective=alias.is_effective,
     )
 
-    catalog = build_catalog_members(products=_product_inputs(), components=(), aliases=(cross_snapshot_alias,))
+    catalog = build_catalog_members(
+        ingredients=_ingredient_inputs(), products=_product_inputs(), components=(), aliases=(cross_snapshot_alias,)
+    )
 
     assert catalog.aliases[0].source_snapshot_id == "synthetic-alias-snapshot-002"
     alias_entry = next(
@@ -226,12 +241,10 @@ def test_missing_component_product_fails_without_exposing_source_value() -> None
     component = _component_inputs()[0]
     missing = CatalogComponentInput(
         source_snapshot_id=component.source_snapshot_id,
-        ingredient_source_record_key=component.ingredient_source_record_key,
         product_code_system=component.product_code_system,
         product_canonical_code="SENSITIVE-MISSING-PRODUCT",
         ingredient_code_system=component.ingredient_code_system,
         ingredient_canonical_code=component.ingredient_canonical_code,
-        ingredient_name=component.ingredient_name,
         component_role=component.component_role,
         component_order=component.component_order,
         strength_value=component.strength_value,
@@ -239,7 +252,9 @@ def test_missing_component_product_fails_without_exposing_source_value() -> None
     )
 
     with pytest.raises(CatalogMappingError) as captured:
-        build_catalog_members(products=_product_inputs(), components=(missing,), aliases=())
+        build_catalog_members(
+            ingredients=_ingredient_inputs(), products=_product_inputs(), components=(missing,), aliases=()
+        )
 
     assert captured.value.code == "COMPONENT_PRODUCT_NOT_FOUND"
     assert captured.value.paths == ("components.product_identity",)
@@ -263,7 +278,9 @@ def test_missing_alias_target_fails_closed() -> None:
     )
 
     with pytest.raises(CatalogMappingError, match="ALIAS_TARGET_NOT_FOUND"):
-        build_catalog_members(products=_product_inputs(), components=(), aliases=(missing,))
+        build_catalog_members(
+            ingredients=_ingredient_inputs(), products=_product_inputs(), components=(), aliases=(missing,)
+        )
 
 
 def test_preserves_raw_display_values_and_source_record_keys() -> None:
@@ -282,12 +299,10 @@ def test_preserves_raw_display_values_and_source_record_keys() -> None:
     )
     component = CatalogComponentInput(
         source_snapshot_id=product.source_snapshot_id,
-        ingredient_source_record_key="INGREDIENT:RAW-001",
         product_code_system=product.code_system,
         product_canonical_code=product.canonical_code,
         ingredient_code_system="MFDS_INGREDIENT",
         ingredient_canonical_code="RAW-001",
-        ingredient_name="  합성   성분  ",
         component_role=CatalogComponentRole.ACTIVE_INGREDIENT,
         component_order=1,
         strength_value="10",
@@ -295,6 +310,11 @@ def test_preserves_raw_display_values_and_source_record_keys() -> None:
     )
 
     catalog = build_catalog_members(
+        ingredients=(
+            CatalogIngredientInput(
+                product.source_snapshot_id, "INGREDIENT:RAW-001", "MFDS_INGREDIENT", "RAW-001", "  합성   성분  "
+            ),
+        ),
         products=(product,),
         components=(component,),
         aliases=(),
@@ -333,6 +353,7 @@ def test_hira_identity_is_excluded_from_p0_catalog() -> None:
     )
 
     catalog = build_catalog_members(
+        ingredients=_ingredient_inputs(),
         products=(hira_product,),
         components=(),
         aliases=(),
@@ -352,7 +373,9 @@ def test_explicit_blank_alias_target_snapshot_is_rejected(target_snapshot: str) 
         target_source_snapshot_id=target_snapshot,
     )
     with pytest.raises(ValueError, match="target_source_snapshot_id must be nonblank"):
-        build_catalog_members(products=_product_inputs(), components=(), aliases=(alias,))
+        build_catalog_members(
+            ingredients=_ingredient_inputs(), products=_product_inputs(), components=(), aliases=(alias,)
+        )
 
 
 def test_omitted_alias_target_snapshot_defaults_to_own_snapshot() -> None:
@@ -361,14 +384,19 @@ def test_omitted_alias_target_snapshot_defaults_to_own_snapshot() -> None:
     explicit = replace(base, source_snapshot_id=base.target_source_snapshot_id)
     omitted = replace(explicit, target_source_snapshot_id=None)
     assert build_catalog_members(
-        products=_product_inputs(), components=(), aliases=(omitted,)
-    ) == build_catalog_members(products=_product_inputs(), components=(), aliases=(explicit,))
+        ingredients=_ingredient_inputs(), products=_product_inputs(), components=(), aliases=(omitted,)
+    ) == build_catalog_members(
+        ingredients=_ingredient_inputs(), products=_product_inputs(), components=(), aliases=(explicit,)
+    )
 
 
 def test_repeated_inputs_keep_first_seen_order_for_every_member_kind() -> None:
     products, components, aliases = _product_inputs(), _component_inputs(), _alias_inputs()
-    expected = build_catalog_members(products=products, components=components, aliases=aliases)
+    expected = build_catalog_members(
+        ingredients=_ingredient_inputs(), products=products, components=components, aliases=aliases
+    )
     repeated = build_catalog_members(
+        ingredients=_ingredient_inputs(),
         products=products + tuple(reversed(products)),
         components=components + tuple(reversed(components)),
         aliases=aliases + tuple(reversed(aliases)),
@@ -381,6 +409,7 @@ def test_deduplication_preserves_conflicting_rows_with_the_same_reference() -> N
     component = _component_inputs()[0]
     alias = _alias_inputs()[0]
     members = build_catalog_members(
+        ingredients=_ingredient_inputs(),
         products=(product, replace(product, product_name="합성 변경 제품명"), product),
         components=(component, replace(component, strength_value="999"), component),
         aliases=(alias, replace(alias, review_status=CandidateAliasReviewStatus.REJECTED), alias),
@@ -396,6 +425,7 @@ def test_deduplication_preserves_conflicting_rows_with_the_same_reference() -> N
 def test_distinct_product_provenance_is_not_hidden_by_entry_deduplication() -> None:
     product = _product_inputs()[0]
     members = build_catalog_members(
+        ingredients=_ingredient_inputs(),
         products=(product, replace(product, source_record_key="synthetic-other-row")),
         components=(),
         aliases=(),

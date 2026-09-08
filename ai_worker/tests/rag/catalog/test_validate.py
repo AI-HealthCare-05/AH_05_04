@@ -7,6 +7,7 @@ from ai_worker.tasks.rag.catalog import (
     CatalogAliasInput,
     CatalogComponentInput,
     CatalogComponentRole,
+    CatalogIngredientInput,
     CatalogProductInput,
     CatalogValidationFailureReason,
     build_catalog_members,
@@ -122,12 +123,10 @@ def test_duplicate_official_identity_across_snapshots_is_rejected() -> None:
 def test_orphan_component_is_rejected_without_source_value_exposure() -> None:
     component = CatalogComponentInput(
         source_snapshot_id="snapshot-001",
-        ingredient_source_record_key="ingredient-record-001",
         product_code_system="MFDS_ITEM_SEQ",
         product_canonical_code="P-001",
         ingredient_code_system="MFDS_INGREDIENT_CODE",
         ingredient_canonical_code="I-001",
-        ingredient_name="합성 성분",
         component_role=CatalogComponentRole.ACTIVE_INGREDIENT,
         component_order=1,
         strength_value="10",
@@ -135,6 +134,11 @@ def test_orphan_component_is_rejected_without_source_value_exposure() -> None:
     )
     members = build_catalog_members(
         products=(_product("P-001"),),
+        ingredients=(
+            CatalogIngredientInput(
+                "snapshot-001", "ingredient-record-001", "MFDS_INGREDIENT_CODE", "I-001", "합성 성분"
+            ),
+        ),
         components=(component,),
         aliases=(),
     )
@@ -150,12 +154,10 @@ def test_orphan_component_is_rejected_without_source_value_exposure() -> None:
 def test_same_component_natural_key_with_different_content_is_rejected() -> None:
     first = CatalogComponentInput(
         source_snapshot_id="snapshot-001",
-        ingredient_source_record_key="ingredient-record-001",
         product_code_system="MFDS_ITEM_SEQ",
         product_canonical_code="P-001",
         ingredient_code_system="MFDS_INGREDIENT_CODE",
         ingredient_canonical_code="I-001",
-        ingredient_name="합성 성분",
         component_role=CatalogComponentRole.ACTIVE_INGREDIENT,
         component_order=1,
         strength_value="10",
@@ -164,6 +166,11 @@ def test_same_component_natural_key_with_different_content_is_rejected() -> None
     second = replace(first, component_order=2, strength_value="20")
     members = build_catalog_members(
         products=(_product("P-001"),),
+        ingredients=(
+            CatalogIngredientInput(
+                "snapshot-001", "ingredient-record-001", "MFDS_INGREDIENT_CODE", "I-001", "합성 성분"
+            ),
+        ),
         components=(first, second),
         aliases=(),
     )
@@ -174,7 +181,7 @@ def test_same_component_natural_key_with_different_content_is_rejected() -> None
     assert report.failures[0].reason is CatalogValidationFailureReason.MEMBER_CONFLICT
 
 
-def test_repeated_alias_target_is_rejected_before_database_unique_constraint() -> None:
+def test_repeated_alias_target_preserves_provenance_and_deduplicates_entries() -> None:
     members = build_catalog_members(
         products=(_product("P-001"),),
         components=(),
@@ -186,5 +193,6 @@ def test_repeated_alias_target_is_rejected_before_database_unique_constraint() -
 
     report = validate_catalog_members(members)
 
-    assert report.conflict_count == 1
-    assert report.failures[0].reason is CatalogValidationFailureReason.MEMBER_CONFLICT
+    assert report.is_valid
+    assert len(members.aliases) == 2
+    assert len(members.search_entries) == 2

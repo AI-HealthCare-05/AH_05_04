@@ -5,9 +5,11 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
+from ai_worker.tasks.rag.catalog.approval import CatalogApprovalReceipt
 from ai_worker.tasks.rag.catalog.build import CatalogMembers
-from ai_worker.tasks.rag.catalog.normalize import CATALOG_NORMALIZATION_VERSION
+from ai_worker.tasks.rag.catalog.normalize import CATALOG_NORMALIZATION_VERSION, require_official_identity_text
 from ai_worker.tasks.rag.catalog.types import (
     CandidateAliasReviewStatus,
     CandidateCatalogCounts,
@@ -20,7 +22,8 @@ from ai_worker.tasks.rag.catalog.types import (
 )
 from ai_worker.tasks.rag.catalog.validate import CatalogValidationReport, validate_catalog_members
 
-CATALOG_SCHEMA_VERSION = "medication-catalog-v1"
+CATALOG_SCHEMA_VERSION = "medication-catalog-v2"
+CATALOG_MANIFEST_SPEC_VERSION = "catalog-manifest-envelope-v2"
 
 
 class CatalogExportError(ValueError):
@@ -182,12 +185,73 @@ def _excluded_aliases(members: CatalogMembers) -> tuple[dict[str, object], ...]:
     )
 
 
+class _ApprovalPayload(TypedDict):
+    verification_status: CatalogVerificationStatus
+    freshness_status: CatalogFreshnessStatus
+    is_complete: bool
+    approval_receipt: dict[str, object] | None
+
+
+def _approval_payload(
+    receipt: CatalogApprovalReceipt | None,
+    *,
+    catalog_version: str,
+    export_checksum: str,
+    source_refs: tuple[CandidateCatalogSourceRef, ...],
+    has_entries: bool,
+) -> _ApprovalPayload:
+    if receipt is None:
+        return {
+            "verification_status": CatalogVerificationStatus.NOT_APPROVED,
+            "freshness_status": CatalogFreshnessStatus.STALE,
+            "is_complete": has_entries,
+            "approval_receipt": None,
+        }
+    refs = tuple(source.source_ref for source in receipt.sources)
+    if (
+        receipt.catalog_version != catalog_version
+        or receipt.export_checksum != export_checksum
+        or len(refs) != len(set(refs))
+        or set(refs) != set(source_refs)
+        or type(receipt.is_complete) is not bool
+    ):
+        raise CatalogExportError("CATALOG_APPROVAL_BINDING_INVALID", ("approval_receipt",))
+    require_official_identity_text(receipt.receipt_id, field_name="approval_receipt.receipt_id")
+    for source in receipt.sources:
+        require_official_identity_text(source.receipt_id, field_name="approval_receipt.sources.receipt_id")
+    current = all(source.freshness_status is CatalogFreshnessStatus.CURRENT for source in receipt.sources)
+    complete = receipt.is_complete and has_entries
+    approved = (
+        receipt.verification_status is CatalogVerificationStatus.APPROVED
+        and all(source.verification_status is CatalogVerificationStatus.APPROVED for source in receipt.sources)
+        and current
+        and complete
+    )
+    ordered = dataclasses.replace(
+        receipt,
+        sources=tuple(
+            sorted(
+                receipt.sources, key=lambda source: (source.source_ref.snapshot_id, source.source_ref.source_version)
+            )
+        ),
+    )
+    return {
+        "verification_status": CatalogVerificationStatus.APPROVED
+        if approved
+        else CatalogVerificationStatus.NOT_APPROVED,
+        "freshness_status": CatalogFreshnessStatus.CURRENT if current else CatalogFreshnessStatus.STALE,
+        "is_complete": complete,
+        "approval_receipt": dataclasses.asdict(ordered),
+    }
+
+
 def create_catalog_export(
     *,
     catalog_version: str,
     source_refs: tuple[CandidateCatalogSourceRef, ...],
     members: CatalogMembers,
     validation: CatalogValidationReport | None = None,
+    approval_receipt: CatalogApprovalReceipt | None = None,
 ) -> CatalogExportArtifacts:
     if not catalog_version.strip():
         raise CatalogExportError("CATALOG_VERSION_INVALID", ("catalog_version",))
@@ -218,7 +282,16 @@ def create_catalog_export(
             key=_text_sort_key,
         )
     )
+    approval = _approval_payload(
+        approval_receipt,
+        catalog_version=catalog_version,
+        export_checksum=export_checksum,
+        source_refs=ordered_source_refs,
+        has_entries=bool(members.search_entries),
+    )
     manifest_payload = {
+        "canonicalization_spec_version": CATALOG_MANIFEST_SPEC_VERSION,
+        **approval,
         "catalog_version": catalog_version,
         "source_refs": [dataclasses.asdict(item) for item in ordered_source_refs],
         "normalization_version": CATALOG_NORMALIZATION_VERSION,
@@ -240,9 +313,9 @@ def create_catalog_export(
         source_refs=ordered_source_refs,
         schema_version=CATALOG_SCHEMA_VERSION,
         normalization_version=CATALOG_NORMALIZATION_VERSION,
-        verification_status=CatalogVerificationStatus.APPROVED,
-        freshness_status=CatalogFreshnessStatus.CURRENT,
-        is_complete=True,
+        verification_status=approval["verification_status"],
+        freshness_status=approval["freshness_status"],
+        is_complete=approval["is_complete"] is True,
         products=tuple(sorted(members.products, key=lambda item: _text_sort_key(item.product_ref))),
         ingredients=tuple(sorted(members.ingredients, key=lambda item: _text_sort_key(item.ingredient_ref))),
         components=tuple(
@@ -274,3 +347,32 @@ def write_catalog_export(*, artifacts: CatalogExportArtifacts, directory: Path) 
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "manifest.json").write_bytes(artifacts.manifest_json)
     (directory / "catalog.jsonl").write_bytes(artifacts.catalog_jsonl)
+
+
+def verify_catalog_export(artifacts: CatalogExportArtifacts) -> None:
+    """인계 경계에서 payload와 typed gate 상태·구성원을 같은 manifest에 결속합니다."""
+    try:
+        manifest = json.loads(artifacts.manifest_json)
+        claimed_hash = manifest.pop("catalog_manifest_hash")
+        catalog = artifacts.catalog
+        members = CatalogMembers(
+            catalog.products, catalog.ingredients, catalog.components, catalog.aliases, catalog.search_entries
+        )
+        valid = (
+            manifest["canonicalization_spec_version"] == CATALOG_MANIFEST_SPEC_VERSION
+            and claimed_hash == catalog.catalog_manifest_hash == _sha256(_canonical_json_bytes(manifest))
+            and manifest["verification_status"] == catalog.verification_status
+            and manifest["freshness_status"] == catalog.freshness_status
+            and manifest["is_complete"] is catalog.is_complete
+            and manifest["catalog_version"] == catalog.catalog_version
+            and manifest["schema_version"] == catalog.schema_version
+            and manifest["normalization_version"] == catalog.normalization_version
+            and manifest["source_refs"] == [dataclasses.asdict(ref) for ref in catalog.source_refs]
+            and manifest["declared_counts"] == dataclasses.asdict(catalog.declared_counts)
+            and manifest["export_checksum"] == artifacts.export_checksum == _sha256(artifacts.catalog_jsonl)
+            and artifacts.catalog_jsonl == _catalog_jsonl(members)
+        )
+    except (ValueError, KeyError, TypeError, AttributeError):
+        valid = False
+    if not valid:
+        raise CatalogExportError("CATALOG_MANIFEST_BINDING_INVALID", ("manifest",))
