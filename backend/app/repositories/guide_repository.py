@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.guides import Guide, GuideGenerationStatus
-from app.models.prescriptions import Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -17,7 +17,10 @@ class GuideRepository:
     async def get_prescription_owned(self, *, prescription_id: UUID, user_id: UUID) -> Prescription | None:
         result = await self.session.execute(
             select(Prescription)
-            .options(selectinload(Prescription.medications), selectinload(Prescription.document))
+            .options(
+                selectinload(Prescription.document),
+                selectinload(Prescription.active_version).selectinload(PrescriptionVersion.medications),
+            )
             .where(
                 Prescription.id == prescription_id,
                 owned_by_self(Prescription.profile_id, user_id),
@@ -26,8 +29,11 @@ class GuideRepository:
         return result.scalar_one_or_none()
 
     async def create(self, *, prescription: Prescription) -> Guide:
+        if prescription.active_version_id is None:
+            raise RuntimeError("active prescription version is required")
         guide = Guide(
             prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
             profile_id=prescription.profile_id,
             generation_status=GuideGenerationStatus.GENERATING,
         )

@@ -4,11 +4,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse as Response
 
+from app.core import config
+from app.core.errors import ApiError, ErrorDetail
 from app.dependencies.security import get_request_user
 from app.dependencies.services import get_chat_service, get_guide_service, get_prescription_service
 from app.dtos.chat import ChatSessionResponse
 from app.dtos.guides import GuideResponse
-from app.dtos.prescriptions import PrescriptionResponse
+from app.dtos.prescriptions import CorrectPrescriptionRequest, PrescriptionResponse
 from app.models.users import User
 from app.services.chat import ChatService
 from app.services.guides import GuideService
@@ -31,6 +33,35 @@ async def get_latest_prescription(
     # 보다 먼저 등록해야 "latest"가 UUID 경로 변수로 잘못 매칭되지 않습니다.
     result = await prescription_service.get_latest_prescription(user=user)
 
+    return Response(
+        content=PrescriptionResponse(data=result).model_dump(mode="json"),
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@prescription_router.patch(
+    "/{prescription_id}",
+    response_model=PrescriptionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def correct_prescription(
+    prescription_id: UUID,
+    request: CorrectPrescriptionRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    prescription_service: Annotated[PrescriptionService, Depends(get_prescription_service)],
+) -> Response:
+    if not config.PRESCRIPTION_CORRECTION_ENABLED:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="SERVICE_UNAVAILABLE",
+            message="처방 정정 기능은 아직 공개되지 않았습니다.",
+            details=[ErrorDetail(field="prescription", reason="PRESCRIPTION_CORRECTION_DISABLED")],
+        )
+    result = await prescription_service.correct_prescription(
+        user=user,
+        prescription_id=prescription_id,
+        request=request,
+    )
     return Response(
         content=PrescriptionResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
