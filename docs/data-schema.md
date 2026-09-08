@@ -289,7 +289,9 @@ Snapshot verification 상태 의미:
 | `PENDING` | Snapshot 생성 또는 검증 대기 상태 | Runtime 사용 불가. Bundle 선택 대상이 아님 |
 | `CURRENT` | 해당 operation에서 최신 검증 기준을 통과한 Snapshot | Runtime 활성 포인터가 아니며 Bundle이 별도로 선택해야 사용 가능 |
 | `STALE` | 더 최신 Snapshot으로 대체되었거나 신규 사용 적격성을 잃은 과거 Snapshot | 신규 선택 대상은 아니지만 과거 provenance 재현을 위해 보존 |
-| `FAILED` | 검증 실패 또는 Source conflict로 사용 불가한 Snapshot | Runtime 사용 불가. 실패 이력은 verification/ingestion run에 보존 |
+| `FAILED` | 이미 생성된 candidate Snapshot이 후속 verification에서 실패해 사용 불가한 상태 | Runtime 사용 불가. 실패 이력은 verification에 보존하며 #323 정렬 범위에서 DB 보호를 강화 |
+
+`SOURCE_VERSION_CONFLICT`는 failed ingestion run으로 기록하고 신규 Snapshot을 생성하지 않는 fail-closed 경로입니다. Snapshot `FAILED`와 Ingestion Run `FAILED`는 같은 의미가 아니며, #165 Source ingestion 계약의 실패 경계를 우선합니다.
 
 `QUARANTINED`는 현재 `RagSnapshotVerificationStatus` 값이 아닙니다. 격리 상태가 필요하면 Source ingestion 정책과 공개 게이트를 먼저 확정한 뒤 별도 Decision/Contract Freeze와 migration·테스트로 추가합니다.
 
@@ -308,7 +310,7 @@ Ingestion Run / Receipt 기준:
 | 독립 실행 | 같은 `operation_id`라도 서로 다른 `run_group_key`면 `attempt_number=1` 허용 | 예약/수동 재수집/재검증 같은 독립 실행을 같은 attempt 번호로 시작할 수 있음 |
 | 성공 이력 | `run_status=SUCCEEDED`, nullable `snapshot_id`, finished metadata | 수집·정규화가 Snapshot으로 귀결된 실행 기록. Runtime 활성화는 아님 |
 | 부분 성공 이력 | `run_status=SUCCEEDED_WITH_REJECTIONS` | 거부 record가 있었던 실행 기록. 자동 Runtime 편입으로 해석하지 않음 |
-| 실패 이력 | `run_status=FAILED`, `failure_code`, `failure_message` | Snapshot 미생성 또는 검증 실패 실행을 추적. 실패 원문 payload는 저장하지 않음 |
+| 실패 이력 | `run_status=FAILED`, `failure_code`, `failure_message` | Snapshot 생성 전 acquisition/normalization/schema/version-conflict 실패를 추적. 신규 Snapshot은 생성하지 않고 실패 원문 payload도 저장하지 않음 |
 | 검증 이력 | `rag_source_snapshot_verification`의 `verification_result` | Snapshot 검증 결과 저장 구조를 수집 실행 record와 구분. append-only DB 강제는 #323 범위 |
 | raw manifest checksum | `raw_manifest_checksum` | Raw Artifact 메타데이터 집합의 결정적 checksum. 원본 바이트/파일 목록 무결성 기준 |
 | canonical checksum | `canonical_checksum` | 성공적으로 해석된 전체 record의 canonical 내용 checksum. envelope 제외·정렬·정규화 규칙은 Operation 계약과 `canonicalization_spec_version`이 고정 |
