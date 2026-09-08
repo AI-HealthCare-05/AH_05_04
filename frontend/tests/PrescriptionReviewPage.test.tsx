@@ -94,7 +94,22 @@ function makeField(
     normalization_version: null,
     confirmed_value: confirmed ? value : null,
     confidence_score: 0.99,
-    confirmation_status: confirmed ? 'CONFIRMED' : 'PENDING',
+    confirmation_status: confirmed ? 'CONFIRMED' : 'UNCONFIRMED',
+  }
+}
+
+function makePlaceholderField(
+  fieldType: string,
+  medicationIndex: number,
+): ExtractedField {
+  return {
+    ...makeField(fieldType, medicationIndex, false),
+    raw_value: null,
+    normalized_value: null,
+    normalization_version: null,
+    confirmed_value: null,
+    confidence_score: null,
+    confirmation_status: 'UNCONFIRMED',
   }
 }
 
@@ -230,7 +245,7 @@ function makePendingFields(medicationCount = 1) {
   return makeCompleteFields(medicationCount).map((field) => ({
     ...field,
     confirmed_value: null,
-    confirmation_status: 'PENDING',
+    confirmation_status: 'UNCONFIRMED',
   }))
 }
 
@@ -679,7 +694,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
   it('일부 약만 확인된 경우 처방을 확정할 수 없다', async () => {
     const fields = makeCompleteFields(2).map((field) =>
       field.medication_index === 2
-        ? { ...field, confirmed_value: null, confirmation_status: 'PENDING' }
+        ? { ...field, confirmed_value: null, confirmation_status: 'UNCONFIRMED' }
         : field,
     )
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
@@ -699,12 +714,25 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     )
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
 
-    renderPage()
+    const { container } = renderPage()
 
     expect(
       await screen.findByText('필수 처방 항목이 누락됐어요'),
     ).toBeTruthy()
+    expect(screen.getByText('필수 처방 항목 인식 누락')).toBeTruthy()
+    expect(screen.getByText('처방전을 다시 업로드해 주세요')).toBeTruthy()
+    expect(
+      container.querySelector(
+        '.prescription-review__status-icon.is-warning',
+      )?.textContent,
+    ).toBe('!')
+    expect(
+      container.querySelector('.prescription-review__status-icon.is-success'),
+    ).toBeNull()
     expect(screen.getByText(/OCR을 다시 실행해 주세요/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    expect(screen.queryByLabelText('투약일수')).toBeNull()
+    expect(updateExtractedField).not.toHaveBeenCalled()
     expect(await getConfirmationButton()).toHaveProperty('disabled', true)
   })
 
@@ -714,21 +742,196 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     )
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
 
-    renderPage()
+    const { container } = renderPage()
 
     expect(
       await screen.findByText('필수 처방 항목이 누락됐어요'),
     ).toBeTruthy()
+    expect(screen.getByText('필수 처방 항목 인식 누락')).toBeTruthy()
+    expect(
+      container.querySelector(
+        '.prescription-review__status-icon.is-warning',
+      )?.textContent,
+    ).toBe('!')
+    expect(
+      container.querySelector('.prescription-review__status-icon.is-success'),
+    ).toBeNull()
     expect(screen.getByText(/처방일·약 이름/)).toBeTruthy()
     expect(screen.queryByLabelText('처방일')).toBeNull()
     expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
     expect(await getConfirmationButton()).toHaveProperty('disabled', true)
   })
 
+  it('PRESCRIBED_DATE placeholder를 직접 입력해 기존 PATCH로 저장한 뒤 검토 완료할 수 있다', async () => {
+    const placeholder = makePlaceholderField('PRESCRIBED_DATE', 0)
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'PRESCRIBED_DATE' ? placeholder : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+    vi.mocked(updateExtractedField).mockResolvedValue({
+      data: {
+        ...placeholder,
+        confirmed_value: '2026-08-22',
+        confirmation_status: 'CONFIRMED',
+      },
+    })
+
+    const { container } = renderPage()
+
+    expect(
+      await screen.findByText('일부 필수 항목 인식 누락'),
+    ).toBeTruthy()
+    expect(
+      container.querySelector(
+        '.prescription-review__status-icon.is-warning',
+      )?.textContent,
+    ).toBe('!')
+    expect(
+      container.querySelector('.prescription-review__status-icon.is-success'),
+    ).toBeNull()
+    expect(
+      screen.getByText(/OCR이 인식하지 못해 직접 입력이 필요한 필드예요/),
+    ).toBeTruthy()
+    const acknowledgement = screen.getByRole<HTMLInputElement>('checkbox')
+    const confirmButton = await getConfirmationButton()
+    expect(acknowledgement.disabled).toBe(true)
+    expect(confirmButton).toHaveProperty('disabled', true)
+
+    const prescribedDateInput = screen.getByLabelText<HTMLInputElement>('처방일')
+    expect(prescribedDateInput.value).toBe('')
+    expect(prescribedDateInput.placeholder).toBe('필수 입력')
+    expect(
+      screen.getByText(/OCR이 인식하지 못해 직접 입력이 필요한 필드예요/),
+    ).toBeTruthy()
+
+    fireEvent.change(prescribedDateInput, {
+      target: { value: '2026-08-22' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '수정완료' }))
+
+    await waitFor(() =>
+      expect(updateExtractedField).toHaveBeenCalledWith(
+        'PRESCRIBED_DATE-0',
+        '2026-08-22',
+      ),
+    )
+    expect(updateExtractedField).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(acknowledgement.disabled).toBe(false))
+    expect(confirmButton).toHaveProperty('disabled', true)
+
+    fireEvent.click(acknowledgement)
+
+    expect(confirmButton).toHaveProperty('disabled', false)
+  })
+
+  it.each([
+    ['DOSE_VALUE', '1회 복용량', '0.5'],
+    ['FREQUENCY_PER_DAY', '하루횟수', '3'],
+    ['DURATION_DAYS', '투약일수', '7'],
+  ] as const)(
+    '약물 필수 %s placeholder를 직접 입력해 기존 PATCH로 저장할 수 있다',
+    async (fieldType, fieldLabel, confirmedValue) => {
+      const placeholder = makePlaceholderField(fieldType, 1)
+      const fields = makeCompleteFields().map((field) =>
+        field.field_type === fieldType ? placeholder : field,
+      )
+      vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+      vi.mocked(updateExtractedField).mockResolvedValue({
+        data: {
+          ...placeholder,
+          confirmed_value: confirmedValue,
+          confirmation_status: 'CONFIRMED',
+        },
+      })
+
+      renderPage()
+
+      expect(
+        await screen.findByText('일부 필수 항목 인식 누락'),
+      ).toBeTruthy()
+      expect(
+        screen.getByText(/OCR이 인식하지 못해 직접 입력이 필요한 필드예요/),
+      ).toBeTruthy()
+      const acknowledgement = screen.getByRole<HTMLInputElement>('checkbox')
+      const confirmButton = await getConfirmationButton()
+      expect(acknowledgement.disabled).toBe(true)
+      expect(confirmButton).toHaveProperty('disabled', true)
+
+      const input = screen.getByLabelText<HTMLInputElement>(fieldLabel)
+      expect(input.value).toBe('')
+      expect(input.placeholder).toBe('필수 입력')
+
+      fireEvent.change(input, { target: { value: confirmedValue } })
+      fireEvent.click(screen.getByRole('button', { name: '수정완료' }))
+
+      await waitFor(() =>
+        expect(updateExtractedField).toHaveBeenCalledWith(
+          `${fieldType}-1`,
+          confirmedValue,
+        ),
+      )
+      expect(updateExtractedField).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(acknowledgement.disabled).toBe(false))
+      expect(confirmButton).toHaveProperty('disabled', true)
+    },
+  )
+
+  it('정상 MEDICATION_NAME row는 required set에 있어도 placeholder로 판정하지 않는다', async () => {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'MEDICATION_NAME'
+        ? {
+            ...field,
+            confirmed_value: null,
+            confirmation_status: 'UNCONFIRMED' as const,
+          }
+        : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+
+    const { container } = renderPage()
+
+    expect(await screen.findByText('처방약 1 100mg')).toBeTruthy()
+    expect(
+      container.querySelector(
+        '.prescription-review__status-icon.is-success',
+      )?.textContent,
+    ).toBe('✓')
+    expect(screen.queryByText('일부 필수 항목 인식 누락')).toBeNull()
+    expect(
+      screen.queryByText(/OCR이 인식하지 못해 직접 입력이 필요한 필드예요/),
+    ).toBeNull()
+    expect(screen.queryByLabelText('약물이름')).toBeNull()
+    expect(updateExtractedField).not.toHaveBeenCalled()
+  })
+
+  it('완전 null MEDICATION_NAME row는 직접 입력을 열지 않고 재업로드 상태로 차단한다', async () => {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_type === 'MEDICATION_NAME'
+        ? makePlaceholderField('MEDICATION_NAME', field.medication_index)
+        : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+
+    renderPage()
+
+    expect(await screen.findByText('약 이름을 인식하지 못했어요')).toBeTruthy()
+    expect(
+      screen.getByText('약 이름은 직접 입력해 검수를 진행할 수 없습니다.'),
+    ).toBeTruthy()
+    expect(screen.getByText(/OCR을 다시 실행해 주세요/)).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '처방전 다시 업로드하기' }),
+    ).toBeTruthy()
+    expect(screen.queryByLabelText('약물이름')).toBeNull()
+    expect(screen.queryByText('일부 필수 항목 인식 누락')).toBeNull()
+    expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
+    expect(updateExtractedField).not.toHaveBeenCalled()
+  })
+
   it('값이 있는 선택 필드는 저장되어야 최종 확인할 수 있다.', async () => {
     const fields = makeCompleteFields().map((field) =>
       field.field_type === 'DOSE_UNIT'
-        ? { ...field, confirmed_value: null, confirmation_status: 'PENDING' }
+        ? { ...field, confirmed_value: null, confirmation_status: 'UNCONFIRMED' }
         : field,
     )
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
@@ -750,7 +953,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
             ...field,
             raw_value: '캡슐',
             confirmed_value: null,
-            confirmation_status: 'PENDING' as const,
+            confirmation_status: 'UNCONFIRMED' as const,
           }
         : field,
     )
@@ -789,6 +992,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
   it.each([
     ['TIMING', '복용조건'],
     ['MEDICATION_STRENGTH', '제품함량'],
+    ['DOSE_UNIT', '복용단위'],
   ] as const)(
     '값이 없는 선택 %s 필드는 저장하지 않아도 최종 확인할 수 있다',
     async (fieldType, fieldLabel) => {
@@ -798,7 +1002,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
               ...field,
               raw_value: null,
               confirmed_value: null,
-              confirmation_status: 'PENDING',
+              confirmation_status: 'UNCONFIRMED',
             }
           : field,
       )
@@ -811,6 +1015,7 @@ describe('PrescriptionReviewPage confirmation gate', () => {
       const acknowledgement = await screen.findByRole<HTMLInputElement>('checkbox')
       const confirmButton = await getConfirmationButton()
       expect(screen.getByText(fieldLabel)).toBeTruthy()
+      expect(screen.queryByText('일부 필수 항목 인식 누락')).toBeNull()
       expect(acknowledgement.disabled).toBe(false)
       expect(confirmButton).toHaveProperty('disabled', true)
 
@@ -820,6 +1025,30 @@ describe('PrescriptionReviewPage confirmation gate', () => {
       expect(updateExtractedField).not.toHaveBeenCalled()
     },
   )
+
+  it('선택 필드가 OCR 응답에서 생략되어도 검토 완료와 확정을 차단하지 않는다', async () => {
+    const optionalFieldTypes = new Set([
+      'MEDICATION_STRENGTH',
+      'DOSE_UNIT',
+      'TIMING',
+    ])
+    const fields = makeCompleteFields().filter(
+      (field) => !optionalFieldTypes.has(field.field_type),
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+
+    renderPage()
+
+    const acknowledgement = await screen.findByRole<HTMLInputElement>('checkbox')
+    const confirmButton = await getConfirmationButton()
+    expect(acknowledgement.disabled).toBe(false)
+    expect(confirmButton).toHaveProperty('disabled', true)
+
+    fireEvent.click(acknowledgement)
+
+    expect(confirmButton).toHaveProperty('disabled', false)
+    expect(updateExtractedField).not.toHaveBeenCalled()
+  })
 
   it('동시 저장 중 하나가 먼저 완료되어도 남은 요청이 있으면 확정을 비활성화한다', async () => {
     const fields = makeCompleteFields()
