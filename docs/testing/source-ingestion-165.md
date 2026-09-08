@@ -304,3 +304,5 @@ PR 본문에서 acquisition 잠금을 Operation으로 설명하면 코드와 다
 - Ruff·format 및 Mypy(427 source files) 통과
 
 전체 CI shell runner 자체 대신 위 각 테스트 범위를 직접 실행했다. Backend fixture가 테이블을 정리하므로 그 후 migration 재실행은 임시 DB를 초기화한 별도 검증으로 수행한다. 원격 CI는 push된 최신 커밋에서 별도로 확인한다.
+
+추가 권한 점검: DB 함수의 PUBLIC EXECUTE를 회수하고 기존 Snapshot UPDATE 역할에만 EXECUTE를 인계했다. 함수 권한이 없는 신규 역할의 호출 권한이 false임을 확인한 뒤 Runtime 역할의 승인 경로를 검증한다. 최종 migration 83건과 Source governance receipt 8건(총 91건)이 통과했다.

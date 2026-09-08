@@ -1130,6 +1130,19 @@ def test_runtime_cannot_write_snapshot_publication_state_directly(status: str) -
                 await connection.execute(
                     text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role}")
                 )
+                permitted = await connection.execute(
+                    text(
+                        "SELECT has_function_privilege(:role, 'transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)', 'EXECUTE')"
+                    ),
+                    {"role": role},
+                )
+                assert permitted.scalar_one() is False
+                # Runtime roles normally exist before migration. This isolated test role is created afterwards.
+                await connection.execute(
+                    text(
+                        f"GRANT EXECUTE ON FUNCTION transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text) TO {role}"
+                    )
+                )
                 await connection.execute(text(f"SET LOCAL ROLE {role}"))
                 # Custom session flags must never confer transition authority.
                 await connection.execute(text("SET LOCAL app.snapshot_transition = 'allowed'"))
@@ -1212,6 +1225,19 @@ def test_runtime_publication_function_requires_approval_and_appends_immutable_se
                 await connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
                 await connection.execute(
                     text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role}")
+                )
+                permitted = await connection.execute(
+                    text(
+                        "SELECT has_function_privilege(:role, 'transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)', 'EXECUTE')"
+                    ),
+                    {"role": role},
+                )
+                assert permitted.scalar_one() is False
+                # Runtime roles normally exist before migration. This isolated test role is created afterwards.
+                await connection.execute(
+                    text(
+                        f"GRANT EXECUTE ON FUNCTION transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text) TO {role}"
+                    )
                 )
                 await connection.execute(text(f"SET LOCAL ROLE {role}"))
                 if not approved:

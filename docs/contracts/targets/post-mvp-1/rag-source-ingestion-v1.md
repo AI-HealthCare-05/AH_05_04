@@ -275,7 +275,7 @@ Runtime Release Bundle의 상세 구성과 현재성 검사는 [RAG Runtime 계�
 
 Revision `165e8f706152`는 비소유자 Runtime 역할의 Snapshot 상태·verified_at·effective_at 직접 변경을 trigger로 거부한다. INSERT는 PENDING·두 timestamp NULL만 허용한다. Runtime은 테이블/함수 소유자·superuser가 아니며 migration owner 역할을 상속하거나 전환할 권한이 없어야 한다. 기존 Runtime DML 권한이 있어도 trigger 검증을 우회하지 못한다.
 
-`transition_rag_source_snapshot(snapshot_id, expected_status, next_status, verified_at, effective_at, selected_by)`는 migration owner의 SECURITY DEFINER 함수다. 함수 search_path는 migration schema와 pg_catalog로 고정하고 pg_temp는 마지막에 둔다. caller가 설정하는 GUC를 권한 근거로 쓰지 않는다. Operation lock과 expected-status 재검증 후 PENDING→CURRENT/FAILED, CURRENT→STALE, STALE→CURRENT만 허용한다. FAILED→CURRENT와 timestamp 단독 변경은 허용하지 않는다.
+`transition_rag_source_snapshot(snapshot_id, expected_status, next_status, verified_at, effective_at, selected_by)`는 migration owner의 SECURITY DEFINER 함수다. 함수 search_path는 migration schema와 pg_catalog로 고정하고 pg_temp는 마지막에 둔다. PUBLIC의 함수 실행 권한은 회수하고 migration 시점에 Snapshot UPDATE 권한이 있는 역할에만 EXECUTE를 부여한다. 이후 Runtime 역할을 신규 생성하면 관리자가 해당 함수의 EXECUTE를 별도로 인계한다. caller가 설정하는 GUC를 권한 근거로 쓰지 않는다. Operation lock과 expected-status 재검증 후 PENDING→CURRENT/FAILED, CURRENT→STALE, STALE→CURRENT만 허용한다. FAILED→CURRENT와 timestamp 단독 변경은 허용하지 않는다.
 
 CURRENT 전이 시 rejection이 있으면 named publication PASSED가 필요하며, 상태 변경과 `snapshot-current-selection=PASSED` append는 같은 SQL 함수·transaction에서 수행한다. 증빙에는 selected_by와 실제 session_user를 기록한다. service는 별도로 같은 선택 이력을 중복 append하지 않는다. 함수 실패나 caller transaction rollback은 상태와 이력을 함께 되돌린다. 이 경계는 기존 최소 publication 검사를 DB에서 강제하며, 실제 Source Use Approval/승인자 권한 인증 전체를 구현했다는 의미는 아니다.
 
