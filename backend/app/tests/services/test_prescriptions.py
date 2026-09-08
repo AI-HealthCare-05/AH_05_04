@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -8,9 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
+from app.dtos.prescriptions import CorrectPrescriptionRequest, PrescriptionMedicationCorrectionRequest
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
@@ -83,7 +85,9 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(ocr_job)
     await session.flush()
 
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -93,7 +97,22 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(prescription)
     await session.flush()
 
-    session.add(Medication(prescription_id=prescription.id, medication_name="타이레놀", display_order=1))
+    version = PrescriptionVersion(
+        id=version_id,
+        prescription_id=prescription.id,
+        version_number=1,
+        prescribed_date=prescription.prescribed_date,
+        confirmed_at=prescription.confirmed_at,
+    )
+    session.add(version)
+    await session.flush()
+    session.add(
+        PrescriptionVersionMedication(
+            prescription_version_id=version_id,
+            medication_name="타이레놀",
+            display_order=1,
+        )
+    )
     await session.flush()
 
     return prescription
@@ -134,3 +153,75 @@ async def test_get_latest_prescription_rejects_other_users_prescription(db_sessi
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.code == "PRESCRIPTION_NOT_FOUND"
+
+
+async def test_correction_creates_new_immutable_version_and_switches_active_read(
+    db_session: AsyncSession,
+) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="correction-owner@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    base_version_id = prescription.active_version_id
+    assert base_version_id is not None
+
+    result = await service.correct_prescription(
+        user=owner,
+        prescription_id=prescription.id,
+        request=CorrectPrescriptionRequest(
+            base_version_id=base_version_id,
+            expected_revision=1,
+            prescribed_date=date(2026, 9, 8),
+            medications=[
+                PrescriptionMedicationCorrectionRequest(
+                    medication_name="  정정된 합성약  ",
+                    strength_text="  5mg  ",
+                    dose_value=Decimal("0.5"),
+                    dose_unit="  정  ",
+                    frequency_per_day=2,
+                    timing_text="  식후  ",
+                    duration_days=5,
+                    display_order=1,
+                )
+            ],
+        ),
+    )
+
+    assert result.revision == 2
+    assert result.current is True
+    assert result.prescription_version_id != base_version_id
+    assert result.medications[0].medication_name == "정정된 합성약"
+    assert result.medications[0].strength_text == "5mg"
+    assert result.medications[0].dose_unit == "정"
+    assert result.medications[0].timing_text == "식후"
+    old_medications = await PrescriptionRepository(db_session).get_version_medications(
+        prescription_version_id=base_version_id
+    )
+    assert old_medications[0].medication_name == "타이레놀"
+
+
+async def test_correction_rejects_stale_base_version_without_creating_version(
+    db_session: AsyncSession,
+) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="correction-conflict@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.correct_prescription(
+            user=owner,
+            prescription_id=prescription.id,
+            request=CorrectPrescriptionRequest(
+                base_version_id=uuid4(),
+                expected_revision=1,
+                prescribed_date=date.today(),
+                medications=[
+                    PrescriptionMedicationCorrectionRequest(
+                        medication_name="정정 시도 약",
+                        display_order=1,
+                    )
+                ],
+            ),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "PRESCRIPTION_VERSION_CONFLICT"

@@ -27,7 +27,10 @@ class PrescriptionRepository:
     async def get_owned(self, *, prescription_id: UUID, user_id: UUID) -> Prescription | None:
         result = await self.session.execute(
             select(Prescription)
-            .options(selectinload(Prescription.document), selectinload(Prescription.medications))
+            .options(
+                selectinload(Prescription.document),
+                selectinload(Prescription.active_version).selectinload(PrescriptionVersion.medications),
+            )
             .where(
                 Prescription.id == prescription_id,
                 owned_by_self(Prescription.profile_id, user_id),
@@ -41,7 +44,10 @@ class PrescriptionRepository:
         돌려줍니다. `idx_prescription_profile_created`(profile_id, created_at, id)를 사용합니다."""
         result = await self.session.execute(
             select(Prescription)
-            .options(selectinload(Prescription.document), selectinload(Prescription.medications))
+            .options(
+                selectinload(Prescription.document),
+                selectinload(Prescription.active_version).selectinload(PrescriptionVersion.medications),
+            )
             .where(owned_by_self(Prescription.profile_id, user_id))
             .order_by(Prescription.created_at.desc(), Prescription.id.desc())
             .limit(1)
@@ -99,3 +105,58 @@ class PrescriptionRepository:
             .order_by(Medication.display_order.asc())
         )
         return list(result.scalars().all())
+
+    async def get_version_medications(self, *, prescription_version_id: UUID) -> list[PrescriptionVersionMedication]:
+        result = await self.session.execute(
+            select(PrescriptionVersionMedication)
+            .where(PrescriptionVersionMedication.prescription_version_id == prescription_version_id)
+            .order_by(PrescriptionVersionMedication.display_order.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_version(self, *, prescription_version_id: UUID) -> PrescriptionVersion | None:
+        return await self.session.get(PrescriptionVersion, prescription_version_id)
+
+    async def get_owned_for_version_update(self, *, prescription_id: UUID, user_id: UUID) -> Prescription | None:
+        result = await self.session.execute(
+            select(Prescription)
+            .where(
+                Prescription.id == prescription_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def create_version(
+        self,
+        *,
+        prescription: Prescription,
+        prescribed_date: date,
+        confirmed_at: datetime,
+        medications: list[dict],
+    ) -> PrescriptionVersion:
+        latest_revision = await self.session.scalar(
+            select(PrescriptionVersion.version_number)
+            .where(PrescriptionVersion.prescription_id == prescription.id)
+            .order_by(PrescriptionVersion.version_number.desc())
+            .limit(1)
+        )
+        version = PrescriptionVersion(
+            prescription_id=prescription.id,
+            version_number=(latest_revision or 0) + 1,
+            prescribed_date=prescribed_date,
+            confirmed_at=confirmed_at,
+        )
+        self.session.add(version)
+        await self.session.flush()
+        for medication in medications:
+            self.session.add(
+                PrescriptionVersionMedication(
+                    prescription_version_id=version.id,
+                    **medication,
+                )
+            )
+        prescription.active_version_id = version.id
+        await self.session.flush()
+        return version
