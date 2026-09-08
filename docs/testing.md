@@ -40,6 +40,12 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 
 필수 동의 수집·철회는 디자인 프로토타입에만 있으며 현재 Backend DTO와 실제 사용자 흐름에는 연결되지 않았습니다. 구현되기 전까지 자동화된 MVP 시나리오로 간주하지 않습니다.
 
+## OCR 처방일 후보 회귀
+
+#309의 분리된 생년월일 라벨·교부일자 우선 선택과 Backend 호환 경로 검증은
+[처방일 라벨·값 연결 검증 기록](testing/prescribed-date-labels-309.md)을 참고합니다.
+최초 실패 재현과 최종 통과 결과를 구분하며 실제 레이아웃 정확도 평가를 대신하지 않습니다.
+
 ## 현재 자동 검증 범위
 
 GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
