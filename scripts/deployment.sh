@@ -94,6 +94,76 @@ if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
   exit 1
 fi
 
+# ---------- 기간 한정 Production 데모 설정 검증 ----------
+required_demo_variables=(
+  DOCKER_USER
+  DOCKER_REPOSITORY
+  APP_VERSION
+  FRONTEND_VERSION
+  AI_WORKER_VERSION
+  PRODUCTION_DOMAIN
+  PRODUCTION_PUBLIC_ORIGIN
+  CERTBOT_EMAIL
+  COOKIE_DOMAIN
+  CORS_ALLOWED_ORIGINS
+)
+
+for variable_name in "${required_demo_variables[@]}"; do
+  if [ -z "${!variable_name:-}" ]; then
+    echo "필수 운영 데모 환경변수가 비어 있습니다: $variable_name"
+    exit 1
+  fi
+done
+
+if [[ ! "$APP_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] ||
+  [[ ! "$FRONTEND_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] ||
+  [[ ! "$AI_WORKER_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "이미지 version은 영문자, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다."
+  exit 1
+fi
+
+if [ "$APP_VERSION" = "latest" ] || [ "$FRONTEND_VERSION" = "latest" ] ||
+  [ "$AI_WORKER_VERSION" = "latest" ]; then
+  echo "Rollback을 위해 latest 대신 commit SHA 또는 고정 version을 사용해야 합니다."
+  exit 1
+fi
+
+if [[ ! "$DOCKER_USER" =~ ^[A-Za-z0-9._-]+$ ]] ||
+  [[ ! "$DOCKER_REPOSITORY" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Docker registry 사용자와 repository 이름의 형식이 올바르지 않습니다."
+  exit 1
+fi
+
+if [[ ! "$PRODUCTION_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] ||
+  [[ "$PRODUCTION_DOMAIN" != *.* ]]; then
+  echo "PRODUCTION_DOMAIN은 유효한 hostname이어야 합니다."
+  exit 1
+fi
+
+expected_public_origin="https://${PRODUCTION_DOMAIN}"
+if [ "$PRODUCTION_PUBLIC_ORIGIN" != "$expected_public_origin" ]; then
+  echo "PRODUCTION_PUBLIC_ORIGIN은 $expected_public_origin 이어야 합니다."
+  exit 1
+fi
+
+if [ "$COOKIE_DOMAIN" != "$PRODUCTION_DOMAIN" ] ||
+  [ "$CORS_ALLOWED_ORIGINS" != "$PRODUCTION_PUBLIC_ORIGIN" ]; then
+  echo "COOKIE_DOMAIN과 CORS_ALLOWED_ORIGINS는 Production 동일 origin과 일치해야 합니다."
+  exit 1
+fi
+
+if [[ ! "$CERTBOT_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
+  echo "CERTBOT_EMAIL 형식이 올바르지 않습니다."
+  exit 1
+fi
+
+for required_command in docker ssh scp; do
+  if ! command -v "$required_command" >/dev/null 2>&1; then
+    echo "필수 명령을 찾을 수 없습니다: $required_command"
+    exit 1
+  fi
+done
+
 # 터미널 색상을 지원하지 않는 환경에서는 빈 문자열을 사용합니다.
 if [ -t 1 ] &&
   command -v tput >/dev/null 2>&1 &&
@@ -117,21 +187,35 @@ build_and_push() {
   local tag="$4"
   local dockerfile="$5"
   local context="$6"
+  local build_arg="${7:-}"
   local tag_base
 
-  if [[ "$name" == "FastAPI" ]]; then
-    tag_base="app"
-  else
-    tag_base="ai"
-  fi
+  case "$name" in
+    FastAPI) tag_base="app" ;;
+    "AI Worker") tag_base="ai" ;;
+    Frontend) tag_base="frontend" ;;
+    *)
+      echo "지원하지 않는 image 종류입니다: $name"
+      return 1
+      ;;
+  esac
 
   echo "${COLOR_BLUE}${name} Docker image build start.${COLOR_NC}"
 
-  docker build \
-    --platform linux/amd64 \
-    -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
-    -f "$dockerfile" \
-    "$context"
+  if [ -n "$build_arg" ]; then
+    docker build \
+      --platform linux/amd64 \
+      --build-arg "$build_arg" \
+      -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
+      -f "$dockerfile" \
+      "$context"
+  else
+    docker build \
+      --platform linux/amd64 \
+      -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
+      -f "$dockerfile" \
+      "$context"
+  fi
 
   echo "${COLOR_BLUE}${name} Docker image push start.${COLOR_NC}"
 
@@ -142,15 +226,16 @@ build_and_push() {
 }
 
 # ---------- Docker 로그인 ----------
-echo "${COLOR_BLUE}Docker username과 PAT을 입력해주세요.${COLOR_NC}"
+docker_user="$DOCKER_USER"
+docker_repo="$DOCKER_REPOSITORY"
 
-read -r -p "username: " docker_user
+echo "${COLOR_BLUE}${docker_user} 계정의 Docker registry PAT을 입력해주세요.${COLOR_NC}"
 read -r -s -p "password: " docker_pw
 echo ""
 echo ""
 
-if [ -z "$docker_user" ] || [ -z "$docker_pw" ]; then
-  echo "${COLOR_RED}Docker username 또는 PAT이 입력되지 않았습니다.${COLOR_NC}"
+if [ -z "$docker_pw" ]; then
+  echo "${COLOR_RED}Docker registry PAT이 입력되지 않았습니다.${COLOR_NC}"
   exit 1
 fi
 
@@ -166,87 +251,27 @@ fi
 echo "${COLOR_GREEN}Docker 로그인 성공!${COLOR_NC}"
 echo ""
 
-# ---------- Docker repository 입력 ----------
-echo "${COLOR_BLUE}이미지를 업로드할 Docker repository 이름을 입력하세요.${COLOR_NC}"
-read -r -p "Docker Repository Name: " docker_repo
-echo ""
+# ---------- 데모 배포 image build 및 push ----------
+# Worker Consumer 공개는 #338 범위 밖입니다. 기간 한정 데모는 FastAPI와 Frontend만
+# 새 immutable image로 배포하고, migration 전 기존 ai-worker 중지 확인은 유지합니다.
+build_and_push \
+  "$docker_user" \
+  "$docker_repo" \
+  "FastAPI" \
+  "$APP_VERSION" \
+  "backend/app/Dockerfile" \
+  "."
 
-if [ -z "$docker_repo" ]; then
-  echo "${COLOR_RED}Docker repository 이름이 입력되지 않았습니다.${COLOR_NC}"
-  exit 1
-fi
+build_and_push \
+  "$docker_user" \
+  "$docker_repo" \
+  "Frontend" \
+  "$FRONTEND_VERSION" \
+  "frontend/Dockerfile.prod" \
+  "." \
+  "VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"
 
-# ---------- 배포 이미지 선택 ----------
-echo "${COLOR_BLUE}빌드하고 배포할 이미지를 선택하세요.${COLOR_NC}"
-echo "1) fastapi"
-echo "2) ai_worker"
-echo "schema migration을 실행하는 배포에서는 fastapi와 ai_worker를 모두 선택해야 합니다."
-read -r -p "선택 (복수 선택 가능, 예: 1 2): " selections
-echo ""
-
-if [ -z "$selections" ]; then
-  echo "${COLOR_RED}배포 대상이 선택되지 않았습니다.${COLOR_NC}"
-  exit 1
-fi
-
-DEPLOY_SERVICES=()
-
-# ---------- 이미지 빌드 및 push ----------
-for choice in $selections; do
-  case "$choice" in
-    1)
-      echo "${COLOR_BLUE}FastAPI 배포 버전을 입력하세요(ex. v1.0.0).${COLOR_NC}"
-      read -r -p "FastAPI 앱 버전: " fastapi_version
-
-      if [ -z "$fastapi_version" ]; then
-        echo "${COLOR_RED}FastAPI 버전이 입력되지 않았습니다.${COLOR_NC}"
-        exit 1
-      fi
-
-      build_and_push \
-        "$docker_user" \
-        "$docker_repo" \
-        "FastAPI" \
-        "$fastapi_version" \
-        "backend/app/Dockerfile" \
-        "."
-
-      # 입력받은 버전을 원격 Compose image tag에 전달합니다.
-      APP_VERSION="$fastapi_version"
-      DEPLOY_SERVICES+=("fastapi")
-      ;;
-    2)
-      echo "${COLOR_BLUE}AI Worker 배포 버전을 입력하세요(ex. v1.0.0).${COLOR_NC}"
-      read -r -p "AI Worker 버전: " ai_version
-
-      if [ -z "$ai_version" ]; then
-        echo "${COLOR_RED}AI Worker 버전이 입력되지 않았습니다.${COLOR_NC}"
-        exit 1
-      fi
-
-      build_and_push \
-        "$docker_user" \
-        "$docker_repo" \
-        "AI Worker" \
-        "$ai_version" \
-        "ai_worker/Dockerfile" \
-        "."
-
-      # 입력받은 버전을 원격 Compose image tag에 전달합니다.
-      AI_WORKER_VERSION="$ai_version"
-      DEPLOY_SERVICES+=("ai-worker")
-      ;;
-    *)
-      echo "${COLOR_RED}잘못된 선택입니다: $choice${COLOR_NC}"
-      exit 1
-      ;;
-  esac
-done
-
-if [[ ! " ${DEPLOY_SERVICES[*]} " =~ " fastapi " ]]; then
-  echo "${COLOR_RED}schema migration 배포는 fastapi 새 이미지를 포함해야 합니다.${COLOR_NC}"
-  exit 1
-fi
+DEPLOY_SERVICES=("fastapi" "nginx")
 
 echo "${COLOR_GREEN}선택한 이미지의 build와 push가 완료되었습니다.${COLOR_NC}"
 echo "${COLOR_BLUE}배포 대상 서비스: ${DEPLOY_SERVICES[*]}${COLOR_NC}"
@@ -284,6 +309,11 @@ if [ -z "$ec2_ip" ]; then
   exit 1
 fi
 
+if [[ ! "$ec2_ip" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "${COLOR_RED}EC2 IP 또는 hostname 형식이 올바르지 않습니다: $ec2_ip${COLOR_NC}"
+  exit 1
+fi
+
 # SSH와 SCP를 실행하기 전에 key 파일 권한을 제한합니다.
 chmod 400 "$SSH_KEY_PATH"
 
@@ -301,31 +331,17 @@ nginx_config_path="$NGINX_TEMP_DIR/default.conf"
 
 case "$is_https" in
   1)
-    # HTTP 환경에서는 EC2 주소를 server_name으로 사용합니다.
+    # 최초 인증서 발급을 위한 HTTP bootstrap도 운영 도메인을 사용합니다.
     sed \
-      "s/server_name .*/server_name ${ec2_ip};/g" \
+      "s/server_name .*/server_name ${PRODUCTION_DOMAIN};/g" \
       infra/nginx/prod_http.conf \
       >"$nginx_config_path"
     ;;
   2)
-    echo "${COLOR_BLUE}현재 사용 중인 도메인을 입력하세요.${COLOR_NC}"
-    read -r -p "Domain: " domain
-
-    if [ -z "$domain" ]; then
-      echo "${COLOR_RED}도메인이 입력되지 않았습니다.${COLOR_NC}"
-      exit 1
-    fi
-
-    # sed replacement에 안전한 기본 hostname 문자만 허용합니다.
-    if [[ ! "$domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
-      echo "${COLOR_RED}도메인 형식이 올바르지 않습니다: $domain${COLOR_NC}"
-      exit 1
-    fi
-
     # HTTPS 환경에서는 server_name과 인증서 경로를 함께 설정합니다.
     sed \
-      -e "s/server_name .*/server_name ${domain};/g" \
-      -e "s|/etc/letsencrypt/live/[^/]*|/etc/letsencrypt/live/${domain}|g" \
+      -e "s/server_name .*/server_name ${PRODUCTION_DOMAIN};/g" \
+      -e "s|/etc/letsencrypt/live/[^/]*|/etc/letsencrypt/live/${PRODUCTION_DOMAIN}|g" \
       infra/nginx/prod_https.conf \
       >"$nginx_config_path"
     ;;
@@ -381,9 +397,9 @@ scp \
 printf -v remote_docker_username '%q' "$docker_user"
 printf -v remote_docker_repository '%q' "$docker_repo"
 printf -v remote_app_version '%q' "$APP_VERSION"
+printf -v remote_frontend_version '%q' "$FRONTEND_VERSION"
 printf -v remote_ai_worker_version '%q' "$AI_WORKER_VERSION"
 printf -v remote_deploy_services '%q' "${DEPLOY_SERVICES[*]}"
-
 
 # PAT은 SSH 명령 인자나 환경변수에 포함하지 않고 표준입력으로만 전달합니다.
 echo "${COLOR_BLUE}Docker registry에 로그인합니다.${COLOR_NC}"
@@ -405,6 +421,7 @@ ssh \
   "DOCKER_USER=$remote_docker_username \
    DOCKER_REPOSITORY=$remote_docker_repository \
    APP_VERSION=$remote_app_version \
+   FRONTEND_VERSION=$remote_frontend_version \
    AI_WORKER_VERSION=$remote_ai_worker_version \
    DEPLOY_SERVICES=$remote_deploy_services \
    bash -s" <<'EOF'
@@ -595,6 +612,7 @@ echo "Deploying services: ${deploy_services[*]}"
 docker compose up \
   -d \
   --pull always \
+  --wait \
   "${deploy_services[@]}"
 
 # 사용 중인 rollback image는 남기고 dangling image만 정리합니다.
@@ -604,3 +622,9 @@ docker compose ps
 EOF
 
 echo "${COLOR_GREEN}Deployment finished.${COLOR_NC}"
+
+if [ "$is_https" = "1" ]; then
+  echo "${COLOR_BLUE}다음 단계: DNS가 ${PRODUCTION_DOMAIN}을 가리키는지 확인한 뒤 scripts/certbot.sh를 실행하세요.${COLOR_NC}"
+else
+  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/v1/health${COLOR_NC}"
+fi

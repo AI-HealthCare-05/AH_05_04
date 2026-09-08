@@ -9,6 +9,10 @@
 Staging 언급은 기존 runtime 안전 정책과 검증 경계를 설명하며, 별도의 AWS Staging
 배포 구성을 뜻하지 않는다.
 
+발표와 최대 1주일의 단일 EC2 합성 데이터 데모 절차는
+[AWS Production 합성 데이터 데모 Runbook](./runbooks/aws-production-demo.md)을 따른다.
+이 제한된 데모 절차는 아래 Production 책임 체계나 공개 게이트를 해제하지 않는다.
+
 ## Production 운영 책임 체계
 
 아래 역할은 제품·공개 게이트 승인, 기술 승인·실행, 도메인별 운영 검증을 분리한다. 담당자가 `미정`이거나 대체 담당자·증빙 위치 또는 해당 역할 수행에 필요한 접근·승인·실행 권한이 비어 있는 역할이 하나라도 있으면 Production 배포를 승인하거나 시작하지 않는다. 실제 배포 명령과 Rollback 명령의 실행 권한은 각각 `배포 실행`과 `Rollback 실행` 담당자에게만 요구하며, 제품 담당자와 도메인별 운영 검증 담당자에게 자동으로 부여하지 않는다. 팀 내부 검토는 외부 의료·약학·Privacy·Source 승인이나 Production 공개 승인을 대체하지 않는다.
@@ -134,10 +138,11 @@ reverse proxy timeout을 결정하는 식이 아닙니다. OCR reverse proxy의
 upstream read timeout은 전체 deadline `D`보다 커야 합니다.
 
 NGINX 기본 `proxy_read_timeout`은 60초이므로 `D=60초`와 동일하게 설정하면
-응답 전달 여유가 없습니다. `infra/nginx/default.conf`,
-`infra/nginx/prod_http.conf`, `infra/nginx/prod_https.conf`에
-`proxy_read_timeout > D`를 만족하는 값을 명시하기 전에는 OCR 동기 경로를
-Production에 배포하지 않습니다.
+응답 전달 여유가 없습니다. Production에서 사용하는 `infra/nginx/prod_http.conf`와
+`infra/nginx/prod_https.conf`는 `proxy_read_timeout=75초`를 명시해 기본
+`D=60초`보다 크게 둡니다. `D`를 75초 이상으로 변경할 때는 두 Production 설정도 같은
+배포 변경에서 더 큰 값으로 갱신합니다. `infra/nginx/default.conf`는 Production Compose가
+사용하지 않는 개발용 예시이며 이 보장을 제공하지 않습니다.
 
 Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
 `N × T + M_chat`을 사용합니다. 따라서 Nginx read timeout의 전체 조건은
@@ -225,7 +230,9 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
 - 비운영 환경에서 downgrade가 필요한 경우에만 백업과 영향 확인을 완료하고, 승인된 절차로 신규 필드 데이터를 제거하거나 별도로 보존한 후 실행합니다.
 - Production에서 migration 문제가 발생하면 신규 애플리케이션 배포를 중단하고 기존 호환 버전을 유지한 상태에서 후속 migration으로 forward-fix합니다.
 - `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 비동기 작업 처리 서비스로 운영하지 않고, Production Compose에서도 placeholder 재시작 루프를 피하기 위해 자동 재시작 대상으로 두지 않습니다. 다만 schema migration 전에는 구버전 프로세스가 변경 중인 DB schema에 접근하지 못하도록 중단 상태를 확인합니다.
-- Frontend build·배포 위치와 `VITE_API_BASE_URL`, Nginx routing, HTTPS 및 CORS 실제 값을 함께 확인합니다.
+- Frontend는 `frontend/Dockerfile.prod`에서 `VITE_API_BASE_URL`을 주입해 build하고,
+  `frontend-${FRONTEND_VERSION}` 고정 이미지로 배포합니다. Production Nginx는 SPA fallback,
+  `/api/` reverse proxy, `/healthz`, HTTPS를 함께 제공하며 CORS·cookie와 동일 origin인지 확인합니다.
 
 ### PostgreSQL volume 초기화 전제
 
