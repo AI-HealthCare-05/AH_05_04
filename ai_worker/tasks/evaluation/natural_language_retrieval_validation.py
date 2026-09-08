@@ -30,7 +30,7 @@ _PHASE_A_BLOCKERS = (
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
 _DECISION_DOCS_PREFIX = "docs/"
-_PHASE_A_CHECK_CATALOG = {
+_VALIDATION_CHECK_CATALOG = {
     "PHASE_A_DEV_FIXTURE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
@@ -54,8 +54,14 @@ _PHASE_A_CHECK_CATALOG = {
         "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
         "94 passed, 7 skipped",
     ),
+    "PHASE_B_GOLD_REVIEW_PROVENANCE": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::"
+        "test_issue_273_graph_records_only_the_actual_gold_review_event -q",
+        "1 passed",
+    ),
 }
-_PHASE_A_CHECK_IDS = tuple(_PHASE_A_CHECK_CATALOG)
+_VALIDATION_CHECK_IDS = tuple(_VALIDATION_CHECK_CATALOG)
 
 
 def _tuple_from_wire(value: object) -> object:
@@ -90,6 +96,7 @@ class ValidationCheck(StrictContractModel):
         "PHASE_A_LOADER",
         "PHASE_A_REPORT_PROJECTION",
         "PHASE_A_SCHEMA_EXPORT",
+        "PHASE_B_GOLD_REVIEW_PROVENANCE",
     ]
     command: NonEmptyString
     exit_code: Literal[0]
@@ -97,8 +104,8 @@ class ValidationCheck(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_catalog_entry(self) -> ValidationCheck:
-        if (self.command, self.result) != _PHASE_A_CHECK_CATALOG[self.check_id]:
-            raise ValueError("validation check must match the Phase A evidence catalog")
+        if (self.command, self.result) != _VALIDATION_CHECK_CATALOG[self.check_id]:
+            raise ValueError("validation check must match the Issue 273 evidence catalog")
         return self
 
 
@@ -108,22 +115,29 @@ class CandidateSchemaSetRef(StrictContractModel):
     hash: Literal["ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"]
 
 
+class GoldReviewEvidenceRef(StrictContractModel):
+    id: Literal["github-pr-341-review-5137833200"]
+    version: Literal["1.0.0"]
+    hash: Literal["6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776"]
+
+
 class Issue273ValidationStatus(StrictContractModel):
     schema_version: Literal["1.0.0"]
     issue: Literal["#273"]
-    phase: Literal["PHASE_A_DEV_AUTHORING"]
-    status_label: Literal["Phase A · DEV Authoring Draft"]
+    phase: Literal["PHASE_B_GOLD_REVIEW"]
+    status_label: Literal["Phase B · DEV Gold Reviewed"]
     schema_set_status: Literal["REVIEW_REQUIRED"]
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
     created_counts: CreatedCounts
-    dataset_manifest_sha256: Literal["a6461ca49c6021b242bd5b13f3d9b1b52bf564bea186a47894cd254a40600291"]
+    dataset_manifest_sha256: Literal["c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff"]
     schema_set_ref: CandidateSchemaSetRef
     schema_set_decision: Literal["docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md"]
     responsible_reviewer: Literal["@hazelnutflavoured"]
-    approval_transition: Literal["FUTURE_PULL_REQUEST_REVIEW_EVENT"]
+    approval_transition: Literal["FUTURE_DATASET_CUSTODIAN_APPROVAL_EVENT"]
     dataset_status: Literal["DRAFT"]
-    gold_review_status: Literal["NOT_STARTED"]
+    gold_review_status: Literal["REVIEWED"]
+    gold_review_evidence_ref: GoldReviewEvidenceRef
     holdout_freeze_status: Literal["NOT_STARTED"]
     adapter_status: Literal["NOT_IMPLEMENTED"]
     actual_run_ref: None
@@ -151,11 +165,11 @@ class Issue273ValidationStatus(StrictContractModel):
     @model_validator(mode="after")
     def validate_ordered_collections(self) -> Issue273ValidationStatus:
         if self.blocking_codes != _PHASE_A_BLOCKERS:
-            raise ValueError("Phase A blockers must be the exact UTF-16-sorted set")
+            raise ValueError("Issue 273 blockers must be the exact UTF-16-sorted set")
         check_ids = [check.check_id for check in self.checks]
         commands = [check.command for check in self.checks]
-        if tuple(check_ids) != _PHASE_A_CHECK_IDS:
-            raise ValueError("validation checks must contain the exact Phase A evidence catalog")
+        if tuple(check_ids) != _VALIDATION_CHECK_IDS:
+            raise ValueError("validation checks must contain the exact Issue 273 evidence catalog")
         if len(check_ids) != len(set(check_ids)) or len(commands) != len(set(commands)):
             raise ValueError("validation checks must be unique")
         if check_ids != sorted(check_ids, key=_utf16_key):
@@ -237,9 +251,9 @@ def render_report(raw_status: bytes) -> bytes:
     schema_set = status.schema_set_ref
     decision_href = _decision_href(status.schema_set_decision)
     lines = [
-        "# Issue #273 Phase A DEV Authoring Validation Report",
+        "# Issue #273 Phase B DEV Gold Review Validation Report",
         "",
-        "> Phase A · DEV Authoring Draft — authored, unreviewed, and not a Release decision.",
+        "> Phase B · DEV Gold Reviewed — human-reviewed, not Dataset-approved, and not a Release decision.",
         "",
         f"- Phase: `{status.phase}`",
         f"- Schema Set Status: `{status.schema_set_status}`",
@@ -248,8 +262,12 @@ def render_report(raw_status: bytes) -> bytes:
         f"- Schema Set: `{schema_set.id}@{schema_set.version}` `{schema_set.hash}`",
         (f"- Candidate Decision: [`{status.schema_set_decision}`]({decision_href})"),
         (
-            f"- Approval Transition: `{status.approval_transition}` by responsible reviewer "
-            f"`{status.responsible_reviewer}`; this future PR event has not occurred."
+            f"- Gold Review Evidence: `{status.gold_review_evidence_ref.id}@"
+            f"{status.gold_review_evidence_ref.version}` `{status.gold_review_evidence_ref.hash}`"
+        ),
+        (
+            f"- Approval Transition: `{status.approval_transition}`; a distinct verified "
+            "`DATASET_CUSTODIAN` event has not occurred."
         ),
         "- Release Eligible: `false`",
         "- Production remains closed.",
@@ -280,7 +298,8 @@ def render_report(raw_status: bytes) -> bytes:
             "한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, "
             "실제 환자 발화나 실제 제품 데이터가 아니다."
         ),
-        "DEV authoring exists but has not received human Gold review; all authored artifacts remain DRAFT.",
+        "DEV Gold review is recorded as REVIEWED for the 60 Cases, Evidence Mapping, and Dataset Manifest.",
+        "Dataset approval has not occurred; the Dataset remains DRAFT and no approver is recorded.",
         "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.",
         "No baseline Metric exists, and no Metric fields are recorded in the machine status.",
         "DEV cannot produce a Release PASS; Production remains closed.",
@@ -302,7 +321,7 @@ def render_report(raw_status: bytes) -> bytes:
         "## Boundaries",
         "",
         "- Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.",
-        "- No human Gold review, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.",
+        "- No Dataset approval, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.",
         "- HOLDOUT question content is absent from the repository and remains future protected work.",
         "- The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.",
         "- The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.",
