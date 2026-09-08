@@ -1238,8 +1238,10 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
 - Production provenance가 Snapshot `canonical_checksum`과 exact-match하지 않거나 정확히 하나의 Snapshot
   Member를 가리키지 않음
 - API·Internal `source_version` hash suffix가 해당 Snapshot `canonical_checksum`과 exact-match하지 않는데
-  Retrieval `VALIDATION_ERROR`와 Safety `VALIDATION_FAILED`로 닫지 않거나 Source producer의
-  `SOURCE_VERSION_CONFLICT`로 오분류함
+  Retrieval Adapter에서 Retrieval `VALIDATION_ERROR`와 Safety `VALIDATION_FAILED`로 닫지 않거나,
+  Source producer에서 Snapshot 생성 전 수집 validation failure로 닫지 않고 외부 version 재사용
+  충돌 전용인 `SOURCE_VERSION_CONFLICT`로 오분류함. Producer의 정확한 ingestion `failure_code`는
+  #362에서 Source Ingestion 계약과 함께 고정함
 - ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
 - Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
 - Production `source_version`을 Source metadata와 함께 검증하지 않거나 Runtime identity와 Evaluation bridge

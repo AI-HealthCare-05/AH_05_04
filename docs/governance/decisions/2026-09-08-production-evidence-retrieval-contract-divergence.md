@@ -128,7 +128,10 @@ Production `source_version` 전체 값은 1~200자, NFC이며 공백·제어문�
 
 API·Internal 형식의 hash suffix는 같은 `source_snapshot_id`의 `canonical_checksum`과 exact-match해야 하며,
 Source producer와 Production Retrieval Adapter가 각각 이 결속을 검증한다. Source producer의 수집 시점
-불일치는 Snapshot을 생성하지 않고 기존 `SOURCE_VERSION_CONFLICT`로 기록한다. 이미 저장된 Snapshot을 읽는
+불일치는 Snapshot을 생성하지 않고 수집 validation failure로 닫는다. 이 실패의 정확한 ingestion
+`failure_code`는 #362에서 Source Ingestion 계약과 함께 고정하며 `SOURCE_VERSION_CONFLICT`로 재사용하지
+않는다. `SOURCE_VERSION_CONFLICT`는 기존 계약대로 동일한 제공자 외부 version이 재사용됐지만 Canonical
+내용이 다른 `external:` 수집 사건에만 유지한다. 이미 저장된 Snapshot을 읽는
 Production Retrieval Adapter에서 suffix와 `canonical_checksum`이 다르면 detached 또는 변조된 provenance
 결속 실패이므로 `retrieval_execution_status=VALIDATION_ERROR`로 닫고 Safety finalizer가
 `execution_status=VALIDATION_ERROR`, `release_decision=REJECTED`, `fallback=VALIDATION_FAILED`로 변환한다.
