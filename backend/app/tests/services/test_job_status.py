@@ -12,7 +12,7 @@ from app.models.async_jobs import _FAILURE_CODE_VALUES, AiJobStatus, AiJobType, 
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob, OcrStatus
-from app.models.prescriptions import Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.async_job_repository import AsyncJobRepository
@@ -124,7 +124,9 @@ async def _create_confirmed_prescription(
     ocr_job = OcrJob(document_id=document.id, ocr_status=OcrStatus.COMPLETED, completed_at=datetime.now(UTC))
     session.add(ocr_job)
     await session.flush()
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -132,6 +134,24 @@ async def _create_confirmed_prescription(
         confirmed_at=datetime.now(UTC),
     )
     session.add(prescription)
+    await session.flush()
+    session.add(
+        PrescriptionVersion(
+            id=version_id,
+            prescription_id=prescription.id,
+            version_number=1,
+            prescribed_date=prescription.prescribed_date,
+            confirmed_at=prescription.confirmed_at,
+        )
+    )
+    await session.flush()
+    session.add(
+        PrescriptionVersionMedication(
+            prescription_version_id=version_id,
+            medication_name="합성 Job 상태 약",
+            display_order=1,
+        )
+    )
     await session.flush()
     return prescription
 
@@ -141,6 +161,7 @@ async def _accept_guide_job(session: AsyncSession, *, user: User, prescription: 
     반환값은 (job_id, guide_id)."""
     guide = Guide(
         prescription_id=prescription.id,
+        prescription_version_id=prescription.active_version_id,
         profile_id=prescription.profile_id,
         generation_status=GuideGenerationStatus.GENERATING,
     )
@@ -148,7 +169,11 @@ async def _accept_guide_job(session: AsyncSession, *, user: User, prescription: 
     await session.flush()
 
     repo = AsyncJobRepository(session)
-    job = await repo.create_job(user_id=user.id, job_type=AiJobType.GUIDE, prescription_version_id=None)
+    job = await repo.create_job(
+        user_id=user.id,
+        job_type=AiJobType.GUIDE,
+        prescription_version_id=prescription.active_version_id,
+    )
     await repo.create_outbox_event(job=job, trace_id="a" * 32, domain_type=DomainType.GUIDE, domain_id=guide.id)
     return job.id, guide.id
 
@@ -415,9 +440,14 @@ async def test_get_job_status_uses_persistent_guide_ai_job_id_when_outbox_event_
     prescription = await _create_confirmed_prescription(db_session, user=user, document=document)
 
     repo = AsyncJobRepository(db_session)
-    job = await repo.create_job(user_id=user.id, job_type=AiJobType.GUIDE, prescription_version_id=None)
+    job = await repo.create_job(
+        user_id=user.id,
+        job_type=AiJobType.GUIDE,
+        prescription_version_id=prescription.active_version_id,
+    )
     guide = Guide(
         prescription_id=prescription.id,
+        prescription_version_id=prescription.active_version_id,
         profile_id=prescription.profile_id,
         generation_status=GuideGenerationStatus.GENERATING,
         ai_job_id=job.id,
@@ -441,9 +471,14 @@ async def test_rediscover_guide_job_uses_persistent_ai_job_id_when_outbox_event_
     prescription = await _create_confirmed_prescription(db_session, user=user, document=document)
 
     repo = AsyncJobRepository(db_session)
-    job = await repo.create_job(user_id=user.id, job_type=AiJobType.GUIDE, prescription_version_id=None)
+    job = await repo.create_job(
+        user_id=user.id,
+        job_type=AiJobType.GUIDE,
+        prescription_version_id=prescription.active_version_id,
+    )
     guide = Guide(
         prescription_id=prescription.id,
+        prescription_version_id=prescription.active_version_id,
         profile_id=prescription.profile_id,
         generation_status=GuideGenerationStatus.GENERATING,
         ai_job_id=job.id,

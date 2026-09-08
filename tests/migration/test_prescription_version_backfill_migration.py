@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -27,6 +27,7 @@ from app.repositories.prescription_repository import PrescriptionRepository
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BACKFILL_REVISION = "169b2c3d4e5f"
 BACKFILL_BASE_REVISION = "165f90716263"
+CUTOVER_REVISION = "169c3d4e5f6a"
 
 
 def create_alembic_config() -> Config:
@@ -275,6 +276,96 @@ async def _version_counts(ids: dict[str, str]) -> tuple[int, int]:
         return int(row[0]), int(row[1])
 
 
+async def _seed_cutover_dependents(ids: dict[str, str]) -> dict[str, str]:
+    dependent_ids = {
+        "search_id": str(uuid4()),
+        "guide_id": str(uuid4()),
+        "chat_session_id": str(uuid4()),
+    }
+    async with _connection() as connection, connection.begin():
+        await connection.execute(
+            text(
+                """
+                INSERT INTO medication_candidate_search (
+                    id, prescription_version_medication_id, medication_name_snapshot,
+                    strength_text_snapshot, query_digest, status, candidate_count,
+                    displayed_candidate_count
+                ) VALUES (
+                    :search_id, :medication_id, '합성백필정', '10mg',
+                    'synthetic-cutover-digest', 'NO_CANDIDATE', 0, 0
+                )
+                """
+            ),
+            {**ids, **dependent_ids},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO guide (id, prescription_id, profile_id, generation_status)
+                VALUES (:guide_id, :prescription_id, :profile_id, 'PENDING')
+                """
+            ),
+            {**ids, **dependent_ids},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO chat_session (id, prescription_id, profile_id, session_status)
+                VALUES (:chat_session_id, :prescription_id, :profile_id, 'ACTIVE')
+                """
+            ),
+            {**ids, **dependent_ids},
+        )
+    return dependent_ids
+
+
+async def _cutover_snapshot(ids: dict[str, str]) -> dict[str, object]:
+    async with _connection() as connection:
+        row = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                    SELECT p.active_version_id, pvm.id AS version_medication_id,
+                           mcs.prescription_version_medication_id AS search_medication_id,
+                           g.prescription_version_id AS guide_version_id,
+                           cs.prescription_version_id AS chat_version_id,
+                           (
+                               SELECT count(*) FROM pg_constraint
+                               WHERE conname IN (
+                                   'fk_medication_candidate_search_version_medication',
+                                   'fk_medication_identification_version_medication',
+                                   'fk_guide_prescription_version_prescription',
+                                   'fk_chat_session_prescription_version_prescription',
+                                   'fk_ai_job_prescription_version'
+                               )
+                           ) AS cutover_fk_count
+                    FROM prescription p
+                    JOIN prescription_version_medication pvm
+                      ON pvm.prescription_version_id = p.active_version_id
+                    JOIN medication_candidate_search mcs ON mcs.id = :search_id
+                    JOIN guide g ON g.id = :guide_id
+                    JOIN chat_session cs ON cs.id = :chat_session_id
+                    WHERE p.id = :prescription_id
+                    """
+                    ),
+                    ids,
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return dict(row)
+
+
+async def _cleanup_cutover(ids: dict[str, str]) -> None:
+    async with _connection() as connection, connection.begin():
+        await connection.execute(text("DELETE FROM chat_session WHERE id = :chat_session_id"), ids)
+        await connection.execute(text("DELETE FROM guide WHERE id = :guide_id"), ids)
+        await connection.execute(text("DELETE FROM medication_candidate_search WHERE id = :search_id"), ids)
+    await _cleanup(ids)
+
+
 async def _create_via_repository() -> dict[str, str]:
     engine = create_async_engine(config.database_url, poolclass=NullPool)
     try:
@@ -338,6 +429,38 @@ async def _create_via_repository() -> dict[str, str]:
         await engine.dispose()
 
 
+async def _correct_via_repository(ids: dict[str, str]) -> str:
+    engine = create_async_engine(config.database_url, poolclass=NullPool)
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
+            repository = PrescriptionRepository(session)
+            prescription = await repository.get_owned_for_version_update(
+                prescription_id=UUID(ids["prescription_id"]),
+                user_id=UUID(ids["user_id"]),
+            )
+            assert prescription is not None
+            version = await repository.create_version(
+                prescription=prescription,
+                prescribed_date=date(2026, 9, 9),
+                confirmed_at=datetime(2026, 9, 9, 2, 3, 4, tzinfo=UTC),
+                medications=[
+                    {
+                        "medication_name": "합성정정정",
+                        "strength_text": "2.5mg",
+                        "dose_value": Decimal("0.250"),
+                        "dose_unit": "정",
+                        "frequency_per_day": 2,
+                        "timing_text": "식후",
+                        "duration_days": 5,
+                        "display_order": 1,
+                    }
+                ],
+            )
+            return str(version.id)
+    finally:
+        await engine.dispose()
+
+
 def test_backfill_creates_exact_version_one_snapshot_and_is_rerunnable() -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, BACKFILL_BASE_REVISION)
@@ -383,6 +506,39 @@ def test_repository_dual_write_commits_against_migrated_postgresql() -> None:
         assert asyncio.run(_version_counts(ids)) == (1, 1)
     finally:
         asyncio.run(_cleanup(ids))
+
+
+def test_repository_correction_commits_complete_version_against_migrated_postgresql() -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_create_via_repository())
+    try:
+        corrected_version_id = asyncio.run(_correct_via_repository(ids))
+        snapshot = asyncio.run(_snapshot(ids))
+        assert snapshot is not None
+        assert str(snapshot["active_version_id"]) == corrected_version_id
+        assert snapshot["version_number"] == 2
+        assert snapshot["medication_name"] == "합성정정정"
+        assert asyncio.run(_version_counts(ids)) == (2, 2)
+    finally:
+        asyncio.run(_cleanup(ids))
+
+
+def test_read_cutover_rebackfills_and_remaps_dependents_on_migrated_postgresql() -> None:
+    alembic_config = create_alembic_config()
+    command.downgrade(alembic_config, BACKFILL_REVISION)
+    ids = asyncio.run(_seed_legacy_prescription())
+    ids.update(asyncio.run(_seed_cutover_dependents(ids)))
+    try:
+        command.upgrade(alembic_config, CUTOVER_REVISION)
+        snapshot = asyncio.run(_cutover_snapshot(ids))
+        assert snapshot["active_version_id"] is not None
+        assert snapshot["search_medication_id"] == snapshot["version_medication_id"]
+        assert snapshot["guide_version_id"] == snapshot["active_version_id"]
+        assert snapshot["chat_version_id"] == snapshot["active_version_id"]
+        assert snapshot["cutover_fk_count"] == 5
+    finally:
+        asyncio.run(_cleanup_cutover(ids))
+        command.upgrade(alembic_config, "head")
 
 
 @pytest.mark.parametrize(

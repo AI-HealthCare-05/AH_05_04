@@ -22,9 +22,12 @@ _GENERATION_FAILED_ERROR_MESSAGE = "가이드 생성 처리 중 오류가 발생
 
 
 def _to_guide_data(guide: Guide) -> GuideData:
+    if guide.prescription_version_id is None:
+        raise RuntimeError("guide prescription version is required")
     return GuideData(
         guide_id=guide.id,
         prescription_id=guide.prescription_id,
+        prescription_version_id=guide.prescription_version_id,
         generation_status=GuideStatus(guide.generation_status),
         content=guide.content,
         model_name=guide.model_name,
@@ -69,6 +72,15 @@ class GuideService:
                 ],
             )
 
+        version = prescription.active_version
+        if version is None or not version.medications:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_VERSION_UNAVAILABLE",
+                message="활성 처방 버전 정보를 사용할 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="INVALID_VERSION_GRAPH")],
+            )
+
         guide = await self._repo.create(prescription=prescription)
 
         failure_error: ApiError
@@ -84,7 +96,7 @@ class GuideService:
                         timing_text=medication.timing_text,
                         duration_days=medication.duration_days,
                     )
-                    for medication in prescription.medications
+                    for medication in version.medications
                 ]
             )
             result = await self._generator.generate(generation_input)

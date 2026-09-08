@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ApiError
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.guide_repository import GuideRepository
@@ -96,7 +96,9 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(ocr_job)
     await session.flush()
 
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -105,8 +107,23 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     )
     session.add(prescription)
     await session.flush()
-
+    version = PrescriptionVersion(
+        id=version_id,
+        prescription_id=prescription.id,
+        version_number=1,
+        prescribed_date=prescription.prescribed_date,
+        confirmed_at=prescription.confirmed_at,
+    )
+    session.add(version)
+    await session.flush()
     session.add(Medication(prescription_id=prescription.id, medication_name="타이레놀", display_order=1))
+    session.add(
+        PrescriptionVersionMedication(
+            prescription_version_id=version_id,
+            medication_name="타이레놀",
+            display_order=1,
+        )
+    )
     await session.flush()
 
     return prescription

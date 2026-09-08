@@ -10,7 +10,7 @@ import pytest
 from app.core.errors import ApiError
 from app.dtos.guides import CreateGuideRequest
 from app.models.guides import Guide, GuideGenerationStatus
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
 from app.services.guide_ai.exceptions import (
@@ -27,10 +27,13 @@ from app.services.guides import GuideService
 
 
 def _prescription(*, medication_name: str = "합성약 A") -> Prescription:
-    return Prescription(
+    prescription_id = uuid4()
+    version = PrescriptionVersion(
         id=uuid4(),
+        prescription_id=prescription_id,
+        version_number=1,
         medications=[
-            Medication(
+            PrescriptionVersionMedication(
                 medication_name=medication_name,
                 strength_text="100mg",
                 dose_value=Decimal("1.250"),
@@ -42,17 +45,22 @@ def _prescription(*, medication_name: str = "합성약 A") -> Prescription:
             )
         ],
     )
+    return Prescription(id=prescription_id, active_version_id=version.id, active_version=version)
 
 
 def _prescription_with_ordered_medications() -> Prescription:
-    return Prescription(
+    prescription_id = uuid4()
+    version = PrescriptionVersion(
         id=uuid4(),
+        prescription_id=prescription_id,
+        version_number=1,
         medications=[
-            Medication(medication_name="첫번째 약", display_order=1),
-            Medication(medication_name="두번째 약", display_order=2),
-            Medication(medication_name="세번째 약", display_order=3),
+            PrescriptionVersionMedication(medication_name="첫번째 약", display_order=1),
+            PrescriptionVersionMedication(medication_name="두번째 약", display_order=2),
+            PrescriptionVersionMedication(medication_name="세번째 약", display_order=3),
         ],
     )
+    return Prescription(id=prescription_id, active_version_id=version.id, active_version=version)
 
 
 def _guide(prescription_id: UUID, *, completed: bool = False) -> Guide:
@@ -60,6 +68,7 @@ def _guide(prescription_id: UUID, *, completed: bool = False) -> Guide:
     return Guide(
         id=uuid4(),
         prescription_id=prescription_id,
+        prescription_version_id=uuid4(),
         generation_status=GuideGenerationStatus.COMPLETED if completed else GuideGenerationStatus.GENERATING,
         content="검증된 최종 평문" if completed else None,
         model_name="gpt-4o-mini-2024-07-18" if completed else None,

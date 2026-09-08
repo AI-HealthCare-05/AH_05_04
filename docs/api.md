@@ -66,6 +66,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | OCR | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200` |
 | OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/latest` | `200` |
+| 처방 | `PATCH` | `/api/v1/prescriptions/{prescription_id}` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
 | 가이드 | `GET` | `/api/v1/prescriptions/{prescription_id}/guide` | `200` |
 | 채팅 | `GET` | `/api/v1/prescriptions/{prescription_id}/chat-session` | `200` |
