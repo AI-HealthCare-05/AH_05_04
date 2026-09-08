@@ -106,3 +106,49 @@ PYTHONPATH=backend:. python -m pytest ai_worker/tests/rag/catalog ai_worker/test
 Python은 공유 테스트 환경의 3.13을 사용했다. PostgreSQL 접속·migration 적용·실제 승인·Runtime은
 실행하지 않았다. 이번 결과는 Catalog 계산·Candidate 단위 회귀이며 DB 적재 성공 증빙이 아니다.
 문서 상대 링크, Markdown 표 구조, 전체 변경 diff와 공백 오류를 확인한다.
+
+## 2단계 — v2 bytes 검증과 저장 metadata 설계
+
+### 보존 모델 설계 (아직 DB 컬럼·DTO 확정 아님)
+
+| 속성 | 이번 v2에서 보존할 의미 | 책임·제약 검토 |
+| --- | --- | --- |
+| hash_kind | JSONL export checksum 또는 Catalog envelope hash | 내부 저장 구분자. 정확한 enum·컬럼명은 DB 리뷰 후 결정. v2 envelope 입력에 새 key를 추가하지 않음 |
+| schema_version | medication-catalog-v2 | 소비자가 요청한 계약과 일치 확인 |
+| canonicalization_spec_version | envelope는 catalog-manifest-envelope-v2 | export는 현재 v2 JSONL 규칙을 식별할 저장 표현을 검토. 새 spec을 임의 발급하지 않음 |
+| hash_value | 각 대상 bytes의 SHA-256 | hash 문자열만으로 종류나 권한을 판단하지 않음 |
+| 계산 대상 참조 | 불변 manifest payload 또는 이를 정확히 복원할 구성원·Set 참조, JSONL 계산 대상 | digest만 저장하지 않음. DB에서 복원한 bytes와 재계산 digest가 동일해야 함 |
+
+현재 v2 producer·consumer 전달 구조와 이 내부 보존 모델을 분리한다. 유일성 범위를 digest 단독으로
+결정하지 않고 종류·schema/spec·계산 대상 및 실행 식별의 관계를 검토한다. D-02 실행 FK는 미확정이다.
+Runtime medication hash와 Candidate projection hash의 placeholder 값을 저장하거나 envelope hash를
+그 종류로 표시하지 않는다. 기존 manifest JSON 파일 checksum은 envelope hash가 아님을 fixture로 구분한다.
+
+### 검증 보강
+
+승인된 합성 v2 입력, canonical JSONL, envelope 계산 bytes, 전달 manifest 및 기대 digest를
+`tests/fixtures/rag/catalog/hash-v2/`에 고정했다. 테스트는 기대값을 생산 함수로 매번 재생성하지 않는다.
+입력·Source refs·receipt 순서 반전, NFD 표시값 보존, LF/CRLF·마지막 LF·BOM 변경,
+checksum 재결속을 시도해도 비정규 JSONL 거부, 다른 종류의 digest 대입, envelope 필드 변조,
+최상위·중첩 JSON 중복 key 거부를 Catalog 및 공개 Candidate 인계 경계에서 검증한다.
+
+기존 manifest 파서가 중복 key의 마지막 값만 사용해 검증을 통과하는 실패 사례 2건을 먼저 재현했다.
+파싱 시 중복 key를 거부하도록 보완했다. 정상 v2 계산식·필드·오류 코드는 유지한다.
+동일한 값을 반복한 중복 key도 거부하며, 실패 상세는 기존 고정 경로만 사용한다.
+실제 승인 만료·회수 검증은 승인 저장소 adapter 후속 범위다. 이번 fixture의 승인 상태는 합성이다.
+DB 원자 저장·rollback은 아직 실행하지 않았다.
+
+2단계 최종 실행 결과:
+
+```text
+python -m pytest ai_worker/tests/rag -q
+937 passed
+ruff check ai_worker/tasks/rag ai_worker/tests/rag
+All checks passed
+MYPYPATH=backend:. python -m mypy ai_worker/tasks/rag
+Success: no issues found in 36 source files
+```
+
+고정 파일 3개의 SHA-256은 별도 `shasum -a 256` 결과와 `expected.json`의 값이 일치했다.
+신규 hash 회귀는 22건이다. 변경 Python 파일 format 검사 및 전체 diff 공백 검사를 함께 수행했다.
+PostgreSQL·Frontend·실제 외부 Source 승인·Runtime 검증은 이번 단계에서 수행하지 않았다.
