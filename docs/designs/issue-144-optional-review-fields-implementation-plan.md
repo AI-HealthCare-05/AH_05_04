@@ -52,6 +52,13 @@ LLM은 공통 보충 대상에 함량·단위를 포함했고, 규칙 경로는 
 실행 범위를 기록했다. 실제 DB 저장·PATCH·DOC-03 확인은 4~5단계에 남아 있다.
 current 계약 승격 및 담당 승인 완료를 선언하지 않는다.
 
+## 4단계 결과 — 저장·API 통합 검증 완료
+
+Backend 53개·Worker PostgreSQL 3개 테스트와 실제 Alembic 적용·제약 조회를 완료했다.
+빈 필드 값 입력·null 확정·중복 저장 실패 rollback을 검증했고 신규 migration은 필요하지 않았다.
+[실행 범위와 재현 명령](../testing/optional-review-fields-144.md)을 참고한다.
+DOC-03·담당 리뷰·CI·current 계약 정렬은 5단계에 남아 있다.
+
 ## 단계별 완료 기준
 
 | 단계 | 작업 | 완료 기준 |

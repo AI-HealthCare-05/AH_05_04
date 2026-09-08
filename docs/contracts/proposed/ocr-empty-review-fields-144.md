@@ -94,7 +94,7 @@ CONFIRMED 및 확인 시각을 기록한다. 용량 값·횟수·기간의 빈 �
 | ER-12 | DOC-03에서 미인식 Optional 편집 | 기존 UI 입력·저장 및 optional null 확인 가능 |
 
 3단계 구조화 단위 회귀는 [실행 증빙](../../testing/optional-review-fields-144.md)에 기록했다.
-DB·PATCH·DOC-03 검증과 담당 리뷰는 남아 있으며 전체 계약 완료를 의미하지 않는다.
+DB·PATCH 통합 검증도 같은 증빙에 기록했다. DOC-03·담당 리뷰·CI는 남아 있으며 전체 계약 완료를 의미하지 않는다.
 합성 fixture와 격리 PostgreSQL을 사용한다. 실제 Provider 호출은 필요하지 않다.
 
 ## 6. 계약 반영과 완료
