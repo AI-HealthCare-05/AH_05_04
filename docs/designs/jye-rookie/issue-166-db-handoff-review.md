@@ -1,7 +1,10 @@
 # #166 DB 인계·결정 항목 검토표
 
-- 작성: 김지혜 / 2026-09-08. 기준: develop `b6e99ad`, 후속 작업 `5d4905b`.
-- 상태: **검토안 작성 완료 / 결정·인계 미완료**. D-02는 미확정이다.
+- 작성: 김지혜 / 2026-09-08, 갱신 2026-09-09. 기준: develop `164b6c7d8e9f`(#355 병합 후), 후속 작업 `8aa6d904`.
+- 상태: **참고 구현 완료 / 결정·인계 미완료**. D-02는 미확정이다.
+- 아래 결정표는 제안이고, 브랜치 `feat/166-catalog-db-integration`에 그 제안을 구현한
+  migration 2개(`166a7b8c9d0e`, `166b8c9d0e1f`)와 adapter가 들어 있다. **채택 확정이 아니라
+  검토 대상 참고 구현**이다. 은영님이 구조를 바꾸면 그쪽을 따른다. develop에는 병합하지 않았다.
 - 이번 산출물: 김지혜가 제안할 연결안, 리뷰 요청 범위, 필요한 인계 자료와 완료 판정.
 - 의미 계약의 상세 제안은 [기존 Proposed 연결안](../../contracts/proposed/post-mvp-1/catalog-db-integration-v2.md)에 둔다.
   이 문서는 그 내용을 별도 정본으로 복제하지 않는 검토·인계 목록이다.
@@ -26,6 +29,7 @@
 | --- | --- | --- | --- |
 | D-02 | **미확정 유지** | Snapshot 재사용과 Catalog 실행 구분, 같은 요청 재시도/새 버전 재처리, 복수 Snapshot 입력과 실행 결과의 관계 | 정본 실행/Publication의 의미, 실제 참조 키·생성 인터페이스·상태/재시도 연결, 구현 담당·적용 revision |
 | D-03 | 리뷰 요청안 | 안정 Identity upsert, 관찰 Alias 집합/적격 검색 집합 분리, 기존 boolean 근거 없는 변환 금지 | 정본 Alias/Crosswalk Set 대응·필수 범위, 물리 구성 key와 상태/불변성, 기존 행 이행 |
+| D-03a | **신설. 은영님 승인 필요** | `rag_medication_alias`(#291) 파괴적 변경: `product_id`·`ingredient_id`·`is_approved` 삭제, `target_identity_id`·`alias_source`·`review_status`·`record_status`·`is_effective` NOT NULL 신설. 기존 행이 1건이라도 있으면 migration을 `RuntimeError`로 거부한다(`_require_safe_legacy_rows`) | 컬럼 삭제 허용 여부, 기존 행 이행 방식(거부 유지 / 백필 규칙 정의), `is_approved` boolean을 `review_status`로 옮길 근거의 출처 |
 | D-04 | 보수적 유지안·실제 Source 근거 미확보 | role 포함 자연키 유지, 함량 문자열 보존, 명시적 FK INSERT | 원본 키 추가 필요성·실데이터 근거, 실행별 unique, 컬럼 이행 |
 | D-05 | **현재 v2 계산·인계 유지**, 물리 저장 리뷰 필요 | 종류/spec/digest/계산 근거를 같은 불변 구성에 연결. digest 단독 unique/FK 금지안 | 기존 구성/Set에 붙일 저장 위치·키·불변성. 새 projection/Runtime hash는 별도 계약 전환 |
 | D-06 | 리뷰 요청안 | adapter transaction 소유, commit 뒤 정상 반환, 같은 요청 재현/다른 내용 거부, 불명확 commit 재조회 | 확정 요청 key·공유 잠금/승인 revision·감사 경계·실패 분류·재시도 한도 |
@@ -65,8 +69,10 @@ D-03·D-04·D-06의 일반 구현 선택은 김지혜의 제안에 대해 PR 리
 | H07 | 저장·소비 도중 승인 철회 또는 Source 부적격 전이 | 공유 동시성 규칙에 따라 순서 결정, 부적격 입력 소비 차단 |
 | H08 | 실제 DB 왕복 후 v2 artifacts 복원 | 고정 JSONL/envelope bytes·digest와 Candidate 인계 일치 |
 
-현재 H01~H07의 실제 신규 DB 동작은 미구현이다. H08도 DB 비의존 복원 검증까지이며 실제 DB
-왕복은 남아 있다. 사례 정의를 테스트 통과 기록으로 표시하지 않는다.
+H01~H08은 참고 구현 브랜치에서 실제 PostgreSQL로 검증했다(`tests/migration/test_rag_source_catalog_migration.py`
+34건, `backend/app/tests/rag/test_rag_source_catalog_repository.py` 15건,
+`ai_worker/tests/rag/catalog` 186건). 다만 이는 **제안한 스키마 기준**의 통과이며,
+스키마가 바뀌면 다시 검증해야 한다. 사례 정의나 이 통과 기록을 계약 확정으로 해석하지 않는다.
 
 ## 검토 답변 기록 양식
 
@@ -105,8 +111,14 @@ D-03·D-04·D-06의 일반 구현 선택은 김지혜의 제안에 대해 PR 리
 - Identity·Alias/Set·현재 v2 hash 계산 자료의 저장 위치, FK·불변성 및 기존 행 이행안
 - adapter의 transaction 소유, 승인/Source 변경과의 경합 제어, 실패 감사 저장 위치
 
-기존 구조로 가능한 부분과 공유 구조 변경이 필요한 부분을 짚어주시면 그에 맞춰 migration을 구체화하겠습니다.
-Evidence/Citation 선행 revision은 준비되는 대로 연결해 주시면, 제 migration 착수 전에 최신 head와 대조하겠습니다.
+말로만 드리면 판단이 어려우실 것 같아 제안을 실제로 구현해 뒀습니다. `feat/166-catalog-db-integration`
+브랜치에 migration 2개(`166a7b8c9d0e`, `166b8c9d0e1f`)와 adapter가 있고, develop 최신 head
+`164b6c7d8e9f` 위에 올려 전체 체인과 테스트를 통과시켰습니다. **채택해 달라는 뜻이 아니라
+검토하실 대상**이고, 구조를 바꾸시면 그쪽에 맞추겠습니다. develop에는 올리지 않았습니다.
+
+특히 D-03a는 은영님이 #291에서 만드신 `rag_medication_alias`를 파괴적으로 바꾸는 제안이라
+승인 없이는 진행하지 않겠습니다. 현재는 기존 행이 1건이라도 있으면 migration이 거부하도록
+막아 뒀는데, 이 방식을 유지할지 백필 규칙을 정의할지 정해 주시면 좋겠습니다.
 
 ### 현우님께
 

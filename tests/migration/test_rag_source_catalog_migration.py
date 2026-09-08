@@ -22,6 +22,9 @@ from app.core import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAG_SOURCE_CATALOG_REVISION = "164f3a2b1c0d"
 RAG_SOURCE_CATALOG_BASE_REVISION = "171c0f751206"
+# 166a7b8c9d0e의 직전 revision. develop head가 바뀌면 함께 갱신한다.
+CATALOG_IDENTITY_BASE_REVISION = "164b6c7d8e9f"
+CATALOG_IDENTITY_REVISION = "166a7b8c9d0e"
 
 
 def create_alembic_config() -> Config:
@@ -1493,7 +1496,7 @@ def test_catalog_migration_inventory_is_read_only_and_counts_legacy_gaps(
     scenario: str, extra_counts: dict[str, int]
 ) -> None:
     configuration = create_alembic_config()
-    command.downgrade(configuration, "169b2c3d4e5f")
+    command.downgrade(configuration, CATALOG_IDENTITY_BASE_REVISION)
 
     async def check() -> None:
         baseline = await _catalog_migration_inventory()
@@ -1578,7 +1581,7 @@ def test_catalog_identity_migration_backfills_coded_legacy_members() -> None:
     configuration = create_alembic_config()
     ids: dict[str, str] | None = None
     try:
-        command.downgrade(configuration, "169b2c3d4e5f")
+        command.downgrade(configuration, CATALOG_IDENTITY_BASE_REVISION)
         ids = asyncio.run(_seed_source_catalog_chain())
 
         async def remove_ambiguous_legacy_alias() -> None:
@@ -1587,7 +1590,7 @@ def test_catalog_identity_migration_backfills_coded_legacy_members() -> None:
                     await connection.execute(text("DELETE FROM rag_medication_alias WHERE id = :alias_id"), ids)
 
         asyncio.run(remove_ambiguous_legacy_alias())
-        command.upgrade(configuration, "166a7b8c9d0e")
+        command.upgrade(configuration, CATALOG_IDENTITY_REVISION)
 
         async def verify() -> None:
             async with _connection() as connection:
@@ -1637,7 +1640,7 @@ def test_catalog_identity_migration_refuses_unprovable_legacy_conversion(legacy_
     configuration = create_alembic_config()
     ids: dict[str, str] | None = None
     try:
-        command.downgrade(configuration, "169b2c3d4e5f")
+        command.downgrade(configuration, CATALOG_IDENTITY_BASE_REVISION)
         ids = asyncio.run(_seed_source_catalog_chain())
 
         if legacy_gap == "ingredient_identity":
@@ -1656,7 +1659,7 @@ def test_catalog_identity_migration_refuses_unprovable_legacy_conversion(legacy_
             asyncio.run(create_gap())
 
         with pytest.raises(RuntimeError, match="Cannot infer"):
-            command.upgrade(configuration, "166a7b8c9d0e")
+            command.upgrade(configuration, CATALOG_IDENTITY_REVISION)
     finally:
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))

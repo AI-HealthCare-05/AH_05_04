@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -32,6 +33,10 @@ test_engine = create_async_engine(
 )
 async def initialize_database() -> AsyncIterator[None]:
     async with test_engine.begin() as connection:
+        # rag_medication_search_entry의 GIN trigram 인덱스가 gin_trgm_ops를 요구합니다.
+        # migration은 CREATE EXTENSION을 수행하지만 이 fixture는 create_all만 쓰므로
+        # 여기서 같은 확장을 보장합니다.
+        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
 
