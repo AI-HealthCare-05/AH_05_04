@@ -299,7 +299,12 @@ async def test_ocr_input_and_result_share_one_external_transaction(field_type, r
 
         await session.commit()
 
-    assert await read_persisted_result(domain_id=domain_id) == ("COMPLETED", 1)
+    # 인식된 필드 1건 + #294 저장 계층 placeholder 4건(PRESCRIBED_DATE, DOSE_VALUE,
+    # FREQUENCY_PER_DAY, DURATION_DAYS) = 5건. SqlAlchemyOcrResultStore가 누락된 필수
+    # 필드를 raw_value=null row로 채우기 때문입니다(sqlalchemy_ocr_result_store.py의
+    # _fill_missing_required_fields). MEDICATION_NAME은 계약상 저장 계층이 빈 필드로
+    # 만들지 않으므로 이 세 parametrize 케이스 모두 동일하게 5건입니다.
+    assert await read_persisted_result(domain_id=domain_id) == ("COMPLETED", 5)
 
     async with session_factory() as session:
         stored = (
