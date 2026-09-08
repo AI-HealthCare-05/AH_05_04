@@ -133,12 +133,13 @@ Protected Artifact Receipt에 등록할 자리가 없기 때문이다. 따라서
 `ai_worker/tests/evaluation/`의 fixture·report 테스트가 고정한다. sidecar를 Loader 계약에 편입하려면 Schema
 Set 확장이 필요하며 이는 후속 작업이다.
 
-이 authoring graph는 아직 사람의 Gold 검토를 받지 않았고 모든 review provenance는 `DRAFT` 또는
-`NOT_STARTED`다. 실제 Knowledge Evidence Retrieval Adapter는 `NOT_IMPLEMENTED`이며 actual retrieval Run과
-baseline Metric은 존재하지 않는다. 따라서 이 DEV Dataset은 Release `PASS`를 만들 수 없고 Production
-공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에 없으며, protected runner·actual Adapter·HOLDOUT Freeze는
-후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지
-않는다. 현재 기계 상태와 결정적 Markdown projection은 `docs/validation/rag/issue-273/`에 있다.
+이 `APPROVED`는 60개 DEV Case, Evidence Mapping, Dataset Manifest의 review provenance에 한정된다. Dataset
+lifecycle은 계속 `DRAFT`이며 Dataset Freeze와 HOLDOUT Freeze는 완료되지 않았다. 실제 Knowledge Evidence
+Retrieval Adapter는 `NOT_IMPLEMENTED`이고 actual retrieval Run과 baseline Metric도 존재하지 않는다. 따라서 이
+DEV Dataset은 Release `PASS`를 만들 수 없고 Production 공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에
+없으며, protected runner·actual Adapter·HOLDOUT Freeze는 후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·
+상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지 않는다. 현재 기계 상태와 결정적 Markdown
+projection은 `docs/validation/rag/issue-273/`에 있다.
 
 ### Evaluation Schema Sets
 

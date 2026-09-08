@@ -105,7 +105,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_REPORT_PROJECTION",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
                 "exit_code": 0,
-                "result": "50 passed",
+                "result": "51 passed",
             },
             {
                 "check_id": "PHASE_A_SCHEMA_EXPORT",
@@ -517,6 +517,16 @@ def test_evals_readme_quotes_the_current_dataset_manifest_hash() -> None:
     assert quoted_hashes == {declared_manifest_hash}, quoted_hashes
 
 
+def test_evals_readme_does_not_describe_the_approved_dev_graph_as_unreviewed() -> None:
+    readme = EVALS_README_PATH.read_text(encoding="utf-8")
+    issue_273_section = readme.split("### Issue #273 자연어 Retrieval DEV authoring", maxsplit=1)[1].split(
+        "\n### ", maxsplit=1
+    )[0]
+
+    assert "아직 사람의 Gold 검토를 받지 않았" not in issue_273_section
+    assert "모든 review provenance는 `DRAFT` 또는 `NOT_STARTED`" not in issue_273_section
+
+
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     raw_status = STATUS_PATH.read_bytes()
     status = parse_status_bytes(raw_status)
@@ -536,7 +546,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    for result in (b"1 passed", b"26 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
+    for result in (b"1 passed", b"26 passed", b"51 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status
