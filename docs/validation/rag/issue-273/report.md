@@ -1,8 +1,8 @@
-# Issue #273 Phase B DEV Dataset Approval Validation Report
+# Issue #273 Phase B2 HOLDOUT Freeze Preparation Validation Report
 
-> Phase B · DEV Dataset Approved — Dataset-approved, unfrozen, and not a Release decision.
+> Phase B2 · HOLDOUT Freeze Preparation Ready — prepared, unauthorized, unfrozen, and not a Release decision.
 
-- Phase: `PHASE_B_DATASET_APPROVAL`
+- Phase: `PHASE_B2_HOLDOUT_FREEZE_PREPARATION`
 - Schema Set Status: `REVIEW_REQUIRED`
 - Dataset: `rag-natural-language-retrieval-dev@1.0.0` (`DRAFT`)
 - Dataset Manifest SHA-256: `b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`
@@ -10,7 +10,11 @@
 - Candidate Decision: [`docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md`](../../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md)
 - Gold Review Evidence: `github-pr-341-review-5137833200@1.0.0` `6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776`
 - Dataset Approval Evidence: `github-pr-354-review-5139907268@1.0.0` `3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896`
-- Approval Transition: `DATASET_CUSTODIAN_APPROVAL_RECORDED`; the verified actor is `@phina-io` (`DATASET_CUSTODIAN`).
+- HOLDOUT Preparation: `issue-273-holdout-freeze-preparation@1.0.0`
+- Preparation raw SHA-256: `40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192`
+- Preparation self SHA-256: `b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6`
+- Phase B2 Responsible Reviewer: `@hazelnutflavoured` (`EVALUATION_REVIEWER`)
+- Prior DEV Approval Transition: `DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED`; the verified actor was `@phina-io` (`DATASET_CUSTODIAN`). This is not HOLDOUT access authorization.
 - Release Eligible: `false`
 - Production remains closed.
 
@@ -23,13 +27,15 @@
 - Independent transform-origin groups: planned `20`; created `20`
 - Gold records created: `20`; review: `APPROVED`
 - Study-wide synthetic corpus records created: `100`
+- HOLDOUT Preparation: `PREPARATION_READY`
 - HOLDOUT Freeze: `NOT_STARTED`
 - Actual Adapter: `NOT_IMPLEMENTED`
 - Actual Run Artifact: `NOT_CREATED`
 
 한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, 실제 환자 발화나 실제 제품 데이터가 아니다.
 DEV Dataset approval is recorded as APPROVED for the 60 Cases, Evidence Mapping, and Dataset Manifest.
-Dataset remains DRAFT and unfrozen; approval does not create or Freeze HOLDOUT content.
+Dataset remains DRAFT and unfrozen; preparation does not create or Freeze HOLDOUT content.
+Access authorization is not recorded, and HOLDOUT authoring has not started.
 Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.
 No baseline Metric exists, and no Metric fields are recorded in the machine status.
 DEV cannot produce a Release PASS; Production remains closed.
@@ -38,6 +44,7 @@ DEV cannot produce a Release PASS; Production remains closed.
 
 - `BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER`
 - `BLOCKED_BY_RAG_14_ADAPTER`
+- `WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION`
 - `WAITING_FOR_HOLDOUT_FREEZE`
 
 ## Verification Evidence
@@ -50,13 +57,15 @@ DEV cannot produce a Release PASS; Production remains closed.
 | `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 94 passed, 7 skipped |
 | `PHASE_B_DATASET_APPROVAL_PROVENANCE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_the_actual_dataset_custodian_approval_event -q` | `0` | 1 passed |
 | `PHASE_B_GOLD_REVIEW_PROVENANCE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_only_the_actual_gold_review_event -q` | `0` | 1 passed |
+| `PHASE_B_HOLDOUT_FREEZE_PREPARATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q` | `0` | 27 passed |
 
 ## Boundaries
 
 - Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.
 - No Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.
 - HOLDOUT question content is absent from the repository and remains future protected work.
-- The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.
+- Access authorization, the protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.
+- HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-08T09:30:09.000000Z`. Canonical status SHA-256: `3a0d320fc28fe334c947a26aac4f8efd3b3fb659c60c96b7a5808b47bf3d2beb`.
+Status updated at `2026-09-08T14:05:39.000000Z`. Canonical status SHA-256: `88baf2056b8527c568ee8551dc03612301fbf9059f3034b5613f0ae7326b629a`.

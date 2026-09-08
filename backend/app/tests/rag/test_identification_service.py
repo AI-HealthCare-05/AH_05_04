@@ -11,7 +11,7 @@ from app.core import config
 from app.core.errors import ApiError
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
     MedicationCandidateSearchStatus,
@@ -113,7 +113,9 @@ async def _create_prescription(session: AsyncSession, *, user: User) -> Prescrip
     session.add(ocr_job)
     await session.flush()
 
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -122,14 +124,25 @@ async def _create_prescription(session: AsyncSession, *, user: User) -> Prescrip
     )
     session.add(prescription)
     await session.flush()
+    session.add(
+        PrescriptionVersion(
+            id=version_id,
+            prescription_id=prescription.id,
+            version_number=1,
+            prescribed_date=prescription.prescribed_date,
+            confirmed_at=prescription.confirmed_at,
+        )
+    )
+    await session.flush()
     return prescription
 
 
 async def _create_medication(
     session: AsyncSession, *, prescription: Prescription, display_order: int = 1
-) -> Medication:
-    medication = Medication(
-        prescription_id=prescription.id,
+) -> PrescriptionVersionMedication:
+    assert prescription.active_version_id is not None
+    medication = PrescriptionVersionMedication(
+        prescription_version_id=prescription.active_version_id,
         medication_name="테스트약",
         strength_text="500mg",
         display_order=display_order,
@@ -369,6 +382,7 @@ async def test_confirm_identification_rejects_reconfirm_of_consumed_search(db_se
         user_id=owner.id,
     )
 
+    assert prescription.active_version_id is not None
     with pytest.raises(ApiError) as exc_info:
         await service.confirm_identification(
             prescription_version_medication_id=medication.id,
@@ -716,9 +730,8 @@ async def test_preflight_passes_when_all_medications_are_matched(db_session: Asy
             user_id=owner.id,
         )
 
-    result = await service.ensure_matched_for_preflight(
-        prescription_version_medication_ids=[first_medication.id, second_medication.id, first_medication.id]
-    )
+    assert prescription.active_version_id is not None
+    result = await service.ensure_matched_for_preflight(prescription_version_id=prescription.active_version_id)
 
     assert result.prescription_version_medication_count == 2
     assert result.matched_identification_count == 2
@@ -729,7 +742,7 @@ async def test_preflight_rejects_when_any_medication_is_not_matched(db_session: 
     owner = await _create_user(db_session, email="owner9@example.com")
     prescription = await _create_prescription(db_session, user=owner)
     matched_medication = await _create_medication(db_session, prescription=prescription)
-    unmatched_medication_id = uuid4()
+    unmatched_medication = await _create_medication(db_session, prescription=prescription, display_order=2)
     search = (
         await service.record_candidate_search(
             prescription_version_medication_id=matched_medication.id,
@@ -752,14 +765,14 @@ async def test_preflight_rejects_when_any_medication_is_not_matched(db_session: 
         user_id=owner.id,
     )
 
+    assert prescription.active_version_id is not None
     with pytest.raises(ApiError) as exc_info:
-        await service.ensure_matched_for_preflight(
-            prescription_version_medication_ids=[matched_medication.id, unmatched_medication_id]
-        )
+        await service.ensure_matched_for_preflight(prescription_version_id=prescription.active_version_id)
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE"
-    assert exc_info.value.details[0].field == "prescription_version_medication_ids"
+    assert unmatched_medication.id is not None
+    assert exc_info.value.details[0].field == "prescription_version_id"
     assert exc_info.value.details[0].reason == "MATCHED_IDENTIFICATION_REQUIRED"
     assert exc_info.value.details[0].rejected_value is None
 

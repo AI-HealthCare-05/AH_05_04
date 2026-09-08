@@ -208,7 +208,11 @@ class JobStatusService:
 
     async def _guide_result_url(self, *, user: User, job: AiJob, domain_id: UUID) -> str | None:
         guide = await self.guide_repository.get_owned(guide_id=domain_id, user_id=user.id)
-        if guide is None:
+        if (
+            guide is None
+            or job.prescription_version_id is None
+            or job.prescription_version_id != guide.prescription_version_id
+        ):
             raise _job_not_found_error()
         return f"/api/v1/guides/{domain_id}" if job.status is AiJobStatus.COMPLETED else None
 
@@ -216,7 +220,11 @@ class JobStatusService:
         # domain_id는 ASSISTANT chat_message.id입니다. Chat의 result_url은 단건이 아니라
         # 메시지 목록 조회라 chat_message.session_id가 필요합니다.
         chat_message = await self.chat_repository.get_message_owned(message_id=domain_id, user_id=user.id)
-        if chat_message is None:
+        if (
+            chat_message is None
+            or job.prescription_version_id is None
+            or job.prescription_version_id != chat_message.session.prescription_version_id
+        ):
             raise _job_not_found_error()
         if job.status is not AiJobStatus.COMPLETED:
             return None

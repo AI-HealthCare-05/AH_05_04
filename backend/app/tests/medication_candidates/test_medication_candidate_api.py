@@ -16,7 +16,7 @@ from app.dependencies.security import get_request_user
 from app.main import app, fastapi_app
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import MedicationCandidateSearchStatus
 from app.models.users import Gender, User
@@ -283,7 +283,9 @@ async def _create_owner(session: AsyncSession) -> User:
     return user
 
 
-async def _create_medication(session: AsyncSession, *, user: User, display_order: int = 1) -> Medication:
+async def _create_medication(
+    session: AsyncSession, *, user: User, display_order: int = 1
+) -> PrescriptionVersionMedication:
     profile = await session.scalar(
         select(Profile).where(Profile.user_id == user.id, Profile.profile_type == ProfileType.SELF)
     )
@@ -303,7 +305,9 @@ async def _create_medication(session: AsyncSession, *, user: User, display_order
     session.add(ocr_job)
     await session.flush()
 
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -312,9 +316,19 @@ async def _create_medication(session: AsyncSession, *, user: User, display_order
     )
     session.add(prescription)
     await session.flush()
+    session.add(
+        PrescriptionVersion(
+            id=version_id,
+            prescription_id=prescription.id,
+            version_number=1,
+            prescribed_date=prescription.prescribed_date,
+            confirmed_at=prescription.confirmed_at,
+        )
+    )
+    await session.flush()
 
-    medication = Medication(
-        prescription_id=prescription.id,
+    medication = PrescriptionVersionMedication(
+        prescription_version_id=version_id,
         medication_name="테스트약",
         strength_text="500mg",
         display_order=display_order,
@@ -324,7 +338,9 @@ async def _create_medication(session: AsyncSession, *, user: User, display_order
     return medication
 
 
-async def _create_ready_search(session: AsyncSession, *, medication: Medication, user: User) -> tuple[UUID, UUID]:
+async def _create_ready_search(
+    session: AsyncSession, *, medication: PrescriptionVersionMedication, user: User
+) -> tuple[UUID, UUID]:
     """RAG-09 service를 그대로 사용해 READY 상태의 Search·표시 Result 1건을 만듭니다.
     반환값은 (search_id, candidate_search_result_id)."""
     service = MedicationIdentificationService(MedicationCandidateRepository(session))
@@ -480,3 +496,65 @@ class TestConfirmAndRejectMedicationCandidate:
         assert data["status"] == "UNRESOLVED"
         assert data["search_status"] == "INVALIDATED_USER_REJECTED"
         assert data["rejected_at"] is not None
+
+    async def test_confirm_replays_stored_response_for_repeated_request(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        _search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        body = {
+            "prescription_version_medication_id": str(medication.id),
+            "candidate_search_result_id": str(result_id),
+        }
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                first = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-replay-001"},
+                    json=body,
+                )
+                second = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-replay-001"},
+                    json=body,
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_200_OK
+        assert second.json()["data"] == first.json()["data"]
+
+    async def test_confirm_rejects_same_key_with_different_body_as_conflict(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        _search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                first = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-conflict-001"},
+                    json={
+                        "prescription_version_medication_id": str(medication.id),
+                        "candidate_search_result_id": str(result_id),
+                    },
+                )
+                second = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-confirm-conflict-001"},
+                    json={
+                        "prescription_version_medication_id": str(medication.id),
+                        "candidate_search_result_id": str(uuid4()),
+                    },
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == 409
+        assert second.json()["code"] == "IDEMPOTENCY_KEY_CONFLICT"

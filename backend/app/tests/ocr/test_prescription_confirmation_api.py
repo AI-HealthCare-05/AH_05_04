@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from app.core import config
 from app.main import app
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType
 from app.models.medical_documents import MedicalDocument
@@ -264,6 +265,75 @@ async def test_confirm_prescription_api_uses_confirmed_fields(db_session: AsyncS
 
     assert response.status_code == status.HTTP_201_CREATED
     assert response.json()["data"]["medications"][0]["medication_name"] == "혈압약정"
+
+
+@pytest.mark.asyncio
+async def test_correct_prescription_api_returns_new_active_version_snapshot(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="correction")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        document_id, job_id = await _upload_and_prepare_ocr(
+            client,
+            db_session=db_session,
+            access_token=access_token,
+        )
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+        confirmation = await client.post(
+            f"/api/v1/documents/{document_id}/prescription",
+            headers=headers,
+        )
+        assert confirmation.status_code == status.HTTP_201_CREATED
+        original = confirmation.json()["data"]
+        correction_payload = {
+            "base_version_id": original["prescription_version_id"],
+            "expected_revision": original["revision"],
+            "prescribed_date": "2026-09-08",
+            "medications": [
+                {
+                    "medication_name": "정정된 합성약",
+                    "strength_text": "5mg",
+                    "dose_value": "0.5",
+                    "dose_unit": "정",
+                    "frequency_per_day": 2,
+                    "timing_text": "식후",
+                    "duration_days": 5,
+                    "display_order": 1,
+                }
+            ],
+        }
+
+        unavailable = await client.patch(
+            f"/api/v1/prescriptions/{original['prescription_id']}",
+            headers=headers,
+            json=correction_payload,
+        )
+        assert unavailable.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert unavailable.json()["details"][0]["reason"] == "PRESCRIPTION_CORRECTION_DISABLED"
+
+        monkeypatch.setattr(config, "PRESCRIPTION_CORRECTION_ENABLED", True)
+        correction = await client.patch(
+            f"/api/v1/prescriptions/{original['prescription_id']}",
+            headers=headers,
+            json=correction_payload,
+        )
+
+        assert correction.status_code == status.HTTP_200_OK, correction.text
+        corrected = correction.json()["data"]
+        assert corrected["prescription_version_id"] != original["prescription_version_id"]
+        assert corrected["revision"] == 2
+        assert corrected["current"] is True
+        assert corrected["medications"][0]["prescription_version_medication_id"]
+        assert corrected["medications"][0]["medication_name"] == "정정된 합성약"
+
+        detail = await client.get(
+            f"/api/v1/prescriptions/{original['prescription_id']}",
+            headers=headers,
+        )
+        assert detail.status_code == status.HTTP_200_OK
+        assert detail.json()["data"] == corrected
 
 
 @pytest.mark.asyncio

@@ -120,7 +120,9 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
             <button
               className="mvp-home__hub-card mvp-home__hub-card--prescription"
               type="button"
-              onClick={() => navigate('/prescriptions/upload')}
+              onClick={() => navigate('/prescriptions/upload', {
+                state: { intent: 'new-prescription' },
+              })}
             >
               <span className="mvp-home__hub-icon">
                 <HomeShortcutIcon type="prescription" />

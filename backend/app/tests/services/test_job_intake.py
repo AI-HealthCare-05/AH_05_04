@@ -139,6 +139,7 @@ async def test_accept_job_creates_placeholder_job_outbox_and_idempotency_record(
         fingerprint={"job_type": "OCR", "document_id": str(document.id)},
         create_domain_placeholder=create_placeholder,
         trace_id="a" * 32,
+        prescription_version_id=None,
     )
 
     assert result.is_duplicate is False
@@ -188,6 +189,7 @@ async def test_accept_job_same_key_same_fingerprint_returns_existing_job(
         fingerprint=fingerprint,
         create_domain_placeholder=create_placeholder,
         trace_id="a" * 32,
+        prescription_version_id=None,
     )
 
     async def unexpected_placeholder(_job_id: UUID) -> NoReturn:
@@ -201,6 +203,7 @@ async def test_accept_job_same_key_same_fingerprint_returns_existing_job(
         fingerprint=fingerprint,
         create_domain_placeholder=unexpected_placeholder,
         trace_id="b" * 32,
+        prescription_version_id=None,
     )
 
     assert second.is_duplicate is True
@@ -234,6 +237,7 @@ async def test_accept_job_expired_record_is_reclaimed_and_creates_new_job(
         fingerprint=fingerprint,
         create_domain_placeholder=create_placeholder,
         trace_id="a" * 32,
+        prescription_version_id=None,
     )
 
     record = await db_session.scalar(select(IdempotencyRecord).where(IdempotencyRecord.job_id == first.job.id))
@@ -252,6 +256,7 @@ async def test_accept_job_expired_record_is_reclaimed_and_creates_new_job(
         fingerprint=fingerprint,
         create_domain_placeholder=second_create_placeholder,
         trace_id="b" * 32,
+        prescription_version_id=None,
     )
 
     assert second.is_duplicate is False
@@ -283,6 +288,7 @@ async def test_accept_job_same_key_different_fingerprint_raises_conflict(
         fingerprint={"job_type": "OCR", "document_id": str(document.id)},
         create_domain_placeholder=create_placeholder,
         trace_id="a" * 32,
+        prescription_version_id=None,
     )
 
     async def unexpected_placeholder(_job_id: UUID) -> NoReturn:
@@ -297,6 +303,7 @@ async def test_accept_job_same_key_different_fingerprint_raises_conflict(
             fingerprint={"job_type": "OCR", "document_id": str(uuid4())},
             create_domain_placeholder=unexpected_placeholder,
             trace_id="b" * 32,
+            prescription_version_id=None,
         )
 
 
@@ -320,6 +327,7 @@ async def test_accept_job_rejects_invalid_idempotency_key_format(
             fingerprint={"job_type": "OCR", "document_id": str(document.id)},
             create_domain_placeholder=unexpected_placeholder,
             trace_id="a" * 32,
+            prescription_version_id=None,
         )
 
 
@@ -348,6 +356,7 @@ async def test_accept_job_rolls_back_all_records_when_document_not_owned_by_user
             fingerprint={"job_type": "OCR", "document_id": str(document.id)},
             create_domain_placeholder=create_placeholder,
             trace_id="a" * 32,
+            prescription_version_id=None,
         )
     assert exc_info.value.code == "MEDICAL_DOCUMENT_NOT_FOUND"
 
@@ -384,6 +393,7 @@ async def test_accept_job_rolls_back_all_records_when_domain_type_mismatches(
             fingerprint={"job_type": "OCR", "document_id": str(uuid4())},
             create_domain_placeholder=mismatched_placeholder,
             trace_id="a" * 32,
+            prescription_version_id=None,
         )
 
     job_count = await db_session.scalar(select(AiJob).where(AiJob.user_id == user.id))
@@ -430,6 +440,7 @@ async def test_accept_job_concurrent_same_key_creates_only_one_job() -> None:
                 fingerprint={"job_type": "OCR", "document_id": str(document.id)},
                 create_domain_placeholder=create_placeholder,
                 trace_id="a" * 32,
+                prescription_version_id=None,
             )
             await session.commit()
             return result

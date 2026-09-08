@@ -52,8 +52,8 @@ class RecordingPrescriptionRepository:
         self.medications = medications
         self.events = events
 
-    async def get_medications(self, *, prescription_id: object) -> Sequence[object]:
-        self.events.append("prescription.get_medications")
+    async def get_version_medications(self, *, prescription_version_id: object) -> Sequence[object]:
+        self.events.append("prescription.get_version_medications")
         return self.medications
 
 
@@ -162,6 +162,7 @@ def _service_fixture(
     chat_session = SimpleNamespace(
         id=uuid4(),
         prescription_id=uuid4(),
+        prescription_version_id=uuid4(),
         session_status=status,
         last_message_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
@@ -228,7 +229,7 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
 
     assert events == [
         "chat.lock_owned",
-        "prescription.get_medications",
+        "prescription.get_version_medications",
         "chat.next_seq",
         f"chat.create.{ChatRole.USER}",
         f"chat.create.{ChatRole.ASSISTANT}",

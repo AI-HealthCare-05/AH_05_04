@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.utils.idempotency import IdempotencyKeyFormatError
+from app.services.idempotency import IdempotencyKeyConflictError as SyncMutationIdempotencyKeyConflictError
+from app.services.idempotency import IdempotencyResponseTooLargeError
 from app.services.job_intake import IdempotencyKeyConflictError
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,38 @@ def register_exception_handlers(app: FastAPI) -> None:
             trace_id=_get_trace_id(request),
         )
         return ORJSONResponse(status_code=409, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(SyncMutationIdempotencyKeyConflictError)
+    async def handle_sync_mutation_idempotency_key_conflict(
+        request: Request,
+        exc: SyncMutationIdempotencyKeyConflictError,
+    ) -> ORJSONResponse:
+        # idempotency-v1.md "동기 상태 변경 처리 규칙": Track B·C·F 동기 mutation이 공유하는
+        # SyncMutationIdempotencyService에서 발생하므로 도메인별 라우트마다 반복해서 잡지 않고
+        # 여기서 한 번만 매핑합니다(ASYNC_JOB용 handle_idempotency_key_conflict와 별개).
+        body = ErrorResponse(
+            code="IDEMPOTENCY_KEY_CONFLICT",
+            message="같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다.",
+            details=[],
+            trace_id=_get_trace_id(request),
+        )
+        return ORJSONResponse(status_code=409, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(IdempotencyResponseTooLargeError)
+    async def handle_idempotency_response_too_large(
+        request: Request,
+        exc: IdempotencyResponseTooLargeError,
+    ) -> ORJSONResponse:
+        # idempotency-v1.md: 암호화된 snapshot이 1MiB cap을 초과하면 mutation 자체를 롤백하고
+        # 503으로 응답합니다. SyncMutationIdempotencyService가 mutate()와 같은 nested transaction
+        # 안에서 이 예외를 발생시켜 도메인 변경도 이미 롤백된 상태입니다.
+        body = ErrorResponse(
+            code="IDEMPOTENCY_RESPONSE_TOO_LARGE",
+            message="응답이 너무 커서 멱등성 저장 용량을 초과했습니다.",
+            details=[],
+            trace_id=_get_trace_id(request),
+        )
+        return ORJSONResponse(status_code=503, content=body.model_dump(mode="json"))
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, exc: RequestValidationError) -> ORJSONResponse:
