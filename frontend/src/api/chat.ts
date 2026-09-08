@@ -55,6 +55,14 @@ export async function createChatSession(
   )
 }
 
+export async function getChatSessionForPrescription(
+  prescriptionId: string,
+): Promise<ChatSessionResponse> {
+  return apiRequest<ChatSessionResponse>(
+    `/api/v1/prescriptions/${prescriptionId}/chat-session`,
+  )
+}
+
 export async function getChatMessages(
   sessionId: string,
 ): Promise<ChatMessageListResponse> {

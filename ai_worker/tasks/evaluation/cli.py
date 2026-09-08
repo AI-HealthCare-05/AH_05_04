@@ -347,6 +347,14 @@ def _entry_exists(directory_fd: int, name: str) -> bool:
     return _entry_identity(directory_fd, name) is not None
 
 
+def _descriptor_identity(descriptor: int) -> FileIdentity:
+    try:
+        metadata = os.fstat(descriptor)
+    except BaseException as error:
+        raise _normalized_publication_error(error) from None
+    return (metadata.st_dev, metadata.st_ino)
+
+
 def _open_flags() -> int:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     flags |= getattr(os, "O_CLOEXEC", 0)
@@ -377,16 +385,24 @@ def _atomic_link(directory_fd: int, temporary_name: str, destination_name: str) 
 
 
 def _write_private_descriptor(descriptor: int, payload: bytes) -> None:
-    try:
-        if os.write(descriptor, payload) != len(payload):
-            raise OSError(errno.EIO, "short private file write")
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    """Write and flush a private file, leaving the descriptor open for its owner to close."""
+
+    if os.write(descriptor, payload) != len(payload):
+        raise OSError(errno.EIO, "short private file write")
+    os.fsync(descriptor)
 
 
 @dataclass(slots=True)
 class _PublishFiles:
+    """Own the lock and temporary entries of one publication, holding their descriptors until cleanup.
+
+    The descriptor of each created entry stays open for the whole publication. An open descriptor keeps
+    the inode allocated, so the kernel cannot hand the recorded ``(st_dev, st_ino)`` pair to a different
+    file. Without that pin, filesystems that recycle inode numbers eagerly (ext4, overlayfs) let a
+    replacement file created at the same name inherit the identity of the entry we unlinked, and the
+    cleanup path would then delete a file it does not own.
+    """
+
     directory_fd: int
     destination_name: str
     lock_name: str
@@ -395,6 +411,8 @@ class _PublishFiles:
     temporary_created: bool = False
     lock_identity: FileIdentity | None = None
     temporary_identity: FileIdentity | None = None
+    lock_descriptor: int | None = None
+    temporary_descriptor: int | None = None
 
     def _create(self, name: str) -> tuple[int, FileIdentity]:
         try:
@@ -402,59 +420,81 @@ class _PublishFiles:
         except BaseException as error:
             raise _normalized_publication_error(error) from None
         try:
-            metadata = os.fstat(descriptor)
-        except BaseException as error:
+            return descriptor, _descriptor_identity(descriptor)
+        except BaseException:
             try:
                 os.close(descriptor)
             except OSError:
                 pass
-            raise _normalized_publication_error(error) from None
-        return descriptor, (metadata.st_dev, metadata.st_ino)
+            raise
 
     def acquire_lock(self) -> None:
         lock_payload = f"pid={os.getpid()}\ncreated_at={_utc_timestamp()}\n".encode("ascii")
         descriptor, identity = self._create(self.lock_name)
+        self.lock_descriptor = descriptor
         self.lock_created = True
         self.lock_identity = identity
         _write_private_descriptor(descriptor, lock_payload)
 
     def write_temporary(self, payload: bytes) -> None:
         descriptor, identity = self._create(self.temporary_name)
+        self.temporary_descriptor = descriptor
         self.temporary_created = True
         self.temporary_identity = identity
         _write_private_descriptor(descriptor, payload)
 
-    def _remove_if_owned(self, name: str, identity: FileIdentity | None) -> None:
-        if identity is None:
+    def _remove_if_owned(self, name: str, descriptor: int | None, identity: FileIdentity | None) -> None:
+        if descriptor is None or identity is None:
+            raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
+        owned_identity = _descriptor_identity(descriptor)
+        if owned_identity != identity:
             raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
         current_identity = _entry_identity(self.directory_fd, name)
         if current_identity is None:
             return
-        if current_identity != identity:
+        if current_identity != owned_identity:
             raise EvaluationValidationError(EvaluationErrorCode.INTERNAL_ERROR)
         try:
             os.unlink(name, dir_fd=self.directory_fd)
         except BaseException as error:
             raise _normalized_publication_error(error) from None
 
+    def _close_descriptor(self, descriptor: int | None) -> BaseException | None:
+        if descriptor is None:
+            return None
+        try:
+            os.close(descriptor)
+        except OSError as error:
+            return _normalized_publication_error(error)
+        return None
+
     def remove_temporary(self) -> None:
-        self._remove_if_owned(self.temporary_name, self.temporary_identity)
+        self._remove_if_owned(self.temporary_name, self.temporary_descriptor, self.temporary_identity)
+        close_error = self._close_descriptor(self.temporary_descriptor)
+        self.temporary_descriptor = None
         self.temporary_created = False
         self.temporary_identity = None
+        if close_error is not None:
+            raise close_error
 
     def cleanup(self) -> BaseException | None:
         first_error: BaseException | None = None
-        names = (
-            (self.temporary_name, self.temporary_created, self.temporary_identity),
-            (self.lock_name, self.lock_created, self.lock_identity),
+        entries = (
+            (self.temporary_name, self.temporary_created, self.temporary_descriptor, self.temporary_identity),
+            (self.lock_name, self.lock_created, self.lock_descriptor, self.lock_identity),
         )
-        for name, created, identity in names:
+        for name, created, descriptor, identity in entries:
             if not created:
                 continue
             try:
-                self._remove_if_owned(name, identity)
+                self._remove_if_owned(name, descriptor, identity)
             except BaseException as error:
                 first_error = first_error or error
+        for descriptor in (self.temporary_descriptor, self.lock_descriptor):
+            close_error = self._close_descriptor(descriptor)
+            first_error = first_error or close_error
+        self.temporary_descriptor = None
+        self.lock_descriptor = None
         try:
             os.close(self.directory_fd)
         except OSError as error:

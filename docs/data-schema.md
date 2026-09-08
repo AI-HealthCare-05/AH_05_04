@@ -263,6 +263,14 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 - `artifact_kind=RAW_RESPONSE`는 양의 페이지 번호를 가지며 거부 메타데이터를 가질 수 없습니다. `artifact_kind=REJECTS`는 페이지 번호 대신 안전한 고정 `reject_code`와 원문을 포함하지 않는 `parser_location`을 필수로 기록합니다.
 - Artifact key·content type과 Snapshot 실행 metadata의 DB 길이 제한, REJECTS 위치의 제어문자, RAW_RESPONSE·REJECTS 전체의 중복 Artifact key는 파일 보존 전에 검사합니다.
 
+현재 최소 구현과 정규 목표의 차이:
+
+- 현재 `rag_source_snapshot`은 Source 전체가 아니라 `rag_source_operation`별 수집·정규화 산출물입니다. 따라서 Snapshot version의 unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 존재할 수 있습니다. 이는 #164 최소 DB 기반의 의도된 모델입니다.
+- 안정적인 수집 Operation은 `source_code + endpoint_code + operation_code`로 식별합니다. Evidence provenance는 `source_version`이 아니라 `source_snapshot_id` 등의 Snapshot 참조로 Snapshot을 특정하며, `source_version`은 사람이 확인하는 값으로 사용합니다(`rag-source-policy` v1.18 8장).
+- 현재 `rag_source_ingestion_run`은 정규 RAG 목표의 수집 실행과 정규화 실행을 하나의 실행 이력으로 합친 최소 구현입니다. `SUCCEEDED` 또는 `SUCCEEDED_WITH_REJECTIONS`는 새 Snapshot을 참조할 수 있고, `NO_CHANGE`는 재검증한 기존 Snapshot을 참조하며, `FAILED`는 `snapshot_id=NULL`일 수 있습니다.
+- 동일 Snapshot을 여러 `NO_CHANGE` 실행이 재검증할 수 있으므로 `rag_source_ingestion_run.snapshot_id` 전체에는 Unique 제약을 두지 않습니다. Snapshot을 최초 발행한 성공 실행을 1개로 제한할지는 부분 Unique Index와 부분 성공의 승인 의미를 함께 확정하는 후속 범위입니다.
+- 이 Operation 단위 모델은 `rag-db-schema` v1.47의 Source 단위 Snapshot과 `ingestion_run`·`normalization_run` 분리 모델을 대체하거나 변경하지 않습니다. 정규 목표로 수렴할 때는 Decision 또는 Contract Freeze, migration, 구현과 계약·통합 테스트를 함께 갱신합니다.
+
 Rollback 정책:
 
 - Production에서는 Source/Catalog 테이블을 삭제하는 downgrade를 사용하지 않고 forward-fix migration을 사용합니다.
