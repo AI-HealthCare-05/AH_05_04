@@ -72,7 +72,7 @@ async def test_backend_dto_crosses_adapter_with_empty_history_and_without_identi
     assert str(prescription_id) not in provider.input_json
     assert result.content == "합성 계약 답변"
     assert result.model_name == "provider-model-2026-08"
-    assert result.prompt_version == "chat-prompt-v2"
+    assert result.prompt_version == "chat-prompt-v3"
 
 
 async def test_backend_history_crosses_adapter_as_ordered_data_without_structured_metadata() -> None:
@@ -108,4 +108,4 @@ async def test_backend_history_crosses_adapter_as_ordered_data_without_structure
     ]
     assert str(prescription_id) not in provider.input_json
     assert {"session_id", "message_seq", "generation_status"}.isdisjoint(payload)
-    assert result.prompt_version == "chat-prompt-v2"
+    assert result.prompt_version == "chat-prompt-v3"
