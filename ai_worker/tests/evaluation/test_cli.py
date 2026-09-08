@@ -302,12 +302,40 @@ def test_publish_receipt_rejects_nonfinal_ancestor_symlink_swap(
     assert not (outside / "level-two/receipt.json").exists()
 
 
+def _swap_entry_under_a_new_inode(name: str, *, dir_fd: int, payload: bytes) -> int:
+    """Replace `name` with fresh bytes that a `(st_dev, st_ino)` check can tell apart.
+
+    `_PublishFiles._remove_if_owned` refuses to delete an entry whose identity no longer matches
+    the one recorded at creation. Unlinking and immediately recreating the entry is not enough to
+    trigger that: Linux (ext4/tmpfs) reuses the just-freed inode number, so the replacement keeps
+    the original identity and the cleanup deletes it as its own. Holding a descriptor on the
+    unlinked inode keeps it allocated, forcing the new entry onto a different one.
+
+    Returns that pinned descriptor; the caller must keep it open until the identity check has run.
+    """
+    original_inode = os.stat(name, dir_fd=dir_fd).st_ino
+    pinned = os.open(name, os.O_RDONLY, dir_fd=dir_fd)
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+        descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
+        try:
+            os.write(descriptor, payload)
+        finally:
+            os.close(descriptor)
+        assert os.stat(name, dir_fd=dir_fd).st_ino != original_inode, "replacement must not reuse the inode"
+    except BaseException:
+        os.close(pinned)
+        raise
+    return pinned
+
+
 def test_publish_receipt_preserves_replacement_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     destination = tmp_path / "receipt.json"
     replacement = b"replacement-lock"
+    pinned_inodes: list[int] = []
 
     def replace_lock_then_fail(
         source: os.PathLike[str] | str,
@@ -320,25 +348,24 @@ def test_publish_receipt_preserves_replacement_lock(
         del source, follow_symlinks
         assert src_dir_fd is not None and dst_dir_fd is not None
         lock_name = f"{os.fspath(target)}.lock"
-        os.unlink(lock_name, dir_fd=dst_dir_fd)
-        descriptor = os.open(lock_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dst_dir_fd)
-        try:
-            os.write(descriptor, replacement)
-        finally:
-            os.close(descriptor)
+        pinned_inodes.append(_swap_entry_under_a_new_inode(lock_name, dir_fd=dst_dir_fd, payload=replacement))
         raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
 
     monkeypatch.setattr(cli_module.os, "link", replace_lock_then_fail)
 
-    with pytest.raises(EvaluationValidationError) as caught:
-        publish_receipt_no_clobber(destination, b'{"safe":true}')
+    try:
+        with pytest.raises(EvaluationValidationError) as caught:
+            publish_receipt_no_clobber(destination, b'{"safe":true}')
 
-    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
-    assert "SENSITIVE_SENTINEL" not in str(caught.value)
-    assert caught.value.__cause__ is None
-    assert (tmp_path / "receipt.json.lock").read_bytes() == replacement
-    assert not destination.exists()
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["receipt.json.lock"]
+        assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+        assert "SENSITIVE_SENTINEL" not in str(caught.value)
+        assert caught.value.__cause__ is None
+        assert (tmp_path / "receipt.json.lock").read_bytes() == replacement
+        assert not destination.exists()
+        assert sorted(path.name for path in tmp_path.iterdir()) == ["receipt.json.lock"]
+    finally:
+        for descriptor in pinned_inodes:
+            os.close(descriptor)
 
 
 def test_publish_receipt_preserves_replacement_temp(
@@ -347,6 +374,7 @@ def test_publish_receipt_preserves_replacement_temp(
 ) -> None:
     destination = tmp_path / "receipt.json"
     replacement = b"replacement-temp"
+    pinned_inodes: list[int] = []
 
     def replace_temp_then_fail(
         source: os.PathLike[str] | str,
@@ -359,32 +387,26 @@ def test_publish_receipt_preserves_replacement_temp(
         del target, follow_symlinks
         assert src_dir_fd is not None and dst_dir_fd is not None
         temporary_name = os.fspath(source)
-        os.unlink(temporary_name, dir_fd=src_dir_fd)
-        descriptor = os.open(
-            temporary_name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-            dir_fd=src_dir_fd,
-        )
-        try:
-            os.write(descriptor, replacement)
-        finally:
-            os.close(descriptor)
+        pinned_inodes.append(_swap_entry_under_a_new_inode(temporary_name, dir_fd=src_dir_fd, payload=replacement))
         raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
 
     monkeypatch.setattr(cli_module.os, "link", replace_temp_then_fail)
 
-    with pytest.raises(EvaluationValidationError) as caught:
-        publish_receipt_no_clobber(destination, b'{"safe":true}')
+    try:
+        with pytest.raises(EvaluationValidationError) as caught:
+            publish_receipt_no_clobber(destination, b'{"safe":true}')
 
-    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
-    assert "SENSITIVE_SENTINEL" not in str(caught.value)
-    assert caught.value.__cause__ is None
-    remaining = list(tmp_path.iterdir())
-    assert len(remaining) == 1
-    assert ".tmp." in remaining[0].name
-    assert remaining[0].read_bytes() == replacement
-    assert not destination.exists()
+        assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+        assert "SENSITIVE_SENTINEL" not in str(caught.value)
+        assert caught.value.__cause__ is None
+        remaining = list(tmp_path.iterdir())
+        assert len(remaining) == 1
+        assert ".tmp." in remaining[0].name
+        assert remaining[0].read_bytes() == replacement
+        assert not destination.exists()
+    finally:
+        for descriptor in pinned_inodes:
+            os.close(descriptor)
 
 
 def test_cli_maps_publication_path_race_to_exit_two_without_raw_error(
