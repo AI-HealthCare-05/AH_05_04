@@ -1371,3 +1371,111 @@ def test_ingestion_run_snapshot_status_check(run_status: str, has_snapshot: bool
         asyncio.run(verify())
     finally:
         asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+async def _catalog_migration_inventory() -> dict[str, int]:
+    query = (PROJECT_ROOT / "scripts/rag/catalog_migration_preflight.sql").read_text()
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(text("SET TRANSACTION READ ONLY"))
+            await connection.execute(text("SET LOCAL row_security = off"))
+            result = (await connection.execute(text(query))).scalar_one()
+            assert isinstance(result, dict)
+            assert all(type(value) is int and value >= 0 for value in result.values())
+            return result
+
+
+@pytest.mark.parametrize(
+    ("scenario", "extra_counts"),
+    [
+        ("unchanged", {}),
+        (
+            "missing_identity",
+            {"ingredient_missing_identity_rows": 1, "alias_missing_target_identity_rows": 1, "alias_rows": 1},
+        ),
+        ("numeric_only", {"component_numeric_without_text_rows": 1}),
+        ("multiple_roles", {"component_multiple_role_pairs": 1, "component_rows": 1}),
+        ("shared_identity", {"product_rows": 1, "product_identity_across_snapshots_groups": 1}),
+    ],
+)
+def test_catalog_migration_inventory_is_read_only_and_counts_legacy_gaps(
+    scenario: str, extra_counts: dict[str, int]
+) -> None:
+    command.upgrade(create_alembic_config(), "head")
+
+    async def check() -> None:
+        baseline = await _catalog_migration_inventory()
+        ids = await _seed_source_catalog_chain()
+        try:
+            stale_snapshot = (
+                await _create_stale_snapshot_for_same_operation(ids) if scenario == "shared_identity" else None
+            )
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(
+                        text("UPDATE rag_medication_product SET canonical_code = :product_id WHERE id = :product_id"),
+                        ids,
+                    )
+                    if scenario == "shared_identity":
+                        await connection.execute(
+                            text("""
+                                INSERT INTO rag_medication_product (
+                                    id, source_snapshot_id, source_record_key, code_system, canonical_code,
+                                    product_name, normalized_product_name, product_status
+                                ) VALUES (:new_id, :stale_snapshot, 'synthetic-shared', 'MFDS_ITEM_SEQ',
+                                          :product_id, 'synthetic-product', 'synthetic-product', 'ACTIVE')
+                            """),
+                            {**ids, "new_id": str(uuid4()), "stale_snapshot": stale_snapshot},
+                        )
+                    elif scenario == "missing_identity":
+                        await connection.execute(
+                            text(
+                                "UPDATE rag_medication_ingredient SET ingredient_code = NULL WHERE id = :ingredient_id"
+                            ),
+                            ids,
+                        )
+                        await connection.execute(
+                            text("""
+                                INSERT INTO rag_medication_alias (
+                                    id, source_snapshot_id, ingredient_id, target_type,
+                                    alias_text, normalized_alias_text, is_approved
+                                ) VALUES (:new_id, :snapshot_id, :ingredient_id, 'INGREDIENT',
+                                          'synthetic-private-alias', 'synthetic-private-alias', false)
+                            """),
+                            {**ids, "new_id": str(uuid4())},
+                        )
+                    elif scenario == "numeric_only":
+                        await connection.execute(
+                            text("""
+                                UPDATE rag_medication_product_component
+                                SET amount_value = 2.5, amount_text = NULL WHERE id = :component_id
+                            """),
+                            ids,
+                        )
+                    elif scenario == "multiple_roles":
+                        await connection.execute(
+                            text("""
+                                INSERT INTO rag_medication_product_component (
+                                    id, source_snapshot_id, product_id, ingredient_id, component_role, display_order
+                                ) VALUES (:new_id, :snapshot_id, :product_id, :ingredient_id, 'EXCIPIENT', 2)
+                            """),
+                            {**ids, "new_id": str(uuid4())},
+                        )
+            expected = dict(baseline)
+            for key in (
+                "product_rows",
+                "ingredient_rows",
+                "alias_rows",
+                "component_rows",
+                "alias_approved_boolean_rows",
+            ):
+                expected[key] += 1
+            for key, count in extra_counts.items():
+                expected[key] += count
+            assert await _catalog_migration_inventory() == expected
+            assert await _catalog_migration_inventory() == expected
+        finally:
+            await _cleanup_source_catalog_chain(ids)
+        assert await _catalog_migration_inventory() == baseline
+
+    asyncio.run(check())

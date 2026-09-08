@@ -79,3 +79,12 @@ Catalog manifest 전용 Runtime 컬럼은 별도 hash 계약 전환 조건을 �
 - [#167 설계](../ceohwj/issue-167-rag-candidate-index-design.md)
 - [#167 구현 계획](../ceohwj/issue-167-rag-candidate-index-implementation-plan.md)
 - [#166 검증 기록](../../testing/catalog-build-166.md)
+
+## 선행 가능한 구현 추가: 기존 데이터 집계
+
+기존 네 Catalog 테이블의 행수·성분 Identity 누락·Alias boolean·Component 원문 누락·복수 role을
+읽기 전용으로 집계하는 SQL을 추가했다. [실행·해석·검증 기록](../../testing/catalog-migration-preflight-166.md)에
+이행 대상 복제본에서 재현할 방법을 기록한다. 정상적인 교차 Snapshot Identity 재사용은 오류와 구분한다.
+
+기존 head를 적용한 격리 PostgreSQL의 합성 데이터로 검증했으며, 실제 이행 대상 DB의 조사 결과는
+아직 확보하지 않았다. 이 점검 구현으로 D-02나 4단계 migration 착수 조건이 충족되는 것은 아니다.
