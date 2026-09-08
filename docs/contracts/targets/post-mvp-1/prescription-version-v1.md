@@ -55,7 +55,9 @@ Backfill 뒤에는 active pointer 누락 0건, Version header 불일치 0건, le
 
 신규 처방 확정은 기존 `prescription`·`medication`과 Version 1 snapshot을 같은 transaction에서 dual-write한다. Version ID를 먼저 생성해 `prescription.active_version_id`에 넣고 deferred composite FK 아래에서 Prescription → legacy Medication → Version → Version Medication을 원자 조립한다. 기존 read와 공개 API 응답은 계속 legacy `medication`을 사용한다. `active_version_id NOT NULL`, Version read cutover, Candidate·Identification·Guide·Chat FK 연결은 후속 PR 범위다.
 
-PR 3의 Candidate·Identification cutover migration은 v2 생성 경로를 공개하기 전에 실행한다. 현재 placeholder ID가 가리키는 legacy `medication`을 `(prescription_id, display_order)`로 같은 Prescription의 Version 1 Medication에 일대일 재매핑하고, 누락·중복·값 불일치가 0건임을 검증한 뒤에만 실제 FK를 추가한다. 검증할 수 없는 기존 행이 하나라도 있으면 추정 연결하거나 삭제하지 않고 migration 전체를 중단한다. 이 재매핑과 FK 적용이 끝날 때까지 정정 API와 Candidate/RAG publication gate는 닫아 둔다. P0에서 Version 간 안정적 Medication 계보 Key를 새로 도입하지 않는 기존 Decision은 유지한다.
+PR 3의 cutover migration은 PR 2 완료 시점의 전체 Version coverage를 가정하지 않는다. 구버전 애플리케이션 rollback 등으로 새로 생긴 `active_version_id IS NULL` 처방이 있으면 PR 2와 같은 사전 검증·복사·완료 검증으로 Version 1을 먼저 재-backfill한다. Version row와 active pointer가 엇갈린 부분 graph는 추정 복구하지 않고 전체 migration을 중단한다.
+
+그 뒤 Candidate·Identification cutover를 v2 생성 경로 공개 전에 실행한다. 현재 placeholder ID가 가리키는 legacy `medication`을 `(prescription_id, display_order)`로 같은 Prescription의 Version 1 Medication에 일대일 재매핑하고, 누락·중복·값 불일치가 0건임을 검증한 뒤에만 실제 FK를 추가한다. 검증할 수 없는 기존 행이 하나라도 있으면 추정 연결하거나 삭제하지 않고 migration 전체를 중단한다. 이 재-backfill·재매핑과 FK 적용이 끝날 때까지 정정 API와 Candidate/RAG publication gate는 닫아 둔다. P0에서 Version 간 안정적 Medication 계보 Key를 새로 도입하지 않는 기존 Decision은 유지한다.
 
 ## 활성화
 
@@ -98,12 +100,12 @@ OCR 검수 완료만으로 자동 활성화하지 않는다. 사용자의 명시
 
 마이그레이션은 원본 row를 삭제하지 않으며 다음 runbook으로 수행한다.
 
-1. **Expand:** version 테이블과 nullable version FK를 추가하고 기존 컬럼을 유지한다.
-2. **Backfill:** 처방 PK 범위별 재실행 가능한 batch로 version 1과 medication snapshot을 만들고 하위 FK를 채운다.
-3. **Dual compatibility:** 새 쓰기는 version snapshot과 구버전 read에 필요한 필드를 함께 채운다. 읽기는 version FK가 있으면 새 구조를 우선하고 없으면 기존 구조로 fallback한다.
+1. **Expand:** version 테이블과 nullable version FK를 추가하고 기존 컬럼을 유지한다. PR 1에서 완료했다.
+2. **Dual-write:** Expand schema 위에 새 writer를 먼저 배포한다. 새 쓰기는 legacy row와 Version 1 snapshot을 함께 채우고 read는 계속 legacy 구조를 사용한다.
+3. **Backfill:** dual-write 동작을 확인한 뒤 처방 PK 범위별 재실행 가능한 batch로 기존 처방의 Version 1과 Medication snapshot을 만든다. writer를 중지하고 migration하는 배포에서는 같은 release의 dual-write 코드만 재시작하며 구 writer를 다시 띄우지 않는다.
 4. **Verify:** orphan 0건, version number 중복 0건, 유효하지 않은 active pointer 0건, snapshot 수와 핵심 값 일치를 검증한다.
-5. **Cutover:** 새 구조 read로 전환한 뒤 한 배포 구간을 관찰하고 FK·unique·NOT NULL 제약을 활성화한다.
-6. **Rollback:** contract 전에는 구버전 read로 application rollback할 수 있다. contract 뒤에는 version row를 삭제하는 downgrade를 금지하고 forward-fix한다.
+5. **Read cutover:** 먼저 누락 Version을 방어적으로 재-backfill하고 검증한 뒤 새 구조 read로 전환한다. 한 배포 구간을 관찰한 후 소비 FK·unique·NOT NULL 제약을 활성화한다.
+6. **Rollback:** read cutover 전에는 legacy read로 application rollback할 수 있지만 dual-write보다 이전 writer로 rollback하지 않는다. 불가피하게 구 writer가 실행됐으면 쓰기를 중지하고 cutover 전에 누락분을 재-backfill한다. Version row를 삭제하는 downgrade는 금지하고 forward-fix한다.
 
 테이블·컬럼별 mapping, batch 크기와 검증 SQL은 migration PR의 필수 산출물이다.
 
