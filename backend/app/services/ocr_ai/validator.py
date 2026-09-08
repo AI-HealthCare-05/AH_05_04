@@ -13,7 +13,7 @@ from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
 )
-from ocr_runtime.prescription_ocr_structurer import normalize_prescribed_date_text
+from app.services.prescription_ocr_structurer import normalize_prescribed_date_text
 from ocr_runtime.review_fields import EMPTY_REVIEW_FIELD_TYPES
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")

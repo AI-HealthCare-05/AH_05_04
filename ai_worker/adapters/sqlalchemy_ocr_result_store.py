@@ -93,9 +93,9 @@ def _fill_missing_required_fields(field_rows: list[dict], *, ocr_job_id: str) ->
     정본은 구조화 계층(backend/app/services/ocr_ai/validator.py,
     ocr_runtime/prescription_ocr_structurer.py)이다 — 두 경로 모두 감지된 약품 행에 대해
     누락 필드를 이미 빈 검수 필드로 채운다. 여기서는 회귀 방지를 위한 방어 계층으로만
-    같은 필드를 다시 채운다. PRESCRIBED_DATE(medication_index=0)는 예외로, 규칙 기반
-    경로(prescription_ocr_structurer.py)가 날짜를 전혀 인식하지 못하면 row 자체를 만들지
-    않으므로(#294가 실제로 재현된 시나리오) 이 저장 계층이 유일한 방어선이다. medication이
+    같은 필드를 다시 채운다. #309 규칙 경로도 날짜가 없거나 모호하면 index 0의
+    PRESCRIBED_DATE를 빈 검수 필드로 생성한다. 저장 계층은 기존 빈 필드를 보존하고,
+    처방일 row 자체가 누락된 입력만 방어적으로 보충한다. medication이
     하나도 감지되지 않은 경우는 여기서 새 medication index를 만들어내지 않는다 — 전체
     약물 누락은 prescriptions.py의 별도 gap 검증 영역이다.
     """
