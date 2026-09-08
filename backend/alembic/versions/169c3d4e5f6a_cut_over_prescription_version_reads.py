@@ -191,35 +191,21 @@ def upgrade() -> None:
             f"{inconsistent_identifications} Identification rows disagree with their Candidate Search."
         )
 
-    op.drop_constraint("fk_medication_identification_result", "medication_identification", type_="foreignkey")
-    op.drop_constraint("fk_medication_identification_search", "medication_identification", type_="foreignkey")
-    op.drop_constraint(
-        "fk_medication_candidate_result_search", "medication_candidate_search_result", type_="foreignkey"
+    inconsistent_search_snapshots = _count(
+        connection,
+        """
+        SELECT count(*) FROM medication_candidate_search mcs
+        JOIN prescription_version_medication pvm
+          ON pvm.id = mcs.prescription_version_medication_id
+        WHERE mcs.medication_name_snapshot <> pvm.medication_name
+           OR mcs.strength_text_snapshot IS DISTINCT FROM pvm.strength_text
+        """,
     )
-    op.create_foreign_key(
-        "fk_medication_candidate_result_search",
-        "medication_candidate_search_result",
-        "medication_candidate_search",
-        ["search_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
-    op.create_foreign_key(
-        "fk_medication_identification_search",
-        "medication_identification",
-        "medication_candidate_search",
-        ["candidate_search_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
-    op.create_foreign_key(
-        "fk_medication_identification_result",
-        "medication_identification",
-        "medication_candidate_search_result",
-        ["candidate_search_result_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
+    if inconsistent_search_snapshots:
+        raise RuntimeError(
+            "Read cutover refused: "
+            f"{inconsistent_search_snapshots} Candidate Search snapshots disagree with their Version medication."
+        )
 
     op.add_column("guide", sa.Column("prescription_version_id", sa.CHAR(length=36), nullable=True))
     op.add_column("chat_session", sa.Column("prescription_version_id", sa.CHAR(length=36), nullable=True))
@@ -242,13 +228,14 @@ def upgrade() -> None:
             """
         )
     )
+    # 현재 Guide만 ai_job_id 역참조를 가진다. Chat 접수는 아직 JobIntakeService에 연결되지 않았고
+    # chat_session/chat_message에는 영속 ai_job_id mapping이 없으므로 추정 join으로 backfill하지 않는다.
     op.create_foreign_key(
         "fk_medication_candidate_search_version_medication",
         "medication_candidate_search",
         "prescription_version_medication",
         ["prescription_version_medication_id"],
         ["id"],
-        ondelete="CASCADE",
     )
     op.create_foreign_key(
         "fk_medication_identification_version_medication",
@@ -256,7 +243,6 @@ def upgrade() -> None:
         "prescription_version_medication",
         ["prescription_version_medication_id"],
         ["id"],
-        ondelete="CASCADE",
     )
     op.create_foreign_key(
         "fk_guide_prescription_version_prescription",
@@ -285,12 +271,27 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     connection = op.get_bind()
+    for table in (
+        "medication_candidate_search",
+        "medication_identification",
+        "guide",
+        "chat_session",
+    ):
+        connection.execute(sa.text(f"LOCK TABLE {table} IN SHARE ROW EXCLUSIVE MODE"))
     referenced = _count(
         connection,
-        "SELECT (SELECT count(*) FROM medication_candidate_search) + (SELECT count(*) FROM medication_identification)",
+        """
+        SELECT
+            (SELECT count(*) FROM medication_candidate_search)
+          + (SELECT count(*) FROM medication_identification)
+          + (SELECT count(*) FROM guide WHERE prescription_version_id IS NOT NULL)
+          + (SELECT count(*) FROM chat_session WHERE prescription_version_id IS NOT NULL)
+        """,
     )
     if referenced:
-        raise RuntimeError("Read cutover downgrade refused: remapped Candidate/Identification IDs are irreversible.")
+        raise RuntimeError(
+            "Read cutover downgrade refused: remapped Candidate/Identification IDs or Guide/Chat provenance exist."
+        )
     op.drop_index("idx_ai_job_prescription_version", table_name="ai_job")
     op.drop_constraint("fk_ai_job_prescription_version", "ai_job", type_="foreignkey")
     op.drop_constraint("fk_chat_session_prescription_version_prescription", "chat_session", type_="foreignkey")
@@ -300,32 +301,6 @@ def downgrade() -> None:
     )
     op.drop_constraint(
         "fk_medication_candidate_search_version_medication", "medication_candidate_search", type_="foreignkey"
-    )
-    op.drop_constraint("fk_medication_identification_result", "medication_identification", type_="foreignkey")
-    op.drop_constraint("fk_medication_identification_search", "medication_identification", type_="foreignkey")
-    op.drop_constraint(
-        "fk_medication_candidate_result_search", "medication_candidate_search_result", type_="foreignkey"
-    )
-    op.create_foreign_key(
-        "fk_medication_candidate_result_search",
-        "medication_candidate_search_result",
-        "medication_candidate_search",
-        ["search_id"],
-        ["id"],
-    )
-    op.create_foreign_key(
-        "fk_medication_identification_search",
-        "medication_identification",
-        "medication_candidate_search",
-        ["candidate_search_id"],
-        ["id"],
-    )
-    op.create_foreign_key(
-        "fk_medication_identification_result",
-        "medication_identification",
-        "medication_candidate_search_result",
-        ["candidate_search_result_id"],
-        ["id"],
     )
     op.drop_column("chat_session", "prescription_version_id")
     op.drop_column("guide", "prescription_version_id")

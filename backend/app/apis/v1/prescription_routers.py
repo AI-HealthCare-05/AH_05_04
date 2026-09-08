@@ -4,6 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse as Response
 
+from app.core import config
+from app.core.errors import ApiError, ErrorDetail
 from app.dependencies.security import get_request_user
 from app.dependencies.services import get_chat_service, get_guide_service, get_prescription_service
 from app.dtos.chat import ChatSessionResponse
@@ -48,6 +50,13 @@ async def correct_prescription(
     user: Annotated[User, Depends(get_request_user)],
     prescription_service: Annotated[PrescriptionService, Depends(get_prescription_service)],
 ) -> Response:
+    if not config.PRESCRIPTION_CORRECTION_ENABLED:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="SERVICE_UNAVAILABLE",
+            message="처방 정정 기능은 아직 공개되지 않았습니다.",
+            details=[ErrorDetail(field="prescription", reason="PRESCRIPTION_CORRECTION_DISABLED")],
+        )
     result = await prescription_service.correct_prescription(
         user=user,
         prescription_id=prescription_id,

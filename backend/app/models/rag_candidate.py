@@ -121,7 +121,6 @@ class MedicationCandidateSearch(Base):
         ForeignKey(
             "prescription_version_medication.id",
             name="fk_medication_candidate_search_version_medication",
-            ondelete="CASCADE",
         ),
         nullable=False,
     )
@@ -209,9 +208,7 @@ class MedicationCandidateSearchResult(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    search_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("medication_candidate_search.id", ondelete="CASCADE"), nullable=False
-    )
+    search_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("medication_candidate_search.id"), nullable=False)
     # 공식 제품 Catalog는 #164 Source/Catalog slice에서 생성된다. product_id FK 연결은 기존
     # Candidate fixture와 적재 경계 정리 후 별도 migration에서 추가한다. 이 값은 편의 포인터일 뿐,
     # 정체성 판단에 쓰지 않는다 — Catalog row는 Source
@@ -299,18 +296,17 @@ class MedicationIdentification(Base):
         ForeignKey(
             "prescription_version_medication.id",
             name="fk_medication_identification_version_medication",
-            ondelete="CASCADE",
         ),
         nullable=False,
     )
     candidate_search_id: Mapped[UUID] = mapped_column(
         UUIDChar(),
-        ForeignKey("medication_candidate_search.id", ondelete="CASCADE"),
+        ForeignKey("medication_candidate_search.id"),
         nullable=False,
     )
     candidate_search_result_id: Mapped[UUID | None] = mapped_column(
         UUIDChar(),
-        ForeignKey("medication_candidate_search_result.id", ondelete="CASCADE"),
+        ForeignKey("medication_candidate_search_result.id"),
         nullable=True,
     )
     # product_id FK 연결은 기존 Candidate fixture와 적재 경계 정리 후 별도 migration에서 추가한다.

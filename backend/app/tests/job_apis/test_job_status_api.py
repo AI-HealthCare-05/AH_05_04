@@ -116,6 +116,7 @@ async def _accept_ocr_job(session: AsyncSession, *, user: User, document: Medica
         fingerprint={"job_type": "OCR", "document_id": str(document.id)},
         create_domain_placeholder=create_domain_placeholder,
         trace_id="a" * 32,
+        prescription_version_id=None,
     )
     await session.flush()
     return result.job.id

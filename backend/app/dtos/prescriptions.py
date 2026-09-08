@@ -57,9 +57,17 @@ class PrescriptionMedicationCorrectionRequest(BaseModel):
     @field_validator("medication_name")
     @classmethod
     def medication_name_must_not_be_blank(cls, value: str) -> str:
-        if not value.strip():
+        stripped = value.strip()
+        if not stripped:
             raise ValueError("medication_name must not be blank")
-        return value
+        return stripped
+
+    @field_validator("strength_text", "dose_unit", "timing_text")
+    @classmethod
+    def optional_text_must_be_normalized(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
 
 class CorrectPrescriptionRequest(BaseModel):

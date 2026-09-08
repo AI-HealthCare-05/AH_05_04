@@ -173,10 +173,12 @@ async def test_correction_creates_new_immutable_version_and_switches_active_read
             prescribed_date=date(2026, 9, 8),
             medications=[
                 PrescriptionMedicationCorrectionRequest(
-                    medication_name="정정된 합성약",
+                    medication_name="  정정된 합성약  ",
+                    strength_text="  5mg  ",
                     dose_value=Decimal("0.5"),
-                    dose_unit="정",
+                    dose_unit="  정  ",
                     frequency_per_day=2,
+                    timing_text="  식후  ",
                     duration_days=5,
                     display_order=1,
                 )
@@ -188,6 +190,9 @@ async def test_correction_creates_new_immutable_version_and_switches_active_read
     assert result.current is True
     assert result.prescription_version_id != base_version_id
     assert result.medications[0].medication_name == "정정된 합성약"
+    assert result.medications[0].strength_text == "5mg"
+    assert result.medications[0].dose_unit == "정"
+    assert result.medications[0].timing_text == "식후"
     old_medications = await PrescriptionRepository(db_session).get_version_medications(
         prescription_version_id=base_version_id
     )

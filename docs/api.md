@@ -80,6 +80,10 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | Candidate | `POST` | `/api/v1/medication-candidates/confirm` | `200` |
 | Candidate | `POST` | `/api/v1/medication-candidates/reject` | `200` |
 
+`PATCH /api/v1/prescriptions/{prescription_id}`는 PR 4의 이전 Version 결과 `STALE` 전이와 현재 노출
+차단이 병합될 때까지 `PRESCRIPTION_CORRECTION_ENABLED=false`가 기본이다. 비활성 상태에서는 인증 이후
+도메인 조회나 mutation 전에 `503 SERVICE_UNAVAILABLE` / `PRESCRIPTION_CORRECTION_DISABLED`로 차단한다.
+
 Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 세 endpoint 모두 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 Job 접수입니다. 같은 요청에서는 CLOVA OCR을 호출하지 않고 `AI_JOB`, `IDEMPOTENCY_RECORD`, `OUTBOX_EVENT`, `OCR_JOB` placeholder를 같은 transaction에 저장한 뒤 `JobStatusResponse`를 반환합니다. 실제 OCR 실행은 Worker가 처리합니다.

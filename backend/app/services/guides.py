@@ -23,7 +23,12 @@ _GENERATION_FAILED_ERROR_MESSAGE = "가이드 생성 처리 중 오류가 발생
 
 def _to_guide_data(guide: Guide) -> GuideData:
     if guide.prescription_version_id is None:
-        raise RuntimeError("guide prescription version is required")
+        raise ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_UNAVAILABLE",
+            message="처방 버전 정보를 사용할 수 없습니다.",
+            details=[ErrorDetail(field="prescription_version_id", reason="INVALID_VERSION_GRAPH")],
+        )
     return GuideData(
         guide_id=guide.id,
         prescription_id=guide.prescription_id,
