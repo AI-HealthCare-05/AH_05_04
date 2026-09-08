@@ -1,6 +1,6 @@
 # 복약 챗봇 최근 대화 3쌍 문맥 설계
 
-> **상태: 기능 구현 완료.** 버전된 합성 평가와 결정론적 Local application-path latency·PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 수행했다. 이 설계가 도입한 history 계약은 유지되며, 현재 생성 프롬프트와 canonical 평가는 Issue #306의 `chat-prompt-v3`·`chat-v3-history-eval-v1`을 사용한다. Issue #306은 2026-09-08 합성 OpenAI live 평가를 실행했으며, 실행하지 않은 Provider 항목만 `NOT_RUN`으로 유지한다. 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
+> **상태: 기능 구현 완료.** 버전된 합성 평가와 결정론적 Local application-path latency·PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 수행했다. 이 설계가 도입한 history 계약은 유지되며, 현재 생성 프롬프트와 canonical 평가는 Issue #306의 `chat-prompt-v3`·`chat-v3-history-eval-v1`을 사용한다. 2026-09-08 합성 OpenAI live 결과는 이전 13-case fixture에서 얻었으며 현재 14-case fixture의 평가 근거가 아니다. 현재 Provider 평가는 `NOT_RUN`이고, 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
 
 | 항목 | 내용 |
 | --- | --- |
@@ -271,8 +271,8 @@ history는 사용자 질문과 과거 AI 답변이라는 추가 의료·대화 �
 
 | Flag | 허용 환경 | 조회·Provider payload | Provider 출력 검증 | 프롬프트·결과 버전 |
 | --- | --- | --- | --- | --- |
-| `false` | 모든 환경의 기본값 | history를 조회하지 않고 빈 배열 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v2` |
-| `true` | 비식별 합성 Local 검증만 | 이 설계에 따라 history 최대 3쌍 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v2` |
+| `false` | 모든 환경의 기본값 | history를 조회하지 않고 빈 배열 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v3` |
+| `true` | 비식별 합성 Local 검증만 | 이 설계에 따라 history 최대 3쌍 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v3` |
 
 flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 설정 변경은 새 process 시작 후 적용하고, Local 검증 기록에 flag 값·합성 fixture·실행 결과를 남긴다.
 
@@ -314,7 +314,7 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - Provider JSON의 시간순 history와 현재 medications 보존
 - 식별자·상태·시각·오류 metadata 비포함
 - `Decimal` 직렬화와 불완전 dose pair 생략 회귀
-- flag 상태와 history 유무에 관계없이 `prompt_version == "chat-prompt-v2"`
+- flag 상태와 history 유무에 관계없이 `prompt_version == "chat-prompt-v3"`
 - 기존 timeout·가용성·응답 처리 오류 mapping 회귀
 - 신규 ASSISTANT 답변을 동일한 금지문자 검증 후에만 `COMPLETED`로 저장
 - feature flag가 꺼져 있으면 history 조회가 발생하지 않고 빈 배열이 전송되는지
