@@ -337,3 +337,41 @@ async def test_new_journal_reader_in_subprocess_sees_intent_and_result(lab):
         text=True,
     )
     assert result.stdout.strip() == "INTENT,DELETED,INTENT,DELETED"
+
+
+async def test_independent_process_lock_blocks_cleanup_until_released(lab):
+    import select
+    import subprocess
+    import sys
+
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import fcntl,os,sys; "
+                "fd=os.open(sys.argv[1],os.O_RDWR|os.O_NOFOLLOW); "
+                "fcntl.flock(fd,fcntl.LOCK_EX); print('LOCKED',flush=True); "
+                "sys.stdin.readline(); os.close(fd)"
+            ),
+            str(Path(lab._directory.name) / "lock"),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None and process.stdin is not None
+        assert select.select([process.stdout], [], [], 5)[0], "Synthetic child lock timed out"
+        assert process.stdout.readline().strip() == "LOCKED"
+        assert not (await execute(lab)).complete
+        assert records(lab) == []
+        assert all(path(lab, target).exists() for target in lab.batch.targets)
+        process.communicate("release\n", timeout=5)
+        assert process.returncode == 0
+        assert (await execute(lab)).complete
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)

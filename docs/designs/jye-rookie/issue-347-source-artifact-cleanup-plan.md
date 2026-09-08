@@ -2,7 +2,7 @@
 
 - 작성: 김지혜 (`Jye-rookie`), 2026-09-08
 - 기준 코드: develop `a6e5645` (#329 병합 포함)
-- 상태: 4단계 Local 합성 삭제·파일 감사·복구 모델까지 진행. 실제 Source/승인/공유 잠금/감사 DB 연결과 5단계 인계는 미완료. 단계별 기록은 하단 참조.
+- 상태: 5단계 합성 구현 검증·실제 직접 참조 DB 테스트·인계 초안까지 작성. 실제 Source/승인/공유 잠금/감사 권한과 담당자 인계는 미완료이며 #347은 Open 유지.
 - 관련: [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347), [#335](https://github.com/AI-HealthCare-05/AH_05_04/issues/335), [PR #348](https://github.com/AI-HealthCare-05/AH_05_04/pull/348), #165/#323
 - 정책 근거: [Source 보존·삭제 정책](../../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
 - DB·보안: 송은영, Source·provenance: 정현우, 정책·배치 승인: 권가빈. 운영 실행자는 별도 지정한다.
@@ -139,3 +139,14 @@ Q3~Q6은 미확정 상태 그대로이며 삭제·감사 기능을 추가하지 
 [4단계 증빙](../../testing/source-artifact-cleanup-347.md)에 실제 보장과 한계를 기록했다.
 운영 감사 DB·역할·모든 Source writer 공유 잠금을 확정한 것이 아니며 Q1~Q6의 운영 인계는 남는다.
 5단계의 DB/동시 실행·T01–T30·runbook 검토에서 미실행 항목을 완료로 처리하지 않는다.
+
+
+## 5단계 진행 기록
+
+최신 develop `76448ea`를 반영하고 전용 migrated PostgreSQL의 FAILED/NO_CHANGE·공유 참조·
+독립 transaction 가시성·조회 실패 회귀를 추가했다. 합성 cleanup끼리의 독립 프로세스 잠금도 검증했다.
+[전체 T01–T30 대조](../../testing/source-artifact-cleanup-347.md)와
+[실행·담당 인계 초안](../../runbooks/source-artifact-cleanup-347.md)을 작성했다.
+
+미완료 T14·T21 등과 실제 담당 인계는 완료로 처리하지 않는다. 이번 결과는 검토 가능한 합성
+구현 분량이며 Q1~Q6 실제 연결, 담당 리뷰, 실행자/감사 보관 인계 후 #347 종료 여부를 다시 판정한다.

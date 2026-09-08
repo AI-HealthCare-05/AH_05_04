@@ -218,3 +218,88 @@ Source writer 동시 transaction·전체 CI는 실행하지 않았다.
 
 4단계 합성 실행 모델의 완료이며 #347 전체 완료나 운영 삭제 준비 완료가 아니다.
 5단계에서는 이 증빙과 미완료 조건을 T01–T30·runbook에 대조하고 DB/승인/잠금 인계를 정리한다.
+
+
+## 5단계 — 최신 develop 통합·직접 참조 DB 검증·인계
+
+기준 develop `76448ea`를 merge commit `a96acc3`으로 반영했다. #350/#344/#354/#345가 포함되며
+#347 자체 migration은 추가하지 않았다. Alembic head는 `169b2c3d4e5f` 하나다.
+일회용 PostgreSQL 16 DB에 최초 revision부터 이 head까지 upgrade를 실행했다.
+
+`tests/integration/rag/test_source_cleanup_references.py` 8건으로 다음을 실제 migrated schema에서 확인했다.
+
+- FAILED(snapshot NULL)·NO_CHANGE(snapshot 존재) Run의 RAW_RESPONSE/REJECTS 참조 보호.
+- 서로 다른 Run/종류가 공유하는 동일 backend/key 전체 count.
+- 무참조 0건도 namespace·전체 조회 범위 증명이 없어 HOLD 유지.
+- 서로 다른 DB connection에서 미commit 참조는 0건으로 보이지만 HOLD이며, commit 후에는 보호됨.
+- 조회 오류를 참조 0건으로 바꾸지 않고 고정 사유의 HOLD로 처리.
+
+독립 Python 프로세스가 합성 flock을 잡은 동안 삭제가 시작되지 않고, 해제 후 실행되는
+추가 회귀도 통과했다. 이는 실제 Source writer와 참조 생성의 경쟁을 해결하는 T14 증빙이 아니다.
+
+### T01–T30 최종 대조 (이번 PR 기준)
+
+`합성 통과`는 지정 fixture/포트 범위의 검증이다. `부분`은 운영 또는 미구현 참조·권한 경계가 남는다.
+
+| ID | 상태 | 증빙 또는 남은 범위 |
+| --- | --- | --- |
+| T01 | 합성 통과 | 정책·시각·소유 증거 누락 보류, invalid batch 거부 |
+| T02 | 범위 유지 | scheduler/Runtime 활성화 진입점 없음 |
+| T03 | DB 통과 | 서로 다른 Run/종류의 동일 객체 count=2 보호 |
+| T04 | DB 통과 | FAILED·snapshot NULL의 RAW_RESPONSE/REJECTS 참조 보호 |
+| T05 | 부분 | NO_CHANGE 직접 참조 DB 검증. 과거 Catalog의 전체 관계 추적은 미구현 |
+| T06 | 부분 | 합성 downstream 양수 보호. Citation/평가/외부 증빙 adapter 미연결 |
+| T07 | 통과 | 실제 SQL 오류 및 합성 불완전 inventory/범위 보류 |
+| T08 | 합성 통과 | 30일 경계·생성 시각 누락/미래/naive 보류. 실제 생성 증거는 미연결 |
+| T09 | 부분 | 실제 commit 전 count=0도 HOLD. 진행 중 모든 writer 보호는 미연결 |
+| T10 | 합성 통과 | 자체 임시 파일 삭제·의도/결과 fsync |
+| T11 | 합성 통과 | 배치 hash·정책·범위 변경 차단 |
+| T12 | 부분 | synthetic receipt 누락·불일치·만료/철회 차단. 실제 권한 verifier 미연결 |
+| T13 | 합성 통과 | 의도 기록/재시도 중 새 참조 차단 |
+| T14 | 미완료 | 실제 Source writer·재사용·신규 DB 참조의 공유 잠금 미연결 |
+| T15 | 합성 통과 | 독립 프로세스 cleanup guard 배타성·성공 재호출 멱등 |
+| T16 | 합성 통과 | 일부 실패 후 성공 유지·생존 대상 제한 재시도 |
+| T17 | 합성 통과 | 삭제 예외/객체 부재를 UNKNOWN으로 보존 |
+| T18 | 합성 통과 | INTENT 쓰기/fsync 실패 시 삭제 없음 |
+| T19 | 부분 | 중단 주입·새 journal/독립 프로세스 읽기. 운영 재기동 포트/감사 복구 미연결 |
+| T20 | 합성 통과 | 재시도 참조·승인·bytes/세대 교체 차단 |
+| T21 | 부분 | append API·중복/손상 거부. OS/DB 비특권 변경·삭제 방지 미구현 |
+| T22 | 합성 통과 | payload/root/key/Provider 예외 비노출 |
+| T23 | 합성 통과 | 다른 DB/namespace 거부. 실제 환경 귀속 증거 미연결 |
+| T24 | 부분 | 허용 종류·공유 직접 참조 보호. 실제 Source 소유 입증 미연결 |
+| T25 | 부분 | 종료 예외 없음. 실제 종료·참조 인계 미수행 |
+| T26 | 합성 경계 통과 | 생성한 fixture 외 store/batch 거부. S3 실행 포트 없음 |
+| T27 | 제외·미실행 | S3 삭제 미구현. marker 의미의 모의 실행도 수행하지 않음 |
+| T28 | 합성 통과 | 배치와 namespace/config 불일치 차단 |
+| T29 | 합성 통과 | 실제 Local bytes·크기·세대 재검사, symlink 거부 |
+| T30 | 부분 | 직접 행 전체 조회. 새 테이블/외부 참조 목록 자동 확인 미구현이며 SQL adapter는 불완전 유지 |
+
+### 이슈 완료 판정
+
+계획한 5단계의 **합성 구현·검증·인계 초안**까지 작성했다. #347 전체 종료 판정은 아니다.
+실제 생성/소유·전체 참조·승인·모든 writer 잠금·감사 권한이 미연결이고,
+실행자 및 감사 보관·관리·보존 종료 기준도 실제 담당자에게 인계되지 않았다.
+따라서 #347은 Open을 유지하고 이번 PR에는 `Related #347`을 사용한다.
+이 미완료 항목을 #166 또는 #164 normalization 작업이 해결한다고 가정하지 않는다.
+
+[runbook·담당 인계표](../runbooks/source-artifact-cleanup-347.md)를 작성했다.
+#335/#165/#323 연결용 초안은 별도 전달하며 댓글/PR은 자동 게시하지 않았다.
+
+
+### 5단계 최종 실행 결과
+
+| 검사 | 결과 |
+| --- | --- |
+| Source cleanup 합성 회귀 | 103 passed |
+| Worker core·OCR·RAG·evaluation 전체 | 2,351 passed, 8 skipped (cleanup 포함) |
+| migrated PostgreSQL 참조 조회 통합 | 8 passed |
+| 전용 DB Alembic upgrade head | 성공, `169b2c3d4e5f` |
+| Alembic heads | `169b2c3d4e5f` 단일 head |
+| 전체 Ruff·format | 통과, 545 files |
+| Mypy Backend·Worker | 통과, 459 source files |
+| git diff --check | 통과 |
+
+테스트는 Python 3.13, PostgreSQL 16의 전용 `source_cleanup347_test`만 사용했다.
+테스트 컨테이너와 익명 볼륨은 종료 후 정리한다. 전체 Backend·Frontend·CI·migration downgrade
+재실행·실제 권한/운영 삭제 검증은 포함하지 않았다. 위 합성/조회 결과를 해당 미실행 항목의
+완료 증빙으로 사용하지 않는다. 실행 명령은 runbook과 기존 Worker 단위 테스트 명령을 따른다.
