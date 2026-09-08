@@ -429,28 +429,34 @@ Source와 Evidence 파생물의 hash domain은 다음처럼 분리한다.
 | `KnowledgeEvidenceProvenance.canonicalization_spec_version` | record별 Evidence text canonicalization 규격 문자열 | 스키마의 `canonicalization_spec_version`은 snapshot·bundle 단위 hash 직렬화 규격 버전이고 규격 변경 시 `normalization_version`과 함께 올려야 한다. 이 Kernel에는 `normalization_version` 대응이 없으므로 두 값을 같은 축으로 취급하지 않는다 |
 | `knowledge_chunk_ref` | 단일 문자열 chunk reference | `knowledge_chunk_id`(UUID)와 `(source_code, source_version, external_document_id, chunk_index)` 안정 좌표. 단일 문자열로 축약하지 않는다 |
 
-Provenance에 필요한 정규 필드 중 이번 slice가 표현하지 않는 것은 `evidence_type`, `source_code`,
-`endpoint_code`, `operation_code`, `external_record_id`, `supporting_excerpt`와 정확한 Snapshot Member
-reference다. Production provenance의 조건부 필수값과 정확히 하나의 Snapshot Member 경로는
-`PD-315-20260908`을 따른다. Evidence Gate·Citation·Rule Evidence 연결은 이 값들이 생긴 뒤에만 가능하다.
-`evidence_ref_id`는 Evaluation bridge가 소유하며 Runtime provenance에 평가 전용 ID를 추가하지 않는다.
+Provenance에 필요한 정규 필드 중 이번 slice가 표현하지 않는 것은 `evidence_type`, `source_code`, 정확한
+Snapshot Member reference와 유형별 안정 ID다. Production provenance는 `PD-315-20260908`의
+`KNOWLEDGE_CHUNK | INTERACTION_RULE | LIFESTYLE_GUIDELINE` discriminated 표와 유형별
+`evidence-bridge-content@1` preimage를 따른다. `external_record_id`는
+모든 Evidence의 공통 필드가 아니라 Chunk 없는 직접 구조화 Rule에만 조건부 필수다. Evidence Gate·Citation·
+Rule Evidence 연결은 `INTERACTION_RULE.evidence_role`을 포함해 해당 유형의 필드가 모두 생긴 뒤에만 가능하다.
+`evidence_ref_id`는 Evaluation bridge가
+소유하며 Runtime provenance에 평가 전용 ID를 추가하지 않는다.
 
-이 adapter는 fixture identifier에 nonblank NFC 문자열만 요구한다. Production Adapter는 bridge 전달 전에
-`evidence_key`·`knowledge_chunk_ref`의 `^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$` 문법을 검증하고,
-Evaluation bridge도 외부 artifact를 신뢰하지 않고 같은 문법을 독립 검증한다. `source_version`과
-`canonicalization_spec_version`은 bridge에서 공백·제어문자 없는 bounded token과 exact-match를 유지한다.
-Production `source_version`의 정규 문법은 Source 생성 경계와 Production Adapter가 별도로 강제해 Evaluation
-synthetic version token을 금지하지 않는다. 현재 fixture는 bridge 문법을 만족한다.
+이 adapter는 fixture identifier에 nonblank NFC 문자열만 요구한다. Production Adapter는 정규 Runtime UUID와
+`(source_code, source_version, external_document_id, chunk_index)` 안정 identity 및 별도 `content_hash`
+일치를 검증한다.
+Evaluation bridge producer가 그 검증된 identity로 `evidence_ref_id`, `evidence_mapping_stable_key`,
+`evidence_key`, opaque `knowledge_chunk_ref`를 만들고 stable ID 문법을 검사하며, bridge loader가 같은 문법과
+exact-match를 독립 검증한다. Production Adapter는 Evaluation 전용 ID를 생성하거나 소유하지 않는다.
 
 Production Graph와 Runtime Execution Manifest의 Node ID는 `hybrid_retrieve`이며 내부 함수명
 `retrieve_knowledge_evidence()`와 구분한다. Evidence Gate는 별도 `evidence_gate` Node다. Production 내부
 실행 상태 필드는 `retrieval_execution_status`를 사용하고 `safety_result.execution_status`로 직접 투영하지
-않는다. Evidence Gate가 Retrieval 결과와 `evidence_status`를 검증한 뒤 Safety 상태를 만든다.
+않는다. Receipt의 terminal 값, `retrieval_run.status`의 `RUNNING` 포함 lifecycle, `NO_HITS` diagnostic과
+Evidence Gate·실패 원인을 포함한 Safety finalizer 변환은 `PD-315-20260908`의 표를 따른다. Evidence Gate
+단독으로 Safety 상태를 만들지 않는다.
 
-Production `source_version`은 `external:<version>`,
-`api:<RFC3339 UTC 고정 6자리 소수초>:<64-lower-hex>`,
-`internal:<immutable-fixture-version>:<64-lower-hex>` 중 하나다. Source 생성 경계와 Production Adapter가
-동일 규칙을 검증하며 synthetic marker는 테스트 namespace에서만 허용한다.
+Production `source_version`은 Source가 제공한 불변 version의 존재 여부와 `source_type`에 결속한다.
+외부 불변 version은 `external:<version>`, 외부 version이 없는 API는
+`api:<RFC3339 UTC 고정 6자리 소수초>:<64-lower-hex>`, `INTERNAL_CURATED_DATA`는 승인 Git tag 또는 commit과
+Fixture Manifest에서 파생한 `internal:<fixture-version>:<64-lower-hex>`를 사용한다. Source 생성 경계와
+Production Adapter가 metadata와 형식을 함께 검증하며 synthetic marker는 테스트 namespace에서만 허용한다.
 
 각 stage의 rank는 1부터 시작하는 중복 없는 연속 정수여야 하며 hit 수는 해당 stage limit 이하여야 한다.
 같은 `evidence_key`는 한 stage에서 한 번만 나타날 수 있다. lexical과 dense에 같은 key가 등장할 수 있지만
@@ -487,17 +493,21 @@ selection은 `selection_limit` 이하이고 rank가 중복 없는 연속 정수�
 정규 파이프라인은 `Lexical → Dense → RRF → Reranking → Evidence Gate → top-K`이고 RRF는 stage별 rank를
 융합한다. 이 adapter는 stage별 raw score를 가중합하므로 `[0,1]` trigram Jaccard와 음수가 가능한 cosine을
 같은 축에서 더한다. `minimum_similarity`를 음수로 둔 config에서는 dense 기여가 후보 점수를 내릴 수 있다.
-따라서 이 공식은 unit-level 계약 검증용이며 Production에 승격하지 않는다. `PD-315-20260908`은 Production
-초기값을 Lexical 20, Dense 20, rank 기반 RRF 최대 30, Reranker 입력 20, Evidence Gate 뒤 Context 최대
-5로 고정한다. RRF `k=60`은 versioned retrieval configuration hash에 포함한다. Exact·Trigram·PostgreSQL
-`ts_rank_cd`는 하나의 Lexical 순위를 만들며, 부족한 Evidence를 Context 목표 수량에 맞추려고 통과시키지
-않는다.
+따라서 이 공식은 unit-level 계약 검증용이며 Production에 승격하지 않는다. `PD-315-20260908`은
+`rrf-rank-fusion@1`, 1-based rank, 미등장 목록 기여값 `0`, content hash를 제외한 안정 Chunk identity
+dedupe·UTF-8 tie-break와 exact-rational reciprocal-rank 비교·fraction receipt를 고정한다. 이 RRF는
+`KNOWLEDGE_CHUNK` 전용이며 `INTERACTION_RULE`은 `rule_check` 경로를 사용한다. P0 승인 기본 configuration은
+Lexical 20, Dense 20, `rrf_k=60`, RRF 출력 30, Reranker 입력 20, Evidence Gate 뒤 Context 최대 5다. DEV가
+변경을 요구하면 새 version을 승인하고 HOLDOUT 실행 전에 선택된 version을 동결한다. Exact 우선 bucket 안에서는
+Trigram·PostgreSQL `ts_rank_cd` 순위를 같은 방식으로 융합한다. 부족한 Evidence를 Context 목표 수량에 맞추려고
+통과시키지 않는다.
 
-Production과 Evaluation 사이의 artifact hash는 각 hash domain의 projection을 RFC 8785 JCS bytes로
+Production과 Evaluation 사이의 JSON artifact hash는 각 hash domain의 projection을 RFC 8785 JCS bytes로
 직렬화한다. Object key는 UTF-16 code unit 순서를 사용한다. NFC, 집합 배열 정렬, 명시적 `null`, 제외 필드와
 Envelope는 domain별 versioned projection이 소유하며 JCS가 이를 대신하지 않는다. 이 synthetic adapter의
 `json.dumps(sort_keys=True)` hash를 Production artifact hash로 승격하지 않는다. Snapshot, Index,
-configuration, Evidence content와 Evaluation artifact hash는 preimage가 다른 별도 domain이다.
+configuration과 Evaluation artifact hash는 서로 다른 JSON preimage다. Evidence content hash는 canonical
+text UTF-8 bytes, query digest는 versioned HMAC preimage를 사용하며 JCS 대상이 아니다.
 
 ## 비권위적 diagnostic trace
 

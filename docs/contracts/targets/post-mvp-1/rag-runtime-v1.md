@@ -7,7 +7,8 @@
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-01 |
+| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Review pending |
+| Last verified | 2026-09-08 |
 
 ## 목적과 적용 범위
 
@@ -168,7 +169,9 @@ Guide의 Citation Finalizer도 `claim_citation_validator`와 `release_gate` 사�
 
 ### Retrieval·Rerank·Evidence Gate
 
-- 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk와 Rule Evidence다.
+- RRF 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk다. Interaction Rule은 앞선 `rule_check`에서
+  결정론적으로 평가하고 연결된 Rule Evidence를 Citation·Evidence Gate로 전달하며, 같은 Rule Evidence를
+  RRF 후보로 다시 검색하지 않는다.
 - `pg_trgm`·Dense 검색과 rerank 구현은 versioned configuration으로 재현한다.
 - 내부 Top-K·score는 공개 DTO에 노출하지 않는다.
 - 의료 Claim과 처방약 기반 Guideline Claim은 승인된 Source version과 locator를 가져야 한다.
