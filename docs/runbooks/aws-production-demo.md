@@ -103,17 +103,39 @@ curl --fail --show-error --silent https://demo.example.com/api/v1/health
 curl --head --fail --show-error https://demo.example.com/
 ```
 
-브라우저에서는 다음을 확인합니다.
+브라우저 smoke는 동일한 합성 계정으로 아래 순서를 중간 생략 없이 수행합니다. 시작 전
+승인된 합성 처방전 fixture와 계정의 비밀값이 아닌 식별 label을 기록합니다.
 
-- 루트 URL에서 Frontend가 열리고 새로고침해도 SPA route가 404가 되지 않는다.
-- Frontend 요청이 동일 origin의 `/api/v1/*`로 전달된다.
-- 합성 계정으로 로그인, 합성 처방전 업로드, OCR 검수 흐름을 확인한다.
-- 실제 환자 데이터는 입력하지 않는다.
-- 공개 게이트가 닫힌 기능은 데모 성공으로 간주하거나 임의로 활성화하지 않는다.
+1. 루트 URL에서 Frontend가 열리고 새로고침해도 SPA route가 404가 되지 않는지 확인합니다.
+2. 합성 계정으로 로그인하고 합성 처방전을 업로드한 뒤 OCR 결과를 검수·확정합니다.
+   기존에 확정한 합성 처방을 재사용할 때도 해당 처방의 약 목록이 화면에서 정상적으로
+   조회되는지 먼저 확인합니다.
+3. 확정 완료 화면에서 복약 가이드로 진입해 `COMPLETED` 가이드의 약 목록과 복약 안내가
+   해당 합성 처방과 일치하는지 확인합니다.
+4. 가이드의 `복약 챗봇 도지와 이야기하기` 버튼으로 Chat에 진입합니다. 합성 질문 1건을
+   전송해 USER 질문과 `COMPLETED` ASSISTANT 답변이 모두 보이는지 확인합니다.
+5. 메뉴에서 로그아웃하고 보호된 처방·가이드·대화가 더 이상 보이지 않으며 시작 화면으로
+   이동하는지 확인합니다.
+6. 같은 합성 계정으로 다시 로그인합니다. 새 처방전 업로드나 Guide·Chat 생성 요청 없이
+   가이드 탭으로 진입해 기존 최신 Prescription과 연결된 Guide가 다시 표시되는지 확인합니다.
+7. 복원된 Guide에서 다시 Chat으로 진입해 로그아웃 전에 만든 동일 세션의 USER 질문과
+   ASSISTANT 답변이 빈 대화로 바뀌지 않고 복원되는지 확인합니다.
 
-배포 commit, 이미지 태그·digest, 실행 시각, 승인자, smoke 결과와
-`deployment-evidence/<timestamp>/` 위치를 배포 PR에 기록합니다. Secret이나 원본 의료
-데이터는 첨부하지 않습니다.
+개발자 도구 Network에서는 Frontend 요청이 동일 origin의 `/api/v1/*`로 전달되고, 재로그인
+뒤 `GET /api/v1/prescriptions/latest`, `GET /api/v1/prescriptions/<redacted>/guide`,
+`GET /api/v1/prescriptions/<redacted>/chat-session`,
+`GET /api/v1/chat-sessions/<redacted>/messages`가 성공하는지 확인합니다. 재발견 단계에서
+Guide 또는 Chat을 새로 만드는 `POST`가 발생하면 통과로 기록하지 않습니다.
+
+각 단계의 PASS/FAIL, 실행 시각, 브라우저 버전, 비밀값이 아닌 합성 fixture label, 재로그인
+전·후의 가이드 및 대화 표시 결과, 위 API의 method·redacted path·status를
+`deployment-evidence/<timestamp>/`에 기록합니다. 배포 commit, 이미지 태그·digest, 승인자와
+증적 위치를 배포 PR에 남깁니다. 요청·응답 body, Authorization/Cookie header, Secret,
+계정 비밀번호, 원본 의료 데이터는 캡처하거나 첨부하지 않습니다.
+
+실제 환자 데이터는 입력하지 않습니다. 공개 게이트가 닫힌 기능은 데모 성공으로 간주하거나
+임의로 활성화하지 않습니다. 이 실제 AWS smoke는 merge 후 Issue #338에서 수행하며, 실행 전
+Runbook에 절차가 있다는 사실만으로 smoke를 통과한 것으로 간주하지 않습니다.
 
 ## 5. 이후 재배포
 

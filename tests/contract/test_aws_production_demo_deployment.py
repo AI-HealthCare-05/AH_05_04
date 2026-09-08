@@ -6,6 +6,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_COMPOSE_PATH = PROJECT_ROOT / "infra/docker/docker-compose.prod.yml"
 NGINX_DIR = PROJECT_ROOT / "infra/nginx"
+PRODUCTION_RUNBOOK_PATH = PROJECT_ROOT / "docs/runbooks/aws-production-demo.md"
 
 
 def _read(path: Path) -> str:
@@ -97,3 +98,29 @@ def test_production_example_declares_demo_origin_and_frontend_version() -> None:
 
     assert "COOKIE_DOMAIN=replace-with-production-domain.example" in env_example
     assert "CORS_ALLOWED_ORIGINS=https://replace-with-production-domain.example" in env_example
+
+
+def test_production_runbook_covers_frontend_rediscovery_smoke_and_safe_evidence() -> None:
+    runbook = _read(PRODUCTION_RUNBOOK_PATH)
+
+    for expected_step in (
+        "OCR 결과를 검수·확정",
+        "복약 가이드로 진입",
+        "복약 챗봇 도지와 이야기하기",
+        "같은 합성 계정으로 다시 로그인",
+        "기존 최신 Prescription과 연결된 Guide",
+        "동일 세션의 USER 질문",
+    ):
+        assert expected_step in runbook
+
+    for rediscovery_request in (
+        "GET /api/v1/prescriptions/latest",
+        "GET /api/v1/prescriptions/<redacted>/guide",
+        "GET /api/v1/prescriptions/<redacted>/chat-session",
+        "GET /api/v1/chat-sessions/<redacted>/messages",
+    ):
+        assert rediscovery_request in runbook
+
+    assert "Guide 또는 Chat을 새로 만드는 `POST`가 발생하면 통과로 기록하지 않습니다" in runbook
+    assert "Authorization/Cookie header" in runbook
+    assert "Runbook에 절차가 있다는 사실만으로 smoke를 통과한 것으로 간주하지 않습니다" in runbook
