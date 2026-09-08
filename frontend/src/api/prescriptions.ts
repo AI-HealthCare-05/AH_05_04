@@ -188,6 +188,10 @@ export type PrescriptionResponse = {
   }
 }
 
+export async function getLatestPrescription(): Promise<PrescriptionResponse> {
+  return apiRequest<PrescriptionResponse>('/api/v1/prescriptions/latest')
+}
+
 export type ExtractedFieldResponse = {
   data: ExtractedField
 }
