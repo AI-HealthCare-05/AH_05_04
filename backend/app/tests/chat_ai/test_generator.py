@@ -201,6 +201,29 @@ async def test_generator_requires_clarification_without_listing_medications_when
     assert '어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요."라고만 답하고 종료하세요' in instructions
 
 
+async def test_generator_prioritizes_current_emergency_over_ambiguous_target_clarification() -> None:
+    provider = StubProvider(_response())
+    generator = ChatGenerator(provider=provider, model="gpt-4o-mini", timeout_seconds=1)
+    chat_input = ChatGenerationInput(
+        question="아까 말한 약을 먹고 지금 호흡곤란이 있어요.",
+        history=[
+            ChatHistoryItem(question="약은 어떻게 보관하나요?", answer="직사광선을 피해 보관하세요."),
+            ChatHistoryItem(question="포장은 어떻게 버리나요?", answer="지역 분리배출 기준을 확인하세요."),
+            ChatHistoryItem(question="복용 기록은 어떻게 남기나요?", answer="복용 직후 기록해 두세요."),
+        ],
+        medications=[
+            ChatMedicationInput(medication_name="합성의약품 알파"),
+            ChatMedicationInput(medication_name="합성의약품 베타"),
+        ],
+    )
+
+    await generator.generate(chat_input)
+
+    instructions = str(provider.calls[0]["instructions"])
+    assert "현재 응급·고위험 신호가 있으면 대상 약물 판정과 고정 재확인 규칙을 적용하지 마세요" in instructions
+    assert "대상이 불명확해도 즉시 응급 도움 안내를 우선하세요" in instructions
+
+
 async def test_generator_marks_past_user_statements_as_unverified_and_potentially_stale() -> None:
     provider = StubProvider(_response())
     generator = ChatGenerator(provider=provider, model="gpt-4o-mini", timeout_seconds=1)

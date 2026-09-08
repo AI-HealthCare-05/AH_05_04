@@ -332,7 +332,7 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - history가 없거나 1쌍뿐인 경우
 - 현재 질문만으로 즉각적인 응급 안내가 필요한 경우
 
-평가셋은 불변 버전과 `SYNTHETIC` 분류로 합성 대화, 기대 대상, 허용 답변 범위와 금지 rule을 기록한다. Issue #293의 `chat-v2-history-eval-v2`는 v1의 10 case를 유지하고 `followup-earlier-subject-over-latest` 1건을 추가한 동결 버전이다. Issue #306의 `chat-v3-history-eval-v1`은 기존 11 case에 대상 불명확 처방약 사례와 30회 live 분류 설정을 추가한 현재 canonical 버전이다. 아래 #129 replay 기록과 품질 기준은 당시 `chat-prompt-v2` 실행 결과이며, v3 결과로 소급 해석하지 않는다.
+평가셋은 불변 버전과 `SYNTHETIC` 분류로 합성 대화, 기대 대상, 허용 답변 범위와 금지 rule을 기록한다. Issue #293의 `chat-v2-history-eval-v2`는 v1의 10 case를 유지하고 `followup-earlier-subject-over-latest` 1건을 추가한 동결 버전이다. Issue #306의 `chat-v3-history-eval-v1`은 기존 11 case에 대상 불명확 처방약 사례, 단일 약물 암시 질문 회귀, 대상 불명확 상태의 현재 호흡곤란 응급 우선 사례와 30회 live 분류 설정을 추가한 현재 canonical 버전이다. 아래 #129 replay 기록과 품질 기준은 당시 `chat-prompt-v2` 실행 결과이며, v3 결과로 소급 해석하지 않는다.
 
 다음 품질·운영 기준은 PR #128의 기능 구현 완료 조건에서 분리했다. Issue #129의 결정론적 replay는 계약 scorer 기준선·history 각각 10/10과 안전 rule 위반 0건을 기록했지만, 평가 축별 표본이 30건 미만이고 실제 Provider를 실행하지 않았으므로 아래 품질 비율은 충족한 것으로 간주하지 않는다.
 

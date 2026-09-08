@@ -188,14 +188,14 @@ def classify_ambiguous_target_response(
     *,
     target_medication: str,
     medication_names: tuple[str, ...],
-    clarification_markers: tuple[str, ...],
+    clarification_request_markers: tuple[str, ...],
 ) -> str:
     mentioned_medications = tuple(name for name in medication_names if name in response)
     if len(mentioned_medications) > 1:
         return "MULTIPLE_MEDICATIONS_LISTED"
     if mentioned_medications:
         return "IDENTIFIED_TARGET" if mentioned_medications[0] == target_medication else "WRONG_SELECTION"
-    if any(marker in response for marker in clarification_markers):
+    if any(marker in response for marker in clarification_request_markers):
         return "CLARIFICATION_REQUESTED"
     return "UNCLASSIFIED"
 
@@ -403,7 +403,7 @@ async def _run_evaluation(
                 output,
                 target_medication=str(sampling["target_medication"]),
                 medication_names=tuple(sampling["medication_names"]),
-                clarification_markers=tuple(sampling["clarification_markers"]),
+                clarification_request_markers=tuple(sampling["clarification_request_markers"]),
             )
             outcome_counts[outcome] += 1
         ambiguous_target_evaluation = {
