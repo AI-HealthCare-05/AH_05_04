@@ -1,7 +1,7 @@
 """add rag source ingestion artifacts
 
 Revision ID: 165a4b3c2d1e
-Revises: 164f3a2b1c0d
+Revises: 164a9c8e7d6f
 Create Date: 2026-09-07
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "165a4b3c2d1e"
-down_revision: str | Sequence[str] | None = "164f3a2b1c0d"
+down_revision: str | Sequence[str] | None = "164a9c8e7d6f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

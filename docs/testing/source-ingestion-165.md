@@ -279,3 +279,11 @@ PASS source snapshot adapter import and database connection
 PR 본문에서 acquisition 잠금을 Operation으로 설명하면 코드와 다르다. 외부 호출 잠금은 Source, lifecycle 판단 잠금은 Operation으로 구분한다. 기존 기술 리뷰의 코드 반영과 담당 리뷰어의 재승인은 별개다.
 
 이번 재점검에서는 Source ingestion 단위 및 Source Governance Receipt 계약 테스트 **280 passed**, 관련 Mypy **15개 소스 파일 통과**, 변경 테스트 Ruff·서식 및 diff 검사를 수행했다. FAILED 이후 동일/새 Source version 재시도가 FAILED Snapshot을 계보로 연결하지 않는 회귀를 고정했다. 런타임·migration 코드는 변경하지 않았고 PostgreSQL·Redis 통합은 이번에 재실행하지 않았다. 위 ecc2ccc 단계 통합 결과와 이번 문서·회귀 검증을 구분한다.
+
+## #319 병합 후 develop 충돌 해결
+
+- develop `20e0ed0`을 병합하고 Evaluation 구현 상태 설명과 Source Verification 보호 문서를 모두 보존했다.
+- Source Artifact revision `165a4b3c2d1e`의 부모를 #319 Evaluation revision `164a9c8e7d6f`로 연결했다.
+- 단일 head `165d7e6f5041` 확인. 격리 PostgreSQL 17에서 빈 DB → head 적용 및 전체 migration 테스트 **66 passed**.
+- Source lifecycle 및 Evaluation repository 테스트 **16 passed**. 변경 migration Ruff 및 diff 검사 통과.
+- 개발·운영 DB에 migration을 적용하지 않았다.
