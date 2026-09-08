@@ -37,7 +37,7 @@ def _date_label_kind(value: str) -> str | None:
 
 
 def _nearby_date_label_kind(field: RawRecognizedField, fields: list[RawRecognizedField]) -> str | None:
-    labels: list[tuple[float, str]] = []
+    kinds: set[str] = set()
     for label in fields:
         kind = _date_label_kind(label.raw_value)
         # 날짜를 이미 포함한 박스는 다른 날짜 값의 라벨로 재사용하지 않습니다.
@@ -51,13 +51,11 @@ def _nearby_date_label_kind(field: RawRecognizedField, fields: list[RawRecognize
         # 같은 줄의 왼쪽 라벨 또는 바로 위 라벨만 연결합니다.
         if not (0 < dx <= 12 and abs(dy) <= 0.75 or abs(dx) <= 2 and 0 < dy <= 3):
             continue
-        labels.append((dx * dx + dy * dy, kind))
-    if not labels:
-        return None
-    nearest = min(distance for distance, _ in labels)
-    kinds = {kind for distance, kind in labels if abs(distance - nearest) <= 1e-9}
-    # 같은 거리에서 라벨이 충돌하면 제외 라벨을 우선하여 추정 선택을 막습니다.
-    return "excluded" if "excluded" in kinds else "preferred"
+        kinds.add(kind)
+    if len(kinds) > 1:
+        # 밀집 배치의 상충 라벨은 거리만으로 의미를 정하지 않고 수동 검수합니다.
+        return "ambiguous"
+    return next(iter(kinds), None)
 
 
 def normalize_prescribed_date_text(value: str) -> str | None:
@@ -338,8 +336,16 @@ class PrescriptionOcrStructurer:
 
         prescribed_date = self._extract_prescribed_date(raw_fields)
 
-        if prescribed_date is not None:
-            structured_fields.append(prescribed_date)
+        structured_fields.append(
+            prescribed_date
+            if prescribed_date is not None
+            else RecognizedField(
+                medication_index=0,
+                field_type="PRESCRIBED_DATE",
+                raw_value=None,
+                confidence_score=None,
+            )
+        )
 
         headers = self._find_header_fields(raw_fields)
 
@@ -376,7 +382,7 @@ class PrescriptionOcrStructurer:
             if normalized_date is None:
                 continue
             kind = _date_label_kind(field.raw_value) or _nearby_date_label_kind(field, raw_fields)
-            if kind == "excluded":
+            if kind in {"excluded", "ambiguous"}:
                 continue
             candidate = RecognizedField(
                 medication_index=0,
