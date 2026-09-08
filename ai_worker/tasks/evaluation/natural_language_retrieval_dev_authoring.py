@@ -46,6 +46,7 @@ EVALUATION_POLICY_PATH = f"policies/{FILE_PREFIX}.evaluation-policy.json"
 SUITE_PATH = f"suites/{FILE_PREFIX}.suite.json"
 PROTECTED_RECEIPT_PATH = f"provenance/{FILE_PREFIX}.protected-artifact-receipt.json"
 REVIEW_EVIDENCE_PATH = f"provenance/{FILE_PREFIX}.review-evidence.json"
+APPROVAL_EVIDENCE_PATH = f"provenance/{FILE_PREFIX}.approval-evidence.json"
 SCHEMA_SET_SHA256 = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
 
 NEGATIVE_TYPES: tuple[NegativeType, ...] = (
@@ -570,6 +571,56 @@ _GOLD_REVIEW_EVIDENCE: dict[str, JsonValue] = {
     "reviewer": "hazelnutflavoured",
 }
 
+_DATASET_APPROVAL_EVIDENCE: dict[str, JsonValue] = {
+    "approval_request_artifact_sha256": "eab78ae599e5d60682dc0c6d1fac1c9e3474cc9a61839fbaa0c9c25d10f3cdd1",
+    "approval_request_path": "docs/validation/rag/issue-273/dataset-approval-request.json",
+    "approval_request_sha256": "032d6c8ce6110c500a8c5fe570381cd377ad73498b856f11c647b13197a15a8f",
+    "approval_result": "APPROVED",
+    "approved_dataset_manifest_sha256": "c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff",
+    "approver": "phina-io",
+    "commit_sha": "c71ebf1a4e644ce3604f57f436d31a86f5e60536",
+    "evidence_id": "github-pr-354-review-5139907268",
+    "evidence_version": DATASET_VERSION,
+    "pull_number": 354,
+    "repository": "AI-HealthCare-05/AH_05_04",
+    "review_body": (
+        "리뷰 (담당 범위: Dataset Custodian으로서 60개 DEV Case·Gold review evidence 해시 결속, 역할 독립성, "
+        "승인값·Freeze·HOLDOUT 미기록 상태 확인)\n\n"
+        "기술적으로 아래 4가지 확인 기준 전부 검증 완료했습니다.\n\n"
+        "1. 해시 결속 — 직접 재실행해서 확인\n\n"
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_dataset_approval.py 8개 테스트를 직접 "
+        "실행했습니다 (본문 claim과 일치, 8 passed). 특히 "
+        "test_committed_approval_request_artifacts_are_exact_deterministic_projections가 커밋된 JSON/MD가 지금 이 "
+        "순간 소스 파일들로 다시 만들면 나오는 결과와 100% 동일한지 검증하는데, 이게 통과한다는 건 문서에 "
+        "적힌 해시·개수가 실제 파일 상태와 어긋날 여지가 없다는 뜻입니다.\n\n"
+        "2. Gold review evidence 진위 — GitHub에서 직접 조회\n\n"
+        "인용된 github-pr-341-review-5137833200을 API로 직접 조회했고, 실제로 존재하며 가빈님"
+        "(hazelnutflavoured)이 작성한 리뷰 본문이 문서에 인용된 해시·문구와 정확히 일치합니다.\n\n"
+        "3. 역할 독립성\n\n"
+        "구현(정현우) / Gold 검토(가빈) / Custodian(은영님) — 세 개 GitHub 계정 모두 다른 실제 사람으로 "
+        "확인. 자기검증 구조 아닙니다.\n\n"
+        "4. 승인값·Freeze·HOLDOUT 미기록\n\n"
+        "approval_event: null, approval_recorded: false, freeze_recorded: false, holdout_count: 0 전부 확인. 사전 "
+        "기록 없음을 거부하는 회귀 테스트(test_approval_request_rejects_prefilled_approval, "
+        "test_approval_request_rejects_holdout_content)도 직접 실행해서 통과 확인했습니다.\n\n"
+        "참고: develop 대비 뒤처짐 확인\n\n"
+        "이 브랜치가 develop보다 2커밋 뒤처져 있는데(#329 RAG Catalog, #350 OCR 검수 필드), 둘 다 "
+        "evals/·ai_worker/tasks/evaluation/·docs/validation/rag/issue-273/를 전혀 건드리지 않아 이번 승인 대상과 "
+        "무관함을 확인했습니다.\n\n\n"
+        "Gold review result: APPROVED\n"
+        "approval_request_sha256: 032d6c8ce6110c500a8c5fe570381cd377ad73498b856f11c647b13197a15a8f\n"
+        "dataset_manifest_sha256: c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff\n"
+        "gold_review_evidence_sha256: 6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776\n"
+        "approved_origins: 20/20\n"
+        "review_commit_oid: c71ebf1a4e644ce3604f57f436d31a86f5e60536"
+    ),
+    "review_id": 5139907268,
+    "review_node_id": "PRR_kwDOT3EWNs8AAAABMlzCxA",
+    "review_state": "APPROVED",
+    "review_submitted_at": "2026-09-08T09:30:09.000000Z",
+    "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/354#pullrequestreview-5139907268",
+}
+
 
 def _gold_review_provenance(review_evidence: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return {
@@ -598,6 +649,33 @@ def _gold_review_provenance(review_evidence: dict[str, JsonValue]) -> dict[str, 
         },
         "team_gold_status": "REVIEWED",
     }
+
+
+def _dataset_approval_provenance(
+    review_evidence: dict[str, JsonValue],
+    approval_evidence: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    provenance = _gold_review_provenance(review_evidence)
+    evidence_refs = cast(list[JsonValue], provenance["evidence_review_refs"])
+    evidence_refs.append(
+        {
+            "hash": canonical_sha256(approval_evidence),
+            "id": approval_evidence["evidence_id"],
+            "version": approval_evidence["evidence_version"],
+        }
+    )
+    provenance.update(
+        {
+            "approved_at": approval_evidence["review_submitted_at"],
+            "approved_by": {
+                "actor_id": approval_evidence["approver"],
+                "namespace": "GITHUB_LOGIN",
+                "role": "DATASET_CUSTODIAN",
+            },
+            "team_gold_status": "APPROVED",
+        }
+    )
+    return provenance
 
 
 def _validate_catalog() -> None:
@@ -1406,12 +1484,27 @@ def _build_evaluation_labels(records: tuple[EvidenceRecord, ...]) -> bytes:
     return canonical_json_bytes(payload)
 
 
-def build_issue_273_dev_graph(*, gold_reviewed: bool = True) -> dict[str, bytes]:
+def build_issue_273_dev_graph(
+    *,
+    gold_reviewed: bool = True,
+    dataset_approved: bool | None = None,
+) -> dict[str, bytes]:
     _validate_catalog()
     graph: dict[str, bytes] = {}
+    if dataset_approved is None:
+        dataset_approved = gold_reviewed
+    if dataset_approved and not gold_reviewed:
+        raise RuntimeError("Issue 273 Dataset approval requires the Gold review event")
     if gold_reviewed:
         graph[REVIEW_EVIDENCE_PATH] = canonical_json_bytes(_GOLD_REVIEW_EVIDENCE)
-        review_provenance = _gold_review_provenance(_GOLD_REVIEW_EVIDENCE)
+        if dataset_approved:
+            graph[APPROVAL_EVIDENCE_PATH] = canonical_json_bytes(_DATASET_APPROVAL_EVIDENCE)
+            review_provenance = _dataset_approval_provenance(
+                _GOLD_REVIEW_EVIDENCE,
+                _DATASET_APPROVAL_EVIDENCE,
+            )
+        else:
+            review_provenance = _gold_review_provenance(_GOLD_REVIEW_EVIDENCE)
     else:
         review_provenance = cast(dict[str, JsonValue], _DRAFT_REVIEW_PROVENANCE)
     evidence_records = _build_evidence_records()
@@ -1504,6 +1597,8 @@ def build_issue_273_dev_graph(*, gold_reviewed: bool = True) -> dict[str, bytes]
     expected_paths = {*_GRAPH_MEMBER_PATHS, *cases}
     if gold_reviewed:
         expected_paths.add(REVIEW_EVIDENCE_PATH)
+    if dataset_approved:
+        expected_paths.add(APPROVAL_EVIDENCE_PATH)
     if set(graph) != expected_paths:
         raise RuntimeError("Issue 273 graph members are incomplete")
     return graph

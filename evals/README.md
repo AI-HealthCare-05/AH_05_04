@@ -115,9 +115,10 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 합성 DEV 질문 60개를 담은 `DRAFT` Dataset이다. 다섯 Topic, 여섯 Expression 유형, 20개 독립
 `transform_origin` group과 합성 Gold 20개를 가지며, study-wide 합성 corpus는 Gold 20개와 hard negative
 80개로 구성된 100개 record다. 60개 Case, Evidence Mapping, Dataset Manifest의 Gold provenance는 PR #341의
-실제 리뷰 이벤트에 결속된 `REVIEWED`이며, 별도 Dataset 승인과 Freeze는 아직 이루어지지 않았다. Dataset
+실제 리뷰 이벤트와 PR #354의 Dataset Custodian 승인 이벤트에 결속된 `APPROVED`다. Dataset은 계속 `DRAFT`이며
+Dataset Freeze와 HOLDOUT Freeze는 아직 이루어지지 않았다. Dataset
 Manifest의 canonical self-hash는
-`c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff`이다.
+`b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`이다.
 
 검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
 `evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·

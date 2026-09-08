@@ -17,6 +17,7 @@ from ai_worker.tasks.evaluation.natural_language_retrieval_dataset_approval impo
 from ai_worker.tasks.evaluation.natural_language_retrieval_dev_authoring import (
     DATASET_MANIFEST_PATH,
     REVIEW_EVIDENCE_PATH,
+    build_issue_273_dev_graph,
 )
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
@@ -29,7 +30,11 @@ def _packet() -> dict[str, Any]:
 
 def _copy_evals(tmp_path: Path) -> Path:
     destination = tmp_path / "evals"
-    shutil.copytree(EVALS_ROOT, destination)
+    shutil.copytree(EVALS_ROOT / "schemas", destination / "schemas")
+    for relative_path, content in build_issue_273_dev_graph(dataset_approved=False).items():
+        path = destination / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
     return destination
 
 
@@ -77,23 +82,24 @@ def test_approval_request_binds_the_exact_reviewed_dev_dataset() -> None:
     )
 
 
-def test_approval_request_binds_review_evidence_and_every_case_byte() -> None:
-    packet = cast(dict[str, Any], build_dataset_approval_request(EVALS_ROOT))
+def test_approval_request_binds_review_evidence_and_every_case_byte(tmp_path: Path) -> None:
+    evals_root = _copy_evals(tmp_path)
+    packet = cast(dict[str, Any], build_dataset_approval_request(evals_root))
     source_artifacts = packet["source_artifacts"]
 
     for source in source_artifacts.values():
-        source_path = EVALS_ROOT / source["path"]
+        source_path = evals_root / source["path"]
         assert source_path.is_file()
         assert source["sha256"] == sha256_hex(source_path.read_bytes())
     for resource in packet["case_resources"]:
-        case_path = EVALS_ROOT / resource["path"]
+        case_path = evals_root / resource["path"]
         assert resource["sha256"] == sha256_hex(case_path.read_bytes())
 
-    review_evidence = json.loads((EVALS_ROOT / REVIEW_EVIDENCE_PATH).read_bytes())
+    review_evidence = json.loads((evals_root / REVIEW_EVIDENCE_PATH).read_bytes())
     assert packet["gold_review_event"] == {
         "commit_sha": review_evidence["commit_sha"],
         "evidence_id": review_evidence["evidence_id"],
-        "evidence_sha256": sha256_hex((EVALS_ROOT / REVIEW_EVIDENCE_PATH).read_bytes()),
+        "evidence_sha256": sha256_hex((evals_root / REVIEW_EVIDENCE_PATH).read_bytes()),
         "packet_sha256": review_evidence["packet_sha256"],
         "review_id": review_evidence["review_id"],
         "review_state": review_evidence["review_state"],
@@ -195,8 +201,8 @@ def test_approval_markdown_defines_the_real_approval_and_follow_up_boundary() ->
     assert "Baseline을 실행하지 않습니다" in markdown
 
 
-def test_committed_approval_request_artifacts_are_exact_deterministic_projections() -> None:
-    packet = cast(dict[str, Any], build_dataset_approval_request(EVALS_ROOT))
+def test_committed_approval_request_artifacts_are_exact_deterministic_projections(tmp_path: Path) -> None:
+    packet = cast(dict[str, Any], build_dataset_approval_request(_copy_evals(tmp_path)))
 
     assert (REPOSITORY_ROOT / DATASET_APPROVAL_JSON_PATH).read_bytes() == canonical_json_bytes(packet)
     assert (REPOSITORY_ROOT / DATASET_APPROVAL_MARKDOWN_PATH).read_text(encoding="utf-8") == (
