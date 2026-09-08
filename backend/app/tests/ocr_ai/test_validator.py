@@ -86,7 +86,14 @@ def test_validator_discards_changed_decimal_strength() -> None:
     )
 
     # 근거 없는 함량은 저장하지 않지만 OCR 전체는 실패시키지 않습니다.
-    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+    strength = [field for field in result if field.field_type == "MEDICATION_STRENGTH"]
+    assert len(strength) == 1
+    assert (
+        strength[0].raw_value,
+        strength[0].normalized_value,
+        strength[0].normalization_version,
+        strength[0].confidence_score,
+    ) == (None, None, None, None)
 
 
 def test_validator_discards_strength_suffix_from_larger_ocr_number() -> None:
@@ -117,7 +124,14 @@ def test_validator_discards_strength_suffix_from_larger_ocr_number() -> None:
     )
 
     # 일부 문자열만 일치하는 잘못된 함량은 저장하지 않습니다.
-    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+    strength = [field for field in result if field.field_type == "MEDICATION_STRENGTH"]
+    assert len(strength) == 1
+    assert (
+        strength[0].raw_value,
+        strength[0].normalized_value,
+        strength[0].normalization_version,
+        strength[0].confidence_score,
+    ) == (None, None, None, None)
 
 
 def test_validator_discards_component_of_compound_strength() -> None:
@@ -147,7 +161,14 @@ def test_validator_discards_component_of_compound_strength() -> None:
         normalizer=MedicationNameNormalizer(),
     )
 
-    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+    strength = [field for field in result if field.field_type == "MEDICATION_STRENGTH"]
+    assert len(strength) == 1
+    assert (
+        strength[0].raw_value,
+        strength[0].normalized_value,
+        strength[0].normalization_version,
+        strength[0].confidence_score,
+    ) == (None, None, None, None)
 
 
 def test_validator_discards_changed_compound_strength() -> None:
@@ -178,7 +199,14 @@ def test_validator_discards_changed_compound_strength() -> None:
     )
 
     # 잘못 변경된 함량은 결과에서 제외합니다.
-    assert not any(field.field_type == "MEDICATION_STRENGTH" for field in result)
+    strength = [field for field in result if field.field_type == "MEDICATION_STRENGTH"]
+    assert len(strength) == 1
+    assert (
+        strength[0].raw_value,
+        strength[0].normalized_value,
+        strength[0].normalization_version,
+        strength[0].confidence_score,
+    ) == (None, None, None, None)
 
 
 def test_validator_rejects_unknown_source_id() -> None:
@@ -1180,3 +1208,69 @@ def test_validator_rejects_medication_name_token_closer_to_next_medication() -> 
             raw_fields=raw_fields,
             normalizer=MedicationNameNormalizer(),
         )
+
+
+@pytest.mark.parametrize(
+    "attribute,field_type,value",
+    [
+        ("strength_text", "MEDICATION_STRENGTH", "5mg"),
+        ("dose_unit", "DOSE_UNIT", "정"),
+    ],
+)
+@pytest.mark.parametrize("case", ["missing", "ungrounded", "valid"])
+def test_optional_review_field_preserves_only_grounded_values(attribute, field_type, value, case) -> None:
+    raw_fields = [_raw("합성의약품정"), _raw(value if case == "valid" else "무관한문구")]
+    medication = GeneratedMedication(medication_name=GeneratedSourceValue(value="합성의약품정", source_ids=[1]))
+    if case != "missing":
+        setattr(medication, attribute, GeneratedSourceValue(value=value, source_ids=[2]))
+    result = validate_and_convert_draft(
+        draft=GeneratedPrescriptionDraft(medications=[medication]),
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+    fields = [field for field in result if field.medication_index == 1]
+    assert len(fields) == 7
+    assert len({(field.medication_index, field.field_type) for field in result}) == len(result)
+    selected = next(field for field in fields if field.field_type == field_type)
+    assert selected.raw_value == (value if case == "valid" else None)
+    assert selected.confidence_score == (0.99 if case == "valid" else None)
+    assert selected.normalized_value is None
+    assert selected.normalization_version is None
+
+
+@pytest.mark.parametrize(
+    "attribute,field_type,value",
+    [
+        ("strength_text", "MEDICATION_STRENGTH", "5mg"),
+        ("dose_unit", "DOSE_UNIT", "정"),
+    ],
+)
+def test_optional_field_rejects_other_medication_row_source(attribute, field_type, value) -> None:
+    raw_fields = [
+        _raw("합성의약품에이정", center_y=10),
+        _raw("합성의약품비정", center_y=100),
+        _raw(value, center_y=100),
+    ]
+    first = GeneratedMedication(
+        medication_name=GeneratedSourceValue(value="합성의약품에이정", source_ids=[1]),
+    )
+    second = GeneratedMedication(
+        medication_name=GeneratedSourceValue(value="합성의약품비정", source_ids=[2]),
+    )
+    for medication in (first, second):
+        setattr(medication, attribute, GeneratedSourceValue(value=value, source_ids=[3]))
+    result = validate_and_convert_draft(
+        draft=GeneratedPrescriptionDraft(medications=[first, second]),
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+    fields = {(field.medication_index, field.field_type): field for field in result}
+    assert len(fields) == len(result)
+    rejected = fields[(1, field_type)]
+    assert (
+        rejected.raw_value,
+        rejected.normalized_value,
+        rejected.normalization_version,
+        rejected.confidence_score,
+    ) == (None, None, None, None)
+    assert fields[(2, field_type)].raw_value == value
