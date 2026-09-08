@@ -27,17 +27,19 @@ REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
 EVALS_ROOT = REPOSITORY_ROOT / "evals"
 DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
 EVALS_README_PATH = EVALS_ROOT / "README.md"
+DATASET_APPROVAL_EVIDENCE_PATH = EVALS_ROOT / "provenance/rag-natural-language-retrieval-dev-v1.approval-evidence.json"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
-DATASET_MANIFEST_HASH = "c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff"
+DATASET_MANIFEST_HASH = "b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2"
 GOLD_REVIEW_EVIDENCE_HASH = "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776"
+DATASET_APPROVAL_EVIDENCE_HASH = "3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"
 
 
 def _status_payload() -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "issue": "#273",
-        "phase": "PHASE_B_GOLD_REVIEW",
-        "status_label": "Phase B · DEV Gold Reviewed",
+        "phase": "PHASE_B_DATASET_APPROVAL",
+        "status_label": "Phase B · DEV Dataset Approved",
         "schema_set_status": "REVIEW_REQUIRED",
         "dataset_ref": "rag-natural-language-retrieval-dev@1.0.0",
         "planned_counts": {
@@ -63,14 +65,19 @@ def _status_payload() -> dict[str, Any]:
             "hash": SCHEMA_SET_HASH,
         },
         "schema_set_decision": "docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md",
-        "responsible_reviewer": "@hazelnutflavoured",
-        "approval_transition": "FUTURE_DATASET_CUSTODIAN_APPROVAL_EVENT",
+        "responsible_reviewer": "@phina-io",
+        "approval_transition": "DATASET_CUSTODIAN_APPROVAL_RECORDED",
         "dataset_status": "DRAFT",
-        "gold_review_status": "REVIEWED",
+        "gold_review_status": "APPROVED",
         "gold_review_evidence_ref": {
             "id": "github-pr-341-review-5137833200",
             "version": "1.0.0",
             "hash": GOLD_REVIEW_EVIDENCE_HASH,
+        },
+        "dataset_approval_evidence_ref": {
+            "id": "github-pr-354-review-5139907268",
+            "version": "1.0.0",
+            "hash": DATASET_APPROVAL_EVIDENCE_HASH,
         },
         "holdout_freeze_status": "NOT_STARTED",
         "adapter_status": "NOT_IMPLEMENTED",
@@ -86,7 +93,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_DEV_FIXTURE",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
                 "exit_code": 0,
-                "result": "25 passed",
+                "result": "26 passed",
             },
             {
                 "check_id": "PHASE_A_LOADER",
@@ -98,7 +105,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_REPORT_PROJECTION",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
                 "exit_code": 0,
-                "result": "50 passed",
+                "result": "51 passed",
             },
             {
                 "check_id": "PHASE_A_SCHEMA_EXPORT",
@@ -107,13 +114,19 @@ def _status_payload() -> dict[str, Any]:
                 "result": "94 passed, 7 skipped",
             },
             {
+                "check_id": "PHASE_B_DATASET_APPROVAL_PROVENANCE",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_the_actual_dataset_custodian_approval_event -q",
+                "exit_code": 0,
+                "result": "1 passed",
+            },
+            {
                 "check_id": "PHASE_B_GOLD_REVIEW_PROVENANCE",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_only_the_actual_gold_review_event -q",
                 "exit_code": 0,
                 "result": "1 passed",
             },
         ],
-        "updated_at": "2026-09-08T06:30:59.000000Z",
+        "updated_at": "2026-09-08T09:30:09.000000Z",
         "status_sha256": "0" * 64,
     }
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
@@ -137,6 +150,12 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
     loaded_manifest = loaded.manifest.model_dump(mode="json")
     assert status.dataset_ref == f"{loaded_manifest['dataset_code']}@{loaded_manifest['dataset_version']}"
     assert status.dataset_status == loaded_manifest["status"]
+    approval_evidence_hash = sha256_hex(DATASET_APPROVAL_EVIDENCE_PATH.read_bytes())
+    assert approval_evidence_hash == status.dataset_approval_evidence_ref.hash
+    assert (
+        status.dataset_approval_evidence_ref.model_dump(mode="json")
+        in loaded_manifest["review_provenance"]["evidence_review_refs"]
+    )
 
     cases = [case.model_dump(mode="json") for case in loaded.cases]
     required_gold_ids = {evidence_id for case in cases for evidence_id in case["expected"]["required_evidence_refs"]}
@@ -181,10 +200,10 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
     }
 
 
-def test_phase_b_status_accepts_only_the_reviewed_but_unapproved_dev_state() -> None:
+def test_phase_b_status_accepts_only_the_approved_but_unfrozen_dev_state() -> None:
     status = parse_status_bytes(_status_bytes(_status_payload()))
 
-    assert status.phase == "PHASE_B_GOLD_REVIEW"
+    assert status.phase == "PHASE_B_DATASET_APPROVAL"
     assert status.dataset_status == "DRAFT"
     assert status.dataset_manifest_sha256 == DATASET_MANIFEST_HASH
     assert status.created_counts.model_dump() == {
@@ -197,8 +216,9 @@ def test_phase_b_status_accepts_only_the_reviewed_but_unapproved_dev_state() -> 
         "independent_groups": 20,
     }
     assert status.schema_set_ref.hash == SCHEMA_SET_HASH
-    assert status.gold_review_status == "REVIEWED"
+    assert status.gold_review_status == "APPROVED"
     assert status.gold_review_evidence_ref.hash == GOLD_REVIEW_EVIDENCE_HASH
+    assert status.dataset_approval_evidence_ref.hash == DATASET_APPROVAL_EVIDENCE_HASH
     assert status.holdout_freeze_status == "NOT_STARTED"
     assert status.adapter_status == "NOT_IMPLEMENTED"
     assert status.actual_run_ref is None
@@ -497,6 +517,16 @@ def test_evals_readme_quotes_the_current_dataset_manifest_hash() -> None:
     assert quoted_hashes == {declared_manifest_hash}, quoted_hashes
 
 
+def test_evals_readme_does_not_describe_the_approved_dev_graph_as_unreviewed() -> None:
+    readme = EVALS_README_PATH.read_text(encoding="utf-8")
+    issue_273_section = readme.split("### Issue #273 자연어 Retrieval DEV authoring", maxsplit=1)[1].split(
+        "\n### ", maxsplit=1
+    )[0]
+
+    assert "아직 사람의 Gold 검토를 받지 않았" not in issue_273_section
+    assert "모든 review provenance는 `DRAFT` 또는 `NOT_STARTED`" not in issue_273_section
+
+
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     raw_status = STATUS_PATH.read_bytes()
     status = parse_status_bytes(raw_status)
@@ -508,14 +538,15 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
-    assert b"Phase B \xc2\xb7 DEV Gold Reviewed" in REPORT_PATH.read_bytes()
+    assert b"Phase B \xc2\xb7 DEV Dataset Approved" in REPORT_PATH.read_bytes()
     assert "한국어 자연어 합성 DEV 질문" in REPORT_PATH.read_text()
-    assert b"DEV Gold review is recorded as REVIEWED" in REPORT_PATH.read_bytes()
+    assert b"DEV Dataset approval is recorded as APPROVED" in REPORT_PATH.read_bytes()
+    assert b"Dataset remains DRAFT and unfrozen" in REPORT_PATH.read_bytes()
     assert b"Actual retrieval was not run" in REPORT_PATH.read_bytes()
     assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    for result in (b"1 passed", b"25 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
+    for result in (b"1 passed", b"26 passed", b"51 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status
