@@ -276,3 +276,55 @@ DB와 객체 저장소는 하나의 transaction이 아니다. 삭제된 파일�
 | #165·#323 인계 | 붙여넣기용 댓글 초안 준비 | 사용자 게시 |
 
 문서 작성 단계는 PM 의견 반영과 완료 기준 점검까지 마쳤다. 위 연결·검토가 남아 있으므로 #335는 Open으로 유지한다. 자동 삭제·Source Runtime은 계속 DISABLED이며 정책 완료만으로 활성화하지 않는다.
+
+
+## #347 Local 합성 구현 증빙 (정책 상태 변경 없음)
+
+#347의 내부 합성 실행 모델은 [검증 기록](../../../testing/source-artifact-cleanup-347.md)의
+4단계에 기술한다. 직접 생성한 임시 파일에 한해 의도/결과 파일 기록·삭제·복구를 검증한다.
+실제 승인 저장소·Source writer 공유 잠금·운영 감사 DB/권한·운영 재시도 정책을 확정하거나
+이 Proposed 문서를 Current로 승격하는 변경이 아니다. 관련 담당·공유 계약 검토 조건은 유지한다.
+
+
+5단계의 실제 PostgreSQL 직접 참조 조회와 합성 독립 프로세스 잠금 검증,
+T01–T30 부분/미완료 대조는 같은 검증 기록에 이어진다.
+[운영 인계 초안](../../../runbooks/source-artifact-cleanup-347.md)의 실제 승인·writer 잠금·감사 권한·
+관리자 인계가 남아 있어 #347 전체 완료 또는 운영 삭제 승인으로 해석하지 않는다.
+
+
+### #347 마무리 구현 연결
+
+Local 합성 객체에 대해 Source store 생성 receipt, PostgreSQL 역할별 배치 검토·철회,
+관리된 수집/참조 commit과 cleanup의 잠금, 독립 commit 감사·재시작/UNKNOWN 복구를 구현했다.
+private control schema는 전용 합성 DB 도구이며 앱 public schema나 운영 Runtime을 변경하지 않는다.
+[현재 실행·담당 인계](../../../runbooks/source-artifact-cleanup-347.md)와
+[마무리 검증](../../../testing/source-artifact-cleanup-347.md)을 기준으로 PR 리뷰한다.
+기존 단계의 미연결 표기는 해당 시점 기록이며, 이 구현 연결로 정책의 Proposed 상태나 실제
+운영 삭제 승인이 자동 변경되지는 않는다.
+
+
+### PR #363 리뷰 보완 — 합성 승인 이력·경합·참조 범위
+
+합성 도구의 검토는 append-only revision으로 추가하고 역할별 최신 행만 사용한다.
+만료·실행자 오기입은 재검토로 정정하되, 배치 철회는 종전처럼 영구 차단하며 해제하지 않는다.
+배치별 잠금을 검토/철회 INSERT와 실행이 공유해, 승인 최종 재조회와 unlink 사이에
+철회가 commit되는 경합을 차단한다. 경합한 요청은 즉시 실패하고 명시적 재요청을 요구한다.
+이미 잠금을 얻은 실행보다 늦은 철회가 진행 중 삭제를 취소한다는 의미는 아니다.
+
+참조 scope 판정은 명시된 합성 workspace에만 구현한다. 비합성·귀속 불명은
+`NotImplementedError`로 차단하며 운영 downstream을 0건으로 간주하지 않는다.
+[runbook의 보완 절차](../../../runbooks/source-artifact-cleanup-347.md)와
+[검증 기록](../../../testing/source-artifact-cleanup-347.md)을 함께 리뷰한다.
+이는 PR #363의 내부 도구 보완안이며 운영 정책/공유 앱 DB의 승인 상태를 변경하지 않는다.
+
+
+### PR #363 추가 리뷰 — 승인 순서·DB 감사 근거
+
+기존 정책의 DB·보안 검토 → PM 최종 승인 순서를 최신 revision 비교로 강제한다.
+DB·보안 재검토 이후에는 PM이 다시 승인해야 한다. 실행자에게 자유형 audit INSERT 권한을 주지
+않고 전용 append 함수에서 관리자 등록 역할·대상 receipt·최신 승인·직접 참조·유효기간을 확인한다.
+승인/대상 필드와 실제 기록 시각은 DB가 생성한다. 합성 시간 offset은 생성 시 불변 workspace에
+등록하며 감사 시각을 미래/과거로 바꾸는 데 쓰지 않는다.
+
+결과 event/reason은 제한된 실행자 보고이며 DB의 독립적인 파일 삭제 관측이 아니다. 운영 활성화나
+실제 Source 정리 범위를 넓히지 않으며 자세한 검증·권한 절차는 runbook을 따른다.
