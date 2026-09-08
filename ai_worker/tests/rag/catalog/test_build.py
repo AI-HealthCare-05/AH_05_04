@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -339,3 +340,66 @@ def test_hira_identity_is_excluded_from_p0_catalog() -> None:
 
     assert catalog.products == ()
     assert catalog.search_entries == ()
+
+
+@pytest.mark.parametrize("target_snapshot", ["", " ", "\t"])
+def test_explicit_blank_alias_target_snapshot_is_rejected(target_snapshot: str) -> None:
+    base = _alias_inputs()[0]
+    assert base.target_source_snapshot_id is not None
+    alias = replace(
+        base,
+        source_snapshot_id=base.target_source_snapshot_id,
+        target_source_snapshot_id=target_snapshot,
+    )
+    with pytest.raises(ValueError, match="target_source_snapshot_id must be nonblank"):
+        build_catalog_members(products=_product_inputs(), components=(), aliases=(alias,))
+
+
+def test_omitted_alias_target_snapshot_defaults_to_own_snapshot() -> None:
+    base = _alias_inputs()[0]
+    assert base.target_source_snapshot_id is not None
+    explicit = replace(base, source_snapshot_id=base.target_source_snapshot_id)
+    omitted = replace(explicit, target_source_snapshot_id=None)
+    assert build_catalog_members(
+        products=_product_inputs(), components=(), aliases=(omitted,)
+    ) == build_catalog_members(products=_product_inputs(), components=(), aliases=(explicit,))
+
+
+def test_repeated_inputs_keep_first_seen_order_for_every_member_kind() -> None:
+    products, components, aliases = _product_inputs(), _component_inputs(), _alias_inputs()
+    expected = build_catalog_members(products=products, components=components, aliases=aliases)
+    repeated = build_catalog_members(
+        products=products + tuple(reversed(products)),
+        components=components + tuple(reversed(components)),
+        aliases=aliases + tuple(reversed(aliases)),
+    )
+    assert repeated == expected
+
+
+def test_deduplication_preserves_conflicting_rows_with_the_same_reference() -> None:
+    product = _product_inputs()[0]
+    component = _component_inputs()[0]
+    alias = _alias_inputs()[0]
+    members = build_catalog_members(
+        products=(product, replace(product, product_name="합성 변경 제품명"), product),
+        components=(component, replace(component, strength_value="999"), component),
+        aliases=(alias, replace(alias, review_status=CandidateAliasReviewStatus.REJECTED), alias),
+    )
+    assert len(members.products) == 2
+    assert len({item.product_ref for item in members.products}) == 1
+    assert len(members.components) == 2
+    assert len({item.component_ref for item in members.components}) == 1
+    assert len(members.aliases) == 2
+    assert len({item.alias_ref for item in members.aliases}) == 1
+
+
+def test_distinct_product_provenance_is_not_hidden_by_entry_deduplication() -> None:
+    product = _product_inputs()[0]
+    members = build_catalog_members(
+        products=(product, replace(product, source_record_key="synthetic-other-row")),
+        components=(),
+        aliases=(),
+    )
+    assert len(members.products) == 2
+    assert len(members.search_entries) == 2
+    assert members.search_entries[0] == members.search_entries[1]

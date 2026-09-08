@@ -80,3 +80,44 @@ Success: no issues found in 7 source files
 17건은 호스트 실행 환경에서 Compose 내부 hostname `postgres`를 해석하지 못해 실패했다. 로컬 DB를
 대상으로 한 migration 재실행은 downgrade/upgrade와 trigger 변경이 기존 데이터를 바꿀 수 있어 수행하지
 않으며, 격리된 CI PostgreSQL에서 확인한다.
+
+## 2026-09-08 계약 결정과 독립적인 계산 계층 보완
+
+PR #329의 `0740402eedd5b07188d4a123cc15108f40171c02`를 기준으로 다음 구현만 보완했다.
+
+- 완전히 같은 구성원 행의 중복 검사를 리스트 순회에서 행 전체를 키로 하는 사전 조회로 변경했다.
+  최초 등장 순서와 상충 행을 보존한다. Identity 또는 reference만으로 행을 합치지 않는다.
+  Product에서 만들어진 기존 Entry 목록도 보존하고, Alias Entry 추가 시 중복 조회만 집합을 사용한다.
+- `target_source_snapshot_id`는 `None`일 때만 Alias 자체 Snapshot으로 기본 설정한다.
+  명시적인 빈 문자열·공백은 기존 필수 문자열 검증으로 거부한다. 유효한 교차 Snapshot 참조는 유지한다.
+- 최초 등장 순서, 동일 reference의 상충 행, 서로 다른 원본 키, 기본값과 빈 입력에 대한 회귀 테스트를 추가했다.
+
+합성 입력으로 기존 코드와 수정 코드의 구성원 전체를 비교했다. 기존 fixture와 서로 다른 제품
+1,000개/5,000개를 각각 두 번 입력한 경우 결과가 같았다. 한 로컬 실행에서 2,000개 입력은
+약 0.090초 → 0.023초, 10,000개 입력은 약 1.884초 → 0.118초였다. 측정은 제품 생성 이후
+`build_catalog_members` 호출 시간을 비교한 참고값이며 성능 보장이나 운영 부하 검증이 아니다.
+
+검증 명령은 기존 Python 3.13 테스트 환경에서 실행했다.
+
+```text
+python -m pytest ai_worker/tests/rag/catalog -q
+54 passed
+
+python -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation -q
+2004 passed, 8 skipped
+
+ruff check .
+All checks passed
+
+ruff format . --check
+509 files already formatted
+
+MYPYPATH="$PWD/backend:$PWD" python -m mypy backend/app ai_worker
+Success: no issues found in 435 source files
+```
+
+기존 export golden hash 테스트도 통과했다. DB·migration·외부 Provider 변경은 없으며,
+PostgreSQL/Redis를 포함한 전체 CI runner는 이번 로컬 검증에 포함하지 않았다.
+승인 상태/receipt·Ingredient 입력·의미상 Alias dedupe·service 실패 응답에 관한 기존 리뷰와
+#164/#165/#166 공유 계약 결정은 별도 후속 범위로 남아 있다. 이 보완은 해당 리뷰의 해결이나
+Runtime 활성화 승인을 의미하지 않는다.

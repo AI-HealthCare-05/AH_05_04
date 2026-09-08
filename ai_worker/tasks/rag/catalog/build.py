@@ -217,9 +217,19 @@ def _ingredient(input_record: CatalogComponentInput) -> CatalogIngredient:
     )
 
 
-def _append_exact_deduplicated[T](items: list[T], item: T) -> None:
-    if item not in items:
-        items.append(item)
+def _append_exact_deduplicated[T](items: dict[T, None], item: T) -> None:
+    # 행 전체의 동등성과 최초 등장 순서를 유지하며 Identity가 같은 충돌 행도 보존합니다.
+    items.setdefault(item, None)
+
+
+def _append_search_entry(
+    entries: list[CatalogSearchEntry],
+    seen: set[CatalogSearchEntry],
+    entry: CatalogSearchEntry,
+) -> None:
+    if entry not in seen:
+        seen.add(entry)
+        entries.append(entry)
 
 
 def _product_entry(product: CatalogProduct) -> CatalogSearchEntry:
@@ -344,7 +354,7 @@ def build_catalog_members(
 ) -> CatalogMembers:
     """입력 순서를 보존하면서 정확히 같은 행만 중복 제거해 Catalog 구성원을 만듭니다."""
 
-    catalog_products: list[CatalogProduct] = []
+    catalog_products: dict[CatalogProduct, None] = {}
     product_by_identity: dict[tuple[str, ProductIdentity], CatalogProduct] = {}
     for product_input in products:
         if _is_hira_code_system(product_input.code_system):
@@ -356,8 +366,8 @@ def build_catalog_members(
             catalog_product,
         )
 
-    catalog_ingredients: list[CatalogIngredient] = []
-    catalog_components: list[CatalogComponent] = []
+    catalog_ingredients: dict[CatalogIngredient, None] = {}
+    catalog_components: dict[CatalogComponent, None] = {}
     ingredient_by_identity: dict[tuple[str, ProductIdentity], CatalogIngredient] = {}
     for component_input in components:
         if _is_hira_code_system(component_input.product_code_system) or _is_hira_code_system(
@@ -390,7 +400,8 @@ def build_catalog_members(
     search_entries = [
         _product_entry(product) for product in catalog_products if product.status is CandidateRecordStatus.ACTIVE
     ]
-    catalog_aliases: list[CatalogAlias] = []
+    seen_search_entries = set(search_entries)
+    catalog_aliases: dict[CatalogAlias, None] = {}
     for alias_input in aliases:
         if _is_hira_code_system(alias_input.target_code_system):
             continue
@@ -400,7 +411,11 @@ def build_catalog_members(
             canonical_code=alias_input.target_canonical_code,
         )
         target_snapshot_id = require_official_identity_text(
-            alias_input.target_source_snapshot_id or alias_input.source_snapshot_id,
+            (
+                alias_input.source_snapshot_id
+                if alias_input.target_source_snapshot_id is None
+                else alias_input.target_source_snapshot_id
+            ),
             field_name="target_source_snapshot_id",
         )
         target_key = (target_snapshot_id, target_identity)
@@ -417,10 +432,7 @@ def build_catalog_members(
             and alias.status is CandidateRecordStatus.ACTIVE
             and alias.is_effective
         ):
-            _append_exact_deduplicated(
-                search_entries,
-                _alias_entry(alias, product=alias_product),
-            )
+            _append_search_entry(search_entries, seen_search_entries, _alias_entry(alias, product=alias_product))
 
     return CatalogMembers(
         products=tuple(catalog_products),
