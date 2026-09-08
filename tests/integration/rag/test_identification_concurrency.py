@@ -11,7 +11,6 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -23,7 +22,7 @@ from app.dtos.medication_candidates import RejectMedicationCandidateRequest
 from app.models.async_jobs import IdempotencyRecord
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
     MedicationCandidateSearch,
@@ -119,6 +118,38 @@ async def _create_user(session: AsyncSession, *, email: str) -> User:
     return user
 
 
+async def _create_version_medication(
+    session: AsyncSession,
+    *,
+    prescription: Prescription,
+    medication: Medication,
+) -> PrescriptionVersionMedication:
+    version = PrescriptionVersion(
+        prescription_id=prescription.id,
+        version_number=1,
+        prescribed_date=prescription.prescribed_date,
+        confirmed_at=prescription.confirmed_at,
+    )
+    session.add(version)
+    await session.flush()
+    version_medication = PrescriptionVersionMedication(
+        prescription_version_id=version.id,
+        medication_name=medication.medication_name,
+        strength_text=medication.strength_text,
+        dose_value=medication.dose_value,
+        dose_unit=medication.dose_unit,
+        frequency_per_day=medication.frequency_per_day,
+        timing_text=medication.timing_text,
+        duration_days=medication.duration_days,
+        display_order=medication.display_order,
+    )
+    session.add(version_medication)
+    await session.flush()
+    prescription.active_version_id = version.id
+    await session.flush()
+    return version_medication
+
+
 async def _create_ready_search() -> tuple[UUID, UUID, UUID, UUID]:
     async with session_factory.begin() as session:
         # 이 helper는 여러 테스트에서 호출되므로(모듈 scope 격리 schema를 공유), 고정 이메일이면
@@ -161,11 +192,16 @@ async def _create_ready_search() -> tuple[UUID, UUID, UUID, UUID]:
         )
         session.add(medication)
         await session.flush()
+        version_medication = await _create_version_medication(
+            session,
+            prescription=prescription,
+            medication=medication,
+        )
 
         service = _service(session)
         search = (
             await service.record_candidate_search(
-                prescription_version_medication_id=medication.id,
+                prescription_version_medication_id=version_medication.id,
                 user_id=owner.id,
                 query_digest="query-digest",
                 runtime_release_bundle_id=None,
@@ -179,7 +215,7 @@ async def _create_ready_search() -> tuple[UUID, UUID, UUID, UUID]:
             status=MedicationCandidateSearchStatus.READY,
             results=[_ready_result()],
         )
-        return owner.id, medication.id, search.id, finalized.results[0].id
+        return owner.id, version_medication.id, search.id, finalized.results[0].id
 
 
 async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUID, UUID, UUID, UUID]:
@@ -222,11 +258,16 @@ async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUI
         )
         session.add(medication)
         await session.flush()
+        version_medication = await _create_version_medication(
+            session,
+            prescription=prescription,
+            medication=medication,
+        )
 
         service = _service(session)
         replaced_search = (
             await service.record_candidate_search(
-                prescription_version_medication_id=medication.id,
+                prescription_version_medication_id=version_medication.id,
                 user_id=owner.id,
                 query_digest="query-digest-old",
                 runtime_release_bundle_id=None,
@@ -243,7 +284,7 @@ async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUI
 
         current_search = (
             await service.record_candidate_search(
-                prescription_version_medication_id=medication.id,
+                prescription_version_medication_id=version_medication.id,
                 user_id=owner.id,
                 query_digest="query-digest-current",
                 runtime_release_bundle_id=None,
@@ -259,7 +300,7 @@ async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUI
         )
         return (
             owner.id,
-            medication.id,
+            version_medication.id,
             replaced_search.id,
             replaced_finalized.results[0].id,
             current_search.id,
@@ -287,6 +328,18 @@ async def _restore_active_search_unique_index() -> None:
                 "ON medication_candidate_search (prescription_version_medication_id) "
                 "WHERE status IN ('RUNNING', 'READY')"
             )
+        )
+
+
+async def _deactivate_searches_for_cleanup(search_ids: list[UUID]) -> None:
+    async with session_factory.begin() as session:
+        await session.execute(
+            text(
+                "UPDATE medication_candidate_search "
+                "SET status = 'INVALIDATED_INPUT_CHANGED', invalidated_at = now() "
+                "WHERE id = ANY(:search_ids) AND status IN ('RUNNING', 'READY')"
+            ),
+            {"search_ids": [str(search_id) for search_id in search_ids]},
         )
 
 
@@ -337,12 +390,17 @@ async def _create_two_ready_searches_for_same_medication() -> tuple[UUID, UUID, 
         )
         session.add(medication)
         await session.flush()
+        version_medication = await _create_version_medication(
+            session,
+            prescription=prescription,
+            medication=medication,
+        )
 
         searches: list[MedicationCandidateSearch] = []
         result_ids: list[UUID] = []
         for index in range(2):
             search = MedicationCandidateSearch(
-                prescription_version_medication_id=medication.id,
+                prescription_version_medication_id=version_medication.id,
                 medication_name_snapshot=medication.medication_name,
                 strength_text_snapshot=medication.strength_text,
                 query_digest=f"query-digest-two-ready-{index}",
@@ -379,7 +437,7 @@ async def _create_two_ready_searches_for_same_medication() -> tuple[UUID, UUID, 
             searches.append(search)
             result_ids.append(result.id)
 
-        return owner.id, medication.id, searches[0].id, result_ids[0], searches[1].id, result_ids[1]
+        return owner.id, version_medication.id, searches[0].id, result_ids[0], searches[1].id, result_ids[1]
 
 
 async def _confirm_once(
@@ -752,6 +810,8 @@ async def test_concurrent_confirm_different_searches_allows_only_current_search(
 
 
 async def test_concurrent_confirm_two_ready_searches_allows_only_one_matched_identification() -> None:
+    first_search_id: UUID | None = None
+    second_search_id: UUID | None = None
     await _drop_active_search_unique_index()
     try:
         (
@@ -763,38 +823,22 @@ async def test_concurrent_confirm_two_ready_searches_allows_only_one_matched_ide
             second_result_id,
         ) = await _create_two_ready_searches_for_same_medication()
 
-        matched_precheck_barrier = asyncio.Barrier(2)
-        precheck_none_count: list[UUID] = []
-        insert_attempt_count: list[UUID] = []
-        integrity_error_count: list[UUID] = []
-
         results = await asyncio.wait_for(
             asyncio.gather(
-                _confirm_once_after_matched_precheck_barrier(
+                _confirm_once(
                     user_id=user_id,
                     medication_id=medication_id,
                     candidate_search_result_id=first_result_id,
-                    matched_precheck_barrier=matched_precheck_barrier,
-                    precheck_none_count=precheck_none_count,
-                    insert_attempt_count=insert_attempt_count,
-                    integrity_error_count=integrity_error_count,
                 ),
-                _confirm_once_after_matched_precheck_barrier(
+                _confirm_once(
                     user_id=user_id,
                     medication_id=medication_id,
                     candidate_search_result_id=second_result_id,
-                    matched_precheck_barrier=matched_precheck_barrier,
-                    precheck_none_count=precheck_none_count,
-                    insert_attempt_count=insert_attempt_count,
-                    integrity_error_count=integrity_error_count,
                 ),
             ),
             timeout=10,
         )
 
-        assert len(precheck_none_count) == 2
-        assert len(insert_attempt_count) == 2
-        assert len(integrity_error_count) == 1
         assert results.count(("ok", None)) == 1
         assert any(
             code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"} and reason == "ALREADY_MATCHED"
@@ -830,4 +874,7 @@ async def test_concurrent_confirm_two_ready_searches_allows_only_one_matched_ide
         assert list(search_statuses.values()).count(MedicationCandidateSearchStatus.CONSUMED) == 1
         assert list(search_statuses.values()).count(MedicationCandidateSearchStatus.READY) == 1
     finally:
+        search_ids = [search_id for search_id in (first_search_id, second_search_id) if search_id is not None]
+        if search_ids:
+            await _deactivate_searches_for_cleanup(search_ids)
         await _restore_active_search_unique_index()

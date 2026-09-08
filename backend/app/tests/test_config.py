@@ -106,6 +106,10 @@ def test_chat_history_context_is_disabled_by_default() -> None:
     assert Config.model_fields["CHAT_HISTORY_CONTEXT_ENABLED"].default is False
 
 
+def test_prescription_correction_is_disabled_by_default() -> None:
+    assert Config.model_fields["PRESCRIPTION_CORRECTION_ENABLED"].default is False
+
+
 def test_chat_history_context_can_be_enabled_in_local_environment() -> None:
     config = Config.model_validate(
         {

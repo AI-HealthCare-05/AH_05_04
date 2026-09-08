@@ -17,7 +17,7 @@ from app.dtos.medication_candidates import (
 from app.models.async_jobs import IdempotencyRecord
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import MedicationCandidateSearchStatus as ModelSearchStatus
 from app.models.rag_candidate import MedicationIdentification
@@ -114,7 +114,9 @@ async def _create_user(session: AsyncSession, *, email: str) -> User:
     return user
 
 
-async def _create_medication(session: AsyncSession, *, user: User, display_order: int = 1) -> Medication:
+async def _create_medication(
+    session: AsyncSession, *, user: User, display_order: int = 1
+) -> PrescriptionVersionMedication:
     profile = await session.scalar(
         select(Profile).where(Profile.user_id == user.id, Profile.profile_type == ProfileType.SELF)
     )
@@ -134,7 +136,9 @@ async def _create_medication(session: AsyncSession, *, user: User, display_order
     session.add(ocr_job)
     await session.flush()
 
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -143,9 +147,19 @@ async def _create_medication(session: AsyncSession, *, user: User, display_order
     )
     session.add(prescription)
     await session.flush()
+    session.add(
+        PrescriptionVersion(
+            id=version_id,
+            prescription_id=prescription.id,
+            version_number=1,
+            prescribed_date=prescription.prescribed_date,
+            confirmed_at=prescription.confirmed_at,
+        )
+    )
+    await session.flush()
 
-    medication = Medication(
-        prescription_id=prescription.id,
+    medication = PrescriptionVersionMedication(
+        prescription_version_id=version_id,
         medication_name="테스트약",
         strength_text="500mg",
         display_order=display_order,
@@ -155,7 +169,7 @@ async def _create_medication(session: AsyncSession, *, user: User, display_order
     return medication
 
 
-async def _create_ready_search(session: AsyncSession, *, medication: Medication, user: User):
+async def _create_ready_search(session: AsyncSession, *, medication: PrescriptionVersionMedication, user: User):
     identification_service = MedicationIdentificationService(MedicationCandidateRepository(session))
     search = (
         await identification_service.record_candidate_search(

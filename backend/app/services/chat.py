@@ -88,9 +88,12 @@ class ChatService:
             )
 
         chat_session = await self._chat_repo.create_session(prescription=prescription)
+        if chat_session.prescription_version_id is None:
+            raise RuntimeError("chat session prescription version is required")
         return ChatSessionData(
             session_id=chat_session.id,
             prescription_id=prescription.id,
+            prescription_version_id=chat_session.prescription_version_id,
             session_status=str(chat_session.session_status),
             created_at=chat_session.created_at,
         )
@@ -118,9 +121,18 @@ class ChatService:
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
             )
 
+        if chat_session.prescription_version_id is None:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_VERSION_UNAVAILABLE",
+                message="대화 세션의 처방 버전 정보를 사용할 수 없습니다.",
+                details=[ErrorDetail(field="session_id", reason="INVALID_VERSION_GRAPH")],
+            )
+
         return ChatSessionData(
             session_id=chat_session.id,
             prescription_id=prescription.id,
+            prescription_version_id=chat_session.prescription_version_id,
             session_status=str(chat_session.session_status),
             created_at=chat_session.created_at,
         )
@@ -162,7 +174,17 @@ class ChatService:
                 details=[ErrorDetail(field="session_id", reason="CHAT_SESSION_CLOSED", rejected_value=str(session_id))],
             )
 
-        medications = await self._prescription_repo.get_medications(prescription_id=chat_session.prescription_id)
+        if chat_session.prescription_version_id is None:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_VERSION_UNAVAILABLE",
+                message="대화 세션의 처방 버전 정보를 사용할 수 없습니다.",
+                details=[ErrorDetail(field="session_id", reason="INVALID_VERSION_GRAPH")],
+            )
+
+        medications = await self._prescription_repo.get_version_medications(
+            prescription_version_id=chat_session.prescription_version_id
+        )
         next_seq = await self._chat_repo.next_seq(session=chat_session)
         history: list[ChatHistoryPair] = []
         if self._history_context_enabled:
