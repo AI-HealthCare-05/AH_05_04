@@ -364,6 +364,49 @@ Rollback 정책:
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`
 
+
+## RAG Evidence·Citation 최소 DB 기반
+
+Revision `164c5d6e7f8a`는 #164의 Evidence/Citation 후속 구현을 위해 최소 DB 기반을 추가합니다. 이 변경은 새 정본 계약이 아니라 기존 `docs/contracts/targets/post-mvp-1/rag-runtime-v1.md`와 `docs/contracts/targets/post-mvp-1/safety-result-v2.md`의 공개·근거·Citation 경계를 data schema에 흡수하는 구현 PR 범위입니다.
+
+구현 테이블:
+
+| 영역 | 테이블 | 설명 |
+| --- | --- | --- |
+| Knowledge | `rag_evidence_knowledge` | Source Snapshot에서 유래한 비환자 근거 단위의 식별자, 제목, locator, digest를 보관 |
+| Evidence | `rag_evidence` | Knowledge/Product/Ingredient와 같은 Snapshot 안에서 연결되는 승인 근거 단위 |
+| Rule | `rag_evidence_rule` | Evidence에 연결되는 rule-first 판단 근거의 최소 식별자와 digest |
+| Guideline | `rag_evidence_guideline` | Guide·limited response·safety fallback에 연결할 guideline 근거의 최소 식별자와 digest |
+| Citation | `rag_citation` | Guide/Chat/RAG/Safety target의 claim과 Evidence를 연결하는 공개 가능성 검증 결과 |
+
+주요 제약:
+
+- Evidence는 `source_snapshot_id`를 기준 provenance로 사용합니다. Product·Ingredient·Knowledge를 참조할 때도 같은 Snapshot 행만 연결할 수 있도록 composite FK로 강제합니다.
+- `PRODUCT_FACT`는 `product_id`, `INGREDIENT_FACT`는 `ingredient_id`가 반드시 있어야 하며, 제품·성분 근거가 참조 대상 없이 저장되지 않도록 CHECK 제약으로 막습니다.
+- `rag_citation`의 `release_status=PUBLIC`은 `authorization_status=PASS`, `support_status=SUPPORTED`, `public_excerpt IS NOT NULL`일 때만 허용합니다.
+- 의료 claim(`claim_kind=MEDICAL`)은 `PARTIALLY_SUPPORTED`로 공개할 수 없습니다. `CONTRADICTED`, `NOT_SUPPORTED` 상태도 공개 Citation이 될 수 없습니다.
+- Citation 없이 일반 의료 답변이 공개되었다고 해석하지 않습니다. 의료 claim이 있는 Guide/Chat/RAG 답변 공개는 Claim-Citation 검증과 release gate 통과가 필요합니다. 단, 의료 claim이나 source-based citation이 없는 승인된 고정 fallback은 빈 Citation Guard 없이 공개될 수 있습니다.
+- Evidence/Citation 계열 row는 append-only입니다. UPDATE·DELETE는 차단하고, 수정이 필요한 경우 replacement row 또는 forward-fix migration으로 처리합니다.
+- downgrade는 빈 DB에서만 허용합니다. Evidence/Citation row가 있으면 downgrade를 중단하고 Production에서는 forward-fix를 사용합니다.
+
+민감정보 저장 경계:
+
+- `rag_evidence_*`, `rag_citation`에는 실제 환자정보, OCR 원문 전체, 처방 원문 전체, Provider raw response를 저장하지 않습니다.
+- 저장 가능한 값은 Source Snapshot/Catalog FK, target 식별자, claim key, locator, digest, enum 상태, 승인된 짧은 공개 excerpt 같은 비민감 provenance metadata로 제한합니다.
+- `public_excerpt`는 승인 Source에서 온 짧은 근거 발췌만 허용하며, 환자 유래 텍스트·OCR 텍스트·처방 텍스트·Provider 원문 출력 저장 위치로 사용하지 않습니다.
+
+범위 제외:
+
+- 실제 Retrieval 구현
+- Ranking / Resolver 구현
+- LLM Provider 호출
+- Guide/Chat 답변 생성 로직
+- Citation 화면 표시
+- Safety/Fallback 문구 생성
+- Evidence 품질 평가 로직
+- Runtime Bundle 활성화
+- Production 공개 승인
+
 ## Prescription Version DB 기반 및 Version 1 Dual-write
 
 Revision `169a1b2c3d4e`는 #169의 Expand 단계로 `prescription_version`, `prescription_version_medication`과 nullable `prescription.active_version_id`를 추가합니다. Revision `169b2c3d4e5f`는 기존 처방과 약물을 Version 1 snapshot으로 500건씩 backfill하고, 신규 처방 확정 repository를 legacy+Version 1 dual-write로 전환합니다. 공개 API와 read 기준은 계속 legacy 테이블을 사용합니다.
@@ -396,8 +439,8 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |
 | 공식 Source·Catalog | `rag_source`, source approval·ingestion·normalization·snapshot·verification 계열, medication product·ingredient·component·alias | #164 최소 DB 기반은 구현 중. 실제 수집·적재·Runtime 활성화·검색 연결은 후속 |
 | Candidate·Identification | candidate index·search·result, append-only medication identification | confirmed `medication_name + nullable strength_text`만 입력, 내부 Top-K와 외부 최대 1개 분리, 사용자 확인·거절·소유권·멱등성·현재성 |
-| Rule·Evidence | `rag_interaction_rule`, `rag_rule_evidence`, rule set 계열 | 처방약–OTC Rule-first, 승인 evidence와 version 연결, rule 없음은 안전 판정이 아님 |
-| RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열 | Job·처방 version·Runtime Bundle 귀속, 생성·검증·공개 상태축과 Citation 완전성 분리 |
+| Rule·Evidence | `rag_evidence_knowledge`, `rag_evidence`, `rag_evidence_rule`, `rag_evidence_guideline`, rule set 계열 | Evidence/Citation 최소 DB 기반은 구현 중. 처방약–OTC Rule-first 실행, ranking, resolver, 품질 평가와 Runtime 활성화는 후속 |
+| RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열, `rag_citation` | `rag_citation`은 claim-Evidence 공개 가능성 최소 저장만 제공. 실제 Retrieval, Provider 호출, 답변 생성, Safety/Fallback 문구 생성, 화면 표시는 후속 |
 | Runtime 배포 | `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval` 최소 DB 기반 구현 중(#164) | Source Snapshot과 Evaluation Run은 FK로 결속하고 Candidate Index는 #168 전까지 ref/hash로만 보관합니다. Evaluation PASS는 release approval 입력일 뿐 자동 Runtime 활성화가 아니며, 실제 activation·rollback·Production 공개는 후속 범위입니다. |
 | Evaluation | `eval_dataset`, `eval_case`, `eval_experiment`, `eval_variant`, `eval_run`, `eval_case_result`, `eval_metric`, `eval_failure` 최소 DB 기반 구현 중(#164) | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. `eval_run`은 `dataset_id + dataset_manifest_hash`가 실제 Dataset manifest와 일치해야 하고, `eval_case_result`는 Run·Case의 `dataset_id + experiment_type` 혼용을 DB에서 차단합니다. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료(`COMPLETED`)는 `decision_status`를 반드시 기록하며 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`입니다. Runner·Release approval·Runtime 활성화 연결은 후속 |
 
