@@ -33,6 +33,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CANONICAL_SCORE_RE = re.compile(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$")
+RERANK_OUTPUT_PROJECTION_VERSION = "evidence-rerank-output-v1"
 
 
 class EvidenceAssessmentStance(StrEnum):
@@ -76,6 +77,8 @@ class EvidenceGateRetrievalReceipt:
     rerank_config_ref: ImmutableArtifactRef
     rerank_input_projection_version: str
     input_set_hash: str
+    rerank_output_projection_version: str
+    rerank_output_hash: str
 
     @classmethod
     def create(
@@ -90,6 +93,8 @@ class EvidenceGateRetrievalReceipt:
         rerank_config_ref: ImmutableArtifactRef,
         rerank_input_projection_version: str,
         input_set_hash: str,
+        rerank_output_projection_version: str,
+        rerank_output_hash: str,
     ) -> Self:
         payload = {
             "evidence_index_ref": _artifact_payload(evidence_index_ref),
@@ -98,6 +103,8 @@ class EvidenceGateRetrievalReceipt:
             "query_fingerprint": _fingerprint_payload(query_fingerprint),
             "rerank_config_ref": _artifact_payload(rerank_config_ref),
             "rerank_input_projection_version": rerank_input_projection_version,
+            "rerank_output_hash": rerank_output_hash,
+            "rerank_output_projection_version": rerank_output_projection_version,
             "retrieval_config_ref": _artifact_payload(retrieval_config_ref),
         }
         return cls(
@@ -109,6 +116,8 @@ class EvidenceGateRetrievalReceipt:
             rerank_config_ref,
             rerank_input_projection_version,
             input_set_hash,
+            rerank_output_projection_version,
+            rerank_output_hash,
         )
 
 
@@ -487,6 +496,12 @@ def _is_valid_request(value: object) -> bool:
             for selection in selections_by_key.values()
         ):
             return False
+        ordered_selections = tuple(sorted(selections_by_key.values(), key=lambda item: item.rerank_rank))
+        if value.retrieval_receipt.rerank_output_hash != canonical_rerank_output_hash(
+            value.retrieval_receipt.rerank_output_projection_version,
+            ordered_selections,
+        ):
+            return False
         assessments_by_key = _validated_assessments(
             value.assessments,
             set(value.required_coverage_keys),
@@ -774,6 +789,9 @@ def _is_valid_retrieval_receipt(value: object) -> bool:
         or not _nonempty_nfc(value.rerank_input_projection_version)
         or not isinstance(value.input_set_hash, str)
         or _SHA256_RE.fullmatch(value.input_set_hash) is None
+        or value.rerank_output_projection_version != RERANK_OUTPUT_PROJECTION_VERSION
+        or not isinstance(value.rerank_output_hash, str)
+        or _SHA256_RE.fullmatch(value.rerank_output_hash) is None
     ):
         return False
     expected = EvidenceGateRetrievalReceipt.create(
@@ -786,6 +804,8 @@ def _is_valid_retrieval_receipt(value: object) -> bool:
         rerank_config_ref=value.rerank_config_ref,
         rerank_input_projection_version=value.rerank_input_projection_version,
         input_set_hash=value.input_set_hash,
+        rerank_output_projection_version=value.rerank_output_projection_version,
+        rerank_output_hash=value.rerank_output_hash,
     )
     return expected.artifact_ref == value.artifact_ref
 
@@ -864,6 +884,25 @@ def canonical_gate_selection_hash(selection: UntrustedKnowledgeEvidenceSelection
                 "stage": _stage_projection_value(signal.stage),
             }
             for signal in selection.candidate.stage_signals
+        ],
+    }
+    return _canonical_sha256(payload)
+
+
+def canonical_rerank_output_hash(
+    projection_version: str,
+    selections: tuple[UntrustedKnowledgeEvidenceSelection, ...],
+) -> str:
+    """Hash the evidence key/rank/score projection returned by reranking."""
+    payload = {
+        "projection_version": projection_version,
+        "selections": [
+            {
+                "evidence_key": selection.candidate.provenance.evidence_key,
+                "rerank_rank": selection.rerank_rank,
+                "rerank_score": selection.rerank_score.value,
+            }
+            for selection in sorted(selections, key=lambda item: item.rerank_rank)
         ],
     }
     return _canonical_sha256(payload)

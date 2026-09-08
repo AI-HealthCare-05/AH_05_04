@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from ai_worker.tasks.rag.evidence_gate import (
+    RERANK_OUTPUT_PROJECTION_VERSION,
     EvidenceAssessmentStance,
     EvidenceEligibilityVerificationFailure,
     EvidenceEligibilityVerificationSuccess,
@@ -21,6 +22,7 @@ from ai_worker.tasks.rag.evidence_gate import (
     EvidenceStatus,
     VersionedEvidenceGatePolicy,
     canonical_gate_selection_hash,
+    canonical_rerank_output_hash,
     evaluate_evidence_gate,
 )
 from ai_worker.tasks.rag.evidence_retrieval import (
@@ -44,11 +46,14 @@ def artifact(code: str, *, digest: str = "a" * 64) -> ImmutableArtifactRef:
 
 def retrieval_receipt(
     *,
+    selections: tuple[UntrustedKnowledgeEvidenceSelection, ...] | None = None,
     query_fingerprint: QueryFingerprint | None = None,
     filter_snapshot_ref: ImmutableArtifactRef | None = None,
     retrieval_config_ref: ImmutableArtifactRef | None = None,
     input_set_hash: str = "d" * 64,
+    output_projection_version: str = RERANK_OUTPUT_PROJECTION_VERSION,
 ) -> EvidenceGateRetrievalReceipt:
+    output_selections = selections if selections is not None else (selection(),)
     return EvidenceGateRetrievalReceipt.create(
         "evidence-retrieval-receipt",
         "evidence-retrieval-receipt@synthetic-1",
@@ -59,6 +64,8 @@ def retrieval_receipt(
         rerank_config_ref=artifact("rerank-config"),
         rerank_input_projection_version="knowledge-rerank-input-v1",
         input_set_hash=input_set_hash,
+        rerank_output_projection_version=output_projection_version,
+        rerank_output_hash=canonical_rerank_output_hash(output_projection_version, output_selections),
     )
 
 
@@ -104,7 +111,7 @@ def assessment(
         selection=selected,
         coverage_key=coverage_key,
         stance=stance,
-        retrieval_receipt_ref=(gate_retrieval_receipt or retrieval_receipt()).artifact_ref,
+        retrieval_receipt_ref=(gate_retrieval_receipt or retrieval_receipt(selections=(selected,))).artifact_ref,
         eligibility_receipt_ref=artifact(f"eligibility-{provenance.evidence_key}"),
         valid_from=valid_from,
         valid_until=valid_until,
@@ -135,7 +142,7 @@ def request(
     return EvidenceGateRequest(
         selections=selections,
         assessments=assessments,
-        retrieval_receipt=gate_retrieval_receipt or retrieval_receipt(),
+        retrieval_receipt=gate_retrieval_receipt or retrieval_receipt(selections=selections),
         required_coverage_keys=required_coverage_keys,
         evaluated_at=NOW,
         policy=gate_policy or policy(),
@@ -291,11 +298,58 @@ def test_assessment_from_another_retrieval_context_cannot_be_replayed(
     [
         lambda value: replace(
             value,
+            candidate=replace(
+                value.candidate,
+                provenance=replace(value.candidate.provenance, evidence_key="knowledge:replayed"),
+            ),
+        ),
+        lambda value: replace(value, rerank_score=CanonicalScore("0.8")),
+    ],
+)
+def test_same_receipt_cannot_replay_changed_rerank_selection(mutation) -> None:
+    original = selection()
+    gate_retrieval_receipt = retrieval_receipt()
+    changed = mutation(original)
+
+    assert_request_invalid(
+        request(
+            (changed,),
+            (assessment(changed, gate_retrieval_receipt=gate_retrieval_receipt),),
+            gate_retrieval_receipt=gate_retrieval_receipt,
+        )
+    )
+
+
+def test_same_receipt_cannot_replay_changed_rerank_ranks() -> None:
+    first = selection("knowledge:first", rank=1)
+    second = selection("knowledge:second", rank=2)
+    gate_retrieval_receipt = retrieval_receipt(selections=(first, second))
+    changed = (
+        replace(first, rerank_rank=2),
+        replace(second, rerank_rank=1),
+    )
+
+    assert_request_invalid(
+        request(
+            changed,
+            tuple(assessment(item, gate_retrieval_receipt=gate_retrieval_receipt) for item in changed),
+            gate_retrieval_receipt=gate_retrieval_receipt,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: replace(
+            value,
             query_fingerprint=QueryFingerprint("HMAC-SHA-256", "query-hmac@synthetic-2", "e" * 64),
         ),
         lambda value: replace(value, filter_snapshot_ref=artifact("other-filter-snapshot")),
         lambda value: replace(value, retrieval_config_ref=artifact("other-retrieval-config")),
         lambda value: replace(value, input_set_hash="e" * 64),
+        lambda value: replace(value, rerank_output_projection_version="evidence-rerank-output-v2"),
+        lambda value: replace(value, rerank_output_hash="e" * 64),
     ],
 )
 def test_retrieval_receipt_values_must_remain_bound_to_receipt_artifact(mutation) -> None:
@@ -308,6 +362,22 @@ def test_retrieval_receipt_values_must_remain_bound_to_receipt_artifact(mutation
             (selected,),
             (selected_assessment,),
             gate_retrieval_receipt=mutation(gate_retrieval_receipt),
+        )
+    )
+
+
+def test_unknown_rerank_output_projection_version_is_rejected() -> None:
+    selected = selection()
+    gate_retrieval_receipt = retrieval_receipt(
+        selections=(selected,),
+        output_projection_version="evidence-rerank-output-v2",
+    )
+
+    assert_request_invalid(
+        request(
+            (selected,),
+            (assessment(selected, gate_retrieval_receipt=gate_retrieval_receipt),),
+            gate_retrieval_receipt=gate_retrieval_receipt,
         )
     )
 
@@ -358,14 +428,20 @@ def test_evidence_expiring_at_evaluation_time_is_stale_and_returns_no_selection(
 def test_opposing_current_evidence_for_same_coverage_is_conflicted() -> None:
     supporting = selection("knowledge:support", rank=1)
     contradicting = selection("knowledge:contradict", rank=2)
+    gate_retrieval_receipt = retrieval_receipt(selections=(supporting, contradicting))
 
     outcome = evaluate(
         request(
             (supporting, contradicting),
             (
-                assessment(supporting),
-                assessment(contradicting, stance=EvidenceAssessmentStance.CONTRADICTS),
+                assessment(supporting, gate_retrieval_receipt=gate_retrieval_receipt),
+                assessment(
+                    contradicting,
+                    stance=EvidenceAssessmentStance.CONTRADICTS,
+                    gate_retrieval_receipt=gate_retrieval_receipt,
+                ),
             ),
+            gate_retrieval_receipt=gate_retrieval_receipt,
         )
     )
 
@@ -414,15 +490,20 @@ def test_policy_minimum_distinct_source_count_does_not_count_two_chunks_twice() 
     shared_source = artifact("shared-source")
     first = selection("knowledge:first", source_snapshot_ref=shared_source, rank=1)
     second = selection("knowledge:second", source_snapshot_ref=shared_source, rank=2)
+    gate_retrieval_receipt = retrieval_receipt(selections=(first, second))
 
     outcome = evaluate(
         request(
             (first, second),
-            (assessment(first), assessment(second)),
+            (
+                assessment(first, gate_retrieval_receipt=gate_retrieval_receipt),
+                assessment(second, gate_retrieval_receipt=gate_retrieval_receipt),
+            ),
             gate_policy=policy(
                 minimum_supporting_items_per_coverage=2,
                 minimum_distinct_source_snapshots_per_coverage=2,
             ),
+            gate_retrieval_receipt=gate_retrieval_receipt,
         )
     )
 
@@ -434,15 +515,25 @@ def test_policy_minimum_distinct_source_count_does_not_count_two_chunks_twice() 
 def test_stale_status_precedes_conflict_and_insufficiency() -> None:
     supporting = selection("knowledge:support", rank=1)
     contradicting = selection("knowledge:contradict", rank=2)
+    gate_retrieval_receipt = retrieval_receipt(selections=(supporting, contradicting))
 
     outcome = evaluate(
         request(
             (supporting, contradicting),
             (
-                assessment(supporting, valid_until=NOW),
-                assessment(contradicting, stance=EvidenceAssessmentStance.CONTRADICTS),
+                assessment(
+                    supporting,
+                    valid_until=NOW,
+                    gate_retrieval_receipt=gate_retrieval_receipt,
+                ),
+                assessment(
+                    contradicting,
+                    stance=EvidenceAssessmentStance.CONTRADICTS,
+                    gate_retrieval_receipt=gate_retrieval_receipt,
+                ),
             ),
             required_coverage_keys=("medication-usage", "medication-warning"),
+            gate_retrieval_receipt=gate_retrieval_receipt,
         )
     )
 
@@ -714,11 +805,26 @@ def test_selections_from_different_evidence_indexes_fail_closed() -> None:
 def test_gate_result_is_deterministic_for_input_order() -> None:
     first = selection("knowledge:first", rank=1)
     second = selection("knowledge:second", rank=2)
-    first_assessment = assessment(first)
-    second_assessment = assessment(second)
+    gate_retrieval_receipt = retrieval_receipt(selections=(first, second))
+    first_assessment = assessment(first, gate_retrieval_receipt=gate_retrieval_receipt)
+    second_assessment = assessment(second, gate_retrieval_receipt=gate_retrieval_receipt)
 
-    forward = evaluate(request((first, second), (first_assessment, second_assessment), gate_policy=policy()))
-    reversed_input = evaluate(request((second, first), (second_assessment, first_assessment), gate_policy=policy()))
+    forward = evaluate(
+        request(
+            (first, second),
+            (first_assessment, second_assessment),
+            gate_policy=policy(),
+            gate_retrieval_receipt=gate_retrieval_receipt,
+        )
+    )
+    reversed_input = evaluate(
+        request(
+            (second, first),
+            (second_assessment, first_assessment),
+            gate_policy=policy(),
+            gate_retrieval_receipt=gate_retrieval_receipt,
+        )
+    )
 
     assert replace(reversed_input, gate_passed_selections=()) == replace(forward, gate_passed_selections=())
     assert tuple(
