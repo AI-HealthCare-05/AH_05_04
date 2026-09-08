@@ -25,6 +25,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     ImmutableArtifactRef,
     KnowledgeEvidenceCandidate,
     KnowledgeEvidenceProvenance,
+    QueryFingerprint,
     SensitiveText,
     StageSignal,
     UntrustedKnowledgeEvidenceSelection,
@@ -60,8 +61,55 @@ class EvidenceGateReason(StrEnum):
     EVIDENCE_STALE = "EVIDENCE_STALE"
     EVIDENCE_INELIGIBLE = "EVIDENCE_INELIGIBLE"
     ELIGIBILITY_RECEIPT_MISMATCH = "ELIGIBILITY_RECEIPT_MISMATCH"
+    RETRIEVAL_RECEIPT_MISMATCH = "RETRIEVAL_RECEIPT_MISMATCH"
     ELIGIBILITY_VERIFICATION_ERROR = "ELIGIBILITY_VERIFICATION_ERROR"
     REQUEST_INVALID = "REQUEST_INVALID"
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceGateRetrievalReceipt:
+    artifact_ref: ImmutableArtifactRef
+    query_fingerprint: QueryFingerprint
+    filter_snapshot_ref: ImmutableArtifactRef
+    evidence_index_ref: ImmutableArtifactRef
+    retrieval_config_ref: ImmutableArtifactRef
+    rerank_config_ref: ImmutableArtifactRef
+    rerank_input_projection_version: str
+    input_set_hash: str
+
+    @classmethod
+    def create(
+        cls,
+        artifact_code: str,
+        version: str,
+        *,
+        query_fingerprint: QueryFingerprint,
+        filter_snapshot_ref: ImmutableArtifactRef,
+        evidence_index_ref: ImmutableArtifactRef,
+        retrieval_config_ref: ImmutableArtifactRef,
+        rerank_config_ref: ImmutableArtifactRef,
+        rerank_input_projection_version: str,
+        input_set_hash: str,
+    ) -> Self:
+        payload = {
+            "evidence_index_ref": _artifact_payload(evidence_index_ref),
+            "filter_snapshot_ref": _artifact_payload(filter_snapshot_ref),
+            "input_set_hash": input_set_hash,
+            "query_fingerprint": _fingerprint_payload(query_fingerprint),
+            "rerank_config_ref": _artifact_payload(rerank_config_ref),
+            "rerank_input_projection_version": rerank_input_projection_version,
+            "retrieval_config_ref": _artifact_payload(retrieval_config_ref),
+        }
+        return cls(
+            ImmutableArtifactRef(artifact_code, version, _canonical_sha256(payload)),
+            query_fingerprint,
+            filter_snapshot_ref,
+            evidence_index_ref,
+            retrieval_config_ref,
+            rerank_config_ref,
+            rerank_input_projection_version,
+            input_set_hash,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +117,7 @@ class EvidenceEligibilityVerificationSuccess:
     assessment_artifact_ref: ImmutableArtifactRef
     eligibility_receipt_ref: ImmutableArtifactRef
     selection_projection_hash: str
+    retrieval_receipt_ref: ImmutableArtifactRef
     verifier_artifact_ref: ImmutableArtifactRef
 
 
@@ -79,7 +128,9 @@ class EvidenceEligibilityVerificationFailure:
 
 class EvidenceEligibilityVerifierPort(Protocol):
     def verify(
-        self, assessment: EvidenceGateAssessment
+        self,
+        assessment: EvidenceGateAssessment,
+        retrieval_receipt: EvidenceGateRetrievalReceipt,
     ) -> EvidenceEligibilityVerificationSuccess | EvidenceEligibilityVerificationFailure: ...
 
 
@@ -93,6 +144,7 @@ class EvidenceGateAssessment:
     evidence_index_ref: ImmutableArtifactRef
     source_snapshot_ref: ImmutableArtifactRef
     content_sha256: str
+    retrieval_receipt_ref: ImmutableArtifactRef
     eligibility_receipt_ref: ImmutableArtifactRef
     valid_from: datetime
     valid_until: datetime
@@ -106,6 +158,7 @@ class EvidenceGateAssessment:
         selection: UntrustedKnowledgeEvidenceSelection,
         coverage_key: str,
         stance: EvidenceAssessmentStance,
+        retrieval_receipt_ref: ImmutableArtifactRef,
         eligibility_receipt_ref: ImmutableArtifactRef,
         valid_from: datetime,
         valid_until: datetime,
@@ -118,6 +171,7 @@ class EvidenceGateAssessment:
             "eligibility_receipt_ref": _artifact_payload(eligibility_receipt_ref),
             "evidence_index_ref": _artifact_payload(provenance.evidence_index_ref),
             "evidence_key": provenance.evidence_key,
+            "retrieval_receipt_ref": _artifact_payload(retrieval_receipt_ref),
             "selection_projection_hash": selection_projection_hash,
             "source_snapshot_ref": _artifact_payload(provenance.source_snapshot_ref),
             "stance": stance.value,
@@ -133,6 +187,7 @@ class EvidenceGateAssessment:
             provenance.evidence_index_ref,
             provenance.source_snapshot_ref,
             provenance.content_sha256,
+            retrieval_receipt_ref,
             eligibility_receipt_ref,
             valid_from,
             valid_until,
@@ -172,6 +227,7 @@ class VersionedEvidenceGatePolicy:
 class EvidenceGateRequest:
     selections: tuple[UntrustedKnowledgeEvidenceSelection, ...]
     assessments: tuple[EvidenceGateAssessment, ...]
+    retrieval_receipt: EvidenceGateRetrievalReceipt
     required_coverage_keys: tuple[str, ...]
     evaluated_at: datetime
     policy: VersionedEvidenceGatePolicy
@@ -180,6 +236,7 @@ class EvidenceGateRequest:
 @dataclass(frozen=True, slots=True)
 class EvidenceGateTrace:
     policy_ref: ImmutableArtifactRef
+    retrieval_receipt_ref: ImmutableArtifactRef
     evaluated_at: datetime
     assessment_artifact_refs: tuple[ImmutableArtifactRef, ...]
     selected_evidence_keys: tuple[str, ...]
@@ -193,6 +250,7 @@ class GatePassedKnowledgeEvidenceSelection:
     selection: UntrustedKnowledgeEvidenceSelection
     assessment_artifact_ref: ImmutableArtifactRef
     eligibility_receipt_ref: ImmutableArtifactRef
+    retrieval_receipt_ref: ImmutableArtifactRef
     verifier_artifact_ref: ImmutableArtifactRef
 
 
@@ -316,6 +374,7 @@ def evaluate_evidence_gate(
             item,
             assessment.assessment_artifact_ref,
             assessment.eligibility_receipt_ref,
+            request.retrieval_receipt.artifact_ref,
             verification_by_assessment[assessment.assessment_artifact_ref].verifier_artifact_ref,
         )
         for item in ordered_selections
@@ -344,6 +403,7 @@ def _detached_request_snapshot(request: EvidenceGateRequest) -> EvidenceGateRequ
 def _request_snapshot_matches(original: EvidenceGateRequest, snapshot: EvidenceGateRequest) -> bool:
     return (
         original.assessments == snapshot.assessments
+        and original.retrieval_receipt == snapshot.retrieval_receipt
         and original.required_coverage_keys == snapshot.required_coverage_keys
         and original.evaluated_at == snapshot.evaluated_at
         and original.policy == snapshot.policy
@@ -365,14 +425,20 @@ def _verify_eligibility(
     for assessment in sorted(request.assessments, key=lambda item: item.evidence_key.encode()):
         try:
             verifier_input = deepcopy(assessment)
-            response = deepcopy(verifier.verify(verifier_input))
+            retrieval_receipt_input = deepcopy(request.retrieval_receipt)
+            response = deepcopy(verifier.verify(verifier_input, retrieval_receipt_input))
         except Exception:
             return EvidenceGateOutcome(
                 EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
                 None,
                 EvidenceGateReason.ELIGIBILITY_VERIFICATION_ERROR,
             )
-        if verifier_input != assessment or not _is_valid_assessment(verifier_input):
+        if (
+            verifier_input != assessment
+            or not _is_valid_assessment(verifier_input)
+            or retrieval_receipt_input != request.retrieval_receipt
+            or not _is_valid_retrieval_receipt(retrieval_receipt_input)
+        ):
             return EvidenceGateOutcome(
                 EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
                 None,
@@ -385,9 +451,19 @@ def _verify_eligibility(
                 EvidenceGateReason.EVIDENCE_INELIGIBLE,
                 trace=_trace(request, selected_evidence_keys),
             )
-        if type(response) is not EvidenceEligibilityVerificationSuccess or not _eligibility_verification_matches(
-            response, assessment
-        ):
+        if type(response) is not EvidenceEligibilityVerificationSuccess:
+            return EvidenceGateOutcome(
+                EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
+                None,
+                EvidenceGateReason.ELIGIBILITY_RECEIPT_MISMATCH,
+            )
+        if not _retrieval_receipt_ref_matches(response, request.retrieval_receipt):
+            return EvidenceGateOutcome(
+                EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
+                None,
+                EvidenceGateReason.RETRIEVAL_RECEIPT_MISMATCH,
+            )
+        if not _eligibility_verification_matches(response, assessment, request.retrieval_receipt):
             return EvidenceGateOutcome(
                 EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
                 None,
@@ -406,7 +482,16 @@ def _is_valid_request(value: object) -> bool:
         selections_by_key = _validated_selections(value.selections)
         if selections_by_key is None:
             return False
-        assessments_by_key = _validated_assessments(value.assessments, set(value.required_coverage_keys))
+        if any(
+            selection.candidate.provenance.evidence_index_ref != value.retrieval_receipt.evidence_index_ref
+            for selection in selections_by_key.values()
+        ):
+            return False
+        assessments_by_key = _validated_assessments(
+            value.assessments,
+            set(value.required_coverage_keys),
+            value.retrieval_receipt.artifact_ref,
+        )
         if assessments_by_key is None or assessments_by_key.keys() != selections_by_key.keys():
             return False
 
@@ -422,6 +507,7 @@ def _has_valid_request_shape(value: EvidenceGateRequest) -> bool:
     return (
         type(value.selections) is tuple
         and type(value.assessments) is tuple
+        and _is_valid_retrieval_receipt(value.retrieval_receipt)
         and type(value.required_coverage_keys) is tuple
         and bool(value.required_coverage_keys)
         and _is_utc_datetime(value.evaluated_at)
@@ -465,6 +551,7 @@ def _validated_selections(
 def _validated_assessments(
     assessments: tuple[EvidenceGateAssessment, ...],
     required_coverage: set[str],
+    retrieval_receipt_ref: ImmutableArtifactRef,
 ) -> dict[str, EvidenceGateAssessment] | None:
     assessments_by_key: dict[str, EvidenceGateAssessment] = {}
     for item in assessments:
@@ -472,6 +559,7 @@ def _validated_assessments(
             not _is_valid_assessment(item)
             or item.evidence_key in assessments_by_key
             or item.coverage_key not in required_coverage
+            or item.retrieval_receipt_ref != retrieval_receipt_ref
         ):
             return None
         assessments_by_key[item.evidence_key] = item
@@ -510,6 +598,7 @@ def _is_valid_assessment(value: object) -> bool:
         and _is_valid_artifact_ref(value.source_snapshot_ref)
         and isinstance(value.content_sha256, str)
         and _SHA256_RE.fullmatch(value.content_sha256) is not None
+        and _is_valid_artifact_ref(value.retrieval_receipt_ref)
         and _is_valid_artifact_ref(value.eligibility_receipt_ref)
         and _is_utc_datetime(value.valid_from)
         and _is_utc_datetime(value.valid_until)
@@ -590,14 +679,32 @@ def _assessment_matches_selection(
 def _eligibility_verification_matches(
     value: object,
     assessment: EvidenceGateAssessment,
+    retrieval_receipt: EvidenceGateRetrievalReceipt,
 ) -> bool:
-    return (
-        type(value) is EvidenceEligibilityVerificationSuccess
-        and value.assessment_artifact_ref == assessment.assessment_artifact_ref
-        and value.eligibility_receipt_ref == assessment.eligibility_receipt_ref
-        and value.selection_projection_hash == assessment.selection_projection_hash
-        and _is_valid_artifact_ref(value.verifier_artifact_ref)
-    )
+    try:
+        return (
+            type(value) is EvidenceEligibilityVerificationSuccess
+            and value.assessment_artifact_ref == assessment.assessment_artifact_ref
+            and value.eligibility_receipt_ref == assessment.eligibility_receipt_ref
+            and value.selection_projection_hash == assessment.selection_projection_hash
+            and value.retrieval_receipt_ref == retrieval_receipt.artifact_ref
+            and _is_valid_artifact_ref(value.verifier_artifact_ref)
+        )
+    except Exception:
+        return False
+
+
+def _retrieval_receipt_ref_matches(
+    value: object,
+    retrieval_receipt: EvidenceGateRetrievalReceipt,
+) -> bool:
+    try:
+        return (
+            type(value) is EvidenceEligibilityVerificationSuccess
+            and value.retrieval_receipt_ref == retrieval_receipt.artifact_ref
+        )
+    except Exception:
+        return False
 
 
 def _trace(
@@ -616,6 +723,7 @@ def _trace(
     )
     return EvidenceGateTrace(
         request.policy.artifact_ref,
+        request.retrieval_receipt.artifact_ref,
         request.evaluated_at,
         assessment_refs,
         selected_evidence_keys,
@@ -654,6 +762,44 @@ def _is_valid_artifact_ref(value: object) -> bool:
     )
 
 
+def _is_valid_retrieval_receipt(value: object) -> bool:
+    if (
+        type(value) is not EvidenceGateRetrievalReceipt
+        or not _is_valid_artifact_ref(value.artifact_ref)
+        or not _is_valid_query_fingerprint(value.query_fingerprint)
+        or not _is_valid_artifact_ref(value.filter_snapshot_ref)
+        or not _is_valid_artifact_ref(value.evidence_index_ref)
+        or not _is_valid_artifact_ref(value.retrieval_config_ref)
+        or not _is_valid_artifact_ref(value.rerank_config_ref)
+        or not _nonempty_nfc(value.rerank_input_projection_version)
+        or not isinstance(value.input_set_hash, str)
+        or _SHA256_RE.fullmatch(value.input_set_hash) is None
+    ):
+        return False
+    expected = EvidenceGateRetrievalReceipt.create(
+        value.artifact_ref.artifact_code,
+        value.artifact_ref.version,
+        query_fingerprint=value.query_fingerprint,
+        filter_snapshot_ref=value.filter_snapshot_ref,
+        evidence_index_ref=value.evidence_index_ref,
+        retrieval_config_ref=value.retrieval_config_ref,
+        rerank_config_ref=value.rerank_config_ref,
+        rerank_input_projection_version=value.rerank_input_projection_version,
+        input_set_hash=value.input_set_hash,
+    )
+    return expected.artifact_ref == value.artifact_ref
+
+
+def _is_valid_query_fingerprint(value: object) -> bool:
+    return (
+        type(value) is QueryFingerprint
+        and _nonempty_nfc(value.algorithm)
+        and _nonempty_nfc(value.key_version)
+        and isinstance(value.digest, str)
+        and _SHA256_RE.fullmatch(value.digest) is not None
+    )
+
+
 def _is_utc_datetime(value: object) -> bool:
     return type(value) is datetime and value.utcoffset() == timedelta(0)
 
@@ -670,6 +816,14 @@ def _artifact_payload(value: ImmutableArtifactRef) -> dict[str, str]:
     }
 
 
+def _fingerprint_payload(value: QueryFingerprint) -> dict[str, str]:
+    return {
+        "algorithm": value.algorithm,
+        "digest": value.digest,
+        "key_version": value.key_version,
+    }
+
+
 def _assessment_payload(value: EvidenceGateAssessment) -> dict[str, object]:
     return {
         "content_sha256": value.content_sha256,
@@ -677,6 +831,7 @@ def _assessment_payload(value: EvidenceGateAssessment) -> dict[str, object]:
         "eligibility_receipt_ref": _artifact_payload(value.eligibility_receipt_ref),
         "evidence_index_ref": _artifact_payload(value.evidence_index_ref),
         "evidence_key": value.evidence_key,
+        "retrieval_receipt_ref": _artifact_payload(value.retrieval_receipt_ref),
         "selection_projection_hash": value.selection_projection_hash,
         "source_snapshot_ref": _artifact_payload(value.source_snapshot_ref),
         "stance": value.stance.value,

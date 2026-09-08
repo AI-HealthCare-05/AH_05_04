@@ -17,6 +17,7 @@ from ai_worker.tasks.rag.evidence_gate import (
     EvidenceGateExecutionStatus,
     EvidenceGateReason,
     EvidenceGateRequest,
+    EvidenceGateRetrievalReceipt,
     EvidenceStatus,
     VersionedEvidenceGatePolicy,
     canonical_gate_selection_hash,
@@ -28,6 +29,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     ImmutableArtifactRef,
     KnowledgeEvidenceCandidate,
     KnowledgeEvidenceProvenance,
+    QueryFingerprint,
     SensitiveText,
     StageSignal,
     UntrustedKnowledgeEvidenceSelection,
@@ -38,6 +40,26 @@ NOW = datetime(2026, 9, 8, 3, 0, tzinfo=UTC)
 
 def artifact(code: str, *, digest: str = "a" * 64) -> ImmutableArtifactRef:
     return ImmutableArtifactRef(code, f"{code}@synthetic-1", digest)
+
+
+def retrieval_receipt(
+    *,
+    query_fingerprint: QueryFingerprint | None = None,
+    filter_snapshot_ref: ImmutableArtifactRef | None = None,
+    retrieval_config_ref: ImmutableArtifactRef | None = None,
+    input_set_hash: str = "d" * 64,
+) -> EvidenceGateRetrievalReceipt:
+    return EvidenceGateRetrievalReceipt.create(
+        "evidence-retrieval-receipt",
+        "evidence-retrieval-receipt@synthetic-1",
+        query_fingerprint=query_fingerprint or QueryFingerprint("HMAC-SHA-256", "query-hmac@synthetic-1", "c" * 64),
+        filter_snapshot_ref=filter_snapshot_ref or artifact("filter-snapshot"),
+        evidence_index_ref=artifact("knowledge-index"),
+        retrieval_config_ref=retrieval_config_ref or artifact("retrieval-config"),
+        rerank_config_ref=artifact("rerank-config"),
+        rerank_input_projection_version="knowledge-rerank-input-v1",
+        input_set_hash=input_set_hash,
+    )
 
 
 def selection(
@@ -73,6 +95,7 @@ def assessment(
     stance: EvidenceAssessmentStance = EvidenceAssessmentStance.SUPPORTS,
     valid_from: datetime = NOW - timedelta(days=1),
     valid_until: datetime = NOW + timedelta(days=1),
+    gate_retrieval_receipt: EvidenceGateRetrievalReceipt | None = None,
 ) -> EvidenceGateAssessment:
     provenance = selected.candidate.provenance
     return EvidenceGateAssessment.create(
@@ -81,6 +104,7 @@ def assessment(
         selection=selected,
         coverage_key=coverage_key,
         stance=stance,
+        retrieval_receipt_ref=(gate_retrieval_receipt or retrieval_receipt()).artifact_ref,
         eligibility_receipt_ref=artifact(f"eligibility-{provenance.evidence_key}"),
         valid_from=valid_from,
         valid_until=valid_until,
@@ -106,10 +130,12 @@ def request(
     *,
     required_coverage_keys: tuple[str, ...] = ("medication-usage",),
     gate_policy: VersionedEvidenceGatePolicy | None = None,
+    gate_retrieval_receipt: EvidenceGateRetrievalReceipt | None = None,
 ) -> EvidenceGateRequest:
     return EvidenceGateRequest(
         selections=selections,
         assessments=assessments,
+        retrieval_receipt=gate_retrieval_receipt or retrieval_receipt(),
         required_coverage_keys=required_coverage_keys,
         evaluated_at=NOW,
         policy=gate_policy or policy(),
@@ -117,30 +143,59 @@ def request(
 
 
 class SyntheticEligibilityVerifier:
-    def verify(self, assessment: EvidenceGateAssessment) -> EvidenceEligibilityVerificationSuccess:
+    def verify(
+        self,
+        assessment: EvidenceGateAssessment,
+        gate_retrieval_receipt: EvidenceGateRetrievalReceipt,
+    ) -> EvidenceEligibilityVerificationSuccess:
         return EvidenceEligibilityVerificationSuccess(
             assessment_artifact_ref=assessment.assessment_artifact_ref,
             eligibility_receipt_ref=assessment.eligibility_receipt_ref,
             selection_projection_hash=assessment.selection_projection_hash,
+            retrieval_receipt_ref=gate_retrieval_receipt.artifact_ref,
             verifier_artifact_ref=artifact("synthetic-eligibility-verifier"),
         )
 
 
 class RejectingEligibilityVerifier:
-    def verify(self, assessment: EvidenceGateAssessment) -> EvidenceEligibilityVerificationFailure:
+    def verify(
+        self,
+        assessment: EvidenceGateAssessment,
+        gate_retrieval_receipt: EvidenceGateRetrievalReceipt,
+    ) -> EvidenceEligibilityVerificationFailure:
         return EvidenceEligibilityVerificationFailure()
 
 
 class MismatchingEligibilityVerifier(SyntheticEligibilityVerifier):
-    def verify(self, assessment: EvidenceGateAssessment) -> EvidenceEligibilityVerificationSuccess:
+    def verify(
+        self,
+        assessment: EvidenceGateAssessment,
+        gate_retrieval_receipt: EvidenceGateRetrievalReceipt,
+    ) -> EvidenceEligibilityVerificationSuccess:
         return replace(
-            super().verify(assessment),
+            super().verify(assessment, gate_retrieval_receipt),
             selection_projection_hash="f" * 64,
         )
 
 
+class MismatchingRetrievalReceiptVerifier(SyntheticEligibilityVerifier):
+    def verify(
+        self,
+        assessment: EvidenceGateAssessment,
+        gate_retrieval_receipt: EvidenceGateRetrievalReceipt,
+    ) -> EvidenceEligibilityVerificationSuccess:
+        return replace(
+            super().verify(assessment, gate_retrieval_receipt),
+            retrieval_receipt_ref=artifact("other-retrieval-receipt"),
+        )
+
+
 class RaisingEligibilityVerifier:
-    def verify(self, assessment: EvidenceGateAssessment) -> EvidenceEligibilityVerificationSuccess:
+    def verify(
+        self,
+        assessment: EvidenceGateAssessment,
+        gate_retrieval_receipt: EvidenceGateRetrievalReceipt,
+    ) -> EvidenceEligibilityVerificationSuccess:
         raise RuntimeError("private-provider-detail")
 
 
@@ -148,7 +203,11 @@ class MutatingEligibilityVerifier(SyntheticEligibilityVerifier):
     def __init__(self, mutation: str) -> None:
         self.mutation = mutation
 
-    def verify(self, assessment: EvidenceGateAssessment) -> EvidenceEligibilityVerificationSuccess:
+    def verify(
+        self,
+        assessment: EvidenceGateAssessment,
+        gate_retrieval_receipt: EvidenceGateRetrievalReceipt,
+    ) -> EvidenceEligibilityVerificationSuccess:
         if self.mutation == "stance":
             object.__setattr__(assessment, "stance", EvidenceAssessmentStance.SUPPORTS)
         elif self.mutation == "freshness":
@@ -157,7 +216,17 @@ class MutatingEligibilityVerifier(SyntheticEligibilityVerifier):
             object.__setattr__(assessment, "eligibility_receipt_ref", artifact("other-receipt"))
         else:
             object.__setattr__(assessment.eligibility_receipt_ref, "version", "tampered-version")
-        return super().verify(assessment)
+        return super().verify(assessment, gate_retrieval_receipt)
+
+
+class MutatingRetrievalReceiptVerifier(SyntheticEligibilityVerifier):
+    def verify(
+        self,
+        assessment: EvidenceGateAssessment,
+        gate_retrieval_receipt: EvidenceGateRetrievalReceipt,
+    ) -> EvidenceEligibilityVerificationSuccess:
+        object.__setattr__(gate_retrieval_receipt, "input_set_hash", "e" * 64)
+        return super().verify(assessment, gate_retrieval_receipt)
 
 
 class ExplodingDeepcopyStr(str):
@@ -188,27 +257,89 @@ def test_current_supporting_evidence_passes_gate() -> None:
     assert outcome.trace.selected_evidence_keys == ("knowledge:chunk-1",)
     assert outcome.trace.evaluated_at == NOW
     assert outcome.trace.assessment_artifact_refs == (selected_assessment.assessment_artifact_ref,)
+    assert outcome.trace.retrieval_receipt_ref == retrieval_receipt().artifact_ref
+    assert outcome.gate_passed_selections[0].retrieval_receipt_ref == retrieval_receipt().artifact_ref
+
+
+@pytest.mark.parametrize(
+    "current_receipt",
+    [
+        retrieval_receipt(query_fingerprint=QueryFingerprint("HMAC-SHA-256", "query-hmac@synthetic-2", "e" * 64)),
+        retrieval_receipt(filter_snapshot_ref=artifact("other-filter-snapshot")),
+        retrieval_receipt(retrieval_config_ref=artifact("other-retrieval-config")),
+        retrieval_receipt(input_set_hash="e" * 64),
+    ],
+)
+def test_assessment_from_another_retrieval_context_cannot_be_replayed(
+    current_receipt: EvidenceGateRetrievalReceipt,
+) -> None:
+    selected = selection()
+    previous_receipt = retrieval_receipt()
+    previous_assessment = assessment(selected, gate_retrieval_receipt=previous_receipt)
+
+    assert_request_invalid(
+        request(
+            (selected,),
+            (previous_assessment,),
+            gate_retrieval_receipt=current_receipt,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: replace(
+            value,
+            query_fingerprint=QueryFingerprint("HMAC-SHA-256", "query-hmac@synthetic-2", "e" * 64),
+        ),
+        lambda value: replace(value, filter_snapshot_ref=artifact("other-filter-snapshot")),
+        lambda value: replace(value, retrieval_config_ref=artifact("other-retrieval-config")),
+        lambda value: replace(value, input_set_hash="e" * 64),
+    ],
+)
+def test_retrieval_receipt_values_must_remain_bound_to_receipt_artifact(mutation) -> None:
+    selected = selection()
+    gate_retrieval_receipt = retrieval_receipt()
+    selected_assessment = assessment(selected, gate_retrieval_receipt=gate_retrieval_receipt)
+
+    assert_request_invalid(
+        request(
+            (selected,),
+            (selected_assessment,),
+            gate_retrieval_receipt=mutation(gate_retrieval_receipt),
+        )
+    )
 
 
 def test_successful_outcome_does_not_alias_caller_owned_request_objects() -> None:
     selected = selection()
-    selected_assessment = assessment(selected)
-    gate_request = request((selected,), (selected_assessment,))
+    gate_retrieval_receipt = retrieval_receipt()
+    selected_assessment = assessment(selected, gate_retrieval_receipt=gate_retrieval_receipt)
+    gate_request = request(
+        (selected,),
+        (selected_assessment,),
+        gate_retrieval_receipt=gate_retrieval_receipt,
+    )
 
     outcome = evaluate(gate_request)
     passed = outcome.gate_passed_selections[0]
     original_locator = passed.selection.candidate.provenance.locator
     original_assessment_version = passed.assessment_artifact_ref.version
+    original_retrieval_receipt_version = passed.retrieval_receipt_ref.version
 
     object.__setattr__(selected.candidate.content_text, "_SensitiveText__value", "TAMPERED-AFTER-GATE")
     object.__setattr__(selected.candidate.provenance, "locator", "$.tampered")
     object.__setattr__(selected_assessment.assessment_artifact_ref, "version", "tampered-version")
+    object.__setattr__(gate_retrieval_receipt.artifact_ref, "version", "tampered-version")
 
     assert passed.selection.candidate.content_text.reveal() == "합성 복약 근거"
     assert passed.selection.candidate.provenance.locator == original_locator
     assert passed.assessment_artifact_ref.version == original_assessment_version
+    assert passed.retrieval_receipt_ref.version == original_retrieval_receipt_version
     assert outcome.trace is not None
     assert outcome.trace.assessment_artifact_refs[0].version == original_assessment_version
+    assert outcome.trace.retrieval_receipt_ref.version == original_retrieval_receipt_version
 
 
 def test_evidence_expiring_at_evaluation_time_is_stale_and_returns_no_selection() -> None:
@@ -676,6 +807,20 @@ def test_mismatched_eligibility_success_receipt_fails_closed() -> None:
     assert outcome.gate_passed_selections == ()
 
 
+def test_mismatched_retrieval_receipt_from_verifier_fails_closed() -> None:
+    selected = selection()
+
+    outcome = evaluate_evidence_gate(
+        request((selected,), (assessment(selected),)),
+        eligibility_verifier=MismatchingRetrievalReceiptVerifier(),
+    )
+
+    assert outcome.execution_status is EvidenceGateExecutionStatus.DEPENDENCY_ERROR
+    assert outcome.evidence_status is None
+    assert outcome.reason is EvidenceGateReason.RETRIEVAL_RECEIPT_MISMATCH
+    assert outcome.gate_passed_selections == ()
+
+
 def test_eligibility_verifier_exception_is_sanitized_dependency_error() -> None:
     selected = selection()
 
@@ -706,6 +851,20 @@ def test_eligibility_verifier_cannot_mutate_assessment_input(mutation: str) -> N
     assert outcome.gate_passed_selections == ()
 
 
+def test_eligibility_verifier_cannot_mutate_retrieval_receipt_input() -> None:
+    selected = selection()
+
+    outcome = evaluate_evidence_gate(
+        request((selected,), (assessment(selected),)),
+        eligibility_verifier=MutatingRetrievalReceiptVerifier(),
+    )
+
+    assert outcome.execution_status is EvidenceGateExecutionStatus.DEPENDENCY_ERROR
+    assert outcome.evidence_status is None
+    assert outcome.reason is EvidenceGateReason.ELIGIBILITY_VERIFICATION_ERROR
+    assert outcome.gate_passed_selections == ()
+
+
 def test_eligibility_snapshot_exception_is_sanitized_dependency_error() -> None:
     selected = selection()
     receipt = replace(
@@ -718,6 +877,7 @@ def test_eligibility_snapshot_exception_is_sanitized_dependency_error() -> None:
         selection=selected,
         coverage_key="medication-usage",
         stance=EvidenceAssessmentStance.SUPPORTS,
+        retrieval_receipt_ref=retrieval_receipt().artifact_ref,
         eligibility_receipt_ref=receipt,
         valid_from=NOW - timedelta(days=1),
         valid_until=NOW + timedelta(days=1),
