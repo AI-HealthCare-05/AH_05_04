@@ -41,16 +41,27 @@ class Prescription(Base):
     __table_args__ = (
         UniqueConstraint("id", "profile_id", name="uq_prescription_id_profile"),
         ForeignKeyConstraint(
+            ["active_version_id", "id"],
+            ["prescription_version.id", "prescription_version.prescription_id"],
+            name="fk_prescription_active_version",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
             ["document_id", "profile_id"],
             ["medical_document.id", "medical_document.profile_id"],
             name="fk_prescription_document_profile",
         ),
         Index("idx_prescription_source_ocr", "source_ocr_job_id"),
         Index("idx_prescription_profile_created", "profile_id", "created_at", "id"),
+        Index("idx_prescription_active_version", "active_version_id"),
         CheckConstraint("prescription_status = 'CONFIRMED'", name="chk_prescription_status"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    # Expand 단계에서는 기존 처방의 backfill 전 호환성을 위해 nullable입니다.
+    active_version_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
     # 문서당 확정 처방은 최대 1개입니다.
     document_id: Mapped[UUID] = mapped_column(
         UUIDChar(),
@@ -80,6 +91,11 @@ class Prescription(Base):
     medications: Mapped[list["Medication"]] = relationship(
         back_populates="prescription",
         order_by=lambda: Medication.display_order,
+    )
+    versions: Mapped[list["PrescriptionVersion"]] = relationship(
+        back_populates="prescription",
+        foreign_keys=lambda: [PrescriptionVersion.prescription_id],
+        order_by=lambda: PrescriptionVersion.version_number,
     )
     guides: Mapped[list["Guide"]] = relationship(back_populates="prescription", overlaps="profile")
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="prescription", overlaps="profile")
@@ -130,3 +146,115 @@ class Medication(Base):
     )
 
     prescription: Mapped["Prescription"] = relationship(back_populates="medications")
+
+
+class PrescriptionVersion(Base):
+    """사용자가 확정한 처방의 불변 snapshot."""
+
+    __tablename__ = "prescription_version"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["prescription_id"],
+            ["prescription.id"],
+            name="fk_prescription_version_prescription",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "prescription_id", name="uq_prescription_version_id_prescription"),
+        UniqueConstraint(
+            "prescription_id",
+            "version_number",
+            name="uq_prescription_version_number",
+        ),
+        CheckConstraint("version_number > 0", name="chk_prescription_version_number"),
+        Index(
+            "idx_prescription_version_prescription_created",
+            "prescription_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    prescribed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    prescription: Mapped["Prescription"] = relationship(
+        back_populates="versions",
+        foreign_keys=[prescription_id],
+    )
+    medications: Mapped[list["PrescriptionVersionMedication"]] = relationship(
+        back_populates="prescription_version",
+        order_by=lambda: PrescriptionVersionMedication.display_order,
+    )
+
+
+class PrescriptionVersionMedication(Base):
+    """PrescriptionVersion에 귀속되는 불변 확정 약물 snapshot."""
+
+    __tablename__ = "prescription_version_medication"
+    __table_args__ = (
+        UniqueConstraint(
+            "prescription_version_id",
+            "display_order",
+            name="uq_prescription_version_medication_order",
+        ),
+        CheckConstraint(
+            "dose_value IS NULL OR dose_value > 0",
+            name="chk_prescription_version_medication_dose",
+        ),
+        CheckConstraint(
+            "frequency_per_day IS NULL OR frequency_per_day > 0",
+            name="chk_prescription_version_medication_frequency",
+        ),
+        CheckConstraint(
+            "duration_days IS NULL OR duration_days > 0",
+            name="chk_prescription_version_medication_duration",
+        ),
+        CheckConstraint(
+            "display_order > 0",
+            name="chk_prescription_version_medication_display_order",
+        ),
+        CheckConstraint(
+            "length(trim(medication_name)) > 0",
+            name="chk_prescription_version_medication_name_nonblank",
+        ),
+        Index(
+            "idx_prescription_version_medication_version",
+            "prescription_version_id",
+            "display_order",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    prescription_version_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version.id",
+            name="fk_prescription_version_medication_version",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    medication_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    strength_text: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    dose_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    dose_unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    frequency_per_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timing_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    prescription_version: Mapped["PrescriptionVersion"] = relationship(back_populates="medications")
