@@ -115,9 +115,10 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 합성 DEV 질문 60개를 담은 `DRAFT` Dataset이다. 다섯 Topic, 여섯 Expression 유형, 20개 독립
 `transform_origin` group과 합성 Gold 20개를 가지며, study-wide 합성 corpus는 Gold 20개와 hard negative
 80개로 구성된 100개 record다. 60개 Case, Evidence Mapping, Dataset Manifest의 Gold provenance는 PR #341의
-실제 리뷰 이벤트에 결속된 `REVIEWED`이며, 별도 Dataset 승인과 Freeze는 아직 이루어지지 않았다. Dataset
+실제 리뷰 이벤트와 PR #354의 Dataset Custodian 승인 이벤트에 결속된 `APPROVED`다. Dataset은 계속 `DRAFT`이며
+Dataset Freeze와 HOLDOUT Freeze는 아직 이루어지지 않았다. Dataset
 Manifest의 canonical self-hash는
-`c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff`이다.
+`b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`이다.
 
 검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
 `evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·
@@ -132,12 +133,13 @@ Protected Artifact Receipt에 등록할 자리가 없기 때문이다. 따라서
 `ai_worker/tests/evaluation/`의 fixture·report 테스트가 고정한다. sidecar를 Loader 계약에 편입하려면 Schema
 Set 확장이 필요하며 이는 후속 작업이다.
 
-이 authoring graph는 아직 사람의 Gold 검토를 받지 않았고 모든 review provenance는 `DRAFT` 또는
-`NOT_STARTED`다. 실제 Knowledge Evidence Retrieval Adapter는 `NOT_IMPLEMENTED`이며 actual retrieval Run과
-baseline Metric은 존재하지 않는다. 따라서 이 DEV Dataset은 Release `PASS`를 만들 수 없고 Production
-공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에 없으며, protected runner·actual Adapter·HOLDOUT Freeze는
-후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지
-않는다. 현재 기계 상태와 결정적 Markdown projection은 `docs/validation/rag/issue-273/`에 있다.
+이 `APPROVED`는 60개 DEV Case, Evidence Mapping, Dataset Manifest의 review provenance에 한정된다. Dataset
+lifecycle은 계속 `DRAFT`이며 Dataset Freeze와 HOLDOUT Freeze는 완료되지 않았다. 실제 Knowledge Evidence
+Retrieval Adapter는 `NOT_IMPLEMENTED`이고 actual retrieval Run과 baseline Metric도 존재하지 않는다. 따라서 이
+DEV Dataset은 Release `PASS`를 만들 수 없고 Production 공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에
+없으며, protected runner·actual Adapter·HOLDOUT Freeze는 후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·
+상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지 않는다. 현재 기계 상태와 결정적 Markdown
+projection은 `docs/validation/rag/issue-273/`에 있다.
 
 ### Evaluation Schema Sets
 

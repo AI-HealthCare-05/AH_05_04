@@ -31,6 +31,9 @@ done
 set -a
 source "$PROD_ENV_FILE"
 set +a
+# CloudFront origin 검증 secret은 이후 실행되는 docker/ssh/scp 프로세스 환경에
+# 불필요하게 상속하지 않습니다. Nginx 설정을 만들 때 현재 Bash 안에서만 씁니다.
+export -n CLOUDFRONT_ORIGIN_VERIFY_SECRET 2>/dev/null || true
 # ---------- PostgreSQL 역할 설정 검증 ----------
 # 역할 이름이 같으면 Migration 역할의 NOSUPERUSER 설정이
 # Bootstrap/admin 역할에도 적용될 수 있으므로 배포 전에 차단합니다.
@@ -101,9 +104,9 @@ required_demo_variables=(
   APP_VERSION
   FRONTEND_VERSION
   AI_WORKER_VERSION
+  TLS_TERMINATION
   PRODUCTION_DOMAIN
   PRODUCTION_PUBLIC_ORIGIN
-  CERTBOT_EMAIL
   COOKIE_DOMAIN
   CORS_ALLOWED_ORIGINS
 )
@@ -152,10 +155,29 @@ if [ "$COOKIE_DOMAIN" != "$PRODUCTION_DOMAIN" ] ||
   exit 1
 fi
 
-if [[ ! "$CERTBOT_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
-  echo "CERTBOT_EMAIL 형식이 올바르지 않습니다."
-  exit 1
-fi
+case "$TLS_TERMINATION" in
+  cloudfront)
+    if [[ ! "$PRODUCTION_DOMAIN" =~ ^[A-Za-z0-9-]+\.cloudfront\.net$ ]]; then
+      echo "CloudFront 모드의 PRODUCTION_DOMAIN은 AWS가 발급한 *.cloudfront.net hostname이어야 합니다."
+      exit 1
+    fi
+
+    if [[ ! "${CLOUDFRONT_ORIGIN_VERIFY_SECRET:-}" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
+      echo "CLOUDFRONT_ORIGIN_VERIFY_SECRET은 32~128자의 영문자, 숫자, 밑줄, 하이픈이어야 합니다."
+      exit 1
+    fi
+    ;;
+  certbot)
+    if [[ ! "${CERTBOT_EMAIL:-}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
+      echo "Certbot 모드에서는 올바른 CERTBOT_EMAIL이 필요합니다."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "TLS_TERMINATION은 cloudfront 또는 certbot이어야 합니다."
+    exit 1
+    ;;
+esac
 
 for required_command in docker ssh scp; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
@@ -286,11 +308,17 @@ echo "${COLOR_BLUE}EC2 IP 또는 hostname을 입력하세요.${COLOR_NC}"
 read -r -p "EC2 IP: " ec2_ip
 echo ""
 
-echo "${COLOR_BLUE}현재 서버의 HTTP/HTTPS 구성을 선택하세요.${COLOR_NC}"
-echo "1) HTTP"
-echo "2) HTTPS"
-read -r -p "선택: " is_https
-echo ""
+if [ "$TLS_TERMINATION" = "cloudfront" ]; then
+  is_https="cloudfront"
+  echo "${COLOR_BLUE}CloudFront가 viewer HTTPS를 종료하므로 EC2에는 HTTP origin 구성을 적용합니다.${COLOR_NC}"
+  echo ""
+else
+  echo "${COLOR_BLUE}현재 서버의 HTTP/HTTPS 구성을 선택하세요.${COLOR_NC}"
+  echo "1) HTTP"
+  echo "2) HTTPS"
+  read -r -p "선택: " is_https
+  echo ""
+fi
 
 SSH_KEY_PATH="$HOME/.ssh/$ssh_key_file"
 
@@ -330,6 +358,15 @@ trap cleanup EXIT
 nginx_config_path="$NGINX_TEMP_DIR/default.conf"
 
 case "$is_https" in
+  cloudfront)
+    # Secret을 sed 인자로 넘기면 짧은 시간이라도 프로세스 목록에 노출될 수 있다.
+    # Bash 문자열 치환과 builtin printf만 사용해 임시 설정을 렌더링합니다.
+    nginx_config="$(<infra/nginx/prod_cloudfront.conf)"
+    nginx_config="${nginx_config//production.cloudfront.net/$PRODUCTION_DOMAIN}"
+    nginx_config="${nginx_config//__CLOUDFRONT_ORIGIN_VERIFY_SECRET__/$CLOUDFRONT_ORIGIN_VERIFY_SECRET}"
+    printf '%s\n' "$nginx_config" >"$nginx_config_path"
+    unset nginx_config
+    ;;
   1)
     # 최초 인증서 발급을 위한 HTTP bootstrap도 운영 도메인을 사용합니다.
     sed \
@@ -392,6 +429,12 @@ scp \
   -i "$SSH_KEY_PATH" \
   "$nginx_config_path" \
   "ubuntu@$ec2_ip":~/project/nginx/default.conf
+
+# CloudFront origin 검증 secret이 포함될 수 있으므로 원격 Nginx 설정도 제한합니다.
+ssh \
+  -i "$SSH_KEY_PATH" \
+  "ubuntu@$ec2_ip" \
+  'chmod 600 "$HOME/project/nginx/default.conf"'
 
 # ---------- 원격 명령에 전달할 값 안전하게 escape ----------
 printf -v remote_docker_username '%q' "$docker_user"
@@ -623,7 +666,10 @@ EOF
 
 echo "${COLOR_GREEN}Deployment finished.${COLOR_NC}"
 
-if [ "$is_https" = "1" ]; then
+if [ "$is_https" = "cloudfront" ]; then
+  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/v1/health${COLOR_NC}"
+  echo "${COLOR_BLUE}EC2 80번 inbound가 CloudFront origin-facing prefix list로만 제한됐는지 확인하세요.${COLOR_NC}"
+elif [ "$is_https" = "1" ]; then
   echo "${COLOR_BLUE}다음 단계: DNS가 ${PRODUCTION_DOMAIN}을 가리키는지 확인한 뒤 scripts/certbot.sh를 실행하세요.${COLOR_NC}"
 else
   echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/v1/health${COLOR_NC}"
