@@ -313,7 +313,7 @@ Kernel은 Safety Result v2의 `evidence_status` 또는 `release_decision`을 생
 `NO_HITS`는 Evidence가 불충분하다는 권위적 판정이 아니다. 후속 Evidence Gate가 자신의 승인 policy와
 Safety v2 계약에 따라 `execution_status`와 `evidence_status`를 별도로 결정한다. 승인 근거가 없는
 `SUCCEEDED/NO_HITS` 조합은 finalizer에서 `execution_status=NO_RESULT`,
-`evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE`로 변환한다.
+`evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback_code=NO_APPROVED_EVIDENCE`로 변환한다.
 
 ## Port 실행 Receipt
 
@@ -463,14 +463,20 @@ Production `source_version`은 Source가 제공한 불변 version의 존재 여�
 Production Adapter가 metadata와 형식을 함께 검증하고, API·Internal의 hash suffix를 해당 Snapshot
 `canonical_checksum`과 exact-match한다. Source producer의 API·Internal suffix 자체 결속 불일치는 Snapshot
 생성 전 수집 validation failure로 닫고, #362에서 정확한 ingestion `failure_code`를 고정하며
-`SOURCE_VERSION_CONFLICT`로 재사용하지 않는다. `SOURCE_VERSION_CONFLICT`는 동일 제공자 외부 version이 서로
-다른 Canonical 내용으로 재사용된 `external:` 수집에만 유지한다. Production Adapter가 저장된 suffix
-불일치를 발견하면 detached provenance 검증 실패인 `VALIDATION_ERROR`로 닫고 Safety finalizer가
+`SOURCE_VERSION_CONFLICT`로 재사용하지 않는다. `SOURCE_VERSION_CONFLICT`는 기존 Source Ingestion
+계약대로 이미 관측된 동일 `source_version`이 다른 canonical contract와 재사용된 수집 사건에
+유지하며 `external:` prefix만으로 한정하지 않는다. Production Adapter가 저장된 suffix 불일치를
+발견하면 detached provenance 검증 실패인 `VALIDATION_ERROR`로 닫고 Safety finalizer가
 `VALIDATION_FAILED`로 변환한다. Adapter
 검증 실패를 `CONFLICTED/CONFLICTING_EVIDENCE`로 분류하지 않는다. synthetic marker는 테스트 namespace에서만
 허용한다.
-현재 Source ingestion의 생산·길이·외부 Version 보존 경계는 #362가 소유하며 #178 Production Adapter의
-fail-closed 검증보다 먼저 완료돼야 한다.
+`external:` payload는 같은 Snapshot에 보존된 non-null `external_version`과 byte-for-byte exact-match하고,
+외부 불변 version이 없는 API·Internal Snapshot의 `external_version`은 `null`이어야 한다. Producer와
+Adapter의 불일치는 각각 수집 validation failure와 Retrieval `VALIDATION_ERROR/VALIDATION_FAILED`로 닫는다.
+전체 `source_version` 200자 상한에 prefix가 포함되므로 `external_version` payload는 최대 191자다.
+현재 Source ingestion의 생산·길이·외부 Version 보존·결속 경계와 Snapshot 없는 conflict의 Operation·시도
+version·canonical contract 감사 근거는 #362가 소유하며, #178 Production Adapter의 fail-closed 검증과
+REQUEST Guard conflict origin 결속보다 먼저 완료돼야 한다.
 
 승인된 새 `source_version`은 같은 `canonical_checksum`·bridge `content_sha256`을 가져도 새 Runtime identity와
 새 Evaluation bridge ID·mapping manifest를 만들고 재평가한다. `NO_CHANGE`로 새 Snapshot·version이 생성되지
@@ -521,8 +527,10 @@ Trigram·PostgreSQL `ts_rank_cd` 순위를 같은 방식으로 융합한다. 부
 통과시키지 않는다.
 
 Production과 Evaluation 사이의 JSON artifact hash는 각 hash domain의 projection을 RFC 8785 JCS bytes로
-직렬화한다. Object key는 UTF-16 code unit 순서를 사용한다. NFC, 집합 배열 정렬, 명시적 `null`, 제외 필드와
-Envelope는 domain별 versioned projection이 소유하며 JCS가 이를 대신하지 않는다. 이 synthetic adapter의
+직렬화한다. Object key는 UTF-16 code unit 순서를 사용한다. Unicode 정규화, 집합 배열 정렬, 명시적 `null`,
+제외 필드와 Envelope는 domain별 versioned projection이 소유하며 JCS가 이를 대신하지 않는다. 따라서 JCS가
+모든 문자열의 NFC 변환을 뜻하지 않으며, 현재 `mfds-product-approval@1` Snapshot checksum은 원문 Unicode를
+보존하는 Source Ingestion 계약을 유지한다. 이 synthetic adapter의
 `json.dumps(sort_keys=True)` hash를 Production artifact hash로 승격하지 않는다. Snapshot, Index,
 configuration과 Evaluation artifact hash는 서로 다른 JSON preimage다. Evidence content hash는 canonical
 text UTF-8 bytes, query digest는 versioned HMAC preimage를 사용하며 JCS 대상이 아니다.

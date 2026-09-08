@@ -57,10 +57,12 @@ divergence 8건을 해소한다. 이 Decision은 Authority Manifest
 
 ## Canonical JSON과 hash domain
 
-RFC 8785 JCS Object key는 UTF-16 code unit 순서다. Unicode NFC, 집합 배열 정렬, 명시적 `null`, 제외 필드와
-Envelope는 각 JSON hash domain의 versioned projection이 JCS 전에 소유한다. Score·threshold는 JSON float
-대신 canonical decimal 문자열을 유지한다. `json.dumps(sort_keys=True)` hash는 Production JSON artifact에
-사용할 수 없다.
+RFC 8785 JCS Object key는 UTF-16 code unit 순서다. Unicode 정규화, 집합 배열 정렬, 명시적 `null`, 제외
+필드와 Envelope는 각 JSON hash domain의 versioned projection이 JCS 전에 소유한다. 따라서 JCS 사용 자체가
+모든 문자열의 NFC 변환을 뜻하지 않는다. 특히 현재 Source Ingestion의 `mfds-product-approval@1` Snapshot
+checksum은 원문 Unicode를 보존하고 NFC를 적용하지 않는 정규 계약을 유지하며, 이 Decision이 그 preimage를
+변경하지 않는다. Score·threshold는 JSON float 대신 canonical decimal 문자열을 유지한다.
+`json.dumps(sort_keys=True)` hash는 Production JSON artifact에 사용할 수 없다.
 
 Snapshot canonical checksum, Evidence Index corpus manifest hash, Retrieval configuration hash와 Evaluation
 artifact hash는 각각 다른 JSON preimage를 JCS로 직렬화한다. 개별 Evidence content hash는 Index가 고정한
@@ -97,24 +99,29 @@ opaque bridge reference를 만든다.
 
 ## Retrieval 상태와 Safety 변환
 
-Retrieval receipt의 필드명은 `retrieval_execution_status`이고 terminal 허용값은 `SUCCEEDED | TIMED_OUT |
+Retrieval receipt의 필드명은 `retrieval_execution_status`이고 #178 P0 terminal 허용값은 `SUCCEEDED |
 DEPENDENCY_ERROR | VALIDATION_ERROR`다. `retrieval_run.status`는 실행 중 `RUNNING`, 완료 뒤에는 같은 terminal
-값 중 하나를 저장한다. `NO_HITS`는 `SUCCEEDED`와 결합되는 diagnostic code이며 Retrieval 단계에서
-`NO_RESULT`로 승격하지 않는다.
+값 중 하나를 저장한다. Retrieval dependency의 timeout은 `DEPENDENCY_ERROR`로 정규화하며 Safety Result의
+`TIMED_OUT/PROVIDER_TIMEOUT`은 Provider 호출 timeout에만 사용한다. `NO_HITS`는 `SUCCEEDED`와 결합되는
+diagnostic code이며 Retrieval 단계에서 `NO_RESULT`로 승격하지 않는다.
 
 | Retrieval·Gate·후속 결과 | Safety finalizer 결과 |
 | --- | --- |
 | Retrieval `SUCCEEDED/CANDIDATES_RERANKED` + Evidence `SUFFICIENT` + 생성·검증 성공 | `execution_status=SUCCEEDED`; 별도 Release Gate가 공개 여부 결정 |
-| Retrieval `SUCCEEDED/NO_HITS`, 승인 근거 없음, Retrieval 근거 부족 | `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE` |
-| Source producer가 기록한 `SOURCE_VERSION_CONFLICT` | `execution_status=NO_RESULT`, `evidence_status=CONFLICTED`, `release_decision=REJECTED`, `fallback=CONFLICTING_EVIDENCE` |
-| Source TTL 만료 | `execution_status=NO_RESULT`, `evidence_status=STALE`, `release_decision=REJECTED`, `fallback=NO_APPROVED_EVIDENCE` |
-| 지원 범위 밖 또는 사용자 Context에 미적용 | 승인 policy가 `execution_status=SUCCEEDED`, `release_decision=LIMITED`와 Claim 생략·한계 안내를 결정할 수 있음 |
-| Retrieval `TIMED_OUT` | `execution_status=TIMED_OUT`, `release_decision=REJECTED`, 승인 timeout fallback |
-| Retrieval `DEPENDENCY_ERROR` | `execution_status=DEPENDENCY_ERROR`, `release_decision=REJECTED`, `fallback=DEPENDENCY_UNAVAILABLE` |
-| Retrieval `VALIDATION_ERROR` | `execution_status=VALIDATION_ERROR`, `release_decision=REJECTED`, `fallback=VALIDATION_FAILED` |
+| Retrieval `SUCCEEDED/NO_HITS`, 승인 근거 없음, Retrieval 근거 부족 | `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback_code=NO_APPROVED_EVIDENCE` |
+| Runtime REQUEST Guard가 pinned Source·Operation·요청 version에 authoritative `SOURCE_VERSION_CONFLICT` 감사 근거를 exact-bind | `execution_status=NO_RESULT`, `evidence_status=CONFLICTED`, `release_decision=REJECTED`, `fallback_code=CONFLICTING_EVIDENCE` |
+| Source TTL 만료 | `execution_status=NO_RESULT`, `evidence_status=STALE`, `release_decision=REJECTED`, `fallback_code=NO_APPROVED_EVIDENCE` |
+| 지원 범위 밖 | `execution_status=SUCCEEDED`, `evidence_status=INSUFFICIENT`, `release_decision=LIMITED`, `fallback_code=UNSUPPORTED_REQUEST`; 승인된 한계 안내만 공개 |
+| 사용자 Context에 미적용 | `execution_status=SUCCEEDED`, `evidence_status=INSUFFICIENT`, `release_decision=LIMITED`, `fallback_code=null`; 해당 Claim 생략·승인된 한계 안내 |
+| Retrieval `DEPENDENCY_ERROR` | `execution_status=DEPENDENCY_ERROR`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback_code=DEPENDENCY_UNAVAILABLE` |
+| Retrieval `VALIDATION_ERROR` | `execution_status=VALIDATION_ERROR`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`, `fallback_code=VALIDATION_FAILED` |
 
-Safety finalizer가 이 표를 소유한다. Evidence Gate 단독 성공이나 Retrieval `SUCCEEDED`만으로 공개 가능 또는
-Safety `SUCCEEDED`를 만들지 않는다.
+Safety finalizer가 이 표를 소유한다. 수집 이력의 unbound 또는 latest `SOURCE_VERSION_CONFLICT`를 현재 Job에
+직접 투영하지 않는다. #178에서 위 exact origin 결속을 증명할 수 없으면 충돌 Source를 Runtime selection에서
+차단할 뿐 `evidence_status=CONFLICTED`를 추론하지 않는다. Evidence Gate 단독 성공이나 Retrieval
+`SUCCEEDED`만으로 공개 가능 또는 Safety `SUCCEEDED`를 만들지 않는다. Kernel·Evidence Gate의 중간 outcome은
+근거 판정 전에 실행이 실패하면 nullable `evidence_status`를 가질 수 있지만, 영속 Safety Result finalizer는
+위 표의 완결된 상태 조합으로 변환한다.
 
 ## Source version과 Evaluation bridge 문법
 
@@ -130,12 +137,24 @@ API·Internal 형식의 hash suffix는 같은 `source_snapshot_id`의 `canonical
 Source producer와 Production Retrieval Adapter가 각각 이 결속을 검증한다. Source producer의 수집 시점
 불일치는 Snapshot을 생성하지 않고 수집 validation failure로 닫는다. 이 실패의 정확한 ingestion
 `failure_code`는 #362에서 Source Ingestion 계약과 함께 고정하며 `SOURCE_VERSION_CONFLICT`로 재사용하지
-않는다. `SOURCE_VERSION_CONFLICT`는 기존 계약대로 동일한 제공자 외부 version이 재사용됐지만 Canonical
-내용이 다른 `external:` 수집 사건에만 유지한다. 이미 저장된 Snapshot을 읽는
+않는다. `SOURCE_VERSION_CONFLICT`는 기존 Source Ingestion 계약대로 이미 관측된 동일
+`source_version`이 서로 다른 canonical contract와 재사용된 수집 사건에 유지한다. 제공자의
+불변 외부 version 재사용과 Canonical 내용 불일치는 이 사건의 대표적 경로이지만,
+`external:` prefix만으로 한정하지 않는다. #362는 Snapshot이 생성되지 않는 conflict도 Operation, 시도한
+`source_version`과 비교한 canonical contract를 append-only 감사 근거로 보존하여 후속 Guard가 origin을
+검증할 수 있게 한다. 이미 저장된 Snapshot을 읽는
 Production Retrieval Adapter에서 suffix와 `canonical_checksum`이 다르면 detached 또는 변조된 provenance
 결속 실패이므로 `retrieval_execution_status=VALIDATION_ERROR`로 닫고 Safety finalizer가
-`execution_status=VALIDATION_ERROR`, `release_decision=REJECTED`, `fallback=VALIDATION_FAILED`로 변환한다.
+`execution_status=VALIDATION_ERROR`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`,
+`fallback_code=VALIDATION_FAILED`로 변환한다.
 Adapter 검증 실패를 `evidence_status=CONFLICTED` 또는 `CONFLICTING_EVIDENCE`로 분류하지 않는다.
+
+`external:` payload는 같은 Snapshot에 보존된 non-null `external_version`과 byte-for-byte exact-match해야 한다.
+외부 불변 version이 없는 API·Internal 경로의 `external_version`은 `null`이어야 한다. #362 producer와
+Production Retrieval Adapter가 각각 이 결속을 검증하며, Adapter에서 발견한 불일치는 위와 같은
+`VALIDATION_ERROR/VALIDATION_FAILED`로 닫는다. 전체 200자 상한에는 prefix도 포함되므로 `external:` payload의
+실질 상한은 191자다. 정규 DB의 `external_version VARCHAR(200)` 물리 용량을 Production 문법 허용치로
+오인하지 않으며 #362가 191/192자 경계를 검증한다.
 
 Synthetic marker는 테스트 전용 namespace에서만 허용한다. Evaluation bridge의 네 stable ID는
 `^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$`를 따르고 `source_version`과

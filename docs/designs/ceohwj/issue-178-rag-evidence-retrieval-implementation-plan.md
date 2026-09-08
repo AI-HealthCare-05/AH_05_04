@@ -1205,9 +1205,11 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
 2. **#166 완료 후 #167/#168 통합:** PR #260의 pure Candidate Index logic을 재구현하지 않고 실제 Catalog
    export와 DB persistence를 연결한다. #166 D-05의 Candidate Catalog projection hash, Runtime medication
    Catalog manifest hash와 PR #329/#167 v2 Catalog envelope 계산식은 이 Decision에서 변경하지 않는다.
-3. **#362 Source 생산 경계:** Source ingestion이 Production `source_version` 생성·검증, 외부 Version 보존,
-   정규 200자 상한과 파생 Freshness·Snapshot 승인 경계를 구현한다. #178의 fail-closed Source version 검증보다
-   먼저 완료한다.
+3. **#362 Source 생산 경계:** Source ingestion이 Production `source_version` 생성·검증, 외부 Version 보존·결속,
+   정규 200자 상한과 파생 Freshness·Snapshot 승인 경계를 구현한다. Snapshot이 없는 conflict run에도 Operation,
+   시도한 `source_version`과 비교 canonical contract를 append-only로 보존한다. #178의 fail-closed Source
+   version 검증과 conflict origin 결속보다 먼저 완료한다. `external:` prefix를 포함한 총 길이 기준으로
+   payload 191자는 허용하고 192자는 거부하는 경계 테스트를 포함한다.
 4. **#178 Production Adapter:** `PD-315-20260908`의 `rrf-rank-fusion@1` 공식과 안정 Chunk 좌표
    dedupe·content hash 충돌 검증·exact-rational 비교·fraction receipt를 구현한다. RRF는
    `KNOWLEDGE_CHUNK` 전용이고 Rule Evidence는 `rule_check` 경로를 사용한다. P0 승인 기본 configuration은
@@ -1239,9 +1241,16 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
   Member를 가리키지 않음
 - API·Internal `source_version` hash suffix가 해당 Snapshot `canonical_checksum`과 exact-match하지 않는데
   Retrieval Adapter에서 Retrieval `VALIDATION_ERROR`와 Safety `VALIDATION_FAILED`로 닫지 않거나,
-  Source producer에서 Snapshot 생성 전 수집 validation failure로 닫지 않고 외부 version 재사용
-  충돌 전용인 `SOURCE_VERSION_CONFLICT`로 오분류함. Producer의 정확한 ingestion `failure_code`는
-  #362에서 Source Ingestion 계약과 함께 고정함
+  Source producer에서 Snapshot 생성 전 수집 validation failure로 닫지 않고 이미 관측된 동일
+  `source_version`의 canonical contract 충돌인 `SOURCE_VERSION_CONFLICT`로 오분류함. Producer의 정확한
+  ingestion `failure_code`는 #362에서 Source Ingestion 계약과 함께 고정함
+- `external:` payload가 Snapshot의 non-null `external_version`과 byte-for-byte exact-match하지 않거나,
+  외부 불변 version이 없는 API·Internal Snapshot에 `external_version`이 남아 있는데 producer 또는
+  Retrieval Adapter가 각각 fail-closed하지 않음
+- Source Snapshot checksum을 포함한 모든 JCS domain의 문자열을 일괄 NFC 변환하여 원문 Unicode를 보존하는
+  `mfds-product-approval@1` preimage를 변경함
+- pinned Source·Operation·요청 version과 authoritative conflict signal의 exact origin 결속 없이 latest 또는
+  unbound `SOURCE_VERSION_CONFLICT`를 현재 Job의 `evidence_status=CONFLICTED`로 투영함
 - ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
 - Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
 - Production `source_version`을 Source metadata와 함께 검증하지 않거나 Runtime identity와 Evaluation bridge
