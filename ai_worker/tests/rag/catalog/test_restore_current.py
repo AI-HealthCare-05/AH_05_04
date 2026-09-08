@@ -1,8 +1,10 @@
 """복원 자료의 당시 승인과 현재 승인 포트의 결과를 구분합니다."""
 
 import asyncio
+import hashlib
 import json
 import traceback
+import unicodedata
 from dataclasses import replace
 from unittest.mock import AsyncMock
 
@@ -15,7 +17,7 @@ from ai_worker.tasks.rag.catalog.restore import CatalogStorageRestoreError, rest
 from ai_worker.tasks.rag.catalog.storage import prepare_catalog_storage
 from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
 from ai_worker.tests.rag.catalog.test_export import _export
-from ai_worker.tests.rag.catalog.test_hash_contract_v2 import approved_export, candidate
+from ai_worker.tests.rag.catalog.test_hash_contract_v2 import FIXTURE, approved_export, candidate
 from ai_worker.tests.rag.catalog.test_restore import storage_plan
 from ai_worker.tests.rag.catalog.test_storage import members_from
 
@@ -44,7 +46,18 @@ async def test_current_receipt_preserves_frozen_bytes_and_public_handoff(reverse
         export_checksum=expected.export_checksum,
         source_refs=expected.catalog.source_refs,
     )
-    assert isinstance(candidate(restored), CandidateIndexBuildSuccess)
+    frozen = json.loads((FIXTURE / "expected.json").read_bytes())
+    assert restored.catalog_jsonl == (FIXTURE / "catalog.jsonl").read_bytes()
+    assert restored.manifest_json == (FIXTURE / "manifest.json").read_bytes()
+    assert hashlib.sha256(restored.catalog_jsonl).hexdigest() == frozen["export_checksum"]
+    assert hashlib.sha256(restored.manifest_json).hexdigest() == frozen["manifest_file_checksum"]
+    result = candidate(restored)
+    assert isinstance(result, CandidateIndexBuildSuccess)
+    assert result.manifest.catalog_manifest_hash == frozen["catalog_manifest_hash"]
+    assert result.manifest.product_identity_count == 2
+    assert result.manifest.product_name_count == 2
+    assert result.manifest.approved_alias_count == 1
+    assert any(unicodedata.normalize("NFC", member.display_text) != member.display_text for member in result.members)
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,8 @@
 
 ## 현재 인계 계약
 
+#166 후속의 DB 비의존 저장·복원 인계 결과는 [6단계 인계 증빙](catalog-storage-handoff-166.md)에 정리한다. 실제 PostgreSQL 인계는 아직 검증하지 않았다.
+
 PR #329의 현재 공개 입력은 `CatalogExportArtifacts`, schema는 `medication-catalog-v2`다.
 manifest·JSONL·typed Catalog 결속과 승인 gate를 검증한 뒤 Candidate Index를 생성한다.
 `CandidateCatalogExport`는 내부 typed 값이며 단독 공개 입력이 아니다.

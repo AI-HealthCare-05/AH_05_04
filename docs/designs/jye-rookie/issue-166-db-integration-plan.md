@@ -1,6 +1,6 @@
 # #166 Catalog DB 통합 후속 구현 계획
 
-- 상태: 1~3단계 완료, 4단계 인계 대기, 5단계 독립 복원·현재 승인 재검사 코드 구현. 공유 DB 계약 승인·실제 적재 완료가 아니다.
+- 상태: 1~3단계 완료, 4단계 인계 대기, 5단계 독립 복원·현재 승인 재검사 코드와 6단계 DB 비의존 인계 증빙 준비 완료. 공유 DB 계약 승인·실제 적재 완료가 아니다.
 - 작성: 김지혜, 2026-09-08
 - 구현 담당: 김지혜. Candidate·RAG 의미 계약 리뷰: 정현우. DB·FK·transaction 리뷰: 송은영.
 - 기준: develop `e20acb9` (#353 병합 포함), 작업 브랜치 `feat/166-catalog-db-integration`.
@@ -212,3 +212,14 @@ RAG Mypy 38파일 통과. 실제 PostgreSQL·승인 저장소·Runtime은 실행
 
 D-02는 미확정 그대로다. 이 작업은 run 생성·ingestion run 대체·FK·migration을 추가하지 않는다.
 기존 public Candidate v2 입력·hash 의미도 유지한다. 실제 DB adapter·transaction 통합은 보류 상태다.
+
+
+## 6단계 — DB 비의존 Candidate 인계·PR 초안 준비
+
+[인계 증빙](../../testing/catalog-storage-handoff-166.md)에 공개 v2 입력, 고정 파일/digest,
+재현 명령, 현재 승인 포트의 한계와 DB 연결 후 재검증 항목을 정리했다. 복원·승인 재검사 후
+공개 Candidate build에서 제품 Identity/이름/승인 Alias 수와 NFD 원문 보존을 확인한다.
+Catalog·Candidate 회귀 278건 통과. #167 두 문서의 공개 입력은 이미 v2와 일치해 수정하지 않았다.
+
+PR 제목·본문은 로컬 초안으로 별도 준비하며 자동 생성/게시하지 않는다. 실제 DB 조회가 빠져
+있으므로 6단계 전체 및 #166 완료로 표시하지 않는다. D-02는 미확정 상태를 그대로 유지한다.
