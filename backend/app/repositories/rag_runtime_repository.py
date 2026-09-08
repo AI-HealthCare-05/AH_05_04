@@ -94,6 +94,7 @@ class RagRuntimeEnvironmentTransitionCreate:
 @dataclass(frozen=True, slots=True)
 class RagReleaseEvaluationApprovalCreate:
     bundle_id: UUID
+    bundle_manifest_hash: str
     eval_run_id: UUID
     approval_scope: str
     eval_decision_status: EvaluationDecisionStatus

@@ -35,6 +35,8 @@ def _raise_if_runtime_data_exists() -> None:
         "rag_runtime_release_bundle",
         "rag_runtime_execution_manifest",
     )
+    bind = op.get_bind()
+    bind.execute(sa.text("LOCK TABLE " + ", ".join(tables) + " IN ACCESS EXCLUSIVE MODE"))
     non_empty = [table for table in tables if _has_rows(table)]
     if non_empty:
         raise RuntimeError(
@@ -268,6 +270,7 @@ def upgrade() -> None:
         "rag_release_evaluation_approval",
         sa.Column("id", sa.CHAR(36), nullable=False),
         sa.Column("bundle_id", sa.CHAR(36), nullable=False),
+        sa.Column("bundle_manifest_hash", sa.String(length=64), nullable=False),
         sa.Column("eval_run_id", sa.CHAR(36), nullable=False),
         sa.Column("eval_decision_status", sa.String(length=20), nullable=False),
         sa.Column("approval_scope", sa.String(length=80), nullable=False),
@@ -276,9 +279,9 @@ def upgrade() -> None:
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(
-            ["bundle_id"],
-            ["rag_runtime_release_bundle.id"],
-            name="fk_rag_release_eval_approval_bundle",
+            ["bundle_id", "bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_rag_release_eval_approval_bundle_manifest",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -289,6 +292,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("bundle_id", "eval_run_id", "approval_scope", name="uq_rag_release_eval_approval_scope"),
+        sa.CheckConstraint(
+            "length(bundle_manifest_hash) = 64", name="chk_rag_release_eval_approval_bundle_hash_length"
+        ),
         sa.CheckConstraint("length(trim(approval_scope)) > 0", name="chk_rag_release_eval_approval_scope_nonblank"),
         sa.CheckConstraint(
             f"approval_status IN ({_sql_in_list(APPROVAL_STATUSES)})", name="chk_rag_release_eval_approval_status"

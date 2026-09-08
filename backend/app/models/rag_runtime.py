@@ -314,12 +314,19 @@ class RagReleaseEvaluationApproval(Base):
     __table_args__ = (
         UniqueConstraint("bundle_id", "eval_run_id", "approval_scope", name="uq_rag_release_eval_approval_scope"),
         ForeignKeyConstraint(
+            ["bundle_id", "bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_rag_release_eval_approval_bundle_manifest",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
             ["eval_run_id", "eval_decision_status"],
             ["eval_run.id", "eval_run.decision_status"],
             name="fk_rag_release_eval_approval_run_decision",
             ondelete="RESTRICT",
         ),
         CheckConstraint("length(trim(approval_scope)) > 0", name="chk_rag_release_eval_approval_scope_nonblank"),
+        CheckConstraint("length(bundle_manifest_hash) = 64", name="chk_rag_release_eval_approval_bundle_hash_length"),
         CheckConstraint(
             f"approval_status IN ({_sql_in_list(RagRuntimeApprovalStatus)})",
             name="chk_rag_release_eval_approval_status",
@@ -337,11 +344,8 @@ class RagReleaseEvaluationApproval(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    bundle_id: Mapped[UUID] = mapped_column(
-        UUIDChar(),
-        ForeignKey("rag_runtime_release_bundle.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    bundle_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    bundle_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     eval_run_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     eval_decision_status: Mapped[EvaluationDecisionStatus] = mapped_column(
         Enum(EvaluationDecisionStatus, native_enum=False, length=20, values_callable=_enum_values),

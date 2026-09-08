@@ -187,6 +187,7 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
     approval = await repository.create_evaluation_approval(
         RagReleaseEvaluationApprovalCreate(
             bundle_id=bundle.id,
+            bundle_manifest_hash=bundle.bundle_manifest_hash,
             eval_run_id=eval_run.id,
             eval_decision_status=EvaluationDecisionStatus.PASS,
             approval_scope="END_TO_END_RAG",
@@ -265,8 +266,45 @@ async def test_approved_evaluation_requires_passed_eval_run(db_session: AsyncSes
         await repository.create_evaluation_approval(
             RagReleaseEvaluationApprovalCreate(
                 bundle_id=bundle.id,
+                bundle_manifest_hash=bundle.bundle_manifest_hash,
                 eval_run_id=eval_run.id,
                 eval_decision_status=EvaluationDecisionStatus.FAIL,
+                approval_scope="END_TO_END_RAG",
+                approval_status=RagRuntimeApprovalStatus.APPROVED,
+                approved_by="reviewer",
+                approved_at=datetime.now(config.TIMEZONE),
+            )
+        )
+
+
+async def test_evaluation_approval_bundle_hash_must_match_bundle(db_session: AsyncSession) -> None:
+    eval_run = await _create_passed_eval_run(db_session)
+    repository = RagRuntimeRepository(db_session)
+    manifest = await repository.create_execution_manifest(
+        RagRuntimeExecutionManifestCreate(
+            manifest_key=f"rag-runtime-{uuid4().hex[:8]}",
+            manifest_version="1.0.0",
+            manifest_hash=_hash("c"),
+            schema_version="runtime-manifest-v1",
+            git_commit_sha="abcdef1",
+        )
+    )
+    bundle = await repository.create_release_bundle(
+        RagRuntimeReleaseBundleCreate(
+            bundle_key=f"local-rag-runtime-{uuid4().hex[:8]}",
+            bundle_version="1.0.0",
+            execution_manifest_id=manifest.id,
+            bundle_manifest_hash=_hash("d"),
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        await repository.create_evaluation_approval(
+            RagReleaseEvaluationApprovalCreate(
+                bundle_id=bundle.id,
+                bundle_manifest_hash=_hash("e"),
+                eval_run_id=eval_run.id,
+                eval_decision_status=EvaluationDecisionStatus.PASS,
                 approval_scope="END_TO_END_RAG",
                 approval_status=RagRuntimeApprovalStatus.APPROVED,
                 approved_by="reviewer",
