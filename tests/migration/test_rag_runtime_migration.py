@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -180,6 +180,12 @@ async def _cleanup_runtime_tables() -> None:
                 )
                 if table_exists.scalar_one() is not None:
                     await connection.execute(text(f"DELETE FROM {table_name}"))
+
+
+@pytest.fixture(autouse=True)
+def _clean_runtime_data_after_test() -> Iterator[None]:
+    yield
+    asyncio.run(_cleanup_runtime_tables())
 
 
 def _upgrade_to_runtime() -> None:
