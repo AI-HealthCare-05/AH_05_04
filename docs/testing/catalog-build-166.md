@@ -275,3 +275,20 @@ upgrade/rollback 실행 검증이 아니다. 전체 Backend·PostgreSQL·Redis �
 
 이는 메모리와 합성 bytes를 이용한 복원 검증이다. 실제 PostgreSQL adapter·commit/rollback·재시도
 통합 테스트는 아직 수행하지 않았고, 4단계 인계 전 5단계 전체 완료로 표시하지 않는다.
+
+
+## #166 후속 5단계 재개 — 현재 승인 대조
+
+`test_restore_current.py`는 복원된 과거 승인과 현재 verifier 응답을 분리해 검증한다.
+정상/역순 Source receipt는 고정 v2 bytes 그대로 공개 Candidate 인계를 통과한다.
+포트 없음, 거부 receipt, 다른 버전/checksum/receipt, Source subset·중복·미승인·STALE·불완전은
+반환을 차단한다. 같은 자료를 다시 읽어도 verifier를 다시 호출하며 첫 성공 뒤 철회를 캐시하지 않는다.
+손상·미승인 저장 자료는 승인 서비스 호출 전 차단하고, 서비스 예외 원문 비노출·취소 전파도 검사한다.
+
+실제 승인 DB·시간에 따른 만료 판단·PostgreSQL 왕복·동시 철회 잠금의 통합 증빙은 아니다.
+D-02는 미확정이며 run/FK를 구현하지 않았다. 실제 DB 통합 완료로 기록하지 않는다.
+
+검증 결과: 신규 승인 재검사 18건 포함 RAG 전체 **1,016 passed**. RAG Ruff 통과, 변경 Python
+format 통과, RAG Mypy **38 source files** 통과, `git diff --check` 통과.
+실행: `PYTHONPATH=backend:. python -m pytest ai_worker/tests/rag -q`,
+`MYPYPATH=backend:. python -m mypy ai_worker/tasks/rag`. PostgreSQL·실제 승인 저장소는 실행하지 않았다.

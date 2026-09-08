@@ -133,3 +133,21 @@ D-02 미확정 유지, 별도 run 임의 생성 금지, ingestion run으로 정�
 
 합성 bytes를 사용하는 복원 검증과 실제 PostgreSQL commit/rollback·재시도 검증은 별개다.
 후자는 4단계 완료 후 5단계의 남은 범위로 수행한다. 임시 테이블이나 별도 run을 만들지 않는다.
+
+
+## 5단계 재개 — 복원 뒤 현재 승인 재검사
+
+`restore_current_catalog_storage`는 기존 복원 검증을 통과한 자료에 대해
+`CatalogApprovalVerifier`를 매번 호출하고, 현재 결과가 저장 당시 v2 approval payload와
+동일하게 결속되는 경우에만 원래 `CatalogExportArtifacts`를 반환한다.
+
+- 검증 포트 없음·receipt 없음·회수/만료 등으로 부적격한 결과·Source 범위/상태 불일치는 반환을 차단한다.
+- 합성 테스트에서 verifier의 거부 결과를 주입한다. 실제 회수/만료·권한 조회 구현은 아직 연결하지 않았다.
+- Source receipt 순서 차이는 현재 producer 규칙으로 정규화하지만, 새 receipt ID로 기존 manifest와
+  hash를 조용히 바꾸지 않는다. 새 승인 근거의 재발행 절차는 별도 adapter 설계·리뷰 대상이다.
+- 이미 저장된 NOT_APPROVED/STALE 자료를 이 함수에서 승인 상태로 승격하지 않는다.
+- 승인 서비스 실패는 원문 없는 내부 복원 오류로 처리하며 비동기 취소는 전파한다.
+- 이는 호출 시점의 승인 대조다. DB 잠금·원자 저장·이후 소비까지의 동시 철회 방지를 보장하지 않는다.
+
+D-02는 미확정 그대로다. 이 작업은 run 생성·ingestion run 대체·FK·migration을 추가하지 않는다.
+기존 public Candidate v2 입력·hash 의미도 유지한다. 실제 DB adapter·transaction 통합은 보류 상태다.

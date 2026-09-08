@@ -1,6 +1,6 @@
 # #166 Catalog DB 통합 후속 구현 계획
 
-- 상태: 1~3단계 완료, 4단계 인계 대기, 5단계 독립 복원 코드만 구현. 공유 DB 계약 승인·실제 적재 완료가 아니다.
+- 상태: 1~3단계 완료, 4단계 인계 대기, 5단계 독립 복원·현재 승인 재검사 코드 구현. 공유 DB 계약 승인·실제 적재 완료가 아니다.
 - 작성: 김지혜, 2026-09-08
 - 구현 담당: 김지혜. Candidate·RAG 의미 계약 리뷰: 정현우. DB·FK·transaction 리뷰: 송은영.
 - 기준: develop `e20acb9` (#353 병합 포함), 작업 브랜치 `feat/166-catalog-db-integration`.
@@ -194,3 +194,21 @@ Candidate에는 복원된 `CatalogExportArtifacts`만 전달하며 기존 공개
 
 5단계 선행 코드 검증: 신규 복원 테스트 35건, RAG 전체 998건 통과. Ruff 및 변경 파일 format 통과,
 RAG Mypy 38파일 통과. 실제 PostgreSQL·승인 저장소·Runtime은 실행하지 않았다.
+
+
+## 5단계 재개 — 복원 뒤 현재 승인 재검사
+
+`restore_current_catalog_storage`는 기존 복원 검증을 통과한 자료에 대해
+`CatalogApprovalVerifier`를 매번 호출하고, 현재 결과가 저장 당시 v2 approval payload와
+동일하게 결속되는 경우에만 원래 `CatalogExportArtifacts`를 반환한다.
+
+- 검증 포트 없음·receipt 없음·회수/만료 등으로 부적격한 결과·Source 범위/상태 불일치는 반환을 차단한다.
+- 합성 테스트에서 verifier의 거부 결과를 주입한다. 실제 회수/만료·권한 조회 구현은 아직 연결하지 않았다.
+- Source receipt 순서 차이는 현재 producer 규칙으로 정규화하지만, 새 receipt ID로 기존 manifest와
+  hash를 조용히 바꾸지 않는다. 새 승인 근거의 재발행 절차는 별도 adapter 설계·리뷰 대상이다.
+- 이미 저장된 NOT_APPROVED/STALE 자료를 이 함수에서 승인 상태로 승격하지 않는다.
+- 승인 서비스 실패는 원문 없는 내부 복원 오류로 처리하며 비동기 취소는 전파한다.
+- 이는 호출 시점의 승인 대조다. DB 잠금·원자 저장·이후 소비까지의 동시 철회 방지를 보장하지 않는다.
+
+D-02는 미확정 그대로다. 이 작업은 run 생성·ingestion run 대체·FK·migration을 추가하지 않는다.
+기존 public Candidate v2 입력·hash 의미도 유지한다. 실제 DB adapter·transaction 통합은 보류 상태다.

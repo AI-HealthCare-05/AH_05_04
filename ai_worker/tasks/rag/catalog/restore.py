@@ -5,10 +5,11 @@ import json
 
 from pydantic import TypeAdapter
 
-from ai_worker.tasks.rag.catalog.approval import CatalogApprovalReceipt
+from ai_worker.tasks.rag.catalog.approval import CatalogApprovalReceipt, CatalogApprovalVerifier
 from ai_worker.tasks.rag.catalog.build import CatalogMembers
 from ai_worker.tasks.rag.catalog.export import (
     CatalogExportArtifacts,
+    _approval_payload,
     _canonical_json_bytes,
     _unique_manifest_object,
     create_catalog_export,
@@ -89,4 +90,43 @@ def _restore(plan: CatalogStoragePlan) -> CatalogExportArtifacts:
     artifacts = dataclasses.replace(artifacts, manifest_json=plan.manifest_json)
     rebuilt = prepare_catalog_storage(members=members, artifacts=artifacts)
     _require(_ordered(rebuilt) == _ordered(plan))
+    return artifacts
+
+
+async def restore_current_catalog_storage(
+    plan: CatalogStoragePlan, *, approval_verifier: CatalogApprovalVerifier | None
+) -> CatalogExportArtifacts:
+    """현재 승인 포트로 재확인한 뒤 저장 당시의 v2 bytes를 그대로 반환합니다.
+
+    실제 승인 저장소 연결은 후속입니다. 이 확인은 호출 시점의 검사이며 DB 잠금이나
+    이후 사용 시점까지의 철회 방지를 보장하지 않습니다. 새 receipt로 기존 manifest를
+    다시 서명하거나 hash를 바꾸지 않습니다.
+    """
+    artifacts = restore_catalog_storage(plan)
+    try:
+        manifest = json.loads(artifacts.manifest_json)
+        _require(
+            manifest["verification_status"] == "APPROVED"
+            and manifest["freshness_status"] == "CURRENT"
+            and manifest["is_complete"] is True
+            and manifest["approval_receipt"] is not None
+        )
+        if approval_verifier is None:
+            raise CatalogStorageRestoreError()
+        receipt = await approval_verifier.verify(
+            catalog_version=artifacts.catalog.catalog_version,
+            export_checksum=artifacts.export_checksum,
+            source_refs=artifacts.catalog.source_refs,
+        )
+        current = _approval_payload(
+            receipt,
+            catalog_version=artifacts.catalog.catalog_version,
+            export_checksum=artifacts.export_checksum,
+            source_refs=artifacts.catalog.source_refs,
+            has_entries=bool(artifacts.catalog.search_entries),
+        )
+        _require(_canonical_json_bytes(current) == _canonical_json_bytes({key: manifest[key] for key in current}))
+    except Exception:
+        # 외부 승인 저장소의 예외 원문도 소비자에게 전달하지 않습니다. 취소는 전파합니다.
+        raise CatalogStorageRestoreError() from None
     return artifacts
