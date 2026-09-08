@@ -4,12 +4,12 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "164b6c7d8e9f"
-down_revision = "165f90716263"
+down_revision = "169b2c3d4e5f"
 branch_labels = None
 depends_on = None
 
 
-BUNDLE_STATUSES = ("BUILDING", "READY", "ACTIVE", "RETIRED", "FAILED")
+BUNDLE_STATUSES = ("BUILDING", "READY", "RETIRED", "FAILED")
 ENVIRONMENT_STATUSES = ("ACTIVE", "SUSPENDED")
 TRANSITION_KINDS = ("PLANNED_ACTIVATION", "EMERGENCY_ROLLBACK", "RESUME", "SUSPEND")
 SOURCE_PURPOSES = ("CATALOG", "KNOWLEDGE", "CANDIDATE_INDEX_INPUT", "RULE", "GUIDELINE", "SAFETY_POLICY")

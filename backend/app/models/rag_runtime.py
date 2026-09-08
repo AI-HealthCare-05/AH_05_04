@@ -35,7 +35,6 @@ def _sql_in_list(values: Iterable[str]) -> str:
 class RagRuntimeBundleStatus(StrEnum):
     BUILDING = "BUILDING"
     READY = "READY"
-    ACTIVE = "ACTIVE"
     RETIRED = "RETIRED"
     FAILED = "FAILED"
 

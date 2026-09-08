@@ -230,7 +230,7 @@ Local Runtime 포인터 변경도 보호된 Guard Operation을 사용한다.
 - `EMERGENCY_ROLLBACK`: 현재 Bundle이 부적격일 때 Rollback 후보의 Source·Endpoint·Operation·Approval·Freshness·평가 PASS를 다시 검사한다. 적격 후보일 때만 포인터를 원자 교체하고, 현재·후보가 모두 부적격일 때 환경을 `SUSPENDED`로 전환한다.
 - `RESUME`: 중지 원인이 해소되고 대상 Bundle 전체가 다시 적격일 때만 `SUSPENDED → ACTIVE`를 허용한다.
 
-활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
+활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 활성 Bundle의 기준 원본은 환경의 active bundle pointer이며, Bundle 자체 status에 `ACTIVE` 값을 두지 않는다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
 
 ## 결과·Citation·상태
 

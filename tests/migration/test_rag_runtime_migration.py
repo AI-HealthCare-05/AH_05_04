@@ -18,7 +18,7 @@ from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAG_RUNTIME_REVISION = "164b6c7d8e9f"
-RAG_RUNTIME_BASE_REVISION = "165f90716263"
+RAG_RUNTIME_BASE_REVISION = "169b2c3d4e5f"
 RAG_RUNTIME_TABLES = {
     "rag_runtime_execution_manifest",
     "rag_runtime_release_bundle",
@@ -234,6 +234,16 @@ def test_rag_runtime_upgrade_creates_tables_and_constraints() -> None:
             VALUES (:id, 'local-bad-hash', 'SUSPENDED', :bundle_id, :wrong_hash)
             """,
             {"wrong_hash": "c" * 64},
+        ),
+        (
+            """
+            INSERT INTO rag_runtime_release_bundle (
+                id, bundle_key, bundle_version, bundle_status,
+                execution_manifest_id, bundle_manifest_hash
+            )
+            VALUES (:id, 'bundle-active-status', '1.0.0', 'ACTIVE', :manifest_id, :bundle_hash)
+            """,
+            {},
         ),
         (
             """
