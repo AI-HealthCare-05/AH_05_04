@@ -124,7 +124,9 @@ async def _fetch_schema_object_names() -> set[str]:
         }
 
 
-async def _seed_source_catalog_chain(*, include_verification: bool = True) -> dict[str, str]:
+async def _seed_source_catalog_chain(
+    *, include_verification: bool = True, status: str = "CURRENT", rejected_count: int = 0
+) -> dict[str, str]:
     ids = {
         "source_id": str(uuid4()),
         "endpoint_id": str(uuid4()),
@@ -199,7 +201,7 @@ async def _seed_source_catalog_chain(*, include_verification: bool = True) -> di
                         :snapshot_id, :operation_id, :source_version, :checksum_a,
                         :checksum_b, 'schema-v1', 'parser-v1',
                         'normalization-v1', 'canonical-v1',
-                        1, 0, 'CURRENT', :collected_at
+                        1, :rejected_count, :status, :collected_at
                     )
                     """
                 ),
@@ -208,6 +210,8 @@ async def _seed_source_catalog_chain(*, include_verification: bool = True) -> di
                     "checksum_a": checksum_a,
                     "checksum_b": checksum_b,
                     "collected_at": collected_at,
+                    "status": status,
+                    "rejected_count": rejected_count,
                 },
             )
             if include_verification:
@@ -547,6 +551,7 @@ def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references()
 
     try:
         command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
 
         async def insert_artifact() -> None:
@@ -612,6 +617,7 @@ def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> 
 
     try:
         command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
         asyncio.run(insert_rejection(ids))
 
@@ -850,6 +856,7 @@ def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
 
     try:
         command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
         asyncio.run(insert_snapshot_with_receipt(ids))
 
@@ -927,6 +934,7 @@ def test_rag_source_catalog_downgrade_blocks_non_empty_tables_and_preserves_data
 
     try:
         command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
 
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 164f3a2b1c0d"):
@@ -1066,6 +1074,7 @@ def test_verification_history_is_immutable_and_publication_requires_actor() -> N
     ids: dict[str, str] | None = None
     try:
         command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain())
         for sql in (
             "UPDATE rag_source_snapshot_verification SET verification_result = 'FAILED' WHERE id = :verification_id",
@@ -1104,3 +1113,185 @@ def test_verification_history_is_immutable_and_publication_requires_actor() -> N
     finally:
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+@pytest.mark.parametrize("status", ["PENDING", "FAILED"])
+def test_runtime_cannot_write_snapshot_publication_state_directly(status: str) -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_source_catalog_chain(status=status))
+
+    async def verify() -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                role = f"synthetic_snapshot_{uuid4().hex}"
+                await connection.execute(text(f"CREATE ROLE {role} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"))
+                await connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
+                await connection.execute(
+                    text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role}")
+                )
+                await connection.execute(text(f"SET LOCAL ROLE {role}"))
+                # Custom session flags must never confer transition authority.
+                await connection.execute(text("SET LOCAL app.snapshot_transition = 'allowed'"))
+                for assignment in ("verification_status = 'CURRENT', effective_at = now()", "verified_at = now()"):
+                    async with connection.begin_nested() as savepoint:
+                        with pytest.raises(DBAPIError, match="DB-owned transition"):
+                            await connection.execute(
+                                text(f"UPDATE rag_source_snapshot SET {assignment} WHERE id = :snapshot_id"), ids
+                            )
+                        await savepoint.rollback()
+                async with connection.begin_nested() as savepoint:
+                    with pytest.raises(DBAPIError, match="must start PENDING"):
+                        await connection.execute(
+                            text("""
+                            INSERT INTO rag_source_snapshot
+                                (id, operation_id, source_version, raw_manifest_checksum, canonical_checksum,
+                                 schema_version, parser_version, normalization_version, canonicalization_spec_version,
+                                 record_count, rejected_record_count, verification_status, collected_at)
+                            SELECT :new_id, operation_id, :new_version, raw_manifest_checksum, canonical_checksum,
+                                schema_version, parser_version, normalization_version, canonicalization_spec_version,
+                                record_count, rejected_record_count, 'CURRENT', collected_at
+                            FROM rag_source_snapshot WHERE id = :snapshot_id
+                        """),
+                            {**ids, "new_id": str(uuid4()), "new_version": uuid4().hex},
+                        )
+                    await savepoint.rollback()
+                for expected in ("FAILED", None):
+                    if status != "FAILED":
+                        continue
+                    async with connection.begin_nested() as savepoint:
+                        if expected is None:
+                            result = await connection.execute(
+                                text(
+                                    "SELECT transition_rag_source_snapshot(:snapshot_id, NULL, 'CURRENT', now(), now(), 'synthetic')"
+                                ),
+                                ids,
+                            )
+                            assert result.scalar_one() is False
+                        else:
+                            with pytest.raises(DBAPIError, match="Invalid Snapshot transition"):
+                                await connection.execute(
+                                    text(
+                                        "SELECT transition_rag_source_snapshot(:snapshot_id, 'FAILED', 'CURRENT', now(), now(), 'synthetic')"
+                                    ),
+                                    ids,
+                                )
+                        await savepoint.rollback()
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(verify())
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+@pytest.mark.parametrize("approved", [False, True])
+def test_runtime_publication_function_requires_approval_and_appends_immutable_selection(approved: bool) -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_source_catalog_chain(status="PENDING", rejected_count=1))
+
+    async def verify() -> None:
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
+        from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import select_current_snapshot
+
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                if approved:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO rag_source_snapshot_verification (id, snapshot_id, check_name, verification_result, verified_at, verified_by) VALUES (:approval_id, :snapshot_id, 'snapshot-publication-approval', 'PASSED', now(), 'synthetic-reviewer')"
+                        ),
+                        {**ids, "approval_id": str(uuid4())},
+                    )
+                role = f"synthetic_snapshot_{uuid4().hex}"
+                await connection.execute(text(f"CREATE ROLE {role} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"))
+                await connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
+                await connection.execute(
+                    text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role}")
+                )
+                await connection.execute(text(f"SET LOCAL ROLE {role}"))
+                if not approved:
+                    async with connection.begin_nested() as savepoint:
+                        with pytest.raises(DBAPIError, match="Publication approval required"):
+                            await connection.execute(
+                                text(
+                                    "SELECT transition_rag_source_snapshot(:snapshot_id, 'PENDING', 'CURRENT', now(), now(), 'synthetic')"
+                                ),
+                                ids,
+                            )
+                        await savepoint.rollback()
+                    return
+                # If the immutable evidence cannot be written, CURRENT must roll back too.
+                async with connection.begin_nested() as savepoint:
+                    with pytest.raises(DBAPIError):
+                        await connection.execute(
+                            text(
+                                "SELECT transition_rag_source_snapshot(:snapshot_id, 'PENDING', 'CURRENT', now(), now(), repeat('x', 1000))"
+                            ),
+                            ids,
+                        )
+                    await savepoint.rollback()
+                unchanged = await connection.execute(
+                    text("SELECT verification_status FROM rag_source_snapshot WHERE id = :snapshot_id"), ids
+                )
+                assert unchanged.scalar_one() == "PENDING"
+                no_evidence = await connection.execute(
+                    text(
+                        "SELECT count(*) FROM rag_source_snapshot_verification WHERE snapshot_id = :snapshot_id AND check_name = 'snapshot-current-selection'"
+                    ),
+                    ids,
+                )
+                assert no_evidence.scalar_one() == 0
+                async with AsyncSession(bind=connection) as session:
+                    from uuid import UUID
+
+                    await select_current_snapshot(
+                        repository=SqlAlchemySourceSnapshotRepository(session),
+                        snapshot_id=UUID(ids["snapshot_id"]),
+                        selected_at=datetime.now(UTC),
+                        selected_by="synthetic-selector",
+                    )
+                    state = await session.execute(
+                        text("SELECT verification_status FROM rag_source_snapshot WHERE id = :snapshot_id"), ids
+                    )
+                    assert state.scalar_one() == "CURRENT"
+                    evidence = await session.execute(
+                        text(
+                            "SELECT id, verified_by, details_summary FROM rag_source_snapshot_verification WHERE snapshot_id = :snapshot_id AND check_name = 'snapshot-current-selection' AND verification_result = 'PASSED'"
+                        ),
+                        ids,
+                    )
+                    row = evidence.one()
+                    assert row.verified_by == "synthetic-selector"
+                    assert row.details_summary.startswith("DB-owned transition; session=")
+                    for sql in (
+                        "UPDATE rag_source_snapshot_verification SET verification_result = 'FAILED' WHERE id = :id",
+                        "DELETE FROM rag_source_snapshot_verification WHERE id = :id",
+                    ):
+                        async with connection.begin_nested() as savepoint:
+                            with pytest.raises(DBAPIError, match="append-only"):
+                                await connection.execute(text(sql), {"id": row.id})
+                            await savepoint.rollback()
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(verify())
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_snapshot_state_protection_downgrade_preserves_existing_snapshots() -> None:
+    configuration = create_alembic_config()
+    command.upgrade(configuration, "head")
+    ids = asyncio.run(_seed_source_catalog_chain(status="PENDING"))
+    try:
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165e8f706152"):
+            command.downgrade(configuration, "165d7e6f5041")
+        assert asyncio.run(_count_table("rag_source_snapshot")) >= 1
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))

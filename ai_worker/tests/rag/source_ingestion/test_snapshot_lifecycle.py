@@ -178,11 +178,14 @@ class FakeSnapshotRepository:
         new_status: SnapshotVerificationStatus,
         verified_at: datetime | None = None,
         effective_at: datetime | None = None,
+        selected_by: str | None = None,
     ) -> bool:
         _ = verified_at, effective_at
         if self.statuses.get(snapshot_id) is not expected_status:
             return False
         self.statuses[snapshot_id] = new_status
+        if new_status is SnapshotVerificationStatus.CURRENT:
+            self.verifications.append((snapshot_id, "snapshot-current-selection", "PASSED"))
         return True
 
 

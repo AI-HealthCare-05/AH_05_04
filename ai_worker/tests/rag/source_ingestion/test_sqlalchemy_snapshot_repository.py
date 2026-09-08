@@ -258,7 +258,7 @@ async def test_snapshot_operation_lock_uses_snapshot_membership() -> None:
 async def test_snapshot_status_change_is_compare_and_set_without_commit() -> None:
     session = AsyncMock(spec=AsyncSession)
     query_result = MagicMock()
-    query_result.scalar_one_or_none.return_value = str(_SNAPSHOT_ID)
+    query_result.scalar_one.return_value = True
     session.execute.return_value = query_result
     repository = SqlAlchemySourceSnapshotRepository(session)
 
@@ -273,11 +273,9 @@ async def test_snapshot_status_change_is_compare_and_set_without_commit() -> Non
     assert changed is True
     statement = session.execute.await_args.args[0]
     sql = str(statement)
-    where_sql = sql.split("WHERE", maxsplit=1)[1]
-    parameters = statement.compile().params
-    assert "UPDATE rag_source_snapshot SET" in sql
-    assert "rag_source_snapshot.id" in where_sql
-    assert "rag_source_snapshot.verification_status" in where_sql
+    parameters = session.execute.await_args.args[1]
+    assert "SELECT transition_rag_source_snapshot" in sql
+    assert parameters["snapshot_id"] == str(_SNAPSHOT_ID)
     assert SnapshotVerificationStatus.PENDING in parameters.values()
     assert SnapshotVerificationStatus.CURRENT in parameters.values()
     assert _NOW in parameters.values()

@@ -16,7 +16,7 @@
 | 외부 Manifest | `post-mvp-rag-evaluation-contract@2026-08-29.11` | `f2c98884c841d3fccdbec552f14aad1fd471730eae6d80c472c1b332ed95a570` |
 | Source Policy | `1.18` | `35842d2cbe54201ff9fb5580616055eda613fe4c16ac6d60daa7f8859d2f28e3` |
 | DB Target | `1.47` | `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Local Source Target | `1` | `138395780dde14028e4f7cb041f602a3552021f70169a35654abc33276d39ad8` |
+| Local Source Target | `1` | `90c1560a9ba404a2adb40c2ee21c26a88d83591ed086515b6a0d9b1226f4a409` |
 | Product Decision | `PD-125-20260831` | `f7e04cad41e3bc4c078e088906a9e7d50826f973fb8825fc45b23198a119ab85` |
 
 ## 선행 Receipt gate
@@ -65,7 +65,7 @@ Machine Receipt는 Source hash/version/lifecycle, Endpoint·Operation 상태축,
 
 ## Receipt 무결성과 후속 입력
 
-Canonical Receipt hash는 `sha256:bdd22b8231806c8da343ff4e607da1f35d740a1dde7f27d5dc4dfce72330f2e4`다. 이 합성 Receipt는 #167, #168, #170, #175의 입력 선행조건으로 연결되지만 실제 Source binding이 채워진 새 Receipt 전까지 네 Issue 모두 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다.
+Canonical Receipt hash는 `sha256:85ba5d876476301a577ceb88eced810326e1d1d64d96edd15c46ee0041aeaf6a`다. 이 합성 Receipt는 #167, #168, #170, #175의 입력 선행조건으로 연결되지만 실제 Source binding이 채워진 새 Receipt 전까지 네 Issue 모두 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다.
 
 ## 사용 범위
 

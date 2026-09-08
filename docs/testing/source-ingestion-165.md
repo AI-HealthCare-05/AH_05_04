@@ -287,3 +287,20 @@ PR 본문에서 acquisition 잠금을 Operation으로 설명하면 코드와 다
 - 단일 head `165d7e6f5041` 확인. 격리 PostgreSQL 17에서 빈 DB → head 적용 및 전체 migration 테스트 **66 passed**.
 - Source lifecycle 및 Evaluation repository 테스트 **16 passed**. 변경 migration Ruff 및 diff 검사 통과.
 - 개발·운영 DB에 migration을 적용하지 않았다.
+
+## #324 병합 이후 DB-owned Snapshot transition 리뷰 보완
+
+현우님 추가 리뷰는 Runtime raw UPDATE가 publication gate를 우회할 수 있다는 문제다. Revision `165e8f706152`에서 비소유자 Runtime의 상태·timestamp 직접 변경과 non-PENDING INSERT를 차단하고 SECURITY DEFINER 함수에서 Operation lock·expected status·허용 전이·rejection 승인 검사와 CURRENT selection 이력 append를 원자적으로 수행한다. caller GUC는 사용하지 않으며 search_path는 고정한다.
+
+#324가 먼저 병합돼 Source 첫 revision `165a4b3c2d1e`의 부모를 `169a1b2c3d4e`로 재연결했다. `#319 → #324 → Source Artifact/Receipt/Verification → DB-owned transition`의 단일 head는 `165e8f706152`다. Runtime 활성화·#164 정규 normalization/provenance 인계·#335 정책은 미완료 상태를 유지한다.
+
+검증 환경은 임시 PostgreSQL 17 및 Redis 7이며 사용자 DB는 사용하지 않았다. 비특권 Runtime 역할 테스트는 table-level SELECT/INSERT/UPDATE/DELETE 권한이 있어도 직접 전이·timestamp 수정·CURRENT INSERT가 거부됨을 검증한다. FAILED 전이·NULL expected 상태·승인 없는 rejected Snapshot도 차단하고, 정상 승인 service 경로의 CURRENT·단일 선택 이력 생성 및 이력 UPDATE/DELETE 차단을 검증한다. 증빙 INSERT 실패 시 상태도 PENDING으로 유지된다.
+
+- 빈 PostgreSQL 17에서 upgrade head 성공; 전체 migration·rollback: 83 passed
+- Source lifecycle·adapter 단위/DB 통합: 62 passed
+- Worker core/OCR/RAG/Evaluation·Source governance receipt: 2,084 passed, 8 skipped
+- Backend·계약·CI 선별 PostgreSQL 통합: 1,116 passed, 2 skipped
+- CI 선별 Redis 통합: 18 passed
+- Ruff·format 및 Mypy(427 source files) 통과
+
+전체 CI shell runner 자체 대신 위 각 테스트 범위를 직접 실행했다. Backend fixture가 테이블을 정리하므로 그 후 migration 재실행은 임시 DB를 초기화한 별도 검증으로 수행한다. 원격 CI는 push된 최신 커밋에서 별도로 확인한다.

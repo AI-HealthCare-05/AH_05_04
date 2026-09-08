@@ -159,3 +159,16 @@ Evaluation → Source Artifact → Receipt/FAILED 재시도 → Verification 보
 - `git diff --check` 및 병합 staged diff 검사 통과
 
 Frontend 최초 실행은 테스트 API URL 미설정으로 실패했고, fixture가 요구하는 localhost URL을 설정한 재실행에서 전체 통과했다. 사용자 DB 대신 임시 PostgreSQL 컨테이너만 사용했다. Redis를 포함한 전체 CI runner는 로컬에서 실행하지 않았으며 원격 CI 결과는 별도로 확인해야 한다.
+
+## #324 및 #323 DB-owned transition 반영
+
+#323의 `aef61f7`을 병합했다. #324 Prescription Version revision 뒤에 Source chain이 이어지며, Source 상태의 Runtime raw UPDATE 우회는 DB-owned transition 함수로 차단된다. 두 PR에 별도 migration을 생성하지 않고 같은 이력을 공유한다. #329 계산·export 계약 변경은 없다.
+
+- #323과 migration·migration test 파일 동일함을 확인
+- 병합된 #329에서 전체 PostgreSQL migration·rollback: 83 passed
+- Frontend 259 passed, build·lint 통과
+- 단일 head: `165e8f706152`
+
+#324의 처방 Version DB 기반이나 이번 Source 상태 보호가 #164의 normalization/provenance 정렬 완료를 의미하지는 않는다. #166 DB 후속 범위와 실제 Runtime 비활성 상태를 유지한다.
+
+병합 후 Worker·Source receipt 2,152 passed, 8 skipped; Ruff·format(523 files), Mypy(443 source files) 및 diff 검사 통과.

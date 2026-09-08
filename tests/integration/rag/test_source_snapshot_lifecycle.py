@@ -1,12 +1,15 @@
 """Source Snapshot 저장·현재성 전이를 실제 PostgreSQL에서 검증합니다."""
 
 import asyncio
+import importlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import func, select, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -102,6 +105,12 @@ async def isolated_schema() -> AsyncIterator[None]:
 
     async with test_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+
+        def install_transition(sync_connection):
+            with Operations.context(MigrationContext.configure(sync_connection)):
+                importlib.import_module("backend.alembic.versions.165e8f706152_guard_snapshot_transitions").upgrade()
+
+        await connection.run_sync(install_transition)
 
     try:
         yield

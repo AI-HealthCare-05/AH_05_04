@@ -221,6 +221,7 @@ class SnapshotLifecycleRepository(Protocol):
         new_status: SnapshotVerificationStatus,
         verified_at: datetime | None = None,
         effective_at: datetime | None = None,
+        selected_by: str | None = None,
     ) -> bool: ...
 
 
@@ -421,17 +422,11 @@ async def select_current_snapshot(
         new_status=SnapshotVerificationStatus.CURRENT,
         verified_at=selected_at if previous_status is SnapshotVerificationStatus.PENDING else None,
         effective_at=selected_at,
+        selected_by=selected_by,
     )
     if not changed:
         raise RuntimeError("선택 대상 Snapshot 상태가 변경되었습니다.")
 
-    await repository.append_verification(
-        snapshot_id=target.snapshot_id,
-        check_name="snapshot-current-selection",
-        result="PASSED",
-        verified_at=selected_at,
-        verified_by=selected_by,
-    )
     decision = (
         SnapshotSelectionDecision.ACTIVATED
         if previous_status is SnapshotVerificationStatus.PENDING
