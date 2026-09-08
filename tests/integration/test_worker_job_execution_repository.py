@@ -1316,7 +1316,10 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         assert ocr_started_at is not None
         assert ocr_completed_at is not None
         assert engine_name == "SYNTHETIC_OCR"
-        assert field_count_result.scalar_one() == 1
+        # SyntheticOcrEngine은 MEDICATION_NAME 1개만 반환하지만, 저장 경로가 나머지 필수
+        # 필드(PRESCRIBED_DATE, DOSE_VALUE, FREQUENCY_PER_DAY, DURATION_DAYS)를 placeholder
+        # row로 채우므로 총 5개가 됩니다(#294).
+        assert field_count_result.scalar_one() == 5
         assert await stream.list_pending() == ()
         assert stream_message_id
     finally:

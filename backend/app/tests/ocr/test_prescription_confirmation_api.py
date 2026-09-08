@@ -608,12 +608,16 @@ async def test_update_extracted_field_api_rejects_after_prescription_confirmed(d
     assert updated_field["confirmed_value"] == original_confirmed_value
 
 
-@pytest.mark.parametrize("path", ["llm", "rule"])
+@pytest.mark.parametrize(
+    "path,date_case",
+    [("llm", "missing"), ("rule", "missing"), ("rule", "birth"), ("rule", "conflict"), ("rule", "dense")],
+)
 @pytest.mark.parametrize("fill_optional", [False, True])
 @pytest.mark.asyncio
 async def test_generated_empty_fields_persist_and_confirm(
     db_session: AsyncSession,
     path: str,
+    date_case: str,
     fill_optional: bool,
 ) -> None:
     from app.repositories.ocr_repository import OcrRepository
@@ -629,6 +633,13 @@ async def test_generated_empty_fields_persist_and_confirm(
         RawRecognizedField("용법", 0.99, 911, 581),
         RawRecognizedField("합성의약품정", 0.99, 137, 637),
     ]
+    date_inputs = {
+        "missing": [],
+        "birth": [("생년월일", 100, 100), ("2010-03-15", 240, 100)],
+        "conflict": [("처방일 2026-08-01", 100, 100), ("발행일 2026-08-02", 100, 200)],
+        "dense": [("처방일자", 350, 300), ("생년월일", 480, 300), ("2026-08-12", 500, 300)],
+    }
+    raw.extend(RawRecognizedField(text, 0.99, x, y) for text, x, y in date_inputs[date_case])
     if path == "rule":
         generated = PrescriptionOcrStructurer().structure(raw)
     else:
@@ -641,8 +652,6 @@ async def test_generated_empty_fields_persist_and_confirm(
             raw_fields=raw,
             normalizer=MedicationNameNormalizer(),
         )
-    generated = [field for field in generated if field.medication_index == 1]
-    generated.append(RecognizedField(0, "PRESCRIBED_DATE", "2026-08-01", 0.99))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         token = await _signup_and_login(client, label="empty-generated")
         headers = {"Authorization": f"Bearer {token}"}
@@ -694,14 +703,21 @@ async def test_generated_empty_fields_persist_and_confirm(
             "DOSE_UNIT": "정" if fill_optional else None,
             "TIMING": "아침 식후" if fill_optional else None,
         }
-        for field in fields:
+        for field in sorted(fields, key=lambda value: value["field_type"] == "PRESCRIBED_DATE"):
             kind = field["field_type"]
-            if kind not in {"MEDICATION_NAME", "PRESCRIBED_DATE"}:
+            if kind != "MEDICATION_NAME":
                 assert all(
                     field[key] is None
                     for key in ("raw_value", "normalized_value", "normalization_version", "confidence_score")
                 )
                 assert field["confirmation_status"] == "UNCONFIRMED"
+            if kind == "PRESCRIBED_DATE":
+                incomplete = await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers)
+                assert incomplete.status_code == 422, incomplete.text
+                assert any(
+                    detail["field"] == "prescribed_date" and detail["reason"] == "REQUIRED"
+                    for detail in incomplete.json()["details"]
+                )
             patched = await client.patch(
                 f"/api/v1/extracted-fields/{field['field_id']}", headers=headers, json={"confirmed_value": values[kind]}
             )

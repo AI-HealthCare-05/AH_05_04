@@ -165,6 +165,7 @@ OCR 결과 소유권은 `ai_job_id`만으로 판단하지 않고 기존 `ocr_job
 - LLM 경로의 `PRESCRIBED_DATE`에는 `YYYY-MM-DD` 정규화를 적용하며 `normalization_version`은 `date-rule-v1`입니다.
 - `MEDICATION_STRENGTH`를 포함한 그 밖의 필드는 현재 `normalized_value`와 `normalization_version`을 생성하지 않습니다.
 - OCR 원문이 없는 사용자 입력용 빈 검수 필드는 `raw_value`, `normalized_value`, `normalization_version`이 모두 `null`일 수 있습니다.
+- 필수 필드(`PRESCRIBED_DATE`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`)는 OCR이 인식하지 못해도 위 빈 검수 필드(`raw_value=null`, `confirmation_status=UNCONFIRMED`) row가 항상 보장됩니다(#294) — `PRESCRIBED_DATE`(index 0)는 항상, 나머지는 이미 감지된 `medication_index`에 한해서만 채우며, 약물 자체가 하나도 감지되지 않은 경우는 포함하지 않습니다. `MEDICATION_STRENGTH`·`DOSE_UNIT`·`TIMING`은 선택 필드라 이 보장 대상이 아니며, `MEDICATION_NAME`은 계약상 빈 필드로 만들지 않으므로 이 목록에서 제외됩니다. 정본은 OCR 구조화 계층(`docs/contracts/current/ocr-medication-structuring.md`의 「부분 인식」)이고, OCR 결과를 저장하는 `ai_worker/adapters/sqlalchemy_ocr_result_store.py`는 회귀 방지를 위한 방어 계층으로만 동일 필드를 다시 채웁니다.
 - 사용자 확인 전에는 `confirmed_value`가 `null`이다.
 - 사용자 확인 전 `confirmation_status`는 `UNCONFIRMED`이다.
 - 최종 처방에는 사용자가 확인한 `confirmed_value`만 사용한다.
@@ -363,9 +364,9 @@ Rollback 정책:
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`
 
-## Prescription Version 최소 DB 기반
+## Prescription Version DB 기반 및 Version 1 Dual-write
 
-Revision `169a1b2c3d4e`는 #169의 Expand 단계로 `prescription_version`, `prescription_version_medication`과 nullable `prescription.active_version_id`를 추가합니다. 이 단계는 API·기존 read/write 동작을 변경하거나 기존 처방을 backfill하지 않습니다.
+Revision `169a1b2c3d4e`는 #169의 Expand 단계로 `prescription_version`, `prescription_version_medication`과 nullable `prescription.active_version_id`를 추가합니다. Revision `169b2c3d4e5f`는 기존 처방과 약물을 Version 1 snapshot으로 500건씩 backfill하고, 신규 처방 확정 repository를 legacy+Version 1 dual-write로 전환합니다. 공개 API와 read 기준은 계속 legacy 테이블을 사용합니다.
 
 | 관계 | 제약 |
 | --- | --- |
@@ -375,9 +376,9 @@ Revision `169a1b2c3d4e`는 #169의 Expand 단계로 `prescription_version`, `pre
 | Snapshot 집합 동결 | Version INSERT trigger가 caller 입력을 덮어쓰고 DB의 epoch-aware top-level transaction ID를 internal `assembly_xid`에 기록. 현재 transaction ID가 같은 동안만 Medication INSERT를 허용하므로 release된 SAVEPOINT 뒤에도 조립 가능하고 custom GUC 위조 및 commit된 draft·active·historical Version 사후 INSERT 차단 |
 | 불변성과 삭제 | Version/Medication 직접 UPDATE·DELETE 차단. 사용자 삭제는 `prescription`에서 시작하는 `ON DELETE CASCADE`만 허용하며, 지연 검증은 commit 전에 이미 연쇄 삭제된 행의 큐 이벤트를 건너뜀 |
 
-현재 `prescription`, `medication`, `medical_document`, `profile` 테이블은 그대로 유지합니다. 소유권은 `prescription.profile_id`, 출처는 기존 `prescription.document_id`와 `source_ocr_job_id` chain을 사용합니다. Candidate Search·Identification FK 연결, Version 1 backfill, dual-write, read cutover와 `active_version_id NOT NULL` 전환은 후속 분할 PR 범위입니다.
+현재 `prescription`, `medication`, `medical_document`, `profile` 테이블과 API 응답은 그대로 유지합니다. 배포 순서는 `Expand → Dual-write → Backfill → Verify → Read cutover`로 고정합니다. Backfill은 `prescription.profile_id → medical_document.profile_id → profile.user_id`와 `source_ocr_job_id → ocr_job.document_id` chain, Medication 존재 여부와 공백이 아닌 `medication_name`을 검증하고, 부분 Version graph인 기존 행을 추정 복구하지 않고 migration 전체를 중단합니다. 완료 검증은 active pointer 누락, Version header 불일치, legacy·snapshot Medication 양방향 집합 차이가 모두 0건인지 확인합니다. Candidate Search·Identification FK 연결, read cutover와 `active_version_id NOT NULL` 전환은 후속 분할 PR 범위입니다. 후속 cutover는 구 writer rollback 등으로 생긴 누락 Version을 같은 규칙으로 먼저 재-backfill하고, v2 생성 전에 legacy Medication placeholder를 동일 Prescription의 Version 1 `(prescription_id, display_order)`로 일대일 재매핑해 누락·중복·값 불일치 0건을 확인한 뒤 FK를 적용해야 합니다. 검증 실패 시 전체를 중단합니다.
 
-Production에서는 생성된 처방 version을 제거하는 migration downgrade 대신 forward-fix를 사용합니다. 비운영 환경도 Version 또는 Version Medication row가 있으면 downgrade를 중단하며, 두 테이블이 비어 있을 때만 downgrade → upgrade 왕복을 허용합니다. 이는 계정·환자 데이터 삭제 시 부모 Prescription에서 시작하는 runtime cascade와 구분합니다.
+Production에서는 생성된 처방 version을 제거하는 migration downgrade 대신 forward-fix를 사용합니다. PR 2 revision의 downgrade는 snapshot을 보존하는 no-op이며 재-upgrade 시 완성된 graph를 검증·재사용합니다. PR 1의 schema downgrade는 Version 또는 Version Medication row가 있으면 계속 중단됩니다. 이는 계정·환자 데이터 삭제 시 부모 Prescription에서 시작하는 runtime cascade와 구분합니다.
 
 ## Post-MVP schema-only 테이블
 
@@ -389,7 +390,7 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 
 | 영역 | 목표 테이블 | 목표 제약 |
 | --- | --- | --- |
-| 처방 버전 후속 | Version 1 backfill, 하위 FK, dual-write/read cutover | PR 1 DB 기반 위에서 기존 처방 이관과 active pointer 필수화 |
+| 처방 버전 후속 | Version 1 backfill·신규 생성 dual-write 구현, 하위 FK·read cutover 후속 | PR 1 DB 기반 위에서 기존 처방 이관 완료; active pointer NOT NULL과 소비 도메인 전환은 후속 |
 | OCR LLM provenance | OCR 구조화 실행·필드 provenance 계열 | `raw_value`, rule 정규화값, LLM 초안, 사용자 수정값, 확정값과 allowlist·schema·prompt·model·validator version 분리 |
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |

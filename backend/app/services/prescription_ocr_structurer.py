@@ -3,9 +3,11 @@
 from ocr_runtime.prescription_ocr_structurer import (
     DOSE_PATTERN,
     PrescriptionOcrStructurer,
+    normalize_prescribed_date_text,
 )
 
 __all__ = [
     "DOSE_PATTERN",
     "PrescriptionOcrStructurer",
+    "normalize_prescribed_date_text",
 ]
