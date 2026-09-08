@@ -1,92 +1,168 @@
-# #347 Source Artifact 정리 — 합성 검증 및 운영 인계 초안
+# #347 Source Artifact 수동 정리 — Local 합성 실행·인계
 
-상태: Local 합성 구현 검토용. 운영 실행 승인·#347 전체 완료 인계는 아직 아니다.
-정책: [#335 Proposed 정책](../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
-증빙: [단계별 검증](../testing/source-artifact-cleanup-347.md)
+상태: Local 합성 범위의 영속 실행 구현·리뷰 대상. 운영 Source/S3 삭제 승인 문서가 아니다.
+정책: [#335 정책](../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
+검증: [#347 검증 기록](../testing/source-artifact-cleanup-347.md)
 
-## 현재 실행 가능한 범위
+## 실행 범위
 
-`SyntheticCleanupLab`가 직접 만든 임시 ASCII 파일을 pytest에서 정리하는 경로만 제공한다.
-기존 Source 저장소 경로·사용자 파일·S3 bucket을 입력하는 삭제 API/CLI는 없다.
-실제 Local reader는 소유/생성 시각을 추정하지 않으며 SQL reader의 count=0도 전체 무참조
-증명이 아니므로 실제 파일은 보류한다. 정기 자동 삭제·Source Runtime 활성화는 하지 않는다.
+`tools/source_cleanup/run.py`는 명시된 Local 전용 `*_cleanup347_test` DB에서만 실행된다.
+앱 기본 DB로 fallback하지 않는다. `create`가 **새로 만든 디렉터리와 합성 bytes**만 등록하며
+기존 Source root·실제 MFDS·OCR·Guide/Chat·S3를 등록하거나 삭제하지 않는다.
 
-합성 테스트는 fixture 생성 시 31일 전 생성 사실을 선언한다. 실 파일의 mtime/ctime을 생성
-시각으로 인정한 것이 아니다. 합성 승인자·DB 식별자는 운영 권한 검증을 대체하지 않는다.
+파일은 실제 `LocalPrivateSourceArtifactStore.put_verified`로 보존한다. PostgreSQL receipt가
+기록한 시각을 생성 이후의 보수적 유예 기산점으로 사용하고, mtime/ctime으로 날짜를 추정하지 않는다.
+receipt commit 실패 시 남은 파일은 등록되지 않으므로 자동 후보가 아니다.
+DB 이름·등록된 root와 root inode·객체 generation·checksum·크기를 모두 대조한다.
 
-## 합성 재현
+객체 key/물리 root는 접근 통제된 control DB에만 보관한다. 실행 출력과 audit는 안전한 참조와
+고정 사유를 사용한다. 자동 삭제·Source Runtime 설정 변경·실제 데이터 활성화는 없다.
 
-저장소 루트, Python 3.13 및 저장소 의존성이 준비된 환경에서 실행한다.
+## 전용 DB 설치와 역할
 
-```bash
-PYTHONPATH=. uv run pytest ai_worker/tests/rag/source_cleanup -q
-```
-
-임시 파일의 생성·조회·실제 unlink·파일 journal 재읽기까지 포함한다. 테스트 종료 시 fixture
-전체를 정리하는 것은 테스트 자원 정리이며 운영 감사 이력을 지워도 된다는 정책이 아니다.
-운영 경로에 이 fixture API를 연결하지 않는다.
-
-## PostgreSQL 조회 통합 재현
-
-별도 일회용 PostgreSQL을 생성하고 DB 이름을 `source_cleanup347_test`로 지정한다.
-예시 값은 이 합성 DB 전용이다. 사용자 서비스 DB에 아래 migration이나 테스트를 적용하지 않는다.
+1. 일회용 PostgreSQL과 이름이 `source_cleanup347_test`인 전용 DB를 준비한다.
+2. 해당 DB에 현재 앱 migration을 적용한다. 사용자 서비스 DB를 지정하지 않는다.
+3. `SOURCE_CLEANUP_TEST_DATABASE_URL`에 전용 URL을 지정하고 아래 명령으로 private control
+   schema를 설치한다. 설치는 한 번만 수행하며 기존 schema를 삭제/재설치하지 않는다.
 
 ```bash
-export DB_HOST=127.0.0.1 DB_PORT=55450 DB_EXPOSE_PORT=55450
-export DB_USER=synthetic DB_PASSWORD=synthetic DB_NAME=source_cleanup347_test
-export PYTHONPATH=backend:.
-export SOURCE_CLEANUP_TEST_DATABASE_URL=postgresql+asyncpg://synthetic:synthetic@127.0.0.1:55450/source_cleanup347_test
-uv run alembic -c backend/alembic.ini upgrade head
-uv run pytest tests/integration/rag/test_source_cleanup_references.py -q
+PYTHONPATH=. uv run python tools/source_cleanup/run.py install
 ```
 
-테스트는 명시된 Local 전용 DB 이름을 검사한다. 앱 기본 DB로 fallback하지 않는다.
-별도 URL이 없으면 통합 테스트는 skip되므로 일반 CI 성공만으로 이 8건 실행을 주장하지 않는다.
-한 테스트는 commit 가시성을 검사하기 위해 합성 행을 남긴다. 완료 후 전용 컨테이너·볼륨을
-폐기한다. 기존 Source 행 삭제 trigger를 해제하는 cleanup을 수행하지 않는다.
+`tools/source_cleanup/synthetic_control.sql`은 **합성 도구 전용 schema 설치 파일**이다.
+앱 public schema 변경이나 새 Alembic migration이 아니며 운영 DB에 적용하지 않는다.
 
-## 실행 결과 해석
+관리자가 서로 다른 합성 DB 계정 3개를 준비한다. 아래 이름은 예시 역할이며 실제 팀원 계정을
+만들거나 권한을 부여했다는 뜻이 아니다. 암호는 URL 환경변수로 전달하고 문서·로그에 쓰지 않는다.
 
-| 결과 | 의미 | 다음 조치 |
+| 역할 예시 | 허용 권한 | 금지 |
 | --- | --- | --- |
-| COMPLETED | 해당 합성 배치의 모든 대상에 DELETED 기록 또는 기존 성공+객체 부재 확인 | 합성 증빙으로만 사용 |
-| REVIEW_REQUIRED | 일부 UNKNOWN/BLOCKED 또는 불완전 실행 | 대상별 journal 확인, 전체 성공으로 보고하지 않음 |
-| EXECUTION_OR_AUDIT_UNAVAILABLE | 검사·guard·감사 실패. 일부 파일이 이미 삭제됐을 수도 있음 | 디스크의 INTENT/결과 기준으로 조사 |
-| MISSING_REQUIRES_RECONCILIATION | 의도 이후 객체 부재지만 성공 기록 없음 | UNKNOWN 유지, 별도 근거 없이 성공 확정하지 않음 |
-| RECREATED_AFTER_SUCCESS | 성공 기록 이후 같은 key에 새 객체 존재 | 과거 승인으로 삭제하지 않음 |
-| RETRY_REQUIRES_REVIEW | 명시적 재시도 요청/한도 조건 미충족 | 새 승인·참조·세대 확인 후 제한된 수동 재시도 |
+| `cleanup347_pm` | 배치 PM 검토 INSERT, 철회 INSERT, control SELECT | actor 위조·기존 승인 UPDATE/DELETE |
+| `cleanup347_security` | DB_SECURITY 검토 INSERT, 철회 INSERT, control SELECT | PM 신원 대체·기존 승인 수정 |
+| `cleanup347_executor` | control/Artifact SELECT, 고정 참조 잠금 함수 EXECUTE, audit INSERT·sequence USAGE | 승인·소유 receipt INSERT, 감사 UPDATE/DELETE/TRUNCATE, Source 참조 변경 |
 
-새로운 함수 호출은 disk journal을 재조회한다. 이전 성공 건은 반복 삭제하지 않는다.
-실패한 파일이 남아 있어도 과거 승인만으로 재시도하지 않는다. 기록 손상 시 원본 journal을
-수정/삭제해서 진행하지 않는다. 결과 불명확·감사 장애를 운영에서 해소하는 권한과 절차는 미확정이다.
+권한 설정 예시(계정은 사전 생성, 비superuser이며 control table 소유자가 아니어야 함):
 
-## 운영 연결 전 인계표
+```sql
+GRANT USAGE ON SCHEMA public, source_cleanup
+  TO cleanup347_pm, cleanup347_security, cleanup347_executor;
+GRANT SELECT ON ALL TABLES IN SCHEMA source_cleanup
+  TO cleanup347_pm, cleanup347_security, cleanup347_executor;
+GRANT SELECT ON public.rag_source_ingestion_artifact TO cleanup347_executor;
+GRANT INSERT (batch_hash,role,executor,policy_version,valid_from,expires_at)
+  ON source_cleanup.review TO cleanup347_pm, cleanup347_security;
+GRANT INSERT (batch_hash) ON source_cleanup.revocation TO cleanup347_pm, cleanup347_security;
+GRANT INSERT (batch_hash,object_ref,attempt_id,event,payload)
+  ON source_cleanup.audit TO cleanup347_executor;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA source_cleanup TO cleanup347_executor;
+GRANT EXECUTE ON FUNCTION source_cleanup.lock_references() TO cleanup347_executor;
+```
 
-| 항목 | 담당/검토 | 현재 상태 및 필요한 산출물 |
-| --- | --- | --- |
-| 구현 | 김지혜 | 합성 코드·직접 참조 조회·테스트·이 문서 |
-| 물리 생성·Source 소유·세대 증거(Q1) | 김지혜 제안, 송은영·정현우 검토 | 실제 adapter 증거 포맷/보존 경계 미확정 |
-| DB/namespace 귀속·전체 참조 목록(Q2) | 송은영·정현우 | 직접 Artifact 전체 조회 구현. downstream/외부 증빙·새 schema 인계 필요 |
-| 모든 writer와 삭제 경합(Q3) | 송은영·정현우, 김지혜 연결 | 합성 cleanup 간 flock만 검증. Source 파일 쓰기/재사용/참조 commit 공유 경계 미연결 |
-| 정책·PM 배치 승인(Q4) | 권가빈, 송은영 | 실제 신원·권한·만료·철회 verifier 및 승인 보관 위치 미연결 |
-| 감사 불변성(Q5) | 송은영, 김지혜 | fsync 파일 append API만 구현. 비특권 수정/삭제 거부·durable storage/권한 미확정 |
-| 재시도·UNKNOWN 해소(Q6) | Backend/운영·검토자 | 합성 상한은 운영 정책 아님. 횟수/간격·장기 실패 인계·결과 확정자 지정 필요 |
-| 실제 실행자 | Backend·운영 담당 중 지정 | 미지정. 구현 담당이 자동으로 삭제 권한을 갖지 않음 |
-| 종료 후 감사 관리자·위치·보존 종료 | 권가빈·송은영 및 실행 담당 | 관련 provenance 동안 보존. 실제 보관 위치/관리자/종료 판단 근거 인계 대기 |
+`actor`와 `recorded_by`는 DB의 `current_user`로 기록한다. 검토자는 actor 컬럼에 직접 값을
+넣을 수 없다. PM/DB_SECURITY 두 actor는 verifier의 지정 역할과 각각 일치해야 한다.
+실행 계정은 검토자와 달라야 하며 superuser·BYPASSRLS·승인/receipt 생성 권한·감사 변경 권한이
+있으면 실행을 거부한다. 참조 잠금 함수는 고정 테이블의 SHARE lock만 취하며 Source 행 수정
+권한을 제공하지 않는다. 일반 UPDATE/DELETE/TRUNCATE는 immutable trigger로도 차단한다.
+관리자가 trigger를 비활성화하거나 DB 전체를 파기하는 행위까지 방어한다고 주장하지 않는다.
 
-현재 코드에 운영 삭제 진입점을 추가하기 전에 위 실제 연결·권한·증거를 갖추고 담당 리뷰를 받는다.
-서비스 종료 자체는 참조 객체의 삭제 승인이나 유예 면제 사유가 아니다.
-후속 테이블이 추가되면 직접/간접 참조 목록을 갱신하기 전 전체 무참조로 판단하지 않는다.
+## 후보 → 검토 → 수동 실행
 
-## 실행 절차 인계 기준
+각 명령에서 `SOURCE_CLEANUP_TEST_DATABASE_URL`은 **해당 역할 계정의 전용 DB URL**을 사용한다.
 
-1. 범위·정책·실행자·감사 관리자와 DB/namespace를 고정하고 필요한 승인 증빙을 연결한다.
-2. 읽기 전용 목록에서 Source 소유·생성 근거·종류를 확인한다. 불명확한 대상은 보류한다.
-3. 직접/간접/외부 참조·수집 중 상태를 모두 확인하고 배치 목록 hash를 검토·승인한다.
-4. 모든 writer와 공유되는 보호 경계에서 승인·전체 참조·실제 bytes/세대를 재검사한다.
-5. 의도 영속화 성공 후 다시 검사하고 삭제·결과 기록을 수행한다. 감사 실패 시 완료 선언하지 않는다.
-6. 성공·실패·UNKNOWN을 분리하고 실패 대상만 재검토한다. 성공 전 DB 참조/metadata를 지우지 않는다.
-7. 결과·미완료 대상·감사 보관 위치·관리자를 인계하고 #335/#165/#323과 연결한다.
+1. 설치 관리 계정으로 신규 합성 디렉터리를 생성한다. 반환된 workspace ID를 기록한다.
 
-이 절차는 인계 초안이다. 현재 합성 adapter가 1~7의 운영 조건을 충족한다는 선언이 아니다.
-PR은 `Related #347`로 연결하며 미완료 조건이 남아 있는 동안 `Closes #347`을 사용하지 않는다.
+```bash
+PYTHONPATH=. uv run python tools/source_cleanup/run.py create --root /absolute/new-synthetic-root
+```
+
+2. 실행 계정으로 조사한다. 원문은 출력하지 않고 batch hash·객체별 안전한 참조·판정을 출력한다.
+   생성 직후에는 30일 미경과로 HOLD가 정상이다.
+
+```bash
+PYTHONPATH=. uv run python tools/source_cleanup/run.py survey --workspace WORKSPACE_ID
+```
+
+3. 31일 경과를 합성 검증하려면 `--simulate-elapsed-days 31`을 사용한다. receipt 시각을 조작하지
+   않고 평가 시각만 실제 현재 시각+31일로 둔다. 이는 운영 유예 면제 기능이 아니다.
+   survey/review/execute에 같은 시간 모드를 사용한다.
+4. PM과 DB_SECURITY 계정으로 각각 **조사에서 확인한 동일 batch hash**를 승인한다.
+
+```bash
+PYTHONPATH=. uv run python tools/source_cleanup/run.py review --workspace WORKSPACE_ID --batch-hash REVIEWED_HASH --review-role PM --executor cleanup347_executor --simulate-elapsed-days 31
+PYTHONPATH=. uv run python tools/source_cleanup/run.py review --workspace WORKSPACE_ID --batch-hash REVIEWED_HASH --review-role DB_SECURITY --executor cleanup347_executor --simulate-elapsed-days 31
+```
+
+두 명령은 서로 다른 지정 계정으로 실행한다. 합성 CLI의 검토 유효기간은 1시간이다.
+실제 정책 승인자의 승인을 받았다는 증빙으로 합성 DB 계정의 기록을 사용하지 않는다.
+대상이 바뀌면 hash가 달라져 이전 검토를 재사용하지 못한다. 철회는 이전 hash를 명시해 append한다.
+
+```bash
+PYTHONPATH=. uv run python tools/source_cleanup/run.py revoke --workspace WORKSPACE_ID --batch-hash REVIEWED_HASH
+```
+
+5. 실행 계정으로 별도 수동 명령을 실행한다. 실행 직전에도 승인·철회·만료·객체·참조를 재검사한다.
+
+```bash
+PYTHONPATH=. uv run python tools/source_cleanup/run.py execute --workspace WORKSPACE_ID --batch-hash REVIEWED_HASH --executor cleanup347_executor --pm-role cleanup347_pm --db-security-role cleanup347_security --simulate-elapsed-days 31
+PYTHONPATH=. uv run python tools/source_cleanup/run.py audit --workspace WORKSPACE_ID
+```
+
+승인 역할 이름은 검토된 환경 설정을 사용하며 실행자가 임의 계정으로 바꿔 통과시키지 않는다.
+CLI가 기본으로 수행하는 작업은 없고 실행 command를 명시해야 한다. 실패 시 exit code 2와 안전한
+고정 오류만 출력하며 DB URL·SQL parameter·원문 예외를 출력하지 않는다.
+
+## 수집·재사용·참조 commit 경합
+
+관리되는 합성 writer는 `reference_existing_objects(engine, batch)` 안에서 객체 bytes/세대를
+검증하고 같은 connection에 Source 참조를 기록한다. shared advisory lock과 root flock은
+참조 commit/rollback까지 유지한다. 삭제 후 새 참조를 만들려 하면 객체 부재로 거부한다.
+일반 `publication_transaction`은 신규 합성 publication의 내부 경계다. 기존 receipt의 재사용은
+반드시 `reference_existing_objects`를 사용한다.
+
+Cleanup은 exclusive advisory lock·root flock·직접 참조 테이블 SHARE lock을 유지한다.
+진행 중 수집/미commit INSERT가 있으면 즉시 보류하고, 보호 중 새 INSERT의 commit을 차단한다.
+Source별 잠금에만 의존하지 않는다. DB 연결 상실 뒤에도 로컬 잠금은 context 종료까지 유지한다.
+이 잠금은 **관리되는 합성 경로**의 보장이다. 현재 운영 Source writer에 등록했다고 주장하지 않는다.
+
+동일 backend/key 전체 Artifact 행을 조회하여 FAILED/NO_CHANGE 및 그 행을 통해 이어지는
+Snapshot/Catalog/검증 provenance를 보호한다. 새 public 테이블/컬럼은 실행자의 조회 권한 유무와
+무관하게 catalog fingerprint를 바꾸므로 보류한다. 합성 workspace는 외부 증빙을 생성하지 않는다.
+기존 root나 운영 Citation/평가의 외부 참조를 자동으로 무참조라고 판단하는 기능은 없다.
+
+## 결과·재시도·UNKNOWN 인계
+
+| 결과 | 조치 |
+| --- | --- |
+| COMPLETED | 해당 합성 배치의 성공/기존 성공을 확인. 자동으로 정책/Runtime 승인으로 해석하지 않음 |
+| REVIEW_REQUIRED | 객체별 BLOCKED/UNKNOWN 사유를 확인. 전체 성공으로 처리하지 않음 |
+| EXECUTION_OR_AUDIT_UNAVAILABLE | 일부 파일은 이미 삭제됐을 수 있음. DB INTENT를 기준으로 조사 |
+| MISSING_REQUIRES_RECONCILIATION | 파일 부재만으로 성공 판정 금지. 기존 이력 수정 없이 UNKNOWN 유지 |
+| RECREATED_AFTER_SUCCESS | 같은 key의 새 객체를 과거 승인으로 삭제하지 않음 |
+| RETRY_REQUIRES_REVIEW | 생존 실패 대상의 승인·참조·세대를 확인한 뒤 제한 수동 재시도 |
+
+재시도는 기존 execute 명령에 `--retry --max-attempts 2`를 명시한다. 합성 도구의 최대 한도는
+3회이며 자동 반복/스케줄러는 없다. 성공 대상은 건너뛰고 실패 대상만 다시 검사한다.
+검토가 철회·만료되면 재시도도 막힌다. 결과가 불명확하면 임의 성공 처리 기능 없이 조사 대상으로
+남긴다. 이 한도는 운영 재시도 정책을 확정한 값이 아니다.
+
+INTENT와 결과는 각각 **독립 DB transaction으로 commit**한다. 파일 unlink가 성공한 뒤 결과
+기록이 실패해도 INTENT는 남고, 재시작 시 새 adapter가 DB를 읽어 UNKNOWN으로 복구한다.
+파일을 지우기 전에 Source 참조/receipt를 제거하지 않으며 rollback으로 파일을 복원한다고 가정하지 않는다.
+
+## 보관·담당 인계
+
+| 항목 | 이번 PR 인계 기준 |
+| --- | --- |
+| 구현·합성 재현 | 김지혜: 코드·fixture·CI·검증 기록과 이 runbook 제공 |
+| DB 권한·불변성 | 송은영 PR 리뷰: control schema/역할/잠금·DB 감사 검증 |
+| Source provenance | 정현우 PR 리뷰: 직접 참조 전체 보호·생성 receipt·범위 불명 보류 |
+| 정책 | 권가빈 PR 리뷰: 30일·수동 승인·실패/UNKNOWN 처리·비활성 범위 |
+| 실제 운영 실행자 | 실제 삭제 작업 전에 Backend/운영 담당 중 지정. 합성 실행은 운영 권한을 부여하지 않음 |
+| 감사 보관 위치 | 합성 DB의 `source_cleanup.audit`, 승인/철회/객체 receipt와 검증 보고서. 실행자는 수정·삭제 권한 없음 |
+| 감사 관리·보존 종료 | 실환경은 PM·DB 담당자가 저장 위치/관리자를 지정하고, 관련 provenance와 증빙이 더 이상 필요 없음을 검토한 뒤 별도 종료 승인. 서비스 종료만으로 제거하지 않음 |
+| UNKNOWN 장기 잔존 | 실행 결과와 batch/attempt 참조를 DB·Source 검토자에게 인계. 자동 삭제/성공 변환 없음 |
+
+테스트 DB를 폐기하는 것은 일회용 합성 환경 정리다. 운영 감사 기록의 삭제 허용 정책이 아니다.
+이번 PR의 구현·리뷰·CI가 완료되면 #347의 합성 수동 정리 완료 범위를 판정할 수 있다.
+운영 S3/실제 Source 데이터 삭제·자동화·Runtime 활성화는 #347 제외 범위를 유지한다.
+#335·#165·#323에는 사용자가 게시할 결과/증빙 연결 초안을 제공하며 도구가 댓글을 게시하지 않는다.

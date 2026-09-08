@@ -290,3 +290,14 @@ DB와 객체 저장소는 하나의 transaction이 아니다. 삭제된 파일�
 T01–T30 부분/미완료 대조는 같은 검증 기록에 이어진다.
 [운영 인계 초안](../../../runbooks/source-artifact-cleanup-347.md)의 실제 승인·writer 잠금·감사 권한·
 관리자 인계가 남아 있어 #347 전체 완료 또는 운영 삭제 승인으로 해석하지 않는다.
+
+
+### #347 마무리 구현 연결
+
+Local 합성 객체에 대해 Source store 생성 receipt, PostgreSQL 역할별 배치 검토·철회,
+관리된 수집/참조 commit과 cleanup의 잠금, 독립 commit 감사·재시작/UNKNOWN 복구를 구현했다.
+private control schema는 전용 합성 DB 도구이며 앱 public schema나 운영 Runtime을 변경하지 않는다.
+[현재 실행·담당 인계](../../../runbooks/source-artifact-cleanup-347.md)와
+[마무리 검증](../../../testing/source-artifact-cleanup-347.md)을 기준으로 PR 리뷰한다.
+기존 단계의 미연결 표기는 해당 시점 기록이며, 이 구현 연결로 정책의 Proposed 상태나 실제
+운영 삭제 승인이 자동 변경되지는 않는다.

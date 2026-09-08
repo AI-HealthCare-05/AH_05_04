@@ -1,7 +1,8 @@
 """Internal synthetic execution model; no production adapters or entry points are registered."""
 
 import hashlib
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -40,9 +41,11 @@ class AuditEntry:
 
 
 class AuditJournal(Protocol):
-    def history(self, batch_hash: str, object_ref: str) -> tuple[AuditEntry, ...]: ...
+    def history(
+        self, batch_hash: str, object_ref: str
+    ) -> tuple[AuditEntry, ...] | Awaitable[tuple[AuditEntry, ...]]: ...
 
-    def append(self, entry: AuditEntry) -> None:
+    def append(self, entry: AuditEntry) -> None | Awaitable[None]:
         """Return only after durable append; raise on uncertain writes. Never update/delete history."""
         ...
 
@@ -118,8 +121,8 @@ async def _attempt(
     await _check_target(session, batch, target, clock())
     attempt_id = str(uuid4())
 
-    def record(event: Outcome, reason: str) -> None:
-        session.audit.append(
+    async def record(event: Outcome, reason: str) -> None:
+        result = session.audit.append(
             AuditEntry(
                 batch.digest(),
                 ref,
@@ -137,23 +140,26 @@ async def _attempt(
             )
         )
 
+        if inspect.isawaitable(result):
+            await result
+
     # Failure here must never call delete. A partially persisted INTENT remains recoverable.
-    record("INTENT", "FINAL_CHECKS_PASSED")
+    await record("INTENT", "FINAL_CHECKS_PASSED")
     try:
         # Audit I/O may be slow. Recheck approval, references and bytes immediately before delete.
         receipt = await _verify(batch, executor, clock, approvals)
         await _check_target(session, batch, target, clock())
         await session.assert_held()
     except Exception:
-        record("BLOCKED", "FINAL_RECHECK_FAILED")
+        await record("BLOCKED", "FINAL_RECHECK_FAILED")
         return ExecutionItem(ref, "BLOCKED", "FINAL_RECHECK_FAILED")
     try:
         await session.delete(target)
     except Exception:
         # Even an exception can follow successful unlink: never assume the file survived.
-        record("UNKNOWN", "DELETE_RESULT_UNKNOWN")
+        await record("UNKNOWN", "DELETE_RESULT_UNKNOWN")
         return ExecutionItem(ref, "UNKNOWN", "DELETE_RESULT_UNKNOWN")
-    record("DELETED", "DELETE_CONFIRMED")
+    await record("DELETED", "DELETE_CONFIRMED")
     return ExecutionItem(ref, "DELETED", "DELETE_CONFIRMED")
 
 
@@ -168,7 +174,8 @@ async def _execute_target(
     max_attempts: int,
 ) -> ExecutionItem:
     ref = _object_ref(batch, target)
-    history = session.audit.history(batch.digest(), ref)
+    history_result = session.audit.history(batch.digest(), ref)
+    history = await history_result if inspect.isawaitable(history_result) else history_result
     if history:
         await session.assert_held()
         observed = await session.observe(target)
@@ -179,7 +186,7 @@ async def _execute_target(
         if observed is None:
             # Missing after INTENT/UNKNOWN cannot be attributed to this deletion attempt.
             if history[-1].event == "INTENT":
-                session.audit.append(
+                written = session.audit.append(
                     replace(
                         history[-1],
                         event="UNKNOWN",
@@ -187,6 +194,8 @@ async def _execute_target(
                         occurred_at=_utc(clock()),
                     )
                 )
+                if inspect.isawaitable(written):
+                    await written
             return ExecutionItem(ref, "UNKNOWN", "MISSING_REQUIRES_RECONCILIATION")
         if not retry or sum(entry.event == "INTENT" for entry in history) >= max_attempts:
             return ExecutionItem(ref, "BLOCKED", "RETRY_REQUIRES_REVIEW")

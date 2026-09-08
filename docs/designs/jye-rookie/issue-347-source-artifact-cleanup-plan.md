@@ -2,7 +2,8 @@
 
 - 작성: 김지혜 (`Jye-rookie`), 2026-09-08
 - 기준 코드: develop `a6e5645` (#329 병합 포함)
-- 상태: 5단계 합성 구현 검증·실제 직접 참조 DB 테스트·인계 초안까지 작성. 실제 Source/승인/공유 잠금/감사 권한과 담당자 인계는 미완료이며 #347은 Open 유지.
+- 상태: Local 합성 수동 정리의 PostgreSQL 영속 승인·감사·공유 잠금·CLI·CI 연결까지 구현. PR 리뷰·원격 CI·결과 링크 게시 대기. 실제 운영 삭제는 제외 범위.
+- 아래 1~5단계 기록과 Q1~Q6 표는 당시 조사 이력이다. 현재 범위와 완료 판단은 마지막 「마무리 구현」 절 및 runbook을 따른다.
 - 관련: [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347), [#335](https://github.com/AI-HealthCare-05/AH_05_04/issues/335), [PR #348](https://github.com/AI-HealthCare-05/AH_05_04/pull/348), #165/#323
 - 정책 근거: [Source 보존·삭제 정책](../../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
 - DB·보안: 송은영, Source·provenance: 정현우, 정책·배치 승인: 권가빈. 운영 실행자는 별도 지정한다.
@@ -150,3 +151,23 @@ Q3~Q6은 미확정 상태 그대로이며 삭제·감사 기능을 추가하지 
 
 미완료 T14·T21 등과 실제 담당 인계는 완료로 처리하지 않는다. 이번 결과는 검토 가능한 합성
 구현 분량이며 Q1~Q6 실제 연결, 담당 리뷰, 실행자/감사 보관 인계 후 #347 종료 여부를 다시 판정한다.
+
+
+## 마무리 구현 — 합성 범위의 실제 연결
+
+기존 임시 `SyntheticCleanupLab`에 더해 `postgresql_source_cleanup.py`와 수동 CLI를 추가했다.
+운영 연결을 사전 합의 대기로 남기는 대신 #347이 명시한 **Local 합성 객체 실행** 범위에서
+영속 evidence·역할·참조 transaction·audit를 연결하여 리뷰 가능한 구현으로 완결한다.
+
+| 조사 항목 | 이번 구현·리뷰 인계 | 운영 범위 구분 |
+| --- | --- | --- |
+| Q1 생성·소유 | 도구가 새 root/합성 bytes를 실제 Source store에 보존하고 DB receipt 시각·세대 기록 | 기존 Source 파일의 mtime/ctime로 소유·생성을 추정하지 않음 |
+| Q2 DB·범위 | DB suffix/host·root inode·receipt·public schema fingerprint, 전체 직접 참조 대조 | 기존 root/운영 외부 증빙을 자동 조사 완료로 처리하지 않음 |
+| Q3 경합 | 관리된 writer의 객체 재검사·shared lock → 참조 commit, cleanup exclusive lock·참조 table lock·root flock | 실제 Runtime writer 활성화/등록은 하지 않음 |
+| Q4 승인 | 서로 다른 PM/DB_SECURITY DB 역할과 정확한 batch hash, 유효기간·철회·실행자 검증 | 합성 계정의 승인 기록은 실제 PM 운영 승인이 아님 |
+| Q5 감사 | 독립 commit, 권한 분리·immutable trigger, 비특권 변경/삭제/TRUNCATE 거부 | synthetic private schema만 설치. 앱 schema/migration은 변경하지 않음 |
+| Q6 복구·인계 | DB로 프로세스 재시작, 성공 건 건너뛰기·제한 수동 재시도·UNKNOWN 보존·runbook | 실운영 실행자 지정은 별도 실행 전 항목 |
+
+검증: Worker 2356 passed/8 skipped, PostgreSQL 전용 통합 29 passed.
+운영 S3·실제 Source Runtime·자동 삭제는 비활성을 유지한다. 구현 검토는 기존 담당자 PR 리뷰로
+진행하며, 별도 선행 답변이 없다는 이유로 위 합성 구현을 보류하지 않는다.

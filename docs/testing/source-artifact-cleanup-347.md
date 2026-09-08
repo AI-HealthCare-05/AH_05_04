@@ -1,5 +1,7 @@
 # #347 읽기 전용 조사·배치 사전 검사 검증
 
+> 최신 검증은 문서 마지막 「마무리 구현」 절을 참고한다. 앞선 단계의 수치·미연결 표는 당시 이력이다.
+
 - 구현: 김지혜. DB·보안 검토: 송은영, Source·provenance 검토: 정현우, 정책·배치 승인: 권가빈.
 - 기준: `8da32d7` 및 이 문서와 함께 커밋하는 2단계 변경. develop 기준은 `a6e5645`.
 - 정책: [#335 보존·삭제 정책](../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
@@ -303,3 +305,57 @@ Source writer 동시 transaction·전체 CI는 실행하지 않았다.
 테스트 컨테이너와 익명 볼륨은 종료 후 정리한다. 전체 Backend·Frontend·CI·migration downgrade
 재실행·실제 권한/운영 삭제 검증은 포함하지 않았다. 위 합성/조회 결과를 해당 미실행 항목의
 완료 증빙으로 사용하지 않는다. 실행 명령은 runbook과 기존 Worker 단위 테스트 명령을 따른다.
+
+
+## 마무리 구현 — 영속 Local 합성 workflow
+
+기준: develop `7a967d2`(#352 포함) 병합과 이 절에 동반되는 #347 변경. 이전 단계의
+「임시 lab만 실행 가능」·Q1~Q6 미연결 표를 최종 구현 상태로 사용하지 않는다.
+
+### 실행한 검증
+
+- `ai_worker/tests/core`, `ocr`, `rag`, `evaluation`: **2356 passed, 8 skipped** (61.86초).
+- `tests/integration/rag/test_source_cleanup_references.py`와
+  `test_source_cleanup_workflow.py`: **29 passed** (9.43초), 일회용 PostgreSQL 16.
+- 전체 Ruff·format: **통과, 549 files**.
+- Backend·Worker와 새 CLI Mypy: **461 source files** 통과.
+- Alembic: base → `169b2c3d4e5f` 실제 upgrade 통과, 단일 head. 새 앱 migration 없음.
+- GitHub workflow에 전용 `source_cleanup347_test` DB 생성·migration·통합 테스트를 추가했다.
+  원격 CI 실행 결과는 아직 아니다.
+- 전체 Backend/Frontend 서비스 테스트·운영 환경·S3 version 삭제·migration downgrade는 재실행하지 않았다.
+
+### 새로 확인한 보장
+
+- 실제 Source store가 생성한 합성 객체의 소유·생성 receipt와 generation을 DB에서 재조회한다.
+  기존 디렉터리를 등록할 수 없고, 생성일은 파일 시각을 과거로 바꿔 만들지 않는다.
+- 평가 시각만 +31일로 이동한 합성 테스트로 30일 미경과/경계 보류와 적격 후보를 구분했다.
+- PM/DB_SECURITY 별도 실제 PostgreSQL 계정으로 검토를 기록하고, 실행자는 승인·철회를
+  만들거나 actor를 위조할 권한이 없다. 철회·만료·다른 실행자/배치 결속은 실행 시 다시 확인한다.
+- managed publisher의 실제 참조 transaction과 cleanup을 경쟁시켰다. 미commit/진행 중 수집은
+  삭제를 막고, rollback은 참조를 남기지 않는다. 삭제 후 이전 receipt로 참조를 만들려 해도 거부된다.
+- FAILED/NO_CHANGE 및 공유 직접 참조는 상태 필터 없이 보호한다. 새 참조 테이블은 실행자의
+  SELECT 권한이 없어도 schema fingerprint 변경으로 보류된다.
+- 별도 CLI 프로세스가 DB에서 batch·승인·audit를 읽고 실행한다. 두 번째 프로세스는 성공 객체를
+  다시 지우지 않는다. 일부 파일만 실패하면 생존 실패 건만 제한 재시도한다.
+- INTENT는 파일 삭제 전에 별도 transaction으로 commit한다. 결과 기록 실패 후 다시 열면
+  UNKNOWN을 append하고 파일 부재를 성공으로 단정하지 않는다.
+- 비특권 실행 역할의 audit UPDATE/DELETE/TRUNCATE와 승인 INSERT를 거부한다. owner의 일반
+  변경도 trigger가 거부한다. superuser가 trigger를 끄는 공격은 보장 범위 밖이며 실행 역할로 허용하지 않는다.
+- audit 내용에 원문·object key·root 경로가 없음을 검사했다. 실패 CLI는 SQL/URL 예외를 출력하지 않는다.
+
+### T01–T30 최종 범위 판정
+
+| 항목 | 이번 PR의 검증 범위 |
+| --- | --- |
+| T01/T07/T08 | 증거 누락·불완전 조사·실제 DB receipt의 유예 경계 보류 |
+| T02/T26/T27 | 자동/Runtime 진입점 없음, Local test DB 및 신규 합성 root만 허용. S3 marker 삭제는 미구현·범위 밖 |
+| T03/T04/T05 | 실제 공유/FAILED/NO_CHANGE 직접 참조 보호. 연결된 Snapshot/Catalog의 근거 행을 제거하지 않음 |
+| T06/T25 | 합성 downstream 양수 보호와 직접 참조 전체 보호. 운영 Citation/평가 외부 참조 통합을 실행한 것은 아님 |
+| T09/T13/T14 | 관리되는 합성 writer/cleanup의 DB+Local 잠금, commit/rollback·삭제 후 재참조 거부 |
+| T10/T11/T12 | 실제 Source-store 합성 객체·정확한 batch·별도 DB 승인 역할·철회/만료와 실제 unlink |
+| T15/T16/T17/T19/T20 | 별도 프로세스 재실행·성공 유지·부분 실패 재시도·영속 UNKNOWN·객체 교체 거부 |
+| T18/T21/T22 | 독립 INTENT commit, 감사 장애 시 차단, 권한/trigger 불변성·원문 비노출 |
+| T23/T24/T28/T29/T30 | root/DB/세대/checksum/크기·종류 대조, 새 schema 또는 범위 불명 보류 |
+
+실행 절차·권한·감사 위치·운영 제외 범위는 [runbook](../runbooks/source-artifact-cleanup-347.md)에
+인계한다. 남은 PR 리뷰와 사용자의 #335/#165/#323 결과 링크 게시를 완료했다고 기록하지 않는다.
