@@ -116,7 +116,8 @@ Compose의 동적 host port·인증 격리 대신, 인증 없는 service contain
 기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
 - `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
 - `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
-- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, 실제 Redis·PostgreSQL OCR one-cycle, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`, `ai_worker/tests/evaluation/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
+- `ai_worker/tests/evaluation/`의 RAG Evaluation 단위 테스트는 기본 실행 범위에 포함됩니다.
+- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, 실제 Redis·PostgreSQL OCR one-cycle, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.
