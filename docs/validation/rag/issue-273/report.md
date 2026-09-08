@@ -1,34 +1,38 @@
-# Issue #273 Phase 0 Validation Report
+# Issue #273 Phase A DEV Authoring Validation Report
 
-> Candidate · Review Required — not approved, not frozen, and not a Release decision.
+> Phase A · DEV Authoring Draft — authored, unreviewed, and not a Release decision.
 
-- Phase: `PHASE_0_SCHEMA_CANDIDATE`
+- Phase: `PHASE_A_DEV_AUTHORING`
 - Schema Set Status: `REVIEW_REQUIRED`
-- Dataset: `rag-natural-language-retrieval-dev@1.0.0` (`NOT_CREATED`)
+- Dataset: `rag-natural-language-retrieval-dev@1.0.0` (`DRAFT`)
+- Dataset Manifest SHA-256: `a6461ca49c6021b242bd5b13f3d9b1b52bf564bea186a47894cd254a40600291`
 - Schema Set: `rag-eval.schema-set@1.3.0` `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`
 - Candidate Decision: [`docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md`](../../../governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md)
 - Approval Transition: `FUTURE_PULL_REQUEST_REVIEW_EVENT` by responsible reviewer `@hazelnutflavoured`; this future PR event has not occurred.
 - Release Eligible: `false`
 - Production remains closed.
 
-## Planned Scope and Current Artifacts
+## Authored DEV Scope
 
-- Planned DEV questions: `60`; created: `0`
+- Planned DEV questions: `60`; created: `60`
 - Planned HOLDOUT questions: `40`; created: `0`
-- Planned topics: `5`
-- Planned expression types: `6`
-- Planned independent groups: `20`
-- Gold records created: `0`; review: `NOT_STARTED`
+- Topics: planned `5`; created `5`
+- Expression types: planned `6`; created `6`
+- Independent transform-origin groups: planned `20`; created `20`
+- Gold records created: `20`; review: `NOT_STARTED`
+- Study-wide synthetic corpus records created: `100`
 - HOLDOUT Freeze: `NOT_STARTED`
 - Actual Adapter: `NOT_IMPLEMENTED`
 - Actual Run Artifact: `NOT_CREATED`
-- Metric summary: `NOT_CREATED`
 
-No DEV or HOLDOUT question bodies, Gold artifacts, actual Run, or Metric values were created in Phase 0.
+한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, 실제 환자 발화나 실제 제품 데이터가 아니다.
+DEV authoring exists but has not received human Gold review; all authored artifacts remain DRAFT.
+Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.
+No baseline Metric exists, and no Metric fields are recorded in the machine status.
+DEV cannot produce a Release PASS; Production remains closed.
 
 ## Blocking Codes
 
-- `BLOCKED_BY_EVAL_SCHEMA_EXTENSION`
 - `BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER`
 - `BLOCKED_BY_RAG_14_ADAPTER`
 - `WAITING_FOR_HOLDOUT_FREEZE`
@@ -37,13 +41,17 @@ No DEV or HOLDOUT question bodies, Gold artifacts, actual Run, or Metric values 
 
 | Check | Command | Exit | Result |
 | --- | --- | ---: | --- |
-| `TASK_1_PROVENANCE_CONTRACTS` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 61 passed |
-| `TASK_2_SCHEMA_SET_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_study_split_axis_cardinality_is_portable -q` | `0` | 6 passed |
-| `TASK_3_LOADER_BINDING` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q` | `0` | 165 passed, 6 skipped |
+| `PHASE_A_DEV_FIXTURE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q` | `0` | 25 passed |
+| `PHASE_A_LOADER` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q` | `0` | 132 passed |
+| `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 50 passed |
+| `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 94 passed, 7 skipped |
 
 ## Boundaries
 
 - Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.
-- No approval, Contract Freeze, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, or Production readiness is claimed.
+- No human Gold review, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.
+- HOLDOUT question content is absent from the repository and remains future protected work.
+- The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.
+- The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-07T01:54:36.000000Z`. Canonical status SHA-256: `298784d4910a272c2c9f3d2906846613159bce2bc9d1e72e3ee52a5a395f5697`.
+Status updated at `2026-09-08T02:40:00.000000Z`. Canonical status SHA-256: `f2220823cd7161baf2c746176e5e66a44e6065431298584a3867a49e191d9476`.
