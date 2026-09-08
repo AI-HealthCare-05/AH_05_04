@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from app.models.medical_documents import MedicalDocument
     from app.models.ocr import OcrJob
     from app.models.profiles import Profile
+    from app.models.rag_candidate import MedicationCandidateSearch, MedicationIdentification
 
 
 class PrescriptionStatus(StrEnum):
@@ -96,6 +97,11 @@ class Prescription(Base):
         back_populates="prescription",
         foreign_keys=lambda: [PrescriptionVersion.prescription_id],
         order_by=lambda: PrescriptionVersion.version_number,
+    )
+    active_version: Mapped["PrescriptionVersion | None"] = relationship(
+        foreign_keys=[active_version_id],
+        uselist=False,
+        viewonly=True,
     )
     guides: Mapped[list["Guide"]] = relationship(back_populates="prescription", overlaps="profile")
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="prescription", overlaps="profile")
@@ -258,3 +264,5 @@ class PrescriptionVersionMedication(Base):
     )
 
     prescription_version: Mapped["PrescriptionVersion"] = relationship(back_populates="medications")
+    candidate_searches: Mapped[list["MedicationCandidateSearch"]] = relationship()
+    identifications: Mapped[list["MedicationIdentification"]] = relationship()

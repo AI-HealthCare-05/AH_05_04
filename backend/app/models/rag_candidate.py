@@ -116,9 +116,14 @@ class MedicationCandidateSearch(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    # prescription_version_medication은 #169에서 생성된다. 이 테이블은 그 선행 테이블을
-    # 중복 생성하지 않기 위해 우선 값만 저장하고, FK는 #169 이후 별도 migration에서 추가한다.
-    prescription_version_medication_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    prescription_version_medication_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version_medication.id",
+            name="fk_medication_candidate_search_version_medication",
+        ),
+        nullable=False,
+    )
     # medication.medication_name/strength_text는 사용자가 나중에 정정하면 값이 바뀐다.
     # Search가 실제로 어떤 값을 대상으로 실행됐는지는 살아있는 FK 참조만으로 재구성할 수
     # 없으므로(#260 Product Identity 원칙과 동일한 이유) 생성 시점 값을 그대로 스냅샷한다.
@@ -286,9 +291,14 @@ class MedicationIdentification(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    # prescription_version_medication은 #169에서 생성된다. Candidate Search와 같은 이유로
-    # 우선 값만 저장하고, FK는 선행 테이블 구현 이후 별도 migration에서 추가한다.
-    prescription_version_medication_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    prescription_version_medication_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version_medication.id",
+            name="fk_medication_identification_version_medication",
+        ),
+        nullable=False,
+    )
     candidate_search_id: Mapped[UUID] = mapped_column(
         UUIDChar(),
         ForeignKey("medication_candidate_search.id"),

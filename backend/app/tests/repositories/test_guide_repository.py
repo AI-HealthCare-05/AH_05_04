@@ -10,7 +10,7 @@ from app.models.async_jobs import AiJobType
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.async_job_repository import AsyncJobRepository
@@ -75,7 +75,9 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(ocr_job)
     await session.flush()
 
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -84,8 +86,23 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     )
     session.add(prescription)
     await session.flush()
-
+    version = PrescriptionVersion(
+        id=version_id,
+        prescription_id=prescription.id,
+        version_number=1,
+        prescribed_date=prescription.prescribed_date,
+        confirmed_at=prescription.confirmed_at,
+    )
+    session.add(version)
+    await session.flush()
     session.add(Medication(prescription_id=prescription.id, medication_name="타이레놀", display_order=1))
+    session.add(
+        PrescriptionVersionMedication(
+            prescription_version_id=version_id,
+            medication_name="타이레놀",
+            display_order=1,
+        )
+    )
     await session.flush()
 
     return prescription
@@ -113,16 +130,16 @@ async def test_get_prescription_owned_orders_medications_by_display_order(db_ses
     # display_order 기준으로 정렬해야만 [1, 2, 3]이 나옵니다.
     prescription = await _create_confirmed_prescription(db_session, user=owner)
     db_session.add(
-        Medication(
-            prescription_id=prescription.id,
+        PrescriptionVersionMedication(
+            prescription_version_id=prescription.active_version_id,
             medication_name="세번째 약",
             display_order=3,
         )
     )
     await db_session.flush()
     db_session.add(
-        Medication(
-            prescription_id=prescription.id,
+        PrescriptionVersionMedication(
+            prescription_version_id=prescription.active_version_id,
             medication_name="두번째 약",
             display_order=2,
         )
@@ -133,7 +150,8 @@ async def test_get_prescription_owned_orders_medications_by_display_order(db_ses
     loaded = await repo.get_prescription_owned(prescription_id=prescription.id, user_id=owner.id)
 
     assert loaded is not None
-    assert [medication.display_order for medication in loaded.medications] == [1, 2, 3]
+    assert loaded.active_version is not None
+    assert [medication.display_order for medication in loaded.active_version.medications] == [1, 2, 3]
 
 
 async def test_get_owned_guide_rejects_other_users_guide(db_session: AsyncSession) -> None:
@@ -159,7 +177,9 @@ async def test_get_by_ai_job_id_returns_matching_guide(db_session: AsyncSession)
     prescription = await _create_confirmed_prescription(db_session, user=owner)
     guide = await GuideRepository(db_session).create(prescription=prescription)
     ai_job = await AsyncJobRepository(db_session).create_job(
-        user_id=owner.id, job_type=AiJobType.GUIDE, prescription_version_id=None
+        user_id=owner.id,
+        job_type=AiJobType.GUIDE,
+        prescription_version_id=prescription.active_version_id,
     )
     guide.ai_job_id = ai_job.id
     await db_session.flush()

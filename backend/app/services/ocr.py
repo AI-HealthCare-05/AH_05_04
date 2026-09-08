@@ -156,6 +156,7 @@ class OcrService:
             },
             create_domain_placeholder=create_domain_placeholder,
             trace_id=trace_id,
+            prescription_version_id=None,
         )
         return await job_status_service.get_job_status(user=user, job_id=intake_result.job.id)
 
