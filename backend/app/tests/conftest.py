@@ -20,11 +20,34 @@ TEST_DATABASE_URL = URL.create(
     database="test",
 )
 
+# pg_trgm은 테이블이 없는 전용 schema에 두고 조회 경로에만 더한다. public이나 테스트 schema에
+# 두면 create_all의 존재 검사가 다른 schema의 동명 테이블을 보고 생성을 건너뛴다.
+EXTENSION_SCHEMA = "test_extensions"
+
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
     pool_pre_ping=True,
     poolclass=NullPool,
+    connect_args={"server_settings": {"search_path": f"public,{EXTENSION_SCHEMA}"}},
 )
+
+
+async def _ensure_trigram_extension(connection, schema: str) -> None:
+    """pg_trgm을 테이블이 없는 전용 schema에 둔다.
+
+    public이나 테스트 schema에 두면 `create_all`의 존재 검사가 다른 schema의 동명 테이블을
+    보고 생성을 건너뛴다. 확장은 DB당 하나뿐이라 이미 다른 schema에 있으면 옮긴다.
+    """
+    await connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+    await connection.execute(text(f"CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA {schema}"))
+    current = await connection.scalar(
+        text(
+            "SELECT n.nspname FROM pg_extension e "
+            "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'"
+        )
+    )
+    if current != schema:
+        await connection.execute(text(f"ALTER EXTENSION pg_trgm SET SCHEMA {schema}"))
 
 
 @pytest_asyncio.fixture(
@@ -33,10 +56,7 @@ test_engine = create_async_engine(
 )
 async def initialize_database() -> AsyncIterator[None]:
     async with test_engine.begin() as connection:
-        # rag_medication_search_entry의 GIN trigram 인덱스가 gin_trgm_ops를 요구합니다.
-        # migration은 CREATE EXTENSION을 수행하지만 이 fixture는 create_all만 쓰므로
-        # 여기서 같은 확장을 보장합니다.
-        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        await _ensure_trigram_extension(connection, EXTENSION_SCHEMA)
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
 
