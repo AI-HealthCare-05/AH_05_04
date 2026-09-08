@@ -282,6 +282,7 @@ class EvalRun(Base):
         UniqueConstraint("run_key", name="uq_eval_run_key"),
         UniqueConstraint("id", "dataset_id", name="uq_eval_run_id_dataset"),
         UniqueConstraint("id", "dataset_id", "experiment_type", name="uq_eval_run_id_dataset_type"),
+        UniqueConstraint("id", "decision_status", name="uq_eval_run_id_decision_status"),
         ForeignKeyConstraint(
             ["dataset_id", "dataset_manifest_hash"],
             ["eval_dataset.id", "eval_dataset.manifest_hash"],

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from app.core import config
@@ -17,21 +18,33 @@ from app.dtos.medication_candidates import (
 from app.models.rag_candidate import MedicationCandidateSearchStatus as ModelCandidateSearchStatus
 from app.models.users import User
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+from app.services.idempotency import RUNTIME_RELEASE_BUNDLE_PLACEHOLDER, SyncMutationIdempotencyService
 from app.services.medication_identification import MedicationIdentificationService
+
+# idempotency-v1.md "동기 상태 변경 처리 규칙": F Candidate 확인·거절은 OpenAPI operation_id가
+# 아니라 이 값으로 scope를 구분한다(operation_id 문자열 자체는 계약이 강제하는 특정 형식이
+# 없어, 다른 Track과 충돌하지 않도록 도메인.동작 형태로 고정한다).
+_CONFIRM_OPERATION_ID = "medication-candidate.confirm"
+_REJECT_OPERATION_ID = "medication-candidate.reject"
 
 
 class MedicationCandidateService:
     """RAG-09(MedicationIdentificationService)의 persistence를 RAG-10 공개 계약
     (medication-identification-v1.md)의 DTO로 변환하는 service adapter입니다. 이 계층은
-    자체 domain mutation을 수행하지 않고 조회·확인·거절을 RAG-09 repository/service에 위임합니다."""
+    자체 domain mutation을 수행하지 않고 조회·확인·거절을 RAG-09 repository/service에 위임합니다.
+
+    확인·거절은 idempotency-v1.md "동기 상태 변경 처리 규칙"(SYNC_MUTATION)이 적용되는
+    Track F 요청이라, 실제 mutation을 `SyncMutationIdempotencyService`가 감싼다."""
 
     def __init__(
         self,
         repository: MedicationCandidateRepository,
         identification_service: MedicationIdentificationService,
+        idempotency_service: SyncMutationIdempotencyService,
     ) -> None:
         self._repository = repository
         self._identification_service = identification_service
+        self._idempotency_service = idempotency_service
 
     async def get_candidate_search(
         self,
@@ -107,43 +120,110 @@ class MedicationCandidateService:
         *,
         user: User,
         request: ConfirmMedicationCandidateRequest,
+        idempotency_key: str,
     ) -> ConfirmMedicationCandidateData:
-        identification = await self._identification_service.confirm_identification(
-            prescription_version_medication_id=request.prescription_version_medication_id,
-            candidate_search_result_id=request.candidate_search_result_id,
+        # 계약: F Candidate 확인·거절의 parent_resource_id는 prescription_version_medication_id로
+        # 고정된다. confirm은 request body에 이미 그 값이 있어 별도 조회가 필요 없다.
+        async def mutate() -> dict[str, Any]:
+            identification = await self._identification_service.confirm_identification(
+                prescription_version_medication_id=request.prescription_version_medication_id,
+                candidate_search_result_id=request.candidate_search_result_id,
+                user_id=user.id,
+            )
+            # chk_medication_identification_matched_payload가 MATCHED일 때
+            # product_id/confirmed_at non-null을 보장한다.
+            assert identification.product_id is not None
+            assert identification.confirmed_at is not None
+            data = ConfirmMedicationCandidateData(
+                identification_id=identification.id,
+                prescription_version_medication_id=identification.prescription_version_medication_id,
+                status=MedicationIdentificationStatus(identification.status),
+                source=MedicationIdentificationSource(identification.source),
+                product_id=identification.product_id,
+                confirmed_at=identification.confirmed_at,
+            )
+            return data.model_dump(mode="json")
+
+        result = await self._idempotency_service.execute(
             user_id=user.id,
+            operation_id=_CONFIRM_OPERATION_ID,
+            parent_resource_id=request.prescription_version_medication_id,
+            idempotency_key=idempotency_key,
+            fingerprint={
+                "action": "confirm",
+                "candidate_search_result_id": str(request.candidate_search_result_id),
+                "runtime_release_bundle": RUNTIME_RELEASE_BUNDLE_PLACEHOLDER,
+            },
+            success_status=200,
+            mutate=mutate,
         )
-        # chk_medication_identification_matched_payload가 MATCHED일 때 product_id/confirmed_at
-        # non-null을 보장한다.
-        assert identification.product_id is not None
-        assert identification.confirmed_at is not None
-        return ConfirmMedicationCandidateData(
-            identification_id=identification.id,
-            prescription_version_medication_id=identification.prescription_version_medication_id,
-            status=MedicationIdentificationStatus(identification.status),
-            source=MedicationIdentificationSource(identification.source),
-            product_id=identification.product_id,
-            confirmed_at=identification.confirmed_at,
-        )
+        return ConfirmMedicationCandidateData.model_validate(result.response_body)
 
     async def reject_candidate(
         self,
         *,
         user: User,
         request: RejectMedicationCandidateRequest,
+        idempotency_key: str,
     ) -> RejectMedicationCandidateData:
-        identification = await self._identification_service.reject_identification(
-            search_id=request.search_id,
+        # 거절 요청 body에는 prescription_version_medication_id가 직접 없어, 멱등성 scope를
+        # 계산하기 전에 미리 조회해서 도출해야 한다(놓치기 쉬운 지점, #311).
+        parent_resource_id = await self._resolve_reject_parent_resource_id(user=user, request=request)
+
+        async def mutate() -> dict[str, Any]:
+            identification = await self._identification_service.reject_identification(
+                search_id=request.search_id,
+                candidate_search_result_id=request.candidate_search_result_id,
+                user_id=user.id,
+            )
+            assert identification.rejected_at is not None
+            data = RejectMedicationCandidateData(
+                identification_event_id=identification.id,
+                prescription_version_medication_id=identification.prescription_version_medication_id,
+                status=MedicationIdentificationStatus(identification.status),
+                # reject_identification 성공은 항상 Search를 INVALIDATED_USER_REJECTED로 전환한다
+                # (계약 124행). 별도 조회 없이 이 불변식으로 채운다.
+                search_status=MedicationCandidateSearchStatus.INVALIDATED_USER_REJECTED,
+                rejected_at=identification.rejected_at,
+            )
+            return data.model_dump(mode="json")
+
+        result = await self._idempotency_service.execute(
+            user_id=user.id,
+            operation_id=_REJECT_OPERATION_ID,
+            parent_resource_id=parent_resource_id,
+            idempotency_key=idempotency_key,
+            fingerprint={
+                "action": "reject",
+                "search_id": str(request.search_id),
+                "candidate_search_result_id": str(request.candidate_search_result_id),
+                "runtime_release_bundle": RUNTIME_RELEASE_BUNDLE_PLACEHOLDER,
+            },
+            success_status=200,
+            mutate=mutate,
+        )
+        return RejectMedicationCandidateData.model_validate(result.response_body)
+
+    async def _resolve_reject_parent_resource_id(
+        self,
+        *,
+        user: User,
+        request: RejectMedicationCandidateRequest,
+    ) -> UUID:
+        """계약: F Candidate 확인·거절 둘 다 parent_resource_id는
+        prescription_version_medication_id로 고정된다. `reject_identification`이 내부적으로
+        쓰는 것과 같은 조회(`get_result_selection_for_update_owned`)를 재사용해, 같은 검증
+        (선택한 결과가 요청한 search_id에 속하는지)을 먼저 적용한다 — 같은 트랜잭션이라 같은
+        행에 대한 재조회·재잠금은 안전하다."""
+        selection = await self._repository.get_result_selection_for_update_owned(
             candidate_search_result_id=request.candidate_search_result_id,
             user_id=user.id,
         )
-        assert identification.rejected_at is not None
-        return RejectMedicationCandidateData(
-            identification_event_id=identification.id,
-            prescription_version_medication_id=identification.prescription_version_medication_id,
-            status=MedicationIdentificationStatus(identification.status),
-            # reject_identification 성공은 항상 Search를 INVALIDATED_USER_REJECTED로 전환한다
-            # (계약 124행). 별도 조회 없이 이 불변식으로 채운다.
-            search_status=MedicationCandidateSearchStatus.INVALIDATED_USER_REJECTED,
-            rejected_at=identification.rejected_at,
-        )
+        if selection is None or selection.search.id != request.search_id:
+            raise ApiError(
+                status_code=404,
+                code="CANDIDATE_SEARCH_NOT_FOUND",
+                message="약품 후보 검색 결과를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="candidate_search_result_id", reason="NOT_FOUND")],
+            )
+        return selection.search.prescription_version_medication_id

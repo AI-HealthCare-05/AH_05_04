@@ -16,6 +16,8 @@
 
 이 문서는 외부 RAG 정본의 Local P0 Runtime 투영본이다. RAG-00은 Approved Target이지만 공유 DTO·DB 계약의 구현·테스트가 완료되기 전에는 현재 Runtime 계약이 아니며 기존 Current 동작을 자동으로 대체하지 않는다.
 
+#164 Runtime Bundle 최소 DB 기반 분할 PR은 `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval`의 저장 구조와 FK/unique/CHECK/append-only 이력 기반만 추가한다. 이 변경은 Runtime Bundle 활성화, 환경 포인터 전환, drain, mixed worker rollback, Production 공개 승인을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
+
 - 자유 ReAct Agent, 열린 웹 검색, Graph DB와 승인되지 않은 Source 자동 편입은 사용하지 않는다.
 - 고위험·응급·금지 행동 분기는 일반 Retrieval보다 먼저 수행한다.
 - OTC는 별도 Job·API·Track이 아니라 기존 `CHAT` Job의 질문 유형이다.
@@ -245,7 +247,7 @@ Local Runtime 포인터 변경도 보호된 Guard Operation을 사용한다.
 - `EMERGENCY_ROLLBACK`: 현재 Bundle이 부적격일 때 Rollback 후보의 Source·Endpoint·Operation·Approval·Freshness·평가 PASS를 다시 검사한다. 적격 후보일 때만 포인터를 원자 교체하고, 현재·후보가 모두 부적격일 때 환경을 `SUSPENDED`로 전환한다.
 - `RESUME`: 중지 원인이 해소되고 대상 Bundle 전체가 다시 적격일 때만 `SUSPENDED → ACTIVE`를 허용한다.
 
-활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
+활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 활성 Bundle의 기준 원본은 환경의 active bundle pointer이며, Bundle 자체 status에 `ACTIVE` 값을 두지 않는다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
 
 ## 결과·Citation·상태
 
