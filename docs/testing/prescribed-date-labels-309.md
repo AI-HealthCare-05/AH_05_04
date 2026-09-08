@@ -63,3 +63,28 @@ xfail/skip으로 숨기지 않았다. `--confcutdir`는 이 순수 구조화 테
 추가 검증: 선호 라벨 3종, 위쪽 생년월일 라벨, 먼/아래 라벨 연결 방지,
 가까운 라벨 선택·동률 제외, 선호 날짜 충돌 및 입력 순서 반전.
 이는 로컬 2단계 완료이며 전체 OCR 회귀·호환 import·계약 정렬·최종 검사는 3~4단계에 수행한다.
+
+## 3단계 — Backend 호환 경로·전체 OCR 회귀
+
+`backend/app/services/prescription_ocr_structurer.py`에서
+`normalize_prescribed_date_text`를 재노출하고 LLM validator의 import를 이 경로로 변경했다.
+날짜 정규화 자체는 같은 runtime 함수를 사용하며, 한글·라벨 포함 날짜와
+존재하지 않는 날짜·추가 숫자 거부를 4개 사례로 검증했다.
+
+- Backend OCR·OCR AI: **303 passed** (격리 PostgreSQL 16)
+- Worker OCR·OCR 필드 별칭 계약: **41 passed**
+- 변경 코드 Ruff·포맷·공백 검사: 통과
+- Mypy 변경 구현 3개 파일: 통과
+
+```bash
+# 전용 합성 PostgreSQL만 대상으로 실행
+export DB_HOST=127.0.0.1 DB_PORT=55445 DB_EXPOSE_PORT=55445
+export DB_USER=synthetic DB_PASSWORD=synthetic DB_NAME=test PYTHONPATH=backend:.
+python -m pytest backend/app/tests/ocr backend/app/tests/ocr_ai -q
+python -m pytest ai_worker/tests/ocr tests/contract/test_ocr_provider_field_alias_contract.py -q
+```
+
+DB 테스트는 기존 Backend 모델 생성 fixture를 사용했다. 이번 변경은 schema를 수정하지
+않으므로 migration 재적용은 하지 않았다. 외부 OCR/LLM 호출·운영 데이터는 사용하지 않았다.
+#144/#350은 아직 이 작업 브랜치에 포함하지 않았으며 함께 병합된 상태의 회귀 결과는 아니다.
+4단계에서 최신 develop 확인·계약 문서·최종 검사·PR 초안을 정리하고 한 번에 푸시한다.

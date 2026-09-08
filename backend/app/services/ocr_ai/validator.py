@@ -13,7 +13,7 @@ from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
 )
-from ocr_runtime.prescription_ocr_structurer import normalize_prescribed_date_text
+from app.services.prescription_ocr_structurer import normalize_prescribed_date_text
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 # LLM이 값을 찾지 못하거나 grounding 검증에 실패했을 때

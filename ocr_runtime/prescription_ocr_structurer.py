@@ -9,7 +9,7 @@ from provider_contracts.ocr import RawRecognizedField, RecognizedField
 # 함께 인식할 수 있으므로 fullmatch 대신 값 내부에서 날짜 부분만 찾아 추출합니다.
 # 구분자는 숫자가 아니면 무엇이든 허용해 "-", ".", "/"뿐 아니라 한글식(년/월/일)
 # 표기도 함께 지원합니다. backend/app/services/ocr_ai/validator.py가 이 모듈의
-# normalize_prescribed_date_text를 그대로 import해서 같은 규칙을 씁니다.
+# normalize_prescribed_date_text를 Backend 호환 진입점을 통해 재사용합니다.
 # day 뒤에 숫자가 더 있으면("2026-08-123") 오인식으로 보고 통째로 버립니다 — 두 자리만
 # 잘라 "12"로 확정하면 잘못된 날짜를 정상처럼 확정하게 됩니다.
 _DATE_PATTERN = re.compile(r"(?P<year>\d{4})\D+(?P<month>\d{1,2})\D+(?P<day>\d{1,2})(?!\d)")

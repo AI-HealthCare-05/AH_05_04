@@ -1431,3 +1431,20 @@ def test_structure_does_not_choose_between_conflicting_preferred_dates() -> None
     fields = [_raw_field("발행일 2026-08-12", 200, 100), _raw_field("교부일자 2026-08-13", 200, 200)]
     assert PrescriptionOcrStructurer().structure(fields) == []
     assert PrescriptionOcrStructurer().structure(list(reversed(fields))) == []
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("2026년 08월 12일", "2026-08-12"),
+        ("발행일 2026.08.12", "2026-08-12"),
+        ("2026-02-30", None),
+        ("2026-08-123", None),
+    ],
+)
+def test_backend_date_normalization_entrypoint_matches_runtime(raw: str, expected: str | None) -> None:
+    from app.services.prescription_ocr_structurer import normalize_prescribed_date_text
+    from ocr_runtime.prescription_ocr_structurer import normalize_prescribed_date_text as runtime_normalize
+
+    assert normalize_prescribed_date_text is runtime_normalize
+    assert normalize_prescribed_date_text(raw) == expected
