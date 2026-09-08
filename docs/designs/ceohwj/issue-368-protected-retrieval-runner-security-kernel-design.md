@@ -98,8 +98,9 @@ journal, operation adapter를 연결할 수 있다.
   capability를 발급·소비하는 async context manager
 - `ProtectedAuditJournal`: global monotonic sequence와 durable head에 대한 append-CAS, operation-key history 제공.
   update/delete API가 없음
-- `ProtectedOperation`: guard 안에서 capability를 필수 입력으로 받아 실행하고, operation key 기준
-  `observe/reconcile`와 비민감 result만 제공
+- `ProtectedOperation`: guard 안에서 capability를 필수 입력으로 받아 실행하고 비민감 result만 제공.
+  성공 결과의 멱등 반환과 `UNKNOWN` 자동 재실행 차단까지만 이번 foundation에서 구현하며,
+  독립 승인 `observe/reconcile` adapter는 실제 인프라 결정 이후 후속 구현한다.
 - `execute_protected_operation(...)`: 승인·감사·실행을 순서대로 조정하는 유일한 진입점
 
 공유 Evaluation schema와 `ActorRole`, `EvaluationErrorCode`는 변경하지 않는다. 위 타입은 실제 인프라가
@@ -116,7 +117,8 @@ journal, operation adapter를 연결할 수 있다.
 - revocation revision, Dataset state revision과 artifact digest를 lock하고 single-use capability를 발급·소비하는
   in-memory `AuthorizationGuard`
 - global monotonic sequence와 durable head를 모사하는 append-CAS journal
-- operation key별 멱등 실행, side-effect 관찰과 `observe/reconcile`을 제공하는 synthetic operation
+- operation key별 멱등 실행, side-effect 관찰 hook과 자동 retry 차단을 제공하는 synthetic operation.
+  독립 승인 reconciliation은 실제 adapter 후속 범위다.
 
 이 모듈은 production registry나 CLI에 등록하지 않는다. HOLDOUT 본문, Gold, 경로, credential을 fixture로
 사용하지 않는다.
@@ -197,8 +199,8 @@ namespace, role 전체를 exact-match하며 actor ID만 같은 다른 namespace�
 9. 성공하면 같은 guard 안에서 `SUCCEEDED`를 append-CAS하고 비민감 result를 반환한다.
 10. operation 또는 terminal audit가 불확실하면 `UNKNOWN`을 append한다. journal까지 불가하면
     `AUDIT_UNAVAILABLE`만 반환하고 operation key를 reconciliation 대상으로 유지한다.
-11. `UNKNOWN`은 `observe/reconcile(operation_key)`로 실제 side effect와 durable audit head를 대조하고 독립 승인을
-    기록하기 전에는 재실행할 수 없다.
+11. `UNKNOWN`은 자동 재실행할 수 없다. 실제 side effect와 durable audit head를 대조하고 독립 승인을 기록하는
+    `observe/reconcile(operation_key)` adapter는 이번 foundation 범위 밖이며 `NOT_IMPLEMENTED`로 공개한다.
 
 exception message, raw query, Evidence/Gold body, filesystem/object key, SQL, credential과 HMAC/fingerprint 값은
 request, result, audit, 오류 메시지에 포함하지 않는다.
@@ -273,8 +275,9 @@ Repository에 금지:
   guard 안 revoke 시 operation 미호출
 - Dataset state revision·artifact digest 변경 시 operation 미호출
 - operation 예외와 success-audit 실패가 성공으로 변환되지 않음
-- synthetic operation의 `observe/reconcile`을 실제 호출해 `UNKNOWN` 또는 미해결 `INTENT`의 자동 retry와
-  새 request ID 우회 거부
+- 성공 audit의 기존 result를 동일 principal·Dataset·action·target과 유효한 현재 grant에만 멱등 반환하고,
+  `UNKNOWN` 또는 미해결 `INTENT`의 자동 retry와 새 request ID 우회를 거부
+- 독립 승인 `observe/reconcile` adapter가 `NOT_IMPLEMENTED`임을 machine status와 공개 보고서에서 고정
 - synthetic append-CAS journal을 실제 호출해 global audit hash-chain tamper·절단, CAS 충돌,
   duplicate terminal, 잘못된 전이 거부
 - authorization/operation audit variant에 상대 variant의 action·outcome field를 섞으면 exact-field 검증이 거부함
