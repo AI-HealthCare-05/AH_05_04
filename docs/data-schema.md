@@ -235,7 +235,7 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## RAG Source·Catalog 최소 DB 기반
 
-Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다.
+Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. 이번 분할 PR은 새 정본 계약을 만들지 않고, 기존 `docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md`와 `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 기준을 구현·traceability 문서에 흡수합니다.
 
 이번 분할 범위의 ID/FK 매핑은 기존 애플리케이션 호환성을 우선해 `UUIDChar` 기반 `CHAR(36)`을 사용합니다. 신규 독립 RAG/Eval ID의 PostgreSQL native `UUID` 전환은 별도 승인 migration 범위이며, 이 PR에서 타입을 섞지 않습니다.
 
@@ -247,14 +247,96 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | Snapshot | `rag_source_snapshot`, `rag_source_snapshot_verification`, `rag_source_ingestion_run` | 수집 version, checksum, parser/normalization/canonicalization version, 검증 이력과 수집 실행 이력 |
 | Catalog | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | snapshot 단위 제품·성분·별칭·구성성분 참조 데이터 |
 
+Source/Snapshot 책임 경계:
+
+| 테이블 | 책임 | Runtime 활성화와의 관계 |
+| --- | --- | --- |
+| `rag_source` | 공식 Source의 정적 식별자, 표시명, 라이선스·출처 표기, lifecycle 상태를 보관 | Source 등록 자체는 Runtime 사용을 의미하지 않음 |
+| `rag_source_endpoint` | Source 하위 endpoint와 수집 승인 상태, endpoint 단위 runtime 사용 가능 상태를 보관 | `runtime_status`는 endpoint 사용 가능성만 나타내며 특정 Snapshot 선택은 하지 않음 |
+| `rag_source_operation` | endpoint 하위 operation의 stable provenance 단위와 수집 승인 상태를 보관 | Operation은 Snapshot 생성 범위이며 Runtime Bundle의 사용 버전 선택과 분리 |
+| `rag_source_snapshot` | 특정 operation 수집·정규화 결과의 불변 Snapshot과 checksum·version·record count를 보관 | `CURRENT`는 검증·최신성 상태이고 Runtime 활성 Snapshot 포인터가 아님 |
+| `rag_source_ingestion_run` | 수집/정규화 실행 시도, 재시도 scope, 성공/실패/NO_CHANGE 결과를 보관 | 실행 이력이며 성공이 곧 Runtime 사용 승인을 뜻하지 않음 |
+| `rag_source_snapshot_verification` | Snapshot 검증 결과를 append-only 이력으로 보관 | 검증 이력은 Runtime Bundle 승인 입력일 수 있지만 직접 활성화하지 않음 |
+
+Downstream provenance 연결 기준:
+
+| 소비 영역 | 기준 provenance key | 현재/후속 책임 |
+| --- | --- | --- |
+| Source 원본 | `rag_source.source_code`, `owner_name`, `license_name`, `attribution_text` | Source 자체의 정적 출처·라이선스·표기 책임. 원문 payload 저장은 #165 Raw Artifact 상세 구조에서 분리 |
+| Endpoint | `rag_source_endpoint.source_id + endpoint_code` | Source 하위 API endpoint 식별. endpoint 승인·비활성 상태는 신규 수집 차단 입력이며 Snapshot 선택 기준은 아님 |
+| Operation | `rag_source_operation.endpoint_id + operation_code` | stable provenance operation 단위. Snapshot version unique와 수집 lock의 기준 |
+| Snapshot | `rag_source_snapshot.id`, 보조 표시값 `source_version`, checksum/version 필드 | 실제 Snapshot 특정은 ID 참조가 기준. `source_version` 단독 조회는 금지하고 operation과 함께만 사용 |
+| Ingestion Run | `operation_id + run_group_key + attempt_number`, nullable `snapshot_id` | 수집/정규화 실행 이력과 재시도 scope. 성공·NO_CHANGE·실패 기록이며 Runtime 활성화와 분리 |
+| Verification | `rag_source_snapshot_verification.snapshot_id`, `check_name`, `verification_result`, `verified_at` | Snapshot 검증 append-only 이력. 승인 입력으로 사용할 수 있으나 직접 Runtime 사용을 켜지 않음 |
+| Catalog Product / Ingredient / Alias / Component | 각 행의 `source_snapshot_id`; Alias/Component는 대상 row와 같은 `source_snapshot_id` composite FK | Catalog 행은 Snapshot 단위 publication row다. 안정 Identity/Set/manifest 확장은 #166에서 별도 정렬 |
+| Candidate Index / Resolver 입력 | 안정 제품 tuple `code_system + canonical_code`, Candidate Index version/ref, Catalog manifest hash | 현재 Candidate는 tuple snapshot을 저장하고 `product_id` FK는 후속 연결. DB UUID를 공식 Identity로 사용하지 않음 |
+| Evaluation evidence | `source_snapshot_ref`, `candidate_index_ref`, dataset/manifest hash | Evaluation은 문자열 ref와 manifest hash로 재현성 근거를 보관한다. 실제 Evidence/Citation FK 전체 구조는 후속 PR 범위 |
+
 주요 제약:
 
+- #164 최소 DB 기반의 Snapshot은 Source 전체가 아니라 Operation 단위 산출물로 둡니다. 따라서 version unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 공존할 수 있습니다.
+- Evidence provenance는 `source_version` 단독이 아니라 `source_snapshot_id` 같은 snapshot 참조로 Snapshot을 특정합니다. `source_version`은 사람이 확인할 수 있는 version 값입니다.
+- `rag_source_ingestion_run`은 정규 목표의 ingestion run과 normalization run을 합친 최소 실행 이력입니다. `NO_CHANGE` 재검증이 동일 Snapshot을 반복 참조할 수 있으므로 `snapshot_id` 전체 unique는 두지 않습니다.
+- 이 최소 모델은 `rag-db-schema` v1.47의 Source 단위 Snapshot과 분리된 ingestion/normalization run 모델을 대체하지 않습니다. 정규 목표로 수렴할 때는 별도 Decision/Contract Freeze와 migration·테스트를 함께 갱신합니다.
 - operation당 `CURRENT` snapshot은 최대 1개만 허용합니다. 여기서 `CURRENT`는 검증·최신성 상태이며, 실제 Runtime 사용 버전 선택은 Runtime Bundle에서 결정합니다. 새 Snapshot 검증 중에도 기존 승인 Bundle은 유지될 수 있습니다. 같은 operation에서 새 Snapshot을 `CURRENT`로 승격할 때는 기존 `CURRENT`를 먼저 `STALE`로 내린 뒤 새 Snapshot을 `CURRENT`로 전환합니다.
+- 새 Snapshot을 `CURRENT`로 승격하는 작업은 같은 transaction 안에서 기존 `CURRENT` → `STALE` 전환과 신규 Snapshot `CURRENT` 전환을 함께 수행해야 합니다. 중간에 operation당 `CURRENT`가 2개가 되는 상태는 `uq_rag_source_snapshot_current`가 거부합니다. 현재 최소 DB 기반에는 승격 service가 없으므로 이 순서는 후속 Source ingestion/Catalog loader 구현에서 적용합니다.
+
+Snapshot verification 상태 의미:
+
+| 상태 | 의미 | Runtime 활성화와의 관계 |
+| --- | --- | --- |
+| `PENDING` | Snapshot 생성 또는 검증 대기 상태 | Runtime 사용 불가. Bundle 선택 대상이 아님 |
+| `CURRENT` | 해당 operation에서 최신 검증 기준을 통과한 Snapshot | Runtime 활성 포인터가 아니며 Bundle이 별도로 선택해야 사용 가능 |
+| `STALE` | 더 최신 Snapshot으로 대체되었거나 신규 사용 적격성을 잃은 과거 Snapshot | 신규 선택 대상은 아니지만 과거 provenance 재현을 위해 보존 |
+| `FAILED` | 검증 실패 또는 Source conflict로 사용 불가한 Snapshot | Runtime 사용 불가. 실패 이력은 verification/ingestion run에 보존 |
+
+`QUARANTINED`는 현재 `RagSnapshotVerificationStatus` 값이 아닙니다. 격리 상태가 필요하면 Source ingestion 정책과 공개 게이트를 먼저 확정한 뒤 별도 Decision/Contract Freeze와 migration·테스트로 추가합니다.
+
 - `rag_source_snapshot`의 version, checksum, parser/normalization/canonicalization version, record count, 선행 snapshot 참조 등 불변 필드는 UPDATE할 수 없습니다.
 - `rag_source_snapshot` 행은 DELETE할 수 없습니다. 재검증 결과는 `rag_source_snapshot_verification`에 append하고, 잘못된 snapshot은 새 snapshot 또는 forward-fix migration으로 정정합니다.
 - Alias와 Component는 product/ingredient와 같은 `source_snapshot_id`를 가져야 하며, composite FK로 DB에서 강제합니다.
 - `rejected_record_count`는 `record_count`보다 클 수 없습니다.
 - `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
+
+Ingestion Run / Receipt 기준:
+
+| 항목 | 기준 | 의미 |
+| --- | --- | --- |
+| `run_group_key` | 같은 operation 안에서 하나의 수집 실행을 묶는 재시도 scope | 같은 수집 실행의 attempt는 같은 `run_group_key`를 공유하고, 독립 수집 실행은 새 `run_group_key`를 사용 |
+| attempt 중복 방지 | `(operation_id, run_group_key, attempt_number)` unique | 같은 수집 실행에서 동일 attempt가 두 번 기록되는 것을 DB가 거부 |
+| 독립 실행 | 같은 `operation_id`라도 서로 다른 `run_group_key`면 `attempt_number=1` 허용 | 예약/수동 재수집/재검증 같은 독립 실행을 같은 attempt 번호로 시작할 수 있음 |
+| 성공 이력 | `run_status=SUCCEEDED`, nullable `snapshot_id`, finished metadata | 수집·정규화가 Snapshot으로 귀결된 실행 기록. Runtime 활성화는 아님 |
+| 부분 성공 이력 | `run_status=SUCCEEDED_WITH_REJECTIONS` | 거부 record가 있었던 실행 기록. 자동 Runtime 편입으로 해석하지 않음 |
+| 실패 이력 | `run_status=FAILED`, `failure_code`, `failure_message` | Snapshot 미생성 또는 검증 실패 실행을 추적. 실패 원문 payload는 저장하지 않음 |
+| 검증 이력 | `rag_source_snapshot_verification`의 `verification_result` | Snapshot 검증 결과를 append-only로 보관하며 수집 실행 record와 구분 |
+| raw manifest checksum | `raw_manifest_checksum` | Raw Artifact 메타데이터 집합의 결정적 checksum. 원본 바이트/파일 목록 무결성 기준 |
+| canonical checksum | `canonical_checksum` | 성공적으로 해석된 전체 record의 canonical 내용 checksum. envelope 제외·정렬·정규화 규칙은 Operation 계약과 `canonicalization_spec_version`이 고정 |
+
+Canonicalization / Checksum 기준:
+
+| 항목 | 기준 | 적용 범위 |
+| --- | --- | --- |
+| 원본 필드값 보존 | 원문 문자열의 Unicode 형태와 앞뒤 공백을 그대로 보존 | Parser가 Snapshot checksum 입력과 raw/source-derived 저장값을 만들 때 NFC·trim을 적용하지 않음 |
+| 숫자형 문자열 | 숫자형 문자열을 숫자 타입으로 변환하지 않음 | `"001"`과 `1`은 서로 다른 값으로 취급 |
+| null/빈 문자열/누락 | `null`, 빈 문자열, 필드 누락을 서로 다른 canonical 값으로 취급 | 감사 재현성과 schema drift 판정 기준 |
+| 객체 key 정렬 | 모든 중첩 객체 key는 UTF-16 big-endian byte lexicographic comparator로 정렬 | 구현 언어의 기본 문자열 정렬에 의존하지 않음 |
+| 배열 순서 | 배열 내부 순서는 원본 순서를 유지 | 객체 key 정렬과 달리 배열 원소를 재정렬하지 않음 |
+| 전체 record 정렬 | Operation Primary Key로 정렬. MFDS 제품 허가정보는 `ITEM_SEQ` 원문 문자열 기준 | `ITEM_SEQ` 누락·타입 불일치·중복은 거부 |
+| canonicalization version | `rag_source_snapshot.canonicalization_spec_version`에 저장 | 규칙 변경 시 기존 Snapshot을 덮어쓰지 않고 새 version으로 새 Snapshot 생성 |
+| checksum NFC | 제품 Source ingestion canonical checksum에는 NFC를 적용하지 않음 | 최신 `rag-source-ingestion-v1.md`의 `mfds-product-approval@1` 규칙을 따름. Synthetic guard manifest의 NFC 해싱과 혼용하지 않음 |
+| trim | 원본·checksum 입력에는 trim을 적용하지 않음 | `normalized_product_name`, `normalized_ingredient_name`, `normalized_alias_text` 같은 matching 전용 필드에만 적용 가능 |
+
+#164 최소 DB 기반은 위 규칙의 저장 위치와 provenance 경계를 고정합니다. 실제 Parser, canonical JSON 생성, Source 수집 및 Catalog 적재 배치는 #165/#166에서 이 규칙을 따라 구현합니다.
+
+Catalog 적재 연결성:
+
+| 항목 | 현재 제공 기준 | 후속 책임 |
+| --- | --- | --- |
+| Product record 조회 | `get_product_by_record_key(source_snapshot_id, source_record_key)` | #166 적재가 원본 record key로 기존 제품 row를 찾을 때 사용 |
+| Ingredient record 조회 | `get_ingredient_by_record_key(source_snapshot_id, source_record_key)` | #166 적재가 원본 record key로 기존 성분 row를 찾을 때 사용 |
+| Ingredient code 조회 | `get_ingredient_by_code(source_snapshot_id, ingredient_code_system, ingredient_code)` | #166 적재가 성분 코드 기반 중복·연결을 확인할 때 사용 |
+| 적재 idempotency | unique/FK/CHECK 제약과 최소 조회 interface까지만 제공 | 대량 적재 재실행의 `ON CONFLICT DO NOTHING/UPDATE`, batch upsert, 충돌 복구 정책은 #166 범위 |
+| 대량 적재 성능 | row 단위 create/get 골격만 제공 | N+1 회피, bulk insert/upsert, chunk size, partial failure 처리는 #166에서 확정 |
 
 Rollback 정책:
 
