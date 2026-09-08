@@ -30,6 +30,19 @@ def _candidate_bundle() -> dict[str, bytes]:
     return {**_bundle(), "comparison.json": b"comparison"}
 
 
+def _capture_created_file_descriptors(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    real_create_file = publisher_module._create_file
+    descriptors: list[int] = []
+
+    def capture_create_file(directory_fd: int, name: str, payload: bytes) -> tuple[int, tuple[int, int]]:
+        descriptor, identity = real_create_file(directory_fd, name, payload)
+        descriptors.append(descriptor)
+        return descriptor, identity
+
+    monkeypatch.setattr(publisher_module, "_create_file", capture_create_file)
+    return descriptors
+
+
 def test_publish_run_directory_is_private_and_complete(tmp_path: Path) -> None:
     destination = publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
 
@@ -37,6 +50,21 @@ def test_publish_run_directory_is_private_and_complete(tmp_path: Path) -> None:
     assert destination.stat().st_mode & 0o777 == 0o700
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in destination.iterdir())
     assert sorted(path.name for path in tmp_path.iterdir()) == [RUN_ID]
+
+
+def test_publish_releases_created_file_descriptors_after_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptors = _capture_created_file_descriptors(monkeypatch)
+
+    publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert len(descriptors) == len(_bundle()) + 1
+    for descriptor in descriptors:
+        with pytest.raises(OSError) as closed:
+            os.fstat(descriptor)
+        assert closed.value.errno == errno.EBADF
 
 
 def test_publisher_atomically_publishes_candidate_bundle_with_comparison(tmp_path: Path) -> None:
@@ -425,6 +453,47 @@ def test_publish_preserves_lock_replacement_swapped_at_cleanup_isolation(
     assert (tmp_path / f"{RUN_ID}.lock.original").read_bytes() == b""
 
 
+def test_publish_preserves_lock_replacement_when_inode_number_is_recycled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_mkdir = os.mkdir
+    replaced = False
+
+    def replace_lock_before_staging_create(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        nonlocal replaced
+        if not replaced and os.fsdecode(path).startswith(f".{RUN_ID}.tmp."):
+            assert dir_fd is not None
+            replaced = True
+            lock_name = f"{RUN_ID}.lock"
+            os.unlink(lock_name, dir_fd=dir_fd)
+            replacement_fd = os.open(
+                lock_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+                dir_fd=dir_fd,
+            )
+            os.write(replacement_fd, b"replacement")
+            os.close(replacement_fd)
+            raise OSError(errno.EIO, "staging mkdir failed")
+        real_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(publisher_module.os, "mkdir", replace_lock_before_staging_create)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert replaced
+    assert (tmp_path / f"{RUN_ID}.lock").read_bytes() == b"replacement"
+    assert not (tmp_path / RUN_ID).exists()
+
+
 def test_publish_fails_closed_when_staging_entry_is_replaced_before_rename(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -607,6 +676,51 @@ def test_publish_rejects_same_name_file_replacement_and_still_removes_lock(
     assert len(staging_directories) == 1
     assert (staging_directories[0] / "run.json").read_bytes() == b"rogue"
     assert (tmp_path / "run.json.original").read_bytes() == b"run"
+
+
+def test_publish_preserves_file_replacement_when_inode_number_is_recycled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_fsync = os.fsync
+    root_identity = (tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+    replaced = False
+    descriptors = _capture_created_file_descriptors(monkeypatch)
+
+    def replace_run_file_after_staging_fsync(descriptor: int) -> None:
+        nonlocal replaced
+        metadata = os.fstat(descriptor)
+        real_fsync(descriptor)
+        if replaced or not stat.S_ISDIR(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) == root_identity:
+            return
+        replaced = True
+        os.unlink("run.json", dir_fd=descriptor)
+        replacement_fd = os.open(
+            "run.json",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=descriptor,
+        )
+        os.write(replacement_fd, b"rogue")
+        os.close(replacement_fd)
+
+    monkeypatch.setattr(publisher_module.os, "fsync", replace_run_file_after_staging_fsync)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert replaced
+    assert not (tmp_path / RUN_ID).exists()
+    assert not (tmp_path / f"{RUN_ID}.lock").exists()
+    staging_directories = list(tmp_path.glob(f".{RUN_ID}.tmp.*"))
+    assert len(staging_directories) == 1
+    assert (staging_directories[0] / "run.json").read_bytes() == b"rogue"
+    assert len(descriptors) == len(_bundle()) + 1
+    for descriptor in descriptors:
+        with pytest.raises(OSError) as closed:
+            os.fstat(descriptor)
+        assert closed.value.errno == errno.EBADF
 
 
 def test_publish_rejects_extra_file_added_inside_rename_boundary(

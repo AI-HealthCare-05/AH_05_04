@@ -113,11 +113,10 @@ def _descriptor_identity(descriptor: int) -> FileIdentity:
     return metadata.st_dev, metadata.st_ino
 
 
-def _create_file(directory_fd: int, name: str, payload: bytes) -> FileIdentity:
+def _create_file(directory_fd: int, name: str, payload: bytes) -> tuple[int, FileIdentity]:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
     identity: FileIdentity | None = None
-    close_attempted = False
     try:
         entry_identity = _identity(directory_fd, name)
         descriptor_identity = _descriptor_identity(descriptor)
@@ -128,21 +127,18 @@ def _create_file(directory_fd: int, name: str, payload: bytes) -> FileIdentity:
         if os.write(descriptor, payload) != len(payload):
             raise OSError(errno.EIO, "short write")
         os.fsync(descriptor)
-        close_attempted = True
-        os.close(descriptor)
-        return identity
+        return descriptor, identity
     except BaseException as error:
         cleanup_error: BaseException | None = None
-        if not close_attempted:
-            try:
-                os.close(descriptor)
-            except BaseException as close_error:
-                cleanup_error = close_error
         try:
             if identity is not None:
                 _remove_file_if_owned(directory_fd, name, identity)
         except BaseException as remove_error:
-            cleanup_error = cleanup_error or remove_error
+            cleanup_error = remove_error
+        try:
+            os.close(descriptor)
+        except BaseException as close_error:
+            cleanup_error = cleanup_error or close_error
         if cleanup_error is not None:
             raise cleanup_error from error
         raise
@@ -344,11 +340,13 @@ class _RunPublication:
     lock_name: str = field(init=False)
     staging_name: str = field(init=False)
     lock_identity: FileIdentity | None = None
+    lock_descriptor: int | None = None
     staging_created: bool = False
     staging_bound: bool = False
     staging_identity: FileIdentity | None = None
     staging_fd: int | None = None
     created_files: dict[str, FileIdentity] = field(default_factory=dict)
+    created_file_descriptors: dict[str, int] = field(default_factory=dict)
     renamed: bool = False
     committed: bool = False
 
@@ -359,7 +357,7 @@ class _RunPublication:
     def execute(self, files: Mapping[str, bytes]) -> None:
         if _identity(self.root_fd, self.run_id) is not None or _identity(self.root_fd, self.lock_name) is not None:
             raise EvaluationValidationError(EvaluationErrorCode.RESULT_PATH_CONFLICT)
-        self.lock_identity = _create_file(self.root_fd, self.lock_name, b"")
+        self.lock_descriptor, self.lock_identity = _create_file(self.root_fd, self.lock_name, b"")
         if _identity(self.root_fd, self.run_id) is not None:
             raise EvaluationValidationError(EvaluationErrorCode.RESULT_PATH_CONFLICT)
         os.mkdir(self.staging_name, 0o700, dir_fd=self.root_fd)
@@ -377,7 +375,9 @@ class _RunPublication:
         self.staging_bound = True
         os.fchmod(self.staging_fd, 0o700)
         for name in sorted(files, key=lambda value: value.encode("utf-16-be")):
-            self.created_files[name] = _create_file(self.staging_fd, name, files[name])
+            descriptor, identity = _create_file(self.staging_fd, name, files[name])
+            self.created_file_descriptors[name] = descriptor
+            self.created_files[name] = identity
         os.fsync(self.staging_fd)
         _verify_staging_entry(
             self.root_fd,
@@ -407,6 +407,9 @@ class _RunPublication:
         )
         os.fsync(self.root_fd)
         self.remove_lock()
+        lock_close_errors = self.close_lock_descriptor()
+        if lock_close_errors:
+            raise lock_close_errors[0]
         os.fsync(self.root_fd)
         self.committed = True
 
@@ -414,6 +417,28 @@ class _RunPublication:
         if self.lock_identity is not None:
             _remove_file_if_owned(self.root_fd, self.lock_name, self.lock_identity)
             self.lock_identity = None
+
+    def close_lock_descriptor(self) -> list[BaseException]:
+        if self.lock_descriptor is None:
+            return []
+        descriptor = self.lock_descriptor
+        self.lock_descriptor = None
+        try:
+            os.close(descriptor)
+        except BaseException as error:
+            return [error]
+        return []
+
+    def close_created_file_descriptors(self) -> list[BaseException]:
+        descriptors = tuple(self.created_file_descriptors.values())
+        self.created_file_descriptors.clear()
+        errors: list[BaseException] = []
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except BaseException as error:
+                errors.append(error)
+        return errors
 
     def cleanup(self) -> BaseException | None:
         cleaned_directory_entry = False
@@ -449,11 +474,13 @@ class _RunPublication:
         except BaseException as error:
             cleanup_errors.append(error)
         self.staging_fd = None
+        cleanup_errors.extend(self.close_created_file_descriptors())
         had_lock = self.lock_identity is not None
         try:
             self.remove_lock()
         except BaseException as error:
             cleanup_errors.append(error)
+        cleanup_errors.extend(self.close_lock_descriptor())
         if cleaned_directory_entry or had_lock:
             try:
                 os.fsync(self.root_fd)
