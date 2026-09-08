@@ -185,6 +185,11 @@ schema·migration은 구현하지 않았다. 3단계 코드 완료와 4단계 �
 `CatalogExportArtifacts` / `medication-catalog-v2`이며, #167 문서·#166 검증 기록·코드의 정합성과
 과거 v1 증빙의 분리를 후속 완료 기준으로 유지한다.
 
+기존 데이터 조사는 읽기 전용 SQL과 합성 PostgreSQL 회귀를 준비한 뒤 현재 로컬 Compose DB에도
+실행했다. 로컬 DB는 `165b5c4d3e2f`였고 Source 및 Catalog 행이 모두 0건이었다. 저장소 head보다
+5개 revision 이전이므로 upgrade하지 않고 상태만 기록했다. 이 결과를 다른 DB에 일반화하지 않으며,
+실제 migration은 비어 있지 않은 합성 기존 행의 이행·거부·rollback을 검증해야 한다.
+
 ## 5단계 — 선행 가능한 복원 코드 구현, DB 통합 대기
 
 `restore.py::restore_catalog_storage`에서 저장 준비 자료를 현재 v2 전체 artifacts로 복원한다.

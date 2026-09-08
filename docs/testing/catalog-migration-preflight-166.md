@@ -58,3 +58,36 @@ PYTHONPATH=backend:. uv run pytest tests/migration/test_rag_source_catalog_migra
 
 이 검증은 기존 스키마의 조회·제약 회귀이며, 새 Catalog adapter의 저장·commit/rollback 통합
 검증이 아니다. D-02는 미확정으로 유지한다. 인계 후 실제 이행·저장 구현을 이어간다.
+
+## 로컬 기존 데이터 조사 결과
+
+- 실행 시각: 2026-09-08T14:08:29Z
+- 코드 기준: `492c000`
+- 대상: 현재 실행 중이던 로컬 Compose PostgreSQL 17의 `five_pills` 데이터베이스
+- 접속 역할: `app_user`
+- 적용 revision: `165b5c4d3e2f`
+- 저장소 revision graph: 29개, 단일 head `169b2c3d4e5f`
+- 대상 DB는 저장소 head보다 5개 revision 이전이며, 이번 조사에서 upgrade하지 않았다.
+- 조사한 네 Catalog 테이블의 RLS 활성 수: 0
+
+읽기 전용 transaction에서 확인한 집계는 아래와 같다.
+
+| 분류 | 결과 |
+| --- | ---: |
+| Product / Ingredient / Alias / Component 전체 행 | 각 0 |
+| Ingredient Identity 누락·동일 Snapshot 중복 그룹 | 각 0 |
+| 복수 Snapshot Product Identity 그룹 | 0 |
+| 기존 승인 boolean Alias·대상 Identity 누락 Alias | 각 0 |
+| Component 숫자 함량만 존재·복수 role 그룹 | 각 0 |
+| Source / Snapshot / ingestion run 전체 행 | 각 0 |
+
+따라서 **이 로컬 DB에 한해서는 이행할 기존 Catalog 행과 backfill 충돌이 없다.** 이 결과는
+팀 공용·배포 DB나 다른 개발자의 DB가 비어 있다는 증거가 아니다. revision도 최신이 아니므로
+새 migration의 upgrade 성공 증빙으로 사용하지 않는다. 빈 DB 경로와 별개로 기존 합성 행을 넣은
+upgrade·downgrade 테스트에서 Identity 누락, 근거 없는 Alias 상태, 함량 문자열 손실과 상충 참조를
+계속 fail-closed로 검증해야 한다.
+
+실제 공유 대상이 별도로 있다면 동일 SQL을 격리 복제본에서 다시 실행하고 대상 식별·revision·시각과
+집계만 기록한다. 원문이나 Identity 값을 조사 증빙에 남기지 않는다. 별도 대상이 없다면 위 로컬
+결과를 현재 확보 가능한 기존 데이터 조사로 사용하되, 물리 migration 설계는 비어 있지 않은 DB도
+보존하도록 작성한다.

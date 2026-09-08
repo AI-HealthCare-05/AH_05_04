@@ -88,3 +88,14 @@ Catalog manifest 전용 Runtime 컬럼은 별도 hash 계약 전환 조건을 �
 
 기존 head를 적용한 격리 PostgreSQL의 합성 데이터로 검증했으며, 실제 이행 대상 DB의 조사 결과는
 아직 확보하지 않았다. 이 점검 구현으로 D-02나 4단계 migration 착수 조건이 충족되는 것은 아니다.
+
+### 로컬 데이터 조사 반영
+
+2026-09-08T14:08:29Z에 실행 중이던 로컬 Compose `five_pills` DB를 읽기 전용으로 조사했다.
+적용 revision은 `165b5c4d3e2f`로 저장소 head보다 5개 이전이었으며, DB를 upgrade하지 않았다.
+Source·Snapshot·ingestion run과 기존 Catalog 네 테이블은 모두 0행이었다. 조사한 Catalog 테이블에는
+RLS가 활성화되어 있지 않아 일부 행만 본 결과는 아니다.
+
+따라서 로컬 기존 행의 개별 backfill 분류는 발생하지 않았다. 다른 DB의 무자료 상태를 추정하지 않고,
+비어 있지 않은 기존 합성 데이터를 사용하는 이행 테스트를 실제 migration의 필수 조건으로 유지한다.
+[실행 결과와 해석](../../testing/catalog-migration-preflight-166.md)을 조사 증빙으로 연결한다.
