@@ -77,6 +77,8 @@ describe('Dosey 메뉴', () => {
 describe('메뉴 로그아웃', () => {
   it('서버 응답을 기다리지 않고 토큰을 제거한 뒤 시작 화면으로 이동한다', async () => {
     sessionStorage.setItem('dosey_ocr_job_recovery:v1', '{"job":"active"}')
+    sessionStorage.setItem('dosey_chat_session:fixture-prescription', 'fixture-session')
+    sessionStorage.setItem('unrelated-session-state', 'keep-me')
     vi.mocked(logout).mockReturnValue(deferred())
     renderMenu()
 
@@ -86,6 +88,8 @@ describe('메뉴 로그아웃', () => {
     expect(screen.getByTestId('location').textContent).toBe('/start')
     expect(localStorage.getItem('access_token')).toBeNull()
     expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+    expect(sessionStorage.getItem('dosey_chat_session:fixture-prescription')).toBeNull()
+    expect(sessionStorage.getItem('unrelated-session-state')).toBe('keep-me')
     expect(logout).toHaveBeenCalledTimes(1)
   })
 

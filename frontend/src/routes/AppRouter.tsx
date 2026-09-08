@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
-import { ApiError } from '../api/client'
 import { getCurrentUser, type CurrentUser } from '../api/users'
-import { clearOcrJobRecovery } from '../features/ai-jobs/ocrJobRecovery'
+import {
+  clearAuthenticatedSession,
+  isStaleTokenError,
+} from '../features/auth/authSession'
 import DesignPrototypePage from '../pages/DesignPrototypePage'
 import HomePage from '../pages/HomePage'
 import LoginPage from '../pages/LoginPage'
@@ -23,16 +25,6 @@ type AuthState =
 
 function hasAccessToken() {
   return Boolean(localStorage.getItem('access_token'))
-}
-
-function isStaleTokenError(error: unknown) {
-  return (
-    error instanceof ApiError &&
-    (error.status === 401 ||
-      error.code === 'UNAUTHORIZED' ||
-      error.code === 'INVALID_TOKEN' ||
-      error.code === 'EXPIRED_TOKEN')
-  )
 }
 
 function useAuthStatus(): AuthState {
@@ -59,8 +51,7 @@ function useAuthStatus(): AuthState {
         if (isMounted) setAuthState({ status: 'authenticated', user })
       } catch (error) {
         if (isStaleTokenError(error)) {
-          localStorage.removeItem('access_token')
-          clearOcrJobRecovery()
+          clearAuthenticatedSession()
         }
         if (isMounted) setAuthState({ status: 'guest', user: null })
       }

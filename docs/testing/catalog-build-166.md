@@ -144,3 +144,18 @@ Evaluation → Source Artifact → Receipt/FAILED 재시도 → Verification 보
 - 승인 verifier가 없거나 Source 미승인·STALE이면 NOT_APPROVED이며 Candidate Index가 거부한다. 합성 승인 경로, 잘못된 checksum/Source receipt 거부, gate 변조 및 manifest exact recomputation을 검증한다.
 - schema와 manifest는 v2로 갱신했다. 기존 합성 manifest의 APPROVED/CURRENT 자동 부여를 제거하고 새 golden으로 바꿨다. 파일 바이트 checksum과 승인 envelope hash는 별개다.
 - 실제 승인 adapter와 정본 projection hash 최종 대응·DB provenance는 후속 범위다. 상세 계약과 결정 기록은 Catalog build v2 문서를 따른다.
+
+## 2026-09-08 리뷰 보완 및 develop 병합 검증
+
+리뷰 보완 커밋 `b8fa5e8` 이후 develop `1adf081`의 #328(Evaluation publish 파일 소유권 보호), #331(Frontend 재접속 복원), #334(Snapshot 최소 구현 deviation 문서)를 반영했다. 세 PR은 migration을 추가하지 않았으며 기존 Source migration을 보존했다. #334 문서 병합은 #164의 정규 normalization/provenance DB 구현 완료를 의미하지 않는다.
+
+- Catalog 단위·서비스·Candidate 인계 회귀: **68 passed**
+- 병합 후 Worker core/OCR/RAG/Evaluation 및 Source governance receipt: **2,152 passed, 8 skipped**
+- PostgreSQL 17 빈 DB에서 `alembic upgrade head` 성공; 단일 head **165d7e6f5041**
+- PostgreSQL 전체 migration·rollback 회귀: **66 passed**
+- PostgreSQL Source lifecycle·Evaluation repository 통합: **16 passed**
+- Ruff 및 서식: **520 files 통과**, Mypy: **443 source files 통과**
+- Frontend(Node 24.19.0, 테스트용 VITE_API_BASE_URL 설정): **259 passed**, build·lint 통과
+- `git diff --check` 및 병합 staged diff 검사 통과
+
+Frontend 최초 실행은 테스트 API URL 미설정으로 실패했고, fixture가 요구하는 localhost URL을 설정한 재실행에서 전체 통과했다. 사용자 DB 대신 임시 PostgreSQL 컨테이너만 사용했다. Redis를 포함한 전체 CI runner는 로컬에서 실행하지 않았으며 원격 CI 결과는 별도로 확인해야 한다.
