@@ -166,6 +166,7 @@ def _service_fixture(
         session_status=status,
         last_message_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
+    chat_session.prescription = SimpleNamespace(active_version_id=chat_session.prescription_version_id)
     medications = [
         SimpleNamespace(
             medication_name="첫 번째 합성약",

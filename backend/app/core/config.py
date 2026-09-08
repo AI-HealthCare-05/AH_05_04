@@ -147,10 +147,6 @@ class Config(BaseSettings):
     # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.
     PUBLIC_TRACK_F_ENABLED: bool = False
 
-    # PR4의 이전 Version 결과 STALE·현재 노출 차단이 병합되기 전에는 처방 정정 API를 공개하지 않습니다.
-    # 운영자가 명시적으로 활성화하기 전까지 PATCH 요청은 route 진입점에서 503으로 fail-closed됩니다.
-    PRESCRIPTION_CORRECTION_ENABLED: bool = False
-
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: str = ""
     CLOVA_OCR_TIMEOUT_SECONDS: float = 20.0

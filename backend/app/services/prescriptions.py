@@ -191,6 +191,10 @@ class PrescriptionService:
             raise self._version_conflict()
 
         confirmed_at = datetime.now(UTC)
+        await self._prescription_repo.invalidate_version_dependencies(
+            prescription_version_id=current_version.id,
+            invalidated_at=confirmed_at,
+        )
         version = await self._prescription_repo.create_version(
             prescription=prescription,
             prescribed_date=request.prescribed_date,

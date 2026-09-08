@@ -46,9 +46,12 @@ class ChatRepository:
     ) -> ChatSession | None:
         result = await self.session.execute(
             select(ChatSession)
+            .join(Prescription, Prescription.id == ChatSession.prescription_id)
+            .options(selectinload(ChatSession.prescription).selectinload(Prescription.document))
             .where(
                 ChatSession.prescription_id == prescription_id,
                 ChatSession.session_status == ChatSessionStatus.ACTIVE,
+                ChatSession.prescription_version_id == Prescription.active_version_id,
                 owned_by_self(ChatSession.profile_id, user_id),
             )
             .order_by(ChatSession.last_message_at.desc(), ChatSession.created_at.desc(), ChatSession.id.desc())
@@ -57,10 +60,23 @@ class ChatRepository:
         return result.scalar_one_or_none()
 
     async def get_session_owned_for_update(self, *, session_id: UUID, user_id: UUID) -> ChatSession | None:
-        result = await self.session.execute(
-            select(ChatSession)
+        prescription = await self.session.scalar(
+            select(Prescription)
+            .join(ChatSession, ChatSession.prescription_id == Prescription.id)
             .where(
                 ChatSession.id == session_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+            .with_for_update(of=Prescription)
+        )
+        if prescription is None:
+            return None
+        result = await self.session.execute(
+            select(ChatSession)
+            .options(selectinload(ChatSession.prescription).selectinload(Prescription.document))
+            .where(
+                ChatSession.id == session_id,
+                ChatSession.prescription_id == prescription.id,
                 owned_by_self(ChatSession.profile_id, user_id),
             )
             .with_for_update()
@@ -70,7 +86,7 @@ class ChatRepository:
     async def get_message_owned(self, *, message_id: UUID, user_id: UUID) -> ChatMessage | None:
         result = await self.session.execute(
             select(ChatMessage)
-            .options(selectinload(ChatMessage.session))
+            .options(selectinload(ChatMessage.session).selectinload(ChatSession.prescription))
             .join(ChatSession, ChatSession.id == ChatMessage.session_id)
             .where(
                 ChatMessage.id == message_id,

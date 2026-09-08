@@ -214,6 +214,8 @@ class JobStatusService:
             or job.prescription_version_id != guide.prescription_version_id
         ):
             raise _job_not_found_error()
+        if guide.prescription.active_version_id != job.prescription_version_id:
+            return None
         return f"/api/v1/guides/{domain_id}" if job.status is AiJobStatus.COMPLETED else None
 
     async def _chat_result_url(self, *, user: User, job: AiJob, domain_id: UUID) -> str | None:
@@ -226,6 +228,8 @@ class JobStatusService:
             or job.prescription_version_id != chat_message.session.prescription_version_id
         ):
             raise _job_not_found_error()
+        if chat_message.session.prescription.active_version_id != job.prescription_version_id:
+            return None
         if job.status is not AiJobStatus.COMPLETED:
             return None
         return f"/api/v1/chat-sessions/{chat_message.session_id}/messages"

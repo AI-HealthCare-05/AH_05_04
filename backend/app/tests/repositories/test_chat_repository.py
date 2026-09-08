@@ -88,14 +88,19 @@ class CapturingResult:
 
 class CapturingSession:
     def __init__(self) -> None:
-        self.statement: object | None = None
+        self.statements: list[object] = []
+        self.prescription_id = uuid4()
+
+    async def scalar(self, statement: object) -> object:
+        self.statements.append(statement)
+        return type("LockedPrescription", (), {"id": self.prescription_id})()
 
     async def execute(self, statement: object) -> CapturingResult:
-        self.statement = statement
+        self.statements.append(statement)
         return CapturingResult()
 
 
-async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_self_profile_subquery() -> None:
+async def test_get_session_owned_for_update_locks_prescription_before_chat_session() -> None:
     session = CapturingSession()
     repository = ChatRepository(session)  # type: ignore[arg-type]
     session_id = uuid4()
@@ -103,27 +108,31 @@ async def test_get_session_owned_for_update_compiles_unique_outer_lock_with_self
 
     await repository.get_session_owned_for_update(session_id=session_id, user_id=user_id)
 
-    assert session.statement is not None
-    statement = cast(ClauseElement, session.statement)
-    # 실제 운영 DB와 동일한 PostgreSQL dialect로 row-lock SQL을 검증합니다.
-    sql = " ".join(
-        str(
-            statement.compile(
-                dialect=postgresql.dialect(),
-                compile_kwargs={"literal_binds": True},
-            )
-        ).split()
-    ).upper()
-    assert sql.count("FOR UPDATE") == 1
-    assert sql.endswith("FOR UPDATE")
-    assert "FROM CHAT_SESSION" in sql
+    assert len(session.statements) == 2
+    sql_statements = [
+        " ".join(
+            str(
+                cast(ClauseElement, statement).compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            ).split()
+        ).upper()
+        for statement in session.statements
+    ]
+    prescription_lock_sql, chat_lock_sql = sql_statements
+    assert "FROM PRESCRIPTION" in prescription_lock_sql
+    assert "JOIN CHAT_SESSION" in prescription_lock_sql
+    assert f"CHAT_SESSION.ID = '{session_id}'".upper() in prescription_lock_sql
+    assert prescription_lock_sql.endswith("FOR UPDATE OF PRESCRIPTION")
+    assert "FROM CHAT_SESSION" in chat_lock_sql
+    assert chat_lock_sql.endswith("FOR UPDATE")
     # 소유권은 user_id 직접 비교가 아니라 사용자의 SELF profile_id로 검증합니다.
-    assert "CHAT_SESSION.PROFILE_ID = (SELECT PROFILE.ID" in sql
-    assert sql.count("CHAT_SESSION.ID =") == 1
-    assert f"CHAT_SESSION.ID = '{session_id}'".upper() in sql
-    assert f"PROFILE.USER_ID = '{user_id}'".upper() in sql
-    assert "PROFILE.PROFILE_TYPE = 'SELF'" in sql
-    assert "CHAT_SESSION JOIN" not in sql
+    assert "PRESCRIPTION.PROFILE_ID = (SELECT PROFILE.ID" in prescription_lock_sql
+    assert f"PROFILE.USER_ID = '{user_id}'".upper() in prescription_lock_sql
+    assert "PROFILE.PROFILE_TYPE = 'SELF'" in prescription_lock_sql
+    assert chat_lock_sql.count("CHAT_SESSION.ID =") == 1
+    assert f"CHAT_SESSION.ID = '{session_id}'".upper() in chat_lock_sql
 
 
 async def test_get_medications_orders_by_display_order_ascending_and_preserves_values(db_session: AsyncSession) -> None:
