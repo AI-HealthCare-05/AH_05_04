@@ -159,6 +159,9 @@ def test_production_runbook_covers_cloudfront_default_domain_and_nine_day_teardo
 
     for expected_setting in (
         "2026-09-22부터 2026-09-30까지 9일",
+        "AWS 유료 플랜",
+        "Free Tier credit이나 무료 사용 한도",
+        "이는 무료 배포라는 뜻이 아니며",
         "*.cloudfront.net",
         "TLS_TERMINATION=cloudfront",
         "Redirect HTTP to HTTPS",

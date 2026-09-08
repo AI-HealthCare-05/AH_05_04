@@ -11,6 +11,8 @@ Staging 언급은 기존 runtime 안전 정책과 검증 경계를 설명하며,
 
 2026-09-22부터 2026-09-30까지 9일간 진행하는 단일 EC2·CloudFront 합성 데이터 데모는
 [AWS Production 합성 데이터 데모 Runbook](./runbooks/aws-production-demo.md)을 따른다.
+이 데모는 AWS 유료 플랜을 사용하며 Free Tier credit이나 무료 사용 한도에 의존하지 않는다.
+CloudFront 기본 hostname 사용은 별도 도메인 구매만 생략하며 AWS 사용량 요금은 발생한다.
 이 제한된 데모 절차는 아래 Production 책임 체계나 공개 게이트를 해제하지 않는다.
 
 ## Production 운영 책임 체계

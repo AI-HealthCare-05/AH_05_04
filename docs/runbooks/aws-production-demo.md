@@ -47,14 +47,20 @@ origin을 직접 우회하지 못하게 합니다. 단일 EC2이므로 고가용
 
 ## 1. 계정과 비용 안전장치
 
+이 데모는 AWS 유료 플랜을 사용하며 Free Tier credit이나 무료 사용 한도를 배포 조건으로
+삼지 않습니다.
+
 1. AWS root는 MFA를 활성화하고 공유하거나 root access key를 만들지 않습니다.
 2. 권가빈과 대체 실행자는 서로 다른 IAM Identity Center 사용자와 SSH key를 사용합니다.
 3. 기술 승인자에게 실행 권한이 필요하지 않으면 ReadOnly 범위만 부여합니다.
-4. 예산 알림을 만들고 2026-09-30 철거 일정을 팀 캘린더에 등록합니다.
-5. 배포할 commit SHA와 직전 정상 `APP_VERSION`, `FRONTEND_VERSION`을 기록합니다.
+4. 팀이 승인한 비용 상한으로 AWS Budget을 만들고 50%, 80%, 100% actual-cost 알림을
+   권가빈에게 설정합니다.
+5. 2026-09-30 철거 일정을 팀 캘린더에 등록합니다.
+6. 배포할 commit SHA와 직전 정상 `APP_VERSION`, `FRONTEND_VERSION`을 기록합니다.
 
-CloudFront 기본 hostname과 기본 인증서에는 별도 도메인 구매가 필요하지 않지만 EC2,
-EBS, CloudFront 전송·요청 등 AWS 사용량 요금은 발생할 수 있습니다.
+CloudFront 기본 hostname과 기본 인증서를 쓰면 별도 도메인을 구매하지 않아도 됩니다.
+이는 무료 배포라는 뜻이 아니며 EC2, EBS, CloudFront 전송·요청 등 실제 AWS 사용량은
+유료로 청구됩니다.
 
 ## 2. EC2와 CloudFront 준비
 
