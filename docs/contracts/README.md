@@ -33,6 +33,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. 삭제 구현·활성화 승인 아님.
+
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
@@ -52,7 +54,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [OCR 비-RAG LLM 구조화 계약 v1](./targets/post-mvp-1/ocr-llm-structuring-v1.md): 최소전송, 구조화 초안 provenance, 사용자 확정과 실패 복구
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계
 - [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): Approved v4 이력과 Track C 공통 Safety 기준; Track F 후속 의미는 v2가 대체
-- [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계 구현 중(#165)
+- [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계, 실패 재시도 충돌·Verification 불변성·REJECTS 1:1·DB-owned 상태 전이 검증 구현 중(#165), 비FAILED 계보 방향 확인·#335 정책 분리·#164 normalization DB 인계 대기
 - [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
@@ -95,3 +97,5 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - 오류: `code`, `message`, `details`, `trace_id`
 
 계약 변경은 관련 요구사항 ID, API 명세, 구현, 테스트와 함께 한 PR에서 갱신합니다. 필드 삭제·이름/타입 변경·필수 필드 추가는 Breaking Change로 취급합니다.
+
+- [Catalog build·approval handoff v2](./targets/post-mvp-1/catalog-build-v2.md): #329 리뷰 반영 구현·검토 대상. 독립 Ingredient, Alias 검색 dedupe, REJECTED 경계, 검증 포트·승인 상태 결속 manifest, Candidate 전체 artifact 검증, 원문 보존·normalized NFC 경계 및 P0 코드 체계 allowlist. 실제 DB·승인 adapter·Runtime 연결은 미완료.

@@ -28,11 +28,11 @@ RAG-08과 RAG-09는 위 hash의 Receipt를 상류 입력 경계로 사용한다.
 
 ## RAG Source Governance (#185) Receipt
 
-Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Governance Contract Receipt](../validation/rag/rag-source-governance-contract-receipt.md)와 [JSON fixture](../../tests/fixtures/rag/source_contract_receipt.json)에 고정하며 canonical hash는 `sha256:950813a07aa473f6027970b8b6377f91e2951379e6d147ce4ba908bf51b56fe3`다. #155의 [MFDS P0 Endpoint Receipt](../validation/rag/endpoints/README.md)는 연결됐고 #164는 Source/Snapshot/Catalog 최소 DB 기반을 추가하지만, DUR·환자용 복약정보의 자연키 검증이 fail-closed이고 #165/#166 Source Snapshot·Catalog Receipt가 연결되지 않아 실제 Source readiness는 계속 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. 실제 Source 활성화나 `PUBLIC_TRACK_F` 해제의 근거로 사용하지 않는다.
+Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Governance Contract Receipt](../validation/rag/rag-source-governance-contract-receipt.md)와 [JSON fixture](../../tests/fixtures/rag/source_contract_receipt.json)에 고정하며 canonical hash는 `sha256:bdd22b8231806c8da343ff4e607da1f35d740a1dde7f27d5dc4dfce72330f2e4`다. #155의 [MFDS P0 Endpoint Receipt](../validation/rag/endpoints/README.md)는 연결됐고 #164는 Source/Snapshot/Catalog 최소 DB 기반을 추가하지만, DUR·환자용 복약정보의 자연키 검증이 fail-closed이고 #165/#166 Source Snapshot·Catalog Receipt가 연결되지 않아 실제 Source readiness는 계속 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. 실제 Source 활성화나 `PUBLIC_TRACK_F` 해제의 근거로 사용하지 않는다.
 
 | 후속 Issue | #185 Receipt 입력 | 현재 판정 |
 | --- | --- | --- |
-| RAG-04 (#164) | Source/Snapshot/Catalog 최소 DB 기반. 수집·적재·Runtime 활성화 제외 | `PARTIAL` · schema foundation only |
+| RAG-04 (#164) | Source/Snapshot/Catalog 최소 DB 기반. snapshot/provenance/canonicalization 저장 경계와 Catalog 적재 조회 key 정렬 포함. 수집·적재·Runtime 활성화·bulk upsert 제외 | `PARTIAL` · 기존 target 계약 흡수용, 새 정본 계약 아님 |
 | RAG-04 (#164) | Evaluation 최소 DB 기반. Runner·Runtime 활성화·실제 환자 데이터 제외 | `PARTIAL` · evaluation schema foundation only |
 | RAG-07A (#167) | Source 목적·Snapshot·Approval·Resolver 입력 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-07B (#168) | Candidate Index Source/version·물리 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |

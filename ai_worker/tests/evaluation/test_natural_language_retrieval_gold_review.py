@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
+from ai_worker.tasks.evaluation.natural_language_retrieval_dev_authoring import build_issue_273_dev_graph
 from ai_worker.tasks.evaluation.natural_language_retrieval_gold_review import (
     GOLD_REVIEW_JSON_PATH,
     GOLD_REVIEW_MARKDOWN_PATH,
@@ -45,7 +46,20 @@ def _all_keys(value: Any) -> set[str]:
 
 
 def _packet() -> dict[str, Any]:
-    return cast(dict[str, Any], build_gold_review_packet(EVALS_ROOT))
+    return cast(
+        dict[str, Any],
+        json.loads((REPOSITORY_ROOT / GOLD_REVIEW_JSON_PATH).read_bytes()),
+    )
+
+
+def _materialize_draft_graph(tmp_path: Path) -> Path:
+    evals_root = tmp_path / "evals"
+    shutil.copytree(EVALS_ROOT / "schemas", evals_root / "schemas")
+    for relative_path, content in build_issue_273_dev_graph(gold_reviewed=False).items():
+        destination = evals_root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+    return evals_root
 
 
 def test_gold_review_packet_joins_the_exact_public_dev_review_surface() -> None:
@@ -97,8 +111,9 @@ def test_gold_review_packet_joins_the_exact_public_dev_review_surface() -> None:
     )
 
 
-def test_gold_review_packet_binds_every_consumed_source_to_committed_bytes() -> None:
-    packet = _packet()
+def test_gold_review_packet_binds_every_consumed_source_to_the_reviewed_draft_graph(tmp_path: Path) -> None:
+    evals_root = _materialize_draft_graph(tmp_path)
+    packet = cast(dict[str, Any], build_gold_review_packet(evals_root))
     source_artifacts = packet["source_artifacts"]
 
     assert set(source_artifacts) == {
@@ -109,11 +124,11 @@ def test_gold_review_packet_binds_every_consumed_source_to_committed_bytes() -> 
         "retrieval_index",
     }
     for source in source_artifacts.values():
-        source_path = EVALS_ROOT / source["path"]
+        source_path = evals_root / source["path"]
         assert source_path.is_file()
         assert source["sha256"] == sha256_hex(source_path.read_bytes())
 
-    manifest = json.loads((EVALS_ROOT / source_artifacts["dataset_manifest"]["path"]).read_bytes())
+    manifest = json.loads((evals_root / source_artifacts["dataset_manifest"]["path"]).read_bytes())
     assert packet["source_dataset_manifest_sha256"] == manifest["manifest_sha256"]
     assert manifest["status"] == "DRAFT"
     assert manifest["frozen_at"] is None
@@ -121,8 +136,7 @@ def test_gold_review_packet_binds_every_consumed_source_to_committed_bytes() -> 
 
 
 def test_gold_review_packet_rejects_an_invalid_dataset_manifest_self_hash(tmp_path: Path) -> None:
-    evals_root = tmp_path / "evals"
-    shutil.copytree(EVALS_ROOT, evals_root)
+    evals_root = _materialize_draft_graph(tmp_path)
     manifest_path = evals_root / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
     manifest = json.loads(manifest_path.read_bytes())
     manifest["manifest_sha256"] = "0" * 64
@@ -133,8 +147,7 @@ def test_gold_review_packet_rejects_an_invalid_dataset_manifest_self_hash(tmp_pa
 
 
 def test_gold_review_packet_rejects_a_negative_bound_to_another_origin(tmp_path: Path) -> None:
-    evals_root = tmp_path / "evals"
-    shutil.copytree(EVALS_ROOT, evals_root)
+    evals_root = _materialize_draft_graph(tmp_path)
     labels_path = (
         evals_root / "retrieval/evidence/resources/rag-natural-language-retrieval-dev-v1/evaluation-labels.json"
     )
@@ -177,8 +190,7 @@ def test_gold_review_packet_rejects_a_negative_bound_to_another_origin(tmp_path:
 
 
 def test_gold_review_packet_rejects_a_gold_locator_that_points_to_another_record(tmp_path: Path) -> None:
-    evals_root = tmp_path / "evals"
-    shutil.copytree(EVALS_ROOT, evals_root)
+    evals_root = _materialize_draft_graph(tmp_path)
     mapping_path = evals_root / "retrieval/evidence/rag-natural-language-retrieval-dev-v1.evidence-mapping.json"
     manifest_path = evals_root / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
     mapping = json.loads(mapping_path.read_bytes())
@@ -240,8 +252,8 @@ def test_gold_review_markdown_is_a_complete_korean_human_review_projection() -> 
             assert negative["statement"] in markdown
 
 
-def test_committed_gold_review_artifacts_are_exact_deterministic_projections() -> None:
-    packet = _packet()
+def test_committed_gold_review_artifacts_are_exact_deterministic_projections(tmp_path: Path) -> None:
+    packet = cast(dict[str, Any], build_gold_review_packet(_materialize_draft_graph(tmp_path)))
 
     assert (REPOSITORY_ROOT / GOLD_REVIEW_JSON_PATH).read_bytes() == canonical_json_bytes(packet)
     assert (REPOSITORY_ROOT / GOLD_REVIEW_MARKDOWN_PATH).read_text(encoding="utf-8") == (
