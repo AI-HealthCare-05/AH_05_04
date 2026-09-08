@@ -101,11 +101,12 @@ upstream read timeout도 같은 배포 변경으로 갱신합니다.
 ### Reverse proxy
 
 Backend가 비스트리밍 응답을 사용하는 동안 reverse proxy의 upstream read timeout은
-`D`보다 커야 합니다. Production Compose가 사용하는 `infra/nginx/prod_http.conf`와
-`prod_https.conf`는 `proxy_read_timeout=75초`를 명시해 기본 `D=60초`보다 크게 둡니다.
-`D`를 75초 이상으로 변경할 때는 두 Production 설정의 timeout도 같은 변경에서 더 크게
-갱신해야 합니다. `infra/nginx/default.conf`는 Production Compose가 사용하지 않는 개발용
-예시이며 이 timeout 보장을 제공하지 않습니다.
+`D`보다 커야 합니다. Production 배포가 사용하는 `infra/nginx/prod_http.conf`,
+`prod_https.conf`, `prod_cloudfront.conf`는 `proxy_read_timeout=75초`를 명시해 기본
+`D=60초`보다 크게 둡니다. CloudFront를 사용하는 경우 origin response timeout도 75초로
+설정합니다. `D`를 75초 이상으로 변경할 때는 적용 중인 Nginx 설정과 CloudFront timeout을
+같은 변경에서 더 크게 갱신해야 합니다. `infra/nginx/default.conf`는 Production 배포
+template이 아니며 이 timeout 보장을 제공하지 않습니다.
 
 ## 제품 함량과 복용량 구분
 
