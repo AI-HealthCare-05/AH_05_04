@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -382,12 +382,19 @@ async def test_execute_resolves_concurrent_insert_race_by_replaying_winner(
     original_find = repository.find_sync_idempotency_record
     call_count = 0
 
-    async def find_once_missing(**kwargs: object) -> IdempotencyRecord | None:
+    async def find_once_missing(
+        *, user_id: UUID, operation_id: str, parent_resource_id: UUID, key_hmac: str
+    ) -> IdempotencyRecord | None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return None
-        return await original_find(**kwargs)
+        return await original_find(
+            user_id=user_id,
+            operation_id=operation_id,
+            parent_resource_id=parent_resource_id,
+            key_hmac=key_hmac,
+        )
 
     repository.find_sync_idempotency_record = find_once_missing  # type: ignore[method-assign]
 
