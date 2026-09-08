@@ -438,7 +438,12 @@ function ChatPage() {
             <h1>도지와 처방에 대해 이야기하려면<br />먼저 처방전을 등록해 주세요</h1>
             <p>처방전을 등록하고 내용을 확인하면<br />도지가 현재 처방을 참고해 답변할 수 있어요.</p>
             <Card className="chat-page__gate-actions">
-              <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
+              <Button
+                fullWidth
+                onClick={() => navigate('/prescriptions/upload', {
+                  state: { intent: 'new-prescription' },
+                })}
+              >
                 처방전 등록하기
               </Button>
               <Button fullWidth variant="ghost" onClick={() => navigate('/')}>
