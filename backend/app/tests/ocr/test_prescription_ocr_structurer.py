@@ -1372,3 +1372,31 @@ def test_structure_keeps_row_with_ocr_digit_confusion() -> None:
     assert fields_by_type["DOSE_VALUE"].raw_value == "I"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "I"
+
+
+@pytest.mark.parametrize("separate_issue_label", [False, True], ids=["inline-issue-label", "split-issue-label"])
+@pytest.mark.parametrize("birthdate_first", [True, False], ids=["birthdate-first", "issue-date-first"])
+def test_structure_excludes_birthdate_with_separate_label(
+    separate_issue_label: bool,
+    birthdate_first: bool,
+) -> None:
+    # 합성 좌표: 같은 줄의 오른쪽 날짜를 라벨에 연결해야 합니다.
+    # 2000년 이후 날짜로 기존 연도 하한 방어를 통과하는 잔여 문제를 재현합니다.
+    birthdate_fields = [
+        _raw_field("생년월일", 100, 100, height=20),
+        _raw_field("2010년 03월 15일", 240, 100, height=20),
+    ]
+    issue_fields = (
+        [_raw_field("교부일자", 100, 200, height=20), _raw_field("2026-08-12", 240, 200, height=20)]
+        if separate_issue_label
+        else [_raw_field("교부일자 2026-08-12", 170, 200, height=20)]
+    )
+    raw_fields = birthdate_fields + issue_fields if birthdate_first else issue_fields + birthdate_fields
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert len(result) == 1
+    assert result[0].medication_index == 0
+    assert result[0].field_type == "PRESCRIBED_DATE"
+    assert result[0].normalized_value == "2026-08-12"
+    assert result[0].raw_value == ("2026-08-12" if separate_issue_label else "교부일자 2026-08-12")
