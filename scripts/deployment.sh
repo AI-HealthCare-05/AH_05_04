@@ -13,6 +13,19 @@ if [ ! -f "$PROD_ENV_FILE" ]; then
   exit 1
 fi
 
+# ---------- 필수 키 선언 검증 (source 이전) ----------
+# source는 파일에 없는 변수를 초기화하지 않는다. 실행 셸에 REDIS_PASSWORD나 ENV가
+# 이미 설정돼 있으면 파일에 값이 없어도 아래 검증을 통과할 수 있는데, 원격 배포는
+# 이 파일 원문만 서버로 복사하므로(하단 scp 참고) 로컬 검증과 실제 전송 설정이
+# 어긋나 필수 값이 없는 채로 배포될 수 있다(#321 리뷰). source 전에 파일 자체가
+# 두 값을 직접 선언하는지 먼저 확인한다.
+for required_key in REDIS_PASSWORD ENV; do
+  if ! grep -Eq "^${required_key}=" "$PROD_ENV_FILE"; then
+    echo "$PROD_ENV_FILE에 $required_key가 선언되어 있지 않습니다."
+    exit 1
+  fi
+done
+
 # 이미지 버전 등 운영 배포 설정을 읽습니다.
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
 set -a
@@ -54,6 +67,15 @@ if grep -Eq '=(replace-with|replace_with)' "$PROD_ENV_FILE"; then
   echo "$PROD_ENV_FILE 안의 placeholder를 실제 운영 값으로 교체해야 합니다."
   exit 1
 fi
+
+# 위 파일 원문 검사는 REDIS_PASSWORD="replace-with-..."처럼 따옴표로 감싼 값을
+# 놓친다(#321 리뷰). source 이후 따옴표가 제거된 실제 셸 변수 값을 다시 검사한다.
+case "$REDIS_PASSWORD" in
+  replace-with* | replace_with*)
+    echo "REDIS_PASSWORD가 아직 placeholder 값입니다: $PROD_ENV_FILE 안의 값을 교체해야 합니다."
+    exit 1
+    ;;
+esac
 
 # ---------- ENV 값 검증 ----------
 # PROD_ENV_FILE 경로가 하드코딩이던 때는 문제가 아니었지만, override를 허용하면서
