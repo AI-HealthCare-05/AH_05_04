@@ -20,9 +20,43 @@ _MIN_PRESCRIBED_YEAR = 2000
 
 # 이 라벨이 포함된 박스는 날짜 모양이어도 처방일 후보에서 제외합니다. 환자 생년월일이
 # 처방일로 오인식되면 의료 정확성뿐 아니라 개인정보(생년월일)가 PRESCRIBED_DATE로
-# 저장되는 문제까지 겹칩니다. 좌표 기반 열 판단이 없는 최소 방어이며, 라벨이 값과
-# 다른 박스에 분리되어 인식되는 경우까지는 막지 못합니다.
+# 저장되는 문제까지 겹칩니다. 분리된 라벨은 제한된 인접 범위에서 연결합니다.
 _EXCLUDED_DATE_LABEL_PATTERN = re.compile(r"생년월일|생일|주민등록번호|주민번호")
+
+_PREFERRED_DATE_LABEL_PATTERN = re.compile(r"교부일자|교부일|발행일자|발행일|처방일자|처방일")
+
+
+def _date_label_kind(value: str) -> str | None:
+    compact = re.sub(r"\s+", "", value)
+    if _EXCLUDED_DATE_LABEL_PATTERN.search(compact):
+        return "excluded"
+    if _PREFERRED_DATE_LABEL_PATTERN.search(compact):
+        return "preferred"
+    return None
+
+
+def _nearby_date_label_kind(field: RawRecognizedField, fields: list[RawRecognizedField]) -> str | None:
+    labels: list[tuple[float, str]] = []
+    for label in fields:
+        kind = _date_label_kind(label.raw_value)
+        # 날짜를 이미 포함한 박스는 다른 날짜 값의 라벨로 재사용하지 않습니다.
+        if kind is None or _DATE_PATTERN.search(label.raw_value):
+            continue
+        height = min(field.height, label.height)
+        if height <= 0:
+            continue
+        dx = (field.center_x - label.center_x) / height
+        dy = (field.center_y - label.center_y) / height
+        # 같은 줄의 왼쪽 라벨 또는 바로 위 라벨만 연결합니다.
+        if not (0 < dx <= 12 and abs(dy) <= 0.75 or abs(dx) <= 2 and 0 < dy <= 3):
+            continue
+        labels.append((dx * dx + dy * dy, kind))
+    if not labels:
+        return None
+    nearest = min(distance for distance, _ in labels)
+    kinds = {kind for distance, kind in labels if abs(distance - nearest) <= 1e-9}
+    # 같은 거리에서 라벨이 충돌하면 제외 라벨을 우선하여 추정 선택을 막습니다.
+    return "excluded" if "excluded" in kinds else "preferred"
 
 
 def normalize_prescribed_date_text(value: str) -> str | None:
@@ -334,22 +368,30 @@ class PrescriptionOcrStructurer:
         self,
         raw_fields: list[RawRecognizedField],
     ) -> RecognizedField | None:
+        preferred: list[RecognizedField] = []
+        fallback: list[RecognizedField] = []
         for field in raw_fields:
-            if _EXCLUDED_DATE_LABEL_PATTERN.search(field.raw_value):
-                continue
-
             normalized_date = normalize_prescribed_date_text(field.raw_value)
-
-            if normalized_date is not None:
-                return RecognizedField(
-                    medication_index=0,
-                    field_type="PRESCRIBED_DATE",
-                    raw_value=field.raw_value,
-                    normalized_value=normalized_date,
-                    normalization_version="date-rule-v1",
-                    confidence_score=field.confidence_score,
-                )
-        return None
+            if normalized_date is None:
+                continue
+            kind = _date_label_kind(field.raw_value) or _nearby_date_label_kind(field, raw_fields)
+            if kind == "excluded":
+                continue
+            candidate = RecognizedField(
+                medication_index=0,
+                field_type="PRESCRIBED_DATE",
+                raw_value=field.raw_value,
+                normalized_value=normalized_date,
+                normalization_version="date-rule-v1",
+                confidence_score=field.confidence_score,
+            )
+            (preferred if kind == "preferred" else fallback).append(candidate)
+        if preferred:
+            # 서로 다른 선호 날짜를 입력 순서만으로 확정하지 않습니다.
+            if len({candidate.normalized_value for candidate in preferred}) > 1:
+                return None
+            return min(preferred, key=lambda candidate: candidate.raw_value or "")
+        return fallback[0] if fallback else None
 
     # 명칭, 투여량, 투여횟수만 인식되고 용법이 누락돼도 정상적인 표 헤더로 처리
     def _normalize_header_text(self, value: str) -> str:

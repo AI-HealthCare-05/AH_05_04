@@ -1400,3 +1400,34 @@ def test_structure_excludes_birthdate_with_separate_label(
     assert result[0].field_type == "PRESCRIBED_DATE"
     assert result[0].normalized_value == "2026-08-12"
     assert result[0].raw_value == ("2026-08-12" if separate_issue_label else "교부일자 2026-08-12")
+
+
+@pytest.mark.parametrize("label", ["교부일자", "발행일", "처방일"])
+def test_structure_prefers_labeled_date_to_unlabeled_date(label: str) -> None:
+    fields = [_raw_field("2010-03-15", 240, 100), _raw_field(label, 100, 200), _raw_field("2026-08-12", 240, 200)]
+    assert PrescriptionOcrStructurer().structure(fields)[0].normalized_value == "2026-08-12"
+
+
+def test_structure_excludes_date_below_birthdate_label() -> None:
+    fields = [_raw_field("생년월일", 200, 100), _raw_field("2010-03-15", 200, 140)]
+    assert PrescriptionOcrStructurer().structure(fields) == []
+
+
+@pytest.mark.parametrize("x,y", [(100, 500), (1000, 100), (100, 120)])
+def test_structure_does_not_bind_distant_or_lower_label(x: float, y: float) -> None:
+    fields = [_raw_field("생년월일", x, y), _raw_field("2026-08-12", 240, 100)]
+    assert PrescriptionOcrStructurer().structure(fields)[0].normalized_value == "2026-08-12"
+
+
+def test_structure_uses_nearest_label_and_excludes_ties() -> None:
+    value = _raw_field("2026-08-12", 240, 100)
+    preferred = _raw_field("교부일자", 200, 100)
+    distant_birth = _raw_field("생년월일", 100, 100)
+    assert PrescriptionOcrStructurer().structure([value, preferred, distant_birth])[0].normalized_value == "2026-08-12"
+    assert PrescriptionOcrStructurer().structure([value, preferred, _raw_field("생년월일", 200, 100)]) == []
+
+
+def test_structure_does_not_choose_between_conflicting_preferred_dates() -> None:
+    fields = [_raw_field("발행일 2026-08-12", 200, 100), _raw_field("교부일자 2026-08-13", 200, 200)]
+    assert PrescriptionOcrStructurer().structure(fields) == []
+    assert PrescriptionOcrStructurer().structure(list(reversed(fields))) == []
