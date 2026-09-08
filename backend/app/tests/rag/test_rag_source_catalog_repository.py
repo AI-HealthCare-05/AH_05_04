@@ -5,6 +5,18 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.adapters.sqlalchemy_catalog_write_support import (
+    CatalogDatabaseBindingError,
+    SqlAlchemyCatalogWriteSupport,
+)
+from ai_worker.tasks.rag.catalog import (
+    CandidateCatalogSourceRef,
+    CandidateRecordStatus,
+    CatalogProductInput,
+    build_catalog_members,
+    create_catalog_export,
+)
+from ai_worker.tasks.rag.catalog.storage import prepare_catalog_storage
 from app.core import config
 from app.models.rag_catalog import (
     RagMedicationAliasReviewStatus,
@@ -445,6 +457,67 @@ async def test_search_entry_rejects_ineligible_alias(db_session: AsyncSession) -
                 normalized_text=pending_alias.normalized_alias_text,
             )
         )
+
+
+async def test_catalog_write_support_binds_source_and_upserts_identity_once(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="ITEM_SEQ:200012350",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="200012350",
+                product_name="어댑터결속제품",
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        components=(),
+        aliases=(),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="catalog-adapter-binding-v1",
+        source_refs=(CandidateCatalogSourceRef(str(snapshot.id), snapshot.source_version),),
+        members=members,
+    )
+    plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+    support = SqlAlchemyCatalogWriteSupport(db_session)
+
+    first = await support.bind(plan)
+    second = await support.bind(plan)
+
+    assert first.source_snapshot_ids == {str(snapshot.id): snapshot.id}
+    assert first.identity_ids == second.identity_ids
+    assert set(first.identity_ids) == set(plan.identities)
+
+
+async def test_catalog_write_support_rejects_source_version_mismatch(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="ITEM_SEQ:200012351",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="200012351",
+                product_name="출처불일치제품",
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        components=(),
+        aliases=(),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="catalog-adapter-binding-v1",
+        source_refs=(CandidateCatalogSourceRef(str(snapshot.id), "다른-source-version"),),
+        members=members,
+    )
+    plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+
+    with pytest.raises(CatalogDatabaseBindingError):
+        await SqlAlchemyCatalogWriteSupport(db_session).bind(plan)
 
 
 async def test_component_product_and_ingredient_must_use_same_snapshot(db_session: AsyncSession) -> None:
