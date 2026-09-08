@@ -79,8 +79,45 @@ def test_deployment_script_rejects_placeholder_redis_password_before_external_ac
     assert "docker" not in completed.stdout.lower()
 
 
+def test_deployment_script_rejects_non_production_env_before_external_actions(tmp_path: Path) -> None:
+    """PROD_ENV_FILE override를 열면서 PROD_ENV_FILE=envs/.local.env 같은 다른 환경파일로
+    운영 배포 스크립트를 실행할 수 있게 됐다. deploy-staging.sh의 ENV 검사와 대칭으로,
+    ENV가 production이 아니면 docker login 등 외부 작업 전에 차단해야 한다(#321, 김지혜 리뷰)."""
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "DB_ADMIN_USER=dummy_admin",
+                "DB_ADMIN_PASSWORD=dummy-admin-password",
+                "DB_MIGRATION_USER=dummy_migration",
+                "DB_MIGRATION_PASSWORD=dummy-migration-password",
+                "DB_APP_USER=dummy_app",
+                "DB_APP_PASSWORD=dummy-app-password",
+                "REDIS_PASSWORD=dummy-redis-password",
+                "ENV=local",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "ENV는 production이어야 합니다" in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+
+
 def test_deployment_script_passes_redis_check_when_password_present(tmp_path: Path) -> None:
-    """REDIS_PASSWORD가 채워져 있으면 Redis 검증은 통과하고, 그 다음 검증
+    """REDIS_PASSWORD가 채워져 있고 ENV=production이면 그 다음 검증
     (DB_ADMIN_USER 등 역할 이름 중복 검사)으로 넘어가야 한다."""
     env_file = tmp_path / "prod.env"
     env_file.write_text(
@@ -93,6 +130,7 @@ def test_deployment_script_passes_redis_check_when_password_present(tmp_path: Pa
                 "DB_APP_USER=dummy_app",
                 "DB_APP_PASSWORD=dummy-app-password",
                 "REDIS_PASSWORD=dummy-redis-password",
+                "ENV=production",
                 "",
             ]
         ),

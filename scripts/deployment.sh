@@ -55,6 +55,16 @@ if grep -Eq '=(replace-with|replace_with)' "$PROD_ENV_FILE"; then
   exit 1
 fi
 
+# ---------- ENV 값 검증 ----------
+# PROD_ENV_FILE 경로가 하드코딩이던 때는 문제가 아니었지만, override를 허용하면서
+# PROD_ENV_FILE=envs/.local.env 같은 다른 환경파일로 운영 배포를 실행할 수 있게
+# 됐다. deploy-staging.sh의 ENV 검사와 대칭으로 운영 배포는 ENV=production인
+# 환경파일로만 실행되도록 강제한다.
+if [ "${ENV:-}" != "production" ]; then
+  echo "ENV는 production이어야 합니다. 현재 값: ${ENV:-<empty>}"
+  exit 1
+fi
+
 if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
   [ "$DB_ADMIN_USER" = "$DB_APP_USER" ] ||
   [ "$DB_MIGRATION_USER" = "$DB_APP_USER" ]; then
