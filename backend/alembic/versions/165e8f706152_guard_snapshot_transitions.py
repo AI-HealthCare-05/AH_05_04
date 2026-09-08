@@ -102,6 +102,21 @@ def upgrade() -> None:
     """)
     )
 
+    signature = "transition_rag_source_snapshot(text, text, text, timestamptz, timestamptz, text)"
+    op.execute(f"REVOKE ALL ON FUNCTION {signature} FROM PUBLIC")
+    # Preserve the existing Runtime DML authority, without giving every DB role a definer entry point.
+    roles = connection.execute(
+        sa.text("""
+        SELECT DISTINCT pg_get_userbyid(acl.grantee)
+        FROM pg_class c, LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) acl
+        WHERE c.oid = 'rag_source_snapshot'::regclass
+          AND acl.privilege_type = 'UPDATE' AND acl.grantee <> 0
+    """)
+    )
+    for role in roles.scalars():
+        quoted_role = connection.dialect.identifier_preparer.quote(role)
+        op.execute(f"GRANT EXECUTE ON FUNCTION {signature} TO {quoted_role}")
+
 
 def downgrade() -> None:
     connection = op.get_bind()

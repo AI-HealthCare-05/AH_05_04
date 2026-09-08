@@ -23,7 +23,7 @@
     "local_target": {
       "repository_path": "docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md",
       "version": "1",
-      "sha256": "90c1560a9ba404a2adb40c2ee21c26a88d83591ed086515b6a0d9b1226f4a409"
+      "sha256": "401abeb775f325ec8305d0e71b6eff50aec4724e22e11c85538f2706fde74ae9"
     },
     "decision": {
       "repository_path": "docs/governance/decisions/2026-08-31-rag-p0-contract-freeze.md",
@@ -582,6 +582,6 @@
   "receipt_hash": {
     "algorithm": "sha256",
     "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
-    "value": "85ba5d876476301a577ceb88eced810326e1d1d64d96edd15c46ee0041aeaf6a"
+    "value": "ca048d6d37ace341f25995f98cc2a046e179213e3356ddf230994aa9bc3d3496"
   }
 }
