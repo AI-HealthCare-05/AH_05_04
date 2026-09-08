@@ -186,7 +186,9 @@ Template OCR 적용과 기존 `RecognizedField` 계약으로의 변환은
 - LLM의 값 누락과 grounding 실패에 동일한 기준을 적용합니다. 규칙 경로의 dose 인식 실패 시 용량 값과 단위를 함께 보충합니다.
 - `MEDICATION_NAME`은 빈 필드로 만들지 않습니다. 기존 약품 행 탐지·약품명 검증을 통과한 행에만 보충하고, 안내문·헤더·미확인 token으로 새 약품 행을 만들지 않습니다.
 - 기존 인식값과 정규화 metadata는 유지하고 같은 `(medication_index, field_type)`을 중복 생성하지 않습니다. 보충 대상은 위 나열 순서로 순회하며 기존 인식 필드의 상대 순서를 유지합니다.
-- `PRESCRIBED_DATE`는 index 0의 별도 정책입니다. LLM의 기존 빈 처방일 처리와 규칙 경로의 날짜 탐지를 유지합니다.
+- `PRESCRIBED_DATE`는 index 0의 별도 정책입니다. #353 리뷰 반영 개정안에서는 규칙 경로도 날짜가 없거나 제외·상충으로 선택하지 못하면 metadata 네 개가 null인 빈 검수 필드 하나를 생성합니다. 기존 저장·조회·수정 API를 사용하며 날짜 필수 검증은 유지합니다. LLM의 기존 빈 처방일 처리는 변경하지 않습니다.
+- 규칙 경로의 분리 라벨 연결 범위에 처방일 계열과 생년월일 계열이 함께 있으면 거리만으로 날짜 의미를 정하지 않고 수동 검수합니다. 같은 박스의 명시적 라벨은 우선 적용합니다. 이 개정안은 #353 코드·회귀와 함께 담당 리뷰를 받으며 병합 전 배포 완료를 의미하지 않습니다.
+- 이 절이 빈 검수 필드 생성의 정본입니다. 저장 계층(`ai_worker/adapters/sqlalchemy_ocr_result_store.py`)은 회귀 방지를 위해 누락된 `PRESCRIBED_DATE`와 이미 감지된 약품 행의 `DOSE_VALUE`·`FREQUENCY_PER_DAY`·`DURATION_DAYS`를 방어적으로 보충합니다(#294). 구조화 계층이 만든 빈 처방일도 기존 행으로 취급하여 중복 생성하거나 덮어쓰지 않습니다. `MEDICATION_NAME`을 빈 필드로 만들지 않는 규칙은 저장 계층에도 동일하게 적용됩니다. 상세: [Decision: 저장 계층 필드 방어 범위](../../governance/decisions/2026-09-08-ocr-storage-layer-field-defense-294.md)
 - OCR 원문이 있는 필드는 `raw_value`로 보존합니다.
 - `I정`, `I회`처럼 숫자 오인식이 의심되더라도 자동으로 `1`로 확정하지 않는다.
 - 모든 추출 필드는 기본적으로 `UNCONFIRMED` 상태다.
