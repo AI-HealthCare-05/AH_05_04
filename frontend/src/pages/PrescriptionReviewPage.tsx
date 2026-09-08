@@ -59,6 +59,13 @@ const requiredReviewFieldTypes = new Set<string>([
   ...requiredMedicationFieldTypes,
 ])
 
+const manuallyEnterableOcrPlaceholderFieldTypes = new Set<string>([
+  'PRESCRIBED_DATE',
+  'DOSE_VALUE',
+  'FREQUENCY_PER_DAY',
+  'DURATION_DAYS',
+])
+
 const manualEntryNotice =
   'OCR이 인식하지 못해 직접 입력이 필요한 필드예요.'
 
@@ -207,14 +214,27 @@ function getSavedDisplayValue(field: ExtractedField) {
   return field.raw_value ?? ''
 }
 
-function isRequiredOcrPlaceholder(field: ExtractedField) {
+function isUnconfirmedEmptyOcrField(field: ExtractedField) {
   return (
-    requiredReviewFieldTypes.has(field.field_type) &&
     field.confirmation_status === 'UNCONFIRMED' &&
     field.raw_value === null &&
     field.normalized_value === null &&
     field.confidence_score === null &&
     field.confirmed_value === null
+  )
+}
+
+function isRequiredOcrPlaceholder(field: ExtractedField) {
+  return (
+    manuallyEnterableOcrPlaceholderFieldTypes.has(field.field_type) &&
+    isUnconfirmedEmptyOcrField(field)
+  )
+}
+
+function isUnrecoverableMedicationNameField(field: ExtractedField) {
+  return (
+    field.field_type === 'MEDICATION_NAME' &&
+    isUnconfirmedEmptyOcrField(field)
   )
 }
 
@@ -504,6 +524,10 @@ function PrescriptionReviewPage() {
     () => fields.some(isRequiredOcrPlaceholder),
     [fields],
   )
+  const hasStructurallyMissingRequiredFields =
+    hasMissingPrescribedDateField || hasMissingRequiredMedicationFields
+  const hasRequiredRecognitionIssue =
+    hasRequiredOcrPlaceholders || hasStructurallyMissingRequiredFields
 
   const reviewReadyForAcknowledgement =
     prescribedDateConfirmed &&
@@ -590,6 +614,16 @@ function PrescriptionReviewPage() {
           setBlockingState(
             getIncompleteOcrState(ocrResponse.data.ocr_status),
           )
+          return
+        }
+
+        if (ocrResponse.data.fields.some(isUnrecoverableMedicationNameField)) {
+          setBlockingState({
+            title: '약 이름을 인식하지 못했어요',
+            message: '약 이름은 직접 입력해 검수를 진행할 수 없습니다.',
+            nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+            action: 'UPLOAD',
+          })
           return
         }
 
@@ -1420,19 +1454,28 @@ function PrescriptionReviewPage() {
       >
         <main className="app-scroll prescription-review prescription-review__content">
           <section className="prescription-review__intro">
-            <div className="prescription-review__success-icon" aria-hidden="true">
-              ✓
+            <div
+              className={`prescription-review__status-icon ${
+                hasRequiredRecognitionIssue ? 'is-warning' : 'is-success'
+              }`}
+              aria-hidden="true"
+            >
+              {hasRequiredRecognitionIssue ? '!' : '✓'}
             </div>
             <div>
               <p>
-                {hasRequiredOcrPlaceholders
-                  ? '일부 필수 항목 인식 누락'
-                  : '전체 인식 성공'}
+                {hasStructurallyMissingRequiredFields
+                  ? '필수 처방 항목 인식 누락'
+                  : hasRequiredOcrPlaceholders
+                    ? '일부 필수 항목 인식 누락'
+                    : '전체 인식 성공'}
               </p>
               <h1>
-                {hasRequiredOcrPlaceholders
-                  ? '누락된 항목을 직접 입력해 주세요'
-                  : '처방전과 같은지 확인해 주세요'}
+                {hasStructurallyMissingRequiredFields
+                  ? '처방전을 다시 업로드해 주세요'
+                  : hasRequiredOcrPlaceholders
+                    ? '누락된 항목을 직접 입력해 주세요'
+                    : '처방전과 같은지 확인해 주세요'}
               </h1>
             </div>
           </section>
@@ -1454,8 +1497,7 @@ function PrescriptionReviewPage() {
             </span>
           </div>
 
-          {(hasMissingPrescribedDateField ||
-            hasMissingRequiredMedicationFields) && (
+          {hasStructurallyMissingRequiredFields && (
             <div className="prescription-review__error" role="alert">
               <strong>필수 처방 항목이 누락됐어요</strong>
               <span>
