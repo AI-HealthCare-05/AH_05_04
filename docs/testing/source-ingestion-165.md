@@ -247,7 +247,7 @@ PASS source snapshot adapter import and database connection
 - FAILED 동일 Source version도 canonical 내용·계약 비교에 포함한다. 내용·Receipt·parser 계약이 달라지면 실패 Run만 남기고 새 Snapshot을 만들지 않는다. 같은 계약의 재시도는 새 PENDING 후보를 만든다.
 - REJECTS의 1:1 개수 검증은 파일 읽기·저장 전과 DB 잠금·저장 전 양쪽에서 수행한다.
 - 실패 재시도 테스트에서 Receipt hash를 바꾸던 기존 성공 fixture는 같은 hash를 사용하도록 바로잡고, hash 변경은 별도 충돌 회귀로 검증한다.
-- 보존 기간·정리 주체·운영 reject code allowlist와 FAILED Snapshot의 계보 포함 정책은 결정 대기로 유지한다. 자동 삭제와 Runtime 활성화는 추가하지 않는다.
+- 보존·삭제 정책은 #335, 운영 reject_code allowlist는 #165 후속 결정으로 남긴다. FAILED 계보 제외 방향은 #165에서 확인됐으며 현재 동작을 유지한다. FAILED 저장 모델·unique·normalization FK는 #164 인계 대기다. 자동 삭제와 Runtime 활성화는 추가하지 않는다.
 
 실제 PostgreSQL 검증에는 개발·운영 DB와 분리된 임시 PostgreSQL 17을 사용한다. 익명 publication 승인이 이미 있는 DB에서는 migration이 실패하며 승인자나 과거 이력을 자동 보정하지 않는다.
 
@@ -262,3 +262,20 @@ PASS source snapshot adapter import and database connection
 - `git diff --check` 및 Source Governance Receipt hash 검증: 통과
 
 기존 Python 환경에 없던 S3 의존성은 임시 테스트 환경에 준비했다. DB 준비는 저장소 절차대로 최신 Alembic head를 적용한 뒤 migration 테스트와 Backend 테스트를 별도 프로세스로 실행했다. 실제 외부 MFDS·S3 호출이나 운영 배포는 수행하지 않았다.
+
+
+## #165 세 담당자 답변 반영 및 #323 재점검
+
+보존·삭제 정책 후속은 #335이며 비활성 유지·후속 연결 조건으로만 정책 미확정이 병합 비차단이다. reject_code versioned 정본·변경 절차는 미확정이다. 상세 결정 근거와 #164/#165/#166 역할 경계는 Source Target의 「#165 검토 결과와 후속 인계」를 따른다.
+
+| 리뷰 | 코드·검증 반영 |
+| --- | --- |
+| 가빈님: rejection 변경·FAILED 재시도·Receipt 유실 및 FAILED 충돌 회귀 | 비교 계약에 거부 수·Receipt 포함, FAILED 동일 version 조회 포함, 동일 계약 재시도만 CREATED. lifecycle 단위·PostgreSQL 회귀 존재 |
+| 현우님: Source 잠금·LOCAL_PRIVATE 기존 경로 보호 | acquisition은 Source 행 SKIP LOCKED, lifecycle은 Operation 행 잠금. 다른 Operation의 동일 Source 통합 테스트와 기존 root 권한·소유권·symlink 거부 테스트 존재 |
+| 현우님: Target 상태·publication 승인 | Partially implemented 및 물리 상태 매핑, rejection 승인 gate, 승인자 CHECK·조회 조건, Verification UPDATE/DELETE 방지 및 downgrade 보호 |
+| 현우님: REJECTS 1:1 | 파일 처리 전·DB 저장 전 개수 검증 및 회귀 존재 |
+| 은영님: DB·S3·Runtime 검토와 공유 DB 인계 | 기존 저장·rollback·S3 보안·DISABLED 유지. 새 uniqueness·FAILED 모델·normalization 구조는 #164 인계 후 반영 |
+
+PR 본문에서 acquisition 잠금을 Operation으로 설명하면 코드와 다르다. 외부 호출 잠금은 Source, lifecycle 판단 잠금은 Operation으로 구분한다. 기존 기술 리뷰의 코드 반영과 담당 리뷰어의 재승인은 별개다.
+
+이번 재점검에서는 Source ingestion 단위 및 Source Governance Receipt 계약 테스트 **280 passed**, 관련 Mypy **15개 소스 파일 통과**, 변경 테스트 Ruff·서식 및 diff 검사를 수행했다. FAILED 이후 동일/새 Source version 재시도가 FAILED Snapshot을 계보로 연결하지 않는 회귀를 고정했다. 런타임·migration 코드는 변경하지 않았고 PostgreSQL·Redis 통합은 이번에 재실행하지 않았다. 위 ecc2ccc 단계 통합 결과와 이번 문서·회귀 검증을 구분한다.

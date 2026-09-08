@@ -535,7 +535,8 @@ async def test_changed_rejection_count_creates_new_candidate_instead_of_no_chang
     assert repository.runs[-1].run_status == "SUCCEEDED_WITH_REJECTIONS"
 
 
-async def test_failed_same_version_snapshot_is_not_reused_for_no_change() -> None:
+@pytest.mark.parametrize("retry_version", ["source-v1", "source-v2"])
+async def test_failed_snapshot_retry_excludes_failed_lineage(retry_version: str) -> None:
     repository = FakeSnapshotRepository()
     first = await persist_product_ingestion_result(
         repository=repository,
@@ -555,12 +556,13 @@ async def test_failed_same_version_snapshot_is_not_reused_for_no_change() -> Non
     retry = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=replace(_metadata("source-v1"), run_group_key="synthetic-retry"),
+        metadata=replace(_metadata(retry_version), run_group_key="synthetic-retry"),
         artifacts=_stored_artifacts(),
     )
 
     assert retry.decision is SnapshotIngestionDecision.CREATED
     assert retry.snapshot_id != first.snapshot_id
+    assert repository.create_requests[-1].supersedes_snapshot_id is None
 
 
 async def test_changed_endpoint_receipt_hash_is_not_no_change() -> None:
