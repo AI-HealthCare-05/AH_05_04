@@ -37,7 +37,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
-| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_snapshot_verification`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | #164 최소 DB 기반. 공식 Source 승인·수집·Parser·Catalog 적재·RAG 검색·Runtime 활성화는 후속 범위 |
+| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | #164 최소 DB 기반과 #165 원본 Artifact 참조. 공식 Source 승인·Catalog 적재·RAG 검색·Runtime 활성화는 후속 범위 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·기록과 감사 로그는 아직 목표 계약과 현재 구현을 구분합니다.
 
@@ -235,7 +235,7 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## RAG Source·Catalog 최소 DB 기반
 
-Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. 이번 문서 정렬은 새 정본 계약을 만들지 않고, 기존 `docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md`와 `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 기준을 data schema·traceability 문서에 흡수합니다.
+Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가하고, `165b5c4d3e2f`는 거부 원문의 안전한 추적 필드를 추가합니다. 이번 문서 정렬은 새 정본 계약을 만들지 않고, 기존 `docs/contracts/targets/post-mvp-1/rag-source-ingestion-v1.md`와 `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 기준을 data schema·traceability 문서에 흡수합니다.
 
 이번 분할 범위의 ID/FK 매핑은 기존 애플리케이션 호환성을 우선해 `UUIDChar` 기반 `CHAR(36)`을 사용합니다. 신규 독립 RAG/Eval ID의 PostgreSQL native `UUID` 전환은 별도 승인 migration 범위이며, 이 PR에서 타입을 섞지 않습니다.
 
@@ -244,7 +244,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | 영역 | 테이블 | 설명 |
 | --- | --- | --- |
 | Source | `rag_source`, `rag_source_endpoint`, `rag_source_operation` | 공식 Source와 endpoint·operation metadata. Runtime 사용은 기본 비활성 |
-| Snapshot | `rag_source_snapshot`, `rag_source_snapshot_verification`, `rag_source_ingestion_run` | 수집 version, checksum, parser/normalization/canonicalization version, 검증 이력과 수집 실행 이력 |
+| Snapshot | `rag_source_snapshot`, `rag_source_snapshot_verification`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact` | 수집 version, checksum, parser/normalization/canonicalization version, 검증 이력, 수집 실행 이력과 원본 저장소 참조 |
 | Catalog | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | snapshot 단위 제품·성분·별칭·구성성분 참조 데이터 |
 
 Source/Snapshot 책임 경계:
@@ -300,6 +300,13 @@ Snapshot verification 상태 의미:
 - Alias와 Component는 product/ingredient와 같은 `source_snapshot_id`를 가져야 하며, composite FK로 DB에서 강제합니다.
 - `rejected_record_count`는 `record_count`보다 클 수 없습니다.
 - `rag_source_ingestion_run.attempt_number`는 `run_group_key`가 가리키는 같은 수집 실행 안의 재시도 번호입니다. 같은 operation이어도 서로 다른 `run_group_key`의 독립 수집 실행은 attempt 1부터 다시 시작할 수 있습니다.
+- `rag_source_ingestion_artifact`는 원본 바이트를 DB에 저장하지 않습니다. 접근 통제 저장소의 backend·object key, 페이지 번호, Artifact key, SHA-256, 크기와 content type만 수집 실행에 연결합니다.
+- 로컬 저장 어댑터는 `sha256/{앞 2자리}/{SHA-256}.artifact` 형식의 내용 주소를 사용합니다. 완성 전 임시 파일은 참조하지 않으며 크기·checksum 검증과 파일 동기화가 끝난 뒤에만 mode `0600`의 불변 객체를 원자적으로 공개합니다. 저장소 디렉터리는 mode `0700`으로 제한합니다.
+- S3 호환 비공개 저장 어댑터는 `{prefix}/sha256/{앞 2자리}/{SHA-256}.artifact`를 사용합니다. `If-None-Match: *`, SHA-256 upload checksum과 명시적으로 선택한 AES256 또는 KMS 서버 측 암호화를 요구하고, 기존 객체는 크기·content type·checksum metadata·암호화 상태가 모두 일치할 때만 재사용합니다. credential은 DB에 저장하지 않고 Worker 실행 역할 또는 표준 AWS credential provider chain으로 주입합니다.
+- `NO_CHANGE`와 `SOURCE_VERSION_CONFLICT`를 포함한 모든 검증 실행은 자체 Artifact 참조를 보존합니다. Snapshot이 생성되지 않은 실행도 감사 가능한 원본 근거를 잃지 않습니다.
+- 같은 수집 실행에서 페이지 번호와 Artifact key는 각각 중복될 수 없으며 Artifact 참조 행은 UPDATE·DELETE할 수 없습니다.
+- `artifact_kind=RAW_RESPONSE`는 양의 페이지 번호를 가지며 거부 메타데이터를 가질 수 없습니다. `artifact_kind=REJECTS`는 페이지 번호 대신 안전한 고정 `reject_code`와 원문을 포함하지 않는 `parser_location`을 필수로 기록합니다.
+- Artifact key·content type과 Snapshot 실행 metadata의 DB 길이 제한, REJECTS 위치의 제어문자, RAW_RESPONSE·REJECTS 전체의 중복 Artifact key는 파일 보존 전에 검사합니다.
 
 Ingestion Run / Receipt 기준:
 
@@ -344,12 +351,14 @@ Catalog 적재 연결성:
 Rollback 정책:
 
 - Production에서는 Source/Catalog 테이블을 삭제하는 downgrade를 사용하지 않고 forward-fix migration을 사용합니다.
-- 비운영 환경에서도 Source/Catalog 테이블에 데이터가 하나라도 있으면 downgrade는 테이블 삭제 전에 중단됩니다.
+- 비운영 환경에서도 Source/Catalog 또는 Artifact 참조 테이블에 데이터가 하나라도 있으면 downgrade는 테이블 삭제 전에 중단됩니다.
 - 빈 DB에서만 downgrade → upgrade 왕복을 허용합니다.
 
 범위 제외:
 
-- 실제 MFDS 수집 로직, Parser 구현, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
+- 실제 MFDS 네트워크 수집, Parser/Normalizer 구현, Catalog 대량 적재 및 `ON CONFLICT` 기반 upsert
+- 외부 Object Storage bucket·credential의 배포 환경 연결
+- DB rollback 뒤 참조되지 않은 내용 주소 객체의 보존·정리 정책과 REJECTS 보존 기간
 - Source 승인·Runtime 활성화·Production 공개 승인
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`
@@ -398,3 +407,15 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 `OTC_IDENTIFICATION`, `OTC_EVALUATION`, `OTC_RULE_MATCH` 같은 Track D 전용 평가 모델은 목표 schema에서 사용하지 않습니다. OTC는 기존 Chat 결과·Citation을 재사용하지만 `interaction_rule`과 `rule_evidence`는 Track F 내부 결정 규칙과 근거 원장으로 유지합니다.
 
 상세 목표는 [계약 인덱스](./contracts/README.md)의 v1 문서를 따릅니다. 각 행의 구현 상태에 명시되지 않은 목표 enum·컬럼은 현재 코드가 이미 사용한다고 설명하지 않습니다.
+
+### Source Verification 후속 보호 (#165 / PR #323)
+
+- `165d7e6f5041`은 `rag_source_snapshot_verification`의 UPDATE·DELETE를 DB trigger로 차단한다.
+- `snapshot-publication-approval = PASSED`는 비어 있지 않은 `verified_by`가 필요하다. 기존 익명 승인은 자동 변환하지 않으며 migration 적용 전에 검토해야 한다.
+- Verification 이력이 있으면 해당 보호를 제거하는 downgrade를 차단한다.
+- FAILED Snapshot도 같은 Source version의 충돌 비교에 포함하지만 `NO_CHANGE` 재사용은 금지한다. FAILED는 계보에서 제외하며, 이전 비FAILED Snapshot이 없으면 NULL이다. FAILED 저장 모델의 정본 정렬은 #164 후속 범위다.
+- REJECTS Artifact는 거부 record와 1:1이며 파일·DB 저장 전 개수 일치를 검사한다.
+
+### Source Snapshot 상태 전이 보호 (#165 / #323)
+
+Revision `165e8f706152`는 일반 비소유자 Runtime 역할의 Snapshot 상태·검증/선택 timestamp 직접 UPDATE와 non-PENDING INSERT를 차단한다. `transition_rag_source_snapshot` DB 함수만 허용 전이와 rejected Snapshot의 named publication 승인을 검사한 뒤 CURRENT 상태와 immutable selection Verification을 함께 기록한다. migration owner와 Runtime 역할은 분리한다. 실제 Source Runtime·외부 승인 활성화는 여전히 후속 범위다. 상세 계약은 Source Target의 DB-owned 경계 절과 2026-09-08 Source Snapshot DB transition Decision을 따른다.

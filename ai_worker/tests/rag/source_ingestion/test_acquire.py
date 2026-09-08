@@ -14,11 +14,16 @@ from ai_worker.tasks.rag.source_client.contracts import (
 )
 from ai_worker.tasks.rag.source_client.mfds_client import DecodedProviderPage
 from ai_worker.tasks.rag.source_ingestion.acquire import (
+    preserve_raw_artifacts,
+    preserve_rejection_artifact,
     verify_raw_artifact_manifest,
     verify_source_run_artifacts,
 )
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
     RawArtifactMetadata,
+    RawArtifactStore,
+    StoredRawArtifact,
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import (
     raw_manifest_checksum,
@@ -60,6 +65,86 @@ def _write_artifact(
     )
 
     return file_path, metadata
+
+
+class RecordingArtifactStore(RawArtifactStore):
+    def __init__(self) -> None:
+        self.pages: list[int] = []
+
+    def put_verified(
+        self,
+        *,
+        page_number: int | None,
+        file_path: Path,
+        metadata: RawArtifactMetadata,
+        artifact_kind: IngestionArtifactKind = IngestionArtifactKind.RAW_RESPONSE,
+        reject_code: str | None = None,
+        parser_location: str | None = None,
+    ) -> StoredRawArtifact:
+        assert file_path.exists()
+        if page_number is not None:
+            self.pages.append(page_number)
+        return StoredRawArtifact(
+            page_number=page_number,
+            metadata=metadata,
+            storage_backend="SYNTHETIC_PRIVATE",
+            object_key=f"synthetic/{metadata.raw_checksum}",
+            artifact_kind=artifact_kind,
+            reject_code=reject_code,
+            parser_location=parser_location,
+        )
+
+
+def test_preserves_raw_artifacts_in_page_order(tmp_path: Path) -> None:
+    first = _write_artifact(tmp_path, "page-1.json", b'{"page":1}')
+    second = _write_artifact(tmp_path, "page-2.json", b'{"page":2}')
+    store = RecordingArtifactStore()
+
+    stored = preserve_raw_artifacts(
+        artifacts=[
+            (2, second[0], second[1]),
+            (1, first[0], first[1]),
+        ],
+        store=store,
+    )
+
+    assert store.pages == [1, 2]
+    assert [artifact.page_number for artifact in stored] == [1, 2]
+
+
+def test_duplicate_page_is_rejected_before_storage(tmp_path: Path) -> None:
+    first = _write_artifact(tmp_path, "page-1.json", b'{"page":1}')
+    second = _write_artifact(tmp_path, "page-2.json", b'{"page":2}')
+    store = RecordingArtifactStore()
+
+    with pytest.raises(ValueError, match="duplicate page binding"):
+        preserve_raw_artifacts(
+            artifacts=[
+                (1, first[0], first[1]),
+                (1, second[0], second[1]),
+            ],
+            store=store,
+        )
+
+    assert store.pages == []
+
+
+def test_preserves_rejection_with_safe_metadata(tmp_path: Path) -> None:
+    rejection = _write_artifact(tmp_path, "reject-1.json", b'{"ITEM_SEQ":null}')
+    store = RecordingArtifactStore()
+
+    stored = preserve_rejection_artifact(
+        file_path=rejection[0],
+        metadata=rejection[1],
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="page[1].record[3]",
+        store=store,
+    )
+
+    assert stored.artifact_kind is IngestionArtifactKind.REJECTS
+    assert stored.page_number is None
+    assert stored.reject_code == "MISSING_ITEM_SEQ"
+    assert stored.parser_location == "page[1].record[3]"
 
 
 def _complete_run(
