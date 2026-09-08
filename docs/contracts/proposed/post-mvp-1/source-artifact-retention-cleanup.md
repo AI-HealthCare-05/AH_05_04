@@ -119,6 +119,48 @@ Source Artifact는 RAW_RESPONSE·REJECTS를 포괄하는 표현이며 별도의 
 | S7 삭제·확인 | 승인한 정확한 객체에 삭제 요청, 저장소 의미에 맞는 결과 확인 | 성공·실패·결과 불명확 | timeout 등을 성공으로 간주하지 않음 |
 | S8 감사·후속 처리 | 결과를 덮어쓰지 않고 append, 남은 건의 상태 확인 | 감사 가능한 진행 결과 | 감사 기록 실패 시 완료 선언 금지, 의도 기록 기준으로 복구 |
 
+## #347 구현 요구사항: 배치 namespace 결속
+
+현재 `storage_backend`는 adapter 종류 상수이며, S3 `object_key`에는 prefix만
+포함되고 bucket은 없다. Local 행에도 root가 없다. 따라서 서로 다른 저장소가
+동일한 `(storage_backend, object_key)`를 가질 수 있으며 이 두 값만으로 물리 객체를
+식별하거나 DB 조회 결과를 다른 저장소에 적용할 수 없다.
+
+#347의 최소 구현은 **배치가 대상 namespace를 명시하고 고정하는 방식**으로 한다.
+새 bucket/root 컬럼을 이 문서에서 확정하지 않으며 다음 사항을 구현·검증한다.
+
+1. 배치 manifest에 조회 DB의 식별 정보(비밀정보 제외), 대상 저장소의 안전한
+   namespace 식별자, S3 bucket/prefix 및 endpoint가 있으면 endpoint, 또는 Local의
+   정규화된 절대 root를 결속한다. 실제 설정값은 접근 통제된 배치 정보에서 관리하고
+   일반 로그에 자격증명·민감 경로를 노출하지 않는다.
+2. 후보 산출·전체 참조 조회·PM 승인·삭제 실행이 같은 manifest를 사용한다.
+   실행 adapter의 실제 config가 이 namespace와 일치하지 않으면 삭제를 호출하지 않는다.
+   DB와 저장소가 같은 환경의 데이터라는 근거를 확인하며, 과거 config 변경·공유 DB 등으로
+   귀속이 불명확하면 참조 0건을 근거로 삭제하지 않고 보류한다.
+3. 삭제 직전 동일 namespace에서 실제 객체의 `raw_checksum`과 `byte_size`를
+   후보 manifest와 재대조한다. key 문자열·ETag·metadata 주장만으로 대체하지 않는다.
+   객체 교체·재생성 여부와 생성 시각도 다시 확인하고, 확인 불가·불일치 시 보류한다.
+4. checksum·크기가 같아도 서로 다른 bucket/root의 객체는 동일 삭제 대상이 아니다.
+   내용 동일성 검사는 namespace/DB 결속 또는 신규 참조 생성 경합 차단을 대신하지 않는다.
+5. namespace·DB·대상 목록이 달라지면 기존 승인을 재사용하지 않는다. 최종 검사는
+   아래 쓰기/삭제 경합 방지 경계 안에서 수행한다.
+
+## #347 구현 요구사항: 전체 참조 조회 기준선
+
+조사 기준 병합 코드에서 객체를 직접 참조하는 테이블은
+`rag_source_ingestion_artifact` 하나다. 현재 직접 조회는 해당 테이블의 동일
+`(storage_backend, object_key)` **전체 행**을 대상으로 하며 Run 상태나 최신 Snapshot
+조건으로 걸러내지 않는다. namespace 컬럼이 없으므로 동일 key의 기존 행을 임의로
+다른 namespace 소유라고 제외하지 않는다.
+
+간접 관계는 Artifact → ingestion run → snapshot을 기준으로 Catalog·Verification 및
+구현된 downstream 관계를 추적한다. 이는 보호·감사 근거이며 직접 참조가 있는 객체를
+삭제 가능으로 바꾸는 조건이 아니다. FAILED Run은 Snapshot이 NULL이어도 직접 참조로 보호한다.
+
+#347은 실제 실행 스키마 기준으로 참조 테이블·관계 목록과 조회 범위를 기록한다.
+새 직접 참조 테이블이 추가되면 이 목록과 테스트를 갱신해야 한다. 관계 미구현·문자열 ref·
+외부 증빙 또는 조회 권한 부족으로 범위를 확정할 수 없으면 “참조 없음”으로 처리하지 않는다.
+
 ## 객체와 참조 판정
 
 - 개별 Run·Snapshot 하나가 아니라 같은 `(storage_backend, object_key)`를 가리키는 전체 행을 확인한다. 실제 bucket/root/endpoint namespace도 정확히 결속해야 한다. 현재 Artifact DB 행만으로 과거 저장소 namespace를 알 수 있다고 가정하지 않는다.
@@ -171,7 +213,7 @@ DB와 객체 저장소는 하나의 transaction이 아니다. 삭제된 파일�
 | T01 | 정책·기간·기산점 중 하나 누락 | 삭제 호출 0건, 미확정 이유 표시 | P1·P2, S1 |
 | T02 | 자동 삭제 DISABLED | 스케줄/삭제 실행 0건 | 기존 진행 조건 |
 | T03 | 같은 객체를 두 Run이 공유 | 한 Run만 확인해서 후보 승인하지 않음 | R1 |
-| T04 | snapshot_id=NULL인 FAILED Run이 객체 참조 | 삭제 호출 0건 | 위 참조 조사 |
+| T04 | snapshot_id=NULL인 FAILED Run이 객체 참조 | 삭제 호출 0건 | `165f90716263`의 `chk_rag_ingestion_run_snapshot_status`가 FAILED ⇒ Snapshot NULL 보장; Artifact 직접 참조 보호 |
 | T05 | NO_CHANGE Run 또는 과거 Catalog가 객체 참조 | 삭제 호출 0건 | R1·R3 |
 | T06 | Citation·평가 증빙 등 downstream 참조 존재 | 삭제 호출 0건 | R3 |
 | T07 | DB 조회 실패·관계 해석 불가·목록 불완전 | 해당 범위 삭제 호출 0건, 보류 | R2 |
@@ -190,11 +232,14 @@ DB와 객체 저장소는 하나의 transaction이 아니다. 삭제된 파일�
 | T20 | 재시도 직전 참조 생성·객체 교체 | 과거 승인/시도를 이용한 삭제 금지 | R4·R6 |
 | T21 | 승인/결과 이력 UPDATE·DELETE 시도 | 확정된 감사 불변성 경계에서 거부 | R8 |
 | T22 | Provider 오류에 원문·인증정보 포함 | 감사·로그·응답에 원문/비밀정보 없음 | R7 |
-| T23 | 같은 key지만 bucket/root가 다름 | 객체 혼동 0건, namespace 불명확 시 보류 | 위 구현 조사 |
+| T23 | 같은 backend/key/checksum/크기지만 bucket/root 또는 조회 DB가 다름 | 기존 승인으로 삭제 호출 0건; 환경 결속 불명확 시 보류 | #347 배치 namespace 결속 |
 | T24 | 객체 종류 불명확 또는 여러 종류의 참조 공유 | Source 소유 범위 불명확 또는 공유 참조 존재 시 삭제하지 않음 | 4절·P1 |
 | T25 | 서비스 종료 및 참조 객체 존재 | 종료만을 근거로 즉시 삭제하지 않음 | P4·R3 |
 | T26 | 운영 S3/실제 데이터가 합성 데모에 입력 | 실행 범위 검사로 차단 | 기존 데모 범위 |
 | T27 | S3 삭제 marker만 생기고 과거 version 존재 | 영구 삭제 완료로 과장하지 않음 | 6절 제안 |
+| T28 | 승인 뒤 adapter config의 bucket/prefix/root 변경 | manifest와 불일치하여 삭제 호출 0건 | #347 배치 namespace 결속 |
+| T29 | 삭제 직전 실제 checksum·byte_size 불일치 또는 검증 실패 | 해당 객체 삭제 호출 0건 | #347 객체 동일성 재검사 |
+| T30 | 직접 참조 행 존재 또는 새 참조 테이블이 조회 목록에서 누락 | 참조 보호 또는 범위 불완전으로 삭제 호출 0건 | #347 전체 참조 기준선 |
 
 정상 저장/rollback·Local/S3 adapter 테스트와 위 cleanup 테스트는 별개다. 후속 검증에서는 실제 비특권 역할·독립 transaction·동시 실행·장애 주입으로 DB와 저장소 사이의 실패 경계를 확인해야 한다. 이번 문서 작성으로 해당 검증을 완료한 것은 아니다.
 
@@ -215,7 +260,7 @@ DB와 객체 저장소는 하나의 transaction이 아니다. 삭제된 파일�
 
 후속 이슈: [#347 Source Artifact 일회성 수동 정리·감사 구현](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)
 
-범위: 읽기 전용 후보 산출, 30일·전체 참조 검사, 고정 배치와 PM 승인 인계, 실행 직전 재확인 및 경합 차단, Local 합성 객체의 수동 삭제·append-only 감사·실패 재시도 검증, 서비스 종료 작업 runbook. 정기 자동 삭제·운영 S3 실행·Runtime 활성화·OCR/Guide/Chat 삭제는 제외한다. 실제 사용할 저장소 adapter는 실행 환경과 담당을 지정한 뒤 결정한다.
+범위: 위 배치 namespace·DB 결속 및 삭제 직전 checksum/크기 재검사, 직접·간접 참조 조회 목록 명시, 읽기 전용 후보 산출, 30일·전체 참조 검사, 고정 배치와 PM 승인 인계, 실행 직전 재확인 및 경합 차단, Local 합성 객체의 수동 삭제·append-only 감사·실패 재시도 검증, 서비스 종료 작업 runbook. 정기 자동 삭제·운영 S3 실행·Runtime 활성화·OCR/Guide/Chat 삭제는 제외한다. 실제 사용할 저장소 adapter는 실행 환경과 담당을 지정한 뒤 결정한다.
 
 #347은 사용자가 생성했으며 구현 담당은 김지혜 (`@Jye-rookie`)다. DB·보안 검토는 송은영, Source·provenance 검토는 정현우, 정책·배치 승인은 권가빈이 맡는다. 공유 DB migration은 은영님과 범위를 협의한다. 실제 Backend·운영 삭제 실행자와 종료 후 감사 인계는 실행 전에 별도 지정한다. #165·#323의 인계 댓글은 게시 전 초안으로 구분한다.
 
