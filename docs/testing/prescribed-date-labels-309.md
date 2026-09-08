@@ -217,3 +217,17 @@ DB 테스트는 127.0.0.1:55448의 일회용 합성 test DB만 사용한다.
   퍼지 매칭을 임의로 추가하면 다른 라벨을 잘못 제외할 수 있어 별도 합성 사례·수용 기준이 필요하다.
   이 한계는 #360에서 다룬다.
 - 두 후속 이슈 모두 담당은 김지혜, Backend·DB/검수 경계 리뷰는 송은영이며 #309/#353에 연결한다.
+
+
+## #352 병합 반영 검증
+
+기준: #353 `9037683`에 develop `7a967d2`(#352 포함)를 병합한 결과.
+구조화 계층의 빈 처방일 생성과 저장 계층의 누락 필드 방어를 함께 유지하고,
+계약·저장소 주석·#294 Decision을 통합 동작에 맞췄다.
+
+- Backend OCR·OCR AI, Worker OCR·SQLAlchemy 저장소 단위, PostgreSQL 저장·placeholder
+  입력/처방 확정 통합 테스트: **378 passed**.
+- 테스트 DB: 별도 PostgreSQL 16 컨테이너의 합성 test DB. 운영 DB는 사용하지 않았다.
+- 변경 Python 파일 Ruff·format 및 `git diff --check`: 통과.
+- Alembic graph: `169b2c3d4e5f` 단일 head. migration 실행은 이번 검증에서 재실행하지 않았다.
+- Frontend·Redis 전체 통합·전체 mypy는 재실행하지 않았다. GitHub CI는 푸시 후 별도 확인한다.
