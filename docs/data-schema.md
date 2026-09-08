@@ -338,6 +338,14 @@ Catalog 적재 연결성:
 | 적재 idempotency | unique/FK/CHECK 제약과 최소 조회 interface까지만 제공 | 대량 적재 재실행의 `ON CONFLICT DO NOTHING/UPDATE`, batch upsert, 충돌 복구 정책은 #166 범위 |
 | 대량 적재 성능 | row 단위 create/get 골격만 제공 | N+1 회피, bulk insert/upsert, chunk size, partial failure 처리는 #166에서 확정 |
 
+현재 최소 구현과 정규 목표의 차이:
+
+- 현재 `rag_source_snapshot`은 Source 전체가 아니라 `rag_source_operation`별 수집·정규화 산출물입니다. 따라서 Snapshot version의 unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 존재할 수 있습니다. 이는 #164 최소 DB 기반의 의도된 모델입니다.
+- 안정적인 수집 Operation은 `source_code + endpoint_code + operation_code`로 식별합니다. Evidence provenance는 `source_version`이 아니라 `source_snapshot_id` 등의 Snapshot 참조로 Snapshot을 특정하며, `source_version`은 사람이 확인하는 값으로 사용합니다(`rag-source-policy` v1.18 8장).
+- 현재 `rag_source_ingestion_run`은 정규 RAG 목표의 수집 실행과 정규화 실행을 하나의 실행 이력으로 합친 최소 구현입니다. `SUCCEEDED` 또는 `SUCCEEDED_WITH_REJECTIONS`는 새 Snapshot을 참조할 수 있고, `NO_CHANGE`는 재검증한 기존 Snapshot을 참조하며, `FAILED`는 `snapshot_id=NULL`일 수 있습니다.
+- 동일 Snapshot을 여러 `NO_CHANGE` 실행이 재검증할 수 있으므로 `rag_source_ingestion_run.snapshot_id` 전체에는 Unique 제약을 두지 않습니다. Snapshot을 최초 발행한 성공 실행을 1개로 제한할지는 부분 Unique Index와 부분 성공의 승인 의미를 함께 확정하는 후속 범위입니다.
+- 이 Operation 단위 모델은 `rag-db-schema` v1.47의 Source 단위 Snapshot과 `ingestion_run`·`normalization_run` 분리 모델을 대체하거나 변경하지 않습니다. 정규 목표로 수렴할 때는 Decision 또는 Contract Freeze, migration, 구현과 계약·통합 테스트를 함께 갱신합니다.
+
 Rollback 정책:
 
 - Production에서는 Source/Catalog 테이블을 삭제하는 downgrade를 사용하지 않고 forward-fix migration을 사용합니다.
@@ -351,6 +359,22 @@ Rollback 정책:
 - RAG 검색, Resolver ranking, Preflight 정책
 - Candidate 결과와 Catalog product의 FK 연결 및 `CandidateCatalogSourceRef`
 
+## Prescription Version 최소 DB 기반
+
+Revision `169a1b2c3d4e`는 #169의 Expand 단계로 `prescription_version`, `prescription_version_medication`과 nullable `prescription.active_version_id`를 추가합니다. 이 단계는 API·기존 read/write 동작을 변경하거나 기존 처방을 backfill하지 않습니다.
+
+| 관계 | 제약 |
+| --- | --- |
+| Version sequence | `(prescription_id, version_number)` unique, `version_number > 0` |
+| 활성 Version | `(prescription.active_version_id, prescription.id)`가 `(prescription_version.id, prescription_version.prescription_id)`를 `DEFERRABLE INITIALLY DEFERRED`로 참조하므로 다른 처방의 Version을 가리킬 수 없고 향후 NOT NULL 상태의 원자 생성도 가능 |
+| Version Medication | `(prescription_version_id, display_order)` unique, 양수 display order·dose·frequency·duration 및 비어 있지 않은 약명 CHECK. 지연 제약은 commit 시 모든 Version과 active pointer에 약물 1개 이상을 요구 |
+| Snapshot 집합 동결 | Version INSERT trigger가 caller 입력을 덮어쓰고 DB의 epoch-aware top-level transaction ID를 internal `assembly_xid`에 기록. 현재 transaction ID가 같은 동안만 Medication INSERT를 허용하므로 release된 SAVEPOINT 뒤에도 조립 가능하고 custom GUC 위조 및 commit된 draft·active·historical Version 사후 INSERT 차단 |
+| 불변성과 삭제 | Version/Medication 직접 UPDATE·DELETE 차단. 사용자 삭제는 `prescription`에서 시작하는 `ON DELETE CASCADE`만 허용하며, 지연 검증은 commit 전에 이미 연쇄 삭제된 행의 큐 이벤트를 건너뜀 |
+
+현재 `prescription`, `medication`, `medical_document`, `profile` 테이블은 그대로 유지합니다. 소유권은 `prescription.profile_id`, 출처는 기존 `prescription.document_id`와 `source_ocr_job_id` chain을 사용합니다. Candidate Search·Identification FK 연결, Version 1 backfill, dual-write, read cutover와 `active_version_id NOT NULL` 전환은 후속 분할 PR 범위입니다.
+
+Production에서는 생성된 처방 version을 제거하는 migration downgrade 대신 forward-fix를 사용합니다. 비운영 환경도 Version 또는 Version Medication row가 있으면 downgrade를 중단하며, 두 테이블이 비어 있을 때만 downgrade → upgrade 왕복을 허용합니다. 이는 계정·환자 데이터 삭제 시 부모 Prescription에서 시작하는 runtime cascade와 구분합니다.
+
 ## Post-MVP schema-only 테이블
 
 `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation`, `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event`는 migration과 SQLAlchemy 모델에는 존재하지만 현재 repository, service, API DTO와 응답에는 연결되지 않습니다. `ai_job`, `outbox_event`, `idempotency_record`는 `JobIntakeService`(#147)의 Job 접수 transaction에 연결되었고, `outbox_event`는 due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·`claim_token` fencing 완료 경계(#219)에 연결되었습니다. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 연결되지 않았습니다(#148). 이 부분 연결을 RAG, 출처 인용, Citation·Safety 검증 또는 Track A 비동기 Job 실행 전체 완료로 해석하지 않습니다.
@@ -361,7 +385,7 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 
 | 영역 | 목표 테이블 | 목표 제약 |
 | --- | --- | --- |
-| 처방 버전 | `prescription_version`, `prescription_version_medication` | 불변 snapshot과 처방별 단일 active version |
+| 처방 버전 후속 | Version 1 backfill, 하위 FK, dual-write/read cutover | PR 1 DB 기반 위에서 기존 처방 이관과 active pointer 필수화 |
 | OCR LLM provenance | OCR 구조화 실행·필드 provenance 계열 | `raw_value`, rule 정규화값, LLM 초안, 사용자 수정값, 확정값과 allowlist·schema·prompt·model·validator version 분리 |
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |

@@ -13,6 +13,7 @@ vi.mock('../src/api/auth', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  sessionStorage.clear()
   vi.mocked(login).mockResolvedValue({ access_token: 'synthetic-token' })
 })
 
@@ -85,6 +86,7 @@ describe('LoginPage', () => {
 
   it('로그인 성공 시 토큰을 저장하고 홈으로 이동한다', async () => {
     sessionStorage.setItem('dosey_ocr_job_recovery:v1', '{"stale":true}')
+    sessionStorage.setItem('dosey_chat_session:previous-prescription', 'previous-session')
     renderPage()
     fillValidForm()
 
@@ -99,6 +101,7 @@ describe('LoginPage', () => {
     expect(await screen.findByText('홈 화면')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBe('synthetic-token')
     expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+    expect(sessionStorage.getItem('dosey_chat_session:previous-prescription')).toBeNull()
   })
 
   it('Backend 401 자격 증명 오류를 그대로 안내한다', async () => {
