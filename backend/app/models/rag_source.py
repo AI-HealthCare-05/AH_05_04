@@ -274,6 +274,10 @@ class RagSourceIngestionRun(Base):
     __table_args__ = (
         UniqueConstraint("operation_id", "run_group_key", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
         Index("idx_rag_source_ingestion_run_operation_status", "operation_id", "run_status", "started_at"),
+        CheckConstraint(
+            "(run_status <> 'FAILED' OR snapshot_id IS NULL) AND (run_status <> 'NO_CHANGE' OR snapshot_id IS NOT NULL)",
+            name="chk_rag_ingestion_run_snapshot_status",
+        ),
         CheckConstraint("length(trim(run_group_key)) > 0", name="chk_rag_source_ingestion_run_group_key_nonblank"),
         CheckConstraint("attempt_number > 0", name="chk_rag_source_ingestion_run_attempt_positive"),
         CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="chk_rag_source_ingestion_run_duration"),

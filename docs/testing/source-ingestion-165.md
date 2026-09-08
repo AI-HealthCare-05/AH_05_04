@@ -306,3 +306,12 @@ PR 본문에서 acquisition 잠금을 Operation으로 설명하면 코드와 다
 전체 CI shell runner 자체 대신 위 각 테스트 범위를 직접 실행했다. Backend fixture가 테이블을 정리하므로 그 후 migration 재실행은 임시 DB를 초기화한 별도 검증으로 수행한다. 원격 CI는 push된 최신 커밋에서 별도로 확인한다.
 
 추가 권한 점검: DB 함수의 PUBLIC EXECUTE를 회수하고 기존 Snapshot UPDATE 역할에만 EXECUTE를 인계했다. 함수 권한이 없는 신규 역할의 호출 권한이 false임을 확인한 뒤 Runtime 역할의 승인 경로를 검증한다. 최종 migration 83건과 Source governance receipt 8건(총 91건)이 통과했다.
+
+## 승인 후 고려 사항 보완 (2026-09-08)
+
+- Runtime role을 migration 이후에 생성해도 `configure-app-role.sql`이 존재하는 Snapshot 전이 함수의 EXECUTE를 인계한다. 기존 역할에 대한 migration GRANT는 유지한다.
+- `165f90716263` CHECK: FAILED Run의 Snapshot 참조 금지, NO_CHANGE 참조 필수. 성공 Run 참조 허용. 기존 위반 데이터 자동 수정 없음.
+- 격리된 PostgreSQL 16에서 전체 migration·Source receipt·Snapshot lifecycle 통합 테스트: **110 passed**. 신규 CHECK 조합 6개와 실제 프로비저닝 GRANT SQL을 사용하는 비특권 역할 회귀 포함.
+- 실제 psql 역할 설정 스크립트: 함수가 없는 빈 DB 및 migration 이후 DB 모두 성공. 이후 생성한 Runtime 역할의 함수 EXECUTE 확인.
+- Alembic 단일 head: `165f90716263`.
+- 변경 Python 파일 Ruff check/format, 모델 Mypy, `git diff --check` 통과. 전체 서비스·Worker 테스트 및 원격 CI는 이번 보완에서 재실행하지 않았다.

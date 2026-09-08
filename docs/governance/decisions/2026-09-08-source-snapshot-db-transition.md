@@ -11,3 +11,9 @@
 기존 외부 Source 승인 전체나 CURRENT 논리 의미를 새로 정의하지 않는다. 실제 승인 인증, #335 정책, #164 normalization/provenance 정렬, Runtime 활성화는 기존 후속 범위를 유지한다. 구체 함수 계약과 실패·rollback 의미는 Source Target의 DB-owned 경계 절을 따른다.
 
 #324가 먼저 병합됐으므로 `165a4b3c2d1e`의 부모를 `169a1b2c3d4e`로 연결하고 신규 보호 revision은 Source chain 끝에 추가한다. #329에는 동일 커밋을 병합해 migration을 중복 생성하지 않는다. 기존 Source revision을 이미 적용한 개발 DB는 별도 재생성 또는 명시적인 이행 검증이 필요하며, 과거 revision 파일 변경만으로 기존 DB가 새 부모를 실행했다고 간주하지 않는다.
+
+## 승인 후 비차단 보완
+
+[현우님 후속 검토](https://github.com/AI-HealthCare-05/AH_05_04/pull/323#pullrequestreview-5137902945)에 따라 역할 프로비저닝에 존재하는 전이 함수의 명시적 EXECUTE 인계를 추가한다. migration의 기존 역할 권한 인계는 유지해 역할 생성 순서에 관계없이 동작하도록 한다. 모든 함수에 대한 포괄 권한은 부여하지 않는다.
+
+`165f90716263`은 기존 `165e8f706152` 뒤에서 ingestion Run의 FAILED/NO_CHANGE Snapshot 참조 CHECK를 추가한다. FAILED는 NULL, NO_CHANGE는 NOT NULL이며 성공 Run의 참조는 허용한다. 기존 위반 행은 자동 수정하지 않고 migration을 중단한다. Snapshot 생성 시점·normalization 구조의 최종 정렬은 #164 범위를 유지한다.
