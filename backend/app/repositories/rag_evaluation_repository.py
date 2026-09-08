@@ -26,6 +26,20 @@ from app.models.rag_evaluation import (
 )
 
 
+def _validate_decision_status_matches_execution(
+    *,
+    execution_status: EvaluationExecutionStatus,
+    decision_status: EvaluationDecisionStatus | None,
+) -> None:
+    if execution_status == EvaluationExecutionStatus.COMPLETED:
+        if decision_status is None:
+            raise ValueError("decision_status is required when execution_status is COMPLETED")
+        return
+
+    if decision_status is not None:
+        raise ValueError("decision_status is allowed only when execution_status is COMPLETED")
+
+
 @dataclass(frozen=True)
 class EvalDatasetCreate:
     dataset_key: str
@@ -96,6 +110,7 @@ class EvalRunCreate:
     dataset_id: UUID
     experiment_id: UUID
     variant_id: UUID
+    experiment_type: EvaluationExperimentType
     execution_status: EvaluationExecutionStatus
     git_commit_sha: str
     dataset_manifest_hash: str
@@ -112,6 +127,7 @@ class EvalCaseResultCreate:
     run_id: UUID
     case_id: UUID
     dataset_id: UUID
+    experiment_type: EvaluationExperimentType
     execution_status: EvaluationExecutionStatus
     decision_status: EvaluationDecisionStatus | None = None
     request_guard_ref: str | None = None
@@ -329,11 +345,16 @@ class RagEvaluationRepository:
         return variant
 
     async def create_run(self, item: EvalRunCreate) -> EvalRun:
+        _validate_decision_status_matches_execution(
+            execution_status=item.execution_status,
+            decision_status=item.decision_status,
+        )
         run = EvalRun(
             run_key=item.run_key,
             dataset_id=item.dataset_id,
             experiment_id=item.experiment_id,
             variant_id=item.variant_id,
+            experiment_type=item.experiment_type,
             execution_status=item.execution_status,
             decision_status=item.decision_status,
             git_commit_sha=item.git_commit_sha,
@@ -349,10 +370,15 @@ class RagEvaluationRepository:
         return run
 
     async def create_case_result(self, item: EvalCaseResultCreate) -> EvalCaseResult:
+        _validate_decision_status_matches_execution(
+            execution_status=item.execution_status,
+            decision_status=item.decision_status,
+        )
         case_result = EvalCaseResult(
             run_id=item.run_id,
             case_id=item.case_id,
             dataset_id=item.dataset_id,
+            experiment_type=item.experiment_type,
             execution_status=item.execution_status,
             decision_status=item.decision_status,
             request_guard_ref=item.request_guard_ref,

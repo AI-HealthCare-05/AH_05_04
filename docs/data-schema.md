@@ -288,7 +288,7 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 | Rule·Evidence | `rag_interaction_rule`, `rag_rule_evidence`, rule set 계열 | 처방약–OTC Rule-first, 승인 evidence와 version 연결, rule 없음은 안전 판정이 아님 |
 | RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열 | Job·처방 version·Runtime Bundle 귀속, 생성·검증·공개 상태축과 Citation 완전성 분리 |
 | Runtime 배포 | runtime execution manifest·release bundle·environment 계열 | Source·Index·Rule·Prompt·Model·Validator·Worker artifact version을 환경별 단일 active bundle로 고정 |
-| Evaluation | `eval_dataset`, `eval_case`, `eval_experiment`, `eval_variant`, `eval_run`, `eval_case_result`, `eval_metric`, `eval_failure` 최소 DB 기반 구현 중(#164) | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료 후 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`. Runner·Release approval·Runtime 활성화 연결은 후속 |
+| Evaluation | `eval_dataset`, `eval_case`, `eval_experiment`, `eval_variant`, `eval_run`, `eval_case_result`, `eval_metric`, `eval_failure` 최소 DB 기반 구현 중(#164) | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. `eval_run`은 `dataset_id + dataset_manifest_hash`가 실제 Dataset manifest와 일치해야 하고, `eval_case_result`는 Run·Case의 `dataset_id + experiment_type` 혼용을 DB에서 차단합니다. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료(`COMPLETED`)는 `decision_status`를 반드시 기록하며 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`입니다. Runner·Release approval·Runtime 활성화 연결은 후속 |
 
 Evaluation의 `question_template`, `source_segment`, `non_sensitive_summary`, `non_sensitive_context`는 합성 template/segment 식별자, metric 이름·개수, enum code, artifact reference 같은 비민감 구조화 값만 허용합니다. 자유 텍스트, 모델 출력, retrieved chunk, 실제 환자정보, OCR 원문, 처방 원문은 저장하지 않습니다.
 

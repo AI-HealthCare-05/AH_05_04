@@ -1,6 +1,7 @@
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rag_evaluation import (
@@ -77,6 +78,7 @@ async def test_rag_evaluation_repository_can_save_and_read_minimum_graph(db_sess
             dataset_id=dataset.id,
             experiment_id=experiment.id,
             variant_id=variant.id,
+            experiment_type=EvaluationExperimentType.END_TO_END_RAG,
             execution_status=EvaluationExecutionStatus.COMPLETED,
             decision_status=EvaluationDecisionStatus.PASS,
             git_commit_sha="abcdef1",
@@ -88,6 +90,7 @@ async def test_rag_evaluation_repository_can_save_and_read_minimum_graph(db_sess
             run_id=run.id,
             case_id=eval_case.id,
             dataset_id=dataset.id,
+            experiment_type=EvaluationExperimentType.END_TO_END_RAG,
             execution_status=EvaluationExecutionStatus.COMPLETED,
             decision_status=EvaluationDecisionStatus.PASS,
             result_summary_hash="e" * 64,
@@ -144,3 +147,41 @@ async def test_rag_evaluation_repository_can_save_and_read_minimum_graph(db_sess
         == metric
     )
     assert failure.case_result_id == case_result.id
+
+
+async def test_rag_evaluation_repository_requires_decision_for_completed_run(
+    db_session: AsyncSession,
+) -> None:
+    repository = RagEvaluationRepository(db_session)
+
+    with pytest.raises(ValueError, match="decision_status is required"):
+        await repository.create_run(
+            EvalRunCreate(
+                run_key=f"run-invalid-{uuid4().hex[:10]}",
+                dataset_id=uuid4(),
+                experiment_id=uuid4(),
+                variant_id=uuid4(),
+                experiment_type=EvaluationExperimentType.END_TO_END_RAG,
+                execution_status=EvaluationExecutionStatus.COMPLETED,
+                git_commit_sha="abcdef1",
+                dataset_manifest_hash="a" * 64,
+            )
+        )
+
+
+async def test_rag_evaluation_repository_rejects_decision_for_incomplete_case_result(
+    db_session: AsyncSession,
+) -> None:
+    repository = RagEvaluationRepository(db_session)
+
+    with pytest.raises(ValueError, match="allowed only when execution_status is COMPLETED"):
+        await repository.create_case_result(
+            EvalCaseResultCreate(
+                run_id=uuid4(),
+                case_id=uuid4(),
+                dataset_id=uuid4(),
+                experiment_type=EvaluationExperimentType.END_TO_END_RAG,
+                execution_status=EvaluationExecutionStatus.ERROR,
+                decision_status=EvaluationDecisionStatus.FAIL,
+            )
+        )

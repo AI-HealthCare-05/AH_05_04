@@ -130,6 +130,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("dataset_key", "dataset_version", name="uq_eval_dataset_key_version"),
         sa.UniqueConstraint("manifest_hash", name="uq_eval_dataset_manifest_hash"),
+        sa.UniqueConstraint("id", "manifest_hash", name="uq_eval_dataset_id_manifest_hash"),
     )
 
     op.create_table(
@@ -181,6 +182,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("dataset_id", "case_key", name="uq_eval_case_dataset_key"),
         sa.UniqueConstraint("id", "dataset_id", name="uq_eval_case_id_dataset"),
+        sa.UniqueConstraint("id", "dataset_id", "experiment_type", name="uq_eval_case_id_dataset_type"),
     )
     op.create_index("idx_eval_case_dataset_partition", "eval_case", ["dataset_id", "partition"])
 
@@ -209,6 +211,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("experiment_key", "experiment_version", name="uq_eval_experiment_key_version"),
         sa.UniqueConstraint("id", "dataset_id", name="uq_eval_experiment_id_dataset"),
+        sa.UniqueConstraint("id", "dataset_id", "experiment_type", name="uq_eval_experiment_id_dataset_type"),
     )
     op.create_index("idx_eval_experiment_dataset", "eval_experiment", ["dataset_id"])
 
@@ -249,6 +252,7 @@ def upgrade() -> None:
         sa.Column("dataset_id", sa.CHAR(length=36), nullable=False),
         sa.Column("experiment_id", sa.CHAR(length=36), nullable=False),
         sa.Column("variant_id", sa.CHAR(length=36), nullable=False),
+        sa.Column("experiment_type", sa.String(length=40), nullable=False),
         sa.Column("execution_status", sa.String(length=30), nullable=False),
         sa.Column("decision_status", sa.String(length=20), nullable=True),
         sa.Column("git_commit_sha", sa.String(length=40), nullable=False),
@@ -268,6 +272,10 @@ def upgrade() -> None:
             name="chk_eval_run_execution_manifest_hash_length",
         ),
         sa.CheckConstraint(
+            f"experiment_type IN ({_sql_in_list(_EXPERIMENT_TYPE_VALUES)})",
+            name="chk_eval_run_experiment_type",
+        ),
+        sa.CheckConstraint(
             f"execution_status IN ({_sql_in_list(_EXECUTION_STATUS_VALUES)})",
             name="chk_eval_run_execution_status",
         ),
@@ -276,18 +284,22 @@ def upgrade() -> None:
             name="chk_eval_run_decision_status",
         ),
         sa.CheckConstraint(
-            "execution_status = 'COMPLETED' OR decision_status IS NULL",
-            name="chk_eval_run_incomplete_decision_null",
+            "((execution_status = 'COMPLETED' AND decision_status IS NOT NULL) OR (execution_status <> 'COMPLETED' AND decision_status IS NULL))",
+            name="chk_eval_run_decision_matches_execution",
         ),
         sa.CheckConstraint(
             "completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at",
             name="chk_eval_run_completed_after_started",
         ),
-        sa.ForeignKeyConstraint(["dataset_id"], ["eval_dataset.id"], name="fk_eval_run_dataset"),
         sa.ForeignKeyConstraint(
-            ["experiment_id", "dataset_id"],
-            ["eval_experiment.id", "eval_experiment.dataset_id"],
-            name="fk_eval_run_experiment_dataset",
+            ["dataset_id", "dataset_manifest_hash"],
+            ["eval_dataset.id", "eval_dataset.manifest_hash"],
+            name="fk_eval_run_dataset_manifest",
+        ),
+        sa.ForeignKeyConstraint(
+            ["experiment_id", "dataset_id", "experiment_type"],
+            ["eval_experiment.id", "eval_experiment.dataset_id", "eval_experiment.experiment_type"],
+            name="fk_eval_run_experiment_dataset_type",
         ),
         sa.ForeignKeyConstraint(
             ["variant_id", "experiment_id"],
@@ -297,6 +309,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("run_key", name="uq_eval_run_key"),
         sa.UniqueConstraint("id", "dataset_id", name="uq_eval_run_id_dataset"),
+        sa.UniqueConstraint("id", "dataset_id", "experiment_type", name="uq_eval_run_id_dataset_type"),
     )
     op.create_index("idx_eval_run_dataset", "eval_run", ["dataset_id"])
     op.create_index("idx_eval_run_experiment", "eval_run", ["experiment_id"])
@@ -308,6 +321,7 @@ def upgrade() -> None:
         sa.Column("run_id", sa.CHAR(length=36), nullable=False),
         sa.Column("case_id", sa.CHAR(length=36), nullable=False),
         sa.Column("dataset_id", sa.CHAR(length=36), nullable=False),
+        sa.Column("experiment_type", sa.String(length=40), nullable=False),
         sa.Column("execution_status", sa.String(length=30), nullable=False),
         sa.Column("decision_status", sa.String(length=20), nullable=True),
         sa.Column("request_guard_ref", sa.String(length=255), nullable=True),
@@ -321,6 +335,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint(
+            f"experiment_type IN ({_sql_in_list(_EXPERIMENT_TYPE_VALUES)})",
+            name="chk_eval_case_result_experiment_type",
+        ),
+        sa.CheckConstraint(
             f"execution_status IN ({_sql_in_list(_EXECUTION_STATUS_VALUES)})",
             name="chk_eval_case_result_execution_status",
         ),
@@ -329,22 +347,22 @@ def upgrade() -> None:
             name="chk_eval_case_result_decision_status",
         ),
         sa.CheckConstraint(
-            "execution_status = 'COMPLETED' OR decision_status IS NULL",
-            name="chk_eval_case_result_incomplete_decision_null",
+            "((execution_status = 'COMPLETED' AND decision_status IS NOT NULL) OR (execution_status <> 'COMPLETED' AND decision_status IS NULL))",
+            name="chk_eval_case_result_decision_matches_execution",
         ),
         sa.CheckConstraint(
             "result_summary_hash IS NULL OR length(result_summary_hash) = 64",
             name="chk_eval_case_result_summary_hash_length",
         ),
         sa.ForeignKeyConstraint(
-            ["case_id", "dataset_id"],
-            ["eval_case.id", "eval_case.dataset_id"],
-            name="fk_eval_case_result_case_dataset",
+            ["case_id", "dataset_id", "experiment_type"],
+            ["eval_case.id", "eval_case.dataset_id", "eval_case.experiment_type"],
+            name="fk_eval_case_result_case_dataset_type",
         ),
         sa.ForeignKeyConstraint(
-            ["run_id", "dataset_id"],
-            ["eval_run.id", "eval_run.dataset_id"],
-            name="fk_eval_case_result_run_dataset",
+            ["run_id", "dataset_id", "experiment_type"],
+            ["eval_run.id", "eval_run.dataset_id", "eval_run.experiment_type"],
+            name="fk_eval_case_result_run_dataset_type",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("run_id", "case_id", name="uq_eval_case_result_run_case"),

@@ -90,6 +90,7 @@ class EvalDataset(Base):
     __table_args__ = (
         UniqueConstraint("dataset_key", "dataset_version", name="uq_eval_dataset_key_version"),
         UniqueConstraint("manifest_hash", name="uq_eval_dataset_manifest_hash"),
+        UniqueConstraint("id", "manifest_hash", name="uq_eval_dataset_id_manifest_hash"),
         CheckConstraint("length(trim(dataset_key)) > 0", name="chk_eval_dataset_key_nonblank"),
         CheckConstraint("length(trim(dataset_version)) > 0", name="chk_eval_dataset_version_nonblank"),
         CheckConstraint("length(trim(display_name)) > 0", name="chk_eval_dataset_display_name_nonblank"),
@@ -159,6 +160,7 @@ class EvalCase(Base):
         ),
         UniqueConstraint("dataset_id", "case_key", name="uq_eval_case_dataset_key"),
         UniqueConstraint("id", "dataset_id", name="uq_eval_case_id_dataset"),
+        UniqueConstraint("id", "dataset_id", "experiment_type", name="uq_eval_case_id_dataset_type"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -209,6 +211,7 @@ class EvalExperiment(Base):
             name="chk_eval_experiment_type",
         ),
         UniqueConstraint("id", "dataset_id", name="uq_eval_experiment_id_dataset"),
+        UniqueConstraint("id", "dataset_id", "experiment_type", name="uq_eval_experiment_id_dataset_type"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -278,10 +281,16 @@ class EvalRun(Base):
         Index("idx_eval_run_variant", "variant_id"),
         UniqueConstraint("run_key", name="uq_eval_run_key"),
         UniqueConstraint("id", "dataset_id", name="uq_eval_run_id_dataset"),
+        UniqueConstraint("id", "dataset_id", "experiment_type", name="uq_eval_run_id_dataset_type"),
         ForeignKeyConstraint(
-            ["experiment_id", "dataset_id"],
-            ["eval_experiment.id", "eval_experiment.dataset_id"],
-            name="fk_eval_run_experiment_dataset",
+            ["dataset_id", "dataset_manifest_hash"],
+            ["eval_dataset.id", "eval_dataset.manifest_hash"],
+            name="fk_eval_run_dataset_manifest",
+        ),
+        ForeignKeyConstraint(
+            ["experiment_id", "dataset_id", "experiment_type"],
+            ["eval_experiment.id", "eval_experiment.dataset_id", "eval_experiment.experiment_type"],
+            name="fk_eval_run_experiment_dataset_type",
         ),
         ForeignKeyConstraint(
             ["variant_id", "experiment_id"],
@@ -296,6 +305,10 @@ class EvalRun(Base):
             name="chk_eval_run_execution_manifest_hash_length",
         ),
         CheckConstraint(
+            f"experiment_type IN ({_sql_in_list(EvaluationExperimentType)})",
+            name="chk_eval_run_experiment_type",
+        ),
+        CheckConstraint(
             f"execution_status IN ({_sql_in_list(EvaluationExecutionStatus)})",
             name="chk_eval_run_execution_status",
         ),
@@ -304,8 +317,8 @@ class EvalRun(Base):
             name="chk_eval_run_decision_status",
         ),
         CheckConstraint(
-            "execution_status = 'COMPLETED' OR decision_status IS NULL",
-            name="chk_eval_run_incomplete_decision_null",
+            "((execution_status = 'COMPLETED' AND decision_status IS NOT NULL) OR (execution_status <> 'COMPLETED' AND decision_status IS NULL))",
+            name="chk_eval_run_decision_matches_execution",
         ),
         CheckConstraint(
             "completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at",
@@ -315,9 +328,13 @@ class EvalRun(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     run_key: Mapped[str] = mapped_column(String(120), nullable=False)
-    dataset_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_dataset.id"), nullable=False)
+    dataset_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     experiment_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_experiment.id"), nullable=False)
     variant_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_variant.id"), nullable=False)
+    experiment_type: Mapped[EvaluationExperimentType] = mapped_column(
+        Enum(EvaluationExperimentType, native_enum=False, length=40),
+        nullable=False,
+    )
     execution_status: Mapped[EvaluationExecutionStatus] = mapped_column(
         Enum(EvaluationExecutionStatus, native_enum=False, length=30),
         nullable=False,
@@ -359,14 +376,18 @@ class EvalCaseResult(Base):
         Index("idx_eval_case_result_run", "run_id"),
         UniqueConstraint("run_id", "case_id", name="uq_eval_case_result_run_case"),
         ForeignKeyConstraint(
-            ["case_id", "dataset_id"],
-            ["eval_case.id", "eval_case.dataset_id"],
-            name="fk_eval_case_result_case_dataset",
+            ["case_id", "dataset_id", "experiment_type"],
+            ["eval_case.id", "eval_case.dataset_id", "eval_case.experiment_type"],
+            name="fk_eval_case_result_case_dataset_type",
         ),
         ForeignKeyConstraint(
-            ["run_id", "dataset_id"],
-            ["eval_run.id", "eval_run.dataset_id"],
-            name="fk_eval_case_result_run_dataset",
+            ["run_id", "dataset_id", "experiment_type"],
+            ["eval_run.id", "eval_run.dataset_id", "eval_run.experiment_type"],
+            name="fk_eval_case_result_run_dataset_type",
+        ),
+        CheckConstraint(
+            f"experiment_type IN ({_sql_in_list(EvaluationExperimentType)})",
+            name="chk_eval_case_result_experiment_type",
         ),
         CheckConstraint(
             f"execution_status IN ({_sql_in_list(EvaluationExecutionStatus)})",
@@ -377,8 +398,8 @@ class EvalCaseResult(Base):
             name="chk_eval_case_result_decision_status",
         ),
         CheckConstraint(
-            "execution_status = 'COMPLETED' OR decision_status IS NULL",
-            name="chk_eval_case_result_incomplete_decision_null",
+            "((execution_status = 'COMPLETED' AND decision_status IS NOT NULL) OR (execution_status <> 'COMPLETED' AND decision_status IS NULL))",
+            name="chk_eval_case_result_decision_matches_execution",
         ),
         CheckConstraint(
             "result_summary_hash IS NULL OR length(result_summary_hash) = 64",
@@ -390,6 +411,10 @@ class EvalCaseResult(Base):
     run_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_run.id"), nullable=False)
     case_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_case.id"), nullable=False)
     dataset_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("eval_dataset.id"), nullable=False)
+    experiment_type: Mapped[EvaluationExperimentType] = mapped_column(
+        Enum(EvaluationExperimentType, native_enum=False, length=40),
+        nullable=False,
+    )
     execution_status: Mapped[EvaluationExecutionStatus] = mapped_column(
         Enum(EvaluationExecutionStatus, native_enum=False, length=30),
         nullable=False,

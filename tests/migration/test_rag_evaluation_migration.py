@@ -212,6 +212,8 @@ async def _seed_eval_graph() -> dict[str, str]:
         "case_result_id": str(uuid4()),
     }
     unique_suffix = uuid4().hex[:10]
+    dataset_manifest_hash = f"{unique_suffix:0<64}"[:64]
+    ids["dataset_manifest_hash"] = dataset_manifest_hash
 
     async with _connection() as connection:
         async with connection.begin():
@@ -234,7 +236,7 @@ async def _seed_eval_graph() -> dict[str, str]:
                     "dataset_id": ids["dataset_id"],
                     "dataset_key": f"synthetic-{unique_suffix}",
                     "schema_set_sha256": "a" * 64,
-                    "manifest_hash": f"{unique_suffix:0<64}"[:64],
+                    "manifest_hash": dataset_manifest_hash,
                 },
             )
             await connection.execute(
@@ -282,26 +284,26 @@ async def _seed_eval_graph() -> dict[str, str]:
                 text(
                     """
                     INSERT INTO eval_run (
-                        id, run_key, dataset_id, experiment_id, variant_id, execution_status,
+                        id, run_key, dataset_id, experiment_id, variant_id, experiment_type, execution_status,
                         decision_status, git_commit_sha, dataset_manifest_hash
                     )
                     VALUES (
-                        :run_id, :run_key, :dataset_id, :experiment_id, :variant_id, 'COMPLETED',
+                        :run_id, :run_key, :dataset_id, :experiment_id, :variant_id, 'END_TO_END_RAG', 'COMPLETED',
                         'PASS', 'abcdef1', :dataset_manifest_hash
                     )
                     """
                 ),
-                {**ids, "run_key": f"run-{unique_suffix}", "dataset_manifest_hash": f"{unique_suffix:1<64}"[:64]},
+                {**ids, "run_key": f"run-{unique_suffix}", "dataset_manifest_hash": dataset_manifest_hash},
             )
             await connection.execute(
                 text(
                     """
                     INSERT INTO eval_case_result (
-                        id, run_id, case_id, dataset_id, execution_status, decision_status,
+                        id, run_id, case_id, dataset_id, experiment_type, execution_status, decision_status,
                         result_summary_hash
                     )
                     VALUES (
-                        :case_result_id, :run_id, :case_id, :dataset_id, 'COMPLETED', 'PASS', :result_summary_hash
+                        :case_result_id, :run_id, :case_id, :dataset_id, 'END_TO_END_RAG', 'COMPLETED', 'PASS', :result_summary_hash
                     )
                     """
                 ),
@@ -322,7 +324,7 @@ async def _cleanup_eval_graph(ids: dict[str, str]) -> None:
             await connection.execute(text("DELETE FROM eval_run WHERE id = :run_id"), ids)
             await connection.execute(text("DELETE FROM eval_variant WHERE id = :variant_id"), ids)
             await connection.execute(text("DELETE FROM eval_experiment WHERE id = :experiment_id"), ids)
-            await connection.execute(text("DELETE FROM eval_case WHERE id = :case_id"), ids)
+            await connection.execute(text("DELETE FROM eval_case WHERE dataset_id = :dataset_id"), ids)
             await connection.execute(text("DELETE FROM eval_dataset WHERE id = :dataset_id"), ids)
 
 
@@ -343,19 +345,28 @@ def test_rag_evaluation_tables_and_constraints_exist_after_alembic_upgrade() -> 
     schema_objects = asyncio.run(_fetch_schema_object_names())
 
     assert "uq_eval_dataset_key_version" in schema_objects
+    assert "uq_eval_dataset_id_manifest_hash" in schema_objects
+    assert "fk_eval_run_dataset_manifest" in schema_objects
     assert "uq_eval_case_dataset_key" in schema_objects
+    assert "uq_eval_case_id_dataset_type" in schema_objects
+    assert "uq_eval_experiment_id_dataset_type" in schema_objects
     assert "uq_eval_experiment_key_version" in schema_objects
     assert "uq_eval_variant_experiment_key" in schema_objects
     assert "uq_eval_run_key" in schema_objects
+    assert "uq_eval_run_id_dataset_type" in schema_objects
+    assert "fk_eval_run_experiment_dataset_type" in schema_objects
     assert "uq_eval_case_result_run_case" in schema_objects
+    assert "fk_eval_case_result_case_dataset_type" in schema_objects
+    assert "fk_eval_case_result_run_dataset_type" in schema_objects
     assert "uq_eval_metric_run_metric" in schema_objects
     assert "uq_eval_metric_case_metric" in schema_objects
     assert "uq_eval_failure_run_code" in schema_objects
     assert "uq_eval_failure_case_code" in schema_objects
 
     assert "chk_eval_case_experiment_type" in schema_objects
-    assert "chk_eval_run_incomplete_decision_null" in schema_objects
-    assert "chk_eval_case_result_incomplete_decision_null" in schema_objects
+    assert "chk_eval_run_decision_matches_execution" in schema_objects
+    assert "chk_eval_case_result_experiment_type" in schema_objects
+    assert "chk_eval_case_result_decision_matches_execution" in schema_objects
     assert "chk_eval_metric_single_owner" in schema_objects
     assert "chk_eval_failure_single_owner" in schema_objects
     assert "chk_eval_metric_score_range" in schema_objects
@@ -434,7 +445,7 @@ def test_rag_evaluation_rejects_invalid_contract_values() -> None:
             asyncio.run(_cleanup_eval_dataset(dataset_id))
 
 
-def test_rag_evaluation_rejects_incomplete_decision_status() -> None:
+def test_rag_evaluation_rejects_run_dataset_manifest_mismatch() -> None:
     alembic_config = create_alembic_config()
     ids: dict[str, str] | None = None
 
@@ -446,20 +457,86 @@ def test_rag_evaluation_rejects_incomplete_decision_status() -> None:
             _assert_integrity_error(
                 """
                 INSERT INTO eval_run (
-                    id, run_key, dataset_id, experiment_id, variant_id, execution_status,
+                    id, run_key, dataset_id, experiment_id, variant_id, experiment_type, execution_status,
                     decision_status, git_commit_sha, dataset_manifest_hash
                 )
                 VALUES (
-                    :id, :run_key, :dataset_id, :experiment_id, :variant_id, 'ERROR',
+                    :id, :run_key, :dataset_id, :experiment_id, :variant_id, 'END_TO_END_RAG', 'COMPLETED',
+                    'PASS', 'abcdef1', :dataset_manifest_hash
+                )
+                """,
+                {
+                    **ids,
+                    "id": str(uuid4()),
+                    "run_key": f"run-manifest-mismatch-{uuid4().hex[:10]}",
+                    "dataset_manifest_hash": "9" * 64,
+                },
+            )
+        )
+    finally:
+        if ids is not None:
+            asyncio.run(_cleanup_eval_graph(ids))
+
+
+def test_rag_evaluation_rejects_decision_status_execution_mismatch() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_eval_graph())
+
+        asyncio.run(
+            _assert_integrity_error(
+                """
+                INSERT INTO eval_run (
+                    id, run_key, dataset_id, experiment_id, variant_id, experiment_type, execution_status,
+                    decision_status, git_commit_sha, dataset_manifest_hash
+                )
+                VALUES (
+                    :id, :run_key, :dataset_id, :experiment_id, :variant_id, 'END_TO_END_RAG', 'ERROR',
                     'FAIL', 'abcdef1', :dataset_manifest_hash
                 )
                 """,
                 {
                     **ids,
                     "id": str(uuid4()),
-                    "run_key": f"run-invalid-{uuid4().hex[:10]}",
-                    "dataset_manifest_hash": "1" * 64,
+                    "run_key": f"run-error-with-decision-{uuid4().hex[:10]}",
+                    "dataset_manifest_hash": ids["dataset_manifest_hash"],
                 },
+            )
+        )
+        asyncio.run(
+            _assert_integrity_error(
+                """
+                INSERT INTO eval_run (
+                    id, run_key, dataset_id, experiment_id, variant_id, experiment_type, execution_status,
+                    decision_status, git_commit_sha, dataset_manifest_hash
+                )
+                VALUES (
+                    :id, :run_key, :dataset_id, :experiment_id, :variant_id, 'END_TO_END_RAG', 'COMPLETED',
+                    NULL, 'abcdef1', :dataset_manifest_hash
+                )
+                """,
+                {
+                    **ids,
+                    "id": str(uuid4()),
+                    "run_key": f"run-completed-null-decision-{uuid4().hex[:10]}",
+                    "dataset_manifest_hash": ids["dataset_manifest_hash"],
+                },
+            )
+        )
+        asyncio.run(
+            _assert_integrity_error(
+                """
+                INSERT INTO eval_case_result (
+                    id, run_id, case_id, dataset_id, experiment_type, execution_status, decision_status
+                )
+                VALUES (
+                    :id, :run_id, :case_id, :dataset_id, 'END_TO_END_RAG', 'COMPLETED', NULL
+                )
+                """,
+                {**ids, "id": str(uuid4())},
             )
         )
     finally:
@@ -725,11 +802,11 @@ def test_rag_evaluation_rejects_run_variant_from_another_experiment() -> None:
             _assert_integrity_error(
                 """
                 INSERT INTO eval_run (
-                    id, run_key, dataset_id, experiment_id, variant_id, execution_status,
+                    id, run_key, dataset_id, experiment_id, variant_id, experiment_type, execution_status,
                     git_commit_sha, dataset_manifest_hash
                 )
                 VALUES (
-                    :id, :run_key, :dataset_id, :experiment_id, :variant_id, 'COMPLETED',
+                    :id, :run_key, :dataset_id, :experiment_id, :variant_id, 'END_TO_END_RAG', 'COMPLETED',
                     'abcdef1', :dataset_manifest_hash
                 )
                 """,
@@ -748,6 +825,58 @@ def test_rag_evaluation_rejects_run_variant_from_another_experiment() -> None:
             asyncio.run(_cleanup_eval_dataset_and_experiment(second_ids))
         if first_ids is not None:
             asyncio.run(_cleanup_eval_dataset_and_experiment(first_ids))
+
+
+def test_rag_evaluation_rejects_case_result_case_with_different_experiment_type() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_eval_graph())
+
+        async def seed_retrieval_case() -> str:
+            case_id = str(uuid4())
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO eval_case (
+                                id, dataset_id, case_key, case_version, partition,
+                                experiment_type, input_hash
+                            )
+                            VALUES (
+                                :case_id, :dataset_id, 'case-retrieval', '1.0.0', 'DEV',
+                                'KNOWLEDGE_RETRIEVAL', :input_hash
+                            )
+                            """
+                        ),
+                        {"case_id": case_id, "dataset_id": ids["dataset_id"], "input_hash": "8" * 64},
+                    )
+            return case_id
+
+        retrieval_case_id = asyncio.run(seed_retrieval_case())
+        asyncio.run(
+            _assert_integrity_error(
+                """
+                INSERT INTO eval_case_result (
+                    id, run_id, case_id, dataset_id, experiment_type, execution_status, decision_status
+                )
+                VALUES (
+                    :id, :run_id, :case_id, :dataset_id, 'END_TO_END_RAG', 'COMPLETED', 'PASS'
+                )
+                """,
+                {
+                    **ids,
+                    "id": str(uuid4()),
+                    "case_id": retrieval_case_id,
+                },
+            )
+        )
+    finally:
+        if ids is not None:
+            asyncio.run(_cleanup_eval_graph(ids))
 
 
 def test_rag_evaluation_rejects_case_result_case_from_another_dataset() -> None:
@@ -786,10 +915,10 @@ def test_rag_evaluation_rejects_case_result_case_from_another_dataset() -> None:
             _assert_integrity_error(
                 """
                 INSERT INTO eval_case_result (
-                    id, run_id, case_id, dataset_id, execution_status
+                    id, run_id, case_id, dataset_id, experiment_type, execution_status, decision_status
                 )
                 VALUES (
-                    :id, :run_id, :case_id, :dataset_id, 'COMPLETED'
+                    :id, :run_id, :case_id, :dataset_id, 'END_TO_END_RAG', 'COMPLETED', 'PASS'
                 )
                 """,
                 {
