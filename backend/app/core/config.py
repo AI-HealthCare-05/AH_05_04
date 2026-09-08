@@ -140,6 +140,12 @@ class Config(BaseSettings):
     IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: str = _IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_PLACEHOLDER
     IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION: str = "v1"
 
+    # PR #346 리뷰: key/version을 교체해도 아직 TTL(IDEMPOTENCY_RECORD_TTL_DAYS)이 남은 기존
+    # snapshot을 계속 복호화(replay)할 수 있도록 유지하는 retired key ring입니다
+    # (`encryption_key_version -> key`). 새 쓰기(encrypt)는 절대 여기 값을 쓰지 않고 항상 위
+    # active key만 사용합니다 — 여기는 오직 과거에 쓰인 key를 만료 시점까지 보관하는 용도입니다.
+    IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS: dict[str, str] = {}
+
     @field_validator("IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY", mode="after")
     @classmethod
     def _validate_idempotency_snapshot_encryption_key_format(cls, value: str) -> str:
@@ -151,6 +157,19 @@ class Config(BaseSettings):
             raise ValueError(
                 "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY must be a valid Fernet key (32 bytes, urlsafe-base64-encoded)"
             ) from exc
+        return value
+
+    @field_validator("IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS", mode="after")
+    @classmethod
+    def _validate_idempotency_snapshot_encryption_retired_keys_format(cls, value: dict[str, str]) -> dict[str, str]:
+        for version, retired_key in value.items():
+            try:
+                Fernet(retired_key.encode("utf-8"))
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS"
+                    f"[{version!r}] must be a valid Fernet key (32 bytes, urlsafe-base64-encoded)"
+                ) from exc
         return value
 
     @field_validator("IDEMPOTENCY_HMAC_KEY", mode="after")
@@ -234,6 +253,17 @@ class Config(BaseSettings):
         ):
             raise ValueError(
                 "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY must be set to a real secret outside local environment"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_idempotency_snapshot_encryption_retired_keys_disjoint_from_active(self) -> "Config":
+        # PR #346 리뷰: 같은 version 문자열이 active key와 retired key 양쪽에 배포되면 어느
+        # key로 복호화해야 할지 모호해진다 — 운영 절차로 강제하지 않고 기동 시점에 바로 막는다.
+        if self.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION in self.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS:
+            raise ValueError(
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION must not also appear in "
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS"
             )
         return self
 

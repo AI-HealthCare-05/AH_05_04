@@ -69,23 +69,45 @@ class FernetSnapshotCipher:
     으로 확정하지 않습니다.
     """
 
-    def __init__(self, *, key: str, key_version: str) -> None:
-        self._fernet = Fernet(key.encode("utf-8"))
-        self._key_version = key_version
+    def __init__(
+        self,
+        *,
+        key: str,
+        key_version: str,
+        retired_keys: dict[str, str] | None = None,
+    ) -> None:
+        """`retired_keys`(PR #346 리뷰)는 `encryption_key_version -> key` 매핑으로, key/version을
+        교체한 뒤에도 아직 만료(TTL)되지 않은 기존 레코드를 복호화하기 위한 decrypt 전용 key
+        ring이다. 새 쓰기는 항상 `key`/`key_version`(active)만 사용한다.
+
+        같은 version 문자열이 active와 retired 양쪽에 다른 의미로 배포되는 구성은 어느 키로
+        복호화해야 할지 알 수 없는 모호한 상태라, 기동 시 바로 막는다(운영 절차로 강제하지
+        않고 코드로 차단)."""
+        if retired_keys and key_version in retired_keys:
+            raise ValueError(
+                f"encryption_key_version {key_version!r}는 active key에도 retired_keys에도 "
+                "쓰일 수 없습니다 — 같은 version 문자열에 다른 key가 배포되는 구성을 막습니다."
+            )
+        self._active_key_version = key_version
+        self._fernets: dict[str, Fernet] = {key_version: Fernet(key.encode("utf-8"))}
+        for version, retired_key in (retired_keys or {}).items():
+            self._fernets[version] = Fernet(retired_key.encode("utf-8"))
 
     def encrypt(self, plaintext: bytes) -> tuple[bytes, str]:
-        return self._fernet.encrypt(plaintext), self._key_version
+        return self._fernets[self._active_key_version].encrypt(plaintext), self._active_key_version
 
     def decrypt(self, ciphertext: bytes, *, key_version: str) -> bytes:
-        if key_version != self._key_version:
+        fernet = self._fernets.get(key_version)
+        if fernet is None:
             raise InvalidToken(f"Unsupported encryption_key_version: {key_version}")
-        return self._fernet.decrypt(ciphertext)
+        return fernet.decrypt(ciphertext)
 
 
 def get_default_snapshot_cipher() -> FernetSnapshotCipher:
     return FernetSnapshotCipher(
         key=config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY,
         key_version=config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION,
+        retired_keys=config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS,
     )
 
 
@@ -178,6 +200,24 @@ class SyncMutationIdempotencyService:
             # (idempotency-v1.md: "동시 최초 요청은 DB unique constraint로 하나만 승리시킨 뒤,
             # 패자는 저장된 요청 지문을 비교해 규칙을 적용한다"). 위 begin_nested()가 이미
             # 패자의 mutate() 부작용을 롤백했습니다.
+            existing = await self._repository.find_sync_idempotency_record(
+                user_id=user_id,
+                operation_id=operation_id,
+                parent_resource_id=parent_resource_id,
+                key_hmac=key_hmac,
+            )
+            if existing is None:
+                raise
+            return self._resolve_existing_record(existing, request_hash=request_hash)
+        except Exception:
+            # mutate()가 IntegrityError가 아닌 도메인 예외로 실패했을 수 있다(PR #346 리뷰).
+            # 예: 동일 key의 두 요청이 동시에 여기 들어와 각자 mutate()를 실행하면, 그 안에서
+            # 실제 domain lock(FOR UPDATE 등)으로 순서가 정해지고 패자는 승자가 커밋한 상태를
+            # 보고 도메인 충돌(예: ApiError 409)을 던진다 — 이 경로는 위 IntegrityError 분기에
+            # 도달하지 않으므로, 그대로 두면 같은 key·같은 지문의 재현 요청이 도메인 오류로
+            # 끝나 계약("동일 key·동일 요청은 최초 200 snapshot을 재현")을 어긴다. 승자가 이미
+            # 레코드를 저장했다면 그걸 다시 조회해 지문이 같으면 재현하고, 없으면(진짜 무관한
+            # 오류라면) 원래 예외를 그대로 전파한다.
             existing = await self._repository.find_sync_idempotency_record(
                 user_id=user_id,
                 operation_id=operation_id,

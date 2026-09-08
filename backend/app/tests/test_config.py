@@ -386,3 +386,49 @@ def test_idempotency_snapshot_encryption_key_accepts_configured_value_outside_lo
     )
 
     assert config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY == REAL_SNAPSHOT_ENCRYPTION_KEY
+
+
+# PR #346 리뷰: key/version 교체 뒤에도 TTL이 남은 snapshot을 복호화하기 위한 retired key ring.
+RETIRED_SNAPSHOT_ENCRYPTION_KEY = "xarzX9iazRmjjafi3G4NAVluYNu0n0YYgT3INatokNU="
+
+
+def test_idempotency_snapshot_encryption_retired_keys_default_is_empty() -> None:
+    config = Config.model_validate(BASE_CONFIG)
+
+    assert config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS == {}
+
+
+def test_idempotency_snapshot_encryption_retired_keys_accepts_valid_fernet_keys() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION": "v2",
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS": {"v1": RETIRED_SNAPSHOT_ENCRYPTION_KEY},
+        }
+    )
+
+    assert config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS == {"v1": RETIRED_SNAPSHOT_ENCRYPTION_KEY}
+
+
+def test_idempotency_snapshot_encryption_retired_keys_rejects_invalid_fernet_format() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION": "v2",
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS": {"v1": "not-a-valid-fernet-key"},
+            }
+        )
+
+
+def test_idempotency_snapshot_encryption_retired_keys_rejects_active_version_reused() -> None:
+    """같은 version 문자열이 active key와 retired key 양쪽에 배포되는 모호한 구성은
+    운영 절차가 아니라 기동 시점에 바로 막습니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION": "v1",
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS": {"v1": RETIRED_SNAPSHOT_ENCRYPTION_KEY},
+            }
+        )
