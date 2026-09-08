@@ -89,54 +89,71 @@ def _create_membership_guards() -> None:
     op.execute(
         sa.text(
             """
+            CREATE OR REPLACE FUNCTION register_prescription_version_assembly()
+            RETURNS trigger AS $$
+            DECLARE
+                assembly_ids text;
+                version_id text := btrim(NEW.id::text);
+            BEGIN
+                assembly_ids := current_setting(
+                    'app.prescription_version_assembly_ids',
+                    true
+                );
+
+                IF assembly_ids IS NULL OR assembly_ids = '' THEN
+                    assembly_ids := version_id;
+                ELSIF NOT version_id = ANY(string_to_array(assembly_ids, ',')) THEN
+                    assembly_ids := assembly_ids || ',' || version_id;
+                END IF;
+
+                PERFORM set_config(
+                    'app.prescription_version_assembly_ids',
+                    assembly_ids,
+                    true
+                );
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE TRIGGER trg_prescription_version_register_assembly
+            AFTER INSERT ON prescription_version
+            FOR EACH ROW
+            EXECUTE FUNCTION register_prescription_version_assembly()
+            """
+        )
+    )
+
+    op.execute(
+        sa.text(
+            """
             CREATE OR REPLACE FUNCTION prevent_frozen_prescription_version_medication_insert()
             RETURNS trigger AS $$
             DECLARE
-                parent_prescription_id char(36);
-                active_version_id char(36);
-                prescription_xmin bigint;
-                version_xmin bigint;
+                assembly_ids text;
+                version_id text := btrim(NEW.prescription_version_id::text);
             BEGIN
-                SELECT prescription_id, xmin::text::bigint
-                INTO parent_prescription_id, version_xmin
-                FROM prescription_version
-                WHERE id = NEW.prescription_version_id;
+                assembly_ids := current_setting(
+                    'app.prescription_version_assembly_ids',
+                    true
+                );
 
-                IF NOT FOUND THEN
+                -- The registration trigger records every Version created in this top-level
+                -- transaction. A transaction-local setting survives a released SAVEPOINT,
+                -- rolls back with an aborted SAVEPOINT, and is cleared at transaction end.
+                IF assembly_ids IS NOT NULL
+                   AND version_id = ANY(string_to_array(assembly_ids, ',')) THEN
                     RETURN NEW;
                 END IF;
 
-                SELECT prescription.active_version_id, prescription.xmin::text::bigint
-                INTO active_version_id, prescription_xmin
-                FROM prescription
-                WHERE id = parent_prescription_id
-                FOR UPDATE;
-
-                -- A version activation transaction may assemble its medication set before
-                -- commit. Once that prescription tuple is committed, active and superseded
-                -- versions reject all further membership changes.
-                IF active_version_id = NEW.prescription_version_id
-                   AND prescription_xmin = txid_current()
-                   AND version_xmin = txid_current() THEN
-                    RETURN NEW;
-                END IF;
-
-                IF active_version_id = NEW.prescription_version_id
-                   OR EXISTS (
-                       SELECT 1
-                       FROM prescription_version AS newer_version
-                       JOIN prescription_version AS target_version
-                         ON target_version.id = NEW.prescription_version_id
-                       WHERE newer_version.prescription_id = target_version.prescription_id
-                         AND newer_version.version_number > target_version.version_number
-                   ) THEN
-                    RAISE EXCEPTION
-                        'prescription version medication set is frozen; create a new version instead'
-                        USING ERRCODE = '23514',
-                              CONSTRAINT = 'chk_prescription_version_medication_frozen';
-                END IF;
-
-                RETURN NEW;
+                RAISE EXCEPTION
+                    'prescription version medication set is frozen; create a new version instead'
+                    USING ERRCODE = '23514',
+                          CONSTRAINT = 'chk_prescription_version_medication_frozen';
             END;
             $$ LANGUAGE plpgsql;
             """
@@ -159,6 +176,12 @@ def _create_membership_guards() -> None:
             CREATE OR REPLACE FUNCTION check_prescription_version_medications()
             RETURNS trigger AS $$
             BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM prescription_version WHERE id = NEW.id
+                ) THEN
+                    RETURN NEW;
+                END IF;
+
                 IF NOT EXISTS (
                     SELECT 1
                     FROM prescription_version_medication
@@ -193,6 +216,12 @@ def _create_membership_guards() -> None:
             CREATE OR REPLACE FUNCTION check_prescription_active_version_medications()
             RETURNS trigger AS $$
             BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM prescription WHERE id = NEW.id
+                ) THEN
+                    RETURN NEW;
+                END IF;
+
                 IF NEW.active_version_id IS NOT NULL
                    AND NOT EXISTS (
                        SELECT 1
@@ -334,6 +363,8 @@ def downgrade() -> None:
         "ON prescription_version_medication"
     )
     op.execute("DROP FUNCTION IF EXISTS prevent_frozen_prescription_version_medication_insert()")
+    op.execute("DROP TRIGGER IF EXISTS trg_prescription_version_register_assembly ON prescription_version")
+    op.execute("DROP FUNCTION IF EXISTS register_prescription_version_assembly()")
     op.execute(
         "DROP TRIGGER IF EXISTS trg_prescription_version_medication_prevent_delete ON prescription_version_medication"
     )

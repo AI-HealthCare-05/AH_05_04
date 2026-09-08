@@ -291,6 +291,7 @@ def test_prescription_version_schema_constraints_exist() -> None:
     assert "trg_prescription_version_prevent_delete" in schema_objects
     assert "trg_prescription_version_medication_prevent_update" in schema_objects
     assert "trg_prescription_version_medication_prevent_delete" in schema_objects
+    assert "trg_prescription_version_register_assembly" in schema_objects
     assert "trg_prescription_version_medication_prevent_frozen_insert" in schema_objects
     assert "trg_prescription_version_medication_required" in schema_objects
     assert "trg_prescription_active_version_medication" in schema_objects
@@ -312,18 +313,44 @@ def test_prescription_version_constraints_and_immutability_are_enforced() -> Non
                 expected_text="uq_prescription_version_number",
             )
         )
-        asyncio.run(
-            _execute_expect_db_error(
-                """
-                INSERT INTO prescription_version_medication (
-                    id, prescription_version_id, medication_name, display_order
-                )
-                VALUES (:invalid_id, :version_id, '   ', 2)
-                """,
-                {**ids, "invalid_id": str(uuid4())},
-                expected_text="chk_prescription_version_medication_name_nonblank",
-            )
-        )
+
+        async def reject_blank_medication_during_assembly() -> None:
+            async with _connection() as connection:
+                transaction = await connection.begin()
+                try:
+                    invalid_version_id = str(uuid4())
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO prescription_version (
+                                id, prescription_id, version_number, prescribed_date, confirmed_at
+                            )
+                            VALUES (:invalid_version_id, :prescription_id, 2, DATE '2026-09-07', now())
+                            """
+                        ),
+                        {**ids, "invalid_version_id": invalid_version_id},
+                    )
+                    with pytest.raises(DBAPIError) as exc_info:
+                        await connection.execute(
+                            text(
+                                """
+                                INSERT INTO prescription_version_medication (
+                                    id, prescription_version_id, medication_name, display_order
+                                )
+                                VALUES (:invalid_id, :invalid_version_id, '   ', 1)
+                                """
+                            ),
+                            {
+                                **ids,
+                                "invalid_id": str(uuid4()),
+                                "invalid_version_id": invalid_version_id,
+                            },
+                        )
+                    assert "chk_prescription_version_medication_name_nonblank" in str(exc_info.value)
+                finally:
+                    await transaction.rollback()
+
+        asyncio.run(reject_blank_medication_during_assembly())
         asyncio.run(
             _execute_expect_db_error(
                 """
@@ -412,7 +439,7 @@ def test_active_and_historical_version_medication_sets_are_frozen() -> None:
     second_version_id = str(uuid4())
     second_medication_id = str(uuid4())
 
-    async def create_and_activate_second_version() -> None:
+    async def create_second_version() -> None:
         async with _connection() as connection:
             async with connection.begin():
                 await connection.execute(
@@ -441,10 +468,6 @@ def test_active_and_historical_version_medication_sets_are_frozen() -> None:
                         "second_medication_id": second_medication_id,
                     },
                 )
-                await connection.execute(
-                    text("UPDATE prescription SET active_version_id = :second_version_id WHERE id = :prescription_id"),
-                    {**ids, "second_version_id": second_version_id},
-                )
                 await connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
 
     try:
@@ -462,7 +485,26 @@ def test_active_and_historical_version_medication_sets_are_frozen() -> None:
             )
         )
 
-        asyncio.run(create_and_activate_second_version())
+        asyncio.run(create_second_version())
+
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO prescription_version_medication (
+                    id, prescription_version_id, medication_name, display_order
+                )
+                VALUES (:late_id, :second_version_id, '커밋후추가약', 2)
+                """,
+                {
+                    **ids,
+                    "second_version_id": second_version_id,
+                    "late_id": str(uuid4()),
+                },
+                expected_text="prescription version medication set is frozen",
+            )
+        )
+
+        asyncio.run(_activate_version(ids, second_version_id))
 
         for frozen_version_id in (ids["version_id"], second_version_id):
             asyncio.run(
@@ -546,34 +588,43 @@ def test_deferred_active_fk_supports_future_not_null_creation_transaction() -> N
                     ),
                     ids,
                 )
-                # The active version does not exist yet. This INSERT succeeds only
-                # because fk_prescription_active_version is initially deferred.
-                await connection.execute(
-                    text(
-                        """
-                        INSERT INTO prescription (
-                            id, active_version_id, document_id, source_ocr_job_id,
-                            profile_id, prescribed_date, prescription_status, confirmed_at
-                        )
-                        VALUES (
-                            :prescription_id, :version_id, :document_id, :ocr_job_id,
-                            :profile_id, DATE '2026-09-08', 'CONFIRMED', now()
-                        )
-                        """
-                    ),
-                    ids,
-                )
-                await connection.execute(
-                    text(
-                        """
-                        INSERT INTO prescription_version (
-                            id, prescription_id, version_number, prescribed_date, confirmed_at
-                        )
-                        VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now())
-                        """
-                    ),
-                    ids,
-                )
+                # Prescription points to a Version that does not exist yet. This
+                # succeeds only because the active FK is initially deferred.
+                nested_transaction = await connection.begin_nested()
+                try:
+                    # The registration trigger runs inside this SAVEPOINT. Its
+                    # transaction-local assembly ID must survive RELEASE.
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO prescription (
+                                id, active_version_id, document_id, source_ocr_job_id,
+                                profile_id, prescribed_date, prescription_status, confirmed_at
+                            )
+                            VALUES (
+                                :prescription_id, :version_id, :document_id, :ocr_job_id,
+                                :profile_id, DATE '2026-09-08', 'CONFIRMED', now()
+                            )
+                            """
+                        ),
+                        ids,
+                    )
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO prescription_version (
+                                id, prescription_id, version_number, prescribed_date, confirmed_at
+                            )
+                            VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now())
+                            """
+                        ),
+                        ids,
+                    )
+                    await nested_transaction.commit()
+                except BaseException:
+                    await nested_transaction.rollback()
+                    raise
+                # Medication assembly continues after SAVEPOINT release.
                 await connection.execute(
                     text(
                         """
@@ -590,6 +641,88 @@ def test_deferred_active_fk_supports_future_not_null_creation_transaction() -> N
                 await transaction.rollback()
 
     asyncio.run(create_graph_with_final_not_null_shape())
+
+
+def test_create_then_parent_delete_same_transaction_commits() -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_prescription_version())
+    replacement_version_id = str(uuid4())
+    replacement_medication_id = str(uuid4())
+
+    async def replace_and_delete_graph() -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(text("DELETE FROM prescription WHERE id = :prescription_id"), ids)
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription (
+                            id, active_version_id, document_id, source_ocr_job_id,
+                            profile_id, prescribed_date, prescription_status, confirmed_at
+                        )
+                        VALUES (
+                            :prescription_id, :replacement_version_id, :document_id, :ocr_job_id,
+                            :profile_id, DATE '2026-09-08', 'CONFIRMED', now()
+                        )
+                        """
+                    ),
+                    {**ids, "replacement_version_id": replacement_version_id},
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version (
+                            id, prescription_id, version_number, prescribed_date, confirmed_at
+                        )
+                        VALUES (:replacement_version_id, :prescription_id, 1, DATE '2026-09-08', now())
+                        """
+                    ),
+                    {**ids, "replacement_version_id": replacement_version_id},
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version_medication (
+                            id, prescription_version_id, medication_name, display_order
+                        )
+                        VALUES (:replacement_medication_id, :replacement_version_id, '합성교체약', 1)
+                        """
+                    ),
+                    {
+                        **ids,
+                        "replacement_version_id": replacement_version_id,
+                        "replacement_medication_id": replacement_medication_id,
+                    },
+                )
+                await connection.execute(text("DELETE FROM prescription WHERE id = :prescription_id"), ids)
+
+    try:
+        asyncio.run(replace_and_delete_graph())
+        assert asyncio.run(_count_rows("prescription", "id = :prescription_id", ids)) == 0
+        assert asyncio.run(_count_rows("prescription_version", "prescription_id = :prescription_id", ids)) == 0
+    finally:
+        asyncio.run(_cleanup_prescription_version(ids))
+
+
+def test_update_then_parent_delete_same_transaction_commits() -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_prescription_version())
+
+    async def activate_and_delete_parent() -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text("UPDATE prescription SET active_version_id = :version_id WHERE id = :prescription_id"),
+                    ids,
+                )
+                await connection.execute(text("DELETE FROM prescription WHERE id = :prescription_id"), ids)
+
+    try:
+        asyncio.run(activate_and_delete_parent())
+        assert asyncio.run(_count_rows("prescription", "id = :prescription_id", ids)) == 0
+        assert asyncio.run(_count_rows("prescription_version", "prescription_id = :prescription_id", ids)) == 0
+    finally:
+        asyncio.run(_cleanup_prescription_version(ids))
 
 
 def test_parent_prescription_delete_cascades_immutable_snapshots() -> None:

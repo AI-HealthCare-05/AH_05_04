@@ -278,8 +278,8 @@ Revision `169a1b2c3d4e`는 #169의 Expand 단계로 `prescription_version`, `pre
 | Version sequence | `(prescription_id, version_number)` unique, `version_number > 0` |
 | 활성 Version | `(prescription.active_version_id, prescription.id)`가 `(prescription_version.id, prescription_version.prescription_id)`를 `DEFERRABLE INITIALLY DEFERRED`로 참조하므로 다른 처방의 Version을 가리킬 수 없고 향후 NOT NULL 상태의 원자 생성도 가능 |
 | Version Medication | `(prescription_version_id, display_order)` unique, 양수 display order·dose·frequency·duration 및 비어 있지 않은 약명 CHECK. 지연 제약은 commit 시 모든 Version과 active pointer에 약물 1개 이상을 요구 |
-| Snapshot 집합 동결 | 최신 draft 조립 중에만 Medication INSERT 허용. active/historical Version에는 사후 INSERT 차단 |
-| 불변성과 삭제 | Version/Medication 직접 UPDATE·DELETE 차단. 사용자 삭제는 `prescription`에서 시작하는 `ON DELETE CASCADE`만 허용 |
+| Snapshot 집합 동결 | Version INSERT가 transaction-local assembly ID를 자동 등록하며, 동일 top-level transaction에서만 해당 Medication INSERT 허용. release된 SAVEPOINT 뒤에도 조립 가능하고 commit된 draft·active·historical Version에는 사후 INSERT 차단 |
+| 불변성과 삭제 | Version/Medication 직접 UPDATE·DELETE 차단. 사용자 삭제는 `prescription`에서 시작하는 `ON DELETE CASCADE`만 허용하며, 지연 검증은 commit 전에 이미 연쇄 삭제된 행의 큐 이벤트를 건너뜀 |
 
 현재 `prescription`, `medication`, `medical_document`, `profile` 테이블은 그대로 유지합니다. 소유권은 `prescription.profile_id`, 출처는 기존 `prescription.document_id`와 `source_ocr_job_id` chain을 사용합니다. Candidate Search·Identification FK 연결, Version 1 backfill, dual-write, read cutover와 `active_version_id NOT NULL` 전환은 후속 분할 PR 범위입니다.
 
