@@ -1,21 +1,25 @@
-# #309 처방일 라벨·값 연결 — 1단계 재현
+# #309 처방일 라벨·값 연결 검증 기록
 
 - 관련 이슈: #309
 - 구현: 김지혜 (`Jye-rookie`), 리뷰: 송은영 (`phina-io`)
-- 상태: 재현 완료, 동작 수정 전. 실패 테스트 2건이 남아 있는 중간 커밋.
+- 상태: 1~3단계 구현 완료. 4단계 최종 검증 결과는 문서 마지막에 기록하며 PR 리뷰·CI·병합은 별도다.
 - 기준 develop: `bd6b4d6bc2d2a04d24bd88012dbaea91ee1aa3fb`
 - 실행일: 2026-09-08
 
-## 합성 입력
+## 1단계 재현 기록 (수정 전)
+
+아래 실패 2건은 최초 재현 당시 결과이며, 2단계에서 해결했다.
+
+### 합성 입력
 
 생년월일 라벨과 2000년 이후 날짜 값을 서로 다른 박스로 같은 줄에 배치한다.
 교부일자는 별도 줄에 두고 라벨·값이 같은 박스인 경우와 분리된 경우를 각각 검증한다.
 좌표와 값은 고정한 채 입력 배열 순서만 뒤집어 총 4개 사례를 비교한다.
 실제 환자 정보·외부 OCR 호출은 사용하지 않는다.
 
-## 관찰 결과
+### 당시 관찰 결과
 
-| 배열 순서 | 교부일자 박스 | 기대 | 현재 결과 |
+| 배열 순서 | 교부일자 박스 | 기대 | 수정 전 결과 |
 | --- | --- | --- | --- |
 | 생년월일 먼저 | 라벨·값 함께 | 2026-08-12 | 2010-03-15, 실패 |
 | 생년월일 먼저 | 라벨·값 분리 | 2026-08-12 | 2010-03-15, 실패 |
@@ -88,3 +92,59 @@ DB 테스트는 기존 Backend 모델 생성 fixture를 사용했다. 이번 변
 않으므로 migration 재적용은 하지 않았다. 외부 OCR/LLM 호출·운영 데이터는 사용하지 않았다.
 #144/#350은 아직 이 작업 브랜치에 포함하지 않았으며 함께 병합된 상태의 회귀 결과는 아니다.
 4단계에서 최신 develop 확인·계약 문서·최종 검사·PR 초안을 정리하고 한 번에 푸시한다.
+
+
+## 4단계 — 완료 조건 대조와 최종 검증
+
+#349가 포함된 develop `16059da71a993de329183a176c1a8c560301fb30`를 병합했다.
+이슈는 내부 파싱 버그 수정으로 명시되어 있으며, API·DTO·DB·필수값·상태·공개 조건을 변경하지 않는다.
+기존 `date-rule-v1` 정규화 형식과 원문·confidence를 유지하므로 새 공유 계약을 만들거나
+미병합 동작을 current 계약의 완료 상태로 승격하지 않는다.
+
+| #309 완료 조건 | 구현·검증 근거 |
+| --- | --- |
+| 좌표 기반 분리 라벨 연결 | `_nearby_date_label_kind`: center_x/center_y/height로 인접 왼쪽·위 라벨 선택 |
+| 분리된 생년월일 제외 | `test_structure_excludes_birthdate_with_separate_label`, `test_structure_excludes_date_below_birthdate_label` |
+| 교부일자·발행일 등 우선 | `test_structure_prefers_labeled_date_to_unlabeled_date` 및 2단계 규칙 설명 |
+| 2000년 이후 생년월일 재현 회귀 | inline/split 교부일자와 배열 순서 반전의 4가지 조합 |
+| #296/#298 기존 날짜 회귀 | 기존 structurer 테스트와 OCR·OCR AI 전체 회귀 |
+| Backend shim 재노출 | `normalize_prescribed_date_text` 재노출, validator의 shim import 및 같은 함수임을 검증 |
+
+### 선택 규칙과 검증 한계
+
+같은 박스 라벨 → 인접 라벨 연결 → 제외 후보 제거 → 선호 라벨 날짜 우선 순서다.
+동일 거리의 선호·제외 라벨은 제외하며, 서로 다른 선호 날짜가 공존하면 날짜를 반환하지 않는다.
+같은 선호 날짜의 반복은 원문 문자열 순서로 선택한다. 선호 라벨이 없으면 기존 첫 유효 후보를 유지한다.
+원문 생년월일만 있고 라벨이 아예 인식되지 않은 상황을 좌표만으로 판별하는 기능은 아니다.
+거리 기준은 합성 fixture에 대한 휴리스틱이며 실제 처방전 레이아웃 전체 정확도를 보증하지 않는다.
+LLM 검증기의 날짜 형식 검사에 좌표 라벨 판정을 새로 적용하지 않는다.
+
+### 최종 로컬 결과
+
+검증 기준: `82b5d6e`(#349까지 develop 반영)의 코드와 이 절을 포함한 문서 변경.
+
+| 검사 | 결과 |
+| --- | --- |
+| Backend OCR·OCR AI·OCR 필드 별칭 계약 | 312 passed |
+| Worker core·OCR·RAG·evaluation | 2,086 passed, 8 skipped |
+| 전체 Ruff·format | 통과, 511 files |
+| Mypy Backend·Worker·ocr_runtime | 통과, 434 source files |
+| Alembic revision graph | `165f90716263` 단일 head |
+| git diff --check | 통과 |
+
+```bash
+# Python 3.13, Backend는 임시 PostgreSQL 16 test DB 사용
+DB_HOST=127.0.0.1 DB_PORT=55446 DB_EXPOSE_PORT=55446 DB_USER=synthetic DB_PASSWORD=synthetic DB_NAME=test PYTHONPATH=backend:. python -m pytest backend/app/tests/ocr backend/app/tests/ocr_ai tests/contract/test_ocr_provider_field_alias_contract.py -q
+PYTHONPATH=. python -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation -q
+ruff check .
+ruff format . --check
+MYPYPATH=backend:. python -m mypy backend/app ai_worker ocr_runtime
+PYTHONPATH=backend:. python -m alembic -c backend/alembic.ini heads
+git diff --check
+```
+
+Backend는 기존 모델 생성 fixture로 격리 DB를 초기화했으며 종료 후 테스트 컨테이너와 볼륨을
+삭제했다. 사용자 DB·실제 OCR/LLM·환자 데이터는 사용하지 않았다. migration 변경이 없으므로
+upgrade/rollback을 재실행하지 않았고 revision graph만 확인했다. 전체 Backend·Redis 통합,
+Frontend·GitHub CI는 이번 로컬 결과에 포함하지 않는다. PR 생성 후 최신 HEAD CI를 확인한다.
+#350/#144는 기준 develop에 아직 포함되지 않아 두 변경을 결합한 검증 완료를 주장하지 않는다.
