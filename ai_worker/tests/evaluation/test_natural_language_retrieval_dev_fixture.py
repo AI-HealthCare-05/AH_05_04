@@ -361,15 +361,13 @@ def test_issue_273_corpus_has_one_gold_and_four_hard_negatives_per_origin() -> N
 
     record_ids = [record["evidence_ref_id"] for record in records]
     content_hashes = [record["content_sha256"] for record in records]
-    expected_record_ids = [
-        evidence_id
-        for origin in RESERVED_PRODUCT_CODES
-        for evidence_id in (
-            f"ev-nlr-{origin.lower()}-gold",
-            *(f"ev-nlr-{origin.lower()}-neg-{number:02d}" for number in range(1, 5)),
-        )
-    ]
-    assert record_ids == expected_record_ids
+    # Ids are content-addressed and the corpus is ordered by them, so neither the id nor the
+    # position tells a retriever what a record is for.
+    assert record_ids == sorted(record_ids)
+    assert all(
+        evidence_id == f"ev-nlr-{record['content_sha256'][:16]}"
+        for evidence_id, record in zip(record_ids, records, strict=True)
+    )
     assert len(record_ids) == len(set(record_ids))
     assert len(content_hashes) == len(set(content_hashes))
     assert {record["evidence_ref_id"] for record in gold_records}.isdisjoint(
@@ -423,9 +421,8 @@ def test_issue_273_cases_share_one_complete_non_gold_knowledge_index_reference()
     mapping = json.loads(graph[MAPPING_PATH])
     cases = [json.loads(content) for path, content in graph.items() if path.startswith(CASE_PREFIX)]
     references = {tuple(sorted(case["context"]["runtime_fixture"]["knowledge_index_ref"].items())) for case in cases}
-    gold_stable_keys = {
-        entry["stable_key"] for entry in mapping["entries"] if entry["evidence_ref_id"].endswith("-gold")
-    }
+    corpus_ids = {record["evidence_ref_id"] for record in index["records"]}
+    gold_stable_keys = {entry["stable_key"] for entry in mapping["entries"] if entry["evidence_ref_id"] in corpus_ids}
 
     assert len(references) == 1
     reference = dict(references.pop())
@@ -442,8 +439,12 @@ def test_issue_273_cases_share_one_complete_non_gold_knowledge_index_reference()
     assert selected_index["evidence_type"] == "KNOWLEDGE_CHUNK"
     assert selected_index["resource_scope"] == "COMPLETE_SYNTHETIC_KNOWLEDGE_INDEX"
     assert selected_index["corpus_record_count"] == 100
-    assert selected_index["gold_record_count"] == 20
-    assert selected_index["hard_negative_record_count"] == 80
+    # The Gold/negative split is evaluation metadata and lives in the sidecar, not in the index.
+    assert "gold_record_count" not in selected_index
+    assert "hard_negative_record_count" not in selected_index
+    sidecar = json.loads(graph[LABEL_PATH])
+    assert sidecar["gold_record_count"] == 20
+    assert sidecar["hard_negative_record_count"] == 80
 
 
 def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None:
@@ -455,19 +456,22 @@ def test_issue_273_corpus_statements_are_sentence_ready_natural_korean() -> None
         for statement in statements_by_id.values()
         for malformed in ("제품의 제품의", "주의사항는", "조건는")
     )
-    assert statements_by_id["ev-nlr-nlr-mi01-gold"] == (
+    gold_statement_by_origin = {
+        record["transform_origin"]: record["statement"] for record in records if record["record_kind"] == "GOLD"
+    }
+    assert gold_statement_by_origin["NLR-MI01"] == (
         "평가용 가상 설정에서 NLR-MI01 제품의 성분 정보는 청색 결정 성분 하나로 구성됩니다."
     )
-    assert statements_by_id["ev-nlr-nlr-pc01-gold"] == (
+    assert gold_statement_by_origin["NLR-PC01"] == (
         "평가용 가상 설정에서 NLR-PC01 제품의 복용 전 주의사항은 봉인선과 확인표의 세 칸을 점검하는 절차입니다."
     )
-    assert statements_by_id["ev-nlr-nlr-lm01-gold"] == (
+    assert gold_statement_by_origin["NLR-LM01"] == (
         "평가용 가상 설정에서 NLR-LM01 제품의 수분 섭취 안내는 기록 카드의 물컵 세 칸을 차례로 표시하는 방식입니다."
     )
-    assert statements_by_id["ev-nlr-nlr-st01-gold"] == (
+    assert gold_statement_by_origin["NLR-ST01"] == (
         "평가용 가상 설정에서 NLR-ST01 제품의 보관 온도 정보는 가상 눈금 B 구간으로 지정됩니다."
     )
-    assert statements_by_id["ev-nlr-nlr-md01-gold"] == (
+    assert gold_statement_by_origin["NLR-MD01"] == (
         "평가용 가상 설정에서 NLR-MD01 제품의 복용 누락을 일찍 알았을 때의 안내는 기록 카드의 절차 A를 조회하는 것입니다."
     )
 
@@ -545,6 +549,32 @@ def test_issue_273_retrieval_projection_carries_no_evaluation_label() -> None:
     }
     # The sidecar is bound by hash from the retrieval artifact, so the split stays verifiable.
     assert index["evaluation_label_ref"] == {"path": LABEL_PATH, "sha256": sha256_hex(graph[LABEL_PATH])}
+
+
+def test_issue_273_retrieval_projection_hides_the_role_case_insensitively() -> None:
+    """Case-insensitive because the first version of this guard was case-sensitive and missed it.
+
+    After the label fields moved to the sidecar, the record ids still read `…-gold` and `…-neg-NN`,
+    so all twenty Gold records were still identifiable by name. Upper-case-only checks passed. So
+    did a Gold set sitting at every fifth position. Both are covered here.
+    """
+    graph = build_issue_273_dev_graph()
+    index_text = graph[INDEX_PATH].decode("utf-8").casefold()
+    for marker in ("gold", "negative", "neg-", "adversarial", "distractor", "정답", "오답"):
+        assert marker.casefold() not in index_text, marker
+
+    records = _labelled_records(graph)
+    identifiers = [record["evidence_ref_id"] for record in records]
+    assert len(set(identifiers)) == 100
+    assert identifiers == sorted(identifiers), "corpus order must follow the neutral id, not authoring order"
+    for record in records:
+        assert record["evidence_ref_id"] == f"ev-nlr-{record['content_sha256'][:16]}"
+
+    # Position must not identify Gold either: reject any constant stride.
+    gold_positions = [index for index, record in enumerate(records) if record["record_kind"] == "GOLD"]
+    assert len(gold_positions) == 20
+    strides = {second - first for first, second in zip(gold_positions, gold_positions[1:], strict=False)}
+    assert len(strides) > 1, gold_positions
 
 
 def test_issue_273_each_negative_type_realises_its_overlap_in_the_statement() -> None:
@@ -687,18 +717,21 @@ def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> No
         assert case["expected"]["required_evidence_refs"] == [gold_id]
         assert case["expected"]["relevant_evidence_refs"] == [gold_id]
 
-    for gold_index, intent in enumerate(BASE_INTENTS):
-        gold_id = gold_by_origin[intent.transform_origin]["evidence_ref_id"]
+    # Chunk numbering follows the corpus order, which is the content-addressed id order rather than
+    # the authoring order — so derive the expected locator and key from the committed positions.
+    gold_positions = [index for index, record in enumerate(records) if record["record_kind"] == "GOLD"]
+    for gold_index, record_index in enumerate(gold_positions):
+        gold_id = records[record_index]["evidence_ref_id"]
         entry = mapping_by_id[gold_id]
         assert entry == {
             "content_sha256": index_sha256,
             "evidence_ref_id": gold_id,
             "evidence_type": "KNOWLEDGE_CHUNK",
             "fixture_record_ref": {"path": INDEX_PATH, "sha256": index_sha256},
-            "locator": f"$.records[{gold_index * 5}]",
+            "locator": f"$.records[{record_index}]",
             "runtime_typed_ref": None,
             "source_version": "1.0.0",
-            "stable_key": f"SYNTHETIC_NLR_GOLD_{gold_index + 1:03d}",
+            "stable_key": f"SYNTHETIC_NLR_CHUNK_{gold_index + 1:03d}",
             "target_kind": "FIXTURE_RECORD",
         }
     assert mapping["review_provenance"]["team_gold_status"] == "DRAFT"

@@ -663,9 +663,19 @@ def _validate_negative_overlap(record: EvidenceRecord, target: BaseIntent) -> No
         raise RuntimeError("Issue 273 cross-topic negatives must share the asked-about subject wording")
 
 
+def _evidence_ref_id(content_sha256: str) -> str:
+    """Content-addressed, role-neutral record id.
+
+    Ids travel inside the retrieval projection, so they must not say what a record is for. An
+    earlier revision used `…-gold` and `…-neg-NN`, which identified all twenty Gold records by name
+    even after the label fields moved to the sidecar. Deriving the id from the statement digest
+    keeps it deterministic and stable while carrying no role, ordinal, or origin.
+    """
+    return f"ev-nlr-{content_sha256[:16]}"
+
+
 def _record(
     *,
-    evidence_ref_id: str,
     transform_origin: str,
     product_code: str,
     topic: Topic,
@@ -674,14 +684,15 @@ def _record(
     negative_type: NegativeType | None = None,
     adversarial_for_transform_origin: str | None = None,
 ) -> EvidenceRecord:
+    content_sha256 = sha256_hex(statement.encode("utf-8"))
     return EvidenceRecord(
-        evidence_ref_id=evidence_ref_id,
+        evidence_ref_id=_evidence_ref_id(content_sha256),
         transform_origin=transform_origin,
         product_code=product_code,
         topic=topic,
         record_kind=record_kind,
         statement=statement,
-        content_sha256=sha256_hex(statement.encode("utf-8")),
+        content_sha256=content_sha256,
         negative_type=negative_type,
         adversarial_for_transform_origin=adversarial_for_transform_origin,
     )
@@ -711,11 +722,11 @@ def _knowledge_index_support_object() -> dict[str, JsonValue]:
         stable_key="SYNTHETIC_NLR_KNOWLEDGE_INDEX",
         content="다섯 주제의 평가용 가상 사실 100개를 모아 둔 전체 합성 지식 색인입니다.",
     )
+    # Only the total belongs here. A Gold/negative breakdown is evaluation metadata, and this
+    # object sits inside the artifact a retrieval Adapter indexes; the split lives in the sidecar.
     support.update(
         {
             "corpus_record_count": 100,
-            "gold_record_count": 20,
-            "hard_negative_record_count": 80,
             "resource_scope": "COMPLETE_SYNTHETIC_KNOWLEDGE_INDEX",
         }
     )
@@ -723,12 +734,16 @@ def _knowledge_index_support_object() -> dict[str, JsonValue]:
 
 
 def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
+    """Build the corpus, then order it so that position carries no signal either.
+
+    Grouping each origin's Gold with its four negatives put every Gold on a five-record stride, so
+    `records[0], records[5], …` was the Gold set regardless of what the ids or fields said. Sorting
+    by the content-addressed id scatters them deterministically.
+    """
     records: list[EvidenceRecord] = []
     for index, intent in enumerate(BASE_INTENTS):
-        origin_lower = intent.transform_origin.lower()
         records.append(
             _record(
-                evidence_ref_id=f"ev-nlr-{origin_lower}-gold",
                 transform_origin=intent.transform_origin,
                 product_code=intent.product_code,
                 topic=intent.topic,
@@ -746,11 +761,10 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
             "LEXICAL_OVERLAP_UNSUPPORTED": intent,
             "CROSS_TOPIC_OVERLAP": cross_topic_intent,
         }
-        for negative_number, negative_type in enumerate(NEGATIVE_TYPES, start=1):
+        for negative_type in NEGATIVE_TYPES:
             source = sources[negative_type]
             records.append(
                 _record(
-                    evidence_ref_id=f"ev-nlr-{origin_lower}-neg-{negative_number:02d}",
                     transform_origin=intent.transform_origin,
                     product_code=source.product_code,
                     topic=source.topic,
@@ -760,13 +774,17 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
                     adversarial_for_transform_origin=intent.transform_origin,
                 )
             )
-    return tuple(records)
+    ordered = sorted(records, key=lambda record: record.evidence_ref_id)
+    if len({record.evidence_ref_id for record in ordered}) != len(ordered):
+        raise RuntimeError("Issue 273 content-addressed evidence ids must be unique")
+    return tuple(ordered)
 
 
 def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, ...]) -> bytes:
     index_sha256 = sha256_hex(index_bytes)
     entries: list[JsonValue] = []
-    for gold_number, record_index in enumerate(range(0, len(records), 5), start=1):
+    gold_positions = [index for index, record in enumerate(records) if record.record_kind == "GOLD"]
+    for chunk_number, record_index in enumerate(gold_positions, start=1):
         record = records[record_index]
         entries.append(
             {
@@ -777,7 +795,8 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
                 "locator": f"$.records[{record_index}]",
                 "runtime_typed_ref": None,
                 "source_version": DATASET_VERSION,
-                "stable_key": f"SYNTHETIC_NLR_GOLD_{gold_number:03d}",
+                # Neutral like the ids: a stable key that names a chunk, not its evaluation role.
+                "stable_key": f"SYNTHETIC_NLR_CHUNK_{chunk_number:03d}",
                 "target_kind": "FIXTURE_RECORD",
             }
         )
@@ -955,6 +974,7 @@ def _build_cases(
     mapping: dict[str, JsonValue],
     rubric: dict[str, JsonValue],
     index_sha256: str,
+    gold_ids_by_origin: dict[str, str],
 ) -> tuple[dict[str, bytes], list[dict[str, JsonValue]]]:
     mapping_ref = _reference(
         cast(str, mapping["mapping_id"]),
@@ -965,7 +985,7 @@ def _build_cases(
     case_values: list[dict[str, JsonValue]] = []
     case_number = 1
     for intent in BASE_INTENTS:
-        gold_id = f"ev-nlr-{intent.transform_origin.lower()}-gold"
+        gold_id = gold_ids_by_origin[intent.transform_origin]
         for variant in intent.variants:
             case_id = f"rag-nlr-dev-{case_number:03d}"
             context = _case_context(
@@ -1290,11 +1310,28 @@ def _build_dataset_manifest(
     return _with_self_hash(payload, "manifest_sha256")
 
 
+# Substrings that would give a retriever the answer for free. Matched case-insensitively because
+# the first attempt at this guard only looked for the upper-case field values and so missed the
+# lower-case `-gold` / `-neg-` markers that the record ids themselves carried.
+_ROLE_MARKERS = ("gold", "negative", "neg-", "adversarial", "distractor", "정답", "오답")
+
+
+def _validate_retrieval_projection(index_bytes: bytes) -> None:
+    """Fail the build if anything a retrieval Adapter can index still names a record's role."""
+    text = index_bytes.decode("utf-8").casefold()
+    for marker in _ROLE_MARKERS:
+        if marker.casefold() in text:
+            raise RuntimeError(f"Issue 273 retrieval projection must not expose the role marker {marker!r}")
+
+
 def _build_evaluation_labels(records: tuple[EvidenceRecord, ...]) -> bytes:
     payload: dict[str, JsonValue] = {
         "data_classification": "SYNTHETIC",
         "label_id": f"{DATASET_CODE}-evaluation-labels",
         "label_version": DATASET_VERSION,
+        "corpus_record_count": len(records),
+        "gold_record_count": sum(1 for record in records if record.record_kind == "GOLD"),
+        "hard_negative_record_count": sum(1 for record in records if record.record_kind == "HARD_NEGATIVE"),
         "labels": [record.to_label_json() for record in records],
         "retrieval_projection_ref": {"path": INDEX_PATH},
         "scope": "EVALUATION_ONLY_NOT_FOR_RETRIEVAL",
@@ -1336,6 +1373,7 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
         },
     }
     graph[INDEX_PATH] = canonical_json_bytes(index_payload)
+    _validate_retrieval_projection(graph[INDEX_PATH])
     graph[EVIDENCE_MAPPING_PATH] = _build_evidence_mapping(graph[INDEX_PATH], evidence_records)
     mapping = cast(dict[str, JsonValue], json.loads(graph[EVIDENCE_MAPPING_PATH]))
     graph[RUBRIC_PATH] = _build_rubric()
@@ -1344,6 +1382,11 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
         mapping=mapping,
         rubric=rubric,
         index_sha256=sha256_hex(graph[INDEX_PATH]),
+        gold_ids_by_origin={
+            record.transform_origin: record.evidence_ref_id
+            for record in evidence_records
+            if record.record_kind == "GOLD"
+        },
     )
     graph.update(cases)
     graph[AUTHORING_IDENTITY_PATH] = _build_authoring_identity(case_values, mapping, index_payload)

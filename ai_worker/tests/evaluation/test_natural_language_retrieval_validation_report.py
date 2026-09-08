@@ -28,7 +28,7 @@ EVALS_ROOT = REPOSITORY_ROOT / "evals"
 DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
 EVALS_README_PATH = EVALS_ROOT / "README.md"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
-DATASET_MANIFEST_HASH = "facf9db8c1027fc062279d2f04465afb1b454a22efd31906d1cfd15de108f69e"
+DATASET_MANIFEST_HASH = "a6461ca49c6021b242bd5b13f3d9b1b52bf564bea186a47894cd254a40600291"
 
 
 def _status_payload() -> dict[str, Any]:
@@ -80,7 +80,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_DEV_FIXTURE",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
                 "exit_code": 0,
-                "result": "24 passed",
+                "result": "25 passed",
             },
             {
                 "check_id": "PHASE_A_LOADER",
@@ -502,7 +502,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    for result in (b"24 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
+    for result in (b"25 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status
