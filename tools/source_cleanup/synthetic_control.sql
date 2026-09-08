@@ -28,21 +28,46 @@ CREATE TABLE source_cleanup.object_receipt (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (workspace_id, object_key)
 );
+CREATE SEQUENCE source_cleanup.review_revision;
 CREATE TABLE source_cleanup.review (
+    revision bigint PRIMARY KEY,
     batch_hash text NOT NULL CHECK (batch_hash ~ '^[0-9a-f]{64}$'),
     role text NOT NULL CHECK (role IN ('PM', 'DB_SECURITY')),
     actor text NOT NULL DEFAULT current_user,
     executor text NOT NULL,
     policy_version text NOT NULL CHECK (policy_version = 'source-artifact-retention-v1'),
     valid_from timestamptz NOT NULL,
-    expires_at timestamptz NOT NULL CHECK (expires_at > valid_from),
-    PRIMARY KEY (batch_hash, role)
+    expires_at timestamptz NOT NULL CHECK (expires_at > valid_from)
 );
 CREATE TABLE source_cleanup.revocation (
     batch_hash text PRIMARY KEY,
     actor text NOT NULL DEFAULT current_user,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+-- All SQL clients participate, including INSERTs outside the CLI. A conflict aborts
+-- immediately; callers must retry explicitly. Revision order is assigned under lock.
+CREATE FUNCTION source_cleanup.lock_review_change() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    IF NOT pg_try_advisory_xact_lock(347, hashtext(NEW.batch_hash)) THEN
+        RAISE EXCEPTION 'CLEANUP_REVIEW_BUSY';
+    END IF;
+    IF TG_TABLE_NAME = 'review' THEN
+        IF EXISTS (SELECT 1 FROM source_cleanup.revocation WHERE batch_hash=NEW.batch_hash) THEN
+            RAISE EXCEPTION 'CLEANUP_BATCH_REVOKED';
+        END IF;
+        NEW.revision := nextval('source_cleanup.review_revision');
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION source_cleanup.lock_review_change() FROM PUBLIC;
+CREATE TRIGGER cleanup_review_lock BEFORE INSERT ON source_cleanup.review
+FOR EACH ROW EXECUTE FUNCTION source_cleanup.lock_review_change();
+CREATE TRIGGER cleanup_revocation_lock BEFORE INSERT ON source_cleanup.revocation
+FOR EACH ROW EXECUTE FUNCTION source_cleanup.lock_review_change();
+CREATE INDEX cleanup_review_latest ON source_cleanup.review(batch_hash, role, revision DESC);
+
 CREATE TABLE source_cleanup.audit (
     sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     batch_hash text NOT NULL,

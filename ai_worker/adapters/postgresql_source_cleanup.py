@@ -12,7 +12,7 @@ import re
 import stat
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -224,9 +224,10 @@ class PostgresApprovalVerifier:
             rows = (
                 (
                     await connection.execute(
-                        text("""SELECT * FROM source_cleanup.review
+                        text("""SELECT DISTINCT ON (role) * FROM source_cleanup.review
                 WHERE batch_hash=:hash AND NOT EXISTS
-                  (SELECT 1 FROM source_cleanup.revocation WHERE batch_hash=:hash)"""),
+                  (SELECT 1 FROM source_cleanup.revocation WHERE batch_hash=:hash)
+                ORDER BY role, revision DESC"""),
                         {"hash": batch_digest},
                     )
                 )
@@ -247,7 +248,7 @@ class PostgresApprovalVerifier:
             return ApprovalEvidence(
                 batch_digest,
                 _POLICY,
-                batch_digest,
+                hashlib.sha256(f"{batch_digest}:{pm['revision']}:{security['revision']}".encode()).hexdigest(),
                 pm["actor"],
                 security["actor"],
                 executor,
@@ -319,6 +320,14 @@ class PostgresLocalCleanupGuard:
                 raise ValueError("Separate restricted execution role required")
             if not await connection.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _LOCK_KEY}):
                 raise ValueError("Source publication in progress")
+            # Review/revocation INSERT triggers take the exclusive side of this lock.
+            # Hold through final verification, unlink and transaction exit. A revoke
+            # committed before acquisition is observed by the verifier inside the guard.
+            if not await connection.scalar(
+                text("SELECT pg_try_advisory_xact_lock_shared(347, hashtext(:hash))"),
+                {"hash": batch.digest()},
+            ):
+                raise ValueError("Batch review change in progress")
             # Even direct INSERTs outside the managed publisher cannot commit during this guard.
             # Such writers must not publish/reuse before taking the shared lock (runbook contract).
             await connection.execute(text("SELECT source_cleanup.lock_references()"))
@@ -399,9 +408,27 @@ class _LocalSession:
             WHERE storage_backend=:backend AND object_key=:key"""),
             {"backend": storage_backend, "key": object_key},
         )
-        # All generated workspace objects are controlled here; no external evidence is generated.
-        # Existing Source roots cannot be enrolled. Schema change above invalidates this inventory.
-        return ReferenceObservation(self.batch.scope.database_id, count, self.batch.scope.namespace, True, 0, True)
+        scope = await self._inspect_downstream_scope(object_key)
+        return replace(scope, direct_count=count)
+
+    async def _inspect_downstream_scope(self, object_key: str) -> ReferenceObservation:
+        """Only the registered, generated synthetic workspace has a closed inventory.
+
+        Operational Citation/Evaluation/external evidence discovery is not implemented.
+        Extending the database gate alone must never turn that missing survey into zero.
+        """
+        try:
+            if self.batch.environment != "SYNTHETIC_LOCAL" or self.batch.scope.storage_backend != "LOCAL_PRIVATE":
+                raise ValueError("Non-synthetic environment")
+            await require_synthetic_database(self.connection)
+            await self.assert_held()
+            registered = await load_batch(self.connection.engine, self.batch.scope.database_id)
+            target = next(t for t in self.batch.targets if t.observation.object_key == object_key)
+            if registered != self.batch or not target.observation.source_owned or await self.observe(target) != target:
+                raise ValueError("Synthetic provenance unproven")
+        except (ValueError, StopIteration, OSError) as exc:
+            raise NotImplementedError("Non-synthetic downstream reference survey unavailable") from exc
+        return ReferenceObservation(self.batch.scope.database_id, None, self.batch.scope.namespace, True, 0, True)
 
     def _parent(self, key: str) -> tuple[int, str]:
         match = re.fullmatch(r"sha256/([0-9a-f]{2})/([0-9a-f]{64})\.artifact", key)

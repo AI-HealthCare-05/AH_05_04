@@ -31,6 +31,10 @@ PYTHONPATH=. uv run python tools/source_cleanup/run.py install
 
 `tools/source_cleanup/synthetic_control.sql`은 **합성 도구 전용 schema 설치 파일**이다.
 앱 public schema 변경이나 새 Alembic migration이 아니며 운영 DB에 적용하지 않는다.
+PR #363 리뷰 보완 버전은 `review.revision`과 승인 변경 잠금 trigger를 사용한다.
+이전 설치 DB의 승인·감사를 삭제하거나 schema를 덮어쓰지 않는다. 이전 DB는 증빙으로 보존하고,
+새 일회용 `*_cleanup347_test` DB와 새 합성 workspace에 설치해 다시 검토한다.
+이전 schema에는 승인 revision이 없어 새 verifier가 실패하며 삭제를 진행하지 않는다.
 
 관리자가 서로 다른 합성 DB 계정 3개를 준비한다. 아래 이름은 예시 역할이며 실제 팀원 계정을
 만들거나 권한을 부여했다는 뜻이 아니다. 암호는 URL 환경변수로 전달하고 문서·로그에 쓰지 않는다.
@@ -93,6 +97,13 @@ PYTHONPATH=. uv run python tools/source_cleanup/run.py review --workspace WORKSP
 ```
 
 두 명령은 서로 다른 지정 계정으로 실행한다. 합성 CLI의 검토 유효기간은 1시간이다.
+만료 또는 실행자 오기입을 고칠 때에는 동일 배치에 `review`를 다시 실행한다. 기존 행은 보존하고
+DB가 잠금 안에서 발급한 새 revision을 추가한다. 역할별 최신 revision만 검사하며, 최신 행이
+만료·신원 불일치·잘못된 실행자이면 과거 유효 승인으로 fallback하지 않는다. 두 역할 모두
+현재 실행자를 승인하고 유효기간이 겹쳐야 실행할 수 있다. audit의 `receipt_id`는 배치 hash와
+선택된 PM·DB_SECURITY revision의 SHA-256으로 실제 사용한 검토 쌍을 식별한다.
+철회는 해당 배치의 영구 차단으로 유지한다. 재승인은 만료·오기입을 고치는 기능이며 철회를
+해제하지 않는다. 철회된 배치에 새 검토를 넣는 것도 거부한다.
 실제 정책 승인자의 승인을 받았다는 증빙으로 합성 DB 계정의 기록을 사용하지 않는다.
 대상이 바뀌면 hash가 달라져 이전 검토를 재사용하지 못한다. 철회는 이전 hash를 명시해 append한다.
 
@@ -111,6 +122,19 @@ PYTHONPATH=. uv run python tools/source_cleanup/run.py audit --workspace WORKSPA
 CLI가 기본으로 수행하는 작업은 없고 실행 command를 명시해야 한다. 실패 시 exit code 2와 안전한
 고정 오류만 출력하며 DB URL·SQL parameter·원문 예외를 출력하지 않는다.
 
+## 승인 변경과 삭제 경합
+
+검토·철회 INSERT trigger는 배치별 exclusive transaction advisory lock을 취한다.
+실행 guard는 같은 배치의 shared lock을 취하고, 잠금 안의 승인 재조회부터 객체 검증·unlink 및
+transaction 종료까지 유지한다. CLI 외 직접 INSERT도 같은 trigger를 거친다.
+
+- 철회가 먼저 commit되면 잠금 안 재조회에서 거부하여 삭제하지 않는다.
+- 철회/재검토 transaction이 먼저 진행 중이면 실행이 잠금을 얻지 못해 삭제하지 않는다.
+- 실행이 먼저 잠금을 얻으면 검토/철회 INSERT는 즉시 실패한다. 해당 요청은 기록·commit되지
+  않았으므로 철회 성공으로 안내하지 않는다. 실행 종료 후 필요하면 명시적으로 다시 요청한다.
+- 이미 잠금 안에서 시작된 삭제를 뒤늦은 철회 요청이 취소한다고 보장하지 않는다.
+  CLI 실패는 exit code 2이며 자동 재시도하지 않는다. 다른 배치의 검토를 같은 승인 잠금으로 묶지 않는다.
+
 ## 수집·재사용·참조 commit 경합
 
 관리되는 합성 writer는 `reference_existing_objects(engine, batch)` 안에서 객체 bytes/세대를
@@ -128,6 +152,10 @@ Source별 잠금에만 의존하지 않는다. DB 연결 상실 뒤에도 로컬
 Snapshot/Catalog/검증 provenance를 보호한다. 새 public 테이블/컬럼은 실행자의 조회 권한 유무와
 무관하게 catalog fingerprint를 바꾸므로 보류한다. 합성 workspace는 외부 증빙을 생성하지 않는다.
 기존 root나 운영 Citation/평가의 외부 참조를 자동으로 무참조라고 판단하는 기능은 없다.
+`_inspect_downstream_scope`가 전용 합성 DB·등록 배치·root 잠금·생성 receipt·실제 합성 bytes를
+확인한 경우에만 닫힌 참조 범위를 반환한다. 비합성 또는 귀속이 입증되지 않은 입력에는
+`NotImplementedError`를 발생시키며 조사·실행은 실패로 종료된다. 운영 adapter에서 이 메서드를
+실제 downstream 조회로 구현하기 전에는 `downstream_count=0`을 재사용하지 않는다.
 
 ## 결과·재시도·UNKNOWN 인계
 

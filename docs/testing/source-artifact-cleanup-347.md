@@ -359,3 +359,56 @@ Source writer 동시 transaction·전체 CI는 실행하지 않았다.
 
 실행 절차·권한·감사 위치·운영 제외 범위는 [runbook](../runbooks/source-artifact-cleanup-347.md)에
 인계한다. 남은 PR 리뷰와 사용자의 #335/#165/#323 결과 링크 게시를 완료했다고 기록하지 않는다.
+
+
+## PR #363 리뷰 보완 검증
+
+기준: PR HEAD `f58afbcc93cd8250e2343cecb0384bf94caca7e3`에 이 절과 함께 커밋한 수정.
+위 마무리 결과는 이전 검증 이력이며 이번 보완의 결과는 아래에 구분한다.
+
+- [가빈님 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/363#pullrequestreview-5141560357):
+  승인 변경/철회와 실행의 배치 잠금, 만료·실행자 오기입 후 append-only 재검토를 반영했다.
+- [현우님 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/363#pullrequestreview-5141755115):
+  downstream 범위 확인을 `_inspect_downstream_scope`로 분리하고 비합성·귀속 불명 입력은
+  `NotImplementedError`로 차단했다. 합성 수동 실행은 계속 가능하다.
+
+### 독립 PostgreSQL connection으로 확인한 추가 회귀
+
+| 시나리오 | 결과 |
+| --- | --- |
+| 사전 승인 조회 뒤 철회가 commit됨 | 잠금 안 재조회에서 거부, 모든 객체 보존 |
+| 철회 transaction이 미commit 상태 | 실행 잠금 획득 실패, 모든 객체 보존 |
+| 최종 검사를 끝내고 unlink 직전 철회/재검토 INSERT | trigger가 즉시 실패시켜 commit 불가. 실행 종료 뒤 명시적 재요청 가능 |
+| 만료 또는 잘못된 실행자를 승인한 뒤 새 검토 | 과거 행 보존, 최신 두 revision으로 실행, 감사 receipt 결속 확인 |
+| 최신 승인이 부적격이고 이전 승인은 적격 | 이전 승인으로 fallback 없이 차단 |
+| 철회한 배치에 새 검토 추가 | 거부. 철회 해제 기능 없음 |
+| 비합성 DB/환경·다른 namespace·소유 증거 불일치 | downstream 범위 메서드가 명시적으로 차단 |
+| downstream 참조 양수·범위 불완전·미구현 포트 | 조사에서 보호/보류하고 실제 삭제 없음 |
+
+실행이 먼저 잠금을 얻으면 뒤늦은 철회 요청이 삭제를 취소하지 않는다. 철회 INSERT 자체가
+실패하므로 철회가 확정됐다고 표시하지 않는다. 이 순서를 runbook에도 명시했다.
+
+### 실행 결과
+
+- 전용 PostgreSQL 16: 참조 조회 8건 + workflow 36건 = **44 passed** (7.48초).
+- 기존 cleanup 단위 회귀: **103 passed**.
+- Worker core·OCR·RAG·evaluation 전체: **2356 passed, 8 skipped** (62.72초).
+- 전체 Ruff/format: 통과, **549 files**.
+- Backend·Worker·CLI Mypy: **461 source files** 통과.
+- 앱 migration: 새 일회용 DB에서 base → `169b2c3d4e5f` upgrade 성공. 앱 migration 변경 없음.
+
+명령:
+
+```text
+pytest tests/integration/rag/test_source_cleanup_references.py tests/integration/rag/test_source_cleanup_workflow.py -q
+pytest ai_worker/tests/rag/source_cleanup -q
+pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation -q
+ruff check .
+ruff format --check .
+mypy backend/app ai_worker tools/source_cleanup/run.py
+```
+
+통합 검증은 전용 loopback `*_cleanup347_test` URL과 테스트용 DB 설정을 지정해 수행했다.
+기존 승인·감사 DB의 schema를 덮어쓰지 않았다. 이전 control schema를 사용한 검증 자료는 보존하고,
+새 도구 검증에는 신규 DB/workspace가 필요하다. 원격 CI·Backend/Frontend 전체 서비스 테스트·
+운영 Source/Runtime·S3 삭제는 이번 로컬 검증에 포함하지 않는다.

@@ -301,3 +301,18 @@ private control schema는 전용 합성 DB 도구이며 앱 public schema나 운
 [마무리 검증](../../../testing/source-artifact-cleanup-347.md)을 기준으로 PR 리뷰한다.
 기존 단계의 미연결 표기는 해당 시점 기록이며, 이 구현 연결로 정책의 Proposed 상태나 실제
 운영 삭제 승인이 자동 변경되지는 않는다.
+
+
+### PR #363 리뷰 보완 — 합성 승인 이력·경합·참조 범위
+
+합성 도구의 검토는 append-only revision으로 추가하고 역할별 최신 행만 사용한다.
+만료·실행자 오기입은 재검토로 정정하되, 배치 철회는 종전처럼 영구 차단하며 해제하지 않는다.
+배치별 잠금을 검토/철회 INSERT와 실행이 공유해, 승인 최종 재조회와 unlink 사이에
+철회가 commit되는 경합을 차단한다. 경합한 요청은 즉시 실패하고 명시적 재요청을 요구한다.
+이미 잠금을 얻은 실행보다 늦은 철회가 진행 중 삭제를 취소한다는 의미는 아니다.
+
+참조 scope 판정은 명시된 합성 workspace에만 구현한다. 비합성·귀속 불명은
+`NotImplementedError`로 차단하며 운영 downstream을 0건으로 간주하지 않는다.
+[runbook의 보완 절차](../../../runbooks/source-artifact-cleanup-347.md)와
+[검증 기록](../../../testing/source-artifact-cleanup-347.md)을 함께 리뷰한다.
+이는 PR #363의 내부 도구 보완안이며 운영 정책/공유 앱 DB의 승인 상태를 변경하지 않는다.

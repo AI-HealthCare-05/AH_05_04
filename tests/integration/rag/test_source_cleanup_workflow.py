@@ -93,7 +93,7 @@ async def workflow(control, tmp_path):
     return admin, engines, roles, root, batch, now, verifier, journal, guard
 
 
-async def approve(workflow, *, expires=None):
+async def approve(workflow, *, expires=None, executor=None):
     _, engines, roles, _, batch, now, *_ = workflow
     for key, role in (("pm", "PM"), ("security", "DB_SECURITY")):
         async with engines[key].begin() as connection:
@@ -104,7 +104,7 @@ async def approve(workflow, *, expires=None):
                 {
                     "hash": batch.digest(),
                     "role": role,
-                    "executor": roles["executor"],
+                    "executor": executor or roles["executor"],
                     "policy": batch.scope.policy_version,
                     "start": now - timedelta(hours=1),
                     "end": expires or now + timedelta(hours=1),
@@ -410,3 +410,190 @@ async def test_privileged_account_is_not_execution_role(workflow):
     with pytest.raises(ValueError, match="restricted execution role"):
         async with guard.acquire(batch):
             pytest.fail("Administrator used as executor")
+
+
+@pytest.mark.parametrize("change", ["expire", "executor"])
+async def test_append_only_reapproval_corrects_latest_review(workflow, change):
+    _, engines, roles, _, batch, now, verifier, *_ = workflow
+    await approve(
+        workflow,
+        expires=now if change == "expire" else None,
+        executor="wrong_executor" if change == "executor" else None,
+    )
+    assert not (await execute(workflow)).complete
+    await approve(workflow)
+    receipt = await verifier.verify(batch_digest=batch.digest(), executor=roles["executor"])
+    assert receipt is not None
+    assert (await execute(workflow)).complete
+    async with engines["executor"].connect() as connection:
+        rows = (
+            await connection.execute(
+                text("SELECT revision FROM source_cleanup.review WHERE batch_hash=:hash ORDER BY revision"),
+                {"hash": batch.digest()},
+            )
+        ).all()
+        assert len(rows) == 4 and len(set(rows)) == 4
+        receipts = (
+            await connection.scalars(
+                text("SELECT payload->>'receipt_id' FROM source_cleanup.audit WHERE batch_hash=:hash"),
+                {"hash": batch.digest()},
+            )
+        ).all()
+        assert set(receipts) == {receipt.receipt_id}
+
+
+async def test_invalid_latest_review_never_falls_back_to_previous(workflow):
+    await approve(workflow)
+    await approve(workflow, executor="wrong_executor")
+    assert not (await execute(workflow)).complete
+
+
+async def test_revocation_is_terminal_and_history_is_preserved(workflow):
+    _, engines, _, _, batch, *_ = workflow
+    await approve(workflow)
+    async with engines["pm"].begin() as connection:
+        await connection.execute(
+            text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
+        )
+    with pytest.raises(DBAPIError, match="CLEANUP_BATCH_REVOKED"):
+        await approve(workflow)
+    assert not (await execute(workflow)).complete
+
+
+async def test_revoke_committed_after_precheck_prevents_every_unlink(workflow, monkeypatch):
+    _, engines, _, root, batch, _, verifier, *_ = workflow
+    await approve(workflow)
+    original = verifier.verify
+    ready, revoked = asyncio.Event(), asyncio.Event()
+
+    async def verify_then_pause(**kwargs):
+        receipt = await original(**kwargs)
+        ready.set()
+        await asyncio.wait_for(revoked.wait(), 5)
+        return receipt
+
+    async def revoke():
+        await asyncio.wait_for(ready.wait(), 5)
+        async with engines["pm"].begin() as connection:
+            await connection.execute(
+                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
+            )
+        revoked.set()
+
+    monkeypatch.setattr(verifier, "verify", verify_then_pause)
+    result, _ = await asyncio.gather(execute(workflow), revoke())
+    assert not result.complete
+    assert all((root / t.observation.object_key).exists() for t in batch.targets)
+
+
+@pytest.mark.parametrize("change", ["revoke", "review"])
+async def test_review_write_cannot_commit_between_final_verify_and_unlink(workflow, monkeypatch, change):
+    from ai_worker.adapters.postgresql_source_cleanup import _LocalSession
+
+    _, engines, _, root, batch, *_ = workflow
+    await approve(workflow)
+    original = _LocalSession.delete
+    reached, attempted = asyncio.Event(), asyncio.Event()
+
+    async def pause_before_unlink(self, target):
+        reached.set()
+        await asyncio.wait_for(attempted.wait(), 5)
+        await original(self, target)
+
+    async def change_review():
+        await asyncio.wait_for(reached.wait(), 5)
+        with pytest.raises(DBAPIError, match="CLEANUP_REVIEW_BUSY"):
+            if change == "review":
+                await approve(workflow)
+            else:
+                async with engines["pm"].begin() as connection:
+                    await connection.execute(
+                        text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"),
+                        {"hash": batch.digest()},
+                    )
+        attempted.set()
+
+    monkeypatch.setattr(_LocalSession, "delete", pause_before_unlink)
+    result, _ = await asyncio.gather(execute(workflow), change_review())
+    assert result.complete
+    assert all(not (root / t.observation.object_key).exists() for t in batch.targets)
+    # The failed write was not reported as committed; an explicit retry can now commit.
+    if change == "review":
+        await approve(workflow)
+    else:
+        async with engines["pm"].begin() as connection:
+            await connection.execute(
+                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
+            )
+
+
+async def test_inflight_revocation_blocks_execution(workflow):
+    _, engines, _, root, batch, *_ = workflow
+    await approve(workflow)
+    async with engines["pm"].begin() as connection:
+        await connection.execute(
+            text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
+        )
+        assert not (await execute(workflow)).complete
+    assert all((root / t.observation.object_key).exists() for t in batch.targets)
+
+
+@pytest.mark.parametrize("change", ["database", "environment", "namespace", "ownership"])
+async def test_downstream_scope_requires_proven_synthetic_origin(workflow, monkeypatch, change):
+    import ai_worker.adapters.postgresql_source_cleanup as adapter
+
+    *_, batch, now, verifier, journal, guard = workflow
+    async with guard.acquire(batch) as session:
+        original = session.batch
+        if change == "database":
+
+            async def non_synthetic(connection):
+                raise ValueError("Not a synthetic database")
+
+            monkeypatch.setattr(adapter, "require_synthetic_database", non_synthetic)
+        elif change == "environment":
+            session.batch = replace(batch, environment="PRODUCTION")
+        elif change == "namespace":
+            session.batch = replace(batch, scope=replace(batch.scope, namespace="/unproved"))
+        else:
+            target = batch.targets[0]
+            session.batch = replace(
+                batch,
+                targets=(
+                    replace(target, observation=replace(target.observation, source_owned=False)),
+                    *batch.targets[1:],
+                ),
+            )
+        try:
+            with pytest.raises(NotImplementedError, match="downstream reference survey unavailable"):
+                await session._inspect_downstream_scope(batch.targets[0].observation.object_key)
+        finally:
+            session.batch = original
+
+
+@pytest.mark.parametrize("evidence", ["downstream", "incomplete", "unimplemented"])
+async def test_adapter_downstream_evidence_reaches_fail_closed_survey(workflow, monkeypatch, evidence):
+    from ai_worker.adapters.postgresql_source_cleanup import _LocalSession
+
+    _, engines, _, root, batch, now, *_ = workflow
+    await approve(workflow)
+    original = _LocalSession._inspect_downstream_scope
+
+    async def inspect(self, key):
+        if evidence == "unimplemented":
+            raise NotImplementedError("Operational scope unavailable")
+        observed = await original(self, key)
+        return (
+            replace(observed, downstream_count=1)
+            if evidence == "downstream"
+            else replace(observed, scope_complete=False)
+        )
+
+    monkeypatch.setattr(_LocalSession, "_inspect_downstream_scope", inspect)
+    report = await survey_workspace(engines["executor"], batch, now=now)
+    assert report.complete is (evidence == "downstream")
+    if evidence != "unimplemented":
+        reason = "DOWNSTREAM_REFERENCE" if evidence == "downstream" else "REFERENCE_SCOPE_INCOMPLETE"
+        assert all(item.reason == reason for item in report.items)
+    assert not (await execute(workflow)).complete
+    assert all((root / t.observation.object_key).exists() for t in batch.targets)
