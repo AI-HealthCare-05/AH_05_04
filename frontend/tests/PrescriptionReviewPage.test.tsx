@@ -797,28 +797,78 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     expect(confirmButton).toHaveProperty('disabled', false)
   })
 
-  it('약물 필수 DOSE_VALUE placeholder를 직접 입력할 수 있게 표시하고 저장 전 확정을 차단한다', async () => {
+  it.each([
+    ['DOSE_VALUE', '1회 복용량', '0.5'],
+    ['FREQUENCY_PER_DAY', '하루횟수', '3'],
+    ['DURATION_DAYS', '투약일수', '7'],
+  ] as const)(
+    '약물 필수 %s placeholder를 직접 입력해 기존 PATCH로 저장할 수 있다',
+    async (fieldType, fieldLabel, confirmedValue) => {
+      const placeholder = makePlaceholderField(fieldType, 1)
+      const fields = makeCompleteFields().map((field) =>
+        field.field_type === fieldType ? placeholder : field,
+      )
+      vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
+      vi.mocked(updateExtractedField).mockResolvedValue({
+        data: {
+          ...placeholder,
+          confirmed_value: confirmedValue,
+          confirmation_status: 'CONFIRMED',
+        },
+      })
+
+      renderPage()
+
+      expect(
+        await screen.findByText('일부 필수 항목 인식 누락'),
+      ).toBeTruthy()
+      expect(
+        screen.getByText(/OCR이 인식하지 못해 직접 입력이 필요한 필드예요/),
+      ).toBeTruthy()
+      const acknowledgement = screen.getByRole<HTMLInputElement>('checkbox')
+      const confirmButton = await getConfirmationButton()
+      expect(acknowledgement.disabled).toBe(true)
+      expect(confirmButton).toHaveProperty('disabled', true)
+
+      const input = screen.getByLabelText<HTMLInputElement>(fieldLabel)
+      expect(input.value).toBe('')
+      expect(input.placeholder).toBe('필수 입력')
+
+      fireEvent.change(input, { target: { value: confirmedValue } })
+      fireEvent.click(screen.getByRole('button', { name: '수정완료' }))
+
+      await waitFor(() =>
+        expect(updateExtractedField).toHaveBeenCalledWith(
+          `${fieldType}-1`,
+          confirmedValue,
+        ),
+      )
+      expect(updateExtractedField).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(acknowledgement.disabled).toBe(false))
+      expect(confirmButton).toHaveProperty('disabled', true)
+    },
+  )
+
+  it('정상 MEDICATION_NAME row는 required set에 있어도 placeholder로 판정하지 않는다', async () => {
     const fields = makeCompleteFields().map((field) =>
-      field.field_type === 'DOSE_VALUE'
-        ? makePlaceholderField('DOSE_VALUE', field.medication_index)
+      field.field_type === 'MEDICATION_NAME'
+        ? {
+            ...field,
+            confirmed_value: null,
+            confirmation_status: 'UNCONFIRMED' as const,
+          }
         : field,
     )
     vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(fields))
 
     renderPage()
 
+    expect(await screen.findByText('처방약 1 100mg')).toBeTruthy()
+    expect(screen.queryByText('일부 필수 항목 인식 누락')).toBeNull()
     expect(
-      await screen.findByText('일부 필수 항목 인식 누락'),
-    ).toBeTruthy()
-    expect(
-      screen.getByText(/OCR이 인식하지 못해 직접 입력이 필요한 필드예요/),
-    ).toBeTruthy()
-    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
-    expect(await getConfirmationButton()).toHaveProperty('disabled', true)
-
-    const doseValueInput = screen.getByLabelText<HTMLInputElement>('1회 복용량')
-    expect(doseValueInput.value).toBe('')
-    expect(doseValueInput.placeholder).toBe('필수 입력')
+      screen.queryByText(/OCR이 인식하지 못해 직접 입력이 필요한 필드예요/),
+    ).toBeNull()
+    expect(screen.queryByLabelText('약물이름')).toBeNull()
     expect(updateExtractedField).not.toHaveBeenCalled()
   })
 
