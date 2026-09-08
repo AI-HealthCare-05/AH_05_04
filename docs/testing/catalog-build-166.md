@@ -249,3 +249,19 @@ git diff --check
 이번 수정에는 DB·migration 변경이 없다. Alembic 확인은 revision graph 검사이며 PostgreSQL
 upgrade/rollback 실행 검증이 아니다. 전체 Backend·PostgreSQL·Redis 통합 및 GitHub CI는 이
 수정의 push 후 최신 HEAD에서 확인해야 한다. #166 DB adapter·Runtime 활성화는 후속 범위다.
+
+## #166 DB 후속 1~3단계 검증 (2026-09-08)
+
+기준: develop `e20acb9`, v2 hash 보강 `59684d6`, 저장 준비 구현 `741795c`.
+현재 공개 인계는 계속 `CatalogExportArtifacts` / `medication-catalog-v2`다.
+과거 v1 기록의 숫자와 경로를 이번 검증 증빙으로 재사용하지 않는다.
+
+- 고정 합성 bytes·digest: `tests/fixtures/rag/catalog/hash-v2/`.
+- hash 보강 22건, DB 비의존 저장 준비 26건 추가.
+- RAG 전체 `963 passed`; Ruff 통과; 변경 Python format 통과; RAG Mypy 37파일 통과.
+- 단일 Alembic head `169b2c3d4e5f`, revision graph 29개 확인. 새 migration 없음.
+- 저장 준비 함수는 SQL을 실행하지 않는다. 실제 PostgreSQL 적재·commit/rollback·실행 FK·승인
+  adapter는 미완료이며 테스트 결과를 DB 통합 완료로 해석하지 않는다.
+
+4단계는 D-02 인계 및 합의된 선행 migration 병합 대기다.
+[상세 인계 점검](../designs/jye-rookie/issue-166-db-migration-readiness.md)을 따른다.

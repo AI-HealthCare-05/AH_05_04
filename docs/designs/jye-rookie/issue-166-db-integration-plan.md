@@ -171,3 +171,13 @@ SQL·migration·실행 ID·Set 상태를 만들지 않으며, 실제 PostgreSQL 
 
 3단계 검증: `ai_worker/tests/rag` 963건 통과(신규 저장 준비 26건), RAG Ruff 통과,
 변경 Python 2개 format 통과, RAG Mypy 37파일 통과. PostgreSQL 저장·migration 적용은 수행하지 않았다.
+
+## 4단계 — 인계 점검, migration 미착수
+
+[Migration 인계 점검](issue-166-db-migration-readiness.md)에 최신 조회 결과, 실제 모델·revision graph,
+변경 순서와 기존 데이터 이행 항목을 기록했다. D-02 인계와 합의된 선행 병합이 확인되지 않아
+schema·migration은 구현하지 않았다. 3단계 코드 완료와 4단계 인계 대기를 구분한다.
+
+사용자가 추가 전달한 #329 현우님 리뷰도 같은 문서에 반영했다. 공개 입력은
+`CatalogExportArtifacts` / `medication-catalog-v2`이며, #167 문서·#166 검증 기록·코드의 정합성과
+과거 v1 증빙의 분리를 후속 완료 기준으로 유지한다.
