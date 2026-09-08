@@ -93,7 +93,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_DEV_FIXTURE",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
                 "exit_code": 0,
-                "result": "25 passed",
+                "result": "26 passed",
             },
             {
                 "check_id": "PHASE_A_LOADER",
@@ -536,7 +536,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    for result in (b"1 passed", b"25 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
+    for result in (b"1 passed", b"26 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status

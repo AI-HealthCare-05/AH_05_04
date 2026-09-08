@@ -34,7 +34,7 @@ _VALIDATION_CHECK_CATALOG = {
     "PHASE_A_DEV_FIXTURE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
-        "25 passed",
+        "26 passed",
     ),
     "PHASE_A_LOADER": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
