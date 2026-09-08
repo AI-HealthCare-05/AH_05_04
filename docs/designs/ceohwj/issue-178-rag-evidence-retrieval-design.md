@@ -3,8 +3,8 @@
 ## 상태
 
 - Issue: `#178`
-- 브랜치: `feat/178-rag-evidence-retrieval`
-- 범위: Knowledge Evidence Retrieval의 순수 kernel과 합성 검증
+- 브랜치: `codex/178-evidence-retrieval-adapters`
+- 범위: Knowledge Evidence Retrieval Kernel과 synthetic exact·trigram·dense·rerank adapter 단위 검증
 - 구현 담당자: 정현우 (`@ceohwj`)
 - 담당 리뷰어: 권가빈 (`@hazelnutflavoured`) — Evidence·Scope·Safety
 - DB·Source 리뷰어: 송은영 (`@phina-io`), 김지혜 (`@Jye-rookie`)
@@ -28,6 +28,13 @@ Evidence Index, Retrieval Run persistence와 Safety Result v2도 Current Runtime
 Candidate Index의 구성원, vector, score 또는 검색 포트를 입력으로 사용하지 않는다. Candidate Index와
 Evidence Index는 version과 물리 경계를 공유하지 않는다.
 
+## Slice 이력
+
+- PR `#270`: `evidence_retrieval.py`의 Kernel, Port Protocol, Receipt·trace·fail-closed 검증만 구현했다.
+- 이번 slice: 위 Protocol을 구현하는 synthetic fixture adapter와 versioned configuration을 추가한다.
+- 후속 slice: RAG-06 공식 Catalog·Evidence Index, PostgreSQL `pg_trgm`·pgvector, Retrieval Run persistence,
+  EVAL `#160` 연결을 담당한다.
+
 ## 문제
 
 현재 저장소에는 Knowledge Evidence를 대상으로 lexical·dense 검색과 rerank를 순서대로 호출하고,
@@ -50,7 +57,7 @@ Evidence Index는 version과 물리 경계를 공유하지 않는다.
 
 ## 제외 범위
 
-- PostgreSQL `pg_trgm`, pgvector query, migration과 repository
+- 실제 PostgreSQL `pg_trgm`, pgvector query, migration과 repository
 - Knowledge Document parsing, chunking, embedding build와 Evidence Index persistence
 - 실제 embedding provider 또는 model download
 - Source 승인, Runtime Bundle membership, Guard Decision과 operation selection 판정
@@ -88,7 +95,17 @@ Citation 금지 조건을 약화하므로 채택하지 않는다.
 ### 미선택: PostgreSQL score를 Python으로 모사
 
 extension 설정, tokenizer, vector distance와 tie-break가 확정되지 않은 상태에서 Python으로 모사하면
-실제 adapter와 다른 결과를 만든다. Kernel은 score 계산이 아니라 port output 검증만 소유한다.
+실제 adapter와 다른 결과를 만든다. 따라서 이번 구현은 PostgreSQL 호환성 adapter가 아니라 알고리즘과
+Receipt 경계를 검증하는 명시적 synthetic fixture adapter로 이름과 완료 주장을 제한한다.
+
+### 선택: synthetic exact·trigram·dense와 versioned rerank adapter
+
+PR `#270`의 `LEXICAL/DENSE` Kernel stage를 유지한다. `LEXICAL` 내부에서 normalized substring exact match를
+우선하고 나머지 후보에 synthetic trigram similarity를 적용한다. `DENSE`는 query fingerprint에 결속된
+fixture vector와 record vector의 Decimal cosine similarity를 사용한다. Reranker는 versioned lexical/dense
+weight와 `top_k`를 적용한다. `LEXICAL` 정렬은 exact 우선, score 내림차순, UTF-8 `evidence_key` 오름차순
+순서이며 trigram score가 `1`이어도 exact가 앞선다. `DENSE`와 rerank 정렬은 score 내림차순, UTF-8
+`evidence_key` 오름차순이다. 세 정렬 기준 모두 해당 stage/rerank config artifact에 결속한다.
 
 ## 모듈 경계
 
@@ -108,6 +125,77 @@ Composer를 import하지 않는다.
 
 모든 공개 타입은 이 단위 구현을 위한 내부 provisional API다. Knowledge Evidence Index와 Privacy 계약이
 승인되기 전에는 Production adapter 또는 다른 도메인의 안정 import contract로 승격하지 않는다.
+
+### Synthetic adapter 모듈
+
+`ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`는 외부 DB, embedding provider, model download 또는
+Backend model 없이 다음 frozen fixture와 concrete Port 구현만 가진다.
+
+- `SyntheticEvidenceRecord`: provenance 구성 요소, `SensitiveText` 본문, 문자열 Decimal dense vector
+- `SyntheticEvidenceIndex`: record projection을 UTF-8 key 순으로 canonical JSON 직렬화한 SHA-256 artifact
+- `VersionedLexicalSearchConfig`: exact·matching normalization·trigram 전략, trigram threshold, ordering과 Decimal context를 결속한 artifact
+- `VersionedDenseSearchConfig`: query fingerprint별 synthetic vector, cosine threshold·metric·ordering·Decimal context artifact
+- `VersionedRerankConfig`: lexical/dense weight, `top_k`, tie-break·score precision·Decimal context artifact
+- `SyntheticEvidenceSearchAdapter`, `VersionedEvidenceRerankAdapter`: 기존 Port Protocol의 concrete 구현
+
+각 adapter는 요청 reference뿐 아니라 현재 fixture/config payload를 다시 canonicalize해 artifact hash와
+exact-match한다. frozen dataclass가 `replace` 또는 저수준 mutation으로 분리되었거나 record/key/vector가
+잘못된 경우 성공 Receipt를 만들지 않고 typed failure를 반환한다. Index records와 dense vector는 각각
+tuple이어야 하고, record·candidate·`SensitiveText`는 `isinstance`가 아닌 exact runtime type으로 검증한다.
+따라서 `reveal()`을 재정의하지 않는 benign subclass와, 호출 순서에 따라 다른 본문을 돌려주는 stateful
+subclass 모두 typed failure로 닫힌다. 후자를 허용하면 provenance `content_sha256`과 이후 `content_text`
+reveal 결과가 서로 다른 본문에서 파생될 수 있다. Threshold와 rerank weight 역시 JSON number가 아닌
+canonical Decimal 문자열만 허용한다.
+
+이 모듈은 테스트만 import한다. `ai_worker` production 모듈이 이 모듈을 import하면 CI 테스트가 실패한다.
+
+이 모듈이 직접 적용하는 Index·stage config·adapter artifact는 artifact code 또는 version에 `synthetic`
+namespace가 있어야 한다. Source record도 `source_snapshot_ref` 또는 `source_version`으로 synthetic임을
+식별할 수 있어야 한다. 운영 Source처럼 보이는 provenance와 Receipt가 들어오면 성공 결과를 만들지 않고
+typed failure로 닫는다.
+
+Index marker와 Source marker는 서로를 대체하지 않고 각각 독립으로 요구한다. Rerank candidate
+provenance는 `evidence_index_ref`가 synthetic namespace를 갖더라도 `source_snapshot_ref` 또는
+`source_version`이 synthetic으로 식별되지 않으면 거부하고, 반대로 Source가 synthetic이어도
+`evidence_index_ref`가 synthetic namespace가 아니면 거부한다. synthetic Index가 승인 Source 형태
+provenance를 보증하거나, synthetic Source가 운영 Evidence Index를 보증하는 것을 둘 다 막는 경계다.
+
+marker 판정은 artifact ref와 `source_version` 모두 case-sensitive 소문자 canonical 형태만 인정한다.
+`MFDS-SYNTHETIC@2026`처럼 승인 Source 형태의 대문자 표기는 marker로 읽지 않는다.
+
+record·candidate·config·`SensitiveText`와 canonical container는 정확한 런타임 타입으로만 통과한다.
+`isinstance`를 쓰면 하위 타입이 검증 시점과 실행 시점에 다른 값을 반환할 수 있고, 그 경우 성공
+Receipt가 가리키는 artifact hash와 실제 적용값이 갈린다. `records`, `dense_vector`, `query_vectors`,
+`values`, rerank `candidates`, `stage_signals`는 `type(x) is tuple`로 검사한다. `__iter__`가 재결속
+검사 이후 다른 record를 내주는 tuple 하위 타입은 Kernel이 index payload를 모르기 때문에 이후 단계에서도
+잡히지 않으므로, 이 경계는 adapter가 직접 닫는다.
+
+Lexical trigram 추출은 [PostgreSQL pg_trgm 문서](https://www.postgresql.org/docs/17/pgtrgm.html)의 원칙에 따라
+비영숫자 문자를 무시하고 각 단어 앞에 공백 2개, 뒤에 공백 1개를 붙인 뒤 PostgreSQL `similarity()`와 같은
+Jaccard 분모 `|A ∩ B| / |A ∪ B|`를 사용한다. Artifact strategy는
+`synthetic-trigram-jaccard-v1`이며 실제 extension, collation, locale, index operator class 또는 운영 SQL과의
+동등성을 주장하지 않는다. Production Adapter는 synthetic threshold를 운영값으로 그대로 승격하지 않고
+실제 PostgreSQL과 Evaluation dataset으로 다시 검증해야 한다.
+
+Retrieval matching의 NFC·casefold·whitespace collapse는
+`unicode-nfc-casefold-collapse-whitespace-v1`로 lexical config artifact에 결속한다. 이 값은 검색 시점의
+matching normalization이며, Source snapshot의 `normalization_version` 또는 canonical JSON/checksum 규칙인
+`canonicalization_spec_version`과 같은 개념이 아니다. 서로의 version 문자열을 같다고 강제하지 않는다.
+
+Dense query fixture에는 raw query를 넣지 않고 `QueryFingerprint`와 vector만 저장한다. fingerprint 누락·중복,
+dimension mismatch, zero/non-finite/non-string vector나 mutable record collection은 `EvidenceSearchFailure`다. Reranker는
+`knowledge-rerank-input-v1` hash를 재계산하고, 중복 candidate key·stage signal, 비정상 rank·score,
+config/hash mismatch 또는 내부 예외를 raw detail 없이 `EvidenceRerankFailure`로 닫는다.
+
+stage signal score는 canonical finite 문자열인 것만으로 통과하지 않고 해당 stage metric 범위 안에
+있어야 한다. `LEXICAL`은 Jaccard 정의에 따라 `0 <= score <= 1`, `DENSE`는 cosine 정의에 따라
+`-1 <= score <= 1`이다. rerank config가 두 metric의 weighted 합에 결속돼 있으므로 범위를 벗어난 한
+signal이 전체 순위를 지배하면서 성공 Receipt를 남기는 것을 막는다. 다른 SearchPort를 DI해도 이
+경계는 reranker가 직접 강제한다.
+
+모든 trigram division, cosine, weighted score, score 정렬과 6자리 score 양자화는 caller의 전역 Decimal 설정을 사용하지
+않고 config artifact에 기록된 precision `50`, `ROUND_HALF_EVEN` local context에서 실행한다. 따라서 동일한
+fixture/config 입력은 호출 프로세스의 Decimal precision과 무관하게 같은 score와 artifact를 만든다.
 
 ### 테스트 모듈
 
@@ -224,14 +312,14 @@ Safety v2 계약에 따라 `execution_status`와 `evidence_status`를 별도로 
 
 ### Query Receipt
 
-`QueryBindingVerificationReceipt`는 요청과 같은 query fingerprint와 실제 verifier의
-`adapter_artifact_ref`를 반환한다. query 원문이나 normalized query는 Receipt에 포함하지 않는다.
+`QueryBindingVerificationSuccess`는 요청과 같은 query fingerprint와 실제 verifier의
+`verifier_artifact_ref`를 반환한다. query 원문이나 normalized query는 Receipt에 포함하지 않는다.
 Kernel은 adapter reference의 형식을 검증하고 trace에 기록하지만, 승인된 Runtime Execution Manifest가
 없는 이번 slice에서 특정 adapter가 허용됐다고 판정하지 않는다.
 
 ### Search Receipt
 
-각 `EvidenceSearchResult`는 다음을 가진다.
+각 `EvidenceSearchSuccess`는 다음을 가진다.
 
 - `stage`: `LEXICAL` 또는 `DENSE`
 - 요청과 동일한 `query_fingerprint`
@@ -247,7 +335,7 @@ artifact는 비어 있지 않은 불변 reference여야 하며 trace에 기록�
 
 ### Rerank Receipt
 
-`EvidenceRerankResult`는 다음을 가진다.
+`EvidenceRerankSuccess`는 다음을 가진다.
 
 - 요청과 동일한 `query_fingerprint`, `filter_snapshot_ref`, `evidence_index_ref`
 - 요청과 동일한 `retrieval_config_ref`, `rerank_config_ref`
@@ -312,7 +400,40 @@ provenance에 포함하지 않는다. Knowledge Evidence Index 계약이 승인�
 
 Kernel은 `content_text`를 UTF-8로 encode해 SHA-256을 계산하고 `content_sha256`과 exact-match한다.
 문자열을 normalize하거나 변환한 뒤 hash하지 않는다. Adapter는 Evidence Index에 고정된 canonical text를
-그대로 반환해야 한다.
+그대로 반환해야 한다. 이 비밀키 없는 SHA-256은 공개·승인 Knowledge Source 본문의 결정적 무결성 확인에만
+사용한다. Query, OCR 결과, 환자 입력 또는 환자 유래 텍스트의 fingerprint 용도로 재사용하지 않는다.
+
+Source와 Evidence 파생물의 hash domain은 다음처럼 분리한다.
+
+- `rag_source_snapshot.canonical_checksum`: Source snapshot 전체 canonical JSON 내용의 SHA-256
+- `source_snapshot_ref.content_sha256`: Production mapping이 확정되기 전까지 별도 Source snapshot artifact 식별자
+- `evidence_index_ref.content_sha256`: Source에서 파생된 Evidence Index manifest의 SHA-256
+- `KnowledgeEvidenceProvenance.content_sha256`: 개별 canonical Evidence text byte의 SHA-256
+
+이 값들을 자동으로 같다고 간주하지 않는다. 특히 Source snapshot checksum은 Evidence Index artifact hash가
+아니다. `source_snapshot_ref.content_sha256`과 `rag_source_snapshot.canonical_checksum`의 실제 매핑은 RAG-06
+통합 계약과 DB·Source 교차리뷰에서 확정한다.
+
+이 Kernel의 provisional 이름은 `rag-db-schema`의 정규 이름과 1:1이 아니다. Production Adapter는 같은
+문자열을 같은 의미로 가정하지 않고 아래 매핑을 먼저 확정해야 한다.
+
+| 이 Kernel의 provisional 이름 | 의미 | `rag-db-schema`의 정규 대응 |
+| --- | --- | --- |
+| `KnowledgeEvidenceProvenance.content_sha256` | 개별 canonical Evidence text byte의 SHA-256 | `knowledge_chunk.content_hash` (정규화 본문 hash). 스키마의 `content_sha256`은 승인 capture·artifact byte용 이름이며 이 값이 아니다 |
+| `evidence_index_ref.content_sha256` | 이 모듈 fixture Index manifest의 SHA-256 | `index_version.corpus_manifest_hash`. 정규 preimage는 `(source_code, source_version, external_document_id, chunk_index, content_hash)` 정렬 목록이며, 이 모듈 payload는 dense vector까지 포함하므로 값이 다르다 |
+| `KnowledgeEvidenceProvenance.canonicalization_spec_version` | record별 Evidence text canonicalization 규격 문자열 | 스키마의 `canonicalization_spec_version`은 snapshot·bundle 단위 hash 직렬화 규격 버전이고 규격 변경 시 `normalization_version`과 함께 올려야 한다. 이 Kernel에는 `normalization_version` 대응이 없으므로 두 값을 같은 축으로 취급하지 않는다 |
+| `knowledge_chunk_ref` | 단일 문자열 chunk reference | `knowledge_chunk_id`(UUID)와 `(source_code, source_version, external_document_id, chunk_index)` 안정 좌표. 단일 문자열로 축약하지 않는다 |
+
+Provenance에 필요한 정규 필드 중 이번 slice가 표현하지 않는 것은 `source_code`, `endpoint_code`,
+`operation_code`, `external_record_id`, `supporting_excerpt`와 정확한 Snapshot Member reference다. Evidence
+Gate·Citation·Rule Evidence 연결은 이 값들이 생긴 뒤에만 가능하다. `evidence_ref_id`와 `evidence_type`도
+없으며, 이 값들은 Evaluation bridge 계약이 소유한다.
+
+이 adapter는 fixture identifier에 nonblank NFC 문자열만 요구하고 Evaluation bridge의 문법을 강제하지
+않는다. 후속 bridge slice의 `IndexBridgeEntry`는 `evidence_key`·`knowledge_chunk_ref`에
+`^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$`, `source_version`·`canonicalization_spec_version`에 공백·제어문자
+없는 token을 요구하므로, fixture를 추가할 때 이 문법을 벗어나면 retrieval 단위 테스트는 통과하더라도
+bridge에 넣을 수 없다. 현재 fixture는 모두 이 문법을 만족한다. 강제 위치는 bridge 계약 확정 시 결정한다.
 
 각 stage의 rank는 1부터 시작하는 중복 없는 연속 정수여야 하며 hit 수는 해당 stage limit 이하여야 한다.
 같은 `evidence_key`는 한 stage에서 한 번만 나타날 수 있다. lexical과 dense에 같은 key가 등장할 수 있지만
@@ -329,7 +450,7 @@ Kernel은 모든 raw hit를 구조적으로 검증하지만 Source 승인이나 
 ## rerank와 selection
 
 `EvidenceRerankPort`는 검증된 canonical candidate와 Kernel이 계산한 input projection hash를 포함하는
-`EvidenceRerankRequest`를 받아 `EvidenceRerankResult`를 반환한다. 각
+`EvidenceRerankRequest`를 받아 `EvidenceRerankSuccess`를 반환한다. 각
 `EvidenceRerankSelection`은 다음을 가진다.
 
 - raw hit에 존재하는 `evidence_key`
@@ -344,6 +465,13 @@ selection은 `selection_limit` 이하이고 rank가 중복 없는 연속 정수�
 
 동점 정렬 의미와 score fusion 공식은 rerank config artifact가 소유한다. Kernel은 받은 순서를 score로
 재정렬하지 않고 rank와 Receipt 일관성만 검증한다.
+
+이번 slice의 `weighted-stage-score-v1`은 `rag-design`이 고정한 Evidence 파이프라인의 RRF 단계가 아니다.
+정규 파이프라인은 `Lexical → Dense → RRF → Reranking → Evidence Gate → top-K`이고 RRF는 stage별 rank를
+융합한다. 이 adapter는 stage별 raw score를 가중합하므로 `[0,1]` trigram Jaccard와 음수가 가능한 cosine을
+같은 축에서 더한다. `minimum_similarity`를 음수로 둔 config에서는 dense 기여가 후보 점수를 내릴 수 있다.
+따라서 이 공식은 unit-level 계약 검증용이며, Production Adapter는 rank 기반 RRF 단계와 정규 candidate
+수량(RRF 20~30, reranker 입력 20, context 3~5)을 별도로 구현하고 이 가중합을 승격하지 않는다.
 
 ## 비권위적 diagnostic trace
 
@@ -412,6 +540,12 @@ query, content 또는 port exception message가 나타나면 안 된다.
 - request·outcome·failure `repr`/`str`과 port exception 처리에 query·content·exception message가 없음
 - whole-outcome 기본 JSON serialization 실패와 sanitized serializer만 성공
 - output이 Source approval, sufficiency, Safety 상태 또는 Composer 사용 가능성을 주장하지 않음
+- synthetic lexical exact 우선, Jaccard-shaped trigram threshold와 dense cosine 순위가 동일 입력에서 재현됨
+- synthetic namespace 없는 Index·Source provenance·config·adapter Receipt 거부
+- immutable `SensitiveText`를 unwrap·rewrap하지 않고 hit로 전달
+- lexical·dense·rerank config payload와 artifact SHA-256 분리 시 typed failure
+- versioned weighted rerank와 UTF-8 key tie-break, input-set hash 재검증
+- concrete adapter를 Kernel에 DI한 lexical+dense → rerank 실행에서도 raw query·본문 trace 비노출
 
 검증 명령은 다음과 같다.
 
@@ -431,7 +565,7 @@ git diff --check
 - `#165/#166` 실제 Source Snapshot·Catalog Receipt
 - Full Execution Context와 Runtime Bundle의 승인된 shared DTO·Guard binding
 - query HMAC algorithm·canonical input·key rotation을 소유하는 Privacy·Security 계약
-- PostgreSQL lexical/dense adapter와 configuration Receipt
+- Production PostgreSQL `pg_trgm`·pgvector adapter와 configuration Receipt
 - `#177` positive interaction rule과 Rule Evidence binding
 - Safety v2의 execution/evidence/release 상태 매핑
 - Retrieval Run persistence schema와 transaction owner
@@ -444,7 +578,7 @@ git diff --check
 
 ## 완료 주장 경계
 
-이 변경이 검증할 수 있는 주장은 “합성 Knowledge Evidence와 versioned port Receipt에 대해 검색·rerank
-orchestration과 결과 무결성 검증이 결정적이다”까지다. 실제 Source 승인, Evidence sufficiency/conflict,
-Safety 상태, `pg_trgm`·dense 품질, Retrieval Run 저장, Recall@5, Citation 정확성, Runtime Bundle 활성화
-또는 환자 공개 안전성을 완료로 주장하지 않는다.
+이 변경이 검증할 수 있는 주장은 “합성 Knowledge Evidence와 versioned port Receipt에 대해 exact·trigram·
+dense 검색, weighted rerank orchestration과 결과 무결성 검증이 결정적이다”까지다. 실제 Source 승인,
+Evidence sufficiency/conflict, Safety 상태, Production `pg_trgm`·pgvector 품질, Retrieval Run 저장,
+Recall@5, Citation 정확성, Runtime Bundle 활성화 또는 환자 공개 안전성을 완료로 주장하지 않는다.

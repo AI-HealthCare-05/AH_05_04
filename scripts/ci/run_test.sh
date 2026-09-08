@@ -22,6 +22,7 @@ for test_dir in \
   ./ai_worker/tests/core \
   ./ai_worker/tests/ocr \
   ./ai_worker/tests/rag \
+  ./ai_worker/tests/evaluation \
   ./tests/integration; do
   if [ -d "$test_dir" ] &&
     find "$test_dir" -type f -name 'test_*.py' -print -quit |
@@ -86,7 +87,8 @@ if ! run_with_worker_test_environment \
   coverage run --append -m pytest \
   ai_worker/tests/core \
   ai_worker/tests/ocr \
-  ai_worker/tests/rag; then
+  ai_worker/tests/rag \
+  ai_worker/tests/evaluation; then
   echo
   echo "AI Worker pytest failed."
   echo "Fix the test failures above and re-run."
