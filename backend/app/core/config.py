@@ -142,6 +142,11 @@ class Config(BaseSettings):
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     RELEASE_VALIDATION_ALLOWED: bool = False
 
+    # medication-identification-v1.md "공개 게이트": RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는
+    # 실제 사용자 트래픽에 Candidate 조회·확정·거절 API를 공개하지 않습니다. 명시적으로 활성화하지
+    # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.
+    PUBLIC_TRACK_F_ENABLED: bool = False
+
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: str = ""
     CLOVA_OCR_TIMEOUT_SECONDS: float = 20.0

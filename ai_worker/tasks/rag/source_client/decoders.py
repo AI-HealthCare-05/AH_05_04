@@ -1,12 +1,34 @@
 """Strict decoders for documented MFDS JSON response envelopes."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 from ai_worker.tasks.rag.source_client.mfds_client import (
     DecodedProviderPage,
 )
+
+_MFDS_BODY_FIELDS = frozenset({"items", "pageNo", "numOfRows", "totalCount"})
+
+
+def _reject_duplicate_object_keys(
+    pairs: Sequence[tuple[str, object]],
+) -> dict[str, object]:
+    """모든 깊이에서 중복 JSON key를 원문 값 노출 없이 거부합니다."""
+    decoded: dict[str, object] = {}
+
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError("MFDS JSON contains a duplicate object key.")
+
+        decoded[key] = value
+
+    return decoded
+
+
+def _reject_nonstandard_json_constant(_value: str) -> object:
+    """JSON 표준 밖의 NaN·Infinity를 원문 값 노출 없이 거부합니다."""
+    raise ValueError("MFDS JSON contains a non-standard numeric constant.")
 
 
 def _require_object(value: object) -> dict[str, object]:
@@ -17,6 +39,14 @@ def _require_object(value: object) -> dict[str, object]:
         raise TypeError("MFDS response keys must be strings.")
 
     return cast(dict[str, object], value)
+
+
+def _require_integer(value: object, field_name: str) -> int:
+    """bool을 포함한 비정수 pagination 값을 거부합니다."""
+    if type(value) is not int:
+        raise TypeError(f"MFDS {field_name} must be an integer.")
+
+    return cast(int, value)
 
 
 def _decode_records(
@@ -45,7 +75,11 @@ def _decode_records(
     else:
         # Swagger 형태: body.items.item
         item_container = _require_object(raw_items)
-        raw_item = item_container.get("item")
+
+        if set(item_container) != {"item"}:
+            raise ValueError("MFDS items wrapper must contain only item.")
+
+        raw_item = item_container["item"]
 
         if raw_item is None:
             return ()
@@ -67,7 +101,11 @@ def decode_mfds_json(
     if media_type != "application/json":
         raise ValueError("MFDS JSON decoder received another media type.")
 
-    payload: object = json.loads(body)
+    payload: object = json.loads(
+        body,
+        object_pairs_hook=_reject_duplicate_object_keys,
+        parse_constant=_reject_nonstandard_json_constant,
+    )
     root = _require_object(payload)
 
     # 일부 Gateway 응답은 최상위를 response로 한 번 더 감쌀 수 있습니다.
@@ -76,20 +114,30 @@ def decode_mfds_json(
     header = _require_object(response["header"])
     body_envelope = _require_object(response["body"])
 
+    if not set(body_envelope).issubset(_MFDS_BODY_FIELDS):
+        raise ValueError("MFDS response body contains an unsupported envelope field.")
+
     result_code = header["resultCode"]
-    total_count = body_envelope.get("totalCount")
+    raw_items = body_envelope["items"]
+    page_number = _require_integer(body_envelope["pageNo"], "pageNo")
+    page_size = _require_integer(body_envelope["numOfRows"], "numOfRows")
+    total_count = _require_integer(body_envelope["totalCount"], "totalCount")
 
     if not isinstance(result_code, str):
         raise TypeError("MFDS resultCode must be a string.")
 
-    # bool은 int의 하위 타입이므로 명시적으로 제외합니다.
-    if total_count is not None and type(total_count) is not int:
-        raise TypeError("MFDS totalCount must be an integer.")
+    if page_number < 1:
+        raise ValueError("MFDS pageNo must be positive.")
 
-    records = _decode_records(body_envelope.get("items"))
+    if total_count < 0:
+        raise ValueError("MFDS totalCount must not be negative.")
+
+    records = _decode_records(raw_items)
 
     return DecodedProviderPage(
         body_code=result_code,
         records=records,
+        page_number=page_number,
+        page_size=page_size,
         total_count=total_count,
     )

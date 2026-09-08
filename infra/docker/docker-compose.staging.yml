@@ -28,11 +28,26 @@ services:
     image: redis:7-alpine
     container_name: finalproject-staging-redis
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # ai_worker/core/config.py의 non-local(STAGING/PRODUCTION 공통) REDIS_PASSWORD 필수
+    # 기준과 맞추기 위해 Production과 동일한 인증을 적용한다. requirepass는 컨테이너 내부
+    # 임시 conf 파일로만 전달해 ps aux/docker top/proc/<pid>/cmdline에 평문이 남지 않게 한다.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        umask 077
+        cat > /tmp/redis-runtime.conf <<CONF
+        requirepass $${REDIS_PASSWORD}
+        CONF
+        exec redis-server /tmp/redis-runtime.conf --save "" --appendonly no
     networks:
       - staging_internal
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # -a 플래그는 redis-cli 프로세스의 argv로 비밀번호를 노출하므로 REDISCLI_AUTH를 사용한다.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -119,6 +134,7 @@ services:
       OCR_STRUCTURE_LLM_ENABLED: ${OCR_STRUCTURE_LLM_ENABLED:-false}
       OCR_STRUCTURE_MODEL: ${OCR_STRUCTURE_MODEL:-gpt-4o-mini}
       OCR_STRUCTURE_TIMEOUT_SECONDS: ${OCR_STRUCTURE_TIMEOUT_SECONDS:-30}
+      PUBLIC_TRACK_F_ENABLED: ${PUBLIC_TRACK_F_ENABLED:-false}
       OCR_REQUEST_DEADLINE_SECONDS: ${OCR_REQUEST_DEADLINE_SECONDS:-60}
       OCR_RESPONSE_MARGIN_SECONDS: ${OCR_RESPONSE_MARGIN_SECONDS:-5}
       OCR_LOCAL_PROCESSING_RESERVE_SECONDS: ${OCR_LOCAL_PROCESSING_RESERVE_SECONDS:-3}
