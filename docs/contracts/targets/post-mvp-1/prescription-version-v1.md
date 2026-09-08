@@ -3,9 +3,9 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | PR 1 DB foundation 구현 · Backfill·Dual-write·Read cutover·API 미구현, 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | PR 1 DB foundation 및 PR 2 Version 1 Backfill·신규 생성 Dual-write 구현 · Read cutover·정정 API 미구현, 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-b-adherence-v1.md`, `track-e-ocr-regression-v1.md`, `track-f-rag-citation-safety-v1.md` |
-| Last verified | 2026-09-07 |
+| Last verified | 2026-09-08 |
 
 ## 모델
 
@@ -38,6 +38,21 @@ Version sequence는 양수이고 `(prescription_id, version_number)`가 unique�
 `profile`, `medical_document`, `ocr_job` 소유권·출처는 PR 1에서 중복 snapshot FK를 추가하지 않고 현재의 `prescription → profile`, `prescription → medical_document`, `prescription → ocr_job` 관계를 따른다. Candidate·Identification의 기존 문자열 FK 자리에는 아직 FK를 연결하지 않는다. Backfill되지 않은 현재 데이터와 API 호환성을 유지한 뒤 PR 3 Read cutover 범위에서 연결한다.
 
 v2 이상은 같은 확정 처방 데이터에 대한 사용자 정정으로 생성하며 같은 문서를 새 OCR Job으로 재스캔·재확정하는 흐름은 PR 2/3 범위에 포함하지 않는다. 그런 흐름을 추가하려면 Version별 OCR provenance 필드와 계약을 별도로 승인한다.
+
+### PR 2 Backfill·Dual-write 물리 매핑
+
+Revision `169b2c3d4e5f`는 기존 `prescription`을 PK 오름차순 500건 단위로 잠그고 Version 1을 생성한다. `prescription`의 `prescribed_date`, `confirmed_at`, `created_at`을 Version header로 복사하고, 각 `medication`의 임상 입력 필드와 `display_order`, `created_at`을 `prescription_version_medication`에 그대로 복사한 뒤 `active_version_id`를 Version 1로 설정한다.
+
+Backfill 전에는 다음 조건을 검사하며 하나라도 위반하면 전체 migration을 rollback한다.
+
+- `prescription.profile_id = medical_document.profile_id`이고 문서 업로더가 해당 SELF Profile의 사용자일 것
+- `source_ocr_job_id`가 같은 `medical_document`의 OCR Job일 것
+- 모든 기존 Prescription에 Medication이 1개 이상 있을 것
+- Version row 유무와 `active_version_id` 설정 여부가 엇갈린 부분 graph가 없을 것
+
+Backfill 뒤에는 active pointer 누락 0건, Version header 불일치 0건, legacy Medication과 active Version Medication의 양방향 `EXCEPT` 불일치 0건을 검증한다. Migration downgrade는 불변 감사 snapshot을 삭제하지 않는 no-op application rollback이다. 다시 upgrade하면 완성된 graph를 검증해 재사용하며 Version이나 Medication을 중복 생성하지 않는다.
+
+신규 처방 확정은 기존 `prescription`·`medication`과 Version 1 snapshot을 같은 transaction에서 dual-write한다. Version ID를 먼저 생성해 `prescription.active_version_id`에 넣고 deferred composite FK 아래에서 Prescription → legacy Medication → Version → Version Medication을 원자 조립한다. 기존 read와 공개 API 응답은 계속 legacy `medication`을 사용한다. `active_version_id NOT NULL`, Version read cutover, Candidate·Identification·Guide·Chat FK 연결은 후속 PR 범위다.
 
 ## 활성화
 
@@ -74,7 +89,7 @@ OCR 검수 완료만으로 자동 활성화하지 않는다. 사용자의 명시
 1. 기존 prescription마다 version 1 row를 생성한다.
 2. 기존 확정 약물을 version 1 medication snapshot으로 복사한다.
 3. 기존 prescription의 `active_version_id`를 version 1로 설정한다.
-4. 하위 레코드에 version 1 FK를 backfill한다.
+4. 하위 레코드의 version 1 FK는 각 소비 도메인의 cutover migration에서 backfill한다.
 5. 검증 쿼리로 orphan, 중복 version number, 유효하지 않은 `active_version_id`가 없음을 확인한다.
 6. 검증 후에만 새 FK와 NOT NULL 제약을 활성화한다.
 

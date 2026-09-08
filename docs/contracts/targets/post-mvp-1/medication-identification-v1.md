@@ -23,7 +23,7 @@
 
 Route Template과 물리 컬럼은 구현 PR에서 OpenAPI·Migration·Contract Test와 함께 확정한다. 공유 DTO, HTTP 의미와 공개 오류 code는 아래 계약을 변경하지 않고 구현해야 한다.
 
-Revision `169a1b2c3d4e`에서 `prescription_version_medication` 최소 DB 기반은 생성됐지만 기존 처방 Backfill과 Candidate·Identification FK 연결은 아직 하지 않았다. 기존 Candidate 경로가 version snapshot 없이 동작하는 호환 구간에서 FK만 먼저 강제하지 않으며, #169 PR 3의 생성 기준 전환과 같은 migration·contract test에서 연결한다.
+Revision `169a1b2c3d4e`에서 `prescription_version_medication` 최소 DB 기반을 만들었고 `169b2c3d4e5f`에서 기존 처방 Version 1 backfill과 신규 확정 dual-write를 연결했다. 기존 Candidate 경로는 아직 legacy Medication을 소비하는 호환 구간이므로 FK만 먼저 강제하지 않으며, #169 PR 3의 생성 기준 전환과 같은 migration·contract test에서 연결한다.
 
 ## 입력 정본
 
