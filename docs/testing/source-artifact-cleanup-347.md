@@ -1,10 +1,11 @@
-# #347 읽기 전용 조사 — 2단계 검증
+# #347 읽기 전용 조사·배치 사전 검사 검증
 
 - 구현: 김지혜. DB·보안 검토: 송은영, Source·provenance 검토: 정현우, 정책·배치 승인: 권가빈.
 - 기준: `8da32d7` 및 이 문서와 함께 커밋하는 2단계 변경. develop 기준은 `a6e5645`.
 - 정책: [#335 보존·삭제 정책](../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
 - 계획: [1단계 경계 조사](../designs/jye-rookie/issue-347-source-artifact-cleanup-plan.md)
-- 상태: 내부 읽기 전용 조사·합성 테스트 구현. 삭제·실제 승인·경합 보호·감사 저장은 미구현.
+- 현재 상태: 2단계 조사와 3단계 내부 승인 결속·보호 경계 사전 검사 구현. 실제 승인 저장소·공유 잠금·삭제·감사 저장은 미구현.
+- 아래 2단계 결과는 해당 시점 증빙이며, 최신 3단계 결과는 마지막 절에 기록한다.
 
 ## 구현된 경로
 
@@ -77,3 +78,60 @@ FAILED/NO_CHANGE/간접 참조를 생성한 통합 검증이나 실 DB 권한 �
 | T03–T06/T30 | 전체 직접 SELECT, 공유 count 보호, 간접 참조 증거 양수 보호, 범위 불명 보류 | 실제 DB 상태별·downstream·schema inventory 통합 |
 | T23/T24/T28/T29 | 다른 DB/root 보류, Local symlink·예상 밖 파일·변조 bytes 차단 | 승인 후 변경/최종 삭제 직전 재검사 |
 | T02/T09–T22/T25–T27 | 삭제·scheduler 실행 경로 없음 | 승인·경합·삭제·감사·복구·운영 인계는 3~5단계 |
+
+
+## 3단계 — 고정 배치·승인 결속 및 보호 경계 사전 검사
+
+기준은 2단계 `ea12a81`과 이 문서에 동반되는 3단계 변경이다. develop 기준은 여전히
+`a6e5645`이며 최신 원격 develop 동기화나 CI 통과를 주장하는 증빙은 아니다.
+
+`preflight.check_batch`는 삭제 없는 내부 dry-run 함수다. Public API/CLI, Source writer,
+DB schema, Runtime 설정은 변경하지 않는다. 아래 포트·자료형은 검토용 내부 구현이며,
+실제 승인 저장 형식이나 공유 잠금 방식을 확정하지 않는다.
+
+- 고정 배치 hash: 정책 version, DB, namespace, backend, 합성 환경, 정렬한 대상 목록을
+  결속한다. 각 대상에는 object key·실제 bytes checksum·크기·생성 시각·세대 식별자가 포함된다.
+  목록 순서만 달라지면 같은 hash이고, namespace나 객체 세대 등이 바뀌면 다른 hash다.
+- 승인 verifier: 신뢰할 수 있는 구현이 승인자의 신원·권한·철회 상태를 검증해야 한다.
+  반환 증거의 배치 hash·정책·PM/DB 검토자·실행자·유효기간을 대조하고, 느린 재조회 후
+  다시 검증하여 대기 중 만료·철회를 거부한다. 합성 verifier만 테스트에 존재한다.
+- guard 포트: 모든 객체 쓰기·재사용·참조 생성을 배제하는 구현을 요구한다. 경계 안에서
+  실제 관측 결과와 배치를 대조하고 전체 참조·수집 상태·보존기간을 다시 검사한다.
+  guard 상실·관측 오류·경계 해제 오류는 실패이며, 예외를 삼키는 guard도 성공으로 보고하지 않는다.
+- 포트가 없거나 증명이 불완전하면 통과하지 않는다. `SYNTHETIC_LOCAL` 외 환경도 거부한다.
+  이 환경 문자열 자체는 실제 파일/DB의 합성 여부를 증명하지 않는다.
+- 결과에는 고정 사유만 포함하며 원문·root·DB 식별자·object key·포트 예외 내용을 내보내지 않는다.
+
+**반환된 결과는 삭제 허가가 아니다.** 함수 반환 시 guard가 이미 해제되므로 이후 삭제에
+재사용할 수 없다. 삭제 단계는 승인·객체·참조 재검사, 의도 기록, 삭제를 같은 유효한 보호
+경계 안에서 수행하도록 별도로 구현·검증해야 한다.
+
+현재는 합성 guard로 호출 순서와 실패 처리를 검증했다. 실제 writer 간 배타성이나
+PostgreSQL 독립 transaction 경합을 검증한 결과가 아니다. Q1/Q2의 증거 공급,
+Q3의 모든 writer 공유 잠금, Q4의 실제 승인 verifier 연결은 남아 있다.
+실제 삭제·감사 저장·재시작 복구는 4~5단계 범위다.
+
+### 3단계 실행 결과
+
+```text
+PYTHONPATH=. python -m pytest ai_worker/tests/rag/source_cleanup -q
+72 passed (2단계 36 + 3단계 36)
+
+PYTHONPATH=. python -m pytest ai_worker/tests/rag -q
+914 passed
+
+ruff check .
+All checks passed!
+ruff format . --check
+534 files already formatted
+MYPYPATH=backend:. python -m mypy backend/app ai_worker
+Success: no issues found in 452 source files
+
+git diff --check
+통과
+```
+
+새 회귀는 승인 불일치·만료·철회, DB/namespace/객체 세대·bytes 교체, 불완전 관측,
+새 직접/간접 참조, 활성 수집, guard 상실/오류를 포함한다. Python 3.13의 합성 포트 테스트다.
+실제 승인 시스템·PostgreSQL 경합·운영 저장소·전체 CI는 실행하지 않았으며,
+T01–T30 전체 완료 또는 실제 삭제 가능성을 의미하지 않는다.
