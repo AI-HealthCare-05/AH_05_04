@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   executeOcr,
   getJobStatus,
@@ -134,6 +134,11 @@ function UploadMethodIcon({ source }: { source: UploadSource }) {
 
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const isNewPrescriptionIntent = (
+    location.state as { intent?: unknown } | null
+  )?.intent === 'new-prescription'
+  const [isNewPrescriptionFlow] = useState(isNewPrescriptionIntent)
   const inputId = useId()
   const filenameId = useId()
   const contractId = useId()
@@ -141,7 +146,9 @@ function PrescriptionUploadPage() {
   const [uploadSource, setUploadSource] = useState<UploadSource | null>(null)
   const [isFilenameExpanded, setIsFilenameExpanded] = useState(false)
   const [pollingTarget, setPollingTarget] =
-    useState<OcrPollingTarget | null>(loadOcrJobRecovery)
+    useState<OcrPollingTarget | null>(() => (
+      isNewPrescriptionFlow ? null : loadOcrJobRecovery()
+    ))
   const [message, setMessage] = useState('')
   const [hasUploadFailed, setHasUploadFailed] = useState(false)
   const [isPreparing, setIsPreparing] = useState(false)
@@ -151,15 +158,29 @@ function PrescriptionUploadPage() {
   const [completionRestartKey, setCompletionRestartKey] = useState(0)
   const [rediscoveryRestartKey, setRediscoveryRestartKey] = useState(0)
   const [isCheckingExistingPrescription, setIsCheckingExistingPrescription] =
-    useState(() => loadOcrJobRecovery() === null)
+    useState(() => !isNewPrescriptionFlow && pollingTarget === null)
   const [rediscoveryError, setRediscoveryError] = useState<unknown>(null)
   const preparationRequestRef = useRef(0)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const preparationControllerRef = useRef<AbortController | null>(null)
   const intakeIntentRef = useRef<OcrIntakeIntent | null>(null)
+  const hasClearedEntryRecoveryRef = useRef(false)
 
   useEffect(() => {
+    if (isNewPrescriptionFlow) {
+      if (!hasClearedEntryRecoveryRef.current) {
+        hasClearedEntryRecoveryRef.current = true
+        clearOcrJobRecovery()
+        if (isNewPrescriptionIntent) {
+          navigate(location.pathname, { replace: true, state: null })
+        }
+      }
+      setIsCheckingExistingPrescription(false)
+      setRediscoveryError(null)
+      return undefined
+    }
+
     if (pollingTarget) {
       setIsCheckingExistingPrescription(false)
       setRediscoveryError(null)
@@ -204,7 +225,14 @@ function PrescriptionUploadPage() {
     return () => {
       isActive = false
     }
-  }, [navigate, pollingTarget, rediscoveryRestartKey])
+  }, [
+    isNewPrescriptionFlow,
+    isNewPrescriptionIntent,
+    location.pathname,
+    navigate,
+    pollingTarget,
+    rediscoveryRestartKey,
+  ])
 
   const resetNativeFileInputs = () => {
     if (cameraInputRef.current) cameraInputRef.current.value = ''
