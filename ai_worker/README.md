@@ -104,6 +104,32 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 `REDIS_SOCKET_TIMEOUT_SECONDS`는 `REDIS_BLOCK_MS / 1000`보다 길어야 합니다.
 이를 통해 정상적인 `XREADGROUP` blocking read가 socket timeout으로 먼저 중단되지 않도록 합니다.
 
+### Source Artifact 저장소
+
+Source ingestion Artifact 저장소는 기본 `DISABLED`이며 #166 Runtime 연결 전에는
+자동으로 로컬 경로를 선택하지 않습니다. 활성화할 때 사용하는 설정은 다음과 같습니다.
+
+| 환경변수 | 기본값 | 의미 |
+| --- | --- | --- |
+| `SOURCE_ARTIFACT_STORAGE_BACKEND` | `DISABLED` | `DISABLED`, `LOCAL_PRIVATE`, `S3_PRIVATE` 중 하나 |
+| `SOURCE_ARTIFACT_LOCAL_ROOT` | 없음 | `LOCAL_PRIVATE` 전용 접근 통제 경로 |
+| `SOURCE_ARTIFACT_S3_BUCKET` | 없음 | `S3_PRIVATE` 전용 비공개 bucket |
+| `SOURCE_ARTIFACT_S3_PREFIX` | `source-artifacts` | bucket 내부 내용 주소 prefix |
+| `SOURCE_ARTIFACT_S3_REGION` | 없음 | S3 region |
+| `SOURCE_ARTIFACT_S3_ENDPOINT_URL` | 없음 | S3 호환 endpoint. credential 없는 HTTPS URL만 허용 |
+| `SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION` | 없음 | `AES256` 또는 `aws:kms`. S3 활성화 시 필수 |
+| `SOURCE_ARTIFACT_S3_KMS_KEY_ID` | 없음 | `aws:kms` 선택 시 필수 KMS key ID |
+
+S3 adapter는 AWS SDK 표준 credential provider chain을 사용합니다. access key·secret
+key·session token 필드를 Worker 설정 모델에 추가하지 않습니다. 배포 환경에서는
+실행 역할이나 Web Identity를 우선 사용하고, 환경 credential을 사용할 때도 저장소·
+로그·DB에 값을 기록하지 않습니다.
+
+S3 객체는 SHA-256 내용 주소와 조건부 생성으로 덮어쓰기를 막고, upload checksum과
+명시적으로 선택한 AES256 또는 KMS 서버 측 암호화를 요구합니다. 기존 객체를 재사용할 때 크기·content type·
+checksum metadata·암호화 상태를 다시 검사합니다. 보존 기간과 정리 정책이 승인되기
+전에는 rollback 뒤 미참조 객체나 REJECTS를 자동 삭제하지 않습니다.
+
 ### OCR Worker Handler
 
 `job_type=OCR`, `domain_type=OCR_JOB` 메시지는 OCR Handler가 처리합니다.

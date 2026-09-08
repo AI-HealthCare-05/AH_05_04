@@ -3,9 +3,9 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | PR 1 DB foundation 구현 · Backfill·Dual-write·Read cutover·API 미구현, 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-b-adherence-v1.md`, `track-e-ocr-regression-v1.md`, `track-f-rag-citation-safety-v1.md` |
-| Last verified | 2026-08-27 |
+| Last verified | 2026-09-07 |
 
 ## 모델
 
@@ -18,6 +18,26 @@
 `(prescription_id, version_number)`는 unique이고 `prescription.active_version_id`가 유일한 활성 포인터다. version row에 별도 `ACTIVE` 상태를 두지 않으므로 DB 제품별 partial unique 제약에 의존하지 않고도 활성 version을 하나로 표현한다. 활성화된 버전의 임상 입력 필드는 수정하지 않고 새 버전을 만든다.
 
 소유권·출처·감사 시각을 위한 추가 물리 컬럼과 이름은 migration mapping, OpenAPI·DTO 및 관련 계약 테스트를 함께 제출하는 구현 PR에서 확정한다. 기준 문서가 고정하지 않은 컬럼을 이 계약에서 선행 확정하지 않는다.
+
+### PR 1 물리 매핑
+
+Revision `169a1b2c3d4e`는 API 동작을 변경하지 않는 Expand 단계다. Application ID/FK는 기존 스키마와 같은 `UUIDChar` 기반 `CHAR(36)`을 사용한다.
+
+| 테이블 | 컬럼 |
+| --- | --- |
+| `prescription` | nullable `active_version_id` |
+| `prescription_version` | `id`, `prescription_id`, `version_number`, `prescribed_date`, `confirmed_at`, internal `assembly_xid`, `created_at` |
+| `prescription_version_medication` | `id`, `prescription_version_id`, `medication_name`, nullable `strength_text`, nullable `dose_value`, nullable `dose_unit`, nullable `frequency_per_day`, nullable `timing_text`, nullable `duration_days`, `display_order`, `created_at` |
+
+`prescription.active_version_id`는 `(active_version_id, prescription.id) → prescription_version(id, prescription_id)` composite FK로 같은 처방의 version만 가리키게 한다. FK는 `DEFERRABLE INITIALLY DEFERRED`이므로 후속 NOT NULL 전환 뒤에도 미리 생성한 ID로 Prescription → Version → Medication을 같은 transaction에서 만들 수 있고 commit 시점에 완전한 graph를 검증한다. `active_version_id`는 기존 처방 Backfill 전까지 nullable이며 PR 2에서 version 1 생성·검증과 함께 채운다. 별도 active/current 상태 컬럼은 만들지 않는다.
+
+Version sequence는 양수이고 `(prescription_id, version_number)`가 unique다. 약물 표시 순서는 양수이며 `(prescription_version_id, display_order)`가 unique다. 지연 제약은 commit 시 모든 Version과 active pointer에 medication snapshot이 1개 이상인지 확인한다. Version INSERT trigger는 caller 입력을 무시하고 DB가 발급한 epoch-aware top-level transaction ID를 internal `assembly_xid`에 기록한다. Medication INSERT는 현재 transaction ID가 이 값과 같은 Version에만 허용한다. 이 비교는 release된 SAVEPOINT 뒤에도 유지되며 Runtime 역할이 custom GUC나 INSERT 값으로 위조할 수 없으므로, active 여부와 관계없이 commit된 Version의 약물 집합은 동결된다. 두 snapshot 테이블은 DB trigger로 직접 UPDATE·DELETE를 차단한다.
+
+사용자 데이터 삭제는 `prescription`을 삭제하는 기존 애플리케이션 경계에서만 시작한다. `prescription → prescription_version → prescription_version_medication` FK는 `ON DELETE CASCADE`이고, 불변성 trigger는 이 부모 연쇄 삭제만 허용한다. Version 또는 Version Medication 직접 삭제는 계속 차단한다. 지연 검증 trigger는 commit 전에 부모와 snapshot이 이미 연쇄 삭제된 경우 큐에 남은 생성·활성화 이벤트를 건너뛴다. Migration downgrade는 런타임 사용자 삭제와 별개이며 version data가 있으면 중단한다.
+
+`profile`, `medical_document`, `ocr_job` 소유권·출처는 PR 1에서 중복 snapshot FK를 추가하지 않고 현재의 `prescription → profile`, `prescription → medical_document`, `prescription → ocr_job` 관계를 따른다. Candidate·Identification의 기존 문자열 FK 자리에는 아직 FK를 연결하지 않는다. Backfill되지 않은 현재 데이터와 API 호환성을 유지한 뒤 PR 3 Read cutover 범위에서 연결한다.
+
+v2 이상은 같은 확정 처방 데이터에 대한 사용자 정정으로 생성하며 같은 문서를 새 OCR Job으로 재스캔·재확정하는 흐름은 PR 2/3 범위에 포함하지 않는다. 그런 흐름을 추가하려면 Version별 OCR provenance 필드와 계약을 별도로 승인한다.
 
 ## 활성화
 

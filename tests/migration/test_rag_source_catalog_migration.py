@@ -77,6 +77,7 @@ async def _fetch_schema_object_names() -> set[str]:
                   AND table_name IN (
                     'rag_source_snapshot',
                     'rag_source_ingestion_run',
+                    'rag_source_ingestion_artifact',
                     'rag_medication_product',
                     'rag_medication_ingredient',
                     'rag_medication_alias',
@@ -94,6 +95,7 @@ async def _fetch_schema_object_names() -> set[str]:
                   AND tablename IN (
                     'rag_source_snapshot',
                     'rag_source_ingestion_run',
+                    'rag_source_ingestion_artifact',
                     'rag_medication_product',
                     'rag_medication_ingredient',
                     'rag_medication_alias',
@@ -108,7 +110,10 @@ async def _fetch_schema_object_names() -> set[str]:
                 SELECT trigger_name
                 FROM information_schema.triggers
                 WHERE event_object_schema = 'public'
-                  AND event_object_table = 'rag_source_snapshot'
+                  AND event_object_table IN (
+                    'rag_source_snapshot',
+                    'rag_source_ingestion_artifact'
+                  )
                 """
             )
         )
@@ -119,7 +124,9 @@ async def _fetch_schema_object_names() -> set[str]:
         }
 
 
-async def _seed_source_catalog_chain() -> dict[str, str]:
+async def _seed_source_catalog_chain(
+    *, include_verification: bool = True, status: str = "CURRENT", rejected_count: int = 0
+) -> dict[str, str]:
     ids = {
         "source_id": str(uuid4()),
         "endpoint_id": str(uuid4()),
@@ -135,6 +142,7 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
     checksum_a = "a" * 64
     checksum_b = "b" * 64
     collected_at = datetime.now(UTC)
+    ids["source_version"] = f"api:2026-09-07:{uuid4().hex[:8]}"
 
     async with _connection() as connection:
         async with connection.begin():
@@ -193,29 +201,31 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
                         :snapshot_id, :operation_id, :source_version, :checksum_a,
                         :checksum_b, 'schema-v1', 'parser-v1',
                         'normalization-v1', 'canonical-v1',
-                        1, 0, 'CURRENT', :collected_at
+                        1, :rejected_count, :status, :collected_at
                     )
                     """
                 ),
                 {
                     **ids,
-                    "source_version": f"api:2026-09-07:{uuid4().hex[:8]}",
                     "checksum_a": checksum_a,
                     "checksum_b": checksum_b,
                     "collected_at": collected_at,
+                    "status": status,
+                    "rejected_count": rejected_count,
                 },
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_source_snapshot_verification (
-                        id, snapshot_id, check_name, verification_result, verified_at
-                    )
-                    VALUES (:verification_id, :snapshot_id, 'checksum', 'PASSED', :collected_at)
-                    """
-                ),
-                {**ids, "collected_at": collected_at},
-            )
+            if include_verification:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_snapshot_verification (
+                            id, snapshot_id, check_name, verification_result, verified_at
+                        )
+                        VALUES (:verification_id, :snapshot_id, 'checksum', 'PASSED', :collected_at)
+                        """
+                    ),
+                    {**ids, "collected_at": collected_at},
+                )
             await connection.execute(
                 text(
                     """
@@ -334,7 +344,26 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
             await connection.execute(
                 text("ALTER TABLE rag_source_snapshot DISABLE TRIGGER trg_rag_source_snapshot_prevent_update")
             )
+            await connection.execute(
+                text(
+                    "ALTER TABLE rag_source_ingestion_artifact "
+                    "DISABLE TRIGGER trg_rag_source_ingestion_artifact_prevent_delete"
+                )
+            )
+            await connection.execute(
+                text(
+                    "ALTER TABLE rag_source_snapshot_verification DISABLE TRIGGER trg_rag_snapshot_verification_immutable"
+                )
+            )
             try:
+                await connection.execute(
+                    text(
+                        "DELETE FROM rag_source_ingestion_artifact "
+                        "WHERE ingestion_run_id IN "
+                        "(SELECT id FROM rag_source_ingestion_run WHERE operation_id = :operation_id)"
+                    ),
+                    ids,
+                )
                 await connection.execute(
                     text(
                         "DELETE FROM rag_medication_product_component WHERE source_snapshot_id IN (SELECT id FROM rag_source_snapshot WHERE operation_id = :operation_id)"
@@ -375,6 +404,17 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
                 await connection.execute(text("DELETE FROM rag_source_endpoint WHERE id = :endpoint_id"), ids)
                 await connection.execute(text("DELETE FROM rag_source WHERE id = :source_id"), ids)
             finally:
+                await connection.execute(
+                    text(
+                        "ALTER TABLE rag_source_snapshot_verification ENABLE TRIGGER trg_rag_snapshot_verification_immutable"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE rag_source_ingestion_artifact "
+                        "ENABLE TRIGGER trg_rag_source_ingestion_artifact_prevent_delete"
+                    )
+                )
                 await connection.execute(
                     text("ALTER TABLE rag_source_snapshot ENABLE TRIGGER trg_rag_source_snapshot_prevent_update")
                 )
@@ -423,6 +463,8 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
     schema_objects = asyncio.run(_fetch_schema_object_names())
 
     assert "uq_rag_source_snapshot_current" in schema_objects
+    assert "uq_rag_source_snapshot_active_version" in schema_objects
+    assert "chk_rag_source_snapshot_endpoint_receipt_hash" in schema_objects
     assert "chk_rag_source_snapshot_rejected_record_count_lte_record_count" in schema_objects
     assert "chk_rag_source_ingestion_run_group_key_nonblank" in schema_objects
     assert "uq_rag_source_ingestion_run_attempt" in schema_objects
@@ -434,6 +476,180 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
     assert "fk_rag_medication_component_ingredient_snapshot" in schema_objects
     assert "trg_rag_source_snapshot_prevent_update" in schema_objects
     assert "trg_rag_source_snapshot_prevent_delete" in schema_objects
+    assert "uq_rag_source_artifact_run_page" in schema_objects
+    assert "uq_rag_source_artifact_run_key" in schema_objects
+    assert "chk_rag_source_artifact_checksum" in schema_objects
+    assert "chk_rag_source_artifact_kind_metadata" in schema_objects
+    assert "trg_rag_source_ingestion_artifact_prevent_update" in schema_objects
+    assert "trg_rag_source_ingestion_artifact_prevent_delete" in schema_objects
+
+
+def test_rag_source_ingestion_artifact_is_append_only_and_run_scoped() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_artifact(ids: dict[str, str]) -> str:
+        artifact_id = str(uuid4())
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_ingestion_artifact (
+                            id, ingestion_run_id, page_number, artifact_key,
+                            storage_backend, object_key, raw_checksum, byte_size, content_type
+                        )
+                        VALUES (
+                            :artifact_id, :ingestion_run_id, 1, 'page-0001.json',
+                            'PRIVATE_OBJECT_STORAGE', 'source/synthetic/page-0001.json',
+                            :raw_checksum, 128, 'application/json'
+                        )
+                        """
+                    ),
+                    {**ids, "artifact_id": artifact_id, "raw_checksum": "d" * 64},
+                )
+        return artifact_id
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        artifact_id = asyncio.run(insert_artifact(ids))
+
+        asyncio.run(
+            _execute_expect_db_error(
+                "UPDATE rag_source_ingestion_artifact SET byte_size = 129 WHERE id = :artifact_id",
+                {"artifact_id": artifact_id},
+                expected_text="rows are append-only",
+            )
+        )
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO rag_source_ingestion_artifact (
+                    id, ingestion_run_id, page_number, artifact_key,
+                    storage_backend, object_key, raw_checksum, byte_size, content_type
+                )
+                VALUES (
+                    :artifact_id, :ingestion_run_id, 1, 'page-0002.json',
+                    'PRIVATE_OBJECT_STORAGE', 'source/synthetic/page-0002.json',
+                    :raw_checksum, 128, 'application/json'
+                )
+                """,
+                {**ids, "artifact_id": str(uuid4()), "raw_checksum": "e" * 64},
+                expected_text="uq_rag_source_artifact_run_page",
+            )
+        )
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    try:
+        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
+
+        async def insert_artifact() -> None:
+            assert ids is not None
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO rag_source_ingestion_artifact (
+                                id, ingestion_run_id, page_number, artifact_key,
+                                storage_backend, object_key, raw_checksum, byte_size, content_type
+                            )
+                            VALUES (
+                                :artifact_id, :ingestion_run_id, 1, 'page-0001.json',
+                                'PRIVATE_OBJECT_STORAGE', 'source/synthetic/page-0001.json',
+                                :raw_checksum, 128, 'application/json'
+                            )
+                            """
+                        ),
+                        {**ids, "artifact_id": str(uuid4()), "raw_checksum": "d" * 64},
+                    )
+
+        asyncio.run(insert_artifact())
+
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165a4b3c2d1e"):
+            command.downgrade(alembic_config, RAG_SOURCE_CATALOG_REVISION)
+
+        assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_rejection(ids: dict[str, str]) -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_ingestion_artifact (
+                            id, ingestion_run_id, page_number, artifact_kind,
+                            artifact_key, storage_backend, object_key,
+                            raw_checksum, byte_size, content_type,
+                            reject_code, parser_location
+                        )
+                        VALUES (
+                            :artifact_id, :ingestion_run_id, NULL, 'REJECTS',
+                            'reject-0001.json', 'PRIVATE_OBJECT_STORAGE',
+                            'source/synthetic/reject-0001.json', :raw_checksum,
+                            64, 'application/json', 'MISSING_ITEM_SEQ',
+                            'page[1].record[3]'
+                        )
+                        """
+                    ),
+                    {**ids, "artifact_id": str(uuid4()), "raw_checksum": "d" * 64},
+                )
+
+    try:
+        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
+        asyncio.run(insert_rejection(ids))
+
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                INSERT INTO rag_source_ingestion_artifact (
+                    id, ingestion_run_id, page_number, artifact_kind,
+                    artifact_key, storage_backend, object_key,
+                    raw_checksum, byte_size, content_type,
+                    reject_code, parser_location
+                )
+                VALUES (
+                    :artifact_id, :ingestion_run_id, NULL, 'REJECTS',
+                    'reject-0002.json', 'PRIVATE_OBJECT_STORAGE',
+                    'source/synthetic/reject-0002.json', :raw_checksum,
+                    64, 'application/json', 'unsafe-code', 'page[1].record[4]'
+                )
+                """,
+                {**ids, "artifact_id": str(uuid4()), "raw_checksum": "e" * 64},
+                expected_text="chk_rag_source_artifact_kind_metadata",
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165b5c4d3e2f"):
+            command.downgrade(alembic_config, "165a4b3c2d1e")
+
+        assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
 
 
 def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrade() -> None:
@@ -514,6 +730,17 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
                 expected_text="immutable fields cannot be updated",
             )
         )
+        asyncio.run(
+            _execute_expect_db_error(
+                """
+                UPDATE rag_source_snapshot
+                SET endpoint_receipt_hash = :endpoint_receipt_hash
+                WHERE id = :snapshot_id
+                """,
+                {**ids, "endpoint_receipt_hash": "d" * 64},
+                expected_text="immutable fields cannot be updated",
+            )
+        )
 
         stale_snapshot_id = asyncio.run(_create_stale_snapshot_for_same_operation(ids))
 
@@ -527,6 +754,114 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
                 expected_text="rows are append-only",
             )
         )
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_failed_snapshot_allows_same_version_retry_after_alembic_upgrade() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_failed_and_retry(ids: dict[str, str]) -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE rag_source_snapshot
+                        SET verification_status = 'FAILED'
+                        WHERE id = :snapshot_id
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_snapshot (
+                            id, operation_id, source_version, raw_manifest_checksum,
+                            canonical_checksum, schema_version, parser_version,
+                            normalization_version, canonicalization_spec_version,
+                            endpoint_receipt_hash, record_count, rejected_record_count,
+                            verification_status, collected_at
+                        )
+                        VALUES (
+                            :retry_snapshot_id, :operation_id, :source_version, :checksum_a,
+                            :checksum_b, 'schema-v1', 'parser-v1',
+                            'normalization-v1', 'canonical-v1',
+                            :endpoint_receipt_hash, 1, 0, 'PENDING', :collected_at
+                        )
+                        """
+                    ),
+                    {
+                        **ids,
+                        "retry_snapshot_id": str(uuid4()),
+                        "endpoint_receipt_hash": "f" * 64,
+                        "checksum_a": "a" * 64,
+                        "checksum_b": "b" * 64,
+                        "collected_at": datetime.now(UTC),
+                    },
+                )
+            finally:
+                await transaction.rollback()
+
+    try:
+        command.upgrade(alembic_config, "head")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        asyncio.run(insert_failed_and_retry(ids))
+    finally:
+        command.upgrade(alembic_config, "head")
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+
+    async def insert_snapshot_with_receipt(ids: dict[str, str]) -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_source_snapshot (
+                            id, operation_id, source_version, raw_manifest_checksum,
+                            canonical_checksum, schema_version, parser_version,
+                            normalization_version, canonicalization_spec_version,
+                            endpoint_receipt_hash, record_count, rejected_record_count,
+                            verification_status, collected_at
+                        )
+                        VALUES (
+                            :receipt_snapshot_id, :operation_id, :receipt_source_version,
+                            :checksum_a, :checksum_b, 'schema-v1', 'parser-v1',
+                            'normalization-v1', 'canonical-v1', :endpoint_receipt_hash,
+                            1, 0, 'STALE', :collected_at
+                        )
+                        """
+                    ),
+                    {
+                        **ids,
+                        "receipt_snapshot_id": str(uuid4()),
+                        "receipt_source_version": f"api:receipt:{uuid4().hex[:8]}",
+                        "endpoint_receipt_hash": "f" * 64,
+                        "checksum_a": "a" * 64,
+                        "checksum_b": "b" * 64,
+                        "collected_at": datetime.now(UTC),
+                    },
+                )
+
+    try:
+        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
+        asyncio.run(insert_snapshot_with_receipt(ids))
+
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165c6d5e4f30"):
+            command.downgrade(alembic_config, "165b5c4d3e2f")
     finally:
         command.upgrade(alembic_config, "head")
         if ids is not None:
@@ -549,7 +884,7 @@ def test_rag_source_ingestion_attempt_is_scoped_by_run_group_after_alembic_upgra
                     id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at
                 )
                 VALUES (
-                    :duplicate_run_id, :operation_id, 'initial-load', :snapshot_id, 'FAILED', 1, :collected_at
+                    :duplicate_run_id, :operation_id, 'initial-load', NULL, 'FAILED', 1, :collected_at
                 )
                 """,
                 {**ids, "duplicate_run_id": str(uuid4()), "collected_at": collected_at},
@@ -599,7 +934,8 @@ def test_rag_source_catalog_downgrade_blocks_non_empty_tables_and_preserves_data
 
     try:
         command.upgrade(alembic_config, "head")
-        ids = asyncio.run(_seed_source_catalog_chain())
+        command.downgrade(alembic_config, "165d7e6f5041")
+        ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
 
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 164f3a2b1c0d"):
             command.downgrade(alembic_config, RAG_SOURCE_CATALOG_BASE_REVISION)
@@ -731,3 +1067,307 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
         command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_verification_history_is_immutable_and_publication_requires_actor() -> None:
+    alembic_config = create_alembic_config()
+    ids: dict[str, str] | None = None
+    try:
+        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "165d7e6f5041")
+        ids = asyncio.run(_seed_source_catalog_chain())
+        for sql in (
+            "UPDATE rag_source_snapshot_verification SET verification_result = 'FAILED' WHERE id = :verification_id",
+            "DELETE FROM rag_source_snapshot_verification WHERE id = :verification_id",
+        ):
+            asyncio.run(_execute_expect_db_error(sql, ids, expected_text="append-only"))
+        for actor in (None, "", "   "):
+            asyncio.run(
+                _execute_expect_db_error(
+                    "INSERT INTO rag_source_snapshot_verification "
+                    "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
+                    "VALUES (:new_id, :snapshot_id, 'snapshot-publication-approval', 'PASSED', :actor, :now)",
+                    {**ids, "new_id": str(uuid4()), "actor": actor, "now": datetime.now(UTC)},
+                    expected_text="chk_rag_snapshot_publication_approver",
+                )
+            )
+
+        async def named_approval_is_accepted() -> None:
+            async with _connection() as connection:
+                transaction = await connection.begin()
+                try:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO rag_source_snapshot_verification "
+                            "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
+                            "VALUES (:new_id, :snapshot_id, 'snapshot-publication-approval', 'PASSED', 'synthetic-reviewer', :now)"
+                        ),
+                        {**ids, "new_id": str(uuid4()), "now": datetime.now(UTC)},
+                    )
+                finally:
+                    await transaction.rollback()
+
+        asyncio.run(named_approval_is_accepted())
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165d7e6f5041"):
+            command.downgrade(alembic_config, "165c6d5e4f30")
+    finally:
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+@pytest.mark.parametrize("status", ["PENDING", "FAILED"])
+def test_runtime_cannot_write_snapshot_publication_state_directly(status: str) -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_source_catalog_chain(status=status))
+
+    async def verify() -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                role = f"synthetic_snapshot_{uuid4().hex}"
+                await connection.execute(text(f"CREATE ROLE {role} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"))
+                await connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
+                await connection.execute(
+                    text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role}")
+                )
+                permitted = await connection.execute(
+                    text(
+                        "SELECT has_function_privilege(:role, 'transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)', 'EXECUTE')"
+                    ),
+                    {"role": role},
+                )
+                assert permitted.scalar_one() is False
+                # This isolated Runtime role is created after migration.
+                # Execute the actual provisioning query for roles created after migration.
+                provisioning = (PROJECT_ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
+                grant_query = provisioning.split("-- Migration 이후", 1)[1].split("SELECT format(", 1)[1]
+                grant_query = "SELECT format(" + grant_query.split("\\gexec", 1)[0]
+                grant = await connection.execute(
+                    text(grant_query.replace(":'app_user'", "CAST(:app_user AS text)")), {"app_user": role}
+                )
+                await connection.execute(text(grant.scalar_one()))
+                await connection.execute(text(f"SET LOCAL ROLE {role}"))
+                # Custom session flags must never confer transition authority.
+                await connection.execute(text("SET LOCAL app.snapshot_transition = 'allowed'"))
+                for assignment in ("verification_status = 'CURRENT', effective_at = now()", "verified_at = now()"):
+                    async with connection.begin_nested() as savepoint:
+                        with pytest.raises(DBAPIError, match="DB-owned transition"):
+                            await connection.execute(
+                                text(f"UPDATE rag_source_snapshot SET {assignment} WHERE id = :snapshot_id"), ids
+                            )
+                        await savepoint.rollback()
+                async with connection.begin_nested() as savepoint:
+                    with pytest.raises(DBAPIError, match="must start PENDING"):
+                        await connection.execute(
+                            text("""
+                            INSERT INTO rag_source_snapshot
+                                (id, operation_id, source_version, raw_manifest_checksum, canonical_checksum,
+                                 schema_version, parser_version, normalization_version, canonicalization_spec_version,
+                                 record_count, rejected_record_count, verification_status, collected_at)
+                            SELECT :new_id, operation_id, :new_version, raw_manifest_checksum, canonical_checksum,
+                                schema_version, parser_version, normalization_version, canonicalization_spec_version,
+                                record_count, rejected_record_count, 'CURRENT', collected_at
+                            FROM rag_source_snapshot WHERE id = :snapshot_id
+                        """),
+                            {**ids, "new_id": str(uuid4()), "new_version": uuid4().hex},
+                        )
+                    await savepoint.rollback()
+                for expected in ("FAILED", None):
+                    if status != "FAILED":
+                        continue
+                    async with connection.begin_nested() as savepoint:
+                        if expected is None:
+                            result = await connection.execute(
+                                text(
+                                    "SELECT transition_rag_source_snapshot(:snapshot_id, NULL, 'CURRENT', now(), now(), 'synthetic')"
+                                ),
+                                ids,
+                            )
+                            assert result.scalar_one() is False
+                        else:
+                            with pytest.raises(DBAPIError, match="Invalid Snapshot transition"):
+                                await connection.execute(
+                                    text(
+                                        "SELECT transition_rag_source_snapshot(:snapshot_id, 'FAILED', 'CURRENT', now(), now(), 'synthetic')"
+                                    ),
+                                    ids,
+                                )
+                        await savepoint.rollback()
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(verify())
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+@pytest.mark.parametrize("approved", [False, True])
+def test_runtime_publication_function_requires_approval_and_appends_immutable_selection(approved: bool) -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_source_catalog_chain(status="PENDING", rejected_count=1))
+
+    async def verify() -> None:
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
+        from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import select_current_snapshot
+
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                if approved:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO rag_source_snapshot_verification (id, snapshot_id, check_name, verification_result, verified_at, verified_by) VALUES (:approval_id, :snapshot_id, 'snapshot-publication-approval', 'PASSED', now(), 'synthetic-reviewer')"
+                        ),
+                        {**ids, "approval_id": str(uuid4())},
+                    )
+                role = f"synthetic_snapshot_{uuid4().hex}"
+                await connection.execute(text(f"CREATE ROLE {role} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"))
+                await connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
+                await connection.execute(
+                    text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role}")
+                )
+                permitted = await connection.execute(
+                    text(
+                        "SELECT has_function_privilege(:role, 'transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)', 'EXECUTE')"
+                    ),
+                    {"role": role},
+                )
+                assert permitted.scalar_one() is False
+                # This isolated Runtime role is created after migration.
+                # Execute the actual provisioning query for roles created after migration.
+                provisioning = (PROJECT_ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
+                grant_query = provisioning.split("-- Migration 이후", 1)[1].split("SELECT format(", 1)[1]
+                grant_query = "SELECT format(" + grant_query.split("\\gexec", 1)[0]
+                grant = await connection.execute(
+                    text(grant_query.replace(":'app_user'", "CAST(:app_user AS text)")), {"app_user": role}
+                )
+                await connection.execute(text(grant.scalar_one()))
+                await connection.execute(text(f"SET LOCAL ROLE {role}"))
+                if not approved:
+                    async with connection.begin_nested() as savepoint:
+                        with pytest.raises(DBAPIError, match="Publication approval required"):
+                            await connection.execute(
+                                text(
+                                    "SELECT transition_rag_source_snapshot(:snapshot_id, 'PENDING', 'CURRENT', now(), now(), 'synthetic')"
+                                ),
+                                ids,
+                            )
+                        await savepoint.rollback()
+                    return
+                # If the immutable evidence cannot be written, CURRENT must roll back too.
+                async with connection.begin_nested() as savepoint:
+                    with pytest.raises(DBAPIError):
+                        await connection.execute(
+                            text(
+                                "SELECT transition_rag_source_snapshot(:snapshot_id, 'PENDING', 'CURRENT', now(), now(), repeat('x', 1000))"
+                            ),
+                            ids,
+                        )
+                    await savepoint.rollback()
+                unchanged = await connection.execute(
+                    text("SELECT verification_status FROM rag_source_snapshot WHERE id = :snapshot_id"), ids
+                )
+                assert unchanged.scalar_one() == "PENDING"
+                no_evidence = await connection.execute(
+                    text(
+                        "SELECT count(*) FROM rag_source_snapshot_verification WHERE snapshot_id = :snapshot_id AND check_name = 'snapshot-current-selection'"
+                    ),
+                    ids,
+                )
+                assert no_evidence.scalar_one() == 0
+                async with AsyncSession(bind=connection) as session:
+                    from uuid import UUID
+
+                    await select_current_snapshot(
+                        repository=SqlAlchemySourceSnapshotRepository(session),
+                        snapshot_id=UUID(ids["snapshot_id"]),
+                        selected_at=datetime.now(UTC),
+                        selected_by="synthetic-selector",
+                    )
+                    state = await session.execute(
+                        text("SELECT verification_status FROM rag_source_snapshot WHERE id = :snapshot_id"), ids
+                    )
+                    assert state.scalar_one() == "CURRENT"
+                    evidence = await session.execute(
+                        text(
+                            "SELECT id, verified_by, details_summary FROM rag_source_snapshot_verification WHERE snapshot_id = :snapshot_id AND check_name = 'snapshot-current-selection' AND verification_result = 'PASSED'"
+                        ),
+                        ids,
+                    )
+                    row = evidence.one()
+                    assert row.verified_by == "synthetic-selector"
+                    assert row.details_summary.startswith("DB-owned transition; session=")
+                    for sql in (
+                        "UPDATE rag_source_snapshot_verification SET verification_result = 'FAILED' WHERE id = :id",
+                        "DELETE FROM rag_source_snapshot_verification WHERE id = :id",
+                    ):
+                        async with connection.begin_nested() as savepoint:
+                            with pytest.raises(DBAPIError, match="append-only"):
+                                await connection.execute(text(sql), {"id": row.id})
+                            await savepoint.rollback()
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(verify())
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_snapshot_state_protection_downgrade_preserves_existing_snapshots() -> None:
+    configuration = create_alembic_config()
+    command.upgrade(configuration, "head")
+    ids = asyncio.run(_seed_source_catalog_chain(status="PENDING"))
+    try:
+        with pytest.raises(RuntimeError, match="Cannot downgrade revision 165e8f706152"):
+            command.downgrade(configuration, "165d7e6f5041")
+        assert asyncio.run(_count_table("rag_source_snapshot")) >= 1
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+@pytest.mark.parametrize(
+    ("run_status", "has_snapshot", "allowed"),
+    [
+        ("FAILED", True, False),
+        ("FAILED", False, True),
+        ("NO_CHANGE", False, False),
+        ("NO_CHANGE", True, True),
+        ("SUCCEEDED", True, True),
+        ("SUCCEEDED_WITH_REJECTIONS", True, True),
+    ],
+)
+def test_ingestion_run_snapshot_status_check(run_status: str, has_snapshot: bool, allowed: bool) -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_source_catalog_chain())
+
+    async def verify() -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                statement = text("""
+                    INSERT INTO rag_source_ingestion_run
+                        (id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at)
+                    VALUES (:id, :operation_id, 'synthetic-status-check', :snapshot_id, :status, 1, now())
+                """)
+                parameters = {
+                    "id": str(uuid4()),
+                    "operation_id": ids["operation_id"],
+                    "snapshot_id": ids["snapshot_id"] if has_snapshot else None,
+                    "status": run_status,
+                }
+                if allowed:
+                    await connection.execute(statement, parameters)
+                else:
+                    with pytest.raises(DBAPIError, match="chk_rag_ingestion_run_snapshot_status"):
+                        await connection.execute(statement, parameters)
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(verify())
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))

@@ -19,7 +19,7 @@ from app.models.guides import Guide, GuideCitation
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ExtractedField, OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
     MedicationCandidateSearch,
@@ -62,6 +62,8 @@ from app.models.rag_source import (
     RagSourceApprovalStatus,
     RagSourceEndpoint,
     RagSourceEndpointLifecycleStatus,
+    RagSourceIngestionArtifact,
+    RagSourceIngestionArtifactKind,
     RagSourceIngestionRun,
     RagSourceLifecycleStatus,
     RagSourceOperation,
@@ -123,6 +125,8 @@ __all__ = [
     "OutboxEventKind",
     "OutboxEventStatus",
     "Prescription",
+    "PrescriptionVersion",
+    "PrescriptionVersionMedication",
     "Profile",
     "ProfileType",
     "RagIngestionRunStatus",
@@ -137,6 +141,8 @@ __all__ = [
     "RagSourceApprovalStatus",
     "RagSourceEndpoint",
     "RagSourceEndpointLifecycleStatus",
+    "RagSourceIngestionArtifact",
+    "RagSourceIngestionArtifactKind",
     "RagSourceIngestionRun",
     "RagSourceLifecycleStatus",
     "RagSourceOperation",
