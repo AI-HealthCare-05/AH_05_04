@@ -2,7 +2,7 @@
 
 - 작성: 김지혜 (`Jye-rookie`), 2026-09-08
 - 기준 코드: develop `a6e5645` (#329 병합 포함)
-- 상태: 1단계 조사 이후 2단계 조회와 3단계 내부 사전 검사까지 진행. 실제 승인·공유 잠금 연결 및 삭제·감사는 미완료. 단계별 기록은 하단 참조.
+- 상태: 4단계 Local 합성 삭제·파일 감사·복구 모델까지 진행. 실제 Source/승인/공유 잠금/감사 DB 연결과 5단계 인계는 미완료. 단계별 기록은 하단 참조.
 - 관련: [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347), [#335](https://github.com/AI-HealthCare-05/AH_05_04/issues/335), [PR #348](https://github.com/AI-HealthCare-05/AH_05_04/pull/348), #165/#323
 - 정책 근거: [Source 보존·삭제 정책](../../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
 - DB·보안: 송은영, Source·provenance: 정현우, 정책·배치 승인: 권가빈. 운영 실행자는 별도 지정한다.
@@ -128,3 +128,14 @@ Q3~Q6은 미확정 상태 그대로이며 삭제·감사 기능을 추가하지 
 공유 Source writer·DB 계약 변경 없이 검토 가능한 내부 구현까지 진행했으며,
 실제 생성/소유 증거·전체 참조 조사·승인 저장소·경합 보호 방식은 Q1~Q4 검토를 거쳐 연결한다.
 정책 Proposed 상태와 Source Runtime/자동 삭제 비활성은 유지한다.
+
+
+## 4단계 진행 기록
+
+임시 합성 파일에 한정한 실행 포트와 Local 실험용 adapter를 추가했다.
+동일 guard 내부에서 의도 fsync → 승인·참조·객체 재검사 → unlink → 결과 fsync를 수행한다.
+부분 실패·중단·감사 쓰기 실패·재시도 시 새 참조 및 객체 교체를 합성 회귀로 검증했다.
+
+[4단계 증빙](../../testing/source-artifact-cleanup-347.md)에 실제 보장과 한계를 기록했다.
+운영 감사 DB·역할·모든 Source writer 공유 잠금을 확정한 것이 아니며 Q1~Q6의 운영 인계는 남는다.
+5단계의 DB/동시 실행·T01–T30·runbook 검토에서 미실행 항목을 완료로 처리하지 않는다.

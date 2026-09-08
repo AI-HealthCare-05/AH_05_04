@@ -25,6 +25,7 @@ class BatchTarget:
     observation: ObjectObservation = field(repr=False)
     # Supplied by a trusted observation port; checksum alone is not a generation identity.
     generation: str = field(repr=False)
+    artifact_kind: str = "RAW_RESPONSE"
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,8 @@ def _batch_bytes(batch: ReviewBatch) -> bytes:
     for target in sorted(batch.targets, key=lambda value: value.observation.object_key):
         obj = target.observation
         if (
-            not obj.object_key.strip()
+            target.artifact_kind not in {"RAW_RESPONSE", "REJECTS"}
+            or not obj.object_key.strip()
             or not target.generation.strip()
             or obj.created_at is None
             or obj.source_owned is not True
@@ -71,6 +73,7 @@ def _batch_bytes(batch: ReviewBatch) -> bytes:
             raise ValueError("Unproven object")
         targets.append(
             {
+                "kind": target.artifact_kind,
                 "key": obj.object_key,
                 "checksum": obj.checksum,
                 "byte_size": obj.byte_size,
@@ -79,7 +82,7 @@ def _batch_bytes(batch: ReviewBatch) -> bytes:
             }
         )
     payload = {
-        "format": "source-cleanup-review-batch-v1",
+        "format": "source-cleanup-review-batch-v2",
         "policy": scope.policy_version,
         "database": scope.database_id,
         "namespace": scope.namespace,

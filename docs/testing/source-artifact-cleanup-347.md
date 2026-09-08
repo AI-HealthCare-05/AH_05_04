@@ -4,7 +4,7 @@
 - 기준: `8da32d7` 및 이 문서와 함께 커밋하는 2단계 변경. develop 기준은 `a6e5645`.
 - 정책: [#335 보존·삭제 정책](../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md)
 - 계획: [1단계 경계 조사](../designs/jye-rookie/issue-347-source-artifact-cleanup-plan.md)
-- 현재 상태: 2단계 조사와 3단계 내부 승인 결속·보호 경계 사전 검사 구현. 실제 승인 저장소·공유 잠금·삭제·감사 저장은 미구현.
+- 현재 상태: 2·3단계 내부 조사·사전 검사와 4단계 임시 Local 합성 파일 삭제·파일 감사·복구 모델 구현. 실제 Source adapter·승인 저장소·공유 writer 잠금·운영 감사 DB 연결은 미구현.
 - 아래 2단계 결과는 해당 시점 증빙이며, 최신 3단계 결과는 마지막 절에 기록한다.
 
 ## 구현된 경로
@@ -135,3 +135,86 @@ git diff --check
 새 직접/간접 참조, 활성 수집, guard 상실/오류를 포함한다. Python 3.13의 합성 포트 테스트다.
 실제 승인 시스템·PostgreSQL 경합·운영 저장소·전체 CI는 실행하지 않았으며,
 T01–T30 전체 완료 또는 실제 삭제 가능성을 의미하지 않는다.
+
+
+## 4단계 — Local 합성 삭제·의도/결과 기록·복구
+
+기준: `a1c6122`와 이 문서에 동반되는 4단계 변경. develop 기준 `a6e5645`이며,
+최신 develop 병합·PR 생성·CI 실행 증빙은 아니다.
+
+### 실행 경계
+
+- `execution.execute_synthetic_batch`는 이전 `check_batch` 결과를 입력으로 받지 않는다.
+  같은 guard 안에서 승인·대상·참조를 재검사하고 의도 기록 → 재검사 → 삭제 → 결과 기록을 수행한다.
+- `SyntheticCleanupLab`만 실제 unlink를 구현한다. 생성자가 직접 만든 임시 디렉터리에
+  고정된 합성 ASCII 데이터만 생성하며 기존 Source root·S3·DB를 입력받는 실행 경로가 없다.
+  임의 namespace·대상·다른 환경·OCR 종류는 거부한다. API·CLI·scheduler에 등록하지 않았다.
+- `RAW_RESPONSE`/`REJECTS` 종류를 내부 배치 hash에 추가했다. 형식은
+  `source-cleanup-review-batch-v2`로 올렸고 기존 v1 승인 hash를 재사용하지 않는다.
+  이는 정규 Catalog manifest나 공용 Source 상태 계약의 변경이 아니다.
+- 합성 생성일은 fixture가 선언한 31일 전 시각이다. 실제로 31일 경과한 파일을 수집한 증거나
+  물리 파일 생성 시각을 확보하는 Q1 구현이 아니다. reference count와 승인자 역시 합성 포트다.
+
+### 삭제·감사·복구 동작
+
+1. 전체 배치 hash와 승인·실행자를 검증하고 guard를 획득한다.
+2. 객체별 bytes SHA-256·크기·세대·Source 소유·기간·전체 참조 조건을 검사한다.
+3. append-only API로 INTENT를 JSONL에 쓰고 flush/fsync가 반환된 후에만 진행한다.
+4. 느린 기록 중 상태가 바뀔 수 있어 승인·객체·참조·잠금을 다시 확인한다.
+5. 동일 guard에서 객체를 다시 확인하고 descriptor-relative unlink 및 directory fsync를 수행한다.
+6. DELETED 결과를 append/fsync한 경우만 해당 객체를 완료로 보고한다.
+
+파일과 감사 기록은 한 transaction이 아니다. 삭제 예외는 실제 unlink 이후 발생할 수도 있어
+UNKNOWN으로 기록한다. 일부 실패 시 성공 건을 복원하거나 다시 지우지 않는다.
+재실행은 디스크의 이력을 새로 읽고, DELETED이며 객체가 없는 건만 건너뛴다.
+성공 기록 뒤 같은 key에 객체가 다시 생겼으면 삭제하지 않는다.
+
+INTENT만 남았는데 객체가 없으면 UNKNOWN 결과를 append하고 외부 확인이 필요한 상태로
+남긴다. 과거 의도만으로 삭제 성공을 주장하지 않는다. 객체가 남았다면 명시적 retry 요청과
+새 승인·참조·세대 검사를 통과해야 다시 시도한다. 손상/불완전 JSONL은 이후 삭제를 차단하며
+복구를 이유로 기존 기록을 수정·삭제하지 않는다. 반환 결과가 실패여도 이미 삭제된 객체는
+존재할 수 있으므로 재시작 시 반드시 디스크 이력을 확인한다.
+
+재시도는 기본 1회이며 호출자가 명시할 때 합성 실행 안전 상한 3회까지만 허용한다.
+이는 테스트 모델의 bounded 실행 제한으로, 운영 재시도 횟수·간격 정책(Q6)을 확정한 값이 아니다.
+자동 재시도·장기 실패 자동 해제·UNKNOWN 수동 확정 API는 없다.
+
+### 감사·잠금의 실제 보장 범위
+
+- 기록: 배치 hash·안전한 객체 참조·시도 ID·종류·checksum·정책·승인 근거·실행자·시각·결과 코드.
+  객체 key/root·payload·Provider 예외 원문을 기록하지 않는다. `references_verified`는 해당 시도의
+  의도 기록 시점 검증 이력이며 재시작 시 현재 참조가 없다는 증거가 아니다.
+- 파일 journal에는 append API만 있고 중복 시도·중복 결과·순서 오류를 거부한다.
+  디렉터리 소유자의 파일 직접 수정/삭제를 OS나 DB 권한으로 막는 감사 불변성은 구현하지 않았다.
+  T21의 운영 권한 검증은 아직 미완료다. 임시 fixture 정리는 테스트 종료 동작이며 감사 보존 정책이 아니다.
+- 합성 executor끼리는 실제 flock으로 동시에 들어가지 못한다. fixture 외 실제 Source
+  writer·재사용·DB 참조 생성 경로는 이 잠금에 참여하지 않는다. Q3의 운영 경합 해결은 아니다.
+- 새 journal 인스턴스와 별도 Python 프로세스에서 기록을 다시 읽는 것을 검증했다.
+  BaseException 중단 주입으로 삭제 후 결과 미기록 복구를 검증했지만 실제 host crash·전원 장애나
+  전체 프로그램 재기동의 DB/승인/객체 포트 복구를 완료한 것은 아니다.
+
+### 검증 결과
+
+| 검사 | 결과 |
+| --- | --- |
+| Source cleanup 전체 | 102 passed (기존 72 + 신규 30) |
+| Worker RAG 전체 | 944 passed |
+| Ruff / format | 통과, 537 files |
+| Mypy Backend·Worker | 통과, 455 source files |
+| git diff --check | 통과 |
+
+Python 3.13, 자동 생성한 Local 합성 파일만 사용했다. 실제 PostgreSQL 통합·운영 역할·
+Source writer 동시 transaction·전체 CI는 실행하지 않았다.
+
+| 정책 시나리오 | 4단계 증빙 | 남은 범위 |
+| --- | --- | --- |
+| T10 | 합성 대상 실제 unlink와 기록 | 실제 생성/소유·승인·전체 참조 증거 |
+| T16 | 일부 실패 후 성공 건 유지·남은 건 재검사 | 실제 운영 실패 인계 |
+| T17/T19 | 중단·결과 기록 실패 후 디스크 이력으로 UNKNOWN 복구 | 운영 조사·불명확 결과의 승인된 해소 절차 |
+| T18 | INTENT 기록·fsync 실패 시 삭제 없음 | 운영 감사 저장소 권한/장애 |
+| T20 | 재시도 전 참조·승인·bytes·세대 변경 차단 | 모든 Source writer의 공유 잠금 |
+| T21 | append API, 중복/잘못된 순서·손상 이력 거부 | 비특권 UPDATE/DELETE 거부 및 운영 보존 |
+| T22 | 오류 응답·파일 감사에 payload/key/root/Provider 예외 없음 | 운영 로깅·감사 전체 경로 |
+
+4단계 합성 실행 모델의 완료이며 #347 전체 완료나 운영 삭제 준비 완료가 아니다.
+5단계에서는 이 증빙과 미완료 조건을 T01–T30·runbook에 대조하고 DB/승인/잠금 인계를 정리한다.
