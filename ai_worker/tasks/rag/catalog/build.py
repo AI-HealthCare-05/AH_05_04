@@ -22,13 +22,15 @@ from ai_worker.tasks.rag.catalog.types import (
     CatalogProduct,
     CatalogSearchEntry,
     ProductIdentity,
+    is_p0_code_system,
 )
 
 _REF_SPEC_VERSION = "catalog-member-ref-v1"
 
 
-def _is_hira_code_system(value: object) -> bool:
-    return isinstance(value, str) and value.strip().upper().startswith("HIRA")
+def _is_excluded_code_system(entity_type: CandidateEntityType, value: object) -> bool:
+    # Malformed non-string values still reach the normal mapping error boundary.
+    return isinstance(value, str) and bool(value.strip()) and not is_p0_code_system(entity_type, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,7 +361,7 @@ def _product_registry(
     catalog_products: dict[CatalogProduct, None] = {}
     product_by_identity: dict[tuple[str, ProductIdentity], CatalogProduct] = {}
     for product_input in products:
-        if _is_hira_code_system(product_input.code_system):
+        if _is_excluded_code_system(CandidateEntityType.PRODUCT, product_input.code_system):
             continue
         catalog_product = _product(product_input)
         _append_exact_deduplicated(catalog_products, catalog_product)
@@ -377,7 +379,7 @@ def _ingredient_registry(
     catalog_ingredients: dict[CatalogIngredient, None] = {}
     ingredient_by_identity: dict[tuple[str, ProductIdentity], CatalogIngredient] = {}
     for ingredient_input in ingredients:
-        if _is_hira_code_system(ingredient_input.code_system):
+        if _is_excluded_code_system(CandidateEntityType.INGREDIENT, ingredient_input.code_system):
             continue
         ingredient = _ingredient(ingredient_input)
         _append_exact_deduplicated(catalog_ingredients, ingredient)
@@ -398,9 +400,9 @@ def build_catalog_members(
     catalog_ingredients, ingredient_by_identity = _ingredient_registry(ingredients)
     catalog_components: dict[CatalogComponent, None] = {}
     for component_input in components:
-        if _is_hira_code_system(component_input.product_code_system) or _is_hira_code_system(
-            component_input.ingredient_code_system
-        ):
+        if _is_excluded_code_system(
+            CandidateEntityType.PRODUCT, component_input.product_code_system
+        ) or _is_excluded_code_system(CandidateEntityType.INGREDIENT, component_input.ingredient_code_system):
             continue
         product_identity = _identity(
             entity_type=CandidateEntityType.PRODUCT,
@@ -434,7 +436,7 @@ def build_catalog_members(
     catalog_aliases: dict[CatalogAlias, None] = {}
     alias_entries: dict[tuple[str, str], CatalogSearchEntry] = {}
     for alias_input in aliases:
-        if _is_hira_code_system(alias_input.target_code_system):
+        if _is_excluded_code_system(alias_input.target_type, alias_input.target_code_system):
             continue
         target_identity = _identity(
             entity_type=alias_input.target_type,

@@ -172,3 +172,16 @@ Frontend 최초 실행은 테스트 API URL 미설정으로 실패했고, fixtur
 #324의 처방 Version DB 기반이나 이번 Source 상태 보호가 #164의 normalization/provenance 정렬 완료를 의미하지는 않는다. #166 DB 후속 범위와 실제 Runtime 비활성 상태를 유지한다.
 
 병합 후 Worker·Source receipt 2,152 passed, 8 skipped; Ruff·format(523 files), Mypy(443 source files) 및 diff 검사 통과.
+
+## 2026-09-08 현우님 추가 리뷰: Candidate 소비 경계·P0 allowlist
+
+기준: `4d1fc38` 이후 추가 보완. 아래 결과는 이 절의 변경을 포함한 로컬 working tree에서 실행했으며, 앞선 SHA의 검증 결과를 최신 결과로 바꿔 쓰지 않는다.
+
+- Candidate public build는 전체 CatalogExportArtifacts를 받아 manifest/hash·JSONL·typed gate/구성원/count 결속을 검증한다. raw typed 입력과 승인 상태만 바꾼 입력은 CATALOG_MANIFEST_INVALID로 거부하며 embedding을 호출하지 않는다.
+- P0 Product MFDS_ITEM_SEQ / Ingredient MFDS_INGREDIENT_CODE allowlist를 build와 Candidate 입력에 적용한다. EDI·NHIS·HIRA·미등록 체계는 lookup 전에 제외한다.
+- 기존 Candidate 구성원 계산 테스트는 내부 순수 함수의 검증으로 구분하고, public API에는 정상 승인 artifact·미승인·raw 입력·gate/구성원/manifest/JSONL/checksum 변조 회귀를 추가했다.
+- Catalog·Candidate 집중 회귀: 180 passed.
+- RAG 전체 및 Source governance receipt: 853 passed.
+- Ruff·format, RAG Mypy(35 source files), git diff --check 통과.
+- DB·migration 변경 없음. 현재 Alembic head는 165e8f706152이며, PostgreSQL 및 전체 서비스 CI는 이번 보완에서 재실행하지 않았다.
+- #323이 미병합이므로 Source 중복 diff 정리는 미완료다. #323 병합 후 develop 반영·단일 head·diff·최종 HEAD CI를 재검증한다. 이 수정 자체로 #166 DB 통합·실제 승인 adapter·Runtime 활성화를 완료하지 않는다.

@@ -301,7 +301,7 @@ def test_preserves_raw_display_values_and_source_record_keys() -> None:
         source_snapshot_id=product.source_snapshot_id,
         product_code_system=product.code_system,
         product_canonical_code=product.canonical_code,
-        ingredient_code_system="MFDS_INGREDIENT",
+        ingredient_code_system="MFDS_INGREDIENT_CODE",
         ingredient_canonical_code="RAW-001",
         component_role=CatalogComponentRole.ACTIVE_INGREDIENT,
         component_order=1,
@@ -312,7 +312,7 @@ def test_preserves_raw_display_values_and_source_record_keys() -> None:
     catalog = build_catalog_members(
         ingredients=(
             CatalogIngredientInput(
-                product.source_snapshot_id, "INGREDIENT:RAW-001", "MFDS_INGREDIENT", "RAW-001", "  합성   성분  "
+                product.source_snapshot_id, "INGREDIENT:RAW-001", "MFDS_INGREDIENT_CODE", "RAW-001", "  합성   성분  "
             ),
         ),
         products=(product,),

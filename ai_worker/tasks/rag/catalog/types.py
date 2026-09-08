@@ -9,6 +9,21 @@ class CandidateEntityType(StrEnum):
     INGREDIENT = "INGREDIENT"
 
 
+# P0's existing official Product/Ingredient identities; insurance systems are not inputs.
+P0_IDENTITY_CODE_SYSTEMS = {
+    CandidateEntityType.PRODUCT: frozenset({"MFDS_ITEM_SEQ"}),
+    CandidateEntityType.INGREDIENT: frozenset({"MFDS_INGREDIENT_CODE"}),
+}
+
+
+def is_p0_code_system(entity_type: CandidateEntityType, value: object) -> bool:
+    return (
+        isinstance(entity_type, CandidateEntityType)
+        and isinstance(value, str)
+        and value.strip() in P0_IDENTITY_CODE_SYSTEMS[entity_type]
+    )
+
+
 class CandidateEntryType(StrEnum):
     PRODUCT_NAME = "PRODUCT_NAME"
     APPROVED_ALIAS = "APPROVED_ALIAS"

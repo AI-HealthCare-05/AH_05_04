@@ -369,6 +369,9 @@ def verify_catalog_export(artifacts: CatalogExportArtifacts) -> None:
             and manifest["normalization_version"] == catalog.normalization_version
             and manifest["source_refs"] == [dataclasses.asdict(ref) for ref in catalog.source_refs]
             and manifest["declared_counts"] == dataclasses.asdict(catalog.declared_counts)
+            and manifest["duplicate_identity_count"] == catalog.duplicate_identity_count
+            and manifest["orphan_count"] == catalog.orphan_count
+            and manifest["conflict_count"] == catalog.conflict_count
             and manifest["export_checksum"] == artifacts.export_checksum == _sha256(artifacts.catalog_jsonl)
             and artifacts.catalog_jsonl == _catalog_jsonl(members)
         )

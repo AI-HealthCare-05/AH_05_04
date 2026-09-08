@@ -152,7 +152,7 @@ async def test_missing_or_ineligible_approval_cannot_build_candidate_index(verif
     catalog = result.export.catalog
     assert catalog.verification_status is CatalogVerificationStatus.NOT_APPROVED
     index = build_candidate_index(
-        catalog, replace(lexical_config(), normalization_version=catalog.normalization_version)
+        result.export, replace(lexical_config(), normalization_version=catalog.normalization_version)
     )
     assert isinstance(index, CandidateIndexBuildFailure)
 
@@ -168,7 +168,9 @@ async def test_approved_receipt_and_gate_fields_are_bound_in_manifest() -> None:
     catalog = result.export.catalog
     assert catalog.verification_status is CatalogVerificationStatus.APPROVED
     assert isinstance(
-        build_candidate_index(catalog, replace(lexical_config(), normalization_version=catalog.normalization_version)),
+        build_candidate_index(
+            result.export, replace(lexical_config(), normalization_version=catalog.normalization_version)
+        ),
         CandidateIndexBuildSuccess,
     )
     payload = json.loads(result.export.manifest_json)
@@ -226,3 +228,122 @@ async def test_gate_or_export_tampering_is_rejected_at_handoff() -> None:
         verify_catalog_export(altered)
     with pytest.raises(CatalogExportError, match="CATALOG_MANIFEST_BINDING_INVALID"):
         verify_catalog_export(replace(result.export, catalog_jsonl=result.export.catalog_jsonl + b"\n"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation", ["raw", "gate", "freshness", "complete", "member", "manifest", "jsonl", "checksum"]
+)
+async def test_public_candidate_handoff_rejects_unbound_inputs_before_embedding(mutation) -> None:
+    from typing import Any, cast
+
+    from ai_worker.tasks.rag.candidate_index import CandidateIndexBuildFailureReason
+    from ai_worker.tests.rag.test_candidate_index import hybrid_config
+
+    result = await build_catalog_candidate(
+        request=_request(), repository=RecordingRepository(), approval_verifier=SyntheticApprovalVerifier()
+    )
+    artifacts = result.export
+    assert artifacts is not None
+    catalog = artifacts.catalog
+    if mutation == "raw":
+        invalid = catalog
+    elif mutation == "gate":
+        invalid = replace(
+            artifacts, catalog=replace(catalog, verification_status=CatalogVerificationStatus.NOT_APPROVED)
+        )
+    elif mutation == "freshness":
+        invalid = replace(artifacts, catalog=replace(catalog, freshness_status=CatalogFreshnessStatus.STALE))
+    elif mutation == "complete":
+        invalid = replace(artifacts, catalog=replace(catalog, is_complete=False))
+    elif mutation == "member":
+        invalid = replace(
+            artifacts,
+            catalog=replace(
+                catalog, products=(replace(catalog.products[0], product_name="tampered"), *catalog.products[1:])
+            ),
+        )
+    elif mutation == "manifest":
+        payload = json.loads(artifacts.manifest_json)
+        payload["approval_receipt"] = None
+        invalid = replace(artifacts, manifest_json=json.dumps(payload).encode())
+    elif mutation == "jsonl":
+        invalid = replace(artifacts, catalog_jsonl=artifacts.catalog_jsonl + b"{}\n")
+    else:
+        invalid = replace(artifacts, export_checksum="0" * 64)
+
+    class NeverEmbed:
+        def __getattr__(self, name):
+            pytest.fail("unverified handoff reached embedding port")
+
+    outcome = build_candidate_index(
+        cast(Any, invalid),
+        replace(hybrid_config(), normalization_version=catalog.normalization_version),
+        cast(Any, NeverEmbed()),
+    )
+    assert isinstance(outcome, CandidateIndexBuildFailure)
+    assert outcome.reason is CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code_system", ["HIRA", "HIRA_EDI", "EDI", "NHIS", "NHIS_CODE", "UNKNOWN", "MFDS_UNKNOWN"])
+async def test_non_allowlisted_identities_are_excluded_before_target_lookup(code_system) -> None:
+    from ai_worker.tasks.rag.catalog.types import CandidateEntityType
+
+    request = _request()
+    foreign_product = replace(request.products[0], code_system=code_system, canonical_code="missing-insurance")
+    foreign_ingredient = replace(_ingredient_inputs()[0], code_system=code_system)
+    foreign_alias = replace(
+        request.aliases[0], target_code_system=code_system, target_canonical_code="missing-insurance"
+    )
+    foreign_component = replace(
+        _component_inputs()[0], product_code_system=code_system, product_canonical_code="missing-insurance"
+    )
+    result = await build_catalog_candidate(
+        request=replace(
+            request,
+            products=(*request.products, foreign_product),
+            ingredients=(*request.ingredients, foreign_ingredient),
+            components=(*request.components, foreign_component),
+            aliases=(*request.aliases, foreign_alias),
+        ),
+        repository=RecordingRepository(),
+        approval_verifier=SyntheticApprovalVerifier(),
+    )
+    assert result.export is not None
+    catalog = result.export.catalog
+    assert all(p.identity.code_system == "MFDS_ITEM_SEQ" for p in catalog.products)
+    assert all(i.identity.code_system == "MFDS_INGREDIENT_CODE" for i in catalog.ingredients)
+    assert all(
+        a.identity.code_system
+        == ("MFDS_ITEM_SEQ" if a.identity.entity_type is CandidateEntityType.PRODUCT else "MFDS_INGREDIENT_CODE")
+        for a in catalog.aliases
+    )
+    assert isinstance(
+        build_candidate_index(
+            result.export, replace(lexical_config(), normalization_version=catalog.normalization_version)
+        ),
+        CandidateIndexBuildSuccess,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unapproved_typed_catalog_cannot_be_promoted_around_manifest_gate() -> None:
+    from typing import Any, cast
+
+    from ai_worker.tasks.rag.candidate_index import CandidateIndexBuildFailureReason
+
+    result = await build_catalog_candidate(request=_request(), repository=RecordingRepository())
+    assert result.export is not None
+    promoted = replace(
+        result.export.catalog,
+        verification_status=CatalogVerificationStatus.APPROVED,
+        freshness_status=CatalogFreshnessStatus.CURRENT,
+        is_complete=True,
+    )
+    for invalid in (promoted, replace(result.export, catalog=promoted)):
+        outcome = build_candidate_index(
+            cast(Any, invalid), replace(lexical_config(), normalization_version=promoted.normalization_version)
+        )
+        assert isinstance(outcome, CandidateIndexBuildFailure)
+        assert outcome.reason is CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID

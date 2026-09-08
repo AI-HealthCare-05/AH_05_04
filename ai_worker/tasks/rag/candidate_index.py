@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from ai_worker.tasks.rag.catalog.export import CatalogExportArtifacts, CatalogExportError, verify_catalog_export
 from ai_worker.tasks.rag.catalog.types import (
     CandidateAliasReviewStatus,
     CandidateCatalogCounts,
@@ -27,6 +28,7 @@ from ai_worker.tasks.rag.catalog.types import (
     CatalogSearchEntry,
     CatalogVerificationStatus,
     ProductIdentity,
+    is_p0_code_system,
 )
 
 
@@ -277,7 +279,7 @@ def _identity_shape_is_valid(value: object) -> bool:
     return (
         isinstance(value, ProductIdentity)
         and isinstance(value.entity_type, CandidateEntityType)
-        and _is_nonblank_text(value.code_system)
+        and is_p0_code_system(value.entity_type, value.code_system)
         and _is_nonblank_text(value.canonical_code)
     )
 
@@ -1189,6 +1191,21 @@ def _catalog_envelope_failure(catalog: CandidateCatalogExport) -> CandidateIndex
 
 
 def build_candidate_index(
+    artifacts: CatalogExportArtifacts,
+    config: CandidateIndexBuildConfig,
+    embedding_port: CandidateEmbeddingPort | None = None,
+) -> CandidateIndexBuildSuccess | CandidateIndexBuildFailure:
+    """Verify the complete Catalog handoff before trusting typed gates or calling ports."""
+    if not isinstance(artifacts, CatalogExportArtifacts):
+        return CandidateIndexBuildFailure(CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID, ("artifacts",))
+    try:
+        verify_catalog_export(artifacts)
+    except CatalogExportError:
+        return CandidateIndexBuildFailure(CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID, ("manifest",))
+    return _build_candidate_index_members(artifacts.catalog, config, embedding_port)
+
+
+def _build_candidate_index_members(
     catalog: CandidateCatalogExport,
     config: CandidateIndexBuildConfig,
     embedding_port: CandidateEmbeddingPort | None = None,

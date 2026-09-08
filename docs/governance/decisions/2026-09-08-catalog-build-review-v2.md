@@ -11,3 +11,11 @@
 - 실제 receipt 제공 adapter, normalization DB 모델 및 외부 정본 projection hash와의 최종 대응은 별도 후속이다. 임의 운영 승인을 만들지 않는다.
 
 상세 명세: `docs/contracts/targets/post-mvp-1/catalog-build-v2.md`.
+
+## 추가 리뷰: 소비 경계와 보험 식별자 제외
+
+근거: https://github.com/AI-HealthCare-05/AH_05_04/pull/329#pullrequestreview-5138112718
+
+Candidate Index의 public build 입력을 raw typed Catalog에서 전체 CatalogExportArtifacts로 변경한다. 소비 경계에서 hash·manifest·JSONL·typed 필드 결속을 검증하고, raw 입력은 기존 CATALOG_MANIFEST_INVALID로 거부한다. 검증을 호출자 관례에 맡기지 않는다.
+
+P0 code system은 Product MFDS_ITEM_SEQ, Ingredient MFDS_INGREDIENT_CODE만 허용하는 구현안으로 고정하고, 목록 확장은 Source/Candidate 검토를 거친다. 기존 테스트 중 표시 문자열 보존 테스트의 비표준 MFDS_INGREDIENT 표기는 합성 fixture의 MFDS_INGREDIENT_CODE와 맞췄다. 현재는 리뷰 요청에 따른 구현·계약 보완이며 운영 승인이나 확정된 외부 코드 체계 확대가 아니다.

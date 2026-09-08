@@ -53,6 +53,14 @@ manifest hash는 catalog_manifest_hash 자신을 제외한 전체 manifest 객�
 
 source_refs는 Snapshot ID·Source version UTF-8 바이트순으로 정렬한다. receipt Source 목록은 Snapshot ID·version 문자열 사전순이다. 유효한 Unicode scalar 문자열에 대해 이 순서는 UTF-8 순서와 일치한다. JSON 객체 키는 Python sort_keys의 Unicode 순서를 사용한다. UTF-16 정렬 규칙인 Source 원문 checksum과 혼동하지 않는다.
 
-`verify_catalog_export`는 hash 재계산, typed gate 상태·version·source_refs·counts, 실제 JSONL checksum 및 구성원 직렬화 일치를 확인한다. 서비스는 저장 전 이 검증을 수행한다. 외부 artifact 인계 소비자는 동일 검증 후 typed Catalog를 전달해야 한다. 이 검증은 승인 권한 검증이나 서명을 대신하지 않는다. Candidate Index의 typed 객체 입력만으로 외부 manifest 전체의 재계산이 자동 수행되는 것은 아니다.
+`verify_catalog_export`는 hash 재계산, typed gate 상태·version·source_refs·counts, 실제 JSONL checksum 및 구성원 직렬화 일치를 확인한다. 서비스는 저장 전 이 검증을 수행한다. `build_candidate_index(artifacts, config, embedding_port)`는 `CatalogExportArtifacts` 전체를 받아 내부에서 매번 동일 검증을 수행한 뒤 typed Catalog를 사용한다. raw `CandidateCatalogExport`만 전달하거나 manifest·JSONL·gate 상태·구성원·검증 count 결속이 어긋나면 `CATALOG_MANIFEST_INVALID`로 실패하며 embedding을 호출하지 않는다. 내부 구성원 계산 함수는 외부 인계 API가 아니다. 이 무결성 검증은 승인 권한 검증이나 서명을 대신하지 않으며, 실제 승인 adapter 연결은 후속이다.
 
 외부 정본의 Catalog projection hash와 본 envelope hash는 동등하다고 가정하지 않는다. Runtime 필드에 연결할 최종 hash 의미와 실제 승인 adapter는 후속 공유 계약에서 정렬한다. READY Set·DB normalization 실행·Runtime activation은 이번 변경에 포함하지 않는다.
+
+## P0 Identity 허용 범위와 후속 리뷰
+
+[현우님 추가 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/329#pullrequestreview-5138112718)에 따라 HIRA 접두사 차단을 명시적 P0 allowlist로 대체한다. 이번 구현안은 기존 합성 인계 계약의 Product `MFDS_ITEM_SEQ`, Ingredient `MFDS_INGREDIENT_CODE`만 허용한다. DB·Source 검토에서 확장하기 전에는 EDI·NHIS·HIRA 및 알 수 없는 체계를 허용하지 않는다.
+
+Product/Ingredient 입력과 Component 양쪽 참조, Alias 대상은 엔티티별 허용 목록을 적용한다. 제외 대상은 lookup 전에 걸러 누락 대상을 조회하지 않으며 Product/Search Entry로 내보내지 않는다. Candidate 입력도 엔티티별 허용 목록을 검사한다. 공백·잘못된 입력 타입의 기존 validation은 유지한다. 보험 식별자를 제품 Identity로 변환하거나 서로 다른 Identity를 병합하지 않는다.
+
+#323은 이번 검토 시점에 미병합이므로 Source 중복 diff를 제거하려고 Source 이력을 임의 삭제하지 않는다. #323 병합 후 최신 develop을 반영하고 중복 diff·Alembic 단일 head·해당 HEAD의 CI를 확인한 뒤 재리뷰한다.

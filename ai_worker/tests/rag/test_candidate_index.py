@@ -1,3 +1,5 @@
+"""Candidate member algorithm tests; public artifact handoff is covered in catalog/test_review_regressions.py."""
+
 import subprocess
 import sys
 import unicodedata
@@ -39,8 +41,10 @@ from ai_worker.tasks.rag.candidate_index import (
     CatalogSearchEntry,
     CatalogVerificationStatus,
     ProductIdentity,
-    build_candidate_index,
     search_candidate_index,
+)
+from ai_worker.tasks.rag.candidate_index import (
+    _build_candidate_index_members as build_candidate_index,
 )
 
 
