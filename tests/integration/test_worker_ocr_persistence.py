@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from importlib import import_module
 from uuid import UUID, uuid4
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.engine import URL
@@ -186,7 +187,15 @@ async def read_persisted_result(
         )
 
 
-async def test_ocr_input_and_result_share_one_external_transaction() -> None:
+@pytest.mark.parametrize(
+    "field_type,raw_value,confidence",
+    [
+        ("MEDICATION_NAME", "합성 의약품", 0.98),
+        ("MEDICATION_STRENGTH", None, None),
+        ("DOSE_UNIT", None, None),
+    ],
+)
+async def test_ocr_input_and_result_share_one_external_transaction(field_type, raw_value, confidence) -> None:
     job_id = uuid4()
     domain_id = uuid4()
     document_id = uuid4()
@@ -269,9 +278,9 @@ async def test_ocr_input_and_result_share_one_external_transaction() -> None:
                 fields=(
                     OcrRecognizedField(
                         medication_index=1,
-                        field_type="MEDICATION_NAME",
-                        raw_value="합성 의약품",
-                        confidence_score=0.98,
+                        field_type=field_type,
+                        raw_value=raw_value,
+                        confidence_score=confidence,
                         normalized_value=None,
                         normalization_version=None,
                     ),
@@ -291,3 +300,19 @@ async def test_ocr_input_and_result_share_one_external_transaction() -> None:
         await session.commit()
 
     assert await read_persisted_result(domain_id=domain_id) == ("COMPLETED", 1)
+
+    async with session_factory() as session:
+        stored = (
+            await session.execute(
+                text(
+                    "SELECT raw_value, normalized_value, normalization_version, confidence_score "
+                    "FROM extracted_field WHERE ocr_job_id = :job_id AND field_type = :field_type"
+                ),
+                {"job_id": str(domain_id), "field_type": field_type},
+            )
+        ).one()
+        assert stored[0] == raw_value
+        assert stored[1] is None
+        assert stored[2] is None
+        if confidence is None:
+            assert stored[3] is None

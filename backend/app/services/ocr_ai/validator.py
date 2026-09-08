@@ -14,21 +14,13 @@ from app.services.ocr_engine import (
     RecognizedField,
 )
 from ocr_runtime.prescription_ocr_structurer import normalize_prescribed_date_text
+from ocr_runtime.review_fields import EMPTY_REVIEW_FIELD_TYPES
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 # LLM이 값을 찾지 못하거나 grounding 검증에 실패했을 때
 # 검수 화면에 사용자 입력용 빈칸을 제공하는 필드입니다.
 # 처방 확정 필수 여부와는 별개이며 TIMING은 선택값입니다.
-_EMPTY_REVIEW_FIELD_TYPES = frozenset(
-    {
-        "DOSE_VALUE",
-        "FREQUENCY_PER_DAY",
-        "DURATION_DAYS",
-        # 복용 조건 인식에 실패해도 필드를 없애지 않고
-        # 사용자가 원본을 보고 직접 입력할 빈칸을 제공합니다.
-        "TIMING",
-    }
-)
+_EMPTY_REVIEW_FIELD_TYPES = frozenset(EMPTY_REVIEW_FIELD_TYPES)
 
 # 복용 시점에서 항목을 나열할 때 사용되는 표기 차이입니다.
 # 예: "아침 저녁", "아침·저녁", "아침, 저녁"

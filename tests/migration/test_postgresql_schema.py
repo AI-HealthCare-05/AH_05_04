@@ -20,8 +20,10 @@ from app.core import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRE_PROFILE_REVISION = "77585c0c9792"
 PROFILE_EXPAND_REVISION = "117a8c9d4e21"
+PROFILE_CONTRACT_REVISION = "9c1d7f2b6a4e"
 OCR_AI_JOB_BASE_REVISION = "8d4f1a6c9e2b"
 GUIDE_AI_JOB_BASE_REVISION = "c3f8a12d9e47"
+GUIDE_AI_JOB_REVISION = "20fd11d29ecc"
 
 
 def create_test_database_url() -> URL:
@@ -559,7 +561,10 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
             _insert_legacy_profile_graph_data()
         )
 
-        command.upgrade(alembic_config, "head")
+        # Keep this historical roundtrip within the Profile migration boundary.
+        # Later immutable Prescription Version backfills intentionally prevent
+        # downgrading a populated prescription graph below their foundation.
+        command.upgrade(alembic_config, PROFILE_CONTRACT_REVISION)
         head_chain = asyncio.run(
             _fetch_head_profile_graph(
                 ocr_job_id=ocr_job_id,
@@ -595,7 +600,7 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
         assert expand_chain["profile_id"] is not None
         assert expand_chain["profile_user_id"] == user_id
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, PROFILE_CONTRACT_REVISION)
         final_chain = asyncio.run(
             _fetch_head_profile_graph(
                 ocr_job_id=ocr_job_id,
@@ -619,7 +624,6 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
         assert final_chain["profile_user_id"] == user_id
         assert set(final_gap_counts.values()) == {0}
     finally:
-        command.upgrade(alembic_config, "head")
         if user_id and document_id and ocr_job_id and prescription_id and guide_id and chat_session_id:
             asyncio.run(
                 _cleanup_profile_roundtrip_data(
@@ -631,6 +635,7 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
                     chat_session_id=chat_session_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -2172,13 +2177,13 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
 
         user_id, document_id, ocr_job_id, prescription_id, guide_id = asyncio.run(_insert_pre_mapping_guide())
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
 
-        # 이미 head인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
-        command.upgrade(alembic_config, "head")
+        # 이미 대상 revision인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
+        command.upgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
 
@@ -2188,13 +2193,11 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
         )
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is False
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
     finally:
-        command.upgrade(alembic_config, "head")
-
         if user_id and document_id and ocr_job_id and prescription_id and guide_id:
             asyncio.run(
                 _cleanup_guide_mapping_roundtrip_data(
@@ -2205,6 +2208,7 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
                     guide_id=guide_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 async def _insert_linked_guide_ai_job() -> tuple[str, str, str, str, str, str]:
@@ -2349,10 +2353,8 @@ async def _write_guide_ai_job_link_and_wait(
 async def _wait_for_guide_downgrade_lock() -> None:
     """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
     기다리는지 확인합니다. `GUIDE_AI_JOB_BASE_REVISION`으로 내려가는 경로에는 #169의
-    `169a1b2c3d4e`(Prescription Version)와 #206의 `d1e2f3a4b5c6`(user 컬럼 추가)이 있습니다.
-    writer가 같은 transaction에서 만든 `prescription` 또는 `user` row 때문에 downgrade가
-    `guide` 단계(FK 제약 삭제)에 도달하기 전에 먼저 대기할 수 있습니다. 어느 테이블에서
-    관찰되든 같은 concurrent writer 대기 상태를 증명합니다."""
+    historical Guide migration revision 안에서 실행하므로 writer가 같은 transaction에서 만든
+    `guide` row와 FK 제약 삭제가 충돌하는 대기 상태를 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
         poolclass=NullPool,
@@ -2406,7 +2408,7 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
     downgrade_future: Future[None] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             writer_future = executor.submit(
@@ -2460,8 +2462,6 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
             except RuntimeError:
                 pass
 
-        command.upgrade(alembic_config, "head")
-
         if user_id and document_id and ocr_job_id and prescription_id and guide_id and ai_job_id:
             asyncio.run(
                 _cleanup_linked_guide_ai_job(
@@ -2473,6 +2473,7 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
@@ -2485,7 +2486,7 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
     ai_job_id = ""
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         user_id, document_id, ocr_job_id, prescription_id, guide_id, ai_job_id = asyncio.run(
             _insert_linked_guide_ai_job()
@@ -2503,8 +2504,6 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) == ai_job_id
     finally:
-        command.upgrade(alembic_config, "head")
-
         if user_id and document_id and ocr_job_id and prescription_id and guide_id and ai_job_id:
             asyncio.run(
                 _cleanup_linked_guide_ai_job(
@@ -2516,6 +2515,7 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 @pytest.mark.asyncio

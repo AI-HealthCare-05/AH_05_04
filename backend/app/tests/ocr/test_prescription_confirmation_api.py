@@ -606,3 +606,109 @@ async def test_update_extracted_field_api_rejects_after_prescription_confirmed(d
 
     # 409 응답만 반환하고 끝나는 것이 아니라, 기존 확정값이 보존되어야 합니다.
     assert updated_field["confirmed_value"] == original_confirmed_value
+
+
+@pytest.mark.parametrize("path", ["llm", "rule"])
+@pytest.mark.parametrize("fill_optional", [False, True])
+@pytest.mark.asyncio
+async def test_generated_empty_fields_persist_and_confirm(
+    db_session: AsyncSession,
+    path: str,
+    fill_optional: bool,
+) -> None:
+    from app.repositories.ocr_repository import OcrRepository
+    from app.services.ocr_ai.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
+    from app.services.ocr_ai.validator import validate_and_convert_draft
+    from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
+    from ocr_runtime.prescription_ocr_structurer import PrescriptionOcrStructurer
+    from provider_contracts.ocr import RawRecognizedField
+
+    raw = [
+        RawRecognizedField("명칭", 0.99, 237, 581),
+        RawRecognizedField("투여량", 0.99, 413, 581),
+        RawRecognizedField("용법", 0.99, 911, 581),
+        RawRecognizedField("합성의약품정", 0.99, 137, 637),
+    ]
+    if path == "rule":
+        generated = PrescriptionOcrStructurer().structure(raw)
+    else:
+        generated = validate_and_convert_draft(
+            draft=GeneratedPrescriptionDraft(
+                medications=[
+                    GeneratedMedication(medication_name=GeneratedSourceValue(value="합성의약품정", source_ids=[4]))
+                ]
+            ),
+            raw_fields=raw,
+            normalizer=MedicationNameNormalizer(),
+        )
+    generated = [field for field in generated if field.medication_index == 1]
+    generated.append(RecognizedField(0, "PRESCRIBED_DATE", "2026-08-01", 0.99))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = await _signup_and_login(client, label="empty-generated")
+        headers = {"Authorization": f"Bearer {token}"}
+        document_id, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=token)
+        job = await db_session.get(OcrJob, UUID(job_id))
+        assert job is not None
+        await OcrRepository(db_session).replace_fields(
+            ocr_job=job,
+            fields=[
+                {
+                    "medication_index": field.medication_index,
+                    "field_type": FieldType(field.field_type),
+                    "raw_value": field.raw_value,
+                    "normalized_value": field.normalized_value,
+                    "normalization_version": field.normalization_version,
+                    "confidence_score": field.confidence_score,
+                }
+                for field in generated
+            ],
+        )
+        response = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert response.status_code == 200
+        fields = response.json()["data"]["fields"]
+        assert len(fields) == 8
+        assert len({field["field_id"] for field in fields}) == 8
+        # 기존 결과를 지운 뒤 중복 삽입에 실패해도 transaction rollback으로 복구되어야 합니다.
+        from sqlalchemy.exc import IntegrityError
+
+        with pytest.raises(IntegrityError, match="uq_extracted_field_identity"):
+            async with db_session.begin_nested():
+                duplicate = {
+                    "medication_index": 1,
+                    "field_type": FieldType.DOSE_UNIT,
+                    "raw_value": None,
+                    "confidence_score": None,
+                }
+                await OcrRepository(db_session).replace_fields(ocr_job=job, fields=[duplicate, duplicate])
+        restored = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert {field["field_id"] for field in restored.json()["data"]["fields"]} == {
+            field["field_id"] for field in fields
+        }
+        values = {
+            "MEDICATION_NAME": "합성의약품정",
+            "PRESCRIBED_DATE": "2026-08-01",
+            "DOSE_VALUE": "1",
+            "FREQUENCY_PER_DAY": "1",
+            "DURATION_DAYS": "7",
+            "MEDICATION_STRENGTH": "5mg" if fill_optional else None,
+            "DOSE_UNIT": "정" if fill_optional else None,
+            "TIMING": "아침 식후" if fill_optional else None,
+        }
+        for field in fields:
+            kind = field["field_type"]
+            if kind not in {"MEDICATION_NAME", "PRESCRIBED_DATE"}:
+                assert all(
+                    field[key] is None
+                    for key in ("raw_value", "normalized_value", "normalization_version", "confidence_score")
+                )
+                assert field["confirmation_status"] == "UNCONFIRMED"
+            patched = await client.patch(
+                f"/api/v1/extracted-fields/{field['field_id']}", headers=headers, json={"confirmed_value": values[kind]}
+            )
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["data"]["confirmed_value"] == values[kind]
+            assert patched.json()["data"]["confirmation_status"] == "CONFIRMED"
+        confirmed = await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers)
+        assert confirmed.status_code == 201, confirmed.text
+        medication = confirmed.json()["data"]["medications"][0]
+        assert medication["strength_text"] == values["MEDICATION_STRENGTH"]

@@ -89,12 +89,15 @@ pointer가 RAG-07B 소유이므로 채택하지 않는다.
 ### 테스트 모듈
 
 `ai_worker/tests/rag/test_candidate_index.py`는 비식별 합성 Catalog record와 결정적 fake search
-port를 사용해 공개 API를 검증한다. 테스트는 PostgreSQL, 외부 model download, Source endpoint,
+port를 사용해 내부 구성원 계산을 검증한다. 공개 artifacts 인계 검증은
+`ai_worker/tests/rag/catalog/test_review_regressions.py`에서 서비스 생성부터 확인한다. 테스트는 PostgreSQL, 외부 model download, Source endpoint,
 credential 또는 환자정보를 요구하지 않는다.
 
 ## Catalog 입력 계약
 
-`CandidateCatalogExport`는 순수 builder가 소비하는 RAG-06 인계값이다. 다음 값을 포함한다.
+`build_candidate_index`의 공개 입력은 `CatalogExportArtifacts`다. `medication-catalog-v2`
+manifest·JSONL·checksum과 typed Catalog의 결속을 검증한 뒤 내부 구성원 계산을 수행한다.
+`CandidateCatalogExport` 단독 입력은 거부한다. 내부 typed Catalog는 다음 값을 포함한다.
 
 - `catalog_version`
 - `catalog_manifest_hash`
@@ -113,10 +116,10 @@ Identity를 대상으로 해야 하고 active, approved, effective 상태이며 
 한다. Ingredient Alias는 후속 ingredient-exact 진단 경계에서만 사용하며 이 인덱스의 Product
 Candidate 구성원이 되면 안 된다.
 
-Catalog export의 모든 문자열은 Unicode NFC여야 한다. RAG-07A는 NFD 등 다른 표현을 조용히 NFC로
-변환하지 않는다. 자동 변환은 RAG-06 Parser의 계약 위반을 숨기고 저장 문자열과 canonical hash가 서로
-다른 내용을 식별하게 만들 수 있으므로, NFC가 아닌 문자열이 하나라도 있으면 전체 build를
-`CATALOG_TEXT_NOT_NFC`로 실패시킨다. 실패 detail에는 원문이 아니라 안정적인 필드 경로만 포함한다.
+Catalog의 검색용 normalized 필드, 공식 Identity, 참조·버전 및 build config는 NFC여야 한다.
+제품명·함량 표시·제형·제조사명, 성분명, Alias 원문과 Search Entry display_text는 Source 표시값으로
+NFD를 포함해 그대로 보존한다. 해당 원문 필드 외의 NFC 위반은 `CATALOG_TEXT_NOT_NFC`로
+실패시키며 detail에는 필드 경로만 포함한다. 직렬화된 원문 전체를 NFC로 재작성하지 않는다.
 
 `PRODUCT_NAME` Search Entry의 `display_text`와 `normalized_text`는 연결된 Product row의
 `product_name`, `normalized_product_name`과 각각 exact-match해야 한다. Alias Entry가 Alias row와
@@ -147,9 +150,9 @@ Source 결속 규칙은 다음과 같다.
 - Alias와 Product는 서로 다른 승인 Snapshot에서 관리될 수 있으므로 두 Snapshot이 같을 필요는 없다.
   다만 Product와 Alias의 Snapshot은 모두 같은 Catalog export의 `source_refs`에 포함돼야 한다.
 
-RAG-06은 Catalog manifest의 정본 envelope와 canonicalization specification version을 발행해야 한다.
-RAG-07A는 현재 `catalog_manifest_hash`의 형식과 위 Source 결속을 검증하며, 정본 envelope가 확정되기
-전까지 알 수 없는 canonicalization version을 추정하거나 hash 일치로 간주하지 않는다.
+RAG-06은 `medication-catalog-v2` / `catalog-manifest-envelope-v2` envelope를 발행한다.
+RAG-07A는 공개 artifacts 입력에서 hash와 Source 결속을 재검증한다. 알 수 없는 schema·
+canonicalization version을 추정하거나 외부 정본 projection hash와 동등하다고 간주하지 않는다.
 
 ### 필수값과 상태 무결성
 
@@ -258,14 +261,16 @@ builder는 다음 순서로 처리한다.
 8. 완전한 `CandidateIndexBuildSuccess` 하나 또는 타입이 지정된 `CandidateIndexBuildFailure` 하나만
    반환한다. failure에는 partial 구성원이나 manifest가 없다.
 
-Canonical payload는 UTF-8, Unicode NFC, compact sorted-key JSON, 명시적 null, 유한 JSON number와
+Canonical payload는 원문 문자열을 보존하는 UTF-8, compact sorted-key JSON, 명시적 null, 유한 JSON number와
 소문자 64자리 SHA-256을 사용한다. 승인된 RAG-06 export 계약이 안정적인 의미 필드로 지정하지 않는
 한 DB ID, 입력 순서, timestamp, object key와 process-local value는 결정적 hash에서 제외한다.
 
-현재 RAG-07A는 `catalog_manifest_hash`가 소문자 64자리 SHA-256 형식인지 검증하지만 RAG-06 export
-전체를 재계산할 정본 envelope가 아직 없으므로 값 자체를 재계산하지 않는다. RAG-06은 RAG-07A와
-동일한 UTF-8·NFC·compact sorted-key canonicalization과 명시적 의미 필드 목록으로 manifest hash를
-발행해야 하며, 그 계약이 확정되면 RAG-07A 또는 RAG-07B 통합 경계에서 exact recomputation을 추가한다.
+공개 소비 경계는 `verify_catalog_export`로 manifest hash, JSONL checksum, typed 구성원·count·승인
+상태 결속을 매번 재계산한다. 실패 시 `CATALOG_MANIFEST_INVALID`이며 embedding을 호출하지 않는다.
+정확한 v2 envelope 필드·직렬화 규칙은
+`docs/contracts/targets/post-mvp-1/catalog-build-v2.md`를 따른다. 이 hash를 외부 정본의 Catalog
+projection hash와 동등하다고 가정하지 않는다. Candidate member hash도 원문 바이트를 보존하며,
+기존 NFC 입력의 hash는 변하지 않고 새로 허용된 NFD 원문은 NFC 원문과 구분된다.
 
 ## Manifest 계약
 
@@ -387,7 +392,7 @@ vector와 Evidence vector를 혼합하거나 내부 hit metadata를 환자 DTO�
 - partial, stale, unapproved, count mismatch 또는 invalid-hash Catalog는 구성원을 반환하지 않는다.
 - 비어 있는 Catalog·Source·Identity·reference·필수 문자열과 구성원 0건 결과는 성공하지 않는다.
 - Source Snapshot과 Version의 결속 변경은 다른 manifest/content hash를 만들며 중복·충돌은 실패한다.
-- Catalog와 build config의 문자열이 NFC가 아니면 자동 변환 없이 구성원을 반환하지 않는다.
+- Catalog의 normalized·Identity·참조 필드와 build config가 NFC가 아니면 차단한다. 원문 표시 필드는 보존한다.
 - Product-name Search Entry 문자열이 Product row와 다르면 참조 무결성 오류로 실패한다.
 - Product-name Entry와 Product, Alias Entry와 Alias의 Source Snapshot 결속을 각각 검증하고, 서로 다른
   승인 Product·Alias Snapshot은 같은 Catalog export 안에서 보존한다.
