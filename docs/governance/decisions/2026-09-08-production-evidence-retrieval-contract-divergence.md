@@ -70,8 +70,9 @@ key, 명시적 `null`, 빈 배열, safe integer와 금지 float를 포함한다.
 
 ## Evidence 유형별 Production provenance
 
-모든 유형은 `evidence_type`, `source_code`, `source_version`, `source_snapshot_id`, `locator`와 정확히 하나의
-Endpoint/Operation Snapshot Member 또는 Artifact Snapshot Member를 가진다. Endpoint 경로의
+모든 유형은 `evidence_type`, `source_code`, `source_version`, `source_snapshot_id`, Snapshot의
+`canonical_checksum`, `locator`와 정확히 하나의 Endpoint/Operation Snapshot Member 또는 Artifact Snapshot
+Member를 가진다. Endpoint 경로의
 `endpoint_code`는 필수이고 `operation_code`는 정규 Member 계약에 따라 nullable이다.
 
 | `evidence_type` | Runtime provenance와 stable key | bridge `content_sha256` preimage |
@@ -86,7 +87,9 @@ Endpoint/Operation Snapshot Member 또는 Artifact Snapshot Member를 가진다.
 `content_sha256`은 해당 bytes의 SHA-256 lower hex다. 이는 `source_snapshot.canonical_checksum`, Snapshot
 Member `content_sha256`, `knowledge_chunk.content_hash`를 서로 대체하지 않으며 Rule·Guideline DB에 새 공통
 content-hash 컬럼이 있다고 가정하지 않는다. 후속 구현은 projection golden vector와 schema/version 변경을
-같은 PR에 포함한다.
+같은 PR에 포함한다. Runtime provenance의 `canonical_checksum`은 `source_snapshot_id`가 가리키는 불변
+Snapshot 값과 exact-match하여 당시 내용 동일성을 증명하지만 `evidence-bridge-content@1` preimage에는 넣지
+않는다.
 
 Runtime은 위 필드와 안정 좌표를 검증한다. Evaluation bridge producer는 검증된 Runtime identity를
 `evidence_type + stable_key + source_version + locator + content_sha256` mapping에 결속해 `evidence_ref_id`와
@@ -148,14 +151,18 @@ Runtime `locator`는 일반 Evidence Mapping의 `locator`, Knowledge Index Bridg
 1. #166 PR에서 Catalog/Resolver 입력 경계와 Source provenance를 검토한다.
 2. #166 완료 뒤 #167/#168에서 실제 Catalog export와 DB 연결을 진행한다. #167 pure Candidate Index logic은
    PR #260으로 구현됐으므로 새 unit slice를 만들지 않는다.
-3. #178 Production slice에서 PostgreSQL hybrid retrieval, 정규 provenance, canonical Node·상태·configuration
+3. #362에서 Source ingestion이 Production `source_version`을 생성·검증하고 외부 Version 보존과 200자 상한,
+   파생 Freshness·Snapshot 승인 경계를 정규 계약과 맞춘다. #178은 이 생산자 경계가 완료되기 전에
+   Production `source_version` 검증을 활성화하지 않는다.
+4. #178 Production slice에서 PostgreSQL hybrid retrieval, 정규 provenance, canonical Node·상태·configuration
    receipt를 구현한다. authoritative Retrieval Run persistence, locator 검증과 Gate origin 결속은 그 구현
    경계에서 별도 DB·Safety 검토를 받는다.
-4. 위 Runtime receipt가 준비된 뒤 실제 Retrieval Evaluation을 연결한다.
+5. 위 Runtime receipt가 준비된 뒤 실제 Retrieval Evaluation을 연결한다.
 
 이 Decision PR에는 PostgreSQL query·migration·repository, Catalog 연결, Retrieval Run persistence,
 Evidence Gate·Composer 구현, Evaluation 실행 또는 공개 flag 변경을 포함하지 않는다. `PUBLIC_TRACK_F=false`를
-유지한다.
+유지한다. #166 D-05가 소유하는 Candidate Catalog projection hash와 Runtime medication Catalog manifest hash,
+PR #329/#167 v2 Catalog envelope 계산식은 이 Decision이 변경하지 않는다.
 
 ## 승인과 후속 구현 조건
 

@@ -1203,21 +1203,26 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
 1. **#166 PR 검토:** Catalog/Resolver 입력 경계, Source Snapshot·Member provenance와 export hash domain을
    검토한다.
 2. **#166 완료 후 #167/#168 통합:** PR #260의 pure Candidate Index logic을 재구현하지 않고 실제 Catalog
-   export와 DB persistence를 연결한다.
-3. **#178 Production Adapter:** `PD-315-20260908`의 `rrf-rank-fusion@1` 공식과 안정 Chunk 좌표
+   export와 DB persistence를 연결한다. #166 D-05의 Candidate Catalog projection hash, Runtime medication
+   Catalog manifest hash와 PR #329/#167 v2 Catalog envelope 계산식은 이 Decision에서 변경하지 않는다.
+3. **#362 Source 생산 경계:** Source ingestion이 Production `source_version` 생성·검증, 외부 Version 보존,
+   정규 200자 상한과 파생 Freshness·Snapshot 승인 경계를 구현한다. #178의 fail-closed Source version 검증보다
+   먼저 완료한다.
+4. **#178 Production Adapter:** `PD-315-20260908`의 `rrf-rank-fusion@1` 공식과 안정 Chunk 좌표
    dedupe·content hash 충돌 검증·exact-rational 비교·fraction receipt를 구현한다. RRF는
    `KNOWLEDGE_CHUNK` 전용이고 Rule Evidence는 `rule_check` 경로를 사용한다. P0 승인 기본 configuration은
    Lexical 20·Dense 20·`rrf_k=60`·RRF 출력 30·Reranker 입력 20·Gate 뒤 Context 최대 5다. DEV가 변경을
    요구하면 새 version을 승인하고 HOLDOUT 전에 선택된 version을 동결한다. Exact 우선 bucket의
    Trigram·`ts_rank_cd` 순위는 PostgreSQL Adapter가 versioned lexical receipt로 반환한다.
-4. **정규 경계 반영:** RFC 8785 JCS serializer와 hash-domain golden vector, 유형별
+5. **정규 경계 반영:** RFC 8785 JCS serializer와 hash-domain golden vector, 유형별
    `evidence-bridge-content@1` projection 및 `INTERACTION_RULE.evidence_role`을 포함한 정규 Evidence provenance,
-   Source metadata와 결속된 Production `source_version`, terminal `retrieval_execution_status`,
+   Snapshot `canonical_checksum` exact-match, Source metadata와 결속된 Production `source_version`, terminal
+   `retrieval_execution_status`,
    `retrieval_run.status` lifecycle과 diagnostic을 포함한 Safety finalizer 변환,
    `hybrid_retrieve` Node ID, Runtime identity와 Evaluation bridge ID의 분리 검증을 구현한다.
-5. **권위적 실행 결속:** PostgreSQL hybrid retrieval이 준비된 뒤 별도 DB·Safety 범위에서 authoritative
+6. **권위적 실행 결속:** PostgreSQL hybrid retrieval이 준비된 뒤 별도 DB·Safety 범위에서 authoritative
    Retrieval Run receipt, locator 검증과 Gate origin을 결속한다.
-6. **Evaluation 연결:** bridge producer가 Runtime identity를 Evaluation ID에 결속한 뒤 runner가 Runtime
+7. **Evaluation 연결:** bridge producer가 Runtime identity를 Evaluation ID에 결속한 뒤 runner가 Runtime
    receipt를 `RET-L -> RET-D -> RET-H -> RET-HR`과 연결하고 Dataset·Index·configuration version/hash를
    exact-match한다. Bridge와 runner는 SQL ranking을 재구현하지 않는다.
 
@@ -1225,9 +1230,11 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
 
 - `PD-315-20260908` 책임·교차 리뷰 미완료
 - #166의 승인 Catalog export Receipt 미확정
+- #362의 Production `source_version` 생산·검증·200자 상한과 Source Snapshot 승인 경계 미완료
 - #178의 별도 Knowledge Evidence Index/Corpus Receipt와 소유 경계 미확정
 - PostgreSQL Adapter가 `ts_rank_cd`를 포함한 Lexical configuration receipt를 재현하지 못함
-- Production provenance가 정확히 하나의 Snapshot Member를 가리키지 않음
+- Production provenance가 Snapshot `canonical_checksum`과 exact-match하지 않거나 정확히 하나의 Snapshot
+  Member를 가리키지 않음
 - ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
 - Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
 - Production `source_version`을 Source metadata와 함께 검증하지 않거나 Runtime identity와 Evaluation bridge

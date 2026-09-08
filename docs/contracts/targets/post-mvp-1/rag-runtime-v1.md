@@ -172,6 +172,9 @@ Guide의 Citation Finalizer도 `claim_citation_validator`와 `release_gate` 사�
 - RRF 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk다. Interaction Rule은 앞선 `rule_check`에서
   결정론적으로 평가하고 연결된 Rule Evidence를 Citation·Evidence Gate로 전달하며, 같은 Rule Evidence를
   RRF 후보로 다시 검색하지 않는다.
+- 내부 Evidence provenance는 `source_snapshot_id`, 해당 Snapshot의 `canonical_checksum`과 정확히 하나의
+  Endpoint/Operation 또는 Artifact Member를 함께 보존·검증한다. `canonical_checksum`은 bridge content hash
+  preimage가 아니라 당시 Snapshot 내용 동일성 확인 값이다.
 - `pg_trgm`·Dense 검색과 rerank 구현은 versioned configuration으로 재현한다.
 - 내부 Top-K·score는 공개 DTO에 노출하지 않는다.
 - 의료 Claim과 처방약 기반 Guideline Claim은 승인된 Source version과 locator를 가져야 한다.

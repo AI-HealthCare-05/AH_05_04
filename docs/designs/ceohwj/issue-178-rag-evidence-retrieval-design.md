@@ -429,8 +429,9 @@ Source와 Evidence 파생물의 hash domain은 다음처럼 분리한다.
 | `KnowledgeEvidenceProvenance.canonicalization_spec_version` | record별 Evidence text canonicalization 규격 문자열 | 스키마의 `canonicalization_spec_version`은 snapshot·bundle 단위 hash 직렬화 규격 버전이고 규격 변경 시 `normalization_version`과 함께 올려야 한다. 이 Kernel에는 `normalization_version` 대응이 없으므로 두 값을 같은 축으로 취급하지 않는다 |
 | `knowledge_chunk_ref` | 단일 문자열 chunk reference | `knowledge_chunk_id`(UUID)와 `(source_code, source_version, external_document_id, chunk_index)` 안정 좌표. 단일 문자열로 축약하지 않는다 |
 
-Provenance에 필요한 정규 필드 중 이번 slice가 표현하지 않는 것은 `evidence_type`, `source_code`, 정확한
-Snapshot Member reference와 유형별 안정 ID다. Production provenance는 `PD-315-20260908`의
+Provenance에 필요한 정규 필드 중 이번 slice가 표현하지 않는 것은 `evidence_type`, `source_code`, Snapshot의
+`canonical_checksum`, 정확한 Snapshot Member reference와 유형별 안정 ID다. Production provenance는
+`PD-315-20260908`의
 `KNOWLEDGE_CHUNK | INTERACTION_RULE | LIFESTYLE_GUIDELINE` discriminated 표와 유형별
 `evidence-bridge-content@1` preimage를 따른다. `external_record_id`는
 모든 Evidence의 공통 필드가 아니라 Chunk 없는 직접 구조화 Rule에만 조건부 필수다. Evidence Gate·Citation·
@@ -457,6 +458,8 @@ Production `source_version`은 Source가 제공한 불변 version의 존재 여�
 `api:<RFC3339 UTC 고정 6자리 소수초>:<64-lower-hex>`, `INTERNAL_CURATED_DATA`는 승인 Git tag 또는 commit과
 Fixture Manifest에서 파생한 `internal:<fixture-version>:<64-lower-hex>`를 사용한다. Source 생성 경계와
 Production Adapter가 metadata와 형식을 함께 검증하며 synthetic marker는 테스트 namespace에서만 허용한다.
+현재 Source ingestion의 생산·길이·외부 Version 보존 경계는 #362가 소유하며 #178 Production Adapter의
+fail-closed 검증보다 먼저 완료돼야 한다.
 
 각 stage의 rank는 1부터 시작하는 중복 없는 연속 정수여야 하며 hit 수는 해당 stage limit 이하여야 한다.
 같은 `evidence_key`는 한 stage에서 한 번만 나타날 수 있다. lexical과 dense에 같은 key가 등장할 수 있지만
