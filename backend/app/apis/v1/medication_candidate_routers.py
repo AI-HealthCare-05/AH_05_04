@@ -128,7 +128,8 @@ async def confirm_medication_candidate(
 ) -> Response:
     _ensure_public_track_f_enabled()
     _validate_idempotency_header(idempotency_key)
-    result = await service.confirm_candidate(user=user, request=request)
+    assert idempotency_key is not None
+    result = await service.confirm_candidate(user=user, request=request, idempotency_key=idempotency_key)
     return Response(
         content=ConfirmMedicationCandidateResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
@@ -149,7 +150,8 @@ async def reject_medication_candidate(
 ) -> Response:
     _ensure_public_track_f_enabled()
     _validate_idempotency_header(idempotency_key)
-    result = await service.reject_candidate(user=user, request=request)
+    assert idempotency_key is not None
+    result = await service.reject_candidate(user=user, request=request, idempotency_key=idempotency_key)
     return Response(
         content=RejectMedicationCandidateResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,

@@ -68,6 +68,19 @@ function LocationCommitProbe({
   return null
 }
 
+function UploadRoute() {
+  const location = useLocation()
+
+  return (
+    <div>
+      처방전 등록 화면
+      <output data-testid="upload-intent">
+        {(location.state as { intent?: string } | null)?.intent ?? ''}
+      </output>
+    </div>
+  )
+}
+
 function renderPage(
   entry = `/chat?prescription_id=${prescriptionId}`,
   options: {
@@ -82,7 +95,7 @@ function renderPage(
       <Routes>
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/login" element={<div>로그인 화면</div>} />
-        <Route path="/prescriptions/upload" element={<div>처방전 등록 화면</div>} />
+        <Route path="/prescriptions/upload" element={<UploadRoute />} />
         <Route path="/guides" element={<div>복약 가이드 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
       </Routes>
@@ -702,7 +715,7 @@ describe('ChatPage', () => {
     ).toHaveProperty('disabled', true)
   })
 
-  it('활성 처방이 없을 때 등록 CTA와 최신 5-tab 도지 active 상태를 유지한다', async () => {
+  it('활성 처방이 없을 때 등록 CTA가 새 처방 등록 intent로 이동한다', async () => {
     renderPage('/chat')
 
     expect(
@@ -717,6 +730,7 @@ describe('ChatPage', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
     expect(screen.getByText('처방전 등록 화면')).toBeTruthy()
+    expect(screen.getByTestId('upload-intent').textContent).toBe('new-prescription')
   })
 
   it('인증 API가 401을 반환하면 로그인 안내로 전환한다', async () => {

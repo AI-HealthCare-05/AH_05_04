@@ -15,6 +15,8 @@ import {
   uploadPrescription,
   type JobStatusResponse,
 } from '../src/api/prescriptions'
+import ChatPage from '../src/pages/ChatPage'
+import HomePage from '../src/pages/HomePage'
 import PrescriptionUploadPage from '../src/pages/PrescriptionUploadPage'
 
 const mvpPageStyles = readFileSync(
@@ -46,6 +48,15 @@ const commonJobId = '22222222-2222-4222-8222-222222222222'
 const ocrJobId = '33333333-3333-4333-8333-333333333333'
 const statusUrl = `/api/v1/jobs/${commonJobId}`
 const resultUrl = `/api/v1/ocr-jobs/${ocrJobId}`
+const currentUser = {
+  id: '00000000-0000-4000-8000-000000000113',
+  name: '테스트 사용자',
+  email: 'upload-intent@example.com',
+  phone_number: null,
+  birthday: null,
+  gender: null,
+  created_at: '2026-08-28T00:00:00Z',
+}
 
 function ocrResponse(status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED') {
   return {
@@ -101,7 +112,11 @@ function polledJobStatus(
   }
 }
 
-function renderPage() {
+function renderPage({
+  newPrescriptionIntent = false,
+}: {
+  newPrescriptionIntent?: boolean
+} = {}) {
   function ReviewRoute() {
     const location = useLocation()
 
@@ -109,7 +124,12 @@ function renderPage() {
   }
 
   return render(
-    <MemoryRouter initialEntries={['/prescriptions/upload']}>
+    <MemoryRouter
+      initialEntries={[{
+        pathname: '/prescriptions/upload',
+        state: newPrescriptionIntent ? { intent: 'new-prescription' } : null,
+      }]}
+    >
       <Routes>
         <Route path="/prescriptions/upload" element={<PrescriptionUploadPage />} />
         <Route path="/prescriptions/review" element={<ReviewRoute />} />
@@ -118,6 +138,28 @@ function renderPage() {
       </Routes>
     </MemoryRouter>,
   )
+}
+
+function renderNewPrescriptionEntry(entry: '/' | '/chat') {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/" element={<HomePage currentUser={currentUser} />} />
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/prescriptions/upload" element={<PrescriptionUploadPage />} />
+        <Route path="/guides" element={<div>가이드 화면</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+function setExistingOcrRecovery() {
+  sessionStorage.setItem('dosey_ocr_job_recovery:v1', JSON.stringify({
+    kind: 'ASYNC',
+    documentId,
+    jobId: commonJobId,
+    pollingKey: statusUrl,
+  }))
 }
 
 function selectPrescriptionFile(
@@ -153,6 +195,112 @@ afterEach(() => {
 })
 
 describe('PrescriptionUploadPage OCR polling', () => {
+  it('HOME 직접 등록 CTA는 기존 Guide와 OCR recovery가 있어도 DOC-01을 유지한다', async () => {
+    setExistingOcrRecovery()
+    vi.mocked(getLatestPrescription).mockResolvedValue({
+      data: {
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        document_id: documentId,
+        prescribed_date: '2026-09-07',
+        confirmed_at: '2026-09-07T08:00:00Z',
+        medications: [],
+      },
+    })
+
+    renderNewPrescriptionEntry('/')
+    fireEvent.click(await screen.findByRole('button', {
+      name: /처방약 복용 안내/,
+    }))
+
+    expect(await screen.findByText('처방전을 등록해 주세요')).toBeTruthy()
+    expect(getLatestPrescription).not.toHaveBeenCalled()
+    expect(getGuideForPrescription).not.toHaveBeenCalled()
+    expect(getJobStatus).not.toHaveBeenCalled()
+    expect(screen.queryByText('가이드 화면')).toBeNull()
+    await waitFor(() => expect(
+      sessionStorage.getItem('dosey_ocr_job_recovery:v1'),
+    ).toBeNull())
+  })
+
+  it('Chat no-prescription gate 등록 CTA는 기존 Guide와 OCR recovery가 있어도 DOC-01을 유지한다', async () => {
+    setExistingOcrRecovery()
+    vi.mocked(getLatestPrescription).mockResolvedValue({
+      data: {
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        document_id: documentId,
+        prescribed_date: '2026-09-07',
+        confirmed_at: '2026-09-07T08:00:00Z',
+        medications: [],
+      },
+    })
+
+    renderNewPrescriptionEntry('/chat')
+    fireEvent.click(await screen.findByRole('button', {
+      name: '처방전 등록하기',
+    }))
+
+    expect(await screen.findByText('처방전을 등록해 주세요')).toBeTruthy()
+    expect(getLatestPrescription).not.toHaveBeenCalled()
+    expect(getGuideForPrescription).not.toHaveBeenCalled()
+    expect(getJobStatus).not.toHaveBeenCalled()
+    expect(screen.queryByText('가이드 화면')).toBeNull()
+    await waitFor(() => expect(
+      sessionStorage.getItem('dosey_ocr_job_recovery:v1'),
+    ).toBeNull())
+  })
+
+  it('Home의 새 처방 등록 intent는 기존 Guide를 확인하지 않고 DOC-01을 유지한다', () => {
+    vi.mocked(getLatestPrescription).mockResolvedValue({
+      data: {
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        document_id: documentId,
+        prescribed_date: '2026-09-07',
+        confirmed_at: '2026-09-07T08:00:00Z',
+        medications: [],
+      },
+    })
+
+    renderPage({ newPrescriptionIntent: true })
+
+    expect(screen.getByText('처방전을 등록해 주세요')).toBeTruthy()
+    expect(getLatestPrescription).not.toHaveBeenCalled()
+    expect(getGuideForPrescription).not.toHaveBeenCalled()
+    expect(screen.queryByText('가이드 화면')).toBeNull()
+  })
+
+  it('새 처방 intent는 진입 전 recovery만 정리하고 새 Job recovery를 재진입까지 유지한다', async () => {
+    setExistingOcrRecovery()
+    vi.mocked(getJobStatus).mockImplementation(
+      () => new Promise(() => undefined),
+    )
+    const firstRender = renderPage({ newPrescriptionIntent: true })
+
+    await waitFor(() => expect(
+      sessionStorage.getItem('dosey_ocr_job_recovery:v1'),
+    ).toBeNull())
+
+    selectPrescriptionFile(firstRender.container)
+    fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
+    await waitFor(() => expect(getJobStatus).toHaveBeenCalledTimes(1))
+
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toContain(
+      statusUrl,
+    )
+
+    firstRender.unmount()
+    renderPage()
+    await waitFor(() => expect(getJobStatus).toHaveBeenCalledTimes(2))
+
+    expect(uploadPrescription).toHaveBeenCalledTimes(1)
+    expect(executeOcr).toHaveBeenCalledTimes(1)
+    expect(getJobStatus).toHaveBeenLastCalledWith(
+      statusUrl,
+      expect.any(AbortSignal),
+    )
+
+    sessionStorage.removeItem('dosey_ocr_job_recovery:v1')
+  })
+
   it('latest 처방이 있으면 업로드 폼을 표시하지 않고 /guides로 정규화한다', async () => {
     const prescriptionId = '44444444-4444-4444-8444-444444444444'
     vi.mocked(getLatestPrescription).mockResolvedValue({
