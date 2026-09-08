@@ -46,6 +46,15 @@ if [ -z "${REDIS_PASSWORD:-}" ]; then
   exit 1
 fi
 
+# ---------- Placeholder 값 검증 ----------
+# example 파일을 그대로 복사해 배포하면 REDIS_PASSWORD 등 필수 값이 비어 있지 않아
+# 위 -z 검사를 통과한다. 그 상태로 배포되면 git에 커밋된 공개 placeholder 값으로
+# 운영 서비스가 인증을 걸고 뜬다(deploy-staging.sh와 동일한 검사).
+if grep -Eq '=(replace-with|replace_with)' "$PROD_ENV_FILE"; then
+  echo "$PROD_ENV_FILE 안의 placeholder를 실제 운영 값으로 교체해야 합니다."
+  exit 1
+fi
+
 if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
   [ "$DB_ADMIN_USER" = "$DB_APP_USER" ] ||
   [ "$DB_MIGRATION_USER" = "$DB_APP_USER" ]; then
