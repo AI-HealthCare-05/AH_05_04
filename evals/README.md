@@ -120,6 +120,12 @@ Dataset Freeze와 HOLDOUT Freeze는 아직 이루어지지 않았다. Dataset
 Manifest의 canonical self-hash는
 `b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`이다.
 
+HOLDOUT Freeze 준비는 `PREPARATION_READY`다. 이는 접근 승인이나 Freeze 완료를 뜻하지 않는다. 공개
+저장소에는 접근 통제·역할 분리·감사·후속 receipt의 요구사항만 담은 비런타임 준비 projection이 있으며,
+HOLDOUT 질문·Gold·fingerprint/HMAC 값·보호 위치는 없다. 독립 Dataset Custodian의 실제 접근 승인 event가
+기록된 뒤에만 보호 환경에서 HOLDOUT 40개 작성을 시작하고, 네 leakage 축의 교집합 0과 전수 검토가 끝난
+뒤에만 Freeze한다.
+
 검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
 `evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·
 `negative_type`·`adversarial_for_transform_origin`·`transform_origin`은 같은 디렉터리의
@@ -137,7 +143,7 @@ Set 확장이 필요하며 이는 후속 작업이다.
 lifecycle은 계속 `DRAFT`이며 Dataset Freeze와 HOLDOUT Freeze는 완료되지 않았다. 실제 Knowledge Evidence
 Retrieval Adapter는 `NOT_IMPLEMENTED`이고 actual retrieval Run과 baseline Metric도 존재하지 않는다. 따라서 이
 DEV Dataset은 Release `PASS`를 만들 수 없고 Production 공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에
-없으며, protected runner·actual Adapter·HOLDOUT Freeze는 후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·
+없으며, 접근 승인·protected runner·actual Adapter·HOLDOUT Freeze는 후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·
 상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지 않는다. 현재 기계 상태와 결정적 Markdown
 projection은 `docs/validation/rag/issue-273/`에 있다.
 

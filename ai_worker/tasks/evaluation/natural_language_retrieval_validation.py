@@ -24,9 +24,10 @@ _FORBIDDEN_KEY_FRAGMENTS = (
     "fingerprint_value",
     "hmac_value",
 )
-_PHASE_A_BLOCKERS = (
+_PHASE_B2_BLOCKERS = (
     "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
     "BLOCKED_BY_RAG_14_ADAPTER",
+    "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
 _DECISION_DOCS_PREFIX = "docs/"
@@ -66,6 +67,11 @@ _VALIDATION_CHECK_CATALOG = {
         "test_issue_273_graph_records_only_the_actual_gold_review_event -q",
         "1 passed",
     ),
+    "PHASE_B_HOLDOUT_FREEZE_PREPARATION": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q",
+        "26 passed",
+    ),
 }
 _VALIDATION_CHECK_IDS = tuple(_VALIDATION_CHECK_CATALOG)
 
@@ -104,6 +110,7 @@ class ValidationCheck(StrictContractModel):
         "PHASE_A_SCHEMA_EXPORT",
         "PHASE_B_DATASET_APPROVAL_PROVENANCE",
         "PHASE_B_GOLD_REVIEW_PROVENANCE",
+        "PHASE_B_HOLDOUT_FREEZE_PREPARATION",
     ]
     command: NonEmptyString
     exit_code: Literal[0]
@@ -134,11 +141,18 @@ class DatasetApprovalEvidenceRef(StrictContractModel):
     hash: Literal["3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"]
 
 
+class HoldoutPreparationRef(StrictContractModel):
+    id: Literal["issue-273-holdout-freeze-preparation"]
+    version: Literal["1.0.0"]
+    raw_sha256: Literal["d64ac99afa697edd80de3e12668b910062c4d08399859925aff56b6cd039fcbb"]
+    self_sha256: Literal["b07c06ff49c5b2f833db864c0b5ee95240b98e18275a96a4090bb585a0acb65a"]
+
+
 class Issue273ValidationStatus(StrictContractModel):
-    schema_version: Literal["1.1.0"]
+    schema_version: Literal["1.2.0"]
     issue: Literal["#273"]
-    phase: Literal["PHASE_B_DATASET_APPROVAL"]
-    status_label: Literal["Phase B · DEV Dataset Approved"]
+    phase: Literal["PHASE_B2_HOLDOUT_FREEZE_PREPARATION"]
+    status_label: Literal["Phase B2 · HOLDOUT Freeze Preparation Ready"]
     schema_set_status: Literal["REVIEW_REQUIRED"]
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
@@ -146,12 +160,14 @@ class Issue273ValidationStatus(StrictContractModel):
     dataset_manifest_sha256: Literal["b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2"]
     schema_set_ref: CandidateSchemaSetRef
     schema_set_decision: Literal["docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md"]
-    responsible_reviewer: Literal["@phina-io"]
-    approval_transition: Literal["DATASET_CUSTODIAN_APPROVAL_RECORDED"]
+    responsible_reviewer: Literal["@hazelnutflavoured"]
+    approval_transition: Literal["DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED"]
     dataset_status: Literal["DRAFT"]
     gold_review_status: Literal["APPROVED"]
     gold_review_evidence_ref: GoldReviewEvidenceRef
     dataset_approval_evidence_ref: DatasetApprovalEvidenceRef
+    holdout_preparation_ref: HoldoutPreparationRef
+    holdout_preparation_status: Literal["PREPARATION_READY"]
     holdout_freeze_status: Literal["NOT_STARTED"]
     adapter_status: Literal["NOT_IMPLEMENTED"]
     actual_run_ref: None
@@ -161,12 +177,13 @@ class Issue273ValidationStatus(StrictContractModel):
             Literal[
                 "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
                 "BLOCKED_BY_RAG_14_ADAPTER",
+                "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
                 "WAITING_FOR_HOLDOUT_FREEZE",
             ],
             ...,
         ],
         BeforeValidator(_tuple_from_wire),
-        Field(min_length=3, max_length=3),
+        Field(min_length=4, max_length=4),
     ]
     checks: Annotated[
         tuple[ValidationCheck, ...],
@@ -178,7 +195,7 @@ class Issue273ValidationStatus(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_ordered_collections(self) -> Issue273ValidationStatus:
-        if self.blocking_codes != _PHASE_A_BLOCKERS:
+        if self.blocking_codes != _PHASE_B2_BLOCKERS:
             raise ValueError("Issue 273 blockers must be the exact UTF-16-sorted set")
         check_ids = [check.check_id for check in self.checks]
         commands = [check.command for check in self.checks]
@@ -265,9 +282,9 @@ def render_report(raw_status: bytes) -> bytes:
     schema_set = status.schema_set_ref
     decision_href = _decision_href(status.schema_set_decision)
     lines = [
-        "# Issue #273 Phase B DEV Dataset Approval Validation Report",
+        "# Issue #273 Phase B2 HOLDOUT Freeze Preparation Validation Report",
         "",
-        "> Phase B · DEV Dataset Approved — Dataset-approved, unfrozen, and not a Release decision.",
+        "> Phase B2 · HOLDOUT Freeze Preparation Ready — prepared, unauthorized, unfrozen, and not a Release decision.",
         "",
         f"- Phase: `{status.phase}`",
         f"- Schema Set Status: `{status.schema_set_status}`",
@@ -283,8 +300,12 @@ def render_report(raw_status: bytes) -> bytes:
             f"- Dataset Approval Evidence: `{status.dataset_approval_evidence_ref.id}@"
             f"{status.dataset_approval_evidence_ref.version}` `{status.dataset_approval_evidence_ref.hash}`"
         ),
-        f"- Approval Transition: `{status.approval_transition}`; the verified actor is `@phina-io` "
-        "(`DATASET_CUSTODIAN`).",
+        (f"- HOLDOUT Preparation: `{status.holdout_preparation_ref.id}@{status.holdout_preparation_ref.version}`"),
+        f"- Preparation raw SHA-256: `{status.holdout_preparation_ref.raw_sha256}`",
+        f"- Preparation self SHA-256: `{status.holdout_preparation_ref.self_sha256}`",
+        f"- Phase B2 Responsible Reviewer: `{status.responsible_reviewer}` (`EVALUATION_REVIEWER`)",
+        f"- Prior DEV Approval Transition: `{status.approval_transition}`; the verified actor was `@phina-io` "
+        "(`DATASET_CUSTODIAN`). This is not HOLDOUT access authorization.",
         "- Release Eligible: `false`",
         "- Production remains closed.",
         "",
@@ -306,6 +327,7 @@ def render_report(raw_status: bytes) -> bytes:
         ),
         f"- Gold records created: `{status.created_counts.gold_records}`; review: `{status.gold_review_status}`",
         f"- Study-wide synthetic corpus records created: `{status.created_counts.corpus_records}`",
+        f"- HOLDOUT Preparation: `{status.holdout_preparation_status}`",
         f"- HOLDOUT Freeze: `{status.holdout_freeze_status}`",
         f"- Actual Adapter: `{status.adapter_status}`",
         "- Actual Run Artifact: `NOT_CREATED`",
@@ -315,7 +337,8 @@ def render_report(raw_status: bytes) -> bytes:
             "실제 환자 발화나 실제 제품 데이터가 아니다."
         ),
         "DEV Dataset approval is recorded as APPROVED for the 60 Cases, Evidence Mapping, and Dataset Manifest.",
-        "Dataset remains DRAFT and unfrozen; approval does not create or Freeze HOLDOUT content.",
+        "Dataset remains DRAFT and unfrozen; preparation does not create or Freeze HOLDOUT content.",
+        "Access authorization is not recorded, and HOLDOUT authoring has not started.",
         "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.",
         "No baseline Metric exists, and no Metric fields are recorded in the machine status.",
         "DEV cannot produce a Release PASS; Production remains closed.",
@@ -339,7 +362,8 @@ def render_report(raw_status: bytes) -> bytes:
         "- Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.",
         "- No Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.",
         "- HOLDOUT question content is absent from the repository and remains future protected work.",
-        "- The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.",
+        "- Access authorization, the protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.",
+        "- HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.",
         "- The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.",
         "",
         f"Status updated at `{status.updated_at}`. Canonical status SHA-256: `{status.status_sha256}`.",

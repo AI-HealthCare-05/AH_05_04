@@ -28,18 +28,21 @@ EVALS_ROOT = REPOSITORY_ROOT / "evals"
 DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
 EVALS_README_PATH = EVALS_ROOT / "README.md"
 DATASET_APPROVAL_EVIDENCE_PATH = EVALS_ROOT / "provenance/rag-natural-language-retrieval-dev-v1.approval-evidence.json"
+HOLDOUT_PREPARATION_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/holdout-freeze-preparation.json"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
 DATASET_MANIFEST_HASH = "b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2"
 GOLD_REVIEW_EVIDENCE_HASH = "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776"
 DATASET_APPROVAL_EVIDENCE_HASH = "3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"
+HOLDOUT_PREPARATION_HASH = "d64ac99afa697edd80de3e12668b910062c4d08399859925aff56b6cd039fcbb"
+HOLDOUT_PREPARATION_SELF_HASH = "b07c06ff49c5b2f833db864c0b5ee95240b98e18275a96a4090bb585a0acb65a"
 
 
 def _status_payload() -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "issue": "#273",
-        "phase": "PHASE_B_DATASET_APPROVAL",
-        "status_label": "Phase B · DEV Dataset Approved",
+        "phase": "PHASE_B2_HOLDOUT_FREEZE_PREPARATION",
+        "status_label": "Phase B2 · HOLDOUT Freeze Preparation Ready",
         "schema_set_status": "REVIEW_REQUIRED",
         "dataset_ref": "rag-natural-language-retrieval-dev@1.0.0",
         "planned_counts": {
@@ -65,8 +68,8 @@ def _status_payload() -> dict[str, Any]:
             "hash": SCHEMA_SET_HASH,
         },
         "schema_set_decision": "docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md",
-        "responsible_reviewer": "@phina-io",
-        "approval_transition": "DATASET_CUSTODIAN_APPROVAL_RECORDED",
+        "responsible_reviewer": "@hazelnutflavoured",
+        "approval_transition": "DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED",
         "dataset_status": "DRAFT",
         "gold_review_status": "APPROVED",
         "gold_review_evidence_ref": {
@@ -79,6 +82,13 @@ def _status_payload() -> dict[str, Any]:
             "version": "1.0.0",
             "hash": DATASET_APPROVAL_EVIDENCE_HASH,
         },
+        "holdout_preparation_ref": {
+            "id": "issue-273-holdout-freeze-preparation",
+            "version": "1.0.0",
+            "raw_sha256": HOLDOUT_PREPARATION_HASH,
+            "self_sha256": HOLDOUT_PREPARATION_SELF_HASH,
+        },
+        "holdout_preparation_status": "PREPARATION_READY",
         "holdout_freeze_status": "NOT_STARTED",
         "adapter_status": "NOT_IMPLEMENTED",
         "actual_run_ref": None,
@@ -86,6 +96,7 @@ def _status_payload() -> dict[str, Any]:
         "blocking_codes": [
             "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
             "BLOCKED_BY_RAG_14_ADAPTER",
+            "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
             "WAITING_FOR_HOLDOUT_FREEZE",
         ],
         "checks": [
@@ -125,6 +136,12 @@ def _status_payload() -> dict[str, Any]:
                 "exit_code": 0,
                 "result": "1 passed",
             },
+            {
+                "check_id": "PHASE_B_HOLDOUT_FREEZE_PREPARATION",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q",
+                "exit_code": 0,
+                "result": "26 passed",
+            },
         ],
         "updated_at": "2026-09-08T09:30:09.000000Z",
         "status_sha256": "0" * 64,
@@ -156,6 +173,7 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
         status.dataset_approval_evidence_ref.model_dump(mode="json")
         in loaded_manifest["review_provenance"]["evidence_review_refs"]
     )
+    assert sha256_hex(HOLDOUT_PREPARATION_PATH.read_bytes()) == status.holdout_preparation_ref.raw_sha256
 
     cases = [case.model_dump(mode="json") for case in loaded.cases]
     required_gold_ids = {evidence_id for case in cases for evidence_id in case["expected"]["required_evidence_refs"]}
@@ -200,10 +218,10 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
     }
 
 
-def test_phase_b_status_accepts_only_the_approved_but_unfrozen_dev_state() -> None:
+def test_phase_b2_status_accepts_only_the_prepared_but_unfrozen_holdout_state() -> None:
     status = parse_status_bytes(_status_bytes(_status_payload()))
 
-    assert status.phase == "PHASE_B_DATASET_APPROVAL"
+    assert status.phase == "PHASE_B2_HOLDOUT_FREEZE_PREPARATION"
     assert status.dataset_status == "DRAFT"
     assert status.dataset_manifest_sha256 == DATASET_MANIFEST_HASH
     assert status.created_counts.model_dump() == {
@@ -219,6 +237,11 @@ def test_phase_b_status_accepts_only_the_approved_but_unfrozen_dev_state() -> No
     assert status.gold_review_status == "APPROVED"
     assert status.gold_review_evidence_ref.hash == GOLD_REVIEW_EVIDENCE_HASH
     assert status.dataset_approval_evidence_ref.hash == DATASET_APPROVAL_EVIDENCE_HASH
+    assert status.responsible_reviewer == "@hazelnutflavoured"
+    assert status.approval_transition == "DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED"
+    assert status.holdout_preparation_ref.raw_sha256 == HOLDOUT_PREPARATION_HASH
+    assert status.holdout_preparation_ref.self_sha256 == HOLDOUT_PREPARATION_SELF_HASH
+    assert status.holdout_preparation_status == "PREPARATION_READY"
     assert status.holdout_freeze_status == "NOT_STARTED"
     assert status.adapter_status == "NOT_IMPLEMENTED"
     assert status.actual_run_ref is None
@@ -525,6 +548,8 @@ def test_evals_readme_does_not_describe_the_approved_dev_graph_as_unreviewed() -
 
     assert "아직 사람의 Gold 검토를 받지 않았" not in issue_273_section
     assert "모든 review provenance는 `DRAFT` 또는 `NOT_STARTED`" not in issue_273_section
+    assert "HOLDOUT Freeze 준비는 `PREPARATION_READY`" in issue_273_section
+    assert "접근 승인이나 Freeze 완료를 뜻하지 않는다" in issue_273_section
 
 
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
@@ -538,7 +563,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
-    assert b"Phase B \xc2\xb7 DEV Dataset Approved" in REPORT_PATH.read_bytes()
+    assert b"Phase B2 \xc2\xb7 HOLDOUT Freeze Preparation Ready" in REPORT_PATH.read_bytes()
     assert "한국어 자연어 합성 DEV 질문" in REPORT_PATH.read_text()
     assert b"DEV Dataset approval is recorded as APPROVED" in REPORT_PATH.read_bytes()
     assert b"Dataset remains DRAFT and unfrozen" in REPORT_PATH.read_bytes()
@@ -546,6 +571,12 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
+    assert b"Access authorization is not recorded" in REPORT_PATH.read_bytes()
+    assert b"HOLDOUT authoring has not started" in REPORT_PATH.read_bytes()
+    assert HOLDOUT_PREPARATION_HASH.encode() in raw_status
+    assert HOLDOUT_PREPARATION_HASH.encode() in REPORT_PATH.read_bytes()
+    assert HOLDOUT_PREPARATION_SELF_HASH.encode() in raw_status
+    assert HOLDOUT_PREPARATION_SELF_HASH.encode() in REPORT_PATH.read_bytes()
     for result in (b"1 passed", b"26 passed", b"51 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
