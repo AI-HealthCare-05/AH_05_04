@@ -264,7 +264,7 @@ def _canonical_json_bytes(value: object) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     )
-    return unicodedata.normalize("NFC", serialized).encode("utf-8")
+    return serialized.encode("utf-8")
 
 
 def _sha256(value: object) -> str:
@@ -1157,7 +1157,20 @@ def _catalog_envelope_failure(catalog: CandidateCatalogExport) -> CandidateIndex
             CandidateIndexBuildFailureReason.CATALOG_COUNT_MISMATCH,
             count_mismatches,
         )
-    non_nfc_fields = _non_nfc_text_paths(dataclasses.asdict(catalog))
+    # These source-derived display values are intentionally preserved byte-for-byte.
+    # Keep NFC validation for normalized matching fields, identities and metadata.
+    raw_display_paths = {
+        "products.product_name",
+        "products.strength_text",
+        "products.dosage_form",
+        "products.manufacturer_name",
+        "ingredients.ingredient_name",
+        "aliases.alias_text",
+        "search_entries.display_text",
+    }
+    non_nfc_fields = tuple(
+        path for path in _non_nfc_text_paths(dataclasses.asdict(catalog)) if path not in raw_display_paths
+    )
     if non_nfc_fields:
         return CandidateIndexBuildFailure(
             CandidateIndexBuildFailureReason.CATALOG_TEXT_NOT_NFC,

@@ -1,6 +1,18 @@
 # Issue #166 Catalog build 검증 기록
 
-## 구현된 범위
+## 현재 인계 계약
+
+PR #329의 현재 공개 입력은 `CatalogExportArtifacts`, schema는 `medication-catalog-v2`다.
+manifest·JSONL·typed Catalog 결속과 승인 gate를 검증한 뒤 Candidate Index를 생성한다.
+`CandidateCatalogExport`는 내부 typed 값이며 단독 공개 입력이 아니다.
+현행 계약: `docs/contracts/targets/post-mvp-1/catalog-build-v2.md`.
+
+## 최초 구현 기록 (v1, 과거 검증 기준)
+
+아래 v1 산출물과 최초 테스트 수치는 초기 구현 증빙이다. 현재 v2 승인·인계 검증 증빙으로 사용하지 않는다.
+이후 날짜별 보완 기록과 문서 마지막의 최신 검증 결과를 함께 확인한다.
+
+### 당시 구현된 범위
 
 - 공식 제품·성분 Identity는 `entity_type + code_system + canonical_code`로 구성한다.
 - Product와 Ingredient에 Source Snapshot과 Source record key를 보존한다.
@@ -26,7 +38,7 @@
 
 실패 상세에는 Source 원문이나 Alias 문자열을 기록하지 않고 안정적으로 생성된 구성원 참조만 기록한다.
 
-## 결정적 산출물
+## 최초 v1 결정적 산출물 (과거 기록)
 
 - Schema version: `medication-catalog-v1`
 - Manifest: `docs/validation/rag/catalog/synthetic-catalog-v1/manifest.json`
@@ -199,3 +211,41 @@ Frontend 최초 실행은 테스트 API URL 미설정으로 실패했고, fixtur
 - `git diff --check` 및 Source 중복 diff 없음 확인.
 
 첫 DB 검증은 빈 DB에 `upgrade head` 초기화를 생략해 기존 Profile downgrade 테스트 1건이 실패했다. CI 순서대로 head 초기화 후 같은 범위 전체 110건이 통과했다. 사용자/운영 DB는 사용하지 않았다. Catalog PostgreSQL adapter는 여전히 후속 범위이며 이번 DB 결과가 해당 adapter 검증을 의미하지 않는다. 원격 CI는 이 병합 커밋을 push한 후 확인한다.
+
+## 2026-09-08 최신 리뷰: 원문 NFC 경계·v2 인계 문서 정렬
+
+검증 기준: PR head `63f2786e011a538633190c7dea6f5cc824dd6c32`에 develop
+`bd6b4d6bc2d2a04d24bd88012dbaea91ee1aa3fb`를 병합한 `57a2401` 및 이 절과 함께 커밋하는 수정 working tree.
+#340·#342를 포함한 develop 병합은 충돌 없이 완료했다. 앞선 절의 수치는 각 당시 검증 기록이다.
+
+- 원문 제품명·성분명·별칭·제품 표시 속성·Search Entry 표시 문자열은 NFD도 보존한다.
+- normalized 필드·Identity·참조·설정은 기존 NFC 검증을 유지한다.
+- Candidate hash의 전체 NFC 재작성도 제거했다. 동일한 Catalog envelope 아래에서도 표시 원문이
+  다르면 member hash가 구분되는 회귀를 추가했다. 기존 NFC 입력의 직렬화 결과는 변하지 않는다.
+- 서비스 build → 합성 승인 receipt → manifest/JSONL 검증 → 공개 Candidate Index 성공 경로에서
+  NFD 원문 보존과 normalized NFC를 확인했다. 합성 receipt는 실제 운영 승인이 아니다.
+- #167 설계·구현 계획과 이 문서의 상단을 `CatalogExportArtifacts` / `medication-catalog-v2`로
+  정렬했다. v1 산출물·초기 테스트 수치는 과거 기록으로 명시했다.
+
+실행 환경: 기존 Python 3.13 테스트 환경. Worker에는 `PYTHONPATH=.`를 사용했다.
+
+```text
+python -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation -q
+2167 passed, 8 skipped
+
+ruff check .
+All checks passed!
+ruff format . --check
+527 files already formatted
+MYPYPATH=backend:. python -m mypy backend/app ai_worker
+Success: no issues found in 445 source files
+
+python -m alembic -c backend/alembic.ini heads
+165f90716263 (head)
+git diff --check
+통과
+```
+
+이번 수정에는 DB·migration 변경이 없다. Alembic 확인은 revision graph 검사이며 PostgreSQL
+upgrade/rollback 실행 검증이 아니다. 전체 Backend·PostgreSQL·Redis 통합 및 GitHub CI는 이
+수정의 push 후 최신 HEAD에서 확인해야 한다. #166 DB adapter·Runtime 활성화는 후속 범위다.

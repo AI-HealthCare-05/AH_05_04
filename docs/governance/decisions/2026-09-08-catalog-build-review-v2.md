@@ -19,3 +19,14 @@
 Candidate Index의 public build 입력을 raw typed Catalog에서 전체 CatalogExportArtifacts로 변경한다. 소비 경계에서 hash·manifest·JSONL·typed 필드 결속을 검증하고, raw 입력은 기존 CATALOG_MANIFEST_INVALID로 거부한다. 검증을 호출자 관례에 맡기지 않는다.
 
 P0 code system은 Product MFDS_ITEM_SEQ, Ingredient MFDS_INGREDIENT_CODE만 허용하는 구현안으로 고정하고, 목록 확장은 Source/Candidate 검토를 거친다. 기존 테스트 중 표시 문자열 보존 테스트의 비표준 MFDS_INGREDIENT 표기는 합성 fixture의 MFDS_INGREDIENT_CODE와 맞췄다. 현재는 리뷰 요청에 따른 구현·계약 보완이며 운영 승인이나 확정된 외부 코드 체계 확대가 아니다.
+
+
+## 추가 리뷰: 원문 보존과 Candidate NFC 경계
+
+2026-09-08 정현우의 PR #329 리뷰 및 #342의 원문 보존 기준을 반영한 구현안이다.
+제품 `product_name/strength_text/dosage_form/manufacturer_name`, 성분 `ingredient_name`, Alias
+`alias_text`, Search Entry `display_text`는 NFD를 포함해 Source 원문을 보존한다.
+normalized 필드·공식 Identity·참조·버전·build config의 NFC 검증은 유지한다.
+Candidate hash 직렬화에서도 전체 문자열 NFC 변환을 제거해 원문 바이트를 결속한다.
+기존에 허용하던 NFC 입력의 hash는 동일하다. 새로 허용되는 NFD 표시값의 hash는 NFC 표시값과
+구분한다. 승인·JSONL·manifest 검증은 우회하지 않는다. 정현우의 최종 재리뷰 대상이다.

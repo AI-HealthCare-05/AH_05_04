@@ -272,30 +272,9 @@ def test_declared_catalog_count_mismatch_fails_closed() -> None:
         (
             lambda catalog: replace(
                 catalog,
-                products=(replace(catalog.products[0], product_name=_nfd("가나다정")),),
-            ),
-            "products.product_name",
-        ),
-        (
-            lambda catalog: replace(
-                catalog,
                 products=(replace(catalog.products[0], normalized_product_name=_nfd("가나다정")),),
             ),
             "products.normalized_product_name",
-        ),
-        (
-            lambda catalog: replace(
-                catalog,
-                products=(replace(catalog.products[0], manufacturer_name=_nfd("합성제약")),),
-            ),
-            "products.manufacturer_name",
-        ),
-        (
-            lambda catalog: replace(
-                catalog,
-                ingredients=(replace(catalog.ingredients[0], ingredient_name=_nfd("합성성분")),),
-            ),
-            "ingredients.ingredient_name",
         ),
         (
             lambda catalog: replace(
@@ -307,26 +286,9 @@ def test_declared_catalog_count_mismatch_fails_closed() -> None:
         (
             lambda catalog: replace(
                 catalog,
-                aliases=(replace(catalog.aliases[0], alias_text=_nfd("가나다 정")),),
-            ),
-            "aliases.alias_text",
-        ),
-        (
-            lambda catalog: replace(
-                catalog,
                 aliases=(replace(catalog.aliases[0], normalized_alias=_nfd("가나다정별칭")),),
             ),
             "aliases.normalized_alias",
-        ),
-        (
-            lambda catalog: replace(
-                catalog,
-                search_entries=(
-                    replace(catalog.search_entries[0], display_text=_nfd("가나다정")),
-                    catalog.search_entries[1],
-                ),
-            ),
-            "search_entries.display_text",
         ),
         (
             lambda catalog: replace(
@@ -1315,3 +1277,23 @@ def test_candidate_index_import_does_not_load_backend_or_database_modules() -> N
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_raw_display_bytes_remain_distinct_in_member_hash() -> None:
+    catalog = valid_catalog()
+    original = build_candidate_index(catalog, lexical_config())
+    raw = _nfd(catalog.products[0].product_name)
+    changed = build_candidate_index(
+        replace(
+            catalog,
+            products=(replace(catalog.products[0], product_name=raw),),
+            search_entries=(replace(catalog.search_entries[0], display_text=raw), catalog.search_entries[1]),
+        ),
+        lexical_config(),
+    )
+    assert isinstance(original, CandidateIndexBuildSuccess)
+    assert isinstance(changed, CandidateIndexBuildSuccess)
+    assert {m.member_key for m in original.members} == {m.member_key for m in changed.members}
+    assert {m.member_content_hash for m in original.members}.isdisjoint(
+        {m.member_content_hash for m in changed.members}
+    )

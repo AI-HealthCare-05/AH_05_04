@@ -1,5 +1,6 @@
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass, replace
 
 import pytest
@@ -348,3 +349,66 @@ async def test_unapproved_typed_catalog_cannot_be_promoted_around_manifest_gate(
         )
         assert isinstance(outcome, CandidateIndexBuildFailure)
         assert outcome.reason is CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID
+
+
+@pytest.mark.asyncio
+async def test_nfd_source_display_survives_approved_public_candidate_handoff() -> None:
+    request = _request()
+    product = request.products[0]
+    alias = request.aliases[0]
+    raw_product = unicodedata.normalize("NFD", product.product_name)
+    raw_alias = unicodedata.normalize("NFD", alias.alias_text)
+    ingredient = replace(_ingredient_inputs()[0], source_snapshot_id="snapshot-001")
+    raw_ingredient = unicodedata.normalize("NFD", ingredient.ingredient_name)
+    request = replace(
+        request,
+        products=(
+            replace(
+                product,
+                product_name=raw_product,
+                strength_text=unicodedata.normalize("NFD", "합성 함량"),
+                dosage_form=unicodedata.normalize("NFD", "정제"),
+                manufacturer_name=unicodedata.normalize("NFD", "합성제약"),
+            ),
+        ),
+        aliases=(replace(alias, alias_text=raw_alias),),
+        ingredients=(replace(ingredient, ingredient_name=raw_ingredient),),
+    )
+    result = await build_catalog_candidate(
+        request=request, repository=RecordingRepository(), approval_verifier=SyntheticApprovalVerifier()
+    )
+    assert result.export is not None
+    catalog = result.export.catalog
+    assert catalog.products[0].product_name == raw_product
+    assert catalog.ingredients[0].ingredient_name == raw_ingredient
+    assert catalog.aliases[0].alias_text == raw_alias
+    for raw, normalized in (
+        (raw_product, catalog.products[0].normalized_product_name),
+        (raw_ingredient, catalog.ingredients[0].normalized_ingredient_name),
+        (raw_alias, catalog.aliases[0].normalized_alias),
+    ):
+        assert not unicodedata.is_normalized("NFC", raw)
+        assert normalized == " ".join(unicodedata.normalize("NFC", raw).split())
+    index = build_candidate_index(
+        result.export, replace(lexical_config(), normalization_version=catalog.normalization_version)
+    )
+    assert isinstance(index, CandidateIndexBuildSuccess)
+    assert {member.display_text for member in index.members} == {raw_product, raw_alias}
+    assert all(unicodedata.is_normalized("NFC", member.normalized_text) for member in index.members)
+
+    # Byte-distinct source displays must not silently collapse to the same member hash.
+    nfc_result = await build_catalog_candidate(
+        request=replace(
+            request, products=(replace(request.products[0], product_name=product.product_name),), aliases=(alias,)
+        ),
+        repository=RecordingRepository(),
+        approval_verifier=SyntheticApprovalVerifier(),
+    )
+    assert nfc_result.export is not None
+    nfc_index = build_candidate_index(
+        nfc_result.export, replace(lexical_config(), normalization_version=catalog.normalization_version)
+    )
+    assert isinstance(nfc_index, CandidateIndexBuildSuccess)
+    assert {member.member_content_hash for member in index.members} != {
+        member.member_content_hash for member in nfc_index.members
+    }

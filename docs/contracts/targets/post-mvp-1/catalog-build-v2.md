@@ -64,3 +64,14 @@ source_refs는 Snapshot ID·Source version UTF-8 바이트순으로 정렬한다
 Product/Ingredient 입력과 Component 양쪽 참조, Alias 대상은 엔티티별 허용 목록을 적용한다. 제외 대상은 lookup 전에 걸러 누락 대상을 조회하지 않으며 Product/Search Entry로 내보내지 않는다. Candidate 입력도 엔티티별 허용 목록을 검사한다. 공백·잘못된 입력 타입의 기존 validation은 유지한다. 보험 식별자를 제품 Identity로 변환하거나 서로 다른 Identity를 병합하지 않는다.
 
 #323 병합 후 develop `2fa814a`를 반영했다. Source 코드·migration·문서·검증 기록은 병합된 develop과 일치시키고, #329 diff에는 Catalog·Candidate 변경만 남긴다. 단일 Alembic head는 `165f90716263`이다. 최종 push SHA의 CI를 확인한 뒤 재리뷰한다.
+
+
+## 추가 리뷰: 원문 보존과 Candidate NFC 경계
+
+2026-09-08 정현우의 PR #329 리뷰 및 #342의 원문 보존 기준을 반영한 구현안이다.
+제품 `product_name/strength_text/dosage_form/manufacturer_name`, 성분 `ingredient_name`, Alias
+`alias_text`, Search Entry `display_text`는 NFD를 포함해 Source 원문을 보존한다.
+normalized 필드·공식 Identity·참조·버전·build config의 NFC 검증은 유지한다.
+Candidate hash 직렬화에서도 전체 문자열 NFC 변환을 제거해 원문 바이트를 결속한다.
+기존에 허용하던 NFC 입력의 hash는 동일하다. 새로 허용되는 NFD 표시값의 hash는 NFC 표시값과
+구분한다. 승인·JSONL·manifest 검증은 우회하지 않는다. 정현우의 최종 재리뷰 대상이다.
