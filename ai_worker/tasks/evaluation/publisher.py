@@ -223,7 +223,10 @@ def _cleanup_staging(
     staging_identity: FileIdentity | None,
     created_files: Mapping[str, FileIdentity],
 ) -> bool:
-    if staging_fd is None or staging_identity is None:
+    if staging_fd is None:
+        return False
+    if staging_identity is None:
+        os.close(staging_fd)
         return False
     quarantine_name: str | None = None
     try:
