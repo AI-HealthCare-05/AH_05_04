@@ -1167,6 +1167,8 @@ PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 sli
 - [x] versioned config·index·query vector·fingerprint·provenance·stage signal을 exact runtime type으로 검증한다.
 - [x] canonical container를 `type(x) is tuple`로 닫아 stateful tuple 하위 타입의 재결속 우회를 막고 end-to-end 회귀로 고정한다.
 - [x] marker 판정을 case-sensitive 소문자 canonical 형태로 통일한다.
+- [x] rerank에서 Evidence Index marker와 Source marker를 각각 독립 요구하고 양방향 회귀를 고정한다.
+- [x] stage signal score를 stage metric 범위(`LEXICAL` `[0,1]`, `DENSE` `[-1,1]`)로 강제한다.
 - [x] import 가드 스캔 범위를 repo 루트로 올려 `ai_worker` 밖 모듈도 덮는다.
 - [x] provisional 이름과 `rag-db-schema` 정규 이름의 매핑과 미표현 정규 필드를 설계 문서에 명시한다.
 - [x] 아래 전체 검증 명령을 fresh 실행한다.

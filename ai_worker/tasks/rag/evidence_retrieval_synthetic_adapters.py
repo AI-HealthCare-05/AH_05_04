@@ -450,12 +450,20 @@ def _valid_rerank_candidates(request: EvidenceRerankRequest) -> bool:
             ):
                 return False
             score = Decimal(signal.score.value)
-            if not score.is_finite():
+            if not score.is_finite() or not _score_in_stage_metric_range(signal.stage, score):
                 return False
             stages.add(signal.stage)
             stage_ranks[signal.stage].add(signal.rank)
         evidence_keys.add(provenance.evidence_key)
     return all(ranks == set(range(1, len(ranks) + 1)) for ranks in stage_ranks.values())
+
+
+def _score_in_stage_metric_range(stage: EvidenceSearchStage, score: Decimal) -> bool:
+    # The rerank config binds a weighted sum of the two stage metrics, so a signal
+    # outside its own metric range would dominate the ranking under a success Receipt.
+    if stage is EvidenceSearchStage.LEXICAL:
+        return Decimal(0) <= score <= Decimal(1)
+    return Decimal(-1) <= score <= Decimal(1)
 
 
 def _valid_provenance(value: KnowledgeEvidenceProvenance) -> bool:
@@ -471,7 +479,7 @@ def _valid_provenance(value: KnowledgeEvidenceProvenance) -> bool:
                 value.canonicalization_spec_version,
             )
         )
-        and _valid_artifact_ref(value.evidence_index_ref)
+        and _is_synthetic_artifact_ref(value.evidence_index_ref)
         and _valid_artifact_ref(value.source_snapshot_ref)
         and _has_synthetic_source_marker(value.source_snapshot_ref, value.source_version)
         and isinstance(value.content_sha256, str)

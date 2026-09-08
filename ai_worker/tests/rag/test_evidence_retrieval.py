@@ -2198,6 +2198,7 @@ def test_versioned_rerank_adapter_applies_weighted_configuration() -> None:
     first = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:first",
             knowledge_chunk_ref="chunk-first",
             content_sha256=content_hash(first_text),
@@ -2211,6 +2212,7 @@ def test_versioned_rerank_adapter_applies_weighted_configuration() -> None:
     second = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:second",
             knowledge_chunk_ref="chunk-second",
             content_sha256=content_hash(second_text),
@@ -2232,7 +2234,7 @@ def test_versioned_rerank_adapter_applies_weighted_configuration() -> None:
     request = EvidenceRerankRequest(
         fingerprint(),
         artifact("filter-snapshot"),
-        artifact("knowledge-index"),
+        artifact("synthetic-knowledge-index"),
         artifact("retrieval-config"),
         config.artifact_ref,
         "knowledge-rerank-input-v1",
@@ -2563,6 +2565,117 @@ def test_synthetic_rerank_adapter_rejects_approved_source_provenance_under_synth
     result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
 
     assert isinstance(result, EvidenceRerankFailure)
+
+
+def test_synthetic_rerank_adapter_rejects_production_index_under_synthetic_source() -> None:
+    # Mirror of the approved-Source case: a synthetic Source must not vouch for a
+    # production Evidence Index either. Index and Source markers are independent.
+    index_ref = artifact("production-evidence-index")
+    candidate = KnowledgeEvidenceCandidate(
+        replace(provenance(), evidence_index_ref=index_ref),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
+    )
+    config = VersionedRerankConfig.create(
+        "synthetic-rerank-config",
+        "synthetic-rerank-config@1",
+        lexical_weight="1",
+        dense_weight="0",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        index_ref,
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+@pytest.mark.parametrize(
+    ("stage", "score"),
+    [
+        (EvidenceSearchStage.LEXICAL, "1.000001"),
+        (EvidenceSearchStage.LEXICAL, "99"),
+        (EvidenceSearchStage.LEXICAL, "-0.000001"),
+        (EvidenceSearchStage.DENSE, "1.000001"),
+        (EvidenceSearchStage.DENSE, "-1.000001"),
+    ],
+)
+def test_rerank_adapter_rejects_stage_score_outside_metric_range(stage: EvidenceSearchStage, score: str) -> None:
+    index_ref = artifact("synthetic-knowledge-index")
+    candidate = KnowledgeEvidenceCandidate(
+        replace(provenance(), evidence_index_ref=index_ref),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(stage, 1, CanonicalScore(score)),),
+    )
+    config = VersionedRerankConfig.create(
+        "synthetic-rerank-config",
+        "synthetic-rerank-config@1",
+        lexical_weight="0.5",
+        dense_weight="0.5",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        index_ref,
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankFailure)
+
+
+@pytest.mark.parametrize(
+    ("stage", "score"),
+    [
+        (EvidenceSearchStage.LEXICAL, "0"),
+        (EvidenceSearchStage.LEXICAL, "1"),
+        (EvidenceSearchStage.DENSE, "1"),
+        (EvidenceSearchStage.DENSE, "-1"),
+    ],
+)
+def test_rerank_adapter_accepts_stage_score_at_metric_bounds(stage: EvidenceSearchStage, score: str) -> None:
+    index_ref = artifact("synthetic-knowledge-index")
+    candidate = KnowledgeEvidenceCandidate(
+        replace(provenance(), evidence_index_ref=index_ref),
+        SensitiveText("합성 복약 근거"),
+        (StageSignal(stage, 1, CanonicalScore(score)),),
+    )
+    config = VersionedRerankConfig.create(
+        "synthetic-rerank-config",
+        "synthetic-rerank-config@1",
+        lexical_weight="0.5",
+        dense_weight="0.5",
+        top_k=1,
+    )
+    request = EvidenceRerankRequest(
+        fingerprint(),
+        artifact("filter-snapshot"),
+        index_ref,
+        artifact("retrieval-config"),
+        config.artifact_ref,
+        "knowledge-rerank-input-v1",
+        canonical_rerank_input_hash("knowledge-rerank-input-v1", (candidate,)),
+        (candidate,),
+    )
+
+    result = VersionedEvidenceRerankAdapter(config, artifact("synthetic-rerank-adapter")).rerank(request)
+
+    assert isinstance(result, EvidenceRerankSuccess)
 
 
 def test_synthetic_search_adapter_requires_canonical_lowercase_source_marker() -> None:
@@ -3075,6 +3188,7 @@ def test_rerank_adapter_changes_order_when_versioned_weights_change() -> None:
     lexical_candidate = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:lexical",
             knowledge_chunk_ref="chunk-lexical",
             content_sha256=content_hash(lexical_text),
@@ -3088,6 +3202,7 @@ def test_rerank_adapter_changes_order_when_versioned_weights_change() -> None:
     dense_candidate = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:dense",
             knowledge_chunk_ref="chunk-dense",
             content_sha256=content_hash(dense_text),
@@ -3111,7 +3226,7 @@ def test_rerank_adapter_changes_order_when_versioned_weights_change() -> None:
         request = EvidenceRerankRequest(
             fingerprint(),
             artifact("filter-snapshot"),
-            artifact("knowledge-index"),
+            artifact("synthetic-knowledge-index"),
             artifact("retrieval-config"),
             config.artifact_ref,
             "knowledge-rerank-input-v1",
@@ -3132,6 +3247,7 @@ def test_rerank_adapter_uses_utf8_evidence_key_tie_break() -> None:
     first = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:a",
             knowledge_chunk_ref="chunk-a",
             content_sha256=content_hash(first_text),
@@ -3142,6 +3258,7 @@ def test_rerank_adapter_uses_utf8_evidence_key_tie_break() -> None:
     second = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:b",
             knowledge_chunk_ref="chunk-b",
             content_sha256=content_hash(second_text),
@@ -3160,7 +3277,7 @@ def test_rerank_adapter_uses_utf8_evidence_key_tie_break() -> None:
     request = EvidenceRerankRequest(
         fingerprint(),
         artifact("filter-snapshot"),
-        artifact("knowledge-index"),
+        artifact("synthetic-knowledge-index"),
         artifact("retrieval-config"),
         config.artifact_ref,
         "knowledge-rerank-input-v1",
@@ -3180,6 +3297,7 @@ def test_rerank_order_is_independent_of_callers_decimal_context() -> None:
     best = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:z-best",
             knowledge_chunk_ref="chunk-best",
             content_sha256=content_hash(best_text),
@@ -3190,6 +3308,7 @@ def test_rerank_order_is_independent_of_callers_decimal_context() -> None:
     worse = KnowledgeEvidenceCandidate(
         replace(
             provenance(),
+            evidence_index_ref=artifact("synthetic-knowledge-index"),
             evidence_key="knowledge:a-worse",
             knowledge_chunk_ref="chunk-worse",
             content_sha256=content_hash(worse_text),
@@ -3208,7 +3327,7 @@ def test_rerank_order_is_independent_of_callers_decimal_context() -> None:
     request = EvidenceRerankRequest(
         fingerprint(),
         artifact("filter-snapshot"),
-        artifact("knowledge-index"),
+        artifact("synthetic-knowledge-index"),
         artifact("retrieval-config"),
         config.artifact_ref,
         "knowledge-rerank-input-v1",

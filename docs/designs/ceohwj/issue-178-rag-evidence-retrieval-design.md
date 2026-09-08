@@ -154,9 +154,11 @@ namespace가 있어야 한다. Source record도 `source_snapshot_ref` 또는 `so
 식별할 수 있어야 한다. 운영 Source처럼 보이는 provenance와 Receipt가 들어오면 성공 결과를 만들지 않고
 typed failure로 닫는다.
 
-Source marker는 Index marker로 대체되지 않는다. Rerank candidate provenance는 `evidence_index_ref`가
-synthetic namespace를 갖더라도 `source_snapshot_ref` 또는 `source_version`이 synthetic으로 식별되지
-않으면 거부한다. synthetic Index가 승인 Source 형태의 provenance를 보증하지 못하게 하는 경계다.
+Index marker와 Source marker는 서로를 대체하지 않고 각각 독립으로 요구한다. Rerank candidate
+provenance는 `evidence_index_ref`가 synthetic namespace를 갖더라도 `source_snapshot_ref` 또는
+`source_version`이 synthetic으로 식별되지 않으면 거부하고, 반대로 Source가 synthetic이어도
+`evidence_index_ref`가 synthetic namespace가 아니면 거부한다. synthetic Index가 승인 Source 형태
+provenance를 보증하거나, synthetic Source가 운영 Evidence Index를 보증하는 것을 둘 다 막는 경계다.
 
 marker 판정은 artifact ref와 `source_version` 모두 case-sensitive 소문자 canonical 형태만 인정한다.
 `MFDS-SYNTHETIC@2026`처럼 승인 Source 형태의 대문자 표기는 marker로 읽지 않는다.
@@ -184,6 +186,12 @@ Dense query fixture에는 raw query를 넣지 않고 `QueryFingerprint`와 vecto
 dimension mismatch, zero/non-finite/non-string vector나 mutable record collection은 `EvidenceSearchFailure`다. Reranker는
 `knowledge-rerank-input-v1` hash를 재계산하고, 중복 candidate key·stage signal, 비정상 rank·score,
 config/hash mismatch 또는 내부 예외를 raw detail 없이 `EvidenceRerankFailure`로 닫는다.
+
+stage signal score는 canonical finite 문자열인 것만으로 통과하지 않고 해당 stage metric 범위 안에
+있어야 한다. `LEXICAL`은 Jaccard 정의에 따라 `0 <= score <= 1`, `DENSE`는 cosine 정의에 따라
+`-1 <= score <= 1`이다. rerank config가 두 metric의 weighted 합에 결속돼 있으므로 범위를 벗어난 한
+signal이 전체 순위를 지배하면서 성공 Receipt를 남기는 것을 막는다. 다른 SearchPort를 DI해도 이
+경계는 reranker가 직접 강제한다.
 
 모든 trigram division, cosine, weighted score, score 정렬과 6자리 score 양자화는 caller의 전역 Decimal 설정을 사용하지
 않고 config artifact에 기록된 precision `50`, `ROUND_HALF_EVEN` local context에서 실행한다. 따라서 동일한
