@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { getGuide, type GuideData } from '../api/guides'
+import {
+  getGuide,
+  getGuideForPrescription,
+  type GuideData,
+} from '../api/guides'
+import { getLatestPrescription } from '../api/prescriptions'
+import {
+  clearAuthenticatedSession,
+  isStaleTokenError,
+} from '../features/auth/authSession'
 import {
   Button,
   Card,
@@ -35,6 +44,10 @@ function getGuideLoadFailureMessage(error: unknown) {
   }
 
   return '복약 가이드를 불러오지 못했어요. 다시 시도해 주세요.'
+}
+
+function isNotFound(error: unknown) {
+  return error instanceof ApiError && error.status === 404
 }
 
 type GuideDetail = {
@@ -200,17 +213,44 @@ function GuidePage() {
 
     setStateGuideId(requestedGuideId)
 
-    if (!requestedGuideId) {
-      setGuide(null)
-      setMessage('')
-      setIsLoading(false)
-      return
-    }
-
     try {
       setIsLoading(true)
       setMessage('')
       setGuide(null)
+
+      if (!requestedGuideId) {
+        let prescriptionResponse
+
+        try {
+          prescriptionResponse = await getLatestPrescription()
+        } catch (error) {
+          if (!isCurrentRequest()) return
+          if (isNotFound(error)) return
+          throw error
+        }
+
+        if (!isCurrentRequest()) return
+        const prescriptionId = prescriptionResponse.data.prescription_id
+
+        try {
+          const response = await getGuideForPrescription(prescriptionId)
+          if (!isCurrentRequest()) return
+
+          if (response.data.prescription_id !== prescriptionId) {
+            setMessage('확인한 처방과 다른 가이드 응답을 받았어요. 다시 불러와 주세요.')
+            return
+          }
+
+          navigate(`/guides/${response.data.guide_id}`, { replace: true })
+        } catch (error) {
+          if (!isCurrentRequest()) return
+          if (isNotFound(error)) return
+          throw error
+        }
+
+        return
+      }
+
       const response = await getGuide(requestedGuideId)
       if (!isCurrentRequest()) return
 
@@ -222,6 +262,11 @@ function GuidePage() {
       setGuide(response.data)
     } catch (error) {
       if (!isCurrentRequest()) return
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
+        navigate('/login', { replace: true })
+        return
+      }
       setGuide(null)
       setMessage(getGuideLoadFailureMessage(error))
     } finally {
@@ -229,7 +274,7 @@ function GuidePage() {
         setIsLoading(false)
       }
     }
-  }, [guideId])
+  }, [guideId, navigate])
 
   useEffect(() => {
     void loadGuide()
@@ -279,7 +324,7 @@ function GuidePage() {
             </p>
           )}
 
-          {!currentIsLoading && !guideId && (
+          {!currentIsLoading && !currentMessage && !currentGuide && !guideId && (
             <div className="guide-page__empty-state">
               <Card className="guide-page__empty">
                 <span className="guide-page__spark" aria-hidden="true" />

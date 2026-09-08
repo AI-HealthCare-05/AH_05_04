@@ -19,7 +19,7 @@ from app.models.guides import Guide, GuideCitation
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ExtractedField, OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
     MedicationCandidateSearch,
@@ -36,6 +36,24 @@ from app.models.rag_catalog import (
     RagMedicationIngredient,
     RagMedicationProduct,
     RagMedicationProductComponent,
+)
+from app.models.rag_evaluation import (
+    EvalCase,
+    EvalCaseResult,
+    EvalDataset,
+    EvalExperiment,
+    EvalFailure,
+    EvalMetric,
+    EvalRun,
+    EvaluationDatasetPartition,
+    EvaluationDatasetStatus,
+    EvaluationDecisionStatus,
+    EvaluationExecutionStatus,
+    EvaluationExperimentType,
+    EvaluationFailureScope,
+    EvaluationMetricScope,
+    EvaluationVariantRole,
+    EvalVariant,
 )
 from app.models.rag_source import (
     RagIngestionRunStatus,
@@ -68,6 +86,22 @@ __all__ = [
     "DlqOutboxEventKind",
     "DlqOutboxEventStatus",
     "ExtractedField",
+    "EvalCase",
+    "EvalCaseResult",
+    "EvalDataset",
+    "EvalExperiment",
+    "EvalFailure",
+    "EvalMetric",
+    "EvalRun",
+    "EvalVariant",
+    "EvaluationDatasetPartition",
+    "EvaluationDatasetStatus",
+    "EvaluationDecisionStatus",
+    "EvaluationExecutionStatus",
+    "EvaluationExperimentType",
+    "EvaluationFailureScope",
+    "EvaluationMetricScope",
+    "EvaluationVariantRole",
     "Gender",
     "Guide",
     "GuideCitation",
@@ -89,6 +123,8 @@ __all__ = [
     "OutboxEventKind",
     "OutboxEventStatus",
     "Prescription",
+    "PrescriptionVersion",
+    "PrescriptionVersionMedication",
     "Profile",
     "ProfileType",
     "RagIngestionRunStatus",

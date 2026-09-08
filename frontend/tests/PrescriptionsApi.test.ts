@@ -3,6 +3,7 @@ import { ApiError } from '../src/api/client'
 import {
   executeOcr,
   getJobStatus,
+  getLatestPrescription,
   getOcrJob,
   getOcrResult,
   isJobStatusResponse,
@@ -243,5 +244,32 @@ describe('OCR Job API', () => {
       details: errorBody.details,
       traceId: errorBody.trace_id,
     })
+  })
+})
+
+describe('Prescription rediscovery API', () => {
+  it('현재 사용자의 최신 확정 처방을 기존 PrescriptionResponse로 조회한다', async () => {
+    const responseBody = {
+      data: {
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        document_id: documentId,
+        prescribed_date: '2026-09-07',
+        confirmed_at: '2026-09-07T08:00:00Z',
+        medications: [],
+      },
+    }
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(responseBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getLatestPrescription()).resolves.toEqual(responseBody)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/prescriptions/latest',
+      expect.any(Object),
+    )
   })
 })

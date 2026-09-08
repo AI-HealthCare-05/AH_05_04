@@ -1,4 +1,4 @@
-import { beforeEach } from 'vitest'
+import { afterEach, beforeEach } from 'vitest'
 
 type JSDOMEnvironmentGlobal = typeof globalThis & {
   jsdom?: {
@@ -29,7 +29,13 @@ Object.defineProperties(globalThis, {
   },
 })
 
-beforeEach(() => {
+function clearWebStorage() {
   jsdomLocalStorage.clear()
   jsdomSessionStorage.clear()
-})
+}
+
+// 테스트가 남긴 Web Storage 상태는 다음 테스트에 노출되지 않아야 하므로
+// 시작과 종료 양쪽에서 정리합니다.
+beforeEach(clearWebStorage)
+
+afterEach(clearWebStorage)
