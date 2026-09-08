@@ -3,7 +3,7 @@
 - 상태: 1~3단계 완료, 4단계 인계 대기, 5단계 독립 복원·현재 승인 재검사 코드와 6단계 DB 비의존 인계 증빙 준비 완료. 공유 DB 계약 승인·실제 적재 완료가 아니다.
 - 작성: 김지혜, 2026-09-08
 - 구현 담당: 김지혜. Candidate·RAG 의미 계약 리뷰: 정현우. DB·FK·transaction 리뷰: 송은영.
-- 기준: develop `e20acb9` (#353 병합 포함), 작업 브랜치 `feat/166-catalog-db-integration`.
+- 현재 작업 기준: develop `b6e99ad` 반영, 작업 브랜치 `feat/166-catalog-db-integration`.
 - 최신 협의 입력: 김지혜가 제공한 `issue-166-d05-hash-calculation-draft-v2.md`.
   비공개 공유 초안 자체는 저장소에 복제하지 않고 이번 구현 경계만 기록한다.
 - 관련: 기존 #166의 남은 범위. #347 승인과 독립적으로 진행하며 별도 이슈·PR을 자동 생성하지 않는다.
@@ -63,13 +63,16 @@ Runtime 활성화·Production 공개는 이번 완료 범위가 아니다.
 
 ## 결정 항목과 착수 경계
 
+[DB 인계·결정 검토표](issue-166-db-handoff-review.md)에 현재 제안, 실제 담당, 필요한 물리 인계와
+검증 사례를 정리했다. 아래 단계별 실행 기록은 당시 증빙이며 현재 인계 완료를 뜻하지 않는다.
+
 | 항목 | 상태 | 1~3단계에서 할 일 | 최종 DB 연결 전 필요한 결과 |
 | --- | --- | --- | --- |
 | D-02 실행 provenance | 미확정 | Snapshot/Source 입력과 실행 참조의 차이·필요 사례 정리 | #164·#165 인계 key, 소유 범위, 재처리·재시도 식별 및 FK 기준 |
-| D-03 Identity·Alias/Crosswalk Set | 세부 제안 필요 | 대상·버전·상태·기존 boolean 이행 매핑 설계 | Set 포함 범위·READY 불변성·승인 전환 규칙 리뷰 |
+| D-03 Identity·Alias/Crosswalk Set | 검토안 작성 완료·결정 대기 | 대상·버전·상태·기존 boolean 이행 매핑 설계 | Set 포함 범위·READY 불변성·승인 전환 규칙 리뷰 |
 | D-04 Component | 최종 자연키 미확정 | Parser/Loader·합성 fixture에서 role/출처 근거 수집 | 실제 Source 근거와 자연키·source_record_key·relationship 선택 |
 | D-05 | 이번 v2 유지 확인, 물리 저장 위치 검토 필요 | 기존 hash fixture 및 저장 metadata 설계 | 저장 위치·참조·유일성 리뷰. 새 projection 계산은 별도 계약 전환 |
-| D-06 transaction | 세부 제안 필요 | 쓰기 순서·멱등키·실패 감사·재시도 설계 | 원자성·동시성·실패 감사 transaction 및 소비 가시성 기준 |
+| D-06 transaction | 검토안 작성 완료·결정 대기 | 쓰기 순서·멱등키·실패 감사·재시도 설계 | 원자성·동시성·실패 감사 transaction 및 소비 가시성 기준 |
 
 기술적인 세부안은 구현 담당자가 근거와 함께 제안하고 PR 리뷰로 확인한다.
 미확정된 공유 의미·FK를 먼저 확정값으로 구현하지 않으며, 독립된 작업은 계속 진행한다.

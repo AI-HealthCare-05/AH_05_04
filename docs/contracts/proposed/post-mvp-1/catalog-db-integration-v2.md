@@ -1,10 +1,12 @@
 # #166 Catalog DB 적재·저장 연결안
 
-- 상태: **Proposed**. 3단계의 내부 저장 준비 코드는 구현했으나 DB schema·migration은 미확정이다.
+- 상태: **Proposed / DB 인계·결정 항목 검토안 작성 완료**. 승인·실제 DB 통합 완료가 아니다. D-02는 미확정이다.
 - 구현 담당: 김지혜. Candidate·의미 계약 검토: 정현우. DB·FK·transaction 검토: 송은영.
 - 현재 적용 기준: [기존 v2 계약](../../targets/post-mvp-1/catalog-build-v2.md).
 - 최신 협의 기준: 김지혜가 제공한 D-05 v2 검토 반영본. 원본 공유 문서 자체를 복제하지 않는다.
 - Source 인계 기준: [Source 계약](../../targets/post-mvp-1/rag-source-ingestion-v1.md).
+
+- 검토용 인계 목록과 답변 양식: [DB 인계·결정 검토표](../../../designs/jye-rookie/issue-166-db-handoff-review.md).
 
 ## 구현 상태
 
@@ -42,66 +44,150 @@ export checksum과 envelope hash를 서로 다른 kind/target으로 보존한다
 나올 수 있으므로 DB의 단독 Publication key나 normalization 실행 ID로 사용하지 않는다.
 이번 저장 자료는 차이가 나는 bytes를 그대로 보존할 뿐, 그 두 실행의 영속 식별을 결정하지 않는다.
 
-## D-03: Identity·Alias·Set 제안
+## D-02: 실행 참조 인계 요청 — 미확정
 
-| 항목 | 제안 | 결정·검증 접점 |
+**결정 상태는 미확정이다.** 아래는 김지혜가 #165 실행 정책과 #166 소비 요구로 제안할 논리 조건이다.
+새 run 테이블 생성, 기존 ingestion FK 채택, 실행 key 형식 확정 또는 schema 승인으로 해석하지 않는다.
+
+- 기존 Snapshot을 다른 Catalog normalization/build 버전으로 처리한 결과는 별도 실행 결과로 구분해야 한다.
+- 같은 실행 요청의 장애 재시도와 새 버전 재처리를 구분한다. 전자는 시도 이력을 남기되 같은 요청 결과를
+  중복 발행하지 않고, 후자는 과거 결과를 덮어쓰지 않는다.
+- 복수 Source Snapshot을 입력으로 쓰는 Catalog에서는 실행이 사용한 Snapshot 집합과 행별 출처를
+  모두 재현해야 한다. Snapshot 하나당 실행 하나라고 가정하지 않는다.
+- 실행 성공과 구성원 발행의 관계, FAILED 실행의 결과 참조 유무, NO_CHANGE 재검증 기록의 위치를
+  별도로 명시한다. #165 Source 충돌·FAILED/NO_CHANGE 규칙은 이 제안으로 변경하지 않는다.
+- 실행 ID는 실제 실행을 식별한다. `catalog_version`, `member_ref`, `normalization_version`, envelope hash
+  또는 ingestion run ID를 정본 실행 ID로 대체하지 않는다.
+
+김지혜는 위 시나리오의 생성·완료·재시도 정책을 제안한다. 송은영은 적용 가능한 저장 구조·PK/FK와
+기존 구조 전환을 검토하고, 정현우는 정본 normalization 실행과 Catalog 재처리의 의미를 검토한다.
+한 사람의 이슈 종료나 반응만으로 D-02 상태를 바꾸지 않는다. 최종 인계에는 적용 문서·결정 근거,
+물리 참조 키와 생성 인터페이스, 구현 담당 및 revision을 기록한다.
+
+## D-03: Identity·Alias·Set 변경안 — 리뷰 요청
+
+아래 논리 구조를 권장한다. 물리 테이블명과 실행/Publication key는 D-02 및 DB 리뷰 전 미확정이다.
+
+| 대상 | 구체 변경안 | DB/adapter 검증 |
 | --- | --- | --- |
-| 안정 Identity | type·code system·canonical code를 자연 식별자로 upsert. DB UUID는 물리 FK로만 사용 | 동일 공식 코드 재등장·동시 적재에서도 중복 Identity 없음 |
-| Product/Ingredient | 기존 테이블 확장. 원문·정규화값·상태·Source record key 보존. Snapshot별 행과 Identity 분리 | Publication/실행 key는 D-02 인계 후 결정 |
-| Ingredient 이름 unique | 공식 코드가 다른 동명 성분을 막는 제약은 Identity·Publication 기준으로 전환 제안 | 코드 없는 기존 행 자동 코드 생성 금지. 기존 데이터 조사와 이행안 필요 |
-| Alias 대상 | 대상 Snapshot 행 FK를 안정 Identity FK로 전환 제안 | 대상 type 일치, Alias 자체 출처와 대상 구성원 출처 분리 |
-| Alias 상태 | 현재 v2 alias_source·review_status·status·is_effective를 손실 없이 보존 | boolean 하나로 축소 금지. expiry/승인 회수 표현은 추가 검토 |
-| 기존 is_approved 이행 | true만 보고 새 APPROVED 상태·승인 receipt를 만들지 않음. 출처·상태·승인 근거를 검토해 이행 | 근거 없는 기존 행은 적격 검색 입력으로 공개하지 않음. 누락값을 임의 backfill하지 않음 |
-| Alias 집합 | 하나의 입력 Catalog에 포함된 Alias 구성원 전체와 선택된 Search Entry를 구분해 보존하는 안 | 부적격·성분 Alias는 보존하되 제품 검색 승격 없음. 전체 관찰 집합과 정본 Alias Set의 범위 동일성은 리뷰 필요 |
-| Crosswalk | 현재 typed input에 승인 Identifier/Crosswalk 집합이 없어 자동 생성하지 않음 | 빈 READY Set으로 위장하지 않음. P0 포함 범위 결정 후 별도 구현 |
-| 불변 Set/member | 승인된 Set 범위와 실행/Publication key를 연결해 선택 구성원을 고정 | 새 catalog_build 테이블을 전제하지 않음. READY 이후 수정 대신 새 버전 |
+| Identity | `(entity_type, code_system, canonical_code)` 유일. P0 Product는 MFDS_ITEM_SEQ, Ingredient는 MFDS_INGREDIENT_CODE. 이름 기반 병합 금지 | 동시 upsert의 동일 Identity 1행. 다른 코드·같은 이름은 별도 Identity. 기존 비허용 체계의 임의 치환 금지 |
+| Product/Ingredient | 기존 테이블 확장. Identity, 출처 Snapshot, 인계된 실행/Publication 참조와 현재 v2 필드 보존 | 같은 실행의 상충 구성원 거부. 새 실행은 과거 구성원을 덮어쓰지 않음. 정확한 unique 조합은 실행 키 인계 후 지정 |
+| Alias 관찰 행 | 안정 Identity를 대상 FK로 사용. 원문·정규화값·alias_source·review_status·status·is_effective 및 Alias 자체 출처 보존 | Product/Alias 교차 Snapshot 허용. Source가 다른 동일 Alias 관찰을 삭제하지 않음 |
+| Alias 선택 집합 | 해당 Catalog에서 선택한 Alias 관찰 행 전체를 불변 member로 보존하는 안 | PENDING·REJECTED·INACTIVE·Ingredient Alias도 관찰 이력으로 보존. 이 집합을 승인된 검색 집합과 동일시하지 않음 |
+| 검색용 선택 | 승인·활성·유효 Product Alias만 현재 builder 규칙으로 Search Entry 선택 | 같은 Product·동일 정규화 문자열의 복수 출처는 모두 보존하고 대표 Alias만 결정적으로 선택. 서로 다른 활성 Product 충돌 거부 |
+| Search Entry | PRODUCT_NAME은 Alias 참조 NULL, APPROVED_ALIAS는 필수. 선택 Product·Alias와 같은 Catalog 구성에 결속 | Product 이름 출처는 Product Snapshot, Alias형 출처는 Alias Snapshot. 대상 Identity와 선택 Product 일치. 동일 Snapshot 강제 금지 |
+| Crosswalk Set | 입력에 승인 Identifier/Crosswalk가 없으므로 기존 공식 코드를 복제해 Set을 생성하지 않음 | P0에서 요구하는 정확한 Crosswalk 범위를 현우님께 확인. 필요하다는 결론이면 입력·승인 provenance·Set 구현을 #166 남은 작업에 포함 |
+| Set 불변성 | 발행된 구성의 member·내용은 수정/삭제 금지. 변경은 새 구성으로 저장 | 원문·링크·manifest만 따로 수정할 수 없도록 DB 제약/권한으로 보호. 상태 enum과 READY 전이 주체는 DB 리뷰에서 지정 |
 
-현재 저장 준비의 `rows` 목록은 정본 Set을 대신하지 않는다. Set 포함 범위·상태·빈 집합 규칙을
-확정하기 전에는 DB Set 상태나 READY flag를 코드에 만들어 넣지 않는다.
+### 기존 Alias boolean 전환
 
-## D-04: Component와 Loader 근거
+| 기존 상태·근거 | 제안하는 처리 |
+| --- | --- |
+| is_approved=true, 상세 승인·출처 근거 확보 | 승인 근거의 대상·Source·유효성 검증 후 새 상태에 매핑. boolean만으로 승인 receipt를 만들지 않음 |
+| is_approved=true, 근거 없음 | 기존 행 보존. 자동 APPROVED 이행과 검색 공개 차단. 보완 또는 명시적 이행 결정 필요 |
+| is_approved=false | PENDING·REJECTED·승인 취소 중 무엇인지 추정하지 않음. 근거 없는 상태 backfill 차단 |
+| alias_source·유효성·실행 출처 누락 | 임의 UNSPECIFIED·is_effective=true·실행 ID로 메우지 않음. 이행 보류 목록을 별도로 검토 |
 
-확인한 구현:
+보류는 새 DB 상태 enum을 만들겠다는 뜻이 아니다. 조사 결과로 변환 가능한 행과 근거 미확보 행을
+구분하고, 검증되지 않은 행을 운영 검색에 노출하지 않는 이행 절차를 제안한다.
 
-- `source_ingestion/parse.py`는 검증된 제품 수집 레코드와 ITEM_SEQ 기반 checksum을 제공한다.
-- Catalog의 Component 입력은 공식 제품·성분 코드, Snapshot, role, order, strength, release profile이다.
-- `tests/fixtures/rag/catalog/synthetic_components.json`은 합성 3행이며 ACTIVE_INGREDIENT만 있다.
-  실제 Source에서 role이 단일하다는 증거로 사용할 수 없다.
-- 현재 builder는 `(product_ref, ingredient_ref, component_role)`로 참조를 만들며 같은 Snapshot의
-  독립 Ingredient registry를 조회한다. 성분을 Component 이름에서 임의 생성하지 않는다.
-- 기존 DB `Numeric(12,4)`와 v2의 strength 문자열은 같지 않다. `010.00`, `5.0`, `2.50` 등을
-  숫자로 변환하면 원문/직렬화 재현이 달라질 수 있으므로 저장 준비에서 그대로 보존한다.
+리뷰 요청: **현우님**은 Alias 관찰 집합/검색 집합과 정본 Alias Set의 대응, Crosswalk P0 필수 범위를,
+**은영님**은 기존 Alias FK 교체 순서, 상태·불변성 제약과 기존 행 보존 방식을 검토한다.
+빈 Crosswalk READY Set으로 미구현을 숨기거나 Crosswalk가 불필요하다고 임의로 범위를 축소하지 않는다.
 
-제안:
+## D-04: Component·Loader 변경안 — 근거 수집 및 리뷰 요청
 
-1. 실제 Source 근거 전에는 자연키에서 role을 제거해 강화하지 않는다.
-2. source_record_key가 입력에 없다고 구성원 hash를 원본 레코드 키로 넣지 않는다.
-   실제 원본 키와 row별 재적재 필요성을 확인한 뒤 입력·DB 전환을 함께 제안한다.
-3. 문자열 함량·release profile·원문 재현에 필요한 필드는 기존 숫자 컬럼만으로 축소 저장하지 않는다.
-4. 후속 Loader는 명시적인 FK 값과 INSERT를 사용하는 방향으로 제안한다. relationship 대입을
-   사용하지 않는다면 viewonly/overlaps만 정리하는 변경은 포함하지 않는다. 실제 adapter 구현 때 확정한다.
+확인한 근거는 현재 Parser와 합성 fixture다. 실제 Source의 role 단일성을 입증하는 자료는 없다.
+현재 builder는 같은 Snapshot의 독립 Ingredient registry를 조회하며 성분을 이름에서 생성하지 않는다.
 
-## D-06: transaction·실패·재시도 제안
+권장안:
 
-현재 단계는 아래 실행 순서의 설계만 제공한다. DB 실패 테스트나 실제 commit을 완료한 것은 아니다.
+1. 현재 `(product, ingredient, component_role)` 자연키의 의미를 유지한다. role을 제거하는 강화는
+   실제 Source의 반복 성분·role·함량 분석 전에는 제안하지 않는다. 실행별 DB unique 범위는 D-02와 연결한다.
+2. 현재 v2의 `strength_value`, `strength_unit`, `release_profile`, 순서를 손실 없이 보존한다.
+   기존 Numeric(12,4)만으로 `010.00`·`2.50` 등 원래 문자열을 재생성하지 않는다.
+3. `source_record_key`를 추가한다면 실제 Source 행 키의 안정성과 scope를 먼저 입증한다.
+   현재 component_ref hash를 원본 키로 재명명하지 않는다.
+4. Loader는 명시적인 FK 값과 INSERT를 사용하고 repository가 flush, adapter가 transaction을 관리하는
+   안으로 제안한다. 이 경로에서는 relationship·viewonly·overlaps 정리만을 위한 변경은 하지 않는다.
 
-1. DB 밖에서 입력 mapping·구성원·v2 artifacts 검증과 저장 준비를 수행한다.
-2. DB transaction을 열고 확정된 요청/실행 key로 경합을 제어한다. key는 D-02와 함께 확정한다.
-   envelope hash 단독으로 실행의 멱등키를 만들지 않는다.
-3. 해당 transaction에서 Source·Publication 참조 및 승인 근거의 현재 적격성을 재확인한다.
-   긴 외부 호출을 DB lock 안에 넣지 않고, 검증된 receipt의 저장 버전/회수 상태 결속을 확인하는 안을 제안한다.
-4. 안정 Identity upsert → Product/Ingredient 구성원 → Alias/Component → Search Entry →
-   확정된 Set/member와 manifest 참조 순으로 적재하고 모든 참조를 검증한다.
-5. 구성원·Set·manifest 참조를 한 transaction에서 commit한다. READY 공개는 별도의 계약 조건이
-   충족된 경우에만 적용한다. NOT_APPROVED/STALE 자료 저장으로 Candidate를 활성화하지 않는다.
-6. 실패 시 전체 rollback하고 원문 없는 실패 분류·요청/실행 식별을 별도 감사 경계에 기록한다.
-   감사 실패까지 성공으로 바꾸지 않는다. 저장 예외를 Catalog REJECTED로 임의 변환하지 않는다.
-7. 재시도 시 같은 확정 key의 완전한 결과와 payload를 확인해 재현한다. 다른 내용은 기존 행을
-   덮어쓰지 않는다. commit 결과가 불명확하면 재조회로 결과를 판별하기 전 중복 성공을 보고하지 않는다.
+김지혜가 준비할 증빙: Source 명세의 필드 경로, 합성 재현 입력, 제품·성분별 role/함량 반복 사례,
+원본 키 재수집 안정성, 순서 변경 후 동일 결과와 상충 내용의 거부 테스트.
+실제 Source 접근·비민감 증빙이 없으면 이 부분은 근거 미확보로 표시한다.
 
-파일 산출물은 DB commit 전에 공개하지 않는다. 내부 임시 파일을 먼저 만들 경우 commit 실패 뒤
-잔여 파일의 식별·정리 기준을 별도로 명시한다. #347의 Source Artifact 정리 구현이 Catalog 파일을
-자동으로 정리한다고 간주하지 않는다. 실제 파일 저장을 adapter에 연결할 때 범위를 검토한다.
+리뷰 요청: **현우님**은 자연키·원문 보존 의미, **은영님**은 문자열 보존 컬럼·unique 및 FK 이행을 검토한다.
+
+## D-05: 현재 v2의 hash 저장안 — 계산 의미 유지, 물리 저장 리뷰 요청
+
+이번 연결에서는 다음 두 종류만 저장하는 안을 제안한다. 현재 Candidate 필드 `catalog_manifest_hash`는
+계속 Catalog envelope hash이며 projection hash로 바꾸지 않는다.
+
+| 저장 자료 | 보존할 값 | 참조·검증 |
+| --- | --- | --- |
+| EXPORT_CHECKSUM | medication-catalog-v2, 현행 JSONL 규칙, digest, 정확한 JSONL bytes 또는 재구성 근거 | 파일의 마지막 LF까지 재계산. envelope에 기록된 export checksum과 일치 |
+| CATALOG_ENVELOPE | medication-catalog-v2, catalog-manifest-envelope-v2, digest, canonical envelope payload 및 원래 manifest bytes | 자기 hash 필드 제외 payload 재계산. manifest 파일 checksum과 구분 |
+
+권장 저장 구조는 **같은 불변 Catalog 구성에 결속된 종류별 계산 자료**다. digest만 별도 보관하거나
+새 catalog_build 테이블을 먼저 전제하지 않는다. 기존 Catalog/Set 구성에 어떤 물리 키로 연결할지는
+D-02·D-03 인계와 함께 은영님께 검토 요청한다.
+
+- 논리적으로 `(구성 참조, hash_kind)`당 하나의 schema/spec·digest·계산 근거를 보존하는 안이다.
+  구성 참조의 실제 unique/FK는 아직 지정하지 않는다.
+- 동일 digest가 다른 실행에 나타나는 것을 전역 unique로 막지 않는다. digest 단독 FK도 사용하지 않는다.
+- DB 관계에 종류·spec·대상 결속이 있어야 하고, application은 bytes 재계산까지 수행한다.
+- Candidate에는 전체 CatalogExportArtifacts를 인계한다. DB 물리 metadata를 기존 v2 envelope에 삽입하지 않는다.
+- Candidate projection·Runtime medication manifest는 최신 v2 초안의 **새 계약 버전 제안**으로 유지한다.
+  승인 Identifier 집합·Entry 본문 hash·projection allowlist·canonical fixture 없이 계산하지 않는다.
+- Runtime Catalog 전용 참조는 해당 의미 계약이 준비된 뒤 #166에서 추가하고 은영님 리뷰를 받는다.
+  현재 envelope hash를 그 값으로 대입하거나 placeholder 컬럼/값으로 완료 처리하지 않는다.
+
+리뷰 요청: **은영님**은 계산 자료 저장 위치·구성 FK·유일성·불변성 보호를 검토한다.
+**현우님**께는 이미 정리한 v2 유지 여부를 다시 묻지 않고, DB 왕복이 기존 인계 bytes/의미를 보존하는지
+검토 요청한다. 새 projection 전환은 이번 v2 저장안과 분리해 남은 범위로 명시한다.
+
+## D-06: transaction·실패·재시도 변경안 — 리뷰 요청
+
+### transaction 소유와 저장 흐름
+
+실제 adapter가 transaction을 소유하고 `save_build`는 commit 확인 이후에만 정상 반환하는 안을 제안한다.
+기존 서비스/포트의 인자 구조는 유지하며 repository의 flush만으로 저장 성공을 보고하지 않는다.
+외부 세션을 주입받는 경우 호출자가 이미 연 transaction의 일부를 임의 commit하는 구현은 피하고,
+adapter 생성·호출 경계에서 소유자를 하나로 제한한다.
+
+1. DB 밖에서 입력·구성원·v2 artifacts·저장 자료를 검증한다.
+2. 외부 승인 verifier를 호출하되 그 응답만으로 이후 DB transaction의 현재성을 보장한다고 가정하지 않는다.
+3. transaction 안에서 **인계된 요청/실행 key**로 같은 요청을 직렬화한다. 실제 키·잠금 대상은 D-02 이후
+   지정한다. envelope hash만으로 요청 키를 만들지 않는다.
+4. 선택된 Source/Publication 참조와 승인 근거 revision의 현재 적격성을 재확인한다. 승인 철회 writer와
+   같은 잠금 또는 버전 조건을 공유해야 한다. 실제 승인 저장소와 철회 프로토콜이 없으면 이 검증은 미완료다.
+5. Identity를 자연키 순으로 upsert하고 구성원 → Alias/Component → Search Entry → Set/member →
+   manifest 참조를 적재한다. 공통 잠금 순서는 DB 검토 후 고정해 교착을 줄인다.
+6. 모든 참조·count·계산 자료 결속을 확인하고 한 번 commit한다. commit 뒤 결과를 반환한다.
+   저장 성공이 실제 Runtime 활성화나 Source 승인 부여를 의미하지 않는다.
+
+### 재시도와 실패 처리
+
+| 발생 조건 | 제안 동작 | 검증 기준 |
+| --- | --- | --- |
+| 같은 확정 요청 key·같은 완전한 내용 재시도 | 기존 불변 결과를 재조회·대조 후 재현 | 구성원·Set·manifest 중복 0건. 읽기 시 현재 승인 gate는 별도 적용 |
+| 같은 요청 key·다른 내용 | 기존 결과 보존, 충돌로 실패 | 기존 bytes·참조 불변. 정확한 오류 코드/외부 매핑은 adapter 리뷰에서 지정 |
+| mapping·구성원 검증 실패 | 기존 REJECTED 경계 유지, 저장 호출 없음 | export·부분 구성원 없음 |
+| 중간 INSERT 또는 commit 이전 오류 | 이번 Catalog transaction 전체 rollback | 새 구성원·Set·manifest·신규 Identity의 부분 commit 없음 |
+| commit 직후 통신 단절 | 성공/실패를 추측하지 않고 같은 확정 key로 재조회 | 완전한 결과일 때만 재현, 판단 불가 시 성공 반환 금지 |
+| deadlock/serialization failure | 전체 transaction을 제한적으로 재시도하는 안 | 부분 재개 금지, 매 시도 참조/승인 적격성 재검사. 한도·분류는 adapter 설정으로 명시 |
+| 승인 철회 또는 Source 부적격 전이와 경합 | 공유 잠금/버전 검사로 한 순서를 결정 | 철회가 먼저 확정된 경우 부적격 결과 소비 차단. 먼저 저장됐어도 후속 소비 시 현재성 재검사 |
+| rollback 후 실패 기록 | 실패 transaction 밖의 별도 감사 경계에서 기록 | 감사 실패를 성공으로 숨기지 않음. 원래 오류 원문·Alias·Source 원문 미기록 |
+
+실패 기록에는 승인된 요청/실행 참조·처리 단계·고정 오류 분류·시도·시각 등 안전한 metadata만 남기는
+안을 제안한다. 새로운 감사 테이블이나 임의 오류 enum을 이 문서에서 확정하지 않는다. 사용 가능한
+기존 감사 저장소와 접근 권한은 DB 리뷰에서 지정한다.
+
+파일은 우선 메모리의 검증된 artifacts를 사용하는 안이다. 별도 파일 저장을 붙일 경우 commit 전 공개하지
+않고 잔여 파일의 식별·정리 책임을 정한다. #347 Source Artifact 삭제가 Catalog 파일도 처리한다고 간주하지 않는다.
+NOT_APPROVED/STALE 자료를 저장하더라도 검색 적격 상태로 승격하지 않는다.
+
+리뷰 요청: **은영님**은 transaction 소유, 승인/Source writer와의 경합 제어, 실패 감사 저장 위치를,
+**현우님**은 재시도 결과와 현재 승인·Source 결속·소비 gate 의미를 검토한다.
 
 ## 4단계 migration 착수 조건
 
