@@ -92,6 +92,16 @@ SELECT format(
 )
 \gexec
 
+-- Migration 이후 생성한 Runtime 역할에도 승인된 Snapshot 전이 함수만 인계합니다.
+-- Migration 전에는 함수가 없으므로 건너뛰며, migration 자체가 기존 역할에 부여합니다.
+SELECT format(
+    'GRANT EXECUTE ON FUNCTION %s TO %I',
+    to_regprocedure('public.transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)'),
+    :'app_user'
+)
+WHERE to_regprocedure('public.transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)') IS NOT NULL
+\gexec
+
 -- PR #72 또는 이전 배포에서 부여됐을 수 있는 sequence UPDATE 권한을
 -- 명시적으로 회수하여 setval() 사용을 차단합니다.
 SELECT format(
