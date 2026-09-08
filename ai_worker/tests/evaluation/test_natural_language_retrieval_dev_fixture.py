@@ -34,6 +34,7 @@ POLICY_PATH = "policies/rag-natural-language-retrieval-dev-v1.evaluation-policy.
 SUITE_PATH = "suites/rag-natural-language-retrieval-dev-v1.suite.json"
 RECEIPT_PATH = "provenance/rag-natural-language-retrieval-dev-v1.protected-artifact-receipt.json"
 REVIEW_EVIDENCE_PATH = "provenance/rag-natural-language-retrieval-dev-v1.review-evidence.json"
+APPROVAL_EVIDENCE_PATH = "provenance/rag-natural-language-retrieval-dev-v1.approval-evidence.json"
 NEGATIVE_TYPES = {
     "SAME_FAMILY_DIFFERENT_ATTRIBUTE",
     "SAME_TOPIC_DIFFERENT_FAMILY",
@@ -109,7 +110,7 @@ def test_issue_273_cases_are_natural_korean_reviewed_retrieval_cases() -> None:
         assert case["task_type"] == "RETRIEVAL"
         assert case["data_classification"] == "SYNTHETIC"
         assert case["partition"] == "DEV"
-        assert case["review_provenance"]["team_gold_status"] == "REVIEWED"
+        assert case["review_provenance"]["team_gold_status"] == "APPROVED"
         assert case["expected"]["required_evidence_refs"] == case["expected"]["relevant_evidence_refs"]
         assert len(case["expected"]["required_evidence_refs"]) == 1
         assert re.search(r"[가-힣]", case["query"])
@@ -263,7 +264,7 @@ def test_issue_273_comparison_scopes_are_diagnostic_and_schema_approved_only() -
 
 
 def test_issue_273_graph_records_only_the_actual_gold_review_event() -> None:
-    graph = build_issue_273_dev_graph()
+    graph = build_issue_273_dev_graph(dataset_approved=False)
     evidence = json.loads(graph[REVIEW_EVIDENCE_PATH])
     reviewed_values = [json.loads(graph[path])["review_provenance"] for path in (MAPPING_PATH, MANIFEST_PATH)]
     reviewed_values.extend(
@@ -330,6 +331,104 @@ def test_issue_273_graph_records_only_the_actual_gold_review_event() -> None:
     assert all(provenance["evidence_review_refs"] == [] for provenance in draft_values)
 
 
+def test_issue_273_graph_records_the_actual_dataset_custodian_approval_event() -> None:
+    graph = build_issue_273_dev_graph()
+    evidence = json.loads(graph[APPROVAL_EVIDENCE_PATH])
+    approved_values = [json.loads(graph[path])["review_provenance"] for path in (MAPPING_PATH, MANIFEST_PATH)]
+    approved_values.extend(
+        json.loads(content)["review_provenance"] for path, content in graph.items() if path.startswith(CASE_PREFIX)
+    )
+
+    assert evidence == {
+        "approval_request_artifact_sha256": "eab78ae599e5d60682dc0c6d1fac1c9e3474cc9a61839fbaa0c9c25d10f3cdd1",
+        "approval_request_path": "docs/validation/rag/issue-273/dataset-approval-request.json",
+        "approval_request_sha256": "032d6c8ce6110c500a8c5fe570381cd377ad73498b856f11c647b13197a15a8f",
+        "approval_result": "APPROVED",
+        "approved_dataset_manifest_sha256": "c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff",
+        "approver": "phina-io",
+        "commit_sha": "c71ebf1a4e644ce3604f57f436d31a86f5e60536",
+        "evidence_id": "github-pr-354-review-5139907268",
+        "evidence_version": "1.0.0",
+        "pull_number": 354,
+        "repository": "AI-HealthCare-05/AH_05_04",
+        "review_body": (
+            "리뷰 (담당 범위: Dataset Custodian으로서 60개 DEV Case·Gold review evidence 해시 결속, 역할 독립성, "
+            "승인값·Freeze·HOLDOUT 미기록 상태 확인)\n\n"
+            "기술적으로 아래 4가지 확인 기준 전부 검증 완료했습니다.\n\n"
+            "1. 해시 결속 — 직접 재실행해서 확인\n\n"
+            "ai_worker/tests/evaluation/test_natural_language_retrieval_dataset_approval.py 8개 테스트를 직접 "
+            "실행했습니다 (본문 claim과 일치, 8 passed). 특히 "
+            "test_committed_approval_request_artifacts_are_exact_deterministic_projections가 커밋된 JSON/MD가 지금 이 "
+            "순간 소스 파일들로 다시 만들면 나오는 결과와 100% 동일한지 검증하는데, 이게 통과한다는 건 문서에 "
+            "적힌 해시·개수가 실제 파일 상태와 어긋날 여지가 없다는 뜻입니다.\n\n"
+            "2. Gold review evidence 진위 — GitHub에서 직접 조회\n\n"
+            "인용된 github-pr-341-review-5137833200을 API로 직접 조회했고, 실제로 존재하며 가빈님"
+            "(hazelnutflavoured)이 작성한 리뷰 본문이 문서에 인용된 해시·문구와 정확히 일치합니다.\n\n"
+            "3. 역할 독립성\n\n"
+            "구현(정현우) / Gold 검토(가빈) / Custodian(은영님) — 세 개 GitHub 계정 모두 다른 실제 사람으로 "
+            "확인. 자기검증 구조 아닙니다.\n\n"
+            "4. 승인값·Freeze·HOLDOUT 미기록\n\n"
+            "approval_event: null, approval_recorded: false, freeze_recorded: false, holdout_count: 0 전부 확인. 사전 "
+            "기록 없음을 거부하는 회귀 테스트(test_approval_request_rejects_prefilled_approval, "
+            "test_approval_request_rejects_holdout_content)도 직접 실행해서 통과 확인했습니다.\n\n"
+            "참고: develop 대비 뒤처짐 확인\n\n"
+            "이 브랜치가 develop보다 2커밋 뒤처져 있는데(#329 RAG Catalog, #350 OCR 검수 필드), 둘 다 "
+            "evals/·ai_worker/tasks/evaluation/·docs/validation/rag/issue-273/를 전혀 건드리지 않아 이번 승인 대상과 "
+            "무관함을 확인했습니다.\n\n\n"
+            "Gold review result: APPROVED\n"
+            "approval_request_sha256: 032d6c8ce6110c500a8c5fe570381cd377ad73498b856f11c647b13197a15a8f\n"
+            "dataset_manifest_sha256: c4d54f4b17f84845ff3cec10f84958a9742357500db10b194535665735fbecff\n"
+            "gold_review_evidence_sha256: "
+            "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776\n"
+            "approved_origins: 20/20\n"
+            "review_commit_oid: c71ebf1a4e644ce3604f57f436d31a86f5e60536"
+        ),
+        "review_id": 5139907268,
+        "review_node_id": "PRR_kwDOT3EWNs8AAAABMlzCxA",
+        "review_state": "APPROVED",
+        "review_submitted_at": "2026-09-08T09:30:09.000000Z",
+        "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/354#pullrequestreview-5139907268",
+    }
+    approval_request_path = EVALS_ROOT.parent / evidence["approval_request_path"]
+    approval_request = json.loads(approval_request_path.read_bytes())
+    assert sha256_hex(approval_request_path.read_bytes()) == evidence["approval_request_artifact_sha256"]
+    assert approval_request["request_sha256"] == evidence["approval_request_sha256"]
+    assert approval_request["source_dataset_manifest_sha256"] == evidence["approved_dataset_manifest_sha256"]
+    assert "\r" not in evidence["review_body"]
+    assert evidence["review_body"].endswith(
+        "Gold review result: APPROVED\n"
+        f"approval_request_sha256: {evidence['approval_request_sha256']}\n"
+        f"dataset_manifest_sha256: {evidence['approved_dataset_manifest_sha256']}\n"
+        "gold_review_evidence_sha256: "
+        "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776\n"
+        "approved_origins: 20/20\n"
+        f"review_commit_oid: {evidence['commit_sha']}"
+    )
+    expected_refs = [
+        {
+            "hash": "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776",
+            "id": "github-pr-341-review-5137833200",
+            "version": "1.0.0",
+        },
+        {
+            "hash": canonical_sha256(evidence),
+            "id": "github-pr-354-review-5139907268",
+            "version": "1.0.0",
+        },
+    ]
+    assert len(approved_values) == 62
+    for provenance in approved_values:
+        assert provenance["team_gold_status"] == "APPROVED"
+        assert provenance["reviewed_by"]["actor_id"] == "hazelnutflavoured"
+        assert provenance["approved_by"] == {
+            "actor_id": "phina-io",
+            "namespace": "GITHUB_LOGIN",
+            "role": "DATASET_CUSTODIAN",
+        }
+        assert provenance["approved_at"] == "2026-09-08T09:30:09.000000Z"
+        assert provenance["evidence_review_refs"] == expected_refs
+
+
 def test_issue_273_dev_graph_has_fixed_identity_and_distribution() -> None:
     graph = build_issue_273_dev_graph()
     case_paths = sorted(path for path in graph if path.startswith(CASE_PREFIX))
@@ -349,6 +448,7 @@ def test_issue_273_dev_graph_has_fixed_identity_and_distribution() -> None:
         "suites/rag-natural-language-retrieval-dev-v1.suite.json",
         "provenance/rag-natural-language-retrieval-dev-v1.protected-artifact-receipt.json",
         "provenance/rag-natural-language-retrieval-dev-v1.review-evidence.json",
+        "provenance/rag-natural-language-retrieval-dev-v1.approval-evidence.json",
     }
     assert [case["case_id"] for case in cases] == [f"rag-nlr-dev-{index:03d}" for index in range(1, 61)]
     assert Counter(next(item for item in case["slice_ids"] if item.startswith("TOPIC_")) for case in cases) == {
@@ -791,10 +891,10 @@ def test_issue_273_cases_and_mapping_resolve_to_each_origins_single_gold() -> No
             "stable_key": f"SYNTHETIC_NLR_CHUNK_{gold_index + 1:03d}",
             "target_kind": "FIXTURE_RECORD",
         }
-    assert mapping["review_provenance"]["team_gold_status"] == "REVIEWED"
+    assert mapping["review_provenance"]["team_gold_status"] == "APPROVED"
     assert mapping["review_provenance"]["evidence_review_refs"]
     assert mapping["review_provenance"]["reviewed_by"]["actor_id"] == "hazelnutflavoured"
-    assert mapping["review_provenance"]["approved_by"] is None
+    assert mapping["review_provenance"]["approved_by"]["actor_id"] == "phina-io"
     assert mapping["manifest_sha256"] == canonical_sha256(
         mapping,
         excluded_top_level_keys=frozenset({"manifest_sha256"}),
