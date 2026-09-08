@@ -3,6 +3,13 @@ services:
   redis:
     image: redis:alpine
     container_name: redis
+    # sh -c 형태의 command는 redis 공식 이미지 entrypoint의 gosu 권한 하향 분기를 타지
+    # 않아 명시하지 않으면 root로 기동된다(#322). requirepass conf 파일 방식과 충돌하지
+    # 않는 것을 확인했다 — 인증 경계가 된 프로세스는 비특권으로 실행한다.
+    # 영속 볼륨을 추가할 때는 기존 데이터 소유자를 확인해야 한다. root로 기동됐던
+    # 시기의 dump.rdb는 umask 077로 600 root:root이므로, user: redis 상태에서는
+    # 읽기 실패로 기동 자체가 막힌다(#322 검증). 볼륨 도입 시 chown 또는 초기화가 필요하다.
+    user: redis
     networks:
       - ws
     environment:

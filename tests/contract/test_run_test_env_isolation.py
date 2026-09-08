@@ -96,7 +96,9 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     assert "ai_worker/tests/core" in script
     assert "ai_worker/tests/ocr" in script
     assert "ai_worker/tests/rag" in script
+    assert "ai_worker/tests/evaluation" in script
     assert "./ai_worker/tests/rag" in script
+    assert "./ai_worker/tests/evaluation" in script
     assert 'PYTHONPATH="$REPOSITORY_ROOT"' in worker_body
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' not in worker_body
 
@@ -177,8 +179,8 @@ def test_github_actions_excludes_backend_from_ai_worker_unit_test_pythonpath() -
 
     assert "PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}" in workflow
     assert (
-        "PYTHONPATH: ${{ github.workspace }}\n        run: |\n          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag"
-        in workflow
+        "PYTHONPATH: ${{ github.workspace }}\n        run: |\n          uv run coverage run --append -m pytest"
+        " ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation\n" in workflow
     )
     assert (
         "uv run coverage run -m pytest backend/app tests/contract ai_worker/tests/core ai_worker/tests/ocr"
