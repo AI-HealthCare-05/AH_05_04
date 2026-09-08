@@ -274,7 +274,7 @@ Downstream provenance 연결 기준:
 
 주요 제약:
 
-- #164 최소 DB 기반의 Snapshot은 Source 전체가 아니라 Operation 단위 산출물로 둡니다. 따라서 version unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 공존할 수 있습니다.
+- #164 최소 DB 기반의 Snapshot은 Source 전체가 아니라 Operation 단위 산출물로 둡니다. 따라서 현재 develop 기준 version unique 축은 `(operation_id, source_version)`이며, 같은 Source의 서로 다른 Operation에 같은 `source_version`이 공존할 수 있습니다. #323에서는 FAILED Snapshot 이후 같은 version 재시도를 허용하기 위해 FAILED가 아닌 Snapshot만 같은 version을 금지하는 조건부 unique로 강화합니다.
 - #165의 동시 Acquisition lock은 `source_id` 단위입니다. 같은 Source의 서로 다른 Operation도 동시에 수집하지 않으며, Snapshot version unique 축과 수집 lock 축을 섞지 않습니다.
 - 안정적인 수집 Operation은 `source_code + endpoint_code + operation_code`로 식별합니다. Evidence provenance는 `source_version` 단독이 아니라 `source_snapshot_id` 같은 snapshot 참조로 Snapshot을 특정합니다. `source_version`은 사람이 확인할 수 있는 version 값입니다.
 - `rag_source_ingestion_run`은 정규 목표의 ingestion run과 normalization run을 합친 최소 실행 이력입니다. `NO_CHANGE` 재검증이 동일 Snapshot을 반복 참조할 수 있으므로 `snapshot_id` 전체 unique는 두지 않습니다.
