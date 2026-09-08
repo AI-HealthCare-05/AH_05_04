@@ -1,6 +1,6 @@
 # #144 빈 검수 필드 생성 변경안
 
-- 상태: **Proposed · Not implemented** (2026-09-08)
+- 상태: **Proposed · Partially implemented (작업 브랜치)** (2026-09-08)
 - 관련 이슈: [#144](https://github.com/AI-HealthCare-05/AH_05_04/issues/144)
 - 구현 담당: 김지혜 (`Jye-rookie`)
 - 주 리뷰: 송은영 (`phina-io`) — API·DB, 추가 확인: 남한솔 (`solia142`) — DOC-03
@@ -93,7 +93,8 @@ CONFIRMED 및 확인 시각을 기록한다. 용량 값·횟수·기간의 빈 �
 | ER-11 | Worker 저장 및 DB 제약 | null 보존, identity unique, 실패 시 부분 저장 방지 |
 | ER-12 | DOC-03에서 미인식 Optional 편집 | 기존 UI 입력·저장 및 optional null 확인 가능 |
 
-모든 테스트는 예정이며 이 문서 작성만으로 통과를 의미하지 않는다.
+3단계 구조화 단위 회귀는 [실행 증빙](../../testing/optional-review-fields-144.md)에 기록했다.
+DB·PATCH·DOC-03 검증과 담당 리뷰는 남아 있으며 전체 계약 완료를 의미하지 않는다.
 합성 fixture와 격리 PostgreSQL을 사용한다. 실제 Provider 호출은 필요하지 않다.
 
 ## 6. 계약 반영과 완료

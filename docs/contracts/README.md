@@ -33,7 +33,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
-- [#144 빈 검수 필드 생성 변경안](./proposed/ocr-empty-review-fields-144.md): 미구현 제안 — 기존 약품 행의 6개 검수 필드 보충, null·중복·PATCH 경계. 현재 OCR 계약에 통합할 변경분만 관리
+- [#144 빈 검수 필드 생성 변경안](./proposed/ocr-empty-review-fields-144.md): 작업 브랜치 구조화 부분 구현·DB/API 검증 대기 — 기존 약품 행의 6개 검수 필드 보충, null·중복·PATCH 경계. 현재 OCR 계약에 통합할 변경분만 관리
 
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
