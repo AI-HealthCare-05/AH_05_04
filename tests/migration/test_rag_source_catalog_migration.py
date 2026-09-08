@@ -81,7 +81,9 @@ async def _fetch_schema_object_names() -> set[str]:
                     'rag_medication_product',
                     'rag_medication_ingredient',
                     'rag_medication_alias',
-                    'rag_medication_product_component'
+                    'rag_medication_product_component',
+                    'rag_entity_identity',
+                    'rag_medication_search_entry'
                   )
                 """
             )
@@ -99,7 +101,9 @@ async def _fetch_schema_object_names() -> set[str]:
                     'rag_medication_product',
                     'rag_medication_ingredient',
                     'rag_medication_alias',
-                    'rag_medication_product_component'
+                    'rag_medication_product_component',
+                    'rag_entity_identity',
+                    'rag_medication_search_entry'
                   )
                 """
             )
@@ -112,7 +116,8 @@ async def _fetch_schema_object_names() -> set[str]:
                 WHERE event_object_schema = 'public'
                   AND event_object_table IN (
                     'rag_source_snapshot',
-                    'rag_source_ingestion_artifact'
+                    'rag_source_ingestion_artifact',
+                    'rag_medication_search_entry'
                   )
                 """
             )
@@ -138,6 +143,8 @@ async def _seed_source_catalog_chain(
         "ingredient_id": str(uuid4()),
         "alias_id": str(uuid4()),
         "component_id": str(uuid4()),
+        "product_identity_id": str(uuid4()),
+        "ingredient_identity_id": str(uuid4()),
     }
     checksum_a = "a" * 64
     checksum_b = "b" * 64
@@ -237,51 +244,110 @@ async def _seed_source_catalog_chain(
                 ),
                 {**ids, "collected_at": collected_at},
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_medication_product (
-                        id, source_snapshot_id, source_record_key, code_system,
-                        canonical_code, product_name, normalized_product_name, product_status
-                    )
-                    VALUES (
-                        :product_id, :snapshot_id, 'ITEM_SEQ:200000001', 'MFDS_ITEM_SEQ',
-                        '200000001', '테스트정', '테스트정', 'ACTIVE'
-                    )
-                    """
-                ),
-                ids,
+            has_stable_identity = bool(
+                (
+                    await connection.execute(text("SELECT to_regclass('public.rag_entity_identity') IS NOT NULL"))
+                ).scalar_one()
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_medication_ingredient (
-                        id, source_snapshot_id, source_record_key, ingredient_code_system,
-                        ingredient_code, ingredient_name, normalized_ingredient_name
-                    )
-                    VALUES (
-                        :ingredient_id, :snapshot_id, 'INGREDIENT:ACETAMINOPHEN',
-                        'MFDS_INGREDIENT', 'I0001', '아세트아미노펜', '아세트아미노펜'
-                    )
-                    """
-                ),
-                ids,
-            )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_medication_alias (
-                        id, source_snapshot_id, product_id, target_type,
-                        alias_text, normalized_alias_text, is_approved
-                    )
-                    VALUES (
-                        :alias_id, :snapshot_id, :product_id, 'PRODUCT',
-                        '테스트 별칭', '테스트별칭', true
-                    )
-                    """
-                ),
-                ids,
-            )
+            if has_stable_identity:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_entity_identity (id, entity_type, code_system, canonical_code)
+                        VALUES
+                            (:product_identity_id, 'PRODUCT', 'MFDS_ITEM_SEQ', '200000001'),
+                            (:ingredient_identity_id, 'INGREDIENT', 'MFDS_INGREDIENT', 'I0001')
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_medication_product (
+                            id, source_snapshot_id, entity_identity_id, source_record_key, code_system,
+                            canonical_code, product_name, normalized_product_name, product_status
+                        ) VALUES (
+                            :product_id, :snapshot_id, :product_identity_id, 'ITEM_SEQ:200000001',
+                            'MFDS_ITEM_SEQ', '200000001', '테스트정', '테스트정', 'ACTIVE'
+                        )
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_medication_ingredient (
+                            id, source_snapshot_id, entity_identity_id, source_record_key,
+                            ingredient_code_system, ingredient_code, ingredient_name,
+                            normalized_ingredient_name
+                        ) VALUES (
+                            :ingredient_id, :snapshot_id, :ingredient_identity_id,
+                            'INGREDIENT:ACETAMINOPHEN', 'MFDS_INGREDIENT', 'I0001',
+                            '아세트아미노펜', '아세트아미노펜'
+                        )
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_medication_alias (
+                            id, source_snapshot_id, target_identity_id, target_type, alias_text,
+                            normalized_alias_text, alias_source, review_status, record_status, is_effective
+                        ) VALUES (
+                            :alias_id, :snapshot_id, :product_identity_id, 'PRODUCT', '테스트 별칭',
+                            '테스트별칭', 'SYNTHETIC', 'APPROVED', 'ACTIVE', true
+                        )
+                        """
+                    ),
+                    ids,
+                )
+            else:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_medication_product (
+                            id, source_snapshot_id, source_record_key, code_system,
+                            canonical_code, product_name, normalized_product_name, product_status
+                        ) VALUES (
+                            :product_id, :snapshot_id, 'ITEM_SEQ:200000001', 'MFDS_ITEM_SEQ',
+                            '200000001', '테스트정', '테스트정', 'ACTIVE'
+                        )
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_medication_ingredient (
+                            id, source_snapshot_id, source_record_key, ingredient_code_system,
+                            ingredient_code, ingredient_name, normalized_ingredient_name
+                        ) VALUES (
+                            :ingredient_id, :snapshot_id, 'INGREDIENT:ACETAMINOPHEN',
+                            'MFDS_INGREDIENT', 'I0001', '아세트아미노펜', '아세트아미노펜'
+                        )
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_medication_alias (
+                            id, source_snapshot_id, product_id, target_type,
+                            alias_text, normalized_alias_text, is_approved
+                        ) VALUES (
+                            :alias_id, :snapshot_id, :product_id, 'PRODUCT',
+                            '테스트 별칭', '테스트별칭', true
+                        )
+                        """
+                    ),
+                    ids,
+                )
             await connection.execute(
                 text(
                     """
@@ -356,6 +422,22 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
                 )
             )
             try:
+                has_search_entry = bool(
+                    (
+                        await connection.execute(
+                            text("SELECT to_regclass('public.rag_medication_search_entry') IS NOT NULL")
+                        )
+                    ).scalar_one()
+                )
+                if has_search_entry:
+                    await connection.execute(
+                        text(
+                            "DELETE FROM rag_medication_search_entry WHERE product_id IN "
+                            "(SELECT id FROM rag_medication_product WHERE source_snapshot_id IN "
+                            "(SELECT id FROM rag_source_snapshot WHERE operation_id = :operation_id))"
+                        ),
+                        ids,
+                    )
                 await connection.execute(
                     text(
                         "DELETE FROM rag_source_ingestion_artifact "
@@ -388,6 +470,19 @@ async def _cleanup_source_catalog_chain(ids: dict[str, str]) -> None:
                     ),
                     ids,
                 )
+                has_identity = bool(
+                    (
+                        await connection.execute(text("SELECT to_regclass('public.rag_entity_identity') IS NOT NULL"))
+                    ).scalar_one()
+                )
+                if has_identity:
+                    await connection.execute(
+                        text(
+                            "DELETE FROM rag_entity_identity WHERE id IN "
+                            "(:product_identity_id, :ingredient_identity_id)"
+                        ),
+                        ids,
+                    )
                 await connection.execute(
                     text(
                         "DELETE FROM rag_source_snapshot_verification WHERE snapshot_id IN (SELECT id FROM rag_source_snapshot WHERE operation_id = :operation_id)"
@@ -470,8 +565,16 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
     assert "uq_rag_source_ingestion_run_attempt" in schema_objects
     assert "uq_rag_medication_product_id_snapshot" in schema_objects
     assert "uq_rag_medication_ingredient_id_snapshot" in schema_objects
-    assert "fk_rag_medication_alias_product_snapshot" in schema_objects
-    assert "fk_rag_medication_alias_ingredient_snapshot" in schema_objects
+    assert "fk_rag_medication_alias_target_identity" in schema_objects
+    assert "uq_rag_entity_identity_natural" in schema_objects
+    assert "fk_rag_medication_product_identity" in schema_objects
+    assert "fk_rag_medication_ingredient_identity" in schema_objects
+    assert "uq_rag_medication_alias_observation" in schema_objects
+    assert "idx_rag_medication_alias_normalized_text" in schema_objects
+    assert "idx_rag_medication_alias_normalized_text_trgm" in schema_objects
+    assert "fk_rag_medication_search_entry_product_identity" in schema_objects
+    assert "fk_rag_medication_search_entry_alias_identity" in schema_objects
+    assert "trg_rag_medication_search_entry_validate" in schema_objects
     assert "fk_rag_medication_component_product_snapshot" in schema_objects
     assert "fk_rag_medication_component_ingredient_snapshot" in schema_objects
     assert "trg_rag_source_snapshot_prevent_update" in schema_objects
@@ -540,9 +643,9 @@ def test_rag_source_ingestion_artifact_is_append_only_and_run_scoped() -> None:
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references() -> None:
@@ -582,9 +685,9 @@ def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references()
 
         assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> None:
@@ -647,9 +750,9 @@ def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> 
 
         assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrade() -> None:
@@ -706,9 +809,9 @@ def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrad
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
@@ -755,9 +858,9 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_failed_snapshot_allows_same_version_retry_after_alembic_upgrade() -> None:
@@ -813,9 +916,9 @@ def test_failed_snapshot_allows_same_version_retry_after_alembic_upgrade() -> No
         ids = asyncio.run(_seed_source_catalog_chain())
         asyncio.run(insert_failed_and_retry(ids))
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
@@ -863,9 +966,9 @@ def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 165c6d5e4f30"):
             command.downgrade(alembic_config, "165b5c4d3e2f")
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_rag_source_ingestion_attempt_is_scoped_by_run_group_after_alembic_upgrade() -> None:
@@ -923,9 +1026,9 @@ def test_rag_source_ingestion_attempt_is_scoped_by_run_group_after_alembic_upgra
 
         assert asyncio.run(create_next_run()) == 2
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_rag_source_catalog_downgrade_blocks_non_empty_tables_and_preserves_data() -> None:
@@ -943,12 +1046,12 @@ def test_rag_source_catalog_downgrade_blocks_non_empty_tables_and_preserves_data
         assert asyncio.run(_table_exists("rag_source_snapshot")) is True
         assert asyncio.run(_count_table("rag_source")) >= 1
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
-def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade() -> None:
+def test_rag_source_catalog_component_snapshot_fk_is_enforced_after_alembic_upgrade() -> None:
     alembic_config = create_alembic_config()
     ids: dict[str, str] | None = None
 
@@ -1004,26 +1107,6 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
         asyncio.run(
             _execute_expect_db_error(
                 """
-                INSERT INTO rag_medication_alias (
-                    id, source_snapshot_id, product_id, target_type,
-                    alias_text, normalized_alias_text, is_approved
-                )
-                VALUES (
-                    :bad_alias_id, :stale_snapshot_id, :product_id, 'PRODUCT',
-                    '잘못된 별칭', '잘못된별칭', true
-                )
-                """,
-                {
-                    **ids,
-                    "bad_alias_id": str(uuid4()),
-                    "stale_snapshot_id": stale_snapshot_id,
-                },
-                expected_text="fk_rag_medication_alias_product_snapshot",
-            )
-        )
-        asyncio.run(
-            _execute_expect_db_error(
-                """
                 INSERT INTO rag_medication_product_component (
                     id, source_snapshot_id, product_id, ingredient_id,
                     component_role, display_order
@@ -1064,9 +1147,9 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(alembic_config, "head")
 
 
 def test_verification_history_is_immutable_and_publication_requires_actor() -> None:
@@ -1322,11 +1405,19 @@ def test_snapshot_state_protection_downgrade_preserves_existing_snapshots() -> N
     command.upgrade(configuration, "head")
     ids = asyncio.run(_seed_source_catalog_chain(status="PENDING"))
     try:
+
+        async def remove_non_reversible_alias() -> None:
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(text("DELETE FROM rag_medication_alias WHERE id = :alias_id"), ids)
+
+        asyncio.run(remove_non_reversible_alias())
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 165e8f706152"):
             command.downgrade(configuration, "165d7e6f5041")
         assert asyncio.run(_count_table("rag_source_snapshot")) >= 1
     finally:
         asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(configuration, "head")
 
 
 @pytest.mark.parametrize(
@@ -1401,7 +1492,8 @@ async def _catalog_migration_inventory() -> dict[str, int]:
 def test_catalog_migration_inventory_is_read_only_and_counts_legacy_gaps(
     scenario: str, extra_counts: dict[str, int]
 ) -> None:
-    command.upgrade(create_alembic_config(), "head")
+    configuration = create_alembic_config()
+    command.downgrade(configuration, "169b2c3d4e5f")
 
     async def check() -> None:
         baseline = await _catalog_migration_inventory()
@@ -1479,3 +1571,166 @@ def test_catalog_migration_inventory_is_read_only_and_counts_legacy_gaps(
         assert await _catalog_migration_inventory() == baseline
 
     asyncio.run(check())
+    command.upgrade(configuration, "head")
+
+
+def test_catalog_identity_migration_backfills_coded_legacy_members() -> None:
+    configuration = create_alembic_config()
+    ids: dict[str, str] | None = None
+    try:
+        command.downgrade(configuration, "169b2c3d4e5f")
+        ids = asyncio.run(_seed_source_catalog_chain())
+
+        async def remove_ambiguous_legacy_alias() -> None:
+            async with _connection() as connection:
+                async with connection.begin():
+                    await connection.execute(text("DELETE FROM rag_medication_alias WHERE id = :alias_id"), ids)
+
+        asyncio.run(remove_ambiguous_legacy_alias())
+        command.upgrade(configuration, "166a7b8c9d0e")
+
+        async def verify() -> None:
+            async with _connection() as connection:
+                identities = await connection.execute(
+                    text(
+                        """
+                        SELECT entity_type, code_system, canonical_code
+                        FROM rag_entity_identity
+                        WHERE (entity_type = 'PRODUCT' AND code_system = 'MFDS_ITEM_SEQ'
+                               AND canonical_code = '200000001')
+                           OR (entity_type = 'INGREDIENT' AND code_system = 'MFDS_INGREDIENT'
+                               AND canonical_code = 'I0001')
+                        ORDER BY entity_type
+                        """
+                    ),
+                )
+                assert identities.all() == [
+                    ("INGREDIENT", "MFDS_INGREDIENT", "I0001"),
+                    ("PRODUCT", "MFDS_ITEM_SEQ", "200000001"),
+                ]
+                linked = await connection.execute(
+                    text(
+                        """
+                        SELECT
+                            p.entity_identity_id IS NOT NULL,
+                            i.entity_identity_id IS NOT NULL,
+                            p.identity_entity_type,
+                            i.identity_entity_type
+                        FROM rag_medication_product p
+                        JOIN rag_medication_ingredient i ON i.id = :ingredient_id
+                        WHERE p.id = :product_id
+                        """
+                    ),
+                    ids,
+                )
+                assert linked.one() == (True, True, "PRODUCT", "INGREDIENT")
+
+        asyncio.run(verify())
+    finally:
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(configuration, "head")
+
+
+@pytest.mark.parametrize("legacy_gap", ["alias", "ingredient_identity"])
+def test_catalog_identity_migration_refuses_unprovable_legacy_conversion(legacy_gap: str) -> None:
+    configuration = create_alembic_config()
+    ids: dict[str, str] | None = None
+    try:
+        command.downgrade(configuration, "169b2c3d4e5f")
+        ids = asyncio.run(_seed_source_catalog_chain())
+
+        if legacy_gap == "ingredient_identity":
+
+            async def create_gap() -> None:
+                async with _connection() as connection:
+                    async with connection.begin():
+                        await connection.execute(text("DELETE FROM rag_medication_alias WHERE id = :alias_id"), ids)
+                        await connection.execute(
+                            text(
+                                "UPDATE rag_medication_ingredient SET ingredient_code = NULL WHERE id = :ingredient_id"
+                            ),
+                            ids,
+                        )
+
+            asyncio.run(create_gap())
+
+        with pytest.raises(RuntimeError, match="Cannot infer"):
+            command.upgrade(configuration, "166a7b8c9d0e")
+    finally:
+        if ids is not None:
+            asyncio.run(_cleanup_source_catalog_chain(ids))
+        command.upgrade(configuration, "head")
+
+
+def test_catalog_alias_and_search_entry_bind_stable_product_identity_across_snapshots() -> None:
+    configuration = create_alembic_config()
+    command.upgrade(configuration, "head")
+    ids = asyncio.run(_seed_source_catalog_chain())
+    try:
+        alias_snapshot_id = asyncio.run(_create_stale_snapshot_for_same_operation(ids))
+
+        async def verify() -> None:
+            async with _connection() as connection:
+                async with connection.begin():
+                    cross_snapshot_alias_id = str(uuid4())
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO rag_medication_alias (
+                                id, source_snapshot_id, target_identity_id, target_type, alias_text,
+                                normalized_alias_text, alias_source, review_status, record_status, is_effective
+                            ) VALUES (
+                                :alias_id, :alias_snapshot_id, :product_identity_id, 'PRODUCT',
+                                '교차 스냅샷 별칭', '교차스냅샷별칭', 'SYNTHETIC', 'APPROVED', 'ACTIVE', true
+                            )
+                            """
+                        ),
+                        {**ids, "alias_id": cross_snapshot_alias_id, "alias_snapshot_id": alias_snapshot_id},
+                    )
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO rag_medication_search_entry (
+                                id, entry_type, product_id, product_identity_id, alias_id, normalized_text
+                            ) VALUES (
+                                :entry_id, 'APPROVED_ALIAS', :product_id, :product_identity_id,
+                                :alias_id, '교차스냅샷별칭'
+                            )
+                            """
+                        ),
+                        {**ids, "entry_id": str(uuid4()), "alias_id": cross_snapshot_alias_id},
+                    )
+
+            await _execute_expect_db_error(
+                """
+                INSERT INTO rag_medication_search_entry (
+                    id, entry_type, product_id, product_identity_id, alias_id, normalized_text
+                ) VALUES (:entry_id, 'PRODUCT_NAME', :product_id, :product_identity_id, :alias_id, 'invalid')
+                """,
+                {**ids, "entry_id": str(uuid4()), "alias_id": cross_snapshot_alias_id},
+            )
+            await _execute_expect_db_error(
+                """
+                INSERT INTO rag_medication_search_entry (
+                    id, entry_type, product_id, product_identity_id, alias_id, normalized_text
+                ) VALUES (
+                    :entry_id, 'APPROVED_ALIAS', :product_id, :product_identity_id,
+                    :alias_id, '다른정규화값'
+                )
+                """,
+                {**ids, "entry_id": str(uuid4()), "alias_id": cross_snapshot_alias_id},
+                expected_text="eligible matching Product Alias",
+            )
+            await _execute_expect_db_error(
+                """
+                INSERT INTO rag_medication_search_entry (
+                    id, entry_type, product_id, product_identity_id, alias_id, normalized_text
+                ) VALUES (:entry_id, 'APPROVED_ALIAS', :product_id, :ingredient_identity_id, :alias_id, 'invalid')
+                """,
+                {**ids, "entry_id": str(uuid4()), "alias_id": cross_snapshot_alias_id},
+            )
+
+        asyncio.run(verify())
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))

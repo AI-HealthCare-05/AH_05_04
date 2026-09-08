@@ -37,10 +37,48 @@ class RagMedicationAliasTargetType(StrEnum):
     INGREDIENT = "INGREDIENT"
 
 
+class RagMedicationAliasReviewStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class RagMedicationRecordStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+
+
+class RagMedicationSearchEntryType(StrEnum):
+    PRODUCT_NAME = "PRODUCT_NAME"
+    APPROVED_ALIAS = "APPROVED_ALIAS"
+
+
 class RagMedicationComponentRole(StrEnum):
     ACTIVE_INGREDIENT = "ACTIVE_INGREDIENT"
     EXCIPIENT = "EXCIPIENT"
     UNKNOWN = "UNKNOWN"
+
+
+class RagEntityIdentity(Base):
+    __tablename__ = "rag_entity_identity"
+    __table_args__ = (
+        UniqueConstraint("entity_type", "code_system", "canonical_code", name="uq_rag_entity_identity_natural"),
+        UniqueConstraint("id", "entity_type", name="uq_rag_entity_identity_id_type"),
+        CheckConstraint(
+            f"entity_type IN ({_sql_in_list(RagMedicationAliasTargetType)})",
+            name="chk_rag_entity_identity_type",
+        ),
+        CheckConstraint("length(trim(code_system)) > 0", name="chk_rag_entity_identity_code_system_nonblank"),
+        CheckConstraint("length(trim(canonical_code)) > 0", name="chk_rag_entity_identity_code_nonblank"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    entity_type: Mapped[RagMedicationAliasTargetType] = mapped_column(
+        Enum(RagMedicationAliasTargetType, native_enum=False, length=20), nullable=False
+    )
+    code_system: Mapped[str] = mapped_column(String(50), nullable=False)
+    canonical_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class RagMedicationProduct(Base):
@@ -58,6 +96,9 @@ class RagMedicationProduct(Base):
             name="uq_rag_medication_product_snapshot_record",
         ),
         UniqueConstraint("id", "source_snapshot_id", name="uq_rag_medication_product_id_snapshot"),
+        UniqueConstraint(
+            "id", "entity_identity_id", "identity_entity_type", name="uq_rag_medication_product_id_identity"
+        ),
         Index("idx_rag_medication_product_identity", "code_system", "canonical_code"),
         Index("idx_rag_medication_product_snapshot", "source_snapshot_id"),
         CheckConstraint("length(trim(source_record_key)) > 0", name="chk_rag_medication_product_record_key_nonblank"),
@@ -69,10 +110,22 @@ class RagMedicationProduct(Base):
             name="chk_rag_medication_product_normalized_name_nonblank",
         ),
         CheckConstraint("length(trim(product_status)) > 0", name="chk_rag_medication_product_status_nonblank"),
+        CheckConstraint("identity_entity_type = 'PRODUCT'", name="chk_rag_medication_product_identity_type"),
+        ForeignKeyConstraint(
+            ["entity_identity_id", "identity_entity_type"],
+            ["rag_entity_identity.id", "rag_entity_identity.entity_type"],
+            name="fk_rag_medication_product_identity",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     source_snapshot_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_source_snapshot.id"), nullable=False)
+    entity_identity_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    identity_entity_type: Mapped[RagMedicationAliasTargetType] = mapped_column(
+        Enum(RagMedicationAliasTargetType, native_enum=False, length=20),
+        nullable=False,
+        default=RagMedicationAliasTargetType.PRODUCT,
+    )
     source_record_key: Mapped[str] = mapped_column(String(255), nullable=False)
     code_system: Mapped[str] = mapped_column(String(50), nullable=False)
     canonical_code: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -85,9 +138,7 @@ class RagMedicationProduct(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     source_snapshot: Mapped["RagSourceSnapshot"] = relationship()
-    aliases: Mapped[list["RagMedicationAlias"]] = relationship(
-        back_populates="product", overlaps="aliases,ingredient,source_snapshot"
-    )
+    identity: Mapped[RagEntityIdentity] = relationship()
     components: Mapped[list["RagMedicationProductComponent"]] = relationship(
         back_populates="product", overlaps="components,ingredient,source_snapshot"
     )
@@ -97,9 +148,7 @@ class RagMedicationIngredient(Base):
     __tablename__ = "rag_medication_ingredient"
     __table_args__ = (
         UniqueConstraint(
-            "source_snapshot_id",
-            "normalized_ingredient_name",
-            name="uq_rag_medication_ingredient_snapshot_name",
+            "source_snapshot_id", "entity_identity_id", name="uq_rag_medication_ingredient_snapshot_identity"
         ),
         UniqueConstraint(
             "source_snapshot_id",
@@ -107,7 +156,11 @@ class RagMedicationIngredient(Base):
             name="uq_rag_medication_ingredient_snapshot_record",
         ),
         UniqueConstraint("id", "source_snapshot_id", name="uq_rag_medication_ingredient_id_snapshot"),
+        UniqueConstraint(
+            "id", "entity_identity_id", "identity_entity_type", name="uq_rag_medication_ingredient_id_identity"
+        ),
         Index("idx_rag_medication_ingredient_snapshot", "source_snapshot_id"),
+        Index("idx_rag_medication_ingredient_normalized_name", "normalized_ingredient_name"),
         Index(
             "uq_rag_medication_ingredient_snapshot_code",
             "source_snapshot_id",
@@ -124,33 +177,36 @@ class RagMedicationIngredient(Base):
             "length(trim(normalized_ingredient_name)) > 0",
             name="chk_rag_medication_ingredient_normalized_name_nonblank",
         ),
+        CheckConstraint("length(trim(ingredient_code)) > 0", name="chk_rag_medication_ingredient_code_nonblank"),
         CheckConstraint(
-            "ingredient_code IS NULL OR length(trim(ingredient_code)) > 0",
-            name="chk_rag_medication_ingredient_code_nonblank",
-        ),
-        CheckConstraint(
-            "ingredient_code IS NULL OR ingredient_code_system IS NOT NULL",
-            name="chk_rag_medication_ingredient_code_system_required",
-        ),
-        CheckConstraint(
-            "ingredient_code_system IS NULL OR length(trim(ingredient_code_system)) > 0",
+            "length(trim(ingredient_code_system)) > 0",
             name="chk_rag_medication_ingredient_code_system_nonblank",
+        ),
+        CheckConstraint("identity_entity_type = 'INGREDIENT'", name="chk_rag_medication_ingredient_identity_type"),
+        ForeignKeyConstraint(
+            ["entity_identity_id", "identity_entity_type"],
+            ["rag_entity_identity.id", "rag_entity_identity.entity_type"],
+            name="fk_rag_medication_ingredient_identity",
         ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     source_snapshot_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_source_snapshot.id"), nullable=False)
+    entity_identity_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    identity_entity_type: Mapped[RagMedicationAliasTargetType] = mapped_column(
+        Enum(RagMedicationAliasTargetType, native_enum=False, length=20),
+        nullable=False,
+        default=RagMedicationAliasTargetType.INGREDIENT,
+    )
     source_record_key: Mapped[str] = mapped_column(String(255), nullable=False)
-    ingredient_code_system: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    ingredient_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ingredient_code_system: Mapped[str] = mapped_column(String(50), nullable=False)
+    ingredient_code: Mapped[str] = mapped_column(String(100), nullable=False)
     ingredient_name: Mapped[str] = mapped_column(String(255), nullable=False)
     normalized_ingredient_name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     source_snapshot: Mapped["RagSourceSnapshot"] = relationship()
-    aliases: Mapped[list["RagMedicationAlias"]] = relationship(
-        back_populates="ingredient", overlaps="aliases,product,source_snapshot"
-    )
+    identity: Mapped[RagEntityIdentity] = relationship()
     components: Mapped[list["RagMedicationProductComponent"]] = relationship(
         back_populates="ingredient", overlaps="components,product,source_snapshot"
     )
@@ -160,29 +216,25 @@ class RagMedicationAlias(Base):
     __tablename__ = "rag_medication_alias"
     __table_args__ = (
         Index("idx_rag_medication_alias_snapshot", "source_snapshot_id"),
+        Index("idx_rag_medication_alias_normalized_text", "normalized_alias_text"),
         Index(
-            "uq_rag_medication_alias_product",
-            "product_id",
+            "idx_rag_medication_alias_normalized_text_trgm",
             "normalized_alias_text",
-            unique=True,
-            postgresql_where=text("product_id IS NOT NULL"),
+            postgresql_using="gin",
+            postgresql_ops={"normalized_alias_text": "gin_trgm_ops"},
         ),
-        Index(
-            "uq_rag_medication_alias_ingredient",
-            "ingredient_id",
+        UniqueConstraint("id", "target_identity_id", "target_type", name="uq_rag_medication_alias_id_identity"),
+        UniqueConstraint(
+            "target_identity_id",
+            "source_snapshot_id",
             "normalized_alias_text",
-            unique=True,
-            postgresql_where=text("ingredient_id IS NOT NULL"),
+            "alias_source",
+            name="uq_rag_medication_alias_observation",
         ),
         ForeignKeyConstraint(
-            ["product_id", "source_snapshot_id"],
-            ["rag_medication_product.id", "rag_medication_product.source_snapshot_id"],
-            name="fk_rag_medication_alias_product_snapshot",
-        ),
-        ForeignKeyConstraint(
-            ["ingredient_id", "source_snapshot_id"],
-            ["rag_medication_ingredient.id", "rag_medication_ingredient.source_snapshot_id"],
-            name="fk_rag_medication_alias_ingredient_snapshot",
+            ["target_identity_id", "target_type"],
+            ["rag_entity_identity.id", "rag_entity_identity.entity_type"],
+            name="fk_rag_medication_alias_target_identity",
         ),
         CheckConstraint("length(trim(alias_text)) > 0", name="chk_rag_medication_alias_text_nonblank"),
         CheckConstraint(
@@ -190,36 +242,98 @@ class RagMedicationAlias(Base):
             name="chk_rag_medication_alias_normalized_text_nonblank",
         ),
         CheckConstraint(
-            "(product_id IS NOT NULL AND ingredient_id IS NULL AND target_type = 'PRODUCT') OR "
-            "(product_id IS NULL AND ingredient_id IS NOT NULL AND target_type = 'INGREDIENT')",
-            name="chk_rag_medication_alias_single_target",
-        ),
-        CheckConstraint(
             f"target_type IN ({_sql_in_list(RagMedicationAliasTargetType)})",
             name="chk_rag_medication_alias_target_type",
+        ),
+        CheckConstraint("length(trim(alias_source)) > 0", name="chk_rag_medication_alias_source_nonblank"),
+        CheckConstraint(
+            f"review_status IN ({_sql_in_list(RagMedicationAliasReviewStatus)})",
+            name="chk_rag_medication_alias_review_status",
+        ),
+        CheckConstraint(
+            f"record_status IN ({_sql_in_list(RagMedicationRecordStatus)})",
+            name="chk_rag_medication_alias_record_status",
         ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     source_snapshot_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_source_snapshot.id"), nullable=False)
-    product_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
-    ingredient_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    target_identity_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     target_type: Mapped[RagMedicationAliasTargetType] = mapped_column(
         Enum(RagMedicationAliasTargetType, native_enum=False, length=20),
         nullable=False,
     )
     alias_text: Mapped[str] = mapped_column(String(255), nullable=False)
     normalized_alias_text: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    alias_source: Mapped[str] = mapped_column(String(100), nullable=False)
+    review_status: Mapped[RagMedicationAliasReviewStatus] = mapped_column(
+        Enum(RagMedicationAliasReviewStatus, native_enum=False, length=20), nullable=False
+    )
+    record_status: Mapped[RagMedicationRecordStatus] = mapped_column(
+        Enum(RagMedicationRecordStatus, native_enum=False, length=20), nullable=False
+    )
+    is_effective: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     source_snapshot: Mapped["RagSourceSnapshot"] = relationship(overlaps="aliases,ingredient,product")
-    product: Mapped[RagMedicationProduct | None] = relationship(
-        back_populates="aliases", overlaps="aliases,ingredient,source_snapshot"
+    target_identity: Mapped[RagEntityIdentity] = relationship()
+
+
+class RagMedicationSearchEntry(Base):
+    __tablename__ = "rag_medication_search_entry"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "entry_type", "normalized_text", name="uq_rag_medication_search_entry_product_text"
+        ),
+        ForeignKeyConstraint(
+            ["product_id", "product_identity_id", "identity_entity_type"],
+            [
+                "rag_medication_product.id",
+                "rag_medication_product.entity_identity_id",
+                "rag_medication_product.identity_entity_type",
+            ],
+            name="fk_rag_medication_search_entry_product_identity",
+        ),
+        ForeignKeyConstraint(
+            ["alias_id", "product_identity_id", "identity_entity_type"],
+            [
+                "rag_medication_alias.id",
+                "rag_medication_alias.target_identity_id",
+                "rag_medication_alias.target_type",
+            ],
+            name="fk_rag_medication_search_entry_alias_identity",
+        ),
+        CheckConstraint(
+            "(entry_type = 'PRODUCT_NAME' AND alias_id IS NULL) OR "
+            "(entry_type = 'APPROVED_ALIAS' AND alias_id IS NOT NULL)",
+            name="chk_rag_medication_search_entry_alias",
+        ),
+        CheckConstraint(
+            f"entry_type IN ({_sql_in_list(RagMedicationSearchEntryType)})",
+            name="chk_rag_medication_search_entry_type",
+        ),
+        CheckConstraint("identity_entity_type = 'PRODUCT'", name="chk_rag_medication_search_entry_identity_type"),
+        CheckConstraint("length(trim(normalized_text)) > 0", name="chk_rag_medication_search_entry_text_nonblank"),
+        Index("idx_rag_medication_search_entry_normalized_text", "normalized_text"),
     )
-    ingredient: Mapped[RagMedicationIngredient | None] = relationship(
-        back_populates="aliases", overlaps="aliases,product,source_snapshot"
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    entry_type: Mapped[RagMedicationSearchEntryType] = mapped_column(
+        Enum(RagMedicationSearchEntryType, native_enum=False, length=30), nullable=False
     )
+    product_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    product_identity_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    identity_entity_type: Mapped[RagMedicationAliasTargetType] = mapped_column(
+        Enum(RagMedicationAliasTargetType, native_enum=False, length=20),
+        nullable=False,
+        default=RagMedicationAliasTargetType.PRODUCT,
+    )
+    alias_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    normalized_text: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    product: Mapped[RagMedicationProduct] = relationship(overlaps="alias")
+    alias: Mapped[RagMedicationAlias | None] = relationship(overlaps="product")
 
 
 class RagMedicationProductComponent(Base):

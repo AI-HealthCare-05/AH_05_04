@@ -6,17 +6,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
-from app.models.rag_catalog import RagMedicationAliasTargetType, RagMedicationComponentRole
+from app.models.rag_catalog import (
+    RagMedicationAliasReviewStatus,
+    RagMedicationAliasTargetType,
+    RagMedicationComponentRole,
+    RagMedicationRecordStatus,
+    RagMedicationSearchEntryType,
+)
 from app.models.rag_source import (
     RagIngestionRunStatus,
     RagSnapshotVerificationStatus,
     RagVerificationResultStatus,
 )
 from app.repositories.rag_source_catalog_repository import (
+    RagEntityIdentityCreate,
     RagMedicationAliasCreate,
     RagMedicationIngredientCreate,
     RagMedicationProductComponentCreate,
     RagMedicationProductCreate,
+    RagMedicationSearchEntryCreate,
     RagSourceCatalogRepository,
     RagSourceCreate,
     RagSourceEndpointCreate,
@@ -76,8 +84,15 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
 
+    product_identity = await repository.create_identity(
+        RagEntityIdentityCreate(RagMedicationAliasTargetType.PRODUCT, "MFDS_ITEM_SEQ", "200012345")
+    )
+    ingredient_identity = await repository.create_identity(
+        RagEntityIdentityCreate(RagMedicationAliasTargetType.INGREDIENT, "MFDS_INGREDIENT", "I0001")
+    )
     product = await repository.create_product(
         RagMedicationProductCreate(
+            entity_identity_id=product_identity.id,
             source_snapshot_id=snapshot.id,
             source_record_key="ITEM_SEQ:200012345",
             code_system="MFDS_ITEM_SEQ",
@@ -92,6 +107,7 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
     )
     ingredient = await repository.create_ingredient(
         RagMedicationIngredientCreate(
+            entity_identity_id=ingredient_identity.id,
             source_snapshot_id=snapshot.id,
             source_record_key="INGREDIENT:ACETAMINOPHEN",
             ingredient_code_system="MFDS_INGREDIENT",
@@ -103,11 +119,23 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
     product_alias = await repository.create_alias(
         RagMedicationAliasCreate(
             source_snapshot_id=snapshot.id,
-            product_id=product.id,
+            target_identity_id=product_identity.id,
             target_type=RagMedicationAliasTargetType.PRODUCT,
             alias_text="테스트 정",
             normalized_alias_text="테스트정",
-            is_approved=True,
+            alias_source="MFDS_PRODUCT_APPROVAL",
+            review_status=RagMedicationAliasReviewStatus.APPROVED,
+            record_status=RagMedicationRecordStatus.ACTIVE,
+            is_effective=True,
+        )
+    )
+    search_entry = await repository.create_search_entry(
+        RagMedicationSearchEntryCreate(
+            entry_type=RagMedicationSearchEntryType.APPROVED_ALIAS,
+            product_id=product.id,
+            product_identity_id=product_identity.id,
+            alias_id=product_alias.id,
+            normalized_text="테스트정",
         )
     )
     component = await repository.create_component(
@@ -144,8 +172,8 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
 
     assert product.source_snapshot_id == snapshot.id
     assert ingredient.source_snapshot_id == snapshot.id
-    assert product_alias.product_id == product.id
-    assert product_alias.ingredient_id is None
+    assert product_alias.target_identity_id == product_identity.id
+    assert search_entry.alias_id == product_alias.id
     assert component.product_id == product.id
     assert component.ingredient_id == ingredient.id
     assert run.snapshot_id == snapshot.id
@@ -174,13 +202,10 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
         )
         == product
     )
-    assert (
-        await repository.get_ingredient_by_normalized_name(
-            source_snapshot_id=snapshot.id,
-            normalized_ingredient_name="아세트아미노펜",
-        )
-        == ingredient
-    )
+    assert await repository.list_ingredients_by_normalized_name(
+        source_snapshot_id=snapshot.id,
+        normalized_ingredient_name="아세트아미노펜",
+    ) == [ingredient]
     assert (
         await repository.get_ingredient_by_record_key(
             source_snapshot_id=snapshot.id,
@@ -196,7 +221,15 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
         )
         == ingredient
     )
-    assert await repository.get_product_alias(product_id=product.id, normalized_alias_text="테스트정") == product_alias
+    assert (
+        await repository.get_alias(
+            target_identity_id=product_identity.id,
+            source_snapshot_id=snapshot.id,
+            normalized_alias_text="테스트정",
+            alias_source="MFDS_PRODUCT_APPROVAL",
+        )
+        == product_alias
+    )
     assert (
         await repository.get_component(
             product_id=product.id,
@@ -243,38 +276,25 @@ async def test_snapshot_checksum_must_be_sha256_length(db_session: AsyncSession)
         )
 
 
-async def test_alias_requires_exactly_one_target(db_session: AsyncSession) -> None:
+async def test_alias_target_type_must_match_stable_identity(db_session: AsyncSession) -> None:
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
-    product = await repository.create_product(
-        RagMedicationProductCreate(
-            source_snapshot_id=snapshot.id,
-            source_record_key="ITEM_SEQ:200012346",
-            code_system="MFDS_ITEM_SEQ",
-            canonical_code="200012346",
-            product_name="테스트캡슐",
-            normalized_product_name="테스트캡슐",
-            product_status="ACTIVE",
-        )
-    )
-    ingredient = await repository.create_ingredient(
-        RagMedicationIngredientCreate(
-            source_snapshot_id=snapshot.id,
-            source_record_key="INGREDIENT:CAFFEINE",
-            ingredient_name="카페인",
-            normalized_ingredient_name="카페인",
-        )
+    product_identity = await repository.create_identity(
+        RagEntityIdentityCreate(RagMedicationAliasTargetType.PRODUCT, "MFDS_ITEM_SEQ", "200012346")
     )
 
     with pytest.raises(IntegrityError):
         await repository.create_alias(
             RagMedicationAliasCreate(
                 source_snapshot_id=snapshot.id,
-                product_id=product.id,
-                ingredient_id=ingredient.id,
-                target_type=RagMedicationAliasTargetType.PRODUCT,
+                target_identity_id=product_identity.id,
+                target_type=RagMedicationAliasTargetType.INGREDIENT,
                 alias_text="잘못된 별칭",
                 normalized_alias_text="잘못된별칭",
+                alias_source="SYNTHETIC",
+                review_status=RagMedicationAliasReviewStatus.PENDING,
+                record_status=RagMedicationRecordStatus.ACTIVE,
+                is_effective=True,
             )
         )
 
@@ -330,7 +350,7 @@ async def test_rejected_record_count_cannot_exceed_record_count(db_session: Asyn
         )
 
 
-async def test_alias_product_must_use_same_snapshot(db_session: AsyncSession) -> None:
+async def test_alias_can_observe_product_identity_from_another_snapshot(db_session: AsyncSession) -> None:
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
     newer_snapshot = await repository.create_snapshot(
@@ -349,8 +369,12 @@ async def test_alias_product_must_use_same_snapshot(db_session: AsyncSession) ->
             collected_at=datetime.now(config.TIMEZONE),
         )
     )
+    product_identity = await repository.create_identity(
+        RagEntityIdentityCreate(RagMedicationAliasTargetType.PRODUCT, "MFDS_ITEM_SEQ", "200012347")
+    )
     product = await repository.create_product(
         RagMedicationProductCreate(
+            entity_identity_id=product_identity.id,
             source_snapshot_id=snapshot.id,
             source_record_key="ITEM_SEQ:200012347",
             code_system="MFDS_ITEM_SEQ",
@@ -361,14 +385,64 @@ async def test_alias_product_must_use_same_snapshot(db_session: AsyncSession) ->
         )
     )
 
-    with pytest.raises(IntegrityError):
-        await repository.create_alias(
-            RagMedicationAliasCreate(
-                source_snapshot_id=newer_snapshot.id,
+    alias = await repository.create_alias(
+        RagMedicationAliasCreate(
+            source_snapshot_id=newer_snapshot.id,
+            target_identity_id=product_identity.id,
+            target_type=RagMedicationAliasTargetType.PRODUCT,
+            alias_text="다른 스냅샷 별칭",
+            normalized_alias_text="다른스냅샷별칭",
+            alias_source="SYNTHETIC",
+            review_status=RagMedicationAliasReviewStatus.APPROVED,
+            record_status=RagMedicationRecordStatus.ACTIVE,
+            is_effective=True,
+        )
+    )
+
+    assert alias.source_snapshot_id == newer_snapshot.id
+    assert alias.target_identity_id == product.entity_identity_id
+
+
+async def test_search_entry_rejects_ineligible_alias(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    product_identity = await repository.create_identity(
+        RagEntityIdentityCreate(RagMedicationAliasTargetType.PRODUCT, "MFDS_ITEM_SEQ", "200012349")
+    )
+    product = await repository.create_product(
+        RagMedicationProductCreate(
+            entity_identity_id=product_identity.id,
+            source_snapshot_id=snapshot.id,
+            source_record_key="ITEM_SEQ:200012349",
+            code_system="MFDS_ITEM_SEQ",
+            canonical_code="200012349",
+            product_name="미승인별칭제품",
+            normalized_product_name="미승인별칭제품",
+            product_status="ACTIVE",
+        )
+    )
+    pending_alias = await repository.create_alias(
+        RagMedicationAliasCreate(
+            source_snapshot_id=snapshot.id,
+            target_identity_id=product_identity.id,
+            target_type=RagMedicationAliasTargetType.PRODUCT,
+            alias_text="검토 중 별칭",
+            normalized_alias_text="검토중별칭",
+            alias_source="SYNTHETIC",
+            review_status=RagMedicationAliasReviewStatus.PENDING,
+            record_status=RagMedicationRecordStatus.ACTIVE,
+            is_effective=True,
+        )
+    )
+
+    with pytest.raises(ValueError, match="eligible matching Product Alias"):
+        await repository.create_search_entry(
+            RagMedicationSearchEntryCreate(
+                entry_type=RagMedicationSearchEntryType.APPROVED_ALIAS,
                 product_id=product.id,
-                target_type=RagMedicationAliasTargetType.PRODUCT,
-                alias_text="다른 스냅샷 별칭",
-                normalized_alias_text="다른스냅샷별칭",
+                product_identity_id=product_identity.id,
+                alias_id=pending_alias.id,
+                normalized_text=pending_alias.normalized_alias_text,
             )
         )
 
@@ -392,8 +466,15 @@ async def test_component_product_and_ingredient_must_use_same_snapshot(db_sessio
             collected_at=datetime.now(config.TIMEZONE),
         )
     )
+    product_identity = await repository.create_identity(
+        RagEntityIdentityCreate(RagMedicationAliasTargetType.PRODUCT, "MFDS_ITEM_SEQ", "200012348")
+    )
+    ingredient_identity = await repository.create_identity(
+        RagEntityIdentityCreate(RagMedicationAliasTargetType.INGREDIENT, "MFDS_INGREDIENT", "SNAPSHOT_MISMATCH")
+    )
     product = await repository.create_product(
         RagMedicationProductCreate(
+            entity_identity_id=product_identity.id,
             source_snapshot_id=snapshot.id,
             source_record_key="ITEM_SEQ:200012348",
             code_system="MFDS_ITEM_SEQ",
@@ -405,8 +486,11 @@ async def test_component_product_and_ingredient_must_use_same_snapshot(db_sessio
     )
     ingredient = await repository.create_ingredient(
         RagMedicationIngredientCreate(
+            entity_identity_id=ingredient_identity.id,
             source_snapshot_id=newer_snapshot.id,
             source_record_key="INGREDIENT:SNAPSHOT_MISMATCH",
+            ingredient_code_system="MFDS_INGREDIENT",
+            ingredient_code="SNAPSHOT_MISMATCH",
             ingredient_name="다른스냅샷성분",
             normalized_ingredient_name="다른스냅샷성분",
         )

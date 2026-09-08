@@ -189,17 +189,26 @@ NOT_APPROVED/STALE 자료를 저장하더라도 검색 적격 상태로 승격�
 리뷰 요청: **은영님**은 transaction 소유, 승인/Source writer와의 경합 제어, 실패 감사 저장 위치를,
 **현우님**은 재시도 결과와 현재 승인·Source 결속·소비 gate 의미를 검토한다.
 
-## 4단계 migration 착수 조건
+## 4단계 진행 범위: D-02 비의존 스키마 기반
 
-D-02 미확정 유지, 별도 run 임의 생성 금지, ingestion run으로 정본 normalization_run_id 대체 금지가
-현재 합의다. 따라서 아래 인계 전에는 신규 Alembic revision을 생성하거나 기존 Catalog FK를 바꾸지 않는다.
+D-02 미확정 유지, 별도 run 임의 생성 금지, ingestion run으로 정본 `normalization_run_id` 대체 금지가
+현재 합의다. 이 경계를 지키면서 D-02 실행/Publication key 없이 완결되는 안정 Identity·Alias 상태·
+Search Entry 기반을 revision `166a7b8c9d0e`로 구현했다.
 
-- #164·#165의 실행/Publication 식별·컬럼·FK·재처리/재시도 관계 인계
-- D-03 Set 범위·상태 및 기존 Alias 이행, D-04 실제 Source 근거, D-05 저장 접점, D-06 transaction 정렬
-- 은영님 Evidence/Citation 작업 병합과 최신 migration head 확인
+- Product·Ingredient 안정 Identity와 공식 코드 결속
+- Alias의 안정 Identity 대상 전환, Alias 자체 Snapshot provenance와 상태·출처·유효성
+- Product와 Alias가 서로 다른 Snapshot에 있을 수 있는 Search Entry Identity 결속
+- Product 이름과 승인·활성·유효 Product Alias의 검색 적격성·정규화 문자열 검사
+- 기존 coded Product·Ingredient backfill과 근거 없는 Ingredient/Alias 변환의 fail-closed 중단
 
-이 문서 승인만으로 위 조건이 충족되는 것은 아니다. 인계 후 실제 구현·migration·통합 테스트 및
-지정 리뷰어 검토를 같은 후속 PR 흐름에서 완료하고 상태를 갱신한다.
+이 revision에는 실행 ID·Publication 구성 key, Set/member, hash 저장, 실제 adapter transaction을 넣지
+않는다. 실행별 unique/composite FK도 D-02 인계 전에는 현재 Snapshot 범위를 임의로 대체하지 않는다.
+현재 `down_revision`은 작성 시점 head에 연결한 임시 값이며, 합의된 Evidence/Citation migration이
+병합되면 PR 제출 전에 최신 head로 재연결하고 전체 migration 회귀를 다시 확인한다.
+
+구현과 격리 PostgreSQL 검증 결과는
+[Catalog Identity·Alias·Search Entry DB 기반 검증](../../../testing/catalog-identity-alias-search-schema-166.md)에
+기록한다. 이 기반 구현은 D-02나 #166 전체 DB 통합 완료를 의미하지 않는다.
 
 ## 5단계 선행 가능 범위: 저장 자료 복원
 
