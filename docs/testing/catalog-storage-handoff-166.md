@@ -50,6 +50,18 @@ shasum -a 256 tests/fixtures/rag/catalog/hash-v2/catalog.jsonl tests/fixtures/ra
 
 결과: **278 passed**. Python 3.13. 관련 Ruff·변경 Python format·RAG Mypy와 diff 공백 검사를 수행한다.
 
+## 최신 develop 반영 후 재검증
+
+- 확인일: 2026-09-08.
+- 기준 코드: `07506ac` (develop `b6e99ad` 병합). #358 Evaluation 승인 provenance와
+  #351 데모 배포 변경을 충돌 없이 반영했다. 운영 배포를 수행한 것은 아니다.
+- `PYTHONPATH=backend:. pytest ai_worker/tests/rag -q`: **1016 passed**.
+- RAG 구현·테스트 Ruff: 통과. RAG Mypy: **38 source files 통과**.
+- Alembic ScriptDirectory 탐색: **29 revisions, 단일 head `169b2c3d4e5f`**.
+  실제 PostgreSQL upgrade/downgrade 검증과 구분한다.
+- #355는 조회 시 미병합이며, 이번 develop 반영으로 D-02 인계나 Evidence/Citation
+  선행 migration 병합이 충족됐다고 판단하지 않는다. 실제 migration 부모는 착수 직전에 재확인한다.
+
 ## 미완료 항목과 상태 해석
 
 - D-02는 **미확정 그대로**다. 별도 run 신설·ingestion run을 정본 normalization_run_id로 대체하는 변경 없음.

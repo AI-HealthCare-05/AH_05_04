@@ -1,7 +1,7 @@
 # #166 4단계 migration 인계 점검
 
 - 상태: **착수 전 점검·변경안 준비 완료 / schema·migration 구현 미착수**.
-- 기준일: 2026-09-08. 원격 develop `e20acb9`, 3단계 구현 커밋 `741795c`.
+- 기준일: 2026-09-08. 원격 develop `b6e99ad`, develop 병합 커밋 `07506ac`.
 - 구현 담당: 김지혜. DB 리뷰: 송은영. Candidate·RAG 계약 리뷰: 정현우.
 - 새 revision과 기존 FK 변경을 하지 않았다. 단계 완료나 DB 통합 성공으로 해석하지 않는다.
 
@@ -10,7 +10,7 @@
 | 조건 | 확인 결과 | 다음 처리 |
 | --- | --- | --- |
 | D-02 실행 참조 인계 | 사용자 최신 합의는 미확정. 별도 run 신설·ingestion run 대체 금지 | 실행/Publication key·FK·재처리 관계 인계 후 최종 연결 |
-| 최신 develop | 원격 조회 결과 e20acb9, #353까지 반영 | migration 착수 직전 다시 fetch |
+| 최신 develop | 원격 develop b6e99ad를 07506ac에 병합. #358·#351 추가 반영 | migration 착수 직전 다시 fetch |
 | 현재 Alembic | revision 29개 탐색 성공, head는 169b2c3d4e5f 하나 | 이 값을 최종 부모로 예약하지 않음 |
 | 기존 Catalog 모델 | Product 12·Ingredient 8·Alias 9·Component 10컬럼, normalization_run_id 없음 | 부재를 nullable 임시 컬럼이나 가짜 ID로 메우지 않음 |
 | Runtime/Evidence/Citation | 기준 develop에 해당 기반 없음. #355 Runtime PR은 조회 시 open·미병합 | 합의된 Evidence/Citation 선행 병합과 head 인계 확인 필요 |
