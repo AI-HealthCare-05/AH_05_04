@@ -268,6 +268,39 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(screen.queryByText('가이드 화면')).toBeNull()
   })
 
+  it('새 처방 intent는 진입 전 recovery만 정리하고 새 Job recovery를 재진입까지 유지한다', async () => {
+    setExistingOcrRecovery()
+    vi.mocked(getJobStatus).mockImplementation(
+      () => new Promise(() => undefined),
+    )
+    const firstRender = renderPage({ newPrescriptionIntent: true })
+
+    await waitFor(() => expect(
+      sessionStorage.getItem('dosey_ocr_job_recovery:v1'),
+    ).toBeNull())
+
+    selectPrescriptionFile(firstRender.container)
+    fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
+    await waitFor(() => expect(getJobStatus).toHaveBeenCalledTimes(1))
+
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toContain(
+      statusUrl,
+    )
+
+    firstRender.unmount()
+    renderPage()
+    await waitFor(() => expect(getJobStatus).toHaveBeenCalledTimes(2))
+
+    expect(uploadPrescription).toHaveBeenCalledTimes(1)
+    expect(executeOcr).toHaveBeenCalledTimes(1)
+    expect(getJobStatus).toHaveBeenLastCalledWith(
+      statusUrl,
+      expect.any(AbortSignal),
+    )
+
+    sessionStorage.removeItem('dosey_ocr_job_recovery:v1')
+  })
+
   it('latest 처방이 있으면 업로드 폼을 표시하지 않고 /guides로 정규화한다', async () => {
     const prescriptionId = '44444444-4444-4444-8444-444444444444'
     vi.mocked(getLatestPrescription).mockResolvedValue({
