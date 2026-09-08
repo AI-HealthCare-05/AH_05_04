@@ -38,7 +38,10 @@ def test_frontend_production_image_requires_api_origin_and_contains_built_spa() 
     assert "HEALTHCHECK" in dockerfile
 
 
-@pytest.mark.parametrize("config_name", ["prod_http.conf", "prod_https.conf"])
+@pytest.mark.parametrize(
+    "config_name",
+    ["prod_http.conf", "prod_https.conf", "prod_cloudfront.conf"],
+)
 def test_production_nginx_supports_spa_api_health_and_ocr_timeout(config_name: str) -> None:
     config = _read(NGINX_DIR / config_name)
 
@@ -60,11 +63,30 @@ def test_https_nginx_redirects_http_and_uses_managed_certificate_volume() -> Non
     assert "/etc/letsencrypt/live/production.example.com/privkey.pem" in config
 
 
+def test_cloudfront_nginx_requires_origin_secret_and_preserves_viewer_https() -> None:
+    config = _read(NGINX_DIR / "prod_cloudfront.conf")
+
+    assert "__CLOUDFRONT_ORIGIN_VERIFY_SECRET__" in config
+    assert "map $http_x_origin_verify $cloudfront_origin_verified" in config
+    assert config.count("if ($cloudfront_origin_verified = 0)") == 3
+    assert config.count("return 403;") == 3
+    assert "proxy_set_header X-Forwarded-Proto https;" in config
+    assert "listen 443" not in config
+
+
 def test_production_scripts_use_env_domain_and_do_not_mutate_source_nginx_configs() -> None:
     deployment_script = _read(PROJECT_ROOT / "scripts/deployment.sh")
     certbot_script = _read(PROJECT_ROOT / "scripts/certbot.sh")
 
     assert 'expected_public_origin="https://${PRODUCTION_DOMAIN}"' in deployment_script
+    assert 'if [ "$TLS_TERMINATION" = "cloudfront" ]' in deployment_script
+    assert "prod_cloudfront.conf" in deployment_script
+    assert "CLOUDFRONT_ORIGIN_VERIFY_SECRET" in deployment_script
+    assert "*.cloudfront.net hostname" in deployment_script
+    assert "export -n CLOUDFRONT_ORIGIN_VERIFY_SECRET" in deployment_script
+    assert 'chmod 600 "$HOME/project/nginx/default.conf"' in deployment_script
+    unsafe_secret_sed = "s/__CLOUDFRONT_ORIGIN_VERIFY_SECRET__/${CLOUDFRONT_ORIGIN_VERIFY_SECRET}"
+    assert unsafe_secret_sed not in deployment_script
     assert '"VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"' in deployment_script
     assert 'DEPLOY_SERVICES=("fastapi" "nginx")' in deployment_script
     assert 'if [ "$APP_VERSION" = "latest" ]' in deployment_script
@@ -83,6 +105,7 @@ def test_production_scripts_use_env_domain_and_do_not_mutate_source_nginx_config
     assert "sudo wget" not in certbot_script
     assert "nginx -t" in certbot_script
     assert "HTTP bootstrap 설정을 복구했습니다" in certbot_script
+    assert 'if [ "${TLS_TERMINATION:-certbot}" != "certbot" ]' in certbot_script
 
 
 def test_production_example_declares_demo_origin_and_frontend_version() -> None:
@@ -90,14 +113,19 @@ def test_production_example_declares_demo_origin_and_frontend_version() -> None:
 
     for key in (
         "FRONTEND_VERSION",
+        "TLS_TERMINATION",
         "PRODUCTION_DOMAIN",
         "PRODUCTION_PUBLIC_ORIGIN",
+        "CLOUDFRONT_ORIGIN_VERIFY_SECRET",
         "CERTBOT_EMAIL",
     ):
         assert f"{key}=" in env_example
 
-    assert "COOKIE_DOMAIN=replace-with-production-domain.example" in env_example
-    assert "CORS_ALLOWED_ORIGINS=https://replace-with-production-domain.example" in env_example
+    assert "TLS_TERMINATION=cloudfront" in env_example
+    assert "PRODUCTION_DOMAIN=replace-with-distribution-id.cloudfront.net" in env_example
+    assert "COOKIE_DOMAIN=replace-with-distribution-id.cloudfront.net" in env_example
+    assert "CORS_ALLOWED_ORIGINS=https://replace-with-distribution-id.cloudfront.net" in env_example
+    assert "CERTBOT_EMAIL=\n" in env_example
 
 
 def test_production_runbook_covers_frontend_rediscovery_smoke_and_safe_evidence() -> None:
@@ -124,3 +152,29 @@ def test_production_runbook_covers_frontend_rediscovery_smoke_and_safe_evidence(
     assert "Guide 또는 Chat을 새로 만드는 `POST`가 발생하면 통과로 기록하지 않습니다" in runbook
     assert "Authorization/Cookie header" in runbook
     assert "Runbook에 절차가 있다는 사실만으로 smoke를 통과한 것으로 간주하지 않습니다" in runbook
+
+
+def test_production_runbook_covers_cloudfront_default_domain_and_nine_day_teardown() -> None:
+    runbook = _read(PRODUCTION_RUNBOOK_PATH)
+
+    for expected_setting in (
+        "2026-09-22부터 2026-09-30까지 9일",
+        "AWS 유료 플랜",
+        "Free Tier credit이나 무료 사용 한도",
+        "이는 무료 배포라는 뜻이 아니며",
+        "*.cloudfront.net",
+        "TLS_TERMINATION=cloudfront",
+        "Redirect HTTP to HTTPS",
+        "CachingDisabled",
+        "AllViewerExceptHostHeader",
+        "X-Origin-Verify",
+        "origin-facing",
+        "Origin response timeout을 `75초`",
+        "CloudFront 모드에서는 `scripts/certbot.sh`를 실행하지 않습니다",
+        "## 8. 2026-09-30 철거",
+    ):
+        assert expected_setting in runbook
+
+    assert "기술 배포 승인과 기술 Rollback 판단: 정현우" in runbook
+    assert "배포·Rollback 실행, 관제 총괄: 권가빈" in runbook
+    assert "대체 배포·Rollback 실행자: 미정" in runbook
