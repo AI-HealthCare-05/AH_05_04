@@ -28,22 +28,19 @@
 | PATCH·확정 | [OCR 서비스](../../backend/app/services/ocr.py)의 `update_extracted_field()`는 기존 소유 필드를 갱신한다. 모델은 함량·단위·TIMING의 null 확정을 허용한다. | 빈 필드의 값 입력 및 null 확정을 검증하고, 필수 필드 null 거부·소유권·처방 확정 후 수정 차단을 유지한다. |
 | 현재 계약 | [OCR 구조화 계약](../contracts/current/ocr-medication-structuring.md)의 Grounding 검증·부분 인식 절에 함량·단위 생략과 규칙 경로 미생성이 명시되어 있다. | 동작 구현과 함께 해당 절 및 계약 인덱스를 정렬한다. 이번 조사에서는 current 문서를 선제적으로 바꾸지 않는다. |
 
-## 2단계에서 명문화할 변경안
+## 2단계 결과 — 변경안 정리 완료
 
-1. 약품 행은 기존 탐지·약품명 검증으로 식별한 행만 사용한다.
-2. 두 경로 모두 누락된 함량·단위를 빈 검수 필드로 제공한다.
-3. 규칙 경로의 나머지 검수 대상(`DOSE_VALUE`, `FREQUENCY_PER_DAY`,
-   `DURATION_DAYS`, `TIMING`)까지 어떤 집합으로 맞출지 이슈의 동일 기준
-   요구와 현재 LLM 집합을 대조해 명시한다. 처방일은 index 0의 별도 처리로 둔다.
-4. 이미 인식된 필드는 보존하고 같은 `(medication_index, field_type)`을
-   추가하지 않는다. 보충 필드의 순서는 결정적으로 유지한다.
-5. 보충 필드는 네 metadata가 모두 null이고 최초 상태는 `UNCONFIRMED`다.
-   빈 필드 생성은 값 추정이나 사용자 확인을 대신하지 않는다.
-6. Optional의 null 확정 허용과 기존 필수값 검증은 유지한다.
+[Proposed 변경안](../contracts/proposed/ocr-empty-review-fields-144.md)과
+[Decision 초안](../governance/decisions/2026-09-08-ocr-empty-review-fields-144.md)에
+생성 대상·null·중복·기존 값 보존·저장·PATCH 경계 및 ER-01~12 인수 항목을 정리했다.
+현재 실행 계약과 코드의 동작은 변경하지 않았다.
 
-응답에 존재하는 필드의 집합이 바뀌므로 공유 계약에 영향을 준다.
-이슈의 Backend/OCR 공동 범위와 담당 리뷰를 연결하고, 구현 PR에서
-Decision·계약·테스트를 함께 정렬한다. 새 API나 optional의 필수값 전환은 제안하지 않는다.
+이슈의 두 경로 기준 통일 및 규칙 경로 DOSE_VALUE·DOSE_UNIT 동시 보충 요구를
+근거로, 기존 LLM 네 유형에 함량·단위를 더한 여섯 유형을 공통 보충 대상으로 제안한다.
+처방일은 별도 정책을 유지한다. 상세 규칙은 Proposed 변경안에서만 관리한다.
+
+문서 링크·전체 diff·공백 검사를 수행한다. 2단계 역시 문서 변경이므로
+동작 테스트·Ruff·Mypy·migration은 실행하지 않는다. 담당 리뷰 승인과 구현 검증은 남아 있다.
 
 ## 단계별 완료 기준
 
