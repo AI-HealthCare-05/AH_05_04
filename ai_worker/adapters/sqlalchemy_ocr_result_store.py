@@ -50,6 +50,65 @@ _EXTRACTED_FIELD = table(
 )
 
 
+# 처방 확정 필수 필드입니다. backend/app/models/ocr.py의 FieldType,
+# backend/app/services/prescriptions.py의 _build_confirmed_data/_build_medication 검증
+# 기준, Frontend PrescriptionReviewPage.tsx의 requiredMedicationFieldTypes와 반드시 같은
+# 집합이어야 합니다. ai_worker는 backend ORM을 import하지 않는 별도 패키지라 값을
+# 문자열로 다시 선언합니다 — 넷 중 하나를 바꾸면 나머지도 맞춰야 합니다.
+_REQUIRED_MEDICATION_FIELD_TYPES = (
+    "MEDICATION_NAME",
+    "DOSE_VALUE",
+    "FREQUENCY_PER_DAY",
+    "DURATION_DAYS",
+)
+_PRESCRIBED_DATE_FIELD_TYPE = "PRESCRIBED_DATE"
+
+
+def _placeholder_field_row(*, ocr_job_id: str, medication_index: int, field_type: str) -> dict:
+    return {
+        "id": str(uuid4()),
+        "ocr_job_id": ocr_job_id,
+        "medication_index": medication_index,
+        "field_type": field_type,
+        "raw_value": None,
+        "confidence_score": None,
+        "normalized_value": None,
+        "normalization_version": None,
+        "confirmed_value": None,
+        "confirmation_status": "UNCONFIRMED",
+        "confirmed_at": None,
+    }
+
+
+def _fill_missing_required_fields(field_rows: list[dict], *, ocr_job_id: str) -> list[dict]:
+    """#294: OCR이 필수 필드를 인식하지 못하면 Frontend가 검수 입력 컨트롤을 만들 근거(row)
+    자체가 없어 처방 확정·가이드 생성이 막힌다. 이미 감지된 medication_index에 대해서만
+    누락된 필수 필드를 raw_value=null인 placeholder row로 채운다.
+
+    PRESCRIBED_DATE(medication_index=0)는 OCR이 아무 필드도 인식하지 못한 경우(빈 결과)
+    에도 항상 채운다 — #294가 실제로 재현된 시나리오다. medication이 하나도 감지되지
+    않은 경우는 여기서 새 medication index를 만들어내지 않는다 — 전체 약물 누락은
+    prescriptions.py의 별도 gap 검증 영역이다.
+    """
+    present = {(row["medication_index"], row["field_type"]) for row in field_rows}
+    medication_indexes = {row["medication_index"] for row in field_rows if row["medication_index"] != 0}
+
+    filled = list(field_rows)
+    if (0, _PRESCRIBED_DATE_FIELD_TYPE) not in present:
+        filled.append(
+            _placeholder_field_row(ocr_job_id=ocr_job_id, medication_index=0, field_type=_PRESCRIBED_DATE_FIELD_TYPE)
+        )
+    for medication_index in medication_indexes:
+        for field_type in _REQUIRED_MEDICATION_FIELD_TYPES:
+            if (medication_index, field_type) not in present:
+                filled.append(
+                    _placeholder_field_row(
+                        ocr_job_id=ocr_job_id, medication_index=medication_index, field_type=field_type
+                    )
+                )
+    return filled
+
+
 class CompletionClock(Protocol):
     """결과 완료 시각을 주입하기 위한 clock 계약입니다."""
 
@@ -123,25 +182,28 @@ class SqlAlchemyOcrResultStore:
             )
         )
 
-        if not result.fields:
-            return
+        field_rows = _fill_missing_required_fields(
+            [
+                {
+                    "id": str(uuid4()),
+                    "ocr_job_id": str(message.domain_id),
+                    "medication_index": field.medication_index,
+                    "field_type": field.field_type,
+                    "raw_value": field.raw_value,
+                    "confidence_score": field.confidence_score,
+                    "normalized_value": field.normalized_value,
+                    "normalization_version": field.normalization_version,
+                    "confirmed_value": None,
+                    "confirmation_status": "UNCONFIRMED",
+                    "confirmed_at": None,
+                }
+                for field in result.fields
+            ],
+            ocr_job_id=str(message.domain_id),
+        )
 
-        field_rows = [
-            {
-                "id": str(uuid4()),
-                "ocr_job_id": str(message.domain_id),
-                "medication_index": field.medication_index,
-                "field_type": field.field_type,
-                "raw_value": field.raw_value,
-                "confidence_score": field.confidence_score,
-                "normalized_value": field.normalized_value,
-                "normalization_version": field.normalization_version,
-                "confirmed_value": None,
-                "confirmation_status": "UNCONFIRMED",
-                "confirmed_at": None,
-            }
-            for field in result.fields
-        ]
+        if not field_rows:
+            return
 
         await self._session.execute(
             insert(_EXTRACTED_FIELD),
