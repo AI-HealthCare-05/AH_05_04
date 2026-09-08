@@ -1,6 +1,6 @@
 # #166 Catalog DB 통합 후속 구현 계획
 
-- 상태: 1단계 조사 완료 / 후속 구현 계획. 새 공유 계약 승인 또는 DB 구현 완료가 아니다.
+- 상태: 1~3단계 완료, 4단계 인계 대기, 5단계 독립 복원 코드만 구현. 공유 DB 계약 승인·실제 적재 완료가 아니다.
 - 작성: 김지혜, 2026-09-08
 - 구현 담당: 김지혜. Candidate·RAG 의미 계약 리뷰: 정현우. DB·FK·transaction 리뷰: 송은영.
 - 기준: develop `e20acb9` (#353 병합 포함), 작업 브랜치 `feat/166-catalog-db-integration`.
@@ -181,3 +181,16 @@ schema·migration은 구현하지 않았다. 3단계 코드 완료와 4단계 �
 사용자가 추가 전달한 #329 현우님 리뷰도 같은 문서에 반영했다. 공개 입력은
 `CatalogExportArtifacts` / `medication-catalog-v2`이며, #167 문서·#166 검증 기록·코드의 정합성과
 과거 v1 증빙의 분리를 후속 완료 기준으로 유지한다.
+
+## 5단계 — 선행 가능한 복원 코드 구현, DB 통합 대기
+
+`restore.py::restore_catalog_storage`에서 저장 준비 자료를 현재 v2 전체 artifacts로 복원한다.
+조회 순서 변경을 허용하면서 구성원·Identity·Source·hash 자료의 누락·중복·변조를 거부하고,
+기존 producer/저장 준비 검증을 재사용해 manifest·JSONL·typed 값의 결속을 확인한다.
+Candidate에는 복원된 `CatalogExportArtifacts`만 전달하며 기존 공개 인계 회귀를 유지한다.
+
+이 작업은 5단계 전체 완료가 아니다. 실제 PostgreSQL adapter·commit/rollback·재시도·READY 불변성
+통합 검증은 D-02 인계와 4단계 schema/migration 이후 진행한다. 테스트용 가짜 DB로 이를 대체하지 않았다.
+
+5단계 선행 코드 검증: 신규 복원 테스트 35건, RAG 전체 998건 통과. Ruff 및 변경 파일 format 통과,
+RAG Mypy 38파일 통과. 실제 PostgreSQL·승인 저장소·Runtime은 실행하지 않았다.

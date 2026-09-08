@@ -114,3 +114,22 @@ D-02 미확정 유지, 별도 run 임의 생성 금지, ingestion run으로 정�
 
 이 문서 승인만으로 위 조건이 충족되는 것은 아니다. 인계 후 실제 구현·migration·통합 테스트 및
 지정 리뷰어 검토를 같은 후속 PR 흐름에서 완료하고 상태를 갱신한다.
+
+## 5단계 선행 가능 범위: 저장 자료 복원
+
+`ai_worker/tasks/rag/catalog/restore.py::restore_catalog_storage`는 내부 저장 자료를 검증하여
+현재 공개 입력인 `CatalogExportArtifacts`를 반환한다. 실제 DB 조회·transaction adapter는 아직
+구현하지 않았다. D-02와 4단계 migration 없이 가능한 복원·검증 코드만 먼저 준비했다.
+
+- canonical record를 현재 dataclass 타입으로 엄격하게 복원한다. 알 수 없는 key, 누락 필드,
+  잘못된 enum·타입을 무시하거나 기본값·자동 형변환으로 보정하지 않는다.
+- 중복 JSON key를 최상위·중첩 객체에서 거부한다.
+- 현재 producer로 전체 manifest를 재생성해 구성원 수·Source·receipt·gate 결속을 확인한다.
+- 3단계 저장 준비 함수를 다시 거쳐 Identity·출처·구성원 링크·hash 종류/spec·계산 bytes까지 비교한다.
+- DB 조회 시 행·Identity·Source·hash 목록 순서는 달라도 허용하지만 중복이나 누락은 허용하지 않는다.
+- 반환값은 typed Catalog 단독이 아닌 manifest·JSONL을 포함한 v2 전체 artifacts다.
+- 승인 receipt는 당시 기록이다. 복원은 승인 주체·현재 회수·만료·DB 실행 FK 검증을 대신하지 않는다.
+  실제 adapter는 소비 전 현재 적격성을 별도로 검증해야 하며, 합성 receipt를 운영 승인으로 쓰지 않는다.
+
+합성 bytes를 사용하는 복원 검증과 실제 PostgreSQL commit/rollback·재시도 검증은 별개다.
+후자는 4단계 완료 후 5단계의 남은 범위로 수행한다. 임시 테이블이나 별도 run을 만들지 않는다.

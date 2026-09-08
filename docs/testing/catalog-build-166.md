@@ -265,3 +265,13 @@ upgrade/rollback 실행 검증이 아니다. 전체 Backend·PostgreSQL·Redis �
 
 4단계는 D-02 인계 및 합의된 선행 migration 병합 대기다.
 [상세 인계 점검](../designs/jye-rookie/issue-166-db-migration-readiness.md)을 따른다.
+
+## #166 DB 후속 5단계 선행 복원 검증 (2026-09-08)
+
+3단계 `741795c`의 저장 준비 자료를 v2 전체 artifacts로 복원하는 독립 코드를 추가했다.
+고정 합성 bytes 복원 → manifest/JSONL 검증 → 공개 Candidate 성공을 확인했고, 부적격·손상된
+자료는 거부했다. 신규 복원 테스트 35건, RAG 전체 `998 passed`, Ruff·format·Mypy 38파일 통과.
+기존 v2 bytes·digest와 D-02 미확정 기준은 유지한다.
+
+이는 메모리와 합성 bytes를 이용한 복원 검증이다. 실제 PostgreSQL adapter·commit/rollback·재시도
+통합 테스트는 아직 수행하지 않았고, 4단계 인계 전 5단계 전체 완료로 표시하지 않는다.
