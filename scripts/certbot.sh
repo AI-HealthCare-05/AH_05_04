@@ -15,6 +15,11 @@ set -a
 source "$PROD_ENV_FILE"
 set +a
 
+if [ "${TLS_TERMINATION:-certbot}" != "certbot" ]; then
+  echo "TLS_TERMINATION=${TLS_TERMINATION:-<empty>}에서는 Certbot을 실행하지 않습니다. CloudFront 기본 인증서를 사용하세요."
+  exit 1
+fi
+
 for variable_name in PRODUCTION_DOMAIN CERTBOT_EMAIL; do
   if [ -z "${!variable_name:-}" ]; then
     echo "필수 인증서 환경변수가 비어 있습니다: $variable_name"

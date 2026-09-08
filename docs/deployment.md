@@ -9,7 +9,7 @@
 Staging 언급은 기존 runtime 안전 정책과 검증 경계를 설명하며, 별도의 AWS Staging
 배포 구성을 뜻하지 않는다.
 
-발표와 최대 1주일의 단일 EC2 합성 데이터 데모 절차는
+2026-09-22부터 2026-09-30까지 9일간 진행하는 단일 EC2·CloudFront 합성 데이터 데모는
 [AWS Production 합성 데이터 데모 Runbook](./runbooks/aws-production-demo.md)을 따른다.
 이 제한된 데모 절차는 아래 Production 책임 체계나 공개 게이트를 해제하지 않는다.
 
@@ -138,11 +138,13 @@ reverse proxy timeout을 결정하는 식이 아닙니다. OCR reverse proxy의
 upstream read timeout은 전체 deadline `D`보다 커야 합니다.
 
 NGINX 기본 `proxy_read_timeout`은 60초이므로 `D=60초`와 동일하게 설정하면
-응답 전달 여유가 없습니다. Production에서 사용하는 `infra/nginx/prod_http.conf`와
-`infra/nginx/prod_https.conf`는 `proxy_read_timeout=75초`를 명시해 기본
-`D=60초`보다 크게 둡니다. `D`를 75초 이상으로 변경할 때는 두 Production 설정도 같은
-배포 변경에서 더 큰 값으로 갱신합니다. `infra/nginx/default.conf`는 Production Compose가
-사용하지 않는 개발용 예시이며 이 보장을 제공하지 않습니다.
+응답 전달 여유가 없습니다. Production에서 사용하는 `infra/nginx/prod_http.conf`,
+`infra/nginx/prod_https.conf`, `infra/nginx/prod_cloudfront.conf`는
+`proxy_read_timeout=75초`를 명시해 기본 `D=60초`보다 크게 둡니다. CloudFront origin
+response timeout도 75초로 맞춥니다. `D`를 75초 이상으로 변경할 때는 해당 Nginx 설정과
+CloudFront timeout을 같은 배포 변경에서 더 큰 값으로 갱신합니다.
+`infra/nginx/default.conf`는 Production Compose가 사용하는 배포 template이 아니며 이
+보장을 제공하지 않습니다.
 
 Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
 `N × T + M_chat`을 사용합니다. 따라서 Nginx read timeout의 전체 조건은
