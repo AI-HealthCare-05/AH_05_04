@@ -45,6 +45,7 @@ COMPARISON_POLICY_PATH = f"policies/{FILE_PREFIX}.comparison-policy.json"
 EVALUATION_POLICY_PATH = f"policies/{FILE_PREFIX}.evaluation-policy.json"
 SUITE_PATH = f"suites/{FILE_PREFIX}.suite.json"
 PROTECTED_RECEIPT_PATH = f"provenance/{FILE_PREFIX}.protected-artifact-receipt.json"
+REVIEW_EVIDENCE_PATH = f"provenance/{FILE_PREFIX}.review-evidence.json"
 SCHEMA_SET_SHA256 = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
 
 NEGATIVE_TYPES: tuple[NegativeType, ...] = (
@@ -538,6 +539,66 @@ _DRAFT_REVIEW_PROVENANCE: JsonValue = {
     "team_gold_status": "DRAFT",
 }
 
+_GOLD_REVIEW_EVIDENCE: dict[str, JsonValue] = {
+    "commit_sha": "4d5e23100cbf5f64abaaa4b3fb48985b51eac920",
+    "evidence_id": "github-pr-341-review-5137833200",
+    "evidence_version": DATASET_VERSION,
+    "gold_review_result": "REVIEWED",
+    "packet_sha256": "fd98d6b3b88f80f858f32275ab8769f77dca152d55ea31e7583a2f88af180f1b",
+    "pull_number": 341,
+    "repository": "AI-HealthCare-05/AH_05_04",
+    "review_body": (
+        "Gold review result: REVIEWED\n"
+        "packet_sha256: fd98d6b3b88f80f858f32275ab8769f77dca152d55ea31e7583a2f88af180f1b\n"
+        "dataset_manifest_sha256: a6461ca49c6021b242bd5b13f3d9b1b52bf564bea186a47894cd254a40600291\n"
+        "reviewed_origins: 20/20\n"
+        "review_commit_oid: 4d5e23100cbf5f64abaaa4b3fb48985b51eac920\n\n"
+        "20개 origin의 질문 60개, Gold 20개, hard negative 80개를 전수 대조했습니다. "
+        "세 표현 변형은 origin별로 같은 검색 의도를 유지하고, 각 Gold는 세 질문을 충족하는 최소 "
+        "단일 Evidence이며 hard negative에서 실제 정답인 false negative는 발견하지 못했습니다. "
+        "실제 환자·제품·Provider 데이터나 OTC 추천·상호작용 질문도 포함되지 않았습니다.\n\n"
+        "독립 검증: 관련 pytest 7 passed, Ruff 통과, 대상 모듈 Mypy 통과. GitHub CI의 "
+        "lint/test/checks도 모두 통과한 상태를 확인했습니다.\n"
+    ),
+    "review_id": 5137833200,
+    "review_node_id": "PRR_kwDOT3EWNs8AAAABMj0c8A",
+    "review_state": "COMMENTED",
+    "review_submitted_at": "2026-09-08T05:47:16.000000Z",
+    "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/341#pullrequestreview-5137833200",
+    "reviewed_dataset_manifest_sha256": "a6461ca49c6021b242bd5b13f3d9b1b52bf564bea186a47894cd254a40600291",
+    "reviewed_origins": "20/20",
+    "reviewer": "hazelnutflavoured",
+}
+
+
+def _gold_review_provenance(review_evidence: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return {
+        "approved_at": None,
+        "approved_by": None,
+        "authored_at": "2026-09-05T00:00:00.000000Z",
+        "authored_by": {
+            "actor_id": "ceohwj",
+            "namespace": "GITHUB_LOGIN",
+            "role": "EVALUATION_IMPLEMENTER",
+        },
+        "evidence_review_refs": [
+            {
+                "hash": canonical_sha256(review_evidence),
+                "id": review_evidence["evidence_id"],
+                "version": review_evidence["evidence_version"],
+            }
+        ],
+        "external_medical_approval_receipt_ref": None,
+        "external_medical_review_status": "NOT_REQUESTED",
+        "reviewed_at": review_evidence["review_submitted_at"],
+        "reviewed_by": {
+            "actor_id": review_evidence["reviewer"],
+            "namespace": "GITHUB_LOGIN",
+            "role": "EVALUATION_REVIEWER",
+        },
+        "team_gold_status": "REVIEWED",
+    }
+
 
 def _validate_catalog() -> None:
     if len(BASE_INTENTS) != 20:
@@ -780,7 +841,11 @@ def _build_evidence_records() -> tuple[EvidenceRecord, ...]:
     return tuple(ordered)
 
 
-def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, ...]) -> bytes:
+def _build_evidence_mapping(
+    index_bytes: bytes,
+    records: tuple[EvidenceRecord, ...],
+    review_provenance: dict[str, JsonValue],
+) -> bytes:
     index_sha256 = sha256_hex(index_bytes)
     entries: list[JsonValue] = []
     gold_positions = [index for index, record in enumerate(records) if record.record_kind == "GOLD"]
@@ -855,7 +920,7 @@ def _build_evidence_mapping(index_bytes: bytes, records: tuple[EvidenceRecord, .
         "manifest_sha256": "0" * 64,
         "mapping_id": f"{DATASET_CODE}-evidence",
         "mapping_version": DATASET_VERSION,
-        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "review_provenance": review_provenance,
         "schema_id": "rag-eval.evidence-mapping-manifest",
         "schema_version": "1.2.0",
     }
@@ -975,6 +1040,7 @@ def _build_cases(
     rubric: dict[str, JsonValue],
     index_sha256: str,
     gold_ids_by_origin: dict[str, str],
+    review_provenance: dict[str, JsonValue],
 ) -> tuple[dict[str, bytes], list[dict[str, JsonValue]]]:
     mapping_ref = _reference(
         cast(str, mapping["mapping_id"]),
@@ -1011,7 +1077,7 @@ def _build_cases(
                 },
                 "partition": "DEV",
                 "query": variant.query,
-                "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+                "review_provenance": review_provenance,
                 "schema_id": "rag-eval.case",
                 "schema_version": "1.2.0",
                 "slice_ids": cast(JsonValue, sorted(["ALL", intent.topic, variant.expression])),
@@ -1278,6 +1344,7 @@ def _build_dataset_manifest(
     receipt: dict[str, JsonValue],
     receipt_bytes: bytes,
     resource_set_hash: str,
+    review_provenance: dict[str, JsonValue],
 ) -> bytes:
     payload: dict[str, JsonValue] = {
         "authoring_identity_manifest_ref": {
@@ -1301,7 +1368,7 @@ def _build_dataset_manifest(
         "partition_counts": {"AUTHORING": 0, "DEV": 60, "HOLDOUT": 0, "SAFETY_REGRESSION": 0},
         "protected_artifact_receipt_ref": _reference(cast(str, receipt["receipt_id"]), sha256_hex(receipt_bytes)),
         "resource_set_hash": resource_set_hash,
-        "review_provenance": _DRAFT_REVIEW_PROVENANCE,
+        "review_provenance": review_provenance,
         "schema_id": "rag-eval.dataset-manifest",
         "schema_version": "1.3.0",
         "scope": "SYNTHETIC_NATURAL_LANGUAGE_RETRIEVAL_DEV",
@@ -1339,9 +1406,14 @@ def _build_evaluation_labels(records: tuple[EvidenceRecord, ...]) -> bytes:
     return canonical_json_bytes(payload)
 
 
-def build_issue_273_dev_graph() -> dict[str, bytes]:
+def build_issue_273_dev_graph(*, gold_reviewed: bool = True) -> dict[str, bytes]:
     _validate_catalog()
     graph: dict[str, bytes] = {}
+    if gold_reviewed:
+        graph[REVIEW_EVIDENCE_PATH] = canonical_json_bytes(_GOLD_REVIEW_EVIDENCE)
+        review_provenance = _gold_review_provenance(_GOLD_REVIEW_EVIDENCE)
+    else:
+        review_provenance = cast(dict[str, JsonValue], _DRAFT_REVIEW_PROVENANCE)
     evidence_records = _build_evidence_records()
     _validate_negative_corpus(evidence_records)
     graph[EVALUATION_LABEL_PATH] = _build_evaluation_labels(evidence_records)
@@ -1374,7 +1446,11 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
     }
     graph[INDEX_PATH] = canonical_json_bytes(index_payload)
     _validate_retrieval_projection(graph[INDEX_PATH])
-    graph[EVIDENCE_MAPPING_PATH] = _build_evidence_mapping(graph[INDEX_PATH], evidence_records)
+    graph[EVIDENCE_MAPPING_PATH] = _build_evidence_mapping(
+        graph[INDEX_PATH],
+        evidence_records,
+        review_provenance,
+    )
     mapping = cast(dict[str, JsonValue], json.loads(graph[EVIDENCE_MAPPING_PATH]))
     graph[RUBRIC_PATH] = _build_rubric()
     rubric = cast(dict[str, JsonValue], json.loads(graph[RUBRIC_PATH]))
@@ -1387,6 +1463,7 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
             for record in evidence_records
             if record.record_kind == "GOLD"
         },
+        review_provenance=review_provenance,
     )
     graph.update(cases)
     graph[AUTHORING_IDENTITY_PATH] = _build_authoring_identity(case_values, mapping, index_payload)
@@ -1422,8 +1499,12 @@ def build_issue_273_dev_graph() -> dict[str, bytes]:
         receipt=receipt,
         receipt_bytes=graph[PROTECTED_RECEIPT_PATH],
         resource_set_hash=resource_set_hash,
+        review_provenance=review_provenance,
     )
-    if set(graph) != {*_GRAPH_MEMBER_PATHS, *cases}:
+    expected_paths = {*_GRAPH_MEMBER_PATHS, *cases}
+    if gold_reviewed:
+        expected_paths.add(REVIEW_EVIDENCE_PATH)
+    if set(graph) != expected_paths:
         raise RuntimeError("Issue 273 graph members are incomplete")
     return graph
 
