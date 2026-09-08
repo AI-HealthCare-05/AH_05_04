@@ -24,37 +24,38 @@ _FORBIDDEN_KEY_FRAGMENTS = (
     "fingerprint_value",
     "hmac_value",
 )
-_PHASE_0_BLOCKERS = (
-    "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
+_PHASE_A_BLOCKERS = (
     "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
     "BLOCKED_BY_RAG_14_ADAPTER",
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
 _DECISION_DOCS_PREFIX = "docs/"
-_PHASE_0_CHECK_CATALOG = {
-    "TASK_1_PROVENANCE_CONTRACTS": (
+_PHASE_A_CHECK_CATALOG = {
+    "PHASE_A_DEV_FIXTURE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
-        "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
-        "61 passed",
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
+        "25 passed",
     ),
-    "TASK_2_SCHEMA_SET_EXPORT": (
-        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest "
-        "ai_worker/tests/evaluation/test_schema_exports.py::"
-        "test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable "
-        "ai_worker/tests/evaluation/test_schema_exports.py::"
-        "test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary "
-        "ai_worker/tests/evaluation/test_schema_exports.py::"
-        "test_schema_set_1_3_study_split_axis_cardinality_is_portable -q",
-        "6 passed",
-    ),
-    "TASK_3_LOADER_BINDING": (
+    "PHASE_A_LOADER": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_authoring_identity_loader.py "
-        "ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
-        "165 passed, 6 skipped",
+        "ai_worker/tests/evaluation/test_loaders.py -q",
+        "132 passed",
+    ),
+    "PHASE_A_REPORT_PROJECTION": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
+        "50 passed",
+    ),
+    "PHASE_A_SCHEMA_EXPORT": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_schema_exports.py "
+        "ai_worker/tests/evaluation/test_external_schema_parity.py "
+        "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+        "94 passed, 7 skipped",
     ),
 }
-_PHASE_0_CHECK_IDS = tuple(_PHASE_0_CHECK_CATALOG)
+_PHASE_A_CHECK_IDS = tuple(_PHASE_A_CHECK_CATALOG)
 
 
 def _tuple_from_wire(value: object) -> object:
@@ -74,16 +75,21 @@ class PlannedCounts(StrictContractModel):
 
 
 class CreatedCounts(StrictContractModel):
-    dev_questions: Literal[0]
+    dev_questions: Literal[60]
     holdout_questions: Literal[0]
-    gold_records: Literal[0]
+    gold_records: Literal[20]
+    corpus_records: Literal[100]
+    topics: Literal[5]
+    expression_types: Literal[6]
+    independent_groups: Literal[20]
 
 
 class ValidationCheck(StrictContractModel):
     check_id: Literal[
-        "TASK_1_PROVENANCE_CONTRACTS",
-        "TASK_2_SCHEMA_SET_EXPORT",
-        "TASK_3_LOADER_BINDING",
+        "PHASE_A_DEV_FIXTURE",
+        "PHASE_A_LOADER",
+        "PHASE_A_REPORT_PROJECTION",
+        "PHASE_A_SCHEMA_EXPORT",
     ]
     command: NonEmptyString
     exit_code: Literal[0]
@@ -91,8 +97,8 @@ class ValidationCheck(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_catalog_entry(self) -> ValidationCheck:
-        if (self.command, self.result) != _PHASE_0_CHECK_CATALOG[self.check_id]:
-            raise ValueError("validation check must match the Phase 0 evidence catalog")
+        if (self.command, self.result) != _PHASE_A_CHECK_CATALOG[self.check_id]:
+            raise ValueError("validation check must match the Phase A evidence catalog")
         return self
 
 
@@ -105,17 +111,18 @@ class CandidateSchemaSetRef(StrictContractModel):
 class Issue273ValidationStatus(StrictContractModel):
     schema_version: Literal["1.0.0"]
     issue: Literal["#273"]
-    phase: Literal["PHASE_0_SCHEMA_CANDIDATE"]
-    status_label: Literal["Candidate · Review Required"]
+    phase: Literal["PHASE_A_DEV_AUTHORING"]
+    status_label: Literal["Phase A · DEV Authoring Draft"]
     schema_set_status: Literal["REVIEW_REQUIRED"]
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
     created_counts: CreatedCounts
+    dataset_manifest_sha256: Literal["a6461ca49c6021b242bd5b13f3d9b1b52bf564bea186a47894cd254a40600291"]
     schema_set_ref: CandidateSchemaSetRef
     schema_set_decision: Literal["docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md"]
     responsible_reviewer: Literal["@hazelnutflavoured"]
     approval_transition: Literal["FUTURE_PULL_REQUEST_REVIEW_EVENT"]
-    dataset_status: Literal["NOT_CREATED"]
+    dataset_status: Literal["DRAFT"]
     gold_review_status: Literal["NOT_STARTED"]
     holdout_freeze_status: Literal["NOT_STARTED"]
     adapter_status: Literal["NOT_IMPLEMENTED"]
@@ -124,7 +131,6 @@ class Issue273ValidationStatus(StrictContractModel):
     blocking_codes: Annotated[
         tuple[
             Literal[
-                "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
                 "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
                 "BLOCKED_BY_RAG_14_ADAPTER",
                 "WAITING_FOR_HOLDOUT_FREEZE",
@@ -132,7 +138,7 @@ class Issue273ValidationStatus(StrictContractModel):
             ...,
         ],
         BeforeValidator(_tuple_from_wire),
-        Field(min_length=4, max_length=4),
+        Field(min_length=3, max_length=3),
     ]
     checks: Annotated[
         tuple[ValidationCheck, ...],
@@ -144,12 +150,12 @@ class Issue273ValidationStatus(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_ordered_collections(self) -> Issue273ValidationStatus:
-        if self.blocking_codes != _PHASE_0_BLOCKERS:
-            raise ValueError("Phase 0 blockers must be the exact UTF-16-sorted set")
+        if self.blocking_codes != _PHASE_A_BLOCKERS:
+            raise ValueError("Phase A blockers must be the exact UTF-16-sorted set")
         check_ids = [check.check_id for check in self.checks]
         commands = [check.command for check in self.checks]
-        if tuple(check_ids) != _PHASE_0_CHECK_IDS:
-            raise ValueError("validation checks must contain the exact Phase 0 evidence catalog")
+        if tuple(check_ids) != _PHASE_A_CHECK_IDS:
+            raise ValueError("validation checks must contain the exact Phase A evidence catalog")
         if len(check_ids) != len(set(check_ids)) or len(commands) != len(set(commands)):
             raise ValueError("validation checks must be unique")
         if check_ids != sorted(check_ids, key=_utf16_key):
@@ -231,13 +237,14 @@ def render_report(raw_status: bytes) -> bytes:
     schema_set = status.schema_set_ref
     decision_href = _decision_href(status.schema_set_decision)
     lines = [
-        "# Issue #273 Phase 0 Validation Report",
+        "# Issue #273 Phase A DEV Authoring Validation Report",
         "",
-        "> Candidate · Review Required — not approved, not frozen, and not a Release decision.",
+        "> Phase A · DEV Authoring Draft — authored, unreviewed, and not a Release decision.",
         "",
         f"- Phase: `{status.phase}`",
         f"- Schema Set Status: `{status.schema_set_status}`",
         f"- Dataset: `{status.dataset_ref}` (`{status.dataset_status}`)",
+        f"- Dataset Manifest SHA-256: `{status.dataset_manifest_sha256}`",
         f"- Schema Set: `{schema_set.id}@{schema_set.version}` `{schema_set.hash}`",
         (f"- Candidate Decision: [`{status.schema_set_decision}`]({decision_href})"),
         (
@@ -247,23 +254,36 @@ def render_report(raw_status: bytes) -> bytes:
         "- Release Eligible: `false`",
         "- Production remains closed.",
         "",
-        "## Planned Scope and Current Artifacts",
+        "## Authored DEV Scope",
         "",
         f"- Planned DEV questions: `{status.planned_counts.dev_questions}`; created: `{status.created_counts.dev_questions}`",
         (
             f"- Planned HOLDOUT questions: `{status.planned_counts.holdout_questions}`; "
             f"created: `{status.created_counts.holdout_questions}`"
         ),
-        f"- Planned topics: `{status.planned_counts.topics}`",
-        f"- Planned expression types: `{status.planned_counts.expression_types}`",
-        f"- Planned independent groups: `{status.planned_counts.independent_groups}`",
+        f"- Topics: planned `{status.planned_counts.topics}`; created `{status.created_counts.topics}`",
+        (
+            f"- Expression types: planned `{status.planned_counts.expression_types}`; "
+            f"created `{status.created_counts.expression_types}`"
+        ),
+        (
+            f"- Independent transform-origin groups: planned `{status.planned_counts.independent_groups}`; "
+            f"created `{status.created_counts.independent_groups}`"
+        ),
         f"- Gold records created: `{status.created_counts.gold_records}`; review: `{status.gold_review_status}`",
+        f"- Study-wide synthetic corpus records created: `{status.created_counts.corpus_records}`",
         f"- HOLDOUT Freeze: `{status.holdout_freeze_status}`",
         f"- Actual Adapter: `{status.adapter_status}`",
         "- Actual Run Artifact: `NOT_CREATED`",
-        "- Metric summary: `NOT_CREATED`",
         "",
-        "No DEV or HOLDOUT question bodies, Gold artifacts, actual Run, or Metric values were created in Phase 0.",
+        (
+            "한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, "
+            "실제 환자 발화나 실제 제품 데이터가 아니다."
+        ),
+        "DEV authoring exists but has not received human Gold review; all authored artifacts remain DRAFT.",
+        "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.",
+        "No baseline Metric exists, and no Metric fields are recorded in the machine status.",
+        "DEV cannot produce a Release PASS; Production remains closed.",
         "",
         "## Blocking Codes",
         "",
@@ -282,7 +302,10 @@ def render_report(raw_status: bytes) -> bytes:
         "## Boundaries",
         "",
         "- Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.",
-        "- No approval, Contract Freeze, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, or Production readiness is claimed.",
+        "- No human Gold review, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.",
+        "- HOLDOUT question content is absent from the repository and remains future protected work.",
+        "- The protected runner, actual Adapter, and HOLDOUT Freeze remain future blockers.",
+        "- The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.",
         "",
         f"Status updated at `{status.updated_at}`. Canonical status SHA-256: `{status.status_sha256}`.",
     ]
