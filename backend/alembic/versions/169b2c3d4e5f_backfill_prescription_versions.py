@@ -1,7 +1,7 @@
 """backfill prescription versions
 
 Revision ID: 169b2c3d4e5f
-Revises: 169a1b2c3d4e
+Revises: 165f90716263
 Create Date: 2026-09-08
 
 Backfill the immutable Version 1 snapshot for legacy prescriptions. The
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "169b2c3d4e5f"
-down_revision: str | Sequence[str] | None = "169a1b2c3d4e"
+down_revision: str | Sequence[str] | None = "165f90716263"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -85,6 +85,20 @@ def _validate_source_graph(connection: sa.Connection) -> None:
     if empty_prescription_count:
         raise RuntimeError(
             f"Prescription Version backfill refused: {empty_prescription_count} prescriptions have no medications."
+        )
+
+    blank_medication_name_count = _scalar_count(
+        connection,
+        """
+        SELECT count(*)
+        FROM medication AS m
+        WHERE length(trim(m.medication_name)) = 0
+        """,
+    )
+    if blank_medication_name_count:
+        raise RuntimeError(
+            "Prescription Version backfill refused: "
+            f"{blank_medication_name_count} medications have blank medication names."
         )
 
     partial_version_count = _scalar_count(

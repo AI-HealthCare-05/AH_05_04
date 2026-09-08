@@ -48,11 +48,14 @@ Backfill 전에는 다음 조건을 검사하며 하나라도 위반하면 전�
 - `prescription.profile_id = medical_document.profile_id`이고 문서 업로더가 해당 SELF Profile의 사용자일 것
 - `source_ocr_job_id`가 같은 `medical_document`의 OCR Job일 것
 - 모든 기존 Prescription에 Medication이 1개 이상 있을 것
+- 모든 legacy Medication의 `medication_name`이 공백이 아닐 것
 - Version row 유무와 `active_version_id` 설정 여부가 엇갈린 부분 graph가 없을 것
 
 Backfill 뒤에는 active pointer 누락 0건, Version header 불일치 0건, legacy Medication과 active Version Medication의 양방향 `EXCEPT` 불일치 0건을 검증한다. Migration downgrade는 불변 감사 snapshot을 삭제하지 않는 no-op application rollback이다. 다시 upgrade하면 완성된 graph를 검증해 재사용하며 Version이나 Medication을 중복 생성하지 않는다.
 
 신규 처방 확정은 기존 `prescription`·`medication`과 Version 1 snapshot을 같은 transaction에서 dual-write한다. Version ID를 먼저 생성해 `prescription.active_version_id`에 넣고 deferred composite FK 아래에서 Prescription → legacy Medication → Version → Version Medication을 원자 조립한다. 기존 read와 공개 API 응답은 계속 legacy `medication`을 사용한다. `active_version_id NOT NULL`, Version read cutover, Candidate·Identification·Guide·Chat FK 연결은 후속 PR 범위다.
+
+PR 3의 Candidate·Identification cutover migration은 v2 생성 경로를 공개하기 전에 실행한다. 현재 placeholder ID가 가리키는 legacy `medication`을 `(prescription_id, display_order)`로 같은 Prescription의 Version 1 Medication에 일대일 재매핑하고, 누락·중복·값 불일치가 0건임을 검증한 뒤에만 실제 FK를 추가한다. 검증할 수 없는 기존 행이 하나라도 있으면 추정 연결하거나 삭제하지 않고 migration 전체를 중단한다. 이 재매핑과 FK 적용이 끝날 때까지 정정 API와 Candidate/RAG publication gate는 닫아 둔다. P0에서 Version 간 안정적 Medication 계보 Key를 새로 도입하지 않는 기존 Decision은 유지한다.
 
 ## 활성화
 

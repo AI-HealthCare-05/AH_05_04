@@ -26,7 +26,7 @@ from app.repositories.prescription_repository import PrescriptionRepository
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BACKFILL_REVISION = "169b2c3d4e5f"
-BACKFILL_BASE_REVISION = "169a1b2c3d4e"
+BACKFILL_BASE_REVISION = "165f90716263"
 
 
 def create_alembic_config() -> Config:
@@ -43,7 +43,12 @@ async def _connection() -> AsyncIterator[AsyncConnection]:
         await engine.dispose()
 
 
-async def _seed_legacy_prescription(*, include_medication: bool = True, mismatched_ocr: bool = False) -> dict[str, str]:
+async def _seed_legacy_prescription(
+    *,
+    include_medication: bool = True,
+    medication_name: str = "합성백필정",
+    mismatched_ocr: bool = False,
+) -> dict[str, str]:
     token = uuid4().hex
     ids = {
         "user_id": str(uuid4()),
@@ -141,14 +146,59 @@ async def _seed_legacy_prescription(*, include_medication: bool = True, mismatch
                         duration_days, display_order, created_at
                     )
                     VALUES (
-                        :medication_id, :prescription_id, '합성백필정', '10mg',
+                        :medication_id, :prescription_id, :medication_name, '10mg',
                         1.500, '정', 2, '식후', 3, 1, :created_at
                     )
                     """
                 ),
-                {**ids, "created_at": datetime(2026, 9, 8, 1, 2, 4, tzinfo=UTC)},
+                {
+                    **ids,
+                    "medication_name": medication_name,
+                    "created_at": datetime(2026, 9, 8, 1, 2, 4, tzinfo=UTC),
+                },
             )
     return ids
+
+
+async def _seed_partial_version_graph(ids: dict[str, str]) -> None:
+    async with _connection() as connection, connection.begin():
+        version_id = str(uuid4())
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription_version (
+                    id, prescription_id, version_number, prescribed_date, confirmed_at
+                )
+                VALUES (
+                    :version_id, :prescription_id, 1, DATE '2026-09-08', :confirmed_at
+                )
+                """
+            ),
+            {
+                **ids,
+                "version_id": version_id,
+                "confirmed_at": datetime(2026, 9, 8, 1, 2, 3, tzinfo=UTC),
+            },
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription_version_medication (
+                    id, prescription_version_id, medication_name, strength_text,
+                    dose_value, dose_unit, frequency_per_day, timing_text,
+                    duration_days, display_order
+                )
+                VALUES (
+                    :version_medication_id, :version_id, '부분그래프정', '10mg',
+                    1.500, '정', 2, '식후', 3, 1
+                )
+                """
+            ),
+            {
+                "version_medication_id": str(uuid4()),
+                "version_id": version_id,
+            },
+        )
 
 
 async def _cleanup(ids: dict[str, str]) -> None:
@@ -360,6 +410,35 @@ def test_backfill_rejects_invalid_legacy_graph_without_partial_snapshot(
             command.upgrade(alembic_config, BACKFILL_REVISION)
 
         assert asyncio.run(_version_counts(ids)) == (0, 0)
+    finally:
+        asyncio.run(_cleanup(ids))
+        command.upgrade(alembic_config, "head")
+
+
+def test_backfill_rejects_blank_legacy_medication_name_before_copy() -> None:
+    alembic_config = create_alembic_config()
+    command.downgrade(alembic_config, BACKFILL_BASE_REVISION)
+    ids = asyncio.run(_seed_legacy_prescription(medication_name="   "))
+    try:
+        with pytest.raises(RuntimeError, match="medications have blank medication names"):
+            command.upgrade(alembic_config, BACKFILL_REVISION)
+
+        assert asyncio.run(_version_counts(ids)) == (0, 0)
+    finally:
+        asyncio.run(_cleanup(ids))
+        command.upgrade(alembic_config, "head")
+
+
+def test_backfill_rejects_partial_version_graph() -> None:
+    alembic_config = create_alembic_config()
+    command.downgrade(alembic_config, BACKFILL_BASE_REVISION)
+    ids = asyncio.run(_seed_legacy_prescription())
+    asyncio.run(_seed_partial_version_graph(ids))
+    try:
+        with pytest.raises(RuntimeError, match="prescriptions have a partial Version graph"):
+            command.upgrade(alembic_config, BACKFILL_REVISION)
+
+        assert asyncio.run(_version_counts(ids)) == (1, 1)
     finally:
         asyncio.run(_cleanup(ids))
         command.upgrade(alembic_config, "head")
