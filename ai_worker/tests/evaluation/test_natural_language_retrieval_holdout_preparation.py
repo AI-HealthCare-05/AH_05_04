@@ -60,6 +60,8 @@ def test_preparation_packet_defines_the_unstarted_protected_holdout_contract() -
         "medication_family",
         "transform_origin",
     ]
+    assert packet["protected_runner_issue_status"] == "NOT_CREATED"
+    assert packet["access_control_start_gate"] == ["PROTECTED_RETRIEVAL_RUNNER_ISSUE_CREATED"]
     assert packet["implementation_owner"]["actor_id"] == "ceohwj"
     assert packet["product_evaluation_reviewer"]["actor_id"] == "hazelnutflavoured"
     assert packet["requested_dataset_custodian"]["actor_id"] == "phina-io"
@@ -144,6 +146,16 @@ def test_public_preparation_projection_rejects_role_or_axis_drift() -> None:
     with pytest.raises(RuntimeError, match="four ordered leakage axes"):
         render_holdout_freeze_preparation_markdown(packet)
 
+    packet = cast(dict[str, Any], build_holdout_freeze_preparation(EVALS_ROOT))
+    packet["access_control_start_gate"] = []
+    packet["preparation_sha256"] = canonical_sha256(
+        packet,
+        excluded_top_level_keys=frozenset({"preparation_sha256"}),
+    )
+
+    with pytest.raises(RuntimeError, match="exact protected-boundary contract"):
+        render_holdout_freeze_preparation_markdown(packet)
+
 
 @pytest.mark.parametrize(
     "mutation",
@@ -154,6 +166,7 @@ def test_public_preparation_projection_rejects_role_or_axis_drift() -> None:
         lambda packet: packet.update({"preparation_status": "FROZEN"}),
         lambda packet: packet.update({"contract_status": "SHARED_RUNTIME_CONTRACT"}),
         lambda packet: packet["dataset"].update({"status": "FROZEN"}),
+        lambda packet: packet.update({"protected_runner_issue_status": "CREATED"}),
     ],
 )
 def test_public_preparation_projection_rejects_rehashed_state_claims(mutation: Any) -> None:

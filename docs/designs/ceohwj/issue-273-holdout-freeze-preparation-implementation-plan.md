@@ -38,7 +38,11 @@
 
 - [ ] **Step 1: Write the failing preparation contract test**
 
-  Assert exact literals for `purpose=PREPARATION_ONLY`, `preparation_status=PREPARATION_READY`, Dataset ref/hash, 40 planned and 0 authored HOLDOUT questions, five literal topic counts of 8, four ordered leakage axes, role identities, `access_authorized=false`, `freeze_recorded=false`, `actual_run_ref=null`, and a valid self-hash.
+  Assert exact literals for `purpose=PREPARATION_ONLY`, `preparation_status=PREPARATION_READY`,
+  `protected_runner_issue_status=NOT_CREATED`,
+  `access_control_start_gate=[PROTECTED_RETRIEVAL_RUNNER_ISSUE_CREATED]`, Dataset ref/hash, 40 planned and
+  0 authored HOLDOUT questions, five literal topic counts of 8, four ordered leakage axes, role identities,
+  `access_authorized=false`, `freeze_recorded=false`, `actual_run_ref=null`, and a valid self-hash.
 
 - [ ] **Step 2: Verify RED**
 

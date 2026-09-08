@@ -33,8 +33,8 @@ SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e
 DATASET_MANIFEST_HASH = "b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2"
 GOLD_REVIEW_EVIDENCE_HASH = "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776"
 DATASET_APPROVAL_EVIDENCE_HASH = "3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"
-HOLDOUT_PREPARATION_HASH = "d64ac99afa697edd80de3e12668b910062c4d08399859925aff56b6cd039fcbb"
-HOLDOUT_PREPARATION_SELF_HASH = "b07c06ff49c5b2f833db864c0b5ee95240b98e18275a96a4090bb585a0acb65a"
+HOLDOUT_PREPARATION_HASH = "40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192"
+HOLDOUT_PREPARATION_SELF_HASH = "b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6"
 
 
 def _status_payload() -> dict[str, Any]:
@@ -140,7 +140,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_B_HOLDOUT_FREEZE_PREPARATION",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q",
                 "exit_code": 0,
-                "result": "26 passed",
+                "result": "27 passed",
             },
         ],
         "updated_at": "2026-09-08T09:30:09.000000Z",
@@ -577,7 +577,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert HOLDOUT_PREPARATION_HASH.encode() in REPORT_PATH.read_bytes()
     assert HOLDOUT_PREPARATION_SELF_HASH.encode() in raw_status
     assert HOLDOUT_PREPARATION_SELF_HASH.encode() in REPORT_PATH.read_bytes()
-    for result in (b"1 passed", b"26 passed", b"51 passed", b"132 passed", b"94 passed, 7 skipped"):
+    for result in (b"1 passed", b"26 passed", b"27 passed", b"51 passed", b"132 passed", b"94 passed, 7 skipped"):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status

@@ -46,6 +46,8 @@ artifact를 결정적으로 생성한다.
 JSON은 다음 의미를 고정한다.
 
 - `purpose=PREPARATION_ONLY`, `preparation_status=PREPARATION_READY`
+- `protected_runner_issue_status=NOT_CREATED`와
+  `access_control_start_gate=[PROTECTED_RETRIEVAL_RUNNER_ISSUE_CREATED]`
 - 현재 DEV Dataset ref와 manifest SHA-256
 - `planned_holdout_questions=40`, 5개 주제별 정확히 8개
 - 네 leakage 축: `question_template`, `source_segment`, `medication_family`, `transform_origin`
@@ -101,6 +103,7 @@ fingerprint/HMAC 값, key material, 보호 저장 위치는 받을 수 없다.
 - `access_authorized`, `holdout_authored`, `freeze_recorded` 중 하나가 `true`다.
 - 공개 artifact에 query, Gold body, record label, fingerprint/HMAC 값, key/credential, 보호 위치가 들어간다.
 - 실제 실행 또는 Metric·Release 필드가 추가된다.
+- 전용 protected Retrieval Runner Issue가 생성되지 않았는데 접근 통제 시작 gate가 충족된 것으로 표시된다.
 
 ## 검증과 완료 경계
 

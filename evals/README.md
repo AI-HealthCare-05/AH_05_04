@@ -124,7 +124,8 @@ HOLDOUT Freeze 준비는 `PREPARATION_READY`다. 이는 접근 승인이나 Free
 저장소에는 접근 통제·역할 분리·감사·후속 receipt의 요구사항만 담은 비런타임 준비 projection이 있으며,
 HOLDOUT 질문·Gold·fingerprint/HMAC 값·보호 위치는 없다. 독립 Dataset Custodian의 실제 접근 승인 event가
 기록된 뒤에만 보호 환경에서 HOLDOUT 40개 작성을 시작하고, 네 leakage 축의 교집합 0과 전수 검토가 끝난
-뒤에만 Freeze한다.
+뒤에만 Freeze한다. 접근 통제 구현 전에 전용 protected Retrieval Runner Issue를 먼저 생성해야 하며, 현재
+해당 Issue 상태는 `NOT_CREATED`다.
 
 검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
 `evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·

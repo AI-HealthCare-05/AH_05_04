@@ -70,7 +70,7 @@ _VALIDATION_CHECK_CATALOG = {
     "PHASE_B_HOLDOUT_FREEZE_PREPARATION": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q",
-        "26 passed",
+        "27 passed",
     ),
 }
 _VALIDATION_CHECK_IDS = tuple(_VALIDATION_CHECK_CATALOG)
@@ -144,8 +144,8 @@ class DatasetApprovalEvidenceRef(StrictContractModel):
 class HoldoutPreparationRef(StrictContractModel):
     id: Literal["issue-273-holdout-freeze-preparation"]
     version: Literal["1.0.0"]
-    raw_sha256: Literal["d64ac99afa697edd80de3e12668b910062c4d08399859925aff56b6cd039fcbb"]
-    self_sha256: Literal["b07c06ff49c5b2f833db864c0b5ee95240b98e18275a96a4090bb585a0acb65a"]
+    raw_sha256: Literal["40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192"]
+    self_sha256: Literal["b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6"]
 
 
 class Issue273ValidationStatus(StrictContractModel):

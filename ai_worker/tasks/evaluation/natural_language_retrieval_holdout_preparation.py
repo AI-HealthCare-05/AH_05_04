@@ -72,6 +72,7 @@ _AUTHORING_START_GATE: list[JsonValue] = [
     "ACCESS_CONTROL_IMPLEMENTED",
     "ACCESS_AUTHORIZATION_RECEIPT_RECORDED",
 ]
+_ACCESS_CONTROL_START_GATE: list[JsonValue] = ["PROTECTED_RETRIEVAL_RUNNER_ISSUE_CREATED"]
 _FREEZE_START_GATE: list[JsonValue] = [
     "DATASET_CUSTODIAN_REVIEW_COMPLETE",
     "FOUR_AXIS_INTERSECTIONS_ZERO",
@@ -106,6 +107,7 @@ _FUTURE_PUBLIC_FREEZE_EVIDENCE_FIELDS: list[JsonValue] = [
 _PUBLIC_PACKET_KEYS = {
     "access_authorized",
     "access_control_requirements",
+    "access_control_start_gate",
     "actual_run_ref",
     "authoring_start_gate",
     "blocking_codes",
@@ -126,6 +128,7 @@ _PUBLIC_PACKET_KEYS = {
     "preparation_sha256",
     "preparation_status",
     "product_evaluation_reviewer",
+    "protected_runner_issue_status",
     "purpose",
     "release_eligible",
     "requested_dataset_custodian",
@@ -206,6 +209,7 @@ def _validate_static_contract(packet: dict[str, JsonValue]) -> None:
         "format_version": "1.0.0",
         "issue": "#273",
         "preparation_status": "PREPARATION_READY",
+        "protected_runner_issue_status": "NOT_CREATED",
         "purpose": "PREPARATION_ONLY",
         "release_eligible": False,
     }
@@ -213,6 +217,7 @@ def _validate_static_contract(packet: dict[str, JsonValue]) -> None:
         raise RuntimeError("Issue 273 preparation requires the exact public preparation state")
     protected_contract = (
         ("access_control_requirements", _ACCESS_CONTROL_REQUIREMENTS),
+        ("access_control_start_gate", _ACCESS_CONTROL_START_GATE),
         ("authoring_start_gate", _AUTHORING_START_GATE),
         ("freeze_start_gate", _FREEZE_START_GATE),
         ("future_private_study_split_receipt", _FUTURE_PRIVATE_STUDY_SPLIT_RECEIPT),
@@ -270,6 +275,7 @@ def build_holdout_freeze_preparation(evals_root: Path) -> dict[str, JsonValue]:
         "access_authorized": False,
         "actual_run_ref": None,
         "access_control_requirements": deepcopy(_ACCESS_CONTROL_REQUIREMENTS),
+        "access_control_start_gate": deepcopy(_ACCESS_CONTROL_START_GATE),
         "authoring_start_gate": deepcopy(_AUTHORING_START_GATE),
         "blocking_codes": deepcopy(_BLOCKING_CODES),
         "contract_status": "REPOSITORY_LOCAL_NON_RUNTIME_PROJECTION",
@@ -297,6 +303,7 @@ def build_holdout_freeze_preparation(evals_root: Path) -> dict[str, JsonValue]:
         "preparation_sha256": "0" * 64,
         "preparation_status": "PREPARATION_READY",
         "product_evaluation_reviewer": cast(JsonValue, deepcopy(_PRODUCT_EVALUATION_REVIEWER)),
+        "protected_runner_issue_status": "NOT_CREATED",
         "purpose": "PREPARATION_ONLY",
         "release_eligible": False,
         "requested_dataset_custodian": cast(JsonValue, deepcopy(_REQUESTED_DATASET_CUSTODIAN)),
@@ -324,6 +331,7 @@ def render_holdout_freeze_preparation_markdown(packet: dict[str, JsonValue]) -> 
         f"- Dataset: `{dataset['ref']}` (`{dataset['status']}`, unfrozen)",
         f"- Dataset manifest SHA-256: `{dataset['manifest_sha256']}`",
         f"- HOLDOUT: 계획 `{holdout_plan['planned_questions']}` / 작성 `{holdout_plan['authored_questions']}`",
+        "- 전용 protected Retrieval Runner Issue: `NOT_CREATED`",
         "- 접근 승인: `false`; Freeze 기록: `false`; Actual Run: `NOT_CREATED`",
         "- Release eligible: `false`; Production은 닫혀 있습니다.",
         "",

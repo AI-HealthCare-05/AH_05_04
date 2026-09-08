@@ -8,6 +8,7 @@
 - Dataset: `rag-natural-language-retrieval-dev@1.0.0` (`DRAFT`, unfrozen)
 - Dataset manifest SHA-256: `b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`
 - HOLDOUT: 계획 `40` / 작성 `0`
+- 전용 protected Retrieval Runner Issue: `NOT_CREATED`
 - 접근 승인: `false`; Freeze 기록: `false`; Actual Run: `NOT_CREATED`
 - Release eligible: `false`; Production은 닫혀 있습니다.
 
@@ -56,4 +57,4 @@ OTC 범위는 Issue #278에서 별도로 진행하며 #273 HOLDOUT에 혼합하�
 - `WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION`
 - `WAITING_FOR_HOLDOUT_FREEZE`
 
-Preparation self hash: `b07c06ff49c5b2f833db864c0b5ee95240b98e18275a96a4090bb585a0acb65a`
+Preparation self hash: `b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6`
