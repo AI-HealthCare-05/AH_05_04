@@ -3,12 +3,11 @@
 ## 환경
 
 - Local
-- Staging
 - Production
 
-AWS Free Plan의 단일 EC2에서 합성 데이터로 수행하는 내부 Staging 리허설은
-[AWS 무료 EC2 Staging Runbook](deployment/aws-free-staging.md)을 따릅니다. 이
-리허설은 아래 Production 책임·승인·공개 게이트를 대체하지 않습니다.
+현재 저장소가 관리하는 배포 구성 대상은 Local과 Production이다. 이 문서 아래의
+Staging 언급은 기존 runtime 안전 정책과 검증 경계를 설명하며, 별도의 AWS Staging
+배포 구성을 뜻하지 않는다.
 
 ## Production 운영 책임 체계
 
