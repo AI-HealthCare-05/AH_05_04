@@ -3,6 +3,7 @@ from datetime import date
 from statistics import median
 
 from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
+from ocr_runtime.review_fields import EMPTY_REVIEW_FIELD_TYPES
 from provider_contracts.ocr import RawRecognizedField, RecognizedField
 
 # CLOVA는 같은 템플릿이라도 날짜 텍스트 박스에 라벨(발행일 등)이나 앞뒤 공백을
@@ -1025,6 +1026,21 @@ class PrescriptionOcrStructurer:
                     field_type="TIMING",
                     source_fields=timing_fields,
                 )
+            )
+
+        present_types = {field.field_type for field in result}
+        if "MEDICATION_NAME" in present_types:
+            result.extend(
+                RecognizedField(
+                    medication_index=medication_index,
+                    field_type=field_type,
+                    raw_value=None,
+                    normalized_value=None,
+                    normalization_version=None,
+                    confidence_score=None,
+                )
+                for field_type in EMPTY_REVIEW_FIELD_TYPES
+                if field_type not in present_types
             )
 
         return result

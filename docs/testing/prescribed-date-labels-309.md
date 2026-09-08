@@ -148,3 +148,21 @@ Backend는 기존 모델 생성 fixture로 격리 DB를 초기화했으며 종�
 upgrade/rollback을 재실행하지 않았고 revision graph만 확인했다. 전체 Backend·Redis 통합,
 Frontend·GitHub CI는 이번 로컬 결과에 포함하지 않는다. PR 생성 후 최신 HEAD CI를 확인한다.
 #350/#144는 기준 develop에 아직 포함되지 않아 두 변경을 결합한 검증 완료를 주장하지 않는다.
+
+## #353 충돌 해결 — #350 병합 후 통합 확인
+
+develop `50d1f7d`(#348·#329·#350 포함)을 #353에 반영했다. validator import 충돌은
+Backend 날짜 shim과 공통 `EMPTY_REVIEW_FIELD_TYPES`를 함께 유지했고, structurer 테스트
+충돌은 #309 날짜 회귀와 #144 누락 검수 필드 회귀를 모두 보존했다. 앞선 '#350 미포함' 표기는
+이전 검증 기준이며 아래는 두 변경을 결합한 로컬 결과다.
+
+- Backend OCR·OCR AI·OCR 필드 별칭 계약: **328 passed**, 격리 PostgreSQL 16.
+- Worker OCR·SQLAlchemy OCR 저장소 단위 테스트: **36 passed**.
+- 전체 Ruff·format: 통과, **528 files**.
+- Mypy Backend·Worker·ocr_runtime: 통과, **451 source files**.
+- Alembic revision graph: `165f90716263` 단일 head. migration 실행 검증은 재실행하지 않음.
+- `git diff --check` 통과. 전체 서비스 CI는 충돌 해결 커밋 push 후 확인.
+
+검증 명령은 위 4단계 Backend 명령과 동일한 범위이며, Worker는
+`pytest ai_worker/tests/ocr ai_worker/tests/core/test_sqlalchemy_ocr_result_store.py -q`를 실행했다.
+테스트용 PostgreSQL은 별도 컨테이너의 test DB만 사용하고 종료 후 정리했다.

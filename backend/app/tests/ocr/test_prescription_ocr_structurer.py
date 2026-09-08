@@ -599,7 +599,7 @@ def test_structure_accepts_dose_with_trailing_ocr_text() -> None:
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
-    assert "DURATION_DAYS" not in fields_by_type
+    assert fields_by_type["DURATION_DAYS"].raw_value is None
 
 
 # 약품 행 유지 테스트 추가
@@ -694,6 +694,11 @@ def test_structure_does_not_merge_name_only_second_medication() -> None:
     assert set(second_medication_fields) == {
         "MEDICATION_NAME",
         "MEDICATION_STRENGTH",
+        "DOSE_VALUE",
+        "DOSE_UNIT",
+        "FREQUENCY_PER_DAY",
+        "DURATION_DAYS",
+        "TIMING",
     }
     assert second_medication_fields["MEDICATION_STRENGTH"].raw_value == "10mg"
 
@@ -772,8 +777,8 @@ def test_structure_keeps_partial_medication_for_confirmation() -> None:
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["TIMING"].raw_value == "저녁 식후"
-    assert "FREQUENCY_PER_DAY" not in fields_by_type
-    assert "DURATION_DAYS" not in fields_by_type
+    assert fields_by_type["FREQUENCY_PER_DAY"].raw_value is None
+    assert fields_by_type["DURATION_DAYS"].raw_value is None
 
 
 def test_structure_excludes_precaution_row_with_dose_values() -> None:
@@ -837,6 +842,11 @@ def test_structure_keeps_name_only_medication_as_unconfirmed() -> None:
     assert set(fields_by_type) == {
         "MEDICATION_NAME",
         "MEDICATION_STRENGTH",
+        "DOSE_VALUE",
+        "DOSE_UNIT",
+        "FREQUENCY_PER_DAY",
+        "DURATION_DAYS",
+        "TIMING",
     }
     assert fields_by_type["MEDICATION_NAME"].raw_value == "리나글립틴정"
     assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "5mg"
@@ -1448,3 +1458,42 @@ def test_backend_date_normalization_entrypoint_matches_runtime(raw: str, expecte
 
     assert normalize_prescribed_date_text is runtime_normalize
     assert normalize_prescribed_date_text(raw) == expected
+
+
+@pytest.mark.parametrize("strength", ["", " 5mg"])
+def test_structure_fills_missing_review_fields_without_changing_recognized_values(strength: str) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("합성의약품정" + strength, 137, 637),
+        _raw_field("조제", 132, 800),
+    ]
+    structurer = PrescriptionOcrStructurer()
+    result = structurer.structure(raw_fields)
+    assert structurer.structure(raw_fields) == result
+    assert len(result) == 7
+    assert {field.medication_index for field in result} == {1}
+    assert len({field.field_type for field in result}) == 7
+    for field in result:
+        if field.field_type == "MEDICATION_NAME":
+            assert field.raw_value == "합성의약품정"
+            assert field.confidence_score == 0.99
+        elif field.field_type == "MEDICATION_STRENGTH" and strength:
+            assert field.raw_value == "5mg"
+            assert field.confidence_score == 0.99
+        else:
+            assert (field.raw_value, field.normalized_value, field.normalization_version, field.confidence_score) == (
+                None,
+                None,
+                None,
+                None,
+            )
+
+
+@pytest.mark.parametrize("with_headers", [False, True])
+def test_structure_does_not_create_review_fields_from_instructions(with_headers: bool) -> None:
+    raw_fields = [_raw_field("복용량을 조정", 137, 637), _raw_field("조제", 132, 800)]
+    if with_headers:
+        raw_fields[:0] = [_raw_field("명칭", 237, 581), _raw_field("투여량", 413, 581), _raw_field("용법", 911, 581)]
+    assert PrescriptionOcrStructurer().structure(raw_fields) == []
