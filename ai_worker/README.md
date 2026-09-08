@@ -41,7 +41,8 @@ Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획�
 - Guide·Chat Handler 등록
 - Pending reclaim·retry·quarantine·DLQ 운영 절차:
   `../docs/runbooks/worker-pending-dlq.md`
-- Publisher 주기 실행·health check·운영 배포 조립
+- Outbox Publisher 주기 실행은 Worker runtime에 조립됨: #370
+- health check·운영 배포 조립
 
 #233의 완료 기준은 실제 CLOVA OCR 호출이 아니라, `OcrEngine`을 주입할 수 있는
 composition root와 명시적으로 주입한 Fake Engine을 사용한 Redis·PostgreSQL
@@ -79,6 +80,7 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 | `REDIS_CONSUMER_GROUP` | `ai-workers` | Consumer Group |
 | `REDIS_CONSUMER_NAME` | `ai-worker-local` | Consumer 식별자 |
 | `REDIS_BLOCK_MS` | `5000` | blocking read 시간 |
+| `OUTBOX_PUBLISHER_INTERVAL_SECONDS` | `1.0` | 정상 Outbox 발행 주기(초) |
 | `REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS` | `5.0` | Redis 연결 수립 timeout(초) |
 | `REDIS_SOCKET_TIMEOUT_SECONDS` | `10.0` | Redis 명령 socket timeout(초) |
 | `DB_HOST` | 없음(필수) | Worker PostgreSQL hostname |

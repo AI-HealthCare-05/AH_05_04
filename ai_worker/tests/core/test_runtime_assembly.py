@@ -16,6 +16,7 @@ from ai_worker.core.job_execution import (
     LeaseNotAcquired,
     LeaseRejectionReason,
 )
+from ai_worker.core.outbox_publisher import OutboxPublisher
 from ai_worker.core.provider_observability import (
     create_worker_provider_call_context_from_trace_id,
 )
@@ -367,6 +368,7 @@ async def test_build_worker_runtime_closes_only_owned_resources() -> None:
         assert engine.sync_engine.pool is original_pool
         assert assembled.registered_types == frozenset()
         assert assembled.recovery_scheduler is not None
+        assert isinstance(assembled.recovery_scheduler._outbox_publisher, OutboxPublisher)
     finally:
         await engine.dispose()
 

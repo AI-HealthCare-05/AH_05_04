@@ -100,7 +100,7 @@ async def test_publish_batch_preserves_envelope_and_marks_claim_owner_published(
         claim_token_factory=lambda: "batch-claim",
     )
 
-    results = await publisher.publish_batch()
+    results = await publisher.run_once()
 
     assert results[0].status is OutboxPublishStatus.PUBLISHED
     assert results[0].stream_message_id == "1-0"
