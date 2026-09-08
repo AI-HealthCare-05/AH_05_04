@@ -203,7 +203,13 @@ class RagSourceSnapshot(Base):
 
     __tablename__ = "rag_source_snapshot"
     __table_args__ = (
-        UniqueConstraint("operation_id", "source_version", name="uq_rag_source_snapshot_operation_version"),
+        Index(
+            "uq_rag_source_snapshot_active_version",
+            "operation_id",
+            "source_version",
+            unique=True,
+            postgresql_where=text("verification_status <> 'FAILED'"),
+        ),
         Index("idx_rag_source_snapshot_operation_status", "operation_id", "verification_status"),
         Index(
             "uq_rag_source_snapshot_current",
@@ -214,6 +220,10 @@ class RagSourceSnapshot(Base):
         CheckConstraint("length(trim(source_version)) > 0", name="chk_rag_source_snapshot_version_nonblank"),
         CheckConstraint("length(raw_manifest_checksum) = 64", name="chk_rag_source_snapshot_raw_manifest_checksum"),
         CheckConstraint("length(canonical_checksum) = 64", name="chk_rag_source_snapshot_canonical_checksum"),
+        CheckConstraint(
+            "endpoint_receipt_hash IS NULL OR endpoint_receipt_hash ~ '^[0-9a-f]{64}$'",
+            name="chk_rag_source_snapshot_endpoint_receipt_hash",
+        ),
         CheckConstraint("record_count >= 0", name="chk_rag_source_snapshot_record_count"),
         CheckConstraint("rejected_record_count >= 0", name="chk_rag_source_snapshot_rejected_record_count"),
         CheckConstraint(
@@ -235,6 +245,7 @@ class RagSourceSnapshot(Base):
     parser_version: Mapped[str] = mapped_column(String(100), nullable=False)
     normalization_version: Mapped[str] = mapped_column(String(100), nullable=False)
     canonicalization_spec_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    endpoint_receipt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     record_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rejected_record_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verification_status: Mapped[RagSnapshotVerificationStatus] = mapped_column(
@@ -353,6 +364,11 @@ class RagSourceSnapshotVerification(Base):
     __tablename__ = "rag_source_snapshot_verification"
     __table_args__ = (
         Index("idx_rag_source_snapshot_verification_snapshot", "snapshot_id", "verified_at"),
+        CheckConstraint(
+            "check_name <> 'snapshot-publication-approval' OR verification_result <> 'PASSED' OR "
+            "(verified_by IS NOT NULL AND length(trim(verified_by)) > 0)",
+            name="chk_rag_snapshot_publication_approver",
+        ),
         CheckConstraint("length(trim(check_name)) > 0", name="chk_rag_source_snapshot_verification_check_nonblank"),
         CheckConstraint(
             f"verification_result IN ({_sql_in_list(RagVerificationResultStatus)})",

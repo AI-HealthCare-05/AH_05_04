@@ -2,11 +2,11 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Not implemented · Track F Source·RAG 구현과 지정 리뷰어·Privacy·외부 Source 승인 대기 |
-| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
+| 문서 상태 | Approved Target · Partially implemented — #164·#165 / 2026-09-08 |
+| 구현·리뷰 | Source·Snapshot DB, Parser·checksum, 원본 Artifact 저장, 수집 이력과 현재성 전이 구현 · Source approval·보존 정책·Catalog·Runtime 연결 대기 |
+| 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Partially implemented` |
 | Normative Source | `rag-source-management-policy-v1.0.md@1.18` · SHA-256 `35842d2cbe54201ff9fb5580616055eda613fe4c16ac6d60daa7f8859d2f28e3` |
-| Last verified | 2026-09-01 |
+| Last verified | 2026-09-08 |
 
 ## 목적과 범위
 
@@ -126,6 +126,28 @@ Raw Artifact 수집
 → Candidate Catalog / Rule / Knowledge Index 입력
 ```
 
+### 현재 물리 상태 매핑
+
+현재 구현은 Target의 논리 상태 일부를 다음 DB 상태와 Verification으로 표현한다.
+
+| Target 논리 상태 | 현재 DB 표현 | 구현 경계 |
+| --- | --- | --- |
+| `VALIDATING` | `rag_source_snapshot.verification_status = PENDING` | 수집 무결성 검사를 통과해도 publication 승인을 의미하지 않는다. |
+| `PUBLISHED` | `verification_status = CURRENT` + `snapshot-current-selection = PASSED` | 같은 Operation에서 하나만 허용한다. 거부 레코드가 있으면 `snapshot-publication-approval = PASSED`가 추가로 필요하다. |
+| 이전 `PUBLISHED` | `verification_status = STALE` | 이력은 보존하며 이전 Snapshot 복원 시 다시 `CURRENT`로 전환할 수 있다. |
+| 검증 실패 | `verification_status = FAILED` | 선택과 `NO_CHANGE` 재사용 대상에서 제외한다. 동일 Source version은 FAILED 이력과도 내용·계약을 비교하며, 일치할 때만 새 후보를 만들 수 있다. |
+
+`source-ingestion-integrity = PASSED`는 Parser·checksum·Artifact 결속 검증 결과이며 사람의 publication 승인을 대신하지 않는다. `CURRENT`는 Source Snapshot 현재성만 뜻하고 Runtime Bundle 활성화를 뜻하지 않는다. Source approval, 보존 정책, Catalog 적재와 Runtime 연결은 아직 구현되지 않았다.
+
+신규 Snapshot은 검증에 사용한 `endpoint_receipt_hash`를 불변 provenance로 저장한다. Migration 이전 Snapshot의 알 수 없는 hash는 `NULL`로 보존하고 `NO_CHANGE` 비교 대상으로 재사용하지 않는다. `NO_CHANGE`는 canonical checksum과 schema·parser·normalization·canonicalization version뿐 아니라 Endpoint Receipt hash와 거부 레코드 개수까지 모두 같고 비교 Snapshot이 `FAILED`가 아닐 때만 허용한다.
+
+### PR #323 후속 리뷰 반영 경계
+
+- `snapshot-publication-approval = PASSED`는 NULL 또는 공백인 `verified_by`를 허용하지 않는다. 일반 자동 무결성 검사의 nullable 승인자와는 구분한다. Verification 이력은 DB trigger로 UPDATE·DELETE를 차단하며 이력이 있으면 보호를 제거하는 downgrade도 거부한다. 기존 익명 publication 승인 데이터가 있으면 migration은 실패하며 임의 승인자 보정은 하지 않는다. 승인 주체의 존재 검사는 전체 Source Use Approval이나 권한 검증 구현을 대신하지 않는다.
+- 동일 Source version의 FAILED 이력도 canonical checksum·schema/parser/normalization/canonicalization version·Endpoint Receipt hash·거부 건수 비교에 포함한다. 하나라도 다르면 `SOURCE_VERSION_CONFLICT`로 기록하고 Snapshot을 생성하지 않는다. 모두 같은 FAILED 재시도만 새 PENDING 후보를 허용한다. 유효 후보가 이미 있으면 그 후보를 우선 조회하여 중복 재시도를 `NO_CHANGE`로 처리한다.
+- 현재 REJECTS는 거부 record 1개당 Artifact 1개다. `rejected_record_count`와 Artifact 개수의 일치를 파일 보존 전과 DB 저장 전에 모두 검사한다.
+- #165 RAG 검토에 따라 FAILED 이력은 동일 version 충돌 비교에 포함하되 `supersedes_snapshot_id` 계보에서는 제외한다. 이전 비FAILED Snapshot이 없으면 NULL이다. 정본은 FAILED normalization에서 Snapshot을 생성하지 않으므로, 현재 FAILED Snapshot 모델과 최종 uniqueness는 #164에서 정렬한다.
+
 - 모든 page와 필수 record가 성공한 경우에만 Snapshot 후보를 만든다.
 - HTTP 성공 status라도 본문의 인증 실패·호출 한도·Provider 오류 code를 성공으로 처리하지 않는다.
 - schema drift, 부분 적재, 필수값 누락, 중복 Identity, checksum 불일치와 참조 불일치는 활성화를 차단한다.
@@ -237,3 +259,12 @@ Runtime Release Bundle의 상세 구성과 현재성 검사는 [RAG Runtime 계�
 ## 공개 게이트
 
 `EXT-SOURCE-001`, `EXT-SOURCE-002`, `EXT-PRIV-001`과 필요한 의료·약학 검토가 완료되기 전에는 실제 사용자 Source를 활성화하거나 `PUBLIC_TRACK_F`를 켜지 않는다. Development·Staging 서버는 만들지 않으며, 승인 전에는 합성 fixture를 사용하는 접근 통제된 Local demo만 허용한다.
+
+
+## #165 검토 결과와 후속 인계 (2026-09-08)
+
+- [PM 결정](https://github.com/AI-HealthCare-05/AH_05_04/issues/165#issuecomment-5578317298): Artifact·REJECTS 보존·삭제 정책은 #335로 분리한다. 자동 삭제·실제 Source Runtime은 DISABLED로 유지하며, 코드 배포·합성 개발/테스트는 가능하다. 비활성 유지와 후속 이슈 연결 조건으로 해당 정책 미확정 자체는 #323 병합 차단이 아니다. 기술 리뷰와 기타 병합 조건은 별도다.
+- [DB 인계](https://github.com/AI-HealthCare-05/AH_05_04/issues/165#issuecomment-5578311828): #319 이후 별도 #164 하위 PR에서 Snapshot uniqueness, normalization 저장 구조·FK, ingestion/normalization/Snapshot 관계와 충돌·재시도 호환성을 정렬한다. 실제 컬럼·FK·migration head 인계 전 공유 DB 구조를 추정 변경하지 않는다.
+- [RAG 검토](https://github.com/AI-HealthCare-05/AH_05_04/issues/165#issuecomment-5578372722): 현재 operation_id/source_version의 비FAILED partial unique와 정본 source_id/source_version은 다르다. 세 충돌·재시도 시나리오의 현재 호환성 확인은 최종 schema 승인이 아니다.
+- normalization run은 #164가 저장 구조·FK, #165가 실행 생성·완료·재실행 정책, #166이 확정된 (source_snapshot_id, normalization_run_id)를 소비하는 책임으로 나눈다. normalization_version이나 ingestion_run_id로 실행 ID를 대신하지 않는다. 물리 구조·실행 인터페이스 상세는 인계 대기다.
+- reject_code 형식 검사는 승인 allowlist가 아니다. 별도 versioned 정본과 변경 절차가 필요하며 구체 목록·버전은 미확정이다. #335의 보존 정책 분리가 이 코드 계약의 승인을 의미하지 않는다.

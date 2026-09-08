@@ -2,14 +2,14 @@
 
 ## 현재 검증 상태
 
-- Source ingestion 단위 테스트: 253 passed
-- AI Worker 전체 테스트: 1023 passed
-- PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 7 passed
-- Source/Catalog·Artifact Migration 테스트: 10 passed
-- 전체 Migration 테스트: 49 passed
-- Backend·계약·통합 전체 테스트: 1088 passed, 2 skipped
-- Ruff 전체 검사 통과, 492 files already formatted
-- Mypy: 429개 핵심 소스 파일 통과
+- Source ingestion 단위 테스트: 262 passed
+- AI Worker 전체 테스트: 1032 passed
+- PostgreSQL Snapshot lifecycle·acquisition lock·실패 이력 통합 테스트: 10 passed
+- Source/Catalog·Artifact Migration 테스트: 12 passed
+- 전체 Migration 테스트: 51 passed
+- Backend·계약·통합 전체 테스트: 1131 passed, 2 skipped
+- Ruff 전체 검사 통과, 495 files already formatted
+- Mypy: 446개 소스 파일 통과
 - 실제 Worker 이미지에서 Source Snapshot adapter import·PostgreSQL 쿼리 통과
 - S3 호환 비공개 Object Storage adapter·SDK 계약 테스트 통과
 - 실제 MFDS 호출은 이번 검증에 포함하지 않는다.
@@ -38,7 +38,7 @@
 - 제품 성공·빈 결과·인증 실패·일일 한도·schema drift 필수 fixture 시나리오 검증
 - Receipt hash·Raw Manifest checksum·canonical checksum·버전·record count를 묶은 `ProductIngestionResult` 계약 추가
 - 검증 결과에 Source version·schema·parser·normalization version과 실행 metadata를 결합하는 저장 계약 추가
-- Source·Endpoint·Operation exact-match 조회와 Operation 행 잠금 경계 추가
+- Source·Endpoint·Operation exact-match 조회와 Source 행 잠금 경계 추가
 - 신규 결과를 승인 전 `PENDING` Snapshot과 append-only 검증·수집 이력으로 저장
 - 동일 canonical 내용과 동일 version 계약의 재수집을 기존 Snapshot의 `NO_CHANGE` 이력으로 저장
 - 동일 외부 Source version의 canonical 내용 또는 version 계약 변경을 `SOURCE_VERSION_CONFLICT`로 차단
@@ -63,7 +63,7 @@
 - DB 문자열 길이 제한과 `parser_location` 제어문자를 Artifact 보존 전에 차단
 - RAW_RESPONSE와 REJECTS를 합친 수집 실행 전체에서 중복 Artifact key를 파일 보존 전에 차단
 - 외부 Source 호출 전에 Operation 행을 `SKIP LOCKED`로 선점해 동시 acquisition을 즉시 차단
-- 같은 Operation의 동시 요청에서 Provider 호출이 한 번만 실행되는 PostgreSQL 통합 테스트
+- 같은 Source의 서로 다른 Operation 동시 요청에서도 Provider 호출이 한 번만 실행되는 PostgreSQL 통합 테스트
 - Provider 수집 실패를 안전한 `SourceFailureCode`로 Snapshot 없이 `FAILED` Run에 기록
 - Parser 검증과 거부 한도 초과를 고정 실패 코드로 기록하고 보존된 원본 Artifact 참조 연결
 - 실패 Source run의 부분 page, 거부 Artifact 누락과 실패 실행 내 Artifact 중복을 DB 접근 전에 차단
@@ -135,12 +135,12 @@ Evaluation Manifest hash는 계산 범위와 제외 규칙이 다르므로 각�
 
 - #291의 Source·Endpoint·Operation·Snapshot·Verification·Ingestion Run 테이블 연결
 - 수집 실행 계층이 선택한 `source_version`, schema·parser·normalization version과 실행 metadata 전달
-- 같은 Operation의 lifecycle 판단 전 행 잠금
+- 같은 Source의 lifecycle 판단 전 Source 행 잠금
 - 신규 Snapshot 후보 생성과 `PASSED` 검증·성공 Run 기록
 - `NO_CHANGE`, `A → B → A`, 동일 Source version 충돌 판단과 append-only 이력
 - Snapshot 후보를 `PENDING`으로 유지해 승인과 Runtime 활성화가 자동으로 일어나지 않는 경계
 - 검증 상태의 `PENDING → CURRENT`, 기존 `CURRENT → STALE`와 이전 Snapshot 복원
-- 실제 PostgreSQL transaction rollback과 같은 Operation의 동시 판단 직렬화
+- 실제 PostgreSQL transaction rollback과 같은 Source의 동시 판단 직렬화
 
 ## 남은 범위
 
@@ -169,10 +169,10 @@ record count를 제공한다. 저장 호출자는 다음 값을 원본이나 che
 - `run_group_key`, `attempt_number`, 실행 시작·종료 시각
 
 DB commit·rollback은 기존 Worker transaction 경계를 재사용한다. 동일
-Operation의 판단과 저장은 Operation 행 잠금 뒤 실행해 동시 수집이 서로 다른
+Source의 판단과 저장은 Source 행 잠금 뒤 실행해 동시 수집이 서로 다른
 결정을 내리지 않도록 한다.
 
-외부 수집 진입점은 같은 Operation 행을 `SKIP LOCKED`로 먼저 선점한다. 이미
+외부 수집 진입점은 같은 Source 행을 `SKIP LOCKED`로 먼저 선점한다. 이미
 수집 중이면 `SourceAcquisitionInProgressError`로 즉시 종료하며 Provider를
 호출하지 않는다. 호출자는 외부 수집이 끝날 때까지 잠금을 얻은 DB transaction을
 유지하고, 반환 또는 예외 뒤 commit·rollback한다.
@@ -239,3 +239,51 @@ PASS source snapshot adapter import and database connection
 로컬 검증 환경 파일에는 `STORAGE_DIR`이 없어 smoke 명령에서 비민감 경로를
 명시했다. Source DB adapter 검증에는 영향을 주지 않으며, Worker 배포 환경은
 기존 OCR runtime 조립 범위에서 필수 저장 경로를 계속 주입해야 한다.
+
+## PR #323 후속 리뷰 반영 (2026-09-08)
+
+- Verification 이력의 UPDATE·DELETE를 `165d7e6f5041` trigger로 차단한다. 이력이 존재하면 보호를 제거하는 downgrade도 차단하며, 기존 Artifact·Receipt·Catalog downgrade 테스트는 Verification 없는 fixture로 각 기존 보호를 독립 검증한다.
+- Publication PASSED는 NULL·빈 문자열·공백 승인자를 DB CHECK로 거부한다. 조회 adapter도 승인자가 있는 PASSED만 인정한다. 일반 자동 검증의 nullable 승인자는 유지한다.
+- FAILED 동일 Source version도 canonical 내용·계약 비교에 포함한다. 내용·Receipt·parser 계약이 달라지면 실패 Run만 남기고 새 Snapshot을 만들지 않는다. 같은 계약의 재시도는 새 PENDING 후보를 만든다.
+- REJECTS의 1:1 개수 검증은 파일 읽기·저장 전과 DB 잠금·저장 전 양쪽에서 수행한다.
+- 실패 재시도 테스트에서 Receipt hash를 바꾸던 기존 성공 fixture는 같은 hash를 사용하도록 바로잡고, hash 변경은 별도 충돌 회귀로 검증한다.
+- 보존·삭제 정책은 #335, 운영 reject_code allowlist는 #165 후속 결정으로 남긴다. FAILED 계보 제외 방향은 #165에서 확인됐으며 현재 동작을 유지한다. FAILED 저장 모델·unique·normalization FK는 #164 인계 대기다. 자동 삭제와 Runtime 활성화는 추가하지 않는다.
+
+실제 PostgreSQL 검증에는 개발·운영 DB와 분리된 임시 PostgreSQL 17을 사용한다. 익명 publication 승인이 이미 있는 DB에서는 migration이 실패하며 승인자나 과거 이력을 자동 보정하지 않는다.
+
+후속 변경 검증 결과:
+
+- AI Worker 단위 테스트: **1,041 passed**
+- 전체 Migration 테스트: **52 passed**
+- Backend·계약·Source 통합 테스트: **1,116 passed, 2 skipped**
+- Redis·PostgreSQL Worker 통합 테스트: **18 passed**
+- Ruff 검사·서식 검사: 통과 (**496 files**)
+- Mypy: **421개 소스 파일 통과**
+- `git diff --check` 및 Source Governance Receipt hash 검증: 통과
+
+기존 Python 환경에 없던 S3 의존성은 임시 테스트 환경에 준비했다. DB 준비는 저장소 절차대로 최신 Alembic head를 적용한 뒤 migration 테스트와 Backend 테스트를 별도 프로세스로 실행했다. 실제 외부 MFDS·S3 호출이나 운영 배포는 수행하지 않았다.
+
+
+## #165 세 담당자 답변 반영 및 #323 재점검
+
+보존·삭제 정책 후속은 #335이며 비활성 유지·후속 연결 조건으로만 정책 미확정이 병합 비차단이다. reject_code versioned 정본·변경 절차는 미확정이다. 상세 결정 근거와 #164/#165/#166 역할 경계는 Source Target의 「#165 검토 결과와 후속 인계」를 따른다.
+
+| 리뷰 | 코드·검증 반영 |
+| --- | --- |
+| 가빈님: rejection 변경·FAILED 재시도·Receipt 유실 및 FAILED 충돌 회귀 | 비교 계약에 거부 수·Receipt 포함, FAILED 동일 version 조회 포함, 동일 계약 재시도만 CREATED. lifecycle 단위·PostgreSQL 회귀 존재 |
+| 현우님: Source 잠금·LOCAL_PRIVATE 기존 경로 보호 | acquisition은 Source 행 SKIP LOCKED, lifecycle은 Operation 행 잠금. 다른 Operation의 동일 Source 통합 테스트와 기존 root 권한·소유권·symlink 거부 테스트 존재 |
+| 현우님: Target 상태·publication 승인 | Partially implemented 및 물리 상태 매핑, rejection 승인 gate, 승인자 CHECK·조회 조건, Verification UPDATE/DELETE 방지 및 downgrade 보호 |
+| 현우님: REJECTS 1:1 | 파일 처리 전·DB 저장 전 개수 검증 및 회귀 존재 |
+| 은영님: DB·S3·Runtime 검토와 공유 DB 인계 | 기존 저장·rollback·S3 보안·DISABLED 유지. 새 uniqueness·FAILED 모델·normalization 구조는 #164 인계 후 반영 |
+
+PR 본문에서 acquisition 잠금을 Operation으로 설명하면 코드와 다르다. 외부 호출 잠금은 Source, lifecycle 판단 잠금은 Operation으로 구분한다. 기존 기술 리뷰의 코드 반영과 담당 리뷰어의 재승인은 별개다.
+
+이번 재점검에서는 Source ingestion 단위 및 Source Governance Receipt 계약 테스트 **280 passed**, 관련 Mypy **15개 소스 파일 통과**, 변경 테스트 Ruff·서식 및 diff 검사를 수행했다. FAILED 이후 동일/새 Source version 재시도가 FAILED Snapshot을 계보로 연결하지 않는 회귀를 고정했다. 런타임·migration 코드는 변경하지 않았고 PostgreSQL·Redis 통합은 이번에 재실행하지 않았다. 위 ecc2ccc 단계 통합 결과와 이번 문서·회귀 검증을 구분한다.
+
+## #319 병합 후 develop 충돌 해결
+
+- develop `20e0ed0`을 병합하고 Evaluation 구현 상태 설명과 Source Verification 보호 문서를 모두 보존했다.
+- Source Artifact revision `165a4b3c2d1e`의 부모를 #319 Evaluation revision `164a9c8e7d6f`로 연결했다.
+- 단일 head `165d7e6f5041` 확인. 격리 PostgreSQL 17에서 빈 DB → head 적용 및 전체 migration 테스트 **66 passed**.
+- Source lifecycle 및 Evaluation repository 테스트 **16 passed**. 변경 migration Ruff 및 diff 검사 통과.
+- 개발·운영 DB에 migration을 적용하지 않았다.

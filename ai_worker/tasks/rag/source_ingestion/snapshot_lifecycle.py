@@ -16,6 +16,7 @@ from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 
 SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
+SNAPSHOT_PUBLICATION_APPROVAL_CHECK = "snapshot-publication-approval"
 _SAFE_FAILURE_CODE_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{0,99}")
 
 
@@ -62,6 +63,9 @@ class SnapshotReference:
     parser_version: str
     normalization_version: str
     canonicalization_spec_version: str
+    endpoint_receipt_hash: str | None
+    rejected_record_count: int
+    verification_status: SnapshotVerificationStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +144,7 @@ class SnapshotStatusReference:
     snapshot_id: UUID
     operation_id: UUID
     verification_status: SnapshotVerificationStatus
+    rejected_record_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +206,13 @@ class SnapshotLifecycleRepository(Protocol):
 
     async def get_current_snapshot_status(self, *, operation_id: UUID) -> SnapshotStatusReference | None: ...
 
+    async def has_passed_verification(
+        self,
+        *,
+        snapshot_id: UUID,
+        check_name: str,
+    ) -> bool: ...
+
     async def change_snapshot_status(
         self,
         *,
@@ -223,9 +235,15 @@ def decide_snapshot_ingestion(
     if same_version is not None:
         if not _has_same_canonical_contract(same_version, ingestion=ingestion, metadata=metadata):
             return SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT, same_version
+        if same_version.verification_status is SnapshotVerificationStatus.FAILED:
+            return SnapshotIngestionDecision.CREATED, latest
         return SnapshotIngestionDecision.NO_CHANGE, same_version
 
-    if latest is not None and _has_same_canonical_contract(latest, ingestion=ingestion, metadata=metadata):
+    if (
+        latest is not None
+        and latest.verification_status is not SnapshotVerificationStatus.FAILED
+        and _has_same_canonical_contract(latest, ingestion=ingestion, metadata=metadata)
+    ):
         return SnapshotIngestionDecision.NO_CHANGE, latest
 
     return SnapshotIngestionDecision.CREATED, latest
@@ -349,6 +367,8 @@ def _validate_ingestion_artifacts(
         raise ValueError("거부 레코드가 없는 실행에는 REJECTS Artifact를 기록할 수 없습니다.")
     if rejected_record_count > 0 and not rejection_artifacts:
         raise ValueError("거부 레코드가 있는 실행에는 REJECTS Artifact가 필요합니다.")
+    if len(rejection_artifacts) != rejected_record_count:
+        raise ValueError("REJECTS Artifact 개수가 rejected_record_count와 일치하지 않습니다.")
     manifest_checksum = raw_manifest_checksum(artifact.metadata for artifact in raw_artifacts)
     if manifest_checksum != ingestion.raw_manifest_checksum:
         raise ValueError("Artifact manifest checksum이 검증된 수집 결과와 일치하지 않습니다.")
@@ -371,6 +391,11 @@ async def select_current_snapshot(
         raise ValueError("선택할 Snapshot을 찾을 수 없습니다.")
     if target.verification_status is SnapshotVerificationStatus.FAILED:
         raise ValueError("FAILED Snapshot은 CURRENT로 선택할 수 없습니다.")
+    if target.rejected_record_count > 0 and not await repository.has_passed_verification(
+        snapshot_id=target.snapshot_id,
+        check_name=SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
+    ):
+        raise ValueError("거부 레코드가 있는 Snapshot은 publication 승인 후 선택할 수 있습니다.")
     if target.verification_status is SnapshotVerificationStatus.CURRENT:
         return SnapshotSelectionResult(
             decision=SnapshotSelectionDecision.ALREADY_CURRENT,
@@ -461,6 +486,7 @@ async def fail_snapshot_verification(
         snapshot_id=snapshot_id,
         operation_id=operation_id,
         verification_status=SnapshotVerificationStatus.FAILED,
+        rejected_record_count=target.rejected_record_count,
     )
 
 
@@ -497,4 +523,6 @@ def _has_same_canonical_contract(
         and snapshot.parser_version == metadata.parser_version
         and snapshot.normalization_version == metadata.normalization_version
         and snapshot.canonicalization_spec_version == ingestion.canonicalization_spec_version
+        and snapshot.endpoint_receipt_hash == ingestion.endpoint_receipt_hash
+        and snapshot.rejected_record_count == metadata.rejected_record_count
     )

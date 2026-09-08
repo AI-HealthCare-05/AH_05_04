@@ -42,6 +42,40 @@ def test_preserves_verified_content_with_private_permissions(tmp_path: Path) -> 
     assert list(destination.parent.glob(".pending-*")) == []
 
 
+def test_existing_private_root_is_reused_without_changing_permissions(tmp_path: Path) -> None:
+    storage_root = tmp_path / "private"
+    storage_root.mkdir(mode=0o700)
+    storage_root.chmod(0o700)
+
+    LocalPrivateSourceArtifactStore(storage_root)
+
+    assert stat.S_IMODE(storage_root.stat().st_mode) == 0o700
+
+
+def test_existing_shared_directory_is_rejected_without_changing_permissions(tmp_path: Path) -> None:
+    shared_root = tmp_path / "shared"
+    shared_root.mkdir(mode=0o755)
+    shared_root.chmod(0o755)
+
+    with pytest.raises(ValueError, match="already use mode 0700"):
+        LocalPrivateSourceArtifactStore(shared_root)
+
+    assert stat.S_IMODE(shared_root.stat().st_mode) == 0o755
+
+
+def test_symlink_root_is_rejected_without_changing_target_permissions(tmp_path: Path) -> None:
+    target = tmp_path / "shared"
+    target.mkdir(mode=0o755)
+    target.chmod(0o755)
+    link = tmp_path / "private-link"
+    link.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        LocalPrivateSourceArtifactStore(link)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+
+
 def test_same_verified_content_reuses_immutable_object(tmp_path: Path) -> None:
     source = tmp_path / "source.json"
     content = b'{"synthetic":true}'

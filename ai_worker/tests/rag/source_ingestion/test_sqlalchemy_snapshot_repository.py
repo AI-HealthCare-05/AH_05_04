@@ -98,6 +98,7 @@ async def test_acquisition_lock_skips_locked_operation_without_waiting() -> None
     lock_statement = session.execute.await_args_list[0].args[0]
     lock_sql = str(lock_statement.compile(dialect=postgresql.dialect()))
     assert "FOR UPDATE" in lock_sql
+    assert "OF rag_source" in lock_sql
     assert "SKIP LOCKED" in lock_sql
     assert "FOR UPDATE" not in str(session.execute.await_args_list[1].args[0])
 
@@ -133,7 +134,48 @@ async def test_snapshot_candidate_is_inserted_as_pending_without_commit() -> Non
     assert parameters["verification_status"] == "PENDING"
     assert parameters["supersedes_snapshot_id"] == str(_SNAPSHOT_ID)
     assert parameters["canonical_checksum"] == "c" * 64
+    assert parameters["endpoint_receipt_hash"] == "a" * 64
     session.commit.assert_not_awaited()
+
+
+async def test_version_conflict_query_includes_failed_but_latest_excludes_failed() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    query_result = MagicMock()
+    query_result.mappings.return_value.one_or_none.return_value = None
+    session.execute.return_value = query_result
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    await repository.get_snapshot_by_version(operation_id=_OPERATION_ID, source_version="source-v1")
+    by_version_sql = str(session.execute.await_args.args[0])
+    await repository.get_latest_snapshot(operation_id=_OPERATION_ID)
+    latest_sql = str(session.execute.await_args.args[0])
+
+    assert "rag_source_snapshot.endpoint_receipt_hash" in by_version_sql
+    assert "rag_source_snapshot.rejected_record_count" in by_version_sql
+    assert "rag_source_snapshot.verification_status !=" not in by_version_sql
+    assert "ORDER BY" in by_version_sql
+    assert "LIMIT" in by_version_sql
+    assert "rag_source_snapshot.verification_status !=" in latest_sql
+
+
+async def test_publication_approval_requires_matching_passed_verification() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = "verification-id"
+    session.execute.return_value = query_result
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    approved = await repository.has_passed_verification(
+        snapshot_id=_SNAPSHOT_ID,
+        check_name="snapshot-publication-approval",
+    )
+
+    assert approved is True
+    statement = session.execute.await_args.args[0]
+    sql = str(statement)
+    assert "rag_source_snapshot_verification.snapshot_id" in sql
+    assert "rag_source_snapshot_verification.check_name" in sql
+    assert "rag_source_snapshot_verification.verification_result" in sql
 
 
 async def test_conflict_run_records_only_safe_failure_code() -> None:

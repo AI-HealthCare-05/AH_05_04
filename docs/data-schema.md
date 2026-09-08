@@ -305,3 +305,11 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 `OTC_IDENTIFICATION`, `OTC_EVALUATION`, `OTC_RULE_MATCH` 같은 Track D 전용 평가 모델은 목표 schema에서 사용하지 않습니다. OTC는 기존 Chat 결과·Citation을 재사용하지만 `interaction_rule`과 `rule_evidence`는 Track F 내부 결정 규칙과 근거 원장으로 유지합니다.
 
 상세 목표는 [계약 인덱스](./contracts/README.md)의 v1 문서를 따릅니다. 각 행의 구현 상태에 명시되지 않은 목표 enum·컬럼은 현재 코드가 이미 사용한다고 설명하지 않습니다.
+
+### Source Verification 후속 보호 (#165 / PR #323)
+
+- `165d7e6f5041`은 `rag_source_snapshot_verification`의 UPDATE·DELETE를 DB trigger로 차단한다.
+- `snapshot-publication-approval = PASSED`는 비어 있지 않은 `verified_by`가 필요하다. 기존 익명 승인은 자동 변환하지 않으며 migration 적용 전에 검토해야 한다.
+- Verification 이력이 있으면 해당 보호를 제거하는 downgrade를 차단한다.
+- FAILED Snapshot도 같은 Source version의 충돌 비교에 포함하지만 `NO_CHANGE` 재사용은 금지한다. FAILED는 계보에서 제외하며, 이전 비FAILED Snapshot이 없으면 NULL이다. FAILED 저장 모델의 정본 정렬은 #164 후속 범위다.
+- REJECTS Artifact는 거부 record와 1:1이며 파일·DB 저장 전 개수 일치를 검사한다.

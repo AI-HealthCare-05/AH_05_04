@@ -23,6 +23,7 @@ from ai_worker.tasks.rag.source_ingestion.persistence import (
 )
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
+    SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SOURCE_VERSION_CONFLICT,
     SnapshotCreateRequest,
     SnapshotIngestionDecision,
@@ -64,11 +65,28 @@ class FakeSnapshotRepository:
         source_version: str,
     ) -> SnapshotReference | None:
         assert operation_id == _OPERATION_ID
-        return next((item for item in self.snapshots if item.source_version == source_version), None)
+        return next(
+            (
+                replace(item, verification_status=self.statuses[item.snapshot_id])
+                for item in sorted(
+                    reversed(self.snapshots),
+                    key=lambda item: self.statuses[item.snapshot_id] is SnapshotVerificationStatus.FAILED,
+                )
+                if item.source_version == source_version
+            ),
+            None,
+        )
 
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         assert operation_id == _OPERATION_ID
-        return self.snapshots[-1] if self.snapshots else None
+        return next(
+            (
+                replace(item, verification_status=self.statuses[item.snapshot_id])
+                for item in reversed(self.snapshots)
+                if self.statuses[item.snapshot_id] is not SnapshotVerificationStatus.FAILED
+            ),
+            None,
+        )
 
     async def create_snapshot(self, request: SnapshotCreateRequest) -> UUID:
         snapshot_id = uuid4()
@@ -82,6 +100,9 @@ class FakeSnapshotRepository:
                 parser_version=request.metadata.parser_version,
                 normalization_version=request.metadata.normalization_version,
                 canonicalization_spec_version=request.ingestion.canonicalization_spec_version,
+                endpoint_receipt_hash=request.ingestion.endpoint_receipt_hash,
+                rejected_record_count=request.metadata.rejected_record_count,
+                verification_status=SnapshotVerificationStatus.PENDING,
             )
         )
         self.statuses[snapshot_id] = SnapshotVerificationStatus.PENDING
@@ -130,14 +151,24 @@ class FakeSnapshotRepository:
         status = self.statuses.get(snapshot_id)
         if status is None:
             return None
-        return SnapshotStatusReference(snapshot_id, operation_id, status)
+        snapshot = next(item for item in self.snapshots if item.snapshot_id == snapshot_id)
+        return SnapshotStatusReference(snapshot_id, operation_id, status, snapshot.rejected_record_count)
 
     async def get_current_snapshot_status(self, *, operation_id: UUID) -> SnapshotStatusReference | None:
         assert operation_id == _OPERATION_ID
         for snapshot_id, status in self.statuses.items():
             if status is SnapshotVerificationStatus.CURRENT:
-                return SnapshotStatusReference(snapshot_id, operation_id, status)
+                snapshot = next(item for item in self.snapshots if item.snapshot_id == snapshot_id)
+                return SnapshotStatusReference(snapshot_id, operation_id, status, snapshot.rejected_record_count)
         return None
+
+    async def has_passed_verification(
+        self,
+        *,
+        snapshot_id: UUID,
+        check_name: str,
+    ) -> bool:
+        return (snapshot_id, check_name, "PASSED") in self.verifications
 
     async def change_snapshot_status(
         self,
@@ -482,6 +513,78 @@ async def test_same_content_with_new_version_appends_no_change_to_latest_snapsho
     assert repository.runs[-1].run_status == "NO_CHANGE"
 
 
+async def test_changed_rejection_count_creates_new_candidate_instead_of_no_change() -> None:
+    repository = FakeSnapshotRepository()
+    first = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
+    )
+
+    changed = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=replace(_metadata("source-v2"), rejected_record_count=1),
+        artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
+    )
+
+    assert first.decision is SnapshotIngestionDecision.CREATED
+    assert changed.decision is SnapshotIngestionDecision.CREATED
+    assert changed.snapshot_id != first.snapshot_id
+    assert repository.runs[-1].run_status == "SUCCEEDED_WITH_REJECTIONS"
+
+
+@pytest.mark.parametrize("retry_version", ["source-v1", "source-v2"])
+async def test_failed_snapshot_retry_excludes_failed_lineage(retry_version: str) -> None:
+    repository = FakeSnapshotRepository()
+    first = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
+    )
+    assert first.snapshot_id is not None
+    await fail_snapshot_verification(
+        repository=repository,
+        snapshot_id=first.snapshot_id,
+        failure_code="SCHEMA_DRIFT",
+        failed_at=_NOW + timedelta(minutes=1),
+        verified_by="synthetic-reviewer",
+    )
+
+    retry = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=replace(_metadata(retry_version), run_group_key="synthetic-retry"),
+        artifacts=_stored_artifacts(),
+    )
+
+    assert retry.decision is SnapshotIngestionDecision.CREATED
+    assert retry.snapshot_id != first.snapshot_id
+    assert repository.create_requests[-1].supersedes_snapshot_id is None
+
+
+async def test_changed_endpoint_receipt_hash_is_not_no_change() -> None:
+    repository = FakeSnapshotRepository()
+    first = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=_metadata("source-v1"),
+        artifacts=_stored_artifacts(),
+    )
+
+    changed = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=replace(_ingestion(), endpoint_receipt_hash="f" * 64),
+        metadata=_metadata("source-v2"),
+        artifacts=_stored_artifacts(),
+    )
+
+    assert changed.decision is SnapshotIngestionDecision.CREATED
+    assert changed.snapshot_id != first.snapshot_id
+
+
 async def test_same_version_with_changed_content_records_conflict_without_snapshot() -> None:
     repository = FakeSnapshotRepository()
     first = await persist_product_ingestion_result(
@@ -632,6 +735,41 @@ async def test_selecting_new_snapshot_marks_previous_current_stale() -> None:
     )
 
 
+async def test_rejected_snapshot_requires_publication_approval_before_selection() -> None:
+    repository = FakeSnapshotRepository()
+    created = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+        artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
+    )
+    assert created.snapshot_id is not None
+
+    with pytest.raises(ValueError, match="publication 승인"):
+        await select_current_snapshot(
+            repository=repository,
+            snapshot_id=created.snapshot_id,
+            selected_at=_NOW + timedelta(minutes=1),
+            selected_by="synthetic-reviewer",
+        )
+
+    await repository.append_verification(
+        snapshot_id=created.snapshot_id,
+        check_name=SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
+        result="PASSED",
+        verified_at=_NOW + timedelta(minutes=2),
+        verified_by="synthetic-reviewer",
+    )
+    selected = await select_current_snapshot(
+        repository=repository,
+        snapshot_id=created.snapshot_id,
+        selected_at=_NOW + timedelta(minutes=3),
+        selected_by="synthetic-reviewer",
+    )
+
+    assert selected.decision is SnapshotSelectionDecision.ACTIVATED
+
+
 async def test_previous_stale_snapshot_can_be_restored_without_runtime_activation() -> None:
     repository = FakeSnapshotRepository()
     first = await persist_product_ingestion_result(
@@ -749,3 +887,80 @@ async def test_snapshot_failure_rejects_free_form_details() -> None:
         )
 
     assert repository.statuses[created.snapshot_id] is SnapshotVerificationStatus.PENDING
+
+
+@pytest.mark.parametrize("changed", ["content", "receipt", "parser", "normalization", "rejections"])
+async def test_failed_same_version_preserves_contract_conflict(changed: str) -> None:
+    repository = FakeSnapshotRepository()
+    first = await persist_product_ingestion_result(
+        repository=repository, ingestion=_ingestion(), metadata=_metadata("external:v1"), artifacts=_stored_artifacts()
+    )
+    assert first.snapshot_id is not None
+    await fail_snapshot_verification(
+        repository=repository,
+        snapshot_id=first.snapshot_id,
+        failure_code="SCHEMA_DRIFT",
+        failed_at=_NOW,
+        verified_by="synthetic-reviewer",
+    )
+    ingestion = _ingestion(_CHECKSUM_B) if changed == "content" else _ingestion()
+    metadata = _metadata("external:v1")
+    artifacts = _stored_artifacts()
+    if changed == "receipt":
+        ingestion = replace(ingestion, endpoint_receipt_hash="f" * 64)
+    elif changed == "parser":
+        metadata = replace(metadata, parser_version="parser-v2")
+    elif changed == "normalization":
+        metadata = replace(metadata, normalization_version="normalization-v2")
+    elif changed == "rejections":
+        metadata = replace(metadata, rejected_record_count=1)
+        artifacts = (*artifacts, _stored_rejection_artifact())
+    result = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=ingestion,
+        metadata=metadata,
+        artifacts=artifacts,
+    )
+    assert result.decision is SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+    assert result.snapshot_id is None
+    assert len(repository.snapshots) == 1
+    assert repository.runs[-1].failure_code == SOURCE_VERSION_CONFLICT
+
+
+@pytest.mark.parametrize(("count", "artifact_count"), [(2, 1), (1, 2)])
+async def test_reject_count_mismatch_stops_before_database(count: int, artifact_count: int) -> None:
+    repository = FakeSnapshotRepository()
+    with pytest.raises(ValueError, match="개수가 rejected_record_count"):
+        await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(),
+            metadata=replace(_metadata("external:v1"), rejected_record_count=count),
+            artifacts=(*_stored_artifacts(), *(_stored_rejection_artifact(),) * artifact_count),
+        )
+    assert repository.locked_identities == []
+    assert repository.runs == []
+
+
+@pytest.mark.parametrize(("count", "artifact_count"), [(2, 1), (1, 2)])
+async def test_reject_count_mismatch_stops_before_file_write(tmp_path: Path, count: int, artifact_count: int) -> None:
+    repository = FakeSnapshotRepository()
+    metadata = _stored_artifacts()[0].metadata
+    # Input paths deliberately do not exist: cardinality must fail before reading/storing them.
+    rejection = RejectionArtifactInput(
+        file_path=tmp_path / "missing-reject.json",
+        metadata=_stored_rejection_artifact().metadata,
+        reject_code="MISSING_ITEM_SEQ",
+        parser_location="$.records[0]",
+    )
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    with pytest.raises(ValueError, match="개수가 rejected_record_count"):
+        await preserve_and_persist_product_ingestion_result(
+            repository=repository,
+            artifact_store=store,
+            ingestion=_ingestion(),
+            metadata=replace(_metadata("external:v1"), rejected_record_count=count),
+            raw_artifacts=((1, tmp_path / "missing-raw.json", metadata),),
+            rejection_artifacts=(rejection,) * artifact_count,
+        )
+    assert list((tmp_path / "private").iterdir()) == []
+    assert repository.locked_identities == []

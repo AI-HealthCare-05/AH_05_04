@@ -121,3 +121,17 @@ PostgreSQL/Redis를 포함한 전체 CI runner는 이번 로컬 검증에 포함
 승인 상태/receipt·Ingredient 입력·의미상 Alias dedupe·service 실패 응답에 관한 기존 리뷰와
 #164/#165/#166 공유 계약 결정은 별도 후속 범위로 남아 있다. 이 보완은 해당 리뷰의 해결이나
 Runtime 활성화 승인을 의미하지 않는다.
+
+## #319 반영 후 CI multiple heads 해결
+
+#329에 Evaluation revision과 기존 Source Artifact revision이 별도 head로 남아
+`alembic upgrade head`가 실패했다. #323의 검증된 최신 커밋 `55e2aff`를 병합하여
+Evaluation → Source Artifact → Receipt/FAILED 재시도 → Verification 보호 순서를 반영했다.
+단일 head는 `165d7e6f5041`이며, #323의 Source 리뷰 보완도 함께 상속했다.
+
+- 격리 PostgreSQL 17 빈 DB에서 `upgrade head` 성공
+- 전체 migration 테스트: **66 passed**
+- Catalog·Source ingestion·Governance Receipt 테스트: **334 passed**
+- PostgreSQL Source lifecycle·Evaluation repository 테스트: **16 passed**
+- 전체 Ruff·서식 검사 통과 (**518 files**), Mypy **441개 소스 파일 통과**
+- 이 수정은 Catalog 승인 receipt·Ingredient 입력·Alias 의미상 dedupe 등 기존 #329 리뷰의 해결을 의미하지 않는다.
