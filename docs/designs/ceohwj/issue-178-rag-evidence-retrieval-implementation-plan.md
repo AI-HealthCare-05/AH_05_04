@@ -10,6 +10,9 @@
 
 **Spec:** `docs/designs/ceohwj/issue-178-rag-evidence-retrieval-design.md`
 
+**Production Decision:** `docs/governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md`
+(`PD-315-20260908`, Review pending)
+
 ## Global Constraints
 
 - Candidate Index와 Evidence Index 타입·포트·score를 공유하지 않는다.
@@ -1189,3 +1192,38 @@ Index persistence, PostgreSQL `pg_trgm`·pgvector SQL, Source approval, Evidence
 EVAL `#160` 연결은 후속 slice다.
 
 리뷰 배정은 구현 담당자 정현우, 담당 리뷰어 권가빈(Evidence/Scope/Safety), DB·Source 교차리뷰 송은영·김지혜다.
+
+---
+
+## Production 후속 순서 — Issue #315 결정 반영
+
+이 절은 후속 구현의 순서와 인계 조건만 고정한다. Issue #315 문서 PR에서는 아래 production code, DB,
+Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
+
+1. **#166 PR 검토:** Catalog/Resolver 입력 경계, Source Snapshot·Member provenance와 export hash domain을
+   검토한다.
+2. **#166 완료 후 #167/#168 통합:** PR #260의 pure Candidate Index logic을 재구현하지 않고 실제 Catalog
+   export와 DB persistence를 연결한다.
+3. **#178 Production Adapter:** `PD-315-20260908`에 따라 Lexical 20·Dense 20, rank 기반 RRF 30,
+   Reranker 입력 20, Gate 뒤 Context 최대 5를 적용한다. Exact·Trigram·`ts_rank_cd`는 PostgreSQL Adapter가
+   하나의 Lexical 순위와 configuration receipt로 반환한다.
+4. **정규 경계 반영:** RFC 8785 JCS serializer와 hash-domain golden vector, 정규 Evidence provenance,
+   Production `source_version`, `retrieval_execution_status`, `hybrid_retrieve` Node ID, adapter·bridge stable ID
+   이중 검증을 구현한다.
+5. **권위적 실행 결속:** PostgreSQL hybrid retrieval이 준비된 뒤 별도 DB·Safety 범위에서 authoritative
+   Retrieval Run receipt, locator 검증과 Gate origin을 결속한다.
+6. **Evaluation 연결:** 위 Runtime receipt를 `RET-L -> RET-D -> RET-H -> RET-HR`과 연결하고 Dataset·Index·
+   configuration version/hash를 exact-match한다. Evaluation bridge는 SQL ranking을 재구현하지 않는다.
+
+### Production 후속 완료 주장 차단 조건
+
+- `PD-315-20260908` 책임·교차 리뷰 미완료
+- #166의 승인 Catalog/Evidence Index 입력 Receipt 미확정
+- PostgreSQL Adapter가 `ts_rank_cd`를 포함한 Lexical configuration receipt를 재현하지 못함
+- Production provenance가 정확히 하나의 Snapshot Member를 가리키지 않음
+- ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
+- Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
+- Production `source_version` 또는 Evaluation bridge stable ID 문법을 경계에서 검증하지 않음
+
+이 차단 조건이 남아 있으면 Production Adapter, Retrieval Run, Evidence Gate origin 또는 실제 Retrieval
+Evaluation 완료를 주장하지 않는다. `PUBLIC_TRACK_F=false`를 유지한다.
