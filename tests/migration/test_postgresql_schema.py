@@ -1468,15 +1468,17 @@ async def _wait_for_ocr_downgrade_lock() -> None:
     """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
     기다리는지 확인합니다.
 
-    OCR_AI_JOB_BASE_REVISION까지의 downgrade는 이제 `d1e2f3a4b5c6`(#206 user 컬럼 추가) →
-    `20fd11d29ecc`(Guide mapping) 두 단계를 먼저 거칩니다. `d1e2f3a4b5c6`의
+    OCR_AI_JOB_BASE_REVISION까지의 downgrade는 `169a1b2c3d4e`(#169 Prescription Version) →
+    `d1e2f3a4b5c6`(#206 user 컬럼 추가) → `20fd11d29ecc`(Guide mapping) 단계를 먼저 거칩니다.
+    `169a1b2c3d4e`의 `prescription.active_version_id` 제거도 parent chain에 포함된
+    미commit `prescription` insert를 기다릴 수 있습니다. `d1e2f3a4b5c6`의
     `ALTER TABLE "user" ... DROP COLUMN`은 이 테스트의 writer가 `insert_ocr_parent_chain()`로
     같은 transaction에서 만든 `user` row 때문에 대기하고, `20fd11d29ecc`의
     `ALTER TABLE guide DROP CONSTRAINT fk_guide_ai_job`은 `guide`뿐 아니라 참조 대상인
     `ai_job` 테이블에도 ACCESS EXCLUSIVE lock을 요구하므로(PostgreSQL의 FK 제약 삭제 규칙)
     writer가 만든 미commit `ai_job` insert 때문에 대기합니다. 두 단계 모두 writer가
     commit해야 통과해 마지막 ocr_job 단계(및 그 데이터 검증)에 도달합니다. 따라서 `user`·
-    `ai_job`·`ocr_job` 중 어느 테이블에서 대기하든 "downgrade가 concurrent writer를
+    `prescription`·`ai_job`·`ocr_job` 중 어느 테이블에서 대기하든 "downgrade가 concurrent writer를
     기다린다"는 같은 사실을 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
@@ -1497,7 +1499,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname IN ('user', 'ai_job', 'ocr_job')
+                              AND table_info.relname IN ('user', 'prescription', 'ai_job', 'ocr_job')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -1510,7 +1512,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the user/ai_job/ocr_job ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/prescription/ai_job/ocr_job ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 
@@ -2346,12 +2348,11 @@ async def _write_guide_ai_job_link_and_wait(
 
 async def _wait_for_guide_downgrade_lock() -> None:
     """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
-    기다리는지 확인합니다. `GUIDE_AI_JOB_BASE_REVISION`으로 내려가는 경로에 #206의
-    `d1e2f3a4b5c6`(user 컬럼 추가)이 head로 얹히면서, writer가 `insert_guide_parent_chain()`로
-    같은 transaction에서 만든 `user` row 때문에 downgrade가 `guide` 단계(FK 제약 삭제)에
-    도달하기 전에 먼저 `user` 테이블의 `ALTER TABLE ... DROP COLUMN` 단계에서 대기합니다 —
-    두 테이블 모두 writer의 같은 uncommitted transaction이 잠그고 있어 어느 쪽에서
-    관찰되든 같은 대기 상태를 증명합니다."""
+    기다리는지 확인합니다. `GUIDE_AI_JOB_BASE_REVISION`으로 내려가는 경로에는 #169의
+    `169a1b2c3d4e`(Prescription Version)와 #206의 `d1e2f3a4b5c6`(user 컬럼 추가)이 있습니다.
+    writer가 같은 transaction에서 만든 `prescription` 또는 `user` row 때문에 downgrade가
+    `guide` 단계(FK 제약 삭제)에 도달하기 전에 먼저 대기할 수 있습니다. 어느 테이블에서
+    관찰되든 같은 concurrent writer 대기 상태를 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
         poolclass=NullPool,
@@ -2371,7 +2372,7 @@ async def _wait_for_guide_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname IN ('user', 'guide')
+                              AND table_info.relname IN ('user', 'prescription', 'guide')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -2384,7 +2385,7 @@ async def _wait_for_guide_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the user/guide ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/prescription/guide ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 
