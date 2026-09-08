@@ -33,6 +33,7 @@ Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Govern
 | 후속 Issue | #185 Receipt 입력 | 현재 판정 |
 | --- | --- | --- |
 | RAG-04 (#164) | Source/Snapshot/Catalog 최소 DB 기반. 수집·적재·Runtime 활성화 제외 | `PARTIAL` · schema foundation only |
+| RAG-04 (#164) | Evaluation 최소 DB 기반. Runner·Runtime 활성화·실제 환자 데이터 제외 | `PARTIAL` · evaluation schema foundation only |
 | RAG-07A (#167) | Source 목적·Snapshot·Approval·Resolver 입력 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-07B (#168) | Candidate Index Source/version·물리 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-08 (#170) | 승인 Catalog provenance와 Resolver allowlist | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
