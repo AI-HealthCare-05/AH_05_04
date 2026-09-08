@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import warnings
 from copy import deepcopy
 from pathlib import Path
@@ -8,9 +9,9 @@ from typing import Any
 import pytest
 
 from ai_worker.tasks.evaluation import natural_language_retrieval_validation as validation_module
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
+from ai_worker.tasks.evaluation.loaders import load_dataset, parse_json_object_bytes
 from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
     Issue273ValidationStatus,
     ValidationCheck,
@@ -23,15 +24,19 @@ from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
 REPOSITORY_ROOT = Path(__file__).parents[3]
 STATUS_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/status.json"
 REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
+EVALS_ROOT = REPOSITORY_ROOT / "evals"
+DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
+EVALS_README_PATH = EVALS_ROOT / "README.md"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
+DATASET_MANIFEST_HASH = "a6461ca49c6021b242bd5b13f3d9b1b52bf564bea186a47894cd254a40600291"
 
 
 def _status_payload() -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schema_version": "1.0.0",
         "issue": "#273",
-        "phase": "PHASE_0_SCHEMA_CANDIDATE",
-        "status_label": "Candidate · Review Required",
+        "phase": "PHASE_A_DEV_AUTHORING",
+        "status_label": "Phase A · DEV Authoring Draft",
         "schema_set_status": "REVIEW_REQUIRED",
         "dataset_ref": "rag-natural-language-retrieval-dev@1.0.0",
         "planned_counts": {
@@ -41,7 +46,16 @@ def _status_payload() -> dict[str, Any]:
             "expression_types": 6,
             "independent_groups": 20,
         },
-        "created_counts": {"dev_questions": 0, "holdout_questions": 0, "gold_records": 0},
+        "created_counts": {
+            "dev_questions": 60,
+            "holdout_questions": 0,
+            "gold_records": 20,
+            "corpus_records": 100,
+            "topics": 5,
+            "expression_types": 6,
+            "independent_groups": 20,
+        },
+        "dataset_manifest_sha256": DATASET_MANIFEST_HASH,
         "schema_set_ref": {
             "id": "rag-eval.schema-set",
             "version": "1.3.0",
@@ -50,36 +64,41 @@ def _status_payload() -> dict[str, Any]:
         "schema_set_decision": "docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md",
         "responsible_reviewer": "@hazelnutflavoured",
         "approval_transition": "FUTURE_PULL_REQUEST_REVIEW_EVENT",
-        "dataset_status": "NOT_CREATED",
+        "dataset_status": "DRAFT",
         "gold_review_status": "NOT_STARTED",
         "holdout_freeze_status": "NOT_STARTED",
         "adapter_status": "NOT_IMPLEMENTED",
         "actual_run_ref": None,
         "release_eligible": False,
         "blocking_codes": [
-            "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
             "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
             "BLOCKED_BY_RAG_14_ADAPTER",
             "WAITING_FOR_HOLDOUT_FREEZE",
         ],
         "checks": [
             {
-                "check_id": "TASK_1_PROVENANCE_CONTRACTS",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+                "check_id": "PHASE_A_DEV_FIXTURE",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
                 "exit_code": 0,
-                "result": "61 passed",
+                "result": "25 passed",
             },
             {
-                "check_id": "TASK_2_SCHEMA_SET_EXPORT",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_study_split_axis_cardinality_is_portable -q",
+                "check_id": "PHASE_A_LOADER",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q",
                 "exit_code": 0,
-                "result": "6 passed",
+                "result": "132 passed",
             },
             {
-                "check_id": "TASK_3_LOADER_BINDING",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
+                "check_id": "PHASE_A_REPORT_PROJECTION",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
                 "exit_code": 0,
-                "result": "165 passed, 6 skipped",
+                "result": "50 passed",
+            },
+            {
+                "check_id": "PHASE_A_SCHEMA_EXPORT",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+                "exit_code": 0,
+                "result": "94 passed, 7 skipped",
             },
         ],
         "updated_at": "2026-09-07T01:23:38.000000Z",
@@ -93,11 +112,82 @@ def _status_bytes(payload: dict[str, Any]) -> bytes:
     return canonical_json_bytes(payload)
 
 
-def test_phase_0_status_accepts_only_the_candidate_state() -> None:
+def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -> None:
+    manifest_payload: dict[str, Any] = parse_json_object_bytes(DATASET_MANIFEST_PATH.read_bytes())
+    declared_manifest_hash = manifest_payload["manifest_sha256"]
+    recomputed_manifest_hash = canonical_sha256(
+        manifest_payload,
+        excluded_top_level_keys=frozenset({"manifest_sha256"}),
+    )
+    assert recomputed_manifest_hash == declared_manifest_hash == status.dataset_manifest_sha256
+
+    loaded = load_dataset(DATASET_MANIFEST_PATH, evals_root=EVALS_ROOT)
+    loaded_manifest = loaded.manifest.model_dump(mode="json")
+    assert status.dataset_ref == f"{loaded_manifest['dataset_code']}@{loaded_manifest['dataset_version']}"
+    assert status.dataset_status == loaded_manifest["status"]
+
+    cases = [case.model_dump(mode="json") for case in loaded.cases]
+    required_gold_ids = {evidence_id for case in cases for evidence_id in case["expected"]["required_evidence_refs"]}
+    mapping = loaded.evidence_mapping.model_dump(mode="json")
+    mapping_by_id = {entry["evidence_ref_id"]: entry for entry in mapping["entries"]}
+    corpus_paths = {mapping_by_id[evidence_id]["fixture_record_ref"]["path"] for evidence_id in required_gold_ids}
+    assert len(corpus_paths) == 1
+    corpus = parse_json_object_bytes((EVALS_ROOT / corpus_paths.pop()).read_bytes())
+    records = corpus["records"]
+    assert isinstance(records, list)
+    record_objects: list[dict[str, JsonValue]] = []
+    for record in records:
+        assert isinstance(record, dict)
+        record_objects.append(record)
+
+    # Gold/negative labels are deliberately absent from the retrieval index, so the Gold count comes
+    # from the evaluation sidecar the index binds by hash.
+    label_ref = corpus["evaluation_label_ref"]
+    assert isinstance(label_ref, dict)
+    label_path = label_ref["path"]
+    assert isinstance(label_path, str)
+    label_bytes = (EVALS_ROOT / label_path).read_bytes()
+    assert sha256_hex(label_bytes) == label_ref["sha256"]
+    labels = parse_json_object_bytes(label_bytes)["labels"]
+    assert isinstance(labels, list)
+    gold_count = sum(1 for item in labels if isinstance(item, dict) and item.get("record_kind") == "GOLD")
+
+    topic_ids = {slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("TOPIC_")}
+    expression_ids = {
+        slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("EXPRESSION_")
+    }
+    transform_origins = {case["leakage_group_ids"]["transform_origin"] for case in cases}
+    partition_counts = loaded_manifest["partition_counts"]
+    assert status.created_counts.model_dump(mode="json") == {
+        "dev_questions": partition_counts["DEV"],
+        "holdout_questions": partition_counts["HOLDOUT"],
+        "gold_records": gold_count,
+        "corpus_records": len(record_objects),
+        "topics": len(topic_ids),
+        "expression_types": len(expression_ids),
+        "independent_groups": len(transform_origins),
+    }
+
+
+def test_phase_a_status_accepts_only_the_verified_dev_authoring_state() -> None:
     status = parse_status_bytes(_status_bytes(_status_payload()))
 
-    assert status.phase == "PHASE_0_SCHEMA_CANDIDATE"
+    assert status.phase == "PHASE_A_DEV_AUTHORING"
+    assert status.dataset_status == "DRAFT"
+    assert status.dataset_manifest_sha256 == DATASET_MANIFEST_HASH
+    assert status.created_counts.model_dump() == {
+        "dev_questions": 60,
+        "holdout_questions": 0,
+        "gold_records": 20,
+        "corpus_records": 100,
+        "topics": 5,
+        "expression_types": 6,
+        "independent_groups": 20,
+    }
     assert status.schema_set_ref.hash == SCHEMA_SET_HASH
+    assert status.gold_review_status == "NOT_STARTED"
+    assert status.holdout_freeze_status == "NOT_STARTED"
+    assert status.adapter_status == "NOT_IMPLEMENTED"
     assert status.actual_run_ref is None
     assert status.release_eligible is False
 
@@ -131,7 +221,7 @@ def test_phase_0_status_accepts_only_the_candidate_state() -> None:
         (lambda payload: payload.update({"metric_summary": []}), EvaluationErrorCode.SCHEMA_INVALID),
     ],
 )
-def test_phase_0_status_rejects_invalid_state(
+def test_phase_a_status_rejects_invalid_state(
     mutation: Any,
     expected_code: EvaluationErrorCode,
 ) -> None:
@@ -154,7 +244,7 @@ def test_phase_0_status_rejects_invalid_state(
         lambda payload: payload["checks"].pop(),
         lambda payload: payload["checks"].append(
             {
-                "check_id": "TASK_4_UNDECLARED",
+                "check_id": "PHASE_A_UNDECLARED",
                 "command": "uv run pytest undeclared.py -q",
                 "exit_code": 0,
                 "result": "1 passed",
@@ -163,7 +253,7 @@ def test_phase_0_status_rejects_invalid_state(
         lambda payload: payload["checks"].reverse(),
     ],
 )
-def test_phase_0_status_rejects_rehashed_check_catalog_mutation(mutation: Any) -> None:
+def test_phase_a_status_rejects_rehashed_check_catalog_mutation(mutation: Any) -> None:
     payload = _status_payload()
     mutation(payload)
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
@@ -376,22 +466,44 @@ def test_report_rejects_untrusted_objects_without_serialization_warning_or_senti
         assert sentinel not in str(raised.value)
 
 
+def test_evals_readme_quotes_the_current_dataset_manifest_hash() -> None:
+    """`evals/README.md` tells consumers how to verify this Dataset's integrity.
+
+    A regeneration changes the manifest self-hash, so a stale README value makes a correct
+    artifact look tampered with. Bind the documented value to the committed manifest.
+    """
+    manifest_payload: dict[str, Any] = parse_json_object_bytes(DATASET_MANIFEST_PATH.read_bytes())
+    declared_manifest_hash = manifest_payload["manifest_sha256"]
+    assert isinstance(declared_manifest_hash, str)
+    readme = EVALS_README_PATH.read_text(encoding="utf-8")
+    section = readme.split("### Issue #273 자연어 Retrieval DEV authoring", maxsplit=1)
+    assert len(section) == 2, "evals/README.md must keep the Issue #273 section heading"
+    issue_273_section = section[1].split("\n### ", maxsplit=1)[0]
+
+    quoted_hashes = set(re.findall(r"\b[0-9a-f]{64}\b", issue_273_section))
+    assert quoted_hashes == {declared_manifest_hash}, quoted_hashes
+
+
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     raw_status = STATUS_PATH.read_bytes()
-    parse_status_bytes(raw_status)
+    status = parse_status_bytes(raw_status)
+
+    _assert_status_matches_committed_dataset(status)
+    stale_status = status.model_copy(update={"dataset_manifest_sha256": "0" * 64})
+    with pytest.raises(AssertionError):
+        _assert_status_matches_committed_dataset(stale_status)
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
-    assert b"Candidate \xc2\xb7 Review Required" in REPORT_PATH.read_bytes()
+    assert b"Phase A \xc2\xb7 DEV Authoring Draft" in REPORT_PATH.read_bytes()
+    assert "한국어 자연어 합성 DEV 질문" in REPORT_PATH.read_text()
+    assert b"DEV authoring exists but has not received human Gold review" in REPORT_PATH.read_bytes()
+    assert b"Actual retrieval was not run" in REPORT_PATH.read_bytes()
+    assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
+    assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    assert b"61 passed" in raw_status and b"165 passed, 6 skipped" in raw_status
-    assert b"61 passed" in REPORT_PATH.read_bytes() and b"165 passed, 6 skipped" in REPORT_PATH.read_bytes()
-    assert b"47 passed" not in raw_status and b"151 passed" not in raw_status
-    assert b"47 passed" not in REPORT_PATH.read_bytes() and b"151 passed" not in REPORT_PATH.read_bytes()
-    assert b"6 passed" in raw_status and b"6 passed" in REPORT_PATH.read_bytes()
-    assert b"2026-09-07T01:54:36.000000Z" in raw_status
-    assert b"2026-09-07T01:54:36.000000Z" in REPORT_PATH.read_bytes()
-    assert b"2026-09-05T15:28:41.000000Z" not in raw_status
-    assert b"2026-09-05T15:28:41.000000Z" not in REPORT_PATH.read_bytes()
-    assert b"dbfafe99a090b82559720707412a2b830231fd6dcc84ebd1cd834ca56675a5ea" not in raw_status
-    assert b"dbfafe99a090b82559720707412a2b830231fd6dcc84ebd1cd834ca56675a5ea" not in REPORT_PATH.read_bytes()
+    for result in (b"25 passed", b"50 passed", b"132 passed", b"94 passed, 7 skipped"):
+        assert result in raw_status
+        assert result in REPORT_PATH.read_bytes()
+    assert DATASET_MANIFEST_HASH.encode() in raw_status
+    assert DATASET_MANIFEST_HASH.encode() in REPORT_PATH.read_bytes()
