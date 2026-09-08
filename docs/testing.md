@@ -56,14 +56,57 @@ GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migrat
 bash scripts/ci/run_test.sh
 ```
 
+`tests/integration/` 전체를 PostgreSQL·Redis와 함께 재현하는 공식 로컬 명령은 다음과 같습니다.
+
+```bash
+docker compose --env-file envs/.local.env -f docker-compose.yml up -d postgres redis
+bash scripts/ci/run_integration_test.sh
+```
+
+통합 runner는 실행 중인 Compose의 실제 host port를 확인하고, 이름이 정확히 `test`인
+PostgreSQL 데이터베이스만 재생성한 뒤 Alembic migration과 `tests/integration/` 전체를
+실행합니다. 현재 `develop` 기준 수집 대상은 45건입니다. 각 테스트는 고유 schema와
+Redis Stream을 사용하고 fixture teardown에서 정리하며, runner의 임시 storage도 종료 시
+삭제됩니다. 실제 환자 데이터나 외부 CLOVA·OpenAI 호출은 사용하지 않습니다.
+
+`run_test.sh`와 `run_integration_test.sh`는 동시에 실행하지 않습니다. 두 runner 모두 이름이
+고정된 `test` 데이터베이스를 `DROP DATABASE ... WITH (FORCE)`로 재생성하고 통합테스트의
+고정 schema를 사용하므로, 동시 실행하면 상대 runner의 연결이나 schema를 제거할 수 있습니다.
+
+`run_integration_test.sh` 종료 코드는 다음과 같이 구분합니다. 기존 기본 runner인
+`run_test.sh`는 이전 동작을 유지하므로 환경 준비 실패도 `1`이며, 테스트가 전혀 없는
+초기 저장소에서는 `0`으로 skip합니다. 전체 통합 runner는 테스트 미발견을 환경 오류
+`2`로 처리해 실행 범위가 비어 있는 상태를 성공으로 오인하지 않습니다.
+
+| 종료 코드 | 의미 |
+| --- | --- |
+| `0` | migration과 통합테스트 전체 성공 |
+| `1` | migration 또는 pytest 실패 |
+| `2` | 환경파일·Compose·Docker·PostgreSQL·Redis 준비 실패 |
+
+`ENV_FILE`과 `COMPOSE_FILE`로 local/test 설정을 선택할 수 있지만, 경로에 `prod`가 포함된
+파일과 `ENV`가 `local` 또는 `test`가 아닌 환경은 Docker Compose를 해석하기 전에
+차단합니다. 실행 중인 서비스의 readiness는 약 30초 동안 재시도하며, 준비되지 않았다는
+안내가 나오면 출력된 `docker compose ... up -d` 명령과 Compose 로그를 확인한 뒤 다시
+시도합니다. 이 전체 통합 명령은 현재 GitHub Actions 필수 gate에는 포함되지 않으며,
+반복 안정성과 실행 시간을 확인한 뒤 [Issue #307](https://github.com/AI-HealthCare-05/AH_05_04/issues/307)에서
+편입 여부와 방식을 결정합니다. 현재 GitHub Actions의 선별 Redis 통합테스트는 로컬
+Compose의 동적 host port·인증 격리 대신, 인증 없는 service container와 고정 host port
+`127.0.0.1:6379`를 사용합니다.
+
 ### test runner가 격리하는 설정
 
-`run_test.sh`는 `uv run --env-file`로 `envs/.local.env` 전체를 주입하지만, 그 파일은 컨테이너용이라 host 실행에서 달라야 하는 값을 아래와 같이 덮어씁니다. uv가 shell 환경변수를 `--env-file`보다 우선 적용하는 성질을 사용합니다.
+`run_test.sh`와 `run_integration_test.sh`는 공용 test environment helper를 사용합니다.
+두 runner 모두 `uv run --env-file`로 `envs/.local.env` 전체를 주입하지만, 그 파일은
+컨테이너용이라 host 실행에서 달라야 하는 값을 아래와 같이 덮어씁니다. uv가 shell
+환경변수를 `--env-file`보다 우선 적용하는 성질을 사용합니다.
 
 | 설정 | test 실행 값 | 격리하는 이유 |
 | --- | --- | --- |
 | `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
 | `DB_USER`·`DB_PASSWORD` | 환경파일 값 사용(shell 값 제거) | 실행자 shell의 계정이 섞이지 않게 합니다 |
+| `REDIS_HOST`·`REDIS_PORT`·`TEST_REDIS_HOST`·`TEST_REDIS_PORT` | 두 runner의 Redis 의존 통합테스트에서 loopback과 Compose가 공개한 Redis port | 컨테이너 hostname이나 다른 Redis로 접속하지 않습니다 |
+| `REDIS_PASSWORD`·`TEST_REDIS_PASSWORD` | 두 runner의 Redis 의존 통합테스트에서 shell 값 제거 | 실행자 shell의 다른 Redis 인증정보가 섞이지 않게 합니다 |
 | `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다 |
 | `RELEASE_VALIDATION_ALLOWED` | `false` | local live 검증 절차가 켜두도록 안내하는 gate입니다 |
 | `OCR_STRUCTURE_LLM_ENABLED` | `false` | 위와 같습니다. 켜진 값이 필요한 테스트는 각자 `monkeypatch`로 설정합니다 |
@@ -117,16 +160,18 @@ uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_re
 
 `chat-v2-history-eval-v1` 결정론적 Local replay는 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 추가했습니다. 기준선은 `chat-prompt-v2 + history=[]`, 처리 경로는 동일한 `chat-prompt-v2 + 합성 history`이며 실제 `ChatGenerator`를 통과합니다. 2026-09-01 실행에서 계약 scorer는 기준선·history 각각 10/10, 단일 질문 회귀 1/1, 안전 rule 위반 0건이었습니다. 표본이 평가 축별 30건 미만이므로 품질 비율 임계값은 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
 
+[Issue #293](https://github.com/AI-HealthCare-05/AH_05_04/issues/293) 조사에서 최신이 아닌 이전 subject를 생략된 대상으로 하는 축이 비어 있음을 확인해 `chat-v2-history-eval-v2`를 추가했습니다. v1은 불변 버전으로 동결 상태를 유지하고 10 case를 byte-for-byte 재사용하며, v2는 `followup-earlier-subject-over-latest` 1건을 더해 11 case입니다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v2를 가리키고, v1은 `--dataset`으로 결정론적 재현만 수행합니다. v2의 2026-09-07 결정론적 실행에서 계약 scorer는 기준선·history 각각 11/11, 후속 대상 식별 2/2, 안전 rule 위반 0건이었으며 임계값은 동일하게 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
+
 최대 3쌍·12,000자 입력을 30회 실행한 결정론적 application-path 관찰값은 payload 36,217 bytes, p95 0.059 ms였습니다. 이 값은 즉시 응답하는 replay Provider를 사용한 해당 Local 실행의 메시지 조립·검증 시간이며 실제 네트워크·Provider latency가 아닙니다. 승인된 Provider tokenizer가 없어 token 수는 `NOT_RUN`입니다. 합성 PII sentinel은 허용된 `history[].question`·`answer`에서 2회, payload의 다른 필드·instructions·응답·로그·오류·결과 metadata에서 0회였고, trace pipeline이 없어 trace는 `NOT_APPLICABLE_NO_TRACE_PIPELINE`입니다.
 
 ```bash
 cd backend
 uv run python -m app.evaluation.chat_history_runner \
   --mode deterministic \
-  --output ../evals/results/chat-v2-history-eval-v1-local-deterministic.json
+  --output ../evals/results/chat-v2-history-eval-v2-local-deterministic.json
 ```
 
-실제 OpenAI 평가는 명시적 Local opt-in을 요청하지 않아 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v2-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결정론적 결과는 PR #128 또는 Production 공개·Privacy 승인 근거가 아닙니다.
+실제 OpenAI 평가는 명시적 Local opt-in을 요청하지 않아 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v2-history-eval-v2` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결정론적 결과는 PR #128 또는 Production 공개·Privacy 승인 근거가 아닙니다.
 
 ### MVP 공통 오류·no-store 회귀
 

@@ -47,6 +47,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    # 로컬 runner와 달리 GitHub Actions service container의 고정 host port를 사용합니다.
+    # 선별 Redis 통합테스트는 인증 없는 127.0.0.1:6379를 기본값으로 사용합니다.
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"

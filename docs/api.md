@@ -65,13 +65,21 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 의료문서 | `GET` | `/api/v1/documents/{document_id}/file` | `200` |
 | OCR | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200` |
 | OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
+| 처방 | `GET` | `/api/v1/prescriptions/latest` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
+| 가이드 | `GET` | `/api/v1/prescriptions/{prescription_id}/guide` | `200` |
+| 채팅 | `GET` | `/api/v1/prescriptions/{prescription_id}/chat-session` | `200` |
 | 채팅 | `POST` | `/api/v1/prescriptions/{prescription_id}/chat-sessions` | `201` |
 | 가이드 | `POST` | `/api/v1/guides` | `201` |
 | 가이드 | `GET` | `/api/v1/guides/{guide_id}` | `200` |
 | 채팅 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200` |
 | 채팅 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201` |
 | Job | `GET` | `/api/v1/jobs/{job_id}` | `200` |
+| Candidate | `GET` | `/api/v1/medication-candidate-searches/{prescription_version_medication_id}` | `200` |
+| Candidate | `POST` | `/api/v1/medication-candidates/confirm` | `200` |
+| Candidate | `POST` | `/api/v1/medication-candidates/reject` | `200` |
+
+Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 세 endpoint 모두 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 Job 접수입니다. 같은 요청에서는 CLOVA OCR을 호출하지 않고 `AI_JOB`, `IDEMPOTENCY_RECORD`, `OUTBOX_EVENT`, `OCR_JOB` placeholder를 같은 transaction에 저장한 뒤 `JobStatusResponse`를 반환합니다. 실제 OCR 실행은 Worker가 처리합니다.
 
@@ -92,6 +100,8 @@ OCR 접수 요청에는 `Idempotency-Key` header가 필수입니다. 키는 16~2
 OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, `GET /api/v1/prescriptions/{prescription_id}/guides`)은 서비스 로직(`JobStatusService.rediscover_ocr_job`/`rediscover_guide_job`)과 그 테스트까지는 구현되어 있지만, 라우트로는 등록하지 않았습니다. OCR 접수는 `accept_job()`에 연결되어 공통 Job이 생성되지만, 클라이언트는 접수 응답의 `status_url`을 그대로 polling하면 되므로 문서 기준 rediscovery 라우트 노출은 별도 계약 검토 후 진행합니다. Guide rediscovery는 Guide 접수가 비동기로 전환되는 시점에 함께 검토합니다.
 
 두 도메인 모두 `ai_job_id` 영속 매핑(OCR은 #212의 `ocr_job.ai_job_id`, Guide는 같은 목적의 `guide.ai_job_id`)을 갖추고 있어, Outbox 30일 보존과 Job 90일 보존 사이의 31~90일 구간에서도 rediscovery가 값을 찾을 수 있습니다(#148 네 번째 리뷰 지적 — 접수 연결 전에 미리 반영).
+
+위 보류 대상과 별개로, `GET /api/v1/prescriptions/latest`, `GET /api/v1/prescriptions/{prescription_id}/guide`(단수형), `GET /api/v1/prescriptions/{prescription_id}/chat-session`(단수형)은 실제로 등록되어 있습니다(#295). 로그아웃·재로그인 등으로 Frontend가 `prescription_id`/`guide_id`/`session_id`를 잃어버렸을 때, Job 상태나 `ai_job_id`와 무관하게 소유권 기준으로 가장 최근 확정 처방과 그 처방의 Guide·활성 Chat session을 다시 조회하기 위한 임시 rediscovery입니다. Chat session 조회는 기존 활성 세션이 없으면 새 세션을 만들지 않고 `404 CHAT_SESSION_NOT_FOUND`를 반환하며, Frontend는 이때만 기존 `POST /prescriptions/{prescription_id}/chat-sessions` 생성 흐름으로 폴백합니다. Guide/Chat 생성이 아직 동기(one-cycle)라 위 Job 기반 보류 대상과는 목적이 다르며, Guide/Chat 접수가 비동기로 전환되면 Job 기반 rediscovery 계약으로 대체될 수 있습니다.
 
 ## 인증과 사용자
 
@@ -203,6 +213,7 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
 | `POST` | `/api/v1/prescriptions/{prescription_id}/chat-sessions` | `201 Created` | 확정 처방에 대한 활성 채팅 세션을 생성합니다. |
+| `GET` | `/api/v1/prescriptions/{prescription_id}/chat-session` | `200 OK` | 재접속 복구를 위해 확정 처방의 기존 활성 채팅 세션을 조회합니다. 세션이 없으면 생성하지 않고 `404 CHAT_SESSION_NOT_FOUND`를 반환합니다. |
 | `GET` | `/api/v1/chat-sessions/{session_id}/messages` | `200 OK` | 세션의 USER·ASSISTANT 메시지를 순서대로 조회합니다. |
 | `POST` | `/api/v1/chat-sessions/{session_id}/messages` | `201 Created` | USER 메시지 저장, AI 응답 생성, ASSISTANT 메시지 저장을 한 요청에서 완료합니다. |
 
