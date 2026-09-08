@@ -13,19 +13,21 @@
 
 ## 기존 구현 조사 요약
 
-아래 구현 조사는 미병합 PR #323의 `b18d5cde1b898ee7e75541ad14f6f870102a582c`를 기준으로 한다. 이 문서 브랜치의 develop에 해당 코드가 이미 존재하거나 운영에 배포됐다는 뜻이 아니다.
+아래 구현 조사는 PR #323의 최종 병합 커밋 `2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd`를 기준으로 갱신했다. #323은 2026-09-08 06:38:52 UTC에 병합됐으며 최종 PR head는 `61b1adeab9f5f774d056a95169e50aa7328a21a7`이다. 해당 코드는 develop에 병합되었고 이 문서 브랜치에도 반영했다. 병합은 운영 배포나 실제 Source Runtime 활성화 승인을 의미하지 않는다.
 
 | 확인한 동작 | 정책·설계에 미치는 영향 | 코드 근거 |
 | --- | --- | --- |
-| RAW_RESPONSE·REJECTS는 파일을 먼저 보존한 뒤 DB 참조 저장 | DB rollback이나 뒤 파일의 저장 실패 후 선행 객체가 남을 수 있음 | [persistence](https://github.com/AI-HealthCare-05/AH_05_04/blob/b18d5cde1b898ee7e75541ad14f6f870102a582c/ai_worker/tasks/rag/source_ingestion/persistence.py) |
-| Local은 root 아래 SHA-256 key, S3는 bucket/prefix 아래 SHA-256 key 사용 | Run·종류와 무관하게 객체 공유 가능. namespace 결속 필요 | [Local store](https://github.com/AI-HealthCare-05/AH_05_04/blob/b18d5cde1b898ee7e75541ad14f6f870102a582c/ai_worker/adapters/local_private_source_artifact_store.py), [S3 store](https://github.com/AI-HealthCare-05/AH_05_04/blob/b18d5cde1b898ee7e75541ad14f6f870102a582c/ai_worker/adapters/s3_private_source_artifact_store.py) |
-| Artifact→Run→nullable Snapshot, Catalog/Verification→Snapshot | NO_CHANGE·FAILED Run 참조와 간접 provenance도 보호 | [lifecycle](https://github.com/AI-HealthCare-05/AH_05_04/blob/b18d5cde1b898ee7e75541ad14f6f870102a582c/ai_worker/tasks/rag/source_ingestion/snapshot_lifecycle.py) |
-| Artifact DB 행은 append-only, 객체 key index는 비unique | 공유 참조를 없애려고 DB 행을 먼저 삭제하지 않음 | [DB 모델](https://github.com/AI-HealthCare-05/AH_05_04/blob/b18d5cde1b898ee7e75541ad14f6f870102a582c/backend/app/models/rag_source.py#L311) |
-| 보존 만료·cleanup 목록/삭제 포트·Source cleanup 감사 기능 없음 | 기존 저장소 기능과 후속 cleanup 구현 구분 | [Artifact 포트](https://github.com/AI-HealthCare-05/AH_05_04/blob/b18d5cde1b898ee7e75541ad14f6f870102a582c/ai_worker/tasks/rag/source_ingestion/artifacts.py#L117) |
+| RAW_RESPONSE·REJECTS는 파일을 먼저 보존한 뒤 DB 참조 저장 | DB rollback이나 뒤 파일의 저장 실패 후 선행 객체가 남을 수 있음 | [persistence](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/ai_worker/tasks/rag/source_ingestion/persistence.py) |
+| Local은 root 아래 SHA-256 key, S3는 bucket/prefix 아래 SHA-256 key 사용 | Run·종류와 무관하게 객체 공유 가능. namespace 결속 필요 | [Local store](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/ai_worker/adapters/local_private_source_artifact_store.py), [S3 store](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/ai_worker/adapters/s3_private_source_artifact_store.py) |
+| Artifact→Run→Snapshot, Catalog/Verification→Snapshot. FAILED Run은 Snapshot NULL, NO_CHANGE Run은 Snapshot 필수 | NO_CHANGE·FAILED Run 참조와 간접 provenance도 보호 | [lifecycle](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/ai_worker/tasks/rag/source_ingestion/snapshot_lifecycle.py) |
+| Artifact DB 행은 append-only, 객체 key index는 비unique | 공유 참조를 없애려고 DB 행을 먼저 삭제하지 않음 | [DB 모델](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/backend/app/models/rag_source.py) |
+| 보존 만료·cleanup 목록/삭제 포트·Source cleanup 감사 기능 없음 | 기존 저장소 기능과 후속 cleanup 구현 구분 | [Artifact 포트](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/ai_worker/tasks/rag/source_ingestion/artifacts.py) |
 
 Source Artifact는 RAW_RESPONSE·REJECTS를 포괄하는 표현이며 별도의 세 번째 종류 enum이 아니다. 물리 bucket/root·운영 객체·S3 lifecycle/versioning/Object Lock/IAM은 이번 조사에서 조회하지 않았다. S3 immutable metadata를 실제 Object Lock으로 해석하지 않는다.
 
-기존 저장소/factory/acquire 테스트 45건은 로컬 1단계 조사 시 통과했다. 이는 합성 파일과 모의 S3 검증이며, 아래 cleanup 명세가 구현·검증됐다는 증거는 아니다. 기존 PostgreSQL rollback 테스트는 DB 행 취소를 검증한다. 실제 파일과 DB rollback을 함께 재현하는 cleanup 통합 검증은 후속이다.
+최종 병합 커밋을 별도 checkout하여 저장소/factory/acquire 테스트 **45건**, 이를 포함한 Source ingestion 단위 테스트 **272건**을 2026-09-08에 재실행해 통과했다. 과거 조사 수치를 재사용한 것이 아니며 두 수치는 중복 합산하지 않는다. [재현 명령·검증 범위](../../../testing/source-artifact-policy-335-merged323.md)를 참고한다. 합성 파일·모의 S3·단위 테스트 결과이며 cleanup 구현 또는 실제 운영 저장소 검증을 의미하지 않는다.
+
+이전 조사 이후 추가된 `165f90716263` migration은 FAILED Run의 Snapshot NULL 및 NO_CHANGE Run의 Snapshot 필수를 CHECK로 강제한다. migration 테스트는 상태별 허용·거부와 실제 `configure-app-role.sql` provisioning 질의를 사용한 Runtime 권한 검증을 포함한다. [최종 migration](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/backend/alembic/versions/165f90716263_check_ingestion_run_snapshot.py), [최종 DB 테스트](https://github.com/AI-HealthCare-05/AH_05_04/blob/2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd/tests/migration/test_rag_source_catalog_migration.py)를 코드로 대조했으며, 이번 문서 수정에서 PostgreSQL 테스트를 재실행하지는 않았다. 실제 파일과 DB rollback을 함께 재현하는 cleanup 통합 검증은 #347 후속이다.
 
 ## 기술 검토 의견 반영표
 
