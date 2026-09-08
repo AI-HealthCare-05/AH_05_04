@@ -6,6 +6,7 @@ from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
@@ -25,6 +26,14 @@ _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS = frozenset(
 
 # example 파일들의 placeholder 명명 규칙("-at-least-32-characters")과 맞춘 최소 길이입니다.
 _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH = 32
+
+# SYNC_MUTATION response_body_snapshot 암호화 키(Fernet, 32byte urlsafe-base64)의 local
+# 기본값입니다. 전부 0바이트로 만든 값이라 눈에 띄게 가짜지만 Fernet이 요구하는 형식은
+# 지켜서, 실제 값을 설정하지 않은 local 환경에서도 기동은 됩니다. non-local 기동은 아래
+# validator가 이 값 그대로 쓰이는 것을 거부합니다. 알고리즘 자체(Fernet)는 #311 구현의
+# 임시 기본값이며, 담당 리뷰어의 암호화 envelope 검토가 끝나기 전까지 실제 운영 키를
+# 이 값으로 설정해서는 안 됩니다.
+_IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_PLACEHOLDER = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
 
 
 def get_default_timezone() -> tzinfo:
@@ -124,6 +133,26 @@ class Config(BaseSettings):
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
 
+    # idempotency-v1.md: SYNC_MUTATION의 response_body_snapshot은 암호화한 BYTEA로 저장합니다.
+    # 알고리즘·키 관리 방식은 #311 담당 리뷰어의 암호화 envelope 검토 대상이라, 아래 값은
+    # "일단 동작하는 기본값"(Fernet)입니다 — 검토 결과에 따라 값을 교체하면 되도록 별도 필드로
+    # 분리해뒀습니다. IDEMPOTENCY_HMAC_KEY와 같은 이유로 로그·이슈·PR에 실제 값을 남기지 않습니다.
+    IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: str = _IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_PLACEHOLDER
+    IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION: str = "v1"
+
+    @field_validator("IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY", mode="after")
+    @classmethod
+    def _validate_idempotency_snapshot_encryption_key_format(cls, value: str) -> str:
+        # 값 자체가 Fernet이 요구하는 32byte urlsafe-base64 키가 아니면, non-local 여부와
+        # 무관하게 기동 시점에 바로 드러나야 한다(런타임 첫 암호화 호출까지 미루지 않는다).
+        try:
+            Fernet(value.encode("utf-8"))
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY must be a valid Fernet key (32 bytes, urlsafe-base64-encoded)"
+            ) from exc
+        return value
+
     @field_validator("IDEMPOTENCY_HMAC_KEY", mode="after")
     @classmethod
     def _strip_idempotency_hmac_key(cls, value: str) -> str:
@@ -196,6 +225,16 @@ class Config(BaseSettings):
                     f"IDEMPOTENCY_HMAC_KEY must be at least {_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH} "
                     "characters outside local environment"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_idempotency_snapshot_encryption_key_configured(self) -> "Config":
+        if self.ENV is not Env.LOCAL and self.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY == (
+            _IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_PLACEHOLDER
+        ):
+            raise ValueError(
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY must be set to a real secret outside local environment"
+            )
         return self
 
     @model_validator(mode="after")

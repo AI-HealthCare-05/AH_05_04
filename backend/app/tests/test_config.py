@@ -1,4 +1,5 @@
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from app.core.config import Config, Env
@@ -12,6 +13,11 @@ BASE_CONFIG = {
     "DB_NAME": "test_database",
     "CHAT_HISTORY_CONTEXT_ENABLED": False,
 }
+
+# IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY용 placeholder가 아닌 실제 형식의(Fernet 32byte
+# urlsafe-base64) 테스트 값입니다. config.py의 placeholder 기본값과만 달라야 하며,
+# 프로덕션에서 실제로 쓰이지 않습니다.
+REAL_SNAPSHOT_ENCRYPTION_KEY = "mNZgOOlYI_KL5_6HjgyDFGPkMW7xU7CBpPYY5awEaRg="
 
 
 def test_backend_env_is_shared_deployment_environment() -> None:
@@ -46,6 +52,8 @@ def test_config_parses_environment(
             # production은 IDEMPOTENCY_HMAC_KEY placeholder·길이 검증을 거부하므로, 이 테스트가
             # 검증하는 ENV 파싱과 무관한 실패를 피하려면 32자 이상의 실제 값을 넣어야 합니다.
             "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+            # 같은 이유로 IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY도 placeholder가 아닌 값을 넣습니다.
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
         }
     )
 
@@ -301,6 +309,7 @@ def test_idempotency_hmac_key_field_is_normalized_to_stripped_value(environment:
             **BASE_CONFIG,
             "ENV": environment,
             "IDEMPOTENCY_HMAC_KEY": "  a-real-idempotency-hmac-secret-value  ",
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
         }
     )
 
@@ -314,7 +323,66 @@ def test_idempotency_hmac_key_accepts_configured_value_outside_local(environment
             **BASE_CONFIG,
             "ENV": environment,
             "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
         }
     )
 
     assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret-value"
+
+
+def test_idempotency_snapshot_encryption_key_default_is_a_fixed_placeholder() -> None:
+    """IDEMPOTENCY_HMAC_KEY와 같은 이유로, 기본값이 프로세스마다 달라지면 서버 재시작
+    사이에 저장된 snapshot을 복호화하지 못합니다. 고정 literal인지 model_fields로 확인합니다."""
+    assert (
+        Config.model_fields["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY"].default
+        == "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+    )
+
+
+def test_idempotency_snapshot_encryption_key_default_is_a_valid_fernet_key() -> None:
+    """local 환경은 이 값을 그대로 쓰므로, placeholder라도 Fernet이 실제로 로드할 수 있는
+    형식이어야 기동이 됩니다."""
+    config = Config.model_validate(BASE_CONFIG)
+
+    Fernet(config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY.encode("utf-8"))
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_snapshot_encryption_key_rejects_placeholder_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+                # 실행 환경의 실제 값이 이 테스트를 거짓으로 통과시키지 않도록 명시적으로
+                # placeholder를 지정합니다(IDEMPOTENCY_HMAC_KEY 테스트와 동일한 이유).
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+            }
+        )
+
+
+def test_idempotency_snapshot_encryption_key_rejects_invalid_fernet_format() -> None:
+    """환경과 무관하게, Fernet이 로드할 수 없는 값은 첫 암호화 호출까지 미루지 않고
+    기동 시점에 바로 드러나야 합니다."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": "not-a-valid-fernet-key",
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_snapshot_encryption_key_accepts_configured_value_outside_local(environment: str) -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": environment,
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+        }
+    )
+
+    assert config.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY == REAL_SNAPSHOT_ENCRYPTION_KEY
