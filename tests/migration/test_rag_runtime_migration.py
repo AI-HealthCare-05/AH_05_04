@@ -20,7 +20,7 @@ from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAG_RUNTIME_REVISION = "164b6c7d8e9f"
-RAG_RUNTIME_BASE_REVISION = "169b2c3d4e5f"
+RAG_RUNTIME_BASE_REVISION = "169c3d4e5f6a"
 RAG_RUNTIME_TABLES = {
     "rag_runtime_execution_manifest",
     "rag_runtime_release_bundle",
