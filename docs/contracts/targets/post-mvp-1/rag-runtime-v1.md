@@ -7,7 +7,8 @@
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-01 |
+| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Review pending |
+| Last verified | 2026-09-08 |
 
 ## 목적과 적용 범위
 
@@ -170,9 +171,25 @@ Guide의 Citation Finalizer도 `claim_citation_validator`와 `release_gate` 사�
 
 ### Retrieval·Rerank·Evidence Gate
 
-- 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk와 Rule Evidence다.
+- RRF 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk다. Interaction Rule은 앞선 `rule_check`에서
+  결정론적으로 평가하고 연결된 Rule Evidence를 Citation·Evidence Gate로 전달하며, 같은 Rule Evidence를
+  RRF 후보로 다시 검색하지 않는다.
+- 내부 Evidence provenance는 `source_snapshot_id`, 해당 Snapshot의 `canonical_checksum`과 정확히 하나의
+  Endpoint/Operation 또는 Artifact Member를 함께 보존·검증한다. `canonical_checksum`은 bridge content hash
+  preimage가 아니라 당시 Snapshot 내용 동일성 확인 값이다.
+- `external:` Production `source_version`의 payload는 해당 Snapshot에 보존된 non-null
+  `external_version`과 byte-for-byte exact-match해야 하며, 외부 불변 version이 없는 API·Internal
+  Snapshot의 `external_version`은 `null`이어야 한다. 전체 `source_version` 200자 상한에 prefix가 포함되므로
+  `external_version` payload의 허용 상한은 191자다.
+- `api:`·`internal:` Production `source_version`의 hash suffix는 해당 `source_snapshot_id`의
+  `canonical_checksum`과 exact-match해야 한다. 이미 저장된 Snapshot을 읽는 Adapter에서 형식만 유효한 다른
+  hash가 발견되면 Source 내용 충돌이 아니라 Retrieval `VALIDATION_ERROR`로 닫고 Safety finalizer가
+  `VALIDATION_FAILED` fallback으로 변환한다.
 - `pg_trgm`·Dense 검색과 rerank 구현은 versioned configuration으로 재현한다.
 - 내부 Top-K·score는 공개 DTO에 노출하지 않는다.
+- 승인 근거가 없는 Retrieval `SUCCEEDED/NO_HITS`는 Safety finalizer에서
+  `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`,
+  `fallback_code=NO_APPROVED_EVIDENCE`로 변환한다.
 - 의료 Claim과 처방약 기반 Guideline Claim은 승인된 Source version과 locator를 가져야 한다.
 - 근거 없음·상충·Source 비활성·만료·Citation 불일치에서는 생성 내용을 폐기하고 승인 fallback만 저장한다.
 

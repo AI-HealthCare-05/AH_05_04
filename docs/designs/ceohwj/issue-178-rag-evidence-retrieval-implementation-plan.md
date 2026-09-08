@@ -10,6 +10,9 @@
 
 **Spec:** `docs/designs/ceohwj/issue-178-rag-evidence-retrieval-design.md`
 
+**Production Decision:** `docs/governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md`
+(`PD-315-20260908`, Review pending)
+
 ## Global Constraints
 
 - Candidate Index와 Evidence Index 타입·포트·score를 공유하지 않는다.
@@ -1189,3 +1192,69 @@ Index persistence, PostgreSQL `pg_trgm`·pgvector SQL, Source approval, Evidence
 EVAL `#160` 연결은 후속 slice다.
 
 리뷰 배정은 구현 담당자 정현우, 담당 리뷰어 권가빈(Evidence/Scope/Safety), DB·Source 교차리뷰 송은영·김지혜다.
+
+---
+
+## Production 후속 순서 — Issue #315 결정 반영
+
+이 절은 후속 구현의 순서와 인계 조건만 고정한다. Issue #315 문서 PR에서는 아래 production code, DB,
+Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
+
+1. **#166 PR 검토:** Catalog/Resolver 입력 경계, Source Snapshot·Member provenance와 export hash domain을
+   검토한다.
+2. **#166 완료 후 #167/#168 통합:** PR #260의 pure Candidate Index logic을 재구현하지 않고 실제 Catalog
+   export와 DB persistence를 연결한다. #166 D-05의 Candidate Catalog projection hash, Runtime medication
+   Catalog manifest hash와 PR #329/#167 v2 Catalog envelope 계산식은 이 Decision에서 변경하지 않는다.
+3. **#362 Source 생산 경계:** Source ingestion이 Production `source_version` 생성·검증, 외부 Version 보존·결속,
+   정규 200자 상한과 파생 Freshness·Snapshot 승인 경계를 구현한다. Snapshot이 없는 conflict run에도 Operation,
+   시도한 `source_version`과 비교 canonical contract를 append-only로 보존한다. #178의 fail-closed Source
+   version 검증과 conflict origin 결속보다 먼저 완료한다. `external:` prefix를 포함한 총 길이 기준으로
+   payload 191자는 허용하고 192자는 거부하는 경계 테스트를 포함한다.
+4. **#178 Production Adapter:** `PD-315-20260908`의 `rrf-rank-fusion@1` 공식과 안정 Chunk 좌표
+   dedupe·content hash 충돌 검증·exact-rational 비교·fraction receipt를 구현한다. RRF는
+   `KNOWLEDGE_CHUNK` 전용이고 Rule Evidence는 `rule_check` 경로를 사용한다. P0 승인 기본 configuration은
+   Lexical 20·Dense 20·`rrf_k=60`·RRF 출력 30·Reranker 입력 20·Gate 뒤 Context 최대 5다. DEV가 변경을
+   요구하면 새 version을 승인하고 HOLDOUT 전에 선택된 version을 동결한다. Exact 우선 bucket의
+   Trigram·`ts_rank_cd` 순위는 PostgreSQL Adapter가 versioned lexical receipt로 반환한다.
+5. **정규 경계 반영:** RFC 8785 JCS serializer와 hash-domain golden vector, 유형별
+   `evidence-bridge-content@1` projection 및 `INTERACTION_RULE.evidence_role`을 포함한 정규 Evidence provenance,
+   Snapshot `canonical_checksum` exact-match, API·Internal `source_version` hash suffix와 Snapshot checksum의
+   exact-match, Source metadata와 결속된 Production `source_version`, terminal `retrieval_execution_status`,
+   `retrieval_run.status` lifecycle과 diagnostic을 포함한 Safety finalizer 변환,
+   `hybrid_retrieve` Node ID, Runtime identity와 Evaluation bridge ID의 분리 검증을 구현한다.
+6. **권위적 실행 결속:** PostgreSQL hybrid retrieval이 준비된 뒤 별도 DB·Safety 범위에서 authoritative
+   Retrieval Run receipt, locator 검증과 Gate origin을 결속한다.
+7. **Evaluation 연결:** bridge producer가 Runtime identity를 Evaluation ID에 결속한 뒤 runner가 Runtime
+   receipt를 `RET-L -> RET-D -> RET-H -> RET-HR`과 연결하고 Dataset·Index·configuration version/hash를
+   exact-match한다. 승인된 새 `source_version`은 내용 hash가 같아도 새 stable key·`evidence_ref_id`·mapping
+   manifest로 재평가하고, 새 Snapshot·version이 없는 `NO_CHANGE`만 기존 결속을 유지한다. Bridge와 runner는
+   SQL ranking을 재구현하지 않는다.
+
+### Production 후속 완료 주장 차단 조건
+
+- `PD-315-20260908` 책임·교차 리뷰 미완료
+- #166의 승인 Catalog export Receipt 미확정
+- #362의 Production `source_version` 생산·검증·200자 상한과 Source Snapshot 승인 경계 미완료
+- #178의 별도 Knowledge Evidence Index/Corpus Receipt와 소유 경계 미확정
+- PostgreSQL Adapter가 `ts_rank_cd`를 포함한 Lexical configuration receipt를 재현하지 못함
+- Production provenance가 Snapshot `canonical_checksum`과 exact-match하지 않거나 정확히 하나의 Snapshot
+  Member를 가리키지 않음
+- API·Internal `source_version` hash suffix가 해당 Snapshot `canonical_checksum`과 exact-match하지 않는데
+  Retrieval Adapter에서 Retrieval `VALIDATION_ERROR`와 Safety `VALIDATION_FAILED`로 닫지 않거나,
+  Source producer에서 Snapshot 생성 전 수집 validation failure로 닫지 않고 이미 관측된 동일
+  `source_version`의 canonical contract 충돌인 `SOURCE_VERSION_CONFLICT`로 오분류함. Producer의 정확한
+  ingestion `failure_code`는 #362에서 Source Ingestion 계약과 함께 고정함
+- `external:` payload가 Snapshot의 non-null `external_version`과 byte-for-byte exact-match하지 않거나,
+  외부 불변 version이 없는 API·Internal Snapshot에 `external_version`이 남아 있는데 producer 또는
+  Retrieval Adapter가 각각 fail-closed하지 않음
+- Source Snapshot checksum을 포함한 모든 JCS domain의 문자열을 일괄 NFC 변환하여 원문 Unicode를 보존하는
+  `mfds-product-approval@1` preimage를 변경함
+- pinned Source·Operation·요청 version과 authoritative conflict signal의 exact origin 결속 없이 latest 또는
+  unbound `SOURCE_VERSION_CONFLICT`를 현재 Job의 `evidence_status=CONFLICTED`로 투영함
+- ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
+- Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
+- Production `source_version`을 Source metadata와 함께 검증하지 않거나 Runtime identity와 Evaluation bridge
+  ID의 생성·검증 소유권이 분리되지 않음
+
+이 차단 조건이 남아 있으면 Production Adapter, Retrieval Run, Evidence Gate origin 또는 실제 Retrieval
+Evaluation 완료를 주장하지 않는다. `PUBLIC_TRACK_F=false`를 유지한다.
