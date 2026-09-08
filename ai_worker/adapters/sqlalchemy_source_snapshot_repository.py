@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, String, column, func, insert, select, table, update
+from sqlalchemy import DateTime, Integer, String, column, func, insert, select, table, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -363,23 +363,22 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         new_status: SnapshotVerificationStatus,
         verified_at: datetime | None = None,
         effective_at: datetime | None = None,
+        selected_by: str | None = None,
     ) -> bool:
-        values: dict[str, object] = {"verification_status": new_status}
-        if verified_at is not None:
-            values["verified_at"] = verified_at
-        if effective_at is not None:
-            values["effective_at"] = effective_at
-        statement = (
-            update(_SNAPSHOT)
-            .where(
-                _SNAPSHOT.c.id == str(snapshot_id),
-                _SNAPSHOT.c.verification_status == expected_status,
-            )
-            .values(**values)
-            .returning(_SNAPSHOT.c.id)
+        result = await self._session.execute(
+            text(
+                "SELECT transition_rag_source_snapshot(:snapshot_id, :expected, :next, :verified, :effective, :actor)"
+            ),
+            {
+                "snapshot_id": str(snapshot_id),
+                "expected": expected_status.value,
+                "next": new_status.value,
+                "verified": verified_at,
+                "effective": effective_at,
+                "actor": selected_by,
+            },
         )
-        result = await self._session.execute(statement)
-        return result.scalar_one_or_none() is not None
+        return result.scalar_one() is True
 
 
 def _snapshot_reference(row: RowMapping | None) -> SnapshotReference | None:
