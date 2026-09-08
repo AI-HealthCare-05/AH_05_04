@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +7,12 @@ from sqlalchemy.orm import selectinload
 
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import (
+    Medication,
+    Prescription,
+    PrescriptionVersion,
+    PrescriptionVersionMedication,
+)
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -52,7 +57,9 @@ class PrescriptionRepository:
         confirmed_at: datetime,
         medications: list[dict],
     ) -> Prescription:
+        version_id = uuid4()
         prescription = Prescription(
+            active_version_id=version_id,
             document_id=document.id,
             source_ocr_job_id=source_ocr_job.id,
             profile_id=document.profile_id,
@@ -64,6 +71,24 @@ class PrescriptionRepository:
 
         for medication in medications:
             self.session.add(Medication(prescription_id=prescription.id, **medication))
+
+        version = PrescriptionVersion(
+            id=version_id,
+            prescription_id=prescription.id,
+            version_number=1,
+            prescribed_date=prescribed_date,
+            confirmed_at=confirmed_at,
+        )
+        self.session.add(version)
+        await self.session.flush()
+
+        for medication in medications:
+            self.session.add(
+                PrescriptionVersionMedication(
+                    prescription_version_id=version.id,
+                    **medication,
+                )
+            )
         await self.session.flush()
         return prescription
 

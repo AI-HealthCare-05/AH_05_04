@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import (
+    Medication,
+    Prescription,
+    PrescriptionVersion,
+    PrescriptionVersionMedication,
+)
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.prescription_repository import PrescriptionRepository
@@ -124,3 +129,68 @@ async def test_get_latest_owned_rejects_other_users_prescriptions(db_session: As
     result = await repo.get_latest_owned(user_id=intruder.id)
 
     assert result is None
+
+
+async def test_create_with_medications_dual_writes_version_one_snapshot(db_session: AsyncSession) -> None:
+    owner = await _create_user(db_session, email="dual-write@example.com")
+    profile = await db_session.scalar(
+        select(Profile).where(Profile.user_id == owner.id, Profile.profile_type == ProfileType.SELF)
+    )
+    assert profile is not None
+    document = MedicalDocument(
+        uploaded_by=owner.id,
+        profile_id=profile.id,
+        original_file_name="dual-write.jpg",
+        object_key=f"{uuid4()}.jpg",
+        file_mime_type="image/jpeg",
+        file_size_bytes=100,
+    )
+    db_session.add(document)
+    await db_session.flush()
+    ocr_job = OcrJob(document_id=document.id)
+    db_session.add(ocr_job)
+    await db_session.flush()
+
+    confirmed_at = datetime.now(UTC)
+    prescription = await PrescriptionRepository(db_session).create_with_medications(
+        document=document,
+        source_ocr_job=ocr_job,
+        prescribed_date=date(2026, 9, 8),
+        confirmed_at=confirmed_at,
+        medications=[
+            {
+                "medication_name": "합성검증정",
+                "strength_text": "10mg",
+                "dose_value": 1,
+                "dose_unit": "정",
+                "frequency_per_day": 2,
+                "timing_text": "식후",
+                "duration_days": 3,
+                "display_order": 1,
+            }
+        ],
+    )
+
+    version = await db_session.scalar(
+        select(PrescriptionVersion).where(PrescriptionVersion.prescription_id == prescription.id)
+    )
+    assert version is not None
+    assert prescription.active_version_id == version.id
+    assert version.version_number == 1
+    assert version.prescribed_date == prescription.prescribed_date
+    assert version.confirmed_at == confirmed_at
+
+    legacy_medication = await db_session.scalar(select(Medication).where(Medication.prescription_id == prescription.id))
+    snapshot_medication = await db_session.scalar(
+        select(PrescriptionVersionMedication).where(PrescriptionVersionMedication.prescription_version_id == version.id)
+    )
+    assert legacy_medication is not None
+    assert snapshot_medication is not None
+    assert snapshot_medication.medication_name == legacy_medication.medication_name
+    assert snapshot_medication.strength_text == legacy_medication.strength_text
+    assert snapshot_medication.dose_value == legacy_medication.dose_value
+    assert snapshot_medication.dose_unit == legacy_medication.dose_unit
+    assert snapshot_medication.frequency_per_day == legacy_medication.frequency_per_day
+    assert snapshot_medication.timing_text == legacy_medication.timing_text
+    assert snapshot_medication.duration_days == legacy_medication.duration_days
+    assert snapshot_medication.display_order == legacy_medication.display_order
