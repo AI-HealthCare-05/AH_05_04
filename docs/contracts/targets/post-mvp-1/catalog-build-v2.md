@@ -63,4 +63,4 @@ source_refs는 Snapshot ID·Source version UTF-8 바이트순으로 정렬한다
 
 Product/Ingredient 입력과 Component 양쪽 참조, Alias 대상은 엔티티별 허용 목록을 적용한다. 제외 대상은 lookup 전에 걸러 누락 대상을 조회하지 않으며 Product/Search Entry로 내보내지 않는다. Candidate 입력도 엔티티별 허용 목록을 검사한다. 공백·잘못된 입력 타입의 기존 validation은 유지한다. 보험 식별자를 제품 Identity로 변환하거나 서로 다른 Identity를 병합하지 않는다.
 
-#323은 이번 검토 시점에 미병합이므로 Source 중복 diff를 제거하려고 Source 이력을 임의 삭제하지 않는다. #323 병합 후 최신 develop을 반영하고 중복 diff·Alembic 단일 head·해당 HEAD의 CI를 확인한 뒤 재리뷰한다.
+#323 병합 후 develop `2fa814a`를 반영했다. Source 코드·migration·문서·검증 기록은 병합된 develop과 일치시키고, #329 diff에는 Catalog·Candidate 변경만 남긴다. 단일 Alembic head는 `165f90716263`이다. 최종 push SHA의 CI를 확인한 뒤 재리뷰한다.

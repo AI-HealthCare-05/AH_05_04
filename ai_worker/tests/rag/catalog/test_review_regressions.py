@@ -246,6 +246,7 @@ async def test_public_candidate_handoff_rejects_unbound_inputs_before_embedding(
     artifacts = result.export
     assert artifacts is not None
     catalog = artifacts.catalog
+    invalid: object
     if mutation == "raw":
         invalid = catalog
     elif mutation == "gate":

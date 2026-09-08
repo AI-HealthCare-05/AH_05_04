@@ -884,7 +884,7 @@ def test_rag_source_ingestion_attempt_is_scoped_by_run_group_after_alembic_upgra
                     id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at
                 )
                 VALUES (
-                    :duplicate_run_id, :operation_id, 'initial-load', :snapshot_id, 'FAILED', 1, :collected_at
+                    :duplicate_run_id, :operation_id, 'initial-load', NULL, 'FAILED', 1, :collected_at
                 )
                 """,
                 {**ids, "duplicate_run_id": str(uuid4()), "collected_at": collected_at},
@@ -1137,12 +1137,15 @@ def test_runtime_cannot_write_snapshot_publication_state_directly(status: str) -
                     {"role": role},
                 )
                 assert permitted.scalar_one() is False
-                # Runtime roles normally exist before migration. This isolated test role is created afterwards.
-                await connection.execute(
-                    text(
-                        f"GRANT EXECUTE ON FUNCTION transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text) TO {role}"
-                    )
+                # This isolated Runtime role is created after migration.
+                # Execute the actual provisioning query for roles created after migration.
+                provisioning = (PROJECT_ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
+                grant_query = provisioning.split("-- Migration 이후", 1)[1].split("SELECT format(", 1)[1]
+                grant_query = "SELECT format(" + grant_query.split("\\gexec", 1)[0]
+                grant = await connection.execute(
+                    text(grant_query.replace(":'app_user'", "CAST(:app_user AS text)")), {"app_user": role}
                 )
+                await connection.execute(text(grant.scalar_one()))
                 await connection.execute(text(f"SET LOCAL ROLE {role}"))
                 # Custom session flags must never confer transition authority.
                 await connection.execute(text("SET LOCAL app.snapshot_transition = 'allowed'"))
@@ -1233,12 +1236,15 @@ def test_runtime_publication_function_requires_approval_and_appends_immutable_se
                     {"role": role},
                 )
                 assert permitted.scalar_one() is False
-                # Runtime roles normally exist before migration. This isolated test role is created afterwards.
-                await connection.execute(
-                    text(
-                        f"GRANT EXECUTE ON FUNCTION transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text) TO {role}"
-                    )
+                # This isolated Runtime role is created after migration.
+                # Execute the actual provisioning query for roles created after migration.
+                provisioning = (PROJECT_ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
+                grant_query = provisioning.split("-- Migration 이후", 1)[1].split("SELECT format(", 1)[1]
+                grant_query = "SELECT format(" + grant_query.split("\\gexec", 1)[0]
+                grant = await connection.execute(
+                    text(grant_query.replace(":'app_user'", "CAST(:app_user AS text)")), {"app_user": role}
                 )
+                await connection.execute(text(grant.scalar_one()))
                 await connection.execute(text(f"SET LOCAL ROLE {role}"))
                 if not approved:
                     async with connection.begin_nested() as savepoint:
@@ -1319,5 +1325,49 @@ def test_snapshot_state_protection_downgrade_preserves_existing_snapshots() -> N
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 165e8f706152"):
             command.downgrade(configuration, "165d7e6f5041")
         assert asyncio.run(_count_table("rag_source_snapshot")) >= 1
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+@pytest.mark.parametrize(
+    ("run_status", "has_snapshot", "allowed"),
+    [
+        ("FAILED", True, False),
+        ("FAILED", False, True),
+        ("NO_CHANGE", False, False),
+        ("NO_CHANGE", True, True),
+        ("SUCCEEDED", True, True),
+        ("SUCCEEDED_WITH_REJECTIONS", True, True),
+    ],
+)
+def test_ingestion_run_snapshot_status_check(run_status: str, has_snapshot: bool, allowed: bool) -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_source_catalog_chain())
+
+    async def verify() -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                statement = text("""
+                    INSERT INTO rag_source_ingestion_run
+                        (id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at)
+                    VALUES (:id, :operation_id, 'synthetic-status-check', :snapshot_id, :status, 1, now())
+                """)
+                parameters = {
+                    "id": str(uuid4()),
+                    "operation_id": ids["operation_id"],
+                    "snapshot_id": ids["snapshot_id"] if has_snapshot else None,
+                    "status": run_status,
+                }
+                if allowed:
+                    await connection.execute(statement, parameters)
+                else:
+                    with pytest.raises(DBAPIError, match="chk_rag_ingestion_run_snapshot_status"):
+                        await connection.execute(statement, parameters)
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(verify())
     finally:
         asyncio.run(_cleanup_source_catalog_chain(ids))

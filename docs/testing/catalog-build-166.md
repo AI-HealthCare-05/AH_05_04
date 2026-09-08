@@ -185,3 +185,17 @@ Frontend 최초 실행은 테스트 API URL 미설정으로 실패했고, fixtur
 - Ruff·format, RAG Mypy(35 source files), git diff --check 통과.
 - DB·migration 변경 없음. 현재 Alembic head는 165e8f706152이며, PostgreSQL 및 전체 서비스 CI는 이번 보완에서 재실행하지 않았다.
 - #323이 미병합이므로 Source 중복 diff 정리는 미완료다. #323 병합 후 develop 반영·단일 head·diff·최종 HEAD CI를 재검증한다. 이 수정 자체로 #166 DB 통합·실제 승인 adapter·Runtime 활성화를 완료하지 않는다.
+
+## #323 병합 후 develop 정렬 및 최종 로컬 검증
+
+#323 squash merge가 포함된 develop `2fa814ad88bd86f05cf44c11e3e8ca2daf720bfd`를 병합했다. Source 문서·Decision·Receipt·migration 테스트의 충돌 5개는 병합된 develop 버전을 반영했다. Source 코드·migration·role 설정은 develop과 동일하며, PR diff는 Catalog·Candidate 관련 28개 파일만 남는다. 앞 절의 '#323 미병합' 상태는 이 병합으로 해소됐다.
+
+- 현우님 리뷰 수정 `b3b741b`의 artifact 소비 검증·P0 allowlist 유지.
+- 신규 Source CHECK revision까지 반영한 Alembic 단일 head: `165f90716263`.
+- Worker 전체: **2,167 passed, 8 skipped**.
+- PostgreSQL 16 migration·rollback·Source lifecycle·Source governance receipt: **110 passed**.
+- 전체 Ruff·format: **526 files 통과**, Mypy: **445 source files 통과**.
+- 추가 회귀 테스트의 혼합 입력 변수 타입 주석을 보완했다. 동작 변경 없이 전체 Mypy를 통과하도록 정렬했다.
+- `git diff --check` 및 Source 중복 diff 없음 확인.
+
+첫 DB 검증은 빈 DB에 `upgrade head` 초기화를 생략해 기존 Profile downgrade 테스트 1건이 실패했다. CI 순서대로 head 초기화 후 같은 범위 전체 110건이 통과했다. 사용자/운영 DB는 사용하지 않았다. Catalog PostgreSQL adapter는 여전히 후속 범위이며 이번 DB 결과가 해당 adapter 검증을 의미하지 않는다. 원격 CI는 이 병합 커밋을 push한 후 확인한다.
