@@ -5,115 +5,123 @@
 | 항목 | 값 |
 | --- | --- |
 | Issue | `#170` Candidate Resolver |
-| 기준 | `origin/develop`의 `899c2dc` 위 rebase 완료 |
-| 문서 상태 | 구현 순서 기록. 공유 계약 또는 Current Runtime 정본이 아님 |
-| 즉시 완료 범위 | 설계 snapshot, LOCAL 합성 fixture, non-release policy proposal |
-| Production 구현 | `BLOCKED` — G0 및 G1–G7 승인 전 착수 금지 |
+| 기준 | 2026-09-09 최신 `origin/develop` |
+| 문서 상태 | 승인된 pure/local slice 실행 계획 |
+| 즉시 구현 | Protocol, 순수 Gate, synthetic policy/Fake, 단위 테스트 |
+| 통합 | `BLOCKED` — #168/#169/#171 및 production policy Receipt 대기 |
 | 공개 gate | `PUBLIC_TRACK_F=false` 유지 |
-
-## 이미 완료한 준비 작업
-
-- [x] Resolver와 #171 Finalizer의 경계를 설계 snapshot으로 기록했다.
-  - Resolver business decision은 `SINGLE_CANDIDATE`다.
-  - #171 Finalizer만 이를 lifecycle `READY`와 공개 후보 1개로 투영한다.
-- [x] 실제 약명·환자·처방·OCR 원문을 포함하지 않는 LOCAL Draft/DEV decision matrix를 작성했다.
-- [x] LOCAL/non-release synthetic policy envelope과 canonical JSON SHA-256 proposal을 작성했다.
-- [x] Resolver 직접 입력을 `medication_name`과 nullable `strength_text`로 제한하고, `form_text`가 직접 입력이
-  아님을 fixture로 고정했다.
-
-준비 산출물:
-
-- [설계 snapshot](issue-170-medication-resolver-design.md)
-- [합성 decision matrix](../../../tests/fixtures/rag/resolver/draft_decision_matrix.json)
-- [합성 policy proposal](../../../tests/fixtures/rag/resolver/policy.synthetic.json)
-- [fixture 사용 범위](../../validation/rag/resolver/README.md)
-
-이 산출물은 문서/합성 검증을 위한 Draft일 뿐이고 runtime loader, release Receipt 또는 production
-threshold의 정본이 아니다.
-
-## 차단 Gate
-
-| Gate | 현재 상태 | 해소에 필요한 artifact | 해소 뒤 가능 작업 |
-| --- | --- | --- | --- |
-| G0 dependency | `BLOCKED` | #166 Source/Catalog completion Receipt, 승인된 #167 interface/Decision, #168 active Candidate Index Receipt, #169 active Medication Snapshot Receipt | Resolver integration 준비 |
-| G1 input/provenance | `TBC (BLOCKED BY G0)` | input owner·normalization·version Decision 및 OCR Receipt 갱신 | input mapper/retrieval facade |
-| G2 stages/result method | `TBC (BLOCKED BY G0)` | search-stage·Ingredient diagnostic·`result_method` Decision | stage adapter/method mapping |
-| G3 identity/fusion | `TBC (BLOCKED BY G0)` | Product Identity dedupe·deterministic fusion policy | pure fusion kernel |
-| G4 attributes | `TBC (BLOCKED BY G0)` | strength/form/status mapping Decision | compatibility gate |
-| G5 outcome | `TBC (BLOCKED BY G0)` | threshold/margin/dense policy와 Single Candidate evaluation Receipt | outcome classifier |
-| G6 finalization | `TBC (BLOCKED BY G0)` | #171 transaction/count/mapping Decision | #171 handoff contract; persistence 구현은 #171 소유 |
-| G7 failures/receipt | `TBC (BLOCKED BY G0)` | failure mapping·public error·Receipt schema Decision | failure mapper/contract Receipt |
-
-현재 Source Receipt는 실제 binding이 연결되기 전까지 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`이며,
-OCR 입력 Receipt는 `PRESCRIPTION_VERSION_NOT_IMPLEMENTED` 및
-`TARGET_STRENGTH_MAPPING_NOT_FROZEN`을 유지한다. 이 세 차단 코드를 축약하거나 성공 상태로 바꾸지 않는다.
 
 ## 구현 순서
 
-### Phase A — 승인 전, 현재 완료
+### Task 1 — 문서와 합성 정책 경계 갱신
 
-1. 설계/Receipt snapshot
-2. 합성 Draft/DEV fixture
-3. non-release policy envelope/hash proposal
+- 설계의 `G0 전체 차단`을 `PURE_SLICE_READY / INTEGRATION_BLOCKED`로 정정한다.
+- 기존 fixture를 executable production policy로 오해하지 않도록 유지한다.
+- 테스트는 기존 `policy.synthetic.json`을 로드하지 않고 inline non-release policy만 생성한다.
+- production loader/default threshold는 만들지 않는다.
 
-Phase A 이후에는 runtime code를 추가하지 않는다. 합성 fixture의 outcome, reason, DB projection은 G0–G7
-승인 전까지 `NON_AUTHORITATIVE_DRAFT` 또는 `TBC`다.
+검증: `git diff --check`, JSON parse/hash 검증.
 
-### Phase B — G0–G7 승인 후
+### Task 2 — 정책 타입을 TDD로 구현
 
-1. `ResolverPolicy`의 explicit version/hash lookup과 fail-closed validation을 TDD로 구현한다.
-2. Backend async retrieval facade와 Candidate read Protocol을 구현한다. facade는 #168 read port의 hydration,
-   provenance/shape validation과 typed internal failure만 소유한다.
-3. DB/Worker import 없이 `ResolverEvidence + ResolverPolicy`만 받는 pure kernel을 구현한다.
-4. `Exact → Alias → Ingredient diagnostic → Trigram/Edit → optional Dense` 호출 순서, stable Product Identity
-   dedupe, deterministic fusion을 구현한다.
-5. attribute compatibility와 Single Candidate Gate를 구현한다.
+대상:
 
-필수 불변식:
+- `backend/app/services/rag/candidate_policy.py`
+- `backend/app/tests_unit/rag/test_candidate_resolver.py`
 
-- `SINGLE_CANDIDATE`만 외부 후보 1개이고 다른 business outcome은 0개다.
-- Ingredient diagnostic은 Product 후보/fusion/count에 포함하지 않는다.
-- unknown version, malformed hit, non-finite score, repository failure는 `INVALID_INPUT`으로 위장하지 않는다.
-- Resolver는 Candidate Search, Result, Identification, DB lifecycle enum 또는 display/selectable flag를 생성하지 않는다.
+먼저 잘못된 version, 길이, limit, stage weight exact coverage, RRF, finite/range,
+selectable-stage subset을 `POLICY_INVALID`로 거부하는 테스트를 작성한다. 그 뒤 불변
+`ResolverPolicy`와 Resolver-side validation을 최소 구현한다.
+Dense selectable stage와 `release_eligible=true`도 `POLICY_INVALID`로 고정한다.
 
-### Phase C — 계약·adapter·application integration
+### Task 3 — Protocol과 입력 검증을 TDD로 구현
 
-1. 승인된 JSON contract fixture를 Backend unit suite와 Worker-side schema/hash suite에서 재생한다.
-2. #168 PostgreSQL adapter가 같은 fixture에 대해 Fake와 같은 business outcome을 내는지 검증한다.
-3. #169 활성 immutable Prescription Version Medication에서만 `ResolverInput`을 만든다.
-4. #171 owner가 Resolver outcome/failure를 Search/Result/status/flag로 매핑하고 transaction currentness를
-   재검증한다. #170 범위는 mapping contract·fixture·review이며 #171 persistence 구현을 대체하지 않는다.
-5. Source/Index/Prescription/Finalizer Receipt, HOLDOUT 및 SAFETY evaluation이 모두 연결된 경우에만
-   integration completion을 선언한다.
+대상:
 
-## 검증 순서
+- `backend/app/services/rag/candidate_resolver.py`
+- `backend/app/tests_unit/rag/test_candidate_resolver.py`
 
-1. Phase B: policy/retrieval/kernel의 targeted unit tests와 import-isolation tests
-2. Phase B/C: synthetic JSON fixture/schema/hash parity와 privacy sentinel tests
-3. Phase C: #168 adapter parity, #169 currentness, #171 transaction/concurrency integration tests
-4. Phase C: Product/Ingredient precision, Candidate recall, abstention, execution failure, multi-gold,
-   zero-denominator를 분리한 HOLDOUT/SAFETY Receipt
+`ResolverInput`, identity/snapshot/hit, result/failure 타입, `CandidateIndexPort`,
+`CandidateAttributeMatcher`, `CandidateRelevanceEvaluator`를 정의한다. 약명·함량의 blank,
+whitespace, non-NFC, length 오류만
+`INVALID_INPUT`인지 검증하고, index/policy version 오류는 typed failure로 분리한다.
 
-`zero denominator`와 미실행 integration/HOLDOUT은 PASS가 아니라 `INCONCLUSIVE` 또는
-`NOT_IMPLEMENTED`로 기록한다. wrong-single, Ingredient Product 승격, 공개 score/top-K/원문 노출은
-SAFETY regression의 Critical 0건 조건이다.
+### Task 4 — 검색 orchestration과 evidence 검증을 TDD로 구현
 
-## 중지 조건
+Fake Port의 descriptor로 index capability를 검증한 뒤 Exact → Alias → Ingredient → Trigram → Dense
+순서와 Dense off를 검증한다. 각 stage의 retrieval limit을 강제한다. 명시적 domain dependency 예외는
+typed failure로 닫되 예상 밖 프로그래밍 예외는 오분류하지 않는다. 잘못된
+stage/rank/version/score/identity/snapshot은 typed failure로 닫는다.
 
-다음 중 하나가 발생하면 해당 Phase를 중지하고 owner Decision/Target을 먼저 갱신한다.
+### Task 5 — dedupe/fusion/attribute Gate를 TDD로 구현
 
-- #168 Candidate projection 또는 Ingredient diagnostic이 승인된 #167 interface와 충돌함
-- normalization owner/version 또는 nullable strength의 물리 mapping이 미확정임
-- internal failure와 공개 lifecycle/error mapping이 합의되지 않음
-- shared enum, DTO, route, DB constraint, transaction order의 변경이 필요함
-- 실제 환자·처방·OCR 원문 fixture가 필요해짐
+- `(code_system, canonical_code)` dedupe
+- 동일 stage 중복 signal 정규화
+- deterministic RRF와 identity tie-break
+- active/status, Fake matcher가 판정한 strength/form/manufacturer compatibility,
+  Fake relevance evaluator와 selectable-stage hard gate
+- identity snapshot 충돌 fail-closed
+- matcher/evaluator를 dedupe identity당 한 번 호출하고 UNKNOWN/exception/malformed result를 fail-closed
+- matcher에는 score/rank가 없는 Product Snapshot만 전달
+- exact RRF, same-stage 중복 정규화, policy tuple 순서 독립성과 identity tie-break
 
-## 후속 담당 경계
+입력 hit 순서를 바꿔도 결과가 같은 property를 사례 기반 테스트로 고정한다.
 
-- #170: Resolver policy/facade/pure kernel, synthetic contract fixture, Receipt evidence
-- #168: Candidate Index PostgreSQL adapter/read port/active pointer
-- #169: immutable Prescription Version Medication와 active pointer
-- #171: Candidate Search/Result persistence, finalization transaction, confirm/reject/Identification lifecycle
+### Task 6 — outcome과 redaction 불변식을 TDD로 구현
 
-공유 계약 변경은 관련 Target/Decision, OpenAPI·DTO, migration, automated contract/integration test,
-`docs/contracts/README.md`, Receipt를 같은 focused PR에서 함께 갱신한다.
+- exact/alias single
+- cross-stage duplicate single
+- 복수 variant 및 insufficient margin → `AMBIGUOUS`
+- explicit strength conflict/inactive/low relevance/dense-only → `NO_CANDIDATE`
+- ingredient-only → `INGREDIENT_ONLY`
+- empty/invalid input → `INVALID_INPUT`
+- `SINGLE_CANDIDATE` 외 `candidate is None`
+- redacted result에 top-K/rank/score 필드가 구조적으로 없음
+- partial stage 성공 뒤 실패, matcher/evaluator 예외 detail과 query 원문 비노출
+
+### Task 7 — 독립 검토와 전체 검증
+
+- 설계·구현·테스트가 Target/Issue 경계를 바꾸지 않는지 코드 리뷰한다.
+- `ai_worker`, SQLAlchemy, Redis, Outbox import가 없는지 검사한다.
+- targeted pytest, Ruff, mypy, fixture JSON/hash, `git diff --check`를 실행한다.
+- 이어서 `CONTRIBUTING.md`의 repository-required format, type, full test checks를 실행한다.
+- 검토에서 blocking finding이 있으면 수정 후 같은 검증을 다시 실행한다.
+
+## 테스트 명령
+
+```bash
+uv run pytest backend/app/tests_unit/rag/test_candidate_resolver.py -q
+uv run ruff check \
+  backend/app/services/rag/candidate_resolver.py \
+  backend/app/services/rag/candidate_policy.py \
+  backend/app/tests_unit/rag/test_candidate_resolver.py
+uv run mypy \
+  backend/app/services/rag/candidate_resolver.py \
+  backend/app/services/rag/candidate_policy.py
+uv run ruff format . --check
+uv run ruff check .
+uv run mypy backend/app ai_worker
+bash scripts/ci/run_test.sh
+git diff --check
+```
+
+Worker-side contract suite, PostgreSQL adapter parity, Candidate Search transaction 및 HOLDOUT/SAFETY 평가는
+이번 pure slice의 완료 조건이 아니다. 실행하지 않은 통합 검증은 `PASS`가 아니라 명시적인 후속 작업으로
+보고하고 Resolver HOLDOUT/SAFETY는 `NOT_RUN / INTEGRATION_BLOCKED`로 기록한다.
+
+## 완료와 중지 조건
+
+Pure/local slice 완료 조건:
+
+- Protocol·순수 Gate·Fake 단위 테스트가 구현되고 targeted checks가 통과한다.
+- business outcome과 execution failure가 분리된다.
+- 외부 후보 최대 1개와 비-single outcome redaction이 테스트로 고정된다.
+- production loader, DB/API integration, 환자 데이터가 diff에 없다.
+
+다음이 필요하면 pure slice를 넘은 것이므로 구현을 중지하고 해당 owner/Receipt로 넘긴다.
+
+- 공유 DTO/status/error/DB constraint 변경
+- 실제 Candidate Index repository 또는 active pointer
+- Prescription Version ownership/currentness 조회
+- Candidate Search Finalizer transaction
+- production threshold나 release-eligible policy 결정

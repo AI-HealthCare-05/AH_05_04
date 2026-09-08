@@ -4,10 +4,13 @@
 Issue #170 medication Candidate Resolver. It is `DRAFT_DEV_ONLY`, is not an executable production expectation,
 and is not a release or approval Receipt.
 
-The policy envelope is deliberately closed with `environment=LOCAL` and `release_eligible=false`. G0 remains
-`BLOCKED`; G1–G7 and every threshold, mapping version, policy version, failure taxonomy, and unresolved reason
-code remain `TBC`. The outcome and DB projection fields express a non-authoritative draft matrix for review and
-must not be copied into runtime defaults, migrations, DTOs, public contracts, or production evaluations.
+The policy envelope is deliberately closed with `environment=LOCAL` and `release_eligible=false`. The legacy
+G0 `BLOCKED` and G1–G7 `TBC` labels apply to production/integration policy and receipts; they do not block the
+separately approved pure/local Protocol and unit-test slice. Every threshold, mapping version, policy version,
+failure taxonomy, and unresolved reason code in these files remains `TBC`. Tests must not load these files as
+runtime configuration and must instead construct explicit inline non-release policies. The outcome and DB
+projection fields express a non-authoritative draft matrix for review and must not be copied into runtime defaults,
+migrations, DTOs, public contracts, or production evaluations.
 
 All Product and Ingredient names and identities use the explicit `SYNTH_*` namespace. The fixture contains no
 patient data, prescription data, raw OCR values, Source IDs, credentials, or real medication data.
