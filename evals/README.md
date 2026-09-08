@@ -115,7 +115,7 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 합성 DEV 질문 60개를 담은 `DRAFT` Dataset이다. 다섯 Topic, 여섯 Expression 유형, 20개 독립
 `transform_origin` group과 합성 Gold 20개를 가지며, study-wide 합성 corpus는 Gold 20개와 hard negative
 80개로 구성된 100개 record다. Dataset Manifest의 canonical self-hash는
-`e6a2e19e6ee283e160afa187d9d2b618272c68ddd4ba1a5b2b0dea277bd0e2d6`이다.
+`facf9db8c1027fc062279d2f04465afb1b454a22efd31906d1cfd15de108f69e`이다.
 
 검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
 `evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·
@@ -124,6 +124,11 @@ uv run python -m ai_worker.tasks.evaluation verify-result \
 있으므로, 이 라벨이 색인 대상에 남으면 후속 Adapter가 내용이 아니라 정답 표시로 Gold를 구분해 Recall·MRR이
 무효가 된다. 색인 파일은 sidecar를 `evaluation_label_ref`로 hash 결속하므로
 `Dataset manifest → Evidence Mapping → 색인 → 라벨` 사슬은 그대로 검증 가능하다.
+
+다만 Loader는 sidecar를 읽지 않는다. 전역 schema를 바꾸지 않는 범위에서 sidecar를 Dataset Manifest나
+Protected Artifact Receipt에 등록할 자리가 없기 때문이다. 따라서 sidecar 무결성은 `load_dataset()`이 아니라
+`ai_worker/tests/evaluation/`의 fixture·report 테스트가 고정한다. sidecar를 Loader 계약에 편입하려면 Schema
+Set 확장이 필요하며 이는 후속 작업이다.
 
 이 authoring graph는 아직 사람의 Gold 검토를 받지 않았고 모든 review provenance는 `DRAFT` 또는
 `NOT_STARTED`다. 실제 Knowledge Evidence Retrieval Adapter는 `NOT_IMPLEMENTED`이며 actual retrieval Run과

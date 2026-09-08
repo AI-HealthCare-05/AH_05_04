@@ -117,7 +117,7 @@ class Issue273ValidationStatus(StrictContractModel):
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
     created_counts: CreatedCounts
-    dataset_manifest_sha256: Literal["e6a2e19e6ee283e160afa187d9d2b618272c68ddd4ba1a5b2b0dea277bd0e2d6"]
+    dataset_manifest_sha256: Literal["facf9db8c1027fc062279d2f04465afb1b454a22efd31906d1cfd15de108f69e"]
     schema_set_ref: CandidateSchemaSetRef
     schema_set_decision: Literal["docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md"]
     responsible_reviewer: Literal["@hazelnutflavoured"]

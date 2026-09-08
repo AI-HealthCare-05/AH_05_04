@@ -454,7 +454,7 @@ _GRAPH_MEMBER_PATHS = (
 )
 
 TOPIC_OVERLAP_TERMS: dict[Topic, str] = {
-    "TOPIC_MEDICATION_INFORMATION": "제품 정보",
+    "TOPIC_MEDICATION_INFORMATION": "의약품 정보",
     "TOPIC_PRECAUTIONS": "주의 안내",
     "TOPIC_LIFESTYLE_MANAGEMENT": "생활 관리",
     "TOPIC_STORAGE": "보관 안내",
