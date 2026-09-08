@@ -86,31 +86,16 @@ def _create_immutability_guards() -> None:
 
 
 def _create_membership_guards() -> None:
+    op.execute("ALTER TABLE prescription_version ADD COLUMN assembly_xid xid8 NOT NULL")
     op.execute(
         sa.text(
             """
-            CREATE OR REPLACE FUNCTION register_prescription_version_assembly()
+            CREATE OR REPLACE FUNCTION stamp_prescription_version_assembly_xid()
             RETURNS trigger AS $$
-            DECLARE
-                assembly_ids text;
-                version_id text := btrim(NEW.id::text);
             BEGIN
-                assembly_ids := current_setting(
-                    'app.prescription_version_assembly_ids',
-                    true
-                );
-
-                IF assembly_ids IS NULL OR assembly_ids = '' THEN
-                    assembly_ids := version_id;
-                ELSIF NOT version_id = ANY(string_to_array(assembly_ids, ',')) THEN
-                    assembly_ids := assembly_ids || ',' || version_id;
-                END IF;
-
-                PERFORM set_config(
-                    'app.prescription_version_assembly_ids',
-                    assembly_ids,
-                    true
-                );
+                -- Always overwrite caller input with a DB-owned, epoch-aware
+                -- top-level transaction identity.
+                NEW.assembly_xid := pg_current_xact_id();
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
@@ -120,10 +105,10 @@ def _create_membership_guards() -> None:
     op.execute(
         sa.text(
             """
-            CREATE TRIGGER trg_prescription_version_register_assembly
-            AFTER INSERT ON prescription_version
+            CREATE TRIGGER trg_prescription_version_stamp_assembly_xid
+            BEFORE INSERT ON prescription_version
             FOR EACH ROW
-            EXECUTE FUNCTION register_prescription_version_assembly()
+            EXECUTE FUNCTION stamp_prescription_version_assembly_xid()
             """
         )
     )
@@ -134,19 +119,16 @@ def _create_membership_guards() -> None:
             CREATE OR REPLACE FUNCTION prevent_frozen_prescription_version_medication_insert()
             RETURNS trigger AS $$
             DECLARE
-                assembly_ids text;
-                version_id text := btrim(NEW.prescription_version_id::text);
+                version_assembly_xid xid8;
             BEGIN
-                assembly_ids := current_setting(
-                    'app.prescription_version_assembly_ids',
-                    true
-                );
+                SELECT assembly_xid
+                INTO version_assembly_xid
+                FROM prescription_version
+                WHERE id = NEW.prescription_version_id;
 
-                -- The registration trigger records every Version created in this top-level
-                -- transaction. A transaction-local setting survives a released SAVEPOINT,
-                -- rolls back with an aborted SAVEPOINT, and is cleared at transaction end.
-                IF assembly_ids IS NOT NULL
-                   AND version_id = ANY(string_to_array(assembly_ids, ',')) THEN
+                -- pg_current_xact_id() is the epoch-aware top-level transaction ID,
+                -- so the comparison remains stable across released SAVEPOINTs.
+                IF version_assembly_xid = pg_current_xact_id() THEN
                     RETURN NEW;
                 END IF;
 
@@ -363,8 +345,8 @@ def downgrade() -> None:
         "ON prescription_version_medication"
     )
     op.execute("DROP FUNCTION IF EXISTS prevent_frozen_prescription_version_medication_insert()")
-    op.execute("DROP TRIGGER IF EXISTS trg_prescription_version_register_assembly ON prescription_version")
-    op.execute("DROP FUNCTION IF EXISTS register_prescription_version_assembly()")
+    op.execute("DROP TRIGGER IF EXISTS trg_prescription_version_stamp_assembly_xid ON prescription_version")
+    op.execute("DROP FUNCTION IF EXISTS stamp_prescription_version_assembly_xid()")
     op.execute(
         "DROP TRIGGER IF EXISTS trg_prescription_version_medication_prevent_delete ON prescription_version_medication"
     )

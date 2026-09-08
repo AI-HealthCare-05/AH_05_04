@@ -291,7 +291,7 @@ def test_prescription_version_schema_constraints_exist() -> None:
     assert "trg_prescription_version_prevent_delete" in schema_objects
     assert "trg_prescription_version_medication_prevent_update" in schema_objects
     assert "trg_prescription_version_medication_prevent_delete" in schema_objects
-    assert "trg_prescription_version_register_assembly" in schema_objects
+    assert "trg_prescription_version_stamp_assembly_xid" in schema_objects
     assert "trg_prescription_version_medication_prevent_frozen_insert" in schema_objects
     assert "trg_prescription_version_medication_required" in schema_objects
     assert "trg_prescription_active_version_medication" in schema_objects
@@ -523,6 +523,48 @@ def test_active_and_historical_version_medication_sets_are_frozen() -> None:
                     expected_text="prescription version medication set is frozen",
                 )
             )
+    finally:
+        asyncio.run(_cleanup_prescription_version(ids))
+
+
+def test_custom_guc_cannot_unfreeze_committed_version() -> None:
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed_prescription_version())
+
+    async def spoof_guc_and_reject_insert() -> None:
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.execute(
+                    text(
+                        """
+                        SELECT set_config(
+                            'app.prescription_version_assembly_ids',
+                            :version_id,
+                            true
+                        )
+                        """
+                    ),
+                    ids,
+                )
+                with pytest.raises(DBAPIError) as exc_info:
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO prescription_version_medication (
+                                id, prescription_version_id, medication_name, display_order
+                            )
+                            VALUES (:late_id, :version_id, '위조시도약', 2)
+                            """
+                        ),
+                        {**ids, "late_id": str(uuid4())},
+                    )
+                assert "prescription version medication set is frozen" in str(exc_info.value)
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(spoof_guc_and_reject_insert())
     finally:
         asyncio.run(_cleanup_prescription_version(ids))
 

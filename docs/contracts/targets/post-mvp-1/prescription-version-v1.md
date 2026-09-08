@@ -26,12 +26,12 @@ Revision `169a1b2c3d4e`는 API 동작을 변경하지 않는 Expand 단계다. A
 | 테이블 | 컬럼 |
 | --- | --- |
 | `prescription` | nullable `active_version_id` |
-| `prescription_version` | `id`, `prescription_id`, `version_number`, `prescribed_date`, `confirmed_at`, `created_at` |
+| `prescription_version` | `id`, `prescription_id`, `version_number`, `prescribed_date`, `confirmed_at`, internal `assembly_xid`, `created_at` |
 | `prescription_version_medication` | `id`, `prescription_version_id`, `medication_name`, nullable `strength_text`, nullable `dose_value`, nullable `dose_unit`, nullable `frequency_per_day`, nullable `timing_text`, nullable `duration_days`, `display_order`, `created_at` |
 
 `prescription.active_version_id`는 `(active_version_id, prescription.id) → prescription_version(id, prescription_id)` composite FK로 같은 처방의 version만 가리키게 한다. FK는 `DEFERRABLE INITIALLY DEFERRED`이므로 후속 NOT NULL 전환 뒤에도 미리 생성한 ID로 Prescription → Version → Medication을 같은 transaction에서 만들 수 있고 commit 시점에 완전한 graph를 검증한다. `active_version_id`는 기존 처방 Backfill 전까지 nullable이며 PR 2에서 version 1 생성·검증과 함께 채운다. 별도 active/current 상태 컬럼은 만들지 않는다.
 
-Version sequence는 양수이고 `(prescription_id, version_number)`가 unique다. 약물 표시 순서는 양수이며 `(prescription_version_id, display_order)`가 unique다. 지연 제약은 commit 시 모든 Version과 active pointer에 medication snapshot이 1개 이상인지 확인한다. Version INSERT trigger가 transaction-local assembly ID를 등록하고, Medication INSERT는 해당 Version을 생성한 동일 top-level transaction에서만 허용한다. 등록은 release된 SAVEPOINT 뒤에도 유지되고 transaction 종료 시 제거되므로 active 여부와 관계없이 commit된 Version의 약물 집합은 동결된다. 두 snapshot 테이블은 DB trigger로 직접 UPDATE·DELETE를 차단한다.
+Version sequence는 양수이고 `(prescription_id, version_number)`가 unique다. 약물 표시 순서는 양수이며 `(prescription_version_id, display_order)`가 unique다. 지연 제약은 commit 시 모든 Version과 active pointer에 medication snapshot이 1개 이상인지 확인한다. Version INSERT trigger는 caller 입력을 무시하고 DB가 발급한 epoch-aware top-level transaction ID를 internal `assembly_xid`에 기록한다. Medication INSERT는 현재 transaction ID가 이 값과 같은 Version에만 허용한다. 이 비교는 release된 SAVEPOINT 뒤에도 유지되며 Runtime 역할이 custom GUC나 INSERT 값으로 위조할 수 없으므로, active 여부와 관계없이 commit된 Version의 약물 집합은 동결된다. 두 snapshot 테이블은 DB trigger로 직접 UPDATE·DELETE를 차단한다.
 
 사용자 데이터 삭제는 `prescription`을 삭제하는 기존 애플리케이션 경계에서만 시작한다. `prescription → prescription_version → prescription_version_medication` FK는 `ON DELETE CASCADE`이고, 불변성 trigger는 이 부모 연쇄 삭제만 허용한다. Version 또는 Version Medication 직접 삭제는 계속 차단한다. 지연 검증 trigger는 commit 전에 부모와 snapshot이 이미 연쇄 삭제된 경우 큐에 남은 생성·활성화 이벤트를 건너뛴다. Migration downgrade는 런타임 사용자 삭제와 별개이며 version data가 있으면 중단한다.
 
