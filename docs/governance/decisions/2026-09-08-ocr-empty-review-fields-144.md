@@ -1,11 +1,11 @@
 # #144 빈 검수 필드 생성 Decision 초안
 
-- 상태: **Proposed · 승인 미기록 · 구조화 부분 구현 (작업 브랜치)**
+- 상태: **Proposed · 승인 미기록 · 구조화·DB/API 로컬 검증 완료 (작업 브랜치)**
 - 작성일: 2026-09-08
 - 작성 담당: 김지혜 (`Jye-rookie`)
 - 검토: 송은영 (`phina-io`) — 공유 API·DB, 남한솔 (`solia142`) — DOC-03 소비 확인
 - 근거: [이슈 #144](https://github.com/AI-HealthCare-05/AH_05_04/issues/144), [공동 범위 협의](https://github.com/AI-HealthCare-05/AH_05_04/issues/144#issuecomment-5489219395)
-- 상세 변경안: [빈 검수 필드 생성 변경안](../../contracts/proposed/ocr-empty-review-fields-144.md)
+- 상세 변경안: [빈 검수 필드 생성 변경안](../../contracts/current/ocr-medication-structuring.md)
 
 ## 배경
 
@@ -26,9 +26,9 @@ LLM의 기존 네 필드에 함량·단위를 더한 여섯 유형을 두 경로
 ## 영향 및 검토 근거
 
 공개 API 형태는 유지하지만 결과 필드의 존재 여부가 바뀌는 공유 계약 변경이다.
-DB 모델은 nullable 값과 Optional null 확정을 이미 지원한다. 신규 migration 필요성은
-실제 스키마·통합 검증으로 판단한다. 기존 결과 backfill과 날짜 정책 변경은 제외한다.
+DB 모델과 실제 migration 스키마가 nullable 값과 Optional null 확정을 지원함을
+로컬 PostgreSQL에서 확인했고 신규 migration은 추가하지 않았다. 기존 결과 backfill과 날짜 정책 변경은 제외한다.
 
-상세 정책·인수 테스트는 위 변경안 한 곳에서 관리한다. 코드·테스트·current 계약을
+상세 정책은 위 계약에 통합했고 인수 검증은 테스트 증빙에서 관리한다. 코드·테스트·current 계약을
 같은 구현 PR에서 정렬하고, 승인 시 실제 리뷰 링크를 기록한다.
 이 초안은 사용자 공개 승인이나 #144 완료를 선언하지 않는다.

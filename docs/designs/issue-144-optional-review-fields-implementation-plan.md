@@ -1,7 +1,7 @@
-# #144 Optional 빈 검수 필드 구현 계획 — 1단계 조사
+# #144 Optional 빈 검수 필드 구현 계획·완료 기록
 
 - 관련 이슈: [#144](https://github.com/AI-HealthCare-05/AH_05_04/issues/144)
-- 상태: **조사 완료 / 변경안 Proposed / 동작 변경 미구현**
+- 상태: **1~5단계 로컬 구현·검증 완료 / 담당 리뷰·CI·병합 대기**
 - 조사일: 2026-09-08
 - 코드 기준: `develop`의 `7d4510f5f6e1f9f70fd25ce4bff30127fda41955`
 - 구현 담당: 김지혜 (`Jye-rookie`), Worker/OCR 및 이슈 내 Backend 연결
@@ -30,7 +30,7 @@
 
 ## 2단계 결과 — 변경안 정리 완료
 
-[Proposed 변경안](../contracts/proposed/ocr-empty-review-fields-144.md)과
+[Proposed 변경안](../contracts/current/ocr-medication-structuring.md)과
 [Decision 초안](../governance/decisions/2026-09-08-ocr-empty-review-fields-144.md)에
 생성 대상·null·중복·기존 값 보존·저장·PATCH 경계 및 ER-01~12 인수 항목을 정리했다.
 현재 실행 계약과 코드의 동작은 변경하지 않았다.
@@ -104,3 +104,16 @@ DOC-03·담당 리뷰·CI·current 계약 정렬은 5단계에 남아 있다.
   후속 실행은 사용자 DB와 분리된 테스트 DB에서 수행한다.
 - 기존 테스트의 존재는 최신 기준에서의 통과 증빙이 아니다. 실행 결과와 SHA는
   3~5단계에서 실제 검증 후 기록한다.
+
+
+## 5단계 결과 — 로컬 마무리
+
+기존 OCR 구조화 계약에 변경분을 통합하고 중복 Proposed 변경안은 제거했다.
+Decision은 실제 승인 근거가 없으므로 Proposed로 유지한다. 앞 단계 기록의 미구현·
+검증 대기 문구는 해당 단계 당시 상태이며 최종 결과는 이 절과 검증 증빙을 기준으로 한다.
+
+최신 develop `bd6b4d6bc2d2a04d24bd88012dbaea91ee1aa3fb` 병합 후 OCR 302개,
+Worker 공통·OCR·RAG 1120개, PostgreSQL Worker 3개가 통과했다.
+전체 Ruff·포맷 512개·Mypy 429개 source 파일 검사를 통과했다.
+실제 UI 확인·담당 승인·CI 결과는 아직 없으며 #144 종료를 선언하지 않는다.
+PR은 사용자가 생성하고 송은영 API·DB 리뷰 및 남한솔 DOC-03 확인을 받는다.

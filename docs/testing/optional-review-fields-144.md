@@ -1,7 +1,7 @@
 # #144 빈 검수 필드 — 3·4단계 증빙
 
 - 상태: 작업 브랜치 구조화 및 DB·PATCH 통합 검증 완료. DOC-03·담당 리뷰·CI 대기.
-- 관련: [구현 계획](../designs/issue-144-optional-review-fields-implementation-plan.md), [변경안](../contracts/proposed/ocr-empty-review-fields-144.md)
+- 관련: [구현 계획](../designs/issue-144-optional-review-fields-implementation-plan.md), [변경안](../contracts/current/ocr-medication-structuring.md)
 - 기반: `7d4510f5f6e1f9f70fd25ce4bff30127fda41955`, 계약 초안 커밋 `2d9bcdf`
 - 실행일: 2026-09-08
 - 검증 대상: 이 문서와 함께 커밋하는 3단계 코드·테스트 변경분. 이후 변경은 재검증한다.
@@ -88,3 +88,24 @@ python -m pytest tests/integration/test_worker_ocr_persistence.py -q
 위 순서는 격리 DB에서만 실행한다. Backend fixture가 스키마를 drop/create하므로
 migration 검증과 동시에 실행하지 않는다. 신규 통합 사례는 Backend 4개와 Worker 2개다.
 DOC-03 실제 화면 확인·담당 리뷰·CI·current 계약 통합은 5단계에 남아 있다.
+
+
+## 5단계 최종 검증 (2026-09-08)
+
+- 검증 기준: `93cdf70e8f5d5bcfb36493d539549f6fb3c2674a` 코드 트리. 이 단계의
+  추가 변경은 계약·Decision 링크·계획·증빙 문서뿐이다.
+- 통합 develop: `bd6b4d6bc2d2a04d24bd88012dbaea91ee1aa3fb`
+- `pytest backend/app/tests/ocr backend/app/tests/ocr_ai -q`: **302 passed**
+- `pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag -q`: **1120 passed**
+- `pytest tests/integration/test_worker_ocr_persistence.py -q`: **3 passed**
+- `ruff check .`: 통과
+- `ruff format . --check`: **512 files** 통과
+- `mypy backend/app ai_worker` (`MYPYPATH=backend:.`): **429 source files** 통과
+- `alembic -c backend/alembic.ini heads`: `165f90716263` 단일 head
+- 문서 참조와 전체 diff·공백 검사 완료.
+
+DB 테스트는 4단계와 동일한 합성 설정의 별도 PostgreSQL 16 컨테이너를 사용했다.
+최종 범위는 관련 OCR 및 Worker 회귀이며 전체 CI·Frontend UI·Evaluation 테스트를
+재실행했다는 의미가 아니다. 4단계의 실제 migration 적용·제약 조회 증빙은 그대로 유효하다.
+현재 계약의 #144 변경은 코드와 함께 검토할 개정안으로 표시했다.
+담당 리뷰·DOC-03 수동 확인·원격 CI·병합은 남아 있다.
