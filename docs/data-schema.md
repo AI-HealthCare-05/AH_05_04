@@ -37,7 +37,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
-| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry` | #164·#165 기반과 #166 안정 Identity·Alias 상태·Search Entry 저장 기반. Catalog 실행/구성·manifest·Runtime 활성화는 후속 범위 |
+| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry`, `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | #164·#165 기반과 #166 안정 Identity·Catalog 구성원·불변 v2 Set/manifest 저장 기반. D-02 실행 provenance와 Runtime 활성화는 후속 범위 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·기록과 감사 로그는 아직 목표 계약과 현재 구현을 구분합니다.
 
@@ -236,7 +236,7 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## RAG Source·Catalog DB 기반
 
-Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가하고, `165b5c4d3e2f`는 거부 원문의 안전한 추적 필드를 추가합니다. Revision `166a7b8c9d0e`는 #166의 안정 Identity, Alias 상태·출처와 Search Entry 저장 기반을 추가합니다. 정본 `normalization_run_id`에 해당하는 D-02는 미확정이며 이 revision에 실행 테이블·대체 FK를 넣지 않습니다.
+Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가하고, `165b5c4d3e2f`는 거부 원문의 안전한 추적 필드를 추가합니다. Revision `166a7b8c9d0e`는 #166의 안정 Identity, Alias 상태·출처와 Search Entry 저장 기반을 추가합니다. Revision `166b8c9d0e1f`는 기존 v2 envelope와 계산 bytes를 보존하는 불변 Catalog Set·Source·member·hash 구조를 추가합니다. 정본 `normalization_run_id`에 해당하는 D-02는 미확정이며 두 #166 revision 모두 실행 테이블·대체 FK를 넣지 않습니다.
 
 이번 분할 범위의 ID/FK 매핑은 기존 애플리케이션 호환성을 우선해 `UUIDChar` 기반 `CHAR(36)`을 사용합니다. 신규 독립 RAG/Eval ID의 PostgreSQL native `UUID` 전환은 별도 승인 migration 범위이며, 이 PR에서 타입을 섞지 않습니다.
 
@@ -248,6 +248,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | Snapshot | `rag_source_snapshot`, `rag_source_snapshot_verification`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact` | 수집 version, checksum, parser/normalization/canonicalization version, 검증 이력, 수집 실행 이력과 원본 저장소 참조 |
 | Catalog Identity | `rag_entity_identity` | `(entity_type, code_system, canonical_code)`로 Product·Ingredient의 안정 Identity를 보관 |
 | Catalog 구성원 | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry` | Snapshot별 제품·성분·Alias 관찰·구성성분과 검색용 선택을 보관 |
+| Catalog 불변 구성 | `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | v2 manifest bytes, 전체 Source Snapshot/version, 실제 구성원 행, export/envelope hash 종류·계산 bytes를 한 Set에 결속. 발행 후 UPDATE·DELETE 차단 |
 
 Source/Snapshot 책임 경계:
 
@@ -274,6 +275,7 @@ Downstream provenance 연결 기준:
 | Catalog Alias | Alias 관찰 자체의 `source_snapshot_id`와 대상 `target_identity_id` | Product/Ingredient의 Snapshot별 row ID를 대상으로 사용하지 않음. 대상 Product와 다른 Snapshot의 승인 Alias를 허용 |
 | Catalog Component | `source_snapshot_id`와 같은 Snapshot의 Product·Ingredient composite FK | Product·Ingredient와 같은 Snapshot 안의 구성 관계만 허용 |
 | Catalog Search Entry | Product row, Product Identity와 nullable Alias의 composite FK | `PRODUCT_NAME`은 Alias가 없고 Product 정규화값과 일치. `APPROVED_ALIAS`는 승인·활성·유효 Product Alias와 일치해야 함 |
+| Catalog Set | Source/member/hash는 `rag_catalog_set.id`를 참조 | content Set은 `(schema_version, manifest_spec_version, envelope_hash)`로 재사용하되 manifest bytes와 모든 연결을 다시 대조. digest 단독 FK나 실행 ID로 사용하지 않음 |
 | Candidate Index / Resolver 입력 | 안정 제품 tuple `code_system + canonical_code`, Candidate Index version/ref, Catalog manifest hash | 현재 Candidate는 tuple snapshot을 저장하고 `product_id` FK는 후속 연결. DB UUID를 공식 Identity로 사용하지 않음 |
 | Evaluation evidence | `source_snapshot_ref`, `candidate_index_ref`, dataset/manifest hash | Evaluation은 문자열 ref와 manifest hash로 재현성 근거를 보관한다. 실제 Evidence/Citation FK 전체 구조는 후속 PR 범위 |
 

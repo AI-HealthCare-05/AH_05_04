@@ -30,6 +30,12 @@ from app.models.rag_candidate import (
     MedicationIdentificationStatus,
 )
 from app.models.rag_catalog import (
+    RagCatalogHashKind,
+    RagCatalogMemberKind,
+    RagCatalogSet,
+    RagCatalogSetHash,
+    RagCatalogSetMember,
+    RagCatalogSetSource,
     RagEntityIdentity,
     RagMedicationAlias,
     RagMedicationAliasReviewStatus,

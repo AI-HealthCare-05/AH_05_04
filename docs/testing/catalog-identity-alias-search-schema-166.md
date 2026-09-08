@@ -1,6 +1,6 @@
 # #166 Catalog Identity·Alias·Search Entry DB 기반 검증
 
-- 구현 revision: `166a7b8c9d0e`
+- 구현 revision: `166a7b8c9d0e`, `166b8c9d0e1f`
 - 검증 환경: Python 3.13 / 격리 PostgreSQL 17
 - 상태: 스키마 기반 구현·검증 완료. #166 전체 DB 통합 완료가 아니다.
 
@@ -19,6 +19,10 @@
   재사용한 뒤 Product·Ingredient·Alias·Component·Search Entry 순서로 현재 최소 schema에 적재한다.
 - 구성원 적재는 caller transaction 안의 savepoint에서 실행하며, 중간 오류가 발생하면 해당 적재에서
   만든 Identity와 구성원 전체를 되돌린다. 이 보조 계층은 commit하거나 build 저장 성공을 반환하지 않는다.
+- 불변 Catalog Set은 manifest 원문, 전체 Source Snapshot/version, 종류별 구성원 실제 FK,
+  `EXPORT_CHECKSUM`·`CATALOG_ENVELOPE`의 schema/spec/digest/계산 bytes를 함께 저장한다.
+- `SqlAlchemyCatalogBuildRepository.save_build()`가 전체 transaction을 소유하고 commit 뒤 새 session에서
+  Set·Source·member·hash count와 manifest 결속을 재검사한다. 동일한 v2 내용은 기존 Set을 재사용한다.
 
 Product와 Alias는 서로 다른 Snapshot에서 관찰될 수 있다. Alias 자체의 Source Snapshot은 유지하면서
 대상은 안정 Identity로 결속한다. 이 허용을 Component의 동일 Snapshot 규칙으로 확대하지 않는다.
@@ -35,19 +39,23 @@ Product와 Alias는 서로 다른 Snapshot에서 관찰될 수 있다. Alias 자
 ## 검증 결과
 
 ```text
-uv run pytest tests/migration/test_rag_source_catalog_migration.py -q
-33 passed
-
 uv run pytest backend/app/tests/rag/test_rag_source_catalog_repository.py -q
-14 passed
+15 passed
+
+uv run pytest tests/migration/test_rag_source_catalog_migration.py -q
+34 passed
+
+uv run pytest tests/migration -q
+105 passed
 
 MYPYPATH="$PWD/backend:$PWD" uv run mypy \
+  ai_worker/adapters/sqlalchemy_catalog_write_support.py \
   backend/app/models/rag_catalog.py \
-  backend/app/repositories/rag_source_catalog_repository.py
-Success: no issues found in 2 source files
+  backend/app/models/rag_source.py
+Success: no issues found in 3 source files
 
 uv run ruff format --check <변경 Python 파일>
-6 files already formatted
+7 files already formatted
 
 uv run ruff check <변경 Python 파일>
 All checks passed!
@@ -63,18 +71,18 @@ Migration 검증은 빈 DB upgrade, 기존 coded 구성원 backfill, 증명할 �
 upgrade/downgrade 보호, 안정 Identity와 교차 Snapshot Alias, Search Entry identity·상태·문자열 결속,
 기존 Source/Snapshot/Artifact 회귀를 포함한다.
 
-Adapter 검증은 전체 구성원 적재 재실행 시 같은 DB ID 재사용, Source version 불일치 거부,
+Adapter 검증은 전체 구성원·Set 적재 재실행 시 같은 DB ID 재사용, Source version 불일치 거부,
 현재 schema가 보존하지 못하는 비활성 Ingredient 입력에서 Product·Identity까지 함께 rollback하는
 시나리오를 포함한다. `release_profile`이 있는 Component도 현재 schema에 조용히 누락하지 않고 거부한다.
+Migration 검증은 Set의 구성원 target CHECK·FK와 UPDATE/DELETE 불변 trigger를 실제 PostgreSQL에서 확인한다.
 
 ## 이번 revision에서 확정하지 않은 범위
 
 - D-02 `normalization_run_id`의 의미·물리 실행 구조와 Publication FK
 - `rag_source_ingestion_run`을 정본 normalization 실행으로 대체하는 방식
-- Alias/Crosswalk 불변 Set/member와 Catalog 구성 식별자
-- export checksum, Catalog envelope hash, Candidate projection hash, Candidate Index manifest hash,
-  Runtime medication Catalog manifest hash의 신규 물리 저장 구조
-- Catalog build·Set/member·manifest까지 포함한 `CatalogBuildRepository` 구현, 최종 commit 결과 재조회와 실패 감사
+- Crosswalk 입력·Set과 D-02 실행/Publication에 결속된 정본 Alias Set
+- Candidate projection hash, Candidate Index manifest hash, Runtime medication Catalog manifest hash의 신규 물리 저장 구조
+- 실제 승인 저장소와 결속된 실패 감사
 - Runtime Bundle 활성화
 
 현재 migration의 `down_revision=169b2c3d4e5f`는 작성 시점의 단일 head다. 합의된 선행

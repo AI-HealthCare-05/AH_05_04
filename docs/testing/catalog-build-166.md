@@ -2,7 +2,9 @@
 
 ## 현재 인계 계약
 
-#166 후속의 DB 비의존 저장·복원 인계 결과는 [6단계 인계 증빙](catalog-storage-handoff-166.md)에 정리한다. 실제 PostgreSQL 인계는 아직 검증하지 않았다.
+#166 후속의 DB 비의존 저장·복원 인계 결과는 [6단계 인계 증빙](catalog-storage-handoff-166.md)에 정리한다.
+실제 PostgreSQL 구성원·불변 Set/manifest 저장 결과는
+[DB 기반 검증](catalog-identity-alias-search-schema-166.md)에 별도로 기록한다.
 
 PR #329의 현재 공개 입력은 `CatalogExportArtifacts`, schema는 `medication-catalog-v2`다.
 manifest·JSONL·typed Catalog 결속과 승인 gate를 검증한 뒤 Candidate Index를 생성한다.
@@ -55,17 +57,15 @@ manifest·JSONL·typed Catalog 결속과 승인 gate를 검증한 뒤 Candidate 
 transaction에 저장하는 포트다. 검증 성공 후 이 메서드가 한 번만 호출되며, 저장 예외는 성공 결과로
 변환하지 않는다.
 
-현재 #164 DB 기반에는 다음 필드와 관계가 없어 손실 없는 Worker DB adapter를 구현할 수 없다.
+후속 revision은 안정 Identity·Search Entry와 Alias 상태·교차 Snapshot 출처를 추가하고,
+현재 v2 manifest·전체 Source 목록·구성원 실제 FK·종류별 hash 계산 bytes를 불변 Catalog Set에 저장한다.
+`SqlAlchemyCatalogBuildRepository`는 Backend ORM을 import하지 않고 이 구조에 적재하며 transaction을
+소유한다. 같은 완전한 v2 내용은 기존 Set을 재사용하고, 중간 오류는 구성원과 Set 전체를 rollback한다.
 
-- Catalog build/version과 manifest candidate 저장 구조
-- Catalog build와 여러 Source Snapshot/version의 lineage
-- Candidate용 Search Entry 저장 구조
-- Alias의 `alias_source`, `review_status`, `status`, `is_effective`
-- Alias Source Snapshot과 대상 Product/Ingredient Snapshot의 분리
-
-따라서 실제 PostgreSQL 저장은 `BLOCKED_BY_WORKER_DB_ADAPTER`로 유지한다. 위 구조의 DB 계약과
-migration이 승인되면 `CatalogBuildRepository` 구현체와 PostgreSQL commit/rollback 통합 테스트를 연결한다.
-현재 구현은 Backend ORM model을 Worker에서 import하지 않는다.
+D-02 실행 provenance는 계속 미확정이므로 이 Set을 정본 normalization 실행이나 Publication으로
+간주하지 않는다. 현재 schema가 손실 없이 보존하지 못하는 비활성 Ingredient와 Component
+`release_profile`도 조용히 누락하지 않고 저장을 거부한다. Crosswalk와 신규 Candidate projection·Runtime
+medication manifest hash, 실제 승인 저장소·실패 감사·Runtime 활성화는 남은 범위다.
 
 ## 실행 결과
 
@@ -83,7 +83,7 @@ MYPYPATH="$PWD/backend:$PWD" uv run mypy ai_worker/tasks/rag/catalog
 Success: no issues found in 7 source files
 ```
 
-## 남은 통합 조건
+## 최초 구현 당시 남았던 통합 조건
 
 - #323 병합 후 승인된 Worker DB adapter 기준으로 branch를 갱신한다.
 - 위 DB 계약과 migration을 DB 담당자에게 확인한다.

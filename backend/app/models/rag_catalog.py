@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     UniqueConstraint,
@@ -57,6 +59,19 @@ class RagMedicationComponentRole(StrEnum):
     ACTIVE_INGREDIENT = "ACTIVE_INGREDIENT"
     EXCIPIENT = "EXCIPIENT"
     UNKNOWN = "UNKNOWN"
+
+
+class RagCatalogMemberKind(StrEnum):
+    PRODUCT = "PRODUCT"
+    INGREDIENT = "INGREDIENT"
+    COMPONENT = "COMPONENT"
+    ALIAS = "ALIAS"
+    SEARCH_ENTRY = "SEARCH_ENTRY"
+
+
+class RagCatalogHashKind(StrEnum):
+    EXPORT_CHECKSUM = "EXPORT_CHECKSUM"
+    CATALOG_ENVELOPE = "CATALOG_ENVELOPE"
 
 
 class RagEntityIdentity(Base):
@@ -393,3 +408,126 @@ class RagMedicationProductComponent(Base):
     ingredient: Mapped[RagMedicationIngredient] = relationship(
         back_populates="components", overlaps="components,product,source_snapshot"
     )
+
+
+class RagCatalogSet(Base):
+    __tablename__ = "rag_catalog_set"
+    __table_args__ = (
+        UniqueConstraint(
+            "schema_version",
+            "manifest_spec_version",
+            "envelope_hash",
+            name="uq_rag_catalog_set_envelope",
+        ),
+        CheckConstraint("length(trim(catalog_version)) > 0", name="chk_rag_catalog_set_version_nonblank"),
+        CheckConstraint("length(trim(schema_version)) > 0", name="chk_rag_catalog_set_schema_nonblank"),
+        CheckConstraint(
+            "length(trim(normalization_version)) > 0",
+            name="chk_rag_catalog_set_normalization_nonblank",
+        ),
+        CheckConstraint(
+            "length(trim(manifest_spec_version)) > 0",
+            name="chk_rag_catalog_set_manifest_spec_nonblank",
+        ),
+        CheckConstraint("envelope_hash ~ '^[0-9a-f]{64}$'", name="chk_rag_catalog_set_envelope_hash"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    catalog_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    normalization_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    manifest_spec_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    envelope_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest_json: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    assembly_xid: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text("pg_current_xact_id()::text::bigint"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RagCatalogSetSource(Base):
+    __tablename__ = "rag_catalog_set_source"
+    __table_args__ = (
+        CheckConstraint(
+            "length(trim(source_version)) > 0",
+            name="chk_rag_catalog_set_source_version_nonblank",
+        ),
+        ForeignKeyConstraint(
+            ["source_snapshot_id", "source_version"],
+            ["rag_source_snapshot.id", "rag_source_snapshot.source_version"],
+            name="fk_rag_catalog_set_source_snapshot_version",
+        ),
+    )
+
+    set_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_catalog_set.id"), primary_key=True)
+    source_snapshot_id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True)
+    source_version: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class RagCatalogSetMember(Base):
+    __tablename__ = "rag_catalog_set_member"
+    __table_args__ = (
+        CheckConstraint(
+            "(member_kind = 'PRODUCT' AND product_id IS NOT NULL AND ingredient_id IS NULL "
+            "AND component_id IS NULL AND alias_id IS NULL AND search_entry_id IS NULL) OR "
+            "(member_kind = 'INGREDIENT' AND product_id IS NULL AND ingredient_id IS NOT NULL "
+            "AND component_id IS NULL AND alias_id IS NULL AND search_entry_id IS NULL) OR "
+            "(member_kind = 'COMPONENT' AND product_id IS NULL AND ingredient_id IS NULL "
+            "AND component_id IS NOT NULL AND alias_id IS NULL AND search_entry_id IS NULL) OR "
+            "(member_kind = 'ALIAS' AND product_id IS NULL AND ingredient_id IS NULL "
+            "AND component_id IS NULL AND alias_id IS NOT NULL AND search_entry_id IS NULL) OR "
+            "(member_kind = 'SEARCH_ENTRY' AND product_id IS NULL AND ingredient_id IS NULL "
+            "AND component_id IS NULL AND alias_id IS NULL AND search_entry_id IS NOT NULL)",
+            name="chk_rag_catalog_set_member_target",
+        ),
+        CheckConstraint("length(trim(member_ref)) > 0", name="chk_rag_catalog_set_member_ref_nonblank"),
+        UniqueConstraint("set_id", "product_id", name="uq_rag_catalog_set_member_product"),
+        UniqueConstraint("set_id", "ingredient_id", name="uq_rag_catalog_set_member_ingredient"),
+        UniqueConstraint("set_id", "component_id", name="uq_rag_catalog_set_member_component"),
+        UniqueConstraint("set_id", "alias_id", name="uq_rag_catalog_set_member_alias"),
+        UniqueConstraint("set_id", "search_entry_id", name="uq_rag_catalog_set_member_search_entry"),
+        ForeignKeyConstraint(
+            ["set_id", "source_snapshot_id"],
+            ["rag_catalog_set_source.set_id", "rag_catalog_set_source.source_snapshot_id"],
+            name="fk_rag_catalog_set_member_source",
+        ),
+    )
+
+    set_id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True)
+    member_kind: Mapped[RagCatalogMemberKind] = mapped_column(
+        Enum(RagCatalogMemberKind, native_enum=False, length=30), primary_key=True
+    )
+    member_ref: Mapped[str] = mapped_column(String(100), primary_key=True)
+    source_snapshot_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    product_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("rag_medication_product.id"))
+    ingredient_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("rag_medication_ingredient.id"))
+    component_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("rag_medication_product_component.id"))
+    alias_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("rag_medication_alias.id"))
+    search_entry_id: Mapped[UUID | None] = mapped_column(UUIDChar(), ForeignKey("rag_medication_search_entry.id"))
+
+
+class RagCatalogSetHash(Base):
+    __tablename__ = "rag_catalog_set_hash"
+    __table_args__ = (
+        CheckConstraint(
+            f"hash_kind IN ({_sql_in_list(RagCatalogHashKind)})",
+            name="chk_rag_catalog_set_hash_kind",
+        ),
+        CheckConstraint(
+            "target IN ('catalog_jsonl', 'envelope_payload')",
+            name="chk_rag_catalog_set_hash_target",
+        ),
+        CheckConstraint("digest ~ '^[0-9a-f]{64}$'", name="chk_rag_catalog_set_hash_digest"),
+    )
+
+    set_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_catalog_set.id"), primary_key=True)
+    hash_kind: Mapped[RagCatalogHashKind] = mapped_column(
+        Enum(RagCatalogHashKind, native_enum=False, length=30), primary_key=True
+    )
+    schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    contract_spec_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    target: Mapped[str] = mapped_column(String(50), nullable=False)
+    canonical_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

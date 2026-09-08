@@ -2,11 +2,13 @@ from datetime import datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ai_worker.adapters.sqlalchemy_catalog_write_support import (
     CatalogDatabaseBindingError,
+    SqlAlchemyCatalogBuildRepository,
     SqlAlchemyCatalogWriteSupport,
 )
 from ai_worker.tasks.rag.catalog import (
@@ -25,6 +27,10 @@ from ai_worker.tasks.rag.catalog import (
 from ai_worker.tasks.rag.catalog.storage import prepare_catalog_storage
 from app.core import config
 from app.models.rag_catalog import (
+    RagCatalogSet,
+    RagCatalogSetHash,
+    RagCatalogSetMember,
+    RagCatalogSetSource,
     RagMedicationAliasReviewStatus,
     RagMedicationAliasTargetType,
     RagMedicationComponentRole,
@@ -595,6 +601,44 @@ async def test_catalog_write_support_stages_compatible_members_idempotently(db_s
     assert first.search_entry_ids == second.search_entry_ids
     assert len(first.product_ids) == len(first.ingredient_ids) == len(first.alias_ids) == len(first.component_ids) == 1
     assert len(first.search_entry_ids) == 2
+    assert first.set_id == second.set_id
+
+
+async def test_catalog_build_repository_commits_one_complete_set_and_reuses_it(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="ITEM_SEQ:200012354",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="200012354",
+                product_name="전체저장제품",
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        components=(),
+        aliases=(),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="catalog-save-build-v1",
+        source_refs=(CandidateCatalogSourceRef(str(snapshot.id), snapshot.source_version),),
+        members=members,
+    )
+    session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    catalog_repository = SqlAlchemyCatalogBuildRepository(session_factory)
+
+    await catalog_repository.save_build(members=members, artifacts=artifacts)
+    await catalog_repository.save_build(members=members, artifacts=artifacts)
+
+    for model, expected in (
+        (RagCatalogSet, 1),
+        (RagCatalogSetSource, 1),
+        (RagCatalogSetMember, 2),
+        (RagCatalogSetHash, 2),
+    ):
+        assert (await db_session.execute(select(func.count()).select_from(model))).scalar_one() == expected
 
 
 async def test_catalog_write_support_rolls_back_all_members_on_unsupported_row(db_session: AsyncSession) -> None:

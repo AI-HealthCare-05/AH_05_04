@@ -1734,3 +1734,132 @@ def test_catalog_alias_and_search_entry_bind_stable_product_identity_across_snap
         asyncio.run(verify())
     finally:
         asyncio.run(_cleanup_source_catalog_chain(ids))
+
+
+def test_catalog_set_schema_binds_members_and_rejects_mutation() -> None:
+    configuration = create_alembic_config()
+    command.upgrade(configuration, "head")
+    ids = asyncio.run(_seed_source_catalog_chain())
+
+    async def verify() -> None:
+        set_id = str(uuid4())
+        async with _connection() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_catalog_set (
+                            id, catalog_version, schema_version, normalization_version,
+                            manifest_spec_version, envelope_hash, manifest_json
+                        ) VALUES (
+                            :set_id, 'catalog-v1', 'medication-catalog-v2', 'normalization-v1',
+                            'catalog-manifest-envelope-v2', :envelope_hash, :manifest_json
+                        )
+                        """
+                    ),
+                    {"set_id": set_id, "envelope_hash": "c" * 64, "manifest_json": b"{}"},
+                )
+                with pytest.raises(DBAPIError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            text(
+                                """
+                                INSERT INTO rag_catalog_set_source (set_id, source_snapshot_id, source_version)
+                                VALUES (:set_id, :snapshot_id, 'wrong-version')
+                                """
+                            ),
+                            {**ids, "set_id": set_id},
+                        )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_catalog_set_source (set_id, source_snapshot_id, source_version)
+                        VALUES (:set_id, :snapshot_id, :source_version)
+                        """
+                    ),
+                    {**ids, "set_id": set_id},
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_catalog_set_member (
+                            set_id, member_kind, member_ref, source_snapshot_id, product_id
+                        ) VALUES (:set_id, 'PRODUCT', 'product-ref', :snapshot_id, :product_id)
+                        """
+                    ),
+                    {**ids, "set_id": set_id},
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_catalog_set_hash (
+                            set_id, hash_kind, schema_version, contract_spec_version,
+                            digest, target, canonical_bytes
+                        ) VALUES (
+                            :set_id, 'EXPORT_CHECKSUM', 'medication-catalog-v2',
+                            'catalog-manifest-envelope-v2', :digest, 'catalog_jsonl', :canonical_bytes
+                        )
+                        """
+                    ),
+                    {"set_id": set_id, "digest": "d" * 64, "canonical_bytes": b""},
+                )
+
+                with pytest.raises(DBAPIError, match="immutable"):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            text("UPDATE rag_catalog_set SET catalog_version = 'changed' WHERE id = :set_id"),
+                            {"set_id": set_id},
+                        )
+                with pytest.raises(DBAPIError, match="immutable set"):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            text("UPDATE rag_medication_product SET product_name = 'changed' WHERE id = :product_id"),
+                            ids,
+                        )
+                sealed_set_id = str(uuid4())
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_catalog_set (
+                            id, catalog_version, schema_version, normalization_version,
+                            manifest_spec_version, envelope_hash, manifest_json, assembly_xid
+                        ) VALUES (
+                            :set_id, 'sealed-v1', 'medication-catalog-v2', 'normalization-v1',
+                            'catalog-manifest-envelope-v2', :envelope_hash, :manifest_json, 0
+                        )
+                        """
+                    ),
+                    {"set_id": sealed_set_id, "envelope_hash": "e" * 64, "manifest_json": b"{}"},
+                )
+                with pytest.raises(DBAPIError, match="creation transaction"):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            text(
+                                """
+                                INSERT INTO rag_catalog_set_source (set_id, source_snapshot_id, source_version)
+                                VALUES (:set_id, :snapshot_id, :source_version)
+                                """
+                            ),
+                            {**ids, "set_id": sealed_set_id},
+                        )
+                result = await connection.execute(
+                    text(
+                        """
+                        SELECT
+                            (SELECT count(*) FROM rag_catalog_set WHERE id = :set_id),
+                            (SELECT count(*) FROM rag_catalog_set_source WHERE set_id = :set_id),
+                            (SELECT count(*) FROM rag_catalog_set_member WHERE set_id = :set_id),
+                            (SELECT count(*) FROM rag_catalog_set_hash WHERE set_id = :set_id)
+                        """
+                    ),
+                    {"set_id": set_id},
+                )
+                assert result.one() == (1, 1, 1, 1)
+            finally:
+                await transaction.rollback()
+
+    try:
+        asyncio.run(verify())
+    finally:
+        asyncio.run(_cleanup_source_catalog_chain(ids))

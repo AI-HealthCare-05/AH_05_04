@@ -9,13 +9,15 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Integer, Numeric, String, column, select, table, tuple_
+from sqlalchemy import Boolean, Integer, LargeBinary, Numeric, String, column, func, select, table, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.selectable import TableClause
 
-from ai_worker.tasks.rag.catalog.storage import CatalogStoragePlan
+from ai_worker.tasks.rag.catalog.build import CatalogMembers
+from ai_worker.tasks.rag.catalog.export import CatalogExportArtifacts
+from ai_worker.tasks.rag.catalog.storage import CatalogStoragePlan, prepare_catalog_storage
 from ai_worker.tasks.rag.catalog.types import CandidateEntityType, ProductIdentity
 
 _SOURCE_SNAPSHOT = table(
@@ -93,6 +95,44 @@ _SEARCH_ENTRY = table(
     column("alias_id", String(36)),
     column("normalized_text", String(255)),
 )
+_CATALOG_SET = table(
+    "rag_catalog_set",
+    column("id", String(36)),
+    column("catalog_version", String(100)),
+    column("schema_version", String(100)),
+    column("normalization_version", String(100)),
+    column("manifest_spec_version", String(100)),
+    column("envelope_hash", String(64)),
+    column("manifest_json", LargeBinary),
+)
+_CATALOG_SET_SOURCE = table(
+    "rag_catalog_set_source",
+    column("set_id", String(36)),
+    column("source_snapshot_id", String(36)),
+    column("source_version", String(255)),
+)
+_CATALOG_SET_MEMBER = table(
+    "rag_catalog_set_member",
+    column("set_id", String(36)),
+    column("member_kind", String(30)),
+    column("member_ref", String(100)),
+    column("source_snapshot_id", String(36)),
+    column("product_id", String(36)),
+    column("ingredient_id", String(36)),
+    column("component_id", String(36)),
+    column("alias_id", String(36)),
+    column("search_entry_id", String(36)),
+)
+_CATALOG_SET_HASH = table(
+    "rag_catalog_set_hash",
+    column("set_id", String(36)),
+    column("hash_kind", String(30)),
+    column("schema_version", String(100)),
+    column("contract_spec_version", String(100)),
+    column("digest", String(64)),
+    column("target", String(50)),
+    column("canonical_bytes", LargeBinary),
+)
 
 
 class CatalogDatabaseBindingError(ValueError):
@@ -118,6 +158,7 @@ class CatalogDatabaseStageResult:
     alias_ids: dict[str, UUID] = field(default_factory=dict)
     component_ids: dict[str, UUID] = field(default_factory=dict)
     search_entry_ids: dict[str, UUID] = field(default_factory=dict)
+    set_id: UUID | None = None
 
 
 def _uuid(value: object) -> UUID:
@@ -214,6 +255,15 @@ class SqlAlchemyCatalogWriteSupport:
                     product_ids,
                     alias_ids,
                 )
+                staged = CatalogDatabaseStageResult(
+                    bindings,
+                    product_ids,
+                    ingredient_ids,
+                    alias_ids,
+                    component_ids,
+                    search_entry_ids,
+                )
+                set_id = await self._stage_set(plan, staged)
                 return CatalogDatabaseStageResult(
                     bindings,
                     product_ids,
@@ -221,6 +271,7 @@ class SqlAlchemyCatalogWriteSupport:
                     alias_ids,
                     component_ids,
                     search_entry_ids,
+                    set_id,
                 )
         except CatalogDatabaseBindingError:
             raise
@@ -326,6 +377,22 @@ class SqlAlchemyCatalogWriteSupport:
             elif actual != expected:
                 raise CatalogDatabaseBindingError()
         return _uuid(stored["id"])
+
+    async def _insert_exact(
+        self,
+        target: TableClause,
+        *,
+        values: dict[str, object],
+        key_columns: tuple[str, ...],
+    ) -> None:
+        database_values = {name: str(value) if isinstance(value, UUID) else value for name, value in values.items()}
+        await self._session.execute(insert(target).values(**database_values).on_conflict_do_nothing())
+        statement = select(target).where(*(target.c[name] == database_values[name] for name in key_columns))
+        rows = (await self._session.execute(statement)).mappings().all()
+        if len(rows) != 1:
+            raise CatalogDatabaseBindingError()
+        if any(rows[0][name] != expected for name, expected in database_values.items()):
+            raise CatalogDatabaseBindingError()
 
     async def _stage_products(
         self,
@@ -480,3 +547,136 @@ class SqlAlchemyCatalogWriteSupport:
                 key_columns=("product_id", "entry_type", "normalized_text"),
             )
         return result
+
+    async def _stage_set(self, plan: CatalogStoragePlan, staged: CatalogDatabaseStageResult) -> UUID:
+        manifest = _record(plan.manifest_json)
+        envelope = tuple(item for item in plan.hashes if item.kind == "CATALOG_ENVELOPE")
+        if len(envelope) != 1 or _text(manifest, "catalog_manifest_hash") != envelope[0].digest:
+            raise CatalogDatabaseBindingError()
+        await self._session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(envelope[0].digest, 0))))
+        existing = (
+            await self._session.execute(
+                select(_CATALOG_SET.c.id).where(
+                    _CATALOG_SET.c.schema_version == _text(manifest, "schema_version"),
+                    _CATALOG_SET.c.manifest_spec_version == envelope[0].contract_spec_version,
+                    _CATALOG_SET.c.envelope_hash == envelope[0].digest,
+                )
+            )
+        ).all()
+        if len(existing) > 1:
+            raise CatalogDatabaseBindingError()
+        set_id = await self._upsert_row(
+            _CATALOG_SET,
+            values={
+                "catalog_version": plan.catalog_version,
+                "schema_version": _text(manifest, "schema_version"),
+                "normalization_version": _text(manifest, "normalization_version"),
+                "manifest_spec_version": envelope[0].contract_spec_version,
+                "envelope_hash": envelope[0].digest,
+                "manifest_json": plan.manifest_json,
+            },
+            key_columns=("schema_version", "manifest_spec_version", "envelope_hash"),
+        )
+        if existing:
+            await self.verify_set(set_id, plan)
+            return set_id
+        for source_ref in plan.source_refs:
+            await self._insert_exact(
+                _CATALOG_SET_SOURCE,
+                values={
+                    "set_id": set_id,
+                    "source_snapshot_id": staged.bindings.source_snapshot_ids[source_ref.snapshot_id],
+                    "source_version": source_ref.source_version,
+                },
+                key_columns=("set_id", "source_snapshot_id"),
+            )
+
+        member_ids = {
+            "PRODUCT": ("product_id", staged.product_ids),
+            "INGREDIENT": ("ingredient_id", staged.ingredient_ids),
+            "COMPONENT": ("component_id", staged.component_ids),
+            "ALIAS": ("alias_id", staged.alias_ids),
+            "SEARCH_ENTRY": ("search_entry_id", staged.search_entry_ids),
+        }
+        for row in plan.rows:
+            target_column, ids = member_ids[row.kind]
+            values: dict[str, object] = {
+                "set_id": set_id,
+                "member_kind": row.kind,
+                "member_ref": row.member_ref,
+                "source_snapshot_id": staged.bindings.source_snapshot_ids[row.source_ref.snapshot_id],
+                "product_id": None,
+                "ingredient_id": None,
+                "component_id": None,
+                "alias_id": None,
+                "search_entry_id": None,
+            }
+            values[target_column] = ids[row.member_ref]
+            await self._insert_exact(
+                _CATALOG_SET_MEMBER,
+                values=values,
+                key_columns=("set_id", "member_kind", "member_ref"),
+            )
+        for hash_material in plan.hashes:
+            await self._insert_exact(
+                _CATALOG_SET_HASH,
+                values={
+                    "set_id": set_id,
+                    "hash_kind": hash_material.kind,
+                    "schema_version": hash_material.schema_version,
+                    "contract_spec_version": hash_material.contract_spec_version,
+                    "digest": hash_material.digest,
+                    "target": hash_material.target,
+                    "canonical_bytes": hash_material.canonical_bytes,
+                },
+                key_columns=("set_id", "hash_kind"),
+            )
+        await self.verify_set(set_id, plan)
+        return set_id
+
+    async def verify_set(self, set_id: UUID, plan: CatalogStoragePlan) -> None:
+        manifest = _record(plan.manifest_json)
+        statement = select(_CATALOG_SET).where(_CATALOG_SET.c.id == str(set_id))
+        rows = (await self._session.execute(statement)).mappings().all()
+        if len(rows) != 1:
+            raise CatalogDatabaseBindingError()
+        stored = rows[0]
+        expected = {
+            "catalog_version": plan.catalog_version,
+            "schema_version": _text(manifest, "schema_version"),
+            "normalization_version": _text(manifest, "normalization_version"),
+            "envelope_hash": _text(manifest, "catalog_manifest_hash"),
+            "manifest_json": plan.manifest_json,
+        }
+        if any(stored[name] != value for name, value in expected.items()):
+            raise CatalogDatabaseBindingError()
+        for target, expected_count in (
+            (_CATALOG_SET_SOURCE, len(plan.source_refs)),
+            (_CATALOG_SET_MEMBER, len(plan.rows)),
+            (_CATALOG_SET_HASH, len(plan.hashes)),
+        ):
+            count = (
+                await self._session.execute(
+                    select(func.count()).select_from(target).where(target.c.set_id == str(set_id))
+                )
+            ).scalar_one()
+            if count != expected_count:
+                raise CatalogDatabaseBindingError()
+
+
+class SqlAlchemyCatalogBuildRepository:
+    """현재 v2 Catalog Set 전체 transaction을 소유하는 PostgreSQL adapter입니다."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def save_build(self, *, members: CatalogMembers, artifacts: CatalogExportArtifacts) -> None:
+        plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+        async with self._session_factory() as session:
+            async with session.begin():
+                staged = await SqlAlchemyCatalogWriteSupport(session).stage_compatible_members(plan)
+                if staged.set_id is None:
+                    raise CatalogDatabaseBindingError()
+                set_id = staged.set_id
+        async with self._session_factory() as session:
+            await SqlAlchemyCatalogWriteSupport(session).verify_set(set_id, plan)

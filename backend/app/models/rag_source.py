@@ -203,6 +203,7 @@ class RagSourceSnapshot(Base):
 
     __tablename__ = "rag_source_snapshot"
     __table_args__ = (
+        UniqueConstraint("id", "source_version", name="uq_rag_source_snapshot_id_version"),
         Index(
             "uq_rag_source_snapshot_active_version",
             "operation_id",
