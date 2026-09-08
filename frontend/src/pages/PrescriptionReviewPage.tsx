@@ -59,6 +59,16 @@ const requiredReviewFieldTypes = new Set<string>([
   ...requiredMedicationFieldTypes,
 ])
 
+const manuallyEnterableOcrPlaceholderFieldTypes = new Set<string>([
+  'PRESCRIBED_DATE',
+  'DOSE_VALUE',
+  'FREQUENCY_PER_DAY',
+  'DURATION_DAYS',
+])
+
+const manualEntryNotice =
+  'OCR이 인식하지 못해 직접 입력이 필요한 필드예요.'
+
 type ReviewSectionKey = 'prescription-date' | `medication-${number}`
 
 type BlockingAction = 'UPLOAD' | 'RETRY_LATER'
@@ -202,6 +212,30 @@ function getSavedDisplayValue(field: ExtractedField) {
   }
 
   return field.raw_value ?? ''
+}
+
+function isUnconfirmedEmptyOcrField(field: ExtractedField) {
+  return (
+    field.confirmation_status === 'UNCONFIRMED' &&
+    field.raw_value === null &&
+    field.normalized_value === null &&
+    field.confidence_score === null &&
+    field.confirmed_value === null
+  )
+}
+
+function isRequiredOcrPlaceholder(field: ExtractedField) {
+  return (
+    manuallyEnterableOcrPlaceholderFieldTypes.has(field.field_type) &&
+    isUnconfirmedEmptyOcrField(field)
+  )
+}
+
+function isUnrecoverableMedicationNameField(field: ExtractedField) {
+  return (
+    field.field_type === 'MEDICATION_NAME' &&
+    isUnconfirmedEmptyOcrField(field)
+  )
 }
 
 function isFieldConfirmed(
@@ -486,6 +520,15 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
+  const hasRequiredOcrPlaceholders = useMemo(
+    () => fields.some(isRequiredOcrPlaceholder),
+    [fields],
+  )
+  const hasStructurallyMissingRequiredFields =
+    hasMissingPrescribedDateField || hasMissingRequiredMedicationFields
+  const hasRequiredRecognitionIssue =
+    hasRequiredOcrPlaceholders || hasStructurallyMissingRequiredFields
+
   const reviewReadyForAcknowledgement =
     prescribedDateConfirmed &&
     allRequiredMedicationFieldsConfirmed &&
@@ -574,18 +617,41 @@ function PrescriptionReviewPage() {
           return
         }
 
+        if (ocrResponse.data.fields.some(isUnrecoverableMedicationNameField)) {
+          setBlockingState({
+            title: '약 이름을 인식하지 못했어요',
+            message: '약 이름은 직접 입력해 검수를 진행할 수 없습니다.',
+            nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+            action: 'UPLOAD',
+          })
+          return
+        }
+
         const documentBlob = await getPrescriptionDocumentFile(resolvedDocumentId)
         if (!isLatestRequest()) return
 
-        setFields(ocrResponse.data.fields)
+        const nextFields = ocrResponse.data.fields
+        const placeholderSections = new Set<ReviewSectionKey>(
+          nextFields
+            .filter(isRequiredOcrPlaceholder)
+            .map<ReviewSectionKey>((field) =>
+              field.medication_index === 0
+                ? 'prescription-date'
+                : `medication-${field.medication_index}`,
+            ),
+        )
+
+        setFields(nextFields)
         setDraftValues(
           Object.fromEntries(
-            ocrResponse.data.fields.map((field) => [
+            nextFields.map((field) => [
               field.field_id,
               getSavedDisplayValue(field),
             ]),
           ),
         )
+        setEditingSections(placeholderSections)
+        setRevokedReviewSections(new Set(placeholderSections))
 
         const nextObjectUrl = URL.createObjectURL(documentBlob)
         if (!isLatestRequest()) {
@@ -871,6 +937,10 @@ function PrescriptionReviewPage() {
     const isSaving = savingFieldIds.has(field.field_id)
     const fieldError = fieldErrors[field.field_id] ??
       getFieldValidationError(field, draftValue)
+    const helpText = [
+      isRequiredOcrPlaceholder(field) ? manualEntryNotice : null,
+      fieldError,
+    ].filter(Boolean).join(' ')
     const inputMode =
       field.field_type === 'DOSE_VALUE'
         ? 'decimal'
@@ -896,6 +966,7 @@ function PrescriptionReviewPage() {
         <span className="prescription-review__edit-control">
           <input
             id={`field-${field.field_id}`}
+            aria-label={getFieldLabel(field.field_type)}
             value={draftValue}
             inputMode={inputMode}
             placeholder={
@@ -925,7 +996,7 @@ function PrescriptionReviewPage() {
           className={fieldError ? 'is-error' : ''}
           role={fieldError ? 'alert' : undefined}
         >
-          {fieldError ?? ''}
+          {helpText}
         </small>
       </label>
     )
@@ -977,6 +1048,9 @@ function PrescriptionReviewPage() {
       ? fieldErrors[prescribedDateField.field_id] ??
         getFieldValidationError(prescribedDateField, dateValue)
       : '처방일을 확인할 수 없습니다.'
+    const dateNeedsManualEntry = Boolean(
+      prescribedDateField && isRequiredOcrPlaceholder(prescribedDateField),
+    )
     const reviewed = Boolean(prescriptionDateReviewed)
 
     return (
@@ -1042,7 +1116,11 @@ function PrescriptionReviewPage() {
               }`}
             >
               <strong>{formatDateForDisplay(dateValue) || '—'}</strong>
-              {dateError && <small role="alert">{dateError}</small>}
+              {dateError && (
+                <small role="alert">
+                  {dateNeedsManualEntry ? manualEntryNotice : dateError}
+                </small>
+              )}
             </div>
             <div className="prescription-review__section-actions">
               <Button
@@ -1176,15 +1254,25 @@ function PrescriptionReviewPage() {
             )}
             <dl className="prescription-review__medication-values">
               {rows.map((fieldType) => {
+                const field = group.fields.find(
+                  (candidate) => candidate.field_type === fieldType,
+                )
                 const value = getValue(fieldType)
                 const isRequiredMissing =
                   requiredReviewFieldTypes.has(fieldType) && !value
+                const needsManualEntry = Boolean(
+                  field && isRequiredOcrPlaceholder(field),
+                )
                 return (
                   <div className={isRequiredMissing ? 'is-error' : ''} key={fieldType}>
                     <dt>{getFieldLabel(fieldType)}</dt>
                     <dd>{formatFieldValue(fieldType, value)}</dd>
                     {isRequiredMissing && (
-                      <small>{getFieldLabel(fieldType)}을(를) 입력해 주세요.</small>
+                      <small>
+                        {needsManualEntry
+                          ? manualEntryNotice
+                          : `${getFieldLabel(fieldType)}을(를) 입력해 주세요.`}
+                      </small>
                     )}
                   </div>
                 )
@@ -1366,12 +1454,29 @@ function PrescriptionReviewPage() {
       >
         <main className="app-scroll prescription-review prescription-review__content">
           <section className="prescription-review__intro">
-            <div className="prescription-review__success-icon" aria-hidden="true">
-              ✓
+            <div
+              className={`prescription-review__status-icon ${
+                hasRequiredRecognitionIssue ? 'is-warning' : 'is-success'
+              }`}
+              aria-hidden="true"
+            >
+              {hasRequiredRecognitionIssue ? '!' : '✓'}
             </div>
             <div>
-              <p>전체 인식 성공</p>
-              <h1>처방전과 같은지 확인해 주세요</h1>
+              <p>
+                {hasStructurallyMissingRequiredFields
+                  ? '필수 처방 항목 인식 누락'
+                  : hasRequiredOcrPlaceholders
+                    ? '일부 필수 항목 인식 누락'
+                    : '전체 인식 성공'}
+              </p>
+              <h1>
+                {hasStructurallyMissingRequiredFields
+                  ? '처방전을 다시 업로드해 주세요'
+                  : hasRequiredOcrPlaceholders
+                    ? '누락된 항목을 직접 입력해 주세요'
+                    : '처방전과 같은지 확인해 주세요'}
+              </h1>
             </div>
           </section>
 
@@ -1392,8 +1497,7 @@ function PrescriptionReviewPage() {
             </span>
           </div>
 
-          {(hasMissingPrescribedDateField ||
-            hasMissingRequiredMedicationFields) && (
+          {hasStructurallyMissingRequiredFields && (
             <div className="prescription-review__error" role="alert">
               <strong>필수 처방 항목이 누락됐어요</strong>
               <span>
