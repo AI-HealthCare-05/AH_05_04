@@ -56,6 +56,8 @@ async function openEditForm() {
 }
 
 beforeEach(() => {
+  localStorage.clear()
+  sessionStorage.clear()
   localStorage.setItem('access_token', 'fixture-token')
   vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
@@ -248,6 +250,7 @@ describe('내 정보 수정', () => {
 
 describe('인증과 재접근', () => {
   it('GET 401/session expired 시 토큰과 민감정보를 지우고 로그인으로 이동한다', async () => {
+    sessionStorage.setItem('dosey_chat_session:fixture-prescription', 'fixture-session')
     vi.mocked(getCurrentUser).mockRejectedValue(
       new ApiError(401, 'expired fixture', 'EXPIRED_TOKEN'),
     )
@@ -255,6 +258,7 @@ describe('인증과 재접근', () => {
 
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_chat_session:fixture-prescription')).toBeNull()
     expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
   })
 

@@ -10,6 +10,10 @@ import {
 import { ApiError } from '../api/client'
 import { Button, Card, MobileShell, StatusBadge } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
+import {
+  clearAuthenticatedSession,
+  isStaleTokenError,
+} from '../features/auth/authSession'
 import '../design-system/prototype.css'
 import './ChatPage.css'
 
@@ -243,7 +247,8 @@ function ChatPage() {
       setMessages(historyResponse.data.messages)
     } catch (error) {
       if (!isCurrentRequest()) return
-      if (error instanceof ApiError && error.status === 401) {
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
         setRequiresLogin(true)
       }
       setSessionId(null)
@@ -336,7 +341,8 @@ function ChatPage() {
       })
     } catch (error) {
       if (!isCurrentRequest()) return
-      if (error instanceof ApiError && error.status === 401) {
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
         setRequiresLogin(true)
       } else {
         try {
@@ -350,8 +356,12 @@ function ChatPage() {
               knownMessageIds,
             ),
           )
-        } catch {
+        } catch (historyError) {
           if (!isCurrentRequest()) return
+          if (isStaleTokenError(historyError)) {
+            clearAuthenticatedSession()
+            setRequiresLogin(true)
+          }
         }
       }
       setErrorMessage(

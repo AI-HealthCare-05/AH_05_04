@@ -720,6 +720,7 @@ describe('ChatPage', () => {
   })
 
   it('인증 API가 401을 반환하면 로그인 안내로 전환한다', async () => {
+    sessionStorage.setItem(`dosey_chat_session:${prescriptionId}`, 'previous-session')
     vi.mocked(getChatSessionForPrescription).mockRejectedValue(
       new ApiError(401, '로그인이 필요합니다.'),
     )
@@ -731,6 +732,8 @@ describe('ChatPage', () => {
     expect(getChatSessionForPrescription).toHaveBeenCalledWith(prescriptionId)
     expect(createChatSession).not.toHaveBeenCalled()
     expect(getChatMessages).not.toHaveBeenCalled()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem(`dosey_chat_session:${prescriptionId}`)).toBeNull()
   })
 
   it.each([
@@ -770,6 +773,32 @@ describe('ChatPage', () => {
     ).toBeTruthy()
     expect(sendChatMessage).toHaveBeenCalledTimes(1)
     expect(getChatMessages).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem(`dosey_chat_session:${prescriptionId}`)).toBeNull()
+  })
+
+  it('메시지 실패 후 이력 복구가 401이면 중앙 세션을 정리한다', async () => {
+    vi.mocked(sendChatMessage).mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.mocked(getChatMessages)
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: [] },
+      })
+      .mockRejectedValueOnce(
+        new ApiError(401, '로그인이 필요합니다.', 'EXPIRED_TOKEN'),
+      )
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '인증 복구 확인 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    expect(
+      await screen.findByText('로그인 후 복약 챗봇을 이용해 주세요'),
+    ).toBeTruthy()
+    expect(sendChatMessage).toHaveBeenCalledTimes(1)
+    expect(getChatMessages).toHaveBeenCalledTimes(2)
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem(`dosey_chat_session:${prescriptionId}`)).toBeNull()
   })
 
   it('CHAT_SESSION_NOT_FOUND 404일 때만 새 session을 생성한다', async () => {

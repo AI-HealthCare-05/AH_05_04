@@ -11,6 +11,7 @@ import {
   type JobStatusResponse,
   type OcrJobResponse,
 } from '../api/prescriptions'
+import { getGuideForPrescription } from '../api/guides'
 import { ApiError } from '../api/client'
 import AiJobStatusState from '../components/AiJobStatusState'
 import { Button, Card, MobileShell } from '../design-system/components'
@@ -184,21 +185,21 @@ function PrescriptionUploadPage() {
       setIsCheckingExistingPrescription(false)
     }
 
-    let rediscoveryRequest
-    try {
-      rediscoveryRequest = getLatestPrescription()
-    } catch (error) {
-      handleRediscoveryFailure(error)
-      return () => {
-        isActive = false
+    const rediscoverExistingGuide = async () => {
+      try {
+        const prescriptionResponse = await getLatestPrescription()
+        if (!isActive) return
+
+        await getGuideForPrescription(
+          prescriptionResponse.data.prescription_id,
+        )
+        if (isActive) navigate('/guides', { replace: true })
+      } catch (error) {
+        handleRediscoveryFailure(error)
       }
     }
 
-    void rediscoveryRequest
-      .then(() => {
-        if (isActive) navigate('/guides', { replace: true })
-      })
-      .catch(handleRediscoveryFailure)
+    void rediscoverExistingGuide()
 
     return () => {
       isActive = false
@@ -333,8 +334,7 @@ function PrescriptionUploadPage() {
   }, [pollingState.jobKey, pollingState.status, pollingTarget])
 
   const expireOcrSession = useCallback(() => {
-    clearOcrJobRecovery()
-    localStorage.removeItem('access_token')
+    clearAuthenticatedSession()
     navigate('/login', { replace: true })
   }, [navigate])
 

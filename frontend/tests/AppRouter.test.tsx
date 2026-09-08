@@ -203,11 +203,13 @@ describe('인증 상태별 AppRouter 이동', () => {
     )
     localStorage.setItem('access_token', 'stale-access-token')
     sessionStorage.setItem('dosey_ocr_job_recovery:v1', '{"job":"active"}')
+    sessionStorage.setItem('dosey_chat_session:fixture-prescription', 'fixture-session')
     renderRoute('/login')
 
     expect(await screen.findByRole('heading', { name: '다시 만나서 반가워요' })).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
     expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+    expect(sessionStorage.getItem('dosey_chat_session:fixture-prescription')).toBeNull()
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 })
