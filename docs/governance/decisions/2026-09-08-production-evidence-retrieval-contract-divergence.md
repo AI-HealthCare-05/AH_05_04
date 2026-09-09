@@ -131,7 +131,7 @@ Production `source_version` 전체 값은 1~200자, NFC이며 공백·제어문�
 | --- | --- |
 | 제공자가 불변 version을 제공 | `external:<nonempty-version>` |
 | `source_type=API`이고 외부 불변 version이 없음 | `api:<RFC3339 UTC 고정 6자리 소수초>:<canonical_checksum 64-lower-hex>` |
-| `source_type=INTERNAL_CURATED_DATA` | `internal:<승인 Git tag 또는 commit과 Fixture Manifest에서 파생한 fixture_version>:<canonical_checksum 64-lower-hex>` |
+| `source_type=INTERNAL_CURATED_DATA` | `internal:commit-<40 lower-hex>-manifest-<64 lower-hex>:<canonical_checksum 64-lower-hex>` |
 
 API·Internal 형식의 hash suffix는 같은 `source_snapshot_id`의 `canonical_checksum`과 exact-match해야 하며,
 Source producer와 Production Retrieval Adapter가 각각 이 결속을 검증한다. Source producer의 수집 시점
@@ -148,6 +148,12 @@ Production Retrieval Adapter에서 suffix와 `canonical_checksum`이 다르면 d
 `execution_status=VALIDATION_ERROR`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`,
 `fallback_code=VALIDATION_FAILED`로 변환한다.
 Adapter 검증 실패를 `evidence_status=CONFLICTED` 또는 `CONFLICTING_EVIDENCE`로 분류하지 않는다.
+
+PD-362 Source producer 구체화에 따라 Internal Fixture의 기존 승인 Git tag 경로는 제거한다.
+Git tag는 이동 가능한 ref이므로 불변 식별자로 취급하지 않는다. Internal `fixture_version`은
+40자리 lowercase Commit SHA와 64자리 lowercase Fixture Manifest SHA-256을 함께
+exact-bind해야 한다. 승인 tag나 release 이름은 필요하면 Receipt의 별도 검토 metadata로
+보존하며 `source_version` 정본에는 포함하지 않는다.
 
 `external:` payload는 같은 Snapshot에 보존된 non-null `external_version`과 byte-for-byte exact-match해야 한다.
 외부 불변 version이 없는 API·Internal 경로의 `external_version`은 `null`이어야 한다. #362 producer와
