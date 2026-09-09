@@ -414,7 +414,12 @@ class InMemoryAuthorizationLedger:
             grant
             for grant_id, grant in self._grants.items()
             if grant_id not in self._revoked
+            and grant.subject == request.principal
             and grant.dataset_id == request.dataset.dataset_id
+            and grant.dataset_version == request.dataset.dataset_version
+            and grant.manifest_sha256 == request.dataset.manifest_sha256
+            and grant.protected_artifact_sha256 == request.dataset.protected_artifact_sha256
+            and grant.hmac_key_version == request.dataset.hmac_key_version
             and request.action in grant.actions
         ]
         if not candidates:

@@ -15,8 +15,8 @@
 - Preparation raw SHA-256: `40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192`
 - Preparation self SHA-256: `b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6`
 - Protected Runner Foundation: `issue-273-protected-runner-foundation@1.0.0`
-- Foundation raw SHA-256: `72306db8414f81cd3f724177885d24c69d87ea56745b4094f4eb29dfb9920de0`
-- Foundation self SHA-256: `f2bb8e8ccb5e9d85470c0ebc69574196865c91ef3504162859660c530990dbe0`
+- Foundation raw SHA-256: `7311f9e934b5cda8a87f14ddf986057a54be79e0a215937ce2345af08b3593d5`
+- Foundation self SHA-256: `7c77b159df066b96aaf22c7ad431ab114dcf147fc6067e5b871bf8ea49e98d5c`
 - Phase B3 Product·Privacy·Safety·Evaluation Reviewer: `@hazelnutflavoured`
 - Phase B3 Dataset Custodian·Backend·Security Reviewer: `@phina-io`
 - Prior DEV Approval Transition: `DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED`; the verified actor was `@phina-io` (`DATASET_CUSTODIAN`). This is not HOLDOUT access authorization.
@@ -66,7 +66,7 @@ DEV cannot produce a Release PASS; Production remains closed.
 | `PHASE_A_LOADER` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q` | `0` | 132 passed |
 | `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 51 passed |
 | `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 94 passed, 7 skipped |
-| `PHASE_B3_PROTECTED_RUNNER_FOUNDATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q` | `0` | 58 passed |
+| `PHASE_B3_PROTECTED_RUNNER_FOUNDATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q` | `0` | 59 passed |
 | `PHASE_B_DATASET_APPROVAL_PROVENANCE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_the_actual_dataset_custodian_approval_event -q` | `0` | 1 passed |
 | `PHASE_B_GOLD_REVIEW_PROVENANCE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_only_the_actual_gold_review_event -q` | `0` | 1 passed |
 | `PHASE_B_HOLDOUT_FREEZE_PREPARATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q` | `0` | 27 passed |
@@ -82,4 +82,4 @@ DEV cannot produce a Release PASS; Production remains closed.
 - HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-09T00:00:00.000000Z`. Canonical status SHA-256: `ec54a45147212a989c7c3f948df736b379933ce464337752a58b18bb364aa8c8`.
+Status updated at `2026-09-09T00:00:00.000000Z`. Canonical status SHA-256: `0f9109879155872f771f50aac32e34a9de8bd2694eee34dee82f5799ad9958ad`.

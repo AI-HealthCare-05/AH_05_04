@@ -78,6 +78,7 @@ def _control_binding() -> ControlImplementationBinding:
 
 def _dataset(
     *,
+    dataset_version: str = "1.0.0",
     state: ProtectedDatasetState = ProtectedDatasetState.AUTHORING,
     state_revision: int = 3,
     artifact_sha256: str = SHA_B,
@@ -90,7 +91,7 @@ def _dataset(
 ) -> ProtectedDatasetBinding:
     return ProtectedDatasetBinding(
         dataset_id="rag-natural-language-retrieval-holdout",
-        dataset_version="1.0.0",
+        dataset_version=dataset_version,
         manifest_sha256=SHA_A,
         protected_artifact_sha256=artifact_sha256,
         hmac_key_version="holdout-key-v1",
@@ -445,6 +446,52 @@ async def test_authorized_write_records_intent_and_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_higher_revision_grants_with_other_subject_or_dataset_binding_do_not_shadow_valid_grant() -> None:
+    requested_dataset = _dataset(dataset_version="1.0.0")
+    other_version = _dataset(dataset_version="2.0.0", artifact_sha256="d" * 64)
+    requested_subject = _principal("requested-author")
+    valid_grant = _grant(subject=requested_subject, dataset=requested_dataset).model_copy(
+        update={"approval_source_event_id": "review-valid"}
+    )
+    other_subject_grant = _grant(subject=_principal("other-author"), dataset=requested_dataset).model_copy(
+        update={"revision": 8, "approval_source_event_id": "review-other-subject"}
+    )
+    other_binding_grant = _grant(subject=requested_subject, dataset=other_version).model_copy(
+        update={"revision": 9, "approval_source_event_id": "review-other-binding"}
+    )
+    sources = {
+        source.source_event_id: source
+        for source in (
+            _approval_source(valid_grant, source_event_id="review-valid"),
+            _approval_source(other_subject_grant, source_event_id="review-other-subject"),
+            _approval_source(other_binding_grant, source_event_id="review-other-binding"),
+        )
+    }
+    clock = FixedTrustedClock(NOW)
+    journal = InMemoryProtectedAuditJournal(clock)
+    ledger = InMemoryAuthorizationLedger(journal, clock, InMemoryApprovalEvidenceVerifier(sources))
+    ledger.register_dataset(requested_dataset)
+    ledger.register_dataset(other_version)
+    ledger.grant(valid_grant)
+    ledger.grant(other_subject_grant)
+    ledger.grant(other_binding_grant)
+    operation = SyntheticProtectedOperation()
+
+    result = await execute_protected_operation(
+        _request(principal=requested_subject, dataset=requested_dataset),
+        ledger=ledger,
+        guard=InMemoryAuthorizationGuard(ledger, clock),
+        journal=journal,
+        operation=operation,
+        clock=clock,
+    )
+
+    assert result.reason_code == "PROTECTED_OPERATION_SUCCEEDED"
+    assert operation.call_count == 1
+    assert journal.operation_entries[-1].grant_id == valid_grant.grant_id
+
+
+@pytest.mark.asyncio
 async def test_completed_operation_returns_the_audited_result_without_reexecution() -> None:
     grant = _grant()
     clock, journal, ledger, guard, operation = _authorized_components(grant, _approval_source(grant))
@@ -556,7 +603,7 @@ async def test_terminal_audit_failure_never_returns_success() -> None:
 @pytest.mark.parametrize(
     ("operation_request", "reason"),
     [
-        (_request(principal=_principal("other-author")), "GRANT_SUBJECT_MISMATCH"),
+        (_request(principal=_principal("other-author")), "AUTHORIZATION_NOT_FOUND"),
         (_request(dataset=_dataset(state=ProtectedDatasetState.FROZEN)), "DATASET_STATE_MISMATCH"),
         (
             _request(
