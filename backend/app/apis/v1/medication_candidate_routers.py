@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse as Response
 
 from app.core import config
-from app.core.errors import ApiError, ErrorDetail
+from app.core.errors import ApiError, ErrorDetail, ErrorResponse
 from app.core.utils.idempotency import IdempotencyKeyFormatError, validate_idempotency_key_format
 from app.dependencies.security import get_request_user
 from app.dependencies.services import get_medication_candidate_service
@@ -21,6 +21,23 @@ from app.models.users import User
 from app.services.medication_candidates import MedicationCandidateService
 
 medication_candidate_router = APIRouter(tags=["medication-candidates"])
+
+_VALIDATION_ERROR_RESPONSE = {
+    "model": ErrorResponse,
+    "description": "ErrorResponse envelope로 반환되는 입력 검증 오류입니다.",
+}
+_SERVICE_UNAVAILABLE_RESPONSE = {
+    "model": ErrorResponse,
+    "description": "Candidate 기능이 아직 공개되지 않았거나 선행 연결이 완료되지 않은 상태입니다.",
+}
+_NOT_FOUND_RESPONSE = {
+    "model": ErrorResponse,
+    "description": "대상 약제, Candidate Search, Result가 없거나 인증 사용자의 SELF Profile 소유가 아닙니다.",
+}
+_CONFLICT_RESPONSE = {
+    "model": ErrorResponse,
+    "description": "Candidate가 현재 상태와 맞지 않거나 같은 Idempotency-Key로 다른 요청 지문이 접수되었습니다.",
+}
 
 
 def _raise_candidate_feature_unavailable() -> NoReturn:
@@ -70,6 +87,10 @@ def _validate_idempotency_header(idempotency_key: str | None) -> None:
     "/medication-candidate-searches",
     response_model=MedicationCandidateSearchResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        status.HTTP_422_UNPROCESSABLE_CONTENT: _VALIDATION_ERROR_RESPONSE,
+        status.HTTP_503_SERVICE_UNAVAILABLE: _SERVICE_UNAVAILABLE_RESPONSE,
+    },
 )
 async def create_medication_candidate_search(
     request: CreateMedicationCandidateSearchRequest,
@@ -83,6 +104,11 @@ async def create_medication_candidate_search(
     "/medication-candidate-searches/{prescription_version_medication_id}",
     response_model=MedicationCandidateSearchResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: _NOT_FOUND_RESPONSE,
+        status.HTTP_422_UNPROCESSABLE_CONTENT: _VALIDATION_ERROR_RESPONSE,
+        status.HTTP_503_SERVICE_UNAVAILABLE: _SERVICE_UNAVAILABLE_RESPONSE,
+    },
 )
 async def get_medication_candidate_search(
     prescription_version_medication_id: UUID,
@@ -118,6 +144,13 @@ _IDEMPOTENCY_KEY_OPENAPI_PARAMETER = {
     "/medication-candidates/confirm",
     response_model=ConfirmMedicationCandidateResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_400_BAD_REQUEST: _VALIDATION_ERROR_RESPONSE,
+        status.HTTP_404_NOT_FOUND: _NOT_FOUND_RESPONSE,
+        status.HTTP_409_CONFLICT: _CONFLICT_RESPONSE,
+        status.HTTP_422_UNPROCESSABLE_CONTENT: _VALIDATION_ERROR_RESPONSE,
+        status.HTTP_503_SERVICE_UNAVAILABLE: _SERVICE_UNAVAILABLE_RESPONSE,
+    },
     openapi_extra={"parameters": [_IDEMPOTENCY_KEY_OPENAPI_PARAMETER]},
 )
 async def confirm_medication_candidate(
@@ -140,6 +173,13 @@ async def confirm_medication_candidate(
     "/medication-candidates/reject",
     response_model=RejectMedicationCandidateResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_400_BAD_REQUEST: _VALIDATION_ERROR_RESPONSE,
+        status.HTTP_404_NOT_FOUND: _NOT_FOUND_RESPONSE,
+        status.HTTP_409_CONFLICT: _CONFLICT_RESPONSE,
+        status.HTTP_422_UNPROCESSABLE_CONTENT: _VALIDATION_ERROR_RESPONSE,
+        status.HTTP_503_SERVICE_UNAVAILABLE: _SERVICE_UNAVAILABLE_RESPONSE,
+    },
     openapi_extra={"parameters": [_IDEMPOTENCY_KEY_OPENAPI_PARAMETER]},
 )
 async def reject_medication_candidate(
