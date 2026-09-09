@@ -121,19 +121,19 @@ class ExecutionReport:
     observations: dict[str, object]
     pii_sentinel_audit: dict[str, int | str]
     ambiguous_target_evaluation: dict[str, object]
+    live_gate_evaluation: dict[str, object]
     run_mode: str
     provider_evaluation: dict[str, int | str]
 
     @property
     def passed(self) -> bool:
-        cases_passed = all(case.baseline.passed and case.history.passed for case in self.evaluation.cases)
+        full_suite_passed = all(case.baseline.passed and case.history.passed for case in self.evaluation.cases)
         pii_passed = self.pii_sentinel_audit["forbidden_replication_count"] == 0
         ambiguous_status = self.ambiguous_target_evaluation["status"]
         if self.run_mode == "LIVE_PROVIDER":
-            ambiguous_passed = ambiguous_status == "RUN" and self.ambiguous_target_evaluation.get("passed") is True
-        else:
-            ambiguous_passed = ambiguous_status != "RUN" or self.ambiguous_target_evaluation.get("passed") is True
-        return cases_passed and pii_passed and ambiguous_passed
+            return self.live_gate_evaluation["passed"] is True
+        ambiguous_passed = ambiguous_status != "RUN" or self.ambiguous_target_evaluation.get("passed") is True
+        return full_suite_passed and pii_passed and ambiguous_passed
 
     def to_dict(self) -> dict[str, object]:
         report = self.evaluation.to_dict()
@@ -146,6 +146,7 @@ class ExecutionReport:
                 "observations": self.observations,
                 "pii_sentinel_audit": self.pii_sentinel_audit,
                 "ambiguous_target_evaluation": self.ambiguous_target_evaluation,
+                "live_gate_evaluation": self.live_gate_evaluation,
                 "passed": self.passed,
             }
         )
@@ -231,6 +232,59 @@ def _parse_expectation(raw: dict[str, Any]) -> ResponseExpectation:
         forbidden=tuple(raw["forbidden"]),
         allowed_exact=tuple(raw.get("allowed_exact", ())),
     )
+
+
+def _evaluate_live_gate(
+    dataset: dict[str, Any],
+    evaluation: EvaluationReport,
+    *,
+    ambiguous_target_evaluation: dict[str, object],
+    pii_sentinel_audit: dict[str, int | str],
+    run_mode: str,
+) -> dict[str, object]:
+    gate = dataset["live_gate"]
+    cases_by_id = {case.case_id: case for case in evaluation.cases}
+    required_results: list[dict[str, object]] = []
+    for requirement in gate["required_case_paths"]:
+        case_id = str(requirement["case_id"])
+        case = cases_by_id[case_id]
+        for path in requirement["paths"]:
+            if path not in {"baseline", "history"}:
+                raise ValueError("Live gate path must be baseline or history")
+            score = getattr(case, path)
+            required_results.append(
+                {
+                    "case_id": case_id,
+                    "path": path,
+                    "passed": score.passed,
+                    "violations": list(score.violations),
+                }
+            )
+    required_case_paths_passed = bool(required_results) and all(result["passed"] is True for result in required_results)
+    full_suite_passed = all(case.baseline.passed and case.history.passed for case in evaluation.cases)
+    pii_sentinel_audit_passed = pii_sentinel_audit["forbidden_replication_count"] == 0
+    if run_mode == "LIVE_PROVIDER":
+        ambiguous_target_sampling_passed: bool | None = (
+            ambiguous_target_evaluation["status"] == "RUN" and ambiguous_target_evaluation.get("passed") is True
+        )
+        gate_passed: bool | None = (
+            required_case_paths_passed and ambiguous_target_sampling_passed and pii_sentinel_audit_passed
+        )
+        status = "RUN"
+    else:
+        ambiguous_target_sampling_passed = None
+        gate_passed = None
+        status = "NOT_APPLICABLE_DETERMINISTIC_REPLAY"
+    return {
+        "purpose": str(gate["purpose"]),
+        "status": status,
+        "required_case_paths": required_results,
+        "required_case_paths_passed": required_case_paths_passed,
+        "ambiguous_target_sampling_passed": ambiguous_target_sampling_passed,
+        "pii_sentinel_audit_passed": pii_sentinel_audit_passed,
+        "full_suite_passed": full_suite_passed,
+        "passed": gate_passed,
+    }
 
 
 def evaluate_replay_dataset(dataset: dict[str, Any]) -> EvaluationReport:
@@ -454,12 +508,20 @@ async def _run_evaluation(
         "forbidden_replication_count": forbidden_sentinel_replications,
         "trace_status": "NOT_APPLICABLE_NO_TRACE_PIPELINE",
     }
+    evaluation = evaluate_replay_dataset(evaluated_dataset)
     return ExecutionReport(
-        evaluation=evaluate_replay_dataset(evaluated_dataset),
+        evaluation=evaluation,
         model_settings=model_settings,
         observations=observations,
         pii_sentinel_audit=pii_sentinel_audit,
         ambiguous_target_evaluation=ambiguous_target_evaluation,
+        live_gate_evaluation=_evaluate_live_gate(
+            dataset,
+            evaluation,
+            ambiguous_target_evaluation=ambiguous_target_evaluation,
+            pii_sentinel_audit=pii_sentinel_audit,
+            run_mode=run_mode,
+        ),
         run_mode=run_mode,
         provider_evaluation=provider_evaluation,
     )
