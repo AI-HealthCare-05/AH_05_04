@@ -10,10 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
 from app.dtos.prescriptions import CorrectPrescriptionRequest, PrescriptionMedicationCorrectionRequest
+from app.models.async_jobs import (
+    AiJob,
+    AiJobAttempt,
+    AiJobAttemptStatus,
+    AiJobStatus,
+    AiJobType,
+    OutboxEvent,
+    OutboxEventStatus,
+)
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
+from app.models.rag_candidate import MedicationCandidateSearch, MedicationCandidateSearchStatus
 from app.models.users import Gender, User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
@@ -225,3 +235,130 @@ async def test_correction_rejects_stale_base_version_without_creating_version(
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "PRESCRIPTION_VERSION_CONFLICT"
+
+
+async def test_correction_invalidates_previous_version_jobs_outbox_and_candidate_search(
+    db_session: AsyncSession,
+) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="correction-invalidation@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    base_version_id = prescription.active_version_id
+    assert base_version_id is not None
+    medication = await db_session.scalar(
+        select(PrescriptionVersionMedication).where(
+            PrescriptionVersionMedication.prescription_version_id == base_version_id
+        )
+    )
+    assert medication is not None
+
+    processing_job = AiJob(
+        user_id=owner.id,
+        job_type=AiJobType.GUIDE,
+        status=AiJobStatus.PROCESSING,
+        prescription_version_id=base_version_id,
+        max_attempts=3,
+        attempt_count=1,
+        lease_token="synthetic-lease",
+        lease_expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+    )
+    pending_job = AiJob(
+        user_id=owner.id,
+        job_type=AiJobType.CHAT,
+        status=AiJobStatus.PENDING,
+        prescription_version_id=base_version_id,
+        max_attempts=2,
+    )
+    retry_job = AiJob(
+        user_id=owner.id,
+        job_type=AiJobType.GUIDE,
+        status=AiJobStatus.RETRY_WAIT,
+        prescription_version_id=base_version_id,
+        max_attempts=3,
+        attempt_count=1,
+    )
+    completed_job = AiJob(
+        user_id=owner.id,
+        job_type=AiJobType.GUIDE,
+        status=AiJobStatus.COMPLETED,
+        prescription_version_id=base_version_id,
+        max_attempts=3,
+        completed_at=datetime.now(UTC),
+    )
+    db_session.add_all([processing_job, pending_job, retry_job, completed_job])
+    await db_session.flush()
+    attempt = AiJobAttempt(
+        ai_job_id=processing_job.id,
+        attempt_no=1,
+        attempt_status=AiJobAttemptStatus.PROCESSING,
+    )
+    claimed_event = OutboxEvent(
+        job_id=processing_job.id,
+        attempt=1,
+        status=OutboxEventStatus.CLAIMED,
+        claim_token="synthetic-claim",
+        claim_expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+    )
+    pending_event = OutboxEvent(
+        job_id=pending_job.id,
+        attempt=1,
+        status=OutboxEventStatus.PENDING,
+    )
+    published_event = OutboxEvent(
+        job_id=completed_job.id,
+        attempt=1,
+        status=OutboxEventStatus.PUBLISHED,
+        published_at=datetime.now(UTC),
+    )
+    search = MedicationCandidateSearch(
+        prescription_version_medication_id=medication.id,
+        medication_name_snapshot=medication.medication_name,
+        strength_text_snapshot=medication.strength_text,
+        query_digest="a" * 64,
+        status=MedicationCandidateSearchStatus.RUNNING,
+        candidate_count=0,
+        displayed_candidate_count=0,
+    )
+    finished_search = MedicationCandidateSearch(
+        prescription_version_medication_id=medication.id,
+        medication_name_snapshot=medication.medication_name,
+        strength_text_snapshot=medication.strength_text,
+        query_digest="b" * 64,
+        status=MedicationCandidateSearchStatus.NO_CANDIDATE,
+        candidate_count=0,
+        displayed_candidate_count=0,
+        finalized_at=datetime.now(UTC),
+    )
+    db_session.add_all([attempt, claimed_event, pending_event, published_event, search, finished_search])
+    await db_session.flush()
+    processing_job.expected_event_id = claimed_event.event_id
+    pending_job.expected_event_id = pending_event.event_id
+    await db_session.flush()
+
+    await service.correct_prescription(
+        user=owner,
+        prescription_id=prescription.id,
+        request=CorrectPrescriptionRequest(
+            base_version_id=base_version_id,
+            expected_revision=1,
+            prescribed_date=date.today(),
+            medications=[PrescriptionMedicationCorrectionRequest(medication_name="정정약", display_order=1)],
+        ),
+    )
+
+    assert processing_job.status == AiJobStatus.STALE
+    assert pending_job.status == AiJobStatus.STALE
+    assert retry_job.status == AiJobStatus.STALE
+    assert processing_job.completed_at is not None
+    assert processing_job.last_consumed_event_id == claimed_event.event_id
+    assert processing_job.lease_token is None
+    assert attempt.attempt_status == AiJobAttemptStatus.BLOCKED
+    assert attempt.completed_at is not None
+    assert claimed_event.status == OutboxEventStatus.CANCELLED
+    assert claimed_event.claim_token is None
+    assert pending_event.status == OutboxEventStatus.CANCELLED
+    assert completed_job.status == AiJobStatus.COMPLETED
+    assert published_event.status == OutboxEventStatus.PUBLISHED
+    assert search.status == MedicationCandidateSearchStatus.INVALIDATED_INPUT_CHANGED
+    assert search.invalidated_at is not None
+    assert finished_search.status == MedicationCandidateSearchStatus.NO_CANDIDATE

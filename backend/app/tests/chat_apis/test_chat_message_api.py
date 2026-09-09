@@ -25,6 +25,7 @@ from app.models.prescriptions import Medication, Prescription, PrescriptionVersi
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.chat_repository import ChatRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.chat_ai import (
     ChatGenerationFailedError,
     ChatReplyInput,
@@ -393,6 +394,41 @@ async def test_get_latest_chat_session_for_prescription_returns_404_without_crea
             }
         ],
     )
+
+
+async def test_previous_version_chat_is_blocked_from_messages_and_rediscovery(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+) -> None:
+    engine = FakeChatEngine()
+    _use_owner_and_engine(api_chat_fixture, engine)
+    prescription = await api_db_session.get(Prescription, api_chat_fixture.owner_prescription_id)
+    assert prescription is not None
+    await PrescriptionRepository(api_db_session).create_version(
+        prescription=prescription,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "새 버전 합성약", "display_order": 1}],
+    )
+    await api_db_session.commit()
+
+    list_response = await client.get(f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages")
+    send_response = await client.post(
+        f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages",
+        json={"content": "이전 처방 기준 질문"},
+    )
+    rediscover_response = await client.get(
+        f"/api/v1/prescriptions/{api_chat_fixture.owner_prescription_id}/chat-session"
+    )
+
+    assert list_response.status_code == 409
+    assert list_response.json()["code"] == "PRESCRIPTION_VERSION_CONFLICT"
+    assert send_response.status_code == 409
+    assert send_response.json()["code"] == "PRESCRIPTION_VERSION_CONFLICT"
+    assert rediscover_response.status_code == 404
+    assert rediscover_response.json()["code"] == "CHAT_SESSION_NOT_FOUND"
+    assert engine.inputs == []
 
 
 @pytest.mark.parametrize(
