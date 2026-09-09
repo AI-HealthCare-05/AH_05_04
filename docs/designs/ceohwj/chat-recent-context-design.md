@@ -1,6 +1,6 @@
 # 복약 챗봇 최근 대화 3쌍 문맥 설계
 
-> **상태: 기능 구현 완료.** 버전된 합성 평가와 결정론적 Local application-path latency·PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 수행했다. 이 설계가 도입한 history 계약은 유지되며, 현재 생성 프롬프트와 canonical 평가는 Issue #306의 `chat-prompt-v3`·`chat-v3-history-eval-v1`을 사용한다. [2026-09-09 current canonical live 실행](../../validation/issue-306-chat-live-evaluation.md)은 대상 불명확 재확인 30/30을 기록했지만 전체 14-case gate는 `passed=false`였다. 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
+> **상태: 기능 구현 완료.** 버전된 합성 평가와 결정론적 Local application-path latency·PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 수행했다. 이 설계가 도입한 history 계약은 유지되며, 현재 생성 프롬프트와 canonical 평가는 Issue #306의 `chat-prompt-v3`·`chat-v3-history-eval-v1`을 사용한다. [2026-09-09 current canonical live 실행](../../validation/issue-306-chat-live-evaluation.md)은 대상 불명확 재확인 30/30, 응급 baseline/history와 PII 비복제의 blocking gate를 통과했다. 전체 14-case 단발 결과는 `full_suite_passed=false` 관찰 지표이며 전체 회귀 blocker는 결정론적 replay 14/14다. 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
 
 | 항목 | 내용 |
 | --- | --- |
@@ -390,4 +390,4 @@ Issue #129의 2026-09-01 결정론적 Local 실행은 최대 3쌍·12,000자 입
 - Provider payload와 로그에 구조화 식별자·오류 metadata·미확정 의료 데이터가 포함되지 않는다.
 - 자유 텍스트의 내용 기반 식별정보 위험과 실제 대화 외부 전송 승인이 향후 서버 공개 선행조건으로 문서화된다.
 - 관련 ADR·계약·Local 결정론적 테스트·외부 전송 위험 검토와 지정 Privacy·Security·Backend·AI 리뷰가 함께 제공된다.
-- 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 Issue #129에서 수행했다. Issue #306의 current canonical Local live 반복 분포는 별도 검증 문서에 기록했으며 전체 14-case gate는 `passed=false`, token 검증은 `NOT_RUN`이다. 어느 결과도 Production 공개 근거로 사용하지 않는다.
+- 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 Issue #129에서 수행했다. Issue #306의 current canonical Local live blocking gate와 전체 단발 관찰은 별도 검증 문서에 기록했으며 `passed=true`, `full_suite_passed=false`, token 검증은 `NOT_RUN`이다. 어느 결과도 Production 공개 근거로 사용하지 않는다.
