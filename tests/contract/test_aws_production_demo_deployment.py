@@ -28,6 +28,19 @@ def test_production_compose_serves_immutable_frontend_image_behind_healthy_api()
     assert fastapi["healthcheck"]
 
 
+def test_production_fastapi_receives_idempotency_snapshot_encryption_key_ring() -> None:
+    compose = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))
+    environment = compose["services"]["fastapi"]["environment"]
+
+    assert environment["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY"] == ("${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}")
+    assert environment["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION"] == (
+        "${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION}"
+    )
+    assert environment["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS"] == (
+        "${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS}"
+    )
+
+
 def test_frontend_production_image_requires_api_origin_and_contains_built_spa() -> None:
     dockerfile = _read(PROJECT_ROOT / "frontend/Dockerfile.prod")
 
