@@ -38,6 +38,7 @@ run_with_backend_test_database() {
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \
+    PYTEST_ADDOPTS= \
     uv run --env-file "$ENV_FILE" "$@"
 }
 
@@ -53,6 +54,7 @@ run_with_worker_test_environment() {
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \
+    PYTEST_ADDOPTS= \
     uv run --env-file "$ENV_FILE" "$@"
 }
 
@@ -74,6 +76,7 @@ run_with_integration_test_environment() {
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \
+    PYTEST_ADDOPTS= \
     uv run --env-file "$ENV_FILE" "$@"
 }
 

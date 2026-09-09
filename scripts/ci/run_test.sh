@@ -12,36 +12,8 @@ source scripts/ci/test_environment.sh
 # shellcheck source=scripts/ci/parallel_test_lanes.sh
 source scripts/ci/parallel_test_lanes.sh
 
-echo "Find Tests"
-
-HAS_TESTS=false
-
-# 실제 기본 테스트 실행 범위와 동일한 디렉터리를 확인합니다.
-for test_dir in \
-  ./backend/app/tests \
-  ./tests/contract \
-  ./tests/migration \
-  ./ai_worker/tests/core \
-  ./ai_worker/tests/ocr \
-  ./ai_worker/tests/rag \
-  ./ai_worker/tests/evaluation \
-  ./tests/integration; do
-  if [ -d "$test_dir" ] &&
-    find "$test_dir" -type f -name 'test_*.py' -print -quit |
-      grep -q .; then
-    HAS_TESTS=true
-    break
-  fi
-done
-
-echo "Has tests: $HAS_TESTS"
-
-if [ "$HAS_TESTS" != true ]; then
-  # 기존 기본 runner는 테스트가 없는 초기 저장소에서도 성공하도록 skip합니다.
-  # 전체 통합 범위를 보장하는 run_integration_test.sh는 같은 상황에서 fail-closed합니다.
-  echo "No tests found. Skipping tests."
-  exit 0
-fi
+export PYTEST_ADDOPTS=""
+uv run python scripts/ci/check_python_test_inventory.py
 
 prepare_test_environment
 TEST_COVERAGE_DIR="$TEST_STORAGE_DIR/coverage"
@@ -69,8 +41,7 @@ run_backend_test_lane() {
     backend/app \
     tests/contract \
     tests/integration/rag \
-    tests/integration/test_worker_ocr_persistence.py \
-    tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed; then
+    tests/integration/test_worker_ocr_persistence.py; then
     echo
     echo "Backend pytest failed."
     echo "Fix the test failures above and re-run."
@@ -82,7 +53,7 @@ run_backend_test_lane() {
   if ! run_with_integration_test_environment \
     coverage run --append -m pytest -o "cache_dir=$cache_dir" \
     tests/integration/test_outbox_publisher.py \
-    tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle \
+    tests/integration/test_worker_job_execution_repository.py \
     tests/integration/test_worker_dlq_outbox_repository.py \
     tests/integration/test_worker_recovery_repository.py; then
     echo

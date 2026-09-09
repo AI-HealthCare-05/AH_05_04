@@ -12,6 +12,7 @@ uv는 shell 환경변수를 `--env-file`보다 우선 적용하므로 `env VAR=.
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,7 @@ CONTAINER_ONLY_SETTINGS = {
 }
 
 REQUIRED_WORKER_INTEGRATION_TARGETS = (
-    "tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle",
+    "tests/integration/test_worker_job_execution_repository.py",
     "tests/integration/test_worker_dlq_outbox_repository.py",
     "tests/integration/test_worker_recovery_repository.py",
 )
@@ -69,6 +70,45 @@ def test_run_test_script_forces_test_value_for_container_only_setting(name: str,
     )
 
 
+@pytest.mark.parametrize(
+    "wrapper_body",
+    [
+        pytest.param(_run_with_backend_test_database_body(), id="backend"),
+        pytest.param(_run_with_worker_test_environment_body(), id="worker"),
+        pytest.param(_run_with_integration_test_environment_body(), id="integration"),
+    ],
+)
+def test_run_test_wrappers_pin_empty_pytest_addopts_after_loading_env_file(wrapper_body: str) -> None:
+    assert "PYTEST_ADDOPTS=" in wrapper_body
+    assert 'uv run --env-file "$ENV_FILE"' in wrapper_body
+
+
+def test_empty_shell_pytest_addopts_overrides_custom_uv_env_file(tmp_path: Path) -> None:
+    env_file = tmp_path / "test.env"
+    env_file.write_text("PYTEST_ADDOPTS=-konly_old\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "env",
+            "PYTEST_ADDOPTS=",
+            "uv",
+            "run",
+            "--env-file",
+            str(env_file),
+            "python",
+            "-c",
+            "import os; print(repr(os.environ['PYTEST_ADDOPTS']))",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "''"
+
+
 def test_run_test_script_replaces_container_storage_dir_with_host_directory() -> None:
     """`STORAGE_DIR`은 고정 문자열이 아니라 host 임시 디렉터리로 덮어써야 합니다."""
     script = TEST_ENVIRONMENT_SCRIPT.read_text(encoding="utf-8")
@@ -99,8 +139,6 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     assert "ai_worker/tests/ocr" in script
     assert "ai_worker/tests/rag" in script
     assert "ai_worker/tests/evaluation" in script
-    assert "./ai_worker/tests/rag" in script
-    assert "./ai_worker/tests/evaluation" in script
     assert 'PYTHONPATH="$REPOSITORY_ROOT"' in worker_body
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' not in worker_body
 
@@ -139,7 +177,7 @@ def test_default_runner_uses_isolated_environment_for_redis_integration_tests() 
     isolated_call = script[start:end]
 
     assert "tests/integration/test_outbox_publisher.py" in isolated_call
-    assert "test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle" in isolated_call
+    assert "tests/integration/test_worker_job_execution_repository.py" in isolated_call
     assert "tests/integration/test_worker_dlq_outbox_repository.py" in isolated_call
     assert "tests/integration/test_worker_recovery_repository.py" in isolated_call
 
@@ -235,18 +273,23 @@ def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_
     workflow = yaml.safe_load(GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
 
-    assert {"test-migration", "test-backend", "test-worker", "test"}.issubset(jobs)
+    assert {"test-inventory", "test-migration", "test-backend", "test-worker", "test"}.issubset(jobs)
+    inventory_step = next(
+        step for step in jobs["test-inventory"]["steps"] if step["name"] == "Verify Python test inventory"
+    )
+    assert inventory_step["run"] == "uv run python scripts/ci/check_python_test_inventory.py"
     assert "postgres" in jobs["test-migration"]["services"]
     assert "redis" not in jobs["test-migration"]["services"]
     assert {"postgres", "redis"}.issubset(jobs["test-backend"]["services"])
     assert "services" not in jobs["test-worker"]
-    assert set(jobs["test"]["needs"]) == {"test-migration", "test-backend", "test-worker"}
+    assert set(jobs["test"]["needs"]) == {"test-inventory", "test-migration", "test-backend", "test-worker"}
     assert jobs["test"]["if"] == "${{ always() }}"
 
     final_steps = jobs["test"]["steps"]
     gate_step = final_steps[0]
     assert gate_step["name"] == "Verify Python test jobs succeeded"
     assert gate_step["env"] == {
+        "INVENTORY_RESULT": "${{ needs.test-inventory.result }}",
         "MIGRATION_RESULT": "${{ needs.test-migration.result }}",
         "BACKEND_RESULT": "${{ needs.test-backend.result }}",
         "WORKER_RESULT": "${{ needs.test-worker.result }}",

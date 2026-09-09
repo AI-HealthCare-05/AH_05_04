@@ -105,10 +105,20 @@ bash scripts/ci/run_test.sh
 뒤 하나라도 실패하면 전체 실행을 실패 처리합니다. CPU와 메모리가 제한된 환경에서는 병렬
 실행에 따른 개선 폭이 작을 수 있습니다.
 
-GitHub Actions는 `test-migration`, `test-backend`, `test-worker`를 독립 job으로 동시에
+GitHub Actions는 `test-inventory`, `test-migration`, `test-backend`, `test-worker`를 독립 job으로 동시에
 실행합니다. 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service container를 자체 사용하므로
-다른 job과 상태를 공유하지 않습니다. 최종 `test` job은 세 job의 성공 여부를 확인하고 Backend와
+다른 job과 상태를 공유하지 않습니다. 최종 `test` job은 네 job의 성공 여부를 확인하고 Backend와
 Worker Coverage artifact를 합산합니다. Coverage artifact에는 실행 data만 포함하며 환경파일은 업로드하지 않습니다.
+
+`tests/contract/test_python_test_inventory.py`는 저장소의 모든 Python `test_*.py`·`*_test.py`
+파일이 기본 lane 또는 명시적 opt-in 범위 중 하나로 분류됐는지 검사합니다. 어느 범위에도 없는
+새 테스트 파일, `path.py::test_name` 형태의 개별 함수 선택, `-k`·`-m`·`--ignore`처럼 수집 범위를
+줄이는 pytest 옵션이 생기면 기본 CI를 실패시킵니다. GitHub Actions는 실제 step의 `run` 명령만
+구조적으로 검사하므로 주석, step 이름, 환경 변수 문자열은 실행 대상으로 인정하지 않습니다.
+로컬 runner는 외부 `PYTEST_ADDOPTS`를 제거하고 CI도 이를 빈 값으로 고정하며, pytest 설정에
+`addopts`를 추가하는 변경도 분류 검토 전에는 허용하지 않습니다.
+따라서 기본 디렉터리 안의 새 테스트는 자동 수집되고, 새 suite는 작성 PR에서 실행 lane 또는
+opt-in 사유를 반드시 결정해야 합니다.
 
 `tests/integration/` 전체를 PostgreSQL·Redis와 함께 재현하는 공식 로컬 명령은 다음과 같습니다.
 
@@ -127,10 +137,9 @@ Redis Stream을 사용하고 fixture teardown에서 정리하며, runner의 임�
 고정된 `test` 데이터베이스를 `DROP DATABASE ... WITH (FORCE)`로 재생성하고 통합테스트의
 고정 schema를 사용하므로, 동시 실행하면 상대 runner의 연결이나 schema를 제거할 수 있습니다.
 
-`run_integration_test.sh` 종료 코드는 다음과 같이 구분합니다. 기존 기본 runner인
-`run_test.sh`는 이전 동작을 유지하므로 환경 준비 실패도 `1`이며, 테스트가 전혀 없는
-초기 저장소에서는 `0`으로 skip합니다. 전체 통합 runner는 테스트 미발견을 환경 오류
-`2`로 처리해 실행 범위가 비어 있는 상태를 성공으로 오인하지 않습니다.
+`run_integration_test.sh` 종료 코드는 다음과 같이 구분합니다. 기본 `run_test.sh`는 환경 준비나
+inventory 분류 실패를 `1`로 처리합니다. 전체 통합 runner는 테스트 미발견을 환경 오류 `2`로
+처리해 실행 범위가 비어 있는 상태를 성공으로 오인하지 않습니다.
 
 | 종료 코드 | 의미 |
 | --- | --- |
@@ -171,7 +180,8 @@ Compose의 동적 host port·인증 격리 대신, 인증 없는 service contain
 - `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 Backend lane의 기본 실행 범위에 포함됩니다.
 - `ai_worker/tests/core/`, `ai_worker/tests/ocr/`, `ai_worker/tests/rag/`, `ai_worker/tests/evaluation/` 아래 테스트는 Worker lane의 기본 실행 범위에 포함됩니다.
 - 위 기본 대상 디렉터리에 `test_*.py`를 추가하면 별도 파일 목록을 수정하지 않아도 해당 lane에서 수집됩니다. 새 최상위 suite나 기본 제외 영역은 공유 자원과 외부 호출 여부를 검토한 뒤 명시적으로 편입합니다.
-- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, 실제 Redis·PostgreSQL OCR one-cycle, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/llm/`과 Frontend 테스트는 기본 Python 실행 범위에 포함되지 않습니다.
+- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, `tests/integration/test_worker_job_execution_repository.py` 전체, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다.
+- `tests/integration/test_cors_and_errors.py`, `tests/integration/test_ocr_required_field_placeholder_e2e.py`, `tests/integration/test_redis_stream_adapter.py`, `tests/integration/test_worker_consumer_session_sharing.py`는 [Issue #307](https://github.com/AI-HealthCare-05/AH_05_04/issues/307)의 전체 Integration CI 편입 결정 전까지 명시적 opt-in 범위입니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/llm/`과 Frontend 테스트는 기본 Python 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.
