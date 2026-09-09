@@ -7,7 +7,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from app.core import config
 from app.main import app
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType
 from app.models.medical_documents import MedicalDocument
@@ -270,7 +269,6 @@ async def test_confirm_prescription_api_uses_confirmed_fields(db_session: AsyncS
 @pytest.mark.asyncio
 async def test_correct_prescription_api_returns_new_active_version_snapshot(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="correction")
@@ -305,15 +303,6 @@ async def test_correct_prescription_api_returns_new_active_version_snapshot(
             ],
         }
 
-        unavailable = await client.patch(
-            f"/api/v1/prescriptions/{original['prescription_id']}",
-            headers=headers,
-            json=correction_payload,
-        )
-        assert unavailable.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-        assert unavailable.json()["details"][0]["reason"] == "PRESCRIPTION_CORRECTION_DISABLED"
-
-        monkeypatch.setattr(config, "PRESCRIPTION_CORRECTION_ENABLED", True)
         correction = await client.patch(
             f"/api/v1/prescriptions/{original['prescription_id']}",
             headers=headers,
