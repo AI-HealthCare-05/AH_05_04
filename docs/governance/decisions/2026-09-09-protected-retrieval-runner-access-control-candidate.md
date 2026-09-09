@@ -72,7 +72,11 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 **협의 필요 — 질문**: 작성·검토(authoring)는 CI 밖 별도 환경에서 한다는 방향엔 이견이 없는데, **그 "별도 환경"이 실제로 무엇인지가 미정**이다 — 사내 특정 인원의 로컬 환경인지, 별도 VM/컨테이너인지, 혹은 GitHub Codespace 같은 관리형 환경인지 확정 필요. 또한 Freeze 이후 평가용 GitHub Actions protected Environment는 **저장소에 선례가 없어**(`.github/workflows/checks.yml`에 `environment:` 설정 없음 확인) required reviewer 명단과 전용 runner 구성을 새로 설계해야 한다.
 
-**의료 분야 실무 기본값**: 민감 테스트 데이터 authoring은 개인 노트북이 아니라 **회사가 관리하는 계정 기반 환경(SSO 로그인 기록이 남는 관리형 워크스테이션 또는 사내 VDI)**에서 하는 게 일반적 — 접근 자체가 누구 계정으로 언제 이뤄졌는지 감사 가능해야 하기 때문. Freeze 이후 실행은 **GitHub Actions protected Environment + 최소 2인 이상 required reviewer**(승인자 1인 단독 결정 방지)가 업계에서 흔히 쓰는 기준이다. **제안: authoring=현우 계정의 관리형 환경(회사 지급 기기, SSO), 실행=protected Environment + required reviewer 2인(가빈+지혜 또는 가빈+독립 Custodian).**
+**의료 분야 실무 기본값**: 민감 테스트 데이터 authoring은 개인 노트북이 아니라 **회사가 관리하는 계정 기반 환경(SSO 로그인 기록이 남는 관리형 워크스테이션 또는 사내 VDI)**에서 하는 게 일반적 — 접근 자체가 누구 계정으로 언제 이뤄졌는지 감사 가능해야 하기 때문. **제안: authoring=현우 계정의 관리형 환경(회사 지급 기기, SSO).**
+
+**⚠️ 정정(가빈 지적, P1)**: Freeze 이후 실행에 "GitHub Actions protected Environment + required reviewer 2인"만으로는 **실제 2인 승인을 강제할 수 없다.** GitHub의 required reviewer는 여러 명을 등록해도 **그중 한 명만 승인하면 job이 진행**되고, self-review 방지도 실행 요청자 본인의 승인만 막을 뿐이다([GitHub 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)). 이 표현대로 구현하면 한 명의 승인만으로 protected credential이 release될 수 있다. 실제 2인 승인이 통제 요건이면 아래 중 하나를 별도로 결정해야 한다 — **협의 필요**:
+- custom deployment protection rule(별도 앱/서비스가 승인 인원수를 직접 검증)을 추가로 둘지
+- 서로 다른 두 승인자의 서명된 approval receipt를 kernel의 `ApprovalEvidenceVerifier`가 확인하는 gate를 별도로 둘지
 
 ## 7. 감사·로깅
 
@@ -83,9 +87,15 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 - global sequence + durable head/checkpoint
 - backup·restore 검증
 
-**협의 필요 — 질문 2 (보존 기간)**: 저장소 관행([`docs/privacy-safety.md:64-69`](../../privacy-safety.md) 표 + "Privacy 승인 전까지 미적용" 단서)을 그대로 따를지 확인. 현우 초안(authorization·revoke·Freeze·run audit evidence는 운영 종료 후 최소 1년, legal hold 우선, 일반 실행 로그와 보존기간 분리)에 **가빈·현우 모두 동의하는지 명시적 확인 필요** — 아직 "초안"일 뿐 확정 답변은 없었다.
+**⚠️ 정정(가빈 지적, P2)**: [`docs/privacy-safety.md:64-69`](../../privacy-safety.md) 표는 protected authorization audit의 1년 보존 선례를 **정의하지 않는다** — 그 표는 Retrieval 실행 메타데이터 90일, Outbox 계열 30일, Idempotency 7일, 사용자 표시 감사 결과는 계정 삭제 정책 연동을 다루고, 전부 "Privacy 승인 전 미적용" 상태다. 따라서 최소 1년은 **"저장소 관행을 따르는 값"이 아니라 이번에 새로 승인할 정책**으로 표시해야 한다.
 
-**의료 분야 실무 기본값**: 보안 감사 로그는 **최소 1년 보존이 업계에서 널리 쓰이는 하한선**(PCI DSS 등 보안 표준의 로그 보존 요구사항과 동일 궤)이고, 의료 데이터를 다루는 조직은 사고가 뒤늦게 드러나는 경우가 많아 **접근 관련 감사 기록은 이보다 길게(3년 전후)** 잡는 경우도 흔하다. HOLDOUT은 환자 원본이 아니라 평가용 합성 데이터이므로 **현우 제안(최소 1년)을 하한으로 채택**하고, legal hold 발생 시 자동 연장하는 조건만 명확히 하면 충분해 보인다.
+**협의 필요 — 질문**: 최소 1년(현우 초안)을 이번 결정에서 새 정책으로 승인할지, 그리고 승인 시 아래를 함께 명시할지 확인 필요.
+- 승인 주체(예: `EXT-PRIV-001`류 Privacy 승인 식별자)
+- 보존 기간의 기산점(Dataset version 운영 종료 시점인지, 각 audit 이벤트 생성 시점인지)
+- 삭제 조건(legal hold 해제 후 자동 삭제인지, 별도 승인 필요인지)
+- 보관 위치
+
+**의료 분야 실무 기본값**: 보안 감사 로그는 최소 1년 보존이 업계에서 널리 쓰이는 하한선(PCI DSS 등 보안 표준의 로그 보존 요구사항과 동일 궤)이고, 의료 데이터를 다루는 조직은 사고가 뒤늦게 드러나는 경우가 많아 접근 관련 감사 기록은 이보다 길게(3년 전후) 잡는 경우도 흔하다. HOLDOUT은 환자 원본이 아니라 평가용 합성 데이터이므로 **현우 제안(최소 1년)을 새 정책의 하한으로 제안**하되, 위 4개 항목이 채워져야 실제로 승인 가능한 정책이 된다.
 
 ## 8. 보존·폐기 정책
 
@@ -94,7 +104,13 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 - 폐기 승인자는 누구인가 — Custodian 단독인가, 독립 승인자도 필요한가?
 - 폐기했다는 증빙은 어떻게 남기는가 — audit journal에 `DENIED`/`REVOKE`류 항목으로 남기는가, 별도 기록이 필요한가?
 
-**의료 분야 실무 기본값**: 민감 데이터 폐기는 **①문서화된 보존기간 만료 후 ②Data Owner/Custodian 승인 ③검증 가능한 삭제(단순 삭제가 아니라 삭제 완료를 확인하고 기록)** 3단계를 갖추는 게 표준이다. 단독 관리자가 임의로 지우는 방식은 지양한다. **제안: 폐기 시점=7번 audit 보존기간과 동일(운영 종료 후 최소 1년 뒤), 승인자=Custodian, 증빙=audit journal에 폐기 완료 이벤트 append.**
+**의료 분야 실무 기본값**: 민감 데이터 폐기는 **①문서화된 보존기간 만료 후 ②Data Owner/Custodian 승인 ③검증 가능한 삭제(단순 삭제가 아니라 삭제 완료를 확인하고 기록)** 3단계를 갖추는 게 표준이다. 단독 관리자가 임의로 지우는 방식은 지양한다. 제안: 폐기 시점=7번 audit 보존기간과 동일(운영 종료 후 최소 1년 뒤), 승인자=Custodian.
+
+**⚠️ 정정(가빈 지적, P1)**: "증빙=audit journal에 폐기 완료 이벤트 append"는 **현재 kernel 계약으로 구현 불가능**하다. PR #373 kernel의 action은 `READ|WRITE|FREEZE|RUN`, authorization action은 `GRANT|REVOKE|EXPIRE`, operation outcome은 `DENIED|INTENT|SUCCEEDED|UNKNOWN`뿐이라 폐기(disposal) 관련 값 자체가 없다. 또한 "삭제 후 완료 이벤트만" 남기면, 삭제는 성공했는데 append가 실패한 경우 복구 근거가 사라지는 문제도 있다.
+
+**협의 필요 — 질문**: 아래 중 어느 방향으로 갈지 확인 필요.
+- [`docs/contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md:188-203`](../../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md) 선례처럼, **삭제 전 `INTENT`(Dataset version/digest, 승인, legal hold·backup 조건 결속) → 삭제 후 결과 또는 `UNKNOWN` → 재조정 절차**를 갖춘 별도 disposal audit 계약을 kernel에 새로 추가할지
+- 아니면 kernel과 별개의 journal/기록 체계를 쓴다는 경계를 명시적으로 둘지
 
 ## 9. 백업·복구
 
@@ -126,7 +142,13 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 **협의 필요 — 질문**: 가빈이 요청한 "담당자·증빙 방식"이 아직 없다 — 각 단계를 누가 실행하는지(예: 1·2번은 Custodian, 5번은 Security 검토자), 증빙을 어디에 남기는지(`docs/validation/` 아래 report 형식인지) 확정 필요.
 
-**의료 분야 실무 기본값**: 사고 대응은 **"사고 지휘자(incident commander)" 역할을 미리 한 명 지정**해두고, 지휘자가 단계별 담당자를 조율하는 방식이 표준이다(사고 중 역할이 불명확하면 대응이 지연되는 게 흔한 실패 사례). **제안: 지휘자=Custodian(현 시점 은영 또는 독립 Custodian), 1·2·4·6·7단계=Custodian, 5단계(조사)=Security 검토자(가빈) 겸임, 증빙은 `docs/validation/rag/issue-273/` 아래 사고별 report 파일로 남김.**
+**의료 분야 실무 기본값**: 사고 대응은 **"사고 지휘자(incident commander)" 역할을 미리 한 명 지정**해두고, 지휘자가 단계별 담당자를 조율하는 방식이 표준이다(사고 중 역할이 불명확하면 대응이 지연되는 게 흔한 실패 사례). **제안: 지휘자=Custodian(현 시점 은영 또는 독립 Custodian), 1·2·4·6·7단계=Custodian, 증빙은 `docs/validation/rag/issue-273/` 아래 사고별 report 파일로 남김.**
+
+**⚠️ 정정(가빈 지적, P2)**: 위 초안에서 5단계(조사) 담당자를 "Security 검토자(가빈)"로 배정했던 건 이 문서 첫머리의 역할 정의와 충돌한다 — 가빈은 Product·Privacy·Safety 담당, 은영은 Backend·Security 기술 통제 담당이다. 다만 단순히 이름만 "은영"으로 바꾸는 것도 해법이 안 된다: 은영이 Custodian/사고 지휘자를 겸하면 **자기 통제를 자기가 조사**하는 문제가 생긴다.
+
+**협의 필요 — 질문**: 5단계(조사)를 다음과 같이 분리할지 확인 필요.
+- **Privacy 판단**(개인정보·정책 위반 여부): 가빈이 담당
+- **Security 기술 조사**(실제 침해 경로·범위 분석): 은영이 담당하되, **은영이 통제 구현자 또는 사고 지휘자인 경우의 대체 조사자**(예: 지혜, 4번의 독립 Custodian 전환 규칙과 동일 논리)를 미리 지정
 
 ## 12. 예외 처리 절차
 
