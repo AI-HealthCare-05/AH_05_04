@@ -65,6 +65,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 의료문서 | `GET` | `/api/v1/documents/{document_id}/file` | `200` |
 | OCR | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200` |
 | OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
+| OCR 검수 | `POST` | `/api/v1/ocr-jobs/{job_id}/manual-medications` | `201` |
 | 처방 | `GET` | `/api/v1/prescriptions/latest` | `200` |
 | 처방 | `PATCH` | `/api/v1/prescriptions/{prescription_id}` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
@@ -404,6 +405,82 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 
 잠금 대기 상한은 3초이므로 이 응답은 요청 후 약 3초 뒤에 반환될 수 있습니다. 거부된 요청은 기존 `confirmed_value`를 변경하지 않습니다.
 
+## OCR 수동 약물 추가
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/ocr-jobs/{job_id}/manual-medications` | `201 Created` | OCR 검수 결과에 사용자가 약물 1개를 수동 추가합니다. |
+
+### 요청
+
+Header:
+
+| 이름 | 필수 | 규칙 |
+| --- | --- | --- |
+| `Idempotency-Key` | 예 | 16~255자의 ASCII 영숫자와 `-._:`만 허용 |
+
+같은 `Idempotency-Key`와 같은 요청 body로 다시 요청하면 새 약물을 만들지 않고 최초 성공 응답을 재현합니다. 같은 key로 다른 body를 보내면 `409 IDEMPOTENCY_KEY_CONFLICT`를 반환합니다.
+
+```json
+{
+  "medication_name": "직접입력약정",
+  "medication_strength": "50mg",
+  "dose_value": "0.5",
+  "dose_unit": "정",
+  "frequency_per_day": "2",
+  "timing": "저녁 식후",
+  "duration_days": "5"
+}
+```
+
+- 사용자는 자신이 소유한 OCR Job에만 수동 약물을 추가할 수 있습니다.
+- OCR Job이 `COMPLETED`인 경우에만 추가할 수 있습니다.
+- 처방 확정 전까지만 추가할 수 있습니다. 처방 확정 이후에는 OCR 검수값과 확정 처방의 불일치를 막기 위해 거부합니다.
+- 수동 입력값은 OCR 원문이나 자동 정규화 결과가 아니므로 `raw_value`, `normalized_value`, `confidence_score`는 `null`로 저장합니다.
+- `normalization_version="manual-entry@1"`은 정규화 수행 결과가 아니라 사용자 수동 입력 필드임을 구분하는 표식입니다.
+- 수동 입력값은 사용자 확정값이므로 `confirmed_value`에 저장하고 `confirmation_status=CONFIRMED`로 응답합니다.
+- 생성되는 field 집합은 `MEDICATION_NAME`, `MEDICATION_STRENGTH`, `DOSE_VALUE`, `DOSE_UNIT`, `FREQUENCY_PER_DAY`, `TIMING`, `DURATION_DAYS`입니다.
+- `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
+- `MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`은 선택값이며 없으면 `null`로 저장할 수 있습니다.
+- `DOSE_VALUE`는 `NUMERIC(10,3)` 범위의 양수, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위의 양수 정수여야 합니다.
+
+### 응답
+
+성공 응답은 `OcrJobResponse`입니다. 응답에는 기존 OCR 추출 필드와 새로 추가된 수동 약물 필드가 함께 포함됩니다.
+
+수동 약물 필드 예시는 다음과 같습니다.
+
+```json
+{
+  "field_type": "MEDICATION_NAME",
+  "medication_index": 2,
+  "raw_value": null,
+  "normalized_value": null,
+  "confirmed_value": "직접입력약정",
+  "confidence_score": null,
+  "confirmation_status": "CONFIRMED",
+  "normalization_version": "manual-entry@1"
+}
+```
+
+수동 추가된 약물은 이후 `POST /api/v1/documents/{document_id}/prescription` 처방 확정 시 기존 OCR 검수 필드와 같은 방식으로 확정 처방에 포함됩니다.
+
+### 주요 오류
+
+| 상태 | `code` | 설명 |
+| ---: | --- | --- |
+| `400` | `IDEMPOTENCY_KEY_REQUIRED` | `Idempotency-Key` header가 없거나 빈 값입니다. |
+| `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
+| `404` | `OCR_JOB_NOT_FOUND` | OCR Job이 없거나 사용자가 접근할 수 없습니다. |
+| `404` | `MEDICAL_DOCUMENT_NOT_FOUND` | 연결된 의료문서가 없거나 사용자가 접근할 수 없습니다. |
+| `409` | `OCR_JOB_NOT_COMPLETED` | OCR Job이 아직 완료되지 않아 수동 약물을 추가할 수 없습니다. |
+| `409` | `PRESCRIPTION_ALREADY_CONFIRMED` | 해당 문서의 처방이 이미 확정되어 약물을 추가할 수 없습니다. |
+| `409` | `CONCURRENT_UPDATE_IN_PROGRESS` | 같은 문서의 OCR 접수, 검수, 처방 확정 또는 다른 수정 요청이 처리 중입니다. 재시도할 수 있습니다. |
+| `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 이전과 다른 요청 body가 접수되었습니다. |
+| `422` | `VALIDATION_FAILED` | 필수값이 비어 있거나 숫자·길이 제한을 만족하지 않습니다. |
+
 ## 처방 정보 확정
 
 ### Endpoint
@@ -423,7 +500,7 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 - `MEDICATION_STRENGTH`는 최대 100자이며 확정 시 `medication.strength_text`로 저장합니다.
 - `PRESCRIBED_DATE`는 `date.fromisoformat()`이 허용하는 ISO 8601 날짜 형식(예: `YYYY-MM-DD`, 하이픈 없는 `YYYYMMDD`, ISO week-date `YYYY-Www-D`), `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
 - `DOSE_UNIT`은 `VARCHAR(50)`, `TIMING`은 `VARCHAR(255)` 길이를 초과하면 저장 전에 `422 VALIDATION_FAILED`로 거부합니다.
-- 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
+- 처방 확정 요청 body에서 검수 대상 OCR Job을 명시적으로 지정하는 `job_id` 연결은 Post-MVP 범위입니다.
 - 값이 없는 선택 필드는 검수 화면에 빈 입력란으로 표시될 수 있으며, 저장하지 않아도 처방 확정을 차단하지 않습니다.
 - 선택 필드에 OCR 값이 있거나 사용자가 직접 값을 입력한 경우에는 `confirmed_value`로 저장해야 처방을 확정할 수 있습니다.
 
@@ -446,10 +523,11 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 
 | 날짜 | 관련 Issue/PR | 변경 내용 |
 | --- | --- | --- |
+| 2026-09-09 | Issue #374 | OCR 검수 결과에 약물 1개를 수동 추가하는 API를 반영 |
 | 2026-09-01 | PR #107 후속 | 기본 404/405 공통 오류 형식, `/api/v1/*` 성공·오류 응답 `Cache-Control: no-store`, CORS preflight 제외 범위와 처방 OCR 원문 비노출 정책을 반영 |
 | 2026-09-01 | Issue #101 | 처방 확정·extracted-field PATCH 직렬화와 신규 `409 CONCURRENT_UPDATE_IN_PROGRESS` 공개 오류 코드를 반영 |
 | 2026-08-27 | Issue #94 / PR #96 | OCR LLM 구조화 metadata, 제품 함량 필드, 확정 후 extracted-field PATCH 409 차단 계약을 반영 |
+| 2026-08-27 | Issue #91 | Approved v4의 OCR 비-RAG LLM→사용자 처방 확정→MFDS Candidate·Identification·Preflight와 Track F OTC Chat 경계를 목표 API에 반영 |
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
-| 2026-08-27 | Issue #91 | Approved v4의 OCR 비-RAG LLM→사용자 처방 확정→MFDS Candidate·Identification·Preflight와 Track F OTC Chat 경계를 목표 API에 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
