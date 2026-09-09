@@ -125,6 +125,12 @@ def evaluate_snapshot_use_eligibility(
             failure_code=SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,
         )
 
+    if verification_status is not SnapshotVerificationStatus.CURRENT:
+        return SnapshotUseEligibilityResult(
+            decision=SnapshotUseDecision.BLOCKED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,
+        )
+
     if rejected_record_count > 0 and not publication_approval_passed:
         return SnapshotUseEligibilityResult(
             decision=SnapshotUseDecision.BLOCKED,

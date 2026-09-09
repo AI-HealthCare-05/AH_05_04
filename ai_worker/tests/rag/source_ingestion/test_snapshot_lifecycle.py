@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -1208,6 +1209,20 @@ def test_blocks_snapshot_that_is_not_current(
 
     assert result.decision is SnapshotUseDecision.BLOCKED
     assert result.failure_code is expected_failure_code
+    assert result.usable is False
+
+
+def test_blocks_unknown_snapshot_verification_status_fail_closed() -> None:
+    result = evaluate_snapshot_use_eligibility(
+        verification_status=cast(SnapshotVerificationStatus, "SUSPENDED"),
+        rejected_record_count=0,
+        publication_approval_passed=True,
+        freshness_eligible=True,
+        provenance_valid=True,
+    )
+
+    assert result.decision is SnapshotUseDecision.BLOCKED
+    assert result.failure_code is SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED
     assert result.usable is False
 
 
