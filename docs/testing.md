@@ -4,7 +4,7 @@
 
 테스트와 배포 기준은 현재 MVP와 Post-MVP를 구분합니다.
 
-- **현재 MVP**: FastAPI 요청 안에서 OCR(feature flag 기반 LLM 또는 규칙 구조화), 복약 가이드 생성, 복약 챗봇 응답을 완료하는 동기 one-cycle 흐름
+- **현재 구현**: OCR은 공통 AI Job·Outbox·Redis Stream·AI Worker로 처리하고, 복약 가이드 생성과 복약 챗봇 응답은 각각 FastAPI 요청 안에서 OpenAI 호출까지 완료하는 동기 흐름
 - **Post-MVP**: 비동기 AI Worker, OCR LLM의 최소전송·provenance·Worker 확장, MFDS 공식 Identity·Preflight, Rule-first RAG·Citation·Safety, OTC Chat 상호작용과 AI 응답 품질 평가
 
 Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 구현 완료 또는 배포 조건으로 간주하지 않습니다.
@@ -16,7 +16,7 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 - `backend/app/tests/`: Backend API·서비스·DB, OCR·가이드·챗봇 AI 어댑터 테스트
 - `tests/contract/`: 현재 Backend–AI Core 경계 계약. OpenAPI 회귀 테스트는 아직 없음
 - `tests/integration/`: 공통 CORS·오류 동작과 선별된 PostgreSQL·Redis Worker 경계 검증. 선별 대상만 기본 CI 명령에 포함
-- `tests/e2e/`: 전체 사용자 여정 테스트를 위한 준비 영역이며 현재 자동화된 E2E 테스트는 없음
+- `frontend/e2e/`: 현재 구현과 요구사항 정의서가 겹치는 사용자 흐름을 검증하는 Playwright 브라우저 E2E
 - `tests/evals/ocr/`: OCR 엔진 검토 자료와 측정 결과
 
 ### Post-MVP 준비 영역
@@ -29,7 +29,7 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 
 1. 회원가입·로그인과 인증된 사용자 확인
 2. 처방전 업로드
-3. 같은 요청 안에서 OCR 실행 및 성공·실패 처리
+3. OCR Job 접수, Outbox 발행, Redis Stream 소비, Worker 실행과 상태 polling
 4. OCR 결과 조회, 사용자 검수·수정 및 확정 처방 생성
 5. 확정 처방 기반 복약 가이드 동기 생성·저장·조회
 6. 확정 처방 기반 채팅 세션 생성
@@ -45,6 +45,42 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 #309의 분리된 생년월일 라벨·교부일자 우선 선택과 Backend 호환 경로 검증은
 [처방일 라벨·값 연결 검증 기록](testing/prescribed-date-labels-309.md)을 참고합니다.
 최초 실패 재현과 최종 통과 결과를 구분하며 실제 레이아웃 정확도 평가를 대신하지 않습니다.
+
+Playwright 환경과 자동 시나리오는 `frontend/playwright.config.ts`와 `frontend/e2e/`에 있습니다.
+대상 요구사항, 현재 구현 근거, 제외한 목표 범위는
+[구현 요구사항 E2E 추적표](testing/implemented-requirements-e2e.md)에 기록합니다. 로컬에서는
+다음 명령으로 Chromium 시나리오를 실행합니다.
+
+```bash
+cd frontend
+pnpm exec playwright install chromium
+pnpm run test:e2e:requirements
+```
+
+브라우저 E2E는 비식별 합성 응답만 사용하며 외부 AI Provider나 실제 Backend에 연결하지
+않습니다. 실패 시 `frontend/playwright-report/requirements/`와
+`frontend/test-results/requirements/`에서 trace·화면·video 증거를 확인합니다.
+
+위 mock 기반 브라우저 흐름과 실제 Provider 연결 검증을 구분합니다. real-stack E2E는 실제
+Backend·격리 DB·Outbox·Redis Stream·Worker·CLOVA OCR을 통과해 검수값을 확인·확정한 뒤,
+OpenAI 가이드와 OpenAI Chat 응답이 화면에 반영될 때까지 한 번의 브라우저 흐름으로 확인합니다.
+
+```bash
+# 격리된 real-stack을 띄워 수동 확인
+bash scripts/e2e/real_stack.sh up
+# 브라우저: http://127.0.0.1:14173
+
+# 승인된 합성 fixture로 실제 CLOVA·OpenAI 자동 확인(외부 호출 비용 발생)
+RUN_REAL_STACK_AI_E2E=1 bash scripts/e2e/real_stack.sh test
+
+# 수동 환경 종료와 임시 DB·업로드 volume 정리
+bash scripts/e2e/real_stack.sh down
+```
+
+real-stack runner는 `envs/.local.env`의 CLOVA·OpenAI 설정을 컨테이너에만 주입하고 값을 출력하지
+않습니다. PostgreSQL은 `dosey_e2e` 임시 DB와 tmpfs를 사용하고 Redis stream, Docker
+network, 업로드 volume도 전용 이름으로 격리합니다. 이 E2E는 실제 Provider 호출이므로
+기본 CI에 포함하지 않으며 `RUN_REAL_STACK_AI_E2E=1` 없이는 실행을 거부합니다.
 
 ## 현재 자동 검증 범위
 

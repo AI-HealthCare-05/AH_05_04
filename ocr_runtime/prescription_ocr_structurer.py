@@ -58,6 +58,18 @@ def _nearby_date_label_kind(field: RawRecognizedField, fields: list[RawRecognize
     return next(iter(kinds), None)
 
 
+def prescribed_date_label_kind(
+    field: RawRecognizedField,
+    fields: list[RawRecognizedField],
+) -> str | None:
+    """날짜 후보에 직접 또는 좌표상 연결된 라벨의 종류를 반환합니다."""
+
+    return _date_label_kind(field.raw_value) or _nearby_date_label_kind(
+        field,
+        fields,
+    )
+
+
 def normalize_prescribed_date_text(value: str) -> str | None:
     match = _DATE_PATTERN.search(value)
 
@@ -381,7 +393,7 @@ class PrescriptionOcrStructurer:
             normalized_date = normalize_prescribed_date_text(field.raw_value)
             if normalized_date is None:
                 continue
-            kind = _date_label_kind(field.raw_value) or _nearby_date_label_kind(field, raw_fields)
+            kind = prescribed_date_label_kind(field, raw_fields)
             if kind in {"excluded", "ambiguous"}:
                 continue
             candidate = RecognizedField(
