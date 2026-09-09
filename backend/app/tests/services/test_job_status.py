@@ -19,6 +19,7 @@ from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.ocr_repository import OcrRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.job_intake import DomainReference, JobIntakeService
 from app.services.job_status import _FAILURE_MESSAGES, JobStatusService
 from app.tests.conftest import test_engine
@@ -244,6 +245,32 @@ async def test_get_job_status_returns_result_url_only_when_completed(db_session:
 
     domain_id = result.data.domain_id
     assert result.data.result_url == f"/api/v1/ocr-jobs/{domain_id}"
+
+
+async def test_completed_previous_version_guide_job_keeps_provenance_but_hides_result_url(
+    db_session: AsyncSession,
+) -> None:
+    user = await _create_user(db_session, email=f"js-stale-guide-{uuid4().hex[:10]}@test.local")
+    document = await _create_document(db_session, user=user)
+    prescription = await _create_confirmed_prescription(db_session, user=user, document=document)
+    previous_version_id = prescription.active_version_id
+    job_id, _ = await _accept_guide_job(db_session, user=user, prescription=prescription)
+    job = await AsyncJobRepository(db_session).get_job(job_id=job_id)
+    assert job is not None
+    job.status = AiJobStatus.COMPLETED
+    job.completed_at = datetime.now(UTC)
+    await PrescriptionRepository(db_session).create_version(
+        prescription=prescription,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "새 버전 합성약", "display_order": 1}],
+    )
+
+    result = await _service(db_session).get_job_status(user=user, job_id=job_id)
+
+    assert result.data.status == AiJobStatus.COMPLETED
+    assert result.data.prescription_version_id == previous_version_id
+    assert result.data.result_url is None
 
 
 async def test_get_job_status_sets_retry_after_seconds_when_retry_wait(db_session: AsyncSession) -> None:
