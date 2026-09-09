@@ -32,6 +32,7 @@ const prescriptionReviewStyles = readFileSync(
 )
 import {
   confirmPrescription,
+  createManualMedication,
   getOcrJob,
   getPrescriptionDocumentFile,
   updateExtractedField,
@@ -43,6 +44,7 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => {
   return {
     ...actual,
     confirmPrescription: vi.fn(),
+    createManualMedication: vi.fn(),
     getOcrJob: vi.fn(),
     getPrescriptionDocumentFile: vi.fn(),
     updateExtractedField: vi.fn(),
@@ -125,6 +127,30 @@ function makeCompleteFields(medicationCount = 1) {
   }
 
   return fields
+}
+
+function makeManualMedicationFields(medicationIndex = 2) {
+  const values: Record<string, string | null> = {
+    MEDICATION_NAME: '직접입력약정',
+    MEDICATION_STRENGTH: '50mg',
+    DOSE_VALUE: '0.5',
+    DOSE_UNIT: '정',
+    FREQUENCY_PER_DAY: '2',
+    DURATION_DAYS: '5',
+    TIMING: '저녁 식후',
+  }
+
+  return displayedMedicationFields.map<ExtractedField>((fieldType) => ({
+    field_id: `manual-${fieldType}-${medicationIndex}`,
+    field_type: fieldType,
+    medication_index: medicationIndex,
+    raw_value: null,
+    normalized_value: null,
+    normalization_version: 'manual-entry@1',
+    confirmed_value: values[fieldType],
+    confidence_score: null,
+    confirmation_status: 'CONFIRMED',
+  }))
 }
 
 function withMedicationName(fields: ExtractedField[], name: string) {
@@ -238,6 +264,30 @@ function renderReroutablePage() {
 async function getConfirmationButton() {
   return screen.findByRole('button', {
     name: '처방전 확정 및 가이드 만들기',
+  })
+}
+
+function fillManualMedicationForm(name = '직접입력약정') {
+  fireEvent.change(screen.getByLabelText('약물이름'), {
+    target: { value: name },
+  })
+  fireEvent.change(screen.getByLabelText('제품함량'), {
+    target: { value: '50mg' },
+  })
+  fireEvent.change(screen.getByLabelText('1회 복용량'), {
+    target: { value: '0.5' },
+  })
+  fireEvent.change(screen.getByLabelText('복용단위'), {
+    target: { value: '정' },
+  })
+  fireEvent.change(screen.getByLabelText('하루횟수'), {
+    target: { value: '2' },
+  })
+  fireEvent.change(screen.getByLabelText('복용조건'), {
+    target: { value: '저녁 식후' },
+  })
+  fireEvent.change(screen.getByLabelText('투약일수'), {
+    target: { value: '5' },
   })
 }
 
@@ -1581,5 +1631,260 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     await waitFor(() =>
       expect(confirmPrescription).toHaveBeenCalledWith('document-1'),
     )
+  })
+})
+
+describe('PrescriptionReviewPage manual medication add', () => {
+  it('기존 약물을 편집 중이거나 미저장한 경우 추가 진입을 차단한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    renderPage()
+
+    const addButton = await screen.findByRole('button', { name: '약물 추가' })
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+
+    expect(addButton).toHaveProperty('disabled', true)
+    fireEvent.change(screen.getByLabelText('약물이름'), {
+      target: { value: '미저장 약물명' },
+    })
+    expect(addButton).toHaveProperty('disabled', true)
+    expect(createManualMedication).not.toHaveBeenCalled()
+  })
+
+  it('필수·선택 필드를 구분하고 client validation 실패 시 API를 호출하지 않는다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    expect(screen.getAllByText('필수')).toHaveLength(4)
+    expect(screen.getAllByText('선택')).toHaveLength(3)
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    expect(await screen.findByText('약물이름을 입력해 주세요.')).toBeTruthy()
+    expect(
+      screen.getByLabelText('1회 복용량').getAttribute('aria-invalid'),
+    ).toBe('true')
+    expect(createManualMedication).not.toHaveBeenCalled()
+  })
+
+  it('Backend NUMERIC(10,3) 범위의 1.001을 부동소수점 오차 없이 허용한다', async () => {
+    const originalFields = makeCompleteFields()
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(originalFields))
+    vi.mocked(createManualMedication).mockResolvedValue(
+      makeOcrResponse([...originalFields, ...makeManualMedicationFields()]),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.change(screen.getByLabelText('1회 복용량'), {
+      target: { value: '1.001' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    await waitFor(() => expect(createManualMedication).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(createManualMedication).mock.calls[0][1].dose_value).toBe(
+      '1.001',
+    )
+  })
+
+  it('Backend NUMERIC(10,3)을 넘는 소수점 4자리 값은 거부한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.change(screen.getByLabelText('1회 복용량'), {
+      target: { value: '1.0001' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    expect(
+      await screen.findByText(
+        '1회 복용량은 0보다 큰 숫자로, 소수점 아래 3자리까지 입력해 주세요.',
+      ),
+    ).toBeTruthy()
+    expect(createManualMedication).not.toHaveBeenCalled()
+  })
+
+  it('저장 응답의 전체 field 목록으로 갱신하고 새 약물을 기존 검수 흐름에 포함한다', async () => {
+    const originalFields = makeCompleteFields()
+    const response = makeOcrResponse([
+      ...originalFields,
+      ...makeManualMedicationFields(),
+    ])
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(originalFields))
+    vi.mocked(createManualMedication).mockResolvedValue(response)
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    await waitFor(() => expect(createManualMedication).toHaveBeenCalledTimes(1))
+    expect(createManualMedication).toHaveBeenCalledWith(
+      'job-1',
+      {
+        medication_name: '직접입력약정',
+        medication_strength: '50mg',
+        dose_value: '0.5',
+        dose_unit: '정',
+        frequency_per_day: '2',
+        timing: '저녁 식후',
+        duration_days: '5',
+      },
+      expect.stringMatching(
+        /^manual-medication:[0-9a-f]{8}-[0-9a-f-]{27}$/,
+      ),
+    )
+    const newMedicationHeading = await screen.findByRole('heading', {
+      name: '직접입력약정 50mg',
+    })
+    const newMedicationCard = newMedicationHeading.closest('section')
+    expect(newMedicationCard).not.toBeNull()
+    expect(screen.getByText('약 1/2개 검토 완료')).toBeTruthy()
+    expect(within(newMedicationCard!).getByText('검토 전')).toBeTruthy()
+
+    fireEvent.click(
+      within(newMedicationCard!).getByRole('button', { name: '검토 완료' }),
+    )
+    expect(await screen.findByText('약 2/2개 검토 완료')).toBeTruthy()
+    expect(screen.getByRole('checkbox')).toHaveProperty('disabled', false)
+  })
+
+  it('동일 요청 재시도에서 Idempotency-Key를 재사용한다', async () => {
+    const originalFields = makeCompleteFields()
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(originalFields))
+    vi.mocked(createManualMedication)
+      .mockRejectedValueOnce(new TypeError('network'))
+      .mockResolvedValueOnce(
+        makeOcrResponse([...originalFields, ...makeManualMedicationFields()]),
+      )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+    await waitFor(() => expect(createManualMedication).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+    await waitFor(() => expect(createManualMedication).toHaveBeenCalledTimes(2))
+
+    expect(vi.mocked(createManualMedication).mock.calls[0][2]).toBe(
+      vi.mocked(createManualMedication).mock.calls[1][2],
+    )
+  })
+
+  it('새로운 약물 추가 시도에서는 새 Idempotency-Key를 생성한다', async () => {
+    const originalFields = makeCompleteFields()
+    const firstManualFields = makeManualMedicationFields(2)
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(originalFields))
+    vi.mocked(createManualMedication)
+      .mockResolvedValueOnce(
+        makeOcrResponse([...originalFields, ...firstManualFields]),
+      )
+      .mockResolvedValueOnce(
+        makeOcrResponse([
+          ...originalFields,
+          ...firstManualFields,
+          ...makeManualMedicationFields(3),
+        ]),
+      )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm('첫번째약')
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+    await screen.findByRole('heading', { name: '직접입력약정 50mg' })
+
+    fireEvent.click(screen.getByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm('셋번째약')
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+    await waitFor(() => expect(createManualMedication).toHaveBeenCalledTimes(2))
+
+    expect(vi.mocked(createManualMedication).mock.calls[0][2]).not.toBe(
+      vi.mocked(createManualMedication).mock.calls[1][2],
+    )
+  })
+
+  it('저장 중에는 폼을 잠그고 저장 상태를 표시한다', async () => {
+    const deferred = createDeferred<OcrJobResponse>()
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    vi.mocked(createManualMedication).mockImplementation(() => deferred.promise)
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    const savingButton = await screen.findByRole('button', { name: '저장 중...' })
+    expect(savingButton).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText('약물이름')).toHaveProperty('disabled', true)
+
+    await act(async () => {
+      deferred.resolve(
+        makeOcrResponse([
+          ...makeCompleteFields(),
+          ...makeManualMedicationFields(),
+        ]),
+      )
+      await deferred.promise
+    })
+  })
+
+  it.each([
+    [
+      'CONCURRENT_UPDATE_IN_PROGRESS',
+      '약물을 저장하고 있는 요청이 있어요',
+    ],
+    ['IDEMPOTENCY_KEY_CONFLICT', '저장 요청을 다시 확인해 주세요'],
+    ['IDEMPOTENCY_KEY_REQUIRED', '저장 요청을 준비하지 못했어요'],
+    ['IDEMPOTENCY_KEY_INVALID', '저장 요청을 준비하지 못했어요'],
+    ['VALIDATION_FAILED', '입력값을 확인해 주세요'],
+  ])('%s를 Backend 용어 없는 안내로 표시한다', async (code, title) => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    vi.mocked(createManualMedication).mockRejectedValue(
+      new ApiError(409, 'backend internal message', code),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    expect(await screen.findByText(title)).toBeTruthy()
+    expect(screen.queryByText('backend internal message')).toBeNull()
+  })
+
+  it.each([
+    ['OCR_JOB_NOT_FOUND', '처방전 정보를 찾을 수 없어요'],
+    ['MEDICAL_DOCUMENT_NOT_FOUND', '처방전 정보를 찾을 수 없어요'],
+    ['OCR_JOB_NOT_COMPLETED', 'OCR 검수가 아직 준비되지 않았어요'],
+    ['PRESCRIPTION_ALREADY_CONFIRMED', '이미 확정된 처방이에요'],
+  ])('%s에서 안전한 차단 상태로 전환한다', async (code, title) => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    vi.mocked(createManualMedication).mockRejectedValue(
+      new ApiError(409, 'backend internal message', code),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    expect(await screen.findByText(title)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '약물 추가' })).toBeNull()
   })
 })
