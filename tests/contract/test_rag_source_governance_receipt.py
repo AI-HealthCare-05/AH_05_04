@@ -300,7 +300,9 @@ def test_contract_authority_is_complete_and_local_artifacts_match_bytes() -> Non
     assert authority["database_target"]["sha256"] == "f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea"
     assert authority["local_target"]["version"] == "1"
     assert authority["local_target"]["sha256"] == _sha256(LOCAL_TARGET_PATH)
-    assert f"canonical hash는 `sha256:{receipt['receipt_hash']['value']}`" in TRACEABILITY_PATH.read_text()
+    assert f"canonical hash는 `sha256:{receipt['receipt_hash']['value']}`" in TRACEABILITY_PATH.read_text(
+        encoding="utf-8"
+    )
     assert authority["decision"]["decision_id"] == "PD-125-20260831"
     assert authority["decision"]["sha256"] == _sha256(DECISION_PATH)
 

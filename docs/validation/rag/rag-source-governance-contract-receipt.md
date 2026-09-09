@@ -65,7 +65,7 @@ Machine Receipt는 Source hash/version/lifecycle, Endpoint·Operation 상태축,
 
 ## Receipt 무결성과 후속 입력
 
-Canonical Receipt hash는 `sha256:c573b7b39a4d64cbf6ab0c3868609e8d9a6084bdbe327d380fcd10b8d4688cba`다. 이 합성 Receipt는 #167, #168, #170, #175의 입력 선행조건으로 연결되지만 실제 Source binding이 채워진 새 Receipt 전까지 네 Issue 모두 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다.
+Canonical Receipt hash는 `sha256:a89d5bd2eb70edefcfae20fc4e330089a2e650a6d4a916a4fd8843dfe708f02a`다. 이 합성 Receipt는 #167, #168, #170, #175의 입력 선행조건으로 연결되지만 실제 Source binding이 채워진 새 Receipt 전까지 네 Issue 모두 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다.
 
 ## 사용 범위
 

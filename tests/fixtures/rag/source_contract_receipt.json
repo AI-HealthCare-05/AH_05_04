@@ -43,7 +43,7 @@
       },
       {
         "path": "tests/contract/test_rag_source_governance_receipt.py",
-        "sha256": "faad9aced53506a36067b02dcfdc217c08898aa2f69aac3312605b04267ea0f6"
+        "sha256": "2ee606c3a067e6e969d4fcfb1a5f9b56088b0e1a7a64e3ced9f19e415ab3f78b"
       },
       {
         "path": "ai_worker/tests/rag/test_source_governance.py",
@@ -582,6 +582,6 @@
   "receipt_hash": {
     "algorithm": "sha256",
     "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
-    "value": "c573b7b39a4d64cbf6ab0c3868609e8d9a6084bdbe327d380fcd10b8d4688cba"
+    "value": "a89d5bd2eb70edefcfae20fc4e330089a2e650a6d4a916a4fd8843dfe708f02a"
   }
 }
