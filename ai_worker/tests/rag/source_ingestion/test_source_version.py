@@ -134,3 +134,33 @@ def test_api_and_internal_require_null_external_version() -> None:
             external_version="unexpected",
             canonical_checksum=_CHECKSUM,
         )
+
+
+@pytest.mark.parametrize(
+    "external_version",
+    [
+        "external:nested-version",
+        "api:2026-09-09T00:00:00.000000Z:" + "a" * 64,
+        "internal:fixture-v1:" + "a" * 64,
+    ],
+)
+def test_external_version_rejects_reserved_source_version_prefix(
+    external_version: str,
+) -> None:
+    with pytest.raises(
+        SourceVersionValidationError,
+        match="예약 접두사",
+    ):
+        build_external_source_version(
+            external_version=external_version,
+        )
+
+    with pytest.raises(
+        SourceVersionValidationError,
+        match="예약 접두사",
+    ):
+        validate_source_version(
+            source_version=f"external:{external_version}",
+            external_version=external_version,
+            canonical_checksum=_CHECKSUM,
+        )

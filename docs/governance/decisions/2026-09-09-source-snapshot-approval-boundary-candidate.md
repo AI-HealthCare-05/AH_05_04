@@ -6,6 +6,7 @@
 | 상태 | Review pending · Issue #362 |
 | 구현 | 김지혜 (`@Jye-rookie`) |
 | 책임 리뷰 | 송은영 (`@phina-io`) — Source ingestion·DB |
+| 선행 Decision | [Source Snapshot DB 상태 전이](./2026-09-08-source-snapshot-db-transition.md) |
 | 의미 계약 검토 | 정현우 (`@ceohwj`) — Catalog·Runtime Source 사용 |
 | 추적 Issue | [#362](https://github.com/AI-HealthCare-05/AH_05_04/issues/362) |
 
@@ -26,6 +27,15 @@ Production Source producer는 다음 형식 중 하나만 생성한다.
 | 외부 Version 없는 API | `api:<UTC RFC3339 6자리 소수초>:<canonical_checksum>` | `NULL` |
 | 승인 내부 Fixture | `internal:<불변 fixture_version>:<canonical_checksum>` | `NULL` |
 
+이 Candidate는 Application과 정규 계약의 `source_version` 최대 길이를
+200자로 채택하는 안을 제시한다. 승인 전에는 확정 Decision으로 해석하지 않으며,
+PR 병합 전에 책임 리뷰 승인이 필요하다.
+
+현재 `rag_source_snapshot.source_version`과 #369의
+`rag_citation.source_version`은 `VARCHAR(255)`다. Candidate 승인 후 #369가
+병합된 최신 Alembic head에서 두 컬럼을 200자로 정렬하고 DB CHECK를 추가한다.
+해당 migration이 완료되기 전에는 Application 검증이 DB보다 엄격한 상태다.
+
 공통 조건:
 
 - 전체 길이는 1~200자이며 NFC 문자열이다.
@@ -34,6 +44,15 @@ Production Source producer는 다음 형식 중 하나만 생성한다.
 - API·Internal checksum suffix는 해당 Snapshot의 `canonical_checksum`과 일치해야 한다.
 - Internal `fixture_version`은 이동 가능한 이름만으로 만들지 않고 승인 Commit과 Fixture Manifest에서 재현할 수 있어야 한다.
 - 형식이나 결속 검증에 실패하면 Snapshot을 생성하지 않는다.
+
+`validate_source_version()`이 반환한 `SourceVersionKind`를 검증 결과의 정본으로
+사용한다. 후속 소비자는 `source_version`의 부분 문자열이나 중첩 접두사를 다시
+파싱해 kind를 추정하지 않는다. `external:` payload가 `external:`, `api:`,
+`internal:` 예약 접두사로 시작하면 거부한다.
+
+`SnapshotIngestionMetadata.external_version`은 현재 생성·결속 검증에만 사용하며
+DB에는 저장되지 않는다. #369 이후 migration에서 저장 컬럼과 Receipt 조회 경로가
+연결되기 전까지 후속 소비자는 이 값이 영속 보존된다고 가정하지 않는다.
 
 ## 동일 Version 충돌과 NO_CHANGE
 
@@ -64,6 +83,11 @@ Producer가 잘못된 문법이나 checksum suffix를 생성한 오류에 재사
 두 거부 Hard Limit은 자동 승인 허용치가 아니다. 제한 이하의 거부도 사람 승인 없이 공개하지 않는다.
 
 ## Freshness와 저장 상태
+
+Snapshot의 `PENDING`, `CURRENT`, `STALE`, `FAILED` 상태 전이와 DB 소유권 규칙은
+[Source Snapshot DB 상태 전이 Decision](./2026-09-08-source-snapshot-db-transition.md)을
+따른다. 이 Candidate는 해당 전이를 변경하지 않고, 승인된 Snapshot의 Freshness 정본
+해석과 Catalog·Runtime 사용 가능 조건만 정의한다.
 
 Snapshot Freshness의 정본은 승인된 Freshness Policy와 평가 시점으로 계산한 파생 결과다.
 기존 `verification_status=CURRENT|STALE`를 Freshness 자체의 정본으로 사용하지 않는다.

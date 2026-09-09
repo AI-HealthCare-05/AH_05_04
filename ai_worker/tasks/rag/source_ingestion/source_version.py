@@ -8,6 +8,12 @@ from enum import StrEnum
 SOURCE_VERSION_MAX_LENGTH = 200
 EXTERNAL_VERSION_MAX_LENGTH = 191
 
+_RESERVED_SOURCE_VERSION_PREFIXES = (
+    "external:",
+    "api:",
+    "internal:",
+)
+
 _CHECKSUM_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _API_VERSION_PATTERN = re.compile(
     r"api:"
@@ -128,6 +134,9 @@ def _validate_common_source_version(source_version: str) -> None:
 
 def _validate_external_version(external_version: str) -> None:
     _validate_token("external_version", external_version)
+
+    if external_version.startswith(_RESERVED_SOURCE_VERSION_PREFIXES):
+        raise SourceVersionValidationError("external_version은 source_version 예약 접두사로 시작할 수 없습니다.")
 
     if len(external_version) > EXTERNAL_VERSION_MAX_LENGTH:
         raise SourceVersionValidationError(f"external_version은 {EXTERNAL_VERSION_MAX_LENGTH}자를 초과할 수 없습니다.")

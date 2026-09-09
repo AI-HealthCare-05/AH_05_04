@@ -251,7 +251,7 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
         parser_version="mfds-product-parser@1",
         normalization_version="mfds-product-normalization@1",
         rejected_record_count=0,
-        run_group_key=f"synthetic-{source_version}",
+        run_group_key=(f"synthetic-{hashlib.sha256(source_version.encode('utf-8')).hexdigest()}"),
         attempt_number=1,
         started_at=_NOW,
         finished_at=_NOW + timedelta(seconds=1),
@@ -265,7 +265,7 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
-        (lambda: replace(_metadata("external:v1"), source_version="x" * 256), "source_version"),
+        (lambda: replace(_metadata("external:v1"), source_version="x" * 201), "source_version"),
         (lambda: replace(_metadata("external:v1"), schema_version="x" * 101), "schema_version"),
         (lambda: replace(_metadata("external:v1"), parser_version="x" * 101), "parser_version"),
         (
@@ -276,7 +276,7 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
         (lambda: replace(_metadata("external:v1"), verified_by="x" * 101), "verified_by"),
     ],
 )
-def test_rejects_snapshot_metadata_larger_than_database_contract(
+def test_rejects_snapshot_metadata_over_configured_limits(
     factory: Callable[[], SnapshotIngestionMetadata],
     message: str,
 ) -> None:
@@ -975,6 +975,42 @@ async def test_reject_count_mismatch_stops_before_file_write(tmp_path: Path, cou
     assert repository.locked_identities == []
 
 
+async def test_invalid_source_version_is_rejected_before_file_write(
+    tmp_path: Path,
+) -> None:
+    content = b'{"synthetic":true}'
+    source = tmp_path / "page-0001.json"
+    source.write_bytes(content)
+
+    raw_metadata = RawArtifactMetadata(
+        artifact_key="page-0001.json",
+        raw_checksum=hashlib.sha256(content).hexdigest(),
+        byte_size=len(content),
+        content_type="application/json",
+    )
+    ingestion = replace(
+        _ingestion(),
+        raw_manifest_checksum=raw_manifest_checksum((raw_metadata,)),
+    )
+    repository = FakeSnapshotRepository()
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+
+    with pytest.raises(SourceVersionValidationError):
+        await preserve_and_persist_product_ingestion_result(
+            repository=repository,
+            artifact_store=store,
+            ingestion=ingestion,
+            metadata=replace(
+                _metadata("external:v1"),
+                source_version="v1",
+            ),
+            raw_artifacts=((1, source, raw_metadata),),
+        )
+
+    assert list((tmp_path / "private").iterdir()) == []
+    assert repository.locked_identities == []
+
+
 async def test_rejects_invalid_source_version_before_locking_operation() -> None:
     repository = FakeSnapshotRepository()
 
@@ -990,6 +1026,56 @@ async def test_rejects_invalid_source_version_before_locking_operation() -> None
         )
 
     assert repository.locked_identities == []
+
+
+@pytest.mark.parametrize(
+    "source_version",
+    [
+        f"api:2026-09-07T01:00:00.000000Z:{_CHECKSUM_A}",
+        f"internal:fixture-v1:{_CHECKSUM_A}",
+    ],
+)
+async def test_persist_accepts_checksum_bound_source_version_kinds(
+    source_version: str,
+) -> None:
+    repository = FakeSnapshotRepository()
+
+    result = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=_metadata(source_version),
+        artifacts=_stored_artifacts(),
+    )
+
+    assert result.decision is SnapshotIngestionDecision.CREATED
+    assert result.snapshot_id is not None
+
+
+@pytest.mark.parametrize(
+    "source_version",
+    [
+        f"api:2026-09-07T01:00:00.000000Z:{_CHECKSUM_B}",
+        f"internal:fixture-v1:{_CHECKSUM_B}",
+    ],
+)
+async def test_persist_rejects_source_version_checksum_mismatch(
+    source_version: str,
+) -> None:
+    repository = FakeSnapshotRepository()
+
+    with pytest.raises(
+        SourceVersionValidationError,
+        match="canonical_checksum",
+    ):
+        await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(_CHECKSUM_A),
+            metadata=_metadata(source_version),
+            artifacts=_stored_artifacts(),
+        )
+
+    assert repository.locked_identities == []
+    assert repository.runs == []
 
 
 async def test_rejects_external_version_mismatch_before_locking_operation() -> None:
