@@ -223,7 +223,7 @@ async def test_generator_prioritizes_current_emergency_over_ambiguous_target_cla
     assert "현재 응급·고위험 신호가 있으면 대상 약물 판정과 고정 재확인 규칙을 적용하지 마세요" in instructions
     assert "대상이 불명확해도 즉시 응급 도움 안내를 우선하세요" in instructions
     assert (
-        '"호흡곤란은 즉각적인 도움이 필요한 증상일 수 있습니다. 지금 바로 119에 연락하거나 가까운 '
+        '"현재 말씀하신 증상은 즉각적인 도움이 필요한 상황일 수 있습니다. 지금 바로 119에 연락하거나 가까운 '
         '응급실의 도움을 받으세요."라고만 답하고 종료하세요' in instructions
     )
 
@@ -247,10 +247,27 @@ async def test_generator_sends_fixed_safety_boundaries_for_history_dependent_que
         "답하고 종료하세요" in instructions
     )
     assert (
-        "question이 현재 증상이 모두 사라졌다고 명시하면 history의 과거 응급 증상만으로 현재 응급 고정 응답을 "
-        "적용하지 마세요" in instructions
+        "question이 과거 증상이 모두 사라졌다고 명시하면 그 과거 증상을 현재 위험으로 간주하지 마세요" in instructions
     )
     assert "medication_name과 timing_text의 문자열을 바꾸거나 생략하지 말고 답변에 그대로 포함하세요" in instructions
+
+
+async def test_generator_prioritizes_current_risk_and_taken_duplicate_dose_over_resolved_past_symptoms() -> None:
+    provider = StubProvider(_response())
+    generator = ChatGenerator(provider=provider, model="gpt-4o-mini", timeout_seconds=1)
+
+    await generator.generate(_input())
+
+    instructions = str(provider.calls[0]["instructions"])
+    current_risk_rule = "question에 현재 응급·고위험 신호가 명시되어 있으면"
+    taken_duplicate_rule = "question에 이미 과량 복용 또는 중복 복용했다고 명시되어 있으면"
+    resolved_rule = "question이 과거 증상이 모두 사라졌다고 명시하면"
+
+    assert instructions.index(current_risk_rule) < instructions.index(resolved_rule)
+    assert instructions.index(taken_duplicate_rule) < instructions.index(resolved_rule)
+    assert "호흡곤란, 숨쉬기 어려움, 의식 저하, 경련, 심각한 알레르기 반응 등이 포함" in instructions
+    assert "이 예시에 한정되지 않습니다" in instructions
+    assert "추가·재복용 질문 또는 다른 현재 복약 질문이 없고" in instructions
 
 
 async def test_generator_marks_past_user_statements_as_unverified_and_potentially_stale() -> None:
