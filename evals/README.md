@@ -120,12 +120,15 @@ Dataset Freeze와 HOLDOUT Freeze는 아직 이루어지지 않았다. Dataset
 Manifest의 canonical self-hash는
 `b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`이다.
 
-HOLDOUT Freeze 준비는 `PREPARATION_READY`다. 이는 접근 승인이나 Freeze 완료를 뜻하지 않는다. 공개
-저장소에는 접근 통제·역할 분리·감사·후속 receipt의 요구사항만 담은 비런타임 준비 projection이 있으며,
-HOLDOUT 질문·Gold·fingerprint/HMAC 값·보호 위치는 없다. 독립 Dataset Custodian의 실제 접근 승인 event가
-기록된 뒤에만 보호 환경에서 HOLDOUT 40개 작성을 시작하고, 네 leakage 축의 교집합 0과 전수 검토가 끝난
-뒤에만 Freeze한다. 접근 통제 구현 전에 전용 protected Retrieval Runner Issue를 먼저 생성해야 하며, 현재
-해당 Issue 상태는 `NOT_CREATED`다.
+HOLDOUT Freeze 준비는 `PREPARATION_READY`다. 이는 접근 승인이나 Freeze 완료를 뜻하지 않는다. 전용
+Protected Retrieval Runner Issue #368은 `CREATED`이고 인프라 독립 policy foundation은 `IMPLEMENTED`다.
+다만 이는 synthetic adapter로 역할·승인·감사·revocation, 성공 결과 멱등 반환과 UNKNOWN 자동 재실행 차단을
+검증한 상태일 뿐이다. 독립 승인 reconciliation adapter와 실제 인프라 enforcement·adapter는
+`NOT_IMPLEMENTED`다. 공개 저장소에는 비민감 상태와 증빙만 있고
+HOLDOUT 질문·Gold·fingerprint/HMAC 값·credential·보호 위치는 없다. `@phina-io`가 database/schema,
+역할, protected credential 환경, append-only audit와 보존 정책을 검토·승인한 뒤 후속 adapter를 연결한다.
+독립 Dataset Custodian의 실제 접근 승인 event가 기록된 뒤에만 보호 환경에서 HOLDOUT 40개 작성을 시작하고,
+네 leakage 축의 교집합 0과 전수 검토가 끝난 뒤에만 Freeze한다.
 
 검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
 `evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·

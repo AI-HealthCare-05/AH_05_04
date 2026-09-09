@@ -29,20 +29,23 @@ DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-r
 EVALS_README_PATH = EVALS_ROOT / "README.md"
 DATASET_APPROVAL_EVIDENCE_PATH = EVALS_ROOT / "provenance/rag-natural-language-retrieval-dev-v1.approval-evidence.json"
 HOLDOUT_PREPARATION_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/holdout-freeze-preparation.json"
+PROTECTED_RUNNER_FOUNDATION_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/protected-runner-foundation.json"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
 DATASET_MANIFEST_HASH = "b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2"
 GOLD_REVIEW_EVIDENCE_HASH = "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776"
 DATASET_APPROVAL_EVIDENCE_HASH = "3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"
 HOLDOUT_PREPARATION_HASH = "40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192"
 HOLDOUT_PREPARATION_SELF_HASH = "b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6"
+PROTECTED_RUNNER_FOUNDATION_HASH = "85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9"
+PROTECTED_RUNNER_FOUNDATION_SELF_HASH = "657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969"
 
 
 def _status_payload() -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.2.1",
         "issue": "#273",
-        "phase": "PHASE_B2_HOLDOUT_FREEZE_PREPARATION",
-        "status_label": "Phase B2 · HOLDOUT Freeze Preparation Ready",
+        "phase": "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
+        "status_label": "Phase B3 · Protected Runner Policy Foundation Implemented",
         "schema_set_status": "REVIEW_REQUIRED",
         "dataset_ref": "rag-natural-language-retrieval-dev@1.0.0",
         "planned_counts": {
@@ -89,6 +92,17 @@ def _status_payload() -> dict[str, Any]:
             "self_sha256": HOLDOUT_PREPARATION_SELF_HASH,
         },
         "holdout_preparation_status": "PREPARATION_READY",
+        "protected_runner_foundation_ref": {
+            "id": "issue-273-protected-runner-foundation",
+            "version": "1.0.0",
+            "raw_sha256": PROTECTED_RUNNER_FOUNDATION_HASH,
+            "self_sha256": PROTECTED_RUNNER_FOUNDATION_SELF_HASH,
+        },
+        "protected_runner_issue_status": "CREATED",
+        "policy_foundation_status": "IMPLEMENTED",
+        "effective_enforcement_status": "NOT_IMPLEMENTED",
+        "infrastructure_adapter_status": "NOT_IMPLEMENTED",
+        "reconciliation_adapter_status": "NOT_IMPLEMENTED",
         "holdout_freeze_status": "NOT_STARTED",
         "adapter_status": "NOT_IMPLEMENTED",
         "actual_run_ref": None,
@@ -142,10 +156,17 @@ def _status_payload() -> dict[str, Any]:
                 "exit_code": 0,
                 "result": "27 passed",
             },
+            {
+                "check_id": "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q",
+                "exit_code": 0,
+                "result": "83 passed",
+            },
         ],
-        "updated_at": "2026-09-08T09:30:09.000000Z",
+        "updated_at": "2026-09-09T00:00:00.000000Z",
         "status_sha256": "0" * 64,
     }
+    payload["checks"].sort(key=lambda item: item["check_id"].encode("utf-16-be"))
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
     return payload
 
@@ -218,10 +239,10 @@ def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -
     }
 
 
-def test_phase_b2_status_accepts_only_the_prepared_but_unfrozen_holdout_state() -> None:
+def test_phase_b3_status_accepts_only_the_policy_foundation_without_effective_enforcement() -> None:
     status = parse_status_bytes(_status_bytes(_status_payload()))
 
-    assert status.phase == "PHASE_B2_HOLDOUT_FREEZE_PREPARATION"
+    assert status.phase == "PHASE_B3_PROTECTED_RUNNER_FOUNDATION"
     assert status.dataset_status == "DRAFT"
     assert status.dataset_manifest_sha256 == DATASET_MANIFEST_HASH
     assert status.created_counts.model_dump() == {
@@ -242,6 +263,13 @@ def test_phase_b2_status_accepts_only_the_prepared_but_unfrozen_holdout_state() 
     assert status.holdout_preparation_ref.raw_sha256 == HOLDOUT_PREPARATION_HASH
     assert status.holdout_preparation_ref.self_sha256 == HOLDOUT_PREPARATION_SELF_HASH
     assert status.holdout_preparation_status == "PREPARATION_READY"
+    assert status.protected_runner_foundation_ref.raw_sha256 == PROTECTED_RUNNER_FOUNDATION_HASH
+    assert status.protected_runner_foundation_ref.self_sha256 == PROTECTED_RUNNER_FOUNDATION_SELF_HASH
+    assert status.protected_runner_issue_status == "CREATED"
+    assert status.policy_foundation_status == "IMPLEMENTED"
+    assert status.effective_enforcement_status == "NOT_IMPLEMENTED"
+    assert status.infrastructure_adapter_status == "NOT_IMPLEMENTED"
+    assert status.reconciliation_adapter_status == "NOT_IMPLEMENTED"
     assert status.holdout_freeze_status == "NOT_STARTED"
     assert status.adapter_status == "NOT_IMPLEMENTED"
     assert status.actual_run_ref is None
@@ -540,7 +568,7 @@ def test_evals_readme_quotes_the_current_dataset_manifest_hash() -> None:
     assert quoted_hashes == {declared_manifest_hash}, quoted_hashes
 
 
-def test_evals_readme_does_not_describe_the_approved_dev_graph_as_unreviewed() -> None:
+def test_evals_readme_describes_the_b3_foundation_without_claiming_enforcement() -> None:
     readme = EVALS_README_PATH.read_text(encoding="utf-8")
     issue_273_section = readme.split("### Issue #273 자연어 Retrieval DEV authoring", maxsplit=1)[1].split(
         "\n### ", maxsplit=1
@@ -550,6 +578,11 @@ def test_evals_readme_does_not_describe_the_approved_dev_graph_as_unreviewed() -
     assert "모든 review provenance는 `DRAFT` 또는 `NOT_STARTED`" not in issue_273_section
     assert "HOLDOUT Freeze 준비는 `PREPARATION_READY`" in issue_273_section
     assert "접근 승인이나 Freeze 완료를 뜻하지 않는다" in issue_273_section
+    assert "Issue #368은 `CREATED`" in issue_273_section
+    assert "policy foundation은 `IMPLEMENTED`" in issue_273_section
+    assert "독립 승인 reconciliation adapter와 실제 인프라 enforcement·adapter는" in issue_273_section
+    assert "`NOT_IMPLEMENTED`" in issue_273_section
+    assert "해당 Issue 상태는 `NOT_CREATED`" not in issue_273_section
 
 
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
@@ -563,7 +596,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
-    assert b"Phase B2 \xc2\xb7 HOLDOUT Freeze Preparation Ready" in REPORT_PATH.read_bytes()
+    assert b"Phase B3 \xc2\xb7 Protected Runner Policy Foundation Implemented" in REPORT_PATH.read_bytes()
     assert "한국어 자연어 합성 DEV 질문" in REPORT_PATH.read_text()
     assert b"DEV Dataset approval is recorded as APPROVED" in REPORT_PATH.read_bytes()
     assert b"Dataset remains DRAFT and unfrozen" in REPORT_PATH.read_bytes()
@@ -577,7 +610,20 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     assert HOLDOUT_PREPARATION_HASH.encode() in REPORT_PATH.read_bytes()
     assert HOLDOUT_PREPARATION_SELF_HASH.encode() in raw_status
     assert HOLDOUT_PREPARATION_SELF_HASH.encode() in REPORT_PATH.read_bytes()
-    for result in (b"1 passed", b"26 passed", b"27 passed", b"51 passed", b"132 passed", b"94 passed, 7 skipped"):
+    assert PROTECTED_RUNNER_FOUNDATION_HASH.encode() in raw_status
+    assert PROTECTED_RUNNER_FOUNDATION_HASH.encode() in REPORT_PATH.read_bytes()
+    assert PROTECTED_RUNNER_FOUNDATION_SELF_HASH.encode() in raw_status
+    assert PROTECTED_RUNNER_FOUNDATION_SELF_HASH.encode() in REPORT_PATH.read_bytes()
+    assert sha256_hex(PROTECTED_RUNNER_FOUNDATION_PATH.read_bytes()) == PROTECTED_RUNNER_FOUNDATION_HASH
+    for result in (
+        b"1 passed",
+        b"26 passed",
+        b"27 passed",
+        b"83 passed",
+        b"51 passed",
+        b"132 passed",
+        b"94 passed, 7 skipped",
+    ):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status
