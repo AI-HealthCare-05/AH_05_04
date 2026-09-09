@@ -39,10 +39,12 @@ from ai_worker.tasks.rag.identification_preflight import (  # noqa: E402
     PreflightDecision,
     PreflightExecutionStatus,
     PreflightReason,
+    PreflightStaleProjection,
     PreflightStaleSignal,
     canonical_preflight_manifest_hash,
     evaluate_medication_identification_preflight,
     preflight_state_from_mapping,
+    project_preflight_stale_signal,
 )
 
 KERNEL_PATH = PROJECT_ROOT / "ai_worker" / "tasks" / "rag" / "identification_preflight.py"
@@ -113,16 +115,90 @@ def test_decision_axis_has_exactly_three_values() -> None:
     )
 
 
-def test_stale_signal_vocabulary_matches_safety_result_contract() -> None:
+def read_safety_contract_fallback_codes() -> tuple[str, ...]:
+    """Extract public fallback_code vocabulary from safety-result-v2.md."""
     text = SAFETY_CONTRACT_PATH.read_text(encoding="utf-8")
-    assert "PRESCRIPTION_STALE" in text
-    assert "IDENTIFICATION_STALE" in text
-    assert "RUNTIME_RELEASE_STALE" in text
+    match = re.search(r"공개 `fallback_code`는 (.+?)로 제한한다\.", text)
+    assert match is not None, "safety-result-v2.md에서 공개 fallback_code 문장을 찾을 수 없습니다."
+    codes = re.findall(r"`([A-Z_]+)`", match.group(1))
+    assert len(codes) >= 9, f"fallback_code 목록 파싱 실패: {codes}"
+    return tuple(codes)
+
+
+def read_safety_contract_internal_stale_reasons() -> tuple[str, ...]:
+    """Extract internal stale_reason vocabulary from safety-result-v2.md."""
+    text = SAFETY_CONTRACT_PATH.read_text(encoding="utf-8")
+    match = re.search(r"- 내부 `stale_reason`: (.+)", text)
+    assert match is not None, "safety-result-v2.md에서 내부 stale_reason 문장을 찾을 수 없습니다."
+    reasons = re.findall(r"`([A-Z_]+)`", match.group(1))
+    assert len(reasons) >= 5, f"stale_reason 목록 파싱 실패: {reasons}"
+    return tuple(reasons)
+
+
+def test_stale_signal_vocabulary_and_projection_matches_safety_result_contract() -> None:
+    """Validate that PreflightStaleSignal and its downstream projection exact-match the safety contract.
+
+    Addresses review [P2]:
+    1. Exact-matches the public fallback_code list and internal stale_reason list parsed from
+       safety-result-v2.md without relying on loose substring checks.
+    2. Distinguishes the two roles: PRESCRIPTION_STALE is a public fallback_code (no internal
+       stale_reason), while IDENTIFICATION_STALE and RUNTIME_RELEASE_STALE are internal stale_reasons
+       projected onto the public EXECUTION_CONTEXT_STALE fallback_code.
+    3. Pins the downstream projection consumed by RAG-12-API (#174).
+    """
+    fallback_codes = read_safety_contract_fallback_codes()
+    stale_reasons = read_safety_contract_internal_stale_reasons()
+
+    # 1. 정본의 공개 fallback_code 및 내부 stale_reason exact-match 고정
+    assert fallback_codes == (
+        "NO_APPROVED_EVIDENCE",
+        "CONFLICTING_EVIDENCE",
+        "SAFETY_ROUTED",
+        "PROVIDER_TIMEOUT",
+        "DEPENDENCY_UNAVAILABLE",
+        "VALIDATION_FAILED",
+        "PRESCRIPTION_STALE",
+        "EXECUTION_CONTEXT_STALE",
+        "UNSUPPORTED_REQUEST",
+    )
+    assert stale_reasons == (
+        "PATIENT_CONTEXT_STALE",
+        "IDENTIFICATION_STALE",
+        "RUNTIME_RELEASE_STALE",
+        "RUNTIME_ENVIRONMENT_SUSPENDED",
+        "RESOLVER_MEMBER_REVOKED",
+    )
+
+    # 2. Kernel enum 축 어휘 고정
     assert tuple(item.value for item in PreflightStaleSignal) == (
         "PRESCRIPTION_STALE",
         "IDENTIFICATION_STALE",
         "RUNTIME_RELEASE_STALE",
     )
+
+    # 3. PreflightStaleSignal -> (fallback_code, stale_reason) 사영 검증
+    # - 처방 버전 불일치: 공개 PRESCRIPTION_STALE, 내부 stale_reason 없음 (None)
+    proj_rx = project_preflight_stale_signal(PreflightStaleSignal.PRESCRIPTION_STALE)
+    assert isinstance(proj_rx, PreflightStaleProjection)
+    assert proj_rx.fallback_code == "PRESCRIPTION_STALE"
+    assert proj_rx.fallback_code in fallback_codes
+    assert proj_rx.stale_reason is None
+
+    # - 식별 불일치: 공개 EXECUTION_CONTEXT_STALE, 내부 stale_reason IDENTIFICATION_STALE
+    proj_id = project_preflight_stale_signal(PreflightStaleSignal.IDENTIFICATION_STALE)
+    assert isinstance(proj_id, PreflightStaleProjection)
+    assert proj_id.fallback_code == "EXECUTION_CONTEXT_STALE"
+    assert proj_id.fallback_code in fallback_codes
+    assert proj_id.stale_reason == "IDENTIFICATION_STALE"
+    assert proj_id.stale_reason in stale_reasons
+
+    # - 런타임 번들 불일치: 공개 EXECUTION_CONTEXT_STALE, 내부 stale_reason RUNTIME_RELEASE_STALE
+    proj_bundle = project_preflight_stale_signal(PreflightStaleSignal.RUNTIME_RELEASE_STALE)
+    assert isinstance(proj_bundle, PreflightStaleProjection)
+    assert proj_bundle.fallback_code == "EXECUTION_CONTEXT_STALE"
+    assert proj_bundle.fallback_code in fallback_codes
+    assert proj_bundle.stale_reason == "RUNTIME_RELEASE_STALE"
+    assert proj_bundle.stale_reason in stale_reasons
 
 
 def test_kernel_imports_are_stdlib_only() -> None:

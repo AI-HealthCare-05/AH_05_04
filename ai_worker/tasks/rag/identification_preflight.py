@@ -92,6 +92,35 @@ class PreflightStaleSignal(StrEnum):
     RUNTIME_RELEASE_STALE = "RUNTIME_RELEASE_STALE"
 
 
+@dataclass(frozen=True, slots=True)
+class PreflightStaleProjection:
+    """Downstream projection of a kernel stale signal onto the public fallback_code and internal stale_reason axes.
+
+    Pinned against ``docs/contracts/targets/post-mvp-1/safety-result-v2.md`` "STALE과 공개 오류":
+    - Prescription version mismatch: public ``PRESCRIPTION_STALE`` (no internal ``stale_reason``)
+    - Identification / Bundle mismatch: public ``EXECUTION_CONTEXT_STALE`` with internal
+      ``stale_reason`` (``IDENTIFICATION_STALE`` / ``RUNTIME_RELEASE_STALE``)
+    """
+
+    fallback_code: str
+    stale_reason: str | None
+
+
+def project_preflight_stale_signal(signal: PreflightStaleSignal) -> PreflightStaleProjection:
+    """Project a kernel stale signal onto the safety-result-v2 contract axes."""
+    match signal:
+        case PreflightStaleSignal.PRESCRIPTION_STALE:
+            return PreflightStaleProjection(fallback_code="PRESCRIPTION_STALE", stale_reason=None)
+        case PreflightStaleSignal.IDENTIFICATION_STALE:
+            return PreflightStaleProjection(
+                fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="IDENTIFICATION_STALE"
+            )
+        case PreflightStaleSignal.RUNTIME_RELEASE_STALE:
+            return PreflightStaleProjection(
+                fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="RUNTIME_RELEASE_STALE"
+            )
+
+
 class PreflightValidationCode(StrEnum):
     """Internal diagnostics.  Never projected onto a patient-facing DTO or message."""
 

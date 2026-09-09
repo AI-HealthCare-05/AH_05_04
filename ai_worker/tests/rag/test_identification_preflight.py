@@ -21,12 +21,14 @@ from ai_worker.tasks.rag.identification_preflight import (
     PreflightDecision,
     PreflightExecutionStatus,
     PreflightReason,
+    PreflightStaleProjection,
     PreflightStaleSignal,
     PreflightValidationCode,
     canonical_preflight_manifest_hash,
     evaluate_medication_identification_preflight,
     medication_ids_in_manifest_order,
     preflight_state_from_mapping,
+    project_preflight_stale_signal,
 )
 
 PRESCRIPTION_ID = "11111111-1111-4111-8111-111111111111"
@@ -478,4 +480,19 @@ def test_medication_ids_in_manifest_order() -> None:
         medication_id(1),
         medication_id(2),
         medication_id(3),
+    )
+
+
+def test_project_preflight_stale_signal() -> None:
+    rx_proj = project_preflight_stale_signal(PreflightStaleSignal.PRESCRIPTION_STALE)
+    assert rx_proj == PreflightStaleProjection(fallback_code="PRESCRIPTION_STALE", stale_reason=None)
+
+    id_proj = project_preflight_stale_signal(PreflightStaleSignal.IDENTIFICATION_STALE)
+    assert id_proj == PreflightStaleProjection(
+        fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="IDENTIFICATION_STALE"
+    )
+
+    bundle_proj = project_preflight_stale_signal(PreflightStaleSignal.RUNTIME_RELEASE_STALE)
+    assert bundle_proj == PreflightStaleProjection(
+        fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="RUNTIME_RELEASE_STALE"
     )
