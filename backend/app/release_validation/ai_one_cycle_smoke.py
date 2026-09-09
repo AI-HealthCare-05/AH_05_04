@@ -664,7 +664,7 @@ async def verify_one_cycle(
         or assistant.generation_status != ChatGenerationStatus.COMPLETED
         or not assistant.content
         or not assistant.model_name
-        or assistant.prompt_version != "chat-prompt-v2"
+        or assistant.prompt_version != "chat-prompt-v3"
         or assistant.error_code is not None
         or assistant.error_message is not None
     ):

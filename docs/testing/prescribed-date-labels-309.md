@@ -231,3 +231,54 @@ DB 테스트는 127.0.0.1:55448의 일회용 합성 test DB만 사용한다.
 - 변경 Python 파일 Ruff·format 및 `git diff --check`: 통과.
 - Alembic graph: `169b2c3d4e5f` 단일 head. migration 실행은 이번 검증에서 재실행하지 않았다.
 - Frontend·Redis 전체 통합·전체 mypy는 재실행하지 않았다. GitHub CI는 푸시 후 별도 확인한다.
+
+## #359 LLM 구조화 경로 처방일 라벨 검증
+
+기준 브랜치: `fix/359-llm-prescribed-date-label-guard`
+
+### 변경한 동작
+
+- 규칙 기반 구조화기가 사용하던 처방일 라벨 판별을
+  `prescribed_date_label_kind()` 공용 함수로 노출하고 Backend 호환 경로에서 재사용한다.
+- LLM이 반환한 날짜가 OCR 원문에 존재하더라도 `교부일자`, `발행일자`,
+  `처방일자` 라벨 근거가 없으면 `PRESCRIBED_DATE`로 저장하지 않는다.
+- `생년월일`, `생일`, `주민등록번호`, `주민번호`에 연결된 날짜와
+  선호·제외 라벨이 충돌하는 날짜는 빈 검수 필드로 전환한다.
+- 라벨이 없는 날짜도 LLM 경로에서는 자동 확정하지 않고 빈 검수 필드로 전환한다.
+- 빈 검수 필드의 `raw_value`, `normalized_value`,
+  `normalization_version`, `confidence_score`는 모두 null이다.
+- 날짜 정규화는 기존 `date-rule-v1`을 유지한다.
+- LLM 프롬프트에는 교부일자 우선, 생년월일 제외, 불확실한 날짜의 null 반환을
+  명시하고 프롬프트 버전을 `ocr-structure-prompt-v3`으로 변경했다.
+- API·DTO·DB schema와 규칙 기반 날짜 선택 동작은 변경하지 않았다.
+
+### 재현과 회귀 검증
+
+수정 전에는 생년월일 값이 OCR 원문과 일치한다는 이유만으로 LLM grounding을 통과했다.
+
+```text
+test_validator_replaces_birthdate_returned_as_prescribed_date_with_empty_field
+수정 전: 1 failed
+수정 후: 1 passed
+```
+
+추가 검증 결과:
+
+| 검증 범위 | 결과 |
+| --- | --- |
+| 작업 전 LLM validator·규칙 구조화 기준선 | 166 passed |
+| 규칙 기반 structurer 회귀 | 122 passed |
+| LLM validator 전체 | 46 passed |
+| 규칙 기반·LLM 라벨 판정 대조 | 2 passed |
+| OCR AI·구조화·의존성 연결 | 69 passed |
+| Backend OCR·OCR AI 전체 | 통과 |
+| Worker OCR·공유 Provider 계약 | 통과 |
+| 변경 파일 Ruff·format | 통과 |
+| 변경 구현 Mypy | 통과 |
+| `git diff --check` | 통과 |
+
+검증에는 비민감 합성 OCR token과 좌표만 사용했다. 실제 환자 정보,
+처방전 원문, 외부 OCR 및 LLM 호출은 사용하지 않았다. 이 변경은
+OCR_STRUCTURE_LLM_ENABLED=true 전환에 필요한 날짜 검증을 보완하지만,
+해당 기능의 Production 활성화를 승인하는 증빙은 아니다.
+제외 라벨의 OCR 오탈자 대응은 #360에서 별도로 처리한다.
