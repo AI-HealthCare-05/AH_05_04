@@ -33,6 +33,21 @@ git switch -c feature/12-prescription-upload
 
 현재 요구사항을 충족하는 가장 단순하고 일관된 구조를 우선합니다. 예상되는 미래 요구만을 근거로 추상화, 계층, 상태, 비동기 처리, 캐시, 의존성 또는 인프라를 미리 추가하지 않습니다. 기존 구조와 유틸리티로 해결할 수 있다면 이를 재사용하고, 필요한 범위만 변경합니다.
 
+### 구체적 적용 기준
+
+- 요구사항이나 승인된 계약에 없는 DB Trigger, Stored Procedure, DB Scheduler 또는 RLS Policy를 임의로 도입하지 않습니다.
+- DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선합니다. 단, DB 무결성·보안에 필요한 constraint, index, transaction과 승인된 DB 정책은 생략하지 않습니다.
+- CQRS, Event Bus, Domain Event, Factory, Strategy, Registry 또는 Plugin 구조는 현재 요구사항에서 필요성이 확인될 때만 도입합니다.
+- 실제 구현체가 하나뿐이라면 미래 확장만을 이유로 interface, abstract class 또는 provider abstraction을 추가하지 않습니다. 외부 API 격리, 테스트 대역, 보안 경계처럼 현재 필요한 역할이 있다면 그 근거를 기록합니다.
+- 측정된 성능 문제가 없다면 cache를 추가하지 않습니다.
+- retry를 추가하기 전에 작업의 멱등성과 중복 실행 영향을 확인하고, 안전한 재실행 조건을 테스트합니다.
+- 새로운 status, enum, DB column, table, queue 또는 stream을 추가하기 전에 기존 모델로 표현할 수 없는 이유를 확인합니다.
+- 같은 의미의 DTO, model 또는 schema를 계층마다 기계적으로 복제하지 않습니다. 외부 계약과 내부 모델의 경계 분리가 필요한 경우에는 변환 책임과 정본을 명확히 합니다.
+- 현재 dependency나 표준 라이브러리로 해결할 수 있다면 새로운 dependency를 추가하지 않습니다.
+- Docker, CI/CD, Redis, DB extension 또는 production configuration 변경은 현재 Issue 범위에 직접 포함되거나 선행 조건으로 합의된 경우에만 수행합니다.
+- 미래 요구사항을 추측해 코드를 미리 구현하지 않고, 현재 Issue의 작업 범위와 완료 조건만 구현합니다.
+- Backend와 AI Worker의 비즈니스 흐름은 적용 가능한 경우 `Router → Service → Repository/External Client` 형태로 명시적으로 추적할 수 있게 유지합니다. 다른 영역에서는 기존 책임 경계와 프레임워크 관례를 따릅니다.
+
 새 구조가 필요하다면 구현과 리뷰 전에 Issue 또는 Pull Request에 다음 내용을 기록합니다.
 
 1. 현재 단순한 구조로 해결할 수 없는 문제
