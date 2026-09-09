@@ -1,0 +1,89 @@
+{
+  "fixture_schema": "issue-170-resolver-policy-proposal-v1",
+  "canonical_hash": {
+    "algorithm": "SHA-256",
+    "value": "e11c7cfb455b9182066661f2ec0cda5d234aa83fc60b2953c90cb2f591373089",
+    "canonicalization_id": "python-json-sorted-keys-compact-utf8-no-nan-v1",
+    "canonicalization": "json.dumps(hash_input, ensure_ascii=False, sort_keys=True, separators=(\",\", \":\"), allow_nan=False).encode(\"utf-8\")",
+    "scope": "The top-level hash_input object only. The canonical_hash object and fixture_schema field are excluded, so the digest is not self-referential. File whitespace, indentation, key order, and trailing newline are outside the hash scope."
+  },
+  "hash_input": {
+    "policy_identity": {
+      "policy_id": "issue-170-resolver-local-synthetic-proposal",
+      "policy_version": "0.0.0-proposal.1"
+    },
+    "document_status": "DRAFT_GOLDEN_PROPOSAL_ONLY",
+    "authority": "NON_AUTHORITATIVE_NOT_EXECUTABLE_PRODUCTION_POLICY",
+    "environment": "LOCAL",
+    "release_eligible": false,
+    "release_receipt": false,
+    "runtime_loading": {
+      "is_runtime_configuration": false,
+      "is_default_policy": false,
+      "default_search_path_eligible": false,
+      "loader_status": "NOT_IMPLEMENTED_BLOCKED_BY_G0_THROUGH_G7",
+      "restriction": "Documentation and golden-fixture review only; runtime loaders and production defaults must not consume this file."
+    },
+    "safety": {
+      "data_classification": "SYNTHETIC",
+      "contains_real_medication_data": false,
+      "contains_patient_data": false,
+      "contains_prescription_data": false,
+      "contains_raw_ocr_data": false,
+      "contains_source_credentials_or_identifiers": false,
+      "contains_credentials": false
+    },
+    "gate_state": {
+      "G0": "BLOCKED",
+      "G1": "TBC (BLOCKED BY G0)",
+      "G2": "TBC (BLOCKED BY G0)",
+      "G3": "TBC (BLOCKED BY G0)",
+      "G4": "TBC (BLOCKED BY G0)",
+      "G5": "TBC (BLOCKED BY G0)",
+      "G6": "TBC (BLOCKED BY G0)",
+      "G7": "TBC (BLOCKED BY G0)"
+    },
+    "compatible_candidate_index": {
+      "interface_status": "COMPATIBILITY_PROPOSAL_AGAINST_RAG_07A_NOT_RUNTIME_BINDING",
+      "index_kind": "MEDICATION_CANDIDATE",
+      "index_code": "MEDICATION_CANDIDATE",
+      "index_version": "candidate-index-v1",
+      "normalization_version": "medication-catalog-normalization-v1",
+      "lexical_config_version": "candidate-lexical-v1",
+      "search_order_version": "candidate-search-order-v1",
+      "build_modes": {
+        "LEXICAL_ONLY": {
+          "search_order": [
+            "PRODUCT_NAME_EXACT",
+            "APPROVED_ALIAS_EXACT",
+            "TRIGRAM_EDIT_DISTANCE"
+          ]
+        },
+        "HYBRID": {
+          "search_order": [
+            "PRODUCT_NAME_EXACT",
+            "APPROVED_ALIAS_EXACT",
+            "TRIGRAM_EDIT_DISTANCE",
+            "DENSE_VECTOR"
+          ]
+        }
+      },
+      "ingredient_exact_role": "TBC_DIAGNOSTIC_ONLY_NOT_PRODUCT_CANDIDATE"
+    },
+    "resolver_policy_decisions": {
+      "approval_status": "TBC_G5_NOT_APPROVED",
+      "minimum_relevance_threshold": "TBC",
+      "minimum_margin_threshold": "TBC",
+      "stage_weights": "TBC",
+      "attribute_weights": "TBC",
+      "fusion_tie_break_version": "TBC",
+      "strength_mapping_version": "TBC",
+      "form_mapping_version": "TBC",
+      "result_method": "TBC",
+      "result_method_version": "TBC",
+      "failure_taxonomy_version": "TBC",
+      "maximum_input_length": "TBC",
+      "release_interpretation": "NO_SELECTION_OR_PRODUCTION_BEHAVIOR_IS_APPROVED_BY_THIS_PROPOSAL"
+    }
+  }
+}
