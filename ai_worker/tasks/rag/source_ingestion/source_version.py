@@ -48,9 +48,7 @@ def build_api_source_version(
     _validate_checksum(canonical_checksum)
 
     if collected_at.tzinfo is None or collected_at.utcoffset() is None:
-        raise SourceVersionValidationError(
-            "API source_version 생성 시 timezone-aware collected_at이 필요합니다."
-        )
+        raise SourceVersionValidationError("API source_version 생성 시 timezone-aware collected_at이 필요합니다.")
 
     timestamp = collected_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     source_version = f"api:{timestamp}:{canonical_checksum}"
@@ -67,9 +65,7 @@ def build_internal_source_version(
     _validate_token("fixture_version", fixture_version)
 
     if ":" in fixture_version:
-        raise SourceVersionValidationError(
-            "fixture_version에는 구분자 ':'를 사용할 수 없습니다."
-        )
+        raise SourceVersionValidationError("fixture_version에는 구분자 ':'를 사용할 수 없습니다.")
 
     _validate_checksum(canonical_checksum)
     source_version = f"internal:{fixture_version}:{canonical_checksum}"
@@ -92,13 +88,9 @@ def validate_source_version(
         _validate_external_version(payload)
 
         if external_version is None:
-            raise SourceVersionValidationError(
-                "external source_version에는 external_version이 필요합니다."
-            )
+            raise SourceVersionValidationError("external source_version에는 external_version이 필요합니다.")
         if payload != external_version:
-            raise SourceVersionValidationError(
-                "source_version payload와 external_version이 일치하지 않습니다."
-            )
+            raise SourceVersionValidationError("source_version payload와 external_version이 일치하지 않습니다.")
         return SourceVersionKind.EXTERNAL
 
     api_match = _API_VERSION_PATTERN.fullmatch(source_version)
@@ -107,9 +99,7 @@ def validate_source_version(
         _validate_utc_timestamp(api_match.group("timestamp"))
 
         if api_match.group("checksum") != canonical_checksum:
-            raise SourceVersionValidationError(
-                "API source_version checksum이 canonical_checksum과 일치하지 않습니다."
-            )
+            raise SourceVersionValidationError("API source_version checksum이 canonical_checksum과 일치하지 않습니다.")
         return SourceVersionKind.API
 
     internal_match = _INTERNAL_VERSION_PATTERN.fullmatch(source_version)
@@ -126,27 +116,21 @@ def validate_source_version(
             )
         return SourceVersionKind.INTERNAL
 
-    raise SourceVersionValidationError(
-        "source_version이 external, api, internal 문법 중 하나와 일치해야 합니다."
-    )
+    raise SourceVersionValidationError("source_version이 external, api, internal 문법 중 하나와 일치해야 합니다.")
 
 
 def _validate_common_source_version(source_version: str) -> None:
     _validate_token("source_version", source_version)
 
     if len(source_version) > SOURCE_VERSION_MAX_LENGTH:
-        raise SourceVersionValidationError(
-            f"source_version은 {SOURCE_VERSION_MAX_LENGTH}자를 초과할 수 없습니다."
-        )
+        raise SourceVersionValidationError(f"source_version은 {SOURCE_VERSION_MAX_LENGTH}자를 초과할 수 없습니다.")
 
 
 def _validate_external_version(external_version: str) -> None:
     _validate_token("external_version", external_version)
 
     if len(external_version) > EXTERNAL_VERSION_MAX_LENGTH:
-        raise SourceVersionValidationError(
-            f"external_version은 {EXTERNAL_VERSION_MAX_LENGTH}자를 초과할 수 없습니다."
-        )
+        raise SourceVersionValidationError(f"external_version은 {EXTERNAL_VERSION_MAX_LENGTH}자를 초과할 수 없습니다.")
 
 
 def _validate_token(field_name: str, value: str) -> None:
@@ -157,28 +141,20 @@ def _validate_token(field_name: str, value: str) -> None:
         raise SourceVersionValidationError(f"{field_name}은 NFC 문자열이어야 합니다.")
 
     if any(character.isspace() for character in value):
-        raise SourceVersionValidationError(
-            f"{field_name}에는 공백 문자를 사용할 수 없습니다."
-        )
+        raise SourceVersionValidationError(f"{field_name}에는 공백 문자를 사용할 수 없습니다.")
 
     if any(unicodedata.category(character).startswith("C") for character in value):
-        raise SourceVersionValidationError(
-            f"{field_name}에는 제어 문자를 사용할 수 없습니다."
-        )
+        raise SourceVersionValidationError(f"{field_name}에는 제어 문자를 사용할 수 없습니다.")
 
 
 def _validate_checksum(canonical_checksum: str) -> None:
     if _CHECKSUM_PATTERN.fullmatch(canonical_checksum) is None:
-        raise SourceVersionValidationError(
-            "canonical_checksum은 64자리 lowercase SHA-256이어야 합니다."
-        )
+        raise SourceVersionValidationError("canonical_checksum은 64자리 lowercase SHA-256이어야 합니다.")
 
 
 def _require_null_external_version(external_version: str | None) -> None:
     if external_version is not None:
-        raise SourceVersionValidationError(
-            "API와 Internal source_version의 external_version은 null이어야 합니다."
-        )
+        raise SourceVersionValidationError("API와 Internal source_version의 external_version은 null이어야 합니다.")
 
 
 def _validate_utc_timestamp(timestamp: str) -> None:

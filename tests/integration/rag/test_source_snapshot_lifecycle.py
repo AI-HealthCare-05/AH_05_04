@@ -219,11 +219,7 @@ def _ingestion(
 
 def _metadata(source_version: str, *, minute: int = 0) -> SnapshotIngestionMetadata:
     started_at = _NOW + timedelta(minutes=minute)
-    external_version = (
-        source_version.removeprefix("external:")
-        if source_version.startswith("external:")
-        else None
-    )
+    external_version = source_version.removeprefix("external:") if source_version.startswith("external:") else None
 
     return SnapshotIngestionMetadata(
         source_version=source_version,

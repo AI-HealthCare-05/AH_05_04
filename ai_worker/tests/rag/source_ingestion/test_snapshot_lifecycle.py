@@ -243,11 +243,7 @@ def _stored_rejection_artifact() -> StoredRawArtifact:
 
 
 def _metadata(source_version: str) -> SnapshotIngestionMetadata:
-    external_version = (
-        source_version.removeprefix("external:")
-        if source_version.startswith("external:")
-        else None
-    )
+    external_version = source_version.removeprefix("external:") if source_version.startswith("external:") else None
 
     return SnapshotIngestionMetadata(
         source_version=source_version,
