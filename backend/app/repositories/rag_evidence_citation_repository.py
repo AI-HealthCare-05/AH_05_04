@@ -183,10 +183,13 @@ class RagEvidenceCitationRepository:
     ) -> list[RagCitation]:
         result = await self.session.execute(
             select(RagCitation)
+            .join(RagEvidence, RagEvidence.id == RagCitation.evidence_id)
             .where(
                 RagCitation.target_type == target_type,
                 RagCitation.target_id == target_id,
                 RagCitation.release_status == RagCitationReleaseStatus.PUBLIC,
+                RagCitation.evidence_status == RagEvidenceStatus.APPROVED,
+                RagEvidence.evidence_status == RagEvidenceStatus.APPROVED,
             )
             .order_by(RagCitation.display_order)
         )
@@ -244,8 +247,13 @@ class RagEvidenceCitationRepository:
         return guideline
 
     async def create_citation(self, item: RagCitationCreate) -> RagCitation:
+        evidence = await self.session.get(RagEvidence, item.evidence_id)
+        if evidence is None:
+            raise ValueError("Citation evidence does not exist")
         citation = RagCitation(
             evidence_id=item.evidence_id,
+            source_snapshot_id=evidence.source_snapshot_id,
+            evidence_status=evidence.evidence_status,
             target_type=item.target_type,
             target_id=item.target_id,
             claim_key=item.claim_key,

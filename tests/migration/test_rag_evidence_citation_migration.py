@@ -121,7 +121,6 @@ async def _clear_evidence_seed_source_catalog_tables() -> None:
                     SELECT s.id
                     FROM rag_source s
                     WHERE s.source_code LIKE 'EVIDENCE_CITATION_%'
-                       OR (s.source_code LIKE 'MFDS_%' AND s.display_name = 'MFDS Product Approval')
                 """
                 snapshot_filter = f"""
                     SELECT rs.id
@@ -365,8 +364,10 @@ def test_rag_evidence_citation_upgrade_and_downgrade() -> None:
     names = asyncio.run(_fetch_constraint_and_trigger_names())
     assert "fk_rag_evidence_product_snapshot" in names
     assert "fk_rag_evidence_ingredient_snapshot" in names
+    assert "chk_rag_evidence_knowledge_chunk_has_knowledge" in names
     assert "chk_rag_evidence_product_fact_has_product" in names
     assert "chk_rag_evidence_ingredient_fact_has_ingredient" in names
+    assert "fk_rag_citation_evidence_snapshot_status" in names
     assert "chk_rag_citation_public_requires_supported_authorized" in names
     assert "chk_rag_citation_medical_not_partially_supported" in names
     assert "trg_rag_citation_append_only_update" in names
@@ -451,6 +452,106 @@ def test_rag_evidence_rejects_fact_without_required_catalog_reference() -> None:
     assert "chk_rag_evidence_ingredient_fact_has_ingredient" in str(exc_info.value.orig)
 
 
+def test_rag_evidence_rejects_knowledge_chunk_without_knowledge() -> None:
+    command.upgrade(create_alembic_config(), RAG_EVIDENCE_CITATION_REVISION)
+    ids = asyncio.run(_seed_source_catalog_chain())
+
+    async def run_insert() -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text("""
+                        INSERT INTO rag_evidence (
+                            id, source_snapshot_id, evidence_key,
+                            evidence_type, evidence_status, evidence_digest
+                        )
+                        VALUES (
+                            :id, :snapshot_id, 'missing-knowledge-reference',
+                            'KNOWLEDGE_CHUNK', 'APPROVED', :digest
+                        )
+                    """),
+                    {**ids, "id": str(uuid4()), "digest": "h" * 64},
+                )
+
+    with pytest.raises(DBAPIError) as exc_info:
+        asyncio.run(run_insert())
+    assert "chk_rag_evidence_knowledge_chunk_has_knowledge" in str(exc_info.value.orig)
+
+
+def test_rag_citation_rejects_cross_snapshot_evidence_provenance() -> None:
+    command.upgrade(create_alembic_config(), RAG_EVIDENCE_CITATION_REVISION)
+    ids = asyncio.run(_seed_evidence_chain())
+
+    async def run_insert() -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text("""
+                        INSERT INTO rag_citation (
+                            id, evidence_id, source_snapshot_id, evidence_status,
+                            target_type, target_id, claim_key, claim_kind,
+                            support_status, authorization_status, release_status, display_order,
+                            source_title, source_version, source_locator
+                        )
+                        VALUES (
+                            :citation_id, :evidence_id, :other_snapshot_id, 'APPROVED',
+                            'GUIDE', :target_id, 'claim:cross-snapshot', 'AUXILIARY',
+                            'SUPPORTED', 'PENDING', 'NOT_PUBLIC', 1,
+                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
+                        )
+                    """),
+                    {**ids, "target_id": str(uuid4())},
+                )
+
+    with pytest.raises(DBAPIError) as exc_info:
+        asyncio.run(run_insert())
+    assert "fk_rag_citation_evidence_snapshot_status" in str(exc_info.value.orig)
+
+
+def test_rag_citation_rejects_public_draft_evidence() -> None:
+    command.upgrade(create_alembic_config(), RAG_EVIDENCE_CITATION_REVISION)
+    ids = asyncio.run(_seed_source_catalog_chain())
+    ids.update({"evidence_id": str(uuid4()), "citation_id": str(uuid4())})
+
+    async def run_insert() -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text("""
+                        INSERT INTO rag_evidence (
+                            id, source_snapshot_id, evidence_key,
+                            evidence_type, evidence_status, evidence_digest
+                        )
+                        VALUES (
+                            :evidence_id, :snapshot_id, 'draft-public-evidence',
+                            'SAFETY_POLICY', 'DRAFT', :digest
+                        )
+                    """),
+                    {**ids, "digest": "i" * 64},
+                )
+                await connection.execute(
+                    text("""
+                        INSERT INTO rag_citation (
+                            id, evidence_id, source_snapshot_id, evidence_status,
+                            target_type, target_id, claim_key, claim_kind,
+                            support_status, authorization_status, release_status, display_order,
+                            source_title, source_version, source_locator, public_excerpt
+                        )
+                        VALUES (
+                            :citation_id, :evidence_id, :snapshot_id, 'DRAFT',
+                            'GUIDE', :target_id, 'claim:draft-public', 'AUXILIARY',
+                            'SUPPORTED', 'PASS', 'PUBLIC', 1,
+                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001', 'approved excerpt'
+                        )
+                    """),
+                    {**ids, "target_id": str(uuid4())},
+                )
+
+    with pytest.raises(DBAPIError) as exc_info:
+        asyncio.run(run_insert())
+    assert "chk_rag_citation_public_requires_supported_authorized" in str(exc_info.value.orig)
+
+
 def test_rag_citation_public_requires_supported_authorized_evidence() -> None:
     command.upgrade(create_alembic_config(), RAG_EVIDENCE_CITATION_REVISION)
     ids = asyncio.run(_seed_evidence_chain())
@@ -461,12 +562,14 @@ def test_rag_citation_public_requires_supported_authorized_evidence() -> None:
                 await connection.execute(
                     text("""
                         INSERT INTO rag_citation (
-                            id, evidence_id, target_type, target_id, claim_key, claim_kind,
+                            id, evidence_id, source_snapshot_id, evidence_status,
+                            target_type, target_id, claim_key, claim_kind,
                             support_status, authorization_status, release_status, display_order,
                             source_title, source_version, source_locator, public_excerpt
                         )
                         VALUES (
-                            :citation_id, :evidence_id, 'CHAT_MESSAGE', :target_id, 'claim:1', 'MEDICAL',
+                            :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
+                            'CHAT_MESSAGE', :target_id, 'claim:1', 'MEDICAL',
                             'NOT_SUPPORTED', 'PASS', 'PUBLIC', 1,
                             'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001', 'approved excerpt'
                         )
@@ -489,12 +592,14 @@ def test_rag_citation_rejects_partially_supported_medical_claim() -> None:
                 await connection.execute(
                     text("""
                         INSERT INTO rag_citation (
-                            id, evidence_id, target_type, target_id, claim_key, claim_kind,
+                            id, evidence_id, source_snapshot_id, evidence_status,
+                            target_type, target_id, claim_key, claim_kind,
                             support_status, authorization_status, release_status, display_order,
                             source_title, source_version, source_locator
                         )
                         VALUES (
-                            :citation_id, :evidence_id, 'GUIDE', :target_id, 'claim:1', 'MEDICAL',
+                            :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
+                            'GUIDE', :target_id, 'claim:1', 'MEDICAL',
                             'PARTIALLY_SUPPORTED', 'PENDING', 'NOT_PUBLIC', 1,
                             'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
                         )
@@ -515,7 +620,7 @@ def test_rag_evidence_citation_rows_are_append_only() -> None:
         async with _connection() as connection:
             async with connection.begin():
                 await connection.execute(
-                    text("UPDATE rag_evidence SET evidence_status = 'RETIRED' WHERE id = :evidence_id"), ids
+                    text("UPDATE rag_evidence SET evidence_status = 'DRAFT' WHERE id = :evidence_id"), ids
                 )
 
     with pytest.raises(DBAPIError) as exc_info:

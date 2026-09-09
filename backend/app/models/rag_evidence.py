@@ -48,8 +48,6 @@ class RagEvidenceType(StrEnum):
 class RagEvidenceStatus(StrEnum):
     DRAFT = "DRAFT"
     APPROVED = "APPROVED"
-    RETIRED = "RETIRED"
-    REVOKED = "REVOKED"
 
 
 class RagEvidenceRuleType(StrEnum):
@@ -95,7 +93,6 @@ class RagCitationAuthorizationStatus(StrEnum):
 class RagCitationReleaseStatus(StrEnum):
     NOT_PUBLIC = "NOT_PUBLIC"
     PUBLIC = "PUBLIC"
-    STALE = "STALE"
 
 
 class RagEvidenceKnowledge(Base):
@@ -133,6 +130,7 @@ class RagEvidence(Base):
     __table_args__ = (
         UniqueConstraint("source_snapshot_id", "evidence_key", name="uq_rag_evidence_snapshot_key"),
         UniqueConstraint("id", "source_snapshot_id", name="uq_rag_evidence_id_snapshot"),
+        UniqueConstraint("id", "source_snapshot_id", "evidence_status", name="uq_rag_evidence_id_snapshot_status"),
         ForeignKeyConstraint(
             ["knowledge_id", "source_snapshot_id"],
             ["rag_evidence_knowledge.id", "rag_evidence_knowledge.source_snapshot_id"],
@@ -153,6 +151,10 @@ class RagEvidence(Base):
         CheckConstraint("length(evidence_digest) = 64", name="chk_rag_evidence_digest_length"),
         CheckConstraint(
             "source_locator IS NULL OR length(trim(source_locator)) > 0", name="chk_rag_evidence_locator_nonblank"
+        ),
+        CheckConstraint(
+            "evidence_type != 'KNOWLEDGE_CHUNK' OR knowledge_id IS NOT NULL",
+            name="chk_rag_evidence_knowledge_chunk_has_knowledge",
         ),
         CheckConstraint(
             "evidence_type != 'PRODUCT_FACT' OR product_id IS NOT NULL",
@@ -247,7 +249,13 @@ class RagCitation(Base):
         UniqueConstraint("target_type", "target_id", "claim_key", name="uq_rag_citation_target_claim"),
         UniqueConstraint("target_type", "target_id", "display_order", name="uq_rag_citation_display_order"),
         Index("idx_rag_citation_target", "target_type", "target_id"),
+        ForeignKeyConstraint(
+            ["evidence_id", "source_snapshot_id", "evidence_status"],
+            ["rag_evidence.id", "rag_evidence.source_snapshot_id", "rag_evidence.evidence_status"],
+            name="fk_rag_citation_evidence_snapshot_status",
+        ),
         Index("idx_rag_citation_evidence", "evidence_id"),
+        Index("idx_rag_citation_source_snapshot", "source_snapshot_id"),
         CheckConstraint("length(trim(target_id)) > 0", name="chk_rag_citation_target_id_nonblank"),
         CheckConstraint("length(trim(claim_key)) > 0", name="chk_rag_citation_claim_key_nonblank"),
         CheckConstraint("display_order > 0", name="chk_rag_citation_display_order"),
@@ -256,7 +264,7 @@ class RagCitation(Base):
             name="chk_rag_citation_public_excerpt_nonblank",
         ),
         CheckConstraint(
-            "release_status != 'PUBLIC' OR (authorization_status = 'PASS' AND support_status = 'SUPPORTED' AND public_excerpt IS NOT NULL)",
+            "release_status != 'PUBLIC' OR (evidence_status = 'APPROVED' AND authorization_status = 'PASS' AND support_status = 'SUPPORTED' AND public_excerpt IS NOT NULL)",
             name="chk_rag_citation_public_requires_supported_authorized",
         ),
         CheckConstraint(
@@ -278,7 +286,8 @@ class RagCitation(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    evidence_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_evidence.id"), nullable=False)
+    evidence_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    source_snapshot_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     target_type: Mapped[RagCitationTargetType] = mapped_column(
         Enum(RagCitationTargetType, native_enum=False, length=30), nullable=False
     )
@@ -286,6 +295,9 @@ class RagCitation(Base):
     claim_key: Mapped[str] = mapped_column(String(160), nullable=False)
     claim_kind: Mapped[RagCitationClaimKind] = mapped_column(
         Enum(RagCitationClaimKind, native_enum=False, length=30), nullable=False
+    )
+    evidence_status: Mapped[RagEvidenceStatus] = mapped_column(
+        Enum(RagEvidenceStatus, native_enum=False, length=20), nullable=False
     )
     support_status: Mapped[RagCitationSupportStatus] = mapped_column(
         Enum(RagCitationSupportStatus, native_enum=False, length=30), nullable=False

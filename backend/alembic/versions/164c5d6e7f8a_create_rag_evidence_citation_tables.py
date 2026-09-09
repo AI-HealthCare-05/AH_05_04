@@ -25,14 +25,14 @@ _EVIDENCE_TYPE_VALUES = (
     "LIFESTYLE_GUIDELINE",
     "SAFETY_POLICY",
 )
-_EVIDENCE_STATUS_VALUES = ("DRAFT", "APPROVED", "RETIRED", "REVOKED")
+_EVIDENCE_STATUS_VALUES = ("DRAFT", "APPROVED")
 _RULE_TYPE_VALUES = ("INTERACTION", "CONTRAINDICATION", "HIGH_RISK_SYMPTOM", "SAFETY_FALLBACK")
 _GUIDELINE_TYPE_VALUES = ("MEDICATION_GUIDE", "LIFESTYLE", "LIMITED_RESPONSE", "SAFETY_FALLBACK")
 _CITATION_TARGET_TYPE_VALUES = ("GUIDE", "CHAT_MESSAGE", "RAG_RESULT", "SAFETY_RESULT")
 _CITATION_CLAIM_KIND_VALUES = ("MEDICAL", "AUXILIARY", "SAFETY_FALLBACK")
 _CITATION_SUPPORT_STATUS_VALUES = ("SUPPORTED", "PARTIALLY_SUPPORTED", "CONTRADICTED", "NOT_SUPPORTED")
 _CITATION_AUTHORIZATION_STATUS_VALUES = ("PENDING", "PASS", "REJECTED")
-_CITATION_RELEASE_STATUS_VALUES = ("NOT_PUBLIC", "PUBLIC", "STALE")
+_CITATION_RELEASE_STATUS_VALUES = ("NOT_PUBLIC", "PUBLIC")
 _RAG_EVIDENCE_CITATION_TABLES = (
     "rag_citation",
     "rag_evidence_guideline",
@@ -69,7 +69,7 @@ def _create_append_only_guard() -> None:
         CREATE OR REPLACE FUNCTION prevent_rag_evidence_citation_mutation()
         RETURNS trigger AS $$
         BEGIN
-            RAISE EXCEPTION 'RAG Evidence/Citation rows are append-only; create a replacement row instead';
+            RAISE EXCEPTION 'RAG Evidence/Citation rows are append-only; use an approved forward-fix or lifecycle transition';
         END;
         $$ LANGUAGE plpgsql;
     """)
@@ -136,6 +136,10 @@ def upgrade() -> None:
             "source_locator IS NULL OR length(trim(source_locator)) > 0", name="chk_rag_evidence_locator_nonblank"
         ),
         sa.CheckConstraint(
+            "evidence_type != 'KNOWLEDGE_CHUNK' OR knowledge_id IS NOT NULL",
+            name="chk_rag_evidence_knowledge_chunk_has_knowledge",
+        ),
+        sa.CheckConstraint(
             "evidence_type != 'PRODUCT_FACT' OR product_id IS NOT NULL",
             name="chk_rag_evidence_product_fact_has_product",
         ),
@@ -166,6 +170,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("source_snapshot_id", "evidence_key", name="uq_rag_evidence_snapshot_key"),
         sa.UniqueConstraint("id", "source_snapshot_id", name="uq_rag_evidence_id_snapshot"),
+        sa.UniqueConstraint("id", "source_snapshot_id", "evidence_status", name="uq_rag_evidence_id_snapshot_status"),
     )
     op.create_index("idx_rag_evidence_snapshot_status", "rag_evidence", ["source_snapshot_id", "evidence_status"])
 
@@ -205,6 +210,8 @@ def upgrade() -> None:
         "rag_citation",
         sa.Column("id", sa.CHAR(length=36), nullable=False),
         sa.Column("evidence_id", sa.CHAR(length=36), nullable=False),
+        sa.Column("source_snapshot_id", sa.CHAR(length=36), nullable=False),
+        sa.Column("evidence_status", sa.String(length=20), nullable=False),
         sa.Column("target_type", sa.String(length=30), nullable=False),
         sa.Column("target_id", sa.String(length=80), nullable=False),
         sa.Column("claim_key", sa.String(length=160), nullable=False),
@@ -231,7 +238,7 @@ def upgrade() -> None:
             name="chk_rag_citation_public_excerpt_nonblank",
         ),
         sa.CheckConstraint(
-            "release_status != 'PUBLIC' OR (authorization_status = 'PASS' AND support_status = 'SUPPORTED' AND public_excerpt IS NOT NULL)",
+            "release_status != 'PUBLIC' OR (evidence_status = 'APPROVED' AND authorization_status = 'PASS' AND support_status = 'SUPPORTED' AND public_excerpt IS NOT NULL)",
             name="chk_rag_citation_public_requires_supported_authorized",
         ),
         sa.CheckConstraint(
@@ -245,6 +252,10 @@ def upgrade() -> None:
             f"claim_kind IN ({_sql_in_list(_CITATION_CLAIM_KIND_VALUES)})", name="chk_rag_citation_claim_kind"
         ),
         sa.CheckConstraint(
+            f"evidence_status IN ({_sql_in_list(_EVIDENCE_STATUS_VALUES)})",
+            name="chk_rag_citation_evidence_status",
+        ),
+        sa.CheckConstraint(
             f"support_status IN ({_sql_in_list(_CITATION_SUPPORT_STATUS_VALUES)})",
             name="chk_rag_citation_support_status",
         ),
@@ -256,13 +267,18 @@ def upgrade() -> None:
             f"release_status IN ({_sql_in_list(_CITATION_RELEASE_STATUS_VALUES)})",
             name="chk_rag_citation_release_status",
         ),
-        sa.ForeignKeyConstraint(["evidence_id"], ["rag_evidence.id"], name="fk_rag_citation_evidence"),
+        sa.ForeignKeyConstraint(
+            ["evidence_id", "source_snapshot_id", "evidence_status"],
+            ["rag_evidence.id", "rag_evidence.source_snapshot_id", "rag_evidence.evidence_status"],
+            name="fk_rag_citation_evidence_snapshot_status",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("target_type", "target_id", "claim_key", name="uq_rag_citation_target_claim"),
         sa.UniqueConstraint("target_type", "target_id", "display_order", name="uq_rag_citation_display_order"),
     )
     op.create_index("idx_rag_citation_target", "rag_citation", ["target_type", "target_id"])
     op.create_index("idx_rag_citation_evidence", "rag_citation", ["evidence_id"])
+    op.create_index("idx_rag_citation_source_snapshot", "rag_citation", ["source_snapshot_id"])
     _create_append_only_guard()
 
 
@@ -273,6 +289,7 @@ def downgrade() -> None:
         op.execute(f"DROP TRIGGER trg_{table_name}_append_only_delete ON {table_name}")
         op.execute(f"DROP TRIGGER trg_{table_name}_append_only_update ON {table_name}")
     op.execute("DROP FUNCTION prevent_rag_evidence_citation_mutation()")
+    op.drop_index("idx_rag_citation_source_snapshot", table_name="rag_citation")
     op.drop_index("idx_rag_citation_evidence", table_name="rag_citation")
     op.drop_index("idx_rag_citation_target", table_name="rag_citation")
     op.drop_table("rag_citation")
