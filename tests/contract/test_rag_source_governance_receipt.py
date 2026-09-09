@@ -25,6 +25,7 @@ from scripts.verify_rag_01_receipt import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RECEIPT_PATH = PROJECT_ROOT / "tests" / "fixtures" / "rag" / "source_contract_receipt.json"
 LOCAL_TARGET_PATH = PROJECT_ROOT / "docs" / "contracts" / "targets" / "post-mvp-1" / "rag-source-ingestion-v1.md"
+TRACEABILITY_PATH = PROJECT_ROOT / "docs" / "testing" / "post-mvp-1-contract-traceability.md"
 DECISION_PATH = PROJECT_ROOT / "docs" / "governance" / "decisions" / "2026-08-31-rag-p0-contract-freeze.md"
 
 
@@ -299,6 +300,7 @@ def test_contract_authority_is_complete_and_local_artifacts_match_bytes() -> Non
     assert authority["database_target"]["sha256"] == "f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea"
     assert authority["local_target"]["version"] == "1"
     assert authority["local_target"]["sha256"] == _sha256(LOCAL_TARGET_PATH)
+    assert f"canonical hash는 `sha256:{receipt['receipt_hash']['value']}`" in TRACEABILITY_PATH.read_text()
     assert authority["decision"]["decision_id"] == "PD-125-20260831"
     assert authority["decision"]["sha256"] == _sha256(DECISION_PATH)
 

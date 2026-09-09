@@ -29,7 +29,7 @@ Track F가 사용하는 공식 의약품·의료정보를 재현 가능한 불�
 | `P0_REQUIRED` | `MFDS_DUR / MFDS_DUR_INGREDIENT_API / LIST_INGREDIENT_CONTRAINDICATIONS` | 처방약–사용자 확인 OTC Rule과 Evidence | [식약처 DUR 성분정보](https://www.data.go.kr/data/15056780/openapi.do) | 실제 관계성분 필드·Rule Fixture 검증 전 비활성 |
 | `P0_REQUIRED` | `MFDS_PATIENT_MEDICATION_GUIDE / MFDS_PATIENT_GUIDE_API / LIST_PATIENT_MEDICATION_GUIDES` | 환자용 복약법·주의·부작용 Document와 Guideline 후보 | [식약처 e약은요](https://www.data.go.kr/data/15075057/openapi.do) | Coverage·Locator·운영 승인 검증 전 비활성 |
 | `P1` | `MFDS_DUR / MFDS_DUR_PRODUCT_API / LIST_PRODUCT_CONTRAINDICATIONS` | 제품 단위 병용금기 보조 | [식약처 DUR 품목정보](https://www.data.go.kr/data/15059486/openapi.do) | P0 비활성, 성분 Rule과 중복·우선순위 검증 후 별도 편입 |
-| `INTERNAL` | `TEAM_APPROVED_MEDICATION_ALIAS / null / null` | Candidate 검색용 팀 승인 Alias | 승인 Git Commit·Tag와 Fixture Manifest | `INTERNAL_CURATED_DATA`, 의료 Claim Citation 금지 |
+| `INTERNAL` | `TEAM_APPROVED_MEDICATION_ALIAS / null / null` | Candidate 검색용 팀 승인 Alias | 승인 Git Commit과 Fixture Manifest; tag·release 이름은 검토 metadata 한정 | `INTERNAL_CURATED_DATA`, 의료 Claim Citation 금지 |
 | `INTERNAL` | `INTERNAL_REVIEWED_GUIDELINE / null / null` | 처방약 기반 짧은 음식 주의·활동 Card | 원문 Snapshot·Locator·팀 Review 기록 | Local 제한, Production 비활성 |
 
 P0 세 외부 Endpoint의 실제 Service ID, Operation Path, Primary Key, Content-Type, 본문 성공 코드와 Pagination은 Endpoint별 연결 검증 Issue에서 실응답으로 Freeze한다. 한 Endpoint의 미검증 값은 그 Parser·Scheduler·Runtime 편입만 차단하며 공통 Source Client·DB 골격·합성 Fixture와 다른 Endpoint 작업까지 차단하지 않는다.
