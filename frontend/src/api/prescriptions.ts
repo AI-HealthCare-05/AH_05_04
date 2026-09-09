@@ -196,6 +196,34 @@ export type ExtractedFieldResponse = {
   data: ExtractedField
 }
 
+export type CreateManualMedicationRequest = {
+  medication_name: string
+  medication_strength?: string | null
+  dose_value: string
+  dose_unit?: string | null
+  frequency_per_day: string
+  timing?: string | null
+  duration_days: string
+}
+
+export async function createManualMedication(
+  jobId: string,
+  request: CreateManualMedicationRequest,
+  idempotencyKey: string,
+): Promise<OcrJobResponse> {
+  return apiRequest<OcrJobResponse>(
+    `/api/v1/ocr-jobs/${jobId}/manual-medications`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify(request),
+    },
+  )
+}
+
 export async function updateExtractedField(
   fieldId: string,
   confirmedValue: string | null,
