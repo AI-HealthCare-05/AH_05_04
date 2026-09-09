@@ -204,6 +204,54 @@ def test_structure_prefers_issue_date_over_labeled_birthdate(birthdate_raw_value
     assert result[0].normalized_value == "2026-08-12"
 
 
+@pytest.mark.parametrize(
+    "label",
+    [
+        "생년훨일",  # 한 글자 치환
+        "생년월",  # 한 글자 삭제
+        "생년월일자",  # 한 글자 삽입
+        "주민등륵번호",  # 한 글자 치환
+    ],
+)
+def test_structure_rejects_date_beside_single_character_excluded_label_typo(
+    label: str,
+) -> None:
+    raw_fields = [
+        _raw_field(label, 100, 350),
+        _raw_field("2010-03-15", 240, 350),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    _assert_empty_date_review(result)
+
+
+def test_structure_selects_date_beside_single_character_preferred_label_typo() -> None:
+    raw_fields = [
+        _raw_field("교부일짜", 100, 350),
+        _raw_field("2026-08-12", 240, 350),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert len(result) == 1
+    assert result[0].field_type == "PRESCRIBED_DATE"
+    assert result[0].raw_value == "2026-08-12"
+    assert result[0].normalized_value == "2026-08-12"
+
+
+def test_structure_returns_empty_review_for_conflicting_fuzzy_date_labels() -> None:
+    raw_fields = [
+        _raw_field("생년훨일", 80, 350),
+        _raw_field("교부일짜", 120, 350),
+        _raw_field("2026-08-12", 240, 350),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    _assert_empty_date_review(result)
+
+
 def test_structure_does_not_extract_prescribed_date_from_code_like_number_sequence() -> None:
     # 환자번호처럼 긴 숫자열 안에서 우연히 4자리+구분자+한두 자리 조합이 나오면
     # 안 되는 연도(6469년)로 파싱될 수 있습니다. 연도 범위 검증으로 걸러냅니다.
