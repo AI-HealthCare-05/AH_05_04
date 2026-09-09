@@ -305,7 +305,7 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
     "error_message": null,
     "engine_name": "CLOVA_OCR",
     "model_version": "gpt-4o-mini",
-    "prompt_version": "ocr-structure-prompt-v2",
+    "prompt_version": "ocr-structure-prompt-v3",
     "created_at": "2026-08-26T09:00:00Z",
     "completed_at": "2026-08-26T09:00:05Z",
     "fields": [
