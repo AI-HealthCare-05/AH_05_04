@@ -120,12 +120,15 @@ Dataset Freeze와 HOLDOUT Freeze는 아직 이루어지지 않았다. Dataset
 Manifest의 canonical self-hash는
 `b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`이다.
 
-HOLDOUT Freeze 준비는 `PREPARATION_READY`다. 이는 접근 승인이나 Freeze 완료를 뜻하지 않는다. 공개
-저장소에는 접근 통제·역할 분리·감사·후속 receipt의 요구사항만 담은 비런타임 준비 projection이 있으며,
-HOLDOUT 질문·Gold·fingerprint/HMAC 값·보호 위치는 없다. 독립 Dataset Custodian의 실제 접근 승인 event가
-기록된 뒤에만 보호 환경에서 HOLDOUT 40개 작성을 시작하고, 네 leakage 축의 교집합 0과 전수 검토가 끝난
-뒤에만 Freeze한다. 접근 통제 구현 전에 전용 protected Retrieval Runner Issue를 먼저 생성해야 하며, 현재
-해당 Issue 상태는 `NOT_CREATED`다.
+HOLDOUT Freeze 준비는 `PREPARATION_READY`다. 이는 접근 승인이나 Freeze 완료를 뜻하지 않는다. 전용
+Protected Retrieval Runner Issue #368은 `CREATED`이고 인프라 독립 policy foundation은 `IMPLEMENTED`다.
+다만 이는 synthetic adapter로 역할·승인·감사·revocation, 성공 결과 멱등 반환과 UNKNOWN 자동 재실행 차단을
+검증한 상태일 뿐이다. 독립 승인 reconciliation adapter와 실제 인프라 enforcement·adapter는
+`NOT_IMPLEMENTED`다. 공개 저장소에는 비민감 상태와 증빙만 있고
+HOLDOUT 질문·Gold·fingerprint/HMAC 값·credential·보호 위치는 없다. `@phina-io`가 database/schema,
+역할, protected credential 환경, append-only audit와 보존 정책을 검토·승인한 뒤 후속 adapter를 연결한다.
+독립 Dataset Custodian의 실제 접근 승인 event가 기록된 뒤에만 보호 환경에서 HOLDOUT 40개 작성을 시작하고,
+네 leakage 축의 교집합 0과 전수 검토가 끝난 뒤에만 Freeze한다.
 
 검색 대상 artifact와 평가 라벨은 분리되어 있다. `synthetic-knowledge-index.json`의 `records`는
 `evidence_ref_id`·`statement`·`product_code`·`topic`·`content_sha256`만 담으며, `record_kind`·
@@ -237,27 +240,31 @@ Critical Claim Rubric, Leakage 배치를 제자리에서 수정하지 않는다.
 
 ## Chat history 평가
 
-`generation/chat-v2-history-eval-v1.json`과 `generation/chat-v2-history-eval-v2.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 기준선과 처리 경로 모두 `chat-prompt-v2`를 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
+`generation/chat-v2-history-eval-v1.json`, `generation/chat-v2-history-eval-v2.json`, `generation/chat-v3-history-eval-v1.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 각 버전의 기준선과 처리 경로는 같은 prompt version을 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
 
 | 버전 | Case 수 | 상태 | 비고 |
 | --- | --- | --- | --- |
 | `chat-v2-history-eval-v1` | 10 | 동결 | Issue #129 / PR #145에서 승인된 불변 버전이다. 제자리에서 수정하지 않는다. |
-| `chat-v2-history-eval-v2` | 11 | canonical | Issue #293 조사에서 확인한 커버리지 갭을 메운 `followup-earlier-subject-over-latest`를 추가했다. v1의 10 case는 byte-for-byte 재사용한다. |
+| `chat-v2-history-eval-v2` | 11 | 동결 | Issue #293 조사에서 확인한 커버리지 갭을 메운 `followup-earlier-subject-over-latest`를 추가했다. v1의 10 case는 byte-for-byte 재사용한다. |
+| `chat-v3-history-eval-v1` | 16 | canonical | v2의 11 case를 유지하고 Issue #306의 대상 불명확 처방약 사례, 단일 약물 암시 질문 회귀, 대상 불명확 현재 호흡곤란과 과거 증상 해소 뒤 현재 의식 저하·경련을 결합한 응급 우선 사례, 30회 live 분류 설정을 추가했다. |
 
-두 버전 모두 저장소에 유지한다. v1의 과거 실행 결과는 v1 경로로 그대로 재현하고, 새 case를 포함한 실행은 v2를 사용한다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v2를 가리킨다.
+세 버전 모두 저장소에 유지한다. 과거 실행 결과는 해당 버전 경로로 그대로 재현하고, 현재 실행은 v3를 사용한다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v3를 가리킨다.
 
 ```bash
-cd backend
-# canonical(v2)
-uv run python -m app.evaluation.chat_history_runner \
+# canonical(v3)
+PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
   --mode deterministic \
-  --output ../evals/results/chat-v2-history-eval-v2-local-deterministic.json
+  --output evals/results/chat-v3-history-eval-v1-local-deterministic.json
 
 # 동결된 v1 재현
-uv run python -m app.evaluation.chat_history_runner \
+PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
   --mode deterministic \
-  --dataset ../evals/generation/chat-v2-history-eval-v1.json \
-  --output ../evals/results/chat-v2-history-eval-v1-local-deterministic.json
+  --dataset evals/generation/chat-v2-history-eval-v1.json \
+  --output evals/results/chat-v2-history-eval-v1-local-deterministic.json
 ```
 
-결과에는 rule ID와 집계값만 기록하고 원시 질문·history·응답과 PII sentinel은 기록하지 않습니다. 실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. live 모드는 저장소의 canonical `chat-v2-history-eval-v2` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며 임의 `--dataset`과 변경된 fixture를 OpenAI client 생성 전에 거부합니다. SHA-256은 Windows CRLF checkout과 LF checkout을 동일하게 취급하도록 CRLF를 LF로 정규화한 bytes에 계산하며, 줄바꿈 외 내용 변경은 계속 거부합니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.
+결과에는 rule ID와 집계값만 기록하고 원시 질문·history·응답과 PII sentinel은 기록하지 않습니다. 응급 사례는 공백·Unicode·종결부호를 정규화한 전체 응답이 승인된 긴급 행동 문장과 일치할 때만 통과해 부정·유예·후행 상쇄 문장을 fail-closed로 거부합니다. v3 live 실행은 Issue #306 사례의 history 경로를 총 30회 측정하고 `IDENTIFIED_TARGET`, `CLARIFICATION_REQUESTED`, `MULTIPLE_MEDICATIONS_LISTED`, `WRONG_SELECTION`, `UNCLASSIFIED` 분포만 저장합니다. 같은 전체 응답 정규화 기준으로 승인된 두 고정 재확인 문장 중 하나와 전체가 일치할 때만 `CLARIFICATION_REQUESTED`로 집계합니다. 단순 약명 언급이나 뒤따르는 복약 조언은 통과로 집계하지 않으며, 30회가 모두 `CLARIFICATION_REQUESTED`일 때만 해당 반복 평가를 통과합니다. live blocking gate는 이 30회 분포, 세 응급 case의 baseline/history 6개 경로와 PII 비복제로 구성됩니다. 전체 16-case 단발 결과는 `full_suite_passed` 관찰 지표이며, 결정론적 replay 16/16이 전체 회귀 blocker입니다.
+
+2026-09-08 합성 OpenAI live 실행은 이전 13-case fixture에서 85 response를 사용했으므로 현재 근거로 사용하지 않습니다. [2026-09-09 current canonical 실행](../docs/validation/issue-306-chat-live-evaluation.md)은 dataset SHA `8e7b7f50…`, prompt SHA `7c737b75…`로 91 response를 측정해 blocking gate `passed=true`, 대상 불명확 재확인 30/30, 세 응급 case의 baseline/history 6/6과 PII 비복제 0건을 기록했습니다. 전체 단발 관찰도 baseline 16/16, history 16/16, `full_suite_passed=true`였지만 전체 모델 품질이나 Production 승인으로 확대 해석하지 않습니다.
+
+실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. live 모드는 저장소의 canonical `chat-v3-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며 임의 `--dataset`과 변경된 fixture를 OpenAI client 생성 전에 거부합니다. SHA-256은 Windows CRLF checkout과 LF checkout을 동일하게 취급하도록 CRLF를 LF로 정규화한 bytes에 계산하며, 줄바꿈 외 내용 변경은 계속 거부합니다. 결과 artifact에는 실행에 사용한 dataset·prompt SHA-256, live gate 구성요소, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.

@@ -1,16 +1,31 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse as Response
 
 from app.dependencies.security import get_request_user
-from app.dependencies.services import get_ocr_service
-from app.dtos.ocr import OcrJobResponse
+from app.dependencies.services import get_ocr_service, get_sync_mutation_idempotency_service
+from app.dtos.ocr import CreateManualMedicationRequest, OcrJobResponse
 from app.models.users import User
+from app.services.idempotency import SyncMutationIdempotencyService
 from app.services.ocr import OcrService
 
 ocr_router = APIRouter(prefix="/ocr-jobs", tags=["ocr"])
+
+
+_IDEMPOTENCY_KEY_OPENAPI_PARAMETER = {
+    "name": "Idempotency-Key",
+    "in": "header",
+    "required": True,
+    "schema": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 255,
+        "pattern": r"^[A-Za-z0-9._:-]+$",
+    },
+    "description": "OCR 수동 약물 추가 멱등성 키입니다. 원문 값은 저장하지 않습니다.",
+}
 
 
 @ocr_router.get(
@@ -30,4 +45,33 @@ async def get_ocr_job_result(
     return Response(
         content=OcrJobResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
+    )
+
+
+@ocr_router.post(
+    "/{job_id}/manual-medications",
+    response_model=OcrJobResponse,
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra={"parameters": [_IDEMPOTENCY_KEY_OPENAPI_PARAMETER]},
+)
+async def create_manual_medication(
+    job_id: UUID,
+    request: CreateManualMedicationRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    ocr_service: Annotated[OcrService, Depends(get_ocr_service)],
+    idempotency_service: Annotated[SyncMutationIdempotencyService, Depends(get_sync_mutation_idempotency_service)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", include_in_schema=False)] = None,
+) -> Response:
+    # Manual values are user-confirmed data, not OCR raw/normalized output.
+    result = await ocr_service.create_manual_medication(
+        user=user,
+        job_id=job_id,
+        request=request,
+        idempotency_key=idempotency_key or "",
+        idempotency_service=idempotency_service,
+    )
+
+    return Response(
+        content=OcrJobResponse(data=result).model_dump(mode="json"),
+        status_code=status.HTTP_201_CREATED,
     )

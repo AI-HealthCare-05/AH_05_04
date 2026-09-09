@@ -1,7 +1,7 @@
 """create rag evidence citation tables
 
 Revision ID: 164c5d6e7f8a
-Revises: 164b6c7d8e9f
+Revises: 169d4e5f6a7b
 Create Date: 2026-09-08
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "164c5d6e7f8a"
-down_revision: str | Sequence[str] | None = "164b6c7d8e9f"
+down_revision: str | Sequence[str] | None = "169d4e5f6a7b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

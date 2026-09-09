@@ -517,7 +517,9 @@ def test_validator_replaces_unlabeled_prescribed_date_with_empty_field() -> None
     ("label", "expected_raw_value"),
     [
         ("교부일자", "2026-08-26"),
+        ("교부일짜", "2026-08-26"),
         ("생년월일", None),
+        ("생년훨일", None),
     ],
 )
 def test_validator_matches_rule_based_prescribed_date_label_decision(

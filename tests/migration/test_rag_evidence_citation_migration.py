@@ -21,7 +21,7 @@ from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAG_EVIDENCE_CITATION_REVISION = "164c5d6e7f8a"
-RAG_EVIDENCE_CITATION_BASE_REVISION = "164b6c7d8e9f"
+RAG_EVIDENCE_CITATION_BASE_REVISION = "169d4e5f6a7b"
 
 
 def create_alembic_config() -> Config:

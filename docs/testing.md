@@ -184,9 +184,9 @@ uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
 
 버전된 비식별 합성 평가셋은 `evals/generation/guide-v3-eval-v1.json`이며 `data_classification=SYNTHETIC`으로 고정합니다. 이 평가는 자유 생성 품질이나 실제 Provider 응답을 측정하지 않고 승인 문구 선택·안전 차단 계약을 재현합니다. 별도 승인 없이 `RUN_OPENAI_SMOKE=1`을 설정하지 않으며, skip된 실호출 테스트를 성공으로 해석하지 않습니다.
 
-### Chat AI v2 최근 대화 Local 검증
+### Chat AI v3 최근 대화 Local 검증
 
-실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v2` 계약을 검증합니다.
+실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v3` 계약을 검증합니다.
 
 ```bash
 uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_repository.py backend/app/tests/chat_ai backend/app/tests/chat_integration tests/contract/test_chat_ai_backend_contract.py -q
@@ -196,25 +196,28 @@ uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_re
 - 답변 없음·FAILED·PENDING·GENERATING·비연속 pair 제외와 최대 30개 후보·12,000자 예산
 - 현재 질문 중복 제외와 다른 사용자·세션·처방 소유권 경계
 - flag OFF의 조회 생략·`history: []`와 flag ON Local 합성 history 전달
-- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v2`
+- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v3`
 - JSON 문자열을 지시가 아닌 데이터로 취급하는 프롬프트 인젝션 방어
 - 과거 USER의 부정확하거나 오래된 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않고, 안전상 중요하면 현재도 해당하는지 확인하는 프롬프트 규칙
 - 과거 ASSISTANT 비신뢰, 현재 확정 medications 우선과 기존 응답·오류 회귀
 
 `chat-v2-history-eval-v1` 결정론적 Local replay는 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 추가했습니다. 기준선은 `chat-prompt-v2 + history=[]`, 처리 경로는 동일한 `chat-prompt-v2 + 합성 history`이며 실제 `ChatGenerator`를 통과합니다. 2026-09-01 실행에서 계약 scorer는 기준선·history 각각 10/10, 단일 질문 회귀 1/1, 안전 rule 위반 0건이었습니다. 표본이 평가 축별 30건 미만이므로 품질 비율 임계값은 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
 
-[Issue #293](https://github.com/AI-HealthCare-05/AH_05_04/issues/293) 조사에서 최신이 아닌 이전 subject를 생략된 대상으로 하는 축이 비어 있음을 확인해 `chat-v2-history-eval-v2`를 추가했습니다. v1은 불변 버전으로 동결 상태를 유지하고 10 case를 byte-for-byte 재사용하며, v2는 `followup-earlier-subject-over-latest` 1건을 더해 11 case입니다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v2를 가리키고, v1은 `--dataset`으로 결정론적 재현만 수행합니다. v2의 2026-09-07 결정론적 실행에서 계약 scorer는 기준선·history 각각 11/11, 후속 대상 식별 2/2, 안전 rule 위반 0건이었으며 임계값은 동일하게 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
+[Issue #293](https://github.com/AI-HealthCare-05/AH_05_04/issues/293) 조사에서 최신이 아닌 이전 subject를 생략된 대상으로 하는 축이 비어 있음을 확인해 `chat-v2-history-eval-v2`를 추가했습니다. v1은 불변 버전으로 동결 상태를 유지하고 10 case를 byte-for-byte 재사용하며, v2는 `followup-earlier-subject-over-latest` 1건을 더해 11 case입니다. v2가 canonical이던 2026-09-07 결정론적 실행에서 계약 scorer는 기준선·history 각각 11/11, 후속 대상 식별 2/2, 안전 rule 위반 0건이었으며 임계값은 동일하게 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
+
+[Issue #306](https://github.com/AI-HealthCare-05/AH_05_04/issues/306)은 v2를 수정하지 않고 `chat-v3-history-eval-v1`을 추가했습니다. v3는 기존 11 case, 대상 불명확 처방약 사례, 단일 약물 암시 질문 회귀, 대상 불명확 현재 호흡곤란과 과거 증상 해소 뒤 현재 의식 저하·경련을 결합한 응급 우선 사례를 포함합니다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v3를 가리킵니다. 결정론적 replay는 기준선·history 각각 16/16, 후속 대상 식별 2/2, 안전 rule 위반 0건이며 전체 기존 case의 회귀 blocker입니다. 응급 사례는 공백·Unicode·종결부호를 정규화한 전체 응답이 승인된 긴급 행동 문장과 일치할 때만 통과해 부정·유예·후행 상쇄 문장을 fail-closed로 거부합니다. live 모드에서는 대상 불명확 사례의 history 입력을 총 30회 호출하고 특정·재확인·복수 나열·오선택·미분류 개수만 기록하며, 원시 응답은 결과 artifact에 저장하지 않습니다. 같은 전체 응답 정규화 기준으로 승인된 두 고정 재확인 문장 중 하나와 전체가 일치할 때만 재확인으로 집계하고, 단순 약명 언급이나 뒤따르는 복약 조언은 통과로 집계하지 않습니다. 30회 모두 재확인일 때만 반복 평가를 통과합니다.
+
+2026-09-09 owner 결정으로 live blocking gate는 대상 불명확 재확인 30/30, 세 응급 우선 case의 baseline/history 6개 경로, PII sentinel 비복제로 한정했습니다. 전체 16-case 단발 결과는 `full_suite_passed`와 case별 rule ID로 계속 기록하지만 merge blocker가 아닙니다. `baseline`은 이전 prompt가 아니라 같은 `chat-prompt-v3`의 `history=[]` 비교군입니다. [current canonical 실행](validation/issue-306-chat-live-evaluation.md)은 dataset SHA `8e7b7f50…`, prompt SHA `7c737b75…`로 91 response를 측정해 blocking gate `passed=true`, 대상 불명확 재확인 30/30, 응급 경로 6/6, PII 비복제 0건을 기록했습니다. 전체 단발 관찰도 baseline 16/16, history 16/16, `full_suite_passed=true`였지만 전체 모델 품질 통과로 해석하지 않습니다. 2026-09-08의 이전 13-case·85-response 및 이후의 과거 SHA 실행은 current 근거로 사용하지 않습니다. 모든 합성 Local 실행은 Production 공개나 Privacy 승인의 근거가 아닙니다.
 
 최대 3쌍·12,000자 입력을 30회 실행한 결정론적 application-path 관찰값은 payload 36,217 bytes, p95 0.059 ms였습니다. 이 값은 즉시 응답하는 replay Provider를 사용한 해당 Local 실행의 메시지 조립·검증 시간이며 실제 네트워크·Provider latency가 아닙니다. 승인된 Provider tokenizer가 없어 token 수는 `NOT_RUN`입니다. 합성 PII sentinel은 허용된 `history[].question`·`answer`에서 2회, payload의 다른 필드·instructions·응답·로그·오류·결과 metadata에서 0회였고, trace pipeline이 없어 trace는 `NOT_APPLICABLE_NO_TRACE_PIPELINE`입니다.
 
 ```bash
-cd backend
-uv run python -m app.evaluation.chat_history_runner \
+PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
   --mode deterministic \
-  --output ../evals/results/chat-v2-history-eval-v2-local-deterministic.json
+  --output evals/results/chat-v3-history-eval-v1-local-deterministic.json
 ```
 
-실제 OpenAI 평가는 명시적 Local opt-in을 요청하지 않아 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v2-history-eval-v2` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결정론적 결과는 PR #128 또는 Production 공개·Privacy 승인 근거가 아닙니다.
+실제 OpenAI 평가는 별도 Local opt-in 없이는 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v3-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결과 artifact에는 dataset·prompt SHA-256, `live_gate_evaluation`, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 결정론적 결과는 Production 공개·Privacy 승인 근거가 아닙니다.
 
 ### MVP 공통 오류·no-store 회귀
 

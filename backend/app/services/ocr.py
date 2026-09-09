@@ -3,10 +3,18 @@ from uuid import UUID
 
 from app.core import config
 from app.core.errors import ApiError, ErrorDetail
-from app.dtos.ocr import ExecuteOcrRequest, ExtractedFieldData, OcrJobData, OcrJobStatus
+from app.core.utils.idempotency import IdempotencyKeyFormatError
+from app.dtos.ocr import (
+    CreateManualMedicationRequest,
+    ExecuteOcrRequest,
+    ExtractedFieldData,
+    OcrJobData,
+    OcrJobResponse,
+    OcrJobStatus,
+)
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
 from app.models.async_jobs import AiJobType, DomainType
-from app.models.ocr import ExtractedField, FieldType, OcrJob
+from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.users import User
 from app.repositories.medical_document_repository import (
     DocumentLockTimeoutError,
@@ -14,6 +22,7 @@ from app.repositories.medical_document_repository import (
 )
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.idempotency import IdempotencyKeyConflictError, SyncMutationIdempotencyService
 from app.services.job_intake import DomainReference, JobIntakeService
 from app.services.job_status import JobStatusResult, JobStatusService
 from app.services.ocr_engine import (
@@ -30,6 +39,7 @@ from app.services.ocr_engine import (
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
 _ENGINE_ERROR_MESSAGE = "OCR 처리 중 오류가 발생했습니다."
+_MANUAL_MEDICATION_OPERATION_ID = "ocr.manual-medication.create"
 
 # 사용자가 OCR 오인식 값을 제거하고 “값 없음”으로 확인할 수 있는 필드입니다.
 _NULLABLE_CONFIRMED_FIELD_TYPES = frozenset(
@@ -38,6 +48,16 @@ _NULLABLE_CONFIRMED_FIELD_TYPES = frozenset(
         FieldType.DOSE_UNIT,
         FieldType.TIMING,
     }
+)
+
+_MANUAL_MEDICATION_FIELD_ORDER = (
+    FieldType.MEDICATION_NAME,
+    FieldType.MEDICATION_STRENGTH,
+    FieldType.DOSE_VALUE,
+    FieldType.DOSE_UNIT,
+    FieldType.FREQUENCY_PER_DAY,
+    FieldType.TIMING,
+    FieldType.DURATION_DAYS,
 )
 
 
@@ -335,6 +355,144 @@ class OcrService:
                 details=[ErrorDetail(field="job_id", reason="NOT_FOUND", rejected_value=str(job_id))],
             )
         return _to_job_data(job, list(job.extracted_fields))
+
+    async def create_manual_medication(
+        self,
+        *,
+        user: User,
+        job_id: UUID,
+        request: CreateManualMedicationRequest,
+        idempotency_key: str,
+        idempotency_service: SyncMutationIdempotencyService,
+    ) -> OcrJobData:
+        try:
+            result = await idempotency_service.execute(
+                user_id=user.id,
+                operation_id=_MANUAL_MEDICATION_OPERATION_ID,
+                parent_resource_id=job_id,
+                idempotency_key=idempotency_key,
+                fingerprint={
+                    "job_id": str(job_id),
+                    "medication_name": request.medication_name,
+                    "medication_strength": request.medication_strength,
+                    "dose_value": request.dose_value,
+                    "dose_unit": request.dose_unit,
+                    "frequency_per_day": request.frequency_per_day,
+                    "timing": request.timing,
+                    "duration_days": request.duration_days,
+                },
+                success_status=201,
+                mutate=lambda: self._create_manual_medication_once(user=user, job_id=job_id, request=request),
+            )
+        except IdempotencyKeyFormatError as exc:
+            raise ApiError(
+                status_code=400,
+                code=str(exc),
+                message="Idempotency-Key 헤더를 확인해 주세요.",
+                details=[ErrorDetail(field="Idempotency-Key", reason=str(exc))],
+            ) from exc
+        except IdempotencyKeyConflictError as exc:
+            raise ApiError(
+                status_code=409,
+                code="IDEMPOTENCY_KEY_CONFLICT",
+                message="같은 Idempotency-Key로 다른 요청이 접수되었습니다.",
+                details=[ErrorDetail(field="Idempotency-Key", reason="REQUEST_HASH_MISMATCH")],
+            ) from exc
+
+        return OcrJobResponse.model_validate(result.response_body).data
+
+    async def _create_manual_medication_once(
+        self,
+        *,
+        user: User,
+        job_id: UUID,
+        request: CreateManualMedicationRequest,
+    ) -> dict:
+        job = await self._ocr_repo.get_job_owned(job_id=job_id, user_id=user.id)
+        if job is None:
+            raise ApiError(
+                status_code=404,
+                code="OCR_JOB_NOT_FOUND",
+                message="OCR 작업 정보를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="job_id", reason="NOT_FOUND", rejected_value=str(job_id))],
+            )
+
+        if job.ocr_status != OcrStatus.COMPLETED:
+            raise ApiError(
+                status_code=409,
+                code="OCR_JOB_NOT_COMPLETED",
+                message="OCR 작업이 완료되지 않았습니다.",
+                details=[ErrorDetail(field="job_id", reason="OCR_JOB_NOT_COMPLETED")],
+            )
+
+        try:
+            document = await self._document_repo.get_owned_for_update(
+                document_id=job.document_id,
+                user=user,
+            )
+        except DocumentLockTimeoutError:
+            raise ApiError(
+                status_code=409,
+                code="CONCURRENT_UPDATE_IN_PROGRESS",
+                message="같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.",
+                details=[ErrorDetail(field="job_id", reason="CONCURRENT_UPDATE_IN_PROGRESS")],
+            ) from None
+
+        if document is None:
+            raise ApiError(
+                status_code=404,
+                code="MEDICAL_DOCUMENT_NOT_FOUND",
+                message="의료문서를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="job_id", reason="NOT_FOUND", rejected_value=str(job_id))],
+            )
+
+        if self._prescription_repo is None:
+            raise RuntimeError("prescription_repository가 주입되지 않았습니다.")
+
+        if await self._prescription_repo.get_by_document(document=document) is not None:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_ALREADY_CONFIRMED",
+                message="이미 확정된 처방 정보입니다.",
+                details=[ErrorDetail(field="document_id", reason="ALREADY_CONFIRMED")],
+            )
+
+        saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
+        next_medication_index = (
+            max(
+                (field.medication_index for field in saved_fields if field.medication_index > 0),
+                default=0,
+            )
+            + 1
+        )
+        confirmed_at = datetime.now(UTC)
+        values = {
+            FieldType.MEDICATION_NAME: request.medication_name,
+            FieldType.MEDICATION_STRENGTH: request.medication_strength,
+            FieldType.DOSE_VALUE: request.dose_value,
+            FieldType.DOSE_UNIT: request.dose_unit,
+            FieldType.FREQUENCY_PER_DAY: request.frequency_per_day,
+            FieldType.TIMING: request.timing,
+            FieldType.DURATION_DAYS: request.duration_days,
+        }
+        manual_fields = [
+            ExtractedField(
+                ocr_job_id=job.id,
+                medication_index=next_medication_index,
+                field_type=field_type,
+                raw_value=None,
+                normalized_value=None,
+                normalization_version="manual-entry@1",
+                confidence_score=None,
+                confirmed_value=values[field_type],
+                confirmation_status=ConfirmationStatus.CONFIRMED,
+                confirmed_at=confirmed_at,
+            )
+            for field_type in _MANUAL_MEDICATION_FIELD_ORDER
+        ]
+        await self._ocr_repo.add_fields(manual_fields)
+        saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
+        return OcrJobResponse(data=_to_job_data(job, saved_fields)).model_dump(mode="json")
 
     async def update_extracted_field(
         self,
