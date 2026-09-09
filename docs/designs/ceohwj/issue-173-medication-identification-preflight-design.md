@@ -226,10 +226,23 @@ MedicationIdentificationPreflightOutcome(
     matched_count,
     identification_reasons,      # tuple, 계약 순서
     blocking_medication_ids,     # tuple, 사전순
-    stale_signals,               # tuple, 선언 순서
+    stale_signals,               # tuple, 선언 순서 (PRESCRIPTION_STALE, IDENTIFICATION_STALE, RUNTIME_RELEASE_STALE)
     validation_codes,            # tuple, 선언 순서. 내부 진단
 )
 ```
+
+### Downstream STALE 사영 계약
+
+`safety-result-v2.md` "STALE과 공개 오류"에 따라 판정 신호를 downstream 공개 fallback_code 및 내부 stale_reason으로 사영하는 순수 함수를 함께 제공한다.
+
+```python
+PreflightStaleProjection(fallback_code: str, stale_reason: str | None)
+project_preflight_stale_signal(signal: PreflightStaleSignal) -> PreflightStaleProjection
+```
+
+- `PRESCRIPTION_STALE` → `fallback_code="PRESCRIPTION_STALE"`, `stale_reason=None`
+- `IDENTIFICATION_STALE` → `fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="IDENTIFICATION_STALE"`
+- `RUNTIME_RELEASE_STALE` → `fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="RUNTIME_RELEASE_STALE"`
 
 `execution_status`를 별도 축으로 둔 이유는 `ai_worker/tasks/rag/evidence_gate.py`의
 `EvidenceGateExecutionStatus` 선례와 같다. 공유 결정축에 새 값을 만들지 않고 구조 오류를 구분한다.
