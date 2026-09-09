@@ -1650,6 +1650,8 @@ async def insert_guide_parent_chain(
     document_id = str(uuid4())
     ocr_job_id = str(uuid4())
     prescription_id = str(uuid4())
+    prescription_version_id = str(uuid4())
+    version_medication_id = str(uuid4())
     guide_id = str(uuid4())
 
     await connection.execute(
@@ -1760,60 +1762,99 @@ async def insert_guide_parent_chain(
         },
     )
 
-    await connection.execute(
-        text(
-            """
-            INSERT INTO prescription (
-                id,
-                document_id,
-                source_ocr_job_id,
-                profile_id,
-                prescribed_date,
-                prescription_status,
-                confirmed_at
+    has_version_schema = bool(
+        await connection.scalar(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'prescription' AND column_name = 'active_version_id'
+                )
+                """
             )
-            VALUES (
-                :id,
-                :document_id,
-                :source_ocr_job_id,
-                :profile_id,
-                DATE '2026-09-03',
-                'CONFIRMED',
-                now()
-            )
-            """
-        ),
-        {
-            "id": prescription_id,
-            "document_id": document_id,
-            "source_ocr_job_id": ocr_job_id,
-            "profile_id": profile_id,
-        },
+        )
     )
-
-    await connection.execute(
-        text(
-            """
-            INSERT INTO guide (
-                id,
-                prescription_id,
-                profile_id,
-                generation_status
-            )
-            VALUES (
-                :id,
-                :prescription_id,
-                :profile_id,
-                'PENDING'
-            )
-            """
-        ),
-        {
-            "id": guide_id,
-            "prescription_id": prescription_id,
-            "profile_id": profile_id,
-        },
-    )
+    prescription_values = {
+        "id": prescription_id,
+        "prescription_version_id": prescription_version_id,
+        "document_id": document_id,
+        "source_ocr_job_id": ocr_job_id,
+        "profile_id": profile_id,
+    }
+    if has_version_schema:
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription (
+                    id, active_version_id, document_id, source_ocr_job_id, profile_id,
+                    prescribed_date, prescription_status, confirmed_at
+                ) VALUES (
+                    :id, :prescription_version_id, :document_id, :source_ocr_job_id, :profile_id,
+                    DATE '2026-09-03', 'CONFIRMED', now()
+                )
+                """
+            ),
+            prescription_values,
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription_version (
+                    id, prescription_id, version_number, prescribed_date, confirmed_at
+                ) VALUES (:id, :prescription_id, 1, DATE '2026-09-03', now())
+                """
+            ),
+            {"id": prescription_version_id, "prescription_id": prescription_id},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription_version_medication (
+                    id, prescription_version_id, medication_name, display_order
+                ) VALUES (:id, :prescription_version_id, '합성 가이드 검증약', 1)
+                """
+            ),
+            {"id": version_medication_id, "prescription_version_id": prescription_version_id},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO guide (
+                    id, prescription_id, prescription_version_id, profile_id, generation_status
+                ) VALUES (:id, :prescription_id, :prescription_version_id, :profile_id, 'PENDING')
+                """
+            ),
+            {
+                "id": guide_id,
+                "prescription_id": prescription_id,
+                "prescription_version_id": prescription_version_id,
+                "profile_id": profile_id,
+            },
+        )
+    else:
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription (
+                    id, document_id, source_ocr_job_id, profile_id,
+                    prescribed_date, prescription_status, confirmed_at
+                ) VALUES (
+                    :id, :document_id, :source_ocr_job_id, :profile_id,
+                    DATE '2026-09-03', 'CONFIRMED', now()
+                )
+                """
+            ),
+            prescription_values,
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO guide (id, prescription_id, profile_id, generation_status)
+                VALUES (:id, :prescription_id, :profile_id, 'PENDING')
+                """
+            ),
+            {"id": guide_id, "prescription_id": prescription_id, "profile_id": profile_id},
+        )
 
     return user_id, document_id, ocr_job_id, prescription_id, guide_id
 
@@ -1822,6 +1863,7 @@ async def _insert_ai_job_for_guide_mapping(
     connection: AsyncConnection,
     *,
     user_id: str,
+    prescription_version_id: str | None = None,
 ) -> str:
     ai_job_id = str(uuid4())
 
@@ -1833,6 +1875,7 @@ async def _insert_ai_job_for_guide_mapping(
                 user_id,
                 job_type,
                 status,
+                prescription_version_id,
                 attempt_count,
                 max_attempts
             )
@@ -1841,6 +1884,7 @@ async def _insert_ai_job_for_guide_mapping(
                 :user_id,
                 'GUIDE',
                 'PENDING',
+                :prescription_version_id,
                 0,
                 3
             )
@@ -1849,6 +1893,7 @@ async def _insert_ai_job_for_guide_mapping(
         {
             "id": ai_job_id,
             "user_id": user_id,
+            "prescription_version_id": prescription_version_id,
         },
     )
 
@@ -1935,9 +1980,15 @@ async def test_deleting_ai_job_sets_guide_mapping_to_null(
 
         try:
             user_id, _, _, _, guide_id = await insert_guide_parent_chain(connection)
+            prescription_version_id = await connection.scalar(
+                text("SELECT prescription_version_id FROM guide WHERE id = :id"),
+                {"id": guide_id},
+            )
+            assert prescription_version_id is not None
             ai_job_id = await _insert_ai_job_for_guide_mapping(
                 connection,
                 user_id=user_id,
+                prescription_version_id=str(prescription_version_id),
             )
 
             await connection.execute(
@@ -1985,16 +2036,16 @@ async def test_one_ai_job_cannot_map_to_multiple_guides(
         try:
             user_id, _, _, prescription_id, first_guide_id = await insert_guide_parent_chain(connection)
             second_guide_id = str(uuid4())
+            prescription_result = await connection.execute(
+                text("SELECT profile_id, active_version_id FROM prescription WHERE id = :id"),
+                {"id": prescription_id},
+            )
+            profile_id, prescription_version_id = prescription_result.one()
             ai_job_id = await _insert_ai_job_for_guide_mapping(
                 connection,
                 user_id=user_id,
+                prescription_version_id=str(prescription_version_id),
             )
-
-            profile_id_result = await connection.execute(
-                text("SELECT profile_id FROM prescription WHERE id = :id"),
-                {"id": prescription_id},
-            )
-            profile_id = profile_id_result.scalar_one()
 
             await connection.execute(
                 text(
@@ -2002,12 +2053,14 @@ async def test_one_ai_job_cannot_map_to_multiple_guides(
                     INSERT INTO guide (
                         id,
                         prescription_id,
+                        prescription_version_id,
                         profile_id,
                         generation_status
                     )
                     VALUES (
                         :id,
                         :prescription_id,
+                        :prescription_version_id,
                         :profile_id,
                         'PENDING'
                     )
@@ -2016,6 +2069,7 @@ async def test_one_ai_job_cannot_map_to_multiple_guides(
                 {
                     "id": second_guide_id,
                     "prescription_id": prescription_id,
+                    "prescription_version_id": prescription_version_id,
                     "profile_id": profile_id,
                 },
             )
@@ -2572,13 +2626,14 @@ async def _insert_candidate_version_graph(connection: AsyncConnection) -> dict[s
                 id, active_version_id, document_id, source_ocr_job_id, profile_id,
                 prescribed_date, prescription_status, confirmed_at
             ) VALUES (
-                :prescription_id, NULL, :document_id, :ocr_job_id, :profile_id,
+                :prescription_id, :version_id, :document_id, :ocr_job_id, :profile_id,
                 DATE '2026-09-08', 'CONFIRMED', now()
             )
             """
         ),
         {
             "prescription_id": prescription_id,
+            "version_id": version_id,
             "document_id": document_id,
             "ocr_job_id": ocr_job_id,
             "profile_id": profile_id,
@@ -2604,10 +2659,6 @@ async def _insert_candidate_version_graph(connection: AsyncConnection) -> dict[s
         ),
         {"pvm_id": pvm_id, "version_id": version_id},
     )
-    await connection.execute(
-        text("UPDATE prescription SET active_version_id = :version_id WHERE id = :prescription_id"),
-        {"version_id": version_id, "prescription_id": prescription_id},
-    )
     return {
         "user_id": user_id,
         "profile_id": str(profile_id),
@@ -2616,6 +2667,33 @@ async def _insert_candidate_version_graph(connection: AsyncConnection) -> dict[s
         "prescription_id": prescription_id,
         "version_id": version_id,
         "pvm_id": pvm_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_prescription_version_runtime_links_are_not_nullable(migrated_engine: AsyncEngine) -> None:
+    async with migrated_engine.connect() as connection:
+        rows = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT table_name, column_name, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND (table_name, column_name) IN (
+                          ('prescription', 'active_version_id'),
+                          ('guide', 'prescription_version_id'),
+                          ('chat_session', 'prescription_version_id')
+                      )
+                    """
+                )
+            )
+        ).mappings()
+
+    assert {(row["table_name"], row["column_name"], row["is_nullable"]) for row in rows} == {
+        ("prescription", "active_version_id", "NO"),
+        ("guide", "prescription_version_id", "NO"),
+        ("chat_session", "prescription_version_id", "NO"),
     }
 
 

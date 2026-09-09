@@ -9,7 +9,6 @@ from app.models.async_jobs import AiJob, AiJobAttempt, AiJobAttemptStatus, AiJob
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import (
-    Medication,
     Prescription,
     PrescriptionVersion,
     PrescriptionVersionMedication,
@@ -77,9 +76,6 @@ class PrescriptionRepository:
         self.session.add(prescription)
         await self.session.flush()
 
-        for medication in medications:
-            self.session.add(Medication(prescription_id=prescription.id, **medication))
-
         version = PrescriptionVersion(
             id=version_id,
             prescription_id=prescription.id,
@@ -99,14 +95,6 @@ class PrescriptionRepository:
             )
         await self.session.flush()
         return prescription
-
-    async def get_medications(self, *, prescription_id: UUID) -> list[Medication]:
-        result = await self.session.execute(
-            select(Medication)
-            .where(Medication.prescription_id == prescription_id)
-            .order_by(Medication.display_order.asc())
-        )
-        return list(result.scalars().all())
 
     async def get_version_medications(self, *, prescription_version_id: UUID) -> list[PrescriptionVersionMedication]:
         result = await self.session.execute(
