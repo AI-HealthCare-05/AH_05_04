@@ -27,7 +27,6 @@ from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSes
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
-from app.models.prescriptions import Medication, Prescription
 from app.models.profiles import Profile
 from app.models.users import User
 from app.release_validation.ai_one_cycle_smoke import (
@@ -52,6 +51,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     verify_one_cycle,
     verify_prescription_input,
 )
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.chat_ai import ChatReplyOutput
 from app.services.guide_ai.schemas import GuideGenerationResult
 from app.tests.conftest import test_engine
@@ -1454,30 +1454,29 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
         document = await session.get(MedicalDocument, fixture.document_id)
         assert document is not None
         assert document.profile_id is not None
-        prescription = Prescription(
-            document_id=fixture.document_id,
-            source_ocr_job_id=fixture.ocr_job_id,
-            profile_id=document.profile_id,
+        ocr_job = await session.get(OcrJob, fixture.ocr_job_id)
+        assert ocr_job is not None
+        prescription = await PrescriptionRepository(session).create_with_medications(
+            document=document,
+            source_ocr_job=ocr_job,
             prescribed_date=datetime(2026, 8, 21, tzinfo=UTC).date(),
             confirmed_at=now,
-        )
-        session.add(prescription)
-        await session.flush()
-        session.add(
-            Medication(
-                prescription_id=prescription.id,
-                medication_name=medication["medication_name"],
-                strength_text=expected_strength,
-                dose_value=Decimal(str(medication["dose_value"])),
-                dose_unit=medication["dose_unit"],
-                frequency_per_day=medication["frequency_per_day"],
-                timing_text=medication["timing_text"],
-                duration_days=medication["duration_days"],
-                display_order=medication["display_order"],
-            )
+            medications=[
+                {
+                    "medication_name": medication["medication_name"],
+                    "strength_text": expected_strength,
+                    "dose_value": Decimal(str(medication["dose_value"])),
+                    "dose_unit": medication["dose_unit"],
+                    "frequency_per_day": medication["frequency_per_day"],
+                    "timing_text": medication["timing_text"],
+                    "duration_days": medication["duration_days"],
+                    "display_order": medication["display_order"],
+                }
+            ],
         )
         guide = Guide(
             prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
             profile_id=prescription.profile_id,
             generation_status=GuideGenerationStatus.COMPLETED,
             content="private guide",
@@ -1485,7 +1484,11 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
             prompt_version="guide-prompt-v3",
             completed_at=now,
         )
-        chat_session = ChatSession(prescription_id=prescription.id, profile_id=prescription.profile_id)
+        chat_session = ChatSession(
+            prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
+            profile_id=prescription.profile_id,
+        )
         session.add_all([guide, chat_session])
         await session.flush()
         session.add_all(

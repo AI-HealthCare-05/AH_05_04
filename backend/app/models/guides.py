@@ -58,9 +58,7 @@ class Guide(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
-    # PR 3에서 기존 row를 backfill하고 새 writer는 항상 채웁니다. NOT NULL hardening은
-    # rollback 관찰 뒤 PR 5에서 적용합니다.
-    prescription_version_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    prescription_version_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     ai_job_id: Mapped[UUID | None] = mapped_column(
         UUIDChar(),
