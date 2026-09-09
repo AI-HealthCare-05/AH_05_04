@@ -1,4 +1,11 @@
 import type { Page, Route } from '@playwright/test'
+import type {
+  ChatMessageListResponse,
+  ChatSessionResponse,
+  SendChatMessageResponse,
+} from '../../src/api/chat'
+import type { GuideResponse } from '../../src/api/guides'
+import type { PrescriptionResponse } from '../../src/api/prescriptions'
 import { previewIds } from '../../src/dev-preview/syntheticIds'
 
 export const ids = previewIds
@@ -125,11 +132,15 @@ export async function installRequirementsApi(
   const prescription = () => ({
     data: {
       prescription_id: ids.prescription,
+      prescription_version_id: ids.prescriptionVersion,
+      revision: 1,
+      current: true,
       document_id: ids.document,
       prescribed_date: '2026-09-08',
       confirmed_at: now,
       medications: [
         {
+          prescription_version_medication_id: ids.prescriptionVersionMedication,
           medication_name: '합성 처방약',
           strength_text: '100mg',
           dose_value: 1,
@@ -141,6 +152,8 @@ export async function installRequirementsApi(
         },
         ...(fields.some((candidate) => candidate.medication_index === 2)
           ? [{
+              prescription_version_medication_id:
+                ids.prescriptionVersionManualMedication,
               medication_name: '직접입력약정',
               strength_text: '50mg',
               dose_value: 0.5,
@@ -153,11 +166,12 @@ export async function installRequirementsApi(
           : []),
       ],
     },
-  })
+  }) satisfies PrescriptionResponse
   const guide = () => ({
     data: {
       guide_id: ids.guide,
       prescription_id: ids.prescription,
+      prescription_version_id: ids.prescriptionVersion,
       generation_status: 'COMPLETED',
       content: '합성 처방약은 확정된 처방 지시에 따라 복용하세요.',
       model_name: 'synthetic-guide-model',
@@ -165,7 +179,16 @@ export async function installRequirementsApi(
       requested_at: now,
       completed_at: now,
     },
-  })
+  }) satisfies GuideResponse
+  const chatSession = () => ({
+    data: {
+      session_id: ids.session,
+      prescription_id: ids.prescription,
+      prescription_version_id: ids.prescriptionVersion,
+      session_status: 'ACTIVE',
+      created_at: now,
+    },
+  }) satisfies ChatSessionResponse
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -359,12 +382,12 @@ export async function installRequirementsApi(
     }
     if (key === `GET /api/v1/prescriptions/${ids.prescription}/chat-session`) {
       return chatExists
-        ? json(route, { data: { session_id: ids.session, prescription_id: ids.prescription, session_status: 'ACTIVE', created_at: now } })
+        ? json(route, chatSession())
         : error(route, 404, 'CHAT_SESSION_NOT_FOUND', '대화를 찾을 수 없습니다.')
     }
     if (key === `POST /api/v1/prescriptions/${ids.prescription}/chat-sessions`) {
       chatExists = true
-      return json(route, { data: { session_id: ids.session, prescription_id: ids.prescription, session_status: 'ACTIVE', created_at: now } }, 201)
+      return json(route, chatSession(), 201)
     }
     if (key === `GET /api/v1/chat-sessions/${ids.session}/messages`) {
       return json(route, {
@@ -375,7 +398,7 @@ export async function installRequirementsApi(
             { message_id: '88888888-8888-4888-8888-888888888888', role: 'ASSISTANT', content: '기존 합성 답변입니다.', generation_status: 'COMPLETED', created_at: now },
           ] : [],
         },
-      })
+      } satisfies ChatMessageListResponse)
     }
     if (key === `POST /api/v1/chat-sessions/${ids.session}/messages`) {
       const body = request.postDataJSON() as { content: string }
@@ -391,7 +414,7 @@ export async function installRequirementsApi(
           created_at: now,
           completed_at: now,
         },
-      }, 201)
+      } satisfies SendChatMessageResponse, 201)
     }
 
     state.unexpectedRequests.push(key)

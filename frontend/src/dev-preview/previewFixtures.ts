@@ -8,6 +8,7 @@ import { ApiError } from '../api/client'
 import type { GuideResponse } from '../api/guides'
 import type {
   ExtractedField,
+  Medication,
   OcrJobResponse,
   PrescriptionResponse,
 } from '../api/prescriptions'
@@ -192,8 +193,10 @@ function ocrResponse(
 function prescriptionResponseForScenario(
   scenario: ReviewScenario,
 ): PrescriptionResponse {
-  const medications = [
+  const medications: Medication[] = [
     {
+      prescription_version_medication_id:
+        previewIds.prescriptionVersionMedication,
       medication_name: '합성 처방약',
       strength_text: '100mg',
       dose_value: 1,
@@ -206,6 +209,8 @@ function prescriptionResponseForScenario(
   ]
   if (scenario === 'manual-add-success') {
     medications.push({
+      prescription_version_medication_id:
+        previewIds.prescriptionVersionManualMedication,
       medication_name: '수동 추가 약',
       strength_text: '50mg',
       dose_value: 1,
@@ -219,12 +224,15 @@ function prescriptionResponseForScenario(
   return {
     data: {
       prescription_id: previewIds.prescription,
+      prescription_version_id: previewIds.prescriptionVersion,
+      revision: 1,
+      current: true,
       document_id: previewIds.document,
       prescribed_date: '2026-09-08',
       confirmed_at: now,
       medications,
     },
-  }
+  } satisfies PrescriptionResponse
 }
 
 function guideResponse(
@@ -235,6 +243,7 @@ function guideResponse(
     data: {
       guide_id: previewIds.guide,
       prescription_id: previewIds.prescription,
+      prescription_version_id: previewIds.prescriptionVersion,
       generation_status: status,
       content,
       model_name: 'synthetic-preview-guide',
@@ -395,6 +404,7 @@ export function createChatPreview(scenario: ChatScenario): {
     data: {
       session_id: previewIds.session,
       prescription_id: previewIds.prescription,
+      prescription_version_id: previewIds.prescriptionVersion,
       session_status: 'ACTIVE',
       created_at: now,
     },
