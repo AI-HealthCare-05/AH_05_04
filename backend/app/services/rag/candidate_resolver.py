@@ -192,7 +192,7 @@ class ResolverResult:
 
     def redacted(self) -> ResolverVisibleResult:
         visible_candidate = None
-        if self.candidate is not None:
+        if self.outcome is ResolverOutcome.SINGLE_CANDIDATE and self.candidate is not None:
             product = self.candidate.product
             visible_candidate = ResolverVisibleCandidate(
                 product_name=product.product_name,
@@ -488,7 +488,13 @@ def _product_snapshot_is_valid(product: object) -> bool:
 
 
 def _finite_number_is_valid(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        finite_value = float(value)
+    except (OverflowError, ValueError):
+        return False
+    return math.isfinite(finite_value)
 
 
 def _unit_interval_is_valid(value: object) -> bool:
@@ -554,6 +560,8 @@ def _dedupe_candidates(
             sorted(signals[key].values(), key=lambda signal: _PRODUCT_STAGE_ORDER.index(signal.stage))
         )
         fusion_score = sum(weights[signal.stage] / (policy.rrf_k + signal.rank) for signal in candidate_signals)
+        if not _finite_number_is_valid(fusion_score):
+            return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
         candidates.append(
             CandidateEvidence(
                 identity=identity,

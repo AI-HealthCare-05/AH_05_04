@@ -90,8 +90,20 @@ def _is_positive_int(value: object) -> bool:
 
 
 def _is_finite_positive_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+    finite_value = _as_finite_float(value)
+    return finite_value is not None and finite_value > 0
 
 
 def _is_unit_interval(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
+    finite_value = _as_finite_float(value)
+    return finite_value is not None and 0 <= finite_value <= 1
+
+
+def _as_finite_float(value: object) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        finite_value = float(value)
+    except (OverflowError, ValueError):
+        return None
+    return finite_value if math.isfinite(finite_value) else None

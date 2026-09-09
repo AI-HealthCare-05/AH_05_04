@@ -248,11 +248,23 @@ def resolve(
         ({"maximum_input_length": True}, ResolverFailureReason.POLICY_INVALID),
         ({"retrieval_limit": 0}, ResolverFailureReason.POLICY_INVALID),
         ({"rrf_k": float("nan")}, ResolverFailureReason.POLICY_INVALID),
+        ({"rrf_k": 10**1000}, ResolverFailureReason.POLICY_INVALID),
         ({"minimum_relevance": 1.1}, ResolverFailureReason.POLICY_INVALID),
         ({"minimum_margin": -0.1}, ResolverFailureReason.POLICY_INVALID),
         ({"release_eligible": True}, ResolverFailureReason.POLICY_INVALID),
         (
             {"stage_weights": ((CandidateStage.PRODUCT_NAME_EXACT, 1.0),)},
+            ResolverFailureReason.POLICY_INVALID,
+        ),
+        (
+            {
+                "stage_weights": (
+                    (CandidateStage.PRODUCT_NAME_EXACT, 10**1000),
+                    (CandidateStage.APPROVED_ALIAS_EXACT, 3.0),
+                    (CandidateStage.TRIGRAM_EDIT_DISTANCE, 2.0),
+                    (CandidateStage.DENSE_VECTOR, 1.0),
+                )
+            },
             ResolverFailureReason.POLICY_INVALID,
         ),
         (
@@ -412,6 +424,26 @@ def test_multiple_eligible_products_are_always_ambiguous() -> None:
     assert result.candidate is None
     assert result.eligible_count == 2
     assert result.redacted().candidate is None
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        ResolverOutcome.AMBIGUOUS,
+        ResolverOutcome.NO_CANDIDATE,
+        ResolverOutcome.INGREDIENT_ONLY,
+        ResolverOutcome.INVALID_INPUT,
+    ],
+)
+def test_redaction_never_exposes_candidate_for_non_single_outcome(outcome: ResolverOutcome) -> None:
+    resolved = resolve(
+        FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),)})
+    )
+    assert isinstance(resolved, ResolverResult)
+    assert resolved.candidate is not None
+    inconsistent_result = dataclasses.replace(resolved, outcome=outcome)
+
+    assert inconsistent_result.redacted().candidate is None
 
 
 def test_nullable_strength_with_multiple_variants_is_ambiguous() -> None:
@@ -659,6 +691,7 @@ def test_unexpected_programming_error_is_not_misclassified_as_port_failure() -> 
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, rank=0),
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, rank=True),
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, score=float("nan")),
+        hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, score=10**1000),
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, index_version="other-index"),
     ],
 )
@@ -688,6 +721,25 @@ def test_conflicting_snapshots_for_same_identity_fail_closed() -> None:
     )
 
     result = resolve(port)
+
+    assert result == ResolverFailure(reason=ResolverFailureReason.EVIDENCE_INVALID)
+
+
+def test_fusion_score_overflow_fails_closed() -> None:
+    overflowing_weights = tuple(
+        (stage, 1e308) for stage in CandidateStage if stage is not CandidateStage.INGREDIENT_EXACT
+    )
+    port = FakeIndexPort(
+        {
+            CandidateStage.PRODUCT_NAME_EXACT: (hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),),
+            CandidateStage.APPROVED_ALIAS_EXACT: (hit("SYNTH-P-001", CandidateStage.APPROVED_ALIAS_EXACT),),
+        }
+    )
+
+    result = resolve(
+        port,
+        policy=synthetic_policy(stage_weights=overflowing_weights, rrf_k=5e-324),
+    )
 
     assert result == ResolverFailure(reason=ResolverFailureReason.EVIDENCE_INVALID)
 
@@ -751,6 +803,11 @@ def test_rrf_same_stage_normalization_and_identity_tie_break_are_deterministic()
         (
             FakeAttributeMatcher(),
             FakeRelevanceEvaluator({"SYNTH-P-001": float("nan")}),
+            ResolverFailureReason.EVIDENCE_INVALID,
+        ),
+        (
+            FakeAttributeMatcher(),
+            FakeRelevanceEvaluator({"SYNTH-P-001": 10**1000}),
             ResolverFailureReason.EVIDENCE_INVALID,
         ),
     ],
