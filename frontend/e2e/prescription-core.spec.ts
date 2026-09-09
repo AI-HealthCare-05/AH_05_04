@@ -14,6 +14,57 @@ test.beforeEach(async ({ page }) => {
   }, syntheticToken)
 })
 
+test('[REQ-DOC-003][REQ-DOC-005][REQ-DOC-006][REQ-OCR-004] OCR 검수에서 누락 약물을 추가하고 함께 처방 확정한다', async ({ page }) => {
+  const api = await installRequirementsApi(page)
+  await page.goto(
+    `/prescriptions/review?document_id=${ids.document}&job_id=${ids.ocrJob}`,
+  )
+
+  await expect(
+    page.getByRole('heading', { name: '합성 처방약 100mg' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: '약물 추가' }).click()
+  await page.getByLabel('약물이름').fill('직접입력약정')
+  await page.getByLabel('제품함량').fill('50mg')
+  await page.getByLabel('1회 복용량').fill('0.5')
+  await page.getByLabel('복용단위').fill('정')
+  await page.getByLabel('하루횟수').fill('2')
+  await page.getByLabel('복용조건').fill('저녁 식후')
+  await page.getByLabel('투약일수').fill('5')
+  await page.getByRole('button', { name: '약물 저장' }).click()
+
+  const manualCard = page.locator(
+    'section.prescription-review__medication-card',
+    { has: page.getByRole('heading', { name: '직접입력약정 50mg' }) },
+  )
+  await expect(manualCard).toBeVisible()
+  await expect(page.getByText('약 1/2개 검토 완료')).toBeVisible()
+  await manualCard.getByRole('button', { name: '검토 완료' }).click()
+  await expect(page.getByText('약 2/2개 검토 완료')).toBeVisible()
+
+  await page.getByRole('checkbox').check()
+  await page.getByRole('button', {
+    name: '처방전 확정 및 가이드 만들기',
+  }).click()
+  await expect(page).toHaveURL(new RegExp(`/guides/${ids.guide}$`))
+
+  expect(api.manualMedicationRequests).toHaveLength(1)
+  expect(api.manualMedicationRequests[0].idempotencyKey).toMatch(
+    /^manual-medication:[0-9a-f-]{36}$/,
+  )
+  expect(api.manualMedicationRequests[0].body).toEqual({
+    medication_name: '직접입력약정',
+    medication_strength: '50mg',
+    dose_value: '0.5',
+    dose_unit: '정',
+    frequency_per_day: '2',
+    timing: '저녁 식후',
+    duration_days: '5',
+  })
+  expect(api.confirmedMedicationCount).toBe(2)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('[REQ-USR-001][REQ-DOC-001][REQ-DOC-003][REQ-DOC-005][REQ-DOC-006][REQ-DOC-007][REQ-DOC-009][REQ-DOC-010][REQ-OCR-004] 업로드부터 누락값 직접 입력·확정·가이드·채팅까지 이어진다', async ({ page }) => {
   const api = await installRequirementsApi(page, { missingPrescribedDate: true })
   await page.goto('/prescriptions/upload')

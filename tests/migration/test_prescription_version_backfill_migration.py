@@ -26,8 +26,10 @@ from app.models.ocr import OcrJob
 from app.models.profiles import Profile, ProfileType
 from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
 from app.services.prescriptions import PrescriptionService
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -483,6 +485,7 @@ async def _correct_once(ids: dict[str, str], *, base_version_id: UUID) -> tuple[
                 MedicalDocumentRepository(session),
                 OcrRepository(session),
                 PrescriptionRepository(session),
+                PrescriptionVersionMedicationInvalidationService(MedicationScheduleRepository(session)),
             )
             try:
                 result = await service.correct_prescription(
