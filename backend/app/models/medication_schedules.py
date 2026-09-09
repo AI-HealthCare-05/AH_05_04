@@ -33,19 +33,32 @@ class MedicationOccurrenceStatus(StrEnum):
 
 
 class MedicationSchedule(Base):
-    """Track B 일정 모델 초안.
+    """Track B 복약 일정.
 
-    ``prescription_version_medication_id``는 #169가 제공할 stable id를 담는다.
-    #169 병합 전에는 대상 테이블이 없으므로 FK와 약품별 schedule unique 제약을
-    의도적으로 만들지 않는다. 두 제약은 #169 산출물에 맞춘 후속 migration에서
-    함께 추가한다. ``times`` 관계는 revision 이력을 모두 보존하므로 현재 일정 시간만
-    필요한 호출자는 반드시 ``schedule_revision == revision``으로 범위를 제한해야 한다.
+    ``prescription_version_medication_id``는 #169의 불변 약품 snapshot을 참조한다.
+    ``times`` 관계는 revision 이력을 모두 보존하므로 현재 일정 시간만 필요한 호출자는
+    반드시 ``schedule_revision == revision``으로 범위를 제한해야 한다.
     """
 
     __tablename__ = "medication_schedule"
     __table_args__ = (
-        Index("idx_medication_schedule_version_medication", "prescription_version_medication_id"),
+        UniqueConstraint(
+            "prescription_version_medication_id",
+            name="uq_medication_schedule_version_medication",
+        ),
         CheckConstraint("revision > 0", name="chk_medication_schedule_revision"),
+        CheckConstraint(
+            "end_mode IN ('DATE', 'OPEN_ENDED')",
+            name="chk_medication_schedule_end_mode",
+        ),
+        CheckConstraint(
+            "source IN ('PRESCRIPTION_EXACT', 'USER_CONFIRMED')",
+            name="chk_medication_schedule_source",
+        ),
+        CheckConstraint(
+            "status IN ('ACTIVE', 'CANCELLED', 'ENDED')",
+            name="chk_medication_schedule_status",
+        ),
         CheckConstraint(
             "(end_mode = 'DATE' AND end_local_date IS NOT NULL) "
             "OR (end_mode = 'OPEN_ENDED' AND end_local_date IS NULL)",
@@ -58,7 +71,15 @@ class MedicationSchedule(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    prescription_version_medication_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    prescription_version_medication_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version_medication.id",
+            name="fk_medication_schedule_version_medication",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
     start_local_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_mode: Mapped[MedicationScheduleEndMode] = mapped_column(
         Enum(MedicationScheduleEndMode, native_enum=False, length=20),
@@ -104,7 +125,13 @@ class MedicationScheduleTime(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     medication_schedule_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("medication_schedule.id", ondelete="CASCADE"), nullable=False
+        UUIDChar(),
+        ForeignKey(
+            "medication_schedule.id",
+            name="fk_medication_schedule_time_schedule",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
     )
     schedule_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     local_time: Mapped[time] = mapped_column(Time(timezone=False), nullable=False)
@@ -126,6 +153,10 @@ class MedicationOccurrence(Base):
         Index("idx_medication_occurrence_deadline_status", "confirmation_deadline_at", "status"),
         CheckConstraint("schedule_revision > 0", name="chk_medication_occurrence_schedule_revision"),
         CheckConstraint(
+            "status IN ('PENDING', 'CANCELLED', 'CLOSED')",
+            name="chk_medication_occurrence_status",
+        ),
+        CheckConstraint(
             "confirmation_deadline_at >= scheduled_at",
             name="chk_medication_occurrence_deadline_after_schedule",
         ),
@@ -133,10 +164,22 @@ class MedicationOccurrence(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     medication_schedule_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("medication_schedule.id", ondelete="RESTRICT"), nullable=False
+        UUIDChar(),
+        ForeignKey(
+            "medication_schedule.id",
+            name="fk_medication_occurrence_schedule",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
     )
     medication_schedule_time_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("medication_schedule_time.id", ondelete="RESTRICT"), nullable=False
+        UUIDChar(),
+        ForeignKey(
+            "medication_schedule_time.id",
+            name="fk_medication_occurrence_schedule_time",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
     )
     schedule_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     scheduled_local_date: Mapped[date] = mapped_column(Date, nullable=False)

@@ -19,6 +19,7 @@ def _repository(*, owned: bool = True) -> tuple[MedicationScheduleRepository, Mo
     session.flush = AsyncMock()
     ownership = AsyncMock()
     ownership.is_owned.return_value = owned
+    ownership.is_active_owned.return_value = owned
     return MedicationScheduleRepository(session, ownership=ownership), session, ownership
 
 
@@ -48,7 +49,7 @@ def test_as_utc_instant_rejects_naive_values() -> None:
         as_utc_instant(datetime(2026, 9, 7, 9, 30), field="scheduled_at")
 
 
-async def test_owned_schedule_is_fail_closed_by_issue_169_boundary() -> None:
+async def test_owned_schedule_is_fail_closed_by_version_parent_chain() -> None:
     repository, session, ownership = _repository(owned=False)
     schedule = _schedule()
     session.get = AsyncMock(return_value=schedule)
@@ -63,7 +64,7 @@ async def test_owned_schedule_is_fail_closed_by_issue_169_boundary() -> None:
     )
 
 
-async def test_create_schedule_is_fail_closed_by_issue_169_boundary() -> None:
+async def test_create_schedule_is_fail_closed_by_active_version_parent_chain() -> None:
     repository, session, ownership = _repository(owned=False)
     medication_id = uuid4()
     user_id = uuid4()
@@ -78,7 +79,7 @@ async def test_create_schedule_is_fail_closed_by_issue_169_boundary() -> None:
     )
 
     assert result is None
-    ownership.is_owned.assert_awaited_once_with(
+    ownership.is_active_owned.assert_awaited_once_with(
         prescription_version_medication_id=medication_id,
         user_id=user_id,
     )

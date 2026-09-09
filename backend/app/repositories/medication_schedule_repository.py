@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime, time
 from typing import Protocol
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medication_schedules import (
@@ -14,10 +15,12 @@ from app.models.medication_schedules import (
     MedicationScheduleStatus,
     MedicationScheduleTime,
 )
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.repositories.profile_ownership import owned_by_self
 
 
 class PrescriptionVersionMedicationOwnership(Protocol):
-    """#169가 제공해야 하는 stable medication 소유권 조회 경계."""
+    """Stable version medication의 SELF 소유권 조회 경계."""
 
     async def is_owned(
         self,
@@ -25,6 +28,61 @@ class PrescriptionVersionMedicationOwnership(Protocol):
         prescription_version_medication_id: UUID,
         user_id: UUID,
     ) -> bool: ...
+
+    async def is_active_owned(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        user_id: UUID,
+    ) -> bool: ...
+
+
+class SqlAlchemyPrescriptionVersionMedicationOwnership:
+    """#169 parent chain을 사용하는 SELF 소유권 adapter."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def is_owned(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        user_id: UUID,
+    ) -> bool:
+        medication_id = await self.session.scalar(
+            select(PrescriptionVersionMedication.id)
+            .join(
+                PrescriptionVersion,
+                PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id,
+            )
+            .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
+            .where(
+                PrescriptionVersionMedication.id == prescription_version_medication_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+        )
+        return medication_id is not None
+
+    async def is_active_owned(
+        self,
+        *,
+        prescription_version_medication_id: UUID,
+        user_id: UUID,
+    ) -> bool:
+        medication_id = await self.session.scalar(
+            select(PrescriptionVersionMedication.id)
+            .join(
+                PrescriptionVersion,
+                PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id,
+            )
+            .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
+            .where(
+                PrescriptionVersionMedication.id == prescription_version_medication_id,
+                Prescription.active_version_id == PrescriptionVersion.id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+        )
+        return medication_id is not None
 
 
 def as_utc_instant(value: datetime, *, field: str) -> datetime:
@@ -36,20 +94,20 @@ def as_utc_instant(value: datetime, *, field: str) -> datetime:
 
 
 class MedicationScheduleRepository:
-    """B2~B5용 저장 골격.
+    """B2~B5에서 재사용하는 Schedule·Occurrence 저장 경계.
 
-    API에서 사용할 owned 조회는 #169 소유권 adapter를 반드시 주입한다. 이
-    Repository는 stable id를 기존 ``medication.id``로 추정하거나 fallback하지 않는다.
+    기본 adapter는 #169의 Version parent chain으로 SELF 소유권을 확인한다. 테스트 등에서
+    같은 Protocol 구현을 주입할 수 있으며 기존 ``medication.id``로 fallback하지 않는다.
     """
 
     def __init__(
         self,
         session: AsyncSession,
         *,
-        ownership: PrescriptionVersionMedicationOwnership,
+        ownership: PrescriptionVersionMedicationOwnership | None = None,
     ) -> None:
         self.session = session
-        self.ownership = ownership
+        self.ownership = ownership or SqlAlchemyPrescriptionVersionMedicationOwnership(session)
 
     async def create_schedule_owned(
         self,
@@ -63,7 +121,7 @@ class MedicationScheduleRepository:
         status: MedicationScheduleStatus = MedicationScheduleStatus.ACTIVE,
         revision: int = 1,
     ) -> MedicationSchedule | None:
-        if not await self.ownership.is_owned(
+        if not await self.ownership.is_active_owned(
             prescription_version_medication_id=prescription_version_medication_id,
             user_id=user_id,
         ):

@@ -20,12 +20,14 @@ def test_track_b_status_enums_match_approved_contract() -> None:
     assert set(MedicationOccurrenceStatus) == {"PENDING", "CANCELLED", "CLOSED"}
 
 
-def test_schedule_stable_medication_fk_and_unique_are_deferred_until_issue_169() -> None:
+def test_schedule_references_one_stable_version_medication() -> None:
     table = cast(Table, MedicationSchedule.__table__)
     column = table.c.prescription_version_medication_id
 
-    assert not column.foreign_keys
-    assert not any(
+    assert {foreign_key.target_fullname for foreign_key in column.foreign_keys} == {
+        "prescription_version_medication.id"
+    }
+    assert any(
         isinstance(constraint, UniqueConstraint)
         and set(constraint.columns.keys()) == {"prescription_version_medication_id"}
         for constraint in table.constraints
