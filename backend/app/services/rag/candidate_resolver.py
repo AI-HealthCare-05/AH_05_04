@@ -67,6 +67,10 @@ class AttributeCompatibility(StrEnum):
 class CandidateIndexPortError(Exception):
     """Expected Candidate Index dependency failure without safe public detail."""
 
+    def __init__(self, stage: CandidateStage | None = None) -> None:
+        super().__init__()
+        self.stage = stage
+
 
 class CandidateAttributeMatcherError(Exception):
     """Expected attribute-matcher dependency failure without safe public detail."""
@@ -89,12 +93,6 @@ class CandidateSearchRequest:
     medication_name: str
     index_version: str
     retrieval_limit: int
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateIndexDescriptor:
-    index_version: str
-    mode: CandidateIndexMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +120,11 @@ class CandidateHit:
     rank: int
     stage_score: float
     index_version: str
+    member_key: str
+    catalog_version: str
+    source_snapshot_id: str
+    normalization_version: str
+    embedding_model_version: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +133,27 @@ class IngredientHit:
     rank: int
     stage_score: float
     index_version: str
+    catalog_version: str
+    source_snapshot_id: str
+    normalization_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateProvenanceReceipt:
+    index_version: str
+    catalog_version: str
+    catalog_manifest_hash: str
+    source_snapshot_ids: tuple[str, ...]
+    normalization_version: str
+    embedding_model_version: str | None
+    index_mode: CandidateIndexMode
+
+
+@dataclass(frozen=True, slots=True)
+class HydratedCandidateEvidence:
+    provenance: CandidateProvenanceReceipt
+    product_hits: tuple[CandidateHit, ...]
+    ingredient_hits: tuple[IngredientHit, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,17 +238,7 @@ class ResolverFailure:
 
 
 class CandidateIndexPort(Protocol):
-    def describe(self, index_version: str) -> CandidateIndexDescriptor: ...
-
-    def search_product_name_exact(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]: ...
-
-    def search_approved_alias_exact(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]: ...
-
-    def search_ingredient_exact(self, request: CandidateSearchRequest) -> tuple[IngredientHit, ...]: ...
-
-    def search_trigram_edit_distance(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]: ...
-
-    def search_dense_vector(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]: ...
+    def hydrate(self, request: CandidateSearchRequest) -> HydratedCandidateEvidence: ...
 
 
 class CandidateAttributeMatcher(Protocol):
@@ -268,22 +282,6 @@ def prepare_candidate_search(
     )
 
 
-def candidate_search_stages(
-    descriptor: CandidateIndexDescriptor,
-    policy: ResolverPolicy,
-) -> tuple[CandidateStage, ...]:
-    """Return the stage plan shared by async hydration and the in-memory Resolver port."""
-    stages = (
-        CandidateStage.PRODUCT_NAME_EXACT,
-        CandidateStage.APPROVED_ALIAS_EXACT,
-        CandidateStage.INGREDIENT_EXACT,
-        CandidateStage.TRIGRAM_EDIT_DISTANCE,
-    )
-    if descriptor.mode is CandidateIndexMode.HYBRID and policy.enable_dense:
-        return (*stages, CandidateStage.DENSE_VECTOR)
-    return stages
-
-
 class MedicationResolver:
     def __init__(
         self,
@@ -305,14 +303,13 @@ class MedicationResolver:
         if not isinstance(prepared, CandidateSearchRequest):
             return prepared
 
-        descriptor = self._describe_index(resolver_input.index_version)
-        if isinstance(descriptor, ResolverFailure):
-            return descriptor
-
-        searched = self._search(prepared, descriptor, policy)
-        if isinstance(searched, ResolverFailure):
-            return searched
-        raw_hits, ingredient_hits = searched
+        hydrated = self._hydrate(prepared)
+        if isinstance(hydrated, ResolverFailure):
+            return hydrated
+        raw_hits = tuple(
+            hit for hit in hydrated.product_hits if policy.enable_dense or hit.stage is not CandidateStage.DENSE_VECTOR
+        )
+        ingredient_hits = hydrated.ingredient_hits
 
         deduped = _dedupe_candidates(raw_hits, policy)
         if isinstance(deduped, ResolverFailure):
@@ -328,76 +325,18 @@ class MedicationResolver:
             minimum_margin=policy.minimum_margin,
         )
 
-    def _describe_index(self, index_version: str) -> CandidateIndexDescriptor | ResolverFailure:
-        try:
-            descriptor = self._index_port.describe(index_version)
-        except CandidateIndexPortError:
-            return ResolverFailure(ResolverFailureReason.PORT_FAILURE)
-        if not isinstance(descriptor, CandidateIndexDescriptor) or not isinstance(descriptor.mode, CandidateIndexMode):
-            return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
-        if descriptor.index_version != index_version:
-            return ResolverFailure(ResolverFailureReason.INDEX_VERSION_MISMATCH)
-        return descriptor
-
-    def _search(
+    def _hydrate(
         self,
         request: CandidateSearchRequest,
-        descriptor: CandidateIndexDescriptor,
-        policy: ResolverPolicy,
-    ) -> tuple[tuple[CandidateHit, ...], tuple[IngredientHit, ...]] | ResolverFailure:
-        raw_hits: list[CandidateHit] = []
-        ingredient_hits: tuple[IngredientHit, ...] = ()
-        product_searches = {
-            CandidateStage.PRODUCT_NAME_EXACT: self._index_port.search_product_name_exact,
-            CandidateStage.APPROVED_ALIAS_EXACT: self._index_port.search_approved_alias_exact,
-            CandidateStage.TRIGRAM_EDIT_DISTANCE: self._index_port.search_trigram_edit_distance,
-            CandidateStage.DENSE_VECTOR: self._index_port.search_dense_vector,
-        }
-        for stage in candidate_search_stages(descriptor, policy):
-            if stage is CandidateStage.INGREDIENT_EXACT:
-                ingredient_result = self._call_ingredient_stage(request)
-                if isinstance(ingredient_result, ResolverFailure):
-                    return ingredient_result
-                ingredient_hits = ingredient_result
-                continue
-            product_result = self._call_product_stage(request, stage, product_searches[stage])
-            if isinstance(product_result, ResolverFailure):
-                return product_result
-            raw_hits.extend(product_result)
-        return tuple(raw_hits), ingredient_hits
-
-    def _call_product_stage(
-        self,
-        request: CandidateSearchRequest,
-        stage: CandidateStage,
-        search,
-    ) -> tuple[CandidateHit, ...] | ResolverFailure:
+    ) -> HydratedCandidateEvidence | ResolverFailure:
         try:
-            hits = search(request)
-        except CandidateIndexPortError:
-            return ResolverFailure(ResolverFailureReason.PORT_FAILURE, stage)
-        if not isinstance(hits, tuple) or len(hits) > request.retrieval_limit:
-            return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID, stage)
-        for expected_rank, hit in enumerate(hits, start=1):
-            if not _product_hit_is_valid(hit, stage, expected_rank, request.index_version):
-                return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID, stage)
-        return hits
-
-    def _call_ingredient_stage(
-        self,
-        request: CandidateSearchRequest,
-    ) -> tuple[IngredientHit, ...] | ResolverFailure:
-        stage = CandidateStage.INGREDIENT_EXACT
-        try:
-            hits = self._index_port.search_ingredient_exact(request)
-        except CandidateIndexPortError:
-            return ResolverFailure(ResolverFailureReason.PORT_FAILURE, stage)
-        if not isinstance(hits, tuple) or len(hits) > request.retrieval_limit:
-            return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID, stage)
-        for expected_rank, hit in enumerate(hits, start=1):
-            if not _ingredient_hit_is_valid(hit, expected_rank, request.index_version):
-                return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID, stage)
-        return hits
+            hydrated = self._index_port.hydrate(request)
+        except CandidateIndexPortError as error:
+            return ResolverFailure(ResolverFailureReason.PORT_FAILURE, error.stage)
+        evidence_failure = _hydrated_evidence_failure(hydrated, request)
+        if evidence_failure is not None:
+            return evidence_failure
+        return hydrated
 
     def _evaluate_candidates(
         self,
@@ -516,32 +455,106 @@ def _unit_interval_is_valid(value: object) -> bool:
 
 def _product_hit_is_valid(
     hit: object,
-    expected_stage: CandidateStage,
-    expected_rank: int,
-    index_version: str,
+    receipt: CandidateProvenanceReceipt,
 ) -> bool:
     return (
         isinstance(hit, CandidateHit)
         and _identity_is_valid(hit.identity, OfficialEntityType.PRODUCT, "MFDS_ITEM_SEQ")
         and _product_snapshot_is_valid(hit.product)
         and hit.product.identity == hit.identity
-        and hit.stage is expected_stage
+        and hit.stage in _PRODUCT_STAGE_ORDER
         and type(hit.rank) is int
-        and hit.rank == expected_rank
+        and hit.rank > 0
         and _finite_number_is_valid(hit.stage_score)
-        and hit.index_version == index_version
+        and hit.index_version == receipt.index_version
+        and bool(re.fullmatch(r"[0-9a-f]{64}", hit.member_key))
+        and hit.catalog_version == receipt.catalog_version
+        and hit.source_snapshot_id in receipt.source_snapshot_ids
+        and hit.normalization_version == receipt.normalization_version
+        and hit.embedding_model_version
+        == (receipt.embedding_model_version if hit.stage is CandidateStage.DENSE_VECTOR else None)
     )
 
 
-def _ingredient_hit_is_valid(hit: object, expected_rank: int, index_version: str) -> bool:
+def _ingredient_hit_is_valid(hit: object, receipt: CandidateProvenanceReceipt) -> bool:
     return (
         isinstance(hit, IngredientHit)
         and _identity_is_valid(hit.identity, OfficialEntityType.INGREDIENT, "MFDS_INGREDIENT_CODE")
         and type(hit.rank) is int
-        and hit.rank == expected_rank
+        and hit.rank > 0
         and _finite_number_is_valid(hit.stage_score)
-        and hit.index_version == index_version
+        and hit.index_version == receipt.index_version
+        and hit.catalog_version == receipt.catalog_version
+        and hit.source_snapshot_id in receipt.source_snapshot_ids
+        and hit.normalization_version == receipt.normalization_version
     )
+
+
+def _provenance_receipt_is_valid(receipt: object, index_version: str) -> bool:
+    return (
+        isinstance(receipt, CandidateProvenanceReceipt)
+        and receipt.index_version == index_version
+        and _canonical_text_is_valid(receipt.index_version)
+        and _canonical_text_is_valid(receipt.catalog_version)
+        and bool(re.fullmatch(r"[0-9a-f]{64}", receipt.catalog_manifest_hash))
+        and isinstance(receipt.source_snapshot_ids, tuple)
+        and bool(receipt.source_snapshot_ids)
+        and len(set(receipt.source_snapshot_ids)) == len(receipt.source_snapshot_ids)
+        and all(_canonical_text_is_valid(value) for value in receipt.source_snapshot_ids)
+        and _canonical_text_is_valid(receipt.normalization_version)
+        and (receipt.embedding_model_version is None or _canonical_text_is_valid(receipt.embedding_model_version))
+        and isinstance(receipt.index_mode, CandidateIndexMode)
+        and (receipt.index_mode is CandidateIndexMode.HYBRID or receipt.embedding_model_version is None)
+    )
+
+
+def _ranks_are_contiguous(hits: tuple[CandidateHit, ...], stage: CandidateStage) -> bool:
+    return [hit.rank for hit in hits if hit.stage is stage] == list(
+        range(1, sum(hit.stage is stage for hit in hits) + 1)
+    )
+
+
+def _hydrated_evidence_failure(
+    hydrated: object,
+    request: CandidateSearchRequest,
+) -> ResolverFailure | None:
+    if (
+        not isinstance(hydrated, HydratedCandidateEvidence)
+        or not _provenance_receipt_is_valid(hydrated.provenance, request.index_version)
+        or not isinstance(hydrated.product_hits, tuple)
+        or not isinstance(hydrated.ingredient_hits, tuple)
+        or not all(isinstance(hit, CandidateHit) for hit in hydrated.product_hits)
+        or not all(isinstance(hit, IngredientHit) for hit in hydrated.ingredient_hits)
+    ):
+        return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
+    receipt = hydrated.provenance
+    if receipt.index_mode is CandidateIndexMode.HYBRID and receipt.embedding_model_version is None:
+        return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
+    if receipt.index_mode is CandidateIndexMode.LEXICAL_ONLY and any(
+        hit.stage is CandidateStage.DENSE_VECTOR for hit in hydrated.product_hits if isinstance(hit, CandidateHit)
+    ):
+        return ResolverFailure(
+            ResolverFailureReason.EVIDENCE_INVALID,
+            CandidateStage.DENSE_VECTOR,
+        )
+    for stage in _PRODUCT_STAGE_ORDER:
+        stage_hits = tuple(hit for hit in hydrated.product_hits if isinstance(hit, CandidateHit) and hit.stage is stage)
+        if (
+            len(stage_hits) > request.retrieval_limit
+            or not _ranks_are_contiguous(stage_hits, stage)
+            or not all(_product_hit_is_valid(hit, receipt) for hit in stage_hits)
+        ):
+            return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID, stage)
+    if (
+        len(hydrated.ingredient_hits) > request.retrieval_limit
+        or not all(_ingredient_hit_is_valid(hit, receipt) for hit in hydrated.ingredient_hits)
+        or [hit.rank for hit in hydrated.ingredient_hits] != list(range(1, len(hydrated.ingredient_hits) + 1))
+    ):
+        return ResolverFailure(
+            ResolverFailureReason.EVIDENCE_INVALID,
+            CandidateStage.INGREDIENT_EXACT,
+        )
+    return None
 
 
 def _dedupe_candidates(

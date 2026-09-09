@@ -48,15 +48,14 @@ whitespace, non-NFC, length 오류만
 이 Task는 저장된 확정값을 정규화하거나 `ResolverInput`으로 변환하는 mapper를 구현하지 않는다.
 Candidate Index용 `CandidateSearchRequest`에는 약명·index version·limit만 허용하고 함량은 포함하지 않는다.
 
-### Task 4 — 검색 orchestration과 evidence 검증을 TDD로 구현
+### Task 4 — typed hydration과 evidence 검증을 TDD로 구현
 
-Fake Port의 descriptor로 index capability를 검증한 뒤 Exact → Alias → Ingredient → Trigram → Dense
-순서와 Dense off를 검증한다. 각 stage의 retrieval limit을 강제한다. 명시적 domain dependency 예외는
-typed failure로 닫되 예상 밖 프로그래밍 예외는 오분류하지 않는다. 잘못된
-stage/rank/version/score/identity/snapshot은 typed failure로 닫는다.
-`prepare_candidate_search(...)`와 `candidate_search_stages(...)`를 pure plan 계약으로 제공해 #168 async hydration과
-Resolver가 요청 allowlist·stage 순서·Dense 조건을 중복 구현하지 않게 한다. 제품 표시 snapshot은 Candidate Result
-저장 계약과 같은 필드별 길이 상한을 검증한다.
+Fake Port의 단일 `hydrate(request)` 호출로 bounded Product/Ingredient hit와 provenance receipt를 전달한다.
+Product 검색 stage 순서·limit·provenance 검증은 #167 `search_candidate_index(...)`가 단독 소유하고 #170은
+재실행하지 않는다. Resolver는 stage별 rank/limit, index/catalog/source/normalization/embedding provenance,
+identity/snapshot과 finite score를 다시 fail-closed 검증한다. 명시적 domain dependency 예외는 typed failure로
+닫되 예상 밖 프로그래밍 예외는 오분류하지 않는다. `prepare_candidate_search(...)`는 #168과 strength-free 요청
+allowlist만 공유한다. 제품 표시 snapshot은 Candidate Result 저장 계약과 같은 필드별 길이 상한을 검증한다.
 
 ### Task 5 — dedupe/fusion/attribute Gate를 TDD로 구현
 
@@ -118,11 +117,11 @@ Worker-side contract suite, PostgreSQL adapter parity, Candidate Search transact
 
 ## 후속 통합 인계
 
-- #168의 async repository/service는 `prepare_candidate_search(...)`로 strength-free 요청을 만들고 descriptor 검증
-  뒤 `candidate_search_stages(...)`가 정한 stage만 조회한다. #167의 Catalog·Source·normalization·embedding
-  provenance를 검증·보존한 bounded immutable evidence snapshot을 hydrate한다. 현재 동기 `CandidateIndexPort`는
-  이 snapshot만 읽는 in-memory 경계이며 DB adapter가 직접 구현하거나 내부에서 async 호출을 숨기는 Protocol이
-  아니다.
+- #168의 async repository/service는 `prepare_candidate_search(...)`로 strength-free 요청을 만들고 물리 조회를
+  한 번 수행한다. Product 결과는 #167 `search_candidate_index(...)`의 stage 순서·limit·Catalog·Source·
+  normalization·embedding provenance 검증을 통과한 뒤 bounded immutable evidence snapshot으로 변환한다.
+  현재 동기 `CandidateIndexPort`는 이 snapshot을 `hydrate(request)` 한 번으로 넘기는 in-memory 경계이며 DB
+  adapter가 직접 구현하거나 내부에서 async 호출을 숨기는 Protocol이 아니다.
 - #169/#171 통합 전에 확정 저장값의 NFC·공백 규칙과 production 입력 길이를 OCR·Backend·RAG owner Decision으로
   확정한다. 현재 저장 경로가 canonical Resolver 입력을 보장하지 않으므로 mapper/저장 계약을 추정 구현하지 않는다.
 - inline synthetic `maximum_input_length=100`을 production 기본값으로 승격하지 않는다. 현재 DTO/DB의

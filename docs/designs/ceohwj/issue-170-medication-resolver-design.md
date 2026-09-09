@@ -22,7 +22,7 @@ Issue #170의 병행 가능 조건을 따른다. 확정 Interface만 사용하�
 ### 이번 PR에 포함
 
 - Backend 소유 `CandidateIndexPort`, attribute/relevance evaluator Protocol과 불변 input/evidence/result 타입
-- `Exact → Alias → Ingredient diagnostic → Trigram/Edit → optional Dense` 호출 순서
+- #167에서 검증된 Product raw hit와 별도 Ingredient 진단 hit의 단일 typed hydration 경계
 - 공식 Product Identity `(code_system, canonical_code)` 기준 dedupe
 - versioned, caller-injected policy를 사용한 deterministic fusion
 - 함량·제형 compatibility, 제품 활성 상태, minimum relevance, top1/top2 margin Gate
@@ -49,8 +49,8 @@ confirmed medication snapshot + index/policy versions
                  ResolverInput validation
                          │
                          ▼
-             CandidateIndexPort (injected Fake)
-       Exact → Alias → Ingredient → Trigram → Dense
+        CandidateIndexPort.hydrate (injected Fake)
+          bounded evidence + provenance receipt
                          │
                          ▼
           evidence validation + identity dedupe
@@ -71,23 +71,24 @@ SINGLE_CANDIDATE   AMBIGUOUS/NO...   typed execution failure
 `backend/app/services/rag/`는 `ai_worker`, SQLAlchemy, Redis, Outbox 또는 Provider SDK를 import하지 않는다.
 `CandidateIndexPort`는 PostgreSQL repository Protocol이 아니다. `prepare_candidate_search(...)`가 index I/O 전에
 입력과 policy version을 검증하고 제품명·index version·limit만 포함한 닫힌 요청을 만든다. 함량은 검색 요청에
-포함하지 않고 dedupe 뒤 `CandidateAttributeMatcher`에만 전달한다. #168의 `AsyncSession` 기반 service는 descriptor를
-검증한 뒤 `candidate_search_stages(...)`가 반환한 동일 stage plan만 비동기로 실행한다. 전체 #167
-Catalog·Source·normalization·embedding provenance를 검증·보존한 뒤 최소 Resolver hit view와 불변 in-memory Port를
-hydrate한다. Resolver의 stage 호출은 이 Port의 메모리 snapshot만 읽으며 DB 재조회, event loop 생성 또는 숨은
-async 호출을 수행하지 않는다.
+포함하지 않고 dedupe 뒤 `CandidateAttributeMatcher`에만 전달한다. Product stage 순서·limit·Catalog/Source/
+normalization/embedding provenance의 권위는 #167 `search_candidate_index(...)` 하나다. #168의 `AsyncSession`
+service는 물리 조회를 한 번 수행해 #167 in-memory search port를 hydrate하고, #167 검증 성공 결과만 Product
+snapshot과 결합한다. 별도 Ingredient 진단 결과와 함께 `HydratedCandidateEvidence`를 만든 뒤 Resolver에는
+단일 `hydrate(request)` 호출로 전달한다. Resolver는 stage를 다시 호출하거나 DB 재조회, event loop 생성 또는
+숨은 async 호출을 수행하지 않는다.
 
 ```text
 #170 prepare_candidate_search (strength-free request)
                   │
                   ▼
-#168 async descriptor + candidate_search_stages 실행
-                  │ await + active index/provenance 검증
+#168 async physical query 1회 + #167 validation
+                  │ active index/provenance 검증
                   ▼
  bounded immutable evidence snapshot + provenance receipt
                   │
                   ▼
-      sync in-memory CandidateIndexPort
+ CandidateIndexPort.hydrate 단일 typed handoff
                   │
                   ▼
           pure MedicationResolver
@@ -125,23 +126,19 @@ inline synthetic policy의 `maximum_input_length=100`은 non-release 테스트 �
 
 ### 검색 Protocol
 
-`CandidateIndexPort`는 hydrate가 끝난 bounded evidence snapshot을 읽는 동기 in-memory 메서드로 구성한다.
-실제 async PostgreSQL repository가 이 Protocol을 직접 구현하는 계약이 아니다. Async hydration은
-`prepare_candidate_search(...)`와 `candidate_search_stages(...)`를 그대로 사용해 Resolver와 요청 allowlist 및
-Dense 실행 조건을 중복 구현하지 않는다.
-
-- `describe(index_version)`
-- `search_product_name_exact(request)`
-- `search_approved_alias_exact(request)`
-- `search_ingredient_exact(request)`
-- `search_trigram_edit_distance(request)`
-- `search_dense_vector(request)`
+`CandidateIndexPort`는 hydrate가 끝난 bounded evidence snapshot을 한 번 읽는 동기 in-memory 메서드
+`hydrate(request)`만 제공한다. 실제 async PostgreSQL repository가 이 Protocol을 직접 구현하는 계약이 아니다.
+Async hydration은 `prepare_candidate_search(...)`로 요청 allowlist를 공유하고, Product 검색 실행과 provenance
+검증에는 #167 `search_candidate_index(...)`를 재사용한다. #170은 별도 stage plan을 정의하지 않는다.
 
 `CandidateSearchRequest`는 `medication_name`, `index_version`, `retrieval_limit`만 포함한다. `strength_text`를 포함한
 다른 확정 처방 필드는 Candidate Index 검색·사전 필터에 전달하지 않는다.
 
-Descriptor는 index version과 `LEXICAL_ONLY | HYBRID` capability를 제공한다. Dense는 descriptor가
-`HYBRID`이고 `ResolverPolicy.enable_dense=true`일 때만 실행한다. 나머지 경우 Dense 메서드는 호출하지 않는다.
+`CandidateProvenanceReceipt`는 index/catalog version, Catalog manifest hash, source snapshot,
+normalization/embedding version과
+`LEXICAL_ONLY | HYBRID` mode를 보존한다. 각 Product hit도 #167의 `member_key`와 동일 provenance를 보존하며,
+receipt 불일치는 `EVIDENCE_INVALID`로 닫는다. Dense 물리 조회 여부는 #167 manifest mode가 결정하고,
+`ResolverPolicy.enable_dense=false`이면 이미 검증된 Dense hit를 Resolver Gate 입력에서 제외한다.
 Ingredient hit는 진단 evidence일 뿐 Product 후보, dedupe, fusion, count에 포함하지 않는다.
 
 각 Product hit는 공식 identity, product snapshot, stage/rank와 #167 의미를 그대로 보존한 finite
@@ -183,10 +180,11 @@ synthetic policy를 명시적으로 생성한다. fixture의 `TBC`를 숫자 기
 
 1. 확정 약명·함량 입력을 검증한다. 실패하면 Port를 호출하지 않고 `INVALID_INPUT`을 반환한다.
    version context 오류는 typed failure로 분리한다.
-2. index descriptor를 검증한 뒤 고정 순서로 stage를 호출한다. Dense는 index capability와 policy가 모두
-   활성화한 경우에만 마지막에 호출한다.
-3. hit의 stage, rank, score, identity, version과 snapshot shape를 검증하고 각 stage 결과가
-   `retrieval_limit`을 넘지 못하게 한다. Protocol이 선언한 domain dependency exception이나 malformed evidence는
+2. `CandidateIndexPort.hydrate(request)`를 한 번 호출해 #167 검증 완료 Product hit, Ingredient 진단 hit와
+   provenance receipt를 받는다. Resolver는 검색 stage를 다시 실행하지 않는다.
+3. hit의 stage, rank, score, identity, snapshot과 index/catalog/source/normalization/embedding provenance를
+   receipt에 대조하고 각 stage 결과가 `retrieval_limit`을 넘지 못하게 한다. `enable_dense=false`이면 Dense
+   hit는 Gate 입력에서 제외한다. Protocol이 선언한 domain dependency exception이나 malformed evidence는
    business outcome으로 강등하지 않고 `ResolverFailure`로 반환한다.
 4. 동일 `(code_system, canonical_code)` hit를 하나로 합친다. 동일 identity의 product snapshot이 충돌하면
    index integrity failure로 닫는다.
@@ -233,13 +231,13 @@ version mismatch, NaN/무한 score, stage/rank 위조, identity/snapshot 충돌�
 ## 검증 기준
 
 - 입력 오류에서 Port 호출 0회
-- descriptor 검증, stage 순서와 Dense capability/policy 조합
+- 단일 hydration 호출, typed provenance receipt 검증과 Dense policy 소비 경계
 - cross-stage 및 same-stage identity dedupe의 순서 독립성
 - 동일 identity snapshot 충돌 fail-closed
 - Fake matcher 기반 함량 누락 복수 variant, 명시 함량 충돌, form/manufacturer conflict,
   inactive product, relevance/margin 경계
 - matcher/relevance evaluator의 `UNKNOWN`, exception, malformed result와 identity당 호출 1회
-- partial stage 성공 뒤 후속 Port 실패 시 partial evidence 비노출 및 원문 예외 detail 폐기
+- hydration 실패 시 partial evidence 비노출 및 원문 예외 detail 폐기
 - `ResolverVisibleResult`에 top-K/rank/score 필드가 구조적으로 없음
 - 기존 TBC policy fixture runtime load 0건과 inline non-release policy만 사용
 - dense-only 자동 선택 차단
@@ -252,8 +250,8 @@ version mismatch, NaN/무한 score, stage/rank 위조, identity/snapshot 충돌�
 다음 연결은 #168 active index read Receipt, #169 current confirmed Medication Snapshot Receipt, 승인된
 Resolver production policy와 #171 Finalizer handoff가 확보된 뒤 별도 integration slice에서 수행한다.
 
-- #168 async `rag_candidate_index_repository.py`, 공통 pure stage plan 실행, 전체 provenance를 보존하는 bounded
-  immutable evidence snapshot hydration
+- #168 async `rag_candidate_index_repository.py`, #167 검색·provenance 검증 재사용, 전체 provenance를 보존하는
+  bounded immutable evidence snapshot hydration
 - 저장된 확정값 → `ResolverInput` 경계의 Unicode/공백·길이 Decision과 contract/integration test
 - 현재·기존 Prescription Version Medication의 canonical input 적합성 검증 또는 fail-closed migration/차단 Receipt
 - production policy loader 및 Runtime Release Bundle binding

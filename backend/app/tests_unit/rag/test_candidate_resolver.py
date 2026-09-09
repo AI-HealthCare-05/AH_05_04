@@ -11,11 +11,12 @@ from app.services.rag.candidate_resolver import (
     CandidateAttributeAssessment,
     CandidateAttributeMatcherError,
     CandidateHit,
-    CandidateIndexDescriptor,
     CandidateIndexMode,
     CandidateIndexPortError,
+    CandidateProvenanceReceipt,
     CandidateRelevanceEvaluatorError,
     CandidateSearchRequest,
+    HydratedCandidateEvidence,
     IngredientHit,
     MedicationResolver,
     OfficialEntityType,
@@ -27,9 +28,15 @@ from app.services.rag.candidate_resolver import (
     ResolverInput,
     ResolverOutcome,
     ResolverResult,
-    candidate_search_stages,
     prepare_candidate_search,
 )
+
+_MEMBER_KEY = "a" * 64
+_CATALOG_VERSION = "catalog-v1"
+_CATALOG_MANIFEST_HASH = "b" * 64
+_SOURCE_SNAPSHOT_ID = "source-snapshot-v1"
+_NORMALIZATION_VERSION = "normalization-v1"
+_EMBEDDING_MODEL_VERSION = "embedding-v1"
 
 
 def synthetic_policy(**changes: object) -> ResolverPolicy:
@@ -111,6 +118,11 @@ def hit(
         rank=rank,
         stage_score=score,
         index_version=index_version,
+        member_key=_MEMBER_KEY,
+        catalog_version=_CATALOG_VERSION,
+        source_snapshot_id=_SOURCE_SNAPSHOT_ID,
+        normalization_version=_NORMALIZATION_VERSION,
+        embedding_model_version=(_EMBEDDING_MODEL_VERSION if stage is CandidateStage.DENSE_VECTOR else None),
     )
 
 
@@ -124,6 +136,9 @@ def ingredient_hit(*, rank: int = 1) -> IngredientHit:
         rank=rank,
         stage_score=1.0,
         index_version="candidate-index-v1",
+        catalog_version=_CATALOG_VERSION,
+        source_snapshot_id=_SOURCE_SNAPSHOT_ID,
+        normalization_version=_NORMALIZATION_VERSION,
     )
 
 
@@ -135,46 +150,43 @@ class FakeIndexPort:
         ingredient_hits: tuple[IngredientHit, ...] = (),
         mode: CandidateIndexMode = CandidateIndexMode.HYBRID,
         fail_stage: CandidateStage | None = None,
-        descriptor: object | None = None,
+        provenance: object | None = None,
     ) -> None:
         self.hits = dict(hits or {})
         self.ingredient_hits = ingredient_hits
         self.mode = mode
         self.fail_stage = fail_stage
-        self.descriptor = descriptor
+        self.provenance = provenance
         self.calls: list[str] = []
 
-    def describe(self, index_version: str) -> CandidateIndexDescriptor:
-        self.calls.append("DESCRIBE")
-        if self.descriptor is not None:
-            return self.descriptor  # type: ignore[return-value]
-        return CandidateIndexDescriptor(index_version=index_version, mode=self.mode)
-
-    def _search(self, request: CandidateSearchRequest, stage: CandidateStage) -> tuple[CandidateHit, ...]:
-        del request
-        self.calls.append(stage.value)
-        if self.fail_stage is stage:
-            raise CandidateIndexPortError("sensitive raw query must not escape")
-        return self.hits.get(stage, ())
-
-    def search_product_name_exact(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]:
-        return self._search(request, CandidateStage.PRODUCT_NAME_EXACT)
-
-    def search_approved_alias_exact(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]:
-        return self._search(request, CandidateStage.APPROVED_ALIAS_EXACT)
-
-    def search_ingredient_exact(self, request: CandidateSearchRequest) -> tuple[IngredientHit, ...]:
-        del request
-        self.calls.append(CandidateStage.INGREDIENT_EXACT.value)
-        if self.fail_stage is CandidateStage.INGREDIENT_EXACT:
-            raise CandidateIndexPortError("sensitive raw query must not escape")
-        return self.ingredient_hits
-
-    def search_trigram_edit_distance(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]:
-        return self._search(request, CandidateStage.TRIGRAM_EDIT_DISTANCE)
-
-    def search_dense_vector(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]:
-        return self._search(request, CandidateStage.DENSE_VECTOR)
+    def hydrate(self, request: CandidateSearchRequest) -> HydratedCandidateEvidence:
+        self.calls.append("HYDRATE")
+        if self.fail_stage is not None:
+            raise CandidateIndexPortError(self.fail_stage)
+        provenance = self.provenance or CandidateProvenanceReceipt(
+            index_version=request.index_version,
+            catalog_version=_CATALOG_VERSION,
+            catalog_manifest_hash=_CATALOG_MANIFEST_HASH,
+            source_snapshot_ids=(_SOURCE_SNAPSHOT_ID,),
+            normalization_version=_NORMALIZATION_VERSION,
+            embedding_model_version=(_EMBEDDING_MODEL_VERSION if self.mode is CandidateIndexMode.HYBRID else None),
+            index_mode=self.mode,
+        )
+        product_hits = tuple(
+            hit
+            for stage in (
+                CandidateStage.PRODUCT_NAME_EXACT,
+                CandidateStage.APPROVED_ALIAS_EXACT,
+                CandidateStage.TRIGRAM_EDIT_DISTANCE,
+                CandidateStage.DENSE_VECTOR,
+            )
+            for hit in self.hits.get(stage, ())
+        )
+        return HydratedCandidateEvidence(
+            provenance=provenance,  # type: ignore[arg-type]
+            product_hits=product_hits,
+            ingredient_hits=self.ingredient_hits,
+        )
 
 
 class FakeAttributeMatcher:
@@ -319,15 +331,39 @@ def test_policy_version_mismatch_is_not_invalid_input() -> None:
     assert port.calls == []
 
 
-def test_index_descriptor_version_mismatch_is_typed_failure() -> None:
+def test_index_provenance_version_mismatch_is_typed_failure() -> None:
     port = FakeIndexPort(
-        descriptor=CandidateIndexDescriptor(index_version="other-index", mode=CandidateIndexMode.HYBRID)
+        provenance=CandidateProvenanceReceipt(
+            index_version="other-index",
+            catalog_version=_CATALOG_VERSION,
+            catalog_manifest_hash=_CATALOG_MANIFEST_HASH,
+            source_snapshot_ids=(_SOURCE_SNAPSHOT_ID,),
+            normalization_version=_NORMALIZATION_VERSION,
+            embedding_model_version=_EMBEDDING_MODEL_VERSION,
+            index_mode=CandidateIndexMode.HYBRID,
+        )
     )
 
     result = resolve(port)
 
-    assert result == ResolverFailure(reason=ResolverFailureReason.INDEX_VERSION_MISMATCH)
-    assert port.calls == ["DESCRIBE"]
+    assert result == ResolverFailure(reason=ResolverFailureReason.EVIDENCE_INVALID)
+    assert port.calls == ["HYDRATE"]
+
+
+def test_catalog_manifest_receipt_must_be_sha256() -> None:
+    port = FakeIndexPort(
+        provenance=CandidateProvenanceReceipt(
+            index_version="candidate-index-v1",
+            catalog_version=_CATALOG_VERSION,
+            catalog_manifest_hash="not-a-sha256",
+            source_snapshot_ids=(_SOURCE_SNAPSHOT_ID,),
+            normalization_version=_NORMALIZATION_VERSION,
+            embedding_model_version=_EMBEDDING_MODEL_VERSION,
+            index_mode=CandidateIndexMode.HYBRID,
+        )
+    )
+
+    assert resolve(port) == ResolverFailure(reason=ResolverFailureReason.EVIDENCE_INVALID)
 
 
 def test_hybrid_search_order_dedupes_identity_and_redacts_internal_scores() -> None:
@@ -350,14 +386,7 @@ def test_hybrid_search_order_dedupes_identity_and_redacts_internal_scores() -> N
     assert result.candidate is not None
     assert result.candidate.identity == product_identity("SYNTH-P-001")
     assert (result.raw_count, result.deduped_count, result.eligible_count) == (2, 1, 1)
-    assert port.calls == [
-        "DESCRIBE",
-        CandidateStage.PRODUCT_NAME_EXACT.value,
-        CandidateStage.APPROVED_ALIAS_EXACT.value,
-        CandidateStage.INGREDIENT_EXACT.value,
-        CandidateStage.TRIGRAM_EDIT_DISTANCE.value,
-        CandidateStage.DENSE_VECTOR.value,
-    ]
+    assert port.calls == ["HYDRATE"]
     assert matcher.calls == ["SYNTH-P-001"]
     assert evaluator.calls == ["SYNTH-P-001"]
     assert {field.name for field in dataclasses.fields(CandidateSearchRequest)} == {
@@ -395,26 +424,18 @@ def test_catalog_display_text_preserves_nfd_and_original_whitespace() -> None:
     assert visible.candidate.product_name == original_name
 
 
-@pytest.mark.parametrize(
-    ("mode", "enable_dense", "dense_called"),
-    [
-        (CandidateIndexMode.LEXICAL_ONLY, True, False),
-        (CandidateIndexMode.HYBRID, False, False),
-        (CandidateIndexMode.HYBRID, True, True),
-    ],
-)
-def test_dense_requires_index_capability_and_policy(
-    mode: CandidateIndexMode, enable_dense: bool, dense_called: bool
-) -> None:
-    port = FakeIndexPort(mode=mode)
+@pytest.mark.parametrize(("enable_dense", "raw_count"), [(False, 0), (True, 1)])
+def test_dense_evidence_consumption_requires_policy(enable_dense: bool, raw_count: int) -> None:
+    port = FakeIndexPort({CandidateStage.DENSE_VECTOR: (hit("SYNTH-P-001", CandidateStage.DENSE_VECTOR),)})
 
     result = resolve(port, policy=synthetic_policy(enable_dense=enable_dense))
 
     assert isinstance(result, ResolverResult)
-    assert (CandidateStage.DENSE_VECTOR.value in port.calls) is dense_called
+    assert result.raw_count == raw_count
+    assert port.calls == ["HYDRATE"]
 
 
-def test_async_hydrator_can_reuse_pure_request_and_stage_plan_contract() -> None:
+def test_async_hydrator_has_one_strength_free_typed_handoff() -> None:
     prepared = prepare_candidate_search(resolver_input(), synthetic_policy(enable_dense=False))
 
     assert isinstance(prepared, CandidateSearchRequest)
@@ -423,15 +444,25 @@ def test_async_hydrator_can_reuse_pure_request_and_stage_plan_contract() -> None
         index_version="candidate-index-v1",
         retrieval_limit=10,
     )
-    assert candidate_search_stages(
-        CandidateIndexDescriptor(index_version="candidate-index-v1", mode=CandidateIndexMode.HYBRID),
-        synthetic_policy(enable_dense=False),
-    ) == (
+    port = FakeIndexPort(
+        {
+            CandidateStage.PRODUCT_NAME_EXACT: (hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),),
+            CandidateStage.APPROVED_ALIAS_EXACT: (hit("SYNTH-P-002", CandidateStage.APPROVED_ALIAS_EXACT),),
+            CandidateStage.TRIGRAM_EDIT_DISTANCE: (hit("SYNTH-P-003", CandidateStage.TRIGRAM_EDIT_DISTANCE),),
+            CandidateStage.DENSE_VECTOR: (hit("SYNTH-P-004", CandidateStage.DENSE_VECTOR),),
+        },
+        ingredient_hits=(ingredient_hit(),),
+    )
+    hydrated = port.hydrate(prepared)
+
+    assert port.calls == ["HYDRATE"]
+    assert [hit.stage for hit in hydrated.product_hits] == [
         CandidateStage.PRODUCT_NAME_EXACT,
         CandidateStage.APPROVED_ALIAS_EXACT,
-        CandidateStage.INGREDIENT_EXACT,
         CandidateStage.TRIGRAM_EDIT_DISTANCE,
-    )
+        CandidateStage.DENSE_VECTOR,
+    ]
+    assert len(hydrated.ingredient_hits) == 1
 
 
 def test_multiple_eligible_products_are_always_ambiguous() -> None:
@@ -703,7 +734,7 @@ def test_partial_stage_failure_discards_evidence_and_exception_detail() -> None:
 
 def test_unexpected_programming_error_is_not_misclassified_as_port_failure() -> None:
     class BrokenPort(FakeIndexPort):
-        def search_product_name_exact(self, request: CandidateSearchRequest) -> tuple[CandidateHit, ...]:
+        def hydrate(self, request: CandidateSearchRequest) -> HydratedCandidateEvidence:
             del request
             raise RuntimeError("programming defect")
 
@@ -714,7 +745,6 @@ def test_unexpected_programming_error_is_not_misclassified_as_port_failure() -> 
 @pytest.mark.parametrize(
     "bad_hit",
     [
-        hit("SYNTH-P-001", CandidateStage.APPROVED_ALIAS_EXACT),
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, rank=0),
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, rank=True),
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, score=float("nan")),
@@ -730,6 +760,40 @@ def test_malformed_product_evidence_is_typed_failure(bad_hit: CandidateHit) -> N
     assert result == ResolverFailure(
         reason=ResolverFailureReason.EVIDENCE_INVALID,
         stage=CandidateStage.PRODUCT_NAME_EXACT,
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_hit",
+    [
+        dataclasses.replace(
+            hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+            member_key="not-a-sha256",
+        ),
+        dataclasses.replace(
+            hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+            catalog_version="other-catalog",
+        ),
+        dataclasses.replace(
+            hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+            source_snapshot_id="other-source",
+        ),
+        dataclasses.replace(
+            hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+            normalization_version="other-normalization",
+        ),
+        dataclasses.replace(
+            hit("SYNTH-P-001", CandidateStage.DENSE_VECTOR),
+            embedding_model_version="other-embedding",
+        ),
+    ],
+)
+def test_hydrated_product_provenance_mismatch_fails_closed(bad_hit: CandidateHit) -> None:
+    result = resolve(FakeIndexPort({bad_hit.stage: (bad_hit,)}))
+
+    assert result == ResolverFailure(
+        reason=ResolverFailureReason.EVIDENCE_INVALID,
+        stage=bad_hit.stage,
     )
 
 
