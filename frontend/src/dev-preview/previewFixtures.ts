@@ -156,11 +156,16 @@ function ocrResponse(
 const prescriptionResponse: PrescriptionResponse = {
   data: {
     prescription_id: previewIds.prescription,
+    prescription_version_id: previewIds.prescriptionVersion,
+    revision: 1,
+    current: true,
     document_id: previewIds.document,
     prescribed_date: '2026-09-08',
     confirmed_at: now,
     medications: [
       {
+        prescription_version_medication_id:
+          previewIds.prescriptionVersionMedication,
         medication_name: '합성 처방약',
         strength_text: '100mg',
         dose_value: 1,
@@ -182,6 +187,7 @@ function guideResponse(
     data: {
       guide_id: previewIds.guide,
       prescription_id: previewIds.prescription,
+      prescription_version_id: previewIds.prescriptionVersion,
       generation_status: status,
       content,
       model_name: 'synthetic-preview-guide',
@@ -333,6 +339,7 @@ export function createChatPreview(scenario: ChatScenario): {
     data: {
       session_id: previewIds.session,
       prescription_id: previewIds.prescription,
+      prescription_version_id: previewIds.prescriptionVersion,
       session_status: 'ACTIVE',
       created_at: now,
     },
