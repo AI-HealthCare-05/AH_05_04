@@ -12,6 +12,7 @@ from ai_worker.tasks.rag.source_ingestion.source_version import (
 )
 
 _CHECKSUM = "a" * 64
+_FIXTURE_VERSION = f"commit-{'1' * 40}-manifest-{'2' * 64}"
 
 
 def test_builds_and_validates_external_source_version() -> None:
@@ -79,11 +80,11 @@ def test_api_checksum_must_match_canonical_checksum() -> None:
 
 def test_builds_internal_version_from_fixture_version() -> None:
     source_version = build_internal_source_version(
-        fixture_version="commit-0123456789abcdef",
+        fixture_version=_FIXTURE_VERSION,
         canonical_checksum=_CHECKSUM,
     )
 
-    assert source_version == f"internal:commit-0123456789abcdef:{_CHECKSUM}"
+    assert source_version == f"internal:{_FIXTURE_VERSION}:{_CHECKSUM}"
     assert (
         validate_source_version(
             source_version=source_version,
@@ -92,6 +93,36 @@ def test_builds_internal_version_from_fixture_version() -> None:
         )
         is SourceVersionKind.INTERNAL
     )
+
+
+@pytest.mark.parametrize(
+    "fixture_version",
+    [
+        "latest",
+        "main",
+        "current",
+        "commit-0123456789abcdef",
+        f"commit-{'1' * 40}",
+        f"commit-{'1' * 40}-manifest-{'G' * 64}",
+    ],
+)
+def test_internal_builder_rejects_movable_or_unbound_fixture_version(
+    fixture_version: str,
+) -> None:
+    with pytest.raises(SourceVersionValidationError, match="commit-<40 lowercase hex>"):
+        build_internal_source_version(
+            fixture_version=fixture_version,
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+def test_internal_validator_rejects_movable_fixture_alias() -> None:
+    with pytest.raises(SourceVersionValidationError, match="commit-<40 lowercase hex>"):
+        validate_source_version(
+            source_version=f"internal:latest:{_CHECKSUM}",
+            external_version=None,
+            canonical_checksum=_CHECKSUM,
+        )
 
 
 @pytest.mark.parametrize(

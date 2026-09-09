@@ -25,6 +25,7 @@ _INTERNAL_VERSION_PATTERN = re.compile(
     r"(?P<fixture_version>[^:]+):"
     r"(?P<checksum>[0-9a-f]{64})\Z"
 )
+_IMMUTABLE_FIXTURE_VERSION_PATTERN = re.compile(r"commit-[0-9a-f]{40}-manifest-[0-9a-f]{64}\Z")
 
 
 class SourceVersionKind(StrEnum):
@@ -68,10 +69,7 @@ def build_internal_source_version(
     canonical_checksum: str,
 ) -> str:
     """승인된 불변 Fixture version으로 Internal Source version을 생성합니다."""
-    _validate_token("fixture_version", fixture_version)
-
-    if ":" in fixture_version:
-        raise SourceVersionValidationError("fixture_version에는 구분자 ':'를 사용할 수 없습니다.")
+    _validate_immutable_fixture_version(fixture_version)
 
     _validate_checksum(canonical_checksum)
     source_version = f"internal:{fixture_version}:{canonical_checksum}"
@@ -111,10 +109,7 @@ def validate_source_version(
     internal_match = _INTERNAL_VERSION_PATTERN.fullmatch(source_version)
     if internal_match is not None:
         _require_null_external_version(external_version)
-        _validate_token(
-            "fixture_version",
-            internal_match.group("fixture_version"),
-        )
+        _validate_immutable_fixture_version(internal_match.group("fixture_version"))
 
         if internal_match.group("checksum") != canonical_checksum:
             raise SourceVersionValidationError(
@@ -140,6 +135,15 @@ def _validate_external_version(external_version: str) -> None:
 
     if len(external_version) > EXTERNAL_VERSION_MAX_LENGTH:
         raise SourceVersionValidationError(f"external_version은 {EXTERNAL_VERSION_MAX_LENGTH}자를 초과할 수 없습니다.")
+
+
+def _validate_immutable_fixture_version(fixture_version: str) -> None:
+    _validate_token("fixture_version", fixture_version)
+
+    if _IMMUTABLE_FIXTURE_VERSION_PATTERN.fullmatch(fixture_version) is None:
+        raise SourceVersionValidationError(
+            "fixture_version은 commit-<40 lowercase hex>-manifest-<64 lowercase hex> 형식이어야 합니다."
+        )
 
 
 def _validate_token(field_name: str, value: str) -> None:

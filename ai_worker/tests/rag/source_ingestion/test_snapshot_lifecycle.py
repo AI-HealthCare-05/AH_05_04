@@ -44,6 +44,7 @@ from ai_worker.tasks.rag.source_ingestion.source_version import (
 _OPERATION_ID = UUID("11111111-1111-4111-8111-111111111111")
 _CHECKSUM_A = "a" * 64
 _CHECKSUM_B = "b" * 64
+_FIXTURE_VERSION = f"commit-{'1' * 40}-manifest-{'2' * 64}"
 _NOW = datetime(2026, 9, 7, 1, 0, tzinfo=UTC)
 
 
@@ -1032,7 +1033,7 @@ async def test_rejects_invalid_source_version_before_locking_operation() -> None
     "source_version",
     [
         f"api:2026-09-07T01:00:00.000000Z:{_CHECKSUM_A}",
-        f"internal:fixture-v1:{_CHECKSUM_A}",
+        f"internal:{_FIXTURE_VERSION}:{_CHECKSUM_A}",
     ],
 )
 async def test_persist_accepts_checksum_bound_source_version_kinds(
@@ -1055,7 +1056,7 @@ async def test_persist_accepts_checksum_bound_source_version_kinds(
     "source_version",
     [
         f"api:2026-09-07T01:00:00.000000Z:{_CHECKSUM_B}",
-        f"internal:fixture-v1:{_CHECKSUM_B}",
+        f"internal:{_FIXTURE_VERSION}:{_CHECKSUM_B}",
     ],
 )
 async def test_persist_rejects_source_version_checksum_mismatch(
