@@ -103,4 +103,4 @@ def test_guide_and_chat_dependencies_inject_operation_descriptors(monkeypatch: p
     assert captured["guide_provider"]["descriptor"].prompt_version == "guide-prompt-v3"
     assert captured["chat_provider"]["context"] is context
     assert captured["chat_provider"]["descriptor"].operation == "CHAT_GENERATION"
-    assert captured["chat_provider"]["descriptor"].prompt_version == "chat-prompt-v2"
+    assert captured["chat_provider"]["descriptor"].prompt_version == "chat-prompt-v3"
