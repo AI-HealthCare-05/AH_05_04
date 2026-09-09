@@ -68,7 +68,7 @@ def test_ocr_dependencies_inject_distinct_clova_and_openai_descriptors(monkeypat
     assert services.get_ocr_engine(structurer, context) is engine
     assert captured["openai"]["context"] is context
     assert captured["openai"]["descriptor"].operation == "OCR_STRUCTURING"
-    assert captured["openai"]["descriptor"].prompt_version == "ocr-structure-prompt-v2"
+    assert captured["openai"]["descriptor"].prompt_version == "ocr-structure-prompt-v3"
     assert captured["clova"]["context"] is context
     assert captured["clova"]["descriptor"].operation == "PRESCRIPTION_RECOGNITION"
     assert captured["clova"]["descriptor"].prompt_version is None
