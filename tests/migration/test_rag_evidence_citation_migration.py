@@ -21,7 +21,7 @@ from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAG_EVIDENCE_CITATION_REVISION = "164c5d6e7f8a"
-RAG_EVIDENCE_CITATION_BASE_REVISION = "169d4e5f6a7b"
+RAG_EVIDENCE_CITATION_BASE_REVISION = "199a1b2c3d4e"
 
 
 def create_alembic_config() -> Config:
@@ -77,6 +77,10 @@ async def _drop_evidence_citation_tables() -> None:
                 "rag_evidence_knowledge",
             ):
                 await connection.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
+            if await _table_exists("rag_source_snapshot"):
+                await connection.execute(
+                    text("ALTER TABLE rag_source_snapshot DROP CONSTRAINT IF EXISTS uq_rag_source_snapshot_id_version")
+                )
             await connection.execute(text("DROP FUNCTION IF EXISTS prevent_rag_evidence_citation_mutation() CASCADE"))
 
 
