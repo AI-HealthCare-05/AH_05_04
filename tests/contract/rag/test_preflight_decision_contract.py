@@ -41,6 +41,7 @@ from rag_runtime.identification_preflight import (  # noqa: E402
     PreflightReason,
     PreflightStaleProjection,
     PreflightStaleSignal,
+    PreflightValidationCode,
     canonical_preflight_manifest_hash,
     evaluate_medication_identification_preflight,
     preflight_state_from_mapping,
@@ -51,6 +52,12 @@ from rag_runtime.identification_preflight import (  # noqa: E402
 KERNEL_PATH = PROJECT_ROOT / "rag_runtime" / "identification_preflight.py"
 RUNTIME_CONTRACT_PATH = PROJECT_ROOT / "docs" / "contracts" / "targets" / "post-mvp-1" / "rag-runtime-v1.md"
 SAFETY_CONTRACT_PATH = PROJECT_ROOT / "docs" / "contracts" / "targets" / "post-mvp-1" / "safety-result-v2.md"
+COMPOUND_STALE_DECISION_PATH = (
+    PROJECT_ROOT / "docs" / "governance" / "decisions" / "2026-09-09-rag-preflight-compound-stale-priority.md"
+)
+PROPOSED_COMPOUND_STALE_CONTRACT_PATH = (
+    PROJECT_ROOT / "docs" / "contracts" / "proposed" / "post-mvp-1" / "safety-result-compound-stale-priority-v1.md"
+)
 FIXTURE_PATH = PROJECT_ROOT / "tests" / "fixtures" / "rag" / "preflight" / "decision_matrix.json"
 
 # 이 kernel이 import해도 되는 stdlib module 전체 목록입니다. 여기에 DB·HTTP·Provider·Retrieval
@@ -137,12 +144,20 @@ def read_safety_contract_internal_stale_reasons() -> tuple[str, ...]:
 
 
 def read_safety_contract_compound_stale_priorities() -> tuple[str, ...]:
-    """Extract compound stale priority vocabulary from safety-result-v2.md."""
-    text = SAFETY_CONTRACT_PATH.read_text(encoding="utf-8")
-    assert "### 복합 STALE 우선순위와 단일 오류 사영" in text, (
-        "safety-result-v2.md에서 복합 STALE 우선순위 섹션을 찾을 수 없습니다."
+    """Extract compound stale priority vocabulary from proposed contract safety-result-compound-stale-priority-v1.md."""
+    assert COMPOUND_STALE_DECISION_PATH.is_file(), f"결정 문서 {COMPOUND_STALE_DECISION_PATH}가 존재해야 합니다."
+    decision_text = COMPOUND_STALE_DECISION_PATH.read_text(encoding="utf-8")
+    assert "PD-173-20260909" in decision_text, "결정 문서에 Decision ID PD-173-20260909가 없습니다."
+
+    assert PROPOSED_COMPOUND_STALE_CONTRACT_PATH.is_file(), (
+        f"제안 계약 문서 {PROPOSED_COMPOUND_STALE_CONTRACT_PATH}가 존재해야 합니다."
     )
-    section = text.split("### 복합 STALE 우선순위와 단일 오류 사영")[1].split("모든 Context")[0]
+    text = PROPOSED_COMPOUND_STALE_CONTRACT_PATH.read_text(encoding="utf-8")
+    assert "PD-173-20260909" in text, "제안 계약 문서에 Decision ID PD-173-20260909 참조가 없습니다."
+    assert "## 복합 STALE 우선순위와 단일 오류 사영" in text, (
+        "제안 계약 문서에서 복합 STALE 우선순위 섹션을 찾을 수 없습니다."
+    )
+    section = text.split("## 복합 STALE 우선순위와 단일 오류 사영")[1].split("## 공통 불변식")[0]
     priorities = re.findall(r"\d+\.\s*`([A-Z_]+)`", section)
     assert len(priorities) == 3, f"복합 STALE 우선순위 파싱 실패: {priorities}"
     return tuple(priorities)
@@ -429,3 +444,62 @@ def test_manifest_hash_changes_when_identification_provenance_changes() -> None:
     )
     assert canonical_preflight_manifest_hash(req_diff_bundle) != base_hash
     assert evaluate_medication_identification_preflight(req_diff_bundle).decision is PreflightDecision.STALE_FALLBACK
+
+
+def test_malformed_member_fields_fail_closed_with_request_shape_invalid() -> None:
+    """Dataclass member field type corruption must end as typed REQUEST_SHAPE_INVALID without raising exceptions (Review [P2])."""
+    fixture = load_fixture()
+    case = fixture["cases"][0]
+    base_request = build_request(fixture, case)
+
+    # 1. MedicationSnapshotRef with unhashable prescription_version_medication_id (list)
+    malformed_med = (
+        MedicationSnapshotRef(
+            prescription_version_medication_id=[],  # type: ignore[arg-type]
+            prescription_version_id=base_request.medications[0].prescription_version_id,
+            display_order=1,
+        ),
+    )
+    req_bad_med_id = MedicationIdentificationPreflightRequest(
+        base_request.currentness, malformed_med, base_request.identifications
+    )
+    outcome = evaluate_medication_identification_preflight(req_bad_med_id)
+    assert outcome.execution_status is PreflightExecutionStatus.VALIDATION_ERROR
+    assert outcome.decision is PreflightDecision.IDENTIFICATION_FALLBACK
+    assert outcome.reason is PreflightReason.REVIEW_REQUIRED
+    assert PreflightValidationCode.REQUEST_SHAPE_INVALID in outcome.validation_codes
+    assert outcome.manifest_hash is None
+
+    # 2. MedicationSnapshotRef with unhashable display_order (list)
+    malformed_order = (
+        MedicationSnapshotRef(
+            prescription_version_medication_id=base_request.medications[0].prescription_version_medication_id,
+            prescription_version_id=base_request.medications[0].prescription_version_id,
+            display_order=[],  # type: ignore[arg-type]
+        ),
+    )
+    req_bad_order = MedicationIdentificationPreflightRequest(
+        base_request.currentness, malformed_order, base_request.identifications
+    )
+    outcome_order = evaluate_medication_identification_preflight(req_bad_order)
+    assert outcome_order.execution_status is PreflightExecutionStatus.VALIDATION_ERROR
+    assert PreflightValidationCode.REQUEST_SHAPE_INVALID in outcome_order.validation_codes
+
+    # 3. IdentificationSnapshotRef with unhashable medication id (list)
+    malformed_ident = (
+        IdentificationSnapshotRef(
+            prescription_version_medication_id=[],  # type: ignore[arg-type]
+            state=MedicationPreflightState.MATCHED,
+            prescription_version_id=base_request.currentness.pinned_prescription_version_id,
+            identification_id="eeeeeeee-0000-4000-8000-000000000201",
+            code_system="SYNTHETIC-CODE-SYSTEM",
+            canonical_code="SYNTHETIC-0101",
+            runtime_release_bundle_id=base_request.currentness.pinned_runtime_release_bundle_id,
+        ),
+    )
+    req_bad_ident = MedicationIdentificationPreflightRequest(
+        base_request.currentness, base_request.medications, malformed_ident
+    )
+    outcome_ident = evaluate_medication_identification_preflight(req_bad_ident)
+    assert outcome_ident.execution_status is PreflightExecutionStatus.VALIDATION_ERROR
+    assert PreflightValidationCode.REQUEST_SHAPE_INVALID in outcome_ident.validation_codes

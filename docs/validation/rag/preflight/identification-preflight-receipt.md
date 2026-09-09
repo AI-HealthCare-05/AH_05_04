@@ -27,10 +27,10 @@
 
 ```text
 $ uv run pytest ai_worker/tests/rag/test_identification_preflight.py -q
-47 passed in 0.04s
+54 passed in 0.07s
 
 $ uv run pytest tests/contract/rag/test_preflight_decision_contract.py -q
-33 passed in 0.05s
+34 passed in 0.08s
 
 $ uv run pytest tests/contract/test_provider_contracts_docker_copy.py -q
 10 passed in 0.02s
@@ -90,9 +90,10 @@ TOTAL coverage 94%
 | 순서가 달라도 동일 hash/decision | `test_input_order_does_not_change_manifest_or_decision`, `test_decision_matrix_case_is_order_independent` (fixture 12건 전체) | 통과 |
 | 동일 입력 재시도 → 동일 결과, side effect 0건 | `test_repeated_evaluation_is_idempotent`, `test_outcome_is_immutable` | 통과 |
 | 복합 STALE 발생 시 결정적 우선순위 사영 | `test_compound_stale_*` (4건), `test_project_preflight_stale_signals_aggregation` | 통과 |
-| 정본 계약 복합 STALE 우선순위 exact-match | `test_stale_signal_vocabulary_and_projection_matches_safety_result_contract` | 통과 |
+| 제안 계약 복합 STALE 우선순위 exact-match | `test_stale_signal_vocabulary_and_projection_matches_safety_result_contract` (`PD-173-20260909` 및 `safety-result-compound-stale-priority-v1.md` 결속) | 통과 |
 | 식별 provenance 변경 시 manifest_hash 변경 및 STALE 판정 | `test_manifest_hash_changes_with_identification_prescription_version_id`, `test_manifest_hash_changes_with_identification_runtime_release_bundle_id`, `test_manifest_hash_changes_when_identification_provenance_changes` | 통과 |
 | 픽스처 기반 결정 matrix STALE 사영 exact-match | `test_decision_matrix_case` (PF-005·PF-006·PF-007 픽스처 기대값 직접 단언) | 통과 |
+| 멤버 필드 타입 손상 fail-closed 방어 (Review [P2]) | `test_malformed_member_fields_end_as_typed_validation_outcome` (7건), `test_malformed_member_fields_fail_closed_with_request_shape_invalid` | 통과 |
 
 ## 완료 기준 대비 현황
 
@@ -111,7 +112,7 @@ Issue를 Close하지 않는다. `#174`·`#131`·`#175` 미구현으로 통합·C
 1. Stale이 Identification Fallback보다 앞서는 판정 우선순위 (고정 실행 Graph가 순서를 정하지 않았다)
 2. Identification Fallback 대표 reason이 계약 표기 순서를 따르는 규칙
 3. 구조 검증 실패를 `IDENTIFICATION_FALLBACK/REVIEW_REQUIRED`로 사영하는 선택
-4. 복합 STALE 신호 발생 시 단일 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`) (Review [P1] 반영: `docs/contracts/targets/post-mvp-1/safety-result-v2.md` 정본에 "STALE과 공개 오류 - 복합 STALE 우선순위와 단일 오류 사영" 규격을 공식 명시하고 계약 테스트로 exact-match 고정 완료)
+4. 복합 STALE 신호 발생 시 단일 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`) (Review [P1] 반영: 기존 승인 `safety-result-v2.md` 정본의 인플레이스 수정을 롤백하고, 별도 Decision `docs/governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md`(`PD-173-20260909`) 및 제안 계약 `docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md`를 신설하여 상태 디렉터리·index·테스트를 authority에 결속 완료)
 5. `#174`에서 Backend가 이 kernel을 소비할 방식 (PR #382 송은영 리뷰 지적 반영으로 `rag_runtime` 최상위 공용 패키지 승격 및 `backend/app/Dockerfile`, `ai_worker/Dockerfile` COPY 추가 완료. 컨테이너 내부 import 계약 테스트 통과)
 
 위 항목들은 승인된 별도 Decision이 아직 없다. `#174` 병합 전에 확정한다. 그때까지 `identification_reasons`,

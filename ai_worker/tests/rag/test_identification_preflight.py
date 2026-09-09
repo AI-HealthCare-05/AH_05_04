@@ -635,3 +635,170 @@ def test_project_preflight_stale_signals_aggregation() -> None:
     assert project_preflight_stale_signals(
         (PreflightStaleSignal.RUNTIME_RELEASE_STALE, PreflightStaleSignal.IDENTIFICATION_STALE)
     ) == PreflightStaleProjection(fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="IDENTIFICATION_STALE")
+
+
+@pytest.mark.parametrize(
+    "malformed_request",
+    [
+        # 1. Unhashable list in MedicationSnapshotRef.prescription_version_medication_id
+        MedicationIdentificationPreflightRequest(
+            currentness=PreflightCurrentnessToken(
+                prescription_id=PRESCRIPTION_ID,
+                pinned_prescription_version_id=VERSION_ID,
+                observed_active_prescription_version_id=VERSION_ID,
+                pinned_runtime_release_bundle_id=BUNDLE_ID,
+                observed_active_runtime_release_bundle_id=BUNDLE_ID,
+                ownership_verified=True,
+            ),
+            medications=(
+                MedicationSnapshotRef(
+                    prescription_version_medication_id=[],  # type: ignore[arg-type]
+                    prescription_version_id=VERSION_ID,
+                    display_order=1,
+                ),
+            ),
+            identifications=(
+                IdentificationSnapshotRef(
+                    prescription_version_medication_id=medication_id(1),
+                    state=MedicationPreflightState.MATCHED,
+                    prescription_version_id=VERSION_ID,
+                    identification_id="55555555-5555-4555-8555-555555555501",
+                    code_system="SYNTHETIC-SYSTEM",
+                    canonical_code="SYNTHETIC-01",
+                    runtime_release_bundle_id=BUNDLE_ID,
+                ),
+            ),
+        ),
+        # 2. Unhashable dict in MedicationSnapshotRef.display_order
+        MedicationIdentificationPreflightRequest(
+            currentness=PreflightCurrentnessToken(
+                prescription_id=PRESCRIPTION_ID,
+                pinned_prescription_version_id=VERSION_ID,
+                observed_active_prescription_version_id=VERSION_ID,
+                pinned_runtime_release_bundle_id=BUNDLE_ID,
+                observed_active_runtime_release_bundle_id=BUNDLE_ID,
+                ownership_verified=True,
+            ),
+            medications=(
+                MedicationSnapshotRef(
+                    prescription_version_medication_id=medication_id(1),
+                    prescription_version_id=VERSION_ID,
+                    display_order={},  # type: ignore[arg-type]
+                ),
+            ),
+            identifications=(),
+        ),
+        # 3. Bool in display_order
+        MedicationIdentificationPreflightRequest(
+            currentness=PreflightCurrentnessToken(
+                prescription_id=PRESCRIPTION_ID,
+                pinned_prescription_version_id=VERSION_ID,
+                observed_active_prescription_version_id=VERSION_ID,
+                pinned_runtime_release_bundle_id=BUNDLE_ID,
+                observed_active_runtime_release_bundle_id=BUNDLE_ID,
+                ownership_verified=True,
+            ),
+            medications=(
+                MedicationSnapshotRef(
+                    prescription_version_medication_id=medication_id(1),
+                    prescription_version_id=VERSION_ID,
+                    display_order=True,  # type: ignore[arg-type]
+                ),
+            ),
+            identifications=(),
+        ),
+        # 4. Unhashable list in IdentificationSnapshotRef.prescription_version_medication_id
+        MedicationIdentificationPreflightRequest(
+            currentness=PreflightCurrentnessToken(
+                prescription_id=PRESCRIPTION_ID,
+                pinned_prescription_version_id=VERSION_ID,
+                observed_active_prescription_version_id=VERSION_ID,
+                pinned_runtime_release_bundle_id=BUNDLE_ID,
+                observed_active_runtime_release_bundle_id=BUNDLE_ID,
+                ownership_verified=True,
+            ),
+            medications=(
+                MedicationSnapshotRef(
+                    prescription_version_medication_id=medication_id(1),
+                    prescription_version_id=VERSION_ID,
+                    display_order=1,
+                ),
+            ),
+            identifications=(
+                IdentificationSnapshotRef(
+                    prescription_version_medication_id=[],  # type: ignore[arg-type]
+                    state=MedicationPreflightState.MATCHED,
+                    prescription_version_id=VERSION_ID,
+                    identification_id="55555555-5555-4555-8555-555555555501",
+                    code_system="SYNTHETIC-SYSTEM",
+                    canonical_code="SYNTHETIC-01",
+                    runtime_release_bundle_id=BUNDLE_ID,
+                ),
+            ),
+        ),
+        # 5. Unhashable list in IdentificationSnapshotRef.identification_id
+        MedicationIdentificationPreflightRequest(
+            currentness=PreflightCurrentnessToken(
+                prescription_id=PRESCRIPTION_ID,
+                pinned_prescription_version_id=VERSION_ID,
+                observed_active_prescription_version_id=VERSION_ID,
+                pinned_runtime_release_bundle_id=BUNDLE_ID,
+                observed_active_runtime_release_bundle_id=BUNDLE_ID,
+                ownership_verified=True,
+            ),
+            medications=(
+                MedicationSnapshotRef(
+                    prescription_version_medication_id=medication_id(1),
+                    prescription_version_id=VERSION_ID,
+                    display_order=1,
+                ),
+            ),
+            identifications=(
+                IdentificationSnapshotRef(
+                    prescription_version_medication_id=medication_id(1),
+                    state=MedicationPreflightState.MATCHED,
+                    prescription_version_id=VERSION_ID,
+                    identification_id=[],  # type: ignore[arg-type]
+                    code_system="SYNTHETIC-SYSTEM",
+                    canonical_code="SYNTHETIC-01",
+                    runtime_release_bundle_id=BUNDLE_ID,
+                ),
+            ),
+        ),
+        # 6. Unhashable list in PreflightCurrentnessToken.prescription_id
+        MedicationIdentificationPreflightRequest(
+            currentness=PreflightCurrentnessToken(
+                prescription_id=[],  # type: ignore[arg-type]
+                pinned_prescription_version_id=VERSION_ID,
+                observed_active_prescription_version_id=VERSION_ID,
+                pinned_runtime_release_bundle_id=BUNDLE_ID,
+                observed_active_runtime_release_bundle_id=BUNDLE_ID,
+                ownership_verified=True,
+            ),
+            medications=(),
+            identifications=(),
+        ),
+        # 7. Non-bool in PreflightCurrentnessToken.ownership_verified
+        MedicationIdentificationPreflightRequest(
+            currentness=PreflightCurrentnessToken(
+                prescription_id=PRESCRIPTION_ID,
+                pinned_prescription_version_id=VERSION_ID,
+                observed_active_prescription_version_id=VERSION_ID,
+                pinned_runtime_release_bundle_id=BUNDLE_ID,
+                observed_active_runtime_release_bundle_id=BUNDLE_ID,
+                ownership_verified="yes",  # type: ignore[arg-type]
+            ),
+            medications=(),
+            identifications=(),
+        ),
+    ],
+)
+def test_malformed_member_fields_end_as_typed_validation_outcome(
+    malformed_request: MedicationIdentificationPreflightRequest,
+) -> None:
+    outcome = evaluate_medication_identification_preflight(malformed_request)
+    assert outcome.execution_status is PreflightExecutionStatus.VALIDATION_ERROR
+    assert outcome.decision is PreflightDecision.IDENTIFICATION_FALLBACK
+    assert outcome.reason is PreflightReason.REVIEW_REQUIRED
+    assert PreflightValidationCode.REQUEST_SHAPE_INVALID in outcome.validation_codes
+    assert outcome.manifest_hash is None

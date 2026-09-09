@@ -392,15 +392,63 @@ def _validate_request(
     return tuple(code for code in PreflightValidationCode if code in codes)
 
 
-def _is_request_shaped(request: MedicationIdentificationPreflightRequest) -> bool:
+def _is_currentness_shaped(currentness: object) -> bool:
     return (
-        isinstance(request, MedicationIdentificationPreflightRequest)
-        and isinstance(request.currentness, PreflightCurrentnessToken)
-        and isinstance(request.medications, tuple)
-        and isinstance(request.identifications, tuple)
-        and all(isinstance(item, MedicationSnapshotRef) for item in request.medications)
-        and all(isinstance(item, IdentificationSnapshotRef) for item in request.identifications)
+        isinstance(currentness, PreflightCurrentnessToken)
+        and isinstance(currentness.prescription_id, str)
+        and isinstance(currentness.pinned_prescription_version_id, str)
+        and isinstance(currentness.observed_active_prescription_version_id, str)
+        and isinstance(currentness.pinned_runtime_release_bundle_id, str)
+        and isinstance(currentness.observed_active_runtime_release_bundle_id, str)
+        and isinstance(currentness.ownership_verified, bool)
     )
+
+
+def _is_medication_item_shaped(item: object) -> bool:
+    return (
+        isinstance(item, MedicationSnapshotRef)
+        and isinstance(item.prescription_version_medication_id, str)
+        and isinstance(item.prescription_version_id, str)
+        and isinstance(item.display_order, int)
+        and not isinstance(item.display_order, bool)
+    )
+
+
+def _is_identification_item_shaped(item: object) -> bool:
+    return (
+        isinstance(item, IdentificationSnapshotRef)
+        and isinstance(item.prescription_version_medication_id, str)
+        and isinstance(item.prescription_version_id, str)
+        and (isinstance(item.state, MedicationPreflightState) or isinstance(item.state, str))
+        and (item.identification_id is None or isinstance(item.identification_id, str))
+        and (item.code_system is None or isinstance(item.code_system, str))
+        and (item.canonical_code is None or isinstance(item.canonical_code, str))
+        and (item.runtime_release_bundle_id is None or isinstance(item.runtime_release_bundle_id, str))
+    )
+
+
+def _is_request_shaped(request: object) -> bool:
+    if not isinstance(request, MedicationIdentificationPreflightRequest):
+        return False
+    if not _is_currentness_shaped(getattr(request, "currentness", None)):
+        return False
+    if not isinstance(request.medications, tuple) or not isinstance(request.identifications, tuple):
+        return False
+    return all(_is_medication_item_shaped(item) for item in request.medications) and all(
+        _is_identification_item_shaped(item) for item in request.identifications
+    )
+
+
+def _has_duplicates(items: Sequence[object]) -> bool:
+    seen: set[object] = set()
+    for item in items:
+        try:
+            if item in seen:
+                return True
+            seen.add(item)
+        except TypeError:
+            return True
+    return False
 
 
 def _validate_currentness(currentness: PreflightCurrentnessToken) -> set[PreflightValidationCode]:
@@ -429,10 +477,10 @@ def _validate_medications(
         return codes
 
     medication_ids = [item.prescription_version_medication_id for item in medications]
-    if len(set(medication_ids)) != len(medication_ids):
+    if _has_duplicates(medication_ids):
         codes.add(PreflightValidationCode.DUPLICATE_MEDICATION_ID)
     display_orders = [item.display_order for item in medications]
-    if len(set(display_orders)) != len(display_orders):
+    if _has_duplicates(display_orders):
         codes.add(PreflightValidationCode.DUPLICATE_DISPLAY_ORDER)
     if not all(isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in display_orders):
         codes.add(PreflightValidationCode.DISPLAY_ORDER_NOT_POSITIVE)
@@ -449,17 +497,27 @@ def _validate_identifications(
     identifications = request.identifications
     codes: set[PreflightValidationCode] = set()
     identification_medication_ids = [item.prescription_version_medication_id for item in identifications]
-    if len(set(identification_medication_ids)) != len(identification_medication_ids):
+    if _has_duplicates(identification_medication_ids):
         codes.add(PreflightValidationCode.DUPLICATE_IDENTIFICATION_MEDICATION_ID)
     identification_ids = [item.identification_id for item in identifications if item.identification_id is not None]
-    if len(set(identification_ids)) != len(identification_ids):
+    if _has_duplicates(identification_ids):
         codes.add(PreflightValidationCode.DUPLICATE_IDENTIFICATION_ID)
-    if set(identification_medication_ids) != {
-        item.prescription_version_medication_id for item in request.medications
-    } or len(identification_medication_ids) != len(request.medications):
+    medication_set: set[object] = set()
+    for med_item in request.medications:
+        try:
+            medication_set.add(med_item.prescription_version_medication_id)
+        except TypeError:
+            pass
+    ident_set: set[object] = set()
+    for mid in identification_medication_ids:
+        try:
+            ident_set.add(mid)
+        except TypeError:
+            pass
+    if ident_set != medication_set or len(identification_medication_ids) != len(request.medications):
         codes.add(PreflightValidationCode.IDENTIFICATION_MEDICATION_SET_MISMATCH)
-    for item in identifications:
-        codes.update(_validate_identification_item(item))
+    for ident_item in identifications:
+        codes.update(_validate_identification_item(ident_item))
     return codes
 
 

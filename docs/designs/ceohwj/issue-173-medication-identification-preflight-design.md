@@ -153,7 +153,13 @@ MedicationIdentificationPreflightRequest(
 약제 집합과 Identification 집합 불일치 / Identification ID 중복 / canonical UUID 위반 /
 약제 `prescription_version_id`가 pinned version과 불일치 / `MATCHED`인데
 `identification_id`·`code_system`·`canonical_code` 중 누락 / 비-`MATCHED`인데 그 값이 존재 /
-`state`가 allowlist 밖.
+`state`가 allowlist 밖 / 멤버 필드 타입 손상(`REQUEST_SHAPE_INVALID`).
+
+dataclass는 런타임에 필드 타입을 강제하지 않으므로, `_is_request_shaped`에서 `PreflightCurrentnessToken`,
+`MedicationSnapshotRef`, `IdentificationSnapshotRef`의 모든 멤버 필드 primitive 타입을 사전 검증한다.
+unhashable list(`[]`), dict, bool 타입 등이 주입될 경우 중복 검사 이전에 `REQUEST_SHAPE_INVALID` 검증
+오류로 즉시 종결하여 예외(`TypeError: unhashable type` 등) 발생 없이 안전하게 fail-closed 처리한다 (Review [P2]).
+또한 중복 판정 함수(`_has_duplicates`)에서도 unhashable 타입 예외를 안전하게 흡수하도록 방어적으로 구현한다.
 
 `state`는 `StrEnum`이므로 알 수 없는 문자열은 `MedicationPreflightState(...)` 생성 시점에 걸린다.
 kernel은 그와 별개로 런타임 타입도 확인해 `str` raw 값이 흘러들어와도 판정으로 끝낸다.
@@ -254,13 +260,13 @@ project_preflight_stale_signals(signals: tuple[PreflightStaleSignal, ...]) -> Pr
 
 ### 복합 STALE 신호 집계 및 우선순위 규칙
 
-처방 Version과 런타임 Bundle/식별 불일치가 동시에 발생하는 경우, `docs/contracts/targets/post-mvp-1/safety-result-v2.md`의 "STALE과 공개 오류 - 복합 STALE 우선순위와 단일 오류 사영" 정본 계약에 따라 다음의 결정적 우선순위로 집계하여 `outcome.primary_stale_projection`에 단일 사영을 고정한다 (Review [P1]).
+처방 Version과 런타임 Bundle/식별 불일치가 동시에 발생하는 경우, [`PD-173-20260909`](../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md) 및 [Safety Result 복합 STALE 우선순위 계약 제안 v1](../../contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md)에 따라 다음의 결정적 우선순위로 집계하여 `outcome.primary_stale_projection`에 단일 사영을 고정한다 (Review [P1]).
 
 1. **`PRESCRIPTION_STALE` 최우선**: 사용자의 활성 처방전 버전 자체가 변경된 임상 사건은 환자에게 직접 안내되어야 하는 근본 원인이므로, 시스템 내부적 컨텍스트 불일치보다 항상 우선한다 (`fallback_code="PRESCRIPTION_STALE"`, `stale_reason=None`).
 2. **`IDENTIFICATION_STALE` 우선**: 처방 버전 변경이 없을 때, 약제 단위의 공식 의약품 식별 불일치가 런타임 번들 불일치보다 상위 도메인 사유로 취급된다 (`fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="IDENTIFICATION_STALE"`).
 3. **`RUNTIME_RELEASE_STALE`**: 활성 런타임 번들만 변경된 경우 (`fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="RUNTIME_RELEASE_STALE"`).
 
-후속 소비자(#174 RAG-12-API)는 복수 신호를 임의로 사영하거나 선언 순서에 의존하지 않고 정본 계약에 고정된 `outcome.primary_stale_projection`을 직접 소비한다.
+후속 소비자(#174 RAG-12-API)는 복수 신호를 임의로 사영하거나 선언 순서에 의존하지 않고 위 제안 계약에 고정된 `outcome.primary_stale_projection`을 직접 소비한다.
 
 `execution_status`를 별도 축으로 둔 이유는 `ai_worker/tasks/rag/evidence_gate.py`의
 `EvidenceGateExecutionStatus` 선례와 같다. 공유 결정축에 새 값을 만들지 않고 구조 오류를 구분한다.
