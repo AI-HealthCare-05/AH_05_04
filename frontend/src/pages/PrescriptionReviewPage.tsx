@@ -390,6 +390,21 @@ const emptyManualMedication: CreateManualMedicationRequest = {
   duration_days: '',
 }
 
+function hasAtMostDecimalPlaces(value: string, maximumPlaces: number) {
+  const normalizedValue = value.replaceAll('_', '')
+  const [coefficient, exponentText] = normalizedValue.toLowerCase().split('e')
+  const unsignedCoefficient = coefficient.replace(/^[+-]/, '')
+  const fractionLength = unsignedCoefficient.split('.')[1]?.length ?? 0
+  const digits = unsignedCoefficient.replace('.', '')
+  const trailingZeroCount = digits.match(/0+$/)?.[0].length ?? 0
+  const decimalExponent =
+    BigInt(exponentText ?? '0') -
+    BigInt(fractionLength) +
+    BigInt(trailingZeroCount)
+
+  return decimalExponent >= -BigInt(maximumPlaces)
+}
+
 function validateManualMedication(payload: CreateManualMedicationRequest) {
   const errors: Record<string, string> = {}
   const medicationName = payload.medication_name.trim()
@@ -404,11 +419,12 @@ function validateManualMedication(payload: CreateManualMedicationRequest) {
   }
 
   const doseNumber = Number(doseValue.replaceAll('_', ''))
+  const doseFormatError = getNumericFieldError('DOSE_VALUE', doseValue)
   const doseHasAtMostThreeDecimals =
-    Number.isInteger(doseNumber * 1000)
+    !doseFormatError && hasAtMostDecimalPlaces(doseValue, 3)
   if (
     !doseValue ||
-    getNumericFieldError('DOSE_VALUE', doseValue) ||
+    doseFormatError ||
     doseNumber > 9_999_999.999 ||
     !doseHasAtMostThreeDecimals
   ) {

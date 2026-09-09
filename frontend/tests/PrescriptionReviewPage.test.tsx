@@ -1672,6 +1672,48 @@ describe('PrescriptionReviewPage manual medication add', () => {
     expect(createManualMedication).not.toHaveBeenCalled()
   })
 
+  it('Backend NUMERIC(10,3) 범위의 1.001을 부동소수점 오차 없이 허용한다', async () => {
+    const originalFields = makeCompleteFields()
+    vi.mocked(getOcrJob).mockResolvedValue(makeOcrResponse(originalFields))
+    vi.mocked(createManualMedication).mockResolvedValue(
+      makeOcrResponse([...originalFields, ...makeManualMedicationFields()]),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.change(screen.getByLabelText('1회 복용량'), {
+      target: { value: '1.001' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    await waitFor(() => expect(createManualMedication).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(createManualMedication).mock.calls[0][1].dose_value).toBe(
+      '1.001',
+    )
+  })
+
+  it('Backend NUMERIC(10,3)을 넘는 소수점 4자리 값은 거부한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: '약물 추가' }))
+    fillManualMedicationForm()
+    fireEvent.change(screen.getByLabelText('1회 복용량'), {
+      target: { value: '1.0001' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '약물 저장' }))
+
+    expect(
+      await screen.findByText(
+        '1회 복용량은 0보다 큰 숫자로, 소수점 아래 3자리까지 입력해 주세요.',
+      ),
+    ).toBeTruthy()
+    expect(createManualMedication).not.toHaveBeenCalled()
+  })
+
   it('저장 응답의 전체 field 목록으로 갱신하고 새 약물을 기존 검수 흐름에 포함한다', async () => {
     const originalFields = makeCompleteFields()
     const response = makeOcrResponse([
