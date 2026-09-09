@@ -56,6 +56,14 @@ Track F 구현은 v1과 v2의 Citation 유형이나 fallback enum을 합집합�
 - Patient Context·Identification·Runtime Bundle·환경 Revision·Resolver Member 불일치: 공개 `EXECUTION_CONTEXT_STALE`
 - 내부 `stale_reason`: `PATIENT_CONTEXT_STALE`, `IDENTIFICATION_STALE`, `RUNTIME_RELEASE_STALE`, `RUNTIME_ENVIRONMENT_SUSPENDED`, `RESOLVER_MEMBER_REVOKED`
 
+### 복합 STALE 우선순위와 단일 오류 사영
+
+처방 Version과 실행 Context(Identification Snapshot, Runtime Bundle 등)의 불일치가 동시에 발생한 경우, 다음 우선순위에 따라 단일 공개 `fallback_code` 및 내부 `stale_reason`으로 사영한다.
+
+1. `PRESCRIPTION_STALE` (최우선): 처방 Version 불일치는 환자 임상 원천 데이터(처방전) 자체의 변경이므로, 내부 실행 Context 불일치보다 환자 공개 오류로 우선한다 (공개 `PRESCRIPTION_STALE`, 내부 `stale_reason=None`).
+2. `IDENTIFICATION_STALE`: 처방 버전 불일치가 없을 때, 약제 단위의 공식 의약품 식별 불일치는 런타임 릴리즈 번들 변경보다 상위 도메인 사유로 우선한다 (공개 `EXECUTION_CONTEXT_STALE`, 내부 `stale_reason="IDENTIFICATION_STALE"`).
+3. `RUNTIME_RELEASE_STALE`: 활성 런타임 릴리즈 번들 불일치 (공개 `EXECUTION_CONTEXT_STALE`, 내부 `stale_reason="RUNTIME_RELEASE_STALE"`).
+
 모든 Context 불일치 종결은 `AI_JOB=STALE + release_decision=STALE + is_current=false`다. 내부 상세 사유는 공개 DTO에 노출하지 않는다. Source Snapshot 만료는 실행 Context STALE이 아니라 `evidence_status=STALE + execution_status=NO_RESULT + release_decision=REJECTED + NO_APPROVED_EVIDENCE`로 처리한다.
 
 공개 `fallback_code`는 `NO_APPROVED_EVIDENCE`, `CONFLICTING_EVIDENCE`, `SAFETY_ROUTED`, `PROVIDER_TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `VALIDATION_FAILED`, `PRESCRIPTION_STALE`, `EXECUTION_CONTEXT_STALE`, `UNSUPPORTED_REQUEST`로 제한한다. `REJECTED`에서는 생성한 의료 답변을 버리고 승인된 고정 fallback만 공개한다. fallback도 안전하게 commit하지 못한 실행만 `AI_JOB=FAILED`다.
@@ -92,6 +100,7 @@ Source 기반 Citation은 원 환자 요청의 `REQUEST/PASS`만으로 공개할
 - 금지 행동 요청의 `SUCCEEDED/LIMITED/BLOCKED_ACTION`과 처방 변경·중단 지시 생성 0건
 - Source 만료와 실행 Context STALE 의미 분리
 - 공개 `EXECUTION_CONTEXT_STALE`과 내부 `stale_reason` 분리
+- 복합 STALE 발생 시 단일 fallback_code 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)
 - Claim별 유형 FK 정확히 하나, 잘못된 유형·FK 조합 차단
 - 다섯 Citation 유형의 Source Snapshot·locator·실행 Usage 재현
 - Citation별 별도 `CITATION_AUTHORIZATION/PASS`, 원 REQUEST·Scope exact-match와 `PATIENT_CITATION` 승인
