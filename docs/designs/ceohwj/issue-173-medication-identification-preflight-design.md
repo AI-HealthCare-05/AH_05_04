@@ -102,6 +102,9 @@ PR #382 리뷰(송은영)에서 backend 컨테이너가 `ai_worker/`를 COPY하�
 `ocr_runtime` / `provider_runtime`과 동일하게 `rag_runtime/` 최상위 공용 패키지로 승격했다.
 `backend/app/Dockerfile`과 `ai_worker/Dockerfile` 양쪽에서 COPY되어 Backend와 AI Worker 모두 동일한 커널을 소비할 수 있다.
 
+> **이름 공간(Namespace) 구분 안내**:
+> 최상위 공용 패키지 `rag_runtime/`(`rag_runtime.identification_preflight`)는 stdlib 기반의 순수 런타임 커널(Preflight 판정 로직)을 제공하는 최상위 공용 패키지이다. 반면 `backend/app/models/rag_runtime.py`는 SQLAlchemy 기반의 RAG 런타임 영속화 모델(`RagRuntimeEnvironment`, `RagRuntimeReleaseBundle` 등)을 정의하는 Backend 내부 모델 모듈이다. 두 모듈은 import 경로(`rag_runtime` vs `app.models.rag_runtime`)와 책임 계층(의존성 없는 순수 커널 vs DB ORM 모델)이 명확히 분리되어 있으며, 커널은 DB 의존성을 갖지 않는다.
+
 ## 입력 계약
 
 ```python
@@ -128,6 +131,7 @@ MedicationIdentificationPreflightRequest(
 ```
 
 - 모든 식별자는 소문자 하이픈 canonical UUID 문자열이다. 대문자·중괄호·공백 변형은 fail-closed다.
+- `PreflightCurrentnessToken.observed_active_runtime_release_bundle_id`: 호출 시점의 활성 Runtime Release Bundle ID이다. DB 모델 관점에서는 `backend/app/models/rag_runtime.py`의 `RagRuntimeEnvironment.active_bundle_id` (테이블 `rag_runtime_environment.active_bundle_id`)에 해당한다. 후속 구현자(#174 RAG-12-API, #175 RAG-12A, #180 등)는 활성 환경(`RagRuntimeEnvironment`) 조회 결과에서 이 값을 추출하여 `PreflightCurrentnessToken`의 `observed_active_runtime_release_bundle_id`로 전달해야 한다 (pinned 번들과 불일치 시 `RUNTIME_RELEASE_STALE` 판정).
 - `ownership_verified`는 호출자가 `prescription_version_medication → prescription_version → prescription
   → profile_id` 소유권 검증을 이미 끝냈다는 표시다. 이 kernel은 소유권을 판정하지 않는다.
 - 약제 이름·함량·query 문자열은 입력이 아니다. 환자 식별 가능 값과 검색 원문을 manifest에 넣지 않는다.
@@ -288,5 +292,5 @@ project_preflight_stale_signals(signals: tuple[PreflightStaleSignal, ...]) -> Pr
 | --- | --- |
 | 대표 reason 규칙이 리뷰에서 뒤집힘 | 전체 집합을 함께 반환. 대표값만 바꾸면 됨 |
 | Stale 우선순위가 리뷰에서 뒤집힘 | 판정 단계가 분리돼 있어 2·3단계 교체로 끝남 |
-| Backend가 `ai_worker`를 import해야 함 | 이 slice는 배선 없음. `#174`에서 배치 결정 |
+| Backend가 `ai_worker`를 import해야 함 | `rag_runtime/` 최상위 공용 패키지로 승격 및 Dockerfile 양쪽 COPY 반영 완료 (PR #382 배포 결함 해결) |
 | pure 테스트가 승인·공개 가능성으로 오해됨 | 설계·증빙 문서와 module docstring에 `PUBLIC_TRACK_F_ENABLED=false`와 미구현 선행을 명시 |

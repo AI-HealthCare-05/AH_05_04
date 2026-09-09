@@ -349,8 +349,11 @@ def test_decision_matrix_case(case_id: str, fixture: dict, case: dict) -> None:
     assert outcome.reason is PreflightReason(expected["reason"]), case_id
     assert [item.value for item in outcome.identification_reasons] == expected["identification_reasons"], case_id
     assert [item.value for item in outcome.stale_signals] == expected["stale_signals"], case_id
-    if outcome.stale_signals:
-        assert outcome.primary_stale_projection == project_preflight_stale_signals(outcome.stale_signals), case_id
+    if expected.get("primary_stale_projection") is not None:
+        exp_proj = expected["primary_stale_projection"]
+        assert outcome.primary_stale_projection is not None, case_id
+        assert outcome.primary_stale_projection.fallback_code == exp_proj["fallback_code"], case_id
+        assert outcome.primary_stale_projection.stale_reason == exp_proj["stale_reason"], case_id
     else:
         assert outcome.primary_stale_projection is None, case_id
     assert (outcome.manifest_hash is not None) is expected["manifest_hash_present"], case_id

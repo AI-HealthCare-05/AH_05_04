@@ -92,6 +92,7 @@ TOTAL coverage 94%
 | 복합 STALE 발생 시 결정적 우선순위 사영 | `test_compound_stale_*` (4건), `test_project_preflight_stale_signals_aggregation` | 통과 |
 | 정본 계약 복합 STALE 우선순위 exact-match | `test_stale_signal_vocabulary_and_projection_matches_safety_result_contract` | 통과 |
 | 식별 provenance 변경 시 manifest_hash 변경 및 STALE 판정 | `test_manifest_hash_changes_with_identification_prescription_version_id`, `test_manifest_hash_changes_with_identification_runtime_release_bundle_id`, `test_manifest_hash_changes_when_identification_provenance_changes` | 통과 |
+| 픽스처 기반 결정 matrix STALE 사영 exact-match | `test_decision_matrix_case` (PF-005·PF-006·PF-007 픽스처 기대값 직접 단언) | 통과 |
 
 ## 완료 기준 대비 현황
 

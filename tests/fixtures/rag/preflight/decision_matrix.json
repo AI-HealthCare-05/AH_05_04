@@ -36,6 +36,7 @@
         "reason": "MATCHED",
         "identification_reasons": [],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "manifest_hash_present": true
       }
     },
@@ -64,6 +65,7 @@
         "identification_reasons": ["UNRESOLVED"],
         "blocking_medication_ids": ["dddddddd-0000-4000-8000-000000000102"],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "manifest_hash_present": true
       }
     },
@@ -98,6 +100,7 @@
           "dddddddd-0000-4000-8000-000000000103"
         ],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "manifest_hash_present": true
       }
     },
@@ -117,6 +120,7 @@
         "reason": "UNAVAILABLE",
         "identification_reasons": ["UNAVAILABLE"],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "manifest_hash_present": true
       }
     },
@@ -140,6 +144,10 @@
         "reason": "EXECUTION_CONTEXT_STALE",
         "identification_reasons": [],
         "stale_signals": ["PRESCRIPTION_STALE"],
+        "primary_stale_projection": {
+          "fallback_code": "PRESCRIPTION_STALE",
+          "stale_reason": null
+        },
         "manifest_hash_present": true
       }
     },
@@ -163,6 +171,10 @@
         "reason": "EXECUTION_CONTEXT_STALE",
         "identification_reasons": [],
         "stale_signals": ["RUNTIME_RELEASE_STALE"],
+        "primary_stale_projection": {
+          "fallback_code": "EXECUTION_CONTEXT_STALE",
+          "stale_reason": "RUNTIME_RELEASE_STALE"
+        },
         "manifest_hash_present": true
       }
     },
@@ -183,6 +195,10 @@
         "reason": "EXECUTION_CONTEXT_STALE",
         "identification_reasons": [],
         "stale_signals": ["PRESCRIPTION_STALE"],
+        "primary_stale_projection": {
+          "fallback_code": "PRESCRIPTION_STALE",
+          "stale_reason": null
+        },
         "manifest_hash_present": true
       }
     },
@@ -196,6 +212,7 @@
         "reason": "REVIEW_REQUIRED",
         "identification_reasons": [],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "validation_codes": ["AT_LEAST_ONE_MEDICATION_REQUIRED"],
         "manifest_hash_present": false
       }
@@ -216,6 +233,7 @@
         "reason": "REVIEW_REQUIRED",
         "identification_reasons": [],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "validation_codes": ["UNKNOWN_PREFLIGHT_STATE"],
         "manifest_hash_present": false
       }
@@ -244,6 +262,7 @@
         "reason": "REVIEW_REQUIRED",
         "identification_reasons": [],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "validation_codes": [
           "DUPLICATE_MEDICATION_ID",
           "DUPLICATE_IDENTIFICATION_MEDICATION_ID"
@@ -271,6 +290,7 @@
         "reason": "REVIEW_REQUIRED",
         "identification_reasons": [],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "validation_codes": ["OWNERSHIP_NOT_VERIFIED"],
         "manifest_hash_present": false
       }
@@ -292,6 +312,7 @@
         "reason": "REVIEW_REQUIRED",
         "identification_reasons": [],
         "stale_signals": [],
+        "primary_stale_projection": null,
         "validation_codes": ["MATCHED_PRODUCT_IDENTITY_REQUIRED"],
         "manifest_hash_present": false
       }
