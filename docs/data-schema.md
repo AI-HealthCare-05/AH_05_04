@@ -433,6 +433,27 @@ Production에서는 생성된 처방 version을 제거하는 migration downgrade
 
 ## Post-MVP-1 목표 스키마 — 분할 구현 중
 
+### Track B Schedule·Occurrence DB 기반 (#199)
+
+Revision `199a1b2c3d4e`는 `medication_schedule`, `medication_schedule_time`,
+`medication_occurrence` 테이블을 추가한다. Schedule은 #169의 불변
+`prescription_version_medication.id`를 FK로 참조하며 약품 snapshot당 하나만 존재한다.
+Schedule time은 `(medication_schedule_id, schedule_revision, local_time)`, occurrence는
+`(medication_schedule_time_id, scheduled_local_date)`를 unique로 고정한다. 상태 enum 값,
+revision 양수, 종료일 조합, occurrence deadline 순서는 DB CHECK로도 제한한다.
+
+Repository의 기본 소유권 adapter는
+`prescription_version_medication → prescription_version → prescription.profile_id → SELF user_id`
+parent chain을 사용하며 기존 `medication.id`로 fallback하지 않는다. 새 schedule 생성은 현재 active
+Version의 본인 약품만 허용한다. 과거 Version에 이미 생성된 schedule·occurrence의 이력 조회는
+같은 SELF 소유자에게 유지하고, 다른 사용자는 존재 여부를 숨길 수 있도록 `None`을 반환한다.
+aware datetime은 저장 전에 UTC instant로 정규화하며 PostgreSQL `timestamptz` 컬럼에 저장한다.
+
+이 revision의 downgrade는 세 테이블을 잠근 뒤 Track B row가 한 건이라도 있으면 중단한다. 비어 있는
+개발·검증 환경에서만 occurrence → schedule time → schedule 순서로 신규 테이블을 제거한다. 실제 데이터가
+생성된 환경은 downgrade로 이력을 삭제하지 않고 동일 schema에서 forward-fix한다. 14일 rolling 생성,
+Version 변경 시 취소, Check-in·API·Notification은 B2~B5 후속 범위다.
+
 Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐고, RAG/Eval 목표 스키마는 분할 PR 단위로 migration·모델·repository를 반영합니다. 이 섹션은 구현 상태를 함께 표시하며, 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK와 이번 분할 PR의 신규 RAG/Eval ID는 호환을 위해 `CHAR(36)`을 사용합니다. PostgreSQL native `UUID` 전환은 별도 승인 migration 범위입니다.
 
 | 영역 | 목표 테이블 | 목표 제약 |

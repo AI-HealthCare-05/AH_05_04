@@ -18,6 +18,15 @@ from app.models.chat import ChatCitation, ChatMessage, ChatSession
 from app.models.guides import Guide, GuideCitation
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.medical_documents import MedicalDocument
+from app.models.medication_schedules import (
+    MedicationOccurrence,
+    MedicationOccurrenceStatus,
+    MedicationSchedule,
+    MedicationScheduleEndMode,
+    MedicationScheduleSource,
+    MedicationScheduleStatus,
+    MedicationScheduleTime,
+)
 from app.models.ocr import ExtractedField, OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
@@ -142,6 +151,13 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeDocument",
     "Medication",
+    "MedicationOccurrence",
+    "MedicationOccurrenceStatus",
+    "MedicationSchedule",
+    "MedicationScheduleEndMode",
+    "MedicationScheduleSource",
+    "MedicationScheduleStatus",
+    "MedicationScheduleTime",
     "MedicationCandidateSearch",
     "MedicationCandidateSearchResult",
     "MedicationCandidateSearchStatus",
