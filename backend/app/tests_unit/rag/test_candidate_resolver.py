@@ -854,6 +854,17 @@ def test_malformed_product_evidence_is_typed_failure(bad_hit: CandidateHit) -> N
     )
 
 
+def test_raw_string_product_stage_fails_closed() -> None:
+    bad_hit = dataclasses.replace(
+        hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+        stage="PRODUCT_NAME_EXACT",  # type: ignore[arg-type]
+    )
+
+    result = resolve(FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (bad_hit,)}))
+
+    assert result == ResolverFailure(reason=ResolverFailureReason.EVIDENCE_INVALID)
+
+
 @pytest.mark.parametrize(
     "bad_hit",
     [

@@ -470,6 +470,7 @@ def _product_hit_is_valid(
         and _identity_is_valid(hit.identity, OfficialEntityType.PRODUCT, "MFDS_ITEM_SEQ")
         and _product_snapshot_is_valid(hit.product)
         and hit.product.identity == hit.identity
+        and isinstance(hit.stage, CandidateStage)
         and hit.stage in _PRODUCT_STAGE_ORDER
         and type(hit.rank) is int
         and hit.rank > 0
@@ -557,7 +558,11 @@ def _hydrated_evidence_failure(
         return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
     receipt = hydrated.provenance
     invalid_product_hit = next(
-        (hit for hit in hydrated.product_hits if hit.stage not in _PRODUCT_STAGE_ORDER),
+        (
+            hit
+            for hit in hydrated.product_hits
+            if not isinstance(hit.stage, CandidateStage) or hit.stage not in _PRODUCT_STAGE_ORDER
+        ),
         None,
     )
     if invalid_product_hit is not None:
