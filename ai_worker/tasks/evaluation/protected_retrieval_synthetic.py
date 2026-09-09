@@ -22,11 +22,13 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedAuthorizationCapability,
     ProtectedAuthorizationGrant,
     ProtectedDatasetBinding,
+    ProtectedDatasetState,
     ProtectedOperationRequest,
     ProtectedOperationResult,
     ProtectedPrincipalRole,
     ProtectedSecurityError,
     VerifiedAuthorizationApproval,
+    _operation_lifecycle_terminal,
     audit_entry_sha256,
     authorization_grant_approval_sha256,
     authorization_grant_sha256,
@@ -190,12 +192,24 @@ class InMemoryProtectedAuditJournal:
             event_id=new_event_id(),
             grant_id=grant.grant_id,
             grant_revision=grant.revision,
+            effective_revision=(grant.revision if action is AuthorizationAuditAction.GRANT else grant.revision + 1),
             subject=grant.subject,
             issuer=approval.evidence.issuer if approval is not None else grant.issuer,
+            dataset_id=grant.dataset_id,
+            dataset_version=grant.dataset_version,
+            manifest_sha256=grant.manifest_sha256,
+            protected_artifact_sha256=grant.protected_artifact_sha256,
+            hmac_key_version=grant.hmac_key_version,
+            actions=grant.actions,
             control_implementation=grant.control_implementation,
             approval_source_event_id=(
                 approval.evidence.source_event_id if approval is not None else grant.approval_source_event_id
             ),
+            approval_source_raw_sha256=(
+                approval.evidence.canonical_raw_sha256 if approval is not None else grant.approval_source_raw_sha256
+            ),
+            valid_from=grant.valid_from,
+            expires_at=grant.expires_at,
             action=action,
             reason_code=safe_reason,
             recorded_at=self._clock.now_utc(),
@@ -205,9 +219,21 @@ class InMemoryProtectedAuditJournal:
         entry = entry.model_copy(update={"entry_sha256": audit_entry_sha256(entry)})
         return self._append(entry)  # type: ignore[return-value]
 
-    def operation_history(self, operation_key: str) -> tuple[OperationAuditEntry, ...]:
+    def operation_history(self, request: ProtectedOperationRequest) -> tuple[OperationAuditEntry, ...]:
         self.verify_chain()
-        return tuple(entry for entry in self.operation_entries if entry.operation_key == operation_key)
+        return tuple(
+            entry
+            for entry in self.operation_entries
+            if entry.operation_key == request.operation_key
+            and entry.principal == request.principal
+            and entry.protected_action is request.action
+            and entry.target_ref == request.target_ref
+            and entry.dataset_id == request.dataset.dataset_id
+            and entry.dataset_version == request.dataset.dataset_version
+            and entry.manifest_sha256 == request.dataset.manifest_sha256
+            and entry.protected_artifact_sha256 == request.dataset.protected_artifact_sha256
+            and entry.hmac_key_version == request.dataset.hmac_key_version
+        )
 
     def append_operation(
         self,
@@ -217,15 +243,26 @@ class InMemoryProtectedAuditJournal:
         reason_code: ProtectedAuditReason | str,
         capability: ProtectedAuthorizationCapability | None = None,
         result: ProtectedOperationResult | None = None,
+        *,
+        closes_intent: bool = False,
     ) -> OperationAuditEntry:
         try:
             safe_reason = ProtectedAuditReason(reason_code)
         except ValueError:
             raise ProtectedSecurityError("INTERNAL_ERROR") from None
-        history = self.operation_history(request.operation_key)
-        if not self._valid_operation_transition(history, outcome):
+        history = self.operation_history(request)
+        if not self._valid_operation_transition(history, outcome, closes_intent=closes_intent):
             raise ProtectedSecurityError("AUDIT_TRANSITION_INVALID")
-        if history and self._operation_binding(history[0]) != self._request_binding(request, grant):
+        lifecycle_terminal = _operation_lifecycle_terminal(history)
+        if (
+            lifecycle_terminal is not None
+            and lifecycle_terminal.outcome is OperationAuditOutcome.INTENT
+            and (
+                outcome in {OperationAuditOutcome.SUCCEEDED, OperationAuditOutcome.UNKNOWN}
+                or (outcome is OperationAuditOutcome.DENIED and closes_intent)
+            )
+            and self._operation_binding(lifecycle_terminal) != self._request_binding(request, grant)
+        ):
             raise ProtectedSecurityError("AUDIT_BINDING_MISMATCH")
         if (outcome is OperationAuditOutcome.SUCCEEDED) != (result is not None):
             raise ProtectedSecurityError("AUDIT_BINDING_MISMATCH")
@@ -238,12 +275,17 @@ class InMemoryProtectedAuditJournal:
             principal=request.principal,
             protected_action=request.action,
             target_ref=request.target_ref,
+            dataset_id=request.dataset.dataset_id,
+            dataset_version=request.dataset.dataset_version,
+            manifest_sha256=request.dataset.manifest_sha256,
+            hmac_key_version=request.dataset.hmac_key_version,
             grant_id=grant.grant_id if grant else None,
             grant_revision=grant.revision if grant else None,
             dataset_state_revision=request.dataset.state_revision,
             protected_artifact_sha256=request.dataset.protected_artifact_sha256,
             capability_nonce=capability.nonce if capability else None,
             result_ref=result.result_ref if result else None,
+            closes_intent=closes_intent,
             outcome=outcome,
             reason_code=safe_reason,
             recorded_at=self._clock.now_utc(),
@@ -262,6 +304,10 @@ class InMemoryProtectedAuditJournal:
             request.principal,
             request.action,
             request.target_ref,
+            request.dataset.dataset_id,
+            request.dataset.dataset_version,
+            request.dataset.manifest_sha256,
+            request.dataset.hmac_key_version,
             grant.grant_id if grant else None,
             grant.revision if grant else None,
             request.dataset.state_revision,
@@ -275,6 +321,10 @@ class InMemoryProtectedAuditJournal:
             entry.principal,
             entry.protected_action,
             entry.target_ref,
+            entry.dataset_id,
+            entry.dataset_version,
+            entry.manifest_sha256,
+            entry.hmac_key_version,
             entry.grant_id,
             entry.grant_revision,
             entry.dataset_state_revision,
@@ -282,19 +332,21 @@ class InMemoryProtectedAuditJournal:
         )
 
     @staticmethod
-    def _valid_operation_transition(history: tuple[OperationAuditEntry, ...], outcome: OperationAuditOutcome) -> bool:
-        if not history:
-            return outcome in {OperationAuditOutcome.DENIED, OperationAuditOutcome.INTENT}
-        return (
-            len(history) == 1
-            and history[0].outcome is OperationAuditOutcome.INTENT
-            and outcome
-            in {
-                OperationAuditOutcome.SUCCEEDED,
-                OperationAuditOutcome.UNKNOWN,
-                OperationAuditOutcome.DENIED,
-            }
-        )
+    def _valid_operation_transition(
+        history: tuple[OperationAuditEntry, ...],
+        outcome: OperationAuditOutcome,
+        *,
+        closes_intent: bool,
+    ) -> bool:
+        terminal = _operation_lifecycle_terminal(history)
+        if outcome is OperationAuditOutcome.DENIED:
+            return not closes_intent or (terminal is not None and terminal.outcome is OperationAuditOutcome.INTENT)
+        if terminal is None or terminal.outcome is OperationAuditOutcome.DENIED:
+            return outcome is OperationAuditOutcome.INTENT
+        return terminal.outcome is OperationAuditOutcome.INTENT and outcome in {
+            OperationAuditOutcome.SUCCEEDED,
+            OperationAuditOutcome.UNKNOWN,
+        }
 
     def verify_chain(self) -> None:
         if (
@@ -353,7 +405,15 @@ class InMemoryAuthorizationLedger:
     ) -> None:
         if (expected.dataset_id, expected.dataset_version) != (updated.dataset_id, updated.dataset_version):
             raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
-        if updated.state_revision != expected.state_revision + 1:
+        allowed_transitions = {
+            ProtectedDatasetState.ACCESS_AUTHORIZED: ProtectedDatasetState.AUTHORING,
+            ProtectedDatasetState.AUTHORING: ProtectedDatasetState.REVIEW_READY,
+            ProtectedDatasetState.REVIEW_READY: ProtectedDatasetState.FROZEN,
+        }
+        if (
+            updated.state_revision != expected.state_revision + 1
+            or allowed_transitions.get(expected.state) is not updated.state
+        ):
             raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
         async with self.transaction_lock:
             key = (expected.dataset_id, expected.dataset_version)
@@ -361,7 +421,11 @@ class InMemoryAuthorizationLedger:
                 raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
             self._datasets[key] = updated
 
-    def grant(self, grant: ProtectedAuthorizationGrant) -> None:
+    async def grant(self, grant: ProtectedAuthorizationGrant) -> None:
+        async with self.transaction_lock:
+            self._grant(grant)
+
+    def _grant(self, grant: ProtectedAuthorizationGrant) -> None:
         approval = self._verifier.verify(grant)
         if approval.evidence.source_event_id != grant.approval_source_event_id:
             raise ProtectedSecurityError("APPROVAL_EVIDENCE_MISMATCH")
@@ -380,7 +444,7 @@ class InMemoryAuthorizationLedger:
 
     async def revoke(self, grant_id: str, source_event_id: str, expected_raw_sha256: str) -> None:
         async with self.transaction_lock:
-            grant = self.require_current(grant_id)
+            grant = self._require_current(grant_id)
             approval = self._verifier.verify_revoke(grant, source_event_id, expected_raw_sha256)
             self._journal.append_authorization(
                 grant,
@@ -398,7 +462,11 @@ class InMemoryAuthorizationLedger:
     def current_revision(self, grant_id: str) -> int | None:
         return self._revisions.get(grant_id)
 
-    def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant:
+    async def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant:
+        async with self.transaction_lock:
+            return self._require_current(grant_id)
+
+    def _require_current(self, grant_id: str) -> ProtectedAuthorizationGrant:
         grant = self.current(grant_id)
         if grant is None:
             raise ProtectedSecurityError("AUTHORIZATION_REVOKED")
@@ -409,22 +477,32 @@ class InMemoryAuthorizationLedger:
             raise ProtectedSecurityError("AUTHORIZATION_EXPIRED")
         return grant
 
-    def find_for(self, request: ProtectedOperationRequest) -> ProtectedAuthorizationGrant | None:
-        candidates = [
-            grant
-            for grant_id, grant in self._grants.items()
-            if grant_id not in self._revoked
-            and grant.subject == request.principal
-            and grant.dataset_id == request.dataset.dataset_id
-            and grant.dataset_version == request.dataset.dataset_version
-            and grant.manifest_sha256 == request.dataset.manifest_sha256
-            and grant.protected_artifact_sha256 == request.dataset.protected_artifact_sha256
-            and grant.hmac_key_version == request.dataset.hmac_key_version
-            and request.action in grant.actions
-        ]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda item: item.revision)
+    async def find_for(self, request: ProtectedOperationRequest) -> ProtectedAuthorizationGrant | None:
+        async with self.transaction_lock:
+            candidates = [
+                grant
+                for grant_id, grant in self._grants.items()
+                if grant_id not in self._revoked
+                and grant.subject == request.principal
+                and grant.dataset_id == request.dataset.dataset_id
+                and grant.dataset_version == request.dataset.dataset_version
+                and grant.manifest_sha256 == request.dataset.manifest_sha256
+                and grant.protected_artifact_sha256 == request.dataset.protected_artifact_sha256
+                and grant.hmac_key_version == request.dataset.hmac_key_version
+                and request.action in grant.actions
+            ]
+            if not candidates:
+                return None
+            now = self._clock.now_utc()
+            for expired in (grant for grant in candidates if now >= grant.expires_at):
+                self._journal.append_authorization(expired, AuthorizationAuditAction.EXPIRE, "EXPIRED")
+                self._revoked.add(expired.grant_id)
+                self._revisions[expired.grant_id] += 1
+            unexpired_candidates = [grant for grant in candidates if now < grant.expires_at]
+            if not unexpired_candidates:
+                return None
+            active_candidates = [grant for grant in unexpired_candidates if grant.valid_from <= now]
+            return max(active_candidates or unexpired_candidates, key=lambda item: item.revision)
 
     def simulate_concurrent_revocation(self, grant_id: str) -> None:
         self._revoked.add(grant_id)
@@ -447,12 +525,15 @@ class _GuardSession:
         self._revoke_before_consume = revoke_before_consume
         self._consumed: set[str] = set()
 
+    def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant:
+        return self._ledger._require_current(grant_id)
+
     def issue_capability(
         self, request: ProtectedOperationRequest, grant: ProtectedAuthorizationGrant
     ) -> ProtectedAuthorizationCapability:
         if request != self._request or grant != self._grant:
             raise ProtectedSecurityError("GUARD_BINDING_MISMATCH")
-        self._ledger.require_current(grant.grant_id)
+        self._ledger._require_current(grant.grant_id)
         return ProtectedAuthorizationCapability(
             request_id=request.request_id,
             grant_id=grant.grant_id,
@@ -468,7 +549,7 @@ class _GuardSession:
     def consume(self, capability: ProtectedAuthorizationCapability) -> None:
         if self._revoke_before_consume:
             self._ledger.simulate_concurrent_revocation(self._grant.grant_id)
-        self._ledger.require_current(self._grant.grant_id)
+        self._ledger._require_current(self._grant.grant_id)
         self._ledger.require_dataset(self._request)
         if capability.nonce in self._consumed:
             raise ProtectedSecurityError("CAPABILITY_ALREADY_CONSUMED")
@@ -498,7 +579,7 @@ class InMemoryAuthorizationGuard:
         self, request: ProtectedOperationRequest, grant: ProtectedAuthorizationGrant
     ) -> AsyncIterator[_GuardSession]:
         async with self._ledger.transaction_lock:
-            current = self._ledger.require_current(grant.grant_id)
+            current = self._ledger._require_current(grant.grant_id)
             if current != grant:
                 raise ProtectedSecurityError("AUTHORIZATION_REVISION_MISMATCH")
             yield _GuardSession(
@@ -514,14 +595,15 @@ class SyntheticProtectedOperation:
     def __init__(self) -> None:
         self.call_count = 0
         self.fail_after_side_effect = False
-        self._results: dict[str, ProtectedOperationResult] = {}
+        self._results: dict[tuple[str, ...], ProtectedOperationResult] = {}
         self.pause_before_return: asyncio.Event | None = None
         self.resume: asyncio.Event | None = None
 
     async def execute(
         self, request: ProtectedOperationRequest, capability: ProtectedAuthorizationCapability
     ) -> ProtectedOperationResult:
-        prior = self._results.get(request.operation_key)
+        operation_scope = self._operation_scope(request)
+        prior = self._results.get(operation_scope)
         if prior is not None:
             return prior
         self.call_count += 1
@@ -529,7 +611,7 @@ class SyntheticProtectedOperation:
             result_ref=OpaqueLogicalRef(namespace=OpaqueRefNamespace.RUN_RESULT, value=str(uuid4())),
             reason_code="PROTECTED_OPERATION_SUCCEEDED",
         )
-        self._results[request.operation_key] = result
+        self._results[operation_scope] = result
         if self.fail_after_side_effect:
             raise RuntimeError("synthetic uncertain operation")
         if self.pause_before_return is not None:
@@ -538,8 +620,25 @@ class SyntheticProtectedOperation:
                 await self.resume.wait()
         return result
 
-    def observe(self, operation_key: str) -> ProtectedOperationResult | None:
-        return self._results.get(operation_key)
+    def observe(self, request: ProtectedOperationRequest) -> ProtectedOperationResult | None:
+        return self._results.get(self._operation_scope(request))
+
+    @staticmethod
+    def _operation_scope(request: ProtectedOperationRequest) -> tuple[str, ...]:
+        return (
+            request.operation_key,
+            request.principal.actor.actor_id,
+            request.principal.actor.namespace,
+            request.principal.role,
+            request.action,
+            request.target_ref.namespace,
+            request.target_ref.value,
+            request.dataset.dataset_id,
+            request.dataset.dataset_version,
+            request.dataset.manifest_sha256,
+            request.dataset.protected_artifact_sha256,
+            request.dataset.hmac_key_version,
+        )
 
 
 __all__ = [

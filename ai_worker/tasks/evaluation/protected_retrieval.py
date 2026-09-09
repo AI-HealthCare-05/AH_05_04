@@ -317,10 +317,20 @@ class AuthorizationAuditEntry(StrictContractModel):
     event_id: str
     grant_id: str
     grant_revision: int
+    effective_revision: int
     subject: ProtectedPrincipal
     issuer: ProtectedApprovalPrincipal
+    dataset_id: str
+    dataset_version: str
+    manifest_sha256: Sha256Hex
+    protected_artifact_sha256: Sha256Hex
+    hmac_key_version: str
+    actions: tuple[ProtectedAction, ...]
     control_implementation: ControlImplementationBinding
     approval_source_event_id: str
+    approval_source_raw_sha256: Sha256Hex
+    valid_from: datetime
+    expires_at: datetime
     action: AuthorizationAuditAction
     reason_code: ProtectedAuditReason
     recorded_at: datetime
@@ -337,12 +347,17 @@ class OperationAuditEntry(StrictContractModel):
     principal: ProtectedPrincipal
     protected_action: ProtectedAction
     target_ref: OpaqueLogicalRef
+    dataset_id: str
+    dataset_version: str
+    manifest_sha256: Sha256Hex
+    hmac_key_version: str
     grant_id: str | None
     grant_revision: int | None
     dataset_state_revision: int
     protected_artifact_sha256: Sha256Hex
     capability_nonce: str | None
     result_ref: OpaqueLogicalRef | None
+    closes_intent: bool
     outcome: OperationAuditOutcome
     reason_code: ProtectedAuditReason
     recorded_at: datetime
@@ -395,14 +410,16 @@ class TrustedClock(Protocol):
 
 
 class AuthorizationLedger(Protocol):
-    def find_for(self, request: ProtectedOperationRequest) -> ProtectedAuthorizationGrant | None: ...
+    async def find_for(self, request: ProtectedOperationRequest) -> ProtectedAuthorizationGrant | None: ...
 
-    def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant: ...
+    async def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant: ...
 
     def require_dataset(self, request: ProtectedOperationRequest) -> ProtectedDatasetBinding: ...
 
 
 class GuardSession(Protocol):
+    def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant: ...
+
     def issue_capability(
         self, request: ProtectedOperationRequest, grant: ProtectedAuthorizationGrant
     ) -> ProtectedAuthorizationCapability: ...
@@ -417,7 +434,7 @@ class AuthorizationGuard(Protocol):
 
 
 class ProtectedAuditJournal(Protocol):
-    def operation_history(self, operation_key: str) -> tuple[OperationAuditEntry, ...]: ...
+    def operation_history(self, request: ProtectedOperationRequest) -> tuple[OperationAuditEntry, ...]: ...
 
     def append_operation(
         self,
@@ -427,6 +444,8 @@ class ProtectedAuditJournal(Protocol):
         reason_code: ProtectedAuditReason | str,
         capability: ProtectedAuthorizationCapability | None = None,
         result: ProtectedOperationResult | None = None,
+        *,
+        closes_intent: bool = False,
     ) -> OperationAuditEntry: ...
 
 
@@ -510,31 +529,113 @@ def _deny(
     request: ProtectedOperationRequest,
     grant: ProtectedAuthorizationGrant | None,
     reason: str,
+    *,
+    closes_intent: bool = False,
 ) -> None:
-    journal.append_operation(request, grant, OperationAuditOutcome.DENIED, ProtectedAuditReason(reason))
+    journal.append_operation(
+        request,
+        grant,
+        OperationAuditOutcome.DENIED,
+        ProtectedAuditReason(reason),
+        closes_intent=closes_intent,
+    )
 
 
-def _replay_completed_operation(
+def _operation_lifecycle_terminal(
+    history: tuple[OperationAuditEntry, ...],
+) -> OperationAuditEntry | None:
+    lifecycle = [entry for entry in history if entry.outcome is not OperationAuditOutcome.DENIED or entry.closes_intent]
+    return lifecycle[-1] if lifecycle else None
+
+
+def _validated_replay_result(
+    request: ProtectedOperationRequest,
+    authoritative_dataset: ProtectedDatasetBinding,
+    terminal_entry: OperationAuditEntry,
+    replay_grant: ProtectedAuthorizationGrant,
+    now: datetime,
+) -> ProtectedOperationResult:
+    if terminal_entry.result_ref is None:
+        raise ProtectedSecurityError("AUDIT_HASH_MISMATCH")
+    authorized_request = request.model_copy(update={"dataset": authoritative_dataset})
+    _validate_completed_operation_replay(authorized_request, authoritative_dataset, terminal_entry)
+    _validate_role_state(authorized_request)
+    if terminal_entry.grant_id != replay_grant.grant_id:
+        raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+    _validate_grant(authorized_request, replay_grant, now)
+    return ProtectedOperationResult(
+        result_ref=terminal_entry.result_ref,
+        reason_code="PROTECTED_OPERATION_SUCCEEDED",
+    )
+
+
+async def _replay_completed_operation(
     request: ProtectedOperationRequest,
     terminal_entry: OperationAuditEntry,
     ledger: AuthorizationLedger,
     clock: TrustedClock,
 ) -> ProtectedOperationResult:
-    if terminal_entry.result_ref is None:
-        raise ProtectedSecurityError("AUDIT_HASH_MISMATCH")
     authoritative_dataset = ledger.require_dataset(request)
-    authorized_request = request.model_copy(update={"dataset": authoritative_dataset})
-    _validate_completed_operation_replay(authorized_request, authoritative_dataset, terminal_entry)
-    _validate_role_state(authorized_request)
-    replay_grant = ledger.find_for(authorized_request)
-    if replay_grant is None or replay_grant.grant_id != terminal_entry.grant_id:
+    if terminal_entry.grant_id is None:
         raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
-    replay_grant = ledger.require_current(replay_grant.grant_id)
-    _validate_grant(authorized_request, replay_grant, clock.now_utc())
-    return ProtectedOperationResult(
-        result_ref=terminal_entry.result_ref,
-        reason_code="PROTECTED_OPERATION_SUCCEEDED",
+    replay_grant = await ledger.require_current(terminal_entry.grant_id)
+    return _validated_replay_result(
+        request,
+        authoritative_dataset,
+        terminal_entry,
+        replay_grant,
+        clock.now_utc(),
     )
+
+
+async def _resolve_operation_history(
+    request: ProtectedOperationRequest,
+    history: tuple[OperationAuditEntry, ...],
+    ledger: AuthorizationLedger,
+    clock: TrustedClock,
+    *,
+    intent_requires_reconciliation: bool,
+) -> ProtectedOperationResult | None:
+    if not history:
+        return None
+    terminal_entry = _operation_lifecycle_terminal(history)
+    if terminal_entry is None:
+        return None
+    if terminal_entry.outcome is OperationAuditOutcome.UNKNOWN or (
+        terminal_entry.outcome is OperationAuditOutcome.INTENT and intent_requires_reconciliation
+    ):
+        raise ProtectedSecurityError("RECONCILIATION_REQUIRED")
+    if terminal_entry.outcome is OperationAuditOutcome.SUCCEEDED:
+        return await _replay_completed_operation(request, terminal_entry, ledger, clock)
+    return None
+
+
+def _resolve_guarded_operation_history(
+    request: ProtectedOperationRequest,
+    history: tuple[OperationAuditEntry, ...],
+    ledger: AuthorizationLedger,
+    session: GuardSession,
+    clock: TrustedClock,
+) -> ProtectedOperationResult | None:
+    if not history:
+        return None
+    terminal_entry = _operation_lifecycle_terminal(history)
+    if terminal_entry is None:
+        return None
+    if terminal_entry.outcome in {OperationAuditOutcome.INTENT, OperationAuditOutcome.UNKNOWN}:
+        raise ProtectedSecurityError("RECONCILIATION_REQUIRED")
+    if terminal_entry.outcome is OperationAuditOutcome.SUCCEEDED:
+        if terminal_entry.grant_id is None:
+            raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+        replay_grant = session.require_current(terminal_entry.grant_id)
+        return _validated_replay_result(
+            request,
+            ledger.require_dataset(request),
+            terminal_entry,
+            replay_grant,
+            clock.now_utc(),
+        )
+    return None
 
 
 async def execute_protected_operation(
@@ -546,25 +647,37 @@ async def execute_protected_operation(
     operation: ProtectedOperation,
     clock: TrustedClock,
 ) -> ProtectedOperationResult:
-    history = journal.operation_history(request.operation_key)
-    if history:
-        terminal_entry = history[-1]
-        terminal = terminal_entry.outcome
-        if terminal in {OperationAuditOutcome.INTENT, OperationAuditOutcome.UNKNOWN}:
-            raise ProtectedSecurityError("RECONCILIATION_REQUIRED")
-        if terminal is OperationAuditOutcome.SUCCEEDED:
-            return _replay_completed_operation(request, terminal_entry, ledger, clock)
-
-    grant = ledger.find_for(request)
+    grant: ProtectedAuthorizationGrant | None = None
+    operation_started = False
     try:
+        replay = await _resolve_operation_history(
+            request,
+            journal.operation_history(request),
+            ledger,
+            clock,
+            intent_requires_reconciliation=False,
+        )
+        if replay is not None:
+            return replay
+
+        grant = await ledger.find_for(request)
         authoritative_dataset = ledger.require_dataset(request)
         authoritative_request = request.model_copy(update={"dataset": authoritative_dataset})
         _validate_role_state(authoritative_request)
         if grant is None:
             raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
-        grant = ledger.require_current(grant.grant_id)
+        grant = await ledger.require_current(grant.grant_id)
         _validate_grant(authoritative_request, grant, clock.now_utc())
         async with guard.hold(authoritative_request, grant) as session:
+            replay = _resolve_guarded_operation_history(
+                authoritative_request,
+                journal.operation_history(authoritative_request),
+                ledger,
+                session,
+                clock,
+            )
+            if replay is not None:
+                return replay
             journal.append_operation(
                 authoritative_request,
                 grant,
@@ -574,6 +687,7 @@ async def execute_protected_operation(
             capability = session.issue_capability(authoritative_request, grant)
             session.consume(capability)
             try:
+                operation_started = True
                 result = await operation.execute(authoritative_request, capability)
             except Exception:
                 journal.append_operation(
@@ -604,11 +718,21 @@ async def execute_protected_operation(
                 raise ProtectedSecurityError("OPERATION_OUTCOME_UNKNOWN") from None
             return result
     except ProtectedSecurityError as error:
-        if error.reason_code not in {
-            "RECONCILIATION_REQUIRED",
-            "OPERATION_OUTCOME_UNKNOWN",
-        } and not journal.operation_history(request.operation_key):
-            _deny(journal, request, grant, error.reason_code)
+        denial_history = journal.operation_history(request)
+        if error.reason_code != "OPERATION_OUTCOME_UNKNOWN" and not operation_started:
+            lifecycle_terminal = _operation_lifecycle_terminal(denial_history)
+            _deny(
+                journal,
+                request,
+                grant,
+                error.reason_code,
+                closes_intent=(
+                    error.reason_code != "RECONCILIATION_REQUIRED"
+                    and lifecycle_terminal is not None
+                    and lifecycle_terminal.outcome is OperationAuditOutcome.INTENT
+                    and lifecycle_terminal.request_id == request.request_id
+                ),
+            )
         raise
 
 

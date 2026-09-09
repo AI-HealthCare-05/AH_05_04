@@ -36,8 +36,8 @@ GOLD_REVIEW_EVIDENCE_HASH = "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72
 DATASET_APPROVAL_EVIDENCE_HASH = "3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"
 HOLDOUT_PREPARATION_HASH = "40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192"
 HOLDOUT_PREPARATION_SELF_HASH = "b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6"
-PROTECTED_RUNNER_FOUNDATION_HASH = "7311f9e934b5cda8a87f14ddf986057a54be79e0a215937ce2345af08b3593d5"
-PROTECTED_RUNNER_FOUNDATION_SELF_HASH = "7c77b159df066b96aaf22c7ad431ab114dcf147fc6067e5b871bf8ea49e98d5c"
+PROTECTED_RUNNER_FOUNDATION_HASH = "85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9"
+PROTECTED_RUNNER_FOUNDATION_SELF_HASH = "657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969"
 
 
 def _status_payload() -> dict[str, Any]:
@@ -160,7 +160,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q",
                 "exit_code": 0,
-                "result": "59 passed",
+                "result": "83 passed",
             },
         ],
         "updated_at": "2026-09-09T00:00:00.000000Z",
@@ -619,7 +619,7 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
         b"1 passed",
         b"26 passed",
         b"27 passed",
-        b"59 passed",
+        b"83 passed",
         b"51 passed",
         b"132 passed",
         b"94 passed, 7 skipped",

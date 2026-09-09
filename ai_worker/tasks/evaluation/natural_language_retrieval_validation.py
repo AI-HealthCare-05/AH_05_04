@@ -59,7 +59,7 @@ _VALIDATION_CHECK_CATALOG = {
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py "
         "ai_worker/tests/evaluation/test_protected_retrieval.py -q",
-        "59 passed",
+        "83 passed",
     ),
     "PHASE_B_DATASET_APPROVAL_PROVENANCE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
@@ -158,8 +158,8 @@ class HoldoutPreparationRef(StrictContractModel):
 class ProtectedRunnerFoundationRef(StrictContractModel):
     id: Literal["issue-273-protected-runner-foundation"]
     version: Literal["1.0.0"]
-    raw_sha256: Literal["7311f9e934b5cda8a87f14ddf986057a54be79e0a215937ce2345af08b3593d5"]
-    self_sha256: Literal["7c77b159df066b96aaf22c7ad431ab114dcf147fc6067e5b871bf8ea49e98d5c"]
+    raw_sha256: Literal["85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9"]
+    self_sha256: Literal["657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969"]
 
 
 class Issue273ValidationStatus(StrictContractModel):

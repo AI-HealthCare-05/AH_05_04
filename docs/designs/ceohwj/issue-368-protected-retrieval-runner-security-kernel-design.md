@@ -84,20 +84,23 @@ journal, operation adapter를 연결할 수 있다.
 - `ProtectedAuthorizationCapability`: request·grant revision·Dataset state revision·artifact digest·action·target,
   single-use nonce와 짧은 expiry를 결속한 operation 전용 capability
 - `ProtectedOperationResult`: protected content가 아닌 logical result ref와 비민감 reason code만 포함
-- `AuthorizationAuditEntry`: `event_kind=AUTHORIZATION`, global sequence, grant ID/revision, subject·issuer 전체
-  identity, implementation binding, approval receipt ref, `GRANT | REVOKE | EXPIRE`, reason, trusted UTC time,
+- `AuthorizationAuditEntry`: `event_kind=AUTHORIZATION`, global sequence, grant/effective revision, subject·issuer 전체
+  identity, Dataset ID/version/manifest/artifact/HMAC binding, action 집합, implementation binding,
+  approval receipt ID/raw hash, validity window, `GRANT | REVOKE | EXPIRE`, reason, trusted UTC time,
   이전 entry hash와 self-hash
 - `OperationAuditEntry`: `event_kind=OPERATION`, global sequence, operation/request key, principal, protected action,
-  logical refs, grant·capability·state revision, `DENIED | INTENT | SUCCEEDED | UNKNOWN`, reason, trusted UTC time,
-  이전 entry hash와 self-hash
+  logical refs, Dataset ID/version/manifest/artifact/HMAC binding, grant·capability·state revision,
+  `DENIED | INTENT | SUCCEEDED | UNKNOWN`, `DENIED`가 현재 `INTENT`를 닫는지 구분하는 flag, reason,
+  trusted UTC time, 이전 entry hash와 self-hash
 - `ProtectedAuditEntry`: 위 두 exact-field variant의 discriminated union. variant 밖 field는 거부함
 - `TrustedClock`: adapter의 신뢰 시간원. request가 제공한 시간은 만료나 audit에 사용하지 않음
-- `AuthorizationLedger`: `VerifiedAuthorizationApproval`만 받아 grant/revoke를 global audit CAS와 같은
-  transaction에서 효력화하고 current revision 조회
+- `AuthorizationLedger`: `VerifiedAuthorizationApproval`만 받아 grant/revoke/expiry를 global audit CAS와 같은
+  async transaction에서 효력화하고 current revision 및 active grant 조회. synthetic 초기 fixture 조립을 제외한
+  control-plane grant도 operation guard와 동일 lock을 기다린다.
 - `AuthorizationGuard`: operation 동안 revocation/state lock 또는 동등한 transaction을 유지하고 single-use
   capability를 발급·소비하는 async context manager
-- `ProtectedAuditJournal`: global monotonic sequence와 durable head에 대한 append-CAS, operation-key history 제공.
-  update/delete API가 없음
+- `ProtectedAuditJournal`: global monotonic sequence와 durable head에 대한 append-CAS, authenticated principal·전체
+  Dataset binding·action·target으로 namespace된 operation-key history 제공. update/delete API가 없음
 - `ProtectedOperation`: guard 안에서 capability를 필수 입력으로 받아 실행하고 비민감 result만 제공.
   성공 결과의 멱등 반환과 `UNKNOWN` 자동 재실행 차단까지만 이번 foundation에서 구현하며,
   독립 승인 `observe/reconcile` adapter는 실제 인프라 결정 이후 후속 구현한다.
@@ -117,7 +120,8 @@ journal, operation adapter를 연결할 수 있다.
 - revocation revision, Dataset state revision과 artifact digest를 lock하고 single-use capability를 발급·소비하는
   in-memory `AuthorizationGuard`
 - global monotonic sequence와 durable head를 모사하는 append-CAS journal
-- operation key별 멱등 실행, side-effect 관찰 hook과 자동 retry 차단을 제공하는 synthetic operation.
+- authenticated principal·Dataset·action·target으로 namespace된 operation key별 멱등 실행, side-effect 관찰 hook과
+  자동 retry 차단을 제공하는 synthetic operation.
   독립 승인 reconciliation은 실제 adapter 후속 범위다.
 
 이 모듈은 production registry나 CLI에 등록하지 않는다. HOLDOUT 본문, Gold, 경로, credential을 fixture로
@@ -181,16 +185,23 @@ namespace, role 전체를 exact-match하며 actor ID만 같은 다른 namespace�
 
 1. request의 UUID/idempotency key, typed opaque refs, principal, Dataset binding과 역할·action·state predicate를
    `TrustedClock.now_utc()` 기준으로 검증한다.
-2. journal에서 operation key의 history를 읽는다. 기존 `INTENT | UNKNOWN`이 있으면 자동·새 request ID 재시도를
-   모두 `RECONCILIATION_REQUIRED`로 거부한다. 기존 `SUCCEEDED`면 기록된 비민감 result만 반환한다.
-3. `AuthorizationGuard`를 획득한다. guard가 current grant, revocation revision, Dataset state revision과 artifact
-   digest를 같은 보호 transaction/lease에서 고정하지 못하면 adapter 등록 또는 실행을 거부한다.
+2. journal에서 authenticated principal·전체 Dataset binding·action·target으로 namespace된 operation key history를
+   읽는다. 기존 `UNKNOWN`은 `RECONCILIATION_REQUIRED`로 거부한다. `INTENT`는 guard 획득을 기다린 뒤 history를
+   재확인하여 완료됐으면 audited result를 반환하고, 여전히 미해결이면 `RECONCILIATION_REQUIRED`로 거부한다.
+   기존 `SUCCEEDED`는 당시 기록된 grant가 여전히 current·valid할 때만 비민감 result를 반환한다.
+3. active grant 조회와 expiry audit/revision 전이는 revoke와 같은 ledger transaction을 사용한다.
+   `AuthorizationGuard`를 획득한 뒤 operation history를 다시 확인한다. guard가 current grant, revocation revision,
+   Dataset state revision과 artifact digest를 같은 보호 transaction/lease에서 고정하지 못하면 adapter 등록 또는
+   실행을 거부한다.
 4. `ApprovalEvidenceVerifier`가 immutable source event ID를 기준으로 actor·state·timestamp, target
    commit·artifact hash, canonical raw hash와 implementation participant 전체를 신뢰 source에서 다시 읽어
    exact-match하고 `VerifiedAuthorizationApproval`을 발급한다. caller가 구성한 receipt나 단순 재해시 값은
    ledger 입력으로 받을 수 없다. 이어 grant의 subject/issuer 전체 identity, Dataset ID/version/hash,
    artifact digest, HMAC key version, action과 `valid_from <= now < expires_at`을 exact-match한다.
-5. 거부는 비민감 `DENIED` audit를 global-head CAS로 append한다. append 실패 여부와 무관하게 operation은 호출하지 않는다.
+5. 각 거부 시도는 request ID별 비민감 `DENIED` audit를 global-head CAS로 append한다. 이전 `DENIED`는 같은 scope의
+   새 시도를 막지 않으며, `INTENT` 뒤 side effect 전에 거부되면 `INTENT → DENIED` terminal로 닫는다. append 실패
+   여부와 무관하게 operation은 호출하지 않는다. 기존 `SUCCEEDED | UNKNOWN` 또는 다른 request의 `INTENT` 뒤에
+   추가된 access-attempt `DENIED`는 원래 lifecycle terminal을 덮지 않는다.
 6. 승인된 요청은 guard 안에서 `INTENT`를 durable append-CAS한다. 실패하면 operation을 호출하지 않는다.
 7. guard가 request·grant revision·state revision·digest·action·target·nonce·expiry에 결속된 single-use capability를
    발급한다. operation은 이 capability 없이는 호출될 수 없다.
@@ -274,9 +285,14 @@ Repository에 금지:
 - synthetic `AuthorizationGuard`를 실제 호출해 guard 획득/atomic capability 미지원 adapter 등록 거부와
   guard 안 revoke 시 operation 미호출
 - Dataset state revision·artifact digest 변경 시 operation 미호출
+- Dataset은 `ACCESS_AUTHORIZED → AUTHORING → REVIEW_READY → FROZEN` 순방향 전이만 허용하고, `FROZEN`의
+  역전이 또는 Freeze evidence 제거를 거부
 - operation 예외와 success-audit 실패가 성공으로 변환되지 않음
 - 성공 audit의 기존 result를 동일 principal·Dataset·action·target과 유효한 현재 grant에만 멱등 반환하고,
   `UNKNOWN` 또는 미해결 `INTENT`의 자동 retry와 새 request ID 우회를 거부
+- 다른 principal/target의 같은 raw operation key가 서로를 차단하거나 result를 공유하지 않고, 동시 duplicate는
+  guard 뒤 history 재확인으로 한 번만 실행되며, 반복 거부는 request ID별로 모두 audit됨
+- 실행 중 clock expiry를 관찰한 다른 요청의 EXPIRE 전이가 guard release 뒤에만 commit됨
 - 독립 승인 `observe/reconcile` adapter가 `NOT_IMPLEMENTED`임을 machine status와 공개 보고서에서 고정
 - synthetic append-CAS journal을 실제 호출해 global audit hash-chain tamper·절단, CAS 충돌,
   duplicate terminal, 잘못된 전이 거부
