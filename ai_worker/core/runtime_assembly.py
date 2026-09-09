@@ -36,6 +36,7 @@ from ai_worker.adapters.sqlalchemy_ocr_execution_starter import (
 )
 from ai_worker.adapters.sqlalchemy_ocr_input_repository import SqlAlchemyOcrInputRepository
 from ai_worker.adapters.sqlalchemy_ocr_result_store import SqlAlchemyOcrResultStore
+from ai_worker.adapters.sqlalchemy_outbox_repository import SqlAlchemyOutboxRepository
 from ai_worker.adapters.sqlalchemy_quarantine_repository import (
     SqlAlchemyQuarantineRepository,
 )
@@ -49,7 +50,9 @@ from ai_worker.core.consumer_runtime import ConsumerRuntime
 from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.event_publisher import EventPublisher
 from ai_worker.core.job_execution import LeaseNotAcquired
+from ai_worker.core.outbox_publisher import OutboxPublisher
 from ai_worker.core.provider_observability import (
     create_worker_provider_call_context_from_trace_id,
 )
@@ -421,13 +424,19 @@ def build_recovery_scheduler(
     logger: logging.Logger,
     rejected_execution: SessionScopedRejectedDeliveryExecution,
 ) -> AssembledRecoveryScheduler:
-    """Pending 복구와 DLQ 발행 Scheduler를 실제 Adapter로 조립합니다."""
+    """정상 Outbox 발행과 복구 Scheduler를 실제 Adapter로 조립합니다."""
 
-    # 두 주기 작업은 동시에 실행되므로 AsyncSession을 공유하지 않습니다.
+    # 장기 실행하는 복구 작업은 동시에 실행되므로 AsyncSession을 공유하지 않습니다.
     recovery_session = session_factory()
     dlq_session = session_factory()
 
     metrics = RecoveryMetricLogger(logger)
+
+    outbox_publisher = OutboxPublisher(
+        repository=SqlAlchemyOutboxRepository(session_factory),
+        event_publisher=EventPublisher(stream),
+        clock=clock,
+    )
 
     reconciler = PendingMessageReconciler(
         repository=SqlAlchemyRecoveryRepository(
@@ -466,6 +475,7 @@ def build_recovery_scheduler(
     )
 
     scheduler = RecoveryScheduler(
+        outbox_publisher=outbox_publisher,
         reconciler=ObservedPendingReconciler(
             task=reconciler,
             metrics=metrics,
@@ -475,6 +485,7 @@ def build_recovery_scheduler(
             metrics=metrics,
         ),
         failure_reporter=metrics,
+        outbox_publisher_interval_seconds=config.OUTBOX_PUBLISHER_INTERVAL_SECONDS,
         reconciler_interval_seconds=(config.RECONCILER_INTERVAL_SECONDS),
         dlq_publisher_interval_seconds=(config.DLQ_PUBLISHER_INTERVAL_SECONDS),
     )

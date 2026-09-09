@@ -69,6 +69,10 @@ class Config(BaseSettings):
         default=1.0,
         gt=0,
     )
+    OUTBOX_PUBLISHER_INTERVAL_SECONDS: float = Field(
+        default=1.0,
+        gt=0,
+    )
     REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
     REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
     OCR_REQUEST_DEADLINE_SECONDS: float = Field(

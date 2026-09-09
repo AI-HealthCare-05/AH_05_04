@@ -121,6 +121,7 @@ def test_config_has_approved_redis_defaults() -> None:
 
     assert config.DLQ_OUTBOX_CLAIM_TTL_SECONDS == 30.0
     assert config.DLQ_PUBLISHER_INTERVAL_SECONDS == 1.0
+    assert config.OUTBOX_PUBLISHER_INTERVAL_SECONDS == 1.0
 
 
 def test_config_accepts_redis_environment_values(
@@ -214,6 +215,7 @@ def test_config_rejects_blank_reconciler_consumer_name() -> None:
         ("RECONCILER_INTERVAL_SECONDS", 0),
         ("DLQ_OUTBOX_CLAIM_TTL_SECONDS", 0),
         ("DLQ_PUBLISHER_INTERVAL_SECONDS", 0),
+        ("OUTBOX_PUBLISHER_INTERVAL_SECONDS", 0),
     ],
 )
 def test_config_rejects_invalid_recovery_setting(

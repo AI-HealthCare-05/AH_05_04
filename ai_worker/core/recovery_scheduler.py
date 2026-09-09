@@ -1,4 +1,4 @@
-"""Pending Reconciler와 DLQ Publisher의 독립 주기 실행기입니다."""
+"""정상 Outbox 발행과 복구 작업의 독립 주기 실행기입니다."""
 
 import asyncio
 from typing import Protocol
@@ -25,17 +25,22 @@ class RecoveryFailureReporter(Protocol):
 
 
 class RecoveryScheduler:
-    """Pending reclaim과 DLQ 발행을 독립적인 주기로 실행합니다."""
+    """Outbox 발행, Pending reclaim, DLQ 발행을 독립적인 주기로 실행합니다."""
 
     def __init__(
         self,
         *,
+        outbox_publisher: ScheduledRecoveryTask,
         reconciler: ScheduledRecoveryTask,
         dlq_publisher: ScheduledRecoveryTask,
         failure_reporter: RecoveryFailureReporter,
+        outbox_publisher_interval_seconds: float,
         reconciler_interval_seconds: float,
         dlq_publisher_interval_seconds: float,
     ) -> None:
+        _validate_interval(
+            outbox_publisher_interval_seconds,
+        )
         _validate_interval(
             reconciler_interval_seconds,
         )
@@ -43,9 +48,11 @@ class RecoveryScheduler:
             dlq_publisher_interval_seconds,
         )
 
+        self._outbox_publisher = outbox_publisher
         self._reconciler = reconciler
         self._dlq_publisher = dlq_publisher
         self._failure_reporter = failure_reporter
+        self._outbox_publisher_interval_seconds = outbox_publisher_interval_seconds
         self._reconciler_interval_seconds = reconciler_interval_seconds
         self._dlq_publisher_interval_seconds = dlq_publisher_interval_seconds
 
@@ -54,12 +61,20 @@ class RecoveryScheduler:
         *,
         stop_event: asyncio.Event,
     ) -> None:
-        """두 복구 loop를 함께 시작하고 종료 신호까지 유지합니다."""
+        """세 주기 loop를 함께 시작하고 종료 신호까지 유지합니다."""
 
         if stop_event.is_set():
             return
 
         async with asyncio.TaskGroup() as task_group:
+            task_group.create_task(
+                self._run_periodically(
+                    task=self._outbox_publisher,
+                    task_name="outbox_publisher",
+                    interval_seconds=self._outbox_publisher_interval_seconds,
+                    stop_event=stop_event,
+                )
+            )
             task_group.create_task(
                 self._run_periodically(
                     task=self._reconciler,

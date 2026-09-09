@@ -304,7 +304,17 @@ async def repository_schema() -> AsyncIterator[None]:
                     event_id VARCHAR(36) PRIMARY KEY,
                     job_id VARCHAR(36) NOT NULL,
                     attempt INTEGER NOT NULL,
-                    event_kind VARCHAR(30) NOT NULL
+                    event_kind VARCHAR(30) NOT NULL,
+                    schema_version VARCHAR(20) NOT NULL DEFAULT '1.0',
+                    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+                    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    claim_token VARCHAR(100),
+                    claim_expires_at TIMESTAMPTZ,
+                    published_at TIMESTAMPTZ,
+                    stream_message_id VARCHAR(100),
+                    trace_id VARCHAR(100),
+                    domain_type VARCHAR(20),
+                    domain_id VARCHAR(36)
                 )
                 """
             )
@@ -1142,6 +1152,7 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         REDIS_CONSUMER_GROUP=group_name,
         REDIS_CONSUMER_NAME="runtime-worker-1",
         REDIS_BLOCK_MS=100,
+        OUTBOX_PUBLISHER_INTERVAL_SECONDS=0.01,
         CLOVA_OCR_INVOKE_URL="https://clova.test/ocr",
         CLOVA_OCR_SECRET="synthetic-clova-secret",
         STORAGE_DIR=str(tmp_path),
@@ -1185,13 +1196,25 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
                     event_id,
                     job_id,
                     attempt,
-                    event_kind
+                    event_kind,
+                    schema_version,
+                    status,
+                    available_at,
+                    trace_id,
+                    domain_type,
+                    domain_id
                 )
                 VALUES (
                     :event_id,
                     :job_id,
                     :attempt,
-                    'JOB_EXECUTE'
+                    'JOB_EXECUTE',
+                    :schema_version,
+                    'PENDING',
+                    :available_at,
+                    :trace_id,
+                    :domain_type,
+                    :domain_id
                 )
                 """
             ),
@@ -1199,6 +1222,11 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
                 "event_id": str(message.event_id),
                 "job_id": str(message.job_id),
                 "attempt": message.attempt,
+                "schema_version": message.schema_version,
+                "available_at": message.available_at,
+                "trace_id": message.trace_id,
+                "domain_type": message.domain_type.value,
+                "domain_id": str(message.domain_id),
             },
         )
         await connection.execute(
@@ -1253,9 +1281,18 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
 
     try:
         await assembled.runtime.initialize()
-        stream_message_id = await stream.publish(message)
-
-        processed_count = await assembled.runtime.run_once()
+        assert assembled.recovery_scheduler is not None
+        stop_event = asyncio.Event()
+        scheduler_task = asyncio.create_task(assembled.recovery_scheduler.run(stop_event=stop_event))
+        processed_count = 0
+        try:
+            for _ in range(20):
+                processed_count += await assembled.runtime.run_once()
+                if processed_count:
+                    break
+        finally:
+            stop_event.set()
+            await asyncio.wait_for(scheduler_task, timeout=1)
 
         async with AsyncSession(
             bind=test_engine,
@@ -1305,8 +1342,21 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
                 ),
                 {"domain_id": str(message.domain_id)},
             )
+            outbox_result = await observer.execute(
+                text(
+                    """
+                    SELECT status, stream_message_id
+                    FROM outbox_event
+                    WHERE event_id = :event_id
+                    """
+                ),
+                {"event_id": str(message.event_id)},
+            )
+            outbox_status, stream_message_id = outbox_result.one()
 
         assert processed_count == 1
+        assert outbox_status == "PUBLISHED"
+        assert stream_message_id
         assert ocr_engine.call_count == 1
         assert job_status == "COMPLETED"
         assert attempt_count == 1
@@ -1321,7 +1371,6 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         # row로 채우므로 총 5개가 됩니다(#294).
         assert field_count_result.scalar_one() == 5
         assert await stream.list_pending() == ()
-        assert stream_message_id
     finally:
         await assembled.aclose()
         await redis_client.delete(stream_name)
