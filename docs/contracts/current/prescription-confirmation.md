@@ -12,6 +12,7 @@
 - Backend는 문서에 연결된 최신 `COMPLETED` OCR 작업을 사용합니다.
 - OCR 필드는 사용자가 확인한 `confirmed_value`만 처방 확정에 사용합니다.
 - OCR 원문 `raw_value`와 정규화 참고값 `normalized_value`는 처방 확정값으로 자동 대체하지 않습니다.
+- 처방 확정은 기존 OCR 추출 필드와 수동 추가된 OCR 검수 필드의 `confirmed_value`를 같은 기준으로 사용합니다.
 
 ## 필수 필드
 
@@ -47,6 +48,11 @@ Backend는 이 상태를 다음과 같이 저장합니다.
 `MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`에만 이 상태를 허용하며,
 필수 필드의 `confirmed_value: null`은 `422 VALIDATION_FAILED`로 거부합니다.
 
+## 수동 추가 필드의 처방 확정 반영
+
+`POST /api/v1/ocr-jobs/{job_id}/manual-medications`로 생성된 필드는 기존 OCR 추출 필드와 동일하게 `confirmed_value`만 처방 확정에 사용합니다.
+`raw_value`, `normalized_value`, `confidence_score`는 처방 확정값으로 사용하지 않습니다.
+
 ## 확정 이후 수정 금지
 
 - 처방이 확정된 문서의 extracted-field는 더 이상 수정할 수 없습니다.
@@ -56,6 +62,7 @@ Backend는 이 상태를 다음과 같이 저장합니다.
 - PATCH와 처방 확정은 대상 `medical_document` row를 `SELECT ... FOR UPDATE`로 먼저 잠가 직렬화합니다.
 - 잠금 대기가 3초를 초과하면 `409 CONCURRENT_UPDATE_IN_PROGRESS`를 반환하고 어떤 값도 변경하지 않습니다.
 - 확정은 잠금 획득 이후에 읽은 검수값만 사용하므로, 확정 직전 commit된 PATCH는 반드시 확정 결과에 반영됩니다.
+
 ## Post-MVP 이관
 
 사용자가 검수한 OCR 작업과 확정 대상 OCR 작업을 `job_id`로 직접 일치 검증하는 기능은 Post-MVP 범위입니다.

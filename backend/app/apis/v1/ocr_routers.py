@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse as Response
 
 from app.dependencies.security import get_request_user
 from app.dependencies.services import get_ocr_service
-from app.dtos.ocr import OcrJobResponse
+from app.dtos.ocr import CreateManualMedicationRequest, OcrJobResponse
 from app.models.users import User
 from app.services.ocr import OcrService
 
@@ -30,4 +30,24 @@ async def get_ocr_job_result(
     return Response(
         content=OcrJobResponse(data=result).model_dump(mode="json"),
         status_code=status.HTTP_200_OK,
+    )
+
+
+@ocr_router.post(
+    "/{job_id}/manual-medications",
+    response_model=OcrJobResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_manual_medication(
+    job_id: UUID,
+    request: CreateManualMedicationRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    ocr_service: Annotated[OcrService, Depends(get_ocr_service)],
+) -> Response:
+    # Manual values are user-confirmed data, not OCR raw/normalized output.
+    result = await ocr_service.create_manual_medication(user=user, job_id=job_id, request=request)
+
+    return Response(
+        content=OcrJobResponse(data=result).model_dump(mode="json"),
+        status_code=status.HTTP_201_CREATED,
     )
