@@ -311,6 +311,10 @@ def test_decision_matrix_case(case_id: str, fixture: dict, case: dict) -> None:
     assert outcome.reason is PreflightReason(expected["reason"]), case_id
     assert [item.value for item in outcome.identification_reasons] == expected["identification_reasons"], case_id
     assert [item.value for item in outcome.stale_signals] == expected["stale_signals"], case_id
+    if outcome.stale_signals:
+        assert outcome.primary_stale_projection == project_preflight_stale_signals(outcome.stale_signals), case_id
+    else:
+        assert outcome.primary_stale_projection is None, case_id
     assert (outcome.manifest_hash is not None) is expected["manifest_hash_present"], case_id
     if "blocking_medication_ids" in expected:
         assert list(outcome.blocking_medication_ids) == expected["blocking_medication_ids"], case_id
