@@ -302,8 +302,8 @@
         {"medication_name": "합성의약품 베타", "timing_text": "점심 식후"}
       ],
       "expected": {
-        "baseline": {"required_all": [], "required_any": [], "forbidden": ["합성의약품 알파", "합성의약품 베타"], "allowed_exact": ["어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요."]},
-        "history": {"required_all": [], "required_any": [], "forbidden": ["합성의약품 알파", "합성의약품 베타"], "allowed_exact": ["어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요."]}
+        "baseline": {"required_all": [], "required_any": [], "forbidden": ["합성의약품 알파", "합성의약품 베타"], "allowed_exact": ["어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요.", "대화에서 어느 약인지 확인할 수 없습니다. 약명, 제품명 또는 성분명을 알려주세요."]},
+        "history": {"required_all": [], "required_any": [], "forbidden": ["합성의약품 알파", "합성의약품 베타"], "allowed_exact": ["어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요.", "대화에서 어느 약인지 확인할 수 없습니다. 약명, 제품명 또는 성분명을 알려주세요."]}
       },
       "replay_outputs": {
         "baseline": "어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요.",
@@ -313,7 +313,7 @@
         "sample_count": 30,
         "target_medication": "합성의약품 알파",
         "medication_names": ["합성의약품 알파", "합성의약품 베타"],
-        "clarification_allowed_responses": ["어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요."]
+        "clarification_allowed_responses": ["어느 약을 뜻하는지 약명, 제품명 또는 성분명을 알려주세요.", "대화에서 어느 약인지 확인할 수 없습니다. 약명, 제품명 또는 성분명을 알려주세요."]
       }
     },
     {
