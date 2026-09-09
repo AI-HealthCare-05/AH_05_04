@@ -8,7 +8,7 @@
 | 기준 | 2026-09-09 최신 `origin/develop` |
 | 문서 상태 | 승인된 pure/local slice 실행 계획 |
 | 즉시 구현 | Protocol, 순수 Gate, synthetic policy/Fake, 단위 테스트 |
-| 통합 | `BLOCKED` — #168/#169/#171 및 production policy Receipt 대기 |
+| 통합 | `BLOCKED` — #168/#169/#171, canonical confirmed-input Decision 및 production policy Receipt 대기 |
 | 공개 gate | `PUBLIC_TRACK_F=false` 유지 |
 
 ## 구현 순서
@@ -45,6 +45,7 @@ Dense selectable stage와 `release_eligible=true`도 `POLICY_INVALID`로 고정�
 `CandidateAttributeMatcher`, `CandidateRelevanceEvaluator`를 정의한다. 약명·함량의 blank,
 whitespace, non-NFC, length 오류만
 `INVALID_INPUT`인지 검증하고, index/policy version 오류는 typed failure로 분리한다.
+이 Task는 저장된 확정값을 정규화하거나 `ResolverInput`으로 변환하는 mapper를 구현하지 않는다.
 
 ### Task 4 — 검색 orchestration과 evidence 검증을 TDD로 구현
 
@@ -109,6 +110,18 @@ Worker-side contract suite, PostgreSQL adapter parity, Candidate Search transact
 이번 pure slice의 완료 조건이 아니다. 실행하지 않은 통합 검증은 `PASS`가 아니라 명시적인 후속 작업으로
 보고하고 Resolver HOLDOUT/SAFETY는 `NOT_RUN / INTEGRATION_BLOCKED`로 기록한다.
 
+## 후속 통합 인계
+
+- #168의 async repository/service가 active index/version을 검증하고 stage별 결과를 bounded immutable evidence
+  snapshot으로 hydrate한다. 현재 동기 `CandidateIndexPort`는 이 snapshot을 읽는 in-memory 경계이며 DB adapter가
+  직접 구현하거나 내부에서 async 호출을 숨기는 Protocol이 아니다.
+- #169/#171 통합 전에 확정 저장값의 NFC·공백 규칙과 production 입력 길이를 OCR·Backend·RAG owner Decision으로
+  확정한다. 현재 저장 경로가 canonical Resolver 입력을 보장하지 않으므로 mapper/저장 계약을 추정 구현하지 않는다.
+- inline synthetic `maximum_input_length=100`을 production 기본값으로 승격하지 않는다. 현재 DTO/DB의
+  `medication_name=255`, `strength_text=100` 상한과 정렬된 versioned policy 및 기존 행 검증이 필요하다.
+- 위 조건이 없으면 #171의 `INVALID_INPUT` 공개 mapping을 추정 구현하지 않고 integration gate를 닫아 둔다.
+  공개 error/status 의미는 별도 공유 계약에서 확정한다.
+
 ## 완료와 중지 조건
 
 Pure/local slice 완료 조건:
@@ -123,5 +136,6 @@ Pure/local slice 완료 조건:
 - 공유 DTO/status/error/DB constraint 변경
 - 실제 Candidate Index repository 또는 active pointer
 - Prescription Version ownership/currentness 조회
+- 확정 입력 Unicode/공백 정규화 또는 DTO·DB 길이 계약 변경
 - Candidate Search Finalizer transaction
 - production threshold나 release-eligible policy 결정

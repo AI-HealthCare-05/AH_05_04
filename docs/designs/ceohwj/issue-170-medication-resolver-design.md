@@ -35,6 +35,7 @@ Issue #170의 병행 가능 조건을 따른다. 확정 Interface만 사용하�
 - #168 PostgreSQL Candidate Index adapter와 active pointer 조회
 - #169 Prescription Version Medication repository mapper
 - #171 Candidate Search/Result 저장, Finalizer, 확인·거절, Identification
+- 확정 처방 저장값의 Unicode/공백 정규화와 길이 제한을 바꾸는 공유 DTO·DB 계약 변경
 - production policy loader/default threshold/environment fallback
 - 실제 MFDS/HIRA/환자/처방/OCR 원문 fixture
 - 자동 `MATCHED`, 외부 DTO, publication gate 변경
@@ -68,7 +69,24 @@ SINGLE_CANDIDATE   AMBIGUOUS/NO...   typed execution failure
 ```
 
 `backend/app/services/rag/`는 `ai_worker`, SQLAlchemy, Redis, Outbox 또는 Provider SDK를 import하지 않는다.
-#168 adapter는 나중에 이 Backend Protocol을 구현하고 Worker-owned 타입을 경계에서 변환한다.
+`CandidateIndexPort`는 PostgreSQL repository Protocol이 아니다. 후속 통합에서는 #168의 `AsyncSession` 기반
+repository/service가 descriptor와 stage별 bounded hit를 먼저 비동기로 조회·검증하고, 그 결과를 불변 evidence
+snapshot으로 hydrate한다. Resolver에는 그 snapshot을 제공하는 동기 in-memory Port를 주입한다. #168 DB row나
+Worker-owned 타입을 Resolver가 직접 import하거나, 동기 Port 안에서 event loop를 만들거나 async DB 호출을
+숨기지 않는다.
+
+```text
+#168 async PostgreSQL repository/service
+                  │ await + active index/version 검증
+                  ▼
+       bounded immutable evidence snapshot
+                  │
+                  ▼
+      sync in-memory CandidateIndexPort
+                  │
+                  ▼
+          pure MedicationResolver
+```
 
 ## 타입 계약
 
@@ -86,9 +104,24 @@ SINGLE_CANDIDATE   AMBIGUOUS/NO...   typed execution failure
 `INVALID_INPUT`으로 끝난다. index/policy version은 사용자 입력이 아닌 실행 context이므로 blank,
 불일치 또는 비-NFC이면 typed execution failure로 끝난다.
 
+현재 `PrescriptionMedicationCorrectionRequest`와 처방 확정 저장 경로는 trim만 수행하며 NFC와 내부 공백
+접기를 보장하지 않는다. 따라서 현재 저장된 Prescription Version Medication을 그대로 `ResolverInput`으로
+만드는 integration은 준비되지 않았고 `INTEGRATION_READY=false`를 유지한다. 이 pure slice는 처방 표시값을
+변환하거나 저장 계약을 바꾸지 않는다. Target의 "입력 경계에서 조용히 변환하지 않는다"를 지키기 위해,
+저장 시 canonical form을 강제할지 versioned query canonicalization과 원문 provenance를 분리할지는 #169/#171
+통합 전에 OCR·Backend·RAG owner가 Decision과 contract/integration test로 확정해야 한다. Guide 전용 private
+`_normalize_display_text`를 공유 계약으로 재사용하거나 복사해 이 결정을 우회하지 않는다.
+
+inline synthetic policy의 `maximum_input_length=100`은 non-release 테스트 값이며 production 상한이 아니다.
+현재 확정 DTO/DB 상한은 `medication_name=255`, `strength_text=100`이므로 production policy 승인 전 다음 중 하나를
+명시적으로 결정하고 기존·신규 확정값에 대해 검증해야 한다: policy가 저장 상한을 포괄하도록 정렬, 확정 입력
+상한을 공유 계약으로 변경, 또는 필드별 versioned 상한 도입. 결정 전 101~255자 약명이 조용히 정상 후보 없음으로
+해석되지 않도록 integration과 publication gate를 열지 않는다.
+
 ### 검색 Protocol
 
-`CandidateIndexPort`는 동기 메서드로 구성한다.
+`CandidateIndexPort`는 hydrate가 끝난 bounded evidence snapshot을 읽는 동기 in-memory 메서드로 구성한다.
+실제 async PostgreSQL repository가 이 Protocol을 직접 구현하는 계약이 아니다.
 
 - `describe(index_version)`
 - `search_product_name_exact(request)`
@@ -204,7 +237,9 @@ version mismatch, NaN/무한 score, stage/rank 위조, identity/snapshot 충돌�
 다음 연결은 #168 active index read Receipt, #169 current confirmed Medication Snapshot Receipt, 승인된
 Resolver production policy와 #171 Finalizer handoff가 확보된 뒤 별도 integration slice에서 수행한다.
 
-- 실제 `rag_candidate_index_repository.py`
+- #168 async `rag_candidate_index_repository.py`와 bounded immutable evidence snapshot hydration
+- 저장된 확정값 → `ResolverInput` 경계의 Unicode/공백·길이 Decision과 contract/integration test
+- 현재·기존 Prescription Version Medication의 canonical input 적합성 검증 또는 fail-closed migration/차단 Receipt
 - production policy loader 및 Runtime Release Bundle binding
 - Resolver outcome → Candidate Search lifecycle/status/result mapping
 - Contract Acceptance Receipt와 HOLDOUT/SAFETY release evidence
