@@ -30,7 +30,7 @@ $ uv run pytest ai_worker/tests/rag/test_identification_preflight.py -q
 39 passed in 0.06s
 
 $ uv run pytest tests/contract/rag/test_preflight_decision_contract.py -q
-30 passed in 0.07s
+31 passed in 0.05s
 ```
 
 ### 정적 검사

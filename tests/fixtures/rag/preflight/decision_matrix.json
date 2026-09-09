@@ -139,7 +139,7 @@
         "decision": "STALE_FALLBACK",
         "reason": "EXECUTION_CONTEXT_STALE",
         "identification_reasons": [],
-        "stale_signals": ["ACTIVE_PRESCRIPTION_VERSION_CHANGED"],
+        "stale_signals": ["PRESCRIPTION_STALE"],
         "manifest_hash_present": true
       }
     },
@@ -162,7 +162,7 @@
         "decision": "STALE_FALLBACK",
         "reason": "EXECUTION_CONTEXT_STALE",
         "identification_reasons": [],
-        "stale_signals": ["ACTIVE_RUNTIME_RELEASE_BUNDLE_CHANGED"],
+        "stale_signals": ["RUNTIME_RELEASE_STALE"],
         "manifest_hash_present": true
       }
     },
@@ -182,7 +182,7 @@
         "decision": "STALE_FALLBACK",
         "reason": "EXECUTION_CONTEXT_STALE",
         "identification_reasons": [],
-        "stale_signals": ["ACTIVE_PRESCRIPTION_VERSION_CHANGED"],
+        "stale_signals": ["PRESCRIPTION_STALE"],
         "manifest_hash_present": true
       }
     },

@@ -175,7 +175,7 @@ def test_active_version_change_returns_stale_fallback() -> None:
 
     assert outcome.decision is PreflightDecision.STALE_FALLBACK
     assert outcome.reason is PreflightReason.EXECUTION_CONTEXT_STALE
-    assert outcome.stale_signals == (PreflightStaleSignal.ACTIVE_PRESCRIPTION_VERSION_CHANGED,)
+    assert outcome.stale_signals == (PreflightStaleSignal.PRESCRIPTION_STALE,)
     assert outcome.identification_reasons == ()
     assert outcome.blocking_medication_ids == ()
 
@@ -189,7 +189,7 @@ def test_active_bundle_change_returns_stale_fallback() -> None:
     )
 
     assert outcome.decision is PreflightDecision.STALE_FALLBACK
-    assert outcome.stale_signals == (PreflightStaleSignal.ACTIVE_RUNTIME_RELEASE_BUNDLE_CHANGED,)
+    assert outcome.stale_signals == (PreflightStaleSignal.RUNTIME_RELEASE_STALE,)
 
 
 def test_identification_pinned_to_other_version_returns_stale_fallback() -> None:
@@ -202,7 +202,7 @@ def test_identification_pinned_to_other_version_returns_stale_fallback() -> None
     outcome = evaluate_medication_identification_preflight(stale)
 
     assert outcome.decision is PreflightDecision.STALE_FALLBACK
-    assert outcome.stale_signals == (PreflightStaleSignal.IDENTIFICATION_PRESCRIPTION_VERSION_MISMATCH,)
+    assert outcome.stale_signals == (PreflightStaleSignal.IDENTIFICATION_STALE,)
 
 
 def test_matched_identification_from_other_bundle_returns_stale_fallback() -> None:
@@ -212,7 +212,7 @@ def test_matched_identification_from_other_bundle_returns_stale_fallback() -> No
     outcome = evaluate_medication_identification_preflight(stale)
 
     assert outcome.decision is PreflightDecision.STALE_FALLBACK
-    assert outcome.stale_signals == (PreflightStaleSignal.IDENTIFICATION_RUNTIME_RELEASE_BUNDLE_MISMATCH,)
+    assert outcome.stale_signals == (PreflightStaleSignal.RUNTIME_RELEASE_STALE,)
 
 
 def test_stale_context_precedes_identification_fallback() -> None:

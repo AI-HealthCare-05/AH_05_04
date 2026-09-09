@@ -71,10 +71,25 @@ class PreflightExecutionStatus(StrEnum):
 
 
 class PreflightStaleSignal(StrEnum):
-    ACTIVE_PRESCRIPTION_VERSION_CHANGED = "ACTIVE_PRESCRIPTION_VERSION_CHANGED"
-    ACTIVE_RUNTIME_RELEASE_BUNDLE_CHANGED = "ACTIVE_RUNTIME_RELEASE_BUNDLE_CHANGED"
-    IDENTIFICATION_PRESCRIPTION_VERSION_MISMATCH = "IDENTIFICATION_PRESCRIPTION_VERSION_MISMATCH"
-    IDENTIFICATION_RUNTIME_RELEASE_BUNDLE_MISMATCH = "IDENTIFICATION_RUNTIME_RELEASE_BUNDLE_MISMATCH"
+    """Which staleness the caller must report downstream.  No new vocabulary is coined here.
+
+    ``safety-result-v2.md`` "STALE과 공개 오류" separates the two public codes: a prescription
+    version mismatch is published as ``PRESCRIPTION_STALE``, while Identification and Runtime
+    Bundle mismatches are published as ``EXECUTION_CONTEXT_STALE`` with internal ``stale_reason``
+    ``IDENTIFICATION_STALE`` / ``RUNTIME_RELEASE_STALE``.  The ``rag-runtime-v1.md`` graph labels
+    the whole preflight branch ``EXECUTION_CONTEXT_STALE``, so :attr:`PreflightReason` keeps that
+    label and this axis carries the distinction RAG-12-API (#174) needs to pick the right public
+    ``fallback_code``.  Mapping ``reason`` straight onto ``fallback_code`` would publish
+    ``EXECUTION_CONTEXT_STALE`` for a version change, which ``safety-result-v2.md`` forbids.
+
+    ``PATIENT_CONTEXT_STALE``, ``RUNTIME_ENVIRONMENT_SUSPENDED`` and ``RESOLVER_MEMBER_REVOKED``
+    are the remaining ``stale_reason`` values; none of them is derivable from this kernel's inputs,
+    so they stay with #174 and #180.
+    """
+
+    PRESCRIPTION_STALE = "PRESCRIPTION_STALE"
+    IDENTIFICATION_STALE = "IDENTIFICATION_STALE"
+    RUNTIME_RELEASE_STALE = "RUNTIME_RELEASE_STALE"
 
 
 class PreflightValidationCode(StrEnum):
@@ -281,22 +296,20 @@ def _replace_decision(
 
 def _stale_signals(request: MedicationIdentificationPreflightRequest) -> tuple[PreflightStaleSignal, ...]:
     currentness = request.currentness
-    signals: list[PreflightStaleSignal] = []
+    signals: set[PreflightStaleSignal] = set()
     if currentness.observed_active_prescription_version_id != currentness.pinned_prescription_version_id:
-        signals.append(PreflightStaleSignal.ACTIVE_PRESCRIPTION_VERSION_CHANGED)
-    if currentness.observed_active_runtime_release_bundle_id != currentness.pinned_runtime_release_bundle_id:
-        signals.append(PreflightStaleSignal.ACTIVE_RUNTIME_RELEASE_BUNDLE_CHANGED)
+        signals.add(PreflightStaleSignal.PRESCRIPTION_STALE)
     if any(
         item.prescription_version_id != currentness.pinned_prescription_version_id for item in request.identifications
     ):
-        signals.append(PreflightStaleSignal.IDENTIFICATION_PRESCRIPTION_VERSION_MISMATCH)
-    if any(
+        signals.add(PreflightStaleSignal.IDENTIFICATION_STALE)
+    if currentness.observed_active_runtime_release_bundle_id != currentness.pinned_runtime_release_bundle_id or any(
         item.state is MedicationPreflightState.MATCHED
         and item.runtime_release_bundle_id != currentness.pinned_runtime_release_bundle_id
         for item in request.identifications
     ):
-        signals.append(PreflightStaleSignal.IDENTIFICATION_RUNTIME_RELEASE_BUNDLE_MISMATCH)
-    return tuple(signals)
+        signals.add(PreflightStaleSignal.RUNTIME_RELEASE_STALE)
+    return tuple(signal for signal in PreflightStaleSignal if signal in signals)
 
 
 def _validate_request(

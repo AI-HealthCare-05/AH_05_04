@@ -21,6 +21,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -38,6 +39,7 @@ from ai_worker.tasks.rag.identification_preflight import (  # noqa: E402
     PreflightDecision,
     PreflightExecutionStatus,
     PreflightReason,
+    PreflightStaleSignal,
     canonical_preflight_manifest_hash,
     evaluate_medication_identification_preflight,
     preflight_state_from_mapping,
@@ -45,6 +47,7 @@ from ai_worker.tasks.rag.identification_preflight import (  # noqa: E402
 
 KERNEL_PATH = PROJECT_ROOT / "ai_worker" / "tasks" / "rag" / "identification_preflight.py"
 RUNTIME_CONTRACT_PATH = PROJECT_ROOT / "docs" / "contracts" / "targets" / "post-mvp-1" / "rag-runtime-v1.md"
+SAFETY_CONTRACT_PATH = PROJECT_ROOT / "docs" / "contracts" / "targets" / "post-mvp-1" / "safety-result-v2.md"
 FIXTURE_PATH = PROJECT_ROOT / "tests" / "fixtures" / "rag" / "preflight" / "decision_matrix.json"
 
 # 이 kernel이 import해도 되는 stdlib module 전체 목록입니다. 여기에 DB·HTTP·Provider·Retrieval
@@ -110,6 +113,18 @@ def test_decision_axis_has_exactly_three_values() -> None:
     )
 
 
+def test_stale_signal_vocabulary_matches_safety_result_contract() -> None:
+    text = SAFETY_CONTRACT_PATH.read_text(encoding="utf-8")
+    assert "PRESCRIPTION_STALE" in text
+    assert "IDENTIFICATION_STALE" in text
+    assert "RUNTIME_RELEASE_STALE" in text
+    assert tuple(item.value for item in PreflightStaleSignal) == (
+        "PRESCRIPTION_STALE",
+        "IDENTIFICATION_STALE",
+        "RUNTIME_RELEASE_STALE",
+    )
+
+
 def test_kernel_imports_are_stdlib_only() -> None:
     tree = ast.parse(KERNEL_PATH.read_text(encoding="utf-8"))
     imported: set[str] = set()
@@ -127,7 +142,7 @@ def test_manifest_projection_version_is_pinned() -> None:
     assert MANIFEST_PROJECTION_VERSION == "medication-identification-preflight-manifest-v1"
 
 
-def load_fixture() -> dict[str, object]:
+def load_fixture() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
