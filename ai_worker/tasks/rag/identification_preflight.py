@@ -121,6 +121,32 @@ def project_preflight_stale_signal(signal: PreflightStaleSignal) -> PreflightSta
             )
 
 
+def project_preflight_stale_signals(
+    signals: tuple[PreflightStaleSignal, ...],
+) -> PreflightStaleProjection | None:
+    """Aggregate multiple stale signals into a single deterministic downstream projection.
+
+    Contract reference: ``docs/contracts/targets/post-mvp-1/safety-result-v2.md`` "STALE과 공개 오류"
+    Priority order for compound staleness:
+    1. PRESCRIPTION_STALE: Prescription version mismatch takes precedence as the root clinical entity.
+       Published as public ``fallback_code="PRESCRIPTION_STALE"`` with no internal ``stale_reason``.
+    2. IDENTIFICATION_STALE: Pinned identification snapshot mismatch.
+       Published as public ``fallback_code="EXECUTION_CONTEXT_STALE"``, internal ``stale_reason="IDENTIFICATION_STALE"``.
+    3. RUNTIME_RELEASE_STALE: Active runtime release bundle mismatch.
+       Published as public ``fallback_code="EXECUTION_CONTEXT_STALE"``, internal ``stale_reason="RUNTIME_RELEASE_STALE"``.
+    """
+    if not signals:
+        return None
+    for priority_signal in (
+        PreflightStaleSignal.PRESCRIPTION_STALE,
+        PreflightStaleSignal.IDENTIFICATION_STALE,
+        PreflightStaleSignal.RUNTIME_RELEASE_STALE,
+    ):
+        if priority_signal in signals:
+            return project_preflight_stale_signal(priority_signal)
+    return None
+
+
 class PreflightValidationCode(StrEnum):
     """Internal diagnostics.  Never projected onto a patient-facing DTO or message."""
 
@@ -203,6 +229,7 @@ class MedicationIdentificationPreflightOutcome:
     identification_reasons: tuple[PreflightReason, ...] = ()
     blocking_medication_ids: tuple[str, ...] = ()
     stale_signals: tuple[PreflightStaleSignal, ...] = ()
+    primary_stale_projection: PreflightStaleProjection | None = None
     validation_codes: tuple[PreflightValidationCode, ...] = ()
 
 
@@ -245,6 +272,7 @@ def evaluate_medication_identification_preflight(
             decision=PreflightDecision.STALE_FALLBACK,
             reason=PreflightReason.EXECUTION_CONTEXT_STALE,
             stale_signals=stale_signals,
+            primary_stale_projection=project_preflight_stale_signals(stale_signals),
         )
 
     blocking = tuple(
@@ -309,6 +337,7 @@ def _replace_decision(
     identification_reasons: tuple[PreflightReason, ...] = (),
     blocking_medication_ids: tuple[str, ...] = (),
     stale_signals: tuple[PreflightStaleSignal, ...] = (),
+    primary_stale_projection: PreflightStaleProjection | None = None,
 ) -> MedicationIdentificationPreflightOutcome:
     return MedicationIdentificationPreflightOutcome(
         execution_status=outcome.execution_status,
@@ -320,6 +349,7 @@ def _replace_decision(
         identification_reasons=identification_reasons,
         blocking_medication_ids=blocking_medication_ids,
         stale_signals=stale_signals,
+        primary_stale_projection=primary_stale_projection,
     )
 
 

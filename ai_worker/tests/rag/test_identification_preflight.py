@@ -29,6 +29,7 @@ from ai_worker.tasks.rag.identification_preflight import (
     medication_ids_in_manifest_order,
     preflight_state_from_mapping,
     project_preflight_stale_signal,
+    project_preflight_stale_signals,
 )
 
 PRESCRIPTION_ID = "11111111-1111-4111-8111-111111111111"
@@ -228,6 +229,88 @@ def test_stale_context_precedes_identification_fallback() -> None:
     assert outcome.decision is PreflightDecision.STALE_FALLBACK
     assert outcome.reason is PreflightReason.EXECUTION_CONTEXT_STALE
     assert outcome.identification_reasons == ()
+    assert outcome.primary_stale_projection == PreflightStaleProjection(
+        fallback_code="PRESCRIPTION_STALE",
+        stale_reason=None,
+    )
+
+
+def test_compound_stale_active_version_and_bundle_change() -> None:
+    outcome = evaluate_medication_identification_preflight(
+        request(
+            (MedicationPreflightState.MATCHED,),
+            token=currentness(
+                observed_version_id=OTHER_VERSION_ID,
+                observed_bundle_id=OTHER_BUNDLE_ID,
+            ),
+        )
+    )
+
+    assert outcome.decision is PreflightDecision.STALE_FALLBACK
+    assert outcome.reason is PreflightReason.EXECUTION_CONTEXT_STALE
+    assert outcome.stale_signals == (
+        PreflightStaleSignal.PRESCRIPTION_STALE,
+        PreflightStaleSignal.RUNTIME_RELEASE_STALE,
+    )
+    assert outcome.primary_stale_projection == PreflightStaleProjection(
+        fallback_code="PRESCRIPTION_STALE",
+        stale_reason=None,
+    )
+
+
+def test_compound_stale_version_and_identification_mismatch() -> None:
+    base = request((MedicationPreflightState.MATCHED,), token=currentness(observed_version_id=OTHER_VERSION_ID))
+    stale = replace(base, identifications=(identification(1, version_id=OTHER_VERSION_ID),))
+    outcome = evaluate_medication_identification_preflight(stale)
+
+    assert outcome.decision is PreflightDecision.STALE_FALLBACK
+    assert outcome.stale_signals == (
+        PreflightStaleSignal.PRESCRIPTION_STALE,
+        PreflightStaleSignal.IDENTIFICATION_STALE,
+    )
+    assert outcome.primary_stale_projection == PreflightStaleProjection(
+        fallback_code="PRESCRIPTION_STALE",
+        stale_reason=None,
+    )
+
+
+def test_compound_stale_identification_and_bundle_mismatch() -> None:
+    base = request((MedicationPreflightState.MATCHED,), token=currentness(observed_bundle_id=OTHER_BUNDLE_ID))
+    stale = replace(base, identifications=(identification(1, version_id=OTHER_VERSION_ID),))
+    outcome = evaluate_medication_identification_preflight(stale)
+
+    assert outcome.decision is PreflightDecision.STALE_FALLBACK
+    assert outcome.stale_signals == (
+        PreflightStaleSignal.IDENTIFICATION_STALE,
+        PreflightStaleSignal.RUNTIME_RELEASE_STALE,
+    )
+    assert outcome.primary_stale_projection == PreflightStaleProjection(
+        fallback_code="EXECUTION_CONTEXT_STALE",
+        stale_reason="IDENTIFICATION_STALE",
+    )
+
+
+def test_compound_stale_all_signals_present() -> None:
+    base = request(
+        (MedicationPreflightState.MATCHED,),
+        token=currentness(
+            observed_version_id=OTHER_VERSION_ID,
+            observed_bundle_id=OTHER_BUNDLE_ID,
+        ),
+    )
+    stale = replace(base, identifications=(identification(1, version_id=OTHER_VERSION_ID),))
+    outcome = evaluate_medication_identification_preflight(stale)
+
+    assert outcome.decision is PreflightDecision.STALE_FALLBACK
+    assert outcome.stale_signals == (
+        PreflightStaleSignal.PRESCRIPTION_STALE,
+        PreflightStaleSignal.IDENTIFICATION_STALE,
+        PreflightStaleSignal.RUNTIME_RELEASE_STALE,
+    )
+    assert outcome.primary_stale_projection == PreflightStaleProjection(
+        fallback_code="PRESCRIPTION_STALE",
+        stale_reason=None,
+    )
 
 
 def assert_fails_closed(
@@ -496,3 +579,33 @@ def test_project_preflight_stale_signal() -> None:
     assert bundle_proj == PreflightStaleProjection(
         fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="RUNTIME_RELEASE_STALE"
     )
+
+
+def test_project_preflight_stale_signals_aggregation() -> None:
+    assert project_preflight_stale_signals(()) is None
+
+    assert project_preflight_stale_signals((PreflightStaleSignal.PRESCRIPTION_STALE,)) == PreflightStaleProjection(
+        fallback_code="PRESCRIPTION_STALE", stale_reason=None
+    )
+    assert project_preflight_stale_signals((PreflightStaleSignal.IDENTIFICATION_STALE,)) == PreflightStaleProjection(
+        fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="IDENTIFICATION_STALE"
+    )
+    assert project_preflight_stale_signals((PreflightStaleSignal.RUNTIME_RELEASE_STALE,)) == PreflightStaleProjection(
+        fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="RUNTIME_RELEASE_STALE"
+    )
+
+    # Order-independent precedence: PRESCRIPTION_STALE wins
+    assert project_preflight_stale_signals(
+        (PreflightStaleSignal.PRESCRIPTION_STALE, PreflightStaleSignal.RUNTIME_RELEASE_STALE)
+    ) == PreflightStaleProjection(fallback_code="PRESCRIPTION_STALE", stale_reason=None)
+    assert project_preflight_stale_signals(
+        (PreflightStaleSignal.RUNTIME_RELEASE_STALE, PreflightStaleSignal.PRESCRIPTION_STALE)
+    ) == PreflightStaleProjection(fallback_code="PRESCRIPTION_STALE", stale_reason=None)
+
+    # Order-independent precedence: IDENTIFICATION_STALE wins over RUNTIME_RELEASE_STALE
+    assert project_preflight_stale_signals(
+        (PreflightStaleSignal.IDENTIFICATION_STALE, PreflightStaleSignal.RUNTIME_RELEASE_STALE)
+    ) == PreflightStaleProjection(fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="IDENTIFICATION_STALE")
+    assert project_preflight_stale_signals(
+        (PreflightStaleSignal.RUNTIME_RELEASE_STALE, PreflightStaleSignal.IDENTIFICATION_STALE)
+    ) == PreflightStaleProjection(fallback_code="EXECUTION_CONTEXT_STALE", stale_reason="IDENTIFICATION_STALE")

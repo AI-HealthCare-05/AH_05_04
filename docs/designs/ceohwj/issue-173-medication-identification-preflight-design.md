@@ -227,6 +227,7 @@ MedicationIdentificationPreflightOutcome(
     identification_reasons,      # tuple, 계약 순서
     blocking_medication_ids,     # tuple, 사전순
     stale_signals,               # tuple, 선언 순서 (PRESCRIPTION_STALE, IDENTIFICATION_STALE, RUNTIME_RELEASE_STALE)
+    primary_stale_projection,    # PreflightStaleProjection | None, 단일 집계 대표 사영
     validation_codes,            # tuple, 선언 순서. 내부 진단
 )
 ```
@@ -238,11 +239,22 @@ MedicationIdentificationPreflightOutcome(
 ```python
 PreflightStaleProjection(fallback_code: str, stale_reason: str | None)
 project_preflight_stale_signal(signal: PreflightStaleSignal) -> PreflightStaleProjection
+project_preflight_stale_signals(signals: tuple[PreflightStaleSignal, ...]) -> PreflightStaleProjection | None
 ```
 
 - `PRESCRIPTION_STALE` → `fallback_code="PRESCRIPTION_STALE"`, `stale_reason=None`
 - `IDENTIFICATION_STALE` → `fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="IDENTIFICATION_STALE"`
 - `RUNTIME_RELEASE_STALE` → `fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="RUNTIME_RELEASE_STALE"`
+
+### 복합 STALE 신호 집계 및 우선순위 규칙
+
+처방 Version과 런타임 Bundle/식별 불일치가 동시에 발생하는 경우, `safety-result-v2.md`의 단일 공개 `fallback_code` 제약에 따라 다음의 결정적 우선순위로 집계하여 `outcome.primary_stale_projection`에 단일 사영을 고정한다.
+
+1. **`PRESCRIPTION_STALE` 최우선**: 사용자의 활성 처방전 버전 자체가 변경된 임상 사건은 환자에게 직접 안내되어야 하는 근본 원인이므로, 시스템 내부적 컨텍스트 불일치보다 항상 우선한다.
+2. **`IDENTIFICATION_STALE` 우선**: 처방 버전 변경이 없을 때, 약제 단위의 공식 의약품 식별 불일치가 런타임 번들 불일치보다 상위 도메인 사유로 취급된다 (`fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="IDENTIFICATION_STALE"`).
+3. **`RUNTIME_RELEASE_STALE`**: 활성 런타임 번들만 변경된 경우 (`fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="RUNTIME_RELEASE_STALE"`).
+
+후속 소비자(#174 RAG-12-API)는 복수 신호를 임의로 사영하거나 선언 순서에 의존하지 않고 `outcome.primary_stale_projection`을 직접 소비한다.
 
 `execution_status`를 별도 축으로 둔 이유는 `ai_worker/tasks/rag/evidence_gate.py`의
 `EvidenceGateExecutionStatus` 선례와 같다. 공유 결정축에 새 값을 만들지 않고 구조 오류를 구분한다.

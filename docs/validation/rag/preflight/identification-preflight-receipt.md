@@ -27,7 +27,7 @@
 
 ```text
 $ uv run pytest ai_worker/tests/rag/test_identification_preflight.py -q
-40 passed in 0.04s
+45 passed in 0.05s
 
 $ uv run pytest tests/contract/rag/test_preflight_decision_contract.py -q
 31 passed in 0.05s
@@ -40,10 +40,10 @@ $ uv run ruff check .
 All checks passed!
 
 $ uv run ruff format . --check
-564 files already formatted
+573 files already formatted
 
 $ uv run mypy backend/app ai_worker
-Success: no issues found in 471 source files
+Success: no issues found in 480 source files
 ```
 
 ### 기본 CI 회귀
@@ -83,6 +83,7 @@ TOTAL coverage 94%
 | 알 수 없는 enum | `test_unknown_state_fails_closed`, fixture `PF-009` | 통과 |
 | 순서가 달라도 동일 hash/decision | `test_input_order_does_not_change_manifest_or_decision`, `test_decision_matrix_case_is_order_independent` (fixture 12건 전체) | 통과 |
 | 동일 입력 재시도 → 동일 결과, side effect 0건 | `test_repeated_evaluation_is_idempotent`, `test_outcome_is_immutable` | 통과 |
+| 복합 STALE 발생 시 결정적 우선순위 사영 | `test_compound_stale_*` (4건), `test_project_preflight_stale_signals_aggregation` | 통과 |
 
 ## 완료 기준 대비 현황
 
@@ -101,10 +102,11 @@ Issue를 Close하지 않는다. `#174`·`#131`·`#175` 미구현으로 통합·C
 1. Stale이 Identification Fallback보다 앞서는 판정 우선순위 (고정 실행 Graph가 순서를 정하지 않았다)
 2. Identification Fallback 대표 reason이 계약 표기 순서를 따르는 규칙
 3. 구조 검증 실패를 `IDENTIFICATION_FALLBACK/REVIEW_REQUIRED`로 사영하는 선택
-4. `#174`에서 Backend가 이 kernel을 소비할 방식
+4. 복합 STALE 신호 발생 시 단일 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)
+5. `#174`에서 Backend가 이 kernel을 소비할 방식
 
-세 항목 모두 승인된 Decision이 아니다. `#174` 병합 전에 확정한다. 그때까지 `identification_reasons`,
-`stale_signals`, `validation_codes`를 환자 문구나 공개 DTO에 직접 매핑하지 않는다.
+위 항목들은 승인된 별도 Decision이 아직 없다. `#174` 병합 전에 확정한다. 그때까지 `identification_reasons`,
+`stale_signals`, `validation_codes`를 환자 문구나 공개 DTO에 직접 매핑하지 않고, `primary_stale_projection`의 계약 범위를 우선 준수한다.
 
 ## 합성 데이터 확인
 

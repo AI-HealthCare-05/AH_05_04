@@ -45,6 +45,7 @@ from ai_worker.tasks.rag.identification_preflight import (  # noqa: E402
     evaluate_medication_identification_preflight,
     preflight_state_from_mapping,
     project_preflight_stale_signal,
+    project_preflight_stale_signals,
 )
 
 KERNEL_PATH = PROJECT_ROOT / "ai_worker" / "tasks" / "rag" / "identification_preflight.py"
@@ -199,6 +200,31 @@ def test_stale_signal_vocabulary_and_projection_matches_safety_result_contract()
     assert proj_bundle.fallback_code in fallback_codes
     assert proj_bundle.stale_reason == "RUNTIME_RELEASE_STALE"
     assert proj_bundle.stale_reason in stale_reasons
+
+    # 4. 복합 STALE 신호 집계(aggregation) 및 우선순위 불변식 검증
+    # - 처방 버전 변경(PRESCRIPTION_STALE)이 최우선: 어떤 신호와 결합해도 단일 결과는 PRESCRIPTION_STALE
+    proj_compound_rx_bundle = project_preflight_stale_signals(
+        (PreflightStaleSignal.PRESCRIPTION_STALE, PreflightStaleSignal.RUNTIME_RELEASE_STALE)
+    )
+    assert proj_compound_rx_bundle == proj_rx
+
+    proj_compound_all = project_preflight_stale_signals(
+        (
+            PreflightStaleSignal.RUNTIME_RELEASE_STALE,
+            PreflightStaleSignal.IDENTIFICATION_STALE,
+            PreflightStaleSignal.PRESCRIPTION_STALE,
+        )
+    )
+    assert proj_compound_all == proj_rx
+
+    # - 처방 버전 불일치가 없을 때는 식별 불일치(IDENTIFICATION_STALE)가 런타임 번들(RUNTIME_RELEASE_STALE)에 우선
+    proj_compound_id_bundle = project_preflight_stale_signals(
+        (PreflightStaleSignal.RUNTIME_RELEASE_STALE, PreflightStaleSignal.IDENTIFICATION_STALE)
+    )
+    assert proj_compound_id_bundle == proj_id
+
+    # - 빈 신호는 None
+    assert project_preflight_stale_signals(()) is None
 
 
 def test_kernel_imports_are_stdlib_only() -> None:
