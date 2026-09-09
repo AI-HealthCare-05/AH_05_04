@@ -92,7 +92,6 @@ class FakeSnapshotRepository:
             None,
         )
 
-
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         assert operation_id == _OPERATION_ID
         return next(
@@ -322,6 +321,7 @@ async def test_default_policy_records_rejection_limit_failure_without_snapshot()
     assert repository.runs[0].run_status == "FAILED"
     assert repository.runs[0].failure_code == "REJECTION_LIMIT_EXCEEDED"
     assert repository.run_artifacts[result.ingestion_run_id] == artifacts
+
 
 async def test_default_policy_records_empty_result_failure_without_snapshot() -> None:
     repository = FakeSnapshotRepository()
