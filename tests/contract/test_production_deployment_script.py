@@ -3,6 +3,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = PROJECT_ROOT / "scripts/deployment.sh"
+VALID_SNAPSHOT_ENCRYPTION_KEY = "mNZgOOlYI_KL5_6HjgyDFGPkMW7xU7CBpPYY5awEaRg="
 
 
 def test_deployment_script_rejects_missing_redis_password_before_external_actions(tmp_path: Path) -> None:
@@ -58,6 +59,7 @@ def test_deployment_script_rejects_placeholder_redis_password_before_external_ac
                 "DB_APP_USER=dummy_app",
                 "DB_APP_PASSWORD=dummy-app-password",
                 "ENV=production",
+                f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 "REDIS_PASSWORD=replace-with-production-redis-password",
                 "",
             ]
@@ -95,6 +97,7 @@ def test_deployment_script_rejects_quoted_placeholder_redis_password(tmp_path: P
                 "DB_APP_USER=dummy_app",
                 "DB_APP_PASSWORD=dummy-app-password",
                 "ENV=production",
+                f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 'REDIS_PASSWORD="replace-with-production-redis-password"',
                 "",
             ]
@@ -133,6 +136,7 @@ def test_deployment_script_rejects_env_file_missing_redis_password_even_when_inh
                 "DB_APP_USER=dummy_app",
                 "DB_APP_PASSWORD=dummy-app-password",
                 "ENV=production",
+                f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 # REDIS_PASSWORD는 파일에서 의도적으로 생략하고, 실행 셸에만 상속시킨다.
                 "",
             ]
@@ -218,6 +222,7 @@ def test_deployment_script_rejects_non_production_env_before_external_actions(tm
                 "DB_APP_PASSWORD=dummy-app-password",
                 "REDIS_PASSWORD=dummy-redis-password",
                 "ENV=local",
+                f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 "",
             ]
         ),
@@ -254,6 +259,7 @@ def test_deployment_script_passes_redis_check_when_password_present(tmp_path: Pa
                 "DB_APP_PASSWORD=dummy-app-password",
                 "REDIS_PASSWORD=dummy-redis-password",
                 "ENV=production",
+                f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 "",
             ]
         ),
@@ -273,3 +279,98 @@ def test_deployment_script_passes_redis_check_when_password_present(tmp_path: Pa
     assert completed.returncode != 0
     assert "REDIS_PASSWORD" not in completed.stdout
     assert "서로 다른 이름이어야 합니다" in completed.stdout
+
+
+def test_deployment_script_rejects_missing_snapshot_key_even_when_inherited(tmp_path: Path) -> None:
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "ENV=production",
+                "REDIS_PASSWORD=dummy-redis-password",
+                # active key는 파일에서 생략하고 실행 셸에만 상속시킨다.
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PROD_ENV_FILE": str(env_file),
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": VALID_SNAPSHOT_ENCRYPTION_KEY,
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY" in completed.stdout
+    assert "선언되어 있지 않습니다" in completed.stdout
+    assert VALID_SNAPSHOT_ENCRYPTION_KEY not in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+
+
+def test_deployment_script_rejects_empty_snapshot_key_before_external_actions(tmp_path: Path) -> None:
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "ENV=production",
+                "REDIS_PASSWORD=dummy-redis-password",
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY=",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY" in completed.stdout
+    assert "비어 있습니다" in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+
+
+def test_deployment_script_rejects_snapshot_key_placeholder_before_external_actions(tmp_path: Path) -> None:
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "ENV=production",
+                "REDIS_PASSWORD=dummy-redis-password",
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY=MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY" in completed.stdout
+    assert "placeholder" in completed.stdout
+    assert "docker" not in completed.stdout.lower()
