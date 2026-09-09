@@ -1863,6 +1863,7 @@ async def _insert_ai_job_for_guide_mapping(
     connection: AsyncConnection,
     *,
     user_id: str,
+    prescription_version_id: str | None = None,
 ) -> str:
     ai_job_id = str(uuid4())
 
@@ -1874,6 +1875,7 @@ async def _insert_ai_job_for_guide_mapping(
                 user_id,
                 job_type,
                 status,
+                prescription_version_id,
                 attempt_count,
                 max_attempts
             )
@@ -1882,6 +1884,7 @@ async def _insert_ai_job_for_guide_mapping(
                 :user_id,
                 'GUIDE',
                 'PENDING',
+                :prescription_version_id,
                 0,
                 3
             )
@@ -1890,6 +1893,7 @@ async def _insert_ai_job_for_guide_mapping(
         {
             "id": ai_job_id,
             "user_id": user_id,
+            "prescription_version_id": prescription_version_id,
         },
     )
 
@@ -1976,9 +1980,15 @@ async def test_deleting_ai_job_sets_guide_mapping_to_null(
 
         try:
             user_id, _, _, _, guide_id = await insert_guide_parent_chain(connection)
+            prescription_version_id = await connection.scalar(
+                text("SELECT prescription_version_id FROM guide WHERE id = :id"),
+                {"id": guide_id},
+            )
+            assert prescription_version_id is not None
             ai_job_id = await _insert_ai_job_for_guide_mapping(
                 connection,
                 user_id=user_id,
+                prescription_version_id=str(prescription_version_id),
             )
 
             await connection.execute(
@@ -2026,16 +2036,16 @@ async def test_one_ai_job_cannot_map_to_multiple_guides(
         try:
             user_id, _, _, prescription_id, first_guide_id = await insert_guide_parent_chain(connection)
             second_guide_id = str(uuid4())
-            ai_job_id = await _insert_ai_job_for_guide_mapping(
-                connection,
-                user_id=user_id,
-            )
-
             prescription_result = await connection.execute(
                 text("SELECT profile_id, active_version_id FROM prescription WHERE id = :id"),
                 {"id": prescription_id},
             )
             profile_id, prescription_version_id = prescription_result.one()
+            ai_job_id = await _insert_ai_job_for_guide_mapping(
+                connection,
+                user_id=user_id,
+                prescription_version_id=str(prescription_version_id),
+            )
 
             await connection.execute(
                 text(

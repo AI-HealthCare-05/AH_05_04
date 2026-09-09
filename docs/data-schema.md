@@ -366,7 +366,7 @@ Rollback 정책:
 
 ## Prescription Version 이관과 Cleanup
 
-Revision `169a1b2c3d4e`는 Expand 단계로 `prescription_version`, `prescription_version_medication`과 임시 nullable `prescription.active_version_id`를 추가했습니다. Revision `169b2c3d4e5f`는 기존 처방과 약물을 Version 1 snapshot으로 backfill했고, `169c3d4e5f6a`는 Prescription·Candidate·Identification·Guide·Chat read를 Version 기준으로 전환했습니다. Revision `169d4e5f6a7b`는 null row가 0건인지 잠금 검증한 뒤 `prescription.active_version_id`, `guide.prescription_version_id`, `chat_session.prescription_version_id`를 `NOT NULL`로 고정합니다.
+Revision `169a1b2c3d4e`는 Expand 단계로 `prescription_version`, `prescription_version_medication`과 임시 nullable `prescription.active_version_id`를 추가했습니다. Revision `169b2c3d4e5f`는 기존 처방과 약물을 Version 1 snapshot으로 backfill했고, `169c3d4e5f6a`는 Prescription·Candidate·Identification·Guide·Chat read를 Version 기준으로 전환했습니다. Revision `169d4e5f6a7b`는 잘못된 provenance가 0건인지 잠금 검증한 뒤 `prescription.active_version_id`, `guide.prescription_version_id`, `chat_session.prescription_version_id`를 `NOT NULL`로 고정하고 `ai_job`의 유형별 Version 조건을 CHECK로 고정합니다.
 
 | 관계 | 제약 |
 | --- | --- |
@@ -378,7 +378,9 @@ Revision `169a1b2c3d4e`는 Expand 단계로 `prescription_version`, `prescriptio
 
 이관 순서는 `Expand → Dual-write → Backfill → Verify → Read cutover → Cleanup`입니다. Cleanup 이후 신규 확정 writer와 모든 현재 read는 `prescription_version`·`prescription_version_medication`만 사용하고 legacy `medication`을 더 이상 dual-write하거나 조회하지 않습니다. legacy 테이블과 과거 row는 이관 감사·구 migration backfill 원본으로 보존하며 이 PR에서 삭제하지 않습니다. `prescription_id`가 Guide·Chat에 남아 있는 것은 소유권 및 composite FK의 부모 연결용이며 결과 snapshot의 현재성 기준은 반드시 `prescription_version_id`입니다.
 
-`prescription_version_id`는 Prescription의 활성 포인터, Guide, Chat Session과 Candidate/Identification 파생 경로에서 필수입니다. `prescription_version_medication_id`는 Candidate Search·Identification에서 필수입니다. 반면 `ai_job.prescription_version_id`는 OCR Job에는 적용할 Prescription이 아직 없으므로 nullable이고, 확정 처방에서 파생되는 Guide·Chat Job에는 필수입니다. 이 조건부 의미는 공통 Job DTO의 nullable 표면을 유지합니다.
+`prescription_version_id`는 Prescription의 활성 포인터, Guide, Chat Session과 Candidate/Identification 파생 경로에서 필수입니다. `prescription_version_medication_id`는 Candidate Search·Identification에서 필수입니다. `ai_job.prescription_version_id`는 OCR Job에는 적용할 Prescription이 아직 없으므로 반드시 `NULL`이고, 확정 처방에서 파생되는 Guide·Chat Job에는 반드시 값이 있어야 합니다. `chk_ai_job_prescription_version_by_type`과 생성 서비스·저장소 검증이 이 조건을 함께 강제하며, 공통 Job DTO만 두 유형을 표현하기 위해 nullable 표면을 유지합니다.
+
+Cleanup 뒤 schema downgrade는 Version 링크 컬럼을 다시 nullable로 바꿀 수 있을 뿐 application rollback을 복구하지 못합니다. Cutover 이후 생성된 처방에는 legacy `medication` row가 없으므로 구버전 애플리케이션을 배포하면 약물 목록이 비어 보입니다. 따라서 구버전 writer·reader로 되돌리는 배포는 금지하고, 같은 Version schema에서 현재 애플리케이션 재배포 또는 forward-fix만 허용합니다.
 
 Production에서는 생성된 처방 version을 제거하는 migration downgrade 대신 forward-fix를 사용합니다. PR 2 revision의 downgrade는 snapshot을 보존하는 no-op이며 재-upgrade 시 완성된 graph를 검증·재사용합니다. PR 1의 schema downgrade는 Version 또는 Version Medication row가 있으면 계속 중단됩니다. 이는 계정·환자 데이터 삭제 시 부모 Prescription에서 시작하는 runtime cascade와 구분합니다.
 

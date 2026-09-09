@@ -131,7 +131,7 @@ PR 3은 Version read와 Candidate·Identification·Guide·Chat·Guide Job의 생
 
 Candidate Search snapshot의 `medication_name_snapshot`·`strength_text_snapshot`은 FK 대상 PVM 값과 정확히 일치해야 한다. cutover migration은 불일치가 한 건이라도 있으면 FK 적용 전에 전체를 중단한다. Candidate Search·Result·Identification은 감사 이력이므로 Prescription/PV/PVM 삭제에 연쇄 삭제되지 않으며 참조가 남아 있으면 삭제를 거부한다.
 
-Cutover 이후 Candidate/Identification의 legacy ID remap이나 Guide/Chat의 Version provenance가 하나라도 존재하면 schema downgrade는 데이터 유실 없이 되돌릴 수 없으므로 거부한다. 배포 시 writer를 먼저 중지한 상태에서 migration을 수행하며, 실패 시 이전 writer로 downgrade하지 않고 같은 schema에서 application rollback 또는 forward-fix한다.
+Cutover 이후 Candidate/Identification의 legacy ID remap이나 Guide/Chat의 Version provenance가 하나라도 존재하면 schema downgrade는 데이터 유실 없이 되돌릴 수 없으므로 거부한다. Cleanup 뒤 hardening schema downgrade가 Version 링크를 nullable로 되돌릴 수 있어도 application rollback은 단방향이다. 신규 처방에는 legacy `medication` row가 없으므로 구버전 애플리케이션은 약물 목록을 복원할 수 없다. 배포 시 writer를 먼저 중지한 상태에서 migration을 수행하며, 실패 시 이전 writer·reader로 downgrade하지 않고 같은 Version schema에서 현재 애플리케이션 재배포 또는 forward-fix한다.
 
 처방 활성화와 Job 처리의 전역 lock 순서는 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX`다. 각 transaction은 필요한 row만 이 순서로 잠그며 역순 잠금을 금지한다.
 

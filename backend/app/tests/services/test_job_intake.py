@@ -170,6 +170,40 @@ async def test_accept_job_creates_placeholder_job_outbox_and_idempotency_record(
     assert record.parent_resource_id is None
 
 
+@pytest.mark.parametrize(
+    ("job_type", "prescription_version_id"),
+    [
+        (AiJobType.OCR, uuid4()),
+        (AiJobType.GUIDE, None),
+        (AiJobType.CHAT, None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_accept_job_rejects_invalid_prescription_version_assignment(
+    db_session: AsyncSession,
+    job_type: AiJobType,
+    prescription_version_id: UUID | None,
+) -> None:
+    user = await _create_user(db_session, email=f"intake-invalid-{uuid4().hex[:8]}@test.local")
+
+    async def unexpected_placeholder(_job_id: UUID) -> NoReturn:
+        raise AssertionError("invalid provenance must fail before placeholder creation")
+
+    with pytest.raises(ValueError, match="prescription_version_id"):
+        await JobIntakeService(AsyncJobRepository(db_session)).accept_job(
+            user_id=user.id,
+            job_type=job_type,
+            operation_id="job.invalid-version",
+            idempotency_key=f"invalid-version-{uuid4().hex}",
+            fingerprint={"job_type": str(job_type)},
+            create_domain_placeholder=unexpected_placeholder,
+            trace_id="a" * 32,
+            prescription_version_id=prescription_version_id,
+        )
+
+    assert await db_session.scalar(select(AiJob.id).where(AiJob.user_id == user.id)) is None
+
+
 @pytest.mark.asyncio
 async def test_accept_job_same_key_same_fingerprint_returns_existing_job(
     db_session: AsyncSession,
