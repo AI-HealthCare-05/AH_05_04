@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | PR 1 DB foundation 및 PR 2 Version 1 Backfill·신규 생성 Dual-write 구현 · PR 3 Read cutover·정정 API 구현, 지정 리뷰어 검토 대기 · PR 4 무효화 및 PR 5 hardening 미구현 |
+| 구현·리뷰 | PR 1 DB foundation, PR 2 Version 1 Backfill·신규 생성 Dual-write, PR 3 Read cutover·정정 API 구현 · PR 4 Job·Outbox·Candidate 무효화와 Guide·Chat·Job 현재 노출 차단 구현, 지정 리뷰어 검토 대기 · PR 5 hardening 미구현 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-b-adherence-v1.md`, `track-e-ocr-regression-v1.md`, `track-f-rag-citation-safety-v1.md` |
 | Last verified | 2026-09-08 |
 
@@ -126,7 +126,7 @@ OCR 검수 완료만으로 자동 활성화하지 않는다. 사용자의 명시
 
 처방 확정·상세·최신·정정 응답은 `prescription_id`, 실제 `prescription_version_id`, 양수 `revision`, `current`, `document_id`, Version의 `prescribed_date`·`confirmed_at`, `medications[]`를 반환한다. 각 약물에는 실제 `prescription_version_medication_id`와 snapshot 임상 필드가 포함된다. `current`는 반환 Version과 응답 시점 `active_version_id`의 일치 여부다.
 
-PR 3은 Version read와 Candidate·Identification·Guide·Chat·Guide Job의 생성 시점 Version 귀속까지만 전환한다. Version 변경 시 기존 Job·결과의 `STALE` 전이와 공개 차단은 PR 4, legacy `prescription_id`·`medication` dual-write 제거 및 nullable 정리는 PR 5 범위다. 의료 현재성 경계를 우회하지 않도록 PR 4가 병합되기 전까지 정정 route는 기본값이 false인 `PRESCRIPTION_CORRECTION_ENABLED` gate로 `503 SERVICE_UNAVAILABLE` 처리한다.
+PR 3은 Version read와 Candidate·Identification·Guide·Chat·Guide Job의 생성 시점 Version 귀속까지 전환했다. PR 4는 Version 변경 transaction에서 이전 Version의 미종료 Job·Outbox·Candidate Search를 무효화하고 Guide·Chat·Job 결과의 현재 노출을 차단한다. 따라서 PR 3의 임시 `PRESCRIPTION_CORRECTION_ENABLED` gate를 제거하고 정정 route를 공개한다. legacy `prescription_id`·`medication` dual-write 제거 및 nullable 정리는 PR 5 범위다.
 
 Candidate Search snapshot의 `medication_name_snapshot`·`strength_text_snapshot`은 FK 대상 PVM 값과 정확히 일치해야 한다. cutover migration은 불일치가 한 건이라도 있으면 FK 적용 전에 전체를 중단한다. Candidate Search·Result·Identification은 감사 이력이므로 Prescription/PV/PVM 삭제에 연쇄 삭제되지 않으며 참조가 남아 있으면 삭제를 거부한다.
 
@@ -135,3 +135,23 @@ Cutover 이후 Candidate/Identification의 legacy ID remap이나 Guide/Chat의 V
 처방 활성화와 Job 처리의 전역 lock 순서는 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX`다. 각 transaction은 필요한 row만 이 순서로 잠그며 역순 잠금을 금지한다.
 
 처방 version 활성화 write service가 transaction owner다. 이전 version의 미래 일정 정리가 필요하면 Track B의 동기 `cancel_future_for_prescription_version` port를 AI Job 상태 전이 뒤 도메인 row 단계에서 같은 transaction 안에 호출한다. effective 시각 이후의 이전 version `PENDING` occurrence와 미전달 알림만 취소하며, 과거 기록을 삭제하거나 새 version에 재귀속하지 않는다. 이 경계에 비동기 event나 사후 보상을 사용하지 않는다.
+
+PR 4 구현은 처방 row 잠금 뒤 이전 Version의 `PENDING | PROCESSING | RETRY_WAIT` Job을 `STALE`로
+종결하고 실행 중 Attempt를 `BLOCKED`로 보존한다. 연결된 `PENDING | CLAIMED` Outbox는
+`CANCELLED`로 전환하며 이미 `PUBLISHED`인 event는 변경하지 않는다. Worker lease를 제거하고
+마지막 event를 consumed provenance로 보존하므로 실행 중 결과 commit은 fencing에서 탈락한다.
+이전 Version의 `RUNNING | READY` Candidate Search만 `INVALIDATED_INPUT_CHANGED`로 바꾸고,
+완료·소비·거절·만료 Search와 Identification 감사 이력은 변경하지 않는다.
+
+Guide·Chat의 ID 직접 조회·메시지 전송은 저장된 Version과 현재 active Version이 다르면
+`409 PRESCRIPTION_VERSION_CONFLICT`로 거부한다. 처방 기준 최신 Guide·Chat 조회는 active Version
+결과만 선택한다. 완료된 이전 Version Job은 상태와 provenance를 계속 조회할 수 있지만
+`result_url`을 반환하지 않는다.
+
+현재 동기 Chat 메시지 전송은 동일 `CHAT_SESSION` row lock으로 같은 세션 요청만 직렬화한다. 서로 다른
+세션의 Provider 호출은 병렬로 수행하며 그 구간에는 `PRESCRIPTION` row lock을 유지하지 않는다. 결과
+commit 직전에 생성 기준 Version과 `active_version_id`의 일치를 `PRESCRIPTION` row lock으로 다시
+검증한다. Provider 호출 중 정정이 commit되어 불일치하면 결과 content·model·prompt metadata를 저장하지
+않고 ASSISTANT placeholder를 `FAILED / PRESCRIPTION_VERSION_STALE`로 보존하며
+`409 PRESCRIPTION_VERSION_CONFLICT`를 반환한다. 처방 활성화 transaction은 기존 `CHAT_SESSION` row를
+잠그지 않으므로 이 완료 fencing과 역방향 lock cycle을 만들지 않는다.
