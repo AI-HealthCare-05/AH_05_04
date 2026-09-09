@@ -734,19 +734,17 @@ def test_malformed_product_evidence_is_typed_failure(bad_hit: CandidateHit) -> N
 
 
 @pytest.mark.parametrize(
-    ("field_name", "value"),
+    "snapshot",
     [
-        ("product_name", "가" * 256),
-        ("strength_text", "1" * 101),
-        ("dosage_form", "정" * 101),
-        ("manufacturer_name", "가" * 256),
+        dataclasses.replace(product_snapshot("SYNTH-P-001"), product_name="가" * 256),
+        dataclasses.replace(product_snapshot("SYNTH-P-001"), strength_text="1" * 101),
+        dataclasses.replace(product_snapshot("SYNTH-P-001"), dosage_form="정" * 101),
+        dataclasses.replace(product_snapshot("SYNTH-P-001"), manufacturer_name="가" * 256),
     ],
 )
 def test_product_snapshot_display_fields_cannot_exceed_persistence_contract(
-    field_name: str,
-    value: str,
+    snapshot: ProductSnapshot,
 ) -> None:
-    snapshot = dataclasses.replace(product_snapshot("SYNTH-P-001"), **{field_name: value})
     candidate = hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, snapshot=snapshot)
 
     result = resolve(FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (candidate,)}))
