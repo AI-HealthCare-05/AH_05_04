@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from app.services.rag import candidate_resolver as candidate_resolver_module
 from app.services.rag.candidate_policy import CandidateStage, ResolverPolicy
 from app.services.rag.candidate_resolver import (
     AttributeCompatibility,
@@ -28,6 +27,8 @@ from app.services.rag.candidate_resolver import (
     ResolverInput,
     ResolverOutcome,
     ResolverResult,
+    candidate_search_stages,
+    prepare_candidate_search,
 )
 
 
@@ -414,12 +415,7 @@ def test_dense_requires_index_capability_and_policy(
 
 
 def test_async_hydrator_can_reuse_pure_request_and_stage_plan_contract() -> None:
-    prepare = getattr(candidate_resolver_module, "prepare_candidate_search", None)
-    stages_for = getattr(candidate_resolver_module, "candidate_search_stages", None)
-    assert callable(prepare)
-    assert callable(stages_for)
-
-    prepared = prepare(resolver_input(), synthetic_policy(enable_dense=False))
+    prepared = prepare_candidate_search(resolver_input(), synthetic_policy(enable_dense=False))
 
     assert isinstance(prepared, CandidateSearchRequest)
     assert prepared == CandidateSearchRequest(
@@ -427,7 +423,7 @@ def test_async_hydrator_can_reuse_pure_request_and_stage_plan_contract() -> None
         index_version="candidate-index-v1",
         retrieval_limit=10,
     )
-    assert stages_for(
+    assert candidate_search_stages(
         CandidateIndexDescriptor(index_version="candidate-index-v1", mode=CandidateIndexMode.HYBRID),
         synthetic_policy(enable_dense=False),
     ) == (
