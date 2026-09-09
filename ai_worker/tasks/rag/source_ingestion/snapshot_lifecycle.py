@@ -1,7 +1,7 @@
 """검증된 Source 수집 결과를 Snapshot 이력에 연결하는 계약입니다."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
@@ -14,6 +14,10 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
+from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
+    SourceSnapshotPolicy,
+    evaluate_snapshot_policy,
+)
 from ai_worker.tasks.rag.source_ingestion.source_version import (
     validate_source_version,
 )
@@ -36,6 +40,7 @@ class SnapshotIngestionDecision(StrEnum):
     CREATED = "CREATED"
     NO_CHANGE = "NO_CHANGE"
     SOURCE_VERSION_CONFLICT = SOURCE_VERSION_CONFLICT
+    VALIDATION_FAILED = "VALIDATION_FAILED"
 
 
 class SnapshotVerificationStatus(StrEnum):
@@ -53,6 +58,82 @@ class SnapshotSelectionDecision(StrEnum):
     ACTIVATED = "ACTIVATED"
     RESTORED = "RESTORED"
     ALREADY_CURRENT = "ALREADY_CURRENT"
+
+
+class SnapshotUseDecision(StrEnum):
+    """Catalog·Runtime의 Snapshot 사용 가능 판정입니다."""
+
+    USABLE = "USABLE"
+    BLOCKED = "BLOCKED"
+
+
+class SnapshotUseFailureCode(StrEnum):
+    """Snapshot을 사용할 수 없을 때 기록하는 안전한 reason code입니다."""
+
+    SNAPSHOT_NOT_APPROVED = "SNAPSHOT_NOT_APPROVED"
+    SNAPSHOT_REJECTED = "SNAPSHOT_REJECTED"
+    SNAPSHOT_FRESHNESS_STALE = "SNAPSHOT_FRESHNESS_STALE"
+    SNAPSHOT_PROVENANCE_INVALID = "SNAPSHOT_PROVENANCE_INVALID"
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotUseEligibilityResult:
+    """Catalog·Runtime 공통 Snapshot 사용 가능 판정 결과입니다."""
+
+    decision: SnapshotUseDecision
+    failure_code: SnapshotUseFailureCode | None
+
+    @property
+    def usable(self) -> bool:
+        return self.decision is SnapshotUseDecision.USABLE
+
+
+def evaluate_snapshot_use_eligibility(
+    *,
+    verification_status: SnapshotVerificationStatus,
+    rejected_record_count: int,
+    publication_approval_passed: bool,
+    freshness_eligible: bool,
+    provenance_valid: bool,
+) -> SnapshotUseEligibilityResult:
+    """승인·Freshness·provenance를 모두 만족한 Snapshot만 허용합니다."""
+    if rejected_record_count < 0:
+        raise ValueError("rejected_record_count는 0 이상이어야 합니다.")
+
+    if not provenance_valid:
+        return SnapshotUseEligibilityResult(
+            decision=SnapshotUseDecision.BLOCKED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_PROVENANCE_INVALID,
+        )
+
+    if verification_status is SnapshotVerificationStatus.FAILED:
+        return SnapshotUseEligibilityResult(
+            decision=SnapshotUseDecision.BLOCKED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_REJECTED,
+        )
+
+    if verification_status is not SnapshotVerificationStatus.CURRENT:
+        return SnapshotUseEligibilityResult(
+            decision=SnapshotUseDecision.BLOCKED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,
+        )
+
+    if rejected_record_count > 0 and not publication_approval_passed:
+        return SnapshotUseEligibilityResult(
+            decision=SnapshotUseDecision.BLOCKED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,
+        )
+
+    if not freshness_eligible:
+        return SnapshotUseEligibilityResult(
+            decision=SnapshotUseDecision.BLOCKED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_FRESHNESS_STALE,
+        )
+
+    return SnapshotUseEligibilityResult(
+        decision=SnapshotUseDecision.USABLE,
+        failure_code=None,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +169,7 @@ class SnapshotIngestionMetadata:
     external_version: str | None = None
     duration_ms: int | None = None
     verified_by: str | None = None
+    snapshot_policy: SourceSnapshotPolicy = field(default_factory=SourceSnapshotPolicy)
 
     def __post_init__(self) -> None:
         bounded_text = (
@@ -141,6 +223,7 @@ class SnapshotPersistenceResult:
     operation_id: UUID
     ingestion_run_id: UUID
     snapshot_id: UUID | None
+    failure_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,8 +357,38 @@ async def persist_product_ingestion_result(
         rejected_record_count=metadata.rejected_record_count,
         artifacts=artifacts,
     )
+    policy_result = evaluate_snapshot_policy(
+        record_count=ingestion.record_count,
+        rejected_record_count=metadata.rejected_record_count,
+        policy=metadata.snapshot_policy,
+    )
 
     operation_id = await repository.lock_operation(ingestion.identity)
+    if not policy_result.snapshot_candidate_allowed:
+        failure_code = policy_result.failure_code
+        if failure_code is None:
+            raise RuntimeError("Snapshot 정책 거부 결과에 failure_code가 없습니다.")
+
+        ingestion_run_id = await repository.create_run(
+            _run_record(
+                operation_id=operation_id,
+                snapshot_id=None,
+                metadata=metadata,
+                run_status="FAILED",
+                failure_code=failure_code.value,
+            )
+        )
+        await repository.create_artifacts(
+            ingestion_run_id=ingestion_run_id,
+            artifacts=artifacts,
+        )
+        return SnapshotPersistenceResult(
+            decision=SnapshotIngestionDecision.VALIDATION_FAILED,
+            operation_id=operation_id,
+            ingestion_run_id=ingestion_run_id,
+            snapshot_id=None,
+            failure_code=failure_code.value,
+        )
     same_version = await repository.get_snapshot_by_version(
         operation_id=operation_id,
         source_version=metadata.source_version,
@@ -353,7 +466,13 @@ async def persist_product_ingestion_result(
         )
     )
     await repository.create_artifacts(ingestion_run_id=ingestion_run_id, artifacts=artifacts)
-    return SnapshotPersistenceResult(decision, operation_id, ingestion_run_id, None)
+    return SnapshotPersistenceResult(
+        decision,
+        operation_id,
+        ingestion_run_id,
+        None,
+        SOURCE_VERSION_CONFLICT,
+    )
 
 
 def _validate_ingestion_artifacts(

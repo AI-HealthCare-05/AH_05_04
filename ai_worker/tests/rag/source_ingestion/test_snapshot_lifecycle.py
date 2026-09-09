@@ -2,6 +2,7 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -32,10 +33,16 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotRunRecord,
     SnapshotSelectionDecision,
     SnapshotStatusReference,
+    SnapshotUseDecision,
+    SnapshotUseFailureCode,
     SnapshotVerificationStatus,
+    evaluate_snapshot_use_eligibility,
     fail_snapshot_verification,
     persist_product_ingestion_result,
     select_current_snapshot,
+)
+from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
+    SourceSnapshotPolicy,
 )
 from ai_worker.tasks.rag.source_ingestion.source_version import (
     SourceVersionValidationError,
@@ -46,6 +53,10 @@ _CHECKSUM_A = "a" * 64
 _CHECKSUM_B = "b" * 64
 _FIXTURE_VERSION = f"commit-{'1' * 40}-manifest-{'2' * 64}"
 _NOW = datetime(2026, 9, 7, 1, 0, tzinfo=UTC)
+_ALLOW_ONE_REJECTION_POLICY = SourceSnapshotPolicy(
+    max_rejected_records=1,
+    max_rejection_rate=Decimal("0.5"),
+)
 
 
 class FakeSnapshotRepository:
@@ -80,6 +91,60 @@ class FakeSnapshotRepository:
             ),
             None,
         )
+
+    async def test_default_policy_records_rejection_limit_failure_without_snapshot() -> None:
+        repository = FakeSnapshotRepository()
+        metadata = replace(
+            _metadata("external:v1"),
+            rejected_record_count=1,
+            snapshot_policy=SourceSnapshotPolicy(),
+        )
+        artifacts = (*_stored_artifacts(), _stored_rejection_artifact())
+
+        result = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(),
+            metadata=metadata,
+            artifacts=artifacts,
+        )
+
+        assert result.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+        assert result.snapshot_id is None
+        assert result.failure_code == "REJECTION_LIMIT_EXCEEDED"
+        assert repository.snapshots == []
+        assert repository.verifications == []
+        assert repository.runs[0].run_status == "FAILED"
+        assert repository.runs[0].failure_code == "REJECTION_LIMIT_EXCEEDED"
+        assert repository.run_artifacts[result.ingestion_run_id] == artifacts
+
+    async def test_default_policy_records_empty_result_failure_without_snapshot() -> None:
+        repository = FakeSnapshotRepository()
+        ingestion = replace(
+            _ingestion(),
+            raw_manifest_checksum=raw_manifest_checksum(()),
+            record_count=0,
+            artifact_count=0,
+        )
+        metadata = replace(
+            _metadata("external:empty"),
+            snapshot_policy=SourceSnapshotPolicy(),
+        )
+
+        result = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=ingestion,
+            metadata=metadata,
+            artifacts=(),
+        )
+
+        assert result.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+        assert result.snapshot_id is None
+        assert result.failure_code == "EMPTY_RESULT"
+        assert repository.snapshots == []
+        assert repository.verifications == []
+        assert repository.runs[0].run_status == "FAILED"
+        assert repository.runs[0].failure_code == "EMPTY_RESULT"
+        assert repository.run_artifacts[result.ingestion_run_id] == ()
 
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         assert operation_id == _OPERATION_ID
@@ -260,6 +325,7 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
         external_version=external_version,
         duration_ms=1000,
         verified_by="source-ingestion-worker",
+        snapshot_policy=_ALLOW_ONE_REJECTION_POLICY,
     )
 
 
@@ -617,6 +683,7 @@ async def test_same_version_with_changed_content_records_conflict_without_snapsh
     assert repository.verifications == [(first.snapshot_id, "source-ingestion-integrity", "PASSED")]
     assert repository.runs[-1].run_status == "FAILED"
     assert repository.runs[-1].failure_code == SOURCE_VERSION_CONFLICT
+    assert conflict.failure_code == SOURCE_VERSION_CONFLICT
 
 
 async def test_a_to_b_to_a_creates_three_append_only_snapshots() -> None:
@@ -1094,3 +1161,114 @@ async def test_rejects_external_version_mismatch_before_locking_operation() -> N
         )
 
     assert repository.locked_identities == []
+
+
+def test_allows_current_fresh_snapshot_with_valid_provenance() -> None:
+    result = evaluate_snapshot_use_eligibility(
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        rejected_record_count=0,
+        publication_approval_passed=False,
+        freshness_eligible=True,
+        provenance_valid=True,
+    )
+
+    assert result.decision is SnapshotUseDecision.USABLE
+    assert result.failure_code is None
+    assert result.usable is True
+
+
+@pytest.mark.parametrize(
+    ("verification_status", "expected_failure_code"),
+    [
+        (
+            SnapshotVerificationStatus.PENDING,
+            SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,
+        ),
+        (
+            SnapshotVerificationStatus.STALE,
+            SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,
+        ),
+        (
+            SnapshotVerificationStatus.FAILED,
+            SnapshotUseFailureCode.SNAPSHOT_REJECTED,
+        ),
+    ],
+)
+def test_blocks_snapshot_that_is_not_current(
+    verification_status: SnapshotVerificationStatus,
+    expected_failure_code: SnapshotUseFailureCode,
+) -> None:
+    result = evaluate_snapshot_use_eligibility(
+        verification_status=verification_status,
+        rejected_record_count=0,
+        publication_approval_passed=False,
+        freshness_eligible=True,
+        provenance_valid=True,
+    )
+
+    assert result.decision is SnapshotUseDecision.BLOCKED
+    assert result.failure_code is expected_failure_code
+    assert result.usable is False
+
+
+def test_blocks_rejected_records_without_publication_approval() -> None:
+    result = evaluate_snapshot_use_eligibility(
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        rejected_record_count=1,
+        publication_approval_passed=False,
+        freshness_eligible=True,
+        provenance_valid=True,
+    )
+
+    assert result.failure_code is SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED
+    assert result.usable is False
+
+
+def test_allows_rejected_records_after_publication_approval() -> None:
+    result = evaluate_snapshot_use_eligibility(
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        rejected_record_count=1,
+        publication_approval_passed=True,
+        freshness_eligible=True,
+        provenance_valid=True,
+    )
+
+    assert result.failure_code is None
+    assert result.usable is True
+
+
+def test_blocks_snapshot_that_is_not_fresh() -> None:
+    result = evaluate_snapshot_use_eligibility(
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        rejected_record_count=0,
+        publication_approval_passed=False,
+        freshness_eligible=False,
+        provenance_valid=True,
+    )
+
+    assert result.failure_code is SnapshotUseFailureCode.SNAPSHOT_FRESHNESS_STALE
+    assert result.usable is False
+
+
+def test_provenance_failure_takes_precedence() -> None:
+    result = evaluate_snapshot_use_eligibility(
+        verification_status=SnapshotVerificationStatus.FAILED,
+        rejected_record_count=1,
+        publication_approval_passed=False,
+        freshness_eligible=False,
+        provenance_valid=False,
+    )
+
+    assert result.failure_code is SnapshotUseFailureCode.SNAPSHOT_PROVENANCE_INVALID
+    assert result.usable is False
+
+
+def test_rejects_negative_rejected_record_count_for_use_evaluation() -> None:
+    with pytest.raises(ValueError, match="rejected_record_count"):
+        evaluate_snapshot_use_eligibility(
+            verification_status=SnapshotVerificationStatus.CURRENT,
+            rejected_record_count=-1,
+            publication_approval_passed=False,
+            freshness_eligible=True,
+            provenance_valid=True,
+        )
