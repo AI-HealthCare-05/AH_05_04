@@ -1,8 +1,9 @@
 import re
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Protocol
 from uuid import UUID
 
 from app.core.errors import ApiError, ErrorDetail
@@ -22,6 +23,19 @@ _MAX_DOSE_SCALE = 3
 _MAX_INTEGER_VALUE = 2_147_483_647
 _MAX_DOSE_UNIT_LENGTH = 50
 _MAX_TIMING_TEXT_LENGTH = 255
+
+
+class PrescriptionVersionScheduleInvalidationPort(Protocol):
+    """처방 Version 활성화 transaction에서 호출하는 Track B 동기 경계."""
+
+    async def cancel_future_for_prescription_version(
+        self,
+        *,
+        prescription_version_id: UUID,
+        effective_at: datetime,
+    ) -> Sequence[UUID]:
+        """취소된 occurrence ID를 B5 미전달 알림 취소 연동점으로 반환한다."""
+        ...
 
 
 def _field_value(field: ExtractedField | None) -> str | None:
@@ -72,10 +86,12 @@ class PrescriptionService:
         document_repository: MedicalDocumentRepository,
         ocr_repository: OcrRepository,
         prescription_repository: PrescriptionRepository,
+        schedule_invalidation: PrescriptionVersionScheduleInvalidationPort,
     ) -> None:
         self._document_repo = document_repository
         self._ocr_repo = ocr_repository
         self._prescription_repo = prescription_repository
+        self._schedule_invalidation = schedule_invalidation
 
     async def confirm_prescription(self, *, user: User, document_id: UUID) -> PrescriptionData:
         # 처방 확정과 extracted-field PATCH의 동시 요청을 직렬화합니다.
@@ -190,9 +206,16 @@ class PrescriptionService:
             raise self._version_conflict()
 
         confirmed_at = datetime.now(UTC)
-        await self._prescription_repo.invalidate_version_dependencies(
+        stale_job_ids = await self._prescription_repo.invalidate_version_domain_dependencies(
             prescription_version_id=current_version.id,
             invalidated_at=confirmed_at,
+        )
+        await self._schedule_invalidation.cancel_future_for_prescription_version(
+            prescription_version_id=current_version.id,
+            effective_at=confirmed_at,
+        )
+        await self._prescription_repo.invalidate_version_outbox(
+            stale_job_ids=stale_job_ids,
         )
         version = await self._prescription_repo.create_version(
             prescription=prescription,
