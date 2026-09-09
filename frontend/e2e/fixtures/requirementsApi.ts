@@ -1,14 +1,7 @@
 import type { Page, Route } from '@playwright/test'
+import { previewIds } from '../../src/dev-preview/syntheticIds'
 
-export const ids = {
-  user: '00000000-0000-4000-8000-000000000001',
-  document: '11111111-1111-4111-8111-111111111111',
-  aiJob: '22222222-2222-4222-8222-222222222222',
-  ocrJob: '33333333-3333-4333-8333-333333333333',
-  prescription: '44444444-4444-4444-8444-444444444444',
-  guide: '55555555-5555-4555-8555-555555555555',
-  session: '66666666-6666-4666-8666-666666666666',
-} as const
+export const ids = previewIds
 
 export const syntheticToken = 'synthetic-e2e-access-token'
 export const sensitiveSentinel = 'SYNTHETIC_PROVIDER_SECRET_MUST_NOT_RENDER'
