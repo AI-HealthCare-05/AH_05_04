@@ -84,19 +84,31 @@ network, 업로드 volume도 전용 이름으로 격리합니다. 이 E2E는 실
 
 ## 현재 자동 검증 범위
 
-GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
+GitHub Actions와 `scripts/ci/run_test.sh`는 다음 경계로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
 
 1. 개발 DB와 분리된 PostgreSQL `test` DB와 격리된 Redis Stream을 사용합니다.
 2. 선택한 환경파일의 DB 계정으로 `alembic upgrade head`를 실행합니다.
 3. `tests/migration/`에서 Alembic이 생성한 실제 PostgreSQL 스키마를 검증합니다.
-4. Backend·공통 계약·Worker 공통 테스트를 실행합니다.
-5. Coverage 결과를 확인합니다.
+4. Backend·공통 계약·선별 Integration lane과 AI Worker 단위·RAG·Evaluation lane을 병렬 실행합니다.
+5. PostgreSQL·Redis를 공유하는 테스트는 Backend lane 안에서 기존 순서대로 직렬 실행합니다.
+6. 두 lane의 Coverage data를 합산한 뒤 결과를 확인합니다.
 
 로컬 기본 실행 명령은 다음과 같습니다.
 
 ```bash
 bash scripts/ci/run_test.sh
 ```
+
+로컬 runner는 migration 검증이 끝난 뒤 Backend lane과 Worker lane을 서로 다른 프로세스로
+동시에 실행합니다. 각 lane은 별도의 Coverage data 파일과 pytest cache 디렉터리를 사용하며,
+출력이 섞이지 않도록 lane별 임시 로그로 모아 순서대로 표시합니다. 두 프로세스를 모두 회수한
+뒤 하나라도 실패하면 전체 실행을 실패 처리합니다. CPU와 메모리가 제한된 환경에서는 병렬
+실행에 따른 개선 폭이 작을 수 있습니다.
+
+GitHub Actions는 `test-migration`, `test-backend`, `test-worker`를 독립 job으로 동시에
+실행합니다. 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service container를 자체 사용하므로
+다른 job과 상태를 공유하지 않습니다. 최종 `test` job은 세 job의 성공 여부를 확인하고 Backend와
+Worker Coverage artifact를 합산합니다. Coverage artifact에는 실행 data만 포함하며 환경파일은 업로드하지 않습니다.
 
 `tests/integration/` 전체를 PostgreSQL·Redis와 함께 재현하는 공식 로컬 명령은 다음과 같습니다.
 
@@ -156,10 +168,10 @@ Compose의 동적 host port·인증 격리 대신, 인증 없는 service contain
 그 외 값은 환경파일을 그대로 따릅니다. 위 목록은 `tests/contract/test_run_test_env_isolation.py`가 고정하므로, 새로 격리해야 할 설정이 생기면 그 테스트도 함께 갱신합니다.
 
 기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
-- `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
-- `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
-- `ai_worker/tests/evaluation/`의 RAG Evaluation 단위 테스트는 기본 실행 범위에 포함됩니다.
-- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, 실제 Redis·PostgreSQL OCR one-cycle, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
+- `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 Backend lane의 기본 실행 범위에 포함됩니다.
+- `ai_worker/tests/core/`, `ai_worker/tests/ocr/`, `ai_worker/tests/rag/`, `ai_worker/tests/evaluation/` 아래 테스트는 Worker lane의 기본 실행 범위에 포함됩니다.
+- 위 기본 대상 디렉터리에 `test_*.py`를 추가하면 별도 파일 목록을 수정하지 않아도 해당 lane에서 수집됩니다. 새 최상위 suite나 기본 제외 영역은 공유 자원과 외부 호출 여부를 검토한 뒤 명시적으로 편입합니다.
+- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, 실제 Redis·PostgreSQL OCR one-cycle, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/llm/`과 Frontend 테스트는 기본 Python 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.

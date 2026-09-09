@@ -15,9 +15,11 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml  # type: ignore[import-untyped]
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 RUN_TEST_SCRIPT = PROJECT_ROOT / "scripts" / "ci" / "run_test.sh"
+PARALLEL_TEST_LANES_SCRIPT = PROJECT_ROOT / "scripts" / "ci" / "parallel_test_lanes.sh"
 TEST_ENVIRONMENT_SCRIPT = PROJECT_ROOT / "scripts" / "ci" / "test_environment.sh"
 GITHUB_ACTIONS_CHECKS = PROJECT_ROOT / ".github" / "workflows" / "checks.yml"
 AI_WORKER_ROOT = PROJECT_ROOT / "ai_worker"
@@ -92,7 +94,7 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
     worker_body = _run_with_worker_test_environment_body()
 
-    assert "coverage run --append -m pytest \\" in script
+    assert 'coverage run -m pytest -o "cache_dir=$cache_dir" \\' in script
     assert "ai_worker/tests/core" in script
     assert "ai_worker/tests/ocr" in script
     assert "ai_worker/tests/rag" in script
@@ -142,6 +144,39 @@ def test_default_runner_uses_isolated_environment_for_redis_integration_tests() 
     assert "tests/integration/test_worker_recovery_repository.py" in isolated_call
 
 
+def test_default_runner_runs_backend_and_worker_lanes_in_parallel_with_isolated_runtime_files() -> None:
+    """Shared coverage or pytest cache files can corrupt an otherwise valid parallel run."""
+    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+
+    assert "source scripts/ci/parallel_test_lanes.sh" in script
+    assert "run_parallel_test_lanes_with_failure_summary run_backend_test_lane run_worker_test_lane" in script
+    assert 'TEST_COVERAGE_DIR="$TEST_STORAGE_DIR/coverage"' in script
+    assert 'COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage.backend"' in script
+    assert 'COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage.worker"' in script
+    assert 'cache_dir="$TEST_STORAGE_DIR/pytest-cache/backend"' in script
+    assert 'cache_dir="$TEST_STORAGE_DIR/pytest-cache/worker"' in script
+    assert 'PARALLEL_TEST_LOG_DIR="$TEST_STORAGE_DIR/test-lane-logs"' in script
+    assert 'COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage"' in script
+    assert 'coverage combine "$TEST_COVERAGE_DIR"' in script
+    assert PARALLEL_TEST_LANES_SCRIPT.is_file()
+
+
+def test_default_runner_preserves_serial_database_setup_and_backend_integration_order() -> None:
+    """DB migration과 같은 DB를 쓰는 Redis integration은 병렬 경계 밖으로 이동하면 안 됩니다."""
+    script = RUN_TEST_SCRIPT.read_text(encoding="utf-8")
+
+    migration_index = script.index("run_with_backend_test_database alembic")
+    migration_validation_index = script.index("run_with_backend_test_database pytest tests/migration")
+    parallel_index = script.index(
+        "run_parallel_test_lanes_with_failure_summary run_backend_test_lane run_worker_test_lane"
+    )
+    backend_pytest_index = script.index("coverage run -m pytest", script.index("run_backend_test_lane()"))
+    redis_integration_index = script.index("coverage run --append -m pytest", script.index("run_backend_test_lane()"))
+
+    assert migration_index < migration_validation_index < parallel_index
+    assert backend_pytest_index < redis_integration_index < script.index("run_worker_test_lane()")
+
+
 def _is_forbidden_worker_backend_import(module_name: str) -> bool:
     return (
         module_name == "app"
@@ -175,17 +210,87 @@ def test_ai_worker_source_does_not_import_backend_app_modules() -> None:
 
 def test_github_actions_excludes_backend_from_ai_worker_unit_test_pythonpath() -> None:
     """GitHub Actions에서도 Worker 단위 테스트는 backend/app 경로 없이 별도 실행해야 합니다."""
-    workflow = GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    backend_step = next(
+        step for step in jobs["test-backend"]["steps"] if step["name"] == "Run Backend Tests with Coverage"
+    )
+    worker_step = next(
+        step for step in jobs["test-worker"]["steps"] if step["name"] == "Run AI Worker Unit Tests with Coverage"
+    )
 
-    assert "PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}" in workflow
-    assert (
-        "PYTHONPATH: ${{ github.workspace }}\n        run: |\n          uv run coverage run --append -m pytest"
-        " ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation\n" in workflow
+    assert backend_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
+    assert worker_step["env"]["PYTHONPATH"] == "${{ github.workspace }}"
+    assert "backend/app" in backend_step["run"]
+    assert "tests/contract" in backend_step["run"]
+    assert "ai_worker/tests/core" in worker_step["run"]
+    assert "ai_worker/tests/ocr" in worker_step["run"]
+    assert "ai_worker/tests/rag" in worker_step["run"]
+    assert "ai_worker/tests/evaluation" in worker_step["run"]
+    assert "backend/app" not in worker_step["run"]
+
+
+def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_gate() -> None:
+    """Putting the lanes back into one job would restore the CI wall-clock bottleneck."""
+    workflow = yaml.safe_load(GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+
+    assert {"test-migration", "test-backend", "test-worker", "test"}.issubset(jobs)
+    assert "postgres" in jobs["test-migration"]["services"]
+    assert "redis" not in jobs["test-migration"]["services"]
+    assert {"postgres", "redis"}.issubset(jobs["test-backend"]["services"])
+    assert "services" not in jobs["test-worker"]
+    assert set(jobs["test"]["needs"]) == {"test-migration", "test-backend", "test-worker"}
+    assert jobs["test"]["if"] == "${{ always() }}"
+
+    final_steps = jobs["test"]["steps"]
+    gate_step = final_steps[0]
+    assert gate_step["name"] == "Verify Python test jobs succeeded"
+    assert gate_step["env"] == {
+        "MIGRATION_RESULT": "${{ needs.test-migration.result }}",
+        "BACKEND_RESULT": "${{ needs.test-backend.result }}",
+        "WORKER_RESULT": "${{ needs.test-worker.result }}",
+    }
+    for result_name in gate_step["env"]:
+        assert f'"${result_name}" != "success"' in gate_step["run"]
+    assert next(index for index, step in enumerate(final_steps) if step["name"] == "Coverage Report") > 0
+
+
+def test_github_actions_combines_distinct_lane_coverage_artifacts() -> None:
+    """Reusing one data file or omitting hidden files would lose coverage from a parallel lane."""
+    workflow = yaml.safe_load(GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+
+    assert jobs["test-backend"]["env"]["COVERAGE_FILE"] == ".coverage.backend"
+    assert jobs["test-worker"]["env"]["COVERAGE_FILE"] == ".coverage.worker"
+
+    backend_upload = next(
+        step for step in jobs["test-backend"]["steps"] if step["name"] == "Upload Backend Coverage Data"
     )
-    assert (
-        "uv run coverage run -m pytest backend/app tests/contract ai_worker/tests/core ai_worker/tests/ocr"
-        not in workflow
+    worker_upload = next(
+        step for step in jobs["test-worker"]["steps"] if step["name"] == "Upload AI Worker Coverage Data"
     )
+
+    assert backend_upload["uses"] == "actions/upload-artifact@v4"
+    assert backend_upload["with"] == {
+        "name": "python-coverage-backend",
+        "path": ".coverage.backend",
+        "include-hidden-files": True,
+        "if-no-files-found": "error",
+    }
+    assert worker_upload["uses"] == "actions/upload-artifact@v4"
+    assert worker_upload["with"] == {
+        "name": "python-coverage-worker",
+        "path": ".coverage.worker",
+        "include-hidden-files": True,
+        "if-no-files-found": "error",
+    }
+
+    final_steps = {step["name"]: step for step in jobs["test"]["steps"]}
+    assert final_steps["Download Backend Coverage Data"]["with"]["name"] == "python-coverage-backend"
+    assert final_steps["Download AI Worker Coverage Data"]["with"]["name"] == "python-coverage-worker"
+    assert "coverage combine coverage-data/backend coverage-data/worker" in final_steps["Coverage Report"]["run"]
+    assert "coverage report -m" in final_steps["Coverage Report"]["run"]
 
 
 @pytest.mark.parametrize("target", REQUIRED_WORKER_INTEGRATION_TARGETS)
