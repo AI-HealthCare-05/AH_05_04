@@ -11,7 +11,7 @@ from typing import cast
 
 import pytest
 
-from ai_worker.tasks.rag.identification_preflight import (
+from rag_runtime.identification_preflight import (
     MANIFEST_PROJECTION_VERSION,
     IdentificationSnapshotRef,
     MedicationIdentificationPreflightRequest,

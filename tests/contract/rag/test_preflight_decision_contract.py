@@ -29,7 +29,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_worker.tasks.rag.identification_preflight import (  # noqa: E402
+from rag_runtime.identification_preflight import (  # noqa: E402
     MANIFEST_PROJECTION_VERSION,
     IdentificationSnapshotRef,
     MedicationIdentificationPreflightRequest,
@@ -48,7 +48,7 @@ from ai_worker.tasks.rag.identification_preflight import (  # noqa: E402
     project_preflight_stale_signals,
 )
 
-KERNEL_PATH = PROJECT_ROOT / "ai_worker" / "tasks" / "rag" / "identification_preflight.py"
+KERNEL_PATH = PROJECT_ROOT / "rag_runtime" / "identification_preflight.py"
 RUNTIME_CONTRACT_PATH = PROJECT_ROOT / "docs" / "contracts" / "targets" / "post-mvp-1" / "rag-runtime-v1.md"
 SAFETY_CONTRACT_PATH = PROJECT_ROOT / "docs" / "contracts" / "targets" / "post-mvp-1" / "safety-result-v2.md"
 FIXTURE_PATH = PROJECT_ROOT / "tests" / "fixtures" / "rag" / "preflight" / "decision_matrix.json"
@@ -238,6 +238,25 @@ def test_kernel_imports_are_stdlib_only() -> None:
             imported.add(node.module or "")
 
     assert imported <= ALLOWED_KERNEL_IMPORTS, f"허용되지 않은 import: {sorted(imported - ALLOWED_KERNEL_IMPORTS)}"
+
+
+def test_rag_runtime_package_exports_all_public_symbols() -> None:
+    import inspect
+
+    import rag_runtime
+    import rag_runtime.identification_preflight as kernel
+
+    assert hasattr(rag_runtime, "__all__")
+    assert isinstance(rag_runtime.__all__, list)
+    kernel_defined = {
+        name
+        for name, obj in inspect.getmembers(kernel)
+        if not name.startswith("_") and getattr(obj, "__module__", None) == kernel.__name__
+    }
+    kernel_defined.add("MANIFEST_PROJECTION_VERSION")
+    assert set(rag_runtime.__all__) == kernel_defined
+    for symbol in rag_runtime.__all__:
+        assert getattr(rag_runtime, symbol) is getattr(kernel, symbol)
 
 
 def test_manifest_projection_version_is_pinned() -> None:
