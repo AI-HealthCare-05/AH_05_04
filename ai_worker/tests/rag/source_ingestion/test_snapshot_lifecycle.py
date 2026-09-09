@@ -37,6 +37,9 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     persist_product_ingestion_result,
     select_current_snapshot,
 )
+from ai_worker.tasks.rag.source_ingestion.source_version import (
+    SourceVersionValidationError,
+)
 
 _OPERATION_ID = UUID("11111111-1111-4111-8111-111111111111")
 _CHECKSUM_A = "a" * 64
@@ -240,6 +243,12 @@ def _stored_rejection_artifact() -> StoredRawArtifact:
 
 
 def _metadata(source_version: str) -> SnapshotIngestionMetadata:
+    external_version = (
+        source_version.removeprefix("external:")
+        if source_version.startswith("external:")
+        else None
+    )
+
     return SnapshotIngestionMetadata(
         source_version=source_version,
         schema_version="mfds-product-response@1",
@@ -251,6 +260,7 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
         started_at=_NOW,
         finished_at=_NOW + timedelta(seconds=1),
         collected_at=_NOW,
+        external_version=external_version,
         duration_ms=1000,
         verified_by="source-ingestion-worker",
     )
@@ -259,15 +269,15 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
-        (lambda: replace(_metadata("source-v1"), source_version="x" * 256), "source_version"),
-        (lambda: replace(_metadata("source-v1"), schema_version="x" * 101), "schema_version"),
-        (lambda: replace(_metadata("source-v1"), parser_version="x" * 101), "parser_version"),
+        (lambda: replace(_metadata("external:v1"), source_version="x" * 256), "source_version"),
+        (lambda: replace(_metadata("external:v1"), schema_version="x" * 101), "schema_version"),
+        (lambda: replace(_metadata("external:v1"), parser_version="x" * 101), "parser_version"),
         (
-            lambda: replace(_metadata("source-v1"), normalization_version="x" * 101),
+            lambda: replace(_metadata("external:v1"), normalization_version="x" * 101),
             "normalization_version",
         ),
-        (lambda: replace(_metadata("source-v1"), run_group_key="x" * 101), "run_group_key"),
-        (lambda: replace(_metadata("source-v1"), verified_by="x" * 101), "verified_by"),
+        (lambda: replace(_metadata("external:v1"), run_group_key="x" * 101), "run_group_key"),
+        (lambda: replace(_metadata("external:v1"), verified_by="x" * 101), "verified_by"),
     ],
 )
 def test_rejects_snapshot_metadata_larger_than_database_contract(
@@ -284,7 +294,7 @@ async def test_first_result_creates_pending_snapshot_candidate_and_success_histo
     result = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
 
@@ -328,7 +338,7 @@ async def test_invalid_artifact_set_is_rejected_before_operation_lock(
         await persist_product_ingestion_result(
             repository=repository,
             ingestion=ingestion,
-            metadata=_metadata("source-v1"),
+            metadata=_metadata("external:v1"),
             artifacts=artifacts,
         )
 
@@ -358,7 +368,7 @@ async def test_preserves_verified_original_before_snapshot_transaction(
         repository=repository,
         artifact_store=store,
         ingestion=ingestion,
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         raw_artifacts=((1, source, raw_metadata),),
     )
 
@@ -386,7 +396,7 @@ async def test_manifest_mismatch_is_rejected_before_file_or_database_write(
             repository=repository,
             artifact_store=LocalPrivateSourceArtifactStore(storage_root),
             ingestion=_ingestion(),
-            metadata=_metadata("source-v1"),
+            metadata=_metadata("external:v1"),
             raw_artifacts=((1, source, raw_metadata),),
         )
 
@@ -425,7 +435,7 @@ async def test_preserves_rejection_before_success_with_rejections_run(
         repository=repository,
         artifact_store=LocalPrivateSourceArtifactStore(tmp_path / "private"),
         ingestion=ingestion,
-        metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+        metadata=replace(_metadata("external:v1"), rejected_record_count=1),
         raw_artifacts=((1, raw_path, raw_metadata),),
         rejection_artifacts=(
             RejectionArtifactInput(
@@ -477,7 +487,7 @@ async def test_duplicate_raw_and_rejection_keys_are_rejected_before_file_write(
                 _ingestion(),
                 raw_manifest_checksum=raw_manifest_checksum((raw_metadata,)),
             ),
-            metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+            metadata=replace(_metadata("external:v1"), rejected_record_count=1),
             raw_artifacts=((1, raw_path, raw_metadata),),
             rejection_artifacts=(
                 RejectionArtifactInput(
@@ -498,14 +508,14 @@ async def test_same_content_with_new_version_appends_no_change_to_latest_snapsho
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
 
     repeated = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v2"),
+        metadata=_metadata("external:v2"),
         artifacts=_stored_artifacts(),
     )
 
@@ -521,14 +531,14 @@ async def test_changed_rejection_count_creates_new_candidate_instead_of_no_chang
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
 
     changed = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=replace(_metadata("source-v2"), rejected_record_count=1),
+        metadata=replace(_metadata("external:v2"), rejected_record_count=1),
         artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
     )
 
@@ -538,13 +548,13 @@ async def test_changed_rejection_count_creates_new_candidate_instead_of_no_chang
     assert repository.runs[-1].run_status == "SUCCEEDED_WITH_REJECTIONS"
 
 
-@pytest.mark.parametrize("retry_version", ["source-v1", "source-v2"])
+@pytest.mark.parametrize("retry_version", ["external:v1", "external:v2"])
 async def test_failed_snapshot_retry_excludes_failed_lineage(retry_version: str) -> None:
     repository = FakeSnapshotRepository()
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
     assert first.snapshot_id is not None
@@ -573,14 +583,14 @@ async def test_changed_endpoint_receipt_hash_is_not_no_change() -> None:
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
 
     changed = await persist_product_ingestion_result(
         repository=repository,
         ingestion=replace(_ingestion(), endpoint_receipt_hash="f" * 64),
-        metadata=_metadata("source-v2"),
+        metadata=_metadata("external:v2"),
         artifacts=_stored_artifacts(),
     )
 
@@ -593,14 +603,14 @@ async def test_same_version_with_changed_content_records_conflict_without_snapsh
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
 
     conflict = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
 
@@ -618,19 +628,19 @@ async def test_a_to_b_to_a_creates_three_append_only_snapshots() -> None:
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
     second = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
-        metadata=_metadata("source-v2"),
+        metadata=_metadata("external:v2"),
         artifacts=_stored_artifacts(),
     )
     third = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
-        metadata=_metadata("source-v3"),
+        metadata=_metadata("external:v3"),
         artifacts=_stored_artifacts(),
     )
 
@@ -649,14 +659,14 @@ async def test_changed_parser_version_creates_new_snapshot_even_when_checksum_ma
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
 
     changed_parser = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=replace(_metadata("source-v2"), parser_version="parser-v2"),
+        metadata=replace(_metadata("external:v2"), parser_version="parser-v2"),
         artifacts=_stored_artifacts(),
     )
 
@@ -667,7 +677,7 @@ async def test_changed_parser_version_creates_new_snapshot_even_when_checksum_ma
 
 async def test_rejections_are_reflected_in_success_status() -> None:
     repository = FakeSnapshotRepository()
-    metadata = replace(_metadata("source-v1"), rejected_record_count=1)
+    metadata = replace(_metadata("external:v1"), rejected_record_count=1)
 
     await persist_product_ingestion_result(
         repository=repository,
@@ -689,7 +699,7 @@ async def test_rejected_count_requires_rejection_artifact_before_database_write(
         await persist_product_ingestion_result(
             repository=repository,
             ingestion=_ingestion(),
-            metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+            metadata=replace(_metadata("external:v1"), rejected_record_count=1),
             artifacts=_stored_artifacts(),
         )
 
@@ -701,7 +711,7 @@ async def test_selecting_new_snapshot_marks_previous_current_stale() -> None:
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
     assert first.snapshot_id is not None
@@ -714,7 +724,7 @@ async def test_selecting_new_snapshot_marks_previous_current_stale() -> None:
     second = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
-        metadata=_metadata("source-v2"),
+        metadata=_metadata("external:v2"),
         artifacts=_stored_artifacts(),
     )
     assert second.snapshot_id is not None
@@ -743,7 +753,7 @@ async def test_rejected_snapshot_requires_publication_approval_before_selection(
     created = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=replace(_metadata("source-v1"), rejected_record_count=1),
+        metadata=replace(_metadata("external:v1"), rejected_record_count=1),
         artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
     )
     assert created.snapshot_id is not None
@@ -778,13 +788,13 @@ async def test_previous_stale_snapshot_can_be_restored_without_runtime_activatio
     first = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_A),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
     second = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(_CHECKSUM_B),
-        metadata=_metadata("source-v2"),
+        metadata=_metadata("external:v2"),
         artifacts=_stored_artifacts(),
     )
     assert first.snapshot_id is not None
@@ -820,7 +830,7 @@ async def test_selecting_current_snapshot_is_idempotent() -> None:
     created = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
     assert created.snapshot_id is not None
@@ -848,7 +858,7 @@ async def test_pending_snapshot_can_fail_with_safe_code() -> None:
     created = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
     assert created.snapshot_id is not None
@@ -875,7 +885,7 @@ async def test_snapshot_failure_rejects_free_form_details() -> None:
     created = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=_metadata("source-v1"),
+        metadata=_metadata("external:v1"),
         artifacts=_stored_artifacts(),
     )
     assert created.snapshot_id is not None
@@ -966,4 +976,38 @@ async def test_reject_count_mismatch_stops_before_file_write(tmp_path: Path, cou
             rejection_artifacts=(rejection,) * artifact_count,
         )
     assert list((tmp_path / "private").iterdir()) == []
+    assert repository.locked_identities == []
+
+
+async def test_rejects_invalid_source_version_before_locking_operation() -> None:
+    repository = FakeSnapshotRepository()
+
+    with pytest.raises(SourceVersionValidationError):
+        await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(),
+            metadata=replace(
+                _metadata("external:v1"),
+                source_version="v1",
+            ),
+            artifacts=_stored_artifacts(),
+        )
+
+    assert repository.locked_identities == []
+
+
+async def test_rejects_external_version_mismatch_before_locking_operation() -> None:
+    repository = FakeSnapshotRepository()
+
+    with pytest.raises(SourceVersionValidationError, match="일치하지 않습니다"):
+        await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(),
+            metadata=replace(
+                _metadata("external:v1"),
+                external_version="v2",
+            ),
+            artifacts=_stored_artifacts(),
+        )
+
     assert repository.locked_identities == []
