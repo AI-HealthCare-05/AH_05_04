@@ -101,9 +101,23 @@ CLOUDFRONT_ORIGIN_VERIFY_SECRET=<CloudFront-X-Origin-Verify와-같은-무작위-
 CERTBOT_EMAIL=
 ```
 
-`CLOUDFRONT_ORIGIN_VERIFY_SECRET`, API Key, DB·Redis 비밀번호, Docker PAT과 계정
-비밀번호를 터미널 출력이나 PR 증빙에 남기지 않습니다. CloudFront custom header와 env의
-origin secret이 다르면 모든 Frontend/API origin 요청이 `403`으로 실패합니다.
+FastAPI idempotency snapshot 암호화 key ring도 함께 준비합니다.
+
+```dotenv
+IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY=<Fernet.generate_key로-생성한-실제-키>
+IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION=v1
+IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS={}
+```
+
+active key는 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`로
+생성하고 `envs/example.prod.env`의 공개 placeholder를 그대로 사용하지 않습니다. 최초 배포는
+version `v1`, retired keys `{}`로 시작합니다. 키 교체 시에는 version을 올리고 TTL이 남은
+snapshot의 이전 key를 원래 version과 함께 retired keys에 보관합니다. 실제 key는 공유
+터미널 기록이나 PR 증빙에 남기지 않습니다.
+
+`CLOUDFRONT_ORIGIN_VERIFY_SECRET`, snapshot 암호화 key, API Key, DB·Redis 비밀번호,
+Docker PAT과 계정 비밀번호를 터미널 출력이나 PR 증빙에 남기지 않습니다. CloudFront custom
+header와 env의 origin secret이 다르면 모든 Frontend/API origin 요청이 `403`으로 실패합니다.
 
 ## 4. 배포
 
