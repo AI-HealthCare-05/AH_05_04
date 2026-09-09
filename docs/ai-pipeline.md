@@ -37,9 +37,9 @@
 - 입력: 현재 사용자 질문, 세션에 연결된 확정 약물 목록과 `history` 배열
 - 처리: USER 메시지 저장 → OpenAI 단일 응답 생성 → ASSISTANT 메시지 저장을 같은 요청에서 완료
 - 문맥 제한: `CHAT_HISTORY_CONTEXT_ENABLED=false`이면 history를 조회하지 않고 빈 배열을 전달한다. 비식별 합성 Local에서만 flag를 켜 같은 세션의 현재 질문 이전 완료 대화를 최대 3쌍 전달하며, 사용자·세션 식별자, 처방전 이미지와 OCR 원문·미검수 값은 전달하지 않는다.
-- 안전 제한: 단일 `chat-prompt-v2`는 과거 USER 진술과 ASSISTANT 답변을 검증된 현재 사실로 취급하지 않고 현재 확정 medications를 우선한다. 추측·임의 복용 변경·확인하지 않은 인용 생성을 금지하고, 안전상 중요한 과거 정보는 현재도 해당하는지 확인하며 명시된 현재 응급·고위험 상황에서는 도움 안내를 우선한다.
+- 안전 제한: 단일 `chat-prompt-v3`는 과거 USER 진술과 ASSISTANT 답변을 검증된 현재 사실로 취급하지 않고 현재 확정 medications를 우선한다. 추측·임의 복용 변경·확인하지 않은 인용 생성을 금지하고, 안전상 중요한 과거 정보는 현재도 해당하는지 확인하며 명시된 현재 응급·고위험 상황에서는 도움 안내를 우선한다. 생략된 약물 대상을 하나로 특정할 수 없으면 medications의 복수 약물을 나열하지 않고 약명·제품명·성분을 재확인한다.
 
-이 안전 제한은 현재 프롬프트와 단위·계약 테스트의 범위입니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)은 `chat-v2-history-eval-v1` 결정론적 replay, 최대 입력의 Local application-path latency와 PII sentinel 비복제를 검증했습니다. 실제 Provider 품질·네트워크 latency·token 측정은 `NOT_RUN`이며, 합성 replay와 별도 데이터셋 결과는 Production 승인 근거가 아닙니다.
+이 안전 제한은 현재 프롬프트와 단위·계약 테스트의 범위입니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)은 `chat-v2-history-eval-v1` 결정론적 replay, 최대 입력의 Local application-path latency와 PII sentinel 비복제를 검증했습니다. [Issue #306](https://github.com/AI-HealthCare-05/AH_05_04/issues/306)은 `chat-v3-history-eval-v1`에 대상 불명확·현재 응급 우선 사례와 30회 live 분류 집계를 추가했습니다. [2026-09-09 current canonical live 실행](validation/issue-306-chat-live-evaluation.md)은 대상 불명확 재확인 30/30, 세 응급 case의 baseline/history 6/6과 PII 비복제의 blocking gate를 통과했습니다. 전체 16-case 단발 결과도 `full_suite_passed=true`였지만 관찰 지표이며 전체 회귀 blocker는 결정론적 replay 16/16입니다. 합성 replay와 Local live 결과는 Production 승인 근거가 아닙니다.
 
 ## 구현 상태 표
 

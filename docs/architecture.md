@@ -13,7 +13,7 @@
 | FastAPI Backend | 인증·인가, 파일·처방·대화 상태 관리, 동기 OCR·가이드·챗봇 orchestration |
 | `backend/app/services/ocr.py` | 같은 HTTP 요청 안에서 CLOVA OCR 호출, feature flag 기반 LLM 또는 규칙 구조화, grounding, 결과 저장·오류 매핑 |
 | `backend/app/services/guide_ai/` | 확정 처방만 입력받아 OpenAI 복약 가이드 생성 |
-| `backend/app/services/chat_ai/` | 현재 질문과 확정 약물 목록만 입력받아 OpenAI 단일 응답 생성 |
+| `backend/app/services/chat_ai/` | 현재 질문, history 배열(기본 빈 배열)과 확정 약물 목록을 입력받아 OpenAI 단일 응답 생성 |
 | PostgreSQL | 사용자, 의료문서, OCR 결과, 확정 처방, 가이드, 채팅 상태 저장 |
 | 로컬 파일시스템 | `STORAGE_DIR` 아래 처방전 원본 저장. 현재 Compose의 영속 volume과 기본 경로가 일치하지 않아 배포 전 확인 필요 |
 | Redis | Compose에 준비되어 있으나 현재 MVP AI 처리 경로에서는 사용하지 않음 |
@@ -31,7 +31,7 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 6. 챗봇 메시지 API는 USER 메시지를 저장하고 OpenAI 단일 응답을 생성한 뒤 ASSISTANT 메시지를 저장하고 `201 Created`로 응답합니다. 같은 세션의 요청은 DB row lock으로 직렬화합니다.
 7. timeout, 제공자 장애 또는 응답 처리 실패는 정해진 API 오류로 변환하고 실패 상태를 저장합니다.
 
-현재 AI 입력에는 기능 수행에 필요한 최소 데이터만 전달합니다. 처방전 이미지, OCR 원문·미검수 값, 사용자·세션 식별자와 이전 대화는 가이드·챗봇 AI 경계를 넘지 않습니다.
+현재 AI 입력에는 기능 수행에 필요한 최소 데이터만 전달합니다. 처방전 이미지, OCR 원문·미검수 값과 사용자·세션 식별자는 가이드·챗봇 AI 경계를 넘지 않습니다. 챗봇의 이전 대화는 기본적으로 조회하지 않고 `history: []`를 전달하며, 비식별 합성 Local에서 `CHAT_HISTORY_CONTEXT_ENABLED=true`일 때만 현재 질문 이전의 완료 대화를 최대 3쌍 전달합니다.
 
 ## 구현 수준 구분
 
