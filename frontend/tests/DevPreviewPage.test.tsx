@@ -67,10 +67,21 @@ describe('DevPreviewPage', () => {
     ['completed-before-ack', '원본 처방전의 모든 항목을 직접 확인했습니다.'],
     ['completed', '이미 확정된 처방이에요'],
     ['validation-error', '필수값 1개 누락'],
+    ['manual-add-form', '약물 추가'],
+    ['manual-add-validation', '약물이름을 입력해 주세요.'],
+    ['manual-add-success', '수동 추가 약'],
   ])('Prescription Review %s scenario를 렌더링한다', async (scenario, expectedText) => {
     renderPreview('prescription-review', scenario)
 
     expect(await screen.findByText(expectedText, { exact: false })).toBeTruthy()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('manual-add-success는 수동 약물을 기존 검토 진행률에 포함한다', async () => {
+    renderPreview('prescription-review', 'manual-add-success')
+    expect(await screen.findByText('수동 추가 약', { exact: false })).toBeTruthy()
+    expect(screen.getByText('약 1/2개 검토 완료')).toBeTruthy()
+    expect(screen.getByText('검토 전')).toBeTruthy()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
