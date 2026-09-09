@@ -37,6 +37,7 @@ def test_image_copies_provider_contracts_package(dockerfile: Path) -> None:
             "provider_runtime",
             "COPY ./provider_runtime ./provider_runtime",
         ),
+        ("rag_runtime", "COPY ./rag_runtime ./rag_runtime"),
     ],
 )
 def test_images_copy_shared_runtime_packages(

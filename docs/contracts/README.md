@@ -39,6 +39,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
 - [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 비밀번호 재설정·회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃과 `token_version` 재검증은 현재 구현 계약에 반영됨
+- [Safety Result 복합 STALE 우선순위 계약 제안 v1 (`PD-173`)](./proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 발생 시 단일 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`) 정의. PR #382 제안, 검토 대기.
 - [Guide·Chat Session·Message 상태 구현 골격 v1](./proposed/guide-chat-session-message-status-ui-v1.md): Session/Message/Job 결과 상태축, SAFETY-STALE 경계, PROFILE 기반 소유권의 Frontend 구현 골격
 
 Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 구현은 전체 계약 완료나 Current 승격을 의미하지 않으며, 관련 schema·service·CLI·테스트와 남은 전환 단계가 완료되고 상태가 갱신되기 전에는 실행 가능한 전체 계약으로 간주하지 않습니다.
