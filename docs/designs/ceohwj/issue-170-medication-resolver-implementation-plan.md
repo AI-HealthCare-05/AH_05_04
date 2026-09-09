@@ -119,7 +119,8 @@ Worker-side contract suite, PostgreSQL adapter parity, Candidate Search transact
 
 - #168의 async repository/service는 `prepare_candidate_search(...)`로 strength-free 요청을 만들고 물리 조회를
   한 번 수행한다. Product 결과는 #167 `search_candidate_index(...)`의 stage 순서·limit·Catalog·Source·
-  normalization·embedding provenance 검증을 통과한 뒤 bounded immutable evidence snapshot으로 변환한다.
+  `(Source Snapshot ID, source version)`·normalization·embedding provenance 검증을 통과한 뒤 bounded immutable
+  evidence snapshot으로 변환한다.
   현재 동기 `CandidateIndexPort`는 이 snapshot을 `hydrate(request)` 한 번으로 넘기는 in-memory 경계이며 DB
   adapter가 직접 구현하거나 내부에서 async 호출을 숨기는 Protocol이 아니다.
 - #169/#171 통합 전에 확정 저장값의 NFC·공백 규칙과 production 입력 길이를 OCR·Backend·RAG owner Decision으로

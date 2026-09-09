@@ -134,8 +134,8 @@ Async hydration은 `prepare_candidate_search(...)`로 요청 allowlist를 공유
 `CandidateSearchRequest`는 `medication_name`, `index_version`, `retrieval_limit`만 포함한다. `strength_text`를 포함한
 다른 확정 처방 필드는 Candidate Index 검색·사전 필터에 전달하지 않는다.
 
-`CandidateProvenanceReceipt`는 index/catalog version, Catalog manifest hash, source snapshot,
-normalization/embedding version과
+`CandidateProvenanceReceipt`는 index/catalog version, Catalog manifest hash, `(source snapshot ID,
+source version)` 결속, normalization/embedding version과
 `LEXICAL_ONLY | HYBRID` mode를 보존한다. 각 Product hit도 #167의 `member_key`와 동일 provenance를 보존하며,
 receipt 불일치는 `EVIDENCE_INVALID`로 닫는다. Dense 물리 조회 여부는 #167 manifest mode가 결정하고,
 `ResolverPolicy.enable_dense=false`이면 이미 검증된 Dense hit를 Resolver Gate 입력에서 제외한다.

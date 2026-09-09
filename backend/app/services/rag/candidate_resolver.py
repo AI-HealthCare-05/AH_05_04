@@ -67,7 +67,7 @@ class AttributeCompatibility(StrEnum):
 class CandidateIndexPortError(Exception):
     """Expected Candidate Index dependency failure without safe public detail."""
 
-    def __init__(self, stage: CandidateStage | None = None) -> None:
+    def __init__(self, *, stage: object | None = None) -> None:
         super().__init__()
         self.stage = stage
 
@@ -139,11 +139,17 @@ class IngredientHit:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateSourceRef:
+    snapshot_id: str
+    source_version: str
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateProvenanceReceipt:
     index_version: str
     catalog_version: str
     catalog_manifest_hash: str
-    source_snapshot_ids: tuple[str, ...]
+    source_refs: tuple[CandidateSourceRef, ...]
     normalization_version: str
     embedding_model_version: str | None
     index_mode: CandidateIndexMode
@@ -332,7 +338,8 @@ class MedicationResolver:
         try:
             hydrated = self._index_port.hydrate(request)
         except CandidateIndexPortError as error:
-            return ResolverFailure(ResolverFailureReason.PORT_FAILURE, error.stage)
+            stage = error.stage if isinstance(error.stage, CandidateStage) else None
+            return ResolverFailure(ResolverFailureReason.PORT_FAILURE, stage)
         evidence_failure = _hydrated_evidence_failure(hydrated, request)
         if evidence_failure is not None:
             return evidence_failure
@@ -467,9 +474,10 @@ def _product_hit_is_valid(
         and hit.rank > 0
         and _finite_number_is_valid(hit.stage_score)
         and hit.index_version == receipt.index_version
-        and bool(re.fullmatch(r"[0-9a-f]{64}", hit.member_key))
+        and _sha256_is_valid(hit.member_key)
         and hit.catalog_version == receipt.catalog_version
-        and hit.source_snapshot_id in receipt.source_snapshot_ids
+        and _canonical_text_is_valid(hit.source_snapshot_id)
+        and hit.source_snapshot_id in {ref.snapshot_id for ref in receipt.source_refs}
         and hit.normalization_version == receipt.normalization_version
         and hit.embedding_model_version
         == (receipt.embedding_model_version if hit.stage is CandidateStage.DENSE_VECTOR else None)
@@ -485,9 +493,31 @@ def _ingredient_hit_is_valid(hit: object, receipt: CandidateProvenanceReceipt) -
         and _finite_number_is_valid(hit.stage_score)
         and hit.index_version == receipt.index_version
         and hit.catalog_version == receipt.catalog_version
-        and hit.source_snapshot_id in receipt.source_snapshot_ids
+        and _canonical_text_is_valid(hit.source_snapshot_id)
+        and hit.source_snapshot_id in {ref.snapshot_id for ref in receipt.source_refs}
         and hit.normalization_version == receipt.normalization_version
     )
+
+
+def _sha256_is_valid(value: object) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+
+def _source_refs_are_valid(source_refs: object) -> bool:
+    if (
+        not isinstance(source_refs, tuple)
+        or not source_refs
+        or not all(isinstance(ref, CandidateSourceRef) for ref in source_refs)
+    ):
+        return False
+    refs = tuple(source_refs)
+    if not all(
+        _canonical_text_is_valid(ref.snapshot_id) and _canonical_text_is_valid(ref.source_version) for ref in refs
+    ):
+        return False
+    return len({(ref.snapshot_id, ref.source_version) for ref in refs}) == len(refs) and len(
+        {ref.snapshot_id for ref in refs}
+    ) == len(refs)
 
 
 def _provenance_receipt_is_valid(receipt: object, index_version: str) -> bool:
@@ -496,11 +526,8 @@ def _provenance_receipt_is_valid(receipt: object, index_version: str) -> bool:
         and receipt.index_version == index_version
         and _canonical_text_is_valid(receipt.index_version)
         and _canonical_text_is_valid(receipt.catalog_version)
-        and bool(re.fullmatch(r"[0-9a-f]{64}", receipt.catalog_manifest_hash))
-        and isinstance(receipt.source_snapshot_ids, tuple)
-        and bool(receipt.source_snapshot_ids)
-        and len(set(receipt.source_snapshot_ids)) == len(receipt.source_snapshot_ids)
-        and all(_canonical_text_is_valid(value) for value in receipt.source_snapshot_ids)
+        and _sha256_is_valid(receipt.catalog_manifest_hash)
+        and _source_refs_are_valid(receipt.source_refs)
         and _canonical_text_is_valid(receipt.normalization_version)
         and (receipt.embedding_model_version is None or _canonical_text_is_valid(receipt.embedding_model_version))
         and isinstance(receipt.index_mode, CandidateIndexMode)
@@ -528,6 +555,15 @@ def _hydrated_evidence_failure(
     ):
         return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
     receipt = hydrated.provenance
+    invalid_product_stage = next(
+        (hit.stage for hit in hydrated.product_hits if hit.stage not in _PRODUCT_STAGE_ORDER),
+        None,
+    )
+    if invalid_product_stage is not None:
+        return ResolverFailure(
+            ResolverFailureReason.EVIDENCE_INVALID,
+            invalid_product_stage if isinstance(invalid_product_stage, CandidateStage) else None,
+        )
     if receipt.index_mode is CandidateIndexMode.HYBRID and receipt.embedding_model_version is None:
         return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
     if receipt.index_mode is CandidateIndexMode.LEXICAL_ONLY and any(

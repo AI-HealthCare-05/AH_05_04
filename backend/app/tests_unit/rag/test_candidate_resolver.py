@@ -16,6 +16,7 @@ from app.services.rag.candidate_resolver import (
     CandidateProvenanceReceipt,
     CandidateRelevanceEvaluatorError,
     CandidateSearchRequest,
+    CandidateSourceRef,
     HydratedCandidateEvidence,
     IngredientHit,
     MedicationResolver,
@@ -35,6 +36,7 @@ _MEMBER_KEY = "a" * 64
 _CATALOG_VERSION = "catalog-v1"
 _CATALOG_MANIFEST_HASH = "b" * 64
 _SOURCE_SNAPSHOT_ID = "source-snapshot-v1"
+_SOURCE_VERSION = "source-version-v1"
 _NORMALIZATION_VERSION = "normalization-v1"
 _EMBEDDING_MODEL_VERSION = "embedding-v1"
 
@@ -162,12 +164,17 @@ class FakeIndexPort:
     def hydrate(self, request: CandidateSearchRequest) -> HydratedCandidateEvidence:
         self.calls.append("HYDRATE")
         if self.fail_stage is not None:
-            raise CandidateIndexPortError(self.fail_stage)
+            raise CandidateIndexPortError(stage=self.fail_stage)
         provenance = self.provenance or CandidateProvenanceReceipt(
             index_version=request.index_version,
             catalog_version=_CATALOG_VERSION,
             catalog_manifest_hash=_CATALOG_MANIFEST_HASH,
-            source_snapshot_ids=(_SOURCE_SNAPSHOT_ID,),
+            source_refs=(
+                CandidateSourceRef(
+                    snapshot_id=_SOURCE_SNAPSHOT_ID,
+                    source_version=_SOURCE_VERSION,
+                ),
+            ),
             normalization_version=_NORMALIZATION_VERSION,
             embedding_model_version=(_EMBEDDING_MODEL_VERSION if self.mode is CandidateIndexMode.HYBRID else None),
             index_mode=self.mode,
@@ -337,7 +344,7 @@ def test_index_provenance_version_mismatch_is_typed_failure() -> None:
             index_version="other-index",
             catalog_version=_CATALOG_VERSION,
             catalog_manifest_hash=_CATALOG_MANIFEST_HASH,
-            source_snapshot_ids=(_SOURCE_SNAPSHOT_ID,),
+            source_refs=(CandidateSourceRef(_SOURCE_SNAPSHOT_ID, _SOURCE_VERSION),),
             normalization_version=_NORMALIZATION_VERSION,
             embedding_model_version=_EMBEDDING_MODEL_VERSION,
             index_mode=CandidateIndexMode.HYBRID,
@@ -356,7 +363,7 @@ def test_catalog_manifest_receipt_must_be_sha256() -> None:
             index_version="candidate-index-v1",
             catalog_version=_CATALOG_VERSION,
             catalog_manifest_hash="not-a-sha256",
-            source_snapshot_ids=(_SOURCE_SNAPSHOT_ID,),
+            source_refs=(CandidateSourceRef(_SOURCE_SNAPSHOT_ID, _SOURCE_VERSION),),
             normalization_version=_NORMALIZATION_VERSION,
             embedding_model_version=_EMBEDDING_MODEL_VERSION,
             index_mode=CandidateIndexMode.HYBRID,
@@ -364,6 +371,71 @@ def test_catalog_manifest_receipt_must_be_sha256() -> None:
     )
 
     assert resolve(port) == ResolverFailure(reason=ResolverFailureReason.EVIDENCE_INVALID)
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        CandidateProvenanceReceipt(
+            index_version="candidate-index-v1",
+            catalog_version=_CATALOG_VERSION,
+            catalog_manifest_hash=object(),  # type: ignore[arg-type]
+            source_refs=(CandidateSourceRef(_SOURCE_SNAPSHOT_ID, _SOURCE_VERSION),),
+            normalization_version=_NORMALIZATION_VERSION,
+            embedding_model_version=_EMBEDDING_MODEL_VERSION,
+            index_mode=CandidateIndexMode.HYBRID,
+        ),
+        CandidateProvenanceReceipt(
+            index_version="candidate-index-v1",
+            catalog_version=_CATALOG_VERSION,
+            catalog_manifest_hash=_CATALOG_MANIFEST_HASH,
+            source_refs=(CandidateSourceRef([], _SOURCE_VERSION),),  # type: ignore[arg-type]
+            normalization_version=_NORMALIZATION_VERSION,
+            embedding_model_version=_EMBEDDING_MODEL_VERSION,
+            index_mode=CandidateIndexMode.HYBRID,
+        ),
+    ],
+)
+def test_malformed_receipt_types_fail_closed(provenance: CandidateProvenanceReceipt) -> None:
+    assert resolve(FakeIndexPort(provenance=provenance)) == ResolverFailure(
+        reason=ResolverFailureReason.EVIDENCE_INVALID
+    )
+
+
+def test_product_hit_cannot_use_ingredient_stage() -> None:
+    invalid = dataclasses.replace(
+        hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+        stage=CandidateStage.INGREDIENT_EXACT,
+    )
+
+    assert resolve(FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (invalid,)})) == ResolverFailure(
+        reason=ResolverFailureReason.EVIDENCE_INVALID,
+        stage=CandidateStage.INGREDIENT_EXACT,
+    )
+
+
+def test_non_string_member_key_fails_closed() -> None:
+    invalid = dataclasses.replace(
+        hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+        member_key=object(),  # type: ignore[arg-type]
+    )
+
+    assert resolve(FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (invalid,)})) == ResolverFailure(
+        reason=ResolverFailureReason.EVIDENCE_INVALID,
+        stage=CandidateStage.PRODUCT_NAME_EXACT,
+    )
+
+
+def test_port_failure_cannot_copy_sensitive_detail_into_stage() -> None:
+    class SensitiveFailurePort(FakeIndexPort):
+        def hydrate(self, request: CandidateSearchRequest) -> HydratedCandidateEvidence:
+            del request
+            raise CandidateIndexPortError(stage="SENSITIVE_RAW_QUERY")
+
+    result = resolve(SensitiveFailurePort())
+
+    assert result == ResolverFailure(reason=ResolverFailureReason.PORT_FAILURE)
+    assert "SENSITIVE" not in repr(result)
 
 
 def test_hybrid_search_order_dedupes_identity_and_redacts_internal_scores() -> None:
@@ -777,6 +849,10 @@ def test_malformed_product_evidence_is_typed_failure(bad_hit: CandidateHit) -> N
         dataclasses.replace(
             hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
             source_snapshot_id="other-source",
+        ),
+        dataclasses.replace(
+            hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+            source_snapshot_id=[],  # type: ignore[arg-type]
         ),
         dataclasses.replace(
             hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
