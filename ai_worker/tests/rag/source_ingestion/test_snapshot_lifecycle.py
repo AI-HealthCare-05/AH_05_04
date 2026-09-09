@@ -92,59 +92,6 @@ class FakeSnapshotRepository:
             None,
         )
 
-    async def test_default_policy_records_rejection_limit_failure_without_snapshot() -> None:
-        repository = FakeSnapshotRepository()
-        metadata = replace(
-            _metadata("external:v1"),
-            rejected_record_count=1,
-            snapshot_policy=SourceSnapshotPolicy(),
-        )
-        artifacts = (*_stored_artifacts(), _stored_rejection_artifact())
-
-        result = await persist_product_ingestion_result(
-            repository=repository,
-            ingestion=_ingestion(),
-            metadata=metadata,
-            artifacts=artifacts,
-        )
-
-        assert result.decision is SnapshotIngestionDecision.VALIDATION_FAILED
-        assert result.snapshot_id is None
-        assert result.failure_code == "REJECTION_LIMIT_EXCEEDED"
-        assert repository.snapshots == []
-        assert repository.verifications == []
-        assert repository.runs[0].run_status == "FAILED"
-        assert repository.runs[0].failure_code == "REJECTION_LIMIT_EXCEEDED"
-        assert repository.run_artifacts[result.ingestion_run_id] == artifacts
-
-    async def test_default_policy_records_empty_result_failure_without_snapshot() -> None:
-        repository = FakeSnapshotRepository()
-        ingestion = replace(
-            _ingestion(),
-            raw_manifest_checksum=raw_manifest_checksum(()),
-            record_count=0,
-            artifact_count=0,
-        )
-        metadata = replace(
-            _metadata("external:empty"),
-            snapshot_policy=SourceSnapshotPolicy(),
-        )
-
-        result = await persist_product_ingestion_result(
-            repository=repository,
-            ingestion=ingestion,
-            metadata=metadata,
-            artifacts=(),
-        )
-
-        assert result.decision is SnapshotIngestionDecision.VALIDATION_FAILED
-        assert result.snapshot_id is None
-        assert result.failure_code == "EMPTY_RESULT"
-        assert repository.snapshots == []
-        assert repository.verifications == []
-        assert repository.runs[0].run_status == "FAILED"
-        assert repository.runs[0].failure_code == "EMPTY_RESULT"
-        assert repository.run_artifacts[result.ingestion_run_id] == ()
 
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         assert operation_id == _OPERATION_ID
@@ -349,6 +296,59 @@ def test_rejects_snapshot_metadata_over_configured_limits(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         factory()
+
+
+async def test_default_policy_records_rejection_limit_failure_without_snapshot() -> None:
+    repository = FakeSnapshotRepository()
+    metadata = replace(
+        _metadata("external:v1"),
+        rejected_record_count=1,
+        snapshot_policy=SourceSnapshotPolicy(),
+    )
+    artifacts = (*_stored_artifacts(), _stored_rejection_artifact())
+
+    result = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=metadata,
+        artifacts=artifacts,
+    )
+
+    assert result.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+    assert result.snapshot_id is None
+    assert result.failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert repository.snapshots == []
+    assert repository.verifications == []
+    assert repository.runs[0].run_status == "FAILED"
+    assert repository.runs[0].failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert repository.run_artifacts[result.ingestion_run_id] == artifacts
+
+async def test_default_policy_records_empty_result_failure_without_snapshot() -> None:
+    repository = FakeSnapshotRepository()
+    ingestion = replace(
+        _ingestion(),
+        record_count=0,
+    )
+    metadata = replace(
+        _metadata("external:empty"),
+        snapshot_policy=SourceSnapshotPolicy(),
+    )
+
+    result = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=ingestion,
+        metadata=metadata,
+        artifacts=_stored_artifacts(),
+    )
+
+    assert result.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+    assert result.snapshot_id is None
+    assert result.failure_code == "EMPTY_RESULT"
+    assert repository.snapshots == []
+    assert repository.verifications == []
+    assert repository.runs[0].run_status == "FAILED"
+    assert repository.runs[0].failure_code == "EMPTY_RESULT"
+    assert repository.run_artifacts[result.ingestion_run_id] == _stored_artifacts()
 
 
 async def test_first_result_creates_pending_snapshot_candidate_and_success_history() -> None:
