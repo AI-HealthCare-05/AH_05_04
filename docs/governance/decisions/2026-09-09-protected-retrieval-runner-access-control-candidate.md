@@ -1,10 +1,18 @@
-# Protected Retrieval Runner 접근 통제·감사 경계 (#368)
+# Product Decision Candidate: Protected Retrieval Runner 접근 통제·감사 경계
 
-상태: Draft — 아직 최종 확정 아님. 팀 의견 수렴 후 정식 governance decision으로 정리 예정.
+| 항목 | 값 |
+| --- | --- |
+| Decision ID | `PD-368-20260909` |
+| 상태 | Candidate · Review Required |
+| 제안일 | 2026-09-09 |
+| 구현 | 정현우 (`@ceohwj`) |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Privacy·Safety·Evaluation |
+| Dataset Custodian·Backend·Security 검토 | 송은영 (`@phina-io`) — 송은영이 실제 접근 통제를 구현하면 독립 Dataset Custodian 승인은 김지혜(`@Jye-rookie`)가 담당 |
+| 선행 Decision | [Source Snapshot DB 상태 전이](./2026-09-08-source-snapshot-db-transition.md) — protected DB-owned 연산(SECURITY DEFINER + PUBLIC EXECUTE 회수) 선례 |
+| 추적 Issue | [#368](https://github.com/AI-HealthCare-05/AH_05_04/issues/368) (상위 #273) |
+| 관련 PR | PR #373 (kernel 구현), PR #366 |
 
-관련: #368, #273, PR #373, [Issue #368 Security Kernel 설계](../../designs/ceohwj/issue-368-protected-retrieval-runner-security-kernel-design.md)
-
-구현 담당 정현우, Product·Privacy·Safety·Evaluation 검토 권가빈, Dataset Custodian·Backend·Security 검토 송은영. 송은영이 실제 접근 통제를 구현하면 독립 Dataset Custodian 승인은 김지혜가 담당한다.
+관련 설계: [Issue #368 Security Kernel 설계](../../designs/ceohwj/issue-368-protected-retrieval-runner-security-kernel-design.md)
 
 아래 각 절은 **채택(안)**(이미 합의됐거나 저장소 관행을 그대로 따르는 부분 — 반영 방법까지 명시)과 **협의 필요**(구체적으로 무엇을 결정해야 하는지 질문 형태로 명시)를 구분한다. 저장소에 전례가 없는 협의 항목에는 **의료 분야 실무 기본값**을 함께 제안해 빠른 의사결정을 돕는다 — 단 이는 법적 자문이 아니라 업계 통용 관행이며, 최종 적용 전 Privacy·Legal 검토가 별도로 필요하다.
 
@@ -24,11 +32,14 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 **의료 분야 실무 기본값**: 규제 대상 데이터라 해도 물리적으로 별도 DB 인스턴스를 요구하는 경우는 드물고, 역할 기반 접근 통제(RBAC)+감사 로그가 갖춰진 **논리적 분리(schema/스키마 단위)면 충분**하다고 보는 게 일반적이다(별도 인스턴스는 오히려 백업·모니터링·커넥션풀을 이중으로 운영해야 해서 40문제 규모엔 과잉 대응). **제안: ②schema 방식 채택**, 단 가빈이 요구한 실통제 검증(REVOKE, default privilege, owner 비공유)을 조건으로 건다.
 
-**채택(안)**: 어느 쪽으로 정해지든 아래 조건은 공통 적용한다(가빈·현우 요구사항 합산).
-- protected 전용 `NOLOGIN` owner/migration role 사용, 일반 Migration 계정과 권한 비공유
-- 일반 `app_user`·일반 CI 계정의 해당 DB/schema `USAGE` 및 테이블·sequence·함수 권한 기본 `REVOKE`
-- 이후 생성되는 객체에도 default privilege로 동일한 거부 정책 적용
-- PUBLIC 권한 회수까지 실제 SQL로 검증(문서 서술만으로 완료 처리하지 않음 — 가빈 조건)
+참고: 아래 ①~③에서 보듯 default privilege 거부 정책이 이미 role 단위로 파라미터화되어 있어([`configure-app-role.sql`](../../../infra/docker/postgres/configure-app-role.sql)), schema 방식으로 가더라도 이 스크립트를 protected schema 대상으로 한 번 더 실행하는 정도로 확장 가능 — database 방식 대비 구현 난도 차이가 크지 않다는 근거이기도 하다. [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)도 같은 저장소에서 SECURITY DEFINER 함수 + PUBLIC EXECUTE 회수로 protected DB-owned 연산을 이미 다룬 선례다.
+
+**채택(안) — 이미 구현된 동일 패턴 확장**: 아래 ①~③은 새로 설계할 게 아니라 [`infra/docker/postgres/configure-app-role.sql`](../../../infra/docker/postgres/configure-app-role.sql)이 `migration_user`/`app_user`에 이미 적용 중인 패턴을 protected role에 그대로 확장하는 것이다(현우 지적으로 인용 정정).
+- ① 전용 role 분리: `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`로 관리 권한 없는 role 생성 ([:24-30](../../../infra/docker/postgres/configure-app-role.sql), [:60-66](../../../infra/docker/postgres/configure-app-role.sql))
+- ② 스키마 권한 기본 회수: `REVOKE CREATE ON SCHEMA public FROM app_user` ([:81-85](../../../infra/docker/postgres/configure-app-role.sql))
+- ③ default privilege로 동일 거부 정책 유지: `ALTER DEFAULT PRIVILEGES FOR ROLE migration_user ... REVOKE UPDATE ON SEQUENCES FROM app_user` ([:132-138](../../../infra/docker/postgres/configure-app-role.sql)), 승인된 함수에만 `GRANT EXECUTE` ([:97-103](../../../infra/docker/postgres/configure-app-role.sql))
+
+**협의 필요 — 질문(신규 항목)**: ④ **PUBLIC 권한 회수**는 이 스크립트에 없는 진짜 신규 항목이다 — `configure-app-role.sql`은 `app_user`의 `CREATE`만 개별 회수할 뿐, PostgreSQL이 기본으로 모든 role에 부여하는 `PUBLIC`의 schema `USAGE`는 그대로 둔다. Protected schema/DB에서는 `REVOKE ALL ON SCHEMA <protected> FROM PUBLIC`을 명시적으로 추가할지, 그리고 이걸 실제 SQL로 검증할 시점(이번 PR인지 후속 adapter PR인지)을 확정해야 한다.
 
 ## 4. 역할·책임 + 직무 분리 (Segregation of Duties)
 
@@ -40,7 +51,7 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 - Author/Runner grant issuer는 subject 및 control implementation participant와 달라야 함(self-approval 차단, kernel에 이미 구현됨)
 - 송은영 본인의 READ/FREEZE grant는 권가빈이 `PRODUCT_SAFETY_REVIEWER` 역할로 독립 발급 (kernel `ProtectedApprovalRole`에 이미 존재)
 
-여기에 더해, 실제 DB 인프라 레벨에서 **"protected owner/migration role"**(DB 객체 소유·migration 전용, `NOLOGIN`)을 신설 — 이건 kernel role과 충돌하지 않는 별도 layer이므로 이견 없이 채택.
+여기에 더해, 실제 DB 인프라 레벨에서 **"protected owner/migration role"**(DB 객체 소유·migration 전용, `NOLOGIN`)을 신설 — 이건 kernel role과 충돌하지 않는 별도 layer이므로 이견 없이 채택. 이 role 설계는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)의 "Runtime은 owner/superuser 또는 owner 역할의 멤버로 운영하지 않는다" 원칙과 정합해야 한다 — 같은 저장소 안에 이미 확정된 DB-owned 연산 경계이므로, protected owner role을 신설할 때 이 결정과 상충하지 않는지 구현 시점에 재확인 필요.
 
 **협의 필요 — 질문**: 현우가 제안한 "approval role"(grant/revoke·Freeze 승인 evidence 기록 전용 governance role)을 kernel의 `ProtectedApprovalRole`과 동일하게 취급할지, 아니면 DB 레벨에서 별도 역할로 다시 만들지 확인 필요.
 
@@ -57,7 +68,7 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 ## 6. Credential/Secret 관리
 
-**채택(안)**: 저장소 기존 관행([`backend/app/core/config.py:149-158`](../../../backend/app/core/config.py)) — LOCAL 환경만 placeholder 허용, 그 외 환경은 실값 강제 + fail-closed validator(기동 시점 `ValueError`) — 를 protected credential에도 동일 적용한다. 공통 조건(가빈·현우 이견 없음): credential은 repository/`.env` 미저장, 실행 시점 단기 주입, 종료 후 폐기/회전, `workflow_dispatch` 수동 실행 + required reviewer.
+**채택(안)**: 저장소 기존 관행([`backend/app/core/config.py:234-247`](../../../backend/app/core/config.py) HMAC key, [`:249-257`](../../../backend/app/core/config.py) snapshot encryption key) — LOCAL 환경만 placeholder 허용, 그 외 환경은 실값 강제 + fail-closed validator(기동 시점 `ValueError`) — 를 protected credential에도 동일 적용한다(현우 지적으로 인용 정정: 이전에 인용했던 `:149-158`은 Fernet 형식 검증만 하는 별개 validator였다). 공통 조건(가빈·현우 이견 없음): credential은 repository/`.env` 미저장, 실행 시점 단기 주입, 종료 후 폐기/회전, `workflow_dispatch` 수동 실행 + required reviewer.
 
 **협의 필요 — 질문**: 작성·검토(authoring)는 CI 밖 별도 환경에서 한다는 방향엔 이견이 없는데, **그 "별도 환경"이 실제로 무엇인지가 미정**이다 — 사내 특정 인원의 로컬 환경인지, 별도 VM/컨테이너인지, 혹은 GitHub Codespace 같은 관리형 환경인지 확정 필요. 또한 Freeze 이후 평가용 GitHub Actions protected Environment는 **저장소에 선례가 없어**(`.github/workflows/checks.yml`에 `environment:` 설정 없음 확인) required reviewer 명단과 전용 runner 구성을 새로 설계해야 한다.
 
@@ -119,7 +130,7 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 ## 12. 예외 처리 절차
 
-**협의 필요 — 질문**: 저장소 기조는 예외 절차를 만드는 대신 예외 자체를 차단하는 쪽이다([`docs/privacy-safety.md:60`](../../privacy-safety.md) "승인표나 수동 검토만으로 이 차단을 예외 처리하지 않습니다"). **이 방향(긴급 접근을 포함해 예외 승인 경로를 별도로 두지 않고, 표준 grant/revoke 절차만 인정)에 가빈·현우 모두 동의하는지** 확인 필요 — 아직 아무도 답하지 않은 새 질문이다.
+**협의 필요 — 질문**: [`docs/privacy-safety.md:60`](../../privacy-safety.md) "승인표나 수동 검토만으로 이 차단을 예외 처리하지 않습니다"는 인용 자체는 정확하지만, 이 문장은 **복약 가이드·챗봇의 Production 배포 차단**에 대한 것이지 protected dataset 접근 예외에 대한 것이 아니다 — 즉 이건 이 시나리오의 **직접 선례가 아니라 "예외를 만들지 않는다"는 유사 기조에서의 유추**다(현우 지적 반영). 이 유추를 그대로 적용해 **긴급 접근을 포함해 예외 승인 경로를 별도로 두지 않고, 표준 grant/revoke 절차만 인정**할지 가빈·현우 모두 동의하는지 확인 필요 — 아직 아무도 답하지 않은 새 질문이다.
 
 **의료 분야 실무 기본값 (주의: 저장소 기존 기조와 다를 수 있음)**: 실제 의료 데이터 시스템(EHR 등)에서는 "예외를 아예 안 만든다"보다 **"break-glass"(비상 접근) 절차 — 평소보다 강화된 감사와 함께 즉시 접근을 허용하고, 24~48시간 내 의무적 사후 검토(post-hoc review)로 정당성을 소명**하는 방식이 더 흔하다. 다만 이건 실시간 진료처럼 "지금 당장 막으면 위험한" 상황을 전제로 한 관행이고, **HOLDOUT은 평가용 합성 데이터라 그 정도 긴급성이 없다** — 그래서 저장소 기존 기조(예외 없음)를 따르는 게 이 케이스엔 더 맞아 보인다. **제안: break-glass 없이 저장소 기조대로 예외 미허용 유지, 단 이 판단 근거(긴급성 낮음)를 문서에 남긴다.**
 
