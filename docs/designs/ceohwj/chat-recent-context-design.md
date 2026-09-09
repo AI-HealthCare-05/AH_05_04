@@ -1,6 +1,6 @@
 # 복약 챗봇 최근 대화 3쌍 문맥 설계
 
-> **상태: 기능 구현 완료.** 버전된 합성 평가와 결정론적 Local application-path latency·PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 수행했다. 실제 Provider 평가는 `NOT_RUN`이며 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
+> **상태: 기능 구현 완료.** 버전된 합성 평가와 결정론적 Local application-path latency·PII sentinel 검증은 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 수행했다. 이 설계가 도입한 history 계약은 유지되며, 현재 생성 프롬프트와 canonical 평가는 Issue #306의 `chat-prompt-v3`·`chat-v3-history-eval-v1`을 사용한다. [2026-09-09 current canonical live 실행](../../validation/issue-306-chat-live-evaluation.md)은 대상 불명확 재확인 30/30, 세 응급 case의 baseline/history 6/6과 PII 비복제의 blocking gate를 통과했다. 전체 16-case 단발 결과도 `full_suite_passed=true`였지만 관찰 지표이며 전체 회귀 blocker는 결정론적 replay 16/16이다. 현재 계약은 [`../../contracts/current/medication-chat-ai-backend.md`](../../contracts/current/medication-chat-ai-backend.md)를 따른다.
 
 | 항목 | 내용 |
 | --- | --- |
@@ -271,8 +271,8 @@ history는 사용자 질문과 과거 AI 답변이라는 추가 의료·대화 �
 
 | Flag | 허용 환경 | 조회·Provider payload | Provider 출력 검증 | 프롬프트·결과 버전 |
 | --- | --- | --- | --- | --- |
-| `false` | 모든 환경의 기본값 | history를 조회하지 않고 빈 배열 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v2` |
-| `true` | 비식별 합성 Local 검증만 | 이 설계에 따라 history 최대 3쌍 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v2` |
+| `false` | 모든 환경의 기본값 | history를 조회하지 않고 빈 배열 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v3` |
+| `true` | 비식별 합성 Local 검증만 | 이 설계에 따라 history 최대 3쌍 전달 | trim·NFC·빈값·10,000자와 NUL·bidi·zero-width 거부 | `chat-prompt-v3` |
 
 flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 설정 변경은 새 process 시작 후 적용하고, Local 검증 기록에 flag 값·합성 fixture·실행 결과를 남긴다.
 
@@ -314,7 +314,7 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - Provider JSON의 시간순 history와 현재 medications 보존
 - 식별자·상태·시각·오류 metadata 비포함
 - `Decimal` 직렬화와 불완전 dose pair 생략 회귀
-- flag 상태와 history 유무에 관계없이 `prompt_version == "chat-prompt-v2"`
+- flag 상태와 history 유무에 관계없이 `prompt_version == "chat-prompt-v3"`
 - 기존 timeout·가용성·응답 처리 오류 mapping 회귀
 - 신규 ASSISTANT 답변을 동일한 금지문자 검증 후에만 `COMPLETED`로 저장
 - feature flag가 꺼져 있으면 history 조회가 발생하지 않고 빈 배열이 전송되는지
@@ -332,7 +332,7 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - history가 없거나 1쌍뿐인 경우
 - 현재 질문만으로 즉각적인 응급 안내가 필요한 경우
 
-평가셋은 `chat-v2-history-eval-v1` 불변 버전과 `SYNTHETIC` 분류로 합성 대화, 기대 대상, 허용 답변 범위와 금지 rule을 기록한다. 이 v1은 동결 상태를 유지한다. Issue #293 조사에서 확인한 커버리지 갭은 v1을 제자리에서 수정하지 않고 `chat-v2-history-eval-v2`(v1의 10 case 재사용 + `followup-earlier-subject-over-latest` 1건)로 분리했으며, runner의 canonical 참조는 v2를 가리킨다. 아래 #129 replay 기록은 v1 실행 결과다. 기준선과 처리 경로는 동일한 모델·temperature·max token·timeout 및 `chat-prompt-v2`를 사용하고, 각각 빈 history와 합성 history만 다르게 비교한다.
+평가셋은 불변 버전과 `SYNTHETIC` 분류로 합성 대화, 기대 대상, 허용 답변 범위와 금지 rule을 기록한다. Issue #293의 `chat-v2-history-eval-v2`는 v1의 10 case를 유지하고 `followup-earlier-subject-over-latest` 1건을 추가한 동결 버전이다. Issue #306의 `chat-v3-history-eval-v1`은 기존 11 case에 대상 불명확 처방약 사례, 단일 약물 암시 질문 회귀, 대상 불명확 상태의 현재 호흡곤란 응급 우선 사례와 30회 live 분류 설정을 추가한 현재 canonical 버전이다. 아래 #129 replay 기록과 품질 기준은 당시 `chat-prompt-v2` 실행 결과이며, v3 결과로 소급 해석하지 않는다.
 
 다음 품질·운영 기준은 PR #128의 기능 구현 완료 조건에서 분리했다. Issue #129의 결정론적 replay는 계약 scorer 기준선·history 각각 10/10과 안전 rule 위반 0건을 기록했지만, 평가 축별 표본이 30건 미만이고 실제 Provider를 실행하지 않았으므로 아래 품질 비율은 충족한 것으로 간주하지 않는다.
 
@@ -390,4 +390,4 @@ Issue #129의 2026-09-01 결정론적 Local 실행은 최대 3쌍·12,000자 입
 - Provider payload와 로그에 구조화 식별자·오류 metadata·미확정 의료 데이터가 포함되지 않는다.
 - 자유 텍스트의 내용 기반 식별정보 위험과 실제 대화 외부 전송 승인이 향후 서버 공개 선행조건으로 문서화된다.
 - 관련 ADR·계약·Local 결정론적 테스트·외부 전송 위험 검토와 지정 Privacy·Security·Backend·AI 리뷰가 함께 제공된다.
-- 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 Issue #129에서 수행했다. 실제 Provider 품질·latency·token 검증은 `NOT_RUN`이며, 어느 결과도 Production 공개 근거로 사용하지 않는다.
+- 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 Issue #129에서 수행했다. Issue #306의 current canonical Local live blocking gate와 전체 단발 관찰은 별도 검증 문서에 기록했으며 `passed=true`, `full_suite_passed=false`, token 검증은 `NOT_RUN`이다. 어느 결과도 Production 공개 근거로 사용하지 않는다.
