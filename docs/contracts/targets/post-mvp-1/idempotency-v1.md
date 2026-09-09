@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Partially implemented — SYNC_MUTATION 공통 조회·저장·재현·409 인프라와 F Candidate 확인·거절 연결(#311)까지는 구현됨. `response_body_snapshot` 암호화 envelope·키 관리는 담당 리뷰어(권가빈) 검토 대기(임시 Fernet 기본값 사용 중), Track B·C 실제 API는 미구현, HMAC key rotation은 여전히 #235 대기 |
+| 구현·리뷰 | Partially implemented — SYNC_MUTATION 공통 조회·저장·재현·409 인프라와 F Candidate 확인·거절 연결(#311)까지는 구현·승인 완료. `response_body_snapshot` 암호화 envelope·키 관리(Fernet, key rotation 포함)는 담당 리뷰어(권가빈) 최종 승인 완료(PR #346), Track B·C 실제 API는 미구현, HMAC key rotation은 여전히 #235 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-f-rag-citation-safety-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-09-08 |
 
