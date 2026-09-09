@@ -1,6 +1,6 @@
 {
   "receipt_version": "2.0",
-  "generated_at": "2026-09-09T02:00:00+09:00",
+  "generated_at": "2026-09-09T14:30:00+09:00",
   "verification_status": "COMPLETED",
   "verified_git_commit_sha": "ee277a81c035302a2fa61dbe3b4d94613c2f35b3",
   "pr_96_merge_commit_sha": "e82f782fa09e068d43d7e78c028f412620e1d0c5",
@@ -76,7 +76,7 @@
         "meaning": "응답에서 prescription_version_id와 prescription_version_medication_id를 필수로 공개한다."
       },
       {
-        "path": "backend/alembic/versions/169a1b2c3d4e_add_prescription_version_schema.py",
+        "path": "backend/alembic/versions/169a1b2c3d4e_create_prescription_version_foundation.py",
         "lines": "1-260",
         "commit_sha": "ee277a81c035302a2fa61dbe3b4d94613c2f35b3",
         "evidence_type": "MIGRATION",
@@ -214,6 +214,6 @@
   "receipt_hash": {
     "algorithm": "sha256",
     "canonicalization": "sorted-keys-compact-utf8-excluding-generated_at-and-receipt_hash-v1",
-    "value": "06aeb8e201194fae2caf77fec699c104f5038109329d731c807810ac5b4fed12"
+    "value": "2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a"
   }
 }

@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | Receipt version | `2.0` |
-| Canonical Receipt hash | `sha256:06aeb8e201194fae2caf77fec699c104f5038109329d731c807810ac5b4fed12` |
+| Canonical Receipt hash | `sha256:2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a` |
 | 검증 상태 | `COMPLETED` |
 | 검증일 | 2026-09-09 |
 | 검증 기준 Commit | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` |
@@ -46,7 +46,7 @@ Canonicalization은 `generated_at`과 `receipt_hash`를 제외하고 key 정렬�
 | `backend/app/models/prescriptions.py` | 40-99 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `SOURCE_INSPECTION` | 필수 active_version_id와 같은 Prescription에 속한 Version만 허용하는 composite FK를 정의한다. |
 | `backend/app/models/prescriptions.py` | 153-245 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `SOURCE_INSPECTION` | 불변 PrescriptionVersion과 nullable 문자열 strength_text를 포함한 Medication snapshot을 정의한다. |
 | `backend/app/dtos/prescriptions.py` | 14-38 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `SOURCE_INSPECTION` | 응답에서 prescription_version_id와 prescription_version_medication_id를 필수로 공개한다. |
-| `backend/alembic/versions/169a1b2c3d4e_add_prescription_version_schema.py` | 1-260 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `MIGRATION` | Prescription Version schema, snapshot 무결성 제약과 불변성 trigger를 추가한다. |
+| `backend/alembic/versions/169a1b2c3d4e_create_prescription_version_foundation.py` | 1-260 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `MIGRATION` | Prescription Version schema, snapshot 무결성 제약과 불변성 trigger를 추가한다. |
 | `backend/alembic/versions/169b2c3d4e5f_backfill_prescription_versions.py` | 1-260 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `MIGRATION` | legacy 확정 처방을 Version 1 snapshot으로 검증·이관한다. |
 | `backend/alembic/versions/169c3d4e5f6a_cut_over_prescription_version_reads.py` | 1-260 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `MIGRATION` | 하위 참조를 Version provenance로 전환하고 legacy downgrade 위험을 차단한다. |
 | `backend/alembic/versions/169d4e5f6a7b_harden_prescription_version_links.py` | 1-61 | `ee277a81c035302a2fa61dbe3b4d94613c2f35b3` | `MIGRATION` | 활성 Version과 Guide·Chat Version 링크를 NOT NULL로 고정한다. |

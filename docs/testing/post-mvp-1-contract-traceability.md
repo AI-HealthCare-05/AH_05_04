@@ -21,8 +21,8 @@
 
 | 후속 Issue | 필수 Receipt | Canonical hash | Prescription 입력 | 남은 차단 코드 | 전체 판정 |
 | --- | --- | --- | --- | --- | --- |
-| RAG-08 (#170) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:06aeb8e201194fae2caf77fec699c104f5038109329d731c807810ac5b4fed12` | `READY=true` | `BLOCKED_BY_RAG_08_PREREQUISITE` | `READY=false` |
-| RAG-09 (#171) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:06aeb8e201194fae2caf77fec699c104f5038109329d731c807810ac5b4fed12` | `READY=true` | `BLOCKED_BY_RAG_09_PREREQUISITE` | `READY=false` |
+| RAG-08 (#170) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a` | `READY=true` | `BLOCKED_BY_RAG_08_PREREQUISITE` | `READY=false` |
+| RAG-09 (#171) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a` | `READY=true` | `BLOCKED_BY_RAG_09_PREREQUISITE` | `READY=false` |
 
 RAG-08과 RAG-09는 위 hash의 Receipt를 상류 입력 경계로 사용한다. `PRESCRIPTION_VERSION_NOT_IMPLEMENTED`와 `TARGET_STRENGTH_MAPPING_NOT_FROZEN`은 #169 구현으로 해소됐다. 다만 #170의 Source·Index·Resolver 선행조건과 #171의 정책·멱등성·평가 선행조건은 별도이므로 각 Issue 전체를 착수 가능 또는 완료로 자동 승격하지 않는다.
 

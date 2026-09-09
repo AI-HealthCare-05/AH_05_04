@@ -45,7 +45,7 @@ def test_required_source_locations_are_machine_readable() -> None:
         "backend/app/repositories/prescription_repository.py",
         "backend/app/models/prescriptions.py",
         "backend/app/dtos/prescriptions.py",
-        "backend/alembic/versions/169a1b2c3d4e_add_prescription_version_schema.py",
+        "backend/alembic/versions/169a1b2c3d4e_create_prescription_version_foundation.py",
         "backend/alembic/versions/169b2c3d4e5f_backfill_prescription_versions.py",
         "backend/alembic/versions/169c3d4e5f6a_cut_over_prescription_version_reads.py",
         "backend/alembic/versions/169d4e5f6a7b_harden_prescription_version_links.py",
@@ -53,6 +53,9 @@ def test_required_source_locations_are_machine_readable() -> None:
     }
 
     assert required_paths <= locations_by_path.keys()
+
+    for location in source_locations:
+        assert (PROJECT_ROOT / location["path"]).is_file()
 
     for path in required_paths:
         location = locations_by_path[path]
