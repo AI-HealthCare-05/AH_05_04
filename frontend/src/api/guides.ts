@@ -5,6 +5,7 @@ export type GuideStatus = 'GENERATING' | 'COMPLETED' | 'FAILED'
 export type GuideData = {
   guide_id: string
   prescription_id: string
+  prescription_version_id: string
   generation_status: GuideStatus
   content: string | null
   model_name: string | null
