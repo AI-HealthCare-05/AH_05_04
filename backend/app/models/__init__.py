@@ -18,6 +18,15 @@ from app.models.chat import ChatCitation, ChatMessage, ChatSession
 from app.models.guides import Guide, GuideCitation
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.medical_documents import MedicalDocument
+from app.models.medication_schedules import (
+    MedicationOccurrence,
+    MedicationOccurrenceStatus,
+    MedicationSchedule,
+    MedicationScheduleEndMode,
+    MedicationScheduleSource,
+    MedicationScheduleStatus,
+    MedicationScheduleTime,
+)
 from app.models.ocr import ExtractedField, OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
@@ -54,6 +63,23 @@ from app.models.rag_evaluation import (
     EvaluationMetricScope,
     EvaluationVariantRole,
     EvalVariant,
+)
+from app.models.rag_evidence import (
+    RagCitation,
+    RagCitationAuthorizationStatus,
+    RagCitationClaimKind,
+    RagCitationReleaseStatus,
+    RagCitationSupportStatus,
+    RagCitationTargetType,
+    RagEvidence,
+    RagEvidenceGuideline,
+    RagEvidenceGuidelineType,
+    RagEvidenceKnowledge,
+    RagEvidenceKnowledgeType,
+    RagEvidenceRule,
+    RagEvidenceRuleType,
+    RagEvidenceStatus,
+    RagEvidenceType,
 )
 from app.models.rag_runtime import (
     RagReleaseEvaluationApproval,
@@ -125,6 +151,13 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeDocument",
     "Medication",
+    "MedicationOccurrence",
+    "MedicationOccurrenceStatus",
+    "MedicationSchedule",
+    "MedicationScheduleEndMode",
+    "MedicationScheduleSource",
+    "MedicationScheduleStatus",
+    "MedicationScheduleTime",
     "MedicationCandidateSearch",
     "MedicationCandidateSearchResult",
     "MedicationCandidateSearchStatus",
@@ -149,6 +182,21 @@ __all__ = [
     "RagMedicationIngredient",
     "RagMedicationProduct",
     "RagMedicationProductComponent",
+    "RagCitation",
+    "RagCitationAuthorizationStatus",
+    "RagCitationClaimKind",
+    "RagCitationReleaseStatus",
+    "RagCitationSupportStatus",
+    "RagCitationTargetType",
+    "RagEvidence",
+    "RagEvidenceGuideline",
+    "RagEvidenceGuidelineType",
+    "RagEvidenceKnowledge",
+    "RagEvidenceKnowledgeType",
+    "RagEvidenceRule",
+    "RagEvidenceRuleType",
+    "RagEvidenceStatus",
+    "RagEvidenceType",
     "RagReleaseEvaluationApproval",
     "RagRuntimeApprovalStatus",
     "RagRuntimeBundleSource",

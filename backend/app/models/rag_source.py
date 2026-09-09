@@ -210,6 +210,7 @@ class RagSourceSnapshot(Base):
             unique=True,
             postgresql_where=text("verification_status <> 'FAILED'"),
         ),
+        UniqueConstraint("id", "source_version", name="uq_rag_source_snapshot_id_version"),
         Index("idx_rag_source_snapshot_operation_status", "operation_id", "verification_status"),
         Index(
             "uq_rag_source_snapshot_current",

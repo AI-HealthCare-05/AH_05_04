@@ -1,4 +1,11 @@
 import type { Page, Route } from '@playwright/test'
+import type {
+  ChatMessageListResponse,
+  ChatSessionResponse,
+  SendChatMessageResponse,
+} from '../../src/api/chat'
+import type { GuideResponse } from '../../src/api/guides'
+import type { PrescriptionResponse } from '../../src/api/prescriptions'
 import { previewIds } from '../../src/dev-preview/syntheticIds'
 
 export const ids = previewIds
@@ -42,6 +49,11 @@ export type RequirementsApiState = {
   logoutCount: number
   unexpectedRequests: string[]
   idempotencyKeys: string[]
+  manualMedicationRequests: Array<{
+    idempotencyKey: string
+    body: Record<string, unknown>
+  }>
+  confirmedMedicationCount: number | null
 }
 
 const now = '2026-09-08T09:00:00Z'
@@ -93,6 +105,8 @@ export async function installRequirementsApi(
     logoutCount: 0,
     unexpectedRequests: [],
     idempotencyKeys: [],
+    manualMedicationRequests: [],
+    confirmedMedicationCount: null,
   }
   let prescriptionExists = options.existingPrescription ?? false
   let guideExists = options.existingGuide ?? false
@@ -118,25 +132,46 @@ export async function installRequirementsApi(
   const prescription = () => ({
     data: {
       prescription_id: ids.prescription,
+      prescription_version_id: ids.prescriptionVersion,
+      revision: 1,
+      current: true,
       document_id: ids.document,
       prescribed_date: '2026-09-08',
       confirmed_at: now,
-      medications: [{
-        medication_name: '합성 처방약',
-        strength_text: '100mg',
-        dose_value: 1,
-        dose_unit: '정',
-        frequency_per_day: 3,
-        timing_text: '식후',
-        duration_days: 7,
-        display_order: 1,
-      }],
+      medications: [
+        {
+          prescription_version_medication_id: ids.prescriptionVersionMedication,
+          medication_name: '합성 처방약',
+          strength_text: '100mg',
+          dose_value: 1,
+          dose_unit: '정',
+          frequency_per_day: 3,
+          timing_text: '식후',
+          duration_days: 7,
+          display_order: 1,
+        },
+        ...(fields.some((candidate) => candidate.medication_index === 2)
+          ? [{
+              prescription_version_medication_id:
+                ids.prescriptionVersionManualMedication,
+              medication_name: '직접입력약정',
+              strength_text: '50mg',
+              dose_value: 0.5,
+              dose_unit: '정',
+              frequency_per_day: 2,
+              timing_text: '저녁 식후',
+              duration_days: 5,
+              display_order: 2,
+            }]
+          : []),
+      ],
     },
-  })
+  }) satisfies PrescriptionResponse
   const guide = () => ({
     data: {
       guide_id: ids.guide,
       prescription_id: ids.prescription,
+      prescription_version_id: ids.prescriptionVersion,
       generation_status: 'COMPLETED',
       content: '합성 처방약은 확정된 처방 지시에 따라 복용하세요.',
       model_name: 'synthetic-guide-model',
@@ -144,7 +179,16 @@ export async function installRequirementsApi(
       requested_at: now,
       completed_at: now,
     },
-  })
+  }) satisfies GuideResponse
+  const chatSession = () => ({
+    data: {
+      session_id: ids.session,
+      prescription_id: ids.prescription,
+      prescription_version_id: ids.prescriptionVersion,
+      session_status: 'ACTIVE',
+      created_at: now,
+    },
+  }) satisfies ChatSessionResponse
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -268,6 +312,50 @@ export async function installRequirementsApi(
         body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xh4QAAAAAElFTkSuQmCC', 'base64'),
       })
     }
+    if (key === `POST /api/v1/ocr-jobs/${ids.ocrJob}/manual-medications`) {
+      const idempotencyKey = request.headers()['idempotency-key'] ?? ''
+      const body = request.postDataJSON() as Record<string, unknown>
+      state.manualMedicationRequests.push({ idempotencyKey, body })
+      const medicationIndex = 2
+      const values: Record<string, string | null> = {
+        MEDICATION_NAME: String(body.medication_name),
+        MEDICATION_STRENGTH: body.medication_strength as string | null,
+        DOSE_VALUE: String(body.dose_value),
+        DOSE_UNIT: body.dose_unit as string | null,
+        FREQUENCY_PER_DAY: String(body.frequency_per_day),
+        TIMING: body.timing as string | null,
+        DURATION_DAYS: String(body.duration_days),
+      }
+      if (!fields.some((candidate) => candidate.medication_index === medicationIndex)) {
+        fields.push(
+          ...Object.entries(values).map<Field>(([fieldType, value]) => ({
+            field_id: `manual-${fieldType}-${medicationIndex}`,
+            field_type: fieldType,
+            medication_index: medicationIndex,
+            raw_value: null,
+            normalized_value: null,
+            normalization_version: 'manual-entry@1',
+            confirmed_value: value,
+            confidence_score: null,
+            confirmation_status: 'CONFIRMED',
+          })),
+        )
+      }
+      return json(route, {
+        data: {
+          job_id: ids.ocrJob,
+          document_id: ids.document,
+          ocr_status: 'COMPLETED',
+          error_code: null,
+          engine_name: 'SYNTHETIC_OCR',
+          model_version: 'synthetic-v1',
+          prompt_version: null,
+          created_at: now,
+          completed_at: now,
+          fields,
+        },
+      }, 201)
+    }
     if (method === 'PATCH' && path.startsWith('/api/v1/extracted-fields/')) {
       const fieldId = path.split('/').at(-1) ?? ''
       const current = fields.find((candidate) => candidate.field_id === fieldId)
@@ -281,7 +369,9 @@ export async function installRequirementsApi(
     }
     if (key === `POST /api/v1/documents/${ids.document}/prescription`) {
       prescriptionExists = true
-      return json(route, prescription(), 201)
+      const response = prescription()
+      state.confirmedMedicationCount = response.data.medications.length
+      return json(route, response, 201)
     }
     if (key === 'POST /api/v1/guides') {
       guideExists = true
@@ -292,12 +382,12 @@ export async function installRequirementsApi(
     }
     if (key === `GET /api/v1/prescriptions/${ids.prescription}/chat-session`) {
       return chatExists
-        ? json(route, { data: { session_id: ids.session, prescription_id: ids.prescription, session_status: 'ACTIVE', created_at: now } })
+        ? json(route, chatSession())
         : error(route, 404, 'CHAT_SESSION_NOT_FOUND', '대화를 찾을 수 없습니다.')
     }
     if (key === `POST /api/v1/prescriptions/${ids.prescription}/chat-sessions`) {
       chatExists = true
-      return json(route, { data: { session_id: ids.session, prescription_id: ids.prescription, session_status: 'ACTIVE', created_at: now } }, 201)
+      return json(route, chatSession(), 201)
     }
     if (key === `GET /api/v1/chat-sessions/${ids.session}/messages`) {
       return json(route, {
@@ -308,7 +398,7 @@ export async function installRequirementsApi(
             { message_id: '88888888-8888-4888-8888-888888888888', role: 'ASSISTANT', content: '기존 합성 답변입니다.', generation_status: 'COMPLETED', created_at: now },
           ] : [],
         },
-      })
+      } satisfies ChatMessageListResponse)
     }
     if (key === `POST /api/v1/chat-sessions/${ids.session}/messages`) {
       const body = request.postDataJSON() as { content: string }
@@ -324,7 +414,7 @@ export async function installRequirementsApi(
           created_at: now,
           completed_at: now,
         },
-      }, 201)
+      } satisfies SendChatMessageResponse, 201)
     }
 
     state.unexpectedRequests.push(key)
