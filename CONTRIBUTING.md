@@ -46,7 +46,15 @@ git switch -c feature/12-prescription-upload
 - 현재 dependency나 표준 라이브러리로 해결할 수 있다면 새로운 dependency를 추가하지 않습니다.
 - Docker, CI/CD, Redis, DB extension 또는 production configuration 변경은 현재 Issue 범위에 직접 포함되거나 선행 조건으로 합의된 경우에만 수행합니다.
 - 미래 요구사항을 추측해 코드를 미리 구현하지 않고, 현재 Issue의 작업 범위와 완료 조건만 구현합니다.
-- Backend와 AI Worker의 비즈니스 흐름은 적용 가능한 경우 `Router → Service → Repository/External Client` 형태로 명시적으로 추적할 수 있게 유지합니다. 다른 영역에서는 기존 책임 경계와 프레임워크 관례를 따릅니다.
+- Backend의 비즈니스 흐름은 적용 가능한 경우 `Router → Service → Repository/External Client` 형태로 명시적으로 추적할 수 있게 유지합니다.
+- AI Worker의 비즈니스 흐름은 적용 가능한 경우 `Task/Consumer → Service → Repository/External Client` 형태로 명시적으로 추적할 수 있게 유지합니다. 다른 영역에서는 기존 책임 경계와 프레임워크 관례를 따릅니다.
+
+### Backend 변경 리뷰 기준
+
+- 함수명, 변수명, 파일명, API 필드명, DB 컬럼명과 테스트명에서 같은 도메인 개념에 같은 이름을 사용합니다. 이름을 변경할 때는 영향 범위를 검색하고 관련 Router, Service, Repository, DTO, schema, fixture, test와 문서를 함께 정렬합니다. 공유 계약을 변경하는 이름 수정은 별도의 계약 변경 절차를 따릅니다.
+- 사용자, 프로필, 문서, 처방, 가이드, 챗과 RAG 리소스의 조회·수정·삭제 경로에서 소유권과 접근 권한을 검증하고, 다른 사용자의 리소스에 접근할 수 있는 경로가 없는지 확인합니다.
+- 인증·인가, 입력 검증, 에러 응답과 로그에서 API Key, token, cookie, 환자 정보, 원본 처방전과 Provider 원문 응답이 노출되지 않는지 확인합니다. 세부 기준은 `SECURITY.md`와 `docs/privacy-safety.md`를 따릅니다.
+- 중복 로직은 기존 패턴과 유틸리티를 우선해 정리하되, 단일 사용처를 위한 새 추상화는 만들지 않습니다. 불필요한 주석, 죽은 코드, 디버그 로그, 임시 코드와 사용하지 않는 import를 남기지 않습니다.
 
 새 구조가 필요하다면 구현과 리뷰 전에 Issue 또는 Pull Request에 다음 내용을 기록합니다.
 
