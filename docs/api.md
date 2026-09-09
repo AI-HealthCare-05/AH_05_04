@@ -411,6 +411,14 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 
 ### 요청
 
+Header:
+
+| 이름 | 필수 | 규칙 |
+| --- | --- | --- |
+| `Idempotency-Key` | 예 | 16~255자의 ASCII 영숫자와 `-._:`만 허용 |
+
+같은 `Idempotency-Key`와 같은 요청 body로 다시 요청하면 새 약물을 만들지 않고 최초 성공 응답을 재현합니다. 같은 key로 다른 body를 보내면 `409 IDEMPOTENCY_KEY_CONFLICT`를 반환합니다.
+
 ```json
 {
   "medication_name": "직접입력약정",
@@ -459,11 +467,14 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 
 | 상태 | `code` | 설명 |
 | ---: | --- | --- |
+| `400` | `IDEMPOTENCY_KEY_REQUIRED` | `Idempotency-Key` header가 없거나 빈 값입니다. |
+| `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
 | `404` | `OCR_JOB_NOT_FOUND` | OCR Job이 없거나 사용자가 접근할 수 없습니다. |
 | `404` | `MEDICAL_DOCUMENT_NOT_FOUND` | 연결된 의료문서가 없거나 사용자가 접근할 수 없습니다. |
 | `409` | `OCR_JOB_NOT_COMPLETED` | OCR Job이 아직 완료되지 않아 수동 약물을 추가할 수 없습니다. |
 | `409` | `PRESCRIPTION_ALREADY_CONFIRMED` | 해당 문서의 처방이 이미 확정되어 약물을 추가할 수 없습니다. |
 | `409` | `CONCURRENT_UPDATE_IN_PROGRESS` | 같은 문서의 OCR 접수, 검수, 처방 확정 또는 다른 수정 요청이 처리 중입니다. 재시도할 수 있습니다. |
+| `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 이전과 다른 요청 body가 접수되었습니다. |
 | `422` | `VALIDATION_FAILED` | 필수값이 비어 있거나 숫자·길이 제한을 만족하지 않습니다. |
 
 ## 처방 정보 확정

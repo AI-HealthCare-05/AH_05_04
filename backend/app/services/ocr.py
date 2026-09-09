@@ -3,7 +3,15 @@ from uuid import UUID
 
 from app.core import config
 from app.core.errors import ApiError, ErrorDetail
-from app.dtos.ocr import CreateManualMedicationRequest, ExecuteOcrRequest, ExtractedFieldData, OcrJobData, OcrJobStatus
+from app.core.utils.idempotency import IdempotencyKeyFormatError
+from app.dtos.ocr import (
+    CreateManualMedicationRequest,
+    ExecuteOcrRequest,
+    ExtractedFieldData,
+    OcrJobData,
+    OcrJobResponse,
+    OcrJobStatus,
+)
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
 from app.models.async_jobs import AiJobType, DomainType
 from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
@@ -14,6 +22,7 @@ from app.repositories.medical_document_repository import (
 )
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.idempotency import IdempotencyKeyConflictError, SyncMutationIdempotencyService
 from app.services.job_intake import DomainReference, JobIntakeService
 from app.services.job_status import JobStatusResult, JobStatusService
 from app.services.ocr_engine import (
@@ -30,6 +39,7 @@ from app.services.ocr_engine import (
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
 _ENGINE_ERROR_MESSAGE = "OCR 처리 중 오류가 발생했습니다."
+_MANUAL_MEDICATION_OPERATION_ID = "ocr.manual-medication.create"
 
 # 사용자가 OCR 오인식 값을 제거하고 “값 없음”으로 확인할 수 있는 필드입니다.
 _NULLABLE_CONFIRMED_FIELD_TYPES = frozenset(
@@ -352,7 +362,52 @@ class OcrService:
         user: User,
         job_id: UUID,
         request: CreateManualMedicationRequest,
+        idempotency_key: str,
+        idempotency_service: SyncMutationIdempotencyService,
     ) -> OcrJobData:
+        try:
+            result = await idempotency_service.execute(
+                user_id=user.id,
+                operation_id=_MANUAL_MEDICATION_OPERATION_ID,
+                parent_resource_id=job_id,
+                idempotency_key=idempotency_key,
+                fingerprint={
+                    "job_id": str(job_id),
+                    "medication_name": request.medication_name,
+                    "medication_strength": request.medication_strength,
+                    "dose_value": request.dose_value,
+                    "dose_unit": request.dose_unit,
+                    "frequency_per_day": request.frequency_per_day,
+                    "timing": request.timing,
+                    "duration_days": request.duration_days,
+                },
+                success_status=201,
+                mutate=lambda: self._create_manual_medication_once(user=user, job_id=job_id, request=request),
+            )
+        except IdempotencyKeyFormatError as exc:
+            raise ApiError(
+                status_code=400,
+                code=str(exc),
+                message="Idempotency-Key 헤더를 확인해 주세요.",
+                details=[ErrorDetail(field="Idempotency-Key", reason=str(exc))],
+            ) from exc
+        except IdempotencyKeyConflictError as exc:
+            raise ApiError(
+                status_code=409,
+                code="IDEMPOTENCY_KEY_CONFLICT",
+                message="같은 Idempotency-Key로 다른 요청이 접수되었습니다.",
+                details=[ErrorDetail(field="Idempotency-Key", reason="REQUEST_HASH_MISMATCH")],
+            ) from exc
+
+        return OcrJobResponse.model_validate(result.response_body).data
+
+    async def _create_manual_medication_once(
+        self,
+        *,
+        user: User,
+        job_id: UUID,
+        request: CreateManualMedicationRequest,
+    ) -> dict:
         job = await self._ocr_repo.get_job_owned(job_id=job_id, user_id=user.id)
         if job is None:
             raise ApiError(
@@ -437,7 +492,7 @@ class OcrService:
         ]
         await self._ocr_repo.add_fields(manual_fields)
         saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
-        return _to_job_data(job, saved_fields)
+        return OcrJobResponse(data=_to_job_data(job, saved_fields)).model_dump(mode="json")
 
     async def update_extracted_field(
         self,

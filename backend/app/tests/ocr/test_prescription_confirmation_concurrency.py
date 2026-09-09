@@ -358,7 +358,7 @@ async def test_two_concurrent_manual_medication_additions_use_distinct_indexes(
         first_task = asyncio.create_task(
             client.post(
                 f"/api/v1/ocr-jobs/{job_id}/manual-medications",
-                headers=headers,
+                headers={**headers, "Idempotency-Key": "manual-medication-concurrent-a"},
                 json={
                     "medication_name": "직접추가약A",
                     "dose_value": "1",
@@ -370,7 +370,7 @@ async def test_two_concurrent_manual_medication_additions_use_distinct_indexes(
         second_task = asyncio.create_task(
             client.post(
                 f"/api/v1/ocr-jobs/{job_id}/manual-medications",
-                headers=headers,
+                headers={**headers, "Idempotency-Key": "manual-medication-concurrent-b"},
                 json={
                     "medication_name": "직접추가약B",
                     "dose_value": "2",

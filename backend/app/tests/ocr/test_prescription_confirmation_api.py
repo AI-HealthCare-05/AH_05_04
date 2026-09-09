@@ -266,7 +266,7 @@ async def test_create_manual_medication_adds_confirmed_fields_and_confirms_presc
 
         response = await client.post(
             f"/api/v1/ocr-jobs/{job_id}/manual-medications",
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "manual-medication-create-0001"},
             json={
                 "medication_name": "직접입력약정",
                 "medication_strength": "50mg",
@@ -324,7 +324,7 @@ async def test_create_manual_medication_rejects_another_users_ocr_job(
 
         response = await client.post(
             f"/api/v1/ocr-jobs/{job_id}/manual-medications",
-            headers={"Authorization": f"Bearer {other_token}"},
+            headers={"Authorization": f"Bearer {other_token}", "Idempotency-Key": "manual-medication-other-0001"},
             json={
                 "medication_name": "직접입력약정",
                 "dose_value": "1",
@@ -355,7 +355,7 @@ async def test_create_manual_medication_rejects_after_prescription_confirmed(
 
         response = await client.post(
             f"/api/v1/ocr-jobs/{job_id}/manual-medications",
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "manual-medication-confirmed-0001"},
             json={
                 "medication_name": "확정후추가약",
                 "dose_value": "1",
@@ -390,6 +390,104 @@ async def test_create_manual_medication_rejects_invalid_numeric_fields(
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert response.json()["code"] == "VALIDATION_FAILED"
     assert any(detail["field"] == "dose_value" for detail in response.json()["details"])
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_replays_same_idempotency_key_without_duplicate(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-replay")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Idempotency-Key": "manual-medication-replay-0001",
+        }
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+        payload = {
+            "medication_name": "재전송방지약",
+            "dose_value": "1",
+            "frequency_per_day": "1",
+            "duration_days": "7",
+        }
+
+        first = await client.post(f"/api/v1/ocr-jobs/{job_id}/manual-medications", headers=headers, json=payload)
+        second = await client.post(f"/api/v1/ocr-jobs/{job_id}/manual-medications", headers=headers, json=payload)
+
+    assert first.status_code == status.HTTP_201_CREATED, first.text
+    assert second.status_code == status.HTTP_201_CREATED, second.text
+    first_fields = first.json()["data"]["fields"]
+    second_fields = second.json()["data"]["fields"]
+    assert first_fields == second_fields
+    replayed_names = [
+        field
+        for field in second_fields
+        if field["field_type"] == "MEDICATION_NAME" and field["confirmed_value"] == "재전송방지약"
+    ]
+    assert len(replayed_names) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_rejects_same_idempotency_key_with_different_body(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-conflict")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Idempotency-Key": "manual-medication-conflict-0001",
+        }
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+
+        first = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers=headers,
+            json={
+                "medication_name": "첫번째약",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+        second = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers=headers,
+            json={
+                "medication_name": "다른약",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+
+    assert first.status_code == status.HTTP_201_CREATED, first.text
+    assert second.status_code == status.HTTP_409_CONFLICT, second.text
+    assert second.json()["code"] == "IDEMPOTENCY_KEY_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_requires_idempotency_key(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-key")
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+
+        response = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "medication_name": "멱등키필수약",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.text
+    assert response.json()["code"] == "IDEMPOTENCY_KEY_REQUIRED"
 
 
 @pytest.mark.asyncio

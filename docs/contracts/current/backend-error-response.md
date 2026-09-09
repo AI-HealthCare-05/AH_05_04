@@ -233,7 +233,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 401 | `EXPIRED_TOKEN` | "인증 정보가 만료되었습니다. 다시 로그인해 주세요." | |
 | 403 | `FORBIDDEN` | "비활성화된 계정입니다." | 현재는 비활성 계정 로그인 시도에만 사용 |
 | 409 | `CONFLICT` | 상황에 따른 안내 문구 (예: "이미 사용중인 이메일입니다.") | 회원가입 중복, 종료된 대화 세션 등 여러 상황에서 재사용 |
-| 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수가 공유하는 `JobIntakeService`에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수 또는 OCR 수동 약물 추가 같은 멱등 mutation에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
 | 422 | `VALIDATION_FAILED` | 상황에 따른 안내 문구 (예: "입력값을 확인해 주세요.", "MVP에서는 처방전 문서만 업로드할 수 있습니다.") | Pydantic 요청 검증 실패 시 자동 발생 또는 Service에서 수동 발생 |
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
 | 503 | `SERVICE_UNAVAILABLE` | "현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요." | |
