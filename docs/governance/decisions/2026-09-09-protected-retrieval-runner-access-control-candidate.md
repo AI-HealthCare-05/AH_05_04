@@ -38,6 +38,8 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)도 같은 저장소에서 SECURITY DEFINER 함수 + PUBLIC EXECUTE 회수로 protected DB-owned 연산을 이미 다룬 선례다.
 
+(현우: #368에서 "별도 database 우선 검토"였던 입장을 `configure-app-role.sql`의 기존 REVOKE·default privilege 패턴을 확인하고 schema 방식 동의로 변경.)
+
 ## 4. 역할·책임 + 직무 분리 (Segregation of Duties)
 
 **채택(안)**: PR #373 kernel이 이미 구현한 3개 역할을 그대로 사용한다.
@@ -51,6 +53,10 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 여기에 더해, 실제 DB 인프라 레벨에서 **"protected owner/migration role"**(DB 객체 소유·migration 전용, `NOLOGIN`)을 신설 — 이건 kernel role과 충돌하지 않는 별도 layer이므로 이견 없이 채택. 이 role 설계는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)의 "Runtime은 owner/superuser 또는 owner 역할의 멤버로 운영하지 않는다" 원칙과 정합해야 한다.
 
 **확정(가빈)**: 현우가 제안한 "approval role"은 `ProtectedApprovalRole`(kernel의 governance/application 계층)로 유지하고, **별도의 공유 PostgreSQL login role로 중복 구현하지 않는다.** 승인자는 개별 identity로 식별되고 approval evidence가 검증되어야 한다. DB 권한이 추가로 필요한지는 Backend·Security 구현 설계 단계에서 판단한다.
+
+**확정(현우)**: `FREEZE`·`RUN`·grant/revoke는 **직접 테이블 DML로 허용하지 않고**, Dataset 상태와 승인 evidence를 검증하는 **제한된 함수 경계**로만 수행한다 — `configure-app-role.sql`이 이미 쓰고 있는 `transition_rag_source_snapshot` SECURITY DEFINER 함수([:97-103](../../../infra/docker/postgres/configure-app-role.sql), 승인된 함수에만 `GRANT EXECUTE`)와 같은 구조다.
+
+**확정(현우)**: 사람(Author·Custodian)과 Runner는 **공유 login이 아니라 개별 identity + 단기 credential**이어야 한다 — 공유 계정을 쓰면 §7 audit가 "누가 접근했는가"를 실제로 답할 수 없게 된다.
 
 ## 5. 접근 통제 모델
 
@@ -71,6 +77,12 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 **확정(가빈)**: 기존 요구사항은 막연한 "2인 승인"이 아니라 **실행 요청자와 분리된 독립 승인자 1인의 승인**이었다 — 2인 승인을 새 요구사항으로 만들려면 별도 합의가 필요하다(이전 초안의 "required reviewer 2인" 제안은 폐기). 우선 **GitHub Environment의 self-review 방지 + 지정된 독립 승인자 1인의 approval evidence를 함께 검증**하는 방향으로 정리한다. (참고로 GitHub required reviewer는 여러 명을 등록해도 그중 한 명만 승인하면 진행되므로, "독립 승인자 1인" 요건을 만족하려면 승인자 목록을 정확히 1인 이상으로 지정하고 self-review 방지가 실제로 작동하는지 별도 검증이 필요하다.)
 
+**확정(현우)**: 이전 초안에서 "authoring=현우 계정의 관리형 환경(회사 지급 기기)"으로 특정 기기를 지목했던 의견은 **철회한다** — 가빈의 "구체 조건 확인 전까지 차단 유지"에 동의.
+
+**확정(현우) — 신규 조건, 접근 통제와 별개 축**: 접근을 아무리 잘 막아도 아래가 없으면 artifact로 정답이 새어 평가 자체가 무효화된다.
+- 승인은 **특정 commit과 Dataset manifest hash에 고정**되어야 한다(승인 당시와 다른 commit/hash로 실행되지 않도록)
+- 질문·Gold·hard negative는 **workflow input, 로그, cache, artifact에 남지 않도록 차단**되어야 한다(예: GitHub Actions 로그, 캐시된 아티팩트, 워크플로 실행 파라미터에 원문이 노출되지 않는지 확인)
+
 ## 7. 감사·로깅
 
 **채택 완료(구현됨)**: PR #373 — append-only hash-chain journal(synthetic, global monotonic sequence, tamper 검증). 단 정책 검증용이며 실제 durable retention을 증명하지 않음(설계 문서 명시, 이견 없음).
@@ -80,13 +92,17 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 - global sequence + durable head/checkpoint
 - backup·restore 검증
 
-**확정(가빈, 신규 정책안)**: authorization·revoke·Freeze·run audit evidence는 **Dataset version 운영 종료 후 최소 1년, legal hold가 있으면 해제 시까지 보존**하는 안에 동의. 단 이는 [`docs/privacy-safety.md:64-69`](../../privacy-safety.md)(90/30/7일 등 다른 값, 전부 미적용 상태)처럼 **기존 저장소 정책의 재사용이 아니라 신규 정책안**이며, 실제 적용은 **Privacy·필요한 외부 승인과 보관 위치가 확정된 뒤에만 가능**하다. 보관 위치와 기술적 삭제·복구 방식은 **Backend·Security 담당자(은영)가 제시**한다.
+**확정(가빈, 신규 정책안)**: authorization·revoke·Freeze·run audit evidence는 **최소 1년, legal hold가 있으면 해제 시까지 보존**하는 안에 동의. 단 이는 [`docs/privacy-safety.md:64-69`](../../privacy-safety.md)(90/30/7일 등 다른 값, 전부 미적용 상태)처럼 **기존 저장소 정책의 재사용이 아니라 신규 정책안**이며, 실제 적용은 **Privacy·필요한 외부 승인과 보관 위치가 확정된 뒤에만 가능**하다. 보관 위치와 기술적 삭제·복구 방식은 **Backend·Security 담당자(은영)가 제시**한다.
+
+**확정(현우) — 기산점 정정**: 보존기간의 기산점을 "운영 종료 후"로 두면 시스템이 그 시점을 판정할 수 없다(운영 종료가 언제인지는 코드로 결정 불가능한 사람의 판단이라서). 대신 **해당 Dataset version의 마지막 Freeze Receipt 생성일**을 기산점으로 한다 — kernel에 이미 있는 `ProtectedDatasetBinding`의 Freeze 시점 기록으로 시스템이 직접 판정 가능하다.
 
 ## 8. 보존·폐기 정책
 
-**확정(가빈)**: Dataset 원본(질문·Gold 본문)도 version 운영 종료 후 **1년을 기본안**으로 하되, **Custodian의 폐기 요청 + Product·Evaluation 책임자(가빈)의 독립 승인**을 거친다.
+**확정(가빈)**: Dataset 원본(질문·Gold 본문)도 마지막 Freeze Receipt 생성일 기준 **1년을 기본안**으로 하되(§7과 동일 기산점으로 정정 — 현우 지적), **Custodian의 폐기 요청 + Product·Evaluation 책임자(가빈)의 독립 승인**을 거친다.
 
 **확정(가빈) — kernel 계약과의 관계**: 현재 kernel enum(`READ|WRITE|FREEZE|RUN`, `GRANT|REVOKE|EXPIRE`, `DENIED|INTENT|SUCCEEDED|UNKNOWN`)에 폐기 이벤트를 **억지로 끼워 넣지 않는다.** 대신 [`docs/contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md:188-203`](../../contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md) 선례처럼 **삭제 전 `INTENT`(Dataset version/digest, 승인, legal hold·backup 조건 결속) → 삭제 후 `SUCCEEDED`/`UNKNOWN` → 재조정 절차**를 갖는 **별도 disposal audit 계약**으로 분리한다. 이는 **공유 계약 변경**이므로 이 문서와 별도로 계약·구현·테스트가 필요하다(이번 PR 범위 밖, 후속 작업으로 이관).
+
+**확정(현우) — 폐기와 재현 검증의 경계**: 폐기 요구와 "과거 평가를 재현해달라"는 요구가 나중에 충돌하지 않도록, **과거 평가의 재현 검증은 Freeze Receipt와 manifest hash 대조로만 하고 원본(Dataset 실제 내용) 재실행을 요구하지 않는다**는 경계를 이번에 같이 고정한다 — 이걸 정하지 않으면 원본을 폐기한 뒤 "그 평가가 진짜 그 Dataset으로 돌았는지 다시 보여달라"는 요청이 왔을 때 원본이 없어서 답할 수 없는 모순이 생긴다.
 
 ## 9. 백업·복구
 
@@ -113,11 +129,13 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 상세 사고 자료는 **비공개 보관**하고, 저장소에는 **비민감 요약 evidence만** 남긴다(증빙 위치는 `docs/validation/rag/issue-273/` 아래 사고별 report — 내용은 비민감 요약에 한정).
 
+(현우: 자신이 앞서 IR 조사 담당을 특정인으로 지목했던 의견을 철회하고 위 분리안에 동의.)
+
 ## 12. 예외 처리 절차
 
 **확정(가빈)**: HOLDOUT은 긴급 진료 데이터가 아니므로 **break-glass 예외는 두지 않고 표준 grant/revoke 절차만 허용**하는 안에 동의.
 
-(참고: [`docs/privacy-safety.md:60`](../../privacy-safety.md)의 "예외 처리하지 않습니다" 문장은 복약 가이드·챗봇 Production 배포 차단에 대한 것으로 이 시나리오의 직접 선례는 아니지만, "예외를 만들지 않는다"는 유사 기조로 참고했다.)
+(참고: [`docs/privacy-safety.md:60`](../../privacy-safety.md)의 "예외 처리하지 않습니다" 문장은 복약 가이드·챗봇 Production 배포 차단에 대한 것으로 이 시나리오의 직접 선례는 아니지만, "예외를 만들지 않는다"는 유사 기조로 참고했다. 현우도 이 인용이 직접 선례로는 약하다고 보고, "HOLDOUT은 합성 데이터라 긴급성이 없다"는 자체 판단을 결론의 근거로 삼는 데 동의.)
 
 ## 13. 문서 재검토 주기·만료일
 
