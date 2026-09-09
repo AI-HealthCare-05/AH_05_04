@@ -113,3 +113,18 @@ class RefreshToken(Token):
             access[claim] = value
 
         return access
+
+    def rotate(self) -> "RefreshToken":
+        """재사용된 refresh token으로 새 access token만 계속 재발급하는 걸 막기 위해,
+        이 refresh token 자체를 새 jti로 교체한 새 RefreshToken을 만든다. `exp`는 새로
+        계산하지 않고 이 토큰의 값을 그대로 옮겨, rotation을 반복해도 최초 로그인 기준
+        절대 만료(REFRESH_TOKEN_EXPIRE_MINUTES)가 늘어나지 않는다."""
+        rotated = RefreshToken()
+        rotated.payload["exp"] = self.payload["exp"]
+
+        for claim, value in self.payload.items():
+            if claim in self.no_copy_claims:
+                continue
+            rotated[claim] = value
+
+        return rotated

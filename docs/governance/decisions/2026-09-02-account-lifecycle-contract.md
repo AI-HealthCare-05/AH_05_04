@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-206-20260902` |
-| 상태 | 결정 기록 — 로그아웃·`token_version` 재검증 구현 반영, 비밀번호 재설정·회원탈퇴 후속 구현 대기 |
+| 상태 | 결정 기록 — 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정 구현 반영, 회원탈퇴 후속 구현 대기 |
 | 결정일 | 2026-09-02 |
 | 결정자(제안) | 송은영 (Backend/DB) |
 | 추적 Issue | [#206](https://github.com/AI-HealthCare-05/AH_05_04/issues/206) |
@@ -102,6 +102,6 @@ REQ-USR-009 설계메모는 "본인 확인 방식과 기존 세션 무효화 범
 ## 후속
 
 - Frontend는 이 Decision과 실제 구현 PR의 API/DTO가 확정된 뒤 연결한다(계정 기능 범위 확정 표2 "다음 조치" 참고). 현재 `frontend/src`에는 로그아웃·비밀번호 재설정·회원탈퇴 관련 실제 구현이 없음을 확인했다(`DesignPrototypePage.tsx`의 로그아웃 항목은 디자인 프로토타입 목업이며 실제 세션·API 연동이 아니다).
-- `password_reset_token`의 만료분 정리 배치는 구현 PR에서 별도 확정한다(`token_version`은 `User` 컬럼 값이라 별도 정리 배치가 필요 없다).
+- `password_reset_token`의 만료분 정리 배치는 구현 PR(#206)에서 lazy cleanup으로 확정했다 — 별도 배치·스케줄러 없이 조회 시 `expires_at` 조건으로만 거르고, 만료된 row는 삭제하지 않는다. 이 저장소의 `idempotency_record`(같은 만료-필터링 패턴, 별도 정리 배치 없음)와 일관된 선택이다. 테이블이 커지는 게 실제 문제가 되면 그때 배치를 추가한다.
 - 목적별 동의 상태 모델링은 [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207)에서 별도 Decision으로 진행한다(담당 송은영/권가빈, `동의·외부 처리 범위 정리.md` §10 P0 근거).
 - 계정 이벤트 감사 로그 저장 여부는 이슈 [#206](https://github.com/AI-HealthCare-05/AH_05_04/issues/206) "후속 작업"에서 별도로 결정한다.

@@ -20,6 +20,7 @@ from app.repositories.medical_document_repository import MedicalDocumentReposito
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.ocr_repository import OcrRepository
+from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
@@ -424,13 +425,26 @@ def get_chat_service(
     )
 
 
+def get_password_reset_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> PasswordResetRepository:
+    return PasswordResetRepository(session)
+
+
 def get_auth_service(
     repository: Annotated[
         UserRepository,
         Depends(get_user_repository),
     ],
+    password_reset_repository: Annotated[
+        PasswordResetRepository,
+        Depends(get_password_reset_repository),
+    ],
 ) -> AuthService:
-    return AuthService(repository)
+    return AuthService(repository, password_reset_repository)
 
 
 def get_user_manage_service(

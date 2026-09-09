@@ -31,6 +31,7 @@ from app.models.medication_schedules import (
     MedicationScheduleTime,
 )
 from app.models.ocr import ExtractedField, OcrJob
+from app.models.password_reset import PasswordResetToken
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
@@ -176,6 +177,7 @@ __all__ = [
     "OutboxEvent",
     "OutboxEventKind",
     "OutboxEventStatus",
+    "PasswordResetToken",
     "Prescription",
     "PrescriptionVersion",
     "PrescriptionVersionMedication",

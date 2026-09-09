@@ -110,9 +110,18 @@ class Config(BaseSettings):
         return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10
+    # 이 값은 로그인 시점부터의 절대 상한이다. refresh rotation은 매 사용마다 jti만
+    # 교체하고 이 exp는 그대로 유지하므로(RefreshToken.rotate 참고), 계속 활동해도
+    # 세션이 무기한 연장되지 않는다.
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60
     JWT_LEEWAY: int = 5
+
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    # 같은 사용자가 재설정을 반복 요청해 password_reset_token row가 무제한으로 쌓이거나
+    # 이메일이 스팸으로 반복 발송되지 않도록 하는 최소한의 안전장치다. 정교한 분당·시간당
+    # rate limit은 이번 범위에 포함하지 않는다(PD-206 제외 범위).
+    PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: int = 60
 
     # idempotency-v1.md: 원문 Idempotency-Key는 저장하지 않고 versioned HMAC만 저장합니다.
     # 실제 key rotation 절차·물리 secret 관리는 Privacy·보안 승인 후 별도로 확정합니다(문서 "단일 테이블과

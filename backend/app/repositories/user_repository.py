@@ -227,6 +227,33 @@ class UserRepository:
             )
         )
 
+    async def set_active_refresh_jti(
+        self,
+        user_id: UUID,
+        jti: str,
+    ) -> None:
+        """로그인 시 최초 발급한 refresh token의 jti를 기록합니다."""
+        await self.session.execute(update(User).where(User.id == user_id).values(active_refresh_jti=jti))
+
+    async def rotate_refresh_jti(
+        self,
+        *,
+        user_id: UUID,
+        expected_jti: str,
+        new_jti: str,
+    ) -> bool:
+        """`expected_jti`가 현재 `active_refresh_jti`와 일치할 때만 원자적으로 교체합니다.
+        일치하지 않으면(이미 rotation된 refresh token 재사용, 또는 동시 rotation 경쟁)
+        영향받은 row가 0건이라 `False`를 반환하며, 호출자는 이를 재사용으로 간주해
+        `token_version`을 증가시켜 전체 세션을 무효화해야 합니다."""
+        updated_id = await self.session.scalar(
+            update(User)
+            .where(User.id == user_id, User.active_refresh_jti == expected_jti)
+            .values(active_refresh_jti=new_jti)
+            .returning(User.id)
+        )
+        return updated_id is not None
+
     async def update_instance(
         self,
         user: User,

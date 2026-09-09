@@ -62,12 +62,28 @@ DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함�
 | `withdrawal_requested_at` | timezone datetime | Yes | 회원탈퇴 요청 시각 |
 | `withdrawn_at` | timezone datetime | Yes | 회원탈퇴 완료 시각 |
 | `token_version` | `INTEGER` | No | 로그아웃·비밀번호 재설정·회원탈퇴 시 증가하는 세션 무효화 카운터. 기본값 `0` |
+| `active_refresh_jti` | `VARCHAR(32)` | Yes | 현재 유효한 refresh token의 jti(#206 rotation 재사용 탐지용). 로그인 시 설정, rotation마다 갱신 |
 
 MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 
 이메일은 회원가입, 로그인 및 내 정보 수정 시 Backend에서 소문자로 정규화합니다. DB에는 정규화된 값만 저장하며, 조회 API도 저장된 소문자 값을 반환합니다. 이메일 unique와 중복 판정 역시 정규화된 값을 기준으로 적용하므로 대소문자만 다른 이메일은 동일하게 취급합니다.
 
 access token과 refresh token에는 발급 시점의 `token_version`을 포함합니다. 인증된 요청과 `GET /api/v1/auth/token/refresh`는 DB의 `user.token_version`, `account_status`, `is_active`를 다시 확인하며, 로그아웃은 `token_version`을 DB에서 원자적으로 `+1`하고 `refresh_token` 쿠키를 삭제합니다.
+
+`GET /api/v1/auth/token/refresh`는 매 호출마다 새 refresh token을 발급해 `active_refresh_jti`를 교체합니다(rotation). 절대 만료는 로그인 시점 기준으로 고정되어 rotation으로 늘어나지 않습니다. 제출된 refresh token의 jti가 `active_refresh_jti`와 다르면(이미 rotation된 token 재사용) `token_version`을 즉시 `+1`해 전체 세션을 무효화합니다.
+
+`password_reset_token` 테이블은 비밀번호 재설정 1회용 token을 관리합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Password Reset Token PK |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `token_hash` | `VARCHAR(64)` | No | 원문 token의 SHA-256 해시. 원문은 저장하지 않음 |
+| `created_at` | timezone datetime | No | 발급 시각 |
+| `expires_at` | timezone datetime | No | 만료 시각(기본 발급 후 30분) |
+| `used_at` | timezone datetime | Yes | 소비 시각. `NULL`이면 미사용 |
+
+재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
 
 ## PROFILE SELF 소유권
 
