@@ -427,6 +427,7 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 - OCR Job이 `COMPLETED`인 경우에만 추가할 수 있습니다.
 - 처방 확정 전까지만 추가할 수 있습니다. 처방 확정 이후에는 OCR 검수값과 확정 처방의 불일치를 막기 위해 거부합니다.
 - 수동 입력값은 OCR 원문이나 자동 정규화 결과가 아니므로 `raw_value`, `normalized_value`, `confidence_score`는 `null`로 저장합니다.
+- `normalization_version="manual-entry@1"`은 정규화 수행 결과가 아니라 사용자 수동 입력 필드임을 구분하는 표식입니다.
 - 수동 입력값은 사용자 확정값이므로 `confirmed_value`에 저장하고 `confirmation_status=CONFIRMED`로 응답합니다.
 - 생성되는 field 집합은 `MEDICATION_NAME`, `MEDICATION_STRENGTH`, `DOSE_VALUE`, `DOSE_UNIT`, `FREQUENCY_PER_DAY`, `TIMING`, `DURATION_DAYS`입니다.
 - `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.

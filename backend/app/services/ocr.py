@@ -402,9 +402,10 @@ class OcrService:
                 details=[ErrorDetail(field="document_id", reason="ALREADY_CONFIRMED")],
             )
 
+        saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
         next_medication_index = (
             max(
-                (field.medication_index for field in job.extracted_fields if field.medication_index > 0),
+                (field.medication_index for field in saved_fields if field.medication_index > 0),
                 default=0,
             )
             + 1

@@ -52,6 +52,7 @@ Backend는 이 상태를 다음과 같이 저장합니다.
 
 `POST /api/v1/ocr-jobs/{job_id}/manual-medications`로 생성된 필드는 기존 OCR 추출 필드와 동일하게 `confirmed_value`만 처방 확정에 사용합니다.
 `raw_value`, `normalized_value`, `confidence_score`는 처방 확정값으로 사용하지 않습니다.
+`normalization_version="manual-entry@1"`은 정규화 수행 결과가 아니라 사용자 수동 입력 필드임을 구분하는 표식입니다.
 
 ## 확정 이후 수정 금지
 
