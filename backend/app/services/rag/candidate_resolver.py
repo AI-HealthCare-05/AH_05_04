@@ -258,7 +258,7 @@ class CandidateAttributeMatcher(Protocol):
 class CandidateRelevanceEvaluator(Protocol):
     def evaluate(
         self,
-        resolver_input: ResolverInput,
+        search_request: CandidateSearchRequest,
         candidate: CandidateEvidence,
     ) -> float: ...
 
@@ -321,7 +321,7 @@ class MedicationResolver:
         if isinstance(deduped, ResolverFailure):
             return deduped
 
-        evaluated = self._evaluate_candidates(resolver_input, deduped, policy)
+        evaluated = self._evaluate_candidates(resolver_input, prepared, deduped, policy)
         if isinstance(evaluated, ResolverFailure):
             return evaluated
         return _classify(
@@ -348,6 +348,7 @@ class MedicationResolver:
     def _evaluate_candidates(
         self,
         resolver_input: ResolverInput,
+        search_request: CandidateSearchRequest,
         candidates: tuple[CandidateEvidence, ...],
         policy: ResolverPolicy,
     ) -> tuple[EvaluatedCandidate, ...] | ResolverFailure:
@@ -358,7 +359,7 @@ class MedicationResolver:
             except CandidateAttributeMatcherError:
                 return ResolverFailure(ResolverFailureReason.PORT_FAILURE)
             try:
-                relevance = self._relevance_evaluator.evaluate(resolver_input, candidate)
+                relevance = self._relevance_evaluator.evaluate(search_request, candidate)
             except CandidateRelevanceEvaluatorError:
                 return ResolverFailure(ResolverFailureReason.PORT_FAILURE)
             if not _assessment_is_valid(attributes) or not _unit_interval_is_valid(relevance):

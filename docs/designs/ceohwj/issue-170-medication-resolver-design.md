@@ -151,9 +151,11 @@ Product snapshot의 표시 원문은 Catalog 계약대로 NFD와 원래 공백�
 별도 동기 `CandidateAttributeMatcher` Protocol에 확정 입력과 product snapshot만 전달하고,
 `MATCH | CONFLICT | NOT_APPLICABLE | UNKNOWN` 결과를 hard gate에 사용한다. production matcher는
 Strength/Form Mapping Decision 이후 별도 integration slice에서 구현하며, 이번 테스트는 합성 Fake만 주입한다.
-`CandidateRelevanceEvaluator`도 deduped signal을 받아 `[0, 1]` relevance를 반환하는 별도 동기
-Protocol이다. 이번 slice는 inline synthetic Fake만 사용하고, #168 adapter나 raw stage score에 relevance
-변환 의미를 부여하지 않는다. Production evaluator와 calibration은 Resolver Policy Decision 이후 연결한다.
+`CandidateRelevanceEvaluator`는 strength-free `CandidateSearchRequest`와 deduped signal만 받아 `[0, 1]`
+relevance를 반환하는 별도 동기 Protocol이다. 전체 `ResolverInput`을 전달하지 않고 `strength_text`는 오직
+post-retrieval `CandidateAttributeMatcher`만 소비한다. 이번 slice는 inline synthetic Fake만 사용하고, #168
+adapter나 raw stage score에 relevance 변환 의미를 부여하지 않는다. Production evaluator와 calibration은
+Resolver Policy Decision 이후 연결한다.
 
 ### 정책
 

@@ -237,9 +237,10 @@ class FakeRelevanceEvaluator:
         self.scores = dict(scores or {})
         self.raises = raises
         self.calls: list[str] = []
+        self.requests: list[CandidateSearchRequest] = []
 
-    def evaluate(self, resolver_input: ResolverInput, candidate: object) -> float:
-        del resolver_input
+    def evaluate(self, search_request: CandidateSearchRequest, candidate: object) -> float:
+        self.requests.append(search_request)
         code = candidate.identity.canonical_code  # type: ignore[attr-defined]
         self.calls.append(code)
         if self.raises:
@@ -472,6 +473,13 @@ def test_hybrid_search_order_dedupes_identity_and_redacts_internal_scores() -> N
     assert port.calls == ["HYDRATE"]
     assert matcher.calls == ["SYNTH-P-001"]
     assert evaluator.calls == ["SYNTH-P-001"]
+    assert evaluator.requests == [
+        CandidateSearchRequest(
+            medication_name="합성제품정",
+            index_version="candidate-index-v1",
+            retrieval_limit=10,
+        )
+    ]
     assert {field.name for field in dataclasses.fields(CandidateSearchRequest)} == {
         "medication_name",
         "index_version",

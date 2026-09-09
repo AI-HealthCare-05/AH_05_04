@@ -65,7 +65,8 @@ allowlist만 공유한다. 제품 표시 snapshot은 Candidate Result 저장 계
 - active/status, Fake matcher가 판정한 strength/form/manufacturer compatibility,
   Fake relevance evaluator와 selectable-stage hard gate
 - identity snapshot 충돌 fail-closed
-- matcher/evaluator를 dedupe identity당 한 번 호출하고 UNKNOWN/exception/malformed result를 fail-closed
+- matcher/evaluator를 dedupe identity당 한 번 호출하고, evaluator에는 strength-free search request만 전달하며,
+  UNKNOWN/exception/malformed result를 fail-closed
 - matcher에는 score/rank가 없는 Product Snapshot만 전달
 - exact RRF, same-stage 중복 정규화, policy tuple 순서 독립성과 identity tie-break
 
