@@ -182,11 +182,10 @@ async def test_rag_evidence_citation_repository_can_save_and_read_minimum_graph(
             claim_key="claim:ingredient",
             claim_kind=RagCitationClaimKind.MEDICAL,
             support_status=RagCitationSupportStatus.SUPPORTED,
-            authorization_status=RagCitationAuthorizationStatus.PASS,
-            release_status=RagCitationReleaseStatus.PUBLIC,
+            authorization_status=RagCitationAuthorizationStatus.PENDING,
+            release_status=RagCitationReleaseStatus.NOT_PUBLIC,
             display_order=1,
             source_title="MFDS product record",
-            source_version=snapshot.source_version,
             source_locator="ITEM_SEQ=200012345",
             public_excerpt="Approved excerpt",
         )
@@ -219,9 +218,11 @@ async def test_rag_evidence_citation_repository_can_save_and_read_minimum_graph(
         )
         == citation
     )
-    assert await repository.list_public_citations(
-        target_type=RagCitationTargetType.CHAT_MESSAGE, target_id=target_id
-    ) == [citation]
+    assert citation.source_version == snapshot.source_version
+    assert (
+        await repository.list_public_citations(target_type=RagCitationTargetType.CHAT_MESSAGE, target_id=target_id)
+        == []
+    )
 
 
 async def test_rag_evidence_repository_rejects_duplicate_evidence_key(db_session: AsyncSession) -> None:
@@ -240,7 +241,7 @@ async def test_rag_evidence_repository_rejects_duplicate_evidence_key(db_session
         await repository.create_evidence(item)
 
 
-async def test_rag_citation_repository_rejects_public_without_authorization(db_session: AsyncSession) -> None:
+async def test_rag_citation_repository_uses_snapshot_source_version(db_session: AsyncSession) -> None:
     snapshot, _, _ = await _create_source_catalog_graph(db_session)
     repository = RagEvidenceCitationRepository(db_session)
     evidence = await repository.create_evidence(
@@ -253,21 +254,21 @@ async def test_rag_citation_repository_rejects_public_without_authorization(db_s
         )
     )
 
-    with pytest.raises(IntegrityError):
-        await repository.create_citation(
-            RagCitationCreate(
-                evidence_id=evidence.id,
-                target_type=RagCitationTargetType.GUIDE,
-                target_id=str(uuid4()),
-                claim_key="claim:guard",
-                claim_kind=RagCitationClaimKind.MEDICAL,
-                support_status=RagCitationSupportStatus.SUPPORTED,
-                authorization_status=RagCitationAuthorizationStatus.PENDING,
-                release_status=RagCitationReleaseStatus.PUBLIC,
-                display_order=1,
-                source_title="MFDS product record",
-                source_version=snapshot.source_version,
-                source_locator="ITEM_SEQ=200012345",
-                public_excerpt="Approved excerpt",
-            )
+    citation = await repository.create_citation(
+        RagCitationCreate(
+            evidence_id=evidence.id,
+            target_type=RagCitationTargetType.GUIDE,
+            target_id=str(uuid4()),
+            claim_key="claim:guard",
+            claim_kind=RagCitationClaimKind.MEDICAL,
+            support_status=RagCitationSupportStatus.SUPPORTED,
+            authorization_status=RagCitationAuthorizationStatus.PENDING,
+            release_status=RagCitationReleaseStatus.NOT_PUBLIC,
+            display_order=1,
+            source_title="MFDS product record",
+            source_locator="ITEM_SEQ=200012345",
+            public_excerpt="Approved excerpt",
         )
+    )
+
+    assert citation.source_version == snapshot.source_version

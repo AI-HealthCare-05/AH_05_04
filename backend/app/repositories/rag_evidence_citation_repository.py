@@ -21,6 +21,7 @@ from app.models.rag_evidence import (
     RagEvidenceStatus,
     RagEvidenceType,
 )
+from app.models.rag_source import RagSourceSnapshot
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ class RagEvidenceCreate:
     evidence_key: str
     evidence_type: RagEvidenceType
     evidence_digest: str
-    evidence_status: RagEvidenceStatus = RagEvidenceStatus.DRAFT
+    evidence_status: RagEvidenceStatus
     knowledge_id: UUID | None = None
     product_id: UUID | None = None
     ingredient_id: UUID | None = None
@@ -74,7 +75,6 @@ class RagCitationCreate:
     release_status: RagCitationReleaseStatus
     display_order: int
     source_title: str
-    source_version: str
     source_locator: str
     public_excerpt: str | None = None
 
@@ -181,19 +181,7 @@ class RagEvidenceCitationRepository:
         target_type: RagCitationTargetType,
         target_id: str,
     ) -> list[RagCitation]:
-        result = await self.session.execute(
-            select(RagCitation)
-            .join(RagEvidence, RagEvidence.id == RagCitation.evidence_id)
-            .where(
-                RagCitation.target_type == target_type,
-                RagCitation.target_id == target_id,
-                RagCitation.release_status == RagCitationReleaseStatus.PUBLIC,
-                RagCitation.evidence_status == RagEvidenceStatus.APPROVED,
-                RagEvidence.evidence_status == RagEvidenceStatus.APPROVED,
-            )
-            .order_by(RagCitation.display_order)
-        )
-        return list(result.scalars().all())
+        return []
 
     async def create_knowledge(self, item: RagEvidenceKnowledgeCreate) -> RagEvidenceKnowledge:
         knowledge = RagEvidenceKnowledge(
@@ -250,6 +238,9 @@ class RagEvidenceCitationRepository:
         evidence = await self.session.get(RagEvidence, item.evidence_id)
         if evidence is None:
             raise ValueError("Citation evidence does not exist")
+        source_snapshot = await self.session.get(RagSourceSnapshot, evidence.source_snapshot_id)
+        if source_snapshot is None:
+            raise ValueError("Citation source snapshot does not exist")
         citation = RagCitation(
             evidence_id=item.evidence_id,
             source_snapshot_id=evidence.source_snapshot_id,
@@ -263,7 +254,7 @@ class RagEvidenceCitationRepository:
             release_status=item.release_status,
             display_order=item.display_order,
             source_title=item.source_title,
-            source_version=item.source_version,
+            source_version=source_snapshot.source_version,
             source_locator=item.source_locator,
             public_excerpt=item.public_excerpt,
         )

@@ -31,8 +31,8 @@ _GUIDELINE_TYPE_VALUES = ("MEDICATION_GUIDE", "LIFESTYLE", "LIMITED_RESPONSE", "
 _CITATION_TARGET_TYPE_VALUES = ("GUIDE", "CHAT_MESSAGE", "RAG_RESULT", "SAFETY_RESULT")
 _CITATION_CLAIM_KIND_VALUES = ("MEDICAL", "AUXILIARY", "SAFETY_FALLBACK")
 _CITATION_SUPPORT_STATUS_VALUES = ("SUPPORTED", "PARTIALLY_SUPPORTED", "CONTRADICTED", "NOT_SUPPORTED")
-_CITATION_AUTHORIZATION_STATUS_VALUES = ("PENDING", "PASS", "REJECTED")
-_CITATION_RELEASE_STATUS_VALUES = ("NOT_PUBLIC", "PUBLIC")
+_CITATION_AUTHORIZATION_STATUS_VALUES = ("PENDING", "REJECTED")
+_CITATION_RELEASE_STATUS_VALUES = ("NOT_PUBLIC",)
 _RAG_EVIDENCE_CITATION_TABLES = (
     "rag_citation",
     "rag_evidence_guideline",
@@ -92,6 +92,11 @@ def _create_append_only_guard() -> None:
 
 
 def upgrade() -> None:
+    op.create_unique_constraint(
+        "uq_rag_source_snapshot_id_version",
+        "rag_source_snapshot",
+        ["id", "source_version"],
+    )
     op.create_table(
         "rag_evidence_knowledge",
         sa.Column("id", sa.CHAR(length=36), nullable=False),
@@ -237,10 +242,7 @@ def upgrade() -> None:
             "public_excerpt IS NULL OR length(trim(public_excerpt)) > 0",
             name="chk_rag_citation_public_excerpt_nonblank",
         ),
-        sa.CheckConstraint(
-            "release_status != 'PUBLIC' OR (evidence_status = 'APPROVED' AND authorization_status = 'PASS' AND support_status = 'SUPPORTED' AND public_excerpt IS NOT NULL)",
-            name="chk_rag_citation_public_requires_supported_authorized",
-        ),
+        sa.CheckConstraint("release_status = 'NOT_PUBLIC'", name="chk_rag_citation_public_guard_deferred"),
         sa.CheckConstraint(
             "claim_kind != 'MEDICAL' OR support_status != 'PARTIALLY_SUPPORTED'",
             name="chk_rag_citation_medical_not_partially_supported",
@@ -272,6 +274,11 @@ def upgrade() -> None:
             ["rag_evidence.id", "rag_evidence.source_snapshot_id", "rag_evidence.evidence_status"],
             name="fk_rag_citation_evidence_snapshot_status",
         ),
+        sa.ForeignKeyConstraint(
+            ["source_snapshot_id", "source_version"],
+            ["rag_source_snapshot.id", "rag_source_snapshot.source_version"],
+            name="fk_rag_citation_snapshot_version",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("target_type", "target_id", "claim_key", name="uq_rag_citation_target_claim"),
         sa.UniqueConstraint("target_type", "target_id", "display_order", name="uq_rag_citation_display_order"),
@@ -299,3 +306,4 @@ def downgrade() -> None:
     op.drop_table("rag_evidence")
     op.drop_index("idx_rag_evidence_knowledge_snapshot", table_name="rag_evidence_knowledge")
     op.drop_table("rag_evidence_knowledge")
+    op.drop_constraint("uq_rag_source_snapshot_id_version", "rag_source_snapshot", type_="unique")

@@ -86,13 +86,11 @@ class RagCitationSupportStatus(StrEnum):
 
 class RagCitationAuthorizationStatus(StrEnum):
     PENDING = "PENDING"
-    PASS = "PASS"
     REJECTED = "REJECTED"
 
 
 class RagCitationReleaseStatus(StrEnum):
     NOT_PUBLIC = "NOT_PUBLIC"
-    PUBLIC = "PUBLIC"
 
 
 class RagEvidenceKnowledge(Base):
@@ -178,7 +176,7 @@ class RagEvidence(Base):
         Enum(RagEvidenceType, native_enum=False, length=40), nullable=False
     )
     evidence_status: Mapped[RagEvidenceStatus] = mapped_column(
-        Enum(RagEvidenceStatus, native_enum=False, length=20), nullable=False, default=RagEvidenceStatus.DRAFT
+        Enum(RagEvidenceStatus, native_enum=False, length=20), nullable=False
     )
     source_locator: Mapped[str | None] = mapped_column(String(500), nullable=True)
     evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -254,6 +252,11 @@ class RagCitation(Base):
             ["rag_evidence.id", "rag_evidence.source_snapshot_id", "rag_evidence.evidence_status"],
             name="fk_rag_citation_evidence_snapshot_status",
         ),
+        ForeignKeyConstraint(
+            ["source_snapshot_id", "source_version"],
+            ["rag_source_snapshot.id", "rag_source_snapshot.source_version"],
+            name="fk_rag_citation_snapshot_version",
+        ),
         Index("idx_rag_citation_evidence", "evidence_id"),
         Index("idx_rag_citation_source_snapshot", "source_snapshot_id"),
         CheckConstraint("length(trim(target_id)) > 0", name="chk_rag_citation_target_id_nonblank"),
@@ -263,10 +266,7 @@ class RagCitation(Base):
             "public_excerpt IS NULL OR length(trim(public_excerpt)) > 0",
             name="chk_rag_citation_public_excerpt_nonblank",
         ),
-        CheckConstraint(
-            "release_status != 'PUBLIC' OR (evidence_status = 'APPROVED' AND authorization_status = 'PASS' AND support_status = 'SUPPORTED' AND public_excerpt IS NOT NULL)",
-            name="chk_rag_citation_public_requires_supported_authorized",
-        ),
+        CheckConstraint("release_status = 'NOT_PUBLIC'", name="chk_rag_citation_public_guard_deferred"),
         CheckConstraint(
             "claim_kind != 'MEDICAL' OR support_status != 'PARTIALLY_SUPPORTED'",
             name="chk_rag_citation_medical_not_partially_supported",
