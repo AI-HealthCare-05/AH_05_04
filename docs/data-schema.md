@@ -419,15 +419,24 @@ PostgreSQL `ON CONFLICT DO NOTHING`을 함께 사용하므로 같은 horizon을 
 occurrence는 중복되지 않는다. `scheduled_at`과
 `max(다음 KST 자정, scheduled_at + 4시간)`인 `confirmation_deadline_at`은 UTC instant로 snapshot한다.
 종료일이 지난 활성 Schedule을 `ENDED`로 전환하는 주체도 Scheduler다.
+운영 scheduler는 app image의 one-shot management command
+`uv run --no-sync python -m app.commands.generate_medication_occurrences`를 KST 날짜가 바뀐 뒤 최소 하루 한 번
+호출한다. command는 실행마다 독립 transaction을 열어 성공 시 commit하고 실패 시 rollback하므로 cron이나
+동등한 배포 scheduler가 안전하게 재시도할 수 있다. 구체적인 실행 주기는 배포 scheduler가 관리하며,
+여러 실행이 겹쳐도 위 unique·conditional insert가 중복을 막는다.
 
 Schedule 생성은 SELF 소유권과 active Version을 확인할 때 부모 `PRESCRIPTION` row를 먼저 잠근다.
 처방 정정도 같은 row부터 잠그므로 active 확인과 insert 사이에 Version이 교체되는 TOCTOU를 막는다.
 처방 정정 transaction은 `PRESCRIPTION → AI_JOB → domain row → OUTBOX` 잠금 순서에서 이전 Version의
 `effective_at` 이후 `PENDING` occurrence만 `CANCELLED`로 바꾼다. effective 시각 이전 occurrence와
 `CLOSED|CANCELLED` occurrence, Schedule·ScheduleTime 이력은 그대로 보존하고 새 Version에 Schedule이나
-occurrence를 복사하지 않는다. 취소된 occurrence ID 목록은 B5가 같은 transaction에서 미전달 알림만
-취소할 수 있는 동기 연동 경계이며, Notification 저장 구현 자체는 B5 범위다. Check-in·API는 B3~B4
-후속 범위다.
+occurrence를 복사하지 않는다. Outbox 취소 대상은 이 transaction에서 실제 `STALE`로 전환된
+`PENDING|PROCESSING|RETRY_WAIT` Job ID로 제한하므로, 이미 `COMPLETED`인 Job의 미발행 이벤트는 변경하지
+않는다. 취소된 occurrence ID 목록은 B5가 같은 transaction에서 미전달 알림만
+취소할 수 있는 동기 연동 경계이며, Notification 저장 구현 자체는 B5 범위다. B5 구현 PR은
+`get_prescription_version_medication_invalidation_service`에서 같은 session을 사용하는 Notification 취소
+adapter를 반드시 주입하고 Version 정정 transaction의 동시 취소 테스트를 추가해야 한다. Check-in·API는
+B3~B4 후속 범위다.
 
 Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐고, RAG/Eval 목표 스키마는 분할 PR 단위로 migration·모델·repository를 반영합니다. 이 섹션은 구현 상태를 함께 표시하며, 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK와 이번 분할 PR의 신규 RAG/Eval ID는 호환을 위해 `CHAR(36)`을 사용합니다. PostgreSQL native `UUID` 전환은 별도 승인 migration 범위입니다.
 

@@ -319,6 +319,11 @@ async def test_correction_invalidates_previous_version_jobs_outbox_and_candidate
         status=OutboxEventStatus.PUBLISHED,
         published_at=datetime.now(UTC),
     )
+    completed_job_pending_event = OutboxEvent(
+        job_id=completed_job.id,
+        attempt=2,
+        status=OutboxEventStatus.PENDING,
+    )
     search = MedicationCandidateSearch(
         prescription_version_medication_id=medication.id,
         medication_name_snapshot=medication.medication_name,
@@ -338,7 +343,17 @@ async def test_correction_invalidates_previous_version_jobs_outbox_and_candidate
         displayed_candidate_count=0,
         finalized_at=datetime.now(UTC),
     )
-    db_session.add_all([attempt, claimed_event, pending_event, published_event, search, finished_search])
+    db_session.add_all(
+        [
+            attempt,
+            claimed_event,
+            pending_event,
+            published_event,
+            completed_job_pending_event,
+            search,
+            finished_search,
+        ]
+    )
     await db_session.flush()
     processing_job.expected_event_id = claimed_event.event_id
     pending_job.expected_event_id = pending_event.event_id
@@ -368,6 +383,7 @@ async def test_correction_invalidates_previous_version_jobs_outbox_and_candidate
     assert pending_event.status == OutboxEventStatus.CANCELLED
     assert completed_job.status == AiJobStatus.COMPLETED
     assert published_event.status == OutboxEventStatus.PUBLISHED
+    assert completed_job_pending_event.status == OutboxEventStatus.PENDING
     assert search.status == MedicationCandidateSearchStatus.INVALIDATED_INPUT_CHANGED
     assert search.invalidated_at is not None
     assert finished_search.status == MedicationCandidateSearchStatus.NO_CANDIDATE

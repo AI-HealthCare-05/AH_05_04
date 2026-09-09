@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
@@ -156,7 +157,7 @@ class PrescriptionRepository:
         *,
         prescription_version_id: UUID,
         invalidated_at: datetime,
-    ) -> None:
+    ) -> list[UUID]:
         """이전 Version의 실행 중 Job과 재사용 가능한 Candidate를 무효화합니다.
 
         호출자는 먼저 ``prescription`` row를 잠가야 합니다. 이후 잠금 순서는 계약의
@@ -233,17 +234,20 @@ class PrescriptionRepository:
             search.finalized_at = invalidated_at
 
         await self.session.flush()
+        return job_ids
 
-    async def invalidate_version_outbox(self, *, prescription_version_id: UUID) -> None:
-        """모든 domain row 무효화 뒤 이전 Version의 미발행 Outbox를 취소한다."""
+    async def invalidate_version_outbox(self, *, stale_job_ids: Sequence[UUID]) -> None:
+        """모든 domain row 무효화 뒤 STALE 전환 Job의 미발행 Outbox만 취소한다."""
+
+        if not stale_job_ids:
+            return
 
         outbox_events = list(
             (
                 await self.session.execute(
                     select(OutboxEvent)
-                    .join(AiJob, AiJob.id == OutboxEvent.job_id)
                     .where(
-                        AiJob.prescription_version_id == prescription_version_id,
+                        OutboxEvent.job_id.in_(stale_job_ids),
                         OutboxEvent.status.in_((OutboxEventStatus.PENDING, OutboxEventStatus.CLAIMED)),
                     )
                     .with_for_update(of=OutboxEvent)

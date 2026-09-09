@@ -206,7 +206,7 @@ class PrescriptionService:
             raise self._version_conflict()
 
         confirmed_at = datetime.now(UTC)
-        await self._prescription_repo.invalidate_version_domain_dependencies(
+        stale_job_ids = await self._prescription_repo.invalidate_version_domain_dependencies(
             prescription_version_id=current_version.id,
             invalidated_at=confirmed_at,
         )
@@ -215,7 +215,7 @@ class PrescriptionService:
             effective_at=confirmed_at,
         )
         await self._prescription_repo.invalidate_version_outbox(
-            prescription_version_id=current_version.id,
+            stale_job_ids=stale_job_ids,
         )
         version = await self._prescription_repo.create_version(
             prescription=prescription,
