@@ -233,7 +233,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 401 | `EXPIRED_TOKEN` | "인증 정보가 만료되었습니다. 다시 로그인해 주세요." | |
 | 403 | `FORBIDDEN` | "비활성화된 계정입니다." | 현재는 비활성 계정 로그인 시도에만 사용 |
 | 409 | `CONFLICT` | 상황에 따른 안내 문구 (예: "이미 사용중인 이메일입니다.") | 회원가입 중복, 종료된 대화 세션 등 여러 상황에서 재사용 |
-| 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수가 공유하는 `JobIntakeService`에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수 또는 OCR 수동 약물 추가 같은 멱등 mutation에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
 | 422 | `VALIDATION_FAILED` | 상황에 따른 안내 문구 (예: "입력값을 확인해 주세요.", "MVP에서는 처방전 문서만 업로드할 수 있습니다.") | Pydantic 요청 검증 실패 시 자동 발생 또는 Service에서 수동 발생 |
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
 | 503 | `SERVICE_UNAVAILABLE` | "현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요." | |
@@ -253,10 +253,10 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | HTTP | code | message | 사용 상황 |
 | --- | --- | --- | --- |
 | 404 | `PRESCRIPTION_NOT_FOUND` | "처방 정보를 찾을 수 없습니다." | 요청한 처방 ID가 존재하지 않거나 다른 사용자 소유 |
-| 409 | `PRESCRIPTION_ALREADY_CONFIRMED` | "이미 확정된 처방 정보입니다." | 이미 확정된 처방을 다시 확정하거나, 확정된 문서의 extracted-field를 수정하려고 함 |
-| 409 | `CONCURRENT_UPDATE_IN_PROGRESS` | "같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요." | 같은 문서의 처방 확정과 extracted-field PATCH가 동시에 요청되어 문서 row 잠금을 3초 안에 획득하지 못함 |
+| 409 | `PRESCRIPTION_ALREADY_CONFIRMED` | "이미 확정된 처방 정보입니다." | 이미 확정된 처방을 다시 확정하거나, 확정된 문서의 extracted-field 수정 또는 수동 약물 추가를 요청함 |
+| 409 | `CONCURRENT_UPDATE_IN_PROGRESS` | "같은 문서에 대한 다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요." | 같은 문서의 OCR 접수, extracted-field PATCH, 수동 약물 추가, 처방 확정 등이 동시에 요청되어 문서 row 잠금을 3초 안에 획득하지 못함 |
 | 422 | `PRESCRIPTION_REQUIRED_FIELD_MISSING` | "처방 확정에 필요한 항목이 누락되었습니다." | 처방 확정 요청에 필수 항목이 없음 |
-| 409 | `OCR_JOB_NOT_COMPLETED` | "OCR 처리가 완료된 결과가 없어 처방을 확정할 수 없습니다." | OCR이 완료되기 전에 처방 확정을 요청함 |
+| 409 | `OCR_JOB_NOT_COMPLETED` | 상황별 안내 문구 | OCR이 완료되기 전에 처방 확정 또는 수동 약물 추가처럼 완료 결과가 필요한 요청을 수행함 |
 | 400 | `UPLOAD_FILE_TOO_LARGE` | "파일 크기는 30MB 이하만 업로드할 수 있습니다." | 30MB를 초과한 파일을 업로드함 |
 | 400 | `UPLOAD_FILE_INVALID_TYPE` | 상황별 안내 문구 (형식 미지원 / 확장자·MIME 불일치 / 시그니처 불일치) | 허용되지 않은 파일 형식을 업로드함 |
 | 404 | `MEDICAL_DOCUMENT_NOT_FOUND` | "의료문서를 찾을 수 없습니다." | 요청한 의료 문서가 없거나 다른 사용자 소유 |
