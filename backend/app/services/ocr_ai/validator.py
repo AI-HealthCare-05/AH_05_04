@@ -13,7 +13,10 @@ from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
 )
-from app.services.prescription_ocr_structurer import normalize_prescribed_date_text
+from app.services.prescription_ocr_structurer import (
+    normalize_prescribed_date_text,
+    prescribed_date_label_kind,
+)
 from ocr_runtime.review_fields import EMPTY_REVIEW_FIELD_TYPES
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
@@ -620,6 +623,17 @@ def _validate_grounded_value(
 
     if not is_grounded:
         raise OcrProcessingError(f"LLM 구조화 결과의 {field_type} 값에 OCR 원문 근거가 없습니다.")
+
+    if field_type == "PRESCRIBED_DATE":
+        generated_date = _normalize_date(generated.value)
+        all_source_fields = list(source_map.values())
+
+        matching_date_fields = [field for field in source_fields if _normalize_date(field.raw_value) == generated_date]
+
+        if not any(
+            prescribed_date_label_kind(field, all_source_fields) == "preferred" for field in matching_date_fields
+        ):
+            raise OcrProcessingError("LLM 구조화 결과의 PRESCRIBED_DATE에 선호 처방일 라벨 근거가 없습니다.")
 
 
 def _minimum_confidence(
