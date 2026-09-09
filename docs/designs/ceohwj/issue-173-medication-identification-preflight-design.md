@@ -89,7 +89,7 @@ DB 잠금과 `ApiError` 예외에 결속돼 있어 Worker Graph Node가 재사�
 
 | 파일 | 역할 |
 | --- | --- |
-| `ai_worker/tasks/rag/identification_preflight.py` | 판정 kernel. stdlib만 import |
+| `rag_runtime/identification_preflight.py` | 판정 kernel. stdlib만 import (`rag_runtime/__init__.py`에서 공개 심볼 export) |
 | `ai_worker/tests/rag/test_identification_preflight.py` | 단위 테스트 |
 | `tests/contract/rag/test_preflight_decision_contract.py` | 정본 문서 ↔ enum 어휘 drift, 순수성, 결정 matrix |
 | `tests/fixtures/rag/preflight/decision_matrix.json` | 합성 결정 matrix fixture |
@@ -97,10 +97,10 @@ DB 잠금과 `ApiError` 예외에 결속돼 있어 Worker Graph Node가 재사�
 `ai_worker/tasks/rag/source_cleanup/preflight.py`는 Source Artifact 정리용이며 이 모듈과 무관하다.
 이름 충돌을 피하기 위해 파일명을 `identification_preflight.py`로 둔다.
 
-Guide 접수 Transaction은 Backend에, Chat `ROUTINE` preflight는 Worker Graph에 있다. 이 slice는 배선을
-포함하지 않으므로 배치가 소비 가능성을 제한하지 않는다. Backend가 `ai_worker`를 production import할지,
-공용 package로 승격할지는 `#174`에서 송은영 리뷰와 함께 결정한다. Issue `#173`의 테스트 명령이
-`ai_worker/tests/rag/`를 고정하므로 이번에는 `ai_worker`에 둔다.
+Guide 접수 Transaction은 Backend에, Chat `ROUTINE` preflight는 Worker Graph에 있다.
+PR #382 리뷰(송은영)에서 backend 컨테이너가 `ai_worker/`를 COPY하지 않아 런타임에 깨지는 배포 결함이 지적되어,
+`ocr_runtime` / `provider_runtime`과 동일하게 `rag_runtime/` 최상위 공용 패키지로 승격했다.
+`backend/app/Dockerfile`과 `ai_worker/Dockerfile` 양쪽에서 COPY되어 Backend와 AI Worker 모두 동일한 커널을 소비할 수 있다.
 
 ## 입력 계약
 

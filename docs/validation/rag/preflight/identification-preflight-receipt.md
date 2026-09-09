@@ -27,10 +27,16 @@
 
 ```text
 $ uv run pytest ai_worker/tests/rag/test_identification_preflight.py -q
-45 passed in 0.05s
+45 passed in 0.04s
 
 $ uv run pytest tests/contract/rag/test_preflight_decision_contract.py -q
-31 passed in 0.05s
+32 passed in 0.05s
+
+$ uv run pytest tests/contract/test_provider_contracts_docker_copy.py -q
+10 passed in 0.02s
+
+$ uv run pytest tests/contract/test_backend_image_rag_runtime.py -q
+1 passed in 9.52s
 ```
 
 ### 정적 검사
@@ -103,7 +109,7 @@ Issue를 Close하지 않는다. `#174`·`#131`·`#175` 미구현으로 통합·C
 2. Identification Fallback 대표 reason이 계약 표기 순서를 따르는 규칙
 3. 구조 검증 실패를 `IDENTIFICATION_FALLBACK/REVIEW_REQUIRED`로 사영하는 선택
 4. 복합 STALE 신호 발생 시 단일 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)
-5. `#174`에서 Backend가 이 kernel을 소비할 방식
+5. `#174`에서 Backend가 이 kernel을 소비할 방식 (PR #382 송은영 리뷰 지적 반영으로 `rag_runtime` 최상위 공용 패키지 승격 및 `backend/app/Dockerfile`, `ai_worker/Dockerfile` COPY 추가 완료. 컨테이너 내부 import 계약 테스트 통과)
 
 위 항목들은 승인된 별도 Decision이 아직 없다. `#174` 병합 전에 확정한다. 그때까지 `identification_reasons`,
 `stale_signals`, `validation_codes`를 환자 문구나 공개 DTO에 직접 매핑하지 않고, `primary_stale_projection`의 계약 범위를 우선 준수한다.

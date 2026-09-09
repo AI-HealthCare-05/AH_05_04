@@ -14,13 +14,14 @@
 
 ## 단계
 
-1. `ai_worker/tasks/rag/identification_preflight.py`
+1. `rag_runtime/identification_preflight.py` (최상위 공용 패키지 `rag_runtime/__init__.py`)
    - enum 4종: `MedicationPreflightState`, `PreflightDecision`, `PreflightReason`,
      `PreflightExecutionStatus`. 추가로 진단용 `PreflightStaleSignal`, `PreflightValidationCode`
    - frozen dataclass 입력 3종 + 요청 1종, 출력 1종, 사영 결과 `PreflightStaleProjection` 1종
    - `evaluate_medication_identification_preflight(request)` 단일 공개 함수
    - `canonical_preflight_manifest_hash(request)` 공개 helper (계약 테스트와 `#174`가 재사용)
    - `project_preflight_stale_signal(signal)` Downstream 사영 helper (`safety-result-v2.md` 연계)
+   - `backend/app/Dockerfile` 및 `ai_worker/Dockerfile`에 `COPY ./rag_runtime ./rag_runtime` 반영
 2. `ai_worker/tests/rag/test_identification_preflight.py`
    - Issue 필수 테스트 6항목 + 구조 검증 분기별 fail-closed
 3. `tests/fixtures/rag/preflight/decision_matrix.json`
