@@ -12,7 +12,14 @@ from app.core.utils.idempotency import (
     compute_request_hash,
     validate_idempotency_key_format,
 )
-from app.models.async_jobs import DOMAIN_TYPE_BY_JOB_TYPE, AiJob, AiJobType, DomainType, IdempotencyRecord
+from app.models.async_jobs import (
+    DOMAIN_TYPE_BY_JOB_TYPE,
+    AiJob,
+    AiJobType,
+    DomainType,
+    IdempotencyRecord,
+    validate_job_prescription_version,
+)
 from app.repositories.async_job_repository import (
     AsyncJobRepository,
     is_async_idempotency_scope_conflict,
@@ -79,6 +86,10 @@ class JobIntakeService:
         prescription_version_id: UUID | None,
         max_attempts: int | None = None,
     ) -> JobIntakeResult:
+        validate_job_prescription_version(
+            job_type=job_type,
+            prescription_version_id=prescription_version_id,
+        )
         validate_idempotency_key_format(idempotency_key)
 
         key_hmac = compute_key_hmac(idempotency_key, hmac_key=config.IDEMPOTENCY_HMAC_KEY)

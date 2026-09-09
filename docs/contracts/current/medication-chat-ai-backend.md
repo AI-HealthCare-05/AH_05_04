@@ -10,7 +10,7 @@
 
 ## Backend 입력 계약
 
-`ChatService`는 활성 세션에 연결된 확정 처방의 약물을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 Local 합성 데이터 검증에서는 현재 질문 이전의 같은 세션 완료 대화도 함께 구성한다.
+`ChatService`는 필수 `prescription_version_id`로 세션 생성 당시 불변 Version Medication을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다. 요청 처리와 결과 저장 직전에는 이 ID가 현재 `active_version_id`인지 검증한다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 Local 합성 데이터 검증에서는 현재 질문 이전의 같은 세션 완료 대화도 함께 구성한다.
 
 | 필드 | 타입 | 규칙 |
 | --- | --- | --- |
@@ -100,6 +100,7 @@ DB lock wait timeout처럼 세션 row lock을 얻기 전에 발생한 DB 오류�
 ## 동시성과 캐시 관찰 계약
 
 - 동일 세션의 메시지 전송은 `CHAT_SESSION` row의 `SELECT ... FOR UPDATE`로 직렬화한다.
+- Provider 호출 뒤 Prescription 결과 fencing의 row lock에는 transaction 범위 `lock_timeout = 3s`를 적용한다.
 - 성공한 USER·ASSISTANT 쌍의 `message_seq`는 연속하며 동일 세션에서 중복되지 않는다.
 - 잠금 획득 전 DB lock timeout이 발생하면 새 메시지를 저장하지 않는다.
 - 모든 채팅 API 성공·오류 응답에는 `Cache-Control: no-store`를 포함한다.

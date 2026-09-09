@@ -61,8 +61,7 @@ class Prescription(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    # Expand 단계에서는 기존 처방의 backfill 전 호환성을 위해 nullable입니다.
-    active_version_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    active_version_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     # 문서당 확정 처방은 최대 1개입니다.
     document_id: Mapped[UUID] = mapped_column(
         UUIDChar(),
@@ -88,17 +87,12 @@ class Prescription(Base):
     document: Mapped["MedicalDocument"] = relationship(back_populates="prescription")
     profile: Mapped["Profile"] = relationship(overlaps="document,prescription")
     source_ocr_job: Mapped["OcrJob"] = relationship(back_populates="prescriptions")
-    # 처방 약물은 OCR·가이드·채팅 등 모든 소비 경로에서 처방전 표시 순서를 유지합니다.
-    medications: Mapped[list["Medication"]] = relationship(
-        back_populates="prescription",
-        order_by=lambda: Medication.display_order,
-    )
     versions: Mapped[list["PrescriptionVersion"]] = relationship(
         back_populates="prescription",
         foreign_keys=lambda: [PrescriptionVersion.prescription_id],
         order_by=lambda: PrescriptionVersion.version_number,
     )
-    active_version: Mapped["PrescriptionVersion | None"] = relationship(
+    active_version: Mapped["PrescriptionVersion"] = relationship(
         foreign_keys=[active_version_id],
         uselist=False,
         viewonly=True,
@@ -151,7 +145,9 @@ class Medication(Base):
         server_default=func.now(),
     )
 
-    prescription: Mapped["Prescription"] = relationship(back_populates="medications")
+    # Cleanup 이후 runtime read/write 기준은 PrescriptionVersionMedication입니다.
+    # 이 관계는 과거 backfill 원본과 rollback 감사 확인에만 사용합니다.
+    prescription: Mapped["Prescription"] = relationship()
 
 
 class PrescriptionVersion(Base):

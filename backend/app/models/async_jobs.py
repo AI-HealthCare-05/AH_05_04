@@ -85,6 +85,20 @@ class AiJobType(StrEnum):
     CHAT = "CHAT"
 
 
+def validate_job_prescription_version(
+    *,
+    job_type: AiJobType,
+    prescription_version_id: UUID | None,
+) -> None:
+    """Job type별 Prescription Version provenance 불변식을 생성 경계에서 검증합니다."""
+    if job_type == AiJobType.OCR:
+        if prescription_version_id is not None:
+            raise ValueError("OCR job must not have prescription_version_id")
+        return
+    if prescription_version_id is None:
+        raise ValueError(f"{job_type} job requires prescription_version_id")
+
+
 class DomainType(StrEnum):
     OCR_JOB = "OCR_JOB"
     GUIDE = "GUIDE"
@@ -151,6 +165,11 @@ class AiJob(_CreatedUpdatedColumns, Base):
         # 90일 보존으로 셋 중 가장 크게 자라는 테이블이라 인덱스 없이는 이 조회가 full scan이 됩니다.
         Index("idx_ai_job_lease_expires", "status", "lease_expires_at", "id"),
         CheckConstraint(f"job_type IN ({_sql_in_list(AiJobType)})", name="chk_ai_job_type"),
+        CheckConstraint(
+            "(job_type = 'OCR' AND prescription_version_id IS NULL) OR "
+            "(job_type IN ('GUIDE', 'CHAT') AND prescription_version_id IS NOT NULL)",
+            name="chk_ai_job_prescription_version_by_type",
+        ),
         CheckConstraint(
             f"status IN ({_sql_in_list(AiJobStatus)})",
             name="chk_ai_job_status",

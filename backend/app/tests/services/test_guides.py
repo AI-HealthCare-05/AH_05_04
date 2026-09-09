@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
-from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -149,26 +148,6 @@ async def test_get_latest_guide_for_prescription_returns_completed_guide(db_sess
     assert result.guide_id == guide.id
     assert result.prescription_id == prescription.id
     assert result.content == "복약 가이드 본문"
-
-
-async def test_get_guide_rejects_missing_prescription_version_as_conflict(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="guide-version-missing@example.com")
-    prescription = await _create_confirmed_prescription(db_session, user=owner)
-    guide = Guide(
-        prescription_id=prescription.id,
-        prescription_version_id=None,
-        profile_id=prescription.profile_id,
-        generation_status=GuideGenerationStatus.COMPLETED,
-    )
-    db_session.add(guide)
-    await db_session.flush()
-
-    with pytest.raises(ApiError) as exc_info:
-        await service.get_guide_detail(user=owner, guide_id=guide.id)
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "PRESCRIPTION_VERSION_UNAVAILABLE"
 
 
 async def test_get_latest_guide_for_prescription_raises_not_found_when_no_guide_exists(

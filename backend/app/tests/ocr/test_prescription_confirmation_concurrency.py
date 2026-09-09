@@ -24,7 +24,7 @@ from app.core.db.databases import get_db_session
 from app.dependencies.services import get_ocr_engine
 from app.main import app, fastapi_app
 from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
-from app.models.prescriptions import Prescription, PrescriptionStatus
+from app.models.prescriptions import Prescription, PrescriptionStatus, PrescriptionVersion
 from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 from app.tests.conftest import test_engine
 
@@ -265,15 +265,29 @@ async def test_patch_waits_for_confirmation_and_then_rejects(
         assert not patch_task.done(), "PATCH가 lock을 기다리지 않고 통과했습니다."
 
         # 잠금 보유자가 확정을 완료하고 lock을 놓습니다.
-        lock_holder.add(
-            Prescription(
-                document_id=UUID(document_id),
-                source_ocr_job_id=UUID(job_id),
-                profile_id=profile_id,
-                prescribed_date=date(2026, 8, 1),
-                prescription_status=PrescriptionStatus.CONFIRMED,
-                confirmed_at=datetime.now(UTC),
-            )
+        prescription_id = uuid4()
+        version_id = uuid4()
+        confirmed_at = datetime.now(UTC)
+        lock_holder.add_all(
+            [
+                Prescription(
+                    id=prescription_id,
+                    active_version_id=version_id,
+                    document_id=UUID(document_id),
+                    source_ocr_job_id=UUID(job_id),
+                    profile_id=profile_id,
+                    prescribed_date=date(2026, 8, 1),
+                    prescription_status=PrescriptionStatus.CONFIRMED,
+                    confirmed_at=confirmed_at,
+                ),
+                PrescriptionVersion(
+                    id=version_id,
+                    prescription_id=prescription_id,
+                    version_number=1,
+                    prescribed_date=date(2026, 8, 1),
+                    confirmed_at=confirmed_at,
+                ),
+            ]
         )
         await lock_holder.commit()
 

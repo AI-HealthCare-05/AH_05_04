@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from datetime import date
 from statistics import median
 
@@ -22,18 +23,93 @@ _MIN_PRESCRIBED_YEAR = 2000
 # 이 라벨이 포함된 박스는 날짜 모양이어도 처방일 후보에서 제외합니다. 환자 생년월일이
 # 처방일로 오인식되면 의료 정확성뿐 아니라 개인정보(생년월일)가 PRESCRIBED_DATE로
 # 저장되는 문제까지 겹칩니다. 분리된 라벨은 제한된 인접 범위에서 연결합니다.
-_EXCLUDED_DATE_LABEL_PATTERN = re.compile(r"생년월일|생일|주민등록번호|주민번호")
+_EXCLUDED_DATE_LABELS = (
+    "생년월일",
+    "생일",
+    "주민등록번호",
+    "주민번호",
+)
+_PREFERRED_DATE_LABELS = (
+    "교부일자",
+    "교부일",
+    "발행일자",
+    "발행일",
+    "처방일자",
+    "처방일",
+)
 
-_PREFERRED_DATE_LABEL_PATTERN = re.compile(r"교부일자|교부일|발행일자|발행일|처방일자|처방일")
+_EXCLUDED_DATE_LABEL_PATTERN = re.compile("|".join(re.escape(label) for label in _EXCLUDED_DATE_LABELS))
+_PREFERRED_DATE_LABEL_PATTERN = re.compile("|".join(re.escape(label) for label in _PREFERRED_DATE_LABELS))
+_HANGUL_LABEL_TOKEN_PATTERN = re.compile(r"[가-힣]+")
+
+
+def _is_single_edit_label_typo(
+    value: str,
+    expected: str,
+) -> bool:
+    """세 글자 이상 라벨의 한 글자 삽입·삭제·치환만 허용합니다."""
+
+    if min(len(value), len(expected)) < 3:
+        return False
+
+    length_difference = len(value) - len(expected)
+    if abs(length_difference) > 1:
+        return False
+
+    if length_difference == 0:
+        return sum(left != right for left, right in zip(value, expected, strict=True)) == 1
+
+    shorter, longer = (value, expected) if len(value) < len(expected) else (expected, value)
+    shorter_index = 0
+    longer_index = 0
+    skipped = False
+
+    while shorter_index < len(shorter) and longer_index < len(longer):
+        if shorter[shorter_index] == longer[longer_index]:
+            shorter_index += 1
+            longer_index += 1
+            continue
+
+        if skipped:
+            return False
+
+        skipped = True
+        longer_index += 1
+
+    return True
+
+
+def _fuzzy_date_label_kind(value: str) -> str | None:
+    normalized = unicodedata.normalize("NFKC", value)
+    tokens = _HANGUL_LABEL_TOKEN_PATTERN.findall(normalized)
+    matched_kinds: set[str] = set()
+
+    for token in tokens:
+        if any(_is_single_edit_label_typo(token, label) for label in _EXCLUDED_DATE_LABELS):
+            matched_kinds.add("excluded")
+
+        if any(_is_single_edit_label_typo(token, label) for label in _PREFERRED_DATE_LABELS):
+            matched_kinds.add("preferred")
+
+    if len(matched_kinds) > 1:
+        return "ambiguous"
+
+    return next(iter(matched_kinds), None)
 
 
 def _date_label_kind(value: str) -> str | None:
-    compact = re.sub(r"\s+", "", value)
+    compact = re.sub(
+        r"\s+",
+        "",
+        unicodedata.normalize("NFKC", value),
+    )
+
     if _EXCLUDED_DATE_LABEL_PATTERN.search(compact):
         return "excluded"
     if _PREFERRED_DATE_LABEL_PATTERN.search(compact):
         return "preferred"
-    return None
+
+    return _fuzzy_date_label_kind(value)
 
 
 def _nearby_date_label_kind(field: RawRecognizedField, fields: list[RawRecognizedField]) -> str | None:
