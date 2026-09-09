@@ -28,6 +28,19 @@ def test_production_compose_serves_immutable_frontend_image_behind_healthy_api()
     assert fastapi["healthcheck"]
 
 
+def test_production_fastapi_receives_idempotency_snapshot_encryption_key_ring() -> None:
+    compose = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))
+    environment = compose["services"]["fastapi"]["environment"]
+
+    assert environment["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY"] == ("${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}")
+    assert environment["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION"] == (
+        "${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION:-v1}"
+    )
+    assert environment["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS"] == (
+        "${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS:-{}}"
+    )
+
+
 def test_frontend_production_image_requires_api_origin_and_contains_built_spa() -> None:
     dockerfile = _read(PROJECT_ROOT / "frontend/Dockerfile.prod")
 
@@ -152,6 +165,20 @@ def test_production_runbook_covers_frontend_rediscovery_smoke_and_safe_evidence(
     assert "Guide 또는 Chat을 새로 만드는 `POST`가 발생하면 통과로 기록하지 않습니다" in runbook
     assert "Authorization/Cookie header" in runbook
     assert "Runbook에 절차가 있다는 사실만으로 smoke를 통과한 것으로 간주하지 않습니다" in runbook
+
+
+def test_production_runbook_covers_idempotency_snapshot_encryption_key_ring() -> None:
+    runbook = _read(PRODUCTION_RUNBOOK_PATH)
+
+    for key in (
+        "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY",
+        "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION",
+        "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS",
+    ):
+        assert f"{key}=" in runbook
+
+    assert "Fernet.generate_key" in runbook
+    assert "실제 key는 공유\n터미널 기록이나 PR 증빙에 남기지 않습니다" in runbook
 
 
 def test_production_runbook_covers_cloudfront_default_domain_and_nine_day_teardown() -> None:
