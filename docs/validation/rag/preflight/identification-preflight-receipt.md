@@ -30,7 +30,7 @@ $ uv run pytest ai_worker/tests/rag/test_identification_preflight.py -q
 54 passed in 0.07s
 
 $ uv run pytest tests/contract/rag/test_preflight_decision_contract.py -q
-34 passed in 0.08s
+35 passed in 0.08s
 
 $ uv run pytest tests/contract/test_provider_contracts_docker_copy.py -q
 10 passed in 0.02s
@@ -90,7 +90,8 @@ TOTAL coverage 94%
 | 순서가 달라도 동일 hash/decision | `test_input_order_does_not_change_manifest_or_decision`, `test_decision_matrix_case_is_order_independent` (fixture 12건 전체) | 통과 |
 | 동일 입력 재시도 → 동일 결과, side effect 0건 | `test_repeated_evaluation_is_idempotent`, `test_outcome_is_immutable` | 통과 |
 | 복합 STALE 발생 시 결정적 우선순위 사영 | `test_compound_stale_*` (4건), `test_project_preflight_stale_signals_aggregation` | 통과 |
-| 제안 계약 복합 STALE 우선순위 exact-match | `test_stale_signal_vocabulary_and_projection_matches_safety_result_contract` (`PD-173-20260909` 및 `safety-result-compound-stale-priority-v1.md` 결속) | 통과 |
+| 제안 계약 복합 STALE 우선순위 exact-match | `test_stale_signal_vocabulary_and_projection_matches_safety_result_contract` (`PD-173-20260909` ↔ Proposed 계약 ↔ 커널 결속) | 통과 |
+| 추적 authority 체인 문서 링크 유효성 검증 (Review [P2]) | `test_compound_stale_authority_chain_markdown_links_resolve` | 통과 |
 | 식별 provenance 변경 시 manifest_hash 변경 및 STALE 판정 | `test_manifest_hash_changes_with_identification_prescription_version_id`, `test_manifest_hash_changes_with_identification_runtime_release_bundle_id`, `test_manifest_hash_changes_when_identification_provenance_changes` | 통과 |
 | 픽스처 기반 결정 matrix STALE 사영 exact-match | `test_decision_matrix_case` (PF-005·PF-006·PF-007 픽스처 기대값 직접 단언) | 통과 |
 | 멤버 필드 타입 손상 fail-closed 방어 (Review [P2]) | `test_malformed_member_fields_end_as_typed_validation_outcome` (7건), `test_malformed_member_fields_fail_closed_with_request_shape_invalid` | 통과 |

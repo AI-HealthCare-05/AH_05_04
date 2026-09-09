@@ -28,7 +28,7 @@
    - 합성 결정 matrix. 환자 식별 가능 값과 실제 제품명·보험코드 0건
 4. `tests/contract/rag/test_preflight_decision_contract.py`
    - `rag-runtime-v1.md` 고정 Graph에서 fallback 어휘를 파싱해 enum과 exact-match
-   - `safety-result-v2.md` 정본에서 단일 STALE 어휘 exact-match 및 제안 계약 `safety-result-compound-stale-priority-v1.md`(Decision `PD-173-20260909`)에서 복합 STALE 우선순위 파싱 및 exact-match 고정
+   - `safety-result-v2.md` 단일 STALE 어휘 exact-match, Decision `PD-173-20260909` ↔ 제안 계약 ↔ 커널 복합 STALE 우선순위 직접 파싱 및 exact-match, authority chain 문서 링크 검증 고정
    - module import 집합이 stdlib뿐임을 고정
    - fixture matrix 전체를 kernel에 통과시켜 decision·reason·hash 안정성 확인
    - 식별 provenance 변경 시 manifest_hash 변경 불변식 검증

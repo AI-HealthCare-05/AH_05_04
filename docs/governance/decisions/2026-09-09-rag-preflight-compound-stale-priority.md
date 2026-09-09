@@ -8,8 +8,8 @@
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Safety·제품 수용, 송은영 (`@phina-io`) — Backend·공개 DTO, 남한솔 (`@ansol-nam`) — 환자 표시·오류 UX |
 | 추적 Issue·PR | [#173](https://github.com/AI-HealthCare-05/AH_05_04/issues/173) · [PR #382](https://github.com/AI-HealthCare-05/AH_05_04/pull/382) |
-| 상위 계약 | [`docs/contracts/targets/post-mvp-1/safety-result-v2.md`](../contracts/targets/post-mvp-1/safety-result-v2.md) |
-| 제안 계약 | [`docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md`](../contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md) |
+| 상위 계약 | [`docs/contracts/targets/post-mvp-1/safety-result-v2.md`](../../contracts/targets/post-mvp-1/safety-result-v2.md) |
+| 제안 계약 | [`docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md`](../../contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md) |
 
 ## 목적
 

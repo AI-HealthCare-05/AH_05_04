@@ -143,12 +143,23 @@ def read_safety_contract_internal_stale_reasons() -> tuple[str, ...]:
     return tuple(reasons)
 
 
-def read_safety_contract_compound_stale_priorities() -> tuple[str, ...]:
-    """Extract compound stale priority vocabulary from proposed contract safety-result-compound-stale-priority-v1.md."""
+def read_decision_compound_stale_priorities() -> tuple[str, ...]:
+    """Extract compound stale priority vocabulary directly from Decision PD-173-20260909."""
     assert COMPOUND_STALE_DECISION_PATH.is_file(), f"결정 문서 {COMPOUND_STALE_DECISION_PATH}가 존재해야 합니다."
     decision_text = COMPOUND_STALE_DECISION_PATH.read_text(encoding="utf-8")
     assert "PD-173-20260909" in decision_text, "결정 문서에 Decision ID PD-173-20260909가 없습니다."
+    match = re.search(
+        r"```text\s*\n\s*([A-Z_]+)\s*>\s*([A-Z_]+)\s*>\s*([A-Z_]+)\s*\n\s*```",
+        decision_text,
+    )
+    assert match is not None, (
+        f"결정 문서 {COMPOUND_STALE_DECISION_PATH}에서 복합 STALE 우선순위 패턴을 찾을 수 없습니다."
+    )
+    return match.groups()
 
+
+def read_proposed_contract_compound_stale_priorities() -> tuple[str, ...]:
+    """Extract compound stale priority vocabulary from proposed contract safety-result-compound-stale-priority-v1.md."""
     assert PROPOSED_COMPOUND_STALE_CONTRACT_PATH.is_file(), (
         f"제안 계약 문서 {PROPOSED_COMPOUND_STALE_CONTRACT_PATH}가 존재해야 합니다."
     )
@@ -228,13 +239,17 @@ def test_stale_signal_vocabulary_and_projection_matches_safety_result_contract()
     assert proj_bundle.stale_reason == "RUNTIME_RELEASE_STALE"
     assert proj_bundle.stale_reason in stale_reasons
 
-    # 4. 복합 STALE 신호 집계(aggregation) 및 우선순위 불변식 검증 (safety-result-v2.md 정본 고정)
-    compound_priorities = read_safety_contract_compound_stale_priorities()
-    assert compound_priorities == (
+    # 4. 복합 STALE 신호 집계(aggregation) 및 우선순위 불변식 검증 (Decision PD-173 ↔ Proposed 계약 ↔ Kernel 결속)
+    decision_priorities = read_decision_compound_stale_priorities()
+    proposed_priorities = read_proposed_contract_compound_stale_priorities()
+    kernel_priorities = tuple(item.value for item in PreflightStaleSignal)
+
+    assert decision_priorities == (
         "PRESCRIPTION_STALE",
         "IDENTIFICATION_STALE",
         "RUNTIME_RELEASE_STALE",
     )
+    assert decision_priorities == proposed_priorities == kernel_priorities
 
     # - 처방 버전 변경(PRESCRIPTION_STALE)이 최우선: 어떤 신호와 결합해도 단일 결과는 PRESCRIPTION_STALE
     proj_compound_rx_bundle = project_preflight_stale_signals(
@@ -503,3 +518,18 @@ def test_malformed_member_fields_fail_closed_with_request_shape_invalid() -> Non
     outcome_ident = evaluate_medication_identification_preflight(req_bad_ident)
     assert outcome_ident.execution_status is PreflightExecutionStatus.VALIDATION_ERROR
     assert PreflightValidationCode.REQUEST_SHAPE_INVALID in outcome_ident.validation_codes
+
+
+def test_compound_stale_authority_chain_markdown_links_resolve() -> None:
+    """Validate that all relative markdown links in Decision PD-173 and Proposed contract resolve to existing files (Review [P2])."""
+    for doc_path in (COMPOUND_STALE_DECISION_PATH, PROPOSED_COMPOUND_STALE_CONTRACT_PATH):
+        assert doc_path.is_file(), f"문서가 존재해야 합니다: {doc_path}"
+        text = doc_path.read_text(encoding="utf-8")
+        links = re.findall(r"\[.*?\]\((?!https?://)(.*?)\)", text)
+        assert len(links) >= 2, f"{doc_path}에서 상대 경로 링크를 찾지 못했습니다."
+        for link in links:
+            target = link.split("#")[0]
+            if not target:
+                continue
+            resolved = (doc_path.parent / target).resolve()
+            assert resolved.is_file(), f"{doc_path}의 상대 링크 '{link}'가 대상 파일 {resolved}로 해석되지 않습니다."
