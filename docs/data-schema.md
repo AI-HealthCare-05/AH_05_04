@@ -408,8 +408,26 @@ aware datetime은 저장 전에 UTC instant로 정규화하며 PostgreSQL `times
 
 이 revision의 downgrade는 세 테이블을 잠근 뒤 Track B row가 한 건이라도 있으면 중단한다. 비어 있는
 개발·검증 환경에서만 occurrence → schedule time → schedule 순서로 신규 테이블을 제거한다. 실제 데이터가
-생성된 환경은 downgrade로 이력을 삭제하지 않고 동일 schema에서 forward-fix한다. 14일 rolling 생성,
-Version 변경 시 취소, Check-in·API·Notification은 B2~B5 후속 범위다.
+생성된 환경은 downgrade로 이력을 삭제하지 않고 동일 schema에서 forward-fix한다.
+
+### Track B Rolling Occurrence·Version 변경 처리 (#200)
+
+Scheduler는 `Asia/Seoul`로 확인된 서비스 시간대에서 실행하며 실행일을 포함한 14개 local date만
+생성한다. 활성 Prescription Version에 속한 `ACTIVE` Schedule의 현재 revision time만 대상으로 삼고,
+Schedule 시작일·종료일로 범위를 자른다. `(medication_schedule_time_id, scheduled_local_date)` unique와
+PostgreSQL `ON CONFLICT DO NOTHING`을 함께 사용하므로 같은 horizon을 반복하거나 여러 실행이 경쟁해도
+occurrence는 중복되지 않는다. `scheduled_at`과
+`max(다음 KST 자정, scheduled_at + 4시간)`인 `confirmation_deadline_at`은 UTC instant로 snapshot한다.
+종료일이 지난 활성 Schedule을 `ENDED`로 전환하는 주체도 Scheduler다.
+
+Schedule 생성은 SELF 소유권과 active Version을 확인할 때 부모 `PRESCRIPTION` row를 먼저 잠근다.
+처방 정정도 같은 row부터 잠그므로 active 확인과 insert 사이에 Version이 교체되는 TOCTOU를 막는다.
+처방 정정 transaction은 `PRESCRIPTION → AI_JOB → domain row → OUTBOX` 잠금 순서에서 이전 Version의
+`effective_at` 이후 `PENDING` occurrence만 `CANCELLED`로 바꾼다. effective 시각 이전 occurrence와
+`CLOSED|CANCELLED` occurrence, Schedule·ScheduleTime 이력은 그대로 보존하고 새 Version에 Schedule이나
+occurrence를 복사하지 않는다. 취소된 occurrence ID 목록은 B5가 같은 transaction에서 미전달 알림만
+취소할 수 있는 동기 연동 경계이며, Notification 저장 구현 자체는 B5 범위다. Check-in·API는 B3~B4
+후속 범위다.
 
 Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐고, RAG/Eval 목표 스키마는 분할 PR 단위로 migration·모델·repository를 반영합니다. 이 섹션은 구현 상태를 함께 표시하며, 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK와 이번 분할 PR의 신규 RAG/Eval ID는 호환을 위해 `CHAR(36)`을 사용합니다. PostgreSQL native `UUID` 전환은 별도 승인 migration 범위입니다.
 

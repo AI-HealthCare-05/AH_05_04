@@ -151,16 +151,17 @@ class PrescriptionRepository:
         await self.session.flush()
         return version
 
-    async def invalidate_version_dependencies(
+    async def invalidate_version_domain_dependencies(
         self,
         *,
         prescription_version_id: UUID,
         invalidated_at: datetime,
     ) -> None:
-        """이전 Version의 실행 중 작업과 재사용 가능한 Candidate를 원자적으로 무효화합니다.
+        """이전 Version의 실행 중 Job과 재사용 가능한 Candidate를 무효화합니다.
 
         호출자는 먼저 ``prescription`` row를 잠가야 합니다. 이후 잠금 순서는 계약의
-        ``PRESCRIPTION → AI_JOB → domain row → OUTBOX`` 순서를 따릅니다.
+        ``PRESCRIPTION → AI_JOB → domain row`` 순서를 따릅니다. Track B를 포함한 다른
+        domain row 무효화가 끝난 뒤 ``invalidate_version_outbox``를 호출해야 합니다.
         """
         jobs = list(
             (
@@ -231,24 +232,28 @@ class PrescriptionRepository:
             search.invalidated_at = invalidated_at
             search.finalized_at = invalidated_at
 
-        if job_ids:
-            outbox_events = list(
-                (
-                    await self.session.execute(
-                        select(OutboxEvent)
-                        .where(
-                            OutboxEvent.job_id.in_(job_ids),
-                            OutboxEvent.status.in_((OutboxEventStatus.PENDING, OutboxEventStatus.CLAIMED)),
-                        )
-                        .with_for_update(of=OutboxEvent)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for event in outbox_events:
-                event.status = OutboxEventStatus.CANCELLED
-                event.claim_token = None
-                event.claim_expires_at = None
+        await self.session.flush()
 
+    async def invalidate_version_outbox(self, *, prescription_version_id: UUID) -> None:
+        """모든 domain row 무효화 뒤 이전 Version의 미발행 Outbox를 취소한다."""
+
+        outbox_events = list(
+            (
+                await self.session.execute(
+                    select(OutboxEvent)
+                    .join(AiJob, AiJob.id == OutboxEvent.job_id)
+                    .where(
+                        AiJob.prescription_version_id == prescription_version_id,
+                        OutboxEvent.status.in_((OutboxEventStatus.PENDING, OutboxEventStatus.CLAIMED)),
+                    )
+                    .with_for_update(of=OutboxEvent)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for event in outbox_events:
+            event.status = OutboxEventStatus.CANCELLED
+            event.claim_token = None
+            event.claim_expires_at = None
         await self.session.flush()
