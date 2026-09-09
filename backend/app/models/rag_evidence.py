@@ -263,8 +263,8 @@ class RagCitation(Base):
         CheckConstraint("length(trim(claim_key)) > 0", name="chk_rag_citation_claim_key_nonblank"),
         CheckConstraint("display_order > 0", name="chk_rag_citation_display_order"),
         CheckConstraint(
-            "public_excerpt IS NULL OR length(trim(public_excerpt)) > 0",
-            name="chk_rag_citation_public_excerpt_nonblank",
+            "public_excerpt IS NULL",
+            name="chk_rag_citation_public_excerpt_guard_deferred",
         ),
         CheckConstraint("release_status = 'NOT_PUBLIC'", name="chk_rag_citation_public_guard_deferred"),
         CheckConstraint(

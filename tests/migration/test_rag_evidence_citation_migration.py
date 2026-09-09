@@ -370,6 +370,7 @@ def test_rag_evidence_citation_upgrade_and_downgrade() -> None:
     assert "fk_rag_citation_evidence_snapshot_status" in names
     assert "fk_rag_citation_snapshot_version" in names
     assert "chk_rag_citation_public_guard_deferred" in names
+    assert "chk_rag_citation_public_excerpt_guard_deferred" in names
     assert "chk_rag_citation_medical_not_partially_supported" in names
     assert "trg_rag_citation_append_only_update" in names
     assert "trg_rag_evidence_append_only_delete" in names
@@ -536,13 +537,13 @@ def test_rag_citation_rejects_public_release_until_guard_connected() -> None:
                             id, evidence_id, source_snapshot_id, evidence_status,
                             target_type, target_id, claim_key, claim_kind,
                             support_status, authorization_status, release_status, display_order,
-                            source_title, source_version, source_locator, public_excerpt
+                            source_title, source_version, source_locator
                         )
                         VALUES (
                             :citation_id, :evidence_id, :snapshot_id, 'DRAFT',
                             'GUIDE', :target_id, 'claim:draft-public', 'AUXILIARY',
                             'SUPPORTED', 'PENDING', 'PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001', 'approved excerpt'
+                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -566,13 +567,13 @@ def test_rag_citation_rejects_public_release_even_for_unsupported_claim() -> Non
                             id, evidence_id, source_snapshot_id, evidence_status,
                             target_type, target_id, claim_key, claim_kind,
                             support_status, authorization_status, release_status, display_order,
-                            source_title, source_version, source_locator, public_excerpt
+                            source_title, source_version, source_locator
                         )
                         VALUES (
                             :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
                             'CHAT_MESSAGE', :target_id, 'claim:1', 'MEDICAL',
                             'NOT_SUPPORTED', 'PENDING', 'PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001', 'approved excerpt'
+                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -611,6 +612,36 @@ def test_rag_citation_rejects_pass_authorization_until_guard_connected() -> None
     with pytest.raises(DBAPIError) as exc_info:
         asyncio.run(run_insert())
     assert "chk_rag_citation_authorization_status" in str(exc_info.value.orig)
+
+
+def test_rag_citation_rejects_public_excerpt_until_guard_connected() -> None:
+    command.upgrade(create_alembic_config(), RAG_EVIDENCE_CITATION_REVISION)
+    ids = asyncio.run(_seed_evidence_chain())
+
+    async def run_insert() -> None:
+        async with _connection() as connection:
+            async with connection.begin():
+                await connection.execute(
+                    text("""
+                        INSERT INTO rag_citation (
+                            id, evidence_id, source_snapshot_id, evidence_status,
+                            target_type, target_id, claim_key, claim_kind,
+                            support_status, authorization_status, release_status, display_order,
+                            source_title, source_version, source_locator, public_excerpt
+                        )
+                        VALUES (
+                            :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
+                            'GUIDE', :target_id, 'claim:excerpt-before-guard', 'AUXILIARY',
+                            'SUPPORTED', 'PENDING', 'NOT_PUBLIC', 1,
+                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001', 'unverified excerpt'
+                        )
+                    """),
+                    {**ids, "target_id": str(uuid4())},
+                )
+
+    with pytest.raises(DBAPIError) as exc_info:
+        asyncio.run(run_insert())
+    assert "chk_rag_citation_public_excerpt_guard_deferred" in str(exc_info.value.orig)
 
 
 def test_rag_citation_rejects_snapshot_source_version_mismatch() -> None:

@@ -10,7 +10,6 @@ from app.models.rag_catalog import RagMedicationAliasTargetType, RagMedicationCo
 from app.models.rag_evidence import (
     RagCitationAuthorizationStatus,
     RagCitationClaimKind,
-    RagCitationReleaseStatus,
     RagCitationSupportStatus,
     RagCitationTargetType,
     RagEvidenceGuidelineType,
@@ -183,11 +182,9 @@ async def test_rag_evidence_citation_repository_can_save_and_read_minimum_graph(
             claim_kind=RagCitationClaimKind.MEDICAL,
             support_status=RagCitationSupportStatus.SUPPORTED,
             authorization_status=RagCitationAuthorizationStatus.PENDING,
-            release_status=RagCitationReleaseStatus.NOT_PUBLIC,
             display_order=1,
             source_title="MFDS product record",
             source_locator="ITEM_SEQ=200012345",
-            public_excerpt="Approved excerpt",
         )
     )
 
@@ -219,10 +216,8 @@ async def test_rag_evidence_citation_repository_can_save_and_read_minimum_graph(
         == citation
     )
     assert citation.source_version == snapshot.source_version
-    assert (
+    with pytest.raises(NotImplementedError, match="#180 Citation Authorization Guard"):
         await repository.list_public_citations(target_type=RagCitationTargetType.CHAT_MESSAGE, target_id=target_id)
-        == []
-    )
 
 
 async def test_rag_evidence_repository_rejects_duplicate_evidence_key(db_session: AsyncSession) -> None:
@@ -263,11 +258,9 @@ async def test_rag_citation_repository_uses_snapshot_source_version(db_session: 
             claim_kind=RagCitationClaimKind.MEDICAL,
             support_status=RagCitationSupportStatus.SUPPORTED,
             authorization_status=RagCitationAuthorizationStatus.PENDING,
-            release_status=RagCitationReleaseStatus.NOT_PUBLIC,
             display_order=1,
             source_title="MFDS product record",
             source_locator="ITEM_SEQ=200012345",
-            public_excerpt="Approved excerpt",
         )
     )
 

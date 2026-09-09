@@ -72,11 +72,9 @@ class RagCitationCreate:
     claim_kind: RagCitationClaimKind
     support_status: RagCitationSupportStatus
     authorization_status: RagCitationAuthorizationStatus
-    release_status: RagCitationReleaseStatus
     display_order: int
     source_title: str
     source_locator: str
-    public_excerpt: str | None = None
 
 
 class RagEvidenceCitationRepository:
@@ -181,7 +179,7 @@ class RagEvidenceCitationRepository:
         target_type: RagCitationTargetType,
         target_id: str,
     ) -> list[RagCitation]:
-        return []
+        raise NotImplementedError("public citation retrieval opens with #180 Citation Authorization Guard")
 
     async def create_knowledge(self, item: RagEvidenceKnowledgeCreate) -> RagEvidenceKnowledge:
         knowledge = RagEvidenceKnowledge(
@@ -251,12 +249,12 @@ class RagEvidenceCitationRepository:
             claim_kind=item.claim_kind,
             support_status=item.support_status,
             authorization_status=item.authorization_status,
-            release_status=item.release_status,
+            release_status=RagCitationReleaseStatus.NOT_PUBLIC,
             display_order=item.display_order,
             source_title=item.source_title,
             source_version=source_snapshot.source_version,
             source_locator=item.source_locator,
-            public_excerpt=item.public_excerpt,
+            public_excerpt=None,
         )
         self.session.add(citation)
         await self.session.flush()

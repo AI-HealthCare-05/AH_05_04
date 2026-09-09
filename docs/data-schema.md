@@ -386,14 +386,14 @@ Revision `164c5d6e7f8a`는 #164의 Evidence/Citation 후속 구현을 위해 최
 - Evidence 승인 전이, revision 기반 교체, Citation Authorization Guard 연결, 공개 Release Gate는 이번 최소 DB 기반 범위가 아니며 #178 Evidence Gate, #180 Citation Authorization Guard, #181 Runtime Release/Activation 후속 구현에서 확정합니다.
 - 의료 claim(`claim_kind=MEDICAL`)은 `PARTIALLY_SUPPORTED`로 공개할 수 없습니다. `CONTRADICTED`, `NOT_SUPPORTED` 상태도 공개 Citation이 될 수 없습니다.
 - Citation 없이 일반 의료 답변이 공개되었다고 해석하지 않습니다. 의료 claim이 있는 Guide/Chat/RAG 답변 공개는 Claim-Citation 검증과 release gate 통과가 필요합니다. 단, 의료 claim이나 source-based citation이 없는 승인된 고정 fallback은 빈 Citation Guard 없이 공개될 수 있습니다.
-- Evidence/Citation 계열 row는 append-only입니다. UPDATE·DELETE는 차단하고, 수정이 필요한 경우 replacement row 또는 forward-fix migration으로 처리합니다.
+- Evidence/Citation 계열 row는 append-only입니다. UPDATE·DELETE는 차단하고, 정정은 forward-fix migration으로 처리합니다. revision 기반 교체 경로는 #178/#180/#181 후속 전환 설계에서 추가합니다.
 - downgrade는 빈 DB에서만 허용합니다. Evidence/Citation row가 있으면 downgrade를 중단하고 Production에서는 forward-fix를 사용합니다.
 
 민감정보 저장 경계:
 
 - `rag_evidence_*`, `rag_citation`에는 실제 환자정보, OCR 원문 전체, 처방 원문 전체, Provider raw response를 저장하지 않습니다.
-- 저장 가능한 값은 Source Snapshot/Catalog FK, target 식별자, claim key, locator, digest, enum 상태, 승인된 짧은 공개 excerpt 같은 비민감 provenance metadata로 제한합니다.
-- `public_excerpt`는 승인 Source에서 온 짧은 근거 발췌만 허용하며, 환자 유래 텍스트·OCR 텍스트·처방 텍스트·Provider 원문 출력 저장 위치로 사용하지 않습니다.
+- 저장 가능한 값은 Source Snapshot/Catalog FK, target 식별자, claim key, locator, digest, enum 상태 같은 비민감 provenance metadata로 제한합니다.
+- `public_excerpt`는 Guard 연결 전까지 `NULL`만 허용합니다. 공개 excerpt 저장과 검증은 #180 Citation Authorization Guard 연결 후 열며, 환자 유래 텍스트·OCR 텍스트·처방 텍스트·Provider 원문 출력 저장 위치로 사용하지 않습니다.
 
 범위 제외:
 
@@ -441,7 +441,7 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 | OCR LLM provenance | OCR 구조화 실행·필드 provenance 계열 | `raw_value`, rule 정규화값, LLM 초안, 사용자 수정값, 확정값과 allowlist·schema·prompt·model·validator version 분리 |
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |
-| 공식 Source·Catalog | `rag_source`, source approval·ingestion·normalization·snapshot·verification 계열, medication product·ingredient·component·alias | #164 최소 DB 기반은 반영 완료. source_version 상한·external_version은 #362 확정 후 별도 migration이며, 실제 수집·적재·Runtime 활성화·검색 연결은 후속 |
+| 공식 Source·Catalog | `rag_source`, source approval·ingestion·normalization·snapshot·verification 계열, medication product·ingredient·component·alias | #164 최소 DB 기반은 반영 완료. source_version 상한·external_version은 #362 확정 후 별도 migration이며, Citation FK 때문에 `rag_source_snapshot.source_version`과 `rag_citation.source_version`을 같은 migration에서 함께 정렬합니다. 실제 수집·적재·Runtime 활성화·검색 연결은 후속 |
 | Candidate·Identification | candidate index·search·result, append-only medication identification | confirmed `medication_name + nullable strength_text`만 입력, 내부 Top-K와 외부 최대 1개 분리, 사용자 확인·거절·소유권·멱등성·현재성 |
 | Rule·Evidence | `rag_evidence_knowledge`, `rag_evidence`, `rag_evidence_rule`, `rag_evidence_guideline`, rule set 계열 | Evidence/Citation 최소 DB 기반은 PR #369에서 추가. 처방약–OTC Rule-first 실행, ranking, resolver, 품질 평가와 Runtime 활성화는 후속 |
 | RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열, `rag_citation` | `rag_citation`은 Evidence와 동일 Source Snapshot 및 `source_version`에 묶인 claim-Evidence 비공개 저장 기반만 제공합니다. 이번 최소 DB 기반의 Evidence 상태는 `DRAFT`/`APPROVED`를 명시 입력으로만 사용하고, Citation 공개 상태는 `NOT_PUBLIC`만 사용합니다. STALE·retire·revoke lifecycle과 공개 Guard 연결은 #178/#180/#181 후속 전환 설계에서 추가합니다. 실제 Retrieval, Provider 호출, 답변 생성, Safety/Fallback 문구 생성, 화면 표시는 후속 |
