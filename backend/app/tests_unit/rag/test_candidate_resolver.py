@@ -414,6 +414,17 @@ def test_product_hit_cannot_use_ingredient_stage() -> None:
     )
 
 
+def test_none_product_stage_fails_closed() -> None:
+    invalid = dataclasses.replace(
+        hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),
+        stage=None,  # type: ignore[arg-type]
+    )
+
+    assert resolve(FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (invalid,)})) == ResolverFailure(
+        reason=ResolverFailureReason.EVIDENCE_INVALID
+    )
+
+
 def test_non_string_member_key_fails_closed() -> None:
     invalid = dataclasses.replace(
         hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT),

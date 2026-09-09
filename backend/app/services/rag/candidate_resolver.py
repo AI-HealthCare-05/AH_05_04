@@ -555,14 +555,15 @@ def _hydrated_evidence_failure(
     ):
         return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
     receipt = hydrated.provenance
-    invalid_product_stage = next(
-        (hit.stage for hit in hydrated.product_hits if hit.stage not in _PRODUCT_STAGE_ORDER),
+    invalid_product_hit = next(
+        (hit for hit in hydrated.product_hits if hit.stage not in _PRODUCT_STAGE_ORDER),
         None,
     )
-    if invalid_product_stage is not None:
+    if invalid_product_hit is not None:
+        stage = invalid_product_hit.stage
         return ResolverFailure(
             ResolverFailureReason.EVIDENCE_INVALID,
-            invalid_product_stage if isinstance(invalid_product_stage, CandidateStage) else None,
+            stage if isinstance(stage, CandidateStage) else None,
         )
     if receipt.index_mode is CandidateIndexMode.HYBRID and receipt.embedding_model_version is None:
         return ResolverFailure(ResolverFailureReason.EVIDENCE_INVALID)
