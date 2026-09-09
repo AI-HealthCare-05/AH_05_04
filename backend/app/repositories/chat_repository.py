@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -15,8 +15,6 @@ class ChatRepository:
         self.session = session
 
     async def create_session(self, *, prescription: Prescription) -> ChatSession:
-        if prescription.active_version_id is None:
-            raise RuntimeError("active prescription version is required")
         chat_session = ChatSession(
             prescription_id=prescription.id,
             prescription_version_id=prescription.active_version_id,
@@ -72,6 +70,9 @@ class ChatRepository:
         return result.scalar_one_or_none()
 
     async def lock_if_current_version(self, *, chat_session: ChatSession) -> bool:
+        # 결과 저장 직전의 짧은 Prescription fencing도 무한 대기하지 않게 제한합니다.
+        # SET LOCAL이므로 현재 transaction이 끝나면 자동으로 원복됩니다.
+        await self.session.execute(text("SET LOCAL lock_timeout = '3s'"))
         current = await self.session.scalar(
             select(Prescription.id)
             .where(

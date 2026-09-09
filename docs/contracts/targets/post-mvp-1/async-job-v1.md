@@ -77,6 +77,8 @@ OCR 접수는 기존 라우터의 path parameter 방식과 `202` 응답을 유�
 
 OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.status_url`을 같은 Job 조회 URL로 제공한다.
 
+`prescription_version_id`는 공통 응답 타입에서는 nullable이다. OCR은 처방 확정 전 입력이므로 항상 `null`이고, 확정 처방에서 파생되는 Guide·Chat Job은 생성 시점의 값이 필수다. DB의 `chk_ai_job_prescription_version_by_type`은 `OCR ↔ NULL`, `GUIDE|CHAT ↔ NOT NULL`을 강제하고, Job intake와 repository 생성 경계도 같은 조건을 검증한다. Guide·Chat Job의 값 누락을 OCR 호환성으로 허용하거나 active Version을 조회 시점에 추정해서는 안 된다. `prescription_version_medication_id`는 Candidate Search·Identification 계약에서 필수이며 공통 Job 응답 필드가 아니다.
+
 공통 header 기준은 다음과 같다.
 
 | Header | 적용 API | 조건 | 설명 |

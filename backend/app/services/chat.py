@@ -123,8 +123,6 @@ class ChatService:
             )
 
         chat_session = await self._chat_repo.create_session(prescription=prescription)
-        if chat_session.prescription_version_id is None:
-            raise RuntimeError("chat session prescription version is required")
         return ChatSessionData(
             session_id=chat_session.id,
             prescription_id=prescription.id,
@@ -156,13 +154,6 @@ class ChatService:
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
             )
 
-        if chat_session.prescription_version_id is None:
-            raise ApiError(
-                status_code=409,
-                code="PRESCRIPTION_VERSION_UNAVAILABLE",
-                message="대화 세션의 처방 버전 정보를 사용할 수 없습니다.",
-                details=[ErrorDetail(field="session_id", reason="INVALID_VERSION_GRAPH")],
-            )
         _ensure_current_version(chat_session)
 
         return ChatSessionData(
@@ -181,13 +172,6 @@ class ChatService:
                 code="CHAT_SESSION_NOT_FOUND",
                 message="대화 세션을 찾을 수 없습니다.",
                 details=[ErrorDetail(field="session_id", reason="NOT_FOUND", rejected_value=str(session_id))],
-            )
-        if chat_session.prescription_version_id is None:
-            raise ApiError(
-                status_code=409,
-                code="PRESCRIPTION_VERSION_UNAVAILABLE",
-                message="대화 세션의 처방 버전 정보를 사용할 수 없습니다.",
-                details=[ErrorDetail(field="session_id", reason="INVALID_VERSION_GRAPH")],
             )
         _ensure_current_version(chat_session)
         messages = await self._chat_repo.list_messages(session=chat_session)
@@ -218,13 +202,6 @@ class ChatService:
                 details=[ErrorDetail(field="session_id", reason="CHAT_SESSION_CLOSED", rejected_value=str(session_id))],
             )
 
-        if chat_session.prescription_version_id is None:
-            raise ApiError(
-                status_code=409,
-                code="PRESCRIPTION_VERSION_UNAVAILABLE",
-                message="대화 세션의 처방 버전 정보를 사용할 수 없습니다.",
-                details=[ErrorDetail(field="session_id", reason="INVALID_VERSION_GRAPH")],
-            )
         _ensure_current_version(chat_session)
 
         medications = await self._prescription_repo.get_version_medications(

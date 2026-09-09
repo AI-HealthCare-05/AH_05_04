@@ -282,6 +282,10 @@ AI에는 현재 요청의 질문, 해당 세션에 연결된 확정 처방의 �
 결과를 저장하지 않고 ASSISTANT placeholder를 `PRESCRIPTION_VERSION_STALE` 실패 이력으로 남긴 뒤
 `409 PRESCRIPTION_VERSION_CONFLICT`를 반환합니다.
 
+이 결과 저장 직전 Prescription row lock은 transaction 범위 `lock_timeout = 3s`를 사용해 무한 대기를
+방지합니다. timeout은 AI 오류로 변환하지 않으며 기존 DB 오류 경계대로 transaction을 rollback하고 공통
+`500 INTERNAL_SERVER_ERROR`를 반환합니다.
+
 DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반환합니다. 잠금을 얻어 USER·ASSISTANT를 만들기 전에 transaction이 rollback되므로 새 메시지가 생성되지 않으며, 메시지 목록을 다시 조회해도 이전 결과와 같습니다.
 
 ## OCR 결과 조회

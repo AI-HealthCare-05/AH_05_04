@@ -3,9 +3,9 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | PR 1 DB foundation, PR 2 Version 1 Backfill·신규 생성 Dual-write, PR 3 Read cutover·정정 API 구현 · PR 4 Job·Outbox·Candidate 무효화와 Guide·Chat·Job 현재 노출 차단 구현, 지정 리뷰어 검토 대기 · PR 5 hardening 미구현 |
+| 구현·리뷰 | PR 1 DB foundation, PR 2 Version 1 Backfill·신규 생성 Dual-write, PR 3 Read cutover·정정 API, PR 4 Job·Outbox·Candidate 무효화와 Guide·Chat·Job 현재 노출 차단 구현·승인 · PR 5 legacy runtime write/read 제거와 NOT NULL hardening 구현, 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-b-adherence-v1.md`, `track-e-ocr-regression-v1.md`, `track-f-rag-citation-safety-v1.md` |
-| Last verified | 2026-09-08 |
+| Last verified | 2026-09-09 |
 
 ## 모델
 
@@ -29,7 +29,7 @@ Revision `169a1b2c3d4e`는 API 동작을 변경하지 않는 Expand 단계다. A
 | `prescription_version` | `id`, `prescription_id`, `version_number`, `prescribed_date`, `confirmed_at`, internal `assembly_xid`, `created_at` |
 | `prescription_version_medication` | `id`, `prescription_version_id`, `medication_name`, nullable `strength_text`, nullable `dose_value`, nullable `dose_unit`, nullable `frequency_per_day`, nullable `timing_text`, nullable `duration_days`, `display_order`, `created_at` |
 
-`prescription.active_version_id`는 `(active_version_id, prescription.id) → prescription_version(id, prescription_id)` composite FK로 같은 처방의 version만 가리키게 한다. FK는 `DEFERRABLE INITIALLY DEFERRED`이므로 후속 NOT NULL 전환 뒤에도 미리 생성한 ID로 Prescription → Version → Medication을 같은 transaction에서 만들 수 있고 commit 시점에 완전한 graph를 검증한다. `active_version_id`는 기존 처방 Backfill 전까지 nullable이며 PR 2에서 version 1 생성·검증과 함께 채운다. 별도 active/current 상태 컬럼은 만들지 않는다.
+`prescription.active_version_id`는 `(active_version_id, prescription.id) → prescription_version(id, prescription_id)` composite FK로 같은 처방의 version만 가리키게 한다. FK는 `DEFERRABLE INITIALLY DEFERRED`이므로 미리 생성한 ID로 Prescription → Version → Medication을 같은 transaction에서 만들 수 있고 commit 시점에 완전한 graph를 검증한다. Expand·Backfill 단계에서는 임시 nullable이었지만 PR 5 cleanup에서 `NOT NULL`로 고정한다. 별도 active/current 상태 컬럼은 만들지 않는다.
 
 Version sequence는 양수이고 `(prescription_id, version_number)`가 unique다. 약물 표시 순서는 양수이며 `(prescription_version_id, display_order)`가 unique다. 지연 제약은 commit 시 모든 Version과 active pointer에 medication snapshot이 1개 이상인지 확인한다. Version INSERT trigger는 caller 입력을 무시하고 DB가 발급한 epoch-aware top-level transaction ID를 internal `assembly_xid`에 기록한다. Medication INSERT는 현재 transaction ID가 이 값과 같은 Version에만 허용한다. 이 비교는 release된 SAVEPOINT 뒤에도 유지되며 Runtime 역할이 custom GUC나 INSERT 값으로 위조할 수 없으므로, active 여부와 관계없이 commit된 Version의 약물 집합은 동결된다. 두 snapshot 테이블은 DB trigger로 직접 UPDATE·DELETE를 차단한다.
 
@@ -53,7 +53,7 @@ Backfill 전에는 다음 조건을 검사하며 하나라도 위반하면 전�
 
 Backfill 뒤에는 active pointer 누락 0건, Version header 불일치 0건, legacy Medication과 active Version Medication의 양방향 `EXCEPT` 불일치 0건을 검증한다. Migration downgrade는 불변 감사 snapshot을 삭제하지 않는 no-op application rollback이다. 다시 upgrade하면 완성된 graph를 검증해 재사용하며 Version이나 Medication을 중복 생성하지 않는다.
 
-신규 처방 확정은 기존 `prescription`·`medication`과 Version 1 snapshot을 같은 transaction에서 dual-write한다. Version ID를 먼저 생성해 `prescription.active_version_id`에 넣고 deferred composite FK 아래에서 Prescription → legacy Medication → Version → Version Medication을 원자 조립한다. 기존 read와 공개 API 응답은 계속 legacy `medication`을 사용한다. `active_version_id NOT NULL`, Version read cutover, Candidate·Identification·Guide·Chat FK 연결은 후속 PR 범위다.
+PR 2 배포 당시 신규 처방 확정은 기존 `prescription`·`medication`과 Version 1 snapshot을 같은 transaction에서 dual-write했다. PR 3 read cutover와 PR 5 cleanup 뒤에는 Version ID를 먼저 생성해 `prescription.active_version_id`에 넣고 deferred composite FK 아래에서 Prescription → Version → Version Medication만 원자 조립한다. 신규 legacy `medication` row는 만들지 않으며 현재 read와 공개 API 응답은 Version snapshot만 사용한다.
 
 PR 3의 cutover migration은 PR 2 완료 시점의 전체 Version coverage를 가정하지 않는다. 구버전 애플리케이션 rollback 등으로 새로 생긴 `active_version_id IS NULL` 처방이 있으면 PR 2와 같은 사전 검증·복사·완료 검증으로 Version 1을 먼저 재-backfill한다. Version row와 active pointer가 엇갈린 부분 graph는 추정 복구하지 않고 전체 migration을 중단한다.
 
@@ -104,8 +104,9 @@ OCR 검수 완료만으로 자동 활성화하지 않는다. 사용자의 명시
 2. **Dual-write:** Expand schema 위에 새 writer를 먼저 배포한다. 새 쓰기는 legacy row와 Version 1 snapshot을 함께 채우고 read는 계속 legacy 구조를 사용한다.
 3. **Backfill:** dual-write 동작을 확인한 뒤 처방 PK 범위별 재실행 가능한 batch로 기존 처방의 Version 1과 Medication snapshot을 만든다. writer를 중지하고 migration하는 배포에서는 같은 release의 dual-write 코드만 재시작하며 구 writer를 다시 띄우지 않는다.
 4. **Verify:** orphan 0건, version number 중복 0건, 유효하지 않은 active pointer 0건, snapshot 수와 핵심 값 일치를 검증한다.
-5. **Read cutover:** 먼저 누락 Version을 방어적으로 재-backfill하고 검증한 뒤 새 구조 read로 전환한다. 한 배포 구간을 관찰한 후 소비 FK·unique·NOT NULL 제약을 활성화한다.
-6. **Rollback:** read cutover 전에는 legacy read로 application rollback할 수 있지만 dual-write보다 이전 writer로 rollback하지 않는다. 불가피하게 구 writer가 실행됐으면 쓰기를 중지하고 cutover 전에 누락분을 재-backfill한다. Version row를 삭제하는 downgrade는 금지하고 forward-fix한다.
+5. **Read cutover:** 먼저 누락 Version을 방어적으로 재-backfill하고 검증한 뒤 새 구조 read와 소비 FK로 전환한다.
+6. **Cleanup:** null provenance 0건을 잠금 상태에서 검증하고 Prescription·Guide·Chat Version FK를 `NOT NULL`로 전환한다. 신규 legacy Medication dual-write와 runtime read를 제거한다.
+7. **Rollback:** cleanup schema는 nullable로 되돌릴 수 있지만 application은 legacy read/write로 돌아가지 않는다. Version row를 삭제하는 downgrade는 금지하고 forward-fix한다.
 
 테이블·컬럼별 mapping, batch 크기와 검증 SQL은 migration PR의 필수 산출물이다.
 
@@ -126,11 +127,11 @@ OCR 검수 완료만으로 자동 활성화하지 않는다. 사용자의 명시
 
 처방 확정·상세·최신·정정 응답은 `prescription_id`, 실제 `prescription_version_id`, 양수 `revision`, `current`, `document_id`, Version의 `prescribed_date`·`confirmed_at`, `medications[]`를 반환한다. 각 약물에는 실제 `prescription_version_medication_id`와 snapshot 임상 필드가 포함된다. `current`는 반환 Version과 응답 시점 `active_version_id`의 일치 여부다.
 
-PR 3은 Version read와 Candidate·Identification·Guide·Chat·Guide Job의 생성 시점 Version 귀속까지 전환했다. PR 4는 Version 변경 transaction에서 이전 Version의 미종료 Job·Outbox·Candidate Search를 무효화하고 Guide·Chat·Job 결과의 현재 노출을 차단한다. 따라서 PR 3의 임시 `PRESCRIPTION_CORRECTION_ENABLED` gate를 제거하고 정정 route를 공개한다. legacy `prescription_id`·`medication` dual-write 제거 및 nullable 정리는 PR 5 범위다.
+PR 3은 Version read와 Candidate·Identification·Guide·Chat·Guide Job의 생성 시점 Version 귀속까지 전환했다. PR 4는 Version 변경 transaction에서 이전 Version의 미종료 Job·Outbox·Candidate Search를 무효화하고 Guide·Chat·Job 결과의 현재 노출을 차단했으며 정정 route gate를 제거했다. PR 5는 신규 legacy Medication dual-write와 runtime read를 제거하고 Prescription·Guide·Chat Version FK를 `NOT NULL`로 고정한다. Guide·Chat의 `prescription_id`는 소유권 및 composite FK 부모 연결이며 snapshot 선택 기준이 아니다.
 
 Candidate Search snapshot의 `medication_name_snapshot`·`strength_text_snapshot`은 FK 대상 PVM 값과 정확히 일치해야 한다. cutover migration은 불일치가 한 건이라도 있으면 FK 적용 전에 전체를 중단한다. Candidate Search·Result·Identification은 감사 이력이므로 Prescription/PV/PVM 삭제에 연쇄 삭제되지 않으며 참조가 남아 있으면 삭제를 거부한다.
 
-Cutover 이후 Candidate/Identification의 legacy ID remap이나 Guide/Chat의 Version provenance가 하나라도 존재하면 schema downgrade는 데이터 유실 없이 되돌릴 수 없으므로 거부한다. 배포 시 writer를 먼저 중지한 상태에서 migration을 수행하며, 실패 시 이전 writer로 downgrade하지 않고 같은 schema에서 application rollback 또는 forward-fix한다.
+Cutover 이후 Candidate/Identification의 legacy ID remap이나 Guide/Chat의 Version provenance가 하나라도 존재하면 schema downgrade는 데이터 유실 없이 되돌릴 수 없으므로 거부한다. Cleanup 뒤 hardening schema downgrade가 Version 링크를 nullable로 되돌릴 수 있어도 application rollback은 단방향이다. 신규 처방에는 legacy `medication` row가 없으므로 구버전 애플리케이션은 약물 목록을 복원할 수 없다. 배포 시 writer를 먼저 중지한 상태에서 migration을 수행하며, 실패 시 이전 writer·reader로 downgrade하지 않고 같은 Version schema에서 현재 애플리케이션 재배포 또는 forward-fix한다.
 
 처방 활성화와 Job 처리의 전역 lock 순서는 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX`다. 각 transaction은 필요한 row만 이 순서로 잠그며 역순 잠금을 금지한다.
 

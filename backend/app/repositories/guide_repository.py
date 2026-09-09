@@ -29,8 +29,6 @@ class GuideRepository:
         return result.scalar_one_or_none()
 
     async def create(self, *, prescription: Prescription) -> Guide:
-        if prescription.active_version_id is None:
-            raise RuntimeError("active prescription version is required")
         guide = Guide(
             prescription_id=prescription.id,
             prescription_version_id=prescription.active_version_id,
