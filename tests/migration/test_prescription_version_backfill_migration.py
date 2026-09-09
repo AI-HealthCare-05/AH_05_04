@@ -34,6 +34,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BACKFILL_REVISION = "169b2c3d4e5f"
 BACKFILL_BASE_REVISION = "165f90716263"
 CUTOVER_REVISION = "169c3d4e5f6a"
+HARDENING_BASE_REVISION = "164b6c7d8e9f"
+HARDENING_REVISION = "169d4e5f6a7b"
 
 
 def create_alembic_config() -> Config:
@@ -384,22 +386,22 @@ async def _create_via_repository() -> dict[str, str]:
             user = User(
                 email=f"dw-{token}@example.com",
                 hashed_password="synthetic-password-hash",
-                name="dual-write-test",
+                name="version-write-test",
             )
             session.add(user)
             await session.flush()
             profile = Profile(
                 user_id=user.id,
                 profile_type=ProfileType.SELF,
-                display_name="dual-write-test",
+                display_name="version-write-test",
             )
             session.add(profile)
             await session.flush()
             document = MedicalDocument(
                 uploaded_by=user.id,
                 profile_id=profile.id,
-                original_file_name="dual-write.png",
-                object_key=f"synthetic/{token}/dual-write.png",
+                original_file_name="version-write.png",
+                object_key=f"synthetic/{token}/version-write.png",
                 file_mime_type="image/png",
                 file_size_bytes=1,
             )
@@ -562,6 +564,26 @@ async def _cleanup_guide_chat_provenance(ids: dict[str, str]) -> None:
         await connection.execute(text("DELETE FROM guide WHERE id = :guide_id"), ids)
 
 
+async def _seed_null_version_guide(ids: dict[str, str]) -> str:
+    guide_id = str(uuid4())
+    async with _connection() as connection, connection.begin():
+        await connection.execute(
+            text(
+                """
+                INSERT INTO guide (id, prescription_id, prescription_version_id, profile_id, generation_status)
+                VALUES (:guide_id, :prescription_id, NULL, :profile_id, 'PENDING')
+                """
+            ),
+            {**ids, "guide_id": guide_id},
+        )
+    return guide_id
+
+
+async def _delete_guide(guide_id: str) -> None:
+    async with _connection() as connection, connection.begin():
+        await connection.execute(text("DELETE FROM guide WHERE id = :guide_id"), {"guide_id": guide_id})
+
+
 async def _seed_active_candidate(ids: dict[str, str]) -> str:
     search_id = str(uuid4())
     async with _connection() as connection, connection.begin():
@@ -644,7 +666,7 @@ def test_backfill_creates_exact_version_one_snapshot_and_is_rerunnable() -> None
         command.upgrade(alembic_config, "head")
 
 
-def test_repository_dual_write_commits_against_migrated_postgresql() -> None:
+def test_repository_version_only_write_commits_against_migrated_postgresql() -> None:
     command.upgrade(create_alembic_config(), "head")
     ids = asyncio.run(_create_via_repository())
     try:
@@ -737,6 +759,20 @@ def test_read_cutover_downgrade_rejects_guide_and_chat_provenance() -> None:
             command.downgrade(alembic_config, BACKFILL_REVISION)
     finally:
         asyncio.run(_cleanup_guide_chat_provenance(ids))
+        asyncio.run(_cleanup(ids))
+        command.upgrade(alembic_config, "head")
+
+
+def test_hardening_refuses_remaining_null_runtime_version_link() -> None:
+    alembic_config = create_alembic_config()
+    command.downgrade(alembic_config, HARDENING_BASE_REVISION)
+    ids = asyncio.run(_create_via_repository())
+    guide_id = asyncio.run(_seed_null_version_guide(ids))
+    try:
+        with pytest.raises(RuntimeError, match="nullable provenance remains"):
+            command.upgrade(alembic_config, HARDENING_REVISION)
+    finally:
+        asyncio.run(_delete_guide(guide_id))
         asyncio.run(_cleanup(ids))
         command.upgrade(alembic_config, "head")
 

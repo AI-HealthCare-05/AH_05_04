@@ -170,11 +170,11 @@ async def _seed_prescription_version() -> dict[str, str]:
                 text(
                     """
                     INSERT INTO prescription (
-                        id, document_id, source_ocr_job_id, profile_id, prescribed_date,
-                        prescription_status, confirmed_at
+                        id, active_version_id, document_id, source_ocr_job_id, profile_id,
+                        prescribed_date, prescription_status, confirmed_at
                     )
                     VALUES (
-                        :prescription_id, :document_id, :ocr_job_id, :profile_id,
+                        :prescription_id, :version_id, :document_id, :ocr_job_id, :profile_id,
                         :prescribed_date, 'CONFIRMED', :confirmed_at
                     )
                     """

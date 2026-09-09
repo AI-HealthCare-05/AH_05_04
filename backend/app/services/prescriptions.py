@@ -129,7 +129,6 @@ class PrescriptionService:
             confirmed_at=confirmed_at,
             medications=medications,
         )
-        assert prescription.active_version_id is not None
         created_medications = await self._prescription_repo.get_version_medications(
             prescription_version_id=prescription.active_version_id
         )

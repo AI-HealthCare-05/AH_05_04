@@ -1,6 +1,5 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
-from decimal import Decimal
 from typing import cast
 from uuid import uuid4
 
@@ -12,7 +11,7 @@ from sqlalchemy.sql.elements import ClauseElement
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.chat_repository import ChatRepository
@@ -66,16 +65,18 @@ async def _create_session(session: AsyncSession) -> tuple[User, Prescription, Ch
     ocr_job = OcrJob(document_id=document.id)
     session.add(ocr_job)
     await session.flush()
-    prescription = Prescription(
-        document_id=document.id,
-        source_ocr_job_id=ocr_job.id,
-        profile_id=profile.id,
+    prescription = await PrescriptionRepository(session).create_with_medications(
+        document=document,
+        source_ocr_job=ocr_job,
         prescribed_date=date(2026, 8, 20),
         confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "합성 채팅 검증약", "display_order": 1}],
     )
-    session.add(prescription)
-    await session.flush()
-    chat_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
+    chat_session = ChatSession(
+        prescription_id=prescription.id,
+        prescription_version_id=prescription.active_version_id,
+        profile_id=profile.id,
+    )
     session.add(chat_session)
     await session.flush()
     return user, prescription, chat_session
@@ -138,10 +139,11 @@ async def test_lock_if_current_version_locks_matching_prescription() -> None:
 
     assert await repository.lock_if_current_version(chat_session=chat_session)
 
-    assert len(session.statements) == 1
+    assert len(session.statements) == 2
+    assert str(session.statements[0]) == "SET LOCAL lock_timeout = '3s'"
     prescription_lock_sql = " ".join(
         str(
-            cast(ClauseElement, session.statements[0]).compile(
+            cast(ClauseElement, session.statements[1]).compile(
                 dialect=postgresql.dialect(),
                 compile_kwargs={"literal_binds": True},
             )
@@ -151,55 +153,6 @@ async def test_lock_if_current_version_locks_matching_prescription() -> None:
     assert f"PRESCRIPTION.ID = '{chat_session.prescription_id}'".upper() in prescription_lock_sql
     assert f"PRESCRIPTION.ACTIVE_VERSION_ID = '{chat_session.prescription_version_id}'".upper() in prescription_lock_sql
     assert prescription_lock_sql.endswith("FOR UPDATE OF PRESCRIPTION")
-
-
-async def test_get_medications_orders_by_display_order_ascending_and_preserves_values(db_session: AsyncSession) -> None:
-    _, prescription, _ = await _create_session(db_session)
-    db_session.add_all(
-        [
-            Medication(
-                prescription_id=prescription.id,
-                medication_name="두 번째 합성약",
-                dose_value=Decimal("2.500"),
-                dose_unit="mg",
-                frequency_per_day=1,
-                timing_text="저녁",
-                duration_days=5,
-                display_order=2,
-            ),
-            Medication(
-                prescription_id=prescription.id,
-                medication_name="첫 번째 합성약",
-                dose_value=Decimal("0.123"),
-                dose_unit="mg",
-                frequency_per_day=3,
-                timing_text="식후",
-                duration_days=9,
-                display_order=1,
-            ),
-        ]
-    )
-    await db_session.flush()
-
-    medications = await PrescriptionRepository(db_session).get_medications(prescription_id=prescription.id)
-
-    assert [item.display_order for item in medications] == [1, 2]
-    assert (
-        medications[0].medication_name,
-        medications[0].dose_value,
-        medications[0].dose_unit,
-        medications[0].frequency_per_day,
-        medications[0].timing_text,
-        medications[0].duration_days,
-    ) == ("첫 번째 합성약", Decimal("0.123"), "mg", 3, "식후", 9)
-    assert (
-        medications[1].medication_name,
-        medications[1].dose_value,
-        medications[1].dose_unit,
-        medications[1].frequency_per_day,
-        medications[1].timing_text,
-        medications[1].duration_days,
-    ) == ("두 번째 합성약", Decimal("2.500"), "mg", 1, "저녁", 5)
 
 
 async def test_commit_failed_message_pair_persists_exactly_one_user_failed_assistant_pair_after_rollback(

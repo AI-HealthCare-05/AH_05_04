@@ -13,13 +13,13 @@
 
 ## 책임 경계
 
-Backend는 인증, 처방 소유권과 확정 상태 확인, 영속 약물 조회, GUIDE 생성·완료·실패 저장, HTTP 오류 변환을 담당한다. Guide AI 모듈은 확정 약물 정보에서 안내 intent를 결정하고 `source_index`와 intent만 provider에 전달한다. 구조화 출력을 검증한 뒤 원본 처방값과 결합한 `GuideGenerationResult`를 반환한다.
+Backend는 인증, 처방 소유권과 활성 Version 확인, 활성 Version Medication 조회, 생성 시점 `prescription_version_id`가 필수인 GUIDE 생성·완료·실패 저장, HTTP 오류 변환을 담당한다. Guide AI 모듈은 확정 약물 정보에서 안내 intent를 결정하고 `source_index`와 intent만 provider에 전달한다. 구조화 출력을 검증한 뒤 원본 처방값과 결합한 `GuideGenerationResult`를 반환한다.
 
 `GuideGenerator`는 DB, FastAPI 객체와 GUIDE 상태를 참조하지 않는다. `OpenAIResponsesClient`만 OpenAI SDK 타입과 예외를 알고, `GuideGenerator`에는 `GuideProvider`, 모델명과 전체 제한시간을 주입한다. Guide AI와 Chat AI는 서로의 스키마·provider 계약을 공유하지 않는다.
 
 ## 입력 계약
 
-Backend는 한 개 이상의 확정 약물을 `GuideGenerationInput.medications`에 전달한다. Guide AI는 전달받은 순서대로 0-based `source_index`를 부여하고 최종 평문에서도 그 순서를 유지한다. `Prescription.medications` relationship에 `MEDICATION.display_order` 명시 정렬이 적용되어 있어, Backend 조회 시점부터 처방 표시 순서가 보장된다.
+Backend는 활성 `PrescriptionVersion`의 한 개 이상 확정 약물을 `GuideGenerationInput.medications`에 전달한다. Guide AI는 전달받은 순서대로 0-based `source_index`를 부여하고 최종 평문에서도 그 순서를 유지한다. `PrescriptionVersion.medications` relationship에 `PRESCRIPTION_VERSION_MEDICATION.display_order` 명시 정렬이 적용되어 있어 Backend 조회 시점부터 처방 표시 순서가 보장된다. legacy `Medication`은 이 입력에 사용하지 않는다.
 
 | 필드 | 타입 | 의미 |
 | --- | --- | --- |
