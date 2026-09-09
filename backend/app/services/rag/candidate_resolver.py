@@ -20,6 +20,10 @@ _ALLOWED_ATTRIBUTE_RESULTS = frozenset(
     }
 )
 _WHITESPACE_PATTERN = re.compile(r"\s+")
+_PRODUCT_NAME_MAX_LENGTH = 255
+_STRENGTH_TEXT_MAX_LENGTH = 100
+_DOSAGE_FORM_MAX_LENGTH = 100
+_MANUFACTURER_NAME_MAX_LENGTH = 255
 
 
 class ResolverOutcome(StrEnum):
@@ -83,7 +87,6 @@ class ResolverInput:
 @dataclass(frozen=True, slots=True)
 class CandidateSearchRequest:
     medication_name: str
-    strength_text: str | None
     index_version: str
     retrieval_limit: int
 
@@ -240,6 +243,47 @@ class CandidateRelevanceEvaluator(Protocol):
     ) -> float: ...
 
 
+def prepare_candidate_search(
+    resolver_input: object,
+    policy: object,
+) -> CandidateSearchRequest | ResolverResult | ResolverFailure:
+    """Validate caller-owned context before any index I/O and build the closed search request."""
+    if not isinstance(policy, ResolverPolicy) or not policy_is_valid(policy):
+        return ResolverFailure(ResolverFailureReason.POLICY_INVALID)
+    if not isinstance(resolver_input, ResolverInput):
+        return _empty_result(ResolverOutcome.INVALID_INPUT)
+    if (
+        not _canonical_text_is_valid(resolver_input.policy_version)
+        or resolver_input.policy_version != policy.policy_version
+    ):
+        return ResolverFailure(ResolverFailureReason.POLICY_VERSION_MISMATCH)
+    if not _canonical_text_is_valid(resolver_input.index_version):
+        return ResolverFailure(ResolverFailureReason.INDEX_VERSION_MISMATCH)
+    if not _input_is_valid(resolver_input, policy.maximum_input_length):
+        return _empty_result(ResolverOutcome.INVALID_INPUT)
+    return CandidateSearchRequest(
+        medication_name=resolver_input.medication_name,
+        index_version=resolver_input.index_version,
+        retrieval_limit=policy.retrieval_limit,
+    )
+
+
+def candidate_search_stages(
+    descriptor: CandidateIndexDescriptor,
+    policy: ResolverPolicy,
+) -> tuple[CandidateStage, ...]:
+    """Return the stage plan shared by async hydration and the in-memory Resolver port."""
+    stages = (
+        CandidateStage.PRODUCT_NAME_EXACT,
+        CandidateStage.APPROVED_ALIAS_EXACT,
+        CandidateStage.INGREDIENT_EXACT,
+        CandidateStage.TRIGRAM_EDIT_DISTANCE,
+    )
+    if descriptor.mode is CandidateIndexMode.HYBRID and policy.enable_dense:
+        return (*stages, CandidateStage.DENSE_VECTOR)
+    return stages
+
+
 class MedicationResolver:
     def __init__(
         self,
@@ -257,31 +301,15 @@ class MedicationResolver:
         resolver_input: ResolverInput,
         policy: ResolverPolicy,
     ) -> ResolverResult | ResolverFailure:
-        if not policy_is_valid(policy):
-            return ResolverFailure(ResolverFailureReason.POLICY_INVALID)
-        if not isinstance(resolver_input, ResolverInput):
-            return self._empty_result(ResolverOutcome.INVALID_INPUT)
-        if (
-            not _canonical_text_is_valid(resolver_input.policy_version)
-            or resolver_input.policy_version != policy.policy_version
-        ):
-            return ResolverFailure(ResolverFailureReason.POLICY_VERSION_MISMATCH)
-        if not _canonical_text_is_valid(resolver_input.index_version):
-            return ResolverFailure(ResolverFailureReason.INDEX_VERSION_MISMATCH)
-        if not _input_is_valid(resolver_input, policy.maximum_input_length):
-            return self._empty_result(ResolverOutcome.INVALID_INPUT)
+        prepared = prepare_candidate_search(resolver_input, policy)
+        if not isinstance(prepared, CandidateSearchRequest):
+            return prepared
 
         descriptor = self._describe_index(resolver_input.index_version)
         if isinstance(descriptor, ResolverFailure):
             return descriptor
 
-        request = CandidateSearchRequest(
-            medication_name=resolver_input.medication_name,
-            strength_text=resolver_input.strength_text,
-            index_version=resolver_input.index_version,
-            retrieval_limit=policy.retrieval_limit,
-        )
-        searched = self._search(request, descriptor, policy)
+        searched = self._search(prepared, descriptor, policy)
         if isinstance(searched, ResolverFailure):
             return searched
         raw_hits, ingredient_hits = searched
@@ -318,39 +346,24 @@ class MedicationResolver:
         policy: ResolverPolicy,
     ) -> tuple[tuple[CandidateHit, ...], tuple[IngredientHit, ...]] | ResolverFailure:
         raw_hits: list[CandidateHit] = []
-        stages = (
-            (CandidateStage.PRODUCT_NAME_EXACT, self._index_port.search_product_name_exact),
-            (CandidateStage.APPROVED_ALIAS_EXACT, self._index_port.search_approved_alias_exact),
-        )
-        for stage, search in stages:
-            result = self._call_product_stage(request, stage, search)
-            if isinstance(result, ResolverFailure):
-                return result
-            raw_hits.extend(result)
-
-        ingredient_hits = self._call_ingredient_stage(request)
-        if isinstance(ingredient_hits, ResolverFailure):
-            return ingredient_hits
-
-        trigram_hits = self._call_product_stage(
-            request,
-            CandidateStage.TRIGRAM_EDIT_DISTANCE,
-            self._index_port.search_trigram_edit_distance,
-        )
-        if isinstance(trigram_hits, ResolverFailure):
-            return trigram_hits
-        raw_hits.extend(trigram_hits)
-
-        if descriptor.mode is CandidateIndexMode.HYBRID and policy.enable_dense:
-            dense_hits = self._call_product_stage(
-                request,
-                CandidateStage.DENSE_VECTOR,
-                self._index_port.search_dense_vector,
-            )
-            if isinstance(dense_hits, ResolverFailure):
-                return dense_hits
-            raw_hits.extend(dense_hits)
-
+        ingredient_hits: tuple[IngredientHit, ...] = ()
+        product_searches = {
+            CandidateStage.PRODUCT_NAME_EXACT: self._index_port.search_product_name_exact,
+            CandidateStage.APPROVED_ALIAS_EXACT: self._index_port.search_approved_alias_exact,
+            CandidateStage.TRIGRAM_EDIT_DISTANCE: self._index_port.search_trigram_edit_distance,
+            CandidateStage.DENSE_VECTOR: self._index_port.search_dense_vector,
+        }
+        for stage in candidate_search_stages(descriptor, policy):
+            if stage is CandidateStage.INGREDIENT_EXACT:
+                ingredient_result = self._call_ingredient_stage(request)
+                if isinstance(ingredient_result, ResolverFailure):
+                    return ingredient_result
+                ingredient_hits = ingredient_result
+                continue
+            product_result = self._call_product_stage(request, stage, product_searches[stage])
+            if isinstance(product_result, ResolverFailure):
+                return product_result
+            raw_hits.extend(product_result)
         return tuple(raw_hits), ingredient_hits
 
     def _call_product_stage(
@@ -420,17 +433,17 @@ class MedicationResolver:
             )
         return tuple(evaluated)
 
-    @staticmethod
-    def _empty_result(outcome: ResolverOutcome) -> ResolverResult:
-        return ResolverResult(
-            outcome=outcome,
-            candidate=None,
-            internal_candidates=(),
-            raw_count=0,
-            deduped_count=0,
-            eligible_count=0,
-            ingredient_hit_count=0,
-        )
+
+def _empty_result(outcome: ResolverOutcome) -> ResolverResult:
+    return ResolverResult(
+        outcome=outcome,
+        candidate=None,
+        internal_candidates=(),
+        raw_count=0,
+        deduped_count=0,
+        eligible_count=0,
+        ingredient_hit_count=0,
+    )
 
 
 def _input_is_valid(resolver_input: ResolverInput, maximum_length: int) -> bool:
@@ -452,12 +465,12 @@ def _canonical_text_is_valid(value: object) -> bool:
     return isinstance(value, str) and bool(value) and value == value.strip() and unicodedata.is_normalized("NFC", value)
 
 
-def _optional_canonical_text_is_valid(value: object) -> bool:
-    return value is None or _display_text_is_valid(value)
+def _optional_display_text_is_valid(value: object, maximum_length: int) -> bool:
+    return value is None or _display_text_is_valid(value, maximum_length)
 
 
-def _display_text_is_valid(value: object) -> bool:
-    if not isinstance(value, str) or not value.strip():
+def _display_text_is_valid(value: object, maximum_length: int) -> bool:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum_length:
         return False
     try:
         value.encode("utf-8")
@@ -479,10 +492,10 @@ def _product_snapshot_is_valid(product: object) -> bool:
     return (
         isinstance(product, ProductSnapshot)
         and _identity_is_valid(product.identity, OfficialEntityType.PRODUCT, "MFDS_ITEM_SEQ")
-        and _display_text_is_valid(product.product_name)
-        and _optional_canonical_text_is_valid(product.strength_text)
-        and _optional_canonical_text_is_valid(product.dosage_form)
-        and _optional_canonical_text_is_valid(product.manufacturer_name)
+        and _display_text_is_valid(product.product_name, _PRODUCT_NAME_MAX_LENGTH)
+        and _optional_display_text_is_valid(product.strength_text, _STRENGTH_TEXT_MAX_LENGTH)
+        and _optional_display_text_is_valid(product.dosage_form, _DOSAGE_FORM_MAX_LENGTH)
+        and _optional_display_text_is_valid(product.manufacturer_name, _MANUFACTURER_NAME_MAX_LENGTH)
         and isinstance(product.status, ProductStatus)
     )
 

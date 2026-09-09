@@ -31,6 +31,10 @@ and deterministic input permutation. Every row records raw/deduped/eligible/pers
 typed failure, a non-authoritative/TBC DB projection, public candidate count, internal-evidence retention,
 unresolved reason code, partition, leakage group, and reviewer provenance.
 
+`internal_candidates`는 Resolver의 평가·진단 evidence이고 `persisted_count`와 동일하지 않다. 승인 Target에 맞춰
+`NO_CANDIDATE | INGREDIENT_ONLY | INVALID_INPUT`의 `persisted_count`와 `db_projection.result_rows`는 0으로
+고정한다. 후속 #171 Finalizer가 내부 후보를 자동 전량 저장하는 계약으로 해석하면 안 된다.
+
 Resolver business success is written as `SINGLE_CANDIDATE`, never as lifecycle `READY`. A corresponding
 `db_projection.search_status=READY` appears only as an explicitly `NON_AUTHORITATIVE_DRAFT` projection into the
 unresolved #171 lifecycle boundary.

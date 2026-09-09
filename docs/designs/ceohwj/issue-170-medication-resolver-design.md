@@ -69,17 +69,22 @@ SINGLE_CANDIDATE   AMBIGUOUS/NO...   typed execution failure
 ```
 
 `backend/app/services/rag/`는 `ai_worker`, SQLAlchemy, Redis, Outbox 또는 Provider SDK를 import하지 않는다.
-`CandidateIndexPort`는 PostgreSQL repository Protocol이 아니다. 후속 통합에서는 #168의 `AsyncSession` 기반
-repository/service가 descriptor와 stage별 bounded hit를 먼저 비동기로 조회·검증하고, 그 결과를 불변 evidence
-snapshot으로 hydrate한다. Resolver에는 그 snapshot을 제공하는 동기 in-memory Port를 주입한다. #168 DB row나
-Worker-owned 타입을 Resolver가 직접 import하거나, 동기 Port 안에서 event loop를 만들거나 async DB 호출을
-숨기지 않는다.
+`CandidateIndexPort`는 PostgreSQL repository Protocol이 아니다. `prepare_candidate_search(...)`가 index I/O 전에
+입력과 policy version을 검증하고 제품명·index version·limit만 포함한 닫힌 요청을 만든다. 함량은 검색 요청에
+포함하지 않고 dedupe 뒤 `CandidateAttributeMatcher`에만 전달한다. #168의 `AsyncSession` 기반 service는 descriptor를
+검증한 뒤 `candidate_search_stages(...)`가 반환한 동일 stage plan만 비동기로 실행한다. 전체 #167
+Catalog·Source·normalization·embedding provenance를 검증·보존한 뒤 최소 Resolver hit view와 불변 in-memory Port를
+hydrate한다. Resolver의 stage 호출은 이 Port의 메모리 snapshot만 읽으며 DB 재조회, event loop 생성 또는 숨은
+async 호출을 수행하지 않는다.
 
 ```text
-#168 async PostgreSQL repository/service
-                  │ await + active index/version 검증
+#170 prepare_candidate_search (strength-free request)
+                  │
                   ▼
-       bounded immutable evidence snapshot
+#168 async descriptor + candidate_search_stages 실행
+                  │ await + active index/provenance 검증
+                  ▼
+ bounded immutable evidence snapshot + provenance receipt
                   │
                   ▼
       sync in-memory CandidateIndexPort
@@ -121,7 +126,9 @@ inline synthetic policy의 `maximum_input_length=100`은 non-release 테스트 �
 ### 검색 Protocol
 
 `CandidateIndexPort`는 hydrate가 끝난 bounded evidence snapshot을 읽는 동기 in-memory 메서드로 구성한다.
-실제 async PostgreSQL repository가 이 Protocol을 직접 구현하는 계약이 아니다.
+실제 async PostgreSQL repository가 이 Protocol을 직접 구현하는 계약이 아니다. Async hydration은
+`prepare_candidate_search(...)`와 `candidate_search_stages(...)`를 그대로 사용해 Resolver와 요청 allowlist 및
+Dense 실행 조건을 중복 구현하지 않는다.
 
 - `describe(index_version)`
 - `search_product_name_exact(request)`
@@ -129,6 +136,9 @@ inline synthetic policy의 `maximum_input_length=100`은 non-release 테스트 �
 - `search_ingredient_exact(request)`
 - `search_trigram_edit_distance(request)`
 - `search_dense_vector(request)`
+
+`CandidateSearchRequest`는 `medication_name`, `index_version`, `retrieval_limit`만 포함한다. `strength_text`를 포함한
+다른 확정 처방 필드는 Candidate Index 검색·사전 필터에 전달하지 않는다.
 
 Descriptor는 index version과 `LEXICAL_ONLY | HYBRID` capability를 제공한다. Dense는 descriptor가
 `HYBRID`이고 `ResolverPolicy.enable_dense=true`일 때만 실행한다. 나머지 경우 Dense 메서드는 호출하지 않는다.
@@ -138,6 +148,8 @@ Ingredient hit는 진단 evidence일 뿐 Product 후보, dedupe, fusion, count�
 `stage_score`를 포함한다. Resolver는 stage score를 `[0, 1]` relevance로 추정 변환하지 않는다.
 Product snapshot의 표시 원문은 Catalog 계약대로 NFD와 원래 공백을 보존할 수 있으며, Resolver는 이를
 검색용 normalized text로 오인하거나 조용히 변환하지 않는다.
+다만 후속 Candidate Result 저장 계약과 동일하게 제품명·제조사는 255자, 함량·제형은 100자를 넘을 수 없으며
+초과 evidence는 `EVIDENCE_INVALID`로 닫는다.
 함량·제형·제조사 compatibility를 #168 persistence adapter가 임의로 결정하게 하지 않는다. Resolver는
 별도 동기 `CandidateAttributeMatcher` Protocol에 확정 입력과 product snapshot만 전달하고,
 `MATCH | CONFLICT | NOT_APPLICABLE | UNKNOWN` 결과를 hard gate에 사용한다. production matcher는
@@ -198,7 +210,10 @@ synthetic policy를 명시적으로 생성한다. fixture의 `TBC`를 숫자 기
     `EVIDENCE_INVALID`이며 외부 결과에서 예외 메시지와 원문을 버린다. 예상 밖 프로그래밍 예외는
     `PORT_FAILURE`로 오분류하지 않고 전파해 내부 진단 가능성을 보존한다.
 
-`SINGLE_CANDIDATE`만 `candidate`가 non-null이다. 내부 evidence는 모든 정상 outcome에 남긴다.
+`SINGLE_CANDIDATE`만 `candidate`가 non-null이다. 내부 evidence는 모든 정상 outcome에 평가·진단용으로 남기되,
+#171 Candidate Result row로 자동 전량 투영하지 않는다. 특히 승인 Target의 저장 불변식에 따라
+`NO_CANDIDATE | INGREDIENT_ONLY | INVALID_INPUT`은 Result row와 `candidate_count`가 0이어야 한다. 저장 투영은
+#171 Finalizer가 outcome별 계약에 맞게 별도로 수행한다.
 `ResolverResult.redacted()`는 outcome과 Identity 없는 표시 allowlist candidate만 가진 별도
 `ResolverVisibleResult`를 반환하며 top-K, rank, score, 공식 code 필드가 구조적으로 없다. 이는 공개 API DTO 구현이나 Finalizer handoff가
 아니라 외부 redaction projection 경계다. #171 Finalizer에는 별도 integration 계약으로 내부 결과 전체를
@@ -237,7 +252,8 @@ version mismatch, NaN/무한 score, stage/rank 위조, identity/snapshot 충돌�
 다음 연결은 #168 active index read Receipt, #169 current confirmed Medication Snapshot Receipt, 승인된
 Resolver production policy와 #171 Finalizer handoff가 확보된 뒤 별도 integration slice에서 수행한다.
 
-- #168 async `rag_candidate_index_repository.py`와 bounded immutable evidence snapshot hydration
+- #168 async `rag_candidate_index_repository.py`, 공통 pure stage plan 실행, 전체 provenance를 보존하는 bounded
+  immutable evidence snapshot hydration
 - 저장된 확정값 → `ResolverInput` 경계의 Unicode/공백·길이 Decision과 contract/integration test
 - 현재·기존 Prescription Version Medication의 canonical input 적합성 검증 또는 fail-closed migration/차단 Receipt
 - production policy loader 및 Runtime Release Bundle binding

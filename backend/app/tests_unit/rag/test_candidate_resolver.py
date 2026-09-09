@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services.rag import candidate_resolver as candidate_resolver_module
 from app.services.rag.candidate_policy import CandidateStage, ResolverPolicy
 from app.services.rag.candidate_resolver import (
     AttributeCompatibility,
@@ -358,6 +359,11 @@ def test_hybrid_search_order_dedupes_identity_and_redacts_internal_scores() -> N
     ]
     assert matcher.calls == ["SYNTH-P-001"]
     assert evaluator.calls == ["SYNTH-P-001"]
+    assert {field.name for field in dataclasses.fields(CandidateSearchRequest)} == {
+        "medication_name",
+        "index_version",
+        "retrieval_limit",
+    }
     visible = result.redacted()
     assert visible.outcome is ResolverOutcome.SINGLE_CANDIDATE
     assert {field.name for field in dataclasses.fields(visible)} == {"outcome", "candidate"}
@@ -405,6 +411,31 @@ def test_dense_requires_index_capability_and_policy(
 
     assert isinstance(result, ResolverResult)
     assert (CandidateStage.DENSE_VECTOR.value in port.calls) is dense_called
+
+
+def test_async_hydrator_can_reuse_pure_request_and_stage_plan_contract() -> None:
+    prepare = getattr(candidate_resolver_module, "prepare_candidate_search", None)
+    stages_for = getattr(candidate_resolver_module, "candidate_search_stages", None)
+    assert callable(prepare)
+    assert callable(stages_for)
+
+    prepared = prepare(resolver_input(), synthetic_policy(enable_dense=False))
+
+    assert isinstance(prepared, CandidateSearchRequest)
+    assert prepared == CandidateSearchRequest(
+        medication_name="합성제품정",
+        index_version="candidate-index-v1",
+        retrieval_limit=10,
+    )
+    assert stages_for(
+        CandidateIndexDescriptor(index_version="candidate-index-v1", mode=CandidateIndexMode.HYBRID),
+        synthetic_policy(enable_dense=False),
+    ) == (
+        CandidateStage.PRODUCT_NAME_EXACT,
+        CandidateStage.APPROVED_ALIAS_EXACT,
+        CandidateStage.INGREDIENT_EXACT,
+        CandidateStage.TRIGRAM_EDIT_DISTANCE,
+    )
 
 
 def test_multiple_eligible_products_are_always_ambiguous() -> None:
@@ -699,6 +730,30 @@ def test_malformed_product_evidence_is_typed_failure(bad_hit: CandidateHit) -> N
     port = FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (bad_hit,)})
 
     result = resolve(port)
+
+    assert result == ResolverFailure(
+        reason=ResolverFailureReason.EVIDENCE_INVALID,
+        stage=CandidateStage.PRODUCT_NAME_EXACT,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("product_name", "가" * 256),
+        ("strength_text", "1" * 101),
+        ("dosage_form", "정" * 101),
+        ("manufacturer_name", "가" * 256),
+    ],
+)
+def test_product_snapshot_display_fields_cannot_exceed_persistence_contract(
+    field_name: str,
+    value: str,
+) -> None:
+    snapshot = dataclasses.replace(product_snapshot("SYNTH-P-001"), **{field_name: value})
+    candidate = hit("SYNTH-P-001", CandidateStage.PRODUCT_NAME_EXACT, snapshot=snapshot)
+
+    result = resolve(FakeIndexPort({CandidateStage.PRODUCT_NAME_EXACT: (candidate,)}))
 
     assert result == ResolverFailure(
         reason=ResolverFailureReason.EVIDENCE_INVALID,
