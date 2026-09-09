@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { getCurrentUser, type CurrentUser } from '../api/users'
@@ -17,6 +17,10 @@ import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
 import ProfilePage from '../pages/ProfilePage'
 import MenuPage from '../pages/MenuPage'
+
+const DevPreviewPage = import.meta.env.DEV
+  ? lazy(() => import('../dev-preview/DevPreviewPage'))
+  : null
 
 type AuthState =
   | { status: 'checking'; user: null }
@@ -98,23 +102,43 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   return authState.status === 'authenticated' ? children : <Navigate to="/login" replace />
 }
 
+export function AppRoutes({
+  enableDevPreview = import.meta.env.DEV,
+}: {
+  enableDevPreview?: boolean
+} = {}) {
+  return (
+    <Routes>
+      <Route path="/" element={<RootRoute />} />
+      <Route path="/start" element={<PublicOnlyRoute><StartPage /></PublicOnlyRoute>} />
+      <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
+      <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
+      <Route path="/prescriptions/upload" element={<ProtectedRoute><PrescriptionUploadPage /></ProtectedRoute>} />
+      <Route path="/design-prototype" element={<DesignPrototypePage />} />
+      {enableDevPreview && DevPreviewPage && (
+        <Route
+          path="/dev/preview"
+          element={
+            <Suspense fallback={<div role="status">Preview를 준비하고 있습니다.</div>}>
+              <DevPreviewPage />
+            </Suspense>
+          }
+        />
+      )}
+      <Route path="/prescriptions/review" element={<ProtectedRoute><PrescriptionReviewPage /></ProtectedRoute>} />
+      <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
+      <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
+      <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+      <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+    </Routes>
+  )
+}
+
 function AppRouter() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<RootRoute />} />
-        <Route path="/start" element={<PublicOnlyRoute><StartPage /></PublicOnlyRoute>} />
-        <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
-        <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
-        <Route path="/prescriptions/upload" element={<ProtectedRoute><PrescriptionUploadPage /></ProtectedRoute>} />
-        <Route path="/design-prototype" element={<DesignPrototypePage />} />
-        <Route path="/prescriptions/review" element={<ProtectedRoute><PrescriptionReviewPage /></ProtectedRoute>} />
-        <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
-        <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
-        <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
-        <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
-        <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
-      </Routes>
+      <AppRoutes />
     </BrowserRouter>
   )
 }

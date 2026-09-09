@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import {
   createChatSession,
   getChatMessages,
@@ -16,6 +17,32 @@ import {
 } from '../features/auth/authSession'
 import '../design-system/prototype.css'
 import './ChatPage.css'
+
+export type ChatPageServices = {
+  createChatSession: typeof createChatSession
+  getChatSessionForPrescription: typeof getChatSessionForPrescription
+  getChatMessages: typeof getChatMessages
+  sendChatMessage: typeof sendChatMessage
+}
+
+export type ChatPreviewState = {
+  prescriptionId: string
+  draft?: string
+  isSending?: boolean
+}
+
+export type ChatPageProps = {
+  services?: ChatPageServices
+  previewState?: ChatPreviewState
+  navigation?: NavigateFunction
+}
+
+const defaultChatPageServices: ChatPageServices = {
+  createChatSession,
+  getChatSessionForPrescription,
+  getChatMessages,
+  sendChatMessage,
+}
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -148,11 +175,18 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-function createChatSessionOnce(prescriptionId: string) {
+function createChatSessionOnce(
+  prescriptionId: string,
+  createSession: typeof createChatSession,
+) {
+  if (createSession !== createChatSession) {
+    return createSession(prescriptionId)
+  }
+
   const pendingRequest = sessionCreationRequests.get(prescriptionId)
   if (pendingRequest) return pendingRequest
 
-  const request = createChatSession(prescriptionId).finally(() => {
+  const request = createSession(prescriptionId).finally(() => {
     if (sessionCreationRequests.get(prescriptionId) === request) {
       sessionCreationRequests.delete(prescriptionId)
     }
@@ -161,11 +195,18 @@ function createChatSessionOnce(prescriptionId: string) {
   return request
 }
 
-function getChatSessionForPrescriptionOnce(prescriptionId: string) {
+function getChatSessionForPrescriptionOnce(
+  prescriptionId: string,
+  getSession: typeof getChatSessionForPrescription,
+) {
+  if (getSession !== getChatSessionForPrescription) {
+    return getSession(prescriptionId)
+  }
+
   const pendingRequest = sessionRediscoveryRequests.get(prescriptionId)
   if (pendingRequest) return pendingRequest
 
-  const request = getChatSessionForPrescription(prescriptionId).finally(() => {
+  const request = getSession(prescriptionId).finally(() => {
     if (sessionRediscoveryRequests.get(prescriptionId) === request) {
       sessionRediscoveryRequests.delete(prescriptionId)
     }
@@ -174,10 +215,16 @@ function getChatSessionForPrescriptionOnce(prescriptionId: string) {
   return request
 }
 
-function ChatPage() {
-  const navigate = useNavigate()
+function ChatPage({
+  services = defaultChatPageServices,
+  previewState,
+  navigation,
+}: ChatPageProps = {}) {
+  const routerNavigate = useNavigate()
+  const navigate = navigation ?? routerNavigate
   const [searchParams] = useSearchParams()
-  const prescriptionId = searchParams.get('prescription_id')?.trim() ?? ''
+  const prescriptionId = previewState?.prescriptionId ??
+    searchParams.get('prescription_id')?.trim() ?? ''
   const activePrescriptionRef = useRef(prescriptionId)
   const initializationRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
@@ -185,10 +232,10 @@ function ChatPage() {
   const [statePrescriptionId, setStatePrescriptionId] = useState(prescriptionId)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessageData[]>([])
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useState(previewState?.draft ?? '')
   const [errorMessage, setErrorMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
-  const [isSending, setIsSending] = useState(false)
+  const [isSending, setIsSending] = useState(previewState?.isSending ?? false)
   const [requiresLogin, setRequiresLogin] = useState(false)
 
   activePrescriptionRef.current = prescriptionId
@@ -203,9 +250,9 @@ function ChatPage() {
     setStatePrescriptionId(requestedPrescriptionId)
     setSessionId(null)
     setMessages([])
-    setDraft('')
+    setDraft(previewState?.draft ?? '')
     setErrorMessage('')
-    setIsSending(false)
+    setIsSending(previewState?.isSending ?? false)
     setRequiresLogin(false)
 
     if (!uuidPattern.test(prescriptionId)) {
@@ -221,7 +268,10 @@ function ChatPage() {
       const storageKey = getSessionStorageKey(prescriptionId)
       let sessionResponse
       try {
-        sessionResponse = await getChatSessionForPrescriptionOnce(prescriptionId)
+        sessionResponse = await getChatSessionForPrescriptionOnce(
+          prescriptionId,
+          services.getChatSessionForPrescription,
+        )
       } catch (error) {
         if (!isCurrentRequest()) return
         if (
@@ -234,13 +284,18 @@ function ChatPage() {
           throw error
         }
 
-        sessionResponse = await createChatSessionOnce(prescriptionId)
+        sessionResponse = await createChatSessionOnce(
+          prescriptionId,
+          services.createChatSession,
+        )
       }
       if (!isCurrentRequest()) return
 
       const activeSessionId = sessionResponse.data.session_id
-      sessionStorage.setItem(storageKey, activeSessionId)
-      const historyResponse = await getChatMessages(activeSessionId)
+      if (!previewState) {
+        sessionStorage.setItem(storageKey, activeSessionId)
+      }
+      const historyResponse = await services.getChatMessages(activeSessionId)
       if (!isCurrentRequest()) return
 
       setSessionId(activeSessionId)
@@ -260,7 +315,7 @@ function ChatPage() {
         setIsLoading(false)
       }
     }
-  }, [prescriptionId])
+  }, [prescriptionId, previewState, services])
 
   useEffect(() => {
     sendRequestRef.current += 1
@@ -273,8 +328,9 @@ function ChatPage() {
   }, [initializeChat])
 
   useEffect(() => {
+    if (previewState) return
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
-  }, [isSending, messages])
+  }, [isSending, messages, previewState])
 
   const isCurrentPrescriptionState = statePrescriptionId === prescriptionId
   const currentSessionId = isCurrentPrescriptionState ? sessionId : null
@@ -312,7 +368,7 @@ function ChatPage() {
       setErrorMessage('')
       setDraft('')
       setMessages((current) => [...current, optimisticUserMessage])
-      const response = await sendChatMessage(requestedSessionId, content)
+      const response = await services.sendChatMessage(requestedSessionId, content)
       if (!isCurrentRequest()) return
       const completedAt = response.data.completed_at ?? response.data.created_at
       const canonicalUserMessage: ChatMessageData = {
@@ -346,7 +402,7 @@ function ChatPage() {
         setRequiresLogin(true)
       } else {
         try {
-          const historyResponse = await getChatMessages(requestedSessionId)
+          const historyResponse = await services.getChatMessages(requestedSessionId)
           if (!isCurrentRequest()) return
           const historyMessages = historyResponse.data.messages
           setMessages((current) =>

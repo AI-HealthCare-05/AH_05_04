@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   confirmPrescription,
@@ -20,6 +21,34 @@ import { DoseyMascot } from '../design-system/DoseyMascot'
 import { createGuide } from '../api/guides'
 import '../design-system/prototype.css'
 import './PrescriptionReviewPage.css'
+
+export type PrescriptionReviewServices = {
+  getOcrJob: typeof getOcrJob
+  getPrescriptionDocumentFile: typeof getPrescriptionDocumentFile
+  updateExtractedField: typeof updateExtractedField
+  confirmPrescription: typeof confirmPrescription
+  createGuide: typeof createGuide
+}
+
+export type PrescriptionReviewPreviewState = {
+  documentId: string
+  jobId: string
+  userConfirmed?: boolean
+}
+
+export type PrescriptionReviewPageProps = {
+  services?: PrescriptionReviewServices
+  previewState?: PrescriptionReviewPreviewState
+  navigation?: NavigateFunction
+}
+
+const defaultPrescriptionReviewServices: PrescriptionReviewServices = {
+  getOcrJob,
+  getPrescriptionDocumentFile,
+  updateExtractedField,
+  confirmPrescription,
+  createGuide,
+}
 
 const fieldLabels: Record<string, string> = {
   PRESCRIBED_DATE: '처방일',
@@ -351,12 +380,17 @@ function formatFieldValue(fieldType: string, value: string) {
   return value
 }
 
-function PrescriptionReviewPage() {
-  const navigate = useNavigate()
+function PrescriptionReviewPage({
+  services = defaultPrescriptionReviewServices,
+  previewState,
+  navigation,
+}: PrescriptionReviewPageProps = {}) {
+  const routerNavigate = useNavigate()
+  const navigate = navigation ?? routerNavigate
   const location = useLocation()
   const [searchParams] = useSearchParams()
-  const documentId = searchParams.get('document_id')
-  const jobId = searchParams.get('job_id')
+  const documentId = previewState?.documentId ?? searchParams.get('document_id')
+  const jobId = previewState?.jobId ?? searchParams.get('job_id')
   const prefetchedOcrResponse = (
     location.state as { ocrResponse?: OcrJobResponse } | null
   )?.ocrResponse
@@ -393,7 +427,9 @@ function PrescriptionReviewPage() {
   const [guideCreationError, setGuideCreationError] = useState<string | null>(
     null,
   )
-  const [userConfirmed, setUserConfirmed] = useState(false)
+  const [userConfirmed, setUserConfirmed] = useState(
+    previewState?.userConfirmed ?? false,
+  )
 
   const applyReviewError = useCallback(
     (error: unknown, fallbackMessage: string) => {
@@ -570,7 +606,7 @@ function PrescriptionReviewPage() {
     setIsCreatingGuide(false)
     setGuideCreationError(null)
     guideCreationRequestRef.current = null
-    setUserConfirmed(false)
+    setUserConfirmed(previewState?.userConfirmed ?? false)
     setIsLoading(true)
 
     if (!documentId || !jobId) {
@@ -597,7 +633,7 @@ function PrescriptionReviewPage() {
           prefetchedOcrResponse.data.ocr_status === 'COMPLETED'
         const ocrResponse = canUsePrefetchedResult
           ? prefetchedOcrResponse
-          : await getOcrJob(resolvedJobId)
+          : await services.getOcrJob(resolvedJobId)
         if (!isLatestRequest()) return
 
         if (ocrResponse.data.document_id !== resolvedDocumentId) {
@@ -627,7 +663,7 @@ function PrescriptionReviewPage() {
           return
         }
 
-        const documentBlob = await getPrescriptionDocumentFile(resolvedDocumentId)
+        const documentBlob = await services.getPrescriptionDocumentFile(resolvedDocumentId)
         if (!isLatestRequest()) return
 
         const nextFields = ocrResponse.data.fields
@@ -678,7 +714,15 @@ function PrescriptionReviewPage() {
       guideCreationRequestRef.current = null
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [applyReviewError, documentId, jobId, prefetchedOcrResponse, reviewRequestKey])
+  }, [
+    applyReviewError,
+    documentId,
+    jobId,
+    prefetchedOcrResponse,
+    previewState?.userConfirmed,
+    reviewRequestKey,
+    services,
+  ])
 
   const startEditing = (sectionKey: ReviewSectionKey) => {
     setEditingSections((current) => new Set(current).add(sectionKey))
@@ -816,7 +860,7 @@ function PrescriptionReviewPage() {
       for (const field of fieldsToSave) {
         const confirmedValue =
           draftValues[field.field_id]?.trim() || null
-        const response = await updateExtractedField(
+        const response = await services.updateExtractedField(
           field.field_id,
           confirmedValue,
         )
@@ -873,7 +917,7 @@ function PrescriptionReviewPage() {
     try {
       setIsCreatingGuide(true)
       setGuideCreationError(null)
-      const response = await createGuide(prescriptionId)
+      const response = await services.createGuide(prescriptionId)
       if (
         latestReviewRequestKeyRef.current !== guideRequestKey ||
         guideCreationRequestRef.current !== requestToken
@@ -918,7 +962,7 @@ function PrescriptionReviewPage() {
     try {
       setIsConfirming(true)
       setMessage(null)
-      const response = await confirmPrescription(documentId)
+      const response = await services.confirmPrescription(documentId)
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       setPrescription(response)
       void handleCreateGuide(response.data.prescription_id)
