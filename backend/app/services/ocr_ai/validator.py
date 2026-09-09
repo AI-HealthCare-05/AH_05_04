@@ -13,22 +13,17 @@ from app.services.ocr_engine import (
     RawRecognizedField,
     RecognizedField,
 )
-from ocr_runtime.prescription_ocr_structurer import normalize_prescribed_date_text
+from app.services.prescription_ocr_structurer import (
+    normalize_prescribed_date_text,
+    prescribed_date_label_kind,
+)
+from ocr_runtime.review_fields import EMPTY_REVIEW_FIELD_TYPES
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 # LLM이 값을 찾지 못하거나 grounding 검증에 실패했을 때
 # 검수 화면에 사용자 입력용 빈칸을 제공하는 필드입니다.
 # 처방 확정 필수 여부와는 별개이며 TIMING은 선택값입니다.
-_EMPTY_REVIEW_FIELD_TYPES = frozenset(
-    {
-        "DOSE_VALUE",
-        "FREQUENCY_PER_DAY",
-        "DURATION_DAYS",
-        # 복용 조건 인식에 실패해도 필드를 없애지 않고
-        # 사용자가 원본을 보고 직접 입력할 빈칸을 제공합니다.
-        "TIMING",
-    }
-)
+_EMPTY_REVIEW_FIELD_TYPES = frozenset(EMPTY_REVIEW_FIELD_TYPES)
 
 # 복용 시점에서 항목을 나열할 때 사용되는 표기 차이입니다.
 # 예: "아침 저녁", "아침·저녁", "아침, 저녁"
@@ -628,6 +623,17 @@ def _validate_grounded_value(
 
     if not is_grounded:
         raise OcrProcessingError(f"LLM 구조화 결과의 {field_type} 값에 OCR 원문 근거가 없습니다.")
+
+    if field_type == "PRESCRIBED_DATE":
+        generated_date = _normalize_date(generated.value)
+        all_source_fields = list(source_map.values())
+
+        matching_date_fields = [field for field in source_fields if _normalize_date(field.raw_value) == generated_date]
+
+        if not any(
+            prescribed_date_label_kind(field, all_source_fields) == "preferred" for field in matching_date_fields
+        ):
+            raise OcrProcessingError("LLM 구조화 결과의 PRESCRIBED_DATE에 선호 처방일 라벨 근거가 없습니다.")
 
 
 def _minimum_confidence(

@@ -15,6 +15,7 @@ from app.core.provider_observability import (
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.guide_repository import GuideRepository
+from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.ocr_repository import OcrRepository
@@ -31,6 +32,7 @@ from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
 from app.services.guide_ai.prompt import PROMPT_VERSION as GUIDE_PROMPT_VERSION
 from app.services.guides import GuideService
+from app.services.idempotency import SnapshotCipher, SyncMutationIdempotencyService, get_default_snapshot_cipher
 from app.services.job_intake import JobIntakeService
 from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
@@ -244,6 +246,34 @@ def get_medication_identification_service(
     return MedicationIdentificationService(repository)
 
 
+def get_idempotency_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> IdempotencyRepository:
+    return IdempotencyRepository(session)
+
+
+def get_snapshot_cipher() -> SnapshotCipher:
+    # 알고리즘·키 관리 방식은 여전히 Privacy·Security 리뷰 대상입니다(#311). 이 provider가
+    # 하나로 모아둔 지점이라, 리뷰 결과가 나오면 이 함수만 바꾸면 됩니다.
+    return get_default_snapshot_cipher()
+
+
+def get_sync_mutation_idempotency_service(
+    repository: Annotated[
+        IdempotencyRepository,
+        Depends(get_idempotency_repository),
+    ],
+    cipher: Annotated[
+        SnapshotCipher,
+        Depends(get_snapshot_cipher),
+    ],
+) -> SyncMutationIdempotencyService:
+    return SyncMutationIdempotencyService(repository, cipher)
+
+
 def get_medication_candidate_service(
     repository: Annotated[
         MedicationCandidateRepository,
@@ -253,8 +283,12 @@ def get_medication_candidate_service(
         MedicationIdentificationService,
         Depends(get_medication_identification_service),
     ],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
 ) -> MedicationCandidateService:
-    return MedicationCandidateService(repository, identification_service)
+    return MedicationCandidateService(repository, identification_service, idempotency_service)
 
 
 def get_guide_repository(

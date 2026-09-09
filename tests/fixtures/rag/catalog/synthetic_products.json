@@ -1,0 +1,38 @@
+{
+  "schema_version": "synthetic-catalog-input-v1",
+  "records": [
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "source_record_key": "synthetic-record-001",
+      "code_system": "MFDS_ITEM_SEQ",
+      "canonical_code": "000000001",
+      "product_name": "  합성   제품 A정  ",
+      "strength_text": "010.00 mg",
+      "dosage_form": "  합성   정제  ",
+      "manufacturer_name": "  합성   제약  ",
+      "product_status": "ACTIVE"
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "source_record_key": "synthetic-record-002",
+      "code_system": "MFDS_ITEM_SEQ",
+      "canonical_code": "000000002",
+      "product_name": "합성 제품 A정",
+      "strength_text": null,
+      "dosage_form": "합성 캡슐",
+      "manufacturer_name": "합성 제조사",
+      "product_status": "ACTIVE"
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "source_record_key": "synthetic-record-003",
+      "code_system": "MFDS_ITEM_SEQ",
+      "canonical_code": "000000003",
+      "product_name": "합성 비활성 제품",
+      "strength_text": null,
+      "dosage_form": null,
+      "manufacturer_name": null,
+      "product_status": "INACTIVE"
+    }
+  ]
+}

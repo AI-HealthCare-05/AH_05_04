@@ -24,37 +24,62 @@ _FORBIDDEN_KEY_FRAGMENTS = (
     "fingerprint_value",
     "hmac_value",
 )
-_PHASE_0_BLOCKERS = (
-    "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
+_PHASE_B2_BLOCKERS = (
     "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
     "BLOCKED_BY_RAG_14_ADAPTER",
+    "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
 _DECISION_DOCS_PREFIX = "docs/"
-_PHASE_0_CHECK_CATALOG = {
-    "TASK_1_PROVENANCE_CONTRACTS": (
+_VALIDATION_CHECK_CATALOG = {
+    "PHASE_A_DEV_FIXTURE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
-        "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
-        "61 passed",
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
+        "26 passed",
     ),
-    "TASK_2_SCHEMA_SET_EXPORT": (
-        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest "
-        "ai_worker/tests/evaluation/test_schema_exports.py::"
-        "test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable "
-        "ai_worker/tests/evaluation/test_schema_exports.py::"
-        "test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary "
-        "ai_worker/tests/evaluation/test_schema_exports.py::"
-        "test_schema_set_1_3_study_split_axis_cardinality_is_portable -q",
-        "6 passed",
-    ),
-    "TASK_3_LOADER_BINDING": (
+    "PHASE_A_LOADER": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_authoring_identity_loader.py "
-        "ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
-        "165 passed, 6 skipped",
+        "ai_worker/tests/evaluation/test_loaders.py -q",
+        "132 passed",
+    ),
+    "PHASE_A_REPORT_PROJECTION": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
+        "51 passed",
+    ),
+    "PHASE_A_SCHEMA_EXPORT": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_schema_exports.py "
+        "ai_worker/tests/evaluation/test_external_schema_parity.py "
+        "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+        "94 passed, 7 skipped",
+    ),
+    "PHASE_B3_PROTECTED_RUNNER_FOUNDATION": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py "
+        "ai_worker/tests/evaluation/test_protected_retrieval.py -q",
+        "83 passed",
+    ),
+    "PHASE_B_DATASET_APPROVAL_PROVENANCE": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::"
+        "test_issue_273_graph_records_the_actual_dataset_custodian_approval_event -q",
+        "1 passed",
+    ),
+    "PHASE_B_GOLD_REVIEW_PROVENANCE": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::"
+        "test_issue_273_graph_records_only_the_actual_gold_review_event -q",
+        "1 passed",
+    ),
+    "PHASE_B_HOLDOUT_FREEZE_PREPARATION": (
+        "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
+        "ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q",
+        "27 passed",
     ),
 }
-_PHASE_0_CHECK_IDS = tuple(_PHASE_0_CHECK_CATALOG)
+_VALIDATION_CHECK_IDS = tuple(_VALIDATION_CHECK_CATALOG)
 
 
 def _tuple_from_wire(value: object) -> object:
@@ -74,16 +99,25 @@ class PlannedCounts(StrictContractModel):
 
 
 class CreatedCounts(StrictContractModel):
-    dev_questions: Literal[0]
+    dev_questions: Literal[60]
     holdout_questions: Literal[0]
-    gold_records: Literal[0]
+    gold_records: Literal[20]
+    corpus_records: Literal[100]
+    topics: Literal[5]
+    expression_types: Literal[6]
+    independent_groups: Literal[20]
 
 
 class ValidationCheck(StrictContractModel):
     check_id: Literal[
-        "TASK_1_PROVENANCE_CONTRACTS",
-        "TASK_2_SCHEMA_SET_EXPORT",
-        "TASK_3_LOADER_BINDING",
+        "PHASE_A_DEV_FIXTURE",
+        "PHASE_A_LOADER",
+        "PHASE_A_REPORT_PROJECTION",
+        "PHASE_A_SCHEMA_EXPORT",
+        "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
+        "PHASE_B_DATASET_APPROVAL_PROVENANCE",
+        "PHASE_B_GOLD_REVIEW_PROVENANCE",
+        "PHASE_B_HOLDOUT_FREEZE_PREPARATION",
     ]
     command: NonEmptyString
     exit_code: Literal[0]
@@ -91,8 +125,8 @@ class ValidationCheck(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_catalog_entry(self) -> ValidationCheck:
-        if (self.command, self.result) != _PHASE_0_CHECK_CATALOG[self.check_id]:
-            raise ValueError("validation check must match the Phase 0 evidence catalog")
+        if (self.command, self.result) != _VALIDATION_CHECK_CATALOG[self.check_id]:
+            raise ValueError("validation check must match the Issue 273 evidence catalog")
         return self
 
 
@@ -102,21 +136,58 @@ class CandidateSchemaSetRef(StrictContractModel):
     hash: Literal["ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"]
 
 
+class GoldReviewEvidenceRef(StrictContractModel):
+    id: Literal["github-pr-341-review-5137833200"]
+    version: Literal["1.0.0"]
+    hash: Literal["6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776"]
+
+
+class DatasetApprovalEvidenceRef(StrictContractModel):
+    id: Literal["github-pr-354-review-5139907268"]
+    version: Literal["1.0.0"]
+    hash: Literal["3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"]
+
+
+class HoldoutPreparationRef(StrictContractModel):
+    id: Literal["issue-273-holdout-freeze-preparation"]
+    version: Literal["1.0.0"]
+    raw_sha256: Literal["40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192"]
+    self_sha256: Literal["b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6"]
+
+
+class ProtectedRunnerFoundationRef(StrictContractModel):
+    id: Literal["issue-273-protected-runner-foundation"]
+    version: Literal["1.0.0"]
+    raw_sha256: Literal["85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9"]
+    self_sha256: Literal["657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969"]
+
+
 class Issue273ValidationStatus(StrictContractModel):
-    schema_version: Literal["1.0.0"]
+    schema_version: Literal["1.2.1"]
     issue: Literal["#273"]
-    phase: Literal["PHASE_0_SCHEMA_CANDIDATE"]
-    status_label: Literal["Candidate · Review Required"]
+    phase: Literal["PHASE_B3_PROTECTED_RUNNER_FOUNDATION"]
+    status_label: Literal["Phase B3 · Protected Runner Policy Foundation Implemented"]
     schema_set_status: Literal["REVIEW_REQUIRED"]
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
     created_counts: CreatedCounts
+    dataset_manifest_sha256: Literal["b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2"]
     schema_set_ref: CandidateSchemaSetRef
     schema_set_decision: Literal["docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md"]
     responsible_reviewer: Literal["@hazelnutflavoured"]
-    approval_transition: Literal["FUTURE_PULL_REQUEST_REVIEW_EVENT"]
-    dataset_status: Literal["NOT_CREATED"]
-    gold_review_status: Literal["NOT_STARTED"]
+    approval_transition: Literal["DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED"]
+    dataset_status: Literal["DRAFT"]
+    gold_review_status: Literal["APPROVED"]
+    gold_review_evidence_ref: GoldReviewEvidenceRef
+    dataset_approval_evidence_ref: DatasetApprovalEvidenceRef
+    holdout_preparation_ref: HoldoutPreparationRef
+    holdout_preparation_status: Literal["PREPARATION_READY"]
+    protected_runner_foundation_ref: ProtectedRunnerFoundationRef
+    protected_runner_issue_status: Literal["CREATED"]
+    policy_foundation_status: Literal["IMPLEMENTED"]
+    effective_enforcement_status: Literal["NOT_IMPLEMENTED"]
+    infrastructure_adapter_status: Literal["NOT_IMPLEMENTED"]
+    reconciliation_adapter_status: Literal["NOT_IMPLEMENTED"]
     holdout_freeze_status: Literal["NOT_STARTED"]
     adapter_status: Literal["NOT_IMPLEMENTED"]
     actual_run_ref: None
@@ -124,9 +195,9 @@ class Issue273ValidationStatus(StrictContractModel):
     blocking_codes: Annotated[
         tuple[
             Literal[
-                "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
                 "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
                 "BLOCKED_BY_RAG_14_ADAPTER",
+                "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
                 "WAITING_FOR_HOLDOUT_FREEZE",
             ],
             ...,
@@ -144,12 +215,12 @@ class Issue273ValidationStatus(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_ordered_collections(self) -> Issue273ValidationStatus:
-        if self.blocking_codes != _PHASE_0_BLOCKERS:
-            raise ValueError("Phase 0 blockers must be the exact UTF-16-sorted set")
+        if self.blocking_codes != _PHASE_B2_BLOCKERS:
+            raise ValueError("Issue 273 blockers must be the exact UTF-16-sorted set")
         check_ids = [check.check_id for check in self.checks]
         commands = [check.command for check in self.checks]
-        if tuple(check_ids) != _PHASE_0_CHECK_IDS:
-            raise ValueError("validation checks must contain the exact Phase 0 evidence catalog")
+        if tuple(check_ids) != _VALIDATION_CHECK_IDS:
+            raise ValueError("validation checks must contain the exact Issue 273 evidence catalog")
         if len(check_ids) != len(set(check_ids)) or len(commands) != len(set(commands)):
             raise ValueError("validation checks must be unique")
         if check_ids != sorted(check_ids, key=_utf16_key):
@@ -231,39 +302,80 @@ def render_report(raw_status: bytes) -> bytes:
     schema_set = status.schema_set_ref
     decision_href = _decision_href(status.schema_set_decision)
     lines = [
-        "# Issue #273 Phase 0 Validation Report",
+        "# Issue #273 Phase B3 Protected Runner Policy Foundation Validation Report",
         "",
-        "> Candidate · Review Required — not approved, not frozen, and not a Release decision.",
+        "> Phase B3 · Protected Runner Policy Foundation Implemented — executable policy tests exist, but effective",
+        "> infrastructure enforcement, authorization, Freeze, actual run, and Release remain incomplete.",
         "",
         f"- Phase: `{status.phase}`",
         f"- Schema Set Status: `{status.schema_set_status}`",
         f"- Dataset: `{status.dataset_ref}` (`{status.dataset_status}`)",
+        f"- Dataset Manifest SHA-256: `{status.dataset_manifest_sha256}`",
         f"- Schema Set: `{schema_set.id}@{schema_set.version}` `{schema_set.hash}`",
         (f"- Candidate Decision: [`{status.schema_set_decision}`]({decision_href})"),
         (
-            f"- Approval Transition: `{status.approval_transition}` by responsible reviewer "
-            f"`{status.responsible_reviewer}`; this future PR event has not occurred."
+            f"- Gold Review Evidence: `{status.gold_review_evidence_ref.id}@"
+            f"{status.gold_review_evidence_ref.version}` `{status.gold_review_evidence_ref.hash}`"
         ),
+        (
+            f"- Dataset Approval Evidence: `{status.dataset_approval_evidence_ref.id}@"
+            f"{status.dataset_approval_evidence_ref.version}` `{status.dataset_approval_evidence_ref.hash}`"
+        ),
+        (f"- HOLDOUT Preparation: `{status.holdout_preparation_ref.id}@{status.holdout_preparation_ref.version}`"),
+        f"- Preparation raw SHA-256: `{status.holdout_preparation_ref.raw_sha256}`",
+        f"- Preparation self SHA-256: `{status.holdout_preparation_ref.self_sha256}`",
+        (
+            f"- Protected Runner Foundation: `{status.protected_runner_foundation_ref.id}@"
+            f"{status.protected_runner_foundation_ref.version}`"
+        ),
+        f"- Foundation raw SHA-256: `{status.protected_runner_foundation_ref.raw_sha256}`",
+        f"- Foundation self SHA-256: `{status.protected_runner_foundation_ref.self_sha256}`",
+        f"- Phase B3 Product·Privacy·Safety·Evaluation Reviewer: `{status.responsible_reviewer}`",
+        "- Phase B3 Dataset Custodian·Backend·Security Reviewer: `@phina-io`",
+        f"- Prior DEV Approval Transition: `{status.approval_transition}`; the verified actor was `@phina-io` "
+        "(`DATASET_CUSTODIAN`). This is not HOLDOUT access authorization.",
         "- Release Eligible: `false`",
         "- Production remains closed.",
         "",
-        "## Planned Scope and Current Artifacts",
+        "## Authored DEV Scope",
         "",
         f"- Planned DEV questions: `{status.planned_counts.dev_questions}`; created: `{status.created_counts.dev_questions}`",
         (
             f"- Planned HOLDOUT questions: `{status.planned_counts.holdout_questions}`; "
             f"created: `{status.created_counts.holdout_questions}`"
         ),
-        f"- Planned topics: `{status.planned_counts.topics}`",
-        f"- Planned expression types: `{status.planned_counts.expression_types}`",
-        f"- Planned independent groups: `{status.planned_counts.independent_groups}`",
+        f"- Topics: planned `{status.planned_counts.topics}`; created `{status.created_counts.topics}`",
+        (
+            f"- Expression types: planned `{status.planned_counts.expression_types}`; "
+            f"created `{status.created_counts.expression_types}`"
+        ),
+        (
+            f"- Independent transform-origin groups: planned `{status.planned_counts.independent_groups}`; "
+            f"created `{status.created_counts.independent_groups}`"
+        ),
         f"- Gold records created: `{status.created_counts.gold_records}`; review: `{status.gold_review_status}`",
+        f"- Study-wide synthetic corpus records created: `{status.created_counts.corpus_records}`",
+        f"- HOLDOUT Preparation: `{status.holdout_preparation_status}`",
+        f"- Protected Runner Issue: `{status.protected_runner_issue_status}`",
+        f"- Policy Foundation: `{status.policy_foundation_status}`",
+        f"- Effective Enforcement: `{status.effective_enforcement_status}`",
+        f"- Infrastructure Adapter: `{status.infrastructure_adapter_status}`",
+        f"- Reconciliation Adapter: `{status.reconciliation_adapter_status}`",
         f"- HOLDOUT Freeze: `{status.holdout_freeze_status}`",
         f"- Actual Adapter: `{status.adapter_status}`",
         "- Actual Run Artifact: `NOT_CREATED`",
-        "- Metric summary: `NOT_CREATED`",
         "",
-        "No DEV or HOLDOUT question bodies, Gold artifacts, actual Run, or Metric values were created in Phase 0.",
+        (
+            "한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, "
+            "실제 환자 발화나 실제 제품 데이터가 아니다."
+        ),
+        "DEV Dataset approval is recorded as APPROVED for the 60 Cases, Evidence Mapping, and Dataset Manifest.",
+        "Dataset remains DRAFT and unfrozen; preparation does not create or Freeze HOLDOUT content.",
+        "The protected Runner policy foundation is implemented and verified with synthetic adapters only.",
+        "Access authorization is not recorded, and HOLDOUT authoring has not started.",
+        "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.",
+        "No baseline Metric exists, and no Metric fields are recorded in the machine status.",
+        "DEV cannot produce a Release PASS; Production remains closed.",
         "",
         "## Blocking Codes",
         "",
@@ -282,7 +394,13 @@ def render_report(raw_status: bytes) -> bytes:
         "## Boundaries",
         "",
         "- Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.",
-        "- No approval, Contract Freeze, Dataset Freeze, HOLDOUT Freeze, actual baseline completion, or Production readiness is claimed.",
+        "- No Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.",
+        "- HOLDOUT question content is absent from the repository and remains future protected work.",
+        "- Actual protected infrastructure, access authorization, actual Adapter, and HOLDOUT Freeze remain blockers.",
+        "- `@phina-io` must approve the database/schema, roles, protected credential environment, audit retention,",
+        "  backup, revoke, and incident-response design before an infrastructure adapter is implemented.",
+        "- HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.",
+        "- The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.",
         "",
         f"Status updated at `{status.updated_at}`. Canonical status SHA-256: `{status.status_sha256}`.",
     ]

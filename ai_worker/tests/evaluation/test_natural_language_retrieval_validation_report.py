@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import warnings
 from copy import deepcopy
 from pathlib import Path
@@ -8,9 +9,9 @@ from typing import Any
 import pytest
 
 from ai_worker.tasks.evaluation import natural_language_retrieval_validation as validation_module
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
+from ai_worker.tasks.evaluation.loaders import load_dataset, parse_json_object_bytes
 from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
     Issue273ValidationStatus,
     ValidationCheck,
@@ -23,15 +24,28 @@ from ai_worker.tasks.evaluation.natural_language_retrieval_validation import (
 REPOSITORY_ROOT = Path(__file__).parents[3]
 STATUS_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/status.json"
 REPORT_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/report.md"
+EVALS_ROOT = REPOSITORY_ROOT / "evals"
+DATASET_MANIFEST_PATH = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
+EVALS_README_PATH = EVALS_ROOT / "README.md"
+DATASET_APPROVAL_EVIDENCE_PATH = EVALS_ROOT / "provenance/rag-natural-language-retrieval-dev-v1.approval-evidence.json"
+HOLDOUT_PREPARATION_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/holdout-freeze-preparation.json"
+PROTECTED_RUNNER_FOUNDATION_PATH = REPOSITORY_ROOT / "docs/validation/rag/issue-273/protected-runner-foundation.json"
 SCHEMA_SET_HASH = "ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325"
+DATASET_MANIFEST_HASH = "b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2"
+GOLD_REVIEW_EVIDENCE_HASH = "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72855e43c235776"
+DATASET_APPROVAL_EVIDENCE_HASH = "3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"
+HOLDOUT_PREPARATION_HASH = "40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192"
+HOLDOUT_PREPARATION_SELF_HASH = "b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6"
+PROTECTED_RUNNER_FOUNDATION_HASH = "85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9"
+PROTECTED_RUNNER_FOUNDATION_SELF_HASH = "657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969"
 
 
 def _status_payload() -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.2.1",
         "issue": "#273",
-        "phase": "PHASE_0_SCHEMA_CANDIDATE",
-        "status_label": "Candidate · Review Required",
+        "phase": "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
+        "status_label": "Phase B3 · Protected Runner Policy Foundation Implemented",
         "schema_set_status": "REVIEW_REQUIRED",
         "dataset_ref": "rag-natural-language-retrieval-dev@1.0.0",
         "planned_counts": {
@@ -41,7 +55,16 @@ def _status_payload() -> dict[str, Any]:
             "expression_types": 6,
             "independent_groups": 20,
         },
-        "created_counts": {"dev_questions": 0, "holdout_questions": 0, "gold_records": 0},
+        "created_counts": {
+            "dev_questions": 60,
+            "holdout_questions": 0,
+            "gold_records": 20,
+            "corpus_records": 100,
+            "topics": 5,
+            "expression_types": 6,
+            "independent_groups": 20,
+        },
+        "dataset_manifest_sha256": DATASET_MANIFEST_HASH,
         "schema_set_ref": {
             "id": "rag-eval.schema-set",
             "version": "1.3.0",
@@ -49,42 +72,101 @@ def _status_payload() -> dict[str, Any]:
         },
         "schema_set_decision": "docs/governance/decisions/2026-09-05-rag-evaluation-schema-set-1-3-candidate.md",
         "responsible_reviewer": "@hazelnutflavoured",
-        "approval_transition": "FUTURE_PULL_REQUEST_REVIEW_EVENT",
-        "dataset_status": "NOT_CREATED",
-        "gold_review_status": "NOT_STARTED",
+        "approval_transition": "DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED",
+        "dataset_status": "DRAFT",
+        "gold_review_status": "APPROVED",
+        "gold_review_evidence_ref": {
+            "id": "github-pr-341-review-5137833200",
+            "version": "1.0.0",
+            "hash": GOLD_REVIEW_EVIDENCE_HASH,
+        },
+        "dataset_approval_evidence_ref": {
+            "id": "github-pr-354-review-5139907268",
+            "version": "1.0.0",
+            "hash": DATASET_APPROVAL_EVIDENCE_HASH,
+        },
+        "holdout_preparation_ref": {
+            "id": "issue-273-holdout-freeze-preparation",
+            "version": "1.0.0",
+            "raw_sha256": HOLDOUT_PREPARATION_HASH,
+            "self_sha256": HOLDOUT_PREPARATION_SELF_HASH,
+        },
+        "holdout_preparation_status": "PREPARATION_READY",
+        "protected_runner_foundation_ref": {
+            "id": "issue-273-protected-runner-foundation",
+            "version": "1.0.0",
+            "raw_sha256": PROTECTED_RUNNER_FOUNDATION_HASH,
+            "self_sha256": PROTECTED_RUNNER_FOUNDATION_SELF_HASH,
+        },
+        "protected_runner_issue_status": "CREATED",
+        "policy_foundation_status": "IMPLEMENTED",
+        "effective_enforcement_status": "NOT_IMPLEMENTED",
+        "infrastructure_adapter_status": "NOT_IMPLEMENTED",
+        "reconciliation_adapter_status": "NOT_IMPLEMENTED",
         "holdout_freeze_status": "NOT_STARTED",
         "adapter_status": "NOT_IMPLEMENTED",
         "actual_run_ref": None,
         "release_eligible": False,
         "blocking_codes": [
-            "BLOCKED_BY_EVAL_SCHEMA_EXTENSION",
             "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
             "BLOCKED_BY_RAG_14_ADAPTER",
+            "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
             "WAITING_FOR_HOLDOUT_FREEZE",
         ],
         "checks": [
             {
-                "check_id": "TASK_1_PROVENANCE_CONTRACTS",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+                "check_id": "PHASE_A_DEV_FIXTURE",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q",
                 "exit_code": 0,
-                "result": "61 passed",
+                "result": "26 passed",
             },
             {
-                "check_id": "TASK_2_SCHEMA_SET_EXPORT",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run --with jsonschema pytest ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_boundary ai_worker/tests/evaluation/test_schema_exports.py::test_schema_set_1_3_study_split_axis_cardinality_is_portable -q",
+                "check_id": "PHASE_A_LOADER",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q",
                 "exit_code": 0,
-                "result": "6 passed",
+                "result": "132 passed",
             },
             {
-                "check_id": "TASK_3_LOADER_BINDING",
-                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py ai_worker/tests/evaluation/test_schema_exports.py -q",
+                "check_id": "PHASE_A_REPORT_PROJECTION",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
                 "exit_code": 0,
-                "result": "165 passed, 6 skipped",
+                "result": "51 passed",
+            },
+            {
+                "check_id": "PHASE_A_SCHEMA_EXPORT",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
+                "exit_code": 0,
+                "result": "94 passed, 7 skipped",
+            },
+            {
+                "check_id": "PHASE_B_DATASET_APPROVAL_PROVENANCE",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_the_actual_dataset_custodian_approval_event -q",
+                "exit_code": 0,
+                "result": "1 passed",
+            },
+            {
+                "check_id": "PHASE_B_GOLD_REVIEW_PROVENANCE",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_only_the_actual_gold_review_event -q",
+                "exit_code": 0,
+                "result": "1 passed",
+            },
+            {
+                "check_id": "PHASE_B_HOLDOUT_FREEZE_PREPARATION",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q",
+                "exit_code": 0,
+                "result": "27 passed",
+            },
+            {
+                "check_id": "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
+                "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q",
+                "exit_code": 0,
+                "result": "83 passed",
             },
         ],
-        "updated_at": "2026-09-07T01:23:38.000000Z",
+        "updated_at": "2026-09-09T00:00:00.000000Z",
         "status_sha256": "0" * 64,
     }
+    payload["checks"].sort(key=lambda item: item["check_id"].encode("utf-16-be"))
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
     return payload
 
@@ -93,11 +175,103 @@ def _status_bytes(payload: dict[str, Any]) -> bytes:
     return canonical_json_bytes(payload)
 
 
-def test_phase_0_status_accepts_only_the_candidate_state() -> None:
+def _assert_status_matches_committed_dataset(status: Issue273ValidationStatus) -> None:
+    manifest_payload: dict[str, Any] = parse_json_object_bytes(DATASET_MANIFEST_PATH.read_bytes())
+    declared_manifest_hash = manifest_payload["manifest_sha256"]
+    recomputed_manifest_hash = canonical_sha256(
+        manifest_payload,
+        excluded_top_level_keys=frozenset({"manifest_sha256"}),
+    )
+    assert recomputed_manifest_hash == declared_manifest_hash == status.dataset_manifest_sha256
+
+    loaded = load_dataset(DATASET_MANIFEST_PATH, evals_root=EVALS_ROOT)
+    loaded_manifest = loaded.manifest.model_dump(mode="json")
+    assert status.dataset_ref == f"{loaded_manifest['dataset_code']}@{loaded_manifest['dataset_version']}"
+    assert status.dataset_status == loaded_manifest["status"]
+    approval_evidence_hash = sha256_hex(DATASET_APPROVAL_EVIDENCE_PATH.read_bytes())
+    assert approval_evidence_hash == status.dataset_approval_evidence_ref.hash
+    assert (
+        status.dataset_approval_evidence_ref.model_dump(mode="json")
+        in loaded_manifest["review_provenance"]["evidence_review_refs"]
+    )
+    assert sha256_hex(HOLDOUT_PREPARATION_PATH.read_bytes()) == status.holdout_preparation_ref.raw_sha256
+
+    cases = [case.model_dump(mode="json") for case in loaded.cases]
+    required_gold_ids = {evidence_id for case in cases for evidence_id in case["expected"]["required_evidence_refs"]}
+    mapping = loaded.evidence_mapping.model_dump(mode="json")
+    mapping_by_id = {entry["evidence_ref_id"]: entry for entry in mapping["entries"]}
+    corpus_paths = {mapping_by_id[evidence_id]["fixture_record_ref"]["path"] for evidence_id in required_gold_ids}
+    assert len(corpus_paths) == 1
+    corpus = parse_json_object_bytes((EVALS_ROOT / corpus_paths.pop()).read_bytes())
+    records = corpus["records"]
+    assert isinstance(records, list)
+    record_objects: list[dict[str, JsonValue]] = []
+    for record in records:
+        assert isinstance(record, dict)
+        record_objects.append(record)
+
+    # Gold/negative labels are deliberately absent from the retrieval index, so the Gold count comes
+    # from the evaluation sidecar the index binds by hash.
+    label_ref = corpus["evaluation_label_ref"]
+    assert isinstance(label_ref, dict)
+    label_path = label_ref["path"]
+    assert isinstance(label_path, str)
+    label_bytes = (EVALS_ROOT / label_path).read_bytes()
+    assert sha256_hex(label_bytes) == label_ref["sha256"]
+    labels = parse_json_object_bytes(label_bytes)["labels"]
+    assert isinstance(labels, list)
+    gold_count = sum(1 for item in labels if isinstance(item, dict) and item.get("record_kind") == "GOLD")
+
+    topic_ids = {slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("TOPIC_")}
+    expression_ids = {
+        slice_id for case in cases for slice_id in case["slice_ids"] if slice_id.startswith("EXPRESSION_")
+    }
+    transform_origins = {case["leakage_group_ids"]["transform_origin"] for case in cases}
+    partition_counts = loaded_manifest["partition_counts"]
+    assert status.created_counts.model_dump(mode="json") == {
+        "dev_questions": partition_counts["DEV"],
+        "holdout_questions": partition_counts["HOLDOUT"],
+        "gold_records": gold_count,
+        "corpus_records": len(record_objects),
+        "topics": len(topic_ids),
+        "expression_types": len(expression_ids),
+        "independent_groups": len(transform_origins),
+    }
+
+
+def test_phase_b3_status_accepts_only_the_policy_foundation_without_effective_enforcement() -> None:
     status = parse_status_bytes(_status_bytes(_status_payload()))
 
-    assert status.phase == "PHASE_0_SCHEMA_CANDIDATE"
+    assert status.phase == "PHASE_B3_PROTECTED_RUNNER_FOUNDATION"
+    assert status.dataset_status == "DRAFT"
+    assert status.dataset_manifest_sha256 == DATASET_MANIFEST_HASH
+    assert status.created_counts.model_dump() == {
+        "dev_questions": 60,
+        "holdout_questions": 0,
+        "gold_records": 20,
+        "corpus_records": 100,
+        "topics": 5,
+        "expression_types": 6,
+        "independent_groups": 20,
+    }
     assert status.schema_set_ref.hash == SCHEMA_SET_HASH
+    assert status.gold_review_status == "APPROVED"
+    assert status.gold_review_evidence_ref.hash == GOLD_REVIEW_EVIDENCE_HASH
+    assert status.dataset_approval_evidence_ref.hash == DATASET_APPROVAL_EVIDENCE_HASH
+    assert status.responsible_reviewer == "@hazelnutflavoured"
+    assert status.approval_transition == "DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED"
+    assert status.holdout_preparation_ref.raw_sha256 == HOLDOUT_PREPARATION_HASH
+    assert status.holdout_preparation_ref.self_sha256 == HOLDOUT_PREPARATION_SELF_HASH
+    assert status.holdout_preparation_status == "PREPARATION_READY"
+    assert status.protected_runner_foundation_ref.raw_sha256 == PROTECTED_RUNNER_FOUNDATION_HASH
+    assert status.protected_runner_foundation_ref.self_sha256 == PROTECTED_RUNNER_FOUNDATION_SELF_HASH
+    assert status.protected_runner_issue_status == "CREATED"
+    assert status.policy_foundation_status == "IMPLEMENTED"
+    assert status.effective_enforcement_status == "NOT_IMPLEMENTED"
+    assert status.infrastructure_adapter_status == "NOT_IMPLEMENTED"
+    assert status.reconciliation_adapter_status == "NOT_IMPLEMENTED"
+    assert status.holdout_freeze_status == "NOT_STARTED"
+    assert status.adapter_status == "NOT_IMPLEMENTED"
     assert status.actual_run_ref is None
     assert status.release_eligible is False
 
@@ -131,7 +305,7 @@ def test_phase_0_status_accepts_only_the_candidate_state() -> None:
         (lambda payload: payload.update({"metric_summary": []}), EvaluationErrorCode.SCHEMA_INVALID),
     ],
 )
-def test_phase_0_status_rejects_invalid_state(
+def test_phase_a_status_rejects_invalid_state(
     mutation: Any,
     expected_code: EvaluationErrorCode,
 ) -> None:
@@ -154,7 +328,7 @@ def test_phase_0_status_rejects_invalid_state(
         lambda payload: payload["checks"].pop(),
         lambda payload: payload["checks"].append(
             {
-                "check_id": "TASK_4_UNDECLARED",
+                "check_id": "PHASE_A_UNDECLARED",
                 "command": "uv run pytest undeclared.py -q",
                 "exit_code": 0,
                 "result": "1 passed",
@@ -163,7 +337,7 @@ def test_phase_0_status_rejects_invalid_state(
         lambda payload: payload["checks"].reverse(),
     ],
 )
-def test_phase_0_status_rejects_rehashed_check_catalog_mutation(mutation: Any) -> None:
+def test_phase_a_status_rejects_rehashed_check_catalog_mutation(mutation: Any) -> None:
     payload = _status_payload()
     mutation(payload)
     payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
@@ -376,22 +550,81 @@ def test_report_rejects_untrusted_objects_without_serialization_warning_or_senti
         assert sentinel not in str(raised.value)
 
 
+def test_evals_readme_quotes_the_current_dataset_manifest_hash() -> None:
+    """`evals/README.md` tells consumers how to verify this Dataset's integrity.
+
+    A regeneration changes the manifest self-hash, so a stale README value makes a correct
+    artifact look tampered with. Bind the documented value to the committed manifest.
+    """
+    manifest_payload: dict[str, Any] = parse_json_object_bytes(DATASET_MANIFEST_PATH.read_bytes())
+    declared_manifest_hash = manifest_payload["manifest_sha256"]
+    assert isinstance(declared_manifest_hash, str)
+    readme = EVALS_README_PATH.read_text(encoding="utf-8")
+    section = readme.split("### Issue #273 자연어 Retrieval DEV authoring", maxsplit=1)
+    assert len(section) == 2, "evals/README.md must keep the Issue #273 section heading"
+    issue_273_section = section[1].split("\n### ", maxsplit=1)[0]
+
+    quoted_hashes = set(re.findall(r"\b[0-9a-f]{64}\b", issue_273_section))
+    assert quoted_hashes == {declared_manifest_hash}, quoted_hashes
+
+
+def test_evals_readme_describes_the_b3_foundation_without_claiming_enforcement() -> None:
+    readme = EVALS_README_PATH.read_text(encoding="utf-8")
+    issue_273_section = readme.split("### Issue #273 자연어 Retrieval DEV authoring", maxsplit=1)[1].split(
+        "\n### ", maxsplit=1
+    )[0]
+
+    assert "아직 사람의 Gold 검토를 받지 않았" not in issue_273_section
+    assert "모든 review provenance는 `DRAFT` 또는 `NOT_STARTED`" not in issue_273_section
+    assert "HOLDOUT Freeze 준비는 `PREPARATION_READY`" in issue_273_section
+    assert "접근 승인이나 Freeze 완료를 뜻하지 않는다" in issue_273_section
+    assert "Issue #368은 `CREATED`" in issue_273_section
+    assert "policy foundation은 `IMPLEMENTED`" in issue_273_section
+    assert "독립 승인 reconciliation adapter와 실제 인프라 enforcement·adapter는" in issue_273_section
+    assert "`NOT_IMPLEMENTED`" in issue_273_section
+    assert "해당 Issue 상태는 `NOT_CREATED`" not in issue_273_section
+
+
 def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
     raw_status = STATUS_PATH.read_bytes()
-    parse_status_bytes(raw_status)
+    status = parse_status_bytes(raw_status)
+
+    _assert_status_matches_committed_dataset(status)
+    stale_status = status.model_copy(update={"dataset_manifest_sha256": "0" * 64})
+    with pytest.raises(AssertionError):
+        _assert_status_matches_committed_dataset(stale_status)
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
-    assert b"Candidate \xc2\xb7 Review Required" in REPORT_PATH.read_bytes()
+    assert b"Phase B3 \xc2\xb7 Protected Runner Policy Foundation Implemented" in REPORT_PATH.read_bytes()
+    assert "한국어 자연어 합성 DEV 질문" in REPORT_PATH.read_text()
+    assert b"DEV Dataset approval is recorded as APPROVED" in REPORT_PATH.read_bytes()
+    assert b"Dataset remains DRAFT and unfrozen" in REPORT_PATH.read_bytes()
+    assert b"Actual retrieval was not run" in REPORT_PATH.read_bytes()
+    assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
+    assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
-    assert b"61 passed" in raw_status and b"165 passed, 6 skipped" in raw_status
-    assert b"61 passed" in REPORT_PATH.read_bytes() and b"165 passed, 6 skipped" in REPORT_PATH.read_bytes()
-    assert b"47 passed" not in raw_status and b"151 passed" not in raw_status
-    assert b"47 passed" not in REPORT_PATH.read_bytes() and b"151 passed" not in REPORT_PATH.read_bytes()
-    assert b"6 passed" in raw_status and b"6 passed" in REPORT_PATH.read_bytes()
-    assert b"2026-09-07T01:54:36.000000Z" in raw_status
-    assert b"2026-09-07T01:54:36.000000Z" in REPORT_PATH.read_bytes()
-    assert b"2026-09-05T15:28:41.000000Z" not in raw_status
-    assert b"2026-09-05T15:28:41.000000Z" not in REPORT_PATH.read_bytes()
-    assert b"dbfafe99a090b82559720707412a2b830231fd6dcc84ebd1cd834ca56675a5ea" not in raw_status
-    assert b"dbfafe99a090b82559720707412a2b830231fd6dcc84ebd1cd834ca56675a5ea" not in REPORT_PATH.read_bytes()
+    assert b"Access authorization is not recorded" in REPORT_PATH.read_bytes()
+    assert b"HOLDOUT authoring has not started" in REPORT_PATH.read_bytes()
+    assert HOLDOUT_PREPARATION_HASH.encode() in raw_status
+    assert HOLDOUT_PREPARATION_HASH.encode() in REPORT_PATH.read_bytes()
+    assert HOLDOUT_PREPARATION_SELF_HASH.encode() in raw_status
+    assert HOLDOUT_PREPARATION_SELF_HASH.encode() in REPORT_PATH.read_bytes()
+    assert PROTECTED_RUNNER_FOUNDATION_HASH.encode() in raw_status
+    assert PROTECTED_RUNNER_FOUNDATION_HASH.encode() in REPORT_PATH.read_bytes()
+    assert PROTECTED_RUNNER_FOUNDATION_SELF_HASH.encode() in raw_status
+    assert PROTECTED_RUNNER_FOUNDATION_SELF_HASH.encode() in REPORT_PATH.read_bytes()
+    assert sha256_hex(PROTECTED_RUNNER_FOUNDATION_PATH.read_bytes()) == PROTECTED_RUNNER_FOUNDATION_HASH
+    for result in (
+        b"1 passed",
+        b"26 passed",
+        b"27 passed",
+        b"83 passed",
+        b"51 passed",
+        b"132 passed",
+        b"94 passed, 7 skipped",
+    ):
+        assert result in raw_status
+        assert result in REPORT_PATH.read_bytes()
+    assert DATASET_MANIFEST_HASH.encode() in raw_status
+    assert DATASET_MANIFEST_HASH.encode() in REPORT_PATH.read_bytes()

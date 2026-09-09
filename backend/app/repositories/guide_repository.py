@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.guides import Guide, GuideGenerationStatus
-from app.models.prescriptions import Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -17,7 +17,10 @@ class GuideRepository:
     async def get_prescription_owned(self, *, prescription_id: UUID, user_id: UUID) -> Prescription | None:
         result = await self.session.execute(
             select(Prescription)
-            .options(selectinload(Prescription.medications), selectinload(Prescription.document))
+            .options(
+                selectinload(Prescription.document),
+                selectinload(Prescription.active_version).selectinload(PrescriptionVersion.medications),
+            )
             .where(
                 Prescription.id == prescription_id,
                 owned_by_self(Prescription.profile_id, user_id),
@@ -28,6 +31,7 @@ class GuideRepository:
     async def create(self, *, prescription: Prescription) -> Guide:
         guide = Guide(
             prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
             profile_id=prescription.profile_id,
             generation_status=GuideGenerationStatus.GENERATING,
         )
@@ -62,14 +66,28 @@ class GuideRepository:
         생성되는 경우(현재 실사용 경로에서는 발생하지 않음)에만 이론상 모호할 수 있습니다."""
         result = await self.session.execute(
             select(Guide)
+            .join(Prescription, Prescription.id == Guide.prescription_id)
+            .options(selectinload(Guide.prescription).selectinload(Prescription.document))
             .where(
                 Guide.prescription_id == prescription_id,
+                Guide.prescription_version_id == Prescription.active_version_id,
                 owned_by_self(Guide.profile_id, user_id),
             )
             .order_by(Guide.requested_at.desc(), Guide.id.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def lock_if_current_version(self, *, guide: Guide) -> bool:
+        current = await self.session.scalar(
+            select(Prescription.id)
+            .where(
+                Prescription.id == guide.prescription_id,
+                Prescription.active_version_id == guide.prescription_version_id,
+            )
+            .with_for_update(of=Prescription)
+        )
+        return current is not None
 
     async def mark_completed(
         self,

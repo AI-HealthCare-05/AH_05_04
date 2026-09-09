@@ -2,6 +2,11 @@
 
 > 상태: Current runtime. PR #96에서 feature flag 기반 비-RAG LLM 구조화 경로가 구현됐고 기본값 `false`는 미구현이 아니라 기본 비활성화를 뜻한다. Approved v4에서 추가한 최소 전송 allowlist, raw/rule/draft/corrected/confirmed provenance, Worker 이관과 실패 복구는 [OCR 비-RAG LLM 구조화 목표 계약](../targets/post-mvp-1/ocr-llm-structuring-v1.md)의 미구현 범위다.
 
+> #144 변경 상태: 작업 브랜치 구현·로컬 검증 완료, 담당 리뷰·CI·병합 대기.
+> 아래 빈 검수 필드 변경은 이 PR의 코드와 일치하는 계약 개정안이며,
+> 병합 전 develop의 실행 동작이나 승인 완료를 선언하지 않는다.
+> [Decision](../../governance/decisions/2026-09-08-ocr-empty-review-fields-144.md) · [검증 증빙](../../testing/optional-review-fields-144.md)
+
 ## 목적
 
 OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안내문
@@ -15,7 +20,7 @@ OCR 원문을 약품별 필드로 구조화하면서 정상 약품 누락과 안
 - `OCR_STRUCTURE_LLM_ENABLED`의 기본값은 `false`입니다.
 - 비활성화 상태에서는 CLOVA OCR token을 기존 규칙 기반 구조화기로 처리하며 OpenAI에 전달하지 않습니다.
 - 활성화 상태에서만 CLOVA OCR 전체 token을 OpenAI Responses API Structured Outputs에 전달합니다.
-- LLM 구조화 결과는 `ocr-structure-prompt-v2` 스키마를 따르며 OpenAI 요청은 `store=False`로 실행합니다.
+- LLM 구조화 결과는 `ocr-structure-prompt-v3` 스키마를 따르며 OpenAI 요청은 `store=False`로 실행합니다.
 - 규칙 기반 경로에서는 OCR 작업의 `model_version`과 `prompt_version`을 `null`로 기록합니다.
 - LLM 경로에서는 실제 모델 ID와 프롬프트 버전을 기록합니다.
 - Production Compose도 해당 설정의 기본값을 `false`로 유지합니다.
@@ -96,9 +101,12 @@ upstream read timeout도 같은 배포 변경으로 갱신합니다.
 ### Reverse proxy
 
 Backend가 비스트리밍 응답을 사용하는 동안 reverse proxy의 upstream read timeout은
-`D`보다 커야 합니다. `infra/nginx`의 `default.conf`·`prod_http.conf`·`prod_https.conf`에는
-현재 `proxy_read_timeout`이 설정되어 있지 않아 NGINX 기본값 60초가 적용됩니다.
-`D=60`이면 여유가 없으므로 세 파일 모두에 명시적으로 설정하는 것이 배포 선행 조건입니다.
+`D`보다 커야 합니다. Production 배포가 사용하는 `infra/nginx/prod_http.conf`,
+`prod_https.conf`, `prod_cloudfront.conf`는 `proxy_read_timeout=75초`를 명시해 기본
+`D=60초`보다 크게 둡니다. CloudFront를 사용하는 경우 origin response timeout도 75초로
+설정합니다. `D`를 75초 이상으로 변경할 때는 적용 중인 Nginx 설정과 CloudFront timeout을
+같은 변경에서 더 크게 갱신해야 합니다. `infra/nginx/default.conf`는 Production 배포
+template이 아니며 이 timeout 보장을 제공하지 않습니다.
 
 ## 제품 함량과 복용량 구분
 
@@ -126,8 +134,7 @@ Backend가 비스트리밍 응답을 사용하는 동안 reverse proxy의 upstre
 - 약물명 grounding 실패는 약제 행 식별 안전을 위해 OCR 구조화 전체 실패로 처리합니다.
 - grounding 실패는 필드 종류에 따라 다음과 같이 처리합니다.
   - `PRESCRIBED_DATE`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`: 사용자 입력용 빈 검수 필드
-  - `TIMING`: 선택값이지만 검수 편의를 위한 빈 검수 필드
-  - `MEDICATION_STRENGTH`, `DOSE_UNIT`: 필드 생략
+  - `MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`: 선택값이지만 검수 편의를 위한 빈 검수 필드
 - 빈 검수 필드의 `raw_value`, `normalized_value`, `normalization_version`, `confidence_score`는 모두 `null`입니다.
 
 현재 validator는 `source_ids`의 존재 여부와 OCR 원문 근거를 필드별 기준으로 검증합니다.
@@ -140,6 +147,22 @@ Backend가 비스트리밍 응답을 사용하는 동안 reverse proxy의 upstre
 - `MEDICATION_NAME`은 OCR 약품명 전체와 일치해야 합니다.
 - 하나의 OCR token에 약품명과 제품 함량이 함께 있는 경우에는 약품명 뒤에 유효한 제품 함량만 남는 것을 허용합니다.
 - 공백으로 분리된 OCR token 결합과 필드별로 허용된 표기 차이만 인정합니다.
+
+### 처방일 라벨 판별
+
+- 규칙 기반 경로와 LLM 경로는 동일한 처방일 라벨 판별 함수를 사용합니다.
+- 날짜와 같은 OCR 박스에 포함된 라벨 또는 제한된 좌표 범위의 왼쪽·위쪽 라벨만 연결합니다.
+- `교부일자`를 우선하며, `발행일자`와 `처방일자`도 처방일 근거로 인정합니다.
+- `생년월일`, `생일`, `주민등록번호`, `주민번호`에 연결된 날짜는 처방일로 저장하지 않습니다.
+- LLM 경로는 라벨이 없거나 선호·제외 라벨이 충돌하면 날짜를 확정하지 않고 빈 `PRESCRIBED_DATE` 검수 필드를 생성합니다.
+- 규칙 기반 경로는 #353의 기존 계약대로 선호 라벨이 없으면 제외되지 않은 첫 유효 후보를 유지합니다. 두 경로는 라벨 종류와 좌표 연결 기준을 공유하며, LLM 경로에는 추가로 fail-closed 정책을 적용합니다.
+- LLM이 반환한 날짜가 OCR 원문에 존재하더라도 선호 처방일 라벨 근거가 없으면 저장하지 않습니다.
+- 날짜 표기 정규화는 두 경로 모두 `date-rule-v1`을 사용합니다.
+- 정확 라벨이 일치하지 않으면 NFKC 정규화된 한글 라벨 token 전체를 승인 목록과 비교합니다.
+- 세 글자 이상인 승인 라벨은 한 글자 삽입·삭제·치환까지만 허용합니다.
+- `생일`처럼 두 글자인 라벨은 유사 매칭하지 않고 정확 일치만 허용합니다.
+- 유사 매칭 결과가 선호·제외 라벨 양쪽과 충돌하면 의미를 추정하지 않고 빈 검수 필드로 처리합니다.
+- 이 규칙은 승인된 처방일·생년월일 라벨 목록에만 적용하며 일반 OCR 문자열 교정이나 라벨 사전 확장이 아닙니다.
 
 ### 약제 행 인접성 검증
 
@@ -175,13 +198,26 @@ Template OCR 적용과 기존 `RecognizedField` 계약으로의 변환은
 ## 부분 인식
 
 - 약품명과 일부 필드만 인식된 경우에도 약품 행을 삭제하지 않는다.
-- 규칙 기반 경로에서는 인식되지 않은 필드를 생성하지 않습니다.
-- LLM 경로에서는 검수용 빈 필드 대상으로 정한 `PRESCRIBED_DATE`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`, `TIMING`만 빈 필드로 생성할 수 있습니다.
-- 값이 없는 `MEDICATION_STRENGTH`와 `DOSE_UNIT`은 생성하지 않습니다.
+- 두 경로 모두 식별한 약품 행의 `MEDICATION_STRENGTH`, `DOSE_VALUE`, `DOSE_UNIT`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`, `TIMING` 중 누락된 필드를 빈 검수 필드로 생성합니다.
+- LLM의 값 누락과 grounding 실패에 동일한 기준을 적용합니다. 규칙 경로의 dose 인식 실패 시 용량 값과 단위를 함께 보충합니다.
+- `MEDICATION_NAME`은 빈 필드로 만들지 않습니다. 기존 약품 행 탐지·약품명 검증을 통과한 행에만 보충하고, 안내문·헤더·미확인 token으로 새 약품 행을 만들지 않습니다.
+- 기존 인식값과 정규화 metadata는 유지하고 같은 `(medication_index, field_type)`을 중복 생성하지 않습니다. 보충 대상은 위 나열 순서로 순회하며 기존 인식 필드의 상대 순서를 유지합니다.
+- `PRESCRIBED_DATE`는 index 0의 별도 정책입니다. #353 리뷰 반영 개정안에서는 규칙 경로도 날짜가 없거나 제외·상충으로 선택하지 못하면 metadata 네 개가 null인 빈 검수 필드 하나를 생성합니다. 기존 저장·조회·수정 API를 사용하며 날짜 필수 검증은 유지합니다. LLM의 기존 빈 처방일 처리는 변경하지 않습니다.
+- 규칙 경로의 분리 라벨 연결 범위에 처방일 계열과 생년월일 계열이 함께 있으면 거리만으로 날짜 의미를 정하지 않고 수동 검수합니다. 같은 박스의 명시적 라벨은 우선 적용합니다. 이 개정안은 #353 코드·회귀와 함께 담당 리뷰를 받으며 병합 전 배포 완료를 의미하지 않습니다.
+- 이 절이 빈 검수 필드 생성의 정본입니다. 저장 계층(`ai_worker/adapters/sqlalchemy_ocr_result_store.py`)은 회귀 방지를 위해 누락된 `PRESCRIBED_DATE`와 이미 감지된 약품 행의 `DOSE_VALUE`·`FREQUENCY_PER_DAY`·`DURATION_DAYS`를 방어적으로 보충합니다(#294). 구조화 계층이 만든 빈 처방일도 기존 행으로 취급하여 중복 생성하거나 덮어쓰지 않습니다. `MEDICATION_NAME`을 빈 필드로 만들지 않는 규칙은 저장 계층에도 동일하게 적용됩니다. 상세: [Decision: 저장 계층 필드 방어 범위](../../governance/decisions/2026-09-08-ocr-storage-layer-field-defense-294.md)
 - OCR 원문이 있는 필드는 `raw_value`로 보존합니다.
 - `I정`, `I회`처럼 숫자 오인식이 의심되더라도 자동으로 `1`로 확정하지 않는다.
 - 모든 추출 필드는 기본적으로 `UNCONFIRMED` 상태다.
 - 최종 처방 확정에는 사용자가 확인한 `confirmed_value`만 사용한다.
+
+## 빈 검수 필드 저장·입력
+
+- 빈 필드의 네 metadata는 모두 null이며 초기 `confirmed_value`·`confirmed_at`도 null입니다.
+- 기존 결과 저장 transaction으로 빈 행을 저장하고 조회 응답의 `field_id`를 기존 `PATCH /api/v1/extracted-fields/{field_id}`에 사용합니다. 원문·정규화값을 사용자 입력으로 덮어쓰지 않습니다.
+- 함량·단위·TIMING만 기존대로 null 확정을 허용합니다. 용량 값·횟수·기간의 빈 필드 생성은 null 확정 허용을 의미하지 않습니다.
+- 소유권·Job 상태·확정 처방 수정 차단과 `uq_extracted_field_identity`·confirmation CHECK를 유지합니다.
+- 신규 route·DTO·DB 컬럼·migration은 없습니다. 새로 구조화하는 결과에 적용하며 기존 결과 자동 backfill·강제 재실행·이미 확정한 처방 변경은 하지 않습니다.
+- DOC-03은 기존 field_id 기반 편집을 사용합니다. 실제 화면 소비 확인은 담당 리뷰에 포함합니다.
 
 ## 미확인 후보
 

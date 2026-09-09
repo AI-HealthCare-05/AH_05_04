@@ -1,15 +1,17 @@
 import re
+import unicodedata
 from datetime import date
 from statistics import median
 
 from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
+from ocr_runtime.review_fields import EMPTY_REVIEW_FIELD_TYPES
 from provider_contracts.ocr import RawRecognizedField, RecognizedField
 
 # CLOVA는 같은 템플릿이라도 날짜 텍스트 박스에 라벨(발행일 등)이나 앞뒤 공백을
 # 함께 인식할 수 있으므로 fullmatch 대신 값 내부에서 날짜 부분만 찾아 추출합니다.
 # 구분자는 숫자가 아니면 무엇이든 허용해 "-", ".", "/"뿐 아니라 한글식(년/월/일)
 # 표기도 함께 지원합니다. backend/app/services/ocr_ai/validator.py가 이 모듈의
-# normalize_prescribed_date_text를 그대로 import해서 같은 규칙을 씁니다.
+# normalize_prescribed_date_text를 Backend 호환 진입점을 통해 재사용합니다.
 # day 뒤에 숫자가 더 있으면("2026-08-123") 오인식으로 보고 통째로 버립니다 — 두 자리만
 # 잘라 "12"로 확정하면 잘못된 날짜를 정상처럼 확정하게 됩니다.
 _DATE_PATTERN = re.compile(r"(?P<year>\d{4})\D+(?P<month>\d{1,2})\D+(?P<day>\d{1,2})(?!\d)")
@@ -20,9 +22,128 @@ _MIN_PRESCRIBED_YEAR = 2000
 
 # 이 라벨이 포함된 박스는 날짜 모양이어도 처방일 후보에서 제외합니다. 환자 생년월일이
 # 처방일로 오인식되면 의료 정확성뿐 아니라 개인정보(생년월일)가 PRESCRIBED_DATE로
-# 저장되는 문제까지 겹칩니다. 좌표 기반 열 판단이 없는 최소 방어이며, 라벨이 값과
-# 다른 박스에 분리되어 인식되는 경우까지는 막지 못합니다.
-_EXCLUDED_DATE_LABEL_PATTERN = re.compile(r"생년월일|생일|주민등록번호|주민번호")
+# 저장되는 문제까지 겹칩니다. 분리된 라벨은 제한된 인접 범위에서 연결합니다.
+_EXCLUDED_DATE_LABELS = (
+    "생년월일",
+    "생일",
+    "주민등록번호",
+    "주민번호",
+)
+_PREFERRED_DATE_LABELS = (
+    "교부일자",
+    "교부일",
+    "발행일자",
+    "발행일",
+    "처방일자",
+    "처방일",
+)
+
+_EXCLUDED_DATE_LABEL_PATTERN = re.compile("|".join(re.escape(label) for label in _EXCLUDED_DATE_LABELS))
+_PREFERRED_DATE_LABEL_PATTERN = re.compile("|".join(re.escape(label) for label in _PREFERRED_DATE_LABELS))
+_HANGUL_LABEL_TOKEN_PATTERN = re.compile(r"[가-힣]+")
+
+
+def _is_single_edit_label_typo(
+    value: str,
+    expected: str,
+) -> bool:
+    """세 글자 이상 라벨의 한 글자 삽입·삭제·치환만 허용합니다."""
+
+    if min(len(value), len(expected)) < 3:
+        return False
+
+    length_difference = len(value) - len(expected)
+    if abs(length_difference) > 1:
+        return False
+
+    if length_difference == 0:
+        return sum(left != right for left, right in zip(value, expected, strict=True)) == 1
+
+    shorter, longer = (value, expected) if len(value) < len(expected) else (expected, value)
+    shorter_index = 0
+    longer_index = 0
+    skipped = False
+
+    while shorter_index < len(shorter) and longer_index < len(longer):
+        if shorter[shorter_index] == longer[longer_index]:
+            shorter_index += 1
+            longer_index += 1
+            continue
+
+        if skipped:
+            return False
+
+        skipped = True
+        longer_index += 1
+
+    return True
+
+
+def _fuzzy_date_label_kind(value: str) -> str | None:
+    normalized = unicodedata.normalize("NFKC", value)
+    tokens = _HANGUL_LABEL_TOKEN_PATTERN.findall(normalized)
+    matched_kinds: set[str] = set()
+
+    for token in tokens:
+        if any(_is_single_edit_label_typo(token, label) for label in _EXCLUDED_DATE_LABELS):
+            matched_kinds.add("excluded")
+
+        if any(_is_single_edit_label_typo(token, label) for label in _PREFERRED_DATE_LABELS):
+            matched_kinds.add("preferred")
+
+    if len(matched_kinds) > 1:
+        return "ambiguous"
+
+    return next(iter(matched_kinds), None)
+
+
+def _date_label_kind(value: str) -> str | None:
+    compact = re.sub(
+        r"\s+",
+        "",
+        unicodedata.normalize("NFKC", value),
+    )
+
+    if _EXCLUDED_DATE_LABEL_PATTERN.search(compact):
+        return "excluded"
+    if _PREFERRED_DATE_LABEL_PATTERN.search(compact):
+        return "preferred"
+
+    return _fuzzy_date_label_kind(value)
+
+
+def _nearby_date_label_kind(field: RawRecognizedField, fields: list[RawRecognizedField]) -> str | None:
+    kinds: set[str] = set()
+    for label in fields:
+        kind = _date_label_kind(label.raw_value)
+        # 날짜를 이미 포함한 박스는 다른 날짜 값의 라벨로 재사용하지 않습니다.
+        if kind is None or _DATE_PATTERN.search(label.raw_value):
+            continue
+        height = min(field.height, label.height)
+        if height <= 0:
+            continue
+        dx = (field.center_x - label.center_x) / height
+        dy = (field.center_y - label.center_y) / height
+        # 같은 줄의 왼쪽 라벨 또는 바로 위 라벨만 연결합니다.
+        if not (0 < dx <= 12 and abs(dy) <= 0.75 or abs(dx) <= 2 and 0 < dy <= 3):
+            continue
+        kinds.add(kind)
+    if len(kinds) > 1:
+        # 밀집 배치의 상충 라벨은 거리만으로 의미를 정하지 않고 수동 검수합니다.
+        return "ambiguous"
+    return next(iter(kinds), None)
+
+
+def prescribed_date_label_kind(
+    field: RawRecognizedField,
+    fields: list[RawRecognizedField],
+) -> str | None:
+    """날짜 후보에 직접 또는 좌표상 연결된 라벨의 종류를 반환합니다."""
+
+    return _date_label_kind(field.raw_value) or _nearby_date_label_kind(
+        field,
+        fields,
+    )
 
 
 def normalize_prescribed_date_text(value: str) -> str | None:
@@ -303,8 +424,16 @@ class PrescriptionOcrStructurer:
 
         prescribed_date = self._extract_prescribed_date(raw_fields)
 
-        if prescribed_date is not None:
-            structured_fields.append(prescribed_date)
+        structured_fields.append(
+            prescribed_date
+            if prescribed_date is not None
+            else RecognizedField(
+                medication_index=0,
+                field_type="PRESCRIBED_DATE",
+                raw_value=None,
+                confidence_score=None,
+            )
+        )
 
         headers = self._find_header_fields(raw_fields)
 
@@ -334,22 +463,30 @@ class PrescriptionOcrStructurer:
         self,
         raw_fields: list[RawRecognizedField],
     ) -> RecognizedField | None:
+        preferred: list[RecognizedField] = []
+        fallback: list[RecognizedField] = []
         for field in raw_fields:
-            if _EXCLUDED_DATE_LABEL_PATTERN.search(field.raw_value):
-                continue
-
             normalized_date = normalize_prescribed_date_text(field.raw_value)
-
-            if normalized_date is not None:
-                return RecognizedField(
-                    medication_index=0,
-                    field_type="PRESCRIBED_DATE",
-                    raw_value=field.raw_value,
-                    normalized_value=normalized_date,
-                    normalization_version="date-rule-v1",
-                    confidence_score=field.confidence_score,
-                )
-        return None
+            if normalized_date is None:
+                continue
+            kind = prescribed_date_label_kind(field, raw_fields)
+            if kind in {"excluded", "ambiguous"}:
+                continue
+            candidate = RecognizedField(
+                medication_index=0,
+                field_type="PRESCRIBED_DATE",
+                raw_value=field.raw_value,
+                normalized_value=normalized_date,
+                normalization_version="date-rule-v1",
+                confidence_score=field.confidence_score,
+            )
+            (preferred if kind == "preferred" else fallback).append(candidate)
+        if preferred:
+            # 서로 다른 선호 날짜를 입력 순서만으로 확정하지 않습니다.
+            if len({candidate.normalized_value for candidate in preferred}) > 1:
+                return None
+            return min(preferred, key=lambda candidate: candidate.raw_value or "")
+        return fallback[0] if fallback else None
 
     # 명칭, 투여량, 투여횟수만 인식되고 용법이 누락돼도 정상적인 표 헤더로 처리
     def _normalize_header_text(self, value: str) -> str:
@@ -983,6 +1120,21 @@ class PrescriptionOcrStructurer:
                     field_type="TIMING",
                     source_fields=timing_fields,
                 )
+            )
+
+        present_types = {field.field_type for field in result}
+        if "MEDICATION_NAME" in present_types:
+            result.extend(
+                RecognizedField(
+                    medication_index=medication_index,
+                    field_type=field_type,
+                    raw_value=None,
+                    normalized_value=None,
+                    normalization_version=None,
+                    confidence_score=None,
+                )
+                for field_type in EMPTY_REVIEW_FIELD_TYPES
+                if field_type not in present_types
             )
 
         return result

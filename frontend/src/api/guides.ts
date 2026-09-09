@@ -34,3 +34,11 @@ export async function createGuide(
 export async function getGuide(guideId: string): Promise<GuideResponse> {
   return apiRequest<GuideResponse>(`/api/v1/guides/${guideId}`)
 }
+
+export async function getGuideForPrescription(
+  prescriptionId: string,
+): Promise<GuideResponse> {
+  return apiRequest<GuideResponse>(
+    `/api/v1/prescriptions/${prescriptionId}/guide`,
+  )
+}

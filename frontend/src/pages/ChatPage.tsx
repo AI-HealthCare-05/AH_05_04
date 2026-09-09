@@ -3,12 +3,17 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   createChatSession,
   getChatMessages,
+  getChatSessionForPrescription,
   sendChatMessage,
   type ChatMessageData,
 } from '../api/chat'
 import { ApiError } from '../api/client'
 import { Button, Card, MobileShell, StatusBadge } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
+import {
+  clearAuthenticatedSession,
+  isStaleTokenError,
+} from '../features/auth/authSession'
 import '../design-system/prototype.css'
 import './ChatPage.css'
 
@@ -120,6 +125,11 @@ const sessionCreationRequests = new Map<
   ReturnType<typeof createChatSession>
 >()
 
+const sessionRediscoveryRequests = new Map<
+  string,
+  ReturnType<typeof getChatSessionForPrescription>
+>()
+
 function getSessionStorageKey(prescriptionId: string) {
   return `dosey_chat_session:${prescriptionId}`
 }
@@ -148,6 +158,19 @@ function createChatSessionOnce(prescriptionId: string) {
     }
   })
   sessionCreationRequests.set(prescriptionId, request)
+  return request
+}
+
+function getChatSessionForPrescriptionOnce(prescriptionId: string) {
+  const pendingRequest = sessionRediscoveryRequests.get(prescriptionId)
+  if (pendingRequest) return pendingRequest
+
+  const request = getChatSessionForPrescription(prescriptionId).finally(() => {
+    if (sessionRediscoveryRequests.get(prescriptionId) === request) {
+      sessionRediscoveryRequests.delete(prescriptionId)
+    }
+  })
+  sessionRediscoveryRequests.set(prescriptionId, request)
   return request
 }
 
@@ -196,40 +219,36 @@ function ChatPage() {
       setMessages([])
 
       const storageKey = getSessionStorageKey(prescriptionId)
-      const storedSessionId = sessionStorage.getItem(storageKey)
-      let activeSessionId = storedSessionId
-
-      if (!activeSessionId) {
-        const sessionResponse = await createChatSessionOnce(prescriptionId)
-        if (!isCurrentRequest()) return
-        activeSessionId = sessionResponse.data.session_id
-        sessionStorage.setItem(storageKey, activeSessionId)
-      }
-
-      let historyResponse
+      let sessionResponse
       try {
-        historyResponse = await getChatMessages(activeSessionId)
-        if (!isCurrentRequest()) return
+        sessionResponse = await getChatSessionForPrescriptionOnce(prescriptionId)
       } catch (error) {
         if (!isCurrentRequest()) return
-        if (!(storedSessionId && error instanceof ApiError && error.status === 404)) {
+        if (
+          !(
+            error instanceof ApiError &&
+            error.status === 404 &&
+            error.code === 'CHAT_SESSION_NOT_FOUND'
+          )
+        ) {
           throw error
         }
 
-        sessionStorage.removeItem(storageKey)
-        const sessionResponse = await createChatSessionOnce(prescriptionId)
-        if (!isCurrentRequest()) return
-        activeSessionId = sessionResponse.data.session_id
-        sessionStorage.setItem(storageKey, activeSessionId)
-        historyResponse = await getChatMessages(activeSessionId)
-        if (!isCurrentRequest()) return
+        sessionResponse = await createChatSessionOnce(prescriptionId)
       }
+      if (!isCurrentRequest()) return
+
+      const activeSessionId = sessionResponse.data.session_id
+      sessionStorage.setItem(storageKey, activeSessionId)
+      const historyResponse = await getChatMessages(activeSessionId)
+      if (!isCurrentRequest()) return
 
       setSessionId(activeSessionId)
       setMessages(historyResponse.data.messages)
     } catch (error) {
       if (!isCurrentRequest()) return
-      if (error instanceof ApiError && error.status === 401) {
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
         setRequiresLogin(true)
       }
       setSessionId(null)
@@ -322,7 +341,8 @@ function ChatPage() {
       })
     } catch (error) {
       if (!isCurrentRequest()) return
-      if (error instanceof ApiError && error.status === 401) {
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
         setRequiresLogin(true)
       } else {
         try {
@@ -336,8 +356,12 @@ function ChatPage() {
               knownMessageIds,
             ),
           )
-        } catch {
+        } catch (historyError) {
           if (!isCurrentRequest()) return
+          if (isStaleTokenError(historyError)) {
+            clearAuthenticatedSession()
+            setRequiresLogin(true)
+          }
         }
       }
       setErrorMessage(
@@ -414,7 +438,12 @@ function ChatPage() {
             <h1>도지와 처방에 대해 이야기하려면<br />먼저 처방전을 등록해 주세요</h1>
             <p>처방전을 등록하고 내용을 확인하면<br />도지가 현재 처방을 참고해 답변할 수 있어요.</p>
             <Card className="chat-page__gate-actions">
-              <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
+              <Button
+                fullWidth
+                onClick={() => navigate('/prescriptions/upload', {
+                  state: { intent: 'new-prescription' },
+                })}
+              >
                 처방전 등록하기
               </Button>
               <Button fullWidth variant="ghost" onClick={() => navigate('/')}>

@@ -19,23 +19,24 @@
 
 ## RAG-08·RAG-09 상류 OCR 입력 Receipt Gate
 
-| 후속 Issue | 필수 Receipt | Canonical hash | 미해결 차단 코드 | 현재 판정 |
-| --- | --- | --- | --- | --- |
-| RAG-08 (#170) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe` | `PRESCRIPTION_VERSION_NOT_IMPLEMENTED` | `READY=false` |
-| RAG-09 (#171) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe` | `PRESCRIPTION_VERSION_NOT_IMPLEMENTED` | `READY=false` |
+| 후속 Issue | 필수 Receipt | Canonical hash | Prescription 입력 | 남은 차단 코드 | 전체 판정 |
+| --- | --- | --- | --- | --- | --- |
+| RAG-08 (#170) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a` | `READY=true` | `BLOCKED_BY_RAG_08_PREREQUISITE` | `READY=false` |
+| RAG-09 (#171) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a` | `READY=true` | `BLOCKED_BY_RAG_09_PREREQUISITE` | `READY=false` |
 
-RAG-08과 RAG-09는 위 hash의 Receipt를 상류 입력 경계로 사용한다. 다만 `PRESCRIPTION_VERSION_NOT_IMPLEMENTED`가 해소되고 Receipt가 새 상태로 재생성되기 전에는 착수 가능 또는 완료로 표시하지 않는다.
+RAG-08과 RAG-09는 위 hash의 Receipt를 상류 입력 경계로 사용한다. `PRESCRIPTION_VERSION_NOT_IMPLEMENTED`와 `TARGET_STRENGTH_MAPPING_NOT_FROZEN`은 #169 구현으로 해소됐다. 다만 #170의 Source·Index·Resolver 선행조건과 #171의 정책·멱등성·평가 선행조건은 별도이므로 각 Issue 전체를 착수 가능 또는 완료로 자동 승격하지 않는다.
 
 ## RAG Source Governance (#185) Receipt
 
-Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Governance Contract Receipt](../validation/rag/rag-source-governance-contract-receipt.md)와 [JSON fixture](../../tests/fixtures/rag/source_contract_receipt.json)에 고정하며 canonical hash는 `sha256:950813a07aa473f6027970b8b6377f91e2951379e6d147ce4ba908bf51b56fe3`다. #155의 [MFDS P0 Endpoint Receipt](../validation/rag/endpoints/README.md)는 연결됐고 #164는 Source/Snapshot/Catalog 최소 DB 기반을 추가하지만, DUR·환자용 복약정보의 자연키 검증이 fail-closed이고 #165/#166 Source Snapshot·Catalog Receipt가 연결되지 않아 실제 Source readiness는 계속 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. 실제 Source 활성화나 `PUBLIC_TRACK_F` 해제의 근거로 사용하지 않는다.
+Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Governance Contract Receipt](../validation/rag/rag-source-governance-contract-receipt.md)와 [JSON fixture](../../tests/fixtures/rag/source_contract_receipt.json)에 고정하며 canonical hash는 `sha256:bdd22b8231806c8da343ff4e607da1f35d740a1dde7f27d5dc4dfce72330f2e4`다. #155의 [MFDS P0 Endpoint Receipt](../validation/rag/endpoints/README.md)는 연결됐고 #164는 Source/Snapshot/Catalog 최소 DB 기반을 추가하지만, DUR·환자용 복약정보의 자연키 검증이 fail-closed이고 #165/#166 Source Snapshot·Catalog Receipt가 연결되지 않아 실제 Source readiness는 계속 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. 실제 Source 활성화나 `PUBLIC_TRACK_F` 해제의 근거로 사용하지 않는다.
 
 | 후속 Issue | #185 Receipt 입력 | 현재 판정 |
 | --- | --- | --- |
-| RAG-04 (#164) | Source/Snapshot/Catalog 최소 DB 기반. 수집·적재·Runtime 활성화 제외 | `PARTIAL` · schema foundation only |
+| RAG-04 (#164) | Source/Snapshot/Catalog 최소 DB 기반. snapshot/provenance/canonicalization 저장 경계와 Catalog 적재 조회 key 정렬 포함. 수집·적재·Runtime 활성화·bulk upsert 제외 | `PARTIAL` · 기존 target 계약 흡수용, 새 정본 계약 아님 |
+| RAG-04 (#164) | Evaluation 최소 DB 기반. Runner·Runtime 활성화·실제 환자 데이터 제외 | `PARTIAL` · evaluation schema foundation only |
 | RAG-07A (#167) | Source 목적·Snapshot·Approval·Resolver 입력 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-07B (#168) | Candidate Index Source/version·물리 경계 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 | RAG-08 (#170) | 승인 Catalog provenance와 Resolver allowlist | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
-| RAG-12A (#175) | Runtime Bundle Source/Member·rollback 적합성 | `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
+| RAG-12A (#175) | Runtime Bundle Source/Member·rollback 적합성. #164 Runtime Bundle 최소 DB 기반은 Source Snapshot FK, Evaluation Run approval FK, Candidate Index ref/hash, Environment transition history 저장까지만 포함 | `PARTIAL` · Runtime activation/rollback/drain/Production 공개는 `READY=false` · `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT` |
 
 Former Track D 요구사항 ID는 결정 이력과 traceability를 위해 보존할 수 있지만 일정·담당·완료 판정과 공개 flag는 Track F에서 관리한다. GitHub handle과 팀 역할 이름을 임의 매핑하지 않으며 실제 Issue와 PR마다 구현 담당자와 담당 리뷰어를 별도로 지정한다.

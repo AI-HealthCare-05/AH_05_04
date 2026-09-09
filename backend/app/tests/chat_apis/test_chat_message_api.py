@@ -21,10 +21,11 @@ from app.main import app, fastapi_app
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession, ChatSessionStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.chat_repository import ChatRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.chat_ai import (
     ChatGenerationFailedError,
     ChatReplyInput,
@@ -45,6 +46,7 @@ class ApiChatFixture:
     closed_session_id: UUID
     foreign_session_id: UUID
     owner_prescription_id: UUID
+    owner_prescription_version_id: UUID
     owner_empty_prescription_id: UUID
     foreign_prescription_id: UUID
 
@@ -126,7 +128,9 @@ async def _add_prescription_graph(session: AsyncSession, *, user: User, token: s
     ocr_job = OcrJob(document_id=document.id)
     session.add(ocr_job)
     await session.flush()
+    version_id = uuid4()
     prescription = Prescription(
+        active_version_id=version_id,
         document_id=document.id,
         source_ocr_job_id=ocr_job.id,
         profile_id=profile.id,
@@ -136,8 +140,30 @@ async def _add_prescription_graph(session: AsyncSession, *, user: User, token: s
     session.add(prescription)
     await session.flush()
     session.add(
+        PrescriptionVersion(
+            id=version_id,
+            prescription_id=prescription.id,
+            version_number=1,
+            prescribed_date=prescription.prescribed_date,
+            confirmed_at=prescription.confirmed_at,
+        )
+    )
+    await session.flush()
+    session.add(
         Medication(
             prescription_id=prescription.id,
+            medication_name=f"합성약-{token}",
+            dose_value=Decimal("1.250"),
+            dose_unit="mg",
+            frequency_per_day=2,
+            timing_text="식후",
+            duration_days=7,
+            display_order=1,
+        )
+    )
+    session.add(
+        PrescriptionVersionMedication(
+            prescription_version_id=version_id,
             medication_name=f"합성약-{token}",
             dose_value=Decimal("1.250"),
             dose_unit="mg",
@@ -181,22 +207,33 @@ async def api_chat_fixture(api_db_session: AsyncSession) -> ApiChatFixture:
     owner_prescription = await _add_prescription_graph(api_db_session, user=owner, token=uuid4().hex)
     owner_empty_prescription = await _add_prescription_graph(api_db_session, user=owner, token=uuid4().hex)
     foreign_prescription = await _add_prescription_graph(api_db_session, user=outsider, token=uuid4().hex)
-    active = ChatSession(prescription_id=owner_prescription.id, profile_id=owner_prescription.profile_id)
+    active = ChatSession(
+        prescription_id=owner_prescription.id,
+        prescription_version_id=owner_prescription.active_version_id,
+        profile_id=owner_prescription.profile_id,
+    )
     closed = ChatSession(
         prescription_id=owner_prescription.id,
+        prescription_version_id=owner_prescription.active_version_id,
         profile_id=owner_prescription.profile_id,
         session_status=ChatSessionStatus.CLOSED,
     )
-    foreign = ChatSession(prescription_id=foreign_prescription.id, profile_id=foreign_prescription.profile_id)
+    foreign = ChatSession(
+        prescription_id=foreign_prescription.id,
+        prescription_version_id=foreign_prescription.active_version_id,
+        profile_id=foreign_prescription.profile_id,
+    )
     api_db_session.add_all([active, closed, foreign])
     await api_db_session.flush()
     await api_db_session.commit()
+    assert owner_prescription.active_version_id is not None
     return ApiChatFixture(
         owner_id=owner.id,
         active_session_id=active.id,
         closed_session_id=closed.id,
         foreign_session_id=foreign.id,
         owner_prescription_id=owner_prescription.id,
+        owner_prescription_version_id=owner_prescription.active_version_id,
         owner_empty_prescription_id=owner_empty_prescription.id,
         foreign_prescription_id=foreign_prescription.id,
     )
@@ -321,6 +358,7 @@ async def test_get_latest_chat_session_for_prescription_rediscovers_existing_act
     assert response.json()["data"] == {
         "session_id": str(api_chat_fixture.active_session_id),
         "prescription_id": str(api_chat_fixture.owner_prescription_id),
+        "prescription_version_id": str(api_chat_fixture.owner_prescription_version_id),
         "session_status": "ACTIVE",
         "created_at": response.json()["data"]["created_at"],
     }
@@ -356,6 +394,41 @@ async def test_get_latest_chat_session_for_prescription_returns_404_without_crea
             }
         ],
     )
+
+
+async def test_previous_version_chat_is_blocked_from_messages_and_rediscovery(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+) -> None:
+    engine = FakeChatEngine()
+    _use_owner_and_engine(api_chat_fixture, engine)
+    prescription = await api_db_session.get(Prescription, api_chat_fixture.owner_prescription_id)
+    assert prescription is not None
+    await PrescriptionRepository(api_db_session).create_version(
+        prescription=prescription,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "새 버전 합성약", "display_order": 1}],
+    )
+    await api_db_session.commit()
+
+    list_response = await client.get(f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages")
+    send_response = await client.post(
+        f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages",
+        json={"content": "이전 처방 기준 질문"},
+    )
+    rediscover_response = await client.get(
+        f"/api/v1/prescriptions/{api_chat_fixture.owner_prescription_id}/chat-session"
+    )
+
+    assert list_response.status_code == 409
+    assert list_response.json()["code"] == "PRESCRIPTION_VERSION_CONFLICT"
+    assert send_response.status_code == 409
+    assert send_response.json()["code"] == "PRESCRIPTION_VERSION_CONFLICT"
+    assert rediscover_response.status_code == 404
+    assert rediscover_response.json()["code"] == "CHAT_SESSION_NOT_FOUND"
+    assert engine.inputs == []
 
 
 @pytest.mark.parametrize(

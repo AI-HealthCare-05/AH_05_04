@@ -1,0 +1,70 @@
+{
+  "schema_version": "synthetic-catalog-input-v1",
+  "records": [
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "target_source_snapshot_id": "synthetic-snapshot-001",
+      "alias_ref": "synthetic-alias-001",
+      "target_type": "PRODUCT",
+      "target_code_system": "MFDS_ITEM_SEQ",
+      "target_code": "000000001",
+      "alias_source": "SYNTHETIC_REVIEWED",
+      "alias_text": "  합성   제품 별칭  ",
+      "review_status": "APPROVED",
+      "status": "ACTIVE",
+      "is_effective": true
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "target_source_snapshot_id": "synthetic-snapshot-001",
+      "alias_ref": "synthetic-alias-002",
+      "target_type": "INGREDIENT",
+      "target_code_system": "MFDS_INGREDIENT_CODE",
+      "target_code": "ING-0001",
+      "alias_source": "SYNTHETIC_REVIEWED",
+      "alias_text": "합성 성분 별칭",
+      "review_status": "APPROVED",
+      "status": "ACTIVE",
+      "is_effective": true
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "target_source_snapshot_id": "synthetic-snapshot-001",
+      "alias_ref": "synthetic-alias-conflict-a",
+      "target_type": "PRODUCT",
+      "target_code_system": "MFDS_ITEM_SEQ",
+      "target_code": "000000001",
+      "alias_source": "SYNTHETIC_REVIEWED",
+      "alias_text": "합성 충돌 별칭",
+      "review_status": "APPROVED",
+      "status": "ACTIVE",
+      "is_effective": true
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "target_source_snapshot_id": "synthetic-snapshot-001",
+      "alias_ref": "synthetic-alias-conflict-b",
+      "target_type": "PRODUCT",
+      "target_code_system": "MFDS_ITEM_SEQ",
+      "target_code": "000000002",
+      "alias_source": "SYNTHETIC_REVIEWED",
+      "alias_text": "합성 충돌 별칭",
+      "review_status": "APPROVED",
+      "status": "ACTIVE",
+      "is_effective": true
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "target_source_snapshot_id": "synthetic-snapshot-001",
+      "alias_ref": "synthetic-alias-expired",
+      "target_type": "PRODUCT",
+      "target_code_system": "MFDS_ITEM_SEQ",
+      "target_code": "000000003",
+      "alias_source": "SYNTHETIC_REVIEWED",
+      "alias_text": "합성 만료 별칭",
+      "review_status": "APPROVED",
+      "status": "INACTIVE",
+      "is_effective": false
+    }
+  ]
+}

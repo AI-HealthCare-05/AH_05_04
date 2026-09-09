@@ -33,7 +33,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        run: uv sync --group app --frozen
+        run: uv sync --group app --group worker --frozen
 
       - name: Run Ruff Check (Linting)
         run: uv run ruff check .
@@ -95,7 +95,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        run: uv sync --group app --frozen
+        run: uv sync --group app --group worker --frozen
 
       - name: Run PostgreSQL migrations
         env:
@@ -114,11 +114,35 @@ jobs:
         run: |
           uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
 
+      # #347은 앱 기본 test DB로 fallback하지 않고 전용 migrated DB에서 권한·삭제를 검증합니다.
+      - name: Verify isolated Source cleanup workflow
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
+          DB_NAME: source_cleanup347_test
+          SOURCE_CLEANUP_TEST_DATABASE_URL: postgresql+asyncpg://postgres:ci_test_password@127.0.0.1:5432/source_cleanup347_test
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+          import asyncpg
+          async def create_database():
+              connection = await asyncpg.connect(host=os.environ['DB_HOST'], port=int(os.environ['DB_PORT']), user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database='postgres')
+              try:
+                  await connection.execute('CREATE DATABASE source_cleanup347_test')
+              finally:
+                  await connection.close()
+          asyncio.run(create_database())
+          PY
+          uv run alembic -c backend/alembic.ini upgrade head
+          uv run coverage run --append -m pytest tests/integration/rag/test_source_cleanup_references.py tests/integration/rag/test_source_cleanup_workflow.py -q
+
+      # ai_worker/tests/evaluation은 외부 서비스 없이 evals/ artifact의 canonical byte와
+      # hash 결속만 검증합니다. Dataset·Schema Set 계약의 회귀를 CI에서 잡기 위해 포함합니다.
       - name: Run AI Worker Unit Tests with Coverage
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag
+          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation
 
       - name: Coverage Report
         run: |
@@ -152,6 +176,23 @@ jobs:
 
       - name: Run Frontend tests
         run: pnpm test
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run implemented requirements E2E
+        run: pnpm run test:e2e:requirements
+
+      - name: Upload Playwright failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-requirements-failure
+          path: |
+            frontend/playwright-report/requirements/
+            frontend/test-results/requirements/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Build Frontend
         run: pnpm build

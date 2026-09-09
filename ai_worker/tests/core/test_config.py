@@ -121,6 +121,7 @@ def test_config_has_approved_redis_defaults() -> None:
 
     assert config.DLQ_OUTBOX_CLAIM_TTL_SECONDS == 30.0
     assert config.DLQ_PUBLISHER_INTERVAL_SECONDS == 1.0
+    assert config.OUTBOX_PUBLISHER_INTERVAL_SECONDS == 1.0
 
 
 def test_config_accepts_redis_environment_values(
@@ -214,6 +215,7 @@ def test_config_rejects_blank_reconciler_consumer_name() -> None:
         ("RECONCILER_INTERVAL_SECONDS", 0),
         ("DLQ_OUTBOX_CLAIM_TTL_SECONDS", 0),
         ("DLQ_PUBLISHER_INTERVAL_SECONDS", 0),
+        ("OUTBOX_PUBLISHER_INTERVAL_SECONDS", 0),
     ],
 )
 def test_config_rejects_invalid_recovery_setting(
@@ -329,3 +331,58 @@ def test_config_rejects_blank_clova_secret() -> None:
 def test_config_rejects_blank_storage_dir() -> None:
     with pytest.raises(ValidationError):
         _config(STORAGE_DIR="   ")
+
+
+def test_source_artifact_storage_is_disabled_by_default() -> None:
+    config = _config()
+
+    assert config.SOURCE_ARTIFACT_STORAGE_BACKEND == "DISABLED"
+
+
+def test_config_accepts_s3_source_artifact_storage_without_credentials() -> None:
+    config = _config(
+        SOURCE_ARTIFACT_STORAGE_BACKEND="S3_PRIVATE",
+        SOURCE_ARTIFACT_S3_BUCKET="private-source-artifacts",
+        SOURCE_ARTIFACT_S3_REGION="ap-northeast-2",
+        SOURCE_ARTIFACT_S3_ENDPOINT_URL="https://storage.example",
+        SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION="AES256",
+    )
+
+    assert config.SOURCE_ARTIFACT_S3_BUCKET == "private-source-artifacts"
+    serialized = repr(config)
+    assert "AWS_ACCESS_KEY_ID" not in serialized
+    assert "AWS_SECRET_ACCESS_KEY" not in serialized
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"SOURCE_ARTIFACT_STORAGE_BACKEND": "LOCAL_PRIVATE"},
+        {"SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE"},
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "LOCAL_PRIVATE",
+            "SOURCE_ARTIFACT_LOCAL_ROOT": "/private/source-artifacts",
+            "SOURCE_ARTIFACT_S3_REGION": "unexpected-region",
+        },
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE",
+            "SOURCE_ARTIFACT_S3_BUCKET": "private-source-artifacts",
+            "SOURCE_ARTIFACT_LOCAL_ROOT": "/unexpected/local/root",
+            "SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION": "AES256",
+        },
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE",
+            "SOURCE_ARTIFACT_S3_BUCKET": "private-source-artifacts",
+            "SOURCE_ARTIFACT_S3_ENDPOINT_URL": "https://user:secret@storage.example",
+            "SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION": "AES256",
+        },
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE",
+            "SOURCE_ARTIFACT_S3_BUCKET": "private-source-artifacts",
+            "SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION": "aws:kms",
+        },
+    ],
+)
+def test_config_rejects_incomplete_or_mixed_source_artifact_storage(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        _config(**overrides)

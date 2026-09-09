@@ -6,18 +6,34 @@ set -euo pipefail
 # 어느 위치에서 실행해도 저장소 루트 기준으로 동작하도록 이동합니다.
 cd "$(dirname "$0")/.."
 
-PROD_ENV_FILE="envs/.prod.env"
+PROD_ENV_FILE="${PROD_ENV_FILE:-envs/.prod.env}"
 
 if [ ! -f "$PROD_ENV_FILE" ]; then
   echo "운영 환경파일을 찾을 수 없습니다: $PROD_ENV_FILE"
   exit 1
 fi
 
+# ---------- 필수 키 선언 검증 (source 이전) ----------
+# source는 파일에 없는 변수를 초기화하지 않는다. 실행 셸에 REDIS_PASSWORD나 ENV가
+# 이미 설정돼 있으면 파일에 값이 없어도 아래 검증을 통과할 수 있는데, 원격 배포는
+# 이 파일 원문만 서버로 복사하므로(하단 scp 참고) 로컬 검증과 실제 전송 설정이
+# 어긋나 필수 값이 없는 채로 배포될 수 있다(#321 리뷰). source 전에 파일 자체가
+# 두 값을 직접 선언하는지 먼저 확인한다.
+for required_key in REDIS_PASSWORD ENV; do
+  if ! grep -Eq "^${required_key}=" "$PROD_ENV_FILE"; then
+    echo "$PROD_ENV_FILE에 $required_key가 선언되어 있지 않습니다."
+    exit 1
+  fi
+done
+
 # 이미지 버전 등 운영 배포 설정을 읽습니다.
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
 set -a
 source "$PROD_ENV_FILE"
 set +a
+# CloudFront origin 검증 secret은 이후 실행되는 docker/ssh/scp 프로세스 환경에
+# 불필요하게 상속하지 않습니다. Nginx 설정을 만들 때 현재 Bash 안에서만 씁니다.
+export -n CLOUDFRONT_ORIGIN_VERIFY_SECRET 2>/dev/null || true
 # ---------- PostgreSQL 역할 설정 검증 ----------
 # 역할 이름이 같으면 Migration 역할의 NOSUPERUSER 설정이
 # Bootstrap/admin 역할에도 적용될 수 있으므로 배포 전에 차단합니다.
@@ -37,12 +53,138 @@ for variable_name in "${required_db_variables[@]}"; do
   fi
 done
 
+# ---------- Redis 인증 검증 ----------
+# PUBLIC_TRACK_F_ENABLED/Track A Worker 모두 non-local(STAGING/PRODUCTION) 환경에서
+# Redis 인증을 강제한다(#150). 값이 비어 있으면 compose가 빈 문자열로 치환해
+# 무인증 Redis가 뜰 수 있으므로, docker login/build/push 같은 외부 작업 전에 차단한다.
+if [ -z "${REDIS_PASSWORD:-}" ]; then
+  echo "필수 운영 환경변수가 비어 있습니다: REDIS_PASSWORD"
+  exit 1
+fi
+
+# ---------- Placeholder 값 검증 ----------
+# example 파일을 그대로 복사해 배포하면 REDIS_PASSWORD 등 필수 값이 비어 있지 않아
+# 위 -z 검사를 통과한다. 그 상태로 배포되면 git에 커밋된 공개 placeholder 값으로
+# 운영 서비스가 인증을 걸고 뜬다(deploy-staging.sh와 동일한 검사).
+if grep -Eq '=(replace-with|replace_with)' "$PROD_ENV_FILE"; then
+  echo "$PROD_ENV_FILE 안의 placeholder를 실제 운영 값으로 교체해야 합니다."
+  exit 1
+fi
+
+# 위 파일 원문 검사는 REDIS_PASSWORD="replace-with-..."처럼 따옴표로 감싼 값을
+# 놓친다(#321 리뷰). source 이후 따옴표가 제거된 실제 셸 변수 값을 다시 검사한다.
+case "$REDIS_PASSWORD" in
+  replace-with* | replace_with*)
+    echo "REDIS_PASSWORD가 아직 placeholder 값입니다: $PROD_ENV_FILE 안의 값을 교체해야 합니다."
+    exit 1
+    ;;
+esac
+
+# ---------- ENV 값 검증 ----------
+# PROD_ENV_FILE 경로가 하드코딩이던 때는 문제가 아니었지만, override를 허용하면서
+# PROD_ENV_FILE=envs/.local.env 같은 다른 환경파일로 운영 배포를 실행할 수 있게
+# 됐다. deploy-staging.sh의 ENV 검사와 대칭으로 운영 배포는 ENV=production인
+# 환경파일로만 실행되도록 강제한다.
+if [ "${ENV:-}" != "production" ]; then
+  echo "ENV는 production이어야 합니다. 현재 값: ${ENV:-<empty>}"
+  exit 1
+fi
+
 if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
   [ "$DB_ADMIN_USER" = "$DB_APP_USER" ] ||
   [ "$DB_MIGRATION_USER" = "$DB_APP_USER" ]; then
   echo "DB_ADMIN_USER, DB_MIGRATION_USER, DB_APP_USER는 서로 다른 이름이어야 합니다."
   exit 1
 fi
+
+# ---------- 기간 한정 Production 데모 설정 검증 ----------
+required_demo_variables=(
+  DOCKER_USER
+  DOCKER_REPOSITORY
+  APP_VERSION
+  FRONTEND_VERSION
+  AI_WORKER_VERSION
+  TLS_TERMINATION
+  PRODUCTION_DOMAIN
+  PRODUCTION_PUBLIC_ORIGIN
+  COOKIE_DOMAIN
+  CORS_ALLOWED_ORIGINS
+)
+
+for variable_name in "${required_demo_variables[@]}"; do
+  if [ -z "${!variable_name:-}" ]; then
+    echo "필수 운영 데모 환경변수가 비어 있습니다: $variable_name"
+    exit 1
+  fi
+done
+
+if [[ ! "$APP_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] ||
+  [[ ! "$FRONTEND_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] ||
+  [[ ! "$AI_WORKER_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "이미지 version은 영문자, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다."
+  exit 1
+fi
+
+if [ "$APP_VERSION" = "latest" ] || [ "$FRONTEND_VERSION" = "latest" ] ||
+  [ "$AI_WORKER_VERSION" = "latest" ]; then
+  echo "Rollback을 위해 latest 대신 commit SHA 또는 고정 version을 사용해야 합니다."
+  exit 1
+fi
+
+if [[ ! "$DOCKER_USER" =~ ^[A-Za-z0-9._-]+$ ]] ||
+  [[ ! "$DOCKER_REPOSITORY" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Docker registry 사용자와 repository 이름의 형식이 올바르지 않습니다."
+  exit 1
+fi
+
+if [[ ! "$PRODUCTION_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] ||
+  [[ "$PRODUCTION_DOMAIN" != *.* ]]; then
+  echo "PRODUCTION_DOMAIN은 유효한 hostname이어야 합니다."
+  exit 1
+fi
+
+expected_public_origin="https://${PRODUCTION_DOMAIN}"
+if [ "$PRODUCTION_PUBLIC_ORIGIN" != "$expected_public_origin" ]; then
+  echo "PRODUCTION_PUBLIC_ORIGIN은 $expected_public_origin 이어야 합니다."
+  exit 1
+fi
+
+if [ "$COOKIE_DOMAIN" != "$PRODUCTION_DOMAIN" ] ||
+  [ "$CORS_ALLOWED_ORIGINS" != "$PRODUCTION_PUBLIC_ORIGIN" ]; then
+  echo "COOKIE_DOMAIN과 CORS_ALLOWED_ORIGINS는 Production 동일 origin과 일치해야 합니다."
+  exit 1
+fi
+
+case "$TLS_TERMINATION" in
+  cloudfront)
+    if [[ ! "$PRODUCTION_DOMAIN" =~ ^[A-Za-z0-9-]+\.cloudfront\.net$ ]]; then
+      echo "CloudFront 모드의 PRODUCTION_DOMAIN은 AWS가 발급한 *.cloudfront.net hostname이어야 합니다."
+      exit 1
+    fi
+
+    if [[ ! "${CLOUDFRONT_ORIGIN_VERIFY_SECRET:-}" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
+      echo "CLOUDFRONT_ORIGIN_VERIFY_SECRET은 32~128자의 영문자, 숫자, 밑줄, 하이픈이어야 합니다."
+      exit 1
+    fi
+    ;;
+  certbot)
+    if [[ ! "${CERTBOT_EMAIL:-}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
+      echo "Certbot 모드에서는 올바른 CERTBOT_EMAIL이 필요합니다."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "TLS_TERMINATION은 cloudfront 또는 certbot이어야 합니다."
+    exit 1
+    ;;
+esac
+
+for required_command in docker ssh scp; do
+  if ! command -v "$required_command" >/dev/null 2>&1; then
+    echo "필수 명령을 찾을 수 없습니다: $required_command"
+    exit 1
+  fi
+done
 
 # 터미널 색상을 지원하지 않는 환경에서는 빈 문자열을 사용합니다.
 if [ -t 1 ] &&
@@ -67,21 +209,35 @@ build_and_push() {
   local tag="$4"
   local dockerfile="$5"
   local context="$6"
+  local build_arg="${7:-}"
   local tag_base
 
-  if [[ "$name" == "FastAPI" ]]; then
-    tag_base="app"
-  else
-    tag_base="ai"
-  fi
+  case "$name" in
+    FastAPI) tag_base="app" ;;
+    "AI Worker") tag_base="ai" ;;
+    Frontend) tag_base="frontend" ;;
+    *)
+      echo "지원하지 않는 image 종류입니다: $name"
+      return 1
+      ;;
+  esac
 
   echo "${COLOR_BLUE}${name} Docker image build start.${COLOR_NC}"
 
-  docker build \
-    --platform linux/amd64 \
-    -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
-    -f "$dockerfile" \
-    "$context"
+  if [ -n "$build_arg" ]; then
+    docker build \
+      --platform linux/amd64 \
+      --build-arg "$build_arg" \
+      -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
+      -f "$dockerfile" \
+      "$context"
+  else
+    docker build \
+      --platform linux/amd64 \
+      -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
+      -f "$dockerfile" \
+      "$context"
+  fi
 
   echo "${COLOR_BLUE}${name} Docker image push start.${COLOR_NC}"
 
@@ -92,15 +248,16 @@ build_and_push() {
 }
 
 # ---------- Docker 로그인 ----------
-echo "${COLOR_BLUE}Docker username과 PAT을 입력해주세요.${COLOR_NC}"
+docker_user="$DOCKER_USER"
+docker_repo="$DOCKER_REPOSITORY"
 
-read -r -p "username: " docker_user
+echo "${COLOR_BLUE}${docker_user} 계정의 Docker registry PAT을 입력해주세요.${COLOR_NC}"
 read -r -s -p "password: " docker_pw
 echo ""
 echo ""
 
-if [ -z "$docker_user" ] || [ -z "$docker_pw" ]; then
-  echo "${COLOR_RED}Docker username 또는 PAT이 입력되지 않았습니다.${COLOR_NC}"
+if [ -z "$docker_pw" ]; then
+  echo "${COLOR_RED}Docker registry PAT이 입력되지 않았습니다.${COLOR_NC}"
   exit 1
 fi
 
@@ -116,87 +273,27 @@ fi
 echo "${COLOR_GREEN}Docker 로그인 성공!${COLOR_NC}"
 echo ""
 
-# ---------- Docker repository 입력 ----------
-echo "${COLOR_BLUE}이미지를 업로드할 Docker repository 이름을 입력하세요.${COLOR_NC}"
-read -r -p "Docker Repository Name: " docker_repo
-echo ""
+# ---------- 데모 배포 image build 및 push ----------
+# Worker Consumer 공개는 #338 범위 밖입니다. 기간 한정 데모는 FastAPI와 Frontend만
+# 새 immutable image로 배포하고, migration 전 기존 ai-worker 중지 확인은 유지합니다.
+build_and_push \
+  "$docker_user" \
+  "$docker_repo" \
+  "FastAPI" \
+  "$APP_VERSION" \
+  "backend/app/Dockerfile" \
+  "."
 
-if [ -z "$docker_repo" ]; then
-  echo "${COLOR_RED}Docker repository 이름이 입력되지 않았습니다.${COLOR_NC}"
-  exit 1
-fi
+build_and_push \
+  "$docker_user" \
+  "$docker_repo" \
+  "Frontend" \
+  "$FRONTEND_VERSION" \
+  "frontend/Dockerfile.prod" \
+  "." \
+  "VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"
 
-# ---------- 배포 이미지 선택 ----------
-echo "${COLOR_BLUE}빌드하고 배포할 이미지를 선택하세요.${COLOR_NC}"
-echo "1) fastapi"
-echo "2) ai_worker"
-echo "schema migration을 실행하는 배포에서는 fastapi와 ai_worker를 모두 선택해야 합니다."
-read -r -p "선택 (복수 선택 가능, 예: 1 2): " selections
-echo ""
-
-if [ -z "$selections" ]; then
-  echo "${COLOR_RED}배포 대상이 선택되지 않았습니다.${COLOR_NC}"
-  exit 1
-fi
-
-DEPLOY_SERVICES=()
-
-# ---------- 이미지 빌드 및 push ----------
-for choice in $selections; do
-  case "$choice" in
-    1)
-      echo "${COLOR_BLUE}FastAPI 배포 버전을 입력하세요(ex. v1.0.0).${COLOR_NC}"
-      read -r -p "FastAPI 앱 버전: " fastapi_version
-
-      if [ -z "$fastapi_version" ]; then
-        echo "${COLOR_RED}FastAPI 버전이 입력되지 않았습니다.${COLOR_NC}"
-        exit 1
-      fi
-
-      build_and_push \
-        "$docker_user" \
-        "$docker_repo" \
-        "FastAPI" \
-        "$fastapi_version" \
-        "backend/app/Dockerfile" \
-        "."
-
-      # 입력받은 버전을 원격 Compose image tag에 전달합니다.
-      APP_VERSION="$fastapi_version"
-      DEPLOY_SERVICES+=("fastapi")
-      ;;
-    2)
-      echo "${COLOR_BLUE}AI Worker 배포 버전을 입력하세요(ex. v1.0.0).${COLOR_NC}"
-      read -r -p "AI Worker 버전: " ai_version
-
-      if [ -z "$ai_version" ]; then
-        echo "${COLOR_RED}AI Worker 버전이 입력되지 않았습니다.${COLOR_NC}"
-        exit 1
-      fi
-
-      build_and_push \
-        "$docker_user" \
-        "$docker_repo" \
-        "AI Worker" \
-        "$ai_version" \
-        "ai_worker/Dockerfile" \
-        "."
-
-      # 입력받은 버전을 원격 Compose image tag에 전달합니다.
-      AI_WORKER_VERSION="$ai_version"
-      DEPLOY_SERVICES+=("ai-worker")
-      ;;
-    *)
-      echo "${COLOR_RED}잘못된 선택입니다: $choice${COLOR_NC}"
-      exit 1
-      ;;
-  esac
-done
-
-if [[ ! " ${DEPLOY_SERVICES[*]} " =~ " fastapi " ]]; then
-  echo "${COLOR_RED}schema migration 배포는 fastapi 새 이미지를 포함해야 합니다.${COLOR_NC}"
-  exit 1
-fi
+DEPLOY_SERVICES=("fastapi" "nginx")
 
 echo "${COLOR_GREEN}선택한 이미지의 build와 push가 완료되었습니다.${COLOR_NC}"
 echo "${COLOR_BLUE}배포 대상 서비스: ${DEPLOY_SERVICES[*]}${COLOR_NC}"
@@ -211,11 +308,17 @@ echo "${COLOR_BLUE}EC2 IP 또는 hostname을 입력하세요.${COLOR_NC}"
 read -r -p "EC2 IP: " ec2_ip
 echo ""
 
-echo "${COLOR_BLUE}현재 서버의 HTTP/HTTPS 구성을 선택하세요.${COLOR_NC}"
-echo "1) HTTP"
-echo "2) HTTPS"
-read -r -p "선택: " is_https
-echo ""
+if [ "$TLS_TERMINATION" = "cloudfront" ]; then
+  is_https="cloudfront"
+  echo "${COLOR_BLUE}CloudFront가 viewer HTTPS를 종료하므로 EC2에는 HTTP origin 구성을 적용합니다.${COLOR_NC}"
+  echo ""
+else
+  echo "${COLOR_BLUE}현재 서버의 HTTP/HTTPS 구성을 선택하세요.${COLOR_NC}"
+  echo "1) HTTP"
+  echo "2) HTTPS"
+  read -r -p "선택: " is_https
+  echo ""
+fi
 
 SSH_KEY_PATH="$HOME/.ssh/$ssh_key_file"
 
@@ -231,6 +334,11 @@ fi
 
 if [ -z "$ec2_ip" ]; then
   echo "${COLOR_RED}EC2 IP 또는 hostname이 입력되지 않았습니다.${COLOR_NC}"
+  exit 1
+fi
+
+if [[ ! "$ec2_ip" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "${COLOR_RED}EC2 IP 또는 hostname 형식이 올바르지 않습니다: $ec2_ip${COLOR_NC}"
   exit 1
 fi
 
@@ -250,32 +358,27 @@ trap cleanup EXIT
 nginx_config_path="$NGINX_TEMP_DIR/default.conf"
 
 case "$is_https" in
+  cloudfront)
+    # Secret을 sed 인자로 넘기면 짧은 시간이라도 프로세스 목록에 노출될 수 있다.
+    # Bash 문자열 치환과 builtin printf만 사용해 임시 설정을 렌더링합니다.
+    nginx_config="$(<infra/nginx/prod_cloudfront.conf)"
+    nginx_config="${nginx_config//production.cloudfront.net/$PRODUCTION_DOMAIN}"
+    nginx_config="${nginx_config//__CLOUDFRONT_ORIGIN_VERIFY_SECRET__/$CLOUDFRONT_ORIGIN_VERIFY_SECRET}"
+    printf '%s\n' "$nginx_config" >"$nginx_config_path"
+    unset nginx_config
+    ;;
   1)
-    # HTTP 환경에서는 EC2 주소를 server_name으로 사용합니다.
+    # 최초 인증서 발급을 위한 HTTP bootstrap도 운영 도메인을 사용합니다.
     sed \
-      "s/server_name .*/server_name ${ec2_ip};/g" \
+      "s/server_name .*/server_name ${PRODUCTION_DOMAIN};/g" \
       infra/nginx/prod_http.conf \
       >"$nginx_config_path"
     ;;
   2)
-    echo "${COLOR_BLUE}현재 사용 중인 도메인을 입력하세요.${COLOR_NC}"
-    read -r -p "Domain: " domain
-
-    if [ -z "$domain" ]; then
-      echo "${COLOR_RED}도메인이 입력되지 않았습니다.${COLOR_NC}"
-      exit 1
-    fi
-
-    # sed replacement에 안전한 기본 hostname 문자만 허용합니다.
-    if [[ ! "$domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
-      echo "${COLOR_RED}도메인 형식이 올바르지 않습니다: $domain${COLOR_NC}"
-      exit 1
-    fi
-
     # HTTPS 환경에서는 server_name과 인증서 경로를 함께 설정합니다.
     sed \
-      -e "s/server_name .*/server_name ${domain};/g" \
-      -e "s|/etc/letsencrypt/live/[^/]*|/etc/letsencrypt/live/${domain}|g" \
+      -e "s/server_name .*/server_name ${PRODUCTION_DOMAIN};/g" \
+      -e "s|/etc/letsencrypt/live/[^/]*|/etc/letsencrypt/live/${PRODUCTION_DOMAIN}|g" \
       infra/nginx/prod_https.conf \
       >"$nginx_config_path"
     ;;
@@ -327,13 +430,19 @@ scp \
   "$nginx_config_path" \
   "ubuntu@$ec2_ip":~/project/nginx/default.conf
 
+# CloudFront origin 검증 secret이 포함될 수 있으므로 원격 Nginx 설정도 제한합니다.
+ssh \
+  -i "$SSH_KEY_PATH" \
+  "ubuntu@$ec2_ip" \
+  'chmod 600 "$HOME/project/nginx/default.conf"'
+
 # ---------- 원격 명령에 전달할 값 안전하게 escape ----------
 printf -v remote_docker_username '%q' "$docker_user"
 printf -v remote_docker_repository '%q' "$docker_repo"
 printf -v remote_app_version '%q' "$APP_VERSION"
+printf -v remote_frontend_version '%q' "$FRONTEND_VERSION"
 printf -v remote_ai_worker_version '%q' "$AI_WORKER_VERSION"
 printf -v remote_deploy_services '%q' "${DEPLOY_SERVICES[*]}"
-
 
 # PAT은 SSH 명령 인자나 환경변수에 포함하지 않고 표준입력으로만 전달합니다.
 echo "${COLOR_BLUE}Docker registry에 로그인합니다.${COLOR_NC}"
@@ -355,6 +464,7 @@ ssh \
   "DOCKER_USER=$remote_docker_username \
    DOCKER_REPOSITORY=$remote_docker_repository \
    APP_VERSION=$remote_app_version \
+   FRONTEND_VERSION=$remote_frontend_version \
    AI_WORKER_VERSION=$remote_ai_worker_version \
    DEPLOY_SERVICES=$remote_deploy_services \
    bash -s" <<'EOF'
@@ -545,6 +655,7 @@ echo "Deploying services: ${deploy_services[*]}"
 docker compose up \
   -d \
   --pull always \
+  --wait \
   "${deploy_services[@]}"
 
 # 사용 중인 rollback image는 남기고 dangling image만 정리합니다.
@@ -554,3 +665,12 @@ docker compose ps
 EOF
 
 echo "${COLOR_GREEN}Deployment finished.${COLOR_NC}"
+
+if [ "$is_https" = "cloudfront" ]; then
+  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/v1/health${COLOR_NC}"
+  echo "${COLOR_BLUE}EC2 80번 inbound가 CloudFront origin-facing prefix list로만 제한됐는지 확인하세요.${COLOR_NC}"
+elif [ "$is_https" = "1" ]; then
+  echo "${COLOR_BLUE}다음 단계: DNS가 ${PRODUCTION_DOMAIN}을 가리키는지 확인한 뒤 scripts/certbot.sh를 실행하세요.${COLOR_NC}"
+else
+  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/v1/health${COLOR_NC}"
+fi

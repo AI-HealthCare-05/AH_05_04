@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -15,7 +15,11 @@ class ChatRepository:
         self.session = session
 
     async def create_session(self, *, prescription: Prescription) -> ChatSession:
-        chat_session = ChatSession(prescription_id=prescription.id, profile_id=prescription.profile_id)
+        chat_session = ChatSession(
+            prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
+            profile_id=prescription.profile_id,
+        )
         self.session.add(chat_session)
         await self.session.flush()
         await self.session.refresh(chat_session, attribute_names=["created_at", "last_message_at"])
@@ -40,9 +44,12 @@ class ChatRepository:
     ) -> ChatSession | None:
         result = await self.session.execute(
             select(ChatSession)
+            .join(Prescription, Prescription.id == ChatSession.prescription_id)
+            .options(selectinload(ChatSession.prescription).selectinload(Prescription.document))
             .where(
                 ChatSession.prescription_id == prescription_id,
                 ChatSession.session_status == ChatSessionStatus.ACTIVE,
+                ChatSession.prescription_version_id == Prescription.active_version_id,
                 owned_by_self(ChatSession.profile_id, user_id),
             )
             .order_by(ChatSession.last_message_at.desc(), ChatSession.created_at.desc(), ChatSession.id.desc())
@@ -53,17 +60,33 @@ class ChatRepository:
     async def get_session_owned_for_update(self, *, session_id: UUID, user_id: UUID) -> ChatSession | None:
         result = await self.session.execute(
             select(ChatSession)
+            .options(selectinload(ChatSession.prescription).selectinload(Prescription.document))
             .where(
                 ChatSession.id == session_id,
                 owned_by_self(ChatSession.profile_id, user_id),
             )
-            .with_for_update()
+            .with_for_update(of=ChatSession)
         )
         return result.scalar_one_or_none()
+
+    async def lock_if_current_version(self, *, chat_session: ChatSession) -> bool:
+        # 결과 저장 직전의 짧은 Prescription fencing도 무한 대기하지 않게 제한합니다.
+        # SET LOCAL이므로 현재 transaction이 끝나면 자동으로 원복됩니다.
+        await self.session.execute(text("SET LOCAL lock_timeout = '3s'"))
+        current = await self.session.scalar(
+            select(Prescription.id)
+            .where(
+                Prescription.id == chat_session.prescription_id,
+                Prescription.active_version_id == chat_session.prescription_version_id,
+            )
+            .with_for_update(of=Prescription)
+        )
+        return current is not None
 
     async def get_message_owned(self, *, message_id: UUID, user_id: UUID) -> ChatMessage | None:
         result = await self.session.execute(
             select(ChatMessage)
+            .options(selectinload(ChatMessage.session).selectinload(ChatSession.prescription))
             .join(ChatSession, ChatSession.id == ChatMessage.session_id)
             .where(
                 ChatMessage.id == message_id,

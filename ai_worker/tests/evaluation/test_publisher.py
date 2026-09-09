@@ -30,6 +30,19 @@ def _candidate_bundle() -> dict[str, bytes]:
     return {**_bundle(), "comparison.json": b"comparison"}
 
 
+def _capture_created_file_descriptors(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    real_create_file = publisher_module._create_file
+    descriptors: list[int] = []
+
+    def capture_create_file(directory_fd: int, name: str, payload: bytes) -> tuple[int, tuple[int, int]]:
+        descriptor, identity = real_create_file(directory_fd, name, payload)
+        descriptors.append(descriptor)
+        return descriptor, identity
+
+    monkeypatch.setattr(publisher_module, "_create_file", capture_create_file)
+    return descriptors
+
+
 def test_publish_run_directory_is_private_and_complete(tmp_path: Path) -> None:
     destination = publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
 
@@ -37,6 +50,21 @@ def test_publish_run_directory_is_private_and_complete(tmp_path: Path) -> None:
     assert destination.stat().st_mode & 0o777 == 0o700
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in destination.iterdir())
     assert sorted(path.name for path in tmp_path.iterdir()) == [RUN_ID]
+
+
+def test_publish_releases_created_file_descriptors_after_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptors = _capture_created_file_descriptors(monkeypatch)
+
+    publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert len(descriptors) == len(_bundle()) + 1
+    for descriptor in descriptors:
+        with pytest.raises(OSError) as closed:
+            os.fstat(descriptor)
+        assert closed.value.errno == errno.EBADF
 
 
 def test_publisher_atomically_publishes_candidate_bundle_with_comparison(tmp_path: Path) -> None:
@@ -178,6 +206,26 @@ def test_publish_cleans_created_staging_when_open_fails(
     assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
     assert not (tmp_path / RUN_ID).exists()
     assert list(tmp_path.iterdir()) == []
+
+
+def test_cleanup_staging_closes_descriptor_when_identity_is_unavailable(tmp_path: Path) -> None:
+    staging_name = f".{RUN_ID}.tmp.unbound"
+    staging_path = tmp_path / staging_name
+    staging_path.mkdir()
+    root_fd = os.open(tmp_path, publisher_module._directory_flags())
+    staging_fd = os.open(staging_name, publisher_module._directory_flags(), dir_fd=root_fd)
+
+    try:
+        assert not publisher_module._cleanup_staging(root_fd, staging_fd, staging_name, None, {})
+        with pytest.raises(OSError) as closed:
+            os.fstat(staging_fd)
+        assert closed.value.errno == errno.EBADF
+    finally:
+        try:
+            os.close(staging_fd)
+        except OSError:
+            pass
+        os.close(root_fd)
 
 
 def test_publish_preserves_unbound_staging_when_initial_identity_stat_fails(
@@ -423,6 +471,49 @@ def test_publish_preserves_lock_replacement_swapped_at_cleanup_isolation(
     assert not (tmp_path / RUN_ID).exists()
     assert (tmp_path / f"{RUN_ID}.lock").read_bytes() == b"replacement"
     assert (tmp_path / f"{RUN_ID}.lock.original").read_bytes() == b""
+
+
+def test_publish_keeps_created_descriptors_open_through_cleanup_ownership_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_create_file = publisher_module._create_file
+    real_remove_file_if_owned = publisher_module._remove_file_if_owned
+    real_fsync = os.fsync
+    root_identity = (tmp_path.stat().st_dev, tmp_path.stat().st_ino)
+    created: dict[str, tuple[int, tuple[int, int]]] = {}
+    checked: set[str] = set()
+
+    def capture_create_file(directory_fd: int, name: str, payload: bytes) -> tuple[int, tuple[int, int]]:
+        descriptor, identity = real_create_file(directory_fd, name, payload)
+        created[name] = descriptor, identity
+        return descriptor, identity
+
+    def assert_descriptor_open_then_remove(directory_fd: int, name: str, identity: tuple[int, int]) -> None:
+        descriptor, created_identity = created[name]
+        assert identity == created_identity
+        assert publisher_module._descriptor_identity(descriptor) == identity
+        checked.add(name)
+        real_remove_file_if_owned(directory_fd, name, identity)
+
+    def fail_staging_fsync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if stat.S_ISDIR(metadata.st_mode) and identity != root_identity:
+            raise OSError(errno.EIO, "staging fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publisher_module, "_create_file", capture_create_file)
+    monkeypatch.setattr(publisher_module, "_remove_file_if_owned", assert_descriptor_open_then_remove)
+    monkeypatch.setattr(publisher_module.os, "fsync", fail_staging_fsync)
+
+    with pytest.raises(EvaluationValidationError) as caught:
+        publish_run_directory(allowed_root=tmp_path, run_id=RUN_ID, files=_bundle())
+
+    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+    assert checked == {*_bundle(), f"{RUN_ID}.lock"}
+    assert not (tmp_path / RUN_ID).exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_publish_fails_closed_when_staging_entry_is_replaced_before_rename(

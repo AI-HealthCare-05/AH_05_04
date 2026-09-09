@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.chat import ChatMessage, ChatSession
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.tests.conftest import test_engine
@@ -42,7 +42,6 @@ class CommittedChatFixture:
     document_id: UUID
     ocr_job_id: UUID
     prescription_id: UUID
-    medication_id: UUID
     session_ids: tuple[UUID, UUID]
 
 
@@ -81,7 +80,9 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             ocr_job = OcrJob(document_id=document.id)
             session.add(ocr_job)
             await session.flush()
+            version_id = uuid4()
             prescription = Prescription(
+                active_version_id=version_id,
                 document_id=document.id,
                 source_ocr_job_id=ocr_job.id,
                 profile_id=profile.id,
@@ -90,8 +91,18 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             )
             session.add(prescription)
             await session.flush()
-            medication = Medication(
-                prescription_id=prescription.id,
+            session.add(
+                PrescriptionVersion(
+                    id=version_id,
+                    prescription_id=prescription.id,
+                    version_number=1,
+                    prescribed_date=prescription.prescribed_date,
+                    confirmed_at=prescription.confirmed_at,
+                )
+            )
+            await session.flush()
+            version_medication = PrescriptionVersionMedication(
+                prescription_version_id=version_id,
                 medication_name="동시성 검증용 합성약",
                 dose_value=Decimal("0.125"),
                 dose_unit="mg",
@@ -100,16 +111,23 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
                 duration_days=7,
                 display_order=1,
             )
-            first_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
-            second_session = ChatSession(prescription_id=prescription.id, profile_id=profile.id)
-            session.add_all([medication, first_session, second_session])
+            first_session = ChatSession(
+                prescription_id=prescription.id,
+                prescription_version_id=version_id,
+                profile_id=profile.id,
+            )
+            second_session = ChatSession(
+                prescription_id=prescription.id,
+                prescription_version_id=version_id,
+                profile_id=profile.id,
+            )
+            session.add_all([version_medication, first_session, second_session])
             await session.flush()
             fixture = CommittedChatFixture(
                 user=user,
                 document_id=document.id,
                 ocr_job_id=ocr_job.id,
                 prescription_id=prescription.id,
-                medication_id=medication.id,
                 session_ids=(first_session.id, second_session.id),
             )
             await session.commit()
@@ -120,7 +138,6 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as cleanup:
                 await cleanup.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(fixture.session_ids)))
                 await cleanup.execute(delete(ChatSession).where(ChatSession.id.in_(fixture.session_ids)))
-                await cleanup.execute(delete(Medication).where(Medication.id == fixture.medication_id))
                 await cleanup.execute(delete(Prescription).where(Prescription.id == fixture.prescription_id))
                 await cleanup.execute(delete(OcrJob).where(OcrJob.id == fixture.ocr_job_id))
                 await cleanup.execute(delete(MedicalDocument).where(MedicalDocument.id == fixture.document_id))
@@ -135,7 +152,6 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
                 assert (
                     await cleanup.scalar(select(ChatSession.id).where(ChatSession.id.in_(fixture.session_ids))) is None
                 )
-                assert await cleanup.get(Medication, fixture.medication_id) is None
                 assert await cleanup.get(Prescription, fixture.prescription_id) is None
                 assert await cleanup.get(OcrJob, fixture.ocr_job_id) is None
                 assert await cleanup.get(MedicalDocument, fixture.document_id) is None

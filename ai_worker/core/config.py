@@ -1,7 +1,8 @@
 import zoneinfo
 from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
-from typing import Self
+from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -68,6 +69,10 @@ class Config(BaseSettings):
         default=1.0,
         gt=0,
     )
+    OUTBOX_PUBLISHER_INTERVAL_SECONDS: float = Field(
+        default=1.0,
+        gt=0,
+    )
     REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
     REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
     OCR_REQUEST_DEADLINE_SECONDS: float = Field(
@@ -97,6 +102,17 @@ class Config(BaseSettings):
     DB_CONNECT_TIMEOUT: int = Field(default=5, gt=0)
     DB_CONNECTION_POOL_MAXSIZE: int = Field(default=10, gt=0)
     SQLALCHEMY_ECHO: bool = False
+
+    # Source ingestion은 #166 runtime 연결 전까지 기본 비활성입니다. S3 credential은
+    # 여기 저장하지 않고 AWS SDK의 실행 역할·Web Identity·환경 주입 chain을 사용합니다.
+    SOURCE_ARTIFACT_STORAGE_BACKEND: Literal["DISABLED", "LOCAL_PRIVATE", "S3_PRIVATE"] = "DISABLED"
+    SOURCE_ARTIFACT_LOCAL_ROOT: str | None = None
+    SOURCE_ARTIFACT_S3_BUCKET: str | None = None
+    SOURCE_ARTIFACT_S3_PREFIX: str = "source-artifacts"
+    SOURCE_ARTIFACT_S3_REGION: str | None = None
+    SOURCE_ARTIFACT_S3_ENDPOINT_URL: str | None = None
+    SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION: Literal["AES256", "aws:kms"] | None = None
+    SOURCE_ARTIFACT_S3_KMS_KEY_ID: str | None = None
 
     # async-job-v1.md "시도와 재시도": lease가 만료되기 전에 heartbeat가 반드시 한 번 이상
     # 갱신되어야 하므로 두 값의 관계를 기동 시 검증합니다.
@@ -220,6 +236,57 @@ class Config(BaseSettings):
                 "WORKER_LEASE_DURATION_SECONDS를 초과할 수 없습니다."
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_source_artifact_storage(self) -> Self:
+        """활성 backend에 필요한 비민감 위치 설정만 허용합니다."""
+
+        backend = self.SOURCE_ARTIFACT_STORAGE_BACKEND
+        if backend == "DISABLED":
+            return self
+        if backend == "LOCAL_PRIVATE":
+            self._validate_local_source_artifact_storage()
+            return self
+
+        self._validate_s3_source_artifact_storage()
+        return self
+
+    def _validate_local_source_artifact_storage(self) -> None:
+        if self.SOURCE_ARTIFACT_LOCAL_ROOT is None or not self.SOURCE_ARTIFACT_LOCAL_ROOT.strip():
+            raise ValueError("LOCAL_PRIVATE Source artifact storage에는 local root가 필요합니다.")
+        s3_only_settings = (
+            self.SOURCE_ARTIFACT_S3_BUCKET,
+            self.SOURCE_ARTIFACT_S3_REGION,
+            self.SOURCE_ARTIFACT_S3_ENDPOINT_URL,
+            self.SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION,
+            self.SOURCE_ARTIFACT_S3_KMS_KEY_ID,
+        )
+        if any(value is not None for value in s3_only_settings):
+            raise ValueError("LOCAL_PRIVATE Source artifact storage에는 S3 전용 설정을 사용할 수 없습니다.")
+
+    def _validate_s3_source_artifact_storage(self) -> None:
+        if self.SOURCE_ARTIFACT_LOCAL_ROOT is not None:
+            raise ValueError("S3_PRIVATE Source artifact storage에는 local root를 설정할 수 없습니다.")
+        if self.SOURCE_ARTIFACT_S3_BUCKET is None or not self.SOURCE_ARTIFACT_S3_BUCKET.strip():
+            raise ValueError("S3_PRIVATE Source artifact storage에는 bucket이 필요합니다.")
+        if self.SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION is None:
+            raise ValueError("S3_PRIVATE Source artifact storage에는 서버 측 암호화 방식이 필요합니다.")
+        if self.SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION == "aws:kms":
+            if self.SOURCE_ARTIFACT_S3_KMS_KEY_ID is None or not self.SOURCE_ARTIFACT_S3_KMS_KEY_ID.strip():
+                raise ValueError("aws:kms Source artifact storage에는 KMS key ID가 필요합니다.")
+        elif self.SOURCE_ARTIFACT_S3_KMS_KEY_ID is not None:
+            raise ValueError("AES256 Source artifact storage에는 KMS key ID를 설정할 수 없습니다.")
+        if self.SOURCE_ARTIFACT_S3_ENDPOINT_URL is not None:
+            endpoint = urlsplit(self.SOURCE_ARTIFACT_S3_ENDPOINT_URL)
+            if (
+                endpoint.scheme != "https"
+                or not endpoint.hostname
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.query
+                or endpoint.fragment
+            ):
+                raise ValueError("Source artifact S3 endpoint는 credential 없는 HTTPS URL이어야 합니다.")
 
     @property
     def database_url(self) -> URL:

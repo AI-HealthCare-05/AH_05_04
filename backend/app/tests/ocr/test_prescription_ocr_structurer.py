@@ -178,7 +178,7 @@ def test_structure_ignores_date_shaped_but_nonexistent_date() -> None:
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    assert result == []
+    _assert_empty_date_review(result)
 
 
 @pytest.mark.parametrize(
@@ -204,6 +204,54 @@ def test_structure_prefers_issue_date_over_labeled_birthdate(birthdate_raw_value
     assert result[0].normalized_value == "2026-08-12"
 
 
+@pytest.mark.parametrize(
+    "label",
+    [
+        "생년훨일",  # 한 글자 치환
+        "생년월",  # 한 글자 삭제
+        "생년월일자",  # 한 글자 삽입
+        "주민등륵번호",  # 한 글자 치환
+    ],
+)
+def test_structure_rejects_date_beside_single_character_excluded_label_typo(
+    label: str,
+) -> None:
+    raw_fields = [
+        _raw_field(label, 100, 350),
+        _raw_field("2010-03-15", 240, 350),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    _assert_empty_date_review(result)
+
+
+def test_structure_selects_date_beside_single_character_preferred_label_typo() -> None:
+    raw_fields = [
+        _raw_field("교부일짜", 100, 350),
+        _raw_field("2026-08-12", 240, 350),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert len(result) == 1
+    assert result[0].field_type == "PRESCRIBED_DATE"
+    assert result[0].raw_value == "2026-08-12"
+    assert result[0].normalized_value == "2026-08-12"
+
+
+def test_structure_returns_empty_review_for_conflicting_fuzzy_date_labels() -> None:
+    raw_fields = [
+        _raw_field("생년훨일", 80, 350),
+        _raw_field("교부일짜", 120, 350),
+        _raw_field("2026-08-12", 240, 350),
+    ]
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    _assert_empty_date_review(result)
+
+
 def test_structure_does_not_extract_prescribed_date_from_code_like_number_sequence() -> None:
     # 환자번호처럼 긴 숫자열 안에서 우연히 4자리+구분자+한두 자리 조합이 나오면
     # 안 되는 연도(6469년)로 파싱될 수 있습니다. 연도 범위 검증으로 걸러냅니다.
@@ -211,7 +259,7 @@ def test_structure_does_not_extract_prescribed_date_from_code_like_number_sequen
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    assert result == []
+    _assert_empty_date_review(result)
 
 
 def test_structure_rejects_date_with_trailing_extra_digit() -> None:
@@ -221,7 +269,7 @@ def test_structure_rejects_date_with_trailing_extra_digit() -> None:
 
     result = PrescriptionOcrStructurer().structure(raw_fields)
 
-    assert result == []
+    _assert_empty_date_review(result)
 
 
 def test_structure_selects_first_matching_date_when_multiple_candidates_exist() -> None:
@@ -599,7 +647,7 @@ def test_structure_accepts_dose_with_trailing_ocr_text() -> None:
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "1"
-    assert "DURATION_DAYS" not in fields_by_type
+    assert fields_by_type["DURATION_DAYS"].raw_value is None
 
 
 # 약품 행 유지 테스트 추가
@@ -694,6 +742,11 @@ def test_structure_does_not_merge_name_only_second_medication() -> None:
     assert set(second_medication_fields) == {
         "MEDICATION_NAME",
         "MEDICATION_STRENGTH",
+        "DOSE_VALUE",
+        "DOSE_UNIT",
+        "FREQUENCY_PER_DAY",
+        "DURATION_DAYS",
+        "TIMING",
     }
     assert second_medication_fields["MEDICATION_STRENGTH"].raw_value == "10mg"
 
@@ -772,8 +825,8 @@ def test_structure_keeps_partial_medication_for_confirmation() -> None:
     assert fields_by_type["DOSE_VALUE"].raw_value == "1"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["TIMING"].raw_value == "저녁 식후"
-    assert "FREQUENCY_PER_DAY" not in fields_by_type
-    assert "DURATION_DAYS" not in fields_by_type
+    assert fields_by_type["FREQUENCY_PER_DAY"].raw_value is None
+    assert fields_by_type["DURATION_DAYS"].raw_value is None
 
 
 def test_structure_excludes_precaution_row_with_dose_values() -> None:
@@ -837,6 +890,11 @@ def test_structure_keeps_name_only_medication_as_unconfirmed() -> None:
     assert set(fields_by_type) == {
         "MEDICATION_NAME",
         "MEDICATION_STRENGTH",
+        "DOSE_VALUE",
+        "DOSE_UNIT",
+        "FREQUENCY_PER_DAY",
+        "DURATION_DAYS",
+        "TIMING",
     }
     assert fields_by_type["MEDICATION_NAME"].raw_value == "리나글립틴정"
     assert fields_by_type["MEDICATION_STRENGTH"].raw_value == "5mg"
@@ -1372,3 +1430,152 @@ def test_structure_keeps_row_with_ocr_digit_confusion() -> None:
     assert fields_by_type["DOSE_VALUE"].raw_value == "I"
     assert fields_by_type["DOSE_UNIT"].raw_value == "정"
     assert fields_by_type["FREQUENCY_PER_DAY"].raw_value == "I"
+
+
+@pytest.mark.parametrize("separate_issue_label", [False, True], ids=["inline-issue-label", "split-issue-label"])
+@pytest.mark.parametrize("birthdate_first", [True, False], ids=["birthdate-first", "issue-date-first"])
+def test_structure_excludes_birthdate_with_separate_label(
+    separate_issue_label: bool,
+    birthdate_first: bool,
+) -> None:
+    # 합성 좌표: 같은 줄의 오른쪽 날짜를 라벨에 연결해야 합니다.
+    # 2000년 이후 날짜로 기존 연도 하한 방어를 통과하는 잔여 문제를 재현합니다.
+    birthdate_fields = [
+        _raw_field("생년월일", 100, 100, height=20),
+        _raw_field("2010년 03월 15일", 240, 100, height=20),
+    ]
+    issue_fields = (
+        [_raw_field("교부일자", 100, 200, height=20), _raw_field("2026-08-12", 240, 200, height=20)]
+        if separate_issue_label
+        else [_raw_field("교부일자 2026-08-12", 170, 200, height=20)]
+    )
+    raw_fields = birthdate_fields + issue_fields if birthdate_first else issue_fields + birthdate_fields
+
+    result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert len(result) == 1
+    assert result[0].medication_index == 0
+    assert result[0].field_type == "PRESCRIBED_DATE"
+    assert result[0].normalized_value == "2026-08-12"
+    assert result[0].raw_value == ("2026-08-12" if separate_issue_label else "교부일자 2026-08-12")
+
+
+@pytest.mark.parametrize("label", ["교부일자", "발행일", "처방일"])
+def test_structure_prefers_labeled_date_to_unlabeled_date(label: str) -> None:
+    fields = [_raw_field("2010-03-15", 240, 100), _raw_field(label, 100, 200), _raw_field("2026-08-12", 240, 200)]
+    assert PrescriptionOcrStructurer().structure(fields)[0].normalized_value == "2026-08-12"
+
+
+def test_structure_excludes_date_below_birthdate_label() -> None:
+    fields = [_raw_field("생년월일", 200, 100), _raw_field("2010-03-15", 200, 140)]
+    _assert_empty_date_review(PrescriptionOcrStructurer().structure(fields))
+
+
+@pytest.mark.parametrize("x,y", [(100, 500), (1000, 100), (100, 120)])
+def test_structure_does_not_bind_distant_or_lower_label(x: float, y: float) -> None:
+    fields = [_raw_field("생년월일", x, y), _raw_field("2026-08-12", 240, 100)]
+    assert PrescriptionOcrStructurer().structure(fields)[0].normalized_value == "2026-08-12"
+
+
+@pytest.mark.parametrize("birth_x", [100, 200, 230])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_structure_leaves_competing_labels_for_review(birth_x: float, reverse: bool) -> None:
+    fields = [
+        _raw_field("2026-08-12", 240, 100),
+        _raw_field("교부일자", 200, 100),
+        _raw_field("생년월일", birth_x, 100),
+    ]
+    _assert_empty_date_review(PrescriptionOcrStructurer().structure(fields[::-1] if reverse else fields))
+
+
+def test_structure_does_not_choose_between_conflicting_preferred_dates() -> None:
+    fields = [_raw_field("발행일 2026-08-12", 200, 100), _raw_field("교부일자 2026-08-13", 200, 200)]
+    _assert_empty_date_review(PrescriptionOcrStructurer().structure(fields))
+    _assert_empty_date_review(PrescriptionOcrStructurer().structure(list(reversed(fields))))
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("2026년 08월 12일", "2026-08-12"),
+        ("발행일 2026.08.12", "2026-08-12"),
+        ("2026-02-30", None),
+        ("2026-08-123", None),
+    ],
+)
+def test_backend_date_normalization_entrypoint_matches_runtime(raw: str, expected: str | None) -> None:
+    from app.services.prescription_ocr_structurer import normalize_prescribed_date_text
+    from ocr_runtime.prescription_ocr_structurer import normalize_prescribed_date_text as runtime_normalize
+
+    assert normalize_prescribed_date_text is runtime_normalize
+    assert normalize_prescribed_date_text(raw) == expected
+
+
+@pytest.mark.parametrize("strength", ["", " 5mg"])
+def test_structure_fills_missing_review_fields_without_changing_recognized_values(strength: str) -> None:
+    raw_fields = [
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("용법", 911, 581),
+        _raw_field("합성의약품정" + strength, 137, 637),
+        _raw_field("조제", 132, 800),
+    ]
+    structurer = PrescriptionOcrStructurer()
+    result = structurer.structure(raw_fields)
+    assert structurer.structure(raw_fields) == result
+    _assert_empty_date_review([field for field in result if field.medication_index == 0])
+    result = [field for field in result if field.medication_index == 1]
+    assert len(result) == 7
+    assert {field.medication_index for field in result} == {1}
+    assert len({field.field_type for field in result}) == 7
+    for field in result:
+        if field.field_type == "MEDICATION_NAME":
+            assert field.raw_value == "합성의약품정"
+            assert field.confidence_score == 0.99
+        elif field.field_type == "MEDICATION_STRENGTH" and strength:
+            assert field.raw_value == "5mg"
+            assert field.confidence_score == 0.99
+        else:
+            assert (field.raw_value, field.normalized_value, field.normalization_version, field.confidence_score) == (
+                None,
+                None,
+                None,
+                None,
+            )
+
+
+@pytest.mark.parametrize("with_headers", [False, True])
+def test_structure_does_not_create_medication_review_fields_from_instructions(with_headers: bool) -> None:
+    raw_fields = [_raw_field("복용량을 조정", 137, 637), _raw_field("조제", 132, 800)]
+    if with_headers:
+        raw_fields[:0] = [_raw_field("명칭", 237, 581), _raw_field("투여량", 413, 581), _raw_field("용법", 911, 581)]
+    _assert_empty_date_review(PrescriptionOcrStructurer().structure(raw_fields))
+
+
+def _assert_empty_date_review(fields) -> None:
+    assert len(fields) == 1
+    field = fields[0]
+    assert field.medication_index == 0
+    assert field.field_type == "PRESCRIBED_DATE"
+    assert field.raw_value is None
+    assert field.normalized_value is None
+    assert field.confidence_score is None
+    assert field.normalization_version is None
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_dense_review_layout_preserves_manual_or_explicit_date(inline: bool) -> None:
+    fields = [
+        _raw_field("처방일자", 350, 300),
+        _raw_field("생년월일", 480, 300),
+        _raw_field("처방일자 2026-08-12" if inline else "2026-08-12", 500, 300),
+    ]
+    result = PrescriptionOcrStructurer().structure(fields)
+    if inline:
+        assert result[0].normalized_value == "2026-08-12"
+    else:
+        _assert_empty_date_review(result)
+
+
+def test_empty_input_keeps_date_review_without_inventing_medication() -> None:
+    _assert_empty_date_review(PrescriptionOcrStructurer().structure([]))

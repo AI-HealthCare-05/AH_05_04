@@ -20,8 +20,10 @@ from app.core import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRE_PROFILE_REVISION = "77585c0c9792"
 PROFILE_EXPAND_REVISION = "117a8c9d4e21"
+PROFILE_CONTRACT_REVISION = "9c1d7f2b6a4e"
 OCR_AI_JOB_BASE_REVISION = "8d4f1a6c9e2b"
 GUIDE_AI_JOB_BASE_REVISION = "c3f8a12d9e47"
+GUIDE_AI_JOB_REVISION = "20fd11d29ecc"
 
 
 def create_test_database_url() -> URL:
@@ -559,7 +561,10 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
             _insert_legacy_profile_graph_data()
         )
 
-        command.upgrade(alembic_config, "head")
+        # Keep this historical roundtrip within the Profile migration boundary.
+        # Later immutable Prescription Version backfills intentionally prevent
+        # downgrading a populated prescription graph below their foundation.
+        command.upgrade(alembic_config, PROFILE_CONTRACT_REVISION)
         head_chain = asyncio.run(
             _fetch_head_profile_graph(
                 ocr_job_id=ocr_job_id,
@@ -595,7 +600,7 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
         assert expand_chain["profile_id"] is not None
         assert expand_chain["profile_user_id"] == user_id
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, PROFILE_CONTRACT_REVISION)
         final_chain = asyncio.run(
             _fetch_head_profile_graph(
                 ocr_job_id=ocr_job_id,
@@ -619,7 +624,6 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
         assert final_chain["profile_user_id"] == user_id
         assert set(final_gap_counts.values()) == {0}
     finally:
-        command.upgrade(alembic_config, "head")
         if user_id and document_id and ocr_job_id and prescription_id and guide_id and chat_session_id:
             asyncio.run(
                 _cleanup_profile_roundtrip_data(
@@ -631,6 +635,7 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
                     chat_session_id=chat_session_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -1468,15 +1473,17 @@ async def _wait_for_ocr_downgrade_lock() -> None:
     """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
     기다리는지 확인합니다.
 
-    OCR_AI_JOB_BASE_REVISION까지의 downgrade는 이제 `d1e2f3a4b5c6`(#206 user 컬럼 추가) →
-    `20fd11d29ecc`(Guide mapping) 두 단계를 먼저 거칩니다. `d1e2f3a4b5c6`의
+    OCR_AI_JOB_BASE_REVISION까지의 downgrade는 `169a1b2c3d4e`(#169 Prescription Version) →
+    `d1e2f3a4b5c6`(#206 user 컬럼 추가) → `20fd11d29ecc`(Guide mapping) 단계를 먼저 거칩니다.
+    `169a1b2c3d4e`의 `prescription.active_version_id` 제거도 parent chain에 포함된
+    미commit `prescription` insert를 기다릴 수 있습니다. `d1e2f3a4b5c6`의
     `ALTER TABLE "user" ... DROP COLUMN`은 이 테스트의 writer가 `insert_ocr_parent_chain()`로
     같은 transaction에서 만든 `user` row 때문에 대기하고, `20fd11d29ecc`의
     `ALTER TABLE guide DROP CONSTRAINT fk_guide_ai_job`은 `guide`뿐 아니라 참조 대상인
     `ai_job` 테이블에도 ACCESS EXCLUSIVE lock을 요구하므로(PostgreSQL의 FK 제약 삭제 규칙)
     writer가 만든 미commit `ai_job` insert 때문에 대기합니다. 두 단계 모두 writer가
     commit해야 통과해 마지막 ocr_job 단계(및 그 데이터 검증)에 도달합니다. 따라서 `user`·
-    `ai_job`·`ocr_job` 중 어느 테이블에서 대기하든 "downgrade가 concurrent writer를
+    `prescription`·`ai_job`·`ocr_job` 중 어느 테이블에서 대기하든 "downgrade가 concurrent writer를
     기다린다"는 같은 사실을 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
@@ -1497,7 +1504,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname IN ('user', 'ai_job', 'ocr_job')
+                              AND table_info.relname IN ('user', 'prescription', 'ai_job', 'ocr_job')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -1510,7 +1517,7 @@ async def _wait_for_ocr_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the user/ai_job/ocr_job ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/prescription/ai_job/ocr_job ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 
@@ -1643,6 +1650,8 @@ async def insert_guide_parent_chain(
     document_id = str(uuid4())
     ocr_job_id = str(uuid4())
     prescription_id = str(uuid4())
+    prescription_version_id = str(uuid4())
+    version_medication_id = str(uuid4())
     guide_id = str(uuid4())
 
     await connection.execute(
@@ -1753,60 +1762,99 @@ async def insert_guide_parent_chain(
         },
     )
 
-    await connection.execute(
-        text(
-            """
-            INSERT INTO prescription (
-                id,
-                document_id,
-                source_ocr_job_id,
-                profile_id,
-                prescribed_date,
-                prescription_status,
-                confirmed_at
+    has_version_schema = bool(
+        await connection.scalar(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'prescription' AND column_name = 'active_version_id'
+                )
+                """
             )
-            VALUES (
-                :id,
-                :document_id,
-                :source_ocr_job_id,
-                :profile_id,
-                DATE '2026-09-03',
-                'CONFIRMED',
-                now()
-            )
-            """
-        ),
-        {
-            "id": prescription_id,
-            "document_id": document_id,
-            "source_ocr_job_id": ocr_job_id,
-            "profile_id": profile_id,
-        },
+        )
     )
-
-    await connection.execute(
-        text(
-            """
-            INSERT INTO guide (
-                id,
-                prescription_id,
-                profile_id,
-                generation_status
-            )
-            VALUES (
-                :id,
-                :prescription_id,
-                :profile_id,
-                'PENDING'
-            )
-            """
-        ),
-        {
-            "id": guide_id,
-            "prescription_id": prescription_id,
-            "profile_id": profile_id,
-        },
-    )
+    prescription_values = {
+        "id": prescription_id,
+        "prescription_version_id": prescription_version_id,
+        "document_id": document_id,
+        "source_ocr_job_id": ocr_job_id,
+        "profile_id": profile_id,
+    }
+    if has_version_schema:
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription (
+                    id, active_version_id, document_id, source_ocr_job_id, profile_id,
+                    prescribed_date, prescription_status, confirmed_at
+                ) VALUES (
+                    :id, :prescription_version_id, :document_id, :source_ocr_job_id, :profile_id,
+                    DATE '2026-09-03', 'CONFIRMED', now()
+                )
+                """
+            ),
+            prescription_values,
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription_version (
+                    id, prescription_id, version_number, prescribed_date, confirmed_at
+                ) VALUES (:id, :prescription_id, 1, DATE '2026-09-03', now())
+                """
+            ),
+            {"id": prescription_version_id, "prescription_id": prescription_id},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription_version_medication (
+                    id, prescription_version_id, medication_name, display_order
+                ) VALUES (:id, :prescription_version_id, '합성 가이드 검증약', 1)
+                """
+            ),
+            {"id": version_medication_id, "prescription_version_id": prescription_version_id},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO guide (
+                    id, prescription_id, prescription_version_id, profile_id, generation_status
+                ) VALUES (:id, :prescription_id, :prescription_version_id, :profile_id, 'PENDING')
+                """
+            ),
+            {
+                "id": guide_id,
+                "prescription_id": prescription_id,
+                "prescription_version_id": prescription_version_id,
+                "profile_id": profile_id,
+            },
+        )
+    else:
+        await connection.execute(
+            text(
+                """
+                INSERT INTO prescription (
+                    id, document_id, source_ocr_job_id, profile_id,
+                    prescribed_date, prescription_status, confirmed_at
+                ) VALUES (
+                    :id, :document_id, :source_ocr_job_id, :profile_id,
+                    DATE '2026-09-03', 'CONFIRMED', now()
+                )
+                """
+            ),
+            prescription_values,
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO guide (id, prescription_id, profile_id, generation_status)
+                VALUES (:id, :prescription_id, :profile_id, 'PENDING')
+                """
+            ),
+            {"id": guide_id, "prescription_id": prescription_id, "profile_id": profile_id},
+        )
 
     return user_id, document_id, ocr_job_id, prescription_id, guide_id
 
@@ -1815,6 +1863,7 @@ async def _insert_ai_job_for_guide_mapping(
     connection: AsyncConnection,
     *,
     user_id: str,
+    prescription_version_id: str | None = None,
 ) -> str:
     ai_job_id = str(uuid4())
 
@@ -1826,6 +1875,7 @@ async def _insert_ai_job_for_guide_mapping(
                 user_id,
                 job_type,
                 status,
+                prescription_version_id,
                 attempt_count,
                 max_attempts
             )
@@ -1834,6 +1884,7 @@ async def _insert_ai_job_for_guide_mapping(
                 :user_id,
                 'GUIDE',
                 'PENDING',
+                :prescription_version_id,
                 0,
                 3
             )
@@ -1842,6 +1893,7 @@ async def _insert_ai_job_for_guide_mapping(
         {
             "id": ai_job_id,
             "user_id": user_id,
+            "prescription_version_id": prescription_version_id,
         },
     )
 
@@ -1928,9 +1980,15 @@ async def test_deleting_ai_job_sets_guide_mapping_to_null(
 
         try:
             user_id, _, _, _, guide_id = await insert_guide_parent_chain(connection)
+            prescription_version_id = await connection.scalar(
+                text("SELECT prescription_version_id FROM guide WHERE id = :id"),
+                {"id": guide_id},
+            )
+            assert prescription_version_id is not None
             ai_job_id = await _insert_ai_job_for_guide_mapping(
                 connection,
                 user_id=user_id,
+                prescription_version_id=str(prescription_version_id),
             )
 
             await connection.execute(
@@ -1978,16 +2036,16 @@ async def test_one_ai_job_cannot_map_to_multiple_guides(
         try:
             user_id, _, _, prescription_id, first_guide_id = await insert_guide_parent_chain(connection)
             second_guide_id = str(uuid4())
+            prescription_result = await connection.execute(
+                text("SELECT profile_id, active_version_id FROM prescription WHERE id = :id"),
+                {"id": prescription_id},
+            )
+            profile_id, prescription_version_id = prescription_result.one()
             ai_job_id = await _insert_ai_job_for_guide_mapping(
                 connection,
                 user_id=user_id,
+                prescription_version_id=str(prescription_version_id),
             )
-
-            profile_id_result = await connection.execute(
-                text("SELECT profile_id FROM prescription WHERE id = :id"),
-                {"id": prescription_id},
-            )
-            profile_id = profile_id_result.scalar_one()
 
             await connection.execute(
                 text(
@@ -1995,12 +2053,14 @@ async def test_one_ai_job_cannot_map_to_multiple_guides(
                     INSERT INTO guide (
                         id,
                         prescription_id,
+                        prescription_version_id,
                         profile_id,
                         generation_status
                     )
                     VALUES (
                         :id,
                         :prescription_id,
+                        :prescription_version_id,
                         :profile_id,
                         'PENDING'
                     )
@@ -2009,6 +2069,7 @@ async def test_one_ai_job_cannot_map_to_multiple_guides(
                 {
                     "id": second_guide_id,
                     "prescription_id": prescription_id,
+                    "prescription_version_id": prescription_version_id,
                     "profile_id": profile_id,
                 },
             )
@@ -2170,13 +2231,13 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
 
         user_id, document_id, ocr_job_id, prescription_id, guide_id = asyncio.run(_insert_pre_mapping_guide())
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
 
-        # 이미 head인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
-        command.upgrade(alembic_config, "head")
+        # 이미 대상 revision인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
+        command.upgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
 
@@ -2186,13 +2247,11 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
         )
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is False
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) is None
     finally:
-        command.upgrade(alembic_config, "head")
-
         if user_id and document_id and ocr_job_id and prescription_id and guide_id:
             asyncio.run(
                 _cleanup_guide_mapping_roundtrip_data(
@@ -2203,6 +2262,7 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
                     guide_id=guide_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 async def _insert_linked_guide_ai_job() -> tuple[str, str, str, str, str, str]:
@@ -2346,12 +2406,9 @@ async def _write_guide_ai_job_link_and_wait(
 
 async def _wait_for_guide_downgrade_lock() -> None:
     """downgrade가 writer의 uncommitted transaction과 충돌하는 ACCESS EXCLUSIVE lock을
-    기다리는지 확인합니다. `GUIDE_AI_JOB_BASE_REVISION`으로 내려가는 경로에 #206의
-    `d1e2f3a4b5c6`(user 컬럼 추가)이 head로 얹히면서, writer가 `insert_guide_parent_chain()`로
-    같은 transaction에서 만든 `user` row 때문에 downgrade가 `guide` 단계(FK 제약 삭제)에
-    도달하기 전에 먼저 `user` 테이블의 `ALTER TABLE ... DROP COLUMN` 단계에서 대기합니다 —
-    두 테이블 모두 writer의 같은 uncommitted transaction이 잠그고 있어 어느 쪽에서
-    관찰되든 같은 대기 상태를 증명합니다."""
+    기다리는지 확인합니다. `GUIDE_AI_JOB_BASE_REVISION`으로 내려가는 경로에는 #169의
+    historical Guide migration revision 안에서 실행하므로 writer가 같은 transaction에서 만든
+    `guide` row와 FK 제약 삭제가 충돌하는 대기 상태를 증명합니다."""
     engine = create_async_engine(
         create_alembic_database_url(),
         poolclass=NullPool,
@@ -2371,7 +2428,7 @@ async def _wait_for_guide_downgrade_lock() -> None:
                             JOIN pg_namespace AS namespace_info
                               ON namespace_info.oid = table_info.relnamespace
                             WHERE namespace_info.nspname = 'public'
-                              AND table_info.relname IN ('user', 'guide')
+                              AND table_info.relname IN ('user', 'prescription', 'guide')
                               AND lock_info.mode = 'AccessExclusiveLock'
                               AND lock_info.granted = false
                         )
@@ -2384,7 +2441,7 @@ async def _wait_for_guide_downgrade_lock() -> None:
 
             await asyncio.sleep(0.05)
 
-        raise AssertionError("Downgrade did not wait for the user/guide ACCESS EXCLUSIVE lock.")
+        raise AssertionError("Downgrade did not wait for the user/prescription/guide ACCESS EXCLUSIVE lock.")
     finally:
         await engine.dispose()
 
@@ -2405,7 +2462,7 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
     downgrade_future: Future[None] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             writer_future = executor.submit(
@@ -2459,8 +2516,6 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
             except RuntimeError:
                 pass
 
-        command.upgrade(alembic_config, "head")
-
         if user_id and document_id and ocr_job_id and prescription_id and guide_id and ai_job_id:
             asyncio.run(
                 _cleanup_linked_guide_ai_job(
@@ -2472,6 +2527,7 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
@@ -2484,7 +2540,7 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
     ai_job_id = ""
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, GUIDE_AI_JOB_REVISION)
 
         user_id, document_id, ocr_job_id, prescription_id, guide_id, ai_job_id = asyncio.run(
             _insert_linked_guide_ai_job()
@@ -2502,8 +2558,6 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
         assert asyncio.run(_fetch_guide_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_guide_ai_job_id(guide_id)) == ai_job_id
     finally:
-        command.upgrade(alembic_config, "head")
-
         if user_id and document_id and ocr_job_id and prescription_id and guide_id and ai_job_id:
             asyncio.run(
                 _cleanup_linked_guide_ai_job(
@@ -2515,6 +2569,7 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
+        command.upgrade(alembic_config, "head")
 
 
 @pytest.mark.asyncio
@@ -2557,14 +2612,100 @@ async def test_user_account_lifecycle_columns_default_to_active(
     assert row.token_version == 0
 
 
+async def _insert_candidate_version_graph(connection: AsyncConnection) -> dict[str, str]:
+    user_id, document_id, ocr_job_id = await insert_ocr_parent_chain(connection)
+    profile_id = await connection.scalar(text("SELECT id FROM profile WHERE user_id = :user_id"), {"user_id": user_id})
+    assert profile_id is not None
+    prescription_id = str(uuid4())
+    version_id = str(uuid4())
+    pvm_id = str(uuid4())
+    await connection.execute(
+        text(
+            """
+            INSERT INTO prescription (
+                id, active_version_id, document_id, source_ocr_job_id, profile_id,
+                prescribed_date, prescription_status, confirmed_at
+            ) VALUES (
+                :prescription_id, :version_id, :document_id, :ocr_job_id, :profile_id,
+                DATE '2026-09-08', 'CONFIRMED', now()
+            )
+            """
+        ),
+        {
+            "prescription_id": prescription_id,
+            "version_id": version_id,
+            "document_id": document_id,
+            "ocr_job_id": ocr_job_id,
+            "profile_id": profile_id,
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO prescription_version (
+                id, prescription_id, version_number, prescribed_date, confirmed_at
+            ) VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now())
+            """
+        ),
+        {"version_id": version_id, "prescription_id": prescription_id},
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO prescription_version_medication (
+                id, prescription_version_id, medication_name, display_order
+            ) VALUES (:pvm_id, :version_id, '테스트약', 1)
+            """
+        ),
+        {"pvm_id": pvm_id, "version_id": version_id},
+    )
+    return {
+        "user_id": user_id,
+        "profile_id": str(profile_id),
+        "document_id": document_id,
+        "ocr_job_id": ocr_job_id,
+        "prescription_id": prescription_id,
+        "version_id": version_id,
+        "pvm_id": pvm_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_prescription_version_runtime_links_are_not_nullable(migrated_engine: AsyncEngine) -> None:
+    async with migrated_engine.connect() as connection:
+        rows = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT table_name, column_name, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND (table_name, column_name) IN (
+                          ('prescription', 'active_version_id'),
+                          ('guide', 'prescription_version_id'),
+                          ('chat_session', 'prescription_version_id')
+                      )
+                    """
+                )
+            )
+        ).mappings()
+
+    assert {(row["table_name"], row["column_name"], row["is_nullable"]) for row in rows} == {
+        ("prescription", "active_version_id", "NO"),
+        ("guide", "prescription_version_id", "NO"),
+        ("chat_session", "prescription_version_id", "NO"),
+    }
+
+
 async def _insert_candidate_search_with_result(
     connection: AsyncConnection,
     *,
     displayed_candidate_count: int,
     is_displayed: bool,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, str]]:
     search_id = str(uuid4())
     result_id = str(uuid4())
+    graph = await _insert_candidate_version_graph(connection)
     await connection.execute(
         text(
             """
@@ -2576,7 +2717,7 @@ async def _insert_candidate_search_with_result(
         ),
         {
             "id": search_id,
-            "pvm_id": str(uuid4()),
+            "pvm_id": graph["pvm_id"],
             "digest": f"digest-{uuid4().hex[:8]}",
             "displayed_candidate_count": displayed_candidate_count,
         },
@@ -2598,7 +2739,7 @@ async def _insert_candidate_search_with_result(
             "is_displayed": is_displayed,
         },
     )
-    return search_id, result_id
+    return search_id, result_id, graph
 
 
 @pytest.mark.asyncio
@@ -2635,6 +2776,7 @@ async def test_candidate_search_displayed_count_deferred_constraint_blocks_inser
     async with migrated_engine.connect() as connection:
         transaction = await connection.begin()
         try:
+            graph = await _insert_candidate_version_graph(connection)
             await connection.execute(
                 text(
                     """
@@ -2646,7 +2788,7 @@ async def test_candidate_search_displayed_count_deferred_constraint_blocks_inser
                 ),
                 {
                     "id": str(uuid4()),
-                    "pvm_id": str(uuid4()),
+                    "pvm_id": graph["pvm_id"],
                     "digest": f"digest-{uuid4().hex[:8]}",
                 },
             )
@@ -2665,10 +2807,11 @@ async def test_candidate_search_displayed_count_deferred_constraint_allows_match
     이 트리거가 정상 흐름까지 막지 않는지 실제 commit으로 확인한다."""
     search_id = None
     result_id = None
+    graph = None
     async with migrated_engine.connect() as connection:
         transaction = await connection.begin()
         try:
-            search_id, result_id = await _insert_candidate_search_with_result(
+            search_id, result_id, graph = await _insert_candidate_search_with_result(
                 connection,
                 displayed_candidate_count=1,
                 is_displayed=True,
@@ -2689,4 +2832,13 @@ async def test_candidate_search_displayed_count_deferred_constraint_allows_match
             text("DELETE FROM medication_candidate_search WHERE id = :id"),
             {"id": search_id},
         )
+        assert graph is not None
+        await cleanup_connection.execute(
+            text("DELETE FROM prescription WHERE id = :prescription_id"),
+            graph,
+        )
+        await cleanup_connection.execute(text("DELETE FROM ocr_job WHERE id = :ocr_job_id"), graph)
+        await cleanup_connection.execute(text("DELETE FROM medical_document WHERE id = :document_id"), graph)
+        await cleanup_connection.execute(text("DELETE FROM profile WHERE id = :profile_id"), graph)
+        await cleanup_connection.execute(text('DELETE FROM "user" WHERE id = :user_id'), graph)
         await cleanup_transaction.commit()

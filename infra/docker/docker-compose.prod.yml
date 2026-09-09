@@ -3,6 +3,13 @@ services:
   redis:
     image: redis:alpine
     container_name: redis
+    # sh -c 형태의 command는 redis 공식 이미지 entrypoint의 gosu 권한 하향 분기를 타지
+    # 않아 명시하지 않으면 root로 기동된다(#322). requirepass conf 파일 방식과 충돌하지
+    # 않는 것을 확인했다 — 인증 경계가 된 프로세스는 비특권으로 실행한다.
+    # 영속 볼륨을 추가할 때는 기존 데이터 소유자를 확인해야 한다. root로 기동됐던
+    # 시기의 dump.rdb는 umask 077로 600 root:root이므로, user: redis 상태에서는
+    # 읽기 실패로 기동 자체가 막힌다(#322 검증). 볼륨 도입 시 chown 또는 초기화가 필요하다.
+    user: redis
     networks:
       - ws
     environment:
@@ -155,6 +162,19 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - uv
+        - run
+        - --no-sync
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   # 5. AI Worker (Model 학습 및 추론)
   ai-worker:
@@ -209,15 +229,14 @@ services:
       redis:
         condition: service_healthy
 
-  # 6. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
+  # 6. Frontend + Nginx (정적 SPA 제공 및 API reverse proxy)
   nginx:
     container_name: nginx
-    image: nginx:latest
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:frontend-${FRONTEND_VERSION}
+    restart: always
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - static_volume:/vol/web/static
-      - media_volume:/vol/web/media
-      - certbot-conf:/etc/letsencrypt
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-conf:/etc/letsencrypt:ro
       - certbot-www:/var/www/certbot
     ports:
       - "80:80"
@@ -225,7 +244,14 @@ services:
     networks:
       - ws
     depends_on:
-      - fastapi
+      fastapi:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   # 7. certbot: SSL 인증서 발급담당
   certbot:
@@ -236,7 +262,8 @@ services:
       - certbot-conf:/etc/letsencrypt
       - certbot-www:/var/www/certbot
     depends_on:
-      - nginx
+      nginx:
+        condition: service_healthy
 
 volumes:
   # PostgreSQL 운영 데이터를 컨테이너 재생성 후에도 유지합니다.

@@ -52,8 +52,8 @@ class RecordingPrescriptionRepository:
         self.medications = medications
         self.events = events
 
-    async def get_medications(self, *, prescription_id: object) -> Sequence[object]:
-        self.events.append("prescription.get_medications")
+    async def get_version_medications(self, *, prescription_version_id: object) -> Sequence[object]:
+        self.events.append("prescription.get_version_medications")
         return self.medications
 
 
@@ -65,6 +65,7 @@ class RecordingChatRepository:
         *,
         recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
         commit_error: Exception | None = None,
+        current_version_at_completion: bool = True,
     ) -> None:
         self.owned_session = session
         self.events = events
@@ -74,6 +75,7 @@ class RecordingChatRepository:
         self.created_snapshots: list[tuple[int, object, object, object]] = []
         self.state_transitions: list[tuple[int, ChatGenerationStatus]] = []
         self.commits = 0
+        self.current_version_at_completion = current_version_at_completion
 
     async def get_session_owned_for_update(self, *, session_id: object, user_id: object) -> object | None:
         self.events.append("chat.lock_owned")
@@ -123,6 +125,11 @@ class RecordingChatRepository:
         self.state_transitions.append((message.message_seq, message.generation_status))
         return message
 
+    async def lock_if_current_version(self, *, chat_session: object) -> bool:
+        del chat_session
+        self.events.append("chat.lock_if_current_version")
+        return self.current_version_at_completion
+
     async def mark_completed(self, message: SimpleNamespace, **kwargs: object) -> SimpleNamespace:
         self.events.append("chat.mark_completed")
         message.content = kwargs["content"]
@@ -157,14 +164,17 @@ def _service_fixture(
     commit_error: Exception | None = None,
     history_context_enabled: bool = False,
     recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
+    current_version_at_completion: bool = True,
 ) -> tuple[ChatService, RecordingChatRepository, list[str], SimpleNamespace]:
     events: list[str] = []
     chat_session = SimpleNamespace(
         id=uuid4(),
         prescription_id=uuid4(),
+        prescription_version_id=uuid4(),
         session_status=status,
         last_message_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
+    chat_session.prescription = SimpleNamespace(active_version_id=chat_session.prescription_version_id)
     medications = [
         SimpleNamespace(
             medication_name="첫 번째 합성약",
@@ -190,6 +200,7 @@ def _service_fixture(
         events,
         recent_pairs=recent_pairs,
         commit_error=commit_error,
+        current_version_at_completion=current_version_at_completion,
     )
     prescription_repo = RecordingPrescriptionRepository(medications, events)
     engine.events = events
@@ -228,12 +239,13 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
 
     assert events == [
         "chat.lock_owned",
-        "prescription.get_medications",
+        "prescription.get_version_medications",
         "chat.next_seq",
         f"chat.create.{ChatRole.USER}",
         f"chat.create.{ChatRole.ASSISTANT}",
         "chat.mark_generating",
         "engine.reply",
+        "chat.lock_if_current_version",
         "chat.mark_completed",
         "chat.update_last_message_at",
     ]
@@ -269,6 +281,34 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
     assert result.prompt_version == "chat-prompt-v2"
     assert result.completed_at == chat_session.last_message_at
     assert engine.inputs[0].history == []
+
+
+async def test_send_message_rejects_generated_result_when_prescription_version_changes() -> None:
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="폐기할 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    service, chat_repo, events, chat_session = _service_fixture(
+        engine=engine,
+        current_version_at_completion=False,
+    )
+
+    with pytest.raises(ApiError) as captured:
+        await service.send_message(
+            user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+            session_id=chat_session.id,
+            request=SendChatMessageRequest(content="정정과 경합하는 질문"),
+        )
+
+    assert captured.value.code == "PRESCRIPTION_VERSION_CONFLICT"
+    assert [(detail.field, detail.reason) for detail in captured.value.details] == [
+        ("session_id", "ACTIVE_VERSION_MISMATCH")
+    ]
+    assert events[-3:] == ["engine.reply", "chat.lock_if_current_version", "chat.commit_failed_message_pair"]
+    assert chat_repo.commits == 1
+    assistant = chat_repo.messages[1]
+    assert assistant.generation_status == ChatGenerationStatus.FAILED
+    assert assistant.error_code == "PRESCRIPTION_VERSION_STALE"
+    assert (assistant.content, assistant.model_name, assistant.prompt_version) == (None, None, None)
 
 
 @pytest.mark.parametrize("pair_count", [0, 1, 3, 4])

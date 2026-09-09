@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   executeOcr,
   getJobStatus,
+  getLatestPrescription,
   getOcrJob,
   getOcrResult,
   isJobStatusResponse,
@@ -10,11 +11,16 @@ import {
   type JobStatusResponse,
   type OcrJobResponse,
 } from '../api/prescriptions'
+import { getGuideForPrescription } from '../api/guides'
 import { ApiError } from '../api/client'
 import AiJobStatusState from '../components/AiJobStatusState'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import { adaptOcrJobStatus } from '../features/ai-jobs/ocrJobAdapter'
+import {
+  clearAuthenticatedSession,
+  isStaleTokenError,
+} from '../features/auth/authSession'
 import {
   clearOcrJobRecovery,
   loadOcrJobRecovery,
@@ -128,6 +134,11 @@ function UploadMethodIcon({ source }: { source: UploadSource }) {
 
 function PrescriptionUploadPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const isNewPrescriptionIntent = (
+    location.state as { intent?: unknown } | null
+  )?.intent === 'new-prescription'
+  const [isNewPrescriptionFlow] = useState(isNewPrescriptionIntent)
   const inputId = useId()
   const filenameId = useId()
   const contractId = useId()
@@ -135,7 +146,9 @@ function PrescriptionUploadPage() {
   const [uploadSource, setUploadSource] = useState<UploadSource | null>(null)
   const [isFilenameExpanded, setIsFilenameExpanded] = useState(false)
   const [pollingTarget, setPollingTarget] =
-    useState<OcrPollingTarget | null>(loadOcrJobRecovery)
+    useState<OcrPollingTarget | null>(() => (
+      isNewPrescriptionFlow ? null : loadOcrJobRecovery()
+    ))
   const [message, setMessage] = useState('')
   const [hasUploadFailed, setHasUploadFailed] = useState(false)
   const [isPreparing, setIsPreparing] = useState(false)
@@ -143,11 +156,83 @@ function PrescriptionUploadPage() {
     useState<OcrCompletionError | null>(null)
   const [pollingRestartKey, setPollingRestartKey] = useState(0)
   const [completionRestartKey, setCompletionRestartKey] = useState(0)
+  const [rediscoveryRestartKey, setRediscoveryRestartKey] = useState(0)
+  const [isCheckingExistingPrescription, setIsCheckingExistingPrescription] =
+    useState(() => !isNewPrescriptionFlow && pollingTarget === null)
+  const [rediscoveryError, setRediscoveryError] = useState<unknown>(null)
   const preparationRequestRef = useRef(0)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const preparationControllerRef = useRef<AbortController | null>(null)
   const intakeIntentRef = useRef<OcrIntakeIntent | null>(null)
+  const hasClearedEntryRecoveryRef = useRef(false)
+
+  useEffect(() => {
+    if (isNewPrescriptionFlow) {
+      if (!hasClearedEntryRecoveryRef.current) {
+        hasClearedEntryRecoveryRef.current = true
+        clearOcrJobRecovery()
+        if (isNewPrescriptionIntent) {
+          navigate(location.pathname, { replace: true, state: null })
+        }
+      }
+      setIsCheckingExistingPrescription(false)
+      setRediscoveryError(null)
+      return undefined
+    }
+
+    if (pollingTarget) {
+      setIsCheckingExistingPrescription(false)
+      setRediscoveryError(null)
+      return undefined
+    }
+
+    let isActive = true
+    setIsCheckingExistingPrescription(true)
+    setRediscoveryError(null)
+
+    const handleRediscoveryFailure = (error: unknown) => {
+      if (!isActive) return
+      if (error instanceof ApiError && error.status === 404) {
+        setIsCheckingExistingPrescription(false)
+        return
+      }
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
+        navigate('/login', { replace: true })
+        return
+      }
+      setRediscoveryError(error)
+      setIsCheckingExistingPrescription(false)
+    }
+
+    const rediscoverExistingGuide = async () => {
+      try {
+        const prescriptionResponse = await getLatestPrescription()
+        if (!isActive) return
+
+        await getGuideForPrescription(
+          prescriptionResponse.data.prescription_id,
+        )
+        if (isActive) navigate('/guides', { replace: true })
+      } catch (error) {
+        handleRediscoveryFailure(error)
+      }
+    }
+
+    void rediscoverExistingGuide()
+
+    return () => {
+      isActive = false
+    }
+  }, [
+    isNewPrescriptionFlow,
+    isNewPrescriptionIntent,
+    location.pathname,
+    navigate,
+    pollingTarget,
+    rediscoveryRestartKey,
+  ])
 
   const resetNativeFileInputs = () => {
     if (cameraInputRef.current) cameraInputRef.current.value = ''
@@ -277,8 +362,7 @@ function PrescriptionUploadPage() {
   }, [pollingState.jobKey, pollingState.status, pollingTarget])
 
   const expireOcrSession = useCallback(() => {
-    clearOcrJobRecovery()
-    localStorage.removeItem('access_token')
+    clearAuthenticatedSession()
     navigate('/login', { replace: true })
   }, [navigate])
 
@@ -439,6 +523,55 @@ function PrescriptionUploadPage() {
   const retryCompletedResult = () => {
     setCompletionError(null)
     setCompletionRestartKey((current) => current + 1)
+  }
+
+  if (isCheckingExistingPrescription) {
+    return (
+      <div className="mvp-page mvp-upload-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/')}
+          brandMark={<DoseyMascot variant="header" />}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-upload__failure" role="status">
+            <DoseyMascot variant="chat" />
+            <h1>등록된 처방전을 확인하고 있어요</h1>
+            <p>잠시만 기다려 주세요.</p>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
+
+  if (rediscoveryError) {
+    return (
+      <div className="mvp-page mvp-upload-page">
+        <MobileShell
+          title="Dosey 도지"
+          onBack={() => navigate('/')}
+          brandMark={<DoseyMascot variant="header" />}
+          backPlacement="content"
+          hideNavigation
+        >
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-upload__failure">
+            <span className="mvp-upload__failure-icon" aria-hidden="true" />
+            <h1>등록된 처방전을 확인하지 못했어요</h1>
+            <p role="alert">{getUploadFailureMessage(rediscoveryError)}</p>
+            <Button
+              fullWidth
+              onClick={() => setRediscoveryRestartKey((current) => current + 1)}
+            >
+              다시 확인하기
+            </Button>
+            <Button fullWidth variant="secondary" onClick={() => navigate('/')}>
+              홈으로 돌아가기
+            </Button>
+          </main>
+        </MobileShell>
+      </div>
+    )
   }
 
   if (hasUploadFailed) {

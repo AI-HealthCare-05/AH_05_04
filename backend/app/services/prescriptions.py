@@ -6,9 +6,9 @@ from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from app.core.errors import ApiError, ErrorDetail
-from app.dtos.prescriptions import MedicationData, PrescriptionData
+from app.dtos.prescriptions import CorrectPrescriptionRequest, MedicationData, PrescriptionData
 from app.models.ocr import ExtractedField, FieldType
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.users import User
 from app.repositories.medical_document_repository import DocumentLockTimeoutError, MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
@@ -36,14 +36,22 @@ def _field_value(field: ExtractedField | None) -> str | None:
     return stripped or None
 
 
-def _to_prescription_data(prescription: Prescription, medications: list[Medication]) -> PrescriptionData:
+def _to_prescription_data(
+    prescription: Prescription,
+    version: PrescriptionVersion,
+    medications: list[PrescriptionVersionMedication],
+) -> PrescriptionData:
     return PrescriptionData(
         prescription_id=prescription.id,
+        prescription_version_id=version.id,
+        revision=version.version_number,
+        current=prescription.active_version_id == version.id,
         document_id=prescription.document_id,
-        prescribed_date=prescription.prescribed_date,
-        confirmed_at=prescription.confirmed_at,
+        prescribed_date=version.prescribed_date,
+        confirmed_at=version.confirmed_at,
         medications=[
             MedicationData(
+                prescription_version_medication_id=medication.id,
                 medication_name=medication.medication_name,
                 strength_text=medication.strength_text,
                 dose_value=(float(medication.dose_value) if medication.dose_value is not None else None),
@@ -121,8 +129,13 @@ class PrescriptionService:
             confirmed_at=confirmed_at,
             medications=medications,
         )
-        created_medications = await self._prescription_repo.get_medications(prescription_id=prescription.id)
-        return _to_prescription_data(prescription, created_medications)
+        created_medications = await self._prescription_repo.get_version_medications(
+            prescription_version_id=prescription.active_version_id
+        )
+        version = await self._prescription_repo.get_version(prescription_version_id=prescription.active_version_id)
+        if version is None:
+            raise RuntimeError("created prescription version is missing")
+        return _to_prescription_data(prescription, version, created_medications)
 
     async def get_prescription_detail(self, *, user: User, prescription_id: UUID) -> PrescriptionData:
         prescription = await self._prescription_repo.get_owned(prescription_id=prescription_id, user_id=user.id)
@@ -133,7 +146,7 @@ class PrescriptionService:
                 message="처방 정보를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
             )
-        return _to_prescription_data(prescription, list(prescription.medications))
+        return self._active_version_data(prescription)
 
     async def get_latest_prescription(self, *, user: User) -> PrescriptionData:
         # 재접속 복구 Backend 계약(#295): Frontend가 어떤 prescription_id도 들고 있지 않을 때
@@ -146,7 +159,70 @@ class PrescriptionService:
                 message="처방 정보를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND")],
             )
-        return _to_prescription_data(prescription, list(prescription.medications))
+        return self._active_version_data(prescription)
+
+    async def correct_prescription(
+        self,
+        *,
+        user: User,
+        prescription_id: UUID,
+        request: CorrectPrescriptionRequest,
+    ) -> PrescriptionData:
+        prescription = await self._prescription_repo.get_owned_for_version_update(
+            prescription_id=prescription_id,
+            user_id=user.id,
+        )
+        if prescription is None:
+            raise ApiError(
+                status_code=404,
+                code="PRESCRIPTION_NOT_FOUND",
+                message="처방 정보를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND")],
+            )
+        if prescription.active_version_id != request.base_version_id:
+            raise self._version_conflict()
+
+        current_version = await self._prescription_repo.session.get(
+            PrescriptionVersion,
+            prescription.active_version_id,
+        )
+        if current_version is None or current_version.version_number != request.expected_revision:
+            raise self._version_conflict()
+
+        confirmed_at = datetime.now(UTC)
+        await self._prescription_repo.invalidate_version_dependencies(
+            prescription_version_id=current_version.id,
+            invalidated_at=confirmed_at,
+        )
+        version = await self._prescription_repo.create_version(
+            prescription=prescription,
+            prescribed_date=request.prescribed_date,
+            confirmed_at=confirmed_at,
+            medications=[item.model_dump() for item in request.medications],
+        )
+        medications = await self._prescription_repo.get_version_medications(prescription_version_id=version.id)
+        return _to_prescription_data(prescription, version, medications)
+
+    @staticmethod
+    def _version_conflict() -> ApiError:
+        return ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_CONFLICT",
+            message="처방 정보가 이미 변경되었습니다. 최신 정보를 다시 확인해 주세요.",
+            details=[ErrorDetail(field="base_version_id", reason="ACTIVE_VERSION_MISMATCH")],
+        )
+
+    @staticmethod
+    def _active_version_data(prescription: Prescription) -> PrescriptionData:
+        version = prescription.active_version
+        if version is None or not version.medications:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_VERSION_UNAVAILABLE",
+                message="활성 처방 버전 정보를 사용할 수 없습니다.",
+                details=[ErrorDetail(field="active_version_id", reason="INVALID_VERSION_GRAPH")],
+            )
+        return _to_prescription_data(prescription, version, list(version.medications))
 
     @staticmethod
     def _build_confirmed_data(
