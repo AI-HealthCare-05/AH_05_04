@@ -345,6 +345,64 @@ async def test_two_concurrent_confirmations_produce_one_success_and_one_conflict
 
 
 @pytest.mark.asyncio
+async def test_two_concurrent_manual_medication_additions_use_distinct_indexes(
+    real_connection_app: None,
+    lock_holder: AsyncSession,
+) -> None:
+    """동시 수동 추가는 lock 이후 최신 필드 기준으로 서로 다른 medication_index를 사용합니다."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, document_id, job_id, _ = await _prepare_reviewed_document(client, label="manual-double")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        await _lock_document(lock_holder, document_id)
+
+        first_task = asyncio.create_task(
+            client.post(
+                f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+                headers={**headers, "Idempotency-Key": "manual-medication-concurrent-a"},
+                json={
+                    "medication_name": "직접추가약A",
+                    "dose_value": "1",
+                    "frequency_per_day": "1",
+                    "duration_days": "3",
+                },
+            )
+        )
+        second_task = asyncio.create_task(
+            client.post(
+                f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+                headers={**headers, "Idempotency-Key": "manual-medication-concurrent-b"},
+                json={
+                    "medication_name": "직접추가약B",
+                    "dose_value": "2",
+                    "frequency_per_day": "2",
+                    "duration_days": "5",
+                },
+            )
+        )
+
+        await asyncio.sleep(HOLD_SECONDS)
+        await lock_holder.rollback()
+        first, second = await asyncio.gather(first_task, second_task)
+
+        assert first.status_code == status.HTTP_201_CREATED, first.text
+        assert second.status_code == status.HTTP_201_CREATED, second.text
+
+        result = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert result.status_code == status.HTTP_200_OK, result.text
+
+    fields = result.json()["data"]["fields"]
+    manual_names = {
+        field["confirmed_value"]: field["medication_index"]
+        for field in fields
+        if field["field_type"] == "MEDICATION_NAME" and field["confirmed_value"] in {"직접추가약A", "직접추가약B"}
+    }
+    assert manual_names == {"직접추가약A": 2, "직접추가약B": 3} or manual_names == {
+        "직접추가약A": 3,
+        "직접추가약B": 2,
+    }
+
+
+@pytest.mark.asyncio
 async def test_lock_scope_is_per_document(
     real_connection_app: None,
     lock_holder: AsyncSession,

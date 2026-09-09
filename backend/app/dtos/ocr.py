@@ -1,8 +1,9 @@
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class OcrJobStatus(StrEnum):
@@ -14,6 +15,59 @@ class OcrJobStatus(StrEnum):
 
 class ExecuteOcrRequest(BaseModel):
     force_reprocess: bool = False
+
+
+class CreateManualMedicationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    medication_name: str = Field(min_length=1, max_length=255)
+    medication_strength: str | None = Field(default=None, max_length=100)
+    dose_value: str = Field(min_length=1, max_length=1000)
+    dose_unit: str | None = Field(default=None, max_length=50)
+    frequency_per_day: str = Field(min_length=1, max_length=1000)
+    timing: str | None = Field(default=None, max_length=255)
+    duration_days: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("medication_name", "dose_value", "frequency_per_day", "duration_days")
+    @classmethod
+    def required_text_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("required value must not be blank")
+        return stripped
+
+    @field_validator("medication_strength", "dose_unit", "timing")
+    @classmethod
+    def optional_text_must_be_normalized(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @field_validator("dose_value")
+    @classmethod
+    def dose_value_must_match_prescription_limits(cls, value: str) -> str:
+        stripped = value.strip()
+        try:
+            parsed = Decimal(stripped)
+        except InvalidOperation as exc:
+            raise ValueError("dose_value must be a positive decimal") from exc
+        if not parsed.is_finite() or parsed <= 0 or parsed > Decimal("9999999.999"):
+            raise ValueError("dose_value must be a positive decimal")
+        exponent = parsed.normalize().as_tuple().exponent
+        if not isinstance(exponent, int) or max(-exponent, 0) > 3:
+            raise ValueError("dose_value supports up to 3 decimal places")
+        return stripped
+
+    @field_validator("frequency_per_day", "duration_days")
+    @classmethod
+    def integer_value_must_match_prescription_limits(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped.isdecimal():
+            raise ValueError("value must be a positive integer")
+        parsed = int(stripped)
+        if parsed <= 0 or parsed > 2_147_483_647:
+            raise ValueError("value must be a positive integer")
+        return stripped
 
 
 class ExtractedFieldData(BaseModel):
