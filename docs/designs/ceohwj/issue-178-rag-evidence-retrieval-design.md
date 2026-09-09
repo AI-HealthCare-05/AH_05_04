@@ -458,8 +458,9 @@ Evidence Gate·실패 원인을 포함한 Safety finalizer 변환은 `PD-315-202
 Production `source_version`은 Source가 제공한 불변 version의 존재 여부와 `source_type`에 결속한다.
 외부 불변 version은 `external:<version>`, 외부 version이 없는 API는
 `api:<RFC3339 UTC 고정 6자리 소수초>:<canonical_checksum 64-lower-hex>`,
-`INTERNAL_CURATED_DATA`는 승인 Git tag 또는 commit과 Fixture Manifest에서 파생한
-`internal:<fixture-version>:<canonical_checksum 64-lower-hex>`를 사용한다. Source 생성 경계와
+`INTERNAL_CURATED_DATA`는 Commit과 Fixture Manifest를 exact-bind한
+`internal:commit-<40 lower-hex>-manifest-<64 lower-hex>:<canonical_checksum 64-lower-hex>`를 사용한다.
+Git tag나 release 이름은 `source_version` 식별자로 사용하지 않는다. Source 생성 경계와
 Production Adapter가 metadata와 형식을 함께 검증하고, API·Internal의 hash suffix를 해당 Snapshot
 `canonical_checksum`과 exact-match한다. Source producer의 API·Internal suffix 자체 결속 불일치는 Snapshot
 생성 전 수집 validation failure로 닫고, #362에서 정확한 ingestion `failure_code`를 고정하며

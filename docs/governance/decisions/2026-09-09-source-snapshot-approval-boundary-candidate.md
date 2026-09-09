@@ -51,6 +51,11 @@ Application은 PD-315/#361의 정규 `source_version` 최대 길이 200자를 �
 - Internal `fixture_version`은 `commit-<40 lowercase hex>-manifest-<64 lowercase hex>` 형식이다. `latest`, branch, tag와 같은 이동 가능한 이름을 허용하지 않으며 Commit과 Fixture Manifest를 함께 exact-bind한다.
 - 형식이나 결속 검증에 실패하면 Snapshot을 생성하지 않는다.
 
+이 규칙은 기존 공유 Target과 PD-315에 있던 승인 Git tag 허용 경로를 제거하는 계약
+변경이다. tag는 검토 metadata로는 기록할 수 있지만 `source_version` 식별자로 사용하지
+않는다. 공유 Target과 PD-315도 이 Candidate와 함께 commit·manifest exact binding으로
+정렬한다.
+
 `validate_source_version()`이 반환한 `SourceVersionKind`를 검증 결과의 정본으로
 사용한다. 후속 소비자는 `source_version`의 부분 문자열이나 중첩 접두사를 다시
 파싱해 kind를 추정하지 않는다. `external:` payload가 `external:`, `api:`,
