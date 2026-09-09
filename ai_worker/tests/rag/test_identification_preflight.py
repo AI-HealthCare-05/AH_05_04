@@ -528,6 +528,32 @@ def test_manifest_hash_changes_with_state() -> None:
     assert canonical_preflight_manifest_hash(matched) != canonical_preflight_manifest_hash(unresolved)
 
 
+def test_manifest_hash_changes_with_identification_prescription_version_id() -> None:
+    pinned = request((MedicationPreflightState.MATCHED,))
+    different_version_identifications = (replace(pinned.identifications[0], prescription_version_id=OTHER_VERSION_ID),)
+    different_version_request = replace(pinned, identifications=different_version_identifications)
+
+    assert canonical_preflight_manifest_hash(pinned) != canonical_preflight_manifest_hash(different_version_request)
+    assert evaluate_medication_identification_preflight(pinned).decision is PreflightDecision.PASS
+    assert (
+        evaluate_medication_identification_preflight(different_version_request).decision
+        is PreflightDecision.STALE_FALLBACK
+    )
+
+
+def test_manifest_hash_changes_with_identification_runtime_release_bundle_id() -> None:
+    pinned = request((MedicationPreflightState.MATCHED,))
+    different_bundle_identifications = (replace(pinned.identifications[0], runtime_release_bundle_id=OTHER_BUNDLE_ID),)
+    different_bundle_request = replace(pinned, identifications=different_bundle_identifications)
+
+    assert canonical_preflight_manifest_hash(pinned) != canonical_preflight_manifest_hash(different_bundle_request)
+    assert evaluate_medication_identification_preflight(pinned).decision is PreflightDecision.PASS
+    assert (
+        evaluate_medication_identification_preflight(different_bundle_request).decision
+        is PreflightDecision.STALE_FALLBACK
+    )
+
+
 def test_repeated_evaluation_is_idempotent() -> None:
     subject = request((MedicationPreflightState.MATCHED, MedicationPreflightState.NOT_FOUND))
 

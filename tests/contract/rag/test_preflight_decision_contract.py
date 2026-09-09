@@ -136,6 +136,18 @@ def read_safety_contract_internal_stale_reasons() -> tuple[str, ...]:
     return tuple(reasons)
 
 
+def read_safety_contract_compound_stale_priorities() -> tuple[str, ...]:
+    """Extract compound stale priority vocabulary from safety-result-v2.md."""
+    text = SAFETY_CONTRACT_PATH.read_text(encoding="utf-8")
+    assert "### 복합 STALE 우선순위와 단일 오류 사영" in text, (
+        "safety-result-v2.md에서 복합 STALE 우선순위 섹션을 찾을 수 없습니다."
+    )
+    section = text.split("### 복합 STALE 우선순위와 단일 오류 사영")[1].split("모든 Context")[0]
+    priorities = re.findall(r"\d+\.\s*`([A-Z_]+)`", section)
+    assert len(priorities) == 3, f"복합 STALE 우선순위 파싱 실패: {priorities}"
+    return tuple(priorities)
+
+
 def test_stale_signal_vocabulary_and_projection_matches_safety_result_contract() -> None:
     """Validate that PreflightStaleSignal and its downstream projection exact-match the safety contract.
 
@@ -201,7 +213,14 @@ def test_stale_signal_vocabulary_and_projection_matches_safety_result_contract()
     assert proj_bundle.stale_reason == "RUNTIME_RELEASE_STALE"
     assert proj_bundle.stale_reason in stale_reasons
 
-    # 4. 복합 STALE 신호 집계(aggregation) 및 우선순위 불변식 검증
+    # 4. 복합 STALE 신호 집계(aggregation) 및 우선순위 불변식 검증 (safety-result-v2.md 정본 고정)
+    compound_priorities = read_safety_contract_compound_stale_priorities()
+    assert compound_priorities == (
+        "PRESCRIPTION_STALE",
+        "IDENTIFICATION_STALE",
+        "RUNTIME_RELEASE_STALE",
+    )
+
     # - 처방 버전 변경(PRESCRIPTION_STALE)이 최우선: 어떤 신호와 결합해도 단일 결과는 PRESCRIPTION_STALE
     proj_compound_rx_bundle = project_preflight_stale_signals(
         (PreflightStaleSignal.PRESCRIPTION_STALE, PreflightStaleSignal.RUNTIME_RELEASE_STALE)
@@ -359,3 +378,51 @@ def test_decision_matrix_case_is_order_independent(case_id: str, fixture: dict, 
         assert canonical_preflight_manifest_hash(forward) == canonical_preflight_manifest_hash(reversed_request), (
             case_id
         )
+
+
+def test_manifest_hash_changes_when_identification_provenance_changes() -> None:
+    """IdentificationSnapshotRef의 prescription_version_id 또는 bundle_id 변경 시 manifest_hash가 변경된다 (Review [P2])."""
+    fixture = load_fixture()
+    case = fixture["cases"][0]
+    base_request = build_request(fixture, case)
+    base_hash = canonical_preflight_manifest_hash(base_request)
+
+    # 1. identification의 prescription_version_id 변경 시 hash 변경 및 STALE 판정
+    other_version = fixture["other_prescription_version_id"]
+    diff_version_ids = tuple(
+        IdentificationSnapshotRef(
+            prescription_version_medication_id=item.prescription_version_medication_id,
+            state=item.state,
+            prescription_version_id=other_version,
+            identification_id=item.identification_id,
+            code_system=item.code_system,
+            canonical_code=item.canonical_code,
+            runtime_release_bundle_id=item.runtime_release_bundle_id,
+        )
+        for item in base_request.identifications
+    )
+    req_diff_version = MedicationIdentificationPreflightRequest(
+        base_request.currentness, base_request.medications, diff_version_ids
+    )
+    assert canonical_preflight_manifest_hash(req_diff_version) != base_hash
+    assert evaluate_medication_identification_preflight(req_diff_version).decision is PreflightDecision.STALE_FALLBACK
+
+    # 2. identification의 runtime_release_bundle_id 변경 시 hash 변경 및 STALE 판정
+    other_bundle = fixture["other_runtime_release_bundle_id"]
+    diff_bundle_ids = tuple(
+        IdentificationSnapshotRef(
+            prescription_version_medication_id=item.prescription_version_medication_id,
+            state=item.state,
+            prescription_version_id=item.prescription_version_id,
+            identification_id=item.identification_id,
+            code_system=item.code_system,
+            canonical_code=item.canonical_code,
+            runtime_release_bundle_id=other_bundle,
+        )
+        for item in base_request.identifications
+    )
+    req_diff_bundle = MedicationIdentificationPreflightRequest(
+        base_request.currentness, base_request.medications, diff_bundle_ids
+    )
+    assert canonical_preflight_manifest_hash(req_diff_bundle) != base_hash
+    assert evaluate_medication_identification_preflight(req_diff_bundle).decision is PreflightDecision.STALE_FALLBACK

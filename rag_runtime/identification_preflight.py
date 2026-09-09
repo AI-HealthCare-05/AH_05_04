@@ -298,7 +298,11 @@ def canonical_preflight_manifest_hash(request: MedicationIdentificationPreflight
     """Return the order-independent SHA-256 identity of the pinned preflight input set.
 
     Observed active pointers and ``ownership_verified`` are excluded: the manifest identifies the
-    pinned input set, and the same input set must hash identically whether or not it is stale.
+    pinned input set, and the same input set must hash identically whether or not it is stale
+    due to observed active pointer changes.
+    Decision inputs from the pinned identification snapshot (including its prescription_version_id
+    and runtime_release_bundle_id provenance) are included so that different snapshot provenance
+    yields a distinct hash.
 
     Precondition: the request already passed :func:`evaluate_medication_identification_preflight`
     structural validation, so every medication has exactly one identification snapshot.
@@ -309,9 +313,13 @@ def canonical_preflight_manifest_hash(request: MedicationIdentificationPreflight
             "prescription_version_medication_id": medication.prescription_version_medication_id,
             "display_order": medication.display_order,
             "state": states[medication.prescription_version_medication_id].state.value,
+            "prescription_version_id": states[medication.prescription_version_medication_id].prescription_version_id,
             "identification_id": states[medication.prescription_version_medication_id].identification_id,
             "code_system": states[medication.prescription_version_medication_id].code_system,
             "canonical_code": states[medication.prescription_version_medication_id].canonical_code,
+            "runtime_release_bundle_id": states[
+                medication.prescription_version_medication_id
+            ].runtime_release_bundle_id,
         }
         for medication in sorted(
             request.medications,
