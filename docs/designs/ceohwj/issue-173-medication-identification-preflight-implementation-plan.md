@@ -19,17 +19,19 @@
      `PreflightExecutionStatus`. 추가로 진단용 `PreflightStaleSignal`, `PreflightValidationCode`
    - frozen dataclass 입력 3종 + 요청 1종, 출력 1종, 사영 결과 `PreflightStaleProjection` 1종
    - `evaluate_medication_identification_preflight(request)` 단일 공개 함수
-   - `canonical_preflight_manifest_hash(request)` 공개 helper (계약 테스트와 `#174`가 재사용)
-   - `project_preflight_stale_signal(signal)` Downstream 사영 helper (`safety-result-v2.md` 연계)
+   - `canonical_preflight_manifest_hash(request)` 공개 helper (식별 스냅샷 provenance 포함, 계약 테스트와 `#174`가 재사용)
+   - `project_preflight_stale_signal(signal)` 및 `project_preflight_stale_signals(signals)` Downstream 사영 helper (`safety-result-v2.md` 정본 연계)
    - `backend/app/Dockerfile` 및 `ai_worker/Dockerfile`에 `COPY ./rag_runtime ./rag_runtime` 반영
 2. `ai_worker/tests/rag/test_identification_preflight.py`
-   - Issue 필수 테스트 6항목 + 구조 검증 분기별 fail-closed
+   - Issue 필수 테스트 6항목 + 구조 검증 분기별 fail-closed + 식별 provenance 변경 시 manifest_hash 변경 회귀 테스트
 3. `tests/fixtures/rag/preflight/decision_matrix.json`
    - 합성 결정 matrix. 환자 식별 가능 값과 실제 제품명·보험코드 0건
 4. `tests/contract/rag/test_preflight_decision_contract.py`
    - `rag-runtime-v1.md` 고정 Graph에서 fallback 어휘를 파싱해 enum과 exact-match
+   - `safety-result-v2.md` 정본에서 복합 STALE 우선순위 파싱 및 exact-match 고정
    - module import 집합이 stdlib뿐임을 고정
    - fixture matrix 전체를 kernel에 통과시켜 decision·reason·hash 안정성 확인
+   - 식별 provenance 변경 시 manifest_hash 변경 불변식 검증
 5. `docs/validation/rag/preflight/identification-preflight-receipt.md`
    - 실행한 검사와 그 출력, 실행하지 않은 검사와 이유
 
