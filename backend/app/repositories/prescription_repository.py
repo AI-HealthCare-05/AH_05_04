@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.async_jobs import AiJob, AiJobAttempt, AiJobAttemptStatus, AiJobStatus, OutboxEvent, OutboxEventStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import (
@@ -13,6 +14,7 @@ from app.models.prescriptions import (
     PrescriptionVersion,
     PrescriptionVersionMedication,
 )
+from app.models.rag_candidate import MedicationCandidateSearch, MedicationCandidateSearchStatus
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -160,3 +162,105 @@ class PrescriptionRepository:
         prescription.active_version_id = version.id
         await self.session.flush()
         return version
+
+    async def invalidate_version_dependencies(
+        self,
+        *,
+        prescription_version_id: UUID,
+        invalidated_at: datetime,
+    ) -> None:
+        """이전 Version의 실행 중 작업과 재사용 가능한 Candidate를 원자적으로 무효화합니다.
+
+        호출자는 먼저 ``prescription`` row를 잠가야 합니다. 이후 잠금 순서는 계약의
+        ``PRESCRIPTION → AI_JOB → domain row → OUTBOX`` 순서를 따릅니다.
+        """
+        jobs = list(
+            (
+                await self.session.execute(
+                    select(AiJob)
+                    .where(
+                        AiJob.prescription_version_id == prescription_version_id,
+                        AiJob.status.in_((AiJobStatus.PENDING, AiJobStatus.PROCESSING, AiJobStatus.RETRY_WAIT)),
+                    )
+                    .with_for_update(of=AiJob)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        job_ids = [job.id for job in jobs]
+        for job in jobs:
+            job.status = AiJobStatus.STALE
+            job.completed_at = invalidated_at
+            if job.expected_event_id is not None:
+                job.last_consumed_event_id = job.expected_event_id
+            job.lease_token = None
+            job.lease_expires_at = None
+            job.heartbeat_at = None
+
+        if job_ids:
+            attempts = list(
+                (
+                    await self.session.execute(
+                        select(AiJobAttempt)
+                        .where(
+                            AiJobAttempt.ai_job_id.in_(job_ids),
+                            AiJobAttempt.attempt_status == AiJobAttemptStatus.PROCESSING,
+                        )
+                        .with_for_update(of=AiJobAttempt)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for attempt in attempts:
+                attempt.attempt_status = AiJobAttemptStatus.BLOCKED
+                attempt.completed_at = invalidated_at
+
+        searches = list(
+            (
+                await self.session.execute(
+                    select(MedicationCandidateSearch)
+                    .join(
+                        PrescriptionVersionMedication,
+                        PrescriptionVersionMedication.id
+                        == MedicationCandidateSearch.prescription_version_medication_id,
+                    )
+                    .where(
+                        PrescriptionVersionMedication.prescription_version_id == prescription_version_id,
+                        MedicationCandidateSearch.status.in_(
+                            (MedicationCandidateSearchStatus.RUNNING, MedicationCandidateSearchStatus.READY)
+                        ),
+                    )
+                    .with_for_update(of=MedicationCandidateSearch)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for search in searches:
+            search.status = MedicationCandidateSearchStatus.INVALIDATED_INPUT_CHANGED
+            search.invalidated_at = invalidated_at
+            search.finalized_at = invalidated_at
+
+        if job_ids:
+            outbox_events = list(
+                (
+                    await self.session.execute(
+                        select(OutboxEvent)
+                        .where(
+                            OutboxEvent.job_id.in_(job_ids),
+                            OutboxEvent.status.in_((OutboxEventStatus.PENDING, OutboxEventStatus.CLAIMED)),
+                        )
+                        .with_for_update(of=OutboxEvent)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for event in outbox_events:
+                event.status = OutboxEventStatus.CANCELLED
+                event.claim_token = None
+                event.claim_expires_at = None
+
+        await self.session.flush()

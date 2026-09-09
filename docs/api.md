@@ -80,9 +80,12 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | Candidate | `POST` | `/api/v1/medication-candidates/confirm` | `200` |
 | Candidate | `POST` | `/api/v1/medication-candidates/reject` | `200` |
 
-`PATCH /api/v1/prescriptions/{prescription_id}`는 PR 4의 이전 Version 결과 `STALE` 전이와 현재 노출
-차단이 병합될 때까지 `PRESCRIPTION_CORRECTION_ENABLED=false`가 기본이다. 비활성 상태에서는 인증 이후
-도메인 조회나 mutation 전에 `503 SERVICE_UNAVAILABLE` / `PRESCRIPTION_CORRECTION_DISABLED`로 차단한다.
+`PATCH /api/v1/prescriptions/{prescription_id}`는 처방 row를 잠근 뒤 새 Version 생성과 함께 이전
+Version의 `PENDING`·`PROCESSING`·`RETRY_WAIT` Job을 `STALE`, 미발행·예약 Outbox를 `CANCELLED`,
+`RUNNING`·`READY` Candidate Search를 `INVALIDATED_INPUT_CHANGED`로 같은 transaction에서 전환한다.
+이전 Version의 Guide·Chat 직접 조회·메시지 전송은 `409 PRESCRIPTION_VERSION_CONFLICT`로 거부하고,
+처방별 최신 Guide·Chat 재접속 조회에서는 이전 Version 결과를 반환하지 않는다. 완료된 이전 Version
+Job의 상태와 provenance는 보존하지만 `result_url`은 `null`이다.
 
 Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 세 endpoint 모두 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
 
@@ -271,6 +274,12 @@ AI에는 현재 요청의 질문과 해당 세션에 연결된 확정 처방의 
 같은 세션의 메시지 전송은 세션 row lock으로 직렬화합니다. 두 요청이 동시에 시작한 참고 시나리오에서 두 번째 요청의 지연은 `2 × T + M`입니다. `T`는 배포 환경의 OpenAI 전체 timeout, `M`은 애플리케이션 처리 여유입니다. 이 값은 참고 지연이지 최대 대기시간 계약이 아닙니다.
 
 같은 세션에 세 개 이상의 요청이 겹치면 뒤 요청은 앞선 요청 수에 비례해 더 오래 대기합니다. 현재 설계는 동시 요청 수를 제한하지 않으므로 세 개 이상에 대한 유한한 end-to-end 최대시간을 보장하지 않습니다.
+
+서로 다른 Chat session은 같은 처방에 속하더라도 Provider 호출을 병렬로 수행할 수 있습니다. Provider 호출
+구간에는 처방 row lock을 유지하지 않으며, 결과 저장 직전에 생성 기준 `prescription_version_id`가
+현재 `active_version_id`인지 처방 row를 잠가 다시 확인합니다. 호출 중 처방 정정이 commit되었다면 생성
+결과를 저장하지 않고 ASSISTANT placeholder를 `PRESCRIPTION_VERSION_STALE` 실패 이력으로 남긴 뒤
+`409 PRESCRIPTION_VERSION_CONFLICT`를 반환합니다.
 
 DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반환합니다. 잠금을 얻어 USER·ASSISTANT를 만들기 전에 transaction이 rollback되므로 새 메시지가 생성되지 않으며, 메시지 목록을 다시 조회해도 이전 결과와 같습니다.
 
