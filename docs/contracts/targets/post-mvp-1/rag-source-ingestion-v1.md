@@ -29,7 +29,7 @@ Track F가 사용하는 공식 의약품·의료정보를 재현 가능한 불�
 | `P0_REQUIRED` | `MFDS_DUR / MFDS_DUR_INGREDIENT_API / LIST_INGREDIENT_CONTRAINDICATIONS` | 처방약–사용자 확인 OTC Rule과 Evidence | [식약처 DUR 성분정보](https://www.data.go.kr/data/15056780/openapi.do) | 실제 관계성분 필드·Rule Fixture 검증 전 비활성 |
 | `P0_REQUIRED` | `MFDS_PATIENT_MEDICATION_GUIDE / MFDS_PATIENT_GUIDE_API / LIST_PATIENT_MEDICATION_GUIDES` | 환자용 복약법·주의·부작용 Document와 Guideline 후보 | [식약처 e약은요](https://www.data.go.kr/data/15075057/openapi.do) | Coverage·Locator·운영 승인 검증 전 비활성 |
 | `P1` | `MFDS_DUR / MFDS_DUR_PRODUCT_API / LIST_PRODUCT_CONTRAINDICATIONS` | 제품 단위 병용금기 보조 | [식약처 DUR 품목정보](https://www.data.go.kr/data/15059486/openapi.do) | P0 비활성, 성분 Rule과 중복·우선순위 검증 후 별도 편입 |
-| `INTERNAL` | `TEAM_APPROVED_MEDICATION_ALIAS / null / null` | Candidate 검색용 팀 승인 Alias | 승인 Git Commit·Tag와 Fixture Manifest | `INTERNAL_CURATED_DATA`, 의료 Claim Citation 금지 |
+| `INTERNAL` | `TEAM_APPROVED_MEDICATION_ALIAS / null / null` | Candidate 검색용 팀 승인 Alias | 승인 Git Commit과 Fixture Manifest; tag·release 이름은 검토 metadata 한정 | `INTERNAL_CURATED_DATA`, 의료 Claim Citation 금지 |
 | `INTERNAL` | `INTERNAL_REVIEWED_GUIDELINE / null / null` | 처방약 기반 짧은 음식 주의·활동 Card | 원문 Snapshot·Locator·팀 Review 기록 | Local 제한, Production 비활성 |
 
 P0 세 외부 Endpoint의 실제 Service ID, Operation Path, Primary Key, Content-Type, 본문 성공 코드와 Pagination은 Endpoint별 연결 검증 Issue에서 실응답으로 Freeze한다. 한 Endpoint의 미검증 값은 그 Parser·Scheduler·Runtime 편입만 차단하며 공통 Source Client·DB 골격·합성 Fixture와 다른 Endpoint 작업까지 차단하지 않는다.
@@ -74,13 +74,18 @@ Snapshot은 다음 정보를 불변으로 보존한다.
 | --- | --- |
 | 외부 불변 Version이 있는 Source | `external:<external_version>` |
 | 외부 Version이 없는 API | `api:<RFC3339 UTC 6자리 소수초>:<canonical_checksum 64자>` |
-| 내부 승인 Fixture | `internal:<승인 Git Tag 또는 Commit 기반 fixture_version>:<canonical_checksum 64자>` |
+| 내부 승인 Fixture | `internal:commit-<40 lowercase hex>-manifest-<64 lowercase hex>:<canonical_checksum 64자>` |
 | `raw_checksum` | 각 원본 페이지 Byte의 무결성 검사용 SHA-256 |
 | `raw_manifest_checksum` | 페이지 번호가 아니라 안정 Artifact Key로 정렬한 `(artifact key, raw_checksum, byte_size, content_type)` 목록의 Canonical SHA-256 |
 | `canonical_checksum` | 모든 성공 페이지를 합친 뒤 Endpoint Primary Key로 정렬한 Canonical JSON 내용 SHA-256 |
 | `canonicalization_spec_version` | Key 정렬·Unicode·숫자·null·Envelope 제외 규칙의 불변 Version. 규칙 변경 시 새 Version 사용 |
 
 `canonical_checksum`은 Unique 제약으로 만들지 않는다. 같은 내용 재수집은 새 Snapshot을 만들지 않고 기존 Snapshot에 append-only `NO_CHANGE` Verification을 추가한다. 내용이 `A → B → A`로 원복되면 세 번째 수집은 새 시각과 새 `source_version`의 Snapshot으로 보존한다. 제공자 외부 Version이 같은데 Canonical 내용이 달라지면 `SOURCE_VERSION_CONFLICT`로 실패시키고 사람 검토 대상으로 보낸다. Pagination 번호·응답 시각처럼 내용과 무관한 Envelope 값은 Operation 계약의 명시적 제외 목록에 있을 때만 Canonical 입력에서 제외한다.
+
+Internal `fixture_version`은 승인 Git tag를 식별자로 사용하지 않는다. tag는 같은 이름이 다른
+Commit을 가리킬 수 있으므로, Source producer는 40자리 lowercase Commit SHA와 64자리
+lowercase Fixture Manifest SHA-256을 함께 exact-bind한다. 승인 tag나 release 이름이 필요하면
+Receipt의 별도 검토 metadata로 기록하며 `source_version` 정본에는 포함하지 않는다.
 
 `schema_version`은 외부 응답 Envelope·필수 필드 계약이고 `parser_version`은 해당 구조를 읽는 코드·배포 Artifact 버전이다. `normalization_version`과 함께 각각 기록하며 같은 Raw Artifact 재처리도 기존 Run을 덮어쓰지 않는다.
 

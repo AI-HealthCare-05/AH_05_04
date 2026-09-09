@@ -14,6 +14,9 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
+from ai_worker.tasks.rag.source_ingestion.source_version import (
+    validate_source_version,
+)
 
 SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
 SNAPSHOT_PUBLICATION_APPROVAL_CHECK = "snapshot-publication-approval"
@@ -82,12 +85,13 @@ class SnapshotIngestionMetadata:
     started_at: datetime
     finished_at: datetime
     collected_at: datetime
+    external_version: str | None = None
     duration_ms: int | None = None
     verified_by: str | None = None
 
     def __post_init__(self) -> None:
         bounded_text = (
-            ("source_version", self.source_version, 255),
+            ("source_version", self.source_version, 200),
             ("schema_version", self.schema_version, 100),
             ("parser_version", self.parser_version, 100),
             ("normalization_version", self.normalization_version, 100),
@@ -258,6 +262,11 @@ async def persist_product_ingestion_result(
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> SnapshotPersistenceResult:
     """검증된 결과를 현재 transaction에 기록하며 commit은 호출자가 담당합니다."""
+    validate_source_version(
+        source_version=metadata.source_version,
+        external_version=metadata.external_version,
+        canonical_checksum=ingestion.canonical_checksum,
+    )
     if metadata.rejected_record_count > ingestion.record_count:
         raise ValueError("rejected_record_count는 record_count를 초과할 수 없습니다.")
     _validate_ingestion_artifacts(
