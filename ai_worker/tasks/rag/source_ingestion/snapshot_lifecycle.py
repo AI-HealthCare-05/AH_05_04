@@ -71,7 +71,8 @@ class SnapshotUseFailureCode(StrEnum):
     """Snapshot을 사용할 수 없을 때 기록하는 안전한 reason code입니다."""
 
     SNAPSHOT_NOT_APPROVED = "SNAPSHOT_NOT_APPROVED"
-    SNAPSHOT_REJECTED = "SNAPSHOT_REJECTED"
+    SNAPSHOT_VALIDATION_FAILED = "SNAPSHOT_VALIDATION_FAILED"
+    SNAPSHOT_SUPERSEDED = "SNAPSHOT_SUPERSEDED"
     SNAPSHOT_FRESHNESS_STALE = "SNAPSHOT_FRESHNESS_STALE"
     SNAPSHOT_PROVENANCE_INVALID = "SNAPSHOT_PROVENANCE_INVALID"
 
@@ -109,10 +110,16 @@ def evaluate_snapshot_use_eligibility(
     if verification_status is SnapshotVerificationStatus.FAILED:
         return SnapshotUseEligibilityResult(
             decision=SnapshotUseDecision.BLOCKED,
-            failure_code=SnapshotUseFailureCode.SNAPSHOT_REJECTED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_VALIDATION_FAILED,
         )
 
-    if verification_status is not SnapshotVerificationStatus.CURRENT:
+    if verification_status is SnapshotVerificationStatus.STALE:
+        return SnapshotUseEligibilityResult(
+            decision=SnapshotUseDecision.BLOCKED,
+            failure_code=SnapshotUseFailureCode.SNAPSHOT_SUPERSEDED,
+        )
+
+    if verification_status is SnapshotVerificationStatus.PENDING:
         return SnapshotUseEligibilityResult(
             decision=SnapshotUseDecision.BLOCKED,
             failure_code=SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,

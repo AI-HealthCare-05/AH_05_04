@@ -74,7 +74,7 @@ def evaluate_snapshot_policy(
                 manual_review_required=False,
                 failure_code=SnapshotPolicyFailureCode.EMPTY_RESULT,
             )
-        raise ValueError("지원하는 empty_result_policy가 아닙니다.")
+        raise NotImplementedError(f"empty_result_policy={policy.empty_result_policy} 처리가 아직 구현되지 않았습니다.")
 
     rejection_rate = Decimal(rejected_record_count) / Decimal(record_count)
     rejection_limit_exceeded = (

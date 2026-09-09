@@ -1186,11 +1186,11 @@ def test_allows_current_fresh_snapshot_with_valid_provenance() -> None:
         ),
         (
             SnapshotVerificationStatus.STALE,
-            SnapshotUseFailureCode.SNAPSHOT_NOT_APPROVED,
+            SnapshotUseFailureCode.SNAPSHOT_SUPERSEDED,
         ),
         (
             SnapshotVerificationStatus.FAILED,
-            SnapshotUseFailureCode.SNAPSHOT_REJECTED,
+            SnapshotUseFailureCode.SNAPSHOT_VALIDATION_FAILED,
         ),
     ],
 )

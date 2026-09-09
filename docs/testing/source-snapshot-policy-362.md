@@ -31,6 +31,11 @@ rejection_rate = rejected_record_count / record_count
 
 두 Hard Limit은 자동 승인 허용치가 아니다.
 
+기본 정책은 `max_rejected_records=0`, `max_rejection_rate=0`,
+`empty_result_policy=REJECT`이다. 정책을 명시하지 않은 Source는 거부 레코드가
+1건이라도 있으면 `FAILED/REJECTION_LIMIT_EXCEEDED`가 된다. 아래의 거부 허용
+경로는 Source별 양수 Hard Limit을 명시한 경우에만 도달할 수 있다.
+
 | 입력 | 결과 |
 | --- | --- |
 | `record_count=0`, `empty_result_policy=REJECT` | `FAILED/EMPTY_RESULT`, Snapshot 없음 |
@@ -53,11 +58,13 @@ rejection_rate = rejected_record_count / record_count
 | 코드 | 조건 |
 | --- | --- |
 | `SNAPSHOT_PROVENANCE_INVALID` | Version·Hash·Receipt 결속 누락 또는 불일치 |
-| `SNAPSHOT_REJECTED` | Snapshot 검토 결과 거부 |
-| `SNAPSHOT_NOT_APPROVED` | 승인 대기 또는 publication 승인 누락 |
+| `SNAPSHOT_VALIDATION_FAILED` | Snapshot 상태가 `FAILED` |
+| `SNAPSHOT_SUPERSEDED` | 승인 이력은 있으나 더 최신 Snapshot으로 대체되어 상태가 `STALE` |
+| `SNAPSHOT_NOT_APPROVED` | Snapshot 상태가 `PENDING`이거나 publication 승인 누락 |
 | `SNAPSHOT_FRESHNESS_STALE` | Freshness Policy 기준 사용 불가 |
 
-판정 우선순위는 provenance 불일치, Snapshot 거부, 승인 누락, Freshness 부적합 순서다.
+판정 우선순위는 provenance 불일치, 저장 상태(`FAILED`, `STALE`, `PENDING`),
+publication 승인 누락, Freshness 부적합 순서다.
 
 ## 이번 단계에서 제외하는 범위
 
