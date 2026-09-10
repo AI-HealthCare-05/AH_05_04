@@ -33,6 +33,7 @@ run_with_backend_test_database pytest tests/migration -v
 
 # Historical downgrade tests finish before the irreversible Source cutover.
 run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
+run_with_backend_test_database python scripts/ci/verify_database_head.py
 
 run_backend_test_lane() {
   local cache_dir="$TEST_RUNNER_STATE_DIR/pytest-cache/backend"

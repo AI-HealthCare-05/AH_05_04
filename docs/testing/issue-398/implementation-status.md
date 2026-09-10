@@ -258,3 +258,13 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - Runtime 전이는 환경 부모 잠금, expected revision·pointer·Governance·Safety Epoch 재검증, 포인터/상태와 이력 원자 저장, revision UNIQUE 봉인까지 완료했다.
 
 검증 결과: 최신 develop 병합 관련 Source·Candidate·Runtime·계약 408 passed, 보호 writer 정책 5 passed, Ruff/format과 보호 writer 실행 검사 통과. Trigger·RLS·PL/pgSQL 정의는 추가하지 않았고 AWS·운영 DB를 변경하지 않았다.
+
+## 전체 migration 환경 및 최신 head 종합 검증
+
+- Alembic migration graph가 단일 head `398f60718293`인지 코드에서 확인한다.
+- CI와 로컬 전체 테스트는 과거 계약 기준 `398b` 적용 → migration 테스트 → 최신 head 적용 → 최종 카탈로그 검사 순서로 실행한다.
+- 최종 카탈로그 검사는 DB revision 일치, public/source_cleanup 사용자 Trigger·RLS 활성·RLS 정책 0개, 제거 대상 함수 14개 부재를 확인한다.
+- `prescription_version.assembly_xid` 제거와 Runtime 환경별 revision UNIQUE 제약도 함께 확인한다.
+- 검사 실패 시 API·Worker 회귀 테스트보다 먼저 전체 테스트를 중단한다.
+
+폐기 PostgreSQL 17 DB에서 두 경로를 독립 검증했다. 첫 DB는 빈 상태에서 `398b`까지 적용한 뒤 전체 migration 150개를 통과하고 최신 head로 전환했다. 두 번째 DB는 완전히 빈 상태에서 최신 head까지 전체 이력을 한 번에 적용했다. 두 DB 모두 최신 head 종합 검사를 통과했다. Trigger·RLS·PL/pgSQL 정의는 추가하지 않았고 AWS·운영 DB를 변경하지 않았다.
