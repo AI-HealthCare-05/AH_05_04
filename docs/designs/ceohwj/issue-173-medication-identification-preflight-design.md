@@ -260,7 +260,7 @@ project_preflight_stale_signals(signals: tuple[PreflightStaleSignal, ...]) -> Pr
 
 ### 복합 STALE 신호 집계 및 우선순위 규칙
 
-처방 Version과 런타임 Bundle/식별 불일치가 동시에 발생하는 경우, [`PD-173-20260909`](../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md) 및 [Safety Result 복합 STALE 우선순위 계약 제안 v1](../../contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md)에 따라 다음의 결정적 우선순위로 집계하여 `outcome.primary_stale_projection`에 단일 사영을 고정한다 (Review [P1]).
+처방 Version과 런타임 Bundle/식별 불일치가 동시에 발생하는 경우, [`PD-173-20260909`](../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md) 및 [Safety Result 복합 STALE 우선순위 계약 v1](../../contracts/targets/post-mvp-1/safety-result-compound-stale-priority-v1.md)에 따라 다음의 결정적 우선순위로 집계하여 `outcome.primary_stale_projection`에 단일 사영을 고정한다 (Review [P1]).
 
 1. **`PRESCRIPTION_STALE` 최우선**: 사용자의 활성 처방전 버전 자체가 변경된 임상 사건은 환자에게 직접 안내되어야 하는 근본 원인이므로, 시스템 내부적 컨텍스트 불일치보다 항상 우선한다 (`fallback_code="PRESCRIPTION_STALE"`, `stale_reason=None`).
 2. **`IDENTIFICATION_STALE` 우선**: 처방 버전 변경이 없을 때, 약제 단위의 공식 의약품 식별 불일치가 런타임 번들 불일치보다 상위 도메인 사유로 취급된다 (`fallback_code="EXECUTION_CONTEXT_STALE"`, `stale_reason="IDENTIFICATION_STALE"`).

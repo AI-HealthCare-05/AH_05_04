@@ -113,7 +113,7 @@ Issue를 Close하지 않는다. `#174`·`#131`·`#175` 미구현으로 통합·C
 1. Stale이 Identification Fallback보다 앞서는 판정 우선순위 (고정 실행 Graph가 순서를 정하지 않았다)
 2. Identification Fallback 대표 reason이 계약 표기 순서를 따르는 규칙
 3. 구조 검증 실패를 `IDENTIFICATION_FALLBACK/REVIEW_REQUIRED`로 사영하는 선택
-4. 복합 STALE 신호 발생 시 단일 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`) (Review [P1] 반영: 기존 승인 `safety-result-v2.md` 정본의 인플레이스 수정을 롤백하고, 별도 Decision `docs/governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md`(`PD-173-20260909`) 및 제안 계약 `docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md`를 신설하여 상태 디렉터리·index·테스트를 authority에 결속 완료)
+4. 복합 STALE 신호 발생 시 단일 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`) (Review [P1] 반영: 기존 승인 `safety-result-v2.md` 정본의 인플레이스 수정을 롤백하고, 별도 Decision `docs/governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md`(`PD-173-20260909`) 및 제안 계약 `docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md`를 신설하여 상태 디렉터리·index·테스트를 authority에 결속 완료. 이후 개정 `PD-173-20260910` 승인에 따라 계약 문서는 `docs/contracts/targets/post-mvp-1/safety-result-compound-stale-priority-v1.md`로 편입됨)
 5. `#174`에서 Backend가 이 kernel을 소비할 방식 (PR #382 송은영 리뷰 지적 반영으로 `rag_runtime` 최상위 공용 패키지 승격 및 `backend/app/Dockerfile`, `ai_worker/Dockerfile` COPY 추가 완료. 컨테이너 내부 import 계약 테스트 통과)
 
 위 항목들은 승인된 별도 Decision이 아직 없다. `#174` 병합 전에 확정한다. 그때까지 `identification_reasons`,
