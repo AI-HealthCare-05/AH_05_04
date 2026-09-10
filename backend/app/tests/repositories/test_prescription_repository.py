@@ -258,3 +258,34 @@ async def test_failed_medication_verification_does_not_leave_new_version_even_if
         )
         == 1
     )
+
+
+async def test_fingerprint_is_persisted_and_slots_are_constrained(db_session):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    from provider_contracts.prescription_integrity import prescription_fingerprint
+
+    owner = await _create_user(db_session, email="synthetic-seal398@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    version = await db_session.get(PrescriptionVersion, prescription.active_version_id)
+    assert version.medication_count == 1
+    assert (
+        version.content_hash
+        == prescription_fingerprint(
+            version.prescribed_date, [{"medication_name": "타이레놀", "display_order": 1}]
+        ).content_hash
+    )
+    for count, order, sqlstate in ((2, 2, "23503"), (1, 2, "23514"), (1, 1, "23505")):
+        with pytest.raises(IntegrityError) as error:
+            async with db_session.begin_nested():
+                db_session.add(
+                    PrescriptionVersionMedication(
+                        prescription_version_id=version.id,
+                        medication_count=count,
+                        medication_name="Synthetic extra",
+                        display_order=order,
+                    )
+                )
+                await db_session.flush()
+        assert error.value.orig.sqlstate == sqlstate

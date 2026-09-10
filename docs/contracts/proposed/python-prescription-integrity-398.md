@@ -30,3 +30,11 @@ Service에서 수행하는 기존 버전의 Job·일정·Outbox 무효화를 포
 Repository는 저장 전 입력을 검증하고 실제 저장 열들을 다시 읽어 입력 fingerprint와 비교한다. DB에 hash를 영구 저장하는 단계는 아직 아니며, 이 비교만으로 저장 이후의 불변성이 보장되지는 않는다. count/hash 컬럼 및 소비 검증은 후속 migration과 함께 연결한다.
 
 정정 DTO도 display_order 1..N을 강제하여 간격이 있는 요청은 기존 validation 응답(422)으로 거부한다. API가 통과시킨 입력이 Repository의 구성 검증에서 500으로 실패하지 않도록 경계를 일치시킨다.
+
+## Fingerprint 확장 migration
+
+398a1b2c3d4e는 부모 medication_count/content_hash와 약 행 medication_count를 추가한다. 부모 (id, medication_count) UNIQUE, 자식 (version_id, medication_count) FK 및 1..count 슬롯 CHECK를 추가하고 기존 버전별 display_order UNIQUE를 유지한다. Repository는 새 버전과 모든 약 행에 해당 값을 명시한다.
+
+기존 버전은 Python v1 hash로 검증·backfill한다. prescription→version→medication의 배타 잠금을 잡은 transaction에서 기존 UPDATE 방지 Trigger만 잠시 중지하고, metadata를 채운 뒤 원래 활성 상태를 복원한다. 새 Trigger를 생성하지 않는다. 잘못된 기존 데이터는 원문을 출력하거나 자동 수정하지 않고 전체 DDL·backfill을 rollback한다. downgrade는 기존 UPDATE 보호가 활성화되어 있을 때만 재계산 가능한 확장 metadata를 제거한다.
+
+아직 nullable인 확장 단계다. 이전 생산자가 null을 기록할 수 있으므로 이 migration만으로 슬롯 봉인 완료를 주장하지 않는다. 모든 생산·소비 경로 전환과 잔여 null 재검증 뒤 NOT NULL 강화가 필요하다. 기존 assembly_xid·불변성 Trigger는 유지하며 운영 배포 전환은 미완료다.

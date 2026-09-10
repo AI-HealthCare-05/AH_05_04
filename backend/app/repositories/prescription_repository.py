@@ -120,7 +120,10 @@ class PrescriptionRepository:
         self.session.add(prescription)
         await self.session.flush()
 
+        fingerprint = prescription_fingerprint(prescribed_date, medications)
         version = PrescriptionVersion(
+            medication_count=fingerprint.medication_count,
+            content_hash=fingerprint.content_hash,
             id=version_id,
             prescription_id=prescription.id,
             version_number=1,
@@ -134,6 +137,7 @@ class PrescriptionRepository:
             self.session.add(
                 PrescriptionVersionMedication(
                     prescription_version_id=version.id,
+                    medication_count=fingerprint.medication_count,
                     **medication,
                 )
             )
@@ -196,7 +200,10 @@ class PrescriptionRepository:
             .order_by(PrescriptionVersion.version_number.desc())
             .limit(1)
         )
+        fingerprint = prescription_fingerprint(prescribed_date, medications)
         version = PrescriptionVersion(
+            medication_count=fingerprint.medication_count,
+            content_hash=fingerprint.content_hash,
             prescription_id=prescription.id,
             version_number=(latest_revision or 0) + 1,
             prescribed_date=prescribed_date,
@@ -208,6 +215,7 @@ class PrescriptionRepository:
             self.session.add(
                 PrescriptionVersionMedication(
                     prescription_version_id=version.id,
+                    medication_count=fingerprint.medication_count,
                     **medication,
                 )
             )

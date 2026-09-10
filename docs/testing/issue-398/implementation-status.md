@@ -130,3 +130,12 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 4. 공통: 기존 DB Trigger 제거와 Runtime/Writer 권한·bootstrap·배포 전환은 미완료. 이 상태로 배포 가능 판정 금지. #402 Check-in 감사도 제거 목록에 유지. 다른 영역을 제외하거나 전체 완료로 표시하지 말 것.
 
 검증은 독립 PostgreSQL 테스트 DB에서 수행했으며 운영 DB는 변경하지 않았다.
+
+## Prescription fingerprint 확장 migration
+
+- 398a: 부모 count/hash, 약 count, 복합 FK·슬롯 CHECK·부모 UNIQUE 추가
+- Repository 신규 저장에 count/hash와 약 count 명시
+- 전체 기존 migration 이력으로 만든 폐기 DB에서 빈 DB·기존 데이터 backfill·오류 데이터 rollback 검증
+- 기존 Trigger의 원래 활성 상태 복구 및 확장 단계 downgrade 확인
+- 아직 nullable 확장 단계이며 NOT NULL 강화·소비 검증·권한·Trigger 제거는 남아 있음
+- migration·Repository·Service·hash 관련 33 passed. count 불일치 FK, 슬롯 범위 CHECK, 중복 슬롯 UNIQUE의 실제 거부 확인
