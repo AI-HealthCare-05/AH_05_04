@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import cast
 
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     GateMemberType,
     GateResult,
@@ -45,6 +47,7 @@ class MetricRequirement:
     ci_method_id: str
     ci_method_version: str
     ci_level: str | None
+    ci_sidedness: str | None
 
     @property
     def member_id(self) -> str:
@@ -71,6 +74,8 @@ class ReleaseGatePolicy:
 @dataclass(frozen=True, slots=True)
 class MetricEvidence:
     metric: MetricResult
+    run_id: str
+    artifact_hash: str
     artifact_ref: ImmutableReference
 
 
@@ -105,7 +110,7 @@ class PairedCaseEvidence:
     candidate_case_ids: tuple[str, ...]
     final_case_ids: tuple[str, ...]
     control_settings: tuple[ControlSettingEvidence, ...]
-    paired_delta_complete: bool
+    paired_delta_refs: tuple[ImmutableReference, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +125,31 @@ class GateEvidence:
     paired_case_evidence: PairedCaseEvidence | None
 
 
+def paired_case_manifest_hash(evidence: PairedCaseEvidence) -> str:
+    """Hash the complete synthetic/immutable pairing payload, excluding its claimed hash."""
+
+    payload = {
+        "receipt_id": evidence.receipt_id,
+        "baseline_case_ids": sorted(evidence.baseline_case_ids),
+        "candidate_case_ids": sorted(evidence.candidate_case_ids),
+        "final_case_ids": sorted(evidence.final_case_ids),
+        "control_settings": [
+            {
+                "variable_key": item.variable_key,
+                "baseline_hash": item.baseline_hash,
+                "candidate_hash": item.candidate_hash,
+                "final_hash": item.final_hash,
+            }
+            for item in sorted(evidence.control_settings, key=lambda item: item.variable_key)
+        ],
+        "paired_delta_refs": [
+            item.model_dump(mode="json")
+            for item in sorted(evidence.paired_delta_refs, key=lambda item: (item.id, item.version))
+        ],
+    }
+    return canonical_sha256(cast(JsonValue, payload))
+
+
 def _reason(prefix: str, identifier: str) -> str:
     if identifier == "baseline-freeze-receipt":
         return f"BASELINE_FREEZE_RECEIPT_{prefix}"
@@ -127,11 +157,9 @@ def _reason(prefix: str, identifier: str) -> str:
 
 
 def _profile_member(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: set[str]) -> RequiredGateMember:
-    status = ExecutionStatus.COMPLETED
-    decision: DecisionStatus | None = DecisionStatus.PASS
+    blocking_statuses: set[ExecutionStatus] = set()
     if not policy.runtime_eligible:
-        status = ExecutionStatus.NOT_EVALUATED
-        decision = None
+        blocking_statuses.add(ExecutionStatus.NOT_EVALUATED)
         reasons.add("PROFILE_NOT_RUNTIME_ELIGIBLE")
     elif (
         policy.paired_comparison_receipt_id is None
@@ -141,23 +169,25 @@ def _profile_member(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: 
         or not policy.controlled_variable_keys
         or len(policy.controlled_variable_keys) != len(set(policy.controlled_variable_keys))
     ):
-        status = ExecutionStatus.INVALID
-        decision = None
+        blocking_statuses.add(ExecutionStatus.INVALID)
         reasons.add("RELEASE_POLICY_PAIRED_REQUIREMENTS_INVALID")
     if evidence.required_scope_manifest_hash != policy.required_scope_manifest_hash:
-        status = ExecutionStatus.INVALID
-        decision = None
+        blocking_statuses.add(ExecutionStatus.INVALID)
         reasons.add("REQUIRED_SCOPE_MANIFEST_HASH_MISMATCH")
     missing_experiments = set(policy.required_experiment_types) - set(evidence.completed_experiment_types)
     missing_partitions = set(policy.required_partitions) - set(evidence.completed_partitions)
     if missing_experiments:
-        status = ExecutionStatus.NOT_EVALUATED
-        decision = None
+        blocking_statuses.add(ExecutionStatus.NOT_EVALUATED)
         reasons.add("REQUIRED_EXPERIMENT_NOT_COMPLETED")
     if missing_partitions:
-        status = ExecutionStatus.NOT_EVALUATED
-        decision = None
+        blocking_statuses.add(ExecutionStatus.NOT_EVALUATED)
         reasons.add("REQUIRED_PARTITION_NOT_COMPLETED")
+    status = (
+        min(blocking_statuses, key=lambda item: _BLOCKING_STATUS_ORDER[item])
+        if blocking_statuses
+        else ExecutionStatus.COMPLETED
+    )
+    decision = DecisionStatus.PASS if status is ExecutionStatus.COMPLETED else None
     return RequiredGateMember(
         member_type=GateMemberType.CONTRACT_RECEIPT,
         member_id="release-profile-readiness",
@@ -174,6 +204,7 @@ def _metric_member(
     metric_evidence: MetricEvidence | None,
     *,
     duplicate: bool,
+    evidence_run_id: str,
     reasons: set[str],
 ) -> RequiredGateMember:
     if duplicate or metric_evidence is None:
@@ -190,6 +221,9 @@ def _metric_member(
             receipt_or_artifact_ref=None,
         )
     metric = metric_evidence.metric
+    if metric_evidence.run_id != evidence_run_id or metric_evidence.artifact_hash != metric_evidence.artifact_ref.hash:
+        reasons.add(f"REQUIRED_METRIC_ARTIFACT_MISMATCH:{requirement.member_id}")
+        return _metric_result_member(requirement, metric_evidence, ExecutionStatus.INVALID, None)
     if not _metric_metadata_matches(requirement, metric):
         reasons.add(f"REQUIRED_METRIC_POLICY_MISMATCH:{requirement.member_id}")
         return _metric_result_member(requirement, metric_evidence, ExecutionStatus.INVALID, None)
@@ -209,6 +243,7 @@ def _metric_metadata_matches(requirement: MetricRequirement, metric: MetricResul
         and metric.ci_method_id == requirement.ci_method_id
         and metric.ci_method_version == requirement.ci_method_version
         and metric.ci_level == requirement.ci_level
+        and metric.ci_sidedness == requirement.ci_sidedness
     )
 
 
@@ -223,10 +258,20 @@ def _metric_outcome(
     if _metric_is_insufficient(requirement, metric):
         reasons.add(f"REQUIRED_METRIC_INCONCLUSIVE:{requirement.member_id}")
         return ExecutionStatus.COMPLETED, DecisionStatus.INCONCLUSIVE
+    if not _metric_ci_is_valid(metric):
+        reasons.add(f"REQUIRED_METRIC_CI_INVALID:{requirement.member_id}")
+        return ExecutionStatus.INVALID, None
+    value_matches = _metric_value_matches_counts(metric)
+    if value_matches is None:
+        reasons.add(f"REQUIRED_METRIC_VALUE_VALIDATION_UNSUPPORTED:{requirement.member_id}")
+        return ExecutionStatus.NOT_IMPLEMENTED, None
+    if not value_matches:
+        reasons.add(f"REQUIRED_METRIC_VALUE_MISMATCH:{requirement.member_id}")
+        return ExecutionStatus.INVALID, None
     expected = _metric_threshold_decision(requirement, metric)
     if expected is None:
         reasons.add(f"REQUIRED_METRIC_DECISION_BASIS_UNSUPPORTED:{requirement.member_id}")
-        return ExecutionStatus.COMPLETED, DecisionStatus.INCONCLUSIVE
+        return ExecutionStatus.NOT_IMPLEMENTED, None
     if metric.decision_status is not expected:
         reasons.add(f"REQUIRED_METRIC_DECISION_MISMATCH:{requirement.member_id}")
         return ExecutionStatus.INVALID, None
@@ -249,6 +294,27 @@ def _metric_is_insufficient(requirement: MetricRequirement, metric: MetricResult
         or metric.ci_lower is None
         or metric.ci_upper is None
     )
+
+
+def _metric_ci_is_valid(metric: MetricResult) -> bool:
+    if metric.metric_value is None or metric.ci_lower is None or metric.ci_upper is None:
+        return False
+    value = Decimal(metric.metric_value)
+    lower = Decimal(metric.ci_lower)
+    upper = Decimal(metric.ci_upper)
+    return lower <= value <= upper
+
+
+def _metric_value_matches_counts(metric: MetricResult) -> bool | None:
+    if metric.metric_value is None or metric.numerator is None or metric.denominator is None:
+        return False
+    if metric.estimator_id == "COUNT":
+        expected = Decimal(metric.numerator)
+    elif metric.metric_id in {"RECALL_AT_5", "PRECISION_AT_5", "NO_HIT_RATE"}:
+        expected = Decimal(metric.numerator) / Decimal(metric.denominator)
+    else:
+        return None
+    return Decimal(metric.metric_value) == expected
 
 
 def _metric_result_member(
@@ -290,6 +356,7 @@ def _metric_members(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: 
                 requirement.slice_id,
             )
             in duplicate_keys,
+            evidence_run_id=evidence.run_id,
             reasons=reasons,
         )
         for requirement in policy.required_metrics
@@ -302,14 +369,13 @@ def _metric_threshold_decision(
 ) -> DecisionStatus | None:
     if requirement.decision_basis == "ZERO_FAILURES":
         return DecisionStatus.PASS if metric.numerator == 0 else DecisionStatus.FAIL
-    if metric.metric_value is None:
+    if metric.metric_value is None or metric.ci_lower is None or metric.ci_upper is None:
         return None
-    value = Decimal(metric.metric_value)
     threshold = Decimal(requirement.threshold)
     if requirement.decision_basis == "AT_LEAST":
-        return DecisionStatus.PASS if value >= threshold else DecisionStatus.FAIL
+        return DecisionStatus.PASS if Decimal(metric.ci_lower) >= threshold else DecisionStatus.FAIL
     if requirement.decision_basis == "AT_MOST":
-        return DecisionStatus.PASS if value <= threshold else DecisionStatus.FAIL
+        return DecisionStatus.PASS if Decimal(metric.ci_upper) <= threshold else DecisionStatus.FAIL
     return None
 
 
@@ -343,6 +409,8 @@ def _suite_members(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: s
             or suite_evidence.suite.suite_id != expected.id
             or suite_evidence.suite.suite_version != expected.version
             or suite_evidence.suite.suite_definition_hash != expected.hash
+            or not suite_evidence.suite.required
+            or suite_evidence.suite.expected_case_set_hash != suite_evidence.suite.executed_case_set_hash
             or suite_evidence.suite.artifact_hash is None
             or suite_evidence.suite.artifact_hash != suite_evidence.artifact_ref.hash
         ):
@@ -472,24 +540,26 @@ def _apply_paired_case_checks(
     member = members[index]
     if member.execution_status is not ExecutionStatus.COMPLETED:
         return members
+    reason, status, decision = _paired_case_outcome(policy, member, paired)
+    if reason is not None:
+        reasons.add(reason)
+        members[index] = member.model_copy(update={"execution_status": status, "decision_status": decision})
+    return members
+
+
+def _paired_case_outcome(
+    policy: ReleaseGatePolicy,
+    member: RequiredGateMember,
+    paired: PairedCaseEvidence | None,
+) -> tuple[str | None, ExecutionStatus, DecisionStatus | None]:
+    required_receipt_id = policy.paired_comparison_receipt_id
+    assert required_receipt_id is not None
     if paired is None:
-        reasons.add("PAIRED_COMPARISON_EVIDENCE_MISSING")
-        members[index] = member.model_copy(
-            update={"execution_status": ExecutionStatus.NOT_EVALUATED, "decision_status": None}
-        )
-        return members
+        return "PAIRED_COMPARISON_EVIDENCE_MISSING", ExecutionStatus.NOT_EVALUATED, None
     if paired.receipt_id != required_receipt_id:
-        reasons.add("PAIRED_COMPARISON_RECEIPT_MISMATCH")
-        members[index] = member.model_copy(
-            update={"execution_status": ExecutionStatus.INVALID, "decision_status": None}
-        )
-        return members
+        return "PAIRED_COMPARISON_RECEIPT_MISMATCH", ExecutionStatus.INVALID, None
     if paired.receipt_hash != member.member_hash:
-        reasons.add("PAIRED_COMPARISON_HASH_MISMATCH")
-        members[index] = member.model_copy(
-            update={"execution_status": ExecutionStatus.INVALID, "decision_status": None}
-        )
-        return members
+        return "PAIRED_COMPARISON_HASH_MISMATCH", ExecutionStatus.INVALID, None
     case_collections = (
         paired.baseline_case_ids,
         paired.candidate_case_ids,
@@ -505,24 +575,17 @@ def _apply_paired_case_checks(
         and all(item.baseline_hash == item.candidate_hash == item.final_hash for item in paired.control_settings)
     )
     if not case_sets_match:
-        reasons.add("PAIRED_CASE_SET_MISMATCH")
-        members[index] = member.model_copy(
-            update={"execution_status": ExecutionStatus.INVALID, "decision_status": None}
-        )
-    elif not controls_match:
-        reasons.add("PAIRED_CONTROL_SETTING_MISMATCH")
-        members[index] = member.model_copy(
-            update={"execution_status": ExecutionStatus.INVALID, "decision_status": None}
-        )
-    elif not paired.paired_delta_complete:
-        reasons.add("PAIRED_DELTA_OR_CI_MISSING")
-        members[index] = member.model_copy(
-            update={
-                "execution_status": ExecutionStatus.COMPLETED,
-                "decision_status": DecisionStatus.INCONCLUSIVE,
-            }
-        )
-    return members
+        return "PAIRED_CASE_SET_MISMATCH", ExecutionStatus.INVALID, None
+    if not controls_match:
+        return "PAIRED_CONTROL_SETTING_MISMATCH", ExecutionStatus.INVALID, None
+    if not paired.paired_delta_refs:
+        return "PAIRED_DELTA_OR_CI_MISSING", ExecutionStatus.COMPLETED, DecisionStatus.INCONCLUSIVE
+    delta_keys = [(item.id, item.version) for item in paired.paired_delta_refs]
+    if len(delta_keys) != len(set(delta_keys)):
+        return "PAIRED_DELTA_OR_CI_DUPLICATE", ExecutionStatus.INVALID, None
+    if paired_case_manifest_hash(paired) != paired.receipt_hash:
+        return "PAIRED_COMPARISON_CONTENT_HASH_MISMATCH", ExecutionStatus.INVALID, None
+    return None, member.execution_status, member.decision_status
 
 
 def _aggregate(
@@ -578,6 +641,8 @@ def build_release_gate(policy: ReleaseGatePolicy, evidence: GateEvidence) -> Gat
 def release_gate_exit_code(gate: GateResult) -> int:
     """Map a validated gate result to the public CLI outcome contract."""
 
+    if gate.aggregate_decision_status is DecisionStatus.PASS and gate.blocking_reason_codes:
+        return 2
     if (
         gate.aggregate_execution_status is ExecutionStatus.COMPLETED
         and gate.aggregate_decision_status is DecisionStatus.PASS

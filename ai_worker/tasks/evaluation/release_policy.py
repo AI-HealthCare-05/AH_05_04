@@ -48,7 +48,6 @@ def load_release_policy(
     *,
     paired_comparison_receipt_id: str | None = None,
     required_case_ids: tuple[str, ...] = (),
-    required_scope_manifest_hash: str | None = None,
 ) -> ReleaseGatePolicy:
     """Load and exact-bind the existing versioned Evaluation policy graph for release gating."""
 
@@ -106,7 +105,8 @@ def load_release_policy(
             decision_basis=scope.decision_basis,
             ci_method_id=scope.ci_method_id,
             ci_method_version=scope.ci_method_version,
-            ci_level=cast(str | None, dict(scope.ci_parameters).get("confidence_level")),
+            ci_level=cast(str | None, dict(scope.ci_parameters).get("level")),
+            ci_sidedness=cast(str | None, dict(scope.ci_parameters).get("sidedness")),
         )
         for scope in comparison.scopes
         if scope.required
@@ -128,5 +128,5 @@ def load_release_policy(
         paired_comparison_receipt_id=paired_comparison_receipt_id,
         required_case_ids=required_case_ids,
         controlled_variable_keys=comparison.controlled_variable_keys,
-        required_scope_manifest_hash=required_scope_manifest_hash or policy.member_manifest_hash,
+        required_scope_manifest_hash=policy.member_manifest_hash,
     )

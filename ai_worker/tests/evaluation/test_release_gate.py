@@ -12,6 +12,7 @@ from ai_worker.tasks.evaluation.release_gate import (
     ReleaseGatePolicy,
     SuiteEvidence,
     build_release_gate,
+    paired_case_manifest_hash,
     release_gate_exit_code,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import MetricResult, SuiteResults
@@ -31,6 +32,7 @@ def _ref(identifier: str, value: str) -> ImmutableReference:
 
 
 def _policy() -> ReleaseGatePolicy:
+    paired_hash = _paired().receipt_hash
     return ReleaseGatePolicy(
         evaluation_policy_ref=_ref("release-policy", "a"),
         evaluation_profile_ref=_ref("release-profile", "b"),
@@ -42,7 +44,11 @@ def _policy() -> ReleaseGatePolicy:
         required_suites=(),
         required_receipts=(
             _ref("baseline-freeze-receipt", "d"),
-            _ref("ans-base-to-ans-final-comparison", "e"),
+            ImmutableReference(
+                id="ans-base-to-ans-final-comparison",
+                version="1.0.0",
+                hash=paired_hash,
+            ),
         ),
         paired_comparison_receipt_id="ans-base-to-ans-final-comparison",
         required_case_ids=("case-001", "case-002"),
@@ -52,9 +58,9 @@ def _policy() -> ReleaseGatePolicy:
 
 
 def _paired() -> PairedCaseEvidence:
-    return PairedCaseEvidence(
+    evidence = PairedCaseEvidence(
         receipt_id="ans-base-to-ans-final-comparison",
-        receipt_hash="e" * 64,
+        receipt_hash="0" * 64,
         baseline_case_ids=("case-001", "case-002"),
         candidate_case_ids=("case-001", "case-002"),
         final_case_ids=("case-001", "case-002"),
@@ -63,12 +69,28 @@ def _paired() -> PairedCaseEvidence:
             ControlSettingEvidence("SEED", "2" * 64, "2" * 64, "2" * 64),
             ControlSettingEvidence("TEMPERATURE", "3" * 64, "3" * 64, "3" * 64),
         ),
-        paired_delta_complete=True,
+        paired_delta_refs=(_ref("paired-delta-and-ci", "4"),),
     )
+    return replace(evidence, receipt_hash=paired_case_manifest_hash(evidence))
 
 
 def _receipt(identifier: str, value: str) -> ReceiptEvidence:
     reference = _ref(identifier, value)
+    return ReceiptEvidence(
+        reference=reference,
+        execution_status=ExecutionStatus.COMPLETED,
+        decision_status=DecisionStatus.PASS,
+        artifact_ref=reference,
+        is_current=True,
+    )
+
+
+def _paired_receipt() -> ReceiptEvidence:
+    reference = ImmutableReference(
+        id="ans-base-to-ans-final-comparison",
+        version="1.0.0",
+        hash=_paired().receipt_hash,
+    )
     return ReceiptEvidence(
         reference=reference,
         execution_status=ExecutionStatus.COMPLETED,
@@ -88,7 +110,7 @@ def _evidence() -> GateEvidence:
         suites=(),
         receipts=(
             _receipt("baseline-freeze-receipt", "d"),
-            _receipt("ans-base-to-ans-final-comparison", "e"),
+            _paired_receipt(),
         ),
         paired_case_evidence=_paired(),
     )
@@ -209,6 +231,21 @@ def test_unpaired_required_case_is_invalid_and_never_passes() -> None:
     assert "PAIRED_CASE_SET_MISMATCH" in gate.blocking_reason_codes
 
 
+def test_paired_case_scope_cannot_be_shrunk_by_altering_policy_and_evidence_together() -> None:
+    policy = replace(_policy(), required_case_ids=("case-001",))
+    paired = replace(
+        _paired(),
+        baseline_case_ids=("case-001",),
+        candidate_case_ids=("case-001",),
+        final_case_ids=("case-001",),
+    )
+
+    gate = build_release_gate(policy, replace(_evidence(), paired_case_evidence=paired))
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert "PAIRED_COMPARISON_CONTENT_HASH_MISMATCH" in gate.blocking_reason_codes
+
+
 def test_paired_case_coverage_compares_sets_not_input_order() -> None:
     evidence = _evidence()
     paired = replace(_paired(), final_case_ids=("case-002", "case-001"))
@@ -257,7 +294,7 @@ def test_control_setting_mismatch_is_invalid_and_never_passes() -> None:
 
 def test_missing_paired_delta_is_completed_inconclusive() -> None:
     evidence = _evidence()
-    paired = replace(_paired(), paired_delta_complete=False)
+    paired = replace(_paired(), paired_delta_refs=())
 
     gate = build_release_gate(_policy(), replace(evidence, paired_case_evidence=paired))
 
@@ -290,7 +327,7 @@ def test_gate_exit_codes_distinguish_pass_fail_and_inconclusive() -> None:
         _policy(),
         replace(
             _evidence(),
-            paired_case_evidence=replace(_paired(), paired_delta_complete=False),
+            paired_case_evidence=replace(_paired(), paired_delta_refs=()),
         ),
     )
 
@@ -353,6 +390,7 @@ def _metric_policy() -> ReleaseGatePolicy:
                 ci_method_id="WILSON_SCORE",
                 ci_method_version="1.0.0",
                 ci_level="0.95",
+                ci_sidedness="TWO_SIDED",
             ),
         ),
     )
@@ -370,7 +408,14 @@ def test_required_metric_zero_denominator_is_completed_inconclusive() -> None:
     metric = _required_metric(decision="INCONCLUSIVE", denominator=0)
     evidence = replace(
         _evidence(),
-        metrics=(MetricEvidence(metric=metric, artifact_ref=_ref("critical-safety-metric", "5")),),
+        metrics=(
+            MetricEvidence(
+                metric=metric,
+                run_id=RUN_ID,
+                artifact_hash="5" * 64,
+                artifact_ref=_ref("critical-safety-metric", "5"),
+            ),
+        ),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -383,7 +428,14 @@ def test_required_metric_cannot_pass_with_non_required_artifact_metadata() -> No
     metric = _required_metric().model_copy(update={"required": False})
     evidence = replace(
         _evidence(),
-        metrics=(MetricEvidence(metric=metric, artifact_ref=_ref("critical-safety-metric", "5")),),
+        metrics=(
+            MetricEvidence(
+                metric=metric,
+                run_id=RUN_ID,
+                artifact_hash="5" * 64,
+                artifact_ref=_ref("critical-safety-metric", "5"),
+            ),
+        ),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -395,11 +447,24 @@ def test_required_metric_cannot_pass_with_non_required_artifact_metadata() -> No
 
 def test_required_metric_decision_is_checked_against_threshold() -> None:
     metric = _required_metric().model_copy(
-        update={"numerator": 1, "metric_value": "0.5", "decision_status": DecisionStatus.PASS}
+        update={
+            "numerator": 1,
+            "metric_value": "1",
+            "ci_lower": "1",
+            "ci_upper": "1",
+            "decision_status": DecisionStatus.PASS,
+        }
     )
     evidence = replace(
         _evidence(),
-        metrics=(MetricEvidence(metric=metric, artifact_ref=_ref("critical-safety-metric", "5")),),
+        metrics=(
+            MetricEvidence(
+                metric=metric,
+                run_id=RUN_ID,
+                artifact_hash="5" * 64,
+                artifact_ref=_ref("critical-safety-metric", "5"),
+            ),
+        ),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -412,7 +477,14 @@ def test_required_metric_missing_ci_is_completed_inconclusive() -> None:
     metric = _required_metric().model_copy(update={"ci_lower": None, "ci_upper": None})
     evidence = replace(
         _evidence(),
-        metrics=(MetricEvidence(metric=metric, artifact_ref=_ref("critical-safety-metric", "5")),),
+        metrics=(
+            MetricEvidence(
+                metric=metric,
+                run_id=RUN_ID,
+                artifact_hash="5" * 64,
+                artifact_ref=_ref("critical-safety-metric", "5"),
+            ),
+        ),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -424,6 +496,8 @@ def test_required_metric_missing_ci_is_completed_inconclusive() -> None:
 def test_duplicate_required_metric_identity_is_invalid() -> None:
     metric = MetricEvidence(
         metric=_required_metric(),
+        run_id=RUN_ID,
+        artifact_hash="5" * 64,
         artifact_ref=_ref("critical-safety-metric", "5"),
     )
 
@@ -431,6 +505,79 @@ def test_duplicate_required_metric_identity_is_invalid() -> None:
 
     assert gate.aggregate_execution_status is ExecutionStatus.INVALID
     assert "REQUIRED_METRIC_DUPLICATE:CRITICAL_SAFETY_FAILURE_COUNT:HOLDOUT:ALL" in gate.blocking_reason_codes
+
+
+def test_required_metric_value_must_match_counts() -> None:
+    metric = _required_metric().model_copy(update={"numerator": 1, "metric_value": "0"})
+    evidence = replace(
+        _evidence(),
+        metrics=(
+            MetricEvidence(
+                metric=metric,
+                run_id=RUN_ID,
+                artifact_hash="5" * 64,
+                artifact_ref=_ref("critical-safety-metric", "5"),
+            ),
+        ),
+    )
+
+    gate = build_release_gate(_metric_policy(), evidence)
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert "REQUIRED_METRIC_VALUE_MISMATCH:CRITICAL_SAFETY_FAILURE_COUNT:HOLDOUT:ALL" in gate.blocking_reason_codes
+
+
+def test_required_metric_rejects_invalid_ci_bounds() -> None:
+    metric = _required_metric().model_copy(update={"ci_lower": "0.1", "ci_upper": "0"})
+    evidence = replace(
+        _evidence(),
+        metrics=(
+            MetricEvidence(
+                metric=metric,
+                run_id=RUN_ID,
+                artifact_hash="5" * 64,
+                artifact_ref=_ref("critical-safety-metric", "5"),
+            ),
+        ),
+    )
+
+    gate = build_release_gate(_metric_policy(), evidence)
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert "REQUIRED_METRIC_CI_INVALID:CRITICAL_SAFETY_FAILURE_COUNT:HOLDOUT:ALL" in gate.blocking_reason_codes
+
+
+def test_required_metric_must_match_gate_run_and_artifact_hash() -> None:
+    metric = MetricEvidence(
+        metric=_required_metric(),
+        run_id="22222222-2222-4222-8222-222222222222",
+        artifact_hash="0" * 64,
+        artifact_ref=_ref("critical-safety-metric", "5"),
+    )
+
+    gate = build_release_gate(_metric_policy(), replace(_evidence(), metrics=(metric,)))
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert "REQUIRED_METRIC_ARTIFACT_MISMATCH:CRITICAL_SAFETY_FAILURE_COUNT:HOLDOUT:ALL" in gate.blocking_reason_codes
+
+
+def test_unsupported_required_metric_decision_basis_is_not_implemented() -> None:
+    policy = _metric_policy()
+    requirement = replace(policy.required_metrics[0], decision_basis="NON_INFERIORITY")
+    metric = MetricEvidence(
+        metric=_required_metric(),
+        run_id=RUN_ID,
+        artifact_hash="5" * 64,
+        artifact_ref=_ref("critical-safety-metric", "5"),
+    )
+
+    gate = build_release_gate(
+        replace(policy, required_metrics=(requirement,)),
+        replace(_evidence(), metrics=(metric,)),
+    )
+
+    assert gate.aggregate_execution_status is ExecutionStatus.NOT_IMPLEMENTED
+    assert gate.aggregate_decision_status is None
 
 
 def _suite_evidence(value: str) -> SuiteEvidence:
@@ -493,6 +640,41 @@ def test_required_suite_internal_identity_cannot_be_spoofed_by_wrapper_ref() -> 
     assert gate.aggregate_execution_status is ExecutionStatus.INVALID
     assert gate.aggregate_decision_status is None
     assert "REQUIRED_SUITE_BINDING_MISMATCH:required-suite" in gate.blocking_reason_codes
+
+
+def test_required_suite_must_be_required_and_cover_expected_cases() -> None:
+    policy = replace(_policy(), required_suites=(_ref("required-suite", "6"),))
+    suite_evidence = _suite_evidence("7")
+    invalid_suite = replace(
+        suite_evidence,
+        suite=suite_evidence.suite.model_copy(update={"required": False, "executed_case_set_hash": "0" * 64}),
+    )
+
+    gate = build_release_gate(policy, replace(_evidence(), suites=(invalid_suite,)))
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert "REQUIRED_SUITE_BINDING_MISMATCH:required-suite" in gate.blocking_reason_codes
+
+
+def test_invalid_profile_evidence_is_not_overwritten_by_missing_execution() -> None:
+    evidence = replace(
+        _evidence(),
+        required_scope_manifest_hash="0" * 64,
+        completed_experiment_types=(),
+    )
+
+    gate = build_release_gate(_policy(), evidence)
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert gate.blocking_execution_statuses == (ExecutionStatus.INVALID,)
+    assert "REQUIRED_EXPERIMENT_NOT_COMPLETED" in gate.blocking_reason_codes
+
+
+def test_exit_code_rejects_pass_with_blocking_reasons() -> None:
+    gate = build_release_gate(_policy(), _evidence())
+    contradictory = gate.model_copy(update={"blocking_reason_codes": ("MANUAL_TAMPER",)})
+
+    assert release_gate_exit_code(contradictory) == 2
 
 
 def test_completed_receipt_requires_exact_artifact_reference() -> None:
