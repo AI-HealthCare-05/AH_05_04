@@ -94,17 +94,14 @@ Track C의 목표 API는 다음으로 고정한다.
 
 ### Proposed/TBD — `setup_reason` 신규 값·우선순위
 
-이 절은 Approved Contract Freeze v4의 일부가 아니며 구현 근거로 사용할 수 없다. 다음 신규 값·우선순위는 별도 Decision 또는 Contract Freeze version에서 승인될 때까지 Proposed/TBD다. 승인 시 Backend가 고정 우선순위를 계산해 `schedule_item_status=SETUP_REQUIRED`인 약품별 항목에 nullable 단일 `setup_reason`을 반환한다. Frontend는 반환값을 표시·분기에만 사용하고 동일 우선순위를 재계산하지 않는다. `NO_ACTIVE_PRESCRIPTION`은 약품별 `setup_reason`이 아니라 전체 `schedule_status`로만 반환한다. `NEW_PRESCRIPTION_VERSION`과 `NEW_MEDICATION`은 중복·경계가 불명확하므로 제안 enum에 포함하지 않는다.
-
-| 우선순위 | `setup_reason` | 의미 |
-| ---: | --- | --- |
-| 1 | `UNSUPPORTED_SCHEDULE_PATTERN` | v1의 매일 동일 시각 반복으로 표현할 수 없음 |
-| 2 | `MISSING_START_DATE` | 시작일 확인이 필요함 |
-| 3 | `MISSING_EXACT_TIME` | 정확한 복용 시각 확인이 필요함 |
-| 4 | `MISSING_DURATION_DECISION` | 종료일 또는 계속 복용 여부 확인이 필요함 |
-| 5 | `USER_CONFIRMATION_REQUIRED` | 필요한 값은 모두 있지만 사용자가 해당 version의 일정을 아직 확인하지 않음 |
-
-제안안에서 `USER_CONFIRMATION_REQUIRED`는 위의 1~4 사유가 없고 active schedule도 없을 때만 사용한다. 이 enum 추가와 우선순위 고정은 공유 계약 변경이므로 구현 전 Decision 또는 Contract Freeze version에 반영하고 OpenAPI·DTO·Frontend fixture·계약 테스트를 같이 동기화한다. 승인 전에는 이 표를 확정 enum 또는 테스트 기대값으로 사용하지 않는다.
+이 절은 Approved Contract Freeze v4의 일부가 아니다. 신규 값·단일 반환 우선순위의 제안 정본은
+[#417 일정 정합화 제안 §2](../../proposed/track-b-schedule-reconciliation-v1.md)로 이동했다.
+[PD-417-20260910](../../../governance/decisions/2026-09-10-track-b-schedule-contract.md)의
+송은영·남한솔 승인 전에는 확정 enum·OpenAPI·테스트 기대값으로 사용할 수 없다.
+일정 Audit·time retire·종료 revision의 B1/B2 차이도 같은 제안에서 추적하며 DB 후속은
+[#423](https://github.com/AI-HealthCare-05/AH_05_04/issues/423)이다. #202·#203은 이 결정의 승인
+결과를 반영하고 같은 계약을 다른 브랜치에서 별도로 확정하지 않는다. Approved v4의 기존 네 가지
+reason과 나머지 목표는 그대로 유지하며, 이 참조 변경은 제안 승인이나 Current 승격이 아니다.
 
 목표 오류 의미는 다음과 같다.
 
