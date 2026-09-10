@@ -19,6 +19,7 @@ from app.services.guide_ai.client import ProviderGuideResponse
 from app.services.guide_ai.generator import GuideGenerator
 from app.services.guides import GuideService
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 @pytest_asyncio.fixture
@@ -109,6 +110,7 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(prescription)
     await session.flush()
     version = PrescriptionVersion(
+        **fingerprint_values(prescription.prescribed_date, [{"medication_name": "타이레놀", "display_order": 1}]),
         id=version_id,
         prescription_id=prescription.id,
         version_number=1,
@@ -120,6 +122,7 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(Medication(prescription_id=prescription.id, medication_name="타이레놀", display_order=1))
     session.add(
         PrescriptionVersionMedication(
+            medication_count=1,
             prescription_version_id=version_id,
             medication_name="타이레놀",
             display_order=1,

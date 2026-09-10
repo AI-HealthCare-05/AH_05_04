@@ -26,14 +26,14 @@ Revision `169a1b2c3d4e`는 API 동작을 변경하지 않는 Expand 단계다. A
 | 테이블 | 컬럼 |
 | --- | --- |
 | `prescription` | nullable `active_version_id` |
-| `prescription_version` | `id`, `prescription_id`, `version_number`, `prescribed_date`, `confirmed_at`, internal `assembly_xid`, `created_at` |
+| `prescription_version` | `id`, `prescription_id`, `version_number`, `prescribed_date`, `confirmed_at`, `medication_count`, `content_hash`, `created_at` |
 | `prescription_version_medication` | `id`, `prescription_version_id`, `medication_name`, nullable `strength_text`, nullable `dose_value`, nullable `dose_unit`, nullable `frequency_per_day`, nullable `timing_text`, nullable `duration_days`, `display_order`, `created_at` |
 
 `prescription.active_version_id`는 `(active_version_id, prescription.id) → prescription_version(id, prescription_id)` composite FK로 같은 처방의 version만 가리키게 한다. FK는 `DEFERRABLE INITIALLY DEFERRED`이므로 미리 생성한 ID로 Prescription → Version → Medication을 같은 transaction에서 만들 수 있고 commit 시점에 완전한 graph를 검증한다. Expand·Backfill 단계에서는 임시 nullable이었지만 PR 5 cleanup에서 `NOT NULL`로 고정한다. 별도 active/current 상태 컬럼은 만들지 않는다.
 
-Version sequence는 양수이고 `(prescription_id, version_number)`가 unique다. 약물 표시 순서는 양수이며 `(prescription_version_id, display_order)`가 unique다. 지연 제약은 commit 시 모든 Version과 active pointer에 medication snapshot이 1개 이상인지 확인한다. Version INSERT trigger는 caller 입력을 무시하고 DB가 발급한 epoch-aware top-level transaction ID를 internal `assembly_xid`에 기록한다. Medication INSERT는 현재 transaction ID가 이 값과 같은 Version에만 허용한다. 이 비교는 release된 SAVEPOINT 뒤에도 유지되며 Runtime 역할이 custom GUC나 INSERT 값으로 위조할 수 없으므로, active 여부와 관계없이 commit된 Version의 약물 집합은 동결된다. 두 snapshot 테이블은 DB trigger로 직접 UPDATE·DELETE를 차단한다.
+Version sequence와 표시 순서는 양수이며 `(prescription_id, version_number)`와 `(prescription_version_id, display_order)`는 UNIQUE다. #398의 Python 저장 경계는 부모 잠금 후 약 목록의 1..N 완전성·count/hash를 검증하고 같은 savepoint에서 버전·약·활성 포인터를 저장한다. 일반 count 복합 FK·슬롯 CHECK 및 NOT NULL이 이를 보조하고 소비 경로는 실제 내용을 재검증한다. `398e`는 `assembly_xid`와 과거 조립·불변성 Trigger를 제거한다. Runtime은 두 snapshot 테이블에 SELECT·INSERT만 가지며 UPDATE·DELETE·TRUNCATE는 거부된다. 자세한 구현 상태는 [PD-398](../../proposed/python-prescription-integrity-398.md)을 따른다.
 
-사용자 데이터 삭제는 `prescription`을 삭제하는 기존 애플리케이션 경계에서만 시작한다. `prescription → prescription_version → prescription_version_medication` FK는 `ON DELETE CASCADE`이고, 불변성 trigger는 이 부모 연쇄 삭제만 허용한다. Version 또는 Version Medication 직접 삭제는 계속 차단한다. 지연 검증 trigger는 commit 전에 부모와 snapshot이 이미 연쇄 삭제된 경우 큐에 남은 생성·활성화 이벤트를 건너뛴다. Migration downgrade는 런타임 사용자 삭제와 별개이며 version data가 있으면 중단한다.
+사용자 데이터 삭제는 기존 `prescription` 부모 경계에서 시작하며 `prescription → prescription_version → prescription_version_medication`의 FK CASCADE를 유지한다. 직접 Version/Medication 삭제는 Runtime 권한 회수로 차단한다. 과거 불변성·지연 검증 Trigger의 동작을 신규 구현 요구로 사용하지 않는다. 운영 역할·삭제 승인과 보존 정책은 별도이며 Trigger 제거 이후 downgrade로 과거 Trigger를 복원하지 않는다.
 
 `profile`, `medical_document`, `ocr_job` 소유권·출처는 PR 1에서 중복 snapshot FK를 추가하지 않고 현재의 `prescription → profile`, `prescription → medical_document`, `prescription → ocr_job` 관계를 따른다. Candidate·Identification의 기존 문자열 FK 자리에는 아직 FK를 연결하지 않는다. Backfill되지 않은 현재 데이터와 API 호환성을 유지한 뒤 PR 3 Read cutover 범위에서 연결한다.
 
@@ -156,3 +156,7 @@ commit 직전에 생성 기준 Version과 `active_version_id`의 일치를 `PRES
 않고 ASSISTANT placeholder를 `FAILED / PRESCRIPTION_VERSION_STALE`로 보존하며
 `409 PRESCRIPTION_VERSION_CONFLICT`를 반환한다. 처방 활성화 transaction은 기존 `CHAT_SESSION` row를
 잠그지 않으므로 이 완료 fencing과 역방향 lock cycle을 만들지 않는다.
+
+## #398 / PR #429 구현 리뷰 보완
+
+작업 브랜치의 확정·정정 멱등성은 [PD-398-R1](../../../governance/decisions/2026-09-10-python-integrity-review-429.md)과 [구현 계약](../../proposed/python-prescription-integrity-398.md#확정정정-요청-멱등성-pd-398-r1)을 따른다. 동일 자연 요청 키·동일 내용은 암호화해 저장한 최초 201/200을 반환한다. 같은 정정 기준의 다른 내용은 409이며, 버전·무효화·응답 snapshot 저장은 원자적이다. 이 절은 PR 리뷰 대상이며 target 전체의 current 승격이나 운영 적용 완료를 뜻하지 않는다.

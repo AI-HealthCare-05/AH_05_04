@@ -30,6 +30,7 @@ from app.repositories.medication_candidate_repository import (
 )
 from app.services.medication_identification import MedicationIdentificationService
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 pytestmark = pytest.mark.asyncio
 
@@ -322,6 +323,13 @@ async def _create_medication(
     await session.flush()
     session.add(
         PrescriptionVersion(
+            **fingerprint_values(
+                prescription.prescribed_date,
+                [
+                    {"medication_name": "테스트약", "strength_text": "500mg", "display_order": i}
+                    for i in range(1, display_order + 1)
+                ],
+            ),
             id=version_id,
             prescription_id=prescription.id,
             version_number=1,
@@ -331,7 +339,18 @@ async def _create_medication(
     )
     await session.flush()
 
+    for slot in range(1, display_order):
+        session.add(
+            PrescriptionVersionMedication(
+                prescription_version_id=version_id,
+                medication_count=display_order,
+                medication_name="테스트약",
+                strength_text="500mg",
+                display_order=slot,
+            )
+        )
     medication = PrescriptionVersionMedication(
+        medication_count=display_order,
         prescription_version_id=version_id,
         medication_name="테스트약",
         strength_text="500mg",

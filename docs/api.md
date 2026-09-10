@@ -560,6 +560,8 @@ Header:
 
 ## 처방 정보 확정
 
+PR #429 / #398 변경: 동일 문서의 성공 재시도는 보존기간 내 저장된 최초 201을 재현한다. 정정 `PATCH /api/v1/prescriptions/{prescription_id}`도 같은 기준 버전·revision·내용이면 최초 200을 재현하고, 같은 기준의 다른 내용은 409 `IDEMPOTENCY_KEY_CONFLICT`다. 요청 형식은 유지한다. 소유권은 매번 확인하며 최신 상태는 GET으로 확인한다. 보존기간·도입 이전 자료·원자성은 [PD-398 구현 계약](contracts/proposed/python-prescription-integrity-398.md#확정정정-요청-멱등성-pd-398-r1)을 따른다.
+
 ### Endpoint
 
 | Method | Path | 성공 상태 | 동작 |
@@ -608,3 +610,7 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
+
+## #398 분리된 Source·Catalog 관리 API (브랜치 구현, 리뷰 대기)
+
+일반 API에 mount하지 않는 별도 관리 앱의 GET/PATCH/DELETE 계약과 401/403/409/422 의미는 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. 회원 가입과 is_admin만으로는 접근 권한을 얻지 않는다. 일반 회원 화면에는 관리 기능을 추가하지 않는다.

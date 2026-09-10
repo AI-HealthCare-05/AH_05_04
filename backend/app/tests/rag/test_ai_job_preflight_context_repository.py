@@ -56,7 +56,9 @@ async def _create_user(session: AsyncSession) -> tuple[User, Profile]:
     return user, profile
 
 
-async def _create_prescription(session: AsyncSession, *, user: User, profile: Profile) -> Prescription:
+async def _create_prescription(
+    session: AsyncSession, *, user: User, profile: Profile, two_medications: bool = False
+) -> Prescription:
     token = uuid4().hex
     document = MedicalDocument(
         uploaded_by=user.id,
@@ -76,7 +78,8 @@ async def _create_prescription(session: AsyncSession, *, user: User, profile: Pr
         source_ocr_job=ocr_job,
         prescribed_date=date(2026, 9, 10),
         confirmed_at=datetime.now(UTC),
-        medications=[{"medication_name": "합성 식별약", "display_order": 1}],
+        medications=[{"medication_name": "합성 식별약", "display_order": 1}]
+        + ([{"medication_name": "다른 합성약", "display_order": 2}] if two_medications else []),
     )
 
 
@@ -201,7 +204,7 @@ async def _create_chat_domain(
     return message
 
 
-async def test_repository_persists_chat_intake_and_execution_context(db_session: AsyncSession) -> None:
+async def persist_and_verify_chat_context(db_session: AsyncSession) -> None:
     user, profile = await _create_user(db_session)
     prescription = await _create_prescription(db_session, user=user, profile=profile)
     medication = await db_session.scalar(
@@ -271,24 +274,29 @@ async def test_repository_persists_chat_intake_and_execution_context(db_session:
     assert await repository.list_execution_identifications(execution.id) == [pinned]
 
 
+async def test_repository_persists_chat_intake_and_execution_context(db_session: AsyncSession) -> None:
+    await persist_and_verify_chat_context(db_session)
+
+
 async def test_execution_identification_requires_matching_medication_and_matched_status(
     db_session: AsyncSession,
 ) -> None:
     user, profile = await _create_user(db_session)
-    prescription = await _create_prescription(db_session, user=user, profile=profile)
+    prescription = await _create_prescription(db_session, user=user, profile=profile, two_medications=True)
     medication = await db_session.scalar(
         select(PrescriptionVersionMedication).where(
-            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id
+            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id,
+            PrescriptionVersionMedication.display_order == 1,
         )
     )
     assert medication is not None
-    other_medication = PrescriptionVersionMedication(
-        prescription_version_id=prescription.active_version_id,
-        medication_name="다른 합성약",
-        display_order=2,
+    other_medication = await db_session.scalar(
+        select(PrescriptionVersionMedication).where(
+            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id,
+            PrescriptionVersionMedication.display_order == 2,
+        )
     )
-    db_session.add(other_medication)
-    await db_session.flush()
+    assert other_medication is not None
     matched_identification = await _create_identification(db_session, medication=medication)
     unresolved_identification = await _create_identification(
         db_session,

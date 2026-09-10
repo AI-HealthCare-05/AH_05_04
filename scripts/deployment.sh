@@ -115,6 +115,26 @@ if [ "$DB_ADMIN_USER" = "$DB_MIGRATION_USER" ] ||
   exit 1
 fi
 
+# Writer is a separate login; never reuse a Runtime/Migration/Admin identity.
+for variable_name in SOURCE_WRITER_USER SOURCE_WRITER_PASSWORD; do
+  if [ -z "${!variable_name:-}" ]; then
+    echo "필수 운영 DB 환경변수가 비어 있습니다: $variable_name"
+    exit 1
+  fi
+  case "${!variable_name}" in
+    replace-with* | replace_with*)
+      echo "Writer 환경변수의 placeholder를 교체해야 합니다: $variable_name"
+      exit 1
+      ;;
+  esac
+done
+if [ "$SOURCE_WRITER_USER" = "$DB_ADMIN_USER" ] ||
+  [ "$SOURCE_WRITER_USER" = "$DB_MIGRATION_USER" ] ||
+  [ "$SOURCE_WRITER_USER" = "$DB_APP_USER" ]; then
+  echo "SOURCE_WRITER_USER는 Admin, Migration, Runtime과 다른 이름이어야 합니다."
+  exit 1
+fi
+
 # ---------- 기간 한정 Production 데모 설정 검증 ----------
 required_demo_variables=(
   DOCKER_USER
@@ -555,10 +575,11 @@ echo "Stopping application services before schema migration"
 
 # Schema migration 전에 기존 애플리케이션을 먼저 멈춰 구버전 코드가 변경 중인
 # DB schema를 읽거나 쓰는 상황을 방지합니다.
-docker compose stop \
+docker compose --profile source-admin stop \
   -t 60 \
   fastapi \
-  ai-worker
+  ai-worker \
+  source-writer
 
 if ! running_application_services="$(docker compose ps --services --status running)"; then
   echo "Could not confirm application service stop state."
@@ -566,7 +587,7 @@ if ! running_application_services="$(docker compose ps --services --status runni
   exit 1
 fi
 
-if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker)$'; then
+if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer)$'; then
   echo "Application services are still running after stop request."
   docker compose ps fastapi ai-worker
   exit 1
@@ -611,6 +632,12 @@ if [ "$migration_exit_code" -ne 0 ]; then
 fi
 
 echo "Alembic migration completed successfully."
+echo "Verifying final database head and catalog state"
+docker compose --profile database-maintenance run --rm --no-deps --pull always verify-db-head
+
+echo "Applying explicit Runtime and Source Writer permissions"
+docker compose --profile database-admin run --rm --no-deps --pull always provision-db-roles
+
 write_deployment_db_snapshot "$evidence_dir/post-migration-snapshot.tsv"
 echo "Validating profile migration integrity"
 

@@ -29,6 +29,8 @@ Frontend E2E 또는 Production 배포 승인이 아닙니다. `local-live-ai`는
 - [ ] Backend stdout Provider log의 접근·발췌·보존 범위와 지정 수동 검토자를 Security·Privacy 책임자가 승인했습니다.
 - [ ] one-cycle read timeout은 `max(C + E × S, T) + 5초`로 계산됩니다.
 
+#398/#404 통합 이후 일반 Runtime은 인증 token 행의 DELETE 권한을 갖지 않습니다. 합성 fixture 생성·정리 runner는 승인된 테스트/검증 DB에서 해당 작업을 수행할 수 있는 별도 operator credential을 사용해야 합니다. 이를 일반 FastAPI·Worker에 주입하거나 Runtime DELETE 권한을 임시 확대하지 않습니다. 정리는 지정한 합성 user_id에 속한 인증 세션·재설정 token·멱등성 응답까지 같은 transaction에서 제거합니다. 실제 사용자 데이터 삭제 기능을 추가하는 변경은 아닙니다.
+
 ## 고정 명령
 
 Preflight는 실제 CLOVA만 호출해 후보 이미지의 field identity를 검사합니다. OpenAI, PATCH, 처방, Guide와

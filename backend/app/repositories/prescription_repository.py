@@ -15,7 +15,9 @@ from app.models.prescriptions import (
     PrescriptionVersionMedication,
 )
 from app.models.rag_candidate import MedicationCandidateSearch, MedicationCandidateSearchStatus
+from app.repositories.prescription_integrity import require_verified_version, unavailable_version, verify_loaded_version
 from app.repositories.profile_ownership import owned_by_self
+from provider_contracts.prescription_integrity import MEDICATION_CONTENT_FIELDS, prescription_fingerprint
 
 
 class PrescriptionRepository:
@@ -38,7 +40,10 @@ class PrescriptionRepository:
                 owned_by_self(Prescription.profile_id, user_id),
             )
         )
-        return result.scalar_one_or_none()
+        prescription = result.scalar_one_or_none()
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
     async def get_latest_owned(self, *, user_id: UUID) -> Prescription | None:
         """재접속 복구 지원: Frontend가 어떤 prescription_id도 들고 있지 않을 때
@@ -54,9 +59,54 @@ class PrescriptionRepository:
             .order_by(Prescription.created_at.desc(), Prescription.id.desc())
             .limit(1)
         )
-        return result.scalar_one_or_none()
+        prescription = result.scalar_one_or_none()
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
     async def create_with_medications(
+        self,
+        *,
+        document: MedicalDocument,
+        source_ocr_job: OcrJob,
+        prescribed_date: date,
+        confirmed_at: datetime,
+        medications: list[dict],
+    ) -> Prescription:
+        prescription_fingerprint(prescribed_date, medications)
+        async with self.session.begin_nested():
+            return await self._create_with_medications(
+                document=document,
+                source_ocr_job=source_ocr_job,
+                prescribed_date=prescribed_date,
+                confirmed_at=confirmed_at,
+                medications=medications,
+            )
+
+    async def create_version(
+        self,
+        *,
+        prescription: Prescription,
+        prescribed_date: date,
+        confirmed_at: datetime,
+        medications: list[dict],
+    ) -> PrescriptionVersion:
+        prescription_fingerprint(prescribed_date, medications)
+        async with self.session.begin_nested():
+            # Service의 expected revision 검사도 이 부모 잠금 안에서 수행해야 합니다.
+            locked = await self.session.scalar(
+                select(Prescription.id).where(Prescription.id == prescription.id).with_for_update()
+            )
+            if locked is None:
+                raise ValueError("Prescription does not exist")
+            return await self._create_version(
+                prescription=prescription,
+                prescribed_date=prescribed_date,
+                confirmed_at=confirmed_at,
+                medications=medications,
+            )
+
+    async def _create_with_medications(
         self,
         *,
         document: MedicalDocument,
@@ -77,7 +127,10 @@ class PrescriptionRepository:
         self.session.add(prescription)
         await self.session.flush()
 
+        fingerprint = prescription_fingerprint(prescribed_date, medications)
         version = PrescriptionVersion(
+            medication_count=fingerprint.medication_count,
+            content_hash=fingerprint.content_hash,
             id=version_id,
             prescription_id=prescription.id,
             version_number=1,
@@ -91,19 +144,51 @@ class PrescriptionRepository:
             self.session.add(
                 PrescriptionVersionMedication(
                     prescription_version_id=version.id,
+                    medication_count=fingerprint.medication_count,
                     **medication,
                 )
             )
         await self.session.flush()
+        await self._verify_medication_membership(version.id, prescribed_date, medications)
         return prescription
 
-    async def get_version_medications(self, *, prescription_version_id: UUID) -> list[PrescriptionVersionMedication]:
-        result = await self.session.execute(
-            select(PrescriptionVersionMedication)
-            .where(PrescriptionVersionMedication.prescription_version_id == prescription_version_id)
-            .order_by(PrescriptionVersionMedication.display_order.asc())
+    async def _verify_medication_membership(
+        self, version_id: UUID, prescribed_date: date, medications: list[dict]
+    ) -> None:
+        rows = (
+            (
+                await self.session.execute(
+                    select(*(getattr(PrescriptionVersionMedication, key) for key in MEDICATION_CONTENT_FIELDS)).where(
+                        PrescriptionVersionMedication.prescription_version_id == version_id
+                    )
+                )
+            )
+            .mappings()
+            .all()
         )
-        return list(result.scalars().all())
+        if prescription_fingerprint(prescribed_date, [dict(row) for row in rows]) != prescription_fingerprint(
+            prescribed_date, medications
+        ):
+            raise ValueError("Persisted prescription medication content differs from requested content")
+
+    async def get_version_medications(self, *, prescription_version_id: UUID) -> list[PrescriptionVersionMedication]:
+        rows = (
+            await self.session.execute(
+                select(PrescriptionVersion, PrescriptionVersionMedication)
+                .join(
+                    PrescriptionVersionMedication,
+                    PrescriptionVersionMedication.prescription_version_id == PrescriptionVersion.id,
+                )
+                .where(PrescriptionVersion.id == prescription_version_id)
+                .order_by(PrescriptionVersionMedication.display_order)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        if not rows:
+            raise unavailable_version()
+        medications = [row[1] for row in rows]
+        verify_loaded_version(rows[0][0], medications)
+        return medications
 
     async def get_version(self, *, prescription_version_id: UUID) -> PrescriptionVersion | None:
         return await self.session.get(PrescriptionVersion, prescription_version_id)
@@ -116,10 +201,14 @@ class PrescriptionRepository:
                 owned_by_self(Prescription.profile_id, user_id),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        return result.scalar_one_or_none()
+        prescription = result.scalar_one_or_none()
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
-    async def create_version(
+    async def _create_version(
         self,
         *,
         prescription: Prescription,
@@ -133,7 +222,10 @@ class PrescriptionRepository:
             .order_by(PrescriptionVersion.version_number.desc())
             .limit(1)
         )
+        fingerprint = prescription_fingerprint(prescribed_date, medications)
         version = PrescriptionVersion(
+            medication_count=fingerprint.medication_count,
+            content_hash=fingerprint.content_hash,
             prescription_id=prescription.id,
             version_number=(latest_revision or 0) + 1,
             prescribed_date=prescribed_date,
@@ -145,9 +237,12 @@ class PrescriptionRepository:
             self.session.add(
                 PrescriptionVersionMedication(
                     prescription_version_id=version.id,
+                    medication_count=fingerprint.medication_count,
                     **medication,
                 )
             )
+        await self.session.flush()
+        await self._verify_medication_membership(version.id, prescribed_date, medications)
         prescription.active_version_id = version.id
         await self.session.flush()
         return version

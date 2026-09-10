@@ -108,3 +108,7 @@
 - 이메일 정규화, 저장, 조회 및 중복 비교 기준 변경
 - 인증 토큰 payload, `token_version` 재검증, 로그아웃 세션 무효화 기준 변경
 - refresh token rotation·재사용 탐지 기준, 비밀번호 재설정 lock 순서·오류 코드 변경
+
+## #398 통합 권한 (PR #429 리뷰 대상)
+
+병합된 #404의 로그인·refresh rotation·비밀번호 재설정은 Python Service/Repository를 유지한다. `refresh_session`, `password_reset_token`에는 Runtime SELECT/INSERT를 허용하며 UPDATE는 각각 `active_jti, updated_at`과 `used_at` 컬럼으로 제한한다. token identity·유효기간 덮어쓰기와 DELETE/TRUNCATE는 허용하지 않는다. Source Writer·관리 Writer에는 인증 테이블 접근 권한이 없다. 새 테이블의 권한을 포괄 GRANT나 DB Trigger로 해결하지 않는다. migration→head 검증→역할 provisioning이 완료된 뒤 서비스를 시작한다. 실제 운영 DB 적용 증빙은 별도다.

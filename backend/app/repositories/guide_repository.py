@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.prescriptions import Prescription, PrescriptionVersion
+from app.repositories.prescription_integrity import require_verified_version
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -26,7 +27,10 @@ class GuideRepository:
                 owned_by_self(Prescription.profile_id, user_id),
             )
         )
-        return result.scalar_one_or_none()
+        prescription = result.scalar_one_or_none()
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
     async def create(self, *, prescription: Prescription) -> Guide:
         guide = Guide(

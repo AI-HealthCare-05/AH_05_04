@@ -34,6 +34,7 @@ from app.services.chat_ai import (
     ChatTimeoutError,
 )
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 TEST_ORIGIN = "http://localhost:5173"
 SAFE_TIMEOUT_MESSAGE = "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
@@ -141,6 +142,20 @@ async def _add_prescription_graph(session: AsyncSession, *, user: User, token: s
     await session.flush()
     session.add(
         PrescriptionVersion(
+            **fingerprint_values(
+                prescription.prescribed_date,
+                [
+                    {
+                        "medication_name": f"합성약-{token}",
+                        "dose_value": Decimal("1.250"),
+                        "dose_unit": "mg",
+                        "frequency_per_day": 2,
+                        "timing_text": "식후",
+                        "duration_days": 7,
+                        "display_order": 1,
+                    }
+                ],
+            ),
             id=version_id,
             prescription_id=prescription.id,
             version_number=1,
@@ -163,6 +178,7 @@ async def _add_prescription_graph(session: AsyncSession, *, user: User, token: s
     )
     session.add(
         PrescriptionVersionMedication(
+            medication_count=1,
             prescription_version_id=version_id,
             medication_name=f"합성약-{token}",
             dose_value=Decimal("1.250"),

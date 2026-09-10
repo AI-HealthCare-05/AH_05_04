@@ -245,6 +245,11 @@ class RagRuntimeEnvironment(Base):
 class RagRuntimeEnvironmentTransition(Base):
     __tablename__ = "rag_runtime_environment_transition"
     __table_args__ = (
+        UniqueConstraint(
+            "environment_id",
+            "environment_revision",
+            name="uq_rag_runtime_transition_environment_revision",
+        ),
         ForeignKeyConstraint(
             ["from_bundle_id", "from_bundle_manifest_hash"],
             ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
