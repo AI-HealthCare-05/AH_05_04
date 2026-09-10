@@ -2,8 +2,12 @@
 
 import subprocess
 
+from scripts.ci.verify_database_head import migration_heads
+
 
 def test_backend_container_can_import_runtime_and_load_migration_head(storage_dir_built_image: str) -> None:
+    expected_heads = migration_heads()
+    assert len(expected_heads) == 1
     completed = subprocess.run(
         [
             "docker",
@@ -17,7 +21,7 @@ def test_backend_container_can_import_runtime_and_load_migration_head(storage_di
             "-c",
             "from rag_runtime import evaluate_medication_identification_preflight; "
             "from scripts.ci.verify_database_head import migration_heads; "
-            "assert migration_heads() == ('3984b5c6d7e8',); print('ok')",
+            f"assert migration_heads() == {expected_heads!r}; print('ok')",
         ],
         check=True,
         capture_output=True,

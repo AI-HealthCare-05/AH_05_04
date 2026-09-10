@@ -1,22 +1,21 @@
-"""Catalog PostgreSQL adapter가 사용할 Source·Identity 결속 단계입니다.
+"""Catalog v2 저장·복원 adapter. Python 검증과 명시적 transaction으로 DB 결속을 보호합니다."""
 
-이 모듈은 CatalogBuildRepository 구현체가 아닙니다. 호출자가 연 transaction 안에서
-Source reference를 대조하고 안정 Identity를 준비하며 commit하지 않습니다.
-"""
-
+import dataclasses
 import json
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Integer, LargeBinary, Numeric, String, column, func, select, table, tuple_
+from sqlalchemy import Boolean, Integer, LargeBinary, Numeric, String, column, func, select, table, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.selectable import TableClause
 
+from ai_worker.tasks.rag.catalog.approval import CatalogApprovalVerifier
 from ai_worker.tasks.rag.catalog.build import CatalogMembers
 from ai_worker.tasks.rag.catalog.export import CatalogExportArtifacts
+from ai_worker.tasks.rag.catalog.restore import restore_catalog_export_bytes, restore_current_catalog_storage
 from ai_worker.tasks.rag.catalog.storage import CatalogStoragePlan, prepare_catalog_storage
 from ai_worker.tasks.rag.catalog.types import CandidateEntityType, ProductIdentity
 
@@ -225,8 +224,9 @@ def _amount(record: dict[str, object]) -> Decimal:
 class SqlAlchemyCatalogWriteSupport:
     """전체 Catalog 저장 transaction 내부에서만 사용하는 선행 결속 단계입니다."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, read_only: bool = False) -> None:
         self._session = session
+        self._read_only = read_only
 
     async def bind(self, plan: CatalogStoragePlan) -> CatalogDatabaseBindings:
         source_snapshot_ids = await self._bind_source_refs(plan)
@@ -234,47 +234,62 @@ class SqlAlchemyCatalogWriteSupport:
         return CatalogDatabaseBindings(source_snapshot_ids, identity_ids)
 
     async def stage_compatible_members(self, plan: CatalogStoragePlan) -> CatalogDatabaseStageResult:
-        """현재 최소 schema가 표현할 수 있는 구성원을 savepoint 안에 적재합니다.
-
-        Catalog build/Set/manifest와 D-02 실행 참조는 저장하지 않으므로 이 메서드의
-        성공을 build 저장 또는 publication 완료로 취급하면 안 됩니다.
-        """
-
+        """한 savepoint에서 구성원과 Set을 검증·적재합니다. commit은 adapter가 소유합니다."""
+        if self._read_only:
+            raise CatalogDatabaseBindingError()
         try:
             async with self._session.begin_nested():
-                bindings = await self.bind(plan)
-                records = {row.member_ref: _record(row.canonical_record) for row in plan.rows}
-                product_ids = await self._stage_products(plan, records, bindings)
-                ingredient_ids = await self._stage_ingredients(plan, records, bindings)
-                alias_ids = await self._stage_aliases(plan, records, bindings)
-                component_ids = await self._stage_components(plan, records, bindings, product_ids, ingredient_ids)
-                search_entry_ids = await self._stage_search_entries(
-                    plan,
-                    records,
-                    bindings,
-                    product_ids,
-                    alias_ids,
-                )
-                staged = CatalogDatabaseStageResult(
-                    bindings,
-                    product_ids,
-                    ingredient_ids,
-                    alias_ids,
-                    component_ids,
-                    search_entry_ids,
-                )
+                staged = await self._bind_members(plan)
                 set_id = await self._stage_set(plan, staged)
-                return CatalogDatabaseStageResult(
-                    bindings,
-                    product_ids,
-                    ingredient_ids,
-                    alias_ids,
-                    component_ids,
-                    search_entry_ids,
-                    set_id,
-                )
+                return dataclasses.replace(staged, set_id=set_id)
         except CatalogDatabaseBindingError:
             raise
+        except (SQLAlchemyError, KeyError, TypeError, ValueError, ArithmeticError):
+            raise CatalogDatabaseBindingError() from None
+
+    async def _bind_members(self, plan: CatalogStoragePlan) -> CatalogDatabaseStageResult:
+        bindings = await self.bind(plan)
+        records = {row.member_ref: _record(row.canonical_record) for row in plan.rows}
+        product_ids = await self._stage_products(plan, records, bindings)
+        ingredient_ids = await self._stage_ingredients(plan, records, bindings)
+        alias_ids = await self._stage_aliases(plan, records, bindings)
+        component_ids = await self._stage_components(plan, records, bindings, product_ids, ingredient_ids)
+        search_entry_ids = await self._stage_search_entries(plan, records, bindings, product_ids, alias_ids)
+        return CatalogDatabaseStageResult(
+            bindings, product_ids, ingredient_ids, alias_ids, component_ids, search_entry_ids
+        )
+
+    async def read_set(self, set_id: UUID) -> CatalogStoragePlan:
+        """보존 bytes와 모든 실제 행/FK를 읽기 전용으로 대조합니다. 누락 행을 생성하지 않습니다."""
+        if not self._read_only:
+            raise CatalogDatabaseBindingError()
+        try:
+            stored = (
+                await self._session.execute(
+                    select(_CATALOG_SET.c.manifest_json).where(_CATALOG_SET.c.id == str(set_id))
+                )
+            ).scalar_one()
+            jsonl = (
+                await self._session.execute(
+                    select(_CATALOG_SET_HASH.c.canonical_bytes).where(
+                        _CATALOG_SET_HASH.c.set_id == str(set_id),
+                        _CATALOG_SET_HASH.c.hash_kind == "EXPORT_CHECKSUM",
+                    )
+                )
+            ).scalar_one()
+            artifacts = restore_catalog_export_bytes(catalog_jsonl=bytes(jsonl), manifest_json=bytes(stored))
+            catalog = artifacts.catalog
+            members = CatalogMembers(
+                products=catalog.products,
+                ingredients=catalog.ingredients,
+                components=catalog.components,
+                aliases=catalog.aliases,
+                search_entries=catalog.search_entries,
+            )
+            plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+            staged = await self._bind_members(plan)
+            await self.verify_set(set_id, plan, staged)
+            return plan
         except (SQLAlchemyError, KeyError, TypeError, ValueError, ArithmeticError):
             raise CatalogDatabaseBindingError() from None
 
@@ -290,8 +305,9 @@ class SqlAlchemyCatalogWriteSupport:
             select(_SOURCE_SNAPSHOT.c.id, _SOURCE_SNAPSHOT.c.source_version)
             .where(_SOURCE_SNAPSHOT.c.id.in_(tuple(str(value) for value in requested)))
             .order_by(_SOURCE_SNAPSHOT.c.id)
-            .with_for_update(of=_SOURCE_SNAPSHOT)
         )
+        if not self._read_only:
+            statement = statement.with_for_update(of=_SOURCE_SNAPSHOT)
         rows = (await self._session.execute(statement)).mappings().all()
         if len(rows) != len(requested):
             raise CatalogDatabaseBindingError()
@@ -314,7 +330,7 @@ class SqlAlchemyCatalogWriteSupport:
         )
         if not ordered:
             return {}
-        for identity in ordered:
+        for identity in () if self._read_only else ordered:
             await self._session.execute(
                 insert(_ENTITY_IDENTITY)
                 .values(
@@ -363,7 +379,10 @@ class SqlAlchemyCatalogWriteSupport:
     ) -> UUID:
         table_columns = target.c
         database_values = {name: str(value) if isinstance(value, UUID) else value for name, value in values.items()}
-        await self._session.execute(insert(target).values(id=str(uuid4()), **database_values).on_conflict_do_nothing())
+        if not self._read_only:
+            await self._session.execute(
+                insert(target).values(id=str(uuid4()), **database_values).on_conflict_do_nothing()
+            )
         statement = select(target).where(*(table_columns[name] == database_values[name] for name in key_columns))
         rows = (await self._session.execute(statement)).mappings().all()
         if len(rows) != 1:
@@ -550,24 +569,14 @@ class SqlAlchemyCatalogWriteSupport:
         return result
 
     async def _require_search_entry_eligible(self, values: dict[str, object]) -> None:
-        product_rows = (
-            (
-                await self._session.execute(
-                    select(
-                        _PRODUCT.c.normalized_product_name,
-                        _PRODUCT.c.product_status,
-                    )
-                    .where(
-                        _PRODUCT.c.id == str(values["product_id"]),
-                        _PRODUCT.c.entity_identity_id == str(values["product_identity_id"]),
-                        _PRODUCT.c.identity_entity_type == "PRODUCT",
-                    )
-                    .with_for_update(of=_PRODUCT)
-                )
-            )
-            .mappings()
-            .all()
+        product_query = select(_PRODUCT.c.normalized_product_name, _PRODUCT.c.product_status).where(
+            _PRODUCT.c.id == str(values["product_id"]),
+            _PRODUCT.c.entity_identity_id == str(values["product_identity_id"]),
+            _PRODUCT.c.identity_entity_type == "PRODUCT",
         )
+        if not self._read_only:
+            product_query = product_query.with_for_update(of=_PRODUCT)
+        product_rows = (await self._session.execute(product_query)).mappings().all()
         if len(product_rows) != 1 or product_rows[0]["product_status"] != "ACTIVE":
             raise CatalogDatabaseBindingError()
 
@@ -581,26 +590,16 @@ class SqlAlchemyCatalogWriteSupport:
         if entry_type != "APPROVED_ALIAS" or alias_id is None:
             raise CatalogDatabaseBindingError()
 
-        alias_rows = (
-            (
-                await self._session.execute(
-                    select(
-                        _ALIAS.c.normalized_alias_text,
-                        _ALIAS.c.review_status,
-                        _ALIAS.c.record_status,
-                        _ALIAS.c.is_effective,
-                    )
-                    .where(
-                        _ALIAS.c.id == str(alias_id),
-                        _ALIAS.c.target_identity_id == str(values["product_identity_id"]),
-                        _ALIAS.c.target_type == "PRODUCT",
-                    )
-                    .with_for_update(of=_ALIAS)
-                )
-            )
-            .mappings()
-            .all()
+        alias_query = select(
+            _ALIAS.c.normalized_alias_text, _ALIAS.c.review_status, _ALIAS.c.record_status, _ALIAS.c.is_effective
+        ).where(
+            _ALIAS.c.id == str(alias_id),
+            _ALIAS.c.target_identity_id == str(values["product_identity_id"]),
+            _ALIAS.c.target_type == "PRODUCT",
         )
+        if not self._read_only:
+            alias_query = alias_query.with_for_update(of=_ALIAS)
+        alias_rows = (await self._session.execute(alias_query)).mappings().all()
         if len(alias_rows) != 1:
             raise CatalogDatabaseBindingError()
         alias = alias_rows[0]
@@ -820,11 +819,24 @@ class SqlAlchemyCatalogBuildRepository:
 
     async def save_build(self, *, members: CatalogMembers, artifacts: CatalogExportArtifacts) -> None:
         plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+        try:
+            async with self._session_factory() as session:
+                async with session.begin():
+                    staged = await SqlAlchemyCatalogWriteSupport(session).stage_compatible_members(plan)
+                    if staged.set_id is None:
+                        raise CatalogDatabaseBindingError()
+                    set_id = staged.set_id
+            async with self._session_factory() as session:
+                await SqlAlchemyCatalogWriteSupport(session).verify_set(set_id, plan, staged)
+        except SQLAlchemyError:
+            raise CatalogDatabaseBindingError() from None
+
+    async def load_build(
+        self, set_id: UUID, *, approval_verifier: CatalogApprovalVerifier | None
+    ) -> CatalogExportArtifacts:
+        """전체 v2 artifacts를 Candidate에 인계합니다. 저장 당시 승인만으로 소비를 허용하지 않습니다."""
         async with self._session_factory() as session:
             async with session.begin():
-                staged = await SqlAlchemyCatalogWriteSupport(session).stage_compatible_members(plan)
-                if staged.set_id is None:
-                    raise CatalogDatabaseBindingError()
-                set_id = staged.set_id
-        async with self._session_factory() as session:
-            await SqlAlchemyCatalogWriteSupport(session).verify_set(set_id, plan, staged)
+                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                plan = await SqlAlchemyCatalogWriteSupport(session, read_only=True).read_set(set_id)
+        return await restore_current_catalog_storage(plan, approval_verifier=approval_verifier)

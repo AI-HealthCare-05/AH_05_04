@@ -15,6 +15,7 @@ from ai_worker.tasks.rag.catalog.export import (
     create_catalog_export,
 )
 from ai_worker.tasks.rag.catalog.storage import CatalogStoragePlan, prepare_catalog_storage
+from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef
 
 _MEMBERS_ADAPTER = TypeAdapter(CatalogMembers)
 _RECEIPT_ADAPTER = TypeAdapter(CatalogApprovalReceipt)
@@ -56,6 +57,38 @@ def restore_catalog_storage(plan: CatalogStoragePlan) -> CatalogExportArtifacts:
     """
     try:
         return _restore(plan)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise CatalogStorageRestoreError() from None
+
+
+def restore_catalog_export_bytes(*, catalog_jsonl: bytes, manifest_json: bytes) -> CatalogExportArtifacts:
+    """DB에 보존한 v2 원본 bytes를 보정 없이 복원합니다. 현재 승인은 별도 검사합니다."""
+    try:
+        groups: dict[str, list[dict[str, object]]] = {name: [] for name in _RECORD_GROUPS.values()}
+        for line in catalog_jsonl.splitlines():
+            record = json.loads(line, object_pairs_hook=_unique_manifest_object)
+            _require(isinstance(record, dict))
+            groups[_RECORD_GROUPS[record.pop("record_type")]].append(record)
+        encoded = _canonical_json_bytes(groups)
+        members = _MEMBERS_ADAPTER.validate_json(encoded, strict=True)
+        _require(_canonical_json_bytes(dataclasses.asdict(members)) == encoded)
+        manifest = json.loads(manifest_json, object_pairs_hook=_unique_manifest_object)
+        refs = TypeAdapter(tuple[CandidateCatalogSourceRef, ...]).validate_json(
+            _canonical_json_bytes(manifest["source_refs"]), strict=True
+        )
+        receipt = None
+        if manifest["approval_receipt"] is not None:
+            receipt = _RECEIPT_ADAPTER.validate_json(_canonical_json_bytes(manifest["approval_receipt"]), strict=True)
+        artifacts = create_catalog_export(
+            catalog_version=manifest["catalog_version"],
+            source_refs=refs,
+            members=members,
+            approval_receipt=receipt,
+        )
+        _require(artifacts.catalog_jsonl == catalog_jsonl)
+        _require(_canonical_json_bytes(json.loads(artifacts.manifest_json)) == _canonical_json_bytes(manifest))
+        artifacts = dataclasses.replace(artifacts, manifest_json=manifest_json)
+        return restore_catalog_storage(prepare_catalog_storage(members=members, artifacts=artifacts))
     except (ValueError, KeyError, TypeError, AttributeError):
         raise CatalogStorageRestoreError() from None
 

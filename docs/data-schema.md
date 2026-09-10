@@ -273,7 +273,7 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | Snapshot | `rag_source_snapshot`, `rag_source_snapshot_verification`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact` | 수집 version, checksum, parser/normalization/canonicalization version, 검증 이력, 수집 실행 이력과 원본 저장소 참조 |
 | Catalog Identity | `rag_entity_identity` | `(entity_type, code_system, canonical_code)`로 Product·Ingredient의 안정 Identity를 보관 |
 | Catalog 구성원 | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry` | Snapshot별 제품·성분·Alias 관찰·구성성분과 검색용 선택을 보관 |
-| Catalog 불변 구성 | `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | v2 manifest bytes, 전체 Source Snapshot/version, 실제 구성원 행, export/envelope hash 종류·계산 bytes를 한 Set에 결속. 발행 후 UPDATE·DELETE 차단 |
+| Catalog 불변 구성 | `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | v2 manifest bytes, 전체 Source Snapshot/version, 실제 구성원 행, export/envelope hash 종류·계산 bytes를 한 Set에 결속. Python adapter는 INSERT·동일 내용 재사용만 제공하고 조회 시 전체를 재검증. 배포 Writer 권한 연결은 후속 |
 
 Source/Snapshot 책임 경계:
 

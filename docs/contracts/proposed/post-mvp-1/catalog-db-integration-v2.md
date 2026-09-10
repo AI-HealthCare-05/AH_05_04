@@ -10,6 +10,20 @@
 
 ## 구현 상태
 
+### 최신 구현 상태 — #372 DB 왕복 연결
+
+현재 확정된 v2 범위에서 `SqlAlchemyCatalogBuildRepository.save_build()`와
+`load_build(set_id, approval_verifier=...)`를 연결했다. 저장은 adapter 소유 transaction,
+조회는 읽기 전용 repeatable-read transaction에서 수행한다. DB 원본 bytes 및 실제 구성원·Identity·
+출처·Set/member/hash를 모두 대조한 뒤 기존 승인 포트를 매번 확인하여 전체 `CatalogExportArtifacts`를 반환한다.
+기존 hash 계산 규칙·Candidate 공개 입력은 변경하지 않았다. 아래 단계별 기록의 "DB adapter 미구현"은
+해당 단계 작성 당시 상태이며 현재 구현/검증 범위는 [인계 검증 문서](../../../testing/catalog-storage-handoff-166.md)를 따른다.
+
+D-02 등 합의된 후속 범위, #436 병합 후 Receipt 소비, 실제 승인/감사 저장소와 배포 Writer 권한 연결은
+유지한다. 저장 성공을 publication 승인 또는 Runtime 활성화로 취급하지 않으며 임의 실행 키를 만들지 않는다.
+본 문서의 proposed 상태와 담당 리뷰 경계는 변경하지 않는다.
+
+
 `ai_worker/tasks/rag/catalog/storage.py::prepare_catalog_storage`는 검증된 v2 구성원과
 artifacts로부터 SQL 실행 전 사용할 불변 저장 자료를 만든다. Backend model을 import하지 않고
 DB·파일·네트워크에 쓰지 않는다. 기존 `save_build(members, artifacts)` 서명과 Candidate v2 인계를

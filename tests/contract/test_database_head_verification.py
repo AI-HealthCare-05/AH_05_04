@@ -24,7 +24,7 @@ def valid_state() -> DatabaseHeadState:
 
 
 def test_current_migration_tree_has_one_head() -> None:
-    assert migration_heads() == ("3984b5c6d7e8",)
+    assert len(migration_heads()) == 1
 
 
 def test_draft_pr_372_catalog_functions_are_in_final_removal_inventory() -> None:

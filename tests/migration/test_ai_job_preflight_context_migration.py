@@ -519,7 +519,7 @@ def test_preflight_context_downgrade_empty_schema_removes_tables() -> None:
 
 
 def test_preflight_tables_join_existing_integrity_head() -> None:
-    from scripts.ci.verify_database_head import read_database_head_state, validation_errors
+    from scripts.ci.verify_database_head import migration_heads, read_database_head_state, validation_errors
 
     cfg = create_alembic_config()
     command.upgrade(cfg, "398293a4b5c6")
@@ -528,6 +528,8 @@ def test_preflight_tables_join_existing_integrity_head() -> None:
 
     async def verify() -> None:
         async with _connection() as connection:
-            assert validation_errors("3984b5c6d7e8", await read_database_head_state(connection)) == []
+            expected_heads = migration_heads()
+            assert len(expected_heads) == 1
+            assert validation_errors(expected_heads[0], await read_database_head_state(connection)) == []
 
     asyncio.run(verify())
