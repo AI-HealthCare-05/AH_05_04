@@ -18,7 +18,11 @@ from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
-from app.models.rag_candidate import MedicationCandidateSearchStatus
+from app.models.rag_candidate import (
+    MedicationCandidateSearch,
+    MedicationCandidateSearchStatus,
+    MedicationIdentification,
+)
 from app.models.users import Gender, User
 from app.repositories.medication_candidate_repository import (
     MedicationCandidateRepository,
@@ -398,6 +402,15 @@ async def _create_ready_search(
     return search.id, finalized.results[0].id
 
 
+async def _count_identifications(session: AsyncSession, *, medication_id: UUID) -> int:
+    result = await session.execute(
+        select(MedicationIdentification).where(
+            MedicationIdentification.prescription_version_medication_id == medication_id
+        )
+    )
+    return len(result.scalars().all())
+
+
 class TestGetMedicationCandidateSearch:
     async def test_returns_ready_snapshot_with_no_store(
         self, db_session: AsyncSession, public_track_f_enabled: None
@@ -457,6 +470,30 @@ class TestGetMedicationCandidateSearch:
 
         assert response.status_code == 404
         assert response.json()["code"] == "CANDIDATE_SEARCH_NOT_FOUND"
+
+    async def test_projects_expired_ready_search_without_candidate(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        search_id, _result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        search = await db_session.get(MedicationCandidateSearch, search_id)
+        assert search is not None
+        search.expires_at = datetime.now(config.TIMEZONE) - timedelta(seconds=1)
+        await db_session.flush()
+
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get(f"/api/v1/medication-candidate-searches/{medication.id}")
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["status"] == "EXPIRED"
+        assert data["candidate_search_result_id"] is None
+        assert data["candidate"] is None
 
 
 class TestConfirmAndRejectMedicationCandidate:
@@ -577,3 +614,135 @@ class TestConfirmAndRejectMedicationCandidate:
         assert first.status_code == status.HTTP_200_OK
         assert second.status_code == 409
         assert second.json()["code"] == "IDEMPOTENCY_KEY_CONFLICT"
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/api/v1/medication-candidates/confirm", "/api/v1/medication-candidates/reject"],
+    )
+    async def test_confirm_and_reject_reject_other_users_result_without_side_effect(
+        self,
+        db_session: AsyncSession,
+        public_track_f_enabled: None,
+        path: str,
+    ) -> None:
+        owner = await _create_owner(db_session)
+        intruder = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        body = (
+            {
+                "prescription_version_medication_id": str(medication.id),
+                "candidate_search_result_id": str(result_id),
+            }
+            if path.endswith("/confirm")
+            else {
+                "search_id": str(search_id),
+                "candidate_search_result_id": str(result_id),
+            }
+        )
+        fastapi_app.dependency_overrides[get_request_user] = lambda: intruder
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    path,
+                    headers={"Idempotency-Key": f"candidate-other-user-{path.rsplit('/', 1)[-1]}"},
+                    json=body,
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert response.status_code == 404
+        assert response.json()["code"] == "CANDIDATE_SEARCH_NOT_FOUND"
+        assert await _count_identifications(db_session, medication_id=medication.id) == 0
+
+    async def test_confirm_rejects_expired_result_without_side_effect(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        search = await db_session.get(MedicationCandidateSearch, search_id)
+        assert search is not None
+        search.expires_at = datetime.now(config.TIMEZONE) - timedelta(seconds=1)
+        await db_session.flush()
+
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-expired-confirm-001"},
+                    json={
+                        "prescription_version_medication_id": str(medication.id),
+                        "candidate_search_result_id": str(result_id),
+                    },
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "CANDIDATE_SEARCH_STALE"
+        assert response.json()["details"][0]["reason"] == "STALE"
+        assert await _count_identifications(db_session, medication_id=medication.id) == 0
+
+    async def test_confirm_rejects_medication_mismatch_without_side_effect(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        search_medication = await _create_medication(db_session, user=owner)
+        other_medication = await _create_medication(db_session, user=owner)
+        _search_id, result_id = await _create_ready_search(db_session, medication=search_medication, user=owner)
+
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-mismatch-confirm-001"},
+                    json={
+                        "prescription_version_medication_id": str(other_medication.id),
+                        "candidate_search_result_id": str(result_id),
+                    },
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "CANDIDATE_SEARCH_STALE"
+        assert response.json()["details"][0]["reason"] == "STALE"
+        assert await _count_identifications(db_session, medication_id=search_medication.id) == 0
+        assert await _count_identifications(db_session, medication_id=other_medication.id) == 0
+
+    async def test_confirm_rejects_consumed_result_without_extra_side_effect(
+        self, db_session: AsyncSession, public_track_f_enabled: None
+    ) -> None:
+        owner = await _create_owner(db_session)
+        medication = await _create_medication(db_session, user=owner)
+        _search_id, result_id = await _create_ready_search(db_session, medication=medication, user=owner)
+        fastapi_app.dependency_overrides[get_request_user] = lambda: owner
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                first = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-consume-confirm-001"},
+                    json={
+                        "prescription_version_medication_id": str(medication.id),
+                        "candidate_search_result_id": str(result_id),
+                    },
+                )
+                second = await client.post(
+                    "/api/v1/medication-candidates/confirm",
+                    headers={"Idempotency-Key": "candidate-consume-confirm-002"},
+                    json={
+                        "prescription_version_medication_id": str(medication.id),
+                        "candidate_search_result_id": str(result_id),
+                    },
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_request_user, None)
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == 409
+        assert second.json()["code"] == "CANDIDATE_SEARCH_STALE"
+        assert second.json()["details"][0]["reason"] == "STALE"
+        assert await _count_identifications(db_session, medication_id=medication.id) == 1

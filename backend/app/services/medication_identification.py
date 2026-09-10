@@ -1,3 +1,4 @@
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +18,9 @@ from app.repositories.medication_candidate_repository import (
     MedicationCandidateRepository,
     MedicationCandidateResultCreate,
 )
+
+logger = logging.getLogger(__name__)
+
 
 _FINALIZABLE_SEARCH_STATUSES = frozenset(
     {
@@ -382,11 +386,17 @@ class MedicationIdentificationService:
 
     @staticmethod
     def _stale_error(*, field: str, reason: str) -> ApiError:
+        # Target 계약은 만료·입력 변경·이미 소비됨 같은 내부 lifecycle 원인을
+        # 환자 오류 DTO에 노출하지 않는다. 구체 reason은 개인정보 없는 내부 로그에만 남긴다.
+        logger.info(
+            "Candidate search became stale before identification finalization.",
+            extra={"field": field, "stale_reason": reason},
+        )
         return ApiError(
             status_code=409,
             code="CANDIDATE_SEARCH_STALE",
             message="현재 사용할 수 없는 약품 후보 검색 결과입니다. 최신 상태를 다시 확인해 주세요.",
-            details=[ErrorDetail(field=field, reason=reason)],
+            details=[ErrorDetail(field=field, reason="STALE")],
         )
 
     @staticmethod

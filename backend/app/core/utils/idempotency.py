@@ -9,6 +9,25 @@ from typing import Any
 _KEY_PATTERN = re.compile(r"\A[A-Za-z0-9\-._:]{16,255}\Z")
 
 
+IDEMPOTENCY_KEY_OPENAPI_SCHEMA = {
+    "type": "string",
+    "minLength": 16,
+    "maxLength": 255,
+    "pattern": r"^[A-Za-z0-9._:-]+$",
+}
+
+
+def build_idempotency_key_openapi_parameter(*, description: str) -> dict[str, object]:
+    """Return the shared OpenAPI parameter for the `Idempotency-Key` header."""
+    return {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": True,
+        "schema": dict(IDEMPOTENCY_KEY_OPENAPI_SCHEMA),
+        "description": description,
+    }
+
+
 class IdempotencyKeyFormatError(ValueError):
     """`Idempotency-Key` 헤더 값이 idempotency-v1.md의 형식 요구사항을 위반할 때 발생합니다."""
 

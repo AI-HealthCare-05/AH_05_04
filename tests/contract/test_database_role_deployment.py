@@ -53,10 +53,13 @@ def test_ci_runs_legacy_downgrades_before_irreversible_cutover():
     runner = (ROOT / "scripts/ci/run_test.sh").read_text()
     assert runner.index("upgrade 398b2c3d4e5f") < runner.index("pytest tests/migration") < runner.index("upgrade head")
     workflow = yaml.safe_load((ROOT / ".github/workflows/checks.yml").read_text())
-    steps = workflow["jobs"]["test"]["steps"]
-    base = next(i for i, step in enumerate(steps) if "upgrade 398b2c3d4e5f" in step.get("run", ""))
-    legacy = next(i for i, step in enumerate(steps) if "pytest tests/migration" in step.get("run", ""))
-    cutover = next(i for i, step in enumerate(steps) if step.get("name") == "Apply irreversible Source cutover")
-    backend = next(step for step in steps if step.get("name") == "Run Backend Tests with Coverage")
+    migration_steps = workflow["jobs"]["test-migration"]["steps"]
+    backend_steps = workflow["jobs"]["test-backend"]["steps"]
+    base = next(i for i, step in enumerate(migration_steps) if "upgrade 398b2c3d4e5f" in step.get("run", ""))
+    legacy = next(i for i, step in enumerate(migration_steps) if "pytest tests/migration" in step.get("run", ""))
+    cutover = next(
+        i for i, step in enumerate(migration_steps) if step.get("name") == "Apply irreversible Source cutover"
+    )
+    backend = next(step for step in backend_steps if step.get("name") == "Run Backend Tests with Coverage")
     assert base < legacy < cutover
     assert backend["env"]["ISSUE398_TEST_POSTGRES_CONTAINER"] == "${{ job.services.postgres.id }}"

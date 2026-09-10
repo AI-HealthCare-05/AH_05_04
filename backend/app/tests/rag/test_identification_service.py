@@ -415,7 +415,7 @@ async def test_confirm_identification_rejects_reconfirm_of_consumed_search(db_se
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "CANDIDATE_SEARCH_STALE"
-    assert exc_info.value.details[0].reason == "SEARCH_NOT_READY"
+    assert exc_info.value.details[0].reason == "STALE"
 
 
 async def test_confirm_identification_rejects_expired_search(db_session: AsyncSession) -> None:
@@ -452,7 +452,7 @@ async def test_confirm_identification_rejects_expired_search(db_session: AsyncSe
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "CANDIDATE_SEARCH_STALE"
-    assert exc_info.value.details[0].reason == "SEARCH_EXPIRED"
+    assert exc_info.value.details[0].reason == "STALE"
 
 
 async def test_confirm_identification_rejects_search_medication_mismatch(db_session: AsyncSession) -> None:
@@ -487,7 +487,7 @@ async def test_confirm_identification_rejects_search_medication_mismatch(db_sess
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "CANDIDATE_SEARCH_STALE"
-    assert exc_info.value.details[0].reason == "SEARCH_MEDICATION_MISMATCH"
+    assert exc_info.value.details[0].reason == "STALE"
 
 
 async def test_record_candidate_search_rejects_existing_identification(db_session: AsyncSession) -> None:
@@ -606,7 +606,7 @@ async def test_reject_identification_rejects_re_reject_of_invalidated_search(db_
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "CANDIDATE_SEARCH_STALE"
-    assert exc_info.value.details[0].reason == "SEARCH_NOT_READY"
+    assert exc_info.value.details[0].reason == "STALE"
 
 
 async def test_record_candidate_search_rejects_after_user_rejected_identification(

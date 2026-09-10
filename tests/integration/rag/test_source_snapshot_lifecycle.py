@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -53,6 +54,9 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     persist_product_ingestion_result,
     select_current_snapshot,
 )
+from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
+    SourceSnapshotPolicy,
+)
 from app.core import config
 from app.core.db.databases import Base
 from app.models.rag_source import (
@@ -93,6 +97,10 @@ session_factory = async_sessionmaker(test_engine, expire_on_commit=False, autofl
 _NOW = datetime(2026, 9, 7, 3, 0, tzinfo=UTC)
 _CHECKSUM_A = "a" * 64
 _CHECKSUM_B = "b" * 64
+_ALLOW_ONE_REJECTION_POLICY = SourceSnapshotPolicy(
+    max_rejected_records=1,
+    max_rejection_rate=Decimal("0.5"),
+)
 
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
@@ -228,6 +236,7 @@ def _metadata(source_version: str, *, minute: int = 0) -> SnapshotIngestionMetad
         external_version=external_version,
         duration_ms=1000,
         verified_by="synthetic-worker",
+        snapshot_policy=_ALLOW_ONE_REJECTION_POLICY,
     )
 
 

@@ -312,7 +312,7 @@ echo "${COLOR_GREEN}Docker 로그인 성공!${COLOR_NC}"
 echo ""
 
 # ---------- 데모 배포 image build 및 push ----------
-# Worker Consumer 공개는 #338 범위 밖입니다. 기간 한정 데모는 FastAPI와 Frontend만
+# Worker health check·운영 관제·Production 배포 조립은 후속 범위입니다. FastAPI와 Frontend만
 # 새 immutable image로 배포하고, migration 전 기존 ai-worker 중지 확인은 유지합니다.
 build_and_push \
   "$docker_user" \

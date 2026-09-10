@@ -57,7 +57,7 @@ CloudFront 기본 hostname 사용은 별도 도메인 구매만 생략하며 AWS
 
 ### 운영 증빙 기록
 
-배포마다 아래 기록을 해당 배포 PR에 정본으로 남기고 이 문서의 환경별 기록에서 링크한다. `모든 배포`는 현재 동기 경로에도 필수이고, `Outbox·Worker Production 적용 이후`는 DB Outbox publisher와 reclaim·retry·DLQ 경로를 구현·검증하여 Production에 적용한 뒤에만 추가로 필수이다. 별도 incident·복구 Issue가 필요하면 배포 PR에서 양방향으로 연결한다. API Key, token, 비밀번호, 실제 환자 정보와 원본 의료문서는 기록하지 않는다.
+배포마다 아래 기록을 해당 배포 PR에 정본으로 남기고 이 문서의 환경별 기록에서 링크한다. `모든 배포`는 현재 Worker 미포함 Production 배포 범위에도 필수이고, `Outbox·Worker Production 적용 이후`는 DB Outbox publisher와 reclaim·retry·DLQ 경로를 구현·검증하여 Production에 적용한 뒤에만 추가로 필수이다. 별도 incident·복구 Issue가 필요하면 배포 PR에서 양방향으로 연결한다. API Key, token, 비밀번호, 실제 환자 정보와 원본 의료문서는 기록하지 않는다.
 
 | 구간 | 적용 범위 | 필수 기록 |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ CloudFront 기본 hostname 사용은 별도 도메인 구매만 생략하며 AWS
 | Rollback 실행 | 모든 배포 | 실행자·실행 시각, 복구 애플리케이션 버전, Production DB 무-downgrade·forward-fix 처리, 복구 health check와 후속 Issue |
 | Rollback 실행 | Outbox·Worker Production 적용 이후 | Stream PEL·예약 retry drain과 구·신 Consumer 호환 확인 |
 
-[Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)은 **Approved Target**이며 아직 `current` runtime 계약으로 승격되지 않았다. 이 상태는 모든 지원 구성요소가 미구현이라는 뜻은 아니다. Redis Streams Adapter·Event Publisher(#140/PR #213), Worker lease·fencing·commit-before-ACK(#141/PR #217), 공통 Job 접수 transaction(#147/PR #215), DB Outbox 발행(#219), Pending reclaim·재시도·quarantine·DLQ와 복구 Scheduler(#142)는 구현되었다. 실제 Provider 연결·검증(#258), 운영 Redis 인증·노출 차단(#150), health check와 Production 배포 조립은 남아 있으며 현재 Production runtime 동작을 증명하지 않는다. 해당 경로를 Production에 적용하기 전에 계약과 테스트를 동기화하고 아래 관제·호환 조건을 검증한다. 목표 계약은 DLQ publish 실패를 정해진 backoff로 재시도하고 10회 연속 실패부터 매 시도 alert하도록 정의한다. 구 Consumer major 제거 전에는 해당 Outbox·Stream·PEL·예약 retry가 모두 0이고 마지막 처리 후 7일 관찰기간이 지났는지 확인한다. `RETRY_WAIT` 중 Runtime Bundle 변경과 구·신 Consumer 동시 배포 방식은 같은 계약이 가리키는 후속 Product Decision이 확정되기 전까지 Production 적용 차단 조건이다.
+[Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)은 **Approved Target**이며 아직 `current` runtime 계약으로 승격되지 않았다. 이 상태는 모든 지원 구성요소가 미구현이라는 뜻은 아니다. Redis Streams Adapter·Event Publisher(#140/PR #213), Worker lease·fencing·commit-before-ACK(#141/PR #217), 공통 Job 접수 transaction(#147/PR #215), DB Outbox 발행과 Worker runtime의 주기 실행(#219, #370/PR #371), 실제 CLOVA OCR Provider 연결·검증(#258/PR #268), Pending reclaim·재시도·quarantine·DLQ와 복구 Scheduler(#142), 운영 Redis 인증·노출 차단(#150/PR #314)은 구현되었다. Worker health check·운영 관제와 Production 배포 조립은 남아 있으며, 현재 `scripts/deployment.sh`는 `fastapi`와 `nginx`만 배포하므로 이 구현 근거가 Production Worker 동작을 증명하지 않는다. 해당 경로를 Production에 적용하기 전에 계약과 테스트를 동기화하고 아래 관제·호환 조건을 검증한다. 목표 계약은 DLQ publish 실패를 정해진 backoff로 재시도하고 10회 연속 실패부터 매 시도 alert하도록 정의한다. 구 Consumer major 제거 전에는 해당 Outbox·Stream·PEL·예약 retry가 모두 0이고 마지막 처리 후 7일 관찰기간이 지났는지 확인한다. `RETRY_WAIT` 중 Runtime Bundle 변경과 구·신 Consumer 동시 배포 방식은 같은 계약이 가리키는 후속 Product Decision이 확정되기 전까지 Production 적용 차단 조건이다.
 
 ## 배포 절차
 
@@ -221,19 +221,19 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
 
 ## Production 실행 확인
 
-- Production Compose는 `postgres → migrate → fastapi` 의존 순서를 기본으로 사용하고, 실제 Redis Consumer 실행 경로가 연결된 뒤 `ai-worker`를 같은 배포 단위에 포함합니다.
+- Production Compose에는 `ai-worker` 서비스와 Redis Consumer 실행 설정이 정의되어 있지만, 현재 배포 스크립트의 배포 대상은 `fastapi`와 `nginx`뿐입니다. Worker health check·관제·Provider secret·공유 storage 검증과 배포 조립을 완료한 변경에서만 `ai-worker`를 같은 배포 단위에 포함합니다.
 - 배포 스크립트는 PostgreSQL과 Redis의 health check 통과를 기다린 뒤 제한된 애플리케이션 DB 계정을 구성합니다.
 - 기존 컬럼 rename, `NOT NULL`, FK 추가처럼 구버전 애플리케이션과 호환되지 않는 schema migration은 기존 `fastapi`와 `ai-worker`를 먼저 멈추고 처리 중인 요청이 종료된 뒤 실행합니다. 서비스 중단에 실패하거나 중단 상태를 확인하지 못하면 migration을 실행하지 않습니다.
-- schema migration을 실행하는 배포에서는 `fastapi` 새 이미지를 포함해야 하며, 구버전 이미지를 다시 띄우는 배포는 허용하지 않습니다. `ai-worker`는 실제 Redis Consumer 실행 경로가 연결된 뒤 같은 배포 단위에 포함합니다.
+- schema migration을 실행하는 배포에서는 `fastapi` 새 이미지를 포함해야 하며, 구버전 이미지를 다시 띄우는 배포는 허용하지 않습니다. `ai-worker`를 배포하는 경우에는 호환되는 새 Worker image와 위 운영 조건을 같은 배포 변경에 포함합니다.
 - 배포 스크립트는 migration 전 DB backup과 migration 전후 Alembic revision·대상 테이블 row count snapshot을 `deployment-evidence/<timestamp>/`에 저장하고, migration 후 SELF profile 수, `profile_id IS NULL`, 부모·자식 `profile_id` 불일치 검증이 통과한 경우에만 FastAPI를 재시작합니다. DB dump와 검증 증빙 디렉터리는 의료·개인정보 포함 가능성을 고려해 소유자만 접근할 수 있도록 생성합니다.
 - PostgreSQL 초기화·Alembic migration 계정과 FastAPI·AI Worker 실행 계정을 분리합니다. FastAPI와 AI Worker에는 테이블 조회·입력·수정·삭제 및 필요한 sequence 사용 권한만 부여하고 schema 객체 생성 권한은 부여하지 않습니다.
-- Alembic migration과 migration 후 profile 무결성 검증이 모두 완료된 경우에만 FastAPI 서비스를 시작합니다. AI Worker는 실제 Redis Consumer 실행 경로가 연결된 뒤 시작 대상에 포함합니다.
+- Alembic migration과 migration 후 profile 무결성 검증이 모두 완료된 경우에만 FastAPI 서비스를 시작합니다. AI Worker를 Production에 조립한 뒤에도 같은 검증이 완료된 경우에만 시작합니다.
 - Migration이 실패하면 신규 애플리케이션 컨테이너 실행을 중단하고 `migrate` 서비스 로그를 확인합니다.
 - Production schema 변경은 forward-fix를 원칙으로 하며 자동 downgrade를 실행하지 않습니다.
 - Revision `529b2a36b677`은 `MEDICATION_STRENGTH`, `medication.strength_text`, `ocr_job.prompt_version` 데이터가 하나라도 존재하면 DDL 실행 전에 downgrade를 중단합니다.
 - 비운영 환경에서 downgrade가 필요한 경우에만 백업과 영향 확인을 완료하고, 승인된 절차로 신규 필드 데이터를 제거하거나 별도로 보존한 후 실행합니다.
 - Production에서 migration 문제가 발생하면 신규 애플리케이션 배포를 중단하고 기존 호환 버전을 유지한 상태에서 후속 migration으로 forward-fix합니다.
-- `ai-worker`는 공통 Worker 골격과 단위 테스트가 구현된 상태이며 실제 Redis Consumer 실행 경로는 아직 연결되지 않았습니다. 실제 처리 로직이 연결되기 전에는 비동기 작업 처리 서비스로 운영하지 않고, Production Compose에서도 placeholder 재시작 루프를 피하기 위해 자동 재시작 대상으로 두지 않습니다. 다만 schema migration 전에는 구버전 프로세스가 변경 중인 DB schema에 접근하지 못하도록 중단 상태를 확인합니다.
+- `ai-worker`는 Redis Consumer, OCR Handler·실제 CLOVA Provider, Outbox Publisher와 복구 Scheduler가 조립되어 현재 MVP의 OCR 비동기 경로를 처리합니다. Local real-stack과 Redis·PostgreSQL 통합 검증은 Production 배포 증빙을 대신하지 않습니다. 현재 Production Compose 정의의 `restart: "no"`와 배포 스크립트의 Worker 제외는 health check·관제·배포 조립이 남았기 때문이며, Consumer가 없거나 Worker가 placeholder이기 때문이 아닙니다. schema migration 전에는 향후 배포되었거나 수동 실행 중인 구버전 Worker가 변경 중인 DB schema에 접근하지 못하도록 중단 상태를 계속 확인합니다.
 - Frontend는 `frontend/Dockerfile.prod`에서 `VITE_API_BASE_URL`을 주입해 build하고,
   `frontend-${FRONTEND_VERSION}` 고정 이미지로 배포합니다. Production Nginx는 SPA fallback,
   `/api/` reverse proxy, `/healthz`, HTTPS를 함께 제공하며 CORS·cookie와 동일 origin인지 확인합니다.
@@ -266,9 +266,9 @@ docker volume inspect postgres_data
 
 기존 Runtime 역할에 부여된 sequence `UPDATE` 권한은 역할 설정 SQL에서 명시적으로 `REVOKE`한 뒤 `USAGE`, `SELECT`만 다시 부여합니다.
 
-## Post-MVP-1 비동기 전환 게이트 — 미구현
+## Worker Production 적용과 Post-MVP-1 비동기 확장 게이트 — 미완료
 
-현재 동기 배포 기록은 비동기 전환이 실제로 완료될 때까지 유효합니다. 아래 항목은 승인된 목표이며 현재 배포 경로가 아닙니다.
+현재 MVP의 OCR은 이미 Outbox·Redis Stream·AI Worker 비동기 경로를 사용합니다. 다만 이 경로의 Production 배포 조립과 Guide·Chat의 Post-MVP-1 비동기 확장은 완료되지 않았습니다. 아래 항목은 승인된 목표이며 현재 Production 배포 경로가 아닙니다.
 
 - OCR·Guide·Chat은 각각 `ASYNC_OCR`, `ASYNC_GUIDE`, `ASYNC_CHAT` feature flag로 전환하고 신규 접수만 선택한 경로로 보냅니다.
 - 기존 비동기 Job은 rollback 시에도 drain하며 실행 중간에 동기 경로로 바꾸지 않습니다.
@@ -276,7 +276,7 @@ docker volume inspect postgres_data
 - 초기 내부 SLO는 queue delay p95 5초 이하, terminal 도달 p95 `OCR 60초 / Guide 120초 / Chat 90초`, 15분 이상 non-terminal 0건입니다.
 - retry·reclaim·STALE 비율을 계측하고 DLQ·quarantine 발생, Safety 검증 우회와 STALE 결과 공개는 1건부터 경보합니다. 비율 threshold는 초기 2주 계측 후 재승인합니다.
 - `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`는 의료·약학·Privacy·Source 승인과 회귀 증빙 전까지 닫아 둡니다. OTC는 F 게이트를 공유하며 별도 `PUBLIC_TRACK_D`를 만들지 않습니다. MFDS 공식 Identity 활성화도 승인·검증된 Source Snapshot, Single Candidate Gate 회귀와 rollback 훈련 전까지 차단합니다.
-- Worker 구현 전 Production Compose의 placeholder `ai-worker`는 실제 비동기 작업 처리 서비스로 운영하지 않습니다. schema migration 전 중단 확인 대상에는 포함하지만, 실제 Redis Consumer 실행 경로가 연결되기 전까지 강제 재시작 대상에는 포함하지 않습니다.
+- 현재 Production Compose의 `ai-worker`는 실행 가능한 OCR Worker 정의이지만 배포 스크립트 대상에는 포함되지 않습니다. health check·운영 관제·Provider secret·공유 storage 검증과 배포 조립을 완료하기 전에는 Production에서 자동 시작·재시작하지 않습니다. schema migration 전 중단 확인 대상에는 계속 포함합니다.
 
 전환 PR은 [비동기 Job](./contracts/targets/post-mvp-1/async-job-v1.md), [Outbox·Stream](./contracts/targets/post-mvp-1/outbox-stream-v1.md), [테스트 전략](./testing.md)을 구현·운영 설정과 함께 갱신해야 합니다.
 
