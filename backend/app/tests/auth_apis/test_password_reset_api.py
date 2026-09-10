@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -53,6 +54,36 @@ class TestPasswordResetRequestAPI:
         assert first_response.json()["reset_token"]
         assert second_response.status_code == status.HTTP_200_OK
         assert second_response.json()["reset_token"] is None
+
+    async def test_request_response_time_is_padded_to_target_for_existing_and_unknown_accounts(self, monkeypatch):
+        """PR #404 리뷰(권가빈): 존재하는 계정만 수행하는 INSERT 때문에 남는 처리시간
+        차이를 없애기 위해 공통 목표 시각까지 응답을 지연시킨다. 실제 운영 TARGET(30ms)은
+        CI 환경 노이즈에 묻히기 쉬워, 여기서는 이 값을 크게 올려(0.2초) 두 경로 모두 그
+        목표치 이상 걸리는지 안정적으로 검증한다."""
+        monkeypatch.setattr(config, "PASSWORD_RESET_RESPONSE_TARGET_SECONDS", 0.2)
+        email = f"reset-padding-{uuid4().hex[:10]}@example.com"
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/v1/auth/signup",
+                json={"email": email, "password": "Password123!", "name": "패딩테스터"},
+            )
+
+            start = time.perf_counter()
+            existing_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
+            existing_elapsed = time.perf_counter() - start
+
+            start = time.perf_counter()
+            unknown_response = await client.post(
+                "/api/v1/auth/password-reset/request",
+                json={"email": f"unknown-{uuid4().hex[:10]}@example.com"},
+            )
+            unknown_elapsed = time.perf_counter() - start
+
+        assert existing_response.status_code == status.HTTP_200_OK
+        assert unknown_response.status_code == status.HTTP_200_OK
+        assert existing_elapsed >= 0.2
+        assert unknown_elapsed >= 0.2
 
 
 class TestPasswordResetConfirmAPI:

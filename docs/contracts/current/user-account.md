@@ -57,12 +57,13 @@
 
 - `password_reset_token(id, user_id, token_hash, created_at, expires_at, used_at)` — 원문 토큰은 저장하지 않고 해시(SHA-256)만 저장합니다.
 - 새 비밀번호는 [회원가입 비밀번호 기준](#회원가입)과 동일하게 필수, 8~72자, 대문자·소문자·숫자·특수문자 각 1개 이상 포함을 적용합니다. 회원가입 비밀번호 정책이 바뀌면 재설정 정책도 같은 변경에서 함께 갱신합니다.
-- `POST /api/v1/auth/password-reset/request`는 계정 존재 여부와 무관하게 항상 같은 성공 응답(`detail`)을 반환합니다(anti-enumeration). `reset_token`은 `LOCAL` 환경에서만 채워지며(실제 이메일 발송 Provider 연동 전까지의 임시 확인 경로), 그 외 환경에서는 항상 비웁니다. 같은 사용자가 `PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 발급하지 않고 같은 성공 응답만 반환합니다. 계정이 없어도 있는 경우와 같은 수의 DB 조회·해싱 연산을 수행해 응답 시간으로도 계정 존재 여부가 새지 않게 합니다.
+- `POST /api/v1/auth/password-reset/request`는 계정 존재 여부와 무관하게 항상 같은 성공 응답(`detail`)을 반환합니다(anti-enumeration). `reset_token`은 `LOCAL` 환경에서만 채워지며(실제 이메일 발송 Provider 연동 전까지의 임시 확인 경로), 그 외 환경에서는 항상 비웁니다. 같은 사용자가 `PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 발급하지 않고 같은 성공 응답만 반환합니다.
+- **처리시간 기반 anti-enumeration(PR #404 리뷰)**: 계정이 없어도 있는 경우와 같은 수의 DB 조회·해싱 연산을 수행하지만, 존재하는 계정만 수행하는 `password_reset_token` INSERT 때문에 남는 처리시간 차이가 있습니다. 이 차이를 없애기 위해 실제 쓰기(있다면)를 마치고 commit까지 끝낸 뒤, 요청 진입 시각 기준 `PASSWORD_RESET_RESPONSE_TARGET_SECONDS`(기본 0.03초)까지 응답을 지연시킵니다. 이 값은 `scripts/measure_password_reset_timing.py`로 CI(Linux 러너, 격리된 컨테이너) 기준 측정한 가장 느린 경로의 최대 관측치(약 14ms)에 여유를 둔 것입니다. **잔존 리스크**: 동시 요청이 많아 DB 커넥션 풀 대기가 지배적인 상황에서는 응답 시간이 이 목표치를 넘을 수 있고, 그 구간에서는 계정 존재 여부에 따른 미세한 시간차가 다시 드러날 수 있습니다 — 이는 설계된 방어가 아니라 알려진 한계로 남겨둡니다. 전역 요청 빈도 제한(IP 기준 등)은 이번 범위에 포함하지 않으며 별도 후속 이슈로 다룹니다.
 - 재설정 완료(`POST /api/v1/auth/password-reset/confirm`)는 `token`·`new_password`를 받아 원자적 일회성 소비로 처리합니다. **재설정 성공 자체는 `password_reset_token` 소지만으로 인증되므로 anti-enumeration을 적용하지 않습니다.**
 
 | 단계 | 입력 | 처리 | 응답 원칙 |
 | --- | --- | --- | --- |
-| 재설정 요청 | 이메일 | 계정이 존재하고 쿨다운이 아니면 `password_reset_token`을 생성하고 원문 토큰은 사용자 전달 경로로만 사용합니다. DB에는 `token_hash`만 저장합니다. | 계정 존재 여부를 노출하지 않도록 존재/미존재 모두 같은 형태·유사 처리시간으로 응답합니다. |
+| 재설정 요청 | 이메일 | 계정이 존재하고 쿨다운이 아니면 `password_reset_token`을 생성하고 원문 토큰은 사용자 전달 경로로만 사용합니다. DB에는 `token_hash`만 저장합니다. | 계정 존재 여부를 노출하지 않도록 존재/미존재 모두 같은 형태로 응답하고, `PASSWORD_RESET_RESPONSE_TARGET_SECONDS`까지 응답을 지연시켜 처리시간도 맞춥니다(부하가 심한 구간은 잔존 리스크로 남음). |
 | 재설정 완료 | 원문 재설정 토큰, 새 비밀번호 | `token_hash`, `used_at IS NULL`, `expires_at > now()` 조건으로 토큰을 원자적으로 소비하고, 같은 transaction에서 비밀번호 해시 저장, `token_version + 1`, 같은 사용자의 나머지 미사용·미만료 토큰 소비를 함께 처리합니다. | 성공 시 새 access/refresh token을 발급하지 않고 재로그인을 요구합니다. |
 
 재설정 완료 transaction은 아래 순서를 하나의 commit 단위로 처리합니다. 같은 사용자의 서로 다른 유효 token이 동시에 제출되어도 모든 완료 transaction이 **user row → password reset token row** 순서로 잠금을 획득합니다.

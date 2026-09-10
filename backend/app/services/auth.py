@@ -1,3 +1,5 @@
+import asyncio
+import time
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -148,9 +150,12 @@ class AuthService:
 
         응답 형태뿐 아니라 처리시간으로도 계정 존재 여부가 새지 않도록, 계정이 없어도
         있는 경우와 같은 수의 DB 조회(사용자 조회, 쿨다운 조회)와 같은 해싱 연산을
-        수행한다. 다만 실제 INSERT 하나까지 동일하게 맞추지는 않는다 — 단일 행 INSERT의
-        비용 차이는 네트워크 왕복 지연에 비해 미미해 실질적 위협으로 보기 어렵다고
-        판단했다."""
+        수행한다. 그래도 존재하는 계정만 수행하는 INSERT 때문에 남는 처리시간 차이는
+        (PR #404 리뷰) 실제 쓰기를 끝내고 커밋해 커넥션을 반납한 뒤, 응답을
+        `PASSWORD_RESET_RESPONSE_TARGET_SECONDS`까지 채우는 padding으로 없앤다 —
+        커밋 전에 대기하면 그동안 커넥션·트랜잭션을 붙든 채로 있게 되므로 순서가
+        중요하다."""
+        start = time.monotonic()
         now = datetime.now(config.TIMEZONE)
         cooldown_since = now - timedelta(seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS)
 
@@ -165,15 +170,23 @@ class AuthService:
         raw_token = generate_password_reset_token()
         token_hash = hash_password_reset_token(raw_token)
 
-        if user is None or recent_token is not None:
+        token_created = user is not None and recent_token is None
+        if token_created:
+            assert user is not None
+            await self.password_reset_repo.create_token(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=now + timedelta(minutes=config.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+            )
+
+        await self.password_reset_repo.session.commit()
+
+        remaining = config.PASSWORD_RESET_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+        if not token_created:
             return None
-
-        await self.password_reset_repo.create_token(
-            user_id=user.id,
-            token_hash=token_hash,
-            expires_at=now + timedelta(minutes=config.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
-        )
-
         return raw_token if config.ENV == Env.LOCAL else None
 
     async def reset_password(self, *, token: str, new_password: str) -> None:
