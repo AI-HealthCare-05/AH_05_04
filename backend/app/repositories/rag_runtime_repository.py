@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.rag_candidate import MedicationIdentification, MedicationIdentificationStatus
 from app.models.rag_evaluation import EvaluationDecisionStatus
 from app.models.rag_runtime import (
     AiJobExecutionContext,
@@ -179,6 +180,17 @@ class RagRuntimeRepository:
         self,
         payload: AiJobExecutionIdentificationCreate,
     ) -> AiJobExecutionIdentification:
+        matched_identification = await self.session.scalar(
+            select(MedicationIdentification.id).where(
+                MedicationIdentification.id == payload.medication_identification_id,
+                MedicationIdentification.prescription_version_medication_id
+                == payload.prescription_version_medication_id,
+                MedicationIdentification.status == MedicationIdentificationStatus.MATCHED,
+            )
+        )
+        if matched_identification is None:
+            raise ValueError("execution context can pin only MATCHED identification for the same medication")
+
         identification = AiJobExecutionIdentification(**asdict(payload))
         self.session.add(identification)
         await self.session.flush()

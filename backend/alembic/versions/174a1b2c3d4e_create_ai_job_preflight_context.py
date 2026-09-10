@@ -225,6 +225,12 @@ def upgrade() -> None:
         ["prescription_version_id"],
     )
 
+    op.create_unique_constraint(
+        "uq_medication_identification_id_medication",
+        "medication_identification",
+        ["id", "prescription_version_medication_id"],
+    )
+
     op.create_table(
         "ai_job_execution_identification",
         sa.Column("id", sa.CHAR(length=36), nullable=False),
@@ -239,9 +245,9 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["medication_identification_id"],
-            ["medication_identification.id"],
-            name="fk_ai_job_execution_identification_identification",
+            ["medication_identification_id", "prescription_version_medication_id"],
+            ["medication_identification.id", "medication_identification.prescription_version_medication_id"],
+            name="fk_ai_job_execution_identification_matched_medication",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
@@ -273,6 +279,11 @@ def downgrade() -> None:
     _raise_if_context_data_exists()
     op.drop_index("idx_ai_job_execution_identification_context", table_name="ai_job_execution_identification")
     op.drop_table("ai_job_execution_identification")
+    op.drop_constraint(
+        "uq_medication_identification_id_medication",
+        "medication_identification",
+        type_="unique",
+    )
     op.drop_index("idx_ai_job_execution_context_prescription_version", table_name="ai_job_execution_context")
     op.drop_index("idx_ai_job_execution_context_job", table_name="ai_job_execution_context")
     op.drop_table("ai_job_execution_context")

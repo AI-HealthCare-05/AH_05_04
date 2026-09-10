@@ -576,6 +576,12 @@ class AiJobExecutionIdentification(Base):
             "prescription_version_medication_id",
             name="uq_ai_job_execution_identification_medication",
         ),
+        ForeignKeyConstraint(
+            ["medication_identification_id", "prescription_version_medication_id"],
+            ["medication_identification.id", "medication_identification.prescription_version_medication_id"],
+            name="fk_ai_job_execution_identification_matched_medication",
+            ondelete="RESTRICT",
+        ),
         Index("idx_ai_job_execution_identification_context", "execution_context_id"),
     )
 
@@ -591,11 +597,6 @@ class AiJobExecutionIdentification(Base):
     )
     medication_identification_id: Mapped[UUID] = mapped_column(
         UUIDChar(),
-        ForeignKey(
-            "medication_identification.id",
-            name="fk_ai_job_execution_identification_identification",
-            ondelete="RESTRICT",
-        ),
         nullable=False,
     )
     prescription_version_medication_id: Mapped[UUID] = mapped_column(

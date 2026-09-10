@@ -119,6 +119,7 @@ async def _create_identification(
     session: AsyncSession,
     *,
     medication: PrescriptionVersionMedication,
+    status: MedicationIdentificationStatus = MedicationIdentificationStatus.MATCHED,
 ) -> MedicationIdentification:
     search = MedicationCandidateSearch(
         prescription_version_medication_id=medication.id,
@@ -146,17 +147,31 @@ async def _create_identification(
     )
     session.add(result)
     await session.flush()
-    identification = MedicationIdentification(
-        prescription_version_medication_id=medication.id,
-        candidate_search_id=search.id,
-        candidate_search_result_id=result.id,
-        product_id=result.product_id,
-        code_system=result.code_system,
-        canonical_code=result.canonical_code,
-        status=MedicationIdentificationStatus.MATCHED,
-        source=MedicationIdentificationSource.USER_SELECTED,
-        confirmed_at=datetime.now(UTC),
-    )
+    if status == MedicationIdentificationStatus.MATCHED:
+        identification = MedicationIdentification(
+            prescription_version_medication_id=medication.id,
+            candidate_search_id=search.id,
+            candidate_search_result_id=result.id,
+            product_id=result.product_id,
+            code_system=result.code_system,
+            canonical_code=result.canonical_code,
+            status=MedicationIdentificationStatus.MATCHED,
+            source=MedicationIdentificationSource.USER_SELECTED,
+            confirmed_at=datetime.now(UTC),
+        )
+    else:
+        identification = MedicationIdentification(
+            prescription_version_medication_id=medication.id,
+            candidate_search_id=search.id,
+            candidate_search_result_id=result.id,
+            product_id=None,
+            code_system=None,
+            canonical_code=None,
+            status=MedicationIdentificationStatus.UNRESOLVED,
+            source=MedicationIdentificationSource.USER_REJECTED,
+            decision_reason="USER_REJECTED_DISPLAYED_CANDIDATE",
+            rejected_at=datetime.now(UTC),
+        )
     session.add(identification)
     await session.flush()
     return identification
@@ -254,6 +269,78 @@ async def test_repository_persists_chat_intake_and_execution_context(db_session:
     assert await repository.get_intake_context_by_job(chat_job.id) == intake
     assert await repository.get_execution_context_by_job(chat_job.id) == execution
     assert await repository.list_execution_identifications(execution.id) == [pinned]
+
+
+async def test_execution_identification_requires_matching_medication_and_matched_status(
+    db_session: AsyncSession,
+) -> None:
+    user, profile = await _create_user(db_session)
+    prescription = await _create_prescription(db_session, user=user, profile=profile)
+    medication = await db_session.scalar(
+        select(PrescriptionVersionMedication).where(
+            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id
+        )
+    )
+    assert medication is not None
+    other_medication = PrescriptionVersionMedication(
+        prescription_version_id=prescription.active_version_id,
+        medication_name="다른 합성약",
+        display_order=2,
+    )
+    db_session.add(other_medication)
+    await db_session.flush()
+    matched_identification = await _create_identification(db_session, medication=medication)
+    unresolved_identification = await _create_identification(
+        db_session,
+        medication=other_medication,
+        status=MedicationIdentificationStatus.UNRESOLVED,
+    )
+    chat_message = await _create_chat_domain(db_session, profile=profile, prescription=prescription)
+    manifest, bundle, environment = await _create_runtime_graph(db_session)
+    chat_job = AiJob(
+        user_id=user.id,
+        job_type=AiJobType.CHAT,
+        status=AiJobStatus.PENDING,
+        prescription_version_id=prescription.active_version_id,
+        max_attempts=2,
+        available_at=datetime.now(UTC),
+    )
+    db_session.add(chat_job)
+    await db_session.flush()
+
+    repository = RagRuntimeRepository(db_session)
+    execution = await repository.create_execution_context(
+        AiJobExecutionContextCreate(
+            ai_job_id=chat_job.id,
+            chat_message_id=chat_message.id,
+            prescription_version_id=prescription.active_version_id,
+            runtime_environment_id=environment.id,
+            runtime_environment_revision=environment.environment_revision,
+            runtime_release_bundle_id=bundle.id,
+            runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
+            runtime_execution_manifest_id=manifest.id,
+            runtime_execution_manifest_hash=manifest.manifest_hash,
+            runtime_guard_decision_ref="guard:full-pass",
+        )
+    )
+
+    with pytest.raises(ValueError, match="MATCHED identification"):
+        await repository.create_execution_identification(
+            AiJobExecutionIdentificationCreate(
+                execution_context_id=execution.id,
+                medication_identification_id=matched_identification.id,
+                prescription_version_medication_id=other_medication.id,
+            )
+        )
+
+    with pytest.raises(ValueError, match="MATCHED identification"):
+        await repository.create_execution_identification(
+            AiJobExecutionIdentificationCreate(
+                execution_context_id=execution.id,
+                medication_identification_id=unresolved_identification.id,
+                prescription_version_medication_id=other_medication.id,
+            )
+        )
 
 
 async def test_execution_context_requires_exactly_one_domain_reference(db_session: AsyncSession) -> None:

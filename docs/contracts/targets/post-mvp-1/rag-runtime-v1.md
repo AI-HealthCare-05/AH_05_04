@@ -18,7 +18,7 @@
 
 #164 Runtime Bundle 최소 DB 기반 분할 PR은 `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval`의 저장 구조와 FK/unique/CHECK/append-only 이력 기반만 추가한다. 이 변경은 Runtime Bundle 활성화, 환경 포인터 전환, drain, mixed worker rollback, Production 공개 승인을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
 
-#174_1 Preflight Context 저장 기반 분할 PR은 `ai_job_intake_context`, `ai_job_execution_context`, `ai_job_execution_identification`의 저장 구조와 FK/unique/CHECK 기반만 추가한다. Guard 물리 테이블이 아직 없으므로 구현 컬럼은 `runtime_guard_decision_ref`를 사용한다. 이 변경은 Guide/Chat `202 + Job` 접수 전환, Worker 실행, 결과 commit currentness 재검증, `STALE` 종결, 공개 DTO 연결을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
+#174_1 Preflight Context 저장 기반 분할 PR은 `ai_job_intake_context`, `ai_job_execution_context`, `ai_job_execution_identification`의 저장 구조와 FK/unique/CHECK 기반만 추가한다. `ai_job_execution_identification`은 약-Identification composite FK와 repository `MATCHED` 검증으로 문서의 MATCHED pinning 보장을 실제 저장 경계에서 강제한다. Guard 물리 테이블이 아직 없으므로 구현 컬럼은 `runtime_guard_decision_ref`를 사용한다. 이 변경은 Guide/Chat `202 + Job` 접수 전환, Worker 실행, 결과 commit currentness 재검증, `STALE` 종결, 공개 DTO 연결을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
 
 - 자유 ReAct Agent, 열린 웹 검색, Graph DB와 승인되지 않은 Source 자동 편입은 사용하지 않는다.
 - 고위험·응급·금지 행동 분기는 일반 Retrieval보다 먼저 수행한다.
