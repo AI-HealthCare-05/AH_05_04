@@ -1,9 +1,9 @@
-# Product Decision Candidate: Source Snapshot 승인·거부 경계
+# Product Decision: Source Snapshot 승인·거부 경계
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-362-20260909` |
-| 상태 | Candidate · Review Required |
+| 상태 | Approved |
 | 구현 | 김지혜 (`@Jye-rookie`) |
 | 책임 리뷰 | 송은영 (`@phina-io`) — Source ingestion·DB |
 | 상위 Decision | [PD-315 Production Evidence Retrieval 계약](./2026-09-08-production-evidence-retrieval-contract-divergence.md) · #361 merged |
@@ -17,7 +17,7 @@ Production `source_version` 생성·검증, 외부 Version 결속, Snapshot 승�
 Catalog·Runtime 사용 가능 조건을 하나의 fail-closed 계약으로 고정한다.
 
 `external/api/internal` 문법과 전체 200자·`external:` payload 191자 상한은
-PD-315/#361이 정한 상위 계약을 따른다. 이 Candidate는 값을 다시 결정하지 않고
+PD-315/#361이 정한 상위 계약을 따른다. 이 Decision은 값을 다시 결정하지 않고
 Source producer 검증, `external_version` 영속화, 거부·publication·Freshness 저장
 경계를 구체화한다.
 
@@ -34,11 +34,11 @@ Production Source producer는 다음 형식 중 하나만 생성한다.
 | 승인 내부 Fixture | `internal:commit-<40 lowercase hex>-manifest-<64 lowercase hex>:<canonical_checksum>` | `NULL` |
 
 Application은 PD-315/#361의 정규 `source_version` 최대 길이 200자를 적용한다.
-이 Candidate의 거부·publication·저장 경계는 승인 전까지 확정 Decision으로
-해석하지 않으며, PR 병합 전에 책임 리뷰 승인이 필요하다.
+이 Decision의 거부·publication·저장 경계는 #362 구현과 후속 소비자가 따르는
+확정 계약이다.
 
 현재 `rag_source_snapshot.source_version`과 #369의
-`rag_citation.source_version`은 `VARCHAR(255)`다. Candidate 승인 후 #369가
+`rag_citation.source_version`은 `VARCHAR(255)`다. #369가
 병합된 최신 Alembic head에서 두 컬럼을 200자로 정렬하고 DB CHECK를 추가한다.
 해당 migration이 완료되기 전에는 Application 검증이 DB보다 엄격한 상태다.
 
@@ -53,7 +53,7 @@ Application은 PD-315/#361의 정규 `source_version` 최대 길이 200자를 �
 
 이 규칙은 기존 공유 Target과 PD-315에 있던 승인 Git tag 허용 경로를 제거하는 계약
 변경이다. tag는 검토 metadata로는 기록할 수 있지만 `source_version` 식별자로 사용하지
-않는다. 공유 Target과 PD-315도 이 Candidate와 함께 commit·manifest exact binding으로
+않는다. 공유 Target과 PD-315도 이 Decision과 함께 commit·manifest exact binding으로
 정렬한다.
 
 `validate_source_version()`이 반환한 `SourceVersionKind`를 검증 결과의 정본으로
@@ -117,11 +117,19 @@ UTF-8 byte의 lowercase SHA-256, byte length, 안전한 validation reason code�
 
 두 거부 Hard Limit은 자동 승인 허용치가 아니다. 제한 이하의 거부도 사람 승인 없이 공개하지 않는다.
 
+`SourceSnapshotPolicy`의 기본값은 `max_rejected_records=0`,
+`max_rejection_rate=0`, `empty_result_policy=REJECT`인 fail-closed 정책이다.
+따라서 정책을 명시하지 않은 Source는 거부 레코드가 1건이라도 있으면
+`FAILED/REJECTION_LIMIT_EXCEEDED`가 되며, 위 표의 “거부가 두 Hard Limit 이하”
+경로에는 도달하지 않는다. `SUCCEEDED_WITH_REJECTIONS`와 `PENDING` 후보는
+Source별 양수 Hard Limit을 명시적으로 설정한 경우에만 허용한다. 이는 #362 본문의
+“기본값은 기존 동작과 동일” 요구를 대체하며 기존의 묵시적 거부 허용 동작을 유지하지 않는다.
+
 ## Freshness와 저장 상태
 
 Snapshot의 `PENDING`, `CURRENT`, `STALE`, `FAILED` 상태 전이와 DB 소유권 규칙은
 [Source Snapshot DB 상태 전이 Decision](./2026-09-08-source-snapshot-db-transition.md)을
-따른다. 이 Candidate는 해당 전이를 변경하지 않고, 승인된 Snapshot의 Freshness 정본
+따른다. 이 Decision은 해당 전이를 변경하지 않고, 승인된 Snapshot의 Freshness 정본
 해석과 Catalog·Runtime 사용 가능 조건만 정의한다.
 
 Snapshot Freshness의 정본은 승인된 Freshness Policy와 평가 시점으로 계산한 파생 결과다.
@@ -140,8 +148,9 @@ Catalog·Runtime이 Snapshot을 사용할 수 없을 때 아래 내부 reason을
 | `SOURCE_VERSION_INVALID` | Production 문법·NFC·길이 검증 실패 |
 | `SOURCE_VERSION_BINDING_MISMATCH` | 외부 Version 또는 checksum 결속 불일치 |
 | `SOURCE_VERSION_CONFLICT` | 동일 Version의 canonical contract 충돌 |
-| `SNAPSHOT_NOT_APPROVED` | 승인 결정이 없거나 검수 대기 |
-| `SNAPSHOT_REJECTED` | 최신 Snapshot 검토 결과가 거부 |
+| `SNAPSHOT_NOT_APPROVED` | `PENDING` 상태이거나 거부 레코드의 publication 승인 누락 |
+| `SNAPSHOT_VALIDATION_FAILED` | 저장된 Snapshot 상태가 `FAILED` |
+| `SNAPSHOT_SUPERSEDED` | 승인 이력은 있으나 더 최신 Snapshot으로 대체되어 상태가 `STALE` |
 | `SNAPSHOT_FRESHNESS_STALE` | 승인 Freshness Policy 기준 사용 불가 |
 | `SNAPSHOT_PROVENANCE_INVALID` | Snapshot의 version/hash/Receipt 결속 누락·불일치 |
 
@@ -171,12 +180,21 @@ hash·length, 비교 canonical contract, `CREATED|NO_CHANGE|SOURCE_VERSION_CONFL
 판정을 제공한다. Snapshot Receipt만으로 `NO_CHANGE`, conflict, invalid 시도의 provenance를
 대체하지 않는다.
 
-## PR #377 단계 경계
+## PD-362 단계 경계
 
-이 PR의 현재 단계는 Source version 생성·검증과 Candidate 계약 검토까지다. failure Run,
-거부 Hard Limit, `empty_result_policy`, 승인·사용 가능 판정, fail-closed reason code 소비자,
-`external_version`·attempt provenance DB migration, DB 왕복 Receipt와 PostgreSQL 통합 검증은
-#362를 열린 상태로 유지하고 후속 PR에서 구현한다. 현재 단계 병합만으로 #362 완료나
+이 Decision의 구현은 다음 세 단계로 나눈다.
+
+1. **#377 완료** — Production `source_version` 생성·검증과 Candidate 계약 검토.
+2. **#393 구현 완료** — failure Run 저장 연결, 거부 건수·비율 Hard Limit,
+   `empty_result_policy`, Snapshot 승인·사용 가능 판정과 fail-closed reason code 산출.
+3. **후속** — fail-closed reason code의 Catalog·Runtime 실제 소비자 연결, Source별 정책값과
+   `external_version`·attempt provenance DB 저장, DB 왕복 Receipt와 PostgreSQL 통합 검증,
+   #178 Freshness 계산.
+
+#393까지는 판정을 산출해 실패 Run과 보존 Artifact에 연결하는 데까지이며, Catalog·Runtime
+소비자는 아직 이 판정을 호출하지 않는다.
+
+#362는 3단계가 끝날 때까지 열린 상태로 유지한다. #393 병합만으로 #362 완료나
 Production Source·Catalog·Runtime 활성화를 선언하지 않는다.
 
 ## 구현 순서
