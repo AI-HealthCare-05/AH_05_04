@@ -707,7 +707,7 @@ async def test_404_authentication_works_with_only_runtime_token_permissions(data
 
 
 @pytest.mark.parametrize("database", ["migration"], indirect=True)
-@pytest.mark.parametrize("previous", ["206a1b2c3d4e", "3980718293a4"])
+@pytest.mark.parametrize("previous", ["206a1b2c3d4e", "3980718293a4", "174a1b2c3d4e"])
 async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previous):
     from app.repositories.rag_source_catalog_repository import (
         RagSourceCatalogRepository,
@@ -756,7 +756,7 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
             )
     assert (await migrate("upgrade", "head")).returncode == 0
     async with engine.connect() as connection:
-        assert validation_errors("398293a4b5c6", await read_database_head_state(connection)) == []
+        assert validation_errors("3983a4b5c6d7", await read_database_head_state(connection)) == []
         rows = (
             (
                 await connection.execute(

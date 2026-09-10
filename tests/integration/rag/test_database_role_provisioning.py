@@ -351,6 +351,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     )
     assert current.returncode == 0, "Synthetic current-head migration failed"
     await run_provisioning(environment)
+    await _exercise_preflight_context_runtime_permissions(reader, producer)
     writer_config = WriterConfig(url.set(database=database, username=writer, password=password), "synthetic-operator")
     args = Namespace(snapshot_id=snapshot_id, expected_checksum="a" * 64, reason_code="SYNTHETIC_TEST")
     assert (await run_selection(writer_config, args)).decision.value == "ACTIVATED"
@@ -815,7 +816,11 @@ async def _grant_historical_test_permissions(admin, environment):
             (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
             (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
         ):
-            for table in tables:
+            for table in tables - {
+                "ai_job_intake_context",
+                "ai_job_execution_context",
+                "ai_job_execution_identification",
+            }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in SOURCE_TABLES:
             await connection.execute(text(f'GRANT SELECT ON "{table}" TO "{runtime}"'))
@@ -831,3 +836,20 @@ async def _add_auth_fixture_columns(connection):
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         for name in columns:
             await connection.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" text'))
+
+
+async def _exercise_preflight_context_runtime_permissions(reader, producer):
+    from app.tests.rag.test_ai_job_preflight_context_repository import persist_and_verify_chat_context
+
+    async with async_sessionmaker(reader, expire_on_commit=False).begin() as session:
+        await persist_and_verify_chat_context(session)
+    for table in ("ai_job_intake_context", "ai_job_execution_context", "ai_job_execution_identification"):
+        for engine, statements in (
+            (reader, (f"UPDATE {table} SET id=id", f"DELETE FROM {table}", f"TRUNCATE {table}")),
+            (producer, (f"SELECT * FROM {table}", f"INSERT INTO {table} DEFAULT VALUES")),
+        ):
+            for statement in statements:
+                with pytest.raises(DBAPIError) as error:
+                    async with engine.begin() as connection:
+                        await connection.execute(text(statement))
+                assert error.value.orig.sqlstate == "42501"

@@ -4,7 +4,7 @@
 
 ## 실행 순서
 
-1. 기존 migration owner로 단일 head `398293a4b5c6`까지 적용하고 `scripts/ci/verify_database_head.py`로 사용자 Trigger/RLS/제거 함수 0개를 확인한다. 이미 적용한 migration 파일은 변경하지 않는다.
+1. 기존 migration owner로 단일 head `3983a4b5c6d7`까지 적용하고 `scripts/ci/verify_database_head.py`로 사용자 Trigger/RLS/제거 함수 0개를 확인한다. 이미 적용한 migration 파일은 변경하지 않는다.
 2. 관리 기능을 사용할 때만 별도 `SOURCE_MANAGEMENT_USER`, `SOURCE_MANAGEMENT_PASSWORD`를 보안 설정에 등록한다. 기존 Admin/Migration/Runtime/Source Writer와 모두 다른 로그인 역할이다. 예시 환경 파일은 비워 두며 일반 API·Worker에 전달하지 않는다.
 3. `source-management-bootstrap` one-shot 서비스로 로그인 계정만 준비한다. 역할 충돌은 거부하고 테이블 쓰기 권한은 부여하지 않는다. 기존 역할의 비밀번호를 자동 변경하지 않는다.
 4. `provision-db-roles`를 실행해 검증된 명시 권한을 적용한다. `SOURCE_MANAGEMENT_USER`가 설정되면 관리 역할 정책도 적용한다. Runtime의 Catalog UPDATE/DELETE는 회수하며, 기존 수집 INSERT는 유지한다. 일반 API에서 직접 Source 쓰기는 계속 차단된다.

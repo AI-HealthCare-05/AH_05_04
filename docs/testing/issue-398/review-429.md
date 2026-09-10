@@ -43,3 +43,26 @@
 Backend의 나머지 skip 2개는 실제 외부 Provider 호출이 필요한 smoke다. Worker skip 8개는 선택 의존성 `jsonschema` 부재에 따른 검사다. 외부 Provider live 실행, AWS·운영 DB 적용, 원격 CI/담당 리뷰 승인을 로컬 테스트 통과로 대체하지 않는다.
 
 종합 검증 중 발견한 합성 one-cycle 및 과거 migration fixture의 멱등성 기록 정리 누락을 보완했다. Source target 문서 수정에 맞춰 합성 계약 receipt의 local target hash와 canonical hash를 재생성했고, 외부 승인·공개 게이트 상태는 변경하지 않았다. 정적 검사와 실제 DB 권한 검증의 보장 범위를 문서에 구분했다.
+
+
+## 추가 승인 리뷰와 #412 통합 (2026-09-10)
+
+- 가빈님의 `5617339390` 의견은 새 BLOCKER/MUST FIX 없음과 승인 권고이며 GitHub 승인 제출은 아니다. 은영님의 `5166769939`는 DB·보안 범위의 APPROVED다. 두 의견 모두 기존 Python 경계·FK/CHECK·실제 권한 검증을 수용하며 새 업무 저장 함수 도입을 요구하지 않는다.
+- 원격 PR head `3e15afa`를 보존하고 #412가 병합된 develop `23b3b59`를 통합했다. #416은 이 통합에 포함되지 않는다.
+- schema 문서 충돌은 #412 Context 설명과 #398 Python 전이 설명을 함께 보존했다. 과거 Trigger 강제 서술은 복원하지 않았다.
+- 기존 migration은 수정하지 않고 `3983a4b5c6d7`로 `398293a4b5c6`과 `174a1b2c3d4e`를 연결했다. 새 revision은 이력 연결만 수행한다.
+- Context 3개 테이블은 Runtime SELECT·INSERT와 기존 Python Repository를 연결했다. 직접 UPDATE·DELETE·TRUNCATE와 Source Writer 접근은 거부한다. 기존 부모 Job CASCADE와 후속 API·Worker·공개 범위는 변경하지 않았다.
+- #412 과거 downgrade 회귀는 별도 폐기 DB에서 실행한다. 두 번째 약물을 직접 추가하던 fixture는 정식 처방 Repository로 완전한 Version을 생성하도록 변경했다.
+
+통합 후 로컬 검증 결과(서로 중복될 수 있으므로 합산하지 않는다):
+
+| 검증 | 결과 |
+| --- | --- |
+| #412·Runtime·Source 관리·실제 제한 역할·head 회귀 | 56 passed |
+| Backend 전체·계약·RAG/PostgreSQL 통합·실제 Backend 이미지 | 1,720 passed, 59 skipped |
+| Worker 단위·OCR·RAG·Evaluation | 2,713 passed, 8 skipped |
+| 전체 migration | 158 passed |
+| 최종 head `3983a4b5c6d7` 및 DB 카탈로그 | 사용자 Trigger·RLS·제거 대상 함수 0개 |
+| Ruff·format·mypy·재도입/보호 쓰기/test inventory | 통과, mypy 535개 파일 |
+
+Backend skip은 별도 Source cleanup 환경 57개와 외부 Provider live smoke 2개이며, Worker skip 8개는 선택 의존성 `jsonschema` 부재다. 이전 단계의 별도 Source cleanup·Redis 검증 수치를 이번 재실행 결과로 표기하지 않는다. AWS·운영 DB에는 적용하지 않았다.

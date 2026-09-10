@@ -5,8 +5,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.rag_candidate import MedicationIdentification, MedicationIdentificationStatus
 from app.models.rag_evaluation import EvaluationDecisionStatus
 from app.models.rag_runtime import (
+    AiJobExecutionContext,
+    AiJobExecutionIdentification,
+    AiJobIntakeContext,
     RagReleaseEvaluationApproval,
     RagRuntimeApprovalStatus,
     RagRuntimeBundleSource,
@@ -19,6 +23,49 @@ from app.models.rag_runtime import (
     RagRuntimeReleaseBundle,
     RagRuntimeSourcePurpose,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AiJobIntakeContextCreate:
+    ai_job_id: UUID
+    chat_message_id: UUID
+    prescription_version_id: UUID
+    runtime_environment_id: UUID
+    runtime_environment_revision: int
+    runtime_release_bundle_id: UUID
+    runtime_release_bundle_manifest_hash: str
+    runtime_execution_manifest_id: UUID
+    runtime_execution_manifest_hash: str
+    runtime_guard_decision_ref: str
+    question_digest: str | None = None
+    patient_context_digest: str | None = None
+    context_schema_version: str = "ai-job-intake-context@1"
+
+
+@dataclass(frozen=True, slots=True)
+class AiJobExecutionContextCreate:
+    ai_job_id: UUID
+    prescription_version_id: UUID
+    runtime_environment_id: UUID
+    runtime_environment_revision: int
+    runtime_release_bundle_id: UUID
+    runtime_release_bundle_manifest_hash: str
+    runtime_execution_manifest_id: UUID
+    runtime_execution_manifest_hash: str
+    runtime_guard_decision_ref: str
+    intake_context_id: UUID | None = None
+    guide_id: UUID | None = None
+    chat_message_id: UUID | None = None
+    patient_context_digest: str | None = None
+    source_scope_manifest_hash: str | None = None
+    context_schema_version: str = "ai-job-execution-context@1"
+
+
+@dataclass(frozen=True, slots=True)
+class AiJobExecutionIdentificationCreate:
+    execution_context_id: UUID
+    medication_identification_id: UUID
+    prescription_version_medication_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +161,59 @@ class RagReleaseEvaluationApprovalCreate:
 class RagRuntimeRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def create_intake_context(self, payload: AiJobIntakeContextCreate) -> AiJobIntakeContext:
+        context = AiJobIntakeContext(**asdict(payload))
+        self.session.add(context)
+        await self.session.flush()
+        return context
+
+    async def get_intake_context_by_job(self, ai_job_id: UUID) -> AiJobIntakeContext | None:
+        result = await self.session.execute(select(AiJobIntakeContext).where(AiJobIntakeContext.ai_job_id == ai_job_id))
+        return result.scalar_one_or_none()
+
+    async def create_execution_context(self, payload: AiJobExecutionContextCreate) -> AiJobExecutionContext:
+        context = AiJobExecutionContext(**asdict(payload))
+        self.session.add(context)
+        await self.session.flush()
+        return context
+
+    async def get_execution_context_by_job(self, ai_job_id: UUID) -> AiJobExecutionContext | None:
+        result = await self.session.execute(
+            select(AiJobExecutionContext).where(AiJobExecutionContext.ai_job_id == ai_job_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_execution_identification(
+        self,
+        payload: AiJobExecutionIdentificationCreate,
+    ) -> AiJobExecutionIdentification:
+        matched_identification = await self.session.scalar(
+            select(MedicationIdentification.id).where(
+                MedicationIdentification.id == payload.medication_identification_id,
+                MedicationIdentification.prescription_version_medication_id
+                == payload.prescription_version_medication_id,
+                MedicationIdentification.status == MedicationIdentificationStatus.MATCHED,
+            )
+        )
+        if matched_identification is None:
+            raise ValueError("execution context can pin only MATCHED identification for the same medication")
+
+        identification = AiJobExecutionIdentification(**asdict(payload))
+        self.session.add(identification)
+        await self.session.flush()
+        return identification
+
+    async def list_execution_identifications(
+        self,
+        execution_context_id: UUID,
+    ) -> list[AiJobExecutionIdentification]:
+        result = await self.session.execute(
+            select(AiJobExecutionIdentification)
+            .where(AiJobExecutionIdentification.execution_context_id == execution_context_id)
+            .order_by(AiJobExecutionIdentification.created_at, AiJobExecutionIdentification.id)
+        )
+        return list(result.scalars().all())
 
     async def create_execution_manifest(
         self,

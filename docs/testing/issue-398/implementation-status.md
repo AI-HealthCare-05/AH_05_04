@@ -346,3 +346,8 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 ## PR #429 리뷰 최종 반영
 
 `d12783e` Runtime·Source 수집 잠금, `fe3033a` 처방 성공 응답 재현, `3014ae6` Snapshot 일반 제약 삭제 방어·#404 통합을 반영했다. 전체 migration 154, Backend/계약/통합 1,716, Worker 2,713, 별도 Source cleanup 57, Redis 연계 23개가 통과했다. 테스트 묶음의 중복 및 skip 설명은 [최종 리뷰 증빙](review-429.md#최종-회귀-검증)에 기록한다. 현재 코드 head는 `398293a4b5c6`이며 DB Trigger·RLS·업무 저장 함수는 새로 정의하지 않았다.
+
+
+### PR #412 통합
+
+최신 develop `23b3b59`의 Preflight Context 저장 기반을 반영했다. migration 이력을 보존하는 merge revision을 추가해 현재 단일 head는 `3983a4b5c6d7`이다. Context의 Runtime SELECT·INSERT 권한과 보호된 Python 저장 경계를 연결하며, #416은 아직 포함하지 않는다. 상세 검증은 [추가 승인 리뷰 및 통합 증빙](review-429.md)에 기록한다.

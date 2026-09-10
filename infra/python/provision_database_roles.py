@@ -28,7 +28,8 @@ RUNTIME_MUTABLE_TABLES = frozenset(
 RUNTIME_APPEND_ONLY_TABLES = frozenset(
     "prescription_version prescription_version_medication checkin_audit rag_citation "
     "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
-    "rag_runtime_environment_transition medication_candidate_search_result".split()
+    "rag_runtime_environment_transition medication_candidate_search_result "
+    "ai_job_intake_context ai_job_execution_context ai_job_execution_identification".split()
 )
 
 
