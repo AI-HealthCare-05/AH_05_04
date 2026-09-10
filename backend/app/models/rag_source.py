@@ -319,6 +319,10 @@ class RagSourceSnapshot(Base):
 class RagSourceIngestionRun(Base):
     __tablename__ = "rag_source_ingestion_run"
     __table_args__ = (
+        CheckConstraint(
+            "reject_code_contract_version IS NULL OR length(trim(reject_code_contract_version)) > 0",
+            name="chk_rag_run_reject_contract_nonblank",
+        ),
         UniqueConstraint("operation_id", "run_group_key", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
         Index("idx_rag_ingestion_attempt_version", "operation_id", "attempted_source_version"),
         CheckConstraint(
@@ -360,6 +364,7 @@ class RagSourceIngestionRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+    reject_code_contract_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     attempted_source_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
     attempted_external_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
     attempted_canonical_contract: Mapped[dict[str, str | int] | None] = mapped_column(JSONB, nullable=True)

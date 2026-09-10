@@ -136,14 +136,14 @@ def test_preserves_rejection_with_safe_metadata(tmp_path: Path) -> None:
     stored = preserve_rejection_artifact(
         file_path=rejection[0],
         metadata=rejection[1],
-        reject_code="MISSING_ITEM_SEQ",
+        reject_code="ITEM_SEQ_REQUIRED",
         parser_location="page[1].record[3]",
         store=store,
     )
 
     assert stored.artifact_kind is IngestionArtifactKind.REJECTS
     assert stored.page_number is None
-    assert stored.reject_code == "MISSING_ITEM_SEQ"
+    assert stored.reject_code == "ITEM_SEQ_REQUIRED"
     assert stored.parser_location == "page[1].record[3]"
 
 

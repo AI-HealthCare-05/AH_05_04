@@ -41,6 +41,7 @@ def _metadata() -> FailedIngestionRunMetadata:
         started_at=_NOW,
         finished_at=_NOW + timedelta(seconds=1),
         duration_ms=1000,
+        reject_code_contract_version="source-reject-codes@1",
     )
 
 
@@ -57,7 +58,7 @@ def _artifact(kind: IngestionArtifactKind = IngestionArtifactKind.RAW_RESPONSE) 
         storage_backend="PRIVATE_OBJECT_STORAGE",
         object_key="sha256/synthetic-artifact",
         artifact_kind=kind,
-        reject_code="MISSING_ITEM_SEQ" if is_rejection else None,
+        reject_code="ITEM_SEQ_REQUIRED" if is_rejection else None,
         parser_location="page[1].record[1]" if is_rejection else None,
     )
 
@@ -118,6 +119,7 @@ async def test_records_source_failure_without_snapshot_or_partial_artifacts() ->
             started_at=_NOW,
             finished_at=_NOW + timedelta(seconds=1),
             duration_ms=1000,
+            reject_code_contract_version="source-reject-codes@1",
             failure_code="TIMEOUT",
         )
     ]
@@ -193,5 +195,5 @@ async def test_records_rejection_limit_failure_without_snapshot() -> None:
     )
 
     assert repository.runs[0].snapshot_id is None
-    assert repository.runs[0].failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert repository.runs[0].failure_code == "PARSER_VALIDATION_FAILED"
     assert repository.artifacts[result.ingestion_run_id] == artifacts

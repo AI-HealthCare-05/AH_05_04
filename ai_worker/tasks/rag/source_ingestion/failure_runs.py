@@ -15,6 +15,11 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     IngestionArtifactKind,
     StoredRawArtifact,
 )
+from ai_worker.tasks.rag.source_ingestion.reject_codes import (
+    PRODUCT_REJECT_IDENTITY,
+    REJECT_CODE_CONTRACT_VERSION,
+    validate_reject_artifact,
+)
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotRunRecord
 from ai_worker.tasks.rag.source_ingestion.source_version import (
     SourceVersionValidationError,
@@ -41,6 +46,7 @@ class FailedIngestionRunMetadata:
     started_at: datetime
     finished_at: datetime
     duration_ms: int | None = None
+    reject_code_contract_version: str | None = None
 
     def __post_init__(self) -> None:
         if not self.run_group_key.strip() or len(self.run_group_key) > 100:
@@ -88,6 +94,10 @@ async def record_source_run_failure(
     if result.pages:
         raise ValueError("실패 Source run은 부분 page를 노출할 수 없습니다.")
 
+    if result.operation == PRODUCT_REJECT_IDENTITY and metadata.reject_code_contract_version is None:
+        from dataclasses import replace
+
+        metadata = replace(metadata, reject_code_contract_version=REJECT_CODE_CONTRACT_VERSION)
     return await _record_failed_run(
         repository=repository,
         identity=result.operation,
@@ -108,6 +118,16 @@ async def record_processing_failure(
     """Parser 또는 거부 한도 실패와 이미 보존한 원본 참조를 기록합니다."""
     if type(failure_code) is not IngestionProcessingFailureCode:
         raise ValueError("허용된 ingestion processing failure code가 아닙니다.")
+    for artifact in artifacts:
+        if artifact.artifact_kind is IngestionArtifactKind.REJECTS:
+            validate_reject_artifact(
+                identity=identity,
+                version=metadata.reject_code_contract_version,
+                code=artifact.reject_code,
+                location=artifact.parser_location,
+            )
+            # v1 identity errors always retain their parser failure semantics.
+            failure_code = IngestionProcessingFailureCode.PARSER_VALIDATION_FAILED
     _validate_failure_artifacts(failure_code=failure_code, artifacts=artifacts)
     return await _record_failed_run(
         repository=repository,
@@ -138,6 +158,7 @@ async def _record_failed_run(
             finished_at=metadata.finished_at,
             duration_ms=metadata.duration_ms,
             failure_code=failure_code,
+            reject_code_contract_version=metadata.reject_code_contract_version,
         )
     )
     if artifacts:
@@ -218,6 +239,7 @@ async def record_source_version_failure(
             finished_at=metadata.finished_at,
             duration_ms=metadata.duration_ms,
             failure_code=failure_code,
+            reject_code_contract_version=metadata.reject_code_contract_version,
             attempted_source_version=version,
             attempted_external_version=safe_external,
             attempted_canonical_contract=canonical_contract,

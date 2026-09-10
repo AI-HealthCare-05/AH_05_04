@@ -68,10 +68,14 @@ def build_product_ingestion_result(
         artifacts=entries,
         decoder=decode_mfds_json,
         success_codes=_PRODUCT_CONTRACT.body_codes.success_codes,
+        inspect_product_rejections=True,
     )
     rejections = classify_product_rejections((page.page_number, page.records) for page in result.pages)
     if rejections:
         raise ProductIdentityError(rejections)
+    from ai_worker.tasks.rag.source_ingestion.validation import require_complete_source_run
+
+    require_complete_source_run(result)
     records = verified_artifacts.records
     canonical_checksum = product_canonical_checksum(records)
 

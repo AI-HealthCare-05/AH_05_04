@@ -1,11 +1,13 @@
 """수집한 원본 Artifact 목록의 무결성을 검증합니다."""
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from ai_worker.tasks.rag.source_client.contracts import (
     ProviderPage,
+    SourceOperationIdentity,
     SourceRunResult,
 )
 from ai_worker.tasks.rag.source_client.mfds_client import ResponseDecoder
@@ -19,6 +21,11 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.normalize import canonical_json_bytes
+from ai_worker.tasks.rag.source_ingestion.reject_codes import (
+    PRODUCT_REJECT_IDENTITY,
+    REJECT_CODE_CONTRACT_VERSION,
+    validate_reject_artifact,
+)
 from ai_worker.tasks.rag.source_ingestion.validation import (
     require_complete_source_run,
 )
@@ -58,8 +65,13 @@ def preserve_rejection_artifact(
     reject_code: str,
     parser_location: str,
     store: RawArtifactStore,
+    identity: SourceOperationIdentity = PRODUCT_REJECT_IDENTITY,
+    reject_code_contract_version: str | None = REJECT_CODE_CONTRACT_VERSION,
 ) -> StoredRawArtifact:
     """거부 원문을 안전한 코드·Parser 위치와 함께 불변 보존합니다."""
+    validate_reject_artifact(
+        identity=identity, version=reject_code_contract_version, code=reject_code, location=parser_location
+    )
     return store.put_verified(
         page_number=None,
         file_path=file_path,
@@ -136,9 +148,11 @@ def verify_source_run_artifacts(
     artifacts: Iterable[tuple[int, Path, RawArtifactMetadata]],
     decoder: ResponseDecoder,
     success_codes: tuple[str, ...],
+    inspect_product_rejections: bool = False,
 ) -> VerifiedSourceRunArtifacts:
     """수집 페이지와 원본 Artifact가 정확히 대응하는지 검증합니다."""
-    require_complete_source_run(result)
+    validator = _require_complete_product_pages if inspect_product_rejections else require_complete_source_run
+    validator(result)
 
     pages_by_number = _index_source_pages(result)
     artifacts_by_page = _index_raw_artifacts(artifacts)
@@ -178,7 +192,8 @@ def verify_source_run_artifacts(
         if decoded.page_number != page_number:
             raise ValueError("Raw artifact page number does not match source page.")
 
-        if canonical_json_bytes(list(decoded.records)) != canonical_json_bytes(list(page.records)):
+        serializer = _rejection_binding_bytes if inspect_product_rejections else canonical_json_bytes
+        if serializer(list(decoded.records)) != serializer(list(page.records)):
             raise ValueError("Raw artifact records do not match source page.")
 
         verified_records.extend(decoded.records)
@@ -187,3 +202,30 @@ def verify_source_run_artifacts(
         raw_manifest_checksum=manifest_checksum,
         records=tuple(verified_records),
     )
+
+
+def _require_complete_product_pages(result: SourceRunResult) -> None:
+    # Only PK eligibility is deferred to the two-pass classifier. Completeness is not relaxed.
+    from ai_worker.tasks.rag.source_client.contracts import SourceRunStatus
+
+    pages = result.pages
+    count = result.record_count
+    if (
+        result.operation != PRODUCT_REJECT_IDENTITY
+        or result.status is not SourceRunStatus.SUCCEEDED
+        or result.failure is not None
+        or not result.full_scan_completed
+        or not pages
+        or count <= 0
+        or result.primary_key_validation is None
+        or result.primary_key_validation.record_count != count
+        or sorted(page.page_number for page in pages) != list(range(1, len(pages) + 1))
+        or any(page.total_count != count for page in pages)
+    ):
+        raise ValueError("Product run is incomplete for rejection inspection.")
+
+
+def _rejection_binding_bytes(value: object) -> bytes:
+    # JSON type fidelity before identity validation: invalid ITEM_SEQ floats must reach
+    # INVALID_ITEM_SEQ_TYPE rather than fail the checksum's narrower numeric contract.
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")

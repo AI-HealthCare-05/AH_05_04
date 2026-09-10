@@ -20,3 +20,8 @@
 
 3단계 완료: 전체 페이지 필수값·타입·중복 2-pass, 모든 중복 행 기록, 원문 비노출 typed 오류 연결.
 Source ingestion 회귀 418건 통과. 기존 checksum 오류 문자열 의존 테스트를 고정 안전 오류로 정렬했다.
+
+4단계 완료: 새 orchestration, checksum 전 실패 감사 복원, Run 계약 버전 저장·Receipt 조회,
+파일 보존 전/Repository 재검증, identity 오류의 Hard Limit 이전 실패, 기존 partial Snapshot 승인 보호 유지.
+신규 실제 DB 경로 10건, 기존 lifecycle 31건, migration·과거 NULL·downgrade·컬럼 권한 3건 통과.
+Source 단위 418건, Ruff·format 통과. 신규 revision 165a0b1c2d3e는 #436 merge head 362c3d4e5f60의 자식이다.

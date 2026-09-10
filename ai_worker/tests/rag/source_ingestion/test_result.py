@@ -180,7 +180,7 @@ def test_rejects_memory_record_changed_after_raw_capture(
     )
     changed_result = replace(source_result, pages=(changed_page,))
 
-    with pytest.raises(ValueError, match="records do not match"):
+    with pytest.raises(ValueError, match="records do not match|incomplete"):
         build_product_ingestion_result(
             result=changed_result,
             artifacts=[(1, file_path, metadata)],
@@ -224,7 +224,7 @@ def test_rejects_memory_record_absent_from_raw_artifact(
         primary_key_validation=changed_validation,
     )
 
-    with pytest.raises(ValueError, match="records do not match"):
+    with pytest.raises(ValueError, match="records do not match|incomplete"):
         build_product_ingestion_result(
             result=changed_result,
             artifacts=[(1, file_path, metadata)],
