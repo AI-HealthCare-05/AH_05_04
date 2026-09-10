@@ -114,6 +114,14 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: uv run alembic -c backend/alembic.ini upgrade head
+
+      # 임시 측정 단계 — PR #404 리뷰(권가빈) 대응용 타이밍 사이드채널 padding TARGET
+      # 값을 정하기 위해 로컬 Windows/Docker보다 안정적인 CI 러너에서 1회성으로
+      # 측정한다. 결과 확인 후 이 단계는 제거한다.
+      - name: (temporary) Measure password reset timing distribution
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
+        run: uv run python scripts/measure_password_reset_timing.py
       # backend/app/tests/conftest.py가 스키마를 재생성하기 전에
       # Alembic이 만든 실제 PostgreSQL 구조를 검증합니다.
       - name: Validate migrated PostgreSQL schema
