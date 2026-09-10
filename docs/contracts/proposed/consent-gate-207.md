@@ -64,7 +64,7 @@
 
 ## 5. 공통 판정표
 
-Backend와 Worker는 런타임 코드를 공유하지 않는다. 대신 같은 Decision Table과 Contract Fixture를 사용해 같은 입력에 같은 판정을 내야 한다.
+Backend와 Worker는 런타임 코드를 공유하지 않는다. 대신 같은 Decision Table과 Contract Fixture를 사용해 같은 입력에 같은 판정을 내야 한다. 이 import 금지는 양방향 원칙이다. 현재 저장소는 Worker가 Backend app module을 import하지 않는 경계를 계약 테스트로 강제하고 있으며, Backend가 `ai_worker` 런타임 코드를 import하지 않는 역방향 경계는 #416 조건부 승인 항목과 함께 별도 계약 테스트로 고정한다.
 
 | 입력 조건 | 기대 판정 | Provider 호출 |
 | --- | --- | --- |
@@ -89,6 +89,8 @@ Backend와 Worker는 런타임 코드를 공유하지 않는다. 대신 같은 D
 
 이 계약은 Guide·Chat `202 + Job` 전환 자체를 구현하지 않는다. 해당 전환 PR에서 같은 Gate를 적용한다.
 
+현재 Guide와 Chat은 Backend 동기 경로에서 LLM Provider를 호출한다. `GUIDE` 목적은 가이드 생성에 필요한 처방·복약 컨텍스트와 검색된 Evidence/Citation 후보를, `CHAT` 목적은 사용자 질문, 대화 맥락, 처방·복약 컨텍스트와 검색된 Evidence/Citation 후보를 Provider 호출 범위로 본다. 원본 OCR 이미지, 불필요한 처방 원문 전체, Provider 원문 응답은 목적별 동의만으로 추가 전송하거나 저장하지 않는다.
+
 ## 7. Worker/Stream 메시지 경계
 
 `WorkerMessage`, Outbox, Redis Stream envelope에는 `user_id`, 동의 상태, 건강정보, 복약정보를 추가하지 않는다.
@@ -108,9 +110,15 @@ OCR Worker는 `ocr_job.document_id -> medical_document.uploaded_by` 조인으로
 
 `AiJobStatus.STALE`와 `AiJobAttemptStatus.BLOCKED`는 기존 enum을 사용한다. 새 Worker FailureCode를 만들지 않는다. `STALE`에는 “접수 당시 유효했던 동의가 실행 전에 철회되어 실행 권한의 현재성을 잃음”을 포함한다.
 
+동의 철회로 인한 `STALE + BLOCKED`는 처방 버전 변경으로 인한 기존 `STALE + BLOCKED`와 반드시 구분한다. 후속 구현 PR은 공개 Job DTO를 확장하지 않더라도 저장 레벨의 내부 차단 사유를 남겨야 한다. 동의 철회 사유는 `CONSENT_WITHDRAWN`으로 기록하고, 처방 버전 변경 사유와 섞지 않는다. 현재 스키마에 적절한 저장 위치가 없으면 Job/Attempt 내부 reason 컬럼 또는 감사 테이블 등 공개 응답이 아닌 저장 경계를 함께 추가한다.
+
+동의 철회 STALE은 Provider 호출 전 차단이므로 Guide/Chat/RAG 결과를 생성하지 않는다. 따라서 생성 결과에 대한 `release_decision=STALE` 또는 `is_current=false` 판정을 새로 만들지 않는다. 이미 생성된 결과를 현재성 상실로 무효화하는 처방 버전 변경 STALE과 별도 원인으로 기록한다.
+
 OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_code=CONSENT_WITHDRAWN`을 사용한다. `CONSENT_WITHDRAWN`은 Worker 공통 FailureCode가 아니라 OCR 도메인 실패 사유다.
 
-공통 Job 조회는 `STALE`의 상세 철회 사유를 새 응답 필드로 노출하지 않는다. Frontend는 현재 목적별 동의 상태와 OCR `error_code`를 사용해 일반 시스템 장애와 구분된 안내를 표시한다.
+접수 후 실행 직전 동의 철회로 OCR을 종료할 때는 일반 Worker FailureCode 매핑 경로를 사용하지 않는다. 새 Worker FailureCode를 추가하지 않고, OCR 도메인 전용 종료 전이 또는 writer를 통해 `ocr_job.status=FAILED`, `ocr_job.error_code=CONSENT_WITHDRAWN`을 저장한다. 이 writer는 Provider 호출 전 차단 경로에서만 사용하며, 기존 Worker FailureCode에서 OCR error_code를 파생하는 매핑과 섞지 않는다.
+
+공통 Job 조회는 `STALE`의 상세 철회 사유를 새 응답 필드로 노출하지 않는다. Frontend는 현재 목적별 동의 상태와 OCR `error_code`, 그리고 후속 구현에서 제공되는 안전한 사용자-facing 안내를 사용해 일반 시스템 장애와 구분된 안내를 표시한다.
 
 ## 9. 오류 계약 제안
 
@@ -143,7 +151,9 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 | `purpose_mismatch` | 차단 |
 | `inactive_account` | 차단 |
 | `owner_mismatch` | 차단 |
-| `withdrawn_after_acceptance` | Provider 호출 0건, Attempt `BLOCKED`, Job `STALE`, OCR `FAILED` |
+| `withdrawn_after_acceptance` | Provider 호출 0건, Attempt `BLOCKED`, Job `STALE`, 내부 사유 `CONSENT_WITHDRAWN`, OCR `FAILED` |
+| `stale_reason_prescription_changed` | 처방 버전 변경 STALE과 동의 철회 STALE이 저장 레벨 내부 사유로 구분됨 |
+| `withdrawn_after_acceptance_no_result` | Guide/Chat/RAG 결과를 생성하지 않고 `release_decision` 또는 `is_current` 판정을 새로 만들지 않음 |
 
 ## 11. Frontend 소비 경계
 
@@ -151,7 +161,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 기능 화면은 반복 동의창을 계속 띄우는 대신 처리 안내와 동의 내역/설정 이동 경로를 제공한다. 현재 OCR 안내는 실제 동작에 맞춰 “처방전 인식에는 외부 OCR 서비스가 사용됩니다.” 수준으로 둔다.
 
-LLM 구조화나 추가 외부 Provider가 실제 연결되면 안내 문구와 목적별 전송 범위를 다시 검토한다.
+OCR LLM 구조화나 추가 외부 Provider가 실제 연결되면 안내 문구와 목적별 전송 범위를 다시 검토한다.
 
 ## 12. 제외와 승인 게이트
 
