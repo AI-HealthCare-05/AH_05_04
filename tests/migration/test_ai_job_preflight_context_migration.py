@@ -272,10 +272,10 @@ async def _seed_preflight_context_graph() -> None:
                 text(
                     """
                     INSERT INTO medication_candidate_search (
-                        id, prescription_version_medication_id, query_digest, status,
+                        id, prescription_version_medication_id, medication_name_snapshot, query_digest, status,
                         candidate_count, displayed_candidate_count
                     )
-                    VALUES (:search_id, :version_medication_id, :query_digest, 'READY', 1, 1)
+                    VALUES (:search_id, :version_medication_id, '합성 식별약', :query_digest, 'READY', 1, 1)
                     """
                 ),
                 {**ids, "query_digest": "c" * 64},
