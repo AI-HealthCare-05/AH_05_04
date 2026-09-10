@@ -17,7 +17,7 @@ from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT_CONTEXT_REVISION = "174a1b2c3d4e"
-PREFLIGHT_CONTEXT_BASE_REVISION = "201a1b2c3d4e"
+PREFLIGHT_CONTEXT_BASE_REVISION = "206a1b2c3d4e"
 PREFLIGHT_CONTEXT_TABLES = {
     "ai_job_intake_context",
     "ai_job_execution_context",
@@ -108,6 +108,8 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
         )
     }
     suffix = uuid4().hex[:10]
+    manifest_hash = (suffix + "a" * 64)[:64]
+    bundle_hash = (suffix + "b" * 64)[:64]
     async with _connection() as connection:
         async with connection.begin():
             await connection.execute(text("SET CONSTRAINTS ALL DEFERRED"))
@@ -235,7 +237,7 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                     )
                     """
                 ),
-                {**ids, "manifest_key": f"preflight-runtime-{suffix}", "manifest_hash": "a" * 64},
+                {**ids, "manifest_key": f"preflight-runtime-{suffix}", "manifest_hash": manifest_hash},
             )
             await connection.execute(
                 text(
@@ -250,7 +252,7 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                     )
                     """
                 ),
-                {**ids, "bundle_key": f"preflight-bundle-{suffix}", "bundle_hash": "b" * 64},
+                {**ids, "bundle_key": f"preflight-bundle-{suffix}", "bundle_hash": bundle_hash},
             )
             await connection.execute(
                 text(
@@ -266,7 +268,7 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                     )
                     """
                 ),
-                {**ids, "environment_code": f"preflight-{suffix}", "bundle_hash": "b" * 64},
+                {**ids, "environment_code": f"preflight-{suffix}", "bundle_hash": bundle_hash},
             )
             await connection.execute(
                 text(
@@ -335,8 +337,8 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                 ),
                 {
                     **ids,
-                    "bundle_hash": "b" * 64,
-                    "manifest_hash": "a" * 64,
+                    "bundle_hash": bundle_hash,
+                    "manifest_hash": manifest_hash,
                     "question_digest": "d" * 64,
                     "patient_digest": "e" * 64,
                 },
@@ -363,8 +365,8 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                 ),
                 {
                     **ids,
-                    "bundle_hash": "b" * 64,
-                    "manifest_hash": "a" * 64,
+                    "bundle_hash": bundle_hash,
+                    "manifest_hash": manifest_hash,
                     "patient_digest": "e" * 64,
                     "scope_hash": "f" * 64,
                 },
@@ -405,8 +407,6 @@ async def _cleanup_preflight_fixture_graph(ids: dict[str, str]) -> None:
                 ("rag_runtime_environment", "id", "environment_id"),
                 ("rag_runtime_release_bundle", "id", "bundle_id"),
                 ("rag_runtime_execution_manifest", "id", "manifest_id"),
-                ("prescription_version_medication", "id", "version_medication_id"),
-                ("prescription_version", "id", "version_id"),
                 ("prescription", "id", "prescription_id"),
                 ("ocr_job", "id", "ocr_job_id"),
                 ("medical_document", "id", "document_id"),
@@ -418,7 +418,7 @@ async def _cleanup_preflight_fixture_graph(ids: dict[str, str]) -> None:
                 )
                 if table_exists.scalar_one() is not None:
                     await connection.execute(
-                        text(f"DELETE FROM {table_name} WHERE {column_name} = :id"),
+                        text(f'DELETE FROM "{table_name}" WHERE "{column_name}" = :id'),
                         {"id": ids[key]},
                     )
 
@@ -432,10 +432,16 @@ async def _cleanup_context_tables() -> None:
                 "ai_job_intake_context",
             ):
                 table_exists = await connection.execute(
-                    text("SELECT to_regclass(:table_name)"), {"table_name": table_name}
+                    text(
+                        "SELECT EXISTS ("
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_schema = 'public' AND table_name = :table_name"
+                        ")"
+                    ),
+                    {"table_name": table_name},
                 )
-                if table_exists.scalar_one() is not None:
-                    await connection.execute(text(f"DELETE FROM {table_name}"))
+                if table_exists.scalar_one():
+                    await connection.execute(text(f'DELETE FROM "{table_name}"'))
 
 
 @pytest.fixture(autouse=True)
