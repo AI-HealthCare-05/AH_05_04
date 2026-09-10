@@ -120,7 +120,11 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 
 `backend/app/services/rag_runtime_bundle_build.py`는 **`backend`가 `ai_worker`를 production 코드에서 import하는 첫 사례**다. 추가되는 의존은 I/O·시계·session이 없는 순수 kernel 모듈 하나이며, `backend`가 이미 `provider_contracts`를 import하는 것과 같은 형태다. 역방향(`ai_worker` → `backend`)은 계속 금지이며 Worker 테스트 lane이 이를 강제한다(확인: `backend` 제외 PYTHONPATH에서 kernel 테스트 통과).
 
-이 경계를 승인할지, 아니면 kernel을 최상위 `rag_runtime/` 공유 패키지로 옮길지 결정이 필요하다. 후자는 kernel이 의존하는 `ai_worker.tasks.rag.catalog`·`source_ingestion` 모듈까지 함께 옮겨야 하므로 이 Issue 범위를 넘는다.
+**결정: (A)안 채택.** `backend`가 `ai_worker`의 순수 kernel 모듈 하나만 production import한다. 2026-09-10 PR #416 리뷰에서 (A)안으로 승인받았고, (B)안(kernel을 `rag_runtime/`으로 이전)은 `evaluate_snapshot_use_eligibility`와 Catalog 상태 enum까지 옮겨야 해 이 Issue 범위를 벗어난다는 판단이 함께 기록됐다.
+
+이 경계는 service와 **repository** 양쪽에 적용된다. §6의 행 기준 재계산 검증이 kernel의 `canonical_runtime_bundle_manifest_hash`를 필요로 하기 때문이다.
+
+후속 조건: `backend`가 이 kernel 모듈 외의 `ai_worker` 모듈을 import하지 않는지 확인하는 계약 테스트를 별도 PR에서 추가한다. 두 리뷰어가 같은 항목을 요청했고 병합 차단 사항은 아니다.
 
 #### 배포 이미지 반영 (리뷰 지적)
 
