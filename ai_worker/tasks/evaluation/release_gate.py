@@ -521,6 +521,7 @@ def _suite_binding_matches(
         or len(case_codes) != len(set(case_codes))
         or suite.expected_case_set_hash != definition.expected_case_set_hash
         or suite.executed_case_set_hash != executed_case_set_hash
+        or executed_case_set_hash != definition.expected_case_set_hash
         or canonical_sha256(payload) != suite_evidence.artifact_ref.hash
     )
 

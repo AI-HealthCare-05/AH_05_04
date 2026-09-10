@@ -774,6 +774,38 @@ def test_required_suite_case_hashes_are_bound_to_signed_definition() -> None:
     assert "REQUIRED_SUITE_BINDING_MISMATCH:required-suite" in gate.blocking_reason_codes
 
 
+def test_required_suite_rejects_executed_case_set_different_from_approved_set() -> None:
+    suite_evidence = _suite_evidence()
+    policy = replace(_policy(), required_suites=(_suite_ref(suite_evidence),))
+    unrelated_case = suite_evidence.suite.case_results[0].model_copy(update={"case_code": "unrelated-case"})
+    executed_hash = canonical_sha256({"case_ids": ["unrelated-case"]})
+    substituted_suite = suite_evidence.suite.model_copy(
+        update={
+            "case_results": (unrelated_case,),
+            "executed_case_set_hash": executed_hash,
+        }
+    )
+    substituted_artifact_hash = canonical_sha256(substituted_suite.model_dump(mode="json"))
+    substituted_evidence = replace(
+        suite_evidence,
+        suite=substituted_suite,
+        artifact_ref=ImmutableReference(
+            id="required-suite",
+            version="1.0.0",
+            hash=substituted_artifact_hash,
+        ),
+    )
+
+    gate = build_release_gate(
+        policy,
+        replace(_evidence(), suites=(substituted_evidence,)),
+    )
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert gate.aggregate_decision_status is None
+    assert "REQUIRED_SUITE_BINDING_MISMATCH:required-suite" in gate.blocking_reason_codes
+
+
 def test_invalid_profile_evidence_is_not_overwritten_by_missing_execution() -> None:
     evidence = replace(
         _evidence(),
