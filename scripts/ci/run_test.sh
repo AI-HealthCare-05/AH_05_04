@@ -14,6 +14,7 @@ source scripts/ci/parallel_test_lanes.sh
 
 export PYTEST_ADDOPTS=""
 uv run python scripts/ci/check_python_test_inventory.py
+uv run python scripts/ci/check_protected_table_writes.py
 
 prepare_test_environment
 prepare_test_runner_state_directory

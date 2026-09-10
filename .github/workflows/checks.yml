@@ -66,6 +66,9 @@ jobs:
       - name: Reject new database triggers and RLS
         run: python scripts/ci/check_database_logic.py
 
+      - name: Reject unapproved protected table writers
+        run: python scripts/ci/check_protected_table_writes.py
+
       - name: Run Ruff Format Check
         run: uv run ruff format . --check
 

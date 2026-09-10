@@ -1,6 +1,6 @@
 # #398 구현 진행 및 검증
 
-기준 develop: `bd201c36f3be677558cccba02b27601a8c7ce52b`
+기준 develop: `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`
 
 상태: #398 로컬 코드·검증 완료. 팀 리뷰와 #404 병합 후 통합 대기.
 
@@ -246,3 +246,15 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 새 `*_cleanup347_test` PostgreSQL DB에 최신 애플리케이션 migration과 control schema를 처음부터 설치해 참조·workflow 통합 57개와 cleanup 단위 103개를 통과했다. S3용 `boto3`가 없는 현재 환경에서 관련 모듈 2개를 제외한 Worker 전체는 2,569 passed, 8 skipped다.
 
 최종 폐기 DB 카탈로그 결과는 public/source_cleanup 사용자 Trigger 0개, RLS 활성 테이블 0개, 정책 0개, source_cleanup 함수 0개다. 앞 단계에서 전체 Backend 1,263 passed, 2 skipped와 전체 migration 150 passed도 통과했다. AWS 배포와 운영 DB 적용은 수행하지 않았다. 작업 중인 #404는 코드를 선반영하지 않았으며 병합 뒤 최신 develop에서 별도 통합 검증한다.
+
+## 최신 develop 통합 및 보호 테이블 쓰기 경계
+
+- #393 Source Snapshot 정책, #403 Candidate API 계약을 포함한 최신 develop을 병합했다.
+- #403의 확인·거절 API는 기존 Candidate Service와 부모 Search/Prescription 잠금 Repository를 그대로 사용하며 결과 테이블 직접 쓰기 경로를 추가하지 않는다.
+- Source·Catalog·Prescription Version·Candidate Result·Runtime Transition·Check-in Audit·Evidence/Citation의 ORM 생성, SQLAlchemy Core DML과 문자열 raw DML을 전수 검색했다.
+- `check_protected_table_writes.py`는 보호 테이블별 승인된 Python writer를 고정한다. 다른 Service·Task·Adapter에서 ORM 생성이나 직접 DML을 추가하면 CI가 실패한다.
+- 이 검사는 애플리케이션 코드의 우발적 우회를 방지하는 정적 가드다. 실제 실행 계정의 DML 차단은 별도 PostgreSQL 권한 통합 테스트가 계속 담당한다.
+- PR #404의 현재 head는 이 기준 develop에 아직 포함되지 않았다. 병합 뒤 새 Catalog DB adapter가 검사에 걸리면 구현과 권한을 검토한 후 승인 writer 목록을 갱신한다.
+- Runtime 전이는 환경 부모 잠금, expected revision·pointer·Governance·Safety Epoch 재검증, 포인터/상태와 이력 원자 저장, revision UNIQUE 봉인까지 완료했다.
+
+검증 결과: 최신 develop 병합 관련 Source·Candidate·Runtime·계약 408 passed, 보호 writer 정책 5 passed, Ruff/format과 보호 writer 실행 검사 통과. Trigger·RLS·PL/pgSQL 정의는 추가하지 않았고 AWS·운영 DB를 변경하지 않았다.
