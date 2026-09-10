@@ -115,6 +115,7 @@ from app.models.rag_source import (
     RagSourceUsageStatus,
     RagVerificationResultStatus,
 )
+from app.models.refresh_session import RefreshSession
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
@@ -230,5 +231,6 @@ __all__ = [
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",
+    "RefreshSession",
     "User",
 ]

@@ -101,6 +101,19 @@ class RefreshToken(Token):
     lifetime = timedelta(minutes=config.REFRESH_TOKEN_EXPIRE_MINUTES)
     no_copy_claims = ("type", "exp", "jti")
 
+    @classmethod
+    def for_user(cls, user: User) -> Self:
+        """#206 리뷰(권가빈): rotation 재사용 탐지를 사용자 전체가 아니라 로그인
+        1회(세션) 단위로 스코프하기 위한 `session_id`를 로그인 시점에 한 번만
+        발급한다. `rotate()`는 `no_copy_claims`에 없는 모든 클레임을 그대로
+        옮기므로, rotation을 반복해도 이 값은 최초 로그인 세션 동안 고정된다."""
+        token = super().for_user(user)
+        token.set_session_id()
+        return token
+
+    def set_session_id(self) -> None:
+        self.payload["session_id"] = uuid4().hex
+
     @property
     def access_token(self) -> AccessToken:
         access = AccessToken()

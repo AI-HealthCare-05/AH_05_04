@@ -65,7 +65,7 @@ def test_refresh_token_exp_matches_configured_minutes_not_days() -> None:
 def test_refresh_token_derived_access_token_keeps_its_own_lifetime() -> None:
     """`RefreshToken.access_token` 프로퍼티가 `/auth/token/refresh`에서 새 access token을
     만들 때 쓰인다. refresh token의 수명 계산을 고치면서 이 프로퍼티가 만드는 access token의
-    수명(`ACCESS_TOKEN_EXPIRE_MINUTES`, 기본 10분)까지 실수로 영향받지 않는지 확인한다."""
+    수명(`ACCESS_TOKEN_EXPIRE_MINUTES`, 기본 60분)까지 실수로 영향받지 않는지 확인한다."""
     user = _build_user()
     refresh_token = RefreshToken.for_user(user)
 

@@ -110,7 +110,10 @@ class Config(BaseSettings):
         return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10
+    # PR #404 리뷰(남한솔): Frontend에 refresh/retry 흐름이 아직 없어 10분으로 줄이면
+    # 사용자가 자주 재로그인해야 한다. Frontend가 그 흐름(+single-flight refresh)을
+    # 구현한 뒤 별도 PR에서 단축한다 — 이번 PR은 기존 60분을 유지한다.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     # 이 값은 로그인 시점부터의 절대 상한이다. refresh rotation은 매 사용마다 jti만
     # 교체하고 이 exp는 그대로 유지하므로(RefreshToken.rotate 참고), 계속 활동해도
     # 세션이 무기한 연장되지 않는다.

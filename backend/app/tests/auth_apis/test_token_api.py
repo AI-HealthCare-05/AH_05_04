@@ -58,7 +58,7 @@ class TestJWTTokenRefreshAPI:
 
     async def test_token_refresh_issues_access_token_with_correct_lifetime_after_refresh_fix(self):
         """4차 리뷰(refresh token 수명·쿠키 Expires 버그) 수정이 `/token/refresh`가 새로
-        발급하는 access token의 수명(`ACCESS_TOKEN_EXPIRE_MINUTES`, 기본 10분)에 실수로
+        발급하는 access token의 수명(`ACCESS_TOKEN_EXPIRE_MINUTES`, 기본 60분)에 실수로
         영향을 주지 않았는지 실제 HTTP 왕복으로 확인합니다."""
         signup_data = {
             "email": "refresh-lifetime@example.com",
@@ -135,8 +135,8 @@ class TestJWTTokenRefreshAPI:
         assert rotated_exp == original_exp
 
     async def test_token_refresh_rejects_expired_refresh_token_even_when_jti_still_active(self):
-        """rotation이 절대 만료를 우회하지 않는지 확인한다. `jti`는 여전히
-        `active_refresh_jti`와 일치해 재사용 탐지에는 걸리지 않는 상태라도, 시간 자체가
+        """rotation이 절대 만료를 우회하지 않는지 확인한다. `jti`는 여전히 세션의
+        `active_jti`와 일치해 재사용 탐지에는 걸리지 않는 상태라도, 시간 자체가
         지난 refresh token은 rotation 로직에 도달하기 전에 기존 JWT 만료 검증에서
         `401 EXPIRED_TOKEN`으로 먼저 걸러져야 한다."""
         signup_data = {
@@ -199,6 +199,45 @@ class TestJWTTokenRefreshAPI:
         assert reuse_response.json()["code"] == "INVALID_TOKEN"
         assert after_reuse_response.status_code == status.HTTP_401_UNAUTHORIZED
         assert after_reuse_response.json()["code"] == "INVALID_TOKEN"
+
+    async def test_token_refresh_two_devices_rotate_independently(self):
+        """PR #404 리뷰(권가빈): 로그인마다 `refresh_session` row가 따로 생기므로, 같은
+        사용자가 두 기기(브라우저)에서 각각 로그인해도 한쪽의 rotation이 다른 쪽의
+        `active_jti`를 덮어써 서로의 다음 refresh를 "재사용"으로 오판하면 안 된다 — 재설계
+        전 `User.active_refresh_jti` 단일 컬럼 구조에서는 실제로 이 문제가 있었다."""
+        email = f"two-devices-{uuid4().hex[:10]}@example.com"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client_a:
+            await client_a.post(
+                "/api/v1/auth/signup",
+                json={"email": email, "password": "Password123!", "name": "멀티디바이스테스터"},
+            )
+
+        async with (
+            AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client_a,
+            AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client_b,
+        ):
+            login_a = await client_a.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+            login_b = await client_b.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+            client_a.cookies["refresh_token"] = extract_refresh_token(login_a)
+            client_b.cookies["refresh_token"] = extract_refresh_token(login_b)
+
+            # A가 먼저 rotation한다 — 이 시점에 단일 컬럼 구조였다면 사용자의 유일한
+            # active_jti가 A의 새 jti로 덮어써져 B의 원래 jti가 무효로 보였을 것이다.
+            refresh_a = await client_a.get("/api/v1/auth/token/refresh")
+            client_a.cookies["refresh_token"] = extract_refresh_token(refresh_a)
+
+            # B는 A의 rotation과 무관하게 자신의 원래 refresh token으로 계속 갱신할 수 있어야 한다.
+            refresh_b = await client_b.get("/api/v1/auth/token/refresh")
+            client_b.cookies["refresh_token"] = extract_refresh_token(refresh_b)
+
+            # 양쪽 다 다시 한번 rotation해도 서로 간섭하지 않아야 한다.
+            refresh_a_again = await client_a.get("/api/v1/auth/token/refresh")
+            refresh_b_again = await client_b.get("/api/v1/auth/token/refresh")
+
+        assert refresh_a.status_code == status.HTTP_200_OK
+        assert refresh_b.status_code == status.HTTP_200_OK
+        assert refresh_a_again.status_code == status.HTTP_200_OK
+        assert refresh_b_again.status_code == status.HTTP_200_OK
 
     async def test_token_refresh_missing_token(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

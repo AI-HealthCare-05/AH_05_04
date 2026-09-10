@@ -130,7 +130,7 @@ class TestLoginAPI:
         )
         repository = AsyncMock()
         repository.get_user_by_email.return_value = inactive_user
-        fastapi_app.dependency_overrides[get_auth_service] = lambda: AuthService(repository, AsyncMock())
+        fastapi_app.dependency_overrides[get_auth_service] = lambda: AuthService(repository, AsyncMock(), AsyncMock())
 
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

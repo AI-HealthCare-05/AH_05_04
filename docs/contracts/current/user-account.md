@@ -47,11 +47,11 @@
 
 ### Refresh Token Rotation(#206)
 
-- `User.active_refresh_jti`는 현재 유효한 refresh token의 jti를 저장하는 nullable 컬럼입니다. 로그인 시 최초 발급한 jti로 설정합니다.
+- `refresh_session(id, user_id, active_jti, created_at, updated_at)` 테이블이 로그인 1회(=refresh token 1개 계보)마다 독립된 row로 현재 유효한 jti를 추적합니다. `id`는 refresh token payload의 `session_id` 클레임과 같습니다. **로그인마다 새 row가 생기므로 같은 사용자의 여러 기기 로그인이 서로 간섭하지 않습니다**(PR #404 리뷰 — `User` 컬럼 하나로 두면 두 번째 로그인이 첫 번째 로그인의 refresh를 재사용 공격으로 오판했습니다).
 - `GET /api/v1/auth/token/refresh`는 매 호출마다 access token과 **새 refresh token을 함께 재발급**하고, 응답에서 `refresh_token` 쿠키를 새 값으로 교체합니다. 이때도 refresh token 자체의 `token_version`을 `user.token_version`과 먼저 비교하며, 일치하지 않으면 `401 INVALID_TOKEN`을 반환합니다.
 - 새 refresh token의 `exp`는 새로 계산하지 않고 직전 refresh token의 값을 그대로 옮깁니다 — rotation을 반복해도 `REFRESH_TOKEN_EXPIRE_MINUTES`(최초 로그인 기준 절대 상한, 기본 7일)가 늘어나지 않습니다.
-- 이미 rotation으로 교체돼 무효해진 refresh token이 다시 제출되면(`active_refresh_jti` 불일치) 탈취 의심 신호로 간주해 그 사용자의 `token_version`을 즉시 `+1`해 모든 access/refresh token을 무효화하고 `401 INVALID_TOKEN`을 반환합니다.
-- `ACCESS_TOKEN_EXPIRE_MINUTES` 기본값은 10분입니다.
+- 이미 rotation으로 교체돼 무효해진 refresh token이 다시 제출되면(해당 `refresh_session.active_jti` 불일치) 탈취 의심 신호로 간주해 그 사용자의 `token_version`을 즉시 `+1`해 모든 access/refresh token을 무효화하고 `401 INVALID_TOKEN`을 반환합니다 — `token_version`은 사용자 전체를 무효화하므로 다른 기기의 세션도 함께 끊깁니다(기존 로그아웃과 동일한 전체 무효화 정책, 세션 단위 무효화는 범위 밖).
+- `ACCESS_TOKEN_EXPIRE_MINUTES` 기본값은 60분입니다(Frontend refresh/retry 흐름이 구현되기 전까지 유지 — PR #404 리뷰).
 
 ### 비밀번호 재설정(#206, `PD-206` 결정 3)
 

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import EmailStr
 
@@ -17,6 +17,7 @@ from app.core.validators import validate_password
 from app.dtos.auth import LoginRequest, SignUpRequest
 from app.models.users import User
 from app.repositories.password_reset_repository import PasswordResetRepository
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import (
     DuplicateUserFieldError,
     UserRepository,
@@ -47,9 +48,11 @@ class AuthService:
         self,
         user_repository: UserRepository,
         password_reset_repository: PasswordResetRepository,
+        refresh_session_repository: RefreshSessionRepository,
     ) -> None:
         self.user_repo = user_repository
         self.password_reset_repo = password_reset_repository
+        self.refresh_session_repo = refresh_session_repository
         self.jwt_service = JwtService()
 
     async def signup(
@@ -117,7 +120,11 @@ class AuthService:
 
         tokens = self.jwt_service.issue_jwt_pair(fresh_user)
         refresh_token = tokens["refresh_token"]
-        await self.user_repo.set_active_refresh_jti(fresh_user.id, str(refresh_token.payload["jti"]))
+        await self.refresh_session_repo.create_session(
+            session_id=UUID(str(refresh_token.payload["session_id"])),
+            user_id=fresh_user.id,
+            jti=str(refresh_token.payload["jti"]),
+        )
         return tokens
 
     async def check_email_exists(

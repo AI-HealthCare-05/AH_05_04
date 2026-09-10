@@ -1,4 +1,4 @@
-"""add refresh token rotation column and password reset token table
+"""add refresh session table and password reset token table
 
 Revision ID: 206a1b2c3d4e
 Revises: 164c5d6e7f8a
@@ -29,7 +29,22 @@ def _ensure_password_reset_token_downgrade_is_data_safe(connection: sa.engine.Co
 
 
 def upgrade() -> None:
-    op.add_column("user", sa.Column("active_refresh_jti", sa.String(length=32), nullable=True))
+    op.create_table(
+        "refresh_session",
+        sa.Column("id", sa.CHAR(length=36), nullable=False),
+        sa.Column("user_id", sa.CHAR(length=36), nullable=False),
+        sa.Column("active_jti", sa.String(length=32), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name="fk_refresh_session_user"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("idx_refresh_session_user", "refresh_session", ["user_id"])
 
     op.create_table(
         "password_reset_token",
@@ -63,4 +78,6 @@ def downgrade() -> None:
     op.drop_index("idx_password_reset_token_user_created", table_name="password_reset_token")
     op.drop_index("ix_password_reset_token_token_hash", table_name="password_reset_token")
     op.drop_table("password_reset_token")
-    op.drop_column("user", "active_refresh_jti")
+
+    op.drop_index("idx_refresh_session_user", table_name="refresh_session")
+    op.drop_table("refresh_session")

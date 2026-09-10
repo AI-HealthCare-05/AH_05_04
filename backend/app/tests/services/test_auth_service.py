@@ -16,8 +16,10 @@ from app.core.utils.security import (
 from app.dtos.auth import LoginRequest
 from app.models.password_reset import PasswordResetToken
 from app.models.profiles import Profile
+from app.models.refresh_session import RefreshSession
 from app.models.users import User
 from app.repositories.password_reset_repository import PasswordResetRepository
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.tests.conftest import test_engine
@@ -47,16 +49,18 @@ async def _delete_user(user_id: UUID) -> None:
     try:
         await session.execute(delete(Profile).where(Profile.user_id == user_id))
         await session.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+        await session.execute(delete(RefreshSession).where(RefreshSession.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
     finally:
         await session.close()
 
 
-async def _is_blocked_on_user_row_lock() -> bool:
-    """`user` 테이블 관련 쿼리(`UPDATE`, `SELECT ... FOR UPDATE` 등)가 lock을 기다리는
+async def _is_blocked_on_query_matching(query_substring: str) -> bool:
+    """대기 중인 쿼리 텍스트에 `query_substring`이 포함된 요청이 lock을 기다리는
     상태인지로 감지합니다 — 이 파일의 동시성 테스트(로그인/재설정/refresh rotation)가
-    공유합니다. 정확히 어느 문장인지는 각 테스트의 관심사가 아닙니다."""
+    공유합니다. `user`는 예약어라 쿼리에 큰따옴표로 인용되지만(`"user"`),
+    `refresh_session`은 그렇지 않으므로 호출자가 정확한 부분 문자열을 넘긴다."""
     session = AsyncSession(bind=test_engine, expire_on_commit=False)
     try:
         result = await session.execute(
@@ -66,10 +70,11 @@ async def _is_blocked_on_user_row_lock() -> bool:
                     SELECT 1
                     FROM pg_stat_activity
                     WHERE wait_event_type = 'Lock'
-                      AND query ILIKE '%"user"%'
+                      AND query ILIKE :pattern
                 )
                 """
-            )
+            ),
+            {"pattern": f"%{query_substring}%"},
         )
         return bool(result.scalar_one())
     finally:
@@ -106,7 +111,11 @@ async def test_login_waits_for_concurrent_logout_and_issues_latest_token_version
         # 먼저 로드합니다 — 아직 로그아웃이 commit 전이라(READ COMMITTED) token_version=0으로
         # 보입니다. populate_existing 없이는 이 객체가 뒤의 SELECT ... FOR UPDATE 결과에도
         # 그대로 재사용되어 낡은 값을 반환하는 버그가 재현됩니다.
-        login_auth_service = AuthService(UserRepository(login_session), PasswordResetRepository(login_session))
+        login_auth_service = AuthService(
+            UserRepository(login_session),
+            PasswordResetRepository(login_session),
+            RefreshSessionRepository(login_session),
+        )
         authenticated_user = await login_auth_service.authenticate(
             LoginRequest(email=user.email, password=_TEST_PASSWORD)
         )
@@ -116,7 +125,7 @@ async def test_login_waits_for_concurrent_logout_and_issues_latest_token_version
 
         blocked = False
         for _ in range(100):
-            if await _is_blocked_on_user_row_lock():
+            if await _is_blocked_on_query_matching('"user"'):
                 blocked = True
                 break
             await asyncio.sleep(0.05)
@@ -170,14 +179,18 @@ async def test_reset_password_concurrent_confirm_only_succeeds_once() -> None:
         winner_user = await UserRepository(winner_session).get_user_for_update(user.id)
         assert winner_user is not None
 
-        loser_service = AuthService(UserRepository(loser_session), PasswordResetRepository(loser_session))
+        loser_service = AuthService(
+            UserRepository(loser_session),
+            PasswordResetRepository(loser_session),
+            RefreshSessionRepository(loser_session),
+        )
         loser_task = asyncio.create_task(
             loser_service.reset_password(token=raw_token, new_password="LoserPassword456!")
         )
 
         blocked = False
         for _ in range(100):
-            if await _is_blocked_on_user_row_lock():
+            if await _is_blocked_on_query_matching('"user"'):
                 blocked = True
                 break
             await asyncio.sleep(0.05)
@@ -218,11 +231,12 @@ async def test_reset_password_concurrent_confirm_only_succeeds_once() -> None:
     assert loser_error.details == [ErrorDetail(field="token", reason="RESET_TOKEN_INVALID", rejected_value=None)]
 
 
-async def test_rotate_refresh_jti_concurrent_same_expected_jti_only_one_succeeds() -> None:
+async def test_rotate_jti_concurrent_same_expected_jti_only_one_succeeds() -> None:
     """#206: 같은 refresh token(jti)으로 거의 동시에 두 rotation 요청이 와도 정확히
-    하나만 성공해야 한다. `rotate_refresh_jti()`의 UPDATE 기반 CAS가 진짜 두 DB
-    커넥션의 동시 요청에서도 lost update 없이 직렬화되는지 검증한다."""
+    하나만 성공해야 한다. `RefreshSessionRepository.rotate_jti()`의 UPDATE 기반 CAS가
+    진짜 두 DB 커넥션의 동시 요청에서도 lost update 없이 직렬화되는지 검증한다."""
     user = await _create_committed_user(email=f"rotate-race-{uuid4().hex[:10]}@example.com")
+    session_id = uuid4()
     original_jti = uuid4().hex
 
     setup_session = AsyncSession(bind=test_engine, expire_on_commit=False)
@@ -231,25 +245,27 @@ async def test_rotate_refresh_jti_concurrent_same_expected_jti_only_one_succeeds
     second_task: asyncio.Task | None = None
     second_result: bool | None = None
     try:
-        await UserRepository(setup_session).set_active_refresh_jti(user.id, original_jti)
+        await RefreshSessionRepository(setup_session).create_session(
+            session_id=session_id, user_id=user.id, jti=original_jti
+        )
         await setup_session.commit()
 
         # first가 실제로 UPDATE를 적용했지만 아직 커밋 전인 상태(row lock 보유)를 만들어
         # 아직 끝나지 않은 동시 rotation을 재현한다.
-        first_result = await UserRepository(first_session).rotate_refresh_jti(
-            user_id=user.id, expected_jti=original_jti, new_jti=uuid4().hex
+        first_result = await RefreshSessionRepository(first_session).rotate_jti(
+            session_id=session_id, expected_jti=original_jti, new_jti=uuid4().hex
         )
         assert first_result is True
 
         second_task = asyncio.create_task(
-            UserRepository(second_session).rotate_refresh_jti(
-                user_id=user.id, expected_jti=original_jti, new_jti=uuid4().hex
+            RefreshSessionRepository(second_session).rotate_jti(
+                session_id=session_id, expected_jti=original_jti, new_jti=uuid4().hex
             )
         )
 
         blocked = False
         for _ in range(100):
-            if await _is_blocked_on_user_row_lock():
+            if await _is_blocked_on_query_matching("refresh_session"):
                 blocked = True
                 break
             await asyncio.sleep(0.05)

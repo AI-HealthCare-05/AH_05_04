@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, Request, status
 from fastapi.responses import JSONResponse as Response
@@ -15,7 +16,7 @@ from app.dependencies.security import (
     resolve_logout_user,
     security,
 )
-from app.dependencies.services import get_auth_service, get_user_repository
+from app.dependencies.services import get_auth_service, get_refresh_session_repository, get_user_repository
 from app.dtos.auth import (
     LoginRequest,
     LoginResponse,
@@ -27,6 +28,7 @@ from app.dtos.auth import (
     SignUpRequest,
     TokenRefreshResponse,
 )
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.jwt import JwtService
@@ -79,6 +81,7 @@ async def login(
 async def token_refresh(
     jwt_service: Annotated[JwtService, Depends(JwtService)],
     user_repository: Annotated[UserRepository, Depends(get_user_repository)],
+    refresh_session_repository: Annotated[RefreshSessionRepository, Depends(get_refresh_session_repository)],
     refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> Response:
     if not refresh_token:
@@ -91,16 +94,24 @@ async def token_refresh(
     verified_refresh_token = jwt_service.verify_jwt(refresh_token, token_type="refresh")
     user = await resolve_active_user_from_payload(payload=verified_refresh_token.payload, repository=user_repository)
 
+    # #206 리뷰(권가빈): 배포 시점 이전에 발급된 refresh token은 `session_id`가 없다 —
+    # 이 rotation 인프라 자체를 모르던 토큰이므로 재사용 판정 없이 그냥 무효로 처리한다
+    # (재로그인 요구, 다른 세션에는 영향 없음).
+    session_id_claim = verified_refresh_token.payload.get("session_id")
+    if not isinstance(session_id_claim, str):
+        raise invalid_token_error()
+
     rotated_refresh_token = verified_refresh_token.rotate()
-    rotation_succeeded = await user_repository.rotate_refresh_jti(
-        user_id=user.id,
+    rotation_succeeded = await refresh_session_repository.rotate_jti(
+        session_id=UUID(session_id_claim),
         expected_jti=str(verified_refresh_token.payload["jti"]),
         new_jti=str(rotated_refresh_token.payload["jti"]),
     )
     if not rotation_succeeded:
         # 이미 rotation으로 교체된 refresh token이 다시 제출됐다 — 탈취 의심 신호이므로
-        # 이 사용자의 모든 access/refresh token을 강제로 무효화한다. 아래에서 바로
-        # invalid_token_error()를 raise하면 get_db_session이 세션 전체를 rollback해
+        # 이 사용자의 모든 access/refresh token을 강제로 무효화한다(다른 기기의 다른
+        # 세션은 각자의 refresh_session row로 스코프되어 있어 영향받지 않는다). 아래에서
+        # 바로 invalid_token_error()를 raise하면 get_db_session이 세션 전체를 rollback해
         # 이 증가분도 함께 사라지므로 즉시 commit한다(ocr_repository.mark_failed와 동일 패턴).
         await user_repository.increment_token_version(user)
         await user_repository.session.commit()

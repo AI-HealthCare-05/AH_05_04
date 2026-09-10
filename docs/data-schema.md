@@ -62,7 +62,6 @@ DB 모델 또는 마이그레이션 변경 시 이 문서와 API 영향을 함�
 | `withdrawal_requested_at` | timezone datetime | Yes | 회원탈퇴 요청 시각 |
 | `withdrawn_at` | timezone datetime | Yes | 회원탈퇴 완료 시각 |
 | `token_version` | `INTEGER` | No | 로그아웃·비밀번호 재설정·회원탈퇴 시 증가하는 세션 무효화 카운터. 기본값 `0` |
-| `active_refresh_jti` | `VARCHAR(32)` | Yes | 현재 유효한 refresh token의 jti(#206 rotation 재사용 탐지용). 로그인 시 설정, rotation마다 갱신 |
 
 MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 
@@ -70,7 +69,17 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 
 access token과 refresh token에는 발급 시점의 `token_version`을 포함합니다. 인증된 요청과 `GET /api/v1/auth/token/refresh`는 DB의 `user.token_version`, `account_status`, `is_active`를 다시 확인하며, 로그아웃은 `token_version`을 DB에서 원자적으로 `+1`하고 `refresh_token` 쿠키를 삭제합니다.
 
-`GET /api/v1/auth/token/refresh`는 매 호출마다 새 refresh token을 발급해 `active_refresh_jti`를 교체합니다(rotation). 절대 만료는 로그인 시점 기준으로 고정되어 rotation으로 늘어나지 않습니다. 제출된 refresh token의 jti가 `active_refresh_jti`와 다르면(이미 rotation된 token 재사용) `token_version`을 즉시 `+1`해 전체 세션을 무효화합니다.
+`refresh_session` 테이블은 refresh token rotation의 재사용 탐지를 로그인(세션) 단위로 관리합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Refresh Session PK. refresh token payload의 `session_id` 클레임과 같음 |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `active_jti` | `VARCHAR(32)` | No | 이 세션에서 현재 유효한 refresh token의 jti |
+| `created_at` | timezone datetime | No | 세션(로그인) 생성 시각 |
+| `updated_at` | timezone datetime | No | 마지막 rotation 시각 |
+
+`GET /api/v1/auth/token/refresh`는 매 호출마다 새 refresh token을 발급해 해당 `refresh_session.active_jti`를 교체합니다(rotation). 절대 만료는 로그인 시점 기준으로 고정되어 rotation으로 늘어나지 않습니다. 제출된 refresh token의 jti가 그 세션의 `active_jti`와 다르면(이미 rotation된 token 재사용) `token_version`을 즉시 `+1`해 전체 세션을 무효화합니다. `session_id`로 row를 스코프하므로 같은 사용자의 다른 기기 로그인(다른 `refresh_session` row)에는 영향을 주지 않습니다.
 
 `password_reset_token` 테이블은 비밀번호 재설정 1회용 token을 관리합니다.
 

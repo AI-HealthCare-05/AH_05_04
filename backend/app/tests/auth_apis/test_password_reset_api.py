@@ -165,6 +165,48 @@ class TestPasswordResetConfirmAPI:
             {"field": "new_password", "reason": "PASSWORD_POLICY_VIOLATION", "rejected_value": None}
         ]
 
+    async def test_confirm_rejects_new_password_over_72_chars(self):
+        """PR #404 리뷰(권가빈): `PasswordResetConfirmRequest`는 DTO 레벨 길이 제약이
+        없어, 회원가입과 달리 72자 초과 비밀번호가 `validate_password()`를 그대로
+        통과해 `hash_password()`까지 도달했다. 73자 경계에서 거부되는지 확인한다."""
+        email = f"reset-toolong-{uuid4().hex[:8]}@example.com"
+        too_long_password = "Aa1!" + "a" * 69  # 73자, 모든 문자 종류 포함
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/v1/auth/signup",
+                json={"email": email, "password": "Password123!", "name": "긴비번테스터"},
+            )
+            request_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
+
+            response = await client.post(
+                "/api/v1/auth/password-reset/confirm",
+                json={"token": request_response.json()["reset_token"], "new_password": too_long_password},
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        body = response.json()
+        assert body["code"] == "VALIDATION_FAILED"
+        assert body["details"] == [
+            {"field": "new_password", "reason": "PASSWORD_POLICY_VIOLATION", "rejected_value": None}
+        ]
+
+    async def test_confirm_accepts_new_password_at_72_char_boundary(self):
+        email = f"reset-72char-{uuid4().hex[:8]}@example.com"
+        boundary_password = "Aa1!" + "a" * 68  # 정확히 72자
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/v1/auth/signup",
+                json={"email": email, "password": "Password123!", "name": "경계비번테스터"},
+            )
+            request_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
+
+            response = await client.post(
+                "/api/v1/auth/password-reset/confirm",
+                json={"token": request_response.json()["reset_token"], "new_password": boundary_password},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+
     async def test_confirm_rejects_expired_token(self, db_session):
         email = f"reset-expired-{uuid4().hex[:8]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

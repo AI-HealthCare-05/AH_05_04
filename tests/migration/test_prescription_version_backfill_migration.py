@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import insert, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -385,29 +385,22 @@ async def _create_via_repository() -> dict[str, str]:
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
             token = uuid4().hex[:12]
-            user_id = uuid4()
-            # 이 헬퍼는 HARDENING_BASE_REVISION으로 다운그레이드한 스키마에서도 재사용된다.
-            # `User(...)` ORM 인스턴스를 그대로 flush하면 그 이후 User 테이블에 추가된
-            # nullable 컬럼(예: `active_refresh_jti`, #206)까지 INSERT 대상에 포함되어,
-            # 다운그레이드된 스키마에 그 컬럼이 없으면 실패한다. 다운그레이드 시점에도 항상
-            # 존재가 보장되는 컬럼만 명시적으로 지정하는 Core insert로 이 결합을 피한다.
-            await session.execute(
-                insert(User.__table__).values(
-                    id=user_id,
-                    email=f"dw-{token}@example.com",
-                    hashed_password="synthetic-password-hash",
-                    name="version-write-test",
-                )
+            user = User(
+                email=f"dw-{token}@example.com",
+                hashed_password="synthetic-password-hash",
+                name="version-write-test",
             )
+            session.add(user)
+            await session.flush()
             profile = Profile(
-                user_id=user_id,
+                user_id=user.id,
                 profile_type=ProfileType.SELF,
                 display_name="version-write-test",
             )
             session.add(profile)
             await session.flush()
             document = MedicalDocument(
-                uploaded_by=user_id,
+                uploaded_by=user.id,
                 profile_id=profile.id,
                 original_file_name="version-write.png",
                 object_key=f"synthetic/{token}/version-write.png",
@@ -438,7 +431,7 @@ async def _create_via_repository() -> dict[str, str]:
                 ],
             )
             return {
-                "user_id": str(user_id),
+                "user_id": str(user.id),
                 "profile_id": str(profile.id),
                 "document_id": str(document.id),
                 "other_document_id": str(uuid4()),

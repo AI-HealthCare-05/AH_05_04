@@ -94,14 +94,6 @@ class User(Base):
         nullable=False,
         default=0,
     )
-    # refresh token rotation(#206)이 재사용을 탐지하는 데 쓰는, 현재 유효한 refresh
-    # token의 jti(32자 hex)다. `token_version`(전체 무효화)과 달리 "이 특정 refresh
-    # token이 이미 새 것으로 교체됐는지"를 판별한다. 로그인 시 발급한 jti로 설정하고,
-    # rotation 성공마다 새 jti로 갱신한다.
-    active_refresh_jti: Mapped[str | None] = mapped_column(
-        String(32),
-        nullable=True,
-    )
     is_admin: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
