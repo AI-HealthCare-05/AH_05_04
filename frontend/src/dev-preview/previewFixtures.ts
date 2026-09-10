@@ -8,6 +8,7 @@ import { ApiError } from '../api/client'
 import type { GuideResponse } from '../api/guides'
 import type {
   ExtractedField,
+  Medication,
   OcrJobResponse,
   PrescriptionResponse,
 } from '../api/prescriptions'
@@ -35,6 +36,9 @@ export const previewScenarioIds = {
     'completed-before-ack',
     'completed',
     'validation-error',
+    'manual-add-form',
+    'manual-add-validation',
+    'manual-add-success',
   ],
   guide: ['completed', 'structured', 'loading', 'empty', 'failed'],
   chat: [
@@ -78,6 +82,24 @@ function field(
   }
 }
 
+function confirmedManualField(
+  fieldType: string,
+  medicationIndex: number,
+  value: string,
+): ExtractedField {
+  return {
+    field_id: `${fieldType}-${medicationIndex}`,
+    field_type: fieldType,
+    medication_index: medicationIndex,
+    raw_value: null,
+    normalized_value: null,
+    normalization_version: 'manual-entry@1',
+    confirmed_value: value,
+    confidence_score: null,
+    confirmation_status: 'CONFIRMED',
+  }
+}
+
 function reviewFields(scenario: ReviewScenario): ExtractedField[] {
   if (scenario === 'missing-medication') {
     return [
@@ -90,7 +112,9 @@ function reviewFields(scenario: ReviewScenario): ExtractedField[] {
   }
 
   const confirmed =
-    scenario === 'optional-empty' || scenario === 'completed-before-ack'
+    scenario === 'optional-empty' ||
+    scenario === 'completed-before-ack' ||
+    scenario === 'manual-add-success'
   const fields = [
     field('PRESCRIBED_DATE', 0, '2026-09-08', confirmed),
     field('MEDICATION_NAME', 1, '합성 처방약', confirmed),
@@ -101,6 +125,19 @@ function reviewFields(scenario: ReviewScenario): ExtractedField[] {
     field('TIMING', 1, '식후', confirmed),
     field('DURATION_DAYS', 1, '7', confirmed),
   ]
+
+  if (scenario === 'manual-add-success') {
+    return [
+      ...fields,
+      confirmedManualField('MEDICATION_NAME', 2, '수동 추가 약'),
+      confirmedManualField('MEDICATION_STRENGTH', 2, '50mg'),
+      confirmedManualField('DOSE_VALUE', 2, '1'),
+      confirmedManualField('DOSE_UNIT', 2, '정'),
+      confirmedManualField('FREQUENCY_PER_DAY', 2, '2'),
+      confirmedManualField('TIMING', 2, '취침 전'),
+      confirmedManualField('DURATION_DAYS', 2, '5'),
+    ]
+  }
 
   if (scenario === 'missing-required') {
     return fields.filter((candidate) => candidate.field_type !== 'DURATION_DAYS')
@@ -153,30 +190,49 @@ function ocrResponse(
   }
 }
 
-const prescriptionResponse: PrescriptionResponse = {
-  data: {
-    prescription_id: previewIds.prescription,
-    prescription_version_id: previewIds.prescriptionVersion,
-    revision: 1,
-    current: true,
-    document_id: previewIds.document,
-    prescribed_date: '2026-09-08',
-    confirmed_at: now,
-    medications: [
-      {
-        prescription_version_medication_id:
-          previewIds.prescriptionVersionMedication,
-        medication_name: '합성 처방약',
-        strength_text: '100mg',
-        dose_value: 1,
-        dose_unit: '정',
-        frequency_per_day: 3,
-        timing_text: '식후',
-        duration_days: 7,
-        display_order: 1,
-      },
-    ],
-  },
+function prescriptionResponseForScenario(
+  scenario: ReviewScenario,
+): PrescriptionResponse {
+  const medications: Medication[] = [
+    {
+      prescription_version_medication_id:
+        previewIds.prescriptionVersionMedication,
+      medication_name: '합성 처방약',
+      strength_text: '100mg',
+      dose_value: 1,
+      dose_unit: '정',
+      frequency_per_day: 3,
+      timing_text: '식후',
+      duration_days: 7,
+      display_order: 1,
+    },
+  ]
+  if (scenario === 'manual-add-success') {
+    medications.push({
+      prescription_version_medication_id:
+        previewIds.prescriptionVersionManualMedication,
+      medication_name: '수동 추가 약',
+      strength_text: '50mg',
+      dose_value: 1,
+      dose_unit: '정',
+      frequency_per_day: 2,
+      timing_text: '취침 전',
+      duration_days: 5,
+      display_order: 2,
+    })
+  }
+  return {
+    data: {
+      prescription_id: previewIds.prescription,
+      prescription_version_id: previewIds.prescriptionVersion,
+      revision: 1,
+      current: true,
+      document_id: previewIds.document,
+      prescribed_date: '2026-09-08',
+      confirmed_at: now,
+      medications,
+    },
+  } satisfies PrescriptionResponse
 }
 
 function guideResponse(
@@ -235,7 +291,8 @@ export function createPrescriptionReviewPreview(scenario: ReviewScenario): {
         },
       }
     },
-    confirmPrescription: async () => prescriptionResponse,
+    createManualMedication: async () => ocrResponse(scenario, fields),
+    confirmPrescription: async () => prescriptionResponseForScenario(scenario),
     createGuide: async () => guideResponse('COMPLETED', structuredGuideContent),
   }
 
@@ -244,6 +301,14 @@ export function createPrescriptionReviewPreview(scenario: ReviewScenario): {
     state: {
       documentId: previewIds.document,
       jobId: previewIds.ocrJob,
+      manualAddMode:
+        scenario === 'manual-add-form'
+          ? 'form'
+          : scenario === 'manual-add-validation'
+            ? 'validation'
+            : undefined,
+      unreviewedMedicationIndexes:
+        scenario === 'manual-add-success' ? [2] : undefined,
     },
   }
 }
@@ -272,7 +337,7 @@ export function createGuidePreview(scenario: GuideScenario): {
         ? new Promise<GuideResponse>(() => undefined)
         : Promise.resolve(response),
     getGuideForPrescription: async () => response,
-    getLatestPrescription: async () => prescriptionResponse,
+    getLatestPrescription: async () => prescriptionResponseForScenario('normal'),
   }
 
   return { services, guideId: previewIds.guide }
