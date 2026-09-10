@@ -8,7 +8,7 @@
 | 승인일 | 2026-09-09 (최종 승인 `2026-09-09T14:41:52Z`) |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Safety·제품 수용 `APPROVED`, 송은영 (`@phina-io`) — Backend·공개 DTO `APPROVED` |
-| 범위 제외 리뷰 | 남한솔 (`@ansol-nam`) — 환자 표시·오류 UX (본 Decision 승인 요건에서 제외, [사유](#책임-리뷰-범위와-제외-근거)) |
+| 범위 제외 리뷰 | 남한솔 (`@solia142`) — 환자 표시·오류 UX (본 Decision 승인 요건에서 제외, [사유](#책임-리뷰-범위와-제외-근거)) |
 | 추적 Issue·PR | [#173](https://github.com/AI-HealthCare-05/AH_05_04/issues/173) · [PR #382](https://github.com/AI-HealthCare-05/AH_05_04/pull/382) (`MERGED` `2026-09-09T16:50:53Z`) |
 | 승인 Evidence | [`docs/validation/rag/issue-173/decision-approval-evidence.json`](../../validation/rag/issue-173/decision-approval-evidence.json) |
 | 상위 계약 | [`docs/contracts/targets/post-mvp-1/safety-result-v2.md`](../../contracts/targets/post-mvp-1/safety-result-v2.md) |
@@ -59,8 +59,10 @@ Issue [#273](https://github.com/AI-HealthCare-05/AH_05_04/issues/273) Gold 승�
 
 ### 책임 리뷰 범위와 제외 근거
 
-남한솔 (`@ansol-nam`) — 환자 표시·오류 UX 리뷰는 **본 Decision의 승인 필수 요건에서 제외**한다. PR #382 리뷰, PR 코멘트, Issue #173 코멘트 어디에도 참여 기록이 없으며 병합 시점 리뷰 요청도 남아 있지 않다.
+남한솔 (`@solia142`) — 환자 표시·오류 UX 리뷰는 **본 Decision의 승인 필수 요건에서 제외**한다. PR #382 리뷰, PR 코멘트, Issue #173 코멘트 어디에도 참여 기록이 없으며 병합 시점 리뷰 요청도 남아 있지 않다.
+
+> **핸들 정정**: 본 문서와 제안 계약은 최초 작성 시 남한솔의 GitHub 핸들을 `@ansol-nam`으로 기재했으나, 해당 계정은 GitHub에 존재하지 않으며(`GET /users/ansol-nam` → 404) 저장소 collaborator도 아니다. 저장소의 다른 문서(예: `docs/designs/issue-144-optional-review-fields-implementation-plan.md`)가 기록한 실제 핸들 `@solia142`로 정정했다. 잘못된 핸들로는 리뷰 요청 자체가 성립하지 않으므로, 위 "참여 기록 없음"은 본인의 검토 거부가 아니라 요청 경로 부재의 결과일 수 있음을 함께 기록한다.
 
 제외 근거: PD-173이 확정하는 대상은 복합 STALE 상황의 공개 `fallback_code` 사영 **우선순위**와 내부 `stale_reason` 분리 규칙이다. 사영 결과로 선택되는 공개 코드는 이미 승인된 `safety-result-v2.md`의 9개 코드 집합 내부이며 본 Decision은 신규 공개 코드나 환자 대면 문구를 추가하지 않는다. 환자 표시 문구·오류 UX 렌더링은 본 Decision이 규정하지 않는 후속 구현 범위다.
 
-후속 요건: 환자 표시 문구 및 오류 UX 구현 시점에는 남한솔 (`@ansol-nam`) 책임 리뷰를 별도 승인 요건으로 유지한다.
+후속 요건: 환자 표시 문구 및 오류 UX 구현 시점에는 남한솔 (`@solia142`) 책임 리뷰를 별도 승인 요건으로 유지한다.

@@ -64,15 +64,22 @@
   },
   "scope_exclusion": {
     "excluded_reviewer": {
-      "actor_id": "ansol-nam",
+      "actor_id": "solia142",
       "namespace": "GITHUB_LOGIN",
       "role": "PATIENT_DISPLAY_ERROR_UX_REVIEWER"
     },
     "participation": "NONE",
     "participation_detail": "PR #382 리뷰·PR 코멘트·Issue #173 코멘트 모두에서 기록 없음. 병합 시점 requested_reviewers 비어 있음.",
+    "handle_correction": {
+      "previous_actor_id": "ansol-nam",
+      "corrected_actor_id": "solia142",
+      "reason": "PD-173 Decision과 제안 계약이 최초 기재한 @ansol-nam은 GitHub에 존재하지 않는 계정이며(GET /users/ansol-nam -> 404) 저장소 collaborator도 아니다. 저장소의 다른 문서가 기록한 실제 핸들 @solia142로 정정했다.",
+      "corroborating_path": "docs/designs/issue-144-optional-review-fields-implementation-plan.md",
+      "impact_note": "잘못된 핸들로는 리뷰 요청이 성립하지 않으므로, participation=NONE은 검토 거부가 아니라 요청 경로 부재의 결과일 수 있다."
+    },
     "decision": "OUT_OF_SCOPE",
     "rationale": "PD-173은 공개 fallback_code 어휘의 사영 우선순위와 내부 stale_reason 분리만 확정한다. 확정 대상 어휘는 safety-result-v2.md가 이미 승인한 9개 코드 집합 내부이며 신규 공개 코드를 추가하지 않는다. 환자 표시 문구·오류 UX 렌더링은 본 Decision이 규정하지 않는 후속 구현 범위이므로, 해당 책임 리뷰는 PD-173 승인의 필수 요건에서 제외한다.",
-    "follow_up": "환자 표시 문구 및 오류 UX 구현 시 남한솔(@ansol-nam) 책임 리뷰를 별도 요건으로 유지한다."
+    "follow_up": "환자 표시 문구 및 오류 UX 구현 시 남한솔(@solia142) 책임 리뷰를 별도 요건으로 유지한다."
   },
   "automated_checks": {
     "checked_commit_sha": "3d63fc5a59a4ce4d66b0bb0ae5d16742e9c0fc3d",

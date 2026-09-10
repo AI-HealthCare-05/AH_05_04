@@ -7,7 +7,7 @@
 | 승인일 | 2026-09-09 (최종 승인 `2026-09-09T14:41:52Z`) |
 | 작성·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Safety·제품 수용 `APPROVED`, 송은영 (`@phina-io`) — Backend·공개 DTO `APPROVED` |
-| 범위 제외 리뷰 | 남한솔 (`@ansol-nam`) — 환자 표시·오류 UX (승인 요건에서 제외, [근거 Decision 참조](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#책임-리뷰-범위와-제외-근거)) |
+| 범위 제외 리뷰 | 남한솔 (`@solia142`) — 환자 표시·오류 UX (승인 요건에서 제외, [근거 Decision 참조](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#책임-리뷰-범위와-제외-근거)) |
 | 근거 Decision | [`PD-173-20260909`](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md) |
 | 상위 목표 계약 | [`docs/contracts/targets/post-mvp-1/safety-result-v2.md`](../../targets/post-mvp-1/safety-result-v2.md) |
 | 추적 Issue·PR | [#173](https://github.com/AI-HealthCare-05/AH_05_04/issues/173) · [PR #382](https://github.com/AI-HealthCare-05/AH_05_04/pull/382) (`MERGED` `2026-09-09T16:50:53Z`) |
@@ -28,7 +28,7 @@
 
 두 승인의 대상 commit `3d63fc5a`는 PR #382의 최종 `headRefOid`이며 최종 승인 이후 추가 커밋이 없다. 해당 commit의 check run `test`·`lint`·`frontend` 모두 `success`. 원본 evidence는 [`docs/validation/rag/issue-173/decision-approval-evidence.json`](../../../validation/rag/issue-173/decision-approval-evidence.json)에 보관한다.
 
-남한솔 (`@ansol-nam`) — 환자 표시·오류 UX 리뷰는 본 계약 승인 요건에서 제외했다. 본 계약은 이미 승인된 `safety-result-v2.md`의 9개 공개 코드 집합 내부에서 사영 우선순위만 정의하고 신규 공개 코드나 환자 대면 문구를 추가하지 않기 때문이다. 환자 표시 문구·오류 UX 구현 시에는 해당 책임 리뷰가 별도 승인 요건으로 유지된다. 상세 근거는 [PD-173 § 책임 리뷰 범위와 제외 근거](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#책임-리뷰-범위와-제외-근거)를 참조한다.
+남한솔 (`@solia142`) — 환자 표시·오류 UX 리뷰는 본 계약 승인 요건에서 제외했다. 본 계약은 이미 승인된 `safety-result-v2.md`의 9개 공개 코드 집합 내부에서 사영 우선순위만 정의하고 신규 공개 코드나 환자 대면 문구를 추가하지 않기 때문이다. 환자 표시 문구·오류 UX 구현 시에는 해당 책임 리뷰가 별도 승인 요건으로 유지된다. 상세 근거는 [PD-173 § 책임 리뷰 범위와 제외 근거](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#책임-리뷰-범위와-제외-근거)를 참조한다.
 
 ## 복합 STALE 우선순위와 단일 오류 사영
 
