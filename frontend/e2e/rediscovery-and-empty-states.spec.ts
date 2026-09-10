@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
   }, syntheticToken)
 })
 
-test('[CURRENT-RUNTIME][REQ-HIS-009] 현재 처방의 가이드와 기존 채팅 메시지를 서버에서 다시 찾는다', async ({ page }) => {
+test('[CURRENT-RUNTIME][REQ-HIS-009] 현재 처방의 Guide와 기존 Chat session을 재발견해 새 진입 UI를 표시한다', async ({ page }) => {
   const api = await installRequirementsApi(page, {
     existingPrescription: true,
     existingGuide: true,
@@ -20,8 +20,15 @@ test('[CURRENT-RUNTIME][REQ-HIS-009] 현재 처방의 가이드와 기존 채팅
   await expect(page).toHaveURL(new RegExp(`/guides/${ids.guide}$`))
   await expect(page.getByRole('heading', { name: '확인된 복약 안내' })).toBeVisible()
   await page.getByRole('button', { name: '복약 챗봇 도지와 이야기하기' }).click()
-  await expect(page.getByText('기존 합성 질문입니다.')).toBeVisible()
-  await expect(page.getByText('기존 합성 답변입니다.')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/chat[?]prescription_id=${ids.prescription}$`))
+  await expect(page.getByText('안녕하세요, 도지입니다.')).toBeVisible()
+  await expect(page.getByText('무엇을 도와드릴까요?')).toBeVisible()
+  await expect(page.getByRole('button', { name: '아침 약은 언제 먹나요?' })).toBeVisible()
+  await expect(page.getByText('기존 합성 질문입니다.')).toHaveCount(0)
+  await expect(page.getByText('기존 합성 답변입니다.')).toHaveCount(0)
+  expect(api.chatSessionRediscoveryCount).toBe(1)
+  expect(api.chatSessionCreationCount).toBe(0)
+  expect(api.chatMessagesGetCount).toBe(1)
   expect(await page.evaluate(() => sessionStorage.length)).toBe(1)
   expect(api.unexpectedRequests).toEqual([])
 })
