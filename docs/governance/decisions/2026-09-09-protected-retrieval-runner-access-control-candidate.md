@@ -101,7 +101,7 @@ PR #373 — append-only hash-chain journal(synthetic, global monotonic sequence,
 - global sequence + durable head/checkpoint
 - backup·restore 검증
 
-Authorization·revoke·Freeze·run audit evidence는 각 event 생성 시점 기준 **최소 1년**을 별도로 보장하고, legal hold가 있으면 해제 시까지 보존한다. 단 이는 기존 저장소 정책의 재사용이 아니라 신규 정책안이며, 실제 적용은 Privacy·필요한 외부 승인과 보관 위치가 확정된 뒤에만 가능하다. 보관 위치와 기술적 삭제·복구 방식은 Backend·Security 담당자(송은영)가 제시한다.
+Authorization·revoke·Freeze·run audit evidence는 각 event 생성 시점 기준 **최소 1년**을 별도로 보장하고, legal hold가 있으면 해제 시까지 보존한다. 단 이는 기존 저장소 정책의 재사용이 아니라 신규 정책안이며, 실제 적용은 [`docs/deployment.md:285`](../../deployment.md)의 **`EXT-PRIV-001`** 승인(정책·승인 인수: 권가빈, 기술 증빙: 송은영)과 보관 위치가 확정된 뒤에만 가능하다. 보관 위치와 기술적 삭제·복구 방식은 Backend·Security 담당자(송은영)가 제시한다.
 
 보존기간의 기산점으로 Freeze 시점을 쓰지 않는다 — Dataset은 Freeze 이후에도 계속 운영·평가에 쓰일 수 있어, Freeze 기준 시간 경과만으로는 아직 사용 중인 audit evidence까지 폐기 대상이 될 수 있다. 대신 Dataset version의 명시적인 **운영 종료·폐기 가능 상태**(판정 가능한 lifecycle marker)를 후속 계약으로 정의하고, 그 상태가 구현되기 전까지는 시간 경과만으로 자동 폐기하지 않는다.
 
@@ -109,7 +109,7 @@ Authorization·revoke·Freeze·run audit evidence는 각 event 생성 시점 기
 
 Dataset 원본(질문·Gold 본문)의 폐기도 §7과 동일하게 **Dataset version의 명시적인 운영 종료·폐기 가능 상태**가 정의·구현되기 전까지는 하지 않는다. 그 상태가 구현된 뒤에는 Custodian의 폐기 요청 + Product·Evaluation 책임자(권가빈)의 독립 승인을 거친다.
 
-현재 kernel enum(`READ|WRITE|FREEZE|RUN`, `GRANT|REVOKE|EXPIRE`, `DENIED|INTENT|SUCCEEDED|UNKNOWN`)에 폐기 이벤트를 억지로 끼워 넣지 않는다. 대신 삭제 전 `INTENT`(Dataset version/digest, 승인, legal hold·backup 조건 결속) → 삭제 후 `SUCCEEDED`/`UNKNOWN` → 재조정 절차를 갖는 별도 disposal audit 계약으로 분리한다. 이는 공유 계약 변경이므로 이 문서와 별도로 계약·구현·테스트가 필요하다(이번 PR 범위 밖, 후속 작업으로 이관).
+현재 kernel enum(`READ|WRITE|FREEZE|RUN`, `GRANT|REVOKE|EXPIRE`, `DENIED|INTENT|SUCCEEDED|UNKNOWN`)에 폐기 이벤트를 억지로 끼워 넣지 않는다. 대신 삭제 전 `INTENT`(Dataset version/digest, 승인, legal hold·backup 조건 결속) → 삭제 후 `SUCCEEDED`/`UNKNOWN` → 재조정 절차를 갖는 별도 disposal audit 계약으로 분리한다. 이는 공유 계약 변경이므로 이 문서와 별도로 계약·구현·테스트가 필요하며, [#425](https://github.com/AI-HealthCare-05/AH_05_04/issues/425)에서 추적한다.
 
 Freeze Receipt와 manifest hash 대조는 Dataset·실행 입력의 identity와 무결성만 확인할 수 있고, 과거 평가 결과를 재현하지는 못한다 — 원본 폐기 후에는 재실행 기반 재현이 불가능하며, 가능한 건 provenance·integrity 확인뿐이다. "원본 재실행을 요구하지 않는다"는 이 문서의 합의 사항이 아니라 별도의 Product·Evaluation 정책 결정이 필요한 사항이며, 그 결정 전까지는 폐기와 재현 요구가 충돌할 수 있는 상태로 남는다.
 
@@ -169,7 +169,9 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 - `backend/app/core/config.py` — §6 credential fail-closed validator 패턴
 - `.github/workflows/checks.yml` — §6 GitHub Actions 현황 확인
 - `docs/privacy-safety.md` — §7 보존기간(다른 값, 전부 미적용), §12 예외 미허용 기조
+- [`docs/deployment.md:285`](../../deployment.md) — §7 `EXT-PRIV-001` 승인 게이트
 - `docs/contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md` — §8 삭제 전 INTENT 기록 선례
+- [#425](https://github.com/AI-HealthCare-05/AH_05_04/issues/425) — §8 disposal audit 계약 후속 Issue
 - `scripts/deployment.sh` — §9 검토 대상 기존 `pg_dump` 백업 메커니즘(재사용 여부 미확정, 선행조건 검토 중)
 - `docs/runbooks/` — §11 참고(장애 복구용, IR 프레이밍 아님)
 - `docs/validation/rag/issue-273/` — §11 사고 증빙 위치
