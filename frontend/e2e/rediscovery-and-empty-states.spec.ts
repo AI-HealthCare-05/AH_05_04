@@ -29,7 +29,7 @@ test('[CURRENT-RUNTIME][REQ-HIS-009] 현재 처방의 Guide와 기존 Chat sessi
   expect(api.chatSessionRediscoveryCount).toBe(1)
   expect(api.chatSessionCreationCount).toBe(0)
   expect(api.chatMessagesGetCount).toBe(1)
-  expect(await page.evaluate(() => sessionStorage.length)).toBe(1)
+  expect(await page.evaluate(() => sessionStorage.length)).toBe(0)
   expect(api.unexpectedRequests).toEqual([])
 })
 
