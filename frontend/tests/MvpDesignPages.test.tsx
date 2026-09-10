@@ -163,6 +163,14 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('가이드 empty 화면')).toBeTruthy()
   })
 
+  it('도지 Bottom Navigation은 prescription_id를 추측하지 않고 /chat으로 이동한다', async () => {
+    renderHome()
+
+    await screen.findByText('오늘도 건강한 하루 되세요')
+    fireEvent.click(screen.getByRole('button', { name: '도지' }))
+    expect(screen.getByText('처방전 ID 없는 챗봇 진입 화면')).toBeTruthy()
+  })
+
   it('HOME-01 Bottom Navigation은 최신 5-tab과 Menu 경로를 유지한다', async () => {
     renderHome()
 
