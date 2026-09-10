@@ -1,6 +1,6 @@
 # Source reject codes v1 — 구현 리뷰안
 
-상태: proposed / 로컬 구현·검증 진행 / 담당 리뷰 전. Target·Current 또는 공개 승인 아님.
+상태: proposed / 로컬 구현·관련 검증 완료 / 담당 리뷰 전. Target·Current 또는 공개 승인 아님.
 작성·구현: 김지혜. Source/Parser 검토: 정현우. DB·무결성 리뷰: 송은영. 제품·Safety: 권가빈.
 근거: 사용자가 제공한 `issue-165-reject-code-proposal.md` v2 및 2026-09-11 진행 지시.
 현우님 의견은 반영된 기준이며, 은영님 사전 의견 없이 구현 후 PR 리뷰를 받는다.
@@ -29,6 +29,7 @@ UNKNOWN/OTHER fallback은 없다. 이 경계는 별도 Decision 리뷰안과 함
 `parser_location`은 `page[{page_number}].record[{record_index}]` 형식이다.
 page_number는 검증된 응답 pageNo(1 이상), record_index는 정렬 이전 원본 배열의 0-based 위치다.
 필드명·원문 식별자를 넣지 않는다. 문법뿐 아니라 페이지 하한과 실제 위치 결속을 검사한다.
+동일 위치의 숫자 표기 차이(예: `page[01].record[00]`)로 중복 Artifact를 추가할 수 없다.
 
 Run의 nullable `reject_code_contract_version`에 실행 전체의 불변 버전을 기록한다.
 실패·거부 0건 실행에도 남기며 과거 NULL을 추정 보정하지 않는다. Artifact별 버전 중복 저장은 없다.

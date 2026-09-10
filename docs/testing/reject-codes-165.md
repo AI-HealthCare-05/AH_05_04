@@ -46,3 +46,21 @@ Source 단위 418건, Ruff·format 통과. 신규 revision 165a0b1c2d3e는 #436 
 `scripts/ci/run_test.sh` 전체 실행은 `envs/.local.env` 부재로 환경 준비 단계에서 중단했다.
 위 검증은 별도 전용 DB 환경으로 직접 실행한 결과이며 전체 CI 통과로 표현하지 않는다.
 운영·AWS·팀원 DB에는 적용하지 않았고, 원격 CI는 푸시하지 않아 실행하지 않았다.
+
+6단계 완료: 계약·Decision·구현·migration·테스트의 최종 정합성을 확인하고
+[로컬 PR 제목·본문 초안](reject-codes-165-pr-draft.md)을 준비했다.
+
+| 완료 조건 | 구현 및 검증 근거 |
+| --- | --- |
+| 세 코드·버전·Operation 고정 | reject_codes.py, test_reject_codes.py의 문서/enum 대조 |
+| 전체 페이지·중복 그룹 전체·원문 유지 | product_rejections.py, test_product_rejections.py 및 DB 통합 |
+| 오류 시 Snapshot/CURRENT 보존 | persistence.py, snapshot_lifecycle.py 및 기존 CURRENT 통합 사례 |
+| 실제 수집 PK 실패 감사 연결 | 실패 Raw Artifact 재검증·복원, 원래 실패 결과 불변 통합 사례 |
+| Run 버전·과거 NULL·최소 권한 | 165a0b1c2d3e migration, 모델/Repository, migration 권한 테스트 |
+| 저장 실패·재시도·정리 경로 | 파일/DB 실패 rollback 통합, 보존·삭제 57건 |
+| 금지 DB 로직 없음 | 정적 검사 및 최종 head 실DB 검사 모두 통과 |
+
+의도된 한계: 기존 내부 API의 과거 parser 호환성은 유지한다. 새 계약 적용에는 새 orchestration이 필요하다.
+#436 최종 병합 상태와 이후 develop 변경은 원격 PR 준비 시 재확인한다.
+이번 계약 작업은 #165 전체 완료나 #166 소비 연결 완료를 의미하지 않는다.
+로컬 단계별 작업 완료. **푸시 필요.**
