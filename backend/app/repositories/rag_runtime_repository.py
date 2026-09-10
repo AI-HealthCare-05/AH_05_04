@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
 
@@ -109,6 +109,54 @@ class RagRuntimeBundleSourceCreate:
     source_purpose: RagRuntimeSourcePurpose
     required: bool = True
     selected_for_operation: bool = True
+
+
+class RagRuntimeExecutionManifestConflictError(RuntimeError):
+    """A stored manifest shares the requested hash but pins a different execution axis."""
+
+
+_MANIFEST_IDENTITY_FIELDS = (
+    "manifest_key",
+    "manifest_version",
+    "schema_version",
+    "git_commit_sha",
+    "worker_artifact_ref",
+    "model_ref",
+    "prompt_ref",
+    "parser_ref",
+    "resolver_ref",
+    "guard_policy_ref",
+)
+
+
+def _assert_manifest_matches(
+    stored: RagRuntimeExecutionManifest,
+    requested: RagRuntimeExecutionManifestCreate,
+) -> None:
+    """Fail closed when a manifest hash is reused for different content.
+
+    ``manifest_hash`` is supplied by the caller, so a hash that matches an existing row does not
+    by itself prove the rows describe the same execution axis.  Reusing a mismatched manifest
+    would silently pin the bundle to something the caller never asked for, which is exactly the
+    evaluated-vs-executed drift this issue exists to prevent.
+    """
+    mismatched = tuple(
+        field for field in _MANIFEST_IDENTITY_FIELDS if getattr(stored, field) != getattr(requested, field)
+    )
+    if mismatched:
+        raise RagRuntimeExecutionManifestConflictError(
+            f"manifest_hash {requested.manifest_hash} is already stored with different {', '.join(mismatched)}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RagRuntimeBundleBuildResult:
+    """What a single RAG-12A build transaction persisted."""
+
+    execution_manifest: RagRuntimeExecutionManifest
+    bundle: RagRuntimeReleaseBundle
+    bundle_sources: tuple[RagRuntimeBundleSource, ...]
+    execution_manifest_reused: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +317,57 @@ class RagRuntimeRepository:
             .order_by(RagRuntimeBundleSource.created_at, RagRuntimeBundleSource.id)
         )
         return list(result.scalars().all())
+
+    async def build_runtime_bundle(
+        self,
+        *,
+        manifest: RagRuntimeExecutionManifestCreate,
+        bundle: RagRuntimeReleaseBundleCreate,
+        bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+    ) -> RagRuntimeBundleBuildResult:
+        """Persist one ``BUILDING`` bundle with its full member set (RAG-12A, Issue #175).
+
+        The caller owns the transaction, so a raised error rolls back the manifest, the bundle
+        and every member together -- there is no partial-bundle path.  Eligibility is decided
+        before this call by ``ai_worker.tasks.rag.runtime_bundle_builder``; this method persists
+        a decision, it does not re-make one.
+
+        Two boundaries are structural rather than checked:
+
+        - ``bundle_status`` is forced to ``BUILDING``.  ``READY``, ``RETIRED`` and the
+          environment pointer belong to RAG-17 (#180), so this method cannot write them.
+        - ``rag_runtime_environment`` and ``rag_runtime_environment_transition`` are neither read
+          nor written, so a build failure has no path to change an existing active pointer.
+
+        Members are created once here and never updated: the repository exposes no member update
+        or delete, which is how "``BUILDING`` member 입력을 임의로 update하지 못한다" holds.
+
+        Raises:
+            RagRuntimeExecutionManifestConflictError: a manifest already stores this hash but
+                describes a different execution axis, so reusing it would bind the bundle to a
+                manifest the caller did not pin.
+        """
+        existing_manifest = await self.get_execution_manifest_by_hash(manifest.manifest_hash)
+        if existing_manifest is not None:
+            _assert_manifest_matches(existing_manifest, manifest)
+        execution_manifest = existing_manifest or await self.create_execution_manifest(manifest)
+
+        created_bundle = await self.create_release_bundle(
+            replace(
+                bundle,
+                execution_manifest_id=execution_manifest.id,
+                bundle_status=RagRuntimeBundleStatus.BUILDING,
+            )
+        )
+        created_sources = tuple(
+            [await self.create_bundle_source(replace(member, bundle_id=created_bundle.id)) for member in bundle_sources]
+        )
+        return RagRuntimeBundleBuildResult(
+            execution_manifest=execution_manifest,
+            bundle=created_bundle,
+            bundle_sources=created_sources,
+            execution_manifest_reused=existing_manifest is not None,
+        )
 
     async def create_environment(self, payload: RagRuntimeEnvironmentCreate) -> RagRuntimeEnvironment:
         environment = RagRuntimeEnvironment(**asdict(payload))
