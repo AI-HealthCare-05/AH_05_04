@@ -362,6 +362,28 @@ class MedicationCandidateRepository:
         await self.session.flush()
         return search
 
+    async def assemble_and_finalize_search(
+        self,
+        *,
+        search: MedicationCandidateSearch,
+        results: list[MedicationCandidateResultCreate],
+        status: MedicationCandidateSearchStatus,
+        finalized_at: datetime,
+        status_reason: str | None = None,
+    ) -> tuple[MedicationCandidateSearch, list[MedicationCandidateSearchResult]]:
+        """결과 저장과 실제 집계 최종화를 묶어 실패 시 부분 결과를 남기지 않습니다."""
+        async with self.session.begin_nested():
+            created = await self.add_results(search=search, results=results)
+            finalized = await self.finalize_search(
+                search=search,
+                status=status,
+                candidate_count=len(results),
+                displayed_candidate_count=sum(item.is_displayed for item in results),
+                finalized_at=finalized_at,
+                status_reason=status_reason,
+            )
+            return finalized, created
+
     async def add_results(
         self,
         *,

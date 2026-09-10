@@ -112,3 +112,21 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - Source lifecycle·Repository 단위·기존 Catalog 회귀 합계 135 passed
 - 현재 Catalog build는 source identity 연결·export 검증 후 save_build 포트를 호출하지만, 실제 DB build adapter는 현재 브랜치에 없음. Catalog 기존 검증 통과를 DB 저장 전환 완료로 해석하지 않는다.
 - 미병합 #404 코드는 가져오지 않음. Catalog DB adapter·Set/hash 저장 및 Source 관리 권한의 운영 연결은 남아 있음.
+
+## Candidate 저장 경계 2단계
+
+- 최종화 Service가 결과 INSERT·실제 집계·최종 상태 UPDATE를 단일 Repository savepoint로 호출
+- 최종화 실패 후 호출자 commit에도 부분 결과 없음, 재시도 성공 및 완료 후 중복 결과 추가 차단
+- Candidate Repository·Identification Service·최종화 단위 검증 31 passed
+- Ruff·생산 코드 Mypy·Trigger/RLS 재도입 검사 통과
+
+## 다음 작업 재개 지점 (Prescription / Source·Catalog / Candidate)
+
+이번 단계는 세 영역의 기초 저장 검증 보강이며 영역 전체 완료가 아니다.
+
+1. Prescription: `prescription-content@1`은 입력과 저장 직후 대조에 연결됨. 아직 부모 medication_count/content_hash 저장, 자식 count 결속·1..N 슬롯 DB 제약, 기존 데이터 검사·backfill, 모든 소비자의 검증 연결, DB 멱등 키가 필요함. 적용된 과거 migration은 변경하지 않고 forward migration으로 전환할 것. 기존 assembly_xid는 아직 존재함.
+2. Source·Catalog: 상태 전이·검증 이력은 Operation 잠금 공유. Source의 나머지 쓰기/승인/철회 관리 권한과 배포 연결 필요. Catalog의 build/save_build 포트·export 검증은 있으나 실제 DB build adapter 미연결. identity 및 Set/hash 계약을 정렬한 뒤 원자 저장 구현 필요. 작업 중인 #404를 가져오거나 수정하지 말고 머지 후 통합할 것.
+3. Candidate: Service의 결과 조립·최종화 원자성 구현. 직접 DML 권한 제한과 모든 쓰기 경로 잠금·제거 migration 이후 회귀 검증 필요.
+4. 공통: 기존 DB Trigger 제거와 Runtime/Writer 권한·bootstrap·배포 전환은 미완료. 이 상태로 배포 가능 판정 금지. #402 Check-in 감사도 제거 목록에 유지. 다른 영역을 제외하거나 전체 완료로 표시하지 말 것.
+
+검증은 독립 PostgreSQL 테스트 DB에서 수행했으며 운영 DB는 변경하지 않았다.
