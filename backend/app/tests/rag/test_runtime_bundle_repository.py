@@ -30,7 +30,6 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotVerificationStatus
 from app.core import config
 from app.models.rag_runtime import (
-    RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
     RagRuntimeEnvironmentStatus,
     RagRuntimeEnvironmentTransition,
@@ -38,7 +37,6 @@ from app.models.rag_runtime import (
     RagRuntimeReleaseBundle,
     RagRuntimeSourcePurpose,
 )
-from app.models.rag_source import RagSnapshotVerificationStatus
 from app.repositories.rag_runtime_repository import (
     RagRuntimeBundleBuildError,
     RagRuntimeBundleNotBuildableError,
@@ -105,9 +103,7 @@ async def _create_source_snapshot(session: AsyncSession):
             canonicalization_spec_version="canonical-v1",
             record_count=1,
             rejected_record_count=0,
-            verification_status=RagSnapshotVerificationStatus.CURRENT,
             collected_at=datetime.now(config.TIMEZONE),
-            verified_at=datetime.now(config.TIMEZONE),
         )
     )
 
@@ -222,8 +218,16 @@ def _source_creates(request: RuntimeBundleBuildRequest) -> tuple[RagRuntimeBundl
     )
 
 
-async def _count(session: AsyncSession, model: type) -> int:
-    result = await session.execute(select(func.count()).select_from(model))
+async def _count(session: AsyncSession, model: type, *where: object) -> int:
+    """이 테스트가 만든 행만 센다.
+
+    전역 count는 같은 lane의 다른 테스트가 만든 Bundle·Manifest에 영향받아 랜덤 순서에서
+    깨진다. 단정은 항상 이 테스트의 hash/id로 한정한다.
+    """
+    statement = select(func.count()).select_from(model)
+    for condition in where:
+        statement = statement.where(condition)  # type: ignore[arg-type]
+    result = await session.execute(statement)
     return int(result.scalar_one())
 
 
@@ -266,8 +270,17 @@ async def test_rejected_judgment_is_refused_at_the_write_boundary(db_session: As
             bundle_sources=_source_creates(request),
         )
 
-    assert await _count(db_session, RagRuntimeReleaseBundle) == 0
-    assert await _count(db_session, RagRuntimeExecutionManifest) == 0
+    assert (
+        await _count(db_session, RagRuntimeReleaseBundle, RagRuntimeReleaseBundle.bundle_key == request.bundle_key) == 0
+    )
+    assert (
+        await _count(
+            db_session,
+            RagRuntimeExecutionManifest,
+            RagRuntimeExecutionManifest.manifest_key == request.execution_manifest.manifest_key,
+        )
+        == 0
+    )
 
 
 async def test_rows_differing_from_the_judged_configuration_are_refused(db_session: AsyncSession) -> None:
@@ -288,7 +301,9 @@ async def test_rows_differing_from_the_judged_configuration_are_refused(db_sessi
             bundle_sources=_source_creates(request),
         )
 
-    assert await _count(db_session, RagRuntimeReleaseBundle) == 0
+    assert (
+        await _count(db_session, RagRuntimeReleaseBundle, RagRuntimeReleaseBundle.bundle_key == request.bundle_key) == 0
+    )
 
 
 async def test_dropping_a_member_from_the_judged_set_is_refused(db_session: AsyncSession) -> None:
@@ -306,7 +321,14 @@ async def test_dropping_a_member_from_the_judged_set_is_refused(db_session: Asyn
             bundle_sources=_source_creates(request)[:1],
         )
 
-    assert await _count(db_session, RagRuntimeBundleSource) == 0
+    assert (
+        await _count(
+            db_session,
+            RagRuntimeReleaseBundle,
+            RagRuntimeReleaseBundle.bundle_manifest_hash == outcome.bundle_manifest_hash,
+        )
+        == 0
+    )
 
 
 async def test_empty_member_set_is_refused(db_session: AsyncSession) -> None:
@@ -340,7 +362,14 @@ async def test_build_reuses_an_existing_manifest_instead_of_duplicating_it(db_se
     assert first.persisted is not None and second.persisted is not None
     assert second.persisted.execution_manifest_reused is True
     assert second.persisted.execution_manifest.id == first.persisted.execution_manifest.id
-    assert await _count(db_session, RagRuntimeExecutionManifest) == 1
+    assert (
+        await _count(
+            db_session,
+            RagRuntimeExecutionManifest,
+            RagRuntimeExecutionManifest.manifest_hash == first.persisted.execution_manifest.manifest_hash,
+        )
+        == 1
+    )
 
 
 async def test_reusing_a_stored_hash_whose_content_differs_fails_closed(db_session: AsyncSession) -> None:
@@ -378,16 +407,17 @@ async def test_identical_bundle_content_collides_on_the_unique_constraint(db_ses
     catalog = await _create_source_snapshot(db_session)
     knowledge = await _create_source_snapshot(db_session)
     await execute_runtime_bundle_build(db_session, _request(catalog, knowledge))
-    await db_session.commit()
+    # commit하지 않는다. `isolate_database`의 rollback 경계를 넘겨 커밋하면 이 행이 다른
+    # 테스트로 새어 나가 랜덤 순서에서 실패를 만든다. 같은 transaction 안의 flush만으로도
+    # unique 제약은 동일하게 발동한다.
 
     # Same content under a new bundle_version: content identity excludes the version, so this is
     # the same bundle and uq_rag_runtime_bundle_manifest_hash refuses it by design.
     with pytest.raises(IntegrityError):
         await execute_runtime_bundle_build(db_session, _request(catalog, knowledge, bundle_version="2026.09.10-002"))
+    # rollback 후 잔여 행을 세지 않는다. commit하지 않으므로 rollback은 첫 Bundle까지 되돌리고,
+    # 이 테스트의 주장은 "동일 내용은 unique 제약에서 거부된다" 하나다.
     await db_session.rollback()
-
-    assert await _count(db_session, RagRuntimeReleaseBundle) == 1
-    assert await _count(db_session, RagRuntimeBundleSource) == 2
 
 
 async def test_build_does_not_read_or_change_the_environment_pointer(db_session: AsyncSession) -> None:
@@ -406,7 +436,14 @@ async def test_build_does_not_read_or_change_the_environment_pointer(db_session:
     assert environment.active_bundle_id is None
     assert environment.active_bundle_manifest_hash is None
     assert environment.environment_status is RagRuntimeEnvironmentStatus.SUSPENDED
-    assert await _count(db_session, RagRuntimeEnvironmentTransition) == 0
+    assert (
+        await _count(
+            db_session,
+            RagRuntimeEnvironmentTransition,
+            RagRuntimeEnvironmentTransition.environment_id == environment.id,
+        )
+        == 0
+    )
 
 
 def test_repository_exposes_no_public_member_write_path() -> None:
@@ -464,8 +501,22 @@ async def test_swapping_manifest_content_under_the_judged_hash_is_refused(db_ses
                 bundle_sources=_source_creates(request),
             )
 
-        assert await _count(db_session, RagRuntimeExecutionManifest) == 0, tampered_field
-        assert await _count(db_session, RagRuntimeReleaseBundle) == 0, tampered_field
+        assert (
+            await _count(
+                db_session,
+                RagRuntimeExecutionManifest,
+                RagRuntimeExecutionManifest.manifest_hash == outcome.manifest_hash,
+            )
+            == 0
+        ), tampered_field
+        assert (
+            await _count(
+                db_session,
+                RagRuntimeReleaseBundle,
+                RagRuntimeReleaseBundle.bundle_manifest_hash == outcome.bundle_manifest_hash,
+            )
+            == 0
+        ), tampered_field
 
 
 async def test_manifest_hash_is_recomputed_from_fields_not_trusted(db_session: AsyncSession) -> None:

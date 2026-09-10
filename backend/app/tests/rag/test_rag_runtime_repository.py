@@ -467,6 +467,9 @@ async def test_environment_transition_preserves_activation_history(db_session: A
             bundle_manifest_hash=_hash("c"),
             bundle_status=RagRuntimeBundleStatus.READY,
             governance_revision_ref="governance:test-b",
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
     with pytest.raises(RuntimeEnvironmentTransitionConflictError):
@@ -656,6 +659,9 @@ async def _freshness_resources(session):
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=uuid4().hex * 2,
             bundle_status=RagRuntimeBundleStatus.READY,
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
     environment = await repository.create_environment(

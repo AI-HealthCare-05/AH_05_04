@@ -181,11 +181,10 @@ class RagRuntimeBundleSource(Base):
     Every field that enters ``bundle_manifest_hash`` is stored here, so the hash can be
     recomputed from persisted rows and compared with the stored value.  Without that the hash is
     an opaque token and the ``rag-runtime-v1.md`` requirement to re-verify the Bundle Manifest
-    before a pointer change cannot be met.  ``source_version`` is pinned through a composite FK
-    onto ``uq_rag_source_snapshot_id_version`` rather than trusted as a copied string, so a member
-    cannot claim a version its snapshot does not have.  The single-column snapshot FK from #164 is
-    kept alongside it: the composite constraint subsumes it, but dropping a merged constraint is a
-    wider change than this issue needs.
+    before a pointer change cannot be met.  ``source_version`` is validated against
+    ``rag_source_snapshot`` inside the build transaction, not by a composite FK: depending on
+    #369's ``uq_rag_source_snapshot_id_version`` made that constraint undroppable and broke #369's
+    own downgrade tests.  #398 moved integrity enforcement into Python, and this follows it.
     """
 
     __tablename__ = "rag_runtime_bundle_source"
@@ -195,12 +194,6 @@ class RagRuntimeBundleSource(Base):
             "source_snapshot_id",
             "source_purpose",
             name="uq_rag_runtime_bundle_source_member",
-        ),
-        ForeignKeyConstraint(
-            ["source_snapshot_id", "source_version"],
-            ["rag_source_snapshot.id", "rag_source_snapshot.source_version"],
-            name="fk_rag_runtime_bundle_source_snapshot_version",
-            ondelete="RESTRICT",
         ),
         CheckConstraint(
             f"source_purpose IN ({_sql_in_list(RagRuntimeSourcePurpose)})",

@@ -9,16 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
+import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import asyncpg
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import text
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -29,7 +31,6 @@ MIGRATION_PATH = (
     PROJECT_ROOT / "backend" / "alembic" / "versions" / "175a1b2c3d4e_persist_runtime_bundle_canonical_configuration.py"
 )
 RUNTIME_BUNDLE_REVISION = "175a1b2c3d4e"
-RUNTIME_BUNDLE_BASE_REVISION = "206a1b2c3d4e"
 
 IDENTITY_COLUMNS = {
     "rag_runtime_bundle_source": (
@@ -82,18 +83,92 @@ class FakeConnection:
         return ScalarResult(0)
 
 
-def _alembic_config() -> Config:
-    return Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
+ISOLATED_DATABASE = "runtime_bundle175_migration_test"
+
+
+def _isolated_url(database: str) -> URL:
+    """URL.create를 쓴다 — 문자열 조립은 비밀번호 특수문자에서 host 파싱이 깨진다."""
+    return URL.create(
+        drivername="postgresql+asyncpg",
+        username=config.DB_USER,
+        password=config.DB_PASSWORD,
+        host="127.0.0.1",
+        port=config.DB_EXPOSE_PORT,
+        database=database,
+    )
+
+
+def _run_alembic(*args: str) -> subprocess.CompletedProcess[str]:
+    """전용 DB를 향해 실제 Alembic을 subprocess로 실행한다.
+
+    `backend/alembic/env.py`가 import 시점에 `app_config.database_url`로 `sqlalchemy.url`을
+    덮어쓰기 때문에, in-process `Config.set_main_option`으로는 대상 DB를 바꿀 수 없다. CI가
+    쓰는 방식과 같게 환경변수를 준 별도 프로세스로 실행해 공유 test DB를 전혀 건드리지 않는다.
+
+    격리가 필수인 이유: #398의 `3984b5c6d7e8` downgrade는 무조건 `RuntimeError`를 던진다.
+    공유 DB의 revision을 그 위로 올려두면 이후 downgrade하는 다른 migration 테스트가 모두
+    막히므로, 이 파일은 공유 revision 상태를 바꾸지 않는다.
+    """
+    # 자격증명을 명시적으로 넘긴다. 이 프로세스는 `uv run --env-file .env`로 값을 받지만
+    # subprocess는 .env를 읽지 않으므로, 전달하지 않으면 config가 기본 host로 폴백해 실패한다.
+    environment = {
+        **os.environ,
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": str(config.DB_EXPOSE_PORT),
+        "DB_EXPOSE_PORT": str(config.DB_EXPOSE_PORT),
+        "DB_USER": config.DB_USER,
+        "DB_PASSWORD": config.DB_PASSWORD,
+        "DB_NAME": ISOLATED_DATABASE,
+        "PYTHONPATH": f"{PROJECT_ROOT / 'backend'}:{PROJECT_ROOT}",
+    }
+    return subprocess.run(
+        ["uv", "run", "alembic", "-c", "backend/alembic.ini", *args],
+        cwd=str(PROJECT_ROOT),
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
 
 
 @asynccontextmanager
 async def _connection() -> AsyncIterator[AsyncConnection]:
-    engine = create_async_engine(config.database_url, poolclass=NullPool)
+    engine = create_async_engine(_isolated_url(ISOLATED_DATABASE), poolclass=NullPool)
     try:
         async with engine.connect() as connection:
             yield connection
     finally:
         await engine.dispose()
+
+
+@asynccontextmanager
+async def _maintenance_connection() -> AsyncIterator[asyncpg.Connection]:
+    """CREATE/DROP DATABASE는 raw asyncpg로 연결한다.
+
+    `checks.yml`의 "Verify isolated Source cleanup workflow" step과 같은 방식이다. SQLAlchemy
+    engine 경유는 이 저장소 환경에서 asyncpg SSL 협상 단계의 host 조회로 넘어가 실패한다.
+    """
+    connection = await asyncpg.connect(
+        host="127.0.0.1",
+        port=config.DB_EXPOSE_PORT,
+        user=config.DB_USER,
+        password=config.DB_PASSWORD,
+        database="postgres",
+    )
+    try:
+        yield connection
+    finally:
+        await connection.close()
+
+
+async def _recreate_isolated_database() -> None:
+    async with _maintenance_connection() as connection:
+        await connection.execute(f"DROP DATABASE IF EXISTS {ISOLATED_DATABASE} WITH (FORCE)")
+        await connection.execute(f"CREATE DATABASE {ISOLATED_DATABASE}")
+
+
+async def _drop_isolated_database() -> None:
+    async with _maintenance_connection() as connection:
+        await connection.execute(f"DROP DATABASE IF EXISTS {ISOLATED_DATABASE} WITH (FORCE)")
 
 
 def _hash(char: str) -> str:
@@ -142,7 +217,10 @@ async def _seed_bundle_with_member() -> dict[str, str]:
                     " parser_version, normalization_version, canonicalization_spec_version, record_count, "
                     " rejected_record_count, verification_status, collected_at) "
                     "VALUES (:id, :operation_id, :source_version, :raw, :canonical, 'schema-v1', 'parser-v1', "
-                    " 'normalization-v1', 'canonical-v1', 1, 0, 'CURRENT', now())"
+                    # PENDING + verified_at/effective_at NULL로 넣는다. #398의
+                    # chk_rag_snapshot_verification_seal은 그 밖의 상태에 verification_seal_id를
+                    # 요구하는데, 이 테스트는 snapshot 검증 상태와 무관하고 복합 FK 대상 행만 필요하다.
+                    " 'normalization-v1', 'canonical-v1', 1, 0, 'PENDING', now())"
                 ),
                 {
                     "id": ids["snapshot"],
@@ -199,36 +277,6 @@ async def _seed_bundle_with_member() -> dict[str, str]:
     return ids
 
 
-async def _delete_seeded(ids: dict[str, str]) -> None:
-    """Runtime 행만 지운다.
-
-    `rag_source_snapshot`은 `165e8f706152`의 append-only trigger가 DELETE를 막으므로 남겨 둔다.
-    Source 체인은 seed마다 유일한 code/version을 쓰고, `_require_empty`가 검사하는 대상도
-    Runtime 두 테이블이므로 남아 있어도 이 테스트에 영향이 없다.
-    """
-    async with _connection() as connection:
-        async with connection.begin():
-            for table, key in (
-                ("rag_runtime_bundle_source", "member"),
-                ("rag_runtime_release_bundle", "bundle"),
-                ("rag_runtime_execution_manifest", "manifest"),
-            ):
-                await connection.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": ids[key]})
-
-
-async def _clear_runtime_tables() -> None:
-    """Runtime 테이블만 비운다 — 다른 테스트가 남긴 행과 무관하게 빈 DB 경로를 검증한다."""
-    async with _connection() as connection:
-        async with connection.begin():
-            await connection.execute(
-                text(
-                    "TRUNCATE TABLE rag_runtime_bundle_source, rag_release_evaluation_approval, "
-                    "rag_runtime_environment_transition, rag_runtime_environment, "
-                    "rag_runtime_release_bundle, rag_runtime_execution_manifest"
-                )
-            )
-
-
 async def _count(table: str) -> int:
     async with _connection() as connection:
         result = await connection.execute(text(f"SELECT count(*) FROM {table}"))
@@ -247,10 +295,16 @@ async def _existing_columns(table: str) -> set[str]:
         return {row[0] for row in result}
 
 
-@pytest.fixture(autouse=True)
-def _restore_head() -> Any:
-    yield
-    command.upgrade(_alembic_config(), RUNTIME_BUNDLE_REVISION)
+@pytest.fixture
+def isolated_database_at_head() -> Any:
+    """전용 DB를 만들고 실제 Alembic으로 head까지 올린다. 공유 test DB는 건드리지 않는다."""
+    asyncio.run(_recreate_isolated_database())
+    result = _run_alembic("upgrade", "head")
+    assert result.returncode == 0, result.stdout + result.stderr
+    try:
+        yield
+    finally:
+        asyncio.run(_drop_isolated_database())
 
 
 def test_require_empty_rejects_bundle_rows() -> None:
@@ -274,35 +328,39 @@ def test_require_empty_allows_empty_tables() -> None:
     migration._require_empty(FakeConnection({}))
 
 
-def test_real_alembic_downgrade_is_refused_while_bundle_data_exists() -> None:
+def test_real_alembic_downgrade_is_refused_while_bundle_data_exists(isolated_database_at_head: None) -> None:
     """실제 Alembic downgrade가 거부되고, 행과 identity 컬럼이 모두 보존되어야 한다."""
-    ids = asyncio.run(_seed_bundle_with_member())
-    try:
-        with pytest.raises(RuntimeError, match="Runtime Bundle 행이 존재하면"):
-            command.downgrade(_alembic_config(), RUNTIME_BUNDLE_BASE_REVISION)
+    _ = isolated_database_at_head
+    asyncio.run(_seed_bundle_with_member())
 
-        assert asyncio.run(_count("rag_runtime_release_bundle")) == 1
-        assert asyncio.run(_count("rag_runtime_bundle_source")) == 1
-        for table, columns in IDENTITY_COLUMNS.items():
-            existing = asyncio.run(_existing_columns(table))
-            assert set(columns).issubset(existing), table
-    finally:
-        asyncio.run(_delete_seeded(ids))
+    # `-1`은 이 migration 한 칸만 되돌린다. 부모 revision을 target으로 주면 #398의
+    # 되돌릴 수 없는 `3984b5c6d7e8`까지 내려가 버려 이 테스트의 대상이 흐려진다.
+    result = _run_alembic("downgrade", "-1")
+
+    assert result.returncode != 0
+    assert "Runtime Bundle 행이 존재하면" in result.stdout + result.stderr
+    # 거부 후에도 행과 identity 컬럼이 그대로 남아야 rollback 안전성이 성립한다.
+    assert asyncio.run(_count("rag_runtime_release_bundle")) == 1
+    assert asyncio.run(_count("rag_runtime_bundle_source")) == 1
+    for table, columns in IDENTITY_COLUMNS.items():
+        assert set(columns).issubset(asyncio.run(_existing_columns(table))), table
 
 
-def test_real_alembic_downgrade_succeeds_and_removes_identity_columns_when_empty() -> None:
-    asyncio.run(_clear_runtime_tables())
+def test_real_alembic_downgrade_succeeds_and_removes_identity_columns_when_empty(
+    isolated_database_at_head: None,
+) -> None:
+    _ = isolated_database_at_head
     assert asyncio.run(_count("rag_runtime_release_bundle")) == 0
     assert asyncio.run(_count("rag_runtime_bundle_source")) == 0
 
-    command.downgrade(_alembic_config(), RUNTIME_BUNDLE_BASE_REVISION)
+    downgraded = _run_alembic("downgrade", "-1")
+    assert downgraded.returncode == 0, downgraded.stdout + downgraded.stderr
 
     for table, columns in IDENTITY_COLUMNS.items():
-        existing = asyncio.run(_existing_columns(table))
-        assert set(columns).isdisjoint(existing), table
+        assert set(columns).isdisjoint(asyncio.run(_existing_columns(table))), table
 
-    command.upgrade(_alembic_config(), RUNTIME_BUNDLE_REVISION)
+    restored = _run_alembic("upgrade", RUNTIME_BUNDLE_REVISION)
+    assert restored.returncode == 0, restored.stdout + restored.stderr
 
     for table, columns in IDENTITY_COLUMNS.items():
-        existing = asyncio.run(_existing_columns(table))
-        assert set(columns).issubset(existing), table
+        assert set(columns).issubset(asyncio.run(_existing_columns(table))), table

@@ -103,6 +103,9 @@ async def _create_runtime_graph(session: AsyncSession):
             bundle_status=RagRuntimeBundleStatus.READY,
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("2"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
             candidate_index_manifest_hash=_hash("3"),
         )
     )

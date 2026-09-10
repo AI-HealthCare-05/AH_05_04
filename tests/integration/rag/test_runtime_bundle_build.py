@@ -45,8 +45,8 @@ from app.models.rag_runtime import (
     RagRuntimeReleaseBundle,
     RagRuntimeSourcePurpose,
 )
-from app.models.rag_source import RagSnapshotVerificationStatus
 from app.repositories.rag_runtime_repository import (
+    RagRuntimeBundleSourceVersionMismatchError,
     RagRuntimeEnvironmentCreate,
     RagRuntimeRepository,
 )
@@ -191,9 +191,7 @@ async def _seed_source_snapshot(label: str):
                 canonicalization_spec_version="canonical-v1",
                 record_count=1,
                 rejected_record_count=0,
-                verification_status=RagSnapshotVerificationStatus.CURRENT,
                 collected_at=_NOW,
-                verified_at=_NOW,
             )
         )
 
@@ -388,29 +386,30 @@ async def test_appending_a_member_after_creation_breaks_hash_verification() -> N
 
 
 async def test_member_cannot_claim_a_version_its_snapshot_does_not_have() -> None:
-    """The composite FK, not a copied string, is what pins source_version."""
-    from sqlalchemy.exc import IntegrityError
+    """``source_version`` is validated against the snapshot inside the build transaction.
 
+    This was a composite FK onto ``uq_rag_source_snapshot_id_version``, but that made this
+    migration a hard dependant of #369's unique constraint -- #369's downgrade could then no
+    longer drop it and 11 of its tests broke.  #398 moved integrity enforcement from the database
+    into Python, and this check follows that direction.
+    """
     catalog = await _seed_source_snapshot("CATALOG")
     knowledge = await _seed_source_snapshot("KNOWLEDGE")
-    async with session_factory.begin() as session:
-        execution = await execute_runtime_bundle_build(session, _request(catalog, knowledge))
-    assert execution.persisted is not None
+    request = _request(catalog, knowledge)
+    forged = replace(
+        request,
+        source_members=(
+            replace(request.source_members[0], source_version="api:2026-01-01:forged"),
+            request.source_members[1],
+        ),
+    )
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(RagRuntimeBundleSourceVersionMismatchError):
         async with session_factory.begin() as session:
-            session.add(
-                RagRuntimeBundleSource(
-                    bundle_id=execution.persisted.bundle.id,
-                    source_snapshot_id=catalog.id,
-                    source_purpose=RagRuntimeSourcePurpose.RULE,
-                    source_version="api:2026-01-01:forged",
-                    canonical_checksum=_hash("b"),
-                    approval_version="approval-v1",
-                    scope_policy_hash=_hash("c"),
-                    freshness_policy_hash=_hash("d"),
-                )
-            )
+            await execute_runtime_bundle_build(session, forged)
+
+    assert await _count(RagRuntimeReleaseBundle) == 0
+    assert await _count(RagRuntimeBundleSource) == 0
 
 
 async def test_rejected_request_writes_nothing_and_leaves_the_pointer_untouched() -> None:

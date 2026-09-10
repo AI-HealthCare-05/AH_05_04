@@ -5,10 +5,16 @@ hash is an opaque token: two different pinned configurations can produce differe
 leaving byte-identical rows, and ``rag-runtime-v1.md``'s requirement to re-verify the Bundle
 Manifest before an environment pointer change cannot be satisfied.
 
+``source_version`` is pinned by explicit validation in the build transaction rather than by a
+composite FK onto ``uq_rag_source_snapshot_id_version``.  A composite FK made this migration a
+hard dependant of #369's unique constraint, so #369's own downgrade could no longer drop it and
+11 of its tests broke.  #398 has since moved integrity enforcement from the database into Python,
+which is the direction this follows.
+
 Decision: docs/governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md
 
 Revision ID: 175a1b2c3d4e
-Revises: 206a1b2c3d4e
+Revises: 3984b5c6d7e8
 Create Date: 2026-09-10
 
 Chained after ``206a1b2c3d4e`` (#206 refresh rotation / password reset), not after
@@ -22,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "175a1b2c3d4e"
-down_revision: str | Sequence[str] | None = "206a1b2c3d4e"
+down_revision: str | Sequence[str] | None = "3984b5c6d7e8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -111,32 +117,12 @@ def upgrade() -> None:
     ):
         op.create_check_constraint(name, "rag_runtime_bundle_source", expression)
 
-    # Pin the snapshot version by reference rather than by copied string: the composite FK targets
-    # uq_rag_source_snapshot_id_version, so a member cannot claim a version the snapshot does not
-    # have.  #164's single-column fk_rag_runtime_bundle_source_snapshot is intentionally kept --
-    # the composite constraint subsumes it, but dropping a merged constraint is a wider change
-    # than this issue needs and tests/migration asserts its presence.
-    op.create_foreign_key(
-        "fk_rag_runtime_bundle_source_snapshot_version",
-        "rag_runtime_bundle_source",
-        "rag_source_snapshot",
-        ["source_snapshot_id", "source_version"],
-        ["id", "source_version"],
-        ondelete="RESTRICT",
-    )
-
 
 def downgrade() -> None:
     connection = op.get_bind()
     connection.execute(sa.text("LOCK TABLE rag_runtime_release_bundle IN SHARE ROW EXCLUSIVE MODE"))
     connection.execute(sa.text("LOCK TABLE rag_runtime_bundle_source IN SHARE ROW EXCLUSIVE MODE"))
     _require_empty(connection)
-
-    op.drop_constraint(
-        "fk_rag_runtime_bundle_source_snapshot_version",
-        "rag_runtime_bundle_source",
-        type_="foreignkey",
-    )
 
     for name in (
         "chk_rag_runtime_bundle_source_version_nonblank",

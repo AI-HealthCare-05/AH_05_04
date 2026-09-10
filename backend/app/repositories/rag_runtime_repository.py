@@ -35,6 +35,7 @@ from app.models.rag_runtime import (
     RagRuntimeReleaseBundle,
     RagRuntimeSourcePurpose,
 )
+from app.models.rag_source import RagSourceSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +160,10 @@ class RagRuntimeBundleBuildError(RuntimeError):
 
 class RagRuntimeBundleNotBuildableError(RagRuntimeBundleBuildError):
     """The kernel did not authorise this write, or the rows do not match what it judged."""
+
+
+class RagRuntimeBundleSourceVersionMismatchError(RagRuntimeBundleBuildError):
+    """A member claims a ``source_version`` its snapshot does not have."""
 
 
 MANIFEST_IDENTITY_FIELDS = (
@@ -478,6 +483,28 @@ class RagRuntimeRepository:
         )
         return result.scalar_one_or_none()
 
+    async def _assert_member_versions_exist(self, bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...]) -> None:
+        """Reject any member whose ``(source_snapshot_id, source_version)`` pair does not exist.
+
+        This replaces a composite FK onto ``uq_rag_source_snapshot_id_version``.  The FK would
+        enforce the same rule in the database, but it made this migration a hard dependant of
+        #369's unique constraint -- #369's downgrade could then no longer drop it, breaking 11 of
+        its tests.  #398 moved integrity enforcement from the database into Python, and this
+        follows that direction: one query, fail-closed, inside the same transaction as the write.
+        """
+        wanted = {(member.source_snapshot_id, member.source_version) for member in bundle_sources}
+        result = await self.session.execute(
+            select(RagSourceSnapshot.id, RagSourceSnapshot.source_version).where(
+                RagSourceSnapshot.id.in_({snapshot_id for snapshot_id, _ in wanted})
+            )
+        )
+        existing = {(row[0], row[1]) for row in result}
+        missing = sorted(f"{snapshot_id}@{source_version}" for snapshot_id, source_version in wanted - existing)
+        if missing:
+            raise RagRuntimeBundleSourceVersionMismatchError(
+                "member가 snapshot에 없는 source_version을 주장합니다: " + ", ".join(missing)
+            )
+
     async def _create_bundle_source(self, payload: RagRuntimeBundleSourceCreate) -> RagRuntimeBundleSource:
         """Private on purpose: members are only ever written by :meth:`build_runtime_bundle`.
 
@@ -528,6 +555,7 @@ class RagRuntimeRepository:
                 manifest the caller did not pin.
         """
         _assert_rows_match_outcome(outcome, bundle=bundle, manifest=manifest, bundle_sources=bundle_sources)
+        await self._assert_member_versions_exist(bundle_sources)
         if not bundle_sources:
             raise RagRuntimeBundleBuildError(
                 "member 없는 Bundle은 저장할 수 없습니다. bundle_manifest_hash가 빈 member set을 "
