@@ -46,6 +46,16 @@ def test_detects_raw_sql_write(tmp_path: Path) -> None:
     ]
 
 
+def test_draft_pr_372_catalog_tables_have_no_preapproved_writer(tmp_path: Path) -> None:
+    path = tmp_path / "ai_worker/adapters/sqlalchemy_catalog_write_support.py"
+    path.parent.mkdir(parents=True)
+    path.write_text('statement = "INSERT INTO rag_catalog_set (id) VALUES (:id)"\n')
+
+    assert violations(tmp_path, [str(path.relative_to(tmp_path))]) == [
+        "ai_worker/adapters/sqlalchemy_catalog_write_support.py:1: unapproved write to rag_catalog_set"
+    ]
+
+
 def test_repository_tree_has_no_unapproved_protected_writes() -> None:
     root = Path(__file__).resolve().parents[2]
     paths = [str(path.relative_to(root)) for path in root.rglob("*.py")]

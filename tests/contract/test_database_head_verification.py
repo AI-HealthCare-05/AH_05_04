@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from scripts.ci.verify_database_head import DatabaseHeadState, alembic_paths, migration_heads, validation_errors
+from scripts.ci.verify_database_head import (
+    CATALOG_REMOVED_FUNCTIONS,
+    DatabaseHeadState,
+    alembic_paths,
+    migration_heads,
+    validation_errors,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,6 +25,16 @@ def valid_state() -> DatabaseHeadState:
 
 def test_current_migration_tree_has_one_head() -> None:
     assert migration_heads() == ("398f60718293",)
+
+
+def test_draft_pr_372_catalog_functions_are_in_final_removal_inventory() -> None:
+    assert set(CATALOG_REMOVED_FUNCTIONS) == {
+        "bind_rag_catalog_identity",
+        "validate_rag_medication_search_entry",
+        "reject_rag_catalog_set_mutation",
+        "validate_rag_catalog_set_child_insert",
+        "reject_bound_rag_catalog_member_mutation",
+    }
 
 
 def test_finds_alembic_tree_in_repository_and_app_image_layout(tmp_path: Path) -> None:

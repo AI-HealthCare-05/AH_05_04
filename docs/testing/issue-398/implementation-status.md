@@ -2,7 +2,7 @@
 
 기준 develop: `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`
 
-상태: #398 로컬 코드·검증 완료. 팀 리뷰와 #404 병합 후 통합 대기.
+상태: #398 현재 develop 범위 로컬 코드·검증 완료. Draft PR #372와 #404 병합 후 통합 대기.
 
 ## 금지 원칙
 
@@ -23,7 +23,7 @@
 | Evidence/Citation | 164c migration | provenance 제약을 유지하고 기존 이력 UPDATE·DELETE 권한 제한 및 승인된 Python 저장 경로 검증 |
 | Check-in Audit | 201a migration (#402) | 감사 append-only를 권한으로 보호하고 Check-in 변경과 감사 저장의 동일 transaction·rollback 유지 |
 | 합성 정리 도구 | `synthetic_control.sql` | 리뷰·철회·감사·실행 코드와 명시적 transaction/잠금으로 전환. 전용 definer 함수 호출 제거 |
-| Catalog (#166 미병합) | 별도 작업 브랜치 | Identity 명시 결속·Set/hash 검증과 FK/UNIQUE/NOT NULL. 새 Trigger 생성 코드 이식 금지 |
+| Catalog (#166, Draft PR #372 미병합) | `feat/166-catalog-db-integration` | Identity 명시 결속·Set/hash 검증과 FK/UNIQUE/NOT NULL. 함수 5개·Trigger 15개·`assembly_xid` 생성 코드 이식 금지 |
 
 ## 수행한 작업
 
@@ -314,3 +314,15 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 - 실제 `backend/app/Dockerfile` 이미지를 빌드하고 컨테이너 안에서 최종 DB 검증 모듈과 Alembic 단일 head `398f60718293`을 로드했다.
 
 검증 결과: 전체 계약 243 passed, app 이미지 DB head 로딩 1 passed. 첫 실행의 Docker 소켓·uv 캐시 접근 실패는 필요한 로컬 권한으로 동일 검사를 다시 실행해 해소했으며 코드 실패가 아니었다.
+
+## Draft PR #372 Catalog 범위 추가
+
+- 2026-09-10의 PR #372 head `081cdf3650c7951947d02985ca34e67f324b4ec1`을 확인했다.
+- 신규 migration `166a7b8c9d0e`와 `166b8c9d0e1f`이 함수 5개와 사용자 Trigger 15개를 추가하므로 #398의 명시적 제거·Python 전환 범위에 포함했다.
+- Identity 결속, Search Entry 정합성, Catalog Set 조립·불변성의 Python 대체 기준과 병합 순서를 `python-catalog-integrity-398.md`에 기록했다.
+- 해당 함수 5개를 최종 DB 제거 목록에 추가했다.
+- PR #372의 신규 Catalog 테이블 6개는 아직 승인 Writer가 없는 보호 대상으로 등록했다. draft Adapter를 그대로 병합하면 정적 검사가 실패하며, 검토 후 정확한 Writer와 최소 권한을 함께 연결해야 한다.
+- PR #372는 현재 develop보다 28개 commit 뒤이고 migration 부모가 `164b6c7d8e9f`다. 최신 develop에 맞추지 않고 병합하면 Alembic head가 갈라진다.
+- 이동 중인 PR #372 코드는 현재 브랜치에 cherry-pick하지 않았다. PR #404와 마찬가지로 병합 또는 head 확정 후 통합 구현·전체 migration 검증을 수행한다.
+
+검증 결과: PR #372 제거 함수·보호 Writer 계약을 포함한 관련 계약 12 passed, Ruff, DB 로직 재도입·보호 Writer·diff 검사 통과. GitHub 브라우저 보안 정책 확인 실패로 #398 원격 이슈 본문 편집은 아직 적용하지 못했고, 붙여 넣을 정확한 문구를 Catalog 전환 문서에 기록했다.

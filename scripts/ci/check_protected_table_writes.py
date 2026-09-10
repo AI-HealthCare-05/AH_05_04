@@ -19,6 +19,7 @@ _SOURCE_WRITERS = frozenset(
     }
 )
 _CATALOG_WRITERS = frozenset({"backend/app/repositories/rag_source_catalog_repository.py"})
+_PENDING_CATALOG_WRITERS: frozenset[str] = frozenset()
 
 APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "rag_source": _SOURCE_WRITERS,
@@ -32,6 +33,13 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "rag_medication_ingredient": _CATALOG_WRITERS,
     "rag_medication_alias": _CATALOG_WRITERS,
     "rag_medication_product_component": _CATALOG_WRITERS,
+    # Draft PR #372 tables stay fail-closed until its Python adapter and role policy are reviewed.
+    "rag_entity_identity": _PENDING_CATALOG_WRITERS,
+    "rag_medication_search_entry": _PENDING_CATALOG_WRITERS,
+    "rag_catalog_set": _PENDING_CATALOG_WRITERS,
+    "rag_catalog_set_source": _PENDING_CATALOG_WRITERS,
+    "rag_catalog_set_member": _PENDING_CATALOG_WRITERS,
+    "rag_catalog_set_hash": _PENDING_CATALOG_WRITERS,
     "prescription_version": frozenset({"backend/app/repositories/prescription_repository.py"}),
     "prescription_version_medication": frozenset({"backend/app/repositories/prescription_repository.py"}),
     "medication_candidate_search_result": frozenset({"backend/app/repositories/medication_candidate_repository.py"}),
@@ -56,6 +64,12 @@ MODEL_TABLES = {
     "RagMedicationIngredient": "rag_medication_ingredient",
     "RagMedicationAlias": "rag_medication_alias",
     "RagMedicationProductComponent": "rag_medication_product_component",
+    "RagEntityIdentity": "rag_entity_identity",
+    "RagMedicationSearchEntry": "rag_medication_search_entry",
+    "RagCatalogSet": "rag_catalog_set",
+    "RagCatalogSetSource": "rag_catalog_set_source",
+    "RagCatalogSetMember": "rag_catalog_set_member",
+    "RagCatalogSetHash": "rag_catalog_set_hash",
     "PrescriptionVersion": "prescription_version",
     "PrescriptionVersionMedication": "prescription_version_medication",
     "MedicationCandidateSearchResult": "medication_candidate_search_result",

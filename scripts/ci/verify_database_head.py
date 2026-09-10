@@ -11,6 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[2]
 APPLICATION_SCHEMAS = ("public", "source_cleanup")
+CATALOG_REMOVED_FUNCTIONS = (
+    "bind_rag_catalog_identity",
+    "validate_rag_medication_search_entry",
+    "reject_rag_catalog_set_mutation",
+    "validate_rag_catalog_set_child_insert",
+    "reject_bound_rag_catalog_member_mutation",
+)
 REMOVED_FUNCTIONS = (
     "transition_rag_source_snapshot",
     "guard_rag_snapshot_state_write",
@@ -26,6 +33,7 @@ REMOVED_FUNCTIONS = (
     "check_prescription_version_medications",
     "check_prescription_active_version_medications",
     "check_medication_candidate_search_displayed_count",
+    *CATALOG_REMOVED_FUNCTIONS,
 )
 
 
