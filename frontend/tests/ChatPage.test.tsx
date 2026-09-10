@@ -651,6 +651,163 @@ describe('ChatPage', () => {
     ).toBeTruthy()
   })
 
+  it('대화 재시도 후에도 최초 history는 숨기고 현재 방문 USER와 ASSISTANT를 유지한다', async () => {
+    vi.mocked(getChatSessionForPrescription).mockResolvedValue({
+      data: {
+        session_id: sessionId,
+        prescription_id: prescriptionId,
+        prescription_version_id: prescriptionVersionId,
+        session_status: 'ACTIVE',
+        created_at: '2026-09-08T00:00:00Z',
+      },
+    })
+    vi.mocked(sendChatMessage).mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const hiddenHistory = [
+      {
+        message_id: 'initial-user',
+        role: 'USER' as const,
+        content: '최초 진입 전에 저장된 질문',
+        generation_status: 'NOT_APPLICABLE' as const,
+        created_at: '2026-09-09T00:00:01Z',
+      },
+      {
+        message_id: 'initial-assistant',
+        role: 'ASSISTANT' as const,
+        content: '최초 진입 전에 저장된 답변',
+        generation_status: 'COMPLETED' as const,
+        created_at: '2026-09-09T00:00:02Z',
+      },
+    ]
+    const currentVisitHistory = [
+      ...hiddenHistory,
+      {
+        message_id: 'current-user',
+        role: 'USER' as const,
+        content: '현재 방문에서 보낸 질문',
+        generation_status: 'NOT_APPLICABLE' as const,
+        created_at: '2026-09-10T00:00:01Z',
+      },
+      {
+        message_id: 'current-assistant',
+        role: 'ASSISTANT' as const,
+        content: '현재 방문에서 받은 답변',
+        generation_status: 'COMPLETED' as const,
+        created_at: '2026-09-10T00:00:02Z',
+      },
+    ]
+
+    vi.mocked(getChatMessages)
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: hiddenHistory },
+      })
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: currentVisitHistory },
+      })
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: hiddenHistory },
+      })
+
+    renderPage()
+
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(screen.queryByText('최초 진입 전에 저장된 질문')).toBeNull()
+    expect(screen.queryByText('최초 진입 전에 저장된 답변')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('복약 질문'), {
+      target: { value: '현재 방문에서 보낸 질문' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    expect(await screen.findByText('현재 방문에서 받은 답변')).toBeTruthy()
+    expect(screen.getAllByText('현재 방문에서 보낸 질문')).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
+
+    await waitFor(() => expect(getChatMessages).toHaveBeenCalledTimes(3))
+    expect(screen.queryByText('최초 진입 전에 저장된 질문')).toBeNull()
+    expect(screen.queryByText('최초 진입 전에 저장된 답변')).toBeNull()
+    expect(screen.getAllByText('현재 방문에서 보낸 질문')).toHaveLength(1)
+    expect(screen.getAllByText('현재 방문에서 받은 답변')).toHaveLength(1)
+    expect(getChatSessionForPrescription).toHaveBeenCalledTimes(2)
+    expect(createChatSession).not.toHaveBeenCalled()
+  })
+
+  it('재시도에서 ACTIVE session이 교체되면 이전 session 메시지를 섞지 않는다', async () => {
+    const replacementSessionId = '77777777-7777-4777-8777-777777777777'
+    vi.mocked(getChatSessionForPrescription)
+      .mockResolvedValueOnce({
+        data: {
+          session_id: sessionId,
+          prescription_id: prescriptionId,
+          prescription_version_id: prescriptionVersionId,
+          session_status: 'ACTIVE',
+          created_at: '2026-09-08T00:00:00Z',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          session_id: replacementSessionId,
+          prescription_id: prescriptionId,
+          prescription_version_id: prescriptionVersionId,
+          session_status: 'ACTIVE',
+          created_at: '2026-09-10T00:00:00Z',
+        },
+      })
+    vi.mocked(sendChatMessage).mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.mocked(getChatMessages)
+      .mockResolvedValueOnce({
+        data: { session_id: sessionId, messages: [] },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          session_id: sessionId,
+          messages: [
+            {
+              message_id: 'old-session-user',
+              role: 'USER',
+              content: '이전 session의 현재 방문 질문',
+              generation_status: 'NOT_APPLICABLE',
+              created_at: '2026-09-10T00:00:01Z',
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          session_id: replacementSessionId,
+          messages: [
+            {
+              message_id: 'replacement-history',
+              role: 'ASSISTANT',
+              content: '교체된 session의 기존 답변',
+              generation_status: 'COMPLETED',
+              created_at: '2026-09-10T00:01:00Z',
+            },
+          ],
+        },
+      })
+
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, {
+      target: { value: '이전 session의 현재 방문 질문' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    expect(
+      await screen.findByText('이전 session의 현재 방문 질문'),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
+
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(screen.queryByText('이전 session의 현재 방문 질문')).toBeNull()
+    expect(screen.queryByText('교체된 session의 기존 답변')).toBeNull()
+    expect(getChatMessages).toHaveBeenLastCalledWith(replacementSessionId)
+    expect(createChatSession).not.toHaveBeenCalled()
+  })
+
   it('메시지 실패 후 history 재조회도 실패하면 안전한 오류 상태를 유지한다', async () => {
     const messageRequest = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
     vi.mocked(sendChatMessage).mockReturnValue(messageRequest.promise)

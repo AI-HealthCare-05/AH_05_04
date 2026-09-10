@@ -98,24 +98,100 @@ describe('AssistantMessageContent', () => {
     expect(container.textContent).toBe(content)
   })
 
-  it('link를 활성 링크로 만들지 않고 label과 URL을 모두 표시한다', () => {
+  it('link를 활성 링크로 만들지 않고 label, URL, title을 모두 표시한다', () => {
     const { container } = render(
-      <AssistantMessageContent content="[복약 안내](https://example.invalid/guide)" />,
+      <AssistantMessageContent content={'[복약 안내](https://example.invalid/guide "임의로 복용을 중단하지 마세요")'} />,
     )
 
     expect(container.querySelector('a')).toBeNull()
     expect(container.textContent).toContain('복약 안내')
     expect(container.textContent).toContain('https://example.invalid/guide')
+    expect(container.textContent).toContain('임의로 복용을 중단하지 마세요')
   })
 
-  it('image를 로드하지 않고 alt text와 URL을 모두 표시한다', () => {
+  it('image를 로드하지 않고 alt text, URL, title을 모두 표시한다', () => {
     const { container } = render(
-      <AssistantMessageContent content="![약 봉투 설명](https://example.invalid/medicine.png)" />,
+      <AssistantMessageContent content={'![약 봉투 설명](https://example.invalid/medicine.png "처방전 원본 이미지")'} />,
     )
 
     expect(container.querySelector('img')).toBeNull()
     expect(container.textContent).toContain('약 봉투 설명')
     expect(container.textContent).toContain('https://example.invalid/medicine.png')
+    expect(container.textContent).toContain('처방전 원본 이미지')
+  })
+
+  it('실행 가능한 URL scheme도 inert text로만 보존한다', () => {
+    const { container } = render(
+      <AssistantMessageContent content={'[복약 안내](javascript:alert%281%29 "확인 문구")'} />,
+    )
+
+    expect(container.querySelector('a')).toBeNull()
+    expect(container.textContent).toContain('복약 안내')
+    expect(container.textContent).toContain('javascript:alert%281%29')
+    expect(container.textContent).toContain('확인 문구')
+  })
+
+  it('reference link와 image definition은 전체 원문 plain text로 보존한다', () => {
+    const content = [
+      '[복약 안내][guide]',
+      '![약 봉투 설명][medicine]',
+      '',
+      '[guide]: https://example.invalid/guide "임의로 복용을 중단하지 마세요"',
+      '[medicine]: https://example.invalid/medicine.png "처방전 원본 이미지"',
+    ].join('\n')
+    const { container } = render(
+      <AssistantMessageContent content={content} />,
+    )
+
+    expect(container.querySelector('a')).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.textContent).toBe(content)
+    expect(container.firstElementChild?.classList).toContain(
+      'chat-message__plain-fallback',
+    )
+  })
+
+  it('escaped label과 다음 줄 destination definition도 전체 원문을 보존한다', () => {
+    const content = [
+      '[unused\\]label]:',
+      '  <https://example.invalid/guide> "임의로 복용을 중단하지 마세요"',
+    ].join('\n')
+    const { container } = render(
+      <AssistantMessageContent content={content} />,
+    )
+
+    expect(container.textContent).toBe(content)
+    expect(container.querySelector('a, img, code, pre, script')).toBeNull()
+  })
+
+  it('줄바꿈을 포함한 reference label도 전체 원문을 보존한다', () => {
+    const content = [
+      '주의',
+      '',
+      '[unused',
+      'label]: https://example.invalid/guide "임의로 복용을 중단하지 마세요"',
+    ].join('\n')
+    const { container } = render(
+      <AssistantMessageContent content={content} />,
+    )
+
+    expect(container.textContent).toBe(content)
+    expect(container.querySelector('a, img, code, pre, script')).toBeNull()
+  })
+
+  it('backslash 줄바꿈을 포함한 reference label도 전체 원문을 보존한다', () => {
+    const content = [
+      '주의',
+      '',
+      '[unused\\',
+      'label]: https://example.invalid/guide "임의로 복용을 중단하지 마세요"',
+    ].join('\n')
+    const { container } = render(
+      <AssistantMessageContent content={content} />,
+    )
+
+    expect(container.textContent).toBe(content)
+    expect(container.querySelector('a, img, code, pre, script')).toBeNull()
   })
 
   it('inline code의 text를 누락 없이 표시한다', () => {
@@ -128,24 +204,38 @@ describe('AssistantMessageContent', () => {
   })
 
   it('fenced code block의 모든 줄을 누락 없이 표시한다', () => {
-    const { container } = render(
-      <AssistantMessageContent content={'```text\n첫째 줄\n둘째 줄\n```'} />,
-    )
-
-    expect(container.querySelector('pre')).toBeNull()
-    expect(container.querySelector('code')).toBeNull()
-    expect(container.textContent).toContain('첫째 줄')
-    expect(container.textContent).toContain('둘째 줄')
-  })
-
-  it('raw HTML과 script를 DOM으로 실행하지 않고 문자열로 표시한다', () => {
-    const content = '<strong>HTML 강조</strong>\n<script>window.hacked = true</script>'
+    const content = [
+      '```임의로-복용을-중단하지-마세요',
+      '첫째 줄',
+      '둘째 줄',
+      '```',
+    ].join('\n')
     const { container } = render(
       <AssistantMessageContent content={content} />,
     )
 
+    expect(container.querySelector('pre')).toBeNull()
+    expect(container.querySelector('code')).toBeNull()
+    expect(container.textContent).toBe(content)
+  })
+
+  it('raw HTML과 script를 DOM으로 실행하지 않고 문자열로 표시한다', () => {
+    const content = [
+      '<a href="javascript:alert(1)">복약 안내</a>',
+      '<img src="https://example.invalid/medicine.png" alt="약 봉투 설명">',
+      '<strong>HTML 강조</strong>',
+      '<script>window.hacked = true</script>',
+    ].join('\n')
+    const { container } = render(
+      <AssistantMessageContent content={content} />,
+    )
+
+    expect(container.querySelector('a')).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('strong')).toBeNull()
+    expect(container.textContent).toContain('복약 안내')
+    expect(container.textContent).toContain('약 봉투 설명')
     expect(container.textContent).toContain('<strong>HTML 강조</strong>')
     expect(container.textContent).toContain('<script>window.hacked = true</script>')
     expect('hacked' in window).toBe(false)

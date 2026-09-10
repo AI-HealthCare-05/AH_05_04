@@ -32,6 +32,7 @@ export type ChatPreviewState = {
   prescriptionId: string
   draft?: string
   isSending?: boolean
+  visibleMessages?: ChatMessageData[]
 }
 
 export type ChatPageProps = {
@@ -113,11 +114,16 @@ function reconcileHistoryMessages(
     historyMessages.map((message) => message.message_id),
   )
 
-  for (const optimisticMessage of optimisticUserMessages) {
-    if (canonicalIdByOptimisticId.has(optimisticMessage.message_id)) continue
+  for (const currentMessage of currentMessages) {
+    if (
+      historyMessageIds.has(currentMessage.message_id) ||
+      canonicalIdByOptimisticId.has(currentMessage.message_id)
+    ) {
+      continue
+    }
 
     const currentIndex = currentMessages.findIndex(
-      (message) => message.message_id === optimisticMessage.message_id,
+      (message) => message.message_id === currentMessage.message_id,
     )
     let nextHistoryMessageId: string | undefined
 
@@ -138,14 +144,16 @@ function reconcileHistoryMessages(
     }
 
     if (!nextHistoryMessageId) {
-      mergedMessages.push(optimisticMessage)
+      mergedMessages.push(currentMessage)
+      historyMessageIds.add(currentMessage.message_id)
       continue
     }
 
     const insertionIndex = mergedMessages.findIndex(
       (message) => message.message_id === nextHistoryMessageId,
     )
-    mergedMessages.splice(insertionIndex, 0, optimisticMessage)
+    mergedMessages.splice(insertionIndex, 0, currentMessage)
+    historyMessageIds.add(currentMessage.message_id)
   }
 
   return mergedMessages
@@ -233,6 +241,8 @@ function ChatPage({
   const initializationRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
   const initialHistoryMessageIdsRef = useRef<Set<string>>(new Set())
+  const hasInitialHistorySnapshotRef = useRef(false)
+  const initialHistorySessionIdRef = useRef<string | null>(null)
   const compositionStateRef = useRef<'idle' | 'composing' | 'ended'>('idle')
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const [stateRoutePrescriptionId, setStateRoutePrescriptionId] = useState(
@@ -247,7 +257,7 @@ function ChatPage({
   const [isSending, setIsSending] = useState(previewState?.isSending ?? false)
   const [requiresLogin, setRequiresLogin] = useState(false)
 
-  const initializeChat = useCallback(async () => {
+  const initializeChat = useCallback(async (preserveCurrentVisit = false) => {
     const requestedRoutePrescriptionId = prescriptionId
     let requestedPrescriptionId = requestedRoutePrescriptionId
     const requestId = ++initializationRequestRef.current
@@ -261,8 +271,12 @@ function ChatPage({
     setStateRoutePrescriptionId(requestedRoutePrescriptionId)
     setStatePrescriptionId(requestedPrescriptionId)
     setSessionId(null)
-    setMessages([])
-    initialHistoryMessageIdsRef.current = new Set()
+    if (!preserveCurrentVisit) {
+      setMessages([])
+      initialHistoryMessageIdsRef.current = new Set()
+      hasInitialHistorySnapshotRef.current = false
+      initialHistorySessionIdRef.current = null
+    }
     setDraft(previewState?.draft ?? '')
     setErrorMessage('')
     setIsSending(previewState?.isSending ?? false)
@@ -344,11 +358,31 @@ function ChatPage({
 
       if (!isCurrentRequest()) return
 
-      initialHistoryMessageIdsRef.current = new Set(
-        historyResponse.data.messages.map((message) => message.message_id),
-      )
       setSessionId(activeSessionId)
-      setMessages([])
+      if (
+        preserveCurrentVisit &&
+        hasInitialHistorySnapshotRef.current &&
+        initialHistorySessionIdRef.current === activeSessionId
+      ) {
+        const currentVisitHistory = historyResponse.data.messages.filter(
+          (message) =>
+            !initialHistoryMessageIdsRef.current.has(message.message_id),
+        )
+        setMessages((current) =>
+          reconcileHistoryMessages(
+            current,
+            currentVisitHistory,
+            new Set(current.map((message) => message.message_id)),
+          ),
+        )
+      } else {
+        initialHistoryMessageIdsRef.current = new Set(
+          historyResponse.data.messages.map((message) => message.message_id),
+        )
+        hasInitialHistorySnapshotRef.current = true
+        initialHistorySessionIdRef.current = activeSessionId
+        setMessages(previewState?.visibleMessages ?? [])
+      }
     } catch (error) {
       if (!isCurrentRequest()) return
 
@@ -676,7 +710,7 @@ function ChatPage({
                   <Button
                     fullWidth
                     variant="secondary"
-                    onClick={() => void initializeChat()}
+                    onClick={() => void initializeChat(true)}
                     disabled={currentIsSending}
                   >
                     대화 다시 불러오기

@@ -20,19 +20,25 @@ const allowedMarkdownElements = [
 ] as const
 
 const unsupportedMarkdownText: Components = {
-  a: ({ children, href }) => (
+  a: ({ children, href, title }) => (
     <span>
       {children}
       {href ? ` (${href})` : null}
+      {title ? ` (${title})` : null}
     </span>
   ),
-  img: ({ alt, src }) => (
+  img: ({ alt, src, title }) => (
     <span>
       {alt}
       {src ? ` (${src})` : null}
+      {title ? ` (${title})` : null}
     </span>
   ),
 }
+
+const referenceDefinitionPattern =
+  /^[\t ]{0,3}\[(?:\\(?:[^\r\n]|\r?\n(?=[\t ]*\S))|[^\]\\\r\n]|\r?\n(?=[\t ]*\S)){1,999}\]:/m
+const fencedCodePattern = /^[\t ]{0,3}(?:`{3,}|~{3,})/m
 
 type MarkdownFallbackBoundaryProps = {
   children: ReactNode
@@ -67,6 +73,13 @@ export class MarkdownFallbackBoundary extends Component<
 }
 
 export function AssistantMessageContent({ content }: { content: string }) {
+  if (
+    referenceDefinitionPattern.test(content) ||
+    fencedCodePattern.test(content)
+  ) {
+    return <span className="chat-message__plain-fallback">{content}</span>
+  }
+
   return (
     <MarkdownFallbackBoundary key={content} content={content}>
       <div className="chat-message__markdown">
@@ -74,6 +87,7 @@ export function AssistantMessageContent({ content }: { content: string }) {
           allowedElements={[...allowedMarkdownElements]}
           components={unsupportedMarkdownText}
           unwrapDisallowed
+          urlTransform={(url) => url}
         >
           {content}
         </ReactMarkdown>
