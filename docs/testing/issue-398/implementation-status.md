@@ -2,7 +2,9 @@
 
 기준 develop: `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`
 
-상태: #398 현재 develop 범위 로컬 코드·검증 완료. Draft PR #372와 #404 병합 후 통합 대기.
+상태: Trigger 제거와 Python 무결성 전환 완료. 누락됐던 Source·Catalog 관리 API·권한·감사 경로를 추가하고 PostgreSQL 검증 완료(23 passed). 관리 실행 설정·최종 인수 문서는 진행 중. #398 → #291 연계 → #372 순서이며 #404는 병합 후 후속 작업.
+
+아래 단계별 기록은 당시 상태를 보존한 이력이다. 과거 “미완료” 표시는 최신 상태를 의미하지 않는다. 관리 경계의 최신 계약은 [PD-398-M1](../../contracts/proposed/source-catalog-management-398.md)을 따른다.
 
 ## 금지 원칙
 

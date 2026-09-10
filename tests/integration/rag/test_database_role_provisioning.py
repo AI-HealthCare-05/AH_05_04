@@ -37,6 +37,7 @@ from infra.python.provision_database_roles import (
     RUNTIME_MUTABLE_TABLES,
     run_provisioning,
 )
+from infra.python.source_management_role_policy import CATALOG_TABLES
 from infra.python.source_role_policy import SOURCE_TABLES
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -112,7 +113,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
         bootstrap()
         async with admin.begin() as connection:
             await connection.execute(text(f'SET LOCAL ROLE "{owner}"'))
-            for table in sorted(RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES | set(SOURCE_TABLES)):
+            for table in sorted(
+                RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES | set(SOURCE_TABLES)
+            ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await connection.execute(
                 text(
@@ -152,6 +155,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
         for engine, sql in [
             (reader, "UPDATE checkin_audit SET id=2"),
             (reader, "DELETE FROM checkin_audit"),
+            (reader, "UPDATE rag_medication_product SET id=2"),
+            (reader, "DELETE FROM rag_medication_alias"),
             (reader, "TRUNCATE checkin_audit"),
             (reader, "UPDATE prescription_version SET id=2"),
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),

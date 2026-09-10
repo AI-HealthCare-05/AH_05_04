@@ -13,15 +13,22 @@ PRODUCTION_ROOTS = ("backend/app/", "ai_worker/", "infra/python/", "scripts/", "
 _SOURCE_WRITERS = frozenset(
     {
         "backend/app/repositories/rag_source_catalog_repository.py",
+        "backend/app/admin/source_management_service.py",
         "ai_worker/adapters/sqlalchemy_source_snapshot_repository.py",
         "ai_worker/adapters/postgresql_source_cleanup.py",
         "ai_worker/tasks/rag/source_cleanup/execution.py",
     }
 )
-_CATALOG_WRITERS = frozenset({"backend/app/repositories/rag_source_catalog_repository.py"})
+_CATALOG_WRITERS = frozenset(
+    {"backend/app/repositories/rag_source_catalog_repository.py", "backend/app/admin/source_management_service.py"}
+)
 _PENDING_CATALOG_WRITERS: frozenset[str] = frozenset()
 
 APPROVED_WRITERS: dict[str, frozenset[str]] = {
+    "source_management_permission": frozenset({"backend/app/admin/source_management_permissions.py"}),
+    "source_management_audit": frozenset(
+        {"backend/app/admin/source_management_permissions.py", "backend/app/admin/source_management_service.py"}
+    ),
     "rag_source": _SOURCE_WRITERS,
     "rag_source_endpoint": _SOURCE_WRITERS,
     "rag_source_operation": _SOURCE_WRITERS,
@@ -53,6 +60,8 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
 }
 
 MODEL_TABLES = {
+    "SourceManagementPermission": "source_management_permission",
+    "SourceManagementAudit": "source_management_audit",
     "RagSource": "rag_source",
     "RagSourceEndpoint": "rag_source_endpoint",
     "RagSourceOperation": "rag_source_operation",

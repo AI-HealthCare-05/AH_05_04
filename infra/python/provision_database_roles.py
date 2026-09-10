@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from infra.python.source_management_role_policy import CATALOG_TABLES, apply_management_role_policy
 from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_policy, quoted_identifier
 
 # Explicit compatibility permissions for domains whose Writer cutover is still pending.
@@ -20,7 +21,6 @@ RUNTIME_MUTABLE_TABLES = frozenset(
     "ocr_job extracted_field chat_session chat_message chat_citation "
     "medication_schedule medication_schedule_time medication_occurrence medication_checkin "
     "knowledge_document knowledge_chunk "
-    "rag_medication_product rag_medication_ingredient rag_medication_alias rag_medication_product_component "
     "eval_dataset eval_case eval_experiment eval_variant eval_run eval_case_result eval_metric eval_failure "
     "rag_runtime_execution_manifest rag_runtime_release_bundle rag_runtime_bundle_source "
     "rag_runtime_environment rag_release_evaluation_approval".split()
@@ -32,7 +32,9 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
 )
 
 
-async def provision_roles(connection: AsyncConnection, *, owner: str, runtime: str, writer: str) -> None:
+async def provision_roles(
+    connection: AsyncConnection, *, owner: str, runtime: str, writer: str, management: str | None = None
+) -> None:
     """Caller must use a single admin transaction; failure must roll it back."""
     owner_sql, runtime_sql, writer_sql = (quoted_identifier(value) for value in (owner, runtime, writer))
     # Validates real role boundaries and rejects the legacy transition function before granting anything.
@@ -62,12 +64,12 @@ async def provision_roles(connection: AsyncConnection, *, owner: str, runtime: s
             )
         )
     present = set(await connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public'")))
-    required = RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES | set(SOURCE_TABLES)
+    required = RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES | set(SOURCE_TABLES)
     if not required.issubset(present):
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
     for tables, privileges in (
         (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
-        (RUNTIME_APPEND_ONLY_TABLES, "SELECT, INSERT"),
+        (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
     ):
         for table in sorted(tables):
             await connection.execute(
@@ -88,6 +90,10 @@ async def provision_roles(connection: AsyncConnection, *, owner: str, runtime: s
     for sequence in sequences:
         await connection.execute(text(f"GRANT USAGE, SELECT ON SEQUENCE {sequence} TO {runtime_sql}"))
     await apply_source_role_policy(connection, schema="public", owner=owner, runtime=runtime, writer=writer)
+    if management:
+        await apply_management_role_policy(
+            connection, owner=owner, runtime=runtime, writer=writer, management=management
+        )
 
 
 async def run_provisioning(environment: Mapping[str, str]) -> None:
@@ -126,6 +132,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
                 owner=environment["DB_MIGRATION_USER"],
                 runtime=environment["DB_APP_USER"],
                 writer=environment["SOURCE_WRITER_USER"],
+                management=environment.get("SOURCE_MANAGEMENT_USER") or None,
             )
     finally:
         await engine.dispose()
