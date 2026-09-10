@@ -110,9 +110,29 @@ class Config(BaseSettings):
         return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     JWT_ALGORITHM: str = "HS256"
+    # PR #404 리뷰(남한솔): Frontend에 refresh/retry 흐름이 아직 없어 10분으로 줄이면
+    # 사용자가 자주 재로그인해야 한다. Frontend가 그 흐름(+single-flight refresh)을
+    # 구현한 뒤 별도 PR에서 단축한다 — 이번 PR은 기존 60분을 유지한다.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
+    # 이 값은 로그인 시점부터의 절대 상한이다. refresh rotation은 매 사용마다 jti만
+    # 교체하고 이 exp는 그대로 유지하므로(RefreshToken.rotate 참고), 계속 활동해도
+    # 세션이 무기한 연장되지 않는다.
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60
     JWT_LEEWAY: int = 5
+
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    # 같은 사용자가 재설정을 반복 요청해 password_reset_token row가 무제한으로 쌓이거나
+    # 이메일이 스팸으로 반복 발송되지 않도록 하는 최소한의 안전장치다. 정교한 분당·시간당
+    # rate limit은 이번 범위에 포함하지 않는다(PD-206 제외 범위).
+    PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: int = 60
+    # PR #404 리뷰(권가빈): 존재하는 계정(추가 INSERT)과 존재하지 않는 계정(조회만) 경로의
+    # 처리시간 차이로 계정 존재 여부가 새는 걸 막기 위해, request_password_reset()이 이
+    # 목표 시각까지 응답을 늦춘다. CI(scripts/measure_password_reset_timing.py, Linux 러너
+    # 기준) 실측 결과 가장 느린 경로도 p99 4ms·최대 14ms 수준이라, 여기에 여유를 두고
+    # 0.03초(30ms)로 잡았다 — 사용자 체감에는 영향 없는 수준이면서 관측된 차이보다 충분히
+    # 크다. 동시 부하가 심해 커넥션 풀 대기가 지배적인 상황에서는 이 값을 넘는 응답이 생길
+    # 수 있고, 그 구간의 잔존 신호는 알려진 리스크로 남겨둔다(계약 문서 참고).
+    PASSWORD_RESET_RESPONSE_TARGET_SECONDS: float = 0.03
 
     # idempotency-v1.md: 원문 Idempotency-Key는 저장하지 않고 versioned HMAC만 저장합니다.
     # 실제 key rotation 절차·물리 secret 관리는 Privacy·보안 승인 후 별도로 확정합니다(문서 "단일 테이블과

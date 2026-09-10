@@ -21,7 +21,9 @@ from app.repositories.medication_candidate_repository import MedicationCandidate
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.ocr_repository import OcrRepository
+from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.chat import ChatService
@@ -442,13 +444,39 @@ def get_chat_service(
     )
 
 
+def get_password_reset_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> PasswordResetRepository:
+    return PasswordResetRepository(session)
+
+
+def get_refresh_session_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> RefreshSessionRepository:
+    return RefreshSessionRepository(session)
+
+
 def get_auth_service(
     repository: Annotated[
         UserRepository,
         Depends(get_user_repository),
     ],
+    password_reset_repository: Annotated[
+        PasswordResetRepository,
+        Depends(get_password_reset_repository),
+    ],
+    refresh_session_repository: Annotated[
+        RefreshSessionRepository,
+        Depends(get_refresh_session_repository),
+    ],
 ) -> AuthService:
-    return AuthService(repository)
+    return AuthService(repository, password_reset_repository, refresh_session_repository)
 
 
 def get_user_manage_service(
