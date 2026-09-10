@@ -36,7 +36,8 @@ from ai_worker.core.runtime_assembly import (
     SessionScopedRejectedDeliveryExecution,
     build_worker_runtime,
     create_clova_ocr_engine,
-    create_protected_retrieval_engine,
+    create_protected_control_engine,
+    create_protected_data_engine,
     create_session_factory,
 )
 from ai_worker.core.stream import WorkerDelivery
@@ -132,15 +133,27 @@ def test_config_builds_database_url_with_special_characters() -> None:
 
 def test_protected_engine_factory_refuses_disabled_configuration() -> None:
     with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
-        create_protected_retrieval_engine(_config())
+        create_protected_data_engine(_config())
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
+        create_protected_control_engine(_config())
 
 
 def test_protected_runtime_surface_is_explicit() -> None:
     assert ProtectedRetrievalAdapters.__name__ == "ProtectedRetrievalAdapters"
 
 
-def test_protected_engine_uses_separate_short_lived_non_logging_connection(
+@pytest.mark.parametrize(
+    ("factory", "expected_user", "application_name"),
+    [
+        (create_protected_data_engine, "protected_actor", "protected-retrieval-data"),
+        (create_protected_control_engine, "protected_controller", "protected-retrieval-control"),
+    ],
+)
+def test_protected_engines_use_distinct_short_lived_non_logging_connections(
     monkeypatch: pytest.MonkeyPatch,
+    factory,
+    expected_user: str,
+    application_name: str,
 ) -> None:
     captured: dict[str, object] = {}
     expected_engine = object()
@@ -157,20 +170,22 @@ def test_protected_engine_uses_separate_short_lived_non_logging_connection(
         PROTECTED_DB_NAME="protected_test",
         PROTECTED_DB_USER="protected_actor",
         PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_CONTROL_USER="protected_controller",
+        PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
         PROTECTED_DB_SCHEMA="synthetic_protected",
     )
 
-    engine = create_protected_retrieval_engine(config)
+    engine = factory(config)
 
     assert engine is expected_engine
-    assert captured["url"] == config.protected_database_url
+    assert captured["url"].username == expected_user
     assert captured["url"] != config.database_url
     assert captured["echo"] is False
     assert captured["pool_pre_ping"] is True
     assert captured["poolclass"] is NullPool
     assert captured["connect_args"] == {
         "timeout": config.DB_CONNECT_TIMEOUT,
-        "server_settings": {"application_name": "protected-retrieval-worker"},
+        "server_settings": {"application_name": application_name},
     }
 
 

@@ -340,6 +340,8 @@ def _protected_settings(**overrides: Any) -> dict[str, Any]:
         "PROTECTED_DB_NAME": "protected_test",
         "PROTECTED_DB_USER": "protected-runner",
         "PROTECTED_DB_PASSWORD": "synthetic-protected-password",
+        "PROTECTED_DB_CONTROL_USER": "protected-controller",
+        "PROTECTED_DB_CONTROL_PASSWORD": "synthetic-control-password",
         "PROTECTED_DB_SCHEMA": "protected_test_schema",
         **overrides,
     }
@@ -350,7 +352,7 @@ def test_protected_retrieval_database_is_disabled_by_default() -> None:
 
     assert config.PROTECTED_RETRIEVAL_ENABLED is False
     with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
-        _ = config.protected_database_url
+        _ = config.protected_data_database_url
 
 
 @pytest.mark.parametrize(
@@ -360,6 +362,8 @@ def test_protected_retrieval_database_is_disabled_by_default() -> None:
         "PROTECTED_DB_NAME",
         "PROTECTED_DB_USER",
         "PROTECTED_DB_PASSWORD",
+        "PROTECTED_DB_CONTROL_USER",
+        "PROTECTED_DB_CONTROL_PASSWORD",
         "PROTECTED_DB_SCHEMA",
     ],
 )
@@ -384,6 +388,16 @@ def test_protected_retrieval_never_falls_back_to_the_worker_connection() -> None
         )
 
 
+def test_protected_data_and_control_identities_must_be_distinct() -> None:
+    with pytest.raises(ValidationError, match="data and control database identities must be distinct"):
+        _config(
+            **_protected_settings(
+                PROTECTED_DB_CONTROL_USER="protected-runner",
+                PROTECTED_DB_CONTROL_PASSWORD="synthetic-protected-password",
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [
@@ -391,6 +405,8 @@ def test_protected_retrieval_never_falls_back_to_the_worker_connection() -> None
         ("PROTECTED_DB_NAME", "replace-with-protected-database"),
         ("PROTECTED_DB_USER", "replace-with-protected-user"),
         ("PROTECTED_DB_PASSWORD", "replace-with-protected-password"),
+        ("PROTECTED_DB_CONTROL_USER", "replace-with-protected-control-user"),
+        ("PROTECTED_DB_CONTROL_PASSWORD", "replace-with-protected-control-password"),
         ("PROTECTED_DB_SCHEMA", "replace-with-protected-schema"),
     ],
 )
@@ -406,8 +422,9 @@ def test_non_local_protected_retrieval_rejects_placeholders(field_name: str, val
 def test_protected_database_url_handles_reserved_password_characters_without_exposing_schema() -> None:
     config = _config(**_protected_settings(PROTECTED_DB_PASSWORD="synthetic@pass/word%value"))
 
-    assert config.protected_database_url.password == "synthetic@pass/word%value"
-    assert config.protected_database_url.username == "protected-runner"
+    assert config.protected_data_database_url.password == "synthetic@pass/word%value"
+    assert config.protected_data_database_url.username == "protected-runner"
+    assert config.protected_control_database_url.username == "protected-controller"
     assert config.PROTECTED_DB_SCHEMA is not None
     assert config.PROTECTED_DB_SCHEMA.get_secret_value() == "protected_test_schema"
     assert "protected_test_schema" not in repr(config)

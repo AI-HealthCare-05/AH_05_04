@@ -155,12 +155,13 @@ class ProtectedRetrievalAdapters:
     operation: PostgresqlProtectedArtifactOperation
 
 
-def create_protected_retrieval_engine(config: Config) -> AsyncEngine:
-    """명시적으로 활성화된 설정에 대해서만 격리 engine을 생성합니다."""
+def _create_protected_engine(config: Config, *, control: bool) -> AsyncEngine:
+    """명시적으로 활성화된 plane에 대해서만 격리 engine을 생성합니다."""
 
     if not config.PROTECTED_RETRIEVAL_ENABLED:
         raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
-    protected_url = config.protected_database_url
+    protected_url = config.protected_control_database_url if control else config.protected_data_database_url
+    application_name = "protected-retrieval-control" if control else "protected-retrieval-data"
     return create_async_engine(
         protected_url,
         echo=False,
@@ -168,9 +169,21 @@ def create_protected_retrieval_engine(config: Config) -> AsyncEngine:
         poolclass=NullPool,
         connect_args={
             "timeout": config.DB_CONNECT_TIMEOUT,
-            "server_settings": {"application_name": "protected-retrieval-worker"},
+            "server_settings": {"application_name": application_name},
         },
     )
+
+
+def create_protected_data_engine(config: Config) -> AsyncEngine:
+    """보호 데이터 작업용 단기 연결 engine을 생성합니다."""
+
+    return _create_protected_engine(config, control=False)
+
+
+def create_protected_control_engine(config: Config) -> AsyncEngine:
+    """승인·권한·Dataset 제어 작업용 단기 연결 engine을 생성합니다."""
+
+    return _create_protected_engine(config, control=True)
 
 
 async def create_protected_retrieval_adapters(

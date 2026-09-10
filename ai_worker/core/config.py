@@ -111,6 +111,8 @@ class Config(BaseSettings):
     PROTECTED_DB_NAME: str | None = None
     PROTECTED_DB_USER: str | None = None
     PROTECTED_DB_PASSWORD: SecretStr | None = None
+    PROTECTED_DB_CONTROL_USER: str | None = None
+    PROTECTED_DB_CONTROL_PASSWORD: SecretStr | None = None
     PROTECTED_DB_SCHEMA: SecretStr | None = None
 
     # Source ingestion은 #166 runtime 연결 전까지 기본 비활성입니다. S3 credential은
@@ -271,13 +273,18 @@ class Config(BaseSettings):
             "PROTECTED_DB_HOST",
             "PROTECTED_DB_NAME",
             "PROTECTED_DB_USER",
+            "PROTECTED_DB_CONTROL_USER",
         ):
             configured = getattr(self, field_name)
             if configured is None or not configured.strip():
                 raise ValueError(f"{field_name} is required when protected retrieval is enabled")
             values[field_name] = configured.strip()
 
-        for field_name in ("PROTECTED_DB_PASSWORD", "PROTECTED_DB_SCHEMA"):
+        for field_name in (
+            "PROTECTED_DB_PASSWORD",
+            "PROTECTED_DB_CONTROL_PASSWORD",
+            "PROTECTED_DB_SCHEMA",
+        ):
             configured = getattr(self, field_name)
             if configured is None or not configured.get_secret_value().strip():
                 raise ValueError(f"{field_name} is required when protected retrieval is enabled")
@@ -295,7 +302,15 @@ class Config(BaseSettings):
             values["PROTECTED_DB_USER"],
         )
         worker_identity = (self.DB_HOST, self.DB_PORT, self.DB_NAME, self.DB_USER)
-        if protected_identity == worker_identity:
+        control_identity = (
+            values["PROTECTED_DB_HOST"],
+            self.PROTECTED_DB_PORT,
+            values["PROTECTED_DB_NAME"],
+            values["PROTECTED_DB_CONTROL_USER"],
+        )
+        if protected_identity == control_identity:
+            raise ValueError("protected data and control database identities must be distinct")
+        if protected_identity == worker_identity or control_identity == worker_identity:
             raise ValueError("protected retrieval requires a separate database identity")
         return self
 
@@ -350,7 +365,7 @@ class Config(BaseSettings):
         )
 
     @property
-    def protected_database_url(self) -> URL:
+    def protected_data_database_url(self) -> URL:
         if not self.PROTECTED_RETRIEVAL_ENABLED:
             raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
         if any(
@@ -369,6 +384,31 @@ class Config(BaseSettings):
             drivername="postgresql+asyncpg",
             username=self.PROTECTED_DB_USER,
             password=self.PROTECTED_DB_PASSWORD.get_secret_value(),
+            host=self.PROTECTED_DB_HOST,
+            port=self.PROTECTED_DB_PORT,
+            database=self.PROTECTED_DB_NAME,
+        )
+
+    @property
+    def protected_control_database_url(self) -> URL:
+        if not self.PROTECTED_RETRIEVAL_ENABLED:
+            raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+        if any(
+            value is None
+            for value in (
+                self.PROTECTED_DB_HOST,
+                self.PROTECTED_DB_NAME,
+                self.PROTECTED_DB_CONTROL_USER,
+                self.PROTECTED_DB_CONTROL_PASSWORD,
+                self.PROTECTED_DB_SCHEMA,
+            )
+        ):
+            raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+        assert self.PROTECTED_DB_CONTROL_PASSWORD is not None
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.PROTECTED_DB_CONTROL_USER,
+            password=self.PROTECTED_DB_CONTROL_PASSWORD.get_secret_value(),
             host=self.PROTECTED_DB_HOST,
             port=self.PROTECTED_DB_PORT,
             database=self.PROTECTED_DB_NAME,
