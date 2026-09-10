@@ -30,7 +30,7 @@ Protected 전용 **schema**로 확정한다(별도 database 아님). 구현은 �
 - ① 전용 role 분리: `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`로 관리 권한 없는 role 생성
 - ② 스키마 권한 기본 회수: `REVOKE CREATE ON SCHEMA public FROM app_user`
 - ③ default privilege로 동일 거부 정책 유지: `ALTER DEFAULT PRIVILEGES FOR ROLE migration_user ... REVOKE UPDATE ON SEQUENCES`, 승인된 함수에만 `GRANT EXECUTE`
-- ④ (신규) `REVOKE ALL ON SCHEMA <protected> FROM PUBLIC`
+- ④ (신규) `REVOKE ALL ON SCHEMA <protected> FROM PUBLIC` — PostgreSQL은 새로 만든 커스텀 스키마에 PUBLIC 권한을 기본 부여하지 않으므로, 이 REVOKE가 실제로 필요한지(이미 no-op인지) 후속 infrastructure adapter PR에서 `\dn+`로 실제 권한을 확인한다.
 
 ## 4. 역할·책임 + 직무 분리 (Segregation of Duties)
 
@@ -48,13 +48,13 @@ PR #373 kernel이 이미 구현한 3개 역할을 그대로 사용한다.
 
 `FREEZE`·`RUN`·grant/revoke의 기본 경계는 `CONTRIBUTING.md`의 "DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선한다" 원칙에 따라 **Application Service**로 둔다.
 
-다만 승인·역할·감사 순서를 DB 트랜잭션 경계와 원자적으로 묶어야 하는 경우에 한해, `migration_user` 소유 SECURITY DEFINER 함수(`transition_rag_source_snapshot`, `165e8f706152_guard_snapshot_transitions.py`가 생성, 정책 근거는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md))와 같은 구조를 예외로 허용한다. `CONTRIBUTING.md`가 이런 예외에 요구하는 5개 항목은 다음과 같다.
+다만 raw SQL로 protected schema에 직접 접근하면 kernel의 Python 레벨 검사(`AuthorizationGuard` 등)를 완전히 우회할 수 있다는 문제에 한해, `migration_user` 소유 SECURITY DEFINER 함수(`transition_rag_source_snapshot`, `165e8f706152_guard_snapshot_transitions.py`가 생성, 정책 근거는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md))와 같은 구조를 예외로 허용한다. `CONTRIBUTING.md`가 이런 예외에 요구하는 5개 항목은 다음과 같다.
 
-1. 단순 구조(Application Service만)로 해결할 수 없는 문제: FREEZE/RUN 시점에 Dataset state·revision·artifact digest가 승인 시점과 동일한지 같은 트랜잭션에서 원자적으로 확인해야 하며, Application Service와 DB 사이의 race window에서 이 확인이 깨질 수 있다.
-2. 제안하는 구조: 승인된 함수에만 `GRANT EXECUTE`를 부여한 SECURITY DEFINER 함수 — 위 SECURITY DEFINER 선례와 동일 패턴.
+1. 단순 구조(Application Service만)로 해결할 수 없는 문제: kernel의 `AuthorizationGuard`는 이미 Application Service 레벨에서 승인·상태 원자성을 보장하지만, 이는 Python 코드 경로를 통할 때만 적용된다. 일반 Runtime role이나 raw SQL 접근이 이 경로를 거치지 않고 protected schema를 직접 UPDATE/DELETE하면 kernel 검사를 완전히 우회한다 — [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)이 해결한 것과 동일한 문제.
+2. 제안하는 구조: 허용 전이만 수행하고 승인·감사 append를 DB 트랜잭션에서 원자적으로 강제하는 SECURITY DEFINER 함수 — 위 선례와 동일 패턴. 일반 Runtime role은 이 함수를 통해서만 상태를 바꿀 수 있고, 테이블 직접 UPDATE 권한은 갖지 않는다.
 3. 추가되는 유지보수 비용: DB 함수 버전 관리와 배포가 Application 코드 배포와 분리되어야 한다.
-4. 검토한 대안: Application Service에서 `SELECT ... FOR UPDATE`로 잠근 뒤 검증 — race window를 완전히 없애지 못해 기각.
-5. 지금 도입해야 하는 이유: 보안·소유권 분리를 위해 독립된 경계가 필요하다는 `CONTRIBUTING.md`의 예외 근거에 해당한다.
+4. 검토한 대안: kernel의 `AuthorizationGuard`만으로 충분한지 검토 — Python 레벨 검사이므로 raw SQL이나 다른 서비스의 직접 쿼리 경로를 막지 못해 기각.
+5. 지금 도입해야 하는 이유: 보안·소유권 분리를 위해 독립된 경계가 필요하다는 `CONTRIBUTING.md`의 예외 근거에 해당하며, 같은 저장소에 이미 승인된 선례(Source Snapshot)가 있다.
 
 사람(Author·Custodian)과 Runner는 공유 login이 아니라 개별 identity + 단기 credential이어야 한다 — 공유 계정을 쓰면 §7 audit가 "누가 접근했는가"를 실제로 답할 수 없게 된다.
 
