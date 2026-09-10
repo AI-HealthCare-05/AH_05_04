@@ -300,6 +300,7 @@ describe('ChatPage', () => {
     fireEvent.change(input, { target: { value: '  Enter 합성 질문  ' } })
 
     expect(fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
 
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
     expect(sendChatMessage).toHaveBeenCalledWith(sessionId, 'Enter 합성 질문')
@@ -363,11 +364,106 @@ describe('ChatPage', () => {
     expect(sendChatMessage).not.toHaveBeenCalled()
   })
 
+  it('한글 composition 종료 후 사용자가 누른 Enter는 정확히 한 번 전송한다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '조합을 끝낸 질문' } })
+
+    fireEvent.keyDown(input, {
+      key: 'Enter',
+      code: 'Enter',
+      isComposing: true,
+      keyCode: 229,
+    })
+    expect(sendChatMessage).not.toHaveBeenCalled()
+
+    fireEvent.compositionEnd(input)
+    expect(
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' }),
+    ).toBe(false)
+
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
+    expect(sendChatMessage).toHaveBeenCalledWith(
+      sessionId,
+      '조합을 끝낸 질문',
+    )
+  })
+
   it('WebKit IME 조합 경계의 Enter는 submit하지 않는다', async () => {
     renderPage()
 
     const input = await screen.findByLabelText('복약 질문')
     fireEvent.change(input, { target: { value: 'WebKit 조합 중 질문' } })
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 229,
+      }),
+    ).toBe(true)
+    expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('composition 종료 후 229로 보고된 의도한 Enter는 한 번 전송한다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: 'WebKit 조합 완료 질문' } })
+    fireEvent.keyDown(input, {
+      key: 'Enter',
+      code: 'Enter',
+      isComposing: true,
+      keyCode: 229,
+    })
+    fireEvent.compositionEnd(input)
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 229,
+      }),
+    ).toBe(false)
+
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
+    expect(sendChatMessage).toHaveBeenCalledWith(
+      sessionId,
+      'WebKit 조합 완료 질문',
+    )
+  })
+
+  it('composition 종료 후 다른 keydown이 ended를 소비하면 229 방어를 복원한다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '상태 reset 질문' } })
+    fireEvent.compositionStart(input)
+    fireEvent.compositionEnd(input)
+
+    fireEvent.keyDown(input, { key: 'ArrowLeft', code: 'ArrowLeft' })
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 229,
+      }),
+    ).toBe(true)
+    expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('새 compositionstart는 이전 ended를 덮어써 조합 Enter를 차단한다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '새 조합 질문' } })
+    fireEvent.compositionStart(input)
+    fireEvent.compositionEnd(input)
+    fireEvent.compositionStart(input)
 
     expect(
       fireEvent.keyDown(input, {

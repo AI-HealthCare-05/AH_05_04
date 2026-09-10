@@ -232,6 +232,7 @@ function ChatPage({
   const initializationRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
   const initialHistoryMessageIdsRef = useRef<Set<string>>(new Set())
+  const compositionStateRef = useRef<'idle' | 'composing' | 'ended'>('idle')
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const [stateRoutePrescriptionId, setStateRoutePrescriptionId] = useState(
     prescriptionId,
@@ -493,15 +494,23 @@ function ChatPage({
   const handleComposerKeyDown = (
     event: React.KeyboardEvent<HTMLTextAreaElement>,
   ) => {
+    if (event.key !== 'Enter' || event.shiftKey) {
+      if (compositionStateRef.current === 'ended') {
+        compositionStateRef.current = 'idle'
+      }
+      return
+    }
+
+    const compositionState = compositionStateRef.current
     if (
-      event.key !== 'Enter' ||
-      event.shiftKey ||
-      event.nativeEvent.isComposing ||
-      event.keyCode === 229
+      compositionState === 'composing' ||
+      (compositionState === 'idle' &&
+        (event.nativeEvent.isComposing || event.keyCode === 229))
     ) {
       return
     }
 
+    compositionStateRef.current = 'idle'
     event.preventDefault()
     event.currentTarget.form?.requestSubmit()
   }
@@ -681,6 +690,12 @@ function ChatPage({
                 className="chat-input"
                 value={currentDraft}
                 onChange={(event) => setDraft(event.target.value)}
+                onCompositionStart={() => {
+                  compositionStateRef.current = 'composing'
+                }}
+                onCompositionEnd={() => {
+                  compositionStateRef.current = 'ended'
+                }}
                 onKeyDown={handleComposerKeyDown}
                 aria-label="복약 질문"
                 placeholder="궁금한 내용을 입력하세요"
