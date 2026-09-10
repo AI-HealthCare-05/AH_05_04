@@ -307,3 +307,10 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 - fixture는 실제 조회 결과가 존재함을 명시적으로 확인하므로 기존 테스트 의미와 실행 경로는 바뀌지 않는다.
 
 검증 결과: Backend·Worker 510개 source 전체 Mypy 통과, Source Writer 테스트 12 passed, Ruff·test inventory·diff 검사 통과.
+
+## 최종 diff 감사: 전체 계약 및 app 이미지
+
+- 전체 계약 테스트 243개를 실행해 배포·권한·API·문서 명령 계약을 함께 확인했다.
+- 실제 `backend/app/Dockerfile` 이미지를 빌드하고 컨테이너 안에서 최종 DB 검증 모듈과 Alembic 단일 head `398f60718293`을 로드했다.
+
+검증 결과: 전체 계약 243 passed, app 이미지 DB head 로딩 1 passed. 첫 실행의 Docker 소켓·uv 캐시 접근 실패는 필요한 로컬 권한으로 동일 검사를 다시 실행해 해소했으며 코드 실패가 아니었다.

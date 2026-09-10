@@ -3,7 +3,7 @@
 import subprocess
 
 
-def test_backend_container_can_import_rag_runtime(storage_dir_built_image: str) -> None:
+def test_backend_container_can_import_runtime_and_load_migration_head(storage_dir_built_image: str) -> None:
     completed = subprocess.run(
         [
             "docker",
@@ -15,7 +15,9 @@ def test_backend_container_can_import_rag_runtime(storage_dir_built_image: str) 
             "--no-sync",
             "python",
             "-c",
-            "from rag_runtime import evaluate_medication_identification_preflight; print('ok')",
+            "from rag_runtime import evaluate_medication_identification_preflight; "
+            "from scripts.ci.verify_database_head import migration_heads; "
+            "assert migration_heads() == ('398f60718293',); print('ok')",
         ],
         check=True,
         capture_output=True,
