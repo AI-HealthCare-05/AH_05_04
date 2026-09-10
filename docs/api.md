@@ -111,7 +111,8 @@ Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까
 | ---: | --- | --- |
 | `400` | `IDEMPOTENCY_KEY_REQUIRED` | `confirm` / `reject` 요청에 `Idempotency-Key` header가 없거나 빈 값입니다. |
 | `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
-| `404` | `CANDIDATE_SEARCH_NOT_FOUND` | 약제, Candidate Search, Result가 없거나 사용자가 접근할 수 없습니다. |
+| `404` | `PRESCRIPTION_MEDICATION_NOT_FOUND` | 요청한 처방 약제가 없거나 인증 사용자의 SELF Profile 소유가 아닙니다. |
+| `404` | `CANDIDATE_SEARCH_NOT_FOUND` | Candidate Search 또는 Result가 없거나 인증 사용자가 접근할 수 없습니다. |
 | `409` | `CANDIDATE_SEARCH_STALE` | Candidate Search가 만료·입력 변경·소비 등으로 더 이상 확인·거절 대상이 아닙니다. |
 | `409` | `IDENTIFICATION_CONTEXT_STALE` | 최신 Identification, Runtime Bundle, Candidate Index 등 확인 context가 더 이상 현재 기준과 맞지 않습니다. |
 | `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 이전과 다른 요청 body가 접수되었습니다. |

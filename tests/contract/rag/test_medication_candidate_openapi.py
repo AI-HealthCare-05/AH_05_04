@@ -41,17 +41,14 @@ def test_candidate_routes_match_approved_paths_and_methods() -> None:
     assert set(paths["/api/v1/medication-candidates/reject"]) == {"post"}
 
 
-def test_candidate_routes_keep_current_operation_ids_and_response_refs() -> None:
+def test_candidate_routes_keep_stable_operation_ids_and_response_refs() -> None:
     get_operation = _operation("get", "/api/v1/medication-candidate-searches/{prescription_version_medication_id}")
     confirm_operation = _operation("post", "/api/v1/medication-candidates/confirm")
     reject_operation = _operation("post", "/api/v1/medication-candidates/reject")
 
-    assert (
-        get_operation["operationId"]
-        == "get_medication_candidate_search_api_v1_medication_candidate_searches__prescription_version_medication_id__get"
-    )
-    assert confirm_operation["operationId"] == "confirm_medication_candidate_api_v1_medication_candidates_confirm_post"
-    assert reject_operation["operationId"] == "reject_medication_candidate_api_v1_medication_candidates_reject_post"
+    assert get_operation["operationId"] == "medication-candidate.search.get"
+    assert confirm_operation["operationId"] == "medication-candidate.confirm"
+    assert reject_operation["operationId"] == "medication-candidate.reject"
 
     assert _json_schema_ref(get_operation, "200") == "#/components/schemas/MedicationCandidateSearchResponse"
     assert _json_schema_ref(confirm_operation, "200") == "#/components/schemas/ConfirmMedicationCandidateResponse"
@@ -101,7 +98,7 @@ def test_candidate_confirm_and_reject_require_idempotency_key_header() -> None:
             "type": "string",
             "minLength": 16,
             "maxLength": 255,
-            "pattern": "^[A-Za-z0-9._:-]+$",
+            "pattern": "[A-Za-z0-9._:-]+",
         }
 
 

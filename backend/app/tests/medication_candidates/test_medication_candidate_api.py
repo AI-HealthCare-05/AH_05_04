@@ -663,7 +663,7 @@ class TestConfirmAndRejectMedicationCandidate:
 
         assert response.status_code == 409
         assert response.json()["code"] == "CANDIDATE_SEARCH_STALE"
-        assert response.json()["details"][0]["reason"] == "SEARCH_EXPIRED"
+        assert response.json()["details"][0]["reason"] == "STALE"
         assert await _count_identifications(db_session, medication_id=medication.id) == 0
 
     async def test_confirm_rejects_medication_mismatch_without_side_effect(
@@ -690,7 +690,7 @@ class TestConfirmAndRejectMedicationCandidate:
 
         assert response.status_code == 409
         assert response.json()["code"] == "CANDIDATE_SEARCH_STALE"
-        assert response.json()["details"][0]["reason"] == "SEARCH_MEDICATION_MISMATCH"
+        assert response.json()["details"][0]["reason"] == "STALE"
         assert await _count_identifications(db_session, medication_id=search_medication.id) == 0
         assert await _count_identifications(db_session, medication_id=other_medication.id) == 0
 
@@ -725,5 +725,5 @@ class TestConfirmAndRejectMedicationCandidate:
         assert first.status_code == status.HTTP_200_OK
         assert second.status_code == 409
         assert second.json()["code"] == "CANDIDATE_SEARCH_STALE"
-        assert second.json()["details"][0]["reason"] == "SEARCH_NOT_READY"
+        assert second.json()["details"][0]["reason"] == "STALE"
         assert await _count_identifications(db_session, medication_id=medication.id) == 1

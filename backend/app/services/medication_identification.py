@@ -386,11 +386,15 @@ class MedicationIdentificationService:
 
     @staticmethod
     def _stale_error(*, field: str, reason: str) -> ApiError:
+        # Target 계약은 만료·입력 변경·이미 소비됨 같은 내부 lifecycle 원인을
+        # 환자 오류 DTO에 노출하지 않는다. 구체 reason은 호출 지점의 분기와
+        # 내부 관측 경계에서만 사용하고, 공개 응답은 일반화한다.
+        del reason
         return ApiError(
             status_code=409,
             code="CANDIDATE_SEARCH_STALE",
             message="현재 사용할 수 없는 약품 후보 검색 결과입니다. 최신 상태를 다시 확인해 주세요.",
-            details=[ErrorDetail(field=field, reason=reason)],
+            details=[ErrorDetail(field=field, reason="STALE")],
         )
 
     @staticmethod

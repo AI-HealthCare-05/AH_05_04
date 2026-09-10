@@ -18,7 +18,11 @@ from app.dtos.medication_candidates import (
     RejectMedicationCandidateResponse,
 )
 from app.models.users import User
-from app.services.medication_candidates import MedicationCandidateService
+from app.services.medication_candidates import (
+    MEDICATION_CANDIDATE_CONFIRM_OPERATION_ID,
+    MEDICATION_CANDIDATE_REJECT_OPERATION_ID,
+    MedicationCandidateService,
+)
 
 medication_candidate_router = APIRouter(tags=["medication-candidates"])
 
@@ -32,7 +36,7 @@ _SERVICE_UNAVAILABLE_RESPONSE = {
 }
 _NOT_FOUND_RESPONSE = {
     "model": ErrorResponse,
-    "description": "대상 약제, Candidate Search, Result가 없거나 인증 사용자의 SELF Profile 소유가 아닙니다.",
+    "description": "대상 약제 또는 Candidate Search/Result가 없거나 인증 사용자의 SELF Profile 소유가 아닙니다.",
 }
 _CONFLICT_RESPONSE = {
     "model": ErrorResponse,
@@ -104,6 +108,7 @@ async def create_medication_candidate_search(
     "/medication-candidate-searches/{prescription_version_medication_id}",
     response_model=MedicationCandidateSearchResponse,
     status_code=status.HTTP_200_OK,
+    operation_id="medication-candidate.search.get",
     responses={
         status.HTTP_404_NOT_FOUND: _NOT_FOUND_RESPONSE,
         status.HTTP_422_UNPROCESSABLE_CONTENT: _VALIDATION_ERROR_RESPONSE,
@@ -134,7 +139,7 @@ _IDEMPOTENCY_KEY_OPENAPI_PARAMETER = {
         "type": "string",
         "minLength": 16,
         "maxLength": 255,
-        "pattern": r"^[A-Za-z0-9._:-]+$",
+        "pattern": r"[A-Za-z0-9._:-]+",
     },
     "description": "Candidate 확인·거절 멱등성 키입니다. 원문 값은 저장하지 않습니다.",
 }
@@ -144,6 +149,7 @@ _IDEMPOTENCY_KEY_OPENAPI_PARAMETER = {
     "/medication-candidates/confirm",
     response_model=ConfirmMedicationCandidateResponse,
     status_code=status.HTTP_200_OK,
+    operation_id=MEDICATION_CANDIDATE_CONFIRM_OPERATION_ID,
     responses={
         status.HTTP_400_BAD_REQUEST: _VALIDATION_ERROR_RESPONSE,
         status.HTTP_404_NOT_FOUND: _NOT_FOUND_RESPONSE,
@@ -173,6 +179,7 @@ async def confirm_medication_candidate(
     "/medication-candidates/reject",
     response_model=RejectMedicationCandidateResponse,
     status_code=status.HTTP_200_OK,
+    operation_id=MEDICATION_CANDIDATE_REJECT_OPERATION_ID,
     responses={
         status.HTTP_400_BAD_REQUEST: _VALIDATION_ERROR_RESPONSE,
         status.HTTP_404_NOT_FOUND: _NOT_FOUND_RESPONSE,
