@@ -56,7 +56,10 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
 )
-from app.services.rag_runtime_bundle_build import execute_runtime_bundle_build
+from app.services.rag_runtime_bundle_build import (
+    execute_runtime_bundle_build,
+    verify_persisted_bundle_manifest_hash,
+)
 
 _ENVIRONMENT = "local"
 _CATALOG_VERSION = "catalog-1.0.0"
@@ -340,26 +343,32 @@ async def test_build_reuses_an_existing_manifest_instead_of_duplicating_it(db_se
     assert await _count(db_session, RagRuntimeExecutionManifest) == 1
 
 
-async def test_reusing_a_hash_for_a_different_manifest_fails_closed(db_session: AsyncSession) -> None:
+async def test_reusing_a_stored_hash_whose_content_differs_fails_closed(db_session: AsyncSession) -> None:
+    """The conflict guard's real target: a stored manifest row that no longer matches its hash.
+
+    Supplying a mismatched manifest+hash pair is now impossible -- the field recomputation rejects
+    it first -- so this exercises the remaining case: a *stored* row whose content drifted, which
+    must not be silently reused to pin a new bundle.
+    """
     catalog = await _create_source_snapshot(db_session)
     knowledge = await _create_source_snapshot(db_session)
-    await execute_runtime_bundle_build(db_session, _request(catalog, knowledge))
-
-    # The stored manifest hash forced onto a different execution axis: silently reusing the stored
-    # row would pin the bundle to an axis the caller never asked for.
     other_catalog = await _create_source_snapshot(db_session)
-    other_request = _request(other_catalog, knowledge)
+
+    first = await execute_runtime_bundle_build(db_session, _request(catalog, knowledge))
+    assert first.persisted is not None
+    first.persisted.execution_manifest.model_ref = "model:drifted:v9"
+    await db_session.flush()
+
+    # A second build with the same execution axis resolves to the same manifest_hash, so it would
+    # reuse the drifted row unless the content is compared.
+    other_request = _request(other_catalog, knowledge, bundle_version="2026.09.10-002")
     other_outcome = evaluate_runtime_bundle_build(other_request)
     assert other_outcome.manifest_hash is not None and other_outcome.bundle_manifest_hash is not None
-    conflicting = replace(
-        _manifest_create(other_request, other_outcome.manifest_hash),
-        worker_artifact_ref="worker:local:other",
-    )
 
     with pytest.raises(RagRuntimeExecutionManifestConflictError):
         await RagRuntimeRepository(db_session).build_runtime_bundle(
             outcome=other_outcome,
-            manifest=conflicting,
+            manifest=_manifest_create(other_request, other_outcome.manifest_hash),
             bundle=_bundle_create(other_request, other_outcome.bundle_manifest_hash),
             bundle_sources=_source_creates(other_request),
         )
@@ -420,3 +429,58 @@ def test_kernel_member_purpose_matches_the_persisted_enum() -> None:
     assert {member.value for member in RuntimeBundleMemberPurpose} == {
         member.value for member in RagRuntimeSourcePurpose
     }
+
+
+async def test_swapping_manifest_content_under_the_judged_hash_is_refused(db_session: AsyncSession) -> None:
+    """Reviewer's reproduction: keep the judged manifest_hash, change model_ref.
+
+    Comparing the supplied ``manifest_hash`` string to the judged one does not prove the manifest
+    fields are the judged ones, so the hash is recomputed from the fields themselves.
+    """
+    catalog = await _create_source_snapshot(db_session)
+    knowledge = await _create_source_snapshot(db_session)
+    request = _request(catalog, knowledge)
+    outcome = evaluate_runtime_bundle_build(request)
+    assert outcome.manifest_hash is not None and outcome.bundle_manifest_hash is not None
+
+    judged = _manifest_create(request, outcome.manifest_hash)
+    tampered_variants = (
+        ("model_ref", replace(judged, model_ref="model:evil:v9")),
+        ("prompt_ref", replace(judged, prompt_ref="prompt:evil:v9")),
+        ("resolver_ref", replace(judged, resolver_ref="resolver:evil:v9")),
+        ("guard_policy_ref", replace(judged, guard_policy_ref="guard:evil:v9")),
+        ("worker_artifact_ref", replace(judged, worker_artifact_ref="worker:evil:v9")),
+        ("schema_version", replace(judged, schema_version="runtime-manifest-v9")),
+    )
+    for tampered_field, tampered in tampered_variants:
+        # The judged manifest_hash is kept verbatim; only the execution axis differs.
+        assert tampered.manifest_hash == outcome.manifest_hash
+
+        with pytest.raises(RagRuntimeBundleNotBuildableError):
+            await RagRuntimeRepository(db_session).build_runtime_bundle(
+                outcome=outcome,
+                manifest=tampered,
+                bundle=_bundle_create(request, outcome.bundle_manifest_hash),
+                bundle_sources=_source_creates(request),
+            )
+
+        assert await _count(db_session, RagRuntimeExecutionManifest) == 0, tampered_field
+        assert await _count(db_session, RagRuntimeReleaseBundle) == 0, tampered_field
+
+
+async def test_manifest_hash_is_recomputed_from_fields_not_trusted(db_session: AsyncSession) -> None:
+    """A manifest whose hash column disagrees with its own fields must not verify."""
+    catalog = await _create_source_snapshot(db_session)
+    knowledge = await _create_source_snapshot(db_session)
+    request = _request(catalog, knowledge)
+
+    execution = await execute_runtime_bundle_build(db_session, request)
+    assert execution.persisted is not None
+    bundle_id = execution.persisted.bundle.id
+    assert await verify_persisted_bundle_manifest_hash(db_session, bundle_id) is True
+
+    # Mutate the stored manifest's execution axis while leaving manifest_hash untouched.
+    execution.persisted.execution_manifest.model_ref = "model:evil:v9"
+    await db_session.flush()
+
+    assert await verify_persisted_bundle_manifest_hash(db_session, bundle_id) is False

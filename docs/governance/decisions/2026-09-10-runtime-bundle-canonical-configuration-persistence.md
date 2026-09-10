@@ -91,10 +91,13 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 | --- | --- |
 | `decision`이 `BUILDABLE`이 아니다 | 판정을 우회한 저장 차단 |
 | `manifest_hash`·`bundle_manifest_hash`가 판정 결과와 다르다 | 다른 해시를 끼워 넣는 것 차단 |
+| Manifest **필드 기준** 재계산 해시 ≠ 판정 해시 | **판정 해시를 유지한 채 `model_ref`·`prompt_ref` 등을 바꾸는 것** 차단 |
 | 저장할 행에서 재계산한 해시 ≠ 판정 해시 | **BUILDABLE 판정을 들고 다른 행을 넘기는 것** 차단 |
 | member set이 비어 있다 | 빈 member set을 가리키는 해시 차단 |
 
-마지막 항목이 핵심이다. outcome만 요구하면 "유효한 판정 + 다른 행" 조합이 남는데, 저장 직전 행 기준 재계산으로 닫는다. 이 검사는 Create DTO만 읽으므로 「구성은 컬럼값만으로 재구성 가능하다」는 §1 원칙을 같은 코드로 증명한다.
+두 재계산 항목이 핵심이다. `manifest_hash`는 호출자가 넘기는 **문자열**이므로 판정 해시와 문자열이 같다는 사실만으로는 Manifest 필드가 판정된 그 값이라는 증거가 되지 않는다. 실제로 유효한 outcome에 `model_ref`만 바꾼 DTO를 넣으면 통과했다(리뷰에서 재현). 따라서 저장 직전과 재조회 시 모두 **Manifest 자기 필드로 `canonical_execution_manifest_hash`를 재계산**해 비교한다. 재조회 경로도 저장된 `manifest_hash` 컬럼을 그대로 쓰지 않고 재계산값을 쓰므로, 컬럼과 필드가 어긋난 행은 스스로를 확인해 주지 못하고 검증 실패로 드러난다.
+
+두 검사는 Create DTO와 저장 행만 읽으므로 「구성은 컬럼값만으로 재구성 가능하다」는 §1 원칙을 같은 코드로 증명한다.
 
 ### 7. member set 불변은 API 차단 + 검증 탐지 2단으로 보장한다
 
@@ -119,6 +122,17 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 
 이 경계를 승인할지, 아니면 kernel을 최상위 `rag_runtime/` 공유 패키지로 옮길지 결정이 필요하다. 후자는 kernel이 의존하는 `ai_worker.tasks.rag.catalog`·`source_ingestion` 모듈까지 함께 옮겨야 하므로 이 Issue 범위를 넘는다.
 
+#### 배포 이미지 반영 (리뷰 지적)
+
+`backend/app/Dockerfile`의 COPY 목록에 `ai_worker`가 없어, 저장소 루트에서 동작하던 build port가 **배포 이미지에서는 import 단계에서 실패**했다. 실제 이미지로 확인한 사실이다.
+
+- COPY 없이 빌드 → `ModuleNotFoundError: No module named 'ai_worker'`
+- `COPY ./ai_worker ./ai_worker` 추가 후 → repository·build service·kernel import 모두 성공 (`/app/.venv/bin/python`, 컨테이너 실행 경로 기준)
+
+import 체인(`runtime_bundle_builder` → `catalog.types`, `source_ingestion.snapshot_lifecycle` → `source_client.contracts`, `artifacts`, `checksums`, `result`, `snapshot_policy`, `source_version`, 그리고 `catalog` 패키지 `__init__`)의 외부 의존을 전수 확인한 결과 **stdlib 전용**이다. 따라서 `app` 의존성 그룹으로 충분하고 `worker` 그룹 패키지(asyncpg·boto3·httpx)는 필요하지 않다.
+
+`rag_runtime/`으로 kernel을 옮기면 이미 COPY되는 패키지만으로 해결되어 이미지에 worker 소스를 넣지 않아도 된다. 다만 `evaluate_snapshot_use_eligibility`와 Catalog 상태 enum까지 옮겨야 하므로 #362 모듈에 손이 간다. 어느 쪽을 택할지 함께 결정한다.
+
 ## 미해소로 남기는 항목
 
 이 Decision은 다음을 해소하지 않는다.
@@ -132,4 +146,4 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 1. `@phina-io`가 migration·복합 FK·CHECK·transaction 경계와 「해시 입력 = 저장 컬럼」 원칙을 승인한다.
 2. `@hazelnutflavoured`가 backfill 금지와 fail-closed 기본값 금지를 승인한다.
 3. 두 승인 모두 PR #416 최신 HEAD 기준으로 기록한다. 승인 전에는 이 Decision을 `Approved`로 전이하지 않으며, PR 병합만으로 승인을 대체하지 않는다.
-4. `backend` → `ai_worker` 경계 결정을 함께 기록한다. 이 경계는 service뿐 아니라 **repository까지** 확장된다 — §6의 행 기준 재계산 검증이 kernel의 `canonical_runtime_bundle_manifest_hash`를 필요로 한다.
+4. `backend` → `ai_worker` 경계 결정을 함께 기록한다. 배포 이미지 COPY 방식(현재)과 `rag_runtime/` 이전 중 어느 쪽인지 명시한다. 이 경계는 service뿐 아니라 **repository까지** 확장된다 — §6의 행 기준 재계산 검증이 kernel의 `canonical_runtime_bundle_manifest_hash`를 필요로 한다.

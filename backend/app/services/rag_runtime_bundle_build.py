@@ -39,6 +39,7 @@ from app.repositories.rag_runtime_repository import (
     RagRuntimeExecutionManifestCreate,
     RagRuntimeReleaseBundleCreate,
     RagRuntimeRepository,
+    recomputed_execution_manifest_hash,
 )
 
 _ARTIFACT_COLUMN_PREFIX = {
@@ -141,7 +142,10 @@ async def load_persisted_bundle_configuration(
 
     return RuntimeBundleCanonicalConfiguration(
         environment_code=bundle.environment_code,
-        execution_manifest_hash=manifest.manifest_hash,
+        # Recomputed from the stored manifest's own fields, not read from its manifest_hash
+        # column: a stored hash that disagrees with its own row must surface as a verification
+        # failure rather than be echoed back and silently confirm itself.
+        execution_manifest_hash=recomputed_execution_manifest_hash(manifest),
         catalog_version=bundle.catalog_version,
         catalog_manifest_hash=bundle.catalog_manifest_hash,
         source_members=tuple(
@@ -168,10 +172,20 @@ async def verify_persisted_bundle_manifest_hash(session: AsyncSession, bundle_id
     This is what makes the hash a verifiable identity rather than an opaque token, and it is also
     how member-set immutability is detected: appending or altering a member changes the recomputed
     hash, so the comparison fails.
+
+    The stored manifest is checked against its own fields first.  A manifest row whose
+    ``manifest_hash`` column disagrees with its ``model_ref``/``prompt_ref``/... is corrupt on its
+    own terms, and reporting that directly is clearer than only observing the downstream bundle
+    hash mismatch it causes.
     """
     repository = RagRuntimeRepository(session)
     bundle = await repository.get_release_bundle_by_id(bundle_id)
     if bundle is None:
+        return False
+    manifest = await repository.get_execution_manifest_by_id(bundle.execution_manifest_id)
+    if manifest is None:
+        return False
+    if recomputed_execution_manifest_hash(manifest) != manifest.manifest_hash:
         return False
     configuration = await load_persisted_bundle_configuration(session, bundle_id)
     if configuration is None:

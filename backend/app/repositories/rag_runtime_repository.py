@@ -13,6 +13,8 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     RuntimeBundleCanonicalConfiguration,
     RuntimeBundleMemberPurpose,
     RuntimeBundleSourceMemberIdentity,
+    RuntimeExecutionManifestInput,
+    canonical_execution_manifest_hash,
     canonical_runtime_bundle_manifest_hash,
 )
 from app.models.rag_candidate import MedicationIdentification, MedicationIdentificationStatus
@@ -159,6 +161,35 @@ class RagRuntimeBundleNotBuildableError(RagRuntimeBundleBuildError):
     """The kernel did not authorise this write, or the rows do not match what it judged."""
 
 
+MANIFEST_IDENTITY_FIELDS = (
+    "manifest_key",
+    "manifest_version",
+    "schema_version",
+    "git_commit_sha",
+    "worker_artifact_ref",
+    "model_ref",
+    "prompt_ref",
+    "parser_ref",
+    "resolver_ref",
+    "guard_policy_ref",
+)
+
+
+def execution_manifest_input_from(source: object) -> RuntimeExecutionManifestInput:
+    """Project a manifest Create DTO or a stored manifest row onto the kernel's hash input.
+
+    Both shapes carry identically named attributes, so one projection serves the write path and
+    the re-read path.  Recomputing from these fields -- rather than trusting a supplied
+    ``manifest_hash`` string -- is what keeps the execution axis bound to the hash.
+    """
+    return RuntimeExecutionManifestInput(**{field: getattr(source, field) for field in MANIFEST_IDENTITY_FIELDS})
+
+
+def recomputed_execution_manifest_hash(source: object) -> str:
+    """Return the manifest hash implied by the manifest's own field values."""
+    return canonical_execution_manifest_hash(execution_manifest_input_from(source))
+
+
 def _assert_rows_match_outcome(
     outcome: RuntimeBundleBuildOutcome,
     *,
@@ -183,6 +214,16 @@ def _assert_rows_match_outcome(
         raise RagRuntimeBundleNotBuildableError("BUILDABLE 판정에 configuration과 두 hash가 모두 있어야 합니다.")
     if manifest.manifest_hash != outcome.manifest_hash:
         raise RagRuntimeBundleNotBuildableError("manifest_hash가 판정 결과와 다릅니다.")
+    # A supplied manifest_hash is just a string: comparing it to the judged hash does not prove
+    # the manifest fields are the ones that were judged.  Without this recomputation a caller
+    # could keep the judged hash and swap model_ref/prompt_ref, binding a different execution
+    # axis to an approved hash.
+    manifest_recomputed = recomputed_execution_manifest_hash(manifest)
+    if manifest_recomputed != outcome.manifest_hash:
+        raise RagRuntimeBundleNotBuildableError(
+            "Execution Manifest 내용이 판정된 구성과 다릅니다. "
+            f"필드 기준 재계산 {manifest_recomputed[:12]}… != 판정 {outcome.manifest_hash[:12]}…"
+        )
     if bundle.bundle_manifest_hash != outcome.bundle_manifest_hash:
         raise RagRuntimeBundleNotBuildableError("bundle_manifest_hash가 판정 결과와 다릅니다.")
 
@@ -250,20 +291,6 @@ class RagRuntimeExecutionManifestConflictError(RagRuntimeBundleBuildError):
     """A stored manifest shares the requested hash but pins a different execution axis."""
 
 
-_MANIFEST_IDENTITY_FIELDS = (
-    "manifest_key",
-    "manifest_version",
-    "schema_version",
-    "git_commit_sha",
-    "worker_artifact_ref",
-    "model_ref",
-    "prompt_ref",
-    "parser_ref",
-    "resolver_ref",
-    "guard_policy_ref",
-)
-
-
 def _assert_manifest_matches(
     stored: RagRuntimeExecutionManifest,
     requested: RagRuntimeExecutionManifestCreate,
@@ -276,7 +303,7 @@ def _assert_manifest_matches(
     evaluated-vs-executed drift this issue exists to prevent.
     """
     mismatched = tuple(
-        field for field in _MANIFEST_IDENTITY_FIELDS if getattr(stored, field) != getattr(requested, field)
+        field for field in MANIFEST_IDENTITY_FIELDS if getattr(stored, field) != getattr(requested, field)
     )
     if mismatched:
         raise RagRuntimeExecutionManifestConflictError(
