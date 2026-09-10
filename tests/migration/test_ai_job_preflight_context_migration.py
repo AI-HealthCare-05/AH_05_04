@@ -216,8 +216,8 @@ async def _seed_preflight_context_graph() -> None:
             await connection.execute(
                 text(
                     """
-                    INSERT INTO chat_message (id, session_id, message_seq, role, content)
-                    VALUES (:chat_message_id, :chat_session_id, 1, 'USER', '합성 질문')
+                    INSERT INTO chat_message (id, session_id, message_seq, role, content, generation_status)
+                    VALUES (:chat_message_id, :chat_session_id, 1, 'USER', '합성 질문', 'NOT_APPLICABLE')
                     """
                 ),
                 ids,
