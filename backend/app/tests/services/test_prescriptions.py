@@ -27,7 +27,7 @@ from app.models.medication_schedules import (
     MedicationScheduleSource,
 )
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.models.prescriptions import Prescription, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import MedicationCandidateSearch, MedicationCandidateSearchStatus
 from app.models.users import Gender, User
@@ -445,7 +445,7 @@ async def test_correction_cancels_only_future_pending_occurrences_without_copyin
     assert new_schedule is None
 
 
-@pytest.mark.parametrize("corruption", ["content", "count", "hash_missing", "medication_missing"])
+@pytest.mark.parametrize("corruption", ["content", "medication_missing"])
 async def test_corrupted_prescription_is_not_returned(db_session, corruption):
     from sqlalchemy import delete, update
 
@@ -457,26 +457,6 @@ async def test_corrupted_prescription_is_not_returned(db_session, corruption):
             update(PrescriptionVersionMedication)
             .where(PrescriptionVersionMedication.prescription_version_id == version_id)
             .values(medication_name="Synthetic changed")
-        )
-    elif corruption == "count":
-        await db_session.execute(
-            update(PrescriptionVersionMedication)
-            .where(PrescriptionVersionMedication.prescription_version_id == version_id)
-            .values(medication_count=None)
-        )
-    elif corruption == "hash_missing":
-        await db_session.execute(
-            update(PrescriptionVersionMedication)
-            .where(PrescriptionVersionMedication.prescription_version_id == version_id)
-            .values(medication_count=None)
-        )
-        await db_session.execute(
-            update(PrescriptionVersion)
-            .where(PrescriptionVersion.id == version_id)
-            .values(
-                medication_count=None,
-                content_hash=None,
-            )
         )
     else:
         await db_session.execute(

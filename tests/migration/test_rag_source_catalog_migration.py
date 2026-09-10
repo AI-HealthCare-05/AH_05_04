@@ -1210,9 +1210,6 @@ def test_runtime_publication_function_requires_approval_and_appends_immutable_se
     async def verify() -> None:
         from sqlalchemy.ext.asyncio import AsyncSession
 
-        from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
-        from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import select_current_snapshot
-
         async with _connection() as connection:
             transaction = await connection.begin()
             try:
@@ -1279,13 +1276,12 @@ def test_runtime_publication_function_requires_approval_and_appends_immutable_se
                 )
                 assert no_evidence.scalar_one() == 0
                 async with AsyncSession(bind=connection) as session:
-                    from uuid import UUID
-
-                    await select_current_snapshot(
-                        repository=SqlAlchemySourceSnapshotRepository(session),
-                        snapshot_id=UUID(ids["snapshot_id"]),
-                        selected_at=datetime.now(UTC),
-                        selected_by="synthetic-selector",
+                    # This test exercises the historical DB function, not the #398 Python replacement.
+                    await session.execute(
+                        text(
+                            "SELECT transition_rag_source_snapshot(:snapshot_id, 'PENDING', 'CURRENT', now(), now(), 'synthetic-selector')"
+                        ),
+                        ids,
                     )
                     state = await session.execute(
                         text("SELECT verification_status FROM rag_source_snapshot WHERE id = :snapshot_id"), ids

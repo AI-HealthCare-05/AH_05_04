@@ -1,6 +1,6 @@
 # PD-398: Python Prescription 무결성
 
-상태: 부분 구현. count/hash·슬롯 제약·권한·제거 migration 및 리뷰 대기.
+상태: count/hash 저장·Backend 소비 검증·NOT NULL 강화 구현. 멱등성·권한·Trigger 제거 및 리뷰 대기.
 구현: 김지혜. 검토: 송은영(Backend·DB), 정현우(후속 소비), 권가빈(제품 수용).
 
 ## 저장 경계
@@ -13,11 +13,11 @@ Service에서 수행하는 기존 버전의 Job·일정·Outbox 무효화를 포
 
 ## 남은 전환 조건
 
-- 부모 medication_count 및 canonical hash, 자식 count 결속·슬롯 제약과 기존 데이터 검증
-- hash 직렬화 계약 및 활성화·소비 시 공통 count/hash 검증
-- DB unique 기반 요청 멱등성과 동시 정정 회귀 검증
-- 불변 테이블 UPDATE·DELETE·TRUNCATE 제한, Writer 실행 경로
-- 기존 assembly_xid·Trigger·함수의 forward migration 제거
+- [x] 부모 medication_count/content_hash, 자식 count 결속·슬롯 제약, 기존 데이터 검증 및 NOT NULL 강화 (398a/398b)
+- [x] hash 직렬화 계약과 Backend 저장·소비 경로의 공통 count/hash 검증
+- [ ] DB unique 기반 요청 멱등성 확장 (기존 동시 정정 검증 유지)
+- [ ] 불변 테이블 UPDATE·DELETE·TRUNCATE 제한, Writer 실행 경로
+- [ ] 기존 assembly_xid·Trigger·함수의 forward migration 제거
 
 과거 migration은 변경하지 않는다. 이 부분 구현만으로 Trigger 제거·배포를 진행하지 않는다.
 
@@ -37,10 +37,26 @@ Repository는 저장 전 입력을 검증하고 실제 저장 열들을 다시 �
 
 기존 버전은 Python v1 hash로 검증·backfill한다. prescription→version→medication의 배타 잠금을 잡은 transaction에서 기존 UPDATE 방지 Trigger만 잠시 중지하고, metadata를 채운 뒤 원래 활성 상태를 복원한다. 새 Trigger를 생성하지 않는다. 잘못된 기존 데이터는 원문을 출력하거나 자동 수정하지 않고 전체 DDL·backfill을 rollback한다. downgrade는 기존 UPDATE 보호가 활성화되어 있을 때만 재계산 가능한 확장 metadata를 제거한다.
 
-아직 nullable인 확장 단계다. 이전 생산자가 null을 기록할 수 있으므로 이 migration만으로 슬롯 봉인 완료를 주장하지 않는다. 모든 생산·소비 경로 전환과 잔여 null 재검증 뒤 NOT NULL 강화가 필요하다. 기존 assembly_xid·불변성 Trigger는 유지하며 운영 배포 전환은 미완료다.
+398a 단독 적용 시에는 nullable인 확장 단계다. 아래 398b에서 재검증 및 NOT NULL 전환을 구현했다. 이전 생산자가 null을 기록할 수 있으므로 이 migration만으로 슬롯 봉인 완료를 주장하지 않는다. 모든 생산·소비 경로 전환과 잔여 null 재검증 뒤 NOT NULL 강화가 필요하다. 기존 assembly_xid·불변성 Trigger는 유지하며 운영 배포 전환은 미완료다.
 
 ## 처방 응답의 소비 검증
 
 공통 verify_prescription_fingerprint는 부모 count/hash 존재, 모든 약 행의 count 결속, 실제 개수·내용 hash를 검증한다. PrescriptionService의 확정·정정·상세·최신 처방 응답 생성에 연결했다. metadata 누락, 약 누락, 내용 변경은 기존 409 PRESCRIPTION_VERSION_UNAVAILABLE / INVALID_VERSION_GRAPH로 차단한다. NULL metadata를 정상 값으로 추측하거나 조용히 다시 계산해 통과시키지 않는다.
 
-Candidate·Guide·Chat·일정·Worker의 개별 직접 소비 경로는 별도 연결 대상이다. 이번 단계는 모든 소비자 전환 완료가 아니다.
+위 내용은 응답 연결 당시의 단계다. 이어서 아래 소비 경로 및 NOT NULL 전환에서 현재 Backend의 나머지 직접 소비 경로를 연결했다.
+
+## 소비 경로 및 NOT NULL 전환
+
+398b2c3d4e는 부모 medication_count/content_hash 및 자식 medication_count를 NOT NULL로 강화한다. 배타 잠금 안에서 모든 버전의 실제 목록을 다시 검증하며 NULL·내용 불일치·불완전 목록을 자동 보정하지 않는다. 오류 시 전체 migration이 rollback되어 이전 nullable 상태를 유지한다.
+
+공통 DB 검증은 소유권 확인 후 실행하며 원문을 반환하지 않는 409 PRESCRIPTION_VERSION_UNAVAILABLE을 사용한다. 적용 경로:
+
+- Prescription 소유 조회·최신 조회·정정 잠금 및 실제 약 목록 반환
+- Candidate 조회·검색/확정/거절의 공통 활성 처방 잠금·Identification preflight
+- Guide 입력 조회 및 생성 전 실제 입력 목록
+- Chat 입력의 get_version_medications: 반환할 ORM 약 목록과 버전 metadata를 같은 조회에서 검증
+- 일정 소유 조회·활성 버전 잠금·일정 발생 생성 대상 조회
+
+다른 사용자 또는 없는 리소스에 대한 기존 404는 무결성 검증보다 먼저 적용한다. 일정 발생 생성은 입력 대상의 버전별로 중복 검증을 제거한다. 현재 Worker에는 직접 처방 DB 내용 읽기 adapter가 없으며 가상의 실행 경로를 추가하지 않는다. 추후 Worker에 직접 읽기를 연결할 때 같은 공통 fingerprint 계약을 적용해야 한다.
+
+NOT NULL은 누락 metadata를 DB에서 차단하는 보조 제약이다. 기존 Trigger·assembly_xid 제거와 최소 권한 배포 전환은 별도 작업으로 남아 있다. 새 Trigger/RLS 정의를 추가하지 않는다.

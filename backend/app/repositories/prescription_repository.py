@@ -15,6 +15,7 @@ from app.models.prescriptions import (
     PrescriptionVersionMedication,
 )
 from app.models.rag_candidate import MedicationCandidateSearch, MedicationCandidateSearchStatus
+from app.repositories.prescription_integrity import require_verified_version, unavailable_version, verify_loaded_version
 from app.repositories.profile_ownership import owned_by_self
 from provider_contracts.prescription_integrity import MEDICATION_CONTENT_FIELDS, prescription_fingerprint
 
@@ -39,7 +40,10 @@ class PrescriptionRepository:
                 owned_by_self(Prescription.profile_id, user_id),
             )
         )
-        return result.scalar_one_or_none()
+        prescription = result.scalar_one_or_none()
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
     async def get_latest_owned(self, *, user_id: UUID) -> Prescription | None:
         """재접속 복구 지원: Frontend가 어떤 prescription_id도 들고 있지 않을 때
@@ -55,7 +59,10 @@ class PrescriptionRepository:
             .order_by(Prescription.created_at.desc(), Prescription.id.desc())
             .limit(1)
         )
-        return result.scalar_one_or_none()
+        prescription = result.scalar_one_or_none()
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
     async def create_with_medications(
         self,
@@ -165,12 +172,23 @@ class PrescriptionRepository:
             raise ValueError("Persisted prescription medication content differs from requested content")
 
     async def get_version_medications(self, *, prescription_version_id: UUID) -> list[PrescriptionVersionMedication]:
-        result = await self.session.execute(
-            select(PrescriptionVersionMedication)
-            .where(PrescriptionVersionMedication.prescription_version_id == prescription_version_id)
-            .order_by(PrescriptionVersionMedication.display_order.asc())
-        )
-        return list(result.scalars().all())
+        rows = (
+            await self.session.execute(
+                select(PrescriptionVersion, PrescriptionVersionMedication)
+                .join(
+                    PrescriptionVersionMedication,
+                    PrescriptionVersionMedication.prescription_version_id == PrescriptionVersion.id,
+                )
+                .where(PrescriptionVersion.id == prescription_version_id)
+                .order_by(PrescriptionVersionMedication.display_order)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        if not rows:
+            raise unavailable_version()
+        medications = [row[1] for row in rows]
+        verify_loaded_version(rows[0][0], medications)
+        return medications
 
     async def get_version(self, *, prescription_version_id: UUID) -> PrescriptionVersion | None:
         return await self.session.get(PrescriptionVersion, prescription_version_id)
@@ -184,7 +202,10 @@ class PrescriptionRepository:
             )
             .with_for_update()
         )
-        return result.scalar_one_or_none()
+        prescription = result.scalar_one_or_none()
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
     async def _create_version(
         self,

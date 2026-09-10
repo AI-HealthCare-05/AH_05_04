@@ -27,6 +27,7 @@ from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.prescriptions import Prescription, PrescriptionStatus, PrescriptionVersion
 from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -281,6 +282,10 @@ async def test_patch_waits_for_confirmation_and_then_rejects(
                     confirmed_at=confirmed_at,
                 ),
                 PrescriptionVersion(
+                    **fingerprint_values(
+                        date(2026, 8, 1),
+                        [{"medication_name": "테스트약", "strength_text": "500mg", "display_order": 1}],
+                    ),
                     id=version_id,
                     prescription_id=prescription_id,
                     version_number=1,

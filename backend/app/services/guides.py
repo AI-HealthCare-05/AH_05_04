@@ -7,6 +7,7 @@ from app.dtos.guides import CreateGuideRequest, GuideData, GuideStatus
 from app.models.guides import Guide
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
+from app.repositories.prescription_integrity import verify_loaded_version
 from app.services.guide_ai import GuideGenerationInput, GuideGenerator, MedicationInput
 from app.services.guide_ai.exceptions import (
     GuideGenerationSafetyError,
@@ -89,6 +90,7 @@ class GuideService:
                 details=[ErrorDetail(field="prescription_id", reason="INVALID_VERSION_GRAPH")],
             )
 
+        verify_loaded_version(version, version.medications)
         guide = await self._repo.create(prescription=prescription)
 
         failure_error: ApiError

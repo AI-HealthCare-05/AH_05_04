@@ -120,7 +120,7 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - Candidate Repository·Identification Service·최종화 단위 검증 31 passed
 - Ruff·생산 코드 Mypy·Trigger/RLS 재도입 검사 통과
 
-## 다음 작업 재개 지점 (Prescription / Source·Catalog / Candidate)
+## 이전 재개 지점 — 398a/398b 적용 전 기록
 
 이번 단계는 세 영역의 기초 저장 검증 보강이며 영역 전체 완료가 아니다.
 
@@ -146,3 +146,23 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 내용 변경, 자식 count 누락, 부모 metadata 누락, 약 행 삭제 시 409 사용 불가로 차단
 - Service 및 확정·정정 API 회귀 42 passed
 - 다른 Candidate/Guide/Chat/일정/Worker 직접 소비 경로 연결은 남아 있음
+
+## 소비 경로 연결 및 NOT NULL 강화
+
+- 398b: 기존 데이터 전체 count/hash 재검증 후 부모 count/hash·자식 count NOT NULL
+- 공통 DB 소비 검증을 Prescription·Candidate·Guide·Chat·일정에 연결
+- 버전 metadata와 실제 약 목록을 함께 검증하며 NULL·내용 변경·약 누락 차단
+- 테스트 fixture도 완성된 목록의 실제 hash를 계산하도록 변경. 운영 fallback/default hash 없음
+- 기존 nullable 확장/소비 일부 미연결에 관한 위 기록은 당시 단계의 이력이며 현재는 이 단계로 대체됨
+- 기존 Trigger 제거·assembly_xid 제거·배포 권한은 아직 미완료
+
+검증 결과:
+
+- 전체 Backend: 1257 passed, 2 skipped
+- 전체 migration: 150 passed
+- 소비 경로·API·동시성 선별 검증: 134 passed (일부는 위 Backend/migration과 중복)
+- 변조·약 누락 소비 차단 14개 및 NOT NULL DB 거부 3개는 전체 Backend 결과에 포함
+- 변경 Python Ruff/format, 생산 코드 Mypy, Trigger/RLS 재도입 검사, diff 검사 통과
+- 과거 Trigger 계약 테스트는 #398 이전 schema에서 유지하고 최신 migration은 전체 이력 위에서 별도 검증
+
+다음 남은 작업: 요청 멱등성 확장, 불변 테이블 최소 권한·실행 계정/배포 연결, assembly_xid·Trigger 제거. 이 작업의 소비 경로 연결 및 NOT NULL 강화는 완료했으며 운영 migration은 실행하지 않았다.

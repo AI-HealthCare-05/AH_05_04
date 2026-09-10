@@ -380,7 +380,7 @@ async def _cleanup_cutover(ids: dict[str, str]) -> None:
     await _cleanup(ids)
 
 
-async def _create_via_repository() -> dict[str, str]:
+async def _create_via_repository(*, legacy_schema: bool = False) -> dict[str, str]:
     engine = create_async_engine(config.database_url, poolclass=NullPool)
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
@@ -412,24 +412,60 @@ async def _create_via_repository() -> dict[str, str]:
             ocr_job = OcrJob(document_id=document.id)
             session.add(ocr_job)
             await session.flush()
-            prescription = await PrescriptionRepository(session).create_with_medications(
-                document=document,
-                source_ocr_job=ocr_job,
-                prescribed_date=date(2026, 9, 8),
-                confirmed_at=datetime(2026, 9, 8, 2, 3, 4, tzinfo=UTC),
-                medications=[
-                    {
-                        "medication_name": "합성듀얼정",
-                        "strength_text": "5mg",
-                        "dose_value": Decimal("0.500"),
-                        "dose_unit": "정",
-                        "frequency_per_day": 1,
-                        "timing_text": "취침 전",
-                        "duration_days": 7,
-                        "display_order": 1,
-                    }
-                ],
-            )
+            if legacy_schema:
+                # Hardening migration tests run against the pre-398 schema.
+                from types import SimpleNamespace
+
+                prescription_id, version_id = str(uuid4()), str(uuid4())
+                params = {
+                    "id": prescription_id,
+                    "version_id": version_id,
+                    "document_id": str(document.id),
+                    "ocr_id": str(ocr_job.id),
+                    "profile_id": str(profile.id),
+                }
+                await session.execute(
+                    text(
+                        "INSERT INTO prescription (id, active_version_id, document_id, source_ocr_job_id, profile_id, "
+                        "prescribed_date, prescription_status, confirmed_at) VALUES "
+                        "(:id, :version_id, :document_id, :ocr_id, :profile_id, DATE '2026-09-08', 'CONFIRMED', now())"
+                    ),
+                    params,
+                )
+                await session.execute(
+                    text(
+                        "INSERT INTO prescription_version (id, prescription_id, version_number, prescribed_date, confirmed_at) "
+                        "VALUES (:version_id, :id, 1, DATE '2026-09-08', now())"
+                    ),
+                    params,
+                )
+                await session.execute(
+                    text(
+                        "INSERT INTO prescription_version_medication (id, prescription_version_id, medication_name, display_order) "
+                        "VALUES (:med_id, :version_id, '합성듀얼정', 1)"
+                    ),
+                    {**params, "med_id": str(uuid4())},
+                )
+                prescription = SimpleNamespace(id=prescription_id)
+            else:
+                prescription = await PrescriptionRepository(session).create_with_medications(
+                    document=document,
+                    source_ocr_job=ocr_job,
+                    prescribed_date=date(2026, 9, 8),
+                    confirmed_at=datetime(2026, 9, 8, 2, 3, 4, tzinfo=UTC),
+                    medications=[
+                        {
+                            "medication_name": "합성듀얼정",
+                            "strength_text": "5mg",
+                            "dose_value": Decimal("0.500"),
+                            "dose_unit": "정",
+                            "frequency_per_day": 1,
+                            "timing_text": "취침 전",
+                            "duration_days": 7,
+                            "display_order": 1,
+                        }
+                    ],
+                )
             return {
                 "user_id": str(user.id),
                 "profile_id": str(profile.id),
@@ -842,7 +878,7 @@ def test_read_cutover_downgrade_rejects_guide_and_chat_provenance() -> None:
 def test_hardening_refuses_remaining_null_runtime_version_link() -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, HARDENING_BASE_REVISION)
-    ids = asyncio.run(_create_via_repository())
+    ids = asyncio.run(_create_via_repository(legacy_schema=True))
     guide_id = asyncio.run(_seed_null_version_guide(ids))
     try:
         with pytest.raises(RuntimeError, match="invalid provenance remains"):
@@ -857,7 +893,7 @@ def test_hardening_refuses_remaining_null_runtime_version_link() -> None:
 def test_hardening_refuses_job_without_required_version(job_type: str) -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, HARDENING_BASE_REVISION)
-    ids = asyncio.run(_create_via_repository())
+    ids = asyncio.run(_create_via_repository(legacy_schema=True))
     job_id = asyncio.run(_seed_invalid_ai_job(ids, job_type=job_type, prescription_version_id=None))
     try:
         with pytest.raises(RuntimeError, match="invalid provenance remains"):
@@ -871,7 +907,7 @@ def test_hardening_refuses_job_without_required_version(job_type: str) -> None:
 def test_hardening_refuses_ocr_job_with_version() -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, HARDENING_BASE_REVISION)
-    ids = asyncio.run(_create_via_repository())
+    ids = asyncio.run(_create_via_repository(legacy_schema=True))
     version_id = asyncio.run(_active_version_id(ids))
     job_id = asyncio.run(_seed_invalid_ai_job(ids, job_type="OCR", prescription_version_id=version_id))
     try:

@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from sqlalchemy.pool import NullPool
 
 from app.core import config
+from provider_contracts.prescription_integrity import prescription_fingerprint
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRE_PROFILE_REVISION = "77585c0c9792"
@@ -1800,18 +1802,24 @@ async def insert_guide_parent_chain(
             text(
                 """
                 INSERT INTO prescription_version (
-                    id, prescription_id, version_number, prescribed_date, confirmed_at
-                ) VALUES (:id, :prescription_id, 1, DATE '2026-09-03', now())
+                    id, prescription_id, version_number, prescribed_date, confirmed_at, medication_count, content_hash
+                ) VALUES (:id, :prescription_id, 1, DATE '2026-09-03', now(), 1, :content_hash)
                 """
             ),
-            {"id": prescription_version_id, "prescription_id": prescription_id},
+            {
+                "id": prescription_version_id,
+                "prescription_id": prescription_id,
+                "content_hash": prescription_fingerprint(
+                    date(2026, 9, 3), [{"medication_name": "합성 가이드 검증약", "display_order": 1}]
+                ).content_hash,
+            },
         )
         await connection.execute(
             text(
                 """
                 INSERT INTO prescription_version_medication (
-                    id, prescription_version_id, medication_name, display_order
-                ) VALUES (:id, :prescription_version_id, '합성 가이드 검증약', 1)
+                    id, prescription_version_id, medication_name, display_order, medication_count
+                ) VALUES (:id, :prescription_version_id, '합성 가이드 검증약', 1, 1)
                 """
             ),
             {"id": version_medication_id, "prescription_version_id": prescription_version_id},
@@ -2643,18 +2651,24 @@ async def _insert_candidate_version_graph(connection: AsyncConnection) -> dict[s
         text(
             """
             INSERT INTO prescription_version (
-                id, prescription_id, version_number, prescribed_date, confirmed_at
-            ) VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now())
+                id, prescription_id, version_number, prescribed_date, confirmed_at, medication_count, content_hash
+            ) VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now(), 1, :content_hash)
             """
         ),
-        {"version_id": version_id, "prescription_id": prescription_id},
+        {
+            "version_id": version_id,
+            "prescription_id": prescription_id,
+            "content_hash": prescription_fingerprint(
+                date(2026, 9, 8), [{"medication_name": "테스트약", "display_order": 1}]
+            ).content_hash,
+        },
     )
     await connection.execute(
         text(
             """
             INSERT INTO prescription_version_medication (
-                id, prescription_version_id, medication_name, display_order
-            ) VALUES (:pvm_id, :version_id, '테스트약', 1)
+                id, prescription_version_id, medication_name, display_order, medication_count
+            ) VALUES (:pvm_id, :version_id, '테스트약', 1, 1)
             """
         ),
         {"pvm_id": pvm_id, "version_id": version_id},

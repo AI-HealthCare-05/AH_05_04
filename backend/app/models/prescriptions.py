@@ -184,9 +184,8 @@ class PrescriptionVersion(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
-    # Expand phase: nullable until all legacy producers/consumers are migrated.
-    medication_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    medication_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     prescribed_date: Mapped[date] = mapped_column(Date, nullable=False)
     confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -266,7 +265,7 @@ class PrescriptionVersionMedication(Base):
         ),
         nullable=False,
     )
-    medication_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    medication_count: Mapped[int] = mapped_column(Integer, nullable=False)
     medication_name: Mapped[str] = mapped_column(String(255), nullable=False)
     strength_text: Mapped[str | None] = mapped_column(String(100), nullable=True)
     dose_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)

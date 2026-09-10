@@ -15,6 +15,7 @@ from app.models.rag_candidate import (
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
+from app.repositories.prescription_integrity import require_verified_version
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -51,7 +52,7 @@ class MedicationCandidateRepository:
         prescription_version_medication_id: UUID,
         user_id: UUID,
     ) -> Prescription | None:
-        return await self.session.scalar(
+        prescription = await self.session.scalar(
             select(Prescription)
             .join(PrescriptionVersion, PrescriptionVersion.prescription_id == Prescription.id)
             .join(
@@ -65,6 +66,9 @@ class MedicationCandidateRepository:
             )
             .with_for_update(of=Prescription)
         )
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
 
     async def get_medication_for_candidate_search_owned(
         self,
@@ -110,7 +114,10 @@ class MedicationCandidateRepository:
                 owned_by_self(Prescription.profile_id, user_id),
             )
         )
-        return result.scalar_one_or_none()
+        medication = result.scalar_one_or_none()
+        if medication is not None:
+            await require_verified_version(self.session, medication.prescription_version_id)
+        return medication
 
     async def get_latest_search_for_medication(
         self,
@@ -327,6 +334,7 @@ class MedicationCandidateRepository:
         )
         if prescription is None:
             return None
+        await require_verified_version(self.session, prescription_version_id)
         result = await self.session.execute(
             select(PrescriptionVersionMedication.id)
             .where(PrescriptionVersionMedication.prescription_version_id == prescription_version_id)

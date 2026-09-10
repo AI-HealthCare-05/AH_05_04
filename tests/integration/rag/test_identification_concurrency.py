@@ -41,6 +41,7 @@ from app.repositories.medication_candidate_repository import (
 from app.services.idempotency import SyncMutationIdempotencyService, get_default_snapshot_cipher
 from app.services.medication_candidates import MedicationCandidateService
 from app.services.medication_identification import MedicationIdentificationService
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 pytestmark = pytest.mark.asyncio
 
@@ -140,6 +141,9 @@ async def _create_version_medication(
         confirmed_at=confirmed_at,
     )
     version = PrescriptionVersion(
+        **fingerprint_values(
+            prescribed_date, [{"medication_name": "테스트약", "strength_text": "500mg", "display_order": 1}]
+        ),
         id=version_id,
         prescription_id=prescription_id,
         version_number=1,
@@ -147,6 +151,7 @@ async def _create_version_medication(
         confirmed_at=confirmed_at,
     )
     version_medication = PrescriptionVersionMedication(
+        medication_count=1,
         prescription_version_id=version_id,
         medication_name="테스트약",
         strength_text="500mg",

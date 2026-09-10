@@ -19,6 +19,7 @@ from app.repositories.medication_candidate_repository import (
     MedicationCandidateResultCreate,
 )
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 @pytest_asyncio.fixture
@@ -74,7 +75,7 @@ async def _create_user(session: AsyncSession, *, email: str) -> User:
     return user
 
 
-async def _create_prescription(session: AsyncSession, *, user: User) -> Prescription:
+async def _create_prescription(session: AsyncSession, *, user: User, medication_count: int = 1) -> Prescription:
     profile = await session.scalar(
         select(Profile).where(Profile.user_id == user.id, Profile.profile_type == ProfileType.SELF)
     )
@@ -107,6 +108,13 @@ async def _create_prescription(session: AsyncSession, *, user: User) -> Prescrip
     await session.flush()
     session.add(
         PrescriptionVersion(
+            **fingerprint_values(
+                prescription.prescribed_date,
+                [
+                    {"medication_name": "테스트약", "strength_text": "500mg", "display_order": i}
+                    for i in range(1, medication_count + 1)
+                ],
+            ),
             id=version_id,
             prescription_id=prescription.id,
             version_number=1,
@@ -122,7 +130,9 @@ async def _create_medication(
     session: AsyncSession, *, prescription: Prescription, display_order: int = 1
 ) -> PrescriptionVersionMedication:
     assert prescription.active_version_id is not None
+    version = await session.get(PrescriptionVersion, prescription.active_version_id)
     medication = PrescriptionVersionMedication(
+        medication_count=version.medication_count,
         prescription_version_id=prescription.active_version_id,
         medication_name="테스트약",
         strength_text="500mg",
@@ -199,7 +209,7 @@ async def test_get_medication_owned_rejects_other_users_medication(db_session: A
 async def test_get_latest_search_for_medication_returns_most_recent(db_session: AsyncSession) -> None:
     repository = MedicationCandidateRepository(db_session)
     owner = await _create_user(db_session, email="owner21@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
+    prescription = await _create_prescription(db_session, user=owner, medication_count=2)
     medication = await _create_medication(db_session, prescription=prescription)
 
     first = await _create_search(repository, prescription=prescription, display_order=2)

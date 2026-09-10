@@ -109,3 +109,78 @@ def test_fingerprint_expand_backfill_and_rollback(monkeypatch, scenario):
             assert "content_hash" not in asyncio.run(_columns())
     finally:
         asyncio.run(_database(admin_url, database, create=False))
+
+
+async def _corrupt_expansion(ids, corruption):
+    async with _connection() as connection, connection.begin():
+        await connection.execute(
+            text("ALTER TABLE prescription_version DISABLE TRIGGER trg_prescription_version_prevent_update")
+        )
+        if corruption == "hash":
+            await connection.execute(
+                text("UPDATE prescription_version SET content_hash=:hash WHERE id=:id"),
+                {"hash": "0" * 64, "id": ids["version_id"]},
+            )
+        else:
+            await connection.execute(
+                text(
+                    "ALTER TABLE prescription_version_medication DISABLE TRIGGER trg_prescription_version_medication_prevent_update"
+                )
+            )
+            await connection.execute(
+                text(
+                    "UPDATE prescription_version_medication SET medication_count=NULL WHERE prescription_version_id=:id"
+                ),
+                {"id": ids["version_id"]},
+            )
+            await connection.execute(
+                text(
+                    "ALTER TABLE prescription_version_medication ENABLE TRIGGER trg_prescription_version_medication_prevent_update"
+                )
+            )
+        await connection.execute(
+            text("ALTER TABLE prescription_version ENABLE TRIGGER trg_prescription_version_prevent_update")
+        )
+
+
+async def _nullable():
+    async with _connection() as connection:
+        return (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT is_nullable FROM information_schema.columns WHERE table_schema='public' "
+                        "AND table_name IN ('prescription_version', 'prescription_version_medication') "
+                        "AND column_name IN ('medication_count', 'content_hash')"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+@pytest.mark.parametrize("scenario", ["existing", "null", "hash"])
+def test_fingerprint_not_null_revalidates_complete_content(monkeypatch, scenario):
+    admin_url = config.database_url
+    database = f"synthetic398_{uuid4().hex[:12]}"
+    asyncio.run(_database(admin_url, database, create=True))
+    monkeypatch.setattr(config, "DB_NAME", database)
+    alembic = Config(str(Path(__file__).resolve().parents[2] / "backend/alembic.ini"))
+    try:
+        command.upgrade(alembic, "201a1b2c3d4e")
+        ids = asyncio.run(_seed_graph())
+        command.upgrade(alembic, "398a1b2c3d4e")
+        if scenario == "existing":
+            command.upgrade(alembic, "398b2c3d4e5f")
+            assert asyncio.run(_nullable()) == ["NO"] * 3
+            asyncio.run(_assert_backfill(ids))
+            command.downgrade(alembic, "398a1b2c3d4e")
+            assert asyncio.run(_nullable()) == ["YES"] * 3
+        else:
+            asyncio.run(_corrupt_expansion(ids, scenario))
+            with pytest.raises(RuntimeError, match="cutover refused"):
+                command.upgrade(alembic, "398b2c3d4e5f")
+            assert asyncio.run(_nullable()) == ["YES"] * 3
+    finally:
+        asyncio.run(_database(admin_url, database, create=False))
