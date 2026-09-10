@@ -103,7 +103,7 @@ describe('DevPreviewPage', () => {
     ['existing-messages', '무엇을 도와드릴까요?'],
     ['input-ready', '궁금한 내용을 입력하세요'],
     ['generating', '답변을 확인하고 있어요'],
-    ['long-answer', '무엇을 도와드릴까요?'],
+    ['long-answer', '확정된 처방에 표시된 내용을 차례로 확인해 주세요.'],
     ['error', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'],
   ])('Chat %s scenario를 렌더링한다', async (scenario, expectedText) => {
     renderPreview('chat', scenario)
@@ -113,6 +113,30 @@ describe('DevPreviewPage', () => {
     } else {
       expect(await screen.findByText(expectedText, { exact: false })).toBeTruthy()
     }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('Chat long-answer는 실제 ASSISTANT Markdown 답변을 모바일 Preview에 표시한다', async () => {
+    const { container } = renderPreview('chat', 'long-answer')
+
+    const assistantMessage = await waitFor(() => {
+      const message = container.querySelector('.chat-message.assistant')
+      expect(message).toBeTruthy()
+      return message as HTMLElement
+    })
+
+    expect(assistantMessage.querySelector('h2')?.textContent).toBe(
+      '복용할 때 확인할 점',
+    )
+    expect(assistantMessage.querySelector('p')?.textContent).toContain(
+      '확정된 처방에 표시된 내용을 차례로 확인해 주세요.',
+    )
+    expect(assistantMessage.querySelectorAll('li')).toHaveLength(4)
+    expect(assistantMessage.querySelector('strong')?.textContent).toBe('약 이름')
+    expect(assistantMessage.querySelector('em')?.textContent).toBe('1회 복용량')
+    expect(screen.getByText('복용할 때 확인할 점')).toBeTruthy()
+    expect(screen.queryByText('무엇을 도와드릴까요?')).toBeNull()
+    expect(container.querySelector('.mobile-app')).toBeTruthy()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

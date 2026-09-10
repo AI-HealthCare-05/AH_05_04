@@ -387,7 +387,18 @@ function chatMessages(scenario: ChatScenario): ChatMessageData[] {
       chatMessage(
         'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         'ASSISTANT',
-        '확정된 처방에 표시된 약 이름, 1회 복용량, 하루 복용 횟수, 복용 시점과 복용 기간을 차례로 확인해 주세요. 내용이 불명확하거나 실제 처방전과 다르면 임의로 복용 방법을 바꾸지 말고 의료진 또는 약사에게 확인해 주세요. 불편한 증상이 있거나 안전이 걱정되는 경우에도 전문가에게 상담해 주세요.',
+        [
+          '## 복용할 때 확인할 점',
+          '',
+          '확정된 처방에 표시된 내용을 차례로 확인해 주세요.',
+          '',
+          '- **약 이름**',
+          '- *1회 복용량*',
+          '- 하루 복용 횟수',
+          '- 복용 시점과 복용 기간',
+          '',
+          '내용이 불명확하거나 실제 처방전과 다르면 임의로 복용 방법을 바꾸지 말고 의료진 또는 약사에게 확인해 주세요. 불편한 증상이 있거나 안전이 걱정되는 경우에도 전문가에게 상담해 주세요.',
+        ].join('\n'),
         'COMPLETED',
       ),
     ]
@@ -400,6 +411,7 @@ export function createChatPreview(scenario: ChatScenario): {
   services: ChatPageServices
   state: ChatPreviewState
 } {
+  const visibleMessages = chatMessages(scenario)
   const sessionResponse: ChatSessionResponse = {
     data: {
       session_id: previewIds.session,
@@ -412,7 +424,7 @@ export function createChatPreview(scenario: ChatScenario): {
   const messageListResponse: ChatMessageListResponse = {
     data: {
       session_id: previewIds.session,
-      messages: chatMessages(scenario),
+      messages: scenario === 'long-answer' ? [] : visibleMessages,
     },
   }
   const sendResponse: SendChatMessageResponse = {
@@ -468,6 +480,7 @@ export function createChatPreview(scenario: ChatScenario): {
         scenario === 'no-prescription' ? '' : previewIds.prescription,
       draft: scenario === 'input-ready' ? '아침 약은 언제 먹나요?' : '',
       isSending: scenario === 'generating',
+      visibleMessages: scenario === 'long-answer' ? visibleMessages : undefined,
     },
   }
 }
