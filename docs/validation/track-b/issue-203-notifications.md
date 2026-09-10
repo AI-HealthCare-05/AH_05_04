@@ -8,7 +8,7 @@
 | 소비 계약 리뷰 | 남한솔 (`solia142`) |
 | 상태 | 구현 브랜치 검증 · 지정 리뷰어 승인 및 #202 일정 API/Frontend 통합 대기 |
 | 계약 | [PD-203 Notification](../../contracts/proposed/track-b-notifications-v1.md), 선행 문서 PR #415 |
-| 기반 | develop `2922c25d` |
+| 기반 | develop `e0313fee` (#415 병합 반영, 실행 코드 변경 없음) |
 | Migration head | `203a1b2c3d4e` (base `206a1b2c3d4e`), 단일 head |
 | Fixture | `notification-v1`: 코드에 고정된 합성 사용자·처방·KST 자정 사례 |
 | 환경 | Local, 작업 전용 PostgreSQL 17·Redis 7, 실제 사용자/외부 Provider 호출 없음 |
@@ -27,7 +27,10 @@
 - PASS: 알림 전용 27개 테스트. API·DB·동시성·명령 실행·Check-in/UNCONFIRMED 연결 검증.
 - PASS: 초기 알림·기존 Check-in·occurrence service 선별 회귀 43개.
 - PASS: 필수 CI의 migration 테스트 149개. 새 알림 migration의 제약·중복 차단·이력 보존 downgrade guard 포함.
-- 전체 CI Backend·Worker·Redis·Coverage 결과: 실행 중, 완료 후 이 행을 갱신한다.
+- PASS: `bash scripts/ci/run_test.sh` 최종 전체 검사 종료 코드 0. Migration 149, Backend/Contract 1,621(59 skipped), Redis integration 23, Worker 2,681(8 skipped): 합계 4,474 passed·67 skipped, 통합 Coverage 94%.
+- PASS: 문서 상대 링크·전체 diff·`git diff --check`, Pandoc HTML 변환. 브라우저 시각 검증은 수행하지 않음.
+- 최초 전체 실행의 Worker Redis 기본값 검사 실패는 합성 env의 호스트/포트 override를 제거한 뒤 최종 전체 실행에서 해소했다. 애플리케이션 설정·테스트 기대값을 변경하지 않았다.
+- 재현 로그: 작업 로컬 `/private/tmp/ah203-ci-final.log`. 기존 suite의 skipped 항목은 통과로 집계하지 않는다.
 
 검증 명령:
 
