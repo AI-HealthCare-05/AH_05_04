@@ -1,5 +1,6 @@
 """Real psql bootstrap and separate credential provisioning in a disposable database."""
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -7,7 +8,7 @@ import sys
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -17,6 +18,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_worker.admin.source_writer import WriterConfig, run_selection
 from app.core import config
+from app.models.rag_runtime import RagRuntimeEnvironmentTransitionKind
+from app.repositories.rag_runtime_repository import (
+    RagRuntimeEnvironmentTransitionCreate,
+    RagRuntimeRepository,
+    RuntimeEnvironmentTransitionConflictError,
+)
 from app.repositories.rag_source_catalog_repository import (
     RagSourceCatalogRepository,
     RagSourceCreate,
@@ -24,6 +31,7 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
 )
+from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
 from infra.python.provision_database_roles import (
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_MUTABLE_TABLES,
@@ -326,9 +334,10 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
         assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "398c3d4e5f60"
         assert await connection.scalar(text("SELECT verification_status FROM rag_source_snapshot")) == "CURRENT"
 
-    await _exercise_audit_cutover(admin, reader, producer, environment)
+    runtime_environment_id = await _exercise_audit_cutover(admin, reader, producer, environment)
 
     await _exercise_prescription_candidate_cutover(admin, reader, environment)
+    await _assert_runtime_transition_revisions_are_sealed(admin, runtime_environment_id, environment)
 
     # A fresh database follows the same complete history to the trigger-free Source head.
     await reader.dispose()
@@ -366,7 +375,7 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
         await connection.execute(
             text(
                 "INSERT INTO rag_runtime_environment (id,environment_code,environment_status) "
-                "VALUES (:id,'synthetic-audit','SUSPENDED')"
+                "VALUES (:id,'synthetic-audit','ACTIVE')"
             ),
             {"id": env_id},
         )
@@ -425,15 +434,89 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
                     async with reader.begin() as connection:
                         await connection.execute(text(sql))
                 assert error.value.orig.sqlstate == "42501"
-    async with reader.begin() as connection:
-        assert await connection.scalar(text("SELECT environment_revision FROM rag_runtime_environment_transition")) == 1
+    runtime_sessions = async_sessionmaker(reader, expire_on_commit=False)
+    async with runtime_sessions.begin() as session:
+        transition = await RagRuntimeEnvironmentTransitionService(RagRuntimeRepository(session)).transition(
+            RagRuntimeEnvironmentTransitionCreate(
+                environment_id=UUID(env_id),
+                transition_kind=RagRuntimeEnvironmentTransitionKind.SUSPEND,
+                expected_environment_revision=1,
+                expected_safety_epoch=1,
+                expected_active_bundle_id=None,
+                expected_active_bundle_manifest_hash=None,
+                expected_governance_revision_ref=None,
+                guard_decision_ref="synthetic-guard-next",
+                transition_reason_code="SYNTHETIC_SAFETY_HOLD",
+                created_by="synthetic-runtime",
+            )
+        )
+        assert transition.environment_revision == 2
+    async with reader.connect() as connection:
+        environment_row = (
+            await connection.execute(
+                text("SELECT environment_status,environment_revision FROM rag_runtime_environment WHERE id=:id"),
+                {"id": env_id},
+            )
+        ).one()
+        assert environment_row == ("SUSPENDED", 2)
+        assert (
+            await connection.scalar(
+                text("SELECT count(*) FROM rag_runtime_environment_transition WHERE environment_id=:id"),
+                {"id": env_id},
+            )
+            == 2
+        )
+
+    # Both writers pass the same optimistic preconditions. The environment row
+    # lock serializes them, so the loser observes revision 2 and fails closed.
+    concurrent_env_id = uuid4()
+    async with admin.begin() as connection:
         await connection.execute(
             text(
-                "INSERT INTO rag_runtime_environment_transition "
-                "(id,environment_id,transition_kind,environment_revision,safety_epoch,guard_decision_ref) "
-                "VALUES (:id,:environment,'SUSPEND',2,1,'synthetic-guard-next')"
+                "INSERT INTO rag_runtime_environment (id,environment_code,environment_status) "
+                "VALUES (:id,:code,'ACTIVE')"
             ),
-            {"id": str(uuid4()), "environment": env_id},
+            {"id": str(concurrent_env_id), "code": f"synthetic-concurrent-{concurrent_env_id.hex[:8]}"},
+        )
+
+    async def suspend_concurrently(actor: str):
+        async with runtime_sessions.begin() as session:
+            return await RagRuntimeEnvironmentTransitionService(RagRuntimeRepository(session)).transition(
+                RagRuntimeEnvironmentTransitionCreate(
+                    environment_id=concurrent_env_id,
+                    transition_kind=RagRuntimeEnvironmentTransitionKind.SUSPEND,
+                    expected_environment_revision=1,
+                    expected_safety_epoch=1,
+                    expected_active_bundle_id=None,
+                    expected_active_bundle_manifest_hash=None,
+                    expected_governance_revision_ref=None,
+                    guard_decision_ref=f"synthetic-guard:{actor}",
+                    transition_reason_code="SYNTHETIC_CONCURRENT_HOLD",
+                    created_by=actor,
+                )
+            )
+
+    outcomes = await asyncio.gather(
+        suspend_concurrently("synthetic-runtime-a"),
+        suspend_concurrently("synthetic-runtime-b"),
+        return_exceptions=True,
+    )
+    assert sum(not isinstance(outcome, Exception) for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, RuntimeEnvironmentTransitionConflictError) for outcome in outcomes) == 1
+    async with reader.connect() as connection:
+        assert (
+            await connection.scalar(
+                text("SELECT environment_revision FROM rag_runtime_environment WHERE id=:id"),
+                {"id": str(concurrent_env_id)},
+            )
+            == 2
+        )
+        assert (
+            await connection.scalar(
+                text("SELECT count(*) FROM rag_runtime_environment_transition WHERE environment_id=:id"),
+                {"id": str(concurrent_env_id)},
+            )
+            == 1
         )
     with pytest.raises(DBAPIError) as error:
         async with producer.begin() as connection:
@@ -449,6 +532,7 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
     )
     assert rollback.returncode != 0
     assert "Audit trigger removal cannot be downgraded" in rollback.stderr
+    return env_id
 
 
 async def _exercise_prescription_candidate_cutover(admin, reader, environment):
@@ -629,3 +713,73 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
     )
     assert rollback.returncode != 0
     assert "Prescription/Candidate trigger removal cannot be downgraded" in rollback.stderr
+
+
+async def _assert_runtime_transition_revisions_are_sealed(admin, environment_id: str, environment) -> None:
+    downgrade = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "downgrade", "398e5f607182"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert downgrade.returncode == 0, "Synthetic Runtime revision constraint downgrade failed"
+    duplicate_id = str(uuid4())
+    async with admin.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO rag_runtime_environment_transition "
+                "(id,environment_id,transition_kind,environment_revision,safety_epoch,guard_decision_ref) "
+                "VALUES (:id,:environment,'SUSPEND',2,1,'synthetic-preexisting-duplicate')"
+            ),
+            {"id": duplicate_id, "environment": environment_id},
+        )
+    rejected = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert rejected.returncode != 0
+    assert "duplicate revisions exist" in rejected.stderr
+    async with admin.begin() as connection:
+        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "398e5f607182"
+        await connection.execute(
+            text("DELETE FROM rag_runtime_environment_transition WHERE id=:id"),
+            {"id": duplicate_id},
+        )
+    upgrade = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert upgrade.returncode == 0, "Synthetic Runtime revision sealing migration failed"
+    async with admin.connect() as connection:
+        assert (
+            await connection.scalar(
+                text(
+                    "SELECT count(*) FROM information_schema.table_constraints "
+                    "WHERE table_schema='public' AND table_name='rag_runtime_environment_transition' "
+                    "AND constraint_name='uq_rag_runtime_transition_environment_revision' "
+                    "AND constraint_type='UNIQUE'"
+                )
+            )
+            == 1
+        )
+    with pytest.raises(DBAPIError) as error:
+        async with admin.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO rag_runtime_environment_transition "
+                    "(id,environment_id,transition_kind,environment_revision,safety_epoch,guard_decision_ref) "
+                    "VALUES (:id,:environment,'SUSPEND',2,1,'synthetic-duplicate-revision')"
+                ),
+                {"id": str(uuid4()), "environment": environment_id},
+            )
+    assert error.value.orig.sqlstate == "23505"
