@@ -164,3 +164,39 @@ downgrade를 수정했으며 upgrade와 revision 연결은 변경하지 않았�
 - Trigger·RLS 등 재도입 검사, Python 쓰기 경계 및 테스트 분류 검사: 통과.
 - 전체 CI 재시도는 정적 검사 후 기존과 동일하게 `envs/.local.env` 부재로 중단했다.
   전체 migration suite나 역할 생성 테스트를 통과했다고 표시하지 않는다.
+
+## PR #436 CI 회귀 수정
+
+원격 CI의 `test-migration`, `test-backend` 실패와 이를 집계한 `test` 실패를 확인했다.
+원인은 아래 테스트 fixture와 최신 schema 사이의 불일치였다.
+
+- 최신 head 검사 두 곳이 과거 `3984b5c6d7e8`을 상수로 사용했다. 저장소에서 단일 head를
+  구하고 실제 DB 및 Docker 이미지의 head와 비교하도록 변경했다.
+- 역할 provisioning 테스트의 축약 Run 테이블에는 `id`만 있었다. 컬럼별 UPDATE 정책을
+  검증할 lifecycle 컬럼과 변경 금지 대상 provenance 컬럼을 fixture에 추가했다.
+  Writer의 lifecycle UPDATE 허용·provenance UPDATE 거부와 Runtime UPDATE 거부도 검사한다.
+- 과거 revision 데이터 보존 테스트에서 최신 Source ORM이 아직 없는 정책 컬럼을 INSERT했다.
+  역사적 스키마를 검증하는 입력은 해당 시점의 컬럼으로 넣고, 최신 Service 동작 검증과 분리했다.
+- Snapshot lock-marker migration의 기존 hash 보존은 그 revision에서 검사하고,
+  최신 head 적용 후에는 과거 컬럼 값들이 그대로 보존됐는지 별도로 검사한다.
+  외부 Alembic 프로세스의 DDL 이후에는 테스트 연결의 오래된 prepared statement를 폐기한다.
+- Trigger 제거 후 최신 Writer까지 실행하는 합성 fixture에는 승인된 API Version 문법과
+  checksum·Endpoint Receipt 결속을 넣었다. 운영 데이터를 소급 보정하지 않는다.
+
+이번 수정은 테스트와 검증 문서에 한정한다. 애플리케이션 권한을 확대하거나,
+검사를 skip 처리하거나, Trigger·RLS·업무 DB 함수를 추가하지 않는다.
+과거 migration 자체도 변경하지 않는다.
+
+검증 환경은 기존 작업 전용 `issue398-postgres` 컨테이너의 신규 `issue436_ci_validation` DB와
+테스트가 생성·정리하는 격리 DB/schema다. 기존 컨테이너 관리 연결을 사용하며 새 관리 계정이나
+운영 권한을 부여하지 않는다. Docker 이미지 내 Runtime import와 head 일치 검사 2건,
+관리·Writer·bootstrap 관련 25건 및 수정 후 과거 행 보존 3건을 통과했다.
+
+추가 검증:
+
+- 전체 migration suite: **170 passed**.
+- 최신 head upgrade 및 최종 DB 상태 검사: **362b2c3d4e5f**, Trigger/RLS/제거 함수 **0개**.
+- Source lifecycle 전체: **27 passed**, 앞서 권한 부족으로 제외했던 Writer 검사 2건도 통과.
+- Ruff / format / diff 검사와 mypy 535개 파일, 재도입·쓰기 경계·테스트 분류 검사 통과.
+- 이전 절의 전체 migration·Writer 권한 검사 미완료 기록은 이 재검증으로 해소했다.
+  전체 Backend 및 집계 CI의 최종 상태는 수정 커밋의 GitHub Actions 결과로 별도 확인한다.
