@@ -25,12 +25,13 @@ HOLDOUT Dataset(질문·Gold·hard negative)을 일반 개발·CI 접근으로�
 
 Protected 전용 **schema**로 확정한다(별도 database 아님). 구현은 이 문서 PR이 아니라 **후속 infrastructure adapter PR**에서 하되, #368의 effective enforcement 선행조건으로 명시한다.
 
-구현 시 아래 4가지를 실제 SQL 테스트로 검증한다. ①~③은 기존 provisioning 스크립트가 이미 적용 중인 패턴을 protected schema 대상으로 확장하는 것이고, ④만 이번에 새로 추가하는 항목이다.
+구현 시 아래 항목을 실제 SQL negative test로 검증한다. ①~③은 기존 provisioning 스크립트가 `public` schema·`app_user`에 이미 적용 중인 패턴이고, ④~⑤는 **protected schema 자체에 새로 적용해야 하는 항목**이다(가빈 지적: 기존 ①~③은 `public` schema 문구를 재인용한 것일 뿐 protected schema의 deny 조건을 직접 정의하지 않는다).
 
 - ① 전용 role 분리: `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`로 관리 권한 없는 role 생성
-- ② 스키마 권한 기본 회수: `REVOKE CREATE ON SCHEMA public FROM app_user`
-- ③ default privilege로 동일 거부 정책 유지: `ALTER DEFAULT PRIVILEGES FOR ROLE migration_user ... REVOKE UPDATE ON SEQUENCES`, 승인된 함수에만 `GRANT EXECUTE`
-- ④ (신규) `REVOKE ALL ON SCHEMA <protected> FROM PUBLIC` — PostgreSQL은 새로 만든 커스텀 스키마에 PUBLIC 권한을 기본 부여하지 않으므로, 이 REVOKE가 실제로 필요한지(이미 no-op인지) 후속 infrastructure adapter PR에서 `\dn+`로 실제 권한을 확인한다.
+- ② (참고 패턴) `public` schema 권한 기본 회수: `REVOKE CREATE ON SCHEMA public FROM app_user`
+- ③ (참고 패턴) default privilege로 동일 거부 정책 유지: `ALTER DEFAULT PRIVILEGES FOR ROLE migration_user ... REVOKE UPDATE ON SEQUENCES`, 승인된 함수에만 `GRANT EXECUTE`
+- ④ (신규, protected schema 대상) `PUBLIC`, 일반 `app_user`, 일반 CI role의 schema 권한(`USAGE`/`CREATE`)과 **기존·향후 모든 table/sequence/function 권한**을 명시적으로 거부. 함수의 기본 `PUBLIC EXECUTE`도 회수 대상에 포함하고, protected owner 기준 `ALTER DEFAULT PRIVILEGES`로 향후 생성 객체에도 동일 적용
+- ⑤ (신규) 위 거부 조건을 `\dn+`/`\dp`로 실제 권한을 조회해 SQL negative test로 검증 — PostgreSQL이 커스텀 스키마에 PUBLIC 권한을 기본 부여하지 않아 일부가 이미 no-op일 수 있으므로, 실제 상태를 먼저 확인한 뒤 필요한 REVOKE만 남긴다
 
 ## 4. 역할·책임 + 직무 분리 (Segregation of Duties)
 
@@ -75,7 +76,7 @@ LOCAL 환경만 placeholder 허용, 그 외 환경은 실값 강제 + fail-close
 
 Authoring 환경은 아직 확정되지 않았다. 사용할 환경의 **소유자, 접근 방식, 로그·artifact 비노출, credential 회전 방법**이 구체적으로 확인될 때까지 authoring 승인은 차단 상태로 유지한다.
 
-기존 요구사항은 막연한 "2인 승인"이 아니라 실행 요청자와 분리된 독립 승인자 1인의 승인이다. 2인 승인을 새 요구사항으로 만들려면 별도 합의가 필요하다. 우선 GitHub Environment의 self-review 방지 + 지정된 독립 승인자 1인의 approval evidence를 함께 검증하는 방향으로 정리한다. (GitHub required reviewer는 여러 명을 등록해도 그중 한 명만 승인하면 진행되므로, "독립 승인자 1인" 요건을 만족하려면 승인자 목록을 정확히 1인 이상으로 지정하고 self-review 방지가 실제로 작동하는지 별도 검증이 필요하다.)
+기존 요구사항은 막연한 "2인 승인"이 아니라 실행 요청자와 분리된 독립 승인자 1인의 승인이다. 2인 승인을 새 요구사항으로 만들려면 별도 합의가 필요하다. 우선 GitHub Environment의 self-review 방지 + 지정된 독립 승인자 1인의 approval evidence를 함께 검증하는 방향으로 정리한다. **승인자 "수"가 아니라, 승인 가능한 목록을 지정된 독립 승인자로 제한하고 실행 요청자의 self-review가 실제로 차단되는지를 검증 대상으로 삼는다**(가빈 지적: "승인자 목록을 정확히 1인 이상으로 지정"은 의미가 불명확).
 
 접근 통제와 별개로, 아래 조건도 필요하다 — 접근을 아무리 잘 막아도 이게 없으면 artifact로 정답이 새어 평가 자체가 무효화된다.
 - 승인은 특정 commit과 Dataset manifest hash에 고정되어야 한다(승인 당시와 다른 commit/hash로 실행되지 않도록)
@@ -90,25 +91,32 @@ PR #373 — append-only hash-chain journal(synthetic, global monotonic sequence,
 - global sequence + durable head/checkpoint
 - backup·restore 검증
 
-Authorization·revoke·Freeze·run audit evidence는 해당 Dataset version의 마지막 Freeze Receipt 생성일 기준 최소 1년, legal hold가 있으면 해제 시까지 보존한다(기산점을 "운영 종료 후"로 두면 시스템이 판정할 수 없어, kernel이 기록하는 Freeze 시점으로 대체). 단 이는 기존 저장소 정책의 재사용이 아니라 신규 정책안이며, 실제 적용은 Privacy·필요한 외부 승인과 보관 위치가 확정된 뒤에만 가능하다. 보관 위치와 기술적 삭제·복구 방식은 Backend·Security 담당자(송은영)가 제시한다.
+Authorization·revoke·Freeze·run audit evidence는 각 event 생성 시점 기준 **최소 1년**을 별도로 보장하고, legal hold가 있으면 해제 시까지 보존한다. 단 이는 기존 저장소 정책의 재사용이 아니라 신규 정책안이며, 실제 적용은 Privacy·필요한 외부 승인과 보관 위치가 확정된 뒤에만 가능하다. 보관 위치와 기술적 삭제·복구 방식은 Backend·Security 담당자(송은영)가 제시한다.
+
+**⚠️ 기산점 정정(가빈 지적)**: 앞선 초안(현우 제안)은 "마지막 Freeze Receipt 생성일"을 기산점으로 삼았으나, Dataset은 Freeze 이후에도 1년 넘게 계속 운영·평가에 쓰일 수 있어 이 기준대로면 **아직 사용 중인 audit evidence까지 폐기 대상**이 될 수 있다. "시스템이 운영 종료를 판정할 수 없다"는 이유로 판정 가능한 Freeze 시점을 대신 쓰지 않는다 — 대신 Dataset version의 명시적인 **운영 종료·폐기 가능 상태**(판정 가능한 lifecycle marker)를 후속 계약으로 정의하고, 그 상태가 구현되기 전까지는 시간 경과만으로 자동 폐기하지 않는다.
 
 ## 8. 보존·폐기 정책
 
-Dataset 원본(질문·Gold 본문)도 §7과 동일하게 마지막 Freeze Receipt 생성일 기준 1년을 기본안으로 하되, Custodian의 폐기 요청 + Product·Evaluation 책임자(권가빈)의 독립 승인을 거친다.
+Dataset 원본(질문·Gold 본문)의 폐기는 §7과 동일하게 **Dataset version의 명시적인 운영 종료·폐기 가능 상태**가 정의·구현되기 전까지 자동 폐기하지 않는다(가빈 지적 반영 — Freeze 이후에도 계속 운영될 수 있어 Freeze 기준 시간 경과만으로 폐기하면 안 됨). 그 상태가 구현된 뒤에는 Custodian의 폐기 요청 + Product·Evaluation 책임자(권가빈)의 독립 승인을 거친다.
 
 현재 kernel enum(`READ|WRITE|FREEZE|RUN`, `GRANT|REVOKE|EXPIRE`, `DENIED|INTENT|SUCCEEDED|UNKNOWN`)에 폐기 이벤트를 억지로 끼워 넣지 않는다. 대신 삭제 전 `INTENT`(Dataset version/digest, 승인, legal hold·backup 조건 결속) → 삭제 후 `SUCCEEDED`/`UNKNOWN` → 재조정 절차를 갖는 별도 disposal audit 계약으로 분리한다. 이는 공유 계약 변경이므로 이 문서와 별도로 계약·구현·테스트가 필요하다(이번 PR 범위 밖, 후속 작업으로 이관).
 
-폐기 요구와 "과거 평가를 재현해달라"는 요구가 나중에 충돌하지 않도록, 과거 평가의 재현 검증은 Freeze Receipt와 manifest hash 대조로만 하고 원본(Dataset 실제 내용) 재실행을 요구하지 않는다는 경계도 같이 고정한다.
+**⚠️ 표현 정정(가빈 지적)**: Freeze Receipt와 manifest hash 대조는 Dataset·실행 입력의 **identity와 무결성**만 확인할 수 있고, 과거 평가 **결과를 재현**하지는 못한다. 원본 폐기 후에는 재실행 기반 재현이 애초에 불가능하며, 가능한 건 provenance·integrity 확인뿐이다. 또한 "원본 재실행을 요구하지 않는다"는 이번 문서에서 이미 합의된 내용이 아니라 **별도의 Product·Evaluation 정책 결정**이 필요한 사항이다 — 그 결정이 나기 전까지는 폐기와 재현 요구가 충돌할 수 있는 상태로 남겨둔다.
 
 ## 9. 백업·복구
 
 Mutable authoring 기간에는 일 단위 backup, Freeze 및 version 변경 시점에는 별도 snapshot, 분기별 restore test를 기본안으로 한다.
 
-보관 위치는 기존 `pg_dump -Fc` 백업(`scripts/deployment.sh:588-591`, migration 배포 시마다 실행)과 동일한 위치를 재사용한다 — protected schema도 같은 DB 인스턴스 안에 있으므로 백업 자체는 별도 인프라가 필요 없다. 다만 이 메커니즘은 migration/배포 시점에만 실행되므로, "authoring 기간 일 단위 backup"은 같은 명령을 별도로 스케줄링(cron 등)해야 하고, "Freeze 시점 snapshot"은 Freeze 시점에 같은 명령을 한 번 더 실행하는 것으로 충족한다.
+보관 위치와 기술적 방식은 **Backend·Security(송은영) 설계에서 확정**한다. Custodian은 비민감 검증 evidence만 확인한다.
 
-**복구(restore) 절차는 저장소에 아직 없다** — `pg_restore`로 이론상 복구 가능한 덤프 포맷(`-Fc`)이긴 하지만, 실제 복구 스크립트나 검증된 절차는 존재하지 않는다(`pg_restore` 사용례 0건). 즉 "분기별 restore test"는 기존 메커니즘 재사용이 아니라 **새로 만들어야 하는 절차**다 — 백업만 있고 복구가 실제로 되는지 검증하지 않는 상태를 피하는 것이 이 항목의 목적이므로, 이 구분을 명확히 한다.
+**⚠️ 정정(가빈 지적)**: 기존 `pg_dump -Fc` 백업(`scripts/deployment.sh:588-591`)을 그대로 재사용한다고 이번 문서에서 확정하지 않는다 — 그 덤프는 admin 계정이 **전체 DB**를 읽어 일반 `deployment-evidence`에 저장하므로, protected schema를 같은 덤프에 포함하면 일반 배포·백업 경로가 §3~§5에서 만든 접근 통제를 우회하는 새로운 HOLDOUT 노출 경로가 된다. 최소한 아래가 선행 조건으로 확인되기 전까지는 기존 메커니즘 재사용 여부를 결정하지 않는다.
 
-암호화·접근 통제 세부사항과 실행 담당자는 Backend·Security(송은영)가 확정하고, Custodian은 비민감 검증 evidence만 확인한다.
+- 암호화
+- protected 전용 ACL(일반 배포·백업 계정과 분리)
+- 일반 CI·배포 artifact에 비노출
+- credential 분리
+- 보존·삭제 정책과의 연계
+- 격리된 restore test(위 조건 위에서 검증) — `pg_restore` 사용례가 저장소에 없으므로(0건) 이 절차 자체도 새로 만들어야 한다
 
 ## 10. 정기 접근 검토 주기
 
