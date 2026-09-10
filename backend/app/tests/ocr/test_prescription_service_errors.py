@@ -11,7 +11,7 @@ from app.services.prescriptions import PrescriptionService
 
 
 @pytest.mark.asyncio
-async def test_confirm_prescription_rejects_when_ocr_is_not_completed() -> None:
+async def test_confirm_prescription_rejects_when_ocr_is_not_completed(db_session) -> None:
     user = User(
         id=uuid4(),
         email="ocr-not-completed@example.com",
@@ -32,10 +32,12 @@ async def test_confirm_prescription_rejects_when_ocr_is_not_completed() -> None:
 
     document_repository = AsyncMock()
     document_repository.get_owned.return_value = document
+    document_repository.get_owned_for_update.return_value = document
     ocr_repository = AsyncMock()
     ocr_repository.get_latest_completed_job.return_value = None
     prescription_repository = AsyncMock()
     prescription_repository.get_by_document.return_value = None
+    prescription_repository.session = db_session
 
     service = PrescriptionService(
         document_repository=document_repository,

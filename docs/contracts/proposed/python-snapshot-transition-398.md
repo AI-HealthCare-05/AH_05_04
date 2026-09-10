@@ -36,12 +36,12 @@ CURRENT 선택은 공백이 아닌 100자 이하 작업자 식별자가 필요�
 
 ## 증빙
 
-### Source 역할 적용 코드 (배포 미연결)
+### Source 역할 적용 코드와 배포 연결
 
 `infra/python/source_role_policy.py`는 관리자 연결의 외부 transaction에서 호출한다. 비밀번호를 받거나 역할을 생성하지 않으며, 사전에 생성된 별도 Runtime/Writer 역할에 권한을 적용한다.
 
 - Source 7개 테이블에서 Runtime은 SELECT만 허용
-- Writer는 SELECT·INSERT 허용. Operation 잠금, Snapshot 전이, Ingestion Run 갱신에만 UPDATE 허용
+- Writer는 SELECT·INSERT 허용. Operation 잠금, Snapshot 전이·seal 연결, Ingestion Run 갱신에만 UPDATE 허용
 - Artifact·Verification의 UPDATE·DELETE·TRUNCATE는 Writer에도 금지
 - Runtime/Writer의 관리자 권한, 역할 상속, schema·database·객체 소유권이 있으면 적용 거부
 - 기존 상태 전이 DB 함수가 남아 있으면 권한 전환 거부
@@ -54,7 +54,7 @@ Source 관리용 수정·삭제 권한과 Catalog/Prescription/Runtime 권한은
 
 `test_source_writer_roles.py`는 서로 다른 로그인 자격 증명으로 실제 INSERT/UPDATE/DELETE/TRUNCATE 및 SET ROLE 차단, Writer 허용 작업, 신규 테이블 기본 권한, 역할 상속 거부를 확인한다.
 
-`tests/integration/rag/test_source_snapshot_lifecycle.py`는 모델 스키마만 생성하고 과거 전이 함수·Trigger 설치 없이 Python 저장 경로를 검증한다. 최종 migration과 실제 역할 분리 검증은 별도로 남아 있다.
+`tests/integration/rag/test_source_snapshot_lifecycle.py`는 모델 스키마에서 Python 저장과 실제 Writer 수집을 검증한다. 최종 migration과 실제 역할 분리는 `test_database_role_provisioning.py` 및 `test_source_management.py`의 폐기 DB 통합 테스트에서 검증한다.
 
 ### 일회성 Source Writer 실행 경로
 
@@ -64,14 +64,14 @@ Operation→Snapshot 잠금 후 checksum을 대조하고 기존 Python 선택 �
 
 운영 Compose의 `source-writer`는 `source-admin` profile의 일회성 서비스이며 기본 배포에 포함되지 않는다. 기존 AI 이미지의 별도 진입점을 사용하고 Writer 환경 변수만 전달한다. 예시: `docker compose -f docker-compose.prod.yml run --rm --no-deps source-writer <UUID> --expected-checksum <SHA-256> --reason-code VERIFIED_RELEASE`.
 
-이 실행 경로 추가는 운영 전환 완료가 아니다. 전용 역할 provisioning과 bootstrap 연결은 아래 배포 권한 절에 구현 상태를 기록한다. 기존 함수·Trigger 제거와 종합 검증이 완료되기 전에는 운영 실행하지 않는다. 통합 테스트는 실제 제한 역할로 명령의 DB 실행 함수(run_selection)를 호출하여 성공·재실행·Runtime 차단·감사 권한 실패 rollback을 확인한다. 컨테이너 실행 및 운영 provisioning을 포함하는 배포 통합 검증은 후속 단계에 남아 있다.
+이 실행 경로 추가는 운영 전환 완료가 아니다. 전용 역할 provisioning과 bootstrap 연결은 아래 배포 권한 절에 구현 상태를 기록한다. 기존 함수·Trigger 제거와 종합 검증이 완료되기 전에는 운영 실행하지 않는다. 통합 테스트는 실제 제한 역할로 명령의 DB 실행 함수(run_selection)를 호출하여 성공·재실행·Runtime 차단·감사 권한 실패 rollback을 확인한다. 실제 이미지 import·head 로딩과 로컬 폐기 DB bootstrap/provisioning은 검증한다. 운영 secret 주입·운영 실행·외부 승인은 별도다.
 
 
 실행 시 실제 로그인 역할의 관리자 권한·다른 역할 membership·DB/schema/객체 소유권을 다시 검사하여 잘못 주입된 고권한 계정을 거부한다. Source 역할 정책은 Migration owner가 PUBLIC 또는 Runtime/Writer에 부여한 전역 테이블 default grant가 있으면 적용을 거부한다. Schema 범위의 REVOKE로 전역 grant를 취소할 수 없기 때문이다. 다른 schema에 영향을 주는 전역 권한을 자동 변경하지 않으며, 운영 provisioning에서 먼저 정렬해야 한다.
 
 ### 검증 이력과 전환의 잠금 일치
 
-Worker의 append_verification 및 Backend Source/Catalog Repository의 create_snapshot_verification은 INSERT 전 해당 Snapshot의 Operation 행을 잠근다. 상태 전환과 승인 이력이 서로 다른 잠금 경로로 경합하지 않도록 한다. 대상이 없으면 기록하지 않는다. 이는 작업자의 승인 권한을 대신하지 않으며 관리 승인·회수 API와 배포 권한 연결은 별도로 남아 있다.
+Worker의 append_verification 및 Backend Source/Catalog Repository의 create_snapshot_verification은 INSERT 전 해당 Snapshot의 Operation 행을 잠근다. 상태 전환과 승인 이력이 서로 다른 잠금 경로로 경합하지 않도록 한다. 대상이 없으면 기록하지 않는다. 이는 작업자의 승인 권한을 대신하지 않으며 Source·Catalog 관리 권한 부여/회수와 별도 실행 환경은 PD-398-M1에 연결되어 있다.
 
 ### 권한 전환 전 컬럼 권한 정리
 
@@ -81,23 +81,23 @@ Worker의 append_verification 및 Backend Source/Catalog Repository의 create_sn
 
 `SOURCE_WRITER_USER/PASSWORD`를 Admin/Migration/Runtime과 다른 로그인으로 준비한다. Bootstrap에서 생성하지만 일반 FastAPI·Worker·migrate에는 이 비밀번호를 전달하지 않는다. `provision-db-roles`는 `database-admin` profile의 일회성 작업으로 Admin 비밀번호와 대상 역할 이름만 받는다. Source Writer는 기존 `source-admin` profile로 운영자가 명시적으로 실행한다.
 
-배포는 API·Worker·Source Writer 중지 확인 → bootstrap → backup → migration → 권한 provisioning → 기존 데이터 검증 → 서비스 시작 순서다. provisioning 실패 시 서비스 시작까지 진행하지 않는다. Worker 포함 여부의 기존 배포 선택은 유지한다.
+배포는 API·Worker·Source Writer 중지 확인 → bootstrap → backup → migration → verify-db-head(최신 head·잔여 DB 로직 검증) → 권한 provisioning → 서비스 시작 순서다. provisioning 실패 시 서비스 시작까지 진행하지 않는다. Worker 포함 여부의 기존 배포 선택은 유지한다.
 
 Runtime 테이블 목록은 `RUNTIME_MUTABLE_TABLES`와 `RUNTIME_APPEND_ONLY_TABLES`로 명시한다. Source는 별도 기존 정책(읽기만 Runtime, 제한된 쓰기 Writer)을 적용한다. Prescription 버전·약 및 Check-in/Evidence 감사는 SELECT/INSERT만 허용한다. 다른 도메인은 기존 동작을 위한 명시적 DML 목록이며 이 목록 자체가 해당 도메인의 Writer 전환 완료를 뜻하지 않는다. 신규·미등록 테이블은 권한이 없으며 schema version 관리 테이블도 Runtime에 열지 않는다. sequence는 등록된 Runtime 테이블에 종속된 것의 USAGE/SELECT만 허용하고 setval 권한은 부여하지 않는다.
 
 PUBLIC과 두 실행 역할의 기존 테이블·컬럼·sequence 권한을 회수하고 명시적 권한을 부여하는 과정은 단일 transaction이다. Migration 역할의 전역·public 기본 테이블/sequence 권한은 bootstrap에서 회수한다. 새 테이블 추가 시 권한 목록을 별도로 리뷰해야 한다. 필수 테이블 누락 또는 기존 Source 함수 존재는 전환 실패이며 우회 옵션을 제공하지 않는다.
 
-현재 검증은 실제 psql bootstrap, 별도 계정과 폐기 DB에서의 재실행, 권한 실패 rollback, 전체 기존 migration 이력에서의 전환 거부까지다. 운영 컨테이너 이미지 실행과 모든 도메인 Trigger 제거 후 종합 배포 검증은 남아 있다. #404는 병합 후 통합한다.
+실제 psql bootstrap, 별도 계정·폐기 DB 재실행, 권한 실패 rollback, 과거 Source 함수 잔존 시 거부, 최신 head 전환 후 Writer 실행을 검증한다. #404 병합 최종본의 인증 테이블 권한도 연결한다. 운영 배포·운영 DB 적용은 별도다.
 
 ### 398c Source 함수·트리거 제거
 
 398c3d4e5f60은 Source Snapshot/Artifact/Verification의 사용자 정의 트리거 6개와 전이·방어 함수 5개를 제거한다. 이미 적용된 migration 및 고정 hash 예외 목록은 변경하지 않는다. 제거 전 Source 7개 테이블을 잠그고 소유자 이외의 기존 테이블·컬럼 권한을 회수하며, 이 과정은 제거와 함께 commit된다. 이후 provisioning이 실패해도 기존 Runtime의 광범위 DML이 남지 않는다. 관리/소유자 계정은 신뢰된 migration 경계이며 애플리케이션 실행 계정으로 사용할 수 없다.
 
-Snapshot 생성은 두 Repository 모두 PENDING이며 verified_at/effective_at이 없는 상태로 제한한다. Backend의 기존 DTO에 다른 상태·시각이 있으면 INSERT 이전에 ValueError로 거부한다. 게시된 자료 조회 테스트의 상태 준비는 별도의 관리자 fixture이며 운영 생성 경로가 아니다. Writer의 Snapshot UPDATE는 verification_status/verified_at/effective_at 컬럼으로만 제한하여 원본 hash·Receipt·구성·identity의 직접 변경을 막는다. 상태 전이·승인·감사는 기존 Python 전이 코드가 수행한다. Artifact/Verification은 Writer에서도 UPDATE/DELETE/TRUNCATE 권한이 없다.
+Snapshot 생성은 두 Repository 모두 PENDING이며 verified_at/effective_at이 없는 상태로 제한한다. Backend의 기존 DTO에 다른 상태·시각이 있으면 INSERT 이전에 ValueError로 거부한다. 게시된 자료 조회 테스트의 상태 준비는 별도의 관리자 fixture이며 운영 생성 경로가 아니다. Writer의 Snapshot UPDATE는 verification_status/verified_at/effective_at/verification_seal_id 컬럼으로만 제한하여 원본 hash·Receipt·구성·identity의 직접 변경을 막는다. 상태 전이·승인·감사는 기존 Python 전이 코드가 수행한다. Artifact/Verification은 Writer에서도 UPDATE/DELETE/TRUNCATE 권한이 없다.
 
 삭제는 정확한 이름으로 수행하며 CASCADE를 사용하지 않는다. 예상 밖 의존성이나 잔여 Source 트리거가 있으면 권한 회수까지 전체 rollback한다. downgrade는 트리거를 재도입하지 않으며 명시적으로 거부한다. 복구는 검토한 forward-fix 또는 배포 전 백업 절차로 처리한다.
 
-과거 migration 계약 테스트는 되돌릴 수 있는 398b까지 고정한다. 최신 head의 기존 자료 보존·빈 DB upgrade·트리거/함수 0개·실제 Writer 선택·재시도·권한 거부·downgrade 차단은 별도 폐기 DB 통합 테스트에서 확인한다. 여기서 0개는 Source 범위이며 Prescription/Candidate/Runtime/Evidence/Check-in/정리 도구까지 모두 제거됐다는 의미는 아니다. 당시 남겨둔 Source 관리 수정·삭제·권한 부여/회수는 아래 PD-398-M1에서 보완했다. #404는 병합 후 별도로 통합한다.
+과거 migration 계약 테스트는 되돌릴 수 있는 398b까지 고정한다. 최신 head의 기존 자료 보존·빈 DB upgrade·트리거/함수 0개·실제 Writer 선택·재시도·권한 거부·downgrade 차단은 별도 폐기 DB 통합 테스트에서 확인한다. 여기서 0개는 Source 범위이며 Prescription/Candidate/Runtime/Evidence/Check-in/정리 도구까지 모두 제거됐다는 의미는 아니다. 당시 남겨둔 Source 관리 수정·삭제·권한 부여/회수는 아래 PD-398-M1에서 보완했다. #404는 PR #429 리뷰 수정에서 병합 최종본과 통합했다.
 
 ## Source·Catalog 관리 경로 후속 구현
 

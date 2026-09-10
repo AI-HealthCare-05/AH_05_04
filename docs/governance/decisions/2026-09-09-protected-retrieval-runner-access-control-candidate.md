@@ -157,7 +157,7 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 - `docs/validation/rag/issue-273/protected-runner-foundation.md`
 - `infra/docker/postgres/configure-app-role.sql` — §3 role/권한 provisioning 선례
 - [PD-398-R1 Python 무결성 리뷰 보완](./2026-09-10-python-integrity-review-429.md) — §4의 현재 구현 원칙. `165e8f706152`와 [과거 Source DB 전이 결정](./2026-09-08-source-snapshot-db-transition.md)은 superseded된 이력이며 신규 함수 선례가 아니다.
-- `CONTRIBUTING.md` — §4 DB 함수 도입 예외 5개 항목 기준
+- `CONTRIBUTING.md`·`AGENTS.md` — §4 Python 업무 로직·일반 제약·최소 권한 및 신규 Trigger/RLS/업무 저장 함수 금지 기준
 - `backend/app/core/config.py` — §6 credential fail-closed validator 패턴
 - `.github/workflows/checks.yml` — §6 GitHub Actions 현황 확인
 - `docs/privacy-safety.md` — §7 보존기간(다른 값, 전부 미적용), §12 예외 미허용 기조

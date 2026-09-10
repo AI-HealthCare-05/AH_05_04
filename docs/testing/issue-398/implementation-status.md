@@ -1,8 +1,8 @@
 # #398 구현 진행 및 검증
 
-기준 develop: `827a93a` (#410·#413·#386·#411 반영, `07cb7d1` 통합 commit). 이전 단계 기준은 `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`.
+기준 develop: `2922c25` (#404 병합 최종본 포함, `7e27bc2` 통합 commit). 이전 단계 기준은 `827a93a`와 `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`.
 
-상태: Trigger 제거와 Python 무결성 전환 완료. 누락됐던 Source·Catalog 관리 API·권한·감사 경로와 분리된 실행 설정·인수 문서를 완료했다. 최종 검증: 관리/권한/실행 계약 26 passed, 전체 migration 150 passed, 실제 이미지 2 passed. Ruff 전체 및 Backend/Worker mypy 516개 파일 통과. #398 → #291 연계 → #372 순서이며 #404는 병합 후 후속 작업.
+상태: PR #429 리뷰 수정 및 로컬 종합 검증 완료, 담당 재리뷰·원격 CI 대기. Runtime 최신 잠금 상태, Source 수집 권한, 처방 멱등 응답, Snapshot SQL 삭제 방어와 #404 인증 권한 통합을 구현·검증했다. 최신 증빙은 [PR #429 리뷰 수정 기록](review-429.md)을 따른다. #398 → #291 연계 → #372 순서를 유지하며 #404 병합 대기는 해소했다. 담당 리뷰·원격 CI·운영 적용은 별도다.
 
 아래 단계별 기록은 당시 상태를 보존한 이력이다. 과거 “미완료” 표시는 최신 상태를 의미하지 않는다. 관리 경계의 최신 계약은 [PD-398-M1](../../contracts/proposed/source-catalog-management-398.md)을 따른다.
 
@@ -341,3 +341,8 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 ## 병합 준비 재검증 (2026-09-10)
 
 최신 develop 통합 후 Check-in·관리 권한·배포/CI 계약·Worker Evaluation 회귀 1260 passed, 8 skipped. Ruff 전체/format 및 Backend/Worker mypy 526개 파일 통과. 재도입 방지·보호 쓰기 경계·테스트 inventory 검사 통과. 로컬 통합 완료와 PR 최종 승인·원격 CI·운영 적용은 구분한다.
+
+
+## PR #429 리뷰 최종 반영
+
+`d12783e` Runtime·Source 수집 잠금, `fe3033a` 처방 성공 응답 재현, `3014ae6` Snapshot 일반 제약 삭제 방어·#404 통합을 반영했다. 전체 migration 154, Backend/계약/통합 1,716, Worker 2,713, 별도 Source cleanup 57, Redis 연계 23개가 통과했다. 테스트 묶음의 중복 및 skip 설명은 [최종 리뷰 증빙](review-429.md#최종-회귀-검증)에 기록한다. 현재 코드 head는 `398293a4b5c6`이며 DB Trigger·RLS·업무 저장 함수는 새로 정의하지 않았다.

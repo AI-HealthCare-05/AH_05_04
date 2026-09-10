@@ -228,6 +228,7 @@ async def _cleanup(ids: dict[str, str]) -> None:
             ids,
         )
         await connection.execute(text("DELETE FROM profile WHERE id = :profile_id"), ids)
+        await connection.execute(text("DELETE FROM idempotency_record WHERE user_id = :user_id"), ids)
         await connection.execute(text('DELETE FROM "user" WHERE id = :user_id'), ids)
 
 
@@ -819,8 +820,8 @@ def test_concurrent_corrections_allow_only_one_new_active_version_on_migrated_po
 
         results = asyncio.run(_correct_concurrently(ids, base_version_id=base_version_id))
 
-        assert [code for code, _ in results].count("ok") == 1
-        assert [code for code, _ in results].count("PRESCRIPTION_VERSION_CONFLICT") == 1
+        assert [code for code, _ in results] == ["ok", "ok"]
+        assert results[0][1] == results[1][1]
         assert asyncio.run(_version_counts(ids)) == (2, 2)
         active = asyncio.run(_snapshot(ids))
         assert active is not None
