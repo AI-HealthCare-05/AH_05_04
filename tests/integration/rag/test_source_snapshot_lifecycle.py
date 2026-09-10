@@ -1,15 +1,13 @@
 """Source Snapshot 저장·현재성 전이를 실제 PostgreSQL에서 검증합니다."""
 
 import asyncio
-import importlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from sqlalchemy import func, select, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -50,6 +48,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
     SnapshotSelectionDecision,
+    SnapshotVerificationStatus,
     fail_snapshot_verification,
     persist_product_ingestion_result,
     select_current_snapshot,
@@ -105,12 +104,6 @@ async def isolated_schema() -> AsyncIterator[None]:
 
     async with test_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-
-        def install_transition(sync_connection):
-            with Operations.context(MigrationContext.configure(sync_connection)):
-                importlib.import_module("backend.alembic.versions.165e8f706152_guard_snapshot_transitions").upgrade()
-
-        await connection.run_sync(install_transition)
 
     try:
         yield
@@ -803,3 +796,44 @@ async def test_failed_same_version_different_contract_is_conflict(changed: str) 
         run = await session.get(RagSourceIngestionRun, result.ingestion_run_id)
         assert run is not None
         assert run.failure_code == "SOURCE_VERSION_CONFLICT"
+
+
+async def test_python_transition_rolls_back_when_selection_audit_fails(monkeypatch) -> None:
+    identity = await _seed_operation("AUDIT_ROLLBACK_398")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        created = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:audit398", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+        assert created.snapshot_id is not None
+        snapshot_id = created.snapshot_id
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        monkeypatch.setattr(repository, "append_verification", AsyncMock(side_effect=RuntimeError("audit unavailable")))
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await repository.change_snapshot_status(
+                snapshot_id=snapshot_id,
+                expected_status=SnapshotVerificationStatus.PENDING,
+                new_status=SnapshotVerificationStatus.CURRENT,
+                verified_at=_NOW,
+                effective_at=_NOW,
+                selected_by="synthetic-reviewer",
+            )
+        # 호출자가 예외를 잡고 외부 transaction을 commit해도 상태 변경만 남지 않습니다.
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, snapshot_id)
+        assert snapshot is not None
+        assert snapshot.verification_status == RagSnapshotVerificationStatus.PENDING
+        assert snapshot.verified_at is None
+        count = await session.scalar(
+            select(func.count())
+            .select_from(RagSourceSnapshotVerification)
+            .where(
+                RagSourceSnapshotVerification.snapshot_id == snapshot_id,
+                RagSourceSnapshotVerification.check_name == "snapshot-current-selection",
+            )
+        )
+        assert count == 0

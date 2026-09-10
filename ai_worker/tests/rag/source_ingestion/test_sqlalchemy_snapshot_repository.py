@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
+    _validate_snapshot_transition,
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
@@ -257,26 +258,54 @@ async def test_snapshot_operation_lock_uses_snapshot_membership() -> None:
 
 async def test_snapshot_status_change_is_compare_and_set_without_commit() -> None:
     session = AsyncMock(spec=AsyncSession)
-    query_result = MagicMock()
-    query_result.scalar_one.return_value = True
-    session.execute.return_value = query_result
+    operation = MagicMock()
+    operation.scalar_one_or_none.return_value = str(_OPERATION_ID)
+    target = MagicMock()
+    target.mappings.return_value.one_or_none.return_value = {
+        "verification_status": "PENDING",
+        "rejected_record_count": 0,
+    }
+    changed = MagicMock()
+    changed.scalar_one_or_none.return_value = str(_SNAPSHOT_ID)
+    session.execute.side_effect = [operation, target, changed, MagicMock()]
     repository = SqlAlchemySourceSnapshotRepository(session)
-
-    changed = await repository.change_snapshot_status(
+    assert await repository.change_snapshot_status(
         snapshot_id=_SNAPSHOT_ID,
         expected_status=SnapshotVerificationStatus.PENDING,
         new_status=SnapshotVerificationStatus.CURRENT,
         verified_at=_NOW,
         effective_at=_NOW,
+        selected_by="synthetic-reviewer",
     )
-
-    assert changed is True
-    statement = session.execute.await_args.args[0]
-    sql = str(statement)
-    parameters = session.execute.await_args.args[1]
-    assert "SELECT transition_rag_source_snapshot" in sql
-    assert parameters["snapshot_id"] == str(_SNAPSHOT_ID)
-    assert SnapshotVerificationStatus.PENDING in parameters.values()
-    assert SnapshotVerificationStatus.CURRENT in parameters.values()
-    assert _NOW in parameters.values()
+    statements = [str(call.args[0]) for call in session.execute.await_args_list]
+    assert "FOR UPDATE" in statements[0]
+    assert "FOR UPDATE" in statements[1]
+    assert statements[2].startswith("UPDATE rag_source_snapshot")
+    assert statements[3].startswith("INSERT INTO rag_source_snapshot_verification")
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("expected", list(SnapshotVerificationStatus))
+@pytest.mark.parametrize("next_status", list(SnapshotVerificationStatus))
+def test_python_transition_matrix_is_fail_closed(expected, next_status) -> None:
+    allowed = {("PENDING", "CURRENT"), ("PENDING", "FAILED"), ("CURRENT", "STALE"), ("STALE", "CURRENT")}
+    args = (
+        expected,
+        next_status,
+        _NOW if expected == SnapshotVerificationStatus.PENDING else None,
+        _NOW if next_status == SnapshotVerificationStatus.CURRENT else None,
+        "synthetic-reviewer",
+    )
+    if (expected.value, next_status.value) in allowed:
+        _validate_snapshot_transition(*args)
+    else:
+        with pytest.raises(ValueError, match="Invalid Snapshot transition"):
+            _validate_snapshot_transition(*args)
+
+
+@pytest.mark.parametrize("actor", [None, "", " ", "x" * 101])
+def test_python_selection_requires_auditable_actor(actor) -> None:
+    with pytest.raises(ValueError, match="actor"):
+        _validate_snapshot_transition(
+            SnapshotVerificationStatus.PENDING, SnapshotVerificationStatus.CURRENT, _NOW, _NOW, actor
+        )

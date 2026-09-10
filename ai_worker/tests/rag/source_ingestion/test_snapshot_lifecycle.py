@@ -800,13 +800,13 @@ async def test_previous_stale_snapshot_can_be_restored_without_runtime_activatio
         repository=repository,
         snapshot_id=first.snapshot_id,
         selected_at=_NOW + timedelta(minutes=1),
-        selected_by=None,
+        selected_by="synthetic-reviewer",
     )
     await select_current_snapshot(
         repository=repository,
         snapshot_id=second.snapshot_id,
         selected_at=_NOW + timedelta(minutes=2),
-        selected_by=None,
+        selected_by="synthetic-reviewer",
     )
 
     restored = await select_current_snapshot(
@@ -835,7 +835,7 @@ async def test_selecting_current_snapshot_is_idempotent() -> None:
         repository=repository,
         snapshot_id=created.snapshot_id,
         selected_at=_NOW + timedelta(minutes=1),
-        selected_by=None,
+        selected_by="synthetic-reviewer",
     )
     verification_count = len(repository.verifications)
 
@@ -843,7 +843,7 @@ async def test_selecting_current_snapshot_is_idempotent() -> None:
         repository=repository,
         snapshot_id=created.snapshot_id,
         selected_at=_NOW + timedelta(minutes=2),
-        selected_by=None,
+        selected_by="synthetic-reviewer",
     )
 
     assert repeated.decision is SnapshotSelectionDecision.ALREADY_CURRENT

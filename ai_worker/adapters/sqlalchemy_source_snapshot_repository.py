@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, String, column, func, insert, select, table, text
+from sqlalchemy import DateTime, Integer, String, column, func, insert, select, table, update
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -365,20 +365,92 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         effective_at: datetime | None = None,
         selected_by: str | None = None,
     ) -> bool:
-        result = await self._session.execute(
-            text(
-                "SELECT transition_rag_source_snapshot(:snapshot_id, :expected, :next, :verified, :effective, :actor)"
-            ),
-            {
-                "snapshot_id": str(snapshot_id),
-                "expected": expected_status.value,
-                "next": new_status.value,
-                "verified": verified_at,
-                "effective": effective_at,
-                "actor": selected_by,
-            },
+        # 감사 실패를 호출자가 잡더라도 상태 변경만 남지 않도록 savepoint로 묶습니다.
+        # 외부 transaction의 commit은 호출자가 담당합니다.
+        async with self._session.begin_nested():
+            target = await self._lock_transition_target(snapshot_id)
+            if target is None or target["verification_status"] != expected_status:
+                return False
+            _validate_snapshot_transition(expected_status, new_status, verified_at, effective_at, selected_by)
+            if (
+                new_status is SnapshotVerificationStatus.CURRENT
+                and target["rejected_record_count"] > 0
+                and not await self.has_passed_verification(
+                    snapshot_id=snapshot_id, check_name=SNAPSHOT_PUBLICATION_APPROVAL_CHECK
+                )
+            ):
+                raise ValueError("Snapshot publication approval required")
+            values: dict[str, Any] = {"verification_status": new_status.value}
+            if verified_at is not None:
+                values["verified_at"] = verified_at
+            if effective_at is not None:
+                values["effective_at"] = effective_at
+            result = await self._session.execute(
+                update(_SNAPSHOT)
+                .where(
+                    _SNAPSHOT.c.id == str(snapshot_id),
+                    _SNAPSHOT.c.verification_status == expected_status.value,
+                )
+                .values(**values)
+                .returning(_SNAPSHOT.c.id)
+            )
+            if result.scalar_one_or_none() is None:
+                return False
+            if new_status is SnapshotVerificationStatus.CURRENT:
+                assert effective_at is not None
+                await self.append_verification(
+                    snapshot_id=snapshot_id,
+                    check_name="snapshot-current-selection",
+                    result="PASSED",
+                    verified_at=effective_at,
+                    verified_by=selected_by,
+                    details_summary="Python transaction: snapshot selection",
+                )
+            return True
+
+    async def _lock_transition_target(self, snapshot_id: UUID) -> RowMapping | None:
+        operation = await self._session.execute(
+            select(_OPERATION.c.id)
+            .select_from(_OPERATION.join(_SNAPSHOT, _SNAPSHOT.c.operation_id == _OPERATION.c.id))
+            .where(_SNAPSHOT.c.id == str(snapshot_id))
+            .with_for_update(of=_OPERATION)
         )
-        return result.scalar_one() is True
+        operation_id = operation.scalar_one_or_none()
+        if operation_id is None:
+            return None
+        target = await self._session.execute(
+            select(_SNAPSHOT.c.verification_status, _SNAPSHOT.c.rejected_record_count)
+            .where(_SNAPSHOT.c.id == str(snapshot_id), _SNAPSHOT.c.operation_id == operation_id)
+            .with_for_update(of=_SNAPSHOT)
+        )
+        return target.mappings().one_or_none()
+
+
+def _validate_snapshot_transition(
+    expected: SnapshotVerificationStatus,
+    next_status: SnapshotVerificationStatus,
+    verified_at: datetime | None,
+    effective_at: datetime | None,
+    selected_by: str | None,
+) -> None:
+    allowed = {
+        (SnapshotVerificationStatus.PENDING, SnapshotVerificationStatus.CURRENT),
+        (SnapshotVerificationStatus.PENDING, SnapshotVerificationStatus.FAILED),
+        (SnapshotVerificationStatus.CURRENT, SnapshotVerificationStatus.STALE),
+        (SnapshotVerificationStatus.STALE, SnapshotVerificationStatus.CURRENT),
+    }
+    if (expected, next_status) not in allowed:
+        raise ValueError("Invalid Snapshot transition")
+    if (expected is SnapshotVerificationStatus.PENDING) != (verified_at is not None):
+        raise ValueError("Invalid Snapshot verification timestamp")
+    if (next_status is SnapshotVerificationStatus.CURRENT) != (effective_at is not None):
+        raise ValueError("Invalid Snapshot selection timestamp")
+    for timestamp in (verified_at, effective_at):
+        if timestamp is not None and (timestamp.tzinfo is None or timestamp.utcoffset() is None):
+            raise ValueError("Snapshot timestamp must be timezone-aware")
+    if next_status is SnapshotVerificationStatus.CURRENT:
+        if selected_by is None or not selected_by.strip() or len(selected_by) > 100:
+            raise ValueError("Snapshot selection requires an actor of at most 100 characters")
 
 
 def _snapshot_reference(row: RowMapping | None) -> SnapshotReference | None:

@@ -35,6 +35,10 @@
 - [x] Candidate 결과 추가·최종화 시 부모 잠금 및 RUNNING 상태 재검증
 - [x] Candidate 최종화에서 실제 저장된 전체 결과·표시 결과 집계 검증
 - [ ] Python 대체 저장 경로 및 계약 구현
+  - Snapshot DB 함수 호출을 Python 잠금·전이 검증·조건부 UPDATE·감사 INSERT로 대체
+  - 상태 변경과 선택 감사의 savepoint rollback 추가
+  - 작업자 없는 CURRENT 선택 차단 및 PD-398 제안 계약 작성
+  - 아직 Writer 권한·제거 migration 연결 전으로 이 브랜치 배포 금지
 - [ ] 실제 Runtime/Writer 권한·프로세스·배포 구성
 - [ ] 기존 데이터 검증과 forward migration
 - [ ] 최종 스키마 검사·PostgreSQL 통합 및 회귀 검증
@@ -49,3 +53,14 @@
 - 변경 Python Ruff 검사 및 Candidate Repository Mypy 통과
 
 Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는다. 임의 직접 DML 차단, 최종 migration, 감사 및 Writer 권한은 남아 있다.
+
+## Snapshot Python 전이 검증
+
+- Snapshot 전이/Repository 단위 검증 76 passed (아래 302개에 포함)
+- Source ingestion 회귀 302 passed
+- Trigger·전용 함수 설치 없는 독립 PostgreSQL Snapshot lifecycle 검증 14 passed
+- 감사 INSERT 실패를 호출자가 잡고 외부 transaction을 commit해도 PENDING 상태와 감사 부재 유지 확인
+- 변경 Python Ruff·format 및 생산 코드 Mypy 통과
+- Source ingestion 전체 수집은 기존 실행 환경의 boto3 부재로 실패. S3 관련 2개 모듈은 제외했으며 해당 테스트 통과를 주장하지 않는다.
+
+브랜치 생성 reflog: `bd201c3 branch: Created from origin/develop`. #362 작업 브랜치에서 분기하지 않았다. #362 미병합 정책과 통합할 때는 별도로 최신 develop 및 해당 PR의 병합 여부를 확인한다.
