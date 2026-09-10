@@ -136,7 +136,7 @@ def test_protected_engine_factory_refuses_disabled_configuration() -> None:
 
 
 def test_protected_runtime_surface_is_explicit() -> None:
-    assert ProtectedRetrievalAdapters
+    assert ProtectedRetrievalAdapters.__name__ == "ProtectedRetrievalAdapters"
 
 
 def test_protected_engine_uses_separate_short_lived_non_logging_connection(

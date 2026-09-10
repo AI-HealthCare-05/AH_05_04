@@ -302,7 +302,7 @@ def write_protected_runner_foundation(repository_root: Path) -> None:
     json_path = repository_root / PROTECTED_RUNNER_FOUNDATION_JSON_PATH
     markdown_path = repository_root / PROTECTED_RUNNER_FOUNDATION_MARKDOWN_PATH
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_bytes(canonical_json_bytes(packet))
+    json_path.write_bytes(canonical_json_bytes(packet) + b"\n")
     markdown_path.write_text(render_protected_runner_foundation_markdown(packet), encoding="utf-8")
 
 

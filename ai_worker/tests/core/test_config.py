@@ -374,11 +374,13 @@ def test_enabled_protected_retrieval_requires_a_complete_separate_connection(mis
 def test_protected_retrieval_never_falls_back_to_the_worker_connection() -> None:
     with pytest.raises(ValidationError, match="separate database identity"):
         _config(
+            DB_PORT=5432,
             **_protected_settings(
                 PROTECTED_DB_HOST=_REQUIRED_SETTINGS["DB_HOST"],
+                PROTECTED_DB_PORT=5432,
                 PROTECTED_DB_NAME=_REQUIRED_SETTINGS["DB_NAME"],
                 PROTECTED_DB_USER=_REQUIRED_SETTINGS["DB_USER"],
-            )
+            ),
         )
 
 

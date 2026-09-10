@@ -99,7 +99,7 @@ def test_foundation_rejects_protected_public_fields(forbidden_key: str) -> None:
 def test_committed_foundation_artifacts_equal_a_fresh_build() -> None:
     packet = build_protected_runner_foundation(REPOSITORY_ROOT)
 
-    assert FOUNDATION_JSON_PATH.read_bytes() == canonical_json_bytes(packet)
+    assert FOUNDATION_JSON_PATH.read_bytes() == canonical_json_bytes(packet) + b"\n"
     assert FOUNDATION_MARKDOWN_PATH.read_text(encoding="utf-8") == render_protected_runner_foundation_markdown(packet)
 
 
