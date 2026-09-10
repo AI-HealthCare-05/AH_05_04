@@ -3,7 +3,7 @@
 ## 현재 인계 계약
 
 #166 후속의 DB 비의존 저장·복원 인계 결과는 [6단계 인계 증빙](catalog-storage-handoff-166.md)에 정리한다.
-실제 PostgreSQL 구성원·불변 Set/manifest 저장 결과는
+실제 PostgreSQL 구성원·내용 주소 기반 Set/manifest 저장 결과는
 [DB 기반 검증](catalog-identity-alias-search-schema-166.md)에 별도로 기록한다.
 
 PR #329의 현재 공개 입력은 `CatalogExportArtifacts`, schema는 `medication-catalog-v2`다.
@@ -58,7 +58,7 @@ transaction에 저장하는 포트다. 검증 성공 후 이 메서드가 한 �
 변환하지 않는다.
 
 후속 revision은 안정 Identity·Search Entry와 Alias 상태·교차 Snapshot 출처를 추가하고,
-현재 v2 manifest·전체 Source 목록·구성원 실제 FK·종류별 hash 계산 bytes를 불변 Catalog Set에 저장한다.
+현재 v2 manifest·전체 Source 목록·구성원 실제 FK·종류별 hash 계산 bytes를 내용 주소 기반 Catalog Set에 저장한다.
 `SqlAlchemyCatalogBuildRepository`는 Backend ORM을 import하지 않고 이 구조에 적재하며 transaction을
 소유한다. 같은 완전한 v2 내용은 기존 Set을 재사용하고, 중간 오류는 구성원과 Set 전체를 rollback한다.
 
@@ -92,7 +92,7 @@ Success: no issues found in 7 source files
 
 저장소 전체 테스트에서는 DB 비의존 테스트 `3179 passed, 10 skipped`까지 진행됐고, PostgreSQL migration
 17건은 호스트 실행 환경에서 Compose 내부 hostname `postgres`를 해석하지 못해 실패했다. 로컬 DB를
-대상으로 한 migration 재실행은 downgrade/upgrade와 trigger 변경이 기존 데이터를 바꿀 수 있어 수행하지
+대상으로 한 migration 재실행은 downgrade/upgrade가 기존 데이터를 바꿀 수 있어 수행하지
 않으며, 격리된 CI PostgreSQL에서 확인한다.
 
 ## 2026-09-08 계약 결정과 독립적인 계산 계층 보완

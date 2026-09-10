@@ -167,67 +167,6 @@ def upgrade() -> None:
         "rag_medication_ingredient",
         ["normalized_ingredient_name"],
     )
-    op.execute(
-        sa.text(
-            """
-            CREATE FUNCTION bind_rag_catalog_identity()
-            RETURNS trigger AS $$
-            DECLARE
-                selected_code_system text;
-                selected_code text;
-            BEGIN
-                IF TG_TABLE_NAME = 'rag_medication_product' THEN
-                    selected_code_system := NEW.code_system;
-                    selected_code := NEW.canonical_code;
-                ELSE
-                    selected_code_system := NEW.ingredient_code_system;
-                    selected_code := NEW.ingredient_code;
-                END IF;
-                IF selected_code_system IS NULL OR selected_code IS NULL
-                   OR btrim(selected_code_system) = '' OR btrim(selected_code) = '' THEN
-                    RAISE EXCEPTION 'stable Catalog identity is required';
-                END IF;
-                IF NEW.entity_identity_id IS NOT NULL THEN
-                    PERFORM 1 FROM rag_entity_identity
-                    WHERE id = NEW.entity_identity_id
-                      AND entity_type = NEW.identity_entity_type
-                      AND code_system = selected_code_system
-                      AND canonical_code = selected_code;
-                    IF NOT FOUND THEN
-                        RAISE EXCEPTION 'Catalog member identity does not match its official code';
-                    END IF;
-                    RETURN NEW;
-                END IF;
-                INSERT INTO rag_entity_identity (id, entity_type, code_system, canonical_code)
-                VALUES (
-                    md5(NEW.identity_entity_type || chr(31) || selected_code_system || chr(31) || selected_code)::uuid::text,
-                    NEW.identity_entity_type,
-                    selected_code_system,
-                    selected_code
-                )
-                ON CONFLICT (entity_type, code_system, canonical_code) DO NOTHING;
-                SELECT id INTO NEW.entity_identity_id
-                FROM rag_entity_identity
-                WHERE entity_type = NEW.identity_entity_type
-                  AND code_system = selected_code_system
-                  AND canonical_code = selected_code;
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-            """
-        )
-    )
-    for table_name in ("rag_medication_product", "rag_medication_ingredient"):
-        op.execute(
-            sa.text(
-                f"""
-                CREATE TRIGGER trg_{table_name}_bind_identity
-                BEFORE INSERT ON {table_name}
-                FOR EACH ROW EXECUTE FUNCTION bind_rag_catalog_identity()
-                """
-            )
-        )
-
     op.drop_constraint("fk_rag_medication_alias_product_snapshot", "rag_medication_alias", type_="foreignkey")
     op.drop_constraint("fk_rag_medication_alias_ingredient_snapshot", "rag_medication_alias", type_="foreignkey")
     op.drop_constraint("chk_rag_medication_alias_single_target", "rag_medication_alias", type_="check")
@@ -329,59 +268,6 @@ def upgrade() -> None:
         "rag_medication_search_entry",
         ["normalized_text"],
     )
-    op.execute(
-        sa.text(
-            """
-            CREATE FUNCTION validate_rag_medication_search_entry()
-            RETURNS trigger AS $$
-            DECLARE
-                selected_product rag_medication_product%ROWTYPE;
-                selected_alias rag_medication_alias%ROWTYPE;
-            BEGIN
-                SELECT * INTO selected_product
-                FROM rag_medication_product
-                WHERE id = NEW.product_id
-                  AND entity_identity_id = NEW.product_identity_id
-                  AND identity_entity_type = NEW.identity_entity_type;
-                IF NOT FOUND OR selected_product.product_status <> 'ACTIVE' THEN
-                    RAISE EXCEPTION 'Search Entry requires an active Product with the same stable identity';
-                END IF;
-
-                IF NEW.entry_type = 'PRODUCT_NAME' THEN
-                    IF NEW.alias_id IS NOT NULL
-                       OR NEW.normalized_text <> selected_product.normalized_product_name THEN
-                        RAISE EXCEPTION 'Product-name Search Entry does not match its Product publication';
-                    END IF;
-                    RETURN NEW;
-                END IF;
-
-                SELECT * INTO selected_alias
-                FROM rag_medication_alias
-                WHERE id = NEW.alias_id
-                  AND target_identity_id = NEW.product_identity_id
-                  AND target_type = 'PRODUCT';
-                IF NOT FOUND
-                   OR selected_alias.review_status <> 'APPROVED'
-                   OR selected_alias.record_status <> 'ACTIVE'
-                   OR selected_alias.is_effective IS NOT TRUE
-                   OR NEW.normalized_text <> selected_alias.normalized_alias_text THEN
-                    RAISE EXCEPTION 'Approved-alias Search Entry requires an eligible matching Product Alias';
-                END IF;
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-            """
-        )
-    )
-    op.execute(
-        sa.text(
-            """
-            CREATE TRIGGER trg_rag_medication_search_entry_validate
-            BEFORE INSERT OR UPDATE ON rag_medication_search_entry
-            FOR EACH ROW EXECUTE FUNCTION validate_rag_medication_search_entry()
-            """
-        )
-    )
 
 
 def downgrade() -> None:
@@ -395,10 +281,6 @@ def downgrade() -> None:
         )
 
     op.drop_table("rag_medication_search_entry")
-    op.execute(sa.text("DROP FUNCTION validate_rag_medication_search_entry()"))
-    op.execute(sa.text("DROP TRIGGER trg_rag_medication_ingredient_bind_identity ON rag_medication_ingredient"))
-    op.execute(sa.text("DROP TRIGGER trg_rag_medication_product_bind_identity ON rag_medication_product"))
-    op.execute(sa.text("DROP FUNCTION bind_rag_catalog_identity()"))
     op.drop_index("idx_rag_medication_alias_normalized_text_trgm", table_name="rag_medication_alias")
     op.drop_index("idx_rag_medication_alias_normalized_text", table_name="rag_medication_alias")
     op.drop_constraint("uq_rag_medication_alias_observation", "rag_medication_alias", type_="unique")

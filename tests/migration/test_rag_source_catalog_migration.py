@@ -25,6 +25,23 @@ RAG_SOURCE_CATALOG_BASE_REVISION = "171c0f751206"
 # 166a7b8c9d0e의 직전 revision. develop head가 바뀌면 함께 갱신한다.
 CATALOG_IDENTITY_BASE_REVISION = "164b6c7d8e9f"
 CATALOG_IDENTITY_REVISION = "166a7b8c9d0e"
+CATALOG_MIGRATION_PATHS = (
+    PROJECT_ROOT / "backend/alembic/versions/166a7b8c9d0e_add_catalog_identity_alias_search.py",
+    PROJECT_ROOT / "backend/alembic/versions/166b8c9d0e1f_add_catalog_set_manifest.py",
+)
+
+
+def test_catalog_migrations_do_not_define_database_triggers_or_functions() -> None:
+    forbidden_fragments = (
+        "create trigger",
+        "create function",
+        "returns trigger",
+        "language plpgsql",
+        "assembly_xid",
+    )
+    for path in CATALOG_MIGRATION_PATHS:
+        source = path.read_text(encoding="utf-8").lower()
+        assert all(fragment not in source for fragment in forbidden_fragments), path
 
 
 def create_alembic_config() -> Config:
@@ -577,7 +594,7 @@ def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> 
     assert "idx_rag_medication_alias_normalized_text_trgm" in schema_objects
     assert "fk_rag_medication_search_entry_product_identity" in schema_objects
     assert "fk_rag_medication_search_entry_alias_identity" in schema_objects
-    assert "trg_rag_medication_search_entry_validate" in schema_objects
+    assert "trg_rag_medication_search_entry_validate" not in schema_objects
     assert "fk_rag_medication_component_product_snapshot" in schema_objects
     assert "fk_rag_medication_component_ingredient_snapshot" in schema_objects
     assert "trg_rag_source_snapshot_prevent_update" in schema_objects
@@ -1666,7 +1683,7 @@ def test_catalog_identity_migration_refuses_unprovable_legacy_conversion(legacy_
         command.upgrade(configuration, "head")
 
 
-def test_catalog_alias_and_search_entry_bind_stable_product_identity_across_snapshots() -> None:
+def test_catalog_alias_and_search_entry_constraints_bind_stable_product_identity_across_snapshots() -> None:
     configuration = create_alembic_config()
     command.upgrade(configuration, "head")
     ids = asyncio.run(_seed_source_catalog_chain())
@@ -1717,18 +1734,6 @@ def test_catalog_alias_and_search_entry_bind_stable_product_identity_across_snap
                 """
                 INSERT INTO rag_medication_search_entry (
                     id, entry_type, product_id, product_identity_id, alias_id, normalized_text
-                ) VALUES (
-                    :entry_id, 'APPROVED_ALIAS', :product_id, :product_identity_id,
-                    :alias_id, '다른정규화값'
-                )
-                """,
-                {**ids, "entry_id": str(uuid4()), "alias_id": cross_snapshot_alias_id},
-                expected_text="eligible matching Product Alias",
-            )
-            await _execute_expect_db_error(
-                """
-                INSERT INTO rag_medication_search_entry (
-                    id, entry_type, product_id, product_identity_id, alias_id, normalized_text
                 ) VALUES (:entry_id, 'APPROVED_ALIAS', :product_id, :ingredient_identity_id, :alias_id, 'invalid')
                 """,
                 {**ids, "entry_id": str(uuid4()), "alias_id": cross_snapshot_alias_id},
@@ -1739,7 +1744,7 @@ def test_catalog_alias_and_search_entry_bind_stable_product_identity_across_snap
         asyncio.run(_cleanup_source_catalog_chain(ids))
 
 
-def test_catalog_set_schema_binds_members_and_rejects_mutation() -> None:
+def test_catalog_set_schema_binds_sources_members_and_hashes() -> None:
     configuration = create_alembic_config()
     command.upgrade(configuration, "head")
     ids = asyncio.run(_seed_source_catalog_chain())
@@ -1808,44 +1813,6 @@ def test_catalog_set_schema_binds_members_and_rejects_mutation() -> None:
                     {"set_id": set_id, "digest": "d" * 64, "canonical_bytes": b""},
                 )
 
-                with pytest.raises(DBAPIError, match="immutable"):
-                    async with connection.begin_nested():
-                        await connection.execute(
-                            text("UPDATE rag_catalog_set SET catalog_version = 'changed' WHERE id = :set_id"),
-                            {"set_id": set_id},
-                        )
-                with pytest.raises(DBAPIError, match="immutable set"):
-                    async with connection.begin_nested():
-                        await connection.execute(
-                            text("UPDATE rag_medication_product SET product_name = 'changed' WHERE id = :product_id"),
-                            ids,
-                        )
-                sealed_set_id = str(uuid4())
-                await connection.execute(
-                    text(
-                        """
-                        INSERT INTO rag_catalog_set (
-                            id, catalog_version, schema_version, normalization_version,
-                            manifest_spec_version, envelope_hash, manifest_json, assembly_xid
-                        ) VALUES (
-                            :set_id, 'sealed-v1', 'medication-catalog-v2', 'normalization-v1',
-                            'catalog-manifest-envelope-v2', :envelope_hash, :manifest_json, 0
-                        )
-                        """
-                    ),
-                    {"set_id": sealed_set_id, "envelope_hash": "e" * 64, "manifest_json": b"{}"},
-                )
-                with pytest.raises(DBAPIError, match="creation transaction"):
-                    async with connection.begin_nested():
-                        await connection.execute(
-                            text(
-                                """
-                                INSERT INTO rag_catalog_set_source (set_id, source_snapshot_id, source_version)
-                                VALUES (:set_id, :snapshot_id, :source_version)
-                                """
-                            ),
-                            {**ids, "set_id": sealed_set_id},
-                        )
                 result = await connection.execute(
                     text(
                         """

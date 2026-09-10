@@ -1,11 +1,11 @@
-"""add immutable Catalog set, members, and manifest material
+"""add Catalog set, members, and manifest material
 
 Revision ID: 166b8c9d0e1f
 Revises: 166a7b8c9d0e
 Create Date: 2026-09-09
 
-D-02 execution provenance remains unresolved. This revision stores an immutable
-v2 content set and does not create or substitute an execution/publication key.
+D-02 execution provenance remains unresolved. This revision stores a content-addressed
+v2 set and does not create or substitute an execution/publication key.
 """
 
 from collections.abc import Sequence
@@ -34,12 +34,6 @@ def upgrade() -> None:
         sa.Column("manifest_spec_version", sa.String(length=100), nullable=False),
         sa.Column("envelope_hash", sa.String(length=64), nullable=False),
         sa.Column("manifest_json", sa.LargeBinary(), nullable=False),
-        sa.Column(
-            "assembly_xid",
-            sa.BigInteger(),
-            server_default=sa.text("pg_current_xact_id()::text::bigint"),
-            nullable=False,
-        ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("length(btrim(catalog_version)) > 0", name="chk_rag_catalog_set_version_nonblank"),
         sa.CheckConstraint("length(btrim(schema_version)) > 0", name="chk_rag_catalog_set_schema_nonblank"),
@@ -149,124 +143,18 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["set_id"], ["rag_catalog_set.id"], name="fk_rag_catalog_set_hash_set"),
         sa.PrimaryKeyConstraint("set_id", "hash_kind"),
     )
-    op.execute(
-        sa.text(
-            """
-            CREATE FUNCTION reject_rag_catalog_set_mutation()
-            RETURNS trigger AS $$
-            BEGIN
-                RAISE EXCEPTION 'published Catalog set rows are immutable';
-            END;
-            $$ LANGUAGE plpgsql;
-            """
-        )
-    )
-    op.execute(
-        sa.text(
-            """
-            CREATE FUNCTION validate_rag_catalog_set_child_insert()
-            RETURNS trigger AS $$
-            BEGIN
-                PERFORM 1 FROM rag_catalog_set
-                WHERE id = NEW.set_id
-                  AND assembly_xid = pg_current_xact_id()::text::bigint;
-                IF NOT FOUND THEN
-                    RAISE EXCEPTION 'Catalog set members can only be assembled in the set creation transaction';
-                END IF;
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-            """
-        )
-    )
-    for table_name in ("rag_catalog_set_source", "rag_catalog_set_member", "rag_catalog_set_hash"):
-        op.execute(
-            sa.text(
-                f"""
-                CREATE TRIGGER trg_{table_name}_assembly
-                BEFORE INSERT ON {table_name}
-                FOR EACH ROW EXECUTE FUNCTION validate_rag_catalog_set_child_insert()
-                """
-            )
-        )
-    op.execute(
-        sa.text(
-            """
-            CREATE FUNCTION reject_bound_rag_catalog_member_mutation()
-            RETURNS trigger AS $$
-            BEGIN
-                PERFORM 1 FROM rag_catalog_set_member
-                WHERE (TG_TABLE_NAME = 'rag_medication_product' AND product_id = OLD.id)
-                   OR (TG_TABLE_NAME = 'rag_medication_ingredient' AND ingredient_id = OLD.id)
-                   OR (TG_TABLE_NAME = 'rag_medication_product_component' AND component_id = OLD.id)
-                   OR (TG_TABLE_NAME = 'rag_medication_alias' AND alias_id = OLD.id)
-                   OR (TG_TABLE_NAME = 'rag_medication_search_entry' AND search_entry_id = OLD.id);
-                IF FOUND THEN
-                    RAISE EXCEPTION 'Catalog members referenced by an immutable set cannot change';
-                END IF;
-                RETURN OLD;
-            END;
-            $$ LANGUAGE plpgsql;
-            """
-        )
-    )
-    for table_name in (
-        "rag_medication_product",
-        "rag_medication_ingredient",
-        "rag_medication_product_component",
-        "rag_medication_alias",
-        "rag_medication_search_entry",
-    ):
-        op.execute(
-            sa.text(
-                f"""
-                CREATE TRIGGER trg_{table_name}_catalog_set_immutable
-                BEFORE UPDATE OR DELETE ON {table_name}
-                FOR EACH ROW EXECUTE FUNCTION reject_bound_rag_catalog_member_mutation()
-                """
-            )
-        )
-    for table_name in (
-        "rag_catalog_set",
-        "rag_catalog_set_source",
-        "rag_catalog_set_member",
-        "rag_catalog_set_hash",
-    ):
-        op.execute(
-            sa.text(
-                f"""
-                CREATE TRIGGER trg_{table_name}_immutable
-                BEFORE UPDATE OR DELETE ON {table_name}
-                FOR EACH ROW EXECUTE FUNCTION reject_rag_catalog_set_mutation()
-                """
-            )
-        )
 
 
 def downgrade() -> None:
     connection = op.get_bind()
     set_count = connection.execute(sa.text("SELECT count(*) FROM rag_catalog_set")).scalar_one()
     if set_count:
-        raise RuntimeError("Cannot downgrade revision 166b8c9d0e1f while immutable Catalog sets exist.")
-    for table_name in (
-        "rag_medication_product",
-        "rag_medication_ingredient",
-        "rag_medication_product_component",
-        "rag_medication_alias",
-        "rag_medication_search_entry",
-    ):
-        op.execute(sa.text(f"DROP TRIGGER IF EXISTS trg_{table_name}_catalog_set_immutable ON {table_name}"))
-    op.execute(sa.text("DROP FUNCTION IF EXISTS reject_bound_rag_catalog_member_mutation()"))
-    for table_name in ("rag_catalog_set_source", "rag_catalog_set_member", "rag_catalog_set_hash"):
-        op.execute(sa.text(f"DROP TRIGGER IF EXISTS trg_{table_name}_assembly ON {table_name}"))
-    op.execute(sa.text("DROP FUNCTION IF EXISTS validate_rag_catalog_set_child_insert()"))
+        raise RuntimeError("Cannot downgrade revision 166b8c9d0e1f while Catalog sets exist.")
     for table_name in (
         "rag_catalog_set_hash",
         "rag_catalog_set_member",
         "rag_catalog_set_source",
         "rag_catalog_set",
     ):
-        op.execute(sa.text(f"DROP TRIGGER IF EXISTS trg_{table_name}_immutable ON {table_name}"))
         op.drop_table(table_name)
     op.drop_constraint("uq_rag_source_snapshot_id_version", "rag_source_snapshot", type_="unique")
-    op.execute(sa.text("DROP FUNCTION IF EXISTS reject_rag_catalog_set_mutation()"))

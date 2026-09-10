@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -439,11 +438,6 @@ class RagCatalogSet(Base):
     manifest_spec_version: Mapped[str] = mapped_column(String(100), nullable=False)
     envelope_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     manifest_json: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    assembly_xid: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        server_default=text("pg_current_xact_id()::text::bigint"),
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
