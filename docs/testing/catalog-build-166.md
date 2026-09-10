@@ -294,3 +294,18 @@ D-02는 미확정이며 run/FK를 구현하지 않았다. 실제 DB 통합 완�
 format 통과, RAG Mypy **38 source files** 통과, `git diff --check` 통과.
 실행: `PYTHONPATH=backend:. python -m pytest ai_worker/tests/rag -q`,
 `MYPYPATH=backend:. python -m mypy ai_worker/tasks/rag`. PostgreSQL·실제 승인 저장소는 실행하지 않았다.
+
+
+## PR #372 develop 충돌 해결 (2026-09-11)
+
+- develop `8df1f93`을 반영했다. #436의 미병합 Receipt 변경은 포함하지 않는다.
+- 공통 head·이미지·Source 관리·preflight 테스트의 충돌 4곳을 해결했다. 기대 head는 코드에서 읽고 단일 head와 실제 DB/이미지 일치를 검사한다.
+- 기존 Catalog `166b8c9d0e1f`와 Runtime `175a1b2c3d4e`를 DDL 없는 merge revision `166c9d0e1f20`으로 연결한다. 기존 migration 이력은 수정하지 않는다.
+- 양쪽 기존 head에서 최신 head까지 Source 행 보존과 Trigger/RLS/제거 함수 부재를 검사한다. #175 downgrade 테스트는 최신 merge head의 상대 이동이 아니라 대상 revision과 부모를 명시한다.
+- Draft 제외 조건은 CI workflow에 없다. 충돌이 있는 PR은 GitHub의 pull_request workflow 실행 대상이 되지 않으므로 충돌 해결 후 푸시해 CI를 확인한다.
+- Ruff·format, mypy 551개 파일, 재도입 방지·보호 테이블 쓰기 경계·테스트 분류 검사를 통과했다.
+- 전체 CI runner는 envs/.local.env 부재로 환경 준비에서 중단했다. 전용 PostgreSQL 컨테이너의 빈 issue166_validation DB 및 격리 schema/DB로 관련 검사를 별도 실행한다.
+- D-02 등 합의된 후속 범위와 Source 승인·Runtime 활성화 경계는 유지한다.
+
+검증 결과: Catalog·저장/복원·Source 관리·head·Docker 이미지 **242 passed**, 전체 migration **176 passed**.
+최종 전용 DB upgrade 및 head 종합 검사: **166c9d0e1f20; Trigger/RLS/제거 함수 0개**.

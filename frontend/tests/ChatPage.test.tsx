@@ -16,7 +16,7 @@ import {
 } from '../src/api/chat'
 import { ApiError } from '../src/api/client'
 import { getLatestPrescription } from '../src/api/prescriptions'
-import ChatPage from '../src/pages/ChatPage'
+import ChatPage, { type ChatPageServices } from '../src/pages/ChatPage'
 
 vi.mock('../src/api/chat', () => ({
   createChatSession: vi.fn(),
@@ -107,6 +107,7 @@ function renderPage(
   options: {
     strict?: boolean
     onLocationCommit?: (search: string, bodyText: string) => void
+    services?: ChatPageServices
   } = {},
 ) {
   const content = (
@@ -114,7 +115,7 @@ function renderPage(
       <NavigationHarness />
       <LocationCommitProbe onCommit={options.onLocationCommit} />
       <Routes>
-        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat" element={<ChatPage services={options.services} />} />
         <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/prescriptions/upload" element={<UploadRoute />} />
         <Route path="/guides" element={<div>복약 가이드 화면</div>} />
@@ -126,6 +127,19 @@ function renderPage(
   return render(
     options.strict ? <React.StrictMode>{content}</React.StrictMode> : content,
   )
+}
+
+function createServices(
+  overrides: Partial<ChatPageServices>,
+): ChatPageServices {
+  return {
+    createChatSession,
+    getChatSessionForPrescription,
+    getChatMessages,
+    sendChatMessage,
+    getLatestPrescription,
+    ...overrides,
+  }
 }
 
 function mockSessionCreation() {
@@ -166,16 +180,14 @@ afterEach(() => {
 })
 
 describe('ChatPage', () => {
-  it('확정된 prescription_id로 Chat session을 생성한다', async () => {
+  it('확정된 prescription_id로 Chat session을 생성하고 브라우저에 저장하지 않는다', async () => {
     renderPage()
 
     expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     expect(getChatSessionForPrescription).toHaveBeenCalledWith(prescriptionId)
     expect(createChatSession).toHaveBeenCalledWith(prescriptionId)
     expect(getChatMessages).toHaveBeenCalledWith(sessionId)
-    expect(
-      sessionStorage.getItem(`dosey_chat_session:${prescriptionId}`),
-    ).toBe(sessionId)
+    expect(sessionStorage.length).toBe(0)
   })
 
   it('StrictMode에서도 동일 처방의 session 생성 POST를 한 번만 호출한다', async () => {
@@ -241,6 +253,93 @@ describe('ChatPage', () => {
     expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     expect(getChatSessionForPrescription).toHaveBeenCalledTimes(1)
     expect(createChatSession).not.toHaveBeenCalled()
+    expect(getChatMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('StrictMode injected service에서 ACTIVE session GET을 한 번만 호출한다', async () => {
+    const rediscoveryRequest = deferred<
+      Awaited<ReturnType<typeof getChatSessionForPrescription>>
+    >()
+    const injectedGetSession = vi
+      .fn<typeof getChatSessionForPrescription>()
+      .mockReturnValue(rediscoveryRequest.promise)
+    const injectedCreateSession = vi.fn<typeof createChatSession>()
+
+    renderPage(`/chat?prescription_id=${prescriptionId}`, {
+      strict: true,
+      services: createServices({
+        createChatSession: injectedCreateSession,
+        getChatSessionForPrescription: injectedGetSession,
+      }),
+    })
+
+    await waitFor(() => expect(injectedGetSession).toHaveBeenCalledTimes(1))
+    await act(async () =>
+      rediscoveryRequest.resolve({
+        data: {
+          session_id: sessionId,
+          prescription_id: prescriptionId,
+          prescription_version_id: prescriptionVersionId,
+          session_status: 'ACTIVE',
+          created_at: '2026-09-08T00:00:00Z',
+        },
+      }),
+    )
+
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(injectedGetSession).toHaveBeenCalledTimes(1)
+    expect(injectedCreateSession).not.toHaveBeenCalled()
+    expect(getChatMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('StrictMode injected service에서 CHAT_SESSION_NOT_FOUND면 GET·POST를 각각 한 번만 호출한다', async () => {
+    const rediscoveryRequest = deferred<
+      Awaited<ReturnType<typeof getChatSessionForPrescription>>
+    >()
+    const creationRequest = deferred<
+      Awaited<ReturnType<typeof createChatSession>>
+    >()
+    const injectedGetSession = vi
+      .fn<typeof getChatSessionForPrescription>()
+      .mockReturnValue(rediscoveryRequest.promise)
+    const injectedCreateSession = vi
+      .fn<typeof createChatSession>()
+      .mockReturnValue(creationRequest.promise)
+
+    renderPage(`/chat?prescription_id=${prescriptionId}`, {
+      strict: true,
+      services: createServices({
+        createChatSession: injectedCreateSession,
+        getChatSessionForPrescription: injectedGetSession,
+      }),
+    })
+
+    await waitFor(() => expect(injectedGetSession).toHaveBeenCalledTimes(1))
+    await act(async () =>
+      rediscoveryRequest.reject(
+        new ApiError(
+          404,
+          '대화 세션을 찾을 수 없습니다.',
+          'CHAT_SESSION_NOT_FOUND',
+        ),
+      ),
+    )
+    await waitFor(() => expect(injectedCreateSession).toHaveBeenCalledTimes(1))
+    await act(async () =>
+      creationRequest.resolve({
+        data: {
+          session_id: sessionId,
+          prescription_id: prescriptionId,
+          prescription_version_id: prescriptionVersionId,
+          session_status: 'ACTIVE',
+          created_at: '2026-09-08T00:00:00Z',
+        },
+      }),
+    )
+
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(injectedGetSession).toHaveBeenCalledTimes(1)
+    expect(injectedCreateSession).toHaveBeenCalledTimes(1)
     expect(getChatMessages).toHaveBeenCalledTimes(1)
   })
 
@@ -390,6 +489,24 @@ describe('ChatPage', () => {
         key: 'Enter',
         code: 'Enter',
         isComposing: true,
+      }),
+    ).toBe(true)
+    expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('한글 IME 조합 중 isComposing=false·keyCode=13 Enter도 submit하지 않는다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '조합 중 비표준 Enter' } })
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        isComposing: false,
+        keyCode: 13,
       }),
     ).toBe(true)
     expect(sendChatMessage).not.toHaveBeenCalled()
@@ -1264,6 +1381,53 @@ describe('ChatPage', () => {
     expect(getChatMessages).not.toHaveBeenCalled()
   })
 
+  it.each([
+    [
+      'PRESCRIPTION_NOT_FOUND 404',
+      new ApiError(
+        404,
+        '처방을 찾을 수 없습니다.',
+        'PRESCRIPTION_NOT_FOUND',
+      ),
+    ],
+    ['401', new ApiError(401, '로그인이 필요합니다.')],
+    ['network', new TypeError('Failed to fetch')],
+    ['5xx', new ApiError(503, '현재 서비스를 사용할 수 없습니다.')],
+  ])('StrictMode injected service의 %s rediscovery 실패에서 POST하지 않는다', async (
+    label,
+    error,
+  ) => {
+    const rediscoveryRequest = deferred<
+      Awaited<ReturnType<typeof getChatSessionForPrescription>>
+    >()
+    const injectedGetSession = vi
+      .fn<typeof getChatSessionForPrescription>()
+      .mockReturnValue(rediscoveryRequest.promise)
+    const injectedCreateSession = vi.fn<typeof createChatSession>()
+
+    renderPage(`/chat?prescription_id=${prescriptionId}`, {
+      strict: true,
+      services: createServices({
+        createChatSession: injectedCreateSession,
+        getChatSessionForPrescription: injectedGetSession,
+      }),
+    })
+
+    await waitFor(() => expect(injectedGetSession).toHaveBeenCalledTimes(1))
+    await act(async () => rediscoveryRequest.reject(error))
+
+    if (label === '401') {
+      expect(
+        await screen.findByText('로그인 후 복약 챗봇을 이용해 주세요'),
+      ).toBeTruthy()
+    } else {
+      expect(await screen.findByRole('alert')).toBeTruthy()
+    }
+    expect(injectedGetSession).toHaveBeenCalledTimes(1)
+    expect(injectedCreateSession).not.toHaveBeenCalled()
+    expect(getChatMessages).not.toHaveBeenCalled()
+  })
+
   it('메시지 전송이 401이면 로그인 안내로 전환한다', async () => {
     vi.mocked(sendChatMessage).mockRejectedValue(
       new ApiError(401, '로그인이 필요합니다.'),
@@ -1323,12 +1487,10 @@ describe('ChatPage', () => {
     expect(createChatSession).toHaveBeenCalledWith(prescriptionId)
     expect(createChatSession).toHaveBeenCalledTimes(1)
     expect(getChatMessages).toHaveBeenCalledWith(sessionId)
-    expect(
-      sessionStorage.getItem(`dosey_chat_session:${prescriptionId}`),
-    ).toBe(sessionId)
+    expect(sessionStorage.length).toBe(0)
   })
 
-  it('prescription별 sessionStorage key를 분리한다', async () => {
+  it('처방을 전환해도 Chat session id를 브라우저에 저장하지 않는다', async () => {
     vi.mocked(getChatSessionForPrescription).mockImplementation((requestedId) =>
       Promise.resolve({
         data: {
@@ -1355,12 +1517,7 @@ describe('ChatPage', () => {
       ),
     )
     expect(createChatSession).not.toHaveBeenCalled()
-    expect(
-      sessionStorage.getItem(`dosey_chat_session:${prescriptionId}`),
-    ).toBe(sessionId)
-    expect(
-      sessionStorage.getItem(`dosey_chat_session:${secondPrescriptionId}`),
-    ).toBe(secondSessionId)
+    expect(sessionStorage.length).toBe(0)
   })
 
   it('처방 A 초기화 응답이 늦게 와도 처방 B 상태를 덮어쓰지 않는다', async () => {
