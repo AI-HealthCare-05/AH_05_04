@@ -172,5 +172,24 @@
     "flag": "PUBLIC_TRACK_F",
     "value": false,
     "note": "이 Decision은 BUILDING 범위의 저장 계약만 확정한다. READY·active pointer 전환은 RAG-17(#180) 소유이며 공개 게이트를 해제하지 않는다."
-  }
+  },
+  "post_approval_corrections": [
+    {
+      "correction_id": "pd-175-section-2-composite-fk",
+      "corrected_at": "2026-09-11",
+      "corrected_in_pull_request": 442,
+      "target": "docs/governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md",
+      "section": "§2 추가 컬럼",
+      "issue": "§2가 복합 FK fk_rag_runtime_bundle_source_snapshot_version 추가를 규정했으나 승인 대상 구현(96fd4693)에는 해당 FK가 없다. 실제 보장 수단은 RagRuntimeRepository._assert_member_versions_exist의 build transaction 내 조회 검증이다.",
+      "cause": "구현 중 복합 FK가 #369의 uq_rag_source_snapshot_id_version에 의존해 #369의 downgrade를 DependentObjectsStillExistError로 막는 것을 확인하고 전환했으나, Decision §2 문구를 함께 갱신하지 않았다. PR #416의 승인 리뷰는 FK 제거를 확인한 상태에서 제출됐다.",
+      "resolution": "§2를 실제 채택 방식으로 정정하고 정정 이력을 절 안에 남겼다. 승인 조건 1의 문구와 대안 표, 설계 문서 2곳도 함께 정합화했다.",
+      "evidence_integrity": "이 정정은 approval_events와 reviewed_documents의 sha256_at_reviewed_commit을 변경하지 않는다. 해당 값들은 승인 시점 commit 96fd4693의 원본이며 그대로 보존된다. 따라서 이 파일의 문서 해시는 '현재 문서'가 아니라 '승인 시점 문서'를 가리킨다.",
+      "reported_by": {
+        "actor_id": "Jye-rookie",
+        "namespace": "GITHUB_LOGIN",
+        "role": "PR_442_REVIEWER"
+      }
+    }
+  ],
+  "reviewed_documents_note": "sha256_at_reviewed_commit은 승인 대상 commit 96fd4693의 blob 해시다. 승인 이후 문서가 정정된 경우 현재 파일 내용과 일치하지 않으며, 그것이 의도된 동작이다. post_approval_corrections를 함께 볼 것."
 }
