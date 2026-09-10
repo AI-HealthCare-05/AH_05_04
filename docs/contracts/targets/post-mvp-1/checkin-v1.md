@@ -3,10 +3,24 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
-| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in DB·Repository·Service 구현 · B4 API/OpenAPI 및 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in DB·Repository·Service 구현 · B4 Check-in PUT API Draft 구현·검증, 일정 API 및 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-b-adherence-v1.md`, `track-c-support-v1.md` |
 | Proposed delta | 아래 `setup_reason` 신규 값·우선순위는 Decision/Contract Freeze 승인 전 TBD이며 Approved v4에 포함되지 않음 |
-| Last verified | 2026-09-09 |
+| Last verified | 2026-09-10 |
+
+## #202 Check-in API 부분 구현 — Draft·리뷰 대기
+
+[PD-202-20260910](../../../governance/decisions/2026-09-10-checkin-api-202.md)은
+기존 B3의 Check-in PUT을 HTTP·OpenAPI·SYNC_MUTATION에 연결하는 구체화 제안이다.
+생성·정정은 `200`과 `data` envelope를 사용하고, SELF 소유권 확인 이후 최초 응답
+snapshot을 재현한다. 상태·revision·오류 의미는 아래 승인 목표를 따른다.
+HTTP 응답 필드와 정규화 상세는 연결된 Decision에서 리뷰하며 Approved v4의 변경으로
+간주하지 않는다. 구현·검증 자료는 [#202 검증 기록](../../../validation/track-b/issue-202-checkin-api.md)에 남긴다.
+
+날짜별 조회와 일정 PUT/PATCH는 각각 미승인 setup_reason 정책 및 원본 schedule audit
+요구와 B1 모델의 불일치 때문에 미구현이다. history·backlog·Notification·Track C 실제
+무효화 연결도 이 PR의 완료 주장에 포함하지 않는다. 이 문서는 target에 유지하며
+책임 리뷰어 승인 없이 Current로 승격하지 않는다.
 
 ## 소유권 경계
 

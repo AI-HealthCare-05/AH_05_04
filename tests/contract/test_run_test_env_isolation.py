@@ -13,6 +13,7 @@ uv는 shell 환경변수를 `--env-file`보다 우선 적용하므로 `env VAR=.
 import ast
 import os
 import re
+import shlex
 import signal
 import subprocess
 import textwrap
@@ -293,7 +294,28 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     worker_lane_body = _function_body("run_worker_test_lane", RUN_TEST_SCRIPT)
     worker_body = _run_with_worker_test_environment_body()
 
-    assert 'coverage run -m pytest -o "cache_dir=$cache_dir" \\' in worker_lane_body
+    command_start = worker_lane_body.index("if ! run_with_worker_test_environment")
+    command_end = worker_lane_body.index("; then", command_start)
+    worker_command = shlex.split(worker_lane_body[command_start:command_end].replace("\\\n", " "))
+
+    assert worker_command == [
+        "if",
+        "!",
+        "run_with_worker_test_environment",
+        "pytest",
+        "-n",
+        "2",
+        "--dist=loadfile",
+        "--max-worker-restart=0",
+        "--cov",
+        "--cov-report=",
+        "-o",
+        "cache_dir=$cache_dir",
+        "ai_worker/tests/core",
+        "ai_worker/tests/ocr",
+        "ai_worker/tests/rag",
+        "ai_worker/tests/evaluation",
+    ]
     assert "ai_worker/tests/core" in worker_lane_body
     assert "ai_worker/tests/ocr" in worker_lane_body
     assert "ai_worker/tests/rag" in worker_lane_body
@@ -302,6 +324,14 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     assert "run_with_backend_test_database" not in worker_lane_body
     assert 'PYTHONPATH="$REPOSITORY_ROOT"' in worker_body
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' not in worker_body
+
+
+def test_default_local_backend_lane_does_not_enable_xdist() -> None:
+    """공유 PostgreSQL·Redis를 사용하는 로컬 Backend lane은 직렬 실행해야 합니다."""
+    backend_lane_tokens = shlex.split(_function_body("run_backend_test_lane", RUN_TEST_SCRIPT).replace("\\\n", " "))
+
+    assert not any(token.startswith(("-n", "--numprocesses")) for token in backend_lane_tokens)
+    assert not any(token.startswith("--dist") for token in backend_lane_tokens)
 
 
 def test_shared_environment_forces_literal_test_database_and_loopback_services() -> None:
@@ -431,6 +461,31 @@ def test_github_actions_excludes_backend_from_ai_worker_unit_test_pythonpath() -
     assert "ai_worker/tests/rag" in worker_step["run"]
     assert "ai_worker/tests/evaluation" in worker_step["run"]
     assert "backend/app" not in worker_step["run"]
+
+
+def test_github_actions_uses_fixed_xdist_only_for_the_worker_lane() -> None:
+    workflow = yaml.safe_load(GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    backend_step = next(
+        step for step in jobs["test-backend"]["steps"] if step["name"] == "Run Backend Tests with Coverage"
+    )
+    worker_step = next(
+        step for step in jobs["test-worker"]["steps"] if step["name"] == "Run AI Worker Unit Tests with Coverage"
+    )
+    backend_command = shlex.split(backend_step["run"].replace("\\\n", " "))
+    worker_command = shlex.split(worker_step["run"].replace("\\\n", " "))
+
+    assert backend_command[:6] == ["uv", "run", "coverage", "run", "-m", "pytest"]
+    assert not any(token.startswith(("-n", "--numprocesses")) for token in backend_command)
+    assert worker_command[:3] == ["uv", "run", "pytest"]
+    assert worker_command[3:9] == [
+        "-n",
+        "2",
+        "--dist=loadfile",
+        "--max-worker-restart=0",
+        "--cov",
+        "--cov-report=",
+    ]
 
 
 def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_gate() -> None:
