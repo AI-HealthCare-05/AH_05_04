@@ -6,7 +6,11 @@ from fastapi.responses import JSONResponse as Response
 
 from app.core import config
 from app.core.errors import ApiError, ErrorDetail, ErrorResponse
-from app.core.utils.idempotency import IdempotencyKeyFormatError, validate_idempotency_key_format
+from app.core.utils.idempotency import (
+    IdempotencyKeyFormatError,
+    build_idempotency_key_openapi_parameter,
+    validate_idempotency_key_format,
+)
 from app.dependencies.security import get_request_user
 from app.dependencies.services import get_medication_candidate_service
 from app.dtos.medication_candidates import (
@@ -131,18 +135,9 @@ async def get_medication_candidate_search(
     )
 
 
-_IDEMPOTENCY_KEY_OPENAPI_PARAMETER = {
-    "name": "Idempotency-Key",
-    "in": "header",
-    "required": True,
-    "schema": {
-        "type": "string",
-        "minLength": 16,
-        "maxLength": 255,
-        "pattern": r"[A-Za-z0-9._:-]+",
-    },
-    "description": "Candidate 확인·거절 멱등성 키입니다. 원문 값은 저장하지 않습니다.",
-}
+_IDEMPOTENCY_KEY_OPENAPI_PARAMETER = build_idempotency_key_openapi_parameter(
+    description="Candidate 확인·거절 멱등성 키입니다. 원문 값은 저장하지 않습니다."
+)
 
 
 @medication_candidate_router.post(

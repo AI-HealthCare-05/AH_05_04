@@ -86,10 +86,12 @@ def test_candidate_error_responses_use_shared_error_envelope() -> None:
         assert _json_schema_ref(operation, status_code) == "#/components/schemas/ErrorResponse"
 
 
-def test_candidate_confirm_and_reject_require_idempotency_key_header() -> None:
+def test_idempotency_key_header_schema_is_shared_by_candidate_and_ocr_routes() -> None:
     for operation in (
         _operation("post", "/api/v1/medication-candidates/confirm"),
         _operation("post", "/api/v1/medication-candidates/reject"),
+        _operation("post", "/api/v1/ocr-jobs/{job_id}/manual-medications"),
+        _operation("post", "/api/v1/documents/{document_id}/ocr-jobs"),
     ):
         header = next(parameter for parameter in operation["parameters"] if parameter["name"] == "Idempotency-Key")
         assert header["in"] == "header"
@@ -98,7 +100,7 @@ def test_candidate_confirm_and_reject_require_idempotency_key_header() -> None:
             "type": "string",
             "minLength": 16,
             "maxLength": 255,
-            "pattern": "[A-Za-z0-9._:-]+",
+            "pattern": "^[A-Za-z0-9._:-]+$",
         }
 
 
