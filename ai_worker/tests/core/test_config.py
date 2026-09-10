@@ -343,6 +343,8 @@ def _protected_settings(**overrides: Any) -> dict[str, Any]:
         "PROTECTED_DB_CONTROL_USER": "protected-controller",
         "PROTECTED_DB_CONTROL_PASSWORD": "synthetic-control-password",
         "PROTECTED_DB_SCHEMA": "protected_test_schema",
+        "PROTECTED_DB_ACCESS_ROLE": "protected_access_role",
+        "PROTECTED_DB_CONTROL_ROLE": "protected_control_role",
         **overrides,
     }
 
@@ -365,6 +367,8 @@ def test_protected_retrieval_database_is_disabled_by_default() -> None:
         "PROTECTED_DB_CONTROL_USER",
         "PROTECTED_DB_CONTROL_PASSWORD",
         "PROTECTED_DB_SCHEMA",
+        "PROTECTED_DB_ACCESS_ROLE",
+        "PROTECTED_DB_CONTROL_ROLE",
     ],
 )
 def test_enabled_protected_retrieval_requires_a_complete_separate_connection(missing_field: str) -> None:
@@ -408,6 +412,8 @@ def test_protected_data_and_control_identities_must_be_distinct() -> None:
         ("PROTECTED_DB_CONTROL_USER", "replace-with-protected-control-user"),
         ("PROTECTED_DB_CONTROL_PASSWORD", "replace-with-protected-control-password"),
         ("PROTECTED_DB_SCHEMA", "replace-with-protected-schema"),
+        ("PROTECTED_DB_ACCESS_ROLE", "replace-with-protected-access-role"),
+        ("PROTECTED_DB_CONTROL_ROLE", "replace-with-protected-control-role"),
     ],
 )
 def test_non_local_protected_retrieval_rejects_placeholders(field_name: str, value: str) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
@@ -18,6 +19,8 @@ from ai_worker.adapters.postgresql_protected_retrieval import (
     PostgresqlProtectedAuditJournal,
     PostgresqlTrustedClock,
 )
+from ai_worker.core.config import Config
+from ai_worker.core.runtime_assembly import create_protected_retrieval_service
 from ai_worker.tasks.evaluation.protected_retrieval import (
     ActorIdentity,
     ControlImplementationBinding,
@@ -38,6 +41,7 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedSecurityError,
     execute_protected_operation,
 )
+from provider_contracts.observability import DeploymentEnvironment
 from tests.migration.test_protected_retrieval_migration import (
     _login_url,
     _ProtectedDatabase,
@@ -53,6 +57,384 @@ def test_postgresql_adapter_surface_is_explicit() -> None:
     assert PostgresqlProtectedAuditJournal
     assert PostgresqlAuthorizationGuard
     assert PostgresqlProtectedArtifactOperation
+
+
+@dataclass(frozen=True)
+class _ReadScenario:
+    payload: bytes
+    dataset: ProtectedDatasetBinding
+    principal: ProtectedPrincipal
+    grant: ProtectedAuthorizationGrant
+    request: ProtectedOperationRequest
+
+
+def _read_scenario(action: ProtectedAction = ProtectedAction.READ) -> _ReadScenario:
+    payload = b"approved synthetic protected envelope"
+    runner_ref = OpaqueLogicalRef(namespace=OpaqueRefNamespace.REQUEST, value=str(uuid4()))
+    is_run = action is ProtectedAction.RUN
+    dataset = ProtectedDatasetBinding(
+        dataset_id=f"synthetic-{uuid4()}",
+        dataset_version="1.0.0",
+        manifest_sha256="a" * 64,
+        protected_artifact_sha256=sha256(payload).hexdigest(),
+        hmac_key_version="synthetic-key-v1",
+        state=ProtectedDatasetState.FROZEN if is_run else ProtectedDatasetState.AUTHORING,
+        state_revision=1,
+        authored_count=40 if is_run else 0,
+        review_complete=is_run,
+        leakage_axis_intersections=(0, 0, 0, 0) if is_run else None,
+        freeze_receipt_ref=runner_ref if is_run else None,
+        execution_authorization_ref=runner_ref if is_run else None,
+        retriever_binding_ref=runner_ref if is_run else None,
+    )
+    principal = ProtectedPrincipal(
+        actor=ActorIdentity(actor_id="synthetic-author", namespace="SERVICE_IDENTITY"),
+        role=ProtectedPrincipalRole.PROTECTED_RUNNER if is_run else ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+    )
+    request = ProtectedOperationRequest(
+        request_id=str(uuid4()),
+        operation_key=f"synthetic-read-{uuid4()}",
+        dataset=dataset,
+        target_ref=OpaqueLogicalRef(namespace=OpaqueRefNamespace.HOLDOUT_SET, value=str(uuid4())),
+        action=action,
+        principal=principal,
+    )
+    now = datetime.now(UTC)
+    grant = ProtectedAuthorizationGrant(
+        grant_id=str(uuid4()),
+        revision=1,
+        subject=principal,
+        dataset_id=dataset.dataset_id,
+        dataset_version=dataset.dataset_version,
+        manifest_sha256=dataset.manifest_sha256,
+        protected_artifact_sha256=dataset.protected_artifact_sha256,
+        hmac_key_version=dataset.hmac_key_version,
+        actions=(action,),
+        issuer=ProtectedApprovalPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+            role=ProtectedApprovalRole.DATASET_CUSTODIAN,
+        ),
+        control_implementation=ControlImplementationBinding(
+            commit_oid="c" * 40,
+            artifact_sha256="d" * 64,
+            participants=(ActorIdentity(actor_id="synthetic-implementer", namespace="GITHUB_LOGIN"),),
+        ),
+        approval_source_event_id=f"synthetic-approval-{uuid4()}",
+        approval_source_raw_sha256="e" * 64,
+        valid_from=now - timedelta(minutes=1),
+        expires_at=now + timedelta(minutes=10),
+    )
+    return _ReadScenario(payload=payload, dataset=dataset, principal=principal, grant=grant, request=request)
+
+
+async def _insert_read_scenario(database: _ProtectedDatabase, scenario: _ReadScenario, payload: bytes) -> None:
+    engine = create_async_engine(database.url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f'''
+                    INSERT INTO "{database.schema}".protected_dataset (
+                        dataset_id, dataset_version, binding, manifest_sha256,
+                        protected_artifact_sha256, hmac_key_version, state,
+                        state_revision, authored_count, review_complete
+                    ) VALUES (
+                        :dataset_id, :dataset_version, CAST(:binding AS jsonb), :manifest_sha256,
+                        :artifact_sha256, :key_version, :state, :state_revision,
+                        :authored_count, :review_complete
+                    )
+                    '''
+                ),
+                {
+                    "dataset_id": scenario.dataset.dataset_id,
+                    "dataset_version": scenario.dataset.dataset_version,
+                    "binding": scenario.dataset.model_dump_json(),
+                    "manifest_sha256": scenario.dataset.manifest_sha256,
+                    "artifact_sha256": scenario.dataset.protected_artifact_sha256,
+                    "key_version": scenario.dataset.hmac_key_version,
+                    "state": scenario.dataset.state.value,
+                    "state_revision": scenario.dataset.state_revision,
+                    "authored_count": scenario.dataset.authored_count,
+                    "review_complete": scenario.dataset.review_complete,
+                },
+            )
+            await connection.execute(
+                text(
+                    f'''
+                    INSERT INTO "{database.schema}".authorization_grant (
+                        grant_id, revision, effective_revision, grant_body,
+                        subject_actor_id, subject_namespace, subject_role,
+                        dataset_id, dataset_version, manifest_sha256,
+                        protected_artifact_sha256, hmac_key_version, actions,
+                        valid_from, expires_at
+                    ) VALUES (
+                        CAST(:grant_id AS uuid), :revision, :revision, CAST(:grant_body AS jsonb),
+                        :actor_id, :actor_namespace, :subject_role,
+                        :dataset_id, :dataset_version, :manifest_sha256,
+                        :artifact_sha256, :key_version, :actions,
+                        :valid_from, :expires_at
+                    )
+                    '''
+                ),
+                {
+                    "grant_id": scenario.grant.grant_id,
+                    "revision": scenario.grant.revision,
+                    "grant_body": scenario.grant.model_dump_json(),
+                    "actor_id": scenario.principal.actor.actor_id,
+                    "actor_namespace": scenario.principal.actor.namespace,
+                    "subject_role": scenario.principal.role.value,
+                    "dataset_id": scenario.dataset.dataset_id,
+                    "dataset_version": scenario.dataset.dataset_version,
+                    "manifest_sha256": scenario.dataset.manifest_sha256,
+                    "artifact_sha256": scenario.dataset.protected_artifact_sha256,
+                    "key_version": scenario.dataset.hmac_key_version,
+                    "actions": [scenario.request.action.value],
+                    "valid_from": scenario.grant.valid_from,
+                    "expires_at": scenario.grant.expires_at,
+                },
+            )
+            await connection.execute(
+                text(
+                    f'''
+                    INSERT INTO "{database.schema}".protected_artifact (
+                        target_ref, dataset_id, dataset_version, envelope, envelope_sha256, hmac_key_version
+                    ) VALUES (
+                        CAST(:target_ref AS uuid), :dataset_id, :dataset_version,
+                        :envelope, :envelope_sha256, :key_version
+                    )
+                    '''
+                ),
+                {
+                    "target_ref": scenario.request.target_ref.value,
+                    "dataset_id": scenario.dataset.dataset_id,
+                    "dataset_version": scenario.dataset.dataset_version,
+                    "envelope": payload,
+                    "envelope_sha256": sha256(payload).hexdigest(),
+                    "key_version": scenario.dataset.hmac_key_version,
+                },
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", [ProtectedAction.READ, ProtectedAction.RUN])
+async def test_read_rejects_artifact_not_bound_to_capability_before_callback(
+    protected_database: _ProtectedDatabase,
+    action: ProtectedAction,
+) -> None:
+    database = protected_database
+    scenario = _read_scenario(action)
+    forged_payload = b"unapproved but internally self-consistent synthetic envelope"
+    await _insert_read_scenario(database, scenario, forged_payload)
+    callback_payloads: list[bytes] = []
+    if action is ProtectedAction.RUN:
+        await _set_actor_role(database, ProtectedPrincipalRole.PROTECTED_RUNNER)
+    runtime = None
+    try:
+        runtime = await create_protected_retrieval_service(_protected_config(database))
+        with pytest.raises(ProtectedSecurityError, match="OPERATION_OUTCOME_UNKNOWN"):
+            await runtime.execute(
+                scenario.request,
+                on_read=lambda payload: _capture_payload(callback_payloads, payload),
+            )
+        assert callback_payloads == []
+    finally:
+        if runtime is not None:
+            await runtime.close()
+        if action is ProtectedAction.RUN:
+            await _set_actor_role(database, ProtectedPrincipalRole.HOLDOUT_AUTHOR)
+
+
+async def _capture_payload(captured: list[bytes], payload: bytes) -> None:
+    captured.append(payload)
+
+
+async def _set_actor_role(database: _ProtectedDatabase, role: ProtectedPrincipalRole) -> None:
+    engine = create_async_engine(database.url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f'''
+                    UPDATE "{database.schema}".protected_identity
+                    SET principal_role = :role
+                    WHERE database_login = :database_login
+                    '''
+                ),
+                {"role": role.value, "database_login": database.actor_login},
+            )
+    finally:
+        await engine.dispose()
+
+
+def _protected_config(database: _ProtectedDatabase) -> Config:
+    url = _login_url(database, database.actor_login)
+    return Config(
+        _env_file=None,
+        ENV=DeploymentEnvironment.LOCAL,
+        DB_HOST="127.0.0.1",
+        DB_NAME="test",
+        DB_USER="worker",
+        DB_PASSWORD="synthetic-worker-password",
+        CLOVA_OCR_INVOKE_URL="https://clova.test/ocr",
+        CLOVA_OCR_SECRET="synthetic-clova-secret",
+        STORAGE_DIR="/tmp/protected-retrieval-test",
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST=url.host,
+        PROTECTED_DB_PORT=url.port,
+        PROTECTED_DB_NAME=url.database,
+        PROTECTED_DB_USER=database.actor_login,
+        PROTECTED_DB_PASSWORD=database.password,
+        PROTECTED_DB_CONTROL_USER=database.control_login,
+        PROTECTED_DB_CONTROL_PASSWORD=database.password,
+        PROTECTED_DB_SCHEMA=database.schema,
+        PROTECTED_DB_ACCESS_ROLE=database.access,
+        PROTECTED_DB_CONTROL_ROLE=database.control,
+    )  # type: ignore[call-arg]
+
+
+@pytest.mark.asyncio
+async def test_runtime_persists_unknown_and_blocks_retry_after_callback_failure(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    scenario = _read_scenario()
+    await _insert_read_scenario(database, scenario, scenario.payload)
+    callback_payloads: list[bytes] = []
+
+    async def fail_after_read(payload: bytes) -> None:
+        callback_payloads.append(payload)
+        raise RuntimeError("synthetic callback failure")
+
+    runtime = await create_protected_retrieval_service(_protected_config(database))
+    try:
+        with pytest.raises(ProtectedSecurityError, match="OPERATION_OUTCOME_UNKNOWN"):
+            await runtime.execute(scenario.request, on_read=fail_after_read)
+
+        with pytest.raises(ProtectedSecurityError, match="RECONCILIATION_REQUIRED"):
+            await runtime.execute(
+                scenario.request,
+                on_read=lambda payload: _capture_payload(callback_payloads, payload),
+            )
+
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                outcomes = list(
+                    await connection.scalars(
+                        text(
+                            f'''
+                            SELECT entry_body->>'outcome'
+                            FROM "{database.schema}".audit_entry
+                            WHERE operation_key = :operation_key
+                            ORDER BY sequence
+                            '''
+                        ),
+                        {"operation_key": scenario.request.operation_key},
+                    )
+                )
+                capability = (
+                    await connection.execute(
+                        text(
+                            f'''
+                            SELECT consumed_at IS NOT NULL, operated_at IS NOT NULL
+                            FROM "{database.schema}".operation_capability
+                            WHERE operation_key = :operation_key
+                            '''
+                        ),
+                        {"operation_key": scenario.request.operation_key},
+                    )
+                ).one()
+            assert outcomes == ["INTENT", "UNKNOWN", "DENIED"]
+            assert capability == (True, False)
+            assert callback_payloads == [scenario.payload]
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_persists_unknown_and_blocks_retry_after_connection_loss(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    scenario = _read_scenario()
+    await _insert_read_scenario(database, scenario, scenario.payload)
+    callback_payloads: list[bytes] = []
+
+    async def terminate_execution_connection(payload: bytes) -> None:
+        callback_payloads.append(payload)
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.begin() as connection:
+                terminated = await connection.scalar(
+                    text(
+                        """
+                        SELECT bool_or(pg_terminate_backend(pid))
+                        FROM pg_stat_activity
+                        WHERE usename = :database_login
+                          AND application_name = 'protected-retrieval-data'
+                          AND pid <> pg_backend_pid()
+                        """
+                    ),
+                    {"database_login": database.actor_login},
+                )
+            assert terminated is True
+        finally:
+            await admin_engine.dispose()
+
+    runtime = await create_protected_retrieval_service(_protected_config(database))
+    try:
+        with pytest.raises(ProtectedSecurityError, match="OPERATION_OUTCOME_UNKNOWN"):
+            await runtime.execute(scenario.request, on_read=terminate_execution_connection)
+
+        with pytest.raises(ProtectedSecurityError, match="RECONCILIATION_REQUIRED"):
+            await runtime.execute(
+                scenario.request,
+                on_read=lambda payload: _capture_payload(callback_payloads, payload),
+            )
+
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                outcomes = list(
+                    await connection.scalars(
+                        text(
+                            f'''
+                            SELECT entry_body->>'outcome'
+                            FROM "{database.schema}".audit_entry
+                            WHERE operation_key = :operation_key
+                            ORDER BY sequence
+                            '''
+                        ),
+                        {"operation_key": scenario.request.operation_key},
+                    )
+                )
+            assert outcomes == ["INTENT", "UNKNOWN", "DENIED"]
+            assert callback_payloads == [scenario.payload]
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_startup_rejects_data_login_with_control_membership(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with admin_engine.begin() as connection:
+            await connection.exec_driver_sql(f'GRANT "{database.control}" TO "{database.actor_login}"')
+        with pytest.raises(ValueError, match="identity or schema boundary is unsafe"):
+            await create_protected_retrieval_service(_protected_config(database))
+    finally:
+        async with admin_engine.begin() as connection:
+            await connection.exec_driver_sql(f'REVOKE "{database.control}" FROM "{database.actor_login}"')
+        await admin_engine.dispose()
 
 
 @pytest.mark.asyncio

@@ -5,12 +5,15 @@
 > disposable PostgreSQL database for migration and limited-login tests.
 
 **Goal:** Replace the superseded protected PostgreSQL function boundary with an ordinary-schema, least-privilege,
-Python transaction adapter while keeping the protected environment and publication gates disabled.
+Python transaction adapter while keeping the protected environment and publication gates disabled. Review amendment:
+PR #432 implements the data-plane only; approval ingestion, grant/revoke/expire, Dataset transition, and FREEZE
+services remain follow-up scope, so the PR is `Related #368` and the repository status is `PARTIALLY_IMPLEMENTED`.
 
 **Architecture:** Alembic owns ordinary tables, constraints, ownership, and closed defaults only. A dedicated Python
 role-policy module grants and validates exact data/control column privileges. The existing protected-retrieval kernel
 continues to own policy decisions while SQLAlchemy repositories resolve the authenticated principal, lock rows in a
-fixed order, perform conditional DML, and append hash-chain audit records in the caller-owned transaction.
+fixed order, perform conditional DML, and append hash-chain audit records. The data-plane service commits `INTENT`
+before exposing content and uses a separate execution/recovery transaction for `SUCCEEDED` or `UNKNOWN`.
 
 **Tech stack:** Python 3.13, Pydantic v2, SQLAlchemy asyncio, Alembic, PostgreSQL, pytest, Ruff, Mypy.
 

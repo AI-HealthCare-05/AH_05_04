@@ -18,7 +18,12 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 def test_infrastructure_evidence_separates_implementation_from_activation() -> None:
     evidence = build_protected_retrieval_infrastructure_evidence(REPOSITORY_ROOT)
 
-    assert evidence["repository_adapter_status"] == "IMPLEMENTED"
+    assert evidence["repository_adapter_status"] == "PARTIALLY_IMPLEMENTED"
+    assert evidence["remaining_repository_scope"] == [
+        "APPROVAL_EVIDENCE_INGESTION_SERVICE",
+        "GRANT_REVOKE_EXPIRE_SERVICE",
+        "DATASET_TRANSITION_AND_FREEZE_SERVICE",
+    ]
     assert evidence["effective_enforcement_status"] == "NOT_IMPLEMENTED"
     assert evidence["access_authorized"] is False
     assert evidence["holdout_authored"] is False

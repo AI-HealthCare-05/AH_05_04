@@ -31,7 +31,6 @@ from ai_worker.core.quarantine import (
 )
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.runtime_assembly import (
-    ProtectedRetrievalAdapters,
     RoutingResultStore,
     SessionScopedDeliveryExecution,
     SessionScopedRejectedDeliveryExecution,
@@ -139,10 +138,6 @@ def test_protected_engine_factory_refuses_disabled_configuration() -> None:
         create_protected_control_engine(_config())
 
 
-def test_protected_runtime_surface_is_explicit() -> None:
-    assert ProtectedRetrievalAdapters.__name__ == "ProtectedRetrievalAdapters"
-
-
 @pytest.mark.parametrize(
     ("factory", "expected_user", "application_name"),
     [
@@ -174,6 +169,8 @@ def test_protected_engines_use_distinct_short_lived_non_logging_connections(
         PROTECTED_DB_CONTROL_USER="protected_controller",
         PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
         PROTECTED_DB_SCHEMA="synthetic_protected",
+        PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
+        PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
     )
 
     engine = factory(config)

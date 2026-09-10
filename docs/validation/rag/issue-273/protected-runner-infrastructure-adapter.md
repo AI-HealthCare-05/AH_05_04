@@ -4,7 +4,9 @@
 
 ## 상태
 
-- Repository adapter: `IMPLEMENTED`
+- Repository adapter: `PARTIALLY_IMPLEMENTED`
+- Implemented scope: data-plane READ/WRITE/RUN transaction and audit boundary
+- Remaining scope: approval ingestion, grant/revoke/expire, Dataset transition/FREEZE services
 - Effective enforcement: `NOT_IMPLEMENTED`
 - Access authorized: `false`
 - HOLDOUT authored: `false`
@@ -15,8 +17,8 @@
 
 ## 검증
 
-- Kernel·config·runtime focused suite: `160 passed`
-- Disposable PostgreSQL migration·ACL·adapter suite: `5 passed`
+- Kernel·config·runtime focused suite: `163 passed`
+- Disposable PostgreSQL migration·ACL·adapter suite: `11 passed`
 - Database logic policy and protected Alembic single head: `passed`
 - 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.
 
@@ -27,4 +29,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `56a62453b6ec70fb18e94281153561b412ecd74e02f61ee38d43b34b640c0be9`
+Evidence self hash: `62f15c774ff7825b05be3fa2b58adeadb7a4a73fd933ff2820a9df7e6d779498`

@@ -326,3 +326,31 @@ async def test_limited_logins_have_plane_specific_column_privileges(
         await actor_engine.dispose()
         await control_engine.dispose()
         await denied_engine.dispose()
+
+
+def test_protected_downgrade_refuses_durable_rows_without_data_loss(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    with pytest.raises(RuntimeError, match="downgrade refused while durable rows exist"):
+        command.downgrade(Config(str(ALEMBIC_CONFIG)), "base")
+
+    async def verify_preserved() -> None:
+        engine = create_async_engine(database.url)
+        try:
+            async with engine.connect() as connection:
+                identity_count = await connection.scalar(
+                    text(f"SELECT count(*) FROM {_quote(database.schema)}.protected_identity")
+                )
+                schema_exists = await connection.scalar(
+                    text("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = :schema)"),
+                    {"schema": database.schema},
+                )
+            assert identity_count == 1
+            assert schema_exists is True
+        finally:
+            await engine.dispose()
+
+    import asyncio
+
+    asyncio.run(verify_preserved())

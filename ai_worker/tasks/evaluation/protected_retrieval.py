@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from hashlib import sha256
@@ -455,6 +456,13 @@ class ProtectedOperation(Protocol):
     ) -> ProtectedOperationResult: ...
 
 
+@dataclass(frozen=True)
+class PreparedProtectedOperation:
+    request: ProtectedOperationRequest
+    grant: ProtectedAuthorizationGrant
+    capability: ProtectedAuthorizationCapability
+
+
 def _validate_grant(request: ProtectedOperationRequest, grant: ProtectedAuthorizationGrant, now: datetime) -> None:
     if request.principal != grant.subject:
         raise ProtectedSecurityError("GRANT_SUBJECT_MISMATCH")
@@ -638,6 +646,83 @@ async def _resolve_guarded_operation_history(
     return None
 
 
+async def prepare_protected_operation(
+    request: ProtectedOperationRequest,
+    *,
+    ledger: AuthorizationLedger,
+    guard: AuthorizationGuard,
+    journal: ProtectedAuditJournal,
+    clock: TrustedClock,
+) -> PreparedProtectedOperation | ProtectedOperationResult:
+    grant: ProtectedAuthorizationGrant | None = None
+    try:
+        replay = await _resolve_operation_history(
+            request,
+            await journal.operation_history(request),
+            ledger,
+            clock,
+            intent_requires_reconciliation=False,
+        )
+        if replay is not None:
+            return replay
+
+        grant = await ledger.find_for(request)
+        authoritative_dataset = await ledger.require_dataset(request)
+        authoritative_request = request.model_copy(update={"dataset": authoritative_dataset})
+        _validate_role_state(authoritative_request)
+        if grant is None:
+            raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+        grant = await ledger.require_current(grant.grant_id)
+        _validate_grant(authoritative_request, grant, clock.now_utc())
+        async with guard.hold(authoritative_request, grant) as session:
+            replay = await _resolve_guarded_operation_history(
+                authoritative_request,
+                await journal.operation_history(authoritative_request),
+                ledger,
+                session,
+                clock,
+            )
+            if replay is not None:
+                return replay
+            await journal.append_operation(
+                authoritative_request,
+                grant,
+                OperationAuditOutcome.INTENT,
+                ProtectedAuditReason.AUTHORIZED,
+            )
+            capability = await session.issue_capability(authoritative_request, grant)
+            await session.consume(capability)
+            return PreparedProtectedOperation(authoritative_request, grant, capability)
+    except ProtectedSecurityError as error:
+        denial_history = await journal.operation_history(request)
+        lifecycle_terminal = _operation_lifecycle_terminal(denial_history)
+        await _deny(
+            journal,
+            request,
+            grant,
+            error.reason_code,
+            closes_intent=(
+                error.reason_code != "RECONCILIATION_REQUIRED"
+                and lifecycle_terminal is not None
+                and lifecycle_terminal.outcome is OperationAuditOutcome.INTENT
+                and lifecycle_terminal.request_id == request.request_id
+            ),
+        )
+        raise
+
+
+def validate_prepared_operation(
+    prepared: PreparedProtectedOperation,
+    dataset: ProtectedDatasetBinding,
+    grant: ProtectedAuthorizationGrant,
+    now: datetime,
+) -> None:
+    if dataset != prepared.request.dataset or grant != prepared.grant:
+        raise ProtectedSecurityError("GUARD_BINDING_MISMATCH")
+    _validate_role_state(prepared.request)
+    _validate_grant(prepared.request, grant, now)
+
+
 async def execute_protected_operation(
     request: ProtectedOperationRequest,
     *,
@@ -777,6 +862,7 @@ __all__ = [
     "ProtectedDatasetState",
     "ProtectedOperationRequest",
     "ProtectedOperationResult",
+    "PreparedProtectedOperation",
     "ProtectedPrincipal",
     "ProtectedPrincipalRole",
     "ProtectedSecurityError",
@@ -785,5 +871,7 @@ __all__ = [
     "authorization_grant_sha256",
     "authorization_grant_approval_sha256",
     "execute_protected_operation",
+    "prepare_protected_operation",
+    "validate_prepared_operation",
     "new_event_id",
 ]

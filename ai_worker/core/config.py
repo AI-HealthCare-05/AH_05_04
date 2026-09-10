@@ -114,6 +114,8 @@ class Config(BaseSettings):
     PROTECTED_DB_CONTROL_USER: str | None = None
     PROTECTED_DB_CONTROL_PASSWORD: SecretStr | None = None
     PROTECTED_DB_SCHEMA: SecretStr | None = None
+    PROTECTED_DB_ACCESS_ROLE: str | None = None
+    PROTECTED_DB_CONTROL_ROLE: str | None = None
 
     # Source ingestion은 #166 runtime 연결 전까지 기본 비활성입니다. S3 credential은
     # 여기 저장하지 않고 AWS SDK의 실행 역할·Web Identity·환경 주입 chain을 사용합니다.
@@ -301,6 +303,8 @@ class Config(BaseSettings):
             "PROTECTED_DB_NAME",
             "PROTECTED_DB_USER",
             "PROTECTED_DB_CONTROL_USER",
+            "PROTECTED_DB_ACCESS_ROLE",
+            "PROTECTED_DB_CONTROL_ROLE",
         )
         secret_fields = ("PROTECTED_DB_PASSWORD", "PROTECTED_DB_CONTROL_PASSWORD", "PROTECTED_DB_SCHEMA")
         for field_name in plain_fields:

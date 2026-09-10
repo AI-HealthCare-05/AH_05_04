@@ -39,7 +39,7 @@ def test_foundation_records_issue_source_and_only_the_implemented_policy_boundar
     assert packet["policy_foundation_status"] == "IMPLEMENTED"
     assert packet["issue_completion_status"] == "IN_PROGRESS"
     assert packet["effective_enforcement_status"] == "NOT_IMPLEMENTED"
-    assert packet["infrastructure_adapter_status"] == "NOT_IMPLEMENTED"
+    assert packet["infrastructure_adapter_status"] == "PARTIALLY_IMPLEMENTED"
     assert packet["reconciliation_adapter_status"] == "NOT_IMPLEMENTED"
     assert packet["access_authorized"] is False
     assert packet["holdout_authored"] is False

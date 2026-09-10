@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from ai_worker.tasks.evaluation.protected_retrieval import (
     ApprovalSourceEvidence,
@@ -24,6 +24,7 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     OpaqueRefNamespace,
     OperationAuditEntry,
     OperationAuditOutcome,
+    PreparedProtectedOperation,
     ProtectedAction,
     ProtectedAuditEntry,
     ProtectedAuditEventKind,
@@ -37,7 +38,10 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedSecurityError,
     audit_entry_sha256,
     new_event_id,
+    prepare_protected_operation,
+    validate_prepared_operation,
 )
+from infra.python.protected_retrieval_role_policy import validate_protected_data_connection
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 _SAFE_DATABASE_REASONS = frozenset(reason.value for reason in ProtectedAuditReason)
@@ -813,10 +817,152 @@ class PostgresqlProtectedArtifactOperation(_ProtectedSession):
             artifact is None
             or artifact.hmac_key_version != request.dataset.hmac_key_version
             or sha256(artifact.envelope).hexdigest() != artifact.envelope_sha256
+            or artifact.envelope_sha256 != capability.protected_artifact_sha256
         ):
             raise ProtectedSecurityError("CAPABILITY_BINDING_MISMATCH")
         if self._on_read is not None:
             await self._on_read(artifact.envelope)
+
+
+class PostgresqlProtectedRetrievalService:
+    """Owns the durable transaction phases for one protected data-plane identity."""
+
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        *,
+        schema: str,
+        data_access_role: str,
+        control_role: str,
+    ) -> None:
+        for identifier in (schema, data_access_role, control_role):
+            if _IDENTIFIER.fullmatch(identifier) is None:
+                raise ValueError("protected runtime identifiers must be safe")
+        self._engine = engine
+        self._session_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+        self._schema = schema
+        self._data_access_role = data_access_role
+        self._control_role = control_role
+
+    async def validate(self) -> None:
+        async with self._engine.connect() as connection:
+            await validate_protected_data_connection(
+                connection,
+                schema=self._schema,
+                data_access=self._data_access_role,
+                control=self._control_role,
+            )
+
+    async def close(self) -> None:
+        await self._engine.dispose()
+
+    async def _validate_session(self, session: AsyncSession) -> None:
+        await validate_protected_data_connection(
+            await session.connection(),
+            schema=self._schema,
+            data_access=self._data_access_role,
+            control=self._control_role,
+        )
+
+    async def _prepare(
+        self,
+        request: ProtectedOperationRequest,
+    ) -> PreparedProtectedOperation | ProtectedOperationResult:
+        async with self._session_factory() as session:
+            transaction = await session.begin()
+            try:
+                await self._validate_session(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                prepared = await prepare_protected_operation(
+                    request,
+                    ledger=PostgresqlAuthorizationLedger(session, self._schema),
+                    guard=PostgresqlAuthorizationGuard(session, self._schema),
+                    journal=PostgresqlProtectedAuditJournal(session, self._schema, clock),
+                    clock=clock,
+                )
+            except ProtectedSecurityError:
+                await transaction.commit()
+                raise
+            except Exception:
+                await transaction.rollback()
+                raise ProtectedSecurityError("INTERNAL_ERROR") from None
+            await transaction.commit()
+            return prepared
+
+    async def _record_unknown_or_recover(
+        self,
+        prepared: PreparedProtectedOperation,
+        result: ProtectedOperationResult | None,
+    ) -> ProtectedOperationResult | None:
+        try:
+            async with self._session_factory() as session, session.begin():
+                await self._validate_session(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                journal = PostgresqlProtectedAuditJournal(session, self._schema, clock)
+                history = await journal.operation_history(prepared.request)
+                terminal = history[-1] if history else None
+                if terminal is not None and terminal.outcome is OperationAuditOutcome.SUCCEEDED:
+                    if result is None or terminal.result_ref != result.result_ref:
+                        raise ProtectedSecurityError("AUDIT_BINDING_MISMATCH")
+                    return result
+                if terminal is not None and terminal.outcome is OperationAuditOutcome.UNKNOWN:
+                    return None
+                await journal.append_operation(
+                    prepared.request,
+                    prepared.grant,
+                    OperationAuditOutcome.UNKNOWN,
+                    ProtectedAuditReason.OPERATION_OUTCOME_UNKNOWN,
+                    prepared.capability,
+                )
+        except Exception:
+            return None
+        return None
+
+    async def execute(
+        self,
+        request: ProtectedOperationRequest,
+        *,
+        write_payload: bytes | None = None,
+        on_read: Callable[[bytes], Awaitable[None]] | None = None,
+    ) -> ProtectedOperationResult:
+        prepared = await self._prepare(request)
+        if isinstance(prepared, ProtectedOperationResult):
+            return prepared
+
+        result: ProtectedOperationResult | None = None
+        try:
+            async with self._session_factory() as session, session.begin():
+                await self._validate_session(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                ledger = PostgresqlAuthorizationLedger(session, self._schema)
+                current_dataset = await ledger.require_dataset(prepared.request)
+                current_grant = await ledger.require_current(prepared.grant.grant_id)
+                validate_prepared_operation(prepared, current_dataset, current_grant, clock.now_utc())
+                async with PostgresqlAuthorizationGuard(session, self._schema).hold(
+                    prepared.request,
+                    current_grant,
+                ):
+                    result = await PostgresqlProtectedArtifactOperation(
+                        session,
+                        self._schema,
+                        write_payload=write_payload,
+                        on_read=on_read,
+                    ).execute(prepared.request, prepared.capability)
+                    await PostgresqlProtectedAuditJournal(session, self._schema, clock).append_operation(
+                        prepared.request,
+                        prepared.grant,
+                        OperationAuditOutcome.SUCCEEDED,
+                        ProtectedAuditReason.COMPLETED,
+                        prepared.capability,
+                        result,
+                    )
+            assert result is not None
+            return result
+        except Exception:
+            recovered = await self._record_unknown_or_recover(prepared, result)
+            if recovered is not None:
+                return recovered
+            raise ProtectedSecurityError("OPERATION_OUTCOME_UNKNOWN") from None
 
 
 __all__ = [
@@ -825,5 +971,6 @@ __all__ = [
     "PostgresqlAuthorizationLedger",
     "PostgresqlProtectedArtifactOperation",
     "PostgresqlProtectedAuditJournal",
+    "PostgresqlProtectedRetrievalService",
     "PostgresqlTrustedClock",
 ]

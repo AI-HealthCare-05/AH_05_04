@@ -24,11 +24,7 @@ from sqlalchemy.pool import NullPool
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
 from ai_worker.adapters.factory import create_redis_client, create_stream_adapter
 from ai_worker.adapters.postgresql_protected_retrieval import (
-    PostgresqlAuthorizationGuard,
-    PostgresqlAuthorizationLedger,
-    PostgresqlProtectedArtifactOperation,
-    PostgresqlProtectedAuditJournal,
-    PostgresqlTrustedClock,
+    PostgresqlProtectedRetrievalService,
 )
 from ai_worker.adapters.redis_dead_letter_stream import (
     RedisDeadLetterStreamPublisher,
@@ -144,17 +140,6 @@ def create_worker_engine(config: Config) -> AsyncEngine:
     )
 
 
-@dataclass(frozen=True)
-class ProtectedRetrievalAdapters:
-    """한 protected transaction과 수명을 같이하는 adapter 묶음입니다."""
-
-    clock: PostgresqlTrustedClock
-    ledger: PostgresqlAuthorizationLedger
-    journal: PostgresqlProtectedAuditJournal
-    guard: PostgresqlAuthorizationGuard
-    operation: PostgresqlProtectedArtifactOperation
-
-
 def _create_protected_engine(config: Config, *, control: bool) -> AsyncEngine:
     """명시적으로 활성화된 plane에 대해서만 격리 engine을 생성합니다."""
 
@@ -186,33 +171,33 @@ def create_protected_control_engine(config: Config) -> AsyncEngine:
     return _create_protected_engine(config, control=True)
 
 
-async def create_protected_retrieval_adapters(
-    session: AsyncSession,
-    config: Config,
-    *,
-    write_payload: bytes | None = None,
-    on_read: Callable[[bytes], Awaitable[None]] | None = None,
-) -> ProtectedRetrievalAdapters:
-    """caller-owned transaction에만 연결되는 protected adapter를 만듭니다."""
+async def create_protected_retrieval_service(config: Config) -> PostgresqlProtectedRetrievalService:
+    """Build and validate the durable protected data-plane runtime."""
 
-    if not config.PROTECTED_RETRIEVAL_ENABLED or config.PROTECTED_DB_SCHEMA is None:
-        raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
-    if not session.in_transaction():
-        raise RuntimeError("PROTECTED_RETRIEVAL_TRANSACTION_REQUIRED")
-    schema = config.PROTECTED_DB_SCHEMA.get_secret_value()
-    clock = await PostgresqlTrustedClock.from_session(session)
-    return ProtectedRetrievalAdapters(
-        clock=clock,
-        ledger=PostgresqlAuthorizationLedger(session, schema),
-        journal=PostgresqlProtectedAuditJournal(session, schema, clock),
-        guard=PostgresqlAuthorizationGuard(session, schema),
-        operation=PostgresqlProtectedArtifactOperation(
-            session,
-            schema,
-            write_payload=write_payload,
-            on_read=on_read,
-        ),
+    if any(
+        value is None
+        for value in (
+            config.PROTECTED_DB_SCHEMA,
+            config.PROTECTED_DB_ACCESS_ROLE,
+            config.PROTECTED_DB_CONTROL_ROLE,
+        )
+    ):
+        raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+    assert config.PROTECTED_DB_SCHEMA is not None
+    assert config.PROTECTED_DB_ACCESS_ROLE is not None
+    assert config.PROTECTED_DB_CONTROL_ROLE is not None
+    service = PostgresqlProtectedRetrievalService(
+        create_protected_data_engine(config),
+        schema=config.PROTECTED_DB_SCHEMA.get_secret_value(),
+        data_access_role=config.PROTECTED_DB_ACCESS_ROLE,
+        control_role=config.PROTECTED_DB_CONTROL_ROLE,
     )
+    try:
+        await service.validate()
+    except Exception:
+        await service.close()
+        raise
+    return service
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

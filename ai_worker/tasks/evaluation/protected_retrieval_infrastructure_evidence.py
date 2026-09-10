@@ -34,7 +34,7 @@ def _validate(evidence: dict[str, JsonValue], repository_root: Path | None = Non
         "freeze_recorded": False,
         "holdout_authored": False,
         "release_eligible": False,
-        "repository_adapter_status": "IMPLEMENTED",
+        "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
     }
     if any(evidence.get(key) != value for key, value in expected_state.items()):
         raise RuntimeError("Issue 368 evidence cannot promote an operational activation state")
@@ -81,7 +81,12 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         ],
         "issue": "#368",
         "release_eligible": False,
-        "repository_adapter_status": "IMPLEMENTED",
+        "remaining_repository_scope": [
+            "APPROVAL_EVIDENCE_INGESTION_SERVICE",
+            "GRANT_REVOKE_EXPIRE_SERVICE",
+            "DATASET_TRANSITION_AND_FREEZE_SERVICE",
+        ],
+        "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
         "required_reviewers": [
             {"actor_id": "hazelnutflavoured", "scope": "PRODUCT_PRIVACY_SAFETY_EVALUATION"},
             {"actor_id": "phina-io", "scope": "BACKEND_SECURITY"},
@@ -89,11 +94,11 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "verification": [
             {
                 "command_id": "KERNEL_CONFIG_RUNTIME",
-                "result": "160_PASSED",
+                "result": "163_PASSED",
             },
             {
                 "command_id": "DISPOSABLE_POSTGRESQL_MIGRATION_ADAPTER",
-                "result": "5_PASSED",
+                "result": "11_PASSED",
             },
             {
                 "command_id": "DATABASE_LOGIC_POLICY_AND_SINGLE_HEAD",
@@ -116,7 +121,9 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "",
             "## 상태",
             "",
-            "- Repository adapter: `IMPLEMENTED`",
+            "- Repository adapter: `PARTIALLY_IMPLEMENTED`",
+            "- Implemented scope: data-plane READ/WRITE/RUN transaction and audit boundary",
+            "- Remaining scope: approval ingestion, grant/revoke/expire, Dataset transition/FREEZE services",
             "- Effective enforcement: `NOT_IMPLEMENTED`",
             "- Access authorized: `false`",
             "- HOLDOUT authored: `false`",
@@ -127,8 +134,8 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "",
             "## 검증",
             "",
-            "- Kernel·config·runtime focused suite: `160 passed`",
-            "- Disposable PostgreSQL migration·ACL·adapter suite: `5 passed`",
+            "- Kernel·config·runtime focused suite: `163 passed`",
+            "- Disposable PostgreSQL migration·ACL·adapter suite: `11 passed`",
             "- Database logic policy and protected Alembic single head: `passed`",
             "- 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.",
             "",

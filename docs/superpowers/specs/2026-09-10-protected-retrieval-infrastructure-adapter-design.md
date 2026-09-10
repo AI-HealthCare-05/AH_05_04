@@ -197,24 +197,22 @@ those rules run.
 
 ### 6. Transaction flow
 
-1. `PostgresqlProtectedRetrievalService` routes the action to the data or control engine, opens one transaction, and
-   validates the limited connection.
-2. The principal repository resolves and validates `session_user`.
-3. Operation history and the durable head are verified for sequence, previous hash, self-hash, and binding.
-4. Dataset and grant rows are loaded and locked in that order.
-5. The kernel revalidates role/state, grant, revision, revoke, expiry, and evidence against DB time.
-6. The audit head is locked and `INTENT` is appended after rechecking the tail.
-7. A capability is inserted and conditionally consumed using `UPDATE ... WHERE consumed_at IS NULL AND expires_at >
-   :trusted_now RETURNING ...`.
-8. Execution conditionally marks `operated_at` once and reads/writes only the capability-bound artifact.
-9. Data operations bind an opaque result reference in the terminal audit entry. A control-plane Freeze atomically
-   advances the authoritative Dataset revision and binds the approved Freeze reference. Both append terminal
-   `SUCCEEDED`; observable uncertainty records `UNKNOWN` and blocks automatic replay.
-10. The transaction commits. Pre-side-effect failure rolls back capability, artifact, and audit together.
+1. Runtime construction opens a data-plane connection and validates the limited `session_user`, role memberships,
+   schema ownership, and exact table/column privileges. Every later transaction repeats that validation.
+2. A preparation transaction resolves the principal, verifies operation history, locks Dataset → grant → audit head,
+   revalidates the kernel policy against DB time, appends `INTENT`, issues and consumes the capability, and commits.
+3. Only after durable `INTENT` exists does a separate execution transaction re-read and lock the current Dataset and
+   grant, validate that they still match the prepared values, and claim the capability operation once.
+4. READ/RUN compares the actual envelope hash, stored envelope hash, and capability-approved artifact hash before
+   invoking the callback. WRITE applies the equivalent capability binding before mutation.
+5. The operation and `SUCCEEDED` terminal audit commit together. A callback failure or connection failure rolls back
+   this phase and a fresh transaction appends `UNKNOWN`.
+6. If the recovery transaction is unavailable, the already committed `INTENT` remains durable and blocks automatic
+   replay. A later request cannot repeat the content access merely because `UNKNOWN` persistence failed.
 
-All components in one operation share one plane-specific `AsyncSession`. Lock order is Dataset → grant → audit head →
-capability → artifact. Grant/revoke/expire use identity → Dataset → grant → audit head. Zero-row conditional DML
-maps to fixed safe reasons, not raw SQL errors.
+The data-plane implementation therefore uses short-lived phase-specific `AsyncSession` instances rather than a
+caller-owned transaction spanning the callback. Zero-row conditional DML maps to fixed safe reasons, not raw SQL
+errors. The control-plane transaction order remains a target until the services in §7 are implemented.
 
 ### 7. Control-plane flow
 
@@ -256,8 +254,9 @@ bodies, payloads, keys, and protected digests. SQL echo remains disabled.
 | write artifact | conditional capability operation mark followed by bound artifact `INSERT ... ON CONFLICT` |
 | internal audit checkpoint | removed; tests inspect ordinary audit relations through the owner fixture only |
 
-Grant/revoke/expire, identity administration, approval ingestion, and Freeze transitions are control-plane Service
-methods rather than replacements with another implicit database execution path.
+Grant/revoke/expire, identity administration, approval ingestion, and Freeze transitions remain target control-plane
+Service methods rather than replacements with another implicit database execution path. They are not implemented by
+PR #432.
 
 ## Testing strategy
 
@@ -296,6 +295,7 @@ named disposable database rather than the shared local `test` database.
 
 Until revised implementation and designated approvals exist, evidence must mark the redesign pending and keep:
 
+- repository adapter: `PARTIALLY_IMPLEMENTED`;
 - effective enforcement: `NOT_IMPLEMENTED`;
 - HOLDOUT authorization: `NOT_RECORDED`;
 - authoring count: `0`;
@@ -326,8 +326,8 @@ Remaining reviewer gates:
   Python the only operational path.
 - Product/Privacy/Safety/Evaluation must accept the residual-risk statement and unchanged activation blocks.
 - Implementation must prove every privilege claim with a real limited login; static scanning alone is insufficient.
-- Current PR #432 code and implementation evidence still describe the superseded function-only adapter and must be
-  replaced and re-hashed before they can be treated as implementation evidence.
+- PR #432 must retain `PARTIALLY_IMPLEMENTED` until approval ingestion, grant/revoke/expire, Dataset transition, and
+  Freeze Application Services are implemented and reviewed.
 
 ## Completion criteria
 

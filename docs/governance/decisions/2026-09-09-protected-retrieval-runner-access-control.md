@@ -172,13 +172,15 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 - `scripts/deployment.sh` — §9 검토 대상 기존 `pg_dump` 백업 메커니즘(재사용 여부 미확정, 선행조건 검토 중)
 - `docs/runbooks/` — §11 참고(장애 복구용, IR 프레이밍 아님)
 - `docs/validation/rag/issue-273/` — §11 사고 증빙 위치
+- [`Protected Retrieval Infrastructure 계약 v1`](../../contracts/targets/post-mvp-1/protected-retrieval-infrastructure-v1.md) — data-plane 부분 구현과 미구현 control-plane 범위
 
 ## 완료 후 상태 (현재)
 
-policy foundation: `IMPLEMENTED` / repository infrastructure adapter: `IMPLEMENTED` / effective enforcement:
+policy foundation: `IMPLEMENTED` / repository infrastructure adapter: `PARTIALLY_IMPLEMENTED` / effective enforcement:
 `NOT_IMPLEMENTED` / HOLDOUT access authorization: `NOT_RECORDED` / HOLDOUT authored: `0` / HOLDOUT Freeze:
-`NOT_STARTED` — 저장소 구현과 합성 disposable PostgreSQL 검증은
+`NOT_STARTED` — data-plane의 제한 로그인 검증, 승인 artifact hash 결속, durable INTENT/UNKNOWN 경계와 합성
+disposable PostgreSQL 검증은
 [`protected-runner-infrastructure-adapter.md`](../../validation/rag/issue-273/protected-runner-infrastructure-adapter.md)에
-기록한다. 실제 환경 provisioning, 독립 Backend·Security 검증, 보관·복구·rotation 및 `EXT-PRIV-001`
-승인이 완료되기 전까지 #368은 Open, `effective_enforcement_status=NOT_IMPLEMENTED`, HOLDOUT 미승인 상태를
-유지한다.
+기록한다. approval ingestion, grant/revoke/expire, Dataset transition/FREEZE Application Service는 미구현이다.
+따라서 #368은 Open으로 유지하며, 실제 환경 provisioning, 독립 Backend·Security 검증, 보관·복구·rotation 및
+`EXT-PRIV-001` 승인 전까지 `effective_enforcement_status=NOT_IMPLEMENTED`, HOLDOUT 미승인 상태를 유지한다.
