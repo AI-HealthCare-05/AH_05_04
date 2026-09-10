@@ -268,3 +268,17 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 검사 실패 시 API·Worker 회귀 테스트보다 먼저 전체 테스트를 중단한다.
 
 폐기 PostgreSQL 17 DB에서 두 경로를 독립 검증했다. 첫 DB는 빈 상태에서 `398b`까지 적용한 뒤 전체 migration 150개를 통과하고 최신 head로 전환했다. 두 번째 DB는 완전히 빈 상태에서 최신 head까지 전체 이력을 한 번에 적용했다. 두 DB 모두 최신 head 종합 검사를 통과했다. Trigger·RLS·PL/pgSQL 정의는 추가하지 않았고 AWS·운영 DB를 변경하지 않았다.
+
+## 최신 head 전체 회귀 검증
+
+CI와 같은 로컬 전체 runner를 깨끗한 `test` DB에서 처음부터 끝까지 실행했다. 과거 migration 계약을 확인한 뒤 최신 head와 카탈로그를 검사하고, Backend와 Worker를 분리된 실행 환경에서 병렬 검증했다.
+
+- migration: 150 passed
+- Backend·Contract·PostgreSQL: 1,620 passed, 59 skipped
+- Redis 통합: 23 passed
+- Worker: 2,620 passed, 8 skipped
+- 통합 coverage: 93%
+- 실제 분리 Runtime·Writer 계정 및 배포 provisioning 선별 재검증: 5 passed
+- 전용 `source_cleanup347_test` DB 통합 검증: 57 passed
+
+Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/source_cleanup 사용자 Trigger 0개, RLS 활성·정책 0개, 제거 대상 함수 0개를 확인했다. skip은 외부 provider가 필요한 smoke와 별도 DB에서 수행하는 Source cleanup 범위이며, Source cleanup은 위 전용 실행에서 모두 통과했다. AWS 배포와 운영 DB는 변경하지 않았다.
