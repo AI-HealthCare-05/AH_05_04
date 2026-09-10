@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../src/api/client'
 import {
+  createManualMedication,
   executeOcr,
   getJobStatus,
   getLatestPrescription,
@@ -60,6 +61,51 @@ afterEach(() => {
 })
 
 describe('OCR Job API', () => {
+  it('sends the manual medication body with the logical-attempt Idempotency-Key', async () => {
+    const responseBody = {
+      ...makeLegacyOcrJob(),
+      data: {
+        ...makeLegacyOcrJob().data,
+        ocr_status: 'COMPLETED' as const,
+      },
+    }
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(responseBody), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const request = {
+      medication_name: '직접입력약정',
+      medication_strength: '50mg',
+      dose_value: '0.5',
+      dose_unit: '정',
+      frequency_per_day: '2',
+      timing: '저녁 식후',
+      duration_days: '5',
+    }
+
+    await expect(
+      createManualMedication(
+        jobId,
+        request,
+        'manual-medication:374:0001',
+      ),
+    ).resolves.toEqual(responseBody)
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://localhost:8000/api/v1/ocr-jobs/${jobId}/manual-medications`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'manual-medication:374:0001',
+        }),
+        body: JSON.stringify(request),
+      }),
+    )
+  })
+
   it('sends a valid Idempotency-Key and AbortSignal with OCR intake', async () => {
     const responseBody = makeJobStatus()
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(

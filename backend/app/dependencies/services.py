@@ -18,6 +18,7 @@ from app.repositories.guide_repository import GuideRepository
 from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.user_repository import UserRepository
@@ -38,6 +39,7 @@ from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.medication_candidates import MedicationCandidateService
 from app.services.medication_identification import MedicationIdentificationService
+from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
 from app.services.ocr import OcrService
 from app.services.ocr_ai import (
     LlmPrescriptionStructurer,
@@ -186,6 +188,25 @@ def get_prescription_repository(
     return PrescriptionRepository(session)
 
 
+def get_medication_schedule_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> MedicationScheduleRepository:
+    return MedicationScheduleRepository(session)
+
+
+def get_prescription_version_medication_invalidation_service(
+    repository: Annotated[
+        MedicationScheduleRepository,
+        Depends(get_medication_schedule_repository),
+    ],
+) -> PrescriptionVersionMedicationInvalidationService:
+    # B5 Notification repository가 구현되면 같은 transaction/session의 adapter를 여기 주입한다.
+    return PrescriptionVersionMedicationInvalidationService(repository)
+
+
 def get_ocr_service(
     document_repository: Annotated[
         MedicalDocumentRepository,
@@ -224,8 +245,17 @@ def get_prescription_service(
         PrescriptionRepository,
         Depends(get_prescription_repository),
     ],
+    schedule_invalidation: Annotated[
+        PrescriptionVersionMedicationInvalidationService,
+        Depends(get_prescription_version_medication_invalidation_service),
+    ],
 ) -> PrescriptionService:
-    return PrescriptionService(document_repository, ocr_repository, prescription_repository)
+    return PrescriptionService(
+        document_repository,
+        ocr_repository,
+        prescription_repository,
+        schedule_invalidation,
+    )
 
 
 def get_medication_candidate_repository(

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../src/api/client'
@@ -53,6 +53,28 @@ afterEach(() => {
 })
 
 describe('인증 상태별 AppRouter 이동', () => {
+  it('개발 환경의 /dev/preview는 인증 API 없이 열린다', async () => {
+    renderRoute('/dev/preview')
+
+    expect(await screen.findByText('DEV PREVIEW')).toBeTruthy()
+    expect(screen.getByText('Mock data only')).toBeTruthy()
+    expect(getCurrentUser).not.toHaveBeenCalled()
+  })
+
+  it('Preview CTA는 인증된 실제 제품 route로 빠져나가지 않는다', async () => {
+    localStorage.setItem('access_token', 'fixture-access-token')
+    renderRoute('/dev/preview?screen=guide&scenario=completed')
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '복약 챗봇 도지와 이야기하기',
+      }),
+    )
+
+    expect(window.location.pathname).toBe('/dev/preview')
+    expect(getCurrentUser).not.toHaveBeenCalled()
+  })
+
   it('비로그인 사용자가 첫 화면에 접속하면 /start로 이동해 시작 화면을 표시한다', async () => {
     renderRoute('/')
 

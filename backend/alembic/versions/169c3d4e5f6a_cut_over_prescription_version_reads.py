@@ -20,6 +20,74 @@ def _count(connection: sa.Connection, sql: str) -> int:
     return connection.execute(sa.text(sql)).scalar_one()
 
 
+def _column_exists(connection: sa.Connection, table_name: str, column_name: str) -> bool:
+    return bool(
+        connection.execute(
+            sa.text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = :table_name
+                      AND column_name = :column_name
+                )
+                """
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        ).scalar_one()
+    )
+
+
+def _constraint_exists(connection: sa.Connection, table_name: str, constraint_name: str) -> bool:
+    return bool(
+        connection.execute(
+            sa.text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.table_constraints
+                    WHERE table_schema = 'public'
+                      AND table_name = :table_name
+                      AND constraint_name = :constraint_name
+                )
+                """
+            ),
+            {"table_name": table_name, "constraint_name": constraint_name},
+        ).scalar_one()
+    )
+
+
+def _index_exists(connection: sa.Connection, index_name: str) -> bool:
+    return bool(
+        connection.execute(
+            sa.text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND indexname = :index_name
+                )
+                """
+            ),
+            {"index_name": index_name},
+        ).scalar_one()
+    )
+
+
+def _drop_constraint_if_exists(
+    connection: sa.Connection, table_name: str, constraint_name: str, constraint_type: str
+) -> None:
+    if _constraint_exists(connection, table_name, constraint_name):
+        op.drop_constraint(constraint_name, table_name, type_=constraint_type)
+
+
+def _drop_column_if_exists(connection: sa.Connection, table_name: str, column_name: str) -> None:
+    if _column_exists(connection, table_name, column_name):
+        op.drop_column(table_name, column_name)
+
+
 def _defensive_backfill(connection: sa.Connection) -> None:
     partial = _count(
         connection,
@@ -278,29 +346,32 @@ def downgrade() -> None:
         "chat_session",
     ):
         connection.execute(sa.text(f"LOCK TABLE {table} IN SHARE ROW EXCLUSIVE MODE"))
-    referenced = _count(
-        connection,
-        """
-        SELECT
-            (SELECT count(*) FROM medication_candidate_search)
-          + (SELECT count(*) FROM medication_identification)
-          + (SELECT count(*) FROM guide WHERE prescription_version_id IS NOT NULL)
-          + (SELECT count(*) FROM chat_session WHERE prescription_version_id IS NOT NULL)
-        """,
+    referenced = _count(connection, "SELECT count(*) FROM medication_candidate_search") + _count(
+        connection, "SELECT count(*) FROM medication_identification"
     )
+    if _column_exists(connection, "guide", "prescription_version_id"):
+        referenced += _count(connection, "SELECT count(*) FROM guide WHERE prescription_version_id IS NOT NULL")
+    if _column_exists(connection, "chat_session", "prescription_version_id"):
+        referenced += _count(connection, "SELECT count(*) FROM chat_session WHERE prescription_version_id IS NOT NULL")
     if referenced:
         raise RuntimeError(
             "Read cutover downgrade refused: remapped Candidate/Identification IDs or Guide/Chat provenance exist."
         )
-    op.drop_index("idx_ai_job_prescription_version", table_name="ai_job")
-    op.drop_constraint("fk_ai_job_prescription_version", "ai_job", type_="foreignkey")
-    op.drop_constraint("fk_chat_session_prescription_version_prescription", "chat_session", type_="foreignkey")
-    op.drop_constraint("fk_guide_prescription_version_prescription", "guide", type_="foreignkey")
-    op.drop_constraint(
-        "fk_medication_identification_version_medication", "medication_identification", type_="foreignkey"
+    if _index_exists(connection, "idx_ai_job_prescription_version"):
+        op.drop_index("idx_ai_job_prescription_version", table_name="ai_job")
+    _drop_constraint_if_exists(connection, "ai_job", "fk_ai_job_prescription_version", "foreignkey")
+    _drop_constraint_if_exists(
+        connection, "chat_session", "fk_chat_session_prescription_version_prescription", "foreignkey"
     )
-    op.drop_constraint(
-        "fk_medication_candidate_search_version_medication", "medication_candidate_search", type_="foreignkey"
+    _drop_constraint_if_exists(connection, "guide", "fk_guide_prescription_version_prescription", "foreignkey")
+    _drop_constraint_if_exists(
+        connection, "medication_identification", "fk_medication_identification_version_medication", "foreignkey"
     )
-    op.drop_column("chat_session", "prescription_version_id")
-    op.drop_column("guide", "prescription_version_id")
+    _drop_constraint_if_exists(
+        connection,
+        "medication_candidate_search",
+        "fk_medication_candidate_search_version_medication",
+        "foreignkey",
+    )
+    _drop_column_if_exists(connection, "chat_session", "prescription_version_id")
+    _drop_column_if_exists(connection, "guide", "prescription_version_id")

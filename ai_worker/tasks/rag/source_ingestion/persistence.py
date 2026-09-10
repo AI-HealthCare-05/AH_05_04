@@ -22,6 +22,9 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotPersistenceResult,
     persist_product_ingestion_result,
 )
+from ai_worker.tasks.rag.source_ingestion.source_version import (
+    validate_source_version,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +53,11 @@ async def preserve_and_persist_product_ingestion_result(
     rejection_artifacts: Iterable[RejectionArtifactInput] = (),
 ) -> SnapshotPersistenceResult:
     """검증 결과와 같은 원본만 불변 보관한 뒤 DB transaction에 연결합니다."""
+    validate_source_version(
+        source_version=metadata.source_version,
+        external_version=metadata.external_version,
+        canonical_checksum=ingestion.canonical_checksum,
+    )
     entries = tuple(raw_artifacts)
     if len(entries) != ingestion.artifact_count:
         raise ValueError("Artifact 개수가 검증된 수집 결과와 일치하지 않습니다.")
