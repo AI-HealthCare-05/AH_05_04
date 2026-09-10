@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, Request, status
 from fastapi.responses import JSONResponse as Response
@@ -8,13 +9,26 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.core import config
 from app.core.config import Env
 from app.core.errors import ApiError, ErrorResponse
+from app.core.jwt.tokens import Token
 from app.dependencies.security import (
+    invalid_token_error,
     resolve_active_user_from_payload,
     resolve_logout_user,
     security,
 )
-from app.dependencies.services import get_auth_service, get_user_repository
-from app.dtos.auth import LoginRequest, LoginResponse, LogoutResponse, SignUpRequest, TokenRefreshResponse
+from app.dependencies.services import get_auth_service, get_refresh_session_repository, get_user_repository
+from app.dtos.auth import (
+    LoginRequest,
+    LoginResponse,
+    LogoutResponse,
+    PasswordResetConfirmRequest,
+    PasswordResetConfirmResponse,
+    PasswordResetRequestRequest,
+    PasswordResetRequestResponse,
+    SignUpRequest,
+    TokenRefreshResponse,
+)
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.jwt import JwtService
@@ -24,6 +38,20 @@ auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 def should_use_secure_cookie(env: Env) -> bool:
     return env in {Env.STAGING, Env.PRODUCTION}
+
+
+def set_refresh_token_cookie(response: Response, refresh_token: Token) -> None:
+    response.set_cookie(
+        key="refresh_token",
+        value=str(refresh_token),
+        httponly=True,
+        secure=should_use_secure_cookie(config.ENV),
+        domain=config.COOKIE_DOMAIN or None,
+        # `expires`에 정수를 그대로 넘기면 Python `http.cookies`가 이를 절대 epoch이 아니라
+        # "지금부터 몇 초 후"로 해석해(`http.cookies._getdate`) 실제 만료가 의도보다 훨씬
+        # 뒤로 밀립니다. `datetime`으로 변환해 절대 시각으로 넘겨야 합니다.
+        expires=datetime.fromtimestamp(refresh_token.payload["exp"], tz=UTC),
+    )
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
@@ -41,22 +69,11 @@ async def login(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> Response:
     user = await auth_service.authenticate(request)
-    tokens = await auth_service.login(user)
+    tokens = await auth_service.login(user, password=request.password)
     resp = Response(
         content=LoginResponse(access_token=str(tokens["access_token"])).model_dump(), status_code=status.HTTP_200_OK
     )
-    resp.set_cookie(
-        key="refresh_token",
-        value=str(tokens["refresh_token"]),
-        httponly=True,
-        secure=should_use_secure_cookie(config.ENV),
-        domain=config.COOKIE_DOMAIN or None,
-        # `expires`에 정수를 그대로 넘기면 Python `http.cookies`가 이를 절대 epoch이 아니라
-        # "지금부터 몇 초 후"로 해석해(`http.cookies._getdate`) 실제 만료가 의도보다 훨씬
-        # 뒤로 밀립니다(4차 리뷰가 지적한 access_token.exp 오사용을 refresh_token.exp로만
-        # 바꿔도 이 문제는 그대로 남습니다). `datetime`으로 변환해 절대 시각으로 넘겨야 합니다.
-        expires=datetime.fromtimestamp(tokens["refresh_token"].payload["exp"], tz=UTC),
-    )
+    set_refresh_token_cookie(resp, tokens["refresh_token"])
     return resp
 
 
@@ -64,6 +81,7 @@ async def login(
 async def token_refresh(
     jwt_service: Annotated[JwtService, Depends(JwtService)],
     user_repository: Annotated[UserRepository, Depends(get_user_repository)],
+    refresh_session_repository: Annotated[RefreshSessionRepository, Depends(get_refresh_session_repository)],
     refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> Response:
     if not refresh_token:
@@ -74,11 +92,43 @@ async def token_refresh(
             headers={"WWW-Authenticate": "Bearer"},
         )
     verified_refresh_token = jwt_service.verify_jwt(refresh_token, token_type="refresh")
-    await resolve_active_user_from_payload(payload=verified_refresh_token.payload, repository=user_repository)
-    access_token = verified_refresh_token.access_token
-    return Response(
-        content=TokenRefreshResponse(access_token=str(access_token)).model_dump(), status_code=status.HTTP_200_OK
+    user = await resolve_active_user_from_payload(payload=verified_refresh_token.payload, repository=user_repository)
+
+    # #206 리뷰(권가빈): 배포 시점 이전에 발급된 refresh token은 `session_id`가 없다 —
+    # 이 rotation 인프라 자체를 모르던 토큰이므로 재사용 판정 없이 그냥 무효로 처리한다
+    # (재로그인 요구, 다른 세션에는 영향 없음).
+    session_id_claim = verified_refresh_token.payload.get("session_id")
+    if not isinstance(session_id_claim, str):
+        raise invalid_token_error()
+
+    rotated_refresh_token = verified_refresh_token.rotate()
+    rotation_succeeded = await refresh_session_repository.rotate_jti(
+        session_id=UUID(session_id_claim),
+        expected_jti=str(verified_refresh_token.payload["jti"]),
+        new_jti=str(rotated_refresh_token.payload["jti"]),
     )
+    if not rotation_succeeded:
+        # 이미 rotation으로 교체된 refresh token이 다시 제출됐다 — 탈취 의심 신호이므로
+        # 이 사용자의 token_version을 전역으로 올려 모든 access/refresh token을 강제로
+        # 무효화한다(PR #404 후속 리뷰). refresh_session의 세션별 스코프는 CAS 판정
+        # 자체를 이 세션으로 좁혀 "다른 기기의 정상 로그인을 재사용으로 오판하지
+        # 않는다"는 뜻일 뿐이다 — CAS가 실패한 뒤의 결과(token_version 전역 증가)는
+        # 그 세션으로 한정되지 않고 다른 기기의 세션도 함께 로그아웃시킨다. 이 CAS는
+        # 진짜 탈취뿐 아니라 같은 세션에 대한 단순 동시 rotation 경쟁으로도 실패할 수
+        # 있으므로, Frontend가 동시 401 요청에 single-flight refresh를 적용하지 않으면
+        # 정상 사용 중에도 다른 기기까지 의도치 않게 로그아웃될 수 있다. 아래에서 바로
+        # invalid_token_error()를 raise하면 get_db_session이 세션 전체를 rollback해
+        # 이 증가분도 함께 사라지므로 즉시 commit한다(ocr_repository.mark_failed와 동일 패턴).
+        await user_repository.increment_token_version(user)
+        await user_repository.session.commit()
+        raise invalid_token_error()
+
+    resp = Response(
+        content=TokenRefreshResponse(access_token=str(rotated_refresh_token.access_token)).model_dump(),
+        status_code=status.HTTP_200_OK,
+    )
+    set_refresh_token_cookie(resp, rotated_refresh_token)
+    return resp
 
 
 @auth_router.post(
@@ -142,3 +192,45 @@ async def logout(
         domain=config.COOKIE_DOMAIN or None,
     )
     return response
+
+
+@auth_router.post(
+    "/password-reset/request",
+    response_model=PasswordResetRequestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def request_password_reset(
+    request: PasswordResetRequestRequest,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> Response:
+    # PD-206 결정 3: 계정 존재 여부를 노출하지 않기 위해 계정이 없거나 쿨다운 중이어도
+    # 항상 같은 성공 응답을 반환한다. reset_token은 실제 이메일 발송 Provider 연동 전까지
+    # LOCAL 환경에서만 채워진다(그 외 환경은 계정 존재 여부가 새지 않도록 항상 None).
+    reset_token = await auth_service.request_password_reset(request.email)
+    content = PasswordResetRequestResponse(detail="비밀번호 재설정 안내를 확인해 주세요.", reset_token=reset_token)
+    return Response(content=content.model_dump(), status_code=status.HTTP_200_OK)
+
+
+@auth_router.post(
+    "/password-reset/confirm",
+    response_model=PasswordResetConfirmResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+            "description": (
+                "`code=VALIDATION_FAILED`. `details[].field=new_password`, "
+                "`reason=PASSWORD_POLICY_VIOLATION` 또는 `details[].field=token`, "
+                "`reason=RESET_TOKEN_INVALID`."
+            ),
+        },
+    },
+)
+async def confirm_password_reset(
+    request: PasswordResetConfirmRequest,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> PasswordResetConfirmResponse:
+    # PD-206 결정 3: 재설정 성공 후 재로그인을 요구한다 — 새 access/refresh token을
+    # 발급하지 않고 성공 안내만 반환한다.
+    await auth_service.reset_password(token=request.token, new_password=request.new_password)
+    return PasswordResetConfirmResponse(detail="비밀번호가 변경되었습니다. 다시 로그인해 주세요.")

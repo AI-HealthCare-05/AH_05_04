@@ -182,7 +182,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
-| `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token을 발급합니다. |
+| `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token과 **새 refresh token(rotation)**을 발급해 쿠키를 교체합니다. |
 | `POST` | `/api/v1/auth/logout` | `200 OK` | 현재 사용자의 세션 무효화 카운터를 증가시키고 `refresh_token` 쿠키를 삭제합니다. |
 
 - access token과 refresh token에는 발급 시점의 `token_version`이 포함됩니다.
@@ -190,6 +190,16 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - `account_status != ACTIVE`, `is_active=false`, 또는 토큰의 `token_version`이 DB의 `user.token_version`과 다르면 `401 INVALID_TOKEN`을 반환합니다.
 - 로그아웃 성공 후 기존 access token으로 보호 API를 호출하거나 기존 refresh token으로 재발급을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
+- refresh token은 매 갱신마다 새 값으로 교체되며(rotation), 절대 만료(로그인 시점 기준)는 rotation으로 늘어나지 않습니다. 이미 교체돼 무효해진 refresh token이 다시 제출되면 탈취 의심 신호로 간주해 그 사용자의 모든 세션을 강제로 무효화합니다.
+
+### 비밀번호 재설정
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/auth/password-reset/request` | `200 OK` | 계정 존재 여부와 무관하게 항상 같은 응답을 반환합니다. `reset_token`은 `LOCAL` 환경에서만 채워집니다(실제 이메일 발송 Provider 연동 전 임시 확인 경로). |
+| `POST` | `/api/v1/auth/password-reset/confirm` | `200 OK` | 유효한 token으로 비밀번호를 변경하고 기존 세션을 전부 무효화합니다. 새 토큰은 발급하지 않으며 재로그인이 필요합니다. |
+
+상세 스펙(오류 코드, lock 순서, 보안 규칙)은 [회원가입·사용자 정보 계약의 비밀번호 재설정 절](./contracts/current/user-account.md#비밀번호-재설정206-pd-206-결정-3)을 따릅니다.
 
 ## Post-MVP-1 목표 API — 미구현
 

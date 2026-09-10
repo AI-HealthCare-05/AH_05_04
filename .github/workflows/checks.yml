@@ -238,7 +238,12 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uv run coverage run -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation
+          uv run pytest \
+            -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
+            ai_worker/tests/core \
+            ai_worker/tests/ocr \
+            ai_worker/tests/rag \
+            ai_worker/tests/evaluation
 
       - name: Upload AI Worker Coverage Data
         uses: actions/upload-artifact@v4

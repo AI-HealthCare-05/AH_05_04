@@ -57,13 +57,22 @@ PYTEST_COMMAND_PREFIXES = {
     ("run_with_backend_test_database",),
     ("run_with_backend_test_database", "coverage", "run", "-m"),
     ("run_with_integration_test_environment", "coverage", "run", "--append", "-m"),
+    ("run_with_worker_test_environment",),
     ("run_with_worker_test_environment", "coverage", "run", "-m"),
     ("uv", "run"),
     ("uv", "run", "coverage", "run", "-m"),
     ("uv", "run", "coverage", "run", "--append", "-m"),
 }
 
-SAFE_PYTEST_FLAG_OPTIONS = {"-q", "-v"}
+SAFE_PYTEST_FLAG_OPTIONS = {
+    "-q",
+    "-v",
+    "--dist=loadfile",
+    "--max-worker-restart=0",
+    "--cov",
+    "--cov-report=",
+}
+SAFE_PYTEST_VALUE_OPTIONS = {"-n": "2"}
 SAFE_PYTEST_OVERRIDE_PREFIXES = ("cache_dir=",)
 
 IGNORED_DIRECTORY_NAMES = {
@@ -163,6 +172,17 @@ def _pytest_invocations(commands: list[list[str]]) -> list[list[str]]:
     return invocations
 
 
+def _consume_safe_pytest_value_option(arguments: list[str], index: int) -> tuple[int, str | None]:
+    argument = arguments[index]
+    if index + 1 >= len(arguments):
+        return index + 1, f"{argument} (missing value)"
+
+    value = arguments[index + 1]
+    if value != SAFE_PYTEST_VALUE_OPTIONS[argument]:
+        return index + 2, f"{argument} {value}"
+    return index + 2, None
+
+
 def _classify_pytest_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
     targets: list[str] = []
     unsupported_options: list[str] = []
@@ -171,6 +191,11 @@ def _classify_pytest_arguments(arguments: list[str]) -> tuple[list[str], list[st
         argument = arguments[index]
         if argument in SAFE_PYTEST_FLAG_OPTIONS:
             index += 1
+            continue
+        if argument in SAFE_PYTEST_VALUE_OPTIONS:
+            index, error = _consume_safe_pytest_value_option(arguments, index)
+            if error is not None:
+                unsupported_options.append(error)
             continue
         if argument == "-o":
             if index + 1 >= len(arguments):
