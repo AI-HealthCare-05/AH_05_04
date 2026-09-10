@@ -3,18 +3,21 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-173-20260910` |
-| 상태 | Proposed · Review pending — 지정 책임 리뷰어 3인 승인 필요 |
+| 상태 | **Approved** — PR #405 최신 HEAD에서 지정 책임 리뷰어 3인 전원 승인 (2026-09-10) |
+| 승인일 | 2026-09-10 (최종 승인 `2026-09-10T02:15:06Z`) |
 | 제안일 | 2026-09-10 |
 | 개정 대상 | [`PD-173-20260909`](./2026-09-09-rag-preflight-compound-stale-priority.md) 「승인 및 적용 조건」 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Safety·제품 수용, 송은영 (`@phina-io`) — Backend·공개 DTO, 남한솔 (`@solia142`) — 환자 표시·오류 UX |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) `APPROVED`, 송은영 (`@phina-io`) `APPROVED`, 남한솔 (`@solia142`) `APPROVED` |
 | 추적 Issue·PR | [#173](https://github.com/AI-HealthCare-05/AH_05_04/issues/173) · 선행 [PR #382](https://github.com/AI-HealthCare-05/AH_05_04/pull/382) · 현황 기록 [PR #405](https://github.com/AI-HealthCare-05/AH_05_04/pull/405) |
-| 관련 계약 | [`safety-result-compound-stale-priority-v1.md`](../../contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md) |
+| 관련 계약 | [`safety-result-compound-stale-priority-v1.md`](../../contracts/targets/post-mvp-1/safety-result-compound-stale-priority-v1.md) — `Approved Target · Not implemented` |
 | 승인 현황 Evidence | [`docs/validation/rag/issue-173/decision-approval-evidence.json`](../../validation/rag/issue-173/decision-approval-evidence.json) |
 
 ## 목적
 
-`PD-173-20260909`의 승인 조건은 **병합 전 게이트**였으나 충족되지 않은 채 PR #382가 병합되었다. 이 사실을 기록하고, 놓친 책임 리뷰를 어떻게 처리할지와 개정 후의 승인 조건을 확정한다. 본 문서가 승인되기 전까지 `PD-173-20260909`와 제안 계약은 `Proposed`로 유지된다.
+`PD-173-20260909`의 승인 조건은 **병합 전 게이트**였으나 충족되지 않은 채 PR #382가 병합되었다. 이 사실을 기록하고, 놓친 책임 리뷰를 어떻게 처리할지와 개정 후의 승인 조건을 확정한다.
+
+본 개정은 2026-09-10 PR #405에서 3인 전원 승인을 받아 `Approved`가 되었다. 이에 따라 `PD-173-20260909`와 계약 문서를 `Approved`로 전이했다.
 
 ## 배경 — 확인된 사실
 
@@ -51,7 +54,7 @@ PR #382가 병합한 판정 kernel `rag_runtime/identification_preflight.py`는 
 
 ## 결정 제안
 
-> 아래는 구현 작성자(`@ceohwj`)의 제안이며 확정이 아니다. 세 영향 영역 책임 리뷰어의 승인 전까지 어떤 항목도 효력이 없다. 특히 제안 2는 남한솔 (`@solia142`)의 책임 범위에 대한 제안이므로 본인 판단이 우선한다.
+> 아래 항목은 2026-09-10 PR #405에서 지정 책임 리뷰어 3인 전원의 승인을 받아 **확정**되었다. 제안 2는 기본안(사후 검토로 갈음)이 승인되었으며 대안 2-a·2-b는 채택하지 않았다.
 
 ### 제안 1. 게이트 미충족 병합 사실의 확정 기록
 
@@ -88,6 +91,22 @@ PR #382가 `PD-173-20260909`의 병합 전 승인 게이트를 충족하지 않�
 
 ## 승인 및 적용 조건
 
-본 문서는 `Proposed` 상태다. 지정 책임 리뷰어 3인 전원이 본 개정 PR의 최신 HEAD에서 `APPROVED`를 제출하고 자동화된 계약/단위 테스트가 통과해야 본 개정이 효력을 갖는다. 본 개정이 승인된 뒤에야 `PD-173-20260909`와 제안 계약의 상태를 전이할 수 있으며, 전이는 별도 PR에서 수행한다.
+본 개정은 지정 책임 리뷰어 3인 전원이 개정 PR [#405](https://github.com/AI-HealthCare-05/AH_05_04/pull/405)의 최신 HEAD `0649e466`에서 `APPROVED`를 제출하고 자동화 검증이 통과하여 **`Approved`** 다.
 
-본 개정의 승인 evidence도 Issue #273 기준(review ID·actor·submitted timestamp·commit OID)으로 수집하여 `docs/validation/rag/issue-173/`에 기록한다.
+### 승인 Evidence
+
+| 리뷰어 | 역할 | 상태 | Review ID | Submitted at (UTC) | 대상 commit OID |
+| --- | --- | --- | --- | --- | --- |
+| 남한솔 (`@solia142`) | 환자 표시·오류 UX | `APPROVED` | [`5161920880`](https://github.com/AI-HealthCare-05/AH_05_04/pull/405#pullrequestreview-5161920880) | `2026-09-10T02:09:13Z` | `0649e466e4e9c120a13b932342fefa98090279dd` |
+| 권가빈 (`@hazelnutflavoured`) | Safety·제품 수용 | `APPROVED` | [`5161932826`](https://github.com/AI-HealthCare-05/AH_05_04/pull/405#pullrequestreview-5161932826) | `2026-09-10T02:10:43Z` | `0649e466e4e9c120a13b932342fefa98090279dd` |
+| 송은영 (`@phina-io`) | Backend·공개 DTO | `APPROVED` | [`5161953360`](https://github.com/AI-HealthCare-05/AH_05_04/pull/405#pullrequestreview-5161953360) | `2026-09-10T02:15:06Z` | `0649e466e4e9c120a13b932342fefa98090279dd` |
+
+세 승인 모두 PR #405의 최종 `headRefOid` `0649e466`을 대상으로 하며, 최종 승인(`02:15:06Z`) 이후 추가 커밋이 없다(마지막 커밋 `02:02:50Z`). 해당 commit의 check run `test`·`lint`·`frontend` 모두 `success`. PR #405 병합은 `2026-09-10T02:19:42Z`, merge commit `548468763a21233860b06deb8bea7e24a8900950`이다.
+
+원본은 Issue [#273](https://github.com/AI-HealthCare-05/AH_05_04/issues/273) 기준으로 [`docs/validation/rag/issue-173/decision-approval-evidence.json`](../../validation/rag/issue-173/decision-approval-evidence.json)에 보관한다.
+
+### evidence 기록 위치에 관한 주의
+
+본 개정의 승인 evidence는 **개정 PR(#405) 자신이 아니라 후속 전이 PR에서 기록했다.** 본 개정이 "개정 PR의 최신 HEAD에서 3인 승인"을 조건으로 걸었기 때문에, 승인을 받은 뒤 같은 PR에 evidence 커밋을 추가하면 HEAD가 바뀌어 방금 받은 승인이 stale이 된다. 자기 조건을 자기가 무효화하는 구조다.
+
+향후 "최신 HEAD 승인"을 조건으로 거는 Decision은 같은 함정을 피하도록, 승인 evidence 기록을 승인 대상 PR과 분리한다.
