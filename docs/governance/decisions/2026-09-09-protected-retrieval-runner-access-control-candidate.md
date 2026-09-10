@@ -30,7 +30,7 @@ Protected 전용 **schema**로 확정한다(별도 database 아님). 구현은 �
 - ① 전용 role 분리: `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION`로 관리 권한 없는 role 생성
 - ② (참고 패턴) `public` schema 권한 기본 회수: `REVOKE CREATE ON SCHEMA public FROM app_user`
 - ③ (참고 패턴) default privilege로 동일 거부 정책 유지: `ALTER DEFAULT PRIVILEGES FOR ROLE migration_user ... REVOKE UPDATE ON SEQUENCES`, 승인된 함수에만 `GRANT EXECUTE`
-- ④ (신규, protected schema 대상) `PUBLIC`, 일반 `app_user`, 일반 CI role의 schema 권한(`USAGE`/`CREATE`)과 **기존·향후 모든 table/sequence/function 권한**을 명시적으로 거부. 함수의 기본 `PUBLIC EXECUTE`도 회수 대상에 포함하고, protected owner 기준 `ALTER DEFAULT PRIVILEGES`로 향후 생성 객체에도 동일 적용
+- ④ (신규, protected schema 대상) `PUBLIC`과 일반 `app_user`(이 저장소는 CI도 별도 role 없이 `app_user`/`migration_user`를 그대로 쓰므로 CI 접근도 이걸로 함께 차단됨)의 schema 권한(`USAGE`/`CREATE`)과 **기존·향후 모든 table/sequence/function 권한**을 명시적으로 거부. 함수의 기본 `PUBLIC EXECUTE`도 회수 대상에 포함하고, protected owner 기준 `ALTER DEFAULT PRIVILEGES`로 향후 생성 객체에도 동일 적용
 - ⑤ (신규) 위 거부 조건을 `\dn+`/`\dp`로 실제 권한을 조회해 SQL negative test로 검증 — PostgreSQL이 커스텀 스키마에 PUBLIC 권한을 기본 부여하지 않아 일부가 이미 no-op일 수 있으므로, 실제 상태를 먼저 확인한 뒤 필요한 REVOKE만 남긴다
 
 ## 4. 역할·책임 + 직무 분리 (Segregation of Duties)
@@ -45,14 +45,16 @@ PR #373 kernel이 이미 구현한 3개 역할을 그대로 사용한다.
 
 여기에 더해, 실제 DB 인프라 레벨에서 "protected owner/migration role"(DB 객체 소유·migration 전용, `NOLOGIN`)을 신설한다 — kernel role과 충돌하지 않는 별도 layer이며, 기존 Runtime 권한 분리 원칙과 정합해야 한다.
 
+`HOLDOUT_AUTHOR`의 WRITE, `DATASET_CUSTODIAN`의 READ, `PROTECTED_RUNNER`의 READ 같은 실제 데이터 접근은 §3에서 전면 거부한 일반 `app_user`도, DDL·migration 전용인 protected owner/migration role도 아닌 별도의 **`protected_access_role`**(`NOLOGIN` 그룹 role, 필요한 최소 DML 권한만 보유. kernel의 `PROTECTED_RUNNER` 원칙과는 다른 개념이므로 이름을 구분함)을 통해 이뤄진다. 개별 identity(사람 계정 또는 Runner service identity)는 이 그룹 role의 멤버로만 접근하고, 공유 login credential을 직접 쓰지 않는다.
+
 "approval role"은 `ProtectedApprovalRole`(kernel의 governance/application 계층)로 유지하고, 별도의 공유 PostgreSQL login role로 중복 구현하지 않는다. 승인자는 개별 identity로 식별되고 approval evidence가 검증되어야 한다. DB 권한이 추가로 필요한지는 Backend·Security 구현 설계 단계에서 판단한다.
 
 `FREEZE`·`RUN`·grant/revoke의 기본 경계는 `CONTRIBUTING.md`의 "DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선한다" 원칙에 따라 **Application Service**로 둔다.
 
 다만 raw SQL로 protected schema에 직접 접근하면 kernel의 Python 레벨 검사(`AuthorizationGuard` 등)를 완전히 우회할 수 있다는 문제에 한해, SECURITY DEFINER 함수와 같은 구조를 예외로 허용한다 — 기존 선례인 `transition_rag_source_snapshot`(`165e8f706152_guard_snapshot_transitions.py`가 생성, 정책 근거는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md))은 일반 `migration_user` 소유이지만, protected schema용 함수는 위에서 신설한 **protected owner/migration role 소유**로 만든다 — 일반 `migration_user`가 소유하면 protected 경계 분리 취지와 어긋난다. `CONTRIBUTING.md`가 이런 예외에 요구하는 5개 항목은 다음과 같다.
 
-1. 단순 구조(Application Service만)로 해결할 수 없는 문제: kernel의 `AuthorizationGuard`는 이미 Application Service 레벨에서 승인·상태 원자성을 보장하지만, 이는 Python 코드 경로를 통할 때만 적용된다. 일반 Runtime role이나 raw SQL 접근이 이 경로를 거치지 않고 protected schema를 직접 UPDATE/DELETE하면 kernel 검사를 완전히 우회한다 — [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)이 해결한 것과 동일한 문제.
-2. 제안하는 구조: 허용 전이만 수행하고 승인·감사 append를 DB 트랜잭션에서 원자적으로 강제하는 SECURITY DEFINER 함수 — 위 선례와 동일 패턴. 일반 Runtime role은 이 함수를 통해서만 상태를 바꿀 수 있고, 테이블 직접 UPDATE 권한은 갖지 않는다.
+1. 단순 구조(Application Service만)로 해결할 수 없는 문제: kernel의 `AuthorizationGuard`는 이미 Application Service 레벨에서 승인·상태 원자성을 보장하지만, 이는 Python 코드 경로를 통할 때만 적용된다. `protected_access_role`이나 raw SQL 접근이 이 경로를 거치지 않고 protected schema를 직접 UPDATE/DELETE하면 kernel 검사를 완전히 우회한다 — [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)이 해결한 것과 동일한 문제.
+2. 제안하는 구조: 허용 전이만 수행하고 승인·감사 append를 DB 트랜잭션에서 원자적으로 강제하는 SECURITY DEFINER 함수 — 위 선례와 동일 패턴. `protected_access_role`은 이 함수를 통해서만 상태를 바꿀 수 있고, 테이블 직접 UPDATE 권한은 갖지 않는다(일반 SELECT/INSERT는 §4 위 문단대로 계속 직접 가능).
 3. 추가되는 유지보수 비용: DB 함수 버전 관리와 배포가 Application 코드 배포와 분리되어야 한다.
 4. 검토한 대안: kernel의 `AuthorizationGuard`만으로 충분한지 검토 — Python 레벨 검사이므로 raw SQL이나 다른 서비스의 직접 쿼리 경로를 막지 못해 기각.
 5. 지금 도입해야 하는 이유: 보안·소유권 분리를 위해 독립된 경계가 필요하다는 `CONTRIBUTING.md`의 예외 근거에 해당하며, 같은 저장소에 이미 승인된 선례(Source Snapshot)가 있다.
@@ -76,7 +78,7 @@ LOCAL 환경만 placeholder 허용, 그 외 환경은 실값 강제 + fail-close
 
 Authoring 환경은 아직 확정되지 않았다. 사용할 환경의 **소유자, 접근 방식, 로그·artifact 비노출, credential 회전 방법**이 구체적으로 확인될 때까지 authoring 승인은 차단 상태로 유지한다.
 
-기존 요구사항은 막연한 "2인 승인"이 아니라 실행 요청자와 분리된 독립 승인자 1인의 승인이다. 2인 승인을 새 요구사항으로 만들려면 별도 합의가 필요하다. GitHub Environment의 self-review 방지를 전제로, 승인 가능한 목록을 지정된 독립 승인자로 제한하고 실행 요청자의 self-review가 실제로 차단되는지를 검증 대상으로 삼는다.
+기존 요구사항은 막연한 "2인 승인"이 아니라 실행 요청자와 분리된 독립 승인자 1인의 승인이다. 2인 승인을 새 요구사항으로 만들려면 별도 합의가 필요하다. GitHub Environment의 self-review 방지 기능을 사용하되, 승인 가능한 목록이 지정된 독립 승인자로 제한되어 있는지와 실행 요청자의 self-review가 실제로 차단되는지를 함께 검증한다.
 
 접근 통제와 별개로, 아래 조건도 필요하다 — 접근을 아무리 잘 막아도 이게 없으면 artifact로 정답이 새어 평가 자체가 무효화된다.
 - 승인은 특정 commit과 Dataset manifest hash에 고정되어야 한다(승인 당시와 다른 commit/hash로 실행되지 않도록)
