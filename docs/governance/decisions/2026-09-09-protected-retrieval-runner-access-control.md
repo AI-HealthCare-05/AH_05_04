@@ -1,15 +1,20 @@
-# Product Decision Candidate: Protected Retrieval Runner 접근 통제·감사 경계
+# Product Decision: Protected Retrieval Runner 접근 통제·감사 경계
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-368-20260909` |
-| 상태 | Candidate · Review Required |
+| 상태 | Approved Target · Not implemented |
 | 제안일 | 2026-09-09 |
 | 구현 | 정현우 (`@ceohwj`) |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Privacy·Safety·Evaluation |
 | Dataset Custodian·Backend·Security 검토 | 송은영 (`@phina-io`) — 송은영이 실제 접근 통제를 구현하면 독립 Dataset Custodian 승인은 김지혜(`@Jye-rookie`)가 담당 |
 | 추적 Issue | [#368](https://github.com/AI-HealthCare-05/AH_05_04/issues/368) (상위 #273) |
 | 관련 PR | PR #373 (kernel 구현), PR #366 |
+
+이 Decision은 PR #386의 최신 검토 commit `076d482355176a7ff2b208781eaea616a79c72db`에서 책임 리뷰어
+권가빈(`@hazelnutflavoured`)이 2026-09-10 `APPROVED` 리뷰를 제출한 뒤 병합되어 승인됐다. 승인은 구현
+방향을 확정한 것이며 실제 protected infrastructure, 접근 승인, HOLDOUT 작성·Freeze·실행 또는 공개 완료를
+뜻하지 않는다.
 
 ## 1. 목적·배경
 
