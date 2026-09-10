@@ -8,8 +8,12 @@ Manifest before an environment pointer change cannot be satisfied.
 Decision: docs/governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md
 
 Revision ID: 175a1b2c3d4e
-Revises: 201a1b2c3d4e
+Revises: 206a1b2c3d4e
 Create Date: 2026-09-10
+
+Chained after ``206a1b2c3d4e`` (#206 refresh rotation / password reset), not after
+``201a1b2c3d4e``.  Both were written against ``201a1b2c3d4e`` as head; #206 merged to develop
+first, so this branch chains onto the merged head to keep a single alembic head.
 """
 
 from collections.abc import Sequence
@@ -18,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "175a1b2c3d4e"
-down_revision: str | Sequence[str] | None = "201a1b2c3d4e"
+down_revision: str | Sequence[str] | None = "206a1b2c3d4e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
