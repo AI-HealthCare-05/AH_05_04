@@ -29,7 +29,9 @@
 
 두 승인의 대상 commit `3d63fc5a`는 PR #382의 최종 `headRefOid`이며 최종 승인 이후 추가 커밋이 없다. 해당 commit의 check run `test`·`lint`·`frontend` 모두 `success`.
 
-남한솔 (`@solia142`)의 승인이 없어 조건 미충족이다. 최초 작성 시 기재한 핸들 `@ansol-nam`이 존재하지 않는 계정이라 리뷰 요청이 전달되지 않았으나, 이는 조건 미충족의 원인이지 해당 리뷰를 면제할 근거가 아니다. 승인 조건 자체를 바꾸려면 별도 Decision·개정 절차가 필요하다. 상세는 [PD-173 § 미충족 항목](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#미충족-항목--남한솔-solia142-책임-리뷰) 및 [§ `Approved` 전이를 위해 남은 조건](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#approved-전이를-위해-남은-조건)을 참조한다.
+남한솔 (`@solia142`)의 승인이 없어 조건 미충족이다. `@solia142`는 PR #382의 리뷰어로 지정된 적이 없으며, 최초 작성 시 기재한 핸들 `@ansol-nam`이 존재하지 않는 계정이라 리뷰 요청이 전달되지도 않았다. 이는 조건 미충족의 원인이지 해당 리뷰를 면제할 근거가 아니다.
+
+**소급 충족은 불가능하다.** 이 조건은 병합 전 게이트이고 PR #382는 게이트를 통과하지 못한 채 병합되었다. 지금 #382에 승인을 추가해도 "병합 전 3인 승인"의 evidence가 되지 않는다. 따라서 남은 절차는 세 영향 영역 책임 리뷰어가 승인한 별도 Decision·개정뿐이다. 상세는 [PD-173 § 미충족 항목](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#미충족-항목--남한솔-solia142-책임-리뷰) 및 [§ `Approved` 전이를 위해 남은 절차](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md#approved-전이를-위해-남은-절차)를 참조한다.
 
 ## 복합 STALE 우선순위와 단일 오류 사영
 

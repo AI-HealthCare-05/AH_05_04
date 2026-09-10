@@ -75,7 +75,12 @@
       },
       "status": "NOT_APPROVED",
       "participation": "NONE",
-      "participation_detail": "PR #382 리뷰·PR 코멘트·Issue #173 코멘트 모두에서 기록 없음. 병합 시점 requested_reviewers 비어 있음.",
+      "participation_detail": "PR #382 리뷰·PR 코멘트·Issue #173 코멘트 모두에서 기록 없음. 병합 시점 requested_reviewers 비어 있었고, 애초에 PR #382의 리뷰어로 지정된 적이 없다.",
+      "was_requested_reviewer_on_pr_382": false,
+      "retroactive_satisfaction_possible": false,
+      "gate_type": "PRE_MERGE",
+      "gate_outcome": "MISSED_AT_MERGE",
+      "gate_note": "본 조건은 병합 전 게이트다. PR #382는 3인 승인을 갖추지 못한 채 2026-09-09T16:50:53Z에 병합되었다. 지금 #382에 승인을 추가해도 '병합 전 3인 승인'의 evidence가 되지 않으며, #273에서 정한 immutable evidence 기준과 맞지 않는다.",
       "cause": {
         "handle_correction": {
           "previous_actor_id": "ansol-nam",
@@ -86,10 +91,12 @@
         "note": "잘못된 핸들 때문에 리뷰 요청이 전달되지 않았다. 이는 승인 조건이 충족되지 않은 원인이며, 해당 책임 리뷰를 면제할 근거가 아니다."
       },
       "resolution_paths": [
-        "남한솔(@solia142)의 승인 evidence를 PR #382 최신 HEAD(3d63fc5a) 기준으로 확보한다.",
-        "세 영향 영역 책임 리뷰어가 승인한 별도 Decision·개정 절차로 승인 조건 자체를 먼저 변경한 뒤 상태를 전이한다."
+        "세 영향 영역(Safety·제품 수용, Backend·공개 DTO, 환자 표시·오류 UX) 책임 리뷰어가 승인한 별도 Decision·개정으로 (1) 병합 전 게이트 미충족 사실, (2) 놓친 책임 리뷰의 처리 방법, (3) 개정 후 승인 조건과 그 충족 방법을 확정한 뒤 상태를 전이한다."
       ],
-      "invalid_resolution": "구현 작성자가 동일 상태 전이 PR에서 해당 필수 승인을 소급해 OUT_OF_SCOPE로 변경하는 방식. 2026-09-10 리뷰에서 세 리뷰어가 모두 거부했다."
+      "invalid_resolutions": [
+        "구현 작성자가 동일 상태 전이 PR에서 해당 필수 승인을 소급해 OUT_OF_SCOPE로 변경하는 방식. 2026-09-10 리뷰에서 세 리뷰어가 모두 거부했다.",
+        "병합된 PR #382에 지금 승인을 추가해 조건을 소급 충족시키는 방식. 병합 전 게이트를 사후 서명으로 대체하는 것이므로 성립하지 않는다."
+      ]
     }
   ],
   "follow_up": "환자 표시 문구 및 오류 UX 구현 시 남한솔(@solia142) 책임 리뷰를 별도 요건으로 유지한다. 이는 본 Decision의 기존 3인 승인 요건을 대체하지 않는다.",
