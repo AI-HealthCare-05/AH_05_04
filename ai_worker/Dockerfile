@@ -16,6 +16,7 @@ COPY ./ai_worker ./ai_worker
 COPY ./provider_contracts ./provider_contracts
 COPY ./ocr_runtime ./ocr_runtime
 COPY ./provider_runtime ./provider_runtime
+COPY ./rag_runtime ./rag_runtime
 
 # 5. AI Worker 진입점을 실행합니다.
 CMD ["uv", "run", "--no-sync", "python", "-m", "ai_worker.main"]
