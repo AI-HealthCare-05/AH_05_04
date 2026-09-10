@@ -77,10 +77,11 @@ run_worker_test_lane() {
 
   # ai_worker 단위 테스트는 backend/app을 PYTHONPATH에서 제외한 별도 프로세스로
   # 실행하여 Worker가 Backend 내부 모듈에 의존하는 실수를 잡습니다.
-  echo "Run AI Worker tests with Coverage"
+  echo "Run AI Worker tests with two pytest-xdist workers and combined Coverage"
 
   if ! run_with_worker_test_environment \
-    coverage run -m pytest -o "cache_dir=$cache_dir" \
+    pytest -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
+    -o "cache_dir=$cache_dir" \
     ai_worker/tests/core \
     ai_worker/tests/ocr \
     ai_worker/tests/rag \
