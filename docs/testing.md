@@ -105,6 +105,11 @@ bash scripts/ci/run_test.sh
 뒤 하나라도 실패하면 전체 실행을 실패 처리합니다. CPU와 메모리가 제한된 환경에서는 병렬
 실행에 따른 개선 폭이 작을 수 있습니다.
 
+애플리케이션 업로드용 `STORAGE_DIR`과 Coverage·pytest cache·lane log가 사용하는 runner 상태
+디렉터리는 서로 다른 임시 디렉터리입니다. Worker 기본 lane은 단위 테스트 경계이므로 DB port를
+연결 불가능한 값으로 고정합니다. 승인된 Worker 디렉터리에 DB 접근 테스트가 추가되면 조용히
+Backend의 `test` DB를 공유하지 않고 실패하며, 별도 Integration lane으로 분류해야 합니다.
+
 GitHub Actions는 `test-inventory`, `test-migration`, `test-backend`, `test-worker`를 독립 job으로 동시에
 실행합니다. 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service container를 자체 사용하므로
 다른 job과 상태를 공유하지 않습니다. 최종 `test` job은 네 job의 성공 여부를 확인하고 Backend와
@@ -166,11 +171,12 @@ Compose의 동적 host port·인증 격리 대신, 인증 없는 service contain
 
 | 설정 | test 실행 값 | 격리하는 이유 |
 | --- | --- | --- |
-| `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
+| Backend·Integration의 `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
+| Worker 단위 lane의 `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback, port `1`, `worker_unit_tests_must_not_use_database` | 자동 편입된 Worker 단위 테스트가 Backend DB를 공유하지 못하게 합니다 |
 | `DB_USER`·`DB_PASSWORD` | 환경파일 값 사용(shell 값 제거) | 실행자 shell의 계정이 섞이지 않게 합니다 |
 | `REDIS_HOST`·`REDIS_PORT`·`TEST_REDIS_HOST`·`TEST_REDIS_PORT` | 두 runner의 Redis 의존 통합테스트에서 loopback과 Compose가 공개한 Redis port | 컨테이너 hostname이나 다른 Redis로 접속하지 않습니다 |
 | `REDIS_PASSWORD`·`TEST_REDIS_PASSWORD` | 두 runner의 Redis 의존 통합테스트에서 shell 값 제거 | 실행자 shell의 다른 Redis 인증정보가 섞이지 않게 합니다 |
-| `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다 |
+| `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다. Coverage·cache·lane log는 별도 runner 상태 디렉터리를 사용합니다 |
 | `RELEASE_VALIDATION_ALLOWED` | `false` | local live 검증 절차가 켜두도록 안내하는 gate입니다 |
 | `OCR_STRUCTURE_LLM_ENABLED` | `false` | 위와 같습니다. 켜진 값이 필요한 테스트는 각자 `monkeypatch`로 설정합니다 |
 

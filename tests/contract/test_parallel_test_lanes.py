@@ -1,4 +1,5 @@
 import os
+import re
 import signal
 import subprocess
 import textwrap
@@ -144,6 +145,7 @@ def test_parallel_lane_runner_groups_each_lane_output_when_log_directory_is_set(
     ) in result.stdout
     assert (log_dir / "first_lane.log").is_file()
     assert (log_dir / "second_lane.log").is_file()
+    assert not re.search(r"\[\d+\].*\b(?:Done|Terminated)\b", result.stderr)
 
 
 def test_parallel_lane_runner_forwards_interrupt_and_stops_lane_process_trees(tmp_path: Path) -> None:
@@ -182,8 +184,9 @@ def test_parallel_lane_runner_forwards_interrupt_and_stops_lane_process_trees(tm
         ["bash", "-c", script, "parallel-test", str(PARALLEL_LANES_SCRIPT)],
         cwd=PROJECT_ROOT,
         env=environment,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
         start_new_session=True,
     )
 
@@ -196,9 +199,13 @@ def test_parallel_lane_runner_forwards_interrupt_and_stops_lane_process_trees(tm
         assert all(path.is_file() for path in started_paths), "lane child processes did not start"
 
         process.send_signal(signal.SIGINT)
-        process.wait(timeout=3)
+        stdout, stderr = process.communicate(timeout=3)
 
         assert process.returncode == 128 + signal.SIGINT
+        assert "Test lane passed:" not in stdout
+        assert "Test lane interrupted: first_lane" in stdout
+        assert "Test lane interrupted: second_lane" in stdout
+        assert not re.search(r"\[\d+\].*\b(?:Done|Terminated)\b", stderr)
         assert not (tmp_path / "first.finished").exists()
         assert not (tmp_path / "second.finished").exists()
         stopped_paths = [tmp_path / "first.stopped", tmp_path / "second.stopped"]
@@ -248,6 +255,36 @@ def test_parallel_lane_runner_restores_caller_traps_and_job_control_mode() -> No
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_parallel_lane_runner_suppresses_job_notifications_and_restores_enabled_monitor_mode() -> None:
+    script = textwrap.dedent(
+        """
+        source "$1"
+        set -m
+
+        successful_lane() {
+          return 0
+        }
+
+        run_parallel_test_lanes successful_lane
+        case "$-" in
+          *m*) exit 0 ;;
+          *) exit 21 ;;
+        esac
+        """
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", script, "parallel-test", str(PARALLEL_LANES_SCRIPT)],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not re.search(r"\[\d+\].*\b(?:Done|Terminated)\b", result.stderr)
+
+
 def test_production_wrapper_preserves_interrupt_during_first_lane_registration(tmp_path: Path) -> None:
     """`set -u` caller가 첫 PID 등록 직전에 취소되어도 새 lane을 시작하거나 1로 바꾸면 안 됩니다."""
     script = textwrap.dedent(
@@ -271,6 +308,12 @@ def test_production_wrapper_preserves_interrupt_during_first_lane_registration(t
 
         inject_interrupt_before_first_pid_capture() {
           if [ "${BASH_COMMAND:-}" = 'lane_pids+=("$!")' ] && [ ! -f "$LANE_TEST_DIR/interrupted" ]; then
+            for _ in {1..100}; do
+              if [ -f "$LANE_TEST_DIR/first.started" ]; then
+                break
+              fi
+              sleep 0.01
+            done
             touch "$LANE_TEST_DIR/interrupted"
             kill -INT "$controller_pid"
           fi

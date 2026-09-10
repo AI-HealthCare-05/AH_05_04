@@ -16,10 +16,11 @@ export PYTEST_ADDOPTS=""
 uv run python scripts/ci/check_python_test_inventory.py
 
 prepare_test_environment
-TEST_COVERAGE_DIR="$TEST_STORAGE_DIR/coverage"
-PARALLEL_TEST_LOG_DIR="$TEST_STORAGE_DIR/test-lane-logs"
+prepare_test_runner_state_directory
+TEST_COVERAGE_DIR="$TEST_RUNNER_STATE_DIR/coverage"
+PARALLEL_TEST_LOG_DIR="$TEST_RUNNER_STATE_DIR/test-lane-logs"
 export PARALLEL_TEST_LOG_DIR
-mkdir -p "$TEST_COVERAGE_DIR" "$TEST_STORAGE_DIR/pytest-cache/backend" "$TEST_STORAGE_DIR/pytest-cache/worker"
+mkdir -p "$TEST_COVERAGE_DIR" "$TEST_RUNNER_STATE_DIR/pytest-cache/backend" "$TEST_RUNNER_STATE_DIR/pytest-cache/worker"
 
 echo "Apply Alembic migrations to test database"
 
@@ -30,7 +31,7 @@ echo "Validate migrated PostgreSQL schema"
 run_with_backend_test_database pytest tests/migration -v
 
 run_backend_test_lane() {
-  local cache_dir="$TEST_STORAGE_DIR/pytest-cache/backend"
+  local cache_dir="$TEST_RUNNER_STATE_DIR/pytest-cache/backend"
   local COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage.backend"
   export COVERAGE_FILE
 
@@ -64,7 +65,7 @@ run_backend_test_lane() {
 }
 
 run_worker_test_lane() {
-  local cache_dir="$TEST_STORAGE_DIR/pytest-cache/worker"
+  local cache_dir="$TEST_RUNNER_STATE_DIR/pytest-cache/worker"
   local COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage.worker"
   export COVERAGE_FILE
 
