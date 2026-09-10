@@ -104,37 +104,13 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(ocr_job)
     await session.flush()
 
-    version_id = uuid4()
-    prescription = Prescription(
-        active_version_id=version_id,
-        document_id=document.id,
-        source_ocr_job_id=ocr_job.id,
-        profile_id=profile.id,
+    return await PrescriptionRepository(session).create_with_medications(
+        document=document,
+        source_ocr_job=ocr_job,
         prescribed_date=date.today(),
         confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "타이레놀", "display_order": 1}],
     )
-    session.add(prescription)
-    await session.flush()
-
-    version = PrescriptionVersion(
-        id=version_id,
-        prescription_id=prescription.id,
-        version_number=1,
-        prescribed_date=prescription.prescribed_date,
-        confirmed_at=prescription.confirmed_at,
-    )
-    session.add(version)
-    await session.flush()
-    session.add(
-        PrescriptionVersionMedication(
-            prescription_version_id=version_id,
-            medication_name="타이레놀",
-            display_order=1,
-        )
-    )
-    await session.flush()
-
-    return prescription
 
 
 async def test_get_latest_prescription_returns_owned_prescription(db_session: AsyncSession) -> None:
@@ -467,3 +443,50 @@ async def test_correction_cancels_only_future_pending_occurrences_without_copyin
         .where(PrescriptionVersionMedication.prescription_version_id == result.prescription_version_id)
     )
     assert new_schedule is None
+
+
+@pytest.mark.parametrize("corruption", ["content", "count", "hash_missing", "medication_missing"])
+async def test_corrupted_prescription_is_not_returned(db_session, corruption):
+    from sqlalchemy import delete, update
+
+    owner = await _create_user(db_session, email=f"seal-{corruption}@test.local")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    version_id = prescription.active_version_id
+    if corruption == "content":
+        await db_session.execute(
+            update(PrescriptionVersionMedication)
+            .where(PrescriptionVersionMedication.prescription_version_id == version_id)
+            .values(medication_name="Synthetic changed")
+        )
+    elif corruption == "count":
+        await db_session.execute(
+            update(PrescriptionVersionMedication)
+            .where(PrescriptionVersionMedication.prescription_version_id == version_id)
+            .values(medication_count=None)
+        )
+    elif corruption == "hash_missing":
+        await db_session.execute(
+            update(PrescriptionVersionMedication)
+            .where(PrescriptionVersionMedication.prescription_version_id == version_id)
+            .values(medication_count=None)
+        )
+        await db_session.execute(
+            update(PrescriptionVersion)
+            .where(PrescriptionVersion.id == version_id)
+            .values(
+                medication_count=None,
+                content_hash=None,
+            )
+        )
+    else:
+        await db_session.execute(
+            delete(PrescriptionVersionMedication).where(
+                PrescriptionVersionMedication.prescription_version_id == version_id
+            )
+        )
+    db_session.expire_all()
+    await db_session.refresh(owner)
+    with pytest.raises(ApiError) as error:
+        await _service(db_session).get_latest_prescription(user=owner)
+    assert error.value.status_code == 409
+    assert error.value.code == "PRESCRIPTION_VERSION_UNAVAILABLE"

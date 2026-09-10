@@ -74,3 +74,20 @@ def _validate_row(row: dict[str, Any]) -> None:
             row["dose_value"] = format(dose, ".3f")
         except InvalidOperation:
             raise ValueError("Invalid prescription medication dose") from None
+
+
+def verify_prescription_fingerprint(
+    prescribed_date: date,
+    medications: Sequence[Mapping[str, Any]],
+    *,
+    medication_count: int | None,
+    content_hash: str | None,
+) -> None:
+    """봉인 metadata 누락·구성 변조를 fail-closed로 거부합니다."""
+    if type(medication_count) is not int or medication_count < 1 or not isinstance(content_hash, str):
+        raise ValueError("Prescription integrity metadata is missing")
+    if any(row.get("medication_count") != medication_count for row in medications):
+        raise ValueError("Prescription medication count binding is invalid")
+    actual = prescription_fingerprint(prescribed_date, medications)
+    if actual.medication_count != medication_count or actual.content_hash != content_hash:
+        raise ValueError("Prescription integrity verification failed")

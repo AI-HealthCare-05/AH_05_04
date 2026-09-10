@@ -14,6 +14,7 @@ from app.models.users import User
 from app.repositories.medical_document_repository import DocumentLockTimeoutError, MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from provider_contracts.prescription_integrity import MEDICATION_CONTENT_FIELDS, verify_prescription_fingerprint
 
 _MAX_MEDICATION_NAME_LENGTH = 255
 # 복합제 및 농도 문자열을 포함할 수 있는 최대 길이입니다.
@@ -55,6 +56,23 @@ def _to_prescription_data(
     version: PrescriptionVersion,
     medications: list[PrescriptionVersionMedication],
 ) -> PrescriptionData:
+    try:
+        verify_prescription_fingerprint(
+            version.prescribed_date,
+            [
+                {key: getattr(item, key) for key in (*MEDICATION_CONTENT_FIELDS, "medication_count")}
+                for item in medications
+            ],
+            medication_count=version.medication_count,
+            content_hash=version.content_hash,
+        )
+    except ValueError:
+        raise ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_UNAVAILABLE",
+            message="활성 처방 버전 정보를 사용할 수 없습니다.",
+            details=[ErrorDetail(field="active_version_id", reason="INVALID_VERSION_GRAPH")],
+        ) from None
     return PrescriptionData(
         prescription_id=prescription.id,
         prescription_version_id=version.id,

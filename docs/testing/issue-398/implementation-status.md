@@ -139,3 +139,10 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 기존 Trigger의 원래 활성 상태 복구 및 확장 단계 downgrade 확인
 - 아직 nullable 확장 단계이며 NOT NULL 강화·소비 검증·권한·Trigger 제거는 남아 있음
 - migration·Repository·Service·hash 관련 33 passed. count 불일치 FK, 슬롯 범위 CHECK, 중복 슬롯 UNIQUE의 실제 거부 확인
+
+## Prescription 응답 소비 검증
+
+- 공통 저장 fingerprint verifier를 확정·정정·상세·최신 처방 응답에 연결
+- 내용 변경, 자식 count 누락, 부모 metadata 누락, 약 행 삭제 시 409 사용 불가로 차단
+- Service 및 확정·정정 API 회귀 42 passed
+- 다른 Candidate/Guide/Chat/일정/Worker 직접 소비 경로 연결은 남아 있음

@@ -38,3 +38,9 @@ Repository는 저장 전 입력을 검증하고 실제 저장 열들을 다시 �
 기존 버전은 Python v1 hash로 검증·backfill한다. prescription→version→medication의 배타 잠금을 잡은 transaction에서 기존 UPDATE 방지 Trigger만 잠시 중지하고, metadata를 채운 뒤 원래 활성 상태를 복원한다. 새 Trigger를 생성하지 않는다. 잘못된 기존 데이터는 원문을 출력하거나 자동 수정하지 않고 전체 DDL·backfill을 rollback한다. downgrade는 기존 UPDATE 보호가 활성화되어 있을 때만 재계산 가능한 확장 metadata를 제거한다.
 
 아직 nullable인 확장 단계다. 이전 생산자가 null을 기록할 수 있으므로 이 migration만으로 슬롯 봉인 완료를 주장하지 않는다. 모든 생산·소비 경로 전환과 잔여 null 재검증 뒤 NOT NULL 강화가 필요하다. 기존 assembly_xid·불변성 Trigger는 유지하며 운영 배포 전환은 미완료다.
+
+## 처방 응답의 소비 검증
+
+공통 verify_prescription_fingerprint는 부모 count/hash 존재, 모든 약 행의 count 결속, 실제 개수·내용 hash를 검증한다. PrescriptionService의 확정·정정·상세·최신 처방 응답 생성에 연결했다. metadata 누락, 약 누락, 내용 변경은 기존 409 PRESCRIPTION_VERSION_UNAVAILABLE / INVALID_VERSION_GRAPH로 차단한다. NULL metadata를 정상 값으로 추측하거나 조용히 다시 계산해 통과시키지 않는다.
+
+Candidate·Guide·Chat·일정·Worker의 개별 직접 소비 경로는 별도 연결 대상이다. 이번 단계는 모든 소비자 전환 완료가 아니다.
