@@ -15,7 +15,32 @@ on:
       - 'release/*'
       - 'hotfix/*'
 
+env:
+  PYTEST_ADDOPTS: ''
+
 jobs:
+  test-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install inventory dependencies
+        run: uv sync --frozen
+
+      - name: Verify Python test inventory
+        run: uv run python scripts/ci/check_python_test_inventory.py
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -44,11 +69,8 @@ jobs:
       - name: Run Mypy
         run: uv run mypy backend/app ai_worker
 
-  test:
+  test-migration:
     runs-on: ubuntu-latest
-
-    # 로컬 runner와 달리 GitHub Actions service container의 고정 host port를 사용합니다.
-    # 선별 Redis 통합테스트는 인증 없는 127.0.0.1:6379를 기본값으로 사용합니다.
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
@@ -58,15 +80,6 @@ jobs:
       DB_NAME: test
 
     services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
       postgres:
         image: postgres:17-alpine
         env:
@@ -108,11 +121,65 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: uv run pytest tests/migration -v
 
+  test-backend:
+    runs-on: ubuntu-latest
+
+    # 로컬 runner와 달리 GitHub Actions service container의 고정 host port를 사용합니다.
+    # 선별 Redis 통합테스트는 인증 없는 127.0.0.1:6379를 기본값으로 사용합니다.
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_EXPOSE_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: ci_test_password
+      DB_NAME: test
+      COVERAGE_FILE: .coverage.backend
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: uv sync --group app --group worker --frozen
+
       - name: Run Backend Tests with Coverage
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: |
-          uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
+          uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
 
       # #347은 앱 기본 test DB로 fallback하지 않고 전용 migrated DB에서 권한·삭제를 검증합니다.
       - name: Verify isolated Source cleanup workflow
@@ -136,16 +203,103 @@ jobs:
           uv run alembic -c backend/alembic.ini upgrade head
           uv run coverage run --append -m pytest tests/integration/rag/test_source_cleanup_references.py tests/integration/rag/test_source_cleanup_workflow.py -q
 
+      - name: Upload Backend Coverage Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-backend
+          path: .coverage.backend
+          include-hidden-files: true
+          if-no-files-found: error
+
+  test-worker:
+    runs-on: ubuntu-latest
+    env:
+      COVERAGE_FILE: .coverage.worker
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: uv sync --group app --group worker --frozen
+
       # ai_worker/tests/evaluation은 외부 서비스 없이 evals/ artifact의 canonical byte와
       # hash 결속만 검증합니다. Dataset·Schema Set 계약의 회귀를 CI에서 잡기 위해 포함합니다.
       - name: Run AI Worker Unit Tests with Coverage
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uv run coverage run --append -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation
+          uv run coverage run -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation
+
+      - name: Upload AI Worker Coverage Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-worker
+          path: .coverage.worker
+          include-hidden-files: true
+          if-no-files-found: error
+
+  test:
+    if: ${{ always() }}
+    needs:
+      - test-inventory
+      - test-migration
+      - test-backend
+      - test-worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Python test jobs succeeded
+        env:
+          INVENTORY_RESULT: ${{ needs.test-inventory.result }}
+          MIGRATION_RESULT: ${{ needs.test-migration.result }}
+          BACKEND_RESULT: ${{ needs.test-backend.result }}
+          WORKER_RESULT: ${{ needs.test-worker.result }}
+        run: |
+          if [ "$INVENTORY_RESULT" != "success" ] || [ "$MIGRATION_RESULT" != "success" ] || [ "$BACKEND_RESULT" != "success" ] || [ "$WORKER_RESULT" != "success" ]; then
+            echo "Python test job failed: inventory=$INVENTORY_RESULT migration=$MIGRATION_RESULT backend=$BACKEND_RESULT worker=$WORKER_RESULT"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: uv sync --group app --group worker --frozen
+
+      - name: Download Backend Coverage Data
+        uses: actions/download-artifact@v4
+        with:
+          name: python-coverage-backend
+          path: coverage-data/backend
+
+      - name: Download AI Worker Coverage Data
+        uses: actions/download-artifact@v4
+        with:
+          name: python-coverage-worker
+          path: coverage-data/worker
 
       - name: Coverage Report
         run: |
+          uv run coverage combine coverage-data/backend coverage-data/worker
           uv run coverage report -m
 
   frontend:
