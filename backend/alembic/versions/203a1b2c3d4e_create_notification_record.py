@@ -1,14 +1,14 @@
 """Create occurrence notifications (PD-203).
 
 Revision ID: 203a1b2c3d4e
-Revises: 206a1b2c3d4e
+Revises: 165a0b1c2d3e
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "203a1b2c3d4e"
-down_revision = "206a1b2c3d4e"
+down_revision = "165a0b1c2d3e"
 branch_labels = None
 depends_on = None
 

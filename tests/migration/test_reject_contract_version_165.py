@@ -85,7 +85,9 @@ def test_versioned_history_blocks_downgrade_without_changing_rows(database):
         command.downgrade(cfg, PARENT)
     row = asyncio.run(execute("SELECT reject_code_contract_version FROM rag_source_ingestion_run", fetch=True))[0]
     assert row["reject_code_contract_version"] == "source-reject-codes@1"
-    assert asyncio.run(execute("SELECT version_num FROM alembic_version", fetch=True))[0]["version_num"] == REVISION
+    heads = migration_heads()
+    assert len(heads) == 1
+    assert asyncio.run(execute("SELECT version_num FROM alembic_version", fetch=True))[0]["version_num"] == heads[0]
 
 
 def test_lifecycle_role_cannot_change_contract_version(database):
@@ -106,7 +108,7 @@ def test_lifecycle_role_cannot_change_contract_version(database):
             try:
                 async with engine.begin() as conn:
                     heads = migration_heads()
-                    assert heads == (REVISION,)
+                    assert len(heads) == 1
                     assert validation_errors(heads[0], await read_database_head_state(conn)) == []
                     await conn.execute(text(f'SET LOCAL ROLE "{role}"'))
                     await conn.execute(text("UPDATE rag_source_ingestion_run SET run_status='FAILED'"))

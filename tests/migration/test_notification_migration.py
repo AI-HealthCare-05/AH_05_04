@@ -1,15 +1,43 @@
 """Verify the actual migrated notification constraints and lossless rollback guard."""
 
 import asyncio
+from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
 from alembic import command
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
+from app.core import config
 from tests.migration.test_medication_checkin_migration import _alembic_config, _connection
 from tests.migration.test_medication_schedule_migration import _cleanup_graph, _seed_graph
+
+
+@pytest.fixture(autouse=True)
+def _isolated_notification_database(monkeypatch) -> Iterator[None]:
+    """Keep the irreversible current head out of historical migration tests."""
+    database = f"notification203_{uuid4().hex[:12]}"
+    cluster_url = config.database_url
+
+    async def database_action(create: bool) -> None:
+        engine = create_async_engine(cluster_url, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(
+                    text(f'CREATE DATABASE "{database}"' if create else f'DROP DATABASE "{database}" WITH (FORCE)')
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(database_action(True))
+    monkeypatch.setattr(config, "DB_NAME", database)
+    try:
+        yield
+    finally:
+        asyncio.run(database_action(False))
 
 
 async def _insert_and_check(ids):
@@ -66,12 +94,12 @@ def test_notification_migration_constraints_and_rollback_guard():
     try:
         asyncio.run(_insert_and_check(ids))
         with pytest.raises(RuntimeError, match="notification history blocks downgrade"):
-            command.downgrade(cfg, "206a1b2c3d4e")
+            command.downgrade(cfg, "165a0b1c2d3e")
         assert asyncio.run(_exists())
     finally:
         asyncio.run(_cleanup(ids))
     try:
-        command.downgrade(cfg, "206a1b2c3d4e")
+        command.downgrade(cfg, "165a0b1c2d3e")
         assert not asyncio.run(_exists())
     finally:
         command.upgrade(cfg, "head")
