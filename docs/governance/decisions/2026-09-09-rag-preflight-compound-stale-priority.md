@@ -4,6 +4,7 @@
 | --- | --- |
 | Decision ID | `PD-173-20260909` |
 | 상태 | Proposed · Review pending — 지정 책임 리뷰어 3인 중 2인 승인, 승인 조건 미충족 ([상세](#승인-및-적용-조건)) |
+| 개정 제안 | [`PD-173-20260910`](./2026-09-10-rag-preflight-compound-stale-approval-gate-amendment.md) — 병합 전 게이트 미충족 처리 및 승인 조건 개정 (Proposed) |
 | 제안일 | 2026-09-09 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Safety·제품 수용 `APPROVED`, 송은영 (`@phina-io`) — Backend·공개 DTO `APPROVED`, 남한솔 (`@solia142`) — 환자 표시·오류 UX **미승인** |
@@ -69,7 +70,7 @@ Issue [#273](https://github.com/AI-HealthCare-05/AH_05_04/issues/273) Gold 승�
 
 **PR #382에서의 소급 승인은 경로가 아니다.** 본 조건은 병합 전 게이트이고 #382는 이미 병합되었으므로, 지금 #382에 승인을 추가하는 방식으로는 조건을 충족할 수 없다. 그렇게 수집한 서명은 게이트 통과의 evidence가 아니라 게이트를 놓친 뒤의 사후 서명이며, Issue [#273](https://github.com/AI-HealthCare-05/AH_05_04/issues/273)에서 정한 immutable evidence 기준과 맞지 않는다.
 
-따라서 남은 절차는 위 "승인 조건 변경 절차"에 따른 **별도 Decision·개정** 하나다. 해당 개정 문서는 최소한 다음을 다뤄야 한다.
+따라서 남은 절차는 위 "승인 조건 변경 절차"에 따른 **별도 Decision·개정** 하나다. 해당 개정을 [`PD-173-20260910`](./2026-09-10-rag-preflight-compound-stale-approval-gate-amendment.md)으로 제안했으며 현재 `Proposed` 상태다. 개정 문서는 최소한 다음을 다뤄야 한다.
 
 - 병합 전 게이트가 충족되지 않은 채 PR #382가 병합된 사실의 기록
 - 놓친 책임 리뷰(환자 표시·오류 UX)를 어떻게 처리할지 — 사후 검토로 갈음할지, 조건을 다시 정의할지, 별도 검증을 붙일지
