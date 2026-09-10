@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -368,6 +368,7 @@ class MedicationCandidateRepository:
         search: MedicationCandidateSearch,
         results: list[MedicationCandidateResultCreate],
     ) -> list[MedicationCandidateSearchResult]:
+        await self._lock_running_search(search_id=search.id)
         created: list[MedicationCandidateSearchResult] = []
         for item in results:
             result = MedicationCandidateSearchResult(
@@ -401,6 +402,20 @@ class MedicationCandidateRepository:
         finalized_at: datetime,
         status_reason: str | None = None,
     ) -> MedicationCandidateSearch:
+        await self._lock_running_search(search_id=search.id)
+        # 입력 목록이 아니라 같은 transaction에 실제 저장된 전체 결과를 검사합니다.
+        await self.session.flush()
+        counts = await self.session.execute(
+            select(
+                func.count(MedicationCandidateSearchResult.id),
+                func.count(MedicationCandidateSearchResult.id).filter(
+                    MedicationCandidateSearchResult.is_displayed.is_(True)
+                ),
+            ).where(MedicationCandidateSearchResult.search_id == search.id)
+        )
+        actual_count, actual_displayed = counts.one()
+        if (candidate_count, displayed_candidate_count) != (actual_count, actual_displayed):
+            raise ValueError("Candidate result counts do not match persisted rows")
         search.status = status
         search.status_reason = status_reason
         search.candidate_count = candidate_count
@@ -410,6 +425,15 @@ class MedicationCandidateRepository:
             search.failed_at = finalized_at
         await self.session.flush()
         return search
+
+    async def _lock_running_search(self, *, search_id: UUID) -> None:
+        # Service가 상위 Prescription/PVM 잠금을 획득한 뒤 호출합니다.
+        # 직접 Repository를 쓰는 경로도 완료된 Search에 결과를 추가할 수 없습니다.
+        current_status = await self.session.scalar(
+            select(MedicationCandidateSearch.status).where(MedicationCandidateSearch.id == search_id).with_for_update()
+        )
+        if current_status != MedicationCandidateSearchStatus.RUNNING:
+            raise ValueError("Candidate search must be running before result assembly")
 
     async def invalidate_input_changed(
         self,

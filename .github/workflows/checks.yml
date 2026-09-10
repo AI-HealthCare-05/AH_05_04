@@ -38,6 +38,9 @@ jobs:
       - name: Run Ruff Check (Linting)
         run: uv run ruff check .
 
+      - name: Reject new database triggers and RLS
+        run: python scripts/ci/check_database_logic.py
+
       - name: Run Ruff Format Check
         run: uv run ruff format . --check
 
