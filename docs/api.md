@@ -114,7 +114,7 @@ Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까
 | `404` | `PRESCRIPTION_MEDICATION_NOT_FOUND` | 요청한 처방 약제가 없거나 인증 사용자의 SELF Profile 소유가 아닙니다. |
 | `404` | `CANDIDATE_SEARCH_NOT_FOUND` | Candidate Search 또는 Result가 없거나 인증 사용자가 접근할 수 없습니다. |
 | `409` | `CANDIDATE_SEARCH_STALE` | Candidate Search가 만료·입력 변경·소비 등으로 더 이상 확인·거절 대상이 아닙니다. |
-| `409` | `IDENTIFICATION_CONTEXT_STALE` | 최신 Identification, Runtime Bundle, Candidate Index 등 확인 context가 더 이상 현재 기준과 맞지 않습니다. |
+| `409` | `IDENTIFICATION_CONTEXT_STALE` | 현재 구현에서는 기존 Identification이 이미 존재해 신규 Identification을 저장하지 않는 경우입니다(`details.reason=IDENTIFICATION_ALREADY_EXISTS`). Runtime Bundle·Candidate Index currentness 불일치 발생 조건은 #168/#181 연결 후 추가합니다. |
 | `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 이전과 다른 요청 body가 접수되었습니다. |
 | `503` | `SERVICE_UNAVAILABLE` | `PUBLIC_TRACK_F_ENABLED=false`이거나 Search 생성 stub이 아직 공개되지 않은 상태입니다. |
 

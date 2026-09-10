@@ -188,7 +188,7 @@ raise ApiError(
 | `CANDIDATE_SEARCH_NOT_FOUND` | 404 | false | Candidate Search·Result 부재 또는 타 사용자 리소스 |
 | `PRESCRIPTION_MEDICATION_NOT_FOUND` | 404 | false | Candidate 조회·확정 대상 처방 약제 부재 또는 타 사용자 리소스 |
 | `CANDIDATE_SEARCH_STALE` | 409 | false | Candidate Search 만료·입력 변경·소비 등으로 같은 확인·거절 재시도 대상이 아님 |
-| `IDENTIFICATION_CONTEXT_STALE` | 409 | false | Identification·Runtime Bundle·Candidate Index 현재성 상실로 현재 상태 재조회 필요 |
+| `IDENTIFICATION_CONTEXT_STALE` | 409 | false | 현재 구현에서는 기존 Identification이 이미 존재해 현재 상태 재조회가 필요한 경우. Runtime Bundle·Candidate Index 현재성 상실 조건은 #168/#181 연결 후 추가 |
 | `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE` | 409 | false | 활성 약제 Identification 완료 전 일반 RAG Guide Job 생성 금지 |
 | `IDEMPOTENCY_KEY_CONFLICT` | 409 | false | 같은 키로 다른 요청 지문이 접수된 것이므로 새 `Idempotency-Key`가 필요한 충돌 |
 | `OCR_PROCESSING_FAILED` | 500 | false | 원인 확인 없이 재전송하면 같은 실패가 반복됨 |
@@ -287,7 +287,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 404 | `PRESCRIPTION_MEDICATION_NOT_FOUND` | "처방 약제를 찾을 수 없습니다." | Candidate 조회·확정 대상 처방 약제가 없거나 다른 사용자 SELF Profile 소유 |
 | 404 | `CANDIDATE_SEARCH_NOT_FOUND` | "약품 후보 정보를 찾을 수 없습니다." | Candidate Search 또는 Result가 없거나 다른 사용자 SELF Profile 소유 |
 | 409 | `CANDIDATE_SEARCH_STALE` | 상황별 안내 문구 | Candidate Search가 만료·입력 변경·소비·재거절 등으로 현재 확인·거절 대상이 아님 |
-| 409 | `IDENTIFICATION_CONTEXT_STALE` | 상황별 안내 문구 | 최신 Identification 또는 Runtime/Candidate Index context가 요청 시점과 달라져 신규 Identification을 저장하지 않음 |
+| 409 | `IDENTIFICATION_CONTEXT_STALE` | "약품 식별 기준이 최신 상태가 아닙니다. 최신 처방 상태를 다시 확인해 주세요." | 현재 구현에서는 기존 Identification이 이미 존재하는 경우(`details.reason=IDENTIFICATION_ALREADY_EXISTS`) 신규 Identification을 저장하지 않음. Runtime/Candidate Index context 불일치는 #168/#181 연결 후 추가되는 발생 조건 |
 | 409 | `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE` | "약품 후보 확인이 완료되지 않았습니다." | 일반 RAG Guide Job 접수 전 활성 약제 Identification Preflight 실패 |
 
 위 Candidate 오류 코드는 #172 API 구현에 포함되지만 `PUBLIC_TRACK_F_ENABLED=false` 기본 게이트 아래에 있습니다. 공개 UI·Preflight·Runtime 현재성 연결 전에는 실제 사용자 경로에서 활성화하지 않습니다.
