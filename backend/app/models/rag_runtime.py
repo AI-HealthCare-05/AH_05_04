@@ -370,3 +370,248 @@ Index("idx_rag_runtime_environment_active_bundle", RagRuntimeEnvironment.active_
 Index("idx_rag_runtime_transition_environment", RagRuntimeEnvironmentTransition.environment_id)
 Index("idx_rag_runtime_transition_to_bundle", RagRuntimeEnvironmentTransition.to_bundle_id)
 Index("idx_rag_release_eval_approval_eval_run", RagReleaseEvaluationApproval.eval_run_id)
+
+
+class AiJobIntakeContext(Base):
+    __tablename__ = "ai_job_intake_context"
+    __table_args__ = (
+        UniqueConstraint("ai_job_id", name="uq_ai_job_intake_context_job"),
+        UniqueConstraint("chat_message_id", name="uq_ai_job_intake_context_chat_message"),
+        ForeignKeyConstraint(
+            ["runtime_release_bundle_id", "runtime_release_bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_ai_job_intake_context_bundle_manifest",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("runtime_environment_revision >= 1", name="chk_ai_job_intake_context_revision_positive"),
+        CheckConstraint(
+            "length(runtime_release_bundle_manifest_hash) = 64",
+            name="chk_ai_job_intake_context_bundle_hash_length",
+        ),
+        CheckConstraint(
+            "length(runtime_execution_manifest_hash) = 64",
+            name="chk_ai_job_intake_context_manifest_hash_length",
+        ),
+        CheckConstraint(
+            "question_digest IS NULL OR length(question_digest) = 64",
+            name="chk_ai_job_intake_context_question_digest_length",
+        ),
+        CheckConstraint(
+            "patient_context_digest IS NULL OR length(patient_context_digest) = 64",
+            name="chk_ai_job_intake_context_patient_digest_length",
+        ),
+        CheckConstraint(
+            "length(trim(runtime_guard_decision_ref)) > 0",
+            name="chk_ai_job_intake_context_guard_ref_nonblank",
+        ),
+        CheckConstraint(
+            "length(trim(context_schema_version)) > 0",
+            name="chk_ai_job_intake_context_schema_nonblank",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    ai_job_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("ai_job.id", name="fk_ai_job_intake_context_job", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chat_message_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("chat_message.id", name="fk_ai_job_intake_context_chat_message", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    prescription_version_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version.id",
+            name="fk_ai_job_intake_context_prescription_version",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    runtime_environment_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("rag_runtime_environment.id", name="fk_ai_job_intake_context_environment", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    runtime_environment_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    runtime_release_bundle_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    runtime_release_bundle_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_execution_manifest_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "rag_runtime_execution_manifest.id",
+            name="fk_ai_job_intake_context_execution_manifest",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    runtime_execution_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_guard_decision_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    question_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    patient_context_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    context_schema_version: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        default="ai-job-intake-context@1",
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class AiJobExecutionContext(Base):
+    __tablename__ = "ai_job_execution_context"
+    __table_args__ = (
+        UniqueConstraint("ai_job_id", name="uq_ai_job_execution_context_job"),
+        ForeignKeyConstraint(
+            ["runtime_release_bundle_id", "runtime_release_bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_ai_job_execution_context_bundle_manifest",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(guide_id IS NOT NULL AND chat_message_id IS NULL) OR (guide_id IS NULL AND chat_message_id IS NOT NULL)",
+            name="chk_ai_job_execution_context_one_domain",
+        ),
+        CheckConstraint(
+            "intake_context_id IS NULL OR chat_message_id IS NOT NULL",
+            name="chk_ai_job_execution_context_intake_chat_only",
+        ),
+        CheckConstraint("runtime_environment_revision >= 1", name="chk_ai_job_execution_context_revision_positive"),
+        CheckConstraint(
+            "length(runtime_release_bundle_manifest_hash) = 64",
+            name="chk_ai_job_execution_context_bundle_hash_length",
+        ),
+        CheckConstraint(
+            "length(runtime_execution_manifest_hash) = 64",
+            name="chk_ai_job_execution_context_manifest_hash_length",
+        ),
+        CheckConstraint(
+            "patient_context_digest IS NULL OR length(patient_context_digest) = 64",
+            name="chk_ai_job_execution_context_patient_digest_length",
+        ),
+        CheckConstraint(
+            "source_scope_manifest_hash IS NULL OR length(source_scope_manifest_hash) = 64",
+            name="chk_ai_job_execution_context_scope_hash_length",
+        ),
+        CheckConstraint(
+            "length(trim(runtime_guard_decision_ref)) > 0",
+            name="chk_ai_job_execution_context_guard_ref_nonblank",
+        ),
+        CheckConstraint(
+            "length(trim(context_schema_version)) > 0",
+            name="chk_ai_job_execution_context_schema_nonblank",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    ai_job_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("ai_job.id", name="fk_ai_job_execution_context_job", ondelete="CASCADE"),
+        nullable=False,
+    )
+    intake_context_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(),
+        ForeignKey("ai_job_intake_context.id", name="fk_ai_job_execution_context_intake", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    guide_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(),
+        ForeignKey("guide.id", name="fk_ai_job_execution_context_guide", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    chat_message_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(),
+        ForeignKey("chat_message.id", name="fk_ai_job_execution_context_chat_message", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    prescription_version_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version.id",
+            name="fk_ai_job_execution_context_prescription_version",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    runtime_environment_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("rag_runtime_environment.id", name="fk_ai_job_execution_context_environment", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    runtime_environment_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    runtime_release_bundle_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    runtime_release_bundle_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_execution_manifest_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "rag_runtime_execution_manifest.id",
+            name="fk_ai_job_execution_context_execution_manifest",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    runtime_execution_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_guard_decision_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    patient_context_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_scope_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    context_schema_version: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        default="ai-job-execution-context@1",
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class AiJobExecutionIdentification(Base):
+    __tablename__ = "ai_job_execution_identification"
+    __table_args__ = (
+        UniqueConstraint(
+            "execution_context_id",
+            "medication_identification_id",
+            name="uq_ai_job_execution_identification_identification",
+        ),
+        UniqueConstraint(
+            "execution_context_id",
+            "prescription_version_medication_id",
+            name="uq_ai_job_execution_identification_medication",
+        ),
+        ForeignKeyConstraint(
+            ["medication_identification_id", "prescription_version_medication_id"],
+            ["medication_identification.id", "medication_identification.prescription_version_medication_id"],
+            name="fk_ai_job_execution_identification_matched_medication",
+            ondelete="RESTRICT",
+        ),
+        Index("idx_ai_job_execution_identification_context", "execution_context_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    execution_context_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "ai_job_execution_context.id",
+            name="fk_ai_job_execution_identification_context",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    medication_identification_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        nullable=False,
+    )
+    prescription_version_medication_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version_medication.id",
+            name="fk_ai_job_execution_identification_medication",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+Index("idx_ai_job_intake_context_job", AiJobIntakeContext.ai_job_id)
+Index("idx_ai_job_intake_context_prescription_version", AiJobIntakeContext.prescription_version_id)
+Index("idx_ai_job_execution_context_job", AiJobExecutionContext.ai_job_id)
+Index("idx_ai_job_execution_context_prescription_version", AiJobExecutionContext.prescription_version_id)
