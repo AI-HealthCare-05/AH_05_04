@@ -117,19 +117,19 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
 
     async def try_lock_acquisition(self, identity: SourceOperationIdentity) -> UUID:
         """같은 Source가 수집 중이면 기다리지 않고 안전한 고정 예외를 반환합니다."""
-        statement = _operation_lookup(identity).with_for_update(
-            of=_SOURCE,
-            skip_locked=True,
-        )
-        result = await self._session.execute(statement)
-        operation_id = result.scalar_one_or_none()
-        if operation_id is not None:
-            return UUID(str(operation_id))
-
-        existence_result = await self._session.execute(_operation_lookup(identity))
-        if existence_result.scalar_one_or_none() is None:
+        result = await self._session.execute(_operation_lookup(identity).add_columns(_SOURCE.c.id))
+        row = result.one_or_none()
+        if row is None:
             raise ValueError("Source operation 수집 대상을 찾을 수 없습니다.")
-        raise SourceAcquisitionInProgressError("Source acquisition is already in progress.")
+        operation_id, source_id = row
+        # PostgreSQL's built-in transaction lock requires no UPDATE privilege on Source.
+        # The namespace + Source ID is shared across operations and released on rollback.
+        acquired = await self._session.scalar(
+            select(func.pg_try_advisory_xact_lock(func.hashtextextended(f"source-acquisition:{source_id}", 0)))
+        )
+        if not acquired:
+            raise SourceAcquisitionInProgressError("Source acquisition is already in progress.")
+        return UUID(str(operation_id))
 
     async def get_snapshot_by_version(
         self,

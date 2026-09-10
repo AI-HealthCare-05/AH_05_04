@@ -613,3 +613,121 @@ async def test_environment_transition_requires_guard_and_authenticated_actor(db_
                 created_by=None,
             )
         )
+
+
+async def _freshness_resources(session):
+    repository = RagRuntimeRepository(session)
+    manifest = await repository.create_execution_manifest(
+        RagRuntimeExecutionManifestCreate(
+            manifest_key=f"fresh-{uuid4().hex}",
+            manifest_version="1",
+            manifest_hash=uuid4().hex * 2,
+            schema_version="1",
+            git_commit_sha="synthetic",
+        )
+    )
+    bundle = await repository.create_release_bundle(
+        RagRuntimeReleaseBundleCreate(
+            bundle_key=f"fresh-{uuid4().hex}",
+            bundle_version="1",
+            execution_manifest_id=manifest.id,
+            bundle_manifest_hash=uuid4().hex * 2,
+            bundle_status=RagRuntimeBundleStatus.READY,
+        )
+    )
+    environment = await repository.create_environment(
+        RagRuntimeEnvironmentCreate(
+            environment_code=f"fresh-{uuid4().hex}", environment_status=RagRuntimeEnvironmentStatus.SUSPENDED
+        )
+    )
+    command = RagRuntimeEnvironmentTransitionCreate(
+        environment_id=environment.id,
+        transition_kind=RagRuntimeEnvironmentTransitionKind.PLANNED_ACTIVATION,
+        expected_environment_revision=1,
+        expected_safety_epoch=1,
+        expected_active_bundle_id=None,
+        expected_active_bundle_manifest_hash=None,
+        expected_governance_revision_ref=None,
+        target_bundle_id=bundle.id,
+        target_bundle_manifest_hash=bundle.bundle_manifest_hash,
+        guard_decision_ref="synthetic-guard",
+        transition_reason_code="SYNTHETIC_REVIEW",
+        created_by="synthetic-actor",
+    )
+    return environment, bundle, command
+
+
+@pytest.mark.parametrize("changed", ["bundle", "environment"])
+async def test_transition_refreshes_preloaded_objects_after_another_transaction(changed):
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models.rag_runtime import RagRuntimeEnvironment, RagRuntimeReleaseBundle
+    from app.tests.conftest import test_engine
+
+    sessions = async_sessionmaker(test_engine, expire_on_commit=False)
+    async with sessions.begin() as setup:
+        environment, bundle, command = await _freshness_resources(setup)
+    async with sessions.begin() as stale:
+        old_environment = await stale.get(RagRuntimeEnvironment, environment.id)
+        old_bundle = await stale.get(RagRuntimeReleaseBundle, bundle.id)
+        async with sessions.begin() as concurrent:
+            if changed == "bundle":
+                row = await concurrent.get(RagRuntimeReleaseBundle, bundle.id)
+                row.bundle_status = RagRuntimeBundleStatus.FAILED
+            else:
+                row = await concurrent.get(RagRuntimeEnvironment, environment.id)
+                row.environment_revision += 1
+        assert old_bundle.bundle_status is RagRuntimeBundleStatus.READY
+        assert old_environment.environment_revision == 1
+        error = (
+            RuntimeEnvironmentTransitionInvalidError
+            if changed == "bundle"
+            else RuntimeEnvironmentTransitionConflictError
+        )
+        with pytest.raises(error):
+            await RagRuntimeEnvironmentTransitionService(RagRuntimeRepository(stale)).transition(command)
+    async with sessions() as check:
+        final = await check.get(RagRuntimeEnvironment, environment.id)
+        assert final.environment_status is RagRuntimeEnvironmentStatus.SUSPENDED
+        assert final.active_bundle_id is None
+        assert not list(
+            await check.scalars(
+                select(RagRuntimeEnvironmentTransition).where(
+                    RagRuntimeEnvironmentTransition.environment_id == environment.id
+                )
+            )
+        )
+
+
+@pytest.mark.parametrize("kind", [*RagRuntimeEnvironmentTransitionKind, "UNSUPPORTED_FUTURE_TRANSITION"])
+async def test_transition_branches_cover_every_supported_kind_and_reject_unknown(db_session, kind):
+    from dataclasses import replace
+
+    environment, bundle, command = await _freshness_resources(db_session)
+    if kind == RagRuntimeEnvironmentTransitionKind.SUSPEND:
+        environment.environment_status = RagRuntimeEnvironmentStatus.ACTIVE
+    if kind == RagRuntimeEnvironmentTransitionKind.RESUME:
+        environment.active_bundle_id = bundle.id
+        environment.active_bundle_manifest_hash = bundle.bundle_manifest_hash
+    command = replace(command, transition_kind=kind)
+    if kind in {RagRuntimeEnvironmentTransitionKind.SUSPEND, RagRuntimeEnvironmentTransitionKind.RESUME}:
+        command = replace(command, target_bundle_id=None, target_bundle_manifest_hash=None)
+    repository = RagRuntimeRepository(db_session)
+    if kind == "UNSUPPORTED_FUTURE_TRANSITION":
+        with pytest.raises(RuntimeEnvironmentTransitionInvalidError):
+            RagRuntimeEnvironmentTransitionService._validate_command(command)
+        with pytest.raises(RuntimeEnvironmentTransitionInvalidError):
+            await repository._resolve_transition_target(environment, command)
+        with pytest.raises(RuntimeEnvironmentTransitionInvalidError):
+            repository._next_environment_status(environment, command, bundle)
+    else:
+        RagRuntimeEnvironmentTransitionService._validate_command(command)
+        target = await repository._resolve_transition_target(environment, command)
+        status = repository._next_environment_status(environment, command, target)
+        expected = (
+            RagRuntimeEnvironmentStatus.SUSPENDED
+            if kind is RagRuntimeEnvironmentTransitionKind.SUSPEND
+            else RagRuntimeEnvironmentStatus.ACTIVE
+        )
+        assert status is expected

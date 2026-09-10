@@ -102,3 +102,9 @@ Snapshot 생성은 두 Repository 모두 PENDING이며 verified_at/effective_at�
 ## Source·Catalog 관리 경로 후속 구현
 
 기존 문서의 관리 API·권한·감사 “미완료” 항목은 [PD-398-M1](source-catalog-management-398.md) 구현으로 보완했다. Snapshot 원본 변경은 허용하지 않고 새 version으로 처리한다. 관리 실행 환경과 인수 절차는 [관리 인수 문서](../../testing/issue-398/management-handoff.md)를 따른다. 운영 적용·담당 리뷰는 별도다.
+
+## PR #429 수집 잠금 리뷰 반영
+
+수집 시작은 Source ID별 PostgreSQL 내장 transaction advisory lock을 비대기 방식으로 획득한다. 같은 Source의 다른 Operation도 동시 수집을 거부하며 transaction 종료 시 해제된다. 새 저장 함수·Trigger·RLS를 정의하지 않는다. 수집 잠금을 위해 Source Writer에 `rag_source` UPDATE 권한을 추가하지 않는다. 저장·상태 전이의 기존 Operation 행 잠금은 유지한다.
+
+실제 Writer 로그인으로 수집 잠금 → 저장 → commit → 재획득과 동시 수집 거부를 검증했다. SQL/AST 검사는 보조 검사이며, 이 권한·동시성 보장은 실제 DB 통합 테스트와 명시적 역할 정책으로 확인한다.

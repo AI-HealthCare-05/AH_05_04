@@ -26,6 +26,13 @@ class RagRuntimeEnvironmentTransitionService:
 
     @staticmethod
     def _validate_command(command: RagRuntimeEnvironmentTransitionCreate) -> None:
+        if command.transition_kind not in {
+            RagRuntimeEnvironmentTransitionKind.PLANNED_ACTIVATION,
+            RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK,
+            RagRuntimeEnvironmentTransitionKind.SUSPEND,
+            RagRuntimeEnvironmentTransitionKind.RESUME,
+        }:
+            raise RuntimeEnvironmentTransitionInvalidError("Unsupported Runtime transition")
         if command.expected_environment_revision < 1 or command.expected_safety_epoch < 1:
             raise RuntimeEnvironmentTransitionInvalidError("Expected Runtime revision is invalid")
         if not command.guard_decision_ref.strip() or command.created_by is None or not command.created_by.strip():

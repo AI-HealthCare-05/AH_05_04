@@ -191,6 +191,7 @@ class RagRuntimeRepository:
                 select(RagRuntimeEnvironment)
                 .where(RagRuntimeEnvironment.id == payload.environment_id)
                 .with_for_update(of=RagRuntimeEnvironment)
+                .execution_options(populate_existing=True)
             )
             if environment is None:
                 raise RuntimeEnvironmentTransitionInvalidError("Runtime environment unavailable")
@@ -255,9 +256,14 @@ class RagRuntimeRepository:
                 raise RuntimeEnvironmentTransitionInvalidError("Resume must use the retained active bundle")
             target_id = environment.active_bundle_id
             target_hash = environment.active_bundle_manifest_hash
-        else:
+        elif payload.transition_kind in {
+            RagRuntimeEnvironmentTransitionKind.PLANNED_ACTIVATION,
+            RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK,
+        }:
             target_id = payload.target_bundle_id
             target_hash = payload.target_bundle_manifest_hash
+        else:
+            raise RuntimeEnvironmentTransitionInvalidError("Unsupported Runtime transition")
         if (
             payload.transition_kind is RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK
             and target_id is None
@@ -273,6 +279,7 @@ class RagRuntimeRepository:
                 RagRuntimeReleaseBundle.bundle_manifest_hash == target_hash,
             )
             .with_for_update(of=RagRuntimeReleaseBundle)
+            .execution_options(populate_existing=True)
         )
         allowed_statuses = (
             {RagRuntimeBundleStatus.READY, RagRuntimeBundleStatus.RETIRED}
@@ -281,6 +288,15 @@ class RagRuntimeRepository:
         )
         if target is None or target.bundle_status not in allowed_statuses:
             raise RuntimeEnvironmentTransitionInvalidError("Transition target bundle unavailable")
+        self._validate_target_environment(environment, payload, target)
+        return target
+
+    @staticmethod
+    def _validate_target_environment(
+        environment: RagRuntimeEnvironment,
+        payload: RagRuntimeEnvironmentTransitionCreate,
+        target: RagRuntimeReleaseBundle,
+    ) -> None:
         if target.governance_revision_ref != environment.governance_revision_ref:
             raise RuntimeEnvironmentTransitionConflictError("Runtime governance revision changed")
         same_target_error = {
@@ -289,7 +305,6 @@ class RagRuntimeRepository:
         }.get(payload.transition_kind)
         if target.id == environment.active_bundle_id and same_target_error is not None:
             raise RuntimeEnvironmentTransitionInvalidError(same_target_error)
-        return target
 
     @staticmethod
     def _next_environment_status(
@@ -310,7 +325,16 @@ class RagRuntimeRepository:
             if environment.environment_status is not RagRuntimeEnvironmentStatus.ACTIVE:
                 raise RuntimeEnvironmentTransitionInvalidError("Only an active environment can enter an emergency hold")
             return RagRuntimeEnvironmentStatus.SUSPENDED
-        return RagRuntimeEnvironmentStatus.ACTIVE
+        if (
+            transition_kind
+            in {
+                RagRuntimeEnvironmentTransitionKind.PLANNED_ACTIVATION,
+                RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK,
+            }
+            and target is not None
+        ):
+            return RagRuntimeEnvironmentStatus.ACTIVE
+        raise RuntimeEnvironmentTransitionInvalidError("Unsupported Runtime transition")
 
     async def list_environment_transitions(self, environment_id: UUID) -> list[RagRuntimeEnvironmentTransition]:
         result = await self.session.execute(

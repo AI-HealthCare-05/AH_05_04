@@ -1039,3 +1039,63 @@ async def test_verification_insert_waits_for_operation_transition_lock(writer_pa
             )
             == 0
         )
+
+
+async def test_writer_login_can_acquire_and_persist_without_source_update_privilege() -> None:
+    from uuid import uuid4
+
+    from infra.python.source_role_policy import apply_source_role_policy
+
+    suffix = uuid4().hex[:10]
+    runtime, writer = f"acquire_reader_{suffix}", f"acquire_writer_{suffix}"
+    password = "synthetic-acquisition-only"
+    identity = await _seed_operation(f"WRITER_{suffix}")
+    admin = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    producer = create_async_engine(
+        TEST_DATABASE_URL.set(username=writer, password=password),
+        poolclass=NullPool,
+        connect_args={"server_settings": {"search_path": TEST_SCHEMA}},
+        hide_parameters=True,
+    )
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await apply_source_role_policy(
+                connection, schema=TEST_SCHEMA, owner=config.DB_USER, runtime=runtime, writer=writer
+            )
+            assert not await connection.scalar(
+                text("SELECT has_any_column_privilege(:role, :table, 'UPDATE')"),
+                {"role": writer, "table": f"{TEST_SCHEMA}.rag_source"},
+            )
+        factory = async_sessionmaker(producer)
+        async with factory.begin() as first:
+            repository = SqlAlchemySourceSnapshotRepository(first)
+            await repository.try_lock_acquisition(identity)
+            async with factory.begin() as second:
+                with pytest.raises(SourceAcquisitionInProgressError):
+                    await SqlAlchemySourceSnapshotRepository(second).try_lock_acquisition(identity)
+            result = await persist_product_ingestion_result(
+                repository=repository,
+                ingestion=_ingestion(identity, _CHECKSUM_A),
+                metadata=_metadata("external:review-429"),
+                artifacts=_stored_artifacts(),
+            )
+        async with factory.begin() as second:
+            await SqlAlchemySourceSnapshotRepository(second).try_lock_acquisition(identity)
+            assert (
+                await second.scalar(
+                    select(func.count())
+                    .select_from(RagSourceSnapshot)
+                    .where(RagSourceSnapshot.source_version == "external:review-429")
+                )
+                == 1
+            )
+        assert result.snapshot_id is not None
+    finally:
+        await producer.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE "{role}"'))
+        await admin.dispose()
