@@ -69,6 +69,31 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 
 access token과 refresh token에는 발급 시점의 `token_version`을 포함합니다. 인증된 요청과 `GET /api/v1/auth/token/refresh`는 DB의 `user.token_version`, `account_status`, `is_active`를 다시 확인하며, 로그아웃은 `token_version`을 DB에서 원자적으로 `+1`하고 `refresh_token` 쿠키를 삭제합니다.
 
+`refresh_session` 테이블은 refresh token rotation의 재사용 탐지를 로그인(세션) 단위로 관리합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Refresh Session PK. refresh token payload의 `session_id` 클레임과 같음 |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `active_jti` | `VARCHAR(32)` | No | 이 세션에서 현재 유효한 refresh token의 jti |
+| `created_at` | timezone datetime | No | 세션(로그인) 생성 시각 |
+| `updated_at` | timezone datetime | No | 마지막 rotation 시각 |
+
+`GET /api/v1/auth/token/refresh`는 매 호출마다 새 refresh token을 발급해 해당 `refresh_session.active_jti`를 교체합니다(rotation). 절대 만료는 로그인 시점 기준으로 고정되어 rotation으로 늘어나지 않습니다. 제출된 refresh token의 jti가 그 세션의 `active_jti`와 다르면(이미 rotation된 token 재사용) `token_version`을 즉시 `+1`해 전체 세션을 무효화합니다. `session_id`로 row를 스코프하므로 같은 사용자의 다른 기기 로그인(다른 `refresh_session` row)에는 영향을 주지 않습니다.
+
+`password_reset_token` 테이블은 비밀번호 재설정 1회용 token을 관리합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Password Reset Token PK |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `token_hash` | `VARCHAR(64)` | No | 원문 token의 SHA-256 해시. 원문은 저장하지 않음 |
+| `created_at` | timezone datetime | No | 발급 시각 |
+| `expires_at` | timezone datetime | No | 만료 시각(기본 발급 후 30분) |
+| `used_at` | timezone datetime | Yes | 소비 시각. `NULL`이면 미사용 |
+
+재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
+
 ## PROFILE SELF 소유권
 
 `profile` 테이블은 본인 단일 `SELF` profile을 저장합니다.
