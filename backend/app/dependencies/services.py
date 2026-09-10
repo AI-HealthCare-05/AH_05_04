@@ -18,6 +18,7 @@ from app.repositories.guide_repository import GuideRepository
 from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
@@ -38,6 +39,8 @@ from app.services.job_intake import JobIntakeService
 from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.medication_candidates import MedicationCandidateService
+from app.services.medication_checkin_api import MedicationCheckinApiService
+from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
 from app.services.ocr import OcrService
@@ -319,6 +322,21 @@ def get_medication_candidate_service(
     ],
 ) -> MedicationCandidateService:
     return MedicationCandidateService(repository, identification_service, idempotency_service)
+
+
+def get_medication_checkin_api_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> MedicationCheckinApiService:
+    # B3's explicit no-op remains until Track C #195 supplies its same-session adapter.
+    checkins = MedicationCheckinService(
+        MedicationCheckinRepository(session),
+        revision_invalidation=NoopCheckinRevisionInvalidation(),
+    )
+    return MedicationCheckinApiService(MedicationScheduleRepository(session), checkins, idempotency_service)
 
 
 def get_guide_repository(
