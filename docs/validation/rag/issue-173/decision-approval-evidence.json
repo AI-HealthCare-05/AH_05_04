@@ -3,10 +3,13 @@
   "format_version": "1.0.0",
   "issue": "#173",
   "decision_id": "PD-173-20260909",
-  "decision_status": "APPROVED",
-  "approval_recorded": true,
+  "decision_status": "PROPOSED",
+  "approval_recorded": false,
+  "approval_condition_met": false,
   "contract_status": "REPOSITORY_LOCAL_NON_RUNTIME_PROJECTION",
-  "purpose": "DECISION_STATUS_TRANSITION",
+  "contract_status_directory": "docs/contracts/proposed/post-mvp-1",
+  "purpose": "APPROVAL_CONDITION_TRACKING",
+  "purpose_note": "본 파일은 상태 전이 기록이 아니라 승인 조건 충족 현황의 추적이다. 지정 책임 리뷰어 3인 중 2인 승인으로 조건 미충족 상태다.",
   "pull_request": {
     "number": 382,
     "url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/382",
@@ -62,25 +65,34 @@
     "last_approval_submitted_at": "2026-09-09T14:41:52.000000Z",
     "note": "두 APPROVED 리뷰 모두 PR의 최종 headRefOid(3d63fc5a)를 대상으로 제출되었으며, 승인 이후 추가 커밋이 없어 '최신 HEAD 승인' 조건이 충족된다."
   },
-  "scope_exclusion": {
-    "excluded_reviewer": {
-      "actor_id": "solia142",
-      "namespace": "GITHUB_LOGIN",
-      "role": "PATIENT_DISPLAY_ERROR_UX_REVIEWER"
-    },
-    "participation": "NONE",
-    "participation_detail": "PR #382 리뷰·PR 코멘트·Issue #173 코멘트 모두에서 기록 없음. 병합 시점 requested_reviewers 비어 있음.",
-    "handle_correction": {
-      "previous_actor_id": "ansol-nam",
-      "corrected_actor_id": "solia142",
-      "reason": "PD-173 Decision과 제안 계약이 최초 기재한 @ansol-nam은 GitHub에 존재하지 않는 계정이며(GET /users/ansol-nam -> 404) 저장소 collaborator도 아니다. 저장소의 다른 문서가 기록한 실제 핸들 @solia142로 정정했다.",
-      "corroborating_path": "docs/designs/issue-144-optional-review-fields-implementation-plan.md",
-      "impact_note": "잘못된 핸들로는 리뷰 요청이 성립하지 않으므로, participation=NONE은 검토 거부가 아니라 요청 경로 부재의 결과일 수 있다."
-    },
-    "decision": "OUT_OF_SCOPE",
-    "rationale": "PD-173은 공개 fallback_code 어휘의 사영 우선순위와 내부 stale_reason 분리만 확정한다. 확정 대상 어휘는 safety-result-v2.md가 이미 승인한 9개 코드 집합 내부이며 신규 공개 코드를 추가하지 않는다. 환자 표시 문구·오류 UX 렌더링은 본 Decision이 규정하지 않는 후속 구현 범위이므로, 해당 책임 리뷰는 PD-173 승인의 필수 요건에서 제외한다.",
-    "follow_up": "환자 표시 문구 및 오류 UX 구현 시 남한솔(@solia142) 책임 리뷰를 별도 요건으로 유지한다."
-  },
+  "unmet_conditions": [
+    {
+      "condition": "DESIGNATED_REVIEWER_APPROVAL",
+      "required_reviewer": {
+        "actor_id": "solia142",
+        "namespace": "GITHUB_LOGIN",
+        "role": "PATIENT_DISPLAY_ERROR_UX_REVIEWER"
+      },
+      "status": "NOT_APPROVED",
+      "participation": "NONE",
+      "participation_detail": "PR #382 리뷰·PR 코멘트·Issue #173 코멘트 모두에서 기록 없음. 병합 시점 requested_reviewers 비어 있음.",
+      "cause": {
+        "handle_correction": {
+          "previous_actor_id": "ansol-nam",
+          "corrected_actor_id": "solia142",
+          "reason": "PD-173 Decision과 제안 계약이 최초 기재한 @ansol-nam은 GitHub에 존재하지 않는 계정이며(GET /users/ansol-nam -> 404) 저장소 collaborator도 아니다. 저장소의 다른 문서가 기록한 실제 핸들 @solia142로 정정했다.",
+          "corroborating_path": "docs/designs/issue-144-optional-review-fields-implementation-plan.md"
+        },
+        "note": "잘못된 핸들 때문에 리뷰 요청이 전달되지 않았다. 이는 승인 조건이 충족되지 않은 원인이며, 해당 책임 리뷰를 면제할 근거가 아니다."
+      },
+      "resolution_paths": [
+        "남한솔(@solia142)의 승인 evidence를 PR #382 최신 HEAD(3d63fc5a) 기준으로 확보한다.",
+        "세 영향 영역 책임 리뷰어가 승인한 별도 Decision·개정 절차로 승인 조건 자체를 먼저 변경한 뒤 상태를 전이한다."
+      ],
+      "invalid_resolution": "구현 작성자가 동일 상태 전이 PR에서 해당 필수 승인을 소급해 OUT_OF_SCOPE로 변경하는 방식. 2026-09-10 리뷰에서 세 리뷰어가 모두 거부했다."
+    }
+  ],
+  "follow_up": "환자 표시 문구 및 오류 UX 구현 시 남한솔(@solia142) 책임 리뷰를 별도 요건으로 유지한다. 이는 본 Decision의 기존 3인 승인 요건을 대체하지 않는다.",
   "automated_checks": {
     "checked_commit_sha": "3d63fc5a59a4ce4d66b0bb0ae5d16742e9c0fc3d",
     "check_runs": [

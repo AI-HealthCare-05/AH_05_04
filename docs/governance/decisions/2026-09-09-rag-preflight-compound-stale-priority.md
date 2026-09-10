@@ -3,14 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-173-20260909` |
-| 상태 | **Approved** — PR #382 최신 HEAD에서 책임 리뷰 승인 완료 (2026-09-09) |
+| 상태 | Proposed · Review pending — 지정 책임 리뷰어 3인 중 2인 승인, 승인 조건 미충족 ([상세](#승인-및-적용-조건)) |
 | 제안일 | 2026-09-09 |
-| 승인일 | 2026-09-09 (최종 승인 `2026-09-09T14:41:52Z`) |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Safety·제품 수용 `APPROVED`, 송은영 (`@phina-io`) — Backend·공개 DTO `APPROVED` |
-| 범위 제외 리뷰 | 남한솔 (`@solia142`) — 환자 표시·오류 UX (본 Decision 승인 요건에서 제외, [사유](#책임-리뷰-범위와-제외-근거)) |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Safety·제품 수용 `APPROVED`, 송은영 (`@phina-io`) — Backend·공개 DTO `APPROVED`, 남한솔 (`@solia142`) — 환자 표시·오류 UX **미승인** |
 | 추적 Issue·PR | [#173](https://github.com/AI-HealthCare-05/AH_05_04/issues/173) · [PR #382](https://github.com/AI-HealthCare-05/AH_05_04/pull/382) (`MERGED` `2026-09-09T16:50:53Z`) |
-| 승인 Evidence | [`docs/validation/rag/issue-173/decision-approval-evidence.json`](../../validation/rag/issue-173/decision-approval-evidence.json) |
+| 승인 현황 Evidence | [`docs/validation/rag/issue-173/decision-approval-evidence.json`](../../validation/rag/issue-173/decision-approval-evidence.json) |
 | 상위 계약 | [`docs/contracts/targets/post-mvp-1/safety-result-v2.md`](../../contracts/targets/post-mvp-1/safety-result-v2.md) |
 | 제안 계약 | [`docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md`](../../contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md) |
 
@@ -40,11 +38,11 @@ RAG Preflight 판정 및 후속 Safety Result 생성 시, 둘 이상의 STALE �
 
 ## 승인 및 적용 조건
 
-본 Decision은 PR #382의 최신 HEAD에서 지정 책임 리뷰어의 승인을 받고 자동화된 계약/단위 테스트가 통과할 것을 적용 조건으로 했다. 아래 immutable evidence로 두 조건의 충족을 확인하여 상태를 `Approved`로 전이한다.
+본 문서는 `Proposed` 상태이며 그 자체로 확정된 Current 계약이나 Production 활성화를 의미하지 않는다. PR #382의 최신 HEAD에서 지정 책임 리뷰어(권가빈, 송은영, 남한솔)의 승인을 받고 자동화된 계약/단위 테스트가 통과해야 본 Decision과 제안 계약이 승인된 Target으로 편입될 수 있다.
 
-`Approved`는 본 Decision과 제안 계약의 어휘·우선순위 규칙이 확정되었음을 의미하며, 그 자체로 Production 활성화를 의미하지 않는다. 런타임 활성화는 별도 릴리즈 절차를 따른다.
+**현재 충족 상태: 미충족.** 지정 책임 리뷰어 3인 중 2인이 승인했고 자동화 검증은 통과했으나, 남한솔 (`@solia142`)의 승인이 없다. 아래에 지금까지 수집한 evidence와 미충족 항목을 기록한다. 이 절의 evidence 기록은 **상태 전이가 아니라 조건 충족 현황의 추적**이다.
 
-### 승인 Evidence
+### 수집된 승인 Evidence (2/3 — 조건 미충족)
 
 Issue [#273](https://github.com/AI-HealthCare-05/AH_05_04/issues/273) Gold 승인에서 정한 기준(구두 합의·Issue 코멘트가 아닌 GitHub review ID·actor·submitted timestamp·commit OID를 immutable evidence로 수집)을 그대로 적용한다. 원본은 [`docs/validation/rag/issue-173/decision-approval-evidence.json`](../../validation/rag/issue-173/decision-approval-evidence.json)에 보관한다.
 
@@ -57,12 +55,17 @@ Issue [#273](https://github.com/AI-HealthCare-05/AH_05_04/issues/273) Gold 승�
 
 **자동화 검증 충족**: 승인 대상 commit `3d63fc5a`의 check run `test`·`lint`·`frontend` 모두 `success`.
 
-### 책임 리뷰 범위와 제외 근거
+### 미충족 항목 — 남한솔 (`@solia142`) 책임 리뷰
 
-남한솔 (`@solia142`) — 환자 표시·오류 UX 리뷰는 **본 Decision의 승인 필수 요건에서 제외**한다. PR #382 리뷰, PR 코멘트, Issue #173 코멘트 어디에도 참여 기록이 없으며 병합 시점 리뷰 요청도 남아 있지 않다.
+남한솔 (`@solia142`) — 환자 표시·오류 UX 책임 리뷰의 승인 evidence가 **없다**. PR #382 리뷰, PR 코멘트, Issue #173 코멘트 어디에도 참여 기록이 없으며 병합 시점 `requested_reviewers`도 비어 있었다. 따라서 본 Decision이 명시한 3인 승인 조건은 충족되지 않았고, 상태는 `Proposed`로 유지한다.
 
-> **핸들 정정**: 본 문서와 제안 계약은 최초 작성 시 남한솔의 GitHub 핸들을 `@ansol-nam`으로 기재했으나, 해당 계정은 GitHub에 존재하지 않으며(`GET /users/ansol-nam` → 404) 저장소 collaborator도 아니다. 저장소의 다른 문서(예: `docs/designs/issue-144-optional-review-fields-implementation-plan.md`)가 기록한 실제 핸들 `@solia142`로 정정했다. 잘못된 핸들로는 리뷰 요청 자체가 성립하지 않으므로, 위 "참여 기록 없음"은 본인의 검토 거부가 아니라 요청 경로 부재의 결과일 수 있음을 함께 기록한다.
+> **핸들 정정**: 본 문서와 제안 계약은 최초 작성 시 남한솔의 GitHub 핸들을 `@ansol-nam`으로 기재했으나, 해당 계정은 GitHub에 존재하지 않으며(`GET /users/ansol-nam` → 404) 저장소 collaborator도 아니다. 저장소의 다른 문서(예: `docs/designs/issue-144-optional-review-fields-implementation-plan.md`)가 기록한 실제 핸들 `@solia142`로 정정했다. 잘못된 핸들 때문에 리뷰 요청이 전달되지 않았으며, 이는 **승인 조건이 충족되지 않은 원인**이지 해당 리뷰를 면제할 근거가 아니다.
 
-제외 근거: PD-173이 확정하는 대상은 복합 STALE 상황의 공개 `fallback_code` 사영 **우선순위**와 내부 `stale_reason` 분리 규칙이다. 사영 결과로 선택되는 공개 코드는 이미 승인된 `safety-result-v2.md`의 9개 코드 집합 내부이며 본 Decision은 신규 공개 코드나 환자 대면 문구를 추가하지 않는다. 환자 표시 문구·오류 UX 렌더링은 본 Decision이 규정하지 않는 후속 구현 범위다.
+**승인 조건 변경 절차**: 본 Decision의 지정 책임 리뷰어 구성을 바꾸려면, 구현 작성자가 상태 전이 PR에서 소급 처리하지 않고 세 영향 영역(Safety·제품 수용, Backend·공개 DTO, 환자 표시·오류 UX)의 책임 리뷰어가 승인한 별도 Decision 또는 개정 절차를 먼저 거쳐야 한다. 저장소 AGENTS 규칙이 공유 경계가 불명확할 때 값을 추정하지 말고 owner와 조정하도록 요구하는 것과 같은 취지다.
 
-후속 요건: 환자 표시 문구 및 오류 UX 구현 시점에는 남한솔 (`@solia142`) 책임 리뷰를 별도 승인 요건으로 유지한다.
+### `Approved` 전이를 위해 남은 조건
+
+1. 남한솔 (`@solia142`)의 승인 evidence 확보 — PR #382 최신 HEAD(`3d63fc5a`) 기준, 또는
+2. 위 "승인 조건 변경 절차"에 따른 별도 Decision·개정으로 승인 조건 자체를 먼저 개정
+
+둘 중 하나가 완료된 뒤에야 상태를 전이한다. 전이 시점에는 제안 계약의 상태 디렉터리 정합(`proposed/` 유지 여부 또는 `targets/` 편입)도 함께 정렬한다.
