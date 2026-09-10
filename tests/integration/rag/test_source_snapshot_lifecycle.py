@@ -131,7 +131,12 @@ async def _seed_operation(suffix: str) -> SourceOperationIdentity:
     async with session_factory.begin() as session:
         repository = RagSourceCatalogRepository(session)
         source = await repository.create_source(
-            RagSourceCreate(source_code=identity.source_code, display_name="Synthetic Source")
+            RagSourceCreate(
+                source_code=identity.source_code,
+                display_name="Synthetic Source",
+                max_rejected_records=1,
+                max_rejection_rate=Decimal("0.5"),
+            )
         )
         endpoint = await repository.create_endpoint(
             RagSourceEndpointCreate(
@@ -1099,3 +1104,22 @@ async def test_writer_login_can_acquire_and_persist_without_source_update_privil
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
                 await connection.execute(text(f'DROP ROLE "{role}"'))
         await admin.dispose()
+
+
+async def test_external_version_and_source_policy_survive_database_roundtrip() -> None:
+    identity = await _seed_operation("POLICY_ROUNDTRIP")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        result = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:provider-release-1"),
+            artifacts=_stored_artifacts(),
+        )
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, result.snapshot_id)
+        assert snapshot is not None
+        assert snapshot.external_version == "provider-release-1"
+        assert snapshot.source_version == "external:provider-release-1"
+        policy = await SqlAlchemySourceSnapshotRepository(session).get_source_policy(operation_id=result.operation_id)
+        assert policy == _ALLOW_ONE_REJECTION_POLICY

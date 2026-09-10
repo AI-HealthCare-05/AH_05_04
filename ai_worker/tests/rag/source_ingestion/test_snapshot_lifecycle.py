@@ -62,6 +62,7 @@ _ALLOW_ONE_REJECTION_POLICY = SourceSnapshotPolicy(
 
 class FakeSnapshotRepository:
     def __init__(self) -> None:
+        self.source_policy = _ALLOW_ONE_REJECTION_POLICY
         self.snapshots: list[SnapshotReference] = []
         self.create_requests: list[SnapshotCreateRequest] = []
         self.statuses: dict[UUID, SnapshotVerificationStatus] = {}
@@ -73,6 +74,9 @@ class FakeSnapshotRepository:
     async def lock_operation(self, identity: SourceOperationIdentity) -> UUID:
         self.locked_identities.append(identity)
         return _OPERATION_ID
+
+    async def get_source_policy(self, *, operation_id: UUID) -> SourceSnapshotPolicy:
+        return self.source_policy
 
     async def get_snapshot_by_version(
         self,
@@ -1287,3 +1291,17 @@ def test_rejects_negative_rejected_record_count_for_use_evaluation() -> None:
             freshness_eligible=True,
             provenance_valid=True,
         )
+
+
+async def test_request_policy_cannot_relax_persisted_source_rejection_limit() -> None:
+    repository = FakeSnapshotRepository()
+    repository.source_policy = SourceSnapshotPolicy()
+    result = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=replace(_metadata("external:v1"), rejected_record_count=1),
+        artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
+    )
+    assert result.failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert result.snapshot_id is None
+    assert not repository.create_requests

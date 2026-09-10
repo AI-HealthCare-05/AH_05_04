@@ -262,6 +262,8 @@ class SnapshotLifecycleRepository(Protocol):
         """Operation을 조회해 잠그고, 없으면 ValueError를 발생시킵니다."""
         ...
 
+    async def get_source_policy(self, *, operation_id: UUID) -> SourceSnapshotPolicy: ...
+
     async def get_snapshot_by_version(
         self,
         *,
@@ -370,13 +372,21 @@ async def persist_product_ingestion_result(
         rejected_record_count=metadata.rejected_record_count,
         artifacts=artifacts,
     )
+    operation_id = await repository.lock_operation(ingestion.identity)
+    stored_policy = await repository.get_source_policy(operation_id=operation_id)
     policy_result = evaluate_snapshot_policy(
         record_count=ingestion.record_count,
         rejected_record_count=metadata.rejected_record_count,
         policy=metadata.snapshot_policy,
     )
 
-    operation_id = await repository.lock_operation(ingestion.identity)
+    stored_result = evaluate_snapshot_policy(
+        record_count=ingestion.record_count,
+        rejected_record_count=metadata.rejected_record_count,
+        policy=stored_policy,
+    )
+    if not stored_result.snapshot_candidate_allowed:
+        policy_result = stored_result
     if not policy_result.snapshot_candidate_allowed:
         failure_code = policy_result.failure_code
         if failure_code is None:

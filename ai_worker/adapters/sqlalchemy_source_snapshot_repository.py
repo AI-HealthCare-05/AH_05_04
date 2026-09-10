@@ -4,12 +4,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, String, column, func, insert, select, table, update
+from sqlalchemy import DateTime, Integer, Numeric, String, column, func, insert, select, table, update
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
-from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_client.contracts import EmptyResultPolicy, SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
 from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProgressError
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
@@ -21,11 +21,15 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotStatusReference,
     SnapshotVerificationStatus,
 )
+from ai_worker.tasks.rag.source_ingestion.snapshot_policy import SourceSnapshotPolicy
 
 _SOURCE = table(
     "rag_source",
     column("id", String(36)),
     column("source_code", String(100)),
+    column("max_rejected_records", Integer),
+    column("max_rejection_rate", Numeric()),
+    column("empty_result_policy", String(20)),
 )
 _ENDPOINT = table(
     "rag_source_endpoint",
@@ -43,7 +47,8 @@ _SNAPSHOT = table(
     "rag_source_snapshot",
     column("id", String(36)),
     column("operation_id", String(36)),
-    column("source_version", String(255)),
+    column("source_version", String(200)),
+    column("external_version", String(200)),
     column("raw_manifest_checksum", String(64)),
     column("canonical_checksum", String(64)),
     column("schema_version", String(100)),
@@ -115,6 +120,22 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         if operation_id is None:
             raise ValueError("Source operation 저장 대상을 찾을 수 없습니다.")
         return UUID(str(operation_id))
+
+    async def get_source_policy(self, *, operation_id: UUID) -> SourceSnapshotPolicy:
+        row = (
+            await self._session.execute(
+                select(_SOURCE.c.max_rejected_records, _SOURCE.c.max_rejection_rate, _SOURCE.c.empty_result_policy)
+                .select_from(
+                    _SOURCE.join(_ENDPOINT, _ENDPOINT.c.source_id == _SOURCE.c.id).join(
+                        _OPERATION, _OPERATION.c.endpoint_id == _ENDPOINT.c.id
+                    )
+                )
+                .where(_OPERATION.c.id == str(operation_id))
+            )
+        ).one()
+        return SourceSnapshotPolicy(
+            row.max_rejected_records, row.max_rejection_rate, EmptyResultPolicy(row.empty_result_policy)
+        )
 
     async def try_lock_acquisition(self, identity: SourceOperationIdentity) -> UUID:
         """같은 Source가 수집 중이면 기다리지 않고 안전한 고정 예외를 반환합니다."""
@@ -203,6 +224,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 id=str(snapshot_id),
                 operation_id=str(request.operation_id),
                 source_version=request.metadata.source_version,
+                external_version=request.metadata.external_version,
                 raw_manifest_checksum=request.ingestion.raw_manifest_checksum,
                 canonical_checksum=request.ingestion.canonical_checksum,
                 schema_version=request.metadata.schema_version,

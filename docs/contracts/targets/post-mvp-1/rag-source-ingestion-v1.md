@@ -285,3 +285,18 @@ Snapshot의 verification_seal_id와 일반 복합 FK·CHECK는 검증된 행을 
 398c는 과거 전이·방어 함수와 Trigger를 제거하고 기본 권한 재부여도 막는다. 이미 적용된 migration 파일은 보존하며 최신 head 및 역할 provisioning을 적용하기 전의 DB를 전환 완료로 설명하지 않는다. 최신 seal 보호의 downgrade는 거부하고 검토한 forward-fix를 사용한다.
 
 PR #323 후속 검토에 따라 ingestion Run은 DB CHECK로 `FAILED → snapshot_id IS NULL`, `NO_CHANGE → snapshot_id IS NOT NULL`을 강제한다. 성공 Run은 생성한 Snapshot을 참조할 수 있다. CHECK는 참조 대상의 생성 시점이나 normalization run 구조를 확정하지 않으며, #164의 Snapshot·normalization provenance 정렬은 후속 범위로 유지한다.
+
+## #362 영속화 구현 — 1단계
+
+PD-362-20260909에 따라 Source별 거부 정책은 `rag_source`에 저장한다.
+`max_rejected_records=0`, `max_rejection_rate=0`, `empty_result_policy=REJECT`를
+기본값으로 사용하며 수집 요청 정책과 저장 정책을 모두 만족해야 후보 생성이 가능하다.
+요청 정책으로 저장된 한도를 완화하지 않는다. 정상 검증도 publication 승인을 대신하지 않는다.
+새 Snapshot의 `external_version`은 원래 입력을 보존한다. 기존 Snapshot은 소급 추정하지 않는다.
+Snapshot·Citation `source_version`의 저장 상한은 200자다. 초과하는 기존 행은
+migration에서 자르지 않고 중단한다. DB Trigger·RLS·업무 DB 함수 없이 Python 검증과
+transaction, 일반 CHECK/FK로 처리한다.
+
+Run 시도 provenance와 소비자 Receipt 연결은 아직 완료되지 않았다.
+#165의 reject_code allowlist·version 계약 및 #166의 실제 소비 검증도
+[공동 완료 조건](../../../testing/source-policy-persistence-362.md)에서 계속 추적한다.

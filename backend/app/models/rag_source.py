@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -11,6 +12,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -81,6 +83,11 @@ class RagSource(Base):
     __tablename__ = "rag_source"
     __table_args__ = (
         UniqueConstraint("source_code", name="uq_rag_source_code"),
+        CheckConstraint("max_rejected_records >= 0", name="chk_rag_source_max_rejected_records"),
+        CheckConstraint(
+            "max_rejection_rate >= 0 AND max_rejection_rate <= 1", name="chk_rag_source_max_rejection_rate"
+        ),
+        CheckConstraint("empty_result_policy = 'REJECT'", name="chk_rag_source_empty_result_policy"),
         CheckConstraint("length(trim(source_code)) > 0", name="chk_rag_source_code_nonblank"),
         CheckConstraint("length(trim(display_name)) > 0", name="chk_rag_source_display_name_nonblank"),
         CheckConstraint(
@@ -107,6 +114,14 @@ class RagSource(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    max_rejected_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_rejection_rate: Mapped[Decimal] = mapped_column(
+        Numeric(), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    empty_result_policy: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="REJECT", server_default="REJECT"
     )
 
     endpoints: Mapped[list["RagSourceEndpoint"]] = relationship(back_populates="source")
@@ -241,6 +256,7 @@ class RagSourceSnapshot(Base):
             unique=True,
             postgresql_where=text("verification_status = 'CURRENT'"),
         ),
+        CheckConstraint("length(source_version) <= 200", name="chk_rag_source_snapshot_version_length"),
         CheckConstraint("length(trim(source_version)) > 0", name="chk_rag_source_snapshot_version_nonblank"),
         CheckConstraint("length(raw_manifest_checksum) = 64", name="chk_rag_source_snapshot_raw_manifest_checksum"),
         CheckConstraint("length(canonical_checksum) = 64", name="chk_rag_source_snapshot_canonical_checksum"),
@@ -262,7 +278,8 @@ class RagSourceSnapshot(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     operation_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_source_operation.id"), nullable=False)
-    source_version: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    external_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
     raw_manifest_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     canonical_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
