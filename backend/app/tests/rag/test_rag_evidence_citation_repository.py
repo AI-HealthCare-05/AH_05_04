@@ -38,6 +38,7 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
 )
+from app.tests.fixtures.source_snapshot import seed_snapshot
 
 _CHECKSUM = "a" * 64
 _OTHER_CHECKSUM = "b" * 64
@@ -64,7 +65,8 @@ async def _create_source_catalog_graph(db_session: AsyncSession):
         )
     )
     now = datetime.now(config.TIMEZONE)
-    snapshot = await repository.create_snapshot(
+    snapshot = await seed_snapshot(
+        repository,
         RagSourceSnapshotCreate(
             operation_id=operation.id,
             source_version=f"api:2026-09-08:{suffix}",
@@ -80,7 +82,7 @@ async def _create_source_catalog_graph(db_session: AsyncSession):
             collected_at=now,
             verified_at=now,
             effective_at=now,
-        )
+        ),
     )
     product = await repository.create_product(
         RagMedicationProductCreate(

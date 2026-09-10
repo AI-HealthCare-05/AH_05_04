@@ -1,5 +1,5 @@
 import traceback
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import cast
 from unittest.mock import AsyncMock
@@ -24,16 +24,34 @@ from app.services.guide_ai.exceptions import (
 from app.services.guide_ai.generator import GuideGenerator
 from app.services.guide_ai.schemas import GuideGenerationResult
 from app.services.guides import GuideService
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 def _prescription(*, medication_name: str = "합성약 A") -> Prescription:
     prescription_id = uuid4()
     version = PrescriptionVersion(
+        **fingerprint_values(
+            date(2026, 9, 10),
+            [
+                {
+                    "medication_name": medication_name,
+                    "strength_text": "100mg",
+                    "dose_value": Decimal("1.250"),
+                    "dose_unit": "mg",
+                    "frequency_per_day": 2,
+                    "timing_text": "아침 식후",
+                    "duration_days": 7,
+                    "display_order": 1,
+                }
+            ],
+        ),
+        prescribed_date=date(2026, 9, 10),
         id=uuid4(),
         prescription_id=prescription_id,
         version_number=1,
         medications=[
             PrescriptionVersionMedication(
+                medication_count=1,
                 medication_name=medication_name,
                 strength_text="100mg",
                 dose_value=Decimal("1.250"),
@@ -51,13 +69,22 @@ def _prescription(*, medication_name: str = "합성약 A") -> Prescription:
 def _prescription_with_ordered_medications() -> Prescription:
     prescription_id = uuid4()
     version = PrescriptionVersion(
+        **fingerprint_values(
+            date(2026, 9, 10),
+            [
+                {"medication_name": "첫번째 약", "display_order": 1},
+                {"medication_name": "두번째 약", "display_order": 2},
+                {"medication_name": "세번째 약", "display_order": 3},
+            ],
+        ),
+        prescribed_date=date(2026, 9, 10),
         id=uuid4(),
         prescription_id=prescription_id,
         version_number=1,
         medications=[
-            PrescriptionVersionMedication(medication_name="첫번째 약", display_order=1),
-            PrescriptionVersionMedication(medication_name="두번째 약", display_order=2),
-            PrescriptionVersionMedication(medication_name="세번째 약", display_order=3),
+            PrescriptionVersionMedication(medication_count=3, medication_name="첫번째 약", display_order=1),
+            PrescriptionVersionMedication(medication_count=3, medication_name="두번째 약", display_order=2),
+            PrescriptionVersionMedication(medication_count=3, medication_name="세번째 약", display_order=3),
         ],
     )
     return Prescription(id=prescription_id, active_version_id=version.id, active_version=version)
@@ -228,7 +255,8 @@ async def test_backend_contract_maps_generation_errors_and_marks_failed(
 
 
 async def test_backend_contract_does_not_call_provider_when_prescription_input_is_invalid() -> None:
-    prescription = _prescription(medication_name="   ")
+    prescription = _prescription()
+    prescription.active_version.medications[0].medication_name = "   "
     service, repository, generator = _service(prescription)
 
     with pytest.raises(ApiError) as caught:
@@ -237,10 +265,11 @@ async def test_backend_contract_does_not_call_provider_when_prescription_input_i
             request=CreateGuideRequest(prescription_id=prescription.id),
         )
 
-    assert caught.value.status_code == 500
-    assert caught.value.code == "GUIDE_GENERATION_FAILED"
+    assert caught.value.status_code == 409
+    assert caught.value.code == "PRESCRIPTION_VERSION_UNAVAILABLE"
     generator.generate.assert_not_awaited()
-    assert repository.mark_failed.await_args.kwargs["error_code"] == "GENERATION_REQUEST_FAILED"
+    repository.create.assert_not_awaited()
+    repository.mark_failed.assert_not_awaited()
 
 
 async def test_backend_contract_does_not_expose_prescription_values_in_logs_or_error_chain(

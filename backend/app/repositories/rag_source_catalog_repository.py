@@ -398,6 +398,12 @@ class RagSourceCatalogRepository:
         return operation
 
     async def create_snapshot(self, item: RagSourceSnapshotCreate) -> RagSourceSnapshot:
+        if (
+            item.verification_status != RagSnapshotVerificationStatus.PENDING
+            or item.verified_at is not None
+            or item.effective_at is not None
+        ):
+            raise ValueError("Snapshot must start PENDING without publication timestamps")
         snapshot = RagSourceSnapshot(
             operation_id=item.operation_id,
             source_version=item.source_version,
@@ -440,6 +446,14 @@ class RagSourceCatalogRepository:
         self,
         item: RagSourceSnapshotVerificationCreate,
     ) -> RagSourceSnapshotVerification:
+        operation_id = await self.session.scalar(
+            select(RagSourceOperation.id)
+            .join(RagSourceSnapshot, RagSourceSnapshot.operation_id == RagSourceOperation.id)
+            .where(RagSourceSnapshot.id == item.snapshot_id)
+            .with_for_update(of=RagSourceOperation)
+        )
+        if operation_id is None:
+            raise ValueError("Snapshot Source operation is missing")
         verification = RagSourceSnapshotVerification(
             snapshot_id=item.snapshot_id,
             check_name=item.check_name,

@@ -17,6 +17,7 @@ from app.models.prescriptions import Prescription, PrescriptionVersion, Prescrip
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 def pytest_collection_modifyitems(config: pytest.Config) -> None:
@@ -93,6 +94,20 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             await session.flush()
             session.add(
                 PrescriptionVersion(
+                    **fingerprint_values(
+                        prescription.prescribed_date,
+                        [
+                            {
+                                "medication_name": "동시성 검증용 합성약",
+                                "dose_value": Decimal("0.125"),
+                                "dose_unit": "mg",
+                                "frequency_per_day": 2,
+                                "timing_text": "식후",
+                                "duration_days": 7,
+                                "display_order": 1,
+                            }
+                        ],
+                    ),
                     id=version_id,
                     prescription_id=prescription.id,
                     version_number=1,
@@ -102,6 +117,7 @@ async def committed_chat_fixture() -> AsyncIterator[CommittedChatFixture]:
             )
             await session.flush()
             version_medication = PrescriptionVersionMedication(
+                medication_count=1,
                 prescription_version_id=version_id,
                 medication_name="동시성 검증용 합성약",
                 dose_value=Decimal("0.125"),

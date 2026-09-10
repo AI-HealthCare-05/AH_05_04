@@ -69,6 +69,31 @@ MVP 회원가입 요청은 `name`, `email`, `password`만 받습니다. 가입 �
 
 access token과 refresh token에는 발급 시점의 `token_version`을 포함합니다. 인증된 요청과 `GET /api/v1/auth/token/refresh`는 DB의 `user.token_version`, `account_status`, `is_active`를 다시 확인하며, 로그아웃은 `token_version`을 DB에서 원자적으로 `+1`하고 `refresh_token` 쿠키를 삭제합니다.
 
+`refresh_session` 테이블은 refresh token rotation의 재사용 탐지를 로그인(세션) 단위로 관리합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Refresh Session PK. refresh token payload의 `session_id` 클레임과 같음 |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `active_jti` | `VARCHAR(32)` | No | 이 세션에서 현재 유효한 refresh token의 jti |
+| `created_at` | timezone datetime | No | 세션(로그인) 생성 시각 |
+| `updated_at` | timezone datetime | No | 마지막 rotation 시각 |
+
+`GET /api/v1/auth/token/refresh`는 매 호출마다 새 refresh token을 발급해 해당 `refresh_session.active_jti`를 교체합니다(rotation). 절대 만료는 로그인 시점 기준으로 고정되어 rotation으로 늘어나지 않습니다. 제출된 refresh token의 jti가 그 세션의 `active_jti`와 다르면(이미 rotation된 token 재사용) `token_version`을 즉시 `+1`해 전체 세션을 무효화합니다. `session_id`로 row를 스코프하므로 같은 사용자의 다른 기기 로그인(다른 `refresh_session` row)에는 영향을 주지 않습니다.
+
+`password_reset_token` 테이블은 비밀번호 재설정 1회용 token을 관리합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Password Reset Token PK |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `token_hash` | `VARCHAR(64)` | No | 원문 token의 SHA-256 해시. 원문은 저장하지 않음 |
+| `created_at` | timezone datetime | No | 발급 시각 |
+| `expires_at` | timezone datetime | No | 만료 시각(기본 발급 후 30분) |
+| `used_at` | timezone datetime | Yes | 소비 시각. `NULL`이면 미사용 |
+
+재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
+
 ## PROFILE SELF 소유권
 
 `profile` 테이블은 본인 단일 `SELF` profile을 저장합니다.
@@ -427,9 +452,9 @@ Revision `169a1b2c3d4e`는 Expand 단계로 `prescription_version`, `prescriptio
 | --- | --- |
 | Version sequence | `(prescription_id, version_number)` unique, `version_number > 0` |
 | 활성 Version | `NOT NULL`인 `(prescription.active_version_id, prescription.id)`가 `(prescription_version.id, prescription_version.prescription_id)`를 `DEFERRABLE INITIALLY DEFERRED`로 참조하므로 다른 처방의 Version을 가리킬 수 없고 Prescription → Version → Medication 원자 생성이 가능 |
-| Version Medication | `(prescription_version_id, display_order)` unique, 양수 display order·dose·frequency·duration 및 비어 있지 않은 약명 CHECK. 지연 제약은 commit 시 모든 Version과 active pointer에 약물 1개 이상을 요구 |
-| Snapshot 집합 동결 | Version INSERT trigger가 caller 입력을 덮어쓰고 DB의 epoch-aware top-level transaction ID를 internal `assembly_xid`에 기록. 현재 transaction ID가 같은 동안만 Medication INSERT를 허용하므로 release된 SAVEPOINT 뒤에도 조립 가능하고 custom GUC 위조 및 commit된 draft·active·historical Version 사후 INSERT 차단 |
-| 불변성과 삭제 | Version/Medication 직접 UPDATE·DELETE 차단. 사용자 삭제는 `prescription`에서 시작하는 `ON DELETE CASCADE`만 허용하며, 지연 검증은 commit 전에 이미 연쇄 삭제된 행의 큐 이벤트를 건너뜀 |
+| Version Medication | `(prescription_version_id, display_order)` UNIQUE, 양수 dose·frequency·duration·display_order와 비어 있지 않은 약명 CHECK. 부모 medication_count와 자식 count의 복합 FK 및 `1..count` 슬롯 제약을 유지하고 실제 개수·내용은 Python 저장·소비 경계에서 검증 |
+| Snapshot 집합 동결 | `398a/398b`의 NOT NULL count/hash와 일반 FK·UNIQUE·CHECK, Python Repository의 조립·저장 직후 fingerprint 검증, 소비 경로 재검증을 결합한다. `398e`는 legacy Trigger·함수와 `assembly_xid`를 제거한다. 과거 transaction ID 기반 동결은 현재 구현이 아니다 |
+| 불변성과 삭제 | Runtime은 Version/Medication에 SELECT·INSERT만 갖고 직접 UPDATE·DELETE·TRUNCATE는 거부된다. `prescription` 부모 삭제의 기존 FK CASCADE는 유지한다. 실제 운영 적용은 forward migration과 역할 provisioning 이후에 성립 |
 
 이관 순서는 `Expand → Dual-write → Backfill → Verify → Read cutover → Cleanup`입니다. Cleanup 이후 신규 확정 writer와 모든 현재 read는 `prescription_version`·`prescription_version_medication`만 사용하고 legacy `medication`을 더 이상 dual-write하거나 조회하지 않습니다. legacy 테이블과 과거 row는 이관 감사·구 migration backfill 원본으로 보존하며 이 PR에서 삭제하지 않습니다. `prescription_id`가 Guide·Chat에 남아 있는 것은 소유권 및 composite FK의 부모 연결용이며 결과 snapshot의 현재성 기준은 반드시 `prescription_version_id`입니다.
 
@@ -498,8 +523,8 @@ B3~B4 후속 범위다.
 Revision `201a1b2c3d4e`는 `medication_checkin`과 `checkin_audit`을 추가한다. 현재 Check-in은
 `occurrence_id` unique로 occurrence마다 하나만 저장하고 `TAKEN|NOT_TAKEN|UNCONFIRMED`, 양수 revision,
 `TAKEN` 외 상태의 `taken_at IS NULL`을 DB CHECK로도 제한한다. 정정 시 현재 row의 revision을 하나 올리며
-이전·이후 상태와 revision, 변경 사용자·시각을 `checkin_audit`에 append한다. Audit은 DB trigger로
-UPDATE·DELETE를 거부하며 `reason_code` 컬럼이나 임의 enum을 만들지 않는다. Check-in 이력이 있는 환경은
+이전·이후 상태와 revision, 변경 사용자·시각을 `checkin_audit`에 append한다. Audit은 상태 변경과 같은 Python transaction에서 append하며, Runtime SELECT·INSERT 권한만 부여해
+직접 UPDATE·DELETE·TRUNCATE를 거부한다. 기존 Trigger는 398d에서 제거하며 `reason_code` 컬럼이나 임의 enum을 만들지 않는다. Check-in 이력이 있는 환경은
 downgrade로 두 테이블을 제거하지 않고 forward-fix한다.
 
 Repository는 occurrence부터 `FOR UPDATE`로 잠그고 SELF parent chain을 확인한다. 최초 사용자 쓰기와 deadline
@@ -533,13 +558,16 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 | Rule·Evidence | `rag_evidence_knowledge`, `rag_evidence`, `rag_evidence_rule`, `rag_evidence_guideline`, rule set 계열 | Evidence/Citation 최소 DB 기반은 PR #369에서 추가. 처방약–OTC Rule-first 실행, ranking, resolver, 품질 평가와 Runtime 활성화는 후속 |
 | RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열, `rag_citation` | `rag_citation`은 Evidence와 동일 Source Snapshot 및 `source_version`에 묶인 claim-Evidence 비공개 저장 기반만 제공합니다. 이번 최소 DB 기반의 Evidence 상태는 `DRAFT`/`APPROVED`를 명시 입력으로만 사용하고, Citation 공개 상태는 `NOT_PUBLIC`만 사용합니다. STALE·retire·revoke lifecycle과 공개 Guard 연결은 #178/#180/#181 후속 전환 설계에서 추가합니다. 실제 Retrieval, Provider 호출, 답변 생성, Safety/Fallback 문구 생성, 화면 표시는 후속 |
 | Runtime 배포 | `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval` 최소 DB 기반 반영 완료 | Source Snapshot과 Evaluation Run은 FK로 결속하고 Candidate Index는 #168 전까지 ref/hash로만 보관합니다. Evaluation PASS는 release approval 입력일 뿐 자동 Runtime 활성화가 아니며, 실제 activation·rollback·Production 공개는 후속 범위입니다. |
+| RAG 실행 Context | `ai_job_intake_context`, `ai_job_execution_context`, `ai_job_execution_identification` 저장 기반 반영 완료 | Chat Intake Context와 Guide/Chat Full Execution Context가 고정한 Prescription Version·Runtime Bundle·Execution Manifest·Guard ref·Identification member를 보존합니다. Guard 물리 테이블 전까지 `runtime_guard_decision_ref`를 사용하며, Guide/Chat 202 접수 transaction, Worker 실행, currentness 재검증, `STALE` 종결과 공개 DTO 연결은 후속 범위입니다. |
 | Evaluation | `eval_dataset`, `eval_case`, `eval_experiment`, `eval_variant`, `eval_run`, `eval_case_result`, `eval_metric`, `eval_failure` 최소 DB 기반 반영 완료 | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. `eval_run`은 `dataset_id + dataset_manifest_hash`가 실제 Dataset manifest와 일치해야 하고, `eval_case_result`는 Run·Case의 `dataset_id + experiment_type` 혼용을 DB에서 차단합니다. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료(`COMPLETED`)는 `decision_status`를 반드시 기록하며 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`입니다. Runner·Release approval·Runtime 활성화 연결은 후속 |
 
 Evaluation의 `question_template`, `source_segment`, `non_sensitive_summary`, `non_sensitive_context`는 합성 template/segment 식별자, metric 이름·개수, enum code, artifact reference 같은 비민감 구조화 값만 허용합니다. 자유 텍스트, 모델 출력, retrieved chunk, 실제 환자정보, OCR 원문, 처방 원문은 저장하지 않습니다.
 
-Runtime Bundle 최소 DB 기반은 `rag_runtime_execution_manifest`로 실행 manifest와 Worker/model/prompt/parser/resolver/guard reference를 고정하고, `rag_runtime_release_bundle`로 bundle manifest hash와 Candidate/Knowledge index ref/hash를 보관합니다. `rag_runtime_bundle_source`는 bundle이 선택한 `rag_source_snapshot.id`를 직접 FK로 기록합니다. `rag_release_evaluation_approval`은 `bundle_id + bundle_manifest_hash`와 `eval_run.id + decision_status`를 FK로 묶어 승인 기록이 정확한 Bundle manifest와 실제 PASS Run에서 벗어나지 않도록 하며, `rag_runtime_environment`는 active bundle id와 manifest hash를 함께 저장합니다. `rag_runtime_environment_transition`은 activation·rollback·resume·suspend 시 이전/이후 bundle pointer와 Guard Decision ref를 append-only 이력으로 보존합니다. 활성 여부의 기준 원본은 `rag_runtime_environment.active_bundle_id + active_bundle_manifest_hash` 포인터이며, `rag_runtime_release_bundle.bundle_status`에는 `ACTIVE` 값을 두지 않습니다. 이 구조는 저장 기반만 제공하며 Runtime 활성화 transaction, drain, mixed worker rollback, Candidate Index FK 연결, Production 공개 승인은 후속 PR에서 처리합니다.
+Runtime Bundle 최소 DB 기반은 `rag_runtime_execution_manifest`로 실행 manifest와 Worker/model/prompt/parser/resolver/guard reference를 고정하고, `rag_runtime_release_bundle`로 bundle manifest hash와 Candidate/Knowledge index ref/hash를 보관합니다. `rag_runtime_bundle_source`는 bundle이 선택한 `rag_source_snapshot.id`를 직접 FK로 기록합니다. `rag_release_evaluation_approval`은 `bundle_id + bundle_manifest_hash`와 `eval_run.id + decision_status`를 FK로 묶어 승인 기록이 정확한 Bundle manifest와 실제 PASS Run에서 벗어나지 않도록 하며, `rag_runtime_environment`는 active bundle id와 manifest hash를 함께 저장합니다. `rag_runtime_environment_transition`은 activation·rollback·resume·suspend 시 이전/이후 bundle pointer와 Guard Decision ref를 append-only 이력으로 보존합니다. 활성 여부의 기준 원본은 `rag_runtime_environment.active_bundle_id + active_bundle_manifest_hash` 포인터이며, `rag_runtime_release_bundle.bundle_status`에는 `ACTIVE` 값을 두지 않습니다. #398은 최소 Environment 전이 transaction과 이력 원자성을 구현합니다. 전체 drain, mixed Worker rollback, Candidate Index 연결과 Production 공개 승인은 후속 범위입니다.
 
-Runtime 수정 가능 범위는 다음처럼 구분합니다. `rag_runtime_environment_transition`은 DB trigger로 UPDATE·DELETE를 차단하는 append-only 이력입니다. `rag_runtime_environment`는 환경별 현재 active bundle pointer, status, revision, safety epoch를 보관하는 mutable pointer 테이블이며 실제 변경 transaction과 drain 검증은 후속 Runtime activation PR 범위입니다. `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_release_evaluation_approval`은 이번 최소 기반에서 생성·참조용 저장 구조와 FK/unique/CHECK만 제공하며, publish 이후 정정은 row 덮어쓰기보다 새 bundle/approval/forward-fix로 처리하는 정책을 후속 activation·approval 구현에서 고정합니다.
+Runtime 전이 이력은 Runtime SELECT·INSERT 권한만 갖는 append-only 테이블이다. Python 전이 Service/Repository가 Environment→Bundle 순서로 잠그고 최신 상태를 다시 읽어 revision·포인터·governance를 비교한 뒤 포인터 변경과 이력 INSERT를 같은 savepoint에서 수행한다. `(environment_id, environment_revision)` UNIQUE가 중복 전이 이력을 막고 미지원 전이 종류는 거부한다. `398d`에서 기존 이력 Trigger·함수를 제거한다. 전체 activation drain, mixed Worker rollback 및 공개 승인은 후속 범위이며 최소 전이 transaction 구현과 구분한다.
+
+AI Job Preflight Context 최소 DB 기반은 `ai_job_intake_context`로 Chat Safety Intake 시점의 요청 digest·Prescription Version·Runtime Bundle/환경·Execution Manifest·Guard ref를 고정하고, `ai_job_execution_context`로 Guide 또는 Chat ROUTINE Full Execution 시점의 동일 Runtime 기준과 Source scope hash를 고정합니다. `ai_job_execution_identification`은 Full Context가 참조한 `MATCHED` Identification member set을 중복 없이 보존합니다. DB는 `medication_identification_id`와 `prescription_version_medication_id`의 composite FK로 약-Identification 일치를 고정하고, repository는 `MATCHED` 상태만 pinning하도록 검증합니다. 이 구조는 저장 기반만 제공하며 Guide/Chat 접수 API 전환, Outbox 원자 생성, Worker 실행, 결과 commit currentness 재검증, Citation 공개 Guard와 Frontend DTO 연결은 후속 PR에서 처리합니다.
 
 OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계를 가지며, pgvector는 OCR 후보 보조 단계에만 사용합니다. HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상호작용 근거로 사용하지 않습니다.
 
@@ -549,7 +577,7 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 
 ### Source Verification 후속 보호 (#165 / PR #323)
 
-- `165d7e6f5041`은 `rag_source_snapshot_verification`의 UPDATE·DELETE를 DB trigger로 차단한다.
+- 과거 `165d7e6f5041`의 Verification Trigger는 `398c`에서 제거한다. 현재는 Python 감사 INSERT와 Runtime/Writer/Management의 Verification UPDATE·DELETE·TRUNCATE 권한 회수로 이력을 보존한다.
 - `snapshot-publication-approval = PASSED`는 비어 있지 않은 `verified_by`가 필요하다. 기존 익명 승인은 자동 변환하지 않으며 migration 적용 전에 검토해야 한다.
 - Verification 이력이 있으면 해당 보호를 제거하는 downgrade를 차단한다.
 - FAILED Snapshot도 같은 Source version의 충돌 비교에 포함하지만 `NO_CHANGE` 재사용은 금지한다. FAILED는 계보에서 제외하며, 이전 비FAILED Snapshot이 없으면 NULL이다. FAILED 저장 모델의 정본 정렬은 #164 후속 범위다.
@@ -557,4 +585,19 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 
 ### Source Snapshot 상태 전이 보호 (#165 / #323)
 
-Revision `165e8f706152`는 일반 비소유자 Runtime 역할의 Snapshot 상태·검증/선택 timestamp 직접 UPDATE와 non-PENDING INSERT를 차단한다. `transition_rag_source_snapshot` DB 함수만 허용 전이와 rejected Snapshot의 named publication 승인을 검사한 뒤 CURRENT 상태와 immutable selection Verification을 함께 기록한다. migration owner와 Runtime 역할은 분리한다. 실제 Source Runtime·외부 승인 활성화는 여전히 후속 범위다. 상세 계약은 Source Target의 DB-owned 경계 절과 2026-09-08 Source Snapshot DB transition Decision을 따른다.
+과거 `165e8f706152`와 `transition_rag_source_snapshot` 함수 기반 경계는 superseded되었다. `398c` forward migration이 기존 Source Trigger·함수를 제거하며, Python Repository가 Operation→Snapshot 잠금·expected status·허용 전이·named publication 승인과 선택 감사의 원자성을 담당한다. Runtime은 Source SELECT만, 별도 Writer는 필요한 INSERT와 제한된 UPDATE만 갖는다. `398293a4b5c6`의 Snapshot `(id, verification_seal_id)` FK와 CHECK, 불변 Verification의 역방향 FK가 검증된 Snapshot의 관리 역할 직접 DELETE를 차단한다. 미검증·미참조 PENDING 관리 삭제는 유지한다. 상세 계약은 [PD-398-R1](governance/decisions/2026-09-10-python-integrity-review-429.md)과 [Python Snapshot 전이](contracts/proposed/python-snapshot-transition-398.md)를 따른다.
+
+## #398 관리 권한·감사 확장 (브랜치 구현, 리뷰 대기)
+
+`3980718293a4`는 `source_management_permission`과 `source_management_audit`를 추가한다. 권한은 user_id별 서버 설정이며 감사는 actor/request_id UNIQUE, 대상별 변경 revision UNIQUE를 갖는다. 감사 대상·작업자는 삭제 후 증거 보존을 위해 대상 FK로 연결하지 않는다. 일반 Runtime/Source Writer는 이 테이블을 수정하지 못하고 관리 Writer는 감사 INSERT만 가능하다. 상세 컬럼 의미와 삭제 후 provenance 보존은 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. Trigger·RLS·업무 DB 함수는 추가하지 않는다.
+
+## #398 / PR #429 적용 기준
+
+위 Python 전환 설명은 이 PR의 코드와 최신 migration head `398293a4b5c6` 기준이다. AWS·운영 DB 적용 완료를 주장하지 않는다. 기존 운영 DB의 보호는 실제 적용 revision과 역할 정책으로 판단한다. 배포는 migration → verify-db-head → provision-db-roles → 서비스 시작 순서이며, 검사 실패 시 시작하지 않는다. 정적 SQL/AST 검사는 휴리스틱이고 동적 SQL 전부를 증명하지 않는다. 검증된 Snapshot 삭제 방어는 일반 FK·CHECK, 불변 이력 ACL, 실제 제한 로그인 테스트로 확인한다.
+
+병합된 #404의 `206a1b2c3d4e`는 `39818293a4b5` merge revision으로 기존 #398 이력과 연결된다. 인증 테이블의 신규 권한은 Runtime SELECT/INSERT 및 `refresh_session(active_jti, updated_at)`, `password_reset_token(used_at)` UPDATE만 허용한다. 처방 멱등성은 기존 `idempotency_record` UNIQUE·암호화 응답 저장을 사용하며 새 Trigger·RLS·저장 함수는 만들지 않는다.
+
+
+### PR #429 관리 Snapshot 잠금 권한 (PD-398-R2)
+
+`rag_source_snapshot.management_lock_marker`는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 `verified_at`/`effective_at`/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration `3984b5c6d7e8` 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.

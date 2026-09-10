@@ -148,7 +148,7 @@ Raw Artifact 수집
 
 ### PR #323 후속 리뷰 반영 경계
 
-- `snapshot-publication-approval = PASSED`는 NULL 또는 공백인 `verified_by`를 허용하지 않는다. 일반 자동 무결성 검사의 nullable 승인자와는 구분한다. Verification 이력은 DB trigger로 UPDATE·DELETE를 차단하며 이력이 있으면 보호를 제거하는 downgrade도 거부한다. 기존 익명 publication 승인 데이터가 있으면 migration은 실패하며 임의 승인자 보정은 하지 않는다. 승인 주체의 존재 검사는 전체 Source Use Approval이나 권한 검증 구현을 대신하지 않는다.
+- `snapshot-publication-approval = PASSED`는 NULL 또는 공백인 `verified_by`를 허용하지 않는다. 일반 자동 무결성 검사의 nullable 승인자와는 구분한다. Verification은 Python transaction에서 기록하고 Runtime/Writer/Management의 UPDATE·DELETE·TRUNCATE 권한을 회수해 보존한다. 과거 Trigger는 398c forward migration에서 제거하며 새로운 Trigger를 만들지 않는다. 기존 익명 publication 승인 데이터가 있으면 migration은 실패하며 임의 승인자 보정은 하지 않는다. 승인 주체의 존재 검사는 전체 Source Use Approval이나 권한 검증 구현을 대신하지 않는다.
 - 동일 Source version의 FAILED 이력도 canonical checksum·schema/parser/normalization/canonicalization version·Endpoint Receipt hash·거부 건수 비교에 포함한다. 하나라도 다르면 `SOURCE_VERSION_CONFLICT`로 기록하고 Snapshot을 생성하지 않는다. 모두 같은 FAILED 재시도만 새 PENDING 후보를 허용한다. 유효 후보가 이미 있으면 그 후보를 우선 조회하여 중복 재시도를 `NO_CHANGE`로 처리한다.
 - 현재 REJECTS는 거부 record 1개당 Artifact 1개다. `rejected_record_count`와 Artifact 개수의 일치를 파일 보존 전과 DB 저장 전에 모두 검사한다.
 - #165 RAG 검토에 따라 FAILED 이력은 동일 version 충돌 비교에 포함하되 `supersedes_snapshot_id` 계보에서는 제외한다. 이전 비FAILED Snapshot이 없으면 NULL이다. 정본은 FAILED normalization에서 Snapshot을 생성하지 않으므로, 현재 FAILED Snapshot 모델과 최종 uniqueness는 #164에서 정렬한다.
@@ -274,16 +274,14 @@ Runtime Release Bundle의 상세 구성과 현재성 검사는 [RAG Runtime 계�
 - normalization run은 #164가 저장 구조·FK, #165가 실행 생성·완료·재실행 정책, #166이 확정된 (source_snapshot_id, normalization_run_id)를 소비하는 책임으로 나눈다. normalization_version이나 ingestion_run_id로 실행 ID를 대신하지 않는다. 물리 구조·실행 인터페이스 상세는 인계 대기다.
 - reject_code 형식 검사는 승인 allowlist가 아니다. 별도 versioned 정본과 변경 절차가 필요하며 구체 목록·버전은 미확정이다. #335의 보존 정책 분리가 이 코드 계약의 승인을 의미하지 않는다.
 
-## Snapshot 상태의 DB-owned 경계 (#323 추가 리뷰)
+## Snapshot 상태의 Python 경계 (#398 / PR #429)
 
-구현·재검토 대상 Decision: `docs/governance/decisions/2026-09-08-source-snapshot-db-transition.md`.
+[과거 DB-owned Decision](../../../governance/decisions/2026-09-08-source-snapshot-db-transition.md)은 superseded되었으며 신규 저장 함수나 Trigger의 승인 근거가 아니다. 대체 기준은 [PD-398-R1](../../../governance/decisions/2026-09-10-python-integrity-review-429.md)과 [Python Snapshot 전이](../../proposed/python-snapshot-transition-398.md)다.
 
-Revision `165e8f706152`는 비소유자 Runtime 역할의 Snapshot 상태·verified_at·effective_at 직접 변경을 trigger로 거부한다. INSERT는 PENDING·두 timestamp NULL만 허용한다. Runtime은 테이블/함수 소유자·superuser가 아니며 migration owner 역할을 상속하거나 전환할 권한이 없어야 한다. 기존 Runtime DML 권한이 있어도 trigger 검증을 우회하지 못한다.
+Runtime은 Source SELECT만 갖고, 분리된 Writer가 Python Repository에서 Operation→Snapshot 잠금 후 expected status와 허용 전이를 확인한다. 신규 Snapshot은 PENDING·verified_at/effective_at NULL로 생성한다. PENDING→CURRENT/FAILED, CURRENT→STALE, STALE→CURRENT만 허용하며 거부 자료 CURRENT 선택에는 named publication PASSED 및 작업자 식별자가 필요하다. seal 이력·상태 변경·CURRENT 선택 감사는 같은 savepoint에 저장하고 실패 시 함께 rollback한다. Source 수집은 Source별 내장 transaction advisory lock을 사용하며 사용자 정의 함수를 만들지 않는다.
 
-`transition_rag_source_snapshot(snapshot_id, expected_status, next_status, verified_at, effective_at, selected_by)`는 migration owner의 SECURITY DEFINER 함수다. 함수 search_path는 migration schema와 pg_catalog로 고정하고 pg_temp는 마지막에 둔다. PUBLIC의 함수 실행 권한은 회수하고 migration 시점에 Snapshot UPDATE 권한이 있는 역할에만 EXECUTE를 부여한다. `configure-app-role.sql`은 함수가 이미 존재하면 신규 Runtime 역할에도 해당 함수의 EXECUTE만 인계한다. 역할을 먼저 만들면 migration이, migration 이후에 만들면 역할 프로비저닝이 인계한다. caller가 설정하는 GUC를 권한 근거로 쓰지 않는다. Operation lock과 expected-status 재검증 후 PENDING→CURRENT/FAILED, CURRENT→STALE, STALE→CURRENT만 허용한다. FAILED→CURRENT와 timestamp 단독 변경은 허용하지 않는다.
+Snapshot의 verification_seal_id와 일반 복합 FK·CHECK는 검증된 행을 불변 Verification 이력에 연결한다. Runtime/Writer/Management는 Verification을 수정·삭제할 수 없으므로 관리 역할의 직접 SQL DELETE도 FK 위반으로 차단된다. 실제 소유자·superuser는 실행 역할로 쓰지 않는다. 이 보장은 전체 Source Use Approval·외부 공개 승인을 대체하지 않는다.
 
-CURRENT 전이 시 rejection이 있으면 named publication PASSED가 필요하며, 상태 변경과 `snapshot-current-selection=PASSED` append는 같은 SQL 함수·transaction에서 수행한다. 증빙에는 selected_by와 실제 session_user를 기록한다. service는 별도로 같은 선택 이력을 중복 append하지 않는다. 함수 실패나 caller transaction rollback은 상태와 이력을 함께 되돌린다. 이 경계는 기존 최소 publication 검사를 DB에서 강제하며, 실제 Source Use Approval/승인자 권한 인증 전체를 구현했다는 의미는 아니다.
-
-#324의 `169a1b2c3d4e` 뒤에 Source Artifact 첫 revision을 연결한다. 최종 normalization run·Snapshot 정렬은 여전히 #164 후속 범위다. Snapshot이 존재하면 상태 보호 downgrade는 거부하고 forward-fix를 사용한다.
+398c는 과거 전이·방어 함수와 Trigger를 제거하고 기본 권한 재부여도 막는다. 이미 적용된 migration 파일은 보존하며 최신 head 및 역할 provisioning을 적용하기 전의 DB를 전환 완료로 설명하지 않는다. 최신 seal 보호의 downgrade는 거부하고 검토한 forward-fix를 사용한다.
 
 PR #323 후속 검토에 따라 ingestion Run은 DB CHECK로 `FAILED → snapshot_id IS NULL`, `NO_CHANGE → snapshot_id IS NOT NULL`을 강제한다. 성공 Run은 생성한 Snapshot을 참조할 수 있다. CHECK는 참조 대상의 생성 시점이나 normalization run 구조를 확정하지 않으며, #164의 Snapshot·normalization provenance 정렬은 후속 범위로 유지한다.

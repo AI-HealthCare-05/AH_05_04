@@ -14,6 +14,8 @@ source scripts/ci/parallel_test_lanes.sh
 
 export PYTEST_ADDOPTS=""
 uv run python scripts/ci/check_python_test_inventory.py
+uv run python scripts/ci/check_database_logic.py
+uv run python scripts/ci/check_protected_table_writes.py
 
 prepare_test_environment
 prepare_test_runner_state_directory
@@ -24,11 +26,15 @@ mkdir -p "$TEST_COVERAGE_DIR" "$TEST_RUNNER_STATE_DIR/pytest-cache/backend" "$TE
 
 echo "Apply Alembic migrations to test database"
 
-run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
+run_with_backend_test_database alembic -c backend/alembic.ini upgrade 398b2c3d4e5f
 
 echo "Validate migrated PostgreSQL schema"
 
 run_with_backend_test_database pytest tests/migration -v
+
+# Historical downgrade tests finish before the irreversible Source cutover.
+run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
+run_with_backend_test_database python scripts/ci/verify_database_head.py
 
 run_backend_test_lane() {
   local cache_dir="$TEST_RUNNER_STATE_DIR/pytest-cache/backend"
@@ -71,10 +77,11 @@ run_worker_test_lane() {
 
   # ai_worker 단위 테스트는 backend/app을 PYTHONPATH에서 제외한 별도 프로세스로
   # 실행하여 Worker가 Backend 내부 모듈에 의존하는 실수를 잡습니다.
-  echo "Run AI Worker tests with Coverage"
+  echo "Run AI Worker tests with two pytest-xdist workers and combined Coverage"
 
   if ! run_with_worker_test_environment \
-    coverage run -m pytest -o "cache_dir=$cache_dir" \
+    pytest -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
+    -o "cache_dir=$cache_dir" \
     ai_worker/tests/core \
     ai_worker/tests/ocr \
     ai_worker/tests/rag \

@@ -1,16 +1,14 @@
 """Source Snapshot 저장·현재성 전이를 실제 PostgreSQL에서 검증합니다."""
 
 import asyncio
-import importlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from sqlalchemy import func, select, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -51,6 +49,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
     SnapshotSelectionDecision,
+    SnapshotVerificationStatus,
     fail_snapshot_verification,
     persist_product_ingestion_result,
     select_current_snapshot,
@@ -135,12 +134,6 @@ async def isolated_schema() -> AsyncIterator[None]:
 
     async with test_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-
-        def install_transition(sync_connection):
-            with Operations.context(MigrationContext.configure(sync_connection)):
-                importlib.import_module("backend.alembic.versions.165e8f706152_guard_snapshot_transitions").upgrade()
-
-        await connection.run_sync(install_transition)
 
     try:
         yield
@@ -379,7 +372,7 @@ async def test_snapshot_history_no_change_conflict_and_restore_are_atomic() -> N
             .select_from(RagSourceSnapshotVerification)
             .where(RagSourceSnapshotVerification.snapshot_id.in_([snapshot.id for snapshot in snapshots]))
         )
-        assert verification_count == 7
+        assert verification_count == 9  # Seven validation/selection records and two immutable state seals.
 
 
 async def test_outer_transaction_rollback_removes_snapshot_and_histories() -> None:
@@ -834,3 +827,297 @@ async def test_failed_same_version_different_contract_is_conflict(changed: str) 
         run = await session.get(RagSourceIngestionRun, result.ingestion_run_id)
         assert run is not None
         assert run.failure_code == "SOURCE_VERSION_CONFLICT"
+
+
+async def test_python_transition_rolls_back_when_selection_audit_fails(monkeypatch) -> None:
+    identity = await _seed_operation("AUDIT_ROLLBACK_398")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        created = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:audit398", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+        assert created.snapshot_id is not None
+        snapshot_id = created.snapshot_id
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        monkeypatch.setattr(repository, "append_verification", AsyncMock(side_effect=RuntimeError("audit unavailable")))
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await repository.change_snapshot_status(
+                snapshot_id=snapshot_id,
+                expected_status=SnapshotVerificationStatus.PENDING,
+                new_status=SnapshotVerificationStatus.CURRENT,
+                verified_at=_NOW,
+                effective_at=_NOW,
+                selected_by="synthetic-reviewer",
+            )
+        # 호출자가 예외를 잡고 외부 transaction을 commit해도 상태 변경만 남지 않습니다.
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, snapshot_id)
+        assert snapshot is not None
+        assert snapshot.verification_status == RagSnapshotVerificationStatus.PENDING
+        assert snapshot.verified_at is None
+        count = await session.scalar(
+            select(func.count())
+            .select_from(RagSourceSnapshotVerification)
+            .where(
+                RagSourceSnapshotVerification.snapshot_id == snapshot_id,
+                RagSourceSnapshotVerification.check_name == "snapshot-current-selection",
+            )
+        )
+        assert count == 0
+
+
+@pytest.mark.parametrize("scenario", ["success", "checksum_mismatch", "request_audit_failure"])
+async def test_writer_selection_transaction(scenario, monkeypatch):
+    from ai_worker.admin.source_writer import select_snapshot
+
+    identity = await _seed_operation(f"WRITER_{scenario}")
+    async with session_factory.begin() as session:
+        created = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata(f"external:writer-{scenario}", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+    assert created.snapshot_id is not None
+    original = SqlAlchemySourceSnapshotRepository.append_verification
+
+    async def append(repository, **kwargs):
+        if kwargs["check_name"] == "snapshot-selection-request":
+            raise RuntimeError("synthetic audit failure")
+        return await original(repository, **kwargs)
+
+    if scenario == "request_audit_failure":
+        monkeypatch.setattr(SqlAlchemySourceSnapshotRepository, "append_verification", append)
+
+    async def execute():
+        async with session_factory.begin() as session:
+            return await select_snapshot(
+                session,
+                snapshot_id=created.snapshot_id,
+                expected_checksum=_CHECKSUM_B if scenario == "checksum_mismatch" else _CHECKSUM_A,
+                actor="synthetic-operator",
+                reason_code="VERIFIED_RELEASE",
+            )
+
+    if scenario == "success":
+        assert (await execute()).decision is SnapshotSelectionDecision.ACTIVATED
+        assert (await execute()).decision is SnapshotSelectionDecision.ALREADY_CURRENT
+    else:
+        with pytest.raises((ValueError, RuntimeError)):
+            await execute()
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, created.snapshot_id)
+        assert snapshot.verification_status == (
+            RagSnapshotVerificationStatus.CURRENT if scenario == "success" else RagSnapshotVerificationStatus.PENDING
+        )
+        audits = (
+            (
+                await session.execute(
+                    select(RagSourceSnapshotVerification.check_name).where(
+                        RagSourceSnapshotVerification.snapshot_id == created.snapshot_id,
+                        RagSourceSnapshotVerification.check_name.in_(
+                            ("snapshot-current-selection", "snapshot-selection-request")
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert sorted(audits) == (
+            ["snapshot-current-selection", "snapshot-selection-request"] if scenario == "success" else []
+        )
+
+
+async def test_writer_entrypoint_with_actual_restricted_credentials():
+    from argparse import Namespace
+    from uuid import uuid4
+
+    from sqlalchemy.exc import DBAPIError
+
+    from ai_worker.admin.source_writer import WriterConfig, run_selection
+    from infra.python.source_role_policy import apply_source_role_policy
+
+    suffix = uuid4().hex[:12]
+    runtime, writer = f"source398_reader_{suffix}", f"source398_writer_{suffix}"
+    password = "synthetic-source398-test-only"
+    admin = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    identity = await _seed_operation(f"ENTRYPOINT_{suffix}")
+    async with session_factory.begin() as session:
+        created = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata(f"external:entrypoint-{suffix}", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+    args = Namespace(snapshot_id=created.snapshot_id, expected_checksum=_CHECKSUM_A, reason_code="VERIFIED_RELEASE")
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+                await connection.execute(text(f'ALTER ROLE "{role}" SET search_path TO {TEST_SCHEMA}'))
+            await apply_source_role_policy(
+                connection, schema=TEST_SCHEMA, owner=config.DB_USER, runtime=runtime, writer=writer
+            )
+        writer_config = WriterConfig(TEST_DATABASE_URL.set(username=writer, password=password), "synthetic-operator")
+        reader_config = WriterConfig(TEST_DATABASE_URL.set(username=runtime, password=password), "synthetic-operator")
+        with pytest.raises(ValueError, match="non-owner"):
+            await run_selection(WriterConfig(TEST_DATABASE_URL, "synthetic-operator"), args)
+        async with admin.begin() as connection:
+            await connection.execute(text(f'ALTER ROLE "{writer}" REPLICATION'))
+        with pytest.raises(ValueError, match="non-owner"):
+            await run_selection(writer_config, args)
+        async with admin.begin() as connection:
+            await connection.execute(text(f'ALTER ROLE "{writer}" NOREPLICATION'))
+        with pytest.raises(DBAPIError):
+            await run_selection(reader_config, args)
+        async with admin.begin() as connection:
+            await connection.execute(
+                text(f'REVOKE INSERT ON {TEST_SCHEMA}.rag_source_snapshot_verification FROM "{writer}"')
+            )
+        with pytest.raises(DBAPIError):
+            await run_selection(writer_config, args)
+        async with session_factory() as session:
+            snapshot = await session.get(RagSourceSnapshot, created.snapshot_id)
+            assert snapshot.verification_status == RagSnapshotVerificationStatus.PENDING
+        async with admin.begin() as connection:
+            await connection.execute(
+                text(f'GRANT INSERT ON {TEST_SCHEMA}.rag_source_snapshot_verification TO "{writer}"')
+            )
+        assert (await run_selection(writer_config, args)).decision is SnapshotSelectionDecision.ACTIVATED
+        assert (await run_selection(writer_config, args)).decision is SnapshotSelectionDecision.ALREADY_CURRENT
+        async with session_factory() as session:
+            count = await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshotVerification)
+                .where(
+                    RagSourceSnapshotVerification.snapshot_id == created.snapshot_id,
+                    RagSourceSnapshotVerification.check_name == "snapshot-selection-request",
+                )
+            )
+            assert count == 1
+    finally:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                if await connection.scalar(text("SELECT 1 FROM pg_roles WHERE rolname=:role"), {"role": role}):
+                    await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                    await connection.execute(text(f'DROP ROLE "{role}"'))
+        await admin.dispose()
+
+
+@pytest.mark.parametrize("writer_path", ["worker", "backend"])
+async def test_verification_insert_waits_for_operation_transition_lock(writer_path):
+    from sqlalchemy.exc import DBAPIError
+
+    from app.models.rag_source import RagVerificationResultStatus
+    from app.repositories.rag_source_catalog_repository import RagSourceSnapshotVerificationCreate
+
+    identity = await _seed_operation(f"VERIFY_LOCK_{writer_path}")
+    async with session_factory.begin() as session:
+        created = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata(f"external:verify-lock-{writer_path}", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+    assert created.snapshot_id is not None
+    async with session_factory.begin() as holder:
+        await SqlAlchemySourceSnapshotRepository(holder).lock_snapshot_operation(snapshot_id=created.snapshot_id)
+        with pytest.raises(DBAPIError) as error:
+            async with session_factory.begin() as contender:
+                await contender.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                if writer_path == "worker":
+                    await SqlAlchemySourceSnapshotRepository(contender).append_verification(
+                        snapshot_id=created.snapshot_id,
+                        check_name="synthetic-lock-check",
+                        result="PASSED",
+                        verified_at=_NOW,
+                        verified_by="synthetic-reviewer",
+                    )
+                else:
+                    await RagSourceCatalogRepository(contender).create_snapshot_verification(
+                        RagSourceSnapshotVerificationCreate(
+                            snapshot_id=created.snapshot_id,
+                            check_name="synthetic-lock-check",
+                            verification_result=RagVerificationResultStatus.PASSED,
+                            verified_at=_NOW,
+                            verified_by="synthetic-reviewer",
+                        )
+                    )
+        assert error.value.orig.sqlstate == "55P03"
+    async with session_factory() as session:
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshotVerification)
+                .where(
+                    RagSourceSnapshotVerification.snapshot_id == created.snapshot_id,
+                    RagSourceSnapshotVerification.check_name == "synthetic-lock-check",
+                )
+            )
+            == 0
+        )
+
+
+async def test_writer_login_can_acquire_and_persist_without_source_update_privilege() -> None:
+    from uuid import uuid4
+
+    from infra.python.source_role_policy import apply_source_role_policy
+
+    suffix = uuid4().hex[:10]
+    runtime, writer = f"acquire_reader_{suffix}", f"acquire_writer_{suffix}"
+    password = "synthetic-acquisition-only"
+    identity = await _seed_operation(f"WRITER_{suffix}")
+    admin = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    producer = create_async_engine(
+        TEST_DATABASE_URL.set(username=writer, password=password),
+        poolclass=NullPool,
+        connect_args={"server_settings": {"search_path": TEST_SCHEMA}},
+        hide_parameters=True,
+    )
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await apply_source_role_policy(
+                connection, schema=TEST_SCHEMA, owner=config.DB_USER, runtime=runtime, writer=writer
+            )
+            assert not await connection.scalar(
+                text("SELECT has_any_column_privilege(:role, :table, 'UPDATE')"),
+                {"role": writer, "table": f"{TEST_SCHEMA}.rag_source"},
+            )
+        factory = async_sessionmaker(producer)
+        async with factory.begin() as first:
+            repository = SqlAlchemySourceSnapshotRepository(first)
+            await repository.try_lock_acquisition(identity)
+            async with factory.begin() as second:
+                with pytest.raises(SourceAcquisitionInProgressError):
+                    await SqlAlchemySourceSnapshotRepository(second).try_lock_acquisition(identity)
+            result = await persist_product_ingestion_result(
+                repository=repository,
+                ingestion=_ingestion(identity, _CHECKSUM_A),
+                metadata=_metadata("external:review-429"),
+                artifacts=_stored_artifacts(),
+            )
+        async with factory.begin() as second:
+            await SqlAlchemySourceSnapshotRepository(second).try_lock_acquisition(identity)
+            assert (
+                await second.scalar(
+                    select(func.count())
+                    .select_from(RagSourceSnapshot)
+                    .where(RagSourceSnapshot.source_version == "external:review-429")
+                )
+                == 1
+            )
+        assert result.snapshot_id is not None
+    finally:
+        await producer.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE "{role}"'))
+        await admin.dispose()

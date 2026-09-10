@@ -530,12 +530,15 @@ async def cleanup_synthetic_fixture(
     *,
     user_id: UUID,
 ) -> int:
+    from app.models.async_jobs import IdempotencyRecord
     from app.models.chat import ChatCitation, ChatMessage, ChatSession
     from app.models.guides import Guide, GuideCitation
     from app.models.medical_documents import MedicalDocument
     from app.models.ocr import ExtractedField, OcrJob
+    from app.models.password_reset import PasswordResetToken
     from app.models.prescriptions import Medication, Prescription
     from app.models.profiles import Profile
+    from app.models.refresh_session import RefreshSession
     from app.models.users import User
 
     document_ids = select(MedicalDocument.id).where(MedicalDocument.uploaded_by == user_id)
@@ -556,6 +559,9 @@ async def cleanup_synthetic_fixture(
         await session.execute(delete(OcrJob).where(OcrJob.document_id.in_(document_ids)))
         await session.execute(delete(MedicalDocument).where(MedicalDocument.uploaded_by == user_id))
         await session.execute(delete(Profile).where(Profile.user_id == user_id))
+        await session.execute(delete(RefreshSession).where(RefreshSession.user_id == user_id))
+        await session.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+        await session.execute(delete(IdempotencyRecord).where(IdempotencyRecord.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
     async with session_factory() as verification_session:

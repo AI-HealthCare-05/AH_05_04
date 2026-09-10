@@ -31,7 +31,7 @@ PYTHONPATH=. uv run python tools/source_cleanup/run.py install
 
 `tools/source_cleanup/synthetic_control.sql`은 **합성 도구 전용 schema 설치 파일**이다.
 앱 public schema 변경이나 새 Alembic migration이 아니며 운영 DB에 적용하지 않는다.
-PR #363 리뷰 보완 버전은 `review.revision`, 승인 변경 잠금, 관리자 등록 reviewer/batch_target 및 `append_audit` 함수를 사용한다.
+현재 버전은 `review.revision`, 관리자 등록 reviewer/batch_target, 감사 결속 FK·CHECK를 사용한다. 리뷰·철회·감사 검증과 배치 잠금은 Python 명령이 명시적 transaction으로 수행한다.
 이전 설치 DB의 승인·감사를 삭제하거나 schema를 덮어쓰지 않는다. 이전 DB는 증빙으로 보존하고,
 새 일회용 `*_cleanup347_test` DB와 새 합성 workspace에 설치해 다시 검토한다.
 이전 schema는 승인 revision·workspace 컬럼·새 감사 함수 중 필요한 요소가 없어 검사/INTENT 기록에서 실패하며 삭제를 진행하지 않는다.
@@ -41,9 +41,9 @@ PR #363 리뷰 보완 버전은 `review.revision`, 승인 변경 잠금, 관리�
 
 | 역할 예시 | 허용 권한 | 금지 |
 | --- | --- | --- |
-| `cleanup347_pm` | 배치 PM 검토 INSERT, 철회 INSERT, control SELECT | actor 위조·기존 승인 UPDATE/DELETE |
-| `cleanup347_security` | DB_SECURITY 검토 INSERT, 철회 INSERT, control SELECT | PM 신원 대체·기존 승인 수정 |
-| `cleanup347_executor` | control/Artifact SELECT, 고정 참조 잠금·append_audit 함수 EXECUTE | 승인·소유 receipt INSERT, 감사 UPDATE/DELETE/TRUNCATE, Source 참조 변경 |
+| `cleanup347_pm` | Python 명령을 통한 배치 PM 검토 INSERT·철회 INSERT, control SELECT | actor 위조·기존 승인 UPDATE/DELETE |
+| `cleanup347_security` | Python 명령을 통한 DB_SECURITY 검토 INSERT·철회 INSERT, control SELECT | PM 신원 대체·기존 승인 수정 |
+| `cleanup347_executor` | control/Artifact SELECT, 검증된 감사 INSERT | 승인·소유 receipt INSERT, 감사 UPDATE/DELETE/TRUNCATE, Source 참조 변경 |
 
 권한 설정 예시(계정은 사전 생성, 비superuser이며 control table 소유자가 아니어야 함):
 
@@ -56,22 +56,24 @@ GRANT SELECT ON public.rag_source_ingestion_artifact TO cleanup347_executor;
 GRANT INSERT (batch_hash,role,executor,policy_version,valid_from,expires_at)
   ON source_cleanup.review TO cleanup347_pm, cleanup347_security;
 GRANT INSERT (batch_hash) ON source_cleanup.revocation TO cleanup347_pm, cleanup347_security;
+GRANT USAGE ON SEQUENCE source_cleanup.review_revision
+  TO cleanup347_pm, cleanup347_security;
 INSERT INTO source_cleanup.reviewer(actor,role) VALUES
   ('cleanup347_security','DB_SECURITY'), ('cleanup347_pm','PM');
-GRANT EXECUTE ON FUNCTION source_cleanup.append_audit(text,text,text,text,text)
-  TO cleanup347_executor;
-GRANT EXECUTE ON FUNCTION source_cleanup.lock_references() TO cleanup347_executor;
+GRANT INSERT (batch_hash,object_ref,attempt_id,event,payload,intent_sequence,recorded_at)
+  ON source_cleanup.audit TO cleanup347_executor;
+GRANT USAGE ON SEQUENCE source_cleanup.audit_sequence_seq TO cleanup347_executor;
 ```
 
-review의 `actor`는 DB `current_user`, audit의 `recorded_by`/executor는 인증된 로그인 `session_user`로 기록한다.
+review의 `actor`와 audit의 `recorded_by`/executor는 인증된 DB 로그인으로 기록한다.
 관리자는 reviewer 역할 목록만 등록하고, 합성 생성 계정이 정확한 batch_target을 등록한다.
 실행자에게 audit 직접 INSERT·sequence USAGE·reviewer/batch_target 변경 권한을 주지 않는다.
-역할마다 별도 로그인 연결을 사용한다. SECURITY DEFINER 소유자를 실제 실행자로 기록하지 않는다. 검토자는 actor 컬럼에 직접 값을
+역할마다 별도 로그인 연결을 사용한다. 검토자는 actor 컬럼에 직접 값을
 넣을 수 없다. PM/DB_SECURITY 두 actor는 verifier의 지정 역할과 각각 일치해야 한다.
 실행 계정은 검토자와 달라야 하며 superuser·BYPASSRLS·승인/receipt 생성 권한·감사 변경 권한이
-있으면 실행을 거부한다. 참조 잠금 함수는 고정 테이블의 SHARE lock만 취하며 Source 행 수정
-권한을 제공하지 않는다. 일반 UPDATE/DELETE/TRUNCATE는 immutable trigger로도 차단한다.
-관리자가 trigger를 비활성화하거나 DB 전체를 파기하는 행위까지 방어한다고 주장하지 않는다.
+있으면 실행을 거부한다. 정리와 지원되는 모든 게시 경로는 Python의 전역 advisory lock을 commit까지 공유한다.
+리뷰·철회도 배치별 lock을 공유해 최종 검증과 삭제 사이에 변경되지 않는다. 감사 payload는 최신 승인·대상·참조에서 다시 만들며, 결과 행은 INTENT를 가리키는 FK와 payload 결속 CHECK를 통과해야 한다.
+일반 실행 계정의 UPDATE/DELETE/TRUNCATE는 권한으로 차단한다. DB 소유자는 migration·장애 복구 경계이며 정상 실행 credential로 사용하지 않는다.
 
 ## 후보 → 검토 → 수동 실행
 
@@ -131,9 +133,9 @@ CLI가 기본으로 수행하는 작업은 없고 실행 command를 명시해야
 
 ## 승인 변경과 삭제 경합
 
-검토·철회 INSERT trigger는 배치별 exclusive transaction advisory lock을 취한다.
+검토·철회 Python 명령은 배치별 exclusive transaction advisory lock을 취한다.
 실행 guard는 같은 배치의 shared lock을 취하고, 잠금 안의 승인 재조회부터 객체 검증·unlink 및
-transaction 종료까지 유지한다. CLI 외 직접 INSERT도 같은 trigger를 거친다.
+transaction 종료까지 유지한다. 지원되는 리뷰·철회 경로는 반드시 이 Python 명령을 사용한다.
 
 - 철회가 먼저 commit되면 잠금 안 재조회에서 거부하여 삭제하지 않는다.
 - 철회/재검토 transaction이 먼저 진행 중이면 실행이 잠금을 얻지 못해 삭제하지 않는다.
@@ -150,8 +152,8 @@ transaction 종료까지 유지한다. CLI 외 직접 INSERT도 같은 trigger�
 일반 `publication_transaction`은 신규 합성 publication의 내부 경계다. 기존 receipt의 재사용은
 반드시 `reference_existing_objects`를 사용한다.
 
-Cleanup은 exclusive advisory lock·root flock·직접 참조 테이블 SHARE lock을 유지한다.
-진행 중 수집/미commit INSERT가 있으면 즉시 보류하고, 보호 중 새 INSERT의 commit을 차단한다.
+Cleanup은 exclusive advisory lock과 root flock을 유지한다.
+지원되는 게시 transaction이 진행 중이면 즉시 보류하고, 보호 중 새 게시 transaction 진입을 차단한다.
 Source별 잠금에만 의존하지 않는다. DB 연결 상실 뒤에도 로컬 잠금은 context 종료까지 유지한다.
 이 잠금은 **관리되는 합성 경로**의 보장이다. 현재 운영 Source writer에 등록했다고 주장하지 않는다.
 
@@ -205,18 +207,17 @@ INTENT와 결과는 각각 **독립 DB transaction으로 commit**한다. 파일 
 
 ## DB가 생성하는 감사 근거와 실행자 보고
 
-`append_audit(batch_hash, object_ref, attempt_id, event, reason)`만 실행자에게 허용한다.
-임의 payload·승인자·receipt·checksum·시각은 함수 입력에 없다. INTENT 생성 시 DB가 아래를 확인한다.
+`PostgresAuditJournal.append`만 지원되는 감사 쓰기 경로다. 호출자가 전달한 승인자·receipt·checksum·시각은 신뢰하지 않고 Python adapter가 아래 DB 근거를 다시 확인한다.
 
 - 관리자 등록 reviewer와 실제 최신 DB_SECURITY → PM revision 순서·실행자·유효기간·철회 여부
 - 생성 계정이 등록한 배치/대상과 불변 object receipt의 결속
 - 실제 DB 시각과 생성 시 등록된 합성 offset으로 30일 유예 검사
 - 참조 테이블 잠금과 같은 backend/key 전체 직접 참조 0건
 
-DB가 checksum·종류·정책·승인 revision 해시·actor·실행자·실제 기록 시각을 구성한다.
+Python adapter가 checksum·종류·정책·승인 revision 해시·actor·실행자·실제 DB 기록 시각을 구성한다.
 `references_verified`는 **INTENT 시점의 DB 직접 참조 검사 이력**이다. 현재 전체 downstream이나
 파일 상태의 증명으로 재사용하지 않는다. 전체 scope/bytes 검증은 기존 Local 실행 guard가 수행한다.
-후속 결과는 같은 로그인·batch/object/attempt의 기존 INTENT 근거를 보존하고 새 이벤트·시각만 추가한다.
+후속 결과는 같은 로그인·batch/object/attempt의 기존 INTENT 근거를 보존하고 새 이벤트·시각만 추가한다. DB의 복합 FK와 CHECK는 INTENT 연결, payload 식별자, event/reason 조합을 추가로 강제한다.
 
 `event/reason`은 정해진 조합의 실행자 보고다. DB가 파일 시스템 unlink를 독립적으로 관측하는 것은
 아니므로 DELETED 행 하나만으로 물리 삭제를 별도 증명했다고 주장하지 않는다. 재시작 경로는

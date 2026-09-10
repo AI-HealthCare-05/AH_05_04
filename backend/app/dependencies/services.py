@@ -18,9 +18,12 @@ from app.repositories.guide_repository import GuideRepository
 from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.ocr_repository import OcrRepository
+from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.chat import ChatService
@@ -38,6 +41,8 @@ from app.services.job_intake import JobIntakeService
 from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.medication_candidates import MedicationCandidateService
+from app.services.medication_checkin_api import MedicationCheckinApiService
+from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
 from app.services.ocr import OcrService
@@ -321,6 +326,21 @@ def get_medication_candidate_service(
     return MedicationCandidateService(repository, identification_service, idempotency_service)
 
 
+def get_medication_checkin_api_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> MedicationCheckinApiService:
+    # B3's explicit no-op remains until Track C #195 supplies its same-session adapter.
+    checkins = MedicationCheckinService(
+        MedicationCheckinRepository(session),
+        revision_invalidation=NoopCheckinRevisionInvalidation(),
+    )
+    return MedicationCheckinApiService(MedicationScheduleRepository(session), checkins, idempotency_service)
+
+
 def get_guide_repository(
     session: Annotated[
         AsyncSession,
@@ -424,13 +444,39 @@ def get_chat_service(
     )
 
 
+def get_password_reset_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> PasswordResetRepository:
+    return PasswordResetRepository(session)
+
+
+def get_refresh_session_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> RefreshSessionRepository:
+    return RefreshSessionRepository(session)
+
+
 def get_auth_service(
     repository: Annotated[
         UserRepository,
         Depends(get_user_repository),
     ],
+    password_reset_repository: Annotated[
+        PasswordResetRepository,
+        Depends(get_password_reset_repository),
+    ],
+    refresh_session_repository: Annotated[
+        RefreshSessionRepository,
+        Depends(get_refresh_session_repository),
+    ],
 ) -> AuthService:
-    return AuthService(repository)
+    return AuthService(repository, password_reset_repository, refresh_session_repository)
 
 
 def get_user_manage_service(

@@ -23,6 +23,7 @@ from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.job_intake import DomainReference, JobIntakeService
 from app.services.job_status import _FAILURE_MESSAGES, JobStatusService
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 def test_failure_messages_cover_every_allowed_failure_code() -> None:
@@ -139,6 +140,9 @@ async def _create_confirmed_prescription(
     await session.flush()
     session.add(
         PrescriptionVersion(
+            **fingerprint_values(
+                prescription.prescribed_date, [{"medication_name": "합성 Job 상태 약", "display_order": 1}]
+            ),
             id=version_id,
             prescription_id=prescription.id,
             version_number=1,
@@ -149,6 +153,7 @@ async def _create_confirmed_prescription(
     await session.flush()
     session.add(
         PrescriptionVersionMedication(
+            medication_count=1,
             prescription_version_id=version_id,
             medication_name="합성 Job 상태 약",
             display_order=1,

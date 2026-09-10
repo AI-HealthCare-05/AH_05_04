@@ -19,6 +19,7 @@ from app.repositories.medication_candidate_repository import (
     MedicationCandidateResultCreate,
 )
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 @pytest_asyncio.fixture
@@ -74,7 +75,7 @@ async def _create_user(session: AsyncSession, *, email: str) -> User:
     return user
 
 
-async def _create_prescription(session: AsyncSession, *, user: User) -> Prescription:
+async def _create_prescription(session: AsyncSession, *, user: User, medication_count: int = 1) -> Prescription:
     profile = await session.scalar(
         select(Profile).where(Profile.user_id == user.id, Profile.profile_type == ProfileType.SELF)
     )
@@ -107,6 +108,13 @@ async def _create_prescription(session: AsyncSession, *, user: User) -> Prescrip
     await session.flush()
     session.add(
         PrescriptionVersion(
+            **fingerprint_values(
+                prescription.prescribed_date,
+                [
+                    {"medication_name": "테스트약", "strength_text": "500mg", "display_order": i}
+                    for i in range(1, medication_count + 1)
+                ],
+            ),
             id=version_id,
             prescription_id=prescription.id,
             version_number=1,
@@ -122,7 +130,10 @@ async def _create_medication(
     session: AsyncSession, *, prescription: Prescription, display_order: int = 1
 ) -> PrescriptionVersionMedication:
     assert prescription.active_version_id is not None
+    version = await session.get(PrescriptionVersion, prescription.active_version_id)
+    assert version is not None
     medication = PrescriptionVersionMedication(
+        medication_count=version.medication_count,
         prescription_version_id=prescription.active_version_id,
         medication_name="테스트약",
         strength_text="500mg",
@@ -199,7 +210,7 @@ async def test_get_medication_owned_rejects_other_users_medication(db_session: A
 async def test_get_latest_search_for_medication_returns_most_recent(db_session: AsyncSession) -> None:
     repository = MedicationCandidateRepository(db_session)
     owner = await _create_user(db_session, email="owner21@example.com")
-    prescription = await _create_prescription(db_session, user=owner)
+    prescription = await _create_prescription(db_session, user=owner, medication_count=2)
     medication = await _create_medication(db_session, prescription=prescription)
 
     first = await _create_search(repository, prescription=prescription, display_order=2)
@@ -288,3 +299,68 @@ async def test_get_result_selection_for_update_owned_rejects_other_users_result(
         candidate_search_result_id=results[0].id, user_id=intruder.id
     )
     assert stolen is None
+
+
+async def test_finalization_failure_rolls_back_results_and_allows_clean_retry(db_session, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import func
+
+    from app.models.rag_candidate import (
+        MedicationCandidateSearch,
+        MedicationCandidateSearchResult,
+        MedicationCandidateSearchStatus,
+    )
+
+    repository = MedicationCandidateRepository(db_session)
+    owner = await _create_user(db_session, email="synthetic-candidate398@example.com")
+    prescription = await _create_prescription(db_session, user=owner)
+    search = await _create_search(repository, prescription=prescription)
+    search_id = search.id
+    original = repository.finalize_search
+    monkeypatch.setattr(repository, "finalize_search", AsyncMock(side_effect=ValueError("synthetic count mismatch")))
+    with pytest.raises(ValueError, match="synthetic count mismatch"):
+        await repository.assemble_and_finalize_search(
+            search=search,
+            results=[_ready_result()],
+            status=MedicationCandidateSearchStatus.READY,
+            finalized_at=datetime.now(config.TIMEZONE),
+        )
+    await db_session.commit()
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(MedicationCandidateSearchResult)
+            .where(MedicationCandidateSearchResult.search_id == search_id)
+        )
+        == 0
+    )
+    assert (
+        await db_session.scalar(
+            select(MedicationCandidateSearch.status).where(MedicationCandidateSearch.id == search_id)
+        )
+        == MedicationCandidateSearchStatus.RUNNING
+    )
+    monkeypatch.setattr(repository, "finalize_search", original)
+    finalized, results = await repository.assemble_and_finalize_search(
+        search=search,
+        results=[_ready_result()],
+        status=MedicationCandidateSearchStatus.READY,
+        finalized_at=datetime.now(config.TIMEZONE),
+    )
+    assert finalized.candidate_count == finalized.displayed_candidate_count == len(results) == 1
+    with pytest.raises(ValueError, match="must be running"):
+        await repository.assemble_and_finalize_search(
+            search=search,
+            results=[_ready_result()],
+            status=MedicationCandidateSearchStatus.READY,
+            finalized_at=datetime.now(config.TIMEZONE),
+        )
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(MedicationCandidateSearchResult)
+            .where(MedicationCandidateSearchResult.search_id == search_id)
+        )
+        == 1
+    )

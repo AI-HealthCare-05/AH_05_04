@@ -182,7 +182,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
-| `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token을 발급합니다. |
+| `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token과 **새 refresh token(rotation)**을 발급해 쿠키를 교체합니다. |
 | `POST` | `/api/v1/auth/logout` | `200 OK` | 현재 사용자의 세션 무효화 카운터를 증가시키고 `refresh_token` 쿠키를 삭제합니다. |
 
 - access token과 refresh token에는 발급 시점의 `token_version`이 포함됩니다.
@@ -190,6 +190,16 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - `account_status != ACTIVE`, `is_active=false`, 또는 토큰의 `token_version`이 DB의 `user.token_version`과 다르면 `401 INVALID_TOKEN`을 반환합니다.
 - 로그아웃 성공 후 기존 access token으로 보호 API를 호출하거나 기존 refresh token으로 재발급을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
+- refresh token은 매 갱신마다 새 값으로 교체되며(rotation), 절대 만료(로그인 시점 기준)는 rotation으로 늘어나지 않습니다. 이미 교체돼 무효해진 refresh token이 다시 제출되면 탈취 의심 신호로 간주해 그 사용자의 모든 세션을 강제로 무효화합니다.
+
+### 비밀번호 재설정
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/auth/password-reset/request` | `200 OK` | 계정 존재 여부와 무관하게 항상 같은 응답을 반환합니다. `reset_token`은 `LOCAL` 환경에서만 채워집니다(실제 이메일 발송 Provider 연동 전 임시 확인 경로). |
+| `POST` | `/api/v1/auth/password-reset/confirm` | `200 OK` | 유효한 token으로 비밀번호를 변경하고 기존 세션을 전부 무효화합니다. 새 토큰은 발급하지 않으며 재로그인이 필요합니다. |
+
+상세 스펙(오류 코드, lock 순서, 보안 규칙)은 [회원가입·사용자 정보 계약의 비밀번호 재설정 절](./contracts/current/user-account.md#비밀번호-재설정206-pd-206-결정-3)을 따릅니다.
 
 ## Post-MVP-1 목표 API — 미구현
 
@@ -222,7 +232,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | B | `GET` | `/api/v1/medication-occurrences?date=YYYY-MM-DD` | KST 날짜별 일정·occurrence·현재 Check-in 조회 |
 | B | `PUT` | `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule` | 일정 생성·변경 |
 | B | `PATCH` | `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule` | 일정 취소 |
-| B | `PUT` | `/api/v1/medication-occurrences/{occurrence_id}/check-in` | Check-in 생성·정정 |
+| B | `PUT` | `/api/v1/medication-occurrences/{occurrence_id}/check-in` | #202 Draft 부분 구현: 생성·정정·snapshot 재현 (`200`), 책임 리뷰 대기 |
 | B | `GET` | `/api/v1/medication-occurrences/{occurrence_id}/check-in-history` | 범위 승인 시 정정 이력 조회 |
 | B | `POST` | `/api/v1/medication-occurrences/{occurrence_id}/reminders` | 앱 내부 재알림 1회 요청 |
 | C | `POST` | `/api/v1/safety-assessments` | 구조화 증상 Safety assessment 저장 |
@@ -233,6 +243,43 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | C | `POST` | `/api/v1/support-action-plans/{id}/followups` | follow-up 저장 |
 
 Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/targets/post-mvp-1/checkin-v1.md)과 [Safety Result 계약](./contracts/targets/post-mvp-1/safety-result-v1.md)을 기준으로 합니다.
+
+### #202 Check-in PUT — Draft 구현, Current 승격 전
+
+기존 B3와 동기 멱등 서비스를 연결한 Check-in PUT만 이 브랜치에 등록했다.
+[PD-202-20260910](./governance/decisions/2026-09-10-checkin-api-202.md)의 HTTP·DTO 제안은
+책임 리뷰 대기이며 Track B 전체 완료 또는 Production 공개를 의미하지 않는다.
+
+요청 예시(비식별 합성):
+
+```json
+{"status":"TAKEN","taken_at":"2026-09-10T03:00:00Z","expected_revision":0}
+```
+
+`Idempotency-Key`가 필요하다. 최초 생성·정정 모두 성공 status는 `200`이다.
+
+```json
+{
+  "data": {
+    "checkin_id": "66666666-6666-4666-8666-666666666666",
+    "occurrence_id": "44444444-4444-4444-8444-444444444444",
+    "status": "TAKEN",
+    "taken_at": "2026-09-10T03:00:00Z",
+    "revision": 1,
+    "corrected": false
+  }
+}
+```
+
+정정은 현재 revision과 새 키를 사용한다. 같은 키·같은 지문은 최초 응답을 재현한다.
+`reason_code`는 거부한다. 사용자 `UNCONFIRMED` 제출은
+`422 CHECKIN_STATUS_NOT_USER_SETTABLE`, 다른 입력 오류는 `422 VALIDATION_FAILED`다.
+없는 ID와 타 사용자 ID는 동일한 `404 MEDICATION_OCCURRENCE_NOT_FOUND`로 숨긴다.
+`409 CHECKIN_REVISION_CONFLICT`, `OCCURRENCE_CANCELLED`, `IDEMPOTENCY_KEY_CONFLICT`와
+snapshot cap 오류 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`는 공통 오류 형식을 사용한다.
+
+날짜별 조회·일정 PUT/PATCH·history·backlog·Reminder route는 이번 부분 구현에 포함하지 않는다.
+상세 사유와 후속 범위는 Decision과 [검증 기록](./validation/track-b/issue-202-checkin-api.md)을 따른다.
 
 ### Track E·F 목표 API 경계
 
@@ -513,6 +560,8 @@ Header:
 
 ## 처방 정보 확정
 
+PR #429 / #398 변경: 동일 문서의 성공 재시도는 보존기간 내 저장된 최초 201을 재현한다. 정정 `PATCH /api/v1/prescriptions/{prescription_id}`도 같은 기준 버전·revision·내용이면 최초 200을 재현하고, 같은 기준의 다른 내용은 409 `IDEMPOTENCY_KEY_CONFLICT`다. 요청 형식은 유지한다. 소유권은 매번 확인하며 최신 상태는 GET으로 확인한다. 보존기간·도입 이전 자료·원자성은 [PD-398 구현 계약](contracts/proposed/python-prescription-integrity-398.md#확정정정-요청-멱등성-pd-398-r1)을 따른다.
+
 ### Endpoint
 
 | Method | Path | 성공 상태 | 동작 |
@@ -561,3 +610,7 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
+
+## #398 분리된 Source·Catalog 관리 API (브랜치 구현, 리뷰 대기)
+
+일반 API에 mount하지 않는 별도 관리 앱의 GET/PATCH/DELETE 계약과 401/403/409/422 의미는 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. 회원 가입과 is_admin만으로는 접근 권한을 얻지 않는다. 일반 회원 화면에는 관리 기능을 추가하지 않는다.

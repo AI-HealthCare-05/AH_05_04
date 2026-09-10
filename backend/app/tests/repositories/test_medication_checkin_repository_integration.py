@@ -1,8 +1,8 @@
 from datetime import UTC, date, datetime, time, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
@@ -159,3 +159,39 @@ async def test_duplicate_first_write_returns_revision_conflict(db_session: Async
 
     assert conflict.value.status_code == 409
     assert conflict.value.code == "CHECKIN_REVISION_CONFLICT"
+
+
+async def test_correction_and_audit_roll_back_together_after_flush_failure(db_session):
+    owner, profile = await _create_user_with_self_profile(db_session, label="audit-rollback")
+    occurrence = await _create_occurrence(
+        db_session, owner=owner, profile=profile, deadline_at=datetime(2026, 9, 9, 4, tzinfo=UTC)
+    )
+    repository = MedicationCheckinRepository(db_session)
+    checkin = await repository.create_if_absent(
+        occurrence_id=occurrence.id, status=MedicationCheckinStatus.UNCONFIRMED, taken_at=None
+    )
+    assert checkin is not None
+    original_flush = db_session.flush
+
+    async def fail_after_audit_flush(*args, **kwargs):
+        has_audit = any(isinstance(row, CheckinAudit) for row in db_session.new)
+        await original_flush(*args, **kwargs)
+        if has_audit:
+            raise RuntimeError("synthetic post-flush failure")
+
+    arguments = dict(
+        checkin=checkin,
+        status=MedicationCheckinStatus.NOT_TAKEN,
+        taken_at=None,
+        changed_by=owner.id,
+        changed_at=datetime(2026, 9, 9, 5, tzinfo=UTC),
+    )
+    with patch.object(db_session, "flush", side_effect=fail_after_audit_flush):
+        with pytest.raises(RuntimeError, match="post-flush"):
+            await repository.correct(**arguments)
+    await db_session.refresh(checkin)
+    assert (checkin.status, checkin.revision) == (MedicationCheckinStatus.UNCONFIRMED, 1)
+    assert await db_session.scalar(select(func.count()).select_from(CheckinAudit)) == 0
+    audit = await repository.correct(**arguments)
+    assert audit.to_revision == checkin.revision == 2
+    assert await db_session.scalar(select(func.count()).select_from(CheckinAudit)) == 1

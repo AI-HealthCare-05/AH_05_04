@@ -5,8 +5,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.rag_candidate import MedicationIdentification, MedicationIdentificationStatus
 from app.models.rag_evaluation import EvaluationDecisionStatus
 from app.models.rag_runtime import (
+    AiJobExecutionContext,
+    AiJobExecutionIdentification,
+    AiJobIntakeContext,
     RagReleaseEvaluationApproval,
     RagRuntimeApprovalStatus,
     RagRuntimeBundleSource,
@@ -19,6 +23,49 @@ from app.models.rag_runtime import (
     RagRuntimeReleaseBundle,
     RagRuntimeSourcePurpose,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AiJobIntakeContextCreate:
+    ai_job_id: UUID
+    chat_message_id: UUID
+    prescription_version_id: UUID
+    runtime_environment_id: UUID
+    runtime_environment_revision: int
+    runtime_release_bundle_id: UUID
+    runtime_release_bundle_manifest_hash: str
+    runtime_execution_manifest_id: UUID
+    runtime_execution_manifest_hash: str
+    runtime_guard_decision_ref: str
+    question_digest: str | None = None
+    patient_context_digest: str | None = None
+    context_schema_version: str = "ai-job-intake-context@1"
+
+
+@dataclass(frozen=True, slots=True)
+class AiJobExecutionContextCreate:
+    ai_job_id: UUID
+    prescription_version_id: UUID
+    runtime_environment_id: UUID
+    runtime_environment_revision: int
+    runtime_release_bundle_id: UUID
+    runtime_release_bundle_manifest_hash: str
+    runtime_execution_manifest_id: UUID
+    runtime_execution_manifest_hash: str
+    runtime_guard_decision_ref: str
+    intake_context_id: UUID | None = None
+    guide_id: UUID | None = None
+    chat_message_id: UUID | None = None
+    patient_context_digest: str | None = None
+    source_scope_manifest_hash: str | None = None
+    context_schema_version: str = "ai-job-execution-context@1"
+
+
+@dataclass(frozen=True, slots=True)
+class AiJobExecutionIdentificationCreate:
+    execution_context_id: UUID
+    medication_identification_id: UUID
+    prescription_version_medication_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,16 +126,24 @@ class RagRuntimeEnvironmentCreate:
 class RagRuntimeEnvironmentTransitionCreate:
     environment_id: UUID
     transition_kind: RagRuntimeEnvironmentTransitionKind
-    environment_revision: int
-    safety_epoch: int
+    expected_environment_revision: int
+    expected_safety_epoch: int
+    expected_active_bundle_id: UUID | None
+    expected_active_bundle_manifest_hash: str | None
+    expected_governance_revision_ref: str | None
     guard_decision_ref: str
-    from_bundle_id: UUID | None = None
-    from_bundle_manifest_hash: str | None = None
-    to_bundle_id: UUID | None = None
-    to_bundle_manifest_hash: str | None = None
-    governance_revision_ref: str | None = None
+    target_bundle_id: UUID | None = None
+    target_bundle_manifest_hash: str | None = None
     transition_reason_code: str | None = None
     created_by: str | None = None
+
+
+class RuntimeEnvironmentTransitionConflictError(ValueError):
+    pass
+
+
+class RuntimeEnvironmentTransitionInvalidError(ValueError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +161,59 @@ class RagReleaseEvaluationApprovalCreate:
 class RagRuntimeRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def create_intake_context(self, payload: AiJobIntakeContextCreate) -> AiJobIntakeContext:
+        context = AiJobIntakeContext(**asdict(payload))
+        self.session.add(context)
+        await self.session.flush()
+        return context
+
+    async def get_intake_context_by_job(self, ai_job_id: UUID) -> AiJobIntakeContext | None:
+        result = await self.session.execute(select(AiJobIntakeContext).where(AiJobIntakeContext.ai_job_id == ai_job_id))
+        return result.scalar_one_or_none()
+
+    async def create_execution_context(self, payload: AiJobExecutionContextCreate) -> AiJobExecutionContext:
+        context = AiJobExecutionContext(**asdict(payload))
+        self.session.add(context)
+        await self.session.flush()
+        return context
+
+    async def get_execution_context_by_job(self, ai_job_id: UUID) -> AiJobExecutionContext | None:
+        result = await self.session.execute(
+            select(AiJobExecutionContext).where(AiJobExecutionContext.ai_job_id == ai_job_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_execution_identification(
+        self,
+        payload: AiJobExecutionIdentificationCreate,
+    ) -> AiJobExecutionIdentification:
+        matched_identification = await self.session.scalar(
+            select(MedicationIdentification.id).where(
+                MedicationIdentification.id == payload.medication_identification_id,
+                MedicationIdentification.prescription_version_medication_id
+                == payload.prescription_version_medication_id,
+                MedicationIdentification.status == MedicationIdentificationStatus.MATCHED,
+            )
+        )
+        if matched_identification is None:
+            raise ValueError("execution context can pin only MATCHED identification for the same medication")
+
+        identification = AiJobExecutionIdentification(**asdict(payload))
+        self.session.add(identification)
+        await self.session.flush()
+        return identification
+
+    async def list_execution_identifications(
+        self,
+        execution_context_id: UUID,
+    ) -> list[AiJobExecutionIdentification]:
+        result = await self.session.execute(
+            select(AiJobExecutionIdentification)
+            .where(AiJobExecutionIdentification.execution_context_id == execution_context_id)
+            .order_by(AiJobExecutionIdentification.created_at, AiJobExecutionIdentification.id)
+        )
+        return list(result.scalars().all())
 
     async def create_execution_manifest(
         self,
@@ -174,20 +282,169 @@ class RagRuntimeRepository:
         )
         return result.scalar_one_or_none()
 
-    async def create_environment_transition(
+    async def transition_environment(
         self,
         payload: RagRuntimeEnvironmentTransitionCreate,
     ) -> RagRuntimeEnvironmentTransition:
-        transition = RagRuntimeEnvironmentTransition(**asdict(payload))
-        self.session.add(transition)
-        await self.session.flush()
-        return transition
+        async with self.session.begin_nested():
+            environment = await self.session.scalar(
+                select(RagRuntimeEnvironment)
+                .where(RagRuntimeEnvironment.id == payload.environment_id)
+                .with_for_update(of=RagRuntimeEnvironment)
+                .execution_options(populate_existing=True)
+            )
+            if environment is None:
+                raise RuntimeEnvironmentTransitionInvalidError("Runtime environment unavailable")
+            self._validate_expected_environment(environment, payload)
+            target = await self._resolve_transition_target(environment, payload)
+            next_status = self._next_environment_status(environment, payload, target)
+            next_revision = environment.environment_revision + 1
+            from_bundle_id = environment.active_bundle_id
+            from_bundle_hash = environment.active_bundle_manifest_hash
+            if target is not None:
+                environment.active_bundle_id = target.id
+                environment.active_bundle_manifest_hash = target.bundle_manifest_hash
+            environment.environment_status = next_status
+            environment.environment_revision = next_revision
+            transition = RagRuntimeEnvironmentTransition(
+                environment_id=environment.id,
+                transition_kind=payload.transition_kind,
+                from_bundle_id=from_bundle_id,
+                from_bundle_manifest_hash=from_bundle_hash,
+                to_bundle_id=environment.active_bundle_id,
+                to_bundle_manifest_hash=environment.active_bundle_manifest_hash,
+                environment_revision=next_revision,
+                governance_revision_ref=environment.governance_revision_ref,
+                safety_epoch=environment.safety_epoch,
+                guard_decision_ref=payload.guard_decision_ref,
+                transition_reason_code=payload.transition_reason_code,
+                created_by=payload.created_by,
+            )
+            self.session.add(transition)
+            await self.session.flush()
+            return transition
+
+    @staticmethod
+    def _validate_expected_environment(
+        environment: RagRuntimeEnvironment,
+        payload: RagRuntimeEnvironmentTransitionCreate,
+    ) -> None:
+        expected_pointer = (
+            payload.expected_active_bundle_id,
+            payload.expected_active_bundle_manifest_hash,
+        )
+        actual_pointer = (environment.active_bundle_id, environment.active_bundle_manifest_hash)
+        if (
+            payload.expected_environment_revision != environment.environment_revision
+            or payload.expected_safety_epoch != environment.safety_epoch
+            or payload.expected_governance_revision_ref != environment.governance_revision_ref
+            or expected_pointer != actual_pointer
+        ):
+            raise RuntimeEnvironmentTransitionConflictError("Runtime environment changed")
+
+    async def _resolve_transition_target(
+        self,
+        environment: RagRuntimeEnvironment,
+        payload: RagRuntimeEnvironmentTransitionCreate,
+    ) -> RagRuntimeReleaseBundle | None:
+        if payload.transition_kind is RagRuntimeEnvironmentTransitionKind.SUSPEND:
+            if payload.target_bundle_id is not None or payload.target_bundle_manifest_hash is not None:
+                raise RuntimeEnvironmentTransitionInvalidError("Suspend must retain the active bundle")
+            return None
+        if payload.transition_kind is RagRuntimeEnvironmentTransitionKind.RESUME:
+            if payload.target_bundle_id is not None or payload.target_bundle_manifest_hash is not None:
+                raise RuntimeEnvironmentTransitionInvalidError("Resume must use the retained active bundle")
+            target_id = environment.active_bundle_id
+            target_hash = environment.active_bundle_manifest_hash
+        elif payload.transition_kind in {
+            RagRuntimeEnvironmentTransitionKind.PLANNED_ACTIVATION,
+            RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK,
+        }:
+            target_id = payload.target_bundle_id
+            target_hash = payload.target_bundle_manifest_hash
+        else:
+            raise RuntimeEnvironmentTransitionInvalidError("Unsupported Runtime transition")
+        if (
+            payload.transition_kind is RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK
+            and target_id is None
+            and target_hash is None
+        ):
+            return None
+        if target_id is None or target_hash is None:
+            raise RuntimeEnvironmentTransitionInvalidError("Transition target bundle required")
+        target = await self.session.scalar(
+            select(RagRuntimeReleaseBundle)
+            .where(
+                RagRuntimeReleaseBundle.id == target_id,
+                RagRuntimeReleaseBundle.bundle_manifest_hash == target_hash,
+            )
+            .with_for_update(of=RagRuntimeReleaseBundle)
+            .execution_options(populate_existing=True)
+        )
+        allowed_statuses = (
+            {RagRuntimeBundleStatus.READY, RagRuntimeBundleStatus.RETIRED}
+            if payload.transition_kind is RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK
+            else {RagRuntimeBundleStatus.READY}
+        )
+        if target is None or target.bundle_status not in allowed_statuses:
+            raise RuntimeEnvironmentTransitionInvalidError("Transition target bundle unavailable")
+        self._validate_target_environment(environment, payload, target)
+        return target
+
+    @staticmethod
+    def _validate_target_environment(
+        environment: RagRuntimeEnvironment,
+        payload: RagRuntimeEnvironmentTransitionCreate,
+        target: RagRuntimeReleaseBundle,
+    ) -> None:
+        if target.governance_revision_ref != environment.governance_revision_ref:
+            raise RuntimeEnvironmentTransitionConflictError("Runtime governance revision changed")
+        same_target_error = {
+            RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK: "Rollback target must differ from the active bundle",
+            RagRuntimeEnvironmentTransitionKind.PLANNED_ACTIVATION: "Activation target is already active",
+        }.get(payload.transition_kind)
+        if target.id == environment.active_bundle_id and same_target_error is not None:
+            raise RuntimeEnvironmentTransitionInvalidError(same_target_error)
+
+    @staticmethod
+    def _next_environment_status(
+        environment: RagRuntimeEnvironment,
+        payload: RagRuntimeEnvironmentTransitionCreate,
+        target: RagRuntimeReleaseBundle | None,
+    ) -> RagRuntimeEnvironmentStatus:
+        transition_kind = payload.transition_kind
+        if transition_kind is RagRuntimeEnvironmentTransitionKind.SUSPEND:
+            if environment.environment_status is not RagRuntimeEnvironmentStatus.ACTIVE:
+                raise RuntimeEnvironmentTransitionInvalidError("Only an active environment can be suspended")
+            return RagRuntimeEnvironmentStatus.SUSPENDED
+        if transition_kind is RagRuntimeEnvironmentTransitionKind.RESUME:
+            if environment.environment_status is not RagRuntimeEnvironmentStatus.SUSPENDED:
+                raise RuntimeEnvironmentTransitionInvalidError("Only a suspended environment can be resumed")
+            return RagRuntimeEnvironmentStatus.ACTIVE
+        if transition_kind is RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK and target is None:
+            if environment.environment_status is not RagRuntimeEnvironmentStatus.ACTIVE:
+                raise RuntimeEnvironmentTransitionInvalidError("Only an active environment can enter an emergency hold")
+            return RagRuntimeEnvironmentStatus.SUSPENDED
+        if (
+            transition_kind
+            in {
+                RagRuntimeEnvironmentTransitionKind.PLANNED_ACTIVATION,
+                RagRuntimeEnvironmentTransitionKind.EMERGENCY_ROLLBACK,
+            }
+            and target is not None
+        ):
+            return RagRuntimeEnvironmentStatus.ACTIVE
+        raise RuntimeEnvironmentTransitionInvalidError("Unsupported Runtime transition")
 
     async def list_environment_transitions(self, environment_id: UUID) -> list[RagRuntimeEnvironmentTransition]:
         result = await self.session.execute(
             select(RagRuntimeEnvironmentTransition)
             .where(RagRuntimeEnvironmentTransition.environment_id == environment_id)
-            .order_by(RagRuntimeEnvironmentTransition.created_at, RagRuntimeEnvironmentTransition.id)
+            .order_by(
+                RagRuntimeEnvironmentTransition.environment_revision,
+                RagRuntimeEnvironmentTransition.created_at,
+                RagRuntimeEnvironmentTransition.id,
+            )
         )
         return list(result.scalars().all())
 

@@ -63,6 +63,12 @@ jobs:
       - name: Run Ruff Check (Linting)
         run: uv run ruff check .
 
+      - name: Reject new database triggers and RLS
+        run: python scripts/ci/check_database_logic.py
+
+      - name: Reject unapproved protected table writers
+        run: python scripts/ci/check_protected_table_writes.py
+
       - name: Run Ruff Format Check
         run: uv run ruff format . --check
 
@@ -113,13 +119,23 @@ jobs:
       - name: Run PostgreSQL migrations
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
-        run: uv run alembic -c backend/alembic.ini upgrade head
+        run: uv run alembic -c backend/alembic.ini upgrade 398b2c3d4e5f
       # backend/app/tests/conftest.py가 스키마를 재생성하기 전에
       # Alembic이 만든 실제 PostgreSQL 구조를 검증합니다.
       - name: Validate migrated PostgreSQL schema
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: uv run pytest tests/migration -v
+
+      - name: Apply irreversible Source cutover
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
+        run: uv run alembic -c backend/alembic.ini upgrade head
+
+      - name: Verify final database head
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
+        run: uv run python scripts/ci/verify_database_head.py
 
   test-backend:
     runs-on: ubuntu-latest
@@ -177,6 +193,7 @@ jobs:
 
       - name: Run Backend Tests with Coverage
         env:
+          ISSUE398_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: |
           uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
@@ -238,7 +255,12 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uv run coverage run -m pytest ai_worker/tests/core ai_worker/tests/ocr ai_worker/tests/rag ai_worker/tests/evaluation
+          uv run pytest \
+            -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
+            ai_worker/tests/core \
+            ai_worker/tests/ocr \
+            ai_worker/tests/rag \
+            ai_worker/tests/evaluation
 
       - name: Upload AI Worker Coverage Data
         uses: actions/upload-artifact@v4

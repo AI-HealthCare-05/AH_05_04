@@ -15,6 +15,50 @@ def test_python_test_inventory_normalizes_windows_execution_targets_to_posix_tok
     )
 
 
+def test_python_test_inventory_accepts_only_the_approved_worker_xdist_options() -> None:
+    classify_pytest_arguments = runpy.run_path(str(INVENTORY_CHECKER))["_classify_pytest_arguments"]
+
+    targets, unsupported = classify_pytest_arguments(
+        [
+            "-n",
+            "2",
+            "--dist=loadfile",
+            "--max-worker-restart=0",
+            "--cov",
+            "--cov-report=",
+            "ai_worker/tests/core",
+        ]
+    )
+
+    assert targets == ["ai_worker/tests/core"]
+    assert unsupported == []
+
+
+def test_python_test_inventory_rejects_worker_xdist_options_that_change_the_approved_boundary() -> None:
+    classify_pytest_arguments = runpy.run_path(str(INVENTORY_CHECKER))["_classify_pytest_arguments"]
+
+    targets, unsupported = classify_pytest_arguments(
+        [
+            "-n",
+            "auto",
+            "--dist=load",
+            "--max-worker-restart=1",
+            "--cov=backend",
+            "--cov-report=term",
+            "ai_worker/tests/core",
+        ]
+    )
+
+    assert targets == []
+    assert unsupported == [
+        "-n auto",
+        "--dist=load",
+        "--max-worker-restart=1",
+        "--cov=backend",
+        "--cov-report=term",
+    ]
+
+
 def _run_inventory_check(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(INVENTORY_CHECKER), "--root", str(root)],

@@ -2,6 +2,7 @@ import json
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select, update
@@ -42,6 +43,7 @@ from app.models.rag_catalog import (
 from app.models.rag_source import (
     RagIngestionRunStatus,
     RagSnapshotVerificationStatus,
+    RagSourceSnapshot,
     RagVerificationResultStatus,
 )
 from app.repositories.rag_source_catalog_repository import (
@@ -59,6 +61,7 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceSnapshotCreate,
     RagSourceSnapshotVerificationCreate,
 )
+from app.tests.fixtures.source_snapshot import seed_snapshot
 
 _CHECKSUM = "a" * 64
 _OTHER_CHECKSUM = "b" * 64
@@ -86,7 +89,8 @@ async def _create_snapshot(repository: RagSourceCatalogRepository):
             display_name="List Approved Products",
         )
     )
-    return await repository.create_snapshot(
+    return await seed_snapshot(
+        repository,
         RagSourceSnapshotCreate(
             operation_id=operation.id,
             source_version="api:2026-09-07T00:00:00.000000Z:" + _CHECKSUM,
@@ -102,7 +106,7 @@ async def _create_snapshot(repository: RagSourceCatalogRepository):
             collected_at=datetime.now(config.TIMEZONE),
             verified_at=datetime.now(config.TIMEZONE),
             effective_at=datetime.now(config.TIMEZONE),
-        )
+        ),
     )
 
 
@@ -285,7 +289,8 @@ async def test_snapshot_checksum_must_be_sha256_length(db_session: AsyncSession)
     )
 
     with pytest.raises(IntegrityError):
-        await repository.create_snapshot(
+        await seed_snapshot(
+            repository,
             RagSourceSnapshotCreate(
                 operation_id=operation.id,
                 source_version="api:bad-checksum",
@@ -298,7 +303,7 @@ async def test_snapshot_checksum_must_be_sha256_length(db_session: AsyncSession)
                 record_count=0,
                 rejected_record_count=0,
                 collected_at=datetime.now(config.TIMEZONE),
-            )
+            ),
         )
 
 
@@ -330,7 +335,8 @@ async def test_only_one_current_snapshot_per_operation(db_session: AsyncSession)
     snapshot = await _create_snapshot(repository)
 
     with pytest.raises(IntegrityError):
-        await repository.create_snapshot(
+        await seed_snapshot(
+            repository,
             RagSourceSnapshotCreate(
                 operation_id=snapshot.operation_id,
                 source_version="api:2026-09-07T00:01:00.000000Z:" + _OTHER_CHECKSUM,
@@ -344,7 +350,7 @@ async def test_only_one_current_snapshot_per_operation(db_session: AsyncSession)
                 rejected_record_count=0,
                 verification_status=RagSnapshotVerificationStatus.CURRENT,
                 collected_at=datetime.now(config.TIMEZONE),
-            )
+            ),
         )
 
 
@@ -359,7 +365,8 @@ async def test_rejected_record_count_cannot_exceed_record_count(db_session: Asyn
     )
 
     with pytest.raises(IntegrityError):
-        await repository.create_snapshot(
+        await seed_snapshot(
+            repository,
             RagSourceSnapshotCreate(
                 operation_id=operation.id,
                 source_version="api:bad-count:" + _CHECKSUM,
@@ -372,14 +379,15 @@ async def test_rejected_record_count_cannot_exceed_record_count(db_session: Asyn
                 record_count=1,
                 rejected_record_count=2,
                 collected_at=datetime.now(config.TIMEZONE),
-            )
+            ),
         )
 
 
 async def test_alias_can_observe_product_identity_from_another_snapshot(db_session: AsyncSession) -> None:
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
-    newer_snapshot = await repository.create_snapshot(
+    newer_snapshot = await seed_snapshot(
+        repository,
         RagSourceSnapshotCreate(
             operation_id=snapshot.operation_id,
             source_version="api:2026-09-07T00:02:00.000000Z:" + _OTHER_CHECKSUM,
@@ -393,7 +401,7 @@ async def test_alias_can_observe_product_identity_from_another_snapshot(db_sessi
             rejected_record_count=0,
             verification_status=RagSnapshotVerificationStatus.STALE,
             collected_at=datetime.now(config.TIMEZONE),
-        )
+        ),
     )
     product_identity = await repository.create_identity(
         RagEntityIdentityCreate(RagMedicationAliasTargetType.PRODUCT, "MFDS_ITEM_SEQ", "200012347")
@@ -852,7 +860,8 @@ async def test_catalog_write_support_rolls_back_all_members_on_unsupported_row(d
 async def test_component_product_and_ingredient_must_use_same_snapshot(db_session: AsyncSession) -> None:
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
-    newer_snapshot = await repository.create_snapshot(
+    newer_snapshot = await seed_snapshot(
+        repository,
         RagSourceSnapshotCreate(
             operation_id=snapshot.operation_id,
             source_version="api:2026-09-07T00:03:00.000000Z:" + _OTHER_CHECKSUM,
@@ -866,7 +875,7 @@ async def test_component_product_and_ingredient_must_use_same_snapshot(db_sessio
             rejected_record_count=0,
             verification_status=RagSnapshotVerificationStatus.STALE,
             collected_at=datetime.now(config.TIMEZONE),
-        )
+        ),
     )
     product_identity = await repository.create_identity(
         RagEntityIdentityCreate(RagMedicationAliasTargetType.PRODUCT, "MFDS_ITEM_SEQ", "200012348")
@@ -947,3 +956,36 @@ async def test_ingestion_attempt_number_is_unique_per_run_group(db_session: Asyn
                 started_at=started_at,
             )
         )
+
+
+@pytest.mark.parametrize(
+    "status,timestamp_field",
+    [
+        (RagSnapshotVerificationStatus.CURRENT, None),
+        (RagSnapshotVerificationStatus.FAILED, None),
+        (RagSnapshotVerificationStatus.STALE, None),
+        (RagSnapshotVerificationStatus.PENDING, "verified_at"),
+        (RagSnapshotVerificationStatus.PENDING, "effective_at"),
+    ],
+)
+async def test_snapshot_creation_requires_pending_without_timestamps(db_session, status, timestamp_field):
+    item = RagSourceSnapshotCreate(
+        operation_id=uuid4(),
+        source_version="synthetic:invalid-state",
+        raw_manifest_checksum=_CHECKSUM,
+        canonical_checksum=_CHECKSUM,
+        schema_version="1",
+        parser_version="1",
+        normalization_version="1",
+        canonicalization_spec_version="1",
+        record_count=0,
+        rejected_record_count=0,
+        collected_at=datetime.now(config.TIMEZONE),
+        verification_status=status,
+        **({timestamp_field: datetime.now(config.TIMEZONE)} if timestamp_field else {}),
+    )
+    repository = RagSourceCatalogRepository(db_session)
+    with pytest.raises(ValueError, match="must start PENDING"):
+        await repository.create_snapshot(item)
+    # Failure precedes even the foreign-key lookup and keeps the transaction usable.
+    assert await db_session.scalar(select(func.count()).select_from(RagSourceSnapshot)) == 0

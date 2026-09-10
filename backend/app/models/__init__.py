@@ -31,6 +31,7 @@ from app.models.medication_schedules import (
     MedicationScheduleTime,
 )
 from app.models.ocr import ExtractedField, OcrJob
+from app.models.password_reset import PasswordResetToken
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
@@ -96,6 +97,9 @@ from app.models.rag_evidence import (
     RagEvidenceType,
 )
 from app.models.rag_runtime import (
+    AiJobExecutionContext,
+    AiJobExecutionIdentification,
+    AiJobIntakeContext,
     RagReleaseEvaluationApproval,
     RagRuntimeApprovalStatus,
     RagRuntimeBundleSource,
@@ -125,6 +129,7 @@ from app.models.rag_source import (
     RagSourceUsageStatus,
     RagVerificationResultStatus,
 )
+from app.models.refresh_session import RefreshSession
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
@@ -134,6 +139,9 @@ __all__ = [
     "AiJobAttemptStatus",
     "AiJobStatus",
     "AiJobType",
+    "AiJobExecutionContext",
+    "AiJobExecutionIdentification",
+    "AiJobIntakeContext",
     "ChatCitation",
     "ChatMessage",
     "ChatSession",
@@ -187,6 +195,7 @@ __all__ = [
     "OutboxEvent",
     "OutboxEventKind",
     "OutboxEventStatus",
+    "PasswordResetToken",
     "Prescription",
     "PrescriptionVersion",
     "PrescriptionVersionMedication",
@@ -244,5 +253,10 @@ __all__ = [
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",
+    "SourceManagementAudit",
+    "SourceManagementPermission",
+    "RefreshSession",
     "User",
 ]
+
+from app.models.source_management import SourceManagementAudit, SourceManagementPermission

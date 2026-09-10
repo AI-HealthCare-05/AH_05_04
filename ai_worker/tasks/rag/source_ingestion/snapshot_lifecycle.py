@@ -527,6 +527,9 @@ async def select_current_snapshot(
     if selected_at.tzinfo is None or selected_at.utcoffset() is None:
         raise ValueError("Snapshot 선택 시각은 timezone-aware 값이어야 합니다.")
 
+    if selected_by is None or not selected_by.strip() or len(selected_by) > 100:
+        raise ValueError("Snapshot 선택에는 100자 이하 작업자 식별자가 필요합니다.")
+
     operation_id = await repository.lock_snapshot_operation(snapshot_id=snapshot_id)
     target = await repository.get_snapshot_status(operation_id=operation_id, snapshot_id=snapshot_id)
     if target is None:

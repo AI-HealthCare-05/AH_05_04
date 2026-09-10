@@ -3,7 +3,18 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func, text
 
@@ -211,6 +222,18 @@ class RagSourceSnapshot(Base):
             unique=True,
             postgresql_where=text("verification_status <> 'FAILED'"),
         ),
+        ForeignKeyConstraint(
+            ["id", "verification_seal_id"],
+            ["rag_source_snapshot_verification.snapshot_id", "rag_source_snapshot_verification.id"],
+            name="fk_rag_snapshot_verification_seal",
+            use_alter=True,
+        ),
+        CheckConstraint(
+            "(verification_status = 'PENDING' AND verified_at IS NULL AND effective_at IS NULL) "
+            "OR verification_seal_id IS NOT NULL",
+            name="chk_rag_snapshot_verification_seal",
+        ),
+        CheckConstraint("management_lock_marker = 0", name="chk_rag_source_snapshot_management_lock_marker"),
         Index("idx_rag_source_snapshot_operation_status", "operation_id", "verification_status"),
         Index(
             "uq_rag_source_snapshot_current",
@@ -257,6 +280,9 @@ class RagSourceSnapshot(Base):
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_seal_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    # Fixed, non-provenance column providing management SELECT FOR UPDATE permission.
+    management_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     supersedes_snapshot_id: Mapped[UUID | None] = mapped_column(
         UUIDChar(),
         ForeignKey("rag_source_snapshot.id", ondelete="SET NULL"),
@@ -267,7 +293,9 @@ class RagSourceSnapshot(Base):
     operation: Mapped[RagSourceOperation] = relationship(back_populates="snapshots")
     supersedes_snapshot: Mapped["RagSourceSnapshot | None"] = relationship(remote_side=[id])
     ingestion_runs: Mapped[list["RagSourceIngestionRun"]] = relationship(back_populates="snapshot")
-    verification_runs: Mapped[list["RagSourceSnapshotVerification"]] = relationship(back_populates="snapshot")
+    verification_runs: Mapped[list["RagSourceSnapshotVerification"]] = relationship(
+        back_populates="snapshot", foreign_keys="RagSourceSnapshotVerification.snapshot_id"
+    )
 
 
 class RagSourceIngestionRun(Base):
@@ -368,6 +396,7 @@ class RagSourceIngestionArtifact(Base):
 class RagSourceSnapshotVerification(Base):
     __tablename__ = "rag_source_snapshot_verification"
     __table_args__ = (
+        UniqueConstraint("snapshot_id", "id", name="uq_rag_verification_snapshot_id"),
         Index("idx_rag_source_snapshot_verification_snapshot", "snapshot_id", "verified_at"),
         CheckConstraint(
             "check_name <> 'snapshot-publication-approval' OR verification_result <> 'PASSED' OR "
@@ -393,4 +422,4 @@ class RagSourceSnapshotVerification(Base):
     verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    snapshot: Mapped[RagSourceSnapshot] = relationship(back_populates="verification_runs")
+    snapshot: Mapped[RagSourceSnapshot] = relationship(back_populates="verification_runs", foreign_keys=[snapshot_id])

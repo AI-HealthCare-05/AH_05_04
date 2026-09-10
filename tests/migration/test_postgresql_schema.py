@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
@@ -9,13 +10,13 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import URL, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core import config
+from provider_contracts.prescription_integrity import prescription_fingerprint
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRE_PROFILE_REVISION = "77585c0c9792"
@@ -635,7 +636,7 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
                     chat_session_id=chat_session_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -653,13 +654,11 @@ async def migrated_engine() -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.mark.asyncio
-async def test_database_is_at_alembic_head(
+async def test_database_is_at_pre_source_cutover_revision(
     migrated_engine: AsyncEngine,
 ) -> None:
-    """DB에 적용된 revision이 저장소의 Alembic head와 일치하는지 확인합니다."""
-    alembic_config = Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
-    script_directory = ScriptDirectory.from_config(alembic_config)
-    expected_heads = set(script_directory.get_heads())
+    """Historical schema tests use the revision before irreversible Source cutover."""
+    expected_heads = {"398b2c3d4e5f"}
 
     async with migrated_engine.connect() as connection:
         result = await connection.execute(text("SELECT version_num FROM alembic_version"))
@@ -1309,13 +1308,13 @@ def test_ocr_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows() -
 
         user_id, document_id, ocr_job_id = asyncio.run(_insert_pre_mapping_ocr_job())
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
 
         # 이미 head인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
 
@@ -1325,12 +1324,12 @@ def test_ocr_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows() -
         )
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is False
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         if user_id and document_id and ocr_job_id:
             asyncio.run(
@@ -1536,7 +1535,7 @@ def test_ocr_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
     downgrade_future: Future[None] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             writer_future = executor.submit(
@@ -1590,7 +1589,7 @@ def test_ocr_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
             except RuntimeError:
                 pass
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         if user_id and document_id and ocr_job_id and ai_job_id:
             asyncio.run(
@@ -1611,7 +1610,7 @@ def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
     ai_job_id = ""
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         user_id, document_id, ocr_job_id, ai_job_id = asyncio.run(_insert_linked_ocr_ai_job())
 
@@ -1627,7 +1626,7 @@ def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) == ai_job_id
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         if user_id and document_id and ocr_job_id and ai_job_id:
             asyncio.run(
@@ -1800,18 +1799,24 @@ async def insert_guide_parent_chain(
             text(
                 """
                 INSERT INTO prescription_version (
-                    id, prescription_id, version_number, prescribed_date, confirmed_at
-                ) VALUES (:id, :prescription_id, 1, DATE '2026-09-03', now())
+                    id, prescription_id, version_number, prescribed_date, confirmed_at, medication_count, content_hash
+                ) VALUES (:id, :prescription_id, 1, DATE '2026-09-03', now(), 1, :content_hash)
                 """
             ),
-            {"id": prescription_version_id, "prescription_id": prescription_id},
+            {
+                "id": prescription_version_id,
+                "prescription_id": prescription_id,
+                "content_hash": prescription_fingerprint(
+                    date(2026, 9, 3), [{"medication_name": "합성 가이드 검증약", "display_order": 1}]
+                ).content_hash,
+            },
         )
         await connection.execute(
             text(
                 """
                 INSERT INTO prescription_version_medication (
-                    id, prescription_version_id, medication_name, display_order
-                ) VALUES (:id, :prescription_version_id, '합성 가이드 검증약', 1)
+                    id, prescription_version_id, medication_name, display_order, medication_count
+                ) VALUES (:id, :prescription_version_id, '합성 가이드 검증약', 1, 1)
                 """
             ),
             {"id": version_medication_id, "prescription_version_id": prescription_version_id},
@@ -2262,7 +2267,7 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
                     guide_id=guide_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 async def _insert_linked_guide_ai_job() -> tuple[str, str, str, str, str, str]:
@@ -2527,7 +2532,7 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
@@ -2569,7 +2574,7 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest.mark.asyncio
@@ -2643,18 +2648,24 @@ async def _insert_candidate_version_graph(connection: AsyncConnection) -> dict[s
         text(
             """
             INSERT INTO prescription_version (
-                id, prescription_id, version_number, prescribed_date, confirmed_at
-            ) VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now())
+                id, prescription_id, version_number, prescribed_date, confirmed_at, medication_count, content_hash
+            ) VALUES (:version_id, :prescription_id, 1, DATE '2026-09-08', now(), 1, :content_hash)
             """
         ),
-        {"version_id": version_id, "prescription_id": prescription_id},
+        {
+            "version_id": version_id,
+            "prescription_id": prescription_id,
+            "content_hash": prescription_fingerprint(
+                date(2026, 9, 8), [{"medication_name": "테스트약", "display_order": 1}]
+            ).content_hash,
+        },
     )
     await connection.execute(
         text(
             """
             INSERT INTO prescription_version_medication (
-                id, prescription_version_id, medication_name, display_order
-            ) VALUES (:pvm_id, :version_id, '테스트약', 1)
+                id, prescription_version_id, medication_name, display_order, medication_count
+            ) VALUES (:pvm_id, :version_id, '테스트약', 1, 1)
             """
         ),
         {"pvm_id": pvm_id, "version_id": version_id},

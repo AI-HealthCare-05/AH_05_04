@@ -24,6 +24,18 @@ PRESCRIPTION_VERSION_REVISION = "169a1b2c3d4e"
 PRESCRIPTION_VERSION_BASE_REVISION = "164a9c8e7d6f"
 
 
+@pytest.fixture(scope="module", autouse=True)
+def legacy_foundation_schema():
+    """169a Trigger 계약 자체는 #398 이전 schema에서 검증한다."""
+    configuration = create_alembic_config()
+    command.upgrade(configuration, "398b2c3d4e5f")
+    command.downgrade(configuration, "201a1b2c3d4e")
+    try:
+        yield
+    finally:
+        command.upgrade(configuration, "398b2c3d4e5f")
+
+
 def create_alembic_config() -> Config:
     return Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
 
@@ -267,18 +279,18 @@ async def _execute_expect_db_error(
 def test_prescription_version_empty_downgrade_roundtrips() -> None:
     alembic_config = create_alembic_config()
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "201a1b2c3d4e")
         command.downgrade(alembic_config, PRESCRIPTION_VERSION_BASE_REVISION)
         assert asyncio.run(_table_exists("prescription_version")) is False
         assert asyncio.run(_table_exists("prescription_version_medication")) is False
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "201a1b2c3d4e")
         assert asyncio.run(_table_exists("prescription_version")) is True
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "201a1b2c3d4e")
 
 
 def test_prescription_version_schema_constraints_exist() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     schema_objects = asyncio.run(_fetch_schema_object_names())
 
     assert "fk_prescription_active_version" in schema_objects
@@ -298,7 +310,7 @@ def test_prescription_version_schema_constraints_exist() -> None:
 
 
 def test_prescription_version_constraints_and_immutability_are_enforced() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
     try:
         asyncio.run(
@@ -374,7 +386,7 @@ def test_prescription_version_constraints_and_immutability_are_enforced() -> Non
 
 
 def test_active_version_must_belong_to_the_same_prescription() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     first = asyncio.run(_seed_prescription_version())
     second = asyncio.run(_seed_prescription_version())
     try:
@@ -398,7 +410,7 @@ def test_active_version_must_belong_to_the_same_prescription() -> None:
 
 
 def test_active_version_requires_at_least_one_medication() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
     empty_version_id = str(uuid4())
 
@@ -434,7 +446,7 @@ def test_active_version_requires_at_least_one_medication() -> None:
 
 
 def test_active_and_historical_version_medication_sets_are_frozen() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
     second_version_id = str(uuid4())
     second_medication_id = str(uuid4())
@@ -528,7 +540,7 @@ def test_active_and_historical_version_medication_sets_are_frozen() -> None:
 
 
 def test_custom_guc_cannot_unfreeze_committed_version() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
 
     async def spoof_guc_and_reject_insert() -> None:
@@ -570,7 +582,7 @@ def test_custom_guc_cannot_unfreeze_committed_version() -> None:
 
 
 def test_deferred_active_fk_supports_future_not_null_creation_transaction() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
 
     async def create_graph_with_final_not_null_shape() -> None:
         ids = {
@@ -686,7 +698,7 @@ def test_deferred_active_fk_supports_future_not_null_creation_transaction() -> N
 
 
 def test_create_then_parent_delete_same_transaction_commits() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
     replacement_version_id = str(uuid4())
     replacement_medication_id = str(uuid4())
@@ -747,7 +759,7 @@ def test_create_then_parent_delete_same_transaction_commits() -> None:
 
 
 def test_update_then_parent_delete_same_transaction_commits() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
 
     async def activate_and_delete_parent() -> None:
@@ -768,7 +780,7 @@ def test_update_then_parent_delete_same_transaction_commits() -> None:
 
 
 def test_parent_prescription_delete_cascades_immutable_snapshots() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
     try:
         asyncio.run(_activate_version(ids))
@@ -799,12 +811,12 @@ def test_parent_prescription_delete_cascades_immutable_snapshots() -> None:
 
 def test_prescription_version_downgrade_rejects_immutable_history() -> None:
     alembic_config = create_alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "201a1b2c3d4e")
     ids = asyncio.run(_seed_prescription_version())
     try:
         with pytest.raises(RuntimeError, match=f"Cannot downgrade revision {PRESCRIPTION_VERSION_REVISION}"):
             command.downgrade(alembic_config, PRESCRIPTION_VERSION_BASE_REVISION)
         assert asyncio.run(_table_exists("prescription_version")) is True
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "201a1b2c3d4e")
         asyncio.run(_cleanup_prescription_version(ids))

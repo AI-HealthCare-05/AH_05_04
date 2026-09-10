@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -99,6 +99,25 @@ async def _seed_graph() -> dict[str, str]:
         "schedule_time_id": str(uuid4()),
         "occurrence_id": str(uuid4()),
     }
+    # Historical migration tests may seed before the fingerprint expansion.
+    async with _connection() as probe:
+        has_fingerprint = bool(
+            await probe.scalar(
+                text(
+                    "SELECT 1 FROM information_schema.columns WHERE table_schema='public' "
+                    "AND table_name='prescription_version' AND column_name='content_hash'"
+                )
+            )
+        )
+    version_columns = ", medication_count, content_hash" if has_fingerprint else ""
+    version_values = ", 1, :content_hash" if has_fingerprint else ""
+    medication_columns = ", medication_count" if has_fingerprint else ""
+    medication_values = ", 1" if has_fingerprint else ""
+    from provider_contracts.prescription_integrity import prescription_fingerprint
+
+    ids["content_hash"] = prescription_fingerprint(
+        date(2026, 9, 9), [{"medication_name": "합성테스트약", "frequency_per_day": 1, "display_order": 1}]
+    ).content_hash
     kst = timezone(timedelta(hours=9))
     async with _connection() as connection:
         async with connection.begin():
@@ -156,22 +175,22 @@ async def _seed_graph() -> dict[str, str]:
             )
             await connection.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO prescription_version (
-                        id, prescription_id, version_number, prescribed_date, confirmed_at
+                        id, prescription_id, version_number, prescribed_date, confirmed_at{version_columns}
                     )
-                    VALUES (:version_id, :prescription_id, 1, DATE '2026-09-09', :confirmed_at)
+                    VALUES (:version_id, :prescription_id, 1, DATE '2026-09-09', :confirmed_at{version_values})
                     """
                 ),
                 {**ids, "confirmed_at": datetime(2026, 9, 9, tzinfo=UTC)},
             )
             await connection.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO prescription_version_medication (
-                        id, prescription_version_id, medication_name, frequency_per_day, display_order
+                        id, prescription_version_id, medication_name, frequency_per_day, display_order{medication_columns}
                     )
-                    VALUES (:version_medication_id, :version_id, '합성테스트약', 1, 1)
+                    VALUES (:version_medication_id, :version_id, '합성테스트약', 1, 1{medication_values})
                     """
                 ),
                 ids,
@@ -251,7 +270,7 @@ async def _execute_expect_constraint(sql: str, values: Mapping[str, object], *, 
 
 def test_schedule_migration_upgrade_and_downgrade() -> None:
     alembic_config = create_alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     try:
         command.downgrade(alembic_config, SCHEDULE_BASE_REVISION)
         assert asyncio.run(_fetch_table_names()) == set()
@@ -269,11 +288,11 @@ def test_schedule_migration_upgrade_and_downgrade() -> None:
             "idx_medication_occurrence_deadline_status",
         } <= schema_objects
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_schedule_constraints_and_utc_storage() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_seed_graph())
     try:
         asyncio.run(
@@ -366,7 +385,7 @@ def test_schedule_constraints_and_utc_storage() -> None:
 
 def test_schedule_downgrade_rejects_existing_history() -> None:
     alembic_config = create_alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     ids = asyncio.run(_seed_graph())
     try:
         with pytest.raises(RuntimeError, match=f"Cannot downgrade revision {SCHEDULE_REVISION}"):
@@ -374,4 +393,4 @@ def test_schedule_downgrade_rejects_existing_history() -> None:
         assert asyncio.run(_fetch_table_names()) == SCHEDULE_TABLES
     finally:
         asyncio.run(_cleanup_graph(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")

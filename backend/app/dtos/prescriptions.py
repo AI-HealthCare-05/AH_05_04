@@ -79,8 +79,8 @@ class CorrectPrescriptionRequest(BaseModel):
     medications: list[PrescriptionMedicationCorrectionRequest] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def display_orders_must_be_unique(self) -> "CorrectPrescriptionRequest":
+    def display_orders_must_be_contiguous(self) -> "CorrectPrescriptionRequest":
         orders = [medication.display_order for medication in self.medications]
-        if len(set(orders)) != len(orders):
-            raise ValueError("medication display_order must be unique")
+        if sorted(orders) != list(range(1, len(orders) + 1)):
+            raise ValueError("medication display_order must be exactly 1 through medication count")
         return self
