@@ -413,7 +413,6 @@ mypy backend/app ai_worker tools/source_cleanup/run.py
 새 도구 검증에는 신규 DB/workspace가 필요하다. 원격 CI·Backend/Frontend 전체 서비스 테스트·
 운영 Source/Runtime·S3 삭제는 이번 로컬 검증에 포함하지 않는다.
 
-
 ## PR #363 추가 리뷰 — 승인 순서·감사 근거 결속
 
 기준: `8a100aa`에 이 절과 함께 커밋한 추가 수정. 앞 절의 44건 결과는 이전 보완 검증 이력이다.
@@ -458,3 +457,17 @@ DB는 승인/대상/직접 참조/시각 근거를 보장하고 기존 Local gua
 Python 3.13, 별도 loopback PostgreSQL 16 `source_cleanup347_test` DB만 사용했다.
 이전 control schema는 덮어쓰지 않고 새 테스트 DB에 설치했다. 실제 승인자·운영 환경·S3·원격 CI와
 전체 Backend/Frontend 서비스 테스트 결과는 이번 로컬 검증에 포함하지 않는다.
+
+## #398 Python 전환 검증
+
+이 절은 위 PR #363 당시 Trigger·함수 기반 기록을 대체한다. `synthetic_control.sql`에서 사용자 Trigger와 PL/pgSQL/SECURITY DEFINER 함수를 모두 제거했다. 리뷰·철회·감사 검증은 Python transaction으로 이동했고, control DB에는 일반 PK·FK·UNIQUE·CHECK와 역할별 권한만 남는다.
+
+- 리뷰·철회 명령은 배치별 advisory lock 아래 append하며 철회 뒤 재승인을 거부한다.
+- 실행 guard는 같은 배치의 shared lock과 게시 경로의 전역 lock을 삭제 완료까지 유지한다.
+- 감사 adapter는 최신 승인 순서·등록 actor·실행자·유효기간·철회·대상·유예기간·직접 참조를 DB에서 다시 읽고 payload를 구성한다.
+- 후속 감사는 복합 FK로 원래 INTENT에 결속되고 식별자 및 event/reason은 CHECK로 검증된다.
+- 실행 계정은 감사 INSERT만 가능하며 UPDATE·DELETE·TRUNCATE와 승인·receipt 변경은 거부된다. DB 소유자는 설치·복구 경계다.
+- 새 전용 PostgreSQL DB에서 참조·workflow 통합 **57 passed**, cleanup 단위 **103 passed**. `source_cleanup` schema의 사용자 Trigger **0개**, 함수 **0개**를 카탈로그에서 확인했다.
+- S3용 `boto3`가 없는 현재 환경에서 관련 모듈 2개를 제외한 Worker 전체 **2,569 passed, 8 skipped**.
+
+지원되는 게시·검토·철회·감사 경로 밖에서 DB 소유자나 직접 SQL이 advisory lock 계약을 우회하는 경우는 정상 실행 모델에 포함하지 않는다. 이 계정들은 애플리케이션 credential로 배포하지 않는다.

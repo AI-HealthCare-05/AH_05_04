@@ -72,7 +72,7 @@ async def _schema_snapshot() -> tuple[set[str], set[str], set[str]]:
 
 def test_checkin_migration_upgrade_and_empty_downgrade() -> None:
     alembic_config = _alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     try:
         tables, columns, constraints = asyncio.run(_schema_snapshot())
         assert tables == CHECKIN_TABLES
@@ -88,7 +88,7 @@ def test_checkin_migration_upgrade_and_empty_downgrade() -> None:
         tables, _, _ = asyncio.run(_schema_snapshot())
         assert tables == set()
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 async def _seed_checkin_audit(ids: dict[str, str]) -> dict[str, str]:
@@ -139,7 +139,7 @@ async def _truncate_checkin_history() -> None:
 
 def test_checkin_audit_is_append_only_and_history_blocks_downgrade() -> None:
     alembic_config = _alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     graph_ids = asyncio.run(_seed_graph())
     ids = asyncio.run(_seed_checkin_audit(graph_ids))
     try:
@@ -149,4 +149,4 @@ def test_checkin_audit_is_append_only_and_history_blocks_downgrade() -> None:
     finally:
         asyncio.run(_truncate_checkin_history())
         asyncio.run(_cleanup_graph(graph_ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")

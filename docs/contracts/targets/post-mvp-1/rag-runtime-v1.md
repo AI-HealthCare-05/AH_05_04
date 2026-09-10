@@ -211,6 +211,8 @@ Citation 공개 전에는 별도 `operation_type=CITATION_AUTHORIZATION` Guard�
 
 ## Intake Context와 Full Execution Context
 
+#398/#412 통합 시 위 Context 저장 테이블 3개의 일반 Runtime 직접 권한은 SELECT·INSERT로 제한한다. UPDATE·DELETE·TRUNCATE는 허용하지 않으며 Source Writer·관리 Writer에는 접근을 부여하지 않는다. Python 저장 경계는 `RagRuntimeRepository`이고 기존 FK·UNIQUE·CHECK와 함께 검증한다. 부모 Job 삭제의 기존 CASCADE 의미와 후속 접수·공개 범위는 변경하지 않는다.
+
 Chat은 접수 시점과 일반 RAG 실행 시점의 Snapshot을 분리한다.
 
 | 구분 | 생성 Transaction | 고정 범위 | 사용 분기 |

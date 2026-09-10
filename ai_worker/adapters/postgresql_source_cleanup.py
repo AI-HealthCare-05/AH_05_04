@@ -13,11 +13,12 @@ import stat
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from ai_worker.adapters.local_private_source_artifact_store import LocalPrivateSourceArtifactStore
@@ -37,6 +38,12 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import IngestionArtifactKind
 _LOCK_KEY = 347165335
 _POLICY = "source-artifact-retention-v1"
 _SAFE_ACTOR = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]{0,62}")
+_AUDIT_REASONS = {
+    "INTENT": {"FINAL_CHECKS_PASSED"},
+    "DELETED": {"DELETE_CONFIRMED"},
+    "BLOCKED": {"FINAL_RECHECK_FAILED"},
+    "UNKNOWN": {"DELETE_RESULT_UNKNOWN", "MISSING_REQUIRES_RECONCILIATION"},
+}
 
 
 async def require_synthetic_database(connection: AsyncConnection) -> str:
@@ -66,6 +73,80 @@ async def schema_fingerprint(connection: AsyncConnection) -> str:
     )
     payload = json.dumps([list(row) for row in rows], separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+async def record_review(
+    engine: AsyncEngine,
+    *,
+    batch_hash: str,
+    role: str,
+    executor: str,
+    policy_version: str,
+    valid_from: datetime,
+    expires_at: datetime,
+) -> int:
+    """Append a review while excluding cleanup and other review changes for the batch."""
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", batch_hash) is None
+        or role not in {"PM", "DB_SECURITY"}
+        or not _SAFE_ACTOR.fullmatch(executor)
+        or policy_version != _POLICY
+        or expires_at <= valid_from
+    ):
+        raise ValueError("Invalid review")
+    async with engine.begin() as connection:
+        await require_synthetic_database(connection)
+        if not await connection.scalar(
+            text("SELECT pg_try_advisory_xact_lock(347, hashtext(:hash))"), {"hash": batch_hash}
+        ):
+            raise ValueError("Cleanup review busy")
+        actor = await connection.scalar(text("SELECT current_user"))
+        registered = await connection.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM source_cleanup.reviewer WHERE actor=:actor AND role=:role)"),
+            {"actor": actor, "role": role},
+        )
+        revoked = await connection.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM source_cleanup.revocation WHERE batch_hash=:hash)"),
+            {"hash": batch_hash},
+        )
+        if not registered or revoked:
+            raise ValueError("Review actor unavailable or batch revoked")
+        revision = await connection.scalar(
+            text("""INSERT INTO source_cleanup.review
+                (batch_hash,role,executor,policy_version,valid_from,expires_at)
+                VALUES (:hash,:role,:executor,:policy,:start,:end) RETURNING revision"""),
+            {
+                "hash": batch_hash,
+                "role": role,
+                "executor": executor,
+                "policy": policy_version,
+                "start": valid_from,
+                "end": expires_at,
+            },
+        )
+        if not isinstance(revision, int):
+            raise ValueError("Review revision unavailable")
+        return revision
+
+
+async def revoke_review_batch(engine: AsyncEngine, *, batch_hash: str) -> None:
+    """Append a terminal batch revocation under the same lock used by cleanup."""
+    if re.fullmatch(r"[0-9a-f]{64}", batch_hash) is None:
+        raise ValueError("Invalid revocation digest")
+    async with engine.begin() as connection:
+        await require_synthetic_database(connection)
+        if not await connection.scalar(
+            text("SELECT pg_try_advisory_xact_lock(347, hashtext(:hash))"), {"hash": batch_hash}
+        ):
+            raise ValueError("Cleanup review busy")
+        actor = await connection.scalar(text("SELECT current_user"))
+        if not await connection.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM source_cleanup.reviewer WHERE actor=:actor)"), {"actor": actor}
+        ):
+            raise ValueError("Revocation actor unavailable")
+        await connection.execute(
+            text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch_hash}
+        )
 
 
 def _root_identity(root: Path) -> str:
@@ -301,28 +382,155 @@ class PostgresAuditJournal:
             )
             return tuple(AuditEntry(**r) for r in rows)
 
+    async def _intent_payload(
+        self, connection: AsyncConnection, entry: AuditEntry, caller: str, target: RowMapping
+    ) -> dict[str, object]:
+        if not await connection.scalar(
+            text("SELECT pg_try_advisory_xact_lock_shared(347, hashtext(:hash))"), {"hash": entry.batch_hash}
+        ):
+            raise ValueError("Cleanup review busy")
+        rows = (
+            (
+                await connection.execute(
+                    text("""SELECT DISTINCT ON (r.role) r.*,
+                    EXISTS (SELECT 1 FROM source_cleanup.reviewer v
+                            WHERE v.actor=r.actor AND v.role=r.role) AS registered
+                    FROM source_cleanup.review r WHERE r.batch_hash=:hash
+                    ORDER BY r.role,r.revision DESC"""),
+                    {"hash": entry.batch_hash},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        by_role = {row["role"]: row for row in rows}
+        if set(by_role) != {"PM", "DB_SECURITY"}:
+            raise ValueError("Audit approval invalid")
+        pm, security = by_role["PM"], by_role["DB_SECURITY"]
+        revoked = await connection.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM source_cleanup.revocation WHERE batch_hash=:hash)"),
+            {"hash": entry.batch_hash},
+        )
+        effective_time = target["effective_time"]
+        if (
+            security["revision"] >= pm["revision"]
+            or pm["executor"] != caller
+            or security["executor"] != caller
+            or pm["actor"] == caller
+            or security["actor"] == caller
+            or not pm["registered"]
+            or not security["registered"]
+            or effective_time < max(pm["valid_from"], security["valid_from"])
+            or effective_time >= min(pm["expires_at"], security["expires_at"])
+            or revoked
+        ):
+            raise ValueError("Audit approval invalid")
+        referenced = await connection.scalar(
+            text("""SELECT EXISTS (SELECT 1 FROM public.rag_source_ingestion_artifact
+            WHERE storage_backend='LOCAL_PRIVATE' AND object_key=:key)"""),
+            {"key": target["object_key"]},
+        )
+        if effective_time <= target["created_at"] + timedelta(days=30) or referenced:
+            raise ValueError("Audit reference invalid")
+        return {
+            "batch_hash": entry.batch_hash,
+            "object_ref": entry.object_ref,
+            "attempt_id": entry.attempt_id,
+            "checksum": target["checksum"],
+            "artifact_kind": target["artifact_kind"],
+            "policy_version": pm["policy_version"],
+            "receipt_id": hashlib.sha256(
+                f"{entry.batch_hash}:{pm['revision']}:{security['revision']}".encode()
+            ).hexdigest(),
+            "pm_actor": pm["actor"],
+            "db_security_actor": security["actor"],
+            "executor": caller,
+            "references_verified": True,
+        }
+
+    async def _outcome_payload(
+        self, connection: AsyncConnection, entry: AuditEntry, caller: str
+    ) -> tuple[dict[str, object], int]:
+        intent = (
+            (
+                await connection.execute(
+                    text("""SELECT sequence,payload,recorded_by,batch_hash,object_ref
+                    FROM source_cleanup.audit WHERE attempt_id=:attempt AND event='INTENT'"""),
+                    {"attempt": entry.attempt_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            intent is None
+            or intent["batch_hash"] != entry.batch_hash
+            or intent["object_ref"] != entry.object_ref
+            or intent["recorded_by"] != caller
+        ):
+            raise ValueError("Audit sequence invalid")
+        return dict(intent["payload"]), intent["sequence"]
+
     async def append(self, entry: AuditEntry) -> None:
         if (
             not all(
                 re.fullmatch(r"[0-9a-f]{64}", value) for value in (entry.batch_hash, entry.object_ref, entry.checksum)
             )
+            or entry.reason not in _AUDIT_REASONS.get(entry.event, set())
             or entry.artifact_kind not in {"RAW_RESPONSE", "REJECTS"}
             or entry.policy_version != _POLICY
             or not all(_SAFE_ACTOR.fullmatch(s) for s in (entry.pm_actor, entry.db_security_actor, entry.executor))
         ):
             raise ValueError("Invalid redacted audit payload")
+        try:
+            UUID(entry.attempt_id)
+        except ValueError:
+            raise ValueError("Invalid redacted audit payload") from None
         async with self.engine.begin() as connection:
             await require_synthetic_database(connection)
-            if await connection.scalar(text("SELECT current_user")) != entry.executor:
+            caller = await connection.scalar(text("SELECT current_user"))
+            if caller != entry.executor:
                 raise ValueError("Audit executor mismatch")
+            target = (
+                (
+                    await connection.execute(
+                        text("""WITH observed AS (SELECT clock_timestamp() AS recorded_time)
+                        SELECT r.checksum,r.artifact_kind,r.created_at,w.evaluation_offset_days,w.database_name,
+                               b.object_key,observed.recorded_time,
+                               observed.recorded_time + make_interval(days=>w.evaluation_offset_days) AS effective_time
+                        FROM source_cleanup.batch_target b
+                        JOIN source_cleanup.object_receipt r USING (workspace_id,object_key)
+                        JOIN source_cleanup.workspace w ON w.id=b.workspace_id
+                        CROSS JOIN observed
+                        WHERE b.batch_hash=:hash AND b.object_ref=:ref"""),
+                        {"hash": entry.batch_hash, "ref": entry.object_ref},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if target is None or target["database_name"] != self.engine.url.database:
+                raise ValueError("Audit target invalid")
+
+            if entry.event == "INTENT":
+                payload = await self._intent_payload(connection, entry, caller, target)
+                intent_sequence = None
+            else:
+                payload, intent_sequence = await self._outcome_payload(connection, entry, caller)
+            recorded_time = target["recorded_time"]
+            payload.update(event=entry.event, reason=entry.reason, occurred_at=recorded_time.isoformat())
             await connection.execute(
-                text("SELECT source_cleanup.append_audit(:hash,:ref,:attempt,:event,:reason)"),
+                text("""INSERT INTO source_cleanup.audit
+                (batch_hash,object_ref,attempt_id,event,payload,intent_sequence,recorded_at)
+                VALUES (:hash,:ref,:attempt,:event,CAST(:payload AS jsonb),:intent,:recorded)"""),
                 {
                     "hash": entry.batch_hash,
                     "ref": entry.object_ref,
                     "attempt": entry.attempt_id,
                     "event": entry.event,
-                    "reason": entry.reason,
+                    "payload": json.dumps(payload, separators=(",", ":")),
+                    "intent": intent_sequence,
+                    "recorded": recorded_time,
                 },
             )
 
@@ -343,24 +551,20 @@ class PostgresLocalCleanupGuard:
                 OR has_any_column_privilege(current_user,'source_cleanup.object_receipt','INSERT')
                 OR has_any_column_privilege(current_user,'source_cleanup.batch_target','INSERT')
                 OR has_any_column_privilege(current_user,'source_cleanup.reviewer','INSERT')
-                OR has_any_column_privilege(current_user,'source_cleanup.audit','INSERT')
                 OR has_table_privilege(current_user,'source_cleanup.audit','UPDATE,DELETE,TRUNCATE')""")
             )
             if unsafe:
                 raise ValueError("Separate restricted execution role required")
             if not await connection.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _LOCK_KEY}):
                 raise ValueError("Source publication in progress")
-            # Review/revocation INSERT triggers take the exclusive side of this lock.
-            # Hold through final verification, unlink and transaction exit. A revoke
-            # committed before acquisition is observed by the verifier inside the guard.
+            # Python review/revocation commands take the exclusive side of this lock.
+            # Hold through final verification, unlink and transaction exit.
             if not await connection.scalar(
                 text("SELECT pg_try_advisory_xact_lock_shared(347, hashtext(:hash))"),
                 {"hash": batch.digest()},
             ):
                 raise ValueError("Batch review change in progress")
-            # Even direct INSERTs outside the managed publisher cannot commit during this guard.
-            # Such writers must not publish/reuse before taking the shared lock (runbook contract).
-            await connection.execute(text("SELECT source_cleanup.lock_references()"))
+            # Every supported publisher holds the shared global lock through reference commit.
             row = (
                 (
                     await connection.execute(

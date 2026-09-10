@@ -1,13 +1,13 @@
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
+    _validate_snapshot_transition,
 )
 from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
@@ -83,31 +83,23 @@ async def test_operation_lookup_locks_exact_source_endpoint_and_operation() -> N
     assert "FOR UPDATE" in sql
 
 
-async def test_acquisition_lock_skips_locked_operation_without_waiting() -> None:
+async def test_acquisition_lock_rejects_busy_source_without_waiting() -> None:
     session = AsyncMock(spec=AsyncSession)
-    locked_result = MagicMock()
-    locked_result.scalar_one_or_none.return_value = None
-    existence_result = MagicMock()
-    existence_result.scalar_one_or_none.return_value = str(_OPERATION_ID)
-    session.execute.side_effect = [locked_result, existence_result]
+    operation_result = MagicMock()
+    operation_result.one_or_none.return_value = (str(_OPERATION_ID), str(uuid4()))
+    session.execute.return_value = operation_result
+    session.scalar.return_value = False
     repository = SqlAlchemySourceSnapshotRepository(session)
 
     with pytest.raises(SourceAcquisitionInProgressError):
         await repository.try_lock_acquisition(_identity())
 
-    lock_statement = session.execute.await_args_list[0].args[0]
-    lock_sql = str(lock_statement.compile(dialect=postgresql.dialect()))
-    assert "FOR UPDATE" in lock_sql
-    assert "OF rag_source" in lock_sql
-    assert "SKIP LOCKED" in lock_sql
-    assert "FOR UPDATE" not in str(session.execute.await_args_list[1].args[0])
-
 
 async def test_acquisition_lock_distinguishes_missing_operation() -> None:
     session = AsyncMock(spec=AsyncSession)
     missing_result = MagicMock()
-    missing_result.scalar_one_or_none.return_value = None
-    session.execute.side_effect = [missing_result, missing_result]
+    missing_result.one_or_none.return_value = None
+    session.execute.return_value = missing_result
     repository = SqlAlchemySourceSnapshotRepository(session)
 
     with pytest.raises(ValueError, match="찾을 수 없습니다"):
@@ -257,26 +249,57 @@ async def test_snapshot_operation_lock_uses_snapshot_membership() -> None:
 
 async def test_snapshot_status_change_is_compare_and_set_without_commit() -> None:
     session = AsyncMock(spec=AsyncSession)
-    query_result = MagicMock()
-    query_result.scalar_one.return_value = True
-    session.execute.return_value = query_result
+    operation = MagicMock()
+    operation.scalar_one_or_none.return_value = str(_OPERATION_ID)
+    target = MagicMock()
+    target.mappings.return_value.one_or_none.return_value = {
+        "verification_status": "PENDING",
+        "verification_seal_id": None,
+        "rejected_record_count": 0,
+    }
+    changed = MagicMock()
+    changed.scalar_one_or_none.return_value = str(_SNAPSHOT_ID)
+    session.execute.side_effect = [operation, target, MagicMock(), changed, operation, MagicMock()]
     repository = SqlAlchemySourceSnapshotRepository(session)
-
-    changed = await repository.change_snapshot_status(
+    assert await repository.change_snapshot_status(
         snapshot_id=_SNAPSHOT_ID,
         expected_status=SnapshotVerificationStatus.PENDING,
         new_status=SnapshotVerificationStatus.CURRENT,
         verified_at=_NOW,
         effective_at=_NOW,
+        selected_by="synthetic-reviewer",
     )
-
-    assert changed is True
-    statement = session.execute.await_args.args[0]
-    sql = str(statement)
-    parameters = session.execute.await_args.args[1]
-    assert "SELECT transition_rag_source_snapshot" in sql
-    assert parameters["snapshot_id"] == str(_SNAPSHOT_ID)
-    assert SnapshotVerificationStatus.PENDING in parameters.values()
-    assert SnapshotVerificationStatus.CURRENT in parameters.values()
-    assert _NOW in parameters.values()
+    statements = [str(call.args[0]) for call in session.execute.await_args_list]
+    assert "FOR UPDATE" in statements[0]
+    assert "FOR UPDATE" in statements[1]
+    assert statements[2].startswith("INSERT INTO rag_source_snapshot_verification")
+    assert statements[3].startswith("UPDATE rag_source_snapshot")
+    assert "FOR UPDATE" in statements[4]
+    assert statements[5].startswith("INSERT INTO rag_source_snapshot_verification")
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("expected", list(SnapshotVerificationStatus))
+@pytest.mark.parametrize("next_status", list(SnapshotVerificationStatus))
+def test_python_transition_matrix_is_fail_closed(expected, next_status) -> None:
+    allowed = {("PENDING", "CURRENT"), ("PENDING", "FAILED"), ("CURRENT", "STALE"), ("STALE", "CURRENT")}
+    args = (
+        expected,
+        next_status,
+        _NOW if expected == SnapshotVerificationStatus.PENDING else None,
+        _NOW if next_status == SnapshotVerificationStatus.CURRENT else None,
+        "synthetic-reviewer",
+    )
+    if (expected.value, next_status.value) in allowed:
+        _validate_snapshot_transition(*args)
+    else:
+        with pytest.raises(ValueError, match="Invalid Snapshot transition"):
+            _validate_snapshot_transition(*args)
+
+
+@pytest.mark.parametrize("actor", [None, "", " ", "x" * 101])
+def test_python_selection_requires_auditable_actor(actor) -> None:
+    with pytest.raises(ValueError, match="actor"):
+        _validate_snapshot_transition(
+            SnapshotVerificationStatus.PENDING, SnapshotVerificationStatus.CURRENT, _NOW, _NOW, actor
+        )

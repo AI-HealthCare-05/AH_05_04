@@ -23,6 +23,7 @@ from app.models.users import Gender, User
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.services.medication_occurrences import MedicationOccurrenceScheduler
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 async def _create_user_with_self_profile(session: AsyncSession, *, label: str) -> tuple[User, Profile]:
@@ -75,6 +76,10 @@ async def _create_active_version_medication(
     session.add(prescription)
     await session.flush()
     version = PrescriptionVersion(
+        **fingerprint_values(
+            prescription.prescribed_date,
+            [{"medication_name": "합성테스트약", "frequency_per_day": 1, "display_order": 1}],
+        ),
         id=version_id,
         prescription_id=prescription.id,
         version_number=1,
@@ -84,6 +89,7 @@ async def _create_active_version_medication(
     session.add(version)
     await session.flush()
     medication = PrescriptionVersionMedication(
+        medication_count=1,
         prescription_version_id=version.id,
         medication_name="합성테스트약",
         frequency_per_day=1,
@@ -183,6 +189,9 @@ async def test_schedule_creation_requires_the_current_prescription_version(
     assert old_schedule is not None
 
     replacement = PrescriptionVersion(
+        **fingerprint_values(
+            date(2026, 9, 10), [{"medication_name": "합성교체약", "frequency_per_day": 1, "display_order": 1}]
+        ),
         prescription_id=prescription.id,
         version_number=2,
         prescribed_date=date(2026, 9, 10),
@@ -191,6 +200,7 @@ async def test_schedule_creation_requires_the_current_prescription_version(
     db_session.add(replacement)
     await db_session.flush()
     replacement_medication = PrescriptionVersionMedication(
+        medication_count=1,
         prescription_version_id=replacement.id,
         medication_name="합성교체약",
         frequency_per_day=1,
@@ -418,6 +428,9 @@ async def test_schedule_creation_waits_for_version_transition_and_rejects_old_ve
             profile=profile,
         )
         replacement = PrescriptionVersion(
+            **fingerprint_values(
+                date(2026, 9, 10), [{"medication_name": "합성경합교체약", "frequency_per_day": 1, "display_order": 1}]
+            ),
             prescription_id=prescription.id,
             version_number=2,
             prescribed_date=date(2026, 9, 10),
@@ -427,6 +440,7 @@ async def test_schedule_creation_waits_for_version_transition_and_rejects_old_ve
         await setup_session.flush()
         setup_session.add(
             PrescriptionVersionMedication(
+                medication_count=1,
                 prescription_version_id=replacement.id,
                 medication_name="합성경합교체약",
                 frequency_per_day=1,

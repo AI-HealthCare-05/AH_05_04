@@ -445,16 +445,31 @@ async def _cleanup_context_tables() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _clean_context_data_after_test() -> Iterator[None]:
-    yield
-    asyncio.run(_cleanup_context_tables())
+def _isolated_preflight_database(monkeypatch) -> Iterator[None]:
+    """Exercise historical downgrades without touching the irreversible #398 head."""
+    database = f"preflight412_{uuid4().hex[:12]}"
+    cluster_url = config.database_url
+
+    async def database_action(create: bool) -> None:
+        engine = create_async_engine(cluster_url, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(
+                    text(f'CREATE DATABASE "{database}"' if create else f'DROP DATABASE "{database}" WITH (FORCE)')
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(database_action(True))
+    monkeypatch.setattr(config, "DB_NAME", database)
+    try:
+        yield
+    finally:
+        asyncio.run(database_action(False))
 
 
 def _upgrade_to_preflight_context() -> None:
     cfg = create_alembic_config()
-    command.upgrade(cfg, "head")
-    asyncio.run(_cleanup_context_tables())
-    command.downgrade(cfg, PREFLIGHT_CONTEXT_BASE_REVISION)
     command.upgrade(cfg, PREFLIGHT_CONTEXT_REVISION)
 
 
@@ -490,7 +505,7 @@ def test_preflight_context_downgrade_blocks_when_context_data_exists() -> None:
         asyncio.run(_cleanup_preflight_fixture_graph(ids))
         asyncio.run(_cleanup_context_tables())
         command.downgrade(cfg, PREFLIGHT_CONTEXT_BASE_REVISION)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, PREFLIGHT_CONTEXT_REVISION)
 
 
 def test_preflight_context_downgrade_empty_schema_removes_tables() -> None:
@@ -500,4 +515,19 @@ def test_preflight_context_downgrade_empty_schema_removes_tables() -> None:
     command.downgrade(cfg, PREFLIGHT_CONTEXT_BASE_REVISION)
 
     assert asyncio.run(_fetch_table_names()) == set()
+    command.upgrade(cfg, PREFLIGHT_CONTEXT_REVISION)
+
+
+def test_preflight_tables_join_existing_integrity_head() -> None:
+    from scripts.ci.verify_database_head import read_database_head_state, validation_errors
+
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "398293a4b5c6")
     command.upgrade(cfg, "head")
+    assert asyncio.run(_fetch_table_names()) == PREFLIGHT_CONTEXT_TABLES
+
+    async def verify() -> None:
+        async with _connection() as connection:
+            assert validation_errors("3984b5c6d7e8", await read_database_head_state(connection)) == []
+
+    asyncio.run(verify())

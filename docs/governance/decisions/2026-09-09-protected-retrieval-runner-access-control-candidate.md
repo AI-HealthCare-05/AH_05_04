@@ -51,21 +51,13 @@ PR #373 kernel이 이미 구현한 3개 역할을 그대로 사용한다.
 
 `FREEZE`·`RUN`·grant/revoke의 기본 경계는 `CONTRIBUTING.md`의 "DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선한다" 원칙에 따라 **Application Service**로 둔다.
 
-다만 raw SQL로 protected schema에 직접 접근하면 kernel의 Python 레벨 검사(`AuthorizationGuard` 등)를 완전히 우회할 수 있다는 문제에 한해, SECURITY DEFINER 함수와 같은 구조를 예외로 허용한다 — 기존 선례인 `transition_rag_source_snapshot`(`165e8f706152_guard_snapshot_transitions.py`가 생성, 정책 근거는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md))은 일반 `migration_user` 소유이지만, protected schema용 함수는 위에서 신설한 **protected owner/migration role 소유**로 만든다 — 일반 `migration_user`가 소유하면 protected 경계 분리 취지와 어긋난다. `CONTRIBUTING.md`가 이런 예외에 요구하는 5개 항목은 다음과 같다.
+### #398 / PR #429에서 대체한 Source 선례
 
-1. 단순 구조(Application Service만)로 해결할 수 없는 문제: kernel의 `AuthorizationGuard`는 이미 Application Service 레벨에서 승인·상태 원자성을 보장하지만, 이는 Python 코드 경로를 통할 때만 적용된다. `protected_access_role`이나 raw SQL 접근이 이 경로를 거치지 않고 protected schema를 직접 UPDATE/DELETE하면 kernel 검사를 완전히 우회한다 — [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)이 해결한 것과 동일한 문제.
-2. 제안하는 구조: 허용 전이만 수행하고 승인·감사 append를 DB 트랜잭션에서 원자적으로 강제하는 SECURITY DEFINER 함수 — 위 선례와 동일 패턴. `protected_access_role`은 이 함수를 통해서만 상태를 바꿀 수 있고, 테이블 직접 UPDATE 권한은 갖지 않는다(일반 SELECT/INSERT는 §4 위 문단대로 계속 직접 가능).
-3. 추가되는 유지보수 비용: DB 함수 버전 관리와 배포가 Application 코드 배포와 분리되어야 한다.
-4. 검토한 대안: kernel의 `AuthorizationGuard`만으로 충분한지 검토 — Python 레벨 검사이므로 raw SQL이나 다른 서비스의 직접 쿼리 경로를 막지 못해 기각.
-5. 지금 도입해야 하는 이유: 보안·소유권 분리를 위해 독립된 경계가 필요하다는 `CONTRIBUTING.md`의 예외 근거에 해당하며, 같은 저장소에 이미 승인된 선례(Source Snapshot)가 있다.
+이 절의 기존 SECURITY DEFINER 예외 제안은 `165e8f706152`와 [과거 Source DB 전이 결정](./2026-09-08-source-snapshot-db-transition.md)을 승인 선례로 인용했다. 해당 Source 결정은 #398의 Python 전환으로 **superseded**되었으므로 현재 구현 근거로 사용할 수 없다. 함수 owner·search_path·EXECUTE 인계에 관한 과거 제안도 신규 저장 함수 도입 지침으로 사용하지 않는다.
 
-SECURITY DEFINER 함수는 owner 권한으로 실행되므로, 아래 조건이 없으면 `search_path` 조작을 통해 protected schema 권한 분리를 우회하는 privilege-escalation 경로가 생긴다. 기존 선례(`165e8f706152_guard_snapshot_transitions.py`)가 이미 이 패턴을 쓰고 있으므로 동일하게 구현·SQL negative test 대상에 포함한다.
+현재 `CONTRIBUTING.md`·`AGENTS.md`에 따라 DB Trigger·RLS·업무 저장 함수를 추가하지 않는다. `FREEZE`·`RUN`·grant/revoke는 명시적 Python Service/Repository transaction에서 검증하고, 실행 역할·credential 분리와 직접 DML 회수, 일반 FK·UNIQUE·CHECK로 뒷받침해야 한다. 동적 SQL/다른 실행 경로가 Python 검사를 우회할 수 있다는 위험은 남으므로 권한 경계를 실제 제한 로그인·동시성·rollback 통합 테스트로 입증해야 한다. 정적 검색만으로 raw SQL 우회를 막았다고 판정하지 않는다.
 
-- caller-controlled `search_path`를 사용하지 않음
-- `SET search_path = pg_catalog, <protected trusted schema>, pg_temp`로 고정
-- `REVOKE ALL ... FROM PUBLIC`으로 `PUBLIC EXECUTE` 회수
-- 승인된 최소 role(`protected_access_role`)에만 `GRANT EXECUTE`
-- 함수 owner는 protected owner/migration role로 제한
+이 정렬은 protected schema 전체 ACL이나 Runner 기능의 구현·승인을 완료하는 변경이 아니다. 실제 구현 권한 목록과 관리 경로는 Source 선례를 자동 복제하지 않고 기존 담당 DB·Security·RAG 리뷰 경로로 확정한다. 대체 Decision은 [PD-398-R1](./2026-09-10-python-integrity-review-429.md)이다.
 
 사람(Author·Custodian)과 Runner는 공유 login이 아니라 개별 identity + 단기 credential이어야 한다 — 공유 계정을 쓰면 §7 audit가 "누가 접근했는가"를 실제로 답할 수 없게 된다.
 
@@ -164,8 +156,8 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 - `ai_worker/tasks/evaluation/protected_retrieval_synthetic.py` — synthetic in-memory adapter
 - `docs/validation/rag/issue-273/protected-runner-foundation.md`
 - `infra/docker/postgres/configure-app-role.sql` — §3 role/권한 provisioning 선례
-- `backend/alembic/versions/165e8f706152_guard_snapshot_transitions.py`, [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md) — §4 SECURITY DEFINER 함수 선례
-- `CONTRIBUTING.md` — §4 DB 함수 도입 예외 5개 항목 기준
+- [PD-398-R1 Python 무결성 리뷰 보완](./2026-09-10-python-integrity-review-429.md) — §4의 현재 구현 원칙. `165e8f706152`와 [과거 Source DB 전이 결정](./2026-09-08-source-snapshot-db-transition.md)은 superseded된 이력이며 신규 함수 선례가 아니다.
+- `CONTRIBUTING.md`·`AGENTS.md` — §4 Python 업무 로직·일반 제약·최소 권한 및 신규 Trigger/RLS/업무 저장 함수 금지 기준
 - `backend/app/core/config.py` — §6 credential fail-closed validator 패턴
 - `.github/workflows/checks.yml` — §6 GitHub Actions 현황 확인
 - `docs/privacy-safety.md` — §7 보존기간(다른 값, 전부 미적용), §12 예외 미허용 기조

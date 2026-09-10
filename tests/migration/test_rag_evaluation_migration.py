@@ -397,7 +397,7 @@ async def _assert_integrity_error(statement: str, params: dict[str, object]) -> 
 def test_rag_evaluation_tables_and_constraints_exist_after_alembic_upgrade() -> None:
     alembic_config = create_alembic_config()
 
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
 
     assert asyncio.run(_fetch_table_names()) == RAG_EVALUATION_TABLES
 
@@ -435,7 +435,7 @@ def test_rag_evaluation_tables_and_constraints_exist_after_alembic_upgrade() -> 
 def test_rag_evaluation_orm_metadata_matches_migrated_foreign_keys() -> None:
     alembic_config = create_alembic_config()
 
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
 
     migrated_fks = asyncio.run(_fetch_foreign_key_signatures({"eval_run", "eval_case_result"}))
     orm_fks = _orm_foreign_key_signatures(EvalRun, EvalCaseResult)
@@ -446,7 +446,7 @@ def test_rag_evaluation_orm_metadata_matches_migrated_foreign_keys() -> None:
 def test_rag_evaluation_upgrade_uses_end_to_end_rag_and_rejects_end_to_end_final() -> None:
     alembic_config = create_alembic_config()
 
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
 
     check_definitions = "\n".join(asyncio.run(_fetch_evaluation_check_definitions()))
 
@@ -458,15 +458,15 @@ def test_rag_evaluation_empty_downgrade_roundtrips() -> None:
     alembic_config = create_alembic_config()
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         command.downgrade(alembic_config, RAG_EVALUATION_BASE_REVISION)
         assert asyncio.run(_table_exists("eval_dataset")) is False
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         assert asyncio.run(_table_exists("eval_dataset")) is True
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_rag_evaluation_downgrade_blocks_non_empty_tables_and_preserves_data() -> None:
@@ -474,7 +474,7 @@ def test_rag_evaluation_downgrade_blocks_non_empty_tables_and_preserves_data() -
     dataset_id: str | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         dataset_id = asyncio.run(_seed_eval_dataset())
 
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 164a9c8e7d6f"):
@@ -482,7 +482,7 @@ def test_rag_evaluation_downgrade_blocks_non_empty_tables_and_preserves_data() -
 
         assert asyncio.run(_table_exists("eval_dataset")) is True
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if dataset_id is not None:
             asyncio.run(_cleanup_eval_dataset(dataset_id))
 
@@ -492,7 +492,7 @@ def test_rag_evaluation_rejects_invalid_contract_values() -> None:
     dataset_id: str | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         dataset_id = asyncio.run(_seed_eval_dataset())
 
         asyncio.run(
@@ -520,7 +520,7 @@ def test_rag_evaluation_rejects_run_dataset_manifest_mismatch() -> None:
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_eval_graph())
 
         asyncio.run(
@@ -553,7 +553,7 @@ def test_rag_evaluation_rejects_decision_status_execution_mismatch() -> None:
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_eval_graph())
 
         asyncio.run(
@@ -619,7 +619,7 @@ def test_rag_evaluation_rejects_metric_owner_and_range_violations() -> None:
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_eval_graph())
 
         asyncio.run(
@@ -692,7 +692,7 @@ def test_rag_evaluation_rejects_duplicate_metric_and_failure_scope_entries() -> 
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_eval_graph())
 
         async def insert_valid_metric_and_failure() -> None:
@@ -837,7 +837,7 @@ def test_rag_evaluation_rejects_end_to_end_case_without_scope_codes() -> None:
     dataset_id: str | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         dataset_id = asyncio.run(_seed_eval_dataset())
 
         asyncio.run(
@@ -866,7 +866,7 @@ def test_rag_evaluation_rejects_run_variant_from_another_experiment() -> None:
     second_ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         first_ids = asyncio.run(_seed_eval_dataset_and_experiment())
         second_ids = asyncio.run(_seed_eval_dataset_and_experiment())
 
@@ -904,7 +904,7 @@ def test_rag_evaluation_rejects_case_result_case_with_different_experiment_type(
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_eval_graph())
 
         async def seed_retrieval_case() -> str:
@@ -957,7 +957,7 @@ def test_rag_evaluation_rejects_case_result_case_from_another_dataset() -> None:
     other_ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         run_ids = asyncio.run(_seed_eval_graph())
         other_ids = asyncio.run(_seed_eval_dataset_and_experiment())
 

@@ -382,7 +382,7 @@ def test_rag_evidence_citation_upgrade_and_downgrade() -> None:
     command.downgrade(alembic_config, RAG_EVIDENCE_CITATION_BASE_REVISION)
     assert not asyncio.run(_table_exists("rag_citation"))
     assert not asyncio.run(_table_exists("rag_evidence"))
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_rag_evidence_rejects_cross_snapshot_product() -> None:

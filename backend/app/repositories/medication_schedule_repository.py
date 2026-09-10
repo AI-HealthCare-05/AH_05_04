@@ -17,6 +17,7 @@ from app.models.medication_schedules import (
     MedicationScheduleTime,
 )
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.repositories.prescription_integrity import require_verified_version
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -50,8 +51,9 @@ class SqlAlchemyPrescriptionVersionMedicationOwnership:
         prescription_version_medication_id: UUID,
         user_id: UUID,
     ) -> bool:
-        medication_id = await self.session.scalar(
-            select(PrescriptionVersionMedication.id)
+        version_id = await self.session.scalar(
+            select(PrescriptionVersion.id)
+            .select_from(PrescriptionVersionMedication)
             .join(
                 PrescriptionVersion,
                 PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id,
@@ -62,7 +64,9 @@ class SqlAlchemyPrescriptionVersionMedicationOwnership:
                 owned_by_self(Prescription.profile_id, user_id),
             )
         )
-        return medication_id is not None
+        if version_id is not None:
+            await require_verified_version(self.session, version_id)
+        return version_id is not None
 
     async def lock_active_owned(
         self,
@@ -76,8 +80,9 @@ class SqlAlchemyPrescriptionVersionMedicationOwnership:
         잠그므로, 확인 뒤 insert 사이에 대상 Version이 과거 Version으로 바뀌지 않는다.
         """
 
-        medication_id = await self.session.scalar(
-            select(PrescriptionVersionMedication.id)
+        version_id = await self.session.scalar(
+            select(PrescriptionVersion.id)
+            .select_from(PrescriptionVersionMedication)
             .join(
                 PrescriptionVersion,
                 PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id,
@@ -90,7 +95,9 @@ class SqlAlchemyPrescriptionVersionMedicationOwnership:
             )
             .with_for_update(of=Prescription)
         )
-        return medication_id is not None
+        if version_id is not None:
+            await require_verified_version(self.session, version_id)
+        return version_id is not None
 
 
 def as_utc_instant(value: datetime, *, field: str) -> datetime:
@@ -210,7 +217,7 @@ class MedicationScheduleRepository:
         """활성 Version의 현재 Schedule revision만 생성 대상으로 잠금 조회한다."""
 
         rows = await self.session.execute(
-            select(MedicationSchedule, MedicationScheduleTime)
+            select(MedicationSchedule, MedicationScheduleTime, PrescriptionVersion.id)
             .join(
                 MedicationScheduleTime,
                 MedicationScheduleTime.medication_schedule_id == MedicationSchedule.id,
@@ -242,7 +249,10 @@ class MedicationScheduleRepository:
             )
             .with_for_update(of=[Prescription, MedicationSchedule])
         )
-        return [(schedule, schedule_time) for schedule, schedule_time in rows.all()]
+        targets = rows.all()
+        for version_id in sorted({row[2] for row in targets}):
+            await require_verified_version(self.session, version_id)
+        return [(schedule, schedule_time) for schedule, schedule_time, _ in targets]
 
     async def create_occurrence_if_absent(
         self,

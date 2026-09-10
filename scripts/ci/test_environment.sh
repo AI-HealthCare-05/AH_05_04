@@ -287,5 +287,11 @@ SQL
     test_environment_error "격리된 test 데이터베이스를 재생성하지 못했습니다."
   fi
 
+  ISSUE398_TEST_POSTGRES_CONTAINER="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q postgres)"
+  if [ -z "$ISSUE398_TEST_POSTGRES_CONTAINER" ]; then
+    test_environment_error "Source 권한 검증용 PostgreSQL 컨테이너를 확인할 수 없습니다."
+  fi
+  export ISSUE398_TEST_POSTGRES_CONTAINER
+
   prepare_test_storage_directory
 }

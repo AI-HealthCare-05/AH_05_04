@@ -35,8 +35,9 @@ git switch -c feature/12-prescription-upload
 
 ### 구체적 적용 기준
 
-- 요구사항이나 승인된 계약에 없는 DB Trigger, Stored Procedure, DB Scheduler 또는 RLS Policy를 임의로 도입하지 않습니다.
-- DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선합니다. 단, DB 무결성·보안에 필요한 constraint, index, transaction과 승인된 DB 정책은 생략하지 않습니다.
+- DB Trigger·RLS Policy·업무 규칙용 Stored Procedure 및 사용자 정의 DB 함수를 도입하지 않습니다. 승인된 계약을 신규 정의의 예외 근거로 사용하지 않습니다. 업무 규칙과 접근 검증은 Python Service/Repository에서 명시적으로 관리합니다. 이미 적용한 migration 이력은 보존하고 기존 정의는 forward migration으로 제거하며, 재도입 검사 예외 목록은 확대하지 않습니다.
+- DB Scheduler는 요구사항과 승인된 계약에 근거가 있는 경우에만 검토합니다.
+- DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선합니다. 단, DB 무결성·보안에 필요한 constraint, index, transaction과 최소 권한은 생략하지 않습니다.
 - CQRS, Event Bus, Domain Event, Factory, Strategy, Registry 또는 Plugin 구조는 현재 요구사항에서 필요성이 확인될 때만 도입합니다.
 - 실제 구현체가 하나뿐이라면 미래 확장만을 이유로 interface, abstract class 또는 provider abstraction을 추가하지 않습니다. 외부 API 격리, 테스트 대역, 보안 경계처럼 현재 필요한 역할이 있다면 그 근거를 기록합니다.
 - 측정된 성능 문제가 없다면 cache를 추가하지 않습니다.

@@ -237,6 +237,10 @@ __all__ = [
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",
+    "SourceManagementAudit",
+    "SourceManagementPermission",
     "RefreshSession",
     "User",
 ]
+
+from app.models.source_management import SourceManagementAudit, SourceManagementPermission

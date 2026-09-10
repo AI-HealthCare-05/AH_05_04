@@ -25,11 +25,13 @@ from ai_worker.adapters.postgresql_source_cleanup import (
     create_synthetic_workspace,
     load_batch,
     publication_transaction,
+    record_review,
     reference_existing_objects,
     require_synthetic_database,
+    revoke_review_batch,
     survey_workspace,
 )
-from ai_worker.tasks.rag.source_cleanup.execution import execute_synthetic_batch
+from ai_worker.tasks.rag.source_cleanup.execution import AuditEntry, execute_synthetic_batch
 from app.models.rag_source import RagIngestionRunStatus
 
 DATABASE_URL = os.environ.get("SOURCE_CLEANUP_TEST_DATABASE_URL")
@@ -48,6 +50,21 @@ async def control():
         script = Path("tools/source_cleanup/synthetic_control.sql").read_text()
         if not await connection.scalar(text("SELECT to_regnamespace('source_cleanup')")):
             await raw.driver_connection.execute(script)
+        assert (
+            await connection.scalar(
+                text("""SELECT count(*) FROM pg_trigger t
+                JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname='source_cleanup' AND NOT t.tgisinternal""")
+            )
+            == 0
+        )
+        assert (
+            await connection.scalar(
+                text("""SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                WHERE n.nspname='source_cleanup'""")
+            )
+            == 0
+        )
         for key, role in roles.items():
             password = uuid4().hex
             await connection.execute(text(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'"))
@@ -64,11 +81,13 @@ async def control():
                 ON source_cleanup.review TO {role}""")
             )
             await connection.execute(text(f"GRANT INSERT (batch_hash) ON source_cleanup.revocation TO {role}"))
+            await connection.execute(text(f"GRANT USAGE ON SEQUENCE source_cleanup.review_revision TO {role}"))
         executor = roles["executor"]
-        await connection.execute(text(f"GRANT EXECUTE ON FUNCTION source_cleanup.lock_references() TO {executor}"))
         await connection.execute(
-            text(f"GRANT EXECUTE ON FUNCTION source_cleanup.append_audit(text,text,text,text,text) TO {executor}")
+            text(f"""GRANT INSERT (batch_hash,object_ref,attempt_id,event,payload,intent_sequence,recorded_at)
+            ON source_cleanup.audit TO {executor}""")
         )
+        await connection.execute(text(f"GRANT USAGE ON SEQUENCE source_cleanup.audit_sequence_seq TO {executor}"))
         for key, role in (("security", "DB_SECURITY"), ("pm", "PM")):
             await connection.execute(
                 text("INSERT INTO source_cleanup.reviewer(actor,role) VALUES (:actor,:role)"),
@@ -101,20 +120,20 @@ async def approve(workflow, *, expires=None, executor=None, order=("security", "
     _, engines, roles, _, batch, now, *_ = workflow
     for key in order:
         role = {"security": "DB_SECURITY", "pm": "PM"}[key]
-        async with engines[key].begin() as connection:
-            await connection.execute(
-                text("""INSERT INTO source_cleanup.review
-                (batch_hash,role,executor,policy_version,valid_from,expires_at)
-                VALUES (:hash,:role,:executor,:policy,:start,:end)"""),
-                {
-                    "hash": batch.digest(),
-                    "role": role,
-                    "executor": executor or roles["executor"],
-                    "policy": batch.scope.policy_version,
-                    "start": now - timedelta(hours=1),
-                    "end": expires or now + timedelta(hours=1),
-                },
-            )
+        await record_review(
+            engines[key],
+            batch_hash=batch.digest(),
+            role=role,
+            executor=executor or roles["executor"],
+            policy_version=batch.scope.policy_version,
+            valid_from=now - timedelta(hours=1),
+            expires_at=expires or now + timedelta(hours=1),
+        )
+
+
+async def revoke(workflow):
+    _, engines, _, _, batch, *_ = workflow
+    await revoke_review_batch(engines["pm"], batch_hash=batch.digest())
 
 
 async def execute(workflow, **kwargs):
@@ -182,13 +201,14 @@ async def test_inflight_publication_and_new_writer_excluded(workflow):
     assert (await execute(workflow)).complete
 
 
-async def test_uncommitted_direct_reference_blocks_cleanup(workflow):
+async def test_committed_direct_reference_blocks_cleanup(workflow):
     admin, _, _, root, batch, *_ = workflow
     await approve(workflow)
     async with AsyncSession(admin) as writer:
         run = await seed_run(writer)
         await add_reference(writer, run, batch.targets[0].observation.object_key)
-        assert not (await execute(workflow)).complete
+        await writer.commit()
+    assert not (await execute(workflow)).complete
     assert all((root / t.observation.object_key).exists() for t in batch.targets)
 
 
@@ -197,10 +217,7 @@ async def test_changed_evidence_blocks(workflow, change):
     admin, engines, _, root, batch, now, *_ = workflow
     await approve(workflow, expires=now if change == "expire" else None)
     if change == "revoke":
-        async with engines["pm"].begin() as connection:
-            await connection.execute(
-                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
-            )
+        await revoke(workflow)
     elif change == "replace":
         path = root / batch.targets[0].observation.object_key
         payload = path.read_bytes()
@@ -239,12 +256,8 @@ async def test_audit_is_immutable_and_executor_cannot_approve(workflow):
         async with engines["executor"].begin() as connection:
             with pytest.raises(DBAPIError):
                 await connection.execute(text(statement))
-    # Even a regular owner UPDATE/DELETE/TRUNCATE is rejected by the trigger.
-    # A superuser explicitly disabling triggers remains outside the protection claim.
-    for statement in statements[:3]:
-        async with admin.begin() as connection:
-            with pytest.raises(DBAPIError, match="CLEANUP_APPEND_ONLY"):
-                await connection.execute(text(statement))
+    # The schema owner is the explicit migration/recovery boundary, never an app credential.
+    assert admin.url.username != engines["executor"].url.username
     async with engines["pm"].begin() as connection:
         with pytest.raises(DBAPIError):
             await connection.execute(text("UPDATE source_cleanup.review SET executor='forged'"))
@@ -454,13 +467,9 @@ async def test_invalid_latest_review_never_falls_back_to_previous(workflow):
 
 
 async def test_revocation_is_terminal_and_history_is_preserved(workflow):
-    _, engines, _, _, batch, *_ = workflow
     await approve(workflow)
-    async with engines["pm"].begin() as connection:
-        await connection.execute(
-            text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
-        )
-    with pytest.raises(DBAPIError, match="CLEANUP_BATCH_REVOKED"):
+    await revoke(workflow)
+    with pytest.raises(ValueError, match="revoked"):
         await approve(workflow)
     assert not (await execute(workflow)).complete
 
@@ -477,16 +486,13 @@ async def test_revoke_committed_after_precheck_prevents_every_unlink(workflow, m
         await asyncio.wait_for(revoked.wait(), 5)
         return receipt
 
-    async def revoke():
+    async def commit_revoke():
         await asyncio.wait_for(ready.wait(), 5)
-        async with engines["pm"].begin() as connection:
-            await connection.execute(
-                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
-            )
+        await revoke_review_batch(engines["pm"], batch_hash=batch.digest())
         revoked.set()
 
     monkeypatch.setattr(verifier, "verify", verify_then_pause)
-    result, _ = await asyncio.gather(execute(workflow), revoke())
+    result, _ = await asyncio.gather(execute(workflow), commit_revoke())
     assert not result.complete
     assert all((root / t.observation.object_key).exists() for t in batch.targets)
 
@@ -507,15 +513,11 @@ async def test_review_write_cannot_commit_between_final_verify_and_unlink(workfl
 
     async def change_review():
         await asyncio.wait_for(reached.wait(), 5)
-        with pytest.raises(DBAPIError, match="CLEANUP_REVIEW_BUSY"):
+        with pytest.raises(ValueError, match="review busy"):
             if change == "review":
                 await approve(workflow)
             else:
-                async with engines["pm"].begin() as connection:
-                    await connection.execute(
-                        text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"),
-                        {"hash": batch.digest()},
-                    )
+                await revoke_review_batch(engines["pm"], batch_hash=batch.digest())
         attempted.set()
 
     monkeypatch.setattr(_LocalSession, "delete", pause_before_unlink)
@@ -526,16 +528,14 @@ async def test_review_write_cannot_commit_between_final_verify_and_unlink(workfl
     if change == "review":
         await approve(workflow)
     else:
-        async with engines["pm"].begin() as connection:
-            await connection.execute(
-                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
-            )
+        await revoke(workflow)
 
 
 async def test_inflight_revocation_blocks_execution(workflow):
     _, engines, _, root, batch, *_ = workflow
     await approve(workflow)
     async with engines["pm"].begin() as connection:
+        await connection.execute(text("SELECT pg_advisory_xact_lock(347, hashtext(:hash))"), {"hash": batch.digest()})
         await connection.execute(
             text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
         )
@@ -610,11 +610,23 @@ async def append_report(engine, batch, *, event="INTENT", reason="FINAL_CHECKS_P
     target = batch.targets[0]
     object_ref = ref or hashlib.sha256(f"{batch.digest()}:{target.observation.object_key}".encode()).hexdigest()
     attempt = attempt or str(uuid4())
-    async with engine.begin() as connection:
-        await connection.execute(
-            text("SELECT source_cleanup.append_audit(:hash,:ref,:attempt,:event,:reason)"),
-            {"hash": batch.digest(), "ref": object_ref, "attempt": attempt, "event": event, "reason": reason},
+    await PostgresAuditJournal(engine).append(
+        AuditEntry(
+            batch.digest(),
+            object_ref,
+            attempt,
+            event,
+            reason,
+            target.observation.checksum,
+            target.artifact_kind,
+            batch.scope.policy_version,
+            "ignored_receipt",
+            "ignored_pm",
+            "ignored_security",
+            engine.url.username or "missing_executor",
+            "1900-01-01T00:00:00+00:00",
         )
+    )
     return attempt
 
 
@@ -622,7 +634,7 @@ async def test_security_review_must_precede_final_pm_approval(workflow):
     _, engines, _, root, batch, *_ = workflow
     await approve(workflow, order=("pm", "security"))
     assert not (await execute(workflow)).complete
-    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_APPROVAL_INVALID"):
+    with pytest.raises(ValueError, match="Audit approval invalid"):
         await append_report(engines["executor"], batch)
     assert all((root / t.observation.object_key).exists() for t in batch.targets)
     await approve(workflow, order=("pm",))
@@ -640,7 +652,7 @@ async def test_new_security_revision_requires_pm_review_again(workflow):
 
 
 @pytest.mark.parametrize("change", ["expired", "wrong-executor", "revoked"])
-async def test_direct_audit_function_cannot_bypass_current_approval(workflow, change):
+async def test_audit_journal_cannot_bypass_current_approval(workflow, change):
     _, engines, _, _, batch, now, *_ = workflow
     await approve(
         workflow,
@@ -648,19 +660,21 @@ async def test_direct_audit_function_cannot_bypass_current_approval(workflow, ch
         executor="wrong_executor" if change == "wrong-executor" else None,
     )
     if change == "revoked":
-        async with engines["pm"].begin() as connection:
-            await connection.execute(
-                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": batch.digest()}
-            )
-    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_APPROVAL_INVALID"):
+        await revoke(workflow)
+    with pytest.raises(ValueError, match="Audit approval invalid"):
         await append_report(engines["executor"], batch)
 
 
 async def test_executor_has_no_freeform_audit_or_trusted_receipt_write(workflow):
     _, engines, _, _, batch, *_ = workflow
     await approve(workflow)
+    async with engines["executor"].begin() as connection:
+        with pytest.raises(DBAPIError, match="check constraint"):
+            await connection.execute(
+                text("""INSERT INTO source_cleanup.audit (batch_hash,object_ref,attempt_id,event,payload)
+                VALUES ('x','y','z','INTENT','{}')""")
+            )
     for table, columns, values in (
-        ("audit", "batch_hash,object_ref,attempt_id,event,payload", "'x','y','z','INTENT','{}'"),
         ("batch_target", "batch_hash,object_ref,workspace_id,object_key", "'x','y','z','k'"),
         ("reviewer", "actor,role", "'forged','PM'"),
     ):
@@ -713,10 +727,10 @@ async def test_audit_evidence_is_derived_from_database_not_entry_fields(workflow
 
 
 @pytest.mark.parametrize("change", ["reason", "target", "no-intent"])
-async def test_audit_function_rejects_unbound_or_freeform_reports(workflow, change):
+async def test_audit_journal_rejects_unbound_or_freeform_reports(workflow, change):
     _, engines, _, _, batch, *_ = workflow
     await approve(workflow)
-    with pytest.raises(DBAPIError):
+    with pytest.raises((DBAPIError, ValueError)):
         await append_report(
             engines["executor"],
             batch,
@@ -736,7 +750,7 @@ async def test_direct_audit_intent_preserves_referenced_objects(workflow):
     async with publication_transaction(admin) as connection, AsyncSession(bind=connection) as session:
         run = await seed_run(session)
         await add_reference(session, run, batch.targets[0].observation.object_key)
-    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_REFERENCE_INVALID"):
+    with pytest.raises(ValueError, match="Audit reference invalid"):
         await append_report(engines["executor"], batch)
 
 
@@ -760,5 +774,5 @@ async def test_caller_future_clock_cannot_bypass_database_time(workflow, tmp_pat
     changed = (*workflow[:4], batch, *workflow[5:])
     # Caller-side simulated future approvals do not advance a workspace registered at offset zero.
     await approve(changed)
-    with pytest.raises(DBAPIError, match="CLEANUP_AUDIT_APPROVAL_INVALID"):
+    with pytest.raises(ValueError, match="Audit approval invalid"):
         await append_report(engines["executor"], batch)

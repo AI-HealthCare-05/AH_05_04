@@ -228,6 +228,7 @@ async def _cleanup(ids: dict[str, str]) -> None:
             ids,
         )
         await connection.execute(text("DELETE FROM profile WHERE id = :profile_id"), ids)
+        await connection.execute(text("DELETE FROM idempotency_record WHERE user_id = :user_id"), ids)
         await connection.execute(text('DELETE FROM "user" WHERE id = :user_id'), ids)
 
 
@@ -380,7 +381,7 @@ async def _cleanup_cutover(ids: dict[str, str]) -> None:
     await _cleanup(ids)
 
 
-async def _create_via_repository() -> dict[str, str]:
+async def _create_via_repository(*, legacy_schema: bool = False) -> dict[str, str]:
     engine = create_async_engine(config.database_url, poolclass=NullPool)
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
@@ -412,24 +413,60 @@ async def _create_via_repository() -> dict[str, str]:
             ocr_job = OcrJob(document_id=document.id)
             session.add(ocr_job)
             await session.flush()
-            prescription = await PrescriptionRepository(session).create_with_medications(
-                document=document,
-                source_ocr_job=ocr_job,
-                prescribed_date=date(2026, 9, 8),
-                confirmed_at=datetime(2026, 9, 8, 2, 3, 4, tzinfo=UTC),
-                medications=[
-                    {
-                        "medication_name": "합성듀얼정",
-                        "strength_text": "5mg",
-                        "dose_value": Decimal("0.500"),
-                        "dose_unit": "정",
-                        "frequency_per_day": 1,
-                        "timing_text": "취침 전",
-                        "duration_days": 7,
-                        "display_order": 1,
-                    }
-                ],
-            )
+            if legacy_schema:
+                # Hardening migration tests run against the pre-398 schema.
+                from types import SimpleNamespace
+
+                prescription_id, version_id = str(uuid4()), str(uuid4())
+                params = {
+                    "id": prescription_id,
+                    "version_id": version_id,
+                    "document_id": str(document.id),
+                    "ocr_id": str(ocr_job.id),
+                    "profile_id": str(profile.id),
+                }
+                await session.execute(
+                    text(
+                        "INSERT INTO prescription (id, active_version_id, document_id, source_ocr_job_id, profile_id, "
+                        "prescribed_date, prescription_status, confirmed_at) VALUES "
+                        "(:id, :version_id, :document_id, :ocr_id, :profile_id, DATE '2026-09-08', 'CONFIRMED', now())"
+                    ),
+                    params,
+                )
+                await session.execute(
+                    text(
+                        "INSERT INTO prescription_version (id, prescription_id, version_number, prescribed_date, confirmed_at) "
+                        "VALUES (:version_id, :id, 1, DATE '2026-09-08', now())"
+                    ),
+                    params,
+                )
+                await session.execute(
+                    text(
+                        "INSERT INTO prescription_version_medication (id, prescription_version_id, medication_name, display_order) "
+                        "VALUES (:med_id, :version_id, '합성듀얼정', 1)"
+                    ),
+                    {**params, "med_id": str(uuid4())},
+                )
+                prescription = SimpleNamespace(id=prescription_id)
+            else:
+                prescription = await PrescriptionRepository(session).create_with_medications(
+                    document=document,
+                    source_ocr_job=ocr_job,
+                    prescribed_date=date(2026, 9, 8),
+                    confirmed_at=datetime(2026, 9, 8, 2, 3, 4, tzinfo=UTC),
+                    medications=[
+                        {
+                            "medication_name": "합성듀얼정",
+                            "strength_text": "5mg",
+                            "dose_value": Decimal("0.500"),
+                            "dose_unit": "정",
+                            "frequency_per_day": 1,
+                            "timing_text": "취침 전",
+                            "duration_days": 7,
+                            "display_order": 1,
+                        }
+                    ],
+                )
             return {
                 "user_id": str(user.id),
                 "profile_id": str(profile.id),
@@ -739,11 +776,11 @@ def test_backfill_creates_exact_version_one_snapshot_and_is_rerunnable() -> None
         assert asyncio.run(_version_counts(ids)) == original_counts == (1, 1)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_repository_version_only_write_commits_against_migrated_postgresql() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     try:
         snapshot = asyncio.run(_snapshot(ids))
@@ -759,7 +796,7 @@ def test_repository_version_only_write_commits_against_migrated_postgresql() -> 
 
 
 def test_repository_correction_commits_complete_version_against_migrated_postgresql() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     try:
         corrected_version_id = asyncio.run(_correct_via_repository(ids))
@@ -774,7 +811,7 @@ def test_repository_correction_commits_complete_version_against_migrated_postgre
 
 
 def test_concurrent_corrections_allow_only_one_new_active_version_on_migrated_postgresql() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     try:
         snapshot = asyncio.run(_snapshot(ids))
@@ -783,8 +820,8 @@ def test_concurrent_corrections_allow_only_one_new_active_version_on_migrated_po
 
         results = asyncio.run(_correct_concurrently(ids, base_version_id=base_version_id))
 
-        assert [code for code, _ in results].count("ok") == 1
-        assert [code for code, _ in results].count("PRESCRIPTION_VERSION_CONFLICT") == 1
+        assert [code for code, _ in results] == ["ok", "ok"]
+        assert results[0][1] == results[1][1]
         assert asyncio.run(_version_counts(ids)) == (2, 2)
         active = asyncio.run(_snapshot(ids))
         assert active is not None
@@ -809,7 +846,7 @@ def test_read_cutover_rebackfills_and_remaps_dependents_on_migrated_postgresql()
         assert snapshot["cutover_fk_count"] == 5
     finally:
         asyncio.run(_cleanup_cutover(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_read_cutover_rejects_candidate_snapshot_that_disagrees_with_pvm() -> None:
@@ -822,12 +859,12 @@ def test_read_cutover_rejects_candidate_snapshot_that_disagrees_with_pvm() -> No
             command.upgrade(alembic_config, CUTOVER_REVISION)
     finally:
         asyncio.run(_cleanup_cutover(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_read_cutover_downgrade_rejects_guide_and_chat_provenance() -> None:
     alembic_config = create_alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     ids.update(asyncio.run(_seed_guide_chat_provenance(ids)))
     try:
@@ -836,13 +873,13 @@ def test_read_cutover_downgrade_rejects_guide_and_chat_provenance() -> None:
     finally:
         asyncio.run(_cleanup_guide_chat_provenance(ids))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_hardening_refuses_remaining_null_runtime_version_link() -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, HARDENING_BASE_REVISION)
-    ids = asyncio.run(_create_via_repository())
+    ids = asyncio.run(_create_via_repository(legacy_schema=True))
     guide_id = asyncio.run(_seed_null_version_guide(ids))
     try:
         with pytest.raises(RuntimeError, match="invalid provenance remains"):
@@ -850,14 +887,14 @@ def test_hardening_refuses_remaining_null_runtime_version_link() -> None:
     finally:
         asyncio.run(_delete_guide(guide_id))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest.mark.parametrize("job_type", ["GUIDE", "CHAT"])
 def test_hardening_refuses_job_without_required_version(job_type: str) -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, HARDENING_BASE_REVISION)
-    ids = asyncio.run(_create_via_repository())
+    ids = asyncio.run(_create_via_repository(legacy_schema=True))
     job_id = asyncio.run(_seed_invalid_ai_job(ids, job_type=job_type, prescription_version_id=None))
     try:
         with pytest.raises(RuntimeError, match="invalid provenance remains"):
@@ -865,13 +902,13 @@ def test_hardening_refuses_job_without_required_version(job_type: str) -> None:
     finally:
         asyncio.run(_delete_ai_job(job_id))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_hardening_refuses_ocr_job_with_version() -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, HARDENING_BASE_REVISION)
-    ids = asyncio.run(_create_via_repository())
+    ids = asyncio.run(_create_via_repository(legacy_schema=True))
     version_id = asyncio.run(_active_version_id(ids))
     job_id = asyncio.run(_seed_invalid_ai_job(ids, job_type="OCR", prescription_version_id=version_id))
     try:
@@ -880,7 +917,7 @@ def test_hardening_refuses_ocr_job_with_version() -> None:
     finally:
         asyncio.run(_delete_ai_job(job_id))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest.mark.parametrize(
@@ -891,7 +928,7 @@ def test_hardening_constraint_prevents_invalid_job_from_bypassing_version_fencin
     job_type: str,
     use_active_version: bool,
 ) -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     version_id = asyncio.run(_active_version_id(ids)) if use_active_version else None
     try:
@@ -908,7 +945,7 @@ def test_hardening_constraint_prevents_invalid_job_from_bypassing_version_fencin
 
 
 def test_prescription_delete_cannot_cascade_candidate_audit_history() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     search_id = asyncio.run(_seed_active_candidate(ids))
     try:
@@ -946,7 +983,7 @@ def test_backfill_rejects_invalid_legacy_graph_without_partial_snapshot(
         assert asyncio.run(_version_counts(ids)) == (0, 0)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_backfill_rejects_blank_legacy_medication_name_before_copy() -> None:
@@ -960,7 +997,7 @@ def test_backfill_rejects_blank_legacy_medication_name_before_copy() -> None:
         assert asyncio.run(_version_counts(ids)) == (0, 0)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_backfill_rejects_partial_version_graph() -> None:
@@ -975,4 +1012,4 @@ def test_backfill_rejects_partial_version_graph() -> None:
         assert asyncio.run(_version_counts(ids)) == (1, 1)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
