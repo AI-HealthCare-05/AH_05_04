@@ -175,4 +175,10 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 
 ## 완료 후 상태 (현재)
 
-policy foundation: `IMPLEMENTED` / effective enforcement: `NOT_IMPLEMENTED` / infrastructure adapter: `NOT_IMPLEMENTED` / HOLDOUT access authorization: `NOT_RECORDED` / HOLDOUT authored: `0` / HOLDOUT Freeze: `NOT_STARTED` — 위 결정은 방향 합의일 뿐이며, 실제 인프라·보관 위치·credential·SQL 통제가 구현·테스트되기 전까지 #368은 Open, `effective_enforcement_status=NOT_IMPLEMENTED`, HOLDOUT 미승인 상태를 유지한다.
+policy foundation: `IMPLEMENTED` / repository infrastructure adapter: `IMPLEMENTED` / effective enforcement:
+`NOT_IMPLEMENTED` / HOLDOUT access authorization: `NOT_RECORDED` / HOLDOUT authored: `0` / HOLDOUT Freeze:
+`NOT_STARTED` — 저장소 구현과 합성 disposable PostgreSQL 검증은
+[`protected-runner-infrastructure-adapter.md`](../../validation/rag/issue-273/protected-runner-infrastructure-adapter.md)에
+기록한다. 실제 환경 provisioning, 독립 Backend·Security 검증, 보관·복구·rotation 및 `EXT-PRIV-001`
+승인이 완료되기 전까지 #368은 Open, `effective_enforcement_status=NOT_IMPLEMENTED`, HOLDOUT 미승인 상태를
+유지한다.
