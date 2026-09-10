@@ -438,6 +438,27 @@ export function createChatPreview(scenario: ChatScenario): {
     },
     getChatMessages: async () => messageListResponse,
     sendChatMessage: async () => sendResponse,
+    getLatestPrescription: async () => {
+      if (scenario === 'no-prescription') {
+        throw new ApiError(
+          404,
+          '처방을 찾을 수 없습니다.',
+          'PRESCRIPTION_NOT_FOUND',
+        )
+      }
+      return {
+        data: {
+          prescription_id: previewIds.prescription,
+          prescription_version_id: previewIds.prescriptionVersion,
+          revision: 1,
+          current: true,
+          document_id: previewIds.document,
+          prescribed_date: '2026-09-09',
+          confirmed_at: '2026-09-09T00:00:00Z',
+          medications: [],
+        },
+      }
+    },
   }
 
   return {

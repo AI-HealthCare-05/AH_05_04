@@ -197,15 +197,6 @@ afterEach(() => {
 describe('PrescriptionUploadPage OCR polling', () => {
   it('HOME 직접 등록 CTA는 기존 Guide와 OCR recovery가 있어도 DOC-01을 유지한다', async () => {
     setExistingOcrRecovery()
-    vi.mocked(getLatestPrescription).mockResolvedValue({
-      data: {
-        prescription_id: '44444444-4444-4444-8444-444444444444',
-        document_id: documentId,
-        prescribed_date: '2026-09-07',
-        confirmed_at: '2026-09-07T08:00:00Z',
-        medications: [],
-      },
-    })
 
     renderNewPrescriptionEntry('/')
     fireEvent.click(await screen.findByRole('button', {
@@ -224,15 +215,6 @@ describe('PrescriptionUploadPage OCR polling', () => {
 
   it('Chat no-prescription gate 등록 CTA는 기존 Guide와 OCR recovery가 있어도 DOC-01을 유지한다', async () => {
     setExistingOcrRecovery()
-    vi.mocked(getLatestPrescription).mockResolvedValue({
-      data: {
-        prescription_id: '44444444-4444-4444-8444-444444444444',
-        document_id: documentId,
-        prescribed_date: '2026-09-07',
-        confirmed_at: '2026-09-07T08:00:00Z',
-        medications: [],
-      },
-    })
 
     renderNewPrescriptionEntry('/chat')
     fireEvent.click(await screen.findByRole('button', {
@@ -240,7 +222,7 @@ describe('PrescriptionUploadPage OCR polling', () => {
     }))
 
     expect(await screen.findByText('처방전을 등록해 주세요')).toBeTruthy()
-    expect(getLatestPrescription).not.toHaveBeenCalled()
+    expect(getLatestPrescription).toHaveBeenCalledTimes(1)
     expect(getGuideForPrescription).not.toHaveBeenCalled()
     expect(getJobStatus).not.toHaveBeenCalled()
     expect(screen.queryByText('가이드 화면')).toBeNull()

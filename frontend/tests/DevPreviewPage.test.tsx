@@ -100,10 +100,10 @@ describe('DevPreviewPage', () => {
 
   it.each([
     ['no-prescription', '먼저 처방전을 등록해 주세요'],
-    ['existing-messages', '아침 약은 언제 먹나요?'],
+    ['existing-messages', '무엇을 도와드릴까요?'],
     ['input-ready', '궁금한 내용을 입력하세요'],
     ['generating', '답변을 확인하고 있어요'],
-    ['long-answer', '확정된 처방에 표시된 약 이름'],
+    ['long-answer', '무엇을 도와드릴까요?'],
     ['error', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'],
   ])('Chat %s scenario를 렌더링한다', async (scenario, expectedText) => {
     renderPreview('chat', scenario)
