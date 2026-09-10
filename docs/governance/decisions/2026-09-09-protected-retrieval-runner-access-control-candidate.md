@@ -46,7 +46,15 @@ PR #373 kernel이 이미 구현한 3개 역할을 그대로 사용한다.
 
 "approval role"은 `ProtectedApprovalRole`(kernel의 governance/application 계층)로 유지하고, 별도의 공유 PostgreSQL login role로 중복 구현하지 않는다. 승인자는 개별 identity로 식별되고 approval evidence가 검증되어야 한다. DB 권한이 추가로 필요한지는 Backend·Security 구현 설계 단계에서 판단한다.
 
-`FREEZE`·`RUN`·grant/revoke는 직접 테이블 DML로 허용하지 않고, Dataset 상태와 승인 evidence를 검증하는 제한된 함수 경계로만 수행한다 — 기존 provisioning 스크립트가 이미 쓰고 있는 SECURITY DEFINER 함수(승인된 함수에만 `GRANT EXECUTE`)와 같은 구조다.
+`FREEZE`·`RUN`·grant/revoke의 기본 경계는 `CONTRIBUTING.md`의 "DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선한다" 원칙에 따라 **Application Service**로 둔다.
+
+다만 승인·역할·감사 순서를 DB 트랜잭션 경계와 원자적으로 묶어야 하는 경우에 한해, `migration_user` 소유 SECURITY DEFINER 함수(`transition_rag_source_snapshot`, `165e8f706152_guard_snapshot_transitions.py`가 생성, 정책 근거는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md))와 같은 구조를 예외로 허용한다. `CONTRIBUTING.md`가 이런 예외에 요구하는 5개 항목은 다음과 같다.
+
+1. 단순 구조(Application Service만)로 해결할 수 없는 문제: FREEZE/RUN 시점에 Dataset state·revision·artifact digest가 승인 시점과 동일한지 같은 트랜잭션에서 원자적으로 확인해야 하며, Application Service와 DB 사이의 race window에서 이 확인이 깨질 수 있다.
+2. 제안하는 구조: 승인된 함수에만 `GRANT EXECUTE`를 부여한 SECURITY DEFINER 함수 — 위 SECURITY DEFINER 선례와 동일 패턴.
+3. 추가되는 유지보수 비용: DB 함수 버전 관리와 배포가 Application 코드 배포와 분리되어야 한다.
+4. 검토한 대안: Application Service에서 `SELECT ... FOR UPDATE`로 잠근 뒤 검증 — race window를 완전히 없애지 못해 기각.
+5. 지금 도입해야 하는 이유: 보안·소유권 분리를 위해 독립된 경계가 필요하다는 `CONTRIBUTING.md`의 예외 근거에 해당한다.
 
 사람(Author·Custodian)과 Runner는 공유 login이 아니라 개별 identity + 단기 credential이어야 한다 — 공유 계정을 쓰면 §7 audit가 "누가 접근했는가"를 실제로 답할 수 없게 된다.
 
@@ -96,7 +104,9 @@ Dataset 원본(질문·Gold 본문)도 §7과 동일하게 마지막 Freeze Rece
 
 Mutable authoring 기간에는 일 단위 backup, Freeze 및 version 변경 시점에는 별도 snapshot, 분기별 restore test를 기본안으로 한다.
 
-보관 위치와 기술적 방식은 기존 `pg_dump -Fc` 메커니즘(`scripts/deployment.sh:570-576`, migration 배포 시마다 실행)을 재사용한다 — protected schema도 같은 DB 인스턴스 안에 있으므로 별도 인프라가 필요 없다. 다만 이 메커니즘은 migration/배포 시점에만 실행되므로, "authoring 기간 일 단위 backup"은 같은 명령을 별도로 스케줄링(cron 등)해야 하고, "Freeze 시점 snapshot"은 Freeze 시점에 같은 명령을 한 번 더 실행하는 것으로 충족한다. 복구는 `pg_restore`.
+보관 위치는 기존 `pg_dump -Fc` 백업(`scripts/deployment.sh:588-591`, migration 배포 시마다 실행)과 동일한 위치를 재사용한다 — protected schema도 같은 DB 인스턴스 안에 있으므로 백업 자체는 별도 인프라가 필요 없다. 다만 이 메커니즘은 migration/배포 시점에만 실행되므로, "authoring 기간 일 단위 backup"은 같은 명령을 별도로 스케줄링(cron 등)해야 하고, "Freeze 시점 snapshot"은 Freeze 시점에 같은 명령을 한 번 더 실행하는 것으로 충족한다.
+
+**복구(restore) 절차는 저장소에 아직 없다** — `pg_restore`로 이론상 복구 가능한 덤프 포맷(`-Fc`)이긴 하지만, 실제 복구 스크립트나 검증된 절차는 존재하지 않는다(`pg_restore` 사용례 0건). 즉 "분기별 restore test"는 기존 메커니즘 재사용이 아니라 **새로 만들어야 하는 절차**다 — 백업만 있고 복구가 실제로 되는지 검증하지 않는 상태를 피하는 것이 이 항목의 목적이므로, 이 구분을 명확히 한다.
 
 암호화·접근 통제 세부사항과 실행 담당자는 Backend·Security(송은영)가 확정하고, Custodian은 비민감 검증 evidence만 확인한다.
 
@@ -133,8 +143,9 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 
 - [Issue #368 Security Kernel 설계](../../designs/ceohwj/issue-368-protected-retrieval-runner-security-kernel-design.md)
 - `docs/validation/rag/issue-273/protected-runner-foundation.md`
-- `infra/docker/postgres/configure-app-role.sql` — §3·§4 role/권한 provisioning 선례
-- [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md) — §4 protected owner role 설계 참고
+- `infra/docker/postgres/configure-app-role.sql` — §3 role/권한 provisioning 선례
+- `backend/alembic/versions/165e8f706152_guard_snapshot_transitions.py`, [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md) — §4 SECURITY DEFINER 함수 선례
+- `CONTRIBUTING.md` — §4 DB 함수 도입 예외 5개 항목 기준
 - `backend/app/core/config.py` — §6 credential fail-closed validator 패턴
 - `.github/workflows/checks.yml` — §6 GitHub Actions 현황 확인
 - `docs/privacy-safety.md` — §7 보존기간(다른 값, 전부 미적용), §12 예외 미허용 기조
