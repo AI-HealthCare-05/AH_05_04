@@ -295,7 +295,6 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
-        (lambda: replace(_metadata("external:v1"), source_version="x" * 201), "source_version"),
         (lambda: replace(_metadata("external:v1"), schema_version="x" * 101), "schema_version"),
         (lambda: replace(_metadata("external:v1"), parser_version="x" * 101), "parser_version"),
         (

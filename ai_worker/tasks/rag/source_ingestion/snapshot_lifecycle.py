@@ -201,7 +201,8 @@ class SnapshotProvenanceReceipt:
 class SnapshotIngestionMetadata:
     """검증 결과 외에 Source 수집 실행 계층이 선택하는 저장 메타데이터입니다."""
 
-    source_version: str
+    # Raw input: the persistence boundary validates and records invalid attempts safely.
+    source_version: str = field(repr=False)
     schema_version: str
     parser_version: str
     normalization_version: str
@@ -211,14 +212,13 @@ class SnapshotIngestionMetadata:
     started_at: datetime
     finished_at: datetime
     collected_at: datetime
-    external_version: str | None = None
+    external_version: str | None = field(default=None, repr=False)
     duration_ms: int | None = None
     verified_by: str | None = None
     snapshot_policy: SourceSnapshotPolicy = field(default_factory=SourceSnapshotPolicy)
 
     def __post_init__(self) -> None:
         bounded_text = (
-            ("source_version", self.source_version, 200),
             ("schema_version", self.schema_version, 100),
             ("parser_version", self.parser_version, 100),
             ("normalization_version", self.normalization_version, 100),
@@ -289,6 +289,35 @@ class SnapshotRunRecord:
                 raise ValueError("Invalid Source version audit shape")
         elif self.invalid_source_version_byte_length is not None:
             raise ValueError("Invalid Source version audit requires a checksum")
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotAttemptReceipt(SnapshotRunRecord):
+    """확정된 Snapshot 시도 판정을 한 곳에서 복원합니다. 알 수 없는 상태는 추정하지 않습니다."""
+
+    decision: SnapshotIngestionDecision = field(init=False)
+
+    def __post_init__(self) -> None:
+        SnapshotRunRecord.__post_init__(self)
+        object.__setattr__(self, "decision", self._decision())
+
+    def _decision(self) -> SnapshotIngestionDecision:
+        if self.snapshot_id is not None and self.failure_code is None:
+            if self.run_status in {"SUCCEEDED", "SUCCEEDED_WITH_REJECTIONS"}:
+                return SnapshotIngestionDecision.CREATED
+            if self.run_status == "NO_CHANGE":
+                return SnapshotIngestionDecision.NO_CHANGE
+        if self.run_status == "FAILED" and self.snapshot_id is None:
+            if self.failure_code == SOURCE_VERSION_CONFLICT:
+                return SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+            if self.failure_code in {
+                "SOURCE_VERSION_INVALID",
+                "SOURCE_VERSION_BINDING_MISMATCH",
+                "EMPTY_RESULT",
+                "REJECTION_LIMIT_EXCEEDED",
+            }:
+                return SnapshotIngestionDecision.VALIDATION_FAILED
+        raise ValueError("Snapshot Attempt decision is unavailable for stored state")
 
 
 @dataclass(frozen=True, slots=True)

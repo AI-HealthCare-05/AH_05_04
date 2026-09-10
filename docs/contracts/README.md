@@ -63,7 +63,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [OCR 비-RAG LLM 구조화 계약 v1](./targets/post-mvp-1/ocr-llm-structuring-v1.md): 최소전송, 구조화 초안 provenance, 사용자 확정과 실패 복구
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계
 - [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): Approved v4 이력과 Track C 공통 Safety 기준; Track F 후속 의미는 v2가 대체
-- [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계, 실패 재시도 충돌·Verification 불변성·REJECTS 1:1·DB-owned 상태 전이 검증 구현 중(#165), 비FAILED 계보 유지·#335/#347 보존·정리 완료·#362 정책/외부 version/시도 provenance 영속화 구현 및 #165 잔여 allowlist 계약 추적
+- [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계, 실패 재시도 충돌·Verification 불변성·REJECTS 1:1·DB-owned 상태 전이 검증 구현 중(#165), 비FAILED 계보 유지·#335/#347 보존·정리 완료·#362 정책/외부 version/시도 provenance 영속화 구현 및 #165 잔여 allowlist 계약 추적 #436은 invalid Version의 저장 진입 감사와 명시적인 Attempt decision 복원을 포함한다.
 - [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름
 - [Guideline Card typed port 계약 v1](./targets/post-mvp-1/guideline-card-v1.md): RAG-14 Evidence Gate·PD-362 Source eligibility와 RAG-16 사이의 Request·Outcome·승인 verifier·fallback 계약 — RAG-15 persistence-free kernel 구현 검토 중(#179, PR #414), Current 아님
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준

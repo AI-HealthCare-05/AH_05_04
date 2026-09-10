@@ -48,6 +48,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
+    SnapshotRunRecord,
     SnapshotSelectionDecision,
     SnapshotVerificationStatus,
     fail_snapshot_verification,
@@ -1151,6 +1152,10 @@ async def test_no_change_version_observation_is_preserved_and_detects_later_conf
     assert conflict.snapshot_id is None
     async with session_factory() as session:
         repository = SqlAlchemySourceSnapshotRepository(session)
+        for result in (created, unchanged, conflict):
+            receipt = await repository.get_attempt_receipt(ingestion_run_id=result.ingestion_run_id)
+            assert receipt is not None
+            assert receipt.decision is result.decision
         attempt = await repository.get_attempt_receipt(ingestion_run_id=unchanged.ingestion_run_id)
         assert attempt is not None
         assert attempt.attempted_source_version == "external:observed"
@@ -1163,38 +1168,61 @@ async def test_no_change_version_observation_is_preserved_and_detects_later_conf
         assert failed.failure_code == "SOURCE_VERSION_CONFLICT"
 
 
-@pytest.mark.parametrize("invalid_version", ["SYNTHETIC_SECRET\ninvalid", "v" * 300])
-async def test_invalid_version_attempt_stores_only_digest_length_and_safe_code(invalid_version: str) -> None:
+@pytest.mark.parametrize("invalid_version", ["v" * 201, "v" * 202, "v" * 300, "합" * 201, "SYNTHETIC_SECRET\ninvalid"])
+async def test_invalid_version_attempt_stores_only_digest_length_and_safe_code(invalid_version: str, caplog) -> None:
     import hashlib
+    from unittest.mock import Mock
     from uuid import uuid4
 
-    from ai_worker.tasks.rag.source_ingestion.failure_runs import record_source_version_failure
-    from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import attempt_canonical_contract
+    from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactStore
+    from ai_worker.tasks.rag.source_ingestion.persistence import preserve_and_persist_product_ingestion_result
 
     identity = await _seed_operation(f"INVALID_{uuid4().hex[:8]}")
+    store = Mock(spec=RawArtifactStore)
+    metadata = replace(_metadata("external:valid"), source_version=invalid_version, external_version=None)
+    assert invalid_version not in repr(metadata)
     async with session_factory.begin() as session:
-        failed = await record_source_version_failure(
+        failed = await preserve_and_persist_product_ingestion_result(
             repository=SqlAlchemySourceSnapshotRepository(session),
-            identity=identity,
-            metadata=FailedIngestionRunMetadata("synthetic-invalid-attempt", 1, _NOW, _NOW),
-            source_version=invalid_version,
-            external_version=None,
-            canonical_contract=attempt_canonical_contract(
-                ingestion=_ingestion(identity, _CHECKSUM_A), metadata=_metadata("external:valid")
-            ),
+            artifact_store=store,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=metadata,
+            raw_artifacts=(),
         )
+    assert failed.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+    assert failed.failure_code == "SOURCE_VERSION_INVALID"
+    assert not store.mock_calls
     async with session_factory() as session:
         attempt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
             ingestion_run_id=failed.ingestion_run_id
         )
         assert attempt is not None
         assert attempt.snapshot_id is None
+        assert attempt.run_status == "FAILED"
+        assert attempt.decision is SnapshotIngestionDecision.VALIDATION_FAILED
         assert attempt.attempted_source_version is None
         assert attempt.attempted_external_version is None
         assert attempt.invalid_source_version_sha256 == hashlib.sha256(invalid_version.encode()).hexdigest()
         assert attempt.invalid_source_version_byte_length == len(invalid_version.encode())
         assert attempt.validation_reason_code == "SOURCE_VERSION_INVALID"
         assert invalid_version not in repr(attempt)
+        assert invalid_version not in caplog.text
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshot)
+                .where(RagSourceSnapshot.operation_id == failed.operation_id)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceIngestionArtifact)
+                .where(RagSourceIngestionArtifact.ingestion_run_id == failed.ingestion_run_id)
+            )
+            == 0
+        )
 
 
 async def test_attempt_is_rolled_back_with_the_snapshot_transaction() -> None:
@@ -1252,3 +1280,26 @@ async def test_snapshot_receipt_keeps_identity_and_blocks_tampered_external_vers
     async with session_factory() as session:
         snapshot = await session.get(RagSourceSnapshot, result.snapshot_id)
         assert snapshot.verification_status is RagSnapshotVerificationStatus.PENDING
+
+
+async def test_attempt_receipt_rejects_unmapped_database_failure_code() -> None:
+    identity = await _seed_operation("UNMAPPED_RECEIPT")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        operation_id = await repository.lock_operation(identity)
+        run_id = await repository.create_run(
+            SnapshotRunRecord(
+                operation_id=operation_id,
+                snapshot_id=None,
+                run_group_key="unmapped-receipt",
+                attempt_number=1,
+                run_status="FAILED",
+                started_at=_NOW,
+                finished_at=_NOW,
+                duration_ms=0,
+                failure_code="FUTURE_FAILURE",
+            )
+        )
+    async with session_factory() as session:
+        with pytest.raises(ValueError, match="decision is unavailable"):
+            await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(ingestion_run_id=run_id)

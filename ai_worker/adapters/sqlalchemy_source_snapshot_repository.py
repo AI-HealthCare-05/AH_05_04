@@ -15,6 +15,7 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
 from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProgressError
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
+    SnapshotAttemptReceipt,
     SnapshotCreateRequest,
     SnapshotLifecycleRepository,
     SnapshotProvenanceReceipt,
@@ -271,7 +272,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         values["verification_status"] = SnapshotVerificationStatus(values["verification_status"])
         return SnapshotProvenanceReceipt(**values)
 
-    async def get_attempt_receipt(self, *, ingestion_run_id: UUID) -> SnapshotRunRecord | None:
+    async def get_attempt_receipt(self, *, ingestion_run_id: UUID) -> SnapshotAttemptReceipt | None:
         row = (
             (await self._session.execute(select(_INGESTION_RUN).where(_INGESTION_RUN.c.id == str(ingestion_run_id))))
             .mappings()
@@ -279,7 +280,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         )
         if row is None:
             return None
-        return SnapshotRunRecord(
+        return SnapshotAttemptReceipt(
             operation_id=UUID(row["operation_id"]),
             snapshot_id=UUID(row["snapshot_id"]) if row["snapshot_id"] else None,
             **{

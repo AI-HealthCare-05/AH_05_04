@@ -316,3 +316,26 @@ PD-362의 checksum·schema/parser/normalization/canonicalization version·Endpoi
 원본 보존·저장 orchestration은 version 실패를 해당 감사 경로로 연결하고 Artifact를 쓰지 않는다.
 Run Receipt 조회는 Snapshot을 역으로 추정하지 않는다. Snapshot·Run·Artifact는 호출자 transaction에 속한다.
 Source Writer의 기존 Run 상태 갱신은 명시한 lifecycle 컬럼에만 허용하고 신규 시도 provenance UPDATE는 허용하지 않는다.
+
+
+### #436 리뷰 반영: invalid Version 감사와 Attempt 판정
+
+`SnapshotIngestionMetadata.source_version`은 아직 검증 전 입력이다. 생성자가 길이로 먼저 거부하지 않고,
+`preserve_and_persist_product_ingestion_result()`가 원본 Artifact 보관·Snapshot 생성 전에 문법·길이·결속을 검증한다.
+잘못된 문자열은 FAILED Run의 SHA-256·UTF-8 byte length·`SOURCE_VERSION_INVALID`로 보존한다.
+원문 Version·external Version은 이 경우 저장하지 않으며 입력 메타데이터 repr에서도 제외한다.
+하위 `persist_product_ingestion_result()`의 저장 전 Version 검증과 DB 200자 제약도 유지한다.
+
+`get_attempt_receipt()`는 기존 Run 필드와 명시적인 `decision` 필드를 갖는 `SnapshotAttemptReceipt`를 반환한다.
+승인된 PD-362 판정을 Python Receipt 경계 한 곳에서 복원하며 DB 컬럼·함수는 추가하지 않는다.
+
+| 저장된 상태 | 추가 조건 | decision |
+| --- | --- | --- |
+| SUCCEEDED / SUCCEEDED_WITH_REJECTIONS | Snapshot 있음, failure_code 없음 | CREATED |
+| NO_CHANGE | Snapshot 있음, failure_code 없음 | NO_CHANGE |
+| FAILED | Snapshot 없음, SOURCE_VERSION_CONFLICT | SOURCE_VERSION_CONFLICT |
+| FAILED | Snapshot 없음, SOURCE_VERSION_INVALID / SOURCE_VERSION_BINDING_MISMATCH / EMPTY_RESULT / REJECTION_LIMIT_EXCEEDED | VALIDATION_FAILED |
+
+진행 중 상태, 상태·Snapshot·failure_code 불일치, 미등록 실패 코드에는 decision을 추측하지 않고 고정 메시지의
+ValueError로 Receipt 반환을 거부한다. 예를 들어 수집 transport TIMEOUT을 Snapshot 검증 실패로 재분류하지 않는다.
+Run 자체의 저장·감사 내역을 제거하는 동작은 아니다. 신규 상태나 실패 코드는 의미 검토와 테스트 없이 매핑에 자동 포함되지 않는다.

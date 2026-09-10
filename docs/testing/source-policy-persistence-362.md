@@ -200,3 +200,19 @@ downgrade를 수정했으며 upgrade와 revision 연결은 변경하지 않았�
 - Ruff / format / diff 검사와 mypy 535개 파일, 재도입·쓰기 경계·테스트 분류 검사 통과.
 - 이전 절의 전체 migration·Writer 권한 검사 미완료 기록은 이 재검증으로 해소했다.
   전체 Backend 및 집계 CI의 최종 상태는 수정 커밋의 GitHub Actions 결과로 별도 확인한다.
+
+
+## PR #436 리뷰 반영 (2026-09-11)
+
+- 정현우 리뷰의 MUST FIX 2건을 Python 계층에서 수정했다.
+- 송은영은 DB·migration·transaction 범위 이상 없음을 확인했으며, 긴 Version의 감사 진입 누락 지적에 동의했다.
+  이를 전체 변경 승인으로 해석하지 않는다.
+- 길이 검증을 input metadata 생성 시점에서 기존 저장 orchestration의 검증·실패 기록 경계로 이동했다.
+  원본 Artifact 보관과 Snapshot 생성 전에 검증하며 하위 저장 경로와 DB 제약도 유지한다.
+- 201·202·300자, 한글 201자, 제어문자를 실제 저장 orchestration에 전달하여 FAILED Run과
+  hash·UTF-8 byte length·사유 보존, Snapshot/Artifact 생성 없음, 원문 저장·repr·로그 미노출을 검증한다.
+- Attempt Receipt는 직렬화 가능한 `decision`을 직접 제공한다. 네 판정의 DB 왕복과
+  성공(거부 레코드 포함)·실패·미지정 코드·불일치 상태에 대한 단일 fail-closed 매핑을 검증한다.
+- 새 migration·Trigger·RLS·업무 DB 함수·권한 확대 없음. 기존 downgrade 및 미확정 후속 범위 유지.
+
+리뷰 수정 검증: Source ingestion 단위 384 passed, 실제 DB lifecycle·Receipt 31 passed, mypy 536개 파일 및 Ruff·format·재도입 방지·쓰기 경계·테스트 분류 검사 통과. 원격 CI 결과는 해당 커밋의 실행 결과로 별도 확인한다.
