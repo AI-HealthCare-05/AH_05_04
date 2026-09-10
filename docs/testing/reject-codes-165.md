@@ -25,3 +25,24 @@ Source ingestion 회귀 418건 통과. 기존 checksum 오류 문자열 의존 �
 파일 보존 전/Repository 재검증, identity 오류의 Hard Limit 이전 실패, 기존 partial Snapshot 승인 보호 유지.
 신규 실제 DB 경로 10건, 기존 lifecycle 31건, migration·과거 NULL·downgrade·컬럼 권한 3건 통과.
 Source 단위 418건, Ruff·format 통과. 신규 revision 165a0b1c2d3e는 #436 merge head 362c3d4e5f60의 자식이다.
+
+5단계 완료: 실패 복구·기존 CURRENT 보존·중복 Artifact 추가 차단·원문 오류 비노출을 검증했다.
+동일 위치의 0 패딩 표기도 숫자 위치로 비교해 중복 저장을 차단한다.
+통신 실패는 기존 FailedIngestionRunResult와 실패 코드를 유지하며 Parser 실패로 바꾸지 않는다.
+
+검증 결과 (2026-09-11, 작업 전용 PostgreSQL 17):
+
+- 신규 DB 통합 25건 + Source 단위 418건: 443 passed.
+- 전체 migration: 180 passed.
+- RAG·Evaluation: 2429 passed, 8 skipped. 이 결과에는 Source 단위 등 중복 테스트가 포함된다.
+- Writer·프로비저닝·이미지·Backend Source 경계: 25 passed, 정리 DB 미설정으로 57 skipped.
+- 위에서 건너뛴 정리 경로는 전용 DB를 설정해 별도 실행: 57 passed.
+- 기존 Snapshot lifecycle: 31 passed.
+- Ruff, format (704 files), Mypy (548 source files), DB 로직 금지 검사,
+  보호 쓰기 경로 검사, Python 테스트 inventory 통과.
+- 전용 테스트 DB upgrade head 및 종합 검증 통과:
+  165a0b1c2d3e, Trigger/RLS/제거 대상 함수 0개.
+
+`scripts/ci/run_test.sh` 전체 실행은 `envs/.local.env` 부재로 환경 준비 단계에서 중단했다.
+위 검증은 별도 전용 DB 환경으로 직접 실행한 결과이며 전체 CI 통과로 표현하지 않는다.
+운영·AWS·팀원 DB에는 적용하지 않았고, 원격 CI는 푸시하지 않아 실행하지 않았다.

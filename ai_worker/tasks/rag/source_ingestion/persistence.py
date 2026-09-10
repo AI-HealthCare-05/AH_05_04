@@ -15,6 +15,7 @@ from ai_worker.tasks.rag.source_client.contracts import (
     SourceRunStatus,
 )
 from ai_worker.tasks.rag.source_client.decoders import decode_mfds_json
+from ai_worker.tasks.rag.source_client.endpoints import MFDS_ENDPOINT_CANDIDATES
 from ai_worker.tasks.rag.source_ingestion.acquire import (
     preserve_raw_artifacts,
     preserve_rejection_artifact,
@@ -30,6 +31,7 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.failure_runs import (
     FailedIngestionRunMetadata,
+    FailedIngestionRunResult,
     IngestionProcessingFailureCode,
     record_processing_failure,
     record_source_run_failure,
@@ -40,6 +42,7 @@ from ai_worker.tasks.rag.source_ingestion.reject_codes import (
     PRODUCT_REJECT_IDENTITY,
     REJECT_CODE_CONTRACT_VERSION,
     RejectContractError,
+    parser_location_identity,
     validate_parser_contract,
     validate_reject_artifact,
 )
@@ -94,7 +97,7 @@ def _validate_rejection_inputs(
             code=entry.reject_code,
             location=entry.parser_location,
         )
-    locations = [entry.parser_location for entry in rejection_entries]
+    locations = [parser_location_identity(entry.parser_location) for entry in rejection_entries]
     if len(locations) != len(set(locations)):
         raise RejectContractError()
 
@@ -280,7 +283,7 @@ async def ingest_and_persist_product_run(
     raw_artifacts: Iterable[tuple[int, Path, RawArtifactMetadata]],
     receipt_path: Path,
     repository_root: Path,
-) -> SnapshotPersistenceResult:
+) -> SnapshotPersistenceResult | FailedIngestionRunResult:
     """Actual raw-run → parser → safe failure or Snapshot boundary. Caller owns transaction.
 
     No commit is hidden here. On storage/DB error the caller must roll back; content-addressed
@@ -300,20 +303,13 @@ async def ingest_and_persist_product_run(
     if _is_complete_identity_failure(result):
         try:
             result = _recover_complete_product_pages(result, entries)
-        except ValueError:
+        except (TypeError, ValueError):
             return await _record_parser_failure(
                 repository=repository, identity=result.operation, metadata=metadata, artifacts=()
             )
     if result.status is not SourceRunStatus.SUCCEEDED:
-        failed = await record_source_run_failure(
+        return await record_source_run_failure(
             repository=repository, result=result, metadata=_failure_metadata(metadata, result.operation)
-        )
-        return SnapshotPersistenceResult(
-            SnapshotIngestionDecision.VALIDATION_FAILED,
-            failed.operation_id,
-            failed.ingestion_run_id,
-            None,
-            failed.failure_code,
         )
     try:
         ingestion = build_product_ingestion_result(
@@ -333,10 +329,18 @@ async def ingest_and_persist_product_run(
             metadata=replace(metadata, rejected_record_count=0),
             raw_artifacts=entries,
         )
-    stored_raw = preserve_raw_artifacts(artifacts=entries, store=artifact_store)
-    stored_rejects = _preserve_product_rejections(
-        result=result, rejections=rejects, artifact_store=artifact_store, version=metadata.reject_code_contract_version
-    )
+    try:
+        stored_raw = preserve_raw_artifacts(artifacts=entries, store=artifact_store)
+        stored_rejects = _preserve_product_rejections(
+            result=result,
+            rejections=rejects,
+            artifact_store=artifact_store,
+            version=metadata.reject_code_contract_version,
+        )
+    except Exception:
+        # Adapter/temporary-file exceptions can contain provider values or paths.
+        # Preserve cancellation (BaseException) and require the caller's rollback.
+        raise RuntimeError("Source Artifact preservation failed.") from None
     return await _record_parser_failure(
         repository=repository, identity=result.operation, metadata=metadata, artifacts=(*stored_raw, *stored_rejects)
     )
@@ -365,7 +369,8 @@ def _recover_complete_product_pages(
     for number, path, metadata in sorted(entries, key=lambda item: item[0]):
         content = read_verified_raw_artifact(file_path=path, metadata=metadata)
         decoded = decode_mfds_json(content, metadata.content_type)
-        if decoded.body_code not in ("00", "NORMAL_SERVICE") or decoded.page_number != number:
+        success_codes = MFDS_ENDPOINT_CANDIDATES["LIST_APPROVED_PRODUCTS"].contract.body_codes.success_codes
+        if decoded.body_code not in success_codes or decoded.page_number != number:
             raise ValueError("Product failure artifact binding is invalid.")
         pages.append(
             ProviderPage(number, decoded.records, metadata.raw_checksum, metadata.content_type, decoded.total_count)

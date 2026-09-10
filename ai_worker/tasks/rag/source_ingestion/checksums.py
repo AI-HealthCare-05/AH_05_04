@@ -2,6 +2,7 @@
 
 import hashlib
 from collections.abc import Iterable, Mapping
+from typing import cast
 
 from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
 from ai_worker.tasks.rag.source_ingestion.normalize import (
@@ -34,7 +35,7 @@ def product_canonical_checksum(
     rejections = classify_product_rejections(((1, entries),))
     if rejections:
         raise ProductIdentityError(rejections)
-    records_by_key = {str(record["ITEM_SEQ"]): dict(record) for record in entries}
+    records_by_key = {cast(str, record["ITEM_SEQ"]): dict(record) for record in entries}
 
     if not records_by_key:
         raise ValueError("Product records must not be empty.")

@@ -54,3 +54,12 @@ def validate_reject_artifact(
     if not isinstance(code, str) or code not in ProductRejectCode:
         raise RejectContractError()
     validate_parser_location(location)
+
+
+def parser_location_identity(location: str | None) -> tuple[int, int]:
+    """Numeric identity prevents spelling variants from counting the same record twice."""
+    validate_parser_location(location)
+    assert location is not None
+    match = _LOCATION.fullmatch(location)
+    assert match is not None
+    return int(match[1]), int(match[2])

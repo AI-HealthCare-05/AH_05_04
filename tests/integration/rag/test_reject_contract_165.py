@@ -341,3 +341,157 @@ async def test_repository_blocks_rejects_on_legacy_run(database):
                 ingestion_run_id=legacy.id, artifacts=(artifact,)
             )
         assert legacy.reject_code_contract_version is None
+
+
+@pytest.mark.parametrize("value", [None, "", " \t", 0, True, 1.25, [], {"nested": 1.25}])
+async def test_each_invalid_value_gets_one_artifact(database, tmp_path, value):
+    factory, _ = database
+    run, entries = raw_run(tmp_path, [[{"ITEM_SEQ": value}]], failed_pk=True)
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    result = await execute(factory, store, run, entries, metadata())
+    assert result.failure_code == "PARSER_VALIDATION_FAILED"
+    async with factory() as session:
+        rows = (
+            await session.scalars(
+                select(RagSourceIngestionArtifact).where(RagSourceIngestionArtifact.artifact_kind == "REJECTS")
+            )
+        ).all()
+        assert len(rows) == 1
+        expected = (
+            "ITEM_SEQ_REQUIRED"
+            if value is None or (isinstance(value, str) and not value.strip())
+            else "INVALID_ITEM_SEQ_TYPE"
+        )
+        assert rows[0].reject_code == expected
+        assert json.loads((tmp_path / "private" / rows[0].object_key).read_bytes()) == {"ITEM_SEQ": value}
+
+
+async def test_store_failure_rolls_back_database_and_keeps_retryable_objects(database, tmp_path):
+    factory, _ = database
+    run, entries = raw_run(tmp_path, [[{}]], failed_pk=True)
+    backing = LocalPrivateSourceArtifactStore(tmp_path / "private")
+
+    class FailingStore:
+        def put_verified(self, **kwargs):
+            if kwargs.get("artifact_kind") is IngestionArtifactKind.REJECTS:
+                raise OSError("SYNTHETIC_SECRET storage failure")
+            return backing.put_verified(**kwargs)
+
+    with pytest.raises(RuntimeError, match="Artifact preservation failed") as error:
+        await execute(factory, FailingStore(), run, entries, metadata())
+    assert "SYNTHETIC_SECRET" not in str(error.value)
+    assert error.value.__suppress_context__
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RagSourceIngestionRun)) == 0
+    retried = await execute(factory, backing, run, entries, metadata())
+    assert retried.failure_code == "PARSER_VALIDATION_FAILED"
+
+
+async def test_parser_contract_upgrade_is_not_legacy_no_change(database, tmp_path):
+    factory, _ = database
+    run, entries = raw_run(tmp_path, [[{"ITEM_SEQ": "SYNTH_A"}]])
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    ingestion = build_product_ingestion_result(
+        result=run, artifacts=entries, receipt_path=RECEIPT, repository_root=ROOT
+    )
+    async with factory.begin() as session:
+        legacy = await preserve_and_persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            artifact_store=store,
+            ingestion=ingestion,
+            metadata=replace(metadata(), parser_version="mfds-product-parser@1", reject_code_contract_version=None),
+            raw_artifacts=entries,
+        )
+    conflict = await execute(factory, store, run, entries, metadata())
+    assert conflict.decision == SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+    new = await execute(factory, store, run, entries, metadata("external:synthetic-v2"))
+    assert new.decision == SnapshotIngestionDecision.CREATED
+    assert new.snapshot_id != legacy.snapshot_id
+    async with factory() as session:
+        previous = await session.get(RagSourceIngestionRun, legacy.ingestion_run_id)
+        assert previous.reject_code_contract_version is None
+
+
+@pytest.mark.parametrize("location", ["page[1].record[0]", "page[01].record[00]"])
+async def test_duplicate_rejection_location_cannot_be_appended_again(database, tmp_path, location):
+    factory, _ = database
+    run, entries = raw_run(tmp_path, [[{}]], failed_pk=True)
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    result = await execute(factory, store, run, entries, metadata())
+    async with factory.begin() as session:
+        saved = (
+            await session.scalars(
+                select(RagSourceIngestionArtifact).where(RagSourceIngestionArtifact.artifact_kind == "REJECTS")
+            )
+        ).one()
+        artifact = StoredRawArtifact(
+            None,
+            RawArtifactMetadata("different-key.json", saved.raw_checksum, saved.byte_size, saved.content_type),
+            saved.storage_backend,
+            saved.object_key,
+            IngestionArtifactKind.REJECTS,
+            saved.reject_code,
+            location,
+        )
+        with pytest.raises(ValueError, match="failed parser run"):
+            await SqlAlchemySourceSnapshotRepository(session).create_artifacts(
+                ingestion_run_id=result.ingestion_run_id, artifacts=(artifact,)
+            )
+
+
+async def test_invalid_run_does_not_replace_existing_current_snapshot(database, tmp_path):
+    from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import select_current_snapshot
+
+    factory, _ = database
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    clean, entries = raw_run(tmp_path, [[{"ITEM_SEQ": "SYNTH_A"}]])
+    first = await execute(factory, store, clean, entries, metadata())
+    async with factory.begin() as session:
+        await select_current_snapshot(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            snapshot_id=first.snapshot_id,
+            selected_at=NOW,
+            selected_by="synthetic-reviewer",
+        )
+    bad, bad_entries = raw_run(tmp_path, [[{}]], failed_pk=True)
+    failed = await execute(factory, store, bad, bad_entries, metadata("external:bad"))
+    assert failed.snapshot_id is None
+    async with factory() as session:
+        rows = (await session.scalars(select(RagSourceSnapshot))).all()
+        assert len(rows) == 1
+        assert rows[0].id == first.snapshot_id
+        assert rows[0].verification_status == "CURRENT"
+
+
+async def test_failed_client_result_is_not_mutated_or_promoted(database, tmp_path):
+    factory, _ = database
+    failed, entries = raw_run(tmp_path, [[{"ITEM_SEQ": "SYNTH_VALID"}]], failed_pk=True)
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    result = await execute(factory, store, failed, entries, metadata())
+    assert result.failure_code == "PARSER_VALIDATION_FAILED"
+    assert result.snapshot_id is None
+    assert failed.pages == ()
+    assert not failed.snapshot_candidate_allowed
+    assert failed.status == SourceRunStatus.SCHEMA_DRIFT
+    assert not any(p.is_file() for p in (tmp_path / "private").rglob("*"))
+
+
+async def test_transport_failure_keeps_existing_failure_type_and_code(database, tmp_path):
+    from ai_worker.tasks.rag.source_ingestion.failure_runs import FailedIngestionRunResult
+
+    factory, _ = database
+    failed = SourceRunResult(
+        PRODUCT_REJECT_IDENTITY,
+        SourceRunStatus.FAILED,
+        (),
+        SourceClientFailure(SourceFailureCode.TIMEOUT, RetryDisposition.BACKOFF, "Synthetic timeout"),
+    )
+    store = AsyncMock()
+    outcome = await execute(factory, store, failed, (), metadata())
+    assert isinstance(outcome, FailedIngestionRunResult)
+    assert outcome.failure_code == "TIMEOUT"
+    store.put_verified.assert_not_called()
+    async with factory() as session:
+        row = await session.get(RagSourceIngestionRun, outcome.ingestion_run_id)
+        assert row.reject_code_contract_version == REJECT_CODE_CONTRACT_VERSION
+        assert row.snapshot_id is None

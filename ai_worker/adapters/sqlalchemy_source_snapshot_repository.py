@@ -12,7 +12,11 @@ from sqlalchemy.sql import Select
 
 from ai_worker.tasks.rag.source_client.contracts import EmptyResultPolicy, SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import IngestionArtifactKind, StoredRawArtifact
-from ai_worker.tasks.rag.source_ingestion.reject_codes import validate_reject_artifact, validate_reject_contract
+from ai_worker.tasks.rag.source_ingestion.reject_codes import (
+    parser_location_identity,
+    validate_reject_artifact,
+    validate_reject_contract,
+)
 from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProgressError
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
@@ -433,7 +437,17 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 .one()
             )
             identity = await self._run_operation_identity(UUID(row["operation_id"]))
-            locations = set()
+            locations = set(
+                (
+                    await self._session.scalars(
+                        select(_INGESTION_ARTIFACT.c.parser_location).where(
+                            _INGESTION_ARTIFACT.c.ingestion_run_id == str(ingestion_run_id),
+                            _INGESTION_ARTIFACT.c.artifact_kind == IngestionArtifactKind.REJECTS,
+                        )
+                    )
+                ).all()
+            )
+            location_keys = {parser_location_identity(location) for location in locations}
             for artifact in rejects:
                 validate_reject_artifact(
                     identity=identity,
@@ -442,12 +456,12 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                     location=artifact.parser_location,
                 )
                 if (
-                    artifact.parser_location in locations
+                    parser_location_identity(artifact.parser_location) in location_keys
                     or row["run_status"] != "FAILED"
                     or row["failure_code"] != "PARSER_VALIDATION_FAILED"
                 ):
                     raise ValueError("Reject artifact does not match failed parser run.")
-                locations.add(artifact.parser_location)
+                location_keys.add(parser_location_identity(artifact.parser_location))
         values = [
             {
                 "id": str(uuid4()),
