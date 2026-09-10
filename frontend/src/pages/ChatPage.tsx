@@ -16,6 +16,7 @@ import {
   clearAuthenticatedSession,
   isStaleTokenError,
 } from '../features/auth/authSession'
+import { AssistantMessageContent } from './AssistantMessageContent'
 import '../design-system/prototype.css'
 import './ChatPage.css'
 
@@ -648,10 +649,14 @@ function ChatPage({
 
               {currentMessages.map((message) => (
                 <div
-                  className={`chat-message ${message.role === 'USER' ? 'user' : ''}`}
+                  className={`chat-message ${message.role === 'USER' ? 'user' : 'assistant'}`}
                   key={message.message_id}
                 >
-                  {message.content ?? '답변을 생성하지 못했어요.'}
+                  {message.role === 'ASSISTANT' && message.content ? (
+                    <AssistantMessageContent content={message.content} />
+                  ) : (
+                    message.content ?? '답변을 생성하지 못했어요.'
+                  )}
                 </div>
               ))}
 

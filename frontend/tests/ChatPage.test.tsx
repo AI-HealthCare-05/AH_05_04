@@ -278,6 +278,37 @@ describe('ChatPage', () => {
     ).toHaveLength(1)
   })
 
+  it('ASSISTANT content만 Markdown으로 표시하고 USER content는 원문을 유지한다', async () => {
+    vi.mocked(sendChatMessage).mockResolvedValue({
+      data: {
+        session_id: sessionId,
+        user_message_id: 'markdown-user',
+        assistant_message_id: 'markdown-assistant',
+        generation_status: 'COMPLETED',
+        content: '**도지 답변**',
+        model_name: 'chat-model',
+        prompt_version: 'chat-v1',
+        created_at: '2026-09-10T00:00:00Z',
+        completed_at: '2026-09-10T00:00:01Z',
+      },
+    })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '**사용자 원문**' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    const userMessage = screen.getByText('**사용자 원문**')
+    const assistantMessage = await screen.findByText('도지 답변')
+
+    expect(userMessage.closest('.chat-message')?.classList).toContain('user')
+    expect(userMessage.querySelector('strong')).toBeNull()
+    expect(assistantMessage.tagName).toBe('STRONG')
+    expect(assistantMessage.closest('.chat-message')?.classList).toContain(
+      'assistant',
+    )
+  })
+
   it('세션 준비 후 입력창에 focus할 수 있고 accessible name을 제공한다', async () => {
     renderPage()
 
