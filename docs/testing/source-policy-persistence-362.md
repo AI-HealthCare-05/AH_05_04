@@ -10,7 +10,7 @@ Source·Catalog 계약 리뷰 정현우. 승인된 PD-362-20260909를 구현한�
 | Source 정책 DB 저장·소비 | 1단계 구현 | Source별 정책 왕복, DB 정책보다 느슨한 요청 차단 |
 | Snapshot external_version 보존 | 1단계 구현 | 새 Snapshot exact roundtrip, 기존 값 추정·소급 수정 없음 |
 | Snapshot·Citation version 200자 | 1단계 구현 | forward migration, 201자 기존 데이터 무변경 중단, FK 보존 |
-| Run 시도 provenance | 미완료 | CREATED/NO_CHANGE/충돌/invalid version별 DB Receipt |
+| Run 시도 provenance | 2단계 구현 | CREATED/NO_CHANGE/충돌/invalid version별 DB Receipt |
 | Catalog·Runtime 사용 Receipt | 미완료 | #398 기존 검증과 저장 version/hash/승인 근거 연결 |
 | #165 reject_code allowlist·version | 계약 미확정 | 정현우 Source 계약 확인 필요, 임의 목록 생성 금지 |
 | #165 Source→#166 Catalog 인계 | 미완료 | #166 실제 소비 통합 검증까지 추적 |
@@ -40,3 +40,12 @@ AWS·팀 개발 DB·운영 DB는 적용하지 않는다.
 
 역할 생성이 필요한 기존 Source Writer 테스트 2개는 일반 계정의 CREATEROLE 부재로 실행이 차단되었다.
 역할 생성 권한을 새로 부여하지 않았으며, 나머지 기능·migration 검증과 구분해 기록한다.
+
+## 2단계 검증
+
+- Source 단위 테스트 366 passed.
+- 실제 DB Source lifecycle·Receipt·NO_CHANGE 관측 충돌·invalid 원문 비저장·rollback: 24 passed, 역할 생성 검사 2개 별도.
+- 전체 Backend/Worker mypy: 535개 파일 통과.
+- 기존 role policy는 Source Run lifecycle 컬럼만 UPDATE하도록 축소한다.
+- 신규 migration은 기존 비소유자의 테이블 단위 Run UPDATE 권한도 같은 컬럼 범위로 축소한다.
+- 기존 Run의 미관측 시도 version을 Snapshot에서 추정·소급 채우지 않는다.

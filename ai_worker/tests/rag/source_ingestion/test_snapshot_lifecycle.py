@@ -97,6 +97,18 @@ class FakeSnapshotRepository:
             None,
         )
 
+    async def has_attempt_version_conflict(
+        self, *, operation_id: UUID, source_version: str, canonical_contract: dict[str, str | int]
+    ) -> bool:
+        for record in self.runs:
+            if record.attempted_source_version == source_version and record.run_status in {
+                "SUCCEEDED",
+                "SUCCEEDED_WITH_REJECTIONS",
+                "NO_CHANGE",
+            }:
+                return record.attempted_canonical_contract != canonical_contract
+        return False
+
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         assert operation_id == _OPERATION_ID
         return next(
@@ -1068,20 +1080,18 @@ async def test_invalid_source_version_is_rejected_before_file_write(
     repository = FakeSnapshotRepository()
     store = LocalPrivateSourceArtifactStore(tmp_path / "private")
 
-    with pytest.raises(SourceVersionValidationError):
-        await preserve_and_persist_product_ingestion_result(
-            repository=repository,
-            artifact_store=store,
-            ingestion=ingestion,
-            metadata=replace(
-                _metadata("external:v1"),
-                source_version="v1",
-            ),
-            raw_artifacts=((1, source, raw_metadata),),
-        )
-
+    result = await preserve_and_persist_product_ingestion_result(
+        repository=repository,
+        artifact_store=store,
+        ingestion=ingestion,
+        metadata=replace(_metadata("external:v1"), source_version="v1"),
+        raw_artifacts=((1, source, raw_metadata),),
+    )
+    assert result.failure_code == "SOURCE_VERSION_INVALID"
+    assert result.snapshot_id is None
     assert list((tmp_path / "private").iterdir()) == []
-    assert repository.locked_identities == []
+    assert repository.runs[0].attempted_source_version is None
+    assert repository.runs[0].invalid_source_version_sha256 == hashlib.sha256(b"v1").hexdigest()
 
 
 async def test_rejects_invalid_source_version_before_locking_operation() -> None:

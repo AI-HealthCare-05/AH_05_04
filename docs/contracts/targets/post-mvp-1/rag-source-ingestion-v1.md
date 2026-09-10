@@ -300,3 +300,19 @@ transaction, 일반 CHECK/FK로 처리한다.
 Run 시도 provenance와 소비자 Receipt 연결은 아직 완료되지 않았다.
 #165의 reject_code allowlist·version 계약 및 #166의 실제 소비 검증도
 [공동 완료 조건](../../../testing/source-policy-persistence-362.md)에서 계속 추적한다.
+
+### #362 수집 시도 이력
+
+`rag_source_ingestion_run`은 Snapshot과 별개로 `attempted_source_version`,
+`attempted_external_version`, `attempted_canonical_contract`를 보존한다. 비교 계약은
+PD-362의 checksum·schema/parser/normalization/canonicalization version·Endpoint Receipt hash·거부 건수
+7개 필드만 포함한다. 새 version이 NO_CHANGE이면 기존 Snapshot을 참조하되 시도 version은 새 값을 유지한다.
+이미 성공·NO_CHANGE로 관측된 version의 비교 계약이 달라지면 Snapshot이 없었던 version도 충돌로 차단한다.
+
+문법 오류는 attempted version·external version을 NULL로 두고
+`invalid_source_version_sha256`, `invalid_source_version_byte_length`, `validation_reason_code`만 기록한다.
+문법이 유효한 결속 오류는 시도 version과 안전하게 검증된 external version을 보존한다.
+`record_source_version_failure`는 Snapshot metadata 생성 전 장문·제어문자 입력 실패에도 사용할 수 있다.
+원본 보존·저장 orchestration은 version 실패를 해당 감사 경로로 연결하고 Artifact를 쓰지 않는다.
+Run Receipt 조회는 Snapshot을 역으로 추정하지 않는다. Snapshot·Run·Artifact는 호출자 transaction에 속한다.
+Source Writer의 기존 Run 상태 갱신은 명시한 lifecycle 컬럼에만 허용하고 신규 시도 provenance UPDATE는 허용하지 않는다.

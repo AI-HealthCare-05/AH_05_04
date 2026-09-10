@@ -20,6 +20,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
 )
 from ai_worker.tasks.rag.source_ingestion.source_version import (
     validate_source_version,
+    validate_source_version_syntax,
 )
 
 SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
@@ -228,6 +229,35 @@ class SnapshotRunRecord:
     finished_at: datetime
     duration_ms: int | None
     failure_code: str | None = None
+    attempted_source_version: str | None = None
+    attempted_external_version: str | None = None
+    attempted_canonical_contract: dict[str, str | int] | None = None
+    invalid_source_version_sha256: str | None = None
+    invalid_source_version_byte_length: int | None = None
+    validation_reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.run_status == "FAILED" and self.snapshot_id is not None:
+            raise ValueError("FAILED attempt cannot reference a Snapshot")
+        if self.run_status == "NO_CHANGE" and self.snapshot_id is None:
+            raise ValueError("NO_CHANGE attempt requires a Snapshot")
+        if self.attempted_canonical_contract is not None:
+            _validate_attempt_contract(self.attempted_canonical_contract)
+        if self.attempted_source_version is not None:
+            validate_source_version_syntax(self.attempted_source_version)
+        if self.invalid_source_version_sha256 is not None:
+            if (
+                re.fullmatch(r"[0-9a-f]{64}", self.invalid_source_version_sha256) is None
+                or self.invalid_source_version_byte_length is None
+                or self.invalid_source_version_byte_length < 0
+                or self.attempted_source_version is not None
+                or self.attempted_external_version is not None
+                or self.run_status != "FAILED"
+                or self.validation_reason_code != "SOURCE_VERSION_INVALID"
+            ):
+                raise ValueError("Invalid Source version audit shape")
+        elif self.invalid_source_version_byte_length is not None:
+            raise ValueError("Invalid Source version audit requires a checksum")
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +302,10 @@ class SnapshotLifecycleRepository(Protocol):
     ) -> SnapshotReference | None: ...
 
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None: ...
+
+    async def has_attempt_version_conflict(
+        self, *, operation_id: UUID, source_version: str, canonical_contract: dict[str, str | int]
+    ) -> bool: ...
 
     async def create_snapshot(self, request: SnapshotCreateRequest) -> UUID: ...
 
@@ -397,6 +431,7 @@ async def persist_product_ingestion_result(
                 operation_id=operation_id,
                 snapshot_id=None,
                 metadata=metadata,
+                ingestion=ingestion,
                 run_status="FAILED",
                 failure_code=failure_code.value,
             )
@@ -424,6 +459,13 @@ async def persist_product_ingestion_result(
         latest=latest,
     )
 
+    if await repository.has_attempt_version_conflict(
+        operation_id=operation_id,
+        source_version=metadata.source_version,
+        canonical_contract=attempt_canonical_contract(ingestion=ingestion, metadata=metadata),
+    ):
+        decision = SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+
     if decision is SnapshotIngestionDecision.CREATED:
         snapshot_id = await repository.create_snapshot(
             SnapshotCreateRequest(
@@ -446,16 +488,16 @@ async def persist_product_ingestion_result(
                 operation_id=operation_id,
                 snapshot_id=snapshot_id,
                 metadata=metadata,
+                ingestion=ingestion,
                 run_status=run_status,
             )
         )
         await repository.create_artifacts(ingestion_run_id=ingestion_run_id, artifacts=artifacts)
         return SnapshotPersistenceResult(decision, operation_id, ingestion_run_id, snapshot_id)
 
-    if comparison_snapshot is None:
-        raise RuntimeError("Snapshot 비교 결과가 없습니다.")
-
     if decision is SnapshotIngestionDecision.NO_CHANGE:
+        if comparison_snapshot is None:
+            raise RuntimeError("Snapshot 비교 결과가 없습니다.")
         await repository.append_verification(
             snapshot_id=comparison_snapshot.snapshot_id,
             check_name="source-ingestion-integrity",
@@ -468,6 +510,7 @@ async def persist_product_ingestion_result(
                 operation_id=operation_id,
                 snapshot_id=comparison_snapshot.snapshot_id,
                 metadata=metadata,
+                ingestion=ingestion,
                 run_status="NO_CHANGE",
             )
         )
@@ -484,6 +527,7 @@ async def persist_product_ingestion_result(
             operation_id=operation_id,
             snapshot_id=None,
             metadata=metadata,
+            ingestion=ingestion,
             run_status="FAILED",
             failure_code=SOURCE_VERSION_CONFLICT,
         )
@@ -645,6 +689,7 @@ def _run_record(
     snapshot_id: UUID | None,
     metadata: SnapshotIngestionMetadata,
     run_status: str,
+    ingestion: ProductIngestionResult,
     failure_code: str | None = None,
 ) -> SnapshotRunRecord:
     return SnapshotRunRecord(
@@ -657,7 +702,26 @@ def _run_record(
         finished_at=metadata.finished_at,
         duration_ms=metadata.duration_ms,
         failure_code=failure_code,
+        attempted_source_version=metadata.source_version,
+        attempted_external_version=metadata.external_version,
+        attempted_canonical_contract=attempt_canonical_contract(ingestion=ingestion, metadata=metadata),
     )
+
+
+def attempt_canonical_contract(
+    *,
+    ingestion: ProductIngestionResult,
+    metadata: SnapshotIngestionMetadata,
+) -> dict[str, str | int]:
+    return {
+        "canonical_checksum": ingestion.canonical_checksum,
+        "schema_version": metadata.schema_version,
+        "parser_version": metadata.parser_version,
+        "normalization_version": metadata.normalization_version,
+        "canonicalization_spec_version": ingestion.canonicalization_spec_version,
+        "endpoint_receipt_hash": ingestion.endpoint_receipt_hash,
+        "rejected_record_count": metadata.rejected_record_count,
+    }
 
 
 def _has_same_canonical_contract(
@@ -675,3 +739,26 @@ def _has_same_canonical_contract(
         and snapshot.endpoint_receipt_hash == ingestion.endpoint_receipt_hash
         and snapshot.rejected_record_count == metadata.rejected_record_count
     )
+
+
+def _validate_attempt_contract(contract: dict[str, str | int]) -> None:
+    keys = {
+        "canonical_checksum",
+        "schema_version",
+        "parser_version",
+        "normalization_version",
+        "canonicalization_spec_version",
+        "endpoint_receipt_hash",
+        "rejected_record_count",
+    }
+    if set(contract) != keys:
+        raise ValueError("Attempt canonical contract keys do not match PD-362")
+    for key in keys - {"rejected_record_count"}:
+        value = contract[key]
+        if not isinstance(value, str) or not value.strip() or len(value) > 100 or any(ord(c) < 32 for c in value):
+            raise ValueError("Invalid attempt canonical contract value")
+        if key in {"canonical_checksum", "endpoint_receipt_hash"} and re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("Invalid attempt checksum")
+    count = contract["rejected_record_count"]
+    if type(count) is not int or count < 0:
+        raise ValueError("Invalid attempt rejected count")

@@ -16,6 +16,13 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     StoredRawArtifact,
 )
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotRunRecord
+from ai_worker.tasks.rag.source_ingestion.source_version import (
+    SourceVersionValidationError,
+    build_external_source_version,
+    build_invalid_source_version_audit,
+    validate_source_version,
+    validate_source_version_syntax,
+)
 
 
 class IngestionProcessingFailureCode(StrEnum):
@@ -160,3 +167,63 @@ def _validate_failure_artifacts(
         artifact.artifact_kind is IngestionArtifactKind.REJECTS for artifact in artifacts
     ):
         raise ValueError("거부 한도 실패에는 REJECTS Artifact가 필요합니다.")
+
+
+async def record_source_version_failure(
+    *,
+    repository: FailedRunRepository,
+    identity: SourceOperationIdentity,
+    metadata: FailedIngestionRunMetadata,
+    source_version: str,
+    external_version: str | None,
+    canonical_contract: dict[str, str | int],
+) -> FailedIngestionRunResult:
+    """Persist a failed attempt without raw malformed version or exception text."""
+    checksum = canonical_contract.get("canonical_checksum")
+    if not isinstance(checksum, str):
+        raise ValueError("Canonical checksum is required for a version attempt")
+    try:
+        validate_source_version(
+            source_version=source_version, external_version=external_version, canonical_checksum=checksum
+        )
+    except SourceVersionValidationError as error:
+        failure_code = error.failure_code.value
+    else:
+        raise ValueError("Valid Source version cannot be recorded as a version failure")
+    version: str | None = source_version
+    safe_external = external_version
+    invalid_hash = None
+    invalid_length = None
+    try:
+        validate_source_version_syntax(source_version)
+    except SourceVersionValidationError as syntax_error:
+        audit = build_invalid_source_version_audit(source_version=source_version, error=syntax_error)
+        version, safe_external = None, None
+        invalid_hash = audit.source_version_sha256
+        invalid_length = audit.source_version_byte_length
+    if safe_external is not None:
+        try:
+            build_external_source_version(external_version=safe_external)
+        except SourceVersionValidationError:
+            safe_external = None
+    operation_id = await repository.lock_operation(identity)
+    run_id = await repository.create_run(
+        SnapshotRunRecord(
+            operation_id=operation_id,
+            snapshot_id=None,
+            run_group_key=metadata.run_group_key,
+            attempt_number=metadata.attempt_number,
+            run_status="FAILED",
+            started_at=metadata.started_at,
+            finished_at=metadata.finished_at,
+            duration_ms=metadata.duration_ms,
+            failure_code=failure_code,
+            attempted_source_version=version,
+            attempted_external_version=safe_external,
+            attempted_canonical_contract=canonical_contract,
+            invalid_source_version_sha256=invalid_hash,
+            invalid_source_version_byte_length=invalid_length,
+            validation_reason_code=failure_code,
+        )
+    )
+    return FailedIngestionRunResult(operation_id, run_id, failure_code)

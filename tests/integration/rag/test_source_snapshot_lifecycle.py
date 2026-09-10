@@ -1123,3 +1123,96 @@ async def test_external_version_and_source_policy_survive_database_roundtrip() -
         assert snapshot.source_version == "external:provider-release-1"
         policy = await SqlAlchemySourceSnapshotRepository(session).get_source_policy(operation_id=result.operation_id)
         assert policy == _ALLOW_ONE_REJECTION_POLICY
+
+
+async def test_no_change_version_observation_is_preserved_and_detects_later_conflict() -> None:
+    identity = await _seed_operation("ATTEMPT_VERSION")
+    results = []
+    for minute, (version, checksum) in enumerate(
+        (
+            ("external:first", _CHECKSUM_A),
+            ("external:observed", _CHECKSUM_A),
+            ("external:observed", _CHECKSUM_B),
+        )
+    ):
+        async with session_factory.begin() as session:
+            results.append(
+                await persist_product_ingestion_result(
+                    repository=SqlAlchemySourceSnapshotRepository(session),
+                    ingestion=_ingestion(identity, checksum),
+                    metadata=_metadata(version, minute=minute),
+                    artifacts=_stored_artifacts(minute=minute),
+                )
+            )
+    created, unchanged, conflict = results
+    assert unchanged.decision is SnapshotIngestionDecision.NO_CHANGE
+    assert unchanged.snapshot_id == created.snapshot_id
+    assert conflict.decision is SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+    assert conflict.snapshot_id is None
+    async with session_factory() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        attempt = await repository.get_attempt_receipt(ingestion_run_id=unchanged.ingestion_run_id)
+        assert attempt is not None
+        assert attempt.attempted_source_version == "external:observed"
+        assert attempt.attempted_external_version == "observed"
+        assert attempt.attempted_canonical_contract["canonical_checksum"] == _CHECKSUM_A
+        snapshot = await session.get(RagSourceSnapshot, created.snapshot_id)
+        assert snapshot.source_version == "external:first"
+        failed = await repository.get_attempt_receipt(ingestion_run_id=conflict.ingestion_run_id)
+        assert failed.attempted_canonical_contract["canonical_checksum"] == _CHECKSUM_B
+        assert failed.failure_code == "SOURCE_VERSION_CONFLICT"
+
+
+@pytest.mark.parametrize("invalid_version", ["SYNTHETIC_SECRET\ninvalid", "v" * 300])
+async def test_invalid_version_attempt_stores_only_digest_length_and_safe_code(invalid_version: str) -> None:
+    import hashlib
+    from uuid import uuid4
+
+    from ai_worker.tasks.rag.source_ingestion.failure_runs import record_source_version_failure
+    from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import attempt_canonical_contract
+
+    identity = await _seed_operation(f"INVALID_{uuid4().hex[:8]}")
+    async with session_factory.begin() as session:
+        failed = await record_source_version_failure(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            identity=identity,
+            metadata=FailedIngestionRunMetadata("synthetic-invalid-attempt", 1, _NOW, _NOW),
+            source_version=invalid_version,
+            external_version=None,
+            canonical_contract=attempt_canonical_contract(
+                ingestion=_ingestion(identity, _CHECKSUM_A), metadata=_metadata("external:valid")
+            ),
+        )
+    async with session_factory() as session:
+        attempt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=failed.ingestion_run_id
+        )
+        assert attempt is not None
+        assert attempt.snapshot_id is None
+        assert attempt.attempted_source_version is None
+        assert attempt.attempted_external_version is None
+        assert attempt.invalid_source_version_sha256 == hashlib.sha256(invalid_version.encode()).hexdigest()
+        assert attempt.invalid_source_version_byte_length == len(invalid_version.encode())
+        assert attempt.validation_reason_code == "SOURCE_VERSION_INVALID"
+        assert invalid_version not in repr(attempt)
+
+
+async def test_attempt_is_rolled_back_with_the_snapshot_transaction() -> None:
+    identity = await _seed_operation("ATTEMPT_ROLLBACK")
+    async with session_factory() as session:
+        transaction = await session.begin()
+        result = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:rolled-back"),
+            artifacts=_stored_artifacts(),
+        )
+        await transaction.rollback()
+    async with session_factory() as session:
+        assert (
+            await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+                ingestion_run_id=result.ingestion_run_id
+            )
+            is None
+        )
+        assert await session.get(RagSourceSnapshot, result.snapshot_id) is None

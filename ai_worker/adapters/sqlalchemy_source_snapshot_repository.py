@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Integer, Numeric, String, column, func, insert, select, table, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -76,6 +77,12 @@ _INGESTION_RUN = table(
     column("attempt_number", Integer),
     column("failure_code", String(100)),
     column("failure_message", String(255)),
+    column("attempted_source_version", String(200)),
+    column("attempted_external_version", String(200)),
+    column("attempted_canonical_contract", JSONB),
+    column("invalid_source_version_sha256", String(64)),
+    column("invalid_source_version_byte_length", Integer),
+    column("validation_reason_code", String(100)),
     column("duration_ms", Integer),
     column("started_at", DateTime(timezone=True)),
     column("finished_at", DateTime(timezone=True)),
@@ -188,6 +195,39 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         row = result.mappings().one_or_none()
         return _snapshot_reference(row)
 
+    async def has_attempt_version_conflict(
+        self, *, operation_id: UUID, source_version: str, canonical_contract: dict[str, str | int]
+    ) -> bool:
+        observed = await self._session.scalar(
+            select(_INGESTION_RUN.c.attempted_canonical_contract)
+            .where(
+                _INGESTION_RUN.c.operation_id == str(operation_id),
+                _INGESTION_RUN.c.attempted_source_version == source_version,
+                _INGESTION_RUN.c.run_status.in_(["SUCCEEDED", "SUCCEEDED_WITH_REJECTIONS", "NO_CHANGE"]),
+            )
+            .order_by(_INGESTION_RUN.c.started_at, _INGESTION_RUN.c.id)
+            .limit(1)
+        )
+        return observed is not None and observed != canonical_contract
+
+    async def get_attempt_receipt(self, *, ingestion_run_id: UUID) -> SnapshotRunRecord | None:
+        row = (
+            (await self._session.execute(select(_INGESTION_RUN).where(_INGESTION_RUN.c.id == str(ingestion_run_id))))
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        return SnapshotRunRecord(
+            operation_id=UUID(row["operation_id"]),
+            snapshot_id=UUID(row["snapshot_id"]) if row["snapshot_id"] else None,
+            **{
+                key: row[key]
+                for key in SnapshotRunRecord.__dataclass_fields__
+                if key not in {"operation_id", "snapshot_id"}
+            },
+        )
+
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         statement = (
             select(
@@ -280,6 +320,12 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 attempt_number=record.attempt_number,
                 failure_code=record.failure_code,
                 failure_message=None,
+                attempted_source_version=record.attempted_source_version,
+                attempted_external_version=record.attempted_external_version,
+                attempted_canonical_contract=record.attempted_canonical_contract,
+                invalid_source_version_sha256=record.invalid_source_version_sha256,
+                invalid_source_version_byte_length=record.invalid_source_version_byte_length,
+                validation_reason_code=record.validation_reason_code,
                 duration_ms=record.duration_ms,
                 started_at=record.started_at,
                 finished_at=record.finished_at,

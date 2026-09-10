@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func, text
 
@@ -319,6 +320,15 @@ class RagSourceIngestionRun(Base):
     __tablename__ = "rag_source_ingestion_run"
     __table_args__ = (
         UniqueConstraint("operation_id", "run_group_key", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
+        Index("idx_rag_ingestion_attempt_version", "operation_id", "attempted_source_version"),
+        CheckConstraint(
+            "(invalid_source_version_sha256 IS NULL AND invalid_source_version_byte_length IS NULL) OR "
+            "(invalid_source_version_sha256 IS NOT NULL AND invalid_source_version_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND invalid_source_version_byte_length IS NOT NULL AND invalid_source_version_byte_length >= 0 "
+            "AND attempted_source_version IS NULL AND attempted_external_version IS NULL "
+            "AND run_status = 'FAILED' AND validation_reason_code IS NOT NULL)",
+            name="chk_rag_ingestion_invalid_version_audit",
+        ),
         Index("idx_rag_source_ingestion_run_operation_status", "operation_id", "run_status", "started_at"),
         CheckConstraint(
             "(run_status <> 'FAILED' OR snapshot_id IS NULL) AND (run_status <> 'NO_CHANGE' OR snapshot_id IS NOT NULL)",
@@ -349,6 +359,13 @@ class RagSourceIngestionRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    attempted_source_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    attempted_external_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    attempted_canonical_contract: Mapped[dict[str, str | int] | None] = mapped_column(JSONB, nullable=True)
+    invalid_source_version_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invalid_source_version_byte_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    validation_reason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     operation: Mapped[RagSourceOperation] = relationship(back_populates="ingestion_runs")
     snapshot: Mapped[RagSourceSnapshot | None] = relationship(back_populates="ingestion_runs")
