@@ -82,7 +82,7 @@ async def _fetch_schema_object_names() -> set[str]:
         return {*(row[0] for row in constraints), *(row[0] for row in indexes)}
 
 
-async def _seed_preflight_context_graph() -> None:
+async def _seed_preflight_context_graph() -> dict[str, str]:
     ids = {
         key: str(uuid4())
         for key in (
@@ -385,6 +385,43 @@ async def _seed_preflight_context_graph() -> None:
                 ids,
             )
 
+    return ids
+
+
+async def _cleanup_preflight_fixture_graph(ids: dict[str, str]) -> None:
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+            for table_name, column_name, key in (
+                ("ai_job_execution_identification", "id", "execution_identification_id"),
+                ("ai_job_execution_context", "id", "execution_context_id"),
+                ("ai_job_intake_context", "id", "intake_context_id"),
+                ("medication_identification", "id", "identification_id"),
+                ("medication_candidate_search_result", "id", "result_id"),
+                ("medication_candidate_search", "id", "search_id"),
+                ("chat_message", "id", "chat_message_id"),
+                ("chat_session", "id", "chat_session_id"),
+                ("ai_job", "id", "ai_job_id"),
+                ("rag_runtime_environment", "id", "environment_id"),
+                ("rag_runtime_release_bundle", "id", "bundle_id"),
+                ("rag_runtime_execution_manifest", "id", "manifest_id"),
+                ("prescription_version_medication", "id", "version_medication_id"),
+                ("prescription_version", "id", "version_id"),
+                ("prescription", "id", "prescription_id"),
+                ("ocr_job", "id", "ocr_job_id"),
+                ("medical_document", "id", "document_id"),
+                ("profile", "id", "profile_id"),
+                ("user", "id", "user_id"),
+            ):
+                table_exists = await connection.execute(
+                    text("SELECT to_regclass(:table_name)"), {"table_name": table_name}
+                )
+                if table_exists.scalar_one() is not None:
+                    await connection.execute(
+                        text(f"DELETE FROM {table_name} WHERE {column_name} = :id"),
+                        {"id": ids[key]},
+                    )
+
 
 async def _cleanup_context_tables() -> None:
     async with _connection() as connection:
@@ -437,13 +474,14 @@ def test_preflight_context_upgrade_creates_tables_and_contract_constraints() -> 
 def test_preflight_context_downgrade_blocks_when_context_data_exists() -> None:
     cfg = create_alembic_config()
     _upgrade_to_preflight_context()
-    asyncio.run(_seed_preflight_context_graph())
+    ids = asyncio.run(_seed_preflight_context_graph())
 
     try:
         with pytest.raises(RuntimeError, match="existing data"):
             command.downgrade(cfg, PREFLIGHT_CONTEXT_BASE_REVISION)
         assert asyncio.run(_fetch_table_names()) == PREFLIGHT_CONTEXT_TABLES
     finally:
+        asyncio.run(_cleanup_preflight_fixture_graph(ids))
         asyncio.run(_cleanup_context_tables())
         command.downgrade(cfg, PREFLIGHT_CONTEXT_BASE_REVISION)
         command.upgrade(cfg, "head")
