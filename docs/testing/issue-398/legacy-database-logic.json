@@ -11,7 +11,6 @@
     "backend/alembic/versions/165e8f706152_guard_snapshot_transitions.py": "1c9ab247acc17aec439d39bc04a2134a2b5fd866fbdeb7cfe3410ab147d28bac",
     "backend/alembic/versions/169a1b2c3d4e_create_prescription_version_foundation.py": "8a9d8c32c938f1c0591e5de0ddf35a36bec2350e90c4e67b12153be366c9bd5c",
     "backend/alembic/versions/171c0f751206_add_candidate_search_displayed_count_deferred_constraint.py": "d5a202c11c90c996259710e692bf0059e3872b2c8f0c3dca2e6bb1a68aefaa04",
-    "backend/alembic/versions/201a1b2c3d4e_create_medication_checkin_audit.py": "ab8892e4116c6854302a544b5484c30becd0b8fb7663ebfae5ffc2cf6bce40e0",
-    "tools/source_cleanup/synthetic_control.sql": "6e5887b1cda5a7328e289d2d5e6e69a1798664416ed7ca9d7b3c621ad8c6e0ae"
+    "backend/alembic/versions/201a1b2c3d4e_create_medication_checkin_audit.py": "ab8892e4116c6854302a544b5484c30becd0b8fb7663ebfae5ffc2cf6bce40e0"
   }
 }

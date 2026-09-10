@@ -2,7 +2,7 @@
 
 기준 develop: `bd201c36f3be677558cccba02b27601a8c7ce52b`
 
-상태: 진행 중. 애플리케이션 public 스키마 전환 완료, 합성 정리 도구 전환과 최종 종합 검증 대기.
+상태: #398 로컬 코드·검증 완료. 팀 리뷰와 #404 병합 후 통합 대기.
 
 ## 금지 원칙
 
@@ -230,4 +230,19 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 최신 head의 public 애플리케이션 테이블 사용자 Trigger 0개 확인
 - downgrade는 Trigger를 재도입하지 않고 명시적으로 거부
 
-폐기 PostgreSQL 17에서 bootstrap→398b→398c→398d→398e→provisioning을 실제 분리 계정으로 검증했다. 운영 DB와 AWS 배포는 변경하지 않았다. 다음 단계는 `tools/source_cleanup/synthetic_control.sql`의 함수·Trigger를 Python transaction으로 전환하고 최종 전체 회귀를 실행하는 것이다.
+폐기 PostgreSQL 17에서 bootstrap→398b→398c→398d→398e→provisioning을 실제 분리 계정으로 검증했다. 운영 DB와 AWS 배포는 변경하지 않았다.
+
+## 합성 정리 도구 Python 전환
+
+- `synthetic_control.sql`의 Trigger·PL/pgSQL 함수·SECURITY DEFINER 함수 전부 제거
+- 리뷰·철회 append는 Python transaction과 배치별 advisory lock으로 직렬화
+- 감사 INTENT는 DB의 최신 승인자 등록·revision 순서·실행자·유효기간·철회·대상·30일 경과·현재 참조를 다시 검증해 payload 생성
+- 결과 감사는 기존 INTENT payload를 계승하고 복합 FK·CHECK로 batch/object/attempt/event/reason 결속
+- 정리와 모든 지원 게시 경로는 전역 advisory lock을 공유해 참조 commit과 삭제를 배타화
+- 실행 계정은 감사 SELECT·INSERT만 사용하고 UPDATE·DELETE·TRUNCATE, 승인·receipt 쓰기는 거부
+- 소유자는 설치·migration·장애 복구 경계로 제한
+- 고정 hash 임시 허용 목록에서 합성 SQL 제거. 이후 함수·Trigger를 다시 넣으면 CI가 실패
+
+새 `*_cleanup347_test` PostgreSQL DB에 최신 애플리케이션 migration과 control schema를 처음부터 설치해 참조·workflow 통합 57개와 cleanup 단위 103개를 통과했다. S3용 `boto3`가 없는 현재 환경에서 관련 모듈 2개를 제외한 Worker 전체는 2,569 passed, 8 skipped다.
+
+최종 폐기 DB 카탈로그 결과는 public/source_cleanup 사용자 Trigger 0개, RLS 활성 테이블 0개, 정책 0개, source_cleanup 함수 0개다. 앞 단계에서 전체 Backend 1,263 passed, 2 skipped와 전체 migration 150 passed도 통과했다. AWS 배포와 운영 DB 적용은 수행하지 않았다. 작업 중인 #404는 코드를 선반영하지 않았으며 병합 뒤 최신 develop에서 별도 통합 검증한다.
