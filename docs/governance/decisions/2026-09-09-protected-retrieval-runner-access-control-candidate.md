@@ -49,7 +49,7 @@ PR #373 kernel이 이미 구현한 3개 역할을 그대로 사용한다.
 
 `FREEZE`·`RUN`·grant/revoke의 기본 경계는 `CONTRIBUTING.md`의 "DB 내부의 암묵적 동작보다 Application Service에서 명시적으로 추적할 수 있는 로직을 우선한다" 원칙에 따라 **Application Service**로 둔다.
 
-다만 raw SQL로 protected schema에 직접 접근하면 kernel의 Python 레벨 검사(`AuthorizationGuard` 등)를 완전히 우회할 수 있다는 문제에 한해, `migration_user` 소유 SECURITY DEFINER 함수(`transition_rag_source_snapshot`, `165e8f706152_guard_snapshot_transitions.py`가 생성, 정책 근거는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md))와 같은 구조를 예외로 허용한다. `CONTRIBUTING.md`가 이런 예외에 요구하는 5개 항목은 다음과 같다.
+다만 raw SQL로 protected schema에 직접 접근하면 kernel의 Python 레벨 검사(`AuthorizationGuard` 등)를 완전히 우회할 수 있다는 문제에 한해, SECURITY DEFINER 함수와 같은 구조를 예외로 허용한다 — 기존 선례인 `transition_rag_source_snapshot`(`165e8f706152_guard_snapshot_transitions.py`가 생성, 정책 근거는 [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md))은 일반 `migration_user` 소유이지만, protected schema용 함수는 위에서 신설한 **protected owner/migration role 소유**로 만든다 — 일반 `migration_user`가 소유하면 protected 경계 분리 취지와 어긋난다. `CONTRIBUTING.md`가 이런 예외에 요구하는 5개 항목은 다음과 같다.
 
 1. 단순 구조(Application Service만)로 해결할 수 없는 문제: kernel의 `AuthorizationGuard`는 이미 Application Service 레벨에서 승인·상태 원자성을 보장하지만, 이는 Python 코드 경로를 통할 때만 적용된다. 일반 Runtime role이나 raw SQL 접근이 이 경로를 거치지 않고 protected schema를 직접 UPDATE/DELETE하면 kernel 검사를 완전히 우회한다 — [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md)이 해결한 것과 동일한 문제.
 2. 제안하는 구조: 허용 전이만 수행하고 승인·감사 append를 DB 트랜잭션에서 원자적으로 강제하는 SECURITY DEFINER 함수 — 위 선례와 동일 패턴. 일반 Runtime role은 이 함수를 통해서만 상태를 바꿀 수 있고, 테이블 직접 UPDATE 권한은 갖지 않는다.
@@ -160,7 +160,7 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 - `.github/workflows/checks.yml` — §6 GitHub Actions 현황 확인
 - `docs/privacy-safety.md` — §7 보존기간(다른 값, 전부 미적용), §12 예외 미허용 기조
 - `docs/contracts/proposed/post-mvp-1/source-artifact-retention-cleanup.md` — §8 삭제 전 INTENT 기록 선례
-- `scripts/deployment.sh` — §9 기존 `pg_dump` 백업 메커니즘
+- `scripts/deployment.sh` — §9 검토 대상 기존 `pg_dump` 백업 메커니즘(재사용 여부 미확정, 선행조건 검토 중)
 - `docs/runbooks/` — §11 참고(장애 복구용, IR 프레이밍 아님)
 - `docs/validation/rag/issue-273/` — §11 사고 증빙 위치
 
