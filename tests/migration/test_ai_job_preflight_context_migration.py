@@ -285,12 +285,12 @@ async def _seed_preflight_context_graph() -> None:
                     """
                     INSERT INTO medication_candidate_search_result (
                         id, search_id, product_id, code_system, canonical_code,
-                        product_name, result_rank, result_score, result_method,
+                        product_name, product_status, result_rank, result_score, result_method,
                         is_displayed, selection_eligible
                     )
                     VALUES (
                         :result_id, :search_id, :product_id, 'MFDS_ITEM_SEQ', 'SYNTHETIC-001',
-                        '합성 식별약 10mg', 1, 1.0, 'fixture-exact', true, true
+                        '합성 식별약 10mg', 'APPROVED', 1, 1.0, 'fixture-exact', true, true
                     )
                     """
                 ),
