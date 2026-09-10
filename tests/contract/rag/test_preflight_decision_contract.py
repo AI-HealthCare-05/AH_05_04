@@ -160,9 +160,7 @@ def read_decision_compound_stale_priorities() -> tuple[str, ...]:
 
 def read_compound_stale_contract_priorities() -> tuple[str, ...]:
     """Extract compound stale priority vocabulary from target contract safety-result-compound-stale-priority-v1.md."""
-    assert COMPOUND_STALE_CONTRACT_PATH.is_file(), (
-        f"계약 문서 {COMPOUND_STALE_CONTRACT_PATH}가 존재해야 합니다."
-    )
+    assert COMPOUND_STALE_CONTRACT_PATH.is_file(), f"계약 문서 {COMPOUND_STALE_CONTRACT_PATH}가 존재해야 합니다."
     text = COMPOUND_STALE_CONTRACT_PATH.read_text(encoding="utf-8")
     assert "PD-173-20260909" in text, "계약 문서에 Decision ID PD-173-20260909 참조가 없습니다."
     assert "## 복합 STALE 우선순위와 단일 오류 사영" in text, (
