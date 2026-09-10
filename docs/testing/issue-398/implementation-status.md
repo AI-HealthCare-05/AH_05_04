@@ -1,6 +1,6 @@
 # #398 구현 진행 및 검증
 
-기준 develop: `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`
+기준 develop: `827a93a` (#410·#413·#386·#411 반영, `07cb7d1` 통합 commit). 이전 단계 기준은 `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`.
 
 상태: Trigger 제거와 Python 무결성 전환 완료. 누락됐던 Source·Catalog 관리 API·권한·감사 경로와 분리된 실행 설정·인수 문서를 완료했다. 최종 검증: 관리/권한/실행 계약 26 passed, 전체 migration 150 passed, 실제 이미지 2 passed. Ruff 전체 및 Backend/Worker mypy 516개 파일 통과. #398 → #291 연계 → #372 순서이며 #404는 병합 후 후속 작업.
 
@@ -337,3 +337,7 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 - 관리 기능은 미사용 초안에 한정한다. 참조·승인·사용 중인 자료와 provenance가 없는 Snapshot/Catalog는 거부한다. Source 계층 메타데이터에는 존재하지 않는 Snapshot provenance를 만들지 않고 null로 기록한다.
 - [관리 인수 절차](management-handoff.md)와 [PD-398-M1](../../contracts/proposed/source-catalog-management-398.md)에 실제 지원 범위와 적용 순서를 기록했다.
 - AWS/운영 DB 미적용. 담당 리뷰·병합은 별도. #372는 #398/#291 이후 migration·신규 Writer 정책을 연결하며 #404는 병합 후 처리한다.
+
+## 병합 준비 재검증 (2026-09-10)
+
+최신 develop 통합 후 Check-in·관리 권한·배포/CI 계약·Worker Evaluation 회귀 1260 passed, 8 skipped. Ruff 전체/format 및 Backend/Worker mypy 526개 파일 통과. 재도입 방지·보호 쓰기 경계·테스트 inventory 검사 통과. 로컬 통합 완료와 PR 최종 승인·원격 CI·운영 적용은 구분한다.
