@@ -326,6 +326,14 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
     assert 'PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT"' not in worker_body
 
 
+def test_default_local_backend_lane_does_not_enable_xdist() -> None:
+    """공유 PostgreSQL·Redis를 사용하는 로컬 Backend lane은 직렬 실행해야 합니다."""
+    backend_lane_tokens = shlex.split(_function_body("run_backend_test_lane", RUN_TEST_SCRIPT).replace("\\\n", " "))
+
+    assert "-n" not in backend_lane_tokens
+    assert not any(token.startswith("--dist") for token in backend_lane_tokens)
+
+
 def test_shared_environment_forces_literal_test_database_and_loopback_services() -> None:
     """두 runner 모두 개발 DB나 컨테이너 hostname으로 접속할 수 없어야 합니다."""
     script = TEST_ENVIRONMENT_SCRIPT.read_text(encoding="utf-8")

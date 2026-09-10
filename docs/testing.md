@@ -103,7 +103,10 @@ bash scripts/ci/run_test.sh
 동시에 실행합니다. 각 lane은 별도의 Coverage data 파일과 pytest cache 디렉터리를 사용하며,
 출력이 섞이지 않도록 lane별 임시 로그로 모아 순서대로 표시합니다. 두 프로세스를 모두 회수한
 뒤 하나라도 실패하면 전체 실행을 실패 처리합니다. CPU와 메모리가 제한된 환경에서는 병렬
-실행에 따른 개선 폭이 작을 수 있습니다.
+실행에 따른 개선 폭이 작을 수 있습니다. Worker lane은 controller와 두 xdist worker, 총 3개
+프로세스를 사용하므로 저사양이거나 부하가 높은 로컬 환경에서는 동시에 실행되는 timeout 민감
+Backend 테스트가 일시적으로 흔들릴 수 있습니다. GitHub Actions의 Backend와 Worker job은 서로
+다른 runner에서 실행되므로 이 로컬 CPU 경쟁을 공유하지 않습니다.
 
 Worker lane 내부는 `pytest-xdist -n 2 --dist=loadfile --max-worker-restart=0`으로 실행합니다.
 고정된 두 worker만 사용해 동시에 실행되는 Backend lane과 CPU를 과다 경쟁하지 않게 하고,
