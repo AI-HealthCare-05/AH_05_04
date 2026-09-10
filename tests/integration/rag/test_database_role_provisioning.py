@@ -29,11 +29,11 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceCreate,
     RagSourceEndpointCreate,
     RagSourceOperationCreate,
-    RagSourceSnapshotCreate,
 )
 from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
 from infra.python.provision_database_roles import (
     RUNTIME_APPEND_ONLY_TABLES,
+    RUNTIME_AUTH_UPDATE_COLUMNS,
     RUNTIME_MUTABLE_TABLES,
     run_provisioning,
 )
@@ -114,14 +114,19 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
         async with admin.begin() as connection:
             await connection.execute(text(f'SET LOCAL ROLE "{owner}"'))
             for table in sorted(
-                RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES | set(SOURCE_TABLES)
+                RUNTIME_MUTABLE_TABLES
+                | RUNTIME_APPEND_ONLY_TABLES
+                | CATALOG_TABLES
+                | set(SOURCE_TABLES)
+                | set(RUNTIME_AUTH_UPDATE_COLUMNS)
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await connection.execute(
                 text(
-                    "ALTER TABLE rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz"
+                    "ALTER TABLE rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz, ADD COLUMN verification_seal_id char(36)"
                 )
             )
+            await _add_auth_fixture_columns(connection)
             await connection.execute(text("CREATE TABLE future_table (id serial PRIMARY KEY)"))
             await connection.execute(text('ALTER TABLE "user" ADD COLUMN sequence_id serial'))
             await connection.execute(
@@ -220,20 +225,16 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
         operation = await repository.create_operation(
             RagSourceOperationCreate(endpoint_id=endpoint.id, operation_code="TEST", display_name="Synthetic")
         )
-        snapshot = await repository.create_snapshot(
-            RagSourceSnapshotCreate(
-                operation_id=operation.id,
-                source_version="synthetic:v1",
-                raw_manifest_checksum="a" * 64,
-                canonical_checksum="a" * 64,
-                schema_version="1",
-                parser_version="1",
-                normalization_version="1",
-                canonicalization_spec_version="1",
-                record_count=0,
-                rejected_record_count=0,
-                collected_at=datetime.now(UTC),
-            )
+        snapshot_id = uuid4()
+        # Historical revision fixture uses historical columns, not today's ORM model.
+        await session.execute(
+            text(
+                "INSERT INTO rag_source_snapshot (id,operation_id,source_version,raw_manifest_checksum,canonical_checksum,"
+                "schema_version,parser_version,normalization_version,canonicalization_spec_version,"
+                "record_count,rejected_record_count,verification_status,collected_at) "
+                "VALUES (:id,:operation,'synthetic:v1',repeat('a',64),repeat('a',64),'1','1','1','1',0,0,'PENDING',now())"
+            ),
+            {"id": str(snapshot_id), "operation": str(operation.id)},
         )
     async with admin.begin() as connection:
         await connection.execute(text(f'GRANT USAGE ON SCHEMA public TO "{runtime}", "{writer}"'))
@@ -309,11 +310,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
             )
             == 0
         )
-    await run_provisioning(environment)
-    writer_config = WriterConfig(url.set(database=database, username=writer, password=password), "synthetic-operator")
-    args = Namespace(snapshot_id=snapshot.id, expected_checksum="a" * 64, reason_code="SYNTHETIC_TEST")
-    assert (await run_selection(writer_config, args)).decision.value == "ACTIVATED"
-    assert (await run_selection(writer_config, args)).decision.value == "ALREADY_CURRENT"
+    await _grant_historical_test_permissions(admin, environment)
     for engine, sql in [
         (reader, "UPDATE rag_source_snapshot SET verified_at=now()"),
         (producer, "UPDATE rag_source_snapshot SET canonical_checksum=repeat('b',64)"),
@@ -337,12 +334,27 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     assert "Source trigger removal cannot be downgraded" in rollback.stderr
     async with admin.connect() as connection:
         assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "398c3d4e5f60"
-        assert await connection.scalar(text("SELECT verification_status FROM rag_source_snapshot")) == "CURRENT"
+        assert await connection.scalar(text("SELECT verification_status FROM rag_source_snapshot")) == "PENDING"
 
     runtime_environment_id = await _exercise_audit_cutover(admin, reader, producer, environment)
 
     await _exercise_prescription_candidate_cutover(admin, reader, environment)
     await _assert_runtime_transition_revisions_are_sealed(admin, runtime_environment_id, environment)
+
+    current = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": database},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert current.returncode == 0, "Synthetic current-head migration failed"
+    await run_provisioning(environment)
+    writer_config = WriterConfig(url.set(database=database, username=writer, password=password), "synthetic-operator")
+    args = Namespace(snapshot_id=snapshot_id, expected_checksum="a" * 64, reason_code="SYNTHETIC_TEST")
+    assert (await run_selection(writer_config, args)).decision.value == "ACTIVATED"
+    assert (await run_selection(writer_config, args)).decision.value == "ALREADY_CURRENT"
 
     # A fresh database follows the same complete history to the trigger-free Source head.
     await reader.dispose()
@@ -432,7 +444,7 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
             await connection.execute(text("UPDATE rag_runtime_environment_transition SET environment_revision=9"))
     assert error.value.orig.sqlstate == "42501"
     for _ in range(2):
-        await run_provisioning(environment)
+        await _grant_historical_test_permissions(admin, environment)
         for table in tables:
             for sql in (f"UPDATE {table} SET id=id", f"DELETE FROM {table}", f"TRUNCATE {table}"):
                 with pytest.raises(DBAPIError) as error:
@@ -590,7 +602,7 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
         )
         await connection.execute(text("ALTER TABLE prescription_version ENABLE TRIGGER ALL"))
     invalid_prescription = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "3980718293a4"],
         cwd=ROOT,
         env={**os.environ, "DB_NAME": environment["DB_NAME"]},
         capture_output=True,
@@ -631,7 +643,7 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
         )
         await connection.execute(text("ALTER TABLE medication_candidate_search ENABLE TRIGGER ALL"))
     invalid_candidate = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "3980718293a4"],
         cwd=ROOT,
         env={**os.environ, "DB_NAME": environment["DB_NAME"]},
         capture_output=True,
@@ -648,7 +660,7 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
         )
         await connection.execute(text("ALTER TABLE medication_candidate_search ENABLE TRIGGER ALL"))
     migration = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "3980718293a4"],
         cwd=ROOT,
         env={**os.environ, "DB_NAME": environment["DB_NAME"]},
         capture_output=True,
@@ -672,7 +684,7 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
                 "AND table_name='prescription_version' AND column_name='assembly_xid')"
             )
         )
-    await run_provisioning(environment)
+    await _grant_historical_test_permissions(admin, environment)
     runtime_sessions = async_sessionmaker(reader, expire_on_commit=False)
     async with runtime_sessions.begin() as session:
         candidates = MedicationCandidateRepository(session)
@@ -741,7 +753,7 @@ async def _assert_runtime_transition_revisions_are_sealed(admin, environment_id:
             {"id": duplicate_id, "environment": environment_id},
         )
     rejected = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "3980718293a4"],
         cwd=ROOT,
         env={**os.environ, "DB_NAME": environment["DB_NAME"]},
         capture_output=True,
@@ -757,7 +769,7 @@ async def _assert_runtime_transition_revisions_are_sealed(admin, environment_id:
             {"id": duplicate_id},
         )
     upgrade = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "3980718293a4"],
         cwd=ROOT,
         env={**os.environ, "DB_NAME": environment["DB_NAME"]},
         capture_output=True,
@@ -788,3 +800,34 @@ async def _assert_runtime_transition_revisions_are_sealed(admin, environment_id:
                 {"id": str(uuid4()), "environment": environment_id},
             )
     assert error.value.orig.sqlstate == "23505"
+
+
+async def _grant_historical_test_permissions(admin, environment):
+    """Explicit fixture grants for pre-#429 schema stages, never deployment provisioning.
+
+    Today's role policy requires the current schema. Historical migration tests use
+    just the old DML boundary to exercise cutover checks; real provisioning is tested
+    separately after upgrading to head, with actual Runtime/Writer credentials.
+    """
+    runtime, writer = environment["DB_APP_USER"], environment["SOURCE_WRITER_USER"]
+    async with admin.begin() as connection:
+        for tables, privileges in (
+            (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
+            (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
+        ):
+            for table in tables:
+                await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
+        for table in SOURCE_TABLES:
+            await connection.execute(text(f'GRANT SELECT ON "{table}" TO "{runtime}"'))
+            await connection.execute(text(f'GRANT SELECT, INSERT ON "{table}" TO "{writer}"'))
+        for table in ("rag_source_operation", "rag_source_ingestion_run"):
+            await connection.execute(text(f'GRANT UPDATE ON "{table}" TO "{writer}"'))
+        await connection.execute(
+            text(f'GRANT UPDATE (verification_status,verified_at,effective_at) ON rag_source_snapshot TO "{writer}"')
+        )
+
+
+async def _add_auth_fixture_columns(connection):
+    for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
+        for name in columns:
+            await connection.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" text'))

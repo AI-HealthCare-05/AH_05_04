@@ -144,18 +144,32 @@ def test_downgrade_guard_allows_when_both_tables_empty() -> None:
     assert connection.execute_count == 3
 
 
-def test_downgrade_blocks_real_alembic_run_when_only_refresh_session_has_data() -> None:
-    """PR #404 리뷰: 위의 단위 테스트는 guard 함수 자체만 검증하므로, 실제
-    `alembic downgrade`가 이 guard를 거쳐 정말로 차단되는지 별도로 확인한다.
-    `password_reset_token`은 비워두고 `refresh_session`에만 row를 남겨,
-    비대칭 데이터에서도 downgrade가 막히는지 재현한다."""
-    alembic_config = _alembic_config()
-    command.upgrade(alembic_config, "head")
-    user_id = asyncio.run(_create_user())
-    asyncio.run(_seed_refresh_session(user_id))
+def test_downgrade_blocks_real_alembic_run_when_only_refresh_session_has_data(monkeypatch) -> None:
+    """Use a disposable #404-era DB: current head deliberately cannot downgrade past #398."""
+    database = f"refresh404_{uuid4().hex[:12]}"
+    cluster_url = config.database_url
+
+    async def database_action(create: bool) -> None:
+        engine = create_async_engine(cluster_url, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(
+                    text(f'CREATE DATABASE "{database}"' if create else f'DROP DATABASE "{database}" WITH (FORCE)')
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(database_action(True))
+    monkeypatch.setattr(config, "DB_NAME", database)
     try:
+        alembic_config = _alembic_config()
+        command.upgrade(alembic_config, REFRESH_ROTATION_REVISION)
+        user_id = asyncio.run(_create_user())
+        asyncio.run(_seed_refresh_session(user_id))
         with pytest.raises(RuntimeError, match=f"Cannot downgrade revision {REFRESH_ROTATION_REVISION}"):
             command.downgrade(alembic_config, REFRESH_ROTATION_BASE_REVISION)
-    finally:
         asyncio.run(_cleanup_user(user_id))
-        command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, REFRESH_ROTATION_BASE_REVISION)
+        command.upgrade(alembic_config, REFRESH_ROTATION_REVISION)
+    finally:
+        asyncio.run(database_action(False))

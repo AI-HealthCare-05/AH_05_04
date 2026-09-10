@@ -77,7 +77,9 @@ async def apply_source_role_policy(
         await connection.execute(text(f"GRANT INSERT ON TABLE {target} TO {writer_sql}"))
         if table == "rag_source_snapshot":
             await connection.execute(
-                text(f"GRANT UPDATE (verification_status, verified_at, effective_at) ON TABLE {target} TO {writer_sql}")
+                text(
+                    f"GRANT UPDATE (verification_status, verified_at, effective_at, verification_seal_id) ON TABLE {target} TO {writer_sql}"
+                )
             )
         if table in WRITER_UPDATE_TABLES:
             await connection.execute(text(f"GRANT UPDATE ON TABLE {target} TO {writer_sql}"))

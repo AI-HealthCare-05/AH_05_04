@@ -32,6 +32,13 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
 )
 
 
+# #404: token identity and history are immutable after issuance. Runtime only rotates/consumes.
+RUNTIME_AUTH_UPDATE_COLUMNS = {
+    "refresh_session": ("active_jti", "updated_at"),
+    "password_reset_token": ("used_at",),
+}
+
+
 async def provision_roles(
     connection: AsyncConnection, *, owner: str, runtime: str, writer: str, management: str | None = None
 ) -> None:
@@ -64,7 +71,13 @@ async def provision_roles(
             )
         )
     present = set(await connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public'")))
-    required = RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES | set(SOURCE_TABLES)
+    required = (
+        RUNTIME_MUTABLE_TABLES
+        | RUNTIME_APPEND_ONLY_TABLES
+        | CATALOG_TABLES
+        | set(SOURCE_TABLES)
+        | set(RUNTIME_AUTH_UPDATE_COLUMNS)
+    )
     if not required.issubset(present):
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
     for tables, privileges in (
@@ -75,6 +88,11 @@ async def provision_roles(
             await connection.execute(
                 text(f"GRANT {privileges} ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
             )
+    for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
+        target = f"public.{quoted_identifier(table)}"
+        names = ", ".join(quoted_identifier(column) for column in columns)
+        await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE {target} TO {runtime_sql}"))
+        await connection.execute(text(f"GRANT UPDATE ({names}) ON TABLE {target} TO {runtime_sql}"))
     # Only sequences owned by explicitly supported Runtime columns are available.
     sequences = await connection.scalars(
         text(

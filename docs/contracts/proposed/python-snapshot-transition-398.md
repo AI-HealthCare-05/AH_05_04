@@ -108,3 +108,15 @@ Snapshot 생성은 두 Repository 모두 PENDING이며 verified_at/effective_at�
 수집 시작은 Source ID별 PostgreSQL 내장 transaction advisory lock을 비대기 방식으로 획득한다. 같은 Source의 다른 Operation도 동시 수집을 거부하며 transaction 종료 시 해제된다. 새 저장 함수·Trigger·RLS를 정의하지 않는다. 수집 잠금을 위해 Source Writer에 `rag_source` UPDATE 권한을 추가하지 않는다. 저장·상태 전이의 기존 Operation 행 잠금은 유지한다.
 
 실제 Writer 로그인으로 수집 잠금 → 저장 → commit → 재획득과 동시 수집 거부를 검증했다. SQL/AST 검사는 보조 검사이며, 이 권한·동시성 보장은 실제 DB 통합 테스트와 명시적 역할 정책으로 확인한다.
+
+## PR #429 검증된 Snapshot 직접 삭제 방어
+
+`398293a4b5c6`에서 Snapshot에 nullable `verification_seal_id`를 추가한다. `(id, verification_seal_id)` FK는 Verification의 UNIQUE `(snapshot_id, id)`를 참조하므로 다른 Snapshot의 이력을 빌려 쓸 수 없다. 일반 CHECK는 PENDING이면서 verified_at/effective_at이 모두 NULL인 경우 외에는 seal을 필수로 요구한다.
+
+Python 전이 Repository는 최초 PENDING→CURRENT/FAILED 전이에서 immutable `snapshot-state-seal` 이력을 먼저 INSERT하고 같은 savepoint에서 상태·시각·seal을 저장한다. seal의 `NO_CHANGE` 결과는 삭제 방어를 위한 상태 연결 증거이며 검증 PASSED나 게시 승인이 아니다. 기존 CURRENT 선택 감사와 거부 자료의 named approval 검사는 그대로 유지한다.
+
+Verification의 Snapshot FK와 역방향 seal FK, Verification의 UPDATE/DELETE/TRUNCATE 권한 회수를 결합한다. 따라서 관리 계정이 Service를 우회해 SQL로 삭제해도 검증된 Snapshot은 FK 위반으로 거부된다. Writer가 현재 상태의 seal을 NULL로 변경하는 것도 CHECK가 거부한다. seal을 가리킨 뒤 상태를 PENDING으로 바꾸더라도 이미 남은 immutable Verification의 FK가 삭제를 막는다. 관리 계정은 seal 컬럼 UPDATE 권한이 없다. 미검증·미참조 PENDING의 관리 API 삭제는 유지한다.
+
+migration은 기존 non-PENDING 또는 검증/선택 시각이 있는 행을 잠그고 `NO_CHANGE` seal만 backfill한다. 기존 상태·내용·승인 의미를 바꾸지 않으며 원문을 로그로 출력하지 않는다. downgrade는 보호를 제거하지 않고 중단한다. 소유자·superuser의 DDL/권한 변경은 이 실행 역할 보장의 범위 밖이며 애플리케이션에 해당 credential을 주입하지 않는다.
+
+`39818293a4b5`는 기존 #398과 병합된 #404 migration을 연결하는 merge revision이고, 최신 head는 `398293a4b5c6`이다. 이미 적용된 migration을 재작성하지 않는다. 운영 적용은 별도다.

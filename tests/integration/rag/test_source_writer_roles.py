@@ -52,7 +52,7 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
             await connection.execute(text(f'ALTER DEFAULT PRIVILEGES REVOKE INSERT ON TABLES FROM "{writer}"'))
             await connection.execute(
                 text(
-                    f'ALTER TABLE "{schema}".rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz'
+                    f'ALTER TABLE "{schema}".rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz, ADD COLUMN verification_seal_id char(36)'
                 )
             )
             await connection.execute(text(f'CREATE TABLE "{schema}".unrelated (id integer)'))

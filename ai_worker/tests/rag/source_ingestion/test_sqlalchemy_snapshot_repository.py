@@ -254,11 +254,12 @@ async def test_snapshot_status_change_is_compare_and_set_without_commit() -> Non
     target = MagicMock()
     target.mappings.return_value.one_or_none.return_value = {
         "verification_status": "PENDING",
+        "verification_seal_id": None,
         "rejected_record_count": 0,
     }
     changed = MagicMock()
     changed.scalar_one_or_none.return_value = str(_SNAPSHOT_ID)
-    session.execute.side_effect = [operation, target, changed, operation, MagicMock()]
+    session.execute.side_effect = [operation, target, MagicMock(), changed, operation, MagicMock()]
     repository = SqlAlchemySourceSnapshotRepository(session)
     assert await repository.change_snapshot_status(
         snapshot_id=_SNAPSHOT_ID,
@@ -271,9 +272,10 @@ async def test_snapshot_status_change_is_compare_and_set_without_commit() -> Non
     statements = [str(call.args[0]) for call in session.execute.await_args_list]
     assert "FOR UPDATE" in statements[0]
     assert "FOR UPDATE" in statements[1]
-    assert statements[2].startswith("UPDATE rag_source_snapshot")
-    assert "FOR UPDATE" in statements[3]
-    assert statements[4].startswith("INSERT INTO rag_source_snapshot_verification")
+    assert statements[2].startswith("INSERT INTO rag_source_snapshot_verification")
+    assert statements[3].startswith("UPDATE rag_source_snapshot")
+    assert "FOR UPDATE" in statements[4]
+    assert statements[5].startswith("INSERT INTO rag_source_snapshot_verification")
     session.commit.assert_not_awaited()
 
 

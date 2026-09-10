@@ -54,6 +54,7 @@ _SNAPSHOT = table(
     column("record_count", Integer),
     column("rejected_record_count", Integer),
     column("verification_status", String(20)),
+    column("verification_seal_id", String(36)),
     column("collected_at", DateTime(timezone=True)),
     column("verified_at", DateTime(timezone=True)),
     column("effective_at", DateTime(timezone=True)),
@@ -381,7 +382,22 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 )
             ):
                 raise ValueError("Snapshot publication approval required")
-            values: dict[str, Any] = {"verification_status": new_status.value}
+            seal_id = target["verification_seal_id"]
+            if seal_id is None:
+                seal_id = str(uuid4())
+                assert verified_at is not None
+                await self._session.execute(
+                    insert(_VERIFICATION).values(
+                        id=seal_id,
+                        snapshot_id=str(snapshot_id),
+                        check_name="snapshot-state-seal",
+                        verification_result="NO_CHANGE",
+                        details_summary="Python transition: immutable state anchor; not publication approval",
+                        verified_by=selected_by,
+                        verified_at=verified_at,
+                    )
+                )
+            values: dict[str, Any] = {"verification_status": new_status.value, "verification_seal_id": seal_id}
             if verified_at is not None:
                 values["verified_at"] = verified_at
             if effective_at is not None:
@@ -420,7 +436,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         if operation_id is None:
             return None
         target = await self._session.execute(
-            select(_SNAPSHOT.c.verification_status, _SNAPSHOT.c.rejected_record_count)
+            select(_SNAPSHOT.c.verification_status, _SNAPSHOT.c.rejected_record_count, _SNAPSHOT.c.verification_seal_id)
             .where(_SNAPSHOT.c.id == str(snapshot_id), _SNAPSHOT.c.operation_id == operation_id)
             .with_for_update(of=_SNAPSHOT)
         )

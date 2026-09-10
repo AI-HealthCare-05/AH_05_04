@@ -17,7 +17,7 @@ def test_backend_container_can_import_runtime_and_load_migration_head(storage_di
             "-c",
             "from rag_runtime import evaluate_medication_identification_preflight; "
             "from scripts.ci.verify_database_head import migration_heads; "
-            "assert migration_heads() == ('3980718293a4',); print('ok')",
+            "assert migration_heads() == ('398293a4b5c6',); print('ok')",
         ],
         check=True,
         capture_output=True,

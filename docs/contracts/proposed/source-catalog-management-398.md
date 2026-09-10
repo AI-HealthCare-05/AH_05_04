@@ -29,3 +29,7 @@ revision은 해당 대상의 마지막 감사 revision이며 최초 0이다. has
 ## 검증 근거
 
 `tests/integration/rag/test_source_management.py`: 관리 API/Service, 실제 제한 역할, 권한 부여·회수, stale, 멱등 재시도, 감사 실패 rollback, 동시 수정·삭제, Snapshot 상태와 Receipt, migration 및 감사 보존 downgrade 거부를 검증한다. 기존 role provisioning/head/관리 실행 설정 검사와 합계 26 passed (2026-09-10). 전체 migration 150 passed, 실제 Backend 이미지 검증 2 passed. Ruff 전체 검사·format 및 Backend/Worker 516개 파일 mypy 통과. 관리 실행 절차는 [인수 문서](../../testing/issue-398/management-handoff.md)를 따른다.
+
+## PR #429 DB 직접 삭제 보완
+
+검증된 Snapshot의 직접 DELETE는 [Snapshot seal 계약](python-snapshot-transition-398.md#pr-429-검증된-snapshot-직접-삭제-방어)에 따라 일반 FK·CHECK와 삭제 불가 검증 이력으로 차단한다. management 역할의 Snapshot DELETE 권한은 미검증·미참조 PENDING 삭제를 위해 유지하지만 seal 변경과 Verification 삭제는 허용하지 않는다. Source/Endpoint/Catalog의 업무상 상태·권한 판단은 명시적 Python 관리 경계를 거치며 모든 업무 규칙이 SQL 제약으로 대체됐다는 의미는 아니다. SECURITY DEFINER 함수·Trigger·RLS는 추가하지 않는다.

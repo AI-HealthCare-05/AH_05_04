@@ -350,7 +350,7 @@ async def test_snapshot_history_no_change_conflict_and_restore_are_atomic() -> N
             .select_from(RagSourceSnapshotVerification)
             .where(RagSourceSnapshotVerification.snapshot_id.in_([snapshot.id for snapshot in snapshots]))
         )
-        assert verification_count == 7
+        assert verification_count == 9  # Seven validation/selection records and two immutable state seals.
 
 
 async def test_outer_transaction_rollback_removes_snapshot_and_histories() -> None:
