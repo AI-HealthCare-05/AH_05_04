@@ -2,309 +2,335 @@
 
 ## Status and authority
 
-- Status: Approved for repository implementation by the task requester on 2026-09-10.
-- Tracking issue: #368.
-- Governing decision: `PD-368-20260909` from PR #386.
+- Status: Revised design awaiting requester and designated reviewer approval.
+- Tracking: Issue #368, PR #432.
+- Governing decisions: `PD-368-20260909`, `PD-398-R1`, and `PD-398-R2`.
 - Implementation owner: 정현우 (`@ceohwj`).
 - Required reviewers: 권가빈 (`@hazelnutflavoured`) for Product, Privacy, Safety, and Evaluation; 송은영
-  (`@phina-io`) for Backend and Security controls.
-- Custodian separation: if 송은영 participates in the ACL implementation, 김지혜 (`@Jye-rookie`) becomes the
-  independent Dataset Custodian approver.
+  (`@phina-io`) for Backend, Dataset Custodian, and Security controls.
+- Custodian separation: if 송은영 participates in implementation, 김지혜 (`@Jye-rookie`) becomes the independent
+  Dataset Custodian approver.
 
-This design is an implementation target, not evidence that the protected environment, HOLDOUT access, authoring,
-Freeze, Runner execution, retention job, or Production publication is active.
+This revision supersedes the function-only design previously committed in PR #432. The latest `develop` policy from
+PR #429 prohibits new database functions, procedures, triggers, and RLS even when an earlier Decision proposed them.
+The repository implementation, real protected environment, HOLDOUT access, authoring, Freeze, Runner execution,
+retention, disposal, and Production publication remain inactive.
 
 ## Goal
 
-Connect the existing protected retrieval security kernel to PostgreSQL without allowing a direct SQL path to bypass
-role, Dataset state, grant revision, expiry, revoke, or audit checks. The repository implementation must be testable
-with synthetic data while every real protected-environment activation gate remains closed.
+Persist the existing protected retrieval kernel in PostgreSQL while keeping policy decisions explicit in Python and
+using only ordinary database constraints, transactions, and least-privilege roles. Synthetic integration tests must
+prove the repository boundary without exposing protected content, credentials, deployed coordinates, or approval
+evidence bodies.
 
 ## Scope
 
 Included:
 
-- a dedicated PostgreSQL schema and `NOLOGIN` owner/access roles;
-- parameterized provisioning that does not commit deployed host, database, schema, login identity, or credential
-  values;
-- durable Dataset, authorization, approval evidence, artifact envelope, audit journal, and audit-head storage;
-- function-only data-plane access for read, write, Freeze, and Runner preparation;
-- direct SQL denial for tables, sequences, and functions not explicitly granted;
-- an asynchronous SQLAlchemy adapter for the existing protected retrieval kernel;
-- fail-closed configuration for a separate protected PostgreSQL credential;
-- real PostgreSQL migration and negative integration tests using synthetic identifiers and payloads;
-- non-sensitive implementation evidence and Decision status alignment.
+- a separate protected PostgreSQL connection and schema;
+- `NOLOGIN` owner, data-access, and control group roles plus individual human/service login identities;
+- tables for identity, Dataset binding, approval evidence, grants, capabilities, artifact envelopes, audit entries,
+  and an audit head;
+- Python Service/Repository validation for identity, grant, Dataset state, capability, operation, and audit lifecycle;
+- ordinary FK, UNIQUE, CHECK, NOT NULL, and column-level privilege enforcement;
+- transaction-scoped SQLAlchemy adapters and a role-policy provisioning/validation module;
+- synthetic limited-login, concurrency, rollback, tamper, idempotency, and non-leakage tests;
+- non-sensitive repository evidence.
 
 Excluded:
 
-- HOLDOUT question, Gold, or hard-negative authoring;
-- `run-protected-holdout` CLI registration;
-- the #178 Retriever Adapter and actual metric execution;
-- production secret creation or injection;
-- real protected schema, table location, login identity, key material, or authorization receipt body;
-- automatic retention, disposal, lifecycle-marker, or deletion behavior tracked by #425;
-- activation of `PUBLIC_TRACK_F` or any external approval gate.
+- database functions, procedures, triggers, RLS, policies, or DB schedulers;
+- HOLDOUT questions, Gold answers, hard negatives, Freeze Receipt bodies, key material, HMAC values, or deployed
+  storage coordinates;
+- human access through a general SQL shell;
+- production credential creation, secret injection, backup, restore, rotation, or network provisioning;
+- `run-protected-holdout` CLI registration and #178 Retriever execution;
+- retention deletion or #425 disposal behavior;
+- Track F publication or Production activation.
 
-## Constraints
+## Repository constraints
 
-1. Application Service remains the visible orchestration boundary. PostgreSQL functions exist only to prevent direct
-   SQL from bypassing the same approved checks.
-2. `protected_access_role` receives no direct table, sequence, or schema-create privileges.
-3. Every callable `SECURITY DEFINER` function fixes `search_path` to `pg_catalog`, the trusted protected schema, and
-   `pg_temp`; revokes `PUBLIC EXECUTE`; and is owned by the protected owner role.
-4. Runtime principals come from `session_user`/`current_user` and an explicit protected identity mapping. Callers
-   cannot supply an actor string as proof of identity.
-5. Shared logins are not supported. Deployed individual human and service login roles are provisioned outside the
-   repository and receive only membership in the `NOLOGIN` access role.
-6. The adapter returns domain DTOs and opaque UUIDv4 references only. It never returns storage coordinates through
-   the kernel, errors, logs, or public evidence.
-7. SQLAlchemy echo is always disabled for the protected engine.
-8. Repository tests use de-identified synthetic payload bytes and disposable test roles/schema names only.
-9. No dependency is added. SQLAlchemy, asyncpg, Alembic, Pydantic, and the existing test stack are reused.
-10. Disposal stays impossible: no delete API, retention worker, disposal enum, or lifecycle transition is added.
+1. Python owns business rules and authorization decisions. SQL contains only ordinary DDL, DML, constraints, locks,
+   and grants.
+2. No existing migration or legacy exception manifest is changed to permit a new forbidden definition.
+3. `PROTECTED_RETRIEVAL_ENABLED=false` remains the default. Normal Worker, protected data-access, and protected control
+   identities are pairwise distinct and cannot be used as fallbacks for each other.
+4. All protected operations use one explicit `AsyncSession` transaction and one protected engine with SQL echo off.
+5. Runtime DTOs, safe reason codes, role/action/state rules, and public evidence fields remain unchanged.
+6. No dependency is introduced.
+7. Tests use disposable schemas, roles, logins, payloads, and opaque identifiers only.
 
 ## Considered approaches
 
-### Function-only protected access — selected
+### Python Service/Repository plus column privileges — selected
 
-The access role can execute narrowly scoped functions but cannot access protected tables directly. Each function
-derives the caller identity, locks the Dataset/grant/audit head, checks the allowed role/state/action, and appends the
-corresponding audit transition in the same transaction.
+The existing kernel remains the policy source. A PostgreSQL repository resolves the authenticated login, loads and
+locks current rows, applies conditional DML, and appends audit entries in the same transaction. A separate Python role
+policy grants only the columns required by this flow and validates the effective privileges using a real limited
+login. This matches current repository policy and the Source management precedent.
 
-This is the smallest design that closes the PR #386 `[WATCH]` finding for both reads and writes. It also provides a
-SQL-negative-testable boundary and follows the approved `SECURITY DEFINER` precedent.
+Cost: a credential that can reach PostgreSQL directly can issue the DML its role permits without invoking Python.
+Network isolation, a controlled job entry point, short-lived credentials, and independent role verification are
+therefore activation requirements rather than assumed guarantees.
 
-Cost: validation rules exist in Python and SQL. Contract tests must keep the role/action/state matrix and safe reason
-codes aligned.
+### Data/control role separation — selected
 
-### RLS plus triggers — rejected
+A data-access group performs Author/Custodian/Runner artifact operations. A separate control group performs approval
+ingestion, grant/revoke/expire, Dataset lifecycle, and Freeze transitions. This prevents every data credential from
+receiving authorization-control DML and follows the separate Source management role precedent.
 
-RLS can restrict row visibility but does not provide a complete, durable audit event for every `SELECT`. Trigger-based
-write auditing also leaves reads on a different enforcement mechanism. It would introduce an RLS policy not approved
-by PD-368 and increase policy-debugging cost.
+### Per-application-action database roles — rejected for this PR
 
-### Direct DML with Python-only guard — rejected
+Separate Author, Custodian, Runner, artifact-writer, and audit-writer roles would further reduce each credential's DML
+surface but still cannot express Dataset-version grants. They add provisioning and rotation complexity beyond #368.
 
-This reuses the current kernel with fewer database objects, but any raw SQL session holding the access role could read
-an unfrozen Dataset or write without approval and audit. It does not resolve the merge-time `[WATCH]` requirement.
+### Views as the authorization boundary — rejected
+
+Updatable or security-barrier views move row filtering back into implicit database logic and still cannot provide the
+complete role/action/state and audit lifecycle without functions, triggers, or RLS.
+
+### Function-only access — superseded
+
+The earlier draft exposed `SECURITY DEFINER` functions while denying table access. PR #429 and current repository
+policy explicitly prohibit that implementation.
+
+## Trust and threat model
+
+Trusted:
+
+- the reviewed protected Python package and immutable deployment commit;
+- the protected owner/migration operator during explicit provisioning;
+- PostgreSQL transactions, locks, ordinary constraints, and column privileges;
+- an authenticated individual login mapped to exactly one enabled protected identity;
+- the controlled protected environment only after its external gates are evidenced.
+
+Untrusted:
+
+- request-supplied actor, role, Dataset state, grant revision, time, or capability fields;
+- normal Backend/Worker/CI credentials and developer checkout configuration;
+- replayed, expired, revoked, malformed, or cross-Dataset evidence;
+- SQL errors, logs, and public evidence as carriers of protected content;
+- any direct SQL path available outside the controlled protected environment.
+
+Column grants limit damage but cannot make Python validation unavoidable for a leaked access credential. Direct DML
+could cause unauthorized changes or audit denial-of-service. Constraints and Python verification detect corruption
+but do not prove business authorization. Repository merge can therefore establish only repository implementation;
+effective enforcement remains blocked until credential and network controls make the reviewed Python path the only
+reachable operational entry point.
 
 ## Architecture
 
 ### 1. Configuration and connection isolation
 
-The Worker configuration adds an explicit `PROTECTED_RETRIEVAL_ENABLED` switch whose default is `false`. Enabling it
-requires a complete, separate protected connection tuple and schema identifier. Partial configuration fails during
-settings validation. Non-local values reject repository placeholder prefixes.
+The protected data and control connection tuples remain fail-closed. Enabling requires a common protected host, port,
+database, and schema plus distinct data-access and control users/passwords. Partial settings, non-Local placeholders,
+or identity equality with each other or the normal Worker fail without printing values.
 
-The protected engine is assembled only by an explicit protected runtime factory. It does not replace or reuse the
-normal Worker `DB_USER`/`DB_PASSWORD` engine and is not registered in the current CLI or consumer registry.
+The explicit engine factory keeps `NullPool`, `pool_pre_ping`, bounded timeout, neutral application name, and
+`echo=False`. It is not registered in the normal consumer or CLI.
 
-Deployment coordinates are environment values. Test values are fixed synthetic names that cannot match a deployed
-environment. The engine uses `pool_pre_ping`, the existing connect timeout, no SQL echo, and an application name that
-contains no Dataset or actor value.
+### 2. Provisioning and roles
 
-### 2. Protected PostgreSQL objects
+1. A bootstrap administrator creates parameterized `NOLOGIN` owner, data-access, and control roles plus a distinct
+   migration login.
+2. The migration login receives only the temporary owner membership needed by the protected Alembic environment.
+3. Alembic creates the schema and ordinary relations as the owner role.
+4. `infra/python/protected_retrieval_role_policy.py` revokes defaults, grants exact columns, and validates the owner,
+   data-access, and control boundaries.
+5. Individual short-lived logins receive data-access or control membership only after external approval. Custodian
+   workflows requiring both use a dedicated approved login whose two memberships are explicitly verified.
+6. A real limited-login smoke test runs before activation.
 
-Provisioning creates two group roles:
+No deployed name or credential is committed, and no migration creates a LOGIN role.
 
-- protected owner role: `NOLOGIN`, owns the schema, tables, sequences, and functions;
-- protected access role: `NOLOGIN`, has schema `USAGE` and explicit function `EXECUTE` only.
+### 3. Relations and constraints
 
-The schema stores these logical relations:
+The existing logical relations remain, but all stored functions and function ACLs are removed:
 
-- Dataset binding and monotonic state revision;
-- opaque artifact envelope bytes and their digest/key-version binding;
-- immutable approval source evidence and canonical raw hash;
-- authorization grant and effective revision/revoked/expired state;
-- append-only authorization/operation audit entries;
-- the single global audit sequence/head checkpoint;
-- opaque operation result references used for idempotent replay.
+- `protected_identity`: immutable `session_user` to actor/application-role mapping;
+- `protected_dataset`: authoritative Dataset binding and state revision;
+- `protected_artifact`: opaque envelope bound to Dataset/version/digest/key version;
+- `approval_evidence`: immutable verified source envelope and raw hash;
+- `authorization_grant`: immutable grant body, revision, validity, actions, and revoke state;
+- `operation_capability`: single-use request/grant/Dataset/action/target binding;
+- `audit_entry`: append-only global sequence and hash-chain entry;
+- `audit_head`: singleton sequence/hash checkpoint.
 
-Logical relation and function names are part of the implementation contract; the deployed database and schema
-coordinates remain secret configuration. No relation has a general-purpose update/delete interface. State changes,
-grant changes, and operation lifecycle transitions occur through functions only.
+FKs bind artifacts, grants, and capabilities. UNIQUE constraints bind operation keys, event IDs, and nonces. CHECK
+constraints validate enum values, digest shape, timestamp order, revisions/counts, capability
+timestamp order, and the audit singleton. Role/state policy is not encoded in CHECK constraints.
 
-Every table denies `PUBLIC`, normal `app_user`, normal migration/CI roles, and the protected access role. Default
-privileges repeat the denial for future tables, sequences, and functions. The access role receives only the approved
-function signatures.
+Rows requiring `SELECT ... FOR UPDATE` expose a constant `lock_marker=0` guarded by `CHECK (lock_marker = 0)`. The
+access role may update only that column; changing it remains impossible.
 
-### 3. SQL enforcement functions
+### 4. Exact data and control privileges
 
-Functions are split by responsibility rather than exposing a generic command executor:
+Both roles receive schema `USAGE`, no `CREATE`, no ownership, no administration, and no `DELETE`, `TRUNCATE`, `TRIGGER`,
+`REFERENCES`, or blanket table privilege.
 
-- resolve the authenticated principal from the database session identity;
-- read and verify immutable approval evidence;
-- grant, revoke, and observe expiry with authorization audit atomicity;
-- load the current Dataset binding;
-- begin a protected operation by validating principal, role, action, Dataset state, binding, grant revision, and
-  expiry, then appending `INTENT`;
-- read or write an opaque artifact envelope only after a valid operation capability exists;
-- transition to `REVIEW_READY` or `FROZEN` only when the approved evidence predicates hold;
-- close an operation as `SUCCEEDED`, `UNKNOWN`, or an intent-closing `DENIED`;
-- read operation history and verified opaque results for replay/reconciliation decisions.
+| Relation | Data-access role | Control role |
+| --- | --- | --- |
+| `protected_identity` | selected identity columns | selected columns; approved identity insert/disable columns |
+| `protected_dataset` | selected binding columns; `UPDATE(lock_marker)` | selected columns; approved Dataset insert/transition columns |
+| `approval_evidence` | no privilege | selected columns and approved immutable insert columns |
+| `authorization_grant` | selected grant columns; `UPDATE(lock_marker)` | selected columns; approved grant insert/revoke columns |
+| `operation_capability` | selected columns; required-column `INSERT`; `UPDATE(consumed_at, operated_at)` | no privilege |
+| `protected_artifact` | selected columns; required-column `INSERT`; `UPDATE(envelope, envelope_sha256)` | no envelope privilege |
+| `audit_entry` | selected columns and required-column `INSERT` | selected columns and required-column `INSERT` |
+| `audit_head` | selected columns and `UPDATE(sequence, entry_sha256)` | same |
 
-The functions use row locks on the Dataset, grant, operation scope, and audit head in a consistent order. The global
-audit head is updated with a compare-and-swap predicate. A mismatch fails the transaction with a fixed safe reason
-code. SQL exceptions do not include payload, object coordinates, approval body, or caller-provided text.
+Every insert grant is column-scoped; neither role receives table-level `INSERT`. Default privileges close future
+tables/sequences. The validator enumerates every table and column; unexpected grants, ownership, membership, or
+schema-create rights fail provisioning and startup validation.
 
-### 4. Kernel async boundary
+### 5. Principal and policy validation
 
-The current kernel defines synchronous journal and guard-session methods, while every SQLAlchemy/asyncpg operation is
-awaitable. The Protocols and coordinator therefore become asynchronous without changing DTOs, enums, safe reason
-codes, validation order, or outcome transitions.
+The repository reads `session_user`, requires exactly one enabled identity row, and verifies that database membership
+matches the operation plane: data access for read/write/run and control access for approval/grant/revoke/expire/Freeze.
+Its actor namespace and role must equal the request principal. A binding denial records the authenticated principal,
+never the claimed principal. If identity resolution or audit persistence is unavailable, no mutation or artifact
+access is attempted.
 
-The following calls become awaitable:
+The existing kernel remains authoritative for role/action/state, Freeze/Runner evidence, grant binding, validity,
+expiry, revoke, replay, and safe reason codes. Database rows replace request-supplied Dataset and grant values before
+those rules run.
 
-- Dataset lookup;
-- operation history lookup;
-- audit append;
-- guard-session current-grant validation;
-- capability issue and consumption.
+### 6. Transaction flow
 
-The synthetic implementation changes in lockstep, preserving its existing behavior and all 65 baseline tests. The
-PostgreSQL implementation receives one `AsyncSession` owned by the application service. `AuthorizationGuard.hold()`
-acquires the database locks inside that transaction, and all journal, ledger, and operation calls use the same
-session until the terminal audit append commits or the transaction rolls back.
+1. `PostgresqlProtectedRetrievalService` routes the action to the data or control engine, opens one transaction, and
+   validates the limited connection.
+2. The principal repository resolves and validates `session_user`.
+3. Operation history and the durable head are verified for sequence, previous hash, self-hash, and binding.
+4. Dataset and grant rows are loaded and locked in that order.
+5. The kernel revalidates role/state, grant, revision, revoke, expiry, and evidence against DB time.
+6. The audit head is locked and `INTENT` is appended after rechecking the tail.
+7. A capability is inserted and conditionally consumed using `UPDATE ... WHERE consumed_at IS NULL AND expires_at >
+   :trusted_now RETURNING ...`.
+8. Execution conditionally marks `operated_at` once and reads/writes only the capability-bound artifact.
+9. Data operations bind an opaque result reference in the terminal audit entry. A control-plane Freeze atomically
+   advances the authoritative Dataset revision and binds the approved Freeze reference. Both append terminal
+   `SUCCEEDED`; observable uncertainty records `UNKNOWN` and blocks automatic replay.
+10. The transaction commits. Pre-side-effect failure rolls back capability, artifact, and audit together.
 
-This is an internal infrastructure seam change. It does not change a public API, portable JSON schema, kernel enum,
-or shared error meaning.
+All components in one operation share one plane-specific `AsyncSession`. Lock order is Dataset → grant → audit head →
+capability → artifact. Grant/revoke/expire use identity → Dataset → grant → audit head. Zero-row conditional DML
+maps to fixed safe reasons, not raw SQL errors.
 
-### 5. PostgreSQL adapter components
+### 7. Control-plane flow
 
-The adapter contains focused implementations of the existing Protocols:
+Approval evidence ingestion, grant, revoke, expire, identity disable, Dataset transition, and Freeze use the control
+engine. Each command carries an opaque request ID and expected revision/hash, resolves the authenticated approver,
+locks rows in the defined order, checks self-approval and implementation-participant separation, applies one
+conditional mutation, and appends an authorization or lifecycle audit entry in the same transaction. Duplicate request
+IDs replay only a verified prior result; different payloads under one request ID fail as conflicts.
 
-- trusted clock backed by PostgreSQL `clock_timestamp()` normalized to UTC;
-- approval evidence verifier backed by immutable protected rows;
-- authorization ledger backed by protected grant functions;
-- audit journal backed by operation-history and append functions;
-- authorization guard backed by transaction-scoped database locks;
-- artifact operation backed by function-only opaque-envelope read/write access.
+### 8. Audit integrity
 
-The adapter maps database output into existing strict Pydantic models. Missing fields, unknown enum values, malformed
-UUIDs/hashes, non-UTC timestamps, and extra result fields fail with a fixed `ProtectedSecurityError`; raw database
-exceptions are chained internally only where they cannot leak through the public error or logging boundary.
+The runtime role can insert but cannot update/delete audit entries. Before append, Python locks `audit_head`, verifies
+the durable tail, bindings, hash chain, and transition, inserts exactly `head.sequence + 1`, then updates the head in
+the same transaction. UNIQUE constraints reject duplicate sequence/event values.
 
-### 6. Operation flow
+A leaked credential can insert a forged row or tamper with the permitted head columns. This is detectable and causes
+subsequent operations to fail closed, but prevention depends on the external credential/network gate.
 
-1. The application service opens one protected `AsyncSession` transaction.
-2. The adapter derives the principal from the database identity and loads the Dataset binding.
-3. The kernel resolves replay history and a matching active grant.
-4. The guard locks Dataset, grant, operation scope, and audit head.
-5. The kernel revalidates the grant and Dataset binding.
-6. The journal appends `INTENT` durably.
-7. The guard issues and consumes a single-use capability bound to request, grant revision, Dataset revision, digest,
-   action, target, nonce, and expiry.
-8. The artifact function performs the minimal approved operation without returning storage coordinates.
-9. The journal appends `SUCCEEDED`; an uncertain side effect appends `UNKNOWN` and blocks automatic retry.
-10. The transaction commits. Any pre-side-effect failure rolls back and records a safe denial when the audit boundary
-    remains available.
+### 9. Error and non-leakage boundary
 
-### 7. Audit durability and retention boundary
+Known failures map to the existing `ProtectedSecurityError` allowlist. Unknown SQLSTATEs, malformed rows, connection
+loss, and row-count mismatches map to fail-closed internal/audit/unknown outcomes. Logs may contain a fixed reason,
+action, and opaque request UUID only; they exclude actor identity, protected coordinates, SQL parameters, evidence
+bodies, payloads, keys, and protected digests. SQL echo remains disabled.
 
-Database ownership and explicit privilege denial prevent update, delete, and truncate of audit relations by runtime
-identities. No audit-table trigger is introduced. The
-adapter verifies continuous sequence numbers, previous-entry hashes, self-hashes, and the durable head before trusting
-history.
+### 10. Superseded-function replacement map
 
-The repository implementation can prove append-only behavior and restore a disposable synthetic test database. It
-cannot prove the deployed backup location, encryption, credential rotation, legal hold, or one-year operational
-retention. Those remain activation evidence owned by Backend/Security and Privacy. No timed deletion is scheduled.
+| Removed SQL function responsibility | Python/ordinary-SQL replacement |
+| --- | --- |
+| resolve principal | principal repository selects by `session_user` and validates role membership |
+| load Dataset / approval | typed repository `SELECT` plus strict Pydantic decoding |
+| find / require grant | grant repository query followed by kernel binding, revoke, revision, and expiry checks |
+| lock operation | ordered `SELECT ... FOR UPDATE` using constant lock-marker privileges |
+| audit checkpoint / history | audit repository selects head, global tail, and operation entries and verifies hashes |
+| append operation | Python builds/verifies the entry, then audit insert and head update share one transaction |
+| issue capability | Python validates current locked rows and performs required-column `INSERT` |
+| consume capability | conditional timestamp `UPDATE ... RETURNING` |
+| read artifact | conditional capability operation mark followed by bound artifact `SELECT` |
+| write artifact | conditional capability operation mark followed by bound artifact `INSERT ... ON CONFLICT` |
+| internal audit checkpoint | removed; tests inspect ordinary audit relations through the owner fixture only |
 
-### 8. Activation states
-
-Repository merge may set the implementation status to `IMPLEMENTED` only when code, protected migration/provisioning,
-tests, and non-sensitive evidence agree. It must keep these states closed:
-
-- effective enforcement: `NOT_IMPLEMENTED` until the real protected environment is provisioned and independently
-  verified;
-- HOLDOUT access authorization: `NOT_RECORDED` until an independent authorization event is recorded;
-- authoring: blocked until environment ownership, access method, log/artifact non-exposure, credential rotation,
-  backup/restore, and applicable Privacy approval are evidenced;
-- Freeze and Runner execution: blocked until 40 protected cases, complete review, zero leakage-axis intersections,
-  Freeze Receipt, execution authorization, and #178 bindings exist;
-- disposal: blocked until #425 is approved and implemented;
-- Production/publication: blocked until the complete Track F external gate is satisfied.
-
-## Error handling
-
-- Configuration errors fail at process startup without echoing configured values.
-- Authorization and policy failures use the existing fixed `ProtectedSecurityError` reason-code allowlist.
-- Unknown database results, SQLSTATEs not explicitly mapped, connection loss after a possible side effect, terminal
-  audit failure, and malformed rows map to fail-closed internal/audit-uncertain outcomes.
-- `UNKNOWN` operations never retry automatically.
-- Logs may contain the fixed reason code, operation type, and an opaque request UUID only. They may not contain actor
-  identity, Dataset content, authorization receipt body, SQL parameters, schema coordinates, or artifact bytes.
+Grant/revoke/expire, identity administration, approval ingestion, and Freeze transitions are control-plane Service
+methods rather than replacements with another implicit database execution path.
 
 ## Testing strategy
 
-### Kernel regression
+Static policy:
 
-- Run the existing protected retrieval suite before changes.
-- Convert one behavior at a time to async and verify each test fails for the missing awaitable boundary before updating
-  the synthetic implementation.
-- Preserve all role/state, audit lifecycle, tamper, concurrency, idempotency, expiry, and non-leakage assertions.
+- `check_database_logic.py` finds no new function/procedure/trigger/RLS definition;
+- the legacy exception manifest is unchanged;
+- no blanket protected-table privilege is introduced.
 
-### Configuration tests
+Migration and role policy:
 
-- disabled-by-default behavior;
-- rejection of partial protected connection settings;
-- rejection of placeholder credentials outside Local;
-- prohibition of normal Worker credential fallback;
-- protected engine SQL echo always disabled;
-- safe URL construction for reserved password characters.
+- empty upgrade/downgrade succeeds; non-empty downgrade refuses data loss;
+- owner/data/control/migration identities are distinct and non-administrative;
+- `PUBLIC`, normal Backend/Worker/CI, and unapproved logins have no schema access;
+- real data and control logins have exactly §4 privileges and cannot use the other plane unless explicitly approved;
+- forbidden UPDATE/DELETE/TRUNCATE/CREATE/sequence access fails;
+- future-object defaults remain closed.
 
-### PostgreSQL migration and ACL tests
+Repository integration:
 
-- protected owner/access roles have no superuser, database-create, role-create, or replication authority;
-- `PUBLIC`, normal app, migration, and CI identities have no protected schema/object access;
-- protected access has no direct table or sequence privileges;
-- future-object default privileges preserve denials;
-- every definer function has the fixed trusted `search_path`, protected owner, revoked `PUBLIC EXECUTE`, and only the
-  approved access-role grant;
-- direct access to unfrozen or frozen artifacts fails for all unapproved identities;
-- direct update/delete/truncate of Dataset, grant, and audit relations fails;
-- downgrade refuses to destroy a non-empty protected schema and requires a forward fix.
+- positive Author write, Custodian read/Freeze, Runner read/run, and independent grant/revoke use synthetic payloads;
+- principal mismatch, disabled identity, missing/expired/revoked/mismatched grant, invalid role/state, and incomplete
+  evidence fail before artifact access;
+- capability and artifact operation are exactly once under concurrency;
+- revoke or Dataset revision changes cannot pass held locks;
+- replay returns only a verified opaque result;
+- audit truncation, forged insert, head rollback, hash mismatch, illegal transition, and terminal failure fail closed;
+- rollback leaves no partial capability, artifact, or terminal audit;
+- DTOs, errors, logs, engine configuration, and public evidence contain no protected values.
 
-### PostgreSQL adapter integration tests
+Repository verification includes focused protected tests, both DB policy scripts, full Evaluation and migration suites,
+Ruff, format, Mypy, `git diff --check`, inventory, and `scripts/ci/run_test.sh`. Concurrent worktrees must use a uniquely
+named disposable database rather than the shared local `test` database.
 
-- positive author, Custodian, and Runner operations use only synthetic opaque envelopes;
-- missing, expired, revoked, forged, or mismatched grants fail before data access;
-- an unfrozen Runner read and a frozen Author write fail;
-- self-approval and implementation-participant approval fail;
-- `INTENT` failure prevents the operation;
-- terminal audit failure produces `UNKNOWN` or rollback according to side-effect observability;
-- concurrent revoke/state change cannot pass the locked guard;
-- duplicate operation keys execute once and replay only a verified opaque result;
-- audit tamper, tail truncation, CAS conflict, and invalid transition fail closed;
-- returned models and logs contain none of the forbidden protected values.
+## Evidence and activation states
 
-### Repository verification
+Until revised implementation and designated approvals exist, evidence must mark the redesign pending and keep:
 
-- targeted kernel, config, migration, and adapter suites;
-- complete `ai_worker/tests/evaluation` suite;
-- complete migration suite against the disposable PostgreSQL test database;
-- Ruff check and format check for changed paths;
-- Mypy for `backend/app` and `ai_worker`;
-- `git diff --check` and full diff review;
-- repository test inventory contract;
-- the repository-required full `bash scripts/ci/run_test.sh` when the local PostgreSQL environment is available.
+- effective enforcement: `NOT_IMPLEMENTED`;
+- HOLDOUT authorization: `NOT_RECORDED`;
+- authoring count: `0`;
+- Freeze and Runner execution: blocked;
+- disposal: `BLOCKED_BY_ISSUE_425`;
+- Production/publication: blocked by `EXT-PRIV-001` and the Track F external gate.
 
-## Documentation and evidence
+Activation additionally requires infrastructure ownership, network/entry-point restriction, short-lived credential
+injection/rotation, independent limited-login verification, encrypted backup/restore, audit retention, incident
+response readiness, and external approvals.
 
-The implementation change must:
+## Design review
 
-- rename the PD-368 Decision file to remove the candidate suffix and set its status to `Approved Target · Not
-  implemented` before later recording implementation evidence;
-- update every repository link to the renamed Decision;
-- add a focused implementation design and plan without changing unrelated contracts;
-- update the #368 non-sensitive evidence with exact implementation status and hashes;
-- state which real-environment checks remain unrun and keep access/authoring/Freeze/run/publication flags closed;
-- avoid creating a Current contract unless the implementation PR contains the required migration, tests, evidence,
-  and designated approvals.
+Resolved blockers:
+
+1. Forbidden DB functions and function ACLs are removed from the target design.
+2. The superseded Source precedent is replaced by PD-398-R1/R2 Python transactions.
+3. Direct-credential bypass is explicit and blocks effective activation.
+4. Audit privileges guarantee append-only rows, while hash/transition correctness is explicitly a Python guarantee.
+5. Constant lock markers define limited-role row locking without writable business fields.
+6. Unique disposable DBs prevent concurrent worktree migration interference.
+7. A separate control role prevents ordinary data credentials from receiving grant/revoke/Freeze DML.
+8. The unused `operation_result` table is removed; verified terminal audit entries remain the single replay source.
+
+Remaining reviewer gates:
+
+- Backend/Security must approve §4, dual-role Custodian handling, and confirm that credential/network controls make
+  Python the only operational path.
+- Product/Privacy/Safety/Evaluation must accept the residual-risk statement and unchanged activation blocks.
+- Implementation must prove every privilege claim with a real limited login; static scanning alone is insufficient.
+- Current PR #432 code and implementation evidence still describe the superseded function-only adapter and must be
+  replaced and re-hashed before they can be treated as implementation evidence.
 
 ## Completion criteria
 
-The repository implementation is complete when the parameterized protected infrastructure, asynchronous adapter, and
-synthetic PostgreSQL tests prove the approved policy without any direct table-access bypass. Completion does not claim
-that a real protected environment exists. Real activation requires separate operational evidence and independent
-authorization as described above.
+The design is implementation-ready when the requester and designated reviewers accept the privilege matrix,
+transaction/lock order, residual risk, and activation gates. Repository implementation is complete only after
+forbidden DB definitions are zero, all checks pass, evidence hashes match, and PR #432 receives independent approvals.
