@@ -28,7 +28,7 @@ Approved Contract Freeze v4와 원본 `FinalProject Documents/04_Decision/track-
 2. 최초 알림과 재알림을 구분하고 전달 상태와 읽음 여부를 별도로 저장한다. 앱 내부 목록에 게시하는 DB 전이를 전달로 정의한다. HTTP GET은 상태를 바꾸지 않는다.
 3. 최초 알림은 occurrence의 기존 예정 시각을 사용한다. 재알림은 사용자가 명시한 미래 시각을 받아 확인 기한 안에서 1회만 생성한다. 알림 읽음·취소에서 복약 결과를 만들거나 수정하지 않는다.
 4. 알림 생성·게시·취소는 occurrence 잠금 뒤 Notification row를 처리한다. 처방 변경은 이미 승인된 B 취소 port에 같은 session의 구현을 주입한다.
-5. 일반 Track B의 PENDING 전용 재알림 제안은 Track C CTA의 소비 계약으로 확정하지 않는다. Frontend 리뷰가 지적한 NOT_TAKEN → FORGOT 흐름은 CLOSED occurrence여서 현재 제안에서 409가 된다. 권가빈(Track C·제품)·남한솔은 동일 endpoint 사용 또는 별도 일정 설정 흐름을 결정하고, 송은영과 생성·게시·정정 무효화 조건까지 함께 조율한다. 상세 계약의 ‘승인 차단’ 표가 해소되기 전 재알림 구현을 시작하지 않는다.
+5. 2026-09-10 권가빈의 [제품 결정](https://github.com/AI-HealthCare-05/AH_05_04/pull/415#issuecomment-5615835554)에 따라 Track C `REMINDER_SETUP`은 향후 복약 일정 확인·설정 흐름으로 연결하고 기존 `PUT /api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`을 사용한다. occurrence 단위 재알림 POST는 재사용하지 않는다. 따라서 Frontend가 CLOSED + NOT_TAKEN occurrence에 재알림 POST를 호출해야 하는 충돌은 해소되며, 일반 Track B 재알림의 PENDING 전용 조건은 유지한다.
 6. 알림 응답에 원본 occurrence의 `occurrence_local_date`를 추가해 #202 날짜별 조회 경로를 명시하는 안을 제안한다. 재알림 시각에서 날짜를 추정하지 않으며, occurrence ID와 약 항목의 정확한 DTO 연결은 #202 통합 때 확정한다. 이 추가 필드도 재검토 전 승인된 계약으로 취급하지 않는다.
 
 새 테이블은 알림의 게시·읽음·취소를 Check-in과 독립적으로 보존하기 위해 필요하다. occurrence에 필드를 추가하는 대안은 최초 알림과 재알림을 별도로 보존하지 못한다. 외부 전송 infrastructure는 이번 범위에 필요하지 않다. 추가 비용은 모델·migration 1개, Repository·Service·API 및 생성·게시 명령과 테스트다.
@@ -36,7 +36,7 @@ Approved Contract Freeze v4와 원본 `FinalProject Documents/04_Decision/track-
 ## 2026-09-10 리뷰 반영 상태
 
 - 송은영의 기술 APPROVED는 PR 최초 초안 `b0d7bfac3073fc559da23ac1e6570ad8ca3c2e06`에 대한 검토다. 이번 추가 필드·소비 결정 정리의 재승인 증거로 사용하지 않는다.
-- 남한솔 MUST FIX: 동일 endpoint와 CLOSED/NOT_TAKEN 허용 결정이 필요하며 **미해결**이다. 결정 책임·선택지·연쇄 수정 범위와 구현 차단 조건을 상세 계약에 추가했다.
+- 남한솔 MUST FIX: **제품 결정 및 문서 반영으로 소비 계약 충돌 해소**. [최종 Frontend 재리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/415#pullrequestreview-5165301643)에서 위 결정을 PD-203과 Notification 계약에 동일하게 반영하는 것을 전제로 추가 Frontend blocker가 없다고 확인했다. 두 문서에 기존 일정 PUT 사용·occurrence 재알림 POST 미사용을 반영했다.
 - 남한솔 WATCH: 원본 occurrence 날짜로 #202 GET을 호출하는 경로, ID 매핑, 자정·이전 version·조회 불가 fixture를 보완했다. 정확한 #202 약 표시 DTO 경로와 Frontend fixture/E2E는 **통합 검증 대기**다.
 
 ## 병렬 진행과 완료 조건

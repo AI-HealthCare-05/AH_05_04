@@ -88,21 +88,18 @@ body는 `{scheduled_at: UTC RFC3339 timestamp}`이며 필수다. 서버는 시�
 4. 기존 REMINDER가 DELIVERED/CANCELLED: 신규 제안 `409 REMINDER_LIMIT_REACHED`.
 5. 시간 범위·timezone 없는 시각·추가 필드 위반: 기존 `422 VALIDATION_FAILED`.
 
-새 오류 코드는 이 Decision 승인과 공통 오류 문서·OpenAPI·테스트 반영 전 확정하지 않는다. 위 PENDING 전용 조건은 일반 Track B 요청을 위한 기존 제안이며 Track C 소비 계약을 해결한 결정이 아니다.
+새 오류 코드는 이 Decision 승인과 공통 오류 문서·OpenAPI·테스트 반영 전 확정하지 않는다. 위 PENDING 전용 조건은 occurrence 단위 재알림에 적용한다.
 
-#### 승인 차단: Track C `REMINDER_SETUP` 소비 결정
+#### Track C `REMINDER_SETUP` 소비 결정 — 2026-09-10 반영
 
-남한솔의 [MUST FIX 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/415#pullrequestreview-5164510149)는 아직 미해결이다. `NOT_TAKEN → FORGOT → 재알림 CTA`의 occurrence는 이미 `CLOSED`이므로 위 조건에서 `409 REMINDER_NOT_ALLOWED`가 된다. 기술 리뷰의 기존 PENDING 전용 조건 승인을 Track C 소비 승인으로 확대하지 않는다.
+권가빈의 [제품 결정](https://github.com/AI-HealthCare-05/AH_05_04/pull/415#issuecomment-5615835554)에 따라 `REMINDER_SETUP`은 향후 복약 일정 확인·설정 흐름으로 연결하고 기존 일정 설정 API를 사용한다.
 
-| 결정 항목 | 확인할 내용 | 책임 |
-| --- | --- | --- |
-| 동일 endpoint 사용 여부 | Track C CTA가 위 POST를 호출하는지, 별도 일정 설정 흐름을 소비하는지 하나로 결정 | 권가빈(Track C·제품), 남한솔(Frontend) |
-| 동일 endpoint를 사용하는 경우 | CLOSED + 현재 NOT_TAKEN 허용 여부, 대상 occurrence와 재알림 시간·기한, 최신 Safety·Barrier eligibility 및 revision 결속 | 권가빈·송은영·남한솔 |
-| 동일 endpoint를 사용하지 않는 경우 | CTA가 이동할 실제 화면·API·대상 일정 및 해당 흐름의 담당 Issue를 명시 | 권가빈·남한솔 |
+- 사용 API: `PUT /api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`.
+- `POST /api/v1/medication-occurrences/{occurrence_id}/reminders`는 재사용하지 않는다.
+- 따라서 `NOT_TAKEN → FORGOT → REMINDER_SETUP`에서 Frontend가 `CLOSED + NOT_TAKEN` occurrence에 재알림 POST를 호출할 필요가 없다. occurrence 단위 재알림의 PENDING 전용 조건과 CLOSED 거부 조건은 유지한다.
+- 일정 확인·설정은 기존 일정 PUT 계약에 따라 사용자의 명시적 확인을 거친다. 과거 occurrence나 Check-in을 재개·변경하거나 새 일정으로 자동 재귀속하는 동작을 추가하지 않는다.
 
-동일 endpoint 안을 채택하면 생성 허용만 바꿔서는 안 된다. 이 문서의 CLOSED 알림 취소·게시 조건, Check-in 정정 무효화, 오류 우선순위, 필요한 참조 필드 및 동일 transaction 잠금 검증도 함께 개정해야 한다. 현재의 `CLOSED` 일괄 거부를 임의로 제거하거나 Safety·Barrier 경계를 우회하지 않는다. 별도 흐름 안도 URL·동작이 확정되기 전에는 연결 완료로 취급하지 않는다.
-
-결정과 담당자 확인이 이 Decision에 기록되고 Frontend 재검토로 MUST FIX 해소가 확인될 때까지 재알림 생성·게시 구현, 계약 승인·승격 및 #203 완료를 차단한다. 이 표 작성 자체는 리뷰 해결이 아니다.
+남한솔은 PR #415 [최종 Frontend 재리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/415#pullrequestreview-5165301643)에서 이 제품 결정을 두 문서에 동일하게 반영하는 것을 전제로 추가 Frontend blocker가 없다고 확인했다. 본 절은 그 결정을 반영한 것으로, 기존 MUST FIX의 endpoint 소비 충돌은 해소되었다. 실제 일정 화면 연결·#202 통합·fixture/E2E 완료나 Notification 전체 계약의 current 승격을 의미하지 않는다.
 
 ## #202와 구현 접점
 
@@ -127,7 +124,7 @@ body는 `{scheduled_at: UTC RFC3339 timestamp}`이며 필수다. 서버는 시�
 - 처방 활성화·일정 취소·변경과 게시 경합, 과거·전달 이력 보존, 취소 실패 시 전체 rollback.
 - Check-in TAKEN·NOT_TAKEN·UNCONFIRMED와 게시 경쟁, 정정 후 복약 결과·audit 불변 및 새 알림 자동 생성 금지.
 - 재알림 시간 경계, 1회 제한, 동시 요청, 같은 키 replay·상이 hash·만료 후 재생성 금지.
-- Track C 소비 결정 후 NOT_TAKEN → FORGOT → CTA 정상 경로 및 최신 Safety·Barrier/revision 불일치·정정 경합을 검증. 결정 전에는 NOT_RUN이며 PENDING 전용 테스트 통과로 대체하지 않음.
+- Track C NOT_TAKEN → FORGOT → REMINDER_SETUP이 향후 일정 확인·설정 흐름과 기존 일정 PUT을 사용하고 occurrence 재알림 POST를 호출하지 않는지 Frontend fixture/E2E로 검증. 실제 통합 검증 전에는 NOT_RUN.
 - 동기 snapshot 암호화·1MiB cap·오류 미저장·일반 로그 비노출.
 - 실제 FastAPI 요청/응답과 OpenAPI 비교 및 #202와의 API 통합, no-store·공통 오류 검증.
 - Ruff·format·Mypy·기본 CI 및 관련 PostgreSQL 계약·통합 검증. AI/Provider 동작 변경이 없어 의료 AI eval 추가 대상은 아님.
