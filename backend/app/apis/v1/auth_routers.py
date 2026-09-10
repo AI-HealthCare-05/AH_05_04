@@ -2,9 +2,10 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Depends, Request, status
+from fastapi import APIRouter, Cookie, Depends, Query, Request, status
 from fastapi.responses import JSONResponse as Response
 from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import EmailStr
 
 from app.core import config
 from app.core.config import Env
@@ -18,6 +19,7 @@ from app.dependencies.security import (
 )
 from app.dependencies.services import get_auth_service, get_refresh_session_repository, get_user_repository
 from app.dtos.auth import (
+    EmailAvailabilityResponse,
     LoginRequest,
     LoginResponse,
     LogoutResponse,
@@ -61,6 +63,27 @@ async def signup(
 ) -> Response:
     await auth_service.signup(request)
     return Response(content={"detail": "회원가입이 성공적으로 완료되었습니다."}, status_code=status.HTTP_201_CREATED)
+
+
+@auth_router.get(
+    "/email-availability",
+    response_model=EmailAvailabilityResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+            "description": (
+                "email query 형식 또는 길이 검증 실패입니다. 전역 `RequestValidationError` 핸들러가 "
+                "`ErrorResponse`(`code=VALIDATION_FAILED`)로 반환합니다."
+            ),
+        },
+    },
+)
+async def email_availability(
+    email: Annotated[EmailStr, Query(max_length=40)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> EmailAvailabilityResponse:
+    return EmailAvailabilityResponse(available=await auth_service.is_email_available(email))
 
 
 @auth_router.post("/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)

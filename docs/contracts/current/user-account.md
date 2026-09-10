@@ -7,10 +7,14 @@
 ## 회원가입
 
 - Endpoint: `POST /api/v1/auth/signup`
+- 회원가입 화면의 UX 보조용 이메일 사용 가능 여부 조회 Endpoint: `GET /api/v1/auth/email-availability?email={email}`
 - 요청 body는 `name`, `email`, `password` 세 필드만 허용합니다(`extra="forbid"`).
 - `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 받지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
 - `email` 중복 시 `409 CONFLICT`을 반환합니다. `phone_number` 중복 체크는 Post-MVP에서 가입 요청에 `phone_number`가 추가될 때 함께 적용됩니다.
+- 이메일 사용 가능 여부 조회는 `{"available": true}` 또는 `{"available": false}`를 반환합니다. 이 API는 가입 전 UX 보조용이며 사용자 ID, 계정 상태, 가입 시각 등 계정 세부 정보는 반환하지 않습니다.
+- 이메일 사용 가능 여부 조회의 query 형식 오류는 공통 `422 VALIDATION_FAILED`를 반환합니다.
+- 최종 중복 방어는 `POST /api/v1/auth/signup`의 `409 CONFLICT` 응답과 DB unique 제약이 계속 담당합니다.
 
 | 필드 | 기준 |
 | --- | --- |

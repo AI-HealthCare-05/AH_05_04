@@ -10,6 +10,67 @@ from app.repositories.user_repository import DuplicateUserFieldError, UserReposi
 
 
 class TestSignupAPI:
+    async def test_email_availability_returns_true_for_unused_email(self):
+        repository = AsyncMock(spec=UserRepository)
+        repository.exists_by_email.return_value = False
+
+        def override_get_user_repository():
+            return repository
+
+        fastapi_app.dependency_overrides[get_user_repository] = override_get_user_repository
+
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get(
+                    "/api/v1/auth/email-availability",
+                    params={"email": "new@example.com"},
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_user_repository, None)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"available": True}
+        repository.exists_by_email.assert_awaited_once_with("new@example.com")
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_email_availability_returns_false_for_used_email(self):
+        repository = AsyncMock(spec=UserRepository)
+        repository.exists_by_email.return_value = True
+
+        def override_get_user_repository():
+            return repository
+
+        fastapi_app.dependency_overrides[get_user_repository] = override_get_user_repository
+
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get(
+                    "/api/v1/auth/email-availability",
+                    params={"email": "used@example.com"},
+                )
+        finally:
+            fastapi_app.dependency_overrides.pop(get_user_repository, None)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"available": False}
+        repository.exists_by_email.assert_awaited_once_with("used@example.com")
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_email_availability_rejects_invalid_email(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/auth/email-availability",
+                params={"email": "invalid-email"},
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        body = response.json()
+        assert body["code"] == "VALIDATION_FAILED"
+        assert body["message"] == "입력값을 확인해 주세요."
+        assert body["details"] == [{"field": "query.email", "reason": "INVALID_FORMAT", "rejected_value": None}]
+        assert isinstance(body["trace_id"], str)
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
     async def test_signup_success(self):
         signup_data = {
             "email": "test@example.com",

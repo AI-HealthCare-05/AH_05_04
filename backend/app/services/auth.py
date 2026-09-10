@@ -151,6 +151,12 @@ class AuthService:
                 details=[ErrorDetail(field="email", reason="ALREADY_EXISTS")],
             )
 
+    async def is_email_available(
+        self,
+        email: str | EmailStr,
+    ) -> bool:
+        return not await self.user_repo.exists_by_email(email)
+
     async def request_password_reset(self, email: str | EmailStr) -> str | None:
         """PD-206 결정 3: 계정 존재 여부를 노출하지 않기 위해 계정이 없거나 쿨다운
         중이어도 예외를 던지지 않고 조용히 반환한다(호출자는 항상 같은 성공 응답을 준다).

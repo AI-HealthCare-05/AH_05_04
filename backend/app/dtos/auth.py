@@ -28,6 +28,10 @@ class LoginResponse(BaseModel):
     access_token: str
 
 
+class EmailAvailabilityResponse(BaseModel):
+    available: bool
+
+
 class TokenRefreshResponse(LoginResponse): ...
 
 

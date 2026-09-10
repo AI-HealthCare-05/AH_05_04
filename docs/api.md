@@ -54,6 +54,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 영역 | Method | Path | 성공 상태 |
 | --- | --- | --- | ---: |
 | 인증 | `POST` | `/api/v1/auth/signup` | `201` |
+| 인증 | `GET` | `/api/v1/auth/email-availability` | `200` |
 | 인증 | `POST` | `/api/v1/auth/login` | `200` |
 | 인증 | `GET` | `/api/v1/auth/token/refresh` | `200` |
 | 인증 | `POST` | `/api/v1/auth/logout` | `200` |
@@ -151,6 +152,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
 | `POST` | `/api/v1/auth/signup` | `201 Created` | MVP 계정을 생성합니다. |
+| `GET` | `/api/v1/auth/email-availability?email={email}` | `200 OK` | 회원가입 화면의 UX 보조용으로 이메일 사용 가능 여부를 조회합니다. |
 
 요청 body는 MVP 기준으로 아래 세 필드만 허용합니다.
 
@@ -166,6 +168,10 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - `password`는 8~72자이며 대문자, 소문자, 숫자, 특수문자를 각각 1개 이상 포함해야 합니다.
 - `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 허용하지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
+- 이메일 사용 가능 여부 응답은 `{"available": true}` 또는 `{"available": false}`입니다.
+- 이메일 query 형식이 올바르지 않으면 공통 `422 VALIDATION_FAILED`를 반환합니다.
+- 이메일 중복 확인 API는 가입 전 UX 보조용입니다. 사용자 ID, 계정 상태, 가입 시각 등 계정 세부 정보는 반환하지 않습니다.
+- 최종 중복 방어는 `POST /api/v1/auth/signup`의 `409 CONFLICT` 응답과 DB unique 제약이 계속 담당합니다.
 
 ### 내 정보 조회·수정
 
