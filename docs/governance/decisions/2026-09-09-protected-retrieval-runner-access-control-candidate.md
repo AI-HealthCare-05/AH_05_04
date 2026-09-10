@@ -59,6 +59,14 @@ PR #373 kernel이 이미 구현한 3개 역할을 그대로 사용한다.
 4. 검토한 대안: kernel의 `AuthorizationGuard`만으로 충분한지 검토 — Python 레벨 검사이므로 raw SQL이나 다른 서비스의 직접 쿼리 경로를 막지 못해 기각.
 5. 지금 도입해야 하는 이유: 보안·소유권 분리를 위해 독립된 경계가 필요하다는 `CONTRIBUTING.md`의 예외 근거에 해당하며, 같은 저장소에 이미 승인된 선례(Source Snapshot)가 있다.
 
+SECURITY DEFINER 함수는 owner 권한으로 실행되므로, 아래 조건이 없으면 `search_path` 조작을 통해 protected schema 권한 분리를 우회하는 privilege-escalation 경로가 생긴다. 기존 선례(`165e8f706152_guard_snapshot_transitions.py`)가 이미 이 패턴을 쓰고 있으므로 동일하게 구현·SQL negative test 대상에 포함한다.
+
+- caller-controlled `search_path`를 사용하지 않음
+- `SET search_path = pg_catalog, <protected trusted schema>, pg_temp`로 고정
+- `REVOKE ALL ... FROM PUBLIC`으로 `PUBLIC EXECUTE` 회수
+- 승인된 최소 role(`protected_access_role`)에만 `GRANT EXECUTE`
+- 함수 owner는 protected owner/migration role로 제한
+
 사람(Author·Custodian)과 Runner는 공유 login이 아니라 개별 identity + 단기 credential이어야 한다 — 공유 계정을 쓰면 §7 audit가 "누가 접근했는가"를 실제로 답할 수 없게 된다.
 
 ## 5. 접근 통제 모델
