@@ -61,11 +61,17 @@ _FORBIDDEN_ACTION_RES = (
     re.compile(r"(?:진단|확진)(?:됩니다|입니다|하세요|하십시오|할\s*수\s*있습니다)"),
     re.compile(r"(?:이|해당)\s*증상(?:은|이)[^.!?\n]{0,30}(?:입니다|이에요|예요|일\s*수\s*있습니다)"),
     re.compile(
-        r"(?:하루|매일|매주)?[^.!?\n]{0,12}(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d+)\s*"
+        r"(?:하루|매일|매주)?[^.!?\n]{0,12}(?:반|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d+)\s*"
         r"(?:알|정|캡슐|회|시간|mg|ml|mL)"
     ),
     re.compile(r"(?:약|복용|투여)[^.!?\n]{0,20}(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|\d+)\s*배"),
     re.compile(r"(?:증상|질환|고혈압|당뇨|암)(?:은|는|이|가)?[^.!?\n]{0,16}(?:확실|분명)(?:합니다|해요|하다)"),
+    re.compile(r"(?:증상|질환|고혈압|당뇨|암)(?:은|는|이|가|으로)?[^.!?\n]{0,16}(?:보입니다|보여요|의심됩니다)"),
+    re.compile(
+        r"(?:식사\s*(?:전|후)|공복(?:에)?|취침\s*전|아침|점심|저녁)[^.!?\n]{0,24}"
+        r"(?:약|복용|투여)[^.!?\n]{0,12}(?:드세요|복용하세요|투여하세요)"
+    ),
+    re.compile(r"(?:다른|새)\s*약(?:으로|을|를)?[^.!?\n]{0,12}(?:교체|변경|바꾸)"),
     re.compile(r"(?:독립\s*)?(?:식단|운동)\s*(?:처방|계획을\s*따르|프로그램을\s*따르)"),
 )
 
@@ -122,6 +128,13 @@ class GuidelineFallbackCode(StrEnum):
     PRESCRIPTION_STALE = "PRESCRIPTION_STALE"
     EXECUTION_CONTEXT_STALE = "EXECUTION_CONTEXT_STALE"
     UNSUPPORTED_REQUEST = "UNSUPPORTED_REQUEST"
+
+
+_APPROVED_UNCERTAINTY_TEXT = "승인된 근거 범위 밖의 내용은 확인할 수 없습니다."
+_APPROVED_CONSULTATION_TEXT = "불편하거나 궁금한 점은 의사 또는 약사와 상담하세요."
+_APPROVED_FALLBACK_TEXT_BY_CODE = {
+    code: "현재는 승인된 안내를 제공할 수 없습니다. 의사 또는 약사와 상담하세요." for code in GuidelineFallbackCode
+}
 
 
 class GuidelineCardReason(StrEnum):
@@ -396,6 +409,16 @@ def finalize_guideline_card(
     approval_verifier: GuidelineApprovalVerifierPort,
 ) -> GuidelineCardOutcome:
     """Validate and bind a draft to pinned medication and gate-passed evidence."""
+    request_snapshot = _detached_request_snapshot(request)
+    if request_snapshot is None:
+        return _unverified_approval_outcome(dependency_error=False)
+    return _finalize_guideline_card_snapshot(request_snapshot, approval_verifier)
+
+
+def _finalize_guideline_card_snapshot(
+    request: GuidelineCardRequest,
+    approval_verifier: GuidelineApprovalVerifierPort,
+) -> GuidelineCardOutcome:
     context, dependency_error = _verified_fallback_context(request, approval_verifier)
     if context is None:
         return _unverified_approval_outcome(dependency_error=dependency_error)
@@ -451,6 +474,16 @@ def finalize_guideline_card(
         GuidelineCardReason.CARD_GENERATED,
         card=_create_card(request, claims, context.verifier_refs),
     )
+
+
+def _detached_request_snapshot(value: object) -> GuidelineCardRequest | None:
+    if type(value) is not GuidelineCardRequest:
+        return None
+    try:
+        snapshot = deepcopy(value)
+    except Exception:
+        return None
+    return snapshot if type(snapshot) is GuidelineCardRequest else None
 
 
 def _verified_fallback_context(
@@ -908,6 +941,8 @@ def _is_valid_policy(value: object) -> bool:
         or not _is_sha256(value.uncertainty_text_sha256)
         or not _is_sha256(value.consultation_text_sha256)
         or not _is_valid_artifact_ref(value.artifact_ref)
+        or value.uncertainty_text_sha256 != hashlib.sha256(_APPROVED_UNCERTAINTY_TEXT.encode()).hexdigest()
+        or value.consultation_text_sha256 != hashlib.sha256(_APPROVED_CONSULTATION_TEXT.encode()).hexdigest()
     ):
         return False
     return (
@@ -936,10 +971,24 @@ def _validated_fallbacks(
         return None
     by_code: dict[GuidelineFallbackCode, ApprovedGuidelineFallback] = {}
     for item in value:
-        if not _is_valid_fallback(item) or item.code in by_code:
+        detached = _detached_fallback_snapshot(item)
+        if detached is None or not _is_valid_fallback(detached) or detached.code in by_code:
             return None
-        by_code[item.code] = item
+        by_code[detached.code] = detached
     return by_code if set(by_code) == set(GuidelineFallbackCode) else None
+
+
+def _detached_fallback_snapshot(value: object) -> ApprovedGuidelineFallback | None:
+    if type(value) is not ApprovedGuidelineFallback:
+        return None
+    try:
+        return ApprovedGuidelineFallback(
+            _copy_artifact_ref(value.artifact_ref),
+            value.code,
+            SensitiveText(value.text.reveal()),
+        )
+    except Exception:
+        return None
 
 
 def _is_valid_fallback(value: object) -> bool:
@@ -951,7 +1000,11 @@ def _is_valid_fallback(value: object) -> bool:
     ):
         return False
     text = value.text.reveal()
-    if not _is_korean_safe_text(text, maximum_length=500) or _contains_forbidden_action(text):
+    if (
+        not _is_korean_safe_text(text, maximum_length=500)
+        or _contains_forbidden_action(text)
+        or text != _APPROVED_FALLBACK_TEXT_BY_CODE[value.code]
+    ):
         return False
     expected = ApprovedGuidelineFallback.create(
         value.artifact_ref.artifact_code,
@@ -1018,6 +1071,10 @@ def _is_valid_draft_shape(draft: GuidelineCardDraft, policy: VersionedGuidelineP
         or type(draft.consultation_text) is not SensitiveText
         or not _is_korean_safe_text(draft.uncertainty_text.reveal(), maximum_length=500)
         or not _is_korean_safe_text(draft.consultation_text.reveal(), maximum_length=500)
+        or _contains_forbidden_action(draft.uncertainty_text.reveal())
+        or _contains_forbidden_action(draft.consultation_text.reveal())
+        or draft.uncertainty_text.reveal() != _APPROVED_UNCERTAINTY_TEXT
+        or draft.consultation_text.reveal() != _APPROVED_CONSULTATION_TEXT
         or hashlib.sha256(draft.uncertainty_text.reveal().encode()).hexdigest() != policy.uncertainty_text_sha256
         or hashlib.sha256(draft.consultation_text.reveal().encode()).hexdigest() != policy.consultation_text_sha256
         or not any(term in draft.consultation_text.reveal() for term in ("의사", "약사", "의료진", "전문가"))
@@ -1119,12 +1176,14 @@ def _verify_approval_refs(
             response = deepcopy(verifier.verify(verifier_input))
             if verifier_input != expected_input:
                 return None, True
+            if type(response) is GuidelineApprovalVerificationFailure:
+                return None, False
             if (
                 type(response) is not GuidelineApprovalVerificationSuccess
                 or response.artifact_ref != artifact_ref
                 or not _is_valid_artifact_ref(response.verifier_artifact_ref)
             ):
-                return None, False
+                return None, True
             verified[artifact_ref] = response.verifier_artifact_ref
         return verified, False
     except Exception:

@@ -27,6 +27,7 @@ from ai_worker.tasks.rag.guideline_card import (
     ApprovedGuidelineEvidenceBinding,
     ApprovedGuidelineFallback,
     GuidelineActionClass,
+    GuidelineApprovalVerificationFailure,
     GuidelineApprovalVerificationSuccess,
     GuidelineCardDraft,
     GuidelineCardReason,
@@ -481,6 +482,7 @@ def test_forbidden_prescription_change_or_diagnosis_discards_card() -> None:
         "식사 후 이 약을 두 배로 드세요.",
         "식사 후 이 약을 반 알씩 드세요.",
         "식사 전에 이 약을 드세요.",
+        "잠자기 전에 이 약을 드세요.",
         "음주할 때 다른 약으로 교체하세요.",
         "음식 주의와 함께 고혈압이 확실합니다.",
         "음식 주의 사항으로 고혈압으로 보여요.",
@@ -586,6 +588,60 @@ def test_finalized_fallback_does_not_alias_mutable_sensitive_input() -> None:
     assert outcome.fallback.text.reveal() == original
 
 
+def test_verifier_cannot_mutate_approved_fallback_after_snapshot() -> None:
+    request = valid_request()
+    source = next(item for item in request.approved_fallbacks if item.code is GuidelineFallbackCode.PROVIDER_TIMEOUT)
+    original = source.text.reveal()
+
+    class MutatingApprovalVerifier(SyntheticApprovalVerifier):
+        def verify(self, artifact_ref: ImmutableArtifactRef) -> GuidelineApprovalVerificationSuccess:
+            object.__setattr__(
+                source.text,
+                "_SensitiveText__value",
+                "이 약의 복용을 중단하세요.",
+            )
+            return super().verify(artifact_ref)
+
+    outcome = _finalize_guideline_card(
+        replace(request, draft=None, generation_failure=GuidelineGenerationFailure.PROVIDER_TIMEOUT),
+        approval_verifier=MutatingApprovalVerifier(),
+    )
+
+    assert outcome.status is GuidelineCardStatus.NO_RESULT
+    assert outcome.fallback is not None
+    assert outcome.fallback.text.reveal() == original
+    assert outcome.fallback.artifact_ref == source.artifact_ref
+
+
+def test_verifier_cannot_mutate_original_policy_after_request_snapshot() -> None:
+    request = valid_request()
+    assert request.draft is not None
+    original_claim = request.draft.claims[0]
+    claims = tuple(replace(original_claim, claim_key=f"claim-food-{index}") for index in range(5))
+    request = replace(request, draft=replace(request.draft, claims=claims))
+    expanded_policy = VersionedGuidelinePolicy.create(
+        request.policy.artifact_ref.artifact_code,
+        request.policy.artifact_ref.version,
+        maximum_claims=5,
+        uncertainty_text_sha256=request.policy.uncertainty_text_sha256,
+        consultation_text_sha256=request.policy.consultation_text_sha256,
+    )
+
+    class MutatingPolicyVerifier(SyntheticApprovalVerifier):
+        def verify(self, artifact_ref: ImmutableArtifactRef) -> GuidelineApprovalVerificationSuccess:
+            object.__setattr__(request.policy, "maximum_claims", expanded_policy.maximum_claims)
+            object.__setattr__(request.policy, "artifact_ref", expanded_policy.artifact_ref)
+            return super().verify(artifact_ref)
+
+    outcome = _finalize_guideline_card(request, approval_verifier=MutatingPolicyVerifier())
+
+    assert request.policy.maximum_claims == 5
+    assert request.policy.artifact_ref == expanded_policy.artifact_ref
+    assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+    assert outcome.reason is GuidelineCardReason.VALIDATION_FAILED
+    assert outcome.card is None
+
+
 def test_unknown_or_duplicate_citation_is_rejected() -> None:
     request = valid_request()
     assert request.draft is not None
@@ -624,6 +680,65 @@ def test_unsafe_uncertainty_or_consultation_copy_is_rejected() -> None:
         outcome = finalize_guideline_card(replace(request, draft=draft))
         assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
         assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
+
+
+def test_policy_approved_forbidden_notice_copy_is_rejected() -> None:
+    request = valid_request()
+    assert request.draft is not None
+    unsafe_texts = (
+        "이 약의 복용을 중단하세요.",
+        "용량을 늘리세요. 약사와 상담하세요.",
+        "식사 후 이 약을 반 알씩 드세요.",
+        "식사 전에 이 약을 드세요.",
+        "잠자기 전에 이 약을 드세요.",
+        "음주할 때 다른 약으로 교체하세요.",
+        "음식 주의 사항으로 고혈압으로 보여요.",
+    )
+    cases = tuple(
+        draft
+        for text in unsafe_texts
+        for draft in (
+            replace(request.draft, uncertainty_text=SensitiveText(text)),
+            replace(request.draft, consultation_text=SensitiveText(f"{text} 약사와 상담하세요.")),
+        )
+    )
+
+    for draft in cases:
+        policy = VersionedGuidelinePolicy.create(
+            "guideline-policy",
+            "guideline-policy@synthetic-unsafe-notice",
+            maximum_claims=request.policy.maximum_claims,
+            uncertainty_text_sha256=hashlib.sha256(draft.uncertainty_text.reveal().encode()).hexdigest(),
+            consultation_text_sha256=hashlib.sha256(draft.consultation_text.reveal().encode()).hexdigest(),
+        )
+        outcome = finalize_guideline_card(replace(request, draft=draft, policy=policy))
+        assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+        assert outcome.card is None
+
+
+def test_self_hashed_forbidden_fallback_paraphrases_are_rejected() -> None:
+    request = valid_request()
+    forbidden_texts = (
+        "식사 후 이 약을 반 알씩 드세요.",
+        "식사 전에 이 약을 드세요.",
+        "음주할 때 다른 약으로 교체하세요.",
+        "음식 주의 사항으로 고혈압으로 보여요.",
+    )
+
+    for text in forbidden_texts:
+        unsafe = ApprovedGuidelineFallback.create(
+            "guideline-fallback",
+            "guideline-fallback@synthetic-unsafe-paraphrase",
+            code=GuidelineFallbackCode.PROVIDER_TIMEOUT,
+            text=SensitiveText(text),
+        )
+        fallbacks = tuple(
+            unsafe if item.code is GuidelineFallbackCode.PROVIDER_TIMEOUT else item
+            for item in request.approved_fallbacks
+        )
+        outcome = finalize_guideline_card(replace(request, approved_fallbacks=fallbacks))
+        assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+        assert outcome.fallback is None
 
 
 def test_tampered_policy_or_generation_provenance_is_rejected() -> None:
@@ -863,7 +978,7 @@ def test_non_exact_string_boundary_fails_closed_without_exception() -> None:
     assert outcome.fallback is None
 
 
-def test_self_hashed_artifacts_require_an_authoritative_approval_verifier() -> None:
+def test_malformed_approval_response_is_a_dependency_failure_without_fallback() -> None:
     request = valid_request()
 
     class RejectingVerifier:
@@ -872,9 +987,52 @@ def test_self_hashed_artifacts_require_an_authoritative_approval_verifier() -> N
 
     outcome = _finalize_guideline_card(request, approval_verifier=RejectingVerifier())  # type: ignore[arg-type]
 
+    assert outcome.status is GuidelineCardStatus.NO_RESULT
+    assert outcome.reason is GuidelineCardReason.DEPENDENCY_UNAVAILABLE
+    assert outcome.fallback_code is GuidelineFallbackCode.DEPENDENCY_UNAVAILABLE
+    assert outcome.fallback is None
+
+
+def test_explicit_approval_rejection_has_no_unverified_fallback() -> None:
+    request = valid_request()
+
+    class RejectingVerifier:
+        def verify(self, artifact_ref: ImmutableArtifactRef) -> GuidelineApprovalVerificationFailure:
+            return GuidelineApprovalVerificationFailure()
+
+    outcome = _finalize_guideline_card(request, approval_verifier=RejectingVerifier())
+
     assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+    assert outcome.reason is GuidelineCardReason.VALIDATION_FAILED
     assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
     assert outcome.fallback is None
+
+
+def test_approval_verifier_dependency_failures_have_no_unverified_fallback() -> None:
+    request = valid_request()
+
+    class RaisingVerifier:
+        def verify(self, artifact_ref: ImmutableArtifactRef) -> GuidelineApprovalVerificationSuccess:
+            raise RuntimeError("synthetic verifier outage")
+
+    class MutatingInputVerifier(SyntheticApprovalVerifier):
+        def verify(self, artifact_ref: ImmutableArtifactRef) -> GuidelineApprovalVerificationSuccess:
+            object.__setattr__(artifact_ref, "artifact_code", "mutated")
+            return super().verify(artifact_ref)
+
+    class MismatchedSuccessVerifier(SyntheticApprovalVerifier):
+        def verify(self, artifact_ref: ImmutableArtifactRef) -> GuidelineApprovalVerificationSuccess:
+            return GuidelineApprovalVerificationSuccess(
+                artifact_ref=artifact("different-approved-artifact"),
+                verifier_artifact_ref=artifact("guideline-approval-verifier"),
+            )
+
+    for verifier in (RaisingVerifier(), MutatingInputVerifier(), MismatchedSuccessVerifier()):
+        outcome = _finalize_guideline_card(request, approval_verifier=verifier)
+        assert outcome.status is GuidelineCardStatus.NO_RESULT
+        assert outcome.reason is GuidelineCardReason.DEPENDENCY_UNAVAILABLE
+        assert outcome.fallback_code is GuidelineFallbackCode.DEPENDENCY_UNAVAILABLE
+        assert outcome.fallback is None
 
 
 def test_malformed_approved_binding_fails_closed_without_attribute_error() -> None:
