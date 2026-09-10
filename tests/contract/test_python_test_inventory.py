@@ -1,9 +1,18 @@
+import runpy
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 INVENTORY_CHECKER = PROJECT_ROOT / "scripts" / "ci" / "check_python_test_inventory.py"
+
+
+def test_python_test_inventory_normalizes_windows_execution_targets_to_posix_tokens() -> None:
+    execution_target = runpy.run_path(str(INVENTORY_CHECKER))["_execution_target"]
+
+    assert execution_target(PureWindowsPath("tests/integration/test_outbox_publisher.py")) == (
+        "tests/integration/test_outbox_publisher.py"
+    )
 
 
 def _run_inventory_check(root: Path) -> subprocess.CompletedProcess[str]:

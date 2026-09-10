@@ -4,7 +4,7 @@ import argparse
 import shlex
 import sys
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import yaml  # type: ignore[import-untyped]
 
@@ -78,6 +78,10 @@ IGNORED_DIRECTORY_NAMES = {
 
 def _is_under(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
+
+
+def _execution_target(path: PurePath) -> str:
+    return path.as_posix()
 
 
 def _discover_python_tests(root: Path) -> set[Path]:
@@ -318,14 +322,18 @@ def _validate_execution_configs(root: Path) -> list[str]:
                 + "\n".join(f"  {config_path}: {option}" for option in unsupported_options)
             )
 
-        missing_targets = [str(path) for path in required_targets if str(path) not in pytest_targets]
+        missing_targets = [
+            _execution_target(path) for path in required_targets if _execution_target(path) not in pytest_targets
+        ]
         if missing_targets:
             errors.append(
                 f"Default Python test targets missing from {config_path}:\n"
                 + "\n".join(f"  {target}" for target in missing_targets)
             )
 
-        unexpected_opt_in = [str(path) for path in INTENTIONAL_OPT_IN_FILES if str(path) in pytest_targets]
+        unexpected_opt_in = [
+            _execution_target(path) for path in INTENTIONAL_OPT_IN_FILES if _execution_target(path) in pytest_targets
+        ]
         if unexpected_opt_in:
             errors.append(
                 f"Opt-in Python tests unexpectedly included by {config_path}:\n"
