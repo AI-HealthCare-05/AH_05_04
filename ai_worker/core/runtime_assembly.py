@@ -19,9 +19,17 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
 from ai_worker.adapters.factory import create_redis_client, create_stream_adapter
+from ai_worker.adapters.postgresql_protected_retrieval import (
+    PostgresqlAuthorizationGuard,
+    PostgresqlAuthorizationLedger,
+    PostgresqlProtectedArtifactOperation,
+    PostgresqlProtectedAuditJournal,
+    PostgresqlTrustedClock,
+)
 from ai_worker.adapters.redis_dead_letter_stream import (
     RedisDeadLetterStreamPublisher,
 )
@@ -133,6 +141,64 @@ def create_worker_engine(config: Config) -> AsyncEngine:
         echo=config.SQLALCHEMY_ECHO,
         pool_size=config.DB_CONNECTION_POOL_MAXSIZE,
         connect_args={"timeout": config.DB_CONNECT_TIMEOUT},
+    )
+
+
+@dataclass(frozen=True)
+class ProtectedRetrievalAdapters:
+    """한 protected transaction과 수명을 같이하는 adapter 묶음입니다."""
+
+    clock: PostgresqlTrustedClock
+    ledger: PostgresqlAuthorizationLedger
+    journal: PostgresqlProtectedAuditJournal
+    guard: PostgresqlAuthorizationGuard
+    operation: PostgresqlProtectedArtifactOperation
+
+
+def create_protected_retrieval_engine(config: Config) -> AsyncEngine:
+    """명시적으로 활성화된 설정에 대해서만 격리 engine을 생성합니다."""
+
+    if not config.PROTECTED_RETRIEVAL_ENABLED:
+        raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+    protected_url = config.protected_database_url
+    return create_async_engine(
+        protected_url,
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=NullPool,
+        connect_args={
+            "timeout": config.DB_CONNECT_TIMEOUT,
+            "server_settings": {"application_name": "protected-retrieval-worker"},
+        },
+    )
+
+
+async def create_protected_retrieval_adapters(
+    session: AsyncSession,
+    config: Config,
+    *,
+    write_payload: bytes | None = None,
+    on_read: Callable[[bytes], Awaitable[None]] | None = None,
+) -> ProtectedRetrievalAdapters:
+    """caller-owned transaction에만 연결되는 protected adapter를 만듭니다."""
+
+    if not config.PROTECTED_RETRIEVAL_ENABLED or config.PROTECTED_DB_SCHEMA is None:
+        raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+    if not session.in_transaction():
+        raise RuntimeError("PROTECTED_RETRIEVAL_TRANSACTION_REQUIRED")
+    schema = config.PROTECTED_DB_SCHEMA.get_secret_value()
+    clock = await PostgresqlTrustedClock.from_session(session)
+    return ProtectedRetrievalAdapters(
+        clock=clock,
+        ledger=PostgresqlAuthorizationLedger(session, schema),
+        journal=PostgresqlProtectedAuditJournal(session, schema, clock),
+        guard=PostgresqlAuthorizationGuard(session, schema),
+        operation=PostgresqlProtectedArtifactOperation(
+            session,
+            schema,
+            write_payload=write_payload,
+            on_read=on_read,
+        ),
     )
 
 

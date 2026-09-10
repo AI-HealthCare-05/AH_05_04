@@ -8,7 +8,9 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.pool import NullPool
 
+from ai_worker.core import runtime_assembly
 from ai_worker.core.config import Config
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.errors import WorkerError
@@ -28,11 +30,13 @@ from ai_worker.core.quarantine import (
 )
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.runtime_assembly import (
+    ProtectedRetrievalAdapters,
     RoutingResultStore,
     SessionScopedDeliveryExecution,
     SessionScopedRejectedDeliveryExecution,
     build_worker_runtime,
     create_clova_ocr_engine,
+    create_protected_retrieval_engine,
     create_session_factory,
 )
 from ai_worker.core.stream import WorkerDelivery
@@ -124,6 +128,50 @@ def test_config_builds_database_url_with_special_characters() -> None:
 
     assert rendered.startswith("postgresql+asyncpg://worker:")
     assert "p%40ss%2Fw%25rd" in rendered
+
+
+def test_protected_engine_factory_refuses_disabled_configuration() -> None:
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
+        create_protected_retrieval_engine(_config())
+
+
+def test_protected_runtime_surface_is_explicit() -> None:
+    assert ProtectedRetrievalAdapters
+
+
+def test_protected_engine_uses_separate_short_lived_non_logging_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    expected_engine = object()
+
+    def fake_create_async_engine(url, **options):
+        captured["url"] = url
+        captured.update(options)
+        return expected_engine
+
+    monkeypatch.setattr(runtime_assembly, "create_async_engine", fake_create_async_engine)
+    config = _config(
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST="protected.test",
+        PROTECTED_DB_NAME="protected_test",
+        PROTECTED_DB_USER="protected_actor",
+        PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_SCHEMA="synthetic_protected",
+    )
+
+    engine = create_protected_retrieval_engine(config)
+
+    assert engine is expected_engine
+    assert captured["url"] == config.protected_database_url
+    assert captured["url"] != config.database_url
+    assert captured["echo"] is False
+    assert captured["pool_pre_ping"] is True
+    assert captured["poolclass"] is NullPool
+    assert captured["connect_args"] == {
+        "timeout": config.DB_CONNECT_TIMEOUT,
+        "server_settings": {"application_name": "protected-retrieval-worker"},
+    }
 
 
 def test_config_rejects_heartbeat_interval_not_shorter_than_lease() -> None:
