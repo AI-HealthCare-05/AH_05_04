@@ -38,6 +38,10 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
+## 승인된 추가 목표
+
+- [Track B 일정 정합화 v1 (#417)](./targets/post-mvp-1/track-b-schedule-reconciliation-v1.md): PR #424 양 도메인 승인 및 Decision 증빙 연결. #423 DB 구현·리뷰 대기; 일정 API #202·실제 알림 #203 연동은 별도.
+
 ## Proposed 계약
 
 - [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): 알림 저장·게시·읽음·재알림 상세 제안. PD-203 도메인 조율 대기·미구현이며 #202와의 통합 접점 및 검증 계획 포함.

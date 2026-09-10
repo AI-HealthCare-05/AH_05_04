@@ -50,6 +50,7 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "prescription_version": frozenset({"backend/app/repositories/prescription_repository.py"}),
     "prescription_version_medication": frozenset({"backend/app/repositories/prescription_repository.py"}),
     "medication_candidate_search_result": frozenset({"backend/app/repositories/medication_candidate_repository.py"}),
+    "medication_schedule_audit": frozenset({"backend/app/repositories/medication_schedule_repository.py"}),
     "checkin_audit": frozenset({"backend/app/repositories/medication_checkin_repository.py"}),
     "ai_job_intake_context": frozenset({"backend/app/repositories/rag_runtime_repository.py"}),
     "ai_job_execution_context": frozenset({"backend/app/repositories/rag_runtime_repository.py"}),
@@ -63,6 +64,7 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
 }
 
 MODEL_TABLES = {
+    "MedicationScheduleAudit": "medication_schedule_audit",
     "SourceManagementPermission": "source_management_permission",
     "SourceManagementAudit": "source_management_audit",
     "RagSource": "rag_source",

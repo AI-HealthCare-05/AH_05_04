@@ -794,7 +794,7 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
             assert snapshot.management_lock_marker == 0
             assert row_hash(snapshot) == old_hashes[str(snapshot.id)]
     async with engine.connect() as connection:
-        assert validation_errors("3984b5c6d7e8", await read_database_head_state(connection)) == []
+        assert validation_errors("423a1b2c3d4e", await read_database_head_state(connection)) == []
         rows = (
             (
                 await connection.execute(

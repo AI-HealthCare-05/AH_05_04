@@ -9,6 +9,7 @@
 - [Transactional Outbox와 Redis Stream 계약 v1](./outbox-stream-v1.md)
 - [처방 버전 계약 v1](./prescription-version-v1.md)
 - [Check-in과 Barrier 계약 v1](./checkin-v1.md)
+- [Track B 일정 정합화 v1 (#417)](./track-b-schedule-reconciliation-v1.md): PR #424 승인 목표; #423 DB 구현 및 PD-423 보완은 리뷰·머지 대기.
 - [OCR 비-RAG LLM 구조화 계약 v1](./ocr-llm-structuring-v1.md)
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./medication-identification-v1.md)
 - [Safety Result 계약 v1](./safety-result-v1.md) — Approved v4 이력과 Track C 공통 Safety 기준
