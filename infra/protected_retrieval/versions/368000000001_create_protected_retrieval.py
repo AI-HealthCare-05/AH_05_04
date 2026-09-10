@@ -186,7 +186,7 @@ def upgrade() -> None:
     op.execute(
         f"""
         CREATE TABLE {schema}.audit_entry (
-            sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            sequence bigint PRIMARY KEY CHECK (sequence > 0),
             event_id uuid NOT NULL UNIQUE,
             event_kind text NOT NULL CHECK (event_kind IN ('AUTHORIZATION','OPERATION')),
             operation_key text,
@@ -245,6 +245,34 @@ def upgrade() -> None:
             END
             """,
         ),
+        "load_approval": (
+            "requested_source_event_id text",
+            "jsonb",
+            f"""
+            DECLARE resolved jsonb;
+            BEGIN
+                PERFORM {schema}.resolve_principal();
+                SELECT evidence INTO resolved FROM {schema}.approval_evidence
+                WHERE source_event_id = requested_source_event_id;
+                IF resolved IS NULL THEN
+                    RAISE EXCEPTION USING MESSAGE = 'APPROVAL_NOT_VERIFIED', ERRCODE = 'P0001';
+                END IF;
+                RETURN resolved;
+            END
+            """,
+        ),
+        "audit_checkpoint": (
+            "",
+            "jsonb",
+            f"""
+            DECLARE head {schema}.audit_head%ROWTYPE;
+            BEGIN
+                PERFORM {schema}.resolve_principal();
+                SELECT * INTO head FROM {schema}.audit_head WHERE singleton FOR UPDATE;
+                RETURN jsonb_build_object('sequence', head.sequence, 'entry_sha256', head.entry_sha256);
+            END
+            """,
+        ),
         "find_grant": (
             "request_body jsonb",
             "jsonb",
@@ -297,7 +325,38 @@ def upgrade() -> None:
                 RETURN QUERY SELECT entry_body FROM {schema}.audit_entry
                 WHERE event_kind = 'OPERATION'
                   AND operation_key = request_body->>'operation_key'
+                  AND entry_body->'principal' = request_body->'principal'
+                  AND entry_body->'target_ref' = request_body->'target_ref'
+                  AND entry_body->>'protected_action' = request_body->>'action'
+                  AND entry_body->>'dataset_id' = request_body#>>'{{dataset,dataset_id}}'
+                  AND entry_body->>'dataset_version' = request_body#>>'{{dataset,dataset_version}}'
+                  AND entry_body->>'manifest_sha256' = request_body#>>'{{dataset,manifest_sha256}}'
+                  AND entry_body->>'protected_artifact_sha256' =
+                      request_body#>>'{{dataset,protected_artifact_sha256}}'
                 ORDER BY sequence;
+            END
+            """,
+        ),
+        "lock_operation": (
+            "request_body jsonb, requested_grant_id uuid",
+            "void",
+            f"""
+            BEGIN
+                IF {schema}.resolve_principal() <> request_body->'principal' THEN
+                    RAISE EXCEPTION USING MESSAGE = 'GUARD_BINDING_MISMATCH', ERRCODE = 'P0001';
+                END IF;
+                PERFORM 1 FROM {schema}.protected_dataset
+                WHERE dataset_id = request_body#>>'{{dataset,dataset_id}}'
+                  AND dataset_version = request_body#>>'{{dataset,dataset_version}}' FOR UPDATE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION USING MESSAGE = 'DATASET_STATE_MISMATCH', ERRCODE = 'P0001';
+                END IF;
+                PERFORM 1 FROM {schema}.authorization_grant
+                WHERE grant_id = requested_grant_id FOR UPDATE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION USING MESSAGE = 'AUTHORIZATION_NOT_FOUND', ERRCODE = 'P0001';
+                END IF;
+                PERFORM 1 FROM {schema}.audit_head WHERE singleton FOR UPDATE;
             END
             """,
         ),
@@ -307,19 +366,55 @@ def upgrade() -> None:
             f"""
             DECLARE head {schema}.audit_head%ROWTYPE;
             DECLARE inserted_sequence bigint;
+            DECLARE latest_outcome text;
+            DECLARE next_outcome text := entry_body->>'outcome';
             BEGIN
                 IF {schema}.resolve_principal() <> request_body->'principal' THEN
                     RAISE EXCEPTION USING MESSAGE = 'AUDIT_BINDING_MISMATCH', ERRCODE = 'P0001';
                 END IF;
                 SELECT * INTO head FROM {schema}.audit_head WHERE singleton FOR UPDATE;
+                IF entry_body->>'event_kind' <> 'OPERATION'
+                   OR entry_body->>'operation_key' <> request_body->>'operation_key'
+                   OR entry_body->>'request_id' <> request_body->>'request_id'
+                   OR entry_body->'principal' <> request_body->'principal'
+                   OR entry_body->>'protected_action' <> request_body->>'action'
+                   OR entry_body->'target_ref' <> request_body->'target_ref'
+                   OR entry_body->>'dataset_id' <> request_body#>>'{{dataset,dataset_id}}'
+                   OR entry_body->>'dataset_version' <> request_body#>>'{{dataset,dataset_version}}'
+                   OR entry_body->>'manifest_sha256' <> request_body#>>'{{dataset,manifest_sha256}}'
+                   OR entry_body->>'protected_artifact_sha256' <>
+                      request_body#>>'{{dataset,protected_artifact_sha256}}'
+                   OR entry_body->>'hmac_key_version' <> request_body#>>'{{dataset,hmac_key_version}}'
+                   OR (entry_body->>'dataset_state_revision')::integer <>
+                      (request_body#>>'{{dataset,state_revision}}')::integer THEN
+                    RAISE EXCEPTION USING MESSAGE = 'AUDIT_BINDING_MISMATCH', ERRCODE = 'P0001';
+                END IF;
+                SELECT prior.entry_body->>'outcome' INTO latest_outcome
+                FROM {schema}.audit_entry AS prior
+                WHERE prior.event_kind = 'OPERATION'
+                  AND prior.operation_key = request_body->>'operation_key'
+                  AND prior.entry_body->'principal' = request_body->'principal'
+                  AND prior.entry_body->'target_ref' = request_body->'target_ref'
+                ORDER BY prior.sequence DESC LIMIT 1;
+                IF NOT (
+                    (next_outcome = 'INTENT' AND (latest_outcome IS NULL OR latest_outcome = 'DENIED'))
+                    OR (next_outcome = 'DENIED' AND (
+                        latest_outcome IS NULL OR latest_outcome = 'DENIED'
+                        OR (latest_outcome = 'INTENT' AND (entry_body->>'closes_intent')::boolean)
+                    ))
+                    OR (next_outcome IN ('SUCCEEDED','UNKNOWN') AND latest_outcome = 'INTENT')
+                ) THEN
+                    RAISE EXCEPTION USING MESSAGE = 'AUDIT_TRANSITION_INVALID', ERRCODE = 'P0001';
+                END IF;
                 IF COALESCE(entry_body->>'previous_entry_sha256', '') <> COALESCE(head.entry_sha256::text, '') THEN
                     RAISE EXCEPTION USING MESSAGE = 'AUDIT_CAS_CONFLICT', ERRCODE = 'P0001';
                 END IF;
                 INSERT INTO {schema}.audit_entry (
-                    event_id, event_kind, operation_key, entry_body, previous_entry_sha256,
+                    sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256,
                     entry_sha256, recorded_at
                 ) VALUES (
-                    (entry_body->>'event_id')::uuid, 'OPERATION', request_body->>'operation_key', entry_body,
+                    head.sequence + 1, (entry_body->>'event_id')::uuid, 'OPERATION',
+                    request_body->>'operation_key', entry_body,
                     NULLIF(entry_body->>'previous_entry_sha256', '')::{schema}.sha256_hex,
                     (entry_body->>'entry_sha256')::{schema}.sha256_hex,
                     (entry_body->>'recorded_at')::timestamptz
@@ -478,6 +573,7 @@ def upgrade() -> None:
             "": "",
             "requested_dataset_id text, requested_dataset_version text": "text,text",
             "request_body jsonb": "jsonb",
+            "requested_source_event_id text": "text",
             "requested_grant_id uuid": "uuid",
             "request_body jsonb, entry_body jsonb": "jsonb,jsonb",
             "request_body jsonb, requested_grant_id uuid": "jsonb,uuid",

@@ -171,10 +171,13 @@ async def test_protected_roles_functions_and_default_privileges_are_locked_down(
             approved_functions = {
                 "resolve_principal",
                 "load_dataset",
+                "load_approval",
+                "audit_checkpoint",
                 "find_grant",
                 "require_grant",
                 "operation_history",
                 "append_operation",
+                "lock_operation",
                 "issue_capability",
                 "consume_capability",
                 "read_artifact",
