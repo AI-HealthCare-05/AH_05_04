@@ -1,7 +1,7 @@
 # PD-418 — UNCONFIRMED backlog 조회 제안
 
 - 상태: Proposed · Backend/Frontend 승인 대기
-- 구현 상태: PR #426 브랜치의 repository·service·DTO·v1 router와 합성 HTTP 통합 테스트. 병합·계약 승인 대기.
+- 구현 상태: repository·service·DTO·미등록 router와 테스트 앱의 합성 HTTP 통합 테스트. 계약 승인 대기.
 - 구현: 권가빈 (`hazelnutflavoured`), #418의 Backend 담당 변경 기준
 - 책임 리뷰: 송은영 (`phina-io`, Backend/API/SELF ownership), 남한솔 (`solia142`, Frontend 소비 계약)
 - 이슈: [#418](https://github.com/AI-HealthCare-05/AH_05_04/issues/418)
@@ -19,7 +19,9 @@ Cursor는 마지막으로 반환된 Check-in UUID다. 소유권을 확인한 저
 
 새 DB schema, 상태, scheduler, 의료 판단, Frontend 구현은 없다. #202 PUT, #203 알림, #417 schedule contract 파일을 변경하지 않는다. 새 조회 메서드는 기존 repository에 추가하고 새 DTO/service/router를 분리한다.
 
-초기 구현은 공유 계약 사전 조율을 위해 router 등록을 보류했다. 2026-09-10 사용자 요청으로 PR 브랜치의 `apis/v1/__init__.py`에 등록하고, 이미 병합된 #413 Check-in PUT과 실제 앱 GET의 HTTP 통합 테스트를 추가했다. Backend 송은영은 등록 전 HEAD를 승인했으나 후속 원격 변경으로 현재 DISMISSED 상태이며, Frontend 남한솔은 cursor 404 복구 명시를 요청했다. 아래 복구 흐름을 포함한 변경 HEAD의 Backend/Frontend 승인은 남아 있으며, 구현 요청을 담당 리뷰어의 계약 승인으로 간주하지 않는다. 이 PR 구현과 테스트만으로 승인, Current 승격, #418 종료를 주장하지 않는다.
+API route·DTO·오류는 공유 계약 변경이므로 두 담당 리뷰어의 계약 승인 전에는 `apis/v1/__init__.py`에 등록하지 않는다. `8d2909eb`의 선등록은 2026-09-10 Backend blocker에 따라 되돌렸다. 테스트 앱에서만 후보 backlog router를 등록해 병합된 #413 PUT 구현과 HTTP 통합을 검증하며, 실제 앱의 route 목록·OpenAPI 미노출 및 HTTP 404를 회귀 테스트로 고정한다.
+
+Frontend의 `b213cc01` 승인과 과거 Backend 검토를 등록 변경의 공동 승인으로 간주하지 않는다. 계약 승인 후 등록과 실제 앱 검증을 추가하고 두 담당 리뷰어가 그 등록 HEAD를 승인하기 전에는 병합하지 않는다. Draft를 유지하며 Current 승격·#138 Frontend 소비 완료·#418 종료를 주장하지 않는다.
 
 ## Pagination 한계
 

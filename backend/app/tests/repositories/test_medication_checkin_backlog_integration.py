@@ -3,11 +3,16 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ApiError
+from app.apis.v1 import v1_routers
+from app.apis.v1.medication_checkin_backlog_routers import medication_checkin_backlog_router
+from app.core.errors import ApiError, register_exception_handlers
+from app.core.no_store_middleware import NoStoreMiddleware
+from app.core.validation_trace_middleware import RequestTraceMiddleware
 from app.dependencies.security import get_request_user
 from app.main import app, fastapi_app
 from app.models.medication_schedules import CheckinAudit, MedicationCheckin, MedicationCheckinStatus, MedicationSchedule
@@ -17,6 +22,29 @@ from app.services.medication_checkin_backlog import MedicationCheckinBacklogServ
 from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
 from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
 from app.tests.repositories.test_medication_schedule_repository_integration import _create_user_with_self_profile
+
+
+@pytest.fixture
+def candidate_app():
+    candidate = FastAPI()
+    candidate.include_router(v1_routers)
+    candidate.include_router(medication_checkin_backlog_router, prefix="/api/v1")
+    register_exception_handlers(candidate)
+    candidate.dependency_overrides = fastapi_app.dependency_overrides
+    return candidate
+
+
+@pytest.fixture
+def candidate_http_app(candidate_app):
+    return RequestTraceMiddleware(NoStoreMiddleware(candidate_app))
+
+
+async def test_backlog_is_not_registered_before_contract_approval():
+    url = "/api/v1/medication-checkins/unconfirmed"
+    assert url not in fastapi_app.openapi()["paths"]
+    assert not any(getattr(route, "path", None) == url for route in fastapi_app.routes)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get(url)).status_code == 404
 
 
 async def _seed(session, *, count=3):
@@ -121,7 +149,9 @@ async def test_historical_snapshot_and_refetch_after_stale_revision(db_session: 
     assert (await backlog.list_owned(user_id=owner.id)).items == []
 
 
-async def test_http_contract_auth_ownership_validation_and_no_mutation(db_session: AsyncSession, monkeypatch):
+async def test_http_contract_auth_ownership_validation_and_no_mutation(
+    db_session: AsyncSession, monkeypatch, candidate_app, candidate_http_app
+):
     owner, _, records = await _seed(db_session, count=3)
     intruder, _ = await _create_user_with_self_profile(db_session, label="backlog-other")
     owner_id, intruder_id = owner.id, intruder.id
@@ -129,7 +159,7 @@ async def test_http_contract_auth_ownership_validation_and_no_mutation(db_sessio
     record_ids = {str(row[0].id) for row in records}
     await db_session.commit()
     url = "/api/v1/medication-checkins/unconfirmed"
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=candidate_http_app), base_url="http://test") as client:
         unauthorized = await client.get(url)
         assert unauthorized.status_code == 401
         assert unauthorized.json()["code"] == "UNAUTHORIZED"
@@ -175,7 +205,7 @@ async def test_http_contract_auth_ownership_validation_and_no_mutation(db_sessio
     assert records[0][0].revision == 1
     assert await db_session.scalar(select(func.count()).select_from(CheckinAudit)) == 0
     assert await db_session.scalar(select(func.count()).select_from(MedicationCheckin)) == 3
-    schema = fastapi_app.openapi()
+    schema = candidate_app.openapi()
     operation = schema["paths"][url]["get"]
     for status in ("401", "404", "422"):
         assert operation["responses"][status]["content"]["application/json"]["schema"] == {
@@ -192,14 +222,16 @@ async def test_service_rejects_unbounded_page(db_session: AsyncSession, limit: i
 
 
 @pytest.mark.parametrize("status", ["TAKEN", "NOT_TAKEN"])
-async def test_http_put_then_backlog_refetch_and_cursor_recovery(db_session: AsyncSession, monkeypatch, status: str):
+async def test_http_put_then_backlog_refetch_and_cursor_recovery(
+    db_session: AsyncSession, monkeypatch, status: str, candidate_http_app
+):
     owner, _, records = await _seed(db_session, count=3)
     owner_id = owner.id
     record_ids = {str(row[0].id) for row in records}
     await db_session.commit()
     monkeypatch.setitem(fastapi_app.dependency_overrides, get_request_user, lambda: SimpleNamespace(id=owner_id))
     url = "/api/v1/medication-checkins/unconfirmed"
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=candidate_http_app), base_url="http://test") as client:
         first = await client.get(url, params={"limit": 1})
         assert first.status_code == 200
         item = first.json()["data"]["items"][0]

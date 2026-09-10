@@ -1,7 +1,7 @@
 # Track B UNCONFIRMED backlog v1
 
 - 문서 상태: Proposed · 리뷰 대기
-- 구현 상태: PR #426 브랜치에서 v1 router 등록 및 #413 PUT→GET HTTP 통합 구현, 병합·계약 승인 대기
+- 구현 상태: 조회 구현 및 테스트 앱의 #413 PUT→GET HTTP 통합 완료. 실제 v1 router 등록 보류, 계약 승인 대기
 - Decision: [PD-418](../../governance/decisions/2026-09-10-unconfirmed-backlog-418.md)
 - 기존 목표: [Check-in v1](../targets/post-mvp-1/checkin-v1.md)
 - 구현 담당 권가빈; 책임 리뷰 송은영(Backend), 남한솔(Frontend)
@@ -67,6 +67,6 @@ UNCONFIRMED만 `scheduled_at ASC, checkin_id ASC`로 반환한다. 비활성 과
 
 ## 검증과 남은 승인
 
-합성 PostgreSQL 테스트에서 historical snapshot, 동일시각 tie-break, corrected cursor, 보완 제외와 revision 충돌, SELF ownership, 조회 무변경 및 후보 HTTP 인증/검증/오류/no-store를 검증한다. 실제 앱의 HTTP/OpenAPI에 route가 등록되고 공통 인증·오류·no-store를 따르는지 검사한다. #413의 실제 PUT으로 TAKEN/NOT_TAKEN 보완 후 목록 제외, 동일 키 replay, stale revision 409 후 재조회, 보완된 cursor로 다음 페이지 조회 및 cursor 404 후 첫 페이지 재요청을 검증한다.
+합성 PostgreSQL 테스트에서 historical snapshot, 동일시각 tie-break, corrected cursor, 보완 제외와 revision 충돌, SELF ownership, 조회 무변경 및 후보 HTTP 인증/검증/오류/no-store를 검증한다. 실제 앱의 route 목록·OpenAPI에 backlog route가 없고 HTTP 요청이 404인지 검사한다. 테스트 앱에서만 backlog router를 등록하고 실제 v1 PUT router와 공통 인증·오류·no-store를 검증한다. #413의 실제 PUT으로 TAKEN/NOT_TAKEN 보완 후 목록 제외, 동일 키 replay, stale revision 409 후 재조회, 보완된 cursor로 다음 페이지 조회 및 cursor 404 후 첫 페이지 재요청을 검증한다.
 
-2026-09-10 사용자 요청으로 PR 브랜치에 router 등록과 병합된 #413 PUT-GET HTTP 연동을 추가했다. Backend 송은영의 기존 승인은 등록 전 HEAD 기준이며 후속 원격 변경으로 현재 DISMISSED 상태다. Frontend 남한솔의 cursor 복구 보완 요청을 본 문서에 반영했다. 변경된 HEAD의 담당 리뷰어 승인과 #138 Frontend 소비 검증은 남아 있다. 계약 승인을 대리하거나 Current로 승격하지 않으며, 현재 문서는 병합된 runtime 계약이나 승인된 target을 대체하지 않는다.
+2026-09-10 Backend blocker에 따라 실제 v1 router 등록을 되돌렸다. Frontend의 `b213cc01` 승인과 과거 Backend 검토는 등록을 포함한 새 HEAD의 공동 승인을 대체하지 않는다. 두 담당 리뷰어의 계약 승인 후 별도 등록 변경과 실제 앱 HTTP/OpenAPI 검증을 진행하고, 그 등록 HEAD의 승인 전에는 병합하지 않는다. #138 Frontend 소비 검증과 계약 상태 전환은 남아 있다. 현재 문서는 병합된 runtime 계약이나 승인된 target을 대체하지 않는다.
