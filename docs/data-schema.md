@@ -39,7 +39,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
 | RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component` | #164 최소 DB 기반과 #165 원본 Artifact 참조. 공식 Source 승인·Catalog 적재·RAG 검색·Runtime 활성화는 후속 범위 |
 
-본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·기록과 감사 로그는 아직 목표 계약과 현재 구현을 구분합니다.
+본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·occurrence와 Check-in 저장·정정 경계는 아래 분할 구현 상태를 따르며, B4 공개 API와 Track C 상세 구현은 아직 목표 계약이다.
 
 ## 변경 원칙
 
@@ -451,8 +451,62 @@ aware datetime은 저장 전에 UTC instant로 정규화하며 PostgreSQL `times
 
 이 revision의 downgrade는 세 테이블을 잠근 뒤 Track B row가 한 건이라도 있으면 중단한다. 비어 있는
 개발·검증 환경에서만 occurrence → schedule time → schedule 순서로 신규 테이블을 제거한다. 실제 데이터가
-생성된 환경은 downgrade로 이력을 삭제하지 않고 동일 schema에서 forward-fix한다. 14일 rolling 생성,
-Version 변경 시 취소, Check-in·API·Notification은 B2~B5 후속 범위다.
+생성된 환경은 downgrade로 이력을 삭제하지 않고 동일 schema에서 forward-fix한다.
+
+### Track B Rolling Occurrence·Version 변경 처리 (#200)
+
+Scheduler는 `Asia/Seoul`로 확인된 서비스 시간대에서 실행하며 실행일을 포함한 14개 local date만
+생성한다. 활성 Prescription Version에 속한 `ACTIVE` Schedule의 현재 revision time만 대상으로 삼고,
+Schedule 시작일·종료일로 범위를 자른다. `(medication_schedule_time_id, scheduled_local_date)` unique와
+PostgreSQL `ON CONFLICT DO NOTHING`을 함께 사용하므로 같은 horizon을 반복하거나 여러 실행이 경쟁해도
+occurrence는 중복되지 않는다. `scheduled_at`과
+`max(다음 KST 자정, scheduled_at + 4시간)`인 `confirmation_deadline_at`은 UTC instant로 snapshot한다.
+종료일이 지난 활성 Schedule을 `ENDED`로 전환하는 주체도 Scheduler다.
+운영 scheduler는 app image의 one-shot management command
+`uv run --no-sync python -m app.commands.generate_medication_occurrences`를 KST 날짜가 바뀐 뒤 최소 하루 한 번
+호출한다. command는 실행마다 독립 transaction을 열어 성공 시 commit하고 실패 시 rollback하므로 cron이나
+동등한 배포 scheduler가 안전하게 재시도할 수 있다. 구체적인 실행 주기는 배포 scheduler가 관리하며,
+여러 실행이 겹쳐도 위 unique·conditional insert가 중복을 막는다.
+
+Schedule 생성은 SELF 소유권과 active Version을 확인할 때 부모 `PRESCRIPTION` row를 먼저 잠근다.
+처방 정정도 같은 row부터 잠그므로 active 확인과 insert 사이에 Version이 교체되는 TOCTOU를 막는다.
+처방 정정 transaction은 `PRESCRIPTION → AI_JOB → domain row → OUTBOX` 잠금 순서에서 이전 Version의
+`effective_at` 이후 `PENDING` occurrence만 `CANCELLED`로 바꾼다. effective 시각 이전 occurrence와
+`CLOSED|CANCELLED` occurrence, Schedule·ScheduleTime 이력은 그대로 보존하고 새 Version에 Schedule이나
+occurrence를 복사하지 않는다. Outbox 취소 대상은 이 transaction에서 실제 `STALE`로 전환된
+`PENDING|PROCESSING|RETRY_WAIT` Job ID로 제한하므로, 이미 `COMPLETED`인 Job의 미발행 이벤트는 변경하지
+않는다. 취소된 occurrence ID 목록은 B5가 같은 transaction에서 미전달 알림만
+취소할 수 있는 동기 연동 경계이며, Notification 저장 구현 자체는 B5 범위다. B5 구현 PR은
+`get_prescription_version_medication_invalidation_service`에서 같은 session을 사용하는 Notification 취소
+adapter를 반드시 주입하고 Version 정정 transaction의 동시 취소 테스트를 추가해야 한다. Check-in·API는
+B3~B4 후속 범위다.
+
+### Track B Check-in·Audit·UNCONFIRMED 처리 (#201)
+
+Revision `201a1b2c3d4e`는 `medication_checkin`과 `checkin_audit`을 추가한다. 현재 Check-in은
+`occurrence_id` unique로 occurrence마다 하나만 저장하고 `TAKEN|NOT_TAKEN|UNCONFIRMED`, 양수 revision,
+`TAKEN` 외 상태의 `taken_at IS NULL`을 DB CHECK로도 제한한다. 정정 시 현재 row의 revision을 하나 올리며
+이전·이후 상태와 revision, 변경 사용자·시각을 `checkin_audit`에 append한다. Audit은 DB trigger로
+UPDATE·DELETE를 거부하며 `reason_code` 컬럼이나 임의 enum을 만들지 않는다. Check-in 이력이 있는 환경은
+downgrade로 두 테이블을 제거하지 않고 forward-fix한다.
+
+Repository는 occurrence부터 `FOR UPDATE`로 잠그고 SELF parent chain을 확인한다. 최초 사용자 쓰기와 deadline
+Scheduler는 동일한 occurrence unique 제약에 `ON CONFLICT DO NOTHING`을 적용하므로 경쟁해도 현재 row는
+하나뿐이다. 정정은 `expected_revision`이 현재 revision과 같을 때만 Audit과 현재값을 함께 기록한다.
+다른 사용자의 occurrence와 존재하지 않는 occurrence는 같은 `404` 경계로 숨기며, 사용자는
+`UNCONFIRMED`를 직접 설정할 수 없다.
+
+deadline 처리는 `confirmation_deadline_at <= now`, `PENDING`, 결과 없음인 occurrence를 최대 500개씩
+`FOR UPDATE SKIP LOCKED`로 나눠 처리한다. 운영 scheduler는 one-shot command
+`uv run --no-sync python -m app.commands.generate_unconfirmed_checkins`를 deadline 처리 주기에 맞춰 반복 호출해야
+하며 각 실행은 독립 transaction에서 성공 시 commit, 실패 시 rollback한다. 소유 사용자별 미확인 backlog와
+Audit 조회 Repository 경계는 B4 API가 사용한다. API DTO·OpenAPI·동기 Idempotency-Key snapshot 연결은 B4,
+Notification은 B5 범위다.
+
+Track C 연동은 `CheckinRevisionInvalidationPort.invalidate_for_checkin_revision` 동기 경계로 고정한다. 현재
+`NOT_TAKEN` revision을 `TAKEN` 또는 새 `NOT_TAKEN` revision으로 정정할 때 Track B transaction 안에서 호출하며,
+Track C adapter는 같은 session과 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE →
+SUPPORT_ACTION_PLAN` 잠금 순서를 사용해야 한다. Track C 저장 모델과 실제 adapter 구현은 후속 범위다.
 
 Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐고, RAG/Eval 목표 스키마는 분할 PR 단위로 migration·모델·repository를 반영합니다. 이 섹션은 구현 상태를 함께 표시하며, 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK와 이번 분할 PR의 신규 RAG/Eval ID는 호환을 위해 `CHAR(36)`을 사용합니다. PostgreSQL native `UUID` 전환은 별도 승인 migration 범위입니다.
 

@@ -1,7 +1,9 @@
 """Production Source version 생성·검증 계약입니다."""
 
+import hashlib
 import re
 import unicodedata
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -34,8 +36,50 @@ class SourceVersionKind(StrEnum):
     INTERNAL = "INTERNAL"
 
 
+class SourceVersionFailureCode(StrEnum):
+    """Source version 검증 실패를 외부에 안전하게 전달하는 고정 코드입니다."""
+
+    SOURCE_VERSION_INVALID = "SOURCE_VERSION_INVALID"
+    SOURCE_VERSION_BINDING_MISMATCH = "SOURCE_VERSION_BINDING_MISMATCH"
+
+
 class SourceVersionValidationError(ValueError):
     """Source version이 Production 계약을 충족하지 않습니다."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_code: SourceVersionFailureCode = SourceVersionFailureCode.SOURCE_VERSION_INVALID,
+    ) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidSourceVersionAudit:
+    """원문을 노출하지 않는 invalid source_version 감사 정보입니다."""
+
+    source_version_sha256: str
+    source_version_byte_length: int
+    validation_reason_code: SourceVersionFailureCode
+
+
+def build_invalid_source_version_audit(
+    *,
+    source_version: str,
+    error: SourceVersionValidationError,
+) -> InvalidSourceVersionAudit:
+    """문법 오류 원문을 SHA-256과 byte 길이로 안전하게 치환합니다."""
+    if error.failure_code is not SourceVersionFailureCode.SOURCE_VERSION_INVALID:
+        raise ValueError("SOURCE_VERSION_INVALID 오류만 invalid-value 감사 정보로 변환할 수 있습니다.")
+
+    encoded_source_version = source_version.encode("utf-8")
+    return InvalidSourceVersionAudit(
+        source_version_sha256=hashlib.sha256(encoded_source_version).hexdigest(),
+        source_version_byte_length=len(encoded_source_version),
+        validation_reason_code=error.failure_code,
+    )
 
 
 def build_external_source_version(*, external_version: str) -> str:
@@ -92,9 +136,15 @@ def validate_source_version(
         _validate_external_version(payload)
 
         if external_version is None:
-            raise SourceVersionValidationError("external source_version에는 external_version이 필요합니다.")
+            raise SourceVersionValidationError(
+                "external source_version에는 external_version이 필요합니다.",
+                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+            )
         if payload != external_version:
-            raise SourceVersionValidationError("source_version payload와 external_version이 일치하지 않습니다.")
+            raise SourceVersionValidationError(
+                "source_version payload와 external_version이 일치하지 않습니다.",
+                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+            )
         return SourceVersionKind.EXTERNAL
 
     api_match = _API_VERSION_PATTERN.fullmatch(source_version)
@@ -103,7 +153,10 @@ def validate_source_version(
         _validate_utc_timestamp(api_match.group("timestamp"))
 
         if api_match.group("checksum") != canonical_checksum:
-            raise SourceVersionValidationError("API source_version checksum이 canonical_checksum과 일치하지 않습니다.")
+            raise SourceVersionValidationError(
+                "API source_version checksum이 canonical_checksum과 일치하지 않습니다.",
+                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+            )
         return SourceVersionKind.API
 
     internal_match = _INTERNAL_VERSION_PATTERN.fullmatch(source_version)
@@ -113,7 +166,8 @@ def validate_source_version(
 
         if internal_match.group("checksum") != canonical_checksum:
             raise SourceVersionValidationError(
-                "Internal source_version checksum이 canonical_checksum과 일치하지 않습니다."
+                "Internal source_version checksum이 canonical_checksum과 일치하지 않습니다.",
+                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
             )
         return SourceVersionKind.INTERNAL
 
@@ -167,7 +221,10 @@ def _validate_checksum(canonical_checksum: str) -> None:
 
 def _require_null_external_version(external_version: str | None) -> None:
     if external_version is not None:
-        raise SourceVersionValidationError("API와 Internal source_version의 external_version은 null이어야 합니다.")
+        raise SourceVersionValidationError(
+            "API와 Internal source_version의 external_version은 null이어야 합니다.",
+            failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+        )
 
 
 def _validate_utc_timestamp(timestamp: str) -> None:

@@ -19,7 +19,7 @@ def _repository(*, owned: bool = True) -> tuple[MedicationScheduleRepository, Mo
     session.flush = AsyncMock()
     ownership = AsyncMock()
     ownership.is_owned.return_value = owned
-    ownership.is_active_owned.return_value = owned
+    ownership.lock_active_owned.return_value = owned
     return MedicationScheduleRepository(session, ownership=ownership), session, ownership
 
 
@@ -79,7 +79,7 @@ async def test_create_schedule_is_fail_closed_by_active_version_parent_chain() -
     )
 
     assert result is None
-    ownership.is_active_owned.assert_awaited_once_with(
+    ownership.lock_active_owned.assert_awaited_once_with(
         prescription_version_medication_id=medication_id,
         user_id=user_id,
     )

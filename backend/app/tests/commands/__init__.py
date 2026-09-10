@@ -1,0 +1,1 @@
+"""Backend management command tests."""
