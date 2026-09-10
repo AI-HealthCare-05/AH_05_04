@@ -44,6 +44,12 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                     connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
                 )
             await connection.execute(text(f'REVOKE "{writer}" FROM "{runtime}"'))
+            await connection.execute(text(f'ALTER DEFAULT PRIVILEGES GRANT INSERT ON TABLES TO "{writer}"'))
+            with pytest.raises(ValueError, match="global table default grants"):
+                await apply_source_role_policy(
+                    connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
+                )
+            await connection.execute(text(f'ALTER DEFAULT PRIVILEGES REVOKE INSERT ON TABLES FROM "{writer}"'))
             await apply_source_role_policy(
                 connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
             )

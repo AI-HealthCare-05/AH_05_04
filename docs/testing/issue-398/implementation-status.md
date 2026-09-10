@@ -42,7 +42,7 @@
 - [ ] 실제 Runtime/Writer 권한·프로세스·배포 구성
   - Source 역할 정책 함수 및 서로 다른 실제 로그인 credential 통합 테스트 구현
   - Runtime 직접 쓰기/SET ROLE, Writer 감사 변경, 신규 테이블 쓰기 차단 확인
-  - 초기화 스크립트·별도 Writer 프로세스·배포 연결은 미완료
+  - 별도 Writer 명령·opt-in Compose 서비스 구현. 초기화 스크립트·운영 배포 전환은 미완료
 - [ ] 기존 데이터 검증과 forward migration
 - [ ] 최종 스키마 검사·PostgreSQL 통합 및 회귀 검증
 
@@ -77,4 +77,14 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 전용 환경 변수·secret 혼합 차단·Compose 경계 단위 검증: 12 passed
 - Snapshot lifecycle PostgreSQL 검증: 17 passed (기존 14 + 새 Writer 시나리오 3)
 - Ruff·Mypy·재도입 검사·diff 검사 통과
-- 실제 제한 역할로 CLI 전체 실행, 역할 provisioning 및 migration/bootstrap 연결은 남아 있음
+- 실제 제한 역할로 실행 함수 검증 완료. 컨테이너 CLI 실행, 역할 provisioning 및 migration/bootstrap 연결은 남아 있음
+
+
+## 실제 Writer 실행 및 권한 보강 검증
+
+- Writer 명령의 DB 실행 함수를 실제 별도 로그인으로 실행: 선택·멱등 재실행 성공
+- Runtime 로그인 쓰기 차단, 관리자 로그인 실행 거부
+- 감사 INSERT 권한 제거 시 Snapshot 상태 전체 rollback, 권한 복구 후 재시도 성공
+- 전역 default grant가 남아 있으면 권한 전환 거부 (schema-local REVOKE 우회 방지)
+- 관련 단위·PostgreSQL 테스트 합계 31 passed (lifecycle 18 + 역할 정책 1 + Writer 설정 12)
+- Ruff·생산 코드 Mypy 통과

@@ -64,4 +64,7 @@ Operation→Snapshot 잠금 후 checksum을 대조하고 기존 Python 선택 �
 
 운영 Compose의 `source-writer`는 `source-admin` profile의 일회성 서비스이며 기본 배포에 포함되지 않는다. 기존 AI 이미지의 별도 진입점을 사용하고 Writer 환경 변수만 전달한다. 예시: `docker compose -f docker-compose.prod.yml run --rm --no-deps source-writer <UUID> --expected-checksum <SHA-256> --reason-code VERIFIED_RELEASE`.
 
-이 실행 경로 추가는 운영 전환 완료가 아니다. 전용 역할 provisioning, 기존 함수·Trigger 제거, bootstrap 권한 정렬이 완료되기 전에는 운영 실행하지 않는다. 이번 통합 테스트는 Python transaction을 검증하며, 제한 역할로 이 명령 전체를 실행하는 배포 통합 검증은 후속 단계에 남아 있다.
+이 실행 경로 추가는 운영 전환 완료가 아니다. 전용 역할 provisioning, 기존 함수·Trigger 제거, bootstrap 권한 정렬이 완료되기 전에는 운영 실행하지 않는다. 통합 테스트는 실제 제한 역할로 명령의 DB 실행 함수(run_selection)를 호출하여 성공·재실행·Runtime 차단·감사 권한 실패 rollback을 확인한다. 컨테이너 실행 및 운영 provisioning을 포함하는 배포 통합 검증은 후속 단계에 남아 있다.
+
+
+실행 시 실제 로그인 역할의 관리자 권한·다른 역할 membership·DB/schema/객체 소유권을 다시 검사하여 잘못 주입된 고권한 계정을 거부한다. Source 역할 정책은 Migration owner가 PUBLIC 또는 Runtime/Writer에 부여한 전역 테이블 default grant가 있으면 적용을 거부한다. Schema 범위의 REVOKE로 전역 grant를 취소할 수 없기 때문이다. 다른 schema에 영향을 주는 전역 권한을 자동 변경하지 않으며, 운영 provisioning에서 먼저 정렬해야 한다.

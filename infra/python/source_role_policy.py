@@ -37,6 +37,17 @@ async def apply_source_role_policy(
         raise ValueError("Migration, Runtime and Writer roles must differ")
     schema_sql, owner_sql, runtime_sql, writer_sql = names
     await _validate_role_boundary(connection, schema=schema, runtime=runtime, writer=writer)
+    global_defaults = await connection.scalar(
+        text(
+            "SELECT count(*) FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a "
+            "WHERE d.defaclnamespace=0 AND d.defaclobjtype='r' "
+            "AND d.defaclrole=(SELECT oid FROM pg_roles WHERE rolname=:owner) "
+            "AND (a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE rolname IN (:runtime, :writer)))"
+        ),
+        {"owner": owner, "runtime": runtime, "writer": writer},
+    )
+    if global_defaults:
+        raise ValueError("Remove global table default grants before Source role cutover")
     tables = await connection.execute(
         text("SELECT tablename FROM pg_tables WHERE schemaname=:schema"), {"schema": schema}
     )

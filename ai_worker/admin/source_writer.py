@@ -93,6 +93,21 @@ async def run_selection(config: WriterConfig, args: argparse.Namespace) -> Snaps
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions.begin() as session:
+            unsafe_role = await session.scalar(
+                text(
+                    "SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls "
+                    "OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member=r.oid) "
+                    "OR EXISTS (SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid) "
+                    "OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspname=current_schema() AND nspowner=r.oid) "
+                    "OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                    "WHERE n.nspname=current_schema() AND c.relowner=r.oid) "
+                    "FROM pg_roles r WHERE r.rolname=current_user"
+                )
+            )
+            if unsafe_role is not False:
+                raise ValueError(
+                    "Source Writer requires a non-owner role without administrative privileges or memberships"
+                )
             return await select_snapshot(
                 session,
                 snapshot_id=args.snapshot_id,

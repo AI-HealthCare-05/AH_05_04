@@ -900,3 +900,73 @@ async def test_writer_selection_transaction(scenario, monkeypatch):
         assert sorted(audits) == (
             ["snapshot-current-selection", "snapshot-selection-request"] if scenario == "success" else []
         )
+
+
+async def test_writer_entrypoint_with_actual_restricted_credentials():
+    from argparse import Namespace
+    from uuid import uuid4
+
+    from sqlalchemy.exc import DBAPIError
+
+    from ai_worker.admin.source_writer import WriterConfig, run_selection
+    from infra.python.source_role_policy import apply_source_role_policy
+
+    suffix = uuid4().hex[:12]
+    runtime, writer = f"source398_reader_{suffix}", f"source398_writer_{suffix}"
+    password = "synthetic-source398-test-only"
+    admin = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    identity = await _seed_operation(f"ENTRYPOINT_{suffix}")
+    async with session_factory.begin() as session:
+        created = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata(f"external:entrypoint-{suffix}", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+    args = Namespace(snapshot_id=created.snapshot_id, expected_checksum=_CHECKSUM_A, reason_code="VERIFIED_RELEASE")
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+                await connection.execute(text(f'ALTER ROLE "{role}" SET search_path TO {TEST_SCHEMA}'))
+            await apply_source_role_policy(
+                connection, schema=TEST_SCHEMA, owner=config.DB_USER, runtime=runtime, writer=writer
+            )
+        writer_config = WriterConfig(TEST_DATABASE_URL.set(username=writer, password=password), "synthetic-operator")
+        reader_config = WriterConfig(TEST_DATABASE_URL.set(username=runtime, password=password), "synthetic-operator")
+        with pytest.raises(ValueError, match="non-owner"):
+            await run_selection(WriterConfig(TEST_DATABASE_URL, "synthetic-operator"), args)
+        with pytest.raises(DBAPIError):
+            await run_selection(reader_config, args)
+        async with admin.begin() as connection:
+            await connection.execute(
+                text(f'REVOKE INSERT ON {TEST_SCHEMA}.rag_source_snapshot_verification FROM "{writer}"')
+            )
+        with pytest.raises(DBAPIError):
+            await run_selection(writer_config, args)
+        async with session_factory() as session:
+            snapshot = await session.get(RagSourceSnapshot, created.snapshot_id)
+            assert snapshot.verification_status == RagSnapshotVerificationStatus.PENDING
+        async with admin.begin() as connection:
+            await connection.execute(
+                text(f'GRANT INSERT ON {TEST_SCHEMA}.rag_source_snapshot_verification TO "{writer}"')
+            )
+        assert (await run_selection(writer_config, args)).decision is SnapshotSelectionDecision.ACTIVATED
+        assert (await run_selection(writer_config, args)).decision is SnapshotSelectionDecision.ALREADY_CURRENT
+        async with session_factory() as session:
+            count = await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshotVerification)
+                .where(
+                    RagSourceSnapshotVerification.snapshot_id == created.snapshot_id,
+                    RagSourceSnapshotVerification.check_name == "snapshot-selection-request",
+                )
+            )
+            assert count == 1
+    finally:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                if await connection.scalar(text("SELECT 1 FROM pg_roles WHERE rolname=:role"), {"role": role}):
+                    await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                    await connection.execute(text(f'DROP ROLE "{role}"'))
+        await admin.dispose()
