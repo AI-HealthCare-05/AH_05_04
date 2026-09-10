@@ -56,7 +56,57 @@ class PrescriptionRepository:
         )
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _validate_medication_membership(medications: list[dict]) -> None:
+        if not medications:
+            raise ValueError("Prescription version requires at least one medication")
+        orders = [item.get("display_order") for item in medications]
+        if any(type(order) is not int for order in orders) or set(orders) != set(range(1, len(medications) + 1)):
+            raise ValueError("Prescription medication slots must be exactly 1 through medication count")
+
     async def create_with_medications(
+        self,
+        *,
+        document: MedicalDocument,
+        source_ocr_job: OcrJob,
+        prescribed_date: date,
+        confirmed_at: datetime,
+        medications: list[dict],
+    ) -> Prescription:
+        self._validate_medication_membership(medications)
+        async with self.session.begin_nested():
+            return await self._create_with_medications(
+                document=document,
+                source_ocr_job=source_ocr_job,
+                prescribed_date=prescribed_date,
+                confirmed_at=confirmed_at,
+                medications=medications,
+            )
+
+    async def create_version(
+        self,
+        *,
+        prescription: Prescription,
+        prescribed_date: date,
+        confirmed_at: datetime,
+        medications: list[dict],
+    ) -> PrescriptionVersion:
+        self._validate_medication_membership(medications)
+        async with self.session.begin_nested():
+            # Service의 expected revision 검사도 이 부모 잠금 안에서 수행해야 합니다.
+            locked = await self.session.scalar(
+                select(Prescription.id).where(Prescription.id == prescription.id).with_for_update()
+            )
+            if locked is None:
+                raise ValueError("Prescription does not exist")
+            return await self._create_version(
+                prescription=prescription,
+                prescribed_date=prescribed_date,
+                confirmed_at=confirmed_at,
+                medications=medications,
+            )
+
+    async def _create_with_medications(
         self,
         *,
         document: MedicalDocument,
@@ -95,7 +145,21 @@ class PrescriptionRepository:
                 )
             )
         await self.session.flush()
+        await self._verify_medication_membership(version.id, len(medications))
         return prescription
+
+    async def _verify_medication_membership(self, version_id: UUID, expected_count: int) -> None:
+        orders = list(
+            (
+                await self.session.scalars(
+                    select(PrescriptionVersionMedication.display_order)
+                    .where(PrescriptionVersionMedication.prescription_version_id == version_id)
+                    .order_by(PrescriptionVersionMedication.display_order)
+                )
+            ).all()
+        )
+        if orders != list(range(1, expected_count + 1)):
+            raise ValueError("Persisted prescription medication membership is incomplete")
 
     async def get_version_medications(self, *, prescription_version_id: UUID) -> list[PrescriptionVersionMedication]:
         result = await self.session.execute(
@@ -119,7 +183,7 @@ class PrescriptionRepository:
         )
         return result.scalar_one_or_none()
 
-    async def create_version(
+    async def _create_version(
         self,
         *,
         prescription: Prescription,
@@ -148,6 +212,8 @@ class PrescriptionRepository:
                     **medication,
                 )
             )
+        await self.session.flush()
+        await self._verify_medication_membership(version.id, len(medications))
         prescription.active_version_id = version.id
         await self.session.flush()
         return version

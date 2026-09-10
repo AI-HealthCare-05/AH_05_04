@@ -88,3 +88,11 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 전역 default grant가 남아 있으면 권한 전환 거부 (schema-local REVOKE 우회 방지)
 - 관련 단위·PostgreSQL 테스트 합계 31 passed (lifecycle 18 + 역할 정책 1 + Writer 설정 12)
 - Ruff·생산 코드 Mypy 통과
+
+## Prescription 저장 경계 1단계
+
+- Repository의 최소 1개·정수 1..N 슬롯 검증 및 실제 저장 구성 재확인
+- 새 버전 생성 전 부모 잠금, 버전·약·포인터의 savepoint rollback
+- 잘못된 슬롯 입력 및 약 INSERT 실패 후 호출자 commit에도 기존 버전 유지 검증
+- Repository·Service·확정 동시성 테스트 20 passed
+- count/hash 저장·소비 검증, 슬롯 DB 제약, 멱등 키, 권한·제거 migration은 후속 단계

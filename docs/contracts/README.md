@@ -6,6 +6,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 디렉터리 구조와 배치 원칙
 
+- [PD-398 Python Prescription 무결성](./proposed/python-prescription-integrity-398.md): 저장 원자성 부분 구현. count/hash·권한·migration 대기.
 - [PD-398 Python Snapshot 상태 전이](./proposed/python-snapshot-transition-398.md): 작업 브랜치 부분 구현. Writer 권한·제거 migration·최종 리뷰 전까지 배포 금지.
 
 계약 문서는 승인·구현 상태에 따라 다음 경로에서 관리합니다.

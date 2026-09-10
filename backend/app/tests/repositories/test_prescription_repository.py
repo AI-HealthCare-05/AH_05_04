@@ -189,3 +189,65 @@ async def test_create_with_medications_writes_only_version_one_snapshot(db_sessi
     assert snapshot_medication.timing_text == "식후"
     assert snapshot_medication.duration_days == 3
     assert snapshot_medication.display_order == 1
+
+
+async def test_empty_or_invalid_medication_slots_leave_version_and_pointer_unchanged(db_session):
+    import pytest
+    from sqlalchemy import func
+
+    owner = await _create_user(db_session, email="synthetic-slots398@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    original_id = prescription.active_version_id
+    repository = PrescriptionRepository(db_session)
+    for medications in (
+        [],
+        [{"medication_name": "Synthetic", "display_order": 2}],
+        [{"medication_name": "Synthetic", "display_order": True}],
+        [{"medication_name": "Synthetic", "display_order": 1}] * 2,
+    ):
+        with pytest.raises(ValueError):
+            await repository.create_version(
+                prescription=prescription,
+                prescribed_date=date.today(),
+                confirmed_at=datetime.now(UTC),
+                medications=medications,
+            )
+    assert prescription.active_version_id == original_id
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(PrescriptionVersion)
+            .where(PrescriptionVersion.prescription_id == prescription.id)
+        )
+        == 1
+    )
+
+
+async def test_failed_medication_insert_does_not_leave_new_version_even_if_caller_commits(db_session):
+    import pytest
+    from sqlalchemy import func
+    from sqlalchemy.exc import IntegrityError
+
+    owner = await _create_user(db_session, email="synthetic-rollback398@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    prescription_id, original_id = prescription.id, prescription.active_version_id
+    with pytest.raises(IntegrityError):
+        await PrescriptionRepository(db_session).create_version(
+            prescription=prescription,
+            prescribed_date=date.today(),
+            confirmed_at=datetime.now(UTC),
+            medications=[{"medication_name": "Synthetic", "display_order": 1, "dose_value": -1}],
+        )
+    await db_session.commit()
+    assert (
+        await db_session.scalar(select(Prescription.active_version_id).where(Prescription.id == prescription_id))
+        == original_id
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(PrescriptionVersion)
+            .where(PrescriptionVersion.prescription_id == prescription_id)
+        )
+        == 1
+    )
