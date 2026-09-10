@@ -47,6 +47,9 @@ export type RequirementsApiState = {
   uploadCount: number
   profilePatchCount: number
   logoutCount: number
+  chatSessionRediscoveryCount: number
+  chatSessionCreationCount: number
+  chatMessagesGetCount: number
   unexpectedRequests: string[]
   idempotencyKeys: string[]
   manualMedicationRequests: Array<{
@@ -103,6 +106,9 @@ export async function installRequirementsApi(
     uploadCount: 0,
     profilePatchCount: 0,
     logoutCount: 0,
+    chatSessionRediscoveryCount: 0,
+    chatSessionCreationCount: 0,
+    chatMessagesGetCount: 0,
     unexpectedRequests: [],
     idempotencyKeys: [],
     manualMedicationRequests: [],
@@ -381,15 +387,18 @@ export async function installRequirementsApi(
       return json(route, guide())
     }
     if (key === `GET /api/v1/prescriptions/${ids.prescription}/chat-session`) {
+      state.chatSessionRediscoveryCount += 1
       return chatExists
         ? json(route, chatSession())
         : error(route, 404, 'CHAT_SESSION_NOT_FOUND', '대화를 찾을 수 없습니다.')
     }
     if (key === `POST /api/v1/prescriptions/${ids.prescription}/chat-sessions`) {
+      state.chatSessionCreationCount += 1
       chatExists = true
       return json(route, chatSession(), 201)
     }
     if (key === `GET /api/v1/chat-sessions/${ids.session}/messages`) {
+      state.chatMessagesGetCount += 1
       return json(route, {
         data: {
           session_id: ids.session,

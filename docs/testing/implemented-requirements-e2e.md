@@ -29,7 +29,7 @@ OpenAPI/Pydantic DTO, migration, 서비스·Worker와 기존 자동 테스트가
 | 처방전 one-cycle | `REQ-USR-001`, `REQ-DOC-001/003/005/006/007/009/010`, `REQ-OCR-004` 부분 | 업로드, Job polling UI, 필수 placeholder 직접 입력, 필드 저장, 명시적 확인, 처방 확정, Guide·Chat 화면 연결 | 실제 파일·OCR·DB·OpenAI, 동시성·권한·실패 rollback, provenance |
 | 업로드 실패 안전 표시 | `REQ-DOC-004`, `NFR-SYS-007` 부분 | Provider 상세 비노출, 이해 가능한 오류와 재선택 행동 | 실제 Provider 실패 분류, 재업로드 성공·멱등성 |
 | OCR STALE | `REQ-OCR-002`, `NFR-SYS-003` 부분 | STALE을 성공으로 표시하지 않고 최신 정보 확인 행동 제공 | 서버 상태 전이, ownership, Retry-After·failure code 전체 |
-| 현재 데이터 재발견 | `REQ-HIS-009` 부분과 현재 runtime 회귀 | 브라우저 임시 상태 없이 현재 처방의 Guide를 찾고 기존 Chat 메시지 조회 | 처방·가이드 전체 이력, 목록·검색, 교차 사용자 |
+| 현재 데이터 재발견 | `REQ-HIS-009` 부분과 현재 runtime 회귀 | 브라우저 임시 상태 없이 현재 처방의 Guide와 기존 ACTIVE Chat session·메시지를 서버에서 조회하되, 새 Chat 진입 UI에는 과거 메시지를 초기 노출하지 않음 | 처방·가이드 전체 이력, 목록·검색, 교차 사용자 |
 | 빈 상태 | `NFR-SYS-009` 부분 | 처방·Guide가 없을 때 오류와 구분된 다음 행동 표시 | 모든 의료기록·일정·대화 화면의 권한·API 실패 분기 |
 
 예상하지 않은 API 요청은 테스트 실패로 기록해 mock 시나리오가 조용히 다른 계약으로
