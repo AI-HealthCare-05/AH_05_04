@@ -105,11 +105,30 @@ def _bundle_payload(bundle_manifest_hash: str, **overrides: object) -> RagRuntim
         # The build transaction supplies the real manifest id; this placeholder proves it does.
         execution_manifest_id=_UNUSED_UUID,
         bundle_manifest_hash=bundle_manifest_hash,
+        environment_code="local",
+        catalog_version="catalog-1.0.0",
+        catalog_manifest_hash=_hash("9"),
         candidate_index_ref="candidate-index:local",
+        candidate_index_version="1.0.0",
         candidate_index_manifest_hash=_hash("4"),
         created_by="backend-test",
     )
     return replace(payload, **overrides)  # type: ignore[arg-type]
+
+
+def _member(
+    snapshot, purpose: RagRuntimeSourcePurpose = RagRuntimeSourcePurpose.CATALOG
+) -> RagRuntimeBundleSourceCreate:
+    return RagRuntimeBundleSourceCreate(
+        bundle_id=_UNUSED_UUID,
+        source_snapshot_id=snapshot.id,
+        source_purpose=purpose,
+        source_version=snapshot.source_version,
+        canonical_checksum=snapshot.canonical_checksum,
+        approval_version="approval-v1",
+        scope_policy_hash=_hash("c"),
+        freshness_policy_hash=_hash("d"),
+    )
 
 
 async def _count(session: AsyncSession, model: type) -> int:
@@ -126,16 +145,8 @@ async def test_build_persists_manifest_bundle_and_every_member(db_session: Async
         manifest=_manifest_payload(_hash("2")),
         bundle=_bundle_payload(_hash("3")),
         bundle_sources=(
-            RagRuntimeBundleSourceCreate(
-                bundle_id=_UNUSED_UUID,
-                source_snapshot_id=catalog_snapshot.id,
-                source_purpose=RagRuntimeSourcePurpose.CATALOG,
-            ),
-            RagRuntimeBundleSourceCreate(
-                bundle_id=_UNUSED_UUID,
-                source_snapshot_id=knowledge_snapshot.id,
-                source_purpose=RagRuntimeSourcePurpose.KNOWLEDGE,
-            ),
+            _member(catalog_snapshot, RagRuntimeSourcePurpose.CATALOG),
+            _member(knowledge_snapshot, RagRuntimeSourcePurpose.KNOWLEDGE),
         ),
     )
 
@@ -159,13 +170,7 @@ async def test_build_forces_building_status(db_session: AsyncSession) -> None:
         manifest=_manifest_payload(_hash("2")),
         # A caller asking for READY must not get it: READY belongs to RAG-17 (#180).
         bundle=_bundle_payload(_hash("3"), bundle_status=RagRuntimeBundleStatus.READY),
-        bundle_sources=(
-            RagRuntimeBundleSourceCreate(
-                bundle_id=_UNUSED_UUID,
-                source_snapshot_id=snapshot.id,
-                source_purpose=RagRuntimeSourcePurpose.CATALOG,
-            ),
-        ),
+        bundle_sources=(_member(snapshot, RagRuntimeSourcePurpose.CATALOG),),
     )
 
     assert result.bundle.bundle_status is RagRuntimeBundleStatus.BUILDING
@@ -181,24 +186,12 @@ async def test_build_reuses_an_existing_manifest_instead_of_duplicating_it(db_se
     first = await repository.build_runtime_bundle(
         manifest=_manifest_payload(_hash("2")),
         bundle=_bundle_payload(_hash("3")),
-        bundle_sources=(
-            RagRuntimeBundleSourceCreate(
-                bundle_id=_UNUSED_UUID,
-                source_snapshot_id=first_snapshot.id,
-                source_purpose=RagRuntimeSourcePurpose.CATALOG,
-            ),
-        ),
+        bundle_sources=(_member(first_snapshot, RagRuntimeSourcePurpose.CATALOG),),
     )
     second = await repository.build_runtime_bundle(
         manifest=_manifest_payload(_hash("2")),
         bundle=_bundle_payload(_hash("5"), bundle_version="2026.09.10-002"),
-        bundle_sources=(
-            RagRuntimeBundleSourceCreate(
-                bundle_id=_UNUSED_UUID,
-                source_snapshot_id=second_snapshot.id,
-                source_purpose=RagRuntimeSourcePurpose.CATALOG,
-            ),
-        ),
+        bundle_sources=(_member(second_snapshot, RagRuntimeSourcePurpose.CATALOG),),
     )
 
     assert second.execution_manifest_reused is True
@@ -213,13 +206,7 @@ async def test_reusing_a_hash_for_a_different_manifest_fails_closed(db_session: 
     await repository.build_runtime_bundle(
         manifest=_manifest_payload(_hash("2")),
         bundle=_bundle_payload(_hash("3")),
-        bundle_sources=(
-            RagRuntimeBundleSourceCreate(
-                bundle_id=_UNUSED_UUID,
-                source_snapshot_id=first_snapshot.id,
-                source_purpose=RagRuntimeSourcePurpose.CATALOG,
-            ),
-        ),
+        bundle_sources=(_member(first_snapshot, RagRuntimeSourcePurpose.CATALOG),),
     )
 
     # Same hash, different worker artifact: silently reusing the stored manifest would pin the
@@ -229,13 +216,7 @@ async def test_reusing_a_hash_for_a_different_manifest_fails_closed(db_session: 
         await repository.build_runtime_bundle(
             manifest=conflicting,
             bundle=_bundle_payload(_hash("5"), bundle_version="2026.09.10-002"),
-            bundle_sources=(
-                RagRuntimeBundleSourceCreate(
-                    bundle_id=_UNUSED_UUID,
-                    source_snapshot_id=second_snapshot.id,
-                    source_purpose=RagRuntimeSourcePurpose.CATALOG,
-                ),
-            ),
+            bundle_sources=(_member(second_snapshot, RagRuntimeSourcePurpose.CATALOG),),
         )
 
     assert await _count(db_session, RagRuntimeReleaseBundle) == 1
@@ -244,13 +225,7 @@ async def test_reusing_a_hash_for_a_different_manifest_fails_closed(db_session: 
 async def test_identical_bundle_content_collides_and_leaves_no_partial_rows(db_session: AsyncSession) -> None:
     snapshot = await _create_source_snapshot(db_session)
     repository = RagRuntimeRepository(db_session)
-    members = (
-        RagRuntimeBundleSourceCreate(
-            bundle_id=_UNUSED_UUID,
-            source_snapshot_id=snapshot.id,
-            source_purpose=RagRuntimeSourcePurpose.CATALOG,
-        ),
-    )
+    members = (_member(snapshot, RagRuntimeSourcePurpose.CATALOG),)
     await repository.build_runtime_bundle(
         manifest=_manifest_payload(_hash("2")),
         bundle=_bundle_payload(_hash("3")),
@@ -283,13 +258,7 @@ async def test_build_does_not_read_or_change_the_environment_pointer(db_session:
     await repository.build_runtime_bundle(
         manifest=_manifest_payload(_hash("2")),
         bundle=_bundle_payload(_hash("3")),
-        bundle_sources=(
-            RagRuntimeBundleSourceCreate(
-                bundle_id=_UNUSED_UUID,
-                source_snapshot_id=snapshot.id,
-                source_purpose=RagRuntimeSourcePurpose.CATALOG,
-            ),
-        ),
+        bundle_sources=(_member(snapshot, RagRuntimeSourcePurpose.CATALOG),),
     )
 
     assert environment.active_bundle_id is None

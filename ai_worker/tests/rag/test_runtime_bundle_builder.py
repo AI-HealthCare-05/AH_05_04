@@ -1,16 +1,19 @@
 """RAG-12A Runtime Bundle build kernel determinism and fail-closed rejection (Issue #175)."""
 
-from dataclasses import replace
+from dataclasses import MISSING, replace
 from uuid import uuid4
 
+from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
 from ai_worker.tasks.rag.runtime_bundle_builder import (
     RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION,
     WORKER_COMPATIBILITY_BLOCK_CODE,
+    MedicationCatalogBinding,
     RuntimeBundleArtifactKind,
     RuntimeBundleArtifactMemberInput,
     RuntimeBundleBuildDecision,
     RuntimeBundleBuildExecutionStatus,
     RuntimeBundleBuildRequest,
+    RuntimeBundleCanonicalConfiguration,
     RuntimeBundleDeferredCheck,
     RuntimeBundleMemberPurpose,
     RuntimeBundleReadinessBlocker,
@@ -21,6 +24,7 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     canonical_execution_manifest_hash,
     canonical_runtime_bundle_manifest_hash,
     evaluate_runtime_bundle_build,
+    runtime_bundle_configuration_from_request,
 )
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotUseFailureCode,
@@ -28,6 +32,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
 )
 
 _ENVIRONMENT = "local"
+_CATALOG_VERSION = "catalog-1.0.0"
 
 
 def _hash(char: str) -> str:
@@ -49,6 +54,18 @@ def _manifest() -> RuntimeExecutionManifestInput:
     )
 
 
+def _catalog(**overrides: object) -> MedicationCatalogBinding:
+    catalog = MedicationCatalogBinding(
+        catalog_version=_CATALOG_VERSION,
+        catalog_manifest_hash=_hash("9"),
+        verification_status=CatalogVerificationStatus.APPROVED,
+        freshness_status=CatalogFreshnessStatus.CURRENT,
+        is_complete=True,
+        source_snapshot_ids=(),
+    )
+    return replace(catalog, **overrides)  # type: ignore[arg-type]
+
+
 def _source_member(
     purpose: RuntimeBundleMemberPurpose = RuntimeBundleMemberPurpose.CATALOG,
     **overrides: object,
@@ -62,6 +79,14 @@ def _source_member(
         scope_policy_hash=_hash("c"),
         freshness_policy_hash=_hash("d"),
         observed_environment=_ENVIRONMENT,
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        rejected_record_count=0,
+        publication_approval_passed=True,
+        freshness_eligible=True,
+        provenance_valid=True,
+        approval_expired=False,
+        revocation_unresolved=False,
+        scope_allowed=True,
     )
     return replace(member, **overrides)  # type: ignore[arg-type]
 
@@ -70,32 +95,58 @@ def _artifact_member(
     kind: RuntimeBundleArtifactKind = RuntimeBundleArtifactKind.CANDIDATE_INDEX,
     **overrides: object,
 ) -> RuntimeBundleArtifactMemberInput:
+    hashed = kind in {RuntimeBundleArtifactKind.CANDIDATE_INDEX, RuntimeBundleArtifactKind.KNOWLEDGE_INDEX}
+    candidate = kind is RuntimeBundleArtifactKind.CANDIDATE_INDEX
     member = RuntimeBundleArtifactMemberInput(
         artifact_kind=kind,
         artifact_ref=f"artifact:{kind.value.lower()}",
         artifact_version="1.0.0",
         observed_environment=_ENVIRONMENT,
-        manifest_hash=_hash("e")
-        if kind
-        in {
-            RuntimeBundleArtifactKind.CANDIDATE_INDEX,
-            RuntimeBundleArtifactKind.KNOWLEDGE_INDEX,
-        }
-        else None,
+        approval_effective=True,
+        approval_expired=False,
+        revocation_unresolved=False,
+        manifest_hash=_hash("e") if hashed else None,
+        catalog_version=_CATALOG_VERSION if candidate else None,
+        catalog_manifest_hash=_hash("9") if candidate else None,
     )
     return replace(member, **overrides)  # type: ignore[arg-type]
 
 
-def _request(**overrides: object) -> RuntimeBundleBuildRequest:
+def _request(
+    *,
+    source_members: tuple[RuntimeBundleSourceMemberInput, ...] | None = None,
+    catalog: MedicationCatalogBinding | None = None,
+    **overrides: object,
+) -> RuntimeBundleBuildRequest:
+    """Build a coherent request: the catalog binding must cover the pinned CATALOG members.
+
+    The default catalog is derived from whichever CATALOG members end up in the request, so a test
+    that swaps members does not have to restate the binding.
+    """
+    # `is None` on purpose: an explicitly empty tuple is a test case, not an unset argument.
+    members = (
+        source_members
+        if source_members is not None
+        else (
+            _source_member(RuntimeBundleMemberPurpose.CATALOG),
+            _source_member(RuntimeBundleMemberPurpose.KNOWLEDGE),
+        )
+    )
+    # Tolerates deliberately malformed members: shape rejection is the kernel's job, not the
+    # fixture's, so the fixture must still be able to build the request.
+    catalog_snapshot_ids = tuple(
+        member.source_snapshot_id
+        for member in members
+        if isinstance(member, RuntimeBundleSourceMemberInput)
+        and member.source_purpose is RuntimeBundleMemberPurpose.CATALOG
+    )
     request = RuntimeBundleBuildRequest(
         bundle_key="local-rag-runtime",
         bundle_version="2026.09.10-001",
-        target_environment=_ENVIRONMENT,
+        environment_code=_ENVIRONMENT,
         execution_manifest=_manifest(),
-        source_members=(
-            _source_member(RuntimeBundleMemberPurpose.CATALOG),
-            _source_member(RuntimeBundleMemberPurpose.KNOWLEDGE),
-        ),
+        catalog=catalog or _catalog(source_snapshot_ids=catalog_snapshot_ids or (str(uuid4()),)),
+        source_members=members,
         artifact_members=(_artifact_member(RuntimeBundleArtifactKind.CANDIDATE_INDEX),),
         created_by="ai-worker-test",
     )
@@ -177,11 +228,11 @@ def test_bundle_naming_and_provenance_are_not_part_of_content_identity() -> None
     )
 
 
-def test_target_environment_is_part_of_content_identity() -> None:
+def test_environment_code_is_part_of_content_identity() -> None:
     request = _request()
     other_environment = replace(
         request,
-        target_environment="test",
+        environment_code="test",
         source_members=tuple(replace(member, observed_environment="test") for member in request.source_members),
         artifact_members=tuple(replace(member, observed_environment="test") for member in request.artifact_members),
     )
@@ -195,7 +246,9 @@ def test_target_environment_is_part_of_content_identity() -> None:
 def test_observation_fields_do_not_change_the_bundle_hash() -> None:
     request = _request()
     manifest_hash = canonical_execution_manifest_hash(request.execution_manifest)
-    baseline = canonical_runtime_bundle_manifest_hash(request, manifest_hash=manifest_hash)
+    baseline = canonical_runtime_bundle_manifest_hash(
+        runtime_bundle_configuration_from_request(request, execution_manifest_hash=manifest_hash)
+    )
     observed_stale = replace(
         request,
         source_members=(
@@ -204,7 +257,12 @@ def test_observation_fields_do_not_change_the_bundle_hash() -> None:
         ),
     )
 
-    assert canonical_runtime_bundle_manifest_hash(observed_stale, manifest_hash=manifest_hash) == baseline
+    assert (
+        canonical_runtime_bundle_manifest_hash(
+            runtime_bundle_configuration_from_request(observed_stale, execution_manifest_hash=manifest_hash)
+        )
+        == baseline
+    )
     # The pinned identity is unchanged, but the member is no longer eligible.
     assert evaluate_runtime_bundle_build(observed_stale).decision is RuntimeBundleBuildDecision.REJECTED
 
@@ -458,7 +516,155 @@ def test_same_snapshot_under_two_purposes_is_allowed() -> None:
 
 
 def test_unshaped_request_never_raises() -> None:
-    outcome = evaluate_runtime_bundle_build(_request(source_members=("not-a-member",)))
+    # Deliberately the wrong type: the kernel must answer, not raise.
+    outcome = evaluate_runtime_bundle_build(_request(source_members=("not-a-member",)))  # type: ignore[arg-type]
 
     assert outcome.validation_codes == (RuntimeBundleValidationCode.REQUEST_SHAPE_INVALID,)
     assert outcome.decision is RuntimeBundleBuildDecision.REJECTED
+
+
+def test_catalog_must_be_approved_current_and_complete() -> None:
+    """A CATALOG-purpose source member is not evidence that the catalog itself was approved."""
+    cases = (
+        (
+            {"verification_status": CatalogVerificationStatus.NOT_APPROVED},
+            RuntimeBundleRejectionReason.CATALOG_NOT_APPROVED,
+        ),
+        ({"freshness_status": CatalogFreshnessStatus.STALE}, RuntimeBundleRejectionReason.CATALOG_STALE),
+        ({"is_complete": False}, RuntimeBundleRejectionReason.CATALOG_PARTIAL),
+    )
+    for overrides, expected in cases:
+        members = (
+            _source_member(RuntimeBundleMemberPurpose.CATALOG),
+            _source_member(RuntimeBundleMemberPurpose.KNOWLEDGE),
+        )
+        outcome = evaluate_runtime_bundle_build(
+            _request(
+                source_members=members,
+                catalog=_catalog(source_snapshot_ids=(members[0].source_snapshot_id,), **overrides),
+            )
+        )
+
+        assert outcome.decision is RuntimeBundleBuildDecision.REJECTED, overrides
+        assert expected in outcome.rejection_reasons, overrides
+        assert outcome.bundle_manifest_hash is None, overrides
+
+
+def test_catalog_member_must_derive_from_the_pinned_catalog() -> None:
+    """The pinned CATALOG snapshot must be one the catalog was actually built from."""
+    members = (
+        _source_member(RuntimeBundleMemberPurpose.CATALOG),
+        _source_member(RuntimeBundleMemberPurpose.KNOWLEDGE),
+    )
+    outcome = evaluate_runtime_bundle_build(
+        _request(
+            source_members=members,
+            # A different catalog's source refs.
+            catalog=_catalog(source_snapshot_ids=(str(uuid4()),)),
+        )
+    )
+
+    assert outcome.decision is RuntimeBundleBuildDecision.REJECTED
+    assert RuntimeBundleRejectionReason.CATALOG_SOURCE_BINDING_INVALID in outcome.rejection_reasons
+
+
+def test_candidate_index_built_from_another_catalog_is_rejected() -> None:
+    for overrides in (
+        {"catalog_version": "catalog-9.9.9"},
+        {"catalog_manifest_hash": _hash("f")},
+    ):
+        outcome = evaluate_runtime_bundle_build(
+            _request(artifact_members=(_artifact_member(RuntimeBundleArtifactKind.CANDIDATE_INDEX, **overrides),))
+        )
+
+        assert outcome.decision is RuntimeBundleBuildDecision.REJECTED, overrides
+        assert RuntimeBundleRejectionReason.CANDIDATE_INDEX_CATALOG_MISMATCH in outcome.rejection_reasons, overrides
+
+
+def test_candidate_index_must_declare_its_catalog_binding() -> None:
+    outcome = evaluate_runtime_bundle_build(
+        _request(
+            artifact_members=(
+                _artifact_member(
+                    RuntimeBundleArtifactKind.CANDIDATE_INDEX,
+                    catalog_version=None,
+                    catalog_manifest_hash=None,
+                ),
+            )
+        )
+    )
+
+    assert RuntimeBundleValidationCode.ARTIFACT_CATALOG_BINDING_REQUIRED in outcome.validation_codes
+
+
+def test_non_candidate_artifact_must_not_declare_a_catalog_binding() -> None:
+    outcome = evaluate_runtime_bundle_build(
+        _request(
+            artifact_members=(
+                _artifact_member(RuntimeBundleArtifactKind.CANDIDATE_INDEX),
+                _artifact_member(RuntimeBundleArtifactKind.RULE_SET, catalog_version=_CATALOG_VERSION),
+            )
+        )
+    )
+
+    assert RuntimeBundleValidationCode.ARTIFACT_CATALOG_BINDING_FORBIDDEN in outcome.validation_codes
+
+
+def test_catalog_without_source_refs_is_a_validation_error() -> None:
+    outcome = evaluate_runtime_bundle_build(_request(catalog=_catalog(source_snapshot_ids=())))
+
+    assert RuntimeBundleValidationCode.CATALOG_SOURCE_REF_REQUIRED in outcome.validation_codes
+
+
+def test_omitted_eligibility_evidence_cannot_be_constructed_as_permissive() -> None:
+    """Every eligibility field is required, so "unspecified" can never read as approved."""
+    required = {
+        "verification_status",
+        "rejected_record_count",
+        "publication_approval_passed",
+        "freshness_eligible",
+        "provenance_valid",
+        "approval_expired",
+        "revocation_unresolved",
+        "scope_allowed",
+    }
+    defaulted = {
+        name
+        for name, field in RuntimeBundleSourceMemberInput.__dataclass_fields__.items()
+        if field.default is not MISSING or field.default_factory is not MISSING  # type: ignore[misc]
+    }
+
+    assert required.isdisjoint(defaulted)
+    assert defaulted == {"required", "selected_for_operation"}
+
+
+def test_configuration_hash_depends_only_on_the_persisted_configuration() -> None:
+    """The hash input is the configuration alone, which is what makes the storage round trip work."""
+    request = _request()
+    outcome = evaluate_runtime_bundle_build(request)
+    assert outcome.configuration is not None
+
+    rebuilt = RuntimeBundleCanonicalConfiguration(
+        environment_code=outcome.configuration.environment_code,
+        execution_manifest_hash=outcome.configuration.execution_manifest_hash,
+        catalog_version=outcome.configuration.catalog_version,
+        catalog_manifest_hash=outcome.configuration.catalog_manifest_hash,
+        # Reversed on purpose: order must not matter.
+        source_members=tuple(reversed(outcome.configuration.source_members)),
+        artifact_members=outcome.configuration.artifact_members,
+    )
+
+    assert canonical_runtime_bundle_manifest_hash(rebuilt) == outcome.bundle_manifest_hash
+
+
+def test_artifact_version_is_part_of_content_identity() -> None:
+    """Regression for the review finding: artifact_version entered the hash but was never stored."""
+    request = _request()
+    baseline = evaluate_runtime_bundle_build(request).bundle_manifest_hash
+    changed = evaluate_runtime_bundle_build(
+        _request(
+            artifact_members=(_artifact_member(RuntimeBundleArtifactKind.CANDIDATE_INDEX, artifact_version="2.0.0"),)
+        )
+    )
+
+    assert changed.bundle_manifest_hash != baseline

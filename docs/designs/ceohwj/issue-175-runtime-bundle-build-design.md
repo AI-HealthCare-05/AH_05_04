@@ -7,7 +7,7 @@
 | 담당 리뷰어 | 송은영 (`@phina-io`) — persistence·FK·transaction |
 | Product/Safety 리뷰 | 권가빈 (`@hazelnutflavoured`) |
 | 상위 계약 | [`targets/post-mvp-1/rag-runtime-v1.md`](../../contracts/targets/post-mvp-1/rag-runtime-v1.md) (Approved Target · Not implemented) |
-| 문서 상태 | 구현 설계 · 계약 변경 없음 |
+| 문서 상태 | 구현 설계 · Migration `175a1b2c3d4e` · [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) Review pending |
 
 ## 1. 착수 판단 근거
 
@@ -42,6 +42,16 @@
 
 Worker 호환성 판정과 `current/` 승격은 `#91` 후속 Product Decision 승인 후 별도 작업으로 남는다. 따라서 이 PR 병합만으로 `#175`를 Close하지 않고, 위 차단 코드를 기록한 Open 상태를 유지한다.
 
+## 2-B. PR 리뷰 반영 (2026-09-10)
+
+PR #416 리뷰에서 3건이 지적됐고 모두 유효했다. 초기 설계의 결함이므로 그대로 기록한다.
+
+| 지적 | 결함 | 대응 |
+| --- | --- | --- |
+| **[BLOCKER]** 해시에 넣은 실행 구성을 저장 후 복원 불가 | `approval_version`·`scope_policy_hash`·`freshness_policy_hash`·artifact `version`·환경·Catalog `version`/`hash`가 해시 입력이지만 저장 컬럼이 없었다. artifact version만 바꾸면 해시는 달라지고 저장 행은 바이트 동일해진다 → `bundle_manifest_hash`가 불투명 토큰 | Migration `175a1b2c3d4e`로 13개 컬럼 추가. 해시 입력을 `RuntimeBundleCanonicalConfiguration` 하나로 좁히고 그 전량을 영속화. 저장→재조회→해시 재계산 왕복을 통합 테스트로 고정 (§6) |
+| **[MUST FIX]** Source Snapshot 존재를 Catalog 승인·완성으로 대체 | `CATALOG` purpose 존재만 확인하고 `verification_status`·`is_complete`·Candidate Index 결속을 검사하지 않았다. 승인 관측값 기본값이 전부 허용이라 최소 인자 생성이 곧 통과였다 | `MedicationCatalogBinding` 필수 입력 도입, `CandidateCatalogExport` 계약 검증, Candidate Index ↔ Catalog exact-match 결속. 승인 관측 필드의 기본값 전면 제거 (§5.3) |
+| **[MUST FIX]** 검증된 불변 Bundle을 만드는 실행 경계 부재 | production 호출자 0건. 임의 hash·빈 member 저장 가능, 생성 후 member 추가 가능 | `execute_runtime_bundle_build` 실행 함수 구현. 빈 member set 저장 차단. member 추가는 재계산 해시 불일치로 탐지 (§7) |
+
 ## 3. 해결하려는 문제
 
 Source·Catalog·Index·Rule·Guideline·Safety의 버전을 각각 "최신값"으로 읽으면 평가 대상과 실제 실행 대상이 달라진다. 평가와 실행이 같은 대상을 가리키도록, member set을 한 번 고정한 **불변 Runtime Execution Manifest**와 그 Manifest를 참조하는 **`BUILDING` Bundle**을 만든다.
@@ -50,20 +60,28 @@ Source·Catalog·Index·Rule·Guideline·Safety의 버전을 각각 "최신값"�
 
 ```
 [호출자: 평가 Runner / RAG-17 활성화 흐름]
-        │  승인된 component ID/version/hash 입력
+        │  승인된 component ID/version/hash + 승인·freshness 관측값
         ▼
-ai_worker/tasks/rag/runtime_bundle_builder.py   ← 순수 kernel (I/O·시계·락 없음)
-        │  RuntimeBundleBuildOutcome (BUILDABLE | REJECTED)
-        ▼
-backend/app/repositories/rag_runtime_repository.py::build_runtime_bundle()
-        │  단일 transaction: manifest + bundle(BUILDING) + bundle_source 전량
-        ▼
-rag_runtime_execution_manifest / rag_runtime_release_bundle / rag_runtime_bundle_source
+backend/app/services/rag_runtime_bundle_build.py::execute_runtime_bundle_build()   ← 실행 경계(build port)
+        │
+        ├─▶ ai_worker/tasks/rag/runtime_bundle_builder.py   ← 순수 kernel (I/O·시계·락 없음)
+        │        │  RuntimeBundleBuildOutcome (BUILDABLE | REJECTED) + CanonicalConfiguration
+        │        ▼
+        │   REJECTED → 저장 0건 (manifest조차 쓰지 않음)
+        │
+        └─▶ RagRuntimeRepository.build_runtime_bundle()   ← 단일 transaction
+                 │  manifest + bundle(BUILDING) + bundle_source 전량
+                 ▼
+        rag_runtime_execution_manifest / rag_runtime_release_bundle / rag_runtime_bundle_source
+                 │
+                 ▼
+        verify_persisted_bundle_manifest_hash()   ← 재조회 후 해시 재계산·비교
 ```
 
 - kernel은 판정과 hash만 담당한다. `identification_preflight.py`(#173)와 같은 규약을 따른다: I/O·락·시계·port 없음, 거부 입력에서 예외를 던지지 않고 **typed fail-closed 결과**로 끝낸다. 예외 경로를 실행 허가로 오인할 수 없게 한다.
 - repository는 저장만 담당한다. 판정을 다시 하지 않고, `BUILDABLE`이 아닌 결과는 저장하지 않는다.
-- 새 Service 계층·Protocol·Factory는 만들지 않는다. 실제 구현체와 소비자가 각각 하나뿐이므로 `CONTRIBUTING.md`의 최소 복잡성 기준을 따른다. build port는 「kernel 판정 → repository transaction」 조합 그 자체이며, 통합 테스트가 이 조합을 고정한다.
+- 새 Protocol·Factory·추상화는 만들지 않는다. `execute_runtime_bundle_build`는 interface가 아니라 구체 함수 하나이며, 판정·변환·원자 저장을 연결하는 실행 경계다. 초기 설계는 이 조합을 통합 테스트의 헬퍼로만 두었는데, 그러면 「거부 입력 저장 차단」과 「member set 불변」이 production 경로에서 보장되지 않는다.
+- 이 service는 **`backend`가 `ai_worker`를 production에서 import하는 첫 사례**다. 추가 의존은 I/O·시계·session이 없는 순수 kernel 모듈 하나이며, `backend`가 이미 `provider_contracts`를 import하는 것과 같은 형태다. 대안(`ai_worker/adapters` Protocol+adapter)은 `table()` 리터럴로 Bundle 6개 테이블 스키마를 재선언해야 해 정본이 이중화된다. 이 경계는 `PD-175-20260910`에서 함께 승인받는다. 역방향은 계속 금지이고 Worker 테스트 lane이 강제한다.
 
 ## 5. Member 모델 — 머지된 스키마를 그대로 사용한다
 
@@ -110,9 +128,23 @@ rag_runtime_execution_manifest / rag_runtime_release_bundle / rag_runtime_bundle
 
 Candidate Index의 `manifest_hash`는 `CandidateIndexManifest.content_hash`(#167)를 그대로 고정한다. 새 hash 체계를 만들지 않는다.
 
-### 5.3 필수 member 판정
+### 5.3 필수 member 판정과 Catalog 승인 검증
 
 완료 기준이 명시한 필수 member는 **Medication Catalog**와 **Candidate Index** 둘이다. Rule·Guideline·Safety는 `BUILDING` 생성에는 필수가 아니고, 없으면 `readiness_blockers`에 기록되어 `READY` 승격을 차단한다(§7).
+
+**`CATALOG` purpose member의 존재는 Catalog 승인의 증거가 아니다.** 따라서 `MedicationCatalogBinding`을 필수 입력으로 받아 `CandidateCatalogExport`(#166/#167)의 계약을 검증한다.
+
+| 검증 | 거부 사유 |
+| --- | --- |
+| `verification_status = APPROVED` | `CATALOG_NOT_APPROVED` |
+| `freshness_status = CURRENT` | `CATALOG_STALE` |
+| `is_complete = true` | `CATALOG_PARTIAL` |
+| 고정된 `CATALOG` member snapshot ⊆ Catalog `source_refs` | `CATALOG_SOURCE_BINDING_INVALID` |
+| Candidate Index의 `catalog_version`·`catalog_manifest_hash` exact-match | `CANDIDATE_INDEX_CATALOG_MISMATCH` |
+
+사유 이름은 머지된 `CandidateIndexBuildFailureReason` 어휘를 그대로 따라 하나의 정책 언어를 유지한다.
+
+**승인 관측값에 기본값을 두지 않는다.** `RuntimeBundleSourceMemberInput`·`RuntimeBundleArtifactMemberInput`의 승인·freshness·revocation·scope 필드는 전부 필수 인자다. 초기 설계는 이들에 허용 기본값을 두어 최소 인자 생성이 곧 `BUILDABLE`이었다 — fail-closed 도메인에서 거꾸로다. 기본값은 pinning 설정(`required`, `selected_for_operation`)에만 남긴다. 이 성질은 `__dataclass_fields__`를 검사하는 테스트로 고정한다.
 
 ### 5.4 머지된 스키마가 덮지 못하는 축 — Graph·Validator (리뷰 필요)
 
@@ -176,20 +208,22 @@ RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION = "rag-runtime-bundle-manifest-v1"
 
 | 완료 기준 | 검증 위치 |
 | --- | --- |
-| 동일 구성요소 → 동일 Bundle/Manifest Hash | `ai_worker/tests/rag/test_runtime_bundle_builder.py` (순서 무관 동일성, 값 변경 시 상이성) |
-| Medication Catalog·Candidate Index 필수 member | 동일 파일 (누락 시 `REJECTED`) |
-| 미승인·만료·누락·revoked·환경 불일치 차단 | 동일 파일 (사유별 케이스) |
-| `BUILDING` member 임의 update 불가 | `backend/app/tests/rag/test_runtime_bundle_repository.py` |
-| 하위 component 미완료 시 `READY`·active pointer 0건 | 동일 파일 + `tests/integration/rag/test_runtime_bundle_build.py` |
-| build failure이 active pointer 미변경 | `tests/integration/rag/test_runtime_bundle_build.py` |
+| 동일 구성요소 → 동일 Bundle/Manifest Hash | `test_runtime_bundle_builder.py` — 순서 무관 동일성, member version·artifact version·환경·worker artifact 변경 시 상이성 |
+| Medication Catalog·Candidate Index 필수 member | 동일 파일 — 누락 시 `REJECTED`, Catalog 미승인·STALE·불완전·결속 불일치 회귀 사례 |
+| 미승인·만료·누락·revoked·환경 불일치 차단 | 동일 파일 — 사유별 케이스 + #362 공용 정책 위임 6종 + 승인 관측 기본값 부재 |
+| `BUILDING` member 임의 update 불가 | `test_runtime_bundle_repository.py` (member 변경 경로 0건) + `test_runtime_bundle_build.py` (생성 후 member 추가 시 재계산 해시 불일치 탐지) |
+| 하위 component 미완료 시 `READY`·active pointer 0건 | `test_runtime_bundle_build.py` |
+| build failure이 active pointer 미변경 | `test_runtime_bundle_build.py` — 거부 시 manifest조차 저장 0건 |
+| **해시 저장 정합(리뷰 지적)** | `test_runtime_bundle_build.py` — 저장→재조회→해시 재계산 일치, artifact version만 다른 두 구성의 개별 검증, 복합 FK로 version 위조 차단 |
 
 테스트 명령은 `#175`가 지정한 3개를 그대로 사용한다.
 
 ## 10. 공유 계약 영향
 
 - 환자용 API·공개 DTO·OpenAPI 변경 **0건**.
-- 마이그레이션·DB 스키마 변경 **0건**. #164에서 머지된 구조만 사용한다.
-- `docs/contracts/` 상태 변경 **0건**. `rag-runtime-v1.md`는 `targets/`에 그대로 둔다(§2).
+- **DB 스키마 변경 있음.** Migration `175a1b2c3d4e`가 `rag_runtime_bundle_source`에 5개, `rag_runtime_release_bundle`에 8개 컬럼과 복합 FK·CHECK를 추가한다. 순수 additive이며 컬럼 삭제 0건이다. 근거와 대안은 [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md)에 기록했다.
+- 기존 행 backfill을 하지 않는다. Runtime Bundle 행이 있으면 migration이 실패한다 — 승인·정책 hash를 추정해 채우면 검증되지 않은 내용에 provenance를 조작해 넣는 것이다.
+- `rag-runtime-v1.md`에 「Bundle Manifest Hash와 저장 정합」 절을 추가하고 `docs/contracts/README.md`·`targets/post-mvp-1/README.md` 인덱스를 갱신했다. 문서는 `targets/`에 유지하며 `current/` 승격은 하지 않는다(§2).
 - 새 enum·status·column·queue **0건**. member 어휘는 머지된 `RagRuntimeSourcePurpose`를, snapshot 사용 가능 판정은 머지된 `evaluate_snapshot_use_eligibility`와 `SnapshotUseFailureCode`를 사용한다.
 - 미충족으로 남는 계약 문장 2건: Worker 호환성 검사(§2), Graph·Validator version 고정(§5.4).
 - kernel 내부 진단 코드(`RuntimeBundleRejectionReason` 등)는 공개 DTO에 사상하지 않는다. `identification_preflight.py`의 `PreflightValidationCode`와 같은 취급이다.

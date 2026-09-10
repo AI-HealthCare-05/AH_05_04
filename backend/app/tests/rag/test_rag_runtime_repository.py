@@ -181,7 +181,11 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
             bundle_status=RagRuntimeBundleStatus.READY,
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("3"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
             candidate_index_ref="candidate-index:pending-fk",
+            candidate_index_version="1.0.0",
             candidate_index_manifest_hash=_hash("4"),
             created_by="backend-test",
         )
@@ -191,6 +195,11 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
             bundle_id=bundle.id,
             source_snapshot_id=snapshot.id,
             source_purpose=RagRuntimeSourcePurpose.CATALOG,
+            source_version=snapshot.source_version,
+            canonical_checksum=snapshot.canonical_checksum,
+            approval_version="approval-v1",
+            scope_policy_hash=_hash("c"),
+            freshness_policy_hash=_hash("d"),
         )
     )
     environment = await repository.create_environment(
@@ -245,6 +254,9 @@ async def test_environment_active_bundle_hash_must_match_bundle(db_session: Asyn
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("6"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
 
@@ -276,6 +288,9 @@ async def test_approved_evaluation_requires_passed_eval_run(db_session: AsyncSes
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("9"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
 
@@ -312,6 +327,9 @@ async def test_evaluation_approval_bundle_hash_must_match_bundle(db_session: Asy
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("d"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
 
@@ -368,6 +386,9 @@ async def test_environment_transition_preserves_activation_history(db_session: A
             bundle_manifest_hash=_hash("b"),
             bundle_status=RagRuntimeBundleStatus.READY,
             governance_revision_ref="governance:test-a",
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
     environment = await repository.create_environment(

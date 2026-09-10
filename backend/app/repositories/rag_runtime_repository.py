@@ -86,18 +86,33 @@ class RagRuntimeExecutionManifestCreate:
 
 @dataclass(frozen=True, slots=True)
 class RagRuntimeReleaseBundleCreate:
+    """Every field behind ``bundle_manifest_hash`` is required, so the hash stays recomputable.
+
+    ``environment_code``, ``catalog_version``, ``catalog_manifest_hash`` and each artifact
+    ``*_version`` enter the hash; storing a bundle without them would make the hash an opaque
+    token that no later read can re-verify.
+    """
+
     bundle_key: str
     bundle_version: str
     execution_manifest_id: UUID
     bundle_manifest_hash: str
+    environment_code: str
+    catalog_version: str
+    catalog_manifest_hash: str
     bundle_status: RagRuntimeBundleStatus = RagRuntimeBundleStatus.BUILDING
     candidate_index_ref: str | None = None
+    candidate_index_version: str | None = None
     candidate_index_manifest_hash: str | None = None
     knowledge_index_ref: str | None = None
+    knowledge_index_version: str | None = None
     knowledge_index_manifest_hash: str | None = None
     rule_set_ref: str | None = None
+    rule_set_version: str | None = None
     guideline_set_ref: str | None = None
+    guideline_set_version: str | None = None
     safety_policy_ref: str | None = None
+    safety_policy_version: str | None = None
     governance_revision_ref: str | None = None
     created_by: str | None = None
 
@@ -107,11 +122,20 @@ class RagRuntimeBundleSourceCreate:
     bundle_id: UUID
     source_snapshot_id: UUID
     source_purpose: RagRuntimeSourcePurpose
+    source_version: str
+    canonical_checksum: str
+    approval_version: str
+    scope_policy_hash: str
+    freshness_policy_hash: str
     required: bool = True
     selected_for_operation: bool = True
 
 
-class RagRuntimeExecutionManifestConflictError(RuntimeError):
+class RagRuntimeBundleBuildError(RuntimeError):
+    """The requested bundle write cannot produce a verifiable immutable bundle."""
+
+
+class RagRuntimeExecutionManifestConflictError(RagRuntimeBundleBuildError):
     """A stored manifest shares the requested hash but pins a different execution axis."""
 
 
@@ -272,6 +296,12 @@ class RagRuntimeRepository:
         await self.session.flush()
         return manifest
 
+    async def get_execution_manifest_by_id(self, manifest_id: UUID) -> RagRuntimeExecutionManifest | None:
+        result = await self.session.execute(
+            select(RagRuntimeExecutionManifest).where(RagRuntimeExecutionManifest.id == manifest_id)
+        )
+        return result.scalar_one_or_none()
+
     async def get_execution_manifest_by_hash(self, manifest_hash: str) -> RagRuntimeExecutionManifest | None:
         result = await self.session.execute(
             select(RagRuntimeExecutionManifest).where(RagRuntimeExecutionManifest.manifest_hash == manifest_hash)
@@ -295,6 +325,12 @@ class RagRuntimeRepository:
                 RagRuntimeReleaseBundle.bundle_key == bundle_key,
                 RagRuntimeReleaseBundle.bundle_version == bundle_version,
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_release_bundle_by_id(self, bundle_id: UUID) -> RagRuntimeReleaseBundle | None:
+        result = await self.session.execute(
+            select(RagRuntimeReleaseBundle).where(RagRuntimeReleaseBundle.id == bundle_id)
         )
         return result.scalar_one_or_none()
 
@@ -347,6 +383,12 @@ class RagRuntimeRepository:
                 describes a different execution axis, so reusing it would bind the bundle to a
                 manifest the caller did not pin.
         """
+        if not bundle_sources:
+            raise RagRuntimeBundleBuildError(
+                "member 없는 Bundle은 저장할 수 없습니다. bundle_manifest_hash가 빈 member set을 "
+                "가리키면 평가·실행 대상 동일성을 재검증할 수 없습니다."
+            )
+
         existing_manifest = await self.get_execution_manifest_by_hash(manifest.manifest_hash)
         if existing_manifest is not None:
             _assert_manifest_matches(existing_manifest, manifest)

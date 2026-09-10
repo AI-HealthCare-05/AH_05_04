@@ -10,6 +10,14 @@ clock, no port.  A passing unit test here proves determinism only -- never appro
 readiness, or ``PUBLIC_TRACK_F_ENABLED``.  Rejected input never raises; every failure ends as a
 typed fail-closed outcome so a caller cannot mistake an exception path for permission to build.
 
+Round-trip requirement.  :class:`RuntimeBundleCanonicalConfiguration` is the *only* input to
+:func:`canonical_runtime_bundle_manifest_hash`, and it is deliberately built from values that are
+all persisted by ``rag_runtime_release_bundle`` and ``rag_runtime_bundle_source``.  Storage can
+therefore rebuild the same configuration and recompute the same hash.  Without that the hash is
+an opaque token: two different pinned configurations could produce different hashes while leaving
+byte-identical rows, and ``rag-runtime-v1.md``'s requirement to re-verify the Bundle Manifest
+before an environment pointer change could not be satisfied.
+
 Scope boundary.  This kernel owns ``BUILDING`` and build-failure judgment only.  It cannot
 return ``READY``: :class:`RuntimeBundleBuildDecision` has no such value, and the environment
 pointer, ``RETIRED`` and rollback execution stay with RAG-17 (#180).  Worker-Bundle
@@ -25,6 +33,7 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotUseFailureCode,
     SnapshotVerificationStatus,
@@ -84,8 +93,8 @@ _HASHED_ARTIFACT_KINDS = frozenset(
 )
 """Kinds with a ``*_manifest_hash`` column on ``rag_runtime_release_bundle``.
 
-The remaining kinds are stored as a bare ``*_ref``, so a hash supplied for them would have
-nowhere to be persisted and is rejected instead of silently dropped.
+The remaining kinds are stored as ``*_ref`` + ``*_version`` only, so a hash supplied for them
+would have nowhere to be persisted and is rejected instead of silently dropped.
 """
 
 _REQUIRED_SOURCE_PURPOSES = (RuntimeBundleMemberPurpose.CATALOG,)
@@ -105,8 +114,11 @@ class RuntimeBundleBuildExecutionStatus(StrEnum):
 class RuntimeBundleRejectionReason(StrEnum):
     """Member eligibility failures.  Internal diagnostics; never projected onto a public DTO.
 
-    Naming follows the already-merged ``SyntheticGovernanceReason`` vocabulary in
-    ``ai_worker/tasks/rag/source_governance.py`` so the two read as one policy language.
+    Naming follows the already-merged vocabularies so the whole Track F pipeline reads as one
+    policy language: ``SyntheticGovernanceReason``
+    (``ai_worker/tasks/rag/source_governance.py``) for governance axes and
+    ``CandidateIndexBuildFailureReason`` (``ai_worker/tasks/rag/candidate_index.py``) for the
+    catalog axes.
 
     Snapshot approval and freshness are deliberately absent: those verdicts belong to
     :func:`evaluate_snapshot_use_eligibility` and are reported through
@@ -116,6 +128,11 @@ class RuntimeBundleRejectionReason(StrEnum):
 
     REQUIRED_SOURCE_MEMBER_MISSING = "REQUIRED_SOURCE_MEMBER_MISSING"
     REQUIRED_ARTIFACT_MEMBER_MISSING = "REQUIRED_ARTIFACT_MEMBER_MISSING"
+    CATALOG_NOT_APPROVED = "CATALOG_NOT_APPROVED"
+    CATALOG_STALE = "CATALOG_STALE"
+    CATALOG_PARTIAL = "CATALOG_PARTIAL"
+    CATALOG_SOURCE_BINDING_INVALID = "CATALOG_SOURCE_BINDING_INVALID"
+    CANDIDATE_INDEX_CATALOG_MISMATCH = "CANDIDATE_INDEX_CATALOG_MISMATCH"
     MEMBER_SNAPSHOT_NOT_USABLE = "MEMBER_SNAPSHOT_NOT_USABLE"
     MEMBER_APPROVAL_NOT_EFFECTIVE = "MEMBER_APPROVAL_NOT_EFFECTIVE"
     MEMBER_APPROVAL_EXPIRED = "MEMBER_APPROVAL_EXPIRED"
@@ -138,6 +155,9 @@ class RuntimeBundleValidationCode(StrEnum):
     DUPLICATE_ARTIFACT_MEMBER = "DUPLICATE_ARTIFACT_MEMBER"
     ARTIFACT_MANIFEST_HASH_REQUIRED = "ARTIFACT_MANIFEST_HASH_REQUIRED"
     ARTIFACT_MANIFEST_HASH_FORBIDDEN = "ARTIFACT_MANIFEST_HASH_FORBIDDEN"
+    ARTIFACT_CATALOG_BINDING_REQUIRED = "ARTIFACT_CATALOG_BINDING_REQUIRED"
+    ARTIFACT_CATALOG_BINDING_FORBIDDEN = "ARTIFACT_CATALOG_BINDING_FORBIDDEN"
+    CATALOG_SOURCE_REF_REQUIRED = "CATALOG_SOURCE_REF_REQUIRED"
 
 
 class RuntimeBundleReadinessBlocker(StrEnum):
@@ -165,6 +185,70 @@ _READINESS_BLOCKER_BY_ARTIFACT_KIND = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Canonical configuration: the persisted content that bundle_manifest_hash identifies
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeBundleSourceMemberIdentity:
+    """A source member's pinned identity.  Every field maps to a ``rag_runtime_bundle_source`` column."""
+
+    source_snapshot_id: str
+    source_purpose: RuntimeBundleMemberPurpose
+    source_version: str
+    canonical_checksum: str
+    approval_version: str
+    scope_policy_hash: str
+    freshness_policy_hash: str
+    required: bool
+    selected_for_operation: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeBundleArtifactMemberIdentity:
+    """An artifact member's pinned identity.  Maps to the bundle row's ``*_ref``/``*_version``/``*_manifest_hash``."""
+
+    artifact_kind: RuntimeBundleArtifactKind
+    artifact_ref: str
+    artifact_version: str
+    manifest_hash: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeBundleCanonicalConfiguration:
+    """The complete content identified by ``bundle_manifest_hash``.
+
+    Every field is persisted, so :func:`canonical_runtime_bundle_manifest_hash` can be recomputed
+    from storage and compared with the stored value.  Deliberately excluded:
+
+    - ``bundle_key`` / ``bundle_version`` / ``created_by``: naming and provenance, not content.
+      Excluding them makes ``uq_rag_runtime_bundle_manifest_hash`` mean "one bundle row per
+      distinct execution content", which is what ``rag-runtime-v1.md`` relies on when it requires
+      an evaluation of "동일 Manifest" to carry over.  Rebuilding identical content therefore
+      collides on that constraint by design; the caller reuses the existing bundle.
+    - ``governance_revision_ref``: checked separately as its own guard reason
+      (``GOVERNANCE_REVISION_MISMATCH`` in ``source_governance.py``).  Folding a revision bump
+      into content identity would invalidate evaluation reuse for unchanged content.
+    - Every eligibility observation: the configuration identifies the *pinned* member set, and the
+      same member set must hash identically whether or not an observation later turns it
+      ineligible.  Same reason ``canonical_preflight_manifest_hash`` (#173) excludes observed
+      pointers.
+    """
+
+    environment_code: str
+    execution_manifest_hash: str
+    catalog_version: str
+    catalog_manifest_hash: str
+    source_members: tuple[RuntimeBundleSourceMemberIdentity, ...]
+    artifact_members: tuple[RuntimeBundleArtifactMemberIdentity, ...]
+
+
+# ---------------------------------------------------------------------------
+# Build request: canonical configuration plus the eligibility evidence for it
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeExecutionManifestInput:
     """The execution-environment axis pinned into ``rag_runtime_execution_manifest``.
@@ -186,26 +270,40 @@ class RuntimeExecutionManifestInput:
 
 
 @dataclass(frozen=True, slots=True)
+class MedicationCatalogBinding:
+    """The Medication Catalog's approval, completeness and source binding.
+
+    Sourced from ``CandidateCatalogExport`` (#166/#167): ``verification_status``,
+    ``freshness_status``, ``is_complete``, ``catalog_version``, ``catalog_manifest_hash`` and the
+    snapshot ids behind ``source_refs``.  A ``CATALOG``-purpose source member being present is not
+    evidence that the catalog it came from was approved or complete, so those facts are required
+    here rather than inferred.
+    """
+
+    catalog_version: str
+    catalog_manifest_hash: str
+    verification_status: CatalogVerificationStatus
+    freshness_status: CatalogFreshnessStatus
+    is_complete: bool
+    source_snapshot_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeBundleSourceMemberInput:
-    """One ``rag_runtime_bundle_source`` member plus the eligibility facts observed for it.
+    """A source member's identity plus the eligibility facts observed for it.
 
-    The pinned fields identify the member and enter the bundle hash.  The observation fields
-    (``verification_status`` onwards) are eligibility evidence gathered by the caller under its
-    own lock and are deliberately excluded from the hash; see
-    :func:`canonical_runtime_bundle_manifest_hash`.
+    The eligibility fields have **no defaults**: an omitted approval or freshness observation must
+    not read as permission.  ``verification_status``, ``rejected_record_count``,
+    ``publication_approval_passed``, ``freshness_eligible`` and ``provenance_valid`` are the exact
+    inputs of :func:`evaluate_snapshot_use_eligibility` -- the merged "Catalog·Runtime 공통
+    Snapshot 사용 가능 판정" from #362 -- so bundle build and catalog build cannot drift apart.
+    ``approval_expired``, ``revocation_unresolved`` and ``scope_allowed`` remain local because that
+    function models none of them.
 
-    ``verification_status``, ``rejected_record_count``, ``publication_approval_passed``,
-    ``freshness_eligible`` and ``provenance_valid`` are the exact inputs of
-    :func:`evaluate_snapshot_use_eligibility` -- the merged "Catalog·Runtime 공통 Snapshot 사용
-    가능 판정" from #362.  Snapshot approval and freshness are decided by that shared function,
-    not restated here, so bundle build and catalog build cannot drift apart.  ``approval_expired``,
-    ``revocation_unresolved`` and ``scope_allowed`` remain local because that function models
-    none of them.
-
-    ``required`` and ``selected_for_operation`` are pinned member configuration -- they change
-    what the bundle means -- so they are hashed and stored, not treated as observations.  Every
-    member is gated identically regardless of ``required``: pinning a revoked or unapproved
-    member into an immutable bundle is fail-closed either way.
+    ``required`` and ``selected_for_operation`` are pinned configuration -- they change what the
+    bundle means -- so they are hashed and stored, not treated as observations.  Every member is
+    gated identically regardless of ``required``: pinning a revoked or unapproved member into an
+    immutable bundle is fail-closed either way.
     """
 
     source_snapshot_id: str
@@ -216,43 +314,69 @@ class RuntimeBundleSourceMemberInput:
     scope_policy_hash: str
     freshness_policy_hash: str
     observed_environment: str
+    verification_status: SnapshotVerificationStatus
+    rejected_record_count: int
+    publication_approval_passed: bool
+    freshness_eligible: bool
+    provenance_valid: bool
+    approval_expired: bool
+    revocation_unresolved: bool
+    scope_allowed: bool
     required: bool = True
     selected_for_operation: bool = True
-    verification_status: SnapshotVerificationStatus = SnapshotVerificationStatus.CURRENT
-    rejected_record_count: int = 0
-    publication_approval_passed: bool = False
-    freshness_eligible: bool = True
-    provenance_valid: bool = True
-    approval_expired: bool = False
-    revocation_unresolved: bool = False
-    scope_allowed: bool = True
+
+    def identity(self) -> RuntimeBundleSourceMemberIdentity:
+        return RuntimeBundleSourceMemberIdentity(
+            source_snapshot_id=self.source_snapshot_id,
+            source_purpose=self.source_purpose,
+            source_version=self.source_version,
+            canonical_checksum=self.canonical_checksum,
+            approval_version=self.approval_version,
+            scope_policy_hash=self.scope_policy_hash,
+            freshness_policy_hash=self.freshness_policy_hash,
+            required=self.required,
+            selected_for_operation=self.selected_for_operation,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeBundleArtifactMemberInput:
-    """One artifact member carried on the ``rag_runtime_release_bundle`` row.
+    """An artifact member's identity plus its eligibility facts.
 
     For :attr:`RuntimeBundleArtifactKind.CANDIDATE_INDEX` the ``manifest_hash`` is the
-    ``CandidateIndexManifest.content_hash`` produced by RAG-07A (#167).  No new hash scheme is
-    introduced here.
+    ``CandidateIndexManifest.content_hash`` and ``catalog_version``/``catalog_manifest_hash`` are
+    that manifest's catalog binding, both from RAG-07A (#167).  No new hash scheme is introduced
+    here.  Eligibility fields have no defaults, for the same fail-closed reason as the source
+    member input.
     """
 
     artifact_kind: RuntimeBundleArtifactKind
     artifact_ref: str
     artifact_version: str
     observed_environment: str
+    approval_effective: bool
+    approval_expired: bool
+    revocation_unresolved: bool
     manifest_hash: str | None = None
-    approval_effective: bool = True
-    approval_expired: bool = False
-    revocation_unresolved: bool = False
+    catalog_version: str | None = None
+    catalog_manifest_hash: str | None = None
+
+    def identity(self) -> RuntimeBundleArtifactMemberIdentity:
+        return RuntimeBundleArtifactMemberIdentity(
+            artifact_kind=self.artifact_kind,
+            artifact_ref=self.artifact_ref,
+            artifact_version=self.artifact_version,
+            manifest_hash=self.manifest_hash,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeBundleBuildRequest:
     bundle_key: str
     bundle_version: str
-    target_environment: str
+    environment_code: str
     execution_manifest: RuntimeExecutionManifestInput
+    catalog: MedicationCatalogBinding
     source_members: tuple[RuntimeBundleSourceMemberInput, ...]
     artifact_members: tuple[RuntimeBundleArtifactMemberInput, ...] = ()
     governance_revision_ref: str | None = None
@@ -266,6 +390,7 @@ class RuntimeBundleBuildOutcome:
     manifest_projection_version: str = RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION
     manifest_hash: str | None = None
     bundle_manifest_hash: str | None = None
+    configuration: RuntimeBundleCanonicalConfiguration | None = None
     source_member_count: int = 0
     artifact_member_count: int = 0
     rejection_reasons: tuple[RuntimeBundleRejectionReason, ...] = ()
@@ -280,7 +405,8 @@ def evaluate_runtime_bundle_build(request: RuntimeBundleBuildRequest) -> Runtime
     """Decide whether a ``BUILDING`` bundle may be persisted for this member set.
 
     ``BUILDABLE`` authorises exactly one thing: writing the manifest, the bundle row at
-    ``BUILDING`` and its members in a single transaction.  It is not a ``READY`` judgment, an
+    ``BUILDING`` and its members in a single transaction, using the returned
+    :attr:`RuntimeBundleBuildOutcome.configuration`.  It is not a ``READY`` judgment, an
     evaluation approval, or permission to touch an environment pointer.
     """
     validation_codes = _validate_request(request)
@@ -307,16 +433,34 @@ def evaluate_runtime_bundle_build(request: RuntimeBundleBuildRequest) -> Runtime
         return counted
 
     manifest_hash = canonical_execution_manifest_hash(request.execution_manifest)
+    configuration = runtime_bundle_configuration_from_request(request, execution_manifest_hash=manifest_hash)
     return RuntimeBundleBuildOutcome(
         execution_status=counted.execution_status,
         decision=RuntimeBundleBuildDecision.BUILDABLE,
         manifest_hash=manifest_hash,
-        bundle_manifest_hash=canonical_runtime_bundle_manifest_hash(request, manifest_hash=manifest_hash),
+        bundle_manifest_hash=canonical_runtime_bundle_manifest_hash(configuration),
+        configuration=configuration,
         source_member_count=counted.source_member_count,
         artifact_member_count=counted.artifact_member_count,
         readiness_blockers=counted.readiness_blockers,
         deferred_checks=counted.deferred_checks,
         deferred_check_block_codes=counted.deferred_check_block_codes,
+    )
+
+
+def runtime_bundle_configuration_from_request(
+    request: RuntimeBundleBuildRequest,
+    *,
+    execution_manifest_hash: str,
+) -> RuntimeBundleCanonicalConfiguration:
+    """Project a build request onto exactly the content that gets persisted and hashed."""
+    return RuntimeBundleCanonicalConfiguration(
+        environment_code=request.environment_code,
+        execution_manifest_hash=execution_manifest_hash,
+        catalog_version=request.catalog.catalog_version,
+        catalog_manifest_hash=request.catalog.catalog_manifest_hash,
+        source_members=tuple(member.identity() for member in request.source_members),
+        artifact_members=tuple(member.identity() for member in request.artifact_members),
     )
 
 
@@ -343,34 +487,11 @@ def canonical_execution_manifest_hash(manifest: RuntimeExecutionManifestInput) -
     return _sha256_of(payload)
 
 
-def canonical_runtime_bundle_manifest_hash(
-    request: RuntimeBundleBuildRequest,
-    *,
-    manifest_hash: str,
-) -> str:
+def canonical_runtime_bundle_manifest_hash(configuration: RuntimeBundleCanonicalConfiguration) -> str:
     """Return the order-independent SHA-256 identity of the pinned bundle content.
 
-    What is hashed, and why:
-
-    - The execution manifest hash, the full source member set and the full artifact member set:
-      this value must change whenever the executed content changes.
-    - ``target_environment``: ``rag_runtime_release_bundle`` has no environment column, so this
-      is the only place the environment binding required by ``rag-runtime-v1.md`` can live
-      without adding one.
-
-    What is excluded, and why:
-
-    - ``bundle_key`` / ``bundle_version`` / ``created_by``: naming and provenance, not content.
-      Excluding them makes ``uq_rag_runtime_bundle_manifest_hash`` mean "one bundle row per
-      distinct execution content", which is what ``rag-runtime-v1.md`` relies on when it requires
-      an evaluation of "동일 Manifest" to carry over.  Rebuilding identical content therefore
-      collides on that constraint by design; the caller reuses the existing bundle.
-    - ``governance_revision_ref``: checked separately as its own guard reason
-      (``GOVERNANCE_REVISION_MISMATCH`` in ``source_governance.py``).  Folding a revision bump
-      into content identity would invalidate evaluation reuse for unchanged content.
-    - Every observation field: the manifest identifies the *pinned* member set, and the same
-      member set must hash identically whether or not an observation later turns it ineligible.
-      Same reason ``canonical_preflight_manifest_hash`` (#173) excludes observed pointers.
+    Member lists are sorted by their canonical JSON bytes, so the same member set hashes
+    identically regardless of the order it was supplied or read back in.
     """
     source_members = sorted(
         (
@@ -385,7 +506,7 @@ def canonical_runtime_bundle_manifest_hash(
                 "required": member.required,
                 "selected_for_operation": member.selected_for_operation,
             }
-            for member in request.source_members
+            for member in configuration.source_members
         ),
         key=_canonical_bytes,
     )
@@ -397,14 +518,16 @@ def canonical_runtime_bundle_manifest_hash(
                 "artifact_version": member.artifact_version,
                 "manifest_hash": member.manifest_hash,
             }
-            for member in request.artifact_members
+            for member in configuration.artifact_members
         ),
         key=_canonical_bytes,
     )
     payload = {
         "projection_version": RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION,
-        "target_environment": request.target_environment,
-        "execution_manifest_hash": manifest_hash,
+        "environment_code": configuration.environment_code,
+        "execution_manifest_hash": configuration.execution_manifest_hash,
+        "catalog_version": configuration.catalog_version,
+        "catalog_manifest_hash": configuration.catalog_manifest_hash,
         "source_members": source_members,
         "artifact_members": artifact_members,
     }
@@ -423,6 +546,8 @@ def _rejection_reasons(
     present_kinds = {member.artifact_kind for member in request.artifact_members}
     if any(kind not in present_kinds for kind in _REQUIRED_ARTIFACT_KINDS):
         reasons.add(RuntimeBundleRejectionReason.REQUIRED_ARTIFACT_MEMBER_MISSING)
+
+    reasons.update(_catalog_reasons(request))
 
     for source_member in request.source_members:
         # #362's shared Catalog/Runtime policy owns snapshot approval and freshness.
@@ -444,7 +569,7 @@ def _rejection_reasons(
                 approval_expired=source_member.approval_expired,
                 revocation_unresolved=source_member.revocation_unresolved,
                 observed_environment=source_member.observed_environment,
-                target_environment=request.target_environment,
+                environment_code=request.environment_code,
             )
         )
 
@@ -458,7 +583,7 @@ def _rejection_reasons(
                 approval_expired=artifact_member.approval_expired,
                 revocation_unresolved=artifact_member.revocation_unresolved,
                 observed_environment=artifact_member.observed_environment,
-                target_environment=request.target_environment,
+                environment_code=request.environment_code,
             )
         )
 
@@ -468,19 +593,57 @@ def _rejection_reasons(
     )
 
 
+def _catalog_reasons(request: RuntimeBundleBuildRequest) -> set[RuntimeBundleRejectionReason]:
+    """Verify the Medication Catalog's own approval contract and its bindings.
+
+    A ``CATALOG``-purpose source member proves only that a snapshot was pinned.  ``#175`` requires
+    the Medication Catalog to be a *required member*, which means the catalog it represents must
+    itself be approved, current and complete, must actually derive from the pinned snapshot, and
+    must be the catalog the Candidate Index was built from.
+    """
+    catalog = request.catalog
+    reasons: set[RuntimeBundleRejectionReason] = set()
+
+    if catalog.verification_status is not CatalogVerificationStatus.APPROVED:
+        reasons.add(RuntimeBundleRejectionReason.CATALOG_NOT_APPROVED)
+    if catalog.freshness_status is not CatalogFreshnessStatus.CURRENT:
+        reasons.add(RuntimeBundleRejectionReason.CATALOG_STALE)
+    if not catalog.is_complete:
+        reasons.add(RuntimeBundleRejectionReason.CATALOG_PARTIAL)
+
+    # The pinned CATALOG members must be exactly the snapshots the catalog was built from.
+    catalog_member_ids = {
+        member.source_snapshot_id
+        for member in request.source_members
+        if member.source_purpose is RuntimeBundleMemberPurpose.CATALOG
+    }
+    if catalog_member_ids and not catalog_member_ids.issubset(set(catalog.source_snapshot_ids)):
+        reasons.add(RuntimeBundleRejectionReason.CATALOG_SOURCE_BINDING_INVALID)
+
+    for member in request.artifact_members:
+        if member.artifact_kind is not RuntimeBundleArtifactKind.CANDIDATE_INDEX:
+            continue
+        if (member.catalog_version, member.catalog_manifest_hash) != (
+            catalog.catalog_version,
+            catalog.catalog_manifest_hash,
+        ):
+            reasons.add(RuntimeBundleRejectionReason.CANDIDATE_INDEX_CATALOG_MISMATCH)
+    return reasons
+
+
 def _common_member_reasons(
     *,
     approval_expired: bool,
     revocation_unresolved: bool,
     observed_environment: str,
-    target_environment: str,
+    environment_code: str,
 ) -> set[RuntimeBundleRejectionReason]:
     reasons: set[RuntimeBundleRejectionReason] = set()
     if approval_expired:
         reasons.add(RuntimeBundleRejectionReason.MEMBER_APPROVAL_EXPIRED)
     if revocation_unresolved:
         reasons.add(RuntimeBundleRejectionReason.MEMBER_REVOCATION_UNRESOLVED)
-    if observed_environment != target_environment:
+    if observed_environment != environment_code:
         reasons.add(RuntimeBundleRejectionReason.MEMBER_ENVIRONMENT_MISMATCH)
     return reasons
 
@@ -496,19 +659,17 @@ def _validate_request(request: RuntimeBundleBuildRequest) -> tuple[RuntimeBundle
         return (RuntimeBundleValidationCode.REQUEST_SHAPE_INVALID,)
 
     codes: set[RuntimeBundleValidationCode] = set()
-    codes.update(_validate_bundle_identity(request))
+    codes.update(
+        _text_codes(
+            required=(request.bundle_key, request.bundle_version, request.environment_code),
+            optional=(request.governance_revision_ref, request.created_by),
+        )
+    )
     codes.update(_validate_execution_manifest(request.execution_manifest))
+    codes.update(_validate_catalog(request.catalog))
     codes.update(_validate_source_members(request))
     codes.update(_validate_artifact_members(request))
     return tuple(code for code in RuntimeBundleValidationCode if code in codes)
-
-
-def _validate_bundle_identity(request: RuntimeBundleBuildRequest) -> set[RuntimeBundleValidationCode]:
-    optional_text = (request.governance_revision_ref, request.created_by)
-    return _text_codes(
-        required=(request.bundle_key, request.bundle_version, request.target_environment),
-        optional=optional_text,
-    )
 
 
 def _validate_execution_manifest(manifest: RuntimeExecutionManifestInput) -> set[RuntimeBundleValidationCode]:
@@ -525,6 +686,17 @@ def _validate_execution_manifest(manifest: RuntimeExecutionManifestInput) -> set
     )
     if _GIT_COMMIT_SHA_RE.fullmatch(manifest.git_commit_sha) is None:
         codes.add(RuntimeBundleValidationCode.GIT_COMMIT_SHA_NOT_CANONICAL)
+    return codes
+
+
+def _validate_catalog(catalog: MedicationCatalogBinding) -> set[RuntimeBundleValidationCode]:
+    codes = _text_codes(required=(catalog.catalog_version,), optional=())
+    if _SHA256_RE.fullmatch(catalog.catalog_manifest_hash) is None:
+        codes.add(RuntimeBundleValidationCode.SHA256_NOT_CANONICAL)
+    if not catalog.source_snapshot_ids:
+        codes.add(RuntimeBundleValidationCode.CATALOG_SOURCE_REF_REQUIRED)
+    elif any(_CANONICAL_UUID_RE.fullmatch(value) is None for value in catalog.source_snapshot_ids):
+        codes.add(RuntimeBundleValidationCode.IDENTIFIER_NOT_CANONICAL_UUID)
     return codes
 
 
@@ -568,17 +740,38 @@ def _validate_artifact_members(request: RuntimeBundleBuildRequest) -> set[Runtim
         codes.update(
             _text_codes(
                 required=(member.artifact_ref, member.artifact_version, member.observed_environment),
-                optional=(),
+                optional=(member.catalog_version,),
             )
         )
-        if member.artifact_kind in _HASHED_ARTIFACT_KINDS:
-            if member.manifest_hash is None:
-                codes.add(RuntimeBundleValidationCode.ARTIFACT_MANIFEST_HASH_REQUIRED)
-            elif _SHA256_RE.fullmatch(member.manifest_hash) is None:
-                codes.add(RuntimeBundleValidationCode.SHA256_NOT_CANONICAL)
-        elif member.manifest_hash is not None:
-            codes.add(RuntimeBundleValidationCode.ARTIFACT_MANIFEST_HASH_FORBIDDEN)
+        codes.update(_artifact_hash_codes(member))
+        codes.update(_artifact_catalog_binding_codes(member))
     return codes
+
+
+def _artifact_hash_codes(member: RuntimeBundleArtifactMemberInput) -> set[RuntimeBundleValidationCode]:
+    if member.artifact_kind in _HASHED_ARTIFACT_KINDS:
+        if member.manifest_hash is None:
+            return {RuntimeBundleValidationCode.ARTIFACT_MANIFEST_HASH_REQUIRED}
+        if _SHA256_RE.fullmatch(member.manifest_hash) is None:
+            return {RuntimeBundleValidationCode.SHA256_NOT_CANONICAL}
+        return set()
+    if member.manifest_hash is not None:
+        return {RuntimeBundleValidationCode.ARTIFACT_MANIFEST_HASH_FORBIDDEN}
+    return set()
+
+
+def _artifact_catalog_binding_codes(member: RuntimeBundleArtifactMemberInput) -> set[RuntimeBundleValidationCode]:
+    """Only the Candidate Index carries a catalog binding; every other kind must not."""
+    binding = (member.catalog_version, member.catalog_manifest_hash)
+    if member.artifact_kind is RuntimeBundleArtifactKind.CANDIDATE_INDEX:
+        if any(value is None for value in binding):
+            return {RuntimeBundleValidationCode.ARTIFACT_CATALOG_BINDING_REQUIRED}
+        if _SHA256_RE.fullmatch(member.catalog_manifest_hash or "") is None:
+            return {RuntimeBundleValidationCode.SHA256_NOT_CANONICAL}
+        return set()
+    if any(value is not None for value in binding):
+        return {RuntimeBundleValidationCode.ARTIFACT_CATALOG_BINDING_FORBIDDEN}
+    return set()
 
 
 def _text_codes(
@@ -599,6 +792,12 @@ def _is_source_member_shaped(member: object) -> bool:
     return (
         isinstance(member, RuntimeBundleSourceMemberInput)
         and isinstance(member.source_purpose, RuntimeBundleMemberPurpose)
+        and isinstance(member.verification_status, SnapshotVerificationStatus)
+        # evaluate_snapshot_use_eligibility raises on a negative count, so reject it here
+        # instead: this kernel must never raise for bad input.
+        and isinstance(member.rejected_record_count, int)
+        and not isinstance(member.rejected_record_count, bool)
+        and member.rejected_record_count >= 0
         and all(
             isinstance(value, str)
             for value in (
@@ -611,12 +810,6 @@ def _is_source_member_shaped(member: object) -> bool:
                 member.observed_environment,
             )
         )
-        and isinstance(member.verification_status, SnapshotVerificationStatus)
-        # evaluate_snapshot_use_eligibility raises on a negative count, so reject it here
-        # instead: this kernel must never raise for bad input.
-        and isinstance(member.rejected_record_count, int)
-        and not isinstance(member.rejected_record_count, bool)
-        and member.rejected_record_count >= 0
         and all(
             isinstance(value, bool)
             for value in (
@@ -641,7 +834,10 @@ def _is_artifact_member_shaped(member: object) -> bool:
             isinstance(value, str)
             for value in (member.artifact_ref, member.artifact_version, member.observed_environment)
         )
-        and (member.manifest_hash is None or isinstance(member.manifest_hash, str))
+        and all(
+            value is None or isinstance(value, str)
+            for value in (member.manifest_hash, member.catalog_version, member.catalog_manifest_hash)
+        )
         and all(
             isinstance(value, bool)
             for value in (member.approval_effective, member.approval_expired, member.revocation_unresolved)
@@ -675,18 +871,31 @@ def _is_execution_manifest_shaped(manifest: object) -> bool:
     )
 
 
+def _is_catalog_shaped(catalog: object) -> bool:
+    return (
+        isinstance(catalog, MedicationCatalogBinding)
+        and isinstance(catalog.verification_status, CatalogVerificationStatus)
+        and isinstance(catalog.freshness_status, CatalogFreshnessStatus)
+        and isinstance(catalog.is_complete, bool)
+        and isinstance(catalog.catalog_version, str)
+        and isinstance(catalog.catalog_manifest_hash, str)
+        and isinstance(catalog.source_snapshot_ids, tuple)
+        and all(isinstance(value, str) for value in catalog.source_snapshot_ids)
+    )
+
+
 def _is_request_shaped(request: object) -> bool:
     if not isinstance(request, RuntimeBundleBuildRequest):
         return False
     if not all(
-        isinstance(value, str) for value in (request.bundle_key, request.bundle_version, request.target_environment)
+        isinstance(value, str) for value in (request.bundle_key, request.bundle_version, request.environment_code)
     ):
         return False
     if not all(
         value is None or isinstance(value, str) for value in (request.governance_revision_ref, request.created_by)
     ):
         return False
-    if not _is_execution_manifest_shaped(request.execution_manifest):
+    if not _is_execution_manifest_shaped(request.execution_manifest) or not _is_catalog_shaped(request.catalog):
         return False
     if not isinstance(request.source_members, tuple) or not isinstance(request.artifact_members, tuple):
         return False

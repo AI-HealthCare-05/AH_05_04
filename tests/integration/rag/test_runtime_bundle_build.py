@@ -1,12 +1,13 @@
-"""RAG-12A Runtime Bundle build port: kernel decision composed with the repository transaction (Issue #175).
+"""RAG-12A Runtime Bundle build port over real persistence (Issue #175).
 
-The "internal build port" of ``#175`` is exactly this composition -- the kernel decides, the
-repository persists, and nothing sits between them.  ``CONTRIBUTING.md`` forbids adding a
-Protocol or Service layer for a single implementation and a single consumer, so this test is what
-fixes the composition.
+These tests drive ``execute_runtime_bundle_build`` -- the production execution boundary -- rather
+than reassembling the kernel and the repository inside the test.  The round-trip tests are the
+ones that make ``bundle_manifest_hash`` a verifiable identity: the hash is recomputed from stored
+rows and compared with the stored value.
 """
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -18,21 +19,26 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
+from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
 from ai_worker.tasks.rag.runtime_bundle_builder import (
+    MedicationCatalogBinding,
     RuntimeBundleArtifactKind,
     RuntimeBundleArtifactMemberInput,
     RuntimeBundleBuildDecision,
     RuntimeBundleBuildRequest,
     RuntimeBundleMemberPurpose,
+    RuntimeBundleRejectionReason,
     RuntimeBundleSourceMemberInput,
     RuntimeExecutionManifestInput,
-    evaluate_runtime_bundle_build,
+    canonical_runtime_bundle_manifest_hash,
 )
+from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotVerificationStatus
 from app.core import config
 from app.core.db.databases import Base
 from app.models.rag_runtime import (
     RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
+    RagRuntimeEnvironment,
     RagRuntimeEnvironmentStatus,
     RagRuntimeEnvironmentTransition,
     RagRuntimeExecutionManifest,
@@ -43,8 +49,6 @@ from app.models.rag_source import RagSnapshotVerificationStatus
 from app.repositories.rag_runtime_repository import (
     RagRuntimeBundleSourceCreate,
     RagRuntimeEnvironmentCreate,
-    RagRuntimeExecutionManifestCreate,
-    RagRuntimeReleaseBundleCreate,
     RagRuntimeRepository,
 )
 from app.repositories.rag_source_catalog_repository import (
@@ -53,6 +57,11 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceEndpointCreate,
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
+)
+from app.services.rag_runtime_bundle_build import (
+    execute_runtime_bundle_build,
+    load_persisted_bundle_configuration,
+    verify_persisted_bundle_manifest_hash,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -75,12 +84,8 @@ test_engine = create_async_engine(
 session_factory = async_sessionmaker(test_engine, expire_on_commit=False, autoflush=False)
 
 _ENVIRONMENT = "local"
+_CATALOG_VERSION = "catalog-1.0.0"
 _NOW = datetime(2026, 9, 10, 3, 0, tzinfo=UTC)
-
-
-def _hash(char: str) -> str:
-    return char * 64
-
 
 _ROOT_TABLES = (
     "rag_runtime_execution_manifest",
@@ -91,6 +96,10 @@ _ROOT_TABLES = (
     "rag_release_evaluation_approval",
     "rag_source_snapshot",
 )
+
+
+def _hash(char: str) -> str:
+    return char * 64
 
 
 def _required_tables() -> list[Table]:
@@ -156,12 +165,12 @@ async def clean_runtime_tables() -> AsyncIterator[None]:
         )
 
 
-async def _seed_source_snapshot(purpose_label: str):
+async def _seed_source_snapshot(label: str):
     suffix = uuid4().hex[:10]
     async with session_factory.begin() as session:
         repository = RagSourceCatalogRepository(session)
         source = await repository.create_source(
-            RagSourceCreate(source_code=f"MFDS_{purpose_label}_{suffix}", display_name="MFDS Source")
+            RagSourceCreate(source_code=f"MFDS_{label}_{suffix}", display_name="MFDS Source")
         )
         endpoint = await repository.create_endpoint(
             RagSourceEndpointCreate(source_id=source.id, endpoint_code="PRODUCT_LIST", display_name="Product List")
@@ -171,7 +180,7 @@ async def _seed_source_snapshot(purpose_label: str):
                 endpoint_id=endpoint.id, operation_code="LIST_PRODUCTS", display_name="List Products"
             )
         )
-        snapshot = await repository.create_snapshot(
+        return await repository.create_snapshot(
             RagSourceSnapshotCreate(
                 operation_id=operation.id,
                 source_version=f"api:2026-09-10:{suffix}",
@@ -188,30 +197,34 @@ async def _seed_source_snapshot(purpose_label: str):
                 verified_at=_NOW,
             )
         )
-    return snapshot
 
 
-def _build_request(
-    *,
-    catalog_snapshot_id: str,
-    knowledge_snapshot_id: str,
-    catalog_overrides: dict[str, object] | None = None,
-) -> RuntimeBundleBuildRequest:
-    catalog_member = RuntimeBundleSourceMemberInput(
-        source_snapshot_id=catalog_snapshot_id,
-        source_purpose=RuntimeBundleMemberPurpose.CATALOG,
-        source_version="api:2026-09-10:catalog",
-        canonical_checksum=_hash("b"),
+def _source_member(snapshot, purpose: RuntimeBundleMemberPurpose) -> RuntimeBundleSourceMemberInput:
+    return RuntimeBundleSourceMemberInput(
+        source_snapshot_id=str(snapshot.id),
+        source_purpose=purpose,
+        source_version=snapshot.source_version,
+        canonical_checksum=snapshot.canonical_checksum,
         approval_version="approval-v1",
         scope_policy_hash=_hash("c"),
         freshness_policy_hash=_hash("d"),
         observed_environment=_ENVIRONMENT,
-        **(catalog_overrides or {}),  # type: ignore[arg-type]
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        rejected_record_count=0,
+        publication_approval_passed=True,
+        freshness_eligible=True,
+        provenance_valid=True,
+        approval_expired=False,
+        revocation_unresolved=False,
+        scope_allowed=True,
     )
-    return RuntimeBundleBuildRequest(
+
+
+def _request(catalog_snapshot, knowledge_snapshot, **overrides: object) -> RuntimeBundleBuildRequest:
+    request = RuntimeBundleBuildRequest(
         bundle_key="local-rag-runtime",
         bundle_version="2026.09.10-001",
-        target_environment=_ENVIRONMENT,
+        environment_code=_ENVIRONMENT,
         execution_manifest=RuntimeExecutionManifestInput(
             manifest_key="rag-runtime",
             manifest_version="2026.09.10-001",
@@ -219,18 +232,17 @@ def _build_request(
             git_commit_sha="abcdef1",
             worker_artifact_ref="worker:local:2026.09.10",
         ),
+        catalog=MedicationCatalogBinding(
+            catalog_version=_CATALOG_VERSION,
+            catalog_manifest_hash=_hash("9"),
+            verification_status=CatalogVerificationStatus.APPROVED,
+            freshness_status=CatalogFreshnessStatus.CURRENT,
+            is_complete=True,
+            source_snapshot_ids=(str(catalog_snapshot.id),),
+        ),
         source_members=(
-            catalog_member,
-            RuntimeBundleSourceMemberInput(
-                source_snapshot_id=knowledge_snapshot_id,
-                source_purpose=RuntimeBundleMemberPurpose.KNOWLEDGE,
-                source_version="api:2026-09-10:knowledge",
-                canonical_checksum=_hash("b"),
-                approval_version="approval-v1",
-                scope_policy_hash=_hash("c"),
-                freshness_policy_hash=_hash("d"),
-                observed_environment=_ENVIRONMENT,
-            ),
+            _source_member(catalog_snapshot, RuntimeBundleMemberPurpose.CATALOG),
+            _source_member(knowledge_snapshot, RuntimeBundleMemberPurpose.KNOWLEDGE),
         ),
         artifact_members=(
             RuntimeBundleArtifactMemberInput(
@@ -238,53 +250,17 @@ def _build_request(
                 artifact_ref="candidate-index:local",
                 artifact_version="1.0.0",
                 observed_environment=_ENVIRONMENT,
+                approval_effective=True,
+                approval_expired=False,
+                revocation_unresolved=False,
                 manifest_hash=_hash("e"),
+                catalog_version=_CATALOG_VERSION,
+                catalog_manifest_hash=_hash("9"),
             ),
         ),
         created_by="integration-test",
     )
-
-
-async def _persist(request: RuntimeBundleBuildRequest, outcome) -> None:
-    """Persist a BUILDABLE outcome exactly as the build port does."""
-    candidate_index = next(
-        member
-        for member in request.artifact_members
-        if member.artifact_kind is RuntimeBundleArtifactKind.CANDIDATE_INDEX
-    )
-    async with session_factory.begin() as session:
-        repository = RagRuntimeRepository(session)
-        assert outcome.manifest_hash is not None
-        assert outcome.bundle_manifest_hash is not None
-        await repository.build_runtime_bundle(
-            manifest=RagRuntimeExecutionManifestCreate(
-                manifest_key=request.execution_manifest.manifest_key,
-                manifest_version=request.execution_manifest.manifest_version,
-                manifest_hash=outcome.manifest_hash,
-                schema_version=request.execution_manifest.schema_version,
-                git_commit_sha=request.execution_manifest.git_commit_sha,
-                worker_artifact_ref=request.execution_manifest.worker_artifact_ref,
-            ),
-            bundle=RagRuntimeReleaseBundleCreate(
-                bundle_key=request.bundle_key,
-                bundle_version=request.bundle_version,
-                execution_manifest_id=uuid4(),
-                bundle_manifest_hash=outcome.bundle_manifest_hash,
-                candidate_index_ref=candidate_index.artifact_ref,
-                candidate_index_manifest_hash=candidate_index.manifest_hash,
-                created_by=request.created_by,
-            ),
-            bundle_sources=tuple(
-                RagRuntimeBundleSourceCreate(
-                    bundle_id=uuid4(),
-                    source_snapshot_id=member.source_snapshot_id,  # type: ignore[arg-type]
-                    source_purpose=RagRuntimeSourcePurpose(member.source_purpose.value),
-                    required=member.required,
-                    selected_for_operation=member.selected_for_operation,
-                )
-                for member in request.source_members
-            ),
-        )
+    return replace(request, **overrides)  # type: ignore[arg-type]
 
 
 async def _count(model: type) -> int:
@@ -293,61 +269,7 @@ async def _count(model: type) -> int:
         return int(result.scalar_one())
 
 
-async def test_buildable_member_set_lands_as_a_building_bundle_with_the_kernel_hashes() -> None:
-    catalog = await _seed_source_snapshot("CATALOG")
-    knowledge = await _seed_source_snapshot("KNOWLEDGE")
-    request = _build_request(
-        catalog_snapshot_id=str(catalog.id),
-        knowledge_snapshot_id=str(knowledge.id),
-    )
-    outcome = evaluate_runtime_bundle_build(request)
-    assert outcome.decision is RuntimeBundleBuildDecision.BUILDABLE
-
-    await _persist(request, outcome)
-
-    async with session_factory() as session:
-        bundle = (
-            await session.execute(
-                select(RagRuntimeReleaseBundle).where(
-                    RagRuntimeReleaseBundle.bundle_manifest_hash == outcome.bundle_manifest_hash
-                )
-            )
-        ).scalar_one()
-        manifest = (
-            await session.execute(
-                select(RagRuntimeExecutionManifest).where(
-                    RagRuntimeExecutionManifest.manifest_hash == outcome.manifest_hash
-                )
-            )
-        ).scalar_one()
-        members = list(
-            (
-                await session.execute(
-                    select(RagRuntimeBundleSource).where(RagRuntimeBundleSource.bundle_id == bundle.id)
-                )
-            ).scalars()
-        )
-
-    assert bundle.bundle_status is RagRuntimeBundleStatus.BUILDING
-    assert bundle.execution_manifest_id == manifest.id
-    assert manifest.worker_artifact_ref == "worker:local:2026.09.10"
-    assert {member.source_purpose for member in members} == {
-        RagRuntimeSourcePurpose.CATALOG,
-        RagRuntimeSourcePurpose.KNOWLEDGE,
-    }
-
-
-async def test_ready_and_active_pointer_stay_at_zero_while_components_are_incomplete() -> None:
-    catalog = await _seed_source_snapshot("CATALOG")
-    knowledge = await _seed_source_snapshot("KNOWLEDGE")
-    request = _build_request(
-        catalog_snapshot_id=str(catalog.id),
-        knowledge_snapshot_id=str(knowledge.id),
-    )
-    outcome = evaluate_runtime_bundle_build(request)
-    # Rule, Guideline and Safety members are absent, so the bundle may build but not be promoted.
-    assert outcome.readiness_blockers != ()
-
+async def _seed_environment() -> None:
     async with session_factory.begin() as session:
         await RagRuntimeRepository(session).create_environment(
             RagRuntimeEnvironmentCreate(
@@ -355,7 +277,183 @@ async def test_ready_and_active_pointer_stay_at_zero_while_components_are_incomp
                 environment_status=RagRuntimeEnvironmentStatus.SUSPENDED,
             )
         )
-    await _persist(request, outcome)
+
+
+async def test_port_persists_a_building_bundle_with_the_full_canonical_configuration() -> None:
+    catalog = await _seed_source_snapshot("CATALOG")
+    knowledge = await _seed_source_snapshot("KNOWLEDGE")
+    request = _request(catalog, knowledge)
+
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(session, request)
+
+    assert execution.outcome.decision is RuntimeBundleBuildDecision.BUILDABLE
+    assert execution.stored
+    assert execution.persisted is not None
+    bundle = execution.persisted.bundle
+    assert bundle.bundle_status is RagRuntimeBundleStatus.BUILDING
+    assert bundle.environment_code == _ENVIRONMENT
+    assert bundle.catalog_version == _CATALOG_VERSION
+    assert bundle.candidate_index_version == "1.0.0"
+    assert {member.source_purpose for member in execution.persisted.bundle_sources} == {
+        RagRuntimeSourcePurpose.CATALOG,
+        RagRuntimeSourcePurpose.KNOWLEDGE,
+    }
+    assert all(member.approval_version == "approval-v1" for member in execution.persisted.bundle_sources)
+
+
+async def test_stored_bundle_manifest_hash_recomputes_from_storage() -> None:
+    """The review blocker: the hash must be verifiable from persisted rows alone."""
+    catalog = await _seed_source_snapshot("CATALOG")
+    knowledge = await _seed_source_snapshot("KNOWLEDGE")
+
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(session, _request(catalog, knowledge))
+    assert execution.persisted is not None
+    bundle_id = execution.persisted.bundle.id
+    built_hash = execution.outcome.bundle_manifest_hash
+
+    async with session_factory() as session:
+        configuration = await load_persisted_bundle_configuration(session, bundle_id)
+        assert configuration is not None
+        assert canonical_runtime_bundle_manifest_hash(configuration) == built_hash
+        assert await verify_persisted_bundle_manifest_hash(session, bundle_id) is True
+
+
+async def test_two_configurations_differing_only_in_artifact_version_do_not_collide_in_storage() -> None:
+    """Regression for the review finding: artifact_version was hashed but never stored.
+
+    Both bundles must persist distinct, individually verifiable rows -- not byte-identical rows
+    carrying different hashes.
+    """
+    catalog = await _seed_source_snapshot("CATALOG")
+    knowledge = await _seed_source_snapshot("KNOWLEDGE")
+    first_request = _request(catalog, knowledge)
+    second_request = _request(
+        catalog,
+        knowledge,
+        bundle_version="2026.09.10-002",
+        artifact_members=(replace(first_request.artifact_members[0], artifact_version="2.0.0"),),
+    )
+
+    async with session_factory.begin() as session:
+        first = await execute_runtime_bundle_build(session, first_request)
+        second = await execute_runtime_bundle_build(session, second_request)
+
+    assert first.persisted is not None and second.persisted is not None
+    assert first.outcome.bundle_manifest_hash != second.outcome.bundle_manifest_hash
+    assert first.persisted.bundle.candidate_index_version == "1.0.0"
+    assert second.persisted.bundle.candidate_index_version == "2.0.0"
+
+    async with session_factory() as session:
+        assert await verify_persisted_bundle_manifest_hash(session, first.persisted.bundle.id) is True
+        assert await verify_persisted_bundle_manifest_hash(session, second.persisted.bundle.id) is True
+
+
+async def test_appending_a_member_after_creation_breaks_hash_verification() -> None:
+    """Member-set immutability is enforced by verification, not by a DB trigger.
+
+    ``CONTRIBUTING.md`` forbids introducing triggers, so nothing physically prevents an INSERT.
+    What the design guarantees instead is detection: the recomputed hash no longer matches.
+    """
+    catalog = await _seed_source_snapshot("CATALOG")
+    knowledge = await _seed_source_snapshot("KNOWLEDGE")
+    extra = await _seed_source_snapshot("EXTRA")
+
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(session, _request(catalog, knowledge))
+    assert execution.persisted is not None
+    bundle_id = execution.persisted.bundle.id
+
+    async with session_factory() as session:
+        assert await verify_persisted_bundle_manifest_hash(session, bundle_id) is True
+
+    async with session_factory.begin() as session:
+        await RagRuntimeRepository(session).create_bundle_source(
+            RagRuntimeBundleSourceCreate(
+                bundle_id=bundle_id,
+                source_snapshot_id=extra.id,
+                source_purpose=RagRuntimeSourcePurpose.RULE,
+                source_version=extra.source_version,
+                canonical_checksum=extra.canonical_checksum,
+                approval_version="approval-v1",
+                scope_policy_hash=_hash("c"),
+                freshness_policy_hash=_hash("d"),
+            )
+        )
+
+    async with session_factory() as session:
+        assert await verify_persisted_bundle_manifest_hash(session, bundle_id) is False
+
+
+async def test_member_cannot_claim_a_version_its_snapshot_does_not_have() -> None:
+    """The composite FK, not a copied string, is what pins source_version."""
+    from sqlalchemy.exc import IntegrityError
+
+    catalog = await _seed_source_snapshot("CATALOG")
+    knowledge = await _seed_source_snapshot("KNOWLEDGE")
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(session, _request(catalog, knowledge))
+    assert execution.persisted is not None
+
+    with pytest.raises(IntegrityError):
+        async with session_factory.begin() as session:
+            await RagRuntimeRepository(session).create_bundle_source(
+                RagRuntimeBundleSourceCreate(
+                    bundle_id=execution.persisted.bundle.id,
+                    source_snapshot_id=catalog.id,
+                    source_purpose=RagRuntimeSourcePurpose.RULE,
+                    source_version="api:2026-01-01:forged",
+                    canonical_checksum=_hash("b"),
+                    approval_version="approval-v1",
+                    scope_policy_hash=_hash("c"),
+                    freshness_policy_hash=_hash("d"),
+                )
+            )
+
+
+async def test_rejected_request_writes_nothing_and_leaves_the_pointer_untouched() -> None:
+    catalog = await _seed_source_snapshot("CATALOG")
+    knowledge = await _seed_source_snapshot("KNOWLEDGE")
+    await _seed_environment()
+    request = _request(catalog, knowledge)
+    unapproved = replace(
+        request,
+        catalog=replace(request.catalog, verification_status=CatalogVerificationStatus.NOT_APPROVED),
+    )
+
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(session, unapproved)
+
+    assert execution.outcome.decision is RuntimeBundleBuildDecision.REJECTED
+    assert RuntimeBundleRejectionReason.CATALOG_NOT_APPROVED in execution.outcome.rejection_reasons
+    assert execution.stored is False
+    # Not even the execution manifest is written for a rejected request.
+    assert await _count(RagRuntimeExecutionManifest) == 0
+    assert await _count(RagRuntimeReleaseBundle) == 0
+    assert await _count(RagRuntimeBundleSource) == 0
+    assert await _count(RagRuntimeEnvironmentTransition) == 0
+
+    async with session_factory() as session:
+        environment = (
+            await session.execute(
+                select(RagRuntimeEnvironment).where(RagRuntimeEnvironment.environment_code == _ENVIRONMENT)
+            )
+        ).scalar_one()
+    assert environment.active_bundle_id is None
+    assert environment.environment_status is RagRuntimeEnvironmentStatus.SUSPENDED
+
+
+async def test_ready_and_active_pointer_stay_at_zero_while_components_are_incomplete() -> None:
+    catalog = await _seed_source_snapshot("CATALOG")
+    knowledge = await _seed_source_snapshot("KNOWLEDGE")
+    await _seed_environment()
+
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(session, _request(catalog, knowledge))
+
+    # Rule, Guideline and Safety members are absent, so the bundle may build but not be promoted.
+    assert execution.outcome.readiness_blockers != ()
 
     async with session_factory() as session:
         promoted = list(
@@ -369,9 +467,7 @@ async def test_ready_and_active_pointer_stay_at_zero_while_components_are_incomp
         )
         environment = (
             await session.execute(
-                select(app.models.rag_runtime.RagRuntimeEnvironment).where(
-                    app.models.rag_runtime.RagRuntimeEnvironment.environment_code == _ENVIRONMENT
-                )
+                select(RagRuntimeEnvironment).where(RagRuntimeEnvironment.environment_code == _ENVIRONMENT)
             )
         ).scalar_one()
 
@@ -380,41 +476,3 @@ async def test_ready_and_active_pointer_stay_at_zero_while_components_are_incomp
     assert environment.active_bundle_manifest_hash is None
     assert environment.environment_status is RagRuntimeEnvironmentStatus.SUSPENDED
     assert await _count(RagRuntimeEnvironmentTransition) == 0
-
-
-async def test_build_failure_persists_nothing_and_leaves_the_active_pointer_untouched() -> None:
-    catalog = await _seed_source_snapshot("CATALOG")
-    knowledge = await _seed_source_snapshot("KNOWLEDGE")
-    async with session_factory.begin() as session:
-        await RagRuntimeRepository(session).create_environment(
-            RagRuntimeEnvironmentCreate(
-                environment_code=_ENVIRONMENT,
-                environment_status=RagRuntimeEnvironmentStatus.SUSPENDED,
-            )
-        )
-    request = _build_request(
-        catalog_snapshot_id=str(catalog.id),
-        knowledge_snapshot_id=str(knowledge.id),
-        catalog_overrides={"revocation_unresolved": True},
-    )
-
-    outcome = evaluate_runtime_bundle_build(request)
-
-    assert outcome.decision is RuntimeBundleBuildDecision.REJECTED
-    assert outcome.bundle_manifest_hash is None
-    # A REJECTED outcome carries no hash, so the port has nothing to persist: 0 rows, by construction.
-    assert await _count(RagRuntimeExecutionManifest) == 0
-    assert await _count(RagRuntimeReleaseBundle) == 0
-    assert await _count(RagRuntimeBundleSource) == 0
-    assert await _count(RagRuntimeEnvironmentTransition) == 0
-
-    async with session_factory() as session:
-        environment = (
-            await session.execute(
-                select(app.models.rag_runtime.RagRuntimeEnvironment).where(
-                    app.models.rag_runtime.RagRuntimeEnvironment.environment_code == _ENVIRONMENT
-                )
-            )
-        ).scalar_one()
-    assert environment.active_bundle_id is None
-    assert environment.environment_status is RagRuntimeEnvironmentStatus.SUSPENDED
