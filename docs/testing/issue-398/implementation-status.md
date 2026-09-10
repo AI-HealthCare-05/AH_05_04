@@ -40,6 +40,9 @@
   - 작업자 없는 CURRENT 선택 차단 및 PD-398 제안 계약 작성
   - 아직 Writer 권한·제거 migration 연결 전으로 이 브랜치 배포 금지
 - [ ] 실제 Runtime/Writer 권한·프로세스·배포 구성
+  - Source 역할 정책 함수 및 서로 다른 실제 로그인 credential 통합 테스트 구현
+  - Runtime 직접 쓰기/SET ROLE, Writer 감사 변경, 신규 테이블 쓰기 차단 확인
+  - 초기화 스크립트·별도 Writer 프로세스·배포 연결은 미완료
 - [ ] 기존 데이터 검증과 forward migration
 - [ ] 최종 스키마 검사·PostgreSQL 통합 및 회귀 검증
 

@@ -36,4 +36,22 @@ CURRENT 선택은 공백이 아닌 100자 이하 작업자 식별자가 필요�
 
 ## 증빙
 
+### Source 역할 적용 코드 (배포 미연결)
+
+`infra/python/source_role_policy.py`는 관리자 연결의 외부 transaction에서 호출한다. 비밀번호를 받거나 역할을 생성하지 않으며, 사전에 생성된 별도 Runtime/Writer 역할에 권한을 적용한다.
+
+- Source 7개 테이블에서 Runtime은 SELECT만 허용
+- Writer는 SELECT·INSERT 허용. Operation 잠금, Snapshot 전이, Ingestion Run 갱신에만 UPDATE 허용
+- Artifact·Verification의 UPDATE·DELETE·TRUNCATE는 Writer에도 금지
+- Runtime/Writer의 관리자 권한, 역할 상속, schema·database·객체 소유권이 있으면 적용 거부
+- 기존 상태 전이 DB 함수가 남아 있으면 권한 전환 거부
+- PUBLIC 및 Runtime/Writer의 테이블 default privilege 정리
+- 새로운 테이블의 권한은 자동으로 열지 않고 해당 migration에서 명시
+
+Source 관리용 수정·삭제 권한과 Catalog/Prescription/Runtime 권한은 이 Source Writer에 자동으로 포함하지 않는다. 각 도메인 구현과 함께 명시적으로 추가한다.
+
+현재 `configure-app-role.sql`의 기존 광범위 권한 부여 및 배포 호출 경로는 아직 전환하지 않았다. 새 정책 적용 후 기존 스크립트를 실행하면 권한이 다시 열릴 수 있으므로, 이 모듈을 운영에 단독 적용하지 않는다. 제거 migration·초기화 스크립트·별도 Writer 실행 구성을 같은 배포에서 연결해야 한다.
+
+`test_source_writer_roles.py`는 서로 다른 로그인 자격 증명으로 실제 INSERT/UPDATE/DELETE/TRUNCATE 및 SET ROLE 차단, Writer 허용 작업, 신규 테이블 기본 권한, 역할 상속 거부를 확인한다.
+
 `tests/integration/rag/test_source_snapshot_lifecycle.py`는 모델 스키마만 생성하고 과거 전이 함수·Trigger 설치 없이 Python 저장 경로를 검증한다. 최종 migration과 실제 역할 분리 검증은 별도로 남아 있다.
