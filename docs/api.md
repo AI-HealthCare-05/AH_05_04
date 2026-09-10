@@ -599,6 +599,6 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
 
-## #418 UNCONFIRMED backlog 후보 API (미등록)
+## #418 UNCONFIRMED backlog API (PR 구현 · 계약 승인 대기)
 
-`GET /api/v1/medication-checkins/unconfirmed`의 조회 repository·service·DTO·router 후보를 구현했다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)의 Backend/Frontend 승인 전까지 v1 router에 등록하지 않으며 실제 OpenAPI에 노출되지 않는다. 테스트 전용 앱에서 HTTP 계약을 검증한다. #202 PUT 공개 연결 완료나 현재 실행 계약으로 해석하지 않는다.
+`GET /api/v1/medication-checkins/unconfirmed`를 PR #426 브랜치의 v1 router에 등록하고 실제 앱 HTTP/OpenAPI 및 병합된 #413 Check-in PUT→목록 재조회를 검증한다. Cursor 404에서는 Frontend가 cursor를 생략해 첫 페이지부터 재조회한다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)은 변경 HEAD의 Backend/Frontend 승인 대기이며, PR 구현을 병합된 runtime 계약·Frontend 연결 완료·Production 공개 승인으로 해석하지 않는다.
