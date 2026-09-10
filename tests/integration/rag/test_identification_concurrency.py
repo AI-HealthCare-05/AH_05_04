@@ -692,8 +692,7 @@ async def test_concurrent_confirm_allows_only_one_identification() -> None:
 
     assert results.count(("ok", None)) == 1
     assert any(
-        code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"}
-        and reason in {"SEARCH_NOT_READY", "ALREADY_MATCHED"}
+        code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"} and reason in {"STALE", "ALREADY_MATCHED"}
         for code, reason in results
     )
 
@@ -735,7 +734,7 @@ async def test_concurrent_confirm_different_searches_allows_only_current_search(
     )
 
     assert results.count(("ok", None)) == 1
-    assert ("CANDIDATE_SEARCH_STALE", "SEARCH_NOT_READY") in results
+    assert ("CANDIDATE_SEARCH_STALE", "STALE") in results
 
     async with session_factory() as session:
         identifications = (
@@ -797,7 +796,8 @@ async def test_concurrent_confirm_two_ready_searches_allows_only_one_matched_ide
 
         assert results.count(("ok", None)) == 1
         assert any(
-            code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"} and reason == "ALREADY_MATCHED"
+            (code == "IDENTIFICATION_CONTEXT_STALE" and reason == "ALREADY_MATCHED")
+            or (code == "CANDIDATE_SEARCH_STALE" and reason == "STALE")
             for code, reason in results
         )
 
