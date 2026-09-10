@@ -528,6 +528,6 @@ def test_preflight_tables_join_existing_integrity_head() -> None:
 
     async def verify() -> None:
         async with _connection() as connection:
-            assert validation_errors("3983a4b5c6d7", await read_database_head_state(connection)) == []
+            assert validation_errors("3984b5c6d7e8", await read_database_head_state(connection)) == []
 
     asyncio.run(verify())

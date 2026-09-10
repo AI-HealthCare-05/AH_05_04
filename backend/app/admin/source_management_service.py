@@ -78,7 +78,13 @@ def fingerprint(values: dict[str, Any]) -> str:
 
 
 def row_hash(row: Any) -> str:
-    return fingerprint({column.key: getattr(row, column.key) for column in inspect(type(row)).columns})
+    return fingerprint(
+        {
+            column.key: getattr(row, column.key)
+            for column in inspect(type(row)).columns
+            if not (isinstance(row, RagSourceSnapshot) and column.key == "management_lock_marker")
+        }
+    )
 
 
 def provenance(snapshot: RagSourceSnapshot | None) -> dict[str, str | None]:

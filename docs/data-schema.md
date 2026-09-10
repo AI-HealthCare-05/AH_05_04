@@ -584,3 +584,8 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 위 Python 전환 설명은 이 PR의 코드와 최신 migration head `398293a4b5c6` 기준이다. AWS·운영 DB 적용 완료를 주장하지 않는다. 기존 운영 DB의 보호는 실제 적용 revision과 역할 정책으로 판단한다. 배포는 migration → verify-db-head → provision-db-roles → 서비스 시작 순서이며, 검사 실패 시 시작하지 않는다. 정적 SQL/AST 검사는 휴리스틱이고 동적 SQL 전부를 증명하지 않는다. 검증된 Snapshot 삭제 방어는 일반 FK·CHECK, 불변 이력 ACL, 실제 제한 로그인 테스트로 확인한다.
 
 병합된 #404의 `206a1b2c3d4e`는 `39818293a4b5` merge revision으로 기존 #398 이력과 연결된다. 인증 테이블의 신규 권한은 Runtime SELECT/INSERT 및 `refresh_session(active_jti, updated_at)`, `password_reset_token(used_at)` UPDATE만 허용한다. 처방 멱등성은 기존 `idempotency_record` UNIQUE·암호화 응답 저장을 사용하며 새 Trigger·RLS·저장 함수는 만들지 않는다.
+
+
+### PR #429 관리 Snapshot 잠금 권한 (PD-398-R2)
+
+`rag_source_snapshot.management_lock_marker`는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 `verified_at`/`effective_at`/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration `3984b5c6d7e8` 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.

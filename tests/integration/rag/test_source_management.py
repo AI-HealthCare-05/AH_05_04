@@ -556,12 +556,25 @@ async def test_verified_snapshot_cannot_be_deleted_by_direct_management_sql(data
         await apply_source_role_policy(
             connection, schema="public", owner=config.DB_USER, runtime=runtime, writer=writer
         )
+        # Simulate the old provisioning grant and require the new policy to revoke it.
+        await connection.execute(text(f'GRANT UPDATE (verified_at) ON rag_source_snapshot TO "{manager}"'))
         await apply_management_role_policy(
             connection, owner=config.DB_USER, runtime=runtime, writer=writer, management=manager
         )
     producer = create_async_engine(url.set(username=writer, password="synthetic-seal-only"), hide_parameters=True)
     managed = create_async_engine(url.set(username=manager, password="synthetic-seal-only"), hide_parameters=True)
     try:
+        async with managed.connect() as connection:
+            await validate_management_connection(connection)
+        async with engine.begin() as connection:
+            await connection.execute(text(f'GRANT UPDATE (verified_at) ON rag_source_snapshot TO "{manager}"'))
+        with pytest.raises(ValueError, match="unexpected column update"):
+            async with managed.connect() as connection:
+                await validate_management_connection(connection)
+        async with engine.begin() as connection:
+            await apply_management_role_policy(
+                connection, owner=config.DB_USER, runtime=runtime, writer=writer, management=manager
+            )
         with pytest.raises(DBAPIError) as unsealed:
             async with producer.begin() as connection:
                 await connection.execute(text("UPDATE rag_source_snapshot SET verification_status='CURRENT'"))
@@ -590,7 +603,19 @@ async def test_verified_snapshot_cannot_be_deleted_by_direct_management_sql(data
             async with managed.begin() as connection:
                 await connection.execute(text("DELETE FROM rag_source_snapshot WHERE id=:id"), {"id": str(snapshot_id)})
         assert deletion.value.orig.sqlstate == "23503"
+        async with async_sessionmaker(engine).begin() as session:
+            before_hash = row_hash(await session.get(RagSourceSnapshot, snapshot_id))
+        async with managed.begin() as connection:
+            await connection.execute(text("SELECT id FROM rag_source_snapshot FOR UPDATE"))
+            await connection.execute(text("UPDATE rag_source_snapshot SET management_lock_marker=0"))
+        with pytest.raises(DBAPIError) as marker_change:
+            async with managed.begin() as connection:
+                await connection.execute(text("UPDATE rag_source_snapshot SET management_lock_marker=1"))
+        assert marker_change.value.orig.sqlstate == "23514"
         for sql in (
+            "UPDATE rag_source_snapshot SET verified_at=now()",
+            "UPDATE rag_source_snapshot SET verified_at=NULL",
+            "UPDATE rag_source_snapshot SET effective_at=now()",
             "UPDATE rag_source_snapshot SET verification_seal_id=NULL",
             "DELETE FROM rag_source_snapshot_verification",
             "TRUNCATE rag_source_snapshot_verification CASCADE",
@@ -599,6 +624,9 @@ async def test_verified_snapshot_cannot_be_deleted_by_direct_management_sql(data
                 async with managed.begin() as connection:
                     await connection.execute(text(sql))
             assert denied.value.orig.sqlstate == "42501"
+        async with async_sessionmaker(engine).begin() as session:
+            assert row_hash(await session.get(RagSourceSnapshot, snapshot_id)) == before_hash
+            assert await session.scalar(select(func.count()).select_from(SourceManagementAudit)) == 0
         async with engine.connect() as connection:
             assert await connection.scalar(text("SELECT verification_status FROM rag_source_snapshot")) == state
     finally:
@@ -754,9 +782,19 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
                 ),
                 {"id": str(snapshot_id), "operation": str(operation.id), "state": state},
             )
-    assert (await migrate("upgrade", "head")).returncode == 0
+    from app.admin.source_management_service import fingerprint
+
+    assert (await migrate("upgrade", "3983a4b5c6d7")).returncode == 0
     async with engine.connect() as connection:
-        assert validation_errors("3983a4b5c6d7", await read_database_head_state(connection)) == []
+        old_rows = (await connection.execute(text("SELECT * FROM rag_source_snapshot"))).mappings().all()
+        old_hashes = {row["id"]: fingerprint(dict(row)) for row in old_rows}
+    assert (await migrate("upgrade", "head")).returncode == 0
+    async with async_sessionmaker(engine).begin() as session:
+        for snapshot in (await session.scalars(select(RagSourceSnapshot))).all():
+            assert snapshot.management_lock_marker == 0
+            assert row_hash(snapshot) == old_hashes[str(snapshot.id)]
+    async with engine.connect() as connection:
+        assert validation_errors("3984b5c6d7e8", await read_database_head_state(connection)) == []
         rows = (
             (
                 await connection.execute(

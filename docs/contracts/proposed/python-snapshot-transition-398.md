@@ -120,3 +120,6 @@ Verification의 Snapshot FK와 역방향 seal FK, Verification의 UPDATE/DELETE/
 migration은 기존 non-PENDING 또는 검증/선택 시각이 있는 행을 잠그고 `NO_CHANGE` seal만 backfill한다. 기존 상태·내용·승인 의미를 바꾸지 않으며 원문을 로그로 출력하지 않는다. downgrade는 보호를 제거하지 않고 중단한다. 소유자·superuser의 DDL/권한 변경은 이 실행 역할 보장의 범위 밖이며 애플리케이션에 해당 credential을 주입하지 않는다.
 
 `39818293a4b5`는 기존 #398과 병합된 #404 migration을 연결하는 merge revision이고, 최신 head는 `398293a4b5c6`이다. 이미 적용된 migration을 재작성하지 않는다. 운영 적용은 별도다.
+
+
+관리 잠금 권한의 후속 보완은 [PD-398-R2 관리 계약](source-catalog-management-398.md#pd-398-r2-잠금-권한-분리)을 따른다. `management_lock_marker`는 CHECK로 0에 고정한 기술 표식이며 Snapshot provenance·검증 시각·상태·관리 hash 의미를 변경하지 않는다. 관리 역할의 `verified_at` UPDATE 권한은 제거한다.

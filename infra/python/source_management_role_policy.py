@@ -9,8 +9,8 @@ MANAGEMENT_COLUMNS = {
     "rag_source": ("display_name", "owner_name", "license_name", "attribution_text", "purpose", "updated_at"),
     "rag_source_endpoint": ("display_name", "updated_at"),
     "rag_source_operation": ("display_name", "updated_at"),
-    # SELECT FOR UPDATE needs UPDATE on one column. The API never edits this column.
-    "rag_source_snapshot": ("verified_at",),
+    # SELECT FOR UPDATE needs UPDATE on one column; CHECK fixes this non-provenance marker to zero.
+    "rag_source_snapshot": ("management_lock_marker",),
     "rag_medication_product": ("product_name", "manufacturer_name", "strength_text", "dosage_form"),
     "rag_medication_ingredient": ("ingredient_name",),
     "rag_medication_alias": ("alias_text",),
@@ -94,7 +94,8 @@ async def validate_management_connection(connection: AsyncConnection) -> None:
         text(
             "SELECT has_table_privilege(current_user, 'source_management_audit', 'SELECT') "
             "AND has_table_privilege(current_user, 'source_management_audit', 'INSERT') "
-            "AND has_column_privilege(current_user, 'source_management_permission', 'lock_version', 'UPDATE')"
+            "AND has_column_privilege(current_user, 'source_management_permission', 'lock_version', 'UPDATE') "
+            "AND has_column_privilege(current_user, 'rag_source_snapshot', 'management_lock_marker', 'UPDATE')"
         )
     )
     if forbidden or not required:

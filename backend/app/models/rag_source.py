@@ -233,6 +233,7 @@ class RagSourceSnapshot(Base):
             "OR verification_seal_id IS NOT NULL",
             name="chk_rag_snapshot_verification_seal",
         ),
+        CheckConstraint("management_lock_marker = 0", name="chk_rag_source_snapshot_management_lock_marker"),
         Index("idx_rag_source_snapshot_operation_status", "operation_id", "verification_status"),
         Index(
             "uq_rag_source_snapshot_current",
@@ -280,6 +281,8 @@ class RagSourceSnapshot(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verification_seal_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    # Fixed, non-provenance column providing management SELECT FOR UPDATE permission.
+    management_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     supersedes_snapshot_id: Mapped[UUID | None] = mapped_column(
         UUIDChar(),
         ForeignKey("rag_source_snapshot.id", ondelete="SET NULL"),

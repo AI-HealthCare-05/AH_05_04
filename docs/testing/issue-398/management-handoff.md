@@ -4,7 +4,7 @@
 
 ## 실행 순서
 
-1. 기존 migration owner로 단일 head `3983a4b5c6d7`까지 적용하고 `scripts/ci/verify_database_head.py`로 사용자 Trigger/RLS/제거 함수 0개를 확인한다. 이미 적용한 migration 파일은 변경하지 않는다.
+1. 기존 migration owner로 단일 head `3984b5c6d7e8`까지 적용하고 `scripts/ci/verify_database_head.py`로 사용자 Trigger/RLS/제거 함수 0개를 확인한다. 이미 적용한 migration 파일은 변경하지 않는다.
 2. 관리 기능을 사용할 때만 별도 `SOURCE_MANAGEMENT_USER`, `SOURCE_MANAGEMENT_PASSWORD`를 보안 설정에 등록한다. 기존 Admin/Migration/Runtime/Source Writer와 모두 다른 로그인 역할이다. 예시 환경 파일은 비워 두며 일반 API·Worker에 전달하지 않는다.
 3. `source-management-bootstrap` one-shot 서비스로 로그인 계정만 준비한다. 역할 충돌은 거부하고 테이블 쓰기 권한은 부여하지 않는다. 기존 역할의 비밀번호를 자동 변경하지 않는다.
 4. `provision-db-roles`를 실행해 검증된 명시 권한을 적용한다. `SOURCE_MANAGEMENT_USER`가 설정되면 관리 역할 정책도 적용한다. Runtime의 Catalog UPDATE/DELETE는 회수하며, 기존 수집 INSERT는 유지한다. 일반 API에서 직접 Source 쓰기는 계속 차단된다.
@@ -27,3 +27,5 @@ DRAFT·미참조 Source 메타데이터와 PENDING·미사용 Snapshot에 속한
 ## PR #429 추가 인수 조건
 
 검증된 Snapshot은 일반 FK·CHECK·삭제 불가 Verification 이력으로 직접 DELETE를 차단한다. 미검증 PENDING만 기존 관리 경로로 삭제하며 상태·승인 값을 SQL로 우회해 바꾸지 않는다. 처방 재시도는 보존기간 내 최초 성공 응답을 재현하므로 최신 상태가 필요하면 GET을 사용한다. 배포 순서는 migration → verify-db-head → provision-db-roles → 서비스 시작으로 고정한다. 정적 SQL/AST 검사는 보조 수단이며 실제 DB 역할과 통합 테스트 증빙을 함께 확인한다.
+
+PR #429 후속 수정(PD-398-R2)은 Snapshot 잠금용 고정 컬럼을 추가한다. migration 후 권한 provisioning을 반드시 재실행해 관리 계정의 기존 `verified_at` 컬럼 UPDATE 권한을 회수하고 `management_lock_marker`만 허용한다. 이 절차 완료 전에는 관리 서비스를 시작하지 않는다.

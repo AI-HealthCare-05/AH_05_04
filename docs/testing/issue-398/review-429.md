@@ -66,3 +66,25 @@ Backend의 나머지 skip 2개는 실제 외부 Provider 호출이 필요한 smo
 | Ruff·format·mypy·재도입/보호 쓰기/test inventory | 통과, mypy 535개 파일 |
 
 Backend skip은 별도 Source cleanup 환경 57개와 외부 Provider live smoke 2개이며, Worker skip 8개는 선택 의존성 `jsonschema` 부재다. 이전 단계의 별도 Source cleanup·Redis 검증 수치를 이번 재실행 결과로 표기하지 않는다. AWS·운영 DB에는 적용하지 않았다.
+
+
+## 현우님 추가 리뷰: Snapshot 잠금 권한과 규칙 정합성
+
+- 리뷰 `5166896553`의 최신 develop 요구는 `54a10a0`에서 #412를 포함하고 충돌을 해결했다.
+- `verified_at`을 관리 잠금용으로 허용하던 우회를 제거했다. `3984b5c6d7e8`는 0만 허용하는 `management_lock_marker` 컬럼과 일반 CHECK를 추가한다. 새 Trigger·RLS·업무 함수는 정의하지 않는다.
+- 관리 역할의 Snapshot UPDATE는 표식만 허용한다. provisioning은 기존 verified_at 컬럼 권한을 회수하며 시작 시 역할 검증도 해당 권한이 남아 있으면 거부한다. 기존 Writer 전이와 Operation → Snapshot 잠금 순서는 유지한다.
+- 표식을 관리 hash에서 제외해 migration 전후 기존 expected_hash와 감사 의미를 보존한다. 실제 제한 로그인으로 CURRENT/STALE/FAILED의 verified_at 변경·seal 변경·직접 DELETE를 거부하며, 고정 표식 변경도 거부하고 미사용 PENDING 삭제는 유지한다.
+- PD-398-R2, 관리·Source 계약, schema, 인수 절차와 head 검사를 함께 갱신했다. AGENTS와 CONTRIBUTING은 승인 계약으로 Trigger·RLS·업무 저장 함수 금지를 예외 처리하지 않는 동일한 규칙을 사용한다.
+
+최종 추가 수정 로컬 검증 결과:
+
+| 검증 | 결과 |
+| --- | --- |
+| Backend 전체·계약·RAG 통합·실제 Backend 이미지 | 1,720 passed, 59 skipped |
+| Worker 단위·OCR·RAG·Evaluation | 2,713 passed, 8 skipped |
+| 전체 migration | 158 passed |
+| 별도 폐기 DB Source cleanup (Backend skip 중 57개) | 57 passed |
+| 최종 head `3984b5c6d7e8` 및 DB 카탈로그 | 사용자 Trigger·RLS·제거 대상 함수 0개 |
+| Ruff·format·mypy·재도입/보호 쓰기/test inventory | 통과, mypy 535개 파일 |
+
+테스트 묶음은 중복될 수 있어 합산하지 않는다. Backend의 나머지 skip 2개는 외부 Provider live smoke이고 Worker skip 8개는 선택 의존성 `jsonschema` 부재다. 이 결과는 운영 적용·공개 승인이나 수정 후 지정 리뷰어 승인을 대신하지 않는다.

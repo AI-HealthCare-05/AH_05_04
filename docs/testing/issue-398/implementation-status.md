@@ -351,3 +351,8 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 ### PR #412 통합
 
 최신 develop `23b3b59`의 Preflight Context 저장 기반을 반영했다. migration 이력을 보존하는 merge revision을 추가해 현재 단일 head는 `3983a4b5c6d7`이다. Context의 Runtime SELECT·INSERT 권한과 보호된 Python 저장 경계를 연결하며, #416은 아직 포함하지 않는다. 상세 검증은 [추가 승인 리뷰 및 통합 증빙](review-429.md)에 기록한다.
+
+
+### PR #429 후속 잠금 권한 수정 (PD-398-R2)
+
+Snapshot 관리 잠금 권한을 검증 시각에서 고정 기술 표식으로 분리했다. 현재 migration head는 `3984b5c6d7e8`이며, 적용 후 관리 역할의 과거 verified_at 권한 회수가 필요하다. 구현·계약·실제 권한 회귀 근거는 [후속 리뷰 증빙](review-429.md)에 기록한다.
