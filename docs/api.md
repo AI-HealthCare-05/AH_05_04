@@ -611,6 +611,6 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
 
-## #398 분리된 Source·Catalog 관리 API (브랜치 구현, 리뷰 대기)
+## #418 UNCONFIRMED backlog 후보 API (미등록)
 
-일반 API에 mount하지 않는 별도 관리 앱의 GET/PATCH/DELETE 계약과 401/403/409/422 의미는 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. 회원 가입과 is_admin만으로는 접근 권한을 얻지 않는다. 일반 회원 화면에는 관리 기능을 추가하지 않는다.
+`GET /api/v1/medication-checkins/unconfirmed`의 조회 구현은 있으나 Backend blocker에 따라 v1 router 등록을 되돌렸다. 실제 앱의 route 목록·OpenAPI에는 없으며 요청은 404다. 테스트 앱에서만 backlog router와 병합된 #413 Check-in PUT을 연결해 보완 후 목록 재조회를 검증한다. Cursor 404에서는 Frontend가 cursor를 생략해 첫 페이지부터 재조회한다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)의 두 담당 리뷰어 승인 후 등록·실제 앱 검증을 진행하고 해당 HEAD 승인 전 병합하지 않는다. #138 Frontend 소비 검증과 Production 공개 승인을 대신하지 않는다.
