@@ -55,7 +55,16 @@ DB check는 `PENDING`에서 attempt=0이고 cancelled_at·delivered_at·read_at�
 
 `limit`은 1~100, `offset`은 0 이상이다. 자신의 `DELIVERED` 알림만 `scheduled_at DESC, id DESC`로 반환한다. 응답은 `200 {data: {items: NotificationResponse[], next_offset: integer|null}}`다. 변경 중인 목록에서 offset pagination은 snapshot 일관성을 보장하지 않는다. 새로고침은 offset=0부터 수행한다.
 
-`NotificationResponse`의 필수 필드는 `id`, `occurrence_id`, `kind`, `scheduled_at`, `status`, `delivered_at`, `read_at`이며 read_at은 nullable이다. API 시각은 UTC RFC3339, status는 목록·읽음 응답에서 `DELIVERED`다. 약 상세와 현재 복약 결과는 #202 occurrence 계약을 소비한다.
+`NotificationResponse`의 필수 필드는 `id`, `occurrence_id`, `occurrence_local_date`, `kind`, `scheduled_at`, `status`, `delivered_at`, `read_at`이며 read_at은 nullable이다. API 시각은 UTC RFC3339, status는 목록·읽음 응답에서 `DELIVERED`다. `occurrence_local_date`는 이번 리뷰 반영에서 추가하는 제안 필드이며, 서버가 연결된 원본 occurrence의 `scheduled_local_date`를 `YYYY-MM-DD`로 반환한다. 알림의 `scheduled_at`은 재알림 시각일 수 있으므로 Frontend는 그 값에서 occurrence 조회 날짜를 추정하지 않는다.
+
+#### #202 표시 정보 소비 경로 — Frontend 리뷰 반영 제안
+
+1. 알림 선택 시 `GET /api/v1/medication-occurrences?date={occurrence_local_date}`를 호출한다. 같은 날짜의 알림은 한 응답을 공유할 수 있다.
+2. 응답의 `occurrences[]`에서 알림의 `occurrence_id`와 동일한 항목을 찾는다. 현재 복약 결과는 해당 occurrence의 현재 Check-in을 사용하고, 알림의 읽음·전달 상태로 계산하지 않는다.
+3. 약 표시 정보는 그 occurrence가 참조하는 `prescription_version_medication_id`와 대응 약 항목으로 연결한다. 약명·필요한 표시 필드를 제공하는 정확한 DTO 경로는 #202 확정 시 계약에 기입한다. 이 연결 필드와 표시 정보가 실제 #202 응답에 존재하는지는 아직 검증되지 않았으며, 없으면 #202 담당자와 조회 경로를 조율한 뒤 확정한다.
+4. 날짜 조회에서 occurrence를 찾을 수 없으면 최신 처방의 비슷한 약으로 대체하지 않고 ‘관련 기록을 조회할 수 없음’ 상태를 표시한다. 이는 Check-in 없음이나 미복용을 의미하지 않는다. 이전 version의 전달된 알림도 같은 경로로 조회 가능한지 #202 통합에서 확인한다.
+
+예를 들어 원본 occurrence가 KST 9월 10일 23:00이고 재알림이 9월 11일 01:00이면 조회 날짜는 `2026-09-10`이다. UTC 날짜나 알림 날짜를 사용하는 fixture는 실패해야 한다. #202 DTO 필드 경로 확정과 Frontend fixture/E2E 증빙 전에는 이 소비 경로의 통합 완료를 선언하지 않는다. 날짜별 조회는 기존 목표 경로이며 occurrence 단건 GET이 이미 있다고 가정하지 않는다.
 
 ### 읽음 — 신규 경로 제안
 
@@ -79,7 +88,21 @@ body는 `{scheduled_at: UTC RFC3339 timestamp}`이며 필수다. 서버는 시�
 4. 기존 REMINDER가 DELIVERED/CANCELLED: 신규 제안 `409 REMINDER_LIMIT_REACHED`.
 5. 시간 범위·timezone 없는 시각·추가 필드 위반: 기존 `422 VALIDATION_FAILED`.
 
-새 오류 코드는 이 Decision 승인과 공통 오류 문서·OpenAPI·테스트 반영 전 확정하지 않는다. 현재 Check-in이 `NOT_TAKEN`일 때 Track C 지원에서 이 endpoint를 재사용할 수 있어야 하는지는 별도 확인 대상이며, 이번 제한을 기존 승인 조건으로 취급하지 않는다.
+새 오류 코드는 이 Decision 승인과 공통 오류 문서·OpenAPI·테스트 반영 전 확정하지 않는다. 위 PENDING 전용 조건은 일반 Track B 요청을 위한 기존 제안이며 Track C 소비 계약을 해결한 결정이 아니다.
+
+#### 승인 차단: Track C `REMINDER_SETUP` 소비 결정
+
+남한솔의 [MUST FIX 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/415#pullrequestreview-5164510149)는 아직 미해결이다. `NOT_TAKEN → FORGOT → 재알림 CTA`의 occurrence는 이미 `CLOSED`이므로 위 조건에서 `409 REMINDER_NOT_ALLOWED`가 된다. 기술 리뷰의 기존 PENDING 전용 조건 승인을 Track C 소비 승인으로 확대하지 않는다.
+
+| 결정 항목 | 확인할 내용 | 책임 |
+| --- | --- | --- |
+| 동일 endpoint 사용 여부 | Track C CTA가 위 POST를 호출하는지, 별도 일정 설정 흐름을 소비하는지 하나로 결정 | 권가빈(Track C·제품), 남한솔(Frontend) |
+| 동일 endpoint를 사용하는 경우 | CLOSED + 현재 NOT_TAKEN 허용 여부, 대상 occurrence와 재알림 시간·기한, 최신 Safety·Barrier eligibility 및 revision 결속 | 권가빈·송은영·남한솔 |
+| 동일 endpoint를 사용하지 않는 경우 | CTA가 이동할 실제 화면·API·대상 일정 및 해당 흐름의 담당 Issue를 명시 | 권가빈·남한솔 |
+
+동일 endpoint 안을 채택하면 생성 허용만 바꿔서는 안 된다. 이 문서의 CLOSED 알림 취소·게시 조건, Check-in 정정 무효화, 오류 우선순위, 필요한 참조 필드 및 동일 transaction 잠금 검증도 함께 개정해야 한다. 현재의 `CLOSED` 일괄 거부를 임의로 제거하거나 Safety·Barrier 경계를 우회하지 않는다. 별도 흐름 안도 URL·동작이 확정되기 전에는 연결 완료로 취급하지 않는다.
+
+결정과 담당자 확인이 이 Decision에 기록되고 Frontend 재검토로 MUST FIX 해소가 확인될 때까지 재알림 생성·게시 구현, 계약 승인·승격 및 #203 완료를 차단한다. 이 표 작성 자체는 리뷰 해결이 아니다.
 
 ## #202와 구현 접점
 
@@ -100,9 +123,11 @@ body는 `{scheduled_at: UTC RFC3339 timestamp}`이며 필수다. 서버는 시�
 - 합성 두 사용자 fixture에서 목록 격리, 타인·없는 ID의 동일 404, SELF parent chain 우회 차단.
 - 최초 알림 반복 생성·동시 생성에서 중복 0건, 게시 반복 실행과 rollback·재실행.
 - 게시 전 비노출, 전달 후 목록 표시, 읽음 최초 시각 보존과 재조회, GET 무변경.
+- 원본 occurrence 날짜와 재알림 날짜가 다른 자정 fixture, #202의 occurrence ID·약 항목 연결, 과거 version 조회와 기록 조회 불가 표시를 Frontend fixture/E2E로 확인.
 - 처방 활성화·일정 취소·변경과 게시 경합, 과거·전달 이력 보존, 취소 실패 시 전체 rollback.
 - Check-in TAKEN·NOT_TAKEN·UNCONFIRMED와 게시 경쟁, 정정 후 복약 결과·audit 불변 및 새 알림 자동 생성 금지.
 - 재알림 시간 경계, 1회 제한, 동시 요청, 같은 키 replay·상이 hash·만료 후 재생성 금지.
+- Track C 소비 결정 후 NOT_TAKEN → FORGOT → CTA 정상 경로 및 최신 Safety·Barrier/revision 불일치·정정 경합을 검증. 결정 전에는 NOT_RUN이며 PENDING 전용 테스트 통과로 대체하지 않음.
 - 동기 snapshot 암호화·1MiB cap·오류 미저장·일반 로그 비노출.
 - 실제 FastAPI 요청/응답과 OpenAPI 비교 및 #202와의 API 통합, no-store·공통 오류 검증.
 - Ruff·format·Mypy·기본 CI 및 관련 PostgreSQL 계약·통합 검증. AI/Provider 동작 변경이 없어 의료 AI eval 추가 대상은 아님.
