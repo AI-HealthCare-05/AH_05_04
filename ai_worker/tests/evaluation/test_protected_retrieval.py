@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -252,6 +253,33 @@ async def test_ledger_rejects_an_unverified_approval_and_audit_failure_is_atomic
     with pytest.raises(ProtectedSecurityError, match="AUDIT_UNAVAILABLE"):
         await ledger.grant(grant)
     assert ledger.current(grant.grant_id) is None
+
+
+@pytest.mark.asyncio
+async def test_execute_protected_operation_awaits_infrastructure_protocols() -> None:
+    grant = _grant()
+    source = _approval_source(grant)
+    clock, journal, ledger, guard, operation = _authorized_components(grant, source)
+    history = journal.operation_history
+    append = journal.append_operation
+    require_dataset = ledger.require_dataset
+    journal.operation_history = AsyncMock(side_effect=history)  # type: ignore[method-assign]
+    journal.append_operation = AsyncMock(side_effect=append)  # type: ignore[method-assign]
+    ledger.require_dataset = AsyncMock(side_effect=require_dataset)  # type: ignore[method-assign]
+
+    result = await execute_protected_operation(
+        _request(),
+        ledger=ledger,
+        guard=guard,
+        journal=journal,
+        operation=operation,
+        clock=clock,
+    )
+
+    assert result.reason_code == "PROTECTED_OPERATION_SUCCEEDED"
+    assert journal.operation_history.await_count >= 2
+    assert journal.append_operation.await_count == 2
+    assert ledger.require_dataset.await_count >= 1
 
 
 @pytest.mark.asyncio
@@ -947,7 +975,8 @@ async def test_denial_audit_failure_is_fail_closed_and_does_not_call_operation()
     assert operation.call_count == 0
 
 
-def test_security_errors_never_expose_caller_supplied_details() -> None:
+@pytest.mark.asyncio
+async def test_security_errors_never_expose_caller_supplied_details() -> None:
     error = ProtectedSecurityError("/protected/location?query=secret")
 
     assert str(error) == "INTERNAL_ERROR"
@@ -955,7 +984,7 @@ def test_security_errors_never_expose_caller_supplied_details() -> None:
 
     journal = InMemoryProtectedAuditJournal(FixedTrustedClock(NOW))
     with pytest.raises(ProtectedSecurityError, match="INTERNAL_ERROR"):
-        journal.append_operation(_request(), None, OperationAuditOutcome.DENIED, "/protected/query=secret")
+        await journal.append_operation(_request(), None, OperationAuditOutcome.DENIED, "/protected/query=secret")
     assert journal.entries == []
 
 
@@ -1187,7 +1216,7 @@ async def test_unresolved_intent_retry_preserves_reconciliation_error_and_audits
     grant = _grant()
     clock, journal, ledger, guard, operation = _authorized_components(grant, _approval_source(grant))
     original = _request(operation_key="unresolved-intent")
-    journal.append_operation(original, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
+    await journal.append_operation(original, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
     retry_request_id = str(uuid4())
 
     with pytest.raises(ProtectedSecurityError, match="RECONCILIATION_REQUIRED"):
@@ -1210,12 +1239,13 @@ async def test_unresolved_intent_retry_preserves_reconciliation_error_and_audits
     assert operation.call_count == 0
 
 
-def test_audit_chain_detects_tamper_and_rejects_duplicate_terminal() -> None:
+@pytest.mark.asyncio
+async def test_audit_chain_detects_tamper_and_rejects_duplicate_terminal() -> None:
     grant = _grant()
     clock, journal, _, _, _ = _authorized_components(grant, _approval_source(grant))
     request = _request()
-    journal.append_operation(request, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
-    journal.append_operation(request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED", result=_result())
+    await journal.append_operation(request, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
+    await journal.append_operation(request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED", result=_result())
 
     journal.verify_chain()
     journal.entries[1] = journal.entries[1].model_copy(update={"reason_code": ProtectedAuditReason.REVOKED})
@@ -1223,21 +1253,22 @@ def test_audit_chain_detects_tamper_and_rejects_duplicate_terminal() -> None:
         journal.verify_chain()
 
     clean = InMemoryProtectedAuditJournal(clock)
-    clean.append_operation(request, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
-    clean.append_operation(request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED", result=_result())
+    await clean.append_operation(request, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
+    await clean.append_operation(request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED", result=_result())
     with pytest.raises(ProtectedSecurityError, match="AUDIT_TRANSITION_INVALID"):
-        clean.append_operation(request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED", result=_result())
+        await clean.append_operation(request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED", result=_result())
 
 
-def test_audit_chain_detects_tail_truncation_and_terminal_binding_changes() -> None:
+@pytest.mark.asyncio
+async def test_audit_chain_detects_tail_truncation_and_terminal_binding_changes() -> None:
     grant = _grant()
     clock, journal, _, _, _ = _authorized_components(grant, _approval_source(grant))
     request = _request()
-    journal.append_operation(request, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
+    await journal.append_operation(request, grant, OperationAuditOutcome.INTENT, "AUTHORIZED")
     other_request = request.model_copy(update={"request_id": str(uuid4())})
 
     with pytest.raises(ProtectedSecurityError, match="AUDIT_BINDING_MISMATCH"):
-        journal.append_operation(other_request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED")
+        await journal.append_operation(other_request, grant, OperationAuditOutcome.SUCCEEDED, "COMPLETED")
 
     journal.entries.pop()
     with pytest.raises(ProtectedSecurityError, match="AUDIT_TAIL_TRUNCATED"):
@@ -1413,7 +1444,7 @@ async def test_frozen_dataset_cannot_transition_back_to_an_authoring_state(
 
     with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
         await ledger.transition_dataset(frozen, reopened)
-    assert ledger.require_dataset(_request(dataset=frozen)) == frozen
+    assert await ledger.require_dataset(_request(dataset=frozen)) == frozen
 
 
 @pytest.mark.asyncio
@@ -1430,7 +1461,7 @@ async def test_frozen_dataset_cannot_remove_freeze_evidence() -> None:
 
     with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
         await ledger.transition_dataset(frozen, changed)
-    assert ledger.require_dataset(_request(dataset=frozen)) == frozen
+    assert await ledger.require_dataset(_request(dataset=frozen)) == frozen
 
 
 @pytest.mark.asyncio
