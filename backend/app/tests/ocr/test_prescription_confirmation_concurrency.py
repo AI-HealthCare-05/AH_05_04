@@ -342,10 +342,10 @@ async def test_confirmation_reflects_patch_committed_while_waiting(
 
 
 @pytest.mark.asyncio
-async def test_two_concurrent_confirmations_produce_one_success_and_one_conflict(
+async def test_two_concurrent_confirmations_replay_one_success(
     real_connection_app: None,
 ) -> None:
-    """3. 동시 확정 2건 중 하나만 성공하고, 나머지는 500이 아닌 409여야 합니다."""
+    """동시 확정은 처방 하나를 만들고 두 요청에 같은 최초 성공 응답을 반환한다."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token, document_id, _, _ = await _prepare_reviewed_document(client, label="double")
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -355,12 +355,8 @@ async def test_two_concurrent_confirmations_produce_one_success_and_one_conflict
             client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers),
         )
 
-    codes = sorted([first.status_code, second.status_code])
-    assert codes == [status.HTTP_201_CREATED, status.HTTP_409_CONFLICT], (first.text, second.text)
-
-    conflict = first if first.status_code == status.HTTP_409_CONFLICT else second
-    # document_id unique 제약 때문에 lock이 없으면 IntegrityError 500이 됩니다.
-    assert conflict.json()["code"] == "PRESCRIPTION_ALREADY_CONFIRMED"
+    assert first.status_code == second.status_code == status.HTTP_201_CREATED, (first.text, second.text)
+    assert first.json()["data"] == second.json()["data"]
 
 
 @pytest.mark.asyncio
@@ -502,3 +498,37 @@ async def test_patch_times_out_and_preserves_value_when_document_row_is_locked(
 
     assert current["confirmed_value"] == expected_value
     assert current["confirmation_status"] == "CONFIRMED"
+
+
+async def test_concurrent_corrections_replay_once_and_conflicting_body_is_rejected(real_connection_app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, document_id, _, _ = await _prepare_reviewed_document(client, label="correct-replay")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        confirmed = await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers)
+        assert confirmed.status_code == 201, confirmed.text
+        initial = confirmed.json()["data"]
+        payload = {
+            "base_version_id": initial["prescription_version_id"],
+            "expected_revision": initial["revision"],
+            "prescribed_date": "2026-09-10",
+            "medications": [{"medication_name": "합성 정정약", "display_order": 1}],
+        }
+        endpoint = f"/api/v1/prescriptions/{initial['prescription_id']}"
+        first, second = await asyncio.gather(
+            client.patch(endpoint, headers=headers, json=payload),
+            client.patch(endpoint, headers=headers, json=payload),
+        )
+        assert first.status_code == second.status_code == 200, (first.text, second.text)
+        assert first.json()["data"] == second.json()["data"]
+        payload["medications"][0]["medication_name"] = "다른 합성약"
+        conflict = await client.patch(endpoint, headers=headers, json=payload)
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["code"] == "IDEMPOTENCY_KEY_CONFLICT"
+        async with test_engine.connect() as connection:
+            assert (
+                await connection.scalar(
+                    text("SELECT count(*) FROM prescription_version WHERE prescription_id=:id"),
+                    {"id": initial["prescription_id"]},
+                )
+                == 2
+            )

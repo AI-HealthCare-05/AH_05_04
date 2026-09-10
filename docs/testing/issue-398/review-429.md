@@ -8,3 +8,9 @@
 - 검증: Runtime Repository, Source Snapshot lifecycle, Snapshot adapter 단위 테스트 **67 passed**.
 
 이 문서는 단계별 검증 기록이다. 처방 멱등성, Snapshot 직접 삭제 방어, 문서 정합성과 병합된 #404 통합 검증은 다음 단계에서 기록한다. AWS·운영 DB에는 적용하지 않았다.
+
+## 2. 처방 성공 재시도
+
+- SYNC_MUTATION 공통 경계에 확정·정정을 연결했다. 같은 요청 재현, 다른 내용 충돌, 소유권 재확인, 동시 정정의 버전 중복 방지, 응답 저장 실패 rollback을 검증했다.
+- 기존 처방 Service/API/동시성 테스트 47 passed. 추가 회귀를 포함한 Service·동시성 재검증 19 passed.
+- OpenAPI operation_id와 저장 scope가 일치함을 확인했다. 필수 헤더·DTO는 추가하지 않는다. PD-398-R1에 응답 의미 변경과 지정 리뷰 범위를 기록했다.

@@ -9,13 +9,13 @@ Repository의 최초 저장·새 버전 저장 모두 약이 최소 1개이고 d
 
 버전·약 목록·활성 포인터 저장을 savepoint로 묶는다. 약 INSERT나 구성 검증 실패를 호출자가 잡더라도 새 버전만 남지 않는다. 최초 처방의 비어 있지 않은 active_version_id 및 deferred FK 계약은 유지하며 외부 transaction commit 때 완성된 관계가 검증된다. 기존 버전 정정에서는 약 저장·검증을 마친 뒤 포인터를 변경한다.
 
-Service에서 수행하는 기존 버전의 Job·일정·Outbox 무효화를 포함한 전체 업무 transaction은 호출자가 rollback해야 한다. Repository savepoint는 앞서 수행한 다른 Service 작업의 부분 commit을 허용한다는 의미가 아니다.
+확정·정정 Service는 도메인 변경과 멱등성 응답 저장을 같은 savepoint로 묶는다. 정정 시 기존 버전의 Job·일정·Outbox 무효화도 이 경계에 포함한다. 실패를 호출자가 잡더라도 새 버전·활성 포인터만 남지 않는다. 최종 commit/rollback은 외부 transaction owner가 담당한다.
 
 ## 남은 전환 조건
 
 - [x] 부모 medication_count/content_hash, 자식 count 결속·슬롯 제약, 기존 데이터 검증 및 NOT NULL 강화 (398a/398b)
 - [x] hash 직렬화 계약과 Backend 저장·소비 경로의 공통 count/hash 검증
-- [ ] DB unique 기반 요청 멱등성 확장 (기존 동시 정정 검증 유지)
+- [x] DB unique 기반 확정·정정 요청 멱등성 및 암호화된 최초 성공 응답 재현 (PR #429 리뷰 반영)
 - [x] 불변 테이블 UPDATE·DELETE·TRUNCATE 제한 및 Runtime 저장 경로
 - [x] 기존 assembly_xid·Trigger·함수의 forward migration 제거
 
@@ -27,7 +27,7 @@ Service에서 수행하는 기존 버전의 Job·일정·Outbox 무효화를 포
 
 약 필드는 display_order, medication_name, strength_text, dose_value, dose_unit, frequency_per_day, timing_text, duration_days이다. 생략한 optional 필드는 null로 취급한다. null과 빈 문자열은 구분한다. 문자열의 공백·Unicode를 hash 함수에서 정규화하지 않으며 정확한 저장 값을 사용한다. dose_value는 유한한 양수·Numeric(10,3) 범위를 확인하고 소수 셋째 자리 문자열로 표현한다. 반올림이 필요한 입력은 거부한다. 날짜·내용 hash이므로 DB surrogate ID와 생성 시각은 포함하지 않는다.
 
-Repository는 저장 전 입력을 검증하고 실제 저장 열들을 다시 읽어 입력 fingerprint와 비교한다. DB에 hash를 영구 저장하는 단계는 아직 아니며, 이 비교만으로 저장 이후의 불변성이 보장되지는 않는다. count/hash 컬럼 및 소비 검증은 후속 migration과 함께 연결한다.
+Repository는 저장 전 입력을 검증하고 실제 저장 열들을 다시 읽어 입력 fingerprint와 비교한다. 현재는 398a/398b를 통해 count/hash를 영구 저장하며 저장·소비 시 재검증한다. 이 비교만으로 저장 이후의 불변성이 보장되지는 않으므로 버전·약 행의 UPDATE/DELETE/TRUNCATE 권한도 제거한다.
 
 정정 DTO도 display_order 1..N을 강제하여 간격이 있는 요청은 기존 validation 응답(422)으로 거부한다. API가 통과시킨 입력이 Repository의 구성 검증에서 500으로 실패하지 않도록 경계를 일치시킨다.
 
@@ -68,3 +68,16 @@ NOT NULL은 누락 metadata를 DB에서 차단하는 보조 제약이다. 새 Tr
 Runtime 역할은 처방 버전과 약 행에 SELECT·INSERT만 가진다. 새 버전 저장은 변경 가능한 `prescription` 부모 행을 잠그고, 불변 자식 행은 읽기 잠금 없이 조회한다. 정정 저장·실제 목록 검증·활성 포인터 변경은 Repository savepoint 안에서 완료된다. 제한 역할 로그인으로 새 버전 저장과 fingerprint 재조회가 성공하고, 불변 두 테이블의 UPDATE·DELETE·TRUNCATE가 거부되는 것을 통합 검증한다.
 
 이 migration은 downgrade 시 과거 Trigger를 되살리지 않고 실패한다. 되돌림은 검토된 forward-fix 또는 적용 전 백업 복구로 수행한다.
+
+## 확정·정정 요청 멱등성 (PD-398-R1)
+
+기존 필수 헤더·DTO는 유지한다. 서버가 확정의 document_id, 정정의 (base_version_id, expected_revision)으로 자연 요청 키를 만든다. 공통 SYNC_MUTATION 서비스가 사용자·OpenAPI operation_id·부모 리소스·key_hmac 범위의 DB UNIQUE와 암호화된 성공 응답 snapshot을 사용한다.
+
+- 확정 키: `prescription-confirm:{document_id}`. 부모는 document_id, 지문은 document_id다.
+- 정정 키: `prescription-correction:{base_version_id}:{expected_revision}`. 부모는 prescription_id, 지문은 검증·정규화된 전체 요청 JSON이다.
+- 확정 201 / 정정 200을 최초 성공 응답 그대로 재현한다. 동일 요청의 동시 실행도 처방·버전·무효화를 중복 생성하지 않는다. 이후 다른 정정이 있어도 재현 응답의 `current`와 revision은 **최초 응답 시점 값**이다. 최신 상태는 GET으로 확인한다.
+- 같은 정정 키의 다른 지문은 409 `IDEMPOTENCY_KEY_CONFLICT`다. 매 요청에 현재 소유권을 먼저 검사하며 타인 리소스는 기존 404를 유지한다.
+- 기존 보존 정책(기본 7일, 최소 24시간)과 암호화 키 설정을 따른다. 만료 후 또는 도입 이전에 성공 응답 기록이 없는 이미 확정된 문서는 기존 409, 오래된 정정 기준은 `PRESCRIPTION_VERSION_CONFLICT`다. 과거 응답을 추정해서 만들지 않는다.
+- 저장 실패·응답 크기 제한 실패는 도메인 변경과 함께 rollback한다. 원문 요청 키·처방 응답을 로그에 남기지 않는다.
+
+이 변경은 성공 재시도의 응답 의미 변경이므로 [PD-398-R1 Decision](../../governance/decisions/2026-09-10-python-integrity-review-429.md)의 담당 리뷰 대상이다.

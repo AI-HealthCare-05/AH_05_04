@@ -11,10 +11,12 @@ from app.dtos.prescriptions import CorrectPrescriptionRequest, MedicationData, P
 from app.models.ocr import ExtractedField, FieldType
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.users import User
+from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import DocumentLockTimeoutError, MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_integrity import verify_loaded_version
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.idempotency import SyncMutationIdempotencyService, get_default_snapshot_cipher
 
 _MAX_MEDICATION_NAME_LENGTH = 255
 # 복합제 및 농도 문자열을 포함할 수 있는 최대 길이입니다.
@@ -96,6 +98,30 @@ class PrescriptionService:
         self._schedule_invalidation = schedule_invalidation
 
     async def confirm_prescription(self, *, user: User, document_id: UUID) -> PrescriptionData:
+        if await self._document_repo.get_owned(document_id=document_id, user=user) is None:
+            raise ApiError(status_code=404, code="MEDICAL_DOCUMENT_NOT_FOUND", message="의료문서를 찾을 수 없습니다.")
+
+        async def mutate() -> dict:
+            result = await self._confirm_prescription_once(user=user, document_id=document_id)
+            return result.model_dump(mode="json")
+
+        result = await self._idempotency().execute(
+            user_id=user.id,
+            operation_id="confirm_prescription_api_v1_documents__document_id__prescription_post",
+            parent_resource_id=document_id,
+            idempotency_key=f"prescription-confirm:{document_id}",
+            fingerprint={"document_id": str(document_id)},
+            success_status=201,
+            mutate=mutate,
+        )
+        return PrescriptionData.model_validate(result.response_body)
+
+    def _idempotency(self) -> SyncMutationIdempotencyService:
+        return SyncMutationIdempotencyService(
+            IdempotencyRepository(self._prescription_repo.session), get_default_snapshot_cipher()
+        )
+
+    async def _confirm_prescription_once(self, *, user: User, document_id: UUID) -> PrescriptionData:
         # 처방 확정과 extracted-field PATCH의 동시 요청을 직렬화합니다.
         # 문서 row를 먼저 잠근 뒤에 확정 여부와 검수값을 읽어야
         # "확정에 반영되지 않은 PATCH"와 "확정 이후 필드 변경"을 함께 차단할 수 있습니다.
@@ -180,6 +206,31 @@ class PrescriptionService:
         return self._active_version_data(prescription)
 
     async def correct_prescription(
+        self,
+        *,
+        user: User,
+        prescription_id: UUID,
+        request: CorrectPrescriptionRequest,
+    ) -> PrescriptionData:
+        if await self._prescription_repo.get_owned(prescription_id=prescription_id, user_id=user.id) is None:
+            raise ApiError(status_code=404, code="PRESCRIPTION_NOT_FOUND", message="처방 정보를 찾을 수 없습니다.")
+
+        async def mutate() -> dict:
+            result = await self._correct_prescription_once(user=user, prescription_id=prescription_id, request=request)
+            return result.model_dump(mode="json")
+
+        result = await self._idempotency().execute(
+            user_id=user.id,
+            operation_id="correct_prescription_api_v1_prescriptions__prescription_id__patch",
+            parent_resource_id=prescription_id,
+            idempotency_key=f"prescription-correction:{request.base_version_id}:{request.expected_revision}",
+            fingerprint=request.model_dump(mode="json"),
+            success_status=200,
+            mutate=mutate,
+        )
+        return PrescriptionData.model_validate(result.response_body)
+
+    async def _correct_prescription_once(
         self,
         *,
         user: User,

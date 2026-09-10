@@ -156,3 +156,7 @@ commit 직전에 생성 기준 Version과 `active_version_id`의 일치를 `PRES
 않고 ASSISTANT placeholder를 `FAILED / PRESCRIPTION_VERSION_STALE`로 보존하며
 `409 PRESCRIPTION_VERSION_CONFLICT`를 반환한다. 처방 활성화 transaction은 기존 `CHAT_SESSION` row를
 잠그지 않으므로 이 완료 fencing과 역방향 lock cycle을 만들지 않는다.
+
+## #398 / PR #429 구현 리뷰 보완
+
+작업 브랜치의 확정·정정 멱등성은 [PD-398-R1](../../../governance/decisions/2026-09-10-python-integrity-review-429.md)과 [구현 계약](../../proposed/python-prescription-integrity-398.md#확정정정-요청-멱등성-pd-398-r1)을 따른다. 동일 자연 요청 키·동일 내용은 암호화해 저장한 최초 201/200을 반환한다. 같은 정정 기준의 다른 내용은 409이며, 버전·무효화·응답 snapshot 저장은 원자적이다. 이 절은 PR 리뷰 대상이며 target 전체의 current 승격이나 운영 적용 완료를 뜻하지 않는다.

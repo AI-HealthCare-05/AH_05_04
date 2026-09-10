@@ -201,6 +201,7 @@ class PrescriptionRepository:
                 owned_by_self(Prescription.profile_id, user_id),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         prescription = result.scalar_one_or_none()
         if prescription is not None:
